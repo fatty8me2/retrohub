@@ -24,3 +24,7 @@ target_link_libraries(hubsaves PUBLIC hubcommon PRIVATE hubminiz bcrypt)
 # Console-only test (no WIN32 flag).
 add_executable(hubsaves_test test_saves.cpp)
 target_link_libraries(hubsaves_test PRIVATE hubsaves)
+
+# QA helper for qa\saves_two_pc.ps1 (key/dirs/sync from the command line). Console only.
+add_executable(qa_saves_tool qa_tool.cpp)
+target_link_libraries(qa_saves_tool PRIVATE hubsaves hubcommon)

@@ -2,6 +2,11 @@
 
 RetroHub is a Windows launcher for retro games (N64, GameCube, GBA, GB, GBC). It has online play, friends and invites, and a save vault that syncs across PCs. Start with `docs/ARCHITECTURE.md`, and see the other docs in `docs/` (FRIENDS, SAVES, RETRORUN, DOLPHIN, CORES).
 
+## Agent roles
+- **Opus: orchestrator.** Plans, writes the contracts/interfaces, splits work into parallel lanes, integrates, and releases.
+- **Sonnet: coders.** Each implements a feature in files it owns, against those contracts.
+- **Haiku: small tasks, second set of eyes, and testing.** Lookups, scripts, code review of Sonnet's work, and QA.
+
 ## Standard QA on every change (required)
 Before any change is released, run **Haiku QA agents** in parallel, scoped to what changed. Typical lanes:
 - **Online:** use headless `retrorun --headless --net ...` peers against the live server and the console tests (`n64run_lockstep_test`, `hubnet_test`, `hubfriends_test`). Also try relay mode (`HUBNET_FORCE_RELAY=1`) and bad networks.

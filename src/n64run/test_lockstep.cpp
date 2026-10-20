@@ -197,6 +197,15 @@ int main() {
     run_sim("3 peers, hash corruption", 3, own3, 2, 0.30, 0.10, 6, N, true, 8);
     const int own1[kPorts] = {0, 0, -1, -1};
     run_sim("1 peer (offline)", 1, own1, 0, 0.0, 0.0, 0, 2000, false, 9);
+    /* Stress: full 4-PC sessions (every N64 port owned by a different PC). */
+    const int own4[kPorts] = {0, 1, 2, 3};
+    const int own4b[kPorts] = {0, 1, 2, 3};
+    run_sim("4 peers, 15% loss, reorder", 4, own4, 2, 0.15, 0.05, 6, N, false, 10);
+    run_sim("4 peers, 15% loss, 50k samples", 4, own4b, 2, 0.15, 0.05, 6, 50000, false, 11);
+    run_sim("4 peers, D=8, 15% loss, reorder 12", 4, own4, 8, 0.15, 0.05, 12, N, false, 12);
+    run_sim("4 peers, D=0, 15% loss, 50k", 4, own4, 0, 0.15, 0.10, 4, 50000, false, 13);
+    run_sim("4 peers, 40% loss (stress)", 4, own4, 3, 0.40, 0.10, 8, N, false, 14);
+    run_sim("4 peers, hash corruption", 4, own4, 2, 0.15, 0.05, 6, N, true, 15);
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL PASSED\n", g_fail);
     return g_fail ? 1 : 0;
 }
