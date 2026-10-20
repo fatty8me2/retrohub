@@ -120,26 +120,46 @@ int main() {
 
     /* shelves */
     {
-        std::vector<ShelfGame> g(7);
-        g[0] = {"native:smash64", "Super Smash Bros.", "n64", false, 0, true, true};
-        g[1] = {"n64:1", "Mario Party", "n64", true, 300, true, false};
-        g[2] = {"n64:2", "banjo", "n64", false, 100, false, false};
-        g[3] = {"gba:1", "Wario Ware", "gba", true, 0, false, false};
-        g[4] = {"gb:1", "Tetris", "gb", false, 200, false, false};
-        g[5] = {"gc:1", "Melee", "gc", false, 0, false, false};
-        g[6] = {"gbc:1", "Crystal", "gbc", false, 0, false, false};
+        std::vector<ShelfGame> g(9);
+        g[0] = {"native:smash64", "Super Smash Bros.", "n64", false, 0, true, true, "Fighting"};
+        g[1] = {"n64:1", "Mario Party", "n64", true, 300, true, false, "Party"};
+        g[2] = {"n64:2", "banjo", "n64", false, 100, false, false, "Platformer"};
+        g[3] = {"gba:1", "Wario Ware", "gba", true, 0, false, false, "Party"};
+        g[4] = {"gb:1", "Tetris", "gb", false, 200, false, false, ""};
+        g[5] = {"gc:1", "Melee", "gc", false, 0, false, false, "Bogus"};
+        g[6] = {"gbc:1", "Crystal", "gbc", false, 0, false, false, ""};
+        g[7] = {"n64:3", "Zelda", "n64", false, 0, false, false, "Adventure"};
+        g[8] = {"n64:4", "Unknown Rom", "n64", false, 0, false, false, ""};
         auto sh = compose_shelves(g);
         std::vector<std::string> ids;
         for (auto& s2 : sh) ids.push_back(s2.id);
-        std::vector<std::string> want = {"recent", "favs", "online", "sys:n64", "sys:gc", "sys:gba", "sys:gbc", "sys:gb"};
+        std::vector<std::string> want = {"recent", "favs", "genre:Party", "genre:Fighting", "genre:Platformer", "genre:Adventure",
+                                         "genre:Other:n64", "genre:Other:gc", "genre:Other:gbc", "genre:Other:gb"};
         CHECK(ids == want);
         CHECK(sh[0].items == std::vector<int>({1, 4, 2}));          // newest first
         CHECK(sh[1].items == std::vector<int>({1, 3}));             // favorites by title
-        CHECK(sh[2].items == std::vector<int>({0, 1}));             // pinned first
-        CHECK(sh[3].items == std::vector<int>({0, 2, 1}));          // n64: pinned, banjo, Mario Party
-        CHECK(sh[0].title == "Continue Playing" && sh[7].title == "Game Boy");
+        CHECK(sh[2].items == std::vector<int>({1, 3}));             // Party by title
+        CHECK(sh[6].items == std::vector<int>({8}));                // Other, n64
+        CHECK(sh[0].title == "Continue Playing" && sh[9].title == "Other - Game Boy" && sh[2].title == "Party");
+        /* each game appears in exactly one genre shelf */
+        std::vector<int> seen(g.size(), 0);
+        for (auto& s2 : sh)
+            if (s2.id.compare(0, 6, "genre:") == 0) for (int i : s2.items) ++seen[i];
+        for (int n : seen) CHECK(n == 1);
         CHECK(compose_shelves({}).empty());
         CHECK(compose_shelves(g, 2)[0].items.size() == 2);
+        CHECK(genre_order().size() == 11 && genre_order()[0] == "Party" && genre_order()[4] == "Platformer");
+        CHECK(effective_genre("RPG") == "RPG" && effective_genre("") == "Other" && effective_genre("rpg") == "Other");
+        std::vector<ShelfGame> odd(1);
+        odd[0] = {"x:1", "Odd", "ps2", false, 0, false, false, ""};
+        auto so = compose_shelves(odd);
+        CHECK(so.size() == 1 && so[0].id == "genre:Other" && so[0].items.size() == 1);
+        std::vector<ShelfGame> ord(3);   // display order follows genre_order(), not input order
+        ord[0] = {"a", "A", "n64", false, 0, false, false, "Action"};
+        ord[1] = {"b", "B", "n64", false, 0, false, false, "Racing"};
+        ord[2] = {"c", "C", "n64", false, 0, false, false, "Party"};
+        auto sord = compose_shelves(ord);
+        CHECK(sord.size() == 3 && sord[0].id == "genre:Party" && sord[1].id == "genre:Racing" && sord[2].id == "genre:Action");
         CHECK(pick_hero(g, "gb:1") == 4 && pick_hero(g, "nope") == 1 && pick_hero(g, "") == 1);
         std::vector<ShelfGame> fresh(2);
         fresh[1].favorite = true;
@@ -150,6 +170,28 @@ int main() {
         CHECK(pk == std::vector<int>({3, 0, 2}));                   // online first, then catalog order
         CHECK(pick_unowned({true, true}, {}, 5).empty());
         CHECK(pick_unowned({false, false, false}, {}, 2) == std::vector<int>({0, 1}));
+    }
+
+    /* horizontal shelf scrolling: wheel routing, drag threshold, paging, reveal */
+    {
+        std::vector<FRect> rs = {{10, 10, 110, 60}, {10, 100, 110, 160}};
+        CHECK(rect_hit(rs, 50, 30) == 0 && rect_hit(rs, 50, 120) == 1);
+        CHECK(rect_hit(rs, 50, 80) == -1 && rect_hit(rs, 110, 30) == -1 && rect_hit({}, 1, 1) == -1);
+        CHECK(std::fabs(shelf_wheel_delta(0, -1, 200, 20) - 330.f) < 1e-3f);   // wheel down = scroll right, 1.5 tiles
+        CHECK(std::fabs(shelf_wheel_delta(0, 1, 200, 20) + 330.f) < 1e-3f);    // wheel up = left
+        CHECK(std::fabs(shelf_wheel_delta(1, 0, 200, 20) - 330.f) < 1e-3f);    // horizontal wheel right
+        CHECK(!drag_exceeds(3, 3, 6) && drag_exceeds(7, 0, 6) && drag_exceeds(0, -7, 6) && !drag_exceeds(0, 0, 6));
+        CHECK(std::fabs(shelf_page_step(1000, 200, 20, 12) - 4 * 220.f) < 1e-3f);
+        CHECK(shelf_page_step(50, 200, 20, 12) == 220.f);                      // at least one tile
+        float ms = shelf_max_scroll(10, 200, 20, 12, 1000);
+        CHECK(std::fabs(ms - (24 + 2000 + 180 - 1000)) < 1e-3f && shelf_max_scroll(2, 200, 20, 12, 1000) == 0.f);
+        CHECK(shelf_clamp(-5, ms) == 0.f && shelf_clamp(1e6f, ms) == ms && shelf_clamp(5, 0) == 0.f);
+        float last_right = 12 + 9 * 220.f + 200;   // the last tile is fully visible at max scroll
+        CHECK(std::fabs((last_right - ms) - (1000 - 12)) < 1e-3f);
+        float t1 = shelf_reveal(12 + 9 * 220.f, last_right, 0, 1000, 28, ms);   // focus walks to the last tile and back
+        CHECK(last_right - t1 <= 1000 - 28 + 1e-3f || t1 == ms);
+        CHECK(shelf_reveal(12, 212, t1, 1000, 28, ms) == 0.f);
+        CHECK(shelf_reveal(12 + 2 * 220.f, 12 + 2 * 220.f + 200, 0, 1000, 28, ms) == 0.f);   // already visible: no move
     }
 
     /* layout + animation math */

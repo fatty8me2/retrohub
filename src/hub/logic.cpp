@@ -454,6 +454,18 @@ std::string system_shelf_title(const std::string& s) {
     return s;
 }
 
+const std::vector<std::string>& genre_order() {
+    static const std::vector<std::string> g = {"Party", "Fighting", "Racing", "Shooter", "Platformer", "Adventure",
+                                                "RPG", "Strategy", "Sports", "Puzzle", "Action"};
+    return g;
+}
+
+std::string effective_genre(const std::string& genre) {
+    for (auto& g : genre_order())
+        if (g == genre) return g;
+    return "Other";
+}
+
 std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_recent) {
     auto by_title = [&](std::vector<int>& v) {
         std::stable_sort(v.begin(), v.end(), [&](int a, int b) {
@@ -468,24 +480,56 @@ std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_rece
     for (auto& e : g) lp.push_back(e.last_played);
     Shelf recent{"recent", "Continue Playing", pick_recent(lp, max_recent)};
     if (!recent.items.empty()) out.push_back(recent);
-    Shelf favs{"favs", "Favorites", {}}, online{"online", "Online with Friends", {}};
-    for (size_t i = 0; i < g.size(); ++i) {
+    Shelf favs{"favs", "Favorites", {}};
+    for (size_t i = 0; i < g.size(); ++i)
         if (g[i].favorite) favs.items.push_back((int)i);
-        if (g[i].online) online.items.push_back((int)i);
-    }
     by_title(favs.items);
-    by_title(online.items);
     if (!favs.items.empty()) out.push_back(favs);
-    if (!online.items.empty()) out.push_back(online);
-    static const char* order[] = {"n64", "gc", "gba", "gbc", "gb"};
-    for (const char* sys : order) {
-        Shelf sh{std::string("sys:") + sys, system_shelf_title(sys), {}};
+    for (const std::string& gn : genre_order()) {
+        Shelf sh{"genre:" + gn, gn, {}};
         for (size_t i = 0; i < g.size(); ++i)
-            if (g[i].system == sys) sh.items.push_back((int)i);
+            if (effective_genre(g[i].genre) == gn) sh.items.push_back((int)i);
         by_title(sh.items);
         if (!sh.items.empty()) out.push_back(sh);
     }
+    static const char* sys_order[] = {"n64", "gc", "gba", "gbc", "gb"};
+    std::vector<bool> placed(g.size(), false);
+    for (const char* sys : sys_order) {
+        Shelf sh{std::string("genre:Other:") + sys, "Other - " + system_shelf_title(sys), {}};
+        for (size_t i = 0; i < g.size(); ++i)
+            if (effective_genre(g[i].genre) == "Other" && g[i].system == sys) { sh.items.push_back((int)i); placed[i] = true; }
+        by_title(sh.items);
+        if (!sh.items.empty()) out.push_back(sh);
+    }
+    /* Unknown system codes still must appear exactly once. */
+    Shelf rest{"genre:Other", "Other", {}};
+    for (size_t i = 0; i < g.size(); ++i)
+        if (effective_genre(g[i].genre) == "Other" && !placed[i]) rest.items.push_back((int)i);
+    by_title(rest.items);
+    if (!rest.items.empty()) out.push_back(rest);
     return out;
+}
+
+int rect_hit(const std::vector<FRect>& rects, float x, float y) {
+    for (size_t i = 0; i < rects.size(); ++i)
+        if (x >= rects[i].x0 && x < rects[i].x1 && y >= rects[i].y0 && y < rects[i].y1) return (int)i;
+    return -1;
+}
+float shelf_wheel_delta(float wx, float wy, float tile_w, float gap) { return (wx - wy) * 1.5f * (tile_w + gap); }
+bool drag_exceeds(float dx, float dy, float t) { return dx * dx + dy * dy > t * t; }
+float shelf_page_step(float view_w, float tile_w, float gap, float bleed) {
+    int n = std::max(1, (int)((view_w - bleed * 2 + gap) / (tile_w + gap)));
+    return n * (tile_w + gap);
+}
+float shelf_clamp(float v, float m) { return std::max(0.f, std::min(std::max(0.f, m), v)); }
+float shelf_reveal(float left, float right, float target, float view_w, float margin, float max_scroll) {
+    if (left - target < margin) target = left - margin;
+    else if (right - target > view_w - margin) target = right - view_w + margin;
+    return shelf_clamp(target, max_scroll);
+}
+float shelf_max_scroll(int count, float tw, float gap, float bleed, float view_w) {
+    float content = bleed * 2 + count * tw + std::max(0, count - 1) * gap;
+    return std::max(0.f, content - view_w);
 }
 
 std::vector<int> pick_unowned(const std::vector<bool>& owned, const std::vector<bool>& online, int max_n) {

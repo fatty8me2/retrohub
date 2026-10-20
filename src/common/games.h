@@ -29,7 +29,11 @@ struct GameInfo {
     std::string blurb;       // one line shown on the card / details panel
     std::string nointro;     // No-Intro name of the primary (USA) release, e.g.
                              // "Mario Kart 64 (USA)" -- used to fetch cover art
+    std::string genre;       // one of genres(): "Party" "Fighting" ... "" = unknown (hub files it under "Other")
 };
+
+/* Allowed GameInfo::genre values, in the order the hub shows genre shelves. */
+const std::vector<std::string>& genres();
 
 /* Catalog lookup for a scanned game: by catalog_id/MD5 first, then serial + system. */
 const GameInfo* find_game_for(const std::string& system_short, const std::string& serial, const std::string& md5);

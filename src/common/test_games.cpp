@@ -65,6 +65,18 @@ static void test_md5() {
 
 static void test_catalog() {
     const auto& c = catalog();
+    {   // every entry has a genre from the allowed list
+        const auto& gl = genres();
+        for (const GameInfo& g : c) {
+            bool ok = false;
+            for (const auto& x : gl) ok = ok || x == g.genre;
+            if (!ok) std::printf("bad genre '%s' for %s\n", g.genre.c_str(), g.id.c_str());
+            CHECK(ok);
+        }
+        CHECK(find_game("smash64")->genre == "Fighting" && find_game("mp2")->genre == "Party");
+        CHECK(find_game("mk64")->genre == "Racing" && find_game("pokeemerald")->genre == "RPG");
+        CHECK(GameInfo().genre.empty());
+    }
     CHECK(c.size() >= 5);  // smash64, mp1, mp2, mp3, remix, plus the curated N64/GBA additions
 
     const GameInfo* smash = find_game("smash64");

@@ -331,6 +331,11 @@ struct Toast {
 struct ShelfState {
     float scroll = 0, target = 0;
     int focus_idx = -1;
+    bool pressed = false, dragging = false;     // click-and-drag panning
+    float press_x = 0, press_y = 0, press_scroll = 0;
+    hubui::FRect rect;                          // visible screen rect of the row (for wheel routing)
+    float max_scroll = 0, tw = 0, gap = 0;
+    int frame = -100;                           // frame this row was last drawn
 };
 
 struct ChatLine { std::string who, text; };
@@ -377,6 +382,8 @@ struct App {
     std::map<std::string, int> lib_index;         // key -> index in lib
     std::map<std::string, hub::GameState> lib_state;   // cached game_state per key
     std::string sys_filter;                       // "" = all, else system short
+    bool online_only = false;                     // All Games: only games that are fun online
+    int group_mode = 0;                           // All Games grouping: 0 genre, 1 system, 2 A-Z
     char search_buf[64] = {0};
     std::string vis_filter, vis_query;            // last inputs used to build `vis`
     std::vector<int> vis;                         // filtered + sorted indices into lib
@@ -564,6 +571,15 @@ static void rebuild_vis() {
     for (auto& e : A.lib) items.push_back({e.key, e.title, sys_short(e), is_native(e)});
     std::string q = A.search_buf;
     A.vis = hubui::filter_sort(items, A.sys_filter, q);
+    if (A.online_only) {
+        std::vector<int> keep;
+        for (int i : A.vis) {
+            const hub::GameEntry& e = A.lib[i];
+            const GameInfo* c = catalog_for(e);
+            if (is_native(e) || (c && c->online)) keep.push_back(i);
+        }
+        A.vis.swap(keep);
+    }
 
     // Home composition: shelves over the whole library, plus catalog games the player doesn't own.
     A.sg.clear();
@@ -580,6 +596,7 @@ static void rebuild_vis() {
         g.last_played = gs.last_played;
         g.online = is_native(e) || (cat && cat->online);
         g.pinned = is_native(e);
+        g.genre = cat ? cat->genre : std::string();
         A.sg.push_back(g);
     }
     A.shelves = hubui::compose_shelves(A.sg);
@@ -1318,6 +1335,7 @@ static std::string initials(const std::string& t) {
 /* ---------- tiles ---------- */
 
 static void seed_nav_here();
+static bool g_suppress_click = false;   // set by shelf_strip while a drag-pan is in progress / just ended
 
 struct TileSpec {
     std::string id, title, subtitle, badge;
@@ -1362,7 +1380,8 @@ static TileResult draw_tile(const TileSpec& t, ImVec2 size) {
     float sr = sp(1.5f);
     ImVec2 sc(r1.x - sp(2.25f), r0.y + sp(2.25f));
     bool star_hov = item_hov && t.show_star && t.owned && std::fabs(io.MousePos.x - sc.x) < sr + sp(0.75f) && std::fabs(io.MousePos.y - sc.y) < sr + sp(0.75f);
-    if (ImGui::IsItemClicked(0)) {
+    /* A click fires on release (and not after a drag-pan), so dragging a shelf never selects or plays a tile. */
+    if (ImGui::IsItemDeactivated() && item_hov && !g_suppress_click && ImGui::IsMouseReleased(0)) {
         if (star_hov) r.star = true;
         else r.clicked = true;
     }
@@ -1469,12 +1488,19 @@ static void handle_entry_result(const hub::GameEntry& e, const TileSpec& spec, c
 
 /* ---------- shelves ---------- */
 
-static void shelf_header(const char* title, const std::string& right, float bleed) {
+static void shelf_header(const char* title, const std::string& right, float bleed, int count = -1) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImFont* f = ui::F.h2;
     dl->AddText(f, f->FontSize, ImVec2(p.x + bleed, p.y), ui::TEXT, title);
+    if (count >= 0) {
+        float tw = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, title).x;
+        char c[16];
+        std::snprintf(c, sizeof c, "%d", count);
+        ImFont* cf = ui::F.cap;
+        dl->AddText(cf, cf->FontSize, ImVec2(p.x + bleed + tw + sp(1.25f), p.y + f->FontSize - cf->FontSize - sp(0.25f)), ui::TEXT2, c);
+    }
     if (!right.empty()) {
         ImVec2 ts = ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, right.c_str());
         dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + w - bleed - ts.x, p.y + f->FontSize - ts.y - sp(0.25f)), ui::TEXT3, right.c_str());
@@ -1482,8 +1508,27 @@ static void shelf_header(const char* title, const std::string& right, float blee
     ImGui::Dummy(ImVec2(w, f->FontSize + sp(1.25f)));
 }
 
+/* Mouse wheel over a shelf row that overflows scrolls THAT row horizontally (called from the event loop before
+ * ImGui sees the event, so the page does not scroll too). Returns false when the pointer is not over such a row. */
+static bool route_wheel(float px, float py, float wx, float wy) {
+    std::vector<hubui::FRect> rects;
+    std::vector<ShelfState*> rows;
+    int fc = ImGui::GetFrameCount();
+    for (auto& kv : A.shelf_state)
+        if (kv.second.frame >= fc - 2 && kv.second.max_scroll > 0) {
+            rects.push_back(kv.second.rect);
+            rows.push_back(&kv.second);
+        }
+    int i = hubui::rect_hit(rects, px, py);
+    if (i < 0) return false;
+    ShelfState& s = *rows[i];
+    s.target = hubui::shelf_clamp(s.target + hubui::shelf_wheel_delta(wx, wy, s.tw, s.gap), s.max_scroll);
+    return true;
+}
+
 /* A horizontally scrolling row of tiles. Scrolling is managed here (smooth, time based) instead of by a child
- * window, so every tile stays a real ImGui item and the D-pad can walk onto tiles that are off-screen. */
+ * window, so every tile stays a real ImGui item and the D-pad can walk onto tiles that are off-screen.
+ * Wheel (see route_wheel), arrow buttons, click-and-drag and keyboard/gamepad focus all move the same target. */
 static void shelf_strip(const std::string& id, int count, float tw, float th, const std::function<TileResult(int, ImVec2)>& draw_one) {
     ImGuiIO& io = ImGui::GetIO();
     ImGuiWindow* win = ImGui::GetCurrentWindow();
@@ -1491,20 +1536,46 @@ static void shelf_strip(const std::string& id, int count, float tw, float th, co
     float gap = sp(2.f), bleed = sp(1.5f);
     float view_w = ImGui::GetContentRegionAvail().x;
     float strip_h = th + sp(4.5f);
-    float content_w = bleed * 2 + count * tw + std::max(0, count - 1) * gap;
-    float max_scroll = std::max(0.f, content_w - view_w);
+    float max_scroll = hubui::shelf_max_scroll(count, tw, gap, bleed, view_w);
     ImVec2 org = ImGui::GetCursorScreenPos();
     ImVec2 v0 = org, v1(org.x + view_w, org.y + strip_h);
 
-    bool hov = ImGui::IsMouseHoveringRect(v0, v1) && ImGui::IsWindowHovered();
-    if (hov && max_scroll > 0) {
-        float wh = -io.MouseWheelH;
-        if (io.KeyShift || !A.page_scrollable) wh -= io.MouseWheel;
-        if (wh != 0) ss.target += wh * tw * 0.8f;
+    ImVec2 c0(std::max(v0.x, win->InnerClipRect.Min.x), std::max(v0.y, win->InnerClipRect.Min.y));
+    ImVec2 c1(std::min(v1.x, win->InnerClipRect.Max.x), std::min(v1.y, win->InnerClipRect.Max.y));
+    ss.rect = {c0.x, c0.y, c1.x, c1.y};
+    ss.max_scroll = max_scroll;
+    ss.tw = tw;
+    ss.gap = gap;
+    ss.frame = ImGui::GetFrameCount();
+
+    // arrow buttons: always shown while the row overflows
+    float bs = sp(4.5f), by = org.y + sp(1.5f) + th * 0.5f - bs * 0.5f;
+    ImVec2 la(org.x + sp(0.5f), by), ra(v1.x - bs - sp(0.5f), by);
+    auto in_box = [&](ImVec2 p, ImVec2 q) { return io.MousePos.x >= p.x && io.MousePos.x < p.x + q.x && io.MousePos.y >= p.y && io.MousePos.y < p.y + q.y; };
+    bool over_arrow = max_scroll > 0 && (in_box(la, ImVec2(bs, bs)) || in_box(ra, ImVec2(bs, bs)));
+
+    bool hov = ImGui::IsMouseHoveringRect(c0, c1) && ImGui::IsWindowHovered();
+    // click-and-drag panning (a press that moves past the threshold becomes a drag; a plain click is untouched)
+    if (max_scroll > 0) {
+        if (hov && !over_arrow && ImGui::IsMouseClicked(0)) {
+            ss.pressed = true;
+            ss.dragging = false;
+            ss.press_x = io.MousePos.x;
+            ss.press_y = io.MousePos.y;
+            ss.press_scroll = ss.scroll;
+        }
+        if (ss.pressed && ImGui::IsMouseDown(0)) {
+            if (!ss.dragging && hubui::drag_exceeds(io.MousePos.x - ss.press_x, io.MousePos.y - ss.press_y, sp(0.75f))) ss.dragging = true;
+            if (ss.dragging) {
+                ss.target = hubui::shelf_clamp(ss.press_scroll - (io.MousePos.x - ss.press_x), max_scroll);
+                ss.scroll = ss.target;
+            }
+        }
     }
-    ss.target = std::max(0.f, std::min(max_scroll, ss.target));
-    ss.scroll = hubui::approach(ss.scroll, ss.target, io.DeltaTime, 16.f);
+    ss.target = hubui::shelf_clamp(ss.target, max_scroll);
+    if (!ss.dragging) ss.scroll = hubui::approach(ss.scroll, ss.target, io.DeltaTime, 16.f);
     if (std::fabs(ss.scroll - ss.target) < 0.4f) ss.scroll = ss.target;
+    g_suppress_click = ss.dragging;
 
     ImGui::PushClipRect(v0, v1, true);
     bool any_focus = false;
@@ -1516,17 +1587,17 @@ static void shelf_strip(const std::string& id, int count, float tw, float th, co
             any_focus = true;
             if (ss.focus_idx != i) {   // gamepad/keyboard moved onto this tile: scroll it into view
                 ss.focus_idx = i;
-                float left = bleed + i * (tw + gap), right = left + tw, margin = bleed + sp(1.f);
-                if (left - ss.target < margin) ss.target = left - margin;
-                else if (right - ss.target > view_w - margin) ss.target = right - view_w + margin;
-                ss.target = std::max(0.f, std::min(max_scroll, ss.target));
+                float left = bleed + i * (tw + gap);
+                ss.target = hubui::shelf_reveal(left, left + tw, ss.target, view_w, sp(5.f), max_scroll);
             }
         }
     }
     if (!any_focus) ss.focus_idx = -1;
     ImGui::PopClipRect();
+    g_suppress_click = false;
+    if (!io.MouseDown[0]) { ss.pressed = false; ss.dragging = false; }
 
-    // edge fades + arrows hint that the row scrolls
+    // edge fades hint that the row scrolls
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float fw = sp(5.f);
     ImU32 solid = ui::BG, clear = ui::with_alpha(ui::BG, 0.f);
@@ -1534,17 +1605,18 @@ static void shelf_strip(const std::string& id, int count, float tw, float th, co
     if (ss.scroll > 1.f) dl->AddRectFilledMultiColor(v0, ImVec2(v0.x + fw, v1.y), solid, clear, clear, solid);
     if (ss.scroll < max_scroll - 1.f) dl->AddRectFilledMultiColor(ImVec2(v1.x - fw, v0.y), v1, clear, solid, solid, clear);
     dl->PopClipRect();
-    if (max_scroll > 0 && (hov || any_focus)) {
-        float bs = sp(5.f), by = org.y + sp(1.5f) + th * 0.5f - bs * 0.5f;
+    if (max_scroll > 0) {
         ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
-        if (ss.scroll > 1.f) {
-            ImGui::SetCursorScreenPos(ImVec2(org.x + sp(0.5f), by));
-            if (ui::icon_button((id + "<").c_str(), ui::Icon::ChevronL, bs, false, nullptr)) ss.target = std::max(0.f, ss.target - view_w * 0.8f);
-        }
-        if (ss.scroll < max_scroll - 1.f) {
-            ImGui::SetCursorScreenPos(ImVec2(v1.x - bs - sp(0.5f), by));
-            if (ui::icon_button((id + ">").c_str(), ui::Icon::ChevronR, bs, false, nullptr)) ss.target = std::min(max_scroll, ss.target + view_w * 0.8f);
-        }
+        float page = hubui::shelf_page_step(view_w, tw, gap, bleed);
+        bool can_l = ss.target > 1.f, can_r = ss.target < max_scroll - 1.f;
+        ImGui::SetCursorScreenPos(la);
+        ImGui::BeginDisabled(!can_l);
+        if (ui::icon_button((id + "<").c_str(), ui::Icon::ChevronL, bs, false, "Scroll left")) ss.target = hubui::shelf_clamp(ss.target - page, max_scroll);
+        ImGui::EndDisabled();
+        ImGui::SetCursorScreenPos(ra);
+        ImGui::BeginDisabled(!can_r);
+        if (ui::icon_button((id + ">").c_str(), ui::Icon::ChevronR, bs, false, "Scroll right")) ss.target = hubui::shelf_clamp(ss.target + page, max_scroll);
+        ImGui::EndDisabled();
         ImGui::PopItemFlag();
     }
 
@@ -1566,9 +1638,7 @@ static void home_shelves() {
     float th = tw / kTileAspect;
     for (size_t si = 0; si < A.shelves.size(); ++si) {
         const hubui::Shelf& sh = A.shelves[si];
-        char cnt[32];
-        std::snprintf(cnt, sizeof cnt, "%d game%s", (int)sh.items.size(), sh.items.size() == 1 ? "" : "s");
-        shelf_header(sh.title.c_str(), cnt, bleed);
+        shelf_header(sh.title.c_str(), "", bleed, (int)sh.items.size());
         bool recent = sh.id == "recent";
         shelf_strip("shelf_" + sh.id, (int)sh.items.size(), tw, th, [&](int i, ImVec2 sz) {
             const hub::GameEntry& e = A.lib[sh.items[i]];
@@ -1581,7 +1651,7 @@ static void home_shelves() {
     }
     if (!A.pick_idx.empty()) {
         const std::vector<GameInfo>& cat = hub::catalog();
-        shelf_header("Top Picks You Don't Have Yet", "add the ROM to a ROM folder", bleed);
+        shelf_header("Top Picks You Don't Have Yet", "add the ROM to a ROM folder", bleed, (int)A.pick_idx.size());
         shelf_strip("shelf_picks", (int)A.pick_idx.size(), tw, th, [&](int i, ImVec2 sz) {
             const GameInfo& g = cat[A.pick_idx[i]];
             TileSpec t;
@@ -1931,8 +2001,31 @@ static void all_games_view() {
         if (c.sys[0]) system_colors(hub::system_from_short(c.sys), &a, &b2);
         if (chip(lab, A.sys_filter == c.sys, a)) { A.sys_filter = c.sys; A.vis_dirty = true; }
     }
+    {   // Online filter chip + group-by toggle
+        int n_online = 0;
+        for (auto& e : A.lib) {
+            const GameInfo* c = catalog_for(e);
+            if (is_native(e) || (c && c->online)) ++n_online;
+        }
+        char lab[48];
+        std::snprintf(lab, sizeof lab, "Online  %d", n_online);
+        ImGui::SameLine(0, sp(2.f));
+        if (chip(lab, A.online_only, ui::GOOD)) { A.online_only = !A.online_only; A.vis_dirty = true; }
+    }
     ImGui::PopItemFlag();
     ImGui::PopStyleVar();
+    {
+        static const char* modes[] = {"Genre", "System", "A-Z"};
+        ImGui::SameLine(0, sp(3.f));
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(ui::TEXT3));
+        ImGui::TextUnformatted("Group by");
+        ImGui::PopStyleColor();
+        ImGui::SameLine(0, sp(1.f));
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
+        A.group_mode = ui::segmented("groupby", modes, 3, A.group_mode);
+        ImGui::PopItemFlag();
+    }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
@@ -1957,24 +2050,54 @@ static void all_games_view() {
             if (button("Clear search", ImVec2(bw, sp(5.f)), false, true, ui::Icon::Close)) A.search_buf[0] = 0;
         }
     } else {
-        char head[64];
-        std::snprintf(head, sizeof head, "%s", A.sys_filter.empty() ? "All games" : hubui::system_shelf_title(A.sys_filter).c_str());
-        char cnt[32];
-        std::snprintf(cnt, sizeof cnt, "%d game%s", (int)A.vis.size(), A.vis.size() == 1 ? "" : "s");
-        shelf_header(head, cnt, 0.f);
+        // sections according to the group-by mode (A.vis is already sorted: pinned first, then by title)
+        struct Section { std::string title; std::vector<int> items; };
+        std::vector<Section> secs;
+        auto sec_for = [&](const std::string& t) -> Section& {
+            for (auto& s : secs) if (s.title == t) return s;
+            secs.push_back({t, {}});
+            return secs.back();
+        };
+        if (A.group_mode == 0) {
+            for (const std::string& gn : hubui::genre_order()) sec_for(gn);
+            sec_for("Other");
+            for (int i : A.vis) {
+                const GameInfo* c = catalog_for(A.lib[i]);
+                sec_for(hubui::effective_genre(c ? c->genre : std::string())).items.push_back(i);
+            }
+        } else if (A.group_mode == 1) {
+            static const char* order[] = {"n64", "gc", "gba", "gbc", "gb"};
+            for (const char* s : order) sec_for(hubui::system_shelf_title(s));
+            for (int i : A.vis) sec_for(hubui::system_shelf_title(sys_short(A.lib[i]))).items.push_back(i);
+        } else {
+            for (int i : A.vis) {
+                unsigned char ch = A.lib[i].title.empty() ? '#' : (unsigned char)A.lib[i].title[0];
+                std::string t(1, std::isalpha(ch) ? (char)std::toupper(ch) : '#');
+                sec_for(t).items.push_back(i);
+            }
+            std::stable_sort(secs.begin(), secs.end(), [](const Section& x, const Section& y) {
+                if ((x.title == "#") != (y.title == "#")) return x.title == "#";
+                return x.title < y.title;
+            });
+        }
         float gap = sp(2.f);
         float avail = ImGui::GetContentRegionAvail().x;
         hubui::GridLayout gl = hubui::grid_layout(avail, sp(26.f), sp(37.5f), gap);
         ImVec2 sz(gl.tile_w, gl.tile_w / kTileAspect);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
-        for (size_t i = 0; i < A.vis.size(); ++i) {
-            if (i % gl.cols) ImGui::SameLine();
-            const hub::GameEntry& e = A.lib[A.vis[i]];
-            TileSpec spec = spec_for_entry(e, "grid", false);
-            TileResult r = draw_tile(spec, sz);
-            handle_entry_result(e, spec, r);
+        for (auto& sec : secs) {
+            if (sec.items.empty()) continue;
+            shelf_header(sec.title.c_str(), "", 0.f, (int)sec.items.size());
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
+            for (size_t k = 0; k < sec.items.size(); ++k) {
+                if (k % gl.cols) ImGui::SameLine();
+                const hub::GameEntry& e = A.lib[sec.items[k]];
+                TileSpec spec = spec_for_entry(e, "grid", false);
+                TileResult r = draw_tile(spec, sz);
+                handle_entry_result(e, spec, r);
+            }
+            ImGui::PopStyleVar();
+            ImGui::Dummy(ImVec2(0, sp(1.5f)));
         }
-        ImGui::PopStyleVar();
         ImGui::Dummy(ImVec2(0, sp(2.f)));
     }
     ImGui::EndChild();
@@ -3411,6 +3534,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         if (const char* pd = std::getenv("HUB_SHOT_PAD")) A.pad_mode = std::atoi(pd) != 0;
     }
+    float shot_wx = 0, shot_wy = 0, shot_wn = 0;   // HUB_SHOT_WHEEL=x,y,notches (notches > 0 scrolls right/down)
+    int shot_wheel_stage = 0;                      // 0 pending, 1 pointer placed, 2 wheel sent
+    double shot_wheel_t = 0;
+    const bool shot_wheel = shot_path && std::getenv("HUB_SHOT_WHEEL") &&
+                            std::sscanf(std::getenv("HUB_SHOT_WHEEL"), "%f,%f,%f", &shot_wx, &shot_wy, &shot_wn) == 3;
     size_t shot_key_i = 0;
     bool shot_key_down = false;
     double shot_last_key = 0;
@@ -3419,6 +3547,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_MOUSEWHEEL && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+                float wx = e.wheel.preciseX, wy = e.wheel.preciseY;
+                if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { wx = -wx; wy = -wy; }
+                if (route_wheel(io.MousePos.x, io.MousePos.y, wx, wy)) continue;   // over a shelf: scroll that row, not the page
+            }
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) running = false;
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) running = false;
@@ -3457,6 +3590,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 shot_last_key = shot_el;
             }
         }
+        if (shot_wheel && shot_wheel_stage == 0 && A.scanned_once && shot_el > std::max(2.0, shot_secs - 2.0)) {
+            io.AddMousePosEvent(shot_wx, shot_wy);   // window pixels
+            shot_wheel_stage = 1;
+        } else if (shot_wheel && shot_wheel_stage == 1) {
+            if (!route_wheel(shot_wx, shot_wy, 0.f, -shot_wn)) io.AddMouseWheelEvent(0.f, -shot_wn);
+            shot_wheel_stage = 2;
+            shot_wheel_t = shot_el;
+        }
         ImGui::NewFrame();
         ImGui::PushFont(ui::F.body);
         draw_frame();
@@ -3467,7 +3608,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         SDL_RenderClear(ren);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), ren);
         if (shot_path) {
-            bool ready = shot_el >= shot_secs && (A.scanned_once || shot_el > shot_secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && shot_key_i >= shot_keys.size() && !shot_key_down;
+            bool ready = shot_el >= shot_secs && (A.scanned_once || shot_el > shot_secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && shot_key_i >= shot_keys.size() && !shot_key_down &&
+                         (!shot_wheel || (shot_wheel_stage == 2 && shot_el - shot_wheel_t > 1.5));
             if (ready) { save_screenshot(ren, shot_path); running = false; }
             SDL_Delay(8);
         }

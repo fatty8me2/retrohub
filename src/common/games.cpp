@@ -139,8 +139,43 @@ bool has_rom_extension(const fs::path& p) {
 
 /* ---- catalog ---- */
 
+const std::vector<std::string>& genres() {
+    static const std::vector<std::string> g = {"Party", "Fighting", "Racing", "Shooter", "Platformer", "Adventure",
+                                                "RPG", "Strategy", "Sports", "Puzzle", "Action"};
+    return g;
+}
+
+namespace {
+/* Genre of every catalog entry, by id (kept as a table so the long entries below stay readable). */
+const char* genre_of(const std::string& id) {
+    static const struct { const char* id; const char* genre; } kTable[] = {
+        {"smash64", "Fighting"}, {"remix", "Fighting"}, {"ssb64rom", "Fighting"}, {"wwfnomercy", "Fighting"},
+        {"mp1", "Party"}, {"mp2", "Party"}, {"mp3", "Party"}, {"pokestadium", "Party"}, {"pokestadium2", "Party"},
+        {"wario", "Party"},
+        {"mk64", "Racing"}, {"dkr", "Racing"}, {"fzerox", "Racing"}, {"wr64", "Racing"}, {"rush2049", "Racing"},
+        {"mksc", "Racing"},
+        {"goldeneye", "Shooter"}, {"perfectdark", "Shooter"}, {"sf64", "Shooter"},
+        {"sm64", "Platformer"}, {"bk", "Platformer"}, {"bt", "Platformer"}, {"dk64", "Platformer"},
+        {"kirby64", "Platformer"}, {"yoshisstory", "Platformer"}, {"toystory2", "Platformer"},
+        {"sma4", "Platformer"}, {"kirbymirror", "Platformer"}, {"kirbynightmare", "Platformer"}, {"sa2", "Platformer"},
+        {"oot", "Adventure"}, {"mm", "Adventure"}, {"ootmq", "Adventure"}, {"minishcap", "Adventure"},
+        {"lttp", "Adventure"}, {"mzm", "Adventure"}, {"mfusion", "Adventure"}, {"pokesnap", "Adventure"},
+        {"papermario", "RPG"}, {"pokeruby", "RPG"}, {"pokesapphire", "RPG"}, {"pokeemerald", "RPG"},
+        {"pokefirered", "RPG"}, {"pokeleafgreen", "RPG"}, {"mlss", "RPG"}, {"goldensun", "RPG"},
+        {"goldensunlostage", "RPG"}, {"bn3blue", "RPG"}, {"pmdred", "RPG"},
+        {"aw1", "Strategy"}, {"aw2", "Strategy"}, {"fireemblem", "Strategy"}, {"ffta", "Strategy"},
+        {"mariotennis", "Sports"}, {"mariogolf", "Sports"}, {"thps2", "Sports"},
+        {"conker", "Action"}, {"bm64", "Action"}, {"aria", "Action"},
+    };
+    for (const auto& r : kTable)
+        if (id == r.id) return r.genre;
+    return "";
+}
+} // namespace
+
 const std::vector<GameInfo>& catalog() {
-    static const std::vector<GameInfo> games = {
+    static const std::vector<GameInfo> games = [] {
+    std::vector<GameInfo> v = {
         /* ---- native port (no ROM serials: the N64 ROM entry "ssb64rom" owns NALE) ---- */
         {"smash64", "Super Smash Bros. (Smash Classic)", Engine::Native, 4, {},
          "games/smashClassic/BattleShip.exe", "n64", {}, true, 1999,
@@ -392,6 +427,9 @@ const std::vector<GameInfo>& catalog() {
          "Skate arena-style courses and chase high scores in a timed career mode.",
          "Tony Hawk's Pro Skater 2 (USA, Europe)"},
     };
+    for (auto& g : v) g.genre = genre_of(g.id);
+    return v;
+    }();
     return games;
 }
 
