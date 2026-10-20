@@ -1,5 +1,5 @@
 #pragma once
-/* Pure (UI/OS independent) logic for ClassicHub: tiny JSON, settings, lobby rules. */
+/* Pure (UI/OS independent) logic for RetroHub: tiny JSON, settings, lobby rules. */
 
 #include <map>
 #include <string>

@@ -1,4 +1,4 @@
-/* retrorun: minimal libretro frontend for Classic Hub (GBA / GB / GBC).
+/* retrorun: minimal libretro frontend for RetroHub (GBA / GB / GBC).
  * See docs/RETRORUN.md. */
 
 #include <windows.h>

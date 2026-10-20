@@ -96,7 +96,7 @@ void WsClient::run(std::string url)
         port = (INTERNET_PORT)atoi(hostport.substr(colon + 1).c_str());
     }
 
-    HINTERNET session = WinHttpOpen(L"ClassicHub/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+    HINTERNET session = WinHttpOpen(L"RetroHub/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                                     WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { fail("WinHttpOpen failed"); return; }
     WinHttpSetTimeouts(session, 5000, 5000, 5000, 0);

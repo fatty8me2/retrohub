@@ -1,4 +1,4 @@
-# Libretro cores for Classic Hub
+# Libretro cores for RetroHub
 
 This document records which libretro core the hub uses for each system, why, and what each core offers a frontend. Cores are fetched by `scripts/fetch-cores.ps1` into `deps/cores/` (DLLs) and `deps/cores/info/` (`.info` metadata).
 
@@ -62,5 +62,5 @@ Options a frontend will most likely need to set: GB model selection, BIOS use, a
 ## Open items
 - Confirm each core's option names from its libretro core-options source file.
 - Confirm save-state support for SameBoy through the libretro build, not only the upstream README.
-- Confirm link-cable support for Gambatte and SameBoy. The current Classic Hub netplay design is lockstep input, not link cable, so this matters only if link-cable games are wanted.
+- Confirm link-cable support for Gambatte and SameBoy. The current RetroHub netplay design is lockstep input, not link cable, so this matters only if link-cable games are wanted.
 - Decide the GameCube core. None is fetched.

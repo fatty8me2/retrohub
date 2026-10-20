@@ -1,5 +1,5 @@
 #pragma once
-/* Game catalog + ROM identification + paths shared by ClassicHub and n64run. */
+/* Game catalog + ROM identification + paths shared by RetroHub and n64run. */
 
 #include <cstdint>
 #include <string>

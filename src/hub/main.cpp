@@ -1,4 +1,4 @@
-/* ClassicHub.exe - the launcher front door.
+/* RetroHub.exe - the launcher front door.
  *
  * Layout: full-window custom UI (no floating windows): left sidebar nav + content pages
  * (Library, Play Online, Saves, Controllers, Settings, About). Drawn with Dear ImGui on SDL_Renderer.
@@ -782,7 +782,7 @@ struct DolphinDl {
 } DL;
 
 static bool http_download(const std::wstring& host, const std::wstring& path, const std::string& out_file, std::string* err) {
-    HINTERNET ses = WinHttpOpen(L"ClassicHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
+    HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
     if (!ses) { *err = "network unavailable"; return false; }
     bool ok = false;
     HINTERNET con = WinHttpConnect(ses, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
@@ -1527,7 +1527,7 @@ static void page_library() {
     if (A.lib.empty() && !A.scanning) {
         begin_panel("empty");
         section_title("No games yet");
-        text_wrapped_disabled("Add the folder(s) that hold your own game files. Classic Hub recognises N64 (.z64 .v64 .n64), "
+        text_wrapped_disabled("Add the folder(s) that hold your own game files. RetroHub recognises N64 (.z64 .v64 .n64), "
                               "GameCube (.iso .gcm .rvz .wia .ciso .gcz), Game Boy Advance (.gba), Game Boy (.gb) and "
                               "Game Boy Color (.gbc) by their contents, not their names.");
         if (button("Add ROM folder", ImVec2(0, 48 * S), true)) add_rom_folder();
@@ -1973,7 +1973,7 @@ static const std::vector<SyncSuggestion>& sync_suggestions() {
     std::set<std::string> seen;
     auto add = [&](const std::string& label, const std::string& base) {
         if (base.empty() || !dir_exists(base) || !seen.insert(base).second) return;
-        v.push_back({label, no_slash(base) + "\\ClassicHub"});
+        v.push_back({label, no_slash(base) + "\\RetroHub"});
     };
     add("OneDrive", env_var(L"OneDriveConsumer"));
     add("OneDrive", env_var(L"OneDrive"));
@@ -2014,7 +2014,7 @@ static void page_saves() {
 
     begin_panel("sync");
     section_title("Sync between PCs");
-    text_wrapped_disabled("Pick a folder both PCs can see (OneDrive, Dropbox, Google Drive, a USB stick or a NAS). Classic Hub keeps "
+    text_wrapped_disabled("Pick a folder both PCs can see (OneDrive, Dropbox, Google Drive, a USB stick or a NAS). RetroHub keeps "
                           "it in step with the vault in both directions and never deletes a save; if both sides changed, the older copy is kept.");
     ImGui::TextUnformatted("Sync folder");
     text_wrapped_disabled(A.st.sync_folder.empty() ? "(not set)" : A.st.sync_folder);
@@ -2061,7 +2061,7 @@ static void page_saves() {
         tm lt{};
         localtime_s(&lt, &t);
         wchar_t nm[64];
-        std::wcsftime(nm, 64, L"ClassicHub-saves-%Y%m%d.zip", &lt);
+        std::wcsftime(nm, 64, L"RetroHub-saves-%Y%m%d.zip", &lt);
         std::string p = pick_save_path(A.hwnd, nm, L"Zip archive", L"*.zip", L"zip");
         if (!p.empty()) start_job(SaveJob::Export, p, true);
     }
@@ -2241,7 +2241,7 @@ static void page_about() {
     page_header("About", "");
     begin_panel("about");
     ImGui::PushFont(A.f_h2);
-    ImGui::TextUnformatted("Classic Hub");
+    ImGui::TextUnformatted("RetroHub");
     ImGui::PopFont();
     ImGui::TextDisabled("Version %s", HUB_VERSION_STR);
     ImGui::Dummy(ImVec2(0, 6 * S));
@@ -2297,7 +2297,7 @@ static void draw_frame() {
     ImGui::BeginChild("side", ImVec2(sw, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar);
     ImGui::PushFont(A.f_title);
-    ImGui::TextUnformatted("Classic Hub");
+    ImGui::TextUnformatted("RetroHub");
     ImGui::PopFont();
     ImGui::Dummy(ImVec2(0, 14 * S));
     float iw = sw - 28 * S;
@@ -2373,7 +2373,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
-        MessageBoxA(nullptr, SDL_GetError(), "Classic Hub", MB_ICONERROR);
+        MessageBoxA(nullptr, SDL_GetError(), "RetroHub", MB_ICONERROR);
         return 1;
     }
 
@@ -2402,11 +2402,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
     if (!A.st.vault_dir.empty()) hub::saves::set_vault_dir(A.st.vault_dir);
 
-    A.win = SDL_CreateWindow("Classic Hub", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (int)(1100 * S), (int)(720 * S),
+    A.win = SDL_CreateWindow("RetroHub", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (int)(1100 * S), (int)(720 * S),
                              SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN);
     SDL_Renderer* ren = A.win ? SDL_CreateRenderer(A.win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : nullptr;
     if (!A.win || !ren) {
-        MessageBoxA(nullptr, SDL_GetError(), "Classic Hub", MB_ICONERROR);
+        MessageBoxA(nullptr, SDL_GetError(), "RetroHub", MB_ICONERROR);
         return 1;
     }
     SDL_SetWindowMinimumSize(A.win, (int)(820 * S), (int)(560 * S));
