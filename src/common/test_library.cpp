@@ -174,6 +174,7 @@ static void test_identify(const fs::path& dir) {
     CHECK(identify_game((dir / "id" / "emerald.gba").string(), &e));
     CHECK(e.system == System::GBA);
     CHECK(e.serial == "BPEE");
+    CHECK(e.catalog_id == "pokeemerald");  // serial match via find_game_for
     CHECK(e.title == "Pokemon Emer");
     CHECK(e.key.rfind("gba:bpee-", 0) == 0 && e.key.size() == 9 + 8);
     CHECK(e.size == gba.size());
@@ -215,6 +216,13 @@ static void test_identify(const fs::path& dir) {
     CHECK(identify_game((dir / "id" / "t.z64").string(), &e));
     CHECK(e.system == System::N64 && e.serial == "NTSE" && e.title == "Super Test 64");
     CHECK(e.key.rfind("n64:", 0) == 0 && e.key.size() == 4 + 32 && e.catalog_id.empty());
+    // Not a catalog dump, but header ID NKTE (Mario Kart 64 USA) identifies it by serial.
+    Bytes mk = make_n64("MARIO KART", 5);
+    put(mk, 0x3B, "NKTE");
+    CHECK(write_file(dir / "id" / "mk.z64", mk));
+    GameEntry emk;
+    CHECK(identify_game((dir / "id" / "mk.z64").string(), &emk));
+    CHECK(emk.serial == "NKTE" && emk.catalog_id == "mk64" && emk.title == "Mario Kart 64");
     Bytes v = n;
     for (size_t i = 0; i + 1 < v.size(); i += 2) std::swap(v[i], v[i + 1]);
     CHECK(write_file(dir / "id" / "t.v64", v));

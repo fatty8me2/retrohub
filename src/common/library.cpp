@@ -1,3 +1,4 @@
+#include "miniz.h"
 #include "library.h"
 #include "games.h"
 
@@ -420,13 +421,9 @@ bool id_n64(const fs::path& p, GameEntry* e) {
     for (char c : ser)
         if (!is_alnum(c)) ok = false;
     e->serial = ok ? ser : std::string();
-    for (const auto& g : catalog()) {
-        for (const auto& m : g.rom_md5s) {
-            if (m == md5) {
-                e->catalog_id = g.id;
-                e->title = g.title;
-            }
-        }
+    if (const GameInfo* g = find_game_for("n64", e->serial, md5)) {
+        e->catalog_id = g->id;
+        e->title = g->title;
     }
     return true;
 }
@@ -454,6 +451,7 @@ bool id_gba(const fs::path& p, uint64_t size, GameEntry* e) {
     e->system = System::GBA;
     e->serial = code;
     e->key = "gba:" + sanitize_key(code) + "-" + hex32(crc);
+    if (const GameInfo* g = find_game_for("gba", code, std::string())) e->catalog_id = g->id;
     e->title = pretty_title(header_text(&d[0xA0], 12), p);
     return true;
 }
@@ -610,6 +608,46 @@ System system_from_short(const std::string& s) {
 
 uint64_t library_identify_count() { return g_identify_calls.load(); }
 
+/* Zipped cartridge ROMs (N64/GBA/GB/GBC): the first ROM inside the zip is
+ * extracted once to data_dir()/rom-cache/<zip name>-<entry crc>/ and that file
+ * is what gets identified and launched. Disc images are never extracted. */
+static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom) {
+    mz_zip_archive za;
+    std::memset(&za, 0, sizeof(za));
+    std::string zpath = path_utf8(zip);
+    FILE* f = _wfopen(zip.wstring().c_str(), L"rb");
+    if (!f) return false;
+    if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { std::fclose(f); return false; }
+    bool ok = false;
+    mz_uint n = mz_zip_reader_get_num_files(&za);
+    for (mz_uint i = 0; i < n && !ok; i++) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
+        std::string name = st.m_filename;
+        std::string ext = ascii_lower(path_utf8(utf8_path(name).extension()));
+        if (ext != ".z64" && ext != ".v64" && ext != ".n64" && ext != ".gba" && ext != ".gb" && ext != ".gbc") continue;
+        if (st.m_uncomp_size < 16 * 1024 || st.m_uncomp_size > 128ull * 1024 * 1024) continue;
+        char crc[16];
+        std::snprintf(crc, sizeof crc, "%08x", (unsigned)st.m_crc32);
+        fs::path dir = utf8_path(data_dir()) / L"rom-cache" /
+                       (zip.stem().wstring() + L"-" + utf8_path(crc).wstring());
+        fs::path rom = dir / utf8_path(name).filename();
+        std::error_code ec;
+        if (!fs::exists(rom, ec) || fs::file_size(rom, ec) != st.m_uncomp_size) {
+            fs::create_directories(dir, ec);
+            fs::path tmp = rom; tmp += L".part";
+            if (!mz_zip_reader_extract_to_file(&za, i, path_utf8(tmp).c_str(), 0)) continue;
+            fs::rename(tmp, rom, ec);
+            if (ec) continue;
+        }
+        *out_rom = rom;
+        ok = true;
+    }
+    mz_zip_reader_end(&za);
+    std::fclose(f);
+    return ok;
+}
+
 bool identify_game(const std::string& path, GameEntry* out) {
     if (!out) return false;
     std::error_code ec;
@@ -618,6 +656,11 @@ bool identify_game(const std::string& path, GameEntry* out) {
     uintmax_t size = fs::file_size(p, ec);
     if (ec) return false;
     std::string ext = ascii_lower(path_utf8(p.extension()));
+    if (ext == ".zip") {
+        fs::path rom;
+        if (!extract_zipped_rom(p, &rom)) return false;
+        return identify_game(path_utf8(rom), out);
+    }
     g_identify_calls.fetch_add(1);
 
     GameEntry e;
@@ -928,7 +971,7 @@ struct CacheRec {
     GameEntry e;
 };
 
-constexpr int kCacheVersion = 1;
+constexpr int kCacheVersion = 4;  // 2: serial matching + GBA catalog_id; forces a rescan
 
 std::unordered_map<std::string, CacheRec> cache_load() {
     std::unordered_map<std::string, CacheRec> m;
@@ -953,7 +996,14 @@ std::unordered_map<std::string, CacheRec> cache_load() {
             r.e.title = f.str("t");
             r.e.serial = f.str("sn");
             r.e.catalog_id = f.str("c");
-            r.e.path = path;
+            r.e.path = f.str("lp").empty() ? path : f.str("lp");
+            {   /* catalog can change between versions: re-match instead of trusting the cache */
+                std::string md5 = (r.e.key.rfind("n64:", 0) == 0) ? r.e.key.substr(4) : std::string();
+                if (const GameInfo* g = find_game_for(f.str("sys"), r.e.serial, md5)) {
+                    r.e.catalog_id = g->id;
+                    if (r.e.system == System::N64) r.e.title = g->title;
+                }
+            }
             r.e.size = r.size;
             if (r.e.key.empty() || r.e.system == System::Unknown) continue;
         }
@@ -979,6 +1029,7 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
             o += ",\"t\":"; jw_str(o, r.e.title);
             o += ",\"sn\":"; jw_str(o, r.e.serial);
             o += ",\"c\":"; jw_str(o, r.e.catalog_id);
+            o += ",\"lp\":"; jw_str(o, r.e.path);   // launch path (differs for zipped ROMs)
         }
         o.push_back('}');
     }
@@ -988,7 +1039,7 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
 
 bool scan_extension(const std::string& ext) {
     static const char* const kExt[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso",
-                                       ".gcm", ".rvz", ".wia", ".ciso", ".gcz"};
+                                       ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip"};
     for (const char* e : kExt)
         if (ext == e) return true;
     return false;
@@ -1064,7 +1115,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         auto it = cache.find(ascii_lower(c.path_utf8));
         if (it != cache.end() && it->second.size == c.size && it->second.mtime == c.mtime) {
             c.rec = it->second;
-            c.rec.e.path = c.path_utf8;
+            if (c.rec.e.path.empty()) c.rec.e.path = c.path_utf8;   // zipped ROMs keep their extracted path
             c.done = true;
         } else {
             work.push_back(i);
@@ -1087,7 +1138,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
             c.rec.size = c.size;
             c.rec.mtime = c.mtime;
             c.rec.ok = ok;
-            if (ok) { e.path = c.path_utf8; e.size = c.size; c.rec.e = std::move(e); }
+            if (ok) { if (e.path.empty()) e.path = c.path_utf8; e.size = c.size; c.rec.e = std::move(e); }
             c.done = true;
             done.fetch_add(1);
         }
