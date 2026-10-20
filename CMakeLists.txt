@@ -54,6 +54,8 @@ add_library(m64p_api INTERFACE)
 target_include_directories(m64p_api INTERFACE ${m64p_core_SOURCE_DIR}/src/api)
 
 add_subdirectory(src/common)
+add_subdirectory(src/saves)
 add_subdirectory(src/net)
 add_subdirectory(src/n64run)
+add_subdirectory(src/retrorun)
 add_subdirectory(src/hub)
