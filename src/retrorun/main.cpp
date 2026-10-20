@@ -354,7 +354,17 @@ bool Frontend::setup_paths() {
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
     // copied under another file name (e.g. "Other Name (USA).gba" on PC B) would look for its own .srm and
     // miss the synced save. If there is no <stem>.srm and exactly one .srm here, that is this game's save.
-    if (!fs::exists(fs::u8path(srm_path))) {
+    // Only for a vault per-game battery dir (...\battery, or a game dir with meta.json one level up); in any other
+    // folder a lone .srm may belong to a different game, so do not guess.
+    bool vault_battery = false;
+    {
+        std::error_code vec;
+        fs::path sdp = fs::u8path(a.save_dir);
+        while (sdp.has_filename() == false && sdp.has_parent_path() && sdp != sdp.parent_path()) sdp = sdp.parent_path();
+        vault_battery = lower(sdp.filename().u8string()) == "battery" ||
+                        (sdp.has_parent_path() && fs::exists(sdp.parent_path() / "meta.json", vec));
+    }
+    if (vault_battery && !fs::exists(fs::u8path(srm_path))) {
         std::error_code sec;
         std::string only;
         int found = 0;

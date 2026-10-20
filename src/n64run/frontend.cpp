@@ -371,13 +371,26 @@ int main(int argc, char** argv) {
             std::vector<SaveFile> host_files;
             if (my_slot == 0) {
                 std::vector<std::string> skipped;
-                load_save_dir(args.host_save_dir, &host_files, &skipped);
-                for (auto& f : host_files) write_save_file(save_dir, f.name, f.data);   // host boots from the bytes it sends
-                logf_("n64run", "save sync: host shares %zu save file(s) from %s", host_files.size(), args.host_save_dir.c_str());
-                for (auto& s : skipped) logf_("n64run", "save sync: not shared (too large, empty or not a battery save): %s", s.c_str());
+                std::error_code lec;
+                if (!args.host_save_dir.empty() && !fs::exists(fs::path(args.host_save_dir), lec)) {
+                    // The host has never played this game: a valid state. Guests get an explicit "no files" HDR.
+                    logf_("n64run", "save sync: host save dir %s does not exist; sharing NO save files", args.host_save_dir.c_str());
+                } else if (!load_save_dir(args.host_save_dir, &host_files, &skipped)) {
+                    logf_("n64run", "save sync failed: cannot read host save dir '%s'", args.host_save_dir.c_str());
+                    session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 6;
+                }
+                for (auto& hf : host_files) {   // host boots from the bytes it sends
+                    if (!write_save_file(save_dir, hf.name, hf.data)) {
+                        logf_("n64run", "save sync failed: cannot write %s into %s", hf.name.c_str(), save_dir.c_str());
+                        session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 6;
+                    }
+                }
+                if (host_files.empty()) logf_("n64run", "save sync: host has no save files to share (guests will start without saves)");
+                else logf_("n64run", "save sync: host shares %zu save file(s) from %s", host_files.size(), args.host_save_dir.c_str());
+                for (auto& sk : skipped) logf_("n64run", "save sync: not shared (too large, empty or not a battery save): %s", sk.c_str());
             }
             std::string err;
-            if (!run_save_sync(session, my_slot, args.players, my_slot == 0 ? &host_files : nullptr, save_dir, 20000, &err)) {
+            if (!run_save_sync(session, my_slot, args.slot_mask, my_slot == 0 ? &host_files : nullptr, save_dir, 20000, &err)) {
                 logf_("n64run", "save sync failed: %s", err.c_str());
                 session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 6;
             }

@@ -272,6 +272,23 @@ int main() {
         CHECK(build_ports({{0, 9}}).ports == "0,0,-1,-1");
         CHECK(delay_arg(0) == " --delay auto" && delay_arg(3) == " --delay 3" && delay_arg(99) == " --delay 8");
         CHECK(launch_json("g", 1, 0, 5, "", true).find("\"share_save\":true") != std::string::npos);
+        /* host-owned port plan travels in the launch message */
+        {
+            Json lj; std::string pp; int pn = 0;
+            PortPlan hp = build_ports({{0, 2}, {2, 1}});
+            CHECK(json_parse(launch_json("g", 1, 0, 5, "", false, &hp), &lj) && parse_launch_plan(lj, &pp, &pn));
+            CHECK(pp == "0,0,2,-1" && pn == 2 && pp == hp.ports && pn == hp.players);
+            CHECK(json_parse(launch_json("g", 1, 0, 5), &lj) && !parse_launch_plan(lj, &pp, &pn));   // older host: absent
+            const char* bad[] = {
+                "{\"ports\":[0,1,2],\"players\":3}",          "{\"ports\":[0,1,2,9],\"players\":4}",
+                "{\"ports\":[0,-1,1,-1],\"players\":2}",      "{\"ports\":[0,1,-1,-1],\"players\":3}",
+                "{\"ports\":[\"0\",1,-1,-1],\"players\":2}",   "{\"ports\":[0,1,0,-1],\"players\":2}",
+                "{\"ports\":[-1,-1,-1,-1],\"players\":0}",    "{\"ports\":[0,1,-1,-1]}",
+                "{\"ports\":[0,1.5,-1,-1],\"players\":2}",
+            };
+            for (const char* b : bad) CHECK(json_parse(b, &lj) && !parse_launch_plan(lj, &pp, &pn));
+            CHECK(json_parse("{\"ports\":[3,3,-1,-1],\"players\":1}", &lj) && parse_launch_plan(lj, &pp, &pn) && pp == "3,3,-1,-1" && pn == 1);
+        }
         Settings s2; s2.delay_auto = false; Settings s3;
         CHECK(settings_from_json(settings_to_json(s2), &s3) && !s3.delay_auto);
     }

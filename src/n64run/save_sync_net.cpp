@@ -8,16 +8,16 @@
 
 namespace n64run {
 
-bool run_save_sync(hubnet::Session& s, int my_slot, int num_slots, const std::vector<SaveFile>* host_files,
+bool run_save_sync(hubnet::Session& s, int my_slot, uint32_t slot_mask, const std::vector<SaveFile>* host_files,
                    const std::string& client_dir, uint32_t timeout_ms, std::string* err) {
-    if (num_slots < 2) return true;   // nobody to share with
+    if ((slot_mask & 0xFFu & ~1u) == 0) return true;   // nobody to share with
     const uint32_t t0 = hubnet::now_ms();
     std::vector<uint8_t> msg;
     int from = 0;
 
     if (my_slot == 0) {
         static const std::vector<SaveFile> none;
-        SaveSender snd(host_files ? *host_files : none, num_slots, t0, timeout_ms);
+        SaveSender snd(host_files ? *host_files : none, slot_mask, t0, timeout_ms);
         SendFn send = [&s](const std::vector<uint8_t>& d) { s.send(-1, d.data(), (int)d.size()); };
         for (;;) {
             s.update();
@@ -30,7 +30,7 @@ bool run_save_sync(hubnet::Session& s, int my_slot, int num_slots, const std::ve
         }
     }
 
-    SaveReceiver rcv(my_slot, num_slots, client_dir);
+    SaveReceiver rcv(my_slot, 0, client_dir);
     SendFn send = [&s](const std::vector<uint8_t>& d) { s.send(0, d.data(), (int)d.size()); };
     for (;;) {
         s.update();

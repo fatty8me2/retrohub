@@ -69,7 +69,7 @@ int popcount(unsigned v)
 void put32(uint8_t* p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
 uint32_t get32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24); }
 
-/* Network simulator (QA): HUBNET_SIM_LATENCY_MS / _JITTER_MS / _LOSS_PCT / _SEED, applied to every
+/* Network simulator (QA): only active when HUBNET_SIM_ENABLE=1 is also set. HUBNET_SIM_LATENCY_MS / _JITTER_MS / _LOSS_PCT / _SEED, applied to every
  * outgoing datagram (direct UDP and relay frames). Relay frames stay in order (they ride TCP). */
 struct SimPkt {
     uint32_t due;
@@ -119,7 +119,7 @@ struct Session::Impl {
         sim_latency = env_int("HUBNET_SIM_LATENCY_MS", 0);
         sim_jitter = env_int("HUBNET_SIM_JITTER_MS", 0);
         sim_loss = env_int("HUBNET_SIM_LOSS_PCT", 0);
-        sim_on = sim_latency > 0 || sim_jitter > 0 || sim_loss > 0;
+        sim_on = env_int("HUBNET_SIM_ENABLE", 0) == 1 && (sim_latency > 0 || sim_jitter > 0 || sim_loss > 0);   // opt-in so a stray env var cannot degrade real play
         int seed = env_int("HUBNET_SIM_SEED", 0);
         sim_rng.seed(seed ? (uint32_t)seed + (uint32_t)slot_ * 7919u : std::random_device()());
         sim_q.clear();
