@@ -13,6 +13,7 @@ param(
     [int]$Players = 2,
     [string]$Slots = '',          # optional sparse slot list, e.g. '0,2' (use with -Ports 0,2,-1,-1)
     [string]$Ports = '0,1,-1,-1',
+    [string]$ClientDelay = '',   # optional: --delay for every non-host slot (host uses -Delay); the host's D must win
     [string]$Delay = 'auto',   # 'auto' or 0..30
     [string]$Server = 'wss://smash-netplay.jumpcircuit.workers.dev',
     [string]$Room = '',
@@ -52,7 +53,7 @@ foreach ($slot in $slotList) {
     $argList = @('--core', $corePath, '--rom', $thisRom, '--system', $System,
         '--save-dir', $sv, '--state-dir', $st, '--headless', '--frames', $Frames, '--fuzz-input',
         '--net', $Server, '--room', $Room, '--slot', $slot, '--players', $Players,
-        '--ports', $Ports, '--delay', $Delay, '--log', $log)
+        '--ports', $Ports, '--delay', $(if ($slot -ne 0 -and $ClientDelay -ne '') { $ClientDelay } else { $Delay }), '--log', $log)
     $p = Start-Process -FilePath $exe -ArgumentList $argList -PassThru -WindowStyle Hidden
     $procs += [pscustomobject]@{ Slot = $slot; Proc = $p; Log = $log; Killed = $false }
 }

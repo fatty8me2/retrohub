@@ -48,6 +48,16 @@ static bool wait_for(const std::function<bool()>& pred, int ms = 8000)
     }
     return false;
 }
+/* The live server auto-friends every new account with the admin (env ADMIN_UID). The test removes that link
+ * right after connecting (it sticks server-side) and ignores the admin in all friend counts. */
+static const char* kAdminUid = "4ooju7u7o3zy67l2qqaotuj5n4";
+static size_t nfriends(const Peer& p)
+{
+    size_t n = 0;
+    for (const Friend& f : p.c.friends()) if (f.uid != kAdminUid) n++;
+    return n;
+}
+static bool has_admin(const Peer& p) { return p.c.find_friend(kAdminUid) != nullptr; }
 static void settle(int ms = 400) { wait_for([] { return false; }, ms); }
 
 static void offline_tests(const std::string& root)
@@ -107,12 +117,20 @@ int main(int argc, char** argv)
     printf("[online] %s\n", server.c_str());
     auto A = make_peer(root, "alice"), B = make_peer(root, "bob"), C = make_peer(root, "carol");
     g_all = {A.get(), B.get(), C.get()};
-    A->c.start(server, "Alice");
-    B->c.start(server, "Bob");
-    C->c.start(server, "Carol");
+    A->c.start(server, "qa-alice");
+    B->c.start(server, "qa-bob");
+    C->c.start(server, "qa-carol");
     bool up = wait_for([&] { return A->c.connected() && B->c.connected() && C->c.connected(); });
     CHECK(up, "A='%s' B='%s' C='%s'", A->c.status_text().c_str(), B->c.status_text().c_str(), C->c.status_text().c_str());
     if (!up) { printf("FAILED\n"); return 1; }
+    for (Peer* p : g_all) {
+        if (!has_admin(*p)) continue;
+        p->c.remove_friend(kAdminUid);
+        bool ok = wait_for([&] { return p->find(Event::FriendRemoved, kAdminUid) != nullptr; });
+        printf("  admin auto-link removed for %s: %s\n", p->name.c_str(), ok ? "FriendRemoved" : "TIMEOUT");
+        CHECK(ok && !has_admin(*p), "admin link cleanup");
+    }
+    for (Peer* p : g_all) p->clear();
     printf("  codes: %s %s %s\n", A->c.my_code().c_str(), B->c.my_code().c_str(), C->c.my_code().c_str());
 
     printf("[friend flow]\n");
@@ -121,7 +139,7 @@ int main(int argc, char** argv)
     CHECK(B->c.incoming_requests().size() == 1 && B->c.incoming_requests()[0].uid == A->c.my_uid());
     B->c.accept(A->c.my_uid());
     CHECK(wait_for([&] { return A->find(Event::FriendAdded) && B->find(Event::FriendAdded); }));
-    CHECK(A->c.friends().size() == 1 && B->c.friends().size() == 1);
+    CHECK(nfriends(*A) == 1 && nfriends(*B) == 1);
     CHECK(A->c.incoming_requests().empty() && A->c.outgoing_requests().empty());
 
     A->clear();
@@ -144,13 +162,13 @@ int main(int argc, char** argv)
     CHECK(wait_for([&] { return A->find(Event::FriendOnline) || A->find(Event::PresenceChanged); }));
     const Friend* fb = A->c.find_friend(B->c.my_uid());
     CHECK(fb && fb->status.state == PresenceState::InLobby && fb->status.lobby_code == "ABC234" && fb->status.joinable &&
-          fb->status.max_players == 4 && fb->name == "Bob");
+          fb->status.max_players == 4 && fb->name == "qa-bob");
     s.state = PresenceState::Online; s.lobby_code.clear(); s.joinable = false;
     B->c.set_status(s);
     CHECK(wait_for([&] { fb = A->c.find_friend(B->c.my_uid()); return fb && fb->status.state == PresenceState::Online; }));
     A->clear();
-    B->c.rename("Bobby \xC3\xA9");
-    CHECK(wait_for([&] { fb = A->c.find_friend(B->c.my_uid()); return fb && fb->name == "Bobby \xC3\xA9"; }));
+    B->c.rename("qa-bobby \xC3\xA9");
+    CHECK(wait_for([&] { fb = A->c.find_friend(B->c.my_uid()); return fb && fb->name == "qa-bobby \xC3\xA9"; }));
 
     printf("[messages]\n");
     A->clear(); B->clear();
@@ -169,13 +187,13 @@ int main(int argc, char** argv)
     B->clear();
     A->c.send_message(B->c.my_uid(), "while you were out");
     settle(500);
-    B->c.start(server, "Bobby");
+    B->c.start(server, "qa-bobby");
     CHECK(wait_for([&] { return B->find(Event::MessageReceived); }));
     CHECK(B->find(Event::MessageReceived) && B->find(Event::MessageReceived)->msg.text == "while you were out");
     CHECK(B->c.unread(A->c.my_uid()) == 1);
     /* ack: a third start must not redeliver */
     B->c.stop(); settle(200); B->clear();
-    B->c.start(server, "Bobby");
+    B->c.start(server, "qa-bobby");
     CHECK(wait_for([&] { return B->c.connected(); }));
     settle(800);
     CHECK(!B->find(Event::MessageReceived), "inbox redelivered");
@@ -204,17 +222,17 @@ int main(int argc, char** argv)
     A->clear(); B->clear();
     A->c.remove_friend(B->c.my_uid());
     CHECK(wait_for([&] { return A->find(Event::FriendRemoved) && B->find(Event::FriendRemoved); }));
-    CHECK(A->c.friends().empty() && B->c.friends().empty());
+    CHECK(nfriends(*A) == 0 && nfriends(*B) == 0);
 
     /* befriend again, then block */
     B->c.add_friend(A->c.my_code());
     CHECK(wait_for([&] { return A->find(Event::RequestReceived); }));
     A->c.accept(B->c.my_uid());
-    CHECK(wait_for([&] { return A->c.friends().size() == 1 && B->c.friends().size() == 1; }));
+    CHECK(wait_for([&] { return nfriends(*A) == 1 && nfriends(*B) == 1; }));
     A->clear(); B->clear();
     A->c.block(B->c.my_uid());
     CHECK(wait_for([&] { return B->find(Event::FriendRemoved); }));
-    CHECK(A->c.blocked().size() == 1 && A->c.friends().empty());
+    CHECK(A->c.blocked().size() == 1 && nfriends(*A) == 0);
     B->c.send_message(A->c.my_uid(), "still there?");
     settle(800);
     CHECK(!A->find(Event::MessageReceived), "blocked message delivered");
@@ -225,7 +243,7 @@ int main(int argc, char** argv)
     /* reconnect: kill carol's socket by stopping and restarting is covered; check restart keeps identity */
     std::string cuid = C->c.my_uid();
     C->c.stop();
-    C->c.start(server, "Carol");
+    C->c.start(server, "qa-carol");
     CHECK(wait_for([&] { return C->c.connected(); }) && C->c.my_uid() == cuid);
 
     for (Peer* p : g_all) p->c.stop();

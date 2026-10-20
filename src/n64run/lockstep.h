@@ -94,6 +94,7 @@ struct DelayNegotiation {
     double frame_ms = 1000.0 / 60.0;
     uint32_t measure_ms = 1500;
     uint32_t timeout_ms = 20000;
+    int fixed_delay = -1;   // host: >=0 skips measuring and broadcasts this D. Clients ignore it and always adopt the host's D.
 };
 bool negotiate_delay(hubnet::Session& session, const DelayNegotiation& dn, const std::function<void()>& idle,
                      const std::function<void(const std::string&)>& log, int* out_delay);
