@@ -1,0 +1,71 @@
+22:15:28.182 [net] Lobby: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=3D3NSH&role=host&name=alice
+22:15:28.495 [net] Lobby: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=3D3NSH&role=join&name=bob
+22:15:28.671 [net] Lobby: welcome slot 0
+22:15:28.671 [net] Lobby: welcome slot 1
+22:15:28.762 [net] Session: start room=T899JA-1 slot=0 expected=3 force_relay=0 udp port 51014
+22:15:28.762 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=T899JA-1&role=host&name=n64run
+22:15:28.800 [net] STUN: public endpoint 76.150.167.30:51014
+22:15:29.075 [net] Session: start room=T899JA-1 slot=1 expected=3 force_relay=0 udp port 51015
+22:15:29.077 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=T899JA-1&role=join&name=n64run&slot=1
+22:15:29.077 [net] Session: start room=T899JA-1 slot=2 expected=3 force_relay=0 udp port 51016
+22:15:29.077 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=T899JA-1&role=join&name=n64run&slot=2
+22:15:29.077 [net] Session 0: welcome room T899JA-1
+22:15:29.079 [net] Session 0: endpoint sent public=76.150.167.30:51014 local=10.0.0.45:51014
+22:15:29.104 [net] STUN: public endpoint 76.150.167.30:51015
+22:15:29.104 [net] STUN: public endpoint 76.150.167.30:51016
+22:15:29.220 [net] Session 0: slot 1 joined
+22:15:29.220 [net] Session 0: slot 2 joined
+22:15:29.220 [net] Session 1: welcome room T899JA-1
+22:15:29.220 [net] Session 1: slot 0 joined
+22:15:29.220 [net] Session 1: slot 2 joined
+22:15:29.220 [net] Session 1: endpoint sent public=76.150.167.30:51015 local=10.0.0.45:51015
+22:15:29.223 [net] Session 2: welcome room T899JA-1
+22:15:29.223 [net] Session 2: slot 0 joined
+22:15:29.223 [net] Session 2: slot 1 joined
+22:15:29.223 [net] Session 2: endpoint sent public=76.150.167.30:51016 local=10.0.0.45:51016
+22:15:29.249 [net] Session 0: peer 1 candidates pub=76.150.167.30:51015 loc=10.0.0.45:51015
+22:15:29.250 [net] Session 0: peer 2 candidates pub=76.150.167.30:51016 loc=10.0.0.45:51016
+22:15:29.250 [net] Session 1: peer 0 candidates pub=76.150.167.30:51014 loc=10.0.0.45:51014
+22:15:29.250 [net] Session 1: peer 2 candidates pub=76.150.167.30:51016 loc=10.0.0.45:51016
+22:15:29.250 [net] Session 2: peer 0 candidates pub=76.150.167.30:51014 loc=10.0.0.45:51014
+22:15:29.250 [net] Session 2: peer 1 candidates pub=76.150.167.30:51015 loc=10.0.0.45:51015
+22:15:29.262 [net] Session 0: direct path to slot 1 via 10.0.0.45:51015
+22:15:29.262 [net] Session 0: direct path to slot 2 via 10.0.0.45:51016
+22:15:29.262 [net] Session 0: ready (roster 07)
+22:15:29.262 [net] Session 1: direct path to slot 0 via 10.0.0.45:51014
+22:15:29.262 [net] Session 1: ready (roster 07)
+22:15:29.262 [net] Session 2: direct path to slot 0 via 10.0.0.45:51014
+22:15:29.262 [net] Session 2: ready (roster 07)
+22:15:35.545 [net] WS: server closed the connection: host-left
+22:15:35.549 [net] WS: server closed the connection: host-left
+22:15:35.566 [net] Lobby: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=9NTWY8&role=host&name=alice
+22:15:35.878 [net] Lobby: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=9NTWY8&role=join&name=bob
+22:15:35.934 [net] Lobby: welcome slot 0
+22:15:36.036 [net] Lobby: welcome slot 1
+22:15:36.125 [net] Session: start room=HR3EGW-1 slot=0 expected=3 force_relay=1 udp port 51020
+22:15:36.125 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=HR3EGW-1&role=host&name=n64run
+22:15:36.438 [net] Session: start room=HR3EGW-1 slot=1 expected=3 force_relay=1 udp port 51021
+22:15:36.438 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=HR3EGW-1&role=join&name=n64run&slot=1
+22:15:36.438 [net] Session: start room=HR3EGW-1 slot=2 expected=3 force_relay=1 udp port 51022
+22:15:36.438 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=HR3EGW-1&role=join&name=n64run&slot=2
+22:15:36.533 [net] Session 0: welcome room HR3EGW-1
+22:15:36.533 [net] Session 0: endpoint sent public=- local=-
+22:15:36.550 [net] Session 0: slot 2 joined
+22:15:36.550 [net] Session 0: slot 2 falling back to relay
+22:15:36.551 [net] Session 2: welcome room HR3EGW-1
+22:15:36.551 [net] Session 2: slot 0 joined
+22:15:36.551 [net] Session 2: endpoint sent public=- local=-
+22:15:36.551 [net] Session 2: slot 0 falling back to relay
+22:15:36.579 [net] Session 0: slot 1 joined
+22:15:36.579 [net] Session 0: slot 1 falling back to relay
+22:15:36.579 [net] Session 1: welcome room HR3EGW-1
+22:15:36.579 [net] Session 1: slot 0 joined
+22:15:36.579 [net] Session 1: slot 2 joined
+22:15:36.579 [net] Session 1: endpoint sent public=- local=-
+22:15:36.579 [net] Session 1: slot 0 falling back to relay
+22:15:36.579 [net] Session 2: slot 1 joined
+22:15:36.625 [net] Session 0: ready (roster 07)
+22:15:36.656 [net] Session 1: ready (roster 07)
+22:15:36.869 [net] Session 2: ready (roster 07)
+22:16:07.656 [net] WS: server closed the connection: host-left
+22:16:07.656 [net] WS: server closed the connection: host-left

@@ -1,0 +1,9 @@
+build/
+build-*/
+deps/
+dist/
+*.z64
+*.n64
+*.v64
+server/node_modules/
+
