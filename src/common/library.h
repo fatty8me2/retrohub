@@ -35,8 +35,10 @@ struct GameEntry {
  * reads headers only, except N64 (full MD5) and GBA (CRC32) which hash the file. */
 bool identify_game(const std::string& path, GameEntry* out);
 
-/* Recursively scan folders. Extensions: .z64 .v64 .n64 .gba .gb .gbc .iso .gcm .rvz .ciso .gcz
- * Callback gets (files_done, files_total) for a progress bar; may be null. */
+/* Recursively scan folders. Extensions: .z64 .v64 .n64 .gba .gb .gbc .iso .gcm .rvz .wia .ciso .gcz
+ * Callback gets (files_done, files_total) for a progress bar; may be null. It is always
+ * invoked on the calling thread. Results are cached in data_dir()/library_cache.json
+ * (path + size + mtime), so unchanged files are not re-identified. */
 std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
                                     const std::function<void(int, int)>& progress);
 
@@ -50,5 +52,16 @@ GameState game_state(const std::string& key);
 void set_favorite(const std::string& key, bool fav);
 void record_play(const std::string& key, uint64_t started_unix, uint64_t seconds);
 void flush_library_state();
+
+/* ---- additions (tests / diagnostics) ---- */
+
+/* Number of times a file was actually identified (header read / hashed) since process start.
+ * Cache hits in scan_library do not count. */
+uint64_t library_identify_count();
+
+/* Redirect library.json / library_cache.json to another directory (trailing slash optional);
+ * "" restores data_dir(). Flushes pending state, then drops the in-memory state so it is
+ * reloaded from the new location. */
+void library_set_data_dir(const std::string& dir);
 
 } // namespace hub
