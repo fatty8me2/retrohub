@@ -6,6 +6,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <set>
+#include <string>
 #include <vector>
 
 using namespace hub;
@@ -63,7 +65,7 @@ static void test_md5() {
 
 static void test_catalog() {
     const auto& c = catalog();
-    CHECK(c.size() == 5);  // smash64, mp1, mp2, mp3, remix
+    CHECK(c.size() >= 5);  // smash64, mp1, mp2, mp3, remix, plus the curated N64/GBA additions
 
     const GameInfo* smash = find_game("smash64");
     CHECK(smash != nullptr);
@@ -148,9 +150,72 @@ static void test_paths() {
     CHECK(fs::is_directory(fs::u8path(data)));
 }
 
+static std::string lower(std::string s) {
+    for (auto& ch : s) {
+        if (ch >= 'A' && ch <= 'Z') ch = char(ch - 'A' + 'a');
+    }
+    return s;
+}
+
+/* Every curated entry is well-formed, ids and per-system header serials are unique. */
+static void test_catalog_integrity() {
+    std::set<std::string> ids;
+    std::set<std::string> serial_keys;
+    for (const GameInfo& g : catalog()) {
+        CHECK(!g.id.empty() && !g.title.empty() && !g.system.empty());
+        CHECK(!g.nointro.empty());  // cover-art name; may be a base game's name for hacks
+        CHECK(ids.insert(g.id).second);  // unique catalog id
+        CHECK(g.system == "n64" || g.system == "gba");
+        CHECK(g.max_players >= 1 && g.max_players <= 4);
+        CHECK(!g.online || g.max_players >= 2);  // online only makes sense for multiplayer
+        for (const auto& s : g.serials) {
+            CHECK(s.size() == 4);  // N64 game ID / GBA game code
+            CHECK(serial_keys.insert(g.system + ":" + lower(s)).second);  // unique per system
+        }
+        if (g.system == "gba") CHECK(g.engine == Engine::Libretro);
+        if (g.system == "n64" && g.id != "smash64" && g.id != "remix") CHECK(g.engine == Engine::Mupen64Plus);
+    }
+    CHECK(ids.count("smash64") == 1 && ids.count("mp1") == 1 && ids.count("remix") == 1);
+}
+
+static void test_find_game_for() {
+    const GameInfo* g = find_game_for("gba", "BPEE", "");
+    CHECK(g && g->id == "pokeemerald");
+    g = find_game_for("gba", "bpee", "");  // case-insensitive
+    CHECK(g && g->id == "pokeemerald");
+    g = find_game_for("gba", "BPRE", "");
+    CHECK(g && g->id == "pokefirered");
+    g = find_game_for("n64", "NKTE", "");  // Mario Kart 64 (USA)
+    CHECK(g && g->id == "mk64");
+    g = find_game_for("n64", "NKTJ", "");  // region variant
+    CHECK(g && g->id == "mk64");
+    g = find_game_for("n64", "nalp", "");
+    CHECK(g && g->id == "ssb64rom");
+    g = find_game_for("n64", "CLBE", "");  // Mario Party (USA), the real header ID
+    CHECK(g && g->id == "mp1");
+
+    /* MD5 of mp1, lower-case accepted, no serial needed. */
+    g = find_game_for("n64", "", "8BC2712139FBF0C56C8EA835802C52DC");
+    CHECK(g && g->id == "mp1");
+    g = find_game_for("n64", "", "8bc2712139fbf0c56c8ea835802c52dc");
+    CHECK(g && g->id == "mp1");
+    /* MD5 wins over a conflicting serial. */
+    g = find_game_for("n64", "NKTE", "04840612A35ECE222AFDB2DFBF926409");
+    CHECK(g && g->id == "mp2");
+
+    /* No match cases: unknown serial, wrong system, empty inputs, remix has no serials. */
+    CHECK(find_game_for("n64", "ZZZZ", "") == nullptr);
+    CHECK(find_game_for("gba", "NKTE", "") == nullptr);  // N64 code is not a GBA code
+    CHECK(find_game_for("n64", "", "") == nullptr);
+    CHECK(find_game_for("", "NKTE", "") == nullptr);
+    CHECK(find_game_for("n64", "NSMX", "00000000000000000000000000000000") == nullptr);
+}
+
 int main() {
     test_md5();
     test_catalog();
+    test_catalog_integrity();
+    test_find_game_for();
 
     std::error_code ec;
     fs::path dir = fs::temp_directory_path(ec) / "hubcommon_test_dir";

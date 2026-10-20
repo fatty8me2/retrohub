@@ -141,18 +141,256 @@ bool has_rom_extension(const fs::path& p) {
 
 const std::vector<GameInfo>& catalog() {
     static const std::vector<GameInfo> games = {
+        /* ---- native port (no ROM serials: the N64 ROM entry "ssb64rom" owns NALE) ---- */
         {"smash64", "Super Smash Bros. (Smash Classic)", Engine::Native, 4, {},
-         "games/smashClassic/BattleShip.exe"},
+         "games/smashClassic/BattleShip.exe", "n64", {}, true, 1999,
+         "A native PC port of the N64 brawler, built for quick local and online matches.",
+         "Super Smash Bros. (USA)"},
+
+        /* ---- Mario Party series (N64, Mupen64Plus) ---- */
         {"mp1", "Mario Party", Engine::Mupen64Plus, 4,
-         {"8BC2712139FBF0C56C8EA835802C52DC"}, ""},
+         {"8BC2712139FBF0C56C8EA835802C52DC"}, "", "n64", {"CLBE", "CLBJ", "NLBP"}, true, 1998,
+         "Roll the dice, race around the board, and settle the score in short minigames.",
+         "Mario Party (USA)"},
         {"mp2", "Mario Party 2", Engine::Mupen64Plus, 4,
-         {"04840612A35ECE222AFDB2DFBF926409"}, ""},
+         {"04840612A35ECE222AFDB2DFBF926409"}, "", "n64", {"NMWE", "NMWJ", "NMWP"}, true, 2000,
+         "A second board tour with new boards and a fresh set of minigames for four players.",
+         "Mario Party 2 (USA)"},
         {"mp3", "Mario Party 3", Engine::Mupen64Plus, 4,
-         {"76A8BBC81BC2060EC99C9645867237CC"}, ""},
+         {"76A8BBC81BC2060EC99C9645867237CC"}, "", "n64", {"NMVE", "NMVJ", "NMVP"}, true, 2001,
+         "The third board game in the series, with new boards and a new cast of minigames.",
+         "Mario Party 3 (USA)"},
+
         /* Smash Remix (fan ROM hack, 50+ fighters): no native port, so it runs
-         * through the emulator path. MD5 of the 2.0.0 release .z64. */
+         * through the emulator path. MD5 of the 2.0.0 release .z64. No serials on
+         * purpose: a hack shares the base game's header ID, which would mislabel it. */
         {"remix", "Smash Remix 2.0", Engine::Mupen64Plus, 4,
-         {"43571020FA5DDB138BBD7F64A8C9C0D4"}, ""},
+         {"43571020FA5DDB138BBD7F64A8C9C0D4"}, "", "n64", {}, true, 0,  // TODO verify year
+         "A fan-made overhaul of Super Smash Bros. with dozens of extra fighters.",
+         "Super Smash Bros. (USA)"},
+
+        /* ---- N64 retail library (Mupen64Plus). Serials: header ID at 0x3B, from the
+         *      No-Intro DAT (libretro-database). USA first, then Europe / Japan. ---- */
+        {"ssb64rom", "Super Smash Bros.", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NALE", "NALP", "NALJ"}, true, 1999,
+         "The retail N64 brawler, played through the emulator for local four-player fights.",
+         "Super Smash Bros. (USA)"},
+        {"sm64", "Super Mario 64", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NSME", "NSMP", "NSMJ"}, false, 1996,
+         "Mario explores painting worlds to collect stars in the 3D platforming classic.",
+         "Super Mario 64 (USA)"},
+        {"mk64", "Mario Kart 64", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NKTE", "NKTP", "NKTJ"}, true, 1997,
+         "Kart racing with power-up items and shortcuts, split-screen for up to four racers.",
+         "Mario Kart 64 (USA)"},
+        {"goldeneye", "GoldenEye 007", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NGEE", "NGEP", "NGEJ"}, true, 1997,
+         "Objective-based shooter whose split-screen multiplayer is still a favorite.",
+         "GoldenEye 007 (USA)"},
+        {"oot", "The Legend of Zelda: Ocarina of Time", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"CZLE", "NZLP", "CZLJ"}, false, 1998,
+         "Link moves between childhood and adulthood to stop Ganondorf.",
+         "Legend of Zelda, The - Ocarina of Time (USA)"},
+        {"mm", "The Legend of Zelda: Majora's Mask", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NZSE", "NZSP", "NZSJ"}, false, 2000,
+         "Link has three days to stop the moon from falling, using masks that change his form.",
+         "Legend of Zelda, The - Majora's Mask (USA)"},
+        {"sf64", "Star Fox 64", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NFXE", "NFXP", "NFXJ"}, true, 1997,
+         "Fox McCloud's squadron fights through rail-based space battles, with a four-player versus mode.",
+         "Star Fox 64 (USA)"},
+        {"bk", "Banjo-Kazooie", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NBKE", "NBKP", "NBKJ"}, false, 1998,
+         "Banjo and Kazooie team up to collect jiggies across colorful worlds.",
+         "Banjo-Kazooie (USA)"},
+        {"bt", "Banjo-Tooie", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NB7E", "NB7P", "NB7J"}, false, 2000,
+         "The bear and bird return for a bigger adventure with more worlds and new moves.",
+         "Banjo-Tooie (USA)"},
+        {"dk64", "Donkey Kong 64", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NDOE", "NDOP", "NDOJ"}, true, 1999,
+         "Five playable Kongs explore huge levels collecting golden bananas, plus a four-player arena mode.",
+         "Donkey Kong 64 (USA)"},
+        {"dkr", "Diddy Kong Racing", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NDYE", "NDYP", "NDYJ"}, true, 1997,
+         "Kart-style racing with planes and hovercraft, plus an adventure mode across worlds.",
+         "Diddy Kong Racing (USA) (En,Fr)"},
+        {"papermario", "Paper Mario", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NMQE", "NMQP"}, false, 2001,
+         "Mario flattens into a paper world, gathering partners and fighting turn-based battles.",
+         "Paper Mario (USA)"},
+        {"perfectdark", "Perfect Dark", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NPDE", "NPDP", "NPDJ"}, true, 2000,
+         "A spy shooter with a deep single-player campaign and a four-player multiplayer mode.",
+         "Perfect Dark (USA)"},
+        {"conker", "Conker's Bad Fur Day", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NFUE", "NFUP"}, true, 2001,
+         "A squirrel's crude, profane adventure that also includes a four-player battle mode.",
+         "Conker's Bad Fur Day (USA)"},
+        {"pokestadium", "Pokemon Stadium", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NPOE", "NPOP", "CPSJ"}, true, 2000,
+         "Battle with your Pokemon in 3D arenas, using Game Boy Pokemon from earlier games.",
+         "Pokemon Stadium (USA)"},
+        {"pokestadium2", "Pokemon Stadium 2", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NP3E", "NP3P", "CP2J"}, true, 2001,
+         "Battle with Gold and Silver Pokemon in 3D, plus Pokemon-themed mini-games.",
+         "Pokemon Stadium 2 (USA)"},
+        {"mariotennis", "Mario Tennis", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NM8E", "NM8P", "NM8J"}, true, 2000,
+         "Singles and doubles tennis with Mario characters, including four-player matches.",
+         "Mario Tennis (USA)"},
+        {"mariogolf", "Mario Golf", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NMFE", "NMFP", "NMFJ"}, true, 1999,
+         "Golf with Mario characters and a four-player match mode.",
+         "Mario Golf (USA)"},
+        {"fzerox", "F-Zero X", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"CFZE", "NFZP", "CFZJ"}, true, 1998,
+         "High-speed hover racing with huge fields of racers and a four-player battle mode.",
+         "F-Zero X (USA)"},
+        {"wr64", "Wave Race 64", Engine::Mupen64Plus, 2, {}, "", "n64",
+         {"NWRE", "NWRP", "NWRJ"}, true, 1996,
+         "Jet ski racing across ocean waves, with two players on split screen.",
+         "Wave Race 64 - Kawasaki Jet Ski (USA)"},
+        {"kirby64", "Kirby 64: The Crystal Shards", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NK4E", "NK4P"}, false, 2000,
+         "Kirby gathers crystal shards and blends copy abilities to power through the levels.",
+         "Kirby 64 - The Crystal Shards (USA)"},
+        {"yoshisstory", "Yoshi's Story", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NYSE", "NYSP"}, false, 1997,
+         "A storybook platformer in which Yoshi carries baby Mario through pop-up levels.",
+         "Yoshi's Story (USA) (En,Ja)"},
+        {"toystory2", "Toy Story 2", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NTHE", "NTHP"}, false, 1999,
+         "Buzz Lightyear explores rooms and streets from the film to rescue Woody.",
+         "Toy Story 2 - Buzz Lightyear to the Rescue! (USA)"},
+        /* Master Quest was released on GameCube; N64-format copies carry NZLE. Art: Ocarina's box. */
+        {"ootmq", "Zelda: Ocarina of Time Master Quest", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NZLE"}, false, 2002,
+         "Ocarina of Time with remixed, much harder dungeons.",
+         "Legend of Zelda, The - Ocarina of Time (USA)"},
+        {"wwfnomercy", "WWF No Mercy", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NW4E", "NW4P"}, true, 2000,
+         "Pro wrestling with create-a-wrestler and a four-player bout option.",
+         "WWF No Mercy (USA)"},
+        {"pokesnap", "Pokemon Snap", Engine::Mupen64Plus, 1, {}, "", "n64",
+         {"NPFE", "NPFP", "NPFJ"}, false, 1999,
+         "Photograph Pokemon in their habitats on a guided rail tour.",
+         "Pokemon Snap (USA)"},
+        {"bm64", "Bomberman 64", Engine::Mupen64Plus, 4, {}, "", "n64",
+         {"NBME", "NBMP"}, true, 1997,
+         "Bomberman battles across colorful arenas with up to four players.",
+         "Bomberman 64 (USA)"},
+        {"rush2049", "San Francisco Rush 2049", Engine::Mupen64Plus, 2, {}, "", "n64",
+         {"NRUE", "NRUP"}, true, 2000,
+         "Stunt-filled arcade racing through city courses, with two-player split screen.",
+         "San Francisco Rush 2049 (USA)"},
+
+        /* ---- GBA library (Libretro). Link-cable games are online=false: the cable is
+         *      not networked yet. Serials from the No-Intro GBA DAT. ---- */
+        {"pokeruby", "Pokemon Ruby", Engine::Libretro, 2, {}, "", "gba",
+         {"AXVE", "AXVJ"}, false, 2003,
+         "Explore the Hoenn region, catch Pokemon, and trade or battle over a link cable.",
+         "Pokemon - Ruby Version (USA, Europe)"},
+        {"pokesapphire", "Pokemon Sapphire", Engine::Libretro, 2, {}, "", "gba",
+         {"AXPE", "AXPJ"}, false, 2003,
+         "The Hoenn adventure again, with a different set of version-exclusive Pokemon.",
+         "Pokemon - Sapphire Version (USA, Europe)"},
+        {"pokeemerald", "Pokemon Emerald", Engine::Libretro, 2, {}, "", "gba",
+         {"BPEE", "BPEJ"}, false, 2005,
+         "The expanded Hoenn story, with the Battle Frontier and more postgame content.",
+         "Pokemon - Emerald Version (USA, Europe)"},
+        {"pokefirered", "Pokemon FireRed", Engine::Libretro, 2, {}, "", "gba",
+         {"BPRE", "BPRJ"}, false, 2004,
+         "A remake of the first generation's Kanto adventure, with link-cable trading and battles.",
+         "Pokemon - FireRed Version (USA, Europe)"},
+        {"pokeleafgreen", "Pokemon LeafGreen", Engine::Libretro, 2, {}, "", "gba",
+         {"BPGE", "BPGJ"}, false, 2004,
+         "The Kanto remake in its Leaf Green form, with link-cable trading and battles.",
+         "Pokemon - LeafGreen Version (USA, Europe)"},
+        {"minishcap", "The Legend of Zelda: The Minish Cap", Engine::Libretro, 1, {}, "", "gba",
+         {"BZME", "BZMP", "BZMJ"}, false, 2004,  // TODO verify max_players
+         "Link shrinks to Minish size to restore a world, guided by a talking hat.",
+         "Legend of Zelda, The - The Minish Cap (USA)"},
+        {"lttp", "The Legend of Zelda: A Link to the Past & Four Swords", Engine::Libretro, 4, {}, "", "gba",
+         {"AZLE", "AZLP", "AZLJ"}, false, 2002,
+         "A Link to the Past and its four-player Four Swords mode on one cartridge.",
+         "Legend of Zelda, The - A Link to the Past & Four Swords (USA)"},
+        {"mzm", "Metroid: Zero Mission", Engine::Libretro, 1, {}, "", "gba",
+         {"BMXE", "BMXP", "BMXJ"}, false, 2004,
+         "A remake of the original Metroid with a new opening and expanded areas.",
+         "Metroid - Zero Mission (USA)"},
+        {"mfusion", "Metroid Fusion", Engine::Libretro, 1, {}, "", "gba",
+         {"AMTE", "AMTP", "AMTJ"}, false, 2002,
+         "Samus hunts a shape-shifting threat aboard a research station.",
+         "Metroid Fusion (USA)"},
+        {"mksc", "Mario Kart: Super Circuit", Engine::Libretro, 4, {}, "", "gba",
+         {"AMKE", "AMKP", "AMKJ"}, false, 2001,
+         "Kart racing with items on handheld tracks, with link-cable races for four.",
+         "Mario Kart - Super Circuit (USA)"},
+        {"mlss", "Mario & Luigi: Superstar Saga", Engine::Libretro, 1, {}, "", "gba",
+         {"A88E", "A88P", "A88J"}, false, 2003,
+         "Mario and Luigi battle through a kingdom with RPG combat and timed button presses.",
+         "Mario & Luigi - Superstar Saga (USA)"},
+        {"sma4", "Super Mario Advance 4: Super Mario Bros. 3", Engine::Libretro, 1, {}, "", "gba",
+         {"AX4E", "AX4P", "AX4J"}, false, 2004,
+         "Super Mario Bros. 3 with its original levels and power-ups, ported to the Game Boy Advance.",
+         "Super Mario Advance 4 - Super Mario Bros. 3 (USA)"},
+        {"aw1", "Advance Wars", Engine::Libretro, 4, {}, "", "gba",  // TODO verify max_players
+         {"AWRE", "AWRP"}, false, 2001,
+         "Turn-based tank battles on a grid, with link-cable matches for several commanders.",
+         "Advance Wars (USA)"},
+        {"aw2", "Advance Wars 2: Black Hole Rising", Engine::Libretro, 4, {}, "", "gba",  // TODO verify max_players
+         {"AW2E", "AW2P"}, false, 2003,
+         "Turn-based strategy with new units, new commanders, and link-cable battles.",
+         "Advance Wars 2 - Black Hole Rising (USA)"},
+        {"fireemblem", "Fire Emblem", Engine::Libretro, 1, {}, "", "gba",
+         {"AE7E", "AE7X", "AE7Y", "AFEJ"}, false, 2003,
+         "Tactical grid battles where fallen units stay gone for good.",
+         "Fire Emblem (USA, Australia)"},
+        {"goldensun", "Golden Sun", Engine::Libretro, 1, {}, "", "gba",
+         {"AGSE"}, false, 2001,
+         "Adepts use Psynergy to solve puzzles and fight in turn-based battles.",
+         "Golden Sun (USA, Europe)"},
+        {"goldensunlostage", "Golden Sun: The Lost Age", Engine::Libretro, 1, {}, "", "gba",
+         {"AGFE"}, false, 2003,
+         "A sequel that continues the Golden Sun story with a new party of Adepts.",
+         "Golden Sun - The Lost Age (USA, Europe)"},
+        {"aria", "Castlevania: Aria of Sorrow", Engine::Libretro, 1, {}, "", "gba",
+         {"A2CE", "A2CP"}, false, 2003,
+         "Soma Cruz explores a dark castle and gains powers by absorbing enemy souls.",
+         "Castlevania - Aria of Sorrow (USA)"},
+        {"wario", "WarioWare, Inc.: Mega Microgame$!", Engine::Libretro, 4, {}, "", "gba",
+         {"AZWE", "AZWP"}, false, 2003,
+         "Dozens of five-second microgames, with multiplayer rounds over the link cable.",
+         "WarioWare, Inc. - Mega Microgame$! (USA)"},
+        {"kirbymirror", "Kirby & The Amazing Mirror", Engine::Libretro, 4, {}, "", "gba",  // TODO verify max_players
+         {"B8KE", "B8KP"}, false, 2004,
+         "Kirby explores a sprawling map of mirror worlds, with multiplayer over the link cable.",
+         "Kirby & The Amazing Mirror (USA)"},
+        {"kirbynightmare", "Kirby: Nightmare in Dream Land", Engine::Libretro, 1, {}, "", "gba",  // TODO verify max_players
+         {"A7KE", "A7KP"}, false, 2002,
+         "Kirby copies enemy powers while exploring a classic platforming world.",
+         "Kirby - Nightmare in Dream Land (USA)"},
+        {"ffta", "Final Fantasy Tactics Advance", Engine::Libretro, 4, {}, "", "gba",  // TODO verify max_players
+         {"AFXE", "AFXP", "AFXJ"}, false, 2003,
+         "Job-based tactical battles on isometric maps, with a link-cable mode for several players.",
+         "Final Fantasy Tactics Advance (USA)"},
+        {"bn3blue", "Mega Man Battle Network 3 (Blue)", Engine::Libretro, 2, {}, "", "gba",
+         {"A3XE", "A3XP"}, false, 2003,
+         "Lan battles viruses on the network grid with battle chips, including link-cable battles.",
+         "Mega Man Battle Network 3 - Blue Version (USA)"},
+        {"pmdred", "Pokemon Mystery Dungeon: Red Rescue Team", Engine::Libretro, 1, {}, "", "gba",
+         {"B24E", "B24P"}, false, 2006,
+         "Become a Pokemon in a randomly generated dungeon alongside a partner Pokemon.",
+         "Pokemon Mystery Dungeon - Red Rescue Team (USA, Australia)"},
+        {"sa2", "Sonic Advance 2", Engine::Libretro, 2, {}, "", "gba",  // TODO verify max_players
+         {"A2NE", "A2NP", "A2NJ"}, false, 2002,
+         "Sonic and friends race through 2D stages with a multiplayer mode over the link cable.",
+         "Sonic Advance 2 (USA) (En,Ja,Fr,De,Es,It)"},
+        {"thps2", "Tony Hawk's Pro Skater 2", Engine::Libretro, 2, {}, "", "gba",  // TODO verify max_players
+         {"ATHE"}, false, 2002,
+         "Skate arena-style courses and chase high scores in a timed career mode.",
+         "Tony Hawk's Pro Skater 2 (USA, Europe)"},
     };
     return games;
 }
@@ -160,6 +398,29 @@ const std::vector<GameInfo>& catalog() {
 const GameInfo* find_game(const std::string& id) {
     for (const auto& g : catalog()) {
         if (g.id == id) return &g;
+    }
+    return nullptr;
+}
+
+const GameInfo* find_game_for(const std::string& system_short, const std::string& serial, const std::string& md5) {
+    /* MD5 first: an exact dump match is the strongest identity. */
+    if (!md5.empty()) {
+        const std::string want = ascii_lower(md5);
+        for (const auto& g : catalog()) {
+            for (const auto& m : g.rom_md5s) {
+                if (ascii_lower(m) == want) return &g;
+            }
+        }
+    }
+    /* Then the header game ID / code, scoped to the same system. */
+    if (!serial.empty() && !system_short.empty()) {
+        const std::string want = ascii_lower(serial);
+        for (const auto& g : catalog()) {
+            if (g.system != system_short) continue;
+            for (const auto& s : g.serials) {
+                if (ascii_lower(s) == want) return &g;
+            }
+        }
     }
     return nullptr;
 }
