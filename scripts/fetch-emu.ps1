@@ -1,5 +1,5 @@
 # Downloads the official mupen64plus 2.6.0 Windows bundle and the GLideN64
-# plugin, and stages the files the Classic Hub runtime needs into deps\emu\.
+# plugin, and stages the files the RetroHub runtime needs into deps\emu\.
 # Windows PowerShell 5.1 compatible. Existing zips are reused, not re-downloaded.
 
 $ErrorActionPreference = 'Stop'

@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
-project(ClassicHub LANGUAGES C CXX)
+project(RetroHub LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(FATAL_ERROR "Classic Hub is x64-only")
+    message(FATAL_ERROR "RetroHub is x64-only")
 endif()
 
 file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" HUB_VERSION LIMIT_COUNT 1)

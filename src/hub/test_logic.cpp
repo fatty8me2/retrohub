@@ -17,7 +17,7 @@ int main() {
     s.smash_exe = "D:\\g\\BattleShip.exe";
     s.gb_core = "gambatte";
     s.fullscreen = true;
-    s.sync_folder = "C:\\Users\\a\\OneDrive\\ClassicHub";
+    s.sync_folder = "C:\\Users\\a\\OneDrive\\RetroHub";
     s.sync_auto = false;
     s.sync_states = true;
     Settings t;

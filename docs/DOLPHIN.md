@@ -1,7 +1,7 @@
 # Dolphin integration reference
 
 Integration notes for launching GameCube games through Dolphin as an external,
-portable process from Classic Hub.
+portable process from RetroHub.
 
 Status legend:
 - **[src]** verified in Dolphin source (dolphin-emu/dolphin, `master`, read 2026-10-19).

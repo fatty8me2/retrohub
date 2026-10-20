@@ -1,5 +1,5 @@
 #pragma once
-/* hubnet: room client for Classic Hub (see docs/ARCHITECTURE.md, "/hub endpoint").
+/* hubnet: room client for RetroHub (see docs/ARCHITECTURE.md, "/hub endpoint").
  *
  * LobbyClient  - the hub's room: members, broadcast JSON messages. WebSocket only.
  * Session      - a game session among up to 4 PCs, star topology (slot 0 = host):

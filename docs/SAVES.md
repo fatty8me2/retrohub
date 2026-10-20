@@ -8,7 +8,7 @@ All games keep their save data in one portable folder, the **save vault**
 **Move saves to another PC / survive a Windows reinstall**
 
 1. Pick a *sync folder* that both PCs can see:
-   - **OneDrive / Dropbox / Google Drive**: choose a folder inside it, e.g. `OneDrive\ClassicHub`.
+   - **OneDrive / Dropbox / Google Drive**: choose a folder inside it, e.g. `OneDrive\RetroHub`.
      Use the same folder on every PC.
    - **USB stick / NAS**: choose a folder on the drive. Plug it in, press *Sync*, take it to the other PC.
 2. Press *Sync*. New saves go to the folder, saves from other PCs come back. Do this after playing,

@@ -1,4 +1,4 @@
-# Classic Hub — architecture
+# RetroHub — architecture
 
 A Windows desktop hub for playing N64 games with friends: a single library, room codes, and one-click launch.
 
@@ -13,7 +13,7 @@ Users supply their own ROMs. Nothing copyrighted is shipped.
 Hub/
   CMakeLists.txt          top level; FetchContent: SDL2, Dear ImGui, mupen64plus-core (API headers only)
   src/net/                static lib `hubnet`: UDP, WebSocket, STUN, room client (lobby + game session)
-  src/hub/                `ClassicHub.exe`: ImGui launcher (library, ROMs, rooms, launch)
+  src/hub/                `RetroHub.exe`: ImGui launcher (library, ROMs, rooms, launch)
   src/n64run/             `n64run.exe`: mupen64plus frontend + built-in netplay input plugin
   src/common/             games catalog, ROM identification (MD5), paths, logging
   server/                 Cloudflare Worker additions (new /hub endpoint, HubRoom Durable Object)
@@ -33,8 +33,8 @@ The build is C++17, x64, with MSVC flags `/W3 /permissive- /utf-8`.
 ## Runtime layout (packaged)
 
 ```
-ClassicHub/
-  ClassicHub.exe
+RetroHub/
+  RetroHub.exe
   n64run.exe
   emu/        mupen64plus.dll, mupen64plus-rsp-hle.dll, mupen64plus-audio-sdl.dll,
               mupen64plus-video-GLideN64.dll, SDL2.dll, data files
@@ -85,7 +85,7 @@ First byte is the type: `H` hello `[H,from]`, `A` helloack `[A,from]`, `D` data 
 
 ### Room roles
 
-- **Lobby room** (the code users share): used by `ClassicHub.exe`.
+- **Lobby room** (the code users share): used by `RetroHub.exe`.
 - **Game room** (`<CODE>` with a launch suffix, e.g. `ABC234-1`, which the server accepts as `room=` followed by `-` and digits): used by `n64run.exe` for the match itself. It joins with `slot=K` to request its lobby slot.
 
 ## Hub lobby messages (`msg.body`, defined by the hub)
