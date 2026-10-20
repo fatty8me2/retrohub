@@ -68,6 +68,7 @@ Copy-Staged $m64Src @(
     'mupen64plus-rsp-hle.dll',
     'mupen64plus-audio-sdl.dll',
     'SDL2.dll',
+    'SDL2_net.dll',
     'freetype.dll',
     'libpng16.dll',
     'zlib.dll',

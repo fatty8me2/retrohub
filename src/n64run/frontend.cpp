@@ -203,7 +203,8 @@ static bool start_plugin(PluginDll& p, const std::string& emu_dir, const char* f
     p.h = load_dll(emu_dir, file);
     if (!p.h) return false;
     if (!sym(p.h, "PluginStartup", &p.startup)) return false;
-    m64p_error e = p.startup(p.h, const_cast<char*>(ctx), m64p_debug_cb);
+    // First arg is the CORE library handle: plugins resolve the core's Config* API from it.
+    m64p_error e = p.startup(g_core.dll, const_cast<char*>(ctx), m64p_debug_cb);
     if (e != M64ERR_SUCCESS) { logf_("n64run", "%s PluginStartup failed (%d)", file, (int)e); return false; }
     return true;
 }
@@ -307,6 +308,16 @@ int main(int argc, char** argv) {
         cfg_int(vid_cfg, "ScreenHeight", args.height);
         cfg_bool(vid_cfg, "VerticalSync", 1);
     }
+    {
+        /* Test runs (and anyone who sets it) stay silent: N64RUN_MUTE=1 / SSB64_MUTE=1. */
+        const char* m1 = std::getenv("N64RUN_MUTE");
+        const char* m2 = std::getenv("SSB64_MUTE");
+        bool mute = (m1 && m1[0] && m1[0] != '0') || (m2 && m2[0] && m2[0] != '0');
+        m64p_handle aud_cfg = nullptr;
+        if (mute && g_core.OpenSection("Audio-SDL", &aud_cfg) == M64ERR_SUCCESS) {
+            cfg_int(aud_cfg, "VOLUME_DEFAULT", 0);
+        }
+    }
     g_core.SaveFile();
 
     // ---- ROM
@@ -322,7 +333,7 @@ int main(int argc, char** argv) {
         g_core.Shutdown();
         return 3;
     }
-    if (PluginStartup(nullptr, const_cast<char*>("Input"), m64p_debug_cb) != M64ERR_SUCCESS) return 3;
+    if (PluginStartup(g_core.dll, const_cast<char*>("Input"), m64p_debug_cb) != M64ERR_SUCCESS) return 3;
     HMODULE self = GetModuleHandle(nullptr);
     if (g_core.Attach(M64PLUGIN_GFX, gfx.h) != M64ERR_SUCCESS || g_core.Attach(M64PLUGIN_AUDIO, aud.h) != M64ERR_SUCCESS ||
         g_core.Attach(M64PLUGIN_INPUT, self) != M64ERR_SUCCESS || g_core.Attach(M64PLUGIN_RSP, rsp.h) != M64ERR_SUCCESS) {

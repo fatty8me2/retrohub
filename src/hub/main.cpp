@@ -258,6 +258,9 @@ static std::string smash_exe_path() {
         std::string p = hub::exe_dir() + g->native_exe;
         if (file_exists(p)) return p;
     }
+    /* The released package ships the hub inside the Smash Classic folder. */
+    std::string here = hub::exe_dir() + "BattleShip.exe";
+    if (file_exists(here)) return here;
     return "";
 }
 static std::string n64run_path() { return hub::exe_dir() + "n64run.exe"; }
@@ -1246,6 +1249,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     A.settings_path = hub::data_dir() + "hub.json";
     A.st.server = hubnet::default_server();
     hubui::load_settings(A.settings_path, &A.st);
+    if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0..4
+        int n = std::atoi(pg);
+        if (n >= 0 && n <= 4) A.page = static_cast<Page>(n);
+    }
     if (A.st.name.empty()) A.st.name = "Player";
     if (A.st.rom_folder.empty()) {
         // Default ROM folder: %USERPROFILE%\Desktop\Everything\N64Games if it exists.

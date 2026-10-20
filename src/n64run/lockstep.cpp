@@ -120,8 +120,14 @@ uint32_t Lockstep::get_keys(int port) {
     // Desync hash, taken at a deterministic point (before inputs of sample n are delivered).
     if (net_ && opt_.hash_interval > 0 && n > 0 && n % (uint32_t)opt_.hash_interval == 0) {
         uint64_t h;
-        if (hooks_.hash_rdram && hooks_.hash_rdram(&h)) core_.add_local_hash(n, h);
-        else if (!hash_warned_) { hash_warned_ = true; if (hooks_.log) hooks_.log("RDRAM hashing unavailable; desync detection disabled"); }
+        if (hooks_.hash_rdram && hooks_.hash_rdram(&h)) {
+            core_.add_local_hash(n, h);
+            if (hooks_.log) {
+                char buf[96];
+                std::snprintf(buf, sizeof buf, "sync check sample %u rdram %016llx", n, (unsigned long long)h);
+                hooks_.log(buf);
+            }
+        } else if (!hash_warned_) { hash_warned_ = true; if (hooks_.log) hooks_.log("RDRAM hashing unavailable; desync detection disabled"); }
     }
 
     uint32_t btn[kPorts] = {0, 0, 0, 0};
