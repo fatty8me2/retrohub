@@ -1,0 +1,170 @@
+// Console unit test for hubcommon (games.cpp). Exit code 0 = all passed.
+#include "games.h"
+
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <vector>
+
+using namespace hub;
+namespace fs = std::filesystem;
+
+static int g_fail = 0;
+
+#define CHECK(cond)                                                              \
+    do {                                                                         \
+        if (!(cond)) {                                                           \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);          \
+            ++g_fail;                                                            \
+        }                                                                        \
+    } while (0)
+
+static std::vector<uint8_t> make_z64() {
+    std::vector<uint8_t> v(1024 * 1024);
+    v[0] = 0x80; v[1] = 0x37; v[2] = 0x12; v[3] = 0x40;
+    uint32_t x = 12345;
+    for (size_t i = 4; i < v.size(); ++i) {
+        x = x * 1103515245u + 12345u;
+        v[i] = uint8_t(x >> 16);
+    }
+    for (size_t i = 0x20; i < 0x34; ++i) v[i] = ' ';
+    std::memcpy(&v[0x20], "TEST ROM", 8);
+    return v;
+}
+
+static std::vector<uint8_t> to_v64(const std::vector<uint8_t>& z) {
+    std::vector<uint8_t> v = z;
+    for (size_t i = 0; i + 1 < v.size(); i += 2) std::swap(v[i], v[i + 1]);
+    return v;
+}
+
+static std::vector<uint8_t> to_n64(const std::vector<uint8_t>& z) {
+    std::vector<uint8_t> v = z;
+    for (size_t i = 0; i + 3 < v.size(); i += 4) {
+        std::swap(v[i], v[i + 3]);
+        std::swap(v[i + 1], v[i + 2]);
+    }
+    return v;
+}
+
+static bool write_file(const fs::path& p, const std::vector<uint8_t>& d) {
+    std::ofstream f(p, std::ios::binary);
+    if (!f) return false;
+    f.write(reinterpret_cast<const char*>(d.data()), (std::streamsize)d.size());
+    return (bool)f;
+}
+
+static void test_md5() {
+    CHECK(md5_hex(reinterpret_cast<const uint8_t*>("abc"), 3) == "900150983CD24FB0D6963F7D28E17F72");
+    CHECK(md5_hex(nullptr, 0) == "D41D8CD98F00B204E9800998ECF8427E");
+}
+
+static void test_catalog() {
+    const auto& c = catalog();
+    CHECK(c.size() == 5);  // smash64, mp1, mp2, mp3, remix
+
+    const GameInfo* smash = find_game("smash64");
+    CHECK(smash != nullptr);
+    if (smash) {
+        CHECK(smash->engine == Engine::Native);
+        CHECK(smash->max_players == 4);
+        CHECK(smash->rom_md5s.empty());
+        CHECK(smash->native_exe == "games/smashClassic/BattleShip.exe");
+    }
+
+    const GameInfo* mp1 = find_game("mp1");
+    CHECK(mp1 != nullptr);
+    if (mp1) {
+        CHECK(mp1->engine == Engine::Mupen64Plus);
+        CHECK(mp1->max_players == 4);
+        CHECK(mp1->rom_md5s.size() == 1 && mp1->rom_md5s[0] == "8BC2712139FBF0C56C8EA835802C52DC");
+    }
+
+    const GameInfo* mp2 = find_game("mp2");
+    CHECK(mp2 != nullptr && mp2->rom_md5s.size() == 1 &&
+          mp2->rom_md5s[0] == "04840612A35ECE222AFDB2DFBF926409");
+
+    const GameInfo* mp3 = find_game("mp3");
+    CHECK(mp3 != nullptr && mp3->rom_md5s.size() == 1 &&
+          mp3->rom_md5s[0] == "76A8BBC81BC2060EC99C9645867237CC");
+
+    CHECK(find_game("nope") == nullptr);
+    CHECK(find_game("") == nullptr);
+}
+
+static void test_rom_files(const fs::path& dir) {
+    const std::vector<uint8_t> z = make_z64();
+    const std::vector<uint8_t> v = to_v64(z);
+    const std::vector<uint8_t> n = to_n64(z);
+    CHECK(v != z && n != z);  // the synthetic image really is in non-z64 order
+
+    const fs::path pz = dir / "a.z64";
+    const fs::path pv = dir / "b.V64";  // mixed-case extension on purpose
+    const fs::path pn = dir / "sub" / "c.n64";
+    fs::create_directories(dir / "sub");
+    CHECK(write_file(pz, z));
+    CHECK(write_file(pv, v));
+    CHECK(write_file(pn, n));
+
+    for (const fs::path& p : {pz, pv, pn}) {
+        std::vector<uint8_t> out;
+        CHECK(load_rom(p.string(), &out));
+        CHECK(out == z);
+    }
+
+    // Too small (512 KB) and unknown magic must be rejected.
+    std::vector<uint8_t> small(512 * 1024, 0);
+    small[0] = 0x80; small[1] = 0x37; small[2] = 0x12; small[3] = 0x40;
+    const fs::path ps = dir / "small.z64";
+    CHECK(write_file(ps, small));
+    std::vector<uint8_t> out;
+    CHECK(!load_rom(ps.string(), &out));
+
+    std::vector<uint8_t> bogus(1024 * 1024, 0x11);
+    const fs::path pb = dir / "bogus.z64";
+    CHECK(write_file(pb, bogus));
+    CHECK(!load_rom(pb.string(), &out));
+
+    // identify: hash is over the normalized image; header name trimmed.
+    RomFile r;
+    CHECK(identify_rom(pv.string(), &r));
+    CHECK(r.md5 == md5_hex(z.data(), z.size()));
+    CHECK(r.header_name == "TEST ROM");
+    CHECK(r.game_id.empty());
+
+    // scan: finds the three valid images (any case, recursive), skips the bad ones and .txt.
+    CHECK(write_file(dir / "notes.txt", z));
+    std::vector<RomFile> found = scan_roms(dir.string());
+    CHECK(found.size() == 3);
+}
+
+static void test_paths() {
+    std::string exe = exe_dir();
+    CHECK(!exe.empty() && exe.back() == '\\');
+    std::string data = data_dir();
+    CHECK(data == exe + "userdata\\");
+    CHECK(fs::is_directory(fs::u8path(data)));
+}
+
+int main() {
+    test_md5();
+    test_catalog();
+
+    std::error_code ec;
+    fs::path dir = fs::temp_directory_path(ec) / "hubcommon_test_dir";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    test_rom_files(dir);
+    fs::remove_all(dir, ec);
+
+    test_paths();
+
+    if (g_fail == 0) {
+        std::printf("hubcommon_test: all checks passed\n");
+        return 0;
+    }
+    std::printf("hubcommon_test: %d check(s) failed\n", g_fail);
+    return 1;
+}
