@@ -319,6 +319,7 @@ class Frontend {
     bool load_state(const std::string& name);
     uint64_t state_hash();
     bool setup_net();
+    int net_rc = 3;
     void finish();
     void do_pacing();
     int selftest();
@@ -688,14 +689,16 @@ bool Frontend::setup_net() {
         Sleep(5);
     }
     rlog("net: session ready");
-    if (a.delay < 0) {
+    {
         n64run::DelayNegotiation dn;
+        dn.fixed_delay = a.delay;
         dn.my_slot = a.slot;
         dn.slot_mask = slot_mask;
         dn.frame_ms = 1000.0 / (fps > 1 ? fps : 60.0);
         int d = 2;
         if (!n64run::negotiate_delay(session, dn, [this] { pump_events(false); }, [](const std::string& m) { rlog("%s", m.c_str()); }, &d)) {
             rlog("net: input delay negotiation failed (%s)", session.status().c_str());
+            net_rc = 4;
             return false;
         }
         a.delay = d;
@@ -724,7 +727,7 @@ bool Frontend::setup_net() {
     h.request_stop = [this]() { quit = true; };
     h.log = [](const std::string& s) { rlog("%s", s.c_str()); };
     lockstep = std::make_unique<n64run::Lockstep>(o, &session, h);
-    if (!lockstep->start_barrier(30000)) { rlog("net: start barrier failed"); return false; }
+    if (!lockstep->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = 4; return false; }
     rlog("net: all %d players ready, starting", a.players);
     return true;
 }
@@ -888,7 +891,7 @@ int Frontend::run(const Args& args) {
     if (a.selftest) {
         rc = selftest();
     } else {
-        if (!setup_net()) { rc = 3; goto done; }
+        if (!setup_net()) { rc = net_rc; goto done; }
         {
             uint64_t t_start = SDL_GetTicks64();
             for (;;) {

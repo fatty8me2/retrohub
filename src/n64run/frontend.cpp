@@ -353,8 +353,9 @@ int main(int argc, char** argv) {
         }
         logf_("n64run", "netplay: all %d players reachable", args.players);
 
-        if (args.delay < 0) {
+        {
             DelayNegotiation dn;
+            dn.fixed_delay = args.delay;
             dn.my_slot = my_slot;
             dn.slot_mask = args.slot_mask;
             dn.frame_ms = 1000.0 / 60.0;

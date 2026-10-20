@@ -186,6 +186,11 @@ bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::
     };
     uint32_t t0 = hubnet::now_ms();
     if (dn.my_slot == 0) {
+      int d = 2;
+      if (dn.fixed_delay >= 0) {
+        d = dn.fixed_delay > 255 ? 255 : dn.fixed_delay;
+        say("input delay: host fixed D=%d", d);
+      } else {
         s.set_ping_interval(100);
         s.clear_ping_stats();
         while (hubnet::now_ms() - t0 < dn.measure_ms) {
@@ -210,8 +215,9 @@ bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::
             say("input delay auto: slot %d rtt avg=%d min=%d max=%d n=%d%s", p, st.avg_ms, st.min_ms, st.max_ms, st.n, s.is_relayed(p) ? " (relay)" : "");
         }
         double rtt = effective_rtt(rtts);
-        int d = auto_delay_from_rtt(rtt, dn.frame_ms, relayed);
+        d = auto_delay_from_rtt(rtt, dn.frame_ms, relayed);
         say("input delay auto: rtt=%.0fms -> %d%s", rtt, d, relayed ? " (relay)" : "");
+      }
         // Broadcast D until every client acked.
         uint32_t need = dn.slot_mask & ~1u, got = 0, last = 0, done_at = 0;
         for (;;) {
@@ -263,6 +269,7 @@ bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::
         Sleep(5);
     }
     say("input delay auto: host chose D=%d", d);
+    if (dn.fixed_delay >= 0 && dn.fixed_delay != d) say("input delay: ignoring local --delay %d, using host's D=%d", dn.fixed_delay, d);
     *out_delay = d;
     return true;
 }
