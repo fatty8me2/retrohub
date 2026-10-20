@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -197,7 +198,9 @@ std::string settings_to_json(const Settings& s) {
       << "  \"sync_folder\": \"" << json_escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"sync_states\": " << (s.sync_states ? "true" : "false") << ",\n"
-      << "  \"vault_dir\": \"" << json_escape(s.vault_dir) << "\"\n"
+      << "  \"vault_dir\": \"" << json_escape(s.vault_dir) << "\",\n"
+      << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
+      << "  \"sidebar_mode\": " << s.sidebar_mode << "\n"
       << "}\n";
     return o.str();
 }
@@ -236,6 +239,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->sync_states = json_bool(j, "sync_states", out->sync_states);
     out->vault_dir = j.str("vault_dir", out->vault_dir);
+    out->download_art = json_bool(j, "download_art", out->download_art);
+    out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));
     return true;
 }
 
@@ -436,6 +441,125 @@ std::vector<int> pick_recent(const std::vector<unsigned long long>& last_played,
     std::stable_sort(v.begin(), v.end(), [&](int a, int b) { return last_played[a] > last_played[b]; });
     if ((int)v.size() > n) v.resize(n);
     return v;
+}
+
+/* ---------------- home composition / layout ---------------- */
+
+std::string system_shelf_title(const std::string& s) {
+    if (s == "n64") return "Nintendo 64";
+    if (s == "gc") return "GameCube";
+    if (s == "gba") return "Game Boy Advance";
+    if (s == "gbc") return "Game Boy Color";
+    if (s == "gb") return "Game Boy";
+    return s;
+}
+
+std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_recent) {
+    auto by_title = [&](std::vector<int>& v) {
+        std::stable_sort(v.begin(), v.end(), [&](int a, int b) {
+            if (g[a].pinned != g[b].pinned) return g[a].pinned;
+            std::string x = lower(g[a].title), y = lower(g[b].title);
+            if (x != y) return x < y;
+            return g[a].key < g[b].key;
+        });
+    };
+    std::vector<Shelf> out;
+    std::vector<unsigned long long> lp;
+    for (auto& e : g) lp.push_back(e.last_played);
+    Shelf recent{"recent", "Continue Playing", pick_recent(lp, max_recent)};
+    if (!recent.items.empty()) out.push_back(recent);
+    Shelf favs{"favs", "Favorites", {}}, online{"online", "Online with Friends", {}};
+    for (size_t i = 0; i < g.size(); ++i) {
+        if (g[i].favorite) favs.items.push_back((int)i);
+        if (g[i].online) online.items.push_back((int)i);
+    }
+    by_title(favs.items);
+    by_title(online.items);
+    if (!favs.items.empty()) out.push_back(favs);
+    if (!online.items.empty()) out.push_back(online);
+    static const char* order[] = {"n64", "gc", "gba", "gbc", "gb"};
+    for (const char* sys : order) {
+        Shelf sh{std::string("sys:") + sys, system_shelf_title(sys), {}};
+        for (size_t i = 0; i < g.size(); ++i)
+            if (g[i].system == sys) sh.items.push_back((int)i);
+        by_title(sh.items);
+        if (!sh.items.empty()) out.push_back(sh);
+    }
+    return out;
+}
+
+std::vector<int> pick_unowned(const std::vector<bool>& owned, const std::vector<bool>& online, int max_n) {
+    std::vector<int> v;
+    for (int pass = 0; pass < 2; ++pass)
+        for (size_t i = 0; i < owned.size(); ++i) {
+            bool on = i < online.size() && online[i];
+            if (owned[i] || on != (pass == 0)) continue;
+            if ((int)v.size() >= max_n) return v;
+            v.push_back((int)i);
+        }
+    return v;
+}
+
+int pick_hero(const std::vector<ShelfGame>& g, const std::string& preferred_key) {
+    if (g.empty()) return -1;
+    for (size_t i = 0; i < g.size(); ++i)
+        if (!preferred_key.empty() && g[i].key == preferred_key) return (int)i;
+    int best = -1;
+    for (size_t i = 0; i < g.size(); ++i)
+        if (g[i].last_played > 0 && (best < 0 || g[i].last_played > g[best].last_played)) best = (int)i;
+    if (best >= 0) return best;
+    for (size_t i = 0; i < g.size(); ++i)
+        if (g[i].favorite) return (int)i;
+    return 0;
+}
+
+GridLayout grid_layout(float avail, float min_w, float max_w, float gap) {
+    GridLayout r;
+    r.cols = std::max(1, (int)((avail + gap) / (min_w + gap)));
+    r.tile_w = std::min(max_w, (avail - gap * (r.cols - 1)) / r.cols);
+    if (r.tile_w < 1.f) r.tile_w = 1.f;
+    return r;
+}
+
+float shelf_tile_w(float avail, float min_w, float max_w, float gap) {
+    int n = std::max(2, (int)((avail + gap) / (max_w + gap)));
+    float w = (avail - gap * n) / (n + 0.4f);
+    return std::max(min_w, std::min(max_w, w));
+}
+
+float approach(float v, float target, float dt, float rate) {
+    if (dt <= 0) return v;
+    return v + (target - v) * (1.f - std::exp(-rate * dt));
+}
+
+ArtFit fit_art(float aw, float ah, float bw, float bh, float lo, float hi) {
+    ArtFit f;
+    if (aw <= 0 || ah <= 0 || bw <= 0 || bh <= 0) { f.w = bw; f.h = bh; return f; }
+    float art_a = aw / ah, box_a = bw / bh, r = art_a / box_a;
+    if (r >= lo && r <= hi) {   /* crop to fill */
+        f.cover = true;
+        f.w = bw; f.h = bh;
+        if (art_a > box_a) {   // art wider: crop left/right
+            float keep = box_a / art_a;
+            f.u0 = (1 - keep) * 0.5f; f.u1 = f.u0 + keep;
+        } else {               // art taller: crop top/bottom
+            float keep = art_a / box_a;
+            f.v0 = (1 - keep) * 0.5f; f.v1 = f.v0 + keep;
+        }
+        return f;
+    }
+    f.cover = false;
+    if (art_a > box_a) { f.w = bw; f.h = bw / art_a; }
+    else { f.h = bh; f.w = bh * art_a; }
+    f.x = (bw - f.w) * 0.5f;
+    f.y = (bh - f.h) * 0.5f;
+    return f;
+}
+
+bool sidebar_collapsed(int mode, float window_w, float narrow_below) {
+    if (mode == 1) return false;
+    if (mode == 2) return true;
+    return window_w < narrow_below;
 }
 
 std::string format_play_time(unsigned long long s) {

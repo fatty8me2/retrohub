@@ -37,6 +37,8 @@ struct Settings {
     bool sync_auto = true;             // sync after playing / on hub start
     bool sync_states = false;          // include save states in sync + export
     std::string vault_dir;             // "" = default (userdata/saves)
+    bool download_art = true;          // fetch cover art from the libretro-thumbnails project
+    int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
 };
 std::string settings_to_json(const Settings& s);
 bool settings_from_json(const std::string& text, Settings* out);   // missing keys keep defaults in *out
@@ -89,6 +91,47 @@ std::vector<int> pick_recent(const std::vector<unsigned long long>& last_played,
 std::string format_play_time(unsigned long long seconds);
 /* Windows user name -> usable player name (printable, max 16 chars, "Player" if empty). */
 std::string sanitize_player_name(const std::string& s);
+
+/* ---- home screen composition (pure; the UI only draws the result) ---- */
+struct ShelfGame {
+    std::string key, title, system;     // system short code
+    bool favorite = false;
+    unsigned long long last_played = 0;
+    bool online = false;                // catalog says it is fun online with friends
+    bool pinned = false;
+};
+struct Shelf {
+    std::string id;      // "recent" "favs" "online" or "sys:<short>"
+    std::string title;   // "Continue Playing" ...
+    std::vector<int> items;   // indices into the ShelfGame vector
+};
+/* Shelves in display order: recent (<= max_recent), favorites, online, then one per system that
+ * has games (n64, gc, gba, gbc, gb). Empty shelves are omitted. Within a shelf: recent = newest
+ * first; the others pinned first then title (case-insensitive). */
+std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& games, int max_recent = 12);
+std::string system_shelf_title(const std::string& system_short);   // "Nintendo 64", ...
+/* Catalog entries to advertise ("Top picks you don't have yet"): indices where !owned[i], games
+ * flagged online first, otherwise catalog order, at most max_n. */
+std::vector<int> pick_unowned(const std::vector<bool>& owned, const std::vector<bool>& online, int max_n);
+/* Which game the hero header shows by default: preferred key if present, else most recently
+ * played, else first favorite, else first. -1 when empty. */
+int pick_hero(const std::vector<ShelfGame>& games, const std::string& preferred_key);
+
+/* ---- layout / animation math ---- */
+struct GridLayout { int cols = 1; float tile_w = 0; };
+/* Columns of tiles in `avail` px: as many as fit at >= min_w, tiles grow up to max_w. */
+GridLayout grid_layout(float avail, float min_w, float max_w, float gap);
+/* Tile width for a horizontal shelf: whole tiles plus a ~40% peek of the next one. */
+float shelf_tile_w(float avail, float min_w, float max_w, float gap);
+/* Frame-rate independent exponential approach: v moves toward target at `rate` (1/s). */
+float approach(float v, float target, float dt, float rate);
+/* How to place box art of size art_w x art_h inside a box_w x box_h tile.
+ * cover: art whose aspect is within [cover_lo, cover_hi] of the tile's is cropped to fill it;
+ * otherwise it is letterboxed (centered, fully visible). x,y,w,h are relative to the box origin. */
+struct ArtFit { bool cover = true; float x = 0, y = 0, w = 0, h = 0, u0 = 0, v0 = 0, u1 = 1, v1 = 1; };
+ArtFit fit_art(float art_w, float art_h, float box_w, float box_h, float cover_lo = 0.74f, float cover_hi = 1.32f);
+/* Sidebar collapsed? mode 0 = auto (narrower than `narrow_below` px), 1 = never, 2 = always. */
+bool sidebar_collapsed(int mode, float window_w, float narrow_below);
 
 /* ---- INI helpers (Dolphin config) ---- */
 /* Returns text with [section] key = value set (section/key matched case-insensitively; added if missing). */
