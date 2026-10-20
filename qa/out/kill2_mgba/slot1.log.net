@@ -1,9 +1,0 @@
-13:09:05.087 [net] Session: start room=CDHGTU-1 slot=1 expected=2 force_relay=0 udp port 63767
-13:09:05.087 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=CDHGTU-1&role=join&name=n64run&slot=1
-13:09:05.112 [net] STUN: public endpoint 76.150.167.30:63767
-13:09:05.456 [net] Session 1: welcome room CDHGTU-1
-13:09:05.456 [net] Session 1: slot 0 joined
-13:09:05.457 [net] Session 1: endpoint sent public=76.150.167.30:63767 local=10.0.0.45:63767
-13:09:05.512 [net] Session 1: peer 0 candidates pub=76.150.167.30:63766 loc=10.0.0.45:63766
-13:09:05.518 [net] Session 1: direct path to slot 0 via 10.0.0.45:63766
-13:09:05.518 [net] Session 1: ready (roster 03)

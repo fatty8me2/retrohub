@@ -1,8 +1,0 @@
-{
- "version": 1,
- "root": "C:\\Users\\fatty\\Desktop\\SmashClassicPort\\RetroHub\\qa\\_work\\SYNC",
- "files": {
-  "gba/gba_1337-d5dc29a9/battery/sram.srm": {"s": 32768, "m": 134369934119871704, "h": "b01d1e59e9f92d13738408fc37cd34e1925d2bc1f1829d7adc41e9c645b51c30"},
-  "gba/gba_1337-d5dc29a9/states/auto.state": {"s": 430144, "m": 134369934098006150, "h": "77b0866563bd719a7171c2b9aeededd20b38124313e4781361d82a5242477ccd"}
- }
-}

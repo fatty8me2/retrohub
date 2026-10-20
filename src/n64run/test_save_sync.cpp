@@ -97,19 +97,21 @@ static void test_hostile_hdr() {
 // ------------------------------------------------------------------ simulated network
 struct Dgram { uint32_t due; int to; int from; std::vector<uint8_t> bytes; };
 
-static void run_sim(const char* name, int clients, double loss, double dup, uint32_t max_jitter_ms, double corrupt, uint32_t seed) {
+static void run_sim(const char* name, uint32_t mask, double loss, double dup, uint32_t max_jitter_ms, double corrupt, uint32_t seed) {
     std::mt19937 rng(seed);
     std::uniform_real_distribution<double> U(0, 1);
     auto files = make_files(seed);
     fs::path root = temp_root() / name;
-    const int slots = clients + 1;
+    std::vector<int> cslots;   // client slots, possibly sparse
+    for (int s = 1; s < 8; s++) if ((mask >> s) & 1u) cslots.push_back(s);
+    const int clients = (int)cslots.size();
     uint32_t now = 1000;
-    SaveSender snd(files, slots, now, 60000);
+    SaveSender snd(files, mask, now, 60000);
     std::vector<std::unique_ptr<SaveReceiver>> rcv;
     std::vector<fs::path> dirs;
-    for (int c = 1; c <= clients; c++) {
-        dirs.push_back(root / ("slot" + std::to_string(c)));
-        rcv.emplace_back(new SaveReceiver(c, slots, dirs.back().string()));
+    for (int c = 0; c < clients; c++) {
+        dirs.push_back(root / ("slot" + std::to_string(cslots[c])));
+        rcv.emplace_back(new SaveReceiver(cslots[c], 8, dirs.back().string()));
     }
     std::vector<Dgram> inflight;
     long sent = 0, dropped = 0, corrupted = 0;
@@ -123,10 +125,10 @@ static void run_sim(const char* name, int clients, double loss, double dup, uint
             inflight.push_back({now + (uint32_t)(rng() % (max_jitter_ms + 1)), to, from, copy});
     };
     SendFn host_send = [&](const std::vector<uint8_t>& m) {
-        for (int c = 1; c <= clients; c++) push(c, 0, m, m[0] == kPktSaveData);
+        for (int c = 0; c < clients; c++) push(cslots[c], 0, m, m[0] == kPktSaveData);
     };
     std::vector<SendFn> client_send;
-    for (int c = 1; c <= clients; c++) client_send.push_back([&, c](const std::vector<uint8_t>& m) { push(0, c, m, false); });
+    for (int c = 0; c < clients; c++) client_send.push_back([&, c](const std::vector<uint8_t>& m) { push(0, cslots[c], m, false); });
 
     uint32_t t_end = now + 600000;
     bool all_fin = false;
@@ -138,11 +140,11 @@ static void run_sim(const char* name, int clients, double loss, double dup, uint
                 inflight[i] = std::move(inflight.back());
                 inflight.pop_back();
                 if (d.to == 0) snd.on_packet(d.from, d.bytes.data(), d.bytes.size());
-                else rcv[d.to - 1]->on_packet(0, d.bytes.data(), d.bytes.size());
+                else for (int c = 0; c < clients; c++) if (cslots[c] == d.to) rcv[c]->on_packet(0, d.bytes.data(), d.bytes.size());
             } else i++;
         }
         snd.tick(now, host_send);
-        for (int c = 1; c <= clients; c++) rcv[c - 1]->tick(now, client_send[c - 1]);
+        for (int c = 0; c < clients; c++) rcv[c]->tick(now, client_send[c]);
         all_fin = snd.finished();
         for (auto& r : rcv) all_fin = all_fin && r->finished();
         if (all_fin) break;
@@ -160,6 +162,36 @@ static void run_sim(const char* name, int clients, double loss, double dup, uint
                 "%ld datagrams (%ld dropped, %ld corrupted), %u ms simulated, %zu bytes of save data sent\n",
                 name, clients, loss * 100, dup * 100, max_jitter_ms, corrupt * 100,
                 all_fin ? "OK" : "NOT FINISHED", sent, dropped, corrupted, now - 1000, snd.bytes_sent());
+}
+
+// Host with no save files: explicit empty HDR, receiver finishes and knows the host has none.
+static void test_no_files() {
+    std::vector<SaveFile> none;
+    fs::path dir = temp_root() / "nofiles";
+    SaveSender snd(none, 0x5, 1000, 60000);
+    SaveReceiver rcv(2, 8, dir.string());
+    uint32_t now = 1000;
+    SendFn hs = [&](const std::vector<uint8_t>& m) { rcv.on_packet(0, m.data(), m.size()); };
+    SendFn cs = [&](const std::vector<uint8_t>& m) { snd.on_packet(2, m.data(), m.size()); };
+    for (int i = 0; i < 2000 && !(snd.finished() && rcv.finished()); i++, now++) { snd.tick(now, hs); rcv.tick(now, cs); }
+    CHECK(snd.finished() && rcv.finished(), "no-files sync finishes");
+    CHECK(rcv.host_has_no_files(), "receiver learns the host has no files");
+}
+
+// A client that cannot write the verified file must fail, not ACK it as verified.
+static void test_write_failure() {
+    fs::path blocker = temp_root() / "blocker";
+    std::ofstream(blocker) << "i am a file, not a directory";
+    auto files = make_files(11);
+    files.resize(1);
+    SaveSender snd(files, 0x3, 1000, 60000);
+    SaveReceiver rcv(1, 8, (blocker / "sub").string());
+    uint32_t now = 1000;
+    SendFn hs = [&](const std::vector<uint8_t>& m) { rcv.on_packet(0, m.data(), m.size()); };
+    SendFn cs = [&](const std::vector<uint8_t>& m) { snd.on_packet(1, m.data(), m.size()); };
+    for (int i = 0; i < 2000 && !rcv.failed(); i++, now++) { snd.tick(now, hs); rcv.tick(now, cs); }
+    CHECK(rcv.failed(), "write failure fails the receiver");
+    CHECK(!snd.all_verified(), "write failure is never ACKed as verified");
 }
 
 // ------------------------------------------------------------------ live server
@@ -182,8 +214,8 @@ static bool live_test(const std::string& server) {
     }
     std::string e_host, e_client;
     bool ok_host = false, ok_client = false;
-    std::thread th([&] { ok_host = run_save_sync(host, 0, 2, &files, "", 20000, &e_host); });
-    std::thread tc([&] { ok_client = run_save_sync(client, 1, 2, nullptr, cdir.string(), 20000, &e_client); });
+    std::thread th([&] { ok_host = run_save_sync(host, 0, 0x3u, &files, "", 20000, &e_host); });
+    std::thread tc([&] { ok_client = run_save_sync(client, 1, 0x3u, nullptr, cdir.string(), 20000, &e_client); });
     th.join();
     tc.join();
     CHECK(ok_host, "live: host sync failed: %s", e_host.c_str());
@@ -200,11 +232,17 @@ static bool live_test(const std::string& server) {
 int main(int argc, char** argv) {
     test_names_and_limits();
     test_hostile_hdr();
-    run_sim("1 client, clean", 1, 0.0, 0.0, 0, 0.0, 1);
-    run_sim("1 client, 30% loss, jitter", 1, 0.30, 0.10, 20, 0.0, 2);
-    run_sim("3 clients, 15% loss, reorder", 3, 0.15, 0.05, 15, 0.0, 3);
-    run_sim("3 clients, 30% loss, corrupt 5%", 3, 0.30, 0.10, 20, 0.05, 4);
-    run_sim("3 clients, 40% loss (stress)", 3, 0.40, 0.10, 30, 0.02, 5);
+    run_sim("1 client, clean", 0x3, 0.0, 0.0, 0, 0.0, 1);
+    run_sim("1 client, 30% loss, jitter", 0x3, 0.30, 0.10, 20, 0.0, 2);
+    run_sim("3 clients, 15% loss, reorder", 0xF, 0.15, 0.05, 15, 0.0, 3);
+    run_sim("3 clients, 30% loss, corrupt 5%", 0xF, 0.30, 0.10, 20, 0.05, 4);
+    run_sim("3 clients, 40% loss (stress)", 0xF, 0.40, 0.10, 30, 0.02, 5);
+    run_sim("sparse {0,2}, clean", 0x5, 0.0, 0.0, 0, 0.0, 6);
+    run_sim("sparse {0,2}, 30% loss", 0x5, 0.30, 0.10, 20, 0.02, 7);
+    run_sim("sparse {0,1,3}, 20% loss", 0xB, 0.20, 0.05, 15, 0.02, 8);
+    run_sim("sparse {0,3}, 30% loss", 0x9, 0.30, 0.10, 20, 0.0, 9);
+    test_no_files();
+    test_write_failure();
     if (argc > 1) {
         if (!live_test(argv[1])) g_fail++;
     }

@@ -1,9 +1,0 @@
-13:09:47.511 [net] Session: start room=PSY6RC-1 slot=1 expected=2 force_relay=0 udp port 56549
-13:09:47.511 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=PSY6RC-1&role=join&name=n64run&slot=1
-13:09:47.536 [net] STUN: public endpoint 76.150.167.30:56549
-13:09:47.940 [net] Session 1: welcome room PSY6RC-1
-13:09:47.940 [net] Session 1: slot 0 joined
-13:09:47.940 [net] Session 1: endpoint sent public=76.150.167.30:56549 local=10.0.0.45:56549
-13:09:48.000 [net] Session 1: peer 0 candidates pub=76.150.167.30:56548 loc=10.0.0.45:56548
-13:09:48.012 [net] Session 1: direct path to slot 0 via 10.0.0.45:56548
-13:09:48.024 [net] Session 1: ready (roster 03)

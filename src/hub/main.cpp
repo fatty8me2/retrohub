@@ -1047,7 +1047,8 @@ static void play_entry(const hub::GameEntry& e) {
 }
 
 static std::vector<hubui::MemberPads> member_pads();
-static void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save) {
+static void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
+                          const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr) {
     A.st.last_game = room_id(e);
     mark_dirty();
     RunInfo ri = run_info_for(e, true);
@@ -1060,7 +1061,20 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
         return;
     }
     /* port i -> i-th member in slot order (slots may have gaps); --slot stays the real lobby slot */
-    hubui::PortPlan plan = hubui::build_ports(member_pads());
+    /* The host builds the plan once and ships it; guests use it verbatim (fallback: derive locally for older hosts). */
+    hubui::PortPlan plan;
+    if (host_plan) plan = *host_plan;
+    else if (launch_msg && hubui::parse_launch_plan(*launch_msg, &plan.ports, &plan.players)) {}
+    else plan = hubui::build_ports(member_pads());
+    {
+        bool mine = false;   // this PC's slot must own a port, else the launch cannot work
+        std::string tok;
+        for (size_t i = 0; i <= plan.ports.size(); ++i) {
+            if (i == plan.ports.size() || plan.ports[i] == ',') { if (tok == std::to_string(A.lobby.my_slot())) mine = true; tok.clear(); }
+            else tok += plan.ports[i];
+        }
+        if (!mine) { set_notice("The host's port plan doesn't include this PC."); return; }
+    }
     std::string net = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
                       std::to_string(A.lobby.my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
                       plan.ports + hubui::delay_arg(delay);
@@ -1235,7 +1249,7 @@ static void lobby_tick() {
             if (A.proc) continue;
             const hubui::Json* ss = j.get("share_save");
             launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
-                          ss && ss->type == hubui::Json::Bool && ss->b);
+                          ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j);
         }
     }
 }
@@ -2609,8 +2623,9 @@ static void page_online_room() {
             bool share = A.share_host_save && rg->system == hub::System::N64;
             unsigned seed = std::random_device{}();
             ++A.launch_counter;
-            A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share));
-            launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share);
+            hubui::PortPlan plan = hubui::build_ports(member_pads());   // built once; guests use it verbatim
+            A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan));
+            launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan);
         }
         ImGui::SameLine();
         ImGui::TextDisabled("%s", ok ? "Everyone is ready." : why.c_str());

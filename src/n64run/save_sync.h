@@ -9,6 +9,7 @@
  *   DATA host -> all   {u8 type, u8 file, u16 chunk, u32 check, bytes}  chunk = kSaveChunk bytes (last may be short);
  *                      check = low 32 bits of save_hash(bytes): a corrupt chunk is dropped and re-sent
  *   ACK  client -> host {u8 type, u8 slot, u8 file, u8 verified, u16 nchunks, bitmap of received chunks}
+ *   HDR with nfiles=0 (namelen 0, size 0, hash 0) means "the host has no save files" (valid: never played).
  *   GO   host -> all   {u8 type}   sent for kGoGraceMs once every client has verified every file
  *
  * The host re-sends HDR every 50 ms and the chunks any client still lacks (round-robin, bounded
@@ -55,7 +56,8 @@ using SendFn = std::function<void(const std::vector<uint8_t>& datagram)>;
 /* Host (slot 0). Feed received datagrams with on_packet(); call tick() regularly. */
 class SaveSender {
   public:
-    SaveSender(const std::vector<SaveFile>& files, int num_slots, uint32_t now_ms, uint32_t timeout_ms);
+    /* slot_mask: bit s set = slot s is a participating PC (may be sparse, e.g. {0,2}); bit 0 is the host. */
+    SaveSender(const std::vector<SaveFile>& files, uint32_t slot_mask, uint32_t now_ms, uint32_t timeout_ms);
     void on_packet(int from, const uint8_t* d, size_t n);
     void tick(uint32_t now_ms, const SendFn& send);
     bool all_verified() const;     // every client verified every file
@@ -68,8 +70,8 @@ class SaveSender {
     struct Peer { std::vector<bool> done; std::vector<std::vector<bool>> have; std::vector<uint16_t> nch; };
     std::vector<SaveFile> files_;
     std::vector<int> nchunks_;
-    std::vector<Peer> peers_;   // index = slot (slot 0 unused)
-    int num_slots_;
+    std::vector<Peer> peers_;   // index = slot (slot 0 unused; only slots in clients_ are used)
+    uint32_t clients_;          // slot mask of the client PCs (host bit removed)
     uint32_t start_ms_, timeout_ms_;
     uint32_t last_hdr_ = 0, last_data_ = 0, last_go_ = 0, go_t0_ = 0, now_ = 0;
     bool started_ = false;
@@ -88,6 +90,7 @@ class SaveReceiver {
     bool failed() const { return !error_.empty(); }
     const std::string& error() const { return error_; }
     std::vector<std::string> written() const;
+    bool host_has_no_files() const { return nfiles_ == 0; }   // host explicitly announced "no save files"
 
   private:
     struct File {
@@ -112,6 +115,6 @@ namespace hubnet { class Session; }
 namespace n64run {
 /* Runs the protocol over a started, ready Session (save_sync_net.cpp). host_files is non-null
  * only on slot 0; clients write the verified files into client_dir. False + *err on failure. */
-bool run_save_sync(hubnet::Session& s, int my_slot, int num_slots, const std::vector<SaveFile>* host_files,
+bool run_save_sync(hubnet::Session& s, int my_slot, uint32_t slot_mask, const std::vector<SaveFile>* host_files,
                    const std::string& client_dir, uint32_t timeout_ms, std::string* err);
 }  // namespace n64run

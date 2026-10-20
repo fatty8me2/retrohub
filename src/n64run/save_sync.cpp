@@ -101,11 +101,12 @@ bool write_save_file(const std::string& dir, const std::string& name, const std:
 }
 
 // ---------------------------------------------------------------- sender (host)
-SaveSender::SaveSender(const std::vector<SaveFile>& files, int num_slots, uint32_t now_ms, uint32_t timeout_ms)
-    : files_(files), num_slots_(num_slots < 1 ? 1 : num_slots), start_ms_(now_ms), timeout_ms_(timeout_ms), now_(now_ms) {
+SaveSender::SaveSender(const std::vector<SaveFile>& files, uint32_t slot_mask, uint32_t now_ms, uint32_t timeout_ms)
+    : files_(files), clients_(slot_mask & 0xFFu & ~1u), start_ms_(now_ms), timeout_ms_(timeout_ms), now_(now_ms) {
     for (auto& f : files_) nchunks_.push_back((int)chunks_for(f.data.size()));
-    peers_.resize(num_slots_);
-    for (int s = 1; s < num_slots_; s++) {
+    peers_.resize(8);
+    for (int s = 1; s < 8; s++) {
+        if (!((clients_ >> s) & 1u)) continue;
         peers_[s].done.assign(files_.size(), false);
         peers_[s].have.assign(files_.size(), std::vector<bool>());
         peers_[s].nch.assign(files_.size(), 0);
@@ -114,7 +115,7 @@ SaveSender::SaveSender(const std::vector<SaveFile>& files, int num_slots, uint32
 
 void SaveSender::on_packet(int from, const uint8_t* d, size_t n) {
     if (n < 1 || d[0] != kPktSaveAck) return;
-    if (from < 1 || from >= num_slots_) return;
+    if (from < 1 || from >= 8 || !((clients_ >> from) & 1u)) return;
     const uint8_t* p = d + 1;
     const uint8_t* end = d + n;
     uint8_t slot, file, verified;
@@ -135,9 +136,10 @@ void SaveSender::on_packet(int from, const uint8_t* d, size_t n) {
 }
 
 bool SaveSender::all_verified() const {
-    for (int s = 1; s < num_slots_; s++)
-        for (size_t f = 0; f < files_.size(); f++)
-            if (!peers_[s].done[f]) return false;
+    for (int s = 1; s < 8; s++)
+        if ((clients_ >> s) & 1u)
+            for (size_t f = 0; f < files_.size(); f++)
+                if (!peers_[s].done[f]) return false;
     return true;
 }
 
@@ -154,18 +156,24 @@ void SaveSender::tick(uint32_t now_ms, const SendFn& send) {
         if (!go_t0_) go_t0_ = now_ms ? now_ms : 1;
         if (!last_go_ || now_ms - last_go_ >= 20) {
             last_go_ = now_ms ? now_ms : 1;
+            if (files_.empty()) {   // explicit "host has no save files"
+                std::vector<uint8_t> h{kPktSaveHdr, 0, 0, 0};
+                put<uint32_t>(h, 0u); put<uint64_t>(h, 0ull);
+                send(h);
+            }
             std::vector<uint8_t> go{kPktSaveGo};
             send(go);
         }
         return;
     }
     if (now_ms - start_ms_ > timeout_ms_) {
-        for (int s = 1; s < num_slots_; s++)
-            for (size_t f = 0; f < files_.size(); f++)
-                if (!peers_[s].done[f]) {
-                    error_ = "peer " + std::to_string(s) + " did not verify " + files_[f].name;
-                    return;
-                }
+        for (int s = 1; s < 8; s++)
+            if ((clients_ >> s) & 1u)
+                for (size_t f = 0; f < files_.size(); f++)
+                    if (!peers_[s].done[f]) {
+                        error_ = "peer " + std::to_string(s) + " did not verify " + files_[f].name;
+                        return;
+                    }
     }
     if (last_hdr_ && now_ms - last_hdr_ < kHdrIntervalMs) {
         // HDR is paced; DATA below still runs every tick
@@ -187,7 +195,8 @@ void SaveSender::tick(uint32_t now_ms, const SendFn& send) {
         int nc = nchunks_[f];
         for (int c = 0; c < nc; c++) {
             bool need = false;
-            for (int s = 1; s < num_slots_ && !need; s++) {
+            for (int s = 1; s < 8 && !need; s++) {
+                if (!((clients_ >> s) & 1u)) continue;
                 const Peer& pe = peers_[s];
                 if (pe.done[f] || pe.nch[f] == 0) continue;
                 if (!pe.have[f][(size_t)c]) need = true;
@@ -233,6 +242,7 @@ void SaveReceiver::on_packet(int from, const uint8_t* d, size_t n) {
             std::string name((const char*)p, nlen);
             p += nlen;
             if (!get(p, end, &size) || !get(p, end, &hash)) return;
+            if (count == 0 && idx == 0 && nlen == 0) { if (nfiles_ < 0) { nfiles_ = 0; files_.clear(); } return; }
             if (count > kSaveMaxFiles || idx >= count) return;
             if (nfiles_ < 0) { nfiles_ = count; files_.assign(count, File()); }
             if (count != nfiles_) return;
@@ -263,8 +273,8 @@ void SaveReceiver::on_packet(int from, const uint8_t* d, size_t n) {
             f.nhave++;
             if (f.nhave == f.nch) {
                 if (save_hash(f.buf.data(), f.buf.size()) == f.hash) {
-                    f.verified = true;
-                    write_save_file(dir_, f.name, f.buf);
+                    if (write_save_file(dir_, f.name, f.buf)) f.verified = true;
+                    else error_ = "cannot write save file " + f.name + " into " + dir_;
                 } else {
                     // Corrupt: clear and let the host resend. The ACK bitmap goes back to zero.
                     f.have.assign(f.nch, false);

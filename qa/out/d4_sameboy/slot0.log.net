@@ -1,9 +1,0 @@
-13:08:34.416 [net] Session: start room=VCB73M-1 slot=0 expected=2 force_relay=0 udp port 50655
-13:08:34.417 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=VCB73M-1&role=host&name=n64run
-13:08:34.436 [net] STUN: public endpoint 76.150.167.30:50655
-13:08:34.780 [net] Session 0: welcome room VCB73M-1
-13:08:34.780 [net] Session 0: slot 1 joined
-13:08:34.781 [net] Session 0: endpoint sent public=76.150.167.30:50655 local=10.0.0.45:50655
-13:08:34.834 [net] Session 0: peer 1 candidates pub=76.150.167.30:50656 loc=10.0.0.45:50656
-13:08:34.840 [net] Session 0: direct path to slot 1 via 10.0.0.45:50656
-13:08:34.840 [net] Session 0: ready (roster 03)

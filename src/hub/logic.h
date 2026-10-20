@@ -76,8 +76,9 @@ std::vector<std::string> hello_messages(const std::string& version, const std::m
 bool parse_hello(const Json& body, PeerInfo* out);
 /* `core` (optional): the host's GB/GBC core so all peers run the same one. */
 /* `delay` 0 = auto. `share_host_save`: N64 online, every PC uses the host's save. */
+struct PortPlan;
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed,
-                        const std::string& core = "", bool share_host_save = false);
+                        const std::string& core = "", bool share_host_save = false, const PortPlan* plan = nullptr);
 /* " --delay auto" / " --delay N" (leading space). */
 std::string delay_arg(int delay);
 
@@ -191,6 +192,11 @@ struct PortPlan {
 /* Members sorted by slot; each gets `locals` (clamped 1-2) consecutive ports; total capped at 4 (every
  * member keeps one port first, extra pads are granted in slot order while ports remain). */
 PortPlan build_ports(std::vector<MemberPads> members);
+/* The HOST builds the plan once and ships it in the launch message ("ports":[4 owner slots or -1],
+ * "players":n) so every PC passes identical --ports/--players. Guests call this: true + the --ports string and
+ * player count when the message carries a well-formed plan (4 entries in -1..3, players == number of distinct
+ * owners, owners packed first); false when absent or malformed (older host: derive locally). */
+bool parse_launch_plan(const Json& launch_msg, std::string* ports, int* players);
 
 /* Save sync must never run while a game process is alive: requests made then are queued. */
 enum class SyncAction { Start, Queue };

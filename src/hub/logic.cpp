@@ -374,12 +374,45 @@ bool parse_hello(const Json& body, PeerInfo* out) {
     return true;
 }
 
-std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save) {
+std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save,
+                        const PortPlan* plan) {
     std::string o = "{\"kind\":\"launch\",\"game\":\"" + json_escape(game) + "\",\"launch\":" + std::to_string(launch) +
                     ",\"delay\":" + std::to_string(delay) + ",\"seed\":" + std::to_string(seed);
     if (!core.empty()) o += ",\"core\":\"" + json_escape(core) + "\"";
     o += std::string(",\"share_save\":") + (share_host_save ? "true" : "false");
+    if (plan) o += ",\"ports\":[" + plan->ports + "],\"players\":" + std::to_string(plan->players);
     return o + "}";
+}
+
+bool parse_launch_plan(const Json& m, std::string* ports, int* players) {
+    const Json* pa = m.get("ports");
+    const Json* pl = m.get("players");
+    if (!pa || pa->type != Json::Arr || pa->vals.size() != 4 || !pl || pl->type != Json::Num) return false;
+    int owner[4];
+    for (int i = 0; i < 4; ++i) {
+        const Json& v = pa->vals[(size_t)i];
+        if (v.type != Json::Num || v.n != (double)(int)v.n || v.n < -1 || v.n > 3) return false;
+        owner[i] = (int)v.n;
+    }
+    bool seen[4] = {false, false, false, false};
+    int distinct = 0;
+    bool gap = false;
+    for (int i = 0; i < 4; ++i) {
+        if (owner[i] < 0) { gap = true; continue; }
+        if (gap) return false;   // owners are packed first
+        if (!seen[owner[i]]) { seen[owner[i]] = true; ++distinct; }
+    }
+    if (distinct < 1 || pl->n != (double)distinct) return false;
+    // each owner's ports must be consecutive (build_ports never interleaves)
+    for (int i = 1; i < 4; ++i)
+        if (owner[i] >= 0 && owner[i] != owner[i - 1])
+            for (int k = 0; k < i - 1; ++k) if (owner[k] == owner[i]) return false;
+    if (ports) {
+        ports->clear();
+        for (int i = 0; i < 4; ++i) *ports += (i ? "," : "") + std::to_string(owner[i]);
+    }
+    if (players) *players = distinct;
+    return true;
 }
 
 std::string delay_arg(int delay) { return delay <= 0 ? " --delay auto" : " --delay " + std::to_string(std::min(delay, 8)); }

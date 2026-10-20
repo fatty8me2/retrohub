@@ -239,6 +239,7 @@ bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::
     // client: Session answers pings in update(); wait for the host's D, ack repeats for a moment
     int d = -1;
     uint32_t got_at = 0;
+    bool host_moved_on = false;
     for (;;) {
         s.update();
         if (s.failed()) return false;
@@ -249,10 +250,14 @@ bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::
                 if (!got_at) got_at = hubnet::now_ms() ? hubnet::now_ms() : 1;
                 uint8_t ack[3] = {kPktDelayAck, (uint8_t)dn.my_slot, (uint8_t)d};
                 s.send(0, ack, 3);
+            } else if (from == 0 && d >= 0) {
+                host_moved_on = true;   // any post-negotiation packet (save-sync / lockstep data): host has our ack
             }
         }
         uint32_t now = hubnet::now_ms();
-        if (d >= 0 && now - got_at > 200) break;
+        // Keep acking every D rebroadcast until the host moves on (it stops once it has our ack).
+        // The 5 s cap is only a safety net.
+        if (d >= 0 && (host_moved_on || now - got_at > 5000)) break;
         if (now - t0 > dn.timeout_ms) { say("input delay auto: host never sent D"); return false; }
         if (idle) idle();
         Sleep(5);
