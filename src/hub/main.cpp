@@ -51,6 +51,7 @@
 #include <vector>
 
 #include "art.h"
+#include "updater.h"
 #include "games.h"
 #include "library.h"
 #include "logic.h"
@@ -363,6 +364,8 @@ struct App {
     std::string settings_path;
     bool dirty = false;
 
+    bool update_prompt_dismissed = false;   // "Later" / "Skip" pressed this run
+    bool update_check_requested = false;    // the player pressed "Check for updates"
     Page page = Page::Library;
 
     // library scan
@@ -2903,9 +2906,83 @@ static void page_about() {
                           "mupen64plus runner and Game Boy games in the built-in libretro runner, both with lockstep input netplay. "
                           "GameCube games use Dolphin. You supply your own game files; none are included.");
     ImGui::Dummy(ImVec2(0, 6 * S));
-    text_wrapped_disabled("Updates: new versions are delivered as new releases; replace the folder to update. "
-                          "Your settings live in userdata/hub.json.");
+    ImGui::Dummy(ImVec2(0, 10 * S));
+    ImGui::PushFont(ui::F.h2);
+    ImGui::TextUnformatted("Updates");
+    ImGui::PopFont();
+    if (hubupdate::downloading()) {
+        float p = hubupdate::download_progress();
+        ImGui::ProgressBar(p < 0 ? 0.f : p, ImVec2(sp(40.f), 0), p < 0 ? "Downloading..." : nullptr);
+        text_wrapped_disabled(hubupdate::status().c_str());
+    } else {
+        ImGui::BeginDisabled(hubupdate::checking());
+        if (ImGui::Button(hubupdate::checking() ? "Checking..." : "Check for updates")) {
+            A.update_prompt_dismissed = false;
+            A.update_check_requested = true;
+            hubupdate::check_async(true);
+        }
+        ImGui::EndDisabled();
+        if (hubupdate::update_available()) {
+            ImGui::SameLine();
+            std::string lbl = "Update to " + hubupdate::latest_version();
+            if (ImGui::Button(lbl.c_str())) hubupdate::start_update();
+        }
+        std::string st = hubupdate::status();
+        if (!st.empty()) text_wrapped_disabled(st.c_str());
+        else if (A.update_check_requested && !hubupdate::checking() && !hubupdate::update_available() && !hubupdate::check_failed())
+            text_wrapped_disabled("You're on the latest version.");
+    }
+    text_wrapped_disabled("RetroHub checks for updates each time it starts. Updating downloads the new version, "
+                          "installs it over this folder (your saves and settings are kept) and reopens RetroHub.");
     end_panel();
+}
+
+/* Startup "new version available" prompt. Shown once per run when the launch
+ * check finds a newer release that the player hasn't chosen to skip (a manual
+ * "Check for updates" shows it even for a skipped version). */
+static void draw_update_popup() {
+    bool want = hubupdate::update_available() && !A.update_prompt_dismissed &&
+                (A.update_check_requested || !hubupdate::latest_skipped());
+    if (want && !ImGui::IsPopupOpen("Update available")) ImGui::OpenPopup("Update available");
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(sp(52.f), 0), ImVec2(sp(80.f), vp->Size.y * 0.8f));
+    if (!ImGui::BeginPopupModal("Update available", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
+        return;
+    ImGui::PushFont(ui::F.h2);
+    ImGui::Text("RetroHub %s is available", hubupdate::latest_version().c_str());
+    ImGui::PopFont();
+    ImGui::TextDisabled("You have %s. Do you want to update now?", hubupdate::current_version().c_str());
+    std::string notes = hubupdate::release_notes();
+    if (!notes.empty()) {
+        ImGui::Dummy(ImVec2(0, 4 * S));
+        ImGui::BeginChild("notes", ImVec2(sp(70.f), sp(18.f)), ImGuiChildFlags_Border);
+        ImGui::TextWrapped("%s", notes.c_str());
+        ImGui::EndChild();
+    }
+    ImGui::Dummy(ImVec2(0, 4 * S));
+    if (hubupdate::downloading()) {
+        float p = hubupdate::download_progress();
+        ImGui::ProgressBar(p < 0 ? 0.f : p, ImVec2(-1, 0), p < 0 ? "Downloading..." : nullptr);
+        ImGui::TextDisabled("%s", hubupdate::status().c_str());
+        ImGui::TextDisabled("RetroHub will close, install the update and reopen by itself.");
+    } else {
+        if (!hubupdate::status().empty() && hubupdate::check_failed())
+            ImGui::TextColored(ImVec4(1.f, 0.5f, 0.45f, 1.f), "%s", hubupdate::status().c_str());
+        if (ImGui::Button("Update now", ImVec2(sp(18.f), 0))) hubupdate::start_update();
+        ImGui::SameLine();
+        if (ImGui::Button("Later", ImVec2(sp(12.f), 0))) {
+            A.update_prompt_dismissed = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Skip this version", ImVec2(sp(18.f), 0))) {
+            hubupdate::skip_latest();
+            A.update_prompt_dismissed = true;
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    ImGui::EndPopup();
 }
 
 /* ---------- toasts ---------- */
@@ -3319,6 +3396,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     refresh_pads();
     start_scan();
     auto_sync();   // pull in saves from other PCs at start
+    const bool shot_update = shot_path && std::getenv("HUB_SHOT_UPDATE");   // screenshot the update prompt
+    if ((!shot_path || shot_update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
 
     double shot_secs = 4.0;
     std::vector<ImGuiKey> shot_keys;
@@ -3358,6 +3437,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_job();
         poll_dolphin();
         lobby_tick();
+        if (hubupdate::installer_started()) running = false;   // the installer replaces our files and relaunches us
         if (A.dirty && !ImGui::IsAnyItemActive()) {
             hubui::save_settings(A.settings_path, A.st);
             A.dirty = false;
@@ -3380,6 +3460,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         ImGui::NewFrame();
         ImGui::PushFont(ui::F.body);
         draw_frame();
+        if (!shot_path || shot_update) draw_update_popup();
         ImGui::PopFont();
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 16, 17, 22, 255);
