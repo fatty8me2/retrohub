@@ -33,7 +33,7 @@ struct Args {
     std::string net, room;
     std::string sync_hash_mode = "auto", pace_override;
     bool list_opts = false, headless = false, fullscreen = false, resume = false, fuzz = false, selftest = false;
-    int frames = -1, scale = 3, slot = 0, players = 1, delay = 2;
+    int frames = -1, scale = 3, slot = 0, players = 1, delay = -1;   // delay -1 = auto
     int ports[4] = {0, -1, -1, -1};
     bool ports_given = false;
     std::vector<std::string> opts;
@@ -51,7 +51,7 @@ static void usage() {
           "  [--system gba|gb|gbc] [--system-dir DIR] [--scale 3] [--fullscreen] [--resume]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
           "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--pace vsync|audio|timer] [--list-options]\n"
-          "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay D]\n",
+          "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
           stderr);
 }
 
@@ -80,7 +80,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--scale") { if (!val(&v)) return false; o->scale = std::max(1, atoi(v.c_str())); }
         else if (k == "--slot") { if (!val(&v)) return false; o->slot = atoi(v.c_str()); }
         else if (k == "--players") { if (!val(&v)) return false; o->players = atoi(v.c_str()); }
-        else if (k == "--delay") { if (!val(&v)) return false; o->delay = atoi(v.c_str()); }
+        else if (k == "--delay") { if (!val(&v)) return false; o->delay = v == "auto" ? -1 : std::max(0, std::min(30, atoi(v.c_str()))); }
         else if (k == "--ports") {
             if (!val(&v)) return false;
             int n = 0;
@@ -294,6 +294,7 @@ class Frontend {
 
     hubnet::Session session;
     std::unique_ptr<n64run::Lockstep> lockstep;
+    uint32_t slot_mask = 1;
     double fps = 60.0;
     int64_t qpc_freq = 1, next_deadline = 0;
 
@@ -350,6 +351,22 @@ bool Frontend::setup_paths() {
     core.system_tag = a.system;
     rom_stem = fs::u8path(a.rom).stem().u8string();
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
+    // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
+    // copied under another file name (e.g. "Other Name (USA).gba" on PC B) would look for its own .srm and
+    // miss the synced save. If there is no <stem>.srm and exactly one .srm here, that is this game's save.
+    if (!fs::exists(fs::u8path(srm_path))) {
+        std::error_code sec;
+        std::string only;
+        int found = 0;
+        for (auto& de : fs::directory_iterator(fs::u8path(a.save_dir), sec)) {
+            if (sec || !de.is_regular_file(sec)) continue;
+            if (lower(de.path().extension().u8string()) == ".srm") { only = de.path().u8string(); found++; }
+        }
+        if (found == 1) {
+            rlog("save: no %s.srm for this file name; using the save here: %s", rom_stem.c_str(), only.c_str());
+            srm_path = only;
+        }
+    }
 
     // Option overrides: ini next to the parent of the save dir, then in the save dir, then --ini, then --opt.
     fs::path sd = fs::u8path(a.save_dir);
@@ -641,8 +658,14 @@ bool Frontend::setup_net() {
     cfg.room = a.room;
     cfg.slot = a.slot;
     cfg.expected = std::max(1, a.players);
+    {
+        std::string err;
+        slot_mask = n64run::derive_slot_mask(owner, a.slot, std::max(1, a.players), &err);
+        if (!slot_mask) { rlog("net: bad --slot/--players/--ports: %s", err.c_str()); return false; }
+    }
     if (!session.start(cfg)) { rlog("net: cannot start session"); return false; }
-    rlog("net: joining %s as slot %d of %d (delay %d)", a.room.c_str(), a.slot, a.players, a.delay);
+    rlog("net: joining %s as slot %d of %d PCs (slot mask %x, delay %s)", a.room.c_str(), a.slot, a.players, slot_mask,
+         a.delay < 0 ? "auto" : std::to_string(a.delay).c_str());
     uint32_t t0 = hubnet::now_ms(), last = 0;
     while (!session.ready()) {
         session.update();
@@ -655,11 +678,26 @@ bool Frontend::setup_net() {
         Sleep(5);
     }
     rlog("net: session ready");
+    if (a.delay < 0) {
+        n64run::DelayNegotiation dn;
+        dn.my_slot = a.slot;
+        dn.slot_mask = slot_mask;
+        dn.frame_ms = 1000.0 / (fps > 1 ? fps : 60.0);
+        int d = 2;
+        if (!n64run::negotiate_delay(session, dn, [this] { pump_events(false); }, [](const std::string& m) { rlog("%s", m.c_str()); }, &d)) {
+            rlog("net: input delay negotiation failed (%s)", session.status().c_str());
+            return false;
+        }
+        a.delay = d;
+    }
+    rlog("net: input delay %d", a.delay);
 
     n64run::LockstepOptions o;
     for (int i = 0; i < 4; i++) o.owner[i] = owner[i];
     o.my_slot = a.slot;
     o.num_slots = a.players;
+    o.slot_mask = slot_mask;
+    o.hash_label = use_state_hash ? "state" : "output";
     o.delay = a.delay;
     o.online = true;
     o.hash_interval = 600;
@@ -872,6 +910,7 @@ int Frontend::run(const Args& args) {
                 }
             }
             double secs = (SDL_GetTicks64() - t_start) / 1000.0;
+            if (online && lockstep) lockstep->log_stall_summary();
             rlog("done: %llu frames in %.2f s (%.1f fps)", (unsigned long long)frame_no, secs, secs > 0 ? frame_no / secs : 0.0);
         }
         // Let the last input packets reach slower peers.

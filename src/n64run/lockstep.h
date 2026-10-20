@@ -23,11 +23,13 @@ struct LockstepOptions {
     int owner[kPorts] = {0, -1, -1, -1};
     int my_slot = 0;
     int num_slots = 1;
+    uint32_t slot_mask = 0;        // explicit (sparse) slot set; 0 = slots 0..num_slots-1
     int delay = 2;
     bool online = false;
     bool strict_sync = false;
     int hash_interval = 600;       // samples between RDRAM hashes
     uint32_t timeout_ms = 10000;   // no progress -> "Connection lost"
+    std::string hash_label = "state";   // desync log text: "<label> hashes"
 };
 
 struct LockstepHooks {
@@ -52,6 +54,12 @@ class Lockstep {
     bool present(int port) const { return core_.port_present(port); }
     bool local(int port) const { return core_.port_local(port); }
 
+    /* Stall statistics (time spent blocked waiting for peers' inputs). */
+    uint64_t stall_ms() const { return stall_ms_; }
+    uint64_t stalled_samples() const { return stalled_; }
+    uint64_t samples_done() const { return (uint64_t)(sample_ + 1); }
+    void log_stall_summary() const;
+
     bool connection_lost() const { return lost_; }
     bool desync_detected() const { return desync_; }
     uint32_t sample() const { return (uint32_t)(sample_ + 1); }
@@ -73,7 +81,22 @@ class Lockstep {
     std::atomic<bool> lost_{false};
     bool desync_ = false;
     bool hash_warned_ = false;
+    uint64_t stall_ms_ = 0, stalled_ = 0;
 };
+
+/* Auto input delay negotiation (call after Session::ready(), before creating Lockstep).
+ * The host measures RTT to every client for measure_ms, computes D (auto_delay_from_rtt) and sends it to
+ * everybody; clients wait for it. All PCs must use auto (or all a fixed --delay and skip this).
+ * Logs "input delay auto: rtt=XXms -> D". */
+struct DelayNegotiation {
+    int my_slot = 0;
+    uint32_t slot_mask = 1;
+    double frame_ms = 1000.0 / 60.0;
+    uint32_t measure_ms = 1500;
+    uint32_t timeout_ms = 20000;
+};
+bool negotiate_delay(hubnet::Session& session, const DelayNegotiation& dn, const std::function<void()>& idle,
+                     const std::function<void(const std::string&)>& log, int* out_delay);
 
 /* 64-bit hash of a memory block (word-wise multiply/xorshift). */
 uint64_t hash_block(const void* data, size_t bytes);

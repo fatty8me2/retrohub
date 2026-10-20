@@ -1,0 +1,9 @@
+13:05:45.983 [net] Session: start room=Y7CPXZ-1 slot=0 expected=2 force_relay=0 udp port 52104
+13:05:45.983 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=Y7CPXZ-1&role=host&name=n64run
+13:05:46.002 [net] STUN: public endpoint 76.150.167.30:52104
+13:05:46.408 [net] Session 0: welcome room Y7CPXZ-1
+13:05:46.408 [net] Session 0: endpoint sent public=76.150.167.30:52104 local=10.0.0.45:52104
+13:05:47.269 [net] Session 0: slot 1 joined
+13:05:47.328 [net] Session 0: peer 1 candidates pub=76.150.167.30:52105 loc=10.0.0.45:52105
+13:05:47.334 [net] Session 0: direct path to slot 1 via 10.0.0.45:52105
+13:05:47.334 [net] Session 0: ready (roster 03)

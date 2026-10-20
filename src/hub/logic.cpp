@@ -191,6 +191,7 @@ std::string settings_to_json(const Settings& s) {
     o << "],\n"
       << "  \"server\": \"" << json_escape(s.server) << "\",\n"
       << "  \"input_delay\": " << s.input_delay << ",\n"
+      << "  \"delay_auto\": " << (s.delay_auto ? "true" : "false") << ",\n"
       << "  \"last_game\": \"" << json_escape(s.last_game) << "\",\n"
       << "  \"smash_exe\": \"" << json_escape(s.smash_exe) << "\",\n"
       << "  \"gb_core\": \"" << json_escape(s.gb_core) << "\",\n"
@@ -232,7 +233,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     }
     out->server = j.str("server", out->server);
     out->input_delay = (int)j.num("input_delay", out->input_delay);
-    out->input_delay = std::max(1, std::min(6, out->input_delay));
+    out->input_delay = std::max(1, std::min(8, out->input_delay));
+    if (const Json* da = j.get("delay_auto")) if (da->type == Json::Bool) out->delay_auto = da->b;
     out->last_game = j.str("last_game", out->last_game);
     out->smash_exe = j.str("smash_exe", out->smash_exe);
     std::string core = j.str("gb_core", out->gb_core);
@@ -372,11 +374,50 @@ bool parse_hello(const Json& body, PeerInfo* out) {
     return true;
 }
 
-std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core) {
+std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save) {
     std::string o = "{\"kind\":\"launch\",\"game\":\"" + json_escape(game) + "\",\"launch\":" + std::to_string(launch) +
                     ",\"delay\":" + std::to_string(delay) + ",\"seed\":" + std::to_string(seed);
     if (!core.empty()) o += ",\"core\":\"" + json_escape(core) + "\"";
+    o += std::string(",\"share_save\":") + (share_host_save ? "true" : "false");
     return o + "}";
+}
+
+std::string delay_arg(int delay) { return delay <= 0 ? " --delay auto" : " --delay " + std::to_string(std::min(delay, 8)); }
+
+PortPlan build_ports(std::vector<MemberPads> m) {
+    std::sort(m.begin(), m.end(), [](const MemberPads& a, const MemberPads& b) { return a.slot < b.slot; });
+    PortPlan p;
+    if (m.size() > 4) m.resize(4);
+    p.players = (int)m.size();
+    std::vector<int> eff(m.size(), 1);
+    int used = (int)m.size();
+    for (size_t i = 0; i < m.size() && used < 4; ++i)
+        if (m[i].locals >= 2) { eff[i] = 2; ++used; }
+    std::vector<int> ports;
+    for (size_t i = 0; i < m.size(); ++i)
+        for (int k = 0; k < eff[i]; ++k) ports.push_back(m[i].slot);
+    for (int i = 0; i < 4; ++i) {
+        if (i) p.ports += ",";
+        p.ports += i < (int)ports.size() ? std::to_string(ports[i]) : "-1";
+    }
+    p.locals = eff;
+    return p;
+}
+
+SyncAction sync_request(SyncGate& g, bool manual, bool game_running, bool job_running) {
+    if (game_running || job_running) {
+        g.pending = true;
+        g.manual = g.manual || manual;
+        return SyncAction::Queue;
+    }
+    return SyncAction::Start;
+}
+bool sync_take_pending(SyncGate& g, bool game_running, bool job_running, bool* manual) {
+    if (!g.pending || game_running || job_running) return false;
+    if (manual) *manual = g.manual;
+    g.pending = false;
+    g.manual = false;
+    return true;
 }
 
 std::string ports_arg(std::vector<int> slots) {
@@ -392,10 +433,11 @@ std::string ports_arg(std::vector<int> slots) {
 std::string exit_code_text(unsigned long code) {
     switch (code) {
         case 0: return "Game closed normally.";
-        case 2: return "n64run could not start: bad arguments or the ROM could not be read.";
+        case 2: return "The game couldn't start: the room's player/port setup or the ROM was rejected. Leave the room, rejoin and try again.";
         case 3: return "Emulator files are missing (emu/ folder). Reinstall or run scripts/fetch-emu.ps1.";
         case 4: return "Connection lost during the match.";
         case 5: return "The game went out of sync (desync) and was stopped.";
+        case 6: return "Couldn't share the host's save - check your connection and try again.";
         default: return "Game exited with code " + std::to_string(code) + ".";
     }
 }

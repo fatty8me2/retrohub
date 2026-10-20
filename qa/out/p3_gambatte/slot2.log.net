@@ -1,0 +1,11 @@
+13:08:49.713 [net] Session: start room=QDDDZP-1 slot=2 expected=3 force_relay=0 udp port 54775
+13:08:49.713 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=QDDDZP-1&role=join&name=n64run&slot=2
+13:08:49.738 [net] STUN: public endpoint 76.150.167.30:54775
+13:08:50.090 [net] Session 2: welcome room QDDDZP-1
+13:08:50.090 [net] Session 2: slot 0 joined
+13:08:50.090 [net] Session 2: slot 1 joined
+13:08:50.091 [net] Session 2: endpoint sent public=76.150.167.30:54775 local=10.0.0.45:54775
+13:08:50.127 [net] Session 2: peer 0 candidates pub=76.150.167.30:54773 loc=10.0.0.45:54773
+13:08:50.134 [net] Session 2: direct path to slot 0 via 10.0.0.45:54773
+13:08:50.146 [net] Session 2: peer 1 candidates pub=76.150.167.30:54774 loc=10.0.0.45:54774
+13:08:50.153 [net] Session 2: ready (roster 07)

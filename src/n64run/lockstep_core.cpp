@@ -1,6 +1,8 @@
 #include "lockstep_core.h"
 
 #include <algorithm>
+#include <cmath>
+#include <functional>
 #include <cstring>
 
 namespace n64run {
@@ -21,6 +23,9 @@ LockstepCore::LockstepCore(const Config& cfg) : cfg_(cfg) {
     if (cfg_.num_slots < 1) cfg_.num_slots = 1;
     if (cfg_.num_slots > kPorts) cfg_.num_slots = kPorts;
     // Window must cover the maximum lead between peers (~D+1) with margin.
+    if (cfg_.slot_mask) mask_ = cfg_.slot_mask & 0xFu;
+    else mask_ = (1u << cfg_.num_slots) - 1u;
+    mask_ |= 1u << (cfg_.my_slot & 3);
     cfg_.redundancy = std::max(cfg_.redundancy, 2 * cfg_.delay + 4);
     cfg_.redundancy = std::min(cfg_.redundancy, 120);
     for (int p = 0; p < kPorts; p++) {
@@ -53,8 +58,8 @@ void LockstepCore::schedule_local(uint32_t cur_sample, const uint32_t buttons[kP
 bool LockstepCore::ready(uint32_t n) const {
     for (int p = 0; p < kPorts; p++)
         if (port_present(p) && !has(p, n)) return false;
-    for (int s = 0; s < cfg_.num_slots; s++)
-        if (s != cfg_.my_slot && (uint64_t)peer_progress_[s] + (uint64_t)max_lead() < n) return false;
+    for (int s = 0; s < kPorts; s++)
+        if ((mask_ >> s & 1u) && s != cfg_.my_slot && (uint64_t)peer_progress_[s] + (uint64_t)max_lead() < n) return false;
     return true;
 }
 
@@ -129,17 +134,22 @@ bool LockstepCore::on_packet(int from_slot, const uint8_t* data, size_t len) {
 }
 
 void LockstepCore::put_hash(int slot, uint32_t sample, uint64_t h) {
-    if (slot < 0 || slot >= cfg_.num_slots) return;
+    if (slot < 0 || slot >= kPorts || !(mask_ >> slot & 1u)) return;
     HashRec& r = hashes_[sample];
     if (r.done) return;
     r.h[slot] = h;
     r.known |= (uint8_t)(1u << slot);
-    uint8_t all = (uint8_t)((1u << cfg_.num_slots) - 1u);
+    uint8_t all = (uint8_t)mask_;
     if ((r.known & all) == all) {
         r.done = true;
         compared_++;
         bool same = true;
-        for (int s = 1; s < cfg_.num_slots; s++) if (r.h[s] != r.h[0]) same = false;
+        int first = -1;
+        for (int s = 0; s < kPorts; s++) {
+            if (!(mask_ >> s & 1u)) continue;
+            if (first < 0) first = s;
+            else if (r.h[s] != r.h[first]) same = false;
+        }
         if (!same) {
             Mismatch m;
             m.sample = sample;
@@ -162,6 +172,39 @@ bool LockstepCore::poll_mismatch(Mismatch* out) {
     *out = mismatches_.front();
     mismatches_.erase(mismatches_.begin());
     return true;
+}
+
+}  // namespace n64run
+
+namespace n64run {
+
+int popcount32(uint32_t v) { int n = 0; for (; v; v >>= 1) n += v & 1; return n; }
+
+uint32_t derive_slot_mask(const int owner[kPorts], int my_slot, int players, std::string* err) {
+    auto fail = [&](const char* m) { if (err) *err = m; return 0u; };
+    if (my_slot < 0 || my_slot >= kPorts) return fail("--slot must be 0..3");
+    if (players < 1 || players > kPorts) return fail("--players must be 1..4 (number of PCs)");
+    uint32_t mask = 1u | (1u << my_slot);
+    for (int p = 0; p < kPorts; p++) {
+        if (owner[p] < -1 || owner[p] >= kPorts) return fail("--ports value must be -1 or a slot 0..3");
+        if (owner[p] >= 0) mask |= 1u << owner[p];
+    }
+    if (popcount32(mask) > players) return fail("--players is smaller than the number of PCs named by --slot/--ports");
+    for (int s = 0; s < kPorts && popcount32(mask) < players; s++) mask |= 1u << s;   // port-less spectators
+    return mask;
+}
+
+int auto_delay_from_rtt(double rtt_ms, double frame_ms, bool relayed, double margin_ms) {
+    if (frame_ms < 1.0) frame_ms = 16.7;
+    int d = (int)std::ceil((rtt_ms / 2.0 + margin_ms) / frame_ms) + 1;
+    if (relayed) d += 1;
+    return std::max(1, std::min(10, d));
+}
+
+double effective_rtt(std::vector<double> v) {
+    if (v.empty()) return 0;
+    std::sort(v.begin(), v.end(), std::greater<double>());
+    return v.size() >= 2 ? v[0] + v[1] : v[0];
 }
 
 }  // namespace n64run

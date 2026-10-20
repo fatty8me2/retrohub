@@ -125,7 +125,7 @@ Delivery is unreliable, the same as UDP. The lockstep layer handles loss by repe
 **Command line:**
 
 ```
-n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay D] [--save-dir DIR]
+n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D] [--save-dir DIR]
 ```
 
 - `--ports` maps each N64 controller port to an owning slot. For example `0,1,-1,-1` means port 1 is played by slot 0, port 2 by slot 1, and ports 3 and 4 have no controller. The game fills those with CPUs.
@@ -146,7 +146,24 @@ n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N --p
 | Save state / speed-limiter hotkeys | off |
 | Controller pak | none (`Plugin = PLUGIN_NONE`, so no mempak serial randomness) |
 
-**Saves in online sessions:** each session starts from a fresh, empty save directory on every PC, so the EEPROM is identical everywhere. Transferring the host's save comes in v2.
+**Slots and `--players`:** `--slot` may be any of 0..3; lobby slots can have gaps (members `{0,2}` after slot 1 left). `--players` is the number of PCs, not max slot + 1. The session's slot set is the host (slot 0), `--slot`, and every owner named in `--ports`; if `--players` is larger than that, the lowest free slots are added as port-less spectators. `--players` smaller than the PCs found is an error (exit 2). The same applies to `retrorun`. Both `Session` readiness (a count of reachable PCs) and `LockstepCore` (`Config::slot_mask`) work with sparse slot sets (`derive_slot_mask` in `lockstep_core.h`).
+
+**Input delay (`--delay auto|N`, default `auto` with `--net`, for `n64run` and `retrorun`):** lockstep throughput is about delay / RTT, so a fixed 2 frames stalls at 60-100 ms ping. With `auto`, after `Session::ready()` the host pings every client for about 1.5 s (`Session::ping_stats`), takes the worst effective RTT (the slowest client, or the sum of the two slowest because client-to-client traffic crosses the host), and computes `D = ceil((rtt/2 + 8 ms) / frame_ms) + 1` clamped to 1..10 (+1 if any path is relayed; `frame_ms` = 1000 / core fps, 16.7 for N64 and GB/GBA). The host sends D to everyone (`kPktDelay`, clients ack with `kPktDelayAck`) and logs `input delay auto: rtt=XXms -> D`. A numeric `--delay N` forces N and skips the negotiation; every PC must use the same mode (all `auto` or all numeric with the same N). At the end of a session both runners log `netplay stalls: total X ms over Y stalled samples, Z samples`.
+
+**Network simulator (QA):** set in the environment of any process that uses `hubnet` (applies to every outgoing datagram, direct UDP and relay frames; relay frames stay in order): `HUBNET_SIM_LATENCY_MS` (added delay per send), `HUBNET_SIM_JITTER_MS` (extra uniform 0..J ms), `HUBNET_SIM_LOSS_PCT` (random drop, 0..100), optional `HUBNET_SIM_SEED` (reproducible). Each PC applies it to what it sends, so RTT is about 2 x latency + jitter. Example: `HUBNET_SIM_LATENCY_MS=80 HUBNET_SIM_JITTER_MS=20 HUBNET_SIM_LOSS_PCT=5 hubnet_test <server> 3 300`. `hubnet_test` relaxes its delivery threshold to 100 - 2*loss - 4 % when loss is set.
+
+**Exit codes (`n64run`, and the same for `retrorun --net`):**
+
+| Code | Meaning |
+|------|---------|
+| 0 | Clean exit |
+| 2 | Bad arguments (including `--slot/--players/--ports` inconsistencies) or invalid ROM |
+| 3 | Emulator / core / plugin load failure (retrorun: lobby wait or start barrier failed) |
+| 4 | Netplay connection failure, input-delay negotiation failure, or connection lost mid-game |
+| 5 | Desync detected (`n64run`: only with `--strict-sync`; `retrorun`: always) |
+| 6 | Host-save sync failed (`--share-host-save`) |
+
+**Saves in online sessions:** each session starts from a fresh, empty save directory on every PC. With `--share-host-save` (opt-in, every PC must pass it) the host (slot 0) reads `--host-save-dir` and sends its battery saves (`.eep .sra .fla .mpk`, at most 8 files, 128 KiB each, 256 KiB total) to the other PCs before the ROM opens (exit code 6 if the sync fails). Transfer uses `src/n64run/save_sync.{h,cpp}`: chunked, per-chunk check, whole-file FNV-1a, client ACK bitmaps, host resends. Without the flag the sessions start empty, as before.
 
 **Lockstep in `GetKeys(Control, Keys)`:**
 

@@ -28,7 +28,7 @@ int main() {
     CHECK(t.gb_core == "gambatte" && t.fullscreen && t.sync_folder == s.sync_folder);
     CHECK(!t.sync_auto && t.sync_states);
     Settings u;
-    CHECK(settings_from_json("{\"input_delay\": 99}", &u) && u.input_delay == 6 && u.name.empty());
+    CHECK(settings_from_json("{\"input_delay\": 99}", &u) && u.input_delay == 8 && u.delay_auto && u.name.empty());
     CHECK(u.gb_core == "sameboy" && u.sync_auto && !u.sync_states && u.rom_folders.empty());
     CHECK(!settings_from_json("{bad", &u));
 
@@ -256,6 +256,38 @@ int main() {
     CHECK(ports_arg({0}) == "0,-1,-1,-1");
     CHECK(normalize_code(" ab c2d3efg") == "ABC2D3");
     CHECK(exit_code_text(5).find("sync") != std::string::npos);
+    CHECK(exit_code_text(6).find("share the host's save") != std::string::npos);
+    CHECK(exit_code_text(2).find("couldn't start") != std::string::npos);
+
+    /* ports with sparse slots and local players */
+    {
+        PortPlan a = build_ports({{2, 1}, {0, 1}});
+        CHECK(a.ports == "0,2,-1,-1" && a.players == 2);
+        PortPlan b = build_ports({{0, 2}, {1, 1}});
+        CHECK(b.ports == "0,0,1,-1" && b.players == 2);
+        PortPlan c = build_ports({{0, 2}, {2, 2}, {3, 1}});   // 5 wanted: cap at 4
+        CHECK(c.ports == "0,0,2,3" && c.locals[0] == 2 && c.locals[1] == 1);
+        PortPlan d = build_ports({{0, 2}, {1, 2}, {2, 2}, {3, 2}});
+        CHECK(d.ports == "0,1,2,3" && d.players == 4);
+        CHECK(build_ports({{0, 9}}).ports == "0,0,-1,-1");
+        CHECK(delay_arg(0) == " --delay auto" && delay_arg(3) == " --delay 3" && delay_arg(99) == " --delay 8");
+        CHECK(launch_json("g", 1, 0, 5, "", true).find("\"share_save\":true") != std::string::npos);
+        Settings s2; s2.delay_auto = false; Settings s3;
+        CHECK(settings_from_json(settings_to_json(s2), &s3) && !s3.delay_auto);
+    }
+
+    /* sync gating while a game runs */
+    {
+        SyncGate g;
+        bool man = false;
+        CHECK(sync_request(g, true, true, false) == SyncAction::Queue && g.pending);
+        CHECK(!sync_take_pending(g, true, false, &man));      // game still running
+        CHECK(!sync_take_pending(g, false, true, &man));      // job running
+        CHECK(sync_take_pending(g, false, false, &man) && man && !g.pending);
+        CHECK(!sync_take_pending(g, false, false, &man));
+        CHECK(sync_request(g, false, false, false) == SyncAction::Start && !g.pending);
+        CHECK(sync_request(g, false, false, true) == SyncAction::Queue);
+    }
 
     /* friends */
     {

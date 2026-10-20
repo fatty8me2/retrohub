@@ -28,7 +28,8 @@ struct Settings {
     std::string name;                      // empty = use the Windows user name (caller fills in)
     std::vector<std::string> rom_folders;  // migrated from the old single "rom_folder"
     std::string server;        // filled from hubnet::default_server() by the caller when empty
-    int input_delay = 2;
+    int input_delay = 2;               // manual delay 1-8 frames (used when delay_auto is off)
+    bool delay_auto = true;            // "Auto (recommended)": runners measure the connection
     std::string last_game;
     std::string smash_exe;     // user-chosen BattleShip.exe
     std::string gb_core = "sameboy";   // default GB/GBC core: "sameboy" | "gambatte"
@@ -74,8 +75,11 @@ std::vector<std::string> hello_messages(const std::string& version, const std::m
                                         const std::vector<std::string>& keys, size_t max_bytes = 3000);
 bool parse_hello(const Json& body, PeerInfo* out);
 /* `core` (optional): the host's GB/GBC core so all peers run the same one. */
+/* `delay` 0 = auto. `share_host_save`: N64 online, every PC uses the host's save. */
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed,
-                        const std::string& core = "");
+                        const std::string& core = "", bool share_host_save = false);
+/* " --delay auto" / " --delay N" (leading space). */
+std::string delay_arg(int delay);
 
 /* ---- library list helpers ---- */
 struct ListItem {
@@ -176,6 +180,24 @@ bool parse_vault_meta(const std::string& json, VaultMeta* out);
 
 /* "0,1,2,-1": controller port i is owned by the i-th member (sorted by slot), -1 if none. */
 std::string ports_arg(std::vector<int> member_slots);
+
+/* A room member and how many local controllers they play with (1-2). */
+struct MemberPads { int slot = 0; int locals = 1; };
+struct PortPlan {
+    std::string ports;            // --ports value, e.g. "0,0,1,-1" (repeated slot ids = several pads on one PC)
+    int players = 0;              // --players: number of members
+    std::vector<int> locals;      // effective local count per member, in slot order (after the 4-port cap)
+};
+/* Members sorted by slot; each gets `locals` (clamped 1-2) consecutive ports; total capped at 4 (every
+ * member keeps one port first, extra pads are granted in slot order while ports remain). */
+PortPlan build_ports(std::vector<MemberPads> members);
+
+/* Save sync must never run while a game process is alive: requests made then are queued. */
+enum class SyncAction { Start, Queue };
+struct SyncGate { bool pending = false; bool manual = false; };
+SyncAction sync_request(SyncGate& g, bool manual, bool game_running, bool job_running);
+/* Call every frame: true (and clears the queue) when a queued sync may start now. */
+bool sync_take_pending(SyncGate& g, bool game_running, bool job_running, bool* manual);
 
 /* Human text for an n64run exit code. */
 std::string exit_code_text(unsigned long code);

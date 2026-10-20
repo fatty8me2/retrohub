@@ -54,8 +54,10 @@ struct SessionConfig {
     std::string server;   // wss://...
     std::string room;     // game room, e.g. "ABC234-1"
     int slot = 0;         // my slot (0 = host)
-    int expected = 2;     // number of PCs in the session
+    int expected = 2;     // number of PCs in the session (slots may be sparse, e.g. {0,2})
 };
+
+struct PingStats { int n = 0, avg_ms = 0, min_ms = 0, max_ms = 0; };
 
 class Session {
   public:
@@ -71,6 +73,11 @@ class Session {
     bool is_relayed(int slot) const;
     int ping_ms(int slot) const; // -1 unknown
     int my_slot() const;
+
+    /* RTT samples since the last clear (last 32), for the auto input delay. */
+    bool ping_stats(int slot, PingStats* out) const;
+    void clear_ping_stats();
+    void set_ping_interval(uint32_t ms);   // default 500; min 20
 
     /* Unreliable datagram to one slot or -1 = all other slots. */
     void send(int to_slot, const void* data, int len);
