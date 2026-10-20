@@ -99,15 +99,21 @@ struct ShelfGame {
     unsigned long long last_played = 0;
     bool online = false;                // catalog says it is fun online with friends
     bool pinned = false;
+    std::string genre;                  // catalog genre ("" / unknown = "Other")
 };
 struct Shelf {
-    std::string id;      // "recent" "favs" "online" or "sys:<short>"
+    std::string id;      // "recent" "favs" or "genre:<Genre>" ("genre:Other:<sys>" for uncatalogued games)
     std::string title;   // "Continue Playing" ...
     std::vector<int> items;   // indices into the ShelfGame vector
 };
-/* Shelves in display order: recent (<= max_recent), favorites, online, then one per system that
- * has games (n64, gc, gba, gbc, gb). Empty shelves are omitted. Within a shelf: recent = newest
- * first; the others pinned first then title (case-insensitive). */
+/* Genre shelves in display order. Games whose genre is not in this list go to "Other". */
+const std::vector<std::string>& genre_order();     // Party Fighting Racing Shooter Platformer Adventure RPG Strategy Sports Puzzle Action
+/* Genre a game is filed under: its own when known, else "Other". */
+std::string effective_genre(const std::string& genre);
+/* Shelves in display order: recent (<= max_recent), favorites, then one shelf per genre that has games
+ * (genre_order(), then "Other"). Every game lands in exactly ONE genre shelf; "Other" is split per system
+ * (n64, gc, gba, gbc, gb). Empty shelves are omitted. Within a shelf: recent = newest first; the others
+ * pinned first then title (case-insensitive). */
 std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& games, int max_recent = 12);
 std::string system_shelf_title(const std::string& system_short);   // "Nintendo 64", ...
 /* Catalog entries to advertise ("Top picks you don't have yet"): indices where !owned[i], games
@@ -116,6 +122,23 @@ std::vector<int> pick_unowned(const std::vector<bool>& owned, const std::vector<
 /* Which game the hero header shows by default: preferred key if present, else most recently
  * played, else first favorite, else first. -1 when empty. */
 int pick_hero(const std::vector<ShelfGame>& games, const std::string& preferred_key);
+
+/* ---- horizontal shelf scrolling (pure so it can be tested) ---- */
+struct FRect { float x0 = 0, y0 = 0, x1 = 0, y1 = 0; };
+/* Index of the first rect containing (x,y), or -1. */
+int rect_hit(const std::vector<FRect>& rects, float x, float y);
+/* Pixels to add to a row's scroll target for a wheel event over it: the vertical wheel (up = left) and the
+ * horizontal wheel (right = right) both scroll the row, ~1.5 tiles per notch. */
+float shelf_wheel_delta(float wheel_x, float wheel_y, float tile_w, float gap);
+/* Has the pointer moved far enough from the press point for a click to become a drag-pan? */
+bool drag_exceeds(float dx, float dy, float threshold);
+/* Distance of one "page" arrow click: whole tiles that fit in the row (at least one). */
+float shelf_page_step(float view_w, float tile_w, float gap, float bleed);
+/* New scroll target that makes [left,right] (content coords) visible with `margin`, clamped to [0,max_scroll]. */
+float shelf_reveal(float left, float right, float target, float view_w, float margin, float max_scroll);
+float shelf_clamp(float v, float max_scroll);
+/* Max scroll of a row of `count` tiles: content (with `bleed` on both ends) minus the view; never negative. */
+float shelf_max_scroll(int count, float tile_w, float gap, float bleed, float view_w);
 
 /* ---- layout / animation math ---- */
 struct GridLayout { int cols = 1; float tile_w = 0; };
