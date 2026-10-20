@@ -1,0 +1,3 @@
+#define RH_FILE_DESC "RetroHub GBA/Game Boy runner"
+#define RH_ORIG_NAME "retrorun.exe"
+#include "retrohub.rc"

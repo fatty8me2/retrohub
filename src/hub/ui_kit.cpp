@@ -636,3 +636,72 @@ void draw_art_bg(ImDrawList* dl, SDL_Texture* tex, int tw, int th, ImVec2 p0, Im
 }
 
 } // namespace ui
+
+/* ---- RetroHub brand logo (mirrors assets/brand/build_brand.py geometry in a 1024 box) ---- */
+void ui_draw_brand_logo(ImDrawList* dl, ImVec2 pos, float size) {
+    const float k = size / 1024.f;
+    auto P = [&](float x, float y) { return ImVec2(pos.x + x * k, pos.y + y * k); };
+    const bool tiny = size < 26.f, mid = size < 50.f;
+    const float m = tiny || mid ? 16.f : 48.f;
+    ImVec2 t0 = P(m, m), t1 = P(1024.f - m, 1024.f - m);
+    float rd = (tiny ? 210.f : mid ? 232.f : 224.f) * k;
+    // tile: dark gradient (top lighter) + violet rim
+    dl->AddRectFilled(t0, t1, IM_COL32(18, 18, 44, 255), rd);
+    dl->PushClipRect(t0, ImVec2(t1.x, t0.y + (t1.y - t0.y) * 0.5f), true);
+    dl->AddRectFilled(t0, t1, IM_COL32(255, 255, 255, 34), rd);
+    dl->PopClipRect();
+    dl->AddRect(t0, t1, IM_COL32(156, 140, 255, 96), rd, 0, std::max(1.f, 8.f * k));
+    // gradient hexagon (pointy-top), vertex colours along the top-left -> bottom-right diagonal
+    const float R = tiny ? 330.f : 336.f;
+    const ImU32 c0 = IM_COL32(124, 139, 255, 255), c1 = IM_COL32(160, 100, 255, 255), c2 = IM_COL32(255, 95, 176, 255);
+    auto grad = [&](float x, float y) {
+        float t = ((x - 300.f) * 460.f + (y - 200.f) * 650.f) / (460.f * 460.f + 650.f * 650.f);
+        t = std::min(1.f, std::max(0.f, t));
+        return t < 0.5f ? ui::mix(c0, c1, t * 2.f) : ui::mix(c1, c2, (t - 0.5f) * 2.f);
+    };
+    ImVec2 hv[6]; ImU32 hc[6];
+    float hx[6], hy[6];
+    for (int i = 0; i < 6; ++i) {
+        float a = (-90.f + 60.f * i) * 3.14159265f / 180.f;
+        hx[i] = 512.f + R * std::cos(a);
+        hy[i] = 512.f + R * std::sin(a);
+        hv[i] = P(hx[i], hy[i]);
+        hc[i] = grad(hx[i], hy[i]);
+    }
+    ImVec2 uv = dl->_Data->TexUvWhitePixel;
+    dl->PrimReserve(18, 7);
+    // centre + 6 outer vertices -> 6 triangles
+    ImDrawIdx base = (ImDrawIdx)dl->_VtxCurrentIdx;
+    dl->PrimWriteVtx(P(512.f, 512.f), uv, grad(512.f, 512.f));
+    for (int i = 0; i < 6; ++i) dl->PrimWriteVtx(hv[i], uv, hc[i]);
+    for (int i = 0; i < 6; ++i) {
+        dl->PrimWriteIdx(base);
+        dl->PrimWriteIdx((ImDrawIdx)(base + 1 + i));
+        dl->PrimWriteIdx((ImDrawIdx)(base + 1 + (i + 1) % 6));
+    }
+    // retro scanline gaps through the lower part (not at tiny sizes)
+    if (!tiny) {
+        ImU32 gap = IM_COL32(21, 21, 52, 255);
+        if (mid) {
+            dl->AddRectFilled(P(150.f, 716.f), P(874.f, 760.f), gap);
+        } else {
+            dl->AddRectFilled(P(150.f, 690.f), P(874.f, 710.f), gap);
+            dl->AddRectFilled(P(150.f, 764.f), P(874.f, 798.f), gap);
+        }
+    }
+    // play glyph
+    const float pr = tiny ? 40.f : mid ? 20.f : 24.f;   // visual rounding allowance
+    ImVec2 tri[3] = {P(tiny ? 440.f : 452.f, tiny ? 350.f : 360.f), P(tiny ? 690.f : 664.f, tiny ? 512.f : 482.f),
+                     P(tiny ? 440.f : 452.f, tiny ? 674.f : 604.f)};
+    (void)pr;
+    dl->AddConvexPolyFilled(tri, 3, IM_COL32_WHITE);
+    dl->AddPolyline(tri, 3, IM_COL32_WHITE, ImDrawFlags_Closed, std::max(1.f, (tiny ? 44.f : 48.f) * k));
+    // friend nodes on three hexagon vertices (full size only)
+    if (!tiny && !mid) {
+        const int idx[3] = {0, 2, 4};
+        for (int n = 0; n < 3; ++n) {
+            dl->AddCircleFilled(hv[idx[n]], 53.f * k, IM_COL32(21, 21, 52, 255), 24);
+            dl->AddCircleFilled(hv[idx[n]], 46.f * k, IM_COL32(52, 222, 252, 255), 24);
+        }
+    }
+}

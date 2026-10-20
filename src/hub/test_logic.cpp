@@ -257,6 +257,39 @@ int main() {
     CHECK(normalize_code(" ab c2d3efg") == "ABC2D3");
     CHECK(exit_code_text(5).find("sync") != std::string::npos);
 
+    /* friends */
+    {
+        auto row = [](const char* uid, const char* nm, int st, bool j, long long upd, const char* game = "", int p = 0, int mx = 0) {
+            FriendRow r; r.uid = uid; r.name = nm; r.state = st; r.joinable = j; r.updated_ms = upd; r.game_title = game; r.players = p; r.max_players = mx;
+            return r;
+        };
+        std::vector<FriendRow> rows = {row("a", "zed", FS_Online, false, 5), row("b", "Amy", FS_InGame, false, 5, "Mario Kart 64"),
+                                       row("c", "bob", FS_InLobby, true, 5, "Mario Party 2", 2, 4), row("d", "old", FS_Offline, false, 1000),
+                                       row("e", "new", FS_Offline, false, 9000), row("f", "cat", FS_InLobby, false, 5, "X", 4, 4),
+                                       row("g", "Ann", FS_Online, false, 5)};
+        FriendGroups g = group_friends(rows);
+        CHECK((g.online == std::vector<int>{2, 1, 5, 6, 0}));    // joinable lobby, in game, full lobby, online by name (Ann, zed)
+        CHECK((g.offline == std::vector<int>{4, 3}));            // most recently seen first
+        CHECK(friend_status_line(rows[1], 0) == "Playing Mario Kart 64");
+        CHECK(friend_status_line(rows[2], 0) == "In lobby \xC2\xB7 Mario Party 2 \xC2\xB7 2/4");
+        CHECK(friend_status_line(rows[0], 0) == "Online" && friend_status_line(row("x", "x", FS_InGame, false, 0), 0) == "Playing");
+        CHECK(friend_status_line(rows[4], 9000 + 3 * 3600 * 1000LL) == "Last seen 3h ago");
+        CHECK(friend_status_line(row("x", "x", FS_Offline, false, 0), 100000) == "Offline");
+        CHECK(format_ago_ms(100000, 90000) == "just now" && format_ago_ms(1000 * 600, 0) == "10 min ago" && format_ago_ms(86400000LL * 2, 0) == "2d ago");
+        CHECK(normalize_friend_code("7kq2m9xd") == "RH-7KQ2-M9XD");
+        CHECK(normalize_friend_code(" rh-7kq2-m9xd ") == "RH-7KQ2-M9XD");
+        CHECK(normalize_friend_code("RH7KQ2M9XD") == "RH-7KQ2-M9XD" && normalize_friend_code("7KQ2 M9XD") == "RH-7KQ2-M9XD");
+        CHECK(normalize_friend_code("").empty() && normalize_friend_code("RH-7KQ2-M9X").empty() && normalize_friend_code("RH-7KQ!-M9XD").empty());
+        CHECK(!invite_expired(5000, 4999) && invite_expired(5000, 5000) && !invite_expired(0, 99999));
+        CHECK(invite_seconds_left(5000, 4000) == 1 && invite_seconds_left(5000, 5000) == 0 && invite_seconds_left(31000, 1000) == 30);
+        CHECK(lobby_joinable(2, 4, false) && !lobby_joinable(4, 4, false) && !lobby_joinable(2, 4, true) && !lobby_joinable(0, 4, false));
+        Settings fs;
+        CHECK(fs.show_friends && !fs.appear_offline && fs.notif_sound);
+        fs.show_friends = false; fs.appear_offline = true; fs.notif_sound = false;
+        Settings ft;
+        CHECK(settings_from_json(settings_to_json(fs), &ft) && !ft.show_friends && ft.appear_offline && !ft.notif_sound);
+    }
+
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }

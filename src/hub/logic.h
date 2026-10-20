@@ -39,6 +39,9 @@ struct Settings {
     std::string vault_dir;             // "" = default (userdata/saves)
     bool download_art = true;          // fetch cover art from the libretro-thumbnails project
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
+    bool show_friends = true;          // friends panel open
+    bool appear_offline = false;       // friends see me as offline
+    bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
 };
 std::string settings_to_json(const Settings& s);
 bool settings_from_json(const std::string& text, Settings* out);   // missing keys keep defaults in *out
@@ -179,5 +182,30 @@ std::string exit_code_text(unsigned long code);
 
 /* Uppercase, strip blanks, cap at 6 chars. */
 std::string normalize_code(const std::string& s);
+
+/* ---- friends (pure helpers; the UI maps hubnet::Friend onto FriendRow) ---- */
+enum FriendState { FS_Offline = 0, FS_Online = 1, FS_InLobby = 2, FS_InGame = 3 };
+struct FriendRow {
+    std::string uid, name, game_title;
+    int state = FS_Offline;
+    bool joinable = false;
+    int players = 0, max_players = 0;
+    long long updated_ms = 0;      // last presence update (offline: roughly "last seen")
+};
+struct FriendGroups { std::vector<int> online, offline; };
+/* Online first (joinable lobby, in game, in lobby, online; then name, case-insensitive), then offline (most
+ * recently seen first, then name). Returns indices into `rows`. */
+FriendGroups group_friends(const std::vector<FriendRow>& rows);
+/* "Playing Mario Kart 64" / "In lobby . Mario Party 2 . 2/4" / "Online" / "Last seen 3h ago" / "Offline". */
+std::string friend_status_line(const FriendRow& r, long long now_ms);
+/* "just now" / "5 min ago" / "3h ago" / "2d ago" */
+std::string format_ago_ms(long long now_ms, long long then_ms);
+/* "RH-7KQ2-M9XD" from "7kq2m9xd", "RH-7KQ2-M9XD", " rh7kq2 m9xd " ...; "" when not a valid code (8 letters/digits). */
+std::string normalize_friend_code(const std::string& s);
+inline bool invite_expired(long long expires_at_ms, long long now_ms) { return expires_at_ms > 0 && now_ms >= expires_at_ms; }
+/* Seconds left before the invite expires (0 when expired or unknown). */
+int invite_seconds_left(long long expires_at_ms, long long now_ms);
+/* A room can be joined while it has a free slot and the game has not been launched. */
+inline bool lobby_joinable(int players, int max_players, bool launched) { return !launched && players > 0 && players < max_players; }
 
 } // namespace hubui

@@ -1,0 +1,3 @@
+#define RH_FILE_DESC "RetroHub N64 runner"
+#define RH_ORIG_NAME "n64run.exe"
+#include "retrohub.rc"
