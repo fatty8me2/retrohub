@@ -200,7 +200,10 @@ std::string settings_to_json(const Settings& s) {
       << "  \"sync_states\": " << (s.sync_states ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json_escape(s.vault_dir) << "\",\n"
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
-      << "  \"sidebar_mode\": " << s.sidebar_mode << "\n"
+      << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
+      << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
+      << "  \"appear_offline\": " << (s.appear_offline ? "true" : "false") << ",\n"
+      << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << "\n"
       << "}\n";
     return o.str();
 }
@@ -241,6 +244,9 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->vault_dir = j.str("vault_dir", out->vault_dir);
     out->download_art = json_bool(j, "download_art", out->download_art);
     out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));
+    out->show_friends = json_bool(j, "show_friends", out->show_friends);
+    out->appear_offline = json_bool(j, "appear_offline", out->appear_offline);
+    out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
     return true;
 }
 
@@ -710,6 +716,77 @@ bool parse_vault_meta(const std::string& text, VaultMeta* out) {
     out->device = j.str("device");
     out->updated = (unsigned long long)j.num("updated", 0);
     return !out->key.empty();
+}
+
+/* ---------------- friends ---------------- */
+
+static std::string lower_str(std::string s) {
+    for (auto& ch : s) ch = (char)std::tolower((unsigned char)ch);
+    return s;
+}
+
+static int online_rank(const FriendRow& r) {
+    if (r.state == FS_InLobby && r.joinable) return 0;
+    if (r.state == FS_InGame) return 1;
+    if (r.state == FS_InLobby) return 2;
+    return 3;
+}
+
+FriendGroups group_friends(const std::vector<FriendRow>& rows) {
+    FriendGroups g;
+    for (int i = 0; i < (int)rows.size(); ++i) (rows[i].state != FS_Offline ? g.online : g.offline).push_back(i);
+    std::stable_sort(g.online.begin(), g.online.end(), [&](int a, int b) {
+        int ra = online_rank(rows[a]), rb = online_rank(rows[b]);
+        if (ra != rb) return ra < rb;
+        std::string x = lower_str(rows[a].name), y = lower_str(rows[b].name);
+        return x != y ? x < y : rows[a].uid < rows[b].uid;
+    });
+    std::stable_sort(g.offline.begin(), g.offline.end(), [&](int a, int b) {
+        if (rows[a].updated_ms != rows[b].updated_ms) return rows[a].updated_ms > rows[b].updated_ms;
+        std::string x = lower_str(rows[a].name), y = lower_str(rows[b].name);
+        return x != y ? x < y : rows[a].uid < rows[b].uid;
+    });
+    return g;
+}
+
+std::string format_ago_ms(long long now_ms, long long then_ms) {
+    long long s = (now_ms - then_ms) / 1000;
+    if (s < 60) return "just now";
+    if (s < 3600) return std::to_string(s / 60) + " min ago";
+    if (s < 86400) return std::to_string(s / 3600) + "h ago";
+    return std::to_string(s / 86400) + "d ago";
+}
+
+std::string friend_status_line(const FriendRow& r, long long now_ms) {
+    switch (r.state) {
+        case FS_InGame: return r.game_title.empty() ? "Playing" : "Playing " + r.game_title;
+        case FS_InLobby: {
+            std::string s = "In lobby";
+            if (!r.game_title.empty()) s += " \xC2\xB7 " + r.game_title;
+            if (r.max_players > 0) s += " \xC2\xB7 " + std::to_string(r.players) + "/" + std::to_string(r.max_players);
+            return s;
+        }
+        case FS_Online: return "Online";
+        default: break;
+    }
+    if (r.updated_ms > 0 && now_ms > r.updated_ms) return "Last seen " + format_ago_ms(now_ms, r.updated_ms);
+    return "Offline";
+}
+
+std::string normalize_friend_code(const std::string& in) {
+    std::string t;
+    for (unsigned char ch : in)
+        if (ch != ' ' && ch != '-' && ch != '\t' && ch != '_') t += (char)std::toupper(ch);
+    if (t.size() == 10 && t.compare(0, 2, "RH") == 0) t = t.substr(2);
+    if (t.size() != 8) return "";
+    for (char ch : t)
+        if (!std::isalnum((unsigned char)ch)) return "";
+    return "RH-" + t.substr(0, 4) + "-" + t.substr(4);
+}
+
+int invite_seconds_left(long long expires_at_ms, long long now_ms) {
+    if (expires_at_ms <= 0 || now_ms >= expires_at_ms) return 0;
+    return (int)((expires_at_ms - now_ms + 999) / 1000);
 }
 
 } // namespace hubui

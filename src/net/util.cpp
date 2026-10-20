@@ -181,9 +181,11 @@ struct Parser {
                 p += 4;
                 if (cp >= 0xD800 && cp < 0xDC00 && t.compare(p, 2, "\\u") == 0 && p + 6 <= t.size()) {
                     unsigned lo = (unsigned)strtoul(t.substr(p + 2, 4).c_str(), nullptr, 16);
-                    p += 6;
-                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                }
+                    if (lo >= 0xDC00 && lo < 0xE000) {
+                        p += 6;
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    } else cp = 0xFFFD;
+                } else if (cp >= 0xD800 && cp < 0xE000) cp = 0xFFFD;
                 if (cp < 0x80) *out += (char)cp;
                 else if (cp < 0x800) { *out += (char)(0xC0 | (cp >> 6)); *out += (char)(0x80 | (cp & 63)); }
                 else if (cp < 0x10000) { *out += (char)(0xE0 | (cp >> 12)); *out += (char)(0x80 | ((cp >> 6) & 63)); *out += (char)(0x80 | (cp & 63)); }

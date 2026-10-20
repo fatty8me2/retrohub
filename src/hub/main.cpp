@@ -56,6 +56,7 @@
 #include "library.h"
 #include "logic.h"
 #include "savestore.h"
+#include "shell_integration.h"
 #include "session.h"
 #include "ui_kit.h"
 
@@ -1083,8 +1084,17 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
 
 /* ---------- lobby ---------- */
 
+/* Room accessors: screenshots (HUB_SHOT_FAKE_ROOM) fake a connected room without touching the network. */
+static bool g_fake_room = false;
+static bool room_connected() { return g_fake_room || A.lobby.connected(); }
+static std::vector<hubnet::Member> room_members() {
+    if (g_fake_room) return {{0, A.st.name}, {1, "Mia"}, {2, "Jake"}};
+    return A.lobby.members();
+}
+static int room_my_slot() { return g_fake_room ? 0 : A.lobby.my_slot(); }
+
 static std::string member_name(int slot) {
-    for (auto& m : A.lobby.members()) if (m.slot == slot) return m.name;
+    for (auto& m : room_members()) if (m.slot == slot) return m.name;
     return "Player " + std::to_string(slot + 1);
 }
 
@@ -1118,16 +1128,16 @@ static void enter_room(bool host, const std::string& code) {
     A.pending_room_game.clear();
 }
 
-static bool is_host() { return A.lobby.connected() && A.lobby.my_slot() == 0; }
+static bool is_host() { return room_connected() && room_my_slot() == 0; }
 
 static std::vector<hubui::PeerInfo> peer_list() {
     std::vector<hubui::PeerInfo> v;
-    int me = A.lobby.my_slot();
-    for (auto& m : A.lobby.members()) {
+    int me = room_my_slot();
+    for (auto& m : room_members()) {
         hubui::PeerInfo p;
         auto it = A.peers.find(m.slot);
         if (it != A.peers.end()) p = it->second;
-        if (m.slot == me) { p.hello = true; p.games.clear(); p.keys.clear(); my_games(&p.games, &p.keys); }
+        if (m.slot == me || g_fake_room) { p.hello = true; p.games.clear(); p.keys.clear(); my_games(&p.games, &p.keys); }
         p.slot = m.slot;
         p.name = m.name;
         v.push_back(p);
@@ -2333,6 +2343,8 @@ static void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     ImGui::EndChild();
 }
 
+#include "friends_ui.inc"
+
 static void page_online_home() {
     page_header("Play Online", "Host a room and share the code, or join a friend's room.");
     float avail = ImGui::GetContentRegionAvail().x;
@@ -2416,13 +2428,19 @@ static void page_online_room() {
     if (button("Copy code", ImVec2(150 * S, 44 * S), true)) { SDL_SetClipboardText(A.code.c_str()); set_notice("Room code copied.", 3); }
     ImGui::SameLine();
     if (button("Leave room", ImVec2(150 * S, 44 * S))) { leave_room(); ImGui::EndGroup(); return; }
+    ImGui::SameLine();
+    fr_invite_button_and_picker(170 * S, 44 * S);
     ImGui::EndGroup();
 
-    if (A.lobby.failed()) {
+    if (g_fake_room && A.selected_game.empty() && !A.lib.empty()) {
+        for (auto& e : A.lib)
+            if (supports_online(e)) { A.selected_game = room_id(e); if (e.title.find("Kart") != std::string::npos) break; }
+    }
+    if (!g_fake_room && A.lobby.failed()) {
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_BAD), "%s", A.lobby.status().c_str());
         return;
     }
-    if (!A.lobby.connected()) {
+    if (!room_connected()) {
         ImGui::TextDisabled("Connecting...  %s", A.lobby.status().c_str());
         return;
     }
@@ -2932,6 +2950,24 @@ static void page_settings() {
     end_panel();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
+    begin_panel("set_friends");
+    section_title("Friends");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (ImGui::Checkbox("Show friends panel", &A.st.show_friends)) mark_dirty();
+    if (ImGui::Checkbox("Appear offline", &A.st.appear_offline)) mark_dirty();
+    text_wrapped_disabled("Friends see you as offline, but you can still use the friends list.");
+    if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
+    std::string mycode = fr_my_code();
+    if (!mycode.empty()) {
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        settings_label("Your friend code", "Share it so friends can add you.");
+        ImGui::TextUnformatted(mycode.c_str());
+        ImGui::SameLine();
+        if (button("Copy", ImVec2(0, 0))) { SDL_SetClipboardText(mycode.c_str()); set_toast("Friend code copied.", true, 3.0); }
+    }
+    end_panel();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+
     begin_panel("set_app");
     section_title("Appearance");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -3191,6 +3227,7 @@ static void draw_footer(float h) {
         hints = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}};
     }
     if (pad) hints.push_back({"LB", "", "Prev page"}), hints.push_back({"RB", "", "Next page"});
+    hints.push_back({"Start", "F2", "Friends"});
 
     std::string status;
     ImU32 dot = ui::TEXT3;
@@ -3226,9 +3263,13 @@ static void global_input() {
     if (!A.focused || A.proc) return;
     if (ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
     if (io.WantTextInput) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+        if (fr_handle_back()) return;
     int dir = 0;
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) dir = 1;
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) dir = -1;
+    if (FR.panel_focused) {}
+    else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) dir = 1;
+    if (!FR.panel_focused && ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) dir = -1;
     if (dir) A.page = static_cast<Page>((6 + (int)A.page + dir) % 6);
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
         if (A.page == Page::Library) {
@@ -3247,6 +3288,11 @@ static void global_input() {
 
 static void draw_frame() {
     ImGuiIO& io = ImGui::GetIO();
+    fr_anim_panel();
+    const bool fr_docked = io.DisplaySize.x >= 1100.f * S;
+    const float fr_pw = fr_panel_w(io.DisplaySize.x);
+    const float dock_w = fr_docked ? fr_pw * FR.panel_t : 0.f;
+    const float view_w = io.DisplaySize.x - dock_w;
     A.focused = g_headless || (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
     if (A.page != A.last_page || A.view != A.last_view) { A.last_page = A.page; A.last_view = A.view; A.nav_seed = true; }
     /* D-pad zones: the sidebar and the content are separate focus zones, otherwise ImGui's scoring happily jumps diagonally
@@ -3263,7 +3309,7 @@ static void draw_frame() {
         A.side_ids.clear();
     }
     ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::SetNextWindowSize(ImVec2(view_w, io.DisplaySize.y));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
     ImGui::Begin("##root", nullptr,
@@ -3272,7 +3318,7 @@ static void draw_frame() {
     ImGui::PopStyleVar(2);
 
     /* ---- sidebar (icons + labels; shrinks to icons only when narrow) ---- */
-    bool collapsed = hubui::sidebar_collapsed(A.st.sidebar_mode, io.DisplaySize.x, 1040.f * S);
+    bool collapsed = hubui::sidebar_collapsed(A.st.sidebar_mode, view_w, 1040.f * S);
     float full_w = sp(29.f), mini_w = sp(9.f), target = collapsed ? mini_w : full_w;
     if (A.side_w <= 0) A.side_w = target;
     ui::anim(A.side_w, target, 14.f);
@@ -3291,9 +3337,7 @@ static void draw_frame() {
         ImVec2 p = ImGui::GetCursorScreenPos();
         float ms = sp(5.f);
         ImVec2 m0(p.x + sp(0.5f), p.y), m1(m0.x + ms, m0.y + ms);
-        ui::glow(sdl, m0, m1, sp(1.5f), ui::ACCENT, 0.5f);
-        gradient_round_rect(sdl, m0, m1, mix(ui::ACCENT, IM_COL32_WHITE, 0.12f), IM_COL32(150, 90, 235, 255), sp(1.5f));
-        ui::icon(sdl, ui::Icon::Play, ImVec2((m0.x + m1.x) * 0.5f + sp(0.1f), (m0.y + m1.y) * 0.5f), sp(3.f), IM_COL32_WHITE);
+        ui_draw_brand_logo(sdl, m0, ms);
         if (expand > 0.02f) {
             sdl->PushClipRect(ImVec2(m1.x, p.y), ImVec2(p.x + iw, p.y + ms), true);
             sdl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(m1.x + sp(1.25f), p.y + (ms - ui::F.h2->FontSize) * 0.5f), ui::scale_alpha(ui::TEXT, expand), "RetroHub");
@@ -3357,13 +3401,14 @@ static void draw_frame() {
     ImGui::SameLine(0, 0);
 
     /* ---- content ---- */
-    float hpad = (io.DisplaySize.x - sw > 1200.f * S) ? sp(5.f) : sp(4.f);
+    float hpad = (view_w - sw > 1200.f * S) ? sp(5.f) : sp(4.f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(hpad, sp(3.f)));
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, in_side);
     ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
 
+    fr_top_bar();
     if (A.proc) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p = ImGui::GetCursorScreenPos();
@@ -3405,8 +3450,10 @@ static void draw_frame() {
 
     draw_overlays();
     global_input();
-    draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f), io.DisplaySize.x - sp(3.f));
+    draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f), view_w - sp(3.f));
     ImGui::End();
+    fr_draw_panel(io.DisplaySize.x, io.DisplaySize.y);
+    fr_draw_toasts(io.DisplaySize.x - (fr_docked ? fr_pw * FR.panel_t : (A.st.show_friends ? fr_pw * FR.panel_t : 0.f)) - sp(2.f), sp(7.5f));
 }
 
 /* ============================ main ============================ */
@@ -3431,12 +3478,14 @@ static ImGuiKey shot_key(const std::string& n) {
     if (n == "down") return ImGuiKey_DownArrow;
     if (n == "enter") return ImGuiKey_Enter;
     if (n == "esc") return ImGuiKey_Escape;
+    if (n == "f2") return ImGuiKey_F2;
     if (n == "i") return ImGuiKey_I;
     if (n == "f") return ImGuiKey_F;
     return ImGuiKey_None;
 }
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    shell_set_app_id();
     const char* shot_path = std::getenv("HUB_SCREENSHOT");
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
     SDL_SetMainReady();
@@ -3503,6 +3552,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_SysWMinfo wm;
     SDL_VERSION(&wm.version);
     if (SDL_GetWindowWMInfo(A.win, &wm)) A.hwnd = wm.info.win.window;
+    if (!shot_path) {
+        shell_set_window_icon(A.win);
+        shell_ensure_start_menu_shortcut();
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -3515,6 +3568,23 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     ImGui_ImplSDLRenderer2_Init(ren);
     hubart::init(ren, hub::data_dir() + "art\\");
     hubart::set_enabled(A.st.download_art);
+
+    if (shot_path) {   // headless screenshot aids for the friends UI (never any network)
+        A.st.show_friends = std::getenv("HUB_SHOT_FRIENDS") != nullptr;
+        if (std::getenv("HUB_SHOT_FAKE_FRIENDS")) {
+            fr_fake_init();
+            if (std::getenv("HUB_SHOT_CHAT")) { fr_open_chat("miauid"); FR.chat_unread = 2; }
+            if (std::getenv("HUB_SHOT_BELL")) FR.shot_bell = true;
+        }
+        if (std::getenv("HUB_SHOT_FAKE_ROOM")) {
+            g_fake_room = true;
+            A.in_room = true;
+            A.code = "K7M2QX";
+            A.page = Page::Online;
+            if (std::getenv("HUB_SHOT_PICKER")) FR.open_picker = true;
+        }
+    }
+    fr_start();
 
     refresh_pads();
     start_scan();
@@ -3570,8 +3640,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_job();
         poll_dolphin();
         lobby_tick();
+        fr_tick();
         if (hubupdate::installer_started()) running = false;   // the installer replaces our files and relaunches us
-        if (A.dirty && !ImGui::IsAnyItemActive()) {
+        if (A.dirty && !g_headless && !ImGui::IsAnyItemActive()) {
             hubui::save_settings(A.settings_path, A.st);
             A.dirty = false;
         }
@@ -3619,6 +3690,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     // clean shutdown
     if (A.dirty) hubui::save_settings(A.settings_path, A.st);
     A.lobby.stop();
+    FR.cli.stop();
     if (A.scan_th.joinable()) A.scan_th.join();
     if (A.job.th.joinable()) A.job.th.join();
     if (DL.th.joinable()) DL.th.join();

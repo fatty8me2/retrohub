@@ -84,3 +84,7 @@ void draw_art(ImDrawList* dl, SDL_Texture* tex, int tw, int th, ImVec2 p0, ImVec
 void draw_art_bg(ImDrawList* dl, SDL_Texture* tex, int tw, int th, ImVec2 p0, ImVec2 p1, float rounding, float brightness, float alpha = 1.f);
 
 } // namespace ui
+
+/* RetroHub brand mark (rounded app tile + gradient hexagon "hub" + play glyph + friend nodes), vector-drawn to
+ * match assets/brand/retrohub-logo.svg. `pos` is the top-left, `size` the tile edge in pixels. No texture needed. */
+void ui_draw_brand_logo(ImDrawList* dl, ImVec2 pos, float size);

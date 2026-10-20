@@ -23,3 +23,7 @@ add_custom_command(TARGET n64run POST_BUILD
 # Console unit test: lockstep over a simulated lossy network + BUTTONS layout check.
 add_executable(n64run_lockstep_test test_lockstep.cpp)
 target_link_libraries(n64run_lockstep_test PRIVATE n64run_lockstep_core m64p_api)
+
+# Branding: same icon + version resources as RetroHub.exe (see src/hub/CMakeLists.txt for the generated header).
+target_sources(n64run PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/n64run.rc)
+target_include_directories(n64run PRIVATE ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_CURRENT_SOURCE_DIR}/../hub)
