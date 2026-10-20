@@ -37,4 +37,15 @@ SDL_Texture* get_by_name(const std::string& system_short, const std::string& noi
 bool enabled();             // user setting "Download cover art" (default on)
 void set_enabled(bool on);
 
+/* ---- internal, exposed for tests / headless tools (no renderer, no worker thread) ---- */
+namespace detail {
+void init_headless(const std::string& cache_dir);
+/* Name resolution as the worker does it (names.json -> catalog nointro -> DAT). how: cache/catalog/md5/crc/serial/title. */
+bool resolve_name(const hub::GameEntry& game, std::string* name, std::string* how);
+/* Download (or read cache) + decode + downscale; returns dimensions. On failure *err says why
+ * (a 404 is recorded in misses.json). png_path gets the cache file path. */
+bool fetch_decode(const std::string& system_short, const std::string& nointro_name, Kind kind,
+                  int* w, int* h, std::string* err, std::string* png_path);
+} // namespace detail
+
 } // namespace hubart

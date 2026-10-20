@@ -25,6 +25,7 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+#include "imgui_internal.h"
 
 #include <windows.h>
 #include <shobjidl.h>
@@ -33,6 +34,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -47,11 +50,13 @@
 #include <thread>
 #include <vector>
 
+#include "art.h"
 #include "games.h"
 #include "library.h"
 #include "logic.h"
 #include "savestore.h"
 #include "session.h"
+#include "ui_kit.h"
 
 #ifndef HUB_VERSION_STR
 #define HUB_VERSION_STR "0.0.0"
@@ -62,7 +67,7 @@ using hub::RomFile;
 
 /* ============================ helpers ============================ */
 
-static float S = 1.0f;  // DPI scale
+static float& S = ui::S;  // DPI scale (lives in ui_kit)
 
 static std::wstring W(const std::string& s) {
     if (s.empty()) return L"";
@@ -233,70 +238,39 @@ static std::string fmt_time(uint64_t unix_s) {
     return b;
 }
 static uint64_t unix_now() { return (uint64_t)time(nullptr); }
-
-/* ============================ drawing helpers ============================ */
-
-static ImU32 C(float r, float g, float b, float a = 1.f) { return ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, a)); }
-static ImU32 mix(ImU32 a, ImU32 b, float t) {
-    ImVec4 x = ImGui::ColorConvertU32ToFloat4(a), y = ImGui::ColorConvertU32ToFloat4(b);
-    return ImGui::ColorConvertFloat4ToU32(ImVec4(x.x + (y.x - x.x) * t, x.y + (y.y - x.y) * t,
-                                                 x.z + (y.z - x.z) * t, x.w + (y.w - x.w) * t));
-}
-static ImU32 with_alpha(ImU32 c, float a) {
-    ImVec4 v = ImGui::ColorConvertU32ToFloat4(c);
-    v.w = a;
-    return ImGui::ColorConvertFloat4ToU32(v);
-}
-
-static const ImU32 COL_ACCENT = IM_COL32(98, 118, 255, 255);
-static const ImU32 COL_GOOD = IM_COL32(52, 190, 110, 255);
-static const ImU32 COL_BAD = IM_COL32(220, 90, 80, 255);
-static const ImU32 COL_WARN = IM_COL32(235, 170, 60, 255);
-static const ImU32 COL_PANEL = IM_COL32(32, 33, 40, 255);
-static const ImU32 COL_PANEL2 = IM_COL32(42, 44, 54, 255);
-
-/* Rounded rect filled with a diagonal gradient (recolours the vertices AddRectFilled produced). */
-static void gradient_round_rect(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1, float rounding) {
-    int start = dl->VtxBuffer.Size;
-    dl->AddRectFilled(p0, p1, IM_COL32_WHITE, rounding);
-    float w = std::max(1.f, p1.x - p0.x), h = std::max(1.f, p1.y - p0.y);
-    for (int i = start; i < dl->VtxBuffer.Size; ++i) {
-        ImDrawVert& v = dl->VtxBuffer[i];
-        float t = ((v.pos.x - p0.x) / w + (v.pos.y - p0.y) / h) * 0.5f;
-        t = std::min(1.f, std::max(0.f, t));
-        ImU32 a = v.col >> 24;
-        v.col = (mix(c0, c1, t) & 0x00FFFFFF) | (a << 24);
-    }
+/* Short relative form for tiles: "Today 08:29", "Yesterday", "3 days ago", else the date. */
+static std::string fmt_ago(uint64_t unix_s) {
+    if (!unix_s) return "never";
+    time_t t = (time_t)unix_s, now = time(nullptr);
+    tm lt{}, nt{};
+    localtime_s(&lt, &t);
+    localtime_s(&nt, &now);
+    int days = (int)((now - t) / 86400);
+    if (lt.tm_year == nt.tm_year && lt.tm_yday == nt.tm_yday) return fmt_time(unix_s);
+    if (days <= 1) return "Yesterday";
+    if (days < 14) return std::to_string(days) + " days ago";
+    char b[32];
+    std::strftime(b, sizeof b, "%b %d, %Y", &lt);
+    return b;
 }
 
-/* Pill at an absolute position; returns its width. */
-static float pill_at(ImDrawList* dl, ImVec2 p, const char* text, ImU32 bg, ImU32 fg = IM_COL32_WHITE) {
-    ImVec2 ts = ImGui::CalcTextSize(text);
-    float px = 10 * S, py = 3 * S;
-    ImVec2 sz(ts.x + 2 * px, ts.y + 2 * py);
-    dl->AddRectFilled(p, p + sz, bg, sz.y * 0.5f);
-    dl->AddText(p + ImVec2(px, py), fg, text);
-    return sz.x;
-}
-static void pill(const char* text, ImU32 bg, ImU32 fg = IM_COL32_WHITE) {
-    ImVec2 ts = ImGui::CalcTextSize(text);
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    float w = pill_at(ImGui::GetWindowDrawList(), p, text, bg, fg);
-    ImGui::Dummy(ImVec2(w, ts.y + 6 * S));
-}
+/* ============================ drawing helpers (palette, widgets, icons live in ui_kit) ============================ */
 
-static bool button(const char* label, ImVec2 size, bool primary = false, bool enabled = true) {
-    if (!enabled) ImGui::BeginDisabled();
-    if (primary) {
-        ImGui::PushStyleColor(ImGuiCol_Button, COL_ACCENT);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, mix(COL_ACCENT, IM_COL32_WHITE, 0.18f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, mix(COL_ACCENT, IM_COL32_BLACK, 0.2f));
-    }
-    bool r = ImGui::Button(label, size);
-    if (primary) ImGui::PopStyleColor(3);
-    if (!enabled) ImGui::EndDisabled();
-    return r;
-}
+using ui::button;
+using ui::chip;
+using ui::gradient_round_rect;
+using ui::mix;
+using ui::pill;
+using ui::pill_at;
+using ui::sp;
+using ui::with_alpha;
+
+static const ImU32 COL_ACCENT = ui::ACCENT;
+static const ImU32 COL_GOOD = ui::GOOD;
+static const ImU32 COL_BAD = ui::BAD;
+static const ImU32 COL_WARN = ui::WARN;
+static const ImU32 COL_PANEL = ui::PANEL;
+static const ImU32 COL_PANEL2 = ui::PANEL2;
 
 /* Per-game colour pair (text/gradients only, no art). */
 static void game_colors(const std::string& id, ImU32* a, ImU32* b) {
@@ -344,6 +318,19 @@ static void entry_colors(const hub::GameEntry& e, ImU32* a, ImU32* b) {
 /* ============================ app state ============================ */
 
 enum class Page { Library, Online, Saves, Controllers, Settings, About };
+enum class LibView { Home, All };
+
+/* A transient message (bottom right). */
+struct Toast {
+    std::string text;
+    ImU32 col = 0;
+    double t0 = 0, until = 0;
+};
+/* Smooth horizontal scroll state of one shelf. */
+struct ShelfState {
+    float scroll = 0, target = 0;
+    int focus_idx = -1;
+};
 
 struct ChatLine { std::string who, text; };
 
@@ -377,7 +364,6 @@ struct App {
     bool dirty = false;
 
     Page page = Page::Library;
-    ImFont *f_body = nullptr, *f_title = nullptr, *f_h2 = nullptr, *f_big = nullptr;
 
     // library scan
     std::thread scan_th;
@@ -391,7 +377,9 @@ struct App {
     char search_buf[64] = {0};
     std::string vis_filter, vis_query;            // last inputs used to build `vis`
     std::vector<int> vis;                         // filtered + sorted indices into lib
-    std::vector<int> vis_recent, vis_fav;
+    std::vector<hubui::ShelfGame> sg;             // parallel to `lib`, input of the shelf composition
+    std::vector<hubui::Shelf> shelves;            // Home screen shelves (indices into lib)
+    std::vector<int> pick_idx;                    // "Top Picks you don't have": indices into hub::catalog()
     bool vis_dirty = true;
     bool scanned_once = false;
 
@@ -413,10 +401,7 @@ struct App {
     std::vector<VaultRow> vault_rows;
     bool vault_dirty = true;
 
-    // toast
-    std::string toast;
-    ImU32 toast_col = 0;
-    double toast_until = 0;
+    std::vector<Toast> toasts;
 
     // running game
     RunInfo run;
@@ -445,20 +430,41 @@ struct App {
     // ui
     std::string sel_game;        // library selection (game key)
     bool focus_search = false;
-    std::map<std::string, float> card_anim;
-    std::map<int, float> nav_anim;
-    std::string notice;
-    double notice_until = 0;
+    LibView view = LibView::Home;
+    std::string env_select;      // HUB_SELECT_GAME
+    std::string hero_key;        // game the hero header currently shows (for the fade-in)
+    float hero_t = 1.f;
+    bool show_details = false;   // request to open the details modal
+    std::map<std::string, ShelfState> shelf_state;
+    std::map<std::string, double> art_seen;   // first time art was requested per game (for the loading shimmer)
+    bool page_scrollable = false;             // the Home shelves overflow vertically (plain wheel then scrolls the page)
+    bool focused = true;                      // hub window has input focus
+    bool pad_mode = false;                    // last input came from a gamepad (footer shows controller glyphs)
+    float side_w = 0;                         // animated sidebar width
+    bool nav_seed = true;                     // put the (invisible) keyboard/gamepad focus on the hero Play / selected tile
+    std::vector<ImGuiID> side_ids, side_ids_prev;   // sidebar item ids (this / last frame): tells which zone has the D-pad focus
+    int zone_req = 0;                         // 1 = move focus to the sidebar, 2 = back to the content (set when a D-pad move found nothing)
+    bool seed_side = false;
+    Page last_page = Page::Library;
+    LibView last_view = LibView::Home;
 
     // controllers
     std::vector<SDL_GameController*> pads;
     int pad_sel = 0;
 } A;
 
-static void set_notice(const std::string& s, double secs = 8.0) {
-    A.notice = s;
-    A.notice_until = ImGui::GetTime() + secs;
+static bool g_headless = false;   // HUB_SCREENSHOT run: never launch games or touch the lobby
+
+static void push_toast(const std::string& s, ImU32 col, double secs = 6.0) {
+    double now = ImGui::GetTime();
+    if (!A.toasts.empty() && A.toasts.back().text == s && A.toasts.back().until > now) {   // same message again: just extend it
+        A.toasts.back().until = now + secs;
+        return;
+    }
+    A.toasts.push_back({s, col, now, now + std::min(secs, 14.0)});
+    if (A.toasts.size() > 4) A.toasts.erase(A.toasts.begin());
 }
+static void set_notice(const std::string& s, double secs = 8.0) { push_toast(s, ui::WARN, secs); }
 static void mark_dirty() { A.dirty = true; }
 
 static std::string server_url() {
@@ -539,19 +545,48 @@ static void apply_scan() {
     A.scanned_once = true;
 }
 
+/* Curated catalog entry for a scanned game (id/MD5 first, then serial + system). */
+static const GameInfo* catalog_for(const hub::GameEntry& e) {
+    if (!e.catalog_id.empty())
+        if (const GameInfo* g = hub::find_game(e.catalog_id)) return g;
+    std::string md5;
+    if (e.key.compare(0, 4, "n64:") == 0)
+        for (char c : e.key.substr(4)) md5 += (char)std::toupper((unsigned char)c);
+    return hub::find_game_for(sys_short(e), e.serial, md5);
+}
+
 static void rebuild_vis() {
     std::vector<hubui::ListItem> items;
     items.reserve(A.lib.size());
     for (auto& e : A.lib) items.push_back({e.key, e.title, sys_short(e), is_native(e)});
     std::string q = A.search_buf;
     A.vis = hubui::filter_sort(items, A.sys_filter, q);
-    std::vector<unsigned long long> lp(A.lib.size(), 0);
-    for (size_t i = 0; i < A.lib.size(); ++i)
-        if (A.sys_filter.empty() || A.sys_filter == sys_short(A.lib[i])) lp[i] = gstate(A.lib[i].key).last_played;
-    A.vis_recent = hubui::pick_recent(lp, 6);
-    A.vis_fav.clear();
-    for (int i : A.vis)
-        if (gstate(A.lib[i].key).favorite) A.vis_fav.push_back(i);
+
+    // Home composition: shelves over the whole library, plus catalog games the player doesn't own.
+    A.sg.clear();
+    std::set<std::string> owned_ids;
+    for (auto& e : A.lib) {
+        const GameInfo* cat = catalog_for(e);
+        if (cat) owned_ids.insert(cat->id);
+        const hub::GameState& gs = gstate(e.key);
+        hubui::ShelfGame g;
+        g.key = e.key;
+        g.title = e.title;
+        g.system = sys_short(e);
+        g.favorite = gs.favorite;
+        g.last_played = gs.last_played;
+        g.online = is_native(e) || (cat && cat->online);
+        g.pinned = is_native(e);
+        A.sg.push_back(g);
+    }
+    A.shelves = hubui::compose_shelves(A.sg);
+    const std::vector<GameInfo>& cat = hub::catalog();
+    std::vector<bool> owned(cat.size()), online(cat.size());
+    for (size_t i = 0; i < cat.size(); ++i) {
+        owned[i] = cat[i].engine == hub::Engine::Native || owned_ids.count(cat[i].id) > 0;
+        online[i] = cat[i].online;
+    }
+    A.pick_idx = hubui::pick_unowned(owned, online, 16);
     A.vis_filter = A.sys_filter;
     A.vis_query = q;
     A.vis_dirty = false;
@@ -596,9 +631,7 @@ static std::map<std::string, std::string> my_games_map() {
 /* ---------- save jobs (sync / export / import) ---------- */
 
 static void set_toast(const std::string& s, bool good = true, double secs = 6.0) {
-    A.toast = s;
-    A.toast_col = good ? COL_GOOD : COL_BAD;
-    A.toast_until = ImGui::GetTime() + secs;
+    push_toast(s, good ? COL_GOOD : COL_BAD, secs);
 }
 
 static bool job_busy() { return A.job.running; }
@@ -679,6 +712,7 @@ static void poll_job() {
 
 static bool spawn(const std::string& exe, const std::string& args, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
+    if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
     if (A.proc) { set_notice("A game is already running."); return false; }
     if (!file_exists(exe)) { set_notice("Cannot find " + file_name(exe) + " (" + exe + ")"); return false; }
     std::wstring cmd = L"\"" + W(exe) + L"\" " + W(args);
@@ -1049,6 +1083,7 @@ static void leave_room() {
 
 static void enter_room(bool host, const std::string& code) {
     if (A.st.name.empty()) { set_notice("Pick a player name in Settings first."); return; }
+    if (g_headless) { set_notice("Headless test run: online skipped."); return; }
     if (A.proc) { set_notice("Close the running game first."); return; }
     leave_room();
     A.code = code;
@@ -1139,103 +1174,30 @@ static void lobby_tick() {
     }
 }
 
-/* ============================ theme / fonts ============================ */
-
-static void setup_theme(float scale) {
-    ImGuiStyle& s = ImGui::GetStyle();
-    ImGui::StyleColorsDark(&s);
-    s.WindowRounding = 12;
-    s.ChildRounding = 12;
-    s.FrameRounding = 8;
-    s.PopupRounding = 10;
-    s.GrabRounding = 8;
-    s.ScrollbarRounding = 8;
-    s.WindowPadding = ImVec2(16, 16);
-    s.FramePadding = ImVec2(14, 10);
-    s.ItemSpacing = ImVec2(12, 12);
-    s.ItemInnerSpacing = ImVec2(10, 8);
-    s.ScrollbarSize = 12;
-    s.FrameBorderSize = 0;
-    s.WindowBorderSize = 0;
-    s.ChildBorderSize = 0;
-    s.ScaleAllSizes(scale);
-
-    ImVec4* c = s.Colors;
-    auto cv = [](ImU32 u) { return ImGui::ColorConvertU32ToFloat4(u); };
-    c[ImGuiCol_WindowBg] = ImVec4(0.075f, 0.078f, 0.094f, 1);
-    c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_PopupBg] = ImVec4(0.12f, 0.125f, 0.15f, 1);
-    c[ImGuiCol_Text] = ImVec4(0.93f, 0.94f, 0.97f, 1);
-    c[ImGuiCol_TextDisabled] = ImVec4(0.55f, 0.57f, 0.65f, 1);
-    c[ImGuiCol_Button] = cv(COL_PANEL2);
-    c[ImGuiCol_ButtonHovered] = cv(mix(COL_PANEL2, COL_ACCENT, 0.45f));
-    c[ImGuiCol_ButtonActive] = cv(mix(COL_PANEL2, COL_ACCENT, 0.7f));
-    c[ImGuiCol_FrameBg] = ImVec4(0.11f, 0.115f, 0.14f, 1);
-    c[ImGuiCol_FrameBgHovered] = ImVec4(0.15f, 0.16f, 0.2f, 1);
-    c[ImGuiCol_FrameBgActive] = ImVec4(0.17f, 0.18f, 0.24f, 1);
-    c[ImGuiCol_SliderGrab] = cv(COL_ACCENT);
-    c[ImGuiCol_SliderGrabActive] = cv(mix(COL_ACCENT, IM_COL32_WHITE, 0.25f));
-    c[ImGuiCol_CheckMark] = cv(COL_ACCENT);
-    c[ImGuiCol_Header] = cv(with_alpha(COL_ACCENT, 0.35f));
-    c[ImGuiCol_HeaderHovered] = cv(with_alpha(COL_ACCENT, 0.55f));
-    c[ImGuiCol_HeaderActive] = cv(with_alpha(COL_ACCENT, 0.75f));
-    c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_ScrollbarGrab] = ImVec4(0.25f, 0.26f, 0.32f, 1);
-    c[ImGuiCol_Separator] = ImVec4(1, 1, 1, 0.08f);
-    c[ImGuiCol_NavCursor] = cv(IM_COL32(255, 255, 255, 230));
-    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.6f);
-}
-
-static void setup_fonts(float scale) {
-    ImGuiIO& io = ImGui::GetIO();
-    const char* reg = "C:\\Windows\\Fonts\\segoeui.ttf";
-    const char* bold = "C:\\Windows\\Fonts\\segoeuib.ttf";
-    bool have_reg = GetFileAttributesA(reg) != INVALID_FILE_ATTRIBUTES;
-    bool have_bold = GetFileAttributesA(bold) != INVALID_FILE_ATTRIBUTES;
-    auto load = [&](bool b, float px) -> ImFont* {
-        const char* p = b ? (have_bold ? bold : reg) : reg;
-        if (have_reg || (b && have_bold)) return io.Fonts->AddFontFromFileTTF(p, px * scale);
-        return nullptr;
-    };
-    A.f_body = load(false, 19);
-    if (!A.f_body) {
-        // Fallback: built-in font, enlarged.
-        ImFontConfig cfg;
-        cfg.SizePixels = 19 * scale;
-        A.f_body = io.Fonts->AddFontDefault(&cfg);
-        A.f_title = A.f_h2 = A.f_big = A.f_body;
-        return;
-    }
-    A.f_title = load(true, 34);
-    A.f_h2 = load(true, 24);
-    A.f_big = load(true, 84);
-    if (!A.f_title) A.f_title = A.f_body;
-    if (!A.f_h2) A.f_h2 = A.f_body;
-    if (!A.f_big) A.f_big = A.f_body;
-}
-
 /* ============================ widgets / pages ============================ */
 
 static void page_header(const char* title, const char* sub) {
-    ImGui::PushFont(A.f_title);
+    ImGui::PushFont(ui::F.title);
     ImGui::TextUnformatted(title);
     ImGui::PopFont();
     if (sub && *sub) ImGui::TextDisabled("%s", sub);
-    ImGui::Dummy(ImVec2(0, 6 * S));
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
 }
 
 static void begin_panel(const char* id, ImVec2 size = ImVec2(0, 0), ImU32 bg = COL_PANEL) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * S);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * S, 18 * S));
-    ImGuiChildFlags fl = ImGuiChildFlags_AlwaysUseWindowPadding;
+    ImGui::PushStyleColor(ImGuiCol_Border, ui::HAIRLINE);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, sp(2.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.25f)));
+    ImGuiChildFlags fl = ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders;
     if (size.y == 0) fl |= ImGuiChildFlags_AutoResizeY;
     ImGui::BeginChild(id, size, fl);
 }
 static void end_panel() {
     ImGui::EndChild();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
 }
 
 static void text_wrapped_disabled(const std::string& s) {
@@ -1260,7 +1222,9 @@ static void locate_smash() {
     start_scan();
 }
 
-/* ---------- Library ---------- */
+/* ---------- Library: Home (hero + shelves) and All Games ---------- */
+
+static const float kTileAspect = 1.3f;   // tile width / height, shared by shelves, grid and hero art
 
 static void toggle_favorite(const std::string& key) {
     hub::set_favorite(key, !gstate(key).favorite);
@@ -1268,114 +1232,8 @@ static void toggle_favorite(const std::string& key) {
     refresh_state(key);
 }
 
-static void star_shape(ImDrawList* dl, ImVec2 c, float r, bool filled, ImU32 col) {
-    ImVec2 pts[10];
-    for (int i = 0; i < 10; ++i) {
-        float a = -3.14159265f / 2 + i * 3.14159265f / 5;
-        float rr = (i & 1) ? r * 0.42f : r;
-        pts[i] = ImVec2(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr);
-    }
-    if (filled) dl->AddConvexPolyFilled(pts, 10, col);
-    else dl->AddPolyline(pts, 10, col, ImDrawFlags_Closed, 1.8f * S);
-}
-
-static void game_card(const hub::GameEntry& e, ImVec2 size, const char* section) {
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui::PushID(section);
-    ImGui::PushID(e.key.c_str());
-    ImGui::InvisibleButton("card", size);
-    bool item_hov = ImGui::IsItemHovered();
-    bool focused = ImGui::IsItemFocused();
-    bool hov = item_hov || focused;
-    ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
-    float pad = 16 * S;
-    float sr = 12 * S;
-    ImVec2 sc(r1.x - pad - sr * 0.6f, r0.y + pad * 0.8f + sr + 2 * S);
-    bool star_hov = item_hov && ImGui::IsMouseHoveringRect(sc - ImVec2(sr + 6 * S, sr + 6 * S), sc + ImVec2(sr + 6 * S, sr + 6 * S));
-    bool play = false;
-    if (ImGui::IsItemClicked()) {
-        A.sel_game = e.key;
-        if (star_hov) toggle_favorite(e.key);
-    }
-    if (item_hov && !star_hov && ImGui::IsMouseDoubleClicked(0)) play = true;
-    if (focused) {
-        if (A.sel_game != e.key && io.NavActive) A.sel_game = e.key;
-        if (!io.WantTextInput) {
-            if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
-                ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) play = true;
-            if (ImGui::IsKeyPressed(ImGuiKey_F, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) toggle_favorite(e.key);
-        }
-    }
-    float& an = A.card_anim[e.key];
-    an += ((hov ? 1.f : 0.f) - an) * std::min(1.f, io.DeltaTime * 14.f);
-
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    float grow = an * 5 * S;
-    ImVec2 p0 = r0 - ImVec2(grow, grow), p1 = r1 + ImVec2(grow, grow);
-    float rad = 18 * S;
-    ImU32 c0, c1;
-    entry_colors(e, &c0, &c1);
-
-    dl->AddRectFilled(p0 + ImVec2(0, 6 * S), p1 + ImVec2(0, 10 * S), IM_COL32(0, 0, 0, (int)(60 + 60 * an)), rad + 4 * S);
-    gradient_round_rect(dl, p0, p1, c0, c1, rad);
-    dl->PushClipRect(p0, p1, true);
-    dl->AddCircleFilled(ImVec2(p1.x - 40 * S, p0.y + 50 * S), 70 * S, IM_COL32(255, 255, 255, 28), 48);
-    dl->AddCircleFilled(ImVec2(p1.x - 10 * S, p1.y - 10 * S), 50 * S, IM_COL32(0, 0, 0, 30), 48);
-    if (hov) dl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, 14), rad);
-    // system badge
-    std::string badge = sys_badge(e.system);
-    if (is_native(e)) badge += "  NATIVE";
-    pill_at(dl, p0 + ImVec2(pad, pad * 0.8f), badge.c_str(), IM_COL32(0, 0, 0, 110));
-    // title (wraps inside the card)
-    dl->PushClipRect(p0 + ImVec2(0, pad * 0.8f + 34 * S), p1 - ImVec2(0, 34 * S), true);
-    dl->AddText(A.f_h2, A.f_h2->FontSize, p0 + ImVec2(pad, pad * 0.8f + 38 * S), IM_COL32_WHITE, e.title.c_str(), nullptr,
-                size.x - 2 * pad);
-    dl->PopClipRect();
-    // bottom line: play time
-    const hub::GameState& gs = gstate(e.key);
-    std::string pt = hubui::format_play_time(gs.play_seconds);
-    dl->AddText(ImVec2(p0.x + pad, p1.y - pad - ImGui::GetFontSize() + 2 * S), IM_COL32(255, 255, 255, 215), pt.c_str());
-    dl->PopClipRect();
-    // favorite star
-    ImVec2 sc2 = sc + ImVec2(0, 0);
-    dl->AddCircleFilled(sc2, sr + 5 * S, IM_COL32(0, 0, 0, star_hov ? 120 : 70), 24);
-    star_shape(dl, sc2, sr, gs.favorite, gs.favorite ? IM_COL32(255, 214, 70, 255) : IM_COL32(255, 255, 255, star_hov ? 255 : 190));
-    if (A.sel_game == e.key) dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 235), rad, 0, 3 * S);
-
-    ImGui::PopID();
-    ImGui::PopID();
-    if (play) {
-        A.sel_game = e.key;
-        play_entry(e);
-    }
-}
-
-static void card_strip(const char* id, const std::vector<int>& idx, ImVec2 cs) {
-    float h = cs.y + 34 * S;
-    ImGui::BeginChild(id, ImVec2(0, h), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_HorizontalScrollbar);
-    ImGui::SetCursorPos(ImVec2(8 * S, 10 * S));
-    for (size_t i = 0; i < idx.size(); ++i) {
-        if (i) ImGui::SameLine();
-        game_card(A.lib[idx[i]], cs, id);
-    }
-    ImGui::EndChild();
-}
-
-static bool chip(const char* label, bool on, ImU32 col) {
-    ImVec2 ts = ImGui::CalcTextSize(label);
-    ImVec2 sz(ts.x + 30 * S, ts.y + 14 * S);
-    bool pressed = ImGui::InvisibleButton(label, sz);
-    bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
-    dl->AddRectFilled(p0, p1, on ? col : (hov ? mix(COL_PANEL2, IM_COL32_WHITE, 0.08f) : COL_PANEL), sz.y * 0.5f);
-    if (ImGui::IsItemFocused()) dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 200), sz.y * 0.5f, 0, 2 * S);
-    dl->AddText(p0 + ImVec2(15 * S, 7 * S), on ? IM_COL32_WHITE : IM_COL32(190, 194, 210, 255), label);
-    return pressed;
-}
-
 static void section_title(const std::string& t) {
-    ImGui::PushFont(A.f_h2);
+    ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted(t.c_str());
     ImGui::PopFont();
 }
@@ -1408,168 +1266,884 @@ static void open_in_explorer(const std::string& dir) {
     ShellExecuteW(nullptr, L"open", W(dir).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-static void library_details(const hub::GameEntry& e, float height) {
-    ImU32 c0, c1;
-    entry_colors(e, &c0, &c1);
-    const hub::GameState& gs = gstate(e.key);
-    if (A.info_key != e.key || ImGui::GetTime() - A.info_at > 4.0) refresh_save_info(e);
-    bool idle = A.proc == nullptr;
-    bool native = is_native(e);
+/* ---------- cover art lookups ---------- */
 
-    begin_panel("details", ImVec2(0, height));
+struct ArtRef {
+    SDL_Texture* tex = nullptr;
+    int w = 0, h = 0;
+    bool loading = false;   // show a gentle shimmer for a few seconds while the fetch is in flight
+};
+static ArtRef art_lookup(const std::string& seen_key, bool have_name, SDL_Texture* tex, int w, int h) {
+    ArtRef a;
+    a.tex = tex;
+    a.w = w;
+    a.h = h;
+    if (!tex && have_name && hubart::enabled()) {
+        double now = ImGui::GetTime();
+        auto it = A.art_seen.find(seen_key);
+        if (it == A.art_seen.end()) it = A.art_seen.emplace(seen_key, now).first;
+        a.loading = now - it->second < 10.0;
+    }
+    return a;
+}
+static ArtRef art_for_entry(const hub::GameEntry& e) {
+    int w = 0, h = 0;
+    SDL_Texture* t = hubart::get(e, hubart::Kind::Boxart, &w, &h);
+    return art_lookup(e.key, true, t, w, h);
+}
+static ArtRef art_for_pick(const GameInfo& g) {
+    if (g.nointro.empty()) return ArtRef();
+    int w = 0, h = 0;
+    SDL_Texture* t = hubart::get_by_name(g.system, g.nointro, hubart::Kind::Boxart, &w, &h);
+    return art_lookup("pick:" + g.id, true, t, w, h);
+}
+
+static std::string initials(const std::string& t) {
+    std::string o;
+    bool start = true;
+    for (unsigned char c : t) {
+        if (c == ' ' || c == '-' || c == ':' || c == '.') { start = true; continue; }
+        if (start && std::isalnum(c)) {
+            o += (char)std::toupper(c);
+            if (o.size() >= 3) break;
+        }
+        start = false;
+    }
+    return o;
+}
+
+/* ---------- tiles ---------- */
+
+static void seed_nav_here();
+
+struct TileSpec {
+    std::string id, title, subtitle, badge;
+    ImU32 c0 = 0, c1 = 0;
+    ArtRef art;
+    bool favorite = false, online = false, selected = false, owned = true, show_star = true;
+    const char* cta = nullptr;   // hover caption for catalog tiles ("Add ROM")
+};
+struct TileResult {
+    bool visible = false, hovered = false, focused = false, clicked = false, activated = false, star = false, details = false;
+};
+
+static void draw_no_art(ImDrawList* dl, const TileSpec& t, ImVec2 p0, ImVec2 p1, float rad, float dim) {
+    ImU32 a = t.c0, b = t.c1;
+    if (dim < 1.f) { a = mix(ui::PANEL, a, dim); b = mix(ui::PANEL, b, dim); }
+    gradient_round_rect(dl, p0, p1, a, b, rad);
+    std::string ini = initials(t.title);
+    if (!ini.empty()) {
+        ImFont* f = ui::F.hero;
+        ImVec2 ts = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, ini.c_str());
+        dl->AddText(f, f->FontSize, ImVec2((p0.x + p1.x - ts.x) * 0.5f, p0.y + (p1.y - p0.y) * 0.16f), IM_COL32(255, 255, 255, 52),
+                    ini.c_str());
+    }
+}
+
+static TileResult draw_tile(const TileSpec& t, ImVec2 size) {
+    TileResult r;
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::PushID(t.id.c_str());
+    ImGui::InvisibleButton("tile", size, ImGuiButtonFlags_EnableNav);
+    if (t.selected && A.view == LibView::All) seed_nav_here();   // All Games: initial focus = the selected game
+    r.visible = ImGui::IsItemVisible();
+    bool item_hov = ImGui::IsItemHovered();
+    bool focused = ImGui::IsItemFocused();
+    r.hovered = item_hov;
+    r.focused = focused && io.NavVisible;
+    if (!r.visible && !focused && !item_hov) {
+        ImGui::PopID();
+        return r;
+    }
+    ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+    float sr = sp(1.5f);
+    ImVec2 sc(r1.x - sp(2.25f), r0.y + sp(2.25f));
+    bool star_hov = item_hov && t.show_star && t.owned && std::fabs(io.MousePos.x - sc.x) < sr + sp(0.75f) && std::fabs(io.MousePos.y - sc.y) < sr + sp(0.75f);
+    if (ImGui::IsItemClicked(0)) {
+        if (star_hov) r.star = true;
+        else r.clicked = true;
+    }
+    if (ImGui::IsItemClicked(1)) { r.clicked = true; r.details = t.owned; }
+    if (item_hov && !star_hov && ImGui::IsMouseDoubleClicked(0)) r.activated = true;
+    if (focused && A.focused && !io.WantTextInput && !A.proc) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))
+            r.activated = true;
+    }
+
+    float* an = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), 0.f);
+    ui::anim(*an, (item_hov || r.focused) ? 1.f : 0.f, 14.f);
+    float e = *an;
+    float lift = e * sp(0.5f), grow = e * sp(0.375f);
+    ImVec2 p0(r0.x - grow, r0.y - grow - lift), p1(r1.x + grow, r1.y + grow - lift);
+    float rad = sp(1.75f), h = p1.y - p0.y, w = p1.x - p0.x;
+    float dim = t.owned ? 1.f : 0.52f + 0.3f * e;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 wp = ImGui::GetWindowPos();
-    dl->AddRectFilled(wp + ImVec2(0, 18 * S), wp + ImVec2(5 * S, ImGui::GetWindowHeight() - 18 * S), c1, 3 * S);
 
-    ImGui::PushFont(A.f_h2);
-    ImGui::TextUnformatted(e.title.c_str());
-    ImGui::PopFont();
-    pill(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.2f));
-    ImGui::SameLine();
-    pill(native ? "NATIVE PORT" : "EMULATED", COL_PANEL2);
-    if (supports_online(e)) {
-        ImGui::SameLine();
-        char pl[32];
-        std::snprintf(pl, sizeof pl, "1-%d players", max_players_for(e));
-        pill(pl, COL_PANEL2);
-    }
-    ImGui::TextDisabled("%s", e.path.c_str());
-    std::string line = "Play time: " + hubui::format_play_time(gs.play_seconds) + "     Last played: " +
-                       (gs.last_played ? fmt_time(gs.last_played) : std::string("never"));
-    ImGui::TextUnformatted(line.c_str());
-    if (native) {
-        ImGui::TextDisabled("Smash Classic keeps its own saves.");
-    } else {
-        std::string sv = A.info_battery_files > 0
-                             ? "Save data: " + std::to_string(A.info_battery_files) + " file(s), " + size_text(A.info_battery_bytes)
-                             : std::string("Save data: none yet");
-        sv += "     Save states: " + std::to_string(A.info_state_files);
-        if (A.info_auto_state) sv += "  (+ resume point)";
-        ImGui::TextUnformatted(sv.c_str());
-    }
-    ImGui::Dummy(ImVec2(0, 2 * S));
+    ui::shadow(dl, p0, p1, rad, 0.8f + 0.7f * e, e * sp(0.5f));
+    ui::glow(dl, p0, p1, rad, t.c1, e);
+    if (t.art.tex) ui::draw_art(dl, t.art.tex, t.art.w, t.art.h, p0, p1, rad, dim);
+    else draw_no_art(dl, t, p0, p1, rad, dim);
+    if (t.art.loading) ui::shimmer(dl, p0, p1, rad, IM_COL32(0, 0, 0, 0));
+    // scrims keep the badge and title readable on any artwork
+    ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.30f), p1, IM_COL32(6, 7, 12, 255), rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.96f);
+    ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.58f), p1, IM_COL32(6, 7, 12, 255), rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.55f);
+    if (t.art.tex) ui::vfade_round_rect(dl, p0, ImVec2(p1.x, p0.y + h * 0.28f), IM_COL32(6, 7, 12, 255), rad, ImDrawFlags_RoundCornersTop, 0.5f, 0.f);
+    if (e > 0.01f) dl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, (int)(12 * e)), rad);
 
-    if (button("Play", ImVec2(170 * S, 46 * S), true, idle)) play_entry(e);
-    ImGui::SameLine();
-    if (e.system == hub::System::GC) {
-        button("Online coming soon", ImVec2(0, 46 * S), false, false);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Online via Dolphin's own netplay - coming soon");
-    } else if (supports_online(e)) {
-        if (button("Play Online", ImVec2(0, 46 * S), false, idle)) {
+    float pad = sp(1.5f);
+    ui::pill_at(dl, p0 + ImVec2(sp(1.25f), sp(1.25f)), t.badge.c_str(), IM_COL32(0, 0, 0, 150));
+    if (t.show_star && t.owned && (t.favorite || e > 0.04f || star_hov)) {
+        float sa = t.favorite ? 1.f : std::max(e, star_hov ? 1.f : 0.f);
+        dl->AddCircleFilled(sc, sr + sp(0.5f), IM_COL32(0, 0, 0, (int)((star_hov ? 150 : 100) * sa)), 24);
+        ui::icon(dl, t.favorite ? ui::Icon::StarFilled : ui::Icon::Star, sc, sr * 1.7f,
+                 t.favorite ? IM_COL32(255, 214, 70, 255) : IM_COL32(255, 255, 255, (int)(235 * sa)));
+    }
+
+    // title (max 2 lines) + subtitle, anchored to the bottom
+    ImFont* tf = ui::F.bold;
+    float tfs = tf->FontSize, cap = ui::F.cap->FontSize;
+    float maxw = w - pad * 2 - (t.online && t.owned ? sp(2.5f) : 0);
+    std::vector<std::string> lines = ui::wrap_lines(tf, tfs, t.title, w - pad * 2, 2);
+    float sub_y = p1.y - sp(1.25f) - cap;
+    float ty = sub_y - sp(0.375f) - (float)lines.size() * tfs * 1.12f;
+    for (size_t i = 0; i < lines.size(); ++i)
+        ui::text_shadowed(dl, tf, tfs, ImVec2(p0.x + pad, ty + i * tfs * 1.12f), IM_COL32_WHITE, lines[i].c_str());
+    std::string sub = ui::ellipsize(ui::F.cap, cap, t.subtitle, maxw);
+    dl->AddText(ui::F.cap, cap, ImVec2(p0.x + pad, sub_y), IM_COL32(255, 255, 255, 190), sub.c_str());
+    if (t.online && t.owned) ui::icon(dl, ui::Icon::Globe, ImVec2(p1.x - pad - sp(1), sub_y + cap * 0.5f), sp(2), ui::GOOD);
+    if (!t.owned && t.cta && e > 0.02f) {
+        const char* c = t.cta;
+        ImFont* f = ui::F.bold;
+        float cw = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, c).x + sp(5.f);
+        ImVec2 cp((p0.x + p1.x - cw) * 0.5f, p0.y + h * 0.40f);
+        float ch = f->FontSize + sp(1.25f);
+        dl->AddRectFilled(cp, cp + ImVec2(cw, ch), ui::scale_alpha(ui::ACCENT, e), ch * 0.5f);
+        ui::icon(dl, ui::Icon::Plus, cp + ImVec2(sp(1.75f), ch * 0.5f), sp(1.75f), IM_COL32(255, 255, 255, (int)(255 * e)));
+        dl->AddText(f, f->FontSize, cp + ImVec2(sp(3.f), sp(0.625f)), IM_COL32(255, 255, 255, (int)(255 * e)), c);
+    }
+    dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
+    if (r.focused) ui::focus_ring(dl, p0, p1, rad);
+    else if (t.selected) dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 120), rad, 0, sp(0.25f));
+    ImGui::PopID();
+    return r;
+}
+
+static TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_sub) {
+    TileSpec t;
+    t.id = std::string(shelf) + "|" + e.key;
+    t.title = e.title;
+    t.badge = sys_badge(e.system);
+    if (is_native(e)) t.badge += " NATIVE";
+    entry_colors(e, &t.c0, &t.c1);
+    t.art = art_for_entry(e);
+    const hub::GameState& gs = gstate(e.key);
+    t.favorite = gs.favorite;
+    t.selected = A.sel_game == e.key;
+    const GameInfo* cat = catalog_for(e);
+    t.online = is_native(e) || (cat && cat->online);
+    if (recent_sub && gs.last_played) t.subtitle = fmt_ago(gs.last_played);
+    else if (gs.play_seconds) t.subtitle = hubui::format_play_time(gs.play_seconds) + " played";
+    else t.subtitle = cat && cat->year ? std::to_string(cat->year) : std::string("Not played yet");
+    return t;
+}
+
+static void handle_entry_result(const hub::GameEntry& e, const TileSpec& spec, const TileResult& r) {
+    if (r.focused && A.sel_game != e.key) A.sel_game = e.key;
+    bool play = r.activated;
+    if (r.clicked) {
+        if (spec.selected) play = true;   // second click on the selected game plays it
+        A.sel_game = e.key;
+    }
+    if (r.star) { A.sel_game = e.key; toggle_favorite(e.key); }
+    if (r.details) { A.sel_game = e.key; A.show_details = true; }
+    if (play) {
+        A.sel_game = e.key;
+        hub::GameEntry copy = e;
+        play_entry(copy);
+    }
+}
+
+/* ---------- shelves ---------- */
+
+static void shelf_header(const char* title, const std::string& right, float bleed) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont* f = ui::F.h2;
+    dl->AddText(f, f->FontSize, ImVec2(p.x + bleed, p.y), ui::TEXT, title);
+    if (!right.empty()) {
+        ImVec2 ts = ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, right.c_str());
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + w - bleed - ts.x, p.y + f->FontSize - ts.y - sp(0.25f)), ui::TEXT3, right.c_str());
+    }
+    ImGui::Dummy(ImVec2(w, f->FontSize + sp(1.25f)));
+}
+
+/* A horizontally scrolling row of tiles. Scrolling is managed here (smooth, time based) instead of by a child
+ * window, so every tile stays a real ImGui item and the D-pad can walk onto tiles that are off-screen. */
+static void shelf_strip(const std::string& id, int count, float tw, float th, const std::function<TileResult(int, ImVec2)>& draw_one) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    ShelfState& ss = A.shelf_state[id];
+    float gap = sp(2.f), bleed = sp(1.5f);
+    float view_w = ImGui::GetContentRegionAvail().x;
+    float strip_h = th + sp(4.5f);
+    float content_w = bleed * 2 + count * tw + std::max(0, count - 1) * gap;
+    float max_scroll = std::max(0.f, content_w - view_w);
+    ImVec2 org = ImGui::GetCursorScreenPos();
+    ImVec2 v0 = org, v1(org.x + view_w, org.y + strip_h);
+
+    bool hov = ImGui::IsMouseHoveringRect(v0, v1) && ImGui::IsWindowHovered();
+    if (hov && max_scroll > 0) {
+        float wh = -io.MouseWheelH;
+        if (io.KeyShift || !A.page_scrollable) wh -= io.MouseWheel;
+        if (wh != 0) ss.target += wh * tw * 0.8f;
+    }
+    ss.target = std::max(0.f, std::min(max_scroll, ss.target));
+    ss.scroll = hubui::approach(ss.scroll, ss.target, io.DeltaTime, 16.f);
+    if (std::fabs(ss.scroll - ss.target) < 0.4f) ss.scroll = ss.target;
+
+    ImGui::PushClipRect(v0, v1, true);
+    bool any_focus = false;
+    for (int i = 0; i < count; ++i) {
+        float x = org.x + bleed + i * (tw + gap) - ss.scroll;
+        ImGui::SetCursorScreenPos(ImVec2(x, org.y + sp(1.5f)));
+        TileResult r = draw_one(i, ImVec2(tw, th));
+        if (r.focused) {
+            any_focus = true;
+            if (ss.focus_idx != i) {   // gamepad/keyboard moved onto this tile: scroll it into view
+                ss.focus_idx = i;
+                float left = bleed + i * (tw + gap), right = left + tw, margin = bleed + sp(1.f);
+                if (left - ss.target < margin) ss.target = left - margin;
+                else if (right - ss.target > view_w - margin) ss.target = right - view_w + margin;
+                ss.target = std::max(0.f, std::min(max_scroll, ss.target));
+            }
+        }
+    }
+    if (!any_focus) ss.focus_idx = -1;
+    ImGui::PopClipRect();
+
+    // edge fades + arrows hint that the row scrolls
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float fw = sp(5.f);
+    ImU32 solid = ui::BG, clear = ui::with_alpha(ui::BG, 0.f);
+    dl->PushClipRect(v0, v1, true);
+    if (ss.scroll > 1.f) dl->AddRectFilledMultiColor(v0, ImVec2(v0.x + fw, v1.y), solid, clear, clear, solid);
+    if (ss.scroll < max_scroll - 1.f) dl->AddRectFilledMultiColor(ImVec2(v1.x - fw, v0.y), v1, clear, solid, solid, clear);
+    dl->PopClipRect();
+    if (max_scroll > 0 && (hov || any_focus)) {
+        float bs = sp(5.f), by = org.y + sp(1.5f) + th * 0.5f - bs * 0.5f;
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+        if (ss.scroll > 1.f) {
+            ImGui::SetCursorScreenPos(ImVec2(org.x + sp(0.5f), by));
+            if (ui::icon_button((id + "<").c_str(), ui::Icon::ChevronL, bs, false, nullptr)) ss.target = std::max(0.f, ss.target - view_w * 0.8f);
+        }
+        if (ss.scroll < max_scroll - 1.f) {
+            ImGui::SetCursorScreenPos(ImVec2(v1.x - bs - sp(0.5f), by));
+            if (ui::icon_button((id + ">").c_str(), ui::Icon::ChevronR, bs, false, nullptr)) ss.target = std::min(max_scroll, ss.target + view_w * 0.8f);
+        }
+        ImGui::PopItemFlag();
+    }
+
+    ImGui::SetCursorScreenPos(org);
+    ImGui::Dummy(ImVec2(view_w, strip_h));
+    win->DC.CursorMaxPos.x = std::min(win->DC.CursorMaxPos.x, win->WorkRect.Max.x);   // off-screen tiles must not widen the page
+}
+
+static void go_add_rom(const GameInfo& g) {
+    A.page = Page::Settings;
+    push_toast("Put your " + g.title + " ROM in a ROM folder, then press Rescan.", ui::ACCENT, 7.0);
+}
+
+static void home_shelves() {
+    float avail = ImGui::GetContentRegionAvail().x;
+    float gap = sp(2.f), bleed = sp(1.5f);
+    float max_w = std::max(sp(25.f), std::min(sp(37.5f), avail * 0.2f));
+    float tw = hubui::shelf_tile_w(avail, sp(24.f), max_w, gap);
+    float th = tw / kTileAspect;
+    for (size_t si = 0; si < A.shelves.size(); ++si) {
+        const hubui::Shelf& sh = A.shelves[si];
+        char cnt[32];
+        std::snprintf(cnt, sizeof cnt, "%d game%s", (int)sh.items.size(), sh.items.size() == 1 ? "" : "s");
+        shelf_header(sh.title.c_str(), cnt, bleed);
+        bool recent = sh.id == "recent";
+        shelf_strip("shelf_" + sh.id, (int)sh.items.size(), tw, th, [&](int i, ImVec2 sz) {
+            const hub::GameEntry& e = A.lib[sh.items[i]];
+            TileSpec spec = spec_for_entry(e, sh.id.c_str(), recent);
+            TileResult r = draw_tile(spec, sz);
+            handle_entry_result(e, spec, r);
+            return r;
+        });
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
+    if (!A.pick_idx.empty()) {
+        const std::vector<GameInfo>& cat = hub::catalog();
+        shelf_header("Top Picks You Don't Have Yet", "add the ROM to a ROM folder", bleed);
+        shelf_strip("shelf_picks", (int)A.pick_idx.size(), tw, th, [&](int i, ImVec2 sz) {
+            const GameInfo& g = cat[A.pick_idx[i]];
+            TileSpec t;
+            t.id = "pick|" + g.id;
+            t.title = g.title;
+            hub::System sy = hub::system_from_short(g.system);
+            t.badge = sys_badge(sy);
+            system_colors(sy, &t.c0, &t.c1);
+            t.art = art_for_pick(g);
+            t.owned = false;
+            t.cta = "Add ROM";
+            t.online = g.online;
+            t.subtitle = g.year ? std::to_string(g.year) + " - not in your library" : std::string("Not in your library");
+            TileResult r = draw_tile(t, sz);
+            if (r.clicked || r.activated) go_add_rom(g);
+            return r;
+        });
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
+    ImGui::Dummy(ImVec2(0, sp(3.f)));
+}
+
+/* ---------- hero ---------- */
+
+/* Gives the item just submitted the (not yet visible) nav focus. ImGui's own first-press behaviour would otherwise
+ * land on whatever is closest to the window corner (the search box). Called once per page/view change. */
+static void set_nav_here() {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (!g.NavWindow) return;
+    ImVec2 off = g.NavWindow->DC.CursorStartPos;
+    ImRect rel(ImGui::GetItemRectMin() - off, ImGui::GetItemRectMax() - off);
+    ImGui::SetNavID(ImGui::GetItemID(), ImGuiNavLayer_Main, g.CurrentFocusScopeId, rel);
+}
+static void seed_nav_here() {
+    if (!A.nav_seed || ImGui::GetIO().WantTextInput) return;
+    A.nav_seed = false;
+    set_nav_here();
+}
+
+static float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool compact, bool seed_nav = false) {
+    bool idle = A.proc == nullptr;
+    const hub::GameState& gs = gstate(e.key);
+    bool gc = e.system == hub::System::GC;
+    bool online = supports_online(e) || gc;
+    float gap = sp(1.5f), play_w = sp(compact ? 15.f : 18.f), on_w = compact ? bh : sp(21.f);
+    float total = play_w;
+    if (online) total += gap + on_w;
+    total += (gap + bh) * 2;
+    if (!draw) return total;
+    ImGui::SetCursorScreenPos(at);
+    if (button("Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; play_entry(c); }
+    if (seed_nav) seed_nav_here();
+    if (online) {
+        ImGui::SameLine(0, gap);
+        if (gc) {
+            button(compact ? "##onsoon" : "Online soon", ImVec2(on_w, bh), false, false, ui::Icon::Globe);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Online via Dolphin's own netplay - coming soon");
+        } else if (button(compact ? "##online" : "Play Online", ImVec2(on_w, bh), false, idle, ui::Icon::Globe)) {
             A.pending_room_game = room_id(e);
             enter_room(true, hubnet::new_room_code());
         }
+        if (compact && ImGui::IsItemHovered()) ImGui::SetTooltip("Play online with friends");
     }
-    ImGui::SameLine();
-    if (button("Open save folder", ImVec2(0, 46 * S), false, !native))
-        open_in_explorer(hub::saves::game_dir(sys_short(e), e.key));
-    ImGui::SameLine();
-    if (button(gs.favorite ? "Remove favorite" : "Add to favorites", ImVec2(0, 46 * S))) toggle_favorite(e.key);
-    if (native) {
-        ImGui::SameLine();
-        if (button("Locate BattleShip.exe", ImVec2(0, 46 * S))) locate_smash();
-    }
-    end_panel();
+    ImGui::SameLine(0, gap);
+    if (ui::icon_button("fav", gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star, bh, gs.favorite, gs.favorite ? "Remove from favorites" : "Add to favorites", IM_COL32(236, 180, 40, 255)))
+        toggle_favorite(e.key);
+    ImGui::SameLine(0, gap);
+    if (ui::icon_button("more", ui::Icon::Dots, bh, false, "Details")) A.show_details = true;
+    return total;
 }
 
-static void page_library() {
-    page_header("Library", "Pick a game and press Play. Everything resumes where you left off.");
+static void draw_hero(const hub::GameEntry& e, float h) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
+    float rad = sp(2.5f), ha = A.hero_t;
+    const hub::GameState& gs = gstate(e.key);
+    const GameInfo* cat = catalog_for(e);
+    ImU32 c0, c1;
+    entry_colors(e, &c0, &c1);
+    ArtRef art = art_for_entry(e);
+    bool compact = h < sp(29.f);
 
-    // ---- search + scan controls
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) A.focus_search = true;
-    if (A.focus_search) { ImGui::SetKeyboardFocusHere(); A.focus_search = false; }
-    ImGui::SetNextItemWidth(std::min(380 * S, ImGui::GetContentRegionAvail().x * 0.5f));
-    ImGui::InputTextWithHint("##search", "Search games...  (Ctrl+F)", A.search_buf, sizeof A.search_buf);
-    ImGui::SameLine();
-    if (button("Rescan", ImVec2(0, 0), false, !A.scanning)) start_scan();
-    ImGui::SameLine();
-    if (button("Add ROM folder", ImVec2(0, 0), A.lib.size() <= 1 && A.st.rom_folders.empty())) add_rom_folder();
-    if (A.scanning) {
-        int d = A.scan_done, t = A.scan_total;
-        char ov[64];
-        std::snprintf(ov, sizeof ov, t > 0 ? "Scanning games...  %d / %d" : "Scanning games...", d, t);
-        ImGui::ProgressBar(t > 0 ? (float)d / (float)t : 0.f, ImVec2(std::min(520 * S, ImGui::GetContentRegionAvail().x), 22 * S), ov);
+    ui::shadow(dl, p0, p1, rad, 1.3f);
+    gradient_round_rect(dl, p0, p1, mix(c0, ui::BG, 0.68f), mix(c1, ui::BG, 0.78f), rad);
+    if (art.tex) ui::draw_art_bg(dl, art.tex, art.w, art.h, p0, p1, rad, 0.27f, ha);
+    ui::hfade_round_rect(dl, p0, p1, IM_COL32(14, 15, 20, 255), rad, 0, 0.94f, 0.30f);
+    ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.5f), p1, IM_COL32(14, 15, 20, 255), rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.55f);
+    dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
+
+    float pad = compact ? sp(2.5f) : sp(3.f), bh = compact ? sp(5.f) : sp(6.f);
+    float inner_h = h - pad * 2;
+    float art_h = inner_h, art_w = art_h * kTileAspect;
+    if (art_w > w * 0.32f) { art_w = w * 0.32f; art_h = art_w / kTileAspect; }
+    ImVec2 a0(p0.x + pad, p0.y + pad + (inner_h - art_h) * 0.5f), a1(a0.x + art_w, a0.y + art_h);
+    float arad = sp(1.75f);
+    ui::shadow(dl, a0, a1, arad, 1.4f);
+    TileSpec ts;
+    ts.title = e.title;
+    ts.c0 = c0;
+    ts.c1 = c1;
+    if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, arad, 1.f, ha);
+    else draw_no_art(dl, ts, a0, a1, arad, 1.f);
+    if (art.loading) ui::shimmer(dl, a0, a1, arad, IM_COL32(0, 0, 0, 0));
+    dl->AddRect(a0, a1, ui::HAIRLINE, arad, 0, 1.f);
+
+    float tx = a1.x + pad, tw = p1.x - pad - tx, ty = p0.y + pad;
+    ImFont* cf = ui::F.cap;
+    std::string eyebrow = gs.last_played ? "LAST PLAYED  " + fmt_ago(gs.last_played) : std::string("READY TO PLAY");
+    for (auto& ch : eyebrow) ch = (char)std::toupper((unsigned char)ch);
+    dl->AddText(cf, cf->FontSize, ImVec2(tx, ty), ui::scale_alpha(mix(c1, IM_COL32_WHITE, 0.45f), ha), eyebrow.c_str());
+    ty += cf->FontSize + sp(0.75f);
+
+    ImFont* tf = compact ? ui::F.title : ui::F.hero;
+    std::vector<std::string> lines = ui::wrap_lines(tf, tf->FontSize, e.title, tw, compact ? 1 : 2);
+    if (lines.size() == 1 && tf == ui::F.hero && ui::F.title != ui::F.hero &&
+        tf->CalcTextSizeA(tf->FontSize, FLT_MAX, 0.f, e.title.c_str()).x > tw) {
+        tf = ui::F.title;
+        lines = ui::wrap_lines(tf, tf->FontSize, e.title, tw, 2);
+    }
+    for (auto& ln : lines) {
+        ui::text_shadowed(dl, tf, tf->FontSize, ImVec2(tx, ty), ui::scale_alpha(IM_COL32_WHITE, ha), ln.c_str());
+        ty += tf->FontSize * 1.08f;
+    }
+    ty += sp(0.5f);
+
+    // meta pills
+    {
+        float x = tx, ph = cf->FontSize + sp(1.f);
+        auto put = [&](const std::string& s, ImU32 bg) {
+            float pw = cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, s.c_str()).x + sp(2.5f);
+            if (x + pw > tx + tw) return;
+            pill_at(dl, ImVec2(x, ty), s.c_str(), ui::scale_alpha(bg, ha), ui::scale_alpha(IM_COL32_WHITE, ha));
+            x += pw + sp(0.75f);
+        };
+        put(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.3f));
+        if (is_native(e)) put("Native port", IM_COL32(255, 255, 255, 30));
+        if (cat && cat->year) put(std::to_string(cat->year), IM_COL32(255, 255, 255, 30));
+        if (supports_online(e)) put("1-" + std::to_string(max_players_for(e)) + " players", IM_COL32(255, 255, 255, 30));
+        if (gs.play_seconds) put(hubui::format_play_time(gs.play_seconds) + " played", IM_COL32(255, 255, 255, 30));
+        ty += ph + sp(1.f);
     }
 
-    // ---- system chips
+    float by = p1.y - pad - bh;
+    if (!compact && cat && !cat->blurb.empty()) {
+        float room = by - ty - sp(1.5f);
+        int nl = (int)(room / (ui::F.body->FontSize * 1.25f));
+        if (nl > 0) {
+            auto bl = ui::wrap_lines(ui::F.body, ui::F.body->FontSize, cat->blurb, tw, std::min(2, nl));
+            for (auto& ln : bl) {
+                dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, ty), ui::scale_alpha(ui::TEXT2, ha), ln.c_str());
+                ty += ui::F.body->FontSize * 1.25f;
+            }
+        }
+    }
+
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.3f + 0.7f * ha);
+    action_row(e, bh, true, ImVec2(tx, by), compact || tw < sp(70.f), true);
+    ImGui::PopStyleVar();
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
+    ImGui::Dummy(ImVec2(w, sp(2.f)));
+}
+
+/* ---------- skeleton / empty states ---------- */
+
+static void skeleton_home() {
+    float w = ImGui::GetContentRegionAvail().x, h = std::max(sp(24.f), std::min(sp(38.f), ImGui::GetContentRegionAvail().y * 0.4f));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ui::shimmer(dl, p0, ImVec2(p0.x + w, p0.y + h), sp(2.5f), ui::PANEL);
+    float aw = std::min((h - sp(6.f)) * kTileAspect, w * 0.3f);
+    ui::shimmer(dl, ImVec2(p0.x + sp(3.f), p0.y + sp(3.f)), ImVec2(p0.x + sp(3.f) + aw, p0.y + h - sp(3.f)), sp(1.75f), ui::PANEL2);
+    float tx = p0.x + sp(6.f) + aw;
+    ui::shimmer(dl, ImVec2(tx, p0.y + sp(3.f)), ImVec2(tx + sp(12.f), p0.y + sp(4.f)), sp(0.5f), ui::PANEL2);
+    ui::shimmer(dl, ImVec2(tx, p0.y + sp(5.f)), ImVec2(tx + sp(34.f), p0.y + sp(8.f)), sp(1.f), ui::PANEL2);
+    ui::shimmer(dl, ImVec2(tx, p0.y + h - sp(9.f)), ImVec2(tx + sp(18.f), p0.y + h - sp(3.f)), sp(1.5f), ui::PANEL3);
+    ImGui::Dummy(ImVec2(w, h + sp(2.f)));
+    float tw = hubui::shelf_tile_w(w, sp(24.f), std::max(sp(25.f), std::min(sp(37.5f), w * 0.2f)), sp(2.f)), th = tw / kTileAspect;
+    for (int row = 0; row < 2; ++row) {
+        ImVec2 o = ImGui::GetCursorScreenPos();
+        ui::shimmer(dl, o + ImVec2(sp(1.5f), 0), o + ImVec2(sp(1.5f) + sp(18.f), sp(2.5f)), sp(0.75f), ui::PANEL);
+        float x = o.x + sp(1.5f), y = o.y + sp(4.f);
+        for (int i = 0; x < o.x + w && i < 12; ++i, x += tw + sp(2.f))
+            ui::shimmer(dl, ImVec2(x, y), ImVec2(x + tw, y + th), sp(1.75f), ui::PANEL);
+        ImGui::Dummy(ImVec2(w, th + sp(7.f)));
+    }
+}
+
+static void centered_text(ImDrawList* dl, ImFont* f, float cx, float y, ImU32 col, const char* s) {
+    ImVec2 ts = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, s);
+    dl->AddText(f, f->FontSize, ImVec2(cx - ts.x * 0.5f, y), col, s);
+}
+
+static void empty_library_state() {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float w = ImGui::GetContentRegionAvail().x, h = std::min(ImGui::GetContentRegionAvail().y, sp(46.f));
+    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
+    dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.5f));
+    dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.5f), 0, 1.f);
+    float cx = (p0.x + p1.x) * 0.5f, y = p0.y + sp(3.f);
+    float ir = sp(5.f);
+    dl->AddCircleFilled(ImVec2(cx, y + ir), ir + sp(1.5f), ui::with_alpha(ui::ACCENT, 0.10f), 48);
+    dl->AddCircleFilled(ImVec2(cx, y + ir), ir, ui::with_alpha(ui::ACCENT, 0.22f), 48);
+    ui::icon(dl, ui::Icon::Gamepad, ImVec2(cx, y + ir), ir * 1.2f, ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.5f));
+    y += ir * 2 + sp(3.f);
+    centered_text(dl, ui::F.title, cx, y, ui::TEXT, "Let's find your games");
+    y += ui::F.title->FontSize + sp(1.f);
+    float tw = std::min(w - sp(6.f), sp(62.f));
+    auto lines = ui::wrap_lines(ui::F.body, ui::F.body->FontSize,
+                                "RetroHub doesn't include any games. Point it at the folder(s) that hold your own game files and "
+                                "everything is recognised by its contents, not its name.",
+                                tw, 3);
+    for (auto& ln : lines) {
+        centered_text(dl, ui::F.body, cx, y, ui::TEXT2, ln.c_str());
+        y += ui::F.body->FontSize * 1.3f;
+    }
+    y += sp(1.5f);
+    // supported systems
+    {
+        struct Sy { const char* label; hub::System s; };
+        static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB}};
+        float tot = 0;
+        for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
+        float x = cx - (tot - sp(0.75f)) * 0.5f;
+        for (auto& s2 : sys) {
+            ImU32 a, b;
+            system_colors(s2.s, &a, &b);
+            x += pill_at(dl, ImVec2(x, y), s2.label, mix(a, IM_COL32_BLACK, 0.2f)) + sp(0.75f);
+        }
+        y += ui::F.cap->FontSize + sp(4.f);
+    }
+    float bw = sp(24.f);
+    ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
+    if (button("Add ROM folder", ImVec2(bw, sp(6.f)), true, true, ui::Icon::Folder)) add_rom_folder();
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
+    ImGui::Dummy(ImVec2(w, sp(1.f)));
+}
+
+/* ---------- top bar ---------- */
+
+static void library_top_bar() {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);   // D-pad focus starts on the hero / tiles, not here
+    static const char* tabs[] = {"Home", "All Games"};
+    int cur = A.view == LibView::Home ? 0 : 1;
+    int n = ui::segmented("view", tabs, 2, cur);
+    if (n != cur) {
+        A.view = n == 0 ? LibView::Home : LibView::All;
+        if (n == 0) A.search_buf[0] = 0;
+    }
+    ImGui::SameLine(0, sp(2.f));
+
+    float bh = sp(5.f);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) A.focus_search = true;
+    if (A.focus_search) { ImGui::SetKeyboardFocusHere(); A.focus_search = false; }
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(5.f), (bh - ImGui::GetFontSize()) * 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
+    ImGui::SetNextItemWidth(std::max(sp(20.f), std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.45f)));
+    ImGui::InputTextWithHint("##search", "Search games   (Ctrl+F)", A.search_buf, sizeof A.search_buf);
+    ImVec2 s0 = ImGui::GetItemRectMin(), s1 = ImGui::GetItemRectMax();
+    ImGui::GetWindowDrawList()->AddRect(s0, s1, ImGui::IsItemActive() ? ui::ACCENT : ui::HAIRLINE, bh * 0.5f, 0, 1.f);
+    ui::icon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(s0.x + sp(2.5f), (s0.y + s1.y) * 0.5f), sp(2.f), ui::TEXT2);
+    ImGui::PopStyleVar(2);
+    if (A.search_buf[0] && A.view == LibView::Home) A.view = LibView::All;
+
+    float total = bh * 2 + sp(1.f);
+    ImGui::SameLine(0, 0);
+    float ax = ImGui::GetContentRegionAvail().x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax - total));
+    ImGui::BeginDisabled(A.scanning);
+    if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, A.scanning ? "Scanning..." : "Rescan ROM folders")) start_scan();
+    ImGui::EndDisabled();
+    ImGui::SameLine(0, sp(1.f));
+    if (ui::icon_button("addfolder", ui::Icon::Plus, bh, false, "Add ROM folder")) add_rom_folder();
+    ImGui::PopItemFlag();
+
+    // scan progress: thin animated line under the bar
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    float lh = sp(0.25f);
+    if (A.scanning) {
+        int d = A.scan_done, t2 = A.scan_total;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImVec2(o.x, o.y + sp(0.5f)), ImVec2(o.x + w, o.y + sp(0.5f) + lh), ui::PANEL2, lh);
+        if (t2 > 0) dl->AddRectFilled(ImVec2(o.x, o.y + sp(0.5f)), ImVec2(o.x + w * d / (float)t2, o.y + sp(0.5f) + lh), ui::ACCENT, lh);
+        else {
+            float ph = std::fmod((float)ImGui::GetTime() * 0.8f, 1.f);
+            dl->AddRectFilled(ImVec2(o.x + w * ph * 0.8f, o.y + sp(0.5f)), ImVec2(o.x + w * (ph * 0.8f + 0.2f), o.y + sp(0.5f) + lh), ui::ACCENT, lh);
+        }
+        char buf[64];
+        std::snprintf(buf, sizeof buf, t2 > 0 ? "Scanning your games...  %d / %d" : "Scanning your games...", d, t2);
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(o.x + sp(0.25f), o.y + sp(1.25f)), ui::TEXT3, buf);
+    }
+    ImGui::Dummy(ImVec2(w, sp(A.scanning ? 3.25f : 1.5f)));
+}
+
+/* ---------- All Games ---------- */
+
+static void selected_bar(const hub::GameEntry& e) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float w = ImGui::GetContentRegionAvail().x, h = sp(8.f);
+    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
+    dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.f));
+    dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.f), 0, 1.f);
+    ImU32 c0, c1;
+    entry_colors(e, &c0, &c1);
+    ArtRef art = art_for_entry(e);
+    float th = h - sp(2.f), tw = th * kTileAspect;
+    ImVec2 a0(p0.x + sp(1.f), p0.y + sp(1.f)), a1(a0.x + tw, a0.y + th);
+    TileSpec ts;
+    ts.title = e.title;
+    ts.c0 = c0;
+    ts.c1 = c1;
+    if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.25f));
+    else draw_no_art(dl, ts, a0, a1, sp(1.25f), 1.f);
+    float bh = sp(5.f);
+    float row_w = action_row(e, bh, false, ImVec2(0, 0), true);
+    float tx = a1.x + sp(2.f);
+    float text_w = std::max(sp(8.f), p1.x - sp(2.f) - row_w - tx - sp(2.f));
+    const hub::GameState& gs = gstate(e.key);
+    dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, p0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, e.title, text_w).c_str());
+    std::string sub = std::string(hub::system_name(e.system)) + "  -  " + hubui::format_play_time(gs.play_seconds);
+    dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f)), ui::TEXT2,
+                ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, text_w).c_str());
+    action_row(e, bh, true, ImVec2(p1.x - sp(2.f) - row_w, p0.y + (h - bh) * 0.5f), true);
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
+    ImGui::Dummy(ImVec2(w, 1));
+}
+
+static void all_games_view() {
+    // system chips
     struct Chip { const char* label; const char* sys; };
-    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"GB", "gb"}};
+    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
     std::map<std::string, int> counts;
     for (auto& e : A.lib) ++counts[sys_short(e)];
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8 * S, 8 * S));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
     bool first = true;
     for (auto& c : chips) {
+        int n = c.sys[0] ? counts[c.sys] : (int)A.lib.size();
+        if (c.sys[0] && n == 0 && A.sys_filter != c.sys) continue;
         if (!first) ImGui::SameLine();
         first = false;
         char lab[48];
-        int n = c.sys[0] ? counts[c.sys] : (int)A.lib.size();
         std::snprintf(lab, sizeof lab, "%s  %d", c.label, n);
         ImU32 a = COL_ACCENT, b2;
         if (c.sys[0]) system_colors(hub::system_from_short(c.sys), &a, &b2);
         if (chip(lab, A.sys_filter == c.sys, a)) { A.sys_filter = c.sys; A.vis_dirty = true; }
     }
+    ImGui::PopItemFlag();
     ImGui::PopStyleVar();
-
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
-    // selection must exist
-    if (!find_entry(A.sel_game)) {
-        A.sel_game.clear();
-        if (!A.vis_recent.empty()) A.sel_game = A.lib[A.vis_recent[0]].key;
-        else if (!A.vis.empty()) A.sel_game = A.lib[A.vis[0]].key;
-    }
     const hub::GameEntry* sel = find_entry(A.sel_game);
-    float det_h = sel ? 218 * S : 0;
-
-    ImGui::BeginChild("libscroll", ImVec2(0, -(det_h + (sel ? 12 * S : 0))), ImGuiChildFlags_NavFlattened);
-    if (A.lib.empty() && !A.scanning) {
-        begin_panel("empty");
-        section_title("No games yet");
-        text_wrapped_disabled("Add the folder(s) that hold your own game files. RetroHub recognises N64 (.z64 .v64 .n64), "
-                              "GameCube (.iso .gcm .rvz .wia .ciso .gcz), Game Boy Advance (.gba), Game Boy (.gb) and "
-                              "Game Boy Color (.gbc) by their contents, not their names.");
-        if (button("Add ROM folder", ImVec2(0, 48 * S), true)) add_rom_folder();
-        end_panel();
+    float bar_h = sel ? sp(8.f) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.5f)));
+    ImGui::BeginChild("grid", ImVec2(0, -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+    A.page_scrollable = true;
+    if (A.vis.empty()) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 o = ImGui::GetCursorScreenPos();
+        float cx = o.x + ImGui::GetContentRegionAvail().x * 0.5f;
+        ui::icon(dl, ui::Icon::Search, ImVec2(cx, o.y + sp(6.f)), sp(5.f), ui::TEXT3);
+        std::string msg = A.search_buf[0] ? std::string("No games match \"") + A.search_buf + "\"" : std::string("No games in this system yet");
+        centered_text(dl, ui::F.h2, cx, o.y + sp(10.f), ui::TEXT, msg.c_str());
+        centered_text(dl, ui::F.body, cx, o.y + sp(10.f) + ui::F.h2->FontSize + sp(1.f), ui::TEXT2, "Try a different spelling, or pick another system.");
+        ImGui::Dummy(ImVec2(0, sp(17.f)));
+        if (A.search_buf[0]) {
+            float bw = sp(18.f);
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - bw) * 0.5f);
+            if (button("Clear search", ImVec2(bw, sp(5.f)), false, true, ui::Icon::Close)) A.search_buf[0] = 0;
+        }
     } else {
-        bool searching = A.search_buf[0] != 0;
-        if (!searching && !A.vis_recent.empty()) {
-            section_title("Continue playing");
-            card_strip("recent", A.vis_recent, ImVec2(300 * S, 170 * S));
-        }
-        if (!searching && !A.vis_fav.empty()) {
-            section_title("Favorites");
-            card_strip("favs", A.vis_fav, ImVec2(230 * S, 130 * S));
-        }
         char head[64];
-        std::snprintf(head, sizeof head, "%s  (%d)", A.sys_filter.empty() ? "All games" : "Games", (int)A.vis.size());
-        section_title(head);
-        if (A.vis.empty()) {
-            ImGui::TextDisabled("No games match.");
-        } else {
-            float avail = ImGui::GetContentRegionAvail().x - 24 * S;
-            float gap = 18 * S, min_w = 230 * S;
-            int cols = std::max(1, (int)((avail + gap) / (min_w + gap)));
-            float cw = std::min(330 * S, (avail - gap * (cols - 1)) / cols);
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
-            ImGui::Dummy(ImVec2(0, 2 * S));
-            ImGui::Indent(8 * S);
-            for (size_t i = 0; i < A.vis.size(); ++i) {
-                if (i % cols) ImGui::SameLine();
-                game_card(A.lib[A.vis[i]], ImVec2(cw, 140 * S), "grid");
-            }
-            ImGui::Unindent(8 * S);
-            ImGui::PopStyleVar();
-            ImGui::Dummy(ImVec2(0, 10 * S));
+        std::snprintf(head, sizeof head, "%s", A.sys_filter.empty() ? "All games" : hubui::system_shelf_title(A.sys_filter).c_str());
+        char cnt[32];
+        std::snprintf(cnt, sizeof cnt, "%d game%s", (int)A.vis.size(), A.vis.size() == 1 ? "" : "s");
+        shelf_header(head, cnt, 0.f);
+        float gap = sp(2.f);
+        float avail = ImGui::GetContentRegionAvail().x;
+        hubui::GridLayout gl = hubui::grid_layout(avail, sp(26.f), sp(37.5f), gap);
+        ImVec2 sz(gl.tile_w, gl.tile_w / kTileAspect);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
+        for (size_t i = 0; i < A.vis.size(); ++i) {
+            if (i % gl.cols) ImGui::SameLine();
+            const hub::GameEntry& e = A.lib[A.vis[i]];
+            TileSpec spec = spec_for_entry(e, "grid", false);
+            TileResult r = draw_tile(spec, sz);
+            handle_entry_result(e, spec, r);
         }
+        ImGui::PopStyleVar();
+        ImGui::Dummy(ImVec2(0, sp(2.f)));
     }
     ImGui::EndChild();
+    if (sel) selected_bar(*sel);
+}
 
-    if (sel) {
-        ImGui::Dummy(ImVec2(0, 0));
-        library_details(*sel, det_h);
+/* ---------- details modal (Y / right-click / "...") ---------- */
+
+static void draw_details_modal() {
+    if (A.show_details) {
+        A.show_details = false;
+        if (find_entry(A.sel_game)) ImGui::OpenPopup("##details");
     }
+    const hub::GameEntry* ep = find_entry(A.sel_game);
+    ImGuiIO& io = ImGui::GetIO();
+    float w = std::min(sp(90.f), io.DisplaySize.x * 0.92f);
+    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(w, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
+    bool open = ImGui::BeginPopupModal("##details", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PopStyleVar(2);
+    if (!open) return;
+    if (!ep) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    const hub::GameEntry& e = *ep;
+    const hub::GameState& gs = gstate(e.key);
+    const GameInfo* cat = catalog_for(e);
+    if (A.info_key != e.key || ImGui::GetTime() - A.info_at > 4.0) refresh_save_info(e);
+    bool idle = A.proc == nullptr, native = is_native(e);
+    ImU32 c0, c1;
+    entry_colors(e, &c0, &c1);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    float avail = ImGui::GetContentRegionAvail().x;
+    bool with_art = avail > sp(62.f);
+    float aw = with_art ? sp(28.f) : 0, ah = aw / kTileAspect;
+    if (with_art) {
+        ArtRef art = art_for_entry(e);
+        TileSpec ts;
+        ts.title = e.title;
+        ts.c0 = c0;
+        ts.c1 = c1;
+        ImVec2 a0 = o, a1(o.x + aw, o.y + ah);
+        ui::shadow(dl, a0, a1, sp(1.75f), 1.2f);
+        if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.75f));
+        else draw_no_art(dl, ts, a0, a1, sp(1.75f), 1.f);
+        dl->AddRect(a0, a1, ui::HAIRLINE, sp(1.75f), 0, 1.f);
+    }
+    float tx = with_art ? aw + sp(3.f) : 0;
+    ImGui::SetCursorScreenPos(ImVec2(o.x + tx, o.y));
+    ImGui::BeginGroup();
+    float tw = avail - tx;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+    ImGui::PushFont(ui::F.title);
+    ImGui::TextWrapped("%s", e.title.c_str());
+    ImGui::PopFont();
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    pill(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.2f));
+    ImGui::SameLine(0, sp(0.75f));
+    pill(native ? "NATIVE PORT" : "EMULATED", ui::PANEL2);
+    if (supports_online(e)) {
+        char pl[32];
+        std::snprintf(pl, sizeof pl, "1-%d players", max_players_for(e));
+        ImGui::SameLine(0, sp(0.75f));
+        pill(pl, ui::PANEL2);
+    }
+    if (cat && cat->year) {
+        ImGui::SameLine(0, sp(0.75f));
+        pill(std::to_string(cat->year).c_str(), ui::PANEL2);
+    }
+    if (cat && !cat->blurb.empty()) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+        ImGui::TextWrapped("%s", cat->blurb.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::EndGroup();
+    if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(2.f)));
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+    ImGui::PushTextWrapPos(0.f);
+    ImGui::TextWrapped("%s", e.path.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    ImGui::Text("Play time: %s      Last played: %s", hubui::format_play_time(gs.play_seconds).c_str(),
+                gs.last_played ? fmt_time(gs.last_played).c_str() : "never");
+    if (native) {
+        ImGui::TextDisabled("Smash Classic keeps its own saves.");
+    } else {
+        std::string sv = A.info_battery_files > 0 ? "Save data: " + std::to_string(A.info_battery_files) + " file(s), " + size_text(A.info_battery_bytes)
+                                                  : std::string("Save data: none yet");
+        sv += "      Save states: " + std::to_string(A.info_state_files);
+        if (A.info_auto_state) sv += "  (+ resume point)";
+        ImGui::TextUnformatted(sv.c_str());
+    }
+    ImGui::Dummy(ImVec2(0, sp(2.f)));
+
+    float bh = sp(5.5f);
+    if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play)) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry(c); }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine(0, sp(1.5f));
+    if (e.system == hub::System::GC) {
+        button("Online soon", ImVec2(0, bh), false, false, ui::Icon::Globe);
+    } else if (supports_online(e)) {
+        if (button("Play Online", ImVec2(0, bh), false, idle, ui::Icon::Globe)) {
+            ImGui::CloseCurrentPopup();
+            A.pending_room_game = room_id(e);
+            enter_room(true, hubnet::new_room_code());
+        }
+    }
+    ImGui::SameLine(0, sp(1.5f));
+    if (button(gs.favorite ? "Unfavorite" : "Favorite", ImVec2(0, bh), false, true, gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star)) toggle_favorite(e.key);
+    if (!native) {
+        ImGui::SameLine(0, sp(1.5f));
+        if (button("Save folder", ImVec2(0, bh), false, true, ui::Icon::Folder)) open_in_explorer(hub::saves::game_dir(sys_short(e), e.key));
+    } else {
+        ImGui::SameLine(0, sp(1.5f));
+        if (button("Locate BattleShip.exe", ImVec2(0, bh))) locate_smash();
+    }
+    ImGui::SameLine(0, sp(1.5f));
+    if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+/* ---------- the page ---------- */
+
+static void ensure_selection() {
+    if (A.lib.empty()) { A.sel_game.clear(); return; }
+    if (!A.env_select.empty() && find_entry(A.env_select)) { A.sel_game = A.env_select; A.env_select.clear(); }
+    if (find_entry(A.sel_game)) return;
+    int i = hubui::pick_hero(A.sg, "");
+    A.sel_game = i >= 0 ? A.lib[i].key : std::string();
+}
+
+static void page_library() {
+    if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
+    ensure_selection();
+    library_top_bar();
+    A.page_scrollable = false;
+
+    if (A.lib.empty()) {
+        if (A.scanning && !A.scanned_once) skeleton_home();
+        else if (A.scanning) {}   // rescan of an empty library: top bar shows the progress line
+        else empty_library_state();
+        return;
+    }
+    if (A.view == LibView::All) {
+        all_games_view();
+        return;
+    }
+
+    const hub::GameEntry* sel = find_entry(A.sel_game);
+    if (sel) {
+        if (A.hero_key != sel->key) { A.hero_key = sel->key; A.hero_t = 0.f; }
+        ui::anim(A.hero_t, 1.f, 9.f);
+        float avail_h = ImGui::GetContentRegionAvail().y;
+        float hero_h = std::max(sp(23.5f), std::min(sp(40.f), avail_h * 0.38f));
+        draw_hero(*sel, hero_h);
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::BeginChild("shelves", ImVec2(0, 0), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleVar();
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(2.f), 0));
+    A.page_scrollable = ImGui::GetScrollMaxY() > 0;
+    home_shelves();
+    ImGui::PopStyleVar();
+    ImGui::EndChild();
 }
 
 /* ---------- Online ---------- */
@@ -1592,8 +2166,8 @@ static void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     dl->AddCircleFilled(cc, 24 * S, slotc[slot & 3], 32);
     char init[2] = {(char)std::toupper((unsigned char)(p->name.empty() ? '?' : p->name[0])), 0};
     ImVec2 its = ImGui::CalcTextSize(init);
-    dl->AddText(A.f_h2, A.f_h2->FontSize, cc - ImVec2(its.x * 0.6f, its.y * 0.62f), IM_COL32(20, 20, 25, 255), init);
-    dl->AddText(A.f_h2, A.f_h2->FontSize, ImVec2(p0.x + 74 * S, p0.y + 14 * S), IM_COL32_WHITE, p->name.c_str());
+    dl->AddText(ui::F.h2, ui::F.h2->FontSize, cc - ImVec2(its.x * 0.6f, its.y * 0.62f), IM_COL32(20, 20, 25, 255), init);
+    dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(p0.x + 74 * S, p0.y + 14 * S), IM_COL32_WHITE, p->name.c_str());
     ImGui::SetCursorScreenPos(p0 + ImVec2(74 * S, 46 * S));
     bool host = slot == 0;
     bool rd = host || A.ready[slot];
@@ -1641,25 +2215,25 @@ static void page_online_home() {
     float w = two ? (avail - gap) / 2 : avail;
 
     begin_panel("host", ImVec2(w, 0));
-    ImGui::PushFont(A.f_h2);
+    ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Host a room");
     ImGui::PopFont();
     text_wrapped_disabled("Create a room, pick a game everyone owns, and share the 6-letter code.");
     ImGui::Dummy(ImVec2(0, 8 * S));
-    if (button("Host Room", ImVec2(-1, 64 * S), true, A.proc == nullptr)) enter_room(true, hubnet::new_room_code());
+    if (button("Host Room", ImVec2(-1, sp(7.f)), true, A.proc == nullptr, ui::Icon::Globe)) enter_room(true, hubnet::new_room_code());
     end_panel();
 
     if (two) ImGui::SameLine();
 
     begin_panel("join", ImVec2(w, 0));
-    ImGui::PushFont(A.f_h2);
+    ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Join a room");
     ImGui::PopFont();
     text_wrapped_disabled("Type the code your friend gave you.");
     ImGui::Dummy(ImVec2(0, 8 * S));
     char buf[16];
     std::snprintf(buf, sizeof buf, "%s", A.join_buf.c_str());
-    ImGui::PushFont(A.f_h2);
+    ImGui::PushFont(ui::F.h2);
     ImGui::SetNextItemWidth(w * 0.5f);
     bool enter = ImGui::InputTextWithHint("##code", "ABC234", buf, 7, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::PopFont();
@@ -1670,11 +2244,40 @@ static void page_online_home() {
     if (!A.join_buf.empty() && !valid) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_WARN), "Codes are 6 letters/digits (no I, O, 0, 1).");
     if (go || (enter && valid)) enter_room(false, A.join_buf);
     end_panel();
+
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    begin_panel("howto");
+    section_title("How it works");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    int online_games = 0;
+    for (auto& e : A.lib) if (supports_online(e)) ++online_games;
+    static const char* steps[] = {"Host a room (or join with a code) - everyone in the room sees each other's games.",
+                                  "The host picks a game that everybody owns, then everyone presses Ready.",
+                                  "The host presses Launch - the game starts on every PC at the same moment."};
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < 3; ++i) {
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float r = sp(1.75f);
+        dl->AddCircleFilled(ImVec2(p.x + r, p.y + r + sp(0.25f)), r, with_alpha(ui::ACCENT, 0.25f), 24);
+        char num[4] = {(char)('1' + i), 0};
+        ImVec2 ts = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, num);
+        dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(p.x + r - ts.x * 0.5f, p.y + r + sp(0.25f) - ts.y * 0.5f), ui::TEXT, num);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + r * 2 + sp(1.5f), p.y));
+        ImGui::PushTextWrapPos(0.f);
+        ImGui::TextUnformatted(steps[i]);
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+    ImGui::Text("You have %d game%s that can be played online.", online_games, online_games == 1 ? "" : "s");
+    ImGui::PopStyleColor();
+    end_panel();
 }
 
 static void page_online_room() {
     // Header: big code + actions
-    ImGui::PushFont(A.f_big);
+    ImGui::PushFont(ui::F.big);
     std::string spaced;
     for (size_t i = 0; i < A.code.size(); ++i) { if (i) spaced += ' '; spaced += A.code[i]; }
     ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
@@ -1724,7 +2327,7 @@ static void page_online_room() {
         bool before = A.my_ready;
         if (ImGui::Checkbox("I'm ready", &A.my_ready) && before != A.my_ready) A.hello_dirty = true;
     }
-    ImGui::PushFont(A.f_h2);
+    ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted(host ? "Choose a game" : "Host's game");
     ImGui::PopFont();
 
@@ -1753,7 +2356,7 @@ static void page_online_room() {
             ImVec2 sz(left_w, 54 * S);
             bool can_click = host && sel.ok;
             if (!can_click) ImGui::BeginDisabled();
-            bool clicked = ImGui::InvisibleButton("row", sz);
+            bool clicked = ImGui::InvisibleButton("row", sz, ImGuiButtonFlags_EnableNav);
             bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
             if (!can_click) ImGui::EndDisabled();
             ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1815,7 +2418,7 @@ static void page_online_room() {
     // chat
     ImGui::SameLine(0, 20 * S);
     begin_panel("chat", ImVec2(chat_w, h));
-    ImGui::PushFont(A.f_h2);
+    ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Chat");
     ImGui::PopFont();
     float input_h = ImGui::GetFrameHeight() + 8 * S;
@@ -1875,9 +2478,25 @@ static void btn_dot(ImDrawList* dl, ImVec2 c, float r, bool on, const char* labe
 static void page_controllers() {
     page_header("Controllers", "Connected game controllers and the N64 port each one will use.");
     if (A.pads.empty()) {
-        begin_panel("nopad");
-        ImGui::TextUnformatted("No game controllers detected.");
-        text_wrapped_disabled("Plug in or pair a controller; it appears here immediately. The first controller becomes port 1, the second port 2, and so on.");
+        begin_panel("nopad", ImVec2(0, sp(30.f)));
+        {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 o = ImGui::GetWindowPos();
+            float w = ImGui::GetWindowWidth(), cx = o.x + w * 0.5f, y = o.y + sp(4.f);
+            dl->AddCircleFilled(ImVec2(cx, y + sp(4.f)), sp(5.5f), with_alpha(ui::ACCENT, 0.10f), 48);
+            dl->AddCircleFilled(ImVec2(cx, y + sp(4.f)), sp(4.f), with_alpha(ui::ACCENT, 0.22f), 48);
+            ui::icon(dl, ui::Icon::Gamepad, ImVec2(cx, y + sp(4.f)), sp(5.f), mix(ui::ACCENT, IM_COL32_WHITE, 0.5f));
+            centered_text(dl, ui::F.h2, cx, y + sp(10.5f), ui::TEXT, "No controller yet");
+            auto lines = ui::wrap_lines(ui::F.body, ui::F.body->FontSize,
+                                        "Plug in or pair a controller and it shows up here right away. The first one becomes port 1, the second port 2, and so on. "
+                                        "You can also use the D-pad and A / B to move around RetroHub itself.",
+                                        std::min(w - sp(6.f), sp(60.f)), 3);
+            float ty = y + sp(10.5f) + ui::F.h2->FontSize + sp(1.f);
+            for (auto& ln : lines) {
+                centered_text(dl, ui::F.body, cx, ty, ui::TEXT2, ln.c_str());
+                ty += ui::F.body->FontSize * 1.3f;
+            }
+        }
         end_panel();
         return;
     }
@@ -1894,7 +2513,7 @@ static void page_controllers() {
     end_panel();
 
     ImGui::Dummy(ImVec2(0, 8 * S));
-    ImGui::PushFont(A.f_h2);
+    ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Test input");
     ImGui::PopFont();
     ImGui::TextDisabled("Move sticks and press buttons to see them light up.");
@@ -2102,24 +2721,41 @@ static void page_saves() {
 
 /* ---------- Settings ---------- */
 
+static void settings_label(const char* title, const char* hint = nullptr) {
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted(title);
+    ImGui::PopFont();
+    if (hint) text_wrapped_disabled(hint);
+}
+
 static void page_settings() {
-    page_header("Settings", "");
-    begin_panel("set1");
-    ImGui::TextUnformatted("Player name");
+    page_header("Settings", "Make RetroHub yours.");
+
+    begin_panel("set_player");
+    section_title("Player");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    settings_label("Player name", "Shown to friends in online rooms.");
     char nb[40];
     std::snprintf(nb, sizeof nb, "%s", A.st.name.c_str());
-    ImGui::SetNextItemWidth(320 * S);
+    ImGui::SetNextItemWidth(sp(40.f));
     if (ImGui::InputText("##name", nb, 25)) { A.st.name = nb; mark_dirty(); }
-    ImGui::Dummy(ImVec2(0, 8 * S));
+    end_panel();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
-    ImGui::TextUnformatted("ROM folders");
+    begin_panel("set_lib");
+    section_title("Library");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    settings_label("ROM folders", "RetroHub scans these folders (and everything below them) for your game files.");
     if (A.st.rom_folders.empty()) text_wrapped_disabled("(none yet)");
     int remove_at = -1;
     for (size_t i = 0; i < A.st.rom_folders.size(); ++i) {
         ImGui::PushID((int)i);
-        if (button("Remove", ImVec2(0, 0))) remove_at = (int)i;
-        ImGui::SameLine();
+        if (ui::icon_button("rm", ui::Icon::Close, sp(4.f), false, "Remove this folder")) remove_at = (int)i;
+        ImGui::SameLine(0, sp(1.5f));
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushTextWrapPos(0.f);
         ImGui::TextDisabled("%s", A.st.rom_folders[i].c_str());
+        ImGui::PopTextWrapPos();
         ImGui::PopID();
     }
     if (remove_at >= 0) {
@@ -2127,39 +2763,61 @@ static void page_settings() {
         mark_dirty();
         start_scan();
     }
-    if (button("Add folder...", ImVec2(0, 0))) add_rom_folder();
+    if (button("Add folder...", ImVec2(0, 0), false, true, ui::Icon::Plus)) add_rom_folder();
     ImGui::SameLine();
-    if (button("Rescan", ImVec2(0, 0), false, !A.scanning)) start_scan();
-    ImGui::Dummy(ImVec2(0, 8 * S));
-
-    ImGui::TextUnformatted("Game Boy / Game Boy Color emulator");
-    int core = A.st.gb_core == "gambatte" ? 1 : 0;
-    if (ImGui::RadioButton("SameBoy (most accurate)", core == 0)) { A.st.gb_core = "sameboy"; mark_dirty(); }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Gambatte (lighter)", core == 1)) { A.st.gb_core = "gambatte"; mark_dirty(); }
-    ImGui::Dummy(ImVec2(0, 8 * S));
-
-    if (ImGui::Checkbox("Start games fullscreen", &A.st.fullscreen)) mark_dirty();
-    ImGui::TextDisabled("Applies to Game Boy and GameCube games. N64 games: press Alt+Enter.");
-    ImGui::Dummy(ImVec2(0, 8 * S));
-
-    ImGui::TextUnformatted("Smash Classic location");
+    if (button("Rescan", ImVec2(0, 0), false, !A.scanning, ui::Icon::Refresh)) start_scan();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (ImGui::Checkbox("Download cover art", &A.st.download_art)) {
+        hubart::set_enabled(A.st.download_art);
+        mark_dirty();
+    }
+    text_wrapped_disabled("Fetches box art for your games (and the games you could add) from the libretro-thumbnails project, "
+                          "then keeps it on this PC. Turn this off to stay fully offline; the colourful tiles are used instead.");
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    settings_label("Smash Classic location");
     std::string se = smash_exe_path();
     text_wrapped_disabled(se.empty() ? "BattleShip.exe not found" : se);
-    if (button("Browse for BattleShip.exe...", ImVec2(0, 0))) locate_smash();
+    if (button("Browse for BattleShip.exe...", ImVec2(0, 0), false, true, ui::Icon::Folder)) locate_smash();
     if (!A.st.smash_exe.empty()) {
         ImGui::SameLine();
         if (button("Use default", ImVec2(0, 0))) { A.st.smash_exe.clear(); mark_dirty(); A.hello_dirty = true; start_scan(); }
     }
-    ImGui::Dummy(ImVec2(0, 8 * S));
+    end_panel();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
-    ImGui::TextUnformatted("Online input delay");
-    ImGui::SetNextItemWidth(320 * S);
+    begin_panel("set_play");
+    section_title("Playing");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    settings_label("Game Boy / Game Boy Color emulator");
+    int core = A.st.gb_core == "gambatte" ? 1 : 0;
+    if (ImGui::RadioButton("SameBoy (most accurate)", core == 0)) { A.st.gb_core = "sameboy"; mark_dirty(); }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Gambatte (lighter)", core == 1)) { A.st.gb_core = "gambatte"; mark_dirty(); }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (ImGui::Checkbox("Start games fullscreen", &A.st.fullscreen)) mark_dirty();
+    text_wrapped_disabled("Applies to Game Boy and GameCube games. N64 games: press Alt+Enter.");
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    settings_label("Online input delay");
+    ImGui::SetNextItemWidth(sp(40.f));
     if (ImGui::SliderInt("##delay", &A.st.input_delay, 1, 6, "%d frames")) mark_dirty();
-    ImGui::TextDisabled("About %d ms at 60 fps. Higher is smoother on slow connections but feels laggier.",
-                        A.st.input_delay * 1000 / 60);
-    ImGui::Dummy(ImVec2(0, 8 * S));
+    text_wrapped_disabled("About " + std::to_string(A.st.input_delay * 1000 / 60) + " ms at 60 fps. Higher is smoother on slow connections but feels laggier.");
+    end_panel();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
+    begin_panel("set_app");
+    section_title("Appearance");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    settings_label("Sidebar");
+    int sm = A.st.sidebar_mode;
+    if (ImGui::RadioButton("Automatic", sm == 0)) { A.st.sidebar_mode = 0; mark_dirty(); }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Always expanded", sm == 1)) { A.st.sidebar_mode = 1; mark_dirty(); }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Icons only", sm == 2)) { A.st.sidebar_mode = 2; mark_dirty(); }
+    text_wrapped_disabled("Automatic shrinks the sidebar to icons when the window is narrow.");
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ImGui::CollapsingHeader("Advanced")) {
         char sb[256];
         std::snprintf(sb, sizeof sb, "%s", A.st.server.c_str());
@@ -2169,6 +2827,7 @@ static void page_settings() {
         ImGui::TextDisabled("Leave empty for the default server.");
     }
     end_panel();
+    ImGui::Dummy(ImVec2(0, sp(2.f)));
 }
 
 /* ---------- Dolphin download dialog + toast ---------- */
@@ -2193,8 +2852,12 @@ static void draw_overlays() {
         ImGui::OpenPopup("Dolphin emulator");
         ImVec2 c = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(520 * S, 0));
-        if (ImGui::BeginPopupModal("Dolphin emulator", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
+        ImGui::SetNextWindowSize(ImVec2(std::min(sp(66.f), ImGui::GetIO().DisplaySize.x * 0.92f), 0));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
+        bool dolphin_open = ImGui::BeginPopupModal("Dolphin emulator", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+        ImGui::PopStyleVar(2);
+        if (dolphin_open) {
             if (DL.state == DolphinDl::Asking) {
                 ImGui::TextWrapped("GameCube needs the Dolphin emulator (about 18 MB download, GPL). Download now?");
                 ImGui::Dummy(ImVec2(0, 8 * S));
@@ -2222,25 +2885,13 @@ static void draw_overlays() {
             ImGui::EndPopup();
         }
     }
-    // toast
-    if (!A.toast.empty() && ImGui::GetTime() < A.toast_until) {
-        ImDrawList* dl = ImGui::GetForegroundDrawList();
-        ImVec2 ds = ImGui::GetIO().DisplaySize;
-        float maxw = std::min(460 * S, ds.x * 0.6f);
-        ImVec2 ts = ImGui::CalcTextSize(A.toast.c_str(), nullptr, false, maxw);
-        ImVec2 p1(ds.x - 24 * S, ds.y - 52 * S);
-        ImVec2 p0(p1.x - ts.x - 36 * S, p1.y - ts.y - 24 * S);
-        dl->AddRectFilled(p0 + ImVec2(0, 4 * S), p1 + ImVec2(0, 6 * S), IM_COL32(0, 0, 0, 80), 12 * S);
-        dl->AddRectFilled(p0, p1, COL_PANEL2, 12 * S);
-        dl->AddRectFilled(p0, ImVec2(p0.x + 5 * S, p1.y), A.toast_col, 3 * S);
-        dl->AddText(nullptr, 0, p0 + ImVec2(20 * S, 12 * S), IM_COL32_WHITE, A.toast.c_str(), nullptr, maxw);
-    }
+    draw_details_modal();
 }
 
 static void page_about() {
     page_header("About", "");
     begin_panel("about");
-    ImGui::PushFont(A.f_h2);
+    ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("RetroHub");
     ImGui::PopFont();
     ImGui::TextDisabled("Version %s", HUB_VERSION_STR);
@@ -2257,29 +2908,160 @@ static void page_about() {
     end_panel();
 }
 
-/* ---------- frame ---------- */
+/* ---------- toasts ---------- */
 
-static bool nav_item(Page pg, const char* label, float w) {
-    int key = (int)pg;
-    ImGui::PushID(key);
-    ImGui::InvisibleButton("nav", ImVec2(w, 46 * S));
-    bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-    bool clicked = ImGui::IsItemClicked() || ImGui::IsItemActivated();
+static void draw_toasts(float bottom, float right) {
+    double now = ImGui::GetTime();
+    A.toasts.erase(std::remove_if(A.toasts.begin(), A.toasts.end(), [&](const Toast& t) { return t.until < now; }), A.toasts.end());
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImFont* f = ui::F.body;
+    float fs = f->FontSize, y = bottom;
+    for (int i = (int)A.toasts.size() - 1; i >= 0; --i) {
+        const Toast& t = A.toasts[i];
+        float in = (float)std::min(1.0, (now - t.t0) / 0.28), out = (float)std::min(1.0, (t.until - now) / 0.35);
+        in = 1.f - (1.f - in) * (1.f - in);   // ease-out
+        float a = std::max(0.f, std::min(1.f, in * out));
+        float maxw = std::min(sp(58.f), ds.x * 0.62f);
+        std::vector<std::string> lines = ui::wrap_lines(f, fs, t.text, maxw - sp(6.f), 4);
+        float tw = 0;
+        for (auto& l : lines) tw = std::max(tw, f->CalcTextSizeA(fs, FLT_MAX, 0.f, l.c_str()).x);
+        float w = tw + sp(6.f), h = lines.size() * fs * 1.25f + sp(2.5f);
+        float x1 = right + (1.f - in) * sp(5.f);
+        ImVec2 p1(x1, y), p0(x1 - w, y - h);
+        ui::shadow(dl, p0, p1, sp(1.5f), a);
+        dl->AddRectFilled(p0, p1, ui::scale_alpha(ui::PANEL2, a), sp(1.5f));
+        dl->AddRect(p0, p1, ui::scale_alpha(ui::HAIRLINE, a), sp(1.5f), 0, 1.f);
+        dl->AddRectFilled(ImVec2(p0.x + sp(1.f), p0.y + sp(1.f)), ImVec2(p0.x + sp(1.f) + sp(0.5f), p1.y - sp(1.f)), ui::scale_alpha(t.col, a), sp(0.25f));
+        for (size_t k = 0; k < lines.size(); ++k)
+            dl->AddText(f, fs, ImVec2(p0.x + sp(3.f), p0.y + sp(1.25f) + k * fs * 1.25f), ui::scale_alpha(ui::TEXT, a), lines[k].c_str());
+        y -= h + sp(1.f);
+    }
+}
+
+/* ---------- sidebar ---------- */
+
+static bool nav_item(Page pg, const char* label, ui::Icon ic, float w, float expand, ImU32 badge) {
+    ImGui::PushID((int)pg);
+    bool pressed = ImGui::InvisibleButton("nav", ImVec2(w, sp(6.f)), ImGuiButtonFlags_EnableNav);
+    A.side_ids.push_back(ImGui::GetItemID());
+    if (A.seed_side && A.page == pg) { A.seed_side = false; set_nav_here(); }
+    bool hov = ImGui::IsItemHovered();
+    bool focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
     bool sel = A.page == pg;
-    float& an = A.nav_anim[key];
-    float target = sel ? 1.f : (hov ? 0.5f : 0.f);
-    an += (target - an) * std::min(1.f, ImGui::GetIO().DeltaTime * 14.f);
+    float* an = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), 0.f);
+    ui::anim(*an, sel ? 1.f : ((hov || focus) ? 0.5f : 0.f), 14.f);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
-    dl->AddRectFilled(p0, p1, with_alpha(COL_ACCENT, 0.28f * an), 12 * S);
-    if (sel) dl->AddRectFilled(p0 + ImVec2(0, 10 * S), p0 + ImVec2(4 * S, 36 * S), COL_ACCENT, 2 * S);
-    dl->AddText(p0 + ImVec2(20 * S, 11 * S), mix(IM_COL32(170, 174, 190, 255), IM_COL32_WHITE, an), label);
+    float rd = sp(1.5f);
+    dl->AddRectFilled(p0, p1, with_alpha(sel ? ui::ACCENT : IM_COL32_WHITE, sel ? 0.20f : 0.07f * (*an * 2.f)), rd);
+    if (*an > 0.6f) dl->AddRectFilled(ImVec2(p0.x, p0.y + sp(1.25f)), ImVec2(p0.x + sp(0.5f), p1.y - sp(1.25f)), ui::ACCENT, sp(0.25f));
+    ImU32 col = mix(ui::TEXT2, IM_COL32_WHITE, std::min(1.f, *an * 1.4f));
+    ImVec2 ic_c(p0.x + sp(3.f), (p0.y + p1.y) * 0.5f);
+    ui::icon(dl, ic, ic_c, sp(3.f), sel ? mix(ui::ACCENT, IM_COL32_WHITE, 0.55f) : col);
+    if (badge) dl->AddCircleFilled(ic_c + ImVec2(sp(1.5f), -sp(1.5f)), sp(0.625f), badge, 12);
+    if (expand > 0.02f) {
+        dl->PushClipRect(p0, p1, true);
+        dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(p0.x + sp(6.f), ic_c.y - ui::F.bold->FontSize * 0.5f - 1), ui::scale_alpha(col, expand), label);
+        dl->PopClipRect();
+    }
+    if (focus) ui::focus_ring(dl, p0, p1, rd);
+    if (expand < 0.5f && hov) ImGui::SetTooltip("%s", label);
     ImGui::PopID();
-    return clicked;
+    return pressed;
 }
+
+/* ---------- footer: contextual controller / keyboard hints + status ---------- */
+
+struct Hint { const char* pad; const char* key; const char* label; };
+
+static void draw_footer(float h) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    dl->AddLine(p, ImVec2(p.x + w, p.y), ui::HAIRLINE, 1.f);
+    bool pad = A.pad_mode;
+    std::vector<Hint> hints;
+    if (A.page == Page::Library && !A.lib.empty()) {
+        hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}};
+        if (A.view == LibView::All) hints.push_back({"B", "Esc", "Back"});
+    } else if (A.page == Page::Library) {
+        hints = {{"A", "Enter", "Select"}};
+    } else {
+        hints = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}};
+    }
+    if (pad) hints.push_back({"LB", "", "Prev page"}), hints.push_back({"RB", "", "Next page"});
+
+    std::string status;
+    ImU32 dot = ui::TEXT3;
+    if (A.proc) { status = "Playing " + A.proc_title; dot = ui::ACCENT; }
+    else if (A.in_room) { status = "Room " + A.code + "  -  " + A.lobby.status(); dot = A.lobby.connected() ? ui::GOOD : ui::WARN; }
+    else if (A.job.running) { status = "Syncing saves..."; dot = ui::ACCENT; }
+    ImFont* cf = ui::F.cap;
+    float sw = 0;
+    if (!status.empty()) {
+        status = ui::ellipsize(cf, cf->FontSize, status, std::min(w * 0.4f, sp(48.f)));
+        sw = cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, status.c_str()).x + sp(2.f);
+    }
+    float hy = p.y + (h - (cf->FontSize + sp(0.75f))) * 0.5f, x = p.x;
+    for (auto& hn : hints) {
+        bool is_shoulder = hn.pad[0] == 'L' || hn.pad[0] == 'R';
+        if (!pad && is_shoulder) continue;
+        float need = ui::key_hint_width(pad, hn.pad, hn.key, hn.label);
+        if (x + need > p.x + w - sw - sp(2.f)) break;
+        x += ui::key_hint(dl, ImVec2(x, hy), pad, hn.pad, hn.key, hn.label) + sp(3.f);
+    }
+    if (!status.empty()) {
+        float tx = p.x + w - sw + sp(2.f);
+        dl->AddCircleFilled(ImVec2(tx - sp(1.f), p.y + h * 0.5f), sp(0.5f), dot, 12);
+        dl->AddText(cf, cf->FontSize, ImVec2(tx, p.y + (h - cf->FontSize) * 0.5f), ui::TEXT2, status.c_str());
+    }
+    ImGui::Dummy(ImVec2(w, h));
+}
+
+/* ---------- global input: back, page switching, quick actions ---------- */
+
+static void global_input() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (!A.focused || A.proc) return;
+    if (ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
+    if (io.WantTextInput) return;
+    int dir = 0;
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) dir = 1;
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) dir = -1;
+    if (dir) A.page = static_cast<Page>((6 + (int)A.page + dir) % 6);
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+        if (A.page == Page::Library) {
+            if (A.view == LibView::All) { A.view = LibView::Home; A.search_buf[0] = 0; A.sys_filter.clear(); A.vis_dirty = true; }
+        } else {
+            A.page = Page::Library;
+        }
+    }
+    if (A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl)) A.show_details = true;
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl)) toggle_favorite(A.sel_game);
+    }
+}
+
+/* ---------- frame ---------- */
 
 static void draw_frame() {
     ImGuiIO& io = ImGui::GetIO();
+    A.focused = g_headless || (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    if (A.page != A.last_page || A.view != A.last_view) { A.last_page = A.page; A.last_view = A.view; A.nav_seed = true; }
+    /* D-pad zones: the sidebar and the content are separate focus zones, otherwise ImGui's scoring happily jumps diagonally
+     * from a hero button to a sidebar entry. Left with nothing further left enters the sidebar, Right leaves it. */
+    bool in_side = false;
+    {
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        for (ImGuiID id : A.side_ids_prev) if (id == g.NavId && id != 0) in_side = true;
+        if (A.zone_req == 1) { in_side = true; A.seed_side = true; }
+        if (A.zone_req == 2) { in_side = false; A.nav_seed = true; }
+        A.zone_req = 0;
+        if (A.nav_seed) in_side = false;
+        A.side_ids_prev.swap(A.side_ids);
+        A.side_ids.clear();
+    }
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -2289,56 +3071,116 @@ static void draw_frame() {
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
     ImGui::PopStyleVar(2);
 
-    // Sidebar
-    float sw = 240 * S;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(21, 22, 28, 255));
+    /* ---- sidebar (icons + labels; shrinks to icons only when narrow) ---- */
+    bool collapsed = hubui::sidebar_collapsed(A.st.sidebar_mode, io.DisplaySize.x, 1040.f * S);
+    float full_w = sp(29.f), mini_w = sp(9.f), target = collapsed ? mini_w : full_w;
+    if (A.side_w <= 0) A.side_w = target;
+    ui::anim(A.side_w, target, 14.f);
+    float sw = A.side_w, expand = std::max(0.f, std::min(1.f, (sw - mini_w) / (full_w - mini_w)));
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::SIDEBAR);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * S, 22 * S));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(3.f)));
     ImGui::BeginChild("side", ImVec2(sw, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
-                      ImGuiWindowFlags_NoScrollbar);
-    ImGui::PushFont(A.f_title);
-    ImGui::TextUnformatted("RetroHub");
-    ImGui::PopFont();
-    ImGui::Dummy(ImVec2(0, 14 * S));
-    float iw = sw - 28 * S;
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 6 * S));
-    if (nav_item(Page::Library, "Library", iw)) A.page = Page::Library;
-    if (nav_item(Page::Online, A.in_room ? "Play Online  (in room)" : "Play Online", iw)) A.page = Page::Online;
-    if (nav_item(Page::Saves, A.job.running ? "Saves  (syncing...)" : "Saves", iw)) A.page = Page::Saves;
-    if (nav_item(Page::Controllers, "Controllers", iw)) A.page = Page::Controllers;
-    if (nav_item(Page::Settings, "Settings", iw)) A.page = Page::Settings;
-    if (nav_item(Page::About, "About / Updates", iw)) A.page = Page::About;
-    ImGui::PopStyleVar();
-    // player card at the bottom
-    ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 78 * S);
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImDrawList* sdl = ImGui::GetWindowDrawList();
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);   // the first D-pad press should land in the content, not the sidebar
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, !in_side);
+    float iw = sw - sp(3.f);
+    {   // logo mark + wordmark
         ImVec2 p = ImGui::GetCursorScreenPos();
-        dl->AddRectFilled(p, p + ImVec2(iw, 56 * S), COL_PANEL, 12 * S);
-        dl->AddCircleFilled(p + ImVec2(28 * S, 28 * S), 14 * S, COL_ACCENT, 24);
-        dl->AddText(p + ImVec2(52 * S, 8 * S), IM_COL32_WHITE, A.st.name.c_str());
-        const char* stt = A.proc ? "In game" : (A.in_room ? (A.lobby.connected() ? "In a room" : "Connecting") : "Offline");
-        dl->AddText(p + ImVec2(52 * S, 29 * S), IM_COL32(150, 152, 165, 255), stt);
+        float ms = sp(5.f);
+        ImVec2 m0(p.x + sp(0.5f), p.y), m1(m0.x + ms, m0.y + ms);
+        ui::glow(sdl, m0, m1, sp(1.5f), ui::ACCENT, 0.5f);
+        gradient_round_rect(sdl, m0, m1, mix(ui::ACCENT, IM_COL32_WHITE, 0.12f), IM_COL32(150, 90, 235, 255), sp(1.5f));
+        ui::icon(sdl, ui::Icon::Play, ImVec2((m0.x + m1.x) * 0.5f + sp(0.1f), (m0.y + m1.y) * 0.5f), sp(3.f), IM_COL32_WHITE);
+        if (expand > 0.02f) {
+            sdl->PushClipRect(ImVec2(m1.x, p.y), ImVec2(p.x + iw, p.y + ms), true);
+            sdl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(m1.x + sp(1.25f), p.y + (ms - ui::F.h2->FontSize) * 0.5f), ui::scale_alpha(ui::TEXT, expand), "RetroHub");
+            sdl->PopClipRect();
+        }
+        ImGui::Dummy(ImVec2(iw, ms + sp(3.f)));
     }
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, sp(0.5f)));
+    ImU32 room_badge = A.in_room ? (A.lobby.connected() ? ui::GOOD : ui::WARN) : 0;
+    if (nav_item(Page::Library, "Library", ui::Icon::Home, iw, expand, 0)) A.page = Page::Library;
+    if (nav_item(Page::Online, A.in_room ? "Play Online  (in room)" : "Play Online", ui::Icon::Globe, iw, expand, room_badge)) A.page = Page::Online;
+    if (nav_item(Page::Saves, A.job.running ? "Saves  (syncing...)" : "Saves", ui::Icon::Cloud, iw, expand, A.job.running ? ui::ACCENT : 0)) A.page = Page::Saves;
+    if (nav_item(Page::Controllers, "Controllers", ui::Icon::Gamepad, iw, expand, 0)) A.page = Page::Controllers;
+    if (nav_item(Page::Settings, "Settings", ui::Icon::Gear, iw, expand, 0)) A.page = Page::Settings;
+    if (nav_item(Page::About, "About / Updates", ui::Icon::Info, iw, expand, 0)) A.page = Page::About;
+    ImGui::PopStyleVar();
+
+    // bottom: collapse toggle + player card
+    float card_h = sp(7.f), bs = sp(4.f);
+    ImVec2 wp = ImGui::GetWindowPos();
+    float bottom = wp.y + ImGui::GetWindowHeight() - sp(3.f);
+    float left = wp.x + sp(1.5f);
+    float icx = left + sp(3.f);
+    {
+        float xl = icx - bs * 0.5f, xr = left + iw - bs;
+        ImGui::SetCursorScreenPos(ImVec2(xl + (xr - xl) * expand, bottom - card_h - sp(1.f) - bs));
+        if (ui::icon_button("side_toggle", collapsed ? ui::Icon::ChevronR : ui::Icon::ChevronL, bs, false, collapsed ? "Expand sidebar" : "Collapse sidebar")) {
+            A.st.sidebar_mode = collapsed ? 1 : 2;
+            mark_dirty();
+        }
+    }
+    {
+        ImVec2 p(left, bottom - card_h);
+        sdl->AddRectFilled(p, p + ImVec2(iw, card_h), ui::scale_alpha(ui::PANEL, expand), sp(1.5f));
+        sdl->AddRect(p, p + ImVec2(iw, card_h), ui::scale_alpha(ui::HAIRLINE, expand), sp(1.5f), 0, 1.f);
+        ImVec2 ac(left + sp(3.f), p.y + card_h * 0.5f);
+        sdl->AddCircleFilled(ac, sp(2.25f), ui::ACCENT, 24);
+        std::string nm = A.st.name.empty() ? "?" : A.st.name;
+        char init[8] = {(char)std::toupper((unsigned char)nm[0]), 0};
+        ImVec2 its = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, init);
+        sdl->AddText(ui::F.bold, ui::F.bold->FontSize, ac - its * 0.5f, IM_COL32_WHITE, init);
+        const char* stt = A.proc ? "In game" : (A.in_room ? (A.lobby.connected() ? "In a room" : "Connecting") : "Offline");
+        ImU32 sc = A.proc ? ui::ACCENT : (A.in_room ? (A.lobby.connected() ? ui::GOOD : ui::WARN) : ui::TEXT3);
+        sdl->AddCircleFilled(ac + ImVec2(sp(1.6f), sp(1.6f)), sp(0.6f), sc, 12);
+        sdl->AddCircle(ac + ImVec2(sp(1.6f), sp(1.6f)), sp(0.6f), ui::SIDEBAR, 12, 2.f);
+        if (expand > 0.05f) {
+            sdl->PushClipRect(p, p + ImVec2(iw, card_h), true);
+            float tx = left + sp(6.f), mw = iw - sp(6.f) - sp(1.f);
+            sdl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, p.y + sp(1.25f)), ui::scale_alpha(ui::TEXT, expand),
+                         ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, nm, mw).c_str());
+            sdl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p.y + sp(1.25f) + ui::F.bold->FontSize + sp(0.25f)), ui::scale_alpha(ui::TEXT2, expand), stt);
+            sdl->PopClipRect();
+        }
+    }
+    ImGui::PopItemFlag();
+    ImGui::PopItemFlag();
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
 
     ImGui::SameLine(0, 0);
 
-    // Content
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(32 * S, 28 * S));
-    ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
+    /* ---- content ---- */
+    float hpad = (io.DisplaySize.x - sw > 1200.f * S) ? sp(5.f) : sp(4.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(hpad, sp(3.f)));
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, in_side);
+    ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
 
     if (A.proc) {
-        begin_panel("ingame", ImVec2(0, 0), mix(COL_PANEL, COL_ACCENT, 0.25f));
-        ImGui::Text("In game...  %s is running. The hub will be ready again when it closes.", A.proc_title.c_str());
-        end_panel();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float w = ImGui::GetContentRegionAvail().x, h = sp(5.f);
+        dl->AddRectFilled(p, p + ImVec2(w, h), mix(ui::PANEL, ui::ACCENT, 0.22f), sp(1.5f));
+        dl->AddRect(p, p + ImVec2(w, h), with_alpha(ui::ACCENT, 0.5f), sp(1.5f), 0, 1.f);
+        float pulse = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 4.f);
+        dl->AddCircleFilled(p + ImVec2(sp(2.f), h * 0.5f), sp(0.6f) + pulse * sp(0.25f), ui::ACCENT, 16);
+        std::string m = A.proc_title + " is running - the hub is ready again when it closes.";
+        dl->AddText(ui::F.body, ui::F.body->FontSize, p + ImVec2(sp(3.5f), (h - ui::F.body->FontSize) * 0.5f),
+                    ui::TEXT, ui::ellipsize(ui::F.body, ui::F.body->FontSize, m, w - sp(5.f)).c_str());
+        ImGui::Dummy(ImVec2(w, h + sp(2.f)));
     }
 
-    float status_h = 36 * S;
-    ImGui::BeginChild("page", ImVec2(0, -status_h), ImGuiChildFlags_NavFlattened);
+    float footer_h = sp(5.5f);
+    ImGuiWindowFlags pf = A.page == Page::Library ? (ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse) : ImGuiWindowFlags_None;
+    ImGui::BeginChild("page", ImVec2(0, -footer_h), ImGuiChildFlags_NavFlattened, pf);
     switch (A.page) {
         case Page::Library: page_library(); break;
         case Page::Online: page_online(); break;
@@ -2348,30 +3190,60 @@ static void draw_frame() {
         case Page::About: page_about(); break;
     }
     ImGui::EndChild();
-
-    // Status bar
-    std::string left = A.in_room ? A.lobby.status() : "Not in a room";
-    bool show_notice = !A.notice.empty() && ImGui::GetTime() < A.notice_until;
-    ImGui::Separator();
-    ImGui::TextDisabled("%s", left.c_str());
-    if (show_notice) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("   |   ");
-        ImGui::SameLine();
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_WARN), "%s", A.notice.c_str());
-    }
+    draw_footer(footer_h);
     ImGui::EndChild();
+    ImGui::PopItemFlag();
+
+    {   // a Left/Right move that found no neighbour hands the focus to the other zone
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        bool miss = g.NavMoveSubmitted && g.NavMoveResultLocal.ID == 0 && g.NavMoveResultOther.ID == 0;
+        if (miss && !g.IO.WantTextInput && !ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+            if (g.NavMoveDir == ImGuiDir_Left && !in_side) A.zone_req = 1;
+            else if (g.NavMoveDir == ImGuiDir_Right && in_side) A.zone_req = 2;
+        }
+    }
+
     draw_overlays();
+    global_input();
+    draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f), io.DisplaySize.x - sp(3.f));
     ImGui::End();
 }
 
 /* ============================ main ============================ */
 
+/* ---- headless screenshot harness (testing aid, no window is ever shown) ----
+ * HUB_SCREENSHOT=<file.bmp>  renders with SDL's "dummy" video driver + software renderer, writes the frame, exits.
+ * HUB_SHOT_SECS (default 4) wall-clock seconds to run first; HUB_SHOT_SIZE=WxH; HUB_SCALE=DPI scale (1, 1.5, 2);
+ * HUB_SHOT_KEYS=right,right,down,enter,... keyboard-nav presses sent at 0.3s intervals before the shot;
+ * HUB_SHOT_PAD=1 shows controller glyphs in the footer. */
+static void save_screenshot(SDL_Renderer* ren, const char* path) {
+    int w = 0, h = 0;
+    SDL_GetRendererOutputSize(ren, &w, &h);
+    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (!s) return;
+    if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch) == 0) SDL_SaveBMP(s, path);
+    SDL_FreeSurface(s);
+}
+static ImGuiKey shot_key(const std::string& n) {
+    if (n == "right") return ImGuiKey_RightArrow;
+    if (n == "left") return ImGuiKey_LeftArrow;
+    if (n == "up") return ImGuiKey_UpArrow;
+    if (n == "down") return ImGuiKey_DownArrow;
+    if (n == "enter") return ImGuiKey_Enter;
+    if (n == "esc") return ImGuiKey_Escape;
+    if (n == "i") return ImGuiKey_I;
+    if (n == "f") return ImGuiKey_F;
+    return ImGuiKey_None;
+}
+
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    const char* shot_path = std::getenv("HUB_SCREENSHOT");
+    if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
     SDL_SetMainReady();
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");   // smooth downscaling of cover art
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
         MessageBoxA(nullptr, SDL_GetError(), "RetroHub", MB_ICONERROR);
         return 1;
@@ -2380,6 +3252,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     float ddpi = 96.f;
     SDL_GetDisplayDPI(0, &ddpi, nullptr, nullptr);
     S = std::max(1.0f, ddpi / 96.0f);
+    if (const char* sc = std::getenv("HUB_SCALE")) S = std::max(0.75f, (float)std::atof(sc));
 
     // settings
     A.settings_path = hub::data_dir() + "hub.json";
@@ -2388,6 +3261,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0 Library, 1 Online, 2 Saves, 3 Controllers, 4 Settings, 5 About
         int n = std::atoi(pg);
         if (n >= 0 && n <= 5) A.page = static_cast<Page>(n);
+    }
+    if (const char* sg = std::getenv("HUB_SELECT_GAME")) A.env_select = sg;   // preselect a library game key (screenshots)
+    if (const char* vw = std::getenv("HUB_START_VIEW")) {                    // "all" opens the All Games grid
+        if (std::string(vw) == "all") A.view = LibView::All;
     }
     if (A.st.name.empty() || A.st.name == "Player") {   // default to the Windows user name
         wchar_t un[128];
@@ -2402,14 +3279,27 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
     if (!A.st.vault_dir.empty()) hub::saves::set_vault_dir(A.st.vault_dir);
 
-    A.win = SDL_CreateWindow("RetroHub", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (int)(1100 * S), (int)(720 * S),
-                             SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN);
-    SDL_Renderer* ren = A.win ? SDL_CreateRenderer(A.win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : nullptr;
+    int win_w = (int)(1280 * S), win_h = (int)(780 * S);
+    {   // never open larger than the screen
+        SDL_Rect ub;
+        if (!shot_path && SDL_GetDisplayUsableBounds(0, &ub) == 0) {
+            win_w = std::min(win_w, (int)(ub.w * 0.94f));
+            win_h = std::min(win_h, (int)(ub.h * 0.94f));
+        }
+    }
+    if (shot_path) {
+        win_w = (int)(1280 * S);
+        win_h = (int)(780 * S);
+        if (const char* sz = std::getenv("HUB_SHOT_SIZE")) std::sscanf(sz, "%dx%d", &win_w, &win_h);
+    }
+    A.win = SDL_CreateWindow("RetroHub", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, win_w, win_h,
+                             SDL_WINDOW_RESIZABLE | (shot_path ? 0 : SDL_WINDOW_SHOWN));
+    SDL_Renderer* ren = A.win ? SDL_CreateRenderer(A.win, -1, shot_path ? SDL_RENDERER_SOFTWARE : (SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC)) : nullptr;
     if (!A.win || !ren) {
         MessageBoxA(nullptr, SDL_GetError(), "RetroHub", MB_ICONERROR);
         return 1;
     }
-    SDL_SetWindowMinimumSize(A.win, (int)(820 * S), (int)(560 * S));
+    SDL_SetWindowMinimumSize(A.win, (int)(960 * S), (int)(600 * S));
     SDL_SysWMinfo wm;
     SDL_VERSION(&wm.version);
     if (SDL_GetWindowWMInfo(A.win, &wm)) A.hwnd = wm.info.win.window;
@@ -2419,14 +3309,32 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     io.IniFilename = nullptr;
-    setup_fonts(S);
-    setup_theme(S);
+    ui::setup_fonts(S);
+    ui::setup_theme(S);
     ImGui_ImplSDL2_InitForSDLRenderer(A.win, ren);
     ImGui_ImplSDLRenderer2_Init(ren);
+    hubart::init(ren, hub::data_dir() + "art\\");
+    hubart::set_enabled(A.st.download_art);
 
     refresh_pads();
     start_scan();
     auto_sync();   // pull in saves from other PCs at start
+
+    double shot_secs = 4.0;
+    std::vector<ImGuiKey> shot_keys;
+    ULONGLONG shot_t0 = GetTickCount64();
+    if (shot_path) {
+        if (const char* ss = std::getenv("HUB_SHOT_SECS")) shot_secs = std::atof(ss);
+        if (const char* ks = std::getenv("HUB_SHOT_KEYS")) {
+            std::stringstream kss(ks);
+            std::string tok;
+            while (std::getline(kss, tok, ',')) if (shot_key(tok) != ImGuiKey_None) shot_keys.push_back(shot_key(tok));
+        }
+        if (const char* pd = std::getenv("HUB_SHOT_PAD")) A.pad_mode = std::atoi(pd) != 0;
+    }
+    size_t shot_key_i = 0;
+    bool shot_key_down = false;
+    double shot_last_key = 0;
 
     bool running = true;
     while (running) {
@@ -2436,8 +3344,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             if (e.type == SDL_QUIT) running = false;
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) running = false;
             if (e.type == SDL_CONTROLLERDEVICEADDED || e.type == SDL_CONTROLLERDEVICEREMOVED) refresh_pads();
+            // which device was used last decides whether the footer shows controller glyphs or key caps
+            if (e.type == SDL_CONTROLLERBUTTONDOWN || (e.type == SDL_CONTROLLERAXISMOTION && std::abs((int)e.caxis.value) > 16000)) A.pad_mode = true;
+            if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEMOTION) A.pad_mode = false;
         }
-        if (A.scan_ready.exchange(false)) {
+        hubart::pump();
+        if (!(shot_path && std::getenv("HUB_SHOT_SKELETON")) && A.scan_ready.exchange(false)) {
             if (A.scan_th.joinable()) A.scan_th.join();
             A.scanning = false;
             apply_scan();
@@ -2455,14 +3367,29 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
+        double shot_el = (GetTickCount64() - shot_t0) / 1000.0;
+        if (shot_path && !shot_keys.empty()) {   // scripted keyboard navigation, starting once the library has loaded
+            double start = std::max(1.5, shot_secs - 0.35 * (shot_keys.size() + 1));
+            if (shot_key_down) { io.AddKeyEvent(shot_keys[shot_key_i - 1], false); shot_key_down = false; }
+            else if (shot_key_i < shot_keys.size() && shot_el > start && shot_el - shot_last_key > 0.3 && A.scanned_once) {
+                io.AddKeyEvent(shot_keys[shot_key_i++], true);
+                shot_key_down = true;
+                shot_last_key = shot_el;
+            }
+        }
         ImGui::NewFrame();
-        ImGui::PushFont(A.f_body);
+        ImGui::PushFont(ui::F.body);
         draw_frame();
         ImGui::PopFont();
         ImGui::Render();
-        SDL_SetRenderDrawColor(ren, 19, 20, 24, 255);
+        SDL_SetRenderDrawColor(ren, 16, 17, 22, 255);
         SDL_RenderClear(ren);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), ren);
+        if (shot_path) {
+            bool ready = shot_el >= shot_secs && (A.scanned_once || shot_el > shot_secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && shot_key_i >= shot_keys.size() && !shot_key_down;
+            if (ready) { save_screenshot(ren, shot_path); running = false; }
+            SDL_Delay(8);
+        }
         SDL_RenderPresent(ren);
     }
 
@@ -2475,6 +3402,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hub::flush_library_state();
     if (A.proc) CloseHandle(A.proc);
     for (auto* p : A.pads) SDL_GameControllerClose(p);
+    hubart::shutdown();
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

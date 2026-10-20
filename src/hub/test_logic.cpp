@@ -1,5 +1,6 @@
 #include "logic.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -103,6 +104,86 @@ int main() {
     auto rec = pick_recent({0, 50, 10, 0, 99, 10}, 3);
     CHECK(rec.size() == 3 && rec[0] == 4 && rec[1] == 1 && rec[2] == 2);   // ties keep list order
     CHECK(pick_recent({0, 0}, 6).empty());
+
+    /* settings: new UI fields */
+    {
+        Settings d;
+        CHECK(d.download_art && d.sidebar_mode == 0);
+        Settings x;
+        x.download_art = false;
+        x.sidebar_mode = 2;
+        Settings y;
+        CHECK(settings_from_json(settings_to_json(x), &y) && !y.download_art && y.sidebar_mode == 2);
+        CHECK(settings_from_json("{\"sidebar_mode\": 9}", &y) && y.sidebar_mode == 2);
+        CHECK(settings_from_json("{}", &d) && d.download_art);
+    }
+
+    /* shelves */
+    {
+        std::vector<ShelfGame> g(7);
+        g[0] = {"native:smash64", "Super Smash Bros.", "n64", false, 0, true, true};
+        g[1] = {"n64:1", "Mario Party", "n64", true, 300, true, false};
+        g[2] = {"n64:2", "banjo", "n64", false, 100, false, false};
+        g[3] = {"gba:1", "Wario Ware", "gba", true, 0, false, false};
+        g[4] = {"gb:1", "Tetris", "gb", false, 200, false, false};
+        g[5] = {"gc:1", "Melee", "gc", false, 0, false, false};
+        g[6] = {"gbc:1", "Crystal", "gbc", false, 0, false, false};
+        auto sh = compose_shelves(g);
+        std::vector<std::string> ids;
+        for (auto& s2 : sh) ids.push_back(s2.id);
+        std::vector<std::string> want = {"recent", "favs", "online", "sys:n64", "sys:gc", "sys:gba", "sys:gbc", "sys:gb"};
+        CHECK(ids == want);
+        CHECK(sh[0].items == std::vector<int>({1, 4, 2}));          // newest first
+        CHECK(sh[1].items == std::vector<int>({1, 3}));             // favorites by title
+        CHECK(sh[2].items == std::vector<int>({0, 1}));             // pinned first
+        CHECK(sh[3].items == std::vector<int>({0, 2, 1}));          // n64: pinned, banjo, Mario Party
+        CHECK(sh[0].title == "Continue Playing" && sh[7].title == "Game Boy");
+        CHECK(compose_shelves({}).empty());
+        CHECK(compose_shelves(g, 2)[0].items.size() == 2);
+        CHECK(pick_hero(g, "gb:1") == 4 && pick_hero(g, "nope") == 1 && pick_hero(g, "") == 1);
+        std::vector<ShelfGame> fresh(2);
+        fresh[1].favorite = true;
+        CHECK(pick_hero(fresh, "") == 1 && pick_hero({}, "x") == -1);
+        fresh[1].favorite = false;
+        CHECK(pick_hero(fresh, "") == 0);
+        auto pk = pick_unowned({false, true, false, false, false}, {false, true, false, true, false}, 3);
+        CHECK(pk == std::vector<int>({3, 0, 2}));                   // online first, then catalog order
+        CHECK(pick_unowned({true, true}, {}, 5).empty());
+        CHECK(pick_unowned({false, false, false}, {}, 2) == std::vector<int>({0, 1}));
+    }
+
+    /* layout + animation math */
+    {
+        GridLayout gl = grid_layout(1000, 230, 330, 18);
+        CHECK(gl.cols == 4 && gl.tile_w > 230 && gl.tile_w <= 330);
+        CHECK(gl.cols * gl.tile_w + (gl.cols - 1) * 18 <= 1000.01f);
+        GridLayout narrow = grid_layout(100, 230, 330, 18);
+        CHECK(narrow.cols == 1 && narrow.tile_w == 100);
+        CHECK(grid_layout(600, 230, 250, 18).tile_w == 250);
+        for (float a = 300; a < 3000; a += 37) {
+            float w = shelf_tile_w(a, 200, 300, 16);
+            CHECK(w >= 200 && w <= 300);
+        }
+        CHECK(shelf_tile_w(900, 200, 300, 16) < 300 + 0.01f);
+        float v = 0;
+        for (int i = 0; i < 600; ++i) v = approach(v, 1.f, 1.f / 60.f, 14.f);
+        CHECK(v > 0.999f && v <= 1.f);
+        float a1 = approach(0, 1, 0.016f, 14), a2 = approach(approach(0, 1, 0.008f, 14), 1, 0.008f, 14);
+        CHECK(std::fabs(a1 - a2) < 1e-5f);                          // frame-rate independent
+        CHECK(approach(0.5f, 1, 0, 14) == 0.5f);
+        CHECK(!sidebar_collapsed(0, 1200, 1100) && sidebar_collapsed(0, 900, 1100));
+        CHECK(!sidebar_collapsed(1, 500, 1100) && sidebar_collapsed(2, 3000, 1100));
+
+        ArtFit c = fit_art(400, 300, 260, 200);                     // landscape box into landscape tile
+        CHECK(c.cover && c.w == 260 && c.h == 200 && c.v0 == 0 && c.v1 == 1 && c.u0 > 0 && c.u1 < 1);
+        CHECK(std::fabs((c.u1 - c.u0) * 400.f / ((c.v1 - c.v0) * 300.f) - 260.f / 200.f) < 1e-3f);   // crop matches tile aspect
+        ArtFit p = fit_art(300, 420, 260, 200);                     // portrait box: letterboxed
+        CHECK(!p.cover && p.h == 200 && p.w < 260 && std::fabs(p.x - (260 - p.w) * 0.5f) < 1e-3f && p.u0 == 0 && p.u1 == 1);
+        ArtFit z = fit_art(0, 0, 260, 200);
+        CHECK(z.cover && z.w == 260 && z.h == 200);
+        ArtFit wide = fit_art(1000, 200, 260, 200);                 // panorama: contain, centered vertically
+        CHECK(!wide.cover && wide.w == 260 && wide.h < 100 && wide.y > 0);
+    }
 
     CHECK(format_play_time(0) == "Never played");
     CHECK(format_play_time(30) == "Under a minute");
