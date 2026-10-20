@@ -1,0 +1,9 @@
+13:05:26.577 [net] Session: start room=S4SME6-1 slot=0 expected=2 force_relay=0 udp port 55640
+13:05:26.578 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=S4SME6-1&role=host&name=n64run
+13:05:26.596 [net] STUN: public endpoint 76.150.167.30:55640
+13:05:27.022 [net] Session 0: welcome room S4SME6-1
+13:05:27.022 [net] Session 0: endpoint sent public=76.150.167.30:55640 local=10.0.0.45:55640
+13:05:27.880 [net] Session 0: slot 1 joined
+13:05:27.929 [net] Session 0: peer 1 candidates pub=76.150.167.30:55641 loc=10.0.0.45:55641
+13:05:27.935 [net] Session 0: direct path to slot 1 via 10.0.0.45:55641
+13:05:27.935 [net] Session 0: ready (roster 03)

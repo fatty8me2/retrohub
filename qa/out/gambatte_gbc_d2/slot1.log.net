@@ -1,0 +1,11 @@
+13:05:39.900 [net] Session: start room=XEJKDH-1 slot=1 expected=2 force_relay=0 udp port 63573
+13:05:39.900 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=XEJKDH-1&role=join&name=n64run&slot=1
+13:05:39.925 [net] STUN: public endpoint 76.150.167.30:63573
+13:05:40.283 [net] WS: server closed the connection: no-such-room
+13:05:40.989 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=XEJKDH-1&role=join&name=n64run&slot=1
+13:05:41.185 [net] Session 1: welcome room XEJKDH-1
+13:05:41.185 [net] Session 1: slot 0 joined
+13:05:41.186 [net] Session 1: endpoint sent public=76.150.167.30:63573 local=10.0.0.45:63573
+13:05:41.245 [net] Session 1: peer 0 candidates pub=76.150.167.30:63572 loc=10.0.0.45:63572
+13:05:41.251 [net] Session 1: direct path to slot 0 via 10.0.0.45:63572
+13:05:41.251 [net] Session 1: ready (roster 03)

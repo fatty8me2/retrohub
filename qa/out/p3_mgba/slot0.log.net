@@ -1,0 +1,12 @@
+13:08:42.526 [net] Session: start room=LDLEE3-1 slot=0 expected=3 force_relay=0 udp port 51706
+13:08:42.527 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=LDLEE3-1&role=host&name=n64run
+13:08:42.545 [net] STUN: public endpoint 76.150.167.30:51706
+13:08:42.909 [net] Session 0: welcome room LDLEE3-1
+13:08:42.909 [net] Session 0: slot 1 joined
+13:08:42.909 [net] Session 0: slot 2 joined
+13:08:42.910 [net] Session 0: endpoint sent public=76.150.167.30:51706 local=10.0.0.45:51706
+13:08:42.965 [net] Session 0: peer 1 candidates pub=76.150.167.30:51707 loc=10.0.0.45:51707
+13:08:42.971 [net] Session 0: peer 2 candidates pub=76.150.167.30:51708 loc=10.0.0.45:51708
+13:08:42.977 [net] Session 0: direct path to slot 1 via 10.0.0.45:51707
+13:08:42.977 [net] Session 0: direct path to slot 2 via 10.0.0.45:51708
+13:08:42.978 [net] Session 0: ready (roster 07)

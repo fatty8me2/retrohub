@@ -404,7 +404,10 @@ struct App {
     // saves
     SaveJob job;
     std::function<void()> after_job;              // run once the current job finishes (e.g. a queued launch)
-    bool sync_pending = false;                    // a sync was requested while a job was running
+    hubui::SyncGate sync_gate;                    // a sync was requested while a job or a game was running
+    bool share_host_save = true;                  // room option (host-controlled): all PCs use the host's N64 save
+    int my_locals = 1;                            // local controllers I play with online (1-2)
+    std::map<int, int> locals;                    // other members' local counts by lobby slot
     std::string sync_result;                      // last result summary (Saves page)
     bool sync_result_ok = true;
     std::string export_result, import_result;
@@ -680,8 +683,13 @@ static void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
 
 static void start_sync(bool manual) {
     if (A.st.sync_folder.empty()) return;
-    if (A.job.running) { A.sync_pending = true; return; }
+    /* never touch battery files under a running emulator: queue until the game exits */
+    if (hubui::sync_request(A.sync_gate, manual, A.proc != nullptr, A.job.running) == hubui::SyncAction::Queue) return;
     start_job(SaveJob::Sync, A.st.sync_folder, manual);
+}
+static void run_pending_sync() {
+    bool manual = false;
+    if (hubui::sync_take_pending(A.sync_gate, A.proc != nullptr, A.job.running, &manual)) start_job(SaveJob::Sync, A.st.sync_folder, manual);
 }
 static void auto_sync() {
     if (!A.st.sync_folder.empty() && A.st.sync_auto) start_sync(false);
@@ -725,7 +733,6 @@ static void poll_job() {
     j.done = false;
     std::function<void()> next;
     next.swap(A.after_job);
-    if (A.sync_pending) { A.sync_pending = false; start_sync(false); }
     if (next) next();
 }
 
@@ -1039,7 +1046,8 @@ static void play_entry(const hub::GameEntry& e) {
     }
 }
 
-static void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in) {
+static std::vector<hubui::MemberPads> member_pads();
+static void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save) {
     A.st.last_game = room_id(e);
     mark_dirty();
     RunInfo ri = run_info_for(e, true);
@@ -1051,13 +1059,18 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
         spawn(exe, "--from-hub", dir_of(exe), env, ri);
         return;
     }
-    std::vector<int> slots;
-    for (auto& m : A.lobby.members()) slots.push_back(m.slot);
+    /* port i -> i-th member in slot order (slots may have gaps); --slot stays the real lobby slot */
+    hubui::PortPlan plan = hubui::build_ports(member_pads());
     std::string net = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
-                      std::to_string(A.lobby.my_slot()) + " --players " + std::to_string(slots.size()) + " --ports " +
-                      hubui::ports_arg(slots) + " --delay " + std::to_string(delay);
+                      std::to_string(A.lobby.my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
+                      plan.ports + hubui::delay_arg(delay);
     if (e.system == hub::System::N64) {
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net;
+        if (share_save) {   // every PC must agree; only the host (slot 0) supplies its battery dir
+            args += " --share-host-save";
+            if (A.lobby.my_slot() == 0)
+                args += " --host-save-dir " + quote(no_slash(hub::saves::battery_dir(sys_short(e), e.key)));
+        }
         if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
             std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
             if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
@@ -1092,6 +1105,16 @@ static std::vector<hubnet::Member> room_members() {
     return A.lobby.members();
 }
 static int room_my_slot() { return g_fake_room ? 0 : A.lobby.my_slot(); }
+static int locals_of(int slot) {
+    if (slot == room_my_slot()) return A.my_locals;
+    auto it = A.locals.find(slot);
+    return it == A.locals.end() ? 1 : std::max(1, std::min(2, it->second));
+}
+static std::vector<hubui::MemberPads> member_pads() {
+    std::vector<hubui::MemberPads> v;
+    for (auto& m : room_members()) v.push_back({m.slot, locals_of(m.slot)});
+    return v;
+}
 
 static std::string member_name(int slot) {
     for (auto& m : room_members()) if (m.slot == slot) return m.name;
@@ -1107,6 +1130,9 @@ static void leave_room() {
     A.chat.clear();
     A.selected_game.clear();
     A.my_ready = false;
+    A.locals.clear();
+    A.my_locals = 1;
+    A.share_host_save = true;
     A.was_connected = false;
     A.code.clear();
 }
@@ -1159,6 +1185,7 @@ static void lobby_tick() {
         std::set<int> alive(slots.begin(), slots.end());
         for (auto it = A.peers.begin(); it != A.peers.end();) it = alive.count(it->first) ? std::next(it) : A.peers.erase(it);
         for (auto it = A.ready.begin(); it != A.ready.end();) it = alive.count(it->first) ? std::next(it) : A.ready.erase(it);
+        for (auto it = A.locals.begin(); it != A.locals.end();) it = alive.count(it->first) ? std::next(it) : A.locals.erase(it);
         A.last_slots = slots;
         A.hello_dirty = true;
         A.was_connected = true;
@@ -1172,6 +1199,8 @@ static void lobby_tick() {
             for (auto& m : hubui::hello_messages("2", games, keys)) A.lobby.send_msg(m);
         }
         A.lobby.send_msg(std::string("{\"kind\":\"ready\",\"ready\":") + (A.my_ready ? "true" : "false") + "}");
+        A.lobby.send_msg("{\"kind\":\"locals\",\"n\":" + std::to_string(A.my_locals) + "}");
+        if (is_host()) A.lobby.send_msg(std::string("{\"kind\":\"opts\",\"share_save\":") + (A.share_host_save ? "true" : "false") + "}");
         if (is_host() && !A.selected_game.empty())
             A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + hubui::json_escape(A.selected_game) + "\"}");
     }
@@ -1190,6 +1219,11 @@ static void lobby_tick() {
         } else if (kind == "ready") {
             const hubui::Json* r = j.get("ready");
             A.ready[from] = r && r->type == hubui::Json::Bool && r->b;
+        } else if (kind == "locals") {
+            A.locals[from] = std::max(1, std::min(2, (int)j.num("n", 1)));
+        } else if (kind == "opts") {
+            const hubui::Json* r = j.get("share_save");
+            if (from == 0 && r && r->type == hubui::Json::Bool) A.share_host_save = r->b;
         } else if (kind == "chat") {
             A.chat.push_back({member_name(from), j.str("text")});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
@@ -1199,7 +1233,9 @@ static void lobby_tick() {
             const hub::GameEntry* g = find_room_entry(j.str("game"));
             if (!g) { set_notice("The host started a game you don't have."); continue; }
             if (A.proc) continue;
-            launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 2), false, j.str("core"));
+            const hubui::Json* ss = j.get("share_save");
+            launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
+                          ss && ss->type == hubui::Json::Bool && ss->b);
         }
     }
 }
@@ -2310,6 +2346,22 @@ static void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     if (slot == A.lobby.my_slot()) rd = host || A.my_ready;
     if (host) pill("HOST", COL_ACCENT);
     else pill(rd ? "Ready" : "Not ready", rd ? COL_GOOD : IM_COL32(70, 72, 86, 255));
+    {   // local players (1-2 controllers on this PC)
+        int n = locals_of(slot);
+        bool mine = slot == room_my_slot();
+        ImGui::SetCursorScreenPos(ImVec2(p1.x - 150 * S, p0.y + 12 * S));
+        ImGui::PushID(slot);
+        ImGui::TextDisabled("Local players");
+        ImGui::SetCursorScreenPos(ImVec2(p1.x - 150 * S, p0.y + 36 * S));
+        if (mine) {
+            if (ImGui::RadioButton("1", n == 1)) { A.my_locals = 1; A.hello_dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("2", n == 2)) { A.my_locals = 2; A.hello_dirty = true; }
+        } else {
+            pill(n == 2 ? "2 players" : "1 player", IM_COL32(70, 72, 86, 255));
+        }
+        ImGui::PopID();
+    }
     // owned games
     ImGui::SetCursorScreenPos(p0 + ImVec2(16 * S, 88 * S));
     if (!p->hello) {
@@ -2532,6 +2584,13 @@ static void page_online_room() {
 
     ImGui::Dummy(ImVec2(0, 6 * S));
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
+    if (rg && rg->system == hub::System::N64) {
+        if (host) {
+            if (ImGui::Checkbox("Use host's save (unlocked characters/boards)", &A.share_host_save)) A.hello_dirty = true;
+        } else {
+            ImGui::TextDisabled("%s", A.share_host_save ? "Using the host's save (unlocked characters/boards)." : "Starting from an empty save.");
+        }
+    }
     if (host) {
         bool ok = false;
         std::string why;
@@ -2546,11 +2605,12 @@ static void page_online_room() {
         }
         if (A.proc) { ok = false; why = "In game..."; }
         if (button("Launch", ImVec2(220 * S, 60 * S), true, ok)) {
-            int delay = A.st.input_delay;
+            int delay = A.st.delay_auto ? 0 : A.st.input_delay;   // 0 = auto, same for everyone
+            bool share = A.share_host_save && rg->system == hub::System::N64;
             unsigned seed = std::random_device{}();
             ++A.launch_counter;
-            A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core));
-            launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core);
+            A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share));
+            launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share);
         }
         ImGui::SameLine();
         ImGui::TextDisabled("%s", ok ? "Everyone is ready." : why.c_str());
@@ -2805,8 +2865,10 @@ static void page_saves() {
     if (ImGui::Checkbox("Sync automatically after playing", &A.st.sync_auto)) mark_dirty();
     if (ImGui::Checkbox("Include save states (bigger)", &A.st.sync_states)) mark_dirty();
     ImGui::Dummy(ImVec2(0, 2 * S));
-    bool can_sync = !A.st.sync_folder.empty() && !busy;
+    bool can_sync = !A.st.sync_folder.empty() && !busy && !A.proc;
     if (button(busy && A.job.kind == SaveJob::Sync ? "Syncing..." : "Sync now", ImVec2(180 * S, 46 * S), true, can_sync)) start_sync(true);
+    if (A.proc && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("A game is running. Saves sync automatically when it closes.");
     if (!A.sync_result.empty()) {
         ImGui::SameLine();
         ImGui::BeginGroup();
@@ -2945,8 +3007,15 @@ static void page_settings() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("Online input delay");
     ImGui::SetNextItemWidth(sp(40.f));
-    if (ImGui::SliderInt("##delay", &A.st.input_delay, 1, 6, "%d frames")) mark_dirty();
-    text_wrapped_disabled("About " + std::to_string(A.st.input_delay * 1000 / 60) + " ms at 60 fps. Higher is smoother on slow connections but feels laggier.");
+    if (ImGui::RadioButton("Auto (recommended)", A.st.delay_auto)) { A.st.delay_auto = true; mark_dirty(); }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Manual", !A.st.delay_auto)) { A.st.delay_auto = false; mark_dirty(); }
+    if (A.st.delay_auto) {
+        text_wrapped_disabled("The game measures your connection and picks the delay for everyone. The host's choice applies to the whole room.");
+    } else {
+        if (ImGui::SliderInt("##delay", &A.st.input_delay, 1, 8, "%d frames")) mark_dirty();
+        text_wrapped_disabled("About " + std::to_string(A.st.input_delay * 1000 / 60) + " ms at 60 fps. Higher is smoother on slow connections but feels laggier.");
+    }
     end_panel();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
@@ -3638,6 +3707,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         poll_process();
         poll_job();
+        run_pending_sync();
         poll_dolphin();
         lobby_tick();
         fr_tick();

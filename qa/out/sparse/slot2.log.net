@@ -1,0 +1,9 @@
+13:21:09.472 [net] Session: start room=K74M2K-1 slot=2 expected=2 force_relay=0 udp port 53397
+13:21:09.473 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=K74M2K-1&role=join&name=n64run&slot=2
+13:21:09.491 [net] STUN: public endpoint 76.150.167.30:53397
+13:21:09.974 [net] Session 2: welcome room K74M2K-1
+13:21:09.974 [net] Session 2: slot 0 joined
+13:21:09.974 [net] Session 2: endpoint sent public=76.150.167.30:53397 local=10.0.0.45:53397
+13:21:10.017 [net] Session 2: peer 0 candidates pub=76.150.167.30:53396 loc=10.0.0.45:53396
+13:21:10.023 [net] Session 2: direct path to slot 0 via 10.0.0.45:53396
+13:21:10.029 [net] Session 2: ready (roster 05)

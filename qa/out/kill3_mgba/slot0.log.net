@@ -1,0 +1,13 @@
+13:09:20.334 [net] Session: start room=CZ3HYS-1 slot=0 expected=3 force_relay=0 udp port 54386
+13:09:20.335 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=CZ3HYS-1&role=host&name=n64run
+13:09:20.353 [net] STUN: public endpoint 76.150.167.30:54386
+13:09:20.758 [net] Session 0: welcome room CZ3HYS-1
+13:09:20.758 [net] Session 0: slot 2 joined
+13:09:20.759 [net] Session 0: endpoint sent public=76.150.167.30:54386 local=10.0.0.45:54386
+13:09:20.802 [net] Session 0: peer 2 candidates pub=76.150.167.30:54388 loc=10.0.0.45:54388
+13:09:20.808 [net] Session 0: direct path to slot 2 via 10.0.0.45:54388
+13:09:21.665 [net] Session 0: slot 1 joined
+13:09:21.718 [net] Session 0: peer 1 candidates pub=76.150.167.30:54387 loc=10.0.0.45:54387
+13:09:21.724 [net] Session 0: direct path to slot 1 via 10.0.0.45:54387
+13:09:21.724 [net] Session 0: ready (roster 07)
+13:09:24.434 [net] Session 0: slot 2 left

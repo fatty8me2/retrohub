@@ -1,0 +1,9 @@
+13:08:20.675 [net] Session: start room=D8QJWN-1 slot=0 expected=2 force_relay=0 udp port 58023
+13:08:20.676 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=D8QJWN-1&role=host&name=n64run
+13:08:20.689 [net] STUN: public endpoint 76.150.167.30:58023
+13:08:21.122 [net] Session 0: welcome room D8QJWN-1
+13:08:21.122 [net] Session 0: endpoint sent public=76.150.167.30:58023 local=10.0.0.45:58023
+13:08:22.043 [net] Session 0: slot 1 joined
+13:08:22.108 [net] Session 0: peer 1 candidates pub=76.150.167.30:58024 loc=10.0.0.45:58024
+13:08:22.114 [net] Session 0: direct path to slot 1 via 10.0.0.45:58024
+13:08:22.115 [net] Session 0: ready (roster 03)

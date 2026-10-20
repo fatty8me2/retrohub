@@ -1,0 +1,7 @@
+13:07:04.716 [net] Session: start room=L8GW8H-1 slot=0 expected=2 force_relay=1 udp port 58610
+13:07:04.717 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=L8GW8H-1&role=host&name=n64run
+13:07:05.125 [net] Session 0: welcome room L8GW8H-1
+13:07:05.125 [net] Session 0: slot 1 joined
+13:07:05.125 [net] Session 0: endpoint sent public=- local=-
+13:07:05.126 [net] Session 0: slot 1 falling back to relay
+13:07:05.180 [net] Session 0: ready (roster 03)

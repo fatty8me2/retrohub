@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 namespace n64run {
@@ -22,13 +23,30 @@ namespace n64run {
 constexpr int kPorts = 4;
 constexpr uint8_t kPktInput = 1;   // lockstep input packet (parsed by LockstepCore)
 constexpr uint8_t kPktReady = 2;   // start barrier packet {type, slot}   (handled by the glue)
+// 3..6 are used by save_sync.h
+constexpr uint8_t kPktDelay = 7;      // host -> clients {type, slot, D}: the negotiated input delay
+constexpr uint8_t kPktDelayAck = 8;   // client -> host {type, slot, D}
+
+/* Slot set of a session: bit s = slot s is a PC in the session. Slots may be sparse ({0,2}).
+ * Members = every owner in --ports, the host (slot 0) and my_slot. If `players` is larger than that,
+ * the lowest unused slots are added (port-less spectators, legacy contiguous behaviour).
+ * Returns 0 and fills *err if invalid (players smaller than the PCs found, slot > 3, ...). */
+uint32_t derive_slot_mask(const int owner[kPorts], int my_slot, int players, std::string* err);
+int popcount32(uint32_t v);
+
+/* Auto input delay: D = ceil((rtt/2 + margin) / frame_ms) + 1, clamped to 1..10 (+1 if relayed). */
+int auto_delay_from_rtt(double rtt_ms, double frame_ms, bool relayed = false, double margin_ms = 8.0);
+/* Worst effective RTT for a star topology: the host's slowest ping, or the sum of the two slowest
+ * (client<->client traffic crosses the host twice). */
+double effective_rtt(std::vector<double> host_to_client_rtt);
 
 class LockstepCore {
   public:
     struct Config {
         int owner[kPorts] = {0, -1, -1, -1};  // owning slot per port, -1 = port not present
         int my_slot = 0;
-        int num_slots = 1;     // PCs in the session (slots 0..num_slots-1) for hash comparison
+        int num_slots = 1;     // PCs in the session; used when slot_mask == 0 (slots 0..num_slots-1)
+        uint32_t slot_mask = 0;   // explicit (possibly sparse) slot set; overrides num_slots
         int delay = 2;         // D
         int redundancy = 8;    // minimum number of samples per port per packet
     };
@@ -45,6 +63,7 @@ class LockstepCore {
     bool port_local(int p) const { return port_present(p) && cfg_.owner[p] == cfg_.my_slot; }
     int lead_port() const { return lead_; }          // lowest present port, -1 if none
     int delay() const { return cfg_.delay; }
+    uint32_t slot_mask() const { return mask_; }
 
     /* Schedule this PC's inputs read at poll `cur_sample` for sample cur_sample + D.
      * buttons[] is indexed by port; only locally owned ports are used. */
@@ -85,6 +104,7 @@ class LockstepCore {
     struct HashRec { uint64_t h[kPorts] = {0, 0, 0, 0}; uint8_t known = 0; bool done = false; };
 
     Config cfg_;
+    uint32_t mask_ = 1;
     int lead_ = -1;
     std::vector<Entry> ring_[kPorts];
     uint32_t newest_local_ = 0;

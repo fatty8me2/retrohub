@@ -4,6 +4,7 @@
 #include "log.h"
 #include "session.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -134,6 +135,9 @@ int main(int argc, char** argv)
 
     // directed send: client 1 -> client 2 (via host forwarding) one datagram
     bool pass = bad == 0;
+    // With HUBNET_SIM_LOSS_PCT=L a client<->client datagram crosses two lossy hops: allow 100 - 2L - 4 %.
+    int sim_loss = getenv("HUBNET_SIM_LOSS_PCT") ? atoi(getenv("HUBNET_SIM_LOSS_PCT")) : 0;
+    int thr_pct = sim_loss > 0 ? std::max(0, 100 - 2 * sim_loss - 4) : 95;
     long total = 0, expected = 0;
     for (int r = 0; r < n; r++)
         for (int f = 0; f < n; f++) {
@@ -142,7 +146,7 @@ int main(int argc, char** argv)
             total += c;
             expected += count;
             printf("  receiver %d from %d: %d/%d\n", r, f, c, count);
-            if (c * 100 < count * 95) pass = false;
+            if (c * 100 < count * thr_pct) pass = false;
             if (c < count && getenv("HUBNET_VERBOSE")) {
                 printf("    missing:");
                 int shown = 0;

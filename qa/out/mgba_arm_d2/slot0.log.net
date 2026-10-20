@@ -1,0 +1,9 @@
+13:05:33.242 [net] Session: start room=PE3VAU-1 slot=0 expected=2 force_relay=0 udp port 61746
+13:05:33.243 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=PE3VAU-1&role=host&name=n64run
+13:05:33.261 [net] STUN: public endpoint 76.150.167.30:61746
+13:05:33.620 [net] Session 0: welcome room PE3VAU-1
+13:05:33.620 [net] Session 0: endpoint sent public=76.150.167.30:61746 local=10.0.0.45:61746
+13:05:34.503 [net] Session 0: slot 1 joined
+13:05:34.551 [net] Session 0: peer 1 candidates pub=76.150.167.30:61747 loc=10.0.0.45:61747
+13:05:34.557 [net] Session 0: direct path to slot 1 via 10.0.0.45:61747
+13:05:34.557 [net] Session 0: ready (roster 03)

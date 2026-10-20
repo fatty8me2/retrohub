@@ -16,6 +16,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <random>
+#include <vector>
 
 namespace hubnet {
 
@@ -46,6 +48,9 @@ struct Peer {
     uint32_t last_hello = 0, last_relay_hello = 0, last_ping = 0, last_roster = 0;
     bool relay_active = false;
     int ping = -1;
+    int ring[32] = {0};       // recent RTT samples (ms)
+    int ring_n = 0, ring_i = 0;
+    void add_ping(int v) { ring[ring_i] = v; ring_i = (ring_i + 1) % 32; if (ring_n < 32) ring_n++; }
     void reset()
     {
         bool p = present;
@@ -63,6 +68,21 @@ int popcount(unsigned v)
 
 void put32(uint8_t* p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
 uint32_t get32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24); }
+
+/* Network simulator (QA): HUBNET_SIM_LATENCY_MS / _JITTER_MS / _LOSS_PCT / _SEED, applied to every
+ * outgoing datagram (direct UDP and relay frames). Relay frames stay in order (they ride TCP). */
+struct SimPkt {
+    uint32_t due;
+    bool relay;
+    Addr to;
+    std::vector<uint8_t> data;
+};
+
+int env_int(const char* n, int def)
+{
+    const char* v = getenv(n);
+    return (v && v[0]) ? atoi(v) : def;
+}
 
 } // namespace
 
@@ -85,6 +105,56 @@ struct Session::Impl {
     Peer peers[kMaxSlots];
     std::deque<std::pair<int, std::vector<uint8_t>>> inbox;
     unsigned roster_mask = 0;      // client: last roster from host; host: computed
+    uint32_t ping_every = kPingMs;
+
+    // simulator
+    int sim_latency = 0, sim_jitter = 0, sim_loss = 0;
+    bool sim_on = false;
+    std::mt19937 sim_rng;
+    std::vector<SimPkt> sim_q;
+    uint32_t sim_last_relay_due = 0;
+
+    void sim_init(int slot_)
+    {
+        sim_latency = env_int("HUBNET_SIM_LATENCY_MS", 0);
+        sim_jitter = env_int("HUBNET_SIM_JITTER_MS", 0);
+        sim_loss = env_int("HUBNET_SIM_LOSS_PCT", 0);
+        sim_on = sim_latency > 0 || sim_jitter > 0 || sim_loss > 0;
+        int seed = env_int("HUBNET_SIM_SEED", 0);
+        sim_rng.seed(seed ? (uint32_t)seed + (uint32_t)slot_ * 7919u : std::random_device()());
+        sim_q.clear();
+        sim_last_relay_due = 0;
+        if (sim_on) net_log("Session %d: NETWORK SIMULATOR latency=%dms jitter=%dms loss=%d%%", slot_, sim_latency, sim_jitter, sim_loss);
+    }
+    /* Queue (or drop) one outgoing datagram. */
+    void sim_out(bool relay, const Addr& to, const uint8_t* p, int len, uint32_t now)
+    {
+        if (sim_loss > 0 && (int)(sim_rng() % 100) < sim_loss) return;
+        uint32_t d = (uint32_t)sim_latency;
+        if (sim_jitter > 0) d += sim_rng() % (uint32_t)(sim_jitter + 1);
+        uint32_t due = now + d;
+        if (relay) {
+            if ((int32_t)(due - sim_last_relay_due) < 0) due = sim_last_relay_due;
+            sim_last_relay_due = due;
+        }
+        sim_q.push_back({due, relay, to, std::vector<uint8_t>(p, p + len)});
+    }
+    void sim_flush(uint32_t now)
+    {
+        for (size_t i = 0; i < sim_q.size();) {
+            if ((int32_t)(now - sim_q[i].due) >= 0) {
+                SimPkt pk = std::move(sim_q[i]);
+                sim_q.erase(sim_q.begin() + i);
+                if (pk.relay) ws.send_binary(pk.data.data(), (int)pk.data.size());
+                else udp.send_to(pk.to, pk.data.data(), (int)pk.data.size());
+            } else i++;
+        }
+    }
+    void out_udp(const Addr& to, const uint8_t* p, int len)
+    {
+        if (sim_on) sim_out(false, to, p, len, now_ms());
+        else udp.send_to(to, p, len);
+    }
 
     bool is_host() const { return slot == 0; }
     bool talks_to(int s) const
@@ -123,7 +193,7 @@ struct Session::Impl {
     {
         Peer& p = peers[s];
         if (direct_fresh(p, now)) {
-            udp.send_to(p.direct, pkt, len);
+            out_udp(p.direct, pkt, len);
         } else if (p.relay_active) {
             send_relay(s, pkt, len);
         }
@@ -134,6 +204,7 @@ struct Session::Impl {
         if (len + 1 > (int)sizeof(buf)) return;
         buf[0] = (uint8_t)s;
         memcpy(buf + 1, pkt, len);
+        if (sim_on) { sim_out(true, Addr(), buf, len + 1, now_ms()); return; }
         if (!ws.send_binary(buf, len + 1)) { static int cnt = 0; if (cnt++ < 20) net_log("relay send failed"); }
     }
     void send_ctl(int s, char type, uint32_t now, const uint8_t* extra = nullptr, int extra_len = 0)
@@ -176,7 +247,7 @@ struct Session::Impl {
             if (via_relay) send_relay(path, reply('A'), 2);
             else {
                 uint8_t a[2] = {'A', (uint8_t)slot};
-                udp.send_to(addr, a, 2);
+                out_udp(addr, a, 2);
             }
             break;
         case 'A':
@@ -192,7 +263,7 @@ struct Session::Impl {
             uint8_t q[6] = {'Q', (uint8_t)slot};
             memcpy(q + 2, d + 2, 4);
             if (via_relay) send_relay(path, q, 6);
-            else udp.send_to(addr, q, 6);
+            else out_udp(addr, q, 6);
             break;
         }
         case 'Q':
@@ -203,6 +274,7 @@ struct Session::Impl {
                 p.last_direct = now;
             }
             p.ping = (int)(now - get32(d + 2));
+            p.add_ping(p.ping);
             break;
         case 'R':
             if (n >= 3 && !is_host() && path == 0) {
@@ -375,8 +447,8 @@ struct Session::Impl {
             if (now - p.last_hello >= every) {
                 p.last_hello = now;
                 uint8_t h[2] = {'H', (uint8_t)slot};
-                if (p.pub.valid()) udp.send_to(p.pub, h, 2);
-                if (p.loc.valid() && !(p.loc == p.pub)) udp.send_to(p.loc, h, 2);
+                if (p.pub.valid()) out_udp(p.pub, h, 2);
+                if (p.loc.valid() && !(p.loc == p.pub)) out_udp(p.loc, h, 2);
             }
         }
         // relay handshake
@@ -386,7 +458,7 @@ struct Session::Impl {
             send_relay(s, h, 2);
         }
         // ping
-        if ((direct_ok || p.relay_active) && now - p.last_ping >= kPingMs) {
+        if ((direct_ok || p.relay_active) && now - p.last_ping >= ping_every) {
             p.last_ping = now;
             uint8_t t[4];
             put32(t, now);
@@ -398,6 +470,7 @@ struct Session::Impl {
     {
         if (!started || failed) return;
         uint32_t now = now_ms();
+        if (sim_on) sim_flush(now);
         pump_ws(now);
         if (failed) return;
         pump_udp(now);
@@ -453,8 +526,10 @@ bool Session::start(const SessionConfig& cfg)
     d.inbox.clear();
     for (Peer& p : d.peers) p = Peer();
     d.roster_mask = 0;
+    d.ping_every = kPingMs;
     const char* fr = getenv("HUBNET_FORCE_RELAY");
     d.force_relay = fr && fr[0] && fr[0] != '0';
+    d.sim_init(d.slot);
     d.start_ms = now_ms();
     d.last_ws_keepalive = d.start_ms;
     d.status = "contacting server";
@@ -515,6 +590,30 @@ int Session::ping_ms(int slot) const
     const Impl& d = *impl_;
     if (slot < 0 || slot >= kMaxSlots) return -1;
     return d.peers[slot].ping;
+}
+
+void Session::set_ping_interval(uint32_t ms) { impl_->ping_every = ms < 20 ? 20 : ms; }
+
+void Session::clear_ping_stats()
+{
+    for (Peer& p : impl_->peers) p.ring_n = p.ring_i = 0;
+}
+
+bool Session::ping_stats(int slot, PingStats* out) const
+{
+    const Impl& d = *impl_;
+    if (slot < 0 || slot >= kMaxSlots || d.peers[slot].ring_n == 0) return false;
+    const Peer& p = d.peers[slot];
+    long sum = 0;
+    out->n = p.ring_n;
+    out->min_ms = out->max_ms = p.ring[0];
+    for (int i = 0; i < p.ring_n; i++) {
+        sum += p.ring[i];
+        if (p.ring[i] < out->min_ms) out->min_ms = p.ring[i];
+        if (p.ring[i] > out->max_ms) out->max_ms = p.ring[i];
+    }
+    out->avg_ms = (int)(sum / p.ring_n);
+    return true;
 }
 
 void Session::send(int to_slot, const void* data, int len)

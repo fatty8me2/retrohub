@@ -1,11 +1,13 @@
 /* n64run: mupen64plus 2.6.0 frontend with lockstep netplay.
  *
  *   n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N
- *          --ports P0,P1,P2,P3 --delay D] [--save-dir DIR] [--emu-dir DIR]
- *          [--width W --height H] [--strict-sync] [--no-hash]
+ *          --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]
+ *          [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]
  *
- * Exit codes: 0 ok, 2 bad args / ROM, 3 emulator load failure, 4 netplay connection failure,
- *             5 desync detected (only with --strict-sync).
+ * Exit codes (documented in docs/ARCHITECTURE.md): 0 ok, 2 bad args / ROM, 3 emulator load failure,
+ *             4 netplay connection failure / connection lost, 5 desync detected (only with --strict-sync),
+ *             6 host-save sync failed.
+ * --slot may be any of 0..3 (lobby slots can have gaps); --players is the number of PCs.
  */
 #include <windows.h>
 
@@ -36,6 +38,7 @@
 #include "local_input.h"
 #include "lockstep.h"
 #include "runstate.h"
+#include "save_sync.h"
 
 namespace fs = std::filesystem;
 using namespace n64run;
@@ -46,8 +49,8 @@ extern "C" m64p_error PluginStartup(m64p_dynlib_handle, void*, void (*)(void*, i
 static const int kFrontendApiVersion = 0x020102;   // ui-console's value for core 2.x
 static const char* kUsage =
     "usage: n64run --rom PATH [--game ID] [--net SERVER --room CODE-N --slot K --players N\n"
-    "              --ports P0,P1,P2,P3 --delay D] [--save-dir DIR] [--emu-dir DIR]\n"
-    "              [--width W --height H] [--strict-sync] [--no-hash]\n";
+    "              --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]\n"
+    "              [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n";
 
 // ---------------------------------------------------------------- logging
 static FILE* g_logf = nullptr;
@@ -75,11 +78,12 @@ static void m64p_debug_cb(void* ctx, int level, const char* msg) {
 
 // ---------------------------------------------------------------- args
 struct Args {
-    std::string rom, game, net, room, save_dir, emu_dir;
-    int slot = 0, players = 1, delay = 2;
+    std::string rom, game, net, room, save_dir, emu_dir, host_save_dir;
+    int slot = 0, players = 1, delay = -1;   // delay -1 = auto (online)
+    uint32_t slot_mask = 1;
     int owner[kPorts] = {0, -1, -1, -1};
     bool ports_given = false;
-    bool strict_sync = false, no_hash = false;
+    bool strict_sync = false, no_hash = false, share_host_save = false;
     int width = 960, height = 720;
 };
 
@@ -110,11 +114,13 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--room") ok = val(&a.room);
         else if (k == "--slot") ok = ival(&a.slot);
         else if (k == "--players") ok = ival(&a.players);
-        else if (k == "--delay") ok = ival(&a.delay);
+        else if (k == "--delay") { std::string s; ok = val(&s); if (ok && s == "auto") a.delay = -1; else if (ok) { char* e; long v = std::strtol(s.c_str(), &e, 10); ok = e != s.c_str() && !*e; a.delay = (int)v; if (ok && v < 0) ok = false; } }
         else if (k == "--width") ok = ival(&a.width);
         else if (k == "--height") ok = ival(&a.height);
         else if (k == "--save-dir") ok = val(&a.save_dir);
         else if (k == "--emu-dir") ok = val(&a.emu_dir);
+        else if (k == "--host-save-dir") ok = val(&a.host_save_dir);
+        else if (k == "--share-host-save") a.share_host_save = true;
         else if (k == "--ports") { std::string s; ok = val(&s) && parse_ports(s, a.owner); a.ports_given = ok; }
         else if (k == "--strict-sync") a.strict_sync = true;
         else if (k == "--no-hash") a.no_hash = true;
@@ -122,19 +128,18 @@ static bool parse_args(int argc, char** argv, Args& a) {
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
     }
     if (a.rom.empty()) { std::fprintf(stderr, "--rom is required\n"); return false; }
-    if (a.delay < 0 || a.delay > 30) { std::fprintf(stderr, "--delay must be 0..30\n"); return false; }
+    if (a.delay > 30) { std::fprintf(stderr, "--delay must be auto or 0..30\n"); return false; }
+    if (a.share_host_save && a.net.empty()) { std::fprintf(stderr, "--share-host-save needs --net\n"); return false; }
     if (!a.net.empty()) {
         if (a.room.empty()) { std::fprintf(stderr, "--net requires --room\n"); return false; }
-        if (a.players < 1 || a.players > 4 || a.slot < 0 || a.slot >= a.players) {
-            std::fprintf(stderr, "bad --players/--slot\n");
-            return false;
-        }
         if (!a.ports_given) { std::fprintf(stderr, "--net requires --ports\n"); return false; }
+        std::string err;
+        a.slot_mask = derive_slot_mask(a.owner, a.slot, a.players, &err);
+        if (!a.slot_mask) { std::fprintf(stderr, "bad --players/--slot/--ports: %s\n", err.c_str()); return false; }
     }
     bool any = false;
     for (int p = 0; p < kPorts; p++) {
         if (a.owner[p] < -1 || a.owner[p] > 3) { std::fprintf(stderr, "bad --ports value\n"); return false; }
-        if (!a.net.empty() && a.owner[p] >= a.players) { std::fprintf(stderr, "--ports references a slot >= --players\n"); return false; }
         any |= a.owner[p] >= 0;
     }
     if (a.ports_given && !any) { std::fprintf(stderr, "--ports has no controllers\n"); return false; }
@@ -251,7 +256,8 @@ int main(int argc, char** argv) {
     if (!args.save_dir.empty()) save_dir = args.save_dir;
     else if (online) {
         auto t = std::chrono::system_clock::now().time_since_epoch().count();
-        save_dir = hub::data_dir() + "saves\\online\\" + args.game + "-" + std::to_string((long long)t);
+        // Throwaway, outside the save vault (the vault is synced; netplay sessions must never reach it).
+        save_dir = hub::data_dir() + "netplay\\n64\\" + args.game + "-" + std::to_string((long long)t);
     } else save_dir = hub::data_dir() + "saves\\" + args.game;
     fs::create_directories(save_dir, ec);
     if (online) {
@@ -320,9 +326,68 @@ int main(int argc, char** argv) {
     }
     g_core.SaveFile();
 
+    // ---- netplay session. This runs before ROM_OPEN: the core reads battery saves when the ROM opens,
+    // so the host's saves (--share-host-save) must already be in the save dir by then.
+    hubnet::Session session;
+    if (online) {
+        hubnet::SessionConfig sc;
+        sc.server = args.net;
+        sc.room = args.room;
+        sc.slot = args.slot;
+        sc.expected = args.players;
+        if (!session.start(sc)) {
+            logf_("n64run", "netplay: cannot start session (%s)", session.status().c_str());
+            g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 4;
+        }
+        uint32_t t0 = hubnet::now_ms();
+        std::string last;
+        while (!session.ready()) {
+            session.update();
+            if (session.failed() || hubnet::now_ms() - t0 > 15000) {
+                logf_("n64run", "netplay connection failed: %s", session.status().c_str());
+                session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 4;
+            }
+            std::string st = session.status();
+            if (st != last) { logf_("n64run", "netplay: %s", st.c_str()); last = st; }
+            Sleep(10);
+        }
+        logf_("n64run", "netplay: all %d players reachable", args.players);
+
+        if (args.delay < 0) {
+            DelayNegotiation dn;
+            dn.my_slot = my_slot;
+            dn.slot_mask = args.slot_mask;
+            dn.frame_ms = 1000.0 / 60.0;
+            int d = 2;
+            if (!negotiate_delay(session, dn, [] {}, [](const std::string& m) { logline("n64run", m.c_str()); }, &d)) {
+                logf_("n64run", "netplay: input delay negotiation failed (%s)", session.status().c_str());
+                session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 4;
+            }
+            args.delay = d;
+        }
+        logf_("n64run", "input delay: %d (%s)", args.delay, "in effect");
+
+        if (args.share_host_save) {
+            std::vector<SaveFile> host_files;
+            if (my_slot == 0) {
+                std::vector<std::string> skipped;
+                load_save_dir(args.host_save_dir, &host_files, &skipped);
+                for (auto& f : host_files) write_save_file(save_dir, f.name, f.data);   // host boots from the bytes it sends
+                logf_("n64run", "save sync: host shares %zu save file(s) from %s", host_files.size(), args.host_save_dir.c_str());
+                for (auto& s : skipped) logf_("n64run", "save sync: not shared (too large, empty or not a battery save): %s", s.c_str());
+            }
+            std::string err;
+            if (!run_save_sync(session, my_slot, args.players, my_slot == 0 ? &host_files : nullptr, save_dir, 20000, &err)) {
+                logf_("n64run", "save sync failed: %s", err.c_str());
+                session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 6;
+            }
+            logf_("n64run", "save sync complete");
+        }
+    }
+
     // ---- ROM
     e = g_core.DoCommand(M64CMD_ROM_OPEN, (int)rom.size(), rom.data());
-    if (e != M64ERR_SUCCESS) { logf_("n64run", "ROM_OPEN failed (%d)", (int)e); g_core.Shutdown(); return 2; }
+    if (e != M64ERR_SUCCESS) { logf_("n64run", "ROM_OPEN failed (%d)", (int)e); session.stop(); g_core.Shutdown(); return 2; }
 
     // ---- plugins
     PluginDll gfx, aud, rsp;
@@ -343,35 +408,14 @@ int main(int argc, char** argv) {
         return 3;
     }
 
-    // ---- netplay session
-    hubnet::Session session;
-    if (online) {
-        hubnet::SessionConfig sc;
-        sc.server = args.net;
-        sc.room = args.room;
-        sc.slot = args.slot;
-        sc.expected = args.players;
-        if (!session.start(sc)) { logf_("n64run", "netplay: cannot start session (%s)", session.status().c_str()); goto fail_net; }
-        uint32_t t0 = hubnet::now_ms();
-        std::string last;
-        while (!session.ready()) {
-            session.update();
-            if (session.failed() || hubnet::now_ms() - t0 > 15000) {
-                logf_("n64run", "netplay connection failed: %s", session.status().c_str());
-                goto fail_net;
-            }
-            std::string st = session.status();
-            if (st != last) { logf_("n64run", "netplay: %s", st.c_str()); last = st; }
-            Sleep(10);
-        }
-        logf_("n64run", "netplay: all %d players reachable", args.players);
-    }
-
     {
         LockstepOptions lo;
         for (int p = 0; p < kPorts; p++) lo.owner[p] = args.owner[p];
         lo.my_slot = my_slot;
         lo.num_slots = online ? args.players : 1;
+        lo.slot_mask = online ? args.slot_mask : 1u;
+        lo.hash_label = "RDRAM";
+        if (args.delay < 0) args.delay = 2;   // offline: unused
         lo.delay = args.delay;
         lo.online = online;
         lo.strict_sync = args.strict_sync;
@@ -400,6 +444,7 @@ int main(int argc, char** argv) {
         logf_("n64run", "executing");
         e = g_core.DoCommand(M64CMD_EXECUTE, 0, nullptr);   // blocks until the emulation stops
         logf_("n64run", "emulation ended (%d)", (int)e);
+        if (online && g_run.lockstep) g_run.lockstep->log_stall_summary();
     }
 
     {

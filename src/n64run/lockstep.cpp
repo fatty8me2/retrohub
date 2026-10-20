@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -28,6 +29,7 @@ static LockstepCore::Config make_core_config(const LockstepOptions& o) {
     for (int i = 0; i < kPorts; i++) c.owner[i] = o.owner[i];
     c.my_slot = o.my_slot;
     c.num_slots = o.num_slots;
+    c.slot_mask = o.slot_mask;
     c.delay = o.online ? o.delay : 0;   // offline: no input delay needed
     return c;
 }
@@ -53,7 +55,10 @@ void Lockstep::pump() {
     std::vector<uint8_t> msg;
     while (net_->recv(&from, &msg)) {
         if (msg.empty()) continue;
-        if (msg[0] == kPktReady) {
+        if (msg[0] == kPktDelay && msg.size() >= 3 && opt_.my_slot != 0) {
+            uint8_t ack[3] = {kPktDelayAck, (uint8_t)opt_.my_slot, msg[2]};   // late repeats of the host's D
+            net_->send(0, ack, 3);
+        } else if (msg[0] == kPktReady) {
             if (msg.size() >= 2 && msg[1] < 8) ready_mask_ |= 1u << msg[1];
         } else {
             core_.on_packet(from, msg.data(), msg.size());
@@ -63,7 +68,7 @@ void Lockstep::pump() {
 
 bool Lockstep::start_barrier(uint32_t timeout_ms) {
     if (!net_) return true;
-    uint32_t all = (1u << opt_.num_slots) - 1u;
+    uint32_t all = core_.slot_mask();
     ready_mask_ |= 1u << opt_.my_slot;
     uint32_t t0 = hubnet::now_ms(), last = 0, seen_all_at = 0;
     for (;;) {
@@ -86,6 +91,16 @@ bool Lockstep::start_barrier(uint32_t timeout_ms) {
     }
 }
 
+void Lockstep::log_stall_summary() const {
+    if (!hooks_.log || !net_) return;
+    char buf[200];
+    uint64_t frames = samples_done();
+    std::snprintf(buf, sizeof buf, "netplay stalls: total %llu ms over %llu stalled samples, %llu samples (delay %d, %.2f ms stalled/sample)",
+                  (unsigned long long)stall_ms_, (unsigned long long)stalled_, (unsigned long long)frames, opt_.delay,
+                  frames ? (double)stall_ms_ / (double)frames : 0.0);
+    hooks_.log(buf);
+}
+
 void Lockstep::abort_with(const std::string& why) {
     if (lost_.exchange(true)) return;
     if (hooks_.log) hooks_.log(why);
@@ -97,8 +112,8 @@ void Lockstep::report_mismatches() {
     while (core_.poll_mismatch(&m)) {
         desync_ = true;
         char buf[256];
-        std::snprintf(buf, sizeof buf, "DESYNC at sample %u: RDRAM hashes %016llx %016llx %016llx %016llx",
-                      m.sample, (unsigned long long)m.hash[0], (unsigned long long)m.hash[1],
+        std::snprintf(buf, sizeof buf, "DESYNC at sample %u: %s hashes %016llx %016llx %016llx %016llx",
+                      m.sample, opt_.hash_label.c_str(), (unsigned long long)m.hash[0], (unsigned long long)m.hash[1],
                       (unsigned long long)m.hash[2], (unsigned long long)m.hash[3]);
         if (hooks_.log) hooks_.log(buf);
         if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
@@ -124,10 +139,10 @@ uint32_t Lockstep::get_keys(int port) {
             core_.add_local_hash(n, h);
             if (hooks_.log) {
                 char buf[96];
-                std::snprintf(buf, sizeof buf, "sync check sample %u rdram %016llx", n, (unsigned long long)h);
+                std::snprintf(buf, sizeof buf, "sync check sample %u %s %016llx", n, opt_.hash_label.c_str(), (unsigned long long)h);
                 hooks_.log(buf);
             }
-        } else if (!hash_warned_) { hash_warned_ = true; if (hooks_.log) hooks_.log("RDRAM hashing unavailable; desync detection disabled"); }
+        } else if (!hash_warned_) { hash_warned_ = true; if (hooks_.log) hooks_.log("state hashing unavailable; desync detection disabled"); }
     }
 
     uint32_t btn[kPorts] = {0, 0, 0, 0};
@@ -138,6 +153,8 @@ uint32_t Lockstep::get_keys(int port) {
 
     if (net_ && !core_.ready(n)) {
         uint32_t t0 = hubnet::now_ms(), last_send = t0;
+        stalled_++;
+        struct Acc { uint64_t& v; uint32_t t; ~Acc() { v += hubnet::now_ms() - t; } } acc{stall_ms_, t0};
         while (!core_.ready(n)) {
             if (hooks_.idle) hooks_.idle();
             pump();
@@ -152,6 +169,97 @@ uint32_t Lockstep::get_keys(int port) {
     }
     if (net_) report_mismatches();
     return core_.get(n, port);
+}
+
+}  // namespace n64run
+
+namespace n64run {
+
+bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::function<void()>& idle,
+                     const std::function<void(const std::string&)>& log, int* out_delay) {
+    auto say = [&](const char* fmt, ...) {
+        char b[256];
+        va_list ap; va_start(ap, fmt);
+        std::vsnprintf(b, sizeof b, fmt, ap);
+        va_end(ap);
+        if (log) log(b);
+    };
+    uint32_t t0 = hubnet::now_ms();
+    if (dn.my_slot == 0) {
+        s.set_ping_interval(100);
+        s.clear_ping_stats();
+        while (hubnet::now_ms() - t0 < dn.measure_ms) {
+            s.update();
+            if (s.failed()) return false;
+            int from; std::vector<uint8_t> m;
+            while (s.recv(&from, &m)) {}
+            if (idle) idle();
+            Sleep(5);
+        }
+        s.set_ping_interval(500);
+        std::vector<double> rtts;
+        bool relayed = false;
+        for (int p = 1; p < 4; p++) {
+            if (!(dn.slot_mask >> p & 1u)) continue;
+            hubnet::PingStats st;
+            double r = 60.0;
+            if (s.ping_stats(p, &st) && st.n > 0) r = st.avg_ms + (st.max_ms - st.avg_ms) * 0.5;   // average, leaning on the worst sample
+            else say("input delay auto: no ping samples from slot %d, assuming 60 ms", p);
+            rtts.push_back(r);
+            relayed |= s.is_relayed(p);
+            say("input delay auto: slot %d rtt avg=%d min=%d max=%d n=%d%s", p, st.avg_ms, st.min_ms, st.max_ms, st.n, s.is_relayed(p) ? " (relay)" : "");
+        }
+        double rtt = effective_rtt(rtts);
+        int d = auto_delay_from_rtt(rtt, dn.frame_ms, relayed);
+        say("input delay auto: rtt=%.0fms -> %d%s", rtt, d, relayed ? " (relay)" : "");
+        // Broadcast D until every client acked.
+        uint32_t need = dn.slot_mask & ~1u, got = 0, last = 0, done_at = 0;
+        for (;;) {
+            s.update();
+            if (s.failed()) return false;
+            int from; std::vector<uint8_t> m;
+            while (s.recv(&from, &m))
+                if (m.size() >= 3 && m[0] == kPktDelayAck && m[2] == (uint8_t)d && from > 0 && from < 4) got |= 1u << from;
+            uint32_t now = hubnet::now_ms();
+            if ((got & need) == need) {
+                if (!done_at) done_at = now ? now : 1;
+                if (now - done_at > 300) break;   // let clients finish their ack linger before the next phase
+            } else if (now - last >= 50 || !last) {
+                uint8_t pkt[3] = {kPktDelay, 0, (uint8_t)d};
+                s.send(-1, pkt, 3);
+                last = now ? now : 1;
+            }
+            if (now - t0 > dn.timeout_ms) { say("input delay auto: clients did not acknowledge D"); return false; }
+            if (idle) idle();
+            Sleep(5);
+        }
+        *out_delay = d;
+        return true;
+    }
+    // client: Session answers pings in update(); wait for the host's D, ack repeats for a moment
+    int d = -1;
+    uint32_t got_at = 0;
+    for (;;) {
+        s.update();
+        if (s.failed()) return false;
+        int from; std::vector<uint8_t> m;
+        while (s.recv(&from, &m)) {
+            if (from == 0 && m.size() >= 3 && m[0] == kPktDelay) {
+                d = m[2];
+                if (!got_at) got_at = hubnet::now_ms() ? hubnet::now_ms() : 1;
+                uint8_t ack[3] = {kPktDelayAck, (uint8_t)dn.my_slot, (uint8_t)d};
+                s.send(0, ack, 3);
+            }
+        }
+        uint32_t now = hubnet::now_ms();
+        if (d >= 0 && now - got_at > 200) break;
+        if (now - t0 > dn.timeout_ms) { say("input delay auto: host never sent D"); return false; }
+        if (idle) idle();
+        Sleep(5);
+    }
+    say("input delay auto: host chose D=%d", d);
+    *out_delay = d;
+    return true;
 }
 
 }  // namespace n64run

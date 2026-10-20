@@ -1,0 +1,7 @@
+13:10:05.729 [net] Session: start room=27F2XW-1 slot=1 expected=2 force_relay=1 udp port 50937
+13:10:05.730 [net] Session: connecting wss://smash-netplay.jumpcircuit.workers.dev/hub?room=27F2XW-1&role=join&name=n64run&slot=1
+13:10:06.122 [net] Session 1: welcome room 27F2XW-1
+13:10:06.122 [net] Session 1: slot 0 joined
+13:10:06.122 [net] Session 1: endpoint sent public=- local=-
+13:10:06.123 [net] Session 1: slot 0 falling back to relay
+13:10:06.218 [net] Session 1: ready (roster 03)
