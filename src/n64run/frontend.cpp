@@ -10,12 +10,15 @@
  * --slot may be any of 0..3 (lobby slots can have gaps); --players is the number of PCs.
  */
 #include <windows.h>
+#include <shellapi.h>
 
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <thread>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -50,7 +53,8 @@ static const int kFrontendApiVersion = 0x020102;   // ui-console's value for cor
 static const char* kUsage =
     "usage: n64run --rom PATH [--game ID] [--net SERVER --room CODE-N --slot K --players N\n"
     "              --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]\n"
-    "              [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n";
+    "              [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n"
+    "              [--title TEXT] [--fullscreen]\n";
 
 // ---------------------------------------------------------------- logging
 static FILE* g_logf = nullptr;
@@ -84,6 +88,8 @@ struct Args {
     int owner[kPorts] = {0, -1, -1, -1};
     bool ports_given = false;
     bool strict_sync = false, no_hash = false, share_host_save = false;
+    bool fullscreen = false;
+    std::string title;   // window caption (UTF-8), from --title; empty = leave the plugin's title
     int width = 960, height = 720;
 };
 
@@ -124,6 +130,8 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--ports") { std::string s; ok = val(&s) && parse_ports(s, a.owner); a.ports_given = ok; }
         else if (k == "--strict-sync") a.strict_sync = true;
         else if (k == "--no-hash") a.no_hash = true;
+        else if (k == "--fullscreen") a.fullscreen = true;
+        else if (k == "--title") ok = val(&a.title);
         else { std::fprintf(stderr, "unknown argument: %s\n", k.c_str()); return false; }
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
     }
@@ -203,6 +211,55 @@ struct PluginDll {
     HMODULE h = nullptr;
     ptr_PluginStartup startup = nullptr;
 };
+
+/* ---- window title -----------------------------------------------------------
+ * The GLideN64 plugin creates and captions the game window itself, so we find it
+ * (top-level, visible, owned by this process) and set our caption. The plugin may
+ * retitle it later, so the watcher re-checks every 2 s until emulation ends. */
+static std::atomic<bool> g_title_stop{false};
+
+static BOOL CALLBACK find_game_window(HWND hwnd, LPARAM lp) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != GetCurrentProcessId() || !IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) != nullptr) return TRUE;
+    if (GetWindowTextLengthW(hwnd) == 0) return TRUE;   // needs a caption
+    *reinterpret_cast<HWND*>(lp) = hwnd;
+    return FALSE;
+}
+
+static void title_watch(std::wstring title) {
+    using namespace std::chrono;
+    const auto start = steady_clock::now();
+    while (!g_title_stop.load()) {
+        HWND hwnd = nullptr;
+        EnumWindows(find_game_window, reinterpret_cast<LPARAM>(&hwnd));
+        if (hwnd) {
+            wchar_t cur[512] = {0};
+            GetWindowTextW(hwnd, cur, 512);
+            if (title != cur) SetWindowTextW(hwnd, title.c_str());
+        }
+        bool early = steady_clock::now() - start < seconds(10);
+        for (int i = 0; i < (early ? 1 : 8) && !g_title_stop.load(); i++) std::this_thread::sleep_for(milliseconds(250));
+    }
+}
+
+/* --title arrives as UTF-8 on the command line; take the wide command line so non-ASCII
+ * (the em dash) survives the ANSI argv conversion that narrow main() would do. */
+static std::wstring wide_title_arg(const std::string& fallback_utf8) {
+    int n = 0;
+    LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &n);
+    std::wstring out;
+    if (wargv) {
+        for (int i = 1; i + 1 < n; i++) if (wcscmp(wargv[i], L"--title") == 0) { out = wargv[i + 1]; break; }
+        LocalFree(wargv);
+    }
+    if (out.empty() && !fallback_utf8.empty()) {
+        int m = MultiByteToWideChar(CP_UTF8, 0, fallback_utf8.c_str(), -1, nullptr, 0);
+        out.assign(m > 0 ? m - 1 : 0, L'\0');
+        if (m > 1) MultiByteToWideChar(CP_UTF8, 0, fallback_utf8.c_str(), -1, out.data(), m);
+    }
+    return out;
+}
 
 static bool start_plugin(PluginDll& p, const std::string& emu_dir, const char* file, const char* ctx) {
     p.h = load_dll(emu_dir, file);
@@ -309,7 +366,7 @@ int main(int argc, char** argv) {
         for (const char* k : off) cfg_int(ev_cfg, k, 0);
     }
     if (g_core.OpenSection("Video-General", &vid_cfg) == M64ERR_SUCCESS) {
-        cfg_bool(vid_cfg, "Fullscreen", 0);
+        cfg_bool(vid_cfg, "Fullscreen", args.fullscreen ? 1 : 0);
         cfg_int(vid_cfg, "ScreenWidth", args.width);
         cfg_int(vid_cfg, "ScreenHeight", args.height);
         cfg_bool(vid_cfg, "VerticalSync", 1);
@@ -456,7 +513,15 @@ int main(int argc, char** argv) {
         }
 
         logf_("n64run", "executing");
+        std::thread title_thread;
+        std::wstring wtitle = wide_title_arg(args.title);
+        if (!wtitle.empty()) {
+            g_title_stop = false;
+            title_thread = std::thread(title_watch, wtitle);
+        }
         e = g_core.DoCommand(M64CMD_EXECUTE, 0, nullptr);   // blocks until the emulation stops
+        g_title_stop = true;
+        if (title_thread.joinable()) title_thread.join();
         logf_("n64run", "emulation ended (%d)", (int)e);
         if (online && g_run.lockstep) g_run.lockstep->log_stall_summary();
     }
