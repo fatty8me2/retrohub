@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 
 struct Args {
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
-    std::string net, room;
+    std::string net, room, title;
     std::string sync_hash_mode = "auto", pace_override;
     bool list_opts = false, headless = false, fullscreen = false, resume = false, fuzz = false, selftest = false;
     int frames = -1, scale = 3, slot = 0, players = 1, delay = -1;   // delay -1 = auto
@@ -48,7 +48,7 @@ static std::string narrow(const wchar_t* w) {
 
 static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
-          "  [--system gba|gb|gbc] [--system-dir DIR] [--scale 3] [--fullscreen] [--resume]\n"
+          "  [--system gba|gb|gbc] [--system-dir DIR] [--scale 3] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
           "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
@@ -75,6 +75,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--ini") { if (!val(&o->ini)) return false; }
         else if (k == "--net") { if (!val(&o->net)) return false; }
         else if (k == "--room") { if (!val(&o->room)) return false; }
+        else if (k == "--title") { if (!val(&o->title)) return false; }
         else if (k == "--opt") { if (!val(&v)) return false; o->opts.push_back(v); }
         else if (k == "--frames") { if (!val(&v)) return false; o->frames = atoi(v.c_str()); }
         else if (k == "--scale") { if (!val(&v)) return false; o->scale = std::max(1, atoi(v.c_str())); }
@@ -285,6 +286,8 @@ class Frontend {
     uint32_t frame_pad[4] = {0, 0, 0, 0};   // RetroPad bitmask per port for the frame about to run
 
     std::string rom_stem, srm_path;
+    // Window caption prefix: --title if given, else "retrorun - <rom stem>".
+    std::string window_base() const { return a.title.empty() ? "retrorun - " + rom_stem : a.title; }
     std::vector<uint8_t> srm_saved;
     uint64_t last_srm_check = 0;
     int slot_sel = 0;
@@ -333,7 +336,7 @@ void Frontend::set_status(const std::string& s) {
     rlog("%s", s.c_str());
     status_msg = s;
     status_until = SDL_GetTicks64() + 2500;
-    if (win) SDL_SetWindowTitle(win, ("retrorun - " + rom_stem + "  |  " + s).c_str());
+    if (win) SDL_SetWindowTitle(win, (window_base() + "  |  " + s).c_str());
 }
 
 bool Frontend::setup_paths() {
@@ -433,7 +436,7 @@ bool Frontend::setup_video() {
     double aspect = g.aspect_ratio > 0 ? g.aspect_ratio : (double)g.base_width / g.base_height;
     int w = (int)std::lround(g.base_height * a.scale * aspect), h = (int)(g.base_height * a.scale);
     Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-    win = SDL_CreateWindow(("retrorun - " + rom_stem).c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
+    win = SDL_CreateWindow(window_base().c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
     if (!win) { rlog("video: window failed: %s", SDL_GetError()); return false; }
 
     // Vsync-paced when the display refresh is within 5% of the core's frame rate; otherwise audio/timer paced.
@@ -583,7 +586,7 @@ void Frontend::pump_events(bool idle) {
     core.set_fast_forwarding(ff);
     if (win && status_until && SDL_GetTicks64() > status_until) {
         status_until = 0;
-        SDL_SetWindowTitle(win, ("retrorun - " + rom_stem).c_str());
+        SDL_SetWindowTitle(win, window_base().c_str());
     }
     if (idle && quit) {
         // Blocked inside lockstep and the user asked to leave: save and go.

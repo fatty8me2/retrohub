@@ -799,6 +799,13 @@ static std::string find_dolphin() {
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
 
+/* Game window caption: "<title> — RetroHub" (UTF-8 em dash), quoted for the command line. */
+static std::string title_arg(const std::string& game_title) {
+    std::string t = game_title;
+    t.erase(std::remove(t.begin(), t.end(), '"'), t.end());   // a quote would break the argument
+    return " --title " + quote(t + " \xE2\x80\x94 RetroHub");
+}
+
 /* Pre-write the Dolphin INI keys the hub relies on (merged into whatever is already there).
  * Per-launch settings (fullscreen, memory-card folder) go on the command line with -C. */
 static void prepare_dolphin(const std::string& userdir) {
@@ -1007,7 +1014,8 @@ static void play_entry(const hub::GameEntry& e) {
     switch (e.system) {
         case hub::System::N64: {
             std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) +
-                               " --save-dir " + quote(battery);
+                               " --save-dir " + quote(battery) + title_arg(e.title);
+            if (A.st.fullscreen) args += " --fullscreen";
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
                 std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
                 if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
@@ -1021,7 +1029,7 @@ static void play_entry(const hub::GameEntry& e) {
             std::string core = find_core(e.system == hub::System::GBA ? "mgba" : A.st.gb_core);
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + " --resume";
+                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title);
             if (A.st.fullscreen) args += " --fullscreen";
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
@@ -1079,7 +1087,8 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
                       std::to_string(A.lobby.my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
                       plan.ports + hubui::delay_arg(delay);
     if (e.system == hub::System::N64) {
-        std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net;
+        std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title);
+        if (A.st.fullscreen) args += " --fullscreen";
         if (share_save) {   // every PC must agree; only the host (slot 0) supplies its battery dir
             args += " --share-host-save";
             if (A.lobby.my_slot() == 0)
@@ -1101,7 +1110,7 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
         remove_tree(tmp);
         make_dirs(tmp);
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
-                           " --state-dir " + quote(tmp) + net;
+                           " --state-dir " + quote(tmp) + net + title_arg(e.title);
         if (A.st.fullscreen) args += " --fullscreen";
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
