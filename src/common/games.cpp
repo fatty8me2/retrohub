@@ -167,6 +167,9 @@ const char* genre_of(const std::string& id) {
         {"aw1", "Strategy"}, {"aw2", "Strategy"}, {"fireemblem", "Strategy"}, {"ffta", "Strategy"},
         {"mariotennis", "Sports"}, {"mariogolf", "Sports"}, {"thps2", "Sports"},
         {"conker", "Action"}, {"bm64", "Action"}, {"aria", "Action"},
+        {"pokex", "RPG"}, {"pokey", "RPG"}, {"pokeor", "RPG"}, {"pokeas", "RPG"},
+        {"pokesun", "RPG"}, {"pokemoon", "RPG"}, {"pokeusun", "RPG"}, {"pokeumoon", "RPG"},
+        {"tphd", "Adventure"},
     };
     for (const auto& r : kTable)
         if (id == r.id) return r.genre;
@@ -427,6 +430,46 @@ const std::vector<GameInfo>& catalog() {
          {"ATHE"}, false, 2002,
          "Skate arena-style courses and chase high scores in a timed career mode.",
          "Tony Hawk's Pro Skater 2 (USA, Europe)"},
+
+        /* ---- Nintendo 3DS (Azahar). Serials = the 4-char game code of the NCCH product code (CTR-P-xxxx). ---- */
+        {"pokex", "Pokemon X", Engine::Azahar, 1, {}, "", "3ds",
+         {"EKJA"}, false, 2013,
+         "Explore the Kalos region, collect Pokemon and meet Mega Evolution in the first fully 3D mainline Pokemon game.",
+         "Pokemon X (USA) (En,Ja,Fr,De,Es,It,Ko)"},
+        {"pokey", "Pokemon Y", Engine::Azahar, 1, {}, "", "3ds",
+         {"EK2A"}, false, 2013,
+         "The Kalos adventure with its own Pokemon, a Mega Evolution twist and a mysterious team to stop.",
+         "Pokemon Y (USA) (En,Ja,Fr,De,Es,It,Ko)"},
+        {"pokeor", "Pokemon Omega Ruby", Engine::Azahar, 1, {}, "", "3ds",
+         {"ECRA"}, false, 2014,
+         "A remake of the Hoenn classic with Mega Evolution, soaring Primal Groudon and a new Delta Episode.",
+         "Pokemon Omega Ruby (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2)"},
+        {"pokeas", "Pokemon Alpha Sapphire", Engine::Azahar, 1, {}, "", "3ds",
+         {"ECLA"}, false, 2014,
+         "A remake of the Hoenn classic with Mega Evolution, Primal Kyogre and a new Delta Episode.",
+         "Pokemon Alpha Sapphire (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2)"},
+        {"pokesun", "Pokemon Sun", Engine::Azahar, 1, {}, "", "3ds",
+         {"BNDA"}, false, 2016,
+         "Island hopping through Alola with Island Challenges, Z-Moves and regional forms.",
+         "Pokemon Sun (USA) (En,Ja,Fr,De,Es,It,Zh,Ko)"},
+        {"pokemoon", "Pokemon Moon", Engine::Azahar, 1, {}, "", "3ds",
+         {"BNEA"}, false, 2016,
+         "Island hopping through Alola with Island Challenges, Z-Moves and regional forms.",
+         "Pokemon Moon (USA) (En,Ja,Fr,De,Es,It,Zh,Ko)"},
+        {"pokeusun", "Pokemon Ultra Sun", Engine::Azahar, 1, {}, "", "3ds",
+         {"A2AA"}, false, 2017,
+         "A new take on Alola with extra story, Ultra Beasts and Totem-sized surprises.",
+         "Pokemon Ultra Sun (USA) (En,Ja,Fr,De,Es,It,Zh,Ko)"},
+        {"pokeumoon", "Pokemon Ultra Moon", Engine::Azahar, 1, {}, "", "3ds",
+         {"A2BA"}, false, 2017,
+         "A new take on Alola with extra story, Ultra Beasts and Totem-sized surprises.",
+         "Pokemon Ultra Moon (USA) (En,Ja,Fr,De,Es,It,Zh,Ko)"},
+
+        /* ---- Wii U (Cemu). Serial = the 16-hex title id of the base game. ---- */
+        {"tphd", "The Legend of Zelda: Twilight Princess HD", Engine::Cemu, 1, {}, "", "wiiu",
+         {"000500001019E500"}, false, 2016,
+         "Link crosses between Hyrule and the Twilight Realm in the remastered GameCube adventure.",
+         "Legend of Zelda, The - Twilight Princess HD (USA) (En,Fr,Es) (Rev 2)"},
     };
     for (auto& g : v) g.genre = genre_of(g.id);
     return v;

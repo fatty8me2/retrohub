@@ -89,6 +89,10 @@ int main(int argc, char** argv) {
              "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Nintendo_64/master/Named_Boxarts/Super%20Mario%2064%20(USA).png");
     CHECK_EQ(hm::thumb_url("gc", 1, "F-Zero GX (USA)"),
              "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_GameCube/master/Named_Titles/F-Zero%20GX%20(USA).png");
+    CHECK_EQ(hm::thumb_url("3ds", 0, "Pokemon X (USA) (En,Ja,Fr,De,Es,It,Ko)"),
+             "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Nintendo_3DS/master/Named_Boxarts/Pokemon%20X%20(USA)%20(En%2CJa%2CFr%2CDe%2CEs%2CIt%2CKo).png");
+    CHECK_EQ(hm::thumb_url("wiiu", 0, "Legend of Zelda, The - Twilight Princess HD (USA) (En,Fr,Es) (Rev 2)").substr(0, 78),
+             "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Wii_U/master/");
     CHECK(hm::thumb_url("xx", 0, "a").empty());
 
     /* ---- DAT parse ---- */

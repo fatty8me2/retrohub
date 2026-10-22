@@ -208,7 +208,8 @@ std::string settings_to_json(const Settings& s) {
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
       << "  \"appear_offline\": " << (s.appear_offline ? "true" : "false") << ",\n"
-      << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << "\n"
+      << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
+      << "  \"cemu_exe\": \"" << json_escape(s.cemu_exe) << "\"\n"
       << "}\n";
     return o.str();
 }
@@ -255,6 +256,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->show_friends = json_bool(j, "show_friends", out->show_friends);
     out->appear_offline = json_bool(j, "appear_offline", out->appear_offline);
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
+    out->cemu_exe = j.str("cemu_exe", out->cemu_exe);
     return true;
 }
 
@@ -807,6 +809,8 @@ std::string system_shelf_title(const std::string& s) {
     if (s == "gba") return "Game Boy Advance";
     if (s == "gbc") return "Game Boy Color";
     if (s == "gb") return "Game Boy";
+    if (s == "3ds") return "Nintendo 3DS";
+    if (s == "wiiu") return "Wii U";
     return s;
 }
 
@@ -848,7 +852,7 @@ std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_rece
         by_title(sh.items);
         if (!sh.items.empty()) out.push_back(sh);
     }
-    static const char* sys_order[] = {"n64", "gc", "gba", "gbc", "gb"};
+    static const char* sys_order[] = {"n64", "gc", "gba", "gbc", "gb", "3ds", "wiiu"};
     std::vector<bool> placed(g.size(), false);
     for (const char* sys : sys_order) {
         Shelf sh{std::string("genre:Other:") + sys, "Other - " + system_shelf_title(sys), {}};

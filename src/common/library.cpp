@@ -1,5 +1,6 @@
 #include "miniz.h"
 #include "library.h"
+#include "emu_formats.h"
 #include "games.h"
 
 #ifndef NOMINMAX
@@ -568,6 +569,128 @@ bool id_gc(const fs::path& p, const std::string& ext, uint64_t size, GameEntry* 
     return false;
 }
 
+/* ---- Nintendo 3DS (Azahar) / Wii U (Cemu) ---- */
+
+/* Up to n bytes from the start of a file (short files are fine). */
+bool read_prefix(const fs::path& p, size_t n, std::vector<uint8_t>* out) {
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return false;
+    out->assign(n, 0);
+    f.read(reinterpret_cast<char*>(out->data()), (std::streamsize)n);
+    out->resize((size_t)f.gcount());
+    return !out->empty();
+}
+
+void fill_3ds(const N3dsInfo& i, const fs::path& name_src, GameEntry* e) {
+    e->system = System::N3DS;
+    e->serial = i.serial;
+    std::string k = n3ds_key(i);
+    e->title = title_from_filename(name_src);
+    e->key = k.empty() ? "3ds:file-" + sanitize_key(e->title) : k;
+    if (const GameInfo* g = find_game_for("3ds", e->serial, std::string())) { e->catalog_id = g->id; e->title = g->title; }
+    if ((i.container == "ncsd" || i.container == "ncch") && !i.decrypted) e->issue = "encrypted";   // Azahar needs AES keys
+}
+
+bool id_3ds(const fs::path& p, const std::string& ext, GameEntry* e) {
+    std::vector<uint8_t> h;
+    if (ext == ".zcci" || ext == ".zcia" || ext == ".zcxi" || ext == ".z3dsx") {   // Azahar's own compressed formats: no cheap header
+        if (!read_prefix(p, 4, &h) || h.size() < 4 || std::memcmp(h.data(), "Z3DS", 4) != 0) return false;
+        fill_3ds(N3dsInfo{}, p, e);
+        return true;
+    }
+    if (!read_prefix(p, kN3dsHeaderBytes, &h)) return false;
+    N3dsInfo i;
+    if (!parse_3ds_header(h.data(), h.size(), &i)) return false;
+    if (i.container != "3dsx" && !i.is_application) return false;   // updates / DLC / system titles are not games
+    fill_3ds(i, p, e);
+    return true;
+}
+
+/* A zip holding one 3DS image: only the first 17 KB of the entry is inflated. Azahar cannot open zips, so the
+ * entry is flagged "extract" and keeps the zip as its path. Nothing is extracted. */
+struct ZipPrefixSink { std::vector<uint8_t> buf; };
+size_t zip_prefix_cb(void* user, mz_uint64 /*ofs*/, const void* data, size_t len) {
+    ZipPrefixSink* s = static_cast<ZipPrefixSink*>(user);
+    size_t room = kN3dsHeaderBytes > s->buf.size() ? kN3dsHeaderBytes - s->buf.size() : 0;
+    size_t take = len < room ? len : room;
+    s->buf.insert(s->buf.end(), (const uint8_t*)data, (const uint8_t*)data + take);
+    return take < len ? 0 : len;   // a short return aborts the inflate once we have enough
+}
+
+bool id_3ds_zip(const fs::path& zip, GameEntry* e) {
+    mz_zip_archive za;
+    std::memset(&za, 0, sizeof(za));
+    FILE* f = _wfopen(zip.wstring().c_str(), L"rb");
+    if (!f) return false;
+    if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { std::fclose(f); return false; }
+    bool ok = false;
+    mz_uint n = mz_zip_reader_get_num_files(&za);
+    for (mz_uint i = 0; i < n && !ok; i++) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
+        std::string ext = ascii_lower(path_utf8(utf8_path(st.m_filename).extension()));
+        if (!is_3ds_zip_entry(ext) || st.m_uncomp_size < kN3dsHeaderBytes) continue;
+        ZipPrefixSink sink;
+        mz_zip_reader_extract_to_callback(&za, i, zip_prefix_cb, &sink, 0);   // reports failure by design after the prefix
+        N3dsInfo info;
+        if (!parse_3ds_header(sink.buf.data(), sink.buf.size(), &info)) continue;
+        if (info.container != "3dsx" && !info.is_application) continue;
+        fill_3ds(info, zip, e);
+        e->issue = "extract";
+        ok = true;
+    }
+    mz_zip_reader_end(&za);
+    std::fclose(f);
+    return ok;
+}
+
+bool id_wiiu(const fs::path& p, const std::string& ext, uint64_t size, GameEntry* e) {
+    WiiuInfo w;
+    auto reader = [&](uint64_t off, void* buf, size_t n) -> bool {
+        std::ifstream f(p, std::ios::binary);
+        if (!f) return false;
+        f.seekg((std::streamoff)off, std::ios::beg);
+        if (!f) return false;
+        f.read(static_cast<char*>(buf), (std::streamsize)n);
+        return f.gcount() == (std::streamsize)n;
+    };
+    bool ok = false;
+    std::string name_stem;   // the game's display name when the header has none
+    fs::path name_src = p;
+    if (ext == ".wua") {
+        ok = parse_wua(reader, size, &w);
+        if (!ok) { w = WiiuInfo{}; w.container = "wua"; ok = true; }   // unknown layout: still launchable, keyed by file name
+    } else if (ext == ".wud") {
+        std::vector<uint8_t> h;
+        ok = read_prefix(p, 16, &h) && parse_wud_header(h.data(), h.size(), &w);
+    } else if (ext == ".wux") {
+        ok = parse_wux(reader, size, &w);
+    } else if (ext == ".rpx") {
+        /* loadiine folder: <game>/code/<x>.rpx + <game>/meta/meta.xml; only base games (title id 00050000-...) */
+        fs::path game_dir = p.parent_path().parent_path();
+        std::ifstream f(game_dir / L"meta" / L"meta.xml", std::ios::binary);
+        if (!f) return false;
+        std::string xml((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        uint64_t tid = 0;
+        if (!parse_meta_xml_title_id(xml, &tid) || (tid >> 32) != 0x00050000u) return false;
+        w.container = "rpx";
+        w.title_id = tid;
+        w.serial = hex16(tid);
+        for (char& c : w.serial) if (c >= 'a' && c <= 'f') c = char(c - 32);
+        name_src = fs::path(game_dir.filename().wstring() + L".rpx");   // the folder name is the game name
+        ok = true;
+    }
+    if (!ok) return false;
+    e->system = System::WiiU;
+    e->serial = w.serial;
+    e->title = title_from_filename(name_src);
+    std::string k = wiiu_key(w);
+    e->key = k.empty() ? "wiiu:file-" + sanitize_key(e->title) : k;
+    if (const GameInfo* g = find_game_for("wiiu", e->serial, std::string())) { e->catalog_id = g->id; e->title = g->title; }
+    if (w.container == "wud" || w.container == "wux") e->issue = "keys";   // needs Cemu's keys.txt (disc key)
+    return true;
+}
+
 } // namespace
 
 /* ------------------------------------------------------------------ */
@@ -581,6 +704,8 @@ const char* system_name(System s) {
     case System::GB:  return "Game Boy";
     case System::GBC: return "Game Boy Color";
     case System::GC:  return "GameCube";
+    case System::N3DS: return "Nintendo 3DS";
+    case System::WiiU: return "Wii U";
     default:          return "Unknown";
     }
 }
@@ -592,6 +717,8 @@ const char* system_short(System s) {
     case System::GB:  return "gb";
     case System::GBC: return "gbc";
     case System::GC:  return "gc";
+    case System::N3DS: return "3ds";
+    case System::WiiU: return "wiiu";
     default:          return "";
     }
 }
@@ -603,6 +730,8 @@ System system_from_short(const std::string& s) {
     if (l == "gb") return System::GB;
     if (l == "gbc") return System::GBC;
     if (l == "gc") return System::GC;
+    if (l == "3ds") return System::N3DS;
+    if (l == "wiiu") return System::WiiU;
     return System::Unknown;
 }
 
@@ -657,6 +786,16 @@ bool identify_game(const std::string& path, GameEntry* out) {
     if (ec) return false;
     std::string ext = ascii_lower(path_utf8(p.extension()));
     if (ext == ".zip") {
+        {   /* a zipped 3DS image is only listed (header read), never extracted behind the player's back */
+            GameEntry z;
+            if (id_3ds_zip(p, &z)) {
+                z.path = path_utf8(p);
+                z.size = size;
+                g_identify_calls.fetch_add(1);
+                *out = std::move(z);
+                return true;
+            }
+        }
         fs::path rom;
         if (!extract_zipped_rom(p, &rom)) return false;
         return identify_game(path_utf8(rom), out);
@@ -670,11 +809,117 @@ bool identify_game(const std::string& path, GameEntry* out) {
     else if (ext == ".gb" || ext == ".gbc") ok = id_gb(p, size, &e);
     else if (ext == ".iso" || ext == ".gcm" || ext == ".rvz" || ext == ".wia" || ext == ".ciso" || ext == ".gcz")
         ok = id_gc(p, ext, size, &e);
+    else if (is_3ds_extension(ext)) ok = id_3ds(p, ext, &e);
+    else if (ext == ".wua" || ext == ".wud" || ext == ".wux" || ext == ".rpx") ok = id_wiiu(p, ext, size, &e);
     if (!ok) return false;
     e.path = path_utf8(p);
     e.size = size;
     *out = std::move(e);
     return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* explicit unzip of a 3DS image                                       */
+/* ------------------------------------------------------------------ */
+
+namespace {
+struct ExtractCtx {
+    FILE* f = nullptr;
+    uint64_t done = 0, total = 0;
+    const std::function<bool(uint64_t, uint64_t)>* cb = nullptr;
+    bool cancelled = false;
+};
+size_t extract_write_cb(void* user, mz_uint64 /*ofs*/, const void* data, size_t n) {
+    ExtractCtx* c = static_cast<ExtractCtx*>(user);
+    if (std::fwrite(data, 1, n, c->f) != n) return 0;
+    c->done += n;
+    if (c->cb && *c->cb && !(*c->cb)(c->done, c->total)) { c->cancelled = true; return 0; }
+    return n;
+}
+} // namespace
+
+std::string extract_3ds_dir(const GameEntry& e) {
+    return path_utf8(utf8_path(data_dir()) / L"rom-cache" / L"3ds" / utf8_path(sanitize_key(e.key)));
+}
+
+uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
+    mz_zip_archive za;
+    std::memset(&za, 0, sizeof(za));
+    FILE* zf = _wfopen(utf8_path(e.path).wstring().c_str(), L"rb");
+    if (!zf) return 0;
+    if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); return 0; }
+    uint64_t size = 0;
+    mz_uint n = mz_zip_reader_get_num_files(&za);
+    for (mz_uint i = 0; i < n && !size; i++) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
+        if (is_3ds_zip_entry(ascii_lower(path_utf8(utf8_path(st.m_filename).extension())))) size = st.m_uncomp_size;
+    }
+    mz_zip_reader_end(&za);
+    std::fclose(zf);
+    return size;
+}
+
+std::string extracted_3ds_path(const GameEntry& e) {
+    std::error_code ec;
+    fs::path dir = utf8_path(extract_3ds_dir(e));
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        std::string ext = ascii_lower(path_utf8(it->path().extension()));
+        if (is_3ds_zip_entry(ext) && it->path().filename().wstring().find(L".part") == std::wstring::npos) return path_utf8(it->path());
+    }
+    return "";
+}
+
+bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint64_t)>& progress,
+                     std::string* out_path, std::string* err) {
+    std::string dummy;
+    if (!err) err = &dummy;
+    fs::path zip = utf8_path(e.path);
+    mz_zip_archive za;
+    std::memset(&za, 0, sizeof(za));
+    FILE* zf = _wfopen(zip.wstring().c_str(), L"rb");
+    if (!zf) { *err = "cannot open the zip"; return false; }
+    if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); *err = "not a valid zip"; return false; }
+    bool ok = false;
+    mz_uint n = mz_zip_reader_get_num_files(&za);
+    for (mz_uint i = 0; i < n && !ok; i++) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
+        fs::path name = utf8_path(st.m_filename).filename();
+        if (!is_3ds_zip_entry(ascii_lower(path_utf8(name.extension())))) continue;
+        fs::path dir = utf8_path(extract_3ds_dir(e));
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        ULARGE_INTEGER free_bytes{};
+        if (GetDiskFreeSpaceExW(dir.wstring().c_str(), &free_bytes, nullptr, nullptr) &&
+            free_bytes.QuadPart < st.m_uncomp_size + (64ull << 20)) {
+            *err = "not enough free disk space (" + std::to_string((st.m_uncomp_size >> 20) + 64) + " MB needed)";
+            break;
+        }
+        fs::path final_path = dir / name, part = dir / (name.wstring() + L".part");
+        ExtractCtx ctx;
+        ctx.f = _wfopen(part.wstring().c_str(), L"wb");
+        if (!ctx.f) { *err = "cannot write " + path_utf8(part); break; }
+        ctx.total = st.m_uncomp_size;
+        ctx.cb = &progress;
+        mz_bool r = mz_zip_reader_extract_to_callback(&za, i, extract_write_cb, &ctx, 0);
+        bool wrote = std::fflush(ctx.f) == 0;
+        std::fclose(ctx.f);
+        if (!r || !wrote || ctx.done != st.m_uncomp_size) {
+            fs::remove(part, ec);
+            *err = ctx.cancelled ? "cancelled" : "extraction failed (disk full or damaged zip)";
+            break;
+        }
+        fs::remove(final_path, ec);
+        fs::rename(part, final_path, ec);
+        if (ec) { *err = "cannot move the unpacked image into place"; break; }
+        if (out_path) *out_path = path_utf8(final_path);
+        ok = true;
+    }
+    mz_zip_reader_end(&za);
+    std::fclose(zf);
+    if (!ok && err->empty()) *err = "no 3DS image inside the zip";
+    return ok;
 }
 
 /* ------------------------------------------------------------------ */
@@ -971,7 +1216,7 @@ struct CacheRec {
     GameEntry e;
 };
 
-constexpr int kCacheVersion = 4;  // 2: serial matching + GBA catalog_id; forces a rescan
+constexpr int kCacheVersion = 5;  // 2: serial matching + GBA catalog_id; forces a rescan
 
 std::unordered_map<std::string, CacheRec> cache_load() {
     std::unordered_map<std::string, CacheRec> m;
@@ -996,12 +1241,13 @@ std::unordered_map<std::string, CacheRec> cache_load() {
             r.e.title = f.str("t");
             r.e.serial = f.str("sn");
             r.e.catalog_id = f.str("c");
+            r.e.issue = f.str("is");
             r.e.path = f.str("lp").empty() ? path : f.str("lp");
             {   /* catalog can change between versions: re-match instead of trusting the cache */
                 std::string md5 = (r.e.key.rfind("n64:", 0) == 0) ? r.e.key.substr(4) : std::string();
                 if (const GameInfo* g = find_game_for(f.str("sys"), r.e.serial, md5)) {
                     r.e.catalog_id = g->id;
-                    if (r.e.system == System::N64) r.e.title = g->title;
+                    if (r.e.system == System::N64 || r.e.system == System::N3DS || r.e.system == System::WiiU) r.e.title = g->title;
                 }
             }
             r.e.size = r.size;
@@ -1029,6 +1275,7 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
             o += ",\"t\":"; jw_str(o, r.e.title);
             o += ",\"sn\":"; jw_str(o, r.e.serial);
             o += ",\"c\":"; jw_str(o, r.e.catalog_id);
+            o += ",\"is\":"; jw_str(o, r.e.issue);
             o += ",\"lp\":"; jw_str(o, r.e.path);   // launch path (differs for zipped ROMs)
         }
         o.push_back('}');
@@ -1039,7 +1286,9 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
 
 bool scan_extension(const std::string& ext) {
     static const char* const kExt[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso",
-                                       ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip"};
+                                       ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip",
+                                       ".3ds", ".cci", ".cia", ".cxi", ".3dsx", ".zcci", ".zcia", ".zcxi", ".z3dsx",
+                                       ".wua", ".wud", ".wux", ".rpx"};
     for (const char* e : kExt)
         if (ext == e) return true;
     return false;

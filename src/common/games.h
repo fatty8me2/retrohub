@@ -7,7 +7,9 @@
 
 namespace hub {
 
-enum class Engine { Native, Mupen64Plus, Libretro, Dolphin };
+enum class Engine { Native, Mupen64Plus, Libretro, Dolphin,
+                    Azahar,   // Nintendo 3DS (external emulator, downloaded on demand)
+                    Cemu };   // Wii U (external emulator; an existing install is reused)
 
 /* Curated metadata for well-known games. Any ROM plays without an entry here;
  * an entry adds a nicer title, player count, online flag and a blurb, and
@@ -23,7 +25,8 @@ struct GameInfo {
     std::string system = "n64";         // library.h system_short(): n64 gba gb gbc gc
     std::vector<std::string> serials;   // header IDs, matched case-insensitively against GameEntry::serial:
                                         //   N64 4-char game ID at 0x3B (e.g. "NSME"), GBA 4-char code (e.g. "BPEE"),
-                                        //   GC 6-char disc ID (e.g. "GALE01"). Region variants allowed.
+                                        //   GC 6-char disc ID (e.g. "GALE01"), 3DS 4-char NCCH game code (e.g. "EKJA"),
+                                        //   Wii U 16-hex title id (e.g. "000500001019E500"). Region variants allowed.
     bool online = false;     // fun with friends online (2+ players, works with lockstep netplay)
     int year = 0;
     std::string blurb;       // one line shown on the card / details panel

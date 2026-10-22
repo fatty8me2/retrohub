@@ -190,4 +190,10 @@ n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N --p
 | `mp3` | Mario Party 3 | mupen64plus | 76A8BBC81BC2060EC99C9645867237CC | EEPROM 16K |
 | `remix` | Smash Remix 2.0 (fan ROM hack) | mupen64plus | 43571020FA5DDB138BBD7F64A8C9C0D4 | — |
 
+### 3DS and Wii U
+
+`3ds` (Azahar, `Engine::Azahar`) and `wiiu` (Cemu, `Engine::Cemu`) entries live in the same catalog (8 Pokemon 3DS games, Twilight Princess HD).
+They run as external emulators started by `launch_external` in `src/hub/main.cpp`; everything else is in `src/hub/emulators.cpp`, with the header
+parsers in `src/common/emu_formats.cpp` and the save mapping in `src/common/emu_saves.cpp`. See `docs/EMULATORS.md`.
+
 ROM files can be `.z64` (big-endian), `.v64` (byteswapped) or `.n64` (little-endian). Normalize to `.z64` byte order before hashing. Identification uses the MD5 of the normalized image, with a fallback to the header CRC1/CRC2 at offsets 0x10/0x14.

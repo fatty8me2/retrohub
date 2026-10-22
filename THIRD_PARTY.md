@@ -26,8 +26,10 @@ RetroHub uses the components below. Each one keeps its own license. Components a
 | Gambatte (libretro core) | nightly | GPL-2.0 | `scripts/fetch-cores.ps1` | Game Boy and Game Boy Color fallback. |
 | libretro frontend info files | nightly | per file (MIT for most) | `scripts/fetch-cores.ps1` | Core metadata (`.info`). |
 | Dolphin | 2509 | GPL-2.0-or-later | `scripts/fetch-dolphin.ps1` | GameCube emulation, downloaded on demand. |
+| Azahar | 2126.2 | GPL-3.0 | `src/hub/emulators.cpp` (github.com/azahar-emu/azahar) | Nintendo 3DS emulation, downloaded on demand into the data folder; SHA-256 pinned. |
+| Cemu | 2.6 | MPL-2.0 | `src/hub/emulators.cpp` (github.com/cemu-project/Cemu) | Wii U emulation. An existing install is used; otherwise downloaded on demand into the data folder; SHA-256 pinned. |
 
-The libretro cores are downloaded from the libretro nightly build server. The Dolphin build is downloaded from dolphin-emu.org. RetroHub does not redistribute these files in its source tree.
+The libretro cores are downloaded from the libretro nightly build server. The Dolphin build is downloaded from dolphin-emu.org, and the Azahar and Cemu builds from their GitHub releases. RetroHub does not redistribute these files in its source tree.
 
 ## Vendored in the source tree
 

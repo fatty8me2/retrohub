@@ -1,6 +1,6 @@
 # RetroHub: session rules
 
-RetroHub is a Windows launcher for retro games (N64, GameCube, GBA, GB, GBC). It has online play, friends and invites, and a save vault that syncs across PCs. Start with `docs/ARCHITECTURE.md`, and see the other docs in `docs/` (FRIENDS, SAVES, RETRORUN, DOLPHIN, CORES).
+RetroHub is a Windows launcher for retro games (N64, GameCube, Wii U, 3DS, GBA, GB, GBC). It has online play, friends and invites, and a save vault that syncs across PCs. Start with `docs/ARCHITECTURE.md`, and see the other docs in `docs/` (FRIENDS, SAVES, RETRORUN, DOLPHIN, EMULATORS, CORES).
 
 ## Agent roles
 - **Opus: orchestrator.** Plans, writes the contracts/interfaces, splits work into parallel lanes, integrates, and releases.

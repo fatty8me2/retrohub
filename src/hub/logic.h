@@ -46,6 +46,7 @@ struct Settings {
     bool show_friends = true;          // friends panel open
     bool appear_offline = false;       // friends see me as offline
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
+    std::string cemu_exe;              // user-chosen Cemu.exe ("" = find an existing install, else download one)
 };
 std::string settings_to_json(const Settings& s);
 bool settings_from_json(const std::string& text, Settings* out);   // missing keys keep defaults in *out

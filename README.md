@@ -1,6 +1,6 @@
 # RetroHub
 
-RetroHub is a Windows launcher for retro games. It puts your N64, GameCube, Game Boy Advance, Game Boy and Game Boy Color games in one library, and it lets you play them online with friends.
+RetroHub is a Windows launcher for retro games. It puts your N64, GameCube, Wii U, Nintendo 3DS, Game Boy Advance, Game Boy and Game Boy Color games in one library, and it lets you play them online with friends.
 
 - **One library.** Browse and launch every game from a single window, with cover art and per-game details.
 - **Online play with friends.** Add friends by friend code, see who is online, send invites, and chat in a room. Rooms use a short room code.
@@ -15,11 +15,13 @@ RetroHub is a Windows launcher for retro games. It puts your N64, GameCube, Game
 |---|---|
 | Nintendo 64 | mupen64plus 2.6.0 inside `n64run.exe`, with GLideN64 video |
 | GameCube | Dolphin, downloaded on demand (`scripts/fetch-dolphin.ps1`) |
+| Nintendo 3DS | Azahar, downloaded on demand into RetroHub's data folder (zipped games are unpacked on request) |
+| Wii U | Cemu: an existing install is used, otherwise downloaded on demand (`.wua`, `.wud/.wux`, loadiine `.rpx`) |
 | Game Boy Advance | mGBA (libretro core) |
 | Game Boy / Game Boy Color | SameBoy by default, Gambatte as a fallback (libretro cores) |
 | Native ports | Run directly, for example Smash Classic (BattleShip) |
 
-See `docs/CORES.md`, `docs/DOLPHIN.md` and `docs/RETRORUN.md` for details.
+See `docs/CORES.md`, `docs/DOLPHIN.md`, `docs/EMULATORS.md` (3DS and Wii U) and `docs/RETRORUN.md` for details.
 
 ## Bring your own games
 
