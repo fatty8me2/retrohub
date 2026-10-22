@@ -12,6 +12,9 @@
 #include <objbase.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <cwctype>
+#include <string>
 
 namespace {
 
@@ -140,7 +143,36 @@ bool shell_write_shortcut(const std::wstring& lnk_path, const std::wstring& exe,
     return true;
 }
 
+bool shell_path_looks_like_dev_build(const std::wstring& exe, bool (*dir_has)(const std::wstring&, const wchar_t*)) {
+    auto has = dir_has ? dir_has : [](const std::wstring& d, const wchar_t* n) {
+        return GetFileAttributesW((d + L"\\" + n).c_str()) != INVALID_FILE_ATTRIBUTES;
+    };
+    std::wstring low = exe;
+    for (auto& ch : low) { ch = (wchar_t)towlower(ch); if (ch == L'/') ch = L'\\'; }
+    std::wstring d = dir_of(low);
+    std::wstring dslash = d + L"\\";
+    for (const wchar_t* seg : {L"\\build\\", L"\\wt\\", L"\\worktrees\\", L"\\_deps\\", L"\\cmakefiles\\"})
+        if (dslash.find(seg) != std::wstring::npos) return true;
+    auto ends = [](const std::wstring& s, const std::wstring& suf) { return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0; };
+    if (ends(d, L"\\release") || ends(d, L"\\debug")) {
+        if (ends(dir_of(d), L"\\bin")) return true;   // ...\bin\Release = a CMake output folder
+    }
+    std::wstring cur = dir_of(exe);   // dev markers in the exe folder or up to 5 ancestors
+    for (int i = 0; i < 6 && !cur.empty(); ++i) {
+        if (has(cur, L"CMakeCache.txt") || has(cur, L"CMakeLists.txt") || has(cur, L".git")) return true;
+        cur = dir_of(cur);
+    }
+    return false;
+}
+
+bool shell_registration_allowed() {
+    auto set = [](const char* n) { const char* v = std::getenv(n); return v && *v && std::string(v) != "0"; };
+    if (set("RETROHUB_NO_SHELL") || std::getenv("HUB_SCREENSHOT") || std::getenv("RETROHUB_TEST")) return false;
+    return !shell_path_looks_like_dev_build(exe_path());
+}
+
 void shell_ensure_start_menu_shortcut() {
+    if (!shell_registration_allowed()) return;
     std::wstring programs = known_folder(FOLDERID_Programs);   // %APPDATA%\Microsoft\Windows\Start Menu\Programs
     if (programs.empty()) return;
     bool ok = false;
@@ -148,6 +180,7 @@ void shell_ensure_start_menu_shortcut() {
 }
 
 void shell_ensure_desktop_shortcut(bool create) {
+    if (!shell_registration_allowed()) return;
     std::wstring desk = known_folder(FOLDERID_Desktop);
     if (desk.empty()) return;
     std::wstring lnk = desk + L"\\RetroHub.lnk";
