@@ -429,6 +429,7 @@ struct App {
     std::map<int, bool> ready;
     std::vector<int> last_slots;
     bool hello_dirty = false, was_connected = false;
+    bool room_update_pending = false;   // guest pressed "Update now": waiting for the release check
     bool my_ready = false;
     std::string selected_game;   // room's chosen game (room id: catalog id or library key)
     std::string pending_room_game;   // preselect when hosting from the library
@@ -1179,6 +1180,11 @@ static void enter_room(bool host, const std::string& code) {
 
 static bool is_host() { return room_connected() && room_my_slot() == 0; }
 
+static bool allow_version_mismatch() {   // dev override
+    const char* e = std::getenv("RETROHUB_ALLOW_VERSION_MISMATCH");
+    return e && *e && std::string(e) != "0";
+}
+
 static std::vector<hubui::PeerInfo> peer_list() {
     std::vector<hubui::PeerInfo> v;
     int me = room_my_slot();
@@ -1186,7 +1192,11 @@ static std::vector<hubui::PeerInfo> peer_list() {
         hubui::PeerInfo p;
         auto it = A.peers.find(m.slot);
         if (it != A.peers.end()) p = it->second;
-        if (m.slot == me || g_fake_room) { p.hello = true; p.games.clear(); p.keys.clear(); my_games(&p.games, &p.keys); }
+        if (m.slot == me || g_fake_room) {
+            p.hello = true; p.games.clear(); p.keys.clear(); my_games(&p.games, &p.keys);
+            p.app = HUB_VERSION_STR;
+            if (g_fake_room && m.slot == 1 && std::getenv("HUB_SHOT_FAKE_APP")) p.app = std::getenv("HUB_SHOT_FAKE_APP");   // screenshot aid: fake version mismatch (e.g. 1.9.1)
+        }
         p.slot = m.slot;
         p.name = m.name;
         v.push_back(p);
@@ -1219,7 +1229,7 @@ static void lobby_tick() {
             std::map<std::string, std::string> games;
             std::vector<std::string> keys;
             my_games(&games, &keys);
-            for (auto& m : hubui::hello_messages("2", games, keys)) A.lobby.send_msg(m);
+            for (auto& m : hubui::hello_messages("2", games, keys, 3000, HUB_VERSION_STR)) A.lobby.send_msg(m);
         }
         A.lobby.send_msg(std::string("{\"kind\":\"ready\",\"ready\":") + (A.my_ready ? "true" : "false") + "}");
         A.lobby.send_msg("{\"kind\":\"locals\",\"n\":" + std::to_string(A.my_locals) + "}");
@@ -2369,6 +2379,12 @@ static void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     if (slot == A.lobby.my_slot()) rd = host || A.my_ready;
     if (host) pill("HOST", COL_ACCENT);
     else pill(rd ? "Ready" : "Not ready", rd ? COL_GOOD : IM_COL32(70, 72, 86, 255));
+    if (p->hello) {   // RetroHub version, bottom-right of the card; red when it differs from ours
+        std::string theirs = p->app.empty() ? "version unknown" : hubui::app_version_label(p->app);
+        bool differs = p->app.empty() || hubui::compare_app_versions(p->app, HUB_VERSION_STR) != 0;
+        ImVec2 ts = ImGui::CalcTextSize(theirs.c_str());
+        dl->AddText(ImVec2(p1.x - ts.x - 14 * S, p1.y - ts.y - 10 * S), differs ? COL_BAD : ui::TEXT2, theirs.c_str());
+    }
     {   // local players (1-2 controllers on this PC)
         int n = locals_of(slot);
         bool mine = slot == room_my_slot();
@@ -2542,6 +2558,34 @@ static void page_online_room() {
     }
 
     ImGui::Dummy(ImVec2(0, 4 * S));
+    if (!host && !allow_version_mismatch()) {
+        std::string host_app;
+        for (auto& p : peers) if (p.slot == 0) host_app = p.app;
+        auto act = hubui::guest_version_action(HUB_VERSION_STR, host_app);
+        if (act == hubui::GuestVersionAction::UpdateNow) {
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_BAD), "The host is on %s and you have %s - you need to update to play.",
+                               hubui::app_version_label(host_app).c_str(), hubui::app_version_label(HUB_VERSION_STR).c_str());
+            if (hubupdate::downloading()) {
+                float pr = hubupdate::download_progress();
+                ImGui::ProgressBar(pr < 0 ? 0.f : pr, ImVec2(260 * S, 0));
+                text_wrapped_disabled(hubupdate::status().c_str());
+            } else {
+                if (button("Update now", ImVec2(200 * S, 40 * S), true, !hubupdate::checking())) {
+                    hubupdate::check_async(true);
+                    A.room_update_pending = true;
+                }
+                if (A.room_update_pending && !hubupdate::checking()) {
+                    A.room_update_pending = false;
+                    if (hubupdate::update_available()) hubupdate::start_update();
+                }
+                if (hubupdate::check_failed() && !hubupdate::status().empty()) text_wrapped_disabled(hubupdate::status().c_str());
+            }
+        } else if (act == hubui::GuestVersionAction::HostNeedsUpdate) {
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_BAD), "Host needs to update (host is on %s, you have %s).",
+                               host_app.empty() ? "an old version" : hubui::app_version_label(host_app).c_str(),
+                               hubui::app_version_label(HUB_VERSION_STR).c_str());
+        }
+    }
     if (!host) {
         bool before = A.my_ready;
         if (ImGui::Checkbox("I'm ready", &A.my_ready) && before != A.my_ready) A.hello_dirty = true;
@@ -2622,6 +2666,12 @@ static void page_online_room() {
             auto s = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0);
             ok = s.ok;
             why = s.reason;
+            if (ok) {
+                std::string host_app;
+                for (auto& p : peers) if (p.slot == 0) host_app = p.app;
+                auto vg = hubui::version_gate(host_app, peers, allow_version_mismatch());
+                if (!vg.ok) { ok = false; why = vg.reason; }
+            }
             if (ok)
                 for (auto& p : peers)
                     if (p.slot != 0 && !A.ready[p.slot]) { ok = false; why = p.name + " isn't ready yet"; break; }
