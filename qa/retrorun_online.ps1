@@ -4,6 +4,7 @@
 #   powershell -File qa\retrorun_online.ps1 -Core mgba_libretro.dll -Rom deps\testroms\sram.gba -System gba -Frames 3000
 # Optional: -KillSlot 1 -KillAfterSec 15   (kill that peer mid-match; the rest must exit 4, not hang)
 # Optional: set $env:HUBNET_FORCE_RELAY=1 before calling to force the WebSocket relay path.
+# Sparse slots: -Players is the number of PCs, not the highest slot. e.g. -Slots 0,2 -Ports 0,2,-1,-1 -Players 2.
 param(
     [string]$Core = 'mgba_libretro.dll',
     [string]$Rom = 'deps\testroms\sram.gba',
