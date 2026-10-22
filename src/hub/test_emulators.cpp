@@ -484,6 +484,27 @@ static void test_config() {
     CHECK(hubemu::azahar_args("C:\\g\\x.3ds", false) == "-w \"C:\\g\\x.3ds\"");
     CHECK(hubemu::cemu_args("D:\\w\\z.wua", true) == "-g \"D:\\w\\z.wua\" -f");
     CHECK(hubemu::cemu_args("D:\\w\\z.wua", false) == "-g \"D:\\w\\z.wua\"");
+
+    /* Dolphin */
+    CHECK(std::string(hubemu::release(hubemu::Kind::Dolphin).sha256).size() == 64 && hubemu::kind_for(hub::System::GC) == hubemu::Kind::Dolphin);
+    CHECK(hubemu::dolphin_args("D:\\g\\m.iso", true, "C:\\c\\GCI") ==
+          "-b -C Dolphin.Display.Fullscreen=True -C Dolphin.Core.SlotA=8 -C \"Dolphin.Core.GCIFolderAPathOverride=C:\\c\\GCI\" -e \"D:\\g\\m.iso\"");
+    hubemu::DolphinPads none, two;
+    two.xinput[1] = true;
+    std::string di = hubemu::dolphin_dolphin_ini_patch("", none);
+    CHECK(di.find("ConfirmStop = False") != std::string::npos && di.find("PermissionAsked = True") != std::string::npos);
+    CHECK(di.find("SIDevice0 = 6") != std::string::npos && di.find("SIDevice1 = 0") != std::string::npos);
+    CHECK(hubemu::dolphin_dolphin_ini_patch("", two).find("SIDevice1 = 6") != std::string::npos);
+    hubemu::DolphinPads ad;
+    ad.adapter = true;
+    CHECK(hubemu::dolphin_dolphin_ini_patch("", ad).find("SIDevice3 = 12") != std::string::npos);
+    CHECK(hubemu::dolphin_dolphin_ini_patch(di, none) == di);   // idempotent
+    std::string pi = hubemu::dolphin_pad_ini("", none);
+    CHECK(pi.find("[GCPad1]") != std::string::npos && pi.find("[GCPad4]") != std::string::npos);
+    CHECK(pi.find("Device = XInput/3/Gamepad") != std::string::npos);
+    CHECK(pi.find("Buttons/Z = `Shoulder R` | `DInput/0/Keyboard Mouse:D`") != std::string::npos);   // keyboard only on port 1
+    CHECK(pi.find("Buttons/Z = `Shoulder R`\n") != std::string::npos || pi.find("Buttons/Z = `Shoulder R`\r\n") != std::string::npos);
+    CHECK(hubemu::dolphin_gfx_ini_patch("").find("ShaderCompilationMode = 2") != std::string::npos);
 }
 
 static void test_prepare_and_find(const fs::path& dir) {
@@ -517,6 +538,28 @@ static void test_prepare_and_find(const fs::path& dir) {
     write_text(az / "retrohub-install.txt", "Azahar test");
     i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").string());
     CHECK(i.managed && i.exe == (az / "azahar.exe").string());
+
+    /* Dolphin: defaults once, user edits survive, per-launch ports follow the pads; old layout is tidied without touching saves */
+    fs::path dd = dir / "dol";
+    hubemu::DolphinPads none, two;
+    two.xinput[1] = true;
+    hubemu::prepare_dolphin(dd.string(), none);
+    CHECK(fs::exists(dd / "portable.txt") && fs::exists(dd / "User" / "Config" / "GCPadNew.ini"));
+    write_text(dd / "User" / "Config" / "GCPadNew.ini", "[GCPad1]\nButtons/A = custom\n");
+    std::string di = read_text(dd / "User" / "Config" / "Dolphin.ini");
+    write_text(dd / "User" / "Config" / "Dolphin.ini", hubui::ini_set(di, "Interface", "ConfirmStop", "True"));
+    hubemu::prepare_dolphin(dd.string(), two);
+    CHECK(read_text(dd / "User" / "Config" / "GCPadNew.ini").find("custom") != std::string::npos);
+    std::string di2 = read_text(dd / "User" / "Config" / "Dolphin.ini");
+    CHECK(di2.find("ConfirmStop = True") != std::string::npos && di2.find("SIDevice1 = 6") != std::string::npos);
+    fs::path od = dir / "olddata";
+    write_text(od / "dolphin-user" / "StateSaves" / "a.sav", "s");
+    write_text(od / "saves" / "gc" / "g" / "battery" / "GCI" / "x.gci", "card");
+    write_text(dir / "oldexe" / "dolphin" / "Dolphin.exe", "x");
+    write_text(dir / "oldexe" / "dolphin" / "portable.txt", "");
+    hubemu::dolphin_migrate_old(od.string(), (dir / "oldexe").string() + "\\", dd.string());
+    CHECK(fs::exists(dd / "User" / "StateSaves" / "a.sav") && fs::exists(od / "dolphin-user.migrated") && !fs::exists(od / "dolphin-user"));
+    CHECK(fs::exists(od / "saves" / "gc" / "g" / "battery" / "GCI" / "x.gci") && !fs::exists(dir / "oldexe" / "dolphin"));
 }
 
 static int test_download(const std::string& root) {

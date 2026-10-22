@@ -296,3 +296,14 @@ Pre-write `Dolphin.ini` [Analytics], [AutoUpdate], [Interface] keys (section 4) 
 - Update API: `https://dolphin-emu.org/update/latest/beta` (returned 2609a; stable endpoint returned 500)
 - Build download: `https://dl.dolphin-emu.org/releases/2509/dolphin-2509-x64.7z`
 - Download page (client-rendered): `https://dolphin-emu.org/download/`
+
+## 11. As integrated in RetroHub (hubemu::Kind::Dolphin)
+
+- Install: pinned 2509 7z, size + SHA-256 (`3a910cd0...e355`) checked, entry list vetted before `tar -xf` into a staging folder, `portable.txt` + `retrohub-install.txt` marker last, any failure removes the folder. Lives in `<data>\emulators\dolphin`; same job-object session wait and "already running" refusal as Azahar/Cemu.
+- Launch (live-verified): `-b -C Dolphin.Display.Fullscreen=True -C Dolphin.Core.SlotA=8 -C Dolphin.Core.GCIFolderAPathOverride=<card> -e <game>`; the render window covers the monitor with no caption. `SkipNKitWarning=True` is needed for .nkit.iso, else a dialog blocks boot.
+- Pads: `GCPadNew.ini` regenerated each launch (XInput/0..3, Xbox A/X/B/Y -> GC A/B/X/Y, Z = RB, analog L/R triggers, C-stick = right stick); port 1 also accepts Dolphin's default keyboard keys (`DInput/0/Keyboard Mouse:*`). `SIDevice0..3` follow connected XInput pads; a WUP-028 adapter with a WinUSB/libusbK driver switches all ports to the adapter (12).
+- Saves: card folder `User\GC\RetroHub\<key>\GCI` is synced with `<vault>\gc\<key>\battery\GCI` (manifest/conflict rules of emu_saves).
+- Graphics (GFX.ini, written once): 2x internal resolution, no widescreen hack, async ubershaders, Direct3D 11.
+- Defaults (Dolphin.ini, GFX.ini, GCPadNew.ini) are written once behind `User\Configetrohub-defaults.txt`; later edits are kept. Every launch only updates `SlotA/SlotB` and `SIDevice0-3` (which ports have a pad).
+- Migration from older builds (`hubemu::dolphin_migrate_old`): the old download in `<exe>\dolphin` is removed when untouched; `<data>\dolphin-user` is renamed to `dolphin-user.migrated` (save states copied to the new User folder). Memory cards were already kept in the vault (`battery\GCI`), which the new sync still reads, so saves stay put.
+- GC keys: disc ID (`gc:<id>-<disc>`) from the header for iso/gcm/rvz/wia/ciso/gcz and archive entries; only an unreadable .gcz falls back to `gc:file-<name>`.

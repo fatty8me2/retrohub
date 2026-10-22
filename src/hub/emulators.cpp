@@ -12,6 +12,10 @@
 #include <cstdio>
 #include <cstring>
 #include <tlhelp32.h>
+#include <cwctype>
+#include <xinput.h>
+#include <setupapi.h>
+#include <initguid.h>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -78,8 +82,8 @@ static std::string join(const std::string& a, const std::string& b) {
     return (c == '\\' || c == '/') ? a + b : a + "\\" + b;
 }
 
-const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : "Cemu"; }
-Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : Kind::Azahar; }
+const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : "Dolphin"; }
+Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : Kind::Azahar; }
 
 /* Pinned official releases. Azahar: github.com/azahar-emu/azahar (GPL-3.0), asset digest as published by GitHub.
  * Cemu: github.com/cemu-project/Cemu (MPL-2.0); GitHub lists no digest for the Windows zip, so the SHA-256 was
@@ -91,11 +95,15 @@ const Release& release(Kind k) {
     static const Release ce = {
         "2.6", L"github.com", L"/cemu-project/Cemu/releases/download/v2.6/cemu-2.6-windows-x64.zip",
         26374093ull, "a6bcc2bc42a362d10213819948f3152fae7d47f70067f25939b51d3ddcfb0896", L"Cemu.exe", "MPL-2.0"};
-    return k == Kind::Azahar ? az : ce;
+    /* Dolphin 2509 (GPL-2.0+), the official x64 7z from dl.dolphin-emu.org; the SHA-256 was computed from that file. */
+    static const Release dol = {
+        "2509", L"dl.dolphin-emu.org", L"/releases/2509/dolphin-2509-x64.7z",
+        18402050ull, "3a910cd09887bdc17df0d344de18249ac9c060d006649cd8660b791a5e8ba355", L"Dolphin.exe", "GPL-2.0+"};
+    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : dol;
 }
 
 std::string managed_root() { return join(hub::data_dir(), "emulators"); }
-std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : "cemu"); }
+std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : "dolphin"); }
 
 /* ------------------------------------------------------------------ */
 /* locating                                                            */
@@ -298,6 +306,66 @@ static bool unzip_to(const std::string& archive, const std::string& dest, std::s
     return ok;
 }
 
+/* Dolphin ships as a .7z only. Windows' own tar.exe (bsdtar) reads it; the entry list is checked first (same path rules as
+ * the zip reader) so nothing can land outside the staging folder, and any tar failure fails the install. */
+static bool run_tar(const std::wstring& args, const std::string& stdout_file, std::string* err) {
+    wchar_t sysdir[MAX_PATH];
+    GetSystemDirectoryW(sysdir, MAX_PATH);
+    std::wstring tar = std::wstring(sysdir) + L"\\tar.exe";
+    std::wstring cmd = L"\"" + tar + L"\" " + args;
+    std::vector<wchar_t> cb(cmd.begin(), cmd.end());
+    cb.push_back(0);
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+    HANDLE out = INVALID_HANDLE_VALUE;
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    if (!stdout_file.empty()) {
+        out = CreateFileW(W(stdout_file).c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = out;
+        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    }
+    PROCESS_INFORMATION pi{};
+    BOOL ok = CreateProcessW(tar.c_str(), cb.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+    if (!ok) { *err = "tar.exe not found (needs Windows 10 or later)"; return false; }
+    DWORD w = WaitForSingleObject(pi.hProcess, 10 * 60 * 1000);
+    DWORD code = 1;
+    if (w == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code); else TerminateProcess(pi.hProcess, 1);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    if (code != 0) { *err = "unpacking failed (tar exit " + std::to_string(code) + ")"; return false; }
+    return true;
+}
+
+static bool untar_to(const std::string& archive, const std::string& dest, const std::string& list_tmp, std::string* err) {
+    struct Cleanup { std::string f; ~Cleanup() { std::error_code ec; fs::remove(P(f), ec); } } cleanup{list_tmp};
+    /* names (-tf): every path checked. types (-tvf): the first column is the entry type; only plain files and folders pass,
+     * so no symlink or hardlink can point out of the staging folder. */
+    if (!run_tar(L"-tf \"" + W(archive) + L"\"", list_tmp, err)) return false;
+    std::istringstream ls(read_text(list_tmp));
+    std::string line;
+    int n = 0;
+    while (std::getline(ls, line)) {
+        while (!line.empty() && (line.back() == 13 || line.back() == 10)) line.pop_back();
+        if (line.empty()) continue;
+        if (!safe_zip_name(line)) { *err = "unsafe path in the download: " + line; return false; }
+        ++n;
+    }
+    if (n == 0) { *err = "the download is empty"; return false; }
+    if (!run_tar(L"-tvf \"" + W(archive) + L"\"", list_tmp, err)) return false;
+    std::istringstream vs(read_text(list_tmp));
+    int m = 0;
+    while (std::getline(vs, line)) {
+        if (line.empty() || line[0] == 13) continue;
+        if ((line[0] != '-' && line[0] != 'd') || line.find(" link to ") != std::string::npos) { *err = "the download contains a link entry: " + line.substr(0, 80); return false; }
+        ++m;
+    }
+    if (m != n) { *err = "the download listing is inconsistent"; return false; }
+    return run_tar(L"-xf \"" + W(archive) + L"\" -C \"" + W(dest) + L"\"", "", err);
+}
+
 static bool install_core(Kind k, const std::string& root, std::string* err, std::atomic<int>* phase, Progress pr) {
     const Release& rel = release(k);
     std::string dir = managed_dir(k, root);
@@ -330,7 +398,11 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         fs::rename(P(archive + ".part"), P(archive), ec);
         if (ec) { ok = false; *err = "cannot move the download into place"; }
     }
-    if (ok) { setp(2); ok = unzip_to(archive, stage, err); }
+    if (ok) {
+        setp(2);
+        ok = (archive.size() > 3 && archive.compare(archive.size() - 3, 3, ".7z") == 0) ? untar_to(archive, stage, join(root, "_downloads\\list.txt"), err)
+                                                                                         : unzip_to(archive, stage, err);
+    }
     if (ok) {
         setp(3);
         std::string inner;
@@ -348,6 +420,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         }
     }
     remove_tree(stage);
+    if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");   // Dolphin keeps its User folder beside the exe
     if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");
     if (!ok) remove_tree(dir);   // never leave a half install behind
     std::error_code ec;
@@ -506,10 +579,175 @@ void prepare_cemu_managed(const std::string& install_dir) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Dolphin (GameCube)                                                  */
+/* ------------------------------------------------------------------ */
+
+DEFINE_GUID(kGuidUsbDevice, 0xA5DCBF10, 0x6530, 0x11D2, 0x90, 0x1F, 0x00, 0xC0, 0x4F, 0xB9, 0x51, 0xED);   // GUID_DEVINTERFACE_USB_DEVICE
+
+/* The Nintendo GameCube adapter (WUP-028, USB 057E:0337) counts only when its driver is WinUSB/libusbK: Dolphin cannot
+ * open it through Nintendo's own driver, and a port set to "adapter" without that would have no controller at all. */
+static bool gc_adapter_usable() {
+    HDEVINFO set = SetupDiGetClassDevsW(&kGuidUsbDevice, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (set == INVALID_HANDLE_VALUE) return false;
+    bool found = false;
+    SP_DEVINFO_DATA d{};
+    d.cbSize = sizeof d;
+    for (DWORD i = 0; !found && SetupDiEnumDeviceInfo(set, i, &d); ++i) {
+        wchar_t id[512] = {0}, svc[128] = {0};
+        if (!SetupDiGetDeviceRegistryPropertyW(set, &d, SPDRP_HARDWAREID, nullptr, (PBYTE)id, sizeof id - 2, nullptr)) continue;
+        std::wstring hw = id;
+        for (auto& ch : hw) ch = (wchar_t)towupper(ch);
+        if (hw.find(L"VID_057E&PID_0337") == std::wstring::npos) continue;
+        if (SetupDiGetDeviceRegistryPropertyW(set, &d, SPDRP_SERVICE, nullptr, (PBYTE)svc, sizeof svc - 2, nullptr)) {
+            std::wstring s = svc;
+            for (auto& ch : s) ch = (wchar_t)towupper(ch);
+            found = s == L"WINUSB" || s == L"LIBUSBK" || s == L"LIBUSB0";
+        }
+    }
+    SetupDiDestroyDeviceInfoList(set);
+    return found;
+}
+
+DolphinPads detect_dolphin_pads() {
+    DolphinPads p;
+    for (DWORD i = 0; i < 4; ++i) {
+        XINPUT_STATE st{};
+        p.xinput[i] = XInputGetState(i, &st) == ERROR_SUCCESS;
+    }
+    p.adapter = gc_adapter_usable();
+    return p;
+}
+
+std::string dolphin_ini_defaults(const std::string& in) {
+    std::string t = in;
+    t = hubui::ini_set(t, "Analytics", "Enabled", "False");
+    t = hubui::ini_set(t, "Analytics", "PermissionAsked", "True");
+    t = hubui::ini_set(t, "AutoUpdate", "UpdateTrack", "");
+    t = hubui::ini_set(t, "Interface", "ConfirmStop", "False");
+    t = hubui::ini_set(t, "Interface", "UsePanicHandlers", "False");
+    t = hubui::ini_set(t, "Interface", "ShowActiveTitle", "False");
+    t = hubui::ini_set(t, "Display", "RenderToMain", "False");
+    t = hubui::ini_set(t, "Display", "KeepWindowOnTop", "False");
+    t = hubui::ini_set(t, "Core", "SkipIPL", "True");
+    t = hubui::ini_set(t, "Interface", "SkipNKitWarning", "True");          // NKit images (.nkit.iso) otherwise stop at a dialog
+    if (hubui::ini_get(t, "Core", "GFXBackend").empty()) t = hubui::ini_set(t, "Core", "GFXBackend", "D3D");   // Direct3D 11
+    if (hubui::ini_get(t, "DSP", "Volume").empty()) t = hubui::ini_set(t, "DSP", "Volume", "100");
+    return t;
+}
+
+/* Per launch: what must follow the current situation. SlotA = GCI folder (the vault copy), card B empty. A pad is plugged into
+ * a port where an XInput pad is connected (port 1 always, keyboard fallback); with a usable GameCube adapter all four ports
+ * are the adapter's. SIDevice: 0 = nothing, 6 = standard pad, 12 = adapter. */
+std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
+    std::string t = in;
+    t = hubui::ini_set(t, "Core", "SlotA", "8");
+    t = hubui::ini_set(t, "Core", "SlotB", "255");
+    for (int i = 0; i < 4; ++i)
+        t = hubui::ini_set(t, "Core", "SIDevice" + std::to_string(i), pads.adapter ? "12" : (i == 0 || pads.xinput[i]) ? "6" : "0");
+    return t;
+}
+
+std::string dolphin_dolphin_ini_patch(const std::string& in, const DolphinPads& pads) {
+    return dolphin_ini_ports(dolphin_ini_defaults(in), pads);
+}
+
+std::string dolphin_gfx_ini_patch(const std::string& in) {
+    std::string t = in;
+    t = hubui::ini_set(t, "Settings", "InternalResolution", "2");           // 2x native (1280x1056)
+    t = hubui::ini_set(t, "Settings", "wideScreenHack", "False");
+    t = hubui::ini_set(t, "Settings", "ShaderCompilationMode", "2");        // asynchronous ubershaders: no compile stutter
+    t = hubui::ini_set(t, "Settings", "WaitForShadersBeforeStarting", "False");
+    t = hubui::ini_set(t, "Settings", "BorderlessFullscreen", "True");      // fullscreen without a mode switch
+    t = hubui::ini_set(t, "Settings", "ShowFPS", "False");
+    return t;
+}
+
+std::string dolphin_pad_ini(const std::string& in, const DolphinPads&) {
+    std::string t = in;
+    const std::string kb = "DInput/0/Keyboard Mouse";
+    struct M { const char* key; const char* xi; const char* key_kb; };
+    static const M map[] = {   // GC control <- Xbox control (by position), keyboard fallback on port 1 (Dolphin's own default keys)
+        {"Buttons/A", "`Button A`", "X"},        {"Buttons/B", "`Button X`", "Z"},      {"Buttons/X", "`Button B`", "C"},
+        {"Buttons/Y", "`Button Y`", "S"},        {"Buttons/Z", "`Shoulder R`", "D"},    {"Buttons/Start", "Start", "RETURN"},
+        {"Main Stick/Up", "`Left Y+`", "UP"},    {"Main Stick/Down", "`Left Y-`", "DOWN"},
+        {"Main Stick/Left", "`Left X-`", "LEFT"}, {"Main Stick/Right", "`Left X+`", "RIGHT"},
+        {"C-Stick/Up", "`Right Y+`", "I"},       {"C-Stick/Down", "`Right Y-`", "K"},
+        {"C-Stick/Left", "`Right X-`", "J"},     {"C-Stick/Right", "`Right X+`", "L"},
+        {"Triggers/L", "`Trigger L`", "Q"},      {"Triggers/R", "`Trigger R`", "W"},
+        {"Triggers/L-Analog", "`Trigger L`", ""}, {"Triggers/R-Analog", "`Trigger R`", ""},
+        {"D-Pad/Up", "`Pad N`", "T"},            {"D-Pad/Down", "`Pad S`", "G"},
+        {"D-Pad/Left", "`Pad W`", "F"},          {"D-Pad/Right", "`Pad E`", "H"},
+    };
+    for (int i = 0; i < 4; ++i) {
+        std::string sec = "GCPad" + std::to_string(i + 1);
+        t = hubui::ini_set(t, sec, "Device", "XInput/" + std::to_string(i) + "/Gamepad");
+        for (const auto& m : map) {
+            std::string v = m.xi;
+            if (i == 0 && m.key_kb[0]) v += " | `" + kb + ":" + m.key_kb + "`";
+            t = hubui::ini_set(t, sec, m.key, v);
+        }
+        t = hubui::ini_set(t, sec, "Rumble/Motor", "`Motor L`|`Motor R`");
+    }
+    return t;
+}
+
+void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads) {
+    std::string cfg = join(install_dir, "User\\Config");
+    make_dirs(cfg);
+    if (!file_exists(join(install_dir, "portable.txt"))) write_text(join(install_dir, "portable.txt"), "");
+    /* Written once (marker), so settings changed later in Dolphin's own dialogs or by hand are kept: Dolphin.ini defaults,
+     * GFX.ini defaults and the pad mappings. */
+    std::string ini = join(cfg, "Dolphin.ini"), gfx = join(cfg, "GFX.ini"), pad = join(cfg, "GCPadNew.ini");
+    std::string marker = join(cfg, "retrohub-defaults.txt");
+    if (!file_exists(marker)) {
+        write_text(ini, dolphin_ini_defaults(read_text(ini)));
+        write_text(gfx, dolphin_gfx_ini_patch(read_text(gfx)));
+        write_text(pad, dolphin_pad_ini(read_text(pad), pads));
+        write_text(marker, "RetroHub wrote its default Dolphin settings and pad mappings once. Delete this file to have them written again.\n");
+    }
+    /* Every launch: only the memory card slots and which ports have a pad plugged in. */
+    write_text(ini, dolphin_ini_ports(read_text(ini), pads));
+}
+
+/* Older RetroHub builds ran a Dolphin downloaded to <exe>\dolphin with its user folder at <data>\dolphin-user, and kept the
+ * memory card straight in the vault (<vault>\gc\<game>\battery\GCI): that location is the one the new sync still reads, so
+ * saves need no move. This only tidies up: save states move to the new User folder, the old user folder is renamed (never
+ * deleted), and an untouched old download (exe + portable.txt, no User folder of its own) is removed. */
+void dolphin_migrate_old(const std::string& data_dir, const std::string& exe_dir, const std::string& install_dir) {
+    std::error_code ec;
+    std::string old_user = join(data_dir, "dolphin-user");
+    if (dir_exists(old_user) && !dir_exists(old_user + ".migrated")) {
+        std::string st = join(old_user, "StateSaves"), nst = join(install_dir, "User\\StateSaves");
+        if (dir_exists(st) && !dir_exists(nst)) {
+            make_dirs(S(P(nst).parent_path()));
+            fs::copy(P(st), P(nst), fs::copy_options::recursive, ec);
+        }
+        fs::rename(P(old_user), P(old_user + ".migrated"), ec);
+    }
+    std::string old_inst = join(exe_dir, "dolphin");
+    if (file_exists(join(old_inst, "Dolphin.exe")) && file_exists(join(old_inst, "portable.txt")) && !dir_exists(join(old_inst, "User")) &&
+        !file_exists(join(old_inst, "retrohub-install.txt")) && !is_running(join(old_inst, "Dolphin.exe")))
+        remove_tree(old_inst);
+}
+
+std::string dolphin_card_root(const std::string& install_dir, const std::string& key) {
+    std::string k = key;
+    for (char& ch : k) if (!isalnum((unsigned char)ch) && ch != '-' && ch != '_' && ch != '.') ch = '_';
+    return join(install_dir, "User\\GC\\RetroHub\\" + k);
+}
+
+/* ------------------------------------------------------------------ */
 /* launch arguments                                                    */
 /* ------------------------------------------------------------------ */
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
+
+std::string dolphin_args(const std::string& game, bool fullscreen, const std::string& gci) {
+    /* -b: no main window, Esc / closing the render window ends the process. The GCI override pins the memory card to the
+     * folder RetroHub syncs with the vault. The game path must be the last argument. */
+    return std::string("-b -C Dolphin.Display.Fullscreen=") + (fullscreen ? "True" : "False") + " -C Dolphin.Core.SlotA=8 -C " +
+           quote("Dolphin.Core.GCIFolderAPathOverride=" + gci) + " -e " + quote(game);
+}
 
 std::string azahar_args(const std::string& game, bool fullscreen) {
     return std::string(fullscreen ? "-f " : "-w ") + quote(game);   // the game path must be the last argument
@@ -600,6 +838,11 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         } else {
             s.rels = {hub::wiiu_save_rel(tid)};
         }
+    } else if (e.system == hub::System::GC) {
+        if (inst.dir.empty()) return s;
+        s.emu_root = dolphin_card_root(inst.dir, e.key);   // <install>\User\GC\RetroHub\<game>\GCI  <->  <vault>\gc\<game>\battery\GCI
+        s.rels = {"GCI"};
+        make_dirs(join(s.emu_root, "GCI"));
     } else {
         return s;
     }
