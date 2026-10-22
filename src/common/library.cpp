@@ -410,14 +410,14 @@ constexpr uint64_t kGbaMin = 64u * 1024u, kGbaMax = 32u * 1024u * 1024u;
 constexpr uint64_t kGbMin = 32u * 1024u, kGbMax = 8u * 1024u * 1024u;
 constexpr size_t kGcHeader = 0x440;
 
-bool id_n64(const fs::path& p, GameEntry* e) {
+bool id_n64(const fs::path& p, const fs::path& name, GameEntry* e) {
     std::vector<uint8_t> img;
     if (!load_rom(path_utf8(p), &img) || img.size() < 0x40) return false;
     std::string md5 = md5_hex(img.data(), img.size());
     if (md5.empty()) return false;
     e->system = System::N64;
     e->key = "n64:" + ascii_lower(md5);
-    e->title = pretty_title(header_text(img.data() + 0x20, 0x14), p);
+    e->title = pretty_title(header_text(img.data() + 0x20, 0x14), name);
     std::string ser(reinterpret_cast<const char*>(img.data() + 0x3B), 4);
     bool ok = true;
     for (char c : ser)
@@ -430,7 +430,7 @@ bool id_n64(const fs::path& p, GameEntry* e) {
     return true;
 }
 
-bool id_gba(const fs::path& p, uint64_t size, GameEntry* e) {
+bool id_gba(const fs::path& p, const fs::path& name, uint64_t size, GameEntry* e) {
     if (size < kGbaMin || size > kGbaMax) return false;
     std::vector<uint8_t> d;
     if (!read_at(p, 0, (size_t)size, &d)) return false;
@@ -454,7 +454,7 @@ bool id_gba(const fs::path& p, uint64_t size, GameEntry* e) {
     e->serial = code;
     e->key = "gba:" + sanitize_key(code) + "-" + hex32(crc);
     if (const GameInfo* g = find_game_for("gba", code, std::string())) e->catalog_id = g->id;
-    e->title = pretty_title(header_text(&d[0xA0], 12), p);
+    e->title = pretty_title(header_text(&d[0xA0], 12), name);
     return true;
 }
 
@@ -470,7 +470,7 @@ uint16_t nds_crc16(const uint8_t* p, size_t n) {
     return crc;
 }
 
-bool id_nds(const fs::path& p, uint64_t size, GameEntry* e) {
+bool id_nds(const fs::path& p, const fs::path& name, uint64_t size, GameEntry* e) {
     if (size < 0x4000) return false;
     std::vector<uint8_t> h;
     if (!read_at(p, 0, 0x200, &h) || h.size() < 0x200) return false;
@@ -490,7 +490,7 @@ bool id_nds(const fs::path& p, uint64_t size, GameEntry* e) {
     e->system = System::NDS;
     e->serial = code;
     e->key = "nds:" + sanitize_key(code) + "-" + tail;
-    e->title = pretty_title(header_text(h.data(), 12), p);
+    e->title = pretty_title(header_text(h.data(), 12), name);
     if (const GameInfo* g = find_game_for("nds", code, std::string())) {
         e->catalog_id = g->id;
         e->title = g->title;
@@ -498,7 +498,7 @@ bool id_nds(const fs::path& p, uint64_t size, GameEntry* e) {
     return true;
 }
 
-bool id_gb(const fs::path& p, uint64_t size, GameEntry* e) {
+bool id_gb(const fs::path& p, const fs::path& name, uint64_t size, GameEntry* e) {
     if (size < kGbMin || size > kGbMax) return false;
     std::vector<uint8_t> h;
     if (!read_at(p, 0, 0x150, &h)) return false;
@@ -522,7 +522,7 @@ bool id_gb(const fs::path& p, uint64_t size, GameEntry* e) {
     std::string base = sanitize_key(t);
     if (t.empty()) base = "untitled";
     e->key = std::string(is_cgb ? "gbc:" : "gb:") + base + "-" + tail;
-    e->title = pretty_title(t, p);
+    e->title = pretty_title(t, name);
     /* Catalog serial: the 4-char manufacturer/game code (0x13F-0x142) on CGB carts that have one,
      * otherwise the header title (uppercase, trailing spaces trimmed). games.cpp matches it. */
     std::string code;
@@ -803,10 +803,23 @@ System system_from_short(const std::string& s) {
 
 uint64_t library_identify_count() { return g_identify_calls.load(); }
 
+namespace {
+fs::path lib_dir();   // defined below, in this file's unnamed namespace
+
+/* The \\?\ form of an absolute path, used only when the plain one is near MAX_PATH (short paths stay as they are). */
+fs::path long_path(const fs::path& p) {
+    std::wstring w = p.wstring();
+    if (w.size() < 200 || w.compare(0, 4, L"\\\\?\\") == 0) return p;
+    std::error_code ec;
+    fs::path abs = fs::absolute(p, ec);
+    return ec ? p : fs::path(L"\\\\?\\" + abs.wstring());
+}
+}
+
 /* Zipped cartridge ROMs (N64/GBA/GB/GBC): the first ROM inside the zip is
  * extracted once to data_dir()/rom-cache/<zip name>-<entry crc>/ and that file
  * is what gets identified and launched. Disc images are never extracted. */
-static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom) {
+static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path* inner_name) {
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
     std::string zpath = path_utf8(zip);
@@ -825,28 +838,37 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom) {
         if (st.m_uncomp_size < 16 * 1024 || st.m_uncomp_size > (ext == ".nds" ? 1024ull : 128ull) * 1024 * 1024) continue;
         char crc[16];
         std::snprintf(crc, sizeof crc, "%08x", (unsigned)st.m_crc32);
-        fs::path dir = utf8_path(data_dir()) / L"rom-cache" /
-                       (zip.stem().wstring() + L"-" + utf8_path(crc).wstring());
-        fs::path rom = dir / utf8_path(name).filename();
+        /* Short names on purpose: "<zip stem>-<crc>\<inner name>" under a deep data dir passes MAX_PATH and extraction
+         * fails. The save name is not taken from this file name: identify_game passes the inner name on (save_stem). */
+        fs::path dir = lib_dir() / L"rom-cache" / utf8_path(crc);
+        fs::path wdir = long_path(dir);   // \\?\ form when the data dir is deep (MAX_PATH)
+        fs::path rom = wdir / (L"rom" + utf8_path(ext).wstring());
         std::error_code ec;
         if (!fs::exists(rom, ec) || fs::file_size(rom, ec) != st.m_uncomp_size) {
-            fs::create_directories(dir, ec);
+            fs::create_directories(wdir, ec);
             fs::path tmp = rom; tmp += L".part";
-            if (!mz_zip_reader_extract_to_file(&za, i, path_utf8(tmp).c_str(), 0)) {
-                fs::remove(tmp, ec);   // never leave a half-written .part behind
+            bool done = false;
+            if (FILE* out = _wfopen(tmp.c_str(), L"wb")) {   // wide path: works past MAX_PATH
+                done = mz_zip_reader_extract_to_cfile(&za, i, out, 0) != 0;
+                done = (std::fclose(out) == 0) && done;
+            }
+            if (done) { fs::rename(tmp, rom, ec); done = !ec; }
+            if (!done) {   // never leave a half-written .part or an empty folder behind
+                std::error_code rec;
+                fs::remove(tmp, rec);
+                fs::remove(wdir, rec);   // only succeeds when the folder is empty
                 continue;
             }
-            fs::rename(tmp, rom, ec);
-            if (ec) { std::error_code rec; fs::remove(tmp, rec); continue; }
         }
         *out_rom = rom;
+        *inner_name = utf8_path(name);
         ok = true;
         /* Drop stale extractions of the same zip (<stem>-<crc8>) left by an older version of the file. */
         {
             std::error_code pec;
-            const std::wstring stem = zip.stem().wstring() + L"-";
-            const std::wstring keep = dir.filename().wstring();
-            for (fs::directory_iterator it(dir.parent_path(), pec), end; !pec && it != end; it.increment(pec)) {
+            const std::wstring stem = zip.stem().wstring() + L"-";   // legacy folders: "<zip stem>-<crc>"
+            const std::wstring keep = wdir.filename().wstring();
+            for (fs::directory_iterator it(wdir.parent_path(), pec), end; !pec && it != end; it.increment(pec)) {
                 std::wstring n = it->path().filename().wstring();
                 if (n == keep || n.size() != stem.size() + 8 || n.compare(0, stem.size(), stem) != 0) continue;
                 bool hex = true;
@@ -860,6 +882,8 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom) {
     std::fclose(f);
     return ok;
 }
+
+static bool identify_rom(const fs::path& p, const fs::path& name_src, GameEntry* out);
 
 bool identify_game(const std::string& path, GameEntry* out) {
     if (!out) return false;
@@ -880,18 +904,29 @@ bool identify_game(const std::string& path, GameEntry* out) {
                 return true;
             }
         }
-        fs::path rom;
-        if (!extract_zipped_rom(p, &rom)) return false;
-        return identify_game(path_utf8(rom), out);
+        fs::path rom, inner;
+        if (!extract_zipped_rom(p, &rom, &inner)) return false;
+        if (!identify_rom(rom, inner, out)) return false;
+        out->save_stem = path_utf8(inner.stem());   // per-game files (DS .srm) keep the inner name's stem
+        return true;
     }
+    return identify_rom(p, p, out);
+}
+
+/* name_src: what a title falls back to (the zip's inner name for an extracted ROM, the file itself otherwise). */
+static bool identify_rom(const fs::path& p, const fs::path& name_src, GameEntry* out) {
+    std::error_code ec;
+    uintmax_t size = fs::file_size(p, ec);
+    if (ec) return false;
+    std::string ext = ascii_lower(path_utf8(p.extension()));
     g_identify_calls.fetch_add(1);
 
     GameEntry e;
     bool ok = false;
-    if (ext == ".z64" || ext == ".v64" || ext == ".n64") ok = id_n64(p, &e);
-    else if (ext == ".gba") ok = id_gba(p, size, &e);
-    else if (ext == ".gb" || ext == ".gbc") ok = id_gb(p, size, &e);
-    else if (ext == ".nds") ok = id_nds(p, size, &e);
+    if (ext == ".z64" || ext == ".v64" || ext == ".n64") ok = id_n64(p, name_src, &e);
+    else if (ext == ".gba") ok = id_gba(p, name_src, size, &e);
+    else if (ext == ".gb" || ext == ".gbc") ok = id_gb(p, name_src, size, &e);
+    else if (ext == ".nds") ok = id_nds(p, name_src, size, &e);
     else if (ext == ".iso" || ext == ".gcm" || ext == ".rvz" || ext == ".wia" || ext == ".ciso" || ext == ".gcz")
         ok = id_gc(p, ext, size, &e);
     else if (is_3ds_extension(ext)) ok = id_3ds(p, ext, &e);
@@ -1301,7 +1336,7 @@ struct CacheRec {
     GameEntry e;
 };
 
-constexpr int kCacheVersion = 6;  // 2: serial matching + GBA catalog_id; 5: GB/GBC serials; 6: 3DS/Wii U/DS; forces a rescan
+constexpr int kCacheVersion = 7;  // 2: serial matching + GBA catalog_id; 5: GB/GBC serials; 6: 3DS/Wii U/DS; 7: save_stem (short rom-cache names); forces a rescan
 
 std::unordered_map<std::string, CacheRec> cache_load() {
     std::unordered_map<std::string, CacheRec> m;
@@ -1328,6 +1363,7 @@ std::unordered_map<std::string, CacheRec> cache_load() {
             r.e.catalog_id = f.str("c");
             r.e.issue = f.str("is");
             r.e.path = f.str("lp").empty() ? path : f.str("lp");
+            r.e.save_stem = f.str("ss");
             {   /* catalog can change between versions: re-match instead of trusting the cache */
                 std::string md5 = (r.e.key.rfind("n64:", 0) == 0) ? r.e.key.substr(4) : std::string();
                 if (const GameInfo* g = find_game_for(f.str("sys"), r.e.serial, md5)) {
@@ -1362,6 +1398,7 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
             o += ",\"c\":"; jw_str(o, r.e.catalog_id);
             o += ",\"is\":"; jw_str(o, r.e.issue);
             o += ",\"lp\":"; jw_str(o, r.e.path);   // launch path (differs for zipped ROMs)
+            if (!r.e.save_stem.empty()) { o += ",\"ss\":"; jw_str(o, r.e.save_stem); }
         }
         o.push_back('}');
     }
@@ -1431,7 +1468,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         static std::once_flag cleaned;
         std::call_once(cleaned, [] {
             std::error_code ec;
-            fs::path rc = utf8_path(data_dir()) / L"rom-cache";
+            fs::path rc = lib_dir() / L"rom-cache";
             for (fs::recursive_directory_iterator it(rc, ec), end; !ec && it != end; it.increment(ec))
                 if (it->path().extension() == L".part") { std::error_code e2; fs::remove(it->path(), e2); }
         });

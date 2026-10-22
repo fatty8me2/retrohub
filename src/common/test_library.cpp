@@ -1,6 +1,7 @@
 // Console test for the multi-system library (library.cpp). Exit code 0 = all passed.
 // Usage: hublibrary_test [folder-to-scan-and-print]
 #include "library.h"
+#include "miniz.h"
 
 #include <chrono>
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -348,6 +350,67 @@ static void test_identify(const fs::path& dir) {
     CHECK(!identify_game((dir / "id" / "readme.txt").string(), &e));
 }
 
+/* Zipped ROM with a ~120-char inner name under a ~150-char data dir: the old "<zip>-<crc>\<inner name>" layout
+ * exceeded MAX_PATH. Also: a corrupt entry must leave no empty rom-cache folder behind. */
+static void test_long_zip(const fs::path& dir) {
+    fs::path base = dir / "longzip";
+    while (base.string().size() < 150) base /= "deep_folder_0123456789";
+    const std::string inner = std::string(105, 'P') + " (USA) [test].z64";
+    CHECK(inner.size() >= 115);
+    const fs::path zipdir = dir / "zips_long";
+    const fs::path zip = zipdir / "Pokemon.zip";
+    const fs::path bad_zip = zipdir / "Corrupt.zip";
+    Bytes rom = make_n64("LONGZIP TEST", 7);
+    library_set_data_dir((base / "userdata").string());
+    std::error_code ec;
+    fs::remove_all(base, ec);
+    fs::create_directories(zipdir);
+
+    mz_zip_archive z;
+    std::memset(&z, 0, sizeof z);
+    CHECK(mz_zip_writer_init_file(&z, zip.string().c_str(), 0));
+    CHECK(mz_zip_writer_add_mem(&z, inner.c_str(), rom.data(), rom.size(), MZ_DEFAULT_COMPRESSION));
+    CHECK(mz_zip_writer_finalize_archive(&z));
+    mz_zip_writer_end(&z);
+
+    GameEntry e;
+    CHECK(identify_game(zip.string(), &e));
+    CHECK(e.system == System::N64 && !e.title.empty());
+    CHECK(e.save_stem == inner.substr(0, inner.size() - 4));   // DS-style saves keep the inner name's stem
+    CHECK(e.path.size() < 240 && fs::exists(fs::path(e.path)));
+    const std::string rom_name = fs::path(e.path).filename().string();
+    CHECK(rom_name.size() < 16);
+    // Identified again from the cache: same save stem.
+    GameEntry e2;
+    CHECK(identify_game(zip.string(), &e2) && e2.save_stem == e.save_stem && e2.path == e.path);
+
+    // Corrupt the stored (uncompressed) data of a second zip: extraction fails on CRC.
+    mz_zip_archive z2;
+    std::memset(&z2, 0, sizeof z2);
+    CHECK(mz_zip_writer_init_file(&z2, bad_zip.string().c_str(), 0));
+    Bytes bad_rom = make_n64("BROKEN", 8);
+    CHECK(mz_zip_writer_add_mem(&z2, "Bad.z64", bad_rom.data(), bad_rom.size(), MZ_NO_COMPRESSION));
+    CHECK(mz_zip_writer_finalize_archive(&z2));
+    mz_zip_writer_end(&z2);
+    {
+        std::string bytes;
+        {
+            std::ifstream in(bad_zip, std::ios::binary);
+            bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        bytes[30 + 7 + 500] ^= 0x5A;   // local header (30) + name "Bad.z64" (7), then inside the data
+        std::ofstream out(bad_zip, std::ios::binary | std::ios::trunc);
+        out.write(bytes.data(), (std::streamsize)bytes.size());
+    }
+    char crc_dir[16];
+    std::snprintf(crc_dir, sizeof crc_dir, "%08x", (unsigned)mz_crc32(0, bad_rom.data(), bad_rom.size()));
+    GameEntry bad;
+    CHECK(!identify_game(bad_zip.string(), &bad));
+    fs::path bad_dir = base / "userdata" / "rom-cache" / crc_dir;
+    CHECK(!fs::exists(bad_dir, ec) || fs::is_empty(bad_dir, ec));
+    library_set_data_dir("");
+}
+
 static void test_scan_cache_state(const fs::path& dir) {
     const fs::path lib = dir / "lib";
     CHECK(write_file(lib / "a" / "emerald.gba", make_gba("POKEMON EMER", "BPEE", 7)));
@@ -429,13 +492,15 @@ int main(int argc, char** argv) {
     CHECK(std::string(system_name(System::GBA)) == "Game Boy Advance");
 
     test_identify(dir);
+    test_long_zip(dir);
     test_scan_cache_state(dir);
     library_set_data_dir("");
     fs::remove_all(dir, ec);
 
     if (argc > 1) {
         std::printf("--- scanning %s ---\n", argv[1]);
-        library_set_data_dir((fs::temp_directory_path() / "hublibrary_realscan").string());
+        // Optional argv[2]: scratch data dir (cache, rom-cache), e.g. a deep path to test long-path handling.
+        library_set_data_dir(argc > 2 ? std::string(argv[2]) : (fs::temp_directory_path() / "hublibrary_realscan").string());
         for (int pass = 0; pass < 2; ++pass) {
             uint64_t c = library_identify_count();
             auto t0 = std::chrono::steady_clock::now();

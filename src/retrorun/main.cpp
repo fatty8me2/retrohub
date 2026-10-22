@@ -31,7 +31,7 @@ namespace fs = std::filesystem;
 
 struct Args {
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
-    std::string net, room, title;
+    std::string net, room, title, save_stem;   // save_stem: file stem for <stem>.srm (zipped ROMs); "" = rom file stem
     std::string sync_hash_mode = "auto", pace_override;
     bool list_opts = false, headless = false, fullscreen = false, resume = false, fuzz = false, selftest = false;
     double stylus_u = -1, stylus_v = -1;   // headless DS test: hold the stylus down at this fraction of the frame
@@ -78,6 +78,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--net") { if (!val(&o->net)) return false; }
         else if (k == "--room") { if (!val(&o->room)) return false; }
         else if (k == "--title") { if (!val(&o->title)) return false; }
+        else if (k == "--save-stem") { if (!val(&o->save_stem)) return false; }
         else if (k == "--opt") { if (!val(&v)) return false; o->opts.push_back(v); }
         else if (k == "--frames") { if (!val(&v)) return false; o->frames = atoi(v.c_str()); }
         else if (k == "--scale") { if (!val(&v)) return false; o->scale = std::max(1, atoi(v.c_str())); }
@@ -397,7 +398,7 @@ bool Frontend::setup_paths() {
         int li = dsview::layout_index(want);
         if (li >= 0) { ds_layout = li; core.overrides["melonds_screen_layout1"] = want; }
     }
-    rom_stem = fs::u8path(a.rom).stem().u8string();
+    rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
     // copied under another file name (e.g. "Other Name (USA).gba" on PC B) would look for its own .srm and
