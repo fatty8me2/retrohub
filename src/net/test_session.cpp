@@ -55,9 +55,10 @@ static bool migration_check(const std::string& server)
     LobbyClient a, b, c, d;
     a.start(server, code, true, "alice");
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    b.start(server, code, false, "bob");
-    c.start(server, code, false, "carol");
     struct Ctx { LobbyClient *a, *b, *c, *d; } cx{&a, &b, &c, &d};
+    b.start(server, code, false, "bob");   // join in order so bob gets slot 1 (concurrent joins race on a real server)
+    pump({&a, &b}, 5000, [](void* p) { return ((Ctx*)p)->b->connected(); }, &cx);
+    c.start(server, code, false, "carol");
     pump({&a, &b, &c}, 5000, [](void* p) { auto* x = (Ctx*)p; return x->c->connected() && x->a->members().size() == 3; }, &cx);
     bool ok = b.my_slot() == 1 && c.my_slot() == 2;
     a.stop();   // host leaves
