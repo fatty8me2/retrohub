@@ -647,7 +647,7 @@ std::vector<RomFile> scan_roms(const std::string& folder) {
 namespace {
 
 bool is_rom_like_file(const fs::path& p) {
-    static const char* const kExts[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".rvz", ".zip", ".nds"};
+    static const char* const kExts[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".rvz", ".zip", ".nds", ".3ds", ".cci"};
     std::string ext = ascii_lower(path_utf8(p.extension()));
     for (const char* e : kExts)
         if (ext == e) return true;
@@ -656,7 +656,7 @@ bool is_rom_like_file(const fs::path& p) {
 
 bool is_library_folder_name(const fs::path& p) {
     std::string n = ascii_lower(path_utf8(p.filename()));
-    return n == "roms" || n == "games" || n == "n64" || n == "gba";
+    return n == "roms" || n == "games" || n == "n64" || n == "gba" || n == "gbc" || n == "gb" || n == "nds" || n == "3ds";
 }
 
 /* True if dir (or a subfolder up to `depth` levels down) holds a ROM-like file.
@@ -710,8 +710,8 @@ std::vector<std::string> suggest_rom_folders(size_t max_out) {
         const fs::path b = home / base;
         std::error_code ec;
         if (!fs::is_directory(b, ec)) continue;
-        cands.push_back(b);
         collect_library_folders(b, 2, cands);
+        // never the bare Desktop/Documents/Downloads: a stray .zip there is not a game library; only named library folders below them
     }
 
     std::vector<std::string> seen;
@@ -721,6 +721,10 @@ std::vector<std::string> suggest_rom_folders(size_t max_out) {
         if (!holds_rom_files(c, 2, budget)) continue;
         std::string s = path_utf8(c);
         if (std::find(seen.begin(), seen.end(), s) != seen.end()) continue;
+        bool nested = false;   // a folder inside one already suggested adds nothing (the parent scan covers it)
+        for (const std::string& q : seen)
+            if (s.size() > q.size() && s.compare(0, q.size(), q) == 0 && s[q.size()] == '\\') nested = true;
+        if (nested) continue;
         seen.push_back(s);
         out.push_back(s);
     }

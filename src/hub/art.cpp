@@ -379,6 +379,26 @@ bool load_image(const std::string& system, const std::string& name, Kind kind, P
         if (st != 404) break;
     }
     if (st == 404) { record_miss(miss_id); *err = "404 (no art for this name)"; return false; }
+    /* libretro-thumbnails stores some entries (e.g. the "(Rev 2)" 3DS boxarts) as git symlinks: raw.githubusercontent
+     * serves the link text (a few dozen bytes, "Other Name.png") instead of an image. Follow it up to twice. */
+    for (int hop = 0; hop < 2 && st == 200 && !urls.empty() && bytes.size() < 400 && !(bytes.size() > 4 && bytes.compare(1, 3, "PNG") == 0); ++hop) {
+        std::string target = bytes;
+        while (!target.empty() && (target.back() == '\n' || target.back() == '\r' || target.back() == ' ')) target.pop_back();
+        if (target.size() < 5 || target.compare(target.size() - 4, 4, ".png") != 0) break;
+        std::string base = urls.back();
+        base.resize(base.rfind('/'));   // directory of the link
+        while (target.compare(0, 3, "../") == 0) { target.erase(0, 3); base.resize(base.rfind('/')); }
+        std::string enc;
+        for (size_t a = 0; a <= target.size();) {   // encode per path segment, keep the '/' separators
+            size_t b = target.find('/', a);
+            if (b == std::string::npos) b = target.size();
+            enc += "/" + hm::url_encode(target.substr(a, b - a));
+            a = b + 1;
+        }
+        urls.back() = base + enc;
+        if (!http_get(urls.back(), &bytes, &st)) { *err = "network error"; return false; }
+    }
+    if (st == 404) { record_miss(miss_id); *err = "404 (no art for this name)"; return false; }
     if (st != 200) { *err = "HTTP " + std::to_string(st); return false; }
     if (!decode_png(bytes, px)) { *err = "bad image"; return false; }
     write_file_atomic(file, bytes);
