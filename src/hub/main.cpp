@@ -396,7 +396,7 @@ struct App {
     std::map<std::string, hub::GameState> lib_state;   // cached game_state per key
     std::string sys_filter;                       // "" = all, else system short
     bool online_only = false;                     // All Games: only games that are fun online
-    int group_mode = 0;                           // All Games grouping: 0 genre, 1 system, 2 A-Z
+    bool picks_open = false;                      // Home: "Top picks you don't have yet" expanded
     char search_buf[64] = {0};
     std::string vis_filter, vis_query;            // last inputs used to build `vis`
     std::vector<int> vis;                         // filtered + sorted indices into lib
@@ -620,7 +620,6 @@ static void rebuild_vis() {
         g.last_played = gs.last_played;
         g.online = is_native(e) || (cat && cat->online);
         g.pinned = is_native(e);
-        g.genre = cat ? cat->genre : std::string();
         A.sg.push_back(g);
     }
     A.shelves = hubui::compose_shelves(A.sg);
@@ -1845,7 +1844,7 @@ static void handle_entry_result(const hub::GameEntry& e, const TileSpec& spec, c
 
 /* ---------- shelves ---------- */
 
-static void shelf_header(const char* title, const std::string& right, float bleed, int count = -1) {
+static void shelf_header(const char* title, const std::string& right, float bleed, int count = -1, bool* link_clicked = nullptr) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1860,7 +1859,17 @@ static void shelf_header(const char* title, const std::string& right, float blee
     }
     if (!right.empty()) {
         ImVec2 ts = ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, right.c_str());
-        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + w - bleed - ts.x, p.y + f->FontSize - ts.y - sp(0.25f)), ui::TEXT3, right.c_str());
+        ImVec2 tp(p.x + w - bleed - ts.x, p.y + f->FontSize - ts.y - sp(0.25f));
+        ImU32 col = ui::TEXT3;
+        if (link_clicked) {   // the right label is a link ("See all")
+            ImGui::SetCursorScreenPos(ImVec2(tp.x - sp(1.f), p.y));
+            ImGui::PushID(title);
+            *link_clicked = ImGui::InvisibleButton("##see_all", ImVec2(ts.x + sp(2.f), f->FontSize + sp(0.5f)));
+            ImGui::PopID();
+            if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) col = ui::ACCENT;
+            ImGui::SetCursorScreenPos(p);
+        }
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, tp, col, right.c_str());
     }
     ImGui::Dummy(ImVec2(w, f->FontSize + sp(1.25f)));
 }
@@ -1995,7 +2004,15 @@ static void home_shelves() {
     float th = tw / kTileAspect;
     for (size_t si = 0; si < A.shelves.size(); ++si) {
         const hubui::Shelf& sh = A.shelves[si];
-        shelf_header(sh.title.c_str(), "", bleed, (int)sh.items.size());
+        bool is_console = sh.id.compare(0, 8, "console:") == 0;
+        bool see_all = false;
+        shelf_header(sh.title.c_str(), is_console ? "See all" : "", bleed, (int)sh.items.size(), is_console ? &see_all : nullptr);
+        if (see_all) {   // jump to All Games filtered to this console
+            A.view = LibView::All;
+            A.sys_filter = sh.id.substr(8) == "other" ? std::string() : sh.id.substr(8);
+            A.search_buf[0] = 0;
+            A.vis_dirty = true;
+        }
         bool recent = sh.id == "recent";
         shelf_strip("shelf_" + sh.id, (int)sh.items.size(), tw, th, [&](int i, ImVec2 sz) {
             const hub::GameEntry& e = A.lib[sh.items[i]];
@@ -2006,7 +2023,14 @@ static void home_shelves() {
         });
         ImGui::Dummy(ImVec2(0, sp(1.f)));
     }
-    if (!A.pick_idx.empty()) {
+    if (!A.pick_idx.empty()) {   // upsell: below the console shelves, collapsed until asked for
+        const std::vector<GameInfo>& cat = hub::catalog();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + bleed);
+        std::string tl = std::string(A.picks_open ? "Hide" : "Show") + " top picks you don't have yet  (" + std::to_string(A.pick_idx.size()) + ")";
+        if (button(tl.c_str(), ImVec2(0, 0), false, true, A.picks_open ? ui::Icon::ChevronL : ui::Icon::ChevronR)) A.picks_open = !A.picks_open;
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
+    if (!A.pick_idx.empty() && A.picks_open) {
         const std::vector<GameInfo>& cat = hub::catalog();
         shelf_header("Top Picks You Don't Have Yet", "add the ROM to a ROM folder", bleed, (int)A.pick_idx.size());
         shelf_strip("shelf_picks", (int)A.pick_idx.size(), tw, th, [&](int i, ImVec2 sz) {
@@ -2363,9 +2387,8 @@ static void selected_bar(const hub::GameEntry& e) {
 static void all_games_view() {
     // system chips
     struct Chip { const char* label; const char* sys; };
-    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"},
-                                {"Nintendo DS", "nds"},
-                                {"3DS", "3ds"}, {"Wii U", "wiiu"}};
+    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
+                                {"Nintendo DS", "nds"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
     std::map<std::string, int> counts;
     for (auto& e : A.lib) ++counts[sys_short(e)];
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
@@ -2382,7 +2405,7 @@ static void all_games_view() {
         if (c.sys[0]) system_colors(hub::system_from_short(c.sys), &a, &b2);
         if (chip(lab, A.sys_filter == c.sys, a)) { A.sys_filter = c.sys; A.vis_dirty = true; }
     }
-    {   // Online filter chip + group-by toggle
+    {   // Online filter chip
         int n_online = 0;
         for (auto& e : A.lib) {
             const GameInfo* c = catalog_for(e);
@@ -2395,21 +2418,6 @@ static void all_games_view() {
     }
     ImGui::PopItemFlag();
     ImGui::PopStyleVar();
-    {
-        static const char* modes[] = {"Genre", "System", "A-Z"};
-        float need = ImGui::CalcTextSize("Group by").x + sp(5.f) + sp(1.f);
-        for (const char* m : modes) need += ImGui::CalcTextSize(m).x + sp(4.f);
-        float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-        if (ImGui::GetItemRectMax().x + sp(3.f) + need <= right) ImGui::SameLine(0, sp(3.f));   // else wrap under the chips
-        ImGui::AlignTextToFramePadding();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(ui::TEXT3));
-        ImGui::TextUnformatted("Group by");
-        ImGui::PopStyleColor();
-        ImGui::SameLine(0, sp(1.f));
-        ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
-        A.group_mode = ui::segmented("groupby", modes, 3, A.group_mode);
-        ImGui::PopItemFlag();
-    }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
@@ -2434,36 +2442,11 @@ static void all_games_view() {
             if (button("Clear search", ImVec2(bw, sp(5.f)), false, true, ui::Icon::Close)) A.search_buf[0] = 0;
         }
     } else {
-        // sections according to the group-by mode (A.vis is already sorted: pinned first, then by title)
-        struct Section { std::string title; std::vector<int> items; };
-        std::vector<Section> secs;
-        auto sec_for = [&](const std::string& t) -> Section& {
-            for (auto& s : secs) if (s.title == t) return s;
-            secs.push_back({t, {}});
-            return secs.back();
-        };
-        if (A.group_mode == 0) {
-            for (const std::string& gn : hubui::genre_order()) sec_for(gn);
-            sec_for("Other");
-            for (int i : A.vis) {
-                const GameInfo* c = catalog_for(A.lib[i]);
-                sec_for(hubui::effective_genre(c ? c->genre : std::string())).items.push_back(i);
-            }
-        } else if (A.group_mode == 1) {
-            static const char* order[] = {"n64", "gc", "gba", "gbc", "gb", "nds", "3ds", "wiiu"};
-            for (const char* s : order) sec_for(hubui::system_shelf_title(s));
-            for (int i : A.vis) sec_for(hubui::system_shelf_title(sys_short(A.lib[i]))).items.push_back(i);
-        } else {
-            for (int i : A.vis) {
-                unsigned char ch = A.lib[i].title.empty() ? '#' : (unsigned char)A.lib[i].title[0];
-                std::string t(1, std::isalpha(ch) ? (char)std::toupper(ch) : '#');
-                sec_for(t).items.push_back(i);
-            }
-            std::stable_sort(secs.begin(), secs.end(), [](const Section& x, const Section& y) {
-                if ((x.title == "#") != (y.title == "#")) return x.title == "#";
-                return x.title < y.title;
-            });
-        }
+        // one section per console (fixed order), A-Z inside; A.vis already holds the search/console/online filters
+        std::vector<hubui::ListItem> li;
+        li.reserve(A.lib.size());
+        for (auto& e : A.lib) li.push_back({e.key, e.title, sys_short(e), is_native(e)});
+        std::vector<hubui::ConsoleSection> secs = hubui::group_by_console(li, &A.vis);
         float gap = sp(2.f);
         float avail = ImGui::GetContentRegionAvail().x;
         hubui::GridLayout gl = hubui::grid_layout(avail, sp(26.f), sp(37.5f), gap);
@@ -4322,7 +4305,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         if (n >= 0 && n <= 5) A.page = static_cast<Page>(n);
     }
     if (const char* sg = std::getenv("HUB_SELECT_GAME")) A.env_select = sg;   // preselect a library game key (screenshots)
-    if (const char* gm = std::getenv("HUB_START_GROUP")) A.group_mode = std::max(0, std::min(2, std::atoi(gm)));   // screenshots: 0 genre, 1 system, 2 A-Z
+    if (const char* ss = std::getenv("HUB_START_SYS")) A.sys_filter = ss;   // screenshots: console filter for All Games (n64 gc wiiu 3ds nds gba gbc gb)
     if (const char* vw = std::getenv("HUB_START_VIEW")) {                    // "all" opens the All Games grid
         if (std::string(vw) == "all") A.view = LibView::All;
     }

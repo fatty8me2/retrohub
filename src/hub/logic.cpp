@@ -815,16 +815,35 @@ std::string system_shelf_title(const std::string& s) {
     return s;
 }
 
-const std::vector<std::string>& genre_order() {
-    static const std::vector<std::string> g = {"Party", "Fighting", "Racing", "Shooter", "Platformer", "Adventure",
-                                                "RPG", "Strategy", "Sports", "Puzzle", "Action"};
-    return g;
+const std::vector<std::string>& console_order() {
+    static const std::vector<std::string> v = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb"};
+    return v;
 }
 
-std::string effective_genre(const std::string& genre) {
-    for (auto& g : genre_order())
-        if (g == genre) return g;
-    return "Other";
+std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items, const std::vector<int>* indices) {
+    std::vector<int> idx;
+    if (indices) idx = *indices;
+    else for (size_t i = 0; i < items.size(); ++i) idx.push_back((int)i);
+    std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) {
+        const ListItem &x = items[a], &y = items[b];
+        if (x.pinned != y.pinned) return x.pinned;
+        std::string lx = lower(x.title), ly = lower(y.title);
+        if (lx != ly) return lx < ly;
+        return x.key < y.key;
+    });
+    std::vector<ConsoleSection> out;
+    for (const std::string& c : console_order()) {
+        ConsoleSection s{c, system_shelf_title(c), {}};
+        for (int i : idx) if (items[i].system == c) s.items.push_back(i);
+        if (!s.items.empty()) out.push_back(s);
+    }
+    ConsoleSection rest{"other", "Other", {}};
+    for (int i : idx) {
+        const std::string& sy = items[i].system;
+        if (std::find(console_order().begin(), console_order().end(), sy) == console_order().end()) rest.items.push_back(i);
+    }
+    if (!rest.items.empty()) out.push_back(rest);
+    return out;
 }
 
 std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_recent) {
@@ -846,28 +865,12 @@ std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_rece
         if (g[i].favorite) favs.items.push_back((int)i);
     by_title(favs.items);
     if (!favs.items.empty()) out.push_back(favs);
-    for (const std::string& gn : genre_order()) {
-        Shelf sh{"genre:" + gn, gn, {}};
-        for (size_t i = 0; i < g.size(); ++i)
-            if (effective_genre(g[i].genre) == gn) sh.items.push_back((int)i);
-        by_title(sh.items);
-        if (!sh.items.empty()) out.push_back(sh);
+    std::vector<ListItem> li;
+    for (auto& e : g) li.push_back({e.key, e.title, e.system, e.pinned});
+    for (auto& cs : group_by_console(li)) {
+        Shelf sh{"console:" + cs.system, cs.title, cs.items};
+        out.push_back(sh);
     }
-    static const char* sys_order[] = {"n64", "gc", "gba", "gbc", "gb", "nds", "3ds", "wiiu"};
-    std::vector<bool> placed(g.size(), false);
-    for (const char* sys : sys_order) {
-        Shelf sh{std::string("genre:Other:") + sys, "Other - " + system_shelf_title(sys), {}};
-        for (size_t i = 0; i < g.size(); ++i)
-            if (effective_genre(g[i].genre) == "Other" && g[i].system == sys) { sh.items.push_back((int)i); placed[i] = true; }
-        by_title(sh.items);
-        if (!sh.items.empty()) out.push_back(sh);
-    }
-    /* Unknown system codes still must appear exactly once. */
-    Shelf rest{"genre:Other", "Other", {}};
-    for (size_t i = 0; i < g.size(); ++i)
-        if (effective_genre(g[i].genre) == "Other" && !placed[i]) rest.items.push_back((int)i);
-    by_title(rest.items);
-    if (!rest.items.empty()) out.push_back(rest);
     return out;
 }
 

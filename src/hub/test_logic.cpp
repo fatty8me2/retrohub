@@ -169,48 +169,71 @@ int main() {
         CHECK(settings_from_json("{}", &d) && d.download_art);
     }
 
+    /* All Games: grouped by console */
+    {
+        const std::vector<std::string> want = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb"};
+        CHECK(console_order() == want);
+        std::vector<ListItem> it = {
+            {"gb:1", "Tetris", "gb", false},          // 0
+            {"gbc:1", "Crystal", "gbc", false},       // 1
+            {"n64:1", "zelda", "n64", false},         // 2
+            {"native:smash64", "Super Smash Bros.", "n64", true},   // 3
+            {"n64:2", "Banjo", "n64", false},         // 4
+            {"wiiu:1", "Mario Kart 8", "wiiu", false},// 5
+            {"gba:1", "Metroid", "gba", false},       // 6
+            {"x:1", "Weird", "ps2", false},           // 7
+        };
+        auto secs = group_by_console(it);
+        std::vector<std::string> sys;
+        for (auto& s2 : secs) sys.push_back(s2.system);
+        CHECK((sys == std::vector<std::string>{"n64", "wiiu", "gba", "gbc", "gb", "other"}));   // fixed order, empty consoles skipped, unknown last
+        CHECK(secs[0].title == "Nintendo 64" && secs[1].title == "Wii U" && secs[3].title == "Game Boy Color");
+        CHECK(secs[0].items == std::vector<int>({3, 4, 2}));    // native Smash under N64 (pinned), then A-Z case-insensitive
+        CHECK(secs[3].items == std::vector<int>({1}) && secs[4].items == std::vector<int>({0}));   // gbc vs gb separate
+        /* console filter: filter_sort -> one section */
+        auto f = group_by_console(it, nullptr);
+        std::vector<int> vis = filter_sort(it, "gb", "");
+        auto fs = group_by_console(it, &vis);
+        CHECK(fs.size() == 1 && fs[0].system == "gb" && fs[0].items == std::vector<int>({0}));
+        std::vector<int> vn = filter_sort(it, "n64", "");
+        CHECK(group_by_console(it, &vn).size() == 1 && group_by_console(it, &vn)[0].items.size() == 3);
+        std::vector<int> none;
+        CHECK(group_by_console(it, &none).empty() && group_by_console({}).empty());
+        (void)f;
+    }
+
     /* shelves */
     {
         std::vector<ShelfGame> g(9);
-        g[0] = {"native:smash64", "Super Smash Bros.", "n64", false, 0, true, true, "Fighting"};
-        g[1] = {"n64:1", "Mario Party", "n64", true, 300, true, false, "Party"};
-        g[2] = {"n64:2", "banjo", "n64", false, 100, false, false, "Platformer"};
-        g[3] = {"gba:1", "Wario Ware", "gba", true, 0, false, false, "Party"};
-        g[4] = {"gb:1", "Tetris", "gb", false, 200, false, false, ""};
-        g[5] = {"gc:1", "Melee", "gc", false, 0, false, false, "Bogus"};
-        g[6] = {"gbc:1", "Crystal", "gbc", false, 0, false, false, ""};
-        g[7] = {"n64:3", "Zelda", "n64", false, 0, false, false, "Adventure"};
-        g[8] = {"n64:4", "Unknown Rom", "n64", false, 0, false, false, ""};
+        g[0] = {"native:smash64", "Super Smash Bros.", "n64", false, 0, true, true};
+        g[1] = {"n64:1", "Mario Party", "n64", true, 300, true, false};
+        g[2] = {"n64:2", "banjo", "n64", false, 100, false, false};
+        g[3] = {"gba:1", "Wario Ware", "gba", true, 0, false, false};
+        g[4] = {"gb:1", "Tetris", "gb", false, 200, false, false};
+        g[5] = {"gc:1", "Melee", "gc", false, 0, false, false};
+        g[6] = {"gbc:1", "Crystal", "gbc", false, 0, false, false};
+        g[7] = {"n64:3", "Zelda", "n64", false, 0, false, false};
+        g[8] = {"n64:4", "Unknown Rom", "n64", false, 0, false, false};
         auto sh = compose_shelves(g);
         std::vector<std::string> ids;
         for (auto& s2 : sh) ids.push_back(s2.id);
-        std::vector<std::string> want = {"recent", "favs", "genre:Party", "genre:Fighting", "genre:Platformer", "genre:Adventure",
-                                         "genre:Other:n64", "genre:Other:gc", "genre:Other:gbc", "genre:Other:gb"};
+        std::vector<std::string> want = {"recent", "favs", "console:n64", "console:gc", "console:gba", "console:gbc", "console:gb"};
         CHECK(ids == want);
         CHECK(sh[0].items == std::vector<int>({1, 4, 2}));          // newest first
         CHECK(sh[1].items == std::vector<int>({1, 3}));             // favorites by title
-        CHECK(sh[2].items == std::vector<int>({1, 3}));             // Party by title
-        CHECK(sh[6].items == std::vector<int>({8}));                // Other, n64
-        CHECK(sh[0].title == "Continue Playing" && sh[9].title == "Other - Game Boy" && sh[2].title == "Party");
-        /* each game appears in exactly one genre shelf */
+        CHECK(sh[2].items == std::vector<int>({0, 2, 1, 8, 7}));    // n64: Smash pinned, then banjo, Mario Party, Unknown Rom, Zelda
+        CHECK(sh[0].title == "Continue Playing" && sh[2].title == "Nintendo 64" && sh[6].title == "Game Boy");
+        /* each game appears in exactly one console shelf */
         std::vector<int> seen(g.size(), 0);
         for (auto& s2 : sh)
-            if (s2.id.compare(0, 6, "genre:") == 0) for (int i : s2.items) ++seen[i];
+            if (s2.id.compare(0, 8, "console:") == 0) for (int i : s2.items) ++seen[i];
         for (int n : seen) CHECK(n == 1);
         CHECK(compose_shelves({}).empty());
         CHECK(compose_shelves(g, 2)[0].items.size() == 2);
-        CHECK(genre_order().size() == 11 && genre_order()[0] == "Party" && genre_order()[4] == "Platformer");
-        CHECK(effective_genre("RPG") == "RPG" && effective_genre("") == "Other" && effective_genre("rpg") == "Other");
         std::vector<ShelfGame> odd(1);
-        odd[0] = {"x:1", "Odd", "ps2", false, 0, false, false, ""};
+        odd[0] = {"x:1", "Odd", "ps2", false, 0, false, false};
         auto so = compose_shelves(odd);
-        CHECK(so.size() == 1 && so[0].id == "genre:Other" && so[0].items.size() == 1);
-        std::vector<ShelfGame> ord(3);   // display order follows genre_order(), not input order
-        ord[0] = {"a", "A", "n64", false, 0, false, false, "Action"};
-        ord[1] = {"b", "B", "n64", false, 0, false, false, "Racing"};
-        ord[2] = {"c", "C", "n64", false, 0, false, false, "Party"};
-        auto sord = compose_shelves(ord);
-        CHECK(sord.size() == 3 && sord[0].id == "genre:Party" && sord[1].id == "genre:Racing" && sord[2].id == "genre:Action");
+        CHECK(so.size() == 1 && so[0].id == "console:other" && so[0].items.size() == 1);
         CHECK(pick_hero(g, "gb:1") == 4 && pick_hero(g, "nope") == 1 && pick_hero(g, "") == 1);
         std::vector<ShelfGame> fresh(2);
         fresh[1].favorite = true;
