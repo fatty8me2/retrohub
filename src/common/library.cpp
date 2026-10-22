@@ -456,6 +456,46 @@ bool id_gba(const fs::path& p, uint64_t size, GameEntry* e) {
     return true;
 }
 
+/* Nintendo DS: 0x200-byte header. Title 0x00 (12), game code 0x0C (4), ROM version 0x1E, header CRC16 0x15E
+ * (CRC-16/MODBUS of bytes 0..0x15D). The key avoids hashing the (up to 512 MB) image: code + version + header CRC
+ * identify one release identically on every PC, trimmed or padded dump alike. */
+uint16_t nds_crc16(const uint8_t* p, size_t n) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < n; ++i) {
+        crc ^= p[i];
+        for (int b = 0; b < 8; ++b) crc = (crc & 1) ? (uint16_t)((crc >> 1) ^ 0xA001) : (uint16_t)(crc >> 1);
+    }
+    return crc;
+}
+
+bool id_nds(const fs::path& p, uint64_t size, GameEntry* e) {
+    if (size < 0x4000) return false;
+    std::vector<uint8_t> h;
+    if (!read_at(p, 0, 0x200, &h) || h.size() < 0x200) return false;
+    /* Nintendo logo CRC16 (0x15C) is constant 0xCF56 on every licensed cartridge/dump. */
+    uint16_t logo = (uint16_t)(h[0x15C] | (h[0x15D] << 8));
+    if (logo != 0xCF56) return false;
+    std::string code((const char*)&h[0x0C], 4);
+    for (char c : code)
+        if (!is_alnum(c)) return false;
+    unsigned want = (unsigned)(h[0x15E] | (h[0x15F] << 8));
+    unsigned have = nds_crc16(h.data(), 0x15E);
+    if (want != have) {   // tolerate patched headers only if the unit code/size fields are sane
+        if (h[0x12] > 3) return false;
+    }
+    char tail[16];
+    std::snprintf(tail, sizeof tail, "%02x%04x", (unsigned)h[0x1E], want);
+    e->system = System::NDS;
+    e->serial = code;
+    e->key = "nds:" + sanitize_key(code) + "-" + tail;
+    e->title = pretty_title(header_text(h.data(), 12), p);
+    if (const GameInfo* g = find_game_for("nds", code, std::string())) {
+        e->catalog_id = g->id;
+        e->title = g->title;
+    }
+    return true;
+}
+
 bool id_gb(const fs::path& p, uint64_t size, GameEntry* e) {
     if (size < kGbMin || size > kGbMax) return false;
     std::vector<uint8_t> h;
@@ -581,6 +621,7 @@ const char* system_name(System s) {
     case System::GB:  return "Game Boy";
     case System::GBC: return "Game Boy Color";
     case System::GC:  return "GameCube";
+    case System::NDS: return "Nintendo DS";
     default:          return "Unknown";
     }
 }
@@ -592,6 +633,7 @@ const char* system_short(System s) {
     case System::GB:  return "gb";
     case System::GBC: return "gbc";
     case System::GC:  return "gc";
+    case System::NDS: return "nds";
     default:          return "";
     }
 }
@@ -603,6 +645,7 @@ System system_from_short(const std::string& s) {
     if (l == "gb") return System::GB;
     if (l == "gbc") return System::GBC;
     if (l == "gc") return System::GC;
+    if (l == "nds") return System::NDS;
     return System::Unknown;
 }
 
@@ -625,8 +668,9 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom) {
         if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
         std::string name = st.m_filename;
         std::string ext = ascii_lower(path_utf8(utf8_path(name).extension()));
-        if (ext != ".z64" && ext != ".v64" && ext != ".n64" && ext != ".gba" && ext != ".gb" && ext != ".gbc") continue;
-        if (st.m_uncomp_size < 16 * 1024 || st.m_uncomp_size > 128ull * 1024 * 1024) continue;
+        if (ext != ".z64" && ext != ".v64" && ext != ".n64" && ext != ".gba" && ext != ".gb" && ext != ".gbc" && ext != ".nds") continue;
+        /* DS cartridges go up to 512 MB (Black/White 2); the other cartridge systems stay under 128 MB. */
+        if (st.m_uncomp_size < 16 * 1024 || st.m_uncomp_size > (ext == ".nds" ? 1024ull : 128ull) * 1024 * 1024) continue;
         char crc[16];
         std::snprintf(crc, sizeof crc, "%08x", (unsigned)st.m_crc32);
         fs::path dir = utf8_path(data_dir()) / L"rom-cache" /
@@ -668,6 +712,7 @@ bool identify_game(const std::string& path, GameEntry* out) {
     if (ext == ".z64" || ext == ".v64" || ext == ".n64") ok = id_n64(p, &e);
     else if (ext == ".gba") ok = id_gba(p, size, &e);
     else if (ext == ".gb" || ext == ".gbc") ok = id_gb(p, size, &e);
+    else if (ext == ".nds") ok = id_nds(p, size, &e);
     else if (ext == ".iso" || ext == ".gcm" || ext == ".rvz" || ext == ".wia" || ext == ".ciso" || ext == ".gcz")
         ok = id_gc(p, ext, size, &e);
     if (!ok) return false;
@@ -1039,7 +1084,7 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
 
 bool scan_extension(const std::string& ext) {
     static const char* const kExt[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso",
-                                       ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip"};
+                                       ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip", ".nds"};
     for (const char* e : kExt)
         if (ext == e) return true;
     return false;

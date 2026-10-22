@@ -167,6 +167,7 @@ const char* genre_of(const std::string& id) {
         {"aw1", "Strategy"}, {"aw2", "Strategy"}, {"fireemblem", "Strategy"}, {"ffta", "Strategy"},
         {"mariotennis", "Sports"}, {"mariogolf", "Sports"}, {"thps2", "Sports"},
         {"conker", "Action"}, {"bm64", "Action"}, {"aria", "Action"},
+        {"pokediamond", "RPG"}, {"pokepearl", "RPG"}, {"pokeplatinum", "RPG"}, {"pokeheartgold", "RPG"}, {"pokesoulsilver", "RPG"}, {"pokeblack", "RPG"}, {"pokewhite", "RPG"}, {"pokeblack2", "RPG"}, {"pokewhite2", "RPG"},   // nds
     };
     for (const auto& r : kTable)
         if (id == r.id) return r.genre;
@@ -427,6 +428,44 @@ const std::vector<GameInfo>& catalog() {
          {"ATHE"}, false, 2002,
          "Skate arena-style courses and chase high scores in a timed career mode.",
          "Tony Hawk's Pro Skater 2 (USA, Europe)"},
+
+        /* ---- Nintendo DS library (Libretro, melonDS DS). Local play only; serials = header game code (0x0C). ---- */
+        {"pokediamond", "Pokemon Diamond", Engine::Libretro, 1, {}, "", "nds",
+         {"ADAE", "ADAJ", "ADAP", "ADAD", "ADAF", "ADAI", "ADAS", "ADAK"}, false, 2007,
+         "Explore the Sinnoh region, catch Pokemon, and take on Team Galactic.",
+         "Pokemon - Diamond Version (USA) (Rev 5)"},
+        {"pokepearl", "Pokemon Pearl", Engine::Libretro, 1, {}, "", "nds",
+         {"APAE", "APAJ", "APAP", "APAD", "APAF", "APAI", "APAS", "APAK"}, false, 2007,
+         "The Sinnoh adventure again, with a different set of version-exclusive Pokemon.",
+         "Pokemon - Pearl Version (USA) (Rev 5)"},
+        {"pokeplatinum", "Pokemon Platinum", Engine::Libretro, 1, {}, "", "nds",
+         {"CPUE", "CPUJ", "CPUP", "CPUD", "CPUF", "CPUI", "CPUS", "CPUK"}, false, 2009,
+         "The enhanced Sinnoh story, with the Distortion World and the Battle Frontier.",
+         "Pokemon - Platinum Version (USA)"},
+        {"pokeheartgold", "Pokemon HeartGold", Engine::Libretro, 1, {}, "", "nds",
+         {"IPKE", "IPKJ", "IPKP", "IPKD", "IPKF", "IPKI", "IPKS", "IPKK"}, false, 2010,
+         "A remake of Gold with Johto and Kanto to explore, and a Pokemon following you around.",
+         "Pokemon - HeartGold Version (USA)"},
+        {"pokesoulsilver", "Pokemon SoulSilver", Engine::Libretro, 1, {}, "", "nds",
+         {"IPGE", "IPGJ", "IPGP", "IPGD", "IPGF", "IPGI", "IPGS", "IPGK"}, false, 2010,
+         "A remake of Silver with Johto and Kanto to explore, and a Pokemon following you around.",
+         "Pokemon - SoulSilver Version (USA)"},
+        {"pokeblack", "Pokemon Black", Engine::Libretro, 1, {}, "", "nds",
+         {"IRBE", "IRBJ", "IRBP", "IRBD", "IRBF", "IRBI", "IRBS", "IRBK", "IRBO"}, false, 2011,
+         "Journey through the Unova region, home to entirely new Pokemon.",
+         "Pokemon - Black Version (USA, Europe) (NDSi Enhanced)"},
+        {"pokewhite", "Pokemon White", Engine::Libretro, 1, {}, "", "nds",
+         {"IRAE", "IRAJ", "IRAP", "IRAD", "IRAF", "IRAI", "IRAS", "IRAK", "IRAO"}, false, 2011,
+         "The Unova adventure with its own exclusive Pokemon and a city to explore.",
+         "Pokemon - White Version (USA, Europe) (NDSi Enhanced)"},
+        {"pokeblack2", "Pokemon Black 2", Engine::Libretro, 1, {}, "", "nds",
+         {"IREE", "IREJ", "IREP", "IRED", "IREF", "IREI", "IRES", "IREK", "IREO"}, false, 2012,
+         "A direct sequel set in Unova two years later, with new areas and a new story.",
+         "Pokemon - Black Version 2 (USA, Europe) (NDSi Enhanced)"},
+        {"pokewhite2", "Pokemon White 2", Engine::Libretro, 1, {}, "", "nds",
+         {"IRDE", "IRDJ", "IRDP", "IRDD", "IRDF", "IRDI", "IRDS", "IRDK", "IRDO"}, false, 2012,
+         "The Unova sequel with its own version-exclusive Pokemon and challenges.",
+         "Pokemon - White Version 2 (USA, Europe) (NDSi Enhanced)"},
     };
     for (auto& g : v) g.genre = genre_of(g.id);
     return v;
@@ -540,7 +579,7 @@ std::vector<RomFile> scan_roms(const std::string& folder) {
 namespace {
 
 bool is_rom_like_file(const fs::path& p) {
-    static const char* const kExts[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".rvz", ".zip"};
+    static const char* const kExts[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".rvz", ".zip", ".nds"};
     std::string ext = ascii_lower(path_utf8(p.extension()));
     for (const char* e : kExts)
         if (ext == e) return true;

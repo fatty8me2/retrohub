@@ -807,6 +807,7 @@ std::string system_shelf_title(const std::string& s) {
     if (s == "gba") return "Game Boy Advance";
     if (s == "gbc") return "Game Boy Color";
     if (s == "gb") return "Game Boy";
+    if (s == "nds") return "Nintendo DS";
     return s;
 }
 
@@ -848,7 +849,7 @@ std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_rece
         by_title(sh.items);
         if (!sh.items.empty()) out.push_back(sh);
     }
-    static const char* sys_order[] = {"n64", "gc", "gba", "gbc", "gb"};
+    static const char* sys_order[] = {"n64", "gc", "gba", "gbc", "gb", "nds"};
     std::vector<bool> placed(g.size(), false);
     for (const char* sys : sys_order) {
         Shelf sh{std::string("genre:Other:") + sys, "Other - " + system_shelf_title(sys), {}};
