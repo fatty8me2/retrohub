@@ -409,6 +409,11 @@ struct App {
     bool share_host_save = true;                  // room option (host-controlled): all PCs use the host's N64 save
     int my_locals = 1;                            // local controllers I play with online (1-2)
     std::map<int, int> locals;                    // other members' local counts by lobby slot
+    std::map<int, hubui::MemberPick> picks;       // other members' fighter picks by lobby slot (Smash match picker)
+    hubui::MemberPick my_pick;                    // my fighter/costume (+ 2nd local player's)
+    hubui::MatchRules rules;                      // stage + stocks: the host's choice, mirrored on guests
+    int pick_edit = 0;                            // which local player the picker edits (0/1)
+    std::string run_fighter;                      // my fighter in the running match ("" = none), for friends presence
     std::string sync_result;                      // last result summary (Saves page)
     bool sync_result_ok = true;
     std::string export_result, import_result;
@@ -1107,7 +1112,8 @@ static void play_entry(const hub::GameEntry& e) {
 
 static std::vector<hubui::MemberPads> member_pads();
 static void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
-                          const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr) {
+                          const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
+                          const hubui::MatchSpec* host_match = nullptr) {
     A.st.last_game = room_id(e);
     mark_dirty();
     RunInfo ri = run_info_for(e, true);
@@ -1135,12 +1141,38 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
         }
         if (!mine) { set_notice("The host's port plan doesn't include this PC."); return; }
     }
+    /* Smash match picker: the host's resolved spec rides in the launch message; every PC passes the identical --match. */
+    std::string match_args;
+    A.run_fighter.clear();
+    if (e.system == hub::System::N64 && hubui::match_game_supported(e.catalog_id)) {
+        hubui::MatchSpec ms;
+        bool have = host_match != nullptr;
+        if (have) ms = *host_match;
+        else if (launch_msg && launch_msg->get("match")) {
+            have = hubui::parse_match(*launch_msg, plan.ports, e.catalog_id == "remix", &ms);
+            if (!have) { set_notice("The host's match setup is invalid - ask them to update RetroHub."); return; }
+        }
+        if (have) {
+            match_args = " --match " + quote(hubui::match_arg(ms));
+            int port = 0, my = -1;
+            std::string tok;
+            for (size_t i = 0; i <= plan.ports.size() && my < 0; ++i) {
+                if (i == plan.ports.size() || plan.ports[i] == ',') {
+                    if (tok == std::to_string(A.lobby.my_slot())) my = port;
+                    if (!tok.empty() && tok != "-1") ++port;
+                    tok.clear();
+                } else tok += plan.ports[i];
+            }
+            if (my >= 0 && my < (int)ms.players.size()) A.run_fighter = hubui::fighter_name(ms.players[(size_t)my].fighter);
+        }
+    }
     std::string net = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
                       std::to_string(A.lobby.my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
                       plan.ports + hubui::delay_arg(delay);
     if (e.system == hub::System::N64) {
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title);
         if (A.st.fullscreen) args += " --fullscreen";
+        args += match_args;
         if (share_save) {   // every PC must agree; only the host (slot 0) supplies its battery dir
             args += " --share-host-save";
             if (A.lobby.my_slot() == 0)
@@ -1196,6 +1228,17 @@ static std::string member_name(int slot) {
     return "Player " + std::to_string(slot + 1);
 }
 
+/* ---------- Smash match picker (room state; the panel itself is drawn by match_panel) ---------- */
+static bool match_active() { return hubui::match_game_supported(A.selected_game); }
+static bool match_remix_roster() { return A.selected_game == "remix"; }   // "ssb64rom" will use the 12-fighter vanilla roster
+static std::map<int, hubui::MemberPick> all_picks() {
+    std::map<int, hubui::MemberPick> m = A.picks;
+    m[room_my_slot()] = A.my_pick;
+    return m;
+}
+static void send_my_pick() { A.lobby.send_msg(hubui::pick_json(A.my_pick)); }
+static void send_rules() { A.lobby.send_msg(hubui::rules_json(A.rules)); }
+
 static void leave_room() {
     A.lobby.stop();
     A.in_room = false;
@@ -1207,6 +1250,10 @@ static void leave_room() {
     A.my_ready = false;
     A.locals.clear();
     A.my_locals = 1;
+    A.picks.clear();
+    A.my_pick = hubui::MemberPick();
+    A.rules = hubui::MatchRules();
+    A.pick_edit = 0;
     A.share_host_save = true;
     A.was_connected = false;
     A.code.clear();
@@ -1270,6 +1317,7 @@ static void lobby_tick() {
         for (auto it = A.peers.begin(); it != A.peers.end();) it = alive.count(it->first) ? std::next(it) : A.peers.erase(it);
         for (auto it = A.ready.begin(); it != A.ready.end();) it = alive.count(it->first) ? std::next(it) : A.ready.erase(it);
         for (auto it = A.locals.begin(); it != A.locals.end();) it = alive.count(it->first) ? std::next(it) : A.locals.erase(it);
+        for (auto it = A.picks.begin(); it != A.picks.end();) it = alive.count(it->first) ? std::next(it) : A.picks.erase(it);
         A.last_slots = slots;
         A.hello_dirty = true;
         A.was_connected = true;
@@ -1285,6 +1333,8 @@ static void lobby_tick() {
         A.lobby.send_msg(std::string("{\"kind\":\"ready\",\"ready\":") + (A.my_ready ? "true" : "false") + "}");
         A.lobby.send_msg("{\"kind\":\"locals\",\"n\":" + std::to_string(A.my_locals) + "}");
         if (is_host()) A.lobby.send_msg(std::string("{\"kind\":\"opts\",\"share_save\":") + (A.share_host_save ? "true" : "false") + "}");
+        A.lobby.send_msg(hubui::pick_json(A.my_pick));
+        if (is_host()) A.lobby.send_msg(hubui::rules_json(A.rules));
         if (is_host() && !A.selected_game.empty())
             A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + hubui::json_escape(A.selected_game) + "\"}");
     }
@@ -1308,6 +1358,12 @@ static void lobby_tick() {
         } else if (kind == "opts") {
             const hubui::Json* r = j.get("share_save");
             if (from == 0 && r && r->type == hubui::Json::Bool) A.share_host_save = r->b;
+        } else if (kind == "pick") {
+            hubui::MemberPick mp;
+            if (from != room_my_slot() && hubui::parse_pick(j, &mp)) A.picks[from] = mp;
+        } else if (kind == "rules") {
+            hubui::MatchRules mr;
+            if (from == 0 && !is_host() && hubui::parse_rules(j, &mr)) A.rules = mr;
         } else if (kind == "chat") {
             A.chat.push_back({member_name(from), j.str("text")});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
@@ -1319,7 +1375,7 @@ static void lobby_tick() {
             if (A.proc) continue;
             const hubui::Json* ss = j.get("share_save");
             launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
-                          ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j);
+                          ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j);   // --match comes from j["match"]
         }
     }
 }
@@ -2467,6 +2523,170 @@ static void page_library() {
 
 /* ---------- Online ---------- */
 
+/* ---------- Smash match picker UI ---------- */
+static const ImU32 COL_REMIX = IM_COL32(250, 150, 40, 255);
+
+static bool match_tile(const char* id, const std::string& label, ImVec2 sz, bool sel, ImU32 tint) {
+    ImGui::PushID(id);
+    bool clicked = ImGui::InvisibleButton("t", sz, ImGuiButtonFlags_EnableNav);
+    bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+    ImGui::PopID();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
+    float rd = 8 * S, pad = 8 * S;
+    dl->AddRectFilled(p0, p1, sel ? with_alpha(tint, 0.35f) : (hov ? COL_PANEL2 : COL_PANEL), rd);
+    dl->AddRect(p0, p1, sel ? tint : (hov ? IM_COL32(255, 255, 255, 60) : ui::HAIRLINE), rd, 0, sel ? 2 * S : 1.f);
+    ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+    dl->PushClipRect(p0 + ImVec2(pad * 0.5f, 0), p1 - ImVec2(pad * 0.5f, 0), true);
+    dl->AddText(ImVec2(p0.x + std::max(pad, (sz.x - ts.x) * 0.5f), p0.y + (sz.y - ts.y) * 0.5f), sel ? IM_COL32_WHITE : ui::TEXT, label.c_str());
+    dl->PopClipRect();
+    return clicked;
+}
+
+/* Cards in remix mode: "Fighter  <pill>  costume N" in place of the owned-games row. */
+static void member_pick_row(int slot) {
+    hubui::MemberPick none;
+    const hubui::MemberPick* mp = &none;
+    if (slot == room_my_slot()) mp = &A.my_pick;
+    else { auto it = A.picks.find(slot); if (it != A.picks.end()) mp = &it->second; }
+    int n = locals_of(slot);
+    std::string lab = hubui::pick_label(*mp, n);
+    bool rnd = mp->p[0].fighter < 0 && (n < 2 || mp->p[1].fighter < 0);
+    ImU32 col = rnd ? IM_COL32(70, 72, 86, 255) : (mp->p[0].fighter > 0x0B ? mix(COL_REMIX, IM_COL32_BLACK, 0.25f) : mix(COL_ACCENT, IM_COL32_BLACK, 0.15f));
+    ImGui::TextDisabled("Fighter");
+    ImGui::SameLine(0, 8 * S);
+    pill(lab.c_str(), col);
+    if (n < 2 && mp->p[0].fighter >= 0) {
+        ImGui::SameLine(0, 8 * S);
+        ImGui::TextDisabled("costume %d", mp->p[0].costume + 1);
+    }
+}
+
+static void match_panel(bool host, float width) {
+    (void)width;
+    const bool remix = match_remix_roster();
+    auto fighters = hubui::fighter_choices(remix);
+    begin_panel("matchpanel");
+    section_title(remix ? "Smash Remix match" : "Match");
+    ImGui::Dummy(ImVec2(0, 2 * S));
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float gap = 8 * S;
+
+    // --- my fighter(s)
+    int locals = std::max(1, std::min(2, A.my_locals));
+    if (A.pick_edit >= locals) A.pick_edit = 0;
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted("Your fighter");
+    ImGui::PopFont();
+    if (locals == 2) {   // the 2nd local player picks their own
+        for (int k = 0; k < 2; ++k) {
+            ImGui::SameLine(0, k ? gap : 18 * S);
+            std::string lab = "Player " + std::to_string(k + 1) + ": " + hubui::fighter_name(A.my_pick.p[k].fighter);
+            if (match_tile(("pe" + std::to_string(k)).c_str(), lab, ImVec2(170 * S, 28 * S), A.pick_edit == k, COL_ACCENT)) A.pick_edit = k;
+        }
+    }
+    hubui::MatchPick& cur = A.my_pick.p[A.pick_edit];
+    {   // costume row
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Costume");
+        int nc = cur.fighter >= 0 ? hubui::fighter_costumes(cur.fighter) : 0;
+        if (nc == 0) {
+            ImGui::SameLine(0, gap);
+            ImGui::TextDisabled("random");
+        }
+        for (int c = 0; c < nc; ++c) {
+            ImGui::SameLine(0, c ? 4 * S : gap);
+            if (match_tile(("co" + std::to_string(c)).c_str(), std::to_string(c + 1), ImVec2(34 * S, 28 * S), cur.costume == c, COL_ACCENT)) {
+                cur.costume = c;
+                send_my_pick();
+            }
+        }
+    }
+    ImGui::Dummy(ImVec2(0, 2 * S));
+    {   // fighter grid: Random, then Vanilla / Remix groups
+        const float min_w = 112 * S;
+        int cols = std::max(1, (int)((avail + gap) / (min_w + gap)));
+        float tw = (avail - gap * (cols - 1)) / cols;
+        ImVec2 tsz(tw, 30 * S);
+        auto choose = [&](int id) {
+            cur.fighter = id;
+            cur.costume = 0;
+            send_my_pick();
+        };
+        if (match_tile("fr", "Random", ImVec2(tw, 30 * S), cur.fighter < 0, ui::TEXT2)) choose(-1);
+        for (int grp = 0; grp < 2; ++grp) {
+            bool any = false;
+            for (auto& f : fighters) any = any || f.remix == (grp == 1);
+            if (!any) continue;
+            ImGui::Dummy(ImVec2(0, 2 * S));
+            ImGui::TextDisabled("%s", grp ? "REMIX" : "VANILLA");
+            int i = 0;
+            for (auto& f : fighters) {
+                if (f.remix != (grp == 1)) continue;
+                if (i % cols) ImGui::SameLine(0, gap);
+                if (match_tile(("f" + std::to_string(f.id)).c_str(), f.name, tsz, cur.fighter == f.id, grp ? COL_REMIX : COL_ACCENT)) choose(f.id);
+                ++i;
+            }
+        }
+    }
+
+    // --- stage + stocks (host decides; everyone sees)
+    ImGui::Dummy(ImVec2(0, 6 * S));
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted("Stage");
+    ImGui::PopFont();
+    ImGui::SameLine(0, 14 * S);
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_ACCENT), "%s", hubui::stage_name(A.rules.stage).c_str());
+    if (host) {
+        auto stages = hubui::stage_choices(remix);
+        const float min_w = 150 * S;
+        int cols = std::max(1, (int)((avail - 14 * S + gap) / (min_w + gap)));
+        float tw = (avail - 14 * S - gap * (cols - 1)) / cols;
+        ImGui::BeginChild("stagelist", ImVec2(0, 210 * S), ImGuiChildFlags_None);
+        auto choose = [&](int id) {
+            A.rules.stage = id;
+            send_rules();
+        };
+        if (match_tile("sr", "Random", ImVec2(tw, 30 * S), A.rules.stage < 0, ui::TEXT2)) choose(-1);
+        for (int grp = 0; grp < 2; ++grp) {
+            bool any = false;
+            for (auto& s : stages) any = any || s.remix == (grp == 1);
+            if (!any) continue;
+            ImGui::Dummy(ImVec2(0, 2 * S));
+            ImGui::TextDisabled("%s", grp ? "REMIX" : "VANILLA");
+            int i = 0;
+            for (auto& s : stages) {
+                if (s.remix != (grp == 1)) continue;
+                if (i % cols) ImGui::SameLine(0, gap);
+                if (match_tile(("s" + std::to_string(s.id)).c_str(), s.name, ImVec2(tw, 30 * S), A.rules.stage == s.id, grp ? COL_REMIX : COL_ACCENT)) choose(s.id);
+                ++i;
+            }
+        }
+        ImGui::EndChild();
+    }
+    ImGui::Dummy(ImVec2(0, 4 * S));
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted("Stocks");
+    ImGui::PopFont();
+    if (host) {
+        for (int k = 1; k <= 5; ++k) {
+            ImGui::SameLine(0, k == 1 ? 14 * S : 4 * S);
+            if (match_tile(("st" + std::to_string(k)).c_str(), std::to_string(k), ImVec2(40 * S, 28 * S), A.rules.stocks == k, COL_ACCENT)) {
+                A.rules.stocks = k;
+                send_rules();
+            }
+        }
+    } else {
+        ImGui::SameLine(0, 14 * S);
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_ACCENT), "%d", A.rules.stocks);
+    }
+    ImGui::Dummy(ImVec2(0, 2 * S));
+    text_wrapped_disabled(host ? "Anyone still on Random, and a Random stage, is rolled for everyone when you press Launch."
+                               : "The host picks the stage and stocks. Anyone on Random is rolled at launch.");
+    end_panel();
+    ImGui::Dummy(ImVec2(0, 4 * S));
+}
+
 static void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     ImGui::BeginChild(("m" + std::to_string(slot)).c_str(), size, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -2517,7 +2737,9 @@ static void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     }
     // owned games
     ImGui::SetCursorScreenPos(p0 + ImVec2(16 * S, 88 * S));
-    if (!p->hello) {
+    if (match_active()) {
+        member_pick_row(slot);
+    } else if (!p->hello) {
         ImGui::TextDisabled("checking games...");
     } else {
         bool first = true;
@@ -2663,7 +2885,8 @@ static void page_online_room() {
     // member cards (4 slots)
     float gap = 14 * S;
     int cols = left_w > 560 * S ? 2 : 1;
-    float mw = (left_w - gap * (cols - 1)) / cols;
+    float card_w = left_w - (match_active() ? ImGui::GetStyle().ScrollbarSize + 2 * S : 0.f);   // the match picker makes this column scroll
+    float mw = (card_w - gap * (cols - 1)) / cols;
     std::map<int, const hubui::PeerInfo*> by_slot;
     for (auto& p : peers) by_slot[p.slot] = &p;
     for (int s = 0; s < 4; ++s) {
@@ -2772,6 +2995,7 @@ static void page_online_room() {
             ImGui::TextDisabled("%s", A.share_host_save ? "Using the host's save (unlocked characters/boards)." : "Starting from an empty save.");
         }
     }
+    if (match_active()) match_panel(host, left_w);
     if (A.selected_game == "smash64") {   // Smash Classic online is 2 players; say so once the room is bigger
         std::string notice = hubui::smash_room_notice(peers);
         if (!notice.empty()) {
@@ -2805,8 +3029,11 @@ static void page_online_room() {
             unsigned seed = std::random_device{}();
             ++A.launch_counter;
             hubui::PortPlan plan = hubui::build_ports(member_pads());   // built once; guests use it verbatim
-            A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan));
-            launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan);
+            hubui::MatchSpec spec;   // Randoms are rolled here, once, from the launch seed
+            bool with_match = rg->system == hub::System::N64 && match_active();
+            if (with_match) spec = hubui::resolve_match(plan.ports, all_picks(), A.rules, seed, match_remix_roster());
+            A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr));
+            launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
         }
         ImGui::SameLine();
         ImGui::TextDisabled("%s", ok ? "Everyone is ready." : why.c_str());
@@ -3815,7 +4042,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             A.code = "K7M2QX";
             A.page = Page::Online;
             if (std::getenv("HUB_SHOT_PICKER")) FR.open_picker = true;
-            if (const char* rg = std::getenv("HUB_SHOT_ROOM_GAME")) A.selected_game = rg;   // e.g. smash64
+            if (const char* rg = std::getenv("HUB_SHOT_ROOM_GAME")) A.selected_game = rg;   // e.g. smash64, remix
+            if (A.selected_game == "remix" && std::getenv("HUB_SHOT_PICKS")) {   // fake picks for the match picker
+                A.my_pick.p[0] = {0x1D, 2};
+                A.picks[1].p[0] = {0x00, 0};
+                A.picks[2].p[0] = {0x20, 4};
+                A.rules.stage = 0x31;
+                A.rules.stocks = 4;
+            }
+            if (std::getenv("HUB_SHOT_LOCALS2")) A.my_locals = 2;
         }
     }
     fr_start();
