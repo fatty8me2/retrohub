@@ -306,6 +306,24 @@ Selectability game_selectable(const std::string& game_id, int max_players,
     return r;
 }
 
+std::string smash_room_notice(const std::vector<PeerInfo>& peers) {
+    if (peers.size() < 3 || peers.size() > 4) return "";
+    std::string out = "Smash Classic online supports 2 players. For 3-4 players pick Super Smash Bros. (emulated)";
+    /* Only peers whose hello has arrived can be judged; the rest show as "waiting". */
+    std::vector<std::string> missing;
+    for (auto& p : peers) {
+        if (!p.hello) continue;
+        bool owns = p.games.count("ssb64rom") || std::find(p.keys.begin(), p.keys.end(), "ssb64rom") != p.keys.end();
+        if (!owns) missing.push_back(p.name);
+    }
+    if (!missing.empty()) {
+        out += ". ";
+        for (size_t i = 0; i < missing.size(); ++i) out += (i ? ", " : "") + missing[i];
+        out += missing.size() == 1 ? " doesn't have Super Smash Bros. (emulated)" : " don't have Super Smash Bros. (emulated)";
+    }
+    return out;
+}
+
 std::string hello_json(const std::string& version, const std::map<std::string, std::string>& games,
                        const std::vector<std::string>& keys) {
     std::string o = "{\"kind\":\"hello\",\"version\":\"" + json_escape(version) + "\",\"games\":{";

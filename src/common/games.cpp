@@ -180,7 +180,7 @@ const std::vector<GameInfo>& catalog() {
         {"smash64", "Super Smash Bros. (Smash Classic)", Engine::Native, 4, {},
          "games/smashClassic/BattleShip.exe", "n64", {}, true, 1999,
          "A native PC port of the N64 brawler, built for quick local and online matches.",
-         "Super Smash Bros. (USA)"},
+         "Super Smash Bros. (USA)", "", 2},   // online rooms are 2 players; the emulated ssb64rom covers 3-4
 
         /* ---- Mario Party series (N64, Mupen64Plus) ---- */
         {"mp1", "Mario Party", Engine::Mupen64Plus, 4,
@@ -438,6 +438,10 @@ const GameInfo* find_game(const std::string& id) {
         if (g.id == id) return &g;
     }
     return nullptr;
+}
+
+int online_max_for(const GameInfo& g) {
+    return g.online_max > 0 ? g.online_max : g.max_players;
 }
 
 const GameInfo* find_game_for(const std::string& system_short, const std::string& serial, const std::string& md5) {
