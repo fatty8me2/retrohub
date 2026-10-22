@@ -12,6 +12,15 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 using namespace hub;
 namespace fs = std::filesystem;
@@ -423,6 +432,18 @@ static void test_scan_cache_state(const fs::path& dir) {
     CHECK(write_file(lib / "junk.gba", Bytes(200 * 1024, 0)));
     CHECK(write_file(lib / "notes.txt", Bytes(10, 1)));
 
+    {   /* non-ASCII games folder: UTF-8 in settings -> wide path (e.g. DocumentsJeux Videos with an accent) */
+        const fs::path jx = dir / fs::path(L"Jeux Vid\u00E9o") / "Game Boy";
+        CHECK(write_file(jx / "uni.gb", make_gb("UNICODE", 0, 0x4321, 9)));
+        std::string u8root;
+        std::wstring wroot = (dir / fs::path(L"Jeux Vid\u00E9o")).wstring();
+        int n = WideCharToMultiByte(CP_UTF8, 0, wroot.c_str(), (int)wroot.size(), nullptr, 0, nullptr, nullptr);
+        u8root.assign((size_t)n, 'x');
+        WideCharToMultiByte(CP_UTF8, 0, wroot.c_str(), (int)wroot.size(), &u8root[0], n, nullptr, nullptr);
+        library_set_data_dir((dir / "userdata_u").string());
+        std::vector<GameEntry> ru = scan_library({u8root}, nullptr);
+        CHECK(ru.size() == 1);
+    }
     library_set_data_dir((dir / "userdata").string());
     uint64_t c0 = library_identify_count();
     int last_done = -1, last_total = -1, calls = 0;
