@@ -37,6 +37,7 @@ struct Settings {
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start
     bool sync_states = false;          // include save states in sync + export
+    bool sync_card_dismissed = false;  // "Keep your saves on all your PCs" card on Home was dismissed ("Not now")
     std::string vault_dir;             // "" = default (userdata/saves)
     bool download_art = true;          // fetch cover art from the libretro-thumbnails project
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only

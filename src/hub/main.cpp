@@ -681,6 +681,34 @@ static void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
     });
 }
 
+struct SyncSuggestion { std::string label, path; };
+static const std::vector<SyncSuggestion>& sync_suggestions() {
+    static std::vector<SyncSuggestion> v;
+    static bool done = false;
+    if (done) return v;
+    done = true;
+    std::set<std::string> seen;
+    auto add = [&](const std::string& label, const std::string& base) {
+        if (base.empty() || !dir_exists(base) || !seen.insert(base).second) return;
+        v.push_back({label, no_slash(base) + "\\RetroHub"});
+    };
+    add("OneDrive", env_var(L"OneDriveConsumer"));
+    add("OneDrive", env_var(L"OneDrive"));
+    add("OneDrive (work)", env_var(L"OneDriveCommercial"));
+    std::string up = env_var(L"USERPROFILE");
+    if (!up.empty()) {
+        add("Dropbox", up + "\\Dropbox");
+        add("Google Drive", up + "\\Google Drive");
+        add("Google Drive", up + "\\My Drive");
+        add("iCloud Drive", up + "\\iCloudDrive");
+    }
+    for (char d = 'D'; d <= 'Z'; ++d) {
+        std::string gd = std::string(1, d) + ":\\My Drive";
+        if (dir_exists(gd)) add("Google Drive", gd);
+    }
+    return v;
+}
+
 static void start_sync(bool manual) {
     if (A.st.sync_folder.empty()) return;
     /* never touch battery files under a running emulator: queue until the game exits */
@@ -2306,6 +2334,45 @@ static void ensure_selection() {
     A.sel_game = i >= 0 ? A.lib[i].key : std::string();
 }
 
+/* Home card: shown until a sync folder is set or the player dismisses it ("Not now", saved in hub.json). */
+static void sync_card() {
+    if (!A.st.sync_folder.empty() || A.st.sync_card_dismissed) return;
+    const auto& sugg = sync_suggestions();
+    bool busy = A.job.running;
+
+    begin_panel("sync_card");
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted("Keep your saves and friends on all your PCs");
+    ImGui::PopFont();
+    text_wrapped_disabled("Sync your save vault through a folder both PCs can see. RetroHub never deletes a save.");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (!sugg.empty() && button(("Use " + sugg[0].label).c_str(), ImVec2(0, 0), true, !busy)) {
+        make_dirs(sugg[0].path);
+        A.st.sync_folder = sugg[0].path;
+        A.st.sync_auto = true;
+        mark_dirty();
+        start_sync(true);
+    }
+    if (!sugg.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sugg[0].path.c_str());
+    ImGui::SameLine(0, sp(1.f));
+    if (button("Choose folder...", ImVec2(0, 0), false, !busy)) {
+        std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+        if (!p.empty()) {
+            A.st.sync_folder = p;
+            A.st.sync_auto = true;
+            mark_dirty();
+            start_sync(true);
+        }
+    }
+    ImGui::SameLine(0, sp(1.f));
+    if (button("Not now", ImVec2(0, 0))) {
+        A.st.sync_card_dismissed = true;
+        mark_dirty();
+    }
+    end_panel();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+}
+
 static void page_library() {
     if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     ensure_selection();
@@ -2322,6 +2389,7 @@ static void page_library() {
         all_games_view();
         return;
     }
+    sync_card();
 
     const hub::GameEntry* sel = find_entry(A.sel_game);
     if (sel) {
@@ -2809,34 +2877,6 @@ static void refresh_vault() {
     }
     std::sort(A.vault_rows.begin(), A.vault_rows.end(), [](const VaultRow& a, const VaultRow& b) { return a.m.updated > b.m.updated; });
     A.vault_dirty = false;
-}
-
-struct SyncSuggestion { std::string label, path; };
-static const std::vector<SyncSuggestion>& sync_suggestions() {
-    static std::vector<SyncSuggestion> v;
-    static bool done = false;
-    if (done) return v;
-    done = true;
-    std::set<std::string> seen;
-    auto add = [&](const std::string& label, const std::string& base) {
-        if (base.empty() || !dir_exists(base) || !seen.insert(base).second) return;
-        v.push_back({label, no_slash(base) + "\\RetroHub"});
-    };
-    add("OneDrive", env_var(L"OneDriveConsumer"));
-    add("OneDrive", env_var(L"OneDrive"));
-    add("OneDrive (work)", env_var(L"OneDriveCommercial"));
-    std::string up = env_var(L"USERPROFILE");
-    if (!up.empty()) {
-        add("Dropbox", up + "\\Dropbox");
-        add("Google Drive", up + "\\Google Drive");
-        add("Google Drive", up + "\\My Drive");
-        add("iCloud Drive", up + "\\iCloudDrive");
-    }
-    for (char d = 'D'; d <= 'Z'; ++d) {
-        std::string gd = std::string(1, d) + ":\\My Drive";
-        if (dir_exists(gd)) add("Google Drive", gd);
-    }
-    return v;
 }
 
 static void result_line(const std::string& s, bool ok) {
