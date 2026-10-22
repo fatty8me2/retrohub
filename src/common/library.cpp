@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cwctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -680,12 +681,29 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom) {
         if (!fs::exists(rom, ec) || fs::file_size(rom, ec) != st.m_uncomp_size) {
             fs::create_directories(dir, ec);
             fs::path tmp = rom; tmp += L".part";
-            if (!mz_zip_reader_extract_to_file(&za, i, path_utf8(tmp).c_str(), 0)) continue;
+            if (!mz_zip_reader_extract_to_file(&za, i, path_utf8(tmp).c_str(), 0)) {
+                fs::remove(tmp, ec);   // never leave a half-written .part behind
+                continue;
+            }
             fs::rename(tmp, rom, ec);
-            if (ec) continue;
+            if (ec) { std::error_code rec; fs::remove(tmp, rec); continue; }
         }
         *out_rom = rom;
         ok = true;
+        /* Drop stale extractions of the same zip (<stem>-<crc8>) left by an older version of the file. */
+        {
+            std::error_code pec;
+            const std::wstring stem = zip.stem().wstring() + L"-";
+            const std::wstring keep = dir.filename().wstring();
+            for (fs::directory_iterator it(dir.parent_path(), pec), end; !pec && it != end; it.increment(pec)) {
+                std::wstring n = it->path().filename().wstring();
+                if (n == keep || n.size() != stem.size() + 8 || n.compare(0, stem.size(), stem) != 0) continue;
+                bool hex = true;
+                for (size_t k = stem.size(); k < n.size(); ++k)
+                    if (!iswxdigit(n[k])) hex = false;
+                if (hex && it->is_directory(pec)) { std::error_code rec; fs::remove_all(it->path(), rec); }
+            }
+        }
     }
     mz_zip_reader_end(&za);
     std::fclose(f);

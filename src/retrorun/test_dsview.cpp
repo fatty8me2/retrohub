@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <map>
 #include <string>
 
 static int g_fail = 0;
@@ -35,8 +36,9 @@ int main() {
     CHECK(!pointer_from_window(10, 100, r, &px, &py) && px == 7 && py == 9);          // letterbox bar: not touching
     CHECK(!pointer_from_window(1920, 500, r, &px, &py));
 
-    // Layout cycle wraps and starts side-by-side.
-    CHECK(std::string(layout_name(0)) == "left-right");
+    // Layout cycle wraps and starts as a vertical stack (top screen over the touch screen).
+    CHECK(std::string(layout_name(0)) == "top-bottom" && std::string(layout_name(1)) == "left-right");
+    CHECK(layout_index("hybrid-top") == 3 && layout_index("bogus") == -1 && layout_index(layout_name(2)) == 2);
     CHECK(std::string(layout_name(layout_count())) == layout_name(0));
     CHECK(std::string(layout_name(-1)) == layout_name(layout_count() - 1));
 
@@ -47,8 +49,45 @@ int main() {
     CHECK(d["melonds_sysfile_mode"] == "builtin");
     CHECK(d["melonds_console_mode"] == "ds");
     CHECK(d["melonds_homebrew_sdcard"] == "disabled" && d["melonds_dsi_sdcard"] == "disabled");
-    CHECK(d["melonds_number_of_screen_layouts"] == "1" && d["melonds_screen_layout1"] == "left-right");
+    CHECK(d["melonds_number_of_screen_layouts"] == "1" && d["melonds_screen_layout1"] == "top-bottom");
     CHECK(d["melonds_start_time_mode"] == "real");
+
+    // Stylus latch: a press that begins outside the frame never touches, even after dragging inside; one that begins
+    // inside keeps touching only while over the frame.
+    {
+        StylusLatch l;
+        CHECK(!l.update(false, false));
+        CHECK(!l.update(true, false));    // button down outside
+        CHECK(!l.update(true, true));     // dragged in: still no touch
+        CHECK(!l.update(false, true));    // released
+        CHECK(l.update(true, true));      // new press inside
+        CHECK(l.update(true, true));      // repeated poll in the same frame
+        CHECK(!l.update(true, false));    // dragged out: lifts
+        CHECK(l.update(true, true));      // back in while still held: touches again
+        CHECK(!l.update(false, true));
+    }
+    // Every option key/value retrorun relies on is listed for the runtime check against the real core, with no duplicates of a
+    // layout name missing: all four F9 layouts must be covered.
+    {
+        int n = 0;
+        const ReqOpt* q = required_options(&n);
+        for (int i = 0; i < layout_count(); ++i) {
+            bool found = false;
+            for (int k = 0; k < n; ++k)
+                if (std::string(q[k].key) == "melonds_screen_layout1" && std::string(q[k].value) == layout_name(i)) found = true;
+            CHECK(found);
+        }
+        std::map<std::string, std::string> dd;
+        for_each_default_option([&](const char* k, const char* v) { dd[k] = v; });
+        for (auto& kv : dd) {
+            bool found = false;
+            for (int k = 0; k < n; ++k)
+                if (kv.first == q[k].key && kv.second == q[k].value) found = true;
+            if (kv.first == "melonds_screen_layout1") found = true;   // covered above
+            if (kv.first == "melonds_show_bios_warnings" || kv.first == "melonds_show_unsupported_features" || kv.first == "melonds_boot_mode") found = true;
+            CHECK(found);   // each default is also verified against the core at startup
+        }
+    }
 
     std::printf(g_fail ? "retrorun_ds_test: %d FAILED\n" : "retrorun_ds_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;

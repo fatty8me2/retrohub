@@ -278,9 +278,28 @@ class Frontend {
     SDL_Texture* tex = nullptr;
     int tex_w = 0, tex_h = 0;
     bool fullscreen = false, quit = false, muted = false, online = false, ff = false;
+    bool srm_size_mismatch = false;
+    std::string userdata_dir;
+    std::string layout_pref_path() const { return userdata_dir + "\\retrorun_layout.txt"; }
+    std::string load_layout_pref() const {   // "nds=<layout>" lines; per system, shared by all games
+        std::ifstream f(fs::u8path(layout_pref_path()));
+        std::string line;
+        while (std::getline(f, line)) {
+            line = trim(line);
+            if (line.rfind("nds=", 0) == 0) return trim(line.substr(4));
+        }
+        return "";
+    }
+    void save_layout_pref(const std::string& v) const {
+        std::string t = "nds=" + v + "\n";
+        std::error_code ec;
+        fs::create_directories(fs::u8path(userdata_dir), ec);
+        write_atomic(layout_pref_path(), t.data(), t.size());
+    }
     bool is_ds = false;        // Nintendo DS: two-screen frame, fractional+linear scaling, stylus via the mouse
     int ds_layout = 0;         // dsview::layout_name index (F9 cycles)
     SDL_Rect last_dst{0, 0, 0, 0};   // where the frame was last drawn (stylus mapping)
+    dsview::StylusLatch stylus;      // a press only counts if it began over the frame
     Pace pace = Pace::None;
     uint64_t frame_no = 0;
     uint64_t out_hash = 0xCBF29CE484222325ull, in_hash = 0xCBF29CE484222325ull;   // rolling hash of video+audio output / inputs
@@ -360,11 +379,24 @@ bool Frontend::setup_paths() {
     fs::create_directories(fs::u8path(a.system_dir), ec);
     core.system_dir = a.system_dir;
     core.save_dir = a.save_dir;
+    wchar_t exe_w[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe_w, MAX_PATH);
+    userdata_dir = narrow((fs::path(exe_w).parent_path() / L"userdata").wstring().c_str());
     core.content_dir = narrow(fs::u8path(a.rom).parent_path().wstring().c_str());
     core.system_tag = a.system;
     is_ds = lower(a.system) == "nds";
-    // Defaults for the DS core go in first so ini / --opt below override them.
-    if (is_ds) dsview::for_each_default_option([this](const char* k, const char* v) { core.overrides[k] = v; });
+    // Defaults for the DS core go in first (then the remembered layout) so ini / --opt below override them.
+    if (is_ds) {
+        // The DS core keeps its own files (Wi-Fi settings, SD card images, ...) in a scratch dir under userdata, never in
+        // the vault: the vault battery folder holds only the .srm that retrorun writes.
+        core.save_dir = userdata_dir + "\\core-save\\nds";
+        std::error_code cec;
+        fs::create_directories(fs::u8path(core.save_dir), cec);
+        dsview::for_each_default_option([this](const char* k, const char* v) { core.overrides[k] = v; });
+        std::string want = load_layout_pref();
+        int li = dsview::layout_index(want);
+        if (li >= 0) { ds_layout = li; core.overrides["melonds_screen_layout1"] = want; }
+    }
     rom_stem = fs::u8path(a.rom).stem().u8string();
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
@@ -571,6 +603,7 @@ void Frontend::handle_key(const SDL_KeyboardEvent& k) {
             if (is_ds) {
                 ds_layout = (ds_layout + 1) % dsview::layout_count();
                 core.set_option("melonds_screen_layout1", dsview::layout_name(ds_layout));
+                save_layout_pref(dsview::layout_name(ds_layout));
                 set_status(std::string("Screen layout: ") + dsview::layout_name(ds_layout));
             }
             break;
@@ -621,6 +654,13 @@ void Frontend::load_srm() {
     if (read_file(srm_path, &d)) {
         memcpy(mem, d.data(), std::min(n, d.size()));
         rlog("save: loaded %s (%zu bytes into %zu)", srm_path.c_str(), d.size(), n);
+        if (d.size() != n) {
+            // A synced save of another size (different core/dump) is never silently truncated or padded: keep the
+            // original as <srm>.bak (once) before the first write replaces it.
+            srm_size_mismatch = true;
+            rlog("save: WARNING size mismatch: file is %zu bytes, core save RAM is %zu; the original will be kept as %s.bak",
+                 d.size(), n, srm_path.c_str());
+        }
     } else {
         rlog("save: no existing %s (battery RAM %zu bytes)", srm_path.c_str(), n);
     }
@@ -632,6 +672,15 @@ void Frontend::save_srm(bool force) {
     void* mem = core.save_ram(&n);
     if (!mem || !n) return;
     if (!force && srm_saved.size() == n && memcmp(srm_saved.data(), mem, n) == 0) return;
+    if (srm_size_mismatch) {
+        srm_size_mismatch = false;
+        std::error_code bec;
+        fs::path bak = fs::u8path(srm_path + ".bak");
+        if (!fs::exists(bak, bec)) {
+            fs::copy_file(fs::u8path(srm_path), bak, bec);
+            rlog("save: %s original kept as %s", bec ? "FAILED to keep" : "size-mismatched", bak.u8string().c_str());
+        }
+    }
     if (write_atomic(srm_path, mem, n)) {
         srm_saved.assign((uint8_t*)mem, (uint8_t*)mem + n);
         rlog("save: wrote %s (%zu bytes)", srm_path.c_str(), n);
@@ -867,7 +916,7 @@ int Frontend::run(const Args& args) {
             if (a.headless && a.stylus_u >= 0) {
                 if (id == RETRO_DEVICE_ID_POINTER_X) return (int16_t)std::lround(a.stylus_u * 65534.0 - 32767.0);
                 if (id == RETRO_DEVICE_ID_POINTER_Y) return (int16_t)std::lround(a.stylus_v * 65534.0 - 32767.0);
-                return id == RETRO_DEVICE_ID_POINTER_PRESSED ? 1 : 0;
+                return (id == RETRO_DEVICE_ID_POINTER_PRESSED || id == RETRO_DEVICE_ID_POINTER_COUNT) ? 1 : 0;
             }
             if (a.headless || !win) return 0;
             int mx = 0, my = 0;
@@ -882,7 +931,7 @@ int Frontend::run(const Args& args) {
                 case RETRO_DEVICE_ID_POINTER_X: return (int16_t)px;
                 case RETRO_DEVICE_ID_POINTER_Y: return (int16_t)py;
                 case RETRO_DEVICE_ID_POINTER_COUNT: return (int16_t)(in ? 1 : 0);
-                case RETRO_DEVICE_ID_POINTER_PRESSED: return (int16_t)(in && (b & SDL_BUTTON(SDL_BUTTON_LEFT)) ? 1 : 0);
+                case RETRO_DEVICE_ID_POINTER_PRESSED: return (int16_t)(stylus.update((b & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0, in) ? 1 : 0);
                 default: return 0;
             }
         }
@@ -901,6 +950,16 @@ int Frontend::run(const Args& args) {
     if (!core.load_core(a.core, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
     if (!core.load_game(a.rom, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
     fps = core.av().timing.fps > 1 ? core.av().timing.fps : 60.0;
+    if (is_ds) {   // every option retrorun relies on must exist in the real core with that value, else F9/defaults would silently fail
+        int nreq = 0;
+        const dsview::ReqOpt* req = dsview::required_options(&nreq);
+        for (int i = 0; i < nreq; i++) {
+            auto it = core.options().find(req[i].key);
+            bool ok = it != core.options().end() &&
+                      std::find(it->second.values.begin(), it->second.values.end(), req[i].value) != it->second.values.end();
+            if (!ok) rlog("WARNING: DS core option %s=%s is not offered by this core", req[i].key, req[i].value);
+        }
+    }
     if (a.list_opts) {
         for (auto& kv : core.options()) {
             std::string vals;

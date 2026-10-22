@@ -1,6 +1,6 @@
 # Headless Nintendo DS QA for retrorun (no window, muted). Never writes next to the ROM: saves/states go to a scratch dir.
 # Usage: powershell -ExecutionPolicy Bypass -File qa\retrorun_nds.ps1 -Rom <game.nds> [-Frames 1500] [-Out <scratch dir>]
-# Checks: boots + screenshot (512x192 side-by-side), seeded .srm is loaded into the core's save RAM, stylus input reaches the core (cursor pixels differ), no auto.state is written for DS.
+# Checks: boots + screenshot (256x384 vertical stack), seeded .srm is loaded into the core's save RAM, stylus input reaches the core (cursor pixels differ), no auto.state is written for DS.
 param(
     [Parameter(Mandatory = $true)][string]$Rom,
     [int]$Frames = 1500,
@@ -27,7 +27,8 @@ function Run($extra, $shot) {
 
 # 1. boot + screenshot
 $log = Run @() "$Out\boot.png"
-Check ($log -match 'av: 512x192') 'default layout is side by side (512x192)'
+Check ($log -match 'av: 256x384') 'default layout is a vertical stack (256x384)'
+Check ($log -notmatch 'WARNING: DS core option') 'every option retrorun sets exists in the real core with that value'
 Check ($log -match 'battery RAM \d+ bytes') 'core exposes battery RAM'
 Check (Test-Path "$Out\boot.png") 'screenshot written'
 Check (-not (Test-Path "$Out\st\auto.state")) 'no auto.state for DS'
@@ -43,9 +44,9 @@ $log = Run @() "$Out\seed.png"
 Check ($log -match "save: loaded .*$([regex]::Escape($stem))\.srm \(524288 bytes") 'seeded .srm loaded from the battery dir'
 # Note: the DS core's in-memory unserialize is not frame-exact (--selftest reports DIFFERENT), one reason online play is off for DS.
 
-# 3. stylus reaches the core: with the cursor always drawn, holding the stylus changes the bottom (right) screen
+# 3. stylus reaches the core: with the cursor always drawn, holding the stylus changes the bottom screen
 Run @('--opt', 'melonds_show_cursor=always') "$Out\nostylus.png" | Out-Null
-Run @('--opt', 'melonds_show_cursor=always', '--stylus', '0.75,0.5') "$Out\stylus.png" | Out-Null
+Run @('--opt', 'melonds_show_cursor=always', '--stylus', '0.5,0.75') "$Out\stylus.png" | Out-Null
 $h1 = (Get-FileHash "$Out\nostylus.png").Hash
 $h2 = (Get-FileHash "$Out\stylus.png").Hash
 Check ($h1 -ne $h2) 'stylus input changes the frame (cursor drawn on the touch screen)'
