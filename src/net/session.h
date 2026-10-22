@@ -24,6 +24,8 @@ std::string new_room_code();
 bool valid_room_code(const std::string& code);
 
 struct Member { int slot; std::string name; };
+/* The server promoted a member to host (slot 0) after the old host left; `from_slot` is where it sat before. */
+struct HostChange { int from_slot; std::string name; };
 
 class LobbyClient {
   public:
@@ -44,6 +46,10 @@ class LobbyClient {
     void send_msg(const std::string& body_json);
     /* Pop one received {from, body_json}. */
     bool poll_msg(int* from_slot, std::string* body_json);
+    /* Pop one host-migration event (the room survived its host leaving). If it was this client that got
+     * promoted, my_slot() is already 0 when the event is returned. Servers without migration close the
+     * socket with 4001 instead, which surfaces as failed()/"The host left the room". */
+    bool poll_host_change(HostChange* out);
 
   private:
     struct Impl;

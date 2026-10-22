@@ -318,4 +318,20 @@ std::string find_smash_rom(const std::vector<RomRef>& lib);
 /* Environment for every Smash launch: SSB64_BASEROM (when a ROM is known) and SSB64_SAVE_PATH. */
 std::vector<std::pair<std::string, std::string>> smash_launch_env(const std::string& rom_path, const std::string& save_file);
 
+/* ---- lobby host migration ----
+ * When the host leaves, the server renumbers the lowest remaining member (`from`) to slot 0 and sends
+ * host_changed{from_slot}. Per-slot room state keyed by the old slot moves to the new key; whatever was
+ * under `to` (the departed host) is dropped. Other keys are untouched. */
+template <class V> void remap_slot_key(std::map<int, V>& m, int from, int to) {
+    if (from == to) return;
+    m.erase(to);
+    auto it = m.find(from);
+    if (it == m.end()) return;
+    V v = std::move(it->second);
+    m.erase(it);
+    m[to] = std::move(v);
+}
+/* Toast shown to the room when the host changes; `me` = the new host is this PC. */
+inline std::string host_changed_text(const std::string& name, bool me) { return me ? "You are now the host" : name + " is now the host"; }
+
 } // namespace hubui

@@ -40,6 +40,52 @@ static bool lobby_check(const std::string& server)
     return got;
 }
 
+/* Host leaves a lobby room: the lowest remaining member becomes slot 0, nobody is dropped, the code keeps working. */
+static bool migration_check(const std::string& server)
+{
+    std::string code = new_room_code();
+    auto pump = [](std::vector<LobbyClient*> v, uint32_t ms, bool (*done)(void*), void* ctx) {
+        for (uint32_t t0 = now_ms(); now_ms() - t0 < ms;) {
+            for (auto* c : v) c->update();
+            if (done && done(ctx)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+    LobbyClient a, b, c, d;
+    a.start(server, code, true, "alice");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    b.start(server, code, false, "bob");
+    c.start(server, code, false, "carol");
+    struct Ctx { LobbyClient *a, *b, *c, *d; } cx{&a, &b, &c, &d};
+    pump({&a, &b, &c}, 5000, [](void* p) { auto* x = (Ctx*)p; return x->c->connected() && x->a->members().size() == 3; }, &cx);
+    bool ok = b.my_slot() == 1 && c.my_slot() == 2;
+    a.stop();   // host leaves
+    HostChange hb{-1, ""}, hc{-1, ""};
+    bool gotb = false, gotc = false;
+    for (uint32_t t0 = now_ms(); now_ms() - t0 < 20000 && !(gotb && gotc);) {
+        b.update(); c.update();
+        HostChange h;
+        if (!gotb && b.poll_host_change(&h)) { hb = h; gotb = true; }
+        if (!gotc && c.poll_host_change(&h)) { hc = h; gotc = true; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    pump({&b, &c}, 500, nullptr, nullptr);
+    ok = ok && gotb && gotc && hb.from_slot == 1 && hb.name == "bob" && hc.from_slot == 1;
+    ok = ok && b.my_slot() == 0 && c.my_slot() == 2 && b.connected() && c.connected() && !b.failed() && !c.failed();
+    ok = ok && b.members().size() == 2 && b.members()[0].slot == 0 && b.members()[0].name == "bob" && c.members().size() == 2;
+    // the code still works: a new player joins and takes the free slot; messages from the new host arrive as slot 0
+    d.start(server, code, false, "dave");
+    pump({&b, &c, &d}, 5000, [](void* p) { return ((Ctx*)p)->d->connected(); }, &cx);
+    ok = ok && d.connected() && d.my_slot() == 1;
+    b.send_msg("{\"kind\":\"select\",\"game\":\"mk64\"}");
+    int from = -1; std::string body;
+    for (uint32_t t0 = now_ms(); now_ms() - t0 < 5000 && from < 0;) { b.update(); c.update(); d.update(); if (c.poll_msg(&from, &body)) break; std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+    ok = ok && from == 0 && body.find("mk64") != std::string::npos;
+    printf("migration check: %s (bob slot %d, carol slot %d, dave slot %d, from=%d)\n", ok ? "ok" : "FAILED", b.my_slot(), c.my_slot(), d.my_slot(), from);
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     std::string server = argc > 1 ? argv[1] : "ws://127.0.0.1:8799";
@@ -51,6 +97,7 @@ int main(int argc, char** argv)
     net_set_log_file("hubnet_test.log");
 
     if (!lobby_check(server)) return 1;
+    if (!migration_check(server)) return 1;
     std::string room = new_room_code() + "-1";
     printf("server=%s room=%s players=%d count=%d mode=%s\n", server.c_str(), room.c_str(), n, count,
            relay ? "FORCED RELAY" : "direct UDP (relay fallback)");

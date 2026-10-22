@@ -16,6 +16,7 @@ struct LobbyClient::Impl {
     std::vector<Member> members;
     struct Msg { int from; std::string body; };
     std::deque<Msg> msgs;
+    std::deque<HostChange> host_changes;
     uint32_t last_keepalive = 0;
 };
 
@@ -31,9 +32,11 @@ bool LobbyClient::start(const std::string& server, const std::string& code, bool
     d.slot = -1;
     d.members.clear();
     d.msgs.clear();
+    d.host_changes.clear();
     d.status = "connecting";
     d.last_keepalive = now_ms();
     std::string url = hub_url(server.empty() ? default_server() : server, code, role_host, name, 0);
+    url += "&caps=hostmig";   // we understand host_changed: keep the room alive when the host leaves
     net_log("Lobby: connecting %s", url.c_str());
     return d.ws.connect(url);
 }
@@ -69,6 +72,15 @@ bool LobbyClient::poll_msg(int* from_slot, std::string* body_json)
     return true;
 }
 
+bool LobbyClient::poll_host_change(HostChange* out)
+{
+    Impl& d = *impl_;
+    if (d.host_changes.empty()) return false;
+    *out = std::move(d.host_changes.front());
+    d.host_changes.pop_front();
+    return true;
+}
+
 static std::string friendly(const std::string& reason)
 {
     if (reason == "room-in-use") return "That room code is already in use";
@@ -97,6 +109,11 @@ void LobbyClient::update()
             d.members.clear();
             if (const Json* a = j.get("members"))
                 for (const Json& m : a->arr) d.members.push_back({m.i("slot", -1), m.s("name")});
+        } else if (type == "host_changed") {
+            int from = j.i("from_slot", -1), to = j.i("slot", 0);
+            if (from >= 0 && from == d.slot) d.slot = to;
+            d.host_changes.push_back({from, j.s("name")});
+            net_log("Lobby: host changed: slot %d (%s) is now the host", from, j.s("name").c_str());
         } else if (type == "msg") {
             if (const Json* b = j.get("body")) d.msgs.push_back({j.i("from", -1), b->raw});
         } else if (type == "error") {

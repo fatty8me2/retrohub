@@ -1215,12 +1215,14 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
 
 /* Room accessors: screenshots (HUB_SHOT_FAKE_ROOM) fake a connected room without touching the network. */
 static bool g_fake_room = false;
+static bool g_fake_other_host = false;   // HUB_SHOT_HOSTCHANGE=other: Mia (slot 0) is the host, we are slot 1
 static bool room_connected() { return g_fake_room || A.lobby.connected(); }
 static std::vector<hubnet::Member> room_members() {
+    if (g_fake_room && g_fake_other_host) return {{0, "Mia"}, {1, A.st.name}, {2, "Jake"}};
     if (g_fake_room) return {{0, A.st.name}, {1, "Mia"}, {2, "Jake"}};
     return A.lobby.members();
 }
-static int room_my_slot() { return g_fake_room ? 0 : A.lobby.my_slot(); }
+static int room_my_slot() { return g_fake_room ? (g_fake_other_host ? 1 : 0) : A.lobby.my_slot(); }
 static int locals_of(int slot) {
     if (slot == room_my_slot()) return A.my_locals;
     auto it = A.locals.find(slot);
@@ -1315,6 +1317,23 @@ static void lobby_tick() {
     if (!A.in_room) return;
     A.lobby.update();
     if (!A.lobby.connected()) return;
+
+    /* The host left and the server promoted a member to slot 0 (same room code, so friends/invites keep
+     * pointing at this room). Move per-slot state from the promoted member's old slot to 0 and drop the
+     * departed host's. A.selected_game / A.rules / A.share_host_save / our pick are kept as they are: the
+     * new host re-broadcasts them via hello_dirty below. */
+    hubnet::HostChange hc;
+    while (A.lobby.poll_host_change(&hc)) {
+        hubui::remap_slot_key(A.peers, hc.from_slot, 0);
+        hubui::remap_slot_key(A.ready, hc.from_slot, 0);
+        hubui::remap_slot_key(A.locals, hc.from_slot, 0);
+        hubui::remap_slot_key(A.picks, hc.from_slot, 0);
+        A.hello_dirty = true;
+        bool me = A.lobby.my_slot() == 0;
+        A.chat.push_back({"", hubui::host_changed_text(hc.name, me)});
+        A.chat_scroll = true;
+        push_toast(hubui::host_changed_text(hc.name, me), ui::GOOD, 8.0);
+    }
 
     // Membership changes -> forget departed peers, re-announce ourselves.
     std::vector<int> slots;
@@ -3058,6 +3077,7 @@ static void page_online_room() {
     float input_h = ImGui::GetFrameHeight() + 8 * S;
     ImGui::BeginChild("chatlog", ImVec2(0, -input_h), ImGuiChildFlags_None);
     for (auto& l : A.chat) {
+        if (l.who.empty()) { text_wrapped_disabled(l.text); continue; }   // system line (e.g. host change)
         ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
         ImGui::TextUnformatted(l.who.c_str());
         ImGui::PopStyleColor();
@@ -4045,6 +4065,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         if (std::getenv("HUB_SHOT_FAKE_ROOM")) {
             g_fake_room = true;
+            if (const char* hcv = std::getenv("HUB_SHOT_HOSTCHANGE")) {   // screenshot aid: room right after a host change ("me" | "other")
+                g_fake_other_host = std::string(hcv) == "other";
+                std::string nm = g_fake_other_host ? "Mia" : "You";
+                push_toast(hubui::host_changed_text(nm, !g_fake_other_host), ui::GOOD, 60.0);
+            }
             A.in_room = true;
             A.code = "K7M2QX";
             A.page = Page::Online;
