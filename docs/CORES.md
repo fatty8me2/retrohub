@@ -13,6 +13,7 @@ Verification key: **[verified]** = confirmed in the core's `.info` file or upstr
 | GBC | **SameBoy** (`sameboy_libretro`) | Gambatte, mGBA | Recommended |
 | N64 | mupen64plus (not a libretro core here) | none | Shipped via `n64run.exe` |
 | GameCube | not decided | none fetched | Future; no core chosen |
+| Nintendo DS | **melonDS DS** (`melondsds_libretro`) | melonDS, DeSmuME (not fetched) | Recommended |
 
 ### GBA: mGBA
 mGBA is the accuracy-focused GBA choice and is the only GBA core fetched. It also handles GB and GBC, so it can serve as a fallback. Its README describes it as a high-accuracy, high-performance emulator and the "generally good first choice" for GBA [verified: mGBA README, https://github.com/libretro/mgba].
@@ -26,6 +27,16 @@ Recommendation: **SameBoy** as the default for GB and GBC.
 Fallback: **Gambatte** for weaker hardware. The `.info` describes it as accurate enough to run nearly all games with no visible bugs and "blisteringly fast" [verified: `gambatte_libretro.info`]. Keep it as a per-system override, not the default.
 
 Note: mGBA also runs GB/GBC. Using it for everything would mean one core, but SameBoy is the better GB/GBC choice by the upstream accuracy claims.
+
+### Nintendo DS: melonDS DS
+`melondsds_libretro` (display version 1.4.0, GPLv3+, "Nintendo - DS (melonDS DS)", based on standalone melonDS) is the DS core, fetched by `scripts/fetch-cores.ps1` and shipped in `cores\` like the others.
+- **No BIOS needed.** With `melonds_sysfile_mode = builtin` it uses its built-in FreeBIOS and generated firmware; the optional real `bios7.bin`, `bios9.bin`, `firmware.bin` (and DSi files) are never required [verified: core log "Falling back to FreeBIOS / built-in firmware", `.info` lists all firmware as `opt`].
+- **Software renderer works.** `melonds_render_mode = software` (the default) needs no OpenGL context, so it runs under retrorun, which refuses `SET_HW_RENDER`. It has a threaded software renderer and an x64 JIT (about 140 fps headless on Pokemon Diamond).
+- **Composes both screens itself** into one frame (`melonds_screen_layout1`, 17 layouts) and takes the stylus as a libretro pointer in frame coordinates (`melonds_touch_mode`), so the frontend only maps the mouse.
+- Save RAM is exposed through `RETRO_MEMORY_SAVE_RAM` (`libretro_saves = true`); `melonds_battery_update_interval = 1` keeps that buffer current. Save states are about 19 MB, so the hub does not resume them.
+- RTC follows the PC clock (`melonds_start_time_mode = real`), which Pokemon uses.
+- Alternatives considered: the older `melonds_libretro` (fewer options, no standalone parity) and `desmume_libretro` (works, but slower/less accurate; no per-core stylus mapping advantage). Both were downloadable from the same buildbot and are not fetched.
+- Option defaults retrorun applies for `--system nds` are in `src/retrorun/dsview.h` (`for_each_default_option`). Override with `retrorun.ini` `[nds]` or `--opt`.
 
 ## Core comparison
 

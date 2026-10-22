@@ -7,7 +7,7 @@
  *  - N64 (emulated):  n64run.exe --rom <path> --game <id|unknown> --save-dir <battery dir>
  *                     [--net <server> --room <CODE>-<launch> --slot <lobby slot> --players <n>
  *                      --ports <p0,p1,p2,p3> --delay <d>]
- *  - GBA/GB/GBC:      retrorun.exe --core <x_libretro.dll> --rom <path> --system <gba|gb|gbc>
+ *  - GBA/GB/GBC/DS:   retrorun.exe --core <x_libretro.dll> --rom <path> --system <gba|gb|gbc|nds>
  *                     --save-dir <battery dir> --state-dir <states dir> --resume [--fullscreen]
  *                     [--net ... same flags as n64run; online uses a fresh temp save dir, no --resume]
  *  - GameCube:        Dolphin.exe -b -u <data>\dolphin-user -e <game>  (INI keys written before launch)
@@ -300,6 +300,7 @@ static void system_colors(hub::System s, ImU32* a, ImU32* b) {
         case hub::System::GBA: *a = IM_COL32(40, 70, 190, 255); *b = IM_COL32(130, 100, 235, 255); break;
         case hub::System::GBC: *a = IM_COL32(0, 120, 125, 255); *b = IM_COL32(60, 200, 180, 255); break;
         case hub::System::GB: *a = IM_COL32(85, 100, 40, 255); *b = IM_COL32(150, 175, 70, 255); break;
+        case hub::System::NDS: *a = IM_COL32(130, 130, 145, 255); *b = IM_COL32(205, 210, 225, 255); break;
         default: *a = IM_COL32(70, 78, 100, 255); *b = IM_COL32(120, 130, 160, 255); break;
     }
 }
@@ -310,6 +311,7 @@ static const char* sys_badge(hub::System s) {
         case hub::System::GBA: return "GBA";
         case hub::System::GBC: return "GBC";
         case hub::System::GB: return "GAME BOY";
+        case hub::System::NDS: return "NINTENDO DS";
         default: return "?";
     }
 }
@@ -1095,6 +1097,15 @@ static void play_entry(const hub::GameEntry& e) {
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
                                " --state-dir " + quote(states) + " --resume" + title_arg(e.title);
+            if (A.st.fullscreen) args += " --fullscreen";
+            spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+            break;
+        }
+        case hub::System::NDS: {   // melonDS DS core; no --resume (a stale auto state could overwrite a save synced from another PC)
+            std::string core = find_core("melondsds");
+            if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }
+            std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
+                               " --state-dir " + quote(states) + title_arg(e.title);
             if (A.st.fullscreen) args += " --fullscreen";
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
@@ -2104,7 +2115,8 @@ static void empty_library_state() {
     // supported systems
     {
         struct Sy { const char* label; hub::System s; };
-        static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB}};
+        static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB},
+                                  {"Nintendo DS", hub::System::NDS}};
         float tot = 0;
         for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
         float x = cx - (tot - sp(0.75f)) * 0.5f;
@@ -2233,7 +2245,8 @@ static void selected_bar(const hub::GameEntry& e) {
 static void all_games_view() {
     // system chips
     struct Chip { const char* label; const char* sys; };
-    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
+    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"},
+                               {"Nintendo DS", "nds"}};
     std::map<std::string, int> counts;
     for (auto& e : A.lib) ++counts[sys_short(e)];
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
@@ -2315,7 +2328,7 @@ static void all_games_view() {
                 sec_for(hubui::effective_genre(c ? c->genre : std::string())).items.push_back(i);
             }
         } else if (A.group_mode == 1) {
-            static const char* order[] = {"n64", "gc", "gba", "gbc", "gb"};
+            static const char* order[] = {"n64", "gc", "gba", "gbc", "gb", "nds"};
             for (const char* s : order) sec_for(hubui::system_shelf_title(s));
             for (int i : A.vis) sec_for(hubui::system_shelf_title(sys_short(A.lib[i]))).items.push_back(i);
         } else {
