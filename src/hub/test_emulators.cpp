@@ -484,6 +484,27 @@ static void test_config() {
     CHECK(hubemu::azahar_args("C:\\g\\x.3ds", false) == "-w \"C:\\g\\x.3ds\"");
     CHECK(hubemu::cemu_args("D:\\w\\z.wua", true) == "-g \"D:\\w\\z.wua\" -f");
     CHECK(hubemu::cemu_args("D:\\w\\z.wua", false) == "-g \"D:\\w\\z.wua\"");
+
+    /* Dolphin */
+    CHECK(std::string(hubemu::release(hubemu::Kind::Dolphin).sha256).size() == 64 && hubemu::kind_for(hub::System::GC) == hubemu::Kind::Dolphin);
+    CHECK(hubemu::dolphin_args("D:\\g\\m.iso", true, "C:\\c\\GCI") ==
+          "-b -C Dolphin.Display.Fullscreen=True -C Dolphin.Core.SlotA=8 -C \"Dolphin.Core.GCIFolderAPathOverride=C:\\c\\GCI\" -e \"D:\\g\\m.iso\"");
+    hubemu::DolphinPads none, two;
+    two.xinput[1] = true;
+    std::string di = hubemu::dolphin_dolphin_ini_patch("", none);
+    CHECK(di.find("ConfirmStop = False") != std::string::npos && di.find("PermissionAsked = True") != std::string::npos);
+    CHECK(di.find("SIDevice0 = 6") != std::string::npos && di.find("SIDevice1 = 0") != std::string::npos);
+    CHECK(hubemu::dolphin_dolphin_ini_patch("", two).find("SIDevice1 = 6") != std::string::npos);
+    hubemu::DolphinPads ad;
+    ad.adapter = true;
+    CHECK(hubemu::dolphin_dolphin_ini_patch("", ad).find("SIDevice3 = 12") != std::string::npos);
+    CHECK(hubemu::dolphin_dolphin_ini_patch(di, none) == di);   // idempotent
+    std::string pi = hubemu::dolphin_pad_ini("", none);
+    CHECK(pi.find("[GCPad1]") != std::string::npos && pi.find("[GCPad4]") != std::string::npos);
+    CHECK(pi.find("Device = XInput/3/Gamepad") != std::string::npos);
+    CHECK(pi.find("Buttons/Z = `Shoulder R` | `DInput/0/Keyboard Mouse:D`") != std::string::npos);   // keyboard only on port 1
+    CHECK(pi.find("Buttons/Z = `Shoulder R`\n") != std::string::npos || pi.find("Buttons/Z = `Shoulder R`\r\n") != std::string::npos);
+    CHECK(hubemu::dolphin_gfx_ini_patch("").find("ShaderCompilationMode = 2") != std::string::npos);
 }
 
 static void test_prepare_and_find(const fs::path& dir) {

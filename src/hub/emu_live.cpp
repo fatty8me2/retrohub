@@ -1,11 +1,12 @@
 // Console driver that runs the exact RetroHub 3DS / Wii U launch path without the UI:
 //   find/install emulator -> unpack zip -> write config -> save copy-in -> spawn (job object) -> wait -> save copy-back.
-// Usage: hub_emu_live <game file> [--fullscreen] [--seconds N] [--shots <dir>] [--mute]
+// Usage: hub_emu_live <game file> [--fullscreen] [--seconds N] [--shots <dir>] [--pads N]   (--pads: GameCube: pretend N XInput pads, 0 = none)
 // Set RETROHUB_NO_EXISTING_EMU=1 to ignore any Cemu install outside RetroHub's own data dir.
 #include "emulators.h"
 #include "games.h"
 #include "library.h"
 #include "savestore.h"
+#include "logic.h"
 
 #include <windows.h>
 
@@ -57,7 +58,7 @@ static void save_bmp(const std::string& path, HWND h) {
     HDC sc = GetDC(nullptr), mem = CreateCompatibleDC(sc);
     HBITMAP bm = CreateCompatibleBitmap(sc, w, ht);
     SelectObject(mem, bm);
-    BitBlt(mem, 0, 0, w, ht, sc, r.left, r.top, SRCCOPY);
+    BitBlt(mem, 0, 0, w, ht, sc, r.left, r.top, SRCCOPY);   // screen copy: the window is brought to the front first (D3D windows come out black with PrintWindow)
     BITMAPINFOHEADER bi{sizeof bi, w, -ht, 1, 24, BI_RGB};
     int stride = (w * 3 + 3) & ~3;
     std::vector<unsigned char> px((size_t)stride * ht);
@@ -77,12 +78,14 @@ int main(int argc, char** argv) {
     SetConsoleOutputCP(CP_UTF8);
     std::string game_path, shots;
     bool fs = false;
+    int fake_pads = -1;
     int seconds = 60;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--fullscreen") fs = true;
         else if (a == "--seconds" && i + 1 < argc) seconds = atoi(argv[++i]);
         else if (a == "--shots" && i + 1 < argc) shots = argv[++i];
+        else if (a == "--pads" && i + 1 < argc) fake_pads = atoi(argv[++i]);
         else game_path = a;
     }
     hub::GameEntry e;
@@ -113,9 +116,18 @@ int main(int argc, char** argv) {
     if (inst.exe.empty() || !inst.managed) { std::printf("refusing: not a managed install\n"); return 5; }
     if (hubemu::is_running(inst.exe)) { std::printf("already running, abort\n"); return 6; }
 
-    if (kind == hubemu::Kind::Azahar) hubemu::prepare_azahar(inst.dir); else hubemu::prepare_cemu_managed(inst.dir);
+    if (kind == hubemu::Kind::Azahar) hubemu::prepare_azahar(inst.dir);
+    else if (kind == hubemu::Kind::Dolphin) {
+        hubemu::DolphinPads pads = hubemu::detect_dolphin_pads();
+        if (fake_pads >= 0) { for (int i = 0; i < 4; ++i) pads.xinput[i] = i < fake_pads; pads.adapter = false; }
+        std::printf("pads: xinput=%d%d%d%d adapter=%d\n", pads.xinput[0], pads.xinput[1], pads.xinput[2], pads.xinput[3], (int)pads.adapter);
+        hubemu::prepare_dolphin(inst.dir, pads);
+    } else hubemu::prepare_cemu_managed(inst.dir);
     // test-only: mute the emulator
-    if (kind == hubemu::Kind::Azahar) {
+    if (kind == hubemu::Kind::Dolphin) {
+        std::string ini = inst.dir + "\\User\\Config\\Dolphin.ini";
+        spit(ini, hubui::ini_set(slurp(ini), "DSP", "Volume", "0"));
+    } else if (kind == hubemu::Kind::Azahar) {
         std::string ini = inst.dir + "\\user\\config\\qt-config.ini";
         std::string t = slurp(ini);
         if (t.find("[Audio]") == std::string::npos) t += "\n[Audio]\nvolume\\default=false\nvolume=0\n";
@@ -131,7 +143,9 @@ int main(int argc, char** argv) {
     }
 
     std::string game = (e.issue == "extract") ? hub::extracted_3ds_path(e) : e.path;
-    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs) : hubemu::cemu_args(game, fs);
+    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs)
+                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
+                                                       : hubemu::cemu_args(game, fs);
     std::string battery = hub::saves::battery_dir(hub::system_short(e.system), e.key);
     hubemu::SaveSession sess = hubemu::begin_session(e, inst, battery, "");
     std::printf("[%.1fs] begin_session active=%d err='%s' battery=%s\n", stamp(), (int)sess.active, sess.error.c_str(), battery.c_str());
@@ -175,7 +189,13 @@ int main(int argc, char** argv) {
                 SetForegroundWindow(best);
                 Sleep(500);
                 save_bmp(p, best);
-                std::printf("[%.1fs] shot %s  window '%s' %ldx%ld at (%ld,%ld)\n", stamp(), p, title, r.right - r.left, r.bottom - r.top, r.left, r.top);
+                LONG style = GetWindowLongW(best, GWL_STYLE);
+                HMONITOR mon = MonitorFromWindow(best, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi{sizeof mi};
+                GetMonitorInfoW(mon, &mi);
+                bool covers = r.left <= mi.rcMonitor.left && r.top <= mi.rcMonitor.top && r.right >= mi.rcMonitor.right && r.bottom >= mi.rcMonitor.bottom;
+                std::printf("[%.1fs] shot %s  window '%s' %ldx%ld at (%ld,%ld) caption=%d covers_monitor=%d\n", stamp(), p, title, r.right - r.left, r.bottom - r.top,
+                            r.left, r.top, (int)((style & WS_CAPTION) == WS_CAPTION), (int)covers);
             }
         }
     }

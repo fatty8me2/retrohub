@@ -10,7 +10,7 @@
  *  - GBA/GB/GBC/DS:   retrorun.exe --core <x_libretro.dll> --rom <path> --system <gba|gb|gbc|nds>
  *                     --save-dir <battery dir> --state-dir <states dir> --resume [--fullscreen]
  *                     [--net ... same flags as n64run; online uses a fresh temp save dir, no --resume]
- *  - GameCube:        Dolphin.exe -b -u <data>\dolphin-user -e <game>  (INI keys written before launch)
+ *  - GameCube:        Dolphin (RetroHub download, portable) -b -e <game>; see hubemu::dolphin_args
  *  - 3DS:             <data>\emulators\azahar\azahar.exe -f <game>   (src/hub/emulators.cpp; downloaded on demand)
  *  - Wii U:           Cemu.exe -g <game> -f  (an existing install, else <data>\emulators\cemu with a portable folder)
  *  - Smash (native):  BattleShip.exe --from-hub --no-update-check
@@ -871,12 +871,6 @@ static std::string find_core(const std::string& name) {
     if (file_exists(p)) return p;
     return find_upward("deps\\cores\\" + f);
 }
-static std::string find_dolphin() {
-    std::string p = hub::exe_dir() + "dolphin\\Dolphin.exe";
-    if (file_exists(p)) return p;
-    return find_upward("deps\\dolphin\\Dolphin.exe");
-}
-
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
 
 /* Game window caption: "<title> — RetroHub" (UTF-8 em dash), quoted for the command line. */
@@ -889,181 +883,6 @@ static std::string title_arg(const std::string& game_title) {
 /* retrorun names the DS save <stem>.srm after the ROM file. A zipped ROM is extracted as rom.<ext>, so pass the inner name's stem. */
 static std::string save_stem_arg(const hub::GameEntry& e) {
     return e.save_stem.empty() ? std::string() : " --save-stem " + quote(e.save_stem);
-}
-
-/* Pre-write the Dolphin INI keys the hub relies on (merged into whatever is already there).
- * Per-launch settings (fullscreen, memory-card folder) go on the command line with -C. */
-static void prepare_dolphin(const std::string& userdir) {
-    make_dirs(userdir + "\\Config");
-    std::string path = userdir + "\\Config\\Dolphin.ini";
-    std::string t = read_text_file(path);
-    t = hubui::ini_set(t, "Analytics", "Enabled", "False");
-    t = hubui::ini_set(t, "Analytics", "PermissionAsked", "True");
-    t = hubui::ini_set(t, "AutoUpdate", "UpdateTrack", "");
-    t = hubui::ini_set(t, "Interface", "ConfirmStop", "False");
-    t = hubui::ini_set(t, "Interface", "UsePanicHandlers", "False");
-    write_text_file(path, t);
-
-    std::string pad_path = userdir + "\\Config\\GCPadNew.ini";
-    std::string p = read_text_file(pad_path);
-    if (hubui::ini_get(p, "GCPad1", "Device").empty()) {
-        static const char* kv[][2] = {
-            {"Device", "XInput/0/Gamepad"},
-            {"Buttons/A", "`Button A`"}, {"Buttons/B", "`Button X`"}, {"Buttons/X", "`Button B`"},
-            {"Buttons/Y", "`Button Y`"}, {"Buttons/Z", "`Shoulder R`"}, {"Buttons/Start", "Start"},
-            {"Main Stick/Up", "`Left Y+`"}, {"Main Stick/Down", "`Left Y-`"},
-            {"Main Stick/Left", "`Left X-`"}, {"Main Stick/Right", "`Left X+`"},
-            {"C-Stick/Up", "`Right Y+`"}, {"C-Stick/Down", "`Right Y-`"},
-            {"C-Stick/Left", "`Right X-`"}, {"C-Stick/Right", "`Right X+`"},
-            {"Triggers/L", "`Trigger L`"}, {"Triggers/R", "`Trigger R`"},
-            {"D-Pad/Up", "`Pad N`"}, {"D-Pad/Down", "`Pad S`"}, {"D-Pad/Left", "`Pad W`"}, {"D-Pad/Right", "`Pad E`"},
-        };
-        for (auto& e2 : kv) p = hubui::ini_set(p, "GCPad1", e2[0], e2[1]);
-        write_text_file(pad_path, p);
-    }
-}
-
-/* ---------- Dolphin download (not shipped: ~18 MB archive, GPL) ---------- */
-
-struct DolphinDl {
-    enum State { Idle, Asking, Working, Failed } state = Idle;
-    std::thread th;
-    std::atomic<bool> done{false}, ok{false};
-    std::atomic<uint64_t> got{0}, total{0};
-    std::atomic<int> phase{0};   // 0 download, 1 extract, 2 install
-    std::string error, key;      // key: the game to start afterwards
-    std::mutex mu;
-} DL;
-
-static bool http_download(const std::wstring& host, const std::wstring& path, const std::string& out_file, std::string* err) {
-    HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
-    if (!ses) { *err = "network unavailable"; return false; }
-    bool ok = false;
-    HINTERNET con = WinHttpConnect(ses, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
-    HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                             WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
-    if (req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) && WinHttpReceiveResponse(req, nullptr)) {
-        DWORD status = 0, sz = sizeof status;
-        WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &sz, nullptr);
-        wchar_t lenb[32] = {0};
-        sz = sizeof lenb;
-        if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH, nullptr, lenb, &sz, nullptr)) DL.total = _wtoi64(lenb);
-        if (status != 200) *err = "server answered " + std::to_string(status);
-        else {
-            HANDLE f = CreateFileW(W(out_file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (f == INVALID_HANDLE_VALUE) *err = "cannot write " + out_file;
-            else {
-                std::vector<char> buf(64 * 1024);
-                ok = true;
-                for (;;) {
-                    DWORD n = 0;
-                    if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &n)) { ok = false; *err = "download interrupted"; break; }
-                    if (n == 0) break;
-                    DWORD w = 0;
-                    if (!WriteFile(f, buf.data(), n, &w, nullptr) || w != n) { ok = false; *err = "disk write failed"; break; }
-                    DL.got += n;
-                }
-                CloseHandle(f);
-            }
-        }
-    } else *err = "could not reach " + U(host);
-    if (req) WinHttpCloseHandle(req);
-    if (con) WinHttpCloseHandle(con);
-    WinHttpCloseHandle(ses);
-    return ok;
-}
-
-/* Directory (searched to `depth` levels) that contains a file called `name`. */
-static bool find_file_below(const std::string& dir, const wchar_t* name, int depth, std::string* found_dir) {
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW(W(with_slash(dir) + "*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    bool ok = false;
-    std::vector<std::string> subs;
-    do {
-        std::string n = U(fd.cFileName);
-        if (n == "." || n == "..") continue;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) subs.push_back(n);
-        else if (_wcsicmp(fd.cFileName, name) == 0) { *found_dir = dir; ok = true; break; }
-    } while (FindNextFileW(h, &fd));
-    FindClose(h);
-    if (ok || depth <= 0) return ok;
-    for (auto& s2 : subs)
-        if (find_file_below(with_slash(dir) + s2, name, depth - 1, found_dir)) return true;
-    return false;
-}
-
-/* Mirrors scripts/fetch-dolphin.ps1: download, tar -xf into a staging folder, move the folder that
- * holds Dolphin.exe up into <exe>\dolphin\, create portable.txt. */
-static void dolphin_install_thread() {
-    std::string dir = no_slash(hub::exe_dir()) + "\\dolphin";
-    std::string stage = dir + "\\_extract";
-    std::string archive = dir + "\\dolphin-2509-x64.7z";
-    std::string err;
-    make_dirs(dir);
-    remove_tree(stage);
-    make_dirs(stage);
-    DL.phase = 0;
-    bool ok = http_download(L"dl.dolphin-emu.org", L"/releases/2509/dolphin-2509-x64.7z", archive + ".part", &err);
-    if (ok) MoveFileExW(W(archive + ".part").c_str(), W(archive).c_str(), MOVEFILE_REPLACE_EXISTING);
-    if (ok) {
-        DL.phase = 1;
-        wchar_t sysdir[MAX_PATH];
-        GetSystemDirectoryW(sysdir, MAX_PATH);
-        std::wstring tar = std::wstring(sysdir) + L"\\tar.exe";
-        std::wstring cmd = L"\"" + tar + L"\" -xf \"" + W(archive) + L"\" -C \"" + W(stage) + L"\"";
-        std::vector<wchar_t> cb(cmd.begin(), cmd.end());
-        cb.push_back(0);
-        STARTUPINFOW si{};
-        si.cb = sizeof si;
-        PROCESS_INFORMATION pi{};
-        if (CreateProcessW(tar.c_str(), cb.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, INFINITE);
-            DWORD code = 1;
-            GetExitCodeProcess(pi.hProcess, &code);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            if (code != 0) { ok = false; err = "extraction failed (tar exit " + std::to_string(code) + ")"; }
-        } else { ok = false; err = "tar.exe not found (needs Windows 10 or later)"; }
-    }
-    if (ok) {
-        DL.phase = 2;
-        std::string inner;
-        if (!find_file_below(stage, L"Dolphin.exe", 3, &inner)) { ok = false; err = "Dolphin.exe not found in the download"; }
-        else {
-            WIN32_FIND_DATAW fd;
-            HANDLE h = FindFirstFileW(W(with_slash(inner) + "*").c_str(), &fd);
-            if (h != INVALID_HANDLE_VALUE) {
-                do {
-                    std::string n = U(fd.cFileName);
-                    if (n == "." || n == "..") continue;
-                    if (!MoveFileExW(W(with_slash(inner) + n).c_str(), W(dir + "\\" + n).c_str(), MOVEFILE_REPLACE_EXISTING) &&
-                        !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) { ok = false; err = "could not install " + n; }
-                } while (FindNextFileW(h, &fd));
-                FindClose(h);
-            }
-            write_text_file(dir + "\\portable.txt", "");
-        }
-    }
-    remove_tree(stage);
-    RemoveDirectoryW(W(stage).c_str());
-    DeleteFileW(W(archive).c_str());
-    DeleteFileW(W(archive + ".part").c_str());
-    if (!ok) { std::lock_guard<std::mutex> lk(DL.mu); DL.error = err; }
-    DL.ok = ok;
-    DL.done = true;
-}
-
-static void start_dolphin_install() {
-    if (DL.th.joinable()) DL.th.join();
-    DL.done = false;
-    DL.ok = false;
-    DL.got = 0;
-    DL.total = 0;
-    DL.phase = 0;
-    DL.error.clear();
-    DL.state = DolphinDl::Working;
-    DL.th = std::thread(dolphin_install_thread);
 }
 
 /* Env for every Smash Classic launch: ROM hand-off + vault save path. Migrates the legacy save once (copy, never delete). */
@@ -1147,14 +966,18 @@ static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const st
     }
     if (kind == hubemu::Kind::Azahar) {
         if (inst.managed) hubemu::prepare_azahar(inst.dir);
+    } else if (kind == hubemu::Kind::Dolphin) {
+        hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads());
     } else if (inst.managed) {
         hubemu::prepare_cemu_managed(inst.dir);
     }
     std::string game = launch_path_for(e);
-    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, A.st.fullscreen) : hubemu::cemu_args(game, A.st.fullscreen);
+    auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
+    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, A.st.fullscreen)
+                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, A.st.fullscreen, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
+                                                       : hubemu::cemu_args(game, A.st.fullscreen);
     if (e.issue == "encrypted") set_notice("This 3DS image is encrypted: Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder).", 12.0);
     if (e.issue == "keys") set_notice("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua needs no keys.", 12.0);
-    auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
     RunInfo r = ri;
     r.after_exit = [sess]() {   // emulator save folder -> vault, before the sync runs
         hubemu::end_session(*sess);
@@ -1232,22 +1055,7 @@ static void play_entry(const hub::GameEntry& e) {
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }
-        case hub::System::GC: {
-            std::string dol = find_dolphin();
-            if (dol.empty()) {   // not shipped: ask, download, then start this game
-                DL.key = e.key;
-                DL.state = DolphinDl::Asking;
-                return;
-            }
-            std::string userdir = no_slash(hub::data_dir()) + "\\dolphin-user";
-            prepare_dolphin(userdir);
-            std::string gci = battery + "\\GCI";
-            make_dirs(gci);
-            std::string args = "-b -u " + quote(userdir) + " -C Dolphin.Core.SlotA=8 -C \"Dolphin.Core.GCIFolderAPathOverride=" + gci +
-                               "\" -C Dolphin.Display.Fullscreen=" + (A.st.fullscreen ? "True" : "False") + " -e " + quote(e.path);
-            spawn(dol, args, dir_of(dol), {}, ri);
-            break;
-        }
+        case hub::System::GC:
         case hub::System::N3DS:
         case hub::System::WiiU:
             launch_external(e, ri, battery);
@@ -3632,15 +3440,17 @@ static void page_settings() {
     {
         std::string wiiu_game;
         for (auto& g : A.lib) if (g.system == hub::System::WiiU) { wiiu_game = g.path; break; }
-        static hubemu::Install az, cm;   // the lookups touch the disk: refresh every 2 s, not every frame
+        static hubemu::Install az, cm, dl;   // the lookups touch the disk: refresh every 2 s, not every frame
         static double looked_at = -100;
         static std::string looked_cemu;
         if (ImGui::GetTime() - looked_at > 2.0 || looked_cemu != A.st.cemu_exe) {
             az = hubemu::find(hubemu::Kind::Azahar, "", "");
+            dl = hubemu::find(hubemu::Kind::Dolphin, "", "");
             cm = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, wiiu_game);
             looked_at = ImGui::GetTime();
             looked_cemu = A.st.cemu_exe;
         }
+        text_wrapped_disabled("Dolphin (GameCube): " + (dl.exe.empty() ? std::string("not installed - downloads the first time you play a GameCube game (about 18 MB)") : dl.exe));
         text_wrapped_disabled("Azahar (3DS): " + (az.exe.empty() ? std::string("not installed - downloads the first time you play a 3DS game (about 42 MB)") : az.exe));
         text_wrapped_disabled("Cemu (Wii U): " + (cm.exe.empty() ? std::string("not found - downloads the first time you play a Wii U game (about 25 MB)") : cm.exe + "  (" + cm.how + ")"));
         if (button("Choose Cemu.exe...", ImVec2(0, 0), false, true, ui::Icon::Folder)) {
@@ -3754,9 +3564,9 @@ static void draw_emulator_dialogs() {
         emu_modal_begin("Emulator download", &open);
         if (open) {
             if (EMU.state == hubemu::Installer::Asking) {
-                ImGui::TextWrapped("%s games need the %s emulator (about %d MB download from its official GitHub release, %s). "
+                ImGui::TextWrapped("%s games need the %s emulator (about %d MB download from its official release, %s). "
                                    "It is kept inside RetroHub's data folder. Download now?",
-                                   EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
+                                   EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : EMU.kind == hubemu::Kind::Dolphin ? "GameCube" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
                 ImGui::Dummy(ImVec2(0, 8 * S));
                 if (button("Download", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
                 ImGui::SetItemDefaultFocus();
@@ -3820,61 +3630,7 @@ static void draw_emulator_dialogs() {
     }
 }
 
-/* ---------- Dolphin download dialog + toast ---------- */
-
-static void poll_dolphin() {
-    if (DL.state == DolphinDl::Working && DL.done) {
-        if (DL.th.joinable()) DL.th.join();
-        if (DL.ok) {
-            DL.state = DolphinDl::Idle;
-            set_toast("Dolphin installed.");
-            std::string key = DL.key;
-            if (const hub::GameEntry* g = find_entry(key)) { hub::GameEntry copy = *g; play_entry(copy); }
-        } else {
-            DL.state = DolphinDl::Failed;
-        }
-    }
-}
-
 static void draw_overlays() {
-    // Dolphin modal
-    if (DL.state != DolphinDl::Idle) {
-        ImGui::OpenPopup("Dolphin emulator");
-        ImVec2 c = ImGui::GetMainViewport()->GetCenter();
-        ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(std::min(sp(66.f), ImGui::GetIO().DisplaySize.x * 0.92f), 0));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-        bool dolphin_open = ImGui::BeginPopupModal("Dolphin emulator", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-        ImGui::PopStyleVar(2);
-        if (dolphin_open) {
-            if (DL.state == DolphinDl::Asking) {
-                ImGui::TextWrapped("GameCube needs the Dolphin emulator (about 18 MB download, GPL). Download now?");
-                ImGui::Dummy(ImVec2(0, 8 * S));
-                if (button("Download", ImVec2(160 * S, 44 * S), true)) start_dolphin_install();
-                ImGui::SetItemDefaultFocus();
-                ImGui::SameLine();
-                if (button("Cancel", ImVec2(160 * S, 44 * S))) DL.state = DolphinDl::Idle;
-            } else if (DL.state == DolphinDl::Working) {
-                static const char* phases[] = {"Downloading Dolphin...", "Unpacking...", "Installing..."};
-                ImGui::TextUnformatted(phases[std::min(2, (int)DL.phase)]);
-                uint64_t got = DL.got, tot = DL.total;
-                char ov[48];
-                std::snprintf(ov, sizeof ov, "%.1f / %.1f MB", got / 1048576.0, tot / 1048576.0);
-                ImGui::ProgressBar(DL.phase > 0 ? 1.f : (tot ? (float)got / (float)tot : 0.f), ImVec2(-1, 24 * S), DL.phase > 0 ? "" : ov);
-                ImGui::TextDisabled("Your game starts as soon as it is ready.");
-            } else {
-                std::string err;
-                { std::lock_guard<std::mutex> lk(DL.mu); err = DL.error; }
-                ImGui::TextWrapped("Could not install Dolphin: %s", err.c_str());
-                ImGui::Dummy(ImVec2(0, 8 * S));
-                if (button("Close", ImVec2(160 * S, 44 * S), true)) DL.state = DolphinDl::Idle;
-                ImGui::SetItemDefaultFocus();
-            }
-            if (DL.state == DolphinDl::Idle) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
-    }
     draw_emulator_dialogs();
     draw_details_modal();
 }
@@ -4499,7 +4255,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_process();
         poll_job();
         run_pending_sync();
-        poll_dolphin();
         poll_emulators();
         lobby_tick();
         fr_tick();
@@ -4555,7 +4310,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     FR.cli.stop();
     if (A.scan_th.joinable()) A.scan_th.join();
     if (A.job.th.joinable()) A.job.th.join();
-    if (DL.th.joinable()) DL.th.join();
     hub::flush_library_state();
     if (A.proc) CloseHandle(A.proc);
     for (auto* p : A.pads) SDL_GameControllerClose(p);

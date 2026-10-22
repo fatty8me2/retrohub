@@ -296,3 +296,11 @@ Pre-write `Dolphin.ini` [Analytics], [AutoUpdate], [Interface] keys (section 4) 
 - Update API: `https://dolphin-emu.org/update/latest/beta` (returned 2609a; stable endpoint returned 500)
 - Build download: `https://dl.dolphin-emu.org/releases/2509/dolphin-2509-x64.7z`
 - Download page (client-rendered): `https://dolphin-emu.org/download/`
+
+## 11. As integrated in RetroHub (hubemu::Kind::Dolphin)
+
+- Install: pinned 2509 7z, size + SHA-256 (`3a910cd0...e355`) checked, entry list vetted before `tar -xf` into a staging folder, `portable.txt` + `retrohub-install.txt` marker last, any failure removes the folder. Lives in `<data>\emulators\dolphin`; same job-object session wait and "already running" refusal as Azahar/Cemu.
+- Launch (live-verified): `-b -C Dolphin.Display.Fullscreen=True -C Dolphin.Core.SlotA=8 -C Dolphin.Core.GCIFolderAPathOverride=<card> -e <game>`; the render window covers the monitor with no caption. `SkipNKitWarning=True` is needed for .nkit.iso, else a dialog blocks boot.
+- Pads: `GCPadNew.ini` regenerated each launch (XInput/0..3, Xbox A/X/B/Y -> GC A/B/X/Y, Z = RB, analog L/R triggers, C-stick = right stick); port 1 also accepts Dolphin's default keyboard keys (`DInput/0/Keyboard Mouse:*`). `SIDevice0..3` follow connected XInput pads; a WUP-028 adapter with a WinUSB/libusbK driver switches all ports to the adapter (12).
+- Saves: card folder `User\GC\RetroHub\<key>\GCI` is synced with `<vault>\gc\<key>\battery\GCI` (manifest/conflict rules of emu_saves).
+- Graphics (GFX.ini, written once): 2x internal resolution, no widescreen hack, async ubershaders, Direct3D 11.
