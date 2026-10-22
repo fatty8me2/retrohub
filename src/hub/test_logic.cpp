@@ -58,24 +58,19 @@ int main() {
     CHECK(game_selectable("mp1", 4, {a, d}, 0).reason == "waiting for Di");
     CHECK(!game_selectable("mp1", 1, {a, b}, 0).ok);
 
-    /* Smash Classic online is 2 players: a 3-member room is refused with the cap in the reason */
-    CHECK(!game_selectable("smash64", 2, {a, b, c}, 0).ok);
-    CHECK(game_selectable("smash64", 2, {a, b, c}, 0).reason == "too many players (max 2)");
-    CHECK(game_selectable("smash64", 2, {a}, 0).ok);   /* a 2-member room: the cap allows it (Bob lacks smash64 in this fixture) */
-    {   /* smash_room_notice: only for 3-4 members; names peers without ssb64rom (hello'd peers only) */
-        PeerInfo sa{0, "Ann", true, {{"smash64", "native"}, {"ssb64rom", "NALE"}}, {}};
+    /* Smash Classic online is up to 4 players (no online cap): 3- and 4-member rooms are allowed, no notice */
+    {
+        PeerInfo sa{0, "Ann", true, {{"smash64", "native"}}, {}};
         PeerInfo sb{1, "Bob", true, {{"smash64", "native"}}, {}};
-        PeerInfo sc{2, "Cy", true, {{"smash64", "native"}, {"ssb64rom", "NALE"}}, {}};
-        PeerInfo sd{3, "Di", false, {}, {}};
-        const std::string base = "Smash Classic online supports 2 players. For 3-4 players pick Super Smash Bros. (emulated)";
-        CHECK(smash_room_notice({sa, sb}) == "");
-        CHECK(smash_room_notice({sa}) == "");
-        CHECK(smash_room_notice({sa, sb, sc}) == base + ". Bob doesn't have Super Smash Bros. (emulated)");
-        CHECK(smash_room_notice({sa, sc, sd}) == base);   // Di's hello has not arrived yet: not judged
-        PeerInfo se{4, "Ed", true, {{"smash64", "native"}}, {}};
-        CHECK(smash_room_notice({sa, sb, sc, se}) == base + ". Bob, Ed don't have Super Smash Bros. (emulated)");
-        PeerInfo sk{4, "Ed", true, {}, {"n64:nale", "ssb64rom"}};   // library key form counts as owning it
-        CHECK(smash_room_notice({sa, sc, sk}) == base);
+        PeerInfo sc{2, "Cy", true, {{"smash64", "native"}}, {}};
+        PeerInfo sd{3, "Di", true, {{"smash64", "native"}}, {}};
+        CHECK(game_selectable("smash64", 4, {sa}, 0).ok);
+        CHECK(game_selectable("smash64", 4, {sa, sb}, 0).ok);
+        CHECK(game_selectable("smash64", 4, {sa, sb, sc}, 0).ok);
+        CHECK(game_selectable("smash64", 4, {sa, sb, sc, sd}, 0).ok);
+        CHECK(game_selectable("smash64", 4, {sa, sb, sc, sd}, 0).reason.empty());
+        CHECK(!game_selectable("smash64", 2, {sa, sb, sc}, 0).ok);   /* the generic max_players check still works */
+        CHECK(game_selectable("smash64", 2, {sa, sb, sc}, 0).reason == "too many players (max 2)");
     }
 
     /* hello v2 (+ old v1 shape without keys) */

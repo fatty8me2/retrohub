@@ -86,7 +86,7 @@ static void test_catalog() {
         CHECK(smash->max_players == 4);
         CHECK(smash->rom_md5s.empty());
         CHECK(smash->native_exe == "games/smashClassic/BattleShip.exe");
-        CHECK(smash->online_max == 2 && online_max_for(*smash) == 2);   // online rooms cap at 2
+        CHECK(smash->online_max == 0 && online_max_for(*smash) == 4);   // online rooms are up to 4 (no cap)
         CHECK(smash->max_players == 4);                                  // local play is still 4
     }
 

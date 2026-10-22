@@ -630,7 +630,7 @@ static bool supports_online(const hub::GameEntry& e) {
     return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB ||
            e.system == hub::System::GBC;
 }
-/* Online player cap for a room (online_max_for: Smash Classic is 2 online). Every online limit uses this. */
+/* Online player cap for a room (online_max_for; 0 online_max = max_players). Every online limit uses this. */
 static int max_players_for(const hub::GameEntry& e) {
     if (const GameInfo* g = hub::find_game(e.catalog_id)) return hub::online_max_for(*g);
     return (e.system == hub::System::GB || e.system == hub::System::GBC) ? 2 : 4;
@@ -3011,14 +3011,6 @@ static void page_online_room() {
         }
     }
     if (match_active()) match_panel(host, left_w);
-    if (A.selected_game == "smash64") {   // Smash Classic online is 2 players; say so once the room is bigger
-        std::string notice = hubui::smash_room_notice(peers);
-        if (!notice.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, COL_BAD);
-            ImGui::TextWrapped("%s", notice.c_str());
-            ImGui::PopStyleColor();
-        }
-    }
     if (host) {
         bool ok = false;
         std::string why;
