@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -58,8 +59,22 @@ struct TreeSyncReport {
  * the content differs the file with the newer modification time wins. Before dst is overwritten the old
  * file is copied to <backup_dir>/<relative path>.<backup_tag> (skipped when backup_dir is empty).
  * Never deletes anything. Keeps modification times. A missing src is not an error (nothing to do). */
+/* What both sides held after the last successful sync, by relative path -> content hash. With it a skewed clock cannot
+ * make an old copy win: the side whose content still equals the agreed hash is the unchanged one. */
+struct SyncManifest {
+    std::map<std::string, uint64_t> agreed;
+};
+bool manifest_load(const std::string& path, SyncManifest* m);
+bool manifest_save(const std::string& path, const SyncManifest& m);
+uint64_t file_hash(const std::string& path);   // FNV-1a 64 of the content, 0 on error
+
+/* Copies are decided as: missing -> copy; identical bytes -> nothing (no backup); differing -> if `manifest` knows the file, the
+ * side that still matches the agreed hash loses to the side that changed; otherwise the newer mtime wins. Per-file backups
+ * "<name>.<tag>" beyond the newest `keep_backups` are pruned. `key_prefix` keeps several trees apart inside one manifest.
+ * Any file that cannot be examined or written sets ok=false (and is skipped, never overwritten). */
 TreeSyncReport sync_tree_newest(const std::string& src, const std::string& dst, const std::string& backup_dir,
-                                const std::string& backup_tag);
+                                const std::string& backup_tag, SyncManifest* manifest = nullptr,
+                                const std::string& key_prefix = "", int keep_backups = 10);
 
 /* True when `dir` exists and holds at least one regular file. */
 bool tree_has_files(const std::string& dir);

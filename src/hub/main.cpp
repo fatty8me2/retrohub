@@ -457,6 +457,7 @@ struct App {
 
     // child process
     HANDLE proc = nullptr;
+    HANDLE job_h = nullptr;     // job object holding an external emulator and anything it starts (3DS / Wii U)
     std::string proc_title;
 
     // ui
@@ -809,6 +810,11 @@ static bool spawn(const std::string& exe, const std::string& args, const std::st
     for (auto& e : env) SetEnvironmentVariableW(W(e.first).c_str(), nullptr);
     if (!ok) { set_notice("Could not start " + file_name(exe) + " (error " + std::to_string(err) + ")"); return false; }
     CloseHandle(pi.hThread);
+    if (ri.after_exit) {   // external emulator: follow every process it starts, so a relaunch / hand-off keeps the session open
+        HANDLE job = CreateJobObjectW(nullptr, nullptr);
+        if (job && !AssignProcessToJobObject(job, pi.hProcess)) { CloseHandle(job); job = nullptr; }
+        A.job_h = job;
+    }
     A.proc = pi.hProcess;
     A.proc_title = ri.title;
     A.run = ri;
@@ -820,6 +826,12 @@ static bool spawn(const std::string& exe, const std::string& args, const std::st
 static void poll_process() {
     if (!A.proc) return;
     if (WaitForSingleObject(A.proc, 0) != WAIT_OBJECT_0) return;
+    if (A.job_h) {   // the emulator may have handed the game to a child: wait until the whole job is gone
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION ji{};
+        if (QueryInformationJobObject(A.job_h, JobObjectBasicAccountingInformation, &ji, sizeof ji, nullptr) && ji.ActiveProcesses > 0) return;
+        CloseHandle(A.job_h);
+        A.job_h = nullptr;
+    }
     DWORD code = 0;
     GetExitCodeProcess(A.proc, &code);
     CloseHandle(A.proc);
@@ -1111,6 +1123,10 @@ static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const st
         return;
     }
     if (g_headless) { set_notice("Headless test run: launch skipped."); return; }
+    if (hubemu::is_running(inst.exe)) {   // a second launch would hand over to the running instance and end the session early
+        set_notice(std::string(hubemu::name(kind)) + " is already running. Close it first, then start the game from RetroHub.", 10.0);
+        return;
+    }
     if (kind == hubemu::Kind::Azahar) {
         if (inst.managed) hubemu::prepare_azahar(inst.dir);
     } else if (inst.managed) {
@@ -1122,7 +1138,10 @@ static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const st
     if (e.issue == "keys") set_notice("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua needs no keys.", 12.0);
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
     RunInfo r = ri;
-    r.after_exit = [sess]() { hubemu::end_session(*sess); };   // emulator save folder -> vault, before the sync runs
+    r.after_exit = [sess]() {   // emulator save folder -> vault, before the sync runs
+        hubemu::end_session(*sess);
+        if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (your emulator's copy is untouched)", ui::WARN, 15.0);
+    };
     spawn(inst.exe, args, inst.dir, {}, r);
 }
 

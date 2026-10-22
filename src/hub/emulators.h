@@ -97,12 +97,17 @@ struct SaveSession {
     int64_t started_unix = 0;
     bool restore_only_if_missing = false; // existing Cemu install: fill an empty save folder, never overwrite
     std::string summary;                  // for a log/toast after end_session
+    std::string error;                    // first failure of begin/end_session ("" = all fine)
+    std::string manifest_path;            // <vault>\.sync\emu-<key>.json: what both sides agreed on last time
 };
 /* Before launch: vault -> emulator (newest wins; see sync_tree_newest). */
 SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& vault_battery_dir,
                           const std::string& vault_root);
 /* After exit: emulator -> vault. */
 void end_session(SaveSession& s);
+
+/* True when a process with this exe's file name is already running (a new launch would hand over to it). */
+bool is_running(const std::string& exe);
 
 /* "3ds:0004000000055d00" / "wiiu:000500001019e500" -> title id (0 if the key carries none). */
 uint64_t title_id_from_key(const std::string& key);

@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
+#include <tlhelp32.h>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -17,6 +19,7 @@
 #include <vector>
 
 #include "emu_saves.h"
+#include "miniz.h"
 #include "games.h"
 #include "logic.h"
 
@@ -151,7 +154,7 @@ Install find(Kind k, const std::string& configured, const std::string& game_path
     }
     std::string md = managed_dir(k, root);
     std::string exe = join(md, U(release(k).exe));
-    if (file_exists(exe)) {
+    if (file_exists(exe) && file_exists(join(md, "retrohub-install.txt"))) {   // complete installs only
         in.exe = exe;
         in.dir = md;
         in.managed = true;
@@ -248,36 +251,57 @@ static bool find_file_below(const std::string& dir, const std::wstring& name, in
     return false;
 }
 
-static bool run_tar_extract(const std::string& archive, const std::string& dest, std::string* err) {
-    wchar_t sysdir[MAX_PATH];
-    GetSystemDirectoryW(sysdir, MAX_PATH);
-    std::wstring tar = std::wstring(sysdir) + L"\\tar.exe";
-    std::wstring cmd = L"\"" + tar + L"\" -xf \"" + W(archive) + L"\" -C \"" + W(dest) + L"\"";
-    std::vector<wchar_t> cb(cmd.begin(), cmd.end());
-    cb.push_back(0);
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(tar.c_str(), cb.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        *err = "tar.exe not found (needs Windows 10 or later)";
-        return false;
+/* Entry names from the zip: UTF-8, relative, no "..", no drive or root. */
+static bool safe_zip_name(const std::string& n) {
+    if (n.empty() || n[0] == '/' || n[0] == '\\' || n.find(':') != std::string::npos) return false;
+    size_t p = 0;
+    while (p <= n.size()) {
+        size_t q = n.find_first_of("/\\", p);
+        std::string part = n.substr(p, q == std::string::npos ? std::string::npos : q - p);
+        if (part == "..") return false;
+        if (q == std::string::npos) break;
+        p = q + 1;
     }
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD code = 1;
-    GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    /* bsdtar exits 1 ("skipping" a name it cannot write, e.g. Cemu's resources/ar/<RTL mark>cemu.mo) but extracts the rest.
-     * The archive already matched its pinned SHA-256, so any other exit 1 is judged by whether the exe appears below. */
-    if (code != 0) { *err = "extraction failed (tar exit " + std::to_string(code) + ")"; return code == 1; }
     return true;
+}
+
+/* Own unzip (miniz) instead of bsdtar: every entry name is checked, and any entry that cannot be written fails the install
+ * (bsdtar skipped Cemu's resources/ar/<RTL mark>cemu.mo and exited 1; the wide-char API writes that name fine). */
+static bool unzip_to(const std::string& archive, const std::string& dest, std::string* err) {
+    mz_zip_archive za;
+    std::memset(&za, 0, sizeof za);
+    FILE* zf = _wfopen(W(archive).c_str(), L"rb");
+    if (!zf) { *err = "cannot open the download"; return false; }
+    if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); *err = "the download is not a valid zip"; return false; }
+    bool ok = true;
+    mz_uint n = mz_zip_reader_get_num_files(&za);
+    for (mz_uint i = 0; i < n && ok; i++) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&za, i, &st)) { ok = false; *err = "damaged zip entry"; break; }
+        std::string name = st.m_filename;
+        if (!safe_zip_name(name)) { ok = false; *err = "unsafe path in the zip: " + name; break; }
+        fs::path target = P(dest) / fs::u8path(name);
+        std::error_code ec;
+        if (st.m_is_directory || name.back() == '/' || name.back() == '\\') { fs::create_directories(target, ec); continue; }
+        fs::create_directories(target.parent_path(), ec);
+        FILE* out = _wfopen(target.wstring().c_str(), L"wb");
+        if (!out) { ok = false; *err = "cannot write " + name; break; }
+        bool r = mz_zip_reader_extract_to_cfile(&za, i, out, 0) != 0;
+        bool flushed = std::fflush(out) == 0;
+        std::fclose(out);
+        if (!r || !flushed) { ok = false; *err = "cannot extract " + name; }
+    }
+    mz_zip_reader_end(&za);
+    std::fclose(zf);
+    return ok;
 }
 
 static bool install_core(Kind k, const std::string& root, std::string* err, std::atomic<int>* phase, Progress pr) {
     const Release& rel = release(k);
     std::string dir = managed_dir(k, root);
     std::string exe = join(dir, U(rel.exe));
-    if (file_exists(exe)) return true;   // already installed
+    if (file_exists(exe) && file_exists(join(dir, "retrohub-install.txt"))) return true;   // complete install (marker is written last)
+    remove_tree(dir);   // a leftover from a failed attempt
     std::string stage = join(dir, "_extract");
     std::string archive = join(join(root, "_downloads"), S(fs::path(rel.path).filename()));
     make_dirs(dir);
@@ -304,7 +328,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         fs::rename(P(archive + ".part"), P(archive), ec);
         if (ec) { ok = false; *err = "cannot move the download into place"; }
     }
-    if (ok) { setp(2); ok = run_tar_extract(archive, stage, err); if (ok) err->clear(); }
+    if (ok) { setp(2); ok = unzip_to(archive, stage, err); }
     if (ok) {
         setp(3);
         std::string inner;
@@ -319,10 +343,11 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
                 if (e2) { ok = false; *err = "could not install " + S(it->path().filename()); break; }
             }
             if (ok && !file_exists(exe)) { ok = false; *err = U(rel.exe) + " missing after install"; }
-            if (ok) write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");
         }
     }
     remove_tree(stage);
+    if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");
+    if (!ok) remove_tree(dir);   // never leave a half install behind
     std::error_code ec;
     fs::remove(P(archive), ec);
     fs::remove(P(archive + ".part"), ec);
@@ -495,6 +520,19 @@ std::string cemu_args(const std::string& game, bool fullscreen) {
 /* saves                                                               */
 /* ------------------------------------------------------------------ */
 
+bool is_running(const std::string& exe) {
+    std::wstring want = P(exe).filename().wstring();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof pe;
+    bool found = false;
+    for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe))
+        if (_wcsicmp(pe.szExeFile, want.c_str()) == 0) found = true;
+    CloseHandle(snap);
+    return found;
+}
+
 uint64_t title_id_from_key(const std::string& key) {
     size_t c = key.find(':');
     if (c == std::string::npos || key.size() < c + 17) return 0;
@@ -534,6 +572,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
     /* <vault>\<system>\<game>\battery -> <vault>\_conflicts\<system>\<game>\battery */
     fs::path game = P(battery).parent_path(), sysdir = game.parent_path(), vault = sysdir.parent_path();
     s.backup_dir = S(vault / L"_conflicts" / sysdir.filename() / game.filename() / L"battery");
+    s.manifest_path = S(vault / L".sync" / (L"emu-" + sysdir.filename().wstring() + L"-" + game.filename().wstring() + L".json"));
 
     uint64_t tid = title_id_from_key(e.key);
     if (e.system == hub::System::N3DS) {
@@ -554,7 +593,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         s.wiiu_save_parent = join(d.mlc, "usr\\save\\00050000");
         if (!tid) {   // .wud/.wux: the title id is not readable without decrypting; reuse what an earlier session stored
             auto known = hub::subdirs_modified_since(join(battery, "usr\\save\\00050000"), 0);
-            if (known.size() == 1) s.rels = {"usr/save/00050000/" + known[0]};
+            for (const auto& k : known) s.rels.push_back("usr/save/00050000/" + k);   // every folder an earlier session stored
             s.wiiu_unknown_title = true;
         } else {
             s.rels = {hub::wiiu_save_rel(tid)};
@@ -564,32 +603,43 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
     }
     s.active = true;
     std::string tag = stamp_tag();
+    hub::SyncManifest man;
+    hub::manifest_load(s.manifest_path, &man);
     int in = 0, kept = 0;
     for (const auto& rel : s.rels) {
         std::string vsrc = join(battery, rel), edst = join(s.emu_root, rel);
         if (s.restore_only_if_missing && hub::tree_has_files(edst)) continue;
-        hub::TreeSyncReport r = hub::sync_tree_newest(vsrc, edst, join(join(s.backup_dir, "emulator"), rel), tag);
+        hub::TreeSyncReport r = hub::sync_tree_newest(vsrc, edst, join(join(s.backup_dir, "emulator"), rel), tag, &man, rel + "/");
         in += r.copied;
         kept += r.kept;
+        if (!r.ok && s.error.empty()) s.error = r.error;
     }
+    hub::manifest_save(s.manifest_path, man);
     s.summary = std::to_string(in) + " save file(s) restored from the vault, " + std::to_string(kept) + " kept (emulator copy newer)";
     return s;
 }
 
 void end_session(SaveSession& s) {
     if (!s.active) return;
-    if (s.wiiu_unknown_title && s.rels.empty()) {
-        auto changed = hub::subdirs_modified_since(s.wiiu_save_parent, s.started_unix - 2);
-        if (changed.size() == 1) s.rels = {"usr/save/00050000/" + changed[0]};
+    if (s.wiiu_unknown_title) {   // .wud/.wux: every save folder that changed during the session belongs to this game
+        for (const auto& c : hub::subdirs_modified_since(s.wiiu_save_parent, s.started_unix - 2)) {
+            std::string rel = "usr/save/00050000/" + c;
+            if (std::find(s.rels.begin(), s.rels.end(), rel) == s.rels.end()) s.rels.push_back(rel);
+        }
     }
     std::string tag = stamp_tag();
+    hub::SyncManifest man;
+    hub::manifest_load(s.manifest_path, &man);
     int out = 0, bk = 0;
     for (const auto& rel : s.rels) {
-        hub::TreeSyncReport r = hub::sync_tree_newest(join(s.emu_root, rel), join(s.battery, rel), join(s.backup_dir, rel), tag);
+        hub::TreeSyncReport r = hub::sync_tree_newest(join(s.emu_root, rel), join(s.battery, rel), join(s.backup_dir, rel), tag, &man, rel + "/");
         out += r.copied;
         bk += r.backed_up;
+        if (!r.ok && s.error.empty()) s.error = r.error;
     }
-    s.summary = std::to_string(out) + " save file(s) copied into the vault, " + std::to_string(bk) + " older vault file(s) kept in _conflicts";
+    hub::manifest_save(s.manifest_path, man);
+    s.summary = std::to_string(out) + " save file(s) copied into the vault, " + std::to_string(bk) + " older vault file(s) kept in _conflicts" +
+                (s.wiiu_unknown_title && s.rels.empty() ? "; no Wii U save folder changed during the session" : "");
     s.active = false;
 }
 

@@ -115,6 +115,9 @@ static void test_3ds_header() {
     CHECK(parse_3ds_header(cia.data(), cia.size(), &i));
     CHECK(i.container == "cia" && i.title_id == 0x00040000001B5100ull && i.serial == "001B5100" && i.is_application);
 
+    /* CIA whose TMD header ends exactly before the 8-byte title id: must not read past the buffer */
+    CHECK(!parse_3ds_header(cia.data(), tmd + 4 + 0x100 + 0x3C + 0x50, &i));
+
     CHECK(is_3ds_extension(".3ds") && is_3ds_extension(".zcia") && !is_3ds_extension(".zip") && !is_3ds_extension(".gba"));
     CHECK(is_3ds_zip_entry(".cci") && !is_3ds_zip_entry(".zcci"));
 }
@@ -326,6 +329,36 @@ static void test_tree_sync(const fs::path& dir) {
     r = sync_tree_newest(a.string(), b.string(), bk.string(), "t3");
     CHECK(r.kept == 1 && r.copied == 0 && read_text(b / "x" / "one.sav") == "AAAA");
 
+    /* clock skew: with a manifest the side that changed since the last agreement wins, whatever its mtime says */
+    {
+        fs::path sa = dir / "sa", sb = dir / "sb";
+        write_text(sa / "f.sav", "v1");
+        SyncManifest man;
+        CHECK(sync_tree_newest(sa.string(), sb.string(), "", "t", &man, "k/").copied == 1);
+        write_text(sa / "f.sav", "v2-edited-on-skewed-pc");
+        set_mtime(sa / "f.sav", 5000);   // its clock is far behind: older than sb's copy
+        TreeSyncReport rr = sync_tree_newest(sa.string(), sb.string(), (dir / "skbk").string(), "local.20260101-000001", &man, "k/");
+        CHECK(rr.copied == 1 && read_text(sb / "f.sav") == "v2-edited-on-skewed-pc");
+        write_text(sa / "f.sav", "v1");   // without a manifest the older mtime loses
+        set_mtime(sa / "f.sav", 9000);
+        CHECK(sync_tree_newest(sa.string(), sb.string(), "", "t").kept == 1 && read_text(sb / "f.sav") == "v2-edited-on-skewed-pc");
+        /* backups are pruned to the newest 10 per file; identical content makes no backup */
+        fs::path pa = dir / "pa", pb = dir / "pb", pbk = dir / "pbk";
+        write_text(pb / "g.sav", "start");
+        for (int i = 0; i < 14; ++i) {
+            write_text(pa / "g.sav", "ver" + std::to_string(i));
+            set_mtime(pa / "g.sav", 100 - i);
+            set_mtime(pb / "g.sav", 3000);
+            char tg[40];
+            std::snprintf(tg, sizeof tg, "local.20260101-0000%02d", i);
+            sync_tree_newest(pa.string(), pb.string(), pbk.string(), tg);
+        }
+        int nb = 0;
+        for (auto& de : fs::directory_iterator(pbk)) { (void)de; ++nb; }
+        CHECK(nb == 10);
+        CHECK(sync_tree_newest(pa.string(), pb.string(), pbk.string(), "local.zzz").identical == 1);
+    }
+
     /* missing source is fine; nothing is ever deleted */
     r = sync_tree_newest((dir / "nope").string(), b.string(), "", "t");
     CHECK(r.ok && r.copied == 0);
@@ -479,6 +512,9 @@ static void test_prepare_and_find(const fs::path& dir) {
     i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").string());
     CHECK(i.exe.empty());   // not downloaded yet
     write_text(az / "azahar.exe", "x");
+    i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").string());
+    CHECK(i.exe.empty());   // exe without the install marker = an incomplete install
+    write_text(az / "retrohub-install.txt", "Azahar test");
     i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").string());
     CHECK(i.managed && i.exe == (az / "azahar.exe").string());
 }

@@ -89,7 +89,7 @@ bool parse_3ds_header(const uint8_t* d, size_t n, N3dsInfo* out) {
         default: return false;
         }
         uint64_t hdr = tmd_at + sig_len;   // TMD header: title id at +0x4C (big endian)
-        if (hdr + 0x50 > n) return false;
+        if (hdr + 0x54 > n) return false;   // reads 8 bytes at hdr + 0x4C
         o.title_id = be64(d + hdr + 0x4C);
         o.container = "cia";
         o.serial = upper_hex8(uint32_t(o.title_id & 0xFFFFFFFFu));
@@ -128,12 +128,13 @@ bool parse_wua(const ReadAtFn& read, uint64_t file_size, WiiuInfo* out) {
     if (be64(f + 128) != file_size) return false;
     uint64_t names_off = be64(f + 32), names_sz = be64(f + 40);
     uint64_t tree_off = be64(f + 48), tree_sz = be64(f + 56);
-    if (tree_sz < 16 || tree_sz > (1ull << 31) || tree_off + tree_sz > file_size || names_off + names_sz > file_size) return false;
+    if (tree_sz < 16 || tree_sz > (1ull << 31) || tree_off > file_size || tree_sz > file_size - tree_off ||
+        names_off > file_size || names_sz > file_size - names_off) return false;
     uint8_t node[16];
     if (!read(tree_off, node, 16)) return false;
     if (node[0] & 0x80) return false;   // root must be a directory
     uint32_t first = be32(node + 4), count = be32(node + 8);
-    if (count == 0 || uint64_t(first) * 16 + uint64_t(count) * 16 > tree_sz) return false;
+    if (count == 0 || first >= tree_sz / 16 || count > tree_sz / 16 - first) return false;
     if (count > 4096) count = 4096;
     std::vector<uint8_t> kids(size_t(count) * 16);
     if (!read(tree_off + uint64_t(first) * 16, kids.data(), kids.size())) return false;
@@ -219,7 +220,7 @@ bool parse_wux(const ReadAtFn& read, uint64_t file_size, WiiuInfo* out) {
     if (std::memcmp(h, "WUX0", 4) != 0 || le32(h + 4) != 0x1099d02e) return false;
     uint32_t sector = le32(h + 8);
     uint64_t uncompressed = le64(h + 12);
-    if (sector < 0x100 || sector > 0x100000 || uncompressed == 0) return false;
+    if (sector < 0x100 || sector > 0x100000 || uncompressed == 0 || uncompressed > (1ull << 50)) return false;
     uint64_t sectors = (uncompressed + sector - 1) / sector;
     uint64_t data_at = (0x20 + sectors * 4 + sector - 1) / sector * sector;
     uint8_t idx[4];
