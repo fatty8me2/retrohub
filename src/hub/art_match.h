@@ -19,6 +19,8 @@ std::string thumb_repo(const std::string& system_short);       // "Nintendo_-_Ni
 std::string dat_url(const std::string& system_short);          // full raw.githubusercontent URL
 const char* kind_dir(int kind);                                // 0 Named_Boxarts, 1 Named_Titles, 2 Named_Snaps
 std::string thumb_url(const std::string& system_short, int kind, const std::string& nointro_name);
+/* URLs to try in order. gbc adds the Game Boy repo second: dual-mode carts (e.g. Pokemon Yellow) are filed there. */
+std::vector<std::string> thumb_urls(const std::string& system_short, int kind, const std::string& nointro_name);
 
 /* One ROM line of a DAT (game-level serial is inherited when the rom has none). */
 struct DatRec {

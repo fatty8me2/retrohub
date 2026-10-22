@@ -17,6 +17,10 @@ set_target_properties(retrorun PROPERTIES WIN32_EXECUTABLE OFF)
 add_custom_command(TARGET retrorun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:retrorun>)
 
+# Nintendo DS helpers (layout fit, stylus mapping, core option defaults): pure logic, console test.
+add_executable(retrorun_ds_test test_dsview.cpp)
+target_include_directories(retrorun_ds_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Branding: same icon + version resources as RetroHub.exe (see src/hub/CMakeLists.txt for the generated header).
 target_sources(retrorun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/retrorun.rc)
 target_include_directories(retrorun PRIVATE ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_CURRENT_SOURCE_DIR}/../hub)

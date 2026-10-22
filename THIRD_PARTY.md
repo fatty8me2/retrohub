@@ -24,6 +24,7 @@ RetroHub uses the components below. Each one keeps its own license. Components a
 | mGBA (libretro core) | nightly | MPL-2.0 | `scripts/fetch-cores.ps1` | Game Boy Advance, and fallback for GB and GBC. |
 | SameBoy (libretro core) | nightly | MIT | `scripts/fetch-cores.ps1` | Game Boy and Game Boy Color. |
 | Gambatte (libretro core) | nightly | GPL-2.0 | `scripts/fetch-cores.ps1` | Game Boy and Game Boy Color fallback. |
+| melonDS DS (libretro core, `melondsds_libretro`) | 1.4.0 (nightly) | GPL-3.0-or-later | `scripts/fetch-cores.ps1` | Nintendo DS. Uses its built-in FreeBIOS and generated firmware; no BIOS files are shipped or required. Based on melonDS (GPL-3.0-or-later). |
 | libretro frontend info files | nightly | per file (MIT for most) | `scripts/fetch-cores.ps1` | Core metadata (`.info`). |
 | Dolphin | 2509 | GPL-2.0-or-later | `scripts/fetch-dolphin.ps1` | GameCube emulation, downloaded on demand. |
 | Azahar | 2126.2 | GPL-3.0 | `src/hub/emulators.cpp` (github.com/azahar-emu/azahar) | Nintendo 3DS emulation, downloaded on demand into the data folder; SHA-256 pinned. |
@@ -49,4 +50,4 @@ RetroHub does not include game cover art, box art or screenshots. Art is fetched
 
 - RetroHub itself is GPL-3.0-or-later (see `LICENSE`).
 - The mupen64plus and GLideN64 components are GPL-2.0-or-later, so they can be used under GPL-3.0-or-later.
-- Gambatte and mupen64plus are used as separate programs or plugins, not compiled into RetroHub.
+- Gambatte, melonDS DS and mupen64plus are used as separate programs, plugins or dynamically loaded libraries, not compiled into RetroHub.

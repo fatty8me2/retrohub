@@ -22,7 +22,7 @@ struct GameInfo {
     std::vector<std::string> rom_md5s;  // uppercase hex MD5 of the .z64-order image; accepted dumps
     std::string native_exe;  // Native only: path relative to the hub dir, e.g. "games/smashClassic/BattleShip.exe"
     // ---- added for the multi-system catalog (defaults keep older entries valid) ----
-    std::string system = "n64";         // library.h system_short(): n64 gba gb gbc gc
+    std::string system = "n64";         // library.h system_short(): n64 gba gb gbc gc nds
     std::vector<std::string> serials;   // header IDs, matched case-insensitively against GameEntry::serial:
                                         //   N64 4-char game ID at 0x3B (e.g. "NSME"), GBA 4-char code (e.g. "BPEE"),
                                         //   GC 6-char disc ID (e.g. "GALE01"), 3DS 4-char NCCH game code (e.g. "EKJA"),

@@ -170,6 +170,8 @@ const char* genre_of(const std::string& id) {
         {"pokex", "RPG"}, {"pokey", "RPG"}, {"pokeor", "RPG"}, {"pokeas", "RPG"},
         {"pokesun", "RPG"}, {"pokemoon", "RPG"}, {"pokeusun", "RPG"}, {"pokeumoon", "RPG"},
         {"tphd", "Adventure"},
+        {"pokered", "RPG"}, {"pokeyellow", "RPG"}, {"pokegold", "RPG"}, {"pokesilver", "RPG"}, {"pokecrystal", "RPG"},
+        {"pokediamond", "RPG"}, {"pokepearl", "RPG"}, {"pokeplatinum", "RPG"}, {"pokeheartgold", "RPG"}, {"pokesoulsilver", "RPG"}, {"pokeblack", "RPG"}, {"pokewhite", "RPG"}, {"pokeblack2", "RPG"}, {"pokewhite2", "RPG"},   // nds
     };
     for (const auto& r : kTable)
         if (id == r.id) return r.genre;
@@ -470,6 +472,68 @@ const std::vector<GameInfo>& catalog() {
          {"000500001019E500"}, false, 2016,
          "Link crosses between Hyrule and the Twilight Realm in the remastered GameCube adventure.",
          "Legend of Zelda, The - Twilight Princess HD (USA) (En,Fr,Es) (Rev 2)"},
+        /* ---- Game Boy / Game Boy Color (Libretro). Serials are what library.cpp reads from the
+         *      header: the manufacturer code (0x13F-0x142) on CGB carts that have one, otherwise
+         *      the header title (CGB titles are 11 chars, DMG 16). Link-cable play is not
+         *      networked, so online=false. ---- */
+        {"pokered", "Pokemon Red", Engine::Libretro, 2, {}, "", "gb",
+         {"POKEMON RED"}, false, 1998,
+         "Explore Kanto, catch Pokemon, and trade or battle over a link cable.",
+         "Pokemon - Red Version (USA, Europe) (SGB Enhanced)"},
+        {"pokeyellow", "Pokemon Yellow", Engine::Libretro, 2, {}, "", "gbc",
+         {"POKEMON YEL"}, false, 1999,
+         "Follow Pikachu through Kanto as your partner, with the link cable for trades and battles.",
+         "Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced)"},
+        {"pokegold", "Pokemon Gold", Engine::Libretro, 2, {}, "", "gbc",
+         {"AAUE", "POKEMON_GLD"}, false, 2000,
+         "Catch Pokemon in Johto and Kanto, with day and night, held items and link-cable trades.",
+         "Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible)"},
+        {"pokesilver", "Pokemon Silver", Engine::Libretro, 2, {}, "", "gbc",
+         {"AAXE", "POKEMON_SLV"}, false, 2000,
+         "The Silver version of Johto and Kanto, with its own version-exclusive Pokemon.",
+         "Pokemon - Silver Version (USA, Europe) (SGB Enhanced) (GB Compatible)"},
+        {"pokecrystal", "Pokemon Crystal", Engine::Libretro, 2, {}, "", "gbc",
+         {"BYTE", "PM_CRYSTAL"}, false, 2001,
+         "Play as a girl or boy in Johto, with a roaming Raikou, Entei and Suicune and a day-night clock.",
+         "Pokemon - Crystal Version (USA)"},
+
+        /* ---- Nintendo DS library (Libretro, melonDS DS). Local play only; serials = header game code (0x0C). ---- */
+        {"pokediamond", "Pokemon Diamond", Engine::Libretro, 1, {}, "", "nds",
+         {"ADAE", "ADAJ", "ADAP", "ADAD", "ADAF", "ADAI", "ADAS", "ADAK"}, false, 2007,
+         "Explore the Sinnoh region, catch Pokemon, and take on Team Galactic.",
+         "Pokemon - Diamond Version (USA) (Rev 5)"},
+        {"pokepearl", "Pokemon Pearl", Engine::Libretro, 1, {}, "", "nds",
+         {"APAE", "APAJ", "APAP", "APAD", "APAF", "APAI", "APAS", "APAK"}, false, 2007,
+         "The Sinnoh adventure again, with a different set of version-exclusive Pokemon.",
+         "Pokemon - Pearl Version (USA) (Rev 5)"},
+        {"pokeplatinum", "Pokemon Platinum", Engine::Libretro, 1, {}, "", "nds",
+         {"CPUE", "CPUJ", "CPUP", "CPUD", "CPUF", "CPUI", "CPUS", "CPUK"}, false, 2009,
+         "The enhanced Sinnoh story, with the Distortion World and the Battle Frontier.",
+         "Pokemon - Platinum Version (USA)"},
+        {"pokeheartgold", "Pokemon HeartGold", Engine::Libretro, 1, {}, "", "nds",
+         {"IPKE", "IPKJ", "IPKP", "IPKD", "IPKF", "IPKI", "IPKS", "IPKK"}, false, 2010,
+         "A remake of Gold with Johto and Kanto to explore, and a Pokemon following you around.",
+         "Pokemon - HeartGold Version (USA)"},
+        {"pokesoulsilver", "Pokemon SoulSilver", Engine::Libretro, 1, {}, "", "nds",
+         {"IPGE", "IPGJ", "IPGP", "IPGD", "IPGF", "IPGI", "IPGS", "IPGK"}, false, 2010,
+         "A remake of Silver with Johto and Kanto to explore, and a Pokemon following you around.",
+         "Pokemon - SoulSilver Version (USA)"},
+        {"pokeblack", "Pokemon Black", Engine::Libretro, 1, {}, "", "nds",
+         {"IRBE", "IRBJ", "IRBP", "IRBD", "IRBF", "IRBI", "IRBS", "IRBK", "IRBO"}, false, 2011,
+         "Journey through the Unova region, home to entirely new Pokemon.",
+         "Pokemon - Black Version (USA, Europe) (NDSi Enhanced)"},
+        {"pokewhite", "Pokemon White", Engine::Libretro, 1, {}, "", "nds",
+         {"IRAE", "IRAJ", "IRAP", "IRAD", "IRAF", "IRAI", "IRAS", "IRAK", "IRAO"}, false, 2011,
+         "The Unova adventure with its own exclusive Pokemon and a city to explore.",
+         "Pokemon - White Version (USA, Europe) (NDSi Enhanced)"},
+        {"pokeblack2", "Pokemon Black 2", Engine::Libretro, 1, {}, "", "nds",
+         {"IREE", "IREJ", "IREP", "IRED", "IREF", "IREI", "IRES", "IREK", "IREO"}, false, 2012,
+         "A direct sequel set in Unova two years later, with new areas and a new story.",
+         "Pokemon - Black Version 2 (USA, Europe) (NDSi Enhanced)"},
+        {"pokewhite2", "Pokemon White 2", Engine::Libretro, 1, {}, "", "nds",
+         {"IRDE", "IRDJ", "IRDP", "IRDD", "IRDF", "IRDI", "IRDS", "IRDK", "IRDO"}, false, 2012,
+         "The Unova sequel with its own version-exclusive Pokemon and challenges.",
+         "Pokemon - White Version 2 (USA, Europe) (NDSi Enhanced)"},
     };
     for (auto& g : v) g.genre = genre_of(g.id);
     return v;
@@ -583,7 +647,7 @@ std::vector<RomFile> scan_roms(const std::string& folder) {
 namespace {
 
 bool is_rom_like_file(const fs::path& p) {
-    static const char* const kExts[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".rvz", ".zip"};
+    static const char* const kExts[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".rvz", ".zip", ".nds"};
     std::string ext = ascii_lower(path_utf8(p.extension()));
     for (const char* e : kExts)
         if (ext == e) return true;
