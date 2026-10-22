@@ -11,13 +11,19 @@ target_include_directories(n64run_save_sync PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(n64run_save_sync PUBLIC cxx_std_17)
 target_link_libraries(n64run_save_sync PUBLIC hubnet)
 
+# --match VS-battle jump driver (pure RDRAM state machine, unit tested).
+add_library(n64run_match STATIC match.cpp)
+target_include_directories(n64run_match PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(n64run_match PUBLIC cxx_std_17)
+target_link_libraries(n64run_match PUBLIC hubcommon)
+
 add_executable(n64run
     frontend.cpp
     input_plugin.cpp
     local_input.cpp
     lockstep.cpp
     headless.cpp)
-target_link_libraries(n64run PRIVATE n64run_lockstep_core n64run_save_sync hubnet hubcommon m64p_api SDL2::SDL2)
+target_link_libraries(n64run PRIVATE n64run_match n64run_lockstep_core n64run_save_sync hubnet hubcommon m64p_api SDL2::SDL2)
 # Console subsystem on purpose (logs to the console too); the hub launches it hidden/with a console as needed.
 set_target_properties(n64run PROPERTIES WIN32_EXECUTABLE OFF)
 # The input plugin entry points are __declspec(dllexport) from the exe; keep them even with /OPT:REF.
@@ -39,3 +45,6 @@ target_link_libraries(n64run_save_sync_test PRIVATE n64run_save_sync)
 # Branding: same icon + version resources as RetroHub.exe (see src/hub/CMakeLists.txt for the generated header).
 target_sources(n64run PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/n64run.rc)
 target_include_directories(n64run PRIVATE ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_CURRENT_SOURCE_DIR}/../hub)
+
+add_executable(n64run_match_test test_match.cpp)
+target_link_libraries(n64run_match_test PRIVATE n64run_match)
