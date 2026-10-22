@@ -86,6 +86,8 @@ static void test_catalog() {
         CHECK(smash->max_players == 4);
         CHECK(smash->rom_md5s.empty());
         CHECK(smash->native_exe == "games/smashClassic/BattleShip.exe");
+        CHECK(smash->online_max == 2 && online_max_for(*smash) == 2);   // online rooms cap at 2
+        CHECK(smash->max_players == 4);                                  // local play is still 4
     }
 
     const GameInfo* mp1 = find_game("mp1");
@@ -170,6 +172,19 @@ static std::string lower(std::string s) {
 }
 
 /* Every curated entry is well-formed, ids and per-system header serials are unique. */
+/* online_max_for: 0 falls back to max_players; an explicit cap wins. */
+static void test_online_max() {
+    GameInfo g;
+    g.max_players = 4;
+    CHECK(g.online_max == 0 && online_max_for(g) == 4);
+    g.online_max = 2;
+    CHECK(online_max_for(g) == 2);
+    const GameInfo* mp1 = find_game("mp1");
+    CHECK(mp1 && online_max_for(*mp1) == mp1->max_players);
+    /* every catalog entry: the online cap never exceeds the local count */
+    for (const GameInfo& c : catalog()) CHECK(online_max_for(c) >= 1 && online_max_for(c) <= c.max_players);
+}
+
 static void test_catalog_integrity() {
     std::set<std::string> ids;
     std::set<std::string> serial_keys;
@@ -227,6 +242,7 @@ int main() {
     test_md5();
     test_catalog();
     test_catalog_integrity();
+    test_online_max();
     test_find_game_for();
 
     std::error_code ec;
