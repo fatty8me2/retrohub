@@ -24,8 +24,15 @@ std::string new_room_code();
 bool valid_room_code(const std::string& code);
 
 struct Member { int slot; std::string name; };
-/* The server promoted a member to host (slot 0) after the old host left; `from_slot` is where it sat before. */
-struct HostChange { int from_slot; std::string name; };
+/* One lobby event, delivered in server arrival order. Msg: a member's broadcast (from_slot, body JSON).
+ * HostChange: the old host left and the server renumbered member `from_slot` (named `name`) to slot 0. Slots in
+ * events before a HostChange use the old numbering; consumers must not reorder across it. */
+struct LobbyEvent {
+    enum Type { Msg, HostChange } type = Msg;
+    int from_slot = -1;
+    std::string body;   // Msg
+    std::string name;   // HostChange
+};
 
 class LobbyClient {
   public:
@@ -44,14 +51,16 @@ class LobbyClient {
 
     /* Broadcast a JSON object body ({"kind":...}) to the other members. */
     void send_msg(const std::string& body_json);
-    /* Pop one received {from, body_json}. */
-    bool poll_msg(int* from_slot, std::string* body_json);
-    /* Pop one host-migration event (the room survived its host leaving). If it was this client that got
-     * promoted, my_slot() is already 0 when the event is returned. Servers without migration close the
-     * socket with 4001 instead, which surfaces as failed()/"The host left the room". */
-    bool poll_host_change(HostChange* out);
+    /* Pop the next event (message or host change) in arrival order. When it is the HostChange that promotes
+     * this client, my_slot() becomes 0 as the event is returned. Servers without migration close the socket
+     * with 4001 instead, which surfaces as failed()/"The host left the room". */
+    bool poll_event(LobbyEvent* out);
+    /* Test hook: process one server text frame as if it had arrived on the socket. */
+    void inject_server_text(const std::string& text);
 
   private:
+    bool handle_text(const std::string& text);
+    void update_tail();
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

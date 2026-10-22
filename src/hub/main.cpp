@@ -1318,21 +1318,72 @@ static void lobby_tick() {
     A.lobby.update();
     if (!A.lobby.connected()) return;
 
-    /* The host left and the server promoted a member to slot 0 (same room code, so friends/invites keep
-     * pointing at this room). Move per-slot state from the promoted member's old slot to 0 and drop the
-     * departed host's. A.selected_game / A.rules / A.share_host_save / our pick are kept as they are: the
-     * new host re-broadcasts them via hello_dirty below. */
-    hubnet::HostChange hc;
-    while (A.lobby.poll_host_change(&hc)) {
-        hubui::remap_slot_key(A.peers, hc.from_slot, 0);
-        hubui::remap_slot_key(A.ready, hc.from_slot, 0);
-        hubui::remap_slot_key(A.locals, hc.from_slot, 0);
-        hubui::remap_slot_key(A.picks, hc.from_slot, 0);
-        A.hello_dirty = true;
-        bool me = A.lobby.my_slot() == 0;
-        A.chat.push_back({"", hubui::host_changed_text(hc.name, me)});
-        A.chat_scroll = true;
-        push_toast(hubui::host_changed_text(hc.name, me), ui::GOOD, 8.0);
+    /* Lobby events are handled strictly in arrival order. A HostChange moves per-slot state from the promoted
+     * member's old slot to 0 and drops the departed host's, so every message queued before it (old numbering)
+     * is applied first and nothing from before the change can recreate state under a stale slot. A `launch`
+     * that arrived in the same batch before the HostChange came from the departed host: it is dropped (its
+     * port plan uses the old slots); the remaining players just stay in the room under the new host. */
+    std::vector<hubnet::LobbyEvent> evs;
+    {
+        hubnet::LobbyEvent e;
+        while (A.lobby.poll_event(&e)) evs.push_back(std::move(e));   // poll applies the slot change when it pops a HostChange
+    }
+    size_t last_hc = evs.size();
+    for (size_t k = 0; k < evs.size(); ++k) if (evs[k].type == hubnet::LobbyEvent::HostChange) last_hc = k;
+    for (size_t k = 0; k < evs.size(); ++k) {
+        const hubnet::LobbyEvent& ev = evs[k];
+        if (ev.type == hubnet::LobbyEvent::HostChange) {
+            hubui::remap_slot_key(A.peers, ev.from_slot, 0);
+            hubui::remap_slot_key(A.ready, ev.from_slot, 0);
+            hubui::remap_slot_key(A.locals, ev.from_slot, 0);
+            hubui::remap_slot_key(A.picks, ev.from_slot, 0);
+            A.hello_dirty = true;
+            bool me = A.lobby.my_slot() == 0;
+            A.chat.push_back({"", hubui::host_changed_text(ev.name, me)});
+            A.chat_scroll = true;
+            push_toast(hubui::host_changed_text(ev.name, me), ui::GOOD, 8.0);
+            continue;
+        }
+        int from = ev.from_slot;
+        const std::string& body = ev.body;
+        bool before_hc = last_hc != evs.size() && k < last_hc;
+        hubui::Json j;
+        if (!hubui::json_parse(body, &j) || j.type != hubui::Json::Obj) continue;
+        if (before_hc && j.str("kind") == "launch") continue;
+        std::string kind = j.str("kind");
+        if (kind == "hello") {
+            hubui::PeerInfo& p = A.peers[from];
+            hubui::parse_hello(j, &p);
+        } else if (kind == "select") {
+            if (from == 0) A.selected_game = j.str("game");
+        } else if (kind == "ready") {
+            const hubui::Json* r = j.get("ready");
+            A.ready[from] = r && r->type == hubui::Json::Bool && r->b;
+        } else if (kind == "locals") {
+            A.locals[from] = std::max(1, std::min(2, (int)j.num("n", 1)));
+        } else if (kind == "opts") {
+            const hubui::Json* r = j.get("share_save");
+            if (from == 0 && r && r->type == hubui::Json::Bool) A.share_host_save = r->b;
+        } else if (kind == "pick") {
+            hubui::MemberPick mp;
+            if (from != room_my_slot() && hubui::parse_pick(j, &mp)) A.picks[from] = mp;
+        } else if (kind == "rules") {
+            hubui::MatchRules mr;
+            if (from == 0 && !is_host() && hubui::parse_rules(j, &mr)) A.rules = mr;
+        } else if (kind == "chat") {
+            A.chat.push_back({member_name(from), j.str("text")});
+            if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
+            A.chat_scroll = true;
+        } else if (kind == "launch") {
+            if (from != 0 || is_host()) continue;
+            const hub::GameEntry* g = find_room_entry(j.str("game"));
+            if (!g) { set_notice("The host started a game you don't have."); continue; }
+            if (A.proc) continue;
+            const hubui::Json* ss = j.get("share_save");
+            launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
+                          ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j);   // --match comes from j["match"]
+        }
+
     }
 
     // Membership changes -> forget departed peers, re-announce ourselves.
@@ -1367,45 +1418,6 @@ static void lobby_tick() {
             A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + hubui::json_escape(A.selected_game) + "\"}");
     }
 
-    int from;
-    std::string body;
-    while (A.lobby.poll_msg(&from, &body)) {
-        hubui::Json j;
-        if (!hubui::json_parse(body, &j) || j.type != hubui::Json::Obj) continue;
-        std::string kind = j.str("kind");
-        if (kind == "hello") {
-            hubui::PeerInfo& p = A.peers[from];
-            hubui::parse_hello(j, &p);
-        } else if (kind == "select") {
-            if (from == 0) A.selected_game = j.str("game");
-        } else if (kind == "ready") {
-            const hubui::Json* r = j.get("ready");
-            A.ready[from] = r && r->type == hubui::Json::Bool && r->b;
-        } else if (kind == "locals") {
-            A.locals[from] = std::max(1, std::min(2, (int)j.num("n", 1)));
-        } else if (kind == "opts") {
-            const hubui::Json* r = j.get("share_save");
-            if (from == 0 && r && r->type == hubui::Json::Bool) A.share_host_save = r->b;
-        } else if (kind == "pick") {
-            hubui::MemberPick mp;
-            if (from != room_my_slot() && hubui::parse_pick(j, &mp)) A.picks[from] = mp;
-        } else if (kind == "rules") {
-            hubui::MatchRules mr;
-            if (from == 0 && !is_host() && hubui::parse_rules(j, &mr)) A.rules = mr;
-        } else if (kind == "chat") {
-            A.chat.push_back({member_name(from), j.str("text")});
-            if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
-            A.chat_scroll = true;
-        } else if (kind == "launch") {
-            if (from != 0 || is_host()) continue;
-            const hub::GameEntry* g = find_room_entry(j.str("game"));
-            if (!g) { set_notice("The host started a game you don't have."); continue; }
-            if (A.proc) continue;
-            const hubui::Json* ss = j.get("share_save");
-            launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
-                          ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j);   // --match comes from j["match"]
-        }
-    }
 }
 
 /* ============================ widgets / pages ============================ */
