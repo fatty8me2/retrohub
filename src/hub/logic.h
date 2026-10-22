@@ -123,6 +123,16 @@ std::string format_play_time(unsigned long long seconds);
 /* Windows user name -> usable player name (printable, max 16 chars, "Player" if empty). */
 std::string sanitize_player_name(const std::string& s);
 
+/* ---- All Games: one section per console ---- */
+struct ConsoleSection {
+    std::string system;           // system short code, "other" for unknown codes
+    std::string title;            // "Nintendo 64" ...
+    std::vector<int> items;       // indices into the ListItem vector, pinned first then A-Z
+};
+/* Groups items[indices] (all of them when `indices` is null) into console sections in console_order(), unknown
+ * system codes last under "Other". Empty consoles are skipped. gb and gbc are separate sections. */
+std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items, const std::vector<int>* indices = nullptr);
+
 /* ---- home screen composition (pure; the UI only draws the result) ---- */
 struct ShelfGame {
     std::string key, title, system;     // system short code
@@ -130,21 +140,18 @@ struct ShelfGame {
     unsigned long long last_played = 0;
     bool online = false;                // catalog says it is fun online with friends
     bool pinned = false;
-    std::string genre;                  // catalog genre ("" / unknown = "Other")
 };
 struct Shelf {
-    std::string id;      // "recent" "favs" or "genre:<Genre>" ("genre:Other:<sys>" for uncatalogued games)
+    std::string id;      // "recent" "favs" or "console:<system_short>" ("console:other" for unknown systems)
     std::string title;   // "Continue Playing" ...
     std::vector<int> items;   // indices into the ShelfGame vector
 };
-/* Genre shelves in display order. Games whose genre is not in this list go to "Other". */
-const std::vector<std::string>& genre_order();     // Party Fighting Racing Shooter Platformer Adventure RPG Strategy Sports Puzzle Action
-/* Genre a game is filed under: its own when known, else "Other". */
-std::string effective_genre(const std::string& genre);
-/* Shelves in display order: recent (<= max_recent), favorites, then one shelf per genre that has games
- * (genre_order(), then "Other"). Every game lands in exactly ONE genre shelf; "Other" is split per system
- * (n64, gc, gba, gbc, gb). Empty shelves are omitted. Within a shelf: recent = newest first; the others
- * pinned first then title (case-insensitive). */
+/* Consoles in display order: n64 gc wiiu 3ds nds gba gbc gb (the native Smash Classic entry is system "n64"). */
+const std::vector<std::string>& console_order();
+/* Shelves in display order: recent (<= max_recent), favorites, then one shelf per console that has games
+ * (console_order(), then "other" for unknown system codes). Every game lands in exactly ONE console shelf.
+ * Empty shelves are omitted. Within a shelf: recent = newest first; the others pinned first then title
+ * (case-insensitive). */
 std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& games, int max_recent = 12);
 std::string system_shelf_title(const std::string& system_short);   // "Nintendo 64", ...
 /* Catalog entries to advertise ("Top picks you don't have yet"): indices where !owned[i], games
