@@ -237,7 +237,19 @@ static void test_identify(const fs::path& dir) {
     // Catalog serials for GB/GBC (games.cpp): CGB manufacturer code, else the header title
     CHECK(write_file(dir / "id" / "gold.gbc", make_gb("POKEMON_GLD", 0x80, 0x682D, 9, true, "AAUE")));
     CHECK(identify_game((dir / "id" / "gold.gbc").string(), &e));
-    CHECK(e.serial == "AAUE" && e.catalog_id == "pokegold");
+    CHECK(e.serial == "AAUE" && e.catalog_id == "pokegold" && e.title == "Pokemon Gold" && e.key == "gbc:pokemon_gld-682d");
+    // The user's real headers: raw names must still resolve to proper catalog titles
+    CHECK(write_file(dir / "id" / "crystal.gbc", make_gb("PM_CRYSTAL", 0x80, 0x129F, 20, true, "BYTE")));
+    CHECK(identify_game((dir / "id" / "crystal.gbc").string(), &e));
+    CHECK(e.catalog_id == "pokecrystal" && e.title == "Pokemon Crystal" && e.key == "gbc:pm_crystal-129f");
+    CHECK(write_file(dir / "id" / "silver.gbc", make_gb("POKEMON_SLV", 0x80, 0x0DAE, 21, true, "AAXE")));
+    CHECK(identify_game((dir / "id" / "silver.gbc").string(), &e));
+    CHECK(e.catalog_id == "pokesilver" && e.title == "Pokemon Silver" && e.key == "gbc:pokemon_slv-0dae");
+    CHECK(write_file(dir / "id" / "yel2.gbc", make_gb("POKEMON YEL", 0x80, 0x047C, 22)));
+    CHECK(identify_game((dir / "id" / "yel2.gbc").string(), &e));
+    CHECK(e.catalog_id == "pokeyellow" && e.title == "Pokemon Yellow" && e.key == "gbc:pokemon-yel-047c");
+    CHECK(write_file(dir / "id" / "gold-sp.gbc", make_gb("POKEMON GLD", 0x80, 0x682D, 23)));   // space instead of underscore
+    CHECK(identify_game((dir / "id" / "gold-sp.gbc").string(), &e) && e.catalog_id == "pokegold");
     CHECK(write_file(dir / "id" / "red.gb", make_gb("POKEMON RED", 0, 0x91E6, 10)));
     CHECK(identify_game((dir / "id" / "red.gb").string(), &e));
     CHECK(e.serial == "POKEMON RED" && e.catalog_id == "pokered");

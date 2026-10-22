@@ -539,11 +539,20 @@ bool id_gb(const fs::path& p, const fs::path& name, uint64_t size, GameEntry* e)
         if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
     const char* sys_short = is_cgb ? "gbc" : "gb";
     e->serial = code.size() == 4 ? code : title_serial;
-    if (const GameInfo* g = find_game_for(sys_short, e->serial, std::string())) {
-        e->catalog_id = g->id;
-    } else if (code.size() == 4) {
+    const GameInfo* g = find_game_for(sys_short, e->serial, std::string());
+    if (!g && code.size() == 4) {
         /* Code is valid but not in the catalog (or is junk): fall back to the header title. */
-        if (const GameInfo* g2 = find_game_for(sys_short, title_serial, std::string())) e->catalog_id = g2->id;
+        g = find_game_for(sys_short, title_serial, std::string());
+    }
+    if (!g) {   /* header titles use '_' or ' ' interchangeably ("POKEMON_GLD" vs "POKEMON GLD") */
+        std::string alt = title_serial;
+        for (auto& c : alt) if (c == '_') c = ' ';
+        g = find_game_for(sys_short, alt, std::string());
+        if (!g) { for (auto& c : alt) if (c == ' ') c = '_'; g = find_game_for(sys_short, alt, std::string()); }
+    }
+    if (g) {   /* catalog title wins over the raw header name (the save key above is unchanged) */
+        e->catalog_id = g->id;
+        e->title = g->title;
     }
     return true;
 }
@@ -1336,7 +1345,7 @@ struct CacheRec {
     GameEntry e;
 };
 
-constexpr int kCacheVersion = 7;  // 2: serial matching + GBA catalog_id; 5: GB/GBC serials; 6: 3DS/Wii U/DS; 7: save_stem (short rom-cache names); forces a rescan
+constexpr int kCacheVersion = 8;  // 2: serial matching + GBA catalog_id; 5: GB/GBC serials; 6: 3DS/Wii U/DS; 7: save_stem (short rom-cache names); 8: GB/GBC catalog titles; forces a rescan
 
 std::unordered_map<std::string, CacheRec> cache_load() {
     std::unordered_map<std::string, CacheRec> m;
@@ -1368,7 +1377,8 @@ std::unordered_map<std::string, CacheRec> cache_load() {
                 std::string md5 = (r.e.key.rfind("n64:", 0) == 0) ? r.e.key.substr(4) : std::string();
                 if (const GameInfo* g = find_game_for(f.str("sys"), r.e.serial, md5)) {
                     r.e.catalog_id = g->id;
-                    if (r.e.system == System::N64 || r.e.system == System::N3DS || r.e.system == System::WiiU) r.e.title = g->title;
+                    if (r.e.system == System::N64 || r.e.system == System::N3DS || r.e.system == System::WiiU ||
+                        r.e.system == System::GB || r.e.system == System::GBC) r.e.title = g->title;
                 }
             }
             r.e.size = r.size;
