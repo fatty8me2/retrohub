@@ -429,15 +429,16 @@ const std::vector<GameInfo>& catalog() {
          "Skate arena-style courses and chase high scores in a timed career mode.",
          "Tony Hawk's Pro Skater 2 (USA, Europe)"},
 
-        /* ---- Game Boy / Game Boy Color (Libretro). Serials are the header manufacturer code
-         *      (0x13F-0x142) where the cart has one; Red and Yellow have none. Link-cable
-         *      trading and battles are not networked, so online=false. ---- */
+        /* ---- Game Boy / Game Boy Color (Libretro). Serials are what library.cpp reads from the
+         *      header: the manufacturer code (0x13F-0x142) on CGB carts that have one, otherwise
+         *      the header title (CGB titles are 11 chars, DMG 16). Link-cable play is not
+         *      networked, so online=false. ---- */
         {"pokered", "Pokemon Red", Engine::Libretro, 2, {}, "", "gb",
-         {}, false, 1998,
+         {"POKEMON RED"}, false, 1998,
          "Explore Kanto, catch Pokemon, and trade or battle over a link cable.",
          "Pokemon - Red Version (USA, Europe) (SGB Enhanced)"},
         {"pokeyellow", "Pokemon Yellow", Engine::Libretro, 2, {}, "", "gbc",
-         {}, false, 1999,
+         {"POKEMON YEL"}, false, 1999,
          "Follow Pikachu through Kanto as your partner, with the link cable for trades and battles.",
          "Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced)"},
         {"pokegold", "Pokemon Gold", Engine::Libretro, 2, {}, "", "gbc",
