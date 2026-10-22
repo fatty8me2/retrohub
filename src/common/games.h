@@ -32,14 +32,14 @@ struct GameInfo {
     std::string blurb;       // one line shown on the card / details panel
     std::string nointro;     // No-Intro name of the primary (USA) release, e.g.
                              // "Mario Kart 64 (USA)" -- used to fetch cover art
-    std::string genre;       // one of genres(): "Party" "Fighting" ... "" = unknown (hub files it under "Other")
+    std::string genre;       // catalog metadata, one of genres() ("" = unknown); the hub groups by console, not genre
     int online_max = 0;      // online player cap when lower than max_players (0 = same as max_players)
 };
 
 /* Online player cap: online_max when set, else max_players. Use this for every online limit (rooms, launch, presence). */
 int online_max_for(const GameInfo& g);
 
-/* Allowed GameInfo::genre values, in the order the hub shows genre shelves. */
+/* Allowed GameInfo::genre values, (catalog metadata). */
 const std::vector<std::string>& genres();
 
 /* Catalog lookup for a scanned game: by catalog_id/MD5 first, then serial + system. */
