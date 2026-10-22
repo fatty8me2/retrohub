@@ -481,6 +481,26 @@ bool id_gb(const fs::path& p, uint64_t size, GameEntry* e) {
     if (t.empty()) base = "untitled";
     e->key = std::string(is_cgb ? "gbc:" : "gb:") + base + "-" + tail;
     e->title = pretty_title(t, p);
+    /* Catalog serial: the 4-char manufacturer/game code (0x13F-0x142) on CGB carts that have one,
+     * otherwise the header title (uppercase, trailing spaces trimmed). games.cpp matches it. */
+    std::string code;
+    if (is_cgb) {
+        for (int i = 0x13F; i < 0x143; ++i) {
+            char c = (char)h[i];
+            if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) { code.clear(); break; }
+            code.push_back(c);
+        }
+    }
+    if (code.size() == 4) {
+        e->serial = code;
+    } else {
+        std::string s = t;
+        while (!s.empty() && s.back() == ' ') s.pop_back();
+        for (auto& c : s)
+            if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+        e->serial = s;
+    }
+    if (const GameInfo* g = find_game_for(is_cgb ? "gbc" : "gb", e->serial, std::string())) e->catalog_id = g->id;
     return true;
 }
 
@@ -971,7 +991,7 @@ struct CacheRec {
     GameEntry e;
 };
 
-constexpr int kCacheVersion = 4;  // 2: serial matching + GBA catalog_id; forces a rescan
+constexpr int kCacheVersion = 5;  // 2: serial matching + GBA catalog_id; 5: GB/GBC serials; forces a rescan
 
 std::unordered_map<std::string, CacheRec> cache_load() {
     std::unordered_map<std::string, CacheRec> m;

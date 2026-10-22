@@ -72,11 +72,14 @@ static Bytes make_gba(const char* title, const char* code, uint32_t seed, size_t
     return v;
 }
 
-static Bytes make_gb(const char* title, uint8_t cgb_flag, uint16_t global, uint32_t seed, bool good = true) {
+static Bytes make_gb(const char* title, uint8_t cgb_flag, uint16_t global, uint32_t seed, bool good = true,
+                     const char* mfr = nullptr) {
     Bytes v = noise(32 * 1024, seed);
     std::memset(&v[0x134], 0, 16);
     put(v, 0x134, title);
     v[0x143] = cgb_flag;
+    std::memset(&v[0x13F], 0, 4);
+    if (mfr) std::memcpy(&v[0x13F], mfr, 4);
     v[0x14E] = uint8_t(global >> 8);
     v[0x14F] = uint8_t(global);
     uint8_t x = 0;
@@ -197,6 +200,17 @@ static void test_identify(const fs::path& dir) {
     CHECK(write_file(dir / "id" / "zelda.gbc", make_gb("ZELDA DX", 0x80, 0xABCD, 2)));
     CHECK(identify_game((dir / "id" / "zelda.gbc").string(), &e));
     CHECK(e.system == System::GBC && e.key == "gbc:zelda-dx-abcd" && e.title == "Zelda DX");
+    CHECK(e.serial == "ZELDA DX");  // CGB cart without a manufacturer code: header title
+    // Catalog serials for GB/GBC (games.cpp): CGB manufacturer code, else the header title
+    CHECK(write_file(dir / "id" / "gold.gbc", make_gb("POKEMON_GLD", 0x80, 0x682D, 9, true, "AAUE")));
+    CHECK(identify_game((dir / "id" / "gold.gbc").string(), &e));
+    CHECK(e.serial == "AAUE" && e.catalog_id == "pokegold");
+    CHECK(write_file(dir / "id" / "red.gb", make_gb("POKEMON RED", 0, 0x91E6, 10)));
+    CHECK(identify_game((dir / "id" / "red.gb").string(), &e));
+    CHECK(e.serial == "POKEMON RED" && e.catalog_id == "pokered");
+    CHECK(write_file(dir / "id" / "yellow.gb", make_gb("POKEMON YELLOW", 0x80, 0x047C, 11)));
+    CHECK(identify_game((dir / "id" / "yellow.gb").string(), &e));
+    CHECK(e.serial == "POKEMON YEL" && e.catalog_id == "pokeyellow");
     // .gbc extension but DMG header -> header decides
     CHECK(write_file(dir / "id" / "plain.gbc", make_gb("PLAIN", 0, 0x0001, 3)));
     CHECK(identify_game((dir / "id" / "plain.gbc").string(), &e) && e.system == System::GB);

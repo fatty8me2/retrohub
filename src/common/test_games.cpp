@@ -80,6 +80,8 @@ static void test_catalog() {
         const GameInfo* gold = find_game_for("gbc", "AAUE", "");
         CHECK(gold && gold->id == "pokegold");
         CHECK(find_game_for("gb", "AAUE", "") == nullptr);
+        CHECK(find_game_for("gb", "POKEMON RED", "") && find_game_for("gb", "POKEMON RED", "")->id == "pokered");
+        CHECK(find_game_for("gbc", "POKEMON YEL", "") && find_game_for("gbc", "POKEMON YEL", "")->id == "pokeyellow");
         CHECK(find_game("mk64")->genre == "Racing" && find_game("pokeemerald")->genre == "RPG");
         CHECK(GameInfo().genre.empty());
     }
@@ -202,7 +204,10 @@ static void test_catalog_integrity() {
         CHECK(g.max_players >= 1 && g.max_players <= 4);
         CHECK(!g.online || g.max_players >= 2);  // online only makes sense for multiplayer
         for (const auto& s : g.serials) {
-            CHECK(s.size() == 4);  // N64 game ID / GBA game code
+            if (g.system == "gb" || g.system == "gbc")
+                CHECK(!s.empty() && s.size() <= 16);  // header title (<= 16) or 4-char CGB code
+            else
+                CHECK(s.size() == 4);  // N64 game ID / GBA game code
             CHECK(serial_keys.insert(g.system + ":" + lower(s)).second);  // unique per system
         }
         if (g.system == "gba") CHECK(g.engine == Engine::Libretro);
