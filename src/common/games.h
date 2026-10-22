@@ -58,6 +58,10 @@ bool load_rom(const std::string& path, std::vector<uint8_t>* z64_image);
 bool identify_rom(const std::string& path, RomFile* out);
 /* Recursively scan a folder for .z64/.v64/.n64 files. */
 std::vector<RomFile> scan_roms(const std::string& folder);
+/* Up to max_out game-library folders under Desktop, Documents and Downloads
+ * (the folder itself, or a ROMs/Games/N64/GBA folder within two levels) that
+ * hold ROM-like files. For the empty-library suggestions; nothing is added. */
+std::vector<std::string> suggest_rom_folders(size_t max_out);
 
 std::string md5_hex(const uint8_t* data, size_t len);  // uppercase
 

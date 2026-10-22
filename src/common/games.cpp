@@ -4,6 +4,7 @@
 #include <bcrypt.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -532,6 +533,89 @@ std::vector<RomFile> scan_roms(const std::string& folder) {
         }
         it.increment(ec);
         if (ec) break;  // directory iteration became unreliable; keep what we have
+    }
+    return out;
+}
+
+namespace {
+
+bool is_rom_like_file(const fs::path& p) {
+    static const char* const kExts[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".rvz", ".zip"};
+    std::string ext = ascii_lower(path_utf8(p.extension()));
+    for (const char* e : kExts)
+        if (ext == e) return true;
+    return false;
+}
+
+bool is_library_folder_name(const fs::path& p) {
+    std::string n = ascii_lower(path_utf8(p.filename()));
+    return n == "roms" || n == "games" || n == "n64" || n == "gba";
+}
+
+/* True if dir (or a subfolder up to `depth` levels down) holds a ROM-like file.
+ * `budget` caps the entries visited so a huge folder cannot stall the UI. */
+bool holds_rom_files(const fs::path& dir, int depth, int& budget) {
+    std::error_code ec;
+    fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+    if (ec) return false;
+    const fs::directory_iterator end;
+    while (it != end && budget > 0) {
+        --budget;
+        std::error_code fec;
+        const fs::path p = it->path();
+        if (it->is_regular_file(fec) && !fec && is_rom_like_file(p)) return true;
+        if (depth > 0 && it->is_directory(fec) && !fec && holds_rom_files(p, depth - 1, budget)) return true;
+        it.increment(ec);
+        if (ec) break;
+    }
+    return false;
+}
+
+/* Library-named folders (ROMs, Games, N64, GBA) up to two levels below `dir`. */
+void collect_library_folders(const fs::path& dir, int depth, std::vector<fs::path>& out) {
+    std::error_code ec;
+    fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+    if (ec) return;
+    const fs::directory_iterator end;
+    int seen = 0;
+    while (it != end && seen++ < 400) {
+        std::error_code fec;
+        const fs::path p = it->path();
+        if (it->is_directory(fec) && !fec) {
+            if (is_library_folder_name(p)) out.push_back(p);
+            if (depth > 1) collect_library_folders(p, depth - 1, out);
+        }
+        it.increment(ec);
+        if (ec) break;
+    }
+}
+
+} // namespace
+
+std::vector<std::string> suggest_rom_folders(size_t max_out) {
+    std::vector<std::string> out;
+    const wchar_t* up = _wgetenv(L"USERPROFILE");
+    if (!up || !*up || max_out == 0) return out;
+    const fs::path home(up);
+
+    std::vector<fs::path> cands;
+    for (const char* base : {"Desktop", "Documents", "Downloads"}) {
+        const fs::path b = home / base;
+        std::error_code ec;
+        if (!fs::is_directory(b, ec)) continue;
+        cands.push_back(b);
+        collect_library_folders(b, 2, cands);
+    }
+
+    std::vector<std::string> seen;
+    for (const fs::path& c : cands) {
+        if (out.size() >= max_out) break;
+        int budget = 4000;
+        if (!holds_rom_files(c, 2, budget)) continue;
+        std::string s = path_utf8(c);
+        if (std::find(seen.begin(), seen.end(), s) != seen.end()) continue;
+        seen.push_back(s);
+        out.push_back(s);
     }
     return out;
 }
