@@ -436,6 +436,7 @@ struct App {
     std::vector<int> last_slots;
     bool hello_dirty = false, was_connected = false;
     bool room_update_pending = false;   // guest pressed "Update now": waiting for the release check
+    bool room_update_none = false;      // that check finished with no newer release
     bool my_ready = false;
     std::string selected_game;   // room's chosen game (room id: catalog id or library key)
     std::string pending_room_game;   // preselect when hosting from the library
@@ -1031,8 +1032,16 @@ static std::vector<std::pair<std::string, std::string>> smash_env(const std::str
     std::string rom = hubui::find_smash_rom(refs);
     std::string save = hubui::smash_save_file(hub::saves::battery_dir(hubui::kSmashSaveSystem, hubui::kSmashSaveKey));
     std::string legacy = dir_of(exe) + "ssb64_save.bin";
-    if (hubui::smash_should_migrate_save(file_exists(save), file_exists(legacy)))
+    bool vault_has = file_exists(save), legacy_has = file_exists(legacy);
+    if (hubui::smash_should_migrate_save(vault_has, legacy_has)) {
         CopyFileW(W(legacy).c_str(), W(save).c_str(), TRUE);
+    } else if (!A.st.smash_save_notice_shown &&
+               hubui::smash_save_conflict(vault_has, legacy_has, read_text_file(save), read_text_file(legacy))) {
+        // both exist and differ: the vault wins; tell the player once where the old local save is
+        A.st.smash_save_notice_shown = true;
+        mark_dirty();
+        push_toast(hubui::smash_save_conflict_text(legacy), ui::WARN, 12.0);
+    }
     if (!file_exists(dir_of(exe) + "BattleShip.o2r")) push_toast("Preparing Smash Classic for first use (about 30 s)...", ui::WARN, 12.0);
     return hubui::smash_launch_env(rom, save);
 }
@@ -2897,8 +2906,9 @@ static void page_online_room() {
     ImGui::Dummy(ImVec2(0, 4 * S));
     if (!host && !allow_version_mismatch()) {
         std::string host_app;
-        for (auto& p : peers) if (p.slot == 0) host_app = p.app;
-        auto act = hubui::guest_version_action(HUB_VERSION_STR, host_app);
+        bool host_hello = false;
+        for (auto& p : peers) if (p.slot == 0) { host_app = p.app; host_hello = p.hello; }
+        auto act = hubui::guest_version_action(HUB_VERSION_STR, host_app, host_hello);
         if (act == hubui::GuestVersionAction::UpdateNow) {
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_BAD), "The host is on %s and you have %s - you need to update to play.",
                                hubui::app_version_label(host_app).c_str(), hubui::app_version_label(HUB_VERSION_STR).c_str());
@@ -2910,13 +2920,18 @@ static void page_online_room() {
                 if (button("Update now", ImVec2(200 * S, 40 * S), true, !hubupdate::checking())) {
                     hubupdate::check_async(true);
                     A.room_update_pending = true;
+                    A.room_update_none = false;
                 }
                 if (A.room_update_pending && !hubupdate::checking()) {
                     A.room_update_pending = false;
                     if (hubupdate::update_available()) hubupdate::start_update();
+                    else if (!hubupdate::check_failed()) A.room_update_none = true;
                 }
                 if (hubupdate::check_failed() && !hubupdate::status().empty()) text_wrapped_disabled(hubupdate::status().c_str());
+                else if (A.room_update_none) text_wrapped_disabled("No newer release is published yet. Ask the host which version they're on.");
             }
+        } else if (act == hubui::GuestVersionAction::Waiting) {
+            text_wrapped_disabled("Checking versions...");
         } else if (act == hubui::GuestVersionAction::HostNeedsUpdate) {
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_BAD), "Host needs to update (host is on %s, you have %s).",
                                host_app.empty() ? "an old version" : hubui::app_version_label(host_app).c_str(),

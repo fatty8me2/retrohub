@@ -39,6 +39,7 @@ struct Settings {
     bool sync_auto = true;             // sync after playing / on hub start
     bool sync_states = false;          // include save states in sync + export
     bool sync_card_dismissed = false;  // "Keep your saves on all your PCs" card on Home was dismissed ("Not now")
+    bool smash_save_notice_shown = false;  // the "Using your synced Smash save" toast has been shown once
     std::string vault_dir;             // "" = default (userdata/saves)
     bool download_art = true;          // fetch cover art from the libretro-thumbnails project
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
@@ -93,9 +94,10 @@ struct VersionGate { bool ok = true; std::string reason; };
 /* Host-side: blocks Launch while any member that sent a hello runs a different (or unknown) version
  * than `host_app`. `allow_mismatch` (dev override) always passes. */
 VersionGate version_gate(const std::string& host_app, const std::vector<PeerInfo>& peers, bool allow_mismatch = false);
-enum class GuestVersionAction { None, UpdateNow, HostNeedsUpdate };
-/* Guest-side: older than the host -> UpdateNow, newer (or host unknown/old build) -> HostNeedsUpdate. */
-GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app);
+enum class GuestVersionAction { None, Waiting, UpdateNow, HostNeedsUpdate };
+/* Guest-side: host hello not received yet -> Waiting; older than the host -> UpdateNow; newer, or the host's
+ * hello arrived without an app field (old build) -> HostNeedsUpdate. */
+GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app, bool host_hello);
 /* `core` (optional): the host's GB/GBC core so all peers run the same one. */
 /* `delay` 0 = auto. `share_host_save`: N64 online, every PC uses the host's save. */
 struct PortPlan;
@@ -308,6 +310,12 @@ inline const char* kSmashSaveKey = "native:smash64";
 std::string smash_save_file(const std::string& battery_dir);
 /* One-time migration: copy <BattleShip dir>\ssb64_save.bin into the vault only when the vault has none yet. */
 inline bool smash_should_migrate_save(bool vault_file_exists, bool legacy_file_exists) { return !vault_file_exists && legacy_file_exists; }
+/* Both saves exist and their bytes differ: the vault copy wins, the legacy file is left alone (shown once). */
+inline bool smash_save_conflict(bool vault_file_exists, bool legacy_file_exists, const std::string& vault_bytes, const std::string& legacy_bytes) {
+    return vault_file_exists && legacy_file_exists && vault_bytes != legacy_bytes;
+}
+/* Toast text for that conflict; `legacy_path` is the old <BattleShip dir>\ssb64_save.bin. */
+std::string smash_save_conflict_text(const std::string& legacy_path);
 struct RomRef { std::string catalog_id, serial, path; };
 /* The Smash 64 ROM in the scanned library: catalog id "ssb64rom" or serial NALE (USA), non-empty path. "" when absent. */
 std::string find_smash_rom(const std::vector<RomRef>& lib);
