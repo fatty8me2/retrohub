@@ -170,6 +170,8 @@ const char* genre_of(const std::string& id) {
         {"pokex", "RPG"}, {"pokey", "RPG"}, {"pokeor", "RPG"}, {"pokeas", "RPG"},
         {"pokesun", "RPG"}, {"pokemoon", "RPG"}, {"pokeusun", "RPG"}, {"pokeumoon", "RPG"},
         {"tphd", "Adventure"},
+        {"gc_ww", "Adventure"}, {"gc_tp", "Adventure"}, {"mkdd", "Racing"}, {"gc_mp6", "Party"}, {"pokexd", "RPG"},
+        {"sunshine", "Platformer"}, {"melee", "Fighting"},
         {"pokered", "RPG"}, {"pokeyellow", "RPG"}, {"pokegold", "RPG"}, {"pokesilver", "RPG"}, {"pokecrystal", "RPG"},
         {"pokediamond", "RPG"}, {"pokepearl", "RPG"}, {"pokeplatinum", "RPG"}, {"pokeheartgold", "RPG"}, {"pokesoulsilver", "RPG"}, {"pokeblack", "RPG"}, {"pokewhite", "RPG"}, {"pokeblack2", "RPG"}, {"pokewhite2", "RPG"},   // nds
     };
@@ -472,6 +474,36 @@ const std::vector<GameInfo>& catalog() {
          {"000500001019E500"}, false, 2016,
          "Link crosses between Hyrule and the Twilight Realm in the remastered GameCube adventure.",
          "Legend of Zelda, The - Twilight Princess HD (USA) (En,Fr,Es) (Rev 2)"},
+
+        /* ---- GameCube (Dolphin). Serial = the 6-char disc ID. Online play is not wired for GC yet. ---- */
+        {"gc_ww", "Zelda: The Wind Waker", Engine::Dolphin, 1, {}, "", "gc",
+         {"GZLE01", "GZLP01", "GZLJ01"}, false, 2002,
+         "Link sails a drowned Hyrule on the King of Red Lions in a cel-shaded adventure.",
+         "Legend of Zelda, The - The Wind Waker (USA)"},
+        {"gc_tp", "Zelda: Twilight Princess", Engine::Dolphin, 1, {}, "", "gc",
+         {"GZ2E01", "GZ2P01", "GZ2J01"}, false, 2006,
+         "Link shifts between Hyrule and the Twilight Realm as a wolf and a hero.",
+         "Legend of Zelda, The - Twilight Princess (USA)"},
+        {"mkdd", "Mario Kart: Double Dash!!", Engine::Dolphin, 4, {}, "", "gc",
+         {"GM4E01", "GM4P01", "GM4J01"}, false, 2003,
+         "Two racers share each kart, one driving and one throwing items.",
+         "Mario Kart - Double Dash!! (USA)"},
+        {"gc_mp6", "Mario Party 6", Engine::Dolphin, 4, {}, "", "gc",
+         {"GP6E01", "GP6P01", "GP6J01"}, false, 2004,
+         "Day and night change the board and the minigames, with a microphone for some.",
+         "Mario Party 6 (USA)"},
+        {"pokexd", "Pokemon XD: Gale of Darkness", Engine::Dolphin, 1, {}, "", "gc",
+         {"GXXE01", "GXXP01", "GXXJ01"}, false, 2005,
+         "Snag Shadow Pokemon from Cipher in a 3D role-playing adventure.",
+         "Pokemon XD - Gale of Darkness (USA)"},
+        {"sunshine", "Super Mario Sunshine", Engine::Dolphin, 1, {}, "", "gc",
+         {"GMSE01", "GMSP01", "GMSJ01"}, false, 2002,
+         "Mario cleans up Isle Delfino with the water-powered F.L.U.D.D.",
+         "Super Mario Sunshine (USA)"},
+        {"melee", "Super Smash Bros. Melee", Engine::Dolphin, 4, {}, "", "gc",
+         {"GALE01", "GALP01", "GALJ01"}, false, 2001,
+         "The fast GameCube Smash with a huge roster and a tournament scene of its own.",
+         "Super Smash Bros. Melee (USA) (En,Ja) (Rev 2)"},
         /* ---- Game Boy / Game Boy Color (Libretro). Serials are what library.cpp reads from the
          *      header: the manufacturer code (0x13F-0x142) on CGB carts that have one, otherwise
          *      the header title (CGB titles are 11 chars, DMG 16). Link-cable play is not

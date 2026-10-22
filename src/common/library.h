@@ -33,6 +33,7 @@ struct GameEntry {
     std::string save_stem;    // "" = stem of path. Set for a zipped ROM: the inner entry's stem (DS saves are <stem>.srm)
     uint64_t size = 0;
     std::string catalog_id;   // games.h catalog id when known (e.g. "mp1"), else ""
+    uint64_t unpacked = 0;    // archived GC disc: size of the image inside (from the scan; 0 = unknown)
     std::string issue;        // "" ok | "extract" zipped 3DS image Azahar cannot open | "encrypted" 3DS image needing AES keys |
                               // "keys" Wii U .wud/.wux needing keys.txt
 };
@@ -56,6 +57,14 @@ bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint
                      std::string* out_path, std::string* err);
 std::string extract_3ds_dir(const GameEntry& e);      // where it would go (for the confirm dialog)
 uint64_t zip_3ds_unpacked_size(const GameEntry& e);   // size of the image inside the zip (central directory only), 0 if unknown
+
+/* GameCube discs in .7z / .zip (issue == "extract", system GC) use the same four calls above; they unpack with
+ * Windows' tar.exe into data_dir()/rom-cache/gc/<key>/disc.<ext>. Pure helpers (exposed for tests): */
+struct ArchiveEntry { std::string name; uint64_t size = 0; };
+bool archive_entry_safe(const std::string& name);              // false for "..", absolute, drive-letter or control-char names
+bool is_7z_file(const std::string& path);                      // 7z signature check
+std::vector<ArchiveEntry> parse_tar_listing(const std::string& text);   // "tar -tvf" output -> regular files
+std::string gc_serial_for_name(const std::string& file_name);  // No-Intro style name -> catalog GC disc ID, "" if unknown
 
 /* Per-user library state, persisted to data_dir()/library.json. */
 struct GameState {

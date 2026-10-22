@@ -203,7 +203,7 @@ static void test_catalog_integrity() {
         CHECK(!g.nointro.empty());  // cover-art name; may be a base game's name for hacks
         CHECK(ids.insert(g.id).second);  // unique catalog id
         CHECK(g.system == "n64" || g.system == "gba" || g.system == "gb" || g.system == "gbc" || g.system == "nds" ||
-              g.system == "3ds" || g.system == "wiiu");
+              g.system == "3ds" || g.system == "wiiu" || g.system == "gc");
         CHECK(g.max_players >= 1 && g.max_players <= 4);
         CHECK(!g.online || g.max_players >= 2);  // online only makes sense for multiplayer
         for (const auto& s : g.serials) {
@@ -211,6 +211,8 @@ static void test_catalog_integrity() {
                 CHECK(!s.empty() && s.size() <= 16);  // header title (<= 16) or 4-char CGB code
             else if (g.system == "wiiu")
                 CHECK(s.size() == 16);  // Wii U title id
+            else if (g.system == "gc")
+                CHECK(s.size() == 6);   // GameCube disc ID
             else
                 CHECK(s.size() == 4);  // N64 game ID / GBA / 3DS game code
             CHECK(serial_keys.insert(g.system + ":" + lower(s)).second);  // unique per system
@@ -218,6 +220,7 @@ static void test_catalog_integrity() {
         if (g.system == "gba") CHECK(g.engine == Engine::Libretro);
         if (g.system == "3ds") CHECK(g.engine == Engine::Azahar);
         if (g.system == "wiiu") CHECK(g.engine == Engine::Cemu);
+        if (g.system == "gc") CHECK(g.engine == Engine::Dolphin);
         if (g.system == "n64" && g.id != "smash64" && g.id != "remix") CHECK(g.engine == Engine::Mupen64Plus);
     }
     CHECK(ids.count("smash64") == 1 && ids.count("mp1") == 1 && ids.count("remix") == 1);

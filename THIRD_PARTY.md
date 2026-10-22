@@ -30,6 +30,8 @@ RetroHub uses the components below. Each one keeps its own license. Components a
 | Azahar | 2126.2 | GPL-3.0 | `src/hub/emulators.cpp` (github.com/azahar-emu/azahar) | Nintendo 3DS emulation, downloaded on demand into the data folder; SHA-256 pinned. |
 | Cemu | 2.6 | MPL-2.0 | `src/hub/emulators.cpp` (github.com/cemu-project/Cemu) | Wii U emulation. An existing install is used; otherwise downloaded on demand into the data folder; SHA-256 pinned. |
 
+RetroHub also calls Windows' own `tar.exe` (bsdtar/libarchive, `%SystemRoot%\System32`, Windows 10 1803+) to read GameCube discs out of `.7z` and `.zip` archives. It is part of Windows and is not bundled.
+
 The libretro cores are downloaded from the libretro nightly build server. The Dolphin build is downloaded from dolphin-emu.org, and the Azahar and Cemu builds from their GitHub releases. RetroHub does not redistribute these files in its source tree.
 
 ## Vendored in the source tree
