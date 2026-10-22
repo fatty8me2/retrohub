@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <tlhelp32.h>
+#include <cwctype>
 #include <xinput.h>
 #include <setupapi.h>
 #include <initguid.h>
@@ -339,10 +340,11 @@ static bool run_tar(const std::wstring& args, const std::string& stdout_file, st
 }
 
 static bool untar_to(const std::string& archive, const std::string& dest, const std::string& list_tmp, std::string* err) {
+    struct Cleanup { std::string f; ~Cleanup() { std::error_code ec; fs::remove(P(f), ec); } } cleanup{list_tmp};
+    /* names (-tf): every path checked. types (-tvf): the first column is the entry type; only plain files and folders pass,
+     * so no symlink or hardlink can point out of the staging folder. */
     if (!run_tar(L"-tf \"" + W(archive) + L"\"", list_tmp, err)) return false;
     std::istringstream ls(read_text(list_tmp));
-    std::error_code ec;
-    fs::remove(P(list_tmp), ec);
     std::string line;
     int n = 0;
     while (std::getline(ls, line)) {
@@ -352,6 +354,15 @@ static bool untar_to(const std::string& archive, const std::string& dest, const 
         ++n;
     }
     if (n == 0) { *err = "the download is empty"; return false; }
+    if (!run_tar(L"-tvf \"" + W(archive) + L"\"", list_tmp, err)) return false;
+    std::istringstream vs(read_text(list_tmp));
+    int m = 0;
+    while (std::getline(vs, line)) {
+        if (line.empty() || line[0] == 13) continue;
+        if ((line[0] != '-' && line[0] != 'd') || line.find(" link to ") != std::string::npos) { *err = "the download contains a link entry: " + line.substr(0, 80); return false; }
+        ++m;
+    }
+    if (m != n) { *err = "the download listing is inconsistent"; return false; }
     return run_tar(L"-xf \"" + W(archive) + L"\" -C \"" + W(dest) + L"\"", "", err);
 }
 
@@ -607,7 +618,7 @@ DolphinPads detect_dolphin_pads() {
     return p;
 }
 
-std::string dolphin_dolphin_ini_patch(const std::string& in, const DolphinPads& pads) {
+std::string dolphin_ini_defaults(const std::string& in) {
     std::string t = in;
     t = hubui::ini_set(t, "Analytics", "Enabled", "False");
     t = hubui::ini_set(t, "Analytics", "PermissionAsked", "True");
@@ -618,16 +629,26 @@ std::string dolphin_dolphin_ini_patch(const std::string& in, const DolphinPads& 
     t = hubui::ini_set(t, "Display", "RenderToMain", "False");
     t = hubui::ini_set(t, "Display", "KeepWindowOnTop", "False");
     t = hubui::ini_set(t, "Core", "SkipIPL", "True");
-    t = hubui::ini_set(t, "Core", "SkipNKitWarning", "True");           // NKit images (.nkit.iso) otherwise stop at a dialog
-    t = hubui::ini_set(t, "Core", "SlotA", "8");                        // GCI folder (the vault copy), card B empty
-    t = hubui::ini_set(t, "Core", "SlotB", "255");
+    t = hubui::ini_set(t, "Interface", "SkipNKitWarning", "True");          // NKit images (.nkit.iso) otherwise stop at a dialog
     if (hubui::ini_get(t, "Core", "GFXBackend").empty()) t = hubui::ini_set(t, "Core", "GFXBackend", "D3D");   // Direct3D 11
     if (hubui::ini_get(t, "DSP", "Volume").empty()) t = hubui::ini_set(t, "DSP", "Volume", "100");
-    /* Controller ports: a standard pad where an XInput pad is connected (port 1 always, keyboard fallback);
-     * with a usable GameCube adapter all four ports are the adapter's. 0 = nothing plugged in, 6 = standard pad, 12 = adapter. */
+    return t;
+}
+
+/* Per launch: what must follow the current situation. SlotA = GCI folder (the vault copy), card B empty. A pad is plugged into
+ * a port where an XInput pad is connected (port 1 always, keyboard fallback); with a usable GameCube adapter all four ports
+ * are the adapter's. SIDevice: 0 = nothing, 6 = standard pad, 12 = adapter. */
+std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
+    std::string t = in;
+    t = hubui::ini_set(t, "Core", "SlotA", "8");
+    t = hubui::ini_set(t, "Core", "SlotB", "255");
     for (int i = 0; i < 4; ++i)
         t = hubui::ini_set(t, "Core", "SIDevice" + std::to_string(i), pads.adapter ? "12" : (i == 0 || pads.xinput[i]) ? "6" : "0");
     return t;
+}
+
+std::string dolphin_dolphin_ini_patch(const std::string& in, const DolphinPads& pads) {
+    return dolphin_ini_ports(dolphin_ini_defaults(in), pads);
 }
 
 std::string dolphin_gfx_ini_patch(const std::string& in) {
@@ -674,15 +695,39 @@ void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads) {
     std::string cfg = join(install_dir, "User\\Config");
     make_dirs(cfg);
     if (!file_exists(join(install_dir, "portable.txt"))) write_text(join(install_dir, "portable.txt"), "");
-    std::string ini = join(cfg, "Dolphin.ini");
-    write_text(ini, dolphin_dolphin_ini_patch(read_text(ini), pads));   // controller ports follow what is plugged in right now
-    std::string gfx = join(cfg, "GFX.ini"), marker = join(cfg, "retrohub-gfx.txt");
-    if (!file_exists(marker)) {   // graphics defaults once; later edits (Dolphin's own settings) are kept
+    /* Written once (marker), so settings changed later in Dolphin's own dialogs or by hand are kept: Dolphin.ini defaults,
+     * GFX.ini defaults and the pad mappings. */
+    std::string ini = join(cfg, "Dolphin.ini"), gfx = join(cfg, "GFX.ini"), pad = join(cfg, "GCPadNew.ini");
+    std::string marker = join(cfg, "retrohub-defaults.txt");
+    if (!file_exists(marker)) {
+        write_text(ini, dolphin_ini_defaults(read_text(ini)));
         write_text(gfx, dolphin_gfx_ini_patch(read_text(gfx)));
-        write_text(marker, "RetroHub wrote the default graphics settings once. Delete this file to have them written again.\n");
+        write_text(pad, dolphin_pad_ini(read_text(pad), pads));
+        write_text(marker, "RetroHub wrote its default Dolphin settings and pad mappings once. Delete this file to have them written again.\n");
     }
-    std::string pad = join(cfg, "GCPadNew.ini");
-    write_text(pad, dolphin_pad_ini(read_text(pad), pads));
+    /* Every launch: only the memory card slots and which ports have a pad plugged in. */
+    write_text(ini, dolphin_ini_ports(read_text(ini), pads));
+}
+
+/* Older RetroHub builds ran a Dolphin downloaded to <exe>\dolphin with its user folder at <data>\dolphin-user, and kept the
+ * memory card straight in the vault (<vault>\gc\<game>\battery\GCI): that location is the one the new sync still reads, so
+ * saves need no move. This only tidies up: save states move to the new User folder, the old user folder is renamed (never
+ * deleted), and an untouched old download (exe + portable.txt, no User folder of its own) is removed. */
+void dolphin_migrate_old(const std::string& data_dir, const std::string& exe_dir, const std::string& install_dir) {
+    std::error_code ec;
+    std::string old_user = join(data_dir, "dolphin-user");
+    if (dir_exists(old_user) && !dir_exists(old_user + ".migrated")) {
+        std::string st = join(old_user, "StateSaves"), nst = join(install_dir, "User\\StateSaves");
+        if (dir_exists(st) && !dir_exists(nst)) {
+            make_dirs(S(P(nst).parent_path()));
+            fs::copy(P(st), P(nst), fs::copy_options::recursive, ec);
+        }
+        fs::rename(P(old_user), P(old_user + ".migrated"), ec);
+    }
+    std::string old_inst = join(exe_dir, "dolphin");
+    if (file_exists(join(old_inst, "Dolphin.exe")) && file_exists(join(old_inst, "portable.txt")) && !dir_exists(join(old_inst, "User")) &&
+        !file_exists(join(old_inst, "retrohub-install.txt")) && !is_running(join(old_inst, "Dolphin.exe")))
+        remove_tree(old_inst);
 }
 
 std::string dolphin_card_root(const std::string& install_dir, const std::string& key) {

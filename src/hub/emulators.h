@@ -83,13 +83,17 @@ std::string cemu_gamepad_profile_xml();
 
 /* Dolphin (GameCube), RetroHub's own portable download: <dir>\portable.txt, User\Config\{Dolphin,GFX,GCPadNew}.ini.
  * `pads` = which XInput slots (0-3) hold a connected controller; adapter = a GameCube adapter (WUP-028) is plugged in.
- * Dolphin.ini / GFX.ini defaults are merged once per file (marker), the pad file is regenerated on every launch. */
+ * Defaults (Dolphin.ini, GFX.ini, GCPadNew.ini) are written once behind a marker; every launch only updates SlotA/B and SIDevice0-3. */
 struct DolphinPads { bool xinput[4] = {false, false, false, false}; bool adapter = false; };
 DolphinPads detect_dolphin_pads();                        // XInputGetState x4 + USB 057E:0337
+std::string dolphin_ini_defaults(const std::string& ini);                               // pure: written once
+std::string dolphin_ini_ports(const std::string& ini, const DolphinPads& p);            // pure: every launch
 std::string dolphin_dolphin_ini_patch(const std::string& ini, const DolphinPads& p);   // pure
 std::string dolphin_gfx_ini_patch(const std::string& ini);                              // pure
 std::string dolphin_pad_ini(const std::string& existing, const DolphinPads& p);         // pure: GCPad1..4
 void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads);
+/* Tidy up after older RetroHub builds (see docs/DOLPHIN.md): saves stay where they are, nothing user-made is deleted. */
+void dolphin_migrate_old(const std::string& data_dir, const std::string& exe_dir, const std::string& install_dir);
 std::string dolphin_args(const std::string& game_path, bool fullscreen, const std::string& gci_dir);
 /* Where the emulator keeps this game's memory card folder (copied from / to the vault around a session). */
 std::string dolphin_card_root(const std::string& install_dir, const std::string& game_key);

@@ -538,6 +538,28 @@ static void test_prepare_and_find(const fs::path& dir) {
     write_text(az / "retrohub-install.txt", "Azahar test");
     i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").string());
     CHECK(i.managed && i.exe == (az / "azahar.exe").string());
+
+    /* Dolphin: defaults once, user edits survive, per-launch ports follow the pads; old layout is tidied without touching saves */
+    fs::path dd = dir / "dol";
+    hubemu::DolphinPads none, two;
+    two.xinput[1] = true;
+    hubemu::prepare_dolphin(dd.string(), none);
+    CHECK(fs::exists(dd / "portable.txt") && fs::exists(dd / "User" / "Config" / "GCPadNew.ini"));
+    write_text(dd / "User" / "Config" / "GCPadNew.ini", "[GCPad1]\nButtons/A = custom\n");
+    std::string di = read_text(dd / "User" / "Config" / "Dolphin.ini");
+    write_text(dd / "User" / "Config" / "Dolphin.ini", hubui::ini_set(di, "Interface", "ConfirmStop", "True"));
+    hubemu::prepare_dolphin(dd.string(), two);
+    CHECK(read_text(dd / "User" / "Config" / "GCPadNew.ini").find("custom") != std::string::npos);
+    std::string di2 = read_text(dd / "User" / "Config" / "Dolphin.ini");
+    CHECK(di2.find("ConfirmStop = True") != std::string::npos && di2.find("SIDevice1 = 6") != std::string::npos);
+    fs::path od = dir / "olddata";
+    write_text(od / "dolphin-user" / "StateSaves" / "a.sav", "s");
+    write_text(od / "saves" / "gc" / "g" / "battery" / "GCI" / "x.gci", "card");
+    write_text(dir / "oldexe" / "dolphin" / "Dolphin.exe", "x");
+    write_text(dir / "oldexe" / "dolphin" / "portable.txt", "");
+    hubemu::dolphin_migrate_old(od.string(), (dir / "oldexe").string() + "\\", dd.string());
+    CHECK(fs::exists(dd / "User" / "StateSaves" / "a.sav") && fs::exists(od / "dolphin-user.migrated") && !fs::exists(od / "dolphin-user"));
+    CHECK(fs::exists(od / "saves" / "gc" / "g" / "battery" / "GCI" / "x.gci") && !fs::exists(dir / "oldexe" / "dolphin"));
 }
 
 static int test_download(const std::string& root) {
