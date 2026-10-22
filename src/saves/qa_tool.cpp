@@ -27,6 +27,12 @@ int main(int argc, char** argv) {
     if (argc < 3) return usage();
     std::string cmd = argv[1];
 
+    if (cmd == "smashdir") {   /* qa_saves_tool smashdir <vault>: battery dir the hub gives the native Smash port (n64 / native:smash64) */
+        hub::saves::set_vault_dir(argv[2]);
+        std::printf("battery=%s\n", hub::saves::battery_dir("n64", "native:smash64").c_str());
+        return 0;
+    }
+
     if (cmd == "key" || cmd == "dirs") {
         const char* rom = cmd == "key" ? argv[2] : (argc >= 4 ? argv[3] : nullptr);
         if (!rom) return usage();

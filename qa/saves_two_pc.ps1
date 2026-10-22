@@ -170,6 +170,15 @@ Add-Result "7a renamed ROM (same key) finds the synced SRAM" ($kR.Key -eq $kA.Ke
 $fe = Get-Content -Raw -LiteralPath (Join-Path $Root "src\n64run\frontend.cpp")
 $onlineInVault = $fe -match 'saves\\\\online'
 Add-Result "8a N64 online save dir is not under the vault (static check, n64run frontend.cpp)" (-not $onlineInVault) "saves\\online reference present: $onlineInVault"
+# ---------------------------------------------------------------- 9. Smash Classic (native) save lives in the vault
+# The hub sets SSB64_SAVE_PATH=<battery_dir("n64","native:smash64")>\ssb64_save.bin; it must be under the vault and sync like any save.
+$sd = (Parse-Kv ((& $Q smashdir $VA 2>&1 | Out-String)) "battery").TrimEnd('\')
+$smashSave = Join-Path $sd "ssb64_save.bin"
+$vaultFull = [IO.Path]::GetFullPath($VA).TrimEnd('\') + '\'
+Add-Result "9a Smash save path is under the vault (n64\native_smash64\battery)" ($sd -and [IO.Path]::GetFullPath($smashSave).StartsWith($vaultFull, [StringComparison]::OrdinalIgnoreCase)) $smashSave
+[IO.File]::WriteAllBytes($smashSave, [byte[]](1..64))
+$sm = Invoke-Sync $VA
+Add-Result "9b Smash save syncs to the shared folder" ($sm.Ok -eq 1 -and $sm.Pushed -ge 1) "pushed=$($sm.Pushed)"
 # ---------------------------------------------------------------- report
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 250 | Write-Output
 $fail = @($results | Where-Object { $_.Result -eq "FAIL" }).Count

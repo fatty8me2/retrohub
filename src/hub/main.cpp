@@ -1015,12 +1015,25 @@ static void start_dolphin_install() {
     DL.th = std::thread(dolphin_install_thread);
 }
 
+/* Env for every Smash Classic launch: ROM hand-off + vault save path. Migrates the legacy save once (copy, never delete). */
+static std::vector<std::pair<std::string, std::string>> smash_env(const std::string& exe) {
+    std::vector<hubui::RomRef> refs;
+    for (auto& g : A.lib) refs.push_back({g.catalog_id, g.serial, g.path});
+    std::string rom = hubui::find_smash_rom(refs);
+    std::string save = hubui::smash_save_file(hub::saves::battery_dir(hubui::kSmashSaveSystem, hubui::kSmashSaveKey));
+    std::string legacy = dir_of(exe) + "ssb64_save.bin";
+    if (hubui::smash_should_migrate_save(file_exists(save), file_exists(legacy)))
+        CopyFileW(W(legacy).c_str(), W(save).c_str(), TRUE);
+    if (!file_exists(dir_of(exe) + "BattleShip.o2r")) push_toast("Preparing Smash Classic for first use (about 30 s)...", ui::WARN, 12.0);
+    return hubui::smash_launch_env(rom, save);
+}
+
 static RunInfo run_info_for(const hub::GameEntry& e, bool online) {
     RunInfo ri;
     ri.key = e.key;
-    ri.system_short = is_native(e) ? "" : sys_short(e);
+    ri.system_short = is_native(e) ? std::string(hubui::kSmashSaveSystem) : sys_short(e);
     ri.title = e.title;
-    ri.track = !is_native(e);
+    ri.track = true;   // the native port is tracked too: its save lives in the vault (n64 / native:smash64)
     ri.online = online;
     return ri;
 }
@@ -1040,7 +1053,7 @@ static void play_entry(const hub::GameEntry& e) {
     std::string sys = sys_short(e);
     if (is_native(e)) {
         std::string exe = smash_exe_path();
-        spawn(exe, "--from-hub", dir_of(exe), {}, ri);
+        spawn(exe, "--from-hub", dir_of(exe), smash_env(exe), ri);
         return;
     }
     std::string battery = no_slash(hub::saves::battery_dir(sys, e.key));
@@ -1099,6 +1112,7 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
         std::vector<std::pair<std::string, std::string>> env;
         env.push_back({is_host ? "SSB64_LOBBY_HOST" : "SSB64_LOBBY_JOIN", server_url()});
         env.push_back({"SSB64_LOBBY_CODE", A.code});
+        for (auto& kv : smash_env(exe)) env.push_back(kv);   // online uses the same vault save as offline
         spawn(exe, "--from-hub", dir_of(exe), env, ri);
         return;
     }
