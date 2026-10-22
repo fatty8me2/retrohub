@@ -11,7 +11,8 @@
  *                     --save-dir <battery dir> --state-dir <states dir> --resume [--fullscreen]
  *                     [--net ... same flags as n64run; online uses a fresh temp save dir, no --resume]
  *  - GameCube:        Dolphin.exe -b -u <data>\dolphin-user -e <game>  (INI keys written before launch)
- *  - Smash (native):  BattleShip.exe --from-hub   (ALWAYS passed so it skips handing back to the hub)
+ *  - Smash (native):  BattleShip.exe --from-hub --no-update-check
+ *                     (ALWAYS passed: skips handing back to the hub, and RetroHub's updater is the only one)
  *                     Online, environment variables:
  *                       SSB64_LOBBY_HOST=<server>  (host)   or  SSB64_LOBBY_JOIN=<server> (joiners)
  *                       SSB64_LOBBY_CODE=<CODE>             (BattleShip joins/hosts this exact code;
@@ -1006,7 +1007,7 @@ static void play_entry(const hub::GameEntry& e) {
     std::string sys = sys_short(e);
     if (is_native(e)) {
         std::string exe = smash_exe_path();
-        spawn(exe, "--from-hub", dir_of(exe), {}, ri);
+        spawn(exe, "--from-hub --no-update-check", dir_of(exe), {}, ri);   // RetroHub's updater is the only one
         return;
     }
     std::string battery = no_slash(hub::saves::battery_dir(sys, e.key));
@@ -1065,7 +1066,7 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
         std::vector<std::pair<std::string, std::string>> env;
         env.push_back({is_host ? "SSB64_LOBBY_HOST" : "SSB64_LOBBY_JOIN", server_url()});
         env.push_back({"SSB64_LOBBY_CODE", A.code});
-        spawn(exe, "--from-hub", dir_of(exe), env, ri);
+        spawn(exe, "--from-hub --no-update-check", dir_of(exe), env, ri);   // RetroHub's updater is the only one
         return;
     }
     /* port i -> i-th member in slot order (slots may have gaps); --slot stays the real lobby slot */
@@ -1295,12 +1296,15 @@ static void text_wrapped_disabled(const std::string& s) {
     ImGui::PopStyleColor();
 }
 
-static void add_rom_folder() {
-    std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
-    if (p.empty()) return;
+static void add_rom_folder_path(const std::string& p) {
     if (std::find(A.st.rom_folders.begin(), A.st.rom_folders.end(), p) == A.st.rom_folders.end()) A.st.rom_folders.push_back(p);
     mark_dirty();
     start_scan();
+}
+static void add_rom_folder() {
+    std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+    if (p.empty()) return;
+    add_rom_folder_path(p);
 }
 static void locate_smash() {
     std::string p = pick_path(A.hwnd, false, L"BattleShip.exe", L"*.exe");
@@ -1915,8 +1919,11 @@ static void centered_text(ImDrawList* dl, ImFont* f, float cx, float y, ImU32 co
 }
 
 static void empty_library_state() {
+    static const std::vector<std::string> suggestions = hub::suggest_rom_folders(3);   // scanned once, on first empty view
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    float w = ImGui::GetContentRegionAvail().x, h = std::min(ImGui::GetContentRegionAvail().y, sp(46.f));
+    float w = ImGui::GetContentRegionAvail().x;
+    float h = std::min(ImGui::GetContentRegionAvail().y,
+                       sp(46.f) + (suggestions.empty() ? 0.f : sp(10.f) + sp(6.f) * (float)suggestions.size()));
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
     dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.5f));
     dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.5f), 0, 1.f);
@@ -1955,6 +1962,23 @@ static void empty_library_state() {
     float bw = sp(24.f);
     ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
     if (button("Add ROM folder", ImVec2(bw, sp(6.f)), true, true, ui::Icon::Folder)) add_rom_folder();
+    if (!suggestions.empty()) {
+        y += sp(6.f) + sp(3.f);
+        centered_text(dl, ui::F.cap, cx, y, ui::TEXT2, "Found game files in these folders:");
+        y += ui::F.cap->FontSize + sp(1.5f);
+        for (size_t i = 0; i < suggestions.size(); ++i) {
+            const std::string& s = suggestions[i];
+            // show the last two path parts, e.g. "Desktop\Roms"
+            size_t cut = s.find_last_of('\\');
+            size_t cut2 = cut == std::string::npos || cut == 0 ? std::string::npos : s.find_last_of('\\', cut - 1);
+            std::string label = "Add  " + (cut2 == std::string::npos ? s : s.substr(cut2 + 1));
+            ImGui::PushID((int)i);
+            ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
+            if (button(label.c_str(), ImVec2(bw, sp(4.5f)), false, true, ui::Icon::Plus)) add_rom_folder_path(s);
+            ImGui::PopID();
+            y += sp(6.f);
+        }
+    }
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
     ImGui::Dummy(ImVec2(w, sp(1.f)));
 }
@@ -3614,11 +3638,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         std::string u = GetUserNameW(un, &ul) ? U(un) : "";
         A.st.name = hubui::sanitize_player_name(u);
     }
-    if (A.st.rom_folders.empty()) {
-        // Default ROM folder: %USERPROFILE%\Desktop\Everything\N64Games if it exists.
-        std::string d = env_var(L"USERPROFILE") + "\\Desktop\\Everything\\N64Games";
-        if (dir_exists(d)) A.st.rom_folders.push_back(d);
-    }
+    // No ROM folder is assumed: an empty library offers detected folders as one-click "Add" suggestions.
     if (!A.st.vault_dir.empty()) hub::saves::set_vault_dir(A.st.vault_dir);
 
     int win_w = (int)(1280 * S), win_h = (int)(780 * S);
