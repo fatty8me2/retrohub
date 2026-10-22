@@ -30,7 +30,11 @@ struct GameInfo {
     std::string nointro;     // No-Intro name of the primary (USA) release, e.g.
                              // "Mario Kart 64 (USA)" -- used to fetch cover art
     std::string genre;       // one of genres(): "Party" "Fighting" ... "" = unknown (hub files it under "Other")
+    int online_max = 0;      // online player cap when lower than max_players (0 = same as max_players)
 };
+
+/* Online player cap: online_max when set, else max_players. Use this for every online limit (rooms, launch, presence). */
+int online_max_for(const GameInfo& g);
 
 /* Allowed GameInfo::genre values, in the order the hub shows genre shelves. */
 const std::vector<std::string>& genres();
