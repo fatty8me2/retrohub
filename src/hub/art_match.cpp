@@ -51,6 +51,7 @@ std::string thumb_repo(const std::string& s) {
     if (s == "gbc") return "Nintendo_-_Game_Boy_Color";
     if (s == "gb") return "Nintendo_-_Game_Boy";
     if (s == "gc") return "Nintendo_-_GameCube";
+    if (s == "nds") return "Nintendo_-_Nintendo_DS";
     return "";
 }
 
@@ -61,6 +62,7 @@ std::string dat_url(const std::string& s) {
     if (s == "gbc") return std::string(base) + "no-intro/Nintendo%20-%20Game%20Boy%20Color.dat";
     if (s == "gb") return std::string(base) + "no-intro/Nintendo%20-%20Game%20Boy.dat";
     if (s == "gc") return std::string(base) + "redump/Nintendo%20-%20GameCube.dat";
+    if (s == "nds") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%20DS.dat";
     return "";
 }
 

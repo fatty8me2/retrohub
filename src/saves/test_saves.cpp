@@ -309,6 +309,29 @@ int main() {
         CHECK(r.ok && read_file(Z2 / rel) == orig && conflict_content(Z2) == fresh);
     }
 
+    printf("[nds] DS saves: vault key/path wiring and cross-PC sync (retrorun writes <rom stem>.srm into battery_dir)\n");
+    {
+        const std::string key = "nds:adae-05ca37";   // library key: game code + ROM version + header CRC16
+        fs::path N1 = base / "ndsA", N2 = base / "ndsB", ncloud = base / "ndscloud";
+        set_vault_dir(N1.u8string());
+        std::string bd = battery_dir("nds", key);
+        CHECK(bd == N1.u8string() + "\\nds\\nds_adae-05ca37\\battery\\");   // ':' is sanitized, same on every PC
+        CHECK(states_dir("nds", key) == N1.u8string() + "\\nds\\nds_adae-05ca37\\states\\");
+        std::string save(524288, '\xFF');
+        save.replace(0, 8, "DSSAVE01");
+        write_file(P(bd) / "Pokemon - Diamond Version (USA) (Rev 5).srm", save, 60);
+        write_file(P(states_dir("nds", key)) / "auto.state", std::string(4096, 'x'), 60);
+        touch_game("nds", key, "Pokemon Diamond");
+        SyncReport nr = sync_folder(ncloud.u8string(), false);
+        CHECK(nr.ok && nr.pushed == 2 && nr.conflicts == 0);   // .srm + meta.json; states stay local
+        CHECK(!fs::exists(ncloud / "nds/nds_adae-05ca37/states"));
+        set_vault_dir(N2.u8string());
+        nr = sync_folder(ncloud.u8string(), false);
+        CHECK(nr.ok && nr.pulled == 2 && nr.conflicts == 0);
+        CHECK(read_file(N2 / "nds/nds_adae-05ca37/battery/Pokemon - Diamond Version (USA) (Rev 5).srm") == save);
+        CHECK(battery_dir("nds", key) == N2.u8string() + "\\nds\\nds_adae-05ca37\\battery\\");
+    }
+
     { std::error_code ec; fs::remove_all(fs::path(L"\\\\?\\" + fs::absolute(base).wstring()), ec); }
     printf("\n%s: %d checks, %d failed\n", g_fail ? "FAILED" : "PASSED", g_checks, g_fail);
     return g_fail ? 1 : 0;
