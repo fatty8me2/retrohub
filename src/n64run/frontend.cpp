@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -40,6 +41,7 @@
 
 #include "headless.h"
 #include "local_input.h"
+#include "match.h"
 #include "lockstep.h"
 #include "runstate.h"
 #include "save_sync.h"
@@ -54,7 +56,7 @@ static const int kFrontendApiVersion = 0x020102;   // ui-console's value for cor
 static const char* kUsage =
     "usage: n64run --rom PATH [--game ID] [--net SERVER --room CODE-N --slot K --players N\n"
     "              --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]\n"
-    "              [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n"
+    "              [--match SPEC] [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n"
     "              [--title TEXT] [--fullscreen]\n"
     "              [--headless [--frames N] [--screenshot OUT.png] [--dump-ram OFFSET,LEN,FILE]...]\n";
 
@@ -98,6 +100,7 @@ struct Args {
     bool headless = false;
     long long frames = 0;
     std::string screenshot;
+    std::string match;   // --match spec (VS battle jump)
     struct RamDump { uint32_t offset, len; std::string file; };
     std::vector<RamDump> dumps;
 };
@@ -135,6 +138,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--headless") a.headless = true;
         else if (k == "--frames") { int f = 0; ok = ival(&f) && f >= 0; a.frames = f; }
         else if (k == "--screenshot") ok = val(&a.screenshot);
+        else if (k == "--match") ok = val(&a.match);
         else if (k == "--dump-ram") {
             std::string s;
             ok = val(&s);
@@ -189,6 +193,9 @@ static bool parse_args(int argc, char** argv, Args& a) {
 static long long g_frame_limit = 0;      // 0 = unlimited
 static long long g_frame_count = 0;
 static bool g_limiter_off = false;
+static std::unique_ptr<MatchDriver> g_match;
+static long long g_vi = 0;
+static bool g_headless_mode = false;
 
 // ---------------------------------------------------------------- emulator
 struct Core {
@@ -209,6 +216,12 @@ static Core g_core;
 /* --headless: called by the core on every VI (emulator thread). Drops the speed limiter on the first
  * call (it cannot be changed before the emulation thread runs) and stops after --frames VIs. */
 static void headless_frame_cb(unsigned int) {
+    g_vi++;
+    if (g_match && g_core.MemPtr && !g_match->done()) {
+        std::string l = g_match->step(static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)), g_vi);
+        if (!l.empty()) { std::stringstream ls(l); std::string one; while (std::getline(ls, one)) logline("n64run", one.c_str()); }
+    }
+    if (!g_headless_mode) return;
     if (!g_limiter_off) {
         int off = 0;
         g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &off);
@@ -541,6 +554,12 @@ int main(int argc, char** argv) {
         return 3;
     }
 
+    if (!args.match.empty()) {
+        MatchSpec ms; std::string merr;
+        if (!parse_match_spec(args.match, &ms, &merr)) { logf_("n64run", "bad --match: %s", merr.c_str()); g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr); g_core.Shutdown(); return 2; }
+        g_match.reset(new MatchDriver(ms, args.owner));
+        logf_("n64run", "match: stage %d stocks %d p0..3 present %d%d%d%d", ms.stage, ms.stocks, ms.present[0], ms.present[1], ms.present[2], ms.present[3]);
+    }
     {
         LockstepOptions lo;
         for (int p = 0; p < kPorts; p++) lo.owner[p] = args.owner[p];
@@ -581,7 +600,8 @@ int main(int argc, char** argv) {
             g_title_stop = false;
             title_thread = std::thread(title_watch, wtitle);
         }
-        if (args.headless) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
+        g_headless_mode = args.headless;
+        if (args.headless || g_match) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         e = g_core.DoCommand(M64CMD_EXECUTE, 0, nullptr);   // blocks until the emulation stops
         g_title_stop = true;
         if (title_thread.joinable()) title_thread.join();
