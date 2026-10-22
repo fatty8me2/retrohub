@@ -4344,8 +4344,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         std::ifstream in(std::filesystem::path(W(hand)), std::ios::binary);
         if (in) {
             std::stringstream ss; ss << in.rdbuf(); in.close();
-            if (hubui::merge_installer_games_dir(&A.st, ss.str())) hubui::save_settings(A.settings_path, A.st);
-            std::error_code ec; std::filesystem::remove(std::filesystem::path(W(hand)), ec);
+            bool changed = hubui::merge_installer_games_dir(&A.st, ss.str());
+            if (!changed || hubui::save_settings(A.settings_path, A.st)) {   // keep the hand-off file if saving failed: retry next start
+                std::error_code ec; std::filesystem::remove(std::filesystem::path(W(hand)), ec);
+            }
         }
     }
     if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0 Library, 1 Online, 2 Saves, 3 Controllers, 4 Settings, 5 About
