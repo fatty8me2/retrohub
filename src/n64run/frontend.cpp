@@ -236,7 +236,8 @@ static void title_watch(std::wstring title) {
         if (hwnd) {
             wchar_t cur[512] = {0};
             GetWindowTextW(hwnd, cur, 512);
-            if (title != cur) SetWindowTextW(hwnd, title.c_str());
+            if (title != cur)   // timeout: the window thread may be busy shutting down
+                SendMessageTimeoutW(hwnd, WM_SETTEXT, 0, (LPARAM)title.c_str(), SMTO_ABORTIFHUNG, 200, nullptr);
         }
         bool early = steady_clock::now() - start < seconds(10);
         for (int i = 0; i < (early ? 1 : 8) && !g_title_stop.load(); i++) std::this_thread::sleep_for(milliseconds(250));
