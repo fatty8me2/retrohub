@@ -453,8 +453,11 @@ bool id_gba(const fs::path& p, const fs::path& name, uint64_t size, GameEntry* e
     e->system = System::GBA;
     e->serial = code;
     e->key = "gba:" + sanitize_key(code) + "-" + hex32(crc);
-    if (const GameInfo* g = find_game_for("gba", code, std::string())) e->catalog_id = g->id;
     e->title = pretty_title(header_text(&d[0xA0], 12), name);
+    if (const GameInfo* g = find_game_for("gba", code, std::string())) {
+        e->catalog_id = g->id;
+        e->title = g->title;   // key above is unchanged
+    }
     return true;
 }
 
@@ -1378,7 +1381,8 @@ std::unordered_map<std::string, CacheRec> cache_load() {
                 if (const GameInfo* g = find_game_for(f.str("sys"), r.e.serial, md5)) {
                     r.e.catalog_id = g->id;
                     if (r.e.system == System::N64 || r.e.system == System::N3DS || r.e.system == System::WiiU ||
-                        r.e.system == System::GB || r.e.system == System::GBC) r.e.title = g->title;
+                        r.e.system == System::GB || r.e.system == System::GBC || r.e.system == System::GBA ||
+                        r.e.system == System::NDS) r.e.title = g->title;
                 }
             }
             r.e.size = r.size;

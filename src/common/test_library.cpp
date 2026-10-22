@@ -69,6 +69,7 @@ static Bytes make_n64(const char* title, uint32_t seed) {
     return v;
 }
 
+static std::string ascii_lower_t(std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; }
 static Bytes make_gba(const char* title, const char* code, uint32_t seed, size_t size = 128 * 1024, bool good = true) {
     Bytes v = noise(size, seed);
     std::memset(&v[0xA0], 0, 12);
@@ -210,8 +211,18 @@ static void test_identify(const fs::path& dir) {
     CHECK(identify_game((dir / "id" / "emerald.gba").string(), &e));
     CHECK(e.system == System::GBA);
     CHECK(e.serial == "BPEE");
-    CHECK(e.catalog_id == "pokeemerald");  // serial match via find_game_for
-    CHECK(e.title == "Pokemon Emer");
+    CHECK(e.catalog_id == "pokeemerald" && e.title == "Pokemon Emerald" && e.key.rfind("gba:bpee-", 0) == 0);  // serial match via find_game_for
+    {   // user's other GBA headers: catalog titles replace the 12-char header names
+        struct { const char* hdr; const char* code; const char* id; const char* title; } t[] = {
+            {"POKEMON FIRE", "BPRE", "pokefirered", "Pokemon FireRed"}, {"POKEMON LEAF", "BPGE", "pokeleafgreen", "Pokemon LeafGreen"},
+            {"POKEMON RUBY", "AXVE", "pokeruby", "Pokemon Ruby"}, {"POKEMON SAPP", "AXPE", "pokesapphire", "Pokemon Sapphire"}};
+        GameEntry x;
+        for (auto& r : t) {
+            CHECK(write_file(dir / "id" / (std::string(r.code) + ".gba"), make_gba(r.hdr, r.code, 31)));
+            CHECK(identify_game((dir / "id" / (std::string(r.code) + ".gba")).string(), &x));
+            CHECK(x.catalog_id == r.id && x.title == r.title && x.key.rfind(std::string("gba:") + ascii_lower_t(r.code) + "-", 0) == 0);
+        }
+    }
     CHECK(e.key.rfind("gba:bpee-", 0) == 0 && e.key.size() == 9 + 8);
     CHECK(e.size == gba.size());
     CHECK(fs::path(e.path).is_absolute());
