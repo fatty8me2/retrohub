@@ -250,6 +250,65 @@ int main() {
     r = sync_folder(A.u8string(), false);
     CHECK(!r.ok);
 
+    printf("[11] identity: oldest 'created' wins on sync and import\n");
+    {
+        auto idj = [](const char* tag, long long created) {
+            return std::string("{\"user_id\":\"") + tag + "\",\"secret\":\"s\",\"created\":" + std::to_string(created) + "}\n";
+        };
+        fs::path I1 = base / "idA", I2 = base / "idB", icloud = base / "idcloud";
+        const char* rel = "_identity/identity.json";
+        std::string orig = idj("orig", 1000), fresh = idj("fresh", 2000);
+        // PC1 = original (OLD file mtime), PC2 = created later (NEW file mtime)
+        write_file(I1 / rel, orig, 500);
+        write_file(I2 / rel, fresh, 5);
+        set_vault_dir(I1.u8string());
+        r = sync_folder(icloud.u8string(), false);
+        CHECK(r.ok && read_file(icloud / rel) == orig);
+        set_vault_dir(I2.u8string());
+        r = sync_folder(icloud.u8string(), false);
+        dump(r);
+        CHECK(r.ok && r.conflicts == 1);
+        CHECK(read_file(I2 / rel) == orig);
+        CHECK(read_file(icloud / rel) == orig);
+        CHECK(count_conflicts(I2) == 1 && conflict_content(I2) == fresh);
+        set_vault_dir(I1.u8string());
+        r = sync_folder(icloud.u8string(), false);
+        CHECK(r.ok && read_file(I1 / rel) == orig);   // never replaced by the newer identity
+        // reverse order: the NEW PC syncs first, the original arrives second and still wins
+        fs::path J1 = base / "idC", J2 = base / "idD", jcloud = base / "idcloud2";
+        write_file(J1 / rel, orig, 500);
+        write_file(J2 / rel, fresh, 5);
+        set_vault_dir(J2.u8string());
+        r = sync_folder(jcloud.u8string(), false);
+        CHECK(r.ok && read_file(jcloud / rel) == fresh);
+        set_vault_dir(J1.u8string());
+        r = sync_folder(jcloud.u8string(), false);
+        CHECK(r.ok && read_file(jcloud / rel) == orig && read_file(J1 / rel) == orig);
+        set_vault_dir(J2.u8string());
+        r = sync_folder(jcloud.u8string(), false);
+        CHECK(r.ok && read_file(J2 / rel) == orig);
+        // import_zip: zip holds the original, vault has the newer-mtime fresh one -> original wins
+        fs::path Z1 = base / "idZ1", Z2 = base / "idZ2";
+        write_file(Z1 / rel, orig, 500);
+        set_vault_dir(Z1.u8string());
+        CHECK(export_zip((base / "id.zip").u8string(), false, &err));
+        write_file(Z2 / rel, fresh, 0);
+        set_vault_dir(Z2.u8string());
+        r = import_zip((base / "id.zip").u8string());
+        CHECK(r.ok && read_file(Z2 / rel) == orig && count_conflicts(Z2) == 1 && conflict_content(Z2) == fresh);
+        // import_zip the other way: zip holds the newer identity, vault keeps the original
+        write_file(Z1 / rel, orig, 0);
+        set_vault_dir(Z2.u8string());
+        write_file(Z2 / rel, orig, 500);
+        fs::remove_all(Z2 / "_conflicts");
+        write_file(Z1 / "_identity/identity.json", fresh, 0);
+        set_vault_dir(Z1.u8string());
+        CHECK(export_zip((base / "id2.zip").u8string(), false, &err));
+        set_vault_dir(Z2.u8string());
+        r = import_zip((base / "id2.zip").u8string());
+        CHECK(r.ok && read_file(Z2 / rel) == orig && conflict_content(Z2) == fresh);
+    }
+
     { std::error_code ec; fs::remove_all(fs::path(L"\\\\?\\" + fs::absolute(base).wstring()), ec); }
     printf("\n%s: %d checks, %d failed\n", g_fail ? "FAILED" : "PASSED", g_checks, g_fail);
     return g_fail ? 1 : 0;

@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <thread>
@@ -78,6 +79,49 @@ static void offline_tests(const std::string& root)
     Identity i3 = identity_load_or_create(d, v);
     CHECK(i3.user_id == i1.user_id, "vault adoption");
     CHECK(fs::exists(fs::path(d) / "identity.json"));
+
+    /* identity adoption after a vault sync (new PC created its own identity first) */
+    {
+        std::string d2 = root + "adopt\\data\\", v2 = root + "adopt\\vault\\";
+        Identity mine = identity_load_or_create(d2, v2);     // "new PC" identity, mirrored to the vault
+        CHECK(!identity_adopt_vault_if_older(d2, v2, nullptr), "same identity: nothing to adopt");
+        Identity orig = identity_generate();
+        orig.created = mine.created - 1000;
+        {   // sync brought the original into the vault
+            std::ofstream o(fs::path(v2) / "_identity" / "identity.json", std::ios::trunc);
+            o << "{\"user_id\":\"" << orig.user_id << "\",\"secret\":\"" << orig.secret << "\",\"created\":" << orig.created << "}\n";
+        }
+        FriendsClient c;
+        c.set_paths(d2, v2);
+        CHECK(c.adopt_vault_identity_if_older());
+        CHECK(c.my_uid() == orig.user_id, "client switched");
+        Event ev;
+        CHECK(c.poll_event(&ev) && ev.kind == Event::IdentityAdopted && ev.text == friend_code(orig.user_id));
+        Identity now = identity_load_or_create(d2, v2);
+        CHECK(now.user_id == orig.user_id && now.secret == orig.secret);
+        int backups = 0;
+        std::string bak;
+        for (auto& e : fs::directory_iterator(d2)) {
+            std::string n = e.path().filename().string();
+            if (n.rfind("identity-backup-", 0) == 0) { backups++; bak = e.path().string(); }
+        }
+        CHECK(backups == 1);
+        std::ifstream bi(bak);
+        std::string btxt((std::istreambuf_iterator<char>(bi)), std::istreambuf_iterator<char>());
+        CHECK(btxt.find(mine.user_id) != std::string::npos, "backup holds the replaced identity");
+        CHECK(!c.adopt_vault_identity_if_older(), "idempotent");
+        // a younger vault identity is never adopted
+        Identity younger = identity_generate();
+        younger.created = orig.created + 5000;
+        {
+            std::ofstream o(fs::path(v2) / "_identity" / "identity.json", std::ios::trunc);
+            o << "{\"user_id\":\"" << younger.user_id << "\",\"secret\":\"" << younger.secret << "\",\"created\":" << younger.created << "}\n";
+        }
+        CHECK(!c.adopt_vault_identity_if_older() && c.my_uid() == orig.user_id);
+        // garbage in the vault is ignored
+        { std::ofstream o(fs::path(v2) / "_identity" / "identity.json", std::ios::trunc); o << "not json"; }
+        CHECK(!identity_adopt_vault_if_older(d2, v2, nullptr));
+    }
 
     /* JSON: escapes + unicode incl. surrogate pair, via the util parser */
     detail::Json j;

@@ -21,6 +21,11 @@ struct Identity {
  * Dirs are paths with or without trailing separator. */
 Identity identity_load_or_create(const std::string& data_dir, const std::string& vault_dir);
 Identity identity_generate();
+/* After a vault sync/import: if <vault_dir>/_identity/identity.json is a valid, different identity with an
+ * OLDER "created" than <data_dir>/identity.json, back the current one up to
+ * <data_dir>/identity-backup-<timestamp>.json and switch identity.json to the vault's. Returns true (and
+ * fills *adopted) when it switched. Pure file logic: does not touch any running client. */
+bool identity_adopt_vault_if_older(const std::string& data_dir, const std::string& vault_dir, Identity* adopted);
 std::string friend_code(const std::string& user_id);   // "RH-7KQ2-M9XD"
 
 /* ---- data ---- */
@@ -61,7 +66,8 @@ struct Message {
 
 struct Event {
     enum Kind { FriendOnline, FriendOffline, PresenceChanged, RequestReceived, RequestResolved,
-                FriendAdded, FriendRemoved, MessageReceived, InviteReceived, Error };
+                FriendAdded, FriendRemoved, MessageReceived, InviteReceived, Error,
+                IdentityAdopted };   // IdentityAdopted: text = new friend code ("RH-XXXX-XXXX"), uid = new uid
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
     std::string name;
@@ -122,6 +128,10 @@ class FriendsClient {
     void mark_read(const std::string& uid);
 
     bool poll_event(Event* out);
+
+    /* Call after a sync/import finished. If the vault holds an older identity, adopts it (backup made),
+     * reconnects with it if the client was started, queues Event::IdentityAdopted and returns true. */
+    bool adopt_vault_identity_if_older();
 
   private:
     struct Impl;

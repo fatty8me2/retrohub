@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -167,6 +168,41 @@ Identity identity_load_or_create(const std::string& data_dir, const std::string&
     id = identity_generate();
     identity_save(id, data_dir, vault_dir);
     return id;
+}
+
+static std::string backup_stamp()
+{
+    time_t t = time(nullptr);
+    struct tm tmv;
+    localtime_s(&tmv, &t);
+    char b[32];
+    strftime(b, sizeof b, "%Y%m%d-%H%M%S", &tmv);
+    return b;
+}
+
+bool identity_adopt_vault_if_older(const std::string& data_dir, const std::string& vault_dir, Identity* adopted)
+{
+    if (vault_dir.empty()) return false;
+    std::string lp = with_sep(data_dir) + "identity.json";
+    std::string vp = with_sep(vault_dir) + "_identity\\identity.json";
+    Identity cur, v;
+    if (!identity_read(vp, &v)) return false;
+    bool have_cur = identity_read(lp, &cur);
+    if (have_cur) {
+        if (cur.user_id == v.user_id) return false;
+        if (!(v.created < cur.created)) return false;
+        std::string text;
+        if (read_file(lp, &text)) {
+            std::string bp = with_sep(data_dir) + "identity-backup-" + backup_stamp() + ".json";
+            for (int n = 2; fs::exists(upath(bp)) && n < 100; n++)
+                bp = with_sep(data_dir) + "identity-backup-" + backup_stamp() + "-" + std::to_string(n) + ".json";
+            write_file(bp, text);
+        }
+    }
+    write_file(lp, identity_json(v));
+    net_log("Friends: adopted older identity from vault");
+    if (adopted) *adopted = v;
+    return true;
 }
 
 /* ====================================================================== impl */
@@ -637,6 +673,25 @@ void FriendsClient::update()
         d.last_keepalive = now;
         d.ws.send_text("{\"type\":\"keepalive\"}");
     }
+}
+
+bool FriendsClient::adopt_vault_identity_if_older()
+{
+    Impl& d = *impl_;
+    Identity v;
+    if (!identity_adopt_vault_if_older(d.data_dir, d.vault_dir, &v)) return false;
+    if (d.started) {
+        std::string server = d.server, name = d.name;
+        start(server, name);   // reloads identity.json, drops per-account state, reconnects
+    } else {
+        d.id = v;
+    }
+    Event e;
+    e.kind = Event::IdentityAdopted;
+    e.uid = v.user_id;
+    e.text = friend_code(v.user_id);
+    d.events.push_back(e);
+    return true;
 }
 
 bool FriendsClient::connected() const { return impl_->welcomed; }

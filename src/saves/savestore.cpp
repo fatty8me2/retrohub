@@ -498,6 +498,33 @@ ws vault_w() {
 
 bool is_meta(const ws& rel) { return comp_count(rel) == 3 && lower(comp_at(rel, 2)) == L"meta.json"; }
 
+/* The friends identity (<vault>/_identity/identity.json) must never "newest wins": a new PC creates a fresh
+ * identity before its first sync, and the user's ORIGINAL (oldest "created") account has to survive. */
+bool is_identity(const ws& rel) { return lower(rel) == L"_identity/identity.json"; }
+
+int64_t identity_created(const str& text) {
+    JP p(text); JV v;
+    if (!p.value(v) || v.t != 'o') return -1;
+    const JV* uid = v.get("user_id"); const JV* c = v.get("created");
+    if (!uid || uid->t != 's' || uid->s.empty() || !c || c->t != 'n') return -1;
+    char* end = nullptr;
+    long long n = strtoll(c->s.c_str(), &end, 10);
+    return (end != c->s.c_str() && n >= 0) ? (int64_t)n : -1;
+}
+int64_t identity_created_file(const ws& path) {
+    std::vector<uint8_t> b;
+    if (!read_file(path, &b)) return -1;
+    return identity_created(str(b.begin(), b.end()));
+}
+/* 1 = a wins (older, or only valid one), 0 = b wins, -1 = no opinion (tie / both invalid) */
+int identity_pick(int64_t a, int64_t b) {
+    if (a < 0 && b < 0) return -1;
+    if (a < 0) return 0;
+    if (b < 0) return 1;
+    if (a == b) return -1;
+    return a < b ? 1 : 0;
+}
+
 /* Pick a _conflicts name that is free in all given roots. */
 ws conflict_rel(const ws& rel, const std::vector<ws>& roots) {
     ws base = L"_conflicts/" + rel + L"." + device_file_tag() + L"." + timestamp_tag();
@@ -639,6 +666,12 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
         else if (el.mtime != er.mtime) local_wins = el.mtime > er.mtime;
         else local_wins = hl > hr;  // deterministic on both PCs
 
+        if (is_identity(el.rel)) {
+            int pk = identity_pick(identity_created_file(vault + L"/" + el.rel), identity_created_file(root + L"/" + er.rel));
+            if (pk >= 0) local_wins = pk == 1;
+            conflict = true;   // always keep the loser
+        }
+
         const FE& win = local_wins ? el : er;
         const FE& lose = local_wins ? er : el;
         const ws& wbase = local_wins ? vault : root;
@@ -654,7 +687,8 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
             }
             rep.conflicts++;
             rep.log.push_back("conflict " + lrel(el) + ": " + (local_wins ? "vault" : "sync folder") +
-                              " is newer and wins; other version kept as " + U(cr));
+                              (is_identity(el.rel) ? " has the older identity and wins; other version kept as "
+                                                                 : " is newer and wins; other version kept as ") + U(cr));
         }
         if (copy_atomic(wbase + L"/" + win.rel, lbase + L"/" + win.rel, win.mtime)) {
             if (local_wins) { rep.pushed++; rep.log.push_back("push " + lrel(el)); }
@@ -771,6 +805,10 @@ SyncReport import_zip(const std::string& zip_path) {
             } else if (lh != zh) {
                 uint64_t lft = ((uint64_t)ad.ftLastWriteTime.dwHighDateTime << 32) | ad.ftLastWriteTime.dwLowDateTime;
                 bool zip_wins = zft > lft + 20000000ULL;  // zip dates have 2 s resolution
+                if (is_identity(rel)) {
+                    int pk = identity_pick(identity_created(str((const char*)bytes, sz)), identity_created_file(target));
+                    if (pk >= 0) zip_wins = pk == 1;
+                }
                 if (is_meta(rel)) {
                     if (zip_wins && write_atomic(target, bytes, sz, zft)) rep.pulled++;
                 } else {
