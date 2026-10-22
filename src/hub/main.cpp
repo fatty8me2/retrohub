@@ -934,6 +934,7 @@ struct UnzipJob {
 
 /* Size of the image inside a zipped 3DS game (read once from the zip's directory). */
 static uint64_t unpacked_size(const hub::GameEntry& e) {
+    if (e.system == hub::System::GC) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
     static std::map<std::string, uint64_t> cache;
     auto it = cache.find(e.path);
     if (it == cache.end()) it = cache.emplace(e.path, hub::zip_3ds_unpacked_size(e)).first;
@@ -947,7 +948,7 @@ static std::string launch_path_for(const hub::GameEntry& e) {
 
 static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery) {
     hubemu::Kind kind = hubemu::kind_for(e.system);
-    if (e.system == hub::System::N3DS && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {
+    if ((e.system == hub::System::N3DS || e.system == hub::System::GC) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
         UNZ.key = e.key;
         UNZ.state = UnzipJob::Asking;
         return;
@@ -1644,7 +1645,11 @@ static TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool 
     t.title = e.title;
     if (show_sys) t.badge = sys_badge(e.system);   // inside a console section the header already says it
     if (is_native(e)) t.tag = "NATIVE";
-    if (e.issue == "extract") { t.tag = "ZIP"; t.tag_tip = "Zipped - RetroHub unpacks it the first time you play"; }
+    if (e.issue == "extract") {
+        const bool sz = e.path.size() > 3 && e.path.compare(e.path.size() - 3, 3, ".7z") == 0;
+        t.tag = sz ? "7Z" : "ZIP";
+        t.tag_tip = "Archived - RetroHub unpacks it the first time you play";
+    }
     else if (e.issue == "encrypted") { t.tag = "ENCRYPTED"; t.tag_warn = true; t.tag_tip = "Encrypted dump - it needs decrypting before it can run"; }
     else if (e.issue == "keys") { t.tag = "NEEDS KEYS"; t.tag_warn = true; t.tag_tip = "Needs decryption keys (see the 3DS setup dialog)"; }
     entry_colors(e, &t.c0, &t.c1);
@@ -2398,7 +2403,8 @@ static void draw_details_modal() {
     ImGui::PopStyleColor();
     if (e.issue == "extract") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
-        ImGui::TextWrapped("Zipped: Azahar cannot open .zip files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your zip stays untouched.", unpacked_size(e) / 1073741824.0);
+        ImGui::TextWrapped("Archived: %s cannot open %s files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your archive stays untouched.",
+                           e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);
         ImGui::PopStyleColor();
     } else if (e.issue == "encrypted") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
@@ -3594,15 +3600,15 @@ static void draw_emulator_dialogs() {
     }
     if (UNZ.state != UnzipJob::Idle) {
         bool open = false;
-        emu_modal_begin("Unpack 3DS game", &open);
+        emu_modal_begin("Unpack game", &open);
         if (open) {
             const hub::GameEntry* g = find_entry(UNZ.key);
             if (UNZ.state == UnzipJob::Asking && g) {
-                ImGui::TextWrapped("Azahar cannot open .zip files. Unpack \"%s\" (about %.1f GB) into RetroHub's data folder?", g->title.c_str(),
+                ImGui::TextWrapped("%s cannot open archives. Unpack \"%s\" (about %.1f GB) into RetroHub's data folder?", g->system == hub::System::GC ? "Dolphin" : "Azahar", g->title.c_str(),
                                    unpacked_size(*g) / 1073741824.0);
                 ImGui::Dummy(ImVec2(0, 2 * S));
                 text_wrapped_disabled("The unpacked image goes to " + hub::extract_3ds_dir(*g) + " and needs the same amount of free disk space. "
-                                      "Your zip is left untouched. You can also unpack it yourself into a ROM folder.");
+                                      "Your archive is left untouched. You can also unpack it yourself into a ROM folder.");
                 ImGui::Dummy(ImVec2(0, 8 * S));
                 if (button("Unpack and play", ImVec2(200 * S, 44 * S), true)) start_unzip(*g);
                 ImGui::SetItemDefaultFocus();
