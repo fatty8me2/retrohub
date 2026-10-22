@@ -38,6 +38,7 @@
 #include "games.h"
 #include "session.h"
 
+#include "headless.h"
 #include "local_input.h"
 #include "lockstep.h"
 #include "runstate.h"
@@ -54,7 +55,8 @@ static const char* kUsage =
     "usage: n64run --rom PATH [--game ID] [--net SERVER --room CODE-N --slot K --players N\n"
     "              --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]\n"
     "              [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n"
-    "              [--title TEXT] [--fullscreen]\n";
+    "              [--title TEXT] [--fullscreen]\n"
+    "              [--headless [--frames N] [--screenshot OUT.png] [--dump-ram OFFSET,LEN,FILE]...]\n";
 
 // ---------------------------------------------------------------- logging
 static FILE* g_logf = nullptr;
@@ -91,6 +93,13 @@ struct Args {
     bool fullscreen = false;
     std::string title;   // window caption (UTF-8), from --title; empty = leave the plugin's title
     int width = 960, height = 720;
+    bool width_given = false, height_given = false;
+    // --headless: hidden window, no audio device, no speed limit; stop after `frames` VIs (0 = until the session ends).
+    bool headless = false;
+    long long frames = 0;
+    std::string screenshot;
+    struct RamDump { uint32_t offset, len; std::string file; };
+    std::vector<RamDump> dumps;
 };
 
 static bool parse_ports(const std::string& s, int owner[kPorts]) {
@@ -121,8 +130,27 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--slot") ok = ival(&a.slot);
         else if (k == "--players") ok = ival(&a.players);
         else if (k == "--delay") { std::string s; ok = val(&s); if (ok && s == "auto") a.delay = -1; else if (ok) { char* e; long v = std::strtol(s.c_str(), &e, 10); ok = e != s.c_str() && !*e; a.delay = (int)v; if (ok && v < 0) ok = false; } }
-        else if (k == "--width") ok = ival(&a.width);
-        else if (k == "--height") ok = ival(&a.height);
+        else if (k == "--width") { ok = ival(&a.width); a.width_given = true; }
+        else if (k == "--height") { ok = ival(&a.height); a.height_given = true; }
+        else if (k == "--headless") a.headless = true;
+        else if (k == "--frames") { int f = 0; ok = ival(&f) && f >= 0; a.frames = f; }
+        else if (k == "--screenshot") ok = val(&a.screenshot);
+        else if (k == "--dump-ram") {
+            std::string s;
+            ok = val(&s);
+            if (ok) {
+                size_t c1 = s.find(','), c2 = c1 == std::string::npos ? c1 : s.find(',', c1 + 1);
+                ok = c2 != std::string::npos;
+                if (ok) {
+                    char *e1, *e2;
+                    unsigned long long off = std::strtoull(s.substr(0, c1).c_str(), &e1, 0);
+                    unsigned long long len = std::strtoull(s.substr(c1 + 1, c2 - c1 - 1).c_str(), &e2, 0);
+                    std::string file = s.substr(c2 + 1);
+                    ok = !*e1 && !*e2 && len > 0 && off + len <= 0x800000ull && !file.empty();
+                    if (ok) a.dumps.push_back({(uint32_t)off, (uint32_t)len, file});
+                }
+            }
+        }
         else if (k == "--save-dir") ok = val(&a.save_dir);
         else if (k == "--emu-dir") ok = val(&a.emu_dir);
         else if (k == "--host-save-dir") ok = val(&a.host_save_dir);
@@ -136,6 +164,9 @@ static bool parse_args(int argc, char** argv, Args& a) {
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
     }
     if (a.rom.empty()) { std::fprintf(stderr, "--rom is required\n"); return false; }
+    if (!a.headless && (a.frames || !a.screenshot.empty() || !a.dumps.empty())) {
+        std::fprintf(stderr, "--frames/--screenshot/--dump-ram need --headless\n"); return false;
+    }
     if (a.delay > 30) { std::fprintf(stderr, "--delay must be auto or 0..30\n"); return false; }
     if (a.share_host_save && a.net.empty()) { std::fprintf(stderr, "--share-host-save needs --net\n"); return false; }
     if (!a.net.empty()) {
@@ -154,6 +185,11 @@ static bool parse_args(int argc, char** argv, Args& a) {
     return true;
 }
 
+// ---------------------------------------------------------------- headless frame counter
+static long long g_frame_limit = 0;      // 0 = unlimited
+static long long g_frame_count = 0;
+static bool g_limiter_off = false;
+
 // ---------------------------------------------------------------- emulator
 struct Core {
     HMODULE dll = nullptr;
@@ -166,8 +202,24 @@ struct Core {
     ptr_ConfigSetParameter SetParam = nullptr;
     ptr_ConfigSaveFile SaveFile = nullptr;
     ptr_DebugMemGetPointer MemPtr = nullptr;
+    ptr_CoreOverrideVidExt OverrideVidExt = nullptr;
 };
 static Core g_core;
+
+/* --headless: called by the core on every VI (emulator thread). Drops the speed limiter on the first
+ * call (it cannot be changed before the emulation thread runs) and stops after --frames VIs. */
+static void headless_frame_cb(unsigned int) {
+    if (!g_limiter_off) {
+        int off = 0;
+        g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &off);
+        g_limiter_off = true;
+    }
+    g_frame_count++;
+    if (g_frame_limit > 0) {
+        if (g_frame_count == g_frame_limit - 1) headless_set_shot_mode(ShotMode::Armed);
+        if (g_frame_count >= g_frame_limit) g_core.DoCommand(M64CMD_STOP, 0, nullptr);
+    }
+}
 
 static bool file_exists(const std::string& p) { std::error_code ec; return fs::exists(fs::path(p), ec); }
 
@@ -297,7 +349,8 @@ int main(int argc, char** argv) {
 
     // ---- ports / local input
     LocalInput input;
-    if (!input.init()) logf_("n64run", "SDL game controller init failed; keyboard only");
+    // Headless never reads pads or the keyboard: stray input must not reach a background test run.
+    if (!args.headless && !input.init()) logf_("n64run", "SDL game controller init failed; keyboard only");
     if (!online && !args.ports_given) {
         // Offline default: one port per connected pad (at least one, for the keyboard), max 4.
         int n = std::max(1, std::min(4, input.pad_count()));
@@ -340,6 +393,7 @@ int main(int argc, char** argv) {
               sym(g_core.dll, "ConfigSetParameter", &g_core.SetParam) && sym(g_core.dll, "ConfigSaveFile", &g_core.SaveFile);
     if (!ok) return 3;
     sym(g_core.dll, "DebugMemGetPointer", &g_core.MemPtr);   // optional
+    if (args.headless && !sym(g_core.dll, "CoreOverrideVidExt", &g_core.OverrideVidExt)) return 3;
 
     m64p_error e = g_core.Startup(kFrontendApiVersion, cfg_dir.c_str(), emu_dir.c_str(), const_cast<char*>("Core"), m64p_debug_cb, nullptr, nullptr);
     if (e != M64ERR_SUCCESS) { logf_("n64run", "CoreStartup failed (%d)", (int)e); return 3; }
@@ -353,7 +407,7 @@ int main(int argc, char** argv) {
     cfg_bool(core_cfg, "DisableExtraMem", 0);
     cfg_int(core_cfg, "SiDmaDuration", -1);
     cfg_bool(core_cfg, "EnableDebugger", 0);
-    cfg_bool(core_cfg, "OnScreenDisplay", 1);
+    cfg_bool(core_cfg, "OnScreenDisplay", args.headless ? 0 : 1);
     cfg_bool(core_cfg, "AutoStateSlotIncrement", 0);
     cfg_str(core_cfg, "SaveSRAMPath", with_sep(save_dir));
     cfg_str(core_cfg, "SaveStatePath", with_sep(save_dir));
@@ -367,10 +421,11 @@ int main(int argc, char** argv) {
         for (const char* k : off) cfg_int(ev_cfg, k, 0);
     }
     if (g_core.OpenSection("Video-General", &vid_cfg) == M64ERR_SUCCESS) {
-        cfg_bool(vid_cfg, "Fullscreen", args.fullscreen ? 1 : 0);
-        cfg_int(vid_cfg, "ScreenWidth", args.width);
-        cfg_int(vid_cfg, "ScreenHeight", args.height);
-        cfg_bool(vid_cfg, "VerticalSync", 1);
+        cfg_bool(vid_cfg, "Fullscreen", args.fullscreen && !args.headless ? 1 : 0);
+        // Headless renders into a hidden window; default to a small N64-native size (faster) unless given.
+        cfg_int(vid_cfg, "ScreenWidth", args.headless && !args.width_given ? 640 : args.width);
+        cfg_int(vid_cfg, "ScreenHeight", args.headless && !args.height_given ? 480 : args.height);
+        cfg_bool(vid_cfg, "VerticalSync", args.headless ? 0 : 1);
     }
     {
         /* Test runs (and anyone who sets it) stay silent: N64RUN_MUTE=1 / SSB64_MUTE=1. */
@@ -463,8 +518,14 @@ int main(int argc, char** argv) {
 
     // ---- plugins
     PluginDll gfx, aud, rsp;
+    if (args.headless) {
+        // Hidden SDL window + GL context for GLideN64; no audio plugin at all (the core uses its dummy audio).
+        if (!headless_install_vidext(g_core.OverrideVidExt)) { logf_("n64run", "headless: CoreOverrideVidExt failed"); g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr); g_core.Shutdown(); return 3; }
+        if (!args.screenshot.empty() && args.frames == 0) headless_set_shot_mode(ShotMode::Periodic);
+        g_frame_limit = args.frames;
+    }
     if (!start_plugin(gfx, emu_dir, "mupen64plus-video-GLideN64.dll", "Video") ||
-        !start_plugin(aud, emu_dir, "mupen64plus-audio-sdl.dll", "Audio") ||
+        (!args.headless && !start_plugin(aud, emu_dir, "mupen64plus-audio-sdl.dll", "Audio")) ||
         !start_plugin(rsp, emu_dir, "mupen64plus-rsp-hle.dll", "RSP")) {
         g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
         g_core.Shutdown();
@@ -472,7 +533,7 @@ int main(int argc, char** argv) {
     }
     if (PluginStartup(g_core.dll, const_cast<char*>("Input"), m64p_debug_cb) != M64ERR_SUCCESS) return 3;
     HMODULE self = GetModuleHandle(nullptr);
-    if (g_core.Attach(M64PLUGIN_GFX, gfx.h) != M64ERR_SUCCESS || g_core.Attach(M64PLUGIN_AUDIO, aud.h) != M64ERR_SUCCESS ||
+    if (g_core.Attach(M64PLUGIN_GFX, gfx.h) != M64ERR_SUCCESS || (!args.headless && g_core.Attach(M64PLUGIN_AUDIO, aud.h) != M64ERR_SUCCESS) ||
         g_core.Attach(M64PLUGIN_INPUT, self) != M64ERR_SUCCESS || g_core.Attach(M64PLUGIN_RSP, rsp.h) != M64ERR_SUCCESS) {
         logf_("n64run", "CoreAttachPlugin failed");
         g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
@@ -515,15 +576,38 @@ int main(int argc, char** argv) {
 
         logf_("n64run", "executing");
         std::thread title_thread;
-        std::wstring wtitle = wide_title_arg(args.title);
+        std::wstring wtitle = args.headless ? std::wstring() : wide_title_arg(args.title);
         if (!wtitle.empty()) {
             g_title_stop = false;
             title_thread = std::thread(title_watch, wtitle);
         }
+        if (args.headless) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         e = g_core.DoCommand(M64CMD_EXECUTE, 0, nullptr);   // blocks until the emulation stops
         g_title_stop = true;
         if (title_thread.joinable()) title_thread.join();
         logf_("n64run", "emulation ended (%d)", (int)e);
+        if (args.headless) {
+            logf_("n64run", "headless: %lld VIs", g_frame_count);
+            if (g_core.MemPtr) {
+                uint8_t* ram = static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM));
+                if (ram) {
+                    logf_("n64run", "headless: final RDRAM hash %016llx", (unsigned long long)hash_block(ram, 8u * 1024u * 1024u));
+                    for (auto& d : args.dumps) {
+                        // RDRAM is stored as host-endian 32-bit words; ^3 on the byte index yields N64 (big-endian) byte order.
+                        std::vector<uint8_t> out(d.len);
+                        for (uint32_t i = 0; i < d.len; i++) out[i] = ram[(d.offset + i) ^ 3u];
+                        FILE* f = std::fopen(d.file.c_str(), "wb");
+                        if (f && std::fwrite(out.data(), 1, out.size(), f) == out.size()) logf_("n64run", "headless: dumped %u bytes at 0x%X to %s", d.len, d.offset, d.file.c_str());
+                        else logf_("n64run", "headless: cannot write %s", d.file.c_str());
+                        if (f) std::fclose(f);
+                    }
+                } else if (!args.dumps.empty()) logf_("n64run", "headless: RDRAM pointer unavailable; --dump-ram skipped");
+            }
+            if (!args.screenshot.empty()) {
+                if (headless_write_screenshot(args.screenshot)) logf_("n64run", "headless: screenshot %s", args.screenshot.c_str());
+                else logf_("n64run", "headless: no frame captured for --screenshot");
+            }
+        }
         if (online && g_run.lockstep) g_run.lockstep->log_stall_summary();
     }
 

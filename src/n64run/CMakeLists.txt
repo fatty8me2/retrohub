@@ -15,7 +15,8 @@ add_executable(n64run
     frontend.cpp
     input_plugin.cpp
     local_input.cpp
-    lockstep.cpp)
+    lockstep.cpp
+    headless.cpp)
 target_link_libraries(n64run PRIVATE n64run_lockstep_core n64run_save_sync hubnet hubcommon m64p_api SDL2::SDL2)
 # Console subsystem on purpose (logs to the console too); the hub launches it hidden/with a console as needed.
 set_target_properties(n64run PROPERTIES WIN32_EXECUTABLE OFF)
