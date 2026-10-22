@@ -199,6 +199,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"sync_folder\": \"" << json_escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"sync_states\": " << (s.sync_states ? "true" : "false") << ",\n"
+      << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json_escape(s.vault_dir) << "\",\n"
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
@@ -243,6 +244,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->sync_states = json_bool(j, "sync_states", out->sync_states);
+    out->sync_card_dismissed = json_bool(j, "sync_card_dismissed", out->sync_card_dismissed);
     out->vault_dir = j.str("vault_dir", out->vault_dir);
     out->download_art = json_bool(j, "download_art", out->download_art);
     out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));
