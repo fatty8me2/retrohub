@@ -69,10 +69,6 @@ struct Selectability { bool ok = false; std::string reason; };
 Selectability game_selectable(const std::string& game_id, int max_players,
                               const std::vector<PeerInfo>& peers, int host_slot);
 
-/* Shown when a room has 3-4 members and Smash Classic (smash64) is selected: its online play is 2 players.
- * Names members (judged from their hello) who lack the emulated ssb64rom. Empty when the notice does not apply. */
-std::string smash_room_notice(const std::vector<PeerInfo>& peers);
-
 /* hello v2: {"kind":"hello","version":"2","games":{catalogId:md5,...},"keys":["n64:..","gba:.."]}.
  * "games" is kept for old clients (N64 catalog md5s); "keys" advertises every game key. */
 std::string hello_json(const std::string& version, const std::map<std::string, std::string>& games,
