@@ -13,6 +13,11 @@ void shell_set_window_icon(SDL_Window* win);   // big + small WM_SETICON from th
 void shell_ensure_start_menu_shortcut();       // %APPDATA%\...\Start Menu\Programs\RetroHub.lnk (only rewritten if missing/stale)
 void shell_ensure_desktop_shortcut(bool create);   // create=true: make Desktop\RetroHub.lnk if missing/stale; false: remove ours
 
+/* Registration policy: only a real installed copy may touch the user's Start Menu / Desktop. A build tree, a git
+ * worktree, a headless/screenshot/test run or RETROHUB_NO_SHELL=1 must never register shortcuts. */
+bool shell_path_looks_like_dev_build(const std::wstring& exe_path, bool (*dir_has)(const std::wstring& dir, const wchar_t* name) = nullptr);
+bool shell_registration_allowed();   // checks env (RETROHUB_NO_SHELL, HUB_SCREENSHOT) + this exe's location
+
 /* Lower-level, path-parameterised (used by the unit test so it never touches the real Start Menu). */
 struct ShellLinkInfo {
     std::wstring target, workdir, icon, description, app_id;
