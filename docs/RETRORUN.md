@@ -102,8 +102,8 @@ instead of input delay.
 Part of the top-level CMake (`add_subdirectory(src/retrorun)`; needs `hubnet`, `hubcommon`, `n64run_lockstep_core`, `SDL2::SDL2`):
 
 ```
-cmake -S Hub -B Hub/build-retro
-cmake --build Hub/build-retro --config Release --target retrorun   # -> build-retro/bin/Release/retrorun.exe (+ SDL2.dll)
+cmake -S . -B build
+cmake --build build --config Release --target retrorun   # -> build/bin/Release/retrorun.exe (+ SDL2.dll)
 ```
 
 ## Testing (no window)
