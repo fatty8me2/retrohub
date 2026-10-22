@@ -269,7 +269,6 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
         }
     }
     const std::string miss_id = "name:" + g.key;
-    if (is_missed(miss_id)) return false;
 
     std::string found, h;
     bool skip_dat = false;
@@ -279,6 +278,9 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
             else skip_dat = true;   // curated entry with no retail release (ROM hack, native port): no art
         }
     }
+    /* A recorded name miss only gates the DAT search: a catalog name is authoritative, so a miss left over
+     * from before the entry matched the catalog must not hide its art. */
+    if (found.empty() && is_missed(miss_id)) return false;
     if (skip_dat) {
         record_miss(miss_id);
         return false;
