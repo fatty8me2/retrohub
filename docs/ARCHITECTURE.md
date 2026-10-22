@@ -24,8 +24,9 @@ Hub/
 Build with the VS 2026 bundled CMake:
 
 ```
-cmake -S Hub -B Hub/build
-cmake --build Hub/build --config Release
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build -C Release -LE online --output-on-failure   # offline console tests (see CLAUDE.md)
 ```
 
 The build is C++17, x64, with MSVC flags `/W3 /permissive- /utf-8`.
