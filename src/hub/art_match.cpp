@@ -79,6 +79,15 @@ std::string thumb_url(const std::string& system_short, int kind, const std::stri
            kind_dir(kind) + "/" + url_encode(thumb_name(nointro_name)) + ".png";
 }
 
+std::vector<std::string> thumb_urls(const std::string& system_short, int kind, const std::string& nointro_name) {
+    std::vector<std::string> out;
+    std::string u = thumb_url(system_short, kind, nointro_name);
+    if (u.empty()) return out;
+    out.push_back(u);
+    if (system_short == "gbc") out.push_back(thumb_url("gb", kind, nointro_name));
+    return out;
+}
+
 /* ---- DAT parsing ---- */
 
 struct Tok { std::string s; bool quoted; };
