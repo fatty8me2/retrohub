@@ -43,6 +43,23 @@ int main() {
     CHECK(ok); CHECK(wrote);
     CHECK(shell_read_shortcut(lnk, &i)); CHECK(_wcsicmp(i.target.c_str(), other.c_str()) == 0);
 
+    {   // registration policy
+        auto none = [](const std::wstring&, const wchar_t*) { return false; };
+        CHECK(!shell_path_looks_like_dev_build(L"C:\\Users\\u\\Desktop\\smashClassic\\RetroHub.exe", none));
+        CHECK(!shell_path_looks_like_dev_build(L"C:\\Program Files\\RetroHub\\RetroHub.exe", none));
+        CHECK(shell_path_looks_like_dev_build(L"C:\\x\\wt\\version-check\\build\\bin\\Release\\RetroHub.exe", none));
+        CHECK(shell_path_looks_like_dev_build(L"C:\\x\\RetroHub\\build\\bin\\RetroHub.exe", none));
+        CHECK(shell_path_looks_like_dev_build(L"C:\\x\\foo\\bin\\Release\\RetroHub.exe", none));
+        CHECK(shell_path_looks_like_dev_build(L"C:\\x\\app\\RetroHub.exe", [](const std::wstring& d, const wchar_t* n) {
+            return d == L"C:\\x" && std::wstring(n) == L".git"; }));
+        SetEnvironmentVariableA("RETROHUB_NO_SHELL", "1");
+        CHECK(!shell_registration_allowed());
+        SetEnvironmentVariableA("RETROHUB_NO_SHELL", nullptr);
+        SetEnvironmentVariableA("HUB_SCREENSHOT", "x.bmp");
+        CHECK(!shell_registration_allowed());
+        SetEnvironmentVariableA("HUB_SCREENSHOT", nullptr);
+        CHECK(!shell_registration_allowed());   // this test exe lives in a build tree
+    }
     shell_set_app_id();
     PWSTR cur = nullptr;
     CHECK(SUCCEEDED(GetCurrentProcessExplicitAppUserModelID(&cur)) && cur && std::wstring(cur) == L"RetroHub.Launcher");

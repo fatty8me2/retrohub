@@ -2391,7 +2391,10 @@ static void all_games_view() {
     ImGui::PopStyleVar();
     {
         static const char* modes[] = {"Genre", "System", "A-Z"};
-        ImGui::SameLine(0, sp(3.f));
+        float need = ImGui::CalcTextSize("Group by").x + sp(5.f) + sp(1.f);
+        for (const char* m : modes) need += ImGui::CalcTextSize(m).x + sp(4.f);
+        float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+        if (ImGui::GetItemRectMax().x + sp(3.f) + need <= right) ImGui::SameLine(0, sp(3.f));   // else wrap under the chips
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(ui::TEXT3));
         ImGui::TextUnformatted("Group by");
@@ -2441,7 +2444,7 @@ static void all_games_view() {
                 sec_for(hubui::effective_genre(c ? c->genre : std::string())).items.push_back(i);
             }
         } else if (A.group_mode == 1) {
-            static const char* order[] = {"n64", "gc", "gba", "gbc", "gb", "nds"};
+            static const char* order[] = {"n64", "gc", "gba", "gbc", "gb", "nds", "3ds", "wiiu"};
             for (const char* s : order) sec_for(hubui::system_shelf_title(s));
             for (int i : A.vis) sec_for(hubui::system_shelf_title(sys_short(A.lib[i]))).items.push_back(i);
         } else {
@@ -2680,7 +2683,25 @@ static void page_library() {
         all_games_view();
         return;
     }
-    sync_card();
+    if (A.st.rom_folders.empty() && !A.scanning) {   // only the bundled game: ask for game folders
+        begin_panel("add_folders_card");
+        ImGui::PushFont(ui::F.bold);
+        ImGui::TextUnformatted("Add your game folders");
+        ImGui::PopFont();
+        text_wrapped_disabled("Only the bundled game is here. Point RetroHub at the folder(s) with your N64, GBA, GB, DS, 3DS and Wii U games and they all show up.");
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        if (button("Add ROM folder", ImVec2(0, 0), true, true, ui::Icon::Folder)) add_rom_folder();
+        static const std::vector<std::string> sugg2 = hub::suggest_rom_folders(2);
+        for (const std::string& s : sugg2) {
+            ImGui::SameLine(0, sp(1.f));
+            size_t cut = s.find_last_of('\\');
+            size_t cut2 = cut == std::string::npos || cut == 0 ? std::string::npos : s.find_last_of('\\', cut - 1);
+            if (button(("Add  " + (cut2 == std::string::npos ? s : s.substr(cut2 + 1))).c_str(), ImVec2(0, 0))) add_rom_folder_path(s);
+        }
+        end_panel();
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
+    if (!A.st.rom_folders.empty()) sync_card();
 
     const hub::GameEntry* sel = find_entry(A.sel_game);
     if (sel) {
@@ -4292,6 +4313,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         if (n >= 0 && n <= 5) A.page = static_cast<Page>(n);
     }
     if (const char* sg = std::getenv("HUB_SELECT_GAME")) A.env_select = sg;   // preselect a library game key (screenshots)
+    if (const char* gm = std::getenv("HUB_START_GROUP")) A.group_mode = std::max(0, std::min(2, std::atoi(gm)));   // screenshots: 0 genre, 1 system, 2 A-Z
     if (const char* vw = std::getenv("HUB_START_VIEW")) {                    // "all" opens the All Games grid
         if (std::string(vw) == "all") A.view = LibView::All;
     }
