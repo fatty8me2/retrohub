@@ -170,6 +170,24 @@ Add-Result "7a renamed ROM (same key) finds the synced SRAM" ($kR.Key -eq $kA.Ke
 $fe = Get-Content -Raw -LiteralPath (Join-Path $Root "src\n64run\frontend.cpp")
 $onlineInVault = $fe -match 'saves\\\\online'
 Add-Result "8a N64 online save dir is not under the vault (static check, n64run frontend.cpp)" (-not $onlineInVault) "saves\\online reference present: $onlineInVault"
+# ---------------------------------------------------------------- 9. friends identity: the OLDEST "created" survives a first sync
+# PC D = the user's original account; PC E = a new PC that made its own identity (newer file, newer "created") before syncing.
+$VD = Join-Path $W "PC_D_data\saves"; $VE = Join-Path $W "PC_E_data\saves"; $SyncId = Join-Path $W "SYNC_ID"
+foreach ($p in @($VD, $VE)) { New-Item -ItemType Directory -Force (Join-Path $p "_identity") | Out-Null }
+$origJson = '{"user_id":"orig","secret":"s","created":1000}'
+$freshJson = '{"user_id":"fresh","secret":"s","created":2000}'
+[IO.File]::WriteAllText((Join-Path $VD "_identity\identity.json"), $origJson)
+(Get-Item (Join-Path $VD "_identity\identity.json")).LastWriteTime = (Get-Date).AddMinutes(-30)
+[IO.File]::WriteAllText((Join-Path $VE "_identity\identity.json"), $freshJson)
+$null = & $Q sync $VD $SyncId 2>&1
+$null = & $Q sync $VE $SyncId 2>&1
+$null = & $Q sync $VD $SyncId 2>&1
+$idD = (Get-Content -Raw (Join-Path $VD "_identity\identity.json")).Trim()
+$idE = (Get-Content -Raw (Join-Path $VE "_identity\identity.json")).Trim()
+$idS = (Get-Content -Raw (Join-Path $SyncId "_identity\identity.json")).Trim()
+Add-Result "9a first sync of a new PC keeps the oldest identity everywhere" ($idD -eq $origJson -and $idE -eq $origJson -and $idS -eq $origJson) "D=$idD E=$idE sync=$idS"
+$kept = @(Get-ChildItem -Recurse -File (Join-Path $VE "_conflicts\_identity") -ErrorAction SilentlyContinue)
+Add-Result "9b the newer identity is kept under _conflicts" ($kept.Count -ge 1 -and ((Get-Content -Raw $kept[0].FullName).Trim() -eq $freshJson)) "files=$($kept.Count)"
 # ---------------------------------------------------------------- report
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 250 | Write-Output
 $fail = @($results | Where-Object { $_.Result -eq "FAIL" }).Count
