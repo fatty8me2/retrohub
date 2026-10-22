@@ -99,8 +99,10 @@ GuestVersionAction guest_version_action(const std::string& my_app, const std::st
 /* `core` (optional): the host's GB/GBC core so all peers run the same one. */
 /* `delay` 0 = auto. `share_host_save`: N64 online, every PC uses the host's save. */
 struct PortPlan;
+struct MatchSpec;
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed,
-                        const std::string& core = "", bool share_host_save = false, const PortPlan* plan = nullptr);
+                        const std::string& core = "", bool share_host_save = false, const PortPlan* plan = nullptr,
+                        const MatchSpec* match = nullptr);
 /* " --delay auto" / " --delay N" (leading space). */
 std::string delay_arg(int delay);
 
@@ -219,6 +221,42 @@ PortPlan build_ports(std::vector<MemberPads> members);
  * player count when the message carries a well-formed plan (4 entries in -1..3, players == number of distinct
  * owners, owners packed first); false when absent or malformed (older host: derive locally). */
 bool parse_launch_plan(const Json& launch_msg, std::string* ports, int* players);
+
+
+/* ---- Smash match picker (fighter / costume per player, stage + stocks by the host) ----
+ * Lobby msg bodies: {"kind":"pick","fighter":f,"costume":c[,"fighter2":f,"costume2":c]}  (every member; fighter -1 = Random;
+ * the *2 pair is the 2nd local player) and the host's {"kind":"rules","stage":s,"stocks":n} (stage -1 = Random).
+ * The host resolves Randoms with the launch seed, ships the final spec in the launch message ("match") and every PC
+ * passes `--match "stage=<id>;stocks=<n>;p0=<fkind>:<costume>;p1=..."` (ids are decimal; port i = i-th used --ports entry).
+ * Data comes from common/remix_data.h. Only catalog "remix" uses it today; `remix=false` selects the vanilla roster
+ * (12 fighters, 9 stages) so "ssb64rom" can reuse everything by flipping match_game_supported(). */
+struct MatchPick { int fighter = -1; int costume = 0; };      // fighter -1 = Random
+struct MemberPick { MatchPick p[2]; };                        // [1] = the 2nd local player
+struct MatchRules { int stage = -1; int stocks = 3; };        // stage -1 = Random, stocks 1-5
+struct MatchSpec { int stage = 0; int stocks = 3; std::vector<MatchPick> players; };   // players[i] = i-th used port
+struct FighterChoice { int id = 0; std::string name; bool remix = false; int costumes = 1; };
+struct StageChoice { int id = 0; std::string name; bool remix = false; };
+bool match_game_supported(const std::string& catalog_id);
+std::vector<FighterChoice> fighter_choices(bool remix);       // CSS fighters, Vanilla first
+std::vector<StageChoice> stage_choices(bool remix);           // VS-legal stages, Vanilla first
+std::string fighter_name(int id);                             // "Random" for -1
+std::string stage_name(int id);                               // "Random" for -1
+int fighter_costumes(int id);                                 // number of base costumes (>= 1)
+bool fighter_valid(int id, bool remix);                       // -1 (Random) is valid
+bool stage_valid(int id, bool remix);                         // -1 (Random) is valid
+std::string pick_json(const MemberPick& p);
+bool parse_pick(const Json& body, MemberPick* out, bool remix = true);   // false when malformed / unknown fighter / bad costume
+std::string rules_json(const MatchRules& r);
+bool parse_rules(const Json& body, MatchRules* out, bool remix = true);
+/* "Falco", "Random", "Falco + Mario" (locals == 2) */
+std::string pick_label(const MemberPick& p, int locals);
+/* Host: one entry per used port in --ports order (unpicked members count as Random); Randoms resolved from `seed`. */
+MatchSpec resolve_match(const std::string& ports, const std::map<int, MemberPick>& picks, const MatchRules& rules,
+                        unsigned seed, bool remix = true);
+std::string match_arg(const MatchSpec& m);                    // the --match value
+std::string match_json(const MatchSpec& m);                   // {"stage":..,"stocks":..,"players":[[f,c],..]}
+/* Guest/host: read + validate the launch message's "match" against the port plan. false when absent or invalid. */
+bool parse_match(const Json& launch_msg, const std::string& ports, bool remix, MatchSpec* out);
 
 /* Save sync must never run while a game process is alive: requests made then are queued. */
 enum class SyncAction { Start, Queue };

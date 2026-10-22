@@ -1,5 +1,7 @@
 #include "logic.h"
 
+#include "remix_data.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -463,12 +465,13 @@ GuestVersionAction guest_version_action(const std::string& my_app, const std::st
 }
 
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save,
-                        const PortPlan* plan) {
+                        const PortPlan* plan, const MatchSpec* match) {
     std::string o = "{\"kind\":\"launch\",\"game\":\"" + json_escape(game) + "\",\"launch\":" + std::to_string(launch) +
                     ",\"delay\":" + std::to_string(delay) + ",\"seed\":" + std::to_string(seed);
     if (!core.empty()) o += ",\"core\":\"" + json_escape(core) + "\"";
     o += std::string(",\"share_save\":") + (share_host_save ? "true" : "false");
     if (plan) o += ",\"ports\":[" + plan->ports + "],\"players\":" + std::to_string(plan->players);
+    if (match) o += ",\"match\":" + match_json(*match);
     return o + "}";
 }
 
@@ -523,6 +526,182 @@ PortPlan build_ports(std::vector<MemberPads> m) {
     }
     p.locals = eff;
     return p;
+}
+
+/* ---- Smash match picker ---- */
+namespace {
+const remix::Fighter* find_fighter(int id) {
+    for (auto& f : remix::kFighters) if (f.id == id) return &f;
+    return nullptr;
+}
+const remix::Stage* find_stage(int id) {
+    for (auto& s : remix::kStages) if (s.id == id) return &s;
+    return nullptr;
+}
+bool fighter_listed(const remix::Fighter& f, bool remix_roster) { return f.on_css && (remix_roster || f.id <= 0x0B); }
+bool stage_listed(const remix::Stage& s, bool remix_roster) {
+    if (s.cls == remix::StageClass::vanilla_vs) return true;
+    return remix_roster && s.cls == remix::StageClass::remix_vs && s.netplay_legal == remix::Flag::yes;
+}
+unsigned mix32(unsigned& st) {   // splitmix32-ish; deterministic everywhere
+    st += 0x9E3779B9u;
+    unsigned z = st;
+    z = (z ^ (z >> 16)) * 0x85EBCA6Bu;
+    z = (z ^ (z >> 13)) * 0xC2B2AE35u;
+    return z ^ (z >> 16);
+}
+std::vector<int> port_owners(const std::string& ports) {   // owner slot per used port ("-1" entries dropped)
+    std::vector<int> v;
+    std::string tok;
+    for (size_t i = 0; i <= ports.size(); ++i) {
+        if (i == ports.size() || ports[i] == ',') {
+            if (!tok.empty() && std::atoi(tok.c_str()) >= 0) v.push_back(std::atoi(tok.c_str()));
+            tok.clear();
+        } else tok += ports[i];
+    }
+    return v;
+}
+bool pick_ok(const MatchPick& p, bool remix_roster) {
+    if (!fighter_valid(p.fighter, remix_roster)) return false;
+    if (p.fighter < 0) return p.costume == 0;
+    return p.costume >= 0 && p.costume < fighter_costumes(p.fighter);
+}
+}  // namespace
+
+bool match_game_supported(const std::string& id) { return id == "remix"; }   // add "ssb64rom" (remix=false) once n64run injects vanilla matches
+
+std::vector<FighterChoice> fighter_choices(bool remix_roster) {
+    std::vector<FighterChoice> v;
+    for (auto& f : remix::kFighters)
+        if (fighter_listed(f, remix_roster)) v.push_back({f.id, f.name, f.id > 0x0B, f.max_costume + 1});
+    return v;   // table is id-ordered: vanilla 0x00-0x0B first, then Remix
+}
+std::vector<StageChoice> stage_choices(bool remix_roster) {
+    std::vector<StageChoice> v;
+    for (auto& s : remix::kStages)
+        if (stage_listed(s, remix_roster)) v.push_back({s.id, s.name, s.cls != remix::StageClass::vanilla_vs});
+    std::stable_sort(v.begin(), v.end(), [](const StageChoice& a, const StageChoice& b) { return !a.remix && b.remix; });
+    return v;
+}
+std::string fighter_name(int id) {
+    if (id < 0) return "Random";
+    const remix::Fighter* f = find_fighter(id);
+    return f ? f->name : "Fighter " + std::to_string(id);
+}
+std::string stage_name(int id) {
+    if (id < 0) return "Random";
+    const remix::Stage* s = find_stage(id);
+    return s ? s->name : "Stage " + std::to_string(id);
+}
+int fighter_costumes(int id) {
+    const remix::Fighter* f = find_fighter(id);
+    return f ? f->max_costume + 1 : 1;
+}
+bool fighter_valid(int id, bool remix_roster) {
+    if (id == -1) return true;
+    const remix::Fighter* f = find_fighter(id);
+    return f && fighter_listed(*f, remix_roster);
+}
+bool stage_valid(int id, bool remix_roster) {
+    if (id == -1) return true;
+    const remix::Stage* s = find_stage(id);
+    return s && stage_listed(*s, remix_roster);
+}
+
+std::string pick_json(const MemberPick& p) {
+    return "{\"kind\":\"pick\",\"fighter\":" + std::to_string(p.p[0].fighter) + ",\"costume\":" + std::to_string(p.p[0].costume) +
+           ",\"fighter2\":" + std::to_string(p.p[1].fighter) + ",\"costume2\":" + std::to_string(p.p[1].costume) + "}";
+}
+bool parse_pick(const Json& b, MemberPick* out, bool remix_roster) {
+    MemberPick m;
+    const char* fk[2] = {"fighter", "fighter2"};
+    const char* ck[2] = {"costume", "costume2"};
+    for (int i = 0; i < 2; ++i) {
+        const Json* f = b.get(fk[i]);
+        if (!f) { if (i == 0) return false; continue; }   // fighter2 is optional
+        const Json* c = b.get(ck[i]);
+        if (f->type != Json::Num || f->n != (double)(int)f->n) return false;
+        if (c && (c->type != Json::Num || c->n != (double)(int)c->n)) return false;
+        m.p[i].fighter = (int)f->n;
+        m.p[i].costume = c ? (int)c->n : 0;
+        if (!pick_ok(m.p[i], remix_roster)) return false;
+    }
+    if (out) *out = m;
+    return true;
+}
+std::string rules_json(const MatchRules& r) {
+    return "{\"kind\":\"rules\",\"stage\":" + std::to_string(r.stage) + ",\"stocks\":" + std::to_string(r.stocks) + "}";
+}
+bool parse_rules(const Json& b, MatchRules* out, bool remix_roster) {
+    const Json* s = b.get("stage");
+    const Json* k = b.get("stocks");
+    if (!s || !k || s->type != Json::Num || k->type != Json::Num || s->n != (double)(int)s->n || k->n != (double)(int)k->n) return false;
+    if (!stage_valid((int)s->n, remix_roster) || k->n < 1 || k->n > 5) return false;
+    if (out) { out->stage = (int)s->n; out->stocks = (int)k->n; }
+    return true;
+}
+std::string pick_label(const MemberPick& p, int locals) {
+    std::string o = fighter_name(p.p[0].fighter);
+    if (locals >= 2) o += " + " + fighter_name(p.p[1].fighter);
+    return o;
+}
+
+MatchSpec resolve_match(const std::string& ports, const std::map<int, MemberPick>& picks, const MatchRules& rules, unsigned seed,
+                        bool remix_roster) {
+    MatchSpec m;
+    unsigned st = seed;
+    m.stocks = std::max(1, std::min(5, rules.stocks));
+    auto stages = stage_choices(remix_roster);
+    auto fighters = fighter_choices(remix_roster);
+    m.stage = rules.stage;
+    if (!stage_valid(m.stage, remix_roster) || m.stage < 0) m.stage = stages.empty() ? 0 : stages[mix32(st) % stages.size()].id;
+    std::map<int, int> used;   // pads already consumed per owner
+    for (int owner : port_owners(ports)) {
+        int k = std::min(used[owner]++, 1);
+        MatchPick p;
+        auto it = picks.find(owner);
+        if (it != picks.end()) p = it->second.p[k];
+        if (!pick_ok(p, remix_roster)) p = MatchPick{};
+        if (p.fighter < 0) {   // Random: any CSS fighter, random base costume
+            const FighterChoice& f = fighters[mix32(st) % fighters.size()];
+            p.fighter = f.id;
+            p.costume = (int)(mix32(st) % (unsigned)f.costumes);
+        }
+        m.players.push_back(p);
+    }
+    return m;
+}
+
+std::string match_arg(const MatchSpec& m) {
+    std::string o = "stage=" + std::to_string(m.stage) + ";stocks=" + std::to_string(m.stocks);
+    for (size_t i = 0; i < m.players.size(); ++i)
+        o += ";p" + std::to_string(i) + "=" + std::to_string(m.players[i].fighter) + ":" + std::to_string(m.players[i].costume);
+    return o;
+}
+std::string match_json(const MatchSpec& m) {
+    std::string o = "{\"stage\":" + std::to_string(m.stage) + ",\"stocks\":" + std::to_string(m.stocks) + ",\"players\":[";
+    for (size_t i = 0; i < m.players.size(); ++i)
+        o += (i ? "," : "") + std::string("[") + std::to_string(m.players[i].fighter) + "," + std::to_string(m.players[i].costume) + "]";
+    return o + "]}";
+}
+bool parse_match(const Json& msg, const std::string& ports, bool remix_roster, MatchSpec* out) {
+    const Json* mj = msg.get("match");
+    if (!mj || mj->type != Json::Obj) return false;
+    const Json* pl = mj->get("players");
+    if (!pl || pl->type != Json::Arr) return false;
+    MatchSpec m;
+    m.stage = (int)mj->num("stage", -2);
+    m.stocks = (int)mj->num("stocks", 0);
+    if (m.stage < 0 || !stage_valid(m.stage, remix_roster) || m.stocks < 1 || m.stocks > 5) return false;
+    if (pl->vals.size() != port_owners(ports).size() || pl->vals.empty()) return false;
+    for (auto& e : pl->vals) {
+        if (e.type != Json::Arr || e.vals.size() != 2 || e.vals[0].type != Json::Num || e.vals[1].type != Json::Num) return false;
+        MatchPick p{(int)e.vals[0].n, (int)e.vals[1].n};
+        if (p.fighter < 0 || !pick_ok(p, remix_roster)) return false;   // a launch spec has no Randoms left
+        m.players.push_back(p);
+    }
+    if (out) *out = m;
+    return true;
 }
 
 SyncAction sync_request(SyncGate& g, bool manual, bool game_running, bool job_running) {
