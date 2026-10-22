@@ -167,6 +167,7 @@ const char* genre_of(const std::string& id) {
         {"aw1", "Strategy"}, {"aw2", "Strategy"}, {"fireemblem", "Strategy"}, {"ffta", "Strategy"},
         {"mariotennis", "Sports"}, {"mariogolf", "Sports"}, {"thps2", "Sports"},
         {"conker", "Action"}, {"bm64", "Action"}, {"aria", "Action"},
+        {"pokered", "RPG"}, {"pokeyellow", "RPG"}, {"pokegold", "RPG"}, {"pokesilver", "RPG"}, {"pokecrystal", "RPG"},
     };
     for (const auto& r : kTable)
         if (id == r.id) return r.genre;
@@ -427,6 +428,30 @@ const std::vector<GameInfo>& catalog() {
          {"ATHE"}, false, 2002,
          "Skate arena-style courses and chase high scores in a timed career mode.",
          "Tony Hawk's Pro Skater 2 (USA, Europe)"},
+
+        /* ---- Game Boy / Game Boy Color (Libretro). Serials are the header manufacturer code
+         *      (0x13F-0x142) where the cart has one; Red and Yellow have none. Link-cable
+         *      trading and battles are not networked, so online=false. ---- */
+        {"pokered", "Pokemon Red", Engine::Libretro, 2, {}, "", "gb",
+         {}, false, 1998,
+         "Explore Kanto, catch Pokemon, and trade or battle over a link cable.",
+         "Pokemon - Red Version (USA, Europe) (SGB Enhanced)"},
+        {"pokeyellow", "Pokemon Yellow", Engine::Libretro, 2, {}, "", "gbc",
+         {}, false, 1999,
+         "Follow Pikachu through Kanto as your partner, with the link cable for trades and battles.",
+         "Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced)"},
+        {"pokegold", "Pokemon Gold", Engine::Libretro, 2, {}, "", "gbc",
+         {"AAUE"}, false, 2000,
+         "Catch Pokemon in Johto and Kanto, with day and night, held items and link-cable trades.",
+         "Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible)"},
+        {"pokesilver", "Pokemon Silver", Engine::Libretro, 2, {}, "", "gbc",
+         {"AAXE"}, false, 2000,
+         "The Silver version of Johto and Kanto, with its own version-exclusive Pokemon.",
+         "Pokemon - Silver Version (USA, Europe) (SGB Enhanced) (GB Compatible)"},
+        {"pokecrystal", "Pokemon Crystal", Engine::Libretro, 2, {}, "", "gbc",
+         {"BYTE"}, false, 2001,
+         "Play as a girl or boy in Johto, with a roaming Raikou, Entei and Suicune and a day-night clock.",
+         "Pokemon - Crystal Version (USA)"},
     };
     for (auto& g : v) g.genre = genre_of(g.id);
     return v;
