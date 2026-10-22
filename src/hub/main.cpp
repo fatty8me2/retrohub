@@ -396,6 +396,10 @@ struct App {
     std::map<std::string, hub::GameState> lib_state;   // cached game_state per key
     std::string sys_filter;                       // "" = all, else system short
     bool online_only = false;                     // All Games: only games that are fun online
+    std::vector<hubui::ConsoleSection> secs;     // All Games sections (cached by rebuild_vis)
+    std::map<std::string, int> chip_counts;      // per-console counts under the current search + Online toggle
+    int chip_total = 0;
+    bool grid_scroll_top = false;                // reset the All Games scroll on the next frame
     bool picks_open = false;                      // Home: "Top picks you don't have yet" expanded
     char search_buf[64] = {0};
     std::string vis_filter, vis_query;            // last inputs used to build `vis`
@@ -594,16 +598,24 @@ static void rebuild_vis() {
     items.reserve(A.lib.size());
     for (auto& e : A.lib) items.push_back({e.key, e.title, sys_short(e), is_native(e)});
     std::string q = A.search_buf;
-    A.vis = hubui::filter_sort(items, A.sys_filter, q);
+    std::vector<int> base = hubui::filter_sort(items, "", q);   // search applied, all consoles
     if (A.online_only) {
         std::vector<int> keep;
-        for (int i : A.vis) {
+        for (int i : base) {
             const hub::GameEntry& e = A.lib[i];
             const GameInfo* c = catalog_for(e);
             if (is_native(e) || (c && c->online)) keep.push_back(i);
         }
-        A.vis.swap(keep);
+        base.swap(keep);
     }
+    A.chip_counts.clear();
+    A.chip_total = (int)base.size();
+    A.vis.clear();
+    for (int i : base) {
+        ++A.chip_counts[items[i].system];
+        if (A.sys_filter.empty() || items[i].system == A.sys_filter) A.vis.push_back(i);
+    }
+    A.secs = hubui::group_by_console(items, &A.vis);
 
     // Home composition: shelves over the whole library, plus catalog games the player doesn't own.
     A.sg.clear();
@@ -1864,7 +1876,7 @@ static void shelf_header(const char* title, const std::string& right, float blee
         if (link_clicked) {   // the right label is a link ("See all")
             ImGui::SetCursorScreenPos(ImVec2(tp.x - sp(1.f), p.y));
             ImGui::PushID(title);
-            *link_clicked = ImGui::InvisibleButton("##see_all", ImVec2(ts.x + sp(2.f), f->FontSize + sp(0.5f)));
+            *link_clicked = ImGui::InvisibleButton("##see_all", ImVec2(ts.x + sp(2.f), f->FontSize + sp(0.5f)), ImGuiButtonFlags_EnableNav);
             ImGui::PopID();
             if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) col = ui::ACCENT;
             ImGui::SetCursorScreenPos(p);
@@ -2004,12 +2016,14 @@ static void home_shelves() {
     float th = tw / kTileAspect;
     for (size_t si = 0; si < A.shelves.size(); ++si) {
         const hubui::Shelf& sh = A.shelves[si];
-        bool is_console = sh.id.compare(0, 8, "console:") == 0;
+        bool is_console = sh.id.compare(0, 8, "console:") == 0 && sh.id != "console:other";   // unknown systems have no filter chip
         bool see_all = false;
         shelf_header(sh.title.c_str(), is_console ? "See all" : "", bleed, (int)sh.items.size(), is_console ? &see_all : nullptr);
         if (see_all) {   // jump to All Games filtered to this console
             A.view = LibView::All;
-            A.sys_filter = sh.id.substr(8) == "other" ? std::string() : sh.id.substr(8);
+            A.sys_filter = sh.id.substr(8);
+            A.online_only = false;
+            A.grid_scroll_top = true;
             A.search_buf[0] = 0;
             A.vis_dirty = true;
         }
@@ -2389,13 +2403,13 @@ static void all_games_view() {
     struct Chip { const char* label; const char* sys; };
     static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
                                 {"Nintendo DS", "nds"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
-    std::map<std::string, int> counts;
-    for (auto& e : A.lib) ++counts[sys_short(e)];
+    if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
+    std::map<std::string, int>& counts = A.chip_counts;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
     bool first = true;
     for (auto& c : chips) {
-        int n = c.sys[0] ? counts[c.sys] : (int)A.lib.size();
+        int n = c.sys[0] ? counts[c.sys] : A.chip_total;
         if (c.sys[0] && n == 0 && A.sys_filter != c.sys) continue;
         if (!first) ImGui::SameLine();
         first = false;
@@ -2403,7 +2417,7 @@ static void all_games_view() {
         std::snprintf(lab, sizeof lab, "%s  %d", c.label, n);
         ImU32 a = COL_ACCENT, b2;
         if (c.sys[0]) system_colors(hub::system_from_short(c.sys), &a, &b2);
-        if (chip(lab, A.sys_filter == c.sys, a)) { A.sys_filter = c.sys; A.vis_dirty = true; }
+        if (chip(lab, A.sys_filter == c.sys, a)) { A.sys_filter = c.sys; A.vis_dirty = true; A.grid_scroll_top = true; }
     }
     {   // Online filter chip
         int n_online = 0;
@@ -2424,6 +2438,7 @@ static void all_games_view() {
     const hub::GameEntry* sel = find_entry(A.sel_game);
     float bar_h = sel ? sp(8.f) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.5f)));
+    if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; }
     ImGui::BeginChild("grid", ImVec2(0, -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
     A.page_scrollable = true;
@@ -2443,10 +2458,7 @@ static void all_games_view() {
         }
     } else {
         // one section per console (fixed order), A-Z inside; A.vis already holds the search/console/online filters
-        std::vector<hubui::ListItem> li;
-        li.reserve(A.lib.size());
-        for (auto& e : A.lib) li.push_back({e.key, e.title, sys_short(e), is_native(e)});
-        std::vector<hubui::ConsoleSection> secs = hubui::group_by_console(li, &A.vis);
+        const std::vector<hubui::ConsoleSection>& secs = A.secs;
         float gap = sp(2.f);
         float avail = ImGui::GetContentRegionAvail().x;
         hubui::GridLayout gl = hubui::grid_layout(avail, sp(26.f), sp(37.5f), gap);
