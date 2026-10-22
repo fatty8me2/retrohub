@@ -200,6 +200,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"sync_states\": " << (s.sync_states ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
+      << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json_escape(s.vault_dir) << "\",\n"
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
@@ -245,6 +246,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->sync_states = json_bool(j, "sync_states", out->sync_states);
     out->sync_card_dismissed = json_bool(j, "sync_card_dismissed", out->sync_card_dismissed);
+    out->smash_save_notice_shown = json_bool(j, "smash_save_notice_shown", out->smash_save_notice_shown);
     out->vault_dir = j.str("vault_dir", out->vault_dir);
     out->download_art = json_bool(j, "download_art", out->download_art);
     out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));
@@ -456,7 +458,8 @@ VersionGate version_gate(const std::string& host_app, const std::vector<PeerInfo
     return g;
 }
 
-GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app) {
+GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app, bool host_hello) {
+    if (!host_hello) return GuestVersionAction::Waiting;   // no hello yet: host_app is empty for a reason other than an old build
     if (host_app.empty()) return GuestVersionAction::HostNeedsUpdate;
     if (same_app_version(my_app, host_app)) return GuestVersionAction::None;
     return compare_app_versions(my_app, host_app) == -1 ? GuestVersionAction::UpdateNow : GuestVersionAction::HostNeedsUpdate;
@@ -567,6 +570,10 @@ std::string smash_save_file(const std::string& battery_dir) {
     std::string d = battery_dir;
     while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
     return d + "\\ssb64_save.bin";
+}
+
+std::string smash_save_conflict_text(const std::string& legacy_path) {
+    return "Using your synced Smash save. Your old local save is still at " + legacy_path + ".";
 }
 
 std::string find_smash_rom(const std::vector<RomRef>& lib) {

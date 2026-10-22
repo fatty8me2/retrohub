@@ -22,15 +22,16 @@ int main() {
     s.sync_auto = false;
     s.sync_states = true;
     s.sync_card_dismissed = true;
+    s.smash_save_notice_shown = true;
     Settings t;
     CHECK(settings_from_json(settings_to_json(s), &t));
     CHECK(t.name == s.name && t.rom_folders == s.rom_folders && t.server == s.server);
     CHECK(t.input_delay == 4 && t.last_game == "mp2" && t.smash_exe == s.smash_exe);
     CHECK(t.gb_core == "gambatte" && t.fullscreen && t.sync_folder == s.sync_folder);
-    CHECK(!t.sync_auto && t.sync_states && t.sync_card_dismissed);
+    CHECK(!t.sync_auto && t.sync_states && t.sync_card_dismissed && t.smash_save_notice_shown);
     Settings u;
     CHECK(settings_from_json("{\"input_delay\": 99}", &u) && u.input_delay == 8 && u.delay_auto && u.name.empty());
-    CHECK(u.gb_core == "sameboy" && u.sync_auto && !u.sync_states && u.rom_folders.empty() && !u.sync_card_dismissed);
+    CHECK(u.gb_core == "sameboy" && u.sync_auto && !u.sync_states && u.rom_folders.empty() && !u.sync_card_dismissed && !u.smash_save_notice_shown);
     CHECK(!settings_from_json("{bad", &u));
 
     /* migration rom_folder -> rom_folders */
@@ -126,10 +127,12 @@ int main() {
         CHECK(!vg.ok && vg.reason.find("Mia is on an old RetroHub") == 0 && vg.reason.find("update") != std::string::npos);
         gg.hello = false;   /* not yet heard from: not this gate's job */
         CHECK(version_gate("1.10.0", {hh, gg}).ok);
-        CHECK(guest_version_action("1.9.1", "1.10.0") == GuestVersionAction::UpdateNow);
-        CHECK(guest_version_action("1.10.0", "1.9.1") == GuestVersionAction::HostNeedsUpdate);
-        CHECK(guest_version_action("1.10.0", "") == GuestVersionAction::HostNeedsUpdate);
-        CHECK(guest_version_action("1.10.0", "v1.10.0") == GuestVersionAction::None);
+        CHECK(guest_version_action("1.9.1", "1.10.0", true) == GuestVersionAction::UpdateNow);
+        CHECK(guest_version_action("1.10.0", "1.9.1", true) == GuestVersionAction::HostNeedsUpdate);
+        CHECK(guest_version_action("1.10.0", "", true) == GuestVersionAction::HostNeedsUpdate);   /* hello, no app: old host */
+        CHECK(guest_version_action("1.10.0", "v1.10.0", true) == GuestVersionAction::None);
+        CHECK(guest_version_action("1.10.0", "", false) == GuestVersionAction::Waiting);          /* no hello yet */
+        CHECK(guest_version_action("1.10.0", "1.9.1", false) == GuestVersionAction::Waiting);
     }
     CHECK(json_parse(launch_json("mp1", 3, 2, 77u), &j));
     CHECK(j.str("game") == "mp1" && (int)j.num("launch") == 3 && (int)j.num("seed") == 77 && j.str("core").empty());
@@ -402,6 +405,12 @@ int main() {
         CHECK(smash_save_file("C:\\v\\n64\\native_smash64\\battery\\") == "C:\\v\\n64\\native_smash64\\battery\\ssb64_save.bin");
         CHECK(smash_save_file("D:\\b") == "D:\\b\\ssb64_save.bin");
         CHECK(smash_should_migrate_save(false, true) && !smash_should_migrate_save(true, true) && !smash_should_migrate_save(false, false));
+        CHECK(smash_save_conflict(true, true, "AAA", "AAB"));                 /* both exist, differ */
+        CHECK(!smash_save_conflict(true, true, "AAA", "AAA"));                /* identical: no notice */
+        CHECK(!smash_save_conflict(true, false, "AAA", ""));                  /* no legacy file */
+        CHECK(!smash_save_conflict(false, true, "", "AAA"));                  /* migration case, not a conflict */
+        CHECK(smash_save_conflict_text("C:\\BS\\ssb64_save.bin") ==
+              "Using your synced Smash save. Your old local save is still at C:\\BS\\ssb64_save.bin.");
         std::vector<RomRef> lib = {{"mp1", "NMPE", "a.z64"}, {"ssb64rom", "NALE", "C:\\r\\ssb.z64"}};
         CHECK(find_smash_rom(lib) == "C:\\r\\ssb.z64");
         CHECK(find_smash_rom({{"", "NALE", "x.z64"}}) == "x.z64" && find_smash_rom({{"mp1", "NMPE", "a"}}).empty() && find_smash_rom({{"ssb64rom", "NALE", ""}}).empty());
