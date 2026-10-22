@@ -1,6 +1,7 @@
 // Console test for the multi-system library (library.cpp). Exit code 0 = all passed.
 // Usage: hublibrary_test [folder-to-scan-and-print]
 #include "library.h"
+#include "games.h"
 #include "miniz.h"
 
 #include <chrono>
@@ -527,6 +528,19 @@ static void test_scan_cache_state(const fs::path& dir) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string(argv[1]) == "--unpack") {   // manual check: hublibrary_test --unpack <archive> <scratch data dir>
+        library_set_data_dir(argv[3]);
+        GameEntry g, back;
+        if (!identify_game(argv[2], &g) || g.issue != "extract") { std::printf("not an archived game\n"); return 2; }
+        std::string out, err;
+        auto t0 = std::chrono::steady_clock::now();
+        uint64_t seen = 0;
+        bool ok = extract_3ds_zip(g, [&](uint64_t d, uint64_t t) { if (d / (64u << 20) != seen / (64u << 20)) std::printf("  %llu / %llu MB\n", (unsigned long long)(d >> 20), (unsigned long long)(t >> 20)); seen = d; return true; }, &out, &err);
+        auto s = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("unpack %s in %llds: %s %s\n", ok ? "ok" : "FAILED", (long long)s, out.c_str(), err.c_str());
+        if (ok && identify_game(out, &back)) std::printf("extracted image: serial=%s key=%s title=%s size=%llu\n", back.serial.c_str(), back.key.c_str(), back.title.c_str(), (unsigned long long)back.size);
+        return ok ? 0 : 1;
+    }
     std::error_code ec;
     fs::path dir = fs::temp_directory_path(ec) / "hublibrary_test_dir";
     fs::remove_all(dir, ec);
@@ -540,6 +554,127 @@ int main(int argc, char** argv) {
     test_scan_cache_state(dir);
     library_set_data_dir("");
     fs::remove_all(dir, ec);
+
+    // ---- GameCube discs inside .7z / .zip archives ----
+    {
+        // pure helpers
+        CHECK(archive_entry_safe("Mario Kart - Double Dash!! (USA).ciso"));
+        CHECK(archive_entry_safe("sub/dir/disc.iso"));
+        CHECK(!archive_entry_safe("../evil.iso"));
+        CHECK(!archive_entry_safe("a/../../evil.iso"));
+        CHECK(!archive_entry_safe("..\\evil.iso"));
+        CHECK(!archive_entry_safe("/abs/disc.iso"));
+        CHECK(!archive_entry_safe("C:\\disc.iso"));
+        CHECK(!archive_entry_safe(""));
+        CHECK(archive_entry_safe("v1..2/disc.iso"));   // ".." inside a name is fine
+        auto lst = parse_tar_listing(
+            "-rw-r--r--  0 0      0  1088455232 Oct 20  2022 Legend of Zelda, The - The Wind Waker (USA, Canada).ciso\r\n"
+            "drwxr-xr-x  0 0      0           0 Oct 20  2022 folder/\r\n"
+            "-rw-r--r--  0 0      0         326 Oct 02  2025 Vimm's Lair.txt\r\n");
+        CHECK(lst.size() == 2 && lst[0].size == 1088455232ull && lst[0].name == "Legend of Zelda, The - The Wind Waker (USA, Canada).ciso");
+        CHECK(lst[1].name == "Vimm's Lair.txt" && lst[1].size == 326);
+        CHECK(gc_serial_for_name("Mario Kart - Double Dash!! (USA).7z") == "GM4E01");
+        CHECK(gc_serial_for_name("Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).nkit.iso") == "GALE01");
+        CHECK(gc_serial_for_name("Totally Unknown Game (USA).7z").empty());
+        CHECK(find_game_for("gc", "GXXE01", "") && find_game_for("gc", "GMSE01", "") && find_game_for("gc", "GP6E01", ""));
+
+        fs::path gdir = fs::temp_directory_path() / "hublibrary_gc_archive";
+        std::error_code gec;
+        fs::remove_all(gdir, gec);
+        fs::create_directories(gdir / "data");
+        library_set_data_dir((gdir / "data").string());
+
+        Bytes disc(0x2000, 0x11);
+        std::memcpy(disc.data(), "GM4E01", 6);
+        disc[6] = 0;
+        disc[0x1C] = 0xC2; disc[0x1D] = 0x33; disc[0x1E] = 0x9F; disc[0x1F] = 0x3D;
+        std::memcpy(disc.data() + 0x20, "MARIOKART DOUBLE DASH!!", 23);
+        for (size_t i = 0x440; i < disc.size(); ++i) disc[i] = (uint8_t)(i * 7);
+        fs::create_directories(gdir / "src");
+        write_file(gdir / "src" / "Mario Kart - Double Dash!! (USA).iso", disc);
+
+        auto make_7z = [&](const std::string& out, const std::string& member) {
+            std::wstring cmd = L"\"\"" + std::wstring(_wgetenv(L"SystemRoot")) + L"\\System32\\tar.exe\" --format 7zip -cf \"" +
+                               fs::path(out).wstring() + L"\" -C \"" + (gdir / "src").wstring() + L"\" \"" + fs::path(member).wstring() + L"\"\"";
+            _wsystem(cmd.c_str());
+        };
+        // zip (miniz) and 7z (Windows bsdtar writes 7z too)
+        mz_zip_archive gz;
+        std::memset(&gz, 0, sizeof gz);
+        const std::string zpath = (gdir / "Mario Kart - Double Dash!! (USA).zip").string();
+        CHECK(mz_zip_writer_init_file(&gz, zpath.c_str(), 0));
+        CHECK(mz_zip_writer_add_mem(&gz, "Mario Kart - Double Dash!! (USA).iso", disc.data(), disc.size(), MZ_DEFAULT_COMPRESSION));
+        CHECK(mz_zip_writer_finalize_archive(&gz));
+        mz_zip_writer_end(&gz);
+        const std::string spath = (gdir / "Mario Kart - Double Dash!! (USA).7z").string();
+        make_7z(spath, "Mario Kart - Double Dash!! (USA).iso");
+        CHECK(fs::exists(spath) && is_7z_file(spath) && !is_7z_file(zpath));
+
+        for (const std::string& arch : {spath, zpath}) {
+            GameEntry g;
+            CHECK(identify_game(arch, &g));
+            CHECK(g.system == System::GC && g.serial == "GM4E01" && g.issue == "extract" && g.catalog_id == "mkdd");
+            CHECK(g.key == "gc:gm4e01-0" && g.path == arch);
+            CHECK(extracted_3ds_path(g).empty());
+            CHECK(zip_3ds_unpacked_size(g) == disc.size());
+            std::string out, err;
+            CHECK(!extract_3ds_zip(g, [](uint64_t, uint64_t) { return false; }, &out, &err) && err == "cancelled");
+            CHECK(extracted_3ds_path(g).empty());
+            {
+                std::error_code e1;
+                bool part = false;
+                for (auto& f : fs::recursive_directory_iterator(gdir / "data" / "rom-cache" / "gc", e1))
+                    if (f.path().extension() == ".part") part = true;
+                CHECK(!part);   // a cancelled unpack leaves no partial file
+            }
+            uint64_t last = 0;
+            CHECK(extract_3ds_zip(g, [&](uint64_t d, uint64_t) { last = d; return true; }, &out, &err));
+            CHECK(!out.empty() && out == extracted_3ds_path(g) && fs::u8path(out).filename() == "disc.iso" && out.size() < 200);
+            CHECK(fs::file_size(fs::u8path(out)) == disc.size());
+            {
+                std::ifstream in(fs::u8path(out), std::ios::binary);
+                Bytes got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                CHECK(got == disc);
+            }
+            GameEntry back;   // the unpacked image identifies as the same disc
+            CHECK(identify_game(out, &back) && back.serial == "GM4E01" && back.key == g.key);
+            fs::remove_all(fs::u8path(extract_3ds_dir(g)), gec);
+        }
+
+        // path traversal: an archive whose only disc entry escapes is rejected, nothing is written outside rom-cache
+        mz_zip_archive ez;
+        std::memset(&ez, 0, sizeof ez);
+        const std::string epath = (gdir / "evil.zip").string();
+        CHECK(mz_zip_writer_init_file(&ez, epath.c_str(), 0));
+        CHECK(mz_zip_writer_add_mem(&ez, "../escape.iso", disc.data(), disc.size(), MZ_DEFAULT_COMPRESSION));
+        CHECK(mz_zip_writer_finalize_archive(&ez));
+        mz_zip_writer_end(&ez);
+        GameEntry ev;
+        CHECK(!identify_game(epath, &ev));
+        GameEntry fake;
+        fake.system = System::GC; fake.key = "gc:gm4e01-0"; fake.path = epath; fake.issue = "extract";
+        std::string o2, e2s;
+        CHECK(!extract_3ds_zip(fake, nullptr, &o2, &e2s));
+        CHECK(!fs::exists(gdir / "escape.iso") && !fs::exists(gdir / "data" / "escape.iso"));
+
+        // a 7z with no disc image, and a file named .7z with the wrong signature: not listed
+        write_file(gdir / "src" / "notes.txt", Bytes(100, 'x'));
+        const std::string tpath = (gdir / "notes.7z").string();
+        make_7z(tpath, "notes.txt");
+        GameEntry nt;
+        CHECK(!identify_game(tpath, &nt));
+        write_file(gdir / "fake.7z", Bytes(64, 'x'));
+        CHECK(!identify_game((gdir / "fake.7z").string(), &nt));
+
+        // a library scan lists both archives
+        std::vector<GameEntry> sc = scan_library({gdir.string()}, nullptr);
+        int found = 0;
+        for (const auto& g : sc) if (g.system == System::GC && g.issue == "extract") ++found;
+        if (found != 1) for (const auto& g : sc) std::printf("  %s [%s]\n", g.path.c_str(), g.issue.c_str());
+        CHECK(found == 1);   // same disc in .iso, .zip and .7z: listed once
+        library_set_data_dir("");
+        fs::remove_all(gdir, gec);
+    }
 
     if (argc > 1) {
         std::printf("--- scanning %s ---\n", argv[1]);

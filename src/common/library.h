@@ -57,6 +57,14 @@ bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint
 std::string extract_3ds_dir(const GameEntry& e);      // where it would go (for the confirm dialog)
 uint64_t zip_3ds_unpacked_size(const GameEntry& e);   // size of the image inside the zip (central directory only), 0 if unknown
 
+/* GameCube discs in .7z / .zip (issue == "extract", system GC) use the same four calls above; they unpack with
+ * Windows' tar.exe into data_dir()/rom-cache/gc/<key>/disc.<ext>. Pure helpers (exposed for tests): */
+struct ArchiveEntry { std::string name; uint64_t size = 0; };
+bool archive_entry_safe(const std::string& name);              // false for "..", absolute, drive-letter or control-char names
+bool is_7z_file(const std::string& path);                      // 7z signature check
+std::vector<ArchiveEntry> parse_tar_listing(const std::string& text);   // "tar -tvf" output -> regular files
+std::string gc_serial_for_name(const std::string& file_name);  // No-Intro style name -> catalog GC disc ID, "" if unknown
+
 /* Per-user library state, persisted to data_dir()/library.json. */
 struct GameState {
     bool favorite = false;
