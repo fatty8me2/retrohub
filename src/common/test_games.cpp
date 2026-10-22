@@ -82,6 +82,8 @@ static void test_catalog() {
         CHECK(find_game_for("gb", "AAUE", "") == nullptr);
         CHECK(find_game_for("gb", "POKEMON RED", "") && find_game_for("gb", "POKEMON RED", "")->id == "pokered");
         CHECK(find_game_for("gbc", "POKEMON YEL", "") && find_game_for("gbc", "POKEMON YEL", "")->id == "pokeyellow");
+        CHECK(find_game_for("gbc", "POKEMON_GLD", "") && find_game_for("gbc", "POKEMON_GLD", "")->id == "pokegold");
+        CHECK(find_game_for("gbc", "PM_CRYSTAL", "") && find_game_for("gbc", "PM_CRYSTAL", "")->id == "pokecrystal");
         CHECK(find_game("mk64")->genre == "Racing" && find_game("pokeemerald")->genre == "RPG");
         CHECK(GameInfo().genre.empty());
     }

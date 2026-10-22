@@ -491,16 +491,18 @@ bool id_gb(const fs::path& p, uint64_t size, GameEntry* e) {
             code.push_back(c);
         }
     }
-    if (code.size() == 4) {
-        e->serial = code;
-    } else {
-        std::string s = t;
-        while (!s.empty() && s.back() == ' ') s.pop_back();
-        for (auto& c : s)
-            if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
-        e->serial = s;
+    std::string title_serial = t;
+    while (!title_serial.empty() && title_serial.back() == ' ') title_serial.pop_back();
+    for (auto& c : title_serial)
+        if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+    const char* sys_short = is_cgb ? "gbc" : "gb";
+    e->serial = code.size() == 4 ? code : title_serial;
+    if (const GameInfo* g = find_game_for(sys_short, e->serial, std::string())) {
+        e->catalog_id = g->id;
+    } else if (code.size() == 4) {
+        /* Code is valid but not in the catalog (or is junk): fall back to the header title. */
+        if (const GameInfo* g2 = find_game_for(sys_short, title_serial, std::string())) e->catalog_id = g2->id;
     }
-    if (const GameInfo* g = find_game_for(is_cgb ? "gbc" : "gb", e->serial, std::string())) e->catalog_id = g->id;
     return true;
 }
 

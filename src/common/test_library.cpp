@@ -211,6 +211,16 @@ static void test_identify(const fs::path& dir) {
     CHECK(write_file(dir / "id" / "yellow.gb", make_gb("POKEMON YELLOW", 0x80, 0x047C, 11)));
     CHECK(identify_game((dir / "id" / "yellow.gb").string(), &e));
     CHECK(e.serial == "POKEMON YEL" && e.catalog_id == "pokeyellow");
+    // Valid-alphanumeric junk in the code field: not a catalog code, so the header title matches
+    CHECK(write_file(dir / "id" / "gold-junk.gbc", make_gb("POKEMON_GLD", 0x80, 0x682D, 12, true, "ZZ9Q")));
+    CHECK(identify_game((dir / "id" / "gold-junk.gbc").string(), &e));
+    CHECK(e.serial == "ZZ9Q" && e.catalog_id == "pokegold");
+    CHECK(write_file(dir / "id" / "yellow-junk.gbc", make_gb("POKEMON YELLOW", 0x80, 0x047C, 13, true, "Q7Q7")));
+    CHECK(identify_game((dir / "id" / "yellow-junk.gbc").string(), &e));
+    CHECK(e.serial == "Q7Q7" && e.catalog_id == "pokeyellow");
+    // Junk code with an unknown title: no catalog match
+    CHECK(write_file(dir / "id" / "unknown.gbc", make_gb("NOPE GAME", 0x80, 0x0003, 14, true, "ZZ9Q")));
+    CHECK(identify_game((dir / "id" / "unknown.gbc").string(), &e) && e.catalog_id.empty());
     // .gbc extension but DMG header -> header decides
     CHECK(write_file(dir / "id" / "plain.gbc", make_gb("PLAIN", 0, 0x0001, 3)));
     CHECK(identify_game((dir / "id" / "plain.gbc").string(), &e) && e.system == System::GB);
