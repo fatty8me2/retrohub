@@ -29,15 +29,87 @@ static bool lobby_check(const std::string& server)
             a.send_msg("{\"kind\":\"chat\",\"text\":\"hi \\\"there\\\"\"}");
             sent = true;
         }
-        int from; std::string body;
-        if (b.poll_msg(&from, &body)) {
-            got = from == 0 && body.find("hi") != std::string::npos;
-            printf("lobby: bob got from=%d body=%s\n", from, body.c_str());
+        LobbyEvent ev;
+        if (b.poll_event(&ev) && ev.type == LobbyEvent::Msg) {
+            got = ev.from_slot == 0 && ev.body.find("hi") != std::string::npos;
+            printf("lobby: bob got from=%d body=%s\n", ev.from_slot, ev.body.c_str());
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     printf("lobby check: %s (alice slot %d, bob slot %d, members %zu)\n", got ? "ok" : "FAILED", a.my_slot(), b.my_slot(), a.members().size());
     return got;
+}
+
+/* Host leaves a lobby room: the lowest remaining member becomes slot 0, nobody is dropped, the code keeps working. */
+static bool migration_check(const std::string& server)
+{
+    std::string code = new_room_code();
+    auto pump = [](std::vector<LobbyClient*> v, uint32_t ms, bool (*done)(void*), void* ctx) {
+        for (uint32_t t0 = now_ms(); now_ms() - t0 < ms;) {
+            for (auto* c : v) c->update();
+            if (done && done(ctx)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+    LobbyClient a, b, c, d;
+    a.start(server, code, true, "alice");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    b.start(server, code, false, "bob");
+    c.start(server, code, false, "carol");
+    struct Ctx { LobbyClient *a, *b, *c, *d; } cx{&a, &b, &c, &d};
+    pump({&a, &b, &c}, 5000, [](void* p) { auto* x = (Ctx*)p; return x->c->connected() && x->a->members().size() == 3; }, &cx);
+    bool ok = b.my_slot() == 1 && c.my_slot() == 2;
+    a.stop();   // host leaves
+    LobbyEvent hb, hc;
+    bool gotb = false, gotc = false;
+    for (uint32_t t0 = now_ms(); now_ms() - t0 < 20000 && !(gotb && gotc);) {
+        b.update(); c.update();
+        LobbyEvent h;
+        while (!gotb && b.poll_event(&h)) if (h.type == LobbyEvent::HostChange) { hb = h; gotb = true; }
+        while (!gotc && c.poll_event(&h)) if (h.type == LobbyEvent::HostChange) { hc = h; gotc = true; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    pump({&b, &c}, 500, nullptr, nullptr);
+    ok = ok && gotb && gotc && hb.from_slot == 1 && hb.name == "bob" && hc.from_slot == 1;
+    ok = ok && b.my_slot() == 0 && c.my_slot() == 2 && b.connected() && c.connected() && !b.failed() && !c.failed();
+    ok = ok && b.members().size() == 2 && b.members()[0].slot == 0 && b.members()[0].name == "bob" && c.members().size() == 2;
+    // the code still works: a new player joins and takes the free slot; messages from the new host arrive as slot 0
+    d.start(server, code, false, "dave");
+    pump({&b, &c, &d}, 5000, [](void* p) { return ((Ctx*)p)->d->connected(); }, &cx);
+    ok = ok && d.connected() && d.my_slot() == 1;
+    b.send_msg("{\"kind\":\"select\",\"game\":\"mk64\"}");
+    int from = -1; std::string body;
+    for (uint32_t t0 = now_ms(); now_ms() - t0 < 5000 && from < 0;) {
+        b.update(); c.update(); d.update();
+        LobbyEvent ev;
+        while (c.poll_event(&ev)) if (ev.type == LobbyEvent::Msg) { from = ev.from_slot; body = ev.body; }
+        if (from >= 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    ok = ok && from == 0 && body.find("mk64") != std::string::npos;
+    printf("migration check: %s (bob slot %d, carol slot %d, dave slot %d, from=%d)\n", ok ? "ok" : "FAILED", b.my_slot(), c.my_slot(), d.my_slot(), from);
+    return ok;
+}
+
+/* Events must come out in server arrival order and my_slot() must flip only when the HostChange is consumed. */
+static bool event_order_check()
+{
+    LobbyClient c;
+    c.inject_server_text(R"({"type":"welcome","room":"ABC234","slot":1})");
+    c.inject_server_text(R"({"type":"msg","from":0,"body":{"kind":"launch"}})");
+    c.inject_server_text(R"({"type":"msg","from":1,"body":{"kind":"ready","ready":true}})");
+    c.inject_server_text(R"({"type":"host_changed","from_slot":1,"slot":0,"name":"me"})");
+    c.inject_server_text(R"({"type":"msg","from":0,"body":{"kind":"select","game":"mk64"}})");
+    LobbyEvent e;
+    bool ok = c.my_slot() == 1;
+    ok = ok && c.poll_event(&e) && e.type == LobbyEvent::Msg && e.from_slot == 0 && e.body.find("launch") != std::string::npos && c.my_slot() == 1;
+    ok = ok && c.poll_event(&e) && e.type == LobbyEvent::Msg && e.from_slot == 1 && c.my_slot() == 1;
+    ok = ok && c.poll_event(&e) && e.type == LobbyEvent::HostChange && e.from_slot == 1 && e.name == "me" && c.my_slot() == 0;
+    ok = ok && c.poll_event(&e) && e.type == LobbyEvent::Msg && e.from_slot == 0 && e.body.find("mk64") != std::string::npos;
+    ok = ok && !c.poll_event(&e);
+    printf("event order check: %s\n", ok ? "ok" : "FAILED");
+    return ok;
 }
 
 int main(int argc, char** argv)
@@ -50,7 +122,9 @@ int main(int argc, char** argv)
     bool relay = fr && fr[0] && fr[0] != '0';
     net_set_log_file("hubnet_test.log");
 
+    if (!event_order_check()) return 1;
     if (!lobby_check(server)) return 1;
+    if (!migration_check(server)) return 1;
     std::string room = new_room_code() + "-1";
     printf("server=%s room=%s players=%d count=%d mode=%s\n", server.c_str(), room.c_str(), n, count,
            relay ? "FORCED RELAY" : "direct UDP (relay fallback)");

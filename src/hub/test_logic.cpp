@@ -488,6 +488,22 @@ int main() {
     }
 
 
+    {   // lobby host migration: per-slot state follows the promoted member to slot 0
+        std::map<int, std::string> m{{0, "oldhost"}, {1, "promoted"}, {3, "other"}};
+        remap_slot_key(m, 1, 0);
+        CHECK(m.size() == 2 && m[0] == "promoted" && m[3] == "other" && !m.count(1));   // old host's entry dropped, others kept
+        std::map<int, int> e{{2, 5}};
+        remap_slot_key(e, 1, 0);                                                         // nothing under `from`: unchanged
+        CHECK(e.size() == 1 && e[2] == 5);
+        std::map<int, int> g{{0, 9}, {2, 5}};
+        remap_slot_key(g, 1, 0);                                                         // promoted had no state: departed host's state is dropped
+        CHECK(g.size() == 1 && g[2] == 5);
+        std::map<int, int> same{{0, 1}};
+        remap_slot_key(same, 0, 0);
+        CHECK(same.size() == 1 && same[0] == 1);
+        CHECK(host_changed_text("Mia", false) == "Mia is now the host" && host_changed_text("Mia", true) == "You are now the host");
+    }
+
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }

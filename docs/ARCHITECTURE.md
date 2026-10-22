@@ -50,7 +50,7 @@ The URL is `wss://smash-netplay.jumpcircuit.workers.dev/hub?room=CODE&role=host|
 - **Code format:** 6 characters, same alphabet as Smash (`[A-HJ-NP-Z2-9]`).
 - **Room size:** up to 4 members.
 - **Slots:** the host is slot 0. Joiners get the lowest free slot.
-- **Room lifetime:** a room ends when its host leaves. All members are then closed with code 4001.
+- **Room lifetime:** a lobby room lives until its last member leaves. **Host migration:** a client that connects with `&caps=hostmig` (every RetroHub since this feature) keeps the room alive when the host (slot 0) leaves: the lowest remaining opted-in slot is renumbered to slot 0 (so "host = slot 0" stays true for the port plan and the hubnet game session), every remaining member gets `host_changed` then `members`, and the room code keeps working (friends' presence and invites point at the same code; a new joiner takes any free slot). Members that did NOT send `caps=hostmig` (older RetroHub) are closed with 4001 `host-left` as before, and the opted-in ones migrate; if nobody opted in, the room just closes. **Game rooms** (`<CODE>-N`) never migrate: the host leaving closes everyone with 4001, which ends the match. The host flag lives only in each socket's attachment (hibernation-safe); the Durable Object is single-threaded so there is never more than one slot 0. A RetroHub talking to an older Worker simply sees the old 4001 close.
 
 Messages from the server (JSON text):
 
@@ -60,6 +60,7 @@ Messages from the server (JSON text):
 | `{type:"members", members:[{slot,name}]}` | On every join or leave, to everyone |
 | `{type:"msg", from, body}` | A member's broadcast. `body` is any JSON object; the hub defines its meaning (see below) |
 | `{type:"peers", peers:[{slot,public,local}]}` | Whenever a member reports its endpoint, to everyone |
+| `{type:"host_changed", from_slot, slot:0, name}` | Host left and `from_slot` (named `name`) is now slot 0. Sent to every remaining opted-in member, just before the new `members`. The promoted member's own `my_slot` becomes 0 |
 | `{type:"error", reason}` then close 4000 | `reason` is one of `room-in-use`, `no-such-room`, `room-full` |
 
 Messages from a client:
