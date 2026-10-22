@@ -130,14 +130,16 @@ Install find(Kind k, const std::string& configured, const std::string& game_path
             in.exe = configured;
             in.how = "chosen in Settings";
         }
-        if (in.exe.empty() && !game_path.empty()) {   // an install next to / above the game file (Cemu's own "game" folder)
+        bool only_managed = !env(L"RETROHUB_NO_EXISTING_EMU").empty();   // test/diagnostic: ignore any Cemu outside RetroHub's data dir
+        if (only_managed) in.exe.clear();
+        if (in.exe.empty() && !game_path.empty() && !only_managed) {   // an install next to / above the game file (Cemu's own "game" folder)
             fs::path d = P(game_path).parent_path();
             for (int i = 0; i < 4 && !d.empty(); ++i, d = d.parent_path()) {
                 if (file_exists(S(d / L"Cemu.exe"))) { in.exe = S(d / L"Cemu.exe"); in.how = "existing install near the game"; break; }
                 if (d == d.root_path()) break;
             }
         }
-        if (in.exe.empty()) {
+        if (in.exe.empty() && !only_managed) {
             std::string up = env(L"USERPROFILE");
             const std::string roots[] = {join(up, "Desktop"), join(up, "Documents"), join(up, "Downloads"), "C:\\Cemu", "C:\\Games",
                                          "C:\\Emulators", env(L"ProgramFiles")};
