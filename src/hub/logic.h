@@ -58,6 +58,7 @@ struct PeerInfo {
     bool hello = false;                         // hello message received
     std::map<std::string, std::string> games;   // catalog id -> md5 ("native" for native ports)
     std::vector<std::string> keys;              // library game keys the peer owns (hello v2)
+    std::string app;                            // RetroHub release version from hello ("" = old build, unknown)
 };
 struct Selectability { bool ok = false; std::string reason; };
 
@@ -74,12 +75,27 @@ std::string smash_room_notice(const std::vector<PeerInfo>& peers);
 /* hello v2: {"kind":"hello","version":"2","games":{catalogId:md5,...},"keys":["n64:..","gba:.."]}.
  * "games" is kept for old clients (N64 catalog md5s); "keys" advertises every game key. */
 std::string hello_json(const std::string& version, const std::map<std::string, std::string>& games,
-                       const std::vector<std::string>& keys = {});
+                       const std::vector<std::string>& keys = {}, const std::string& app = "");
 /* Same content, split into several messages (each <= ~max_bytes) because the lobby server drops
  * text frames above 4096 bytes. Part 0 carries "games"; later parts ("part":n) append keys. */
 std::vector<std::string> hello_messages(const std::string& version, const std::map<std::string, std::string>& games,
-                                        const std::vector<std::string>& keys, size_t max_bytes = 3000);
+                                        const std::vector<std::string>& keys, size_t max_bytes = 3000,
+                                        const std::string& app = "");
 bool parse_hello(const Json& body, PeerInfo* out);
+
+/* ---- app version gate (everyone in a room must run the same RetroHub release) ---- */
+/* Dotted numeric compare, tolerant of a leading "v" and trailing suffixes ("1.10.0-beta"): -1/0/1.
+ * Returns 2 when either side has no parsable number. */
+int compare_app_versions(const std::string& a, const std::string& b);
+/* "v1.10.0" form ("" -> ""). */
+std::string app_version_label(const std::string& v);
+struct VersionGate { bool ok = true; std::string reason; };
+/* Host-side: blocks Launch while any member that sent a hello runs a different (or unknown) version
+ * than `host_app`. `allow_mismatch` (dev override) always passes. */
+VersionGate version_gate(const std::string& host_app, const std::vector<PeerInfo>& peers, bool allow_mismatch = false);
+enum class GuestVersionAction { None, UpdateNow, HostNeedsUpdate };
+/* Guest-side: older than the host -> UpdateNow, newer (or host unknown/old build) -> HostNeedsUpdate. */
+GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app);
 /* `core` (optional): the host's GB/GBC core so all peers run the same one. */
 /* `delay` 0 = auto. `share_host_save`: N64 online, every PC uses the host's save. */
 struct PortPlan;

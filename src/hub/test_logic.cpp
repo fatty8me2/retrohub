@@ -101,6 +101,36 @@ int main() {
         CHECK(allok && r.keys == many && r.games["mp1"] == "AAA" && r.hello);
         CHECK(hello_messages("2", {}, {}).size() == 1);
     }
+    {   /* app version gate */
+        Json aj;
+        PeerInfo ap;
+        CHECK(json_parse(hello_json("2", {}, {}, "1.10.0"), &aj) && parse_hello(aj, &ap) && ap.app == "1.10.0");
+        PeerInfo ap2;
+        auto am = hello_messages("2", {{"mp1", "A"}}, {"n64:a"}, 3000, "1.9.1");
+        CHECK(json_parse(am[0], &aj) && parse_hello(aj, &ap2) && ap2.app == "1.9.1");
+        PeerInfo ap3;
+        CHECK(json_parse(hello_json("2", {}, {}), &aj) && parse_hello(aj, &ap3) && ap3.app.empty());
+        CHECK(compare_app_versions("1.9.1", "1.10.0") == -1 && compare_app_versions("v1.10.0", "1.10") == 0 &&
+              compare_app_versions("2.0.0", "1.99.9") == 1 && compare_app_versions("1.10.0-beta", "1.10.0") == 0 &&
+              compare_app_versions("dev", "1.0") == 2);
+        CHECK(app_version_label("1.10.0") == "v1.10.0" && app_version_label("v1.2") == "v1.2" && app_version_label("").empty());
+        PeerInfo hh; hh.slot = 0; hh.name = "Host"; hh.hello = true; hh.app = "1.10.0";
+        PeerInfo gg; gg.slot = 1; gg.name = "Mia"; gg.hello = true; gg.app = "1.10.0";
+        CHECK(version_gate("1.10.0", {hh, gg}).ok);
+        gg.app = "1.9.1";
+        VersionGate vg = version_gate("1.10.0", {hh, gg});
+        CHECK(!vg.ok && vg.reason == "Mia is on v1.9.1 - everyone needs v1.10.0. Ask them to update.");
+        CHECK(version_gate("1.10.0", {hh, gg}, true).ok);
+        gg.app.clear();
+        vg = version_gate("1.10.0", {hh, gg});
+        CHECK(!vg.ok && vg.reason.find("Mia is on an old RetroHub") == 0 && vg.reason.find("update") != std::string::npos);
+        gg.hello = false;   /* not yet heard from: not this gate's job */
+        CHECK(version_gate("1.10.0", {hh, gg}).ok);
+        CHECK(guest_version_action("1.9.1", "1.10.0") == GuestVersionAction::UpdateNow);
+        CHECK(guest_version_action("1.10.0", "1.9.1") == GuestVersionAction::HostNeedsUpdate);
+        CHECK(guest_version_action("1.10.0", "") == GuestVersionAction::HostNeedsUpdate);
+        CHECK(guest_version_action("1.10.0", "v1.10.0") == GuestVersionAction::None);
+    }
     CHECK(json_parse(launch_json("mp1", 3, 2, 77u), &j));
     CHECK(j.str("game") == "mp1" && (int)j.num("launch") == 3 && (int)j.num("seed") == 77 && j.str("core").empty());
     CHECK(json_parse(launch_json("gb:x-1", 1, 2, 5u, "gambatte"), &j) && j.str("core") == "gambatte");
