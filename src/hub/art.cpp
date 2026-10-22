@@ -371,10 +371,13 @@ bool load_image(const std::string& system, const std::string& name, Kind kind, P
     std::string bytes;
     if (read_file(file, &bytes) && decode_png(bytes, px)) return true;
     if (is_missed(miss_id)) { *err = "known miss"; return false; }
-    std::string url = hm::thumb_url(system, (int)kind, name);
-    if (url.empty()) { *err = "unsupported system"; return false; }
+    std::vector<std::string> urls = hm::thumb_urls(system, (int)kind, name);
+    if (urls.empty()) { *err = "unsupported system"; return false; }
     int st = 0;
-    if (!http_get(url, &bytes, &st)) { *err = "network error"; return false; }
+    for (const std::string& url : urls) {   /* 404 on one repo: try the next (gbc -> gb) */
+        if (!http_get(url, &bytes, &st)) { *err = "network error"; return false; }
+        if (st != 404) break;
+    }
     if (st == 404) { record_miss(miss_id); *err = "404 (no art for this name)"; return false; }
     if (st != 200) { *err = "HTTP " + std::to_string(st); return false; }
     if (!decode_png(bytes, px)) { *err = "bad image"; return false; }

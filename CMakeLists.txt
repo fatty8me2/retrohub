@@ -69,6 +69,7 @@ set(RETROHUB_TEST_SERVER "wss://smash-netplay.jumpcircuit.workers.dev" CACHE STR
 
 add_test(NAME hubcommon_test COMMAND hubcommon_test)
 add_test(NAME hublibrary_test COMMAND hublibrary_test)
+add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
 add_test(NAME hubsaves_test COMMAND hubsaves_test)
 add_test(NAME hub_logic_test COMMAND hub_logic_test)
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live

@@ -94,6 +94,20 @@ int main(int argc, char** argv) {
     CHECK_EQ(hm::thumb_url("wiiu", 0, "Legend of Zelda, The - Twilight Princess HD (USA) (En,Fr,Es) (Rev 2)").substr(0, 78),
              "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Wii_U/master/");
     CHECK(hm::thumb_url("xx", 0, "a").empty());
+    /* gbc art falls back to the Game Boy repo (dual-mode carts like Yellow are filed there) */
+    {
+        const std::string yellow = "Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced)";
+        auto u = hm::thumb_urls("gbc", 0, yellow);
+        CHECK(u.size() == 2);
+        if (u.size() == 2) {
+            CHECK_EQ(u[0], hm::thumb_url("gbc", 0, yellow));
+            CHECK_EQ(u[1], hm::thumb_url("gb", 0, yellow));
+            CHECK(u[1].find("/Nintendo_-_Game_Boy/master/Named_Boxarts/") != std::string::npos);
+        }
+        CHECK(hm::thumb_urls("gb", 0, yellow).size() == 1);
+        CHECK(hm::thumb_urls("n64", 0, "Super Mario 64 (USA)").size() == 1);
+        CHECK(hm::thumb_urls("xx", 0, "a").empty());
+    }
 
     /* ---- DAT parse ---- */
     auto dat = hm::parse_dat(kSample);

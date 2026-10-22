@@ -61,6 +61,8 @@ class Core {
 
     void set_fast_forwarding(bool ff) { ff_ = ff; }
     const std::map<std::string, CoreOption>& options() const { return opts_; }
+    /* Change an option while running (the core sees it on its next GET_VARIABLE_UPDATE poll). */
+    void set_option(const std::string& key, const std::string& value) { overrides[key] = value; vars_dirty_ = true; }
 
     /* Used by the static trampolines. */
     bool environment(unsigned cmd, void* data);

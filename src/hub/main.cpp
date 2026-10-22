@@ -7,7 +7,7 @@
  *  - N64 (emulated):  n64run.exe --rom <path> --game <id|unknown> --save-dir <battery dir>
  *                     [--net <server> --room <CODE>-<launch> --slot <lobby slot> --players <n>
  *                      --ports <p0,p1,p2,p3> --delay <d>]
- *  - GBA/GB/GBC:      retrorun.exe --core <x_libretro.dll> --rom <path> --system <gba|gb|gbc>
+ *  - GBA/GB/GBC/DS:   retrorun.exe --core <x_libretro.dll> --rom <path> --system <gba|gb|gbc|nds>
  *                     --save-dir <battery dir> --state-dir <states dir> --resume [--fullscreen]
  *                     [--net ... same flags as n64run; online uses a fresh temp save dir, no --resume]
  *  - GameCube:        Dolphin.exe -b -u <data>\dolphin-user -e <game>  (INI keys written before launch)
@@ -305,6 +305,7 @@ static void system_colors(hub::System s, ImU32* a, ImU32* b) {
         case hub::System::GB: *a = IM_COL32(85, 100, 40, 255); *b = IM_COL32(150, 175, 70, 255); break;
         case hub::System::N3DS: *a = IM_COL32(170, 25, 55, 255); *b = IM_COL32(235, 90, 105, 255); break;
         case hub::System::WiiU: *a = IM_COL32(0, 100, 170, 255); *b = IM_COL32(60, 190, 230, 255); break;
+        case hub::System::NDS: *a = IM_COL32(130, 130, 145, 255); *b = IM_COL32(205, 210, 225, 255); break;
         default: *a = IM_COL32(70, 78, 100, 255); *b = IM_COL32(120, 130, 160, 255); break;
     }
 }
@@ -317,6 +318,7 @@ static const char* sys_badge(hub::System s) {
         case hub::System::GB: return "GAME BOY";
         case hub::System::N3DS: return "3DS";
         case hub::System::WiiU: return "WII U";
+        case hub::System::NDS: return "NINTENDO DS";
         default: return "?";
     }
 }
@@ -1184,6 +1186,15 @@ static void play_entry(const hub::GameEntry& e) {
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }
+        case hub::System::NDS: {   // melonDS DS core; no --resume (a stale auto state could overwrite a save synced from another PC)
+            std::string core = find_core("melondsds");
+            if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }
+            std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
+                               " --state-dir " + quote(states) + title_arg(e.title);
+            if (A.st.fullscreen) args += " --fullscreen";
+            spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+            break;
+        }
         case hub::System::GC: {
             std::string dol = find_dolphin();
             if (dol.empty()) {   // not shipped: ask, download, then start this game
@@ -1304,12 +1315,14 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
 
 /* Room accessors: screenshots (HUB_SHOT_FAKE_ROOM) fake a connected room without touching the network. */
 static bool g_fake_room = false;
+static bool g_fake_other_host = false;   // HUB_SHOT_HOSTCHANGE=other: Mia (slot 0) is the host, we are slot 1
 static bool room_connected() { return g_fake_room || A.lobby.connected(); }
 static std::vector<hubnet::Member> room_members() {
+    if (g_fake_room && g_fake_other_host) return {{0, "Mia"}, {1, A.st.name}, {2, "Jake"}};
     if (g_fake_room) return {{0, A.st.name}, {1, "Mia"}, {2, "Jake"}};
     return A.lobby.members();
 }
-static int room_my_slot() { return g_fake_room ? 0 : A.lobby.my_slot(); }
+static int room_my_slot() { return g_fake_room ? (g_fake_other_host ? 1 : 0) : A.lobby.my_slot(); }
 static int locals_of(int slot) {
     if (slot == room_my_slot()) return A.my_locals;
     auto it = A.locals.find(slot);
@@ -1405,43 +1418,38 @@ static void lobby_tick() {
     A.lobby.update();
     if (!A.lobby.connected()) return;
 
-    // Membership changes -> forget departed peers, re-announce ourselves.
-    std::vector<int> slots;
-    for (auto& m : A.lobby.members()) slots.push_back(m.slot);
-    std::sort(slots.begin(), slots.end());
-    bool changed = !A.was_connected || slots != A.last_slots;
-    if (changed) {
-        std::set<int> alive(slots.begin(), slots.end());
-        for (auto it = A.peers.begin(); it != A.peers.end();) it = alive.count(it->first) ? std::next(it) : A.peers.erase(it);
-        for (auto it = A.ready.begin(); it != A.ready.end();) it = alive.count(it->first) ? std::next(it) : A.ready.erase(it);
-        for (auto it = A.locals.begin(); it != A.locals.end();) it = alive.count(it->first) ? std::next(it) : A.locals.erase(it);
-        for (auto it = A.picks.begin(); it != A.picks.end();) it = alive.count(it->first) ? std::next(it) : A.picks.erase(it);
-        A.last_slots = slots;
-        A.hello_dirty = true;
-        A.was_connected = true;
+    /* Lobby events are handled strictly in arrival order. A HostChange moves per-slot state from the promoted
+     * member's old slot to 0 and drops the departed host's, so every message queued before it (old numbering)
+     * is applied first and nothing from before the change can recreate state under a stale slot. A `launch`
+     * that arrived in the same batch before the HostChange came from the departed host: it is dropped (its
+     * port plan uses the old slots); the remaining players just stay in the room under the new host. */
+    std::vector<hubnet::LobbyEvent> evs;
+    {
+        hubnet::LobbyEvent e;
+        while (A.lobby.poll_event(&e)) evs.push_back(std::move(e));   // poll applies the slot change when it pops a HostChange
     }
-    if (A.hello_dirty) {
-        A.hello_dirty = false;
-        {
-            std::map<std::string, std::string> games;
-            std::vector<std::string> keys;
-            my_games(&games, &keys);
-            for (auto& m : hubui::hello_messages("2", games, keys, 3000, HUB_VERSION_STR)) A.lobby.send_msg(m);
+    size_t last_hc = evs.size();
+    for (size_t k = 0; k < evs.size(); ++k) if (evs[k].type == hubnet::LobbyEvent::HostChange) last_hc = k;
+    for (size_t k = 0; k < evs.size(); ++k) {
+        const hubnet::LobbyEvent& ev = evs[k];
+        if (ev.type == hubnet::LobbyEvent::HostChange) {
+            hubui::remap_slot_key(A.peers, ev.from_slot, 0);
+            hubui::remap_slot_key(A.ready, ev.from_slot, 0);
+            hubui::remap_slot_key(A.locals, ev.from_slot, 0);
+            hubui::remap_slot_key(A.picks, ev.from_slot, 0);
+            A.hello_dirty = true;
+            bool me = A.lobby.my_slot() == 0;
+            A.chat.push_back({"", hubui::host_changed_text(ev.name, me)});
+            A.chat_scroll = true;
+            push_toast(hubui::host_changed_text(ev.name, me), ui::GOOD, 8.0);
+            continue;
         }
-        A.lobby.send_msg(std::string("{\"kind\":\"ready\",\"ready\":") + (A.my_ready ? "true" : "false") + "}");
-        A.lobby.send_msg("{\"kind\":\"locals\",\"n\":" + std::to_string(A.my_locals) + "}");
-        if (is_host()) A.lobby.send_msg(std::string("{\"kind\":\"opts\",\"share_save\":") + (A.share_host_save ? "true" : "false") + "}");
-        A.lobby.send_msg(hubui::pick_json(A.my_pick));
-        if (is_host()) A.lobby.send_msg(hubui::rules_json(A.rules));
-        if (is_host() && !A.selected_game.empty())
-            A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + hubui::json_escape(A.selected_game) + "\"}");
-    }
-
-    int from;
-    std::string body;
-    while (A.lobby.poll_msg(&from, &body)) {
+        int from = ev.from_slot;
+        const std::string& body = ev.body;
+        bool before_hc = last_hc != evs.size() && k < last_hc;
         hubui::Json j;
         if (!hubui::json_parse(body, &j) || j.type != hubui::Json::Obj) continue;
+        if (before_hc && j.str("kind") == "launch") continue;
         std::string kind = j.str("kind");
         if (kind == "hello") {
             hubui::PeerInfo& p = A.peers[from];
@@ -1475,7 +1483,41 @@ static void lobby_tick() {
             launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
                           ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j);   // --match comes from j["match"]
         }
+
     }
+
+    // Membership changes -> forget departed peers, re-announce ourselves.
+    std::vector<int> slots;
+    for (auto& m : A.lobby.members()) slots.push_back(m.slot);
+    std::sort(slots.begin(), slots.end());
+    bool changed = !A.was_connected || slots != A.last_slots;
+    if (changed) {
+        std::set<int> alive(slots.begin(), slots.end());
+        for (auto it = A.peers.begin(); it != A.peers.end();) it = alive.count(it->first) ? std::next(it) : A.peers.erase(it);
+        for (auto it = A.ready.begin(); it != A.ready.end();) it = alive.count(it->first) ? std::next(it) : A.ready.erase(it);
+        for (auto it = A.locals.begin(); it != A.locals.end();) it = alive.count(it->first) ? std::next(it) : A.locals.erase(it);
+        for (auto it = A.picks.begin(); it != A.picks.end();) it = alive.count(it->first) ? std::next(it) : A.picks.erase(it);
+        A.last_slots = slots;
+        A.hello_dirty = true;
+        A.was_connected = true;
+    }
+    if (A.hello_dirty) {
+        A.hello_dirty = false;
+        {
+            std::map<std::string, std::string> games;
+            std::vector<std::string> keys;
+            my_games(&games, &keys);
+            for (auto& m : hubui::hello_messages("2", games, keys, 3000, HUB_VERSION_STR)) A.lobby.send_msg(m);
+        }
+        A.lobby.send_msg(std::string("{\"kind\":\"ready\",\"ready\":") + (A.my_ready ? "true" : "false") + "}");
+        A.lobby.send_msg("{\"kind\":\"locals\",\"n\":" + std::to_string(A.my_locals) + "}");
+        if (is_host()) A.lobby.send_msg(std::string("{\"kind\":\"opts\",\"share_save\":") + (A.share_host_save ? "true" : "false") + "}");
+        A.lobby.send_msg(hubui::pick_json(A.my_pick));
+        if (is_host()) A.lobby.send_msg(hubui::rules_json(A.rules));
+        if (is_host() && !A.selected_game.empty())
+            A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + hubui::json_escape(A.selected_game) + "\"}");
+    }
+
 }
 
 /* ============================ widgets / pages ============================ */
@@ -2166,6 +2208,7 @@ static void empty_library_state() {
     {
         struct Sy { const char* label; hub::System s; };
         static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB},
+                                {"Nintendo DS", hub::System::NDS},
                                 {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}};
         float tot = 0;
         for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
@@ -2296,6 +2339,7 @@ static void all_games_view() {
     // system chips
     struct Chip { const char* label; const char* sys; };
     static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"},
+                                {"Nintendo DS", "nds"},
                                 {"3DS", "3ds"}, {"Wii U", "wiiu"}};
     std::map<std::string, int> counts;
     for (auto& e : A.lib) ++counts[sys_short(e)];
@@ -2378,7 +2422,7 @@ static void all_games_view() {
                 sec_for(hubui::effective_genre(c ? c->genre : std::string())).items.push_back(i);
             }
         } else if (A.group_mode == 1) {
-            static const char* order[] = {"n64", "gc", "gba", "gbc", "gb"};
+            static const char* order[] = {"n64", "gc", "gba", "gbc", "gb", "nds"};
             for (const char* s : order) sec_for(hubui::system_shelf_title(s));
             for (int i : A.vis) sec_for(hubui::system_shelf_title(sys_short(A.lib[i]))).items.push_back(i);
         } else {
@@ -3165,6 +3209,7 @@ static void page_online_room() {
     float input_h = ImGui::GetFrameHeight() + 8 * S;
     ImGui::BeginChild("chatlog", ImVec2(0, -input_h), ImGuiChildFlags_None);
     for (auto& l : A.chat) {
+        if (l.who.empty()) { text_wrapped_disabled(l.text); continue; }   // system line (e.g. host change)
         ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
         ImGui::TextUnformatted(l.who.c_str());
         ImGui::PopStyleColor();
@@ -4296,6 +4341,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         if (std::getenv("HUB_SHOT_FAKE_ROOM")) {
             g_fake_room = true;
+            if (const char* hcv = std::getenv("HUB_SHOT_HOSTCHANGE")) {   // screenshot aid: room right after a host change ("me" | "other")
+                g_fake_other_host = std::string(hcv) == "other";
+                std::string nm = g_fake_other_host ? "Mia" : "You";
+                push_toast(hubui::host_changed_text(nm, !g_fake_other_host), ui::GOOD, 60.0);
+            }
             A.in_room = true;
             A.code = "K7M2QX";
             A.page = Page::Online;

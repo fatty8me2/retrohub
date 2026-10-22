@@ -72,11 +72,36 @@ static Bytes make_gba(const char* title, const char* code, uint32_t seed, size_t
     return v;
 }
 
-static Bytes make_gb(const char* title, uint8_t cgb_flag, uint16_t global, uint32_t seed, bool good = true) {
+/* Nintendo DS header: title 0x00 (12), game code 0x0C, unit code 0x12, ROM version 0x1E, logo CRC 0x15C, header CRC16 0x15E. */
+static uint16_t nds_crc16(const Bytes& v, size_t n) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < n; ++i) {
+        crc ^= v[i];
+        for (int b = 0; b < 8; ++b) crc = (crc & 1) ? uint16_t((crc >> 1) ^ 0xA001) : uint16_t(crc >> 1);
+    }
+    return crc;
+}
+static Bytes make_nds(const char* title, const char* code, uint8_t version, uint32_t seed, size_t size = 64 * 1024, bool good = true) {
+    Bytes v = noise(size, seed);
+    std::memset(&v[0], 0, 0x20);
+    put(v, 0x00, title);
+    put(v, 0x0C, code);
+    v[0x12] = 0;
+    v[0x1E] = version;
+    v[0x15C] = 0x56; v[0x15D] = good ? 0xCF : 0x00;
+    uint16_t c = nds_crc16(v, 0x15E);
+    v[0x15E] = uint8_t(c); v[0x15F] = uint8_t(c >> 8);
+    return v;
+}
+
+static Bytes make_gb(const char* title, uint8_t cgb_flag, uint16_t global, uint32_t seed, bool good = true,
+                     const char* mfr = nullptr) {
     Bytes v = noise(32 * 1024, seed);
     std::memset(&v[0x134], 0, 16);
     put(v, 0x134, title);
     v[0x143] = cgb_flag;
+    std::memset(&v[0x13F], 0, 4);
+    if (mfr) std::memcpy(&v[0x13F], mfr, 4);
     v[0x14E] = uint8_t(global >> 8);
     v[0x14F] = uint8_t(global);
     uint8_t x = 0;
@@ -197,6 +222,27 @@ static void test_identify(const fs::path& dir) {
     CHECK(write_file(dir / "id" / "zelda.gbc", make_gb("ZELDA DX", 0x80, 0xABCD, 2)));
     CHECK(identify_game((dir / "id" / "zelda.gbc").string(), &e));
     CHECK(e.system == System::GBC && e.key == "gbc:zelda-dx-abcd" && e.title == "Zelda DX");
+    CHECK(e.serial == "ZELDA DX");  // CGB cart without a manufacturer code: header title
+    // Catalog serials for GB/GBC (games.cpp): CGB manufacturer code, else the header title
+    CHECK(write_file(dir / "id" / "gold.gbc", make_gb("POKEMON_GLD", 0x80, 0x682D, 9, true, "AAUE")));
+    CHECK(identify_game((dir / "id" / "gold.gbc").string(), &e));
+    CHECK(e.serial == "AAUE" && e.catalog_id == "pokegold");
+    CHECK(write_file(dir / "id" / "red.gb", make_gb("POKEMON RED", 0, 0x91E6, 10)));
+    CHECK(identify_game((dir / "id" / "red.gb").string(), &e));
+    CHECK(e.serial == "POKEMON RED" && e.catalog_id == "pokered");
+    CHECK(write_file(dir / "id" / "yellow.gb", make_gb("POKEMON YELLOW", 0x80, 0x047C, 11)));
+    CHECK(identify_game((dir / "id" / "yellow.gb").string(), &e));
+    CHECK(e.serial == "POKEMON YEL" && e.catalog_id == "pokeyellow");
+    // Valid-alphanumeric junk in the code field: not a catalog code, so the header title matches
+    CHECK(write_file(dir / "id" / "gold-junk.gbc", make_gb("POKEMON_GLD", 0x80, 0x682D, 12, true, "ZZ9Q")));
+    CHECK(identify_game((dir / "id" / "gold-junk.gbc").string(), &e));
+    CHECK(e.serial == "ZZ9Q" && e.catalog_id == "pokegold");
+    CHECK(write_file(dir / "id" / "yellow-junk.gbc", make_gb("POKEMON YELLOW", 0x80, 0x047C, 13, true, "Q7Q7")));
+    CHECK(identify_game((dir / "id" / "yellow-junk.gbc").string(), &e));
+    CHECK(e.serial == "Q7Q7" && e.catalog_id == "pokeyellow");
+    // Junk code with an unknown title: no catalog match
+    CHECK(write_file(dir / "id" / "unknown.gbc", make_gb("NOPE GAME", 0x80, 0x0003, 14, true, "ZZ9Q")));
+    CHECK(identify_game((dir / "id" / "unknown.gbc").string(), &e) && e.catalog_id.empty());
     // .gbc extension but DMG header -> header decides
     CHECK(write_file(dir / "id" / "plain.gbc", make_gb("PLAIN", 0, 0x0001, 3)));
     CHECK(identify_game((dir / "id" / "plain.gbc").string(), &e) && e.system == System::GB);
@@ -264,6 +310,39 @@ static void test_identify(const fs::path& dir) {
     CHECK(identify_game((dir / "id" / "Weird Game (USA).gcz").string(), &e));
     CHECK(e.key == "gc:file-weird-game" && e.title == "Weird Game" && e.serial.empty());
 
+    /* Nintendo DS (.nds): header code is the serial, key = code + version + header CRC16 (no whole-file hash). */
+    {
+        Bytes dia = make_nds("POKEMON D", "ADAE", 5, 31);
+        CHECK(write_file(dir / "id" / "diamond.nds", dia));
+        GameEntry n;
+        CHECK(identify_game((dir / "id" / "diamond.nds").string(), &n));
+        CHECK(n.system == System::NDS && n.serial == "ADAE" && n.catalog_id == "pokediamond" && n.title == "Pokemon Diamond");
+        char want[64];
+        std::snprintf(want, sizeof want, "nds:adae-05%04x", (unsigned)nds_crc16(dia, 0x15E));
+        CHECK(n.key == want);
+        CHECK(std::string(system_short(n.system)) == "nds" && system_from_short("NDS") == System::NDS);
+        CHECK(std::string(system_name(System::NDS)) == "Nintendo DS");
+        // Same release padded to another size (trimmed vs untrimmed dump) keeps the key; another revision does not.
+        Bytes padded = dia;
+        padded.resize(256 * 1024, 0xFF);
+        CHECK(write_file(dir / "id" / "diamond-padded.nds", padded));
+        GameEntry np;
+        CHECK(identify_game((dir / "id" / "diamond-padded.nds").string(), &np) && np.key == n.key);
+        CHECK(write_file(dir / "id" / "diamond-r0.nds", make_nds("POKEMON D", "ADAE", 0, 31)));
+        GameEntry nr;
+        CHECK(identify_game((dir / "id" / "diamond-r0.nds").string(), &nr) && nr.key != n.key);
+        // Unknown game: no catalog entry, title from the header; bad logo CRC / tiny file are rejected.
+        CHECK(write_file(dir / "id" / "homebrew.nds", make_nds("MY HOMEBREW", "ABCD", 0, 32)));
+        GameEntry nh;
+        CHECK(identify_game((dir / "id" / "homebrew.nds").string(), &nh) && nh.catalog_id.empty() && nh.serial == "ABCD");
+        CHECK(write_file(dir / "id" / "badlogo.nds", make_nds("BAD", "ABCD", 0, 33, 64 * 1024, false)));
+        CHECK(!identify_game((dir / "id" / "badlogo.nds").string(), &nh));
+        CHECK(write_file(dir / "id" / "tiny.nds", make_nds("TINY", "ABCD", 0, 34, 0x200)));
+        CHECK(!identify_game((dir / "id" / "tiny.nds").string(), &nh));
+        // A .nds is only a DS game by extension + header; a GBA-looking file with that extension is not.
+        CHECK(write_file(dir / "id" / "notds.nds", make_gba("POKEMON EMER", "BPEE", 7)));
+        CHECK(!identify_game((dir / "id" / "notds.nds").string(), &nh));
+    }
     CHECK(!identify_game((dir / "id" / "missing.gba").string(), &e));
     CHECK(write_file(dir / "id" / "readme.txt", Bytes(100, 'a')));
     CHECK(!identify_game((dir / "id" / "readme.txt").string(), &e));

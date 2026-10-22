@@ -53,6 +53,7 @@ std::string thumb_repo(const std::string& s) {
     if (s == "gc") return "Nintendo_-_GameCube";
     if (s == "3ds") return "Nintendo_-_Nintendo_3DS";
     if (s == "wiiu") return "Nintendo_-_Wii_U";
+    if (s == "nds") return "Nintendo_-_Nintendo_DS";
     return "";
 }
 
@@ -64,6 +65,7 @@ std::string dat_url(const std::string& s) {
     if (s == "gb") return std::string(base) + "no-intro/Nintendo%20-%20Game%20Boy.dat";
     if (s == "gc") return std::string(base) + "redump/Nintendo%20-%20GameCube.dat";
     if (s == "3ds") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%203DS.dat";
+    if (s == "nds") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%20DS.dat";
     return "";
 }
 
@@ -80,6 +82,15 @@ std::string thumb_url(const std::string& system_short, int kind, const std::stri
     if (repo.empty() || nointro_name.empty()) return "";
     return "https://raw.githubusercontent.com/libretro-thumbnails/" + repo + "/master/" +
            kind_dir(kind) + "/" + url_encode(thumb_name(nointro_name)) + ".png";
+}
+
+std::vector<std::string> thumb_urls(const std::string& system_short, int kind, const std::string& nointro_name) {
+    std::vector<std::string> out;
+    std::string u = thumb_url(system_short, kind, nointro_name);
+    if (u.empty()) return out;
+    out.push_back(u);
+    if (system_short == "gbc") out.push_back(thumb_url("gb", kind, nointro_name));
+    return out;
 }
 
 /* ---- DAT parsing ---- */

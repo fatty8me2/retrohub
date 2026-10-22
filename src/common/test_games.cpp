@@ -74,6 +74,16 @@ static void test_catalog() {
             CHECK(ok);
         }
         CHECK(find_game("smash64")->genre == "Fighting" && find_game("mp2")->genre == "Party");
+        CHECK(find_game("pokegold") && find_game("pokegold")->genre == "RPG");
+        CHECK(find_game("pokered") && find_game("pokered")->system == "gb");
+        /* GB/GBC catalog serials are header manufacturer codes, scoped to the system */
+        const GameInfo* gold = find_game_for("gbc", "AAUE", "");
+        CHECK(gold && gold->id == "pokegold");
+        CHECK(find_game_for("gb", "AAUE", "") == nullptr);
+        CHECK(find_game_for("gb", "POKEMON RED", "") && find_game_for("gb", "POKEMON RED", "")->id == "pokered");
+        CHECK(find_game_for("gbc", "POKEMON YEL", "") && find_game_for("gbc", "POKEMON YEL", "")->id == "pokeyellow");
+        CHECK(find_game_for("gbc", "POKEMON_GLD", "") && find_game_for("gbc", "POKEMON_GLD", "")->id == "pokegold");
+        CHECK(find_game_for("gbc", "PM_CRYSTAL", "") && find_game_for("gbc", "PM_CRYSTAL", "")->id == "pokecrystal");
         CHECK(find_game("mk64")->genre == "Racing" && find_game("pokeemerald")->genre == "RPG");
         CHECK(GameInfo().genre.empty());
     }
@@ -192,11 +202,17 @@ static void test_catalog_integrity() {
         CHECK(!g.id.empty() && !g.title.empty() && !g.system.empty());
         CHECK(!g.nointro.empty());  // cover-art name; may be a base game's name for hacks
         CHECK(ids.insert(g.id).second);  // unique catalog id
-        CHECK(g.system == "n64" || g.system == "gba" || g.system == "3ds" || g.system == "wiiu");
+        CHECK(g.system == "n64" || g.system == "gba" || g.system == "gb" || g.system == "gbc" || g.system == "nds" ||
+              g.system == "3ds" || g.system == "wiiu");
         CHECK(g.max_players >= 1 && g.max_players <= 4);
         CHECK(!g.online || g.max_players >= 2);  // online only makes sense for multiplayer
         for (const auto& s : g.serials) {
-            CHECK(s.size() == (g.system == "wiiu" ? 16u : 4u));  // N64 game ID / GBA / 3DS game code; Wii U title id
+            if (g.system == "gb" || g.system == "gbc")
+                CHECK(!s.empty() && s.size() <= 16);  // header title (<= 16) or 4-char CGB code
+            else if (g.system == "wiiu")
+                CHECK(s.size() == 16);  // Wii U title id
+            else
+                CHECK(s.size() == 4);  // N64 game ID / GBA / 3DS game code
             CHECK(serial_keys.insert(g.system + ":" + lower(s)).second);  // unique per system
         }
         if (g.system == "gba") CHECK(g.engine == Engine::Libretro);
@@ -220,6 +236,18 @@ static void test_find_game_for() {
     CHECK(g && g->id == "mk64");
     g = find_game_for("n64", "nalp", "");
     CHECK(g && g->id == "ssb64rom");
+    /* Nintendo DS catalog: header codes as read from the USA dumps, scoped to system "nds". */
+    {
+        const struct { const char* code; const char* id; } ds[] = {
+            {"ADAE", "pokediamond"}, {"APAE", "pokepearl"}, {"CPUE", "pokeplatinum"}, {"IPKE", "pokeheartgold"},
+            {"IPGE", "pokesoulsilver"}, {"IRBO", "pokeblack"}, {"IRAO", "pokewhite"}, {"IREO", "pokeblack2"}, {"IRDO", "pokewhite2"}};
+        for (const auto& d : ds) {
+            const GameInfo* n = find_game_for("nds", d.code, "");
+            CHECK(n && n->id == d.id && n->system == "nds" && n->max_players == 1 && !n->online && n->genre == "RPG" &&
+                  n->engine == Engine::Libretro && !n->nointro.empty() && n->year >= 2007);
+            CHECK(find_game_for("gba", d.code, "") == nullptr);   // scoped by system
+        }
+    }
     g = find_game_for("n64", "CLBE", "");  // Mario Party (USA), the real header ID
     CHECK(g && g->id == "mp1");
 
