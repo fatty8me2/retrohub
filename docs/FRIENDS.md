@@ -66,6 +66,7 @@ Invite  = {lobby_code, game_id, game_title, system, expires_at}
   - joins the lobby with the code, using the existing LobbyClient join flow.
 - **Join from presence:** a friend whose status is `in_lobby` with `joinable:true` shows a **Join** button in the friends list. It does the same as accepting an invite.
 - **Joinability:** the host's RetroHub sets `joinable` to true while the room has a free slot and the game hasn't launched.
+- **Host leaves:** the room survives (see ARCHITECTURE "Room lifetime"). The next member becomes host (slot 0) with the same room code, keeps the game selection, rules and picks, re-broadcasts them, and shows "<name> is now the host". Because presence is keyed by room code, friends and unexpired invites keep pointing at the same room and the new host's presence continues to advertise it. A game running when the host left ends as before; the remaining players are back in the room under the new host.
 
 ## Limits and abuse
 

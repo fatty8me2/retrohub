@@ -4,8 +4,8 @@ let fails = 0;
 const check = (c, m) => { if (!c) { fails++; console.log("FAIL:", m); } else console.log("ok:  ", m); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function open(room, role, name, slot) {
-  let u = `${BASE}/hub?room=${room}&role=${role}&name=${name}` + (slot !== undefined ? `&slot=${slot}` : "");
+function open(room, role, name, slot, caps) {
+  let u = `${BASE}/hub?room=${room}&role=${role}&name=${name}` + (slot !== undefined ? `&slot=${slot}` : "") + (caps ? `&caps=${caps}` : "");
   const ws = new WebSocket(u);
   ws.binaryType = "arraybuffer";
   const c = { ws, text: [], bin: [], closed: null };
@@ -110,10 +110,101 @@ check(d3.last("error")?.reason === "room-full", "taken slot -> room-full");
 
 // host leaves
 h.ws.close();
-await b.wait(() => b.closed);
-await c.wait(() => c.closed);
+await b.wait(() => b.closed, 15000);
+await c.wait(() => c.closed, 15000);
 await d2.wait(() => d2.closed, 10000); console.log(b.closed, c.closed, d2.closed, d2.ws.readyState, d2.text.map(m=>m.type+JSON.stringify(m.members||"")));
 check(b.closed?.code === 4001 && c.closed?.code === 4001 && d2.closed?.code === 4001, "host-left closes everyone with 4001");
+
+
+// ---- host migration (clients that send caps=hostmig) ----
+const M = code();
+const m0 = open(M, "host", "host0", undefined, "hostmig");
+await m0.wait(() => m0.last("welcome"));
+const m1 = open(M, "join", "one", undefined, "hostmig");
+const m2 = open(M, "join", "two", undefined, "hostmig");
+const m3 = open(M, "join", "three", undefined, "hostmig");
+await m3.wait(() => m3.last("welcome"));
+await sleep(150);
+m2.send({ type: "endpoint", public: "1.1.1.1:1", local: "-" });
+m0.send({ type: "msg", body: { kind: "select", game: "mk64" } });
+await m1.wait(() => m1.last("msg"));
+m0.ws.close();                       // host leaves
+await m1.wait(() => m1.last("host_changed"));
+await m2.wait(() => m2.last("host_changed"));
+check(!m1.closed && !m2.closed && !m3.closed, "migration: members stay connected");
+let hc = m1.last("host_changed");
+check(hc && hc.from_slot === 1 && hc.slot === 0 && hc.name === "one", "migration: host_changed names lowest slot (1 -> 0)");
+check(m3.last("host_changed")?.from_slot === 1, "migration: every member gets host_changed");
+await sleep(150);
+let ml = m3.last("members").members;
+check(ml.length === 3 && ml[0].slot === 0 && ml[0].name === "one" && ml[1].slot === 2 && ml[2].slot === 3, "migration: members = new host at slot 0, others keep slots");
+const dupH = open(M, "host", "usurp", undefined, "hostmig");
+await dupH.wait(() => dupH.closed);
+check(dupH.last("error")?.reason === "room-in-use", "migration: code still has exactly one host (role=host -> room-in-use)");
+m1.send({ type: "msg", body: { kind: "select", game: "mk64" } });   // new host acts as slot 0
+await m2.wait(() => m2.text.filter((t) => t.type === "msg").length >= 1);
+check(m2.last("msg")?.from === 0 && m2.last("msg").body.game === "mk64", "migration: new host's msgs arrive from slot 0");
+m2.ws.send(new Uint8Array([0, 7]));
+await m1.wait(() => m1.bin.length);
+check(m1.bin[0]?.[0] === 2, "migration: binary to slot 0 reaches the new host");
+const n1 = open(M, "join", "late", undefined, "hostmig");
+await n1.wait(() => n1.last("welcome"));
+check(n1.last("welcome")?.slot === 1, "migration: new joiner takes the free slot 1");
+// double leave: new host and next-lowest leave in quick succession
+m1.ws.close(); n1.ws.close();
+await sleep(800);
+const hcs = m3.text.filter((t) => t.type === "host_changed");
+check((hcs.length === 2 || hcs.length === 3) && hcs.at(-1).from_slot === 2 && hcs.at(-1).name === "two" && !m2.closed && !m3.closed, "migration: double leave (either order) ends with slot 2 promoted, nobody dropped");
+ml = m3.last("members").members;
+check(ml.length === 2 && ml[0].slot === 0 && ml[0].name === "two" && ml[1].slot === 3, "migration: members after double leave");
+// race: both remaining leave at once -> room closes, code reusable
+m2.ws.close(); m3.ws.close();
+let re;
+for (let i = 0; i < 40; i++) {   // local workerd delivers client closes slowly; retry until the room has emptied
+  await sleep(500);
+  re = open(M, "host", "fresh", undefined, "hostmig");
+  await re.wait(() => re.last("welcome") || re.closed);
+  if (re.last("welcome")) break;
+}
+check(re.last("welcome")?.slot === 0 && re.last("members")?.members.length === 1, "migration: empty room closes; code can be hosted again fresh");
+const ghost = open(M, "join", "ghost2", undefined, "hostmig");
+await ghost.wait(() => ghost.last("welcome"));
+check(ghost.last("welcome")?.slot === 1, "migration: fresh room works after previous one emptied");
+re.ws.close(); ghost.ws.close();
+await sleep(200);
+
+// mixed room: old client (no caps) is closed 4001, capable members migrate
+const X = code();
+const x0 = open(X, "host", "xh", undefined, "hostmig");
+await x0.wait(() => x0.last("welcome"));
+const xold = open(X, "join", "oldie");            // slot 1, no caps
+await xold.wait(() => xold.last("welcome"));
+const xnew = open(X, "join", "newbie", undefined, "hostmig");
+await xnew.wait(() => xnew.last("welcome"));
+x0.ws.close();
+// the old client's socket is still open until its close completes: frames it sends now must be dropped
+xold.ws.send(new Uint8Array([0xff, 9, 9]));
+xold.send({ type: "msg", body: { kind: "chat", text: "ghost" } });
+await xold.wait(() => xold.closed, 20000);
+await xnew.wait(() => xnew.last("host_changed"));
+check(xold.closed?.code === 4001 && !xold.last("host_changed"), "mixed: old client closed with 4001, never sees host_changed");
+check(xnew.bin.length === 0 && !xnew.last("msg"), "departed socket: binary and msg frames are dropped (no from:-1 / 0xFF broadcast)");
+check(!xnew.closed && xnew.last("host_changed")?.from_slot === 2, "mixed: capable member is promoted to host");
+await sleep(150);
+check(xnew.last("members").members.length === 1 && xnew.last("members").members[0].slot === 0, "mixed: members excludes the closed old client");
+xnew.ws.close();
+
+// all-old room keeps the original behaviour (covered above: "host-left closes everyone with 4001")
+
+// game rooms (suffix) never migrate even for capable clients
+const GM = code() + "-3";
+const gm0 = open(GM, "host", "n64run", undefined, "hostmig");
+await gm0.wait(() => gm0.last("welcome"));
+const gm1 = open(GM, "join", "n64run", 1, "hostmig");
+await gm1.wait(() => gm1.last("welcome"));
+gm0.ws.close();
+await gm1.wait(() => gm1.closed, 20000);
+check(gm1.closed?.code === 4001 && !gm1.last("host_changed"), "game room: host leaving still closes members (no migration)");
 
 // game room
 const G = R + "-7";
