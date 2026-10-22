@@ -622,9 +622,15 @@ static bool supports_online(const hub::GameEntry& e) {
     return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB ||
            e.system == hub::System::GBC;
 }
+/* Online player cap for a room (online_max_for: Smash Classic is 2 online). Every online limit uses this. */
 static int max_players_for(const hub::GameEntry& e) {
-    if (const GameInfo* g = hub::find_game(e.catalog_id)) return g->max_players;
+    if (const GameInfo* g = hub::find_game(e.catalog_id)) return hub::online_max_for(*g);
     return (e.system == hub::System::GB || e.system == hub::System::GBC) ? 2 : 4;
+}
+/* Local player count shown on cards (not the online cap). */
+static int local_players_for(const hub::GameEntry& e) {
+    if (const GameInfo* g = hub::find_game(e.catalog_id)) return g->max_players;
+    return max_players_for(e);
 }
 /* How a game is named in lobby messages: the N64 catalog id (back-compat) or the library key. */
 static std::string room_id(const hub::GameEntry& e) { return e.catalog_id.empty() ? e.key : e.catalog_id; }
@@ -1887,7 +1893,7 @@ static void draw_hero(const hub::GameEntry& e, float h) {
         put(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.3f));
         if (is_native(e)) put("Native port", IM_COL32(255, 255, 255, 30));
         if (cat && cat->year) put(std::to_string(cat->year), IM_COL32(255, 255, 255, 30));
-        if (supports_online(e)) put("1-" + std::to_string(max_players_for(e)) + " players", IM_COL32(255, 255, 255, 30));
+        if (supports_online(e)) put("1-" + std::to_string(local_players_for(e)) + " players", IM_COL32(255, 255, 255, 30));
         if (gs.play_seconds) put(hubui::format_play_time(gs.play_seconds) + " played", IM_COL32(255, 255, 255, 30));
         ty += ph + sp(1.f);
     }
@@ -2259,7 +2265,7 @@ static void draw_details_modal() {
     pill(native ? "NATIVE PORT" : "EMULATED", ui::PANEL2);
     if (supports_online(e)) {
         char pl[32];
-        std::snprintf(pl, sizeof pl, "1-%d players", max_players_for(e));
+        std::snprintf(pl, sizeof pl, "1-%d players", local_players_for(e));
         ImGui::SameLine(0, sp(0.75f));
         pill(pl, ui::PANEL2);
     }
@@ -2680,6 +2686,14 @@ static void page_online_room() {
             if (ImGui::Checkbox("Use host's save (unlocked characters/boards)", &A.share_host_save)) A.hello_dirty = true;
         } else {
             ImGui::TextDisabled("%s", A.share_host_save ? "Using the host's save (unlocked characters/boards)." : "Starting from an empty save.");
+        }
+    }
+    if (A.selected_game == "smash64") {   // Smash Classic online is 2 players; say so once the room is bigger
+        std::string notice = hubui::smash_room_notice(peers);
+        if (!notice.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, COL_BAD);
+            ImGui::TextWrapped("%s", notice.c_str());
+            ImGui::PopStyleColor();
         }
     }
     if (host) {
@@ -3715,6 +3729,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             A.code = "K7M2QX";
             A.page = Page::Online;
             if (std::getenv("HUB_SHOT_PICKER")) FR.open_picker = true;
+            if (const char* rg = std::getenv("HUB_SHOT_ROOM_GAME")) A.selected_game = rg;   // e.g. smash64
         }
     }
     fr_start();
