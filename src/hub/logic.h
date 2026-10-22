@@ -52,6 +52,11 @@ std::string settings_to_json(const Settings& s);
 bool settings_from_json(const std::string& text, Settings* out);   // missing keys keep defaults in *out
 bool load_settings(const std::string& path, Settings* out);
 bool save_settings(const std::string& path, const Settings& s);
+/* RetroHub-Setup.exe drops userdata/installer_games_dir.txt with the games folder the player chose.
+ * Adds that folder to s->rom_folders (never removes or reorders existing ones). Returns true when the
+ * list changed. Tolerates a UTF-8 BOM, CRLF, surrounding quotes/spaces; rejects empty/relative paths;
+ * duplicates are detected ignoring case and trailing slashes. The caller deletes the file afterwards. */
+bool merge_installer_games_dir(Settings* s, const std::string& file_text);
 
 /* ---- lobby rules ---- */
 struct PeerInfo {

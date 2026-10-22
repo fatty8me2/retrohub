@@ -529,6 +529,17 @@ int main() {
         CHECK(host_changed_text("Mia", false) == "Mia is now the host" && host_changed_text("Mia", true) == "You are now the host");
     }
 
+    {   /* installer games-folder hand-off */
+        Settings g;
+        g.rom_folders = {"D:\\mine"};
+        CHECK(merge_installer_games_dir(&g, "\xEF\xBB\xBF\"C:\\Users\\a\\Documents\\RetroHub Games\\\"\r\n"));
+        CHECK(g.rom_folders.size() == 2 && g.rom_folders[0] == "D:\\mine" && g.rom_folders[1] == "C:\\Users\\a\\Documents\\RetroHub Games\\");
+        CHECK(!merge_installer_games_dir(&g, "c:/users/A/documents/retrohub games\n"));   // duplicate: ignored
+        CHECK(!merge_installer_games_dir(&g, "") && !merge_installer_games_dir(&g, "relative\\x") && g.rom_folders.size() == 2);
+        Settings e;
+        CHECK(merge_installer_games_dir(&e, "E:\\G") && e.rom_folders.size() == 1);
+    }
+
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }

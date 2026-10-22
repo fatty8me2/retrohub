@@ -287,6 +287,18 @@ try {
         }
         throw
     }
+    # Installed via RetroHub-Setup.exe? Keep Apps & features showing the right version.
+    # (AppId must match installer\RetroHub.iss in the BattleShip repo.)
+    try {
+        $uk = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B7F3C1A2-5D4E-4F6A-9C8B-3E1D2A7F5C90}_is1"
+        if (Test-Path -LiteralPath $uk) {
+            $loc = (Get-ItemProperty -LiteralPath $uk).InstallLocation
+            if ($loc -and ($loc.TrimEnd('\') -ieq $dirFull)) {
+                $dv = $Version.TrimStart('v','V')
+                Set-ItemProperty -LiteralPath $uk -Name DisplayVersion -Value $dv
+            }
+        }
+    } catch { }
     Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath ($ZipPath + ".started") -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue

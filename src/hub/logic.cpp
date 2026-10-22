@@ -12,6 +12,28 @@
 
 namespace hubui {
 
+bool merge_installer_games_dir(Settings* s, const std::string& text) {
+    std::string t = text;
+    if (t.compare(0, 3, "\xEF\xBB\xBF") == 0) t.erase(0, 3);
+    size_t nl = t.find_first_of("\r\n");
+    if (nl != std::string::npos) t.resize(nl);
+    size_t a = t.find_first_not_of(" \t\"");
+    size_t b = t.find_last_not_of(" \t\"");
+    t = a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+    if (t.empty()) return false;
+    bool abs = (t.size() >= 3 && std::isalpha((unsigned char)t[0]) && t[1] == ':' && (t[2] == '\\' || t[2] == '/')) ||
+               t.compare(0, 2, "\\\\") == 0;
+    if (!abs) return false;
+    auto norm = [](std::string x) {
+        while (x.size() > 3 && (x.back() == '\\' || x.back() == '/')) x.pop_back();
+        for (auto& ch : x) { if (ch == '/') ch = '\\'; ch = (char)std::tolower((unsigned char)ch); }
+        return x;
+    };
+    std::string n = norm(t);
+    for (auto& f : s->rom_folders) if (norm(f) == n) return false;
+    s->rom_folders.push_back(t);
+    return true;
+}
 /* ---------------- JSON ---------------- */
 
 const Json* Json::get(const std::string& key) const {
