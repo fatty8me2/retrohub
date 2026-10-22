@@ -360,6 +360,18 @@ int main() {
         CHECK(settings_from_json(settings_to_json(fs), &ft) && !ft.show_friends && ft.appear_offline && !ft.notif_sound);
     }
 
+    {   // Smash vault / hand-off
+        CHECK(smash_save_file("C:\\v\\n64\\native_smash64\\battery\\") == "C:\\v\\n64\\native_smash64\\battery\\ssb64_save.bin");
+        CHECK(smash_save_file("D:\\b") == "D:\\b\\ssb64_save.bin");
+        CHECK(smash_should_migrate_save(false, true) && !smash_should_migrate_save(true, true) && !smash_should_migrate_save(false, false));
+        std::vector<RomRef> lib = {{"mp1", "NMPE", "a.z64"}, {"ssb64rom", "NALE", "C:\\r\\ssb.z64"}};
+        CHECK(find_smash_rom(lib) == "C:\\r\\ssb.z64");
+        CHECK(find_smash_rom({{"", "NALE", "x.z64"}}) == "x.z64" && find_smash_rom({{"mp1", "NMPE", "a"}}).empty() && find_smash_rom({{"ssb64rom", "NALE", ""}}).empty());
+        auto env = smash_launch_env("r.z64", "s.bin");
+        CHECK(env.size() == 2 && env[0].first == "SSB64_BASEROM" && env[1].first == "SSB64_SAVE_PATH" && env[1].second == "s.bin");
+        CHECK(smash_launch_env("", "s.bin").size() == 1);
+    }
+
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }

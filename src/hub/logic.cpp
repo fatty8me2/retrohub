@@ -495,6 +495,25 @@ std::string exit_code_text(unsigned long code) {
     }
 }
 
+std::string smash_save_file(const std::string& battery_dir) {
+    std::string d = battery_dir;
+    while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
+    return d + "\\ssb64_save.bin";
+}
+
+std::string find_smash_rom(const std::vector<RomRef>& lib) {
+    for (auto& r : lib)
+        if (!r.path.empty() && (r.catalog_id == "ssb64rom" || r.serial == "NALE")) return r.path;
+    return "";
+}
+
+std::vector<std::pair<std::string, std::string>> smash_launch_env(const std::string& rom_path, const std::string& save_file) {
+    std::vector<std::pair<std::string, std::string>> env;
+    if (!rom_path.empty()) env.push_back({"SSB64_BASEROM", rom_path});
+    if (!save_file.empty()) env.push_back({"SSB64_SAVE_PATH", save_file});
+    return env;
+}
+
 std::string normalize_code(const std::string& s) {
     std::string o;
     for (unsigned char c : s) {
