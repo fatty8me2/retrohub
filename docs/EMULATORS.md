@@ -51,12 +51,16 @@ Twilight Princess HD is a `.wua` with the base game `000500001019e500_v81` and u
 | Portable data | `azahar\user\` (a `user` folder beside the exe is Azahar's portable mode: `common/file_util.cpp`) | `cemu\portable\` (Cemu's portable folder: `gui/wxgui/CemuApp.cpp`) |
 | Launch | `azahar.exe -f "<game>"` (`-w` windowed; the path must be last) | `Cemu.exe -g "<game>" -f` |
 
-Download: WinHTTP to `<data>\emulators\_downloads\`, size and SHA-256 checked before anything is unpacked, `tar.exe -xf`
-into a staging folder, the folder holding the exe is moved into place. A mismatch deletes the download and shows the error.
-The archive is never executed from the download. bsdtar exits 1 on Cemu's zip because one entry name
-(`resources/ar/<RTL mark>cemu.mo`) cannot be written on Windows; that single translation file is skipped, which is expected.
-Verified by `hub_emu_test --download` into a scratch dir: Azahar `azahar.exe` (35,499,008 bytes) and Cemu `Cemu.exe`
-(24,490,496 bytes) were found after extraction, the checksums matched, and neither was started.
+Download: WinHTTP to `<data>\emulators\_downloads\`, size and SHA-256 checked before anything is unpacked, then RetroHub's own unzip (miniz;
+every entry name is checked for `..`, drive letters and absolute paths, and any entry that cannot be written fails the install). The folder holding
+the exe is moved into place and `retrohub-install.txt` is written last: only an install with that marker counts as installed, and any failure deletes
+the half-installed folder. A mismatch deletes the download and shows the error. Verified by `hub_emu_test --download` into a scratch dir: Azahar
+`azahar.exe` (35,499,008 bytes) and Cemu `Cemu.exe` (24,490,496 bytes) were found after extraction (including Cemu's RTL-mark file name), and
+neither was started.
+
+**Sessions.** The emulator runs inside a Windows job object; the save copy-back and the vault sync wait until every process in it has exited, so
+a hand-off or relaunch cannot end the session early. A launch is refused while an `azahar.exe` / `Cemu.exe` is already running (it would hand the game to
+that instance). Save-copy failures are shown as a toast and never overwrite anything.
 
 ### Finding Cemu
 1. The path chosen in Settings (`cemu_exe` in `hub.json`).
@@ -88,9 +92,10 @@ same relative paths, so the vault tree can be copied back verbatim on another PC
 | 3DS | `user\sdmc\Nintendo 3DS\<id0>\<id1>\title\00040000\<id low>\data` (+ `extdata\00000000\<id low>` when it exists) | `battery\title\...`, `battery\extdata\...` |
 | Wii U | `<mlc>\usr\save\00050000\<id low>` | `battery\usr\save\00050000\<id low>` |
 
-- **Before launch** (vault -> emulator) and **after exit** (emulator -> vault), per file: missing = copied; same bytes = skipped;
-  different = the newer modification time wins and the older file is kept in `<vault>\_conflicts\<system>\<key>\battery\<rel>.local.<time>`
-  (the same `_conflicts` area the sync uses, so it syncs and is never lost). Nothing is deleted. The vault sync is queued while the
+- **Before launch** (vault -> emulator) and **after exit** (emulator -> vault), per file: missing = copied; same bytes = skipped (no backup);
+  different = the side that changed since the last agreed state wins (`<vault>\.sync\emu-*.json` holds the agreed content hashes, so a skewed clock cannot
+  make an old copy win); with no history the newer modification time wins and the older file is kept in `<vault>\_conflicts\<system>\<key>\battery\<rel>.local.<time>`
+  (the same `_conflicts` area the sync uses; the newest 10 per file are kept). Nothing is deleted. The vault sync is queued while the
   game runs and starts after the copy-back (`poll_process`).
 - **RetroHub-managed Azahar/Cemu:** both directions as above.
 - **The user's existing Cemu:** its saves are not moved or overwritten. The Wii U data dir follows Cemu's rules (`portable` folder, legacy

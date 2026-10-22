@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <system_error>
+#include <vector>
 
 namespace hub {
 
@@ -135,35 +136,127 @@ bool tree_has_files(const std::string& dir) {
     return false;
 }
 
+uint64_t file_hash(const std::string& path) {
+    std::ifstream f(u8(path), std::ios::binary);
+    if (!f) return 0;
+    uint64_t h = 1469598103934665603ull;
+    char buf[65536];
+    for (;;) {
+        f.read(buf, sizeof buf);
+        std::streamsize n = f.gcount();
+        if (n <= 0) break;
+        for (std::streamsize i = 0; i < n; ++i) { h ^= (unsigned char)buf[i]; h *= 1099511628211ull; }
+    }
+    return h ? h : 1;
+}
+
+bool manifest_load(const std::string& path, SyncManifest* m) {
+    std::ifstream f(u8(path));
+    if (!f) return false;
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t t = line.find('\t');
+        if (t == std::string::npos || t == 0) continue;
+        m->agreed[line.substr(t + 1)] = std::strtoull(line.substr(0, t).c_str(), nullptr, 16);
+    }
+    return true;
+}
+
+bool manifest_save(const std::string& path, const SyncManifest& m) {
+    std::error_code ec;
+    fs::create_directories(u8(path).parent_path(), ec);
+    fs::path tmp = u8(path);
+    tmp += L".hubtmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        for (const auto& kv : m.agreed) {
+            char h[24];
+            std::snprintf(h, sizeof h, "%016llx", (unsigned long long)kv.second);
+            f << h << '\t' << kv.first << '\n';
+        }
+        if (!f) return false;
+    }
+    fs::rename(tmp, u8(path), ec);
+    return !ec;
+}
+
+static void prune_backups(const fs::path& backup_file, const std::string& tag, int keep) {
+    if (keep <= 0) return;
+    std::string stem_tag = tag.substr(0, tag.find('.') == std::string::npos ? 0 : tag.find('.') + 1);   // "local."
+    std::wstring prefix = backup_file.filename().wstring();
+    size_t cut = prefix.rfind(u8(tag).wstring());
+    if (cut == std::wstring::npos) return;
+    prefix = prefix.substr(0, cut) + u8(stem_tag).wstring();
+    std::vector<fs::path> mine;
+    std::error_code ec;
+    for (fs::directory_iterator it(backup_file.parent_path(), ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().filename().wstring().compare(0, prefix.size(), prefix) == 0) mine.push_back(it->path());
+    if ((int)mine.size() <= keep) return;
+    std::sort(mine.begin(), mine.end());   // names end in a sortable timestamp: oldest first
+    for (size_t i = 0; i + keep < mine.size(); ++i) fs::remove(mine[i], ec);
+}
+
 TreeSyncReport sync_tree_newest(const std::string& src, const std::string& dst, const std::string& backup_dir,
-                                const std::string& tag) {
+                                const std::string& tag, SyncManifest* manifest, const std::string& key_prefix, int keep_backups) {
     TreeSyncReport r;
     std::error_code ec;
     fs::path s = u8(src), d = u8(dst);
     if (!fs::is_directory(s, ec)) return r;
+    auto fail = [&](const std::string& why) { r.ok = false; if (r.error.empty()) r.error = why; };
     for (fs::recursive_directory_iterator it(s, ec), end; !ec && it != end; it.increment(ec)) {
-        if (!it->is_regular_file(ec)) continue;
+        std::error_code e0;
+        if (!it->is_regular_file(e0)) continue;
         if (it->path().extension() == L".hubtmp") continue;
-        fs::path rel = fs::relative(it->path(), s, ec);
+        fs::path rel = fs::relative(it->path(), s, e0);
+        if (e0) { fail("cannot read " + to_u8(it->path())); continue; }
         fs::path to = d / rel;
+        std::string key = key_prefix + to_u8(rel);
         std::error_code e1;
-        if (!fs::exists(to, e1)) {
-            if (copy_keep_time(it->path(), to, e1)) ++r.copied;
-            else { r.ok = false; r.error = "cannot write " + to_u8(to); }
+        bool exists = fs::exists(to, e1);
+        if (e1) { fail("cannot examine " + to_u8(to)); continue; }   // unknown state: never overwrite
+        if (!exists) {
+            if (copy_keep_time(it->path(), to, e1)) {
+                ++r.copied;
+                if (manifest) manifest->agreed[key] = file_hash(to_u8(to));
+            } else fail("cannot write " + to_u8(to));
             continue;
         }
-        if (same_content(it->path(), to)) { ++r.identical; continue; }
-        auto ts = fs::last_write_time(it->path(), e1);
-        auto td = fs::last_write_time(to, e1);
-        if (ts <= td) { ++r.kept; continue; }   // the destination is newer (or the same age): it wins
+        if (same_content(it->path(), to)) {
+            ++r.identical;
+            if (manifest) manifest->agreed[key] = file_hash(to_u8(to));
+            continue;
+        }
+        bool src_wins;
+        uint64_t agreed = 0;
+        if (manifest) { auto f = manifest->agreed.find(key); if (f != manifest->agreed.end()) agreed = f->second; }
+        if (agreed) {   // trust "who changed since we last agreed" over clocks
+            uint64_t hs = file_hash(to_u8(it->path())), hd = file_hash(to_u8(to));
+            if (agreed == hd && agreed != hs) src_wins = true;
+            else if (agreed == hs && agreed != hd) src_wins = false;
+            else agreed = 0;
+            if (agreed) goto decided;
+        }
+        {
+            auto ts = fs::last_write_time(it->path(), e1);
+            auto td = fs::last_write_time(to, e1);
+            if (e1) { fail("cannot read the time of " + to_u8(to)); continue; }
+            src_wins = ts > td;   // the destination wins a tie
+        }
+    decided:
+        if (!src_wins) { ++r.kept; continue; }
         if (!backup_dir.empty()) {
             fs::path bk = u8(backup_dir) / rel;
             bk += u8("." + tag);
-            if (copy_keep_time(to, bk, e1)) ++r.backed_up;
+            if (copy_keep_time(to, bk, e1)) { ++r.backed_up; prune_backups(bk, tag, keep_backups); }
+            else { fail("cannot back up " + to_u8(to)); continue; }   // no backup, no overwrite
         }
-        if (copy_keep_time(it->path(), to, e1)) ++r.copied;
-        else { r.ok = false; r.error = "cannot write " + to_u8(to); }
+        if (copy_keep_time(it->path(), to, e1)) {
+            ++r.copied;
+            if (manifest) manifest->agreed[key] = file_hash(to_u8(to));
+        } else fail("cannot write " + to_u8(to));
     }
+    if (ec) fail("cannot read " + src);
     return r;
 }
 

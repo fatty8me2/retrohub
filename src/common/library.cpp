@@ -1427,6 +1427,15 @@ void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::strin
 
 std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
                                     const std::function<void(int, int)>& progress) {
+    {   /* once per process: stale "*.part" files from an interrupted unzip / extraction in the rom cache */
+        static std::once_flag cleaned;
+        std::call_once(cleaned, [] {
+            std::error_code ec;
+            fs::path rc = utf8_path(data_dir()) / L"rom-cache";
+            for (fs::recursive_directory_iterator it(rc, ec), end; !ec && it != end; it.increment(ec))
+                if (it->path().extension() == L".part") { std::error_code e2; fs::remove(it->path(), e2); }
+        });
+    }
     std::vector<Candidate> cands;
     std::set<std::string> seen;
     std::vector<std::string> prefixes;
