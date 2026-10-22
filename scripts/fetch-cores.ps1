@@ -25,7 +25,8 @@ $infoZip    = Join-Path $dlDir 'info.zip'
 $cores = @(
     'mgba_libretro',       # GBA (also GB/GBC)
     'gambatte_libretro',   # GB/GBC
-    'sameboy_libretro'     # GB/GBC, accuracy-focused
+    'sameboy_libretro',    # GB/GBC, accuracy-focused
+    'melondsds_libretro'   # Nintendo DS (melonDS DS; software renderer, built-in FreeBIOS/firmware)
 )
 
 New-Item -ItemType Directory -Force -Path $coresDir, $dlDir, $infoDir | Out-Null

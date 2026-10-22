@@ -180,6 +180,14 @@ n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N --p
 
 **Desync check:** every 600 samples, each PC sends a hash of RDRAM (via `M64CMD_*` memory access, or the debugger API if needed). A mismatch is logged and shown on screen.
 
+## Nintendo DS (system `nds`)
+
+- **Library (`src/common/library.cpp`):** `.nds` files, also inside a `.zip` (extracted once to `userdata\rom-cache\`, entries up to 1 GB because DS images reach 512 MB). Header read: title 0x00 (12), game code 0x0C (the serial), unit code 0x12, ROM version 0x1E, Nintendo-logo CRC 0x15C (must be 0xCF56), header CRC16 0x15E. Key `nds:<code>-<version hex 2><header CRC16 hex 4>` (e.g. `nds:adae-05ca37`): no whole-file hash, so scanning stays fast and trimmed/padded dumps of one release share saves.
+- **Catalog:** nine Pokemon DS games (Diamond, Pearl, Platinum, HeartGold, SoulSilver, Black, White, Black 2, White 2), `max_players` 1, `online` false, genre RPG, all region codes of each game.
+- **Launch (`play_entry`, `System::NDS`):** `retrorun.exe --core melondsds_libretro.dll --system nds --save-dir <vault battery> --state-dir <vault states>`, no `--resume`. Saves are `<rom stem>.srm` in the vault battery folder and sync like every other game; states are never synced (and DS states are not written at all).
+- **Online:** off. `supports_online()` is false for `nds`; the core's in-memory unserialize is not frame-exact and states are 19 MB, so lockstep/rollback is not planned.
+- **Hub UI:** "Nintendo DS" shelf, filter chip, `NINTENDO DS` badge, covers from libretro-thumbnails `Nintendo_-_Nintendo_DS` (No-Intro DAT `Nintendo - Nintendo DS`, matched by game code). Details: `docs/RETRORUN.md`, `docs/CORES.md`.
+
 ## Games catalog (`src/common/games.cpp`)
 
 | id | Title | Engine | USA ROM MD5 | Save |

@@ -11,7 +11,8 @@
 
 namespace hub {
 
-enum class System { Unknown = 0, N64, GBA, GB, GBC, GC };
+enum class System { Unknown = 0, N64, GBA, GB, GBC, GC,
+    NDS };
 
 const char* system_name(System s);   // "Nintendo 64", "Game Boy Advance", "Game Boy", "Game Boy Color", "GameCube"
 const char* system_short(System s);  // "n64", "gba", "gb", "gbc", "gc"  (stable; used in keys and paths)
@@ -21,6 +22,7 @@ struct GameEntry {
     /* Stable identity across PCs, used for saves and library state:
      *   n64:<MD5 of .z64-order image>     gba:<4-char game code>-<CRC32 of the whole file, hex>
      *   gb/gbc:<header title>-<global checksum hex>   gc:<6-char disc ID>-<disc number>
+     *   nds:<4-char game code>-<ROM version hex><header CRC16 hex>
      * Lowercase, filesystem-safe ([a-z0-9._-]). */
     std::string key;
     System system = System::Unknown;

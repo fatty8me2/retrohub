@@ -192,7 +192,7 @@ static void test_catalog_integrity() {
         CHECK(!g.id.empty() && !g.title.empty() && !g.system.empty());
         CHECK(!g.nointro.empty());  // cover-art name; may be a base game's name for hacks
         CHECK(ids.insert(g.id).second);  // unique catalog id
-        CHECK(g.system == "n64" || g.system == "gba");
+        CHECK(g.system == "n64" || g.system == "gba" || g.system == "nds");
         CHECK(g.max_players >= 1 && g.max_players <= 4);
         CHECK(!g.online || g.max_players >= 2);  // online only makes sense for multiplayer
         for (const auto& s : g.serials) {
@@ -218,6 +218,18 @@ static void test_find_game_for() {
     CHECK(g && g->id == "mk64");
     g = find_game_for("n64", "nalp", "");
     CHECK(g && g->id == "ssb64rom");
+    /* Nintendo DS catalog: header codes as read from the USA dumps, scoped to system "nds". */
+    {
+        const struct { const char* code; const char* id; } ds[] = {
+            {"ADAE", "pokediamond"}, {"APAE", "pokepearl"}, {"CPUE", "pokeplatinum"}, {"IPKE", "pokeheartgold"},
+            {"IPGE", "pokesoulsilver"}, {"IRBO", "pokeblack"}, {"IRAO", "pokewhite"}, {"IREO", "pokeblack2"}, {"IRDO", "pokewhite2"}};
+        for (const auto& d : ds) {
+            const GameInfo* n = find_game_for("nds", d.code, "");
+            CHECK(n && n->id == d.id && n->system == "nds" && n->max_players == 1 && !n->online && n->genre == "RPG" &&
+                  n->engine == Engine::Libretro && !n->nointro.empty() && n->year >= 2007);
+            CHECK(find_game_for("gba", d.code, "") == nullptr);   // scoped by system
+        }
+    }
     g = find_game_for("n64", "CLBE", "");  // Mario Party (USA), the real header ID
     CHECK(g && g->id == "mp1");
 

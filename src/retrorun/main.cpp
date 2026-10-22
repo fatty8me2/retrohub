@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "core.h"
+#include "dsview.h"
 #include "image.h"
 #include "lockstep.h"
 #include "log.h"
@@ -33,6 +34,7 @@ struct Args {
     std::string net, room, title;
     std::string sync_hash_mode = "auto", pace_override;
     bool list_opts = false, headless = false, fullscreen = false, resume = false, fuzz = false, selftest = false;
+    double stylus_u = -1, stylus_v = -1;   // headless DS test: hold the stylus down at this fraction of the frame
     int frames = -1, scale = 3, slot = 0, players = 1, delay = -1;   // delay -1 = auto
     int ports[4] = {0, -1, -1, -1};
     bool ports_given = false;
@@ -48,9 +50,9 @@ static std::string narrow(const wchar_t* w) {
 
 static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
-          "  [--system gba|gb|gbc] [--system-dir DIR] [--scale 3] [--fullscreen] [--resume] [--title TEXT]\n"
+          "  [--system gba|gb|gbc|nds] [--system-dir DIR] [--scale 3] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
-          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--pace vsync|audio|timer] [--list-options]\n"
+          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
           stderr);
 }
@@ -94,6 +96,10 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
             }
             for (; n < 4; n++) o->ports[n] = -1;
             o->ports_given = true;
+        }
+        else if (k == "--stylus") {   // U,V in 0..1 of the displayed frame (headless DS input test)
+            if (!val(&v)) return false;
+            if (sscanf(v.c_str(), "%lf,%lf", &o->stylus_u, &o->stylus_v) != 2) { fprintf(stderr, "bad --stylus (want U,V)\n"); return false; }
         }
         else if (k == "--headless") o->headless = true;
         else if (k == "--fullscreen") o->fullscreen = true;
@@ -272,6 +278,9 @@ class Frontend {
     SDL_Texture* tex = nullptr;
     int tex_w = 0, tex_h = 0;
     bool fullscreen = false, quit = false, muted = false, online = false, ff = false;
+    bool is_ds = false;        // Nintendo DS: two-screen frame, fractional+linear scaling, stylus via the mouse
+    int ds_layout = 0;         // dsview::layout_name index (F9 cycles)
+    SDL_Rect last_dst{0, 0, 0, 0};   // where the frame was last drawn (stylus mapping)
     Pace pace = Pace::None;
     uint64_t frame_no = 0;
     uint64_t out_hash = 0xCBF29CE484222325ull, in_hash = 0xCBF29CE484222325ull;   // rolling hash of video+audio output / inputs
@@ -353,6 +362,9 @@ bool Frontend::setup_paths() {
     core.save_dir = a.save_dir;
     core.content_dir = narrow(fs::u8path(a.rom).parent_path().wstring().c_str());
     core.system_tag = a.system;
+    is_ds = lower(a.system) == "nds";
+    // Defaults for the DS core go in first so ini / --opt below override them.
+    if (is_ds) dsview::for_each_default_option([this](const char* k, const char* v) { core.overrides[k] = v; });
     rom_stem = fs::u8path(a.rom).stem().u8string();
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
@@ -402,12 +414,8 @@ void Frontend::layout(SDL_Rect* dst) {
     const FrameBuf& f = core.frame();
     double aspect = core.av().geometry.aspect_ratio;
     if (aspect <= 0.f) aspect = (double)f.w / std::max(1, f.h);
-    double ks = std::min(ow / (f.h * aspect), (double)oh / f.h);
-    double k = ks >= 1.0 ? std::floor(ks) : ks;   // integer scale when it fits
-    dst->h = (int)std::lround(f.h * k);
-    dst->w = (int)std::lround(f.h * k * aspect);
-    dst->x = (ow - dst->w) / 2;
-    dst->y = (oh - dst->h) / 2;
+    dsview::Rect r = dsview::fit(ow, oh, f.h, aspect, !is_ds);   // integer scale when it fits (not for DS)
+    dst->x = r.x; dst->y = r.y; dst->w = r.w; dst->h = r.h;
 }
 
 void Frontend::present() {
@@ -415,7 +423,7 @@ void Frontend::present() {
     if (!ren || f.px.empty()) return;
     if (!tex || tex_w != f.w || tex_h != f.h) {
         if (tex) SDL_DestroyTexture(tex);
-        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, is_ds ? "linear" : "nearest");
         tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, f.w, f.h);
         tex_w = f.w;
         tex_h = f.h;
@@ -426,6 +434,7 @@ void Frontend::present() {
     SDL_RenderClear(ren);
     SDL_Rect dst;
     layout(&dst);
+    last_dst = dst;
     SDL_RenderCopy(ren, tex, nullptr, &dst);
     SDL_RenderPresent(ren);
 }
@@ -463,7 +472,7 @@ void Frontend::toggle_fullscreen() {
     if (!win) return;
     fullscreen = !fullscreen;
     SDL_SetWindowFullscreen(win, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-    SDL_ShowCursor(fullscreen ? SDL_DISABLE : SDL_ENABLE);
+    SDL_ShowCursor(fullscreen && !is_ds ? SDL_DISABLE : SDL_ENABLE);   // DS: the cursor is the stylus
 }
 
 /* ------------------------------------------------------------------ input */
@@ -557,6 +566,13 @@ void Frontend::handle_key(const SDL_KeyboardEvent& k) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
             if (k.keysym.mod & KMOD_ALT) toggle_fullscreen();
+            break;
+        case SDLK_F9:
+            if (is_ds) {
+                ds_layout = (ds_layout + 1) % dsview::layout_count();
+                core.set_option("melonds_screen_layout1", dsview::layout_name(ds_layout));
+                set_status(std::string("Screen layout: ") + dsview::layout_name(ds_layout));
+            }
             break;
         case SDLK_F5: want_save = true; break;
         case SDLK_F7:
@@ -770,7 +786,7 @@ void Frontend::finish() {
     done = true;
     if (core.game_loaded()) {
         save_srm(false);
-        if (!a.selftest && core.serialize_size()) {
+        if (!a.selftest && !is_ds && core.serialize_size()) {   // DS states are ~19 MB and the hub never resumes them
             size_t n = core.serialize_size();
             std::vector<uint8_t> buf(n);
             if (core.serialize(buf.data(), n) && write_atomic(state_path("auto"), buf.data(), n))
@@ -846,6 +862,30 @@ int Frontend::run(const Args& args) {
     qpc_freq = fq.QuadPart;
 
     core.on_input = [this](unsigned port, unsigned dev, unsigned idx, unsigned id) -> int16_t {
+        if ((dev & RETRO_DEVICE_MASK) == RETRO_DEVICE_POINTER && is_ds && port == 0 && idx == 0) {
+            // Stylus: the mouse over the drawn frame (libretro pointer coordinates span the displayed frame).
+            if (a.headless && a.stylus_u >= 0) {
+                if (id == RETRO_DEVICE_ID_POINTER_X) return (int16_t)std::lround(a.stylus_u * 65534.0 - 32767.0);
+                if (id == RETRO_DEVICE_ID_POINTER_Y) return (int16_t)std::lround(a.stylus_v * 65534.0 - 32767.0);
+                return id == RETRO_DEVICE_ID_POINTER_PRESSED ? 1 : 0;
+            }
+            if (a.headless || !win) return 0;
+            int mx = 0, my = 0;
+            Uint32 b = SDL_GetMouseState(&mx, &my);
+            int ww = 0, wh = 0, ow = 0, oh = 0;
+            SDL_GetWindowSize(win, &ww, &wh);
+            SDL_GetRendererOutputSize(ren, &ow, &oh);
+            if (ww > 0 && wh > 0) { mx = mx * ow / ww; my = my * oh / wh; }   // window -> renderer pixels (high DPI)
+            int px = 0, py = 0;
+            bool in = dsview::pointer_from_window(mx, my, {last_dst.x, last_dst.y, last_dst.w, last_dst.h}, &px, &py);
+            switch (id) {
+                case RETRO_DEVICE_ID_POINTER_X: return (int16_t)px;
+                case RETRO_DEVICE_ID_POINTER_Y: return (int16_t)py;
+                case RETRO_DEVICE_ID_POINTER_COUNT: return (int16_t)(in ? 1 : 0);
+                case RETRO_DEVICE_ID_POINTER_PRESSED: return (int16_t)(in && (b & SDL_BUTTON(SDL_BUTTON_LEFT)) ? 1 : 0);
+                default: return 0;
+            }
+        }
         if ((dev & RETRO_DEVICE_MASK) != RETRO_DEVICE_JOYPAD || port >= 4 || idx != 0) return 0;
         uint32_t m = frame_pad[port];
         if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return (int16_t)(m & 0xFFFF);

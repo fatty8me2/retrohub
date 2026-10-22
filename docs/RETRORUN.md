@@ -1,4 +1,4 @@
-# retrorun: libretro frontend for GBA / GB / GBC
+# retrorun: libretro frontend for GBA / GB / GBC / Nintendo DS
 
 `retrorun.exe` is a small, dependency-light libretro frontend (SDL2 only) that the hub launches for Game Boy
 family games. It loads any software-rendered `*_libretro.dll` core; tested with **mGBA** (GBA) and **Gambatte** (GB/GBC).
@@ -9,7 +9,7 @@ Source: `src/retrorun/` (`core.cpp` = libretro host, `main.cpp` = frontend, `ima
 
 ```
 retrorun --core <x_libretro.dll> --rom <file> --save-dir <battery dir> --state-dir <states dir>
-         [--system gba|gb|gbc] [--system-dir DIR] [--scale 3] [--fullscreen] [--resume]
+         [--system gba|gb|gbc|nds] [--system-dir DIR] [--scale 3] [--fullscreen] [--resume]
          [--opt key=value]... [--ini FILE] [--log FILE]
          [--headless [--frames N] [--screenshot out.png|out.bmp]]
          [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay D]
@@ -39,6 +39,8 @@ retrorun --core <x_libretro.dll> --rom <file> --save-dir <battery dir> --state-d
 | Slot - / + | F6 / F8 (slots 0-9) | |
 | Fast forward (hold, offline only) | Tab | |
 | Fullscreen | F11 or Alt+Enter | |
+| DS screen layout (cycle) | F9 | |
+| DS touch screen (stylus) | left mouse button | |
 | Quit | Esc | |
 
 ## Core features and limits
@@ -57,6 +59,19 @@ Ini format: `key = value`, `#`/`;` comments, optional `[global]`, `[gba]`, `[gb]
 must use identical options; the hub should pass `--opt` explicitly rather than rely on per-PC ini files.
 
 **Directories.** Core save dir = `--save-dir`; core system dir = `--system-dir` (default `<exe dir>\system`, put BIOS files there); content dir = ROM folder.
+
+## Nintendo DS (`--system nds`, melonDS DS core)
+
+- **Core:** `melondsds_libretro.dll`, software renderer. The hub passes no BIOS; the core uses FreeBIOS and generated firmware (see `docs/CORES.md`). `--system nds` makes retrorun apply the defaults in `src/retrorun/dsview.h`
+  (software render, DS mode even for DSi-enhanced carts such as Black/White, no SD card or Wi-Fi, silent microphone, 1 s save-RAM flush, PC-clock RTC, OS cursor as the stylus); ini / `--opt` override them.
+- **Screens:** the core draws both screens into one frame. Default layout is side by side (`left-right`, 512x192), the widest picture in a 16:9 window; **F9** cycles `left-right`, `top-bottom`, `largescreen-top`, `hybrid-top` at run time
+  (`Core::set_option`, picked up on the core's next option poll). DS frames are scaled fractionally with linear filtering (other systems keep integer nearest scaling).
+- **Touch:** the left mouse button over the frame is the stylus (`RETRO_DEVICE_POINTER`, coordinates normalised to the drawn frame, high-DPI aware); the OS cursor stays visible, also in fullscreen.
+  Headless test: `--stylus U,V` holds the stylus down at that fraction of the frame (with `--opt melonds_show_cursor=always` the core draws the cursor there).
+- **Pad:** same RetroPad mapping as GBA; X, Y, L and R are keyboard S, A, Q, W and the controller X, Y and shoulder buttons (see Controls).
+- **Saves:** battery RAM goes to `<save-dir>\<rom basename>.srm` like every system (the file is the raw DS save, same bytes as a `.sav`; rename to import/export). The hub points `--save-dir` at the vault battery folder, so it syncs. Save states are not written or resumed for DS.
+- **Online:** not offered (the hub only enables online for N64/GBA/GB/GBC). The DS core uses a JIT and 19 MB states; lockstep netplay has not been validated.
+- ROMs inside `.zip` are extracted by the hub library to `userdataom-cache\` (DS images reach 512 MB), so retrorun always gets a plain `.nds`.
 
 ## Video
 
@@ -125,6 +140,6 @@ Windowed code paths can be smoke-tested with `SDL_VIDEODRIVER=dummy SDL_AUDIODRI
 ## Limitations
 
 - No hardware rendering, no cheats, no disk control (multi-disc), no rumble/sensors/camera, no core-options UI (use `--opt` / ini), no rewind, no shaders.
-- Zipped ROMs are not unpacked by the frontend (cores that handle zip themselves via `need_fullpath` work).
+- Zipped ROMs are not unpacked by retrorun itself (the hub library extracts them first) (cores that handle zip themselves via `need_fullpath` work).
 - Core options changed while running are not supported (the core sees the values given at start).
 - Cores with real-time clocks (e.g. mGBA with RTC games) may use wall-clock time, which can desync netplay; Gambatte state is not byte-exact after load (affects rollback later, not lockstep).
