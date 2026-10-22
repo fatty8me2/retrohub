@@ -241,6 +241,10 @@ inline bool invite_expired(long long expires_at_ms, long long now_ms) { return e
 int invite_seconds_left(long long expires_at_ms, long long now_ms);
 /* A room can be joined while it has a free slot and the game has not been launched. */
 inline bool lobby_joinable(int players, int max_players, bool launched) { return !launched && players > 0 && players < max_players; }
+/* A friend row offers "Join": in a lobby, or in a game launched from a room, with a free slot (and a known code). */
+inline bool friend_can_join(const FriendRow& r) { return (r.state == FS_InLobby || r.state == FS_InGame) && r.joinable; }
+/* Toast shown when a join is clicked while our own game is running (performed when the game closes). */
+std::string queued_join_text(const std::string& friend_name);
 
 /* ---- Smash Classic (native BattleShip.exe) launch plumbing ---- */
 /* Vault identity of the native port's save: system "n64", game key "native:smash64" (stable; shared by every PC). */

@@ -353,6 +353,14 @@ int main() {
         CHECK(!invite_expired(5000, 4999) && invite_expired(5000, 5000) && !invite_expired(0, 99999));
         CHECK(invite_seconds_left(5000, 4000) == 1 && invite_seconds_left(5000, 5000) == 0 && invite_seconds_left(31000, 1000) == 30);
         CHECK(lobby_joinable(2, 4, false) && !lobby_joinable(4, 4, false) && !lobby_joinable(2, 4, true) && !lobby_joinable(0, 4, false));
+        {   // join while the friend's game runs (room kept in presence)
+            FriendRow ig = row("h", "Hal", FS_InGame, true, 5, "Smash", 2, 4), full = row("i", "Ivy", FS_InGame, false, 5, "Smash", 4, 4);
+            CHECK(friend_can_join(ig) && !friend_can_join(full) && friend_can_join(rows[2]) && !friend_can_join(rows[1]) && !friend_can_join(rows[0]));
+            CHECK(friend_status_line(ig, 0) == "Playing Smash \xC2\xB7 2/4" && friend_status_line(full, 0) == "Playing Smash");
+            std::vector<FriendRow> r2 = {row("a", "plain", FS_InGame, false, 5), ig, rows[2], rows[0]};
+            CHECK((group_friends(r2).online == std::vector<int>{2, 1, 0, 3}));   // joinable lobby, joinable in-game, in game, online
+            CHECK(queued_join_text("Mia") == "Will join Mia's room when your game closes." && queued_join_text("") == "Will join that room when your game closes.");
+        }
         Settings fs;
         CHECK(fs.show_friends && !fs.appear_offline && fs.notif_sound);
         fs.show_friends = false; fs.appear_offline = true; fs.notif_sound = false;

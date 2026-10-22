@@ -841,9 +841,10 @@ static std::string lower_str(std::string s) {
 
 static int online_rank(const FriendRow& r) {
     if (r.state == FS_InLobby && r.joinable) return 0;
-    if (r.state == FS_InGame) return 1;
-    if (r.state == FS_InLobby) return 2;
-    return 3;
+    if (r.state == FS_InGame && r.joinable) return 1;
+    if (r.state == FS_InGame) return 2;
+    if (r.state == FS_InLobby) return 3;
+    return 4;
 }
 
 FriendGroups group_friends(const std::vector<FriendRow>& rows) {
@@ -873,7 +874,11 @@ std::string format_ago_ms(long long now_ms, long long then_ms) {
 
 std::string friend_status_line(const FriendRow& r, long long now_ms) {
     switch (r.state) {
-        case FS_InGame: return r.game_title.empty() ? "Playing" : "Playing " + r.game_title;
+        case FS_InGame: {
+            std::string s = r.game_title.empty() ? "Playing" : "Playing " + r.game_title;
+            if (r.joinable && r.max_players > 0) s += " \xC2\xB7 " + std::to_string(r.players) + "/" + std::to_string(r.max_players);
+            return s;
+        }
         case FS_InLobby: {
             std::string s = "In lobby";
             if (!r.game_title.empty()) s += " \xC2\xB7 " + r.game_title;
@@ -885,6 +890,10 @@ std::string friend_status_line(const FriendRow& r, long long now_ms) {
     }
     if (r.updated_ms > 0 && now_ms > r.updated_ms) return "Last seen " + format_ago_ms(now_ms, r.updated_ms);
     return "Offline";
+}
+
+std::string queued_join_text(const std::string& friend_name) {
+    return "Will join " + (friend_name.empty() ? std::string("that") : friend_name + "'s") + " room when your game closes.";
 }
 
 std::string normalize_friend_code(const std::string& in) {
