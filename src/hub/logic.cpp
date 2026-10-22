@@ -325,8 +325,10 @@ std::string smash_room_notice(const std::vector<PeerInfo>& peers) {
 }
 
 std::string hello_json(const std::string& version, const std::map<std::string, std::string>& games,
-                       const std::vector<std::string>& keys) {
-    std::string o = "{\"kind\":\"hello\",\"version\":\"" + json_escape(version) + "\",\"games\":{";
+                       const std::vector<std::string>& keys, const std::string& app) {
+    std::string o = "{\"kind\":\"hello\",\"version\":\"" + json_escape(version) + "\"";
+    if (!app.empty()) o += ",\"app\":\"" + json_escape(app) + "\"";
+    o += ",\"games\":{";
     bool first = true;
     for (auto& g : games) {
         if (!first) o += ",";
@@ -339,13 +341,15 @@ std::string hello_json(const std::string& version, const std::map<std::string, s
 }
 
 std::vector<std::string> hello_messages(const std::string& version, const std::map<std::string, std::string>& games,
-                                        const std::vector<std::string>& keys, size_t max_bytes) {
+                                        const std::vector<std::string>& keys, size_t max_bytes,
+                                        const std::string& app) {
     std::vector<std::string> out;
     size_t i = 0;
     int part = 0;
     do {
         std::string o = "{\"kind\":\"hello\",\"version\":\"" + json_escape(version) + "\",\"part\":" + std::to_string(part);
         if (part == 0) {
+            if (!app.empty()) o += ",\"app\":\"" + json_escape(app) + "\"";
             o += ",\"games\":{";
             bool f = true;
             for (auto& g : games) {
@@ -390,8 +394,72 @@ bool parse_hello(const Json& body, PeerInfo* out) {
     if (k && k->type == Json::Arr)
         for (auto& v : k->vals)
             if (v.type == Json::Str) out->keys.push_back(v.s);
+    out->app = body.str("app");
     out->hello = true;
     return true;
+}
+
+/* ---- app version gate ---- */
+static bool parse_dotted(const std::string& v, std::vector<long>* out) {
+    size_t i = 0;
+    while (i < v.size() && (v[i] == 'v' || v[i] == 'V' || v[i] == ' ')) ++i;
+    bool any = false;
+    while (i < v.size()) {
+        if (!std::isdigit((unsigned char)v[i])) break;
+        long n = 0;
+        while (i < v.size() && std::isdigit((unsigned char)v[i])) { n = n * 10 + (v[i] - '0'); if (n > 1000000) n = 1000000; ++i; }
+        out->push_back(n);
+        any = true;
+        if (i < v.size() && v[i] == '.') ++i; else break;
+    }
+    return any;
+}
+
+int compare_app_versions(const std::string& a, const std::string& b) {
+    std::vector<long> x, y;
+    if (!parse_dotted(a, &x) || !parse_dotted(b, &y)) return 2;
+    size_t n = std::max(x.size(), y.size());
+    for (size_t i = 0; i < n; ++i) {
+        long p = i < x.size() ? x[i] : 0, q = i < y.size() ? y[i] : 0;
+        if (p != q) return p < q ? -1 : 1;
+    }
+    return 0;
+}
+
+std::string app_version_label(const std::string& v) {
+    if (v.empty()) return "";
+    return (v[0] == 'v' || v[0] == 'V') ? v : "v" + v;
+}
+
+static bool same_app_version(const std::string& a, const std::string& b) {
+    int c = compare_app_versions(a, b);
+    return c == 2 ? a == b : c == 0;
+}
+
+VersionGate version_gate(const std::string& host_app, const std::vector<PeerInfo>& peers, bool allow_mismatch) {
+    VersionGate g;
+    if (allow_mismatch) return g;
+    std::string need = app_version_label(host_app);
+    for (auto& p : peers) {
+        if (!p.hello) continue;   // game_selectable reports "waiting for ..."
+        if (p.app.empty()) {
+            g.ok = false;
+            g.reason = p.name + " is on an old RetroHub (unknown version) - everyone needs " + need + ". Ask them to update.";
+            return g;
+        }
+        if (!same_app_version(p.app, host_app)) {
+            g.ok = false;
+            g.reason = p.name + " is on " + app_version_label(p.app) + " - everyone needs " + need + ". Ask them to update.";
+            return g;
+        }
+    }
+    return g;
+}
+
+GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app) {
+    if (host_app.empty()) return GuestVersionAction::HostNeedsUpdate;
+    if (same_app_version(my_app, host_app)) return GuestVersionAction::None;
+    return compare_app_versions(my_app, host_app) == -1 ? GuestVersionAction::UpdateNow : GuestVersionAction::HostNeedsUpdate;
 }
 
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save,
