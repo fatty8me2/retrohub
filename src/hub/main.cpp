@@ -739,6 +739,7 @@ static std::string report_summary(const hub::saves::SyncReport& r, const char* s
     return s + ".";
 }
 
+static void fr_adopt_identity_after_vault_change();   // friends_ui.inc
 static void poll_job() {
     if (!A.job.running || !A.job.done) return;
     if (A.job.th.joinable()) A.job.th.join();
@@ -760,6 +761,7 @@ static void poll_job() {
                               (j.report.conflicts ? ", " + std::to_string(j.report.conflicts) + " conflict(s) (older copy kept)" : "") + ".";
         set_toast(j.report.ok ? "Saves imported." : A.import_result, j.report.ok);
     }
+    if ((j.kind == SaveJob::Sync || j.kind == SaveJob::Import) && j.report.ok) fr_adopt_identity_after_vault_change();
     A.vault_dirty = true;
     A.info_at = -100;
     j.kind = SaveJob::None;
