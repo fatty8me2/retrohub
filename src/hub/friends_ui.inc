@@ -397,6 +397,15 @@ static void fr_start() {
     FR.last_name = A.st.name;
 }
 
+/* After a save sync/import: a vault identity older than ours is the user's original account; adopt it. */
+static void fr_adopt_identity_after_vault_change() {
+    if (g_headless || FR.fake) return;
+    if (FR.started) { FR.cli.adopt_vault_identity_if_older(); return; }   // toast comes from the IdentityAdopted event
+    hubnet::Identity id;
+    if (hubnet::identity_adopt_vault_if_older(hub::data_dir(), hub::saves::vault_dir(), &id))
+        set_toast("Signed in as " + hubnet::friend_code(id.user_id) + " (your account from your other PC)");
+}
+
 static void fr_tick() {
     if (!FR.started || FR.fake) return;
     FR.cli.update();
@@ -406,6 +415,9 @@ static void fr_tick() {
             case hubnet::Event::RequestReceived: fr_notify(false, e.uid, e.name, hubnet::Invite()); break;
             case hubnet::Event::RequestResolved:
                 if (e.text == "accepted") set_toast((e.name.empty() ? std::string("Your request") : e.name) + " accepted your friend request.");
+                break;
+            case hubnet::Event::IdentityAdopted:
+                set_toast("Signed in as " + e.text + " (your account from your other PC)");
                 break;
             case hubnet::Event::FriendAdded: set_toast(e.name + " is now your friend."); break;
             case hubnet::Event::MessageReceived:
