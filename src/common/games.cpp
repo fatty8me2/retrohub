@@ -200,7 +200,7 @@ const std::vector<GameInfo>& catalog() {
          * through the emulator path. MD5 of the 2.0.0 release .z64. No serials on
          * purpose: a hack shares the base game's header ID, which would mislabel it. */
         {"remix", "Smash Remix 2.0", Engine::Mupen64Plus, 4,
-         {"43571020FA5DDB138BBD7F64A8C9C0D4"}, "", "n64", {}, true, 0,  // TODO verify year
+         {"43571020FA5DDB138BBD7F64A8C9C0D4"}, "", "n64", {}, true, 2025,
          "A fan-made overhaul of Super Smash Bros. with dozens of extra fighters.",
          "Super Smash Bros. (USA)"},
 
@@ -343,7 +343,7 @@ const std::vector<GameInfo>& catalog() {
          "The Kanto remake in its Leaf Green form, with link-cable trading and battles.",
          "Pokemon - LeafGreen Version (USA, Europe)"},
         {"minishcap", "The Legend of Zelda: The Minish Cap", Engine::Libretro, 1, {}, "", "gba",
-         {"BZME", "BZMP", "BZMJ"}, false, 2004,  // TODO verify max_players
+         {"BZME", "BZMP", "BZMJ"}, false, 2004,
          "Link shrinks to Minish size to restore a world, guided by a talking hat.",
          "Legend of Zelda, The - The Minish Cap (USA)"},
         {"lttp", "The Legend of Zelda: A Link to the Past & Four Swords", Engine::Libretro, 4, {}, "", "gba",
@@ -370,11 +370,11 @@ const std::vector<GameInfo>& catalog() {
          {"AX4E", "AX4P", "AX4J"}, false, 2004,
          "Super Mario Bros. 3 with its original levels and power-ups, ported to the Game Boy Advance.",
          "Super Mario Advance 4 - Super Mario Bros. 3 (USA)"},
-        {"aw1", "Advance Wars", Engine::Libretro, 4, {}, "", "gba",  // TODO verify max_players
+        {"aw1", "Advance Wars", Engine::Libretro, 4, {}, "", "gba",
          {"AWRE", "AWRP"}, false, 2001,
          "Turn-based tank battles on a grid, with link-cable matches for several commanders.",
          "Advance Wars (USA)"},
-        {"aw2", "Advance Wars 2: Black Hole Rising", Engine::Libretro, 4, {}, "", "gba",  // TODO verify max_players
+        {"aw2", "Advance Wars 2: Black Hole Rising", Engine::Libretro, 4, {}, "", "gba",
          {"AW2E", "AW2P"}, false, 2003,
          "Turn-based strategy with new units, new commanders, and link-cable battles.",
          "Advance Wars 2 - Black Hole Rising (USA)"},
@@ -398,15 +398,15 @@ const std::vector<GameInfo>& catalog() {
          {"AZWE", "AZWP"}, false, 2003,
          "Dozens of five-second microgames, with multiplayer rounds over the link cable.",
          "WarioWare, Inc. - Mega Microgame$! (USA)"},
-        {"kirbymirror", "Kirby & The Amazing Mirror", Engine::Libretro, 4, {}, "", "gba",  // TODO verify max_players
+        {"kirbymirror", "Kirby & The Amazing Mirror", Engine::Libretro, 4, {}, "", "gba",
          {"B8KE", "B8KP"}, false, 2004,
          "Kirby explores a sprawling map of mirror worlds, with multiplayer over the link cable.",
          "Kirby & The Amazing Mirror (USA)"},
-        {"kirbynightmare", "Kirby: Nightmare in Dream Land", Engine::Libretro, 1, {}, "", "gba",  // TODO verify max_players
+        {"kirbynightmare", "Kirby: Nightmare in Dream Land", Engine::Libretro, 4, {}, "", "gba",
          {"A7KE", "A7KP"}, false, 2002,
          "Kirby copies enemy powers while exploring a classic platforming world.",
          "Kirby - Nightmare in Dream Land (USA)"},
-        {"ffta", "Final Fantasy Tactics Advance", Engine::Libretro, 4, {}, "", "gba",  // TODO verify max_players
+        {"ffta", "Final Fantasy Tactics Advance", Engine::Libretro, 2, {}, "", "gba",
          {"AFXE", "AFXP", "AFXJ"}, false, 2003,
          "Job-based tactical battles on isometric maps, with a link-cable mode for several players.",
          "Final Fantasy Tactics Advance (USA)"},
@@ -418,11 +418,11 @@ const std::vector<GameInfo>& catalog() {
          {"B24E", "B24P"}, false, 2006,
          "Become a Pokemon in a randomly generated dungeon alongside a partner Pokemon.",
          "Pokemon Mystery Dungeon - Red Rescue Team (USA, Australia)"},
-        {"sa2", "Sonic Advance 2", Engine::Libretro, 2, {}, "", "gba",  // TODO verify max_players
+        {"sa2", "Sonic Advance 2", Engine::Libretro, 4, {}, "", "gba",
          {"A2NE", "A2NP", "A2NJ"}, false, 2002,
          "Sonic and friends race through 2D stages with a multiplayer mode over the link cable.",
          "Sonic Advance 2 (USA) (En,Ja,Fr,De,Es,It)"},
-        {"thps2", "Tony Hawk's Pro Skater 2", Engine::Libretro, 2, {}, "", "gba",  // TODO verify max_players
+        {"thps2", "Tony Hawk's Pro Skater 2", Engine::Libretro, 2, {}, "", "gba",
          {"ATHE"}, false, 2002,
          "Skate arena-style courses and chase high scores in a timed career mode.",
          "Tony Hawk's Pro Skater 2 (USA, Europe)"},
