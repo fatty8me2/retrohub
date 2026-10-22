@@ -968,6 +968,7 @@ static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const st
     if (kind == hubemu::Kind::Azahar) {
         if (inst.managed) hubemu::prepare_azahar(inst.dir);
     } else if (kind == hubemu::Kind::Dolphin) {
+        hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
         hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads());
     } else if (inst.managed) {
         hubemu::prepare_cemu_managed(inst.dir);
