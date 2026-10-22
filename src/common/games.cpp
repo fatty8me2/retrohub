@@ -440,7 +440,7 @@ const std::vector<GameInfo>& catalog() {
         {"pokeyellow", "Pokemon Yellow", Engine::Libretro, 2, {}, "", "gbc",
          {"POKEMON YEL"}, false, 1999,
          "Follow Pikachu through Kanto as your partner, with the link cable for trades and battles.",
-         "Pokemon - Yellow Version - Special Pikachu Edition DX (USA)"},
+         "Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced)"},
         {"pokegold", "Pokemon Gold", Engine::Libretro, 2, {}, "", "gbc",
          {"AAUE", "POKEMON_GLD"}, false, 2000,
          "Catch Pokemon in Johto and Kanto, with day and night, held items and link-cable trades.",
