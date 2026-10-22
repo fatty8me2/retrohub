@@ -75,6 +75,7 @@ add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
 add_test(NAME hub_shell_test COMMAND hub_shell_test)
 add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
+add_test(NAME n64run_match_test COMMAND n64run_match_test)
 add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulated network only
 
 # Online: need the live server.
