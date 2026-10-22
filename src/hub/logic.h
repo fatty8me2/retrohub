@@ -3,6 +3,7 @@
 
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace hubui {
@@ -235,5 +236,19 @@ inline bool invite_expired(long long expires_at_ms, long long now_ms) { return e
 int invite_seconds_left(long long expires_at_ms, long long now_ms);
 /* A room can be joined while it has a free slot and the game has not been launched. */
 inline bool lobby_joinable(int players, int max_players, bool launched) { return !launched && players > 0 && players < max_players; }
+
+/* ---- Smash Classic (native BattleShip.exe) launch plumbing ---- */
+/* Vault identity of the native port's save: system "n64", game key "native:smash64" (stable; shared by every PC). */
+inline const char* kSmashSaveSystem = "n64";
+inline const char* kSmashSaveKey = "native:smash64";
+/* Full file path BattleShip must use (env SSB64_SAVE_PATH is a FILE path): <battery_dir>\ssb64_save.bin. */
+std::string smash_save_file(const std::string& battery_dir);
+/* One-time migration: copy <BattleShip dir>\ssb64_save.bin into the vault only when the vault has none yet. */
+inline bool smash_should_migrate_save(bool vault_file_exists, bool legacy_file_exists) { return !vault_file_exists && legacy_file_exists; }
+struct RomRef { std::string catalog_id, serial, path; };
+/* The Smash 64 ROM in the scanned library: catalog id "ssb64rom" or serial NALE (USA), non-empty path. "" when absent. */
+std::string find_smash_rom(const std::vector<RomRef>& lib);
+/* Environment for every Smash launch: SSB64_BASEROM (when a ROM is known) and SSB64_SAVE_PATH. */
+std::vector<std::pair<std::string, std::string>> smash_launch_env(const std::string& rom_path, const std::string& save_file);
 
 } // namespace hubui
