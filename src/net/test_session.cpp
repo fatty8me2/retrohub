@@ -29,10 +29,10 @@ static bool lobby_check(const std::string& server)
             a.send_msg("{\"kind\":\"chat\",\"text\":\"hi \\\"there\\\"\"}");
             sent = true;
         }
-        int from; std::string body;
-        if (b.poll_msg(&from, &body)) {
-            got = from == 0 && body.find("hi") != std::string::npos;
-            printf("lobby: bob got from=%d body=%s\n", from, body.c_str());
+        LobbyEvent ev;
+        if (b.poll_event(&ev) && ev.type == LobbyEvent::Msg) {
+            got = ev.from_slot == 0 && ev.body.find("hi") != std::string::npos;
+            printf("lobby: bob got from=%d body=%s\n", ev.from_slot, ev.body.c_str());
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -61,13 +61,13 @@ static bool migration_check(const std::string& server)
     pump({&a, &b, &c}, 5000, [](void* p) { auto* x = (Ctx*)p; return x->c->connected() && x->a->members().size() == 3; }, &cx);
     bool ok = b.my_slot() == 1 && c.my_slot() == 2;
     a.stop();   // host leaves
-    HostChange hb{-1, ""}, hc{-1, ""};
+    LobbyEvent hb, hc;
     bool gotb = false, gotc = false;
     for (uint32_t t0 = now_ms(); now_ms() - t0 < 20000 && !(gotb && gotc);) {
         b.update(); c.update();
-        HostChange h;
-        if (!gotb && b.poll_host_change(&h)) { hb = h; gotb = true; }
-        if (!gotc && c.poll_host_change(&h)) { hc = h; gotc = true; }
+        LobbyEvent h;
+        while (!gotb && b.poll_event(&h)) if (h.type == LobbyEvent::HostChange) { hb = h; gotb = true; }
+        while (!gotc && c.poll_event(&h)) if (h.type == LobbyEvent::HostChange) { hc = h; gotc = true; }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     pump({&b, &c}, 500, nullptr, nullptr);
@@ -80,9 +80,35 @@ static bool migration_check(const std::string& server)
     ok = ok && d.connected() && d.my_slot() == 1;
     b.send_msg("{\"kind\":\"select\",\"game\":\"mk64\"}");
     int from = -1; std::string body;
-    for (uint32_t t0 = now_ms(); now_ms() - t0 < 5000 && from < 0;) { b.update(); c.update(); d.update(); if (c.poll_msg(&from, &body)) break; std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+    for (uint32_t t0 = now_ms(); now_ms() - t0 < 5000 && from < 0;) {
+        b.update(); c.update(); d.update();
+        LobbyEvent ev;
+        while (c.poll_event(&ev)) if (ev.type == LobbyEvent::Msg) { from = ev.from_slot; body = ev.body; }
+        if (from >= 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
     ok = ok && from == 0 && body.find("mk64") != std::string::npos;
     printf("migration check: %s (bob slot %d, carol slot %d, dave slot %d, from=%d)\n", ok ? "ok" : "FAILED", b.my_slot(), c.my_slot(), d.my_slot(), from);
+    return ok;
+}
+
+/* Events must come out in server arrival order and my_slot() must flip only when the HostChange is consumed. */
+static bool event_order_check()
+{
+    LobbyClient c;
+    c.inject_server_text(R"({"type":"welcome","room":"ABC234","slot":1})");
+    c.inject_server_text(R"({"type":"msg","from":0,"body":{"kind":"launch"}})");
+    c.inject_server_text(R"({"type":"msg","from":1,"body":{"kind":"ready","ready":true}})");
+    c.inject_server_text(R"({"type":"host_changed","from_slot":1,"slot":0,"name":"me"})");
+    c.inject_server_text(R"({"type":"msg","from":0,"body":{"kind":"select","game":"mk64"}})");
+    LobbyEvent e;
+    bool ok = c.my_slot() == 1;
+    ok = ok && c.poll_event(&e) && e.type == LobbyEvent::Msg && e.from_slot == 0 && e.body.find("launch") != std::string::npos && c.my_slot() == 1;
+    ok = ok && c.poll_event(&e) && e.type == LobbyEvent::Msg && e.from_slot == 1 && c.my_slot() == 1;
+    ok = ok && c.poll_event(&e) && e.type == LobbyEvent::HostChange && e.from_slot == 1 && e.name == "me" && c.my_slot() == 0;
+    ok = ok && c.poll_event(&e) && e.type == LobbyEvent::Msg && e.from_slot == 0 && e.body.find("mk64") != std::string::npos;
+    ok = ok && !c.poll_event(&e);
+    printf("event order check: %s\n", ok ? "ok" : "FAILED");
     return ok;
 }
 
@@ -96,6 +122,7 @@ int main(int argc, char** argv)
     bool relay = fr && fr[0] && fr[0] != '0';
     net_set_log_file("hubnet_test.log");
 
+    if (!event_order_check()) return 1;
     if (!lobby_check(server)) return 1;
     if (!migration_check(server)) return 1;
     std::string room = new_room_code() + "-1";

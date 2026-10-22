@@ -14,9 +14,7 @@ struct LobbyClient::Impl {
     std::string status = "idle";
     int slot = -1;
     std::vector<Member> members;
-    struct Msg { int from; std::string body; };
-    std::deque<Msg> msgs;
-    std::deque<HostChange> host_changes;
+    std::deque<LobbyEvent> events;   // msgs and host changes in arrival order
     uint32_t last_keepalive = 0;
 };
 
@@ -31,8 +29,7 @@ bool LobbyClient::start(const std::string& server, const std::string& code, bool
     d.welcomed = d.failed = false;
     d.slot = -1;
     d.members.clear();
-    d.msgs.clear();
-    d.host_changes.clear();
+    d.events.clear();
     d.status = "connecting";
     d.last_keepalive = now_ms();
     std::string url = hub_url(server.empty() ? default_server() : server, code, role_host, name, 0);
@@ -62,22 +59,15 @@ void LobbyClient::send_msg(const std::string& body_json)
     impl_->ws.send_text("{\"type\":\"msg\",\"body\":" + body_json + "}");
 }
 
-bool LobbyClient::poll_msg(int* from_slot, std::string* body_json)
+bool LobbyClient::poll_event(LobbyEvent* out)
 {
     Impl& d = *impl_;
-    if (d.msgs.empty()) return false;
-    *from_slot = d.msgs.front().from;
-    *body_json = std::move(d.msgs.front().body);
-    d.msgs.pop_front();
-    return true;
-}
-
-bool LobbyClient::poll_host_change(HostChange* out)
-{
-    Impl& d = *impl_;
-    if (d.host_changes.empty()) return false;
-    *out = std::move(d.host_changes.front());
-    d.host_changes.pop_front();
+    if (d.events.empty()) return false;
+    *out = std::move(d.events.front());
+    d.events.pop_front();
+    /* My slot changes exactly when the host-change event is consumed, so messages queued before it are
+     * still interpreted under the old numbering. */
+    if (out->type == LobbyEvent::HostChange && out->from_slot >= 0 && out->from_slot == d.slot) d.slot = 0;
     return true;
 }
 
@@ -96,9 +86,24 @@ void LobbyClient::update()
     if (!d.started || d.failed) return;
 
     std::string text;
-    while (d.ws.poll_text(&text)) {
+    while (d.ws.poll_text(&text))
+        if (!handle_text(text)) return;
+    update_tail();
+}
+
+void LobbyClient::inject_server_text(const std::string& text)
+{
+    Impl& d = *impl_;
+    d.started = true;
+    handle_text(text);
+}
+
+bool LobbyClient::handle_text(const std::string& text)
+{
+    Impl& d = *impl_;
+    {
         Json j;
-        if (!json_parse(text, &j) || j.type != Json::Object) continue;
+        if (!json_parse(text, &j) || j.type != Json::Object) return true;
         std::string type = j.s("type");
         if (type == "welcome") {
             d.welcomed = true;
@@ -110,19 +115,34 @@ void LobbyClient::update()
             if (const Json* a = j.get("members"))
                 for (const Json& m : a->arr) d.members.push_back({m.i("slot", -1), m.s("name")});
         } else if (type == "host_changed") {
-            int from = j.i("from_slot", -1), to = j.i("slot", 0);
-            if (from >= 0 && from == d.slot) d.slot = to;
-            d.host_changes.push_back({from, j.s("name")});
+            int from = j.i("from_slot", -1);
+            LobbyEvent e;
+            e.type = LobbyEvent::HostChange;
+            e.from_slot = from;
+            e.name = j.s("name");
+            d.events.push_back(std::move(e));
             net_log("Lobby: host changed: slot %d (%s) is now the host", from, j.s("name").c_str());
         } else if (type == "msg") {
-            if (const Json* b = j.get("body")) d.msgs.push_back({j.i("from", -1), b->raw});
+            if (const Json* b = j.get("body")) {
+                LobbyEvent e;
+                e.type = LobbyEvent::Msg;
+                e.from_slot = j.i("from", -1);
+                e.body = b->raw;
+                d.events.push_back(std::move(e));
+            }
         } else if (type == "error") {
             d.failed = true;
             d.status = friendly(j.s("reason", "error"));
             net_log("Lobby: error %s", d.status.c_str());
-            return;
+            return false;
         }
     }
+    return true;
+}
+
+void LobbyClient::update_tail()
+{
+    Impl& d = *impl_;
 
     if (d.ws.state() == WsState::Failed) {
         d.failed = true;

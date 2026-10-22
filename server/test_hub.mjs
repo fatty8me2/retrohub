@@ -182,9 +182,13 @@ await xold.wait(() => xold.last("welcome"));
 const xnew = open(X, "join", "newbie", undefined, "hostmig");
 await xnew.wait(() => xnew.last("welcome"));
 x0.ws.close();
+// the old client's socket is still open until its close completes: frames it sends now must be dropped
+xold.ws.send(new Uint8Array([0xff, 9, 9]));
+xold.send({ type: "msg", body: { kind: "chat", text: "ghost" } });
 await xold.wait(() => xold.closed, 20000);
 await xnew.wait(() => xnew.last("host_changed"));
 check(xold.closed?.code === 4001 && !xold.last("host_changed"), "mixed: old client closed with 4001, never sees host_changed");
+check(xnew.bin.length === 0 && !xnew.last("msg"), "departed socket: binary and msg frames are dropped (no from:-1 / 0xFF broadcast)");
 check(!xnew.closed && xnew.last("host_changed")?.from_slot === 2, "mixed: capable member is promoted to host");
 await sleep(150);
 check(xnew.last("members").members.length === 1 && xnew.last("members").members[0].slot === 0, "mixed: members excludes the closed old client");
