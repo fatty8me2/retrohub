@@ -410,6 +410,80 @@ int main() {
         CHECK(smash_launch_env("", "s.bin").size() == 1);
     }
 
+    {   // Smash match picker
+        auto fc = fighter_choices(true), fv = fighter_choices(false);
+        CHECK(fv.size() == 12 && fc.size() == 30 && !fv.back().remix && fc.back().remix && fc[12].remix && fc[11].name == "Ness");
+        auto sc = stage_choices(true), sv = stage_choices(false);
+        CHECK(sv.size() == 9 && sc.size() > 9 && !sc[8].remix && sc[9].remix);
+        CHECK(fighter_valid(-1, true) && fighter_valid(0x1D, true) && !fighter_valid(0x1D, false) && !fighter_valid(0x1B, true) && !fighter_valid(0x22, true) && !fighter_valid(999, true));
+        CHECK(stage_valid(-1, true) && stage_valid(6, false) && stage_valid(0x2A, true) && !stage_valid(0x2A, false) && !stage_valid(0x29, true) && !stage_valid(0xD3, true));
+        CHECK(fighter_name(-1) == "Random" && fighter_name(0x1D) == "Falco" && stage_name(6) == "Dream Land" && fighter_costumes(0) == 5);
+        CHECK(match_game_supported("remix") && !match_game_supported("smash64"));
+
+        MemberPick mp;
+        mp.p[0] = {0x1D, 2}; mp.p[1] = {0, 4};
+        Json j;
+        MemberPick got;
+        CHECK(json_parse(pick_json(mp), &j) && j.str("kind") == "pick" && parse_pick(j, &got) && got.p[0].fighter == 0x1D && got.p[0].costume == 2 && got.p[1].fighter == 0 && got.p[1].costume == 4);
+        CHECK(json_parse("{\"kind\":\"pick\",\"fighter\":3}", &j) && parse_pick(j, &got) && got.p[0].fighter == 3 && got.p[0].costume == 0 && got.p[1].fighter == -1);
+        CHECK(json_parse("{\"fighter\":0,\"costume\":5}", &j) && !parse_pick(j, &got));          // costume beyond Mario's 5
+        CHECK(json_parse("{\"fighter\":-1,\"costume\":2}", &j) && !parse_pick(j, &got));         // Random has no costume
+        CHECK(json_parse("{\"fighter\":34}", &j) && !parse_pick(j, &got));                        // 0x22 Dark Samus: not on the CSS
+        CHECK(json_parse("{\"fighter\":29}", &j) && parse_pick(j, &got) && !parse_pick(j, &got, false));
+        CHECK(json_parse("{\"fighter\":\"a\"}", &j) && !parse_pick(j, &got));
+        CHECK(json_parse("{\"costume\":1}", &j) && !parse_pick(j, &got));
+        CHECK(pick_label(mp, 1) == "Falco" && pick_label(mp, 2) == "Falco + Mario" && pick_label(MemberPick{}, 1) == "Random");
+
+        MatchRules r;
+        r.stage = 0x2A; r.stocks = 4;
+        MatchRules rg;
+        CHECK(json_parse(rules_json(r), &j) && j.str("kind") == "rules" && parse_rules(j, &rg) && rg.stage == 0x2A && rg.stocks == 4);
+        CHECK(json_parse("{\"stage\":-1,\"stocks\":1}", &j) && parse_rules(j, &rg) && rg.stage == -1);
+        CHECK(json_parse("{\"stage\":6,\"stocks\":0}", &j) && !parse_rules(j, &rg));
+        CHECK(json_parse("{\"stage\":6,\"stocks\":6}", &j) && !parse_rules(j, &rg));
+        CHECK(json_parse("{\"stage\":41,\"stocks\":3}", &j) && !parse_rules(j, &rg));            // 0x29: not netplay legal
+        CHECK(json_parse("{\"stage\":6}", &j) && !parse_rules(j, &rg));
+
+        /* ports "0,0,1,2": slot 0 has two pads */
+        std::map<int, MemberPick> picks;
+        picks[0] = mp;
+        picks[1].p[0] = {1, 3};
+        MatchRules fixed;
+        fixed.stage = 6; fixed.stocks = 2;
+        MatchSpec ms = resolve_match("0,0,1,2", picks, fixed, 99u);
+        CHECK(ms.stage == 6 && ms.stocks == 2 && ms.players.size() == 4);
+        CHECK(ms.players[0].fighter == 0x1D && ms.players[0].costume == 2 && ms.players[1].fighter == 0 && ms.players[1].costume == 4);
+        CHECK(ms.players[2].fighter == 1 && ms.players[2].costume == 3);
+        CHECK(ms.players[3].fighter >= 0 && fighter_valid(ms.players[3].fighter, true) && ms.players[3].costume < fighter_costumes(ms.players[3].fighter));   // unpicked -> Random
+        CHECK(match_arg(ms).rfind("stage=6;stocks=2;p0=29:2;p1=0:4;p2=1:3;p3=", 0) == 0);
+        MatchSpec ms2 = resolve_match("0,0,1,2", picks, fixed, 99u);
+        CHECK(match_arg(ms) == match_arg(ms2));                                                       // same seed, same result
+        bool varied = false;
+        MatchRules rnd;
+        for (unsigned sd = 1; sd < 40 && !varied; ++sd) {
+            MatchSpec a = resolve_match("0,1", {}, rnd, sd);
+            CHECK(stage_valid(a.stage, true) && a.stage >= 0 && a.players.size() == 2 && a.players[0].fighter >= 0 && a.players[1].fighter >= 0);
+            CHECK(a.players[0].costume >= 0 && a.players[0].costume < fighter_costumes(a.players[0].fighter));
+            varied = a.stage != resolve_match("0,1", {}, rnd, sd + 1).stage;
+        }
+        CHECK(varied);
+        CHECK(resolve_match("0,1", {}, rnd, 5u, false).stage <= 8 && resolve_match("0,1", {}, rnd, 5u, false).players[0].fighter <= 0x0B);
+        CHECK(resolve_match("0,1", {}, MatchRules{6, 99}, 1u).stocks == 5);
+        CHECK(resolve_match("3,-1,-1,-1", picks, fixed, 1u).players.size() == 1);
+
+        PortPlan pp;
+        pp.ports = "0,0,1,2"; pp.players = 3;
+        std::string lm = launch_json("remix", 1, 0, 7u, "", false, &pp, &ms);
+        MatchSpec back;
+        CHECK(json_parse(lm, &j) && parse_match(j, pp.ports, true, &back) && match_arg(back) == match_arg(ms));
+        CHECK(!parse_match(j, "0,1,2", true, &back) && !parse_match(j, "0,0,1,2", false, &back));      // wrong port count / vanilla roster
+        CHECK(json_parse(launch_json("remix", 1, 0, 7u), &j) && !parse_match(j, pp.ports, true, &back));   // older host: absent
+        CHECK(json_parse("{\"match\":{\"stage\":6,\"stocks\":3,\"players\":[[0,0],[-1,0]]}}", &j) && !parse_match(j, "0,1", true, &back));
+        CHECK(json_parse("{\"match\":{\"stage\":6,\"stocks\":3,\"players\":[[0,0],[1,9]]}}", &j) && !parse_match(j, "0,1", true, &back));
+        CHECK(json_parse("{\"match\":{\"stage\":6,\"stocks\":3,\"players\":[[0,0],[1,3]]}}", &j) && parse_match(j, "0,1", true, &back) && match_arg(back) == "stage=6;stocks=3;p0=0:0;p1=1:3");
+    }
+
+
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }

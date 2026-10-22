@@ -374,6 +374,7 @@ static hubnet::Status fr_desired_status() {
         fill_game(A.run.key);
         if (s.game_title.empty()) s.game_title = A.run.title;
         if (s.system.empty()) s.system = A.run.system_short;
+        if (s.game_id == "remix" && !A.run_fighter.empty() && A.run.online) s.game_title += " as " + A.run_fighter;   // "Playing Smash Remix as Falco"
         if (A.in_room && room_connected()) {   // launched from a room: keep it visible so friends can join the next match
             s.lobby_code = A.code;
             s.players = (int)room_members().size();
