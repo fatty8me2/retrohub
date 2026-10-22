@@ -31,7 +31,7 @@ add_executable(n64run_lockstep_test test_lockstep.cpp)
 target_link_libraries(n64run_lockstep_test PRIVATE n64run_lockstep_core m64p_api)
 
 # Console test: save sync over a simulated lossy network; with a server URL argument also runs two
-# real Sessions through it (qa/test_save_sync.ps1).
+# real Sessions through the live server (registered with CTest in the top-level CMakeLists.txt).
 add_executable(n64run_save_sync_test test_save_sync.cpp)
 target_link_libraries(n64run_save_sync_test PRIVATE n64run_save_sync)
 

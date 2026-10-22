@@ -59,3 +59,26 @@ add_subdirectory(src/net)
 add_subdirectory(src/n64run)
 add_subdirectory(src/retrorun)
 add_subdirectory(src/hub)
+
+# ---- Tests (ctest) ----
+# Offline (no network, no emulator): ctest -C Release -LE online
+# Online (hit the live netplay/friends server): ctest -C Release -L online
+enable_testing()
+set(RETROHUB_TEST_SERVER "wss://smash-netplay.jumpcircuit.workers.dev" CACHE STRING
+    "Live lobby/friends server used by the online tests")
+
+add_test(NAME hubcommon_test COMMAND hubcommon_test)
+add_test(NAME hublibrary_test COMMAND hublibrary_test)
+add_test(NAME hubsaves_test COMMAND hubsaves_test)
+add_test(NAME hub_logic_test COMMAND hub_logic_test)
+add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
+add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
+add_test(NAME hub_shell_test COMMAND hub_shell_test)
+add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
+add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulated network only
+
+# Online: need the live server.
+add_test(NAME hubnet_test COMMAND hubnet_test ${RETROHUB_TEST_SERVER})
+add_test(NAME hubfriends_test COMMAND hubfriends_test ${RETROHUB_TEST_SERVER})
+add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
+set_tests_properties(hubnet_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)

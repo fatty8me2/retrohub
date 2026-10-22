@@ -2,6 +2,7 @@
 #include "updater.h"
 
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <string>
 #include <thread>
@@ -23,7 +24,7 @@ static const char* kSample = R"({
   ]
 })";
 
-int main() {
+int main(int argc, char** argv) {
     using namespace hubupdate::detail;
     // --- versions ---
     CHECK(compare_versions("v1.8.0", "v1.7.0") == 1);
@@ -73,6 +74,9 @@ int main() {
 
     std::printf("current_version=%s launch_check_disabled=%d\n", current_version().c_str(), (int)launch_check_disabled());
     std::printf("unit checks: %s\n", g_fail ? "FAILED" : "all passed");
+
+    // --offline: unit checks only (used by CTest; the live check needs GitHub).
+    if (argc > 1 && std::strcmp(argv[1], "--offline") == 0) return g_fail ? 1 : 0;
 
     // --- live check (no download) ---
     check_async(true);
