@@ -305,7 +305,7 @@ static void system_colors(hub::System s, ImU32* a, ImU32* b) {
         case hub::System::GB: *a = IM_COL32(85, 100, 40, 255); *b = IM_COL32(150, 175, 70, 255); break;
         case hub::System::N3DS: *a = IM_COL32(170, 25, 55, 255); *b = IM_COL32(235, 90, 105, 255); break;
         case hub::System::WiiU: *a = IM_COL32(0, 100, 170, 255); *b = IM_COL32(60, 190, 230, 255); break;
-        case hub::System::NDS: *a = IM_COL32(130, 130, 145, 255); *b = IM_COL32(205, 210, 225, 255); break;
+        case hub::System::NDS: *a = IM_COL32(184, 108, 16, 255); *b = IM_COL32(242, 190, 76, 255); break;
         default: *a = IM_COL32(70, 78, 100, 255); *b = IM_COL32(120, 130, 160, 255); break;
     }
 }
@@ -1703,7 +1703,9 @@ static void seed_nav_here();
 static bool g_suppress_click = false;   // set by shelf_strip while a drag-pan is in progress / just ended
 
 struct TileSpec {
-    std::string id, title, subtitle, badge;
+    std::string id, title, subtitle, badge;   // badge: system pill (empty inside a console section)
+    std::string tag, tag_tip;                 // subtle state tag ("ZIP", "NATIVE", ...) + hover explanation
+    bool tag_warn = false;                    // tint the tag as a warning (needs keys / encrypted)
     ImU32 c0 = 0, c1 = 0;
     ArtRef art;
     bool favorite = false, online = false, selected = false, owned = true, show_star = true;
@@ -1779,7 +1781,16 @@ static TileResult draw_tile(const TileSpec& t, ImVec2 size) {
     if (e > 0.01f) dl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, (int)(12 * e)), rad);
 
     float pad = sp(1.5f);
-    ui::pill_at(dl, p0 + ImVec2(sp(1.25f), sp(1.25f)), t.badge.c_str(), IM_COL32(0, 0, 0, 150));
+    {
+        ImVec2 bp = p0 + ImVec2(sp(1.25f), sp(1.25f));
+        if (!t.badge.empty()) bp.x += ui::pill_at(dl, bp, t.badge.c_str(), IM_COL32(0, 0, 0, 150)) + sp(0.5f);
+        if (!t.tag.empty()) {   // small corner tag: quiet unless it is a warning
+            float tw2 = ui::pill_at(dl, bp, t.tag.c_str(), IM_COL32(0, 0, 0, t.tag_warn ? 170 : 120), t.tag_warn ? ui::WARN : IM_COL32(255, 255, 255, 190));
+            ImVec2 mp = io.MousePos;
+            if (item_hov && !t.tag_tip.empty() && mp.x >= bp.x && mp.x <= bp.x + tw2 && mp.y >= bp.y && mp.y <= bp.y + ui::F.cap->FontSize + sp(1.f))
+                ImGui::SetTooltip("%s", t.tag_tip.c_str());
+        }
+    }
     if (t.show_star && t.owned && (t.favorite || e > 0.04f || star_hov)) {
         float sa = t.favorite ? 1.f : std::max(e, star_hov ? 1.f : 0.f);
         dl->AddCircleFilled(sc, sr + sp(0.5f), IM_COL32(0, 0, 0, (int)((star_hov ? 150 : 100) * sa)), 24);
@@ -1791,11 +1802,13 @@ static TileResult draw_tile(const TileSpec& t, ImVec2 size) {
     ImFont* tf = ui::F.bold;
     float tfs = tf->FontSize, cap = ui::F.cap->FontSize;
     float maxw = w - pad * 2 - (t.online && t.owned ? sp(2.5f) : 0);
-    std::vector<std::string> lines = ui::wrap_lines(tf, tfs, t.title, w - pad * 2, 2);
+    // one line, ellipsized, so every card in a row has its title and year on the same lines (full title on hover)
+    std::string title_line = ui::ellipsize(tf, tfs, t.title, w - pad * 2);
     float sub_y = p1.y - sp(1.25f) - cap;
-    float ty = sub_y - sp(0.375f) - (float)lines.size() * tfs * 1.12f;
-    for (size_t i = 0; i < lines.size(); ++i)
-        ui::text_shadowed(dl, tf, tfs, ImVec2(p0.x + pad, ty + i * tfs * 1.12f), IM_COL32_WHITE, lines[i].c_str());
+    float ty = sub_y - sp(0.375f) - tfs * 1.12f;
+    ui::text_shadowed(dl, tf, tfs, ImVec2(p0.x + pad, ty), IM_COL32_WHITE, title_line.c_str());
+    if (title_line != t.title && item_hov && t.tag_tip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) &&
+        !(io.MousePos.y < p0.y + sp(4.f))) ImGui::SetTooltip("%s", t.title.c_str());
     std::string sub = ui::ellipsize(ui::F.cap, cap, t.subtitle, maxw);
     dl->AddText(ui::F.cap, cap, ImVec2(p0.x + pad, sub_y), IM_COL32(255, 255, 255, 190), sub.c_str());
     if (t.online && t.owned) ui::icon(dl, ui::Icon::Globe, ImVec2(p1.x - pad - sp(1), sub_y + cap * 0.5f), sp(2), ui::GOOD);
@@ -1816,15 +1829,15 @@ static TileResult draw_tile(const TileSpec& t, ImVec2 size) {
     return r;
 }
 
-static TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_sub) {
+static TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_sub, bool show_sys = true) {
     TileSpec t;
     t.id = std::string(shelf) + "|" + e.key;
     t.title = e.title;
-    t.badge = sys_badge(e.system);
-    if (is_native(e)) t.badge += " NATIVE";
-    if (e.issue == "extract") t.badge += " ZIPPED";
-    else if (e.issue == "encrypted") t.badge += " ENCRYPTED";
-    else if (e.issue == "keys") t.badge += " NEEDS KEYS";
+    if (show_sys) t.badge = sys_badge(e.system);   // inside a console section the header already says it
+    if (is_native(e)) t.tag = "NATIVE";
+    if (e.issue == "extract") { t.tag = "ZIP"; t.tag_tip = "Zipped - RetroHub unpacks it the first time you play"; }
+    else if (e.issue == "encrypted") { t.tag = "ENCRYPTED"; t.tag_warn = true; t.tag_tip = "Encrypted dump - it needs decrypting before it can run"; }
+    else if (e.issue == "keys") { t.tag = "NEEDS KEYS"; t.tag_warn = true; t.tag_tip = "Needs decryption keys (see the 3DS setup dialog)"; }
     entry_colors(e, &t.c0, &t.c1);
     t.art = art_for_entry(e);
     const hub::GameState& gs = gstate(e.key);
@@ -1856,7 +1869,11 @@ static void handle_entry_result(const hub::GameEntry& e, const TileSpec& spec, c
 
 /* ---------- shelves ---------- */
 
-static void shelf_header(const char* title, const std::string& right, float bleed, int count = -1, bool* link_clicked = nullptr) {
+/* Arrow buttons that scroll an overflowing shelf live in the header row (right edge), never over the covers. */
+static float shelf_arrow_size() { return sp(3.25f); }
+static float shelf_arrows_w() { return shelf_arrow_size() * 2 + sp(0.5f); }
+
+static void shelf_header(const char* title, const std::string& right, float bleed, int count = -1, bool* link_clicked = nullptr, bool arrows = false) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1867,21 +1884,22 @@ static void shelf_header(const char* title, const std::string& right, float blee
         char c[16];
         std::snprintf(c, sizeof c, "%d", count);
         ImFont* cf = ui::F.cap;
-        dl->AddText(cf, cf->FontSize, ImVec2(p.x + bleed + tw + sp(1.25f), p.y + f->FontSize - cf->FontSize - sp(0.25f)), ui::TEXT2, c);
+        dl->AddText(cf, cf->FontSize, ImVec2(p.x + bleed + tw + sp(1.25f), p.y + f->FontSize - cf->FontSize - sp(0.25f)), ui::TEXT2, c);   // ~7:1 on BG
     }
     if (!right.empty()) {
-        ImVec2 ts = ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, right.c_str());
-        ImVec2 tp(p.x + w - bleed - ts.x, p.y + f->FontSize - ts.y - sp(0.25f));
-        ImU32 col = ui::TEXT3;
+        ImFont* rf = ui::F.body;
+        ImVec2 ts = rf->CalcTextSizeA(rf->FontSize, FLT_MAX, 0.f, right.c_str());
+        ImVec2 tp(p.x + w - bleed - ts.x - (arrows ? shelf_arrows_w() + sp(1.5f) : 0.f), p.y + f->FontSize - ts.y - sp(0.125f));
+        ImU32 col = ui::TEXT2;
         if (link_clicked) {   // the right label is a link ("See all")
             ImGui::SetCursorScreenPos(ImVec2(tp.x - sp(1.f), p.y));
             ImGui::PushID(title);
             *link_clicked = ImGui::InvisibleButton("##see_all", ImVec2(ts.x + sp(2.f), f->FontSize + sp(0.5f)), ImGuiButtonFlags_EnableNav);
             ImGui::PopID();
-            if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) col = ui::ACCENT;
+            if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) col = ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.35f);
             ImGui::SetCursorScreenPos(p);
         }
-        dl->AddText(ui::F.cap, ui::F.cap->FontSize, tp, col, right.c_str());
+        dl->AddText(rf, rf->FontSize, tp, col, right.c_str());
     }
     ImGui::Dummy(ImVec2(w, f->FontSize + sp(1.25f)));
 }
@@ -1926,11 +1944,12 @@ static void shelf_strip(const std::string& id, int count, float tw, float th, co
     ss.gap = gap;
     ss.frame = ImGui::GetFrameCount();
 
-    // arrow buttons: always shown while the row overflows
-    float bs = sp(4.5f), by = org.y + sp(1.5f) + th * 0.5f - bs * 0.5f;
-    ImVec2 la(org.x + sp(0.5f), by), ra(v1.x - bs - sp(0.5f), by);
-    auto in_box = [&](ImVec2 p, ImVec2 q) { return io.MousePos.x >= p.x && io.MousePos.x < p.x + q.x && io.MousePos.y >= p.y && io.MousePos.y < p.y + q.y; };
-    bool over_arrow = max_scroll > 0 && (in_box(la, ImVec2(bs, bs)) || in_box(ra, ImVec2(bs, bs)));
+    // arrow buttons: in the header row (right edge) while the row overflows, so they never cover a cover
+    float bs = shelf_arrow_size();
+    float hdr_h = ui::F.h2->FontSize + sp(1.25f);
+    float by = org.y - hdr_h + (ui::F.h2->FontSize - bs) * 0.5f + sp(0.3f);
+    ImVec2 la(v1.x - bleed - shelf_arrows_w(), by), ra(v1.x - bleed - bs, by);
+    bool over_arrow = false;   // arrows are outside the strip, so a press on a tile is never an arrow press
 
     bool hov = ImGui::IsMouseHoveringRect(c0, c1) && ImGui::IsWindowHovered();
     // click-and-drag panning (a press that moves past the threshold becomes a drag; a plain click is untouched)
@@ -2018,7 +2037,8 @@ static void home_shelves() {
         const hubui::Shelf& sh = A.shelves[si];
         bool is_console = sh.id.compare(0, 8, "console:") == 0 && sh.id != "console:other";   // unknown systems have no filter chip
         bool see_all = false;
-        shelf_header(sh.title.c_str(), is_console ? "See all" : "", bleed, (int)sh.items.size(), is_console ? &see_all : nullptr);
+        bool overflow = hubui::shelf_max_scroll((int)sh.items.size(), tw, gap, bleed, avail) > 0;
+        shelf_header(sh.title.c_str(), is_console ? "See all" : "", bleed, (int)sh.items.size(), is_console ? &see_all : nullptr, overflow);
         if (see_all) {   // jump to All Games filtered to this console
             A.view = LibView::All;
             A.sys_filter = sh.id.substr(8);
@@ -2030,7 +2050,7 @@ static void home_shelves() {
         bool recent = sh.id == "recent";
         shelf_strip("shelf_" + sh.id, (int)sh.items.size(), tw, th, [&](int i, ImVec2 sz) {
             const hub::GameEntry& e = A.lib[sh.items[i]];
-            TileSpec spec = spec_for_entry(e, sh.id.c_str(), recent);
+            TileSpec spec = spec_for_entry(e, sh.id.c_str(), recent, !is_console);
             TileResult r = draw_tile(spec, sz);
             handle_entry_result(e, spec, r);
             return r;
@@ -2046,7 +2066,8 @@ static void home_shelves() {
     }
     if (!A.pick_idx.empty() && A.picks_open) {
         const std::vector<GameInfo>& cat = hub::catalog();
-        shelf_header("Top Picks You Don't Have Yet", "add the ROM to a ROM folder", bleed, (int)A.pick_idx.size());
+        shelf_header("Top Picks You Don't Have Yet", "add the ROM to a ROM folder", bleed, (int)A.pick_idx.size(), nullptr,
+                     hubui::shelf_max_scroll((int)A.pick_idx.size(), tw, gap, bleed, avail) > 0);
         shelf_strip("shelf_picks", (int)A.pick_idx.size(), tw, th, [&](int i, ImVec2 sz) {
             const GameInfo& g = cat[A.pick_idx[i]];
             TileSpec t;
@@ -2066,7 +2087,7 @@ static void home_shelves() {
         });
         ImGui::Dummy(ImVec2(0, sp(1.f)));
     }
-    ImGui::Dummy(ImVec2(0, sp(3.f)));
+    ImGui::Dummy(ImVec2(0, sp(7.f)));   // room so the last shelf's covers clear the footer when scrolled to the end
 }
 
 /* ---------- hero ---------- */
@@ -2132,9 +2153,9 @@ static void draw_hero(const hub::GameEntry& e, float h) {
 
     ui::shadow(dl, p0, p1, rad, 1.3f);
     gradient_round_rect(dl, p0, p1, mix(c0, ui::BG, 0.68f), mix(c1, ui::BG, 0.78f), rad);
-    if (art.tex) ui::draw_art_bg(dl, art.tex, art.w, art.h, p0, p1, rad, 0.27f, ha);
-    ui::hfade_round_rect(dl, p0, p1, IM_COL32(14, 15, 20, 255), rad, 0, 0.94f, 0.30f);
-    ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.5f), p1, IM_COL32(14, 15, 20, 255), rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.55f);
+    if (art.tex) ui::draw_art_bg(dl, art.tex, art.w, art.h, p0, p1, rad, 0.20f, ha);
+    ui::hfade_round_rect(dl, p0, p1, IM_COL32(14, 15, 20, 255), rad, 0, 0.96f, 0.66f);
+    ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.4f), p1, IM_COL32(14, 15, 20, 255), rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.6f);
     dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
 
     float pad = compact ? sp(2.5f) : sp(3.f), bh = compact ? sp(5.f) : sp(6.f);
@@ -2439,7 +2460,8 @@ static void all_games_view() {
     float bar_h = sel ? sp(8.f) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.5f)));
     if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; }
-    ImGui::BeginChild("grid", ImVec2(0, -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() - sp(1.5f));   // the grid's padding is the cover inset: first cover lines up with the chips
+    ImGui::BeginChild("grid", ImVec2(ImGui::GetContentRegionAvail().x + sp(1.5f), -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
     A.page_scrollable = true;
     if (A.vis.empty()) {
@@ -2470,7 +2492,7 @@ static void all_games_view() {
             for (size_t k = 0; k < sec.items.size(); ++k) {
                 if (k % gl.cols) ImGui::SameLine();
                 const hub::GameEntry& e = A.lib[sec.items[k]];
-                TileSpec spec = spec_for_entry(e, "grid", false);
+                TileSpec spec = spec_for_entry(e, "grid", false, sec.system == "other");
                 TileResult r = draw_tile(spec, sz);
                 handle_entry_result(e, spec, r);
             }
@@ -2709,11 +2731,15 @@ static void page_library() {
         if (A.hero_key != sel->key) { A.hero_key = sel->key; A.hero_t = 0.f; }
         ui::anim(A.hero_t, 1.f, 9.f);
         float avail_h = ImGui::GetContentRegionAvail().y;
-        float hero_h = std::max(sp(23.5f), std::min(sp(40.f), avail_h * 0.38f));
+        float hero_h = std::min(sp(40.f), std::max(sp(21.f), std::min(avail_h * 0.36f, ImGui::GetIO().DisplaySize.y * 0.25f)));   // <= a quarter of the window
         draw_hero(*sel, hero_h);
     }
+    /* The shelf strips inset their covers by `bleed` (room for the hover grow); pull the child out by the same amount so
+     * headers and the first cover start on the same left edge as the hero and the top bar. */
+    const float lib_bleed = sp(1.5f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() - lib_bleed);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::BeginChild("shelves", ImVec2(0, 0), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+    ImGui::BeginChild("shelves", ImVec2(ImGui::GetContentRegionAvail().x + lib_bleed, 0), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
     ImGui::PopStyleVar();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(2.f), 0));
     A.page_scrollable = ImGui::GetScrollMaxY() > 0;
