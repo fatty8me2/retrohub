@@ -29,7 +29,8 @@ struct GameEntry {
     System system = System::Unknown;
     std::string title;        // header title, prettified; falls back to file name
     std::string serial;       // N64 game ID (0x3B), GBA game code (0xAC), GC disc ID; "" if none
-    std::string path;         // absolute UTF-8 path
+    std::string path;         // absolute UTF-8 path (for a zipped ROM: the extracted copy under rom-cache\)
+    std::string save_stem;    // "" = stem of path. Set for a zipped ROM: the inner entry's stem (DS saves are <stem>.srm)
     uint64_t size = 0;
     std::string catalog_id;   // games.h catalog id when known (e.g. "mp1"), else ""
     std::string issue;        // "" ok | "extract" zipped 3DS image Azahar cannot open | "encrypted" 3DS image needing AES keys |

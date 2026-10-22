@@ -337,6 +337,7 @@ struct Toast {
     std::string text;
     ImU32 col = 0;
     double t0 = 0, until = 0;
+    bool top = false;   // stacks from the top edge instead of the bottom (keeps the chat input clear)
 };
 /* Smooth horizontal scroll state of one shelf. */
 struct ShelfState {
@@ -488,13 +489,13 @@ struct App {
 
 static bool g_headless = false;   // HUB_SCREENSHOT run: never launch games or touch the lobby
 
-static void push_toast(const std::string& s, ImU32 col, double secs = 6.0) {
+static void push_toast(const std::string& s, ImU32 col, double secs = 6.0, bool top = false) {
     double now = ImGui::GetTime();
     if (!A.toasts.empty() && A.toasts.back().text == s && A.toasts.back().until > now) {   // same message again: just extend it
         A.toasts.back().until = now + secs;
         return;
     }
-    A.toasts.push_back({s, col, now, now + std::min(secs, 14.0)});
+    A.toasts.push_back({s, col, now, now + std::min(secs, 14.0), top});
     if (A.toasts.size() > 4) A.toasts.erase(A.toasts.begin());
 }
 static void set_notice(const std::string& s, double secs = 8.0) { push_toast(s, ui::WARN, secs); }
@@ -873,6 +874,11 @@ static std::string title_arg(const std::string& game_title) {
     return " --title " + quote(t + " \xE2\x80\x94 RetroHub");
 }
 
+/* retrorun names the DS save <stem>.srm after the ROM file. A zipped ROM is extracted as rom.<ext>, so pass the inner name's stem. */
+static std::string save_stem_arg(const hub::GameEntry& e) {
+    return e.save_stem.empty() ? std::string() : " --save-stem " + quote(e.save_stem);
+}
+
 /* Pre-write the Dolphin INI keys the hub relies on (merged into whatever is already there).
  * Per-launch settings (fullscreen, memory-card folder) go on the command line with -C. */
 static void prepare_dolphin(const std::string& userdir) {
@@ -1200,7 +1206,7 @@ static void play_entry(const hub::GameEntry& e) {
             std::string core = find_core(e.system == hub::System::GBA ? "mgba" : A.st.gb_core);
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title);
+                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e);
             if (A.st.fullscreen) args += " --fullscreen";
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
@@ -1209,7 +1215,7 @@ static void play_entry(const hub::GameEntry& e) {
             std::string core = find_core("melondsds");
             if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + title_arg(e.title);
+                               " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e);
             if (A.st.fullscreen) args += " --fullscreen";
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
@@ -1322,7 +1328,7 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
         remove_tree(tmp);
         make_dirs(tmp);
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
-                           " --state-dir " + quote(tmp) + net + title_arg(e.title);
+                           " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e);
         if (A.st.fullscreen) args += " --fullscreen";
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
@@ -1460,7 +1466,7 @@ static void lobby_tick() {
             bool me = A.lobby.my_slot() == 0;
             A.chat.push_back({"", hubui::host_changed_text(ev.name, me)});
             A.chat_scroll = true;
-            push_toast(hubui::host_changed_text(ev.name, me), ui::GOOD, 8.0);
+            push_toast(hubui::host_changed_text(ev.name, me), ui::GOOD, 8.0, /*top=*/true);
             continue;
         }
         int from = ev.from_slot;
@@ -2896,7 +2902,8 @@ static void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
         std::string theirs = p->app.empty() ? "version unknown" : hubui::app_version_label(p->app);
         bool differs = p->app.empty() || hubui::compare_app_versions(p->app, HUB_VERSION_STR) != 0;
         ImVec2 ts = ImGui::CalcTextSize(theirs.c_str());
-        dl->AddText(ImVec2(p1.x - ts.x - 14 * S, p1.y - ts.y - 10 * S), differs ? COL_BAD : ui::TEXT2, theirs.c_str());
+        /* Right-aligned in the gap between the local-player controls and the console chips (which start at y=88). */
+        dl->AddText(ImVec2(p1.x - ts.x - 14 * S, p0.y + 68 * S), differs ? COL_BAD : ui::TEXT2, theirs.c_str());
     }
     {   // local players (1-2 controllers on this PC)
         int n = locals_of(slot);
@@ -3926,13 +3933,13 @@ static void draw_update_popup() {
 
 /* ---------- toasts ---------- */
 
-static void draw_toasts(float bottom, float right) {
+static void draw_toasts(float bottom, float right, float top) {
     double now = ImGui::GetTime();
     A.toasts.erase(std::remove_if(A.toasts.begin(), A.toasts.end(), [&](const Toast& t) { return t.until < now; }), A.toasts.end());
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImFont* f = ui::F.body;
-    float fs = f->FontSize, y = bottom;
+    float fs = f->FontSize, y_bot = bottom, y_top = top;
     for (int i = (int)A.toasts.size() - 1; i >= 0; --i) {
         const Toast& t = A.toasts[i];
         float in = (float)std::min(1.0, (now - t.t0) / 0.28), out = (float)std::min(1.0, (t.until - now) / 0.35);
@@ -3944,14 +3951,16 @@ static void draw_toasts(float bottom, float right) {
         for (auto& l : lines) tw = std::max(tw, f->CalcTextSizeA(fs, FLT_MAX, 0.f, l.c_str()).x);
         float w = tw + sp(6.f), h = lines.size() * fs * 1.25f + sp(2.5f);
         float x1 = right + (1.f - in) * sp(5.f);
-        ImVec2 p1(x1, y), p0(x1 - w, y - h);
+        float y0 = t.top ? y_top : y_bot - h;   // top toasts grow downward from the top edge, the rest upward from the bottom
+        ImVec2 p1(x1, y0 + h), p0(x1 - w, y0);
         ui::shadow(dl, p0, p1, sp(1.5f), a);
         dl->AddRectFilled(p0, p1, ui::scale_alpha(ui::PANEL2, a), sp(1.5f));
         dl->AddRect(p0, p1, ui::scale_alpha(ui::HAIRLINE, a), sp(1.5f), 0, 1.f);
         dl->AddRectFilled(ImVec2(p0.x + sp(1.f), p0.y + sp(1.f)), ImVec2(p0.x + sp(1.f) + sp(0.5f), p1.y - sp(1.f)), ui::scale_alpha(t.col, a), sp(0.25f));
         for (size_t k = 0; k < lines.size(); ++k)
             dl->AddText(f, fs, ImVec2(p0.x + sp(3.f), p0.y + sp(1.25f) + k * fs * 1.25f), ui::scale_alpha(ui::TEXT, a), lines[k].c_str());
-        y -= h + sp(1.f);
+        if (t.top) y_top += h + sp(1.f);
+        else y_bot -= h + sp(1.f);
     }
 }
 
@@ -4230,7 +4239,7 @@ static void draw_frame() {
 
     draw_overlays();
     global_input();
-    draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f), view_w - sp(3.f));
+    draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f), view_w - sp(3.f), sp(7.5f));
     ImGui::End();
     fr_draw_panel(io.DisplaySize.x, io.DisplaySize.y);
     fr_draw_toasts(io.DisplaySize.x - (fr_docked ? fr_pw * FR.panel_t : (A.st.show_friends ? fr_pw * FR.panel_t : 0.f)) - sp(2.f), sp(7.5f));
@@ -4363,7 +4372,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             if (const char* hcv = std::getenv("HUB_SHOT_HOSTCHANGE")) {   // screenshot aid: room right after a host change ("me" | "other")
                 g_fake_other_host = std::string(hcv) == "other";
                 std::string nm = g_fake_other_host ? "Mia" : "You";
-                push_toast(hubui::host_changed_text(nm, !g_fake_other_host), ui::GOOD, 60.0);
+                push_toast(hubui::host_changed_text(nm, !g_fake_other_host), ui::GOOD, 60.0, /*top=*/true);
             }
             A.in_room = true;
             A.code = "K7M2QX";

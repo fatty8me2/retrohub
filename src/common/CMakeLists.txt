@@ -10,4 +10,4 @@ target_link_libraries(hubcommon_test PRIVATE hubcommon)
 # Library (multi-system identification, scan, cache, state) test. Optional argv[1]: a real
 # folder to scan and print.
 add_executable(hublibrary_test test_library.cpp)
-target_link_libraries(hublibrary_test PRIVATE hubcommon)
+target_link_libraries(hublibrary_test PRIVATE hubcommon hubminiz)
