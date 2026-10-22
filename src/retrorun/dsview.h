@@ -35,12 +35,30 @@ inline bool pointer_from_window(int mx, int my, const Rect& dst, int* px, int* p
     return true;
 }
 
-/* Screen layouts cycled by F9. Index 0 is the default (a 16:9 window gets the widest picture with side-by-side screens). */
+/* Screen layouts cycled by F9. Index 0 is the default: top screen over the touch screen, the way DS games are designed.
+ * (F9 offers side by side for wide windows, then two layouts with one large screen.) */
 inline const char* layout_name(int i) {
-    static const char* const k[] = {"left-right", "top-bottom", "largescreen-top", "hybrid-top"};
+    static const char* const k[] = {"top-bottom", "left-right", "largescreen-top", "hybrid-top"};
     return k[((i % 4) + 4) % 4];
 }
 inline int layout_count() { return 4; }
+inline int layout_index(const std::string& name) {
+    for (int i = 0; i < layout_count(); ++i)
+        if (name == layout_name(i)) return i;
+    return -1;
+}
+
+/* A stylus press only counts when it began over the frame, so dragging in from outside the window area does not touch. */
+struct StylusLatch {
+    bool prev_down = false, latched = false;
+    /* Idempotent for repeated polls within a frame. */
+    bool update(bool down, bool inside) {
+        if (!down) latched = false;
+        else if (!prev_down) latched = inside;
+        prev_down = down;
+        return down && latched && inside;
+    }
+};
 
 /* Core option defaults retrorun applies for the DS core (melonDS DS). Written into a callback so the test can
  * inspect them without a Core. User ini / --opt values are applied afterwards and win. */
@@ -49,7 +67,7 @@ template <class F> void for_each_default_option(F&& f) {
     f("melonds_console_mode", "ds");                // DSi-enhanced carts (Black/White) run in DS mode: no DSi BIOS/NAND needed
     f("melonds_sysfile_mode", "builtin");           // FreeBIOS + generated firmware: no user BIOS files
     f("melonds_boot_mode", "direct");
-    f("melonds_screen_layout1", layout_name(0));
+    f("melonds_screen_layout1", layout_name(0));   // top-bottom
     f("melonds_number_of_screen_layouts", "1");
     f("melonds_show_cursor", "disabled");           // the OS cursor is the stylus
     f("melonds_touch_mode", "touch");
@@ -61,6 +79,22 @@ template <class F> void for_each_default_option(F&& f) {
     f("melonds_show_bios_warnings", "disabled");
     f("melonds_show_unsupported_features", "disabled");
     f("melonds_start_time_mode", "real");           // the RTC follows the PC clock (Pokemon day/night, events)
+}
+
+/* Options retrorun sets or changes at run time, with a value each must accept (checked against the loaded core). */
+struct ReqOpt { const char* key; const char* value; };
+inline const ReqOpt* required_options(int* n) {
+    static const ReqOpt k[] = {
+        {"melonds_screen_layout1", "top-bottom"}, {"melonds_screen_layout1", "left-right"},
+        {"melonds_screen_layout1", "largescreen-top"}, {"melonds_screen_layout1", "hybrid-top"},
+        {"melonds_number_of_screen_layouts", "1"}, {"melonds_touch_mode", "touch"},
+        {"melonds_render_mode", "software"}, {"melonds_console_mode", "ds"}, {"melonds_sysfile_mode", "builtin"},
+        {"melonds_show_cursor", "always"}, {"melonds_show_cursor", "disabled"}, {"melonds_battery_update_interval", "1"},
+        {"melonds_homebrew_sdcard", "disabled"}, {"melonds_dsi_sdcard", "disabled"}, {"melonds_network_mode", "disabled"},
+        {"melonds_mic_input", "silence"}, {"melonds_start_time_mode", "real"},
+    };
+    *n = (int)(sizeof k / sizeof k[0]);
+    return k;
 }
 
 } // namespace dsview
