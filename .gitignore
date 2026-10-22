@@ -17,3 +17,7 @@ qa/**/*.srm
 qa/**/*.gba
 qa/**/*.gb
 qa/**/*.gbc
+
+# Screenshots: may show the local profile name and friend data; keep out of git
+shots/*.png
+shots/*.bmp
