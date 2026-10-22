@@ -1,4 +1,4 @@
-add_library(hubcommon STATIC games.cpp library.cpp)
+add_library(hubcommon STATIC games.cpp library.cpp emu_formats.cpp emu_saves.cpp)
 target_include_directories(hubcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcommon PUBLIC cxx_std_17)
 target_link_libraries(hubcommon PRIVATE bcrypt hubminiz)   # hubminiz: defined in src/saves (zipped ROMs)

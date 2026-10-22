@@ -192,14 +192,16 @@ static void test_catalog_integrity() {
         CHECK(!g.id.empty() && !g.title.empty() && !g.system.empty());
         CHECK(!g.nointro.empty());  // cover-art name; may be a base game's name for hacks
         CHECK(ids.insert(g.id).second);  // unique catalog id
-        CHECK(g.system == "n64" || g.system == "gba");
+        CHECK(g.system == "n64" || g.system == "gba" || g.system == "3ds" || g.system == "wiiu");
         CHECK(g.max_players >= 1 && g.max_players <= 4);
         CHECK(!g.online || g.max_players >= 2);  // online only makes sense for multiplayer
         for (const auto& s : g.serials) {
-            CHECK(s.size() == 4);  // N64 game ID / GBA game code
+            CHECK(s.size() == (g.system == "wiiu" ? 16u : 4u));  // N64 game ID / GBA / 3DS game code; Wii U title id
             CHECK(serial_keys.insert(g.system + ":" + lower(s)).second);  // unique per system
         }
         if (g.system == "gba") CHECK(g.engine == Engine::Libretro);
+        if (g.system == "3ds") CHECK(g.engine == Engine::Azahar);
+        if (g.system == "wiiu") CHECK(g.engine == Engine::Cemu);
         if (g.system == "n64" && g.id != "smash64" && g.id != "remix") CHECK(g.engine == Engine::Mupen64Plus);
     }
     CHECK(ids.count("smash64") == 1 && ids.count("mp1") == 1 && ids.count("remix") == 1);

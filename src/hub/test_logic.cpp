@@ -23,13 +23,15 @@ int main() {
     s.sync_states = true;
     s.sync_card_dismissed = true;
     s.smash_save_notice_shown = true;
+    s.cemu_exe = "D:\Wiiu\Cemu.exe";
     Settings t;
     CHECK(settings_from_json(settings_to_json(s), &t));
     CHECK(t.name == s.name && t.rom_folders == s.rom_folders && t.server == s.server);
     CHECK(t.input_delay == 4 && t.last_game == "mp2" && t.smash_exe == s.smash_exe);
     CHECK(t.gb_core == "gambatte" && t.fullscreen && t.sync_folder == s.sync_folder);
-    CHECK(!t.sync_auto && t.sync_states && t.sync_card_dismissed && t.smash_save_notice_shown);
+    CHECK(!t.sync_auto && t.sync_states && t.sync_card_dismissed && t.smash_save_notice_shown && t.cemu_exe == s.cemu_exe);
     Settings u;
+    CHECK(u.cemu_exe.empty());
     CHECK(settings_from_json("{\"input_delay\": 99}", &u) && u.input_delay == 8 && u.delay_auto && u.name.empty());
     CHECK(u.gb_core == "sameboy" && u.sync_auto && !u.sync_states && u.rom_folders.empty() && !u.sync_card_dismissed && !u.smash_save_notice_shown);
     CHECK(!settings_from_json("{bad", &u));

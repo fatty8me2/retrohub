@@ -51,6 +51,8 @@ std::string thumb_repo(const std::string& s) {
     if (s == "gbc") return "Nintendo_-_Game_Boy_Color";
     if (s == "gb") return "Nintendo_-_Game_Boy";
     if (s == "gc") return "Nintendo_-_GameCube";
+    if (s == "3ds") return "Nintendo_-_Nintendo_3DS";
+    if (s == "wiiu") return "Nintendo_-_Wii_U";
     return "";
 }
 
@@ -61,6 +63,7 @@ std::string dat_url(const std::string& s) {
     if (s == "gbc") return std::string(base) + "no-intro/Nintendo%20-%20Game%20Boy%20Color.dat";
     if (s == "gb") return std::string(base) + "no-intro/Nintendo%20-%20Game%20Boy.dat";
     if (s == "gc") return std::string(base) + "redump/Nintendo%20-%20GameCube.dat";
+    if (s == "3ds") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%203DS.dat";
     return "";
 }
 
@@ -198,6 +201,10 @@ static std::string gc_id4(const std::string& serial) {
 static bool serial_equal(const std::string& system, const std::string& a, const std::string& b) {
     if (a.empty() || b.empty()) return false;
     if (system == "gc") return gc_id4(a) == gc_id4(b);
+    if (system == "3ds") {   // no-intro serial "CTR-P-EKJA" vs the 4-char game code "EKJA"
+        std::string ua = upper(a), ub = upper(b);
+        return ua.size() >= ub.size() && (ua.compare(ua.size() - ub.size(), ub.size(), ub) == 0 || ua.find("-" + ub + "-") != std::string::npos);
+    }
     return upper(a) == upper(b);
 }
 

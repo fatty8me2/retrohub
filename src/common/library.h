@@ -11,10 +11,11 @@
 
 namespace hub {
 
-enum class System { Unknown = 0, N64, GBA, GB, GBC, GC };
+enum class System { Unknown = 0, N64, GBA, GB, GBC, GC,
+                    N3DS, WiiU };   // appended: 3DS (Azahar), Wii U (Cemu)
 
 const char* system_name(System s);   // "Nintendo 64", "Game Boy Advance", "Game Boy", "Game Boy Color", "GameCube"
-const char* system_short(System s);  // "n64", "gba", "gb", "gbc", "gc"  (stable; used in keys and paths)
+const char* system_short(System s);  // "n64", "gba", "gb", "gbc", "gc" "3ds" "wiiu"  (stable; used in keys and paths)
 System system_from_short(const std::string& s);
 
 struct GameEntry {
@@ -29,6 +30,8 @@ struct GameEntry {
     std::string path;         // absolute UTF-8 path
     uint64_t size = 0;
     std::string catalog_id;   // games.h catalog id when known (e.g. "mp1"), else ""
+    std::string issue;        // "" ok | "extract" zipped 3DS image Azahar cannot open | "encrypted" 3DS image needing AES keys |
+                              // "keys" Wii U .wud/.wux needing keys.txt
 };
 
 /* Identify one file by extension + header. false if not a recognized game. Cheap:
@@ -41,6 +44,15 @@ bool identify_game(const std::string& path, GameEntry* out);
  * (path + size + mtime), so unchanged files are not re-identified. */
 std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
                                     const std::function<void(int, int)>& progress);
+
+/* Zipped 3DS images (GameEntry::issue == "extract"): Azahar cannot read .zip, so the player may unpack one on request
+ * (never done silently). Target: data_dir()/rom-cache/3ds/<key>/<image name>. */
+std::string extracted_3ds_path(const GameEntry& e);   // the unpacked image if it exists, else ""
+/* progress(done, total) returns false to cancel. On success *out_path is the image. Checks free disk space first. */
+bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint64_t)>& progress,
+                     std::string* out_path, std::string* err);
+std::string extract_3ds_dir(const GameEntry& e);      // where it would go (for the confirm dialog)
+uint64_t zip_3ds_unpacked_size(const GameEntry& e);   // size of the image inside the zip (central directory only), 0 if unknown
 
 /* Per-user library state, persisted to data_dir()/library.json. */
 struct GameState {

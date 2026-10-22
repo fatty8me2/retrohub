@@ -11,6 +11,8 @@
  *                     --save-dir <battery dir> --state-dir <states dir> --resume [--fullscreen]
  *                     [--net ... same flags as n64run; online uses a fresh temp save dir, no --resume]
  *  - GameCube:        Dolphin.exe -b -u <data>\dolphin-user -e <game>  (INI keys written before launch)
+ *  - 3DS:             <data>\emulators\azahar\azahar.exe -f <game>   (src/hub/emulators.cpp; downloaded on demand)
+ *  - Wii U:           Cemu.exe -g <game> -f  (an existing install, else <data>\emulators\cemu with a portable folder)
  *  - Smash (native):  BattleShip.exe --from-hub --no-update-check
  *                     (ALWAYS passed: skips handing back to the hub, and RetroHub's updater is the only one)
  *                     Online, environment variables:
@@ -54,6 +56,7 @@
 #include "art.h"
 #include "updater.h"
 #include "games.h"
+#include "emulators.h"
 #include "library.h"
 #include "logic.h"
 #include "savestore.h"
@@ -300,6 +303,8 @@ static void system_colors(hub::System s, ImU32* a, ImU32* b) {
         case hub::System::GBA: *a = IM_COL32(40, 70, 190, 255); *b = IM_COL32(130, 100, 235, 255); break;
         case hub::System::GBC: *a = IM_COL32(0, 120, 125, 255); *b = IM_COL32(60, 200, 180, 255); break;
         case hub::System::GB: *a = IM_COL32(85, 100, 40, 255); *b = IM_COL32(150, 175, 70, 255); break;
+        case hub::System::N3DS: *a = IM_COL32(170, 25, 55, 255); *b = IM_COL32(235, 90, 105, 255); break;
+        case hub::System::WiiU: *a = IM_COL32(0, 100, 170, 255); *b = IM_COL32(60, 190, 230, 255); break;
         default: *a = IM_COL32(70, 78, 100, 255); *b = IM_COL32(120, 130, 160, 255); break;
     }
 }
@@ -310,6 +315,8 @@ static const char* sys_badge(hub::System s) {
         case hub::System::GBA: return "GBA";
         case hub::System::GBC: return "GBC";
         case hub::System::GB: return "GAME BOY";
+        case hub::System::N3DS: return "3DS";
+        case hub::System::WiiU: return "WII U";
         default: return "?";
     }
 }
@@ -349,6 +356,7 @@ struct RunInfo {
     ULONGLONG start_tick = 0;
     bool track = true;      // record play time / touch the save vault (false for the native Smash port)
     bool online = false;
+    std::function<void()> after_exit;   // runs once when the process ended (3DS/Wii U: copy the emulator save folder into the vault)
 };
 
 /* Background save job (sync / export / import). */
@@ -814,6 +822,7 @@ static void poll_process() {
     GetExitCodeProcess(A.proc, &code);
     CloseHandle(A.proc);
     A.proc = nullptr;
+    if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
     uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
     if (!A.run.key.empty()) {
         if (secs >= 1) hub::record_play(A.run.key, A.run.start_unix, secs);
@@ -1057,6 +1066,82 @@ static RunInfo run_info_for(const hub::GameEntry& e, bool online) {
 }
 
 static void play_entry(const hub::GameEntry& e);
+
+/* ---------- 3DS (Azahar) and Wii U (Cemu): external emulators, see docs/EMULATORS.md ---------- */
+
+static hubemu::Installer EMU;   // download-on-demand job + its dialog state
+
+/* Explicit, confirmed unpacking of a zipped 3DS image (Azahar cannot open .zip files). */
+struct UnzipJob {
+    enum State { Idle, Asking, Working, Failed } state = Idle;
+    std::thread th;
+    std::atomic<bool> done{false}, ok{false}, cancel{false};
+    std::atomic<uint64_t> got{0}, total{0};
+    std::string key, error;
+    std::mutex mu;
+} UNZ;
+
+/* Size of the image inside a zipped 3DS game (read once from the zip's directory). */
+static uint64_t unpacked_size(const hub::GameEntry& e) {
+    static std::map<std::string, uint64_t> cache;
+    auto it = cache.find(e.path);
+    if (it == cache.end()) it = cache.emplace(e.path, hub::zip_3ds_unpacked_size(e)).first;
+    return it->second ? it->second : e.size;
+}
+
+static std::string launch_path_for(const hub::GameEntry& e) {
+    if (e.issue == "extract") return hub::extracted_3ds_path(e);
+    return e.path;
+}
+
+static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery) {
+    hubemu::Kind kind = hubemu::kind_for(e.system);
+    if (e.system == hub::System::N3DS && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {
+        UNZ.key = e.key;
+        UNZ.state = UnzipJob::Asking;
+        return;
+    }
+    hubemu::Install inst = hubemu::find(kind, A.st.cemu_exe, e.path);
+    if (inst.exe.empty()) {   // not installed: ask, download, then start this game
+        EMU.kind = kind;
+        EMU.game_key = e.key;
+        EMU.state = hubemu::Installer::Asking;
+        return;
+    }
+    if (g_headless) { set_notice("Headless test run: launch skipped."); return; }
+    if (kind == hubemu::Kind::Azahar) {
+        if (inst.managed) hubemu::prepare_azahar(inst.dir);
+    } else if (inst.managed) {
+        hubemu::prepare_cemu_managed(inst.dir);
+    }
+    std::string game = launch_path_for(e);
+    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, A.st.fullscreen) : hubemu::cemu_args(game, A.st.fullscreen);
+    if (e.issue == "encrypted") set_notice("This 3DS image is encrypted: Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder).", 12.0);
+    if (e.issue == "keys") set_notice("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua needs no keys.", 12.0);
+    auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
+    RunInfo r = ri;
+    r.after_exit = [sess]() { hubemu::end_session(*sess); };   // emulator save folder -> vault, before the sync runs
+    spawn(inst.exe, args, inst.dir, {}, r);
+}
+
+static void start_unzip(const hub::GameEntry& e) {
+    if (UNZ.th.joinable()) UNZ.th.join();
+    UNZ.done = false;
+    UNZ.ok = false;
+    UNZ.cancel = false;
+    UNZ.got = 0;
+    UNZ.total = unpacked_size(e);
+    UNZ.error.clear();
+    UNZ.state = UnzipJob::Working;
+    hub::GameEntry copy = e;
+    UNZ.th = std::thread([copy]() {
+        std::string out, err;
+        bool ok = hub::extract_3ds_zip(copy, [](uint64_t done, uint64_t total) { UNZ.got = done; UNZ.total = total; return !UNZ.cancel.load(); }, &out, &err);
+        if (!ok) { std::lock_guard<std::mutex> lk(UNZ.mu); UNZ.error = err; }
+        UNZ.ok = ok;
+        UNZ.done = true;
+    });
+}
 static void play_entry(const hub::GameEntry& e) {
     if (A.proc) { set_notice("A game is already running."); return; }
     if (A.job.running) {
@@ -1115,6 +1200,10 @@ static void play_entry(const hub::GameEntry& e) {
             spawn(dol, args, dir_of(dol), {}, ri);
             break;
         }
+        case hub::System::N3DS:
+        case hub::System::WiiU:
+            launch_external(e, ri, battery);
+            break;
         default: set_notice("Unsupported system."); break;
     }
 }
@@ -1655,6 +1744,9 @@ static TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool 
     t.title = e.title;
     t.badge = sys_badge(e.system);
     if (is_native(e)) t.badge += " NATIVE";
+    if (e.issue == "extract") t.badge += " ZIPPED";
+    else if (e.issue == "encrypted") t.badge += " ENCRYPTED";
+    else if (e.issue == "keys") t.badge += " NEEDS KEYS";
     entry_colors(e, &t.c0, &t.c1);
     t.art = art_for_entry(e);
     const hub::GameState& gs = gstate(e.key);
@@ -2073,7 +2165,8 @@ static void empty_library_state() {
     // supported systems
     {
         struct Sy { const char* label; hub::System s; };
-        static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB}};
+        static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB},
+                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}};
         float tot = 0;
         for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
         float x = cx - (tot - sp(0.75f)) * 0.5f;
@@ -2202,7 +2295,8 @@ static void selected_bar(const hub::GameEntry& e) {
 static void all_games_view() {
     // system chips
     struct Chip { const char* label; const char* sys; };
-    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
+    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"},
+                                {"3DS", "3ds"}, {"Wii U", "wiiu"}};
     std::map<std::string, int> counts;
     for (auto& e : A.lib) ++counts[sys_short(e)];
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
@@ -2404,6 +2498,19 @@ static void draw_details_modal() {
     ImGui::TextWrapped("%s", e.path.c_str());
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
+    if (e.issue == "extract") {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+        ImGui::TextWrapped("Zipped: Azahar cannot open .zip files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your zip stays untouched.", unpacked_size(e) / 1073741824.0);
+        ImGui::PopStyleColor();
+    } else if (e.issue == "encrypted") {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+        ImGui::TextWrapped("This 3DS image is encrypted. Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder) to run it.");
+        ImGui::PopStyleColor();
+    } else if (e.issue == "keys") {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+        ImGui::TextWrapped("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua archive needs no keys.");
+        ImGui::PopStyleColor();
+    }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     ImGui::Text("Play time: %s      Last played: %s", hubui::format_play_time(gs.play_seconds).c_str(),
                 gs.last_played ? fmt_time(gs.last_played).c_str() : "never");
@@ -3405,7 +3512,34 @@ static void page_settings() {
     if (ImGui::RadioButton("Gambatte (lighter)", core == 1)) { A.st.gb_core = "gambatte"; mark_dirty(); }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ImGui::Checkbox("Start games fullscreen", &A.st.fullscreen)) mark_dirty();
-    text_wrapped_disabled("Applies to Game Boy and GameCube games. N64 games: press Alt+Enter.");
+    text_wrapped_disabled("Applies to Game Boy, GameCube, 3DS and Wii U games. N64 games: press Alt+Enter.");
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    settings_label("3DS and Wii U emulators");
+    {
+        std::string wiiu_game;
+        for (auto& g : A.lib) if (g.system == hub::System::WiiU) { wiiu_game = g.path; break; }
+        static hubemu::Install az, cm;   // the lookups touch the disk: refresh every 2 s, not every frame
+        static double looked_at = -100;
+        static std::string looked_cemu;
+        if (ImGui::GetTime() - looked_at > 2.0 || looked_cemu != A.st.cemu_exe) {
+            az = hubemu::find(hubemu::Kind::Azahar, "", "");
+            cm = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, wiiu_game);
+            looked_at = ImGui::GetTime();
+            looked_cemu = A.st.cemu_exe;
+        }
+        text_wrapped_disabled("Azahar (3DS): " + (az.exe.empty() ? std::string("not installed - downloads the first time you play a 3DS game (about 42 MB)") : az.exe));
+        text_wrapped_disabled("Cemu (Wii U): " + (cm.exe.empty() ? std::string("not found - downloads the first time you play a Wii U game (about 25 MB)") : cm.exe + "  (" + cm.how + ")"));
+        if (button("Choose Cemu.exe...", ImVec2(0, 0), false, true, ui::Icon::Folder)) {
+            std::string p = pick_path(A.hwnd, false, L"Cemu.exe", L"*.exe");
+            if (!p.empty()) { A.st.cemu_exe = p; mark_dirty(); }
+        }
+        if (!A.st.cemu_exe.empty()) {
+            ImGui::SameLine();
+            if (button("Use automatic", ImVec2(0, 0))) { A.st.cemu_exe.clear(); mark_dirty(); }
+        }
+        text_wrapped_disabled("A Cemu you already have is used as it is: RetroHub never changes its settings or moves its saves; it only copies "
+                              "the game's save folder into the save vault after you play (and restores it into an empty one).");
+    }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("Online input delay");
     ImGui::SetNextItemWidth(sp(40.f));
@@ -3463,6 +3597,115 @@ static void page_settings() {
     ImGui::Dummy(ImVec2(0, sp(2.f)));
 }
 
+/* ---------- 3DS / Wii U emulator download + unzip dialogs ---------- */
+
+static void poll_emulators() {
+    bool success = false;
+    if (EMU.poll(&success)) {
+        if (success) {
+            set_toast(std::string(hubemu::name(EMU.kind)) + " installed.");
+            if (const hub::GameEntry* g = find_entry(EMU.game_key)) { hub::GameEntry copy = *g; play_entry(copy); }
+        }
+    }
+    if (UNZ.state == UnzipJob::Working && UNZ.done) {
+        if (UNZ.th.joinable()) UNZ.th.join();
+        if (UNZ.ok) {
+            UNZ.state = UnzipJob::Idle;
+            set_toast("Unpacked. Starting the game...");
+            if (const hub::GameEntry* g = find_entry(UNZ.key)) { hub::GameEntry copy = *g; play_entry(copy); }
+        } else if (UNZ.error == "cancelled") {
+            UNZ.state = UnzipJob::Idle;
+        } else {
+            UNZ.state = UnzipJob::Failed;
+        }
+    }
+}
+
+static void emu_modal_begin(const char* name, bool* open_flag) {
+    ImGui::OpenPopup(name);
+    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(sp(66.f), ImGui::GetIO().DisplaySize.x * 0.92f), 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
+    *open_flag = ImGui::BeginPopupModal(name, nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+    ImGui::PopStyleVar(2);
+}
+
+static void draw_emulator_dialogs() {
+    if (EMU.state != hubemu::Installer::Idle) {
+        const hubemu::Release& rel = hubemu::release(EMU.kind);
+        std::string nm = hubemu::name(EMU.kind);
+        bool open = false;
+        emu_modal_begin("Emulator download", &open);
+        if (open) {
+            if (EMU.state == hubemu::Installer::Asking) {
+                ImGui::TextWrapped("%s games need the %s emulator (about %d MB download from its official GitHub release, %s). "
+                                   "It is kept inside RetroHub's data folder. Download now?",
+                                   EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
+                ImGui::Dummy(ImVec2(0, 8 * S));
+                if (button("Download", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
+                ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                if (button("Cancel", ImVec2(160 * S, 44 * S))) EMU.state = hubemu::Installer::Idle;
+            } else if (EMU.state == hubemu::Installer::Working) {
+                std::string phases[] = {"Downloading " + nm + "...", "Checking the download...", "Unpacking...", "Installing..."};
+                ImGui::TextUnformatted(phases[std::min(3, (int)EMU.phase)].c_str());
+                uint64_t got = EMU.got, tot = EMU.total;
+                char ov[48];
+                std::snprintf(ov, sizeof ov, "%.1f / %.1f MB", got / 1048576.0, tot / 1048576.0);
+                ImGui::ProgressBar(EMU.phase > 0 ? 1.f : (tot ? (float)got / (float)tot : 0.f), ImVec2(-1, 24 * S), EMU.phase > 0 ? "" : ov);
+                ImGui::TextDisabled("Your game starts as soon as it is ready.");
+            } else {
+                std::string err;
+                { std::lock_guard<std::mutex> lk(EMU.mu); err = EMU.error; }
+                ImGui::TextWrapped("Could not install %s: %s", nm.c_str(), err.c_str());
+                ImGui::Dummy(ImVec2(0, 8 * S));
+                if (button("Close", ImVec2(160 * S, 44 * S), true)) EMU.state = hubemu::Installer::Idle;
+                ImGui::SetItemDefaultFocus();
+            }
+            if (EMU.state == hubemu::Installer::Idle) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+    }
+    if (UNZ.state != UnzipJob::Idle) {
+        bool open = false;
+        emu_modal_begin("Unpack 3DS game", &open);
+        if (open) {
+            const hub::GameEntry* g = find_entry(UNZ.key);
+            if (UNZ.state == UnzipJob::Asking && g) {
+                ImGui::TextWrapped("Azahar cannot open .zip files. Unpack \"%s\" (about %.1f GB) into RetroHub's data folder?", g->title.c_str(),
+                                   unpacked_size(*g) / 1073741824.0);
+                ImGui::Dummy(ImVec2(0, 2 * S));
+                text_wrapped_disabled("The unpacked image goes to " + hub::extract_3ds_dir(*g) + " and needs the same amount of free disk space. "
+                                      "Your zip is left untouched. You can also unpack it yourself into a ROM folder.");
+                ImGui::Dummy(ImVec2(0, 8 * S));
+                if (button("Unpack and play", ImVec2(200 * S, 44 * S), true)) start_unzip(*g);
+                ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                if (button("Cancel", ImVec2(160 * S, 44 * S))) UNZ.state = UnzipJob::Idle;
+            } else if (UNZ.state == UnzipJob::Working) {
+                ImGui::TextUnformatted("Unpacking...");
+                uint64_t got = UNZ.got, tot = UNZ.total;
+                char ov[48];
+                std::snprintf(ov, sizeof ov, "%.2f / %.2f GB", got / 1073741824.0, tot / 1073741824.0);
+                ImGui::ProgressBar(tot ? (float)((double)got / (double)tot) : 0.f, ImVec2(-1, 24 * S), ov);
+                ImGui::Dummy(ImVec2(0, 6 * S));
+                if (button("Cancel", ImVec2(160 * S, 44 * S))) UNZ.cancel = true;
+            } else {
+                std::string err;
+                { std::lock_guard<std::mutex> lk(UNZ.mu); err = UNZ.error; }
+                ImGui::TextWrapped("Could not unpack the game: %s", err.c_str());
+                ImGui::Dummy(ImVec2(0, 8 * S));
+                if (button("Close", ImVec2(160 * S, 44 * S), true)) UNZ.state = UnzipJob::Idle;
+                ImGui::SetItemDefaultFocus();
+            }
+            if (UNZ.state == UnzipJob::Idle) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+    }
+}
+
 /* ---------- Dolphin download dialog + toast ---------- */
 
 static void poll_dolphin() {
@@ -3518,6 +3761,7 @@ static void draw_overlays() {
             ImGui::EndPopup();
         }
     }
+    draw_emulator_dialogs();
     draw_details_modal();
 }
 
@@ -3529,12 +3773,13 @@ static void page_about() {
     ImGui::PopFont();
     ImGui::TextDisabled("Version %s", HUB_VERSION_STR);
     ImGui::Dummy(ImVec2(0, 6 * S));
-    ImGui::TextWrapped("One library for N64, GameCube, Game Boy Advance, Game Boy and Game Boy Color: one-click resume, "
+    ImGui::TextWrapped("One library for N64, GameCube, Wii U, Nintendo 3DS, Game Boy Advance, Game Boy and Game Boy Color: one-click resume, "
                        "room codes, online play, and saves that follow you between PCs.");
     ImGui::Dummy(ImVec2(0, 6 * S));
     text_wrapped_disabled("Smash Classic runs as a native port with rollback netplay. N64 games run in the built-in "
                           "mupen64plus runner and Game Boy games in the built-in libretro runner, both with lockstep input netplay. "
-                          "GameCube games use Dolphin. You supply your own game files; none are included.");
+                          "GameCube games use Dolphin, Nintendo 3DS games use Azahar and Wii U games use Cemu; those emulators are downloaded "
+                          "the first time you need them (or an existing Cemu is used). You supply your own game files; none are included.");
     ImGui::Dummy(ImVec2(0, 6 * S));
     ImGui::Dummy(ImVec2(0, 10 * S));
     ImGui::PushFont(ui::F.h2);
@@ -4038,6 +4283,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     if (shot_path) {   // headless screenshot aids for the friends UI (never any network)
         A.st.show_friends = std::getenv("HUB_SHOT_FRIENDS") != nullptr;
+        if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show a 3DS / Wii U dialog (azahar | cemu | unzip | failed)
+            std::string m = se;
+            if (m == "azahar" || m == "cemu") { EMU.kind = m == "cemu" ? hubemu::Kind::Cemu : hubemu::Kind::Azahar; EMU.state = hubemu::Installer::Asking; }
+            else if (m == "failed") { EMU.kind = hubemu::Kind::Azahar; EMU.error = "checksum mismatch: the download was rejected"; EMU.state = hubemu::Installer::Failed; }
+            else if (m == "unzip") { UNZ.key = A.env_select; UNZ.state = UnzipJob::Asking; }
+        }
         if (std::getenv("HUB_SHOT_FAKE_FRIENDS")) {
             fr_fake_init();
             if (std::getenv("HUB_SHOT_CHAT")) { fr_open_chat("miauid"); FR.chat_unread = 2; }
@@ -4116,6 +4367,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_job();
         run_pending_sync();
         poll_dolphin();
+        poll_emulators();
         lobby_tick();
         fr_tick();
         if (hubupdate::installer_started()) running = false;   // the installer replaces our files and relaunches us
