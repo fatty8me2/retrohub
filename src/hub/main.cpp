@@ -1115,6 +1115,7 @@ struct UnzipJob {
 
 /* Size of the image inside a zipped 3DS game (read once from the zip's directory). */
 static uint64_t unpacked_size(const hub::GameEntry& e) {
+    if (e.system == hub::System::GC) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
     static std::map<std::string, uint64_t> cache;
     auto it = cache.find(e.path);
     if (it == cache.end()) it = cache.emplace(e.path, hub::zip_3ds_unpacked_size(e)).first;

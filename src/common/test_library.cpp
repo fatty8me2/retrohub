@@ -666,12 +666,56 @@ int main(int argc, char** argv) {
         write_file(gdir / "fake.7z", Bytes(64, 'x'));
         CHECK(!identify_game((gdir / "fake.7z").string(), &nt));
 
+        // non-ASCII archive and entry names (tar -tv output encoding), then stamp invalidation
+        {
+            CHECK(!archive_entry_safe("evil\".iso"));
+            fs::path ud = gdir / L"u";
+            fs::create_directories(ud / L"in");
+            Bytes zd = disc;
+            std::memcpy(zd.data(), "GZLE01", 6);
+            write_file(ud / L"in" / L"Zelda ü.iso", zd);
+            fs::path u7 = ud / L"Zelda ü.7z";
+            std::wstring cmd = L"\"\"" + std::wstring(_wgetenv(L"SystemRoot")) + L"\\System32\\tar.exe\" --format 7zip -cf \"" + u7.wstring() +
+                               L"\" -C \"" + (ud / L"in").wstring() + L"\" \"Zelda ü.iso\"\"";
+            _wsystem(cmd.c_str());
+            GameEntry u;
+            CHECK(identify_game(u7.u8string(), &u));
+            CHECK(u.serial == "GZLE01" && u.issue == "extract");
+            std::string uo, ue;
+            CHECK(extract_3ds_zip(u, nullptr, &uo, &ue));
+            {
+                std::ifstream in(fs::u8path(uo), std::ios::binary);
+                Bytes got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                CHECK(got == zd);
+            }
+            CHECK(extracted_3ds_path(u) == uo);
+            // replacing the archive invalidates the unpacked copy
+            fs::last_write_time(u7, fs::file_time_type::clock::now() + std::chrono::hours(1));
+            CHECK(extracted_3ds_path(u).empty());
+            // a truncated image is not trusted either
+            CHECK(extract_3ds_zip(u, nullptr, &uo, &ue) && extracted_3ds_path(u) == uo);
+            { std::ofstream t(fs::u8path(uo), std::ios::binary | std::ios::trunc); t << "x"; }
+            CHECK(extracted_3ds_path(u).empty());
+
+            // two entries that the pattern handed to tar could both match: refused
+            mz_zip_archive az;
+            std::memset(&az, 0, sizeof az);
+            const std::string amb = (gdir / "amb.zip").string();
+            CHECK(mz_zip_writer_init_file(&az, amb.c_str(), 0));
+            CHECK(mz_zip_writer_add_mem(&az, "Zelda \xC3\xBC.iso", zd.data(), zd.size(), MZ_DEFAULT_COMPRESSION));
+            CHECK(mz_zip_writer_add_mem(&az, "Zelda \xC3\xA4.iso", zd.data(), zd.size(), MZ_DEFAULT_COMPRESSION));
+            CHECK(mz_zip_writer_finalize_archive(&az));
+            mz_zip_writer_end(&az);
+            GameEntry am;
+            CHECK(!identify_game(amb, &am));
+        }
+
         // a library scan lists both archives
         std::vector<GameEntry> sc = scan_library({gdir.string()}, nullptr);
         int found = 0;
         for (const auto& g : sc) if (g.system == System::GC && g.issue == "extract") ++found;
-        if (found != 1) for (const auto& g : sc) std::printf("  %s [%s]\n", g.path.c_str(), g.issue.c_str());
-        CHECK(found == 1);   // same disc in .iso, .zip and .7z: listed once
+        if (found != 2) for (const auto& g : sc) std::printf("  %s [%s]\n", g.path.c_str(), g.issue.c_str());
+        CHECK(found == 2);   // Double Dash (.iso, .zip, .7z listed once) + the non-ASCII Zelda
         library_set_data_dir("");
         fs::remove_all(gdir, gec);
     }

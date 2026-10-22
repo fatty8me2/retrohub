@@ -911,7 +911,7 @@ bool archive_entry_safe(const std::string& n) {
     if (n.empty() || n.size() > 260) return false;
     if (n[0] == '/' || n[0] == '\\') return false;
     if (n.size() >= 2 && n[1] == ':') return false;
-    for (unsigned char c : n) if (c < 0x20) return false;
+    for (unsigned char c : n) if (c < 0x20 || c == '"') return false;
     size_t i = 0;
     while (i <= n.size()) {
         size_t j = n.find_first_of("/\\", i);
@@ -1073,10 +1073,37 @@ bool list_archive(const std::string& archive, std::vector<ArchiveEntry>* out) {
 }
 
 /* The disc image inside: first entry with a GameCube image extension and a safe name. */
+bool glob_star(const std::string& pat, size_t pi, const std::string& s, size_t si) {   // '*' only, everything else literal
+    while (pi < pat.size()) {
+        if (pat[pi] == '*') {
+            for (size_t k = si; k <= s.size(); ++k) if (glob_star(pat, pi + 1, s, k)) return true;
+            return false;
+        }
+        if (si >= s.size() || pat[pi] != s[si]) return false;
+        ++pi; ++si;
+    }
+    return si == s.size();
+}
+
+/* What tar_member_arg() asks tar for: the name with every non-ASCII run turned into '*'. */
+std::string member_skeleton(const std::string& name) {
+    std::string r;
+    bool star = false;
+    for (unsigned char c : name) {
+        if (c >= 0x80) { if (!star) r += '*'; star = true; } else { r += (char)c; star = false; }
+    }
+    return r;
+}
+
+/* The member must be unambiguous: exactly one entry in the archive matches the pattern we hand to tar. */
 bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out) {
     for (const auto& a : l) {
         if (!archive_entry_safe(a.name) || a.size < 0x1000) continue;
         if (!is_gc_image_ext(ascii_lower(path_utf8(utf8_path(a.name).extension())))) continue;
+        const std::string pat = member_skeleton(a.name);
+        int matches = 0;
+        for (const auto& b : l) if (glob_star(pat, 0, b.name, 0)) ++matches;
+        if (matches != 1) return false;
         *out = a;
         return true;
     }
@@ -1147,20 +1174,46 @@ static bool id_gc_archive(const fs::path& arch, GameEntry* e) {
     }
     g.path = path_utf8(arch);
     g.issue = "extract";
+    g.unpacked = ent.size;
     *e = std::move(g);
     return true;
 }
 
+/* Stamp written next to the unpacked image: archive size + mtime + image size + entry name. A changed or replaced archive
+ * (or a truncated image) no longer matches, so it is unpacked again. */
+static std::string gc_stamp(const GameEntry& e, uint64_t image_size, const std::string& entry) {
+    std::error_code ec;
+    fs::path a = utf8_path(e.path);
+    uintmax_t sz = fs::file_size(a, ec);
+    auto mt = fs::last_write_time(a, ec).time_since_epoch().count();
+    return std::to_string(sz) + "|" + std::to_string((long long)mt) + "|" + std::to_string(image_size) + "|" + entry;
+}
+
 static std::string gc_extracted_path(const GameEntry& e) {
     std::error_code ec;
-    for (fs::directory_iterator it(gc_unpack_dir(e), ec), end; !ec && it != end; it.increment(ec)) {
+    fs::path dir = gc_unpack_dir(e);
+    std::string stamp;
+    {
+        std::ifstream in(dir / L"stamp.txt", std::ios::binary);
+        if (!in) return "";
+        std::getline(in, stamp);
+    }
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
         std::wstring n = it->path().filename().wstring();
-        if (n.rfind(L"disc.", 0) == 0 && n.find(L".part") == std::wstring::npos) return path_utf8(it->path());
+        if (n.rfind(L"disc.", 0) != 0 || n.find(L".part") != std::wstring::npos) continue;
+        std::vector<std::string> parts;   // size|mtime|image size|entry
+        size_t b = 0;
+        for (int k = 0; k < 3; ++k) { size_t x = stamp.find('|', b); if (x == std::string::npos) return ""; parts.push_back(stamp.substr(b, x - b)); b = x + 1; }
+        uint64_t img = std::strtoull(parts[2].c_str(), nullptr, 10);
+        if (fs::file_size(it->path(), ec) != img || ec) return "";
+        if (gc_stamp(e, img, stamp.substr(b)) != stamp) return "";
+        return path_utf8(it->path());
     }
     return "";
 }
 
 static uint64_t gc_unpacked_size(const GameEntry& e) {
+    if (e.unpacked) return e.unpacked;
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
     return list_archive(e.path, &l) && find_gc_entry(l, &ent) ? ent.size : 0;
@@ -1189,11 +1242,15 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
     if (f == INVALID_HANDLE_VALUE) { *err = "cannot write " + path_utf8(part); return false; }
     HANDLE proc = tar_spawn(L"-xOf " + tar_archive_arg(e.path) + L" " + tar_member_arg(ent.name), f);
     if (!proc) { CloseHandle(f); fs::remove(part, ec); *err = "cannot start tar.exe"; return false; }
-    bool cancelled = false;
+    bool cancelled = false, stalled = false;
+    uint64_t last_size = 0;
+    ULONGLONG last_move = GetTickCount64();
     for (;;) {
         DWORD w = WaitForSingleObject(proc, 150);
         LARGE_INTEGER sz{};
         GetFileSizeEx(f, &sz);
+        if ((uint64_t)sz.QuadPart != last_size) { last_size = (uint64_t)sz.QuadPart; last_move = GetTickCount64(); }
+        else if (w == WAIT_TIMEOUT && GetTickCount64() - last_move > 180000) { stalled = true; TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); break; }
         if (progress && !progress((uint64_t)sz.QuadPart, ent.size)) { cancelled = true; TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); break; }
         if (w != WAIT_TIMEOUT) break;
     }
@@ -1206,11 +1263,16 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
     CloseHandle(f);
     if (cancelled || code != 0 || (uint64_t)sz.QuadPart != ent.size) {
         fs::remove(part, ec);
-        *err = cancelled ? "cancelled" : "extraction failed (disk full or damaged archive)";
+        *err = cancelled ? "cancelled" : stalled ? "extraction stalled (no data for 3 minutes); try again" : "extraction failed (disk full or damaged archive)";
         return false;
     }
     fs::rename(part, final_path, ec);
     if (ec) { *err = "cannot move the unpacked image into place"; return false; }
+    {
+        std::ofstream st(dir / L"stamp.txt", std::ios::binary | std::ios::trunc);
+        st << gc_stamp(e, ent.size, ent.name) << '\n';
+        if (!st) { fs::remove(final_path, ec); *err = "cannot write the unpack record"; return false; }
+    }
     if (out_path) *out_path = path_utf8(final_path);
     return true;
 }
@@ -1712,6 +1774,7 @@ std::unordered_map<std::string, CacheRec> cache_load() {
             r.e.issue = f.str("is");
             r.e.path = f.str("lp").empty() ? path : f.str("lp");
             r.e.save_stem = f.str("ss");
+            r.e.unpacked = (uint64_t)f.num("us");
             {   /* catalog can change between versions: re-match instead of trusting the cache */
                 std::string md5 = (r.e.key.rfind("n64:", 0) == 0) ? r.e.key.substr(4) : std::string();
                 if (const GameInfo* g = find_game_for(f.str("sys"), r.e.serial, md5)) {
@@ -1749,6 +1812,7 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
             o += ",\"is\":"; jw_str(o, r.e.issue);
             o += ",\"lp\":"; jw_str(o, r.e.path);   // launch path (differs for zipped ROMs)
             if (!r.e.save_stem.empty()) { o += ",\"ss\":"; jw_str(o, r.e.save_stem); }
+            if (r.e.unpacked) o += ",\"us\":" + std::to_string(r.e.unpacked);
         }
         o.push_back('}');
     }
@@ -1819,6 +1883,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         std::call_once(cleaned, [] {
             std::error_code ec;
             fs::path rc = lib_dir() / L"rom-cache";
+            fs::remove_all(rc / L"_probe", ec);
             for (fs::recursive_directory_iterator it(rc, ec), end; !ec && it != end; it.increment(ec))
                 if (it->path().extension() == L".part") { std::error_code e2; fs::remove(it->path(), e2); }
         });
