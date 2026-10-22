@@ -54,9 +54,13 @@ The first configure downloads SDL2, Dear ImGui, the mupen64plus headers and mini
 
 RetroHub releases ship inside the Smash Classic package, not as a separate download. The packaging script lives in the Smash Classic repository. It stamps the release version into `VERSION` and builds the package that is published on GitHub. The lobby and friends server is a Cloudflare Worker, and its code also lives in the Smash Classic repository.
 
+## Install (Windows)
+
+Download **[RetroHub-Setup.exe](https://github.com/fatty8me2/smash-classic/releases/latest/download/RetroHub-Setup.exe)** from the latest release and run it. It installs per-user to `%LOCALAPPDATA%\Programs\RetroHub` (no admin needed), adds a Start-menu shortcut and an optional Desktop shortcut. Uninstall from Apps & features; your saves and settings are kept unless you choose to delete them. The portable alternative is `BattleShip-windows.zip` from the same release: extract it anywhere and run `RetroHub.exe`. The in-app updater works for both. Building the setup needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install --id JRSoftware.InnoSetup -e`); `package-windows.ps1` in the Smash Classic repo builds it.
+
 ## Windows SmartScreen warning
 
-RetroHub is not code-signed yet, so Windows SmartScreen may say it "protected your PC" the first time you run it. To continue:
+RetroHub is not code-signed yet, so Windows SmartScreen may say it "protected your PC" the first time you run the setup or RetroHub. To continue:
 
 1. Click **More info**.
 2. Click **Run anyway**.

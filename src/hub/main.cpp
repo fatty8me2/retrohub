@@ -42,6 +42,7 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -4338,6 +4339,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     A.settings_path = hub::data_dir() + "hub.json";
     A.st.server = hubnet::default_server();
     hubui::load_settings(A.settings_path, &A.st);
+    {   // the installer's chosen games folder: merged into rom_folders once, then the hand-off file is removed
+        std::string hand = hub::data_dir() + "installer_games_dir.txt";
+        std::ifstream in(std::filesystem::path(W(hand)), std::ios::binary);
+        if (in) {
+            std::stringstream ss; ss << in.rdbuf(); in.close();
+            if (hubui::merge_installer_games_dir(&A.st, ss.str())) hubui::save_settings(A.settings_path, A.st);
+            std::error_code ec; std::filesystem::remove(std::filesystem::path(W(hand)), ec);
+        }
+    }
     if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0 Library, 1 Online, 2 Saves, 3 Controllers, 4 Settings, 5 About
         int n = std::atoi(pg);
         if (n >= 0 && n <= 5) A.page = static_cast<Page>(n);
