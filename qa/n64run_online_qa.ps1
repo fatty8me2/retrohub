@@ -92,8 +92,9 @@ if (-not (Test-Path $n64) -or -not (Test-Path -LiteralPath $Rom)) {
 Write-Output "== n64run argument checks (must be rejected, never run)"
 $exe = Join-Path $bin 'n64run.exe'
 $cases = @(
-    @{ name = 'gap lobby slots {0,2}: slot 2 of 2 players'; args = '--rom x.z64 --net wss://h --room ABC234-1 --slot 2 --players 2 --ports 0,2,-1,-1'; expect = 'bad --players/--slot' },
-    @{ name = 'ports reference slot >= players';          args = '--rom x.z64 --net wss://h --room ABC234-1 --slot 0 --players 3 --ports 0,2,3,-1'; expect = 'references a slot' },
+    # Sparse slots are legal (--players counts PCs, not the highest slot), so these check the real limits instead.
+    @{ name = 'ports name 2 PCs but --players 1';          args = '--rom x.z64 --net wss://h --room ABC234-1 --slot 2 --players 1 --ports 0,2,-1,-1'; expect = 'bad --players/--slot' },
+    @{ name = 'ports value out of range (slot 4)';         args = '--rom x.z64 --net wss://h --room ABC234-1 --slot 0 --players 2 --ports 0,4,-1,-1'; expect = 'bad --players/--slot' },
     @{ name = 'share-host-save without --net';             args = '--rom x.z64 --share-host-save'; expect = 'needs --net' }
 )
 foreach ($c in $cases) {
