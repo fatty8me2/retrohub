@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <mutex>
@@ -50,6 +51,26 @@ std::string s_latest, s_notes, s_url, s_digest, s_status;
 long long s_size = 0;
 std::mutex s_mu;
 
+/* Every path crosses the Win32 boundary as UTF-16 (the *W APIs and wide
+ * streams). The ANSI (*A) APIs and narrow CRT calls would mangle paths that
+ * contain non-ASCII characters, e.g. a profile folder with an accent. */
+std::wstring W(const std::string& s) {
+    if (s.empty()) return std::wstring();
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+    std::wstring w(n > 0 ? (size_t)n : 0, L'\0');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
+    return w;
+}
+std::string U8(const std::wstring& w) {
+    if (w.empty()) return std::string();
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string s(n > 0 ? (size_t)n : 0, '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), &s[0], n, nullptr, nullptr);
+    return s;
+}
+std::filesystem::path P(const std::string& s) { return std::filesystem::path(W(s)); }
+void rm_file(const std::string& p) { DeleteFileW(W(p).c_str()); }
+
 void set_status(const std::string& s) { std::lock_guard<std::mutex> l(s_mu); s_status = s; }
 
 std::string trim_slash(std::string s) {
@@ -59,8 +80,8 @@ std::string trim_slash(std::string s) {
 
 void ulog(const char* fmt, ...) {
     std::string dir = hub::data_dir() + "logs";
-    CreateDirectoryA(dir.c_str(), nullptr);
-    FILE* f = std::fopen((dir + "\\updater.log").c_str(), "ab");
+    CreateDirectoryW(W(dir).c_str(), nullptr);
+    FILE* f = _wfopen(W(dir + "\\updater.log").c_str(), L"ab");
     if (!f) return;
     char buf[1024];
     va_list ap; va_start(ap, fmt);
@@ -291,10 +312,11 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof(sa); sa.bInheritHandle = TRUE;
     if (!CreatePipe(&rd, &wr, &sa, 0)) return -1;
     SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
-    STARTUPINFOA si{}; si.cb = sizeof(si); si.dwFlags = STARTF_USESTDHANDLES;
+    STARTUPINFOW si{}; si.cb = sizeof(si); si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = wr; si.hStdError = wr;
     PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    std::wstring wcmd = W(cmd);
+    BOOL ok = CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     CloseHandle(wr);
     if (!ok) { CloseHandle(rd); return -1; }
     std::string line; char buf[512]; DWORD got = 0;
@@ -317,7 +339,7 @@ std::string sha256_file(const std::string& path) {
     BCRYPT_ALG_HANDLE alg = nullptr; BCRYPT_HASH_HANDLE hash = nullptr; std::string hex;
     if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return hex;
     if (BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) == 0) {
-        std::ifstream in(path, std::ios::binary);
+        std::ifstream in(P(path), std::ios::binary);
         std::vector<char> buf(1 << 16);
         bool ok = static_cast<bool>(in);
         while (ok && in) {
@@ -336,16 +358,21 @@ std::string sha256_file(const std::string& path) {
     return hex;
 }
 
+/* Growing UTF-16 buffer: long or non-ASCII install paths are not truncated. */
 std::string exe_path() {
-    char path[MAX_PATH];
-    DWORD n = GetModuleFileNameA(nullptr, path, MAX_PATH);
-    return (n > 0 && n < MAX_PATH) ? std::string(path, n) : std::string();
+    std::wstring buf(MAX_PATH, L'\0');
+    for (;;) {
+        DWORD n = GetModuleFileNameW(nullptr, &buf[0], (DWORD)buf.size());
+        if (n == 0) return std::string();
+        if (n < buf.size()) { buf.resize(n); return U8(buf); }
+        buf.resize(buf.size() * 2);
+    }
 }
 
 std::string settings_path() { return hub::data_dir() + "updater.json"; }
 
 std::string read_skipped() {
-    std::ifstream in(settings_path(), std::ios::binary);
+    std::ifstream in(P(settings_path()), std::ios::binary);
     if (!in) return "";
     std::stringstream ss; ss << in.rdbuf();
     JV v;
@@ -556,10 +583,10 @@ void start_update() {
         std::string exeDir = trim_slash(hub::exe_dir());
         if (exePath.empty() || exeDir.empty()) { fail("could not locate the install folder."); return; }
         std::string updatesDir = exeDir + "\\updates";
-        CreateDirectoryA(updatesDir.c_str(), nullptr);
+        CreateDirectoryW(W(updatesDir).c_str(), nullptr);
         std::string zipPath = updatesDir + "\\update.zip";
-        std::remove(zipPath.c_str());
-        std::remove((zipPath + ".started").c_str());
+        rm_file(zipPath);
+        rm_file(zipPath + ".started");
 
         auto onLine = [](const std::string& line) {
             size_t p = line.rfind('%');
@@ -576,30 +603,34 @@ void start_update() {
         };
         ulog("downloading %s", url.c_str());
         if (run_capture("curl -fL -# -m 600 -o \"" + zipPath + "\" \"" + url + "\"", onLine) != 0) {
-            std::remove(zipPath.c_str());
+            rm_file(zipPath);
             fail("download failed.");
             return;
         }
         set_status("Verifying...");
         {
-            std::ifstream in(zipPath, std::ios::binary | std::ios::ate);
+            std::ifstream in(P(zipPath), std::ios::binary | std::ios::ate);
             long long actual = in ? (long long)in.tellg() : -1;
-            if (actual != size) { std::remove(zipPath.c_str()); fail("download was incomplete."); return; }
+            if (actual != size) { rm_file(zipPath); fail("download was incomplete."); return; }
         }
         if (digest.rfind("sha256:", 0) == 0 && sha256_file(zipPath) != digest.substr(7)) {
-            std::remove(zipPath.c_str());
+            rm_file(zipPath);
             fail("download failed verification.");
             return;
         }
         std::string scriptPath = updatesDir + "\\install_update.ps1";
         {
-            std::ofstream script(scriptPath, std::ios::binary | std::ios::trunc);
+            std::ofstream script(P(scriptPath), std::ios::binary | std::ios::trunc);
             script << kInstallerScript;
             if (!script) { fail("could not prepare the installer."); return; }
         }
-        char systemRoot[MAX_PATH] = "C:\\Windows";
-        GetEnvironmentVariableA("SystemRoot", systemRoot, MAX_PATH);
-        std::string cmd = std::string("\"") + systemRoot + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"" +
+        std::wstring systemRoot = L"C:\\Windows";
+        if (DWORD need = GetEnvironmentVariableW(L"SystemRoot", nullptr, 0)) {
+            std::wstring b(need, L'\0');
+            DWORD got = GetEnvironmentVariableW(L"SystemRoot", &b[0], need);
+            if (got > 0 && got < need) { b.resize(got); systemRoot = b; }
+        }
+        std::string cmd = "\"" + U8(systemRoot) + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"" +
                           " -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass" +
                           " -File \"" + scriptPath + "\"" +
                           " -WaitForPid " + std::to_string(GetCurrentProcessId()) +
@@ -607,15 +638,16 @@ void start_update() {
                           " -InstallDir \"" + exeDir + "\"" +
                           " -GamePath \"" + exePath + "\"" +
                           " -Version \"" + version + "\"";
-        STARTUPINFOA si{}; si.cb = sizeof(si);
+        STARTUPINFOW si{}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
         /* Hidden console of its own; break away from our job object (if any) so
          * the installer outlives us, falling back to a plain launch. */
-        std::string cmdBreakaway = cmd;
-        if (!CreateProcessA(nullptr, cmdBreakaway.data(), nullptr, nullptr, FALSE,
-                            CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB, nullptr, exeDir.c_str(), &si, &pi) &&
-            !CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-                            exeDir.c_str(), &si, &pi)) {
+        std::wstring wcmd = W(cmd), wdir = W(exeDir);
+        std::wstring cmdBreakaway = wcmd;
+        if (!CreateProcessW(nullptr, cmdBreakaway.data(), nullptr, nullptr, FALSE,
+                            CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB, nullptr, wdir.c_str(), &si, &pi) &&
+            !CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                            wdir.c_str(), &si, &pi)) {
             fail("could not start the installer.");
             return;
         }
@@ -628,7 +660,7 @@ void start_update() {
         bool started = false;
         for (int i = 0; i < 300 && !started; i++) {   // PowerShell can take a while to cold-start
             Sleep(100);
-            started = GetFileAttributesA(marker.c_str()) != INVALID_FILE_ATTRIBUTES;
+            started = GetFileAttributesW(W(marker).c_str()) != INVALID_FILE_ATTRIBUTES;
         }
         if (!started) { fail("the installer did not start."); return; }
         set_status("Installing " + version + " - RetroHub will restart...");
@@ -644,7 +676,7 @@ void skip_latest() {
     if (v.empty()) return;
     std::string esc;
     for (char c : v) { if (c == '"' || c == '\\') esc += '\\'; esc += c; }
-    std::ofstream out(settings_path(), std::ios::binary | std::ios::trunc);
+    std::ofstream out(P(settings_path()), std::ios::binary | std::ios::trunc);
     if (out) out << "{\"skipped_version\":\"" << esc << "\"}\n";
 }
 
