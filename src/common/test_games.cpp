@@ -74,6 +74,12 @@ static void test_catalog() {
             CHECK(ok);
         }
         CHECK(find_game("smash64")->genre == "Fighting" && find_game("mp2")->genre == "Party");
+        CHECK(find_game("pokegold") && find_game("pokegold")->genre == "RPG");
+        CHECK(find_game("pokered") && find_game("pokered")->system == "gb");
+        /* GB/GBC catalog serials are header manufacturer codes, scoped to the system */
+        const GameInfo* gold = find_game_for("gbc", "AAUE", "");
+        CHECK(gold && gold->id == "pokegold");
+        CHECK(find_game_for("gb", "AAUE", "") == nullptr);
         CHECK(find_game("mk64")->genre == "Racing" && find_game("pokeemerald")->genre == "RPG");
         CHECK(GameInfo().genre.empty());
     }
@@ -192,7 +198,7 @@ static void test_catalog_integrity() {
         CHECK(!g.id.empty() && !g.title.empty() && !g.system.empty());
         CHECK(!g.nointro.empty());  // cover-art name; may be a base game's name for hacks
         CHECK(ids.insert(g.id).second);  // unique catalog id
-        CHECK(g.system == "n64" || g.system == "gba");
+        CHECK(g.system == "n64" || g.system == "gba" || g.system == "gb" || g.system == "gbc");
         CHECK(g.max_players >= 1 && g.max_players <= 4);
         CHECK(!g.online || g.max_players >= 2);  // online only makes sense for multiplayer
         for (const auto& s : g.serials) {
