@@ -37,6 +37,7 @@
 #include "m64p_types.h"
 
 #include "games.h"
+#include "game_settings.h"
 #include "session.h"
 
 #include "headless.h"
@@ -58,7 +59,7 @@ static const char* kUsage =
     "usage: n64run --rom PATH [--game ID] [--net SERVER --room CODE-N --slot K --players N\n"
     "              --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]\n"
     "              [--match SPEC] [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n"
-    "              [--title TEXT] [--fullscreen]\n"
+    "              [--title TEXT] [--fullscreen] [--gfx Key=i|b|s:value]...\n"
     "              [--headless [--frames N] [--screenshot OUT.png] [--dump-ram OFFSET,LEN,FILE]...]\n";
 
 // ---------------------------------------------------------------- logging
@@ -94,6 +95,7 @@ struct Args {
     bool ports_given = false;
     bool strict_sync = false, no_hash = false, share_host_save = false;
     bool fullscreen = false;
+    std::vector<std::string> gfx;   // --gfx Key=t:value (GLideN64 settings from game_settings.h)
     std::string title;   // window caption (UTF-8), from --title; empty = leave the plugin's title
     int width = 960, height = 720;
     bool width_given = false, height_given = false;
@@ -166,6 +168,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--no-hash") a.no_hash = true;
         else if (k == "--fullscreen") a.fullscreen = true;
         else if (k == "--title") ok = val(&a.title);
+        else if (k == "--gfx") { std::string g; hub::gs::GfxParam gp; ok = val(&g) && hub::gs::parse_gfx_arg(g, &gp); if (ok) a.gfx.push_back(g); }
         else if (k == "--test-input") ok = val(&a.test_input);
         else { std::fprintf(stderr, "unknown argument: %s\n", k.c_str()); return false; }
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
@@ -546,6 +549,22 @@ int main(int argc, char** argv) {
         if (!headless_install_vidext(g_core.OverrideVidExt)) { logf_("n64run", "headless: CoreOverrideVidExt failed"); g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr); g_core.Shutdown(); return 3; }
         if (!args.screenshot.empty() && args.frames == 0) headless_set_shot_mode(ShotMode::Periodic);
         g_frame_limit = args.frames;
+    }
+    if (!args.gfx.empty()) {
+        /* Per-game GLideN64 settings, set before the plugin starts (it keeps existing values). Online, the options that
+         * change emulation results (framebuffer emulation) are ignored whatever the caller passed. */
+        m64p_handle gh = nullptr;
+        if (g_core.OpenSection("Video-GLideN64", &gh) == M64ERR_SUCCESS) {
+            for (const std::string& a : args.gfx) {
+                hub::gs::GfxParam gp;
+                if (!hub::gs::parse_gfx_arg(a, &gp)) continue;
+                if (online && hub::gs::n64_key_locked_online(gp.key)) { logf_("n64run", "gfx %s ignored online", gp.key.c_str()); continue; }
+                if (gp.type == 'i') cfg_int(gh, gp.key.c_str(), gp.ival);
+                else if (gp.type == 'b') cfg_bool(gh, gp.key.c_str(), gp.ival);
+                else cfg_str(gh, gp.key.c_str(), gp.sval);
+                logf_("n64run", "gfx %s", a.c_str());
+            }
+        }
     }
     if (!start_plugin(gfx, emu_dir, "mupen64plus-video-GLideN64.dll", "Video") ||
         (!args.headless && !start_plugin(aud, emu_dir, "mupen64plus-audio-sdl.dll", "Audio")) ||

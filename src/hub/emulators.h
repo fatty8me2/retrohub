@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "library.h"
+#include "game_settings.h"
 
 namespace hubemu {
 
@@ -97,6 +98,12 @@ void dolphin_migrate_old(const std::string& data_dir, const std::string& exe_dir
 std::string dolphin_args(const std::string& game_path, bool fullscreen, const std::string& gci_dir);
 /* Where the emulator keeps this game's memory card folder (copied from / to the vault around a session). */
 std::string dolphin_card_root(const std::string& install_dir, const std::string& game_key);
+
+/* ---- per-game settings (game_settings.h): pure patchers + one writer called before launch ---- */
+std::string dolphin_gfx_apply(const std::string& gfx_ini, const hub::gs::Values& v);        // InternalResolution, wideScreenHack
+std::string azahar_config_apply(const std::string& qt_config, const hub::gs::Values& v);    // resolution_factor, layout_option
+std::string cemu_settings_apply(const std::string& settings_xml, const hub::gs::Values& v); // graphic packs on/off (reversible)
+void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::Values& resolved);
 
 /* ---- launch ---- */
 std::string azahar_args(const std::string& game_path, bool fullscreen, const std::string& extra = "");   // extra: e.g. -m "nick@127.0.0.1:port"   // after the exe path
