@@ -480,7 +480,7 @@ const std::vector<GameInfo>& catalog() {
          {"GZLE01", "GZLP01", "GZLJ01"}, false, 2002,
          "Link sails a drowned Hyrule on the King of Red Lions in a cel-shaded adventure.",
          "Legend of Zelda, The - The Wind Waker (USA)"},
-        {"gc_tp", "Zelda: Twilight Princess", Engine::Dolphin, 1, {}, "", "gc",
+        {"gc_tp", "The Legend of Zelda: Twilight Princess (GameCube)", Engine::Dolphin, 1, {}, "", "gc",
          {"GZ2E01", "GZ2P01", "GZ2J01"}, false, 2006,
          "Link shifts between Hyrule and the Twilight Realm as a wolf and a hero.",
          "Legend of Zelda, The - Twilight Princess (USA)"},

@@ -549,6 +549,13 @@ int main(int argc, char** argv) {
     CHECK(system_from_short("gbc") == System::GBC && std::string(system_short(System::GC)) == "gc");
     CHECK(std::string(system_name(System::GBA)) == "Game Boy Advance");
 
+    // dedupe: an unzipped copy beats a zipped/7z copy of the same game; otherwise first wins
+    CHECK(dedupe_prefers("D:/roms/a.z64", "D:/roms/a.zip"));
+    CHECK(dedupe_prefers("D:/roms/a.gba", "D:/roms/b.7z"));
+    CHECK(!dedupe_prefers("D:/roms/a.zip", "D:/roms/a.z64"));
+    CHECK(!dedupe_prefers("D:/roms/a.z64", "D:/roms/b.n64"));
+    CHECK(!dedupe_prefers("D:/roms/a.zip", "D:/roms/b.7z"));
+
     test_identify(dir);
     test_long_zip(dir);
     test_scan_cache_state(dir);
@@ -710,12 +717,18 @@ int main(int argc, char** argv) {
             CHECK(!identify_game(amb, &am));
         }
 
-        // a library scan lists both archives
+        // a library scan lists one card per game: Double Dash (.iso, .zip, .7z) and the non-ASCII Zelda;
+        // the unzipped .iso copy is the one listed (dedupe_prefers)
         std::vector<GameEntry> sc = scan_library({gdir.string()}, nullptr);
-        int found = 0;
-        for (const auto& g : sc) if (g.system == System::GC && g.issue == "extract") ++found;
-        if (found != 2) for (const auto& g : sc) std::printf("  %s [%s]\n", g.path.c_str(), g.issue.c_str());
-        CHECK(found == 2);   // Double Dash (.iso, .zip, .7z listed once) + the non-ASCII Zelda
+        int gc_cards = 0, unzipped = 0;
+        for (const auto& g : sc) {
+            if (g.system != System::GC) continue;
+            ++gc_cards;
+            if (fs::path(g.path).extension() == ".iso") ++unzipped;
+        }
+        if (gc_cards != 2 || unzipped != 2) for (const auto& g : sc) std::printf("  %s [%s]\n", g.path.c_str(), g.issue.c_str());
+        CHECK(gc_cards == 2);   // Double Dash (listed once) + the non-ASCII Zelda
+        CHECK(unzipped == 2);   // both cards point at the unzipped image, not the archive
         library_set_data_dir("");
         fs::remove_all(gdir, gec);
     }
