@@ -80,8 +80,29 @@ void page_saves() {
     ImGui::Dummy(ImVec2(0, 4 * S));
     if (ImGui::Checkbox("Sync automatically after playing", &A.st.sync_auto)) mark_dirty();
     if (ImGui::Checkbox("Include save states (bigger)", &A.st.sync_states)) mark_dirty();
+    ImGui::Dummy(ImVec2(0, 4 * S));
+    if (ImGui::Checkbox("Cloud saves", &A.st.cloud_saves)) {
+        mark_dirty();
+        A.cloud_probed = false;
+        A.cloud_stat_known = false;
+        A.cloud_stat = hub::saves::CloudStatus();
+    }
+    text_wrapped_disabled("Sync saves through your RetroHub account - no OneDrive needed");
+    if (A.st.cloud_saves) {
+        if (!A.cloud_probed && !busy) start_cloud_probe();
+        std::string line;
+        if (!A.cloud_stat_known) line = "Checking cloud saves...";
+        else if (A.cloud_stat.unavailable) line = "Cloud saves aren't available on the server yet";
+        else if (A.cloud_stat.enabled) {
+            char b[160];
+            std::snprintf(b, sizeof b, "%d files, %.1f of %.0f MB", A.cloud_stat.files,
+                          A.cloud_stat.used / 1048576.0, A.cloud_stat.quota / 1048576.0);
+            line = b;
+        } else line = "Cloud saves: " + (A.cloud_stat.error.empty() ? std::string("could not reach the server") : A.cloud_stat.error);
+        text_wrapped_disabled(line.c_str());
+    }
     ImGui::Dummy(ImVec2(0, 2 * S));
-    bool can_sync = !A.st.sync_folder.empty() && !busy && !A.proc;
+    bool can_sync = sync_enabled() && !busy && !A.proc;
     if (button(busy && A.job.kind == SaveJob::Sync ? "Syncing..." : "Sync now", ImVec2(180 * S, 46 * S), true, can_sync)) start_sync(true);
     if (A.proc && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("A game is running. Saves sync automatically when it closes.");

@@ -7,6 +7,36 @@ void set_toast(const std::string& s, bool good, double secs) {
 }
 
 
+/* Cloud config from the friends identity. The Worker is reached over https; server_url() is the wss:// lobby URL. */
+static hub::saves::CloudConfig cloud_config() {
+    hub::saves::CloudConfig c;
+    std::string base = server_url();
+    if (base.rfind("wss://", 0) == 0) base = "https://" + base.substr(6);
+    else if (base.rfind("ws://", 0) == 0) base = "http://" + base.substr(5);
+    c.base_url = base;
+    hubnet::Identity id = hubnet::identity_load_or_create(hub::data_dir(), hub::saves::vault_dir());
+    c.user_id = id.user_id;
+    c.secret = id.secret;
+    c.include_states = A.st.sync_states;
+    return c;
+}
+
+bool sync_enabled() { return !A.st.sync_folder.empty() || A.st.cloud_saves; }
+
+/* Merges the folder and cloud reports of one sync run into the one line the Saves page shows. */
+static hub::saves::SyncReport merge_reports(const hub::saves::SyncReport& a, const hub::saves::SyncReport& b) {
+    hub::saves::SyncReport r;
+    r.pushed = a.pushed + b.pushed;
+    r.pulled = a.pulled + b.pulled;
+    r.conflicts = a.conflicts + b.conflicts;
+    r.ok = a.ok && b.ok;
+    r.error = a.error;
+    if (!b.error.empty()) r.error += (r.error.empty() ? "" : "; ") + b.error;
+    r.log = a.log;
+    r.log.insert(r.log.end(), b.log.begin(), b.log.end());
+    return r;
+}
+
 void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
     if (A.job.running) return;
     if (A.job.th.joinable()) A.job.th.join();
@@ -19,13 +49,29 @@ void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
     A.job.report = hub::saves::SyncReport();
     A.job.export_ok = false;
     A.job.export_err.clear();
+    A.job.cloud = (k == SaveJob::Sync && A.st.cloud_saves) || k == SaveJob::Status;
+    if (A.job.cloud) A.job.cloud_cfg = cloud_config();
     A.job.th = std::thread([]() {
         SaveJob& j = A.job;
-        if (j.kind == SaveJob::Sync) j.report = hub::saves::sync_folder(j.path, j.include_states);
+        if (j.kind == SaveJob::Sync) {
+            hub::saves::SyncReport folder, cloud;
+            if (!j.path.empty()) folder = hub::saves::sync_folder(j.path, j.include_states);
+            if (j.cloud) {
+                cloud = hub::saves::sync_cloud(j.cloud_cfg);
+                j.cloud_stat = hub::saves::cloud_status(j.cloud_cfg);
+            }
+            j.report = merge_reports(folder, cloud);
+        }
+        else if (j.kind == SaveJob::Status) j.cloud_stat = hub::saves::cloud_status(j.cloud_cfg);
         else if (j.kind == SaveJob::Export) j.export_ok = hub::saves::export_zip(j.path, j.include_states, &j.export_err);
         else if (j.kind == SaveJob::Import) j.report = hub::saves::import_zip(j.path);
         j.done = true;
     });
+}
+
+void start_cloud_probe() {
+    A.cloud_probed = true;
+    if (!A.job.running) start_job(SaveJob::Status, "", false);
 }
 
 const std::vector<SyncSuggestion>& sync_suggestions() {
@@ -56,7 +102,7 @@ const std::vector<SyncSuggestion>& sync_suggestions() {
 }
 
 void start_sync(bool manual) {
-    if (A.st.sync_folder.empty()) return;
+    if (!sync_enabled()) return;
     /* never touch battery files under a running emulator: queue until the game exits */
     if (hubui::sync_request(A.sync_gate, manual, A.proc != nullptr, A.job.running) == hubui::SyncAction::Queue) return;
     start_job(SaveJob::Sync, A.st.sync_folder, manual);
@@ -66,7 +112,7 @@ void run_pending_sync() {
     if (hubui::sync_take_pending(A.sync_gate, A.proc != nullptr, A.job.running, &manual)) start_job(SaveJob::Sync, A.st.sync_folder, manual);
 }
 void auto_sync() {
-    if (!A.st.sync_folder.empty() && A.st.sync_auto) start_sync(false);
+    if (sync_enabled() && A.st.sync_auto) start_sync(false);
 }
 
 std::string report_summary(const hub::saves::SyncReport& r, const char* sent_word, const char* got_word) {
@@ -83,7 +129,13 @@ void poll_job() {
     if (!A.job.running || !A.job.done) return;
     if (A.job.th.joinable()) A.job.th.join();
     SaveJob& j = A.job;
-    if (j.kind == SaveJob::Sync) {
+    if (j.kind == SaveJob::Status || (j.kind == SaveJob::Sync && j.cloud)) {
+        A.cloud_stat = j.cloud_stat;
+        A.cloud_stat_known = true;
+    }
+    if (j.kind == SaveJob::Status) {
+        // probe only: no toast, no result line
+    } else if (j.kind == SaveJob::Sync) {
         A.sync_result = report_summary(j.report, "sent", "received");
         A.sync_result_ok = j.report.ok;
         bool quiet = j.report.ok && j.report.pushed == 0 && j.report.pulled == 0 && j.report.conflicts == 0 && !j.manual;

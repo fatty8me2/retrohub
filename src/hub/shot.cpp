@@ -31,6 +31,17 @@ ImGuiKey shot_key(const std::string& n) {
 /* Screenshot aids that seed UI state before the first frame (friends / room / emulator dialogs). Never any network. */
 void shot_init_ui() {
     A.st.show_friends = std::getenv("HUB_SHOT_FRIENDS") != nullptr;
+    if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
+        if (std::string(pg) == "saves") A.page = Page::Saves;
+    }
+    if (const char* cs = std::getenv("HUB_SHOT_CLOUD")) {   // screenshot aid: cloud saves toggle state, no network ("off" | "on" | "unavailable" | "ok")
+        std::string m = cs;
+        A.st.cloud_saves = m != "off";
+        A.cloud_probed = true;                   // never probe the server from a screenshot
+        A.cloud_stat_known = true;
+        if (m == "unavailable") A.cloud_stat.unavailable = true;
+        else if (m == "ok") { A.cloud_stat.enabled = true; A.cloud_stat.files = 12; A.cloud_stat.used = 3250000; A.cloud_stat.quota = 500LL * 1048576; }
+    }
     if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show a 3DS / Wii U dialog (azahar | cemu | unzip | failed)
         std::string m = se;
         if (m == "azahar" || m == "cemu") { EMU.kind = m == "cemu" ? hubemu::Kind::Cemu : hubemu::Kind::Azahar; EMU.state = hubemu::Installer::Asking; }
