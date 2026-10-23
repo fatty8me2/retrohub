@@ -65,13 +65,16 @@ must use identical options; the hub should pass `--opt` explicitly rather than r
 - **Core:** `melondsds_libretro.dll`, software renderer. The hub passes no BIOS; the core uses FreeBIOS and generated firmware (see `docs/CORES.md`). `--system nds` makes retrorun apply the defaults in `src/retrorun/dsview.h`
   (software render, DS mode even for DSi-enhanced carts such as Black/White, no SD card or Wi-Fi, silent microphone, 1 s save-RAM flush, PC-clock RTC, OS cursor as the stylus); ini / `--opt` override them.
 - **Screens:** the core draws both screens into one frame. Default layout is a vertical stack (`top-bottom`, 256x384: top screen over the touch screen, as DS games are designed); **F9** cycles `top-bottom`, `left-right` (wide windows), `largescreen-top`, `hybrid-top` at run time
-  (`Core::set_option`, picked up on the core's next option poll) and remembers the choice in `userdataetrorun_layout.txt` (`nds=<layout>`). At startup retrorun checks every option key/value it relies on against the loaded core and logs `WARNING: DS core option ...` if one is missing (`qaetrorun_nds.ps1` asserts there is none). DS frames are scaled fractionally with linear filtering (other systems keep integer nearest scaling).
+  (`Core::set_option`, picked up on the core's next option poll) and remembers the choice in `userdata
+etrorun_layout.txt` (`nds=<layout>`). At startup retrorun checks every option key/value it relies on against the loaded core and logs `WARNING: DS core option ...` if one is missing (`qa
+etrorun_nds.ps1` asserts there is none). DS frames are scaled fractionally with linear filtering (other systems keep integer nearest scaling).
 - **Touch:** the left mouse button over the frame is the stylus (`RETRO_DEVICE_POINTER`, coordinates normalised to the drawn frame, high-DPI aware); a press only touches if it began over the frame (dragging in does not); the OS cursor stays visible, also in fullscreen.
   Headless test: `--stylus U,V` holds the stylus down at that fraction of the frame (with `--opt melonds_show_cursor=always` the core draws the cursor there).
 - **Pad:** same RetroPad mapping as GBA; X, Y, L and R are keyboard S, A, Q, W and the controller X, Y and shoulder buttons (see Controls).
 - **Saves:** battery RAM goes to `<save-dir>\<rom basename>.srm` like every system (the file is the raw DS save, same bytes as a `.sav`; rename to import/export). The hub points `--save-dir` at the vault battery folder, so it syncs. The core itself gets a scratch save dir (`userdata\core-save\nds`), so nothing but the `.srm` lands in the vault. If a synced `.srm` has a different size than the core's save RAM, retrorun logs a warning and keeps the original as `<name>.srm.bak` (once) before its first write. Save states are not written or resumed for DS.
 - **Online:** not offered (the hub only enables online for N64/GBA/GB/GBC). The DS core uses a JIT and 19 MB states; lockstep netplay has not been validated.
-- ROMs inside `.zip` are extracted by the hub library to `userdataom-cache\` (DS images reach 512 MB), so retrorun always gets a plain `.nds`.
+- ROMs inside `.zip` are extracted by the hub library to `userdata
+om-cache\` (DS images reach 512 MB), so retrorun always gets a plain `.nds`.
 
 ## Video
 
@@ -109,7 +112,7 @@ compared among peers; a mismatch logs `DESYNC ...` and the exit code is 5. Fast 
 video+audio output is bit-identical (about 10-20 bytes of the 27-51 KB state; a core quirk), which would report false desyncs, so for Gambatte `auto` uses a rolling hash
 of all video frames and audio samples instead (`--sync-hash output`). Each `final:` log line prints `state-hash`, `output-hash` and `input-hash` (all peers must agree on the last two).
 
-**Planned upgrade: rollback** using `retro_serialize`/`retro_unserialize` (mGBA states are exact; Gambatte states would need the quirk fixed or a different core) to hide latency
+**Rollback:** see the Rollback section below; this paragraph is the original plan: using `retro_serialize`/`retro_unserialize` (mGBA states are exact; Gambatte states would need the quirk fixed or a different core) to hide latency
 instead of input delay.
 
 ## Build
@@ -188,3 +191,19 @@ plays that console's audio. The periodic state hash covers both consoles (SameBo
   Pokemon Center); the .srm is 128 KiB for Flash1M games (autodetected from the ROM).
 - Tests: `qa\retrorun_gbalink.ps1` (two peers via a local `wrangler dev`) and `qa\make_siotest_rom.py` (hand-assembled multiplayer-SIO test ROM).
 - Test: `qa\retrorun_link.ps1` (needs a local `wrangler dev`), `retrorun_link_test` (exchange logic with loss/reorder).
+
+## Rollback netplay (`--rollback`, `--synctest N`)
+
+GGPO-style rollback (`rollback.h/.cpp`, engine independent of SDL/libretro/hubnet; `retrorun_rollback_test` runs two engines over a simulated lossy link).
+Remote inputs are predicted (repeat last), the state before every frame is saved (`retro_serialize` into a max_pred+4 ring, default 8 predicted frames),
+a mispredicted input restores the state and re-simulates up to now with audio dropped (only the newest frame is presented), the sim stalls at the prediction
+limit, and a PC that runs ahead waits an occasional frame (time sync). Input delay is 1 frame (`--delay 0..4`; the lockstep RTT negotiation is skipped).
+Packets are cumulative and acked, so loss only costs latency. Desync check: every 120 confirmed frames a rolling hash of the confirmed video frames is compared
+(`RB_HASH_INTERVAL` overrides). Final lines print `rollback-stats` (rollbacks/s, max/avg depth, stalls, sync-waits) and `rollback-timing`.
+
+Safety: retrorun only rolls back on cores whose savestates passed SyncTest, otherwise it logs `staying on lockstep netplay` and falls back (`RETRORUN_FORCE_ROLLBACK=1` overrides for QA).
+- Verified: `mgba_link_libretro` (hub's GBA link core). mGBA's `mgba_idle_optimization` is forced to `Don't Remove` for rollback (idle-loop state is not in the savestate).
+- Not verified: stock mGBA libretro (non-link; savestates drift after frequent reloads), Gambatte (state not exact), SameBoy (CGB output differs after a load; DMG link desynced in a bad-network run).
+- `--synctest N` (offline, `qa/retrorun_synctest.ps1`): a free-running reference pass records per-frame video + memory hashes, then a second pass rolls back N frames after every frame (also running half the frames first with wrong pads) and compares every frame with the reference.
+- Cores start rollback after 12 neutral warmup frames (first boot frames cannot be restored faithfully).
+- Test: `qa/retrorun_online.ps1 -Rollback -Core mgba_link_libretro.dll -Extra --link ...` against a local `wrangler dev`.
