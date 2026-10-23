@@ -88,3 +88,14 @@ target_link_libraries(hub_emu_live PRIVATE hublogic hubcommon hubsaves hubminiz 
 # 3DS local wireless over rooms (np_3ds): pure-logic test (no network, no emulator)
 add_executable(hub_np3ds_test test_netplay_3ds.cpp)
 target_link_libraries(hub_np3ds_test PRIVATE hublogic hubcommon)
+
+# ---- Clickable invite links (retrohub://join/<CODE>, --join <CODE>, single-instance handoff) ----
+add_library(hubinvite STATIC invite.cpp)
+target_include_directories(hubinvite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hubinvite PUBLIC shell32 user32)
+target_compile_features(hubinvite PUBLIC cxx_std_17)
+target_link_libraries(RetroHub PRIVATE hubinvite advapi32)
+target_link_libraries(hub_shell_test PRIVATE hubinvite advapi32)
+
+add_executable(hub_invite_test test_invite.cpp)
+target_link_libraries(hub_invite_test PRIVATE hubinvite)
