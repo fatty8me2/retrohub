@@ -72,6 +72,12 @@ add_executable(hub_emu_test test_emulators.cpp emulators.cpp)
 target_include_directories(hub_emu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
+# GameCube online via Dolphin NetPlay
+target_sources(RetroHub PRIVATE netplay_dolphin.cpp)
+add_executable(hub_gcnp_test test_netplay_dolphin.cpp netplay_dolphin.cpp)
+add_executable(hub_gcnp_live gcnp_live.cpp netplay_dolphin.cpp)
+target_link_libraries(hub_gcnp_live PRIVATE user32)
+
 # Live launch driver: runs the 3DS / Wii U launch path without the UI (manual tool, not a ctest)
 add_executable(hub_emu_live emu_live.cpp emulators.cpp)
 target_include_directories(hub_emu_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
