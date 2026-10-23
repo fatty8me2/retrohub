@@ -41,6 +41,7 @@
 #include "session.h"
 
 #include "headless.h"
+#include "controls_sdl.h"
 #include "local_input.h"
 #include "test_input.h"
 #include "mempak.h"
@@ -104,6 +105,7 @@ struct Args {
     bool headless = false;
     long long frames = 0;
     std::string screenshot;
+    std::string controls;   // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (controls.h)
     std::string test_input;   // --test-input / N64RUN_TEST_INPUT: scripted local input (QA)
     std::string match;   // --match spec (VS battle jump)
     struct RamDump { uint32_t offset, len; std::string file; };
@@ -171,9 +173,11 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--title") ok = val(&a.title);
         else if (k == "--gfx") { std::string g; hub::gs::GfxParam gp; ok = val(&g) && hub::gs::parse_gfx_arg(g, &gp); if (ok) a.gfx.push_back(g); }
         else if (k == "--test-input") ok = val(&a.test_input);
+        else if (k == "--controls") ok = val(&a.controls);
         else { std::fprintf(stderr, "unknown argument: %s\n", k.c_str()); return false; }
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
     }
+    if (a.controls.empty()) { const char* e = std::getenv("RETROHUB_CONTROLS"); if (e && *e) a.controls = e; }
     if (a.test_input.empty()) { const char* e = std::getenv("N64RUN_TEST_INPUT"); if (e && *e) a.test_input = e; }
     if (a.rom.empty()) { std::fprintf(stderr, "--rom is required\n"); return false; }
     if (!a.headless && (a.frames || !a.screenshot.empty() || !a.dumps.empty())) {
@@ -370,6 +374,14 @@ int main(int argc, char** argv) {
 
     // ---- ports / local input
     LocalInput input;
+    if (!args.headless) hubctl::load_bundled_db();   // SDL_GameControllerDB: DualSense, Switch Pro, 8BitDo ...
+    if (!args.controls.empty()) {
+        hubctl::Profile prof;
+        if (hubctl::read_profile_file(args.controls, &prof) && prof.system == "n64") {
+            input.set_profile(prof);
+            logf_("n64run", "controls: profile '%s' (%s)", prof.name.c_str(), args.controls.c_str());
+        } else logf_("n64run", "controls: cannot use %s; built-in mapping", args.controls.c_str());
+    }
     // Headless never reads pads or the keyboard: stray input must not reach a background test run.
     if (!args.headless && !input.init()) logf_("n64run", "SDL game controller init failed; keyboard only");
     if (!online && !args.ports_given) {
