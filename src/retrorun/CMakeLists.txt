@@ -8,6 +8,7 @@ add_executable(retrorun
     core.cpp
     image.cpp
     link_sync.cpp
+    rollback.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run/lockstep.cpp)
 target_include_directories(retrorun PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -38,3 +39,7 @@ target_link_libraries(retrorun_link_test PRIVATE hubnet)
 # SDL_GameControllerDB (zlib, see THIRD_PARTY.md) next to the exe: <exe>/controls/gamecontrollerdb.txt
 add_custom_command(TARGET retrorun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/controls/gamecontrollerdb.txt $<TARGET_FILE_DIR:retrorun>/controls/gamecontrollerdb.txt)
+
+# Rollback netplay engine (rollback.h): console test with two peers over a simulated laggy/lossy link.
+add_executable(retrorun_rollback_test test_rollback.cpp rollback.cpp)
+target_include_directories(retrorun_rollback_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

@@ -1,0 +1,495 @@
+#include "rollback.h"
+
+#include <windows.h>
+
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+namespace rb {
+
+uint64_t hash_bytes(const void* data, size_t bytes) {
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    uint64_t h = 0xCBF29CE484222325ull;
+    size_t words = bytes / 8;
+    for (size_t i = 0; i < words; i++) {
+        uint64_t w;
+        std::memcpy(&w, p + i * 8, 8);
+        h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+        h ^= h >> 29;
+    }
+    for (size_t i = words * 8; i < bytes; i++) h = (h ^ p[i]) * 0x100000001B3ull;
+    return h;
+}
+
+static double qpc_us() {
+    static double inv = 0;
+    if (inv == 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); inv = 1e6 / (double)f.QuadPart; }
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return (double)t.QuadPart * inv;
+}
+
+static const uint64_t kFnvBasis = 0xCBF29CE484222325ull;
+static const uint64_t kFnvPrime = 0x100000001B3ull;
+
+Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(cfg), sim_(sim), net_(net) {
+    cfg_.max_pred = std::max(1, std::min(10, cfg_.max_pred));
+    cfg_.delay = std::max(0, std::min(4, cfg_.delay));
+    ring_n_ = cfg_.max_pred + 4;
+    state_n_ = sim_.state_size();
+    ring_.assign((size_t)ring_n_ * state_n_, 0);
+    tmp_.assign(state_n_, 0);
+    for (int p = 0; p < kPorts; p++) { conf_upto_[p] = -1; last_val_[p] = 0; }
+    memset(used_, 0, sizeof used_);
+    memset(fsum_, 0, sizeof fsum_);
+    for (int s = 0; s < 8; s++) {
+        peer_cur_[s] = 0; peer_adv_[s] = 0; peer_seen_[s] = false;
+        for (int p = 0; p < kPorts; p++) peer_ack_[s][p] = -1;
+    }
+    roll_out_ = roll_in_ = kFnvBasis;
+    // Frames 0..D-1 are neutral for the local ports.
+    for (int p = 0; p < kPorts; p++)
+        if (local(p)) for (int f = 0; f < cfg_.delay; f++) put_local(p, f, 0);
+    uint32_t now = net_.now_ms();
+    last_progress_ = now;
+}
+
+void Engine::put_local(int p, int64_t f, uint16_t v) {
+    in_[p][f % kInRing].tag = f;
+    in_[p][f % kInRing].val = v;
+    local_newest_ = std::max(local_newest_, f);
+}
+
+void Engine::put_remote(int p, int64_t f, uint16_t v) {
+    if (f < 0 || has(p, f)) return;
+    if (f <= conf_eff_ && f < (int64_t)cur_ - kFrRing + 1) return;   // ancient
+    in_[p][f % kInRing].tag = f;
+    in_[p][f % kInRing].val = v;
+    if (f < (int64_t)cur_ && used_[f % kFrRing][p] != v) rb_to_ = rb_to_ < 0 ? f : std::min(rb_to_, f);
+    while (has(p, conf_upto_[p] + 1)) {
+        conf_upto_[p]++;
+        last_val_[p] = get(p, conf_upto_[p]);
+    }
+}
+
+void Engine::build_pads(int64_t f, uint32_t pads[kPorts]) {
+    for (int p = 0; p < kPorts; p++) {
+        if (!present(p)) { pads[p] = 0; continue; }
+        pads[p] = has(p, f) ? get(p, f) : last_val_[p];
+        used_[f % kFrRing][p] = (uint16_t)pads[p];
+    }
+}
+
+void Engine::sim_frame(int64_t f, bool visible) {
+    uint32_t pads[kPorts];
+    build_pads(f, pads);
+    double t0 = qpc_us();
+    sim_.step(pads, visible);
+    st_.step_us += qpc_us() - t0;
+    st_.step_n++;
+    fsum_[f % kFrRing] = sim_.frame_sum ? sim_.frame_sum() : 0;
+}
+
+void Engine::do_rollback() {
+    int64_t g = rb_to_;
+    rb_to_ = -1;
+    if (g < 0 || g >= (int64_t)cur_) return;
+    if ((int64_t)cur_ - g >= ring_n_) {
+        if (net_.log) net_.log("rollback: DESYNC target frame " + std::to_string(g) + " is older than the state ring");
+        desync_ = true;
+        return;
+    }
+    int depth = (int)(cur_ - g);
+    double t0 = qpc_us();
+    bool ok = sim_.load(ring_state(g), state_n_);
+    double dt = qpc_us() - t0;
+    st_.load_us += dt;
+    st_.load_n++;
+    if (!ok) { if (net_.log) net_.log("rollback: unserialize failed"); desync_ = true; return; }
+    for (int64_t f = g; f < (int64_t)cur_; f++) {
+        if (f > g) {
+            double s0 = qpc_us();
+            sim_.save(ring_state(f), state_n_);
+            st_.save_us += qpc_us() - s0;
+            st_.save_n++;
+        }
+        sim_frame(f, false);
+    }
+    st_.rollbacks++;
+    st_.resim_frames += depth;
+    st_.depth_sum += depth;
+    st_.max_depth = std::max(st_.max_depth, depth);
+}
+
+void Engine::pump_net() {
+    if (net_.pump) net_.pump();
+    int from;
+    std::vector<uint8_t> m;
+    while (net_.recv(&from, &m)) {
+        if (m.empty() || from < 0 || from >= 8) continue;
+        on_packet(from, m);
+    }
+}
+
+static void w32(std::vector<uint8_t>& b, uint32_t v) { for (int i = 0; i < 4; i++) b.push_back((uint8_t)(v >> (8 * i))); }
+static void w16(std::vector<uint8_t>& b, uint16_t v) { b.push_back((uint8_t)v); b.push_back((uint8_t)(v >> 8)); }
+static void w64(std::vector<uint8_t>& b, uint64_t v) { for (int i = 0; i < 8; i++) b.push_back((uint8_t)(v >> (8 * i))); }
+static uint32_t r32(const uint8_t* p) { uint32_t v; memcpy(&v, p, 4); return v; }
+static uint16_t r16(const uint8_t* p) { uint16_t v; memcpy(&v, p, 2); return v; }
+static uint64_t r64(const uint8_t* p) { uint64_t v; memcpy(&v, p, 8); return v; }
+
+void Engine::send_packet(bool force) {
+    uint32_t now = net_.now_ms();
+    if (!force && now - last_send_ < 8) return;
+    last_send_ = now;
+    std::vector<uint8_t> b;
+    b.push_back(kPktInput);
+    b.push_back((uint8_t)cfg_.my_slot);
+    w32(b, cur_);
+    int adv = -1000;
+    for (int s = 0; s < 8; s++)
+        if (active_peer(s) && peer_seen_[s]) adv = std::max(adv, (int)cur_ - (int)peer_cur_[s]);
+    w16(b, (uint16_t)(int16_t)(adv == -1000 ? 0 : adv));
+    for (int p = 0; p < kPorts; p++) w32(b, (uint32_t)(int32_t)(present(p) && !local(p) ? conf_upto_[p] : -1));
+    int nloc = 0;
+    for (int p = 0; p < kPorts; p++) if (local(p) && local_newest_ >= 0) nloc++;
+    b.push_back((uint8_t)nloc);
+    for (int p = 0; p < kPorts; p++) {
+        if (!local(p) || local_newest_ < 0) continue;
+        int64_t start = local_newest_;
+        bool any = false;
+        for (int s = 0; s < 8; s++) {
+            if (!active_peer(s)) continue;
+            start = std::min(start, peer_ack_[s][p] + 1);
+            any = true;
+        }
+        if (!any) start = local_newest_;
+        start = std::max<int64_t>(start, local_newest_ - 99);
+        start = std::min<int64_t>(start, local_newest_ - 2);
+        start = std::max<int64_t>(start, 0);
+        b.push_back((uint8_t)p);
+        w32(b, (uint32_t)start);
+        b.push_back((uint8_t)(local_newest_ - start + 1));
+        for (int64_t f = start; f <= local_newest_; f++) w16(b, has(p, f) ? get(p, f) : 0);
+    }
+    int nh = (int)std::min<size_t>(4, my_h_.size());
+    b.push_back((uint8_t)nh);
+    for (int i = 0; i < nh; i++) { const HEnt& e = my_h_[my_h_.size() - nh + i]; w32(b, e.frame); w64(b, e.h); }
+    net_.send(-1, b.data(), (int)b.size());
+}
+
+void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
+    const uint8_t* d = m.data();
+    size_t n = m.size();
+    if (d[0] == kPktReady) {
+        if (n >= 2 && d[1] < 8) {
+            ready_mask_ |= 1u << d[1];
+            uint8_t r[2] = {kPktReady, (uint8_t)cfg_.my_slot};   // late joiner still waiting: answer
+            net_.send(d[1], r, 2);
+        }
+        return;
+    }
+    if (d[0] == kPktBye) {
+        if (n >= 2 && d[1] < 8 && d[1] == from && (int)d[1] != cfg_.my_slot) {
+            left_mask_ |= 1u << d[1];
+            if (net_.log) net_.log("partner in slot " + std::to_string((int)d[1]) + " ended the session");
+        }
+        return;
+    }
+    if (d[0] != kPktInput || n < 8 + 2 + 16 + 2) return;
+    int slot = d[1];
+    if (slot != from || slot >= 8 || slot == cfg_.my_slot || !(cfg_.slot_mask >> slot & 1u)) return;
+    ready_mask_ |= 1u << slot;
+    size_t o = 2;
+    peer_cur_[slot] = r32(d + o); o += 4;
+    peer_adv_[slot] = (int16_t)r16(d + o); o += 2;
+    peer_seen_[slot] = true;
+    for (int p = 0; p < kPorts; p++) {
+        int32_t a = (int32_t)r32(d + o); o += 4;
+        peer_ack_[slot][p] = std::max<int64_t>(peer_ack_[slot][p], a);
+    }
+    int np = d[o++];
+    bool progress = false;
+    for (int i = 0; i < np; i++) {
+        if (o + 6 > n) return;
+        int p = d[o++];
+        uint32_t start = r32(d + o); o += 4;
+        int cnt = d[o++];
+        if (o + (size_t)cnt * 2 > n) return;
+        bool ok = p < kPorts && cfg_.owner[p] == slot;
+        for (int k = 0; k < cnt; k++) {
+            uint16_t v = r16(d + o + k * 2);
+            if (ok) {
+                int64_t before = conf_upto_[p];
+                put_remote(p, (int64_t)start + k, v);
+                if (conf_upto_[p] != before) progress = true;
+            }
+        }
+        o += (size_t)cnt * 2;
+    }
+    if (progress) last_progress_ = net_.now_ms();
+    if (o < n) {
+        int nh = d[o++];
+        for (int i = 0; i < nh && o + 12 <= n; i++) {
+            compare_hash(slot, r32(d + o), r64(d + o + 4));
+            o += 12;
+        }
+    }
+}
+
+void Engine::compare_hash(int slot, uint32_t frame, uint64_t h) {
+    for (auto& e : peer_h_[slot]) if (e.frame == frame) return;
+    peer_h_[slot].push_back({frame, h});
+    if (peer_h_[slot].size() > 16) peer_h_[slot].pop_front();
+    for (auto& e : my_h_) {
+        if (e.frame != frame) continue;
+        st_.hashes_compared++;
+        if (e.h != h) {
+            desync_ = true;
+            char buf[160];
+            snprintf(buf, sizeof buf, "DESYNC at confirmed frame %u: %s hashes differ (mine %016llx, slot %d %016llx)", frame,
+                     cfg_.use_state_hash ? "state" : "output", (unsigned long long)e.h, slot, (unsigned long long)h);
+            if (net_.log) net_.log(buf);
+        }
+    }
+}
+
+void Engine::advance_confirmed() {
+    int64_t c = (int64_t)cur_ - 1;
+    for (int p = 0; p < kPorts; p++)
+        if (present(p) && !local(p) && !(left_mask_ >> cfg_.owner[p] & 1u)) c = std::min(c, conf_upto_[p]);
+    conf_eff_ = std::max(conf_eff_, c);
+    while (roll_next_ <= conf_eff_) {
+        int64_t f = roll_next_++;
+        roll_out_ = (roll_out_ ^ fsum_[f % kFrRing]) * kFnvPrime;
+        for (int p = 0; p < kPorts; p++) roll_in_ = (roll_in_ ^ used_[f % kFrRing][p]) * kFnvPrime;
+        if (cfg_.hash_interval > 0 && (f + 1) % cfg_.hash_interval == 0) {
+            if (cfg_.use_state_hash) pending_h_.push_back((uint32_t)(f + 1));
+            else {
+                my_h_.push_back({(uint32_t)(f + 1), roll_out_});
+                if (my_h_.size() > 16) my_h_.pop_front();
+                for (int s = 0; s < 8; s++)
+                    for (auto& e : peer_h_[s]) if (e.frame == f + 1) { HEnt copy = e; compare_hash(s, copy.frame, copy.h); }
+            }
+        }
+    }
+}
+
+void Engine::resolve_hashes() {
+    while (!pending_h_.empty()) {
+        uint32_t H = pending_h_.front();
+        if (H > cur_) return;   // state before H not saved yet
+        pending_h_.pop_front();
+        if ((int64_t)cur_ - H >= ring_n_) { if (net_.log) net_.log("hash point " + std::to_string(H) + " fell out of the ring"); continue; }
+        uint64_t h = hash_bytes(ring_state(H), state_n_);
+        my_h_.push_back({H, h});
+        if (my_h_.size() > 16) my_h_.pop_front();
+        for (int s = 0; s < 8; s++)
+            for (auto& e : peer_h_[s]) if (e.frame == H) { HEnt copy = e; compare_hash(s, copy.frame, copy.h); }
+    }
+}
+
+bool Engine::start_barrier(uint32_t timeout_ms) {
+    uint32_t t0 = net_.now_ms(), last = 0;
+    ready_mask_ |= 1u << cfg_.my_slot;
+    while ((ready_mask_ & cfg_.slot_mask) != cfg_.slot_mask) {
+        uint32_t now = net_.now_ms();
+        if (now - t0 > timeout_ms) return false;
+        if (now - last >= 50 || last == 0) {
+            last = now;
+            uint8_t r[2] = {kPktReady, (uint8_t)cfg_.my_slot};
+            net_.send(-1, r, 2);
+        }
+        if (net_.pump) net_.pump();
+        int from;
+        std::vector<uint8_t> m;
+        while (net_.recv(&from, &m)) if (!m.empty() && from >= 0 && from < 8) on_packet(from, m);
+        if (sim_.idle) sim_.idle();
+        Sleep(2);
+    }
+    // Make sure the others see our ready too.
+    uint8_t r[2] = {kPktReady, (uint8_t)cfg_.my_slot};
+    net_.send(-1, r, 2);
+    last_progress_ = net_.now_ms();
+    return true;
+}
+
+void Engine::service() {
+    pump_net();
+    if (rb_to_ >= 0 && !desync_) do_rollback();
+    advance_confirmed();
+    send_packet(false);
+}
+
+Engine::Status Engine::prepare() {
+    service();
+    uint32_t now = net_.now_ms();
+    if ((int64_t)cur_ - 1 - conf_eff_ >= cfg_.max_pred) {
+        // At the prediction limit: wait for the missing peer inputs.
+        bool any_remote = false;
+        for (int p = 0; p < kPorts; p++) if (present(p) && !local(p) && !(left_mask_ >> cfg_.owner[p] & 1u)) any_remote = true;
+        if (any_remote) {
+            if (stall_since_ == 0) stall_since_ = now;
+            st_.stalls++;
+            send_packet(false);
+            if (now - last_progress_ > cfg_.timeout_ms) lost_ = true;
+            return Status::Stalled;
+        }
+    }
+    if (stall_since_) { st_.stalled_ms += now - stall_since_; stall_since_ = 0; }
+    // Time sync: the PC that is ahead in time waits an occasional frame.
+    double best = -1e9;
+    bool have = false;
+    for (int s = 0; s < 8; s++) {
+        if (!active_peer(s) || !peer_seen_[s]) continue;
+        double my_adv = (double)cur_ - (double)peer_cur_[s];
+        double skew = (my_adv - (double)peer_adv_[s]) / 2.0;
+        best = std::max(best, skew);
+        have = true;
+    }
+    if (have) {
+        skew_ema_ = skew_ema_ * 0.9 + best * 0.1;
+        st_.max_skew = std::max(st_.max_skew, skew_ema_);
+        if (skew_ema_ > 1.2 && cur_ - last_wait_ >= 10) {
+            last_wait_ = cur_;
+            skew_ema_ -= 1.0;
+            st_.sync_waits++;
+            return Status::SyncWait;
+        }
+    }
+    return Status::Ready;
+}
+
+void Engine::run_frame() {
+    if (sim_.poll_local) sim_.poll_local();
+    for (int p = 0; p < kPorts; p++)
+        if (local(p)) put_local(p, (int64_t)cur_ + cfg_.delay, (uint16_t)sim_.read_local(p));
+    send_packet(true);
+    double t0 = qpc_us();
+    sim_.save(ring_state(cur_), state_n_);
+    st_.save_us += qpc_us() - t0;
+    st_.save_n++;
+    resolve_hashes();
+    sim_frame(cur_, true);
+    cur_++;
+    st_.frames++;
+    last_progress_ = std::max(last_progress_, net_.now_ms() - 0);
+}
+
+bool Engine::finish(uint32_t timeout_ms) {
+    uint32_t t0 = net_.now_ms();
+    bool ok = false;
+    for (;;) {
+        service();
+        send_packet(false);
+        bool conf = true, acked = true;
+        for (int p = 0; p < kPorts; p++)
+            if (present(p) && !local(p) && !(left_mask_ >> cfg_.owner[p] & 1u) && conf_upto_[p] < (int64_t)cur_ - 1) conf = false;
+        for (int s = 0; s < 8; s++) {
+            if (!active_peer(s)) continue;
+            for (int p = 0; p < kPorts; p++)
+                if (local(p) && peer_ack_[s][p] < local_newest_ - cfg_.delay) acked = false;
+        }
+        if (conf && acked && rb_to_ < 0) { ok = true; break; }
+        if (net_.now_ms() - t0 > timeout_ms || desync_) break;
+        if (sim_.idle) sim_.idle();
+        Sleep(1);
+    }
+    advance_confirmed();
+    uint8_t bye[2] = {kPktBye, (uint8_t)cfg_.my_slot};
+    for (int i = 0; i < 3; i++) { net_.send(-1, bye, 2); if (net_.pump) net_.pump(); Sleep(10); }
+    return ok;
+}
+
+/* ------------------------------------------------------------------ synctest */
+
+SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_state_hash,
+                            const std::function<void(int, uint32_t[kPorts])>& input,
+                            const std::function<void(const std::string&)>& log) {
+    SyncTestResult r;
+    size_t n = sim.state_size();
+    r.state_size = n;
+    int R = depth + 2;
+    std::vector<std::vector<uint8_t>> before(R, std::vector<uint8_t>(n));
+    std::vector<uint8_t> tmp(n);
+    std::vector<uint64_t> sum(R, 0), post(R, 0);
+    std::vector<std::array<uint32_t, kPorts>> pads(R);
+    bool dbg = std::getenv("RB_DIFF") != nullptr;
+    std::vector<std::vector<uint8_t>> dbg_post(R);
+    std::vector<uint8_t> dbg_last;
+    double hash_t = 0;
+    uint64_t hash_n = 0;
+    auto timed_save = [&](uint8_t* dst) {
+        double t = qpc_us();
+        sim.save(dst, n);
+        double d = qpc_us() - t;
+        r.save_us += d; r.save_n++; r.save_us_max = std::max(r.save_us_max, d);
+    };
+    auto timed_step = [&](const uint32_t* p) {
+        double t = qpc_us();
+        sim.step(p, true);
+        r.step_us += qpc_us() - t; r.step_n++;
+    };
+    auto post_hash = [&]() -> uint64_t {
+        if (!use_state_hash) return 0;
+        sim.save(tmp.data(), n);
+        if (dbg) { dbg_last.assign(tmp.begin(), tmp.end()); }
+        double t = qpc_us();
+        uint64_t h = hash_bytes(tmp.data(), n);
+        hash_t += qpc_us() - t; hash_n++;
+        return h;
+    };
+    for (int f = 0; f < frames; f++) {
+        int k = f % R;
+        timed_save(before[k].data());
+        input(f, pads[k].data());
+        timed_step(pads[k].data());
+        sum[k] = sim.frame_sum();
+        post[k] = post_hash();
+        if (dbg) dbg_post[k] = dbg_last;
+        r.frames++;
+        if (depth <= 0 || f + 1 < depth) continue;
+        int g = f + 1 - depth;
+        double t = qpc_us();
+        bool ok = sim.load(before[g % R].data(), n);
+        double d = qpc_us() - t;
+        r.load_us += d; r.load_n++; r.load_us_max = std::max(r.load_us_max, d);
+        if (!ok) { r.mismatches++; if (log) log("synctest: unserialize failed at frame " + std::to_string(f)); continue; }
+        for (int q = g; q <= f; q++) {
+            int kq = q % R;
+            if (q > g) timed_save(before[kq].data());   // like the engine: the ring now holds the re-simulated timeline
+            timed_step(pads[kq].data());
+            uint64_t s2 = sim.frame_sum();
+            uint64_t p2 = post_hash();
+            r.checks++;
+            if (dbg && p2 != post[kq] && r.mismatches < 6 && log) {
+                size_t nd = 0; std::string offs;
+                for (size_t i = 0; i < n; i++) if (dbg_post[kq][i] != dbg_last[i]) { if (nd < 12) offs += " " + std::to_string(i); nd++; }
+                log("synctest DIFF frame " + std::to_string(q) + ": " + std::to_string(nd) + " bytes differ; first offsets:" + offs);
+            }
+            if (dbg && p2 == p2) dbg_post[kq] = dbg_last;
+            if (s2 != sum[kq] || p2 != post[kq]) {
+                r.mismatches++;
+                if ((r.mismatches <= 10 || std::getenv("RB_ALLMISS")) && log) {
+                    char b[200];
+                    snprintf(b, sizeof b, "synctest MISMATCH frame %d (rollback from %d): output %016llx vs %016llx, state %016llx vs %016llx", q, f,
+                             (unsigned long long)sum[kq], (unsigned long long)s2, (unsigned long long)post[kq], (unsigned long long)p2);
+                    log(b);
+                }
+            }
+            sum[kq] = s2;
+            post[kq] = p2;
+        }
+    }
+    auto avg = [](double s, uint64_t c) { return c ? s / (double)c : 0.0; };
+    r.save_us = avg(r.save_us, r.save_n);
+    r.load_us = avg(r.load_us, r.load_n);
+    r.step_us = avg(r.step_us, r.step_n);
+    r.hash_us = avg(hash_t, hash_n);
+    return r;
+}
+
+}  // namespace rb
