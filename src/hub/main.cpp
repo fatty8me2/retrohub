@@ -1387,6 +1387,35 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
         spawn(n64run_path(), args, hub::exe_dir(), {}, ri);
         return;
     }
+    if ((e.system == hub::System::GB || e.system == hub::System::GBC) && hub::link_cable_game(e.catalog_id) &&
+        (is_host || (launch_msg && launch_msg->get("np_link")))) {
+        /* Link cable: every PC runs BOTH Game Boys in one SameBoy simulation (np_link); each PC loads its own vault save into its
+         * console, the saves are exchanged through the room, and only the own console's save is written back. */
+        std::string core = find_core("sameboy");
+        if (core.empty()) { set_notice("Emulator core 'sameboy' not found (cores folder)."); return; }
+        std::vector<std::string> owners;
+        {
+            std::string tok;
+            for (size_t i = 0; i <= plan.ports.size(); ++i) {
+                if (i == plan.ports.size() || plan.ports[i] == ',') {
+                    if (!tok.empty() && tok != "-1" && std::find(owners.begin(), owners.end(), tok) == owners.end()) owners.push_back(tok);
+                    tok.clear();
+                } else tok += plan.ports[i];
+            }
+        }
+        if (owners.size() != 2) { set_notice("Link cable games need exactly 2 players."); return; }
+        std::string lnet = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
+                           std::to_string(A.lobby.my_slot()) + " --players 2 --ports " + owners[0] + "," + owners[1] + ",-1,-1" + hubui::delay_arg(delay);
+        std::string battery = no_slash(hub::saves::battery_dir(sys_short(e), e.key));
+        std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
+        make_dirs(tmp);
+        ri.online = false;   // the vault save is used and written back: track/sync it like an offline session
+        std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --link --save-dir " + quote(battery) +
+                           " --state-dir " + quote(tmp) + lnet + title_arg(e.title) + save_stem_arg(e);
+        if (A.st.fullscreen) args += " --fullscreen";
+        spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        return;
+    }
     if (e.system == hub::System::GBA || e.system == hub::System::GB || e.system == hub::System::GBC) {
         std::string corename = e.system == hub::System::GBA ? "mgba" : (core_in.empty() ? A.st.gb_core : core_in);
         std::string core = find_core(corename);
@@ -3343,6 +3372,8 @@ static void page_online_room() {
                 if (!gc_host_spec(*rg, (int)peers.size() + 1, &gspec)) gc_ok = false;
                 else np_extra = gcnp::launch_fragment(gspec);
             }
+            if ((rg->system == hub::System::GB || rg->system == hub::System::GBC) && hub::link_cable_game(rg->catalog_id))
+                np_extra += ",\"np_link\":{\"core\":\"sameboy\",\"consoles\":2}";
             if (gc_ok) {
                 A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra));
                 launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);

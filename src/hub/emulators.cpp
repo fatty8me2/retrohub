@@ -709,6 +709,27 @@ void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads) {
     write_text(ini, dolphin_ini_ports(read_text(ini), pads));
 }
 
+/* True when a process whose image is exactly this file is running (is_running matches the bare file name, so an unrelated
+ * Dolphin.exe elsewhere would wrongly keep an old download alive and make the cleanup depend on what else runs). */
+static bool running_from(const std::string& exe) {
+    std::wstring want = P(exe).wstring();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof pe;
+    bool found = false;
+    for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, P(exe).filename().wstring().c_str()) != 0) continue;
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+        if (!h) { found = true; continue; }   // cannot tell: be careful and treat it as running
+        wchar_t buf[MAX_PATH * 2];
+        DWORD n = (DWORD)(sizeof buf / sizeof buf[0]);
+        if (QueryFullProcessImageNameW(h, 0, buf, &n) && _wcsicmp(buf, want.c_str()) == 0) found = true;
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
+    return found;
+}
 /* Older RetroHub builds ran a Dolphin downloaded to <exe>\dolphin with its user folder at <data>\dolphin-user, and kept the
  * memory card straight in the vault (<vault>\gc\<game>\battery\GCI): that location is the one the new sync still reads, so
  * saves need no move. This only tidies up: save states move to the new User folder, the old user folder is renamed (never
@@ -726,7 +747,7 @@ void dolphin_migrate_old(const std::string& data_dir, const std::string& exe_dir
     }
     std::string old_inst = join(exe_dir, "dolphin");
     if (file_exists(join(old_inst, "Dolphin.exe")) && file_exists(join(old_inst, "portable.txt")) && !dir_exists(join(old_inst, "User")) &&
-        !file_exists(join(old_inst, "retrohub-install.txt")) && !is_running(join(old_inst, "Dolphin.exe")))
+        !file_exists(join(old_inst, "retrohub-install.txt")) && !running_from(join(old_inst, "Dolphin.exe")))
         remove_tree(old_inst);
 }
 

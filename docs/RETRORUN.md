@@ -143,3 +143,21 @@ Windowed code paths can be smoke-tested with `SDL_VIDEODRIVER=dummy SDL_AUDIODRI
 - Zipped ROMs are not unpacked by retrorun itself (the hub library extracts them first) (cores that handle zip themselves via `need_fullpath` work).
 - Core options changed while running are not supported (the core sees the values given at start).
 - Cores with real-time clocks (e.g. mGBA with RTC games) may use wall-clock time, which can desync netplay; Gambatte state is not byte-exact after load (affects rollback later, not lockstep).
+
+## Link cable netplay (`--link`, Game Boy / Color Pokemon online)
+
+`retrorun --core sameboy_libretro.dll --system gb|gbc --link --rom <rom> [--link-roms romP0,romP1] --net ... --ports 0,1,-1,-1 --players 2`
+
+Every PC runs BOTH Game Boys in ONE deterministic SameBoy instance (`retro_load_game_special`, game type 0x101, `sameboy_link=enabled`,
+`sameboy_rtc=accurate`, side-by-side frame). Port 0 drives console 1, port 1 console 2; inputs flow through the normal lockstep netplay, so the
+emulated cable is part of the shared simulation and trades/battles cannot desync. Each PC shows only its own console (the frame is cropped) and
+plays that console's audio. The periodic state hash covers both consoles (SameBoy states are exact: selftest passes, identical state hashes on both peers).
+- **Saves:** before frame 0 each PC broadcasts its own save (`<stem>.srm` + `<stem>.rtc` in `--save-dir`) to the others (`link_sync.*`, all-to-all,
+  loss tolerant, hash verified); every PC loads blob(s) into the console owned by that slot, so you trade with your own Pokemon. Only your own console's
+  save is written back (never before the exchange succeeded). Offline `--link --players 2` loads console 2 from `<stem>.p2.srm`.
+- **Launch spec:** `"np_link":{"core":"sameboy","consoles":2}`; the hub then passes the vault battery dir. Catalog: Red/Yellow/Gold/Silver/Crystal `online=true`, 2 players.
+- **Limits:** both PCs need the same ROM unless `--link-roms` lists each console's ROM (cross-version trades Red<->Blue need both ROMs on both PCs);
+  RTC is cycle-based (the in-game clock only advances while playing); SameBoy wants optional boot ROMs (`dmg_boot.bin`/`cgb_boot.bin`) in the system dir.
+- **GBA is not online:** mGBA/gpSP libretro cores expose no link port and a second core instance cannot be wired to the first one's SIO without
+  patching a core. Needs a custom mGBA build (mGBA's lockstep driver runs N cores in one process) - future work.
+- Test: `qa\retrorun_link.ps1` (needs a local `wrangler dev`), `retrorun_link_test` (exchange logic with loss/reorder).

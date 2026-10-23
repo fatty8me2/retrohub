@@ -103,6 +103,7 @@ bool Core::load_core(const std::string& dll_path, std::string* err) {
     S("retro_get_memory_data", fn_get_mem_data_);
     S("retro_get_memory_size", fn_get_mem_size_);
 #undef S
+    sym(dll_, "retro_load_game_special", &fn_load_game_special_);   // optional
     if (!ok) { *err = "not a libretro core (missing retro_* exports): " + dll_path; return false; }
     if (fn_api_version_() != RETRO_API_VERSION) {
         *err = "libretro API version mismatch: core reports " + std::to_string(fn_api_version_());
@@ -144,6 +145,40 @@ bool Core::load_game(const std::string& rom_path, std::string* err) {
          av_.geometry.max_width, av_.geometry.max_height, (double)av_.geometry.aspect_ratio, av_.timing.fps,
          av_.timing.sample_rate);
     return true;
+}
+
+bool Core::load_game_special(unsigned game_type, const std::vector<std::string>& rom_paths, std::string* err) {
+    if (!fn_load_game_special_) { *err = "core has no retro_load_game_special"; return false; }
+    std::vector<std::string> paths = rom_paths;
+    std::vector<retro_game_info> gi(paths.size());
+    game_datas_.assign(paths.size(), {});
+    for (size_t i = 0; i < paths.size(); i++) {
+        gi[i] = retro_game_info{};
+        gi[i].path = paths[i].c_str();
+        if (!sysinfo_.need_fullpath) {
+            std::ifstream f(fs::u8path(paths[i]), std::ios::binary);
+            if (!f) { *err = "cannot read ROM " + paths[i]; return false; }
+            game_datas_[i].assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+            gi[i].data = game_datas_[i].data();
+            gi[i].size = game_datas_[i].size();
+        } else if (!fs::exists(fs::u8path(paths[i]))) {
+            *err = "ROM not found: " + paths[i];
+            return false;
+        }
+    }
+    game_path_ = paths.empty() ? "" : paths[0];
+    if (!fn_load_game_special_(game_type, gi.data(), gi.size())) { *err = "retro_load_game_special failed"; return false; }
+    loaded_ = true;
+    fn_get_av_(&av_);
+    rlog("av: %ux%u (max %ux%u) aspect %.4f, %.4f fps, %.1f Hz audio (special game type 0x%x, %zu contents)", av_.geometry.base_width,
+         av_.geometry.base_height, av_.geometry.max_width, av_.geometry.max_height, (double)av_.geometry.aspect_ratio, av_.timing.fps,
+         av_.timing.sample_rate, game_type, paths.size());
+    return true;
+}
+
+void* Core::memory(unsigned id, size_t* size) {
+    *size = fn_get_mem_size_(id);
+    return *size ? fn_get_mem_data_(id) : nullptr;
 }
 
 void Core::unload() {
@@ -319,6 +354,18 @@ bool Core::environment(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
             if (data && ((const retro_message_ext*)data)->msg) rlog("core message: %s", ((const retro_message_ext*)data)->msg);
             return true;
+        case RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO: {
+            subsystems_.clear();
+            for (auto* si = (const retro_subsystem_info*)data; si && si->ident; si++) {
+                Subsystem s;
+                s.ident = si->ident;
+                s.desc = si->desc ? si->desc : "";
+                s.id = si->id;
+                s.num_roms = si->num_roms;
+                subsystems_.push_back(s);
+            }
+            return true;
+        }
         case RETRO_ENVIRONMENT_SET_HW_RENDER:
             rlog("core requested hardware rendering: not supported (software cores only)");
             return false;
