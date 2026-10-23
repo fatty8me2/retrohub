@@ -134,6 +134,9 @@ int main() {
     CHECK(json_parse(launch_json("mp1", 3, 2, 77u), &j));
     CHECK(j.str("game") == "mp1" && (int)j.num("launch") == 3 && (int)j.num("seed") == 77 && j.str("core").empty());
     CHECK(json_parse(launch_json("gb:x-1", 1, 2, 5u, "gambatte"), &j) && j.str("core") == "gambatte");
+    CHECK(json_parse(launch_json("pokered", 1, 0, 5u, "", false, nullptr, nullptr, "{\"core\":\"sameboy\",\"consoles\":2}"), &j) && j.get("np_link") &&
+          j.get("np_link")->str("core") == "sameboy");
+    CHECK(json_parse(launch_json("pokered", 1, 0, 5u), &j) && !j.get("np_link"));
 
     /* library filtering / search / sorting */
     std::vector<ListItem> items = {

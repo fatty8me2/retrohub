@@ -7,6 +7,7 @@ add_executable(retrorun
     main.cpp
     core.cpp
     image.cpp
+    link_sync.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run/lockstep.cpp)
 target_include_directories(retrorun PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -24,3 +25,8 @@ target_include_directories(retrorun_ds_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Branding: same icon + version resources as RetroHub.exe (see src/hub/CMakeLists.txt for the generated header).
 target_sources(retrorun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/retrorun.rc)
 target_include_directories(retrorun PRIVATE ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_CURRENT_SOURCE_DIR}/../hub)
+
+# Link-cable save exchange (retrorun --link): pure logic, console test with simulated loss/reorder.
+add_executable(retrorun_link_test test_link_sync.cpp link_sync.cpp)
+target_include_directories(retrorun_link_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+target_link_libraries(retrorun_link_test PRIVATE hubnet)
