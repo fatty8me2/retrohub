@@ -584,6 +584,142 @@ static int test_download(const std::string& root) {
     return bad;
 }
 
+/* ---- controller profiles: the default profiles must generate exactly what the old hardcoded tables did ---- */
+namespace legacy {
+static const char* kAzPad[][2] = {
+    {"button_a", "engine:sdl,api:controller,button:1,maptype:all,port:0"},
+    {"button_b", "engine:sdl,api:controller,button:0,maptype:all,port:0"},
+    {"button_x", "engine:sdl,api:controller,button:3,maptype:all,port:0"},
+    {"button_y", "engine:sdl,api:controller,button:2,maptype:all,port:0"},
+    {"button_up", "engine:sdl,api:controller,button:11,maptype:all,port:0"},
+    {"button_down", "engine:sdl,api:controller,button:12,maptype:all,port:0"},
+    {"button_left", "engine:sdl,api:controller,button:13,maptype:all,port:0"},
+    {"button_right", "engine:sdl,api:controller,button:14,maptype:all,port:0"},
+    {"button_l", "engine:sdl,api:controller,button:9,maptype:all,port:0"},
+    {"button_r", "engine:sdl,api:controller,button:10,maptype:all,port:0"},
+    {"button_start", "engine:sdl,api:controller,button:6,maptype:all,port:0"},
+    {"button_select", "engine:sdl,api:controller,button:4,maptype:all,port:0"},
+    {"button_zl", "engine:sdl,api:controller,axis:4,direction:+,threshold:0.5,maptype:all,port:0"},
+    {"button_zr", "engine:sdl,api:controller,axis:5,direction:+,threshold:0.5,maptype:all,port:0"},
+    {"circle_pad", "engine:sdl,api:controller,axis_x:0,axis_y:1,deadzone:0.15,maptype:all,port:0"},
+    {"c_stick", "engine:sdl,api:controller,axis_x:2,axis_y:3,deadzone:0.15,maptype:all,port:0"},
+};
+static std::string azahar(const std::string& in) {
+    std::string t = in;
+    auto set = [&](const char* sec, const std::string& key, const std::string& val) {
+        t = hubui::ini_set(t, sec, key + "\\default", "false");
+        t = hubui::ini_set(t, sec, key, val);
+    };
+    set("UI", "confirmClose", "false");
+    set("UI", "firstStart", "false");
+    set("UI", "enable_discord_presence", "false");
+    set("Miscellaneous", "check_for_update_on_start", "false");
+    for (auto& kv : kAzPad) set("Controls", kv[0], std::string("\"") + kv[1] + "\"");
+    return t;
+}
+static std::string cemu() {
+    static const int m[][2] = {
+        {1, 13}, {2, 12}, {3, 15}, {4, 14}, {5, 8}, {6, 9}, {7, 42}, {8, 43}, {9, 4}, {10, 5}, {11, 0}, {12, 1}, {13, 2}, {14, 3},
+        {15, 6}, {16, 7}, {17, 39}, {18, 45}, {19, 44}, {20, 38}, {21, 41}, {22, 47}, {23, 46}, {24, 40},
+    };
+    std::string x = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>Wii U GamePad</type>\n"
+                    "\t<controller>\n\t\t<api>XInput</api>\n\t\t<uuid>0</uuid>\n\t\t<display_name>Controller 1</display_name>\n"
+                    "\t\t<rumble>0</rumble>\n"
+                    "\t\t<axis>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n"
+                    "\t\t<rotation>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n"
+                    "\t\t<trigger>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</trigger>\n"
+                    "\t\t<mappings>\n";
+    for (auto& e : m)
+        x += "\t\t\t<entry>\n\t\t\t\t<mapping>" + std::to_string(e[0]) + "</mapping>\n\t\t\t\t<button>" + std::to_string(e[1]) +
+             "</button>\n\t\t\t</entry>\n";
+    x += "\t\t</mappings>\n\t</controller>\n</emulated_controller>\n";
+    return x;
+}
+static std::string dolphin_pad(const std::string& in) {
+    std::string t = in;
+    const std::string kb = "DInput/0/Keyboard Mouse";
+    struct M { const char* key; const char* xi; const char* key_kb; };
+    static const M map[] = {
+        {"Buttons/A", "`Button A`", "X"},        {"Buttons/B", "`Button X`", "Z"},      {"Buttons/X", "`Button B`", "C"},
+        {"Buttons/Y", "`Button Y`", "S"},        {"Buttons/Z", "`Shoulder R`", "D"},    {"Buttons/Start", "Start", "RETURN"},
+        {"Main Stick/Up", "`Left Y+`", "UP"},    {"Main Stick/Down", "`Left Y-`", "DOWN"},
+        {"Main Stick/Left", "`Left X-`", "LEFT"}, {"Main Stick/Right", "`Left X+`", "RIGHT"},
+        {"C-Stick/Up", "`Right Y+`", "I"},       {"C-Stick/Down", "`Right Y-`", "K"},
+        {"C-Stick/Left", "`Right X-`", "J"},     {"C-Stick/Right", "`Right X+`", "L"},
+        {"Triggers/L", "`Trigger L`", "Q"},      {"Triggers/R", "`Trigger R`", "W"},
+        {"Triggers/L-Analog", "`Trigger L`", ""}, {"Triggers/R-Analog", "`Trigger R`", ""},
+        {"D-Pad/Up", "`Pad N`", "T"},            {"D-Pad/Down", "`Pad S`", "G"},
+        {"D-Pad/Left", "`Pad W`", "F"},          {"D-Pad/Right", "`Pad E`", "H"},
+    };
+    for (int i = 0; i < 4; ++i) {
+        std::string sec = "GCPad" + std::to_string(i + 1);
+        t = hubui::ini_set(t, sec, "Device", "XInput/" + std::to_string(i) + "/Gamepad");
+        for (const auto& m : map) {
+            std::string v = m.xi;
+            if (i == 0 && m.key_kb[0]) v += " | `" + kb + ":" + m.key_kb + "`";
+            t = hubui::ini_set(t, sec, m.key, v);
+        }
+        t = hubui::ini_set(t, sec, "Rumble/Motor", "`Motor L`|`Motor R`");
+    }
+    return t;
+}
+}  // namespace legacy
+
+static void test_controls_emulators(const fs::path& dir) {
+    hubemu::DolphinPads none;
+    const char* sample = "[Renderer]\nresolution_factor = 2\n[Controls]\nbutton_a = \"x\"\n";
+    CHECK(hubemu::azahar_config_patch("") == legacy::azahar(""));
+    CHECK(hubemu::azahar_config_patch(sample) == legacy::azahar(sample));
+    CHECK(hubemu::cemu_gamepad_profile_xml() == legacy::cemu());
+    CHECK(hubemu::dolphin_pad_ini("", none) == legacy::dolphin_pad(""));
+    CHECK(hubemu::dolphin_pad_ini("[GCPad1]\nButtons/A = q\n", none) == legacy::dolphin_pad("[GCPad1]\nButtons/A = q\n"));
+
+    /* a changed profile changes the output; the marker logic rewrites only then */
+    hubctl::Store st;
+    CHECK(hubctl::set_mapping(st, "gc", "", "a", "b"));
+    CHECK(hubctl::set_mapping(st, "wiiu", "", "zl", "leftshoulder"));
+    CHECK(hubctl::set_mapping(st, "3ds", "", "a", "lefttrigger@8000"));
+    CHECK(hubctl::set_analog(st, "3ds", "", "circle_pad", 0.3, 1.0));
+    hubctl::Profile gc = hubctl::resolve(st, "gc"), wu = hubctl::resolve(st, "wiiu"), ds = hubctl::resolve(st, "3ds");
+    CHECK(hubemu::dolphin_pad_ini("", none, gc).find("Buttons/A = `Button B` | `DInput/0/Keyboard Mouse:X`") != std::string::npos);
+    CHECK(hubemu::cemu_gamepad_profile_xml(wu).find("<mapping>7</mapping>\n\t\t\t\t<button>8</button>") != std::string::npos);
+    std::string az = hubemu::azahar_config_patch("", ds);
+    CHECK(az.find("button_a = \"engine:sdl,api:controller,axis:4,direction:+,threshold:0.244141") != std::string::npos);
+    CHECK(az.find("deadzone:0.3,") != std::string::npos);
+
+    fs::path d = dir / "regen";
+    fs::path azd = d / "az", ced = d / "ce", dod = d / "dol";
+    hubemu::prepare_azahar(azd.string(), hubctl::default_profile("3ds"));
+    write_text(azd / "user" / "config" / "qt-config.ini", "[Controls]\nbutton_a = \"user-choice\"\n");
+    hubemu::prepare_azahar(azd.string(), hubctl::default_profile("3ds"));   // same profile: user edit stays
+    CHECK(read_text(azd / "user" / "config" / "qt-config.ini").find("user-choice") != std::string::npos);
+    hubemu::prepare_azahar(azd.string(), ds);                               // profile changed: regenerated
+    CHECK(read_text(azd / "user" / "config" / "qt-config.ini").find("user-choice") == std::string::npos);
+    write_text(azd / "user" / "config" / "qt-config.ini", "[Controls]\nbutton_a = \"user-choice\"\n");
+    hubemu::prepare_azahar(azd.string(), ds);                               // same changed profile again: stays
+    CHECK(read_text(azd / "user" / "config" / "qt-config.ini").find("user-choice") != std::string::npos);
+    /* an install from an older RetroHub (marker without a hash) counts as the default profile */
+    write_text(azd / "user" / "config" / "retrohub-pad.txt", "old marker\n");
+    hubemu::prepare_azahar(azd.string(), hubctl::default_profile("3ds"));
+    CHECK(read_text(azd / "user" / "config" / "qt-config.ini").find("user-choice") != std::string::npos);
+
+    hubemu::prepare_cemu_managed(ced.string(), hubctl::default_profile("wiiu"));
+    CHECK(read_text(ced / "portable" / "controllerProfiles" / "controller0.xml") == legacy::cemu());
+    write_text(ced / "portable" / "controllerProfiles" / "controller0.xml", "user xml");
+    hubemu::prepare_cemu_managed(ced.string(), hubctl::default_profile("wiiu"));
+    CHECK(read_text(ced / "portable" / "controllerProfiles" / "controller0.xml") == "user xml");
+    hubemu::prepare_cemu_managed(ced.string(), wu);
+    CHECK(read_text(ced / "portable" / "controllerProfiles" / "controller0.xml") == hubemu::cemu_gamepad_profile_xml(wu));
+
+    hubemu::prepare_dolphin(dod.string(), none, hubctl::default_profile("gc"));
+    CHECK(read_text(dod / "User" / "Config" / "GCPadNew.ini") == legacy::dolphin_pad(""));
+    write_text(dod / "User" / "Config" / "GCPadNew.ini", "[GCPad1]\nButtons/A = custom\n");
+    hubemu::prepare_dolphin(dod.string(), none, hubctl::default_profile("gc"));
+    CHECK(read_text(dod / "User" / "Config" / "GCPadNew.ini").find("custom") != std::string::npos);
+    hubemu::prepare_dolphin(dod.string(), none, gc);
+    CHECK(read_text(dod / "User" / "Config" / "GCPadNew.ini").find("custom") == std::string::npos);
+}
+
 int main(int argc, char** argv) {
     test_3ds_header();
     test_wiiu_formats();
@@ -599,6 +735,7 @@ int main(int argc, char** argv) {
     test_tree_sync(dir / "tree");
     test_sessions(dir / "sess");
     test_prepare_and_find(dir / "prep");
+    test_controls_emulators(dir / "ctl");
     fs::remove_all(dir, ec);
 
     int dl_bad = 0;

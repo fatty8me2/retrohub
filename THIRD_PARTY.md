@@ -41,6 +41,7 @@ The libretro cores are downloaded from the libretro nightly build server. The Do
 | `src/hub/third_party/stb_image.h` | MIT or public domain (dual) | Image decoding. |
 | `src/retrorun/third_party/stb_image_write.h` | MIT or public domain (dual) | Image encoding for screenshots. |
 | `src/retrorun/third_party/libretro.h` | MIT | libretro frontend API header. |
+| `assets/controls/gamecontrollerdb.txt` | zlib | SDL_GameControllerDB (github.com/mdqinc/SDL_GameControllerDB), Windows entries only; controller mappings for non-XInput pads (DualSense, Switch Pro, 8BitDo). Shipped as `controls/gamecontrollerdb.txt` next to the exes. |
 
 The stb libraries are public domain in the sense that you may use them without restriction. The dual license lets you choose between MIT and public domain.
 

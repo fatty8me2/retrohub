@@ -69,6 +69,7 @@ set(RETROHUB_TEST_SERVER "wss://smash-netplay.jumpcircuit.workers.dev" CACHE STR
 
 add_test(NAME hubcommon_test COMMAND hubcommon_test)
 add_test(NAME hublibrary_test COMMAND hublibrary_test)
+add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
 add_test(NAME retrorun_link_test COMMAND retrorun_link_test)
 add_test(NAME hubsaves_test COMMAND hubsaves_test)
