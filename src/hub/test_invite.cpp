@@ -105,6 +105,15 @@ static void single_instance_tests() {
     run_child(L"--sendplay \"" + pipe + L"\" k1");
     check(server.take_play(&key) && key == L"k1" && server.take(&got) && got == L"ABCDEF", "mixed queue keeps kinds separate");
 
+    /* A client that connects and never writes must not block the next client. */
+    HANDLE silent = CreateFileW(pipe.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+    check(silent != INVALID_HANDLE_VALUE, "silent client connects");
+    DWORD t0 = GetTickCount();
+    rc = run_child(L"--send \"" + pipe + L"\" ABCDEF");
+    check(rc == 0 && server.take(&got) && got == L"ABCDEF", "message delivered despite a silent client");
+    check(GetTickCount() - t0 < 2900, "silent client dropped by the read deadline");
+    if (silent != INVALID_HANDLE_VALUE) CloseHandle(silent);
+
     server.stop();
 }
 
