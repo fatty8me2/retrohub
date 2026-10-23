@@ -63,6 +63,7 @@
 #include "savestore.h"
 #include "shell_integration.h"
 #include "session.h"
+#include "netplay_3ds_run.h"
 #include "ui_kit.h"
 
 #ifndef HUB_VERSION_STR
@@ -652,7 +653,7 @@ static void rebuild_vis() {
 
 static bool supports_online(const hub::GameEntry& e) {
     return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB ||
-           e.system == hub::System::GBC;
+           e.system == hub::System::GBC || e.system == hub::System::N3DS;   // 3DS: Azahar room via np_3ds
 }
 /* Online player cap for a room (online_max_for; 0 online_max = max_players). Every online limit uses this. */
 static int max_players_for(const hub::GameEntry& e) {
@@ -946,7 +947,11 @@ static std::string launch_path_for(const hub::GameEntry& e) {
     return e.path;
 }
 
-static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery) {
+static hubnp3ds::Runner NP3;                 // 3DS local-wireless forwarder (np_3ds)
+static std::string NP3_mp;                    // "-m ..." for Azahar once NP3 is ready
+static hub::GameEntry NP3_game;
+static bool NP3_pending = false;
+static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg = "") {
     hubemu::Kind kind = hubemu::kind_for(e.system);
     if ((e.system == hub::System::N3DS || e.system == hub::System::GC) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
         UNZ.key = e.key;
@@ -975,7 +980,7 @@ static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const st
     }
     std::string game = launch_path_for(e);
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
-    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, A.st.fullscreen)
+    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, A.st.fullscreen, mp_arg)
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, A.st.fullscreen, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
                                                        : hubemu::cemu_args(game, A.st.fullscreen);
     if (e.issue == "encrypted") set_notice("This 3DS image is encrypted: Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder).", 12.0);
@@ -983,9 +988,10 @@ static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const st
     RunInfo r = ri;
     r.after_exit = [sess]() {   // emulator save folder -> vault, before the sync runs
         hubemu::end_session(*sess);
+        NP3.stop();
         if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (your emulator's copy is untouched)", ui::WARN, 15.0);
     };
-    spawn(inst.exe, args, inst.dir, {}, r);
+    if (!spawn(inst.exe, args, inst.dir, {}, r)) NP3.stop();
 }
 
 static void start_unzip(const hub::GameEntry& e) {
@@ -1067,12 +1073,45 @@ static void play_entry(const hub::GameEntry& e) {
 }
 
 static std::vector<hubui::MemberPads> member_pads();
+/* 3DS: bring up the room server (host) + UDP forwarder, then poll_np3ds() starts Azahar once everyone is reachable. */
+static void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg) {
+    if (A.proc || NP3.active()) { set_notice("A game is already running."); return; }
+    hubemu::Install inst = hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, e.path);
+    if (inst.exe.empty()) { set_notice("Install Azahar first (start the game offline once), then join the room again.", 10.0); return; }
+    hubnp3ds::Plan plan;
+    std::string err;
+    if (is_host) {
+        plan.expected = (int)A.lobby.members().size();
+        plan.port = hubnp3ds::kDefaultRoomPort;
+        std::string room = hubnp3ds::room_exe_for(inst.exe);
+        std::string wd = no_slash(hub::data_dir()) + "\netplay\3ds";
+        make_dirs(wd);
+        if (!NP3.start_host(server_url(), A.code, launch_no, plan, room, wd, &err)) { set_notice("3DS online: " + err, 12.0); return; }
+    } else {
+        if (!msg || !hubnp3ds::parse_plan(*msg, &plan)) { set_notice("The host's 3DS room settings are missing - ask them to update RetroHub.", 10.0); return; }
+        if (!NP3.start_guest(server_url(), A.code, launch_no, plan, A.lobby.my_slot(), &err)) { set_notice("3DS online: " + err, 12.0); return; }
+    }
+    NP3_mp = hubnp3ds::multiplayer_arg(hubnp3ds::nickname(A.st.name, A.lobby.my_slot()), plan.password, "127.0.0.1", NP3.connect_port());
+    NP3_game = e;
+    NP3_pending = true;
+    set_notice("Connecting the 3DS wireless link...", 20.0);
+}
+static void poll_np3ds() {
+    if (!NP3.active()) return;
+    NP3.update();
+    if (NP3.failed()) { set_notice("3DS online: " + NP3.status(), 12.0); NP3.stop(); NP3_pending = false; return; }
+    if (NP3_pending && NP3.ready()) {   // never start Azahar earlier: a failed join raises a modal error dialog in it
+        NP3_pending = false;
+        launch_external(NP3_game, run_info_for(NP3_game, true), "", NP3_mp);
+    }
+}
 static void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
                           const hubui::MatchSpec* host_match = nullptr) {
     A.st.last_game = room_id(e);
     mark_dirty();
     RunInfo ri = run_info_for(e, true);
+    if (e.system == hub::System::N3DS) { launch_online_3ds(e, launch_no, is_host, launch_msg); return; }
     if (is_native(e)) {
         std::string exe = smash_exe_path();
         std::vector<std::pair<std::string, std::string>> env;
@@ -3074,7 +3113,9 @@ static void page_online_room() {
             hubui::MatchSpec spec;   // Randoms are rolled here, once, from the launch seed
             bool with_match = rg->system == hub::System::N64 && match_active();
             if (with_match) spec = hubui::resolve_match(plan.ports, all_picks(), A.rules, seed, match_remix_roster());
-            A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr));
+            std::string np_extra;
+            if (rg->system == hub::System::N3DS) { hubnp3ds::Plan np; np.expected = (int)A.lobby.members().size(); np_extra = hubnp3ds::plan_json_fragment(np); }
+            A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra));
             launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
         }
         ImGui::SameLine();
@@ -4260,6 +4301,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             apply_scan();
         }
         poll_process();
+        poll_np3ds();
         poll_job();
         run_pending_sync();
         poll_emulators();

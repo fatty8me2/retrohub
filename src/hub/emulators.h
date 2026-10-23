@@ -99,7 +99,7 @@ std::string dolphin_args(const std::string& game_path, bool fullscreen, const st
 std::string dolphin_card_root(const std::string& install_dir, const std::string& game_key);
 
 /* ---- launch ---- */
-std::string azahar_args(const std::string& game_path, bool fullscreen);   // after the exe path
+std::string azahar_args(const std::string& game_path, bool fullscreen, const std::string& extra = "");   // extra: e.g. -m "nick@127.0.0.1:port"   // after the exe path
 std::string cemu_args(const std::string& game_path, bool fullscreen);
 
 /* ---- saves: emulator folder <-> vault ---- */
