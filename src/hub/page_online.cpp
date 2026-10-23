@@ -124,7 +124,7 @@ void page_online_room() {
     for (auto& p : peers) by_slot[p.slot] = &p;
     for (int s = 0; s < 4; ++s) {
         if (s % cols) ImGui::SameLine(0, gap);
-        member_card(by_slot.count(s) ? by_slot[s] : nullptr, s, ImVec2(mw, 124 * S));
+        member_card(by_slot.count(s) ? by_slot[s] : nullptr, s, ImVec2(mw, 146 * S));   // room for two chip rows when the console chips wrap
     }
 
     ImGui::Dummy(ImVec2(0, 4 * S));

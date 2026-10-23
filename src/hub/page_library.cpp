@@ -597,29 +597,44 @@ void draw_details_modal() {
     ImGui::Dummy(ImVec2(0, sp(2.f)));
 
     float bh = sp(5.5f);
+    /* Action row: each button joins the row only if it fits the modal width, otherwise it wraps to the next line. */
+    const float row_gap = sp(1.5f), row_avail = ImGui::GetContentRegionAvail().x;
+    float row_used = 0.f;
+    bool row_started = false;
+    auto place = [&](float w) {   // call before each button in the row
+        if (!row_started) { row_started = true; row_used = w; return; }
+        if (row_used + row_gap + w <= row_avail) { ImGui::SameLine(0, row_gap); row_used += row_gap + w; }
+        else row_used = w;   // no SameLine: this button starts a new row
+    };
+    auto label_w = [&](const char* label, bool icon) {   // matches button(): text + icon + gap + 2.5sp padding each side
+        return ImGui::CalcTextSize(label).x + (icon ? sp(2.25f) + sp(1) : 0.f) + sp(5);
+    };
+    place(sp(17.f));
     if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play)) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry(c); }
     ImGui::SetItemDefaultFocus();
-    ImGui::SameLine(0, sp(1.5f));
     if (e.system == hub::System::GC && !supports_online(e)) {
+        place(label_w("Online soon", true));
         button("Online soon", ImVec2(0, bh), false, false, ui::Icon::Globe);
     } else if (supports_online(e)) {
+        place(label_w("Play Online", true));
         if (button("Play Online", ImVec2(0, bh), false, idle, ui::Icon::Globe)) {
             ImGui::CloseCurrentPopup();
             A.pending_room_game = room_id(e);
             enter_room(true, hubnet::new_room_code());
         }
     }
-    ImGui::SameLine(0, sp(1.5f));
-    if (button(gs.favorite ? "Unfavorite" : "Favorite", ImVec2(0, bh), false, true, gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star)) toggle_favorite(e.key);
+    const char* fav_label = gs.favorite ? "Unfavorite" : "Favorite";
+    place(label_w(fav_label, true));
+    if (button(fav_label, ImVec2(0, bh), false, true, gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star)) toggle_favorite(e.key);
     if (!native) {
-        ImGui::SameLine(0, sp(1.5f));
+        place(label_w("Save folder", true));
         if (button("Save folder", ImVec2(0, bh), false, true, ui::Icon::Folder)) open_in_explorer(hub::saves::game_dir(sys_short(e), e.key));
     } else {
-        ImGui::SameLine(0, sp(1.5f));
+        place(label_w("Locate BattleShip.exe", false));
         if (button("Locate BattleShip.exe", ImVec2(0, bh))) locate_smash();
     }
     if (!hubctl::system_key(e.system).empty()) {
-        ImGui::SameLine(0, sp(1.5f));
+        place(label_w("Controls for this game", true));
         if (button("Controls for this game", ImVec2(0, bh), false, true, ui::Icon::Gamepad)) { ImGui::CloseCurrentPopup(); open_controls_for(e); }
     }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));

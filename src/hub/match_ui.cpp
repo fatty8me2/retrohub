@@ -222,6 +222,18 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
         ImGui::TextDisabled("checking games...");
     } else {
         bool first = true;
+        /* Chips flow left to right and wrap inside the card, so none are clipped at the right edge. */
+        ImFont* cf = ui::F.cap ? ui::F.cap : ImGui::GetFont();
+        const float chip_x0 = p0.x + 16 * S, chip_max = p1.x - 12 * S;
+        float chip_x = chip_x0, chip_y = p0.y + 88 * S;
+        const float chip_row_h = cf->FontSize + ui::sp(1) + 4 * S;
+        auto chip = [&](const char* text, ImU32 bg) {
+            float w = cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, text).x + 2 * ui::sp(1.25f);
+            if (chip_x > chip_x0 && chip_x + w > chip_max) { chip_x = chip_x0; chip_y += chip_row_h; }
+            ImGui::SetCursorScreenPos(ImVec2(chip_x, chip_y));
+            pill(text, bg);
+            chip_x += w + 6 * S;
+        };
         if (!p->keys.empty()) {   // v2 peers: games per system
             std::map<std::string, int> per;
             for (auto& k : p->keys) ++per[k.substr(0, k.find(':'))];
@@ -230,18 +242,16 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
                 system_colors(hub::system_from_short(kv.first), &a, &b);
                 char lab[48];
                 std::snprintf(lab, sizeof lab, "%s %d", sys_badge(hub::system_from_short(kv.first)), kv.second);
-                if (!first) ImGui::SameLine(0, 6 * S);
                 first = false;
-                pill(lab, mix(a, IM_COL32_BLACK, 0.15f));
+                chip(lab, mix(a, IM_COL32_BLACK, 0.15f));
             }
         } else {
             for (auto& g : hub::catalog()) {
                 if (!p->games.count(g.id)) continue;
                 ImU32 a, b;
                 game_colors(g.id, &a, &b);
-                if (!first) ImGui::SameLine(0, 6 * S);
                 first = false;
-                pill(short_name(g.id), mix(a, IM_COL32_BLACK, 0.15f));
+                chip(short_name(g.id), mix(a, IM_COL32_BLACK, 0.15f));
             }
         }
         if (first) ImGui::TextDisabled("no supported games");

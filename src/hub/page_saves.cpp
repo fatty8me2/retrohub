@@ -81,7 +81,14 @@ void page_saves() {
     if (ImGui::Checkbox("Sync automatically after playing", &A.st.sync_auto)) mark_dirty();
     if (ImGui::Checkbox("Include save states (bigger)", &A.st.sync_states)) mark_dirty();
     ImGui::Dummy(ImVec2(0, 4 * S));
-    if (ImGui::Checkbox("Cloud saves", &A.st.cloud_saves)) {
+    /* Server has no cloud saves yet: keep the user's choice in A.st.cloud_saves, but show the toggle off and disabled. */
+    const bool cloud_unavail = A.cloud_stat_known && A.cloud_stat.unavailable;
+    if (cloud_unavail) {
+        bool shown_off = false;
+        ImGui::BeginDisabled();
+        ImGui::Checkbox("Cloud saves", &shown_off);
+        ImGui::EndDisabled();
+    } else if (ImGui::Checkbox("Cloud saves", &A.st.cloud_saves)) {
         mark_dirty();
         A.cloud_probed = false;
         A.cloud_stat_known = false;
@@ -92,7 +99,7 @@ void page_saves() {
         if (!A.cloud_probed && !busy) start_cloud_probe();
         std::string line;
         if (!A.cloud_stat_known) line = "Checking cloud saves...";
-        else if (A.cloud_stat.unavailable) line = "Cloud saves aren't available on the server yet";
+        else if (A.cloud_stat.unavailable) line = "Cloud saves aren't available on the server yet. Will turn on when the server supports it.";
         else if (A.cloud_stat.enabled) {
             char b[160];
             std::snprintf(b, sizeof b, "%d files, %.1f of %.0f MB", A.cloud_stat.files,
