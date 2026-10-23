@@ -35,5 +35,6 @@ Fold their findings in before packaging and release.
 
 ## Build and release
 - Build with the VS 2026 bundled CMake: `cmake -S . -B build`, then `cmake --build build --config Release`. The first configure downloads SDL, which takes a few minutes.
+- **MinGW-w64 gcc is required for `sameboy_rb_libretro.dll`** (GB/GBC rollback core; SameBoy uses GNU C extensions MSVC cannot compile). Install MSYS2 and the `mingw-w64-x86_64-gcc` package so `C:\msys64\mingw64\bin\gcc.exe` exists, or pass `-DSAMEBOY_RB_GCC=<path to gcc.exe>`. Without it the target is skipped and GB/GBC netplay stays on lockstep. `package-windows.ps1` fails if the DLL is missing. The DLL is statically linked (only KERNEL32/msvcrt imports) and ships in the release `cores\`.
 - Releases ship inside the Smash Classic package. Run `..\BattleShip\scripts\package-windows.ps1`, which copies the release version from the BattleShip `VERSION` into the RetroHub `VERSION`. Then run `gh release create vX.Y.Z ... -R fatty8me2/smash-classic`.
 - The lobby/friends server is the Cloudflare Worker in `..\BattleShip\server\cloudflare`. Deploy it with `npx wrangler deploy`.
