@@ -156,8 +156,9 @@ static bool parse_args(int argc, char** argv, Args& a) {
                 ok = c2 != std::string::npos;
                 if (ok) {
                     char *e1, *e2;
-                    unsigned long long off = std::strtoull(s.substr(0, c1).c_str(), &e1, 0);
-                    unsigned long long len = std::strtoull(s.substr(c1 + 1, c2 - c1 - 1).c_str(), &e2, 0);
+                    const std::string soff = s.substr(0, c1), slen = s.substr(c1 + 1, c2 - c1 - 1);   // keep alive: e1/e2 point into them
+                    unsigned long long off = std::strtoull(soff.c_str(), &e1, 0);
+                    unsigned long long len = std::strtoull(slen.c_str(), &e2, 0);
                     std::string file = s.substr(c2 + 1);
                     ok = !*e1 && !*e2 && len > 0 && off + len <= 0x800000ull && !file.empty();
                     if (ok) a.dumps.push_back({(uint32_t)off, (uint32_t)len, file});
@@ -204,6 +205,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
 }
 
 // ---------------------------------------------------------------- headless frame counter
+static std::atomic<bool> g_stop_watchdog{false};
 static long long g_frame_limit = 0;      // 0 = unlimited
 static long long g_frame_count = 0;
 static bool g_limiter_off = false;
@@ -367,10 +369,15 @@ int main(int argc, char** argv) {
     // ---- ROM
     std::vector<uint8_t> rom;
     if (!hub::load_rom(args.rom, &rom)) { logf_("n64run", "not a valid N64 ROM: %s", args.rom.c_str()); return 2; }
+    std::string rom_header_name;
     if (args.game.empty()) {
         hub::RomFile rf;
         if (hub::identify_rom(args.rom, &rf) && !rf.game_id.empty()) args.game = rf.game_id;
         else args.game = "unknown";
+        rom_header_name = rf.header_name;
+    } else {
+        hub::RomFile rf;
+        if (hub::identify_rom(args.rom, &rf)) rom_header_name = rf.header_name;
     }
 
     const bool online = !args.net.empty();
@@ -569,11 +576,21 @@ int main(int argc, char** argv) {
         if (!args.screenshot.empty() && args.frames == 0) headless_set_shot_mode(ShotMode::Periodic);
         g_frame_limit = args.frames;
     }
-    if (!args.gfx.empty()) {
+    std::string hdr_up; for (char c : rom_header_name) hdr_up += (char)std::toupper((unsigned char)c);
+    const bool det_gfx = online && (hdr_up.find("MARIOPARTY") != std::string::npos || args.game == "mp1" || args.game == "mp2" || args.game == "mp3");
+    if (!args.gfx.empty() || det_gfx) {
         /* Per-game GLideN64 settings, set before the plugin starts (it keeps existing values). Online, the options that
          * change emulation results (framebuffer emulation) are ignored whatever the caller passed. */
         m64p_handle gh = nullptr;
         if (g_core.OpenSection("Video-GLideN64", &gh) == M64ERR_SUCCESS) {
+            if (det_gfx) {
+                /* These games keep CPU-visible framebuffers; GLideN64's framebuffer emulation (GPU readbacks into RDRAM) is
+                 * timing dependent, so peers' RDRAM (and sometimes game state) diverged. Plain HLE rendering is deterministic. */
+                cfg_bool(gh, "EnableFBEmulation", 0);
+                cfg_int(gh, "EnableCopyColorToRDRAM", 0);
+                cfg_int(gh, "EnableCopyDepthToRDRAM", 0);
+                logf_("n64run", "netplay: framebuffer emulation off for %s (deterministic RDRAM)", args.game.c_str());
+            }
             for (const std::string& a : args.gfx) {
                 hub::gs::GfxParam gp;
                 if (!hub::gs::parse_gfx_arg(a, &gp)) continue;
@@ -657,7 +674,16 @@ int main(int argc, char** argv) {
         g_headless_mode = args.headless;
         g_realtime = args.realtime;
         if (args.headless || g_match) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
+        /* Boot watchdog: a game that never reads a controller within 90 s is stuck in its own boot code (seen with a
+         * bad Pokemon Stadium dump: it spins in a `bal .` loop at 0x80000198). Say so instead of hanging silently. */
+        std::thread([] {
+            for (int i = 0; i < 90 * 10; i++) { Sleep(100); if (g_run.lockstep && g_run.lockstep->samples_done() > 0) return; if (g_stop_watchdog) return; }
+            logf_("n64run", "ERROR: the game made no controller poll in 90 s - it is stuck in its boot code (bad or modified ROM dump?). Exiting.");
+            std::fflush(nullptr);
+            ExitProcess(4);
+        }).detach();
         e = g_core.DoCommand(M64CMD_EXECUTE, 0, nullptr);   // blocks until the emulation stops
+        g_stop_watchdog = true;
         g_title_stop = true;
         if (title_thread.joinable()) title_thread.join();
         logf_("n64run", "emulation ended (%d)", (int)e);
