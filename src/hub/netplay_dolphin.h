@@ -27,6 +27,8 @@ bool spec_parse(const std::string& json, Spec* out);        // accepts the objec
 std::string add_to_launch(const std::string& launch_json, const Spec& s);
 /* Extract the np_gc object text from a launch message ("" when absent). */
 std::string extract_from_launch(const std::string& launch_json);
+/* ",\"np_gc\":{...}" (leading comma) for hubui::launch_json's extra_json parameter. */
+std::string launch_fragment(const Spec& s);
 
 enum class Match { Same, DifferentDisc, Unknown };
 /* Identity check of this PC's disc file against the host's. Unknown when the host sent no hash. */
@@ -64,7 +66,7 @@ struct Run {
 /* Starts Dolphin (-b not used: the main window must exist) minimized without activation plus the driver.
  * desktop = "" runs on the user's desktop; a name (tests) runs both on a private invisible desktop. */
 bool start(bool host, const std::string& dolphin_exe, const std::string& user_dir, const Spec& s,
-           int my_slot, const std::string& work_dir, const std::string& desktop, Run* out);
+           int my_slot, const std::string& work_dir, const std::string& desktop, const std::string& extra_args, Run* out);
 /* Last "code:" value written by the host driver ("" if none yet). */
 std::string read_code(const Run& r);
 std::string read_status(const Run& r);   // whole status file

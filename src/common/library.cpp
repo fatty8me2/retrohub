@@ -1820,6 +1820,11 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
     write_text_atomic(lib_dir() / L"library_cache.json", o);
 }
 
+bool is_archive_file(const std::string& path) {
+    std::string ext = ascii_lower(path_utf8(fs::path(utf8_path(path)).extension()));
+    return ext == ".zip" || ext == ".7z";
+}
+
 bool scan_extension(const std::string& ext) {
     static const char* const kExt[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".7z",
                                        ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip", ".nds",
@@ -1974,13 +1979,22 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         cache_save(recs);
     }
 
-    /* Dedupe by key (first wins), then sort. */
+    /* Dedupe by key (one card per game), then sort. Among copies of the same game the
+     * unzipped one is listed (dedupe_prefers); otherwise the first found wins. */
     std::vector<GameEntry> out;
-    std::set<std::string> keys;
+    std::map<std::string, size_t> by_key;   // key -> index in out
+    std::vector<std::string> out_src;       // original file path of each out entry
     for (const Candidate& c : cands) {
         if (!c.rec.ok) continue;
-        if (!keys.insert(c.rec.e.key).second) continue;
-        out.push_back(c.rec.e);
+        auto it = by_key.find(c.rec.e.key);
+        if (it == by_key.end()) {
+            by_key.emplace(c.rec.e.key, out.size());
+            out.push_back(c.rec.e);
+            out_src.push_back(c.path_utf8);
+        } else if (dedupe_prefers(c.path_utf8, out_src[it->second])) {
+            out[it->second] = c.rec.e;
+            out_src[it->second] = c.path_utf8;
+        }
     }
     std::stable_sort(out.begin(), out.end(), [](const GameEntry& a, const GameEntry& b) {
         if (a.system != b.system) return (int)a.system < (int)b.system;
@@ -1989,6 +2003,10 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         return a.path < b.path;
     });
     return out;
+}
+
+bool dedupe_prefers(const std::string& challenger_path, const std::string& holder_path) {
+    return is_archive_file(holder_path) && !is_archive_file(challenger_path);
 }
 
 /* ------------------------------------------------------------------ */

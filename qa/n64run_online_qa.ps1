@@ -11,7 +11,8 @@ param(
     [string]$Server = '',
     [string]$Build = 'build\bin\Release',
     [string]$Rom = 'C:\Users\fatty\Desktop\Everything\N64Games\Mario Kart 64 (U) [!].z64',
-    [int]$Frames = 1800
+    [int]$Frames = 1800,
+    [string]$TestInput = ''   # e.g. random:42 -> peers get scripted pseudo-random input
 )
 
 $ErrorActionPreference = 'Continue'
@@ -66,7 +67,7 @@ if (-not (Test-Path $n64) -or -not (Test-Path -LiteralPath $Rom)) {
         $room = ('{0}-1' -f ([guid]::NewGuid().ToString('N').Substring(0, 6).ToUpper() -replace '[01OIL]', 'X'))
         $items = @()
         foreach ($slot in 0, 1) {
-            $a = "--rom `"$Rom`" --game mk64 --save-dir `"$tmp\savep$slot`" --net $Server --room $room --players 2 --ports 0,1,-1,-1 --slot $slot --headless --frames $Frames"
+            $a = "--rom `"$Rom`" --game mk64 --save-dir `"$tmp\savep$slot`" --net $Server --room $room --players 2 --ports 0,1,-1,-1 --slot $slot --headless --frames $Frames" + (Get-TestInputArg $TestInput)
             $items += @{ P = (Start-HeadlessRun $n64 $a "$tmp\peer$slot"); Base = "$tmp\peer$slot" }
         }
         $res = Wait-HeadlessRuns $items 300
@@ -107,3 +108,4 @@ foreach ($c in $cases) {
 if ($fail) { Write-Output "FAILED ($fail)"; exit 1 }
 Write-Output "ALL PASSED"
 exit 0
+

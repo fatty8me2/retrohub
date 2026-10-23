@@ -749,8 +749,8 @@ std::string dolphin_args(const std::string& game, bool fullscreen, const std::st
            quote("Dolphin.Core.GCIFolderAPathOverride=" + gci) + " -e " + quote(game);
 }
 
-std::string azahar_args(const std::string& game, bool fullscreen) {
-    return std::string(fullscreen ? "-f " : "-w ") + quote(game);   // the game path must be the last argument
+std::string azahar_args(const std::string& game, bool fullscreen, const std::string& extra) {
+    return std::string(fullscreen ? "-f " : "-w ") + (extra.empty() ? "" : extra + " ") + quote(game);   // the game path must be the last argument
 }
 std::string cemu_args(const std::string& game, bool fullscreen) {
     return "-g " + quote(game) + (fullscreen ? " -f" : "");

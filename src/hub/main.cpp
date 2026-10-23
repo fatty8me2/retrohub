@@ -64,6 +64,7 @@
 #include "savestore.h"
 #include "shell_integration.h"
 #include "session.h"
+#include "netplay_3ds_run.h"
 #include "ui_kit.h"
 
 #ifndef HUB_VERSION_STR
@@ -657,7 +658,7 @@ static bool supports_online(const hub::GameEntry& e) {
         return g && g->online;
     }
     return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB ||
-           e.system == hub::System::GBC;
+           e.system == hub::System::GBC || e.system == hub::System::N3DS;   // 3DS: Azahar room via np_3ds
 }
 /* Online player cap for a room (online_max_for; 0 online_max = max_players). Every online limit uses this. */
 static int max_players_for(const hub::GameEntry& e) {
@@ -932,6 +933,7 @@ struct UnzipJob {
     enum State { Idle, Asking, Working, Failed } state = Idle;
     std::thread th;
     std::atomic<bool> done{false}, ok{false}, cancel{false};
+    bool quiet = false;   // unpacked for a room (GameCube netplay): do not start the game afterwards
     std::atomic<uint64_t> got{0}, total{0};
     std::string key, error;
     std::mutex mu;
@@ -951,7 +953,11 @@ static std::string launch_path_for(const hub::GameEntry& e) {
     return e.path;
 }
 
-static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery) {
+static hubnp3ds::Runner NP3;                 // 3DS local-wireless forwarder (np_3ds)
+static std::string NP3_mp;                    // "-m ..." for Azahar once NP3 is ready
+static hub::GameEntry NP3_game;
+static bool NP3_pending = false;
+static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg = "") {
     hubemu::Kind kind = hubemu::kind_for(e.system);
     if ((e.system == hub::System::N3DS || e.system == hub::System::GC) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
         UNZ.key = e.key;
@@ -980,7 +986,7 @@ static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const st
     }
     std::string game = launch_path_for(e);
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
-    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, A.st.fullscreen)
+    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, A.st.fullscreen, mp_arg)
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, A.st.fullscreen, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
                                                        : hubemu::cemu_args(game, A.st.fullscreen);
     if (e.issue == "encrypted") set_notice("This 3DS image is encrypted: Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder).", 12.0);
@@ -988,9 +994,10 @@ static void launch_external(const hub::GameEntry& e, const RunInfo& ri, const st
     RunInfo r = ri;
     r.after_exit = [sess]() {   // emulator save folder -> vault, before the sync runs
         hubemu::end_session(*sess);
+        NP3.stop();
         if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (your emulator's copy is untouched)", ui::WARN, 15.0);
     };
-    spawn(inst.exe, args, inst.dir, {}, r);
+    if (!spawn(inst.exe, args, inst.dir, {}, r)) NP3.stop();
 }
 
 static void start_unzip(const hub::GameEntry& e) {
@@ -1071,20 +1078,27 @@ static void play_entry(const hub::GameEntry& e) {
     }
 }
 
+static bool room_connected();
 static std::string member_name(int slot);
 static int room_my_slot();
-/* ---------- GameCube online: Dolphin's own NetPlay, started and joined by RetroHub (netplay_dolphin.h) ---------- */
+/* ---------- GameCube online: Dolphin's own NetPlay, started and joined by RetroHub (netplay_dolphin.h) ----------
+ * Dolphin's ENet/UDP goes through the room like 3DS: the host's Dolphin hosts on 127.0.0.1:<port>, every guest's Dolphin
+ * connects (direct mode) to a loopback forwarder, and hubnp3ds::Runner carries the datagrams through hubnet::Session
+ * (hole punch, relay fallback). No traversal server, no port forwarding. */
 struct GcOnline {
     gcnp::Run run;
-    bool active = false, host = false, code_sent = false, guest_wait = false;
+    hubnp3ds::Runner fw;
+    bool active = false, host = false, ready_sent = false, guest_wait = false, host_ready = false, checked = true;
     gcnp::Spec spec;                 // host: what we announce; guest: what the host announced
     hub::GameEntry entry;
-    int slot = 0;
+    int launch_no = 0, port = 0;
     std::string fp_path, fp_sha;     // disc fingerprint (computed once per path on a worker thread)
     uint64_t fp_size = 0;
     std::atomic<bool> fp_done{false};
     std::thread fp_th;
 } GCO;
+
+static bool gc_needs_unpack(const hub::GameEntry& e) { return e.issue == "extract" && hub::extracted_3ds_path(e).empty(); }
 
 static bool gc_fingerprint_ready(const std::string& path) {
     if (GCO.fp_path == path) return GCO.fp_done;
@@ -1110,101 +1124,201 @@ static bool gc_process_alive() {
     return alive;
 }
 
-/* Host: the NetPlay spec for the selected game (false = fingerprint still being computed, try again). */
+static void gc_kill() {
+    for (DWORD pid : {GCO.run.driver_pid, GCO.run.dolphin_pid}) {
+        if (!pid) continue;
+        if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid)) { TerminateProcess(h, 0); CloseHandle(h); }
+    }
+}
+
+/* Called while a GameCube game is selected in the room: unpack an archived copy (existing progress UI) and fingerprint the
+ * disc in the background, so Launch never waits. */
+static void gc_prefetch(const hub::GameEntry& e) {
+    if (gc_needs_unpack(e)) {
+        if (UNZ.state == UnzipJob::Idle && !UNZ.th.joinable()) { UNZ.key = e.key; UNZ.quiet = true; start_unzip(e); }
+        return;
+    }
+    gc_fingerprint_ready(launch_path_for(e));
+}
+
+/* Host: the NetPlay spec for the selected game. The sha is included when the background hash is already done. */
 static bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
+    if (gc_needs_unpack(e)) return false;
     std::string path = launch_path_for(e);
-    if (!gc_fingerprint_ready(path)) return false;
+    bool have = gc_fingerprint_ready(path);
     const GameInfo* g = hub::find_game(e.catalog_id);
     gcnp::Spec s;
-    s.mode = "traversal";
+    s.mode = "direct";
+    s.addr = "127.0.0.1";
+    if (!GCO.port) GCO.port = 27000 + (int)(std::random_device{}() % 2000);
+    s.port = GCO.port;
     s.game_id = !e.serial.empty() ? e.serial : (g && !g->serials.empty() ? g->serials[0] : "");
     s.title = e.title;
-    s.sha256 = GCO.fp_sha;
-    s.size = GCO.fp_size;
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad);
+    s.size = ((uint64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+    if (have) s.sha256 = GCO.fp_sha;
     s.players = std::max(2, std::min(4, players));
     *out = s;
     return !s.game_id.empty();
 }
 
-static bool gc_begin(const hub::GameEntry& e, bool host, int slot) {
+static bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     if (GCO.active && gc_process_alive()) { set_notice("A GameCube online session is already running."); return false; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Dolphin, "", "");
     if (inst.exe.empty()) { set_notice("Dolphin isn't installed yet - start any GameCube game once so RetroHub can download it."); return false; }
     std::string game = launch_path_for(e);
-    if (e.issue == "extract" && game.empty()) { set_notice("Unpack " + e.title + " first (press Play once), then join the room again."); return false; }
+    if (game.empty() || gc_needs_unpack(e)) { set_notice("Unpack " + e.title + " first."); return false; }
     if (hubemu::is_running(inst.exe)) { set_notice("Dolphin is already running. Close it first."); return false; }
     if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
     hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
-    hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads());
+    hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads());   // managed config: no update check, no analytics, no panic alerts
     std::string user = inst.dir + "\\User", ini = user + "\\Config\\Dolphin.ini";
+    gcnp::Spec sp = GCO.spec;
+    sp.mode = "direct";
+    sp.addr = "127.0.0.1";
+    sp.port = port;
     gcnp::IniParams ip;
     ip.host = host;
     ip.nickname = member_name(room_my_slot());
     ip.iso_dir = dir_of(game);
     std::string cur;
     { std::ifstream f(ini, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
-    std::string next = gcnp::ini_patch(cur, GCO.spec, ip);
+    std::string next = gcnp::ini_patch(cur, sp, ip);
     { std::ofstream f(ini, std::ios::binary | std::ios::trunc); f << next; }
     GCO.run = gcnp::Run();
-    if (!gcnp::start(host, inst.exe, user, GCO.spec, slot, hub::data_dir() + "\\gcnp", "", &GCO.run)) {
+    std::string extra = std::string("-C Dolphin.Display.Fullscreen=") + (A.st.fullscreen ? "True" : "False");
+    if (!gcnp::start(host, inst.exe, user, sp, slot, hub::data_dir() + "\\gcnp", "", extra, &GCO.run)) {
         set_notice("Could not start Dolphin NetPlay: " + GCO.run.error);
         return false;
     }
     GCO.active = true;
     GCO.host = host;
-    GCO.code_sent = false;
+    GCO.ready_sent = false;
     GCO.entry = e;
-    GCO.slot = slot;
     push_toast(host ? "Starting GameCube NetPlay as host..." : "Joining the host's GameCube NetPlay...", ui::GOOD, 6.0);
     return true;
 }
 
-/* Each frame: the host publishes its Dolphin host code once; guests start when the code and their fingerprint are there. */
+static void gc_stop_all() {
+    GCO.fw.stop();
+    GCO.active = false;
+    GCO.guest_wait = false;
+}
+
+/* Each frame: keep the forwarder alive, tell guests when the host's Dolphin is listening, check the guest's disc. */
 static void gc_tick() {
-    if (!GCO.active) return;
-    if (!gc_process_alive()) {
-        GCO.active = false;
-        GCO.guest_wait = false;
-        return;
-    }
-    if (GCO.host && !GCO.code_sent) {
-        std::string code = gcnp::read_code(GCO.run);
-        if (!code.empty()) {
-            GCO.code_sent = true;
-            A.lobby.send_msg("{\"kind\":\"np_gc_code\",\"code\":\"" + code + "\"}");
+    if (GCO.fw.active()) {
+        GCO.fw.update();
+        if (GCO.fw.failed()) {
+            set_notice("GameCube online: " + GCO.fw.status(), 12.0);
+            gc_kill();
+            gc_stop_all();
+            return;
         }
     }
+    if (!GCO.active) {
+        if (room_connected() && !A.selected_game.empty()) {
+            const hub::GameEntry* g = find_room_entry(A.selected_game);
+            if (g && g->system == hub::System::GC) gc_prefetch(*g);
+        }
+        return;
+    }
+    if (!gc_process_alive()) { gc_stop_all(); return; }
+    if (GCO.host && !GCO.ready_sent && gcnp::read_status(GCO.run).find("stage:netplay-open") != std::string::npos) {
+        GCO.ready_sent = true;
+        A.lobby.send_msg("{\"kind\":\"np_gc_ready\"}");
+    }
+    if (!GCO.host && !GCO.checked && GCO.fp_done && GCO.fp_path == launch_path_for(GCO.entry)) {
+        GCO.checked = true;
+        gcnp::Match m = gcnp::compare_disc(GCO.spec, GCO.fp_size, GCO.fp_sha);
+        if (m == gcnp::Match::DifferentDisc) push_toast(gcnp::match_text(m), ui::WARN, 20.0, true);
+    }
 }
 
-static void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s) {
+static void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_no) {
+    if (GCO.active && gc_process_alive()) return;
     GCO.spec = s;
     GCO.entry = e;
-    GCO.guest_wait = true;   // waiting for np_gc_code (or already have it in s)
-    std::string path = launch_path_for(e);
-    if (!gc_fingerprint_ready(path)) return;   // gc_guest_poll finishes the job
+    GCO.launch_no = launch_no;
+    GCO.guest_wait = true;
+    GCO.host_ready = false;
+    GCO.checked = false;
+    gc_prefetch(e);   // archive: unpack automatically; disc fingerprint in the background
+    hubnp3ds::Plan plan;
+    plan.port = s.port;
+    plan.expected = (int)A.lobby.members().size();
+    std::string err;
+    if (!GCO.fw.start_guest(server_url(), A.code, launch_no, plan, A.lobby.my_slot(), &err, "gc")) {
+        set_notice("GameCube online: " + err, 12.0);
+        GCO.guest_wait = false;
+    }
 }
 
+/* Guest: start Dolphin once the host's Dolphin listens, the session reaches the host, and the game is unpacked. */
 static void gc_guest_poll() {
-    if (!GCO.guest_wait || GCO.spec.host_code.empty()) return;
-    std::string path = launch_path_for(GCO.entry);
-    if (!gc_fingerprint_ready(path)) return;
+    if (!GCO.guest_wait) return;
+    if (gc_needs_unpack(GCO.entry)) { gc_prefetch(GCO.entry); return; }
+    if (!GCO.host_ready || !GCO.fw.ready()) return;
+    gc_fingerprint_ready(launch_path_for(GCO.entry));
     GCO.guest_wait = false;
-    gcnp::Match m = gcnp::compare_disc(GCO.spec, GCO.fp_size, GCO.fp_sha);
-    if (m == gcnp::Match::DifferentDisc) push_toast(gcnp::match_text(m), ui::WARN, 15.0, true);
-    gc_begin(GCO.entry, false, room_my_slot());
+    if (!gc_begin(GCO.entry, false, room_my_slot(), GCO.fw.connect_port())) gc_stop_all();
 }
 
 static std::vector<hubui::MemberPads> member_pads();
+/* 3DS: bring up the room server (host) + UDP forwarder, then poll_np3ds() starts Azahar once everyone is reachable. */
+static void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg) {
+    if (A.proc || NP3.active()) { set_notice("A game is already running."); return; }
+    hubemu::Install inst = hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, e.path);
+    if (inst.exe.empty()) { set_notice("Install Azahar first (start the game offline once), then join the room again.", 10.0); return; }
+    hubnp3ds::Plan plan;
+    std::string err;
+    if (is_host) {
+        plan.expected = (int)A.lobby.members().size();
+        plan.port = hubnp3ds::kDefaultRoomPort;
+        std::string room = hubnp3ds::room_exe_for(inst.exe);
+        std::string wd = no_slash(hub::data_dir()) + "\netplay\3ds";
+        make_dirs(wd);
+        if (!NP3.start_host(server_url(), A.code, launch_no, plan, room, wd, &err)) { set_notice("3DS online: " + err, 12.0); return; }
+    } else {
+        if (!msg || !hubnp3ds::parse_plan(*msg, &plan)) { set_notice("The host's 3DS room settings are missing - ask them to update RetroHub.", 10.0); return; }
+        if (!NP3.start_guest(server_url(), A.code, launch_no, plan, A.lobby.my_slot(), &err)) { set_notice("3DS online: " + err, 12.0); return; }
+    }
+    NP3_mp = hubnp3ds::multiplayer_arg(hubnp3ds::nickname(A.st.name, A.lobby.my_slot()), plan.password, "127.0.0.1", NP3.connect_port());
+    NP3_game = e;
+    NP3_pending = true;
+    set_notice("Connecting the 3DS wireless link...", 20.0);
+}
+static void poll_np3ds() {
+    if (!NP3.active()) return;
+    NP3.update();
+    if (NP3.failed()) { set_notice("3DS online: " + NP3.status(), 12.0); NP3.stop(); NP3_pending = false; return; }
+    if (NP3_pending && NP3.ready()) {   // never start Azahar earlier: a failed join raises a modal error dialog in it
+        NP3_pending = false;
+        launch_external(NP3_game, run_info_for(NP3_game, true), "", NP3_mp);
+    }
+}
 static void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
                           const hubui::MatchSpec* host_match = nullptr) {
     A.st.last_game = room_id(e);
     mark_dirty();
     if (e.system == hub::System::GC) {   // Dolphin NetPlay: the host starts now; guests start from the launch handler
-        if (is_host) { gcnp::Spec s; if (gc_host_spec(e, (int)A.lobby.members().size(), &s)) { GCO.spec = s; gc_begin(e, true, 0); } }
+        if (is_host) {
+            gcnp::Spec s;
+            if (!gc_host_spec(e, (int)A.lobby.members().size(), &s)) return;
+            GCO.spec = s;
+            hubnp3ds::Plan plan;
+            plan.port = s.port;
+            plan.expected = (int)A.lobby.members().size();
+            std::string err;
+            if (!GCO.fw.start_host_forward(server_url(), A.code, launch_no, plan, "gc", &err)) { set_notice("GameCube online: " + err, 12.0); return; }
+            if (!gc_begin(e, true, 0, s.port)) GCO.fw.stop();
+        }
         return;
     }
     RunInfo ri = run_info_for(e, true);
+    if (e.system == hub::System::N3DS) { launch_online_3ds(e, launch_no, is_host, launch_msg); return; }
     if (is_native(e)) {
         std::string exe = smash_exe_path();
         std::vector<std::pair<std::string, std::string>> env;
@@ -1449,9 +1563,8 @@ static void lobby_tick() {
         } else if (kind == "rules") {
             hubui::MatchRules mr;
             if (from == 0 && !is_host() && hubui::parse_rules(j, &mr)) A.rules = mr;
-        } else if (kind == "np_gc_code") {
-            std::string c = j.str("code");
-            if (from == 0 && !is_host() && GCO.guest_wait && gcnp::valid_host_code(c)) GCO.spec.host_code = c;
+        } else if (kind == "np_gc_ready") {
+            if (from == 0 && !is_host() && GCO.guest_wait) GCO.host_ready = true;
         } else if (kind == "chat") {
             A.chat.push_back({member_name(from), j.str("text")});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
@@ -1464,7 +1577,7 @@ static void lobby_tick() {
             if (g->system == hub::System::GC) {
                 gcnp::Spec gs;
                 if (!gcnp::spec_parse(gcnp::extract_from_launch(body), &gs)) { set_notice("The host's GameCube launch is invalid - ask them to update RetroHub."); continue; }
-                gc_guest_prepare(*g, gs);
+                gc_guest_prepare(*g, gs, (int)j.num("launch", 1));
                 continue;
             }
             const hubui::Json* ss = j.get("share_save");
@@ -3189,6 +3302,7 @@ static void page_online_room() {
             ImGui::TextDisabled("%s", A.share_host_save ? "Using the host's save (unlocked characters/boards)." : "Starting from an empty save.");
         }
     }
+    if (rg && rg->system == hub::System::GC) ImGui::TextWrapped("GameCube online uses the host's save and memory card for everyone. Your own memory card is not changed.");
     if (match_active()) match_panel(host, left_w);
     if (host) {
         bool ok = false;
@@ -3209,6 +3323,10 @@ static void page_online_room() {
                     if (p.slot != 0 && !A.ready[p.slot]) { ok = false; why = p.name + " isn't ready yet"; break; }
         }
         if (A.proc) { ok = false; why = "In game..."; }
+        if (rg && rg->system == hub::System::GC) {
+            if (gc_needs_unpack(*rg)) { ok = false; why = "Unpacking " + rg->title + " (needed for GameCube online)..."; }
+            else if (GCO.active) { ok = false; why = "In game..."; }
+        }
         if (button("Launch", ImVec2(220 * S, 60 * S), true, ok)) {
             int delay = A.st.delay_auto ? 0 : A.st.input_delay;   // 0 = auto, same for everyone
             bool share = A.share_host_save && rg->system == hub::System::N64;
@@ -3218,11 +3336,17 @@ static void page_online_room() {
             hubui::MatchSpec spec;   // Randoms are rolled here, once, from the launch seed
             bool with_match = rg->system == hub::System::N64 && match_active();
             gcnp::Spec gspec; bool gc_ok = true;
-            if (rg->system == hub::System::GC) { gc_ok = gc_host_spec(*rg, (int)peers.size() + 1, &gspec); if (!gc_ok) { push_toast("Checking your game file (a few seconds)... press Launch again.", ui::GOOD, 5.0); --A.launch_counter; } }
             if (with_match) spec = hubui::resolve_match(plan.ports, all_picks(), A.rules, seed, match_remix_roster());
-            if (gc_ok) { std::string lj = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr); if (rg->system == hub::System::GC) lj = gcnp::add_to_launch(lj, gspec); A.lobby.send_msg(lj); }
-            if (gc_ok) launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
-        }
+            std::string np_extra;
+            if (rg->system == hub::System::N3DS) { hubnp3ds::Plan np; np.expected = (int)A.lobby.members().size(); np_extra = hubnp3ds::plan_json_fragment(np); }
+            if (rg->system == hub::System::GC) {
+                if (!gc_host_spec(*rg, (int)peers.size() + 1, &gspec)) gc_ok = false;
+                else np_extra = gcnp::launch_fragment(gspec);
+            }
+            if (gc_ok) {
+                A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra));
+                launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
+            } else --A.launch_counter;        }
         ImGui::SameLine();
         ImGui::TextDisabled("%s", ok ? "Everyone is ready." : why.c_str());
     } else {
@@ -3688,10 +3812,14 @@ static void poll_emulators() {
         if (UNZ.th.joinable()) UNZ.th.join();
         if (UNZ.ok) {
             UNZ.state = UnzipJob::Idle;
-            set_toast("Unpacked. Starting the game...");
-            if (const hub::GameEntry* g = find_entry(UNZ.key)) { hub::GameEntry copy = *g; play_entry(copy); }
+            if (UNZ.quiet) { UNZ.quiet = false; set_toast("Unpacked."); }
+            else {
+                set_toast("Unpacked. Starting the game...");
+                if (const hub::GameEntry* g = find_entry(UNZ.key)) { hub::GameEntry copy = *g; play_entry(copy); }
+            }
         } else if (UNZ.error == "cancelled") {
             UNZ.state = UnzipJob::Idle;
+            UNZ.quiet = false;
         } else {
             UNZ.state = UnzipJob::Failed;
         }
@@ -4406,6 +4534,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             apply_scan();
         }
         poll_process();
+        poll_np3ds();
         poll_job();
         run_pending_sync();
         poll_emulators();
