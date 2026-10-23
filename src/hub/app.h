@@ -553,6 +553,7 @@ void page_saves();
 /* ---- page_settings.cpp ---- */
 void settings_label(const char* title, const char* hint = nullptr);
 void page_settings();
+void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
 
 
 /* ---- emu_dialogs.cpp ---- */

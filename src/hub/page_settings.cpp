@@ -141,6 +141,8 @@ void page_settings() {
     end_panel();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
+    draw_account_section();
+
     begin_panel("set_app");
     section_title("Appearance");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
