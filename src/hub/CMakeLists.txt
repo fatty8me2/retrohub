@@ -1,4 +1,4 @@
-add_library(hublogic STATIC logic.cpp netplay_3ds.cpp smash_save.cpp)
+add_library(hublogic STATIC logic.cpp toast.cpp netplay_3ds.cpp smash_save.cpp)
 target_link_libraries(hublogic PUBLIC hubbase)
 target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_compile_features(hublogic PUBLIC cxx_std_17)
@@ -63,9 +63,12 @@ configure_file("${CMAKE_BINARY_DIR}/brand_gen/hub_version_rc.h.tmp" "${CMAKE_BIN
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
 set(RH_BRAND_RC_DIRS ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_CURRENT_SOURCE_DIR})
 set_source_files_properties(retrohub.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/assets/brand/retrohub.ico")
-target_sources(RetroHub PRIVATE shell_integration.cpp retrohub.rc)
+target_sources(RetroHub PRIVATE shell_integration.cpp toast_win.cpp retrohub.rc)
 target_include_directories(RetroHub PRIVATE ${RH_BRAND_RC_DIRS})
-target_link_libraries(RetroHub PRIVATE propsys)
+target_link_libraries(RetroHub PRIVATE propsys windowsapp)
+
+add_executable(hub_toast_test test_toast.cpp)
+target_link_libraries(hub_toast_test PRIVATE hublogic)
 
 add_executable(hub_shell_test test_shell.cpp shell_integration.cpp)
 target_link_libraries(hub_shell_test PRIVATE hubbase SDL2::SDL2 ole32 shell32 uuid propsys user32)
