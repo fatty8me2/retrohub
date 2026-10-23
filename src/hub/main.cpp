@@ -5,6 +5,23 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
     shell_set_app_id();
     const char* shot_path = std::getenv("HUB_SCREENSHOT");
+    // Single instance + command-line actions: `retrohub://join/<CODE>`, `--join <CODE>`, `--play <game key>`.
+    std::wstring cmd_join, cmd_play;
+    const bool has_join = invite_parse_command_line(GetCommandLineW(), &cmd_join);
+    const bool has_play = invite_parse_play(GetCommandLineW(), &cmd_play);
+    std::unique_ptr<InviteInstance> instance;
+    InviteServer invite_srv;
+    if (!shot_path) {
+        instance.reset(new InviteInstance(INVITE_MUTEX_NAME));
+        if (!instance->is_primary()) {   // already running: hand the request over (or just ask it to show itself) and leave
+            bool sent = has_join ? invite_send(INVITE_PIPE_NAME, cmd_join) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play) : invite_send_show(INVITE_PIPE_NAME);
+            if (sent) return 0;
+        } else {
+            invite_srv.start(INVITE_PIPE_NAME);
+        }
+    }
+    std::string first_join = has_join && !shot_path ? U(cmd_join) : std::string();
+    if (has_play && !shot_path) A.pending_play = U(cmd_play);
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
     SDL_SetMainReady();
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -81,6 +98,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (!shot_path) {
         shell_set_window_icon(A.win);
         shell_ensure_start_menu_shortcut();
+        shell_ensure_url_protocol();
     }
 
     IMGUI_CHECKVERSION();
@@ -134,6 +152,22 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_emulators();
         lobby_tick();
         fr_tick();
+        {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
+            std::wstring w;
+            if (!first_join.empty()) { std::string c = first_join; first_join.clear(); fr_join_lobby(c, "", "", ""); if (A.proc) flash_taskbar(); }
+            while (invite_srv.take(&w)) { fr_join_lobby(U(w), "", "", ""); if (A.proc) flash_taskbar(); }
+            while (invite_srv.take_play(&w)) A.pending_play = U(w);
+            if (invite_srv.take_show()) {
+                if (A.proc) flash_taskbar();   // a game is running: never pull RetroHub in front of it
+                else { SDL_RestoreWindow(A.win); SDL_RaiseWindow(A.win); }
+            }
+            if (!A.pending_play.empty() && !A.scanning) {   // library is loaded: start the favorite (offline)
+                std::string key = A.pending_play;
+                A.pending_play.clear();
+                if (const hub::GameEntry* g = find_entry(key)) { A.sel_game = key; hub::GameEntry copy = *g; play_entry(copy); }
+                else set_notice("That game is not in your library any more.");
+            }
+        }
         if (hubupdate::installer_started()) running = false;   // the installer replaces our files and relaunches us
         if (A.dirty && !g_headless && !ImGui::IsAnyItemActive()) {
             hubui::save_settings(A.settings_path, A.st);
@@ -163,6 +197,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     // clean shutdown
     if (A.dirty) hubui::save_settings(A.settings_path, A.st);
+    invite_srv.stop();
     A.lobby.stop();
     FR.cli.stop();
     if (A.scan_th.joinable()) A.scan_th.join();

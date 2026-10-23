@@ -20,6 +20,12 @@ bool invite_parse_url(const std::wstring& url, std::wstring* code);
 /* Scans a full command line (GetCommandLineW) for "--join <CODE>" or a retrohub:// URL argument. */
 bool invite_parse_command_line(const std::wstring& cmdline, std::wstring* code);
 
+/* One-click favorites: "RetroHub.exe --play <game key>" (library key: lowercase [a-z0-9._-], at most 120 chars). */
+bool invite_is_valid_game_key(const std::wstring& key);
+bool invite_parse_play(const std::wstring& cmdline, std::wstring* key);
+/* Arguments of a game shortcut: --play <key>. */
+std::wstring invite_play_arguments(const std::wstring& key);
+
 /* https://smash-netplay.jumpcircuit.workers.dev/j/<CODE>. Returns "" for an invalid code. */
 std::wstring invite_web_link(const std::wstring& code);
 /* Puts text on the clipboard. Returns false on failure. */
@@ -50,18 +56,24 @@ public:
     ~InviteServer();
     bool start(const std::wstring& pipe_name);
     void stop();
-    bool take(std::wstring* code);   // pops the next queued code (main thread, once per frame)
+    bool take(std::wstring* code);        // pops the next queued join code (main thread, once per frame)
+    bool take_play(std::wstring* key);    // pops the next queued --play game key
+    bool take_show();                     // true once per "show yourself" request
 private:
+    bool pop(int kind, std::wstring* text);
+    void push(int kind, const std::wstring& text);
     void run();
     std::wstring pipe_;
     HANDLE thread_ = nullptr;
     volatile LONG stop_ = 0;
     CRITICAL_SECTION lock_{};
     bool lock_ready_ = false;
-    std::wstring queue_[16];
+    struct Msg { int kind; std::wstring text; } queue_[16];
     int count_ = 0;
 };
 
 /* Second-launch side: sends a code to the primary. Retries until timeout_ms while the primary starts up.
  * Returns true when the primary accepted the code. */
 bool invite_send(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms = 3000);
+bool invite_send_play(const std::wstring& pipe_name, const std::wstring& key, DWORD timeout_ms = 3000);
+bool invite_send_show(const std::wstring& pipe_name, DWORD timeout_ms = 3000);

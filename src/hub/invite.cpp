@@ -14,7 +14,7 @@ namespace {
 
 const wchar_t kWebBase[] = L"https://smash-netplay.jumpcircuit.workers.dev/j/";
 const wchar_t kScheme[] = L"retrohub://join/";
-const size_t kPipeMsgMax = 64;
+const size_t kPipeMsgMax = 200;
 
 bool starts_with_ci(const std::wstring& s, const wchar_t* prefix) {
     size_t n = wcslen(prefix);
@@ -133,7 +133,7 @@ bool InviteServer::start(const std::wstring& pipe_name) {
 void InviteServer::run() {
     while (!InterlockedCompareExchange(&stop_, 0, 0)) {
         HANDLE pipe = CreateNamedPipeW(pipe_.c_str(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-                                       PIPE_UNLIMITED_INSTANCES, 256, 256, 0, nullptr);
+                                       PIPE_UNLIMITED_INSTANCES, 512, 512, 0, nullptr);
         if (pipe == INVALID_HANDLE_VALUE) { Sleep(200); continue; }
         BOOL connected = ConnectNamedPipe(pipe, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED;
         if (connected && !InterlockedCompareExchange(&stop_, 0, 0)) {
@@ -145,12 +145,14 @@ void InviteServer::run() {
                 int n = MultiByteToWideChar(CP_UTF8, 0, buf, (int)got, nullptr, 0);
                 if (n > 0) { text.resize(n); MultiByteToWideChar(CP_UTF8, 0, buf, (int)got, &text[0], n); }
             }
-            std::wstring code = invite_normalize_code(text);
-            bool accepted = invite_is_valid_code(code);
-            if (accepted) {
-                EnterCriticalSection(&lock_);
-                if (count_ < 16) queue_[count_++] = code;
-                LeaveCriticalSection(&lock_);
+            bool accepted = false;
+            if (text == L"show") { push(2, L""); accepted = true; }
+            else if (text.compare(0, 5, L"play:") == 0) {
+                std::wstring key = text.substr(5);
+                if (invite_is_valid_game_key(key)) { push(1, key); accepted = true; }
+            } else {
+                std::wstring code = invite_normalize_code(text);
+                if (invite_is_valid_code(code)) { push(0, code); accepted = true; }
             }
             const char* reply = accepted ? "OK" : "ERR";
             DWORD wrote = 0;
@@ -173,25 +175,59 @@ void InviteServer::stop() {
     if (lock_ready_) { DeleteCriticalSection(&lock_); lock_ready_ = false; }
 }
 
-bool InviteServer::take(std::wstring* code) {
+void InviteServer::push(int kind, const std::wstring& text) {
+    EnterCriticalSection(&lock_);
+    if (count_ < 16) { queue_[count_].kind = kind; queue_[count_].text = text; ++count_; }
+    LeaveCriticalSection(&lock_);
+}
+
+bool InviteServer::pop(int kind, std::wstring* text) {
     if (!lock_ready_) return false;
     EnterCriticalSection(&lock_);
-    bool got = count_ > 0;
-    if (got) {
-        *code = queue_[0];
-        for (int i = 1; i < count_; ++i) queue_[i - 1] = queue_[i];
+    bool got = false;
+    for (int i = 0; i < count_ && !got; ++i) {
+        if (queue_[i].kind != kind) continue;
+        if (text) *text = queue_[i].text;
+        for (int j = i + 1; j < count_; ++j) queue_[j - 1] = queue_[j];
         --count_;
+        got = true;
     }
     LeaveCriticalSection(&lock_);
     return got;
 }
 
-bool invite_send(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms) {
-    std::wstring c = invite_normalize_code(code);
-    if (!invite_is_valid_code(c)) return false;
-    int n = WideCharToMultiByte(CP_UTF8, 0, c.c_str(), (int)c.size(), nullptr, 0, nullptr, nullptr);
+bool InviteServer::take(std::wstring* code) { return pop(0, code); }
+bool InviteServer::take_play(std::wstring* key) { return pop(1, key); }
+bool InviteServer::take_show() { return pop(2, nullptr); }
+
+bool invite_is_valid_game_key(const std::wstring& key) {
+    if (key.empty() || key.size() > 120) return false;
+    for (wchar_t c : key)
+        if (!((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == L'.' || c == L'_' || c == L'-')) return false;
+    return true;
+}
+
+bool invite_parse_play(const std::wstring& cmdline, std::wstring* key) {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(cmdline.c_str(), &argc);
+    if (!argv) return false;
+    bool found = false;
+    for (int i = 0; i < argc && !found; ++i) {
+        if (_wcsicmp(argv[i], L"--play") == 0 && i + 1 < argc && invite_is_valid_game_key(argv[i + 1])) {
+            if (key) *key = argv[i + 1];
+            found = true;
+        }
+    }
+    LocalFree(argv);
+    return found;
+}
+
+std::wstring invite_play_arguments(const std::wstring& key) { return L"--play " + key; }
+
+static bool pipe_call(const std::wstring& pipe_name, const std::wstring& text, DWORD timeout_ms) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0, nullptr, nullptr);
     std::vector<char> msg((size_t)n);
-    WideCharToMultiByte(CP_UTF8, 0, c.c_str(), (int)c.size(), msg.data(), n, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), msg.data(), n, nullptr, nullptr);
     DWORD deadline = GetTickCount() + timeout_ms;
     for (;;) {
         char reply[8] = {};
@@ -202,4 +238,15 @@ bool invite_send(const std::wstring& pipe_name, const std::wstring& code, DWORD 
         if ((LONG)(GetTickCount() - deadline) >= 0) return false;   // past the deadline (wrap-safe)
         Sleep(50);   // primary still starting, or busy
     }
+}
+
+bool invite_send(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms) {
+    std::wstring c = invite_normalize_code(code);
+    return invite_is_valid_code(c) && pipe_call(pipe_name, c, timeout_ms);
+}
+bool invite_send_play(const std::wstring& pipe_name, const std::wstring& key, DWORD timeout_ms) {
+    return invite_is_valid_game_key(key) && pipe_call(pipe_name, L"play:" + key, timeout_ms);
+}
+bool invite_send_show(const std::wstring& pipe_name, DWORD timeout_ms) {
+    return pipe_call(pipe_name, L"show", timeout_ms);
 }
