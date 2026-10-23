@@ -173,11 +173,6 @@ static std::string read_text_file(const std::string& p) {
     ss << f.rdbuf();
     return ss.str();
 }
-static bool write_text_file(const std::string& p, const std::string& text) {
-    std::ofstream f(W(p), std::ios::binary | std::ios::trunc);
-    f << text;
-    return f.good();
-}
 static void make_dirs(const std::string& p) {
     std::wstring w = W(p);
     for (size_t i = 3; i < w.size(); ++i)
@@ -690,11 +685,6 @@ static void my_games(std::map<std::string, std::string>* games, std::vector<std:
         if (keys) keys->push_back(e.key);
     }
 }
-static std::map<std::string, std::string> my_games_map() {
-    std::map<std::string, std::string> m;
-    my_games(&m, nullptr);
-    return m;
-}
 
 /* ---------- save jobs (sync / export / import) ---------- */
 
@@ -702,7 +692,6 @@ static void set_toast(const std::string& s, bool good = true, double secs = 6.0)
     push_toast(s, good ? COL_GOOD : COL_BAD, secs);
 }
 
-static bool job_busy() { return A.job.running; }
 
 static void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
     if (A.job.running) return;
