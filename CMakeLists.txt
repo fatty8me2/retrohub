@@ -67,6 +67,8 @@ enable_testing()
 # Online tests read RETROHUB_TEST_SERVER at run time (env var > production default in hubnet::default_server()).
 # Nothing is baked into the command lines, so set the env var when running ctest; never configure a URL here.
 
+add_test(NAME json_test COMMAND json_test)
+add_test(NAME winutil_test COMMAND winutil_test)
 add_test(NAME hubcommon_test COMMAND hubcommon_test)
 add_test(NAME hublibrary_test COMMAND hublibrary_test)
 add_test(NAME hubgamesettings_test COMMAND hubgamesettings_test)

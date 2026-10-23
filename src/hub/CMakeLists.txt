@@ -1,4 +1,5 @@
 add_library(hublogic STATIC logic.cpp netplay_3ds.cpp)
+target_link_libraries(hublogic PUBLIC hubbase)
 target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_compile_features(hublogic PUBLIC cxx_std_17)
 
