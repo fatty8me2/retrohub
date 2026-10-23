@@ -39,6 +39,7 @@ Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(c
     cfg_.max_pred = std::max(1, std::min(10, cfg_.max_pred));
     cfg_.delay = std::max(0, std::min(4, cfg_.delay));
     ring_n_ = cfg_.max_pred + 4;
+    trace_ = std::getenv("RB_TRACE") != nullptr;
     state_n_ = sim_.state_size();
     ring_.assign((size_t)ring_n_ * state_n_, 0);
     tmp_.assign(state_n_, 0);
@@ -108,6 +109,7 @@ void Engine::do_rollback() {
     double dt = qpc_us() - t0;
     st_.load_us += dt;
     st_.load_n++;
+    if (trace_ && net_.log) net_.log("R rollback to " + std::to_string(g) + " at cur " + std::to_string(cur_));
     if (!ok) { if (net_.log) net_.log("rollback: unserialize failed"); desync_ = true; return; }
     for (int64_t f = g; f < (int64_t)cur_; f++) {
         if (f > g) {
@@ -264,6 +266,7 @@ void Engine::advance_confirmed() {
     conf_eff_ = std::max(conf_eff_, c);
     while (roll_next_ <= conf_eff_) {
         int64_t f = roll_next_++;
+        if (trace_ && net_.log) { char b[120]; snprintf(b, sizeof b, "T %lld %016llx %04x %04x", (long long)f, (unsigned long long)fsum_[f % kFrRing], used_[f % kFrRing][0], used_[f % kFrRing][1]); net_.log(b); }
         roll_out_ = (roll_out_ ^ fsum_[f % kFrRing]) * kFnvPrime;
         for (int p = 0; p < kPorts; p++) roll_in_ = (roll_in_ ^ used_[f % kFrRing][p]) * kFnvPrime;
         if (cfg_.hash_interval > 0 && (f + 1) % cfg_.hash_interval == 0) {
@@ -433,23 +436,65 @@ SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_stat
         sim.step(p, true);
         r.step_us += qpc_us() - t; r.step_n++;
     };
+    use_state_hash = use_state_hash && (bool)sim.mem_hash;
     auto post_hash = [&]() -> uint64_t {
         if (!use_state_hash) return 0;
-        sim.save(tmp.data(), n);
-        if (dbg) { dbg_last.assign(tmp.begin(), tmp.end()); }
         double t = qpc_us();
-        uint64_t h = hash_bytes(tmp.data(), n);
+        uint64_t h = sim.mem_hash();
         hash_t += qpc_us() - t; hash_n++;
         return h;
+    };
+    // Pass A: free-running reference (no rollbacks), recorded per frame. Pass B: same inputs, but rolling back `depth` frames after
+    // every frame; every frame (first run and re-simulation) must equal the reference. This catches drift that only appears once
+    // a state has been loaded (comparing a reload with an earlier reload would not).
+    std::vector<uint64_t> ref_sum(frames), ref_post(frames);
+    std::vector<std::array<uint32_t, kPorts>> all_pads(frames);
+    std::vector<uint8_t> s0(n);
+    int dumpf = std::getenv("RB_DUMPFRAME") ? atoi(std::getenv("RB_DUMPFRAME")) : -1;
+    std::vector<uint8_t> dump_ref[4];
+    sim.save(s0.data(), n);
+    for (int f = 0; f < frames; f++) {
+        input(f, all_pads[f].data());
+        sim.save(tmp.data(), n);   // like the engine: the state is serialized before every frame (serializing is not free of side effects in some cores)
+        timed_step(all_pads[f].data());
+        ref_sum[f] = sim.frame_sum();
+        ref_post[f] = post_hash();
+        if (dumpf >= 0 && f >= dumpf && f <= dumpf + 3) { dump_ref[f - dumpf].resize(n); sim.save(dump_ref[f - dumpf].data(), n); }
+    }
+    sim.load(s0.data(), n);
+    auto check = [&](int q, int from) {
+        if (dumpf >= 0 && q >= dumpf && q <= dumpf + 3 && from == q && log) {
+            std::vector<uint8_t> cur(n);
+            sim.save(cur.data(), n);
+            std::string offs; size_t nd = 0;
+            for (size_t i = 0; i < n; i++) if (cur[i] != dump_ref[q - dumpf][i]) { if (nd < 40) offs += " " + std::to_string(i); nd++; }
+            log("DUMP frame " + std::to_string(q) + ": " + std::to_string(nd) + " state bytes differ:" + offs);
+        }
+        uint64_t s2 = sim.frame_sum();
+        uint64_t p2 = post_hash();
+        r.checks++;
+        if (s2 != ref_sum[q] || p2 != ref_post[q]) {
+            r.mismatches++;
+            if ((r.mismatches <= 10 || std::getenv("RB_ALLMISS")) && log) {
+                char b[200];
+                snprintf(b, sizeof b, "synctest MISMATCH frame %d (rollback from %d): video %016llx vs ref %016llx, memory %016llx vs ref %016llx", q, from,
+                         (unsigned long long)s2, (unsigned long long)ref_sum[q], (unsigned long long)p2, (unsigned long long)ref_post[q]);
+                log(b);
+            }
+        }
     };
     for (int f = 0; f < frames; f++) {
         int k = f % R;
         timed_save(before[k].data());
-        input(f, pads[k].data());
-        timed_step(pads[k].data());
-        sum[k] = sim.frame_sum();
-        post[k] = post_hash();
-        if (dbg) dbg_post[k] = dbg_last;
+        if (f % 2 == 0 && !std::getenv("RB_NOWRONG")) {
+            // mispredicted frame: run it with wrong pads first (as a predicting peer does), then roll it back and replay it right
+            uint32_t bad[kPorts];
+            for (int i = 0; i < kPorts; i++) bad[i] = all_pads[f][i] ^ 0x1u ^ (uint32_t)(f & 0x3F0);
+            timed_step(bad);
+            sim.load(before[k].data(), n);
+        }
+        timed_step(all_pads[f].data());
+        check(f, f);
         r.frames++;
         if (depth <= 0 || f + 1 < depth) continue;
         int g = f + 1 - depth;
@@ -459,29 +504,9 @@ SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_stat
         r.load_us += d; r.load_n++; r.load_us_max = std::max(r.load_us_max, d);
         if (!ok) { r.mismatches++; if (log) log("synctest: unserialize failed at frame " + std::to_string(f)); continue; }
         for (int q = g; q <= f; q++) {
-            int kq = q % R;
-            if (q > g) timed_save(before[kq].data());   // like the engine: the ring now holds the re-simulated timeline
-            timed_step(pads[kq].data());
-            uint64_t s2 = sim.frame_sum();
-            uint64_t p2 = post_hash();
-            r.checks++;
-            if (dbg && p2 != post[kq] && r.mismatches < 6 && log) {
-                size_t nd = 0; std::string offs;
-                for (size_t i = 0; i < n; i++) if (dbg_post[kq][i] != dbg_last[i]) { if (nd < 12) offs += " " + std::to_string(i); nd++; }
-                log("synctest DIFF frame " + std::to_string(q) + ": " + std::to_string(nd) + " bytes differ; first offsets:" + offs);
-            }
-            if (dbg && p2 == p2) dbg_post[kq] = dbg_last;
-            if (s2 != sum[kq] || p2 != post[kq]) {
-                r.mismatches++;
-                if ((r.mismatches <= 10 || std::getenv("RB_ALLMISS")) && log) {
-                    char b[200];
-                    snprintf(b, sizeof b, "synctest MISMATCH frame %d (rollback from %d): output %016llx vs %016llx, state %016llx vs %016llx", q, f,
-                             (unsigned long long)sum[kq], (unsigned long long)s2, (unsigned long long)post[kq], (unsigned long long)p2);
-                    log(b);
-                }
-            }
-            sum[kq] = s2;
-            post[kq] = p2;
+            if (q > g) timed_save(before[q % R].data());
+            timed_step(all_pads[q].data());
+            check(q, f);
         }
     }
     auto avg = [](double s, uint64_t c) { return c ? s / (double)c : 0.0; };

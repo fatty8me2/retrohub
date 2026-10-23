@@ -21,7 +21,9 @@ param(
     [string]$Tag = 'run',
     [int]$KillSlot = -1,
     [int]$KillAfterSec = 15,
-    [int]$TimeoutSec = 900
+    [int]$TimeoutSec = 900,
+    [switch]$Rollback,            # --rollback (GGPO-style) instead of lockstep
+    [string[]]$Extra = @()        # extra retrorun args, e.g. --link
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,6 +58,8 @@ foreach ($slot in $slotList) {
         '--save-dir', $sv, '--state-dir', $st, '--headless', '--frames', $Frames, '--fuzz-input',
         '--net', $Server, '--room', $Room, '--slot', $slot, '--players', $Players,
         '--ports', $Ports, '--delay', $(if ($slot -ne 0 -and $ClientDelay -ne '') { $ClientDelay } else { $Delay }), '--log', $log)
+    if ($Rollback) { $argList += '--rollback' }
+    $argList += $Extra
     $p = Start-Process -FilePath $exe -ArgumentList $argList -PassThru -WindowStyle Hidden
     $procs += [pscustomobject]@{ Slot = $slot; Proc = $p; Log = $log; Killed = $false }
 }
@@ -94,6 +98,7 @@ foreach ($x in $procs) {
     $fin = if ($final) { $final.Substring($final.IndexOf('final:')) } else { 'NONE' }
     Write-Output ("slot " + $x.Slot + " rc=" + $rc + " | " + $fin)
     Write-Output ("   " + $(if ($done) { $done.Substring($done.IndexOf('done:')) } else { 'no done line' }) + " | " + $(if ($syncmode) { $syncmode.Substring($syncmode.IndexOf('sync hash:')) } else { '' }))
+    foreach ($rl in @($lines | Where-Object { $_ -match 'rollback-stats|rollback-timing' })) { Write-Output ('   ' + $rl.Substring($rl.IndexOf('rollback-'))) }
     Write-Output ("   desync-lines=" + $desync + " stall-or-timeout-lines=" + $timeouts.Count + $(if ($timeouts.Count) { ' :: ' + ($timeouts[0]) } else { '' }))
 }
 Write-Output ("wall=" + [int]$wall + "s")
