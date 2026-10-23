@@ -45,6 +45,12 @@ class Core {
 
     bool load_core(const std::string& dll_path, std::string* err);
     bool load_game(const std::string& rom_path, std::string* err);
+    /* Multi-content load (retro_load_game_special): e.g. two linked Game Boys in one SameBoy instance. */
+    bool load_game_special(unsigned game_type, const std::vector<std::string>& rom_paths, std::string* err);
+    struct Subsystem { std::string ident, desc; unsigned id = 0; unsigned num_roms = 0; };
+    const std::vector<Subsystem>& subsystems() const { return subsystems_; }
+    /* Raw libretro memory block (RETRO_MEMORY_* | instance << 8 for the multi-GB cores); size 0 / null when absent. */
+    void* memory(unsigned id, size_t* size);
     void run() { fn_run_(); }
     void unload();
 
@@ -83,7 +89,10 @@ class Core {
     bool loaded_ = false, inited_ = false, ff_ = false;
     std::string core_path_;
     std::string game_path_;
+    std::vector<std::vector<uint8_t>> game_datas_;
     std::vector<uint8_t> game_data_;
+    std::vector<Subsystem> subsystems_;
+    bool (*fn_load_game_special_)(unsigned, const retro_game_info*, size_t) = nullptr;
 
     void (*fn_set_env_)(retro_environment_t) = nullptr;
     void (*fn_set_video_)(retro_video_refresh_t) = nullptr;
