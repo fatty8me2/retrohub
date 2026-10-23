@@ -1,3 +1,4 @@
+#include "json.h"
 #include "controls.h"
 
 #include <algorithm>
@@ -326,102 +327,18 @@ std::vector<int> order_pads(const std::vector<std::string>& order, const std::ve
 
 namespace {
 
-struct J {
-    enum T { Null, Bool, Num, Str, Arr, Obj } t = Null;
-    bool b = false;
-    double n = 0;
-    std::string s;
-    std::vector<J> a;
-    std::vector<std::pair<std::string, J>> o;
-    const J* get(const std::string& k) const { for (auto& kv : o) if (kv.first == k) return &kv.second; return nullptr; }
-};
+typedef json::Value J;   // shared reader/writer (json.h)
 
-struct Parser {
-    const std::string& s;
-    size_t i = 0;
-    int depth = 0;
-    bool ok = true;
-    void ws() { while (i < s.size() && (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t')) i++; }
-    bool lit(const char* w) { size_t n = std::char_traits<char>::length(w); if (s.compare(i, n, w) == 0) { i += n; return true; } return false; }
-    std::string str() {
-        std::string r;
-        i++;
-        while (i < s.size() && s[i] != '"') {
-            if (s[i] == '\\' && i + 1 < s.size()) {
-                char c = s[++i];
-                if (c == 'n') r += '\n'; else if (c == 't') r += '\t'; else if (c == 'r') r += '\r';
-                else if (c == 'u' && i + 4 < s.size()) { r += (char)std::strtol(s.substr(i + 1, 4).c_str(), nullptr, 16); i += 4; }
-                else r += c;
-                i++;
-            } else r += s[i++];
-        }
-        if (i >= s.size()) ok = false; else i++;
-        return r;
-    }
-    J val() {
-        J v;
-        ws();
-        if (i >= s.size() || ++depth > 32) { ok = false; return v; }
-        char c = s[i];
-        if (c == '{') {
-            v.t = J::Obj; i++; ws();
-            if (i < s.size() && s[i] == '}') i++;
-            else for (;;) {
-                ws();
-                if (i >= s.size() || s[i] != '"') { ok = false; break; }
-                std::string k = str();
-                ws();
-                if (i >= s.size() || s[i] != ':') { ok = false; break; }
-                i++;
-                v.o.emplace_back(k, val());
-                ws();
-                if (i < s.size() && s[i] == ',') { i++; continue; }
-                if (i < s.size() && s[i] == '}') { i++; break; }
-                ok = false; break;
-            }
-        } else if (c == '[') {
-            v.t = J::Arr; i++; ws();
-            if (i < s.size() && s[i] == ']') i++;
-            else for (;;) {
-                v.a.push_back(val());
-                ws();
-                if (i < s.size() && s[i] == ',') { i++; continue; }
-                if (i < s.size() && s[i] == ']') { i++; break; }
-                ok = false; break;
-            }
-        } else if (c == '"') { v.t = J::Str; v.s = str(); }
-        else if (lit("true")) { v.t = J::Bool; v.b = true; }
-        else if (lit("false")) { v.t = J::Bool; }
-        else if (lit("null")) {}
-        else {
-            char* e = nullptr;
-            v.n = std::strtod(s.c_str() + i, &e);
-            if (e == s.c_str() + i) ok = false; else { v.t = J::Num; i = (size_t)(e - s.c_str()); }
-        }
-        depth--;
-        return v;
-    }
-};
-
-std::string esc(const std::string& in) {
-    std::string r = "\"";
-    for (unsigned char c : in) {
-        if (c == '"' || c == '\\') { r += '\\'; r += (char)c; }
-        else if (c == '\n') r += "\\n";
-        else if (c < 0x20) r += ' ';
-        else r += (char)c;
-    }
-    return r + "\"";
-}
+bool jparse(const std::string& text, J* out) { return json::parse(text, out, json::ParseOptions{64, true}); }
 
 void write_profile(std::ostringstream& o, const Profile& p, const char* ind) {
-    o << ind << "{\"system\":" << esc(p.system) << ",\"axis_threshold\":" << p.axis_threshold << ",\n" << ind << " \"buttons\":{";
+    o << ind << "{\"system\":" << json::quote(p.system) << ",\"axis_threshold\":" << p.axis_threshold << ",\n" << ind << " \"buttons\":{";
     bool first = true;
-    for (auto& kv : p.buttons) { o << (first ? "" : ",") << esc(kv.first) << ":" << esc(kv.second); first = false; }
+    for (auto& kv : p.buttons) { o << (first ? "" : ",") << json::quote(kv.first) << ":" << json::quote(kv.second); first = false; }
     o << "},\n" << ind << " \"analogs\":{";
     first = true;
     for (auto& kv : p.analogs) {
-        o << (first ? "" : ",") << esc(kv.first) << ":{\"x\":" << esc(kv.second.x) << ",\"y\":" << esc(kv.second.y)
+        o << (first ? "" : ",") << json::quote(kv.first) << ":{\"x\":" << json::quote(kv.second.x) << ",\"y\":" << json::quote(kv.second.y)
           << ",\"deadzone\":" << fmt_num(kv.second.deadzone) << ",\"sensitivity\":" << fmt_num(kv.second.sensitivity) << "}";
         first = false;
     }
@@ -429,37 +346,37 @@ void write_profile(std::ostringstream& o, const Profile& p, const char* ind) {
 }
 
 bool read_profile(const J& j, const std::string& name, Profile* p) {
-    if (j.t != J::Obj) return false;
+    if (j.type != J::Object) return false;
     const J* sys = j.get("system");
-    if (!sys || sys->t != J::Str || !is_system(sys->s)) return false;
+    if (!sys || sys->type != J::String || !is_system(sys->s)) return false;
     *p = default_profile(sys->s);   // missing entries fall back to the default (forward compatible)
     p->name = name;
-    if (const J* t = j.get("axis_threshold")) if (t->t == J::Num && t->n >= 1 && t->n <= 32766) p->axis_threshold = (int)t->n;
-    if (const J* b = j.get("buttons")) if (b->t == J::Obj)
-        for (auto& kv : b->o) if (kv.second.t == J::Str && valid_expr(kv.second.s)) p->buttons[kv.first] = kv.second.s;
-    if (const J* a = j.get("analogs")) if (a->t == J::Obj)
+    if (const J* t = j.get("axis_threshold")) if (t->type == J::Number && t->n >= 1 && t->n <= 32766) p->axis_threshold = (int)t->n;
+    if (const J* b = j.get("buttons")) if (b->type == J::Object)
+        for (auto& kv : b->o) if (kv.second.type == J::String && valid_expr(kv.second.s)) p->buttons[kv.first] = kv.second.s;
+    if (const J* a = j.get("analogs")) if (a->type == J::Object)
         for (auto& kv : a->o) {
-            if (kv.second.t != J::Obj) continue;
+            if (kv.second.type != J::Object) continue;
             Analog an = p->analogs.count(kv.first) ? p->analogs[kv.first] : Analog{};
-            if (auto* x = kv.second.get("x")) if (x->t == J::Str && (x->s.empty() || axis_index(x->s) >= 0)) an.x = x->s;
-            if (auto* y = kv.second.get("y")) if (y->t == J::Str && (y->s.empty() || axis_index(y->s) >= 0)) an.y = y->s;
-            if (auto* d = kv.second.get("deadzone")) if (d->t == J::Num && d->n >= 0 && d->n <= 0.95) an.deadzone = d->n;
-            if (auto* sn = kv.second.get("sensitivity")) if (sn->t == J::Num && sn->n >= 0.1 && sn->n <= 4) an.sensitivity = sn->n;
+            if (auto* x = kv.second.get("x")) if (x->type == J::String && (x->s.empty() || axis_index(x->s) >= 0)) an.x = x->s;
+            if (auto* y = kv.second.get("y")) if (y->type == J::String && (y->s.empty() || axis_index(y->s) >= 0)) an.y = y->s;
+            if (auto* d = kv.second.get("deadzone")) if (d->type == J::Number && d->n >= 0 && d->n <= 0.95) an.deadzone = d->n;
+            if (auto* sn = kv.second.get("sensitivity")) if (sn->type == J::Number && sn->n >= 0.1 && sn->n <= 4) an.sensitivity = sn->n;
             p->analogs[kv.first] = an;
         }
     return true;
 }
 
 void read_strs(const J* a, std::vector<std::string>* out) {
-    if (a && a->t == J::Arr) for (auto& e : a->a) if (e.t == J::Str) out->push_back(e.s);
+    if (a && a->type == J::Array) for (auto& e : a->a) if (e.type == J::String) out->push_back(e.s);
 }
 
 }  // namespace
 
 std::string profile_to_json(const Profile& p) {
     std::ostringstream o;
-    o << "{\"version\":1,\"name\":" << esc(p.name) << ",\"port_order\":[";
-    for (size_t i = 0; i < p.port_order.size(); i++) o << (i ? "," : "") << esc(p.port_order[i]);
+    o << "{\"version\":1,\"name\":" << json::quote(p.name) << ",\"port_order\":[";
+    for (size_t i = 0; i < p.port_order.size(); i++) o << (i ? "," : "") << json::quote(p.port_order[i]);
     o << "],\n\"profile\":\n";
     write_profile(o, p, "");
     o << "}\n";
@@ -467,11 +384,10 @@ std::string profile_to_json(const Profile& p) {
 }
 
 bool profile_from_json(const std::string& json, Profile* out) {
-    Parser ps{json};
-    J r = ps.val();
-    if (!ps.ok || r.t != J::Obj) return false;
+    J r;
+    if (!jparse(json, &r) || r.type != J::Object) return false;
     const J* pj = r.get("profile");
-    std::string name = r.get("name") && r.get("name")->t == J::Str ? r.get("name")->s : "";
+    std::string name = r.get("name") && r.get("name")->type == J::String ? r.get("name")->s : "";
     Profile p;
     if (!pj || !read_profile(*pj, name, &p)) return false;
     read_strs(r.get("port_order"), &p.port_order);
@@ -482,30 +398,29 @@ bool profile_from_json(const std::string& json, Profile* out) {
 std::string to_json(const Store& s) {
     std::ostringstream o;
     o << "{\"version\":1,\"stamp\":" << s.stamp << ",\n\"port_order\":[";
-    for (size_t i = 0; i < s.port_order.size(); i++) o << (i ? "," : "") << esc(s.port_order[i]);
+    for (size_t i = 0; i < s.port_order.size(); i++) o << (i ? "," : "") << json::quote(s.port_order[i]);
     o << "],\n\"system_default\":{";
     bool f = true;
-    for (auto& kv : s.system_default) { o << (f ? "" : ",") << esc(kv.first) << ":" << esc(kv.second); f = false; }
+    for (auto& kv : s.system_default) { o << (f ? "" : ",") << json::quote(kv.first) << ":" << json::quote(kv.second); f = false; }
     o << "},\n\"game_override\":{";
     f = true;
-    for (auto& kv : s.game_override) { o << (f ? "" : ",") << esc(kv.first) << ":" << esc(kv.second); f = false; }
+    for (auto& kv : s.game_override) { o << (f ? "" : ",") << json::quote(kv.first) << ":" << json::quote(kv.second); f = false; }
     o << "},\n\"profiles\":{";
     f = true;
-    for (auto& kv : s.profiles) { o << (f ? "\n" : ",\n") << esc(kv.first) << ":\n"; write_profile(o, kv.second, " "); f = false; }
+    for (auto& kv : s.profiles) { o << (f ? "\n" : ",\n") << json::quote(kv.first) << ":\n"; write_profile(o, kv.second, " "); f = false; }
     o << "}}\n";
     return o.str();
 }
 
 bool from_json(const std::string& json, Store* out) {
-    Parser ps{json};
-    J r = ps.val();
-    if (!ps.ok || r.t != J::Obj) return false;
+    J r;
+    if (!jparse(json, &r) || r.type != J::Object) return false;
     Store s;
-    if (auto* t = r.get("stamp")) if (t->t == J::Num) s.stamp = (int64_t)t->n;
+    if (auto* t = r.get("stamp")) if (t->type == J::Number) s.stamp = (int64_t)t->n;
     read_strs(r.get("port_order"), &s.port_order);
-    if (auto* sd = r.get("system_default")) if (sd->t == J::Obj) for (auto& kv : sd->o) if (kv.second.t == J::Str && is_system(kv.first)) s.system_default[kv.first] = kv.second.s;
-    if (auto* go = r.get("game_override")) if (go->t == J::Obj) for (auto& kv : go->o) if (kv.second.t == J::Str) s.game_override[kv.first] = kv.second.s;
-    if (auto* pr = r.get("profiles")) if (pr->t == J::Obj)
+    if (auto* sd = r.get("system_default")) if (sd->type == J::Object) for (auto& kv : sd->o) if (kv.second.type == J::String && is_system(kv.first)) s.system_default[kv.first] = kv.second.s;
+    if (auto* go = r.get("game_override")) if (go->type == J::Object) for (auto& kv : go->o) if (kv.second.type == J::String) s.game_override[kv.first] = kv.second.s;
+    if (auto* pr = r.get("profiles")) if (pr->type == J::Object)
         for (auto& kv : pr->o) { Profile p; if (read_profile(kv.second, kv.first, &p)) s.profiles[kv.first] = p; }
     *out = s;
     return true;

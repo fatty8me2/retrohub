@@ -1,3 +1,4 @@
+#include "json.h"
 #include "game_settings.h"
 
 #include <cstdio>
@@ -89,72 +90,27 @@ std::string trim(const std::string& s) {
     return a == std::string::npos ? "" : s.substr(a, b - a + 1);
 }
 
-// ---- tiny JSON: {"a":{"k":"v"},...} strings only
-void jesc(std::string& o, const std::string& s) {
-    o += '"';
-    for (unsigned char c : s) {
-        if (c == '"' || c == '\\') { o += '\\'; o += (char)c; }
-        else if (c == '\n') o += "\\n";
-        else if (c == '\t') o += "\\t";
-        else if (c < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); o += b; }
-        else o += (char)c;
-    }
-    o += '"';
-}
+// ---- JSON via the shared reader (json.h): {"a":{"k":"v"},...} strings only
+void jesc(std::string& o, const std::string& s) { o += json::quote(s); }
 
-struct P {
-    const std::string& s; size_t i = 0;
-    explicit P(const std::string& t) : s(t) {}
-    void ws() { while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n')) i++; }
-    bool eat(char c) { ws(); if (i < s.size() && s[i] == c) { i++; return true; } return false; }
-    bool str(std::string* o) {
-        ws();
-        if (i >= s.size() || s[i] != '"') return false;
-        i++; o->clear();
-        while (i < s.size() && s[i] != '"') {
-            char c = s[i++];
-            if (c == '\\') {
-                if (i >= s.size()) return false;
-                char e = s[i++];
-                if (e == 'n') *o += '\n'; else if (e == 't') *o += '\t';
-                else if (e == 'u') {
-                    if (i + 4 > s.size()) return false;
-                    unsigned cp = (unsigned)std::strtoul(s.substr(i, 4).c_str(), nullptr, 16); i += 4;
-                    if (cp < 0x80) *o += (char)cp;
-                    else if (cp < 0x800) { *o += (char)(0xC0 | (cp >> 6)); *o += (char)(0x80 | (cp & 63)); }
-                    else { *o += (char)(0xE0 | (cp >> 12)); *o += (char)(0x80 | ((cp >> 6) & 63)); *o += (char)(0x80 | (cp & 63)); }
-                } else *o += e;
-            } else *o += c;
-        }
-        if (i >= s.size()) return false;
-        i++;
-        return true;
+// An object whose values are all strings -> Values; false for anything else.
+bool to_flat(const json::Value& v, Values* o) {
+    if (v.type != json::Value::Object) return false;
+    for (const auto& kv : v.o) {
+        if (kv.second.type != json::Value::String) return false;
+        (*o)[kv.first] = kv.second.s;
     }
-    // flat object of string values
-    bool flat(Values* o) {
-        if (!eat('{')) return false;
-        if (eat('}')) return true;
-        for (;;) {
-            std::string k, v;
-            if (!str(&k) || !eat(':') || !str(&v)) return false;
-            (*o)[k] = v;
-            if (eat(',')) continue;
-            return eat('}');
-        }
+    return true;
+}
+bool to_nested(const json::Value& v, std::map<std::string, Values>* o) {
+    if (v.type != json::Value::Object) return false;
+    for (const auto& kv : v.o) {
+        Values f;
+        if (!to_flat(kv.second, &f)) return false;
+        (*o)[kv.first] = f;
     }
-    bool nested(std::map<std::string, Values>* o) {
-        if (!eat('{')) return false;
-        if (eat('}')) return true;
-        for (;;) {
-            std::string k;
-            Values v;
-            if (!str(&k) || !eat(':') || !flat(&v)) return false;
-            (*o)[k] = v;
-            if (eat(',')) continue;
-            return eat('}');
-        }
-    }
-};
+    return true;
+}
 
 const char* sys_name(System s) { return system_short(s); }
 
@@ -287,20 +243,13 @@ std::string Store::to_json() const {
 }
 
 bool Store::from_json(const std::string& text) {
-    P p(text);
-    if (!p.eat('{')) return false;
+    json::Value root;
+    if (!json::parse(text, &root, json::ParseOptions{64, true}) || root.type != json::Value::Object) return false;
     std::map<std::string, Values> sys, game;
-    if (!p.eat('}')) {
-        for (;;) {
-            std::string k;
-            if (!p.str(&k) || !p.eat(':')) return false;
-            if (k == "systems") { if (!p.nested(&sys)) return false; }
-            else if (k == "games") { if (!p.nested(&game)) return false; }
-            else { std::string ignore; if (!p.str(&ignore)) return false; }
-            if (p.eat(',')) continue;
-            if (!p.eat('}')) return false;
-            break;
-        }
+    for (const auto& kv : root.o) {
+        if (kv.first == "systems") { if (!to_nested(kv.second, &sys)) return false; }
+        else if (kv.first == "games") { if (!to_nested(kv.second, &game)) return false; }
+        else if (kv.second.type != json::Value::String) return false;
     }
     for (auto it = sys.begin(); it != sys.end();) { keep_valid(&it->second); it = it->second.empty() ? sys.erase(it) : std::next(it); }
     for (auto it = game.begin(); it != game.end();) { keep_valid(&it->second); it = it->second.empty() ? game.erase(it) : std::next(it); }
@@ -371,9 +320,8 @@ Values extract_sync(const std::string& json) {
         // bare object only accepted when it has no nested braces
         if (json.find('{', start + 1) != std::string::npos) return {};
     }
-    P p(json);
-    p.i = start;
-    if (!p.flat(&v)) return {};
+    json::Value root;
+    if (!json::parse(json.data() + start, json.size() - start, &root, json::ParseOptions{64, true}) || !to_flat(root, &v)) return {};
     for (auto it = v.begin(); it != v.end();) {
         const Option* o = find_option(it->first);
         std::string n;

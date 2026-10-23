@@ -1,3 +1,4 @@
+#include "json.h"
 #include "art_match.h"
 
 #include <algorithm>
@@ -267,28 +268,15 @@ std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::stri
     return "";
 }
 
-/* ---- tiny JSON string map ---- */
+/* ---- JSON string map (shared reader/writer, json.h) ---- */
 
 std::string map_to_json(const std::map<std::string, std::string>& m) {
-    auto esc = [](const std::string& s) {
-        std::string r;
-        for (unsigned char c : s) {
-            if (c == '"') r += "\\\"";
-            else if (c == '\\') r += "\\\\";
-            else if (c == '\n') r += "\\n";
-            else if (c == '\r') r += "\\r";
-            else if (c == '\t') r += "\\t";
-            else if (c < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); r += b; }
-            else r += (char)c;
-        }
-        return r;
-    };
     std::string o = "{\n";
     bool first = true;
     for (const auto& kv : m) {
         if (!first) o += ",\n";
         first = false;
-        o += "  \"" + esc(kv.first) + "\": \"" + esc(kv.second) + "\"";
+        o += "  " + json::quote(kv.first) + ": " + json::quote(kv.second);
     }
     o += "\n}\n";
     return o;
@@ -296,60 +284,13 @@ std::string map_to_json(const std::map<std::string, std::string>& m) {
 
 bool map_from_json(const std::string& t, std::map<std::string, std::string>* out) {
     out->clear();
-    size_t i = 0, n = t.size();
-    auto ws = [&] { while (i < n && std::isspace((unsigned char)t[i])) ++i; };
-    auto str = [&](std::string* s) -> bool {
-        if (i >= n || t[i] != '"') return false;
-        ++i;
-        s->clear();
-        while (i < n && t[i] != '"') {
-            char c = t[i++];
-            if (c == '\\' && i < n) {
-                char d = t[i++];
-                switch (d) {
-                case 'n': *s += '\n'; break;
-                case 'r': *s += '\r'; break;
-                case 't': *s += '\t'; break;
-                case 'u': {
-                    if (i + 4 > n) return false;
-                    unsigned v = (unsigned)std::strtoul(t.substr(i, 4).c_str(), nullptr, 16);
-                    i += 4;
-                    if (v < 0x80) *s += (char)v;
-                    else if (v < 0x800) { *s += (char)(0xC0 | (v >> 6)); *s += (char)(0x80 | (v & 0x3F)); }
-                    else { *s += (char)(0xE0 | (v >> 12)); *s += (char)(0x80 | ((v >> 6) & 0x3F)); *s += (char)(0x80 | (v & 0x3F)); }
-                    break;
-                }
-                default: *s += d; break;
-                }
-            } else {
-                *s += c;
-            }
-        }
-        if (i >= n) return false;
-        ++i;
-        return true;
-    };
-    ws();
-    if (i >= n || t[i] != '{') return false;
-    ++i;
-    ws();
-    if (i < n && t[i] == '}') return true;
-    while (i < n) {
-        ws();
-        std::string k, v;
-        if (!str(&k)) return false;
-        ws();
-        if (i >= n || t[i] != ':') return false;
-        ++i;
-        ws();
-        if (!str(&v)) return false;
-        (*out)[k] = v;
-        ws();
-        if (i < n && t[i] == ',') { ++i; continue; }
-        if (i < n && t[i] == '}') return true;
-        return false;
+    json::Value root;
+    if (!json::parse(t, &root, json::ParseOptions{64, true}) || root.type != json::Value::Object) return false;
+    for (const auto& kv : root.o) {
+        if (kv.second.type != json::Value::String) { out->clear(); return false; }
+        (*out)[kv.first] = kv.second.s;
     }
-    return false;
+    return true;
 }
 
 } // namespace hubart_match

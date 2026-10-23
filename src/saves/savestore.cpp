@@ -1,4 +1,5 @@
 /* Save vault implementation. See savestore.h and docs/SAVES.md. */
+#include "json.h"
 #include "savestore.h"
 #include "games.h"
 
@@ -140,23 +141,6 @@ const uint64_t kEpochDiff = 116444736000000000ULL;
 int64_t ft_to_unix(uint64_t ft) { return ft >= kEpochDiff ? (int64_t)((ft - kEpochDiff) / 10000000ULL) : 0; }
 uint64_t unix_to_ft(int64_t t) { return (uint64_t)t * 10000000ULL + kEpochDiff; }
 int64_t now_unix() { return (int64_t)time(nullptr); }
-
-str json_escape(const str& s) {
-    str o;
-    for (unsigned char c : s) {
-        switch (c) {
-        case '"': o += "\\\""; break;
-        case '\\': o += "\\\\"; break;
-        case '\n': o += "\\n"; break;
-        case '\r': o += "\\r"; break;
-        case '\t': o += "\\t"; break;
-        default:
-            if (c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", c); o += b; }
-            else o += (char)c;
-        }
-    }
-    return o;
-}
 
 /* ------------------------------------------------------------------- SHA-256 */
 
@@ -332,111 +316,12 @@ void walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str
     FindClose(h);
 }
 
-/* --------------------------------------------------------- tiny JSON reader */
+/* --------------------------------------------------------- JSON (shared reader, src/common/json.h) */
 
-struct JV {
-    char t = 0;  // 'o' object, 'a' array, 's' string, 'n' number/other (raw text in s)
-    str s;
-    std::vector<std::pair<str, JV>> kids;
-    const JV* get(const char* k) const {
-        for (auto& p : kids) if (p.first == k) return &p.second;
-        return nullptr;
-    }
-};
-
-struct JP {
-    const str& t; size_t i = 0;
-    explicit JP(const str& s) : t(s) {}
-    void ws_() { while (i < t.size() && (t[i] == ' ' || t[i] == '\n' || t[i] == '\r' || t[i] == '\t')) i++; }
-    static void put_utf8(str& o, unsigned cp) {
-        if (cp < 0x80) o += (char)cp;
-        else if (cp < 0x800) { o += (char)(0xC0 | (cp >> 6)); o += (char)(0x80 | (cp & 63)); }
-        else if (cp < 0x10000) { o += (char)(0xE0 | (cp >> 12)); o += (char)(0x80 | ((cp >> 6) & 63)); o += (char)(0x80 | (cp & 63)); }
-        else { o += (char)(0xF0 | (cp >> 18)); o += (char)(0x80 | ((cp >> 12) & 63)); o += (char)(0x80 | ((cp >> 6) & 63)); o += (char)(0x80 | (cp & 63)); }
-    }
-    bool hex4(unsigned* v) {
-        if (i + 4 > t.size()) return false;
-        *v = 0;
-        for (int k = 0; k < 4; k++) {
-            char c = t[i++]; *v <<= 4;
-            if (c >= '0' && c <= '9') *v |= c - '0';
-            else if (c >= 'a' && c <= 'f') *v |= c - 'a' + 10;
-            else if (c >= 'A' && c <= 'F') *v |= c - 'A' + 10;
-            else return false;
-        }
-        return true;
-    }
-    bool string_(str& o) {
-        if (i >= t.size() || t[i] != '"') return false;
-        i++;
-        while (i < t.size()) {
-            char c = t[i++];
-            if (c == '"') return true;
-            if (c != '\\') { o += c; continue; }
-            if (i >= t.size()) return false;
-            char e = t[i++];
-            switch (e) {
-            case 'n': o += '\n'; break; case 'r': o += '\r'; break; case 't': o += '\t'; break;
-            case 'b': o += '\b'; break; case 'f': o += '\f'; break;
-            case 'u': {
-                unsigned cp;
-                if (!hex4(&cp)) return false;
-                if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < t.size() && t[i] == '\\' && t[i + 1] == 'u') {
-                    i += 2; unsigned lo;
-                    if (!hex4(&lo)) return false;
-                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                }
-                put_utf8(o, cp);
-                break;
-            }
-            default: o += e;
-            }
-        }
-        return false;
-    }
-    bool value(JV& v, int depth = 0) {
-        if (depth > 8) return false;
-        ws_();
-        if (i >= t.size()) return false;
-        char c = t[i];
-        if (c == '"') { v.t = 's'; return string_(v.s); }
-        if (c == '{') {
-            v.t = 'o'; i++; ws_();
-            if (i < t.size() && t[i] == '}') { i++; return true; }
-            for (;;) {
-                ws_(); str k;
-                if (!string_(k)) return false;
-                ws_();
-                if (i >= t.size() || t[i++] != ':') return false;
-                JV child;
-                if (!value(child, depth + 1)) return false;
-                v.kids.emplace_back(std::move(k), std::move(child));
-                ws_();
-                if (i >= t.size()) return false;
-                if (t[i] == ',') { i++; continue; }
-                if (t[i] == '}') { i++; return true; }
-                return false;
-            }
-        }
-        if (c == '[') {
-            v.t = 'a'; i++; ws_();
-            if (i < t.size() && t[i] == ']') { i++; return true; }
-            for (;;) {
-                JV child;
-                if (!value(child, depth + 1)) return false;
-                v.kids.emplace_back(str(), std::move(child));
-                ws_();
-                if (i >= t.size()) return false;
-                if (t[i] == ',') { i++; continue; }
-                if (t[i] == ']') { i++; return true; }
-                return false;
-            }
-        }
-        v.t = 'n';
-        while (i < t.size() && !strchr(",}] \n\r\t", t[i])) v.s += t[i++];
-        return !v.s.empty();
-    }
-};
+typedef json::Value JV;
+bool jparse(const str& text, JV* out) { return json::parse(text, out, json::ParseOptions{64, true}); }
+/* A number's exact text (sizes/FILETIMEs exceed a double's 53 bits), or a string's contents. */
+str jtok(const JV* v) { return v->type == JV::Number ? v->raw : v->s; }
 
 /* ---------------------------------------------------------------- manifest */
 
@@ -456,31 +341,31 @@ void load_manifest(const ws& path, Manifest& m) {
     std::vector<uint8_t> data;
     if (!read_file(path, &data)) return;
     str text((const char*)data.data(), data.size());
-    JP p(text); JV root;
-    if (!p.value(root) || root.t != 'o') return;
+    JV root;
+    if (!jparse(text, &root) || root.type != JV::Object) return;
     const JV* files = root.get("files");
-    if (!files || files->t != 'o') return;
-    for (auto& kv : files->kids) {
+    if (!files || files->type != JV::Object) return;
+    for (auto& kv : files->o) {
         const JV& e = kv.second;
         const JV *s = e.get("s"), *mt = e.get("m"), *h = e.get("h");
         if (!s || !mt || !h || h->s.size() != 64) continue;
         ME me;
         me.rel = W(kv.first);
-        me.size = strtoull(s->s.c_str(), nullptr, 10);
-        me.mtime = strtoull(mt->s.c_str(), nullptr, 10);
+        me.size = strtoull(jtok(s).c_str(), nullptr, 10);
+        me.mtime = strtoull(jtok(mt).c_str(), nullptr, 10);
         me.sha = h->s;
         m[lower(me.rel)] = me;
     }
 }
 
 bool save_manifest(const ws& path, const ws& sync_root, const Manifest& m) {
-    str o = "{\n \"version\": 1,\n \"root\": \"" + json_escape(U(sync_root)) + "\",\n \"files\": {";
+    str o = "{\n \"version\": 1,\n \"root\": \"" + json::escape(U(sync_root)) + "\",\n \"files\": {";
     bool first = true;
     for (auto& kv : m) {
         const ME& e = kv.second;
         o += first ? "\n" : ",\n";
         first = false;
-        o += "  \"" + json_escape(U(e.rel)) + "\": {\"s\": " + std::to_string(e.size) + ", \"m\": " +
+        o += "  \"" + json::escape(U(e.rel)) + "\": {\"s\": " + std::to_string(e.size) + ", \"m\": " +
              std::to_string(e.mtime) + ", \"h\": \"" + e.sha + "\"}";
     }
     o += "\n }\n}\n";
@@ -503,13 +388,13 @@ bool is_meta(const ws& rel) { return comp_count(rel) == 3 && lower(comp_at(rel, 
 bool is_identity(const ws& rel) { return lower(rel) == L"_identity/identity.json"; }
 
 int64_t identity_created(const str& text) {
-    JP p(text); JV v;
-    if (!p.value(v) || v.t != 'o') return -1;
+    JV v;
+    if (!jparse(text, &v) || v.type != JV::Object) return -1;
     const JV* uid = v.get("user_id"); const JV* c = v.get("created");
-    if (!uid || uid->t != 's' || uid->s.empty() || !c || c->t != 'n') return -1;
+    if (!uid || uid->type != JV::String || uid->s.empty() || !c || c->type != JV::Number) return -1;
     char* end = nullptr;
-    long long n = strtoll(c->s.c_str(), &end, 10);
-    return (end != c->s.c_str() && n >= 0) ? (int64_t)n : -1;
+    long long n = strtoll(c->raw.c_str(), &end, 10);
+    return (end != c->raw.c_str() && n >= 0) ? (int64_t)n : -1;
 }
 int64_t identity_created_file(const ws& path) {
     std::vector<uint8_t> b;
@@ -586,9 +471,9 @@ std::string states_dir(const std::string& system_short, const std::string& game_
 
 void touch_game(const std::string& system_short, const std::string& game_key, const std::string& title) {
     ws dir = W(game_dir(system_short, game_key));
-    str j = "{\n \"key\": \"" + json_escape(game_key) + "\",\n \"title\": \"" + json_escape(title) +
-            "\",\n \"system\": \"" + json_escape(system_short) + "\",\n \"updated\": " + std::to_string(now_unix()) +
-            ",\n \"device\": \"" + json_escape(device_name_utf8()) + "\"\n}\n";
+    str j = "{\n \"key\": \"" + json::escape(game_key) + "\",\n \"title\": \"" + json::escape(title) +
+            "\",\n \"system\": \"" + json::escape(system_short) + "\",\n \"updated\": " + std::to_string(now_unix()) +
+            ",\n \"device\": \"" + json::escape(device_name_utf8()) + "\"\n}\n";
     write_atomic(dir + L"meta.json", j.data(), j.size(), 0);
 }
 
