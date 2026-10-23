@@ -595,6 +595,10 @@ void draw_details_modal() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     gs_draw_game_section(e);
     ImGui::Dummy(ImVec2(0, sp(2.f)));
+    if (local_players_for(e) >= 2) {   // offline local multiplayer: who holds which port before Play
+        if (draw_players_strip(local_players_for(e))) { ImGui::CloseCurrentPopup(); open_port_assign(); }
+        ImGui::Dummy(ImVec2(0, sp(1.5f)));
+    }
 
     float bh = sp(5.5f);
     /* Action row: each button joins the row only if it fits the modal width, otherwise it wraps to the next line. */
