@@ -36,6 +36,7 @@ struct Settings {
     bool show_friends = true;          // friends panel open
     bool appear_offline = false;       // friends see me as offline
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
+    bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
     std::string cemu_exe;              // user-chosen Cemu.exe ("" = find an existing install, else download one)
 };
 std::string settings_to_json(const Settings& s);
