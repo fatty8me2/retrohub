@@ -3,6 +3,7 @@
 
 #include "games.h"
 #include "netplay_3ds.h"
+#include "netplay_3ds_join.h"
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
@@ -10,6 +11,12 @@ static int g_fail = 0;
 using namespace hubnp3ds;
 
 int main() {
+    /* Azahar join helper (the Qt frontend ignores -m) */
+    CHECK(join_state("stage:driver-start\r\n") == "");
+    CHECK(join_state("stage:driver-start\nstage:connect-clicked\njoined\n") == "joined");
+    CHECK(join_state("error:join timed out\n").rfind("error:", 0) == 0);
+    CHECK(join_driver_args(42, "s.txt", "Host_1", "", "127.0.0.1", 24990, 120).find("-Port 24990") != std::string::npos);
+    CHECK(std::string(join_driver_script()).find("DirectConnectWindow") != std::string::npos);
     /* launch spec key */
     Plan p;
     p.port = 24872;

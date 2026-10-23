@@ -81,7 +81,7 @@ add_custom_command(TARGET hub_shell_test POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:hub_shell_test>)
 
 # ---- 3DS (Azahar) / Wii U (Cemu): external emulators, downloaded on demand (docs/EMULATORS.md) ----
-target_sources(RetroHub PRIVATE emulators.cpp netplay_3ds_run.cpp)
+target_sources(RetroHub PRIVATE emulators.cpp netplay_3ds_run.cpp netplay_3ds_join.cpp)
 target_link_libraries(RetroHub PRIVATE ws2_32)
 target_link_libraries(RetroHub PRIVATE xinput setupapi)
 target_link_libraries(RetroHub PRIVATE hubminiz)
@@ -96,6 +96,9 @@ target_link_libraries(hub_gcnp_test PRIVATE hubbase)
 add_executable(hub_gcnp_live gcnp_live.cpp netplay_dolphin.cpp netplay_3ds_run.cpp)
 target_include_directories(hub_gcnp_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gcnp_live PRIVATE hublogic hubcommon hubnet user32 ws2_32 winhttp)
+add_executable(hub_n3ds_live n3ds_live.cpp netplay_3ds_run.cpp netplay_3ds_join.cpp)
+target_include_directories(hub_n3ds_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+target_link_libraries(hub_n3ds_live PRIVATE hublogic hubcommon hubnet user32 ws2_32 winhttp)
 
 # Live launch driver: runs the 3DS / Wii U launch path without the UI (manual tool, not a ctest)
 add_executable(hub_emu_live emu_live.cpp emulators.cpp)
@@ -103,7 +106,7 @@ target_include_directories(hub_emu_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../c
 target_link_libraries(hub_emu_live PRIVATE hublogic hubcommon hubsaves hubminiz bcrypt winhttp user32 gdi32 xinput setupapi)
 
 # 3DS local wireless over rooms (np_3ds): pure-logic test (no network, no emulator)
-add_executable(hub_np3ds_test test_netplay_3ds.cpp)
+add_executable(hub_np3ds_test test_netplay_3ds.cpp netplay_3ds_join.cpp)
 target_link_libraries(hub_np3ds_test PRIVATE hublogic hubcommon)
 
 # Native update applier: unit tests + integration dry-run of `RetroHub.exe --apply-update` in scratch dirs.
