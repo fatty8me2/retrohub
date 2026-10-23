@@ -50,7 +50,7 @@ int main() {
           ra.find("--preferred-app-id 0") != std::string::npos && ra.find("--password") == std::string::npos &&
           ra.find("--log-file \"C:\\x\\room.log\"") != std::string::npos);   // azahar-room refuses to start without preferred-app
     CHECK(room_args(1, "pw", 4, "", "").find("--password pw") != std::string::npos);
-    CHECK(session_room("ABC234", 3) == "ABC234-3-3ds");
+    CHECK(session_room("ABC234", 3) == "ABC234-3");
 
     /* config prefill for Direct Connect */
     std::string ini = config_patch("[UI]\nfirstStart=false\n", "127.0.0.1", 24872, "Fatty_1");

@@ -62,7 +62,7 @@ std::string multiplayer_arg(const std::string& nick, const std::string& pw, cons
     return "-m " + q(nick + (pw.empty() ? "" : ":" + pw) + "@" + host + ":" + std::to_string(port));
 }
 
-std::string session_room(const std::string& code, int launch_no) { return code + "-" + std::to_string(launch_no) + "-3ds"; }
+std::string session_room(const std::string& code, int launch_no) { return code + "-" + std::to_string(launch_no); }   // the Worker only accepts CODE or CODE-N
 
 std::string config_patch(const std::string& in, const std::string& host, int port, const std::string& nick) {
     std::string t = in;
