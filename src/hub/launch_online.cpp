@@ -76,7 +76,7 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     if (hubemu::is_running(inst.exe)) { set_notice("Dolphin is already running. Close it first."); return false; }
     if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
     hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
-    hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads());   // managed config: no update check, no analytics, no panic alerts
+    hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads(), controls_profile("gc", e.key));   // managed config: no update check, no analytics, no panic alerts
     std::string user = inst.dir + "\\User", ini = user + "\\Config\\Dolphin.ini";
     gcnp::Spec sp = GCO.spec;
     sp.mode = "direct";
@@ -91,7 +91,7 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     std::string next = gcnp::ini_patch(cur, sp, ip);
     { std::ofstream f(ini, std::ios::binary | std::ios::trunc); f << next; }
     GCO.run = gcnp::Run();
-    std::string extra = std::string("-C Dolphin.Display.Fullscreen=") + (A.st.fullscreen ? "True" : "False");
+    std::string extra = std::string("-C Dolphin.Display.Fullscreen=") + (hub::gs::is_fullscreen(gs_values_for(e)) ? "True" : "False");
     if (!gcnp::start(host, inst.exe, user, sp, slot, hub::data_dir() + "\\gcnp", "", extra, &GCO.run)) {
         set_notice("Could not start Dolphin NetPlay: " + GCO.run.error);
         return false;
@@ -203,7 +203,7 @@ void poll_np3ds() {
 }
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan, const hubui::Json* launch_msg,
-                          const hubui::MatchSpec* host_match) {
+                          const hubui::MatchSpec* host_match, const std::string* launch_body) {
     A.st.last_game = room_id(e);
     mark_dirty();
     if (e.system == hub::System::GC) {   // Dolphin NetPlay: the host starts now; guests start from the launch handler
@@ -221,6 +221,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         return;
     }
     RunInfo ri = run_info_for(e, true);
+    hub::gs::Values gsv = hubui::online_values(e.system, gs_values_for(e), is_host, launch_body ? *launch_body : std::string());
     if (e.system == hub::System::N3DS) { launch_online_3ds(e, launch_no, is_host, launch_msg); return; }
     if (is_native(e)) {
         std::string exe = smash_exe_path();
@@ -275,8 +276,8 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
                       std::to_string(A.lobby.my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
                       plan.ports + hubui::delay_arg(delay);
     if (e.system == hub::System::N64) {
-        std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title);
-        if (A.st.fullscreen) args += " --fullscreen";
+        std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
+        args += hubui::n64_extra_args(gsv);
         args += match_args;
         if (share_save) {   // every PC must agree; only the host (slot 0) supplies its battery dir
             args += " --share-host-save";
@@ -314,8 +315,8 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         make_dirs(tmp);
         ri.online = false;   // the vault save is used and written back: track/sync it like an offline session
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --link --save-dir " + quote(battery) +
-                           " --state-dir " + quote(tmp) + lnet + title_arg(e.title) + save_stem_arg(e);
-        if (A.st.fullscreen) args += " --fullscreen";
+                           " --state-dir " + quote(tmp) + lnet + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+        args += hubui::retro_extra_args(e.system, gsv);
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
@@ -328,8 +329,30 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         remove_tree(tmp);
         make_dirs(tmp);
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
-                           " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e);
-        if (A.st.fullscreen) args += " --fullscreen";
+                           " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+        args += hubui::retro_extra_args(e.system, gsv);
+        spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        return;
+    }
+    if (e.system == hub::System::NDS) {
+        /* DS local wireless: no lockstep. Every PC runs its own melonDS core and only the wireless frames travel through
+         * the room (retrorun --ds-link), so the game's own save is used and trades/battles are real. */
+        std::string core = find_core("melondsds");
+        if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }
+        std::string mode;
+        if (launch_msg && launch_msg->get("np_ds") && !hubui::parse_np_ds(*launch_msg, &mode)) {
+            set_notice("The host's DS launch is newer than this RetroHub - update to join.");
+            return;
+        }
+        ri.online = false;   // real save: play time and the vault see this like an offline session
+        std::string sys = sys_short(e);
+        std::string battery = no_slash(hub::saves::battery_dir(sys, e.key));
+        std::string states = no_slash(hub::saves::states_dir(sys, e.key));
+        std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
+                           " --state-dir " + quote(states) + " --ds-link --net " + quote(server_url()) + " --room " + A.code + "-" +
+                           std::to_string(launch_no) + " --slot " + std::to_string(A.lobby.my_slot()) + " --players " +
+                           std::to_string(plan.players) + title_arg(e.title) + save_stem_arg(e);
+        args += hubui::retro_extra_args(e.system, gsv);
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }

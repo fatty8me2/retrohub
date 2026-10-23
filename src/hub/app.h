@@ -27,6 +27,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <set>
@@ -40,15 +41,19 @@
 #include "update_apply.h"
 #include "games.h"
 #include "emulators.h"
+#include "controls.h"
 #include "netplay_dolphin.h"
 #include "library.h"
 #include "logic.h"
 #include "savestore.h"
 #include "cloud.h"
 #include "shell_integration.h"
+#include "invite.h"
 #include "session.h"
 #include "netplay_3ds_run.h"
 #include "ui_kit.h"
+#include "game_settings.h"
+#include "launch_settings.h"
 
 #ifndef HUB_VERSION_STR
 #define HUB_VERSION_STR "0.0.0"
@@ -231,6 +236,7 @@ struct App {
     bool focus_search = false;
     LibView view = LibView::Home;
     std::string env_select;      // HUB_SELECT_GAME
+    std::string pending_play;    // --play <key> (own command line or forwarded by a second launch): started once the library has loaded
     std::string hero_key;        // game the hero header currently shows (for the fade-in)
     float hero_t = 1.f;
     bool show_details = false;   // request to open the details modal
@@ -439,6 +445,8 @@ std::string launch_path_for(const hub::GameEntry& e);
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg = "");
 void start_unzip(const hub::GameEntry& e);
 void play_entry(const hub::GameEntry& e);
+void add_game_shortcut(const hub::GameEntry& e);   // "Add to desktop": .lnk to RetroHub.exe --play <key> (shell_shortcut_dir())
+void flash_taskbar();                              // FlashWindowEx on the hub window; never takes focus
 
 
 /* ---- launch_online.cpp ---- */
@@ -457,7 +465,14 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
 void poll_np3ds();
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
-                          const hubui::MatchSpec* host_match = nullptr);
+                          const hubui::MatchSpec* host_match = nullptr, const std::string* launch_body = nullptr);
+
+/* settings_games_ui.cpp: per-game settings (vault: _settings\game_settings.json) */
+extern hub::gs::Store GSTORE;
+void gs_load();   // after the vault dir is known
+hub::gs::Values gs_values_for(const hub::GameEntry& e);   // resolved incl. the global fullscreen default
+void gs_draw_game_section(const hub::GameEntry& e);       // details modal
+void gs_draw_defaults_area();                              // Settings page
 
 
 /* ---- lobby.cpp ---- */
@@ -551,6 +566,9 @@ void refresh_pads();
 void stick(ImDrawList* dl, ImVec2 c, float r, float x, float y, const char* label);
 void btn_dot(ImDrawList* dl, ImVec2 c, float r, bool on, const char* label);
 void page_controllers();
+void open_controls_for(const hub::GameEntry& e);
+std::string controls_arg(const std::string& system_key, const std::string& game_key);
+hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key);
 
 
 /* ---- page_saves.cpp ---- */
@@ -562,6 +580,7 @@ void page_saves();
 /* ---- page_settings.cpp ---- */
 void settings_label(const char* title, const char* hint = nullptr);
 void page_settings();
+void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
 
 
 /* ---- emu_dialogs.cpp ---- */

@@ -298,6 +298,7 @@ void fr_notify(bool invite, const std::string& uid, const std::string& name, con
     FR.notifs.push_back(n);
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
+    if (invite && A.proc) flash_taskbar();   // a game is in front: blink the taskbar button, never take focus
 }
 int fr_pending_count() {
     int n = (int)fr_incoming().size();

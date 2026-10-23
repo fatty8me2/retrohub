@@ -43,6 +43,36 @@ int main() {
     CHECK(ok); CHECK(wrote);
     CHECK(shell_read_shortcut(lnk, &i)); CHECK(_wcsicmp(i.target.c_str(), other.c_str()) == 0);
 
+    {   // one-click favorite shortcut (scratch dir only)
+        std::wstring glnk = dir + L"\\Mario Kart_ 64.lnk";
+        CHECK(shell_game_shortcut_name(L"Super: Mario/Kart?") == L"Super  Mario Kart.lnk");
+        CHECK(shell_game_shortcut_name(L"  ") == L"Game.lnk");
+        unsigned char px[4 * 4 * 4];
+        for (int k = 0; k < 16; ++k) { px[k*4] = 200; px[k*4+1] = 50; px[k*4+2] = 20; px[k*4+3] = 255; }
+        std::wstring ico = dir + L"\\g.ico";
+        CHECK(shell_write_ico(ico, px, 4, 4));
+        WIN32_FILE_ATTRIBUTE_DATA fa{};
+        CHECK(GetFileAttributesExW(ico.c_str(), GetFileExInfoStandard, &fa) && fa.nFileSizeLow == 22 + 40 + 128*128*4 + 128*128/8);
+        CHECK(shell_write_game_shortcut(glnk, exe, L"n64-abc", L"Mario Kart 64", ico));
+        ShellLinkInfo g;
+        CHECK(shell_read_shortcut(glnk, &g));
+        CHECK(_wcsicmp(g.target.c_str(), exe.c_str()) == 0);
+        CHECK(_wcsicmp(g.icon.c_str(), ico.c_str()) == 0);
+        CHECK(g.description == L"Play Mario Kart 64 with RetroHub");
+        IShellLinkW* sl = nullptr; IPersistFile* pf = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&sl)))) {
+            sl->QueryInterface(IID_PPV_ARGS(&pf));
+            wchar_t args[256] = {};
+            CHECK(pf && SUCCEEDED(pf->Load(glnk.c_str(), STGM_READ)) && SUCCEEDED(sl->GetArguments(args, 256)) && std::wstring(args) == L"--play n64-abc");
+            if (pf) pf->Release();
+            sl->Release();
+        }
+        DeleteFileW(glnk.c_str()); DeleteFileW(ico.c_str());
+        SetEnvironmentVariableW(L"HUB_SHORTCUT_DIR", L"C:\\scratch");
+        CHECK(shell_shortcut_dir() == L"C:\\scratch");
+        SetEnvironmentVariableW(L"HUB_SHORTCUT_DIR", nullptr);
+        CHECK(shell_shortcut_dir().empty());   // dev build: never the real Desktop
+    }
     {   // registration policy
         auto none = [](const std::wstring&, const wchar_t*) { return false; };
         CHECK(!shell_path_looks_like_dev_build(L"C:\\Users\\u\\Desktop\\smashClassic\\RetroHub.exe", none));

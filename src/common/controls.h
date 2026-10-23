@@ -72,6 +72,9 @@ struct Term {
 bool parse_expr(const std::string& expr, int default_threshold, std::vector<Term>* out, std::string* err = nullptr);
 bool valid_expr(const std::string& expr);
 std::string term_name(const Term& t);                  // "a", "leftx-", "lefttrigger"
+/* Human text for the Controllers page: "A", "Left stick left", "LT", "X / B / Y"; "Unbound" for a bad expression. */
+std::string describe_term(const Term& t);
+std::string describe_expr(const std::string& expr);
 int button_index(const std::string& name);             // -1 if unknown
 int axis_index(const std::string& name);
 const char* button_name(int idx);
