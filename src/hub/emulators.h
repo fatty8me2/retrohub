@@ -71,6 +71,7 @@ struct Installer {
 bool install_blocking(Kind k, const std::string& root, std::string* err,
                       const std::function<void(int phase, uint64_t got, uint64_t total)>& progress);
 std::string sha256_file(const std::string& path);   // lowercase hex, "" on error
+std::string md5_file(const std::string& path);      // lowercase hex, "" on error (Smash ROM identity)
 
 /* ---- config pre-writing (merged into what is already there) ---- */
 /* Azahar: creates <dir>\user (portable marker) and writes qt-config.ini defaults once: no first-run prompts,

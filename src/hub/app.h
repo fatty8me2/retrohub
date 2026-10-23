@@ -119,6 +119,7 @@ struct RunInfo {
     ULONGLONG start_tick = 0;
     bool track = true;      // record play time / touch the save vault (false for the native Smash port)
     bool online = false;
+    std::string o2r_prep;   // native Smash only: BattleShip.o2r path, shown as "Preparing" while it is missing ("" otherwise)
     std::function<void()> after_exit;   // runs once when the process ended (3DS/Wii U: copy the emulator save folder into the vault)
 };
 

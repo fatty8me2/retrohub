@@ -622,6 +622,24 @@ std::vector<std::pair<std::string, std::string>> smash_launch_env(const std::str
     return env;
 }
 
+bool smash_md5_supported(const std::string& md5_hex) {
+    if (md5_hex.size() != 32) return false;
+    for (size_t i = 0; i < 32; ++i)
+        if (std::tolower((unsigned char)md5_hex[i]) != kSmashUsaMd5[i]) return false;
+    return true;
+}
+
+SmashPlay smash_play_decision(bool o2r_exists, bool rom_found, const std::string& rom_md5_hex) {
+    if (o2r_exists) return SmashPlay::Launch;          // already extracted: the ROM is not needed again
+    if (!rom_found) return SmashPlay::NeedRom;
+    return smash_md5_supported(rom_md5_hex) ? SmashPlay::Launch : SmashPlay::WarnMd5;
+}
+
+std::string smash_md5_warn_text(const std::string& md5_hex) {
+    std::string m = md5_hex.empty() ? std::string("unreadable") : md5_hex;
+    return "This ROM is not the supported Super Smash Bros. (USA) 1.0 dump (MD5 " + m + "). Smash Classic may not start. Launching anyway.";
+}
+
 std::string normalize_code(const std::string& s) {
     std::string o;
     for (unsigned char c : s) {

@@ -181,12 +181,13 @@ Install find(Kind k, const std::string& configured, const std::string& game_path
 /* download + install                                                  */
 /* ------------------------------------------------------------------ */
 
-std::string sha256_file(const std::string& path) {
+/* Hashes a file with a BCrypt algorithm (SHA-256 or MD5). Returns lowercase hex, "" on error. */
+static std::string bcrypt_file(const std::string& path, LPCWSTR alg_id, int digest_len) {
     std::ifstream f(P(path), std::ios::binary);
     if (!f) return "";
     BCRYPT_ALG_HANDLE alg = nullptr;
     BCRYPT_HASH_HANDLE h = nullptr;
-    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return "";
+    if (BCryptOpenAlgorithmProvider(&alg, alg_id, nullptr, 0) != 0) return "";
     std::string out;
     if (BCryptCreateHash(alg, &h, nullptr, 0, nullptr, 0, 0) == 0) {
         std::vector<char> buf(1 << 20);
@@ -195,10 +196,11 @@ std::string sha256_file(const std::string& path) {
             std::streamsize n = f.gcount();
             if (n > 0) BCryptHashData(h, (PUCHAR)buf.data(), (ULONG)n, 0);
         }
-        UCHAR dig[32];
-        if (BCryptFinishHash(h, dig, 32, 0) == 0) {
-            char hex[65];
-            for (int i = 0; i < 32; ++i) std::snprintf(hex + i * 2, 3, "%02x", dig[i]);
+        std::vector<UCHAR> dig(digest_len);
+        if (BCryptFinishHash(h, dig.data(), (ULONG)digest_len, 0) == 0) {
+            std::string hex;
+            char tmp[3];
+            for (int i = 0; i < digest_len; ++i) { std::snprintf(tmp, sizeof tmp, "%02x", dig[i]); hex += tmp; }
             out = hex;
         }
         BCryptDestroyHash(h);
@@ -206,6 +208,9 @@ std::string sha256_file(const std::string& path) {
     BCryptCloseAlgorithmProvider(alg, 0);
     return out;
 }
+
+std::string sha256_file(const std::string& path) { return bcrypt_file(path, BCRYPT_SHA256_ALGORITHM, 32); }
+std::string md5_file(const std::string& path) { return bcrypt_file(path, BCRYPT_MD5_ALGORITHM, 16); }
 
 struct Progress {
     std::atomic<uint64_t>* got;
