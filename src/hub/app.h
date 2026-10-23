@@ -44,6 +44,7 @@
 #include "library.h"
 #include "logic.h"
 #include "savestore.h"
+#include "cloud.h"
 #include "shell_integration.h"
 #include "session.h"
 #include "netplay_3ds_run.h"
@@ -118,13 +119,16 @@ struct RunInfo {
 
 /* Background save job (sync / export / import). */
 struct SaveJob {
-    enum Kind { None, Sync, Export, Import } kind = None;
+    enum Kind { None, Sync, Export, Import, Status } kind = None;   // Status: cloud_status probe only
     std::thread th;
     std::atomic<bool> running{false}, done{false};
     hub::saves::SyncReport report;
     bool export_ok = false;
     std::string export_err, path;
     bool include_states = false, manual = false;
+    bool cloud = false;                              // also sync through the RetroHub account
+    hub::saves::CloudConfig cloud_cfg;
+    hub::saves::CloudStatus cloud_stat;              // filled by Status jobs and by Sync jobs with cloud on
 };
 
 struct VaultRow { hubui::VaultMeta m; };
@@ -185,6 +189,9 @@ struct App {
     std::string run_fighter;                      // my fighter in the running match ("" = none), for friends presence
     std::string sync_result;                      // last result summary (Saves page)
     bool sync_result_ok = true;
+    hub::saves::CloudStatus cloud_stat;           // last cloud status (Saves page line)
+    bool cloud_stat_known = false;                // a probe has answered since the toggle went on
+    bool cloud_probed = false;                    // a probe was started for the current toggle state
     std::string export_result, import_result;
     bool export_ok = true, import_ok = true;
     std::vector<VaultRow> vault_rows;
@@ -409,6 +416,8 @@ void set_toast(const std::string& s, bool good = true, double secs = 6.0);
 void start_job(SaveJob::Kind k, const std::string& path, bool manual);
 const std::vector<SyncSuggestion>& sync_suggestions();
 void start_sync(bool manual);
+bool sync_enabled();                 // a sync folder is set or cloud saves are on
+void start_cloud_probe();            // Status job: refresh the cloud status line
 void run_pending_sync();
 void auto_sync();
 std::string report_summary(const hub::saves::SyncReport& r, const char* sent_word, const char* got_word);

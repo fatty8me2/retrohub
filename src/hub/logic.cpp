@@ -223,6 +223,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"sync_folder\": \"" << json_escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"sync_states\": " << (s.sync_states ? "true" : "false") << ",\n"
+      << "  \"cloud_saves\": " << (s.cloud_saves ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json_escape(s.vault_dir) << "\",\n"
@@ -270,6 +271,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->sync_states = json_bool(j, "sync_states", out->sync_states);
+    out->cloud_saves = json_bool(j, "cloud_saves", out->cloud_saves);
     out->sync_card_dismissed = json_bool(j, "sync_card_dismissed", out->sync_card_dismissed);
     out->smash_save_notice_shown = json_bool(j, "smash_save_notice_shown", out->smash_save_notice_shown);
     out->vault_dir = j.str("vault_dir", out->vault_dir);

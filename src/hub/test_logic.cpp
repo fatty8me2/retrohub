@@ -21,6 +21,7 @@ int main() {
     s.sync_folder = "C:\\Users\\a\\OneDrive\\RetroHub";
     s.sync_auto = false;
     s.sync_states = true;
+    s.cloud_saves = true;
     s.sync_card_dismissed = true;
     s.smash_save_notice_shown = true;
     s.cemu_exe = "D:\Wiiu\Cemu.exe";
@@ -30,6 +31,7 @@ int main() {
     CHECK(t.input_delay == 4 && t.last_game == "mp2" && t.smash_exe == s.smash_exe);
     CHECK(t.gb_core == "gambatte" && t.fullscreen && t.sync_folder == s.sync_folder);
     CHECK(!t.sync_auto && t.sync_states && t.sync_card_dismissed && t.smash_save_notice_shown && t.cemu_exe == s.cemu_exe);
+    CHECK(t.cloud_saves && !Settings().cloud_saves);   // cloud saves: stored, off by default
     Settings u;
     CHECK(u.cemu_exe.empty());
     CHECK(settings_from_json("{\"input_delay\": 99}", &u) && u.input_delay == 8 && u.delay_auto && u.name.empty());
