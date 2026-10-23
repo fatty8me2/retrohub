@@ -591,9 +591,10 @@ void fr_join_notif(Notif& n) {
 }
 
 /* Toast cards (top right, below the top bar). */
-void fr_draw_toasts(float right_x, float top_y) {
+/* Friend request / invite cards stack upward from `bottom_y` (bottom right, clear of the page header buttons such as "Invite friends"). */
+void fr_draw_toasts(float right_x, float bottom_y) {
     double now = ImGui::GetTime();
-    float y = top_y, w = std::min(sp(45.f), right_x - sp(2.f));
+    float y = bottom_y, w = std::min(sp(45.f), right_x - sp(2.f));
     for (auto& n : FR.notifs) {
         if (n.done || !n.toast) continue;
         if (FR.fake && g_headless) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
@@ -602,7 +603,7 @@ void fr_draw_toasts(float right_x, float top_y) {
         float in = (float)std::min(1.0, age / 0.3);
         in = 1.f - (1.f - in) * (1.f - in);
         float h = n.invite ? fr_invite_card_h() : fr_request_card_h();
-        ImGui::SetNextWindowPos(ImVec2(right_x - w + (1.f - in) * sp(8.f), y));
+        ImGui::SetNextWindowPos(ImVec2(right_x - w + (1.f - in) * sp(8.f), y - h));
         ImGui::SetNextWindowSize(ImVec2(w, h));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
@@ -623,7 +624,7 @@ void fr_draw_toasts(float right_x, float top_y) {
         ImGui::End();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
-        y += h + sp(1.f);
+        y -= h + sp(1.f);
     }
 }
 
