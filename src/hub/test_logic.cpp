@@ -464,6 +464,17 @@ int main() {
         auto env = smash_launch_env("r.z64", "s.bin");
         CHECK(env.size() == 2 && env[0].first == "SSB64_BASEROM" && env[1].first == "SSB64_SAVE_PATH" && env[1].second == "s.bin");
         CHECK(smash_launch_env("", "s.bin").size() == 1);
+        /* Play decision: ROM identity and first-run extraction */
+        CHECK(smash_md5_supported("f7c52568a31aadf26e14dc2b6416b2ed") && smash_md5_supported("F7C52568A31AADF26E14DC2B6416B2ED"));
+        CHECK(!smash_md5_supported("") && !smash_md5_supported("4b71f0e01878696733eefa9c80d11c147ecb4984"));
+        CHECK(smash_play_decision(true, false, "") == SmashPlay::Launch);                       /* o2r exists: no ROM needed */
+        CHECK(smash_play_decision(false, false, "") == SmashPlay::NeedRom);                     /* no ROM, no o2r: message, no launch */
+        CHECK(smash_play_decision(false, true, "f7c52568a31aadf26e14dc2b6416b2ed") == SmashPlay::Launch);
+        CHECK(smash_play_decision(false, true, "66db457b130d31a286a23d6e4dd9726e") == SmashPlay::WarnMd5);   /* JP dump */
+        CHECK(smash_play_decision(false, true, "") == SmashPlay::WarnMd5);                       /* unreadable */
+        CHECK(smash_play_decision(true, true, "66db457b130d31a286a23d6e4dd9726e") == SmashPlay::Launch);
+        CHECK(smash_prep_visible(true, false) && !smash_prep_visible(true, true) && !smash_prep_visible(false, false));
+        CHECK(smash_md5_warn_text("").find("unreadable") != std::string::npos);
     }
 
     {   // Smash match picker
