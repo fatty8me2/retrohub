@@ -86,18 +86,32 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     ip.host = host;
     ip.nickname = member_name(room_my_slot());
     ip.iso_dir = dir_of(game);
+    ip.write_save = host && A.gc_write_save;
+    ip.mute = autotest_active();
     std::string cur;
     { std::ifstream f(ini, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
     std::string next = gcnp::ini_patch(cur, sp, ip);
     { std::ofstream f(ini, std::ios::binary | std::ios::trunc); f << next; }
     GCO.run = gcnp::Run();
-    std::string extra = std::string("-C Dolphin.Display.Fullscreen=") + (hub::gs::is_fullscreen(gs_values_for(e)) ? "True" : "False");
+    /* Memory card: the host plays on (and syncs to everyone) its real vault card, the same folder offline play uses; whether the
+     * session's changes stay is Dolphin's WriteSaveData (the host's room choice). Guests get a wiped scratch folder: Dolphin
+     * replaces their card with the host's copy in its own Netplay folder, and their real card is never opened. */
+    std::string card;
+    if (host) card = hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI";
+    else {
+        card = no_slash(hub::data_dir()) + "\\netplay\\gc\\guest-card";
+        remove_tree(card);
+    }
+    make_dirs(card);
+    std::string extra = std::string("-C Dolphin.Display.Fullscreen=") + (hub::gs::is_fullscreen(gs_values_for(e)) ? "True" : "False") +
+                        " -C \"Dolphin.Core.GCIFolderAPathOverride=" + card + "\"";
     if (!gcnp::start(host, inst.exe, user, sp, slot, hub::data_dir() + "\\gcnp", "", extra, &GCO.run)) {
         set_notice("Could not start Dolphin NetPlay: " + GCO.run.error);
         return false;
     }
     GCO.active = true;
     GCO.host = host;
+    autotest_log(std::string("gc_begin ") + (host ? "host" : "guest") + " card=" + card);
     GCO.ready_sent = false;
     GCO.entry = e;
     push_toast(host ? "Starting GameCube NetPlay as host..." : "Joining the host's GameCube NetPlay...", ui::GOOD, 6.0);
@@ -136,6 +150,7 @@ void gc_tick() {
     if (!GCO.host && !GCO.checked && GCO.fp_done && GCO.fp_path == launch_path_for(GCO.entry)) {
         GCO.checked = true;
         gcnp::Match m = gcnp::compare_disc(GCO.spec, GCO.fp_size, GCO.fp_sha);
+        if (m == gcnp::Match::DifferentDisc) autotest_log("warn:different-disc");
         if (m == gcnp::Match::DifferentDisc) push_toast(gcnp::match_text(m), ui::WARN, 20.0, true);
     }
 }

@@ -44,6 +44,7 @@ struct IniParams {
     std::string nickname;
     std::string iso_dir;
     bool mute = false;
+    bool write_save = false;      // host only: keep this session's memory-card changes (Dolphin 'Write save data'); off = discarded
 };
 std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p);
 

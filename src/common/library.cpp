@@ -561,6 +561,7 @@ bool gc_from_header(const uint8_t* h, size_t n, const fs::path& p, GameEntry* e)
     e->key = "gc:" + sanitize_key(id) + "-" + std::to_string(disc);
     size_t tl = std::min<size_t>(n > 0x20 ? n - 0x20 : 0, 0x3E0);
     e->title = pretty_title(header_text(h + 0x20, tl), p);
+    if (const GameInfo* gi = find_game_for("gc", id, std::string())) { e->catalog_id = gi->id; }   // loose discs are catalog games too (online needs it)
     return true;
 }
 
