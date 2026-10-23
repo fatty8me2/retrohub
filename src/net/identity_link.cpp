@@ -108,7 +108,7 @@ bool aes_gcm(bool encrypt, const uint8_t key[32], const uint8_t iv[kIvLen], std:
 
 std::string identity_to_json(const Identity& id)
 {
-    return "{\"user_id\":" + std::string("\"") + json_escape(id.user_id) + "\",\"secret\":\"" + json_escape(id.secret) +
+    return "{\"user_id\":" + std::string("\"") + json::escape(id.user_id) + "\",\"secret\":\"" + json::escape(id.secret) +
            "\",\"created\":" + std::to_string(id.created) + "}\n";
 }
 
@@ -117,10 +117,10 @@ bool identity_from_json(const std::string& text, Identity* out)
     Json j;
     if (!json_parse(text, &j) || j.type != Json::Object) return false;
     Identity t;
-    t.user_id = j.s("user_id");
-    t.secret = j.s("secret");
+    t.user_id = j.str("user_id");
+    t.secret = j.str("secret");
     const Json* c = j.get("created");
-    t.created = (c && c->type == Json::Number) ? (int64_t)c->num : 0;
+    t.created = (c && c->type == Json::Number) ? (int64_t)c->n : 0;
     if (!is_b32(t.user_id, 26) || !is_b32(t.secret, 52)) return false;
     *out = t;
     return true;
@@ -194,7 +194,7 @@ bool http_post(const std::string& server, const std::string& path, const std::st
 std::string server_error(const HttpResult& r)
 {
     Json j;
-    std::string e = (json_parse(r.body, &j) && j.type == Json::Object) ? j.s("error") : "";
+    std::string e = (json_parse(r.body, &j) && j.type == Json::Object) ? j.str("error") : "";
     return e.empty() ? ("server returned HTTP " + std::to_string(r.status)) : e;
 }
 
@@ -251,7 +251,7 @@ bool link_create_code(const std::string& server, const Identity& id, std::string
     if (!http_post(server, "/link/create", "{" + auth + "}", &r, &e)) { *err = e; return false; }
     Json j;
     if (r.status != 200 || !json_parse(r.body, &j)) { *err = "create failed: " + server_error(r); return false; }
-    std::string code = j.s("code");
+    std::string code = j.str("code");
     if (link_normalize_code(code).empty()) { *err = "server returned a bad code"; return false; }
 
     LinkEnvelope env;
@@ -277,7 +277,7 @@ bool link_redeem_code(const std::string& server, const std::string& code, Identi
     if (r.status == 404) { *err = "Code is wrong, expired or already used."; return false; }
     Json j;
     if (r.status != 200 || !json_parse(r.body, &j)) { *err = "redeem failed: " + server_error(r); return false; }
-    LinkEnvelope env{j.s("salt"), j.s("iv"), j.s("ct")};
+    LinkEnvelope env{j.str("salt"), j.str("iv"), j.str("ct")};
     if (!link_open(c, env, out)) { *err = "Could not decrypt the identity. Check the code and create a new one."; return false; }
     return true;
 }

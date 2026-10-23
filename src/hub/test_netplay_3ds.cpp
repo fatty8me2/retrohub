@@ -17,21 +17,21 @@ int main() {
     p.expected = 3;
     std::string msg = hubui::launch_json("pokex", 2, 0, 5u, "", false, nullptr, nullptr, plan_json_fragment(p));
     hubui::Json j;
-    CHECK(hubui::json_parse(msg, &j));
+    CHECK(json::parse(msg, &j));
     Plan q;
     CHECK(parse_plan(j, &q) && q.port == 24872 && q.expected == 3 && q.password.empty());
     CHECK(j.str("game") == "pokex" && j.num("launch") == 2);   // existing keys untouched
     hubui::Json none;
-    CHECK(hubui::json_parse(hubui::launch_json("pokex", 1, 0, 5u), &none) && !parse_plan(none, &q));   // older host
+    CHECK(json::parse(hubui::launch_json("pokex", 1, 0, 5u), &none) && !parse_plan(none, &q));   // older host
     Plan bad = p;
     bad.expected = 1;
-    CHECK(hubui::json_parse(hubui::launch_json("x", 1, 0, 1u, "", false, nullptr, nullptr, plan_json_fragment(bad)), &none) && !parse_plan(none, &q));
+    CHECK(json::parse(hubui::launch_json("x", 1, 0, 1u, "", false, nullptr, nullptr, plan_json_fragment(bad)), &none) && !parse_plan(none, &q));
     bad = p;
     bad.port = 80;
-    CHECK(hubui::json_parse(hubui::launch_json("x", 1, 0, 1u, "", false, nullptr, nullptr, plan_json_fragment(bad)), &none) && !parse_plan(none, &q));
+    CHECK(json::parse(hubui::launch_json("x", 1, 0, 1u, "", false, nullptr, nullptr, plan_json_fragment(bad)), &none) && !parse_plan(none, &q));
     bad = p;
     bad.password = "a@b:c";   // would corrupt the -m argument
-    CHECK(hubui::json_parse(hubui::launch_json("x", 1, 0, 1u, "", false, nullptr, nullptr, plan_json_fragment(bad)), &none) && !parse_plan(none, &q));
+    CHECK(json::parse(hubui::launch_json("x", 1, 0, 1u, "", false, nullptr, nullptr, plan_json_fragment(bad)), &none) && !parse_plan(none, &q));
     std::string pw = random_password(7u);
     CHECK(pw.size() == 12 && pw == random_password(7u) && pw != random_password(8u));
 

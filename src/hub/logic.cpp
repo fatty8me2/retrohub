@@ -34,205 +34,36 @@ bool merge_installer_games_dir(Settings* s, const std::string& text) {
     s->rom_folders.push_back(t);
     return true;
 }
-/* ---------------- JSON ---------------- */
-
-const Json* Json::get(const std::string& key) const {
-    if (type != Obj) return nullptr;
-    for (size_t i = 0; i < keys.size(); ++i)
-        if (keys[i] == key) return &vals[i];
-    return nullptr;
-}
-std::string Json::str(const std::string& key, const std::string& def) const {
-    const Json* j = get(key);
-    return (j && j->type == Str) ? j->s : def;
-}
-double Json::num(const std::string& key, double def) const {
-    const Json* j = get(key);
-    return (j && j->type == Num) ? j->n : def;
-}
-
-namespace {
-
-struct Parser {
-    const std::string& t;
-    size_t p = 0;
-    explicit Parser(const std::string& s) : t(s) {}
-
-    void ws() { while (p < t.size() && std::isspace((unsigned char)t[p])) ++p; }
-
-    static void put_utf8(std::string& o, unsigned cp) {
-        if (cp < 0x80) o += (char)cp;
-        else if (cp < 0x800) { o += (char)(0xC0 | (cp >> 6)); o += (char)(0x80 | (cp & 63)); }
-        else if (cp < 0x10000) { o += (char)(0xE0 | (cp >> 12)); o += (char)(0x80 | ((cp >> 6) & 63)); o += (char)(0x80 | (cp & 63)); }
-        else { o += (char)(0xF0 | (cp >> 18)); o += (char)(0x80 | ((cp >> 12) & 63)); o += (char)(0x80 | ((cp >> 6) & 63)); o += (char)(0x80 | (cp & 63)); }
-    }
-    bool hex4(unsigned* v) {
-        if (p + 4 > t.size()) return false;
-        unsigned r = 0;
-        for (int i = 0; i < 4; ++i) {
-            char c = t[p++];
-            r <<= 4;
-            if (c >= '0' && c <= '9') r |= c - '0';
-            else if (c >= 'a' && c <= 'f') r |= c - 'a' + 10;
-            else if (c >= 'A' && c <= 'F') r |= c - 'A' + 10;
-            else return false;
-        }
-        *v = r;
-        return true;
-    }
-    bool string(std::string* o) {
-        if (p >= t.size() || t[p] != '"') return false;
-        ++p;
-        o->clear();
-        while (p < t.size()) {
-            char c = t[p++];
-            if (c == '"') return true;
-            if (c != '\\') { *o += c; continue; }
-            if (p >= t.size()) return false;
-            char e = t[p++];
-            switch (e) {
-                case '"': *o += '"'; break;
-                case '\\': *o += '\\'; break;
-                case '/': *o += '/'; break;
-                case 'b': *o += '\b'; break;
-                case 'f': *o += '\f'; break;
-                case 'n': *o += '\n'; break;
-                case 'r': *o += '\r'; break;
-                case 't': *o += '\t'; break;
-                case 'u': {
-                    unsigned cp;
-                    if (!hex4(&cp)) return false;
-                    if (cp >= 0xD800 && cp < 0xDC00 && p + 1 < t.size() && t[p] == '\\' && t[p + 1] == 'u') {
-                        p += 2;
-                        unsigned lo;
-                        if (!hex4(&lo)) return false;
-                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                    }
-                    put_utf8(*o, cp);
-                    break;
-                }
-                default: return false;
-            }
-        }
-        return false;
-    }
-    bool value(Json* j, int depth) {
-        if (depth > 16) return false;
-        ws();
-        if (p >= t.size()) return false;
-        char c = t[p];
-        if (c == '{') {
-            ++p;
-            j->type = Json::Obj;
-            ws();
-            if (p < t.size() && t[p] == '}') { ++p; return true; }
-            for (;;) {
-                ws();
-                std::string k;
-                if (!string(&k)) return false;
-                ws();
-                if (p >= t.size() || t[p++] != ':') return false;
-                Json v;
-                if (!value(&v, depth + 1)) return false;
-                j->keys.push_back(k);
-                j->vals.push_back(std::move(v));
-                ws();
-                if (p >= t.size()) return false;
-                char d = t[p++];
-                if (d == '}') return true;
-                if (d != ',') return false;
-            }
-        }
-        if (c == '[') {
-            ++p;
-            j->type = Json::Arr;
-            ws();
-            if (p < t.size() && t[p] == ']') { ++p; return true; }
-            for (;;) {
-                Json v;
-                if (!value(&v, depth + 1)) return false;
-                j->vals.push_back(std::move(v));
-                ws();
-                if (p >= t.size()) return false;
-                char d = t[p++];
-                if (d == ']') return true;
-                if (d != ',') return false;
-            }
-        }
-        if (c == '"') { j->type = Json::Str; return string(&j->s); }
-        if (t.compare(p, 4, "true") == 0) { p += 4; j->type = Json::Bool; j->b = true; return true; }
-        if (t.compare(p, 5, "false") == 0) { p += 5; j->type = Json::Bool; j->b = false; return true; }
-        if (t.compare(p, 4, "null") == 0) { p += 4; j->type = Json::Null; return true; }
-        const char* b = t.c_str() + p;
-        char* e = nullptr;
-        double d = std::strtod(b, &e);
-        if (e == b) return false;
-        p += (size_t)(e - b);
-        j->type = Json::Num;
-        j->n = d;
-        return true;
-    }
-};
-
-} // namespace
-
-bool json_parse(const std::string& text, Json* out) {
-    Parser ps(text);
-    Json j;
-    if (!ps.value(&j, 0)) return false;
-    ps.ws();
-    if (ps.p != text.size()) return false;
-    *out = std::move(j);
-    return true;
-}
-
-std::string json_escape(const std::string& s) {
-    std::string o;
-    for (unsigned char c : s) {
-        switch (c) {
-            case '"': o += "\\\""; break;
-            case '\\': o += "\\\\"; break;
-            case '\n': o += "\\n"; break;
-            case '\r': o += "\\r"; break;
-            case '\t': o += "\\t"; break;
-            default:
-                if (c < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); o += b; }
-                else o += (char)c;
-        }
-    }
-    return o;
-}
-
 /* ---------------- settings ---------------- */
 
 std::string settings_to_json(const Settings& s) {
     std::ostringstream o;
     o << "{\n"
-      << "  \"name\": \"" << json_escape(s.name) << "\",\n"
+      << "  \"name\": \"" << json::escape(s.name) << "\",\n"
       << "  \"rom_folders\": [";
     for (size_t i = 0; i < s.rom_folders.size(); ++i)
-        o << (i ? ", " : "") << "\"" << json_escape(s.rom_folders[i]) << "\"";
+        o << (i ? ", " : "") << "\"" << json::escape(s.rom_folders[i]) << "\"";
     o << "],\n"
-      << "  \"server\": \"" << json_escape(s.server) << "\",\n"
+      << "  \"server\": \"" << json::escape(s.server) << "\",\n"
       << "  \"input_delay\": " << s.input_delay << ",\n"
       << "  \"delay_auto\": " << (s.delay_auto ? "true" : "false") << ",\n"
-      << "  \"last_game\": \"" << json_escape(s.last_game) << "\",\n"
-      << "  \"smash_exe\": \"" << json_escape(s.smash_exe) << "\",\n"
-      << "  \"gb_core\": \"" << json_escape(s.gb_core) << "\",\n"
+      << "  \"last_game\": \"" << json::escape(s.last_game) << "\",\n"
+      << "  \"smash_exe\": \"" << json::escape(s.smash_exe) << "\",\n"
+      << "  \"gb_core\": \"" << json::escape(s.gb_core) << "\",\n"
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
-      << "  \"sync_folder\": \"" << json_escape(s.sync_folder) << "\",\n"
+      << "  \"sync_folder\": \"" << json::escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"sync_states\": " << (s.sync_states ? "true" : "false") << ",\n"
       << "  \"cloud_saves\": " << (s.cloud_saves ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
-      << "  \"vault_dir\": \"" << json_escape(s.vault_dir) << "\",\n"
+      << "  \"vault_dir\": \"" << json::escape(s.vault_dir) << "\",\n"
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
       << "  \"appear_offline\": " << (s.appear_offline ? "true" : "false") << ",\n"
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
-      << "  \"cemu_exe\": \"" << json_escape(s.cemu_exe) << "\"\n"
+      << "  \"cemu_exe\": \"" << json::escape(s.cemu_exe) << "\"\n"
       << "}\n";
     return o.str();
 }
@@ -244,13 +75,13 @@ static bool json_bool(const Json& j, const char* key, bool def) {
 
 bool settings_from_json(const std::string& text, Settings* out) {
     Json j;
-    if (!json_parse(text, &j) || j.type != Json::Obj) return false;
+    if (!json::parse(text, &j) || j.type != Json::Object) return false;
     out->name = j.str("name", out->name);
     const Json* rf = j.get("rom_folders");
-    if (rf && rf->type == Json::Arr) {
+    if (rf && rf->type == Json::Array) {
         out->rom_folders.clear();
-        for (auto& v : rf->vals)
-            if (v.type == Json::Str && !v.s.empty() &&
+        for (auto& v : rf->a)
+            if (v.type == Json::String && !v.s.empty() &&
                 std::find(out->rom_folders.begin(), out->rom_folders.end(), v.s) == out->rom_folders.end())
                 out->rom_folders.push_back(v.s);
     } else {
@@ -338,17 +169,17 @@ Selectability game_selectable(const std::string& game_id, int max_players,
 
 std::string hello_json(const std::string& version, const std::map<std::string, std::string>& games,
                        const std::vector<std::string>& keys, const std::string& app) {
-    std::string o = "{\"kind\":\"hello\",\"version\":\"" + json_escape(version) + "\"";
-    if (!app.empty()) o += ",\"app\":\"" + json_escape(app) + "\"";
+    std::string o = "{\"kind\":\"hello\",\"version\":\"" + json::escape(version) + "\"";
+    if (!app.empty()) o += ",\"app\":\"" + json::escape(app) + "\"";
     o += ",\"games\":{";
     bool first = true;
     for (auto& g : games) {
         if (!first) o += ",";
         first = false;
-        o += "\"" + json_escape(g.first) + "\":\"" + json_escape(g.second) + "\"";
+        o += "\"" + json::escape(g.first) + "\":\"" + json::escape(g.second) + "\"";
     }
     o += "},\"keys\":[";
-    for (size_t i = 0; i < keys.size(); ++i) o += (i ? ",\"" : "\"") + json_escape(keys[i]) + "\"";
+    for (size_t i = 0; i < keys.size(); ++i) o += (i ? ",\"" : "\"") + json::escape(keys[i]) + "\"";
     return o + "]}";
 }
 
@@ -359,22 +190,22 @@ std::vector<std::string> hello_messages(const std::string& version, const std::m
     size_t i = 0;
     int part = 0;
     do {
-        std::string o = "{\"kind\":\"hello\",\"version\":\"" + json_escape(version) + "\",\"part\":" + std::to_string(part);
+        std::string o = "{\"kind\":\"hello\",\"version\":\"" + json::escape(version) + "\",\"part\":" + std::to_string(part);
         if (part == 0) {
-            if (!app.empty()) o += ",\"app\":\"" + json_escape(app) + "\"";
+            if (!app.empty()) o += ",\"app\":\"" + json::escape(app) + "\"";
             o += ",\"games\":{";
             bool f = true;
             for (auto& g : games) {
                 if (!f) o += ",";
                 f = false;
-                o += "\"" + json_escape(g.first) + "\":\"" + json_escape(g.second) + "\"";
+                o += "\"" + json::escape(g.first) + "\":\"" + json::escape(g.second) + "\"";
             }
             o += "}";
         }
         o += ",\"keys\":[";
         bool first = true;
         while (i < keys.size()) {
-            std::string k = "\"" + json_escape(keys[i]) + "\"";
+            std::string k = "\"" + json::escape(keys[i]) + "\"";
             if (!first && o.size() + k.size() + 3 > max_bytes) break;
             o += (first ? "" : ",") + k;
             first = false;
@@ -391,21 +222,21 @@ bool parse_hello(const Json& body, PeerInfo* out) {
     bool cont = body.num("part", 0) > 0;   // continuation of a long key list
     if (cont) {
         const Json* k = body.get("keys");
-        if (k && k->type == Json::Arr)
-            for (auto& v : k->vals)
-                if (v.type == Json::Str) out->keys.push_back(v.s);
+        if (k && k->type == Json::Array)
+            for (auto& v : k->a)
+                if (v.type == Json::String) out->keys.push_back(v.s);
         return true;
     }
     const Json* g = body.get("games");
     out->games.clear();
     out->keys.clear();
-    if (g && g->type == Json::Obj)
-        for (size_t i = 0; i < g->keys.size(); ++i)
-            if (g->vals[i].type == Json::Str) out->games[g->keys[i]] = g->vals[i].s;
+    if (g && g->type == Json::Object)
+        for (auto& kv : g->o)
+            if (kv.second.type == Json::String) out->games[kv.first] = kv.second.s;
     const Json* k = body.get("keys");
-    if (k && k->type == Json::Arr)
-        for (auto& v : k->vals)
-            if (v.type == Json::Str) out->keys.push_back(v.s);
+    if (k && k->type == Json::Array)
+        for (auto& v : k->a)
+            if (v.type == Json::String) out->keys.push_back(v.s);
     out->app = body.str("app");
     out->hello = true;
     return true;
@@ -477,9 +308,9 @@ GuestVersionAction guest_version_action(const std::string& my_app, const std::st
 
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save,
                         const PortPlan* plan, const MatchSpec* match, const std::string& extra_json) {
-    std::string o = "{\"kind\":\"launch\",\"game\":\"" + json_escape(game) + "\",\"launch\":" + std::to_string(launch) +
+    std::string o = "{\"kind\":\"launch\",\"game\":\"" + json::escape(game) + "\",\"launch\":" + std::to_string(launch) +
                     ",\"delay\":" + std::to_string(delay) + ",\"seed\":" + std::to_string(seed);
-    if (!core.empty()) o += ",\"core\":\"" + json_escape(core) + "\"";
+    if (!core.empty()) o += ",\"core\":\"" + json::escape(core) + "\"";
     o += std::string(",\"share_save\":") + (share_host_save ? "true" : "false");
     if (plan) o += ",\"ports\":[" + plan->ports + "],\"players\":" + std::to_string(plan->players);
     if (match) o += ",\"match\":" + match_json(*match);
@@ -491,7 +322,7 @@ std::string np_ds_json() { return "{\"v\":1,\"mode\":\"wireless\"}"; }
 
 bool parse_np_ds(const Json& m, std::string* mode) {
     const Json* n = m.get("np_ds");
-    if (!n || n->type != Json::Obj || (int)n->num("v", 0) != 1) return false;
+    if (!n || n->type != Json::Object || (int)n->num("v", 0) != 1) return false;
     if (mode) *mode = n->str("mode");
     return n->str("mode") == "wireless";
 }
@@ -499,11 +330,11 @@ bool parse_np_ds(const Json& m, std::string* mode) {
 bool parse_launch_plan(const Json& m, std::string* ports, int* players) {
     const Json* pa = m.get("ports");
     const Json* pl = m.get("players");
-    if (!pa || pa->type != Json::Arr || pa->vals.size() != 4 || !pl || pl->type != Json::Num) return false;
+    if (!pa || pa->type != Json::Array || pa->a.size() != 4 || !pl || pl->type != Json::Number) return false;
     int owner[4];
     for (int i = 0; i < 4; ++i) {
-        const Json& v = pa->vals[(size_t)i];
-        if (v.type != Json::Num || v.n != (double)(int)v.n || v.n < -1 || v.n > 3) return false;
+        const Json& v = pa->a[(size_t)i];
+        if (v.type != Json::Number || v.n != (double)(int)v.n || v.n < -1 || v.n > 3) return false;
         owner[i] = (int)v.n;
     }
     bool seen[4] = {false, false, false, false};
@@ -641,8 +472,8 @@ bool parse_pick(const Json& b, MemberPick* out, bool remix_roster) {
         const Json* f = b.get(fk[i]);
         if (!f) { if (i == 0) return false; continue; }   // fighter2 is optional
         const Json* c = b.get(ck[i]);
-        if (f->type != Json::Num || f->n != (double)(int)f->n) return false;
-        if (c && (c->type != Json::Num || c->n != (double)(int)c->n)) return false;
+        if (f->type != Json::Number || f->n != (double)(int)f->n) return false;
+        if (c && (c->type != Json::Number || c->n != (double)(int)c->n)) return false;
         m.p[i].fighter = (int)f->n;
         m.p[i].costume = c ? (int)c->n : 0;
         if (!pick_ok(m.p[i], remix_roster)) return false;
@@ -656,7 +487,7 @@ std::string rules_json(const MatchRules& r) {
 bool parse_rules(const Json& b, MatchRules* out, bool remix_roster) {
     const Json* s = b.get("stage");
     const Json* k = b.get("stocks");
-    if (!s || !k || s->type != Json::Num || k->type != Json::Num || s->n != (double)(int)s->n || k->n != (double)(int)k->n) return false;
+    if (!s || !k || s->type != Json::Number || k->type != Json::Number || s->n != (double)(int)s->n || k->n != (double)(int)k->n) return false;
     if (!stage_valid((int)s->n, remix_roster) || k->n < 1 || k->n > 5) return false;
     if (out) { out->stage = (int)s->n; out->stocks = (int)k->n; }
     return true;
@@ -707,17 +538,17 @@ std::string match_json(const MatchSpec& m) {
 }
 bool parse_match(const Json& msg, const std::string& ports, bool remix_roster, MatchSpec* out) {
     const Json* mj = msg.get("match");
-    if (!mj || mj->type != Json::Obj) return false;
+    if (!mj || mj->type != Json::Object) return false;
     const Json* pl = mj->get("players");
-    if (!pl || pl->type != Json::Arr) return false;
+    if (!pl || pl->type != Json::Array) return false;
     MatchSpec m;
     m.stage = (int)mj->num("stage", -2);
     m.stocks = (int)mj->num("stocks", 0);
     if (m.stage < 0 || !stage_valid(m.stage, remix_roster) || m.stocks < 1 || m.stocks > 5) return false;
-    if (pl->vals.size() != port_owners(ports).size() || pl->vals.empty()) return false;
-    for (auto& e : pl->vals) {
-        if (e.type != Json::Arr || e.vals.size() != 2 || e.vals[0].type != Json::Num || e.vals[1].type != Json::Num) return false;
-        MatchPick p{(int)e.vals[0].n, (int)e.vals[1].n};
+    if (pl->a.size() != port_owners(ports).size() || pl->a.empty()) return false;
+    for (auto& e : pl->a) {
+        if (e.type != Json::Array || e.a.size() != 2 || e.a[0].type != Json::Number || e.a[1].type != Json::Number) return false;
+        MatchPick p{(int)e.a[0].n, (int)e.a[1].n};
         if (p.fighter < 0 || !pick_ok(p, remix_roster)) return false;   // a launch spec has no Randoms left
         m.players.push_back(p);
     }
@@ -1101,7 +932,7 @@ std::string ini_set(const std::string& text, const std::string& section, const s
 
 bool parse_vault_meta(const std::string& text, VaultMeta* out) {
     Json j;
-    if (!json_parse(text, &j) || j.type != Json::Obj) return false;
+    if (!json::parse(text, &j) || j.type != Json::Object) return false;
     out->key = j.str("key");
     out->title = j.str("title");
     out->system = j.str("system");

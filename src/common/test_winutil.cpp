@@ -28,7 +28,7 @@ int main() {
     CHECK(w == L"caf\u00e9 \u65e5\u672c \U0001F600");
     CHECK(winutil::to_utf8(w) == u8);
     CHECK(winutil::to_wide("").empty() && winutil::to_utf8(std::wstring()).empty() && winutil::to_utf8((const wchar_t*)nullptr).empty());
-    CHECK(winutil::to_wide("ÿþ").size() == 2);   // invalid UTF-8 -> U+FFFD per bad byte, no crash
+    CHECK(winutil::to_wide("\xFF\xFE").size() == 2);   // invalid UTF-8 -> U+FFFD per bad byte, no crash
 
     /* exe location */
     std::wstring ep = winutil::exe_path_w();

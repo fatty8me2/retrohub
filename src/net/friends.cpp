@@ -89,12 +89,12 @@ static bool write_file(const std::string& path, const std::string& data)
     return true;
 }
 
-static std::string q(const std::string& s) { return "\"" + json_escape(s) + "\""; }
+static std::string q(const std::string& s) { return "\"" + json::escape(s) + "\""; }
 
 static int64_t jnum(const Json& j, const char* k, int64_t def = 0)
 {
     const Json* v = j.get(k);
-    return (v && v->type == Json::Number) ? (int64_t)v->num : def;
+    return (v && v->type == Json::Number) ? (int64_t)v->n : def;
 }
 static bool jbool(const Json& j, const char* k, bool def = false)
 {
@@ -131,8 +131,8 @@ static bool identity_read(const std::string& path, Identity* id)
     Json j;
     if (!read_file(path, &text) || !json_parse(text, &j) || j.type != Json::Object) return false;
     Identity t;
-    t.user_id = j.s("user_id");
-    t.secret = j.s("secret");
+    t.user_id = j.str("user_id");
+    t.secret = j.str("secret");
     t.created = jnum(j, "created");
     if (!is_b32(t.user_id, 26) || !is_b32(t.secret, 52)) return false;
     *id = t;
@@ -288,13 +288,13 @@ struct FriendsClient::Impl {
     {
         Status s;
         if (!j || j->type != Json::Object) return s;
-        std::string st = j->s("state");
+        std::string st = j->str("state");
         s.state = st == "online" ? PresenceState::Online : st == "in_lobby" ? PresenceState::InLobby
                 : st == "in_game" ? PresenceState::InGame : PresenceState::Offline;
-        s.game_id = j->s("game_id");
-        s.game_title = j->s("game_title");
-        s.system = j->s("system");
-        s.lobby_code = j->s("lobby_code");
+        s.game_id = j->str("game_id");
+        s.game_title = j->str("game_title");
+        s.system = j->str("system");
+        s.lobby_code = j->str("lobby_code");
         s.joinable = jbool(*j, "joinable");
         s.players = (int)jnum(*j, "players");
         s.max_players = (int)jnum(*j, "max_players");
@@ -304,7 +304,7 @@ struct FriendsClient::Impl {
     static Friend parse_friend(const Json& j)
     {
         Friend f;
-        f.uid = j.s("uid"); f.code = j.s("code"); f.name = j.s("name"); f.note = j.s("note");
+        f.uid = j.str("uid"); f.code = j.str("code"); f.name = j.str("name"); f.note = j.str("note");
         f.since = jnum(j, "since");
         f.status = parse_status(j.get("status"));
         return f;
@@ -312,23 +312,23 @@ struct FriendsClient::Impl {
     static Request parse_req(const Json& j)
     {
         Request r;
-        r.uid = j.s("uid"); r.code = j.s("code"); r.name = j.s("name"); r.at = jnum(j, "at");
+        r.uid = j.str("uid"); r.code = j.str("code"); r.name = j.str("name"); r.at = jnum(j, "at");
         return r;
     }
     static Invite parse_invite(const Json* j)
     {
         Invite v;
         if (!j || j->type != Json::Object) return v;
-        v.lobby_code = j->s("lobby_code"); v.game_id = j->s("game_id"); v.game_title = j->s("game_title");
-        v.system = j->s("system"); v.expires_at = jnum(*j, "expires_at");
+        v.lobby_code = j->str("lobby_code"); v.game_id = j->str("game_id"); v.game_title = j->str("game_title");
+        v.system = j->str("system"); v.expires_at = jnum(*j, "expires_at");
         return v;
     }
     Message parse_msg(const Json& j) const
     {
         Message m;
-        m.id = j.s("id"); m.from = j.s("from"); m.from_name = j.s("from_name"); m.to = j.s("to");
-        m.invite = j.s("kind") == "invite";
-        m.text = j.s("text");
+        m.id = j.str("id"); m.from = j.str("from"); m.from_name = j.str("from_name"); m.to = j.str("to");
+        m.invite = j.str("kind") == "invite";
+        m.text = j.str("text");
         m.inv = parse_invite(j.get("invite"));
         m.at = jnum(j, "at");
         m.mine = (m.from == id.user_id);
@@ -369,7 +369,7 @@ struct FriendsClient::Impl {
                 if (read_file(conv_path(uid), &text) && json_parse(text, &j) && j.type == Json::Object) {
                     c.unread = (int)jnum(j, "unread");
                     if (const Json* a = j.get("msgs"))
-                        for (const Json& m : a->arr) c.msgs.push_back(parse_msg(m));
+                        for (const Json& m : a->a) c.msgs.push_back(parse_msg(m));
                 }
             }
         }
@@ -449,19 +449,19 @@ struct FriendsClient::Impl {
         last_keepalive = now_ms();
         status_text = "Online";
         friends.clear(); incoming.clear(); outgoing.clear(); blocked.clear();
-        if (const Json* a = j.get("friends")) for (const Json& f : a->arr) friends.push_back(parse_friend(f));
+        if (const Json* a = j.get("friends")) for (const Json& f : a->a) friends.push_back(parse_friend(f));
         if (const Json* r = j.get("requests")) {
-            if (const Json* a = r->get("incoming")) for (const Json& x : a->arr) incoming.push_back(parse_req(x));
-            if (const Json* a = r->get("outgoing")) for (const Json& x : a->arr) outgoing.push_back(parse_req(x));
+            if (const Json* a = r->get("incoming")) for (const Json& x : a->a) incoming.push_back(parse_req(x));
+            if (const Json* a = r->get("outgoing")) for (const Json& x : a->a) outgoing.push_back(parse_req(x));
         }
         if (const Json* a = j.get("blocked"))
-            for (const Json& x : a->arr) if (x.type == Json::String) blocked.push_back(x.str);
+            for (const Json& x : a->a) if (x.type == Json::String) blocked.push_back(x.s);
         if (have_status) send("{\"type\":\"status\",\"status\":" + status_json(my_status) + "}");
 
         std::vector<std::string> ids;
         if (const Json* a = j.get("inbox")) {
             std::vector<Message> in;
-            for (const Json& x : a->arr) in.push_back(parse_msg(x));
+            for (const Json& x : a->a) in.push_back(parse_msg(x));
             std::stable_sort(in.begin(), in.end(), [](const Message& a2, const Message& b) { return a2.at < b.at; });
             for (const Message& m : in) {
                 if (!m.id.empty()) ids.push_back(m.id);
@@ -491,10 +491,10 @@ struct FriendsClient::Impl {
 
     void on_presence(const Json& j)
     {
-        Friend* f = find(j.s("uid"));
+        Friend* f = find(j.str("uid"));
         if (!f) return;
         bool was = f->online();
-        std::string nm = j.s("name");
+        std::string nm = j.str("name");
         if (!nm.empty()) f->name = nm;
         f->status = parse_status(j.get("status"));
         Event e;
@@ -509,31 +509,31 @@ struct FriendsClient::Impl {
     {
         Json j;
         if (!json_parse(text, &j) || j.type != Json::Object) return false;
-        std::string type = j.s("type");
+        std::string type = j.str("type");
         if (type == "welcome") on_welcome(j);
         else if (type == "presence") on_presence(j);
         else if (type == "request") {
             const Json* r = j.get("req");
             if (!r) return false;
             Request rq = parse_req(*r);
-            if (j.s("dir") == "out") { put(outgoing, rq); return false; }
+            if (j.str("dir") == "out") { put(outgoing, rq); return false; }
             put(incoming, rq);
             Event e; e.kind = Event::RequestReceived; e.uid = rq.uid; e.name = rq.name; e.text = rq.code;
             push_event(std::move(e));
         } else if (type == "request_out") {   // optional: server confirms an outgoing request
             if (const Json* r = j.get("req")) put(outgoing, parse_req(*r));
         } else if (type == "request_update") {
-            std::string uid = j.s("uid");
+            std::string uid = j.str("uid");
             std::string name;
             for (auto& r : incoming) if (r.uid == uid) name = r.name;
             for (auto& r : outgoing) if (r.uid == uid) name = r.name;
             size_t before = incoming.size() + outgoing.size();
             drop(incoming, uid); drop(outgoing, uid);
             if (before == incoming.size() + outgoing.size()) return false;   // already resolved locally
-            Event e; e.kind = Event::RequestResolved; e.uid = uid; e.name = name; e.text = j.s("result");
+            Event e; e.kind = Event::RequestResolved; e.uid = uid; e.name = name; e.text = j.str("result");
             push_event(std::move(e));
         } else if (type == "block_update") {
-            std::string uid = j.s("uid");
+            std::string uid = j.str("uid");
             blocked.erase(std::remove(blocked.begin(), blocked.end(), uid), blocked.end());
             if (jbool(j, "blocked")) blocked.push_back(uid);
         } else if (type == "friend_added") {
@@ -545,7 +545,7 @@ struct FriendsClient::Impl {
             Event e; e.kind = Event::FriendAdded; e.uid = f.uid; e.name = f.name; e.text = f.code;
             push_event(std::move(e));
         } else if (type == "friend_removed") {
-            std::string uid = j.s("uid");
+            std::string uid = j.str("uid");
             std::string nm;
             if (Friend* f = find(uid)) nm = f->name;
             friends.erase(std::remove_if(friends.begin(), friends.end(), [&](const Friend& f) { return f.uid == uid; }), friends.end());
@@ -558,15 +558,15 @@ struct FriendsClient::Impl {
                 if (!msg.id.empty()) ack_ids({msg.id});
             }
         } else if (type == "history") {
-            std::string with = j.s("with");
+            std::string with = j.str("with");
             const Json* a = j.get("msgs");
             if (!a) a = j.get("messages");
             if (a && is_b32(with, 26))
-                for (const Json& m : a->arr) add_msg(with, parse_msg(m), false);
+                for (const Json& m : a->a) add_msg(with, parse_msg(m), false);
         } else if (type == "error") {
-            std::string reason = j.s("reason", "error");
+            std::string reason = j.str("reason", "error");
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
-            Event e; e.kind = Event::Error; e.text = reason; e.name = j.s("ref");
+            Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref");
             push_event(std::move(e));
         }
         return false;

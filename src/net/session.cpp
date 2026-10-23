@@ -320,19 +320,19 @@ struct Session::Impl {
     {
         Json j;
         if (!json_parse(text, &j) || j.type != Json::Object) return;
-        std::string type = j.s("type");
+        std::string type = j.str("type");
         if (type == "welcome") {
             welcomed = true;
             ws_retrying = false;
-            int s = j.i("slot", slot);
+            int s = (int)j.i64("slot", slot);
             if (s != slot) net_log("Session: server gave slot %d (wanted %d)", s, slot);
             slot = s;
-            net_log("Session %d: welcome room %s", slot, j.s("room").c_str());
+            net_log("Session %d: welcome room %s", slot, j.str("room").c_str());
         } else if (type == "members") {
             bool seen[kMaxSlots] = {};
             if (const Json* a = j.get("members"))
-                for (const Json& m : a->arr) {
-                    int s = m.i("slot", -1);
+                for (const Json& m : a->a) {
+                    int s = (int)m.i64("slot", -1);
                     if (s >= 0 && s < kMaxSlots) seen[s] = true;
                 }
             for (int s = 0; s < kMaxSlots; s++) {
@@ -350,21 +350,21 @@ struct Session::Impl {
             }
         } else if (type == "peers") {
             if (const Json* a = j.get("peers"))
-                for (const Json& m : a->arr) {
-                    int s = m.i("slot", -1);
+                for (const Json& m : a->a) {
+                    int s = (int)m.i64("slot", -1);
                     if (s < 0 || s >= kMaxSlots || s == slot) continue;
                     Peer& p = peers[s];
                     Addr pub, loc;
-                    bool hp = parse_addr(m.s("public"), &pub), hl = parse_addr(m.s("local"), &loc);
+                    bool hp = parse_addr(m.str("public"), &pub), hl = parse_addr(m.str("local"), &loc);
                     if (hp) p.pub = pub; else p.pub = Addr();
                     if (hl) p.loc = loc; else p.loc = Addr();
                     if (!p.has_cand && (hp || hl))
-                        net_log("Session %d: peer %d candidates pub=%s loc=%s", slot, s, m.s("public").c_str(),
-                                m.s("local").c_str());
+                        net_log("Session %d: peer %d candidates pub=%s loc=%s", slot, s, m.str("public").c_str(),
+                                m.str("local").c_str());
                     p.has_cand = hp || hl;
                 }
         } else if (type == "error") {
-            std::string reason = j.s("reason", "error");
+            std::string reason = j.str("reason", "error");
             if (reason == "no-such-room" && !is_host()) {
                 ws_retrying = true;
                 ws_retry_at = now + 700;
