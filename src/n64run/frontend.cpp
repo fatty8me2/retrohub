@@ -62,7 +62,7 @@ static const char* kUsage =
     "              --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]\n"
     "              [--match SPEC] [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n"
     "              [--title TEXT] [--fullscreen] [--gfx Key=i|b|s:value]...\n"
-    "              [--headless [--frames N] [--screenshot OUT.png] [--dump-ram OFFSET,LEN,FILE]...]\n";
+    "              [--headless [--realtime] [--frames N] [--screenshot OUT.png] [--dump-ram OFFSET,LEN,FILE]...]\n";
 
 // ---------------------------------------------------------------- logging
 static FILE* g_logf = nullptr;
@@ -103,6 +103,7 @@ struct Args {
     bool width_given = false, height_given = false;
     // --headless: hidden window, no audio device, no speed limit; stop after `frames` VIs (0 = until the session ends).
     bool headless = false;
+    bool realtime = false;   // --realtime (with --headless): keep the 60 Hz speed limiter, like a real game (QA of stalls)
     long long frames = 0;
     std::string screenshot;
     std::string controls;   // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (controls.h)
@@ -143,6 +144,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--width") { ok = ival(&a.width); a.width_given = true; }
         else if (k == "--height") { ok = ival(&a.height); a.height_given = true; }
         else if (k == "--headless") a.headless = true;
+        else if (k == "--realtime") a.realtime = true;
         else if (k == "--frames") { int f = 0; ok = ival(&f) && f >= 0; a.frames = f; }
         else if (k == "--screenshot") ok = val(&a.screenshot);
         else if (k == "--match") ok = val(&a.match);
@@ -205,6 +207,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
 static long long g_frame_limit = 0;      // 0 = unlimited
 static long long g_frame_count = 0;
 static bool g_limiter_off = false;
+static bool g_realtime = false;
 static std::unique_ptr<MatchDriver> g_match;
 static long long g_vi = 0;
 static bool g_headless_mode = false;
@@ -234,7 +237,7 @@ static void headless_frame_cb(unsigned int) {
         if (!l.empty()) { std::stringstream ls(l); std::string one; while (std::getline(ls, one)) logline("n64run", one.c_str()); }
     }
     if (!g_headless_mode) return;
-    if (!g_limiter_off) {
+    if (!g_limiter_off && !g_realtime) {
         int off = 0;
         g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &off);
         g_limiter_off = true;
@@ -371,6 +374,7 @@ int main(int argc, char** argv) {
     }
 
     const bool online = !args.net.empty();
+    const bool delay_auto = args.delay < 0;   // no explicit --delay: negotiate, then adapt during play
 
     // ---- ports / local input
     LocalInput input;
@@ -615,6 +619,7 @@ int main(int argc, char** argv) {
         lo.delay = args.delay;
         lo.online = online;
         lo.strict_sync = args.strict_sync;
+        lo.adaptive_delay = delay_auto && !std::getenv("N64RUN_FIXED_DELAY");
         LockstepHooks hk;
         if (test_input.active()) {
             hk.update_local = [&] { test_input.update(); };
@@ -650,6 +655,7 @@ int main(int argc, char** argv) {
             title_thread = std::thread(title_watch, wtitle);
         }
         g_headless_mode = args.headless;
+        g_realtime = args.realtime;
         if (args.headless || g_match) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         e = g_core.DoCommand(M64CMD_EXECUTE, 0, nullptr);   // blocks until the emulation stops
         g_title_stop = true;
@@ -677,12 +683,13 @@ int main(int argc, char** argv) {
                 else logf_("n64run", "headless: no frame captured for --screenshot");
             }
         }
-        if (online && g_run.lockstep) g_run.lockstep->log_stall_summary();
+        if (online && g_run.lockstep) { g_run.lockstep->log_stall_summary(); g_run.lockstep->finish(); }
     }
 
     {
         int code = 0;
         if (g_run.lockstep && g_run.lockstep->connection_lost()) { logf_("n64run", "Connection lost"); code = 4; }
+        else if (g_run.lockstep && g_run.lockstep->peer_left() && !g_run.lockstep->desync_detected()) logf_("n64run", "a partner ended the session");
         else if (g_run.lockstep && g_run.lockstep->desync_detected()) {
             logf_("n64run", "desync was detected during the session");
             if (args.strict_sync) code = 5;
