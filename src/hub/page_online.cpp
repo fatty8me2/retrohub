@@ -275,8 +275,8 @@ void page_online_room() {
                 if (!gc_host_spec(*rg, (int)peers.size() + 1, &gspec)) gc_ok = false;
                 else np_extra = gcnp::launch_fragment(gspec);
             }
-            if ((rg->system == hub::System::GB || rg->system == hub::System::GBC) && hub::link_cable_game(rg->catalog_id))
-                np_extra += ",\"np_link\":{\"core\":\"sameboy\",\"consoles\":2}";
+            if ((rg->system == hub::System::GB || rg->system == hub::System::GBC || rg->system == hub::System::GBA) && hub::link_cable_game(rg->catalog_id))
+                np_extra += std::string(",\"np_link\":{\"core\":\"") + (rg->system == hub::System::GBA ? "mgba" : "sameboy") + "\",\"consoles\":2}";
             if (rg->system == hub::System::NDS) np_extra += ",\"np_ds\":" + hubui::np_ds_json();
             np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
             if (gc_ok) {
