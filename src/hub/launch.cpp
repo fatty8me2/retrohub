@@ -181,12 +181,12 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         return;
     }
     if (kind == hubemu::Kind::Azahar) {
-        if (inst.managed) hubemu::prepare_azahar(inst.dir);
+        if (inst.managed) hubemu::prepare_azahar(inst.dir, controls_profile("3ds", e.key));
     } else if (kind == hubemu::Kind::Dolphin) {
         hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
-        hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads());
+        hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads(), controls_profile("gc", e.key));
     } else if (inst.managed) {
-        hubemu::prepare_cemu_managed(inst.dir);
+        hubemu::prepare_cemu_managed(inst.dir, controls_profile("wiiu", e.key));
     }
     std::string game = launch_path_for(e);
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
@@ -244,7 +244,7 @@ void play_entry(const hub::GameEntry& e) {
     switch (e.system) {
         case hub::System::N64: {
             std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) +
-                               " --save-dir " + quote(battery) + title_arg(e.title);
+                               " --save-dir " + quote(battery) + title_arg(e.title) + controls_arg("n64", e.key);
             if (A.st.fullscreen) args += " --fullscreen";
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
                 std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
@@ -259,7 +259,7 @@ void play_entry(const hub::GameEntry& e) {
             std::string core = find_core(e.system == hub::System::GBA ? "mgba" : A.st.gb_core);
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e);
+                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             if (A.st.fullscreen) args += " --fullscreen";
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
@@ -268,7 +268,7 @@ void play_entry(const hub::GameEntry& e) {
             std::string core = find_core("melondsds");
             if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e);
+                               " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             if (A.st.fullscreen) args += " --fullscreen";
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;

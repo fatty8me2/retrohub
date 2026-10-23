@@ -616,6 +616,10 @@ void draw_details_modal() {
         ImGui::SameLine(0, sp(1.5f));
         if (button("Locate BattleShip.exe", ImVec2(0, bh))) locate_smash();
     }
+    if (!hubctl::system_key(e.system).empty()) {
+        ImGui::SameLine(0, sp(1.5f));
+        if (button("Controls for this game", ImVec2(0, bh), false, true, ui::Icon::Gamepad)) { ImGui::CloseCurrentPopup(); open_controls_for(e); }
+    }
     ImGui::SameLine(0, sp(1.5f));
     if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
