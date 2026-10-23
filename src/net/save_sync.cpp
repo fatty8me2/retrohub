@@ -189,27 +189,31 @@ void SaveSender::tick(uint32_t now_ms, const SendFn& send) {
         }
     }
 
-    // DATA: round-robin over (file, chunk) pairs that some unverified peer lacks.
-    std::vector<std::pair<size_t, size_t>> want;
-    for (size_t f = 0; f < files_.size(); f++) {
-        int nc = nchunks_[f];
-        for (int c = 0; c < nc; c++) {
-            bool need = false;
-            for (int s = 1; s < 8 && !need; s++) {
-                if (!((clients_ >> s) & 1u)) continue;
-                const Peer& pe = peers_[s];
-                if (pe.done[f] || pe.nch[f] == 0) continue;
-                if (!pe.have[f][(size_t)c]) need = true;
-            }
-            if (need) want.push_back({f, (size_t)c});
-        }
+    // DATA: chunks some unverified peer lacks, each re-sent at most every kResendMs (an ACK needs a round
+    // trip, longer over the relay). At most kDataPerTick per kDataIntervalMs: the lobby relay (one Durable
+    // Object forwarding every frame) stalls and drops traffic, including the clients' ACKs, above ~1000 frames/s.
+    if (sent_at_.empty()) {
+        sent_at_.resize(files_.size());
+        for (size_t f = 0; f < files_.size(); f++) sent_at_[f].assign((size_t)nchunks_[f], 0u);
     }
-    if (want.empty()) return;
-    if (last_data_ && now_ms - last_data_ < 10) return;   // pace DATA to about 2.4 MB/s
+    if (last_data_ && now_ms - last_data_ < kDataIntervalMs) return;
     last_data_ = now_ms ? now_ms : 1;
     int budget = kDataPerTick;
-    for (size_t k = 0; k < want.size() && budget > 0; k++, budget--) {
-        auto [f, c] = want[(cursor_ + k) % want.size()];
+    size_t total = 0;
+    for (size_t f = 0; f < files_.size(); f++) total += (size_t)nchunks_[f];
+    for (size_t k = 0; k < total && budget > 0; k++) {
+        size_t idx = (cursor_ + k) % total, f = 0, c = idx;
+        while (c >= (size_t)nchunks_[f]) { c -= (size_t)nchunks_[f]; f++; }
+        uint32_t& at = sent_at_[f][c];
+        if (at && now_ms - at < kResendMs) continue;
+        bool need = false;
+        for (int s = 1; s < 8 && !need; s++) {
+            if (!((clients_ >> s) & 1u)) continue;
+            const Peer& pe = peers_[s];
+            if (pe.done[f]) continue;
+            if (pe.nch[f] == 0 || !pe.have[f][c]) need = true;   // no ACK yet: assume it lacks everything
+        }
+        if (!need) continue;
         const SaveFile& sf = files_[f];
         size_t off = c * kSaveChunk;
         size_t len = std::min(kSaveChunk, sf.data.size() - off);
@@ -218,9 +222,11 @@ void SaveSender::tick(uint32_t now_ms, const SendFn& send) {
         put<uint32_t>(m, (uint32_t)save_hash(sf.data.data() + off, len));
         m.insert(m.end(), sf.data.begin() + (long)off, sf.data.begin() + (long)(off + len));
         send(m);
+        at = now_ms ? now_ms : 1;
         bytes_sent_ += len;
+        budget--;
+        cursor_ = (idx + 1) % total;
     }
-    cursor_ = (cursor_ + kDataPerTick) % want.size();
 }
 
 // ---------------------------------------------------------------- receiver (client)

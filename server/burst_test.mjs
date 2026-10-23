@@ -17,6 +17,12 @@ for (let i = 0; i < N; i++) {
   j.ws.send(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
   if (GAP && i % 4 === 3) await sleep(GAP);
 }
-await sleep(1500);
+// The Worker forwards at its own pace (slower under load): wait until the count stops rising, not a fixed time.
+let last = -1, still = 0;
+for (let waited = 0; waited < 20000 && still < 1500; waited += 100) {
+  await sleep(100);
+  if (h.n === last) still += 100; else { still = 0; last = h.n; }
+  if (h.n >= N) break;
+}
 console.log(`client->host burst: sent ${N}, host received ${h.n}`);
-process.exit(0);
+process.exit(h.n === N ? 0 : 1);
