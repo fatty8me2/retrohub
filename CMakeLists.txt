@@ -64,8 +64,8 @@ add_subdirectory(src/hub)
 # Offline (no network, no emulator): ctest -C Release -LE online
 # Online (hit the live netplay/friends server): ctest -C Release -L online
 enable_testing()
-set(RETROHUB_TEST_SERVER "wss://smash-netplay.jumpcircuit.workers.dev" CACHE STRING
-    "Live lobby/friends server used by the online tests")
+# Online tests read RETROHUB_TEST_SERVER at run time (env var > production default in hubnet::default_server()).
+# Nothing is baked into the command lines, so set the env var when running ctest; never configure a URL here.
 
 add_test(NAME hubcommon_test COMMAND hubcommon_test)
 add_test(NAME hublibrary_test COMMAND hublibrary_test)
@@ -90,8 +90,8 @@ add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulate
 add_test(NAME n64run_mempak_test COMMAND n64run_mempak_test)          # controller pak policy (no network)
 
 # Online: need the live server.
-add_test(NAME hubnet_test COMMAND hubnet_test ${RETROHUB_TEST_SERVER})
-add_test(NAME hubfriends_test COMMAND hubfriends_test ${RETROHUB_TEST_SERVER})
+add_test(NAME hubnet_test COMMAND hubnet_test)                           # server: $RETROHUB_TEST_SERVER at run time
+add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hublink_test COMMAND hublink_test)                         # link-a-new-PC crypto/adopt/export (no network)
 add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
 set_tests_properties(hubnet_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)
