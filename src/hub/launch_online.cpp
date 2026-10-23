@@ -1,3 +1,4 @@
+#include "netplay_3ds_join.h"
 #include "app.h"
 
 GcOnline GCO;
@@ -180,7 +181,7 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
         plan.expected = (int)A.lobby.members().size();
         plan.port = hubnp3ds::kDefaultRoomPort;
         std::string room = hubnp3ds::room_exe_for(inst.exe);
-        std::string wd = no_slash(hub::data_dir()) + "\netplay\3ds";
+        std::string wd = no_slash(hub::data_dir()) + "\\netplay\\3ds";
         make_dirs(wd);
         if (!NP3.start_host(server_url(), A.code, launch_no, plan, room, wd, &err)) { set_notice("3DS online: " + err, 12.0); return; }
     } else {
@@ -199,6 +200,12 @@ void poll_np3ds() {
     if (NP3_pending && NP3.ready()) {   // never start Azahar earlier: a failed join raises a modal error dialog in it
         NP3_pending = false;
         launch_external(NP3_game, run_info_for(NP3_game, true), "", NP3_mp);
+        /* Azahar's Qt frontend ignores -m: join the room through its Direct Connect dialog (UI Automation helper). */
+        if (A.proc) {
+            std::string st;
+            hubnp3ds::start_join_driver(GetProcessId(A.proc), no_slash(hub::data_dir()) + "\\netplay\\3ds", hubnp3ds::nickname(A.st.name, A.lobby.my_slot()),
+                                        "", "127.0.0.1", NP3.connect_port(), L"", &st);
+        }
     }
 }
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
