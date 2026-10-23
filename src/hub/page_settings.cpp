@@ -130,6 +130,8 @@ void page_settings() {
     if (ImGui::Checkbox("Show friends panel", &A.st.show_friends)) mark_dirty();
     if (ImGui::Checkbox("Appear offline", &A.st.appear_offline)) mark_dirty();
     text_wrapped_disabled("Friends see you as offline, but you can still use the friends list.");
+    if (ImGui::Checkbox("Notify me about invites while I'm playing", &A.st.notify_in_game)) mark_dirty();
+    text_wrapped_disabled("Shows a Windows notification that never takes focus from your game. Click Join to enter the room when your game ends.");
     if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
     std::string mycode = fr_my_code();
     if (!mycode.empty()) {
