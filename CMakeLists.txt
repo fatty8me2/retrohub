@@ -77,6 +77,7 @@ add_test(NAME retrorun_link_test COMMAND retrorun_link_test)
 add_test(NAME hubsaves_test COMMAND hubsaves_test)
 add_test(NAME hubsaves_cloud_test COMMAND hubsaves_cloud_test)   # e2e part runs only with RETROHUB_TEST_SAVES_URL (qa\saves_cloud.ps1)
 add_test(NAME hub_logic_test COMMAND hub_logic_test)
+add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
 add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
