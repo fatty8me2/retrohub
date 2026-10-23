@@ -99,10 +99,10 @@ int main() {
         CHECK(!r.add(0, (const uint8_t*)"Z12345", 6, 5000, &o));   // not a fragment
     }
 
-    /* catalog: all 8 3DS Pokemon games are online-capable for 2 players */
+    /* catalog: all 8 3DS Pokemon games are 2-player; online stays off until the Azahar room join is verified live */
     int n = 0;
     for (const hub::GameInfo& g : hub::catalog())
-        if (g.engine == hub::Engine::Azahar) { ++n; CHECK(g.online && hub::online_max_for(g) == 2 && g.max_players >= 2); }
+        if (g.engine == hub::Engine::Azahar) { ++n; CHECK(!g.online && g.max_players >= 2); }
     CHECK(n == 8);
 
     std::printf(g_fail ? "FAILED (%d)\n" : "np3ds tests passed\n", g_fail);
