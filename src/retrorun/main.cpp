@@ -21,6 +21,7 @@
 #include "core.h"
 #include "dsview.h"
 #include "image.h"
+#include "link_sync.h"
 #include "lockstep.h"
 #include "log.h"
 #include "session.h"
@@ -33,6 +34,8 @@ struct Args {
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
     std::string net, room, title, save_stem;   // save_stem: file stem for <stem>.srm (zipped ROMs); "" = rom file stem
     std::string sync_hash_mode = "auto", pace_override;
+    bool link = false;            // two linked Game Boys in one SameBoy instance (see docs/RETRORUN.md)
+    std::string link_roms;        // optional "romP0,romP1" (default: --rom for both)
     bool list_opts = false, headless = false, fullscreen = false, resume = false, fuzz = false, selftest = false;
     double stylus_u = -1, stylus_v = -1;   // headless DS test: hold the stylus down at this fraction of the frame
     int frames = -1, scale = 3, slot = 0, players = 1, delay = -1;   // delay -1 = auto
@@ -102,6 +105,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
             if (!val(&v)) return false;
             if (sscanf(v.c_str(), "%lf,%lf", &o->stylus_u, &o->stylus_v) != 2) { fprintf(stderr, "bad --stylus (want U,V)\n"); return false; }
         }
+        else if (k == "--link") o->link = true;
+        else if (k == "--link-roms") { if (!val(&o->link_roms)) return false; }
         else if (k == "--headless") o->headless = true;
         else if (k == "--fullscreen") o->fullscreen = true;
         else if (k == "--resume") o->resume = true;
@@ -332,6 +337,20 @@ class Frontend {
 
     int run(const Args& args);
 
+    /* ---- link mode: N consoles in one core instance ---- */
+    bool link = false;
+    int link_n = 2;                          // consoles in the simulation
+    int link_port_of_slot(int slot) const { for (int i = 0; i < link_n; i++) if (owner[i] == slot) return i; return -1; }
+    bool link_own(int inst) const { return inst >= 0 && inst < link_n && owner[inst] == a.slot; }
+    std::string link_srm(int inst) const;    // <stem>.srm for the first own console, <stem>.p<N>.srm otherwise
+    std::string link_rtc(int inst) const { std::string p = link_srm(inst); return p.substr(0, p.size() - 4) + ".rtc"; }
+    std::vector<uint8_t> link_blob_from_disk(int inst) const;
+    void link_apply_blob(int inst, const std::vector<uint8_t>& blob);
+    void link_save(bool force);
+    bool link_loaded = false;   // never write a console save before its real save was loaded into the core
+    std::vector<std::vector<uint8_t>> link_saved_;   // last written sram+rtc per console
+    SDL_Rect view_src() const;               // portion of the frame shown to this player
+
   private:
     bool setup_paths();
     bool setup_video();
@@ -398,6 +417,15 @@ bool Frontend::setup_paths() {
         int li = dsview::layout_index(want);
         if (li >= 0) { ds_layout = li; core.overrides["melonds_screen_layout1"] = want; }
     }
+    if (a.link) {
+        // Deterministic link defaults (ini / --opt below may still override): cycle-based RTC, side-by-side layout, my console's audio.
+        int mine = 0;
+        for (int i = 0; i < 4; i++) if (owner[i] == a.slot) { mine = i; break; }
+        core.overrides["sameboy_link"] = "enabled";
+        core.overrides["sameboy_rtc"] = "accurate";
+        core.overrides["sameboy_screen_layout"] = "left-right";
+        core.overrides["sameboy_audio_output"] = "Game Boy #" + std::to_string(std::min(1, mine) + 1);
+    }
     rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
@@ -447,7 +475,9 @@ void Frontend::layout(SDL_Rect* dst) {
     const FrameBuf& f = core.frame();
     double aspect = core.av().geometry.aspect_ratio;
     if (aspect <= 0.f) aspect = (double)f.w / std::max(1, f.h);
-    dsview::Rect r = dsview::fit(ow, oh, f.h, aspect, !is_ds);   // integer scale when it fits (not for DS)
+    int fh = f.h;
+    if (link) { SDL_Rect v = view_src(); aspect = (double)v.w / std::max(1, v.h); fh = v.h; }
+    dsview::Rect r = dsview::fit(ow, oh, fh, aspect, !is_ds);   // integer scale when it fits (not for DS)
     dst->x = r.x; dst->y = r.y; dst->w = r.w; dst->h = r.h;
 }
 
@@ -468,7 +498,8 @@ void Frontend::present() {
     SDL_Rect dst;
     layout(&dst);
     last_dst = dst;
-    SDL_RenderCopy(ren, tex, nullptr, &dst);
+    if (link) { SDL_Rect v = view_src(); SDL_RenderCopy(ren, tex, &v, &dst); }
+    else SDL_RenderCopy(ren, tex, nullptr, &dst);
     SDL_RenderPresent(ren);
 }
 
@@ -477,6 +508,7 @@ bool Frontend::setup_video() {
     const retro_game_geometry& g = core.av().geometry;
     double aspect = g.aspect_ratio > 0 ? g.aspect_ratio : (double)g.base_width / g.base_height;
     int w = (int)std::lround(g.base_height * a.scale * aspect), h = (int)(g.base_height * a.scale);
+    if (link) { w = 160 * a.scale; h = 144 * a.scale; }
     Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
     win = SDL_CreateWindow(window_base().c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
     if (!win) { rlog("video: window failed: %s", SDL_GetError()); return false; }
@@ -726,6 +758,72 @@ uint64_t Frontend::state_hash() {
     return n64run::hash_block(buf.data(), buf.size());
 }
 
+/* ------------------------------------------------------------------ link mode */
+
+/* SameBoy: console n (1-based) SRAM = ((2n-1)<<8)|0, RTC = (2n<<8)|1 (probed: 0x100/0x201, 0x300/0x401). */
+static unsigned link_mem(int inst, unsigned type) { return (type == RETRO_MEMORY_RTC ? (unsigned)(inst + 1) * 2 : (unsigned)(inst + 1) * 2 - 1) << 8 | type; }
+
+std::string Frontend::link_srm(int inst) const {
+    int first = -1;
+    for (int i = 0; i < link_n; i++) if (owner[i] == a.slot) { first = i; break; }
+    if (inst == first || first < 0) return srm_path;
+    return srm_path.substr(0, srm_path.size() - 4) + ".p" + std::to_string(inst + 1) + ".srm";
+}
+
+SDL_Rect Frontend::view_src() const {
+    const FrameBuf& f = core.frame();
+    int me = 0;
+    for (int i = 0; i < link_n; i++) if (owner[i] == a.slot) { me = i; break; }
+    if (f.w > f.h * 1.2) { int hw = f.w / link_n; return {hw * me, 0, hw, f.h}; }   // side by side
+    int hh = f.h / link_n;
+    return {0, hh * me, f.w, hh};                                                     // stacked
+}
+
+/* blob = u32 'LNK1', u32 sram_size, u32 rtc_size, sram, rtc */
+std::vector<uint8_t> Frontend::link_blob_from_disk(int inst) const {
+    std::vector<uint8_t> sram, rtc, out;
+    read_file(link_srm(inst), &sram);
+    read_file(link_rtc(inst), &rtc);
+    auto p32 = [&](uint32_t v) { for (int i = 0; i < 4; i++) out.push_back((uint8_t)(v >> (8 * i))); };
+    p32(0x314B4E4C); p32((uint32_t)sram.size()); p32((uint32_t)rtc.size());
+    out.insert(out.end(), sram.begin(), sram.end());
+    out.insert(out.end(), rtc.begin(), rtc.end());
+    return out;
+}
+
+void Frontend::link_apply_blob(int inst, const std::vector<uint8_t>& b) {
+    auto g32 = [&](size_t o) { return (uint32_t)b[o] | (uint32_t)b[o + 1] << 8 | (uint32_t)b[o + 2] << 16 | (uint32_t)b[o + 3] << 24; };
+    if (b.size() < 12 || g32(0) != 0x314B4E4C) { rlog("link: console %d: no usable save blob (%zu bytes), starting blank", inst + 1, b.size()); return; }
+    uint32_t ns = g32(4), nr = g32(8);
+    if (12ull + ns + nr != b.size()) { rlog("link: console %d: malformed blob", inst + 1); return; }
+    size_t n = 0;
+    void* m = core.memory(link_mem(inst, RETRO_MEMORY_SAVE_RAM), &n);
+    if (m && n) memcpy(m, b.data() + 12, std::min<size_t>(n, ns));
+    rlog("link: console %d: save RAM %u bytes -> core %zu (blob hash %016llx)", inst + 1, ns, n, (unsigned long long)rlink::blob_hash(b.data(), b.size()));
+    m = core.memory(link_mem(inst, RETRO_MEMORY_RTC), &n);
+    if (m && n && nr) memcpy(m, b.data() + 12 + ns, std::min<size_t>(n, nr));
+}
+
+/* Writes only the consoles this PC owns. */
+void Frontend::link_save(bool force) {
+    if (!link_loaded) return;
+    link_saved_.resize(link_n);
+    for (int i = 0; i < link_n; i++) {
+        if (!link_own(i)) continue;
+        std::vector<uint8_t> cur;
+        size_t ns = 0, nr = 0;
+        void* ms = core.memory(link_mem(i, RETRO_MEMORY_SAVE_RAM), &ns);
+        void* mr = core.memory(link_mem(i, RETRO_MEMORY_RTC), &nr);
+        if (ms) cur.insert(cur.end(), (uint8_t*)ms, (uint8_t*)ms + ns);
+        if (mr) cur.insert(cur.end(), (uint8_t*)mr, (uint8_t*)mr + nr);
+        if (!force && cur == link_saved_[i]) continue;
+        if (ms && ns) write_atomic(link_srm(i), ms, ns);
+        if (mr && nr) write_atomic(link_rtc(i), mr, nr);
+        link_saved_[i] = cur;
+        rlog("save: console %d wrote %s (%zu + %zu bytes)", i + 1, link_srm(i).c_str(), ns, nr);
+    }
+}
+
 /* ------------------------------------------------------------------ netplay */
 
 bool Frontend::setup_net() {
@@ -758,6 +856,21 @@ bool Frontend::setup_net() {
         Sleep(5);
     }
     rlog("net: session ready");
+    if (link) {
+        std::vector<std::vector<uint8_t>> blobs;
+        std::string lerr;
+        int mine = link_port_of_slot(a.slot);
+        if (mine < 0) { rlog("link: this slot owns no console"); return false; }
+        if (!rlink::run_link_exchange(session, a.slot, slot_mask, link_blob_from_disk(mine), 60000, &blobs, [this] { pump_events(false); }, &lerr)) {
+            rlog("link: save exchange failed: %s", lerr.c_str());
+            net_rc = 4;
+            return false;
+        }
+        for (int i = 0; i < link_n; i++)
+            if (owner[i] >= 0 && owner[i] < 8 && (slot_mask & (1u << owner[i]))) link_apply_blob(i, blobs[owner[i]]);
+        link_loaded = true;
+        rlog("link: saves exchanged and loaded for %d consoles", link_n);
+    }
     {
         n64run::DelayNegotiation dn;
         dn.fixed_delay = a.delay;
@@ -834,7 +947,9 @@ void Frontend::finish() {
     static bool done = false;
     if (done) return;
     done = true;
-    if (core.game_loaded()) {
+    if (core.game_loaded() && link) {
+        link_save(false);
+    } else if (core.game_loaded()) {
         save_srm(false);
         if (!a.selftest && !is_ds && core.serialize_size()) {   // DS states are ~19 MB and the hub never resumes them
             size_t n = core.serialize_size();
@@ -943,13 +1058,25 @@ int Frontend::run(const Args& args) {
     };
     bool drc = false;
     core.on_audio = [this, &drc](const int16_t* d, size_t n) {
-        for (size_t i = 0; i < n * 2; i++) out_hash = (out_hash ^ (uint16_t)d[i]) * 0x100000001B3ull;
+        if (!link) for (size_t i = 0; i < n * 2; i++) out_hash = (out_hash ^ (uint16_t)d[i]) * 0x100000001B3ull;
         if (!ff && audio.active()) audio.push(d, n, drc);
     };
 
     std::string err;
     if (!core.load_core(a.core, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
-    if (!core.load_game(a.rom, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
+    if (a.link) {
+        link = true;
+        std::vector<std::string> roms;
+        if (!a.link_roms.empty()) {
+            size_t p = 0;
+            while (p <= a.link_roms.size()) { size_t q = a.link_roms.find(',', p); if (q == std::string::npos) q = a.link_roms.size(); roms.push_back(a.link_roms.substr(p, q - p)); p = q + 1; }
+        }
+        if (roms.empty()) roms.assign(2, a.rom);
+        link_n = (int)roms.size();
+        unsigned gt = 0x101;
+        for (auto& ss : core.subsystems()) if (ss.num_roms == (unsigned)link_n) { gt = ss.id; break; }
+        if (!core.load_game_special(gt, roms, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
+    } else if (!core.load_game(a.rom, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
     fps = core.av().timing.fps > 1 ? core.av().timing.fps : 60.0;
     if (is_ds) {   // every option retrorun relies on must exist in the real core with that value, else F9/defaults would silently fail
         int nreq = 0;
@@ -985,8 +1112,12 @@ int Frontend::run(const Args& args) {
     if (!a.headless) open_pads();
     core.on_geometry = [this]() { fps = core.av().timing.fps > 1 ? core.av().timing.fps : fps; };
 
-    load_srm();
-    if (a.resume && !online && a.net.empty()) {
+    if (link) {
+        // Offline (no --net): every console with a local owner loads its own save from disk.
+        if (a.net.empty())
+            { for (int i = 0; i < link_n; i++) if (owner[i] >= 0) link_apply_blob(i, link_blob_from_disk(i)); link_loaded = true; }
+    } else load_srm();
+    if (!link && a.resume && !online && a.net.empty()) {
         if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
     }
 
@@ -1022,7 +1153,7 @@ int Frontend::run(const Args& args) {
 
                 if ((frame_no & 63) == 0 && SDL_GetTicks64() - last_srm_check > 30000) {
                     last_srm_check = SDL_GetTicks64();
-                    save_srm(false);
+                    if (link) link_save(false); else save_srm(false);
                 }
             }
             double secs = (SDL_GetTicks64() - t_start) / 1000.0;

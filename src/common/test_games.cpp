@@ -276,6 +276,12 @@ int main() {
     test_catalog();
     test_catalog_integrity();
     test_online_max();
+    /* link-cable games: online via retrorun --link, 2 players; GBA link stays offline-only (no in-process link available) */
+    for (const char* id : {"pokered", "pokeyellow", "pokegold", "pokesilver", "pokecrystal"}) {
+        const GameInfo* g = find_game(id);
+        CHECK(g && g->online && online_max_for(*g) == 2 && link_cable_game(id));
+    }
+    for (const char* id : {"pokeruby", "pokesapphire", "pokeemerald", "pokefirered", "pokeleafgreen"}) CHECK(find_game(id) && !find_game(id)->online && !link_cable_game(id));
     test_find_game_for();
 
     std::error_code ec;
