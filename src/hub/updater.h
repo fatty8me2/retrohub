@@ -3,10 +3,10 @@
  *
  * Checks the latest GitHub release of fatty8me2/smash-classic (asset
  * BattleShip-windows.zip), accepts only a strictly newer semver, downloads
- * with curl, verifies size + SHA-256, then launches a hidden PowerShell
- * installer that waits for this process to exit, backs up, overlays the files
- * in the zip onto exe_dir() (never deleting anything), rolls back on failure
- * and relaunches RetroHub.exe.
+ * with curl, verifies size + SHA-256, unpacks with tar.exe, then runs a TEMP copy of
+ * RetroHub.exe as `--apply-update` (see update_apply.h): it waits for the old
+ * processes, backs up, overlays the files onto exe_dir() (never deleting anything),
+ * rolls back on failure and relaunches RetroHub.exe.
  *
  * UI contract: poll the getters each frame; when installer_started() turns
  * true, quit the app immediately (the installer is waiting for the exit). */

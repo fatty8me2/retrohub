@@ -56,6 +56,7 @@
 
 #include "art.h"
 #include "updater.h"
+#include "update_apply.h"
 #include "games.h"
 #include "emulators.h"
 #include "netplay_dolphin.h"
@@ -4385,6 +4386,7 @@ static ImGuiKey shot_key(const std::string& n) {
 }
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
     shell_set_app_id();
     const char* shot_path = std::getenv("HUB_SCREENSHOT");
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
