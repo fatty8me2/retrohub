@@ -47,3 +47,7 @@ target_include_directories(mgba_link_libretro PRIVATE
 target_link_libraries(mgba_link_libretro PRIVATE mgba)
 set_target_properties(mgba_link_libretro PROPERTIES PREFIX "")
 add_dependencies(retrorun mgba_link_libretro)   # ship mgba_link_libretro.dll next to the other cores (cores\ folder)
+# Dev layout: <build>\bin\<cfg>\cores\ (find_core looks in <exe_dir>\cores\ first). Packaged: copied by package-windows.ps1.
+add_custom_command(TARGET mgba_link_libretro POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:retrorun>/cores
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:mgba_link_libretro> $<TARGET_FILE_DIR:retrorun>/cores/$<TARGET_FILE_NAME:mgba_link_libretro>)
