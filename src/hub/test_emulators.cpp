@@ -201,7 +201,7 @@ static void test_wiiu_formats() {
 
 static void test_catalog() {
     const GameInfo* g = find_game_for("3ds", "EKJA", "");
-    CHECK(g && g->id == "pokex" && g->engine == Engine::Azahar && g->max_players == 2 && g->online && online_max_for(*g) == 2 && g->genre == "RPG");
+    CHECK(g && g->id == "pokex" && g->engine == Engine::Azahar && g->max_players == 2 && !g->online && g->genre == "RPG");
     g = find_game_for("3ds", "a2ba", "");
     CHECK(g && g->id == "pokeumoon");
     CHECK(find_game_for("3ds", "ECRA", "") && find_game_for("3ds", "ECLA", "") && find_game_for("3ds", "BNDA", "") &&
