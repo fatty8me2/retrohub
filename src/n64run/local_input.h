@@ -15,8 +15,11 @@
  *   left stick -> analog (radial 8% deadzone, rescaled, clamped to +-80). */
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
+#include "controls.h"
+#include "pad_map.h"
 namespace n64run {
 
 class LocalInput {
@@ -24,6 +27,8 @@ class LocalInput {
     ~LocalInput();
     /* Initialise SDL's game controller subsystem and open pads. */
     bool init();
+    /* Mapping to use (default: hubctl::default_profile("n64")). Call before init(); the profile also carries the port order. */
+    void set_profile(const hubctl::Profile& p);
     int pad_count() const { return (int)pads_.size(); }
     /* Poll everything once (call once per sample). */
     void update();
@@ -32,6 +37,8 @@ class LocalInput {
 
   private:
     void rescan();
+    hubctl::Profile profile_ = hubctl::default_profile("n64");
+    std::unique_ptr<PadMap> map_;
     std::vector<void*> pads_;   // SDL_GameController*
     std::vector<uint32_t> pad_state_;
     uint32_t kbd_state_ = 0;

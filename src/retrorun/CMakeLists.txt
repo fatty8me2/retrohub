@@ -12,7 +12,7 @@ add_executable(retrorun
 target_include_directories(retrorun PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
-target_link_libraries(retrorun PRIVATE n64run_lockstep_core hubnet hubcommon SDL2::SDL2)
+target_link_libraries(retrorun PRIVATE n64run_lockstep_core hubnet hubcommon hubcontrols_sdl SDL2::SDL2)
 set_target_properties(retrorun PROPERTIES WIN32_EXECUTABLE OFF)
 
 add_custom_command(TARGET retrorun POST_BUILD
@@ -30,3 +30,7 @@ target_include_directories(retrorun PRIVATE ${CMAKE_BINARY_DIR}/brand_gen ${CMAK
 add_executable(retrorun_link_test test_link_sync.cpp link_sync.cpp)
 target_include_directories(retrorun_link_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(retrorun_link_test PRIVATE hubnet)
+
+# SDL_GameControllerDB (zlib, see THIRD_PARTY.md) next to the exe: <exe>/controls/gamecontrollerdb.txt
+add_custom_command(TARGET retrorun POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/controls/gamecontrollerdb.txt $<TARGET_FILE_DIR:retrorun>/controls/gamecontrollerdb.txt)
