@@ -76,7 +76,7 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     if (hubemu::is_running(inst.exe)) { set_notice("Dolphin is already running. Close it first."); return false; }
     if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
     hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
-    hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads(), controls_profile("gc", e.key));   // managed config: no update check, no analytics, no panic alerts
+    { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }   // managed config: no update check, no analytics, no panic alerts
     std::string user = inst.dir + "\\User", ini = user + "\\Config\\Dolphin.ini";
     gcnp::Spec sp = GCO.spec;
     sp.mode = "direct";

@@ -4,7 +4,7 @@
  * Uses SDL_GameControllerUpdate / SDL_PumpEvents / SDL_GetKeyboardState only (never SDL_PollEvent),
  * so it does not steal events from the core's/video plugin's event handling.
  *
- * Keyboard map (applies to the FIRST locally owned port, merged with pad 0 if one is connected):
+ * Keyboard map (default; remappable via the profile's keys; applies to the FIRST locally owned port, merged with pad 0 if one is connected):
  *   arrows      analog stick (+-80)         X = A         C = B        Z = Z trigger
  *   Enter       Start                       A = L         S = R
  *   I/J/K/L     C-up / C-left / C-down / C-right
@@ -34,11 +34,14 @@ class LocalInput {
     void update();
     /* Packed BUTTONS word for the `owned_index`-th locally owned port (0 = first). */
     uint32_t read(int owned_index) const;
+    /* Rumble Pak motor on the pad of the owned port (no-op without rumble support). */
+    void rumble(int owned_index, bool on);
 
   private:
     void rescan();
     hubctl::Profile profile_ = hubctl::default_profile("n64");
     std::unique_ptr<PadMap> map_;
+    std::unique_ptr<hubctl::KeyMapper> keys_;   // keyboard pad, from the profile
     std::vector<void*> pads_;   // SDL_GameController*
     std::vector<uint32_t> pad_state_;
     uint32_t kbd_state_ = 0;
