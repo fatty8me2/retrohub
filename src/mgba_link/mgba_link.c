@@ -25,6 +25,7 @@
 #include <mgba/gba/core.h>
 #include <mgba/internal/gba/gba.h>
 #include <mgba/internal/gba/io.h>
+#include <mgba/internal/gba/renderers/video-software.h>
 #include <mgba/internal/gba/sio.h>
 #include <mgba/internal/gba/sio/lockstep.h>
 
@@ -419,14 +420,14 @@ EXPORT void retro_run(void) {
 }
 
 /* ---- state: every console + the lockstep bookkeeping, so a state hash covers the whole simulation ---- */
-static size_t extra_size(void) { return (size_t) (4 + n_cons * 16 + MAXN * 6 + 4 * 4 + MAXN * 24) + 64; }
+static size_t extra_size(void) { return (size_t) (4 + n_cons * 16 + MAXN * 6 + 4 * 4 + MAXN * 24 + MAXN * 24) + 64; }
 
 static size_t core_state_size(void) { return cores[0]->stateSize(cores[0]); }
 
 EXPORT size_t retro_serialize_size(void) {
     if (!n_cons) return 0;
     do_deferred_setup();
-    return core_state_size() * n_cons + extra_size();
+    return (core_state_size() + SIZE_CART_FLASH1M + (size_t) STRIDE * H * sizeof(color_t) + sizeof(struct GBAVideoSoftwareRenderer)) * n_cons + extra_size();
 }
 
 static uint8_t* put32(uint8_t* p, uint32_t v) { memcpy(p, &v, 4); return p + 4; }
@@ -438,6 +439,15 @@ EXPORT bool retro_serialize(void* data, size_t size) {
     for (int i = 0; i < n_cons; i++) {
         if (!cores[i]->saveState(cores[i], p)) return false;
         p += cs;
+        memcpy(p, sav[i], SIZE_CART_FLASH1M);   /* cart save (flash/SRAM) is not in the core state, but games write it mid-run: rollback must restore it */
+        p += SIZE_CART_FLASH1M;
+        /* a console can run a few scanlines of the NEXT frame before the frame is handed out: those rows live in the video buffer,
+         * so it is part of the state (otherwise a rollback re-presents rows drawn by the discarded future) */
+        memcpy(p, vbuf[i], (size_t) STRIDE * H * sizeof(color_t));
+        p += (size_t) STRIDE * H * sizeof(color_t);
+        /* the software renderer keeps per-scanline caches / latched IO outside the savestate; mGBA only rebuilds them from registers */
+        memcpy(p, ((struct GBA*) cores[i]->board)->video.renderer, sizeof(struct GBAVideoSoftwareRenderer));
+        p += sizeof(struct GBAVideoSoftwareRenderer);
     }
     memset(p, 0, extra_size());
     p = put32(p, (uint32_t) lockstep.d.transferActive);
@@ -453,6 +463,17 @@ EXPORT bool retro_serialize(void* data, size_t size) {
         p = put32(p, (uint32_t) pl[i].awake);
         p = put32(p, pl[i].wait_mask);
     }
+    /* cart RTC bookkeeping that mGBA leaves out of its state: the offset set when the game writes the clock, and the last latch */
+    for (int i = 0; i < n_cons; i++) {
+        struct GBA* g = (struct GBA*) cores[i]->board;
+        int64_t off = (int64_t) g->memory.hw.rtc.offset, ll = (int64_t) g->memory.hw.rtc.lastLatch;
+        memcpy(p, &off, 8); p += 8;
+        memcpy(p, &ll, 8); p += 8;
+        /* the lockstep node's timing event: loadState clears the core's event queue, so it must be re-armed or the link clock stalls after a rollback */
+        int sch = mTimingIsScheduled(&g->timing, &nodes[i].event);
+        p = put32(p, (uint32_t) sch);
+        p = put32(p, (uint32_t) (sch ? nodes[i].event.when - mTimingCurrentTime(&g->timing) : 0));
+    }
     return true;
 }
 
@@ -466,6 +487,12 @@ EXPORT bool retro_unserialize(const void* data, size_t size) {
     for (int i = 0; i < n_cons; i++) {
         if (!cores[i]->loadState(cores[i], p)) return false;
         p += cs;
+        memcpy(sav[i], p, SIZE_CART_FLASH1M);
+        p += SIZE_CART_FLASH1M;
+        memcpy(vbuf[i], p, (size_t) STRIDE * H * sizeof(color_t));
+        p += (size_t) STRIDE * H * sizeof(color_t);
+        memcpy(((struct GBA*) cores[i]->board)->video.renderer, p, sizeof(struct GBAVideoSoftwareRenderer));
+        p += sizeof(struct GBAVideoSoftwareRenderer);
     }
     uint32_t v;
     p = get32(p, &v); lockstep.d.transferActive = (enum mLockstepPhase) v;
@@ -476,10 +503,22 @@ EXPORT bool retro_unserialize(const void* data, size_t size) {
     for (int i = 0; i < n_cons; i++) {
         p = get32(p, &v); nodes[i].nextEvent = (int32_t) v;
         p = get32(p, &v); nodes[i].eventDiff = (int32_t) v;
-        p = get32(p, &v); nodes[i].normalSO = v & 1; nodes[i].transferFinished = (v >> 1) & 1;
+        p = get32(p, &v); nodes[i].normalSO = v & 1; nodes[i].transferFinished = (v >> 1) & 1; nodes[i].mode = (enum GBASIOMode) ((v >> 8) & 0xFF);
         p = get32(p, &v); pl[i].cycles_posted = (int32_t) v;
         p = get32(p, &v); pl[i].awake = (int) v;
         p = get32(p, &v); pl[i].wait_mask = v;
+    }
+    for (int i = 0; i < n_cons; i++) {
+        struct GBA* g = (struct GBA*) cores[i]->board;
+        int64_t off, ll;
+        memcpy(&off, p, 8); p += 8;
+        memcpy(&ll, p, 8); p += 8;
+        g->memory.hw.rtc.offset = (time_t) off;
+        g->memory.hw.rtc.lastLatch = (time_t) ll;
+        uint32_t sch, dt;
+        p = get32(p, &sch); p = get32(p, &dt);
+        if (mTimingIsScheduled(&g->timing, &nodes[i].event)) mTimingDeschedule(&g->timing, &nodes[i].event);
+        if (sch) mTimingSchedule(&g->timing, &nodes[i].event, (int32_t) dt);
     }
     return true;
 }

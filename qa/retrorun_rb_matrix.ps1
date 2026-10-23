@@ -19,7 +19,7 @@ $core = Join-Path $bin 'mgba_link_libretro.dll'
 $out = Join-Path $root ('qa\out\' + $Tag + '_' + $Case)
 Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $out | Out-Null
-$env:RETRORUN_MUTE = '1'
+$env:RETRORUN_MUTE = '1'; $env:HUBNET_LOOPBACK = '1'   # bind 127.0.0.1 only (no firewall prompts)
 Remove-Item Env:HUBNET_FORCE_RELAY -ErrorAction SilentlyContinue
 if ($Case -eq 'relay') { $env:HUBNET_FORCE_RELAY = '1' }
 # per-slot one-way simulator settings: latency, jitter, loss
@@ -54,7 +54,7 @@ foreach ($p in $procs) {
     $st = [regex]::Match($txt, 'rollback-stats: [^\r\n]*').Value
     $dn = [regex]::Match($txt, 'done: [^\r\n]*').Value
     $fm = [regex]::Match($txt, 'final: [^\r\n]*').Value
-    $ds = $txt -match 'DESYNC'
+    $ds = $txt -cmatch 'DESYNC at|RESULT: DESYNC'
     Write-Output ("[$Case] slot " + $p.Slot + " exit=" + $p.Proc.ExitCode + " desync=" + $ds)
     Write-Output ("  " + $st); Write-Output ("  " + $dn); Write-Output ("  " + $fm)
     if ($p.Proc.ExitCode -ne 0 -or $ds) { $fail++ }
