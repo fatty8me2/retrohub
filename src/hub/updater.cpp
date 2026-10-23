@@ -40,6 +40,8 @@ namespace {
 constexpr const char* kLatestReleaseApi = "https://api.github.com/repos/fatty8me2/smash-classic/releases/latest";
 constexpr const char* kDownloadPrefix = "https://github.com/fatty8me2/smash-classic/releases/download/";
 constexpr const char* kPlatformAssetName = "BattleShip-windows.zip";
+constexpr const char* kSumsAssetName = "SHA256SUMS.txt";
+constexpr const char* kManualUrl = "https://github.com/fatty8me2/smash-classic/releases/latest";
 
 std::atomic<bool> s_checked{false};
 std::atomic<bool> s_available{false};
@@ -49,7 +51,7 @@ std::atomic<bool> s_downloading{false};
 std::atomic<bool> s_started{false};
 std::atomic<float> s_progress{-1.0f};
 
-std::string s_latest, s_notes, s_url, s_digest, s_status;
+std::string s_latest, s_notes, s_url, s_digest, s_sums_url, s_status;
 long long s_size = 0;
 std::mutex s_mu;
 
@@ -254,17 +256,107 @@ Release parse_release(const std::string& json) {
         for (const JV& a : assets->a) {
             const JV* name = a.get("name");
             const JV* url = a.get("browser_download_url");
+            if (name && name->type == JV::String && name->s == kSumsAssetName && url && url->type == JV::String &&
+                is_trusted_download_url(url->s)) { r.sums_url = url->s; continue; }
             if (!name || name->type != JV::String || name->s != kPlatformAssetName || !url || url->type != JV::String) continue;
             const JV* size = a.get("size");
             long long sz = (size && size->type == JV::Number) ? (long long)size->n : 0;
-            if (!is_trusted_download_url(url->s) || sz <= 0) break;
+            if (!is_trusted_download_url(url->s) || sz <= 0) continue;
             r.has_asset = true; r.url = url->s; r.size = sz;
             const JV* d = a.get("digest");
             if (d && d->type == JV::String) r.digest = d->s;
-            break;
         }
     }
     return r;
+}
+
+const char* const kFirstChecksumRelease = "v1.17.1";
+
+bool checksums_required(const std::string& tag) { return compare_versions(tag, kFirstChecksumRelease) >= 0; }
+
+static std::string lower(std::string s) { for (char& c : s) if (c >= 'A' && c <= 'F') c = (char)(c - 'A' + 'a'); return s; }
+static bool is_hex64(const std::string& s) {
+    if (s.size() != 64) return false;
+    for (char c : s) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false;
+    return true;
+}
+
+std::map<std::string, std::string> parse_sha256sums(const std::string& text) {
+    std::map<std::string, std::string> m;
+    std::istringstream in(text);
+    std::string line;
+    bool first = true;
+    while (std::getline(in, line)) {
+        if (first && line.rfind("\xEF\xBB\xBF", 0) == 0) line = line.substr(3);   // BOM from Windows PowerShell
+        first = false;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.size() < 66) continue;
+        std::string hex = line.substr(0, 64);
+        if (!is_hex64(hex) || line[64] != ' ') continue;
+        size_t at = 65;
+        if (at < line.size() && (line[at] == ' ' || line[at] == '*')) at++;
+        std::string name = line.substr(at);
+        if (name.empty()) continue;
+        hex = lower(hex);
+        auto it = m.find(name);
+        if (it == m.end()) m[name] = hex;
+        else if (it->second != hex) it->second.clear();
+    }
+    return m;
+}
+
+Verdict verify_hashes(const std::string& tag, const std::string& actual, const std::string* sums, const std::string& api_digest) {
+    std::string a = lower(actual);
+    if (!is_hex64(a)) return Verdict::BadSums;
+    if (api_digest.rfind("sha256:", 0) == 0 && lower(api_digest.substr(7)) != a) return Verdict::DigestMismatch;
+    if (!sums) return checksums_required(tag) ? Verdict::NoSums : Verdict::OkLegacy;
+    auto m = parse_sha256sums(*sums);
+    auto it = m.find(kPlatformAssetName);
+    if (it == m.end() || !is_hex64(it->second)) return Verdict::BadSums;
+    return it->second == a ? Verdict::Ok : Verdict::ZipMismatch;
+}
+
+const char* verdict_message(Verdict v) {
+    switch (v) {
+        case Verdict::Ok: case Verdict::OkLegacy: return "ok";
+        case Verdict::NoSums: return "this release has no SHA256SUMS.txt, so the download cannot be verified.";
+        case Verdict::BadSums: return "the release checksum file is unreadable or does not list the update.";
+        case Verdict::ZipMismatch: return "the download does not match the published checksum (SHA256SUMS.txt).";
+        case Verdict::DigestMismatch: return "the download does not match GitHub's checksum for the file.";
+    }
+    return "verification failed.";
+}
+
+std::string sha256_file_hex(const std::string& path) { return sha256_file(path); }
+
+bool download_verified(const FetchSpec& f, const std::string& zipPath, std::string* err,
+                       const std::function<void(const std::string&)>& onLine) {
+    auto bad = [&](const std::string& m) { rm_file(zipPath); if (err) *err = m; return false; };
+    std::string sums; bool haveSums = false;
+    if (f.sums_url.empty() && checksums_required(f.tag)) return bad(verdict_message(Verdict::NoSums));
+    if (!f.sums_url.empty()) {
+        std::string sp = zipPath + ".sums";
+        rm_file(sp);
+        int c = run_capture("curl -fLsS -m 30 --max-filesize 262144 -o \"" + sp + "\" \"" + f.sums_url + "\"", [](const std::string&) {});
+        if (c == 0) {
+            std::ifstream in(P(sp), std::ios::binary);
+            std::stringstream ss; ss << in.rdbuf();
+            sums = ss.str(); haveSums = !sums.empty();
+        }
+        rm_file(sp);
+        /* A listed-but-unfetchable checksum file is never treated as "legacy". */
+        if (!haveSums) return bad("could not download SHA256SUMS.txt to verify the update.");
+    }
+    rm_file(zipPath);
+    if (run_capture("curl -fL -# -m 600 -o \"" + zipPath + "\" \"" + f.zip_url + "\"", onLine) != 0) return bad("download failed.");
+    std::ifstream in(P(zipPath), std::ios::binary | std::ios::ate);
+    long long actual = in ? (long long)in.tellg() : -1;
+    in.close();
+    if (actual != f.size) return bad("download was incomplete.");
+    Verdict v = verify_hashes(f.tag, sha256_file(zipPath), haveSums ? &sums : nullptr, f.digest);
+    if (v != Verdict::Ok && v != Verdict::OkLegacy) return bad(verdict_message(v));
+    if (v == Verdict::OkLegacy) ulog("release %s predates SHA256SUMS.txt; accepted on TLS + size (+ API digest if present)", f.tag.c_str());
+    return true;
 }
 
 } // namespace detail
@@ -324,7 +416,7 @@ void check_async(bool force) {
             std::lock_guard<std::mutex> l(s_mu);
             s_latest = rel.tag;
             s_notes = detail::strip_markdown(rel.body);
-            s_url.clear(); s_digest.clear(); s_size = 0;
+            s_url.clear(); s_digest.clear(); s_sums_url.clear(); s_size = 0;
         }
         std::string cur = current_version();
         if (detail::compare_versions(rel.tag, cur) <= 0) {
@@ -333,7 +425,7 @@ void check_async(bool force) {
         } else if (rel.has_asset) {
             {
                 std::lock_guard<std::mutex> l(s_mu);
-                s_url = rel.url; s_size = rel.size; s_digest = rel.digest;
+                s_url = rel.url; s_size = rel.size; s_digest = rel.digest; s_sums_url = rel.sums_url;
             }
             s_available.store(true);
             set_status("");
@@ -352,10 +444,10 @@ void start_update() {
     if (!s_downloading.compare_exchange_strong(expected, true)) return;
     s_progress.store(-1.0f);
 
-    std::string url, digest, version; long long size;
+    std::string url, digest, sumsUrl, version; long long size;
     {
         std::lock_guard<std::mutex> l(s_mu);
-        url = s_url; digest = s_digest; version = s_latest; size = s_size;
+        url = s_url; digest = s_digest; sumsUrl = s_sums_url; version = s_latest; size = s_size;
     }
     if (url.empty()) {
         set_status("Error: No update download available.");
@@ -364,7 +456,7 @@ void start_update() {
     }
     set_status("Starting download...");
 
-    std::thread([url, digest, version, size]() {
+    std::thread([url, digest, sumsUrl, version, size]() {
         auto fail = [](const std::string& m) {
             ulog("update failed: %s", m.c_str());
             set_status("Error: " + m);
@@ -392,22 +484,13 @@ void start_update() {
             }
         };
         ulog("downloading %s", url.c_str());
-        if (run_capture("curl -fL -# -m 600 -o \"" + zipPath + "\" \"" + url + "\"", onLine) != 0) {
-            rm_file(zipPath);
-            fail("download failed.");
+        detail::FetchSpec spec; spec.zip_url = url; spec.sums_url = sumsUrl; spec.tag = version; spec.digest = digest; spec.size = size;
+        std::string verr;
+        if (!detail::download_verified(spec, zipPath, &verr, onLine)) {
+            fail(verr + " Download manually: " + kManualUrl);
             return;
         }
-        set_status("Verifying...");
-        {
-            std::ifstream in(P(zipPath), std::ios::binary | std::ios::ate);
-            long long actual = in ? (long long)in.tellg() : -1;
-            if (actual != size) { rm_file(zipPath); fail("download was incomplete."); return; }
-        }
-        if (digest.rfind("sha256:", 0) == 0 && sha256_file(zipPath) != digest.substr(7)) {
-            rm_file(zipPath);
-            fail("download failed verification.");
-            return;
-        }
+        set_status("Verified.");
         /* Unpack the zip (Windows' own tar.exe, hidden), then hand over to a TEMP copy of
          * RetroHub.exe running `--apply-update` (see update_apply.h). */
         set_status("Preparing...");
@@ -505,6 +588,7 @@ bool check_failed() { return s_failed.load(); }
 bool downloading() { return s_downloading.load(); }
 float download_progress() { return s_progress.load(); }
 bool installer_started() { return s_started.load(); }
+std::string manual_download_url() { return kManualUrl; }
 std::string status() { std::lock_guard<std::mutex> l(s_mu); return s_status; }
 std::string latest_version() { std::lock_guard<std::mutex> l(s_mu); return s_latest; }
 std::string release_notes() { std::lock_guard<std::mutex> l(s_mu); return s_notes; }
