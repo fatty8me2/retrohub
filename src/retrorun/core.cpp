@@ -319,6 +319,10 @@ bool Core::environment(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
             if (data && ((const retro_message_ext*)data)->msg) rlog("core message: %s", ((const retro_message_ext*)data)->msg);
             return true;
+        case RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE:
+            if (data) np_ = *(const retro_netpacket_callback*)data;
+            rlog("core registered a netpacket interface (protocol %s)", np_.protocol_version ? np_.protocol_version : "-");
+            return true;
         case RETRO_ENVIRONMENT_SET_HW_RENDER:
             rlog("core requested hardware rendering: not supported (software cores only)");
             return false;

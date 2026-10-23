@@ -60,6 +60,9 @@ class Core {
     bool unserialize(const void* buf, size_t size) { return fn_unserialize_(buf, size); }
 
     void set_fast_forwarding(bool ff) { ff_ = ff; }
+    /* Netpacket interface the core registered (DS local wireless); null start = none. */
+    const retro_netpacket_callback& netpacket() const { return np_; }
+    bool has_netpacket() const { return np_.start != nullptr && np_.receive != nullptr; }
     const std::map<std::string, CoreOption>& options() const { return opts_; }
     /* Change an option while running (the core sees it on its next GET_VARIABLE_UPDATE poll). */
     void set_option(const std::string& key, const std::string& value) { overrides[key] = value; vars_dirty_ = true; }
@@ -114,6 +117,7 @@ class Core {
     std::map<std::string, CoreOption> opts_;
     bool vars_dirty_ = true;
     std::string lang_dummy_;
+    retro_netpacket_callback np_{};
 };
 
 Core* active_core();

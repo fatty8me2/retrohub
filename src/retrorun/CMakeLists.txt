@@ -21,6 +21,10 @@ add_custom_command(TARGET retrorun POST_BUILD
 add_executable(retrorun_ds_test test_dsview.cpp)
 target_include_directories(retrorun_ds_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# DS local wireless packet framing (ds_link.h).
+add_executable(retrorun_dslink_test test_dslink.cpp)
+target_include_directories(retrorun_dslink_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Branding: same icon + version resources as RetroHub.exe (see src/hub/CMakeLists.txt for the generated header).
 target_sources(retrorun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/retrorun.rc)
 target_include_directories(retrorun PRIVATE ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_CURRENT_SOURCE_DIR}/../hub)

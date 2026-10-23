@@ -246,7 +246,7 @@ static void test_find_game_for() {
             {"IPGE", "pokesoulsilver"}, {"IRBO", "pokeblack"}, {"IRAO", "pokewhite"}, {"IREO", "pokeblack2"}, {"IRDO", "pokewhite2"}};
         for (const auto& d : ds) {
             const GameInfo* n = find_game_for("nds", d.code, "");
-            CHECK(n && n->id == d.id && n->system == "nds" && n->max_players == 1 && !n->online && n->genre == "RPG" &&
+            CHECK(n && n->id == d.id && n->system == "nds" && n->max_players == 4 && n->online && online_max_for(*n) == 4 && n->genre == "RPG" &&
                   n->engine == Engine::Libretro && !n->nointro.empty() && n->year >= 2007);
             CHECK(find_game_for("gba", d.code, "") == nullptr);   // scoped by system
         }

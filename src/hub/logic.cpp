@@ -474,14 +474,24 @@ GuestVersionAction guest_version_action(const std::string& my_app, const std::st
 }
 
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save,
-                        const PortPlan* plan, const MatchSpec* match) {
+                        const PortPlan* plan, const MatchSpec* match, const std::string& np_ds) {
     std::string o = "{\"kind\":\"launch\",\"game\":\"" + json_escape(game) + "\",\"launch\":" + std::to_string(launch) +
                     ",\"delay\":" + std::to_string(delay) + ",\"seed\":" + std::to_string(seed);
     if (!core.empty()) o += ",\"core\":\"" + json_escape(core) + "\"";
     o += std::string(",\"share_save\":") + (share_host_save ? "true" : "false");
     if (plan) o += ",\"ports\":[" + plan->ports + "],\"players\":" + std::to_string(plan->players);
     if (match) o += ",\"match\":" + match_json(*match);
+    if (!np_ds.empty()) o += ",\"np_ds\":" + np_ds;
     return o + "}";
+}
+
+std::string np_ds_json() { return "{\"v\":1,\"mode\":\"wireless\"}"; }
+
+bool parse_np_ds(const Json& m, std::string* mode) {
+    const Json* n = m.get("np_ds");
+    if (!n || n->type != Json::Obj || (int)n->num("v", 0) != 1) return false;
+    if (mode) *mode = n->str("mode");
+    return n->str("mode") == "wireless";
 }
 
 bool parse_launch_plan(const Json& m, std::string* ports, int* players) {
