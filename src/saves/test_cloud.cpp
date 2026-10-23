@@ -82,6 +82,16 @@ int main() {
     CHECK(s1 != cloud_sign("secret2", "GET", "/saves/list", 1000, ""));
     CHECK(s1 != cloud_sign("secret", "GET", "/saves/list", 1001, ""));
 
+    CHECK(s1 != cloud_sign("secret", "GET", "/saves/list", 1000, "", "e"));
+    CHECK(s1 != cloud_sign("secret", "GET", "/saves/list", 1000, "", "", "*"));
+    CHECK(s1 != cloud_sign("secret", "GET", "/saves/list", 1000, "", "", "", "5"));
+    CHECK(s1 != cloud_sign("secret", "GET", "/saves/list", 1000, "", "", "", "", "9"));
+    for (const char* k : {"a/b.sav", "n64/smash/battery/a.sav", "x"}) CHECK(cloud_key_safe(k));
+    for (const char* k : {"", "..", "../x", "a/../b", "a/./b", "/abs", "\\abs", "a//b", "a/", "C:/x", "C:x", "a\\b", "a:stream", "a/b\x01"})
+        CHECK(!cloud_key_safe(k));
+    CHECK(cloud_sha_ok(sha256_hex_of("abc")));
+    CHECK(!cloud_sha_ok("") && !cloud_sha_ok("abc") && !cloud_sha_ok(std::string(64, 'G')) && !cloud_sha_ok(std::string(64, 'A')));
+
     const char* accf = std::getenv("RETROHUB_TEST_SAVES_ACCOUNTS");
     if (!accf || !*accf) {
         printf("hubsaves_cloud_test: unit checks done, end-to-end skipped (no RETROHUB_TEST_SAVES_ACCOUNTS)\n");

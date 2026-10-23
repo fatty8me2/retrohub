@@ -43,7 +43,24 @@ SyncReport sync_cloud(const CloudConfig& cfg);
 
 /* Pure helpers (exposed for tests). */
 std::string cloud_sign(const std::string& secret, const std::string& method, const std::string& path_and_query,
-                       long long ts_ms, const std::string& body_sha);
+                       long long ts_ms, const std::string& body_sha,
+                       const std::string& if_match = "", const std::string& if_none_match = "",
+                       const std::string& content_length = "", const std::string& mtime = "");
+/* Signed string = METHOD
+PATH
+TS
+SHA
+If-Match
+If-None-Match
+Content-Length
+X-RH-Mtime ("-" for absent).
+ * Must stay in lockstep with authenticate() in BattleShip server/cloudflare/src/saves.js. */
+
+/* A server-supplied object key is only ever joined onto the mirror if this accepts it: no "..", ".", empty
+ * segments, ':' or backslash (drive/ADS), leading slash, control chars. */
+bool cloud_key_safe(const std::string& key);
+/* A download must carry a full lowercase sha256 hex digest, which it is verified against. */
+bool cloud_sha_ok(const std::string& sha);
 std::string sha256_hex_of(const std::string& data);
 
 } // namespace hub::saves

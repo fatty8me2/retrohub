@@ -221,8 +221,15 @@ struct Http {
         HINTERNET req = WinHttpOpenRequest(conn, W(method).c_str(), W(base_path + pq).c_str(), nullptr, WINHTTP_NO_REFERER,
                                            WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0);
         if (!req) { r.error = "WinHttpOpenRequest failed"; return r; }
+        auto xh = [&](const char* name) {
+            str pre = str(name) + ": ";
+            for (auto& e : extra) if (e.compare(0, pre.size(), pre) == 0) return e.substr(pre.size());
+            return str();
+        };
+        str clen = method == "PUT" ? std::to_string(blen) : str();   // WinHTTP sends Content-Length for PUT bodies
         str hdr = "Authorization: RHSIG uid=" + cfg.user_id + ",ts=" + std::to_string(ts) + ",sig=" +
-              cloud_sign(cfg.secret, method, base_path + pq, ts, body_sha) + "\r\n";
+              cloud_sign(cfg.secret, method, base_path + pq, ts, body_sha, xh("If-Match"), xh("If-None-Match"), clen,
+                         xh("X-RH-Mtime")) + "\r\n";
         if (!body_sha.empty()) hdr += "X-RH-Sha: " + body_sha + "\r\n";
         for (auto& e : extra) hdr += e + "\r\n";
         std::wstring wh = W(hdr);
@@ -378,6 +385,7 @@ bool fetch_list(Http& http, std::vector<RemoteFile>& out, CloudStatus* stat, str
         RemoteFile rf;
         rf.key = f.str_of("key"); rf.etag = f.str_of("etag"); rf.sha = f.str_of("sha"); rf.mtime = f.str_of("mtime");
         rf.size = f.num_of("size");
+        if (!cloud_key_safe(rf.key)) continue;   // never trust a server-supplied path
         if (!rf.key.empty() && !rf.etag.empty()) out.push_back(rf);
     }
     if (stat) { stat->used = root.num_of("used"); stat->quota = root.num_of("quota"); stat->files = (int)files->a.size(); }
@@ -392,6 +400,8 @@ str stamp() {
 
 /* Download one object into the mirror: resumable via <file>.hubtmp + Range, verified by sha256. */
 bool download(Http& http, const fs::path& mirror, const RemoteFile& rf, str* err) {
+    if (!cloud_key_safe(rf.key)) { *err = "unsafe key from server"; return false; }
+    if (!cloud_sha_ok(rf.sha)) { *err = "server gave no valid checksum for " + rf.key; return false; }
     fs::path dst = rel_path(mirror, rf.key);
     fs::path tmp = dst.string() + ".hubtmp";
     std::error_code ec;
@@ -430,7 +440,7 @@ bool download(Http& http, const fs::path& mirror, const RemoteFile& rf, str* err
         }
         out.close();
         str got = sha_file(tmp);
-        if (got == rf.sha || (rf.sha.empty() && !got.empty())) {
+        if (got == rf.sha) {
             fs::remove(dst, ec);
             fs::rename(tmp, dst, ec);
             if (ec) { *err = "cannot place " + dst.string(); return false; }
@@ -452,15 +462,38 @@ str default_mirror(const CloudConfig& c) {
 } // namespace
 
 /* ----------------------------------------------------------------- public */
+bool cloud_key_safe(const std::string& key) {
+    if (key.empty() || key.size() > 512 || key[0] == '/' || key[0] == '\\') return false;
+    size_t i = 0;
+    while (i <= key.size()) {
+        size_t j = key.find('/', i);
+        if (j == str::npos) j = key.size();
+        str seg = key.substr(i, j - i);
+        if (seg.empty() || seg == "." || seg == "..") return false;
+        i = j + 1;
+    }
+    for (unsigned char c : key) if (c < 0x20 || c == 0x7f || c == ':' || c == '\\') return false;
+    return true;
+}
+
+bool cloud_sha_ok(const std::string& sha) {
+    if (sha.size() != 64) return false;
+    for (char c : sha) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    return true;
+}
+
 std::string sha256_hex_of(const std::string& data) {
     Sha s; s.update(data.data(), data.size()); return s.hex();
 }
 
 std::string cloud_sign(const std::string& secret, const std::string& method, const std::string& path_and_query,
-                       long long ts_ms, const std::string& body_sha) {
+                       long long ts_ms, const std::string& body_sha, const std::string& if_match,
+                       const std::string& if_none_match, const std::string& content_length, const std::string& mtime) {
     str key = sha256_hex_of(secret);   // the server stores sha256hex(secret); that is the HMAC key
     Sha h(&key);
-    str msg = method + "\n" + path_and_query + "\n" + std::to_string(ts_ms) + "\n" + (body_sha.empty() ? "-" : body_sha);
+    str msg = method + "\n" + path_and_query + "\n" + std::to_string(ts_ms) + "\n" + (body_sha.empty() ? "-" : body_sha) +
+                "\n" + (if_match.empty() ? "-" : if_match) + "\n" + (if_none_match.empty() ? "-" : if_none_match) +
+                "\n" + (content_length.empty() ? "-" : content_length) + "\n" + (mtime.empty() ? "-" : mtime);
     h.update(msg.data(), msg.size());
     return h.hex();
 }
