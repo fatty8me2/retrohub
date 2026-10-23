@@ -1237,6 +1237,11 @@ int Frontend::run(const Args& args) {
                 if (a.frames >= 0 && frame_no >= (uint64_t)a.frames) break;
                 pump_events(false);
                 if (quit) break;
+                if (a.ds_link && session.ended()) {   // a partner signed off on purpose: not a failure
+                    rlog("link: partner ended the session");
+                    link_stop("partner ended the session");
+                    break;
+                }
 
                 if (want_save) { want_save = false; save_state("slot" + std::to_string(slot_sel)); }
                 if (want_load) { want_load = false; if (!online && !a.ds_link) load_state("slot" + std::to_string(slot_sel)); }
@@ -1289,6 +1294,12 @@ int Frontend::run(const Args& args) {
                  (unsigned long long)link_tx_cmd, (unsigned long long)link_tx_reply, (unsigned long long)link_rx,
                  (unsigned long long)link_rx_cmd, (unsigned long long)link_rx_reply);
             link_stop("closing");
+            // Sign off so the partners end cleanly instead of treating our exit as a lost connection.
+            for (int i = 0; i < 4; i++) {
+                session.say_bye();
+                uint32_t t0 = hubnet::now_ms();
+                while (hubnet::now_ms() - t0 < 80) { session.update(); Sleep(5); }
+            }
         }
         // Let the last input packets reach slower peers.
         if (online) {

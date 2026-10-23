@@ -33,6 +33,11 @@ for ($s = 0; $s -lt $Players; $s++) {
     "---- slot $s (exit $($procs[$s].ExitCode)) ----"
     Get-Content $log | Select-String "link:|multiplayer|netpacket|done:" | Select-Object -Last 12 | ForEach-Object { $_.Line }
     if (-not (Select-String -Path $log -Pattern "link: wireless started" -Quiet)) { $ok = $false }
+    # A "connection lost" before the scripted end (the "done:" line) is a failure; after it is just the teardown.
+    $lines = @(Get-Content $log)
+    $lost = [array]::IndexOf(@($lines | ForEach-Object { $_ -match 'connection lost' }), $true)
+    $done = [array]::IndexOf(@($lines | ForEach-Object { $_ -match 'done: ' }), $true)
+    if ($lost -ge 0 -and ($done -lt 0 -or $lost -lt $done)) { "slot ${s}: connection lost before the scripted end"; $ok = $false }
     $pl = Select-String -Path $log -Pattern "PROBE tx (\d+) rx (\d+) corrupt (\d+)" | Select-Object -Last 1
     if (-not $pl -or [int]$pl.Matches[0].Groups[2].Value -lt 10 -or [int]$pl.Matches[0].Groups[3].Value -ne 0) { $ok = $false }
     if ($procs[$s].ExitCode -ne 0) { $ok = $false }
