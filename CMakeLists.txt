@@ -78,6 +78,7 @@ add_test(NAME hub_shell_test COMMAND hub_shell_test)
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
 add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
 add_test(NAME n64run_match_test COMMAND n64run_match_test)
+add_test(NAME n64run_testinput_test COMMAND n64run_testinput_test)
 add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulated network only
 
 # Online: need the live server.

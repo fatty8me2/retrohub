@@ -64,3 +64,11 @@ function Wait-HeadlessRuns($items, [int]$TimeoutSec = 300) {
     }
     return $res
 }
+
+# Returns the n64run argument fragment for scripted test input ('' when $Spec is empty, so runs are unchanged).
+# $Spec: 'random:<seed>' or 'file:<path>' (see src\n64run\test_input.h). n64run mixes in the slot, so peers differ
+# even with the same seed. Usage: $a = "--rom ... --headless --frames 6000" + (Get-TestInputArg 'random:42')
+function Get-TestInputArg([string]$Spec) {
+    if (-not $Spec) { return '' }
+    return " --test-input `"$Spec`""
+}
