@@ -1,4 +1,4 @@
-add_library(hublogic STATIC logic.cpp)
+add_library(hublogic STATIC logic.cpp netplay_3ds.cpp)
 target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_compile_features(hublogic PUBLIC cxx_std_17)
 
@@ -65,7 +65,8 @@ add_custom_command(TARGET hub_shell_test POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:hub_shell_test>)
 
 # ---- 3DS (Azahar) / Wii U (Cemu): external emulators, downloaded on demand (docs/EMULATORS.md) ----
-target_sources(RetroHub PRIVATE emulators.cpp)
+target_sources(RetroHub PRIVATE emulators.cpp netplay_3ds_run.cpp)
+target_link_libraries(RetroHub PRIVATE ws2_32)
 target_link_libraries(RetroHub PRIVATE xinput setupapi)
 target_link_libraries(RetroHub PRIVATE hubminiz)
 add_executable(hub_emu_test test_emulators.cpp emulators.cpp)
@@ -75,10 +76,15 @@ target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt wi
 # GameCube online via Dolphin NetPlay
 target_sources(RetroHub PRIVATE netplay_dolphin.cpp)
 add_executable(hub_gcnp_test test_netplay_dolphin.cpp netplay_dolphin.cpp)
-add_executable(hub_gcnp_live gcnp_live.cpp netplay_dolphin.cpp)
-target_link_libraries(hub_gcnp_live PRIVATE user32)
+add_executable(hub_gcnp_live gcnp_live.cpp netplay_dolphin.cpp netplay_3ds_run.cpp)
+target_include_directories(hub_gcnp_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+target_link_libraries(hub_gcnp_live PRIVATE hublogic hubcommon hubnet user32 ws2_32 winhttp)
 
 # Live launch driver: runs the 3DS / Wii U launch path without the UI (manual tool, not a ctest)
 add_executable(hub_emu_live emu_live.cpp emulators.cpp)
 target_include_directories(hub_emu_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
 target_link_libraries(hub_emu_live PRIVATE hublogic hubcommon hubsaves hubminiz bcrypt winhttp user32 gdi32 xinput setupapi)
+
+# 3DS local wireless over rooms (np_3ds): pure-logic test (no network, no emulator)
+add_executable(hub_np3ds_test test_netplay_3ds.cpp)
+target_link_libraries(hub_np3ds_test PRIVATE hublogic hubcommon)

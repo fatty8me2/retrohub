@@ -83,6 +83,8 @@ bool spec_parse(const std::string& j, Spec* out) {
     return true;
 }
 
+std::string launch_fragment(const Spec& s) { return ",\"np_gc\":" + spec_json(s); }
+
 std::string add_to_launch(const std::string& launch, const Spec& s) {
     size_t e = launch.rfind('}');
     if (e == std::string::npos) return launch;
@@ -184,10 +186,11 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
     KV gen, iface, an;
     if (!p.iso_dir.empty()) { gen.push_back({"ISOPath0", p.iso_dir}); gen.push_back({"ISOPaths", "1"}); }
     iface.push_back({"ConfirmStop", "False"});
+    iface.push_back({"UsePanicHandlers", "False"});
     an.push_back({"Enabled", "False"});
     an.push_back({"PermissionAsked", "True"});
     std::vector<std::pair<std::string, KV>> want = {{"NetPlay", np}, {"General", gen}, {"Interface", iface}, {"Analytics", an}, {"AutoUpdate", KV{{"UpdateTrack", ""}}}};
-    if (p.mute) { want.push_back({"DSP", KV{{"Backend", "No Audio Output"}}}); want[2].second.push_back({"UsePanicHandlers", "False"}); }
+    if (p.mute) { want.push_back({"DSP", KV{{"Backend", "No Audio Output"}}}); }
     return ini_set_all(ini, want);
 }
 
@@ -299,7 +302,7 @@ static bool spawn(const std::wstring& cmd, const std::wstring& cwd, const std::w
 }
 
 bool start(bool host, const std::string& dolphin_exe, const std::string& user_dir, const Spec& s,
-           int my_slot, const std::string& work_dir, const std::string& desktop, Run* out) {
+           int my_slot, const std::string& work_dir, const std::string& desktop, const std::string& extra_args, Run* out) {
     CreateDirectoryA(work_dir.c_str(), nullptr);
     std::string script = work_dir + "\\gc_netplay_driver.ps1";
     { std::ofstream f(script, std::ios::binary); f << driver_script(); }
@@ -311,7 +314,7 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
         CreateDesktopW(wd.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
     }
     std::string exe_dir = dolphin_exe.substr(0, dolphin_exe.find_last_of("\\/"));
-    std::wstring cmd = L"\"" + W(dolphin_exe) + L"\" -u \"" + W(user_dir) + L"\"";
+    std::wstring cmd = L"\"" + W(dolphin_exe) + L"\" -u \"" + W(user_dir) + L"\" " + W(extra_args);
     if (!spawn(cmd, W(exe_dir), wd, desktop.empty(), &out->dolphin_pid)) { out->error = "could not start Dolphin"; return false; }
     std::string args = std::string("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"") + script + "\" -Role " + (host ? "host" : "guest") +
                        " -DolphinPid " + std::to_string(out->dolphin_pid) + " -Status \"" + out->status_path + "\" -Suffix \"" +

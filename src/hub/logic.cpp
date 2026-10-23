@@ -474,13 +474,14 @@ GuestVersionAction guest_version_action(const std::string& my_app, const std::st
 }
 
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save,
-                        const PortPlan* plan, const MatchSpec* match) {
+                        const PortPlan* plan, const MatchSpec* match, const std::string& extra_json) {
     std::string o = "{\"kind\":\"launch\",\"game\":\"" + json_escape(game) + "\",\"launch\":" + std::to_string(launch) +
                     ",\"delay\":" + std::to_string(delay) + ",\"seed\":" + std::to_string(seed);
     if (!core.empty()) o += ",\"core\":\"" + json_escape(core) + "\"";
     o += std::string(",\"share_save\":") + (share_host_save ? "true" : "false");
     if (plan) o += ",\"ports\":[" + plan->ports + "],\"players\":" + std::to_string(plan->players);
     if (match) o += ",\"match\":" + match_json(*match);
+    o += extra_json;
     return o + "}";
 }
 

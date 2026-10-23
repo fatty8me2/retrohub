@@ -63,6 +63,8 @@ int main() {
     CHECK(oh.find("Address = 127.0.0.1") != std::string::npos && oh.find("ConnectPort = 2700") != std::string::npos && oh.find("HostPort = 2700") != std::string::npos);
     CHECK(oh.find("TraversalChoice = direct") != std::string::npos && oh.find("[DSP]") == std::string::npos);
 
+    CHECK(launch_fragment(s).rfind(",\"np_gc\":{", 0) == 0);
+    CHECK(oh.find("UsePanicHandlers = False") != std::string::npos && oh.find("UpdateTrack =") != std::string::npos);
     CHECK(std::string(driver_script()).find("Start NetPlay...") != std::string::npos);
 
     if (!fails) printf("netplay_dolphin tests passed\n");
