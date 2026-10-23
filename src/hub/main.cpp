@@ -58,6 +58,7 @@
 #include "updater.h"
 #include "games.h"
 #include "emulators.h"
+#include "netplay_dolphin.h"
 #include "library.h"
 #include "logic.h"
 #include "savestore.h"
@@ -651,6 +652,10 @@ static void rebuild_vis() {
 /* ---------- online capability ---------- */
 
 static bool supports_online(const hub::GameEntry& e) {
+    if (e.system == hub::System::GC) {   // Dolphin NetPlay (netplay_dolphin.h); only catalog games flagged online
+        const GameInfo* g = hub::find_game(e.catalog_id);
+        return g && g->online;
+    }
     return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB ||
            e.system == hub::System::GBC;
 }
@@ -1066,12 +1071,139 @@ static void play_entry(const hub::GameEntry& e) {
     }
 }
 
+static std::string member_name(int slot);
+static int room_my_slot();
+/* ---------- GameCube online: Dolphin's own NetPlay, started and joined by RetroHub (netplay_dolphin.h) ---------- */
+struct GcOnline {
+    gcnp::Run run;
+    bool active = false, host = false, code_sent = false, guest_wait = false;
+    gcnp::Spec spec;                 // host: what we announce; guest: what the host announced
+    hub::GameEntry entry;
+    int slot = 0;
+    std::string fp_path, fp_sha;     // disc fingerprint (computed once per path on a worker thread)
+    uint64_t fp_size = 0;
+    std::atomic<bool> fp_done{false};
+    std::thread fp_th;
+} GCO;
+
+static bool gc_fingerprint_ready(const std::string& path) {
+    if (GCO.fp_path == path) return GCO.fp_done;
+    if (GCO.fp_th.joinable()) GCO.fp_th.join();
+    GCO.fp_path = path;
+    GCO.fp_done = false;
+    GCO.fp_th = std::thread([path]() {
+        WIN32_FILE_ATTRIBUTE_DATA fad{};
+        GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad);
+        GCO.fp_size = ((uint64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+        GCO.fp_sha = hubemu::sha256_file(path);
+        GCO.fp_done = true;
+    });
+    return false;
+}
+
+static bool gc_process_alive() {
+    if (!GCO.run.dolphin_pid) return false;
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, GCO.run.dolphin_pid);
+    if (!h) return false;
+    bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    CloseHandle(h);
+    return alive;
+}
+
+/* Host: the NetPlay spec for the selected game (false = fingerprint still being computed, try again). */
+static bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
+    std::string path = launch_path_for(e);
+    if (!gc_fingerprint_ready(path)) return false;
+    const GameInfo* g = hub::find_game(e.catalog_id);
+    gcnp::Spec s;
+    s.mode = "traversal";
+    s.game_id = !e.serial.empty() ? e.serial : (g && !g->serials.empty() ? g->serials[0] : "");
+    s.title = e.title;
+    s.sha256 = GCO.fp_sha;
+    s.size = GCO.fp_size;
+    s.players = std::max(2, std::min(4, players));
+    *out = s;
+    return !s.game_id.empty();
+}
+
+static bool gc_begin(const hub::GameEntry& e, bool host, int slot) {
+    if (GCO.active && gc_process_alive()) { set_notice("A GameCube online session is already running."); return false; }
+    hubemu::Install inst = hubemu::find(hubemu::Kind::Dolphin, "", "");
+    if (inst.exe.empty()) { set_notice("Dolphin isn't installed yet - start any GameCube game once so RetroHub can download it."); return false; }
+    std::string game = launch_path_for(e);
+    if (e.issue == "extract" && game.empty()) { set_notice("Unpack " + e.title + " first (press Play once), then join the room again."); return false; }
+    if (hubemu::is_running(inst.exe)) { set_notice("Dolphin is already running. Close it first."); return false; }
+    if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
+    hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
+    hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads());
+    std::string user = inst.dir + "\\User", ini = user + "\\Config\\Dolphin.ini";
+    gcnp::IniParams ip;
+    ip.host = host;
+    ip.nickname = member_name(room_my_slot());
+    ip.iso_dir = dir_of(game);
+    std::string cur;
+    { std::ifstream f(ini, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
+    std::string next = gcnp::ini_patch(cur, GCO.spec, ip);
+    { std::ofstream f(ini, std::ios::binary | std::ios::trunc); f << next; }
+    GCO.run = gcnp::Run();
+    if (!gcnp::start(host, inst.exe, user, GCO.spec, slot, hub::data_dir() + "\\gcnp", "", &GCO.run)) {
+        set_notice("Could not start Dolphin NetPlay: " + GCO.run.error);
+        return false;
+    }
+    GCO.active = true;
+    GCO.host = host;
+    GCO.code_sent = false;
+    GCO.entry = e;
+    GCO.slot = slot;
+    push_toast(host ? "Starting GameCube NetPlay as host..." : "Joining the host's GameCube NetPlay...", ui::GOOD, 6.0);
+    return true;
+}
+
+/* Each frame: the host publishes its Dolphin host code once; guests start when the code and their fingerprint are there. */
+static void gc_tick() {
+    if (!GCO.active) return;
+    if (!gc_process_alive()) {
+        GCO.active = false;
+        GCO.guest_wait = false;
+        return;
+    }
+    if (GCO.host && !GCO.code_sent) {
+        std::string code = gcnp::read_code(GCO.run);
+        if (!code.empty()) {
+            GCO.code_sent = true;
+            A.lobby.send_msg("{\"kind\":\"np_gc_code\",\"code\":\"" + code + "\"}");
+        }
+    }
+}
+
+static void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s) {
+    GCO.spec = s;
+    GCO.entry = e;
+    GCO.guest_wait = true;   // waiting for np_gc_code (or already have it in s)
+    std::string path = launch_path_for(e);
+    if (!gc_fingerprint_ready(path)) return;   // gc_guest_poll finishes the job
+}
+
+static void gc_guest_poll() {
+    if (!GCO.guest_wait || GCO.spec.host_code.empty()) return;
+    std::string path = launch_path_for(GCO.entry);
+    if (!gc_fingerprint_ready(path)) return;
+    GCO.guest_wait = false;
+    gcnp::Match m = gcnp::compare_disc(GCO.spec, GCO.fp_size, GCO.fp_sha);
+    if (m == gcnp::Match::DifferentDisc) push_toast(gcnp::match_text(m), ui::WARN, 15.0, true);
+    gc_begin(GCO.entry, false, room_my_slot());
+}
+
 static std::vector<hubui::MemberPads> member_pads();
 static void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
                           const hubui::MatchSpec* host_match = nullptr) {
     A.st.last_game = room_id(e);
     mark_dirty();
+    if (e.system == hub::System::GC) {   // Dolphin NetPlay: the host starts now; guests start from the launch handler
+        if (is_host) { gcnp::Spec s; if (gc_host_spec(e, (int)A.lobby.members().size(), &s)) { GCO.spec = s; gc_begin(e, true, 0); } }
+        return;
+    }
     RunInfo ri = run_info_for(e, true);
     if (is_native(e)) {
         std::string exe = smash_exe_path();
@@ -1317,6 +1449,9 @@ static void lobby_tick() {
         } else if (kind == "rules") {
             hubui::MatchRules mr;
             if (from == 0 && !is_host() && hubui::parse_rules(j, &mr)) A.rules = mr;
+        } else if (kind == "np_gc_code") {
+            std::string c = j.str("code");
+            if (from == 0 && !is_host() && GCO.guest_wait && gcnp::valid_host_code(c)) GCO.spec.host_code = c;
         } else if (kind == "chat") {
             A.chat.push_back({member_name(from), j.str("text")});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
@@ -1326,6 +1461,12 @@ static void lobby_tick() {
             const hub::GameEntry* g = find_room_entry(j.str("game"));
             if (!g) { set_notice("The host started a game you don't have."); continue; }
             if (A.proc) continue;
+            if (g->system == hub::System::GC) {
+                gcnp::Spec gs;
+                if (!gcnp::spec_parse(gcnp::extract_from_launch(body), &gs)) { set_notice("The host's GameCube launch is invalid - ask them to update RetroHub."); continue; }
+                gc_guest_prepare(*g, gs);
+                continue;
+            }
             const hubui::Json* ss = j.get("share_save");
             launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
                           ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j);   // --match comes from j["match"]
@@ -1333,6 +1474,8 @@ static void lobby_tick() {
 
     }
 
+    gc_tick();
+    gc_guest_poll();
     // Membership changes -> forget departed peers, re-announce ourselves.
     std::vector<int> slots;
     for (auto& m : A.lobby.members()) slots.push_back(m.slot);
@@ -1927,6 +2070,7 @@ static float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at,
     const hub::GameState& gs = gstate(e.key);
     bool gc = e.system == hub::System::GC;
     bool online = supports_online(e) || gc;
+    if (gc && supports_online(e)) gc = false;   // online-capable GameCube games get the normal Play Online button
     float gap = sp(1.5f), play_w = sp(compact ? 15.f : 18.f), on_w = compact ? bh : sp(21.f);
     float total = play_w;
     if (online) total += gap + on_w;
@@ -2434,7 +2578,7 @@ static void draw_details_modal() {
     if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play)) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry(c); }
     ImGui::SetItemDefaultFocus();
     ImGui::SameLine(0, sp(1.5f));
-    if (e.system == hub::System::GC) {
+    if (e.system == hub::System::GC && !supports_online(e)) {
         button("Online soon", ImVec2(0, bh), false, false, ui::Icon::Globe);
     } else if (supports_online(e)) {
         if (button("Play Online", ImVec2(0, bh), false, idle, ui::Icon::Globe)) {
@@ -3073,9 +3217,11 @@ static void page_online_room() {
             hubui::PortPlan plan = hubui::build_ports(member_pads());   // built once; guests use it verbatim
             hubui::MatchSpec spec;   // Randoms are rolled here, once, from the launch seed
             bool with_match = rg->system == hub::System::N64 && match_active();
+            gcnp::Spec gspec; bool gc_ok = true;
+            if (rg->system == hub::System::GC) { gc_ok = gc_host_spec(*rg, (int)peers.size() + 1, &gspec); if (!gc_ok) { push_toast("Checking your game file (a few seconds)... press Launch again.", ui::GOOD, 5.0); --A.launch_counter; } }
             if (with_match) spec = hubui::resolve_match(plan.ports, all_picks(), A.rules, seed, match_remix_roster());
-            A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr));
-            launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
+            if (gc_ok) { std::string lj = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr); if (rg->system == hub::System::GC) lj = gcnp::add_to_launch(lj, gspec); A.lobby.send_msg(lj); }
+            if (gc_ok) launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
         }
         ImGui::SameLine();
         ImGui::TextDisabled("%s", ok ? "Everyone is ready." : why.c_str());
