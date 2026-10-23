@@ -1,7 +1,10 @@
 // Console unit test for findgames.cpp (ranking / collapsing + a bounded scan of a scratch tree). Exit code 0 = all passed.
 #include "findgames.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <thread>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -27,6 +30,20 @@ static void touch(const fs::path& p) {
 }
 
 int main() {
+    {   // a scan still running when the runner goes away is cancelled and joined (no std::terminate)
+        std::atomic<bool> saw_cancel{false};
+        {
+            hub::fg::ScanRunner r;
+            r.start([&] { while (!r.ctl.cancel) std::this_thread::sleep_for(std::chrono::milliseconds(2)); saw_cancel = true; });
+        }
+        CHECK(saw_cancel);
+        hub::fg::ScanRunner r2;
+        r2.stop();   // idle stop is a no-op
+        int n = 0;
+        r2.start([&] { n = 1; });
+        r2.join();
+        CHECK(n == 1);
+    }
     CHECK(classify_ext(".z64") == N64 && classify_ext(".rvz") == GC && classify_ext(".gbc") == GBC && classify_ext(".wua") == WIIU);
     CHECK(classify_ext(".zip") == kArchive && classify_ext(".7z") == kArchive && classify_ext(".txt") == kNone && classify_ext("") == kNone);
     CHECK(norm_path("C:/Users/A/") == "c:\\users\\a" && skip_dir_name("Windows") && skip_dir_name("$RECYCLE.BIN") && !skip_dir_name("Roms"));

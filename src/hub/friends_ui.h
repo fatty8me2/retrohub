@@ -108,7 +108,7 @@ float fr_request_card_h();
 int fr_request_card(const std::string& name, const std::string& code, float w, float frac, bool shadow, const char* decline);
 void fr_accept(const std::string& uid, const std::string& name);
 void fr_join_notif(Notif& n);
-void fr_draw_toasts(float right_x, float top_y);
+void fr_draw_toasts(float right_x, float bottom_y);
 void fr_top_bar();
 void fr_confirm(const char* kind, const hubnet::Friend& f);
 void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w, long long now);

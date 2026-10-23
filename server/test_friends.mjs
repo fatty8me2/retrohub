@@ -112,7 +112,7 @@ async function main() {
   check("bad secret closed 4003", c && c.code === 4003, c);
 
   console.log("errors");
-  A.send({ type: "add_friend", code: "RH-AAAA-AAAA" });
+  A.send({ type: "add_friend", code: "RH-ZZZZ-ZZZZ" });
   const e1 = await A.wait(T("error"));
   check("unknown code", e1 && e1.reason === "unknown-code", e1);
   A.send({ type: "add_friend", code: A.code });

@@ -448,6 +448,22 @@ bool PortAssign::press(const std::string& pad_key, double now) {
 
 void PortAssign::end() { active_ = false; }
 
+void PortAssign::sync(const std::vector<std::string>& present) {
+    std::vector<std::string> kept;
+    for (const std::string& k : keys_) if (std::find(present.begin(), present.end(), k) != present.end()) kept.push_back(k);
+    keys_.swap(kept);
+}
+
+std::vector<std::string> uniquify_keys(std::vector<std::string> keys) {
+    for (size_t i = 0; i < keys.size(); ++i) {
+        int n = 1;
+        std::string base = keys[i];
+        for (size_t j = 0; j < i; ++j) if (keys[j] == base || keys[j].rfind(base + "#dup", 0) == 0) ++n;
+        if (n > 1) keys[i] = base + "#dup" + std::to_string(n);
+    }
+    return keys;
+}
+
 std::vector<std::string> PortAssign::order(const std::vector<std::string>& all_keys) const {
     std::vector<std::string> out = keys_;
     for (const std::string& k : all_keys)
