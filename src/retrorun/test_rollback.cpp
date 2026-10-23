@@ -53,9 +53,10 @@ struct Link {
     int latency = 0, jitter = 0, loss = 0;
     uint32_t rng = 12345;
     uint32_t rnd() { rng = rng * 1664525u + 1013904223u; return rng >> 8; }
+    int extra[2] = {0, 0};
     void send(int dir, const void* d, int n) {
         if ((int)(rnd() % 100) < loss) return;
-        uint32_t at = now + latency + (jitter ? rnd() % (jitter + 1) : 0);
+        uint32_t at = now + latency + extra[dir] + (jitter ? rnd() % (jitter + 1) : 0);
         q[dir].push_back({at, std::vector<uint8_t>((const uint8_t*)d, (const uint8_t*)d + n)});
     }
     bool recv(int dir, std::vector<uint8_t>* out) {
@@ -65,11 +66,15 @@ struct Link {
     }
 };
 
-struct Result { uint64_t x[2], y[2]; uint32_t frame[2]; bool desync[2]; rb::Stats st[2]; };
+struct Result { uint64_t x[2], y[2]; uint32_t frame[2]; bool desync[2]; rb::Stats st[2]; int delay[2]; };
+static bool g_adaptive = false;
+static int g_pred = 8;
+static int g_lat1 = -1;   // >=0: extra one-way latency for peer 1's packets only (asymmetric link)
 
 static Result run(int frames, int latency, int jitter, int loss, int delay, bool nondet, int cpu_skew_pct) {
     Link link;
     link.latency = latency; link.jitter = jitter; link.loss = loss;
+    if (g_lat1 >= 0) link.extra[1] = g_lat1;
     FakeSim sim[2];
     sim[1].nondeterministic = nondet;
     std::unique_ptr<rb::Engine> eng[2];
@@ -77,6 +82,7 @@ static Result run(int frames, int latency, int jitter, int loss, int delay, bool
         rb::Config c;
         c.owner[0] = 0; c.owner[1] = 1; c.owner[2] = c.owner[3] = -1;
         c.my_slot = i; c.slot_mask = 3; c.delay = delay; c.hash_interval = 60;
+        c.max_pred = g_pred; c.adaptive_delay = g_adaptive; c.frame_ms = 16.0;
         rb::Transport t;
         t.pump = [] {};
         t.send = [&link, i](int, const void* d, int n) { link.send(i, d, n); };
@@ -100,7 +106,7 @@ static Result run(int frames, int latency, int jitter, int loss, int delay, bool
     for (int i = 0; i < 2; i++) {
         // let both finish confirming
         eng[i]->service();
-        r.x[i] = sim[i].x; r.y[i] = sim[i].y; r.frame[i] = sim[i].frame; r.desync[i] = eng[i]->desync(); r.st[i] = eng[i]->stats();
+        r.x[i] = sim[i].x; r.y[i] = sim[i].y; r.frame[i] = sim[i].frame; r.desync[i] = eng[i]->desync(); r.st[i] = eng[i]->stats(); r.delay[i] = eng[i]->delay();
     }
     return r;
 }
@@ -166,6 +172,48 @@ int main() {
         rb::Sim sim2 = make_sim(&s2, 0, 5);
         rb::SyncTestResult t2 = rb::run_synctest(sim2, 500, 7, true, [&](int f, uint32_t p[4]) { p[0] = (uint32_t)f; p[1] = p[2] = p[3] = 0; }, nullptr);
         CHECK(t2.mismatches > 0, "synctest should catch nondeterminism");
+    }
+    // 7) adaptive delay + wide window on a 150 ms (one way) lossy link: fewer stalls than the old fixed delay 1 / window 8, never a desync
+    {
+        g_adaptive = false; g_pred = 8;
+        Result a = run(1500, 150, 20, 5, 1, false, 100);
+        report("fixed D=1 pred 8", a, true);
+        g_adaptive = true; g_pred = 14;
+        Result b = run(1500, 150, 20, 5, 1, false, 100);
+        report("adaptive pred 14", b, true);
+        CHECK(b.frame[0] == 1500 && b.frame[1] == 1500, "frames reached");
+        CHECK(b.x[0] == b.x[1] && b.y[0] == b.y[1], "final state differs");
+        CHECK(b.st[0].delay_changes > 0 && b.delay[0] >= 3, "delay should have grown (got %d)", b.delay[0]);
+        CHECK(b.st[0].rtt_ms > 250 && b.st[0].rtt_ms < 420, "rtt estimate off: %.0f", b.st[0].rtt_ms);
+        CHECK(b.st[0].stalled_ms + b.st[1].stalled_ms < a.st[0].stalled_ms + a.st[1].stalled_ms, "adaptive should stall less (%llu vs %llu ms)",
+              (unsigned long long)(b.st[0].stalled_ms + b.st[1].stalled_ms), (unsigned long long)(a.st[0].stalled_ms + a.st[1].stalled_ms));
+    }
+    // 8) a delay that is too high on a LAN shrinks back; both peers stay in sync across the changes
+    {
+        g_adaptive = true; g_pred = 14;
+        Result r = run(900, 10, 0, 0, 4, false, 100);
+        report("adaptive shrink 4->0", r, true);
+        CHECK(r.delay[0] == 0 && r.delay[1] == 0, "delay should shrink to 0 (got %d/%d)", r.delay[0], r.delay[1]);
+        CHECK(r.st[0].delay_changes >= 4, "delay changes");
+        CHECK(r.x[0] == r.x[1] && r.y[0] == r.y[1], "final state differs after delay changes");
+    }
+    // 9) asymmetric link (peer 1's packets take 100 ms longer): peers pick different delays, stay in sync, no desync
+    {
+        g_adaptive = true; g_pred = 14; g_lat1 = 100;
+        Result r = run(1200, 20, 5, 2, 1, false, 100);
+        report("asymmetric +100ms", r, true);
+        CHECK(r.frame[0] == 1200 && r.frame[1] == 1200, "frames reached");
+        CHECK(r.x[0] == r.x[1] && r.y[0] == r.y[1], "final state differs");
+        g_lat1 = -1;
+    }
+    // 10) time sync: a 70% speed peer with the wide window: the fast peer paces itself, rollbacks stay shallow
+    {
+        g_adaptive = true; g_pred = 14;
+        Result r = run(900, 40, 5, 0, 1, false, 70);
+        report("slow peer 70% adaptive", r, true);
+        CHECK(r.st[0].sync_waits > 5, "fast peer should wait gradually");
+        CHECK(r.st[0].max_depth <= 14 && r.st[1].max_depth <= 14, "depth bounded");
+        CHECK(r.x[0] == r.x[1] && r.y[0] == r.y[1], "final state differs");
     }
     printf(g_fail ? "ROLLBACK TEST FAILED (%d)\n" : "ROLLBACK TEST PASSED\n", g_fail);
     return g_fail ? 1 : 0;

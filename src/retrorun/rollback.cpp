@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -36,7 +37,7 @@ static const uint64_t kFnvBasis = 0xCBF29CE484222325ull;
 static const uint64_t kFnvPrime = 0x100000001B3ull;
 
 Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(cfg), sim_(sim), net_(net) {
-    cfg_.max_pred = std::max(1, std::min(10, cfg_.max_pred));
+    cfg_.max_pred = std::max(1, std::min(kMaxPred, cfg_.max_pred));
     cfg_.delay = std::max(0, std::min(4, cfg_.delay));
     ring_n_ = cfg_.max_pred + 4;
     trace_ = std::getenv("RB_TRACE") != nullptr;
@@ -48,6 +49,7 @@ Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(c
     memset(fsum_, 0, sizeof fsum_);
     for (int s = 0; s < 8; s++) {
         peer_cur_[s] = 0; peer_adv_[s] = 0; peer_seen_[s] = false;
+        peer_ts_[s] = 0; peer_ts_at_[s] = 0; rtt_[s] = 0; rttdev_[s] = 0;
         for (int p = 0; p < kPorts; p++) peer_ack_[s][p] = -1;
     }
     roll_out_ = roll_in_ = kFnvBasis;
@@ -56,6 +58,7 @@ Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(c
         if (local(p)) for (int f = 0; f < cfg_.delay; f++) put_local(p, f, 0);
     uint32_t now = net_.now_ms();
     last_progress_ = now;
+    st_.delay_min = st_.delay_max = cfg_.delay;
 }
 
 void Engine::put_local(int p, int64_t f, uint16_t v) {
@@ -180,6 +183,13 @@ void Engine::send_packet(bool force) {
     int nh = (int)std::min<size_t>(4, my_h_.size());
     b.push_back((uint8_t)nh);
     for (int i = 0; i < nh; i++) { const HEnt& e = my_h_[my_h_.size() - nh + i]; w32(b, e.frame); w64(b, e.h); }
+    // RTT probe: our send time, plus the newest timestamp heard from the first active peer and how long we held it (2-player echo; extra peers share it).
+    w32(b, now);
+    uint32_t echo = 0xFFFFFFFFu, hold = 0;
+    for (int s = 0; s < 8; s++)
+        if (active_peer(s) && peer_seen_[s]) { echo = peer_ts_[s]; hold = now - peer_ts_at_[s]; break; }
+    w32(b, echo);
+    w16(b, (uint16_t)std::min<uint32_t>(hold, 65535));
     net_.send(-1, b.data(), (int)b.size());
 }
 
@@ -239,6 +249,52 @@ void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
             compare_hash(slot, r32(d + o), r64(d + o + 4));
             o += 12;
         }
+        if (o + 10 <= n) {
+            uint32_t now = net_.now_ms();
+            peer_ts_[slot] = r32(d + o);
+            peer_ts_at_[slot] = now;
+            note_rtt(slot, r32(d + o + 4), r16(d + o + 8));
+        }
+    }
+}
+
+void Engine::note_rtt(int slot, uint32_t echo, uint32_t hold) {
+    if (echo == 0xFFFFFFFFu) return;
+    uint32_t now = net_.now_ms();
+    int32_t r = (int32_t)(now - echo) - (int32_t)hold;
+    if (r < 0 || r > 5000) return;
+    if (rtt_[slot] <= 0) { rtt_[slot] = r; rttdev_[slot] = r / 4.0; }
+    else {
+        double e = r - rtt_[slot];
+        rtt_[slot] += e / 8.0;
+        rttdev_[slot] += (std::abs(e) - rttdev_[slot]) / 8.0;
+    }
+    double worst = 0;
+    for (int s = 0; s < 8; s++) if (active_peer(s)) worst = std::max(worst, rtt_[s]);
+    st_.rtt_ms = worst;
+}
+
+/* Adaptive input delay. Prediction hides up to pred_budget frames of one-way latency for free (a wrong guess costs a rollback, not input lag);
+ * beyond that the local input delay grows so confirmed inputs still arrive inside the prediction window. The delay is a purely local choice:
+ * every packet names the frames its inputs belong to, so a peer's delay changing never changes what the other peer simulates. Growing the delay repeats the
+ * last pad over the new gap frames, shrinking it drops the pads that would land on frames already scheduled (see run_frame). */
+void Engine::adapt_delay() {
+    double worst = 0;
+    for (int s = 0; s < 8; s++)
+        if (active_peer(s) && rtt_[s] > 0) worst = std::max(worst, rtt_[s] + rttdev_[s]);
+    if (worst <= 0) return;
+    double owd_frames = worst / 2.0 / std::max(1.0, cfg_.frame_ms);
+    int target = (int)std::ceil(owd_frames) - cfg_.pred_budget;
+    target = std::max(0, std::min(std::min(4, cfg_.delay_max), target));
+    int before = cfg_.delay;
+    if (target > cfg_.delay) { cfg_.delay++; adapt_dn_ = 0; }                       // grow fast (one step per evaluation)
+    else if (target < cfg_.delay) { if (++adapt_dn_ >= 4) { cfg_.delay--; adapt_dn_ = 0; } }   // shrink only after it stays low
+    else { adapt_dn_ = 0; return; }
+    if (cfg_.delay != before) {
+        st_.delay_changes++;
+        st_.delay_min = std::min(st_.delay_min, cfg_.delay);
+        st_.delay_max = std::max(st_.delay_max, cfg_.delay);
+        if (net_.log) net_.log("rollback: input delay " + std::to_string(before) + " -> " + std::to_string(cfg_.delay) + " at frame " + std::to_string(cur_) + " (rtt " + std::to_string((int)st_.rtt_ms) + " ms)");
     }
 }
 
@@ -354,13 +410,18 @@ Engine::Status Engine::prepare() {
         have = true;
     }
     if (have) {
-        skew_ema_ = skew_ema_ * 0.9 + best * 0.1;
+        // One EMA step per simulated frame (prepare() runs many times while waiting). skew > 0: we are ahead of the peers.
+        if (skew_cur_ != cur_) { skew_cur_ = cur_; skew_ema_ = skew_ema_ * 0.85 + best * 0.15; }
         st_.max_skew = std::max(st_.max_skew, skew_ema_);
-        if (skew_ema_ > 1.2 && cur_ - last_wait_ >= 10) {
-            last_wait_ = cur_;
-            skew_ema_ -= 1.0;
-            st_.sync_waits++;
-            return Status::SyncWait;
+        // GGPO-style gradual correction: the further ahead, the more often a frame is skipped (every 8 frames at ~1 ahead, every 2 at 4+).
+        if (skew_ema_ > 0.7) {
+            uint32_t gap = (uint32_t)std::max(2.0, std::min(8.0, 8.0 / skew_ema_));
+            if (cur_ - last_wait_ >= gap) {
+                last_wait_ = cur_;
+                skew_ema_ -= 1.0;
+                st_.sync_waits++;
+                return Status::SyncWait;
+            }
         }
     }
     return Status::Ready;
@@ -368,8 +429,17 @@ Engine::Status Engine::prepare() {
 
 void Engine::run_frame() {
     if (sim_.poll_local) sim_.poll_local();
-    for (int p = 0; p < kPorts; p++)
-        if (local(p)) put_local(p, (int64_t)cur_ + cfg_.delay, (uint16_t)sim_.read_local(p));
+    if (cfg_.adaptive_delay && cur_ >= 20 && cur_ % 30 == 0) adapt_delay();
+    const int64_t base = local_newest_;
+    for (int p = 0; p < kPorts; p++) {
+        if (!local(p)) continue;
+        int64_t tf = (int64_t)cur_ + cfg_.delay;
+        uint16_t v = (uint16_t)sim_.read_local(p);
+        if (tf <= base) continue;   // delay shrank: that frame already has its pad
+        uint16_t prev = has(p, base) ? get(p, base) : 0;
+        for (int64_t g = base + 1; g < tf; g++) put_local(p, g, prev);   // delay grew: hold the last pad over the gap
+        put_local(p, tf, v);
+    }
     send_packet(true);
     double t0 = qpc_us();
     sim_.save(ring_state(cur_), state_n_);
