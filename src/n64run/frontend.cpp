@@ -42,6 +42,7 @@
 #include "headless.h"
 #include "local_input.h"
 #include "test_input.h"
+#include "mempak.h"
 #include "match.h"
 #include "lockstep.h"
 #include "runstate.h"
@@ -382,6 +383,8 @@ int main(int argc, char** argv) {
     }
     if (!online) for (int p = 0; p < kPorts; p++) if (args.owner[p] >= 0) args.owner[p] = 0;
     for (int p = 0; p < kPorts; p++) g_run.owner[p] = args.owner[p];
+    g_run.mempak = mempak_enabled(online, args.share_host_save);
+    logf_("n64run", "controller paks: %s", g_run.mempak ? "on (saved as .mpk in the save dir)" : "off (online without shared host saves)");
     logf_("n64run", "ports: %d %d %d %d (my slot %d, %d pad(s))", args.owner[0], args.owner[1], args.owner[2], args.owner[3], my_slot, input.pad_count());
 
     // ---- directories
