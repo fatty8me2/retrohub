@@ -84,7 +84,7 @@ struct Peer {
 };
 
 static void run_sim(const char* name, int npeers, const int owner[kPorts], int delay, double loss, double dup, int max_delay,
-                    uint32_t samples, bool corrupt_hash, uint32_t seed) {
+                    uint32_t samples, bool corrupt_hash, uint32_t seed, const std::vector<std::pair<uint32_t, int>>* orders = nullptr) {
     Net net(seed, loss, dup, max_delay);
     std::vector<Peer> peers(npeers);
     for (int i = 0; i < npeers; i++) {
@@ -135,6 +135,7 @@ static void run_sim(const char* name, int npeers, const int owner[kPorts], int d
                     if (corrupt_hash && i == (g_mask ? 2 : 1) && pe.n == 1200) h ^= 1;
                     pe.core->add_local_hash(pe.n, h);
                 }
+                if (orders && i == 0) for (auto& o : *orders) if (o.first == pe.n) pe.core->order_delay(o.second);
                 pe.core->schedule_local(pe.n, btn);
                 pe.scheduled = true;
                 pe.core->set_progress(pe.n);
@@ -166,9 +167,23 @@ static void run_sim(const char* name, int npeers, const int owner[kPorts], int d
         if (owner[p] < 0) continue;
         for (uint32_t s = 0; s < samples; s++) {
             uint32_t expect = s < (uint32_t)delay ? 0u : local_input(p, s - delay);
+            int ref = -1;
             for (int i = 0; i < npeers; i++) {
                 if (!active(i) || s >= peers[i].seen[p].size()) continue;
                 compared++;
+                if (orders) {   // adaptive delay: all PCs must agree, and the value must be a recent input of the owner (hold/skip semantics)
+                    if (ref < 0) {
+                        ref = i;
+                        bool okv = s < (uint32_t)delay;
+                        if (s < (uint32_t)delay) okv = peers[i].seen[p][s] == 0u;
+                        else for (uint32_t k = (s >= (uint32_t)kMaxDelay ? s - kMaxDelay : 0); k <= s && !okv; k++) okv = peers[i].seen[p][s] == local_input(p, k);
+                        if (!okv) { CHECK(false, "%s: port %d sample %u value is not a recent input of its owner", name, p, s); goto next_port; }
+                    } else if (peers[i].seen[p][s] != peers[ref].seen[p][s]) {
+                        CHECK(false, "%s: peers %d and %d disagree on port %d sample %u", name, ref, i, p, s);
+                        goto next_port;
+                    }
+                    continue;
+                }
                 if (peers[i].seen[p][s] != expect) {
                     CHECK(false, "%s: peer %d port %d sample %u got %08x want %08x", name, i, p, s, peers[i].seen[p][s], expect);
                     goto next_port;
@@ -215,6 +230,58 @@ static void test_auto_delay_and_masks() {
     CHECK(derive_slot_mask(d, 0, 2, &err) == 0, "port owner 5 rejected");
 }
 
+static void test_delay_adapter() {
+    // Single stall is ignored; a second one within 3 s raises; quiet 12 s lowers one step toward the floor.
+    DelayAdapter a(2);
+    uint32_t t = 1000;
+    for (int i = 0; i < 100; i++) { a.on_poll(t, 0); t += 16; }
+    CHECK(a.want(3, t) == 3, "no stalls keeps D");
+    a.on_poll(t, 40); t += 16;
+    CHECK(a.want(3, t) == 3, "single stall ignored");
+    for (int i = 0; i < 10; i++) { a.on_poll(t, 0); t += 16; }
+    a.on_poll(t, 33); t += 16;
+    int w = a.want(3, t);
+    CHECK(w >= 4 && w <= 6, "two stalls raise (got %d)", w);
+    CHECK(a.want(3, t + 100) == w, "raise request persists until it took effect");
+    CHECK(a.want(w, t + 100) == w, "no change once in effect");
+    int wants[4] = {2, 5, 3, 2};
+    DelayAdapter h(2);
+    CHECK(h.decide(3, wants, 0xF, 10000) == 5, "host orders the largest ask");
+    int w2[4] = {2, 2, 2, 2};
+    CHECK(h.decide(5, w2, 0xF, 10100) == 5, "host rate-limits changes");
+    CHECK(h.decide(5, w2, 0xF, 20000) == 4, "everybody wants lower: one step down");
+    int w3[4] = {4, 2, 2, 4};
+    CHECK(h.decide(4, w3, 0xF, 40000) == 4, "one holdout keeps D");
+    CHECK(h.decide(2, w2, 0xF, 60000) == 2, "never below floor");
+    DelayAdapter q(2);
+    t = 1000;
+    for (int i = 0; i < 800; i++) { q.on_poll(t, 0); t += 16; }   // ~12.8 s quiet
+    CHECK(q.want(5, t) == 4, "quiet lowers one step");
+    std::printf("delay adapter tests done\n");
+}
+
+static void test_bye() {
+    // A peer that said bye no longer gates progress.
+    LockstepCore::Config c0, c1;
+    for (int i = 0; i < kPorts; i++) c0.owner[i] = c1.owner[i] = i < 2 ? i : -1;
+    c0.my_slot = 0; c1.my_slot = 1; c0.num_slots = c1.num_slots = 2; c0.delay = c1.delay = 2;
+    LockstepCore a(c0), b(c1);
+    uint32_t btn[kPorts] = {7, 9, 0, 0};
+    uint8_t buf[1100];
+    for (uint32_t n = 0; n < 50; n++) {
+        a.schedule_local(n, btn); b.schedule_local(n, btn);
+        a.set_progress(n); b.set_progress(n);
+        size_t l = b.build_packet(buf, sizeof buf); a.on_packet(1, buf, l);
+        l = a.build_packet(buf, sizeof buf); b.on_packet(0, buf, l);
+    }
+    CHECK(a.ready(40), "ready while peer alive");
+    CHECK(!a.ready(200), "not ready beyond peer data");
+    // a spectator-like gate: after bye the progress gate is gone, but missing data still blocks
+    a.peer_left(1);
+    CHECK(!a.ready(200), "missing data of a left peer still blocks");
+    std::printf("bye tests done\n");
+}
+
 int main() {
     test_buttons();
     test_auto_delay_and_masks();
@@ -254,6 +321,14 @@ int main() {
     g_mask = 0x9u;
     run_sim("sparse {0,3}, lead on 0", 4, sp03, 3, 0.20, 0.05, 6, N, false, 23);
     g_mask = 0;
+    {   // adaptive delay: the host orders D changes mid-run (up, down, up by a lot) over a lossy reordering net
+        std::vector<std::pair<uint32_t, int>> ord = {{500, 6}, {1500, 3}, {2500, 14}, {4000, 2}, {6000, 20}, {7000, 1}};
+        run_sim("2 peers, D changes", 2, own2, 2, 0.20, 0.05, 6, N, false, 30, &ord);
+        run_sim("4 peers, D changes", 4, own4, 3, 0.15, 0.05, 6, N, false, 31, &ord);
+        run_sim("4 peers, D changes, heavy loss", 4, own4, 3, 0.40, 0.10, 8, N, false, 32, &ord);
+    }
+    test_delay_adapter();
+    test_bye();
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL PASSED\n", g_fail);
     return g_fail ? 1 : 0;
 }
