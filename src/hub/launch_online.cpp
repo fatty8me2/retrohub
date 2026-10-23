@@ -76,7 +76,7 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     if (hubemu::is_running(inst.exe)) { set_notice("Dolphin is already running. Close it first."); return false; }
     if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
     hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
-    hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads());   // managed config: no update check, no analytics, no panic alerts
+    hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads(), controls_profile("gc", e.key));   // managed config: no update check, no analytics, no panic alerts
     std::string user = inst.dir + "\\User", ini = user + "\\Config\\Dolphin.ini";
     gcnp::Spec sp = GCO.spec;
     sp.mode = "direct";
@@ -275,7 +275,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
                       std::to_string(A.lobby.my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
                       plan.ports + hubui::delay_arg(delay);
     if (e.system == hub::System::N64) {
-        std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title);
+        std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
         if (A.st.fullscreen) args += " --fullscreen";
         args += match_args;
         if (share_save) {   // every PC must agree; only the host (slot 0) supplies its battery dir
@@ -314,7 +314,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         make_dirs(tmp);
         ri.online = false;   // the vault save is used and written back: track/sync it like an offline session
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --link --save-dir " + quote(battery) +
-                           " --state-dir " + quote(tmp) + lnet + title_arg(e.title) + save_stem_arg(e);
+                           " --state-dir " + quote(tmp) + lnet + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
         if (A.st.fullscreen) args += " --fullscreen";
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
@@ -328,7 +328,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         remove_tree(tmp);
         make_dirs(tmp);
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
-                           " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e);
+                           " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
         if (A.st.fullscreen) args += " --fullscreen";
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;

@@ -40,6 +40,7 @@
 #include "update_apply.h"
 #include "games.h"
 #include "emulators.h"
+#include "controls.h"
 #include "netplay_dolphin.h"
 #include "library.h"
 #include "logic.h"
@@ -542,6 +543,9 @@ void refresh_pads();
 void stick(ImDrawList* dl, ImVec2 c, float r, float x, float y, const char* label);
 void btn_dot(ImDrawList* dl, ImVec2 c, float r, bool on, const char* label);
 void page_controllers();
+void open_controls_for(const hub::GameEntry& e);
+std::string controls_arg(const std::string& system_key, const std::string& game_key);
+hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key);
 
 
 /* ---- page_saves.cpp ---- */
