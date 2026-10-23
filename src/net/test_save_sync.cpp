@@ -64,6 +64,8 @@ static void test_names_and_limits() {
     CHECK(!valid_save_name("../x.eep"), "path traversal rejected");
     CHECK(!valid_save_name("a\\b.eep"), "backslash rejected");
     CHECK(!valid_save_name("notes.txt"), "non-battery ext rejected");
+    CHECK(valid_save_name("game.srm") && valid_save_name("Pokemon Gold.SAV") && valid_save_name("game.rtc"), "GB/GBA save + clock names valid");
+    CHECK(!valid_save_name("game.srm.bak") && !valid_save_name("game.state"), "backup / state files not shared");
     CHECK(!valid_save_name(std::string(70, 'a') + ".eep"), "long name rejected");
 
     fs::path d = temp_root() / "vault";
