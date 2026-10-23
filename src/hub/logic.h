@@ -317,6 +317,17 @@ inline bool lobby_joinable(int players, int max_players, bool launched) { return
 inline bool friend_can_join(const FriendRow& r) { return (r.state == FS_InLobby || r.state == FS_InGame) && r.joinable; }
 /* Toast shown when a join is clicked while our own game is running (performed when the game closes). */
 std::string queued_join_text(const std::string& friend_name);
+/* Join click while our own game runs: queue it, or drop it when we are already in that room. */
+enum class JoinWhileRunning { Queue, AlreadyInRoom };
+inline JoinWhileRunning join_while_running(bool same_room) { return same_room ? JoinWhileRunning::AlreadyInRoom : JoinWhileRunning::Queue; }
+/* A queued join runs once our game has closed. */
+inline bool pending_join_ready(bool has_pending, bool game_running) { return has_pending && !game_running; }
+/* After a game closes: play time goes to the vault only for tracked, offline launches of a known system. */
+inline bool exit_should_touch_game(bool has_key, bool track, bool online, const std::string& system_short) {
+    return has_key && track && !online && !system_short.empty();
+}
+/* After a game closes: auto sync runs when a sync target exists and auto-sync is on. */
+inline bool auto_sync_should_run(bool sync_target, bool sync_auto) { return sync_target && sync_auto; }
 
 /* ---- Smash Classic (native BattleShip.exe) launch plumbing ---- */
 /* Vault identity of the native port's save: system "n64", game key "native:smash64" (stable; shared by every PC). */
@@ -326,6 +337,8 @@ inline const char* kSmashSaveKey = "native:smash64";
 std::string smash_save_file(const std::string& battery_dir);
 /* One-time migration: copy <BattleShip dir>\ssb64_save.bin into the vault only when the vault has none yet. */
 inline bool smash_should_migrate_save(bool vault_file_exists, bool legacy_file_exists) { return !vault_file_exists && legacy_file_exists; }
+/* Runs the one-time copy (CopyFileW, fail-if-exists) when the rule above says so. Never deletes the legacy file. Returns true when it copied. */
+bool smash_migrate_legacy_save(const std::string& legacy_path, const std::string& save_path);
 /* Both saves exist and their bytes differ: the vault copy wins, the legacy file is left alone (shown once). */
 inline bool smash_save_conflict(bool vault_file_exists, bool legacy_file_exists, const std::string& vault_bytes, const std::string& legacy_bytes) {
     return vault_file_exists && legacy_file_exists && vault_bytes != legacy_bytes;
