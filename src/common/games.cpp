@@ -507,25 +507,26 @@ const std::vector<GameInfo>& catalog() {
         /* ---- Game Boy / Game Boy Color (Libretro). Serials are what library.cpp reads from the
          *      header: the manufacturer code (0x13F-0x142) on CGB carts that have one, otherwise
          *      the header title (CGB titles are 11 chars, DMG 16). Link-cable play is not
-         *      networked, so online=false. ---- */
+         *      networked in-core: online=true means retrorun --link (both consoles in one SameBoy
+         *      simulation, see docs/RETRORUN.md). ---- */
         {"pokered", "Pokemon Red", Engine::Libretro, 2, {}, "", "gb",
-         {"POKEMON RED"}, false, 1998,
+         {"POKEMON RED"}, true, 1998,
          "Explore Kanto, catch Pokemon, and trade or battle over a link cable.",
          "Pokemon - Red Version (USA, Europe) (SGB Enhanced)"},
         {"pokeyellow", "Pokemon Yellow", Engine::Libretro, 2, {}, "", "gbc",
-         {"POKEMON YEL"}, false, 1999,
+         {"POKEMON YEL"}, true, 1999,
          "Follow Pikachu through Kanto as your partner, with the link cable for trades and battles.",
          "Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced)"},
         {"pokegold", "Pokemon Gold", Engine::Libretro, 2, {}, "", "gbc",
-         {"AAUE", "POKEMON_GLD"}, false, 2000,
+         {"AAUE", "POKEMON_GLD"}, true, 2000,
          "Catch Pokemon in Johto and Kanto, with day and night, held items and link-cable trades.",
          "Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible)"},
         {"pokesilver", "Pokemon Silver", Engine::Libretro, 2, {}, "", "gbc",
-         {"AAXE", "POKEMON_SLV"}, false, 2000,
+         {"AAXE", "POKEMON_SLV"}, true, 2000,
          "The Silver version of Johto and Kanto, with its own version-exclusive Pokemon.",
          "Pokemon - Silver Version (USA, Europe) (SGB Enhanced) (GB Compatible)"},
         {"pokecrystal", "Pokemon Crystal", Engine::Libretro, 2, {}, "", "gbc",
-         {"BYTE", "PM_CRYSTAL"}, false, 2001,
+         {"BYTE", "PM_CRYSTAL"}, true, 2001,
          "Play as a girl or boy in Johto, with a roaming Raikou, Entei and Suicune and a day-night clock.",
          "Pokemon - Crystal Version (USA)"},
 
@@ -578,6 +579,12 @@ const GameInfo* find_game(const std::string& id) {
         if (g.id == id) return &g;
     }
     return nullptr;
+}
+
+bool link_cable_game(const std::string& id) {
+    static const char* ids[] = {"pokered", "pokeyellow", "pokegold", "pokesilver", "pokecrystal"};
+    for (const char* x : ids) if (id == x) return true;
+    return false;
 }
 
 int online_max_for(const GameInfo& g) {

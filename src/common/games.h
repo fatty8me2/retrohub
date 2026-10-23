@@ -38,6 +38,8 @@ struct GameInfo {
 
 /* Online player cap: online_max when set, else max_players. Use this for every online limit (rooms, launch, presence). */
 int online_max_for(const GameInfo& g);
+/* Game Boy / Color games whose online mode is the two-console link cable (retrorun --link; launch spec key "np_link"). */
+bool link_cable_game(const std::string& id);
 
 /* Allowed GameInfo::genre values, (catalog metadata). */
 const std::vector<std::string>& genres();
