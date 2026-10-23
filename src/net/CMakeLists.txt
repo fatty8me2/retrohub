@@ -8,7 +8,7 @@ add_library(hubnet STATIC
     identity_link.cpp
     session.cpp)
 target_include_directories(hubnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hubnet PUBLIC ws2_32 winhttp bcrypt crypt32)
+target_link_libraries(hubnet PUBLIC hubbase ws2_32 winhttp bcrypt crypt32)
 
 add_executable(hublink_test test_link.cpp)
 target_link_libraries(hublink_test PRIVATE hubnet)
