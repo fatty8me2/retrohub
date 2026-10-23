@@ -272,6 +272,7 @@ void page_online_room() {
             }
             if ((rg->system == hub::System::GB || rg->system == hub::System::GBC) && hub::link_cable_game(rg->catalog_id))
                 np_extra += ",\"np_link\":{\"core\":\"sameboy\",\"consoles\":2}";
+            np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
             if (gc_ok) {
                 A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra));
                 launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);

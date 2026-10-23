@@ -188,11 +188,14 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     } else if (inst.managed) {
         hubemu::prepare_cemu_managed(inst.dir);
     }
+    hub::gs::Values gsv = gs_values_for(e);
+    hubemu::apply_game_settings(kind, inst.dir, gsv);
+    bool fs = hub::gs::is_fullscreen(gsv);
     std::string game = launch_path_for(e);
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
-    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, A.st.fullscreen, mp_arg)
-                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, A.st.fullscreen, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
-                                                       : hubemu::cemu_args(game, A.st.fullscreen);
+    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
+                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
+                                                       : hubemu::cemu_args(game, fs);
     if (e.issue == "encrypted") set_notice("This 3DS image is encrypted: Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder).", 12.0);
     if (e.issue == "keys") set_notice("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua needs no keys.", 12.0);
     RunInfo r = ri;
@@ -245,7 +248,7 @@ void play_entry(const hub::GameEntry& e) {
         case hub::System::N64: {
             std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) +
                                " --save-dir " + quote(battery) + title_arg(e.title);
-            if (A.st.fullscreen) args += " --fullscreen";
+            args += hubui::n64_extra_args(gs_values_for(e));
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
                 std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
                 if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
@@ -260,7 +263,7 @@ void play_entry(const hub::GameEntry& e) {
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
                                " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e);
-            if (A.st.fullscreen) args += " --fullscreen";
+            args += hubui::retro_extra_args(e.system, gs_values_for(e));
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }
@@ -269,7 +272,7 @@ void play_entry(const hub::GameEntry& e) {
             if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
                                " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e);
-            if (A.st.fullscreen) args += " --fullscreen";
+            args += hubui::retro_extra_args(e.system, gs_values_for(e));
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }
