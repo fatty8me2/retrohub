@@ -2,6 +2,7 @@
  * mappings (n64run local_input, retrorun pad_mask), plus storage, ordering and expression parsing. The emulator-config
  * equivalence (Dolphin/Azahar/Cemu) lives in hub_emu_test next to the generators. */
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -271,7 +272,67 @@ static void test_page_flows() {
     CHECK(hubctl::mapping_hash(hubctl::resolve(u, "n64")) != hubctl::mapping_hash(hubctl::default_profile("n64")));
 }
 
+/* ---- keyboard pad, rumble, sensitivity: defaults reproduce the old fixed keyboard maps ---- */
+static void test_keyboard() {
+    using namespace n64run;
+    uint8_t k[hubctl::kKeyStateSize];
+    auto press = [&](const char* name) { std::memset(k, 0, sizeof k); k[hubctl::key_code(name)] = 1; };
+    hubctl::Profile n = hubctl::default_profile("n64");
+    hubctl::KeyMapper km(n);
+    auto dn = [&](const char* c) { return km.down(km.id(c), k); };
+    /* the old local_input.cpp table (SDL scancodes: X=27 C=6 Z=29 RETURN=40 A=4 S=22 I=12 J=13 K=14 L=15 T=23 F=9 G=10 H=11) */
+    struct { const char* key; int sc; const char* ctl; } old[] = {
+        {"x", 27, "a"}, {"c", 6, "b"}, {"z", 29, "z"}, {"return", 40, "start"}, {"a", 4, "l"}, {"s", 22, "r"}, {"i", 12, "c_up"},
+        {"j", 13, "c_left"}, {"k", 14, "c_down"}, {"l", 15, "c_right"}, {"t", 23, "dpad_up"}, {"f", 9, "dpad_left"}, {"g", 10, "dpad_down"},
+        {"h", 11, "dpad_right"}, {"up", 82, "stick_up"}, {"down", 81, "stick_down"}, {"left", 80, "stick_left"}, {"right", 79, "stick_right"}};
+    for (auto& o : old) { CHECK(hubctl::key_code(o.key) == o.sc); press(o.key); CHECK(dn(o.ctl)); CHECK(!dn(o.ctl[0] == 'a' ? "b" : "a")); }
+    /* retro: old kbd_mask (arrows, Z=B X=A A=Y S=X Q=L W=R Enter/KP_Enter=Start RShift=Select) */
+    hubctl::Profile r = hubctl::default_profile("retro");
+    retrorun::RetroPad rp(r);
+    auto m = [&](const char* name) { press(name); return rp.key_mask(k); };
+    CHECK(m("z") == 1u << RETRO_DEVICE_ID_JOYPAD_B && m("x") == 1u << RETRO_DEVICE_ID_JOYPAD_A && m("a") == 1u << RETRO_DEVICE_ID_JOYPAD_Y);
+    CHECK(m("s") == 1u << RETRO_DEVICE_ID_JOYPAD_X && m("q") == 1u << RETRO_DEVICE_ID_JOYPAD_L && m("w") == 1u << RETRO_DEVICE_ID_JOYPAD_R);
+    CHECK(m("return") == 1u << RETRO_DEVICE_ID_JOYPAD_START && m("kp_enter") == 1u << RETRO_DEVICE_ID_JOYPAD_START);
+    CHECK(m("rshift") == 1u << RETRO_DEVICE_ID_JOYPAD_SELECT && m("up") == 1u << RETRO_DEVICE_ID_JOYPAD_UP);
+    /* Defaults: hash unchanged by the new fields; remaps and rumble change it and survive JSON */
+    hubctl::Store s;
+    CHECK(hubctl::mapping_hash(hubctl::resolve(s, "n64")) == hubctl::mapping_hash(n));
+    CHECK(hubctl::set_key(s, "n64", "", "a", "space|x"));
+    CHECK(!hubctl::set_key(s, "n64", "", "a", "nokey") && !hubctl::set_key(s, "n64", "", "bogus", "x") && !hubctl::set_key(s, "3ds", "", "a", "x"));
+    CHECK(hubctl::mapping_hash(hubctl::resolve(s, "n64")) != hubctl::mapping_hash(n));
+    hubctl::Store t;
+    CHECK(hubctl::from_json(hubctl::to_json(s), &t));
+    CHECK(hubctl::resolve(t, "n64").keys["a"] == "space|x");
+    hubctl::KeyMapper k2(hubctl::resolve(t, "n64"));
+    press("space");
+    CHECK(k2.down(k2.id("a"), k) && !km.down(km.id("a"), k));
+    CHECK(hubctl::describe_keys("space|return") == "Space / Enter" && hubctl::describe_keys("zz") == "Unbound");
+    CHECK(hubctl::has_keyboard("n64") && hubctl::has_keyboard("gc") && hubctl::has_keyboard("retro") && !hubctl::has_keyboard("3ds") && !hubctl::has_keyboard("wiiu"));
+    for (auto& kv : hubctl::default_profile("retro").keys) { bool f = false; for (auto& c : hubctl::key_controls_for("retro")) f |= c.name == kv.first; CHECK(f); }
+    CHECK(hubctl::set_key(s, "retro", "", "l2", "e"));   // controls without a default key can be bound too, and survive JSON
+    hubctl::Store s2;
+    CHECK(hubctl::from_json(hubctl::to_json(s), &s2) && hubctl::resolve(s2, "retro").keys["l2"] == "e");
+    /* rumble: n64 only, per game, default off, hash-neutral until on */
+    hubctl::Store u;
+    CHECK(!hubctl::resolve(u, "n64", "g1").rumble);
+    CHECK(hubctl::set_rumble(u, "n64", "g1", true) && hubctl::resolve(u, "n64", "g1").rumble && !hubctl::resolve(u, "n64").rumble);
+    CHECK(!hubctl::set_rumble(u, "gc", "", true));
+    CHECK(hubctl::mapping_hash(hubctl::resolve(u, "n64", "g1")) != hubctl::mapping_hash(n));
+    hubctl::Store v;
+    CHECK(hubctl::from_json(hubctl::to_json(u), &v) && hubctl::resolve(v, "n64", "g1").rumble);
+    hubctl::Profile pf;
+    CHECK(hubctl::profile_from_json(hubctl::profile_to_json(hubctl::resolve(u, "n64", "g1")), &pf) && pf.rumble);
+    /* sensitivity scales the n64 stick (the only analog consumer inside RetroHub's runners) */
+    hubctl::Profile hot = n;
+    hot.analogs["stick"].sensitivity = 0.5;
+    hubctl::PadState ps;
+    ps.a[0] = 32767;
+    CHECK(((PadMap(n).word(ps) >> 16) & 0xFF) != 0 || (PadMap(n).word(ps) & 0xFF) != 0);
+    CHECK(PadMap(hot).word(ps) != PadMap(n).word(ps));
+}
+
 int main() {
+    test_keyboard();
     test_describe();
     test_page_flows();
     test_defaults_equal_legacy();

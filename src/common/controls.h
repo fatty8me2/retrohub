@@ -53,6 +53,8 @@ struct Profile {
     std::map<std::string, std::string> buttons;   // control -> expr
     std::map<std::string, Analog> analogs;
     int axis_threshold = kDefaultAxisThreshold;
+    std::map<std::string, std::string> keys;      // keyboard "pad": control -> key expr ("x|space"), see key_controls_for()
+    bool rumble = false;                          // n64 only: attach a Rumble Pak instead of a Controller Pak (offline)
     std::vector<std::string> port_order;          // filled by resolve(): pad keys, first = port 1
     /* Equality ignores name and port_order (what the emulator configs are generated from). */
     bool same_mapping(const Profile& o) const;
@@ -61,6 +63,33 @@ struct Profile {
 Profile default_profile(const std::string& system);   // name "default-<system>"
 uint64_t mapping_hash(const Profile& p);               // FNV-1a over the canonical mapping (not name / port_order)
 std::string hash_hex(uint64_t h);
+
+/* ---- keyboard "pad" ----
+ * The keyboard is a pad of its own: Profile::keys maps the same control names (plus n64 stick_up/down/left/right) to key
+ * expressions, `key ('|' key)*`, key = a-z 0-9 up down left right return kp_enter space tab backspace lshift rshift lctrl
+ * rctrl lalt ralt f1..f12 kp0..kp9 comma period slash semicolon quote lbracket rbracket minus equals backslash grave
+ * insert delete home end pageup pagedown. It drives port 1 (n64run, retrorun) and Dolphin's GCPad1. Systems without a
+ * keyboard pad (wiiu, 3ds: Cemu / Azahar take one source per control) have no key controls. The defaults are the old
+ * fixed bindings. Key codes are SDL scancodes, so the runners index SDL_GetKeyboardState with them directly. */
+const std::vector<ControlInfo>& key_controls_for(const std::string& system);   // empty = no keyboard pad
+bool has_keyboard(const std::string& system);
+int key_code(const std::string& name);                 // SDL scancode, -1 if unknown
+const char* key_name(int code);                        // "" if unknown
+std::string key_label(int code);                       // "Enter", "Left arrow", "X"
+bool parse_keys(const std::string& expr, std::vector<int>* codes);
+bool valid_keys(const std::string& expr);
+std::string describe_keys(const std::string& expr);    // "X / Enter", "Unbound"
+
+constexpr int kKeyStateSize = 512;
+class KeyMapper {
+  public:
+    explicit KeyMapper(const Profile& p);
+    int id(const std::string& control) const;                  // -1 if not bound / not a key control
+    bool down(int id, const uint8_t* state) const;             // state = SDL_GetKeyboardState (kKeyStateSize entries)
+  private:
+    std::vector<std::vector<int>> codes_;
+    std::map<std::string, int> ids_;
+};
 
 /* ---- source expressions ---- */
 struct Term {
@@ -118,6 +147,9 @@ bool set_mapping(Store& s, const std::string& system, const std::string& game_id
                  const std::string& expr, std::string* err = nullptr);
 bool set_analog(Store& s, const std::string& system, const std::string& game_id, const std::string& control,
                 double deadzone, double sensitivity, std::string* err = nullptr);
+bool set_key(Store& s, const std::string& system, const std::string& game_id, const std::string& control,
+             const std::string& keys, std::string* err = nullptr);
+bool set_rumble(Store& s, const std::string& system, const std::string& game_id, bool on, std::string* err = nullptr);   // n64 only
 void reset(Store& s, const std::string& system, const std::string& game_id = "");   // back to the built-in default / the system default
 void set_port_order(Store& s, const std::vector<std::string>& pad_keys);
 
