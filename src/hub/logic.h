@@ -343,6 +343,20 @@ std::string find_smash_rom(const std::vector<RomRef>& lib);
 /* Environment for every Smash launch: SSB64_BASEROM (when a ROM is known) and SSB64_SAVE_PATH. */
 std::vector<std::pair<std::string, std::string>> smash_launch_env(const std::string& rom_path, const std::string& save_file);
 
+/* ROM identity: BattleShip's supported dump is NTSC-U v1.0 (game code NALE), MD5 f7c52568a31aadf26e14dc2b6416b2ed. */
+inline const char* kSmashUsaMd5 = "f7c52568a31aadf26e14dc2b6416b2ed";
+/* True when `md5_hex` (any case) is the supported USA 1.0 dump. An empty hash (unreadable file) is not supported. */
+bool smash_md5_supported(const std::string& md5_hex);
+/* What Play does for the native Smash entry. NeedRom: no ROM in the library and no BattleShip.o2r yet, so nothing launches.
+ * WarnMd5: the ROM is not the supported dump, so warn, then launch anyway. Launch: go. */
+enum class SmashPlay { Launch, WarnMd5, NeedRom };
+SmashPlay smash_play_decision(bool o2r_exists, bool rom_found, const std::string& rom_md5_hex);
+/* The "Preparing" toast: BattleShip extracts BattleShip.o2r on its first run, so show it while the process runs and the .o2r is still missing. */
+inline bool smash_prep_visible(bool proc_running, bool o2r_exists) { return proc_running && !o2r_exists; }
+inline const char* smash_prep_text() { return "Preparing Smash Classic (one-time setup)..."; }
+inline const char* smash_need_rom_text() { return "Add your Super Smash Bros. (USA) ROM to a game folder, then press Rescan."; }
+std::string smash_md5_warn_text(const std::string& md5_hex);
+
 /* ---- lobby host migration ----
  * When the host leaves, the server renumbers the lowest remaining member (`from`) to slot 0 and sends
  * host_changed{from_slot}. Per-slot room state keyed by the old slot moves to the new key; whatever was
