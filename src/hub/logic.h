@@ -106,7 +106,7 @@ struct PortPlan;
 struct MatchSpec;
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed,
                         const std::string& core = "", bool share_host_save = false, const PortPlan* plan = nullptr,
-                        const MatchSpec* match = nullptr);
+                        const MatchSpec* match = nullptr, const std::string& extra_json = "");   // extra_json: ",\"np_x\":{...}" fragment
 /* " --delay auto" / " --delay N" (leading space). */
 std::string delay_arg(int delay);
 
