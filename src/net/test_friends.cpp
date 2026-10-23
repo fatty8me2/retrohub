@@ -149,9 +149,18 @@ static std::unique_ptr<Peer> make_peer(const std::string& root, const std::strin
     return p;
 }
 
+// Server for the online test: argv[1] > RETROHUB_TEST_SERVER (read at run time) > production default.
+// Usage: RETROHUB_TEST_SERVER=ws://localhost:8761 ctest --test-dir build -C Release -R hubfriends_test
+static std::string test_server(int argc, char** argv)
+{
+    if (argc > 1) return argv[1];
+    const char* env = getenv("RETROHUB_TEST_SERVER");
+    return (env && *env) ? std::string(env) : std::string(hubnet::default_server());
+}
+
 int main(int argc, char** argv)
 {
-    std::string server = argc > 1 ? argv[1] : "ws://127.0.0.1:8799";
+    std::string server = test_server(argc, argv);
     std::string root = (fs::temp_directory_path() / ("hubfriends_" + std::to_string(now_ms()))).string() + "\\";
     fs::create_directories(root);
 
