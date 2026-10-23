@@ -821,6 +821,7 @@ uint64_t Frontend::state_hash() {
     if (!n) return 0;
     std::vector<uint8_t> buf(n);
     if (!core.serialize(buf.data(), n)) return 0;
+    if (const char* dp = std::getenv("RB_DUMPSTATE")) { FILE* f = fopen(dp, "wb"); if (f) { fwrite(buf.data(), 1, buf.size(), f); fclose(f); } }   // QA: last hashed state
     return n64run::hash_block(buf.data(), buf.size());
 }
 
@@ -1363,8 +1364,9 @@ int Frontend::run(const Args& args) {
         bool safe = false;
         std::string why;
         if (ln.find("mgba link") != std::string::npos) safe = true;
+        else if (ln.find("sameboy (rollback)") != std::string::npos) safe = true;   // src/sameboy_rb: joypad-bounce + RNG patched, SyncTest exact
         else if (ln.find("sameboy") != std::string::npos)
-            why = "SameBoy: rollback desyncs under deep re-simulation (CGB states inexact, DMG failed a bad-network run)";
+            why = "stock SameBoy: joypad-bounce state is not in its savestates (use sameboy_rb_libretro)";
         else if (ln.find("gambatte") != std::string::npos) why = "Gambatte states are not exact";
         else why = "core " + ln + " is not verified for rollback";
         if (!safe && std::getenv("RETRORUN_FORCE_ROLLBACK")) { rlog("rollback: forced on an unverified core (RETRORUN_FORCE_ROLLBACK)"); safe = true; }

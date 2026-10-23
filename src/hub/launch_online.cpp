@@ -296,8 +296,9 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         /* Link cable: every PC runs BOTH Game Boys in one SameBoy simulation (np_link); each PC loads its own vault save into its
          * console, the saves are exchanged through the room, and only the own console's save is written back. */
         /* GBA: mgba_link_libretro = N mGBA cores joined by mGBA's lockstep SIO driver (src/mgba_link). */
-        const char* lcore = e.system == hub::System::GBA ? "mgba_link" : "sameboy";
+        const char* lcore = e.system == hub::System::GBA ? "mgba_link" : "sameboy_rb";
         std::string core = find_core(lcore);
+        if (core.empty() && e.system != hub::System::GBA) { lcore = "sameboy"; core = find_core(lcore); }   // no rollback build: lockstep
         if (core.empty()) { set_notice(std::string("Emulator core '") + lcore + "' not found (cores folder)."); return; }
         std::vector<std::string> owners;
         {
@@ -319,14 +320,16 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --link --save-dir " + quote(battery) +
                            " --state-dir " + quote(tmp) + lnet + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
         /* GGPO-style rollback (retrorun --rollback) for the GBA link core, whose savestates passed SyncTest and bad-network runs.
-         * SameBoy/Gambatte stay on lockstep (retrorun also refuses --rollback for any core it has not verified). */
-        if (e.system == hub::System::GBA) args += " --rollback";
+         * SameBoy uses the patched sameboy_rb core (src/sameboy_rb); Gambatte stays on lockstep. */
+        if (e.system == hub::System::GBA || std::string(lcore) == "sameboy_rb") args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
     if (e.system == hub::System::GBA || e.system == hub::System::GB || e.system == hub::System::GBC) {
         std::string corename = e.system == hub::System::GBA ? "mgba" : (core_in.empty() ? A.st.gb_core : core_in);
+        bool gb_rb = false;
+        if (e.system != hub::System::GBA && corename == "sameboy" && !find_core("sameboy_rb").empty()) { corename = "sameboy_rb"; gb_rb = true; }
         std::string core = find_core(corename);
         if (core.empty()) { set_notice("Emulator core '" + corename + "' not found (cores folder)."); return; }
         /* Netplay starts from an empty, identical save on every PC: use a throwaway dir. */
@@ -335,6 +338,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         make_dirs(tmp);
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
                            " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+        if (gb_rb) args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
