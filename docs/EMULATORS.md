@@ -35,7 +35,7 @@ Updates, DLC and system titles (`0004000E`, `0004008C`, ...) are not listed as g
 - `keys`: `.wud` / `.wux` discs need the disc key in Cemu's `keys.txt`. **`.wua` archives need no keys** (already decrypted);
   loadiine `.rpx` folders are decrypted too.
 
-The user's files (read-only check, 2026-10-22): all nine 3DS zips under `Everything\Games` (X, Y, Omega Ruby, Alpha
+A local library check (read-only, 2026-10-22): all nine 3DS zips under the game library folder (X, Y, Omega Ruby, Alpha
 Sapphire, Sun x2 identical copies, Moon, Ultra Sun, Ultra Moon) hold a single `.3ds` NCSD image, **all decrypted**
 (NCCH flags `0000000001030004`, NoCrypto set), so Azahar needs no keys; they are zipped, so each needs the one-time unpack.
 Twilight Princess HD is a `.wua` with the base game `000500001019e500_v81` and update `0005000e1019e500_v81`.

@@ -5,11 +5,11 @@ add_library(n64run_lockstep_core STATIC lockstep_core.cpp)
 target_include_directories(n64run_lockstep_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(n64run_lockstep_core PUBLIC cxx_std_17)
 
-# Host-save sharing (--share-host-save): protocol state machine + Session driver.
-add_library(n64run_save_sync STATIC save_sync.cpp save_sync_net.cpp mempak.cpp)
+# Controller Pak policy (the save-sync protocol itself lives in src/net, library hubsavesync).
+add_library(n64run_save_sync STATIC mempak.cpp)
 target_include_directories(n64run_save_sync PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(n64run_save_sync PUBLIC cxx_std_17)
-target_link_libraries(n64run_save_sync PUBLIC hubnet)
+target_link_libraries(n64run_save_sync PUBLIC hubsavesync hubnet)
 
 # --match VS-battle jump driver (pure RDRAM state machine, unit tested).
 add_library(n64run_match STATIC match.cpp)
@@ -38,10 +38,6 @@ add_custom_command(TARGET n64run POST_BUILD
 add_executable(n64run_lockstep_test test_lockstep.cpp)
 target_link_libraries(n64run_lockstep_test PRIVATE n64run_lockstep_core m64p_api)
 
-# Console test: save sync over a simulated lossy network; with a server URL argument also runs two
-# real Sessions through the live server (registered with CTest in the top-level CMakeLists.txt).
-add_executable(n64run_save_sync_test test_save_sync.cpp)
-target_link_libraries(n64run_save_sync_test PRIVATE n64run_save_sync)
 
 # Console test: Controller Pak policy and .mpk naming (pure logic).
 add_executable(n64run_mempak_test test_mempak.cpp)

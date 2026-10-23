@@ -16,6 +16,13 @@ namespace n64run {
 // True when the input plugin should attach a Controller Pak (PLUGIN_MEMPAK) to each present port.
 bool mempak_enabled(bool online, bool share_host_save);
 
+// Rumble Pak (offline only, per-game profile option): replaces the Controller Pak on every present port. Online it
+// is never used (a different pak would change what the game sees on every PC).
+bool rumble_enabled(bool online, bool profile_rumble);
+// The core's rumble backend sends a raw pak write (cmd[2] = 0x03, address 0xC000, 32 data bytes) through ControllerCommand.
+// Returns true for that command and sets *on to the motor state.
+bool decode_rumble_command(const unsigned char* cmd, bool* on);
+
 // True for a file name the save sync may carry as a Controller Pak: a plain battery name ending in .mpk.
 bool is_mempak_file(const std::string& name);
 

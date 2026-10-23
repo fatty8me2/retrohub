@@ -75,6 +75,12 @@ std::string sha256_file(const std::string& path);   // lowercase hex, "" on erro
 /* ---- config pre-writing (merged into what is already there) ---- */
 /* Azahar: creates <dir>\user (portable marker) and writes qt-config.ini defaults once: no first-run prompts,
  * no update check, controller 1 (any SDL game controller, so the first XInput pad) mapped by position. */
+/* Pad choice (follows the RetroHub port order): AzPad = guid + the n-th pad with that guid; empty guid = any pad. */
+struct PadDesc { std::string name, guid, key; bool xinput = false; };   // key = guid[#serial]
+struct AzPad { std::string guid; int port = 0; };
+bool azahar_pad_select(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl, AzPad* out);
+std::string azahar_config_patch(const std::string& qt_config_ini, const hubctl::Profile& profile, const AzPad& pad);
+void prepare_azahar(const std::string& install_dir, const hubctl::Profile& profile, const AzPad& pad);
 void prepare_azahar(const std::string& install_dir);   // profile = the stored 3ds profile
 void prepare_azahar(const std::string& install_dir, const hubctl::Profile& profile);
 std::string azahar_config_patch(const std::string& qt_config_ini, const hubctl::Profile& profile);
@@ -90,7 +96,14 @@ std::string cemu_gamepad_profile_xml();
 /* Dolphin (GameCube), RetroHub's own portable download: <dir>\portable.txt, User\Config\{Dolphin,GFX,GCPadNew}.ini.
  * `pads` = which XInput slots (0-3) hold a connected controller; adapter = a GameCube adapter (WUP-028) is plugged in.
  * Defaults (Dolphin.ini, GFX.ini, GCPadNew.ini) are written once behind a marker; every launch only updates SlotA/B and SIDevice0-3. */
-struct DolphinPads { bool xinput[4] = {false, false, false, false}; bool adapter = false; };
+struct DolphinPads {
+    bool xinput[4] = {false, false, false, false};
+    bool adapter = false;
+    std::string dev[4];   // device when the pad on that port is not XInput/<port>/Gamepad: "SDL/0/<name>" (DualSense, Switch Pro, 8BitDo ...)
+};
+/* RetroHub port order -> devices: non-XInput pads become SDL devices, XInput pads are numbered among the XInput pads. */
+DolphinPads dolphin_pads_with(DolphinPads base, const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl);
+std::string dolphin_key_name(const std::string& key);   // profile key name -> Dolphin DInput keyboard name ("" = none)
 DolphinPads detect_dolphin_pads();                        // XInputGetState x4 + USB 057E:0337
 std::string dolphin_ini_defaults(const std::string& ini);                               // pure: written once
 std::string dolphin_ini_ports(const std::string& ini, const DolphinPads& p);            // pure: every launch

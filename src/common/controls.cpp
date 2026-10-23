@@ -113,11 +113,25 @@ Profile default_profile(const std::string& sys) {
         p.analogs["circle_pad"] = {"leftx", "lefty", 0.15, 1.0};
         p.analogs["c_stick"] = {"rightx", "righty", 0.15, 1.0};
     }
+    auto K = [&](std::initializer_list<std::pair<const char*, const char*>> l) { for (auto& kv : l) p.keys[kv.first] = kv.second; };
+    if (sys == "n64") {   // the old fixed keyboard map of n64run
+        K({{"a", "x"}, {"b", "c"}, {"z", "z"}, {"start", "return"}, {"l", "a"}, {"r", "s"}, {"c_up", "i"}, {"c_left", "j"}, {"c_down", "k"},
+           {"c_right", "l"}, {"dpad_up", "t"}, {"dpad_left", "f"}, {"dpad_down", "g"}, {"dpad_right", "h"},
+           {"stick_up", "up"}, {"stick_down", "down"}, {"stick_left", "left"}, {"stick_right", "right"}});
+    } else if (sys == "retro") {   // the old fixed keyboard map of retrorun
+        K({{"up", "up"}, {"down", "down"}, {"left", "left"}, {"right", "right"}, {"b", "z"}, {"a", "x"}, {"y", "a"}, {"x", "s"},
+           {"l", "q"}, {"r", "w"}, {"start", "return|kp_enter"}, {"select", "rshift"}});
+    } else if (sys == "gc") {   // Dolphin's own default keyboard keys for GCPad1
+        K({{"a", "x"}, {"b", "z"}, {"x", "c"}, {"y", "s"}, {"z", "d"}, {"start", "return"}, {"main_up", "up"}, {"main_down", "down"},
+           {"main_left", "left"}, {"main_right", "right"}, {"c_up", "i"}, {"c_down", "k"}, {"c_left", "j"}, {"c_right", "l"},
+           {"l", "q"}, {"r", "w"}, {"dpad_up", "t"}, {"dpad_down", "g"}, {"dpad_left", "f"}, {"dpad_right", "h"}});
+    }
     return p;
 }
 
 bool Profile::same_mapping(const Profile& o) const {
-    return system == o.system && buttons == o.buttons && analogs == o.analogs && axis_threshold == o.axis_threshold;
+    return system == o.system && buttons == o.buttons && analogs == o.analogs && axis_threshold == o.axis_threshold &&
+           keys == o.keys && rumble == o.rumble;
 }
 
 static std::string fmt_num(double v) {
@@ -133,9 +147,102 @@ uint64_t mapping_hash(const Profile& p) {
     mix(std::to_string(p.axis_threshold));
     for (auto& kv : p.buttons) { mix(kv.first); mix(kv.second); }
     for (auto& kv : p.analogs) { mix(kv.first); mix(kv.second.x); mix(kv.second.y); mix(fmt_num(kv.second.deadzone)); mix(fmt_num(kv.second.sensitivity)); }
+    /* Keyboard and rumble only count once they differ from the defaults, so the hash of an untouched profile is the same as
+     * before they existed (generated emulator configs are not rewritten by an upgrade). */
+    if (p.keys != default_profile(p.system).keys) for (auto& kv : p.keys) { mix("key:" + kv.first); mix(kv.second); }
+    if (p.rumble) mix("rumble");
     return h;
 }
 std::string hash_hex(uint64_t h) { char b[20]; std::snprintf(b, sizeof b, "%016llx", (unsigned long long)h); return b; }
+
+/* ------------------------------------------------------------------ keyboard */
+
+namespace {
+struct KeyDef { std::string name; int code; std::string label; };
+const std::vector<KeyDef>& key_defs() {
+    static const std::vector<KeyDef> v = [] {
+        std::vector<KeyDef> k;
+        for (int i = 0; i < 26; i++) k.push_back({std::string(1, (char)('a' + i)), 4 + i, std::string(1, (char)('A' + i))});
+        for (int i = 1; i <= 9; i++) k.push_back({std::to_string(i), 29 + i, std::to_string(i)});
+        k.push_back({"0", 39, "0"});
+        k.push_back({"return", 40, "Enter"}); k.push_back({"backspace", 42, "Backspace"}); k.push_back({"tab", 43, "Tab"});
+        k.push_back({"space", 44, "Space"}); k.push_back({"minus", 45, "-"}); k.push_back({"equals", 46, "="});
+        k.push_back({"lbracket", 47, "["}); k.push_back({"rbracket", 48, "]"}); k.push_back({"backslash", 49, "\\"});
+        k.push_back({"semicolon", 51, ";"}); k.push_back({"quote", 52, "'"}); k.push_back({"grave", 53, "`"});
+        k.push_back({"comma", 54, ","}); k.push_back({"period", 55, "."}); k.push_back({"slash", 56, "/"});
+        for (int i = 1; i <= 12; i++) k.push_back({"f" + std::to_string(i), 57 + i, "F" + std::to_string(i)});
+        k.push_back({"insert", 73, "Insert"}); k.push_back({"home", 74, "Home"}); k.push_back({"pageup", 75, "Page up"});
+        k.push_back({"delete", 76, "Delete"}); k.push_back({"end", 77, "End"}); k.push_back({"pagedown", 78, "Page down"});
+        k.push_back({"right", 79, "Right arrow"}); k.push_back({"left", 80, "Left arrow"}); k.push_back({"down", 81, "Down arrow"});
+        k.push_back({"up", 82, "Up arrow"});
+        k.push_back({"kp_enter", 88, "Numpad Enter"});
+        for (int i = 1; i <= 9; i++) k.push_back({"kp" + std::to_string(i), 88 + i, "Numpad " + std::to_string(i)});
+        k.push_back({"kp0", 98, "Numpad 0"});
+        k.push_back({"lctrl", 224, "Left Ctrl"}); k.push_back({"lshift", 225, "Left Shift"}); k.push_back({"lalt", 226, "Left Alt"});
+        k.push_back({"rctrl", 228, "Right Ctrl"}); k.push_back({"rshift", 229, "Right Shift"}); k.push_back({"ralt", 230, "Right Alt"});
+        return k;
+    }();
+    return v;
+}
+}  // namespace
+
+const std::vector<ControlInfo>& key_controls_for(const std::string& sys) {
+    static std::map<std::string, std::vector<ControlInfo>> m;
+    static const std::vector<ControlInfo> none;
+    if (sys != "n64" && sys != "retro" && sys != "gc") return none;
+    auto it = m.find(sys);
+    if (it != m.end()) return it->second;
+    std::vector<ControlInfo> v;
+    for (auto& c : controls_for(sys)) if (!c.analog && !(sys == "gc" && (c.name == "l_analog" || c.name == "r_analog"))) v.push_back(c);
+    if (sys == "n64") for (const char* d : {"up", "down", "left", "right"}) v.push_back({std::string("stick_") + d, std::string("Stick ") + d, false});
+    return m.emplace(sys, std::move(v)).first->second;
+}
+bool has_keyboard(const std::string& sys) { return !key_controls_for(sys).empty(); }
+
+int key_code(const std::string& n) { for (auto& k : key_defs()) if (n == k.name) return k.code; return -1; }
+const char* key_name(int code) { for (auto& k : key_defs()) if (k.code == code) return k.name.c_str(); return ""; }
+std::string key_label(int code) { for (auto& k : key_defs()) if (k.code == code) return k.label; return "?"; }
+
+bool parse_keys(const std::string& expr, std::vector<int>* out) {
+    out->clear();
+    size_t p = 0;
+    while (p <= expr.size()) {
+        size_t q = expr.find('|', p);
+        if (q == std::string::npos) q = expr.size();
+        std::string t = expr.substr(p, q - p);
+        size_t tb = t.find_first_not_of(" \t"), te = t.find_last_not_of(" \t");
+        t = tb == std::string::npos ? std::string() : t.substr(tb, te - tb + 1);
+        int c = key_code(t);
+        if (c < 0) { out->clear(); return false; }
+        out->push_back(c);
+        if (q >= expr.size()) break;
+        p = q + 1;
+    }
+    return !out->empty();
+}
+bool valid_keys(const std::string& e) { std::vector<int> v; return parse_keys(e, &v); }
+std::string describe_keys(const std::string& e) {
+    std::vector<int> v;
+    if (!parse_keys(e, &v)) return "Unbound";
+    std::string r;
+    for (size_t i = 0; i < v.size(); i++) r += (i ? " / " : "") + key_label(v[i]);
+    return r;
+}
+
+KeyMapper::KeyMapper(const Profile& p) {
+    for (auto& kv : p.keys) {
+        std::vector<int> c;
+        if (!parse_keys(kv.second, &c)) continue;
+        ids_[kv.first] = (int)codes_.size();
+        codes_.push_back(std::move(c));
+    }
+}
+int KeyMapper::id(const std::string& c) const { auto it = ids_.find(c); return it == ids_.end() ? -1 : it->second; }
+bool KeyMapper::down(int id, const uint8_t* st) const {
+    if (id < 0 || id >= (int)codes_.size() || !st) return false;
+    for (int c : codes_[id]) if (c >= 0 && c < kKeyStateSize && st[c]) return true;
+    return false;
+}
 
 /* ------------------------------------------------------------------ expressions */
 
@@ -296,6 +403,21 @@ bool set_analog(Store& s, const std::string& sys, const std::string& game, const
     return true;
 }
 
+bool set_key(Store& s, const std::string& sys, const std::string& game, const std::string& control, const std::string& keys, std::string* err) {
+    bool known = false;
+    for (auto& c : key_controls_for(sys)) if (c.name == control) known = true;
+    if (!known) { if (err) *err = "unknown key control"; return false; }
+    if (!valid_keys(keys)) { if (err) *err = "invalid key expression"; return false; }
+    edit_profile(s, sys, game).keys[control] = keys;
+    return true;
+}
+
+bool set_rumble(Store& s, const std::string& sys, const std::string& game, bool on, std::string* err) {
+    if (sys != "n64") { if (err) *err = "rumble is only available for N64"; return false; }
+    edit_profile(s, sys, game).rumble = on;
+    return true;
+}
+
 void reset(Store& s, const std::string& sys, const std::string& game) {
     if (game.empty()) {
         auto d = s.system_default.find(sys);
@@ -342,7 +464,10 @@ void write_profile(std::ostringstream& o, const Profile& p, const char* ind) {
           << ",\"deadzone\":" << fmt_num(kv.second.deadzone) << ",\"sensitivity\":" << fmt_num(kv.second.sensitivity) << "}";
         first = false;
     }
-    o << "}}";
+    o << "},\n" << ind << " \"keys\":{";
+    first = true;
+    for (auto& kv : p.keys) { o << (first ? "" : ",") << json::quote(kv.first) << ":" << json::quote(kv.second); first = false; }
+    o << "}" << (p.rumble ? ",\"rumble\":true" : "") << "}";
 }
 
 bool read_profile(const J& j, const std::string& name, Profile* p) {
@@ -354,6 +479,9 @@ bool read_profile(const J& j, const std::string& name, Profile* p) {
     if (const J* t = j.get("axis_threshold")) if (t->type == J::Number && t->n >= 1 && t->n <= 32766) p->axis_threshold = (int)t->n;
     if (const J* b = j.get("buttons")) if (b->type == J::Object)
         for (auto& kv : b->o) if (kv.second.type == J::String && valid_expr(kv.second.s)) p->buttons[kv.first] = kv.second.s;
+    if (const J* k = j.get("keys")) if (k->type == J::Object)
+        for (auto& kv : k->o) if (kv.second.type == J::String && valid_keys(kv.second.s)) for (auto& c : key_controls_for(p->system)) if (c.name == kv.first) p->keys[kv.first] = kv.second.s;
+    if (const J* r = j.get("rumble")) if (r->type == J::Bool && p->system == "n64") p->rumble = r->b;
     if (const J* a = j.get("analogs")) if (a->type == J::Object)
         for (auto& kv : a->o) {
             if (kv.second.type != J::Object) continue;

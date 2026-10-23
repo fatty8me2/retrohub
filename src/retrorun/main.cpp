@@ -30,6 +30,7 @@
 #include "lockstep.h"
 #include "log.h"
 #include "session.h"
+#include "save_sync.h"
 
 namespace fs = std::filesystem;
 
@@ -42,6 +43,7 @@ struct Args {
     std::string controls;         // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (src/common/controls.h)
     std::string net, room, title, save_stem;   // save_stem: file stem for <stem>.srm (zipped ROMs); "" = rom file stem
     std::string sync_hash_mode = "auto", pace_override;
+    bool share_host_save = false; // --share-host-save: lockstep session boots from the host's save (+ clock) on every PC
     bool link = false;            // two linked Game Boys in one SameBoy instance (see docs/RETRORUN.md)
     std::string link_roms;        // optional "romP0,romP1" (default: --rom for both)
     bool list_opts = false, headless = false, fullscreen = false, resume = false, fuzz = false, selftest = false;
@@ -113,6 +115,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
             if (sscanf(v.c_str(), "%lf,%lf", &o->stylus_u, &o->stylus_v) != 2) { fprintf(stderr, "bad --stylus (want U,V)\n"); return false; }
         }
         else if (k == "--link") o->link = true;
+        else if (k == "--share-host-save") o->share_host_save = true;
+        else if (k == "--host-save-dir") { std::string ignored; if (!val(&ignored)) return false; }   // accepted for hub symmetry with n64run
         else if (k == "--link-roms") { if (!val(&o->link_roms)) return false; }
         else if (k == "--headless") o->headless = true;
         else if (k == "--fullscreen") o->fullscreen = true;
@@ -376,6 +380,10 @@ class Frontend {
     void poll_all_local();
     void set_status(const std::string& s);
     void load_srm();
+    bool share_host_save_run();
+    bool guest_save_ro = false;   // --share-host-save guest: the save lives in a throwaway dir and is never written back
+    std::string rtc_path() const { return srm_path.substr(0, srm_path.size() - 4) + ".rtc"; }
+    std::vector<uint8_t> rtc_saved;
     void save_srm(bool force);
     std::string state_path(const std::string& name) const { return a.state_dir + "\\" + name + ".state"; }
     bool save_state(const std::string& name);
@@ -456,6 +464,7 @@ bool Frontend::setup_paths() {
         core.overrides["sameboy_screen_layout"] = "left-right";
         core.overrides["sameboy_audio_output"] = "Game Boy #" + std::to_string(std::min(1, mine) + 1);
     }
+    if (!a.net.empty() && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
     rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
@@ -579,26 +588,6 @@ void Frontend::open_pads() {
     for (size_t i = 0; i < names.size(); i++) rlog("controller %zu: %s", i, names[i].c_str());
 }
 
-static uint32_t kbd_mask() {
-    const Uint8* k = SDL_GetKeyboardState(nullptr);
-    uint32_t m = 0;
-    auto b = [&](SDL_Scancode s, int id) { if (k[s]) m |= 1u << id; };
-    b(SDL_SCANCODE_UP, RETRO_DEVICE_ID_JOYPAD_UP);
-    b(SDL_SCANCODE_DOWN, RETRO_DEVICE_ID_JOYPAD_DOWN);
-    b(SDL_SCANCODE_LEFT, RETRO_DEVICE_ID_JOYPAD_LEFT);
-    b(SDL_SCANCODE_RIGHT, RETRO_DEVICE_ID_JOYPAD_RIGHT);
-    b(SDL_SCANCODE_Z, RETRO_DEVICE_ID_JOYPAD_B);
-    b(SDL_SCANCODE_X, RETRO_DEVICE_ID_JOYPAD_A);
-    b(SDL_SCANCODE_A, RETRO_DEVICE_ID_JOYPAD_Y);
-    b(SDL_SCANCODE_S, RETRO_DEVICE_ID_JOYPAD_X);
-    b(SDL_SCANCODE_Q, RETRO_DEVICE_ID_JOYPAD_L);
-    b(SDL_SCANCODE_W, RETRO_DEVICE_ID_JOYPAD_R);
-    b(SDL_SCANCODE_RETURN, RETRO_DEVICE_ID_JOYPAD_START);
-    b(SDL_SCANCODE_KP_ENTER, RETRO_DEVICE_ID_JOYPAD_START);
-    b(SDL_SCANCODE_RSHIFT, RETRO_DEVICE_ID_JOYPAD_SELECT);
-    return m;
-}
-
 /* Pad for the i-th locally owned port. */
 uint32_t Frontend::poll_local(int i) {
     int port = local_ports[i];
@@ -609,7 +598,7 @@ uint32_t Frontend::poll_local(int i) {
     }
     if (a.headless) return 0;
     uint32_t m = 0;
-    if (i == 0) m |= kbd_mask();
+    if (i == 0 && retro_pad) m |= retro_pad->key_mask(SDL_GetKeyboardState(nullptr));
     if ((size_t)i < pads.size()) {
         hubctl::PadState st;
         hubctl::read_state(pads[i], &st);
@@ -699,12 +688,71 @@ void Frontend::load_srm() {
         rlog("save: no existing %s (battery RAM %zu bytes)", srm_path.c_str(), n);
     }
     srm_saved.assign((uint8_t*)mem, (uint8_t*)mem + n);
+    // Cores that keep the cartridge clock apart from the battery RAM (SameBoy/Gambatte MBC3: Gold/Silver/Crystal) get <stem>.rtc.
+    size_t nr = 0;
+    void* rm = core.memory(RETRO_MEMORY_RTC, &nr);
+    if (rm && nr) {
+        std::vector<uint8_t> r;
+        if (read_file(rtc_path(), &r) && r.size() == nr) { memcpy(rm, r.data(), nr); rlog("save: loaded clock %s (%zu bytes)", rtc_path().c_str(), nr); }
+        rtc_saved.assign((uint8_t*)rm, (uint8_t*)rm + nr);
+    }
+}
+
+/* --share-host-save (lockstep GB/GBC/GBA): slot 0 sends the save RAM + clock it booted with, every other PC overwrites its
+ * own (throwaway-dir) save with those bytes before frame 0, so all PCs start from identical battery data. Guests never write
+ * to a vault. Runs between "session ready" and delay negotiation. */
+bool Frontend::share_host_save_run() {
+    size_t n = 0, nr = 0;
+    void* mem = core.save_ram(&n);
+    void* rm = core.memory(RETRO_MEMORY_RTC, &nr);
+    std::vector<n64run::SaveFile> files;
+    if (a.slot == 0) {
+        if (mem && n) files.push_back({"game.srm", std::vector<uint8_t>((uint8_t*)mem, (uint8_t*)mem + n)});
+        if (rm && nr) files.push_back({"game.rtc", std::vector<uint8_t>((uint8_t*)rm, (uint8_t*)rm + nr)});
+        for (auto& f : files)
+            rlog("hostsave: host shares %s (%zu bytes, hash %016llx)", f.name.c_str(), f.data.size(), (unsigned long long)n64run::save_hash(f.data.data(), f.data.size()));
+        if (files.empty()) rlog("hostsave: core exposes no battery RAM; nothing to share");
+    } else {
+        guest_save_ro = true;
+    }
+    std::string dir = a.save_dir + "\\hostsave";
+    std::error_code ec;
+    if (a.slot != 0) { fs::remove_all(fs::u8path(dir), ec); fs::create_directories(fs::u8path(dir), ec); }
+    std::string err;
+    if (!n64run::run_save_sync(session, a.slot, slot_mask, a.slot == 0 ? &files : nullptr, dir, 30000, &err)) {
+        rlog("hostsave: save sync failed: %s", err.c_str());
+        return false;
+    }
+    if (a.slot != 0) {
+        std::vector<uint8_t> d;
+        if (mem && n && read_file(dir + "\\game.srm", &d)) {
+            if (d.size() != n) { rlog("hostsave: host save is %zu bytes but this core's save RAM is %zu: different core/game?", d.size(), n); return false; }
+            memcpy(mem, d.data(), n);
+            srm_saved.assign((uint8_t*)mem, (uint8_t*)mem + n);
+            rlog("hostsave: booted from host save (%zu bytes, hash %016llx)", n, (unsigned long long)n64run::save_hash(d.data(), d.size()));
+        }
+        if (rm && nr && read_file(dir + "\\game.rtc", &d)) {
+            if (d.size() != nr) { rlog("hostsave: host clock is %zu bytes but this core's is %zu", d.size(), nr); return false; }
+            memcpy(rm, d.data(), nr);
+            rlog("hostsave: booted from host clock (%zu bytes, hash %016llx)", nr, (unsigned long long)n64run::save_hash(d.data(), d.size()));
+        }
+    }
+    rlog("hostsave: save sync complete");
+    return true;
 }
 
 void Frontend::save_srm(bool force) {
+    if (guest_save_ro) return;
     size_t n = 0;
     void* mem = core.save_ram(&n);
     if (!mem || !n) return;
+    {
+        size_t nr = 0;
+        void* rm = core.memory(RETRO_MEMORY_RTC, &nr);
+        if (rm && nr && (force || rtc_saved.size() != nr || memcmp(rtc_saved.data(), rm, nr) != 0) ) {
+            if (write_atomic(rtc_path(), rm, nr)) rtc_saved.assign((uint8_t*)rm, (uint8_t*)rm + nr);
+        }
+    }
     if (!force && srm_saved.size() == n && memcmp(srm_saved.data(), mem, n) == 0) return;
     if (srm_size_mismatch) {
         srm_size_mismatch = false;
@@ -857,6 +905,7 @@ bool Frontend::setup_net() {
         Sleep(5);
     }
     rlog("net: session ready");
+    if (a.share_host_save && !link && !is_ds && !share_host_save_run()) { net_rc = 6; return false; }
     if (link) {
         std::vector<std::vector<uint8_t>> blobs;
         std::string lerr;
@@ -1032,6 +1081,12 @@ void Frontend::finish() {
         link_save(false);
     } else if (core.game_loaded()) {
         save_srm(false);
+        {   // final clock (the periodic save only writes it together with a changed save RAM)
+            size_t nr = 0;
+            void* rm = core.memory(RETRO_MEMORY_RTC, &nr);
+            if (rm && nr && !guest_save_ro && !is_ds && !rtc_saved.empty() && (rtc_saved.size() != nr || memcmp(rtc_saved.data(), rm, nr) != 0))
+                write_atomic(rtc_path(), rm, nr);
+        }
         if (!a.selftest && !is_ds && core.serialize_size()) {   // DS states are ~19 MB and the hub never resumes them
             size_t n = core.serialize_size();
             std::vector<uint8_t> buf(n);
@@ -1229,6 +1284,11 @@ int Frontend::run(const Args& args) {
                 if (a.frames >= 0 && frame_no >= (uint64_t)a.frames) break;
                 pump_events(false);
                 if (quit) break;
+                if (a.ds_link && session.ended()) {   // a partner signed off on purpose: not a failure
+                    rlog("link: partner ended the session");
+                    link_stop("partner ended the session");
+                    break;
+                }
 
                 if (want_save) { want_save = false; save_state("slot" + std::to_string(slot_sel)); }
                 if (want_load) { want_load = false; if (!online && !a.ds_link) load_state("slot" + std::to_string(slot_sel)); }
@@ -1281,6 +1341,12 @@ int Frontend::run(const Args& args) {
                  (unsigned long long)link_tx_cmd, (unsigned long long)link_tx_reply, (unsigned long long)link_rx,
                  (unsigned long long)link_rx_cmd, (unsigned long long)link_rx_reply);
             link_stop("closing");
+            // Sign off so the partners end cleanly instead of treating our exit as a lost connection.
+            for (int i = 0; i < 4; i++) {
+                session.say_bye();
+                uint32_t t0 = hubnet::now_ms();
+                while (hubnet::now_ms() - t0 < 80) { session.update(); Sleep(5); }
+            }
         }
         // Let the last input packets reach slower peers.
         if (online) {

@@ -36,15 +36,15 @@ int main() {
     CHECK(pw.size() == 12 && pw == random_password(7u) && pw != random_password(8u));
 
     /* nicknames: Azahar accepts 4..20 of [A-Za-z0-9 ._-]; unique per slot */
-    CHECK(nickname("Fatty", 0) == "Fatty_1" && nickname("Fatty", 2) == "Fatty_3");
+    CHECK(nickname("Player", 0) == "Player_1" && nickname("Player", 2) == "Player_3");
     CHECK(nickname("a", 1) == "ax_2" || nickname("a", 1).size() >= 4);
     CHECK(nickname("Ma\xC3\xA9 @:x y", 0) == "Ma_x_y_1");
     CHECK(nickname("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 0).size() <= 20);
     for (int s = 0; s < 4; ++s) { auto n = nickname("", s); CHECK(n.size() >= 4 && n.size() <= 20); }
 
     /* command lines */
-    CHECK(multiplayer_arg("Fatty_1", "", "127.0.0.1", 24872) == "-m \"Fatty_1@127.0.0.1:24872\"");
-    CHECK(multiplayer_arg("Fatty_1", "pw", "127.0.0.1", 5) == "-m \"Fatty_1:pw@127.0.0.1:5\"");
+    CHECK(multiplayer_arg("Player_1", "", "127.0.0.1", 24872) == "-m \"Player_1@127.0.0.1:24872\"");
+    CHECK(multiplayer_arg("Player_1", "pw", "127.0.0.1", 5) == "-m \"Player_1:pw@127.0.0.1:5\"");
     std::string ra = room_args(24872, "", 8, "C:\\x\\room.log", "");
     CHECK(ra.find("--port 24872") != std::string::npos && ra.find("--preferred-app RetroHub") != std::string::npos &&
           ra.find("--preferred-app-id 0") != std::string::npos && ra.find("--password") == std::string::npos &&
@@ -53,9 +53,9 @@ int main() {
     CHECK(session_room("ABC234", 3) == "ABC234-3");
 
     /* config prefill for Direct Connect */
-    std::string ini = config_patch("[UI]\nfirstStart=false\n", "127.0.0.1", 24872, "Fatty_1");
+    std::string ini = config_patch("[UI]\nfirstStart=false\n", "127.0.0.1", 24872, "Player_1");
     CHECK(hubui::ini_get(ini, "UI", "Multiplayer\\ip", "") == "127.0.0.1" && hubui::ini_get(ini, "UI", "Multiplayer\\port", "") == "24872" &&
-          hubui::ini_get(ini, "UI", "Multiplayer\\nickname", "") == "Fatty_1" && hubui::ini_get(ini, "UI", "firstStart", "") == "false");
+          hubui::ini_get(ini, "UI", "Multiplayer\\nickname", "") == "Player_1" && hubui::ini_get(ini, "UI", "firstStart", "") == "false");
 
     /* fragmentation: sizes around the 1100-byte hubnet limit, out of order, duplicates, interleaved sources */
     std::string big;

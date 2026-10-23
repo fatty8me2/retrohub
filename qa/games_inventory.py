@@ -1,6 +1,6 @@
 """Read-only inventory of game files (ROMs / discs / Wii U) for catalog work.
 
-Usage: python -I qa/games_inventory.py [ROOT ...]
+Usage: python -I qa/games_inventory.py ROOT [ROOT ...]  (or set RETROHUB_GAME_ROOTS to ;-separated folders)
 Never writes into the scanned folders. Archives are listed with zipfile and
 only the header bytes of the inner ROM are read (nothing is extracted).
 Output: one tab-separated line per game: source, system, size, identity.
@@ -16,13 +16,7 @@ WIIU_EXT = {".wud", ".wux", ".rpx", ".wua"}
 OTHER_EXT = {".nds", ".3ds", ".cia", ".xci", ".nsp", ".cue", ".bin", ".chd", ".pbp", ".ps1", ".iso"}
 ARCHIVE_EXT = {".zip", ".7z"}
 
-DEFAULT_ROOTS = [
-    r"C:\Users\fatty\Desktop\Everything\Games",
-    r"C:\Users\fatty\Desktop\Everything\N64Games",
-    r"C:\Users\fatty\Desktop\Everything\Cemu_2.6",
-    r"C:\Users\fatty\Desktop\Everything\project64k",
-    r"C:\Users\fatty\Desktop\Everything\simple64",
-]
+DEFAULT_ROOTS = [p for p in os.environ.get("RETROHUB_GAME_ROOTS", "").split(os.pathsep) if p]
 
 
 def ext_of(name):
