@@ -46,7 +46,7 @@ std::string counts_text(const hub::fg::Counts& c) {
     return s;
 }
 
-/* "C:\Users\Me\Desktop\Emulation\ROMs" -> name "ROMs" + parent shortened from the left to fit `w` pixels. */
+/* "C:\Users\Me\Desktop\Emulation\ROMs" -> name "ROMs" + parent shortened to "...\<folder>" (the last two segments; callers show the full path on hover). */
 void split_label(const std::string& p, float w, std::string* name, std::string* parent) {
     std::string t = p;
     while (t.size() > 3 && (t.back() == '\\' || t.back() == '/')) t.pop_back();
@@ -54,12 +54,11 @@ void split_label(const std::string& p, float w, std::string* name, std::string* 
     *name = cut == std::string::npos ? t : t.substr(cut + 1);
     if (name->empty()) *name = t;
     std::string full = cut == std::string::npos || cut == 0 ? std::string() : t.substr(0, cut);
-    size_t skip = 0;   // characters dropped from the left
-    *parent = full;
-    while (full.size() - skip > 12 && ImGui::CalcTextSize(parent->c_str()).x > w) {
-        skip += 4;
-        *parent = "..." + full.substr(skip);
-    }
+    /* keep only the last two segments ("...\Emulation\ROMs"): the full path is shown on hover */
+    size_t cut2 = full.find_last_of("\\/");
+    std::string up = cut2 == std::string::npos ? full : full.substr(cut2 + 1);
+    *parent = (cut2 == std::string::npos || cut2 == 0) ? full : "...\\" + up;
+    (void)w;
 }
 
 void close_flow(bool done) {
@@ -151,6 +150,7 @@ static void find_games_modal() {
                 if (have) { ImGui::SameLine(0, sp(2.f)); ImGui::TextDisabled("already in your library"); }
                 if (!par.empty()) ImGui::TextDisabled("%s", par.c_str());
                 ImGui::EndGroup();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", FG.found[i].path.c_str());
                 ImGui::PopID();
             }
             for (size_t i = 0; i < FG.extra.size(); ++i) {
@@ -168,6 +168,7 @@ static void find_games_modal() {
                 ImGui::TextDisabled("added by you");
                 if (!par.empty()) ImGui::TextDisabled("%s", par.c_str());
                 ImGui::EndGroup();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", FG.extra[i].c_str());
                 ImGui::PopID();
             }
             ImGui::EndChild();
