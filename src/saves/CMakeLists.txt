@@ -16,10 +16,10 @@ if (MSVC)
     target_compile_options(hubminiz PRIVATE /W0)
 endif()
 
-add_library(hubsaves STATIC savestore.cpp)
+add_library(hubsaves STATIC savestore.cpp cloud.cpp)
 target_include_directories(hubsaves PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubsaves PUBLIC cxx_std_17)
-target_link_libraries(hubsaves PUBLIC hubcommon PRIVATE hubminiz bcrypt)
+target_link_libraries(hubsaves PUBLIC hubcommon PRIVATE hubminiz bcrypt winhttp)
 
 # Console-only test (no WIN32 flag).
 add_executable(hubsaves_test test_saves.cpp)
@@ -28,3 +28,8 @@ target_link_libraries(hubsaves_test PRIVATE hubsaves)
 # QA helper for qa\saves_two_pc.ps1 (key/dirs/sync from the command line). Console only.
 add_executable(qa_saves_tool qa_tool.cpp)
 target_link_libraries(qa_saves_tool PRIVATE hubsaves hubcommon)
+
+# Cloud saves test: unit checks always; end-to-end against a local `wrangler dev` when RETROHUB_TEST_SAVES_URL +
+# RETROHUB_TEST_SAVES_ACCOUNTS are set (qa\saves_cloud.ps1). Skips (passes) otherwise.
+add_executable(hubsaves_cloud_test test_cloud.cpp)
+target_link_libraries(hubsaves_cloud_test PRIVATE hubsaves)
