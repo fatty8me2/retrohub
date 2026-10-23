@@ -1,4 +1,5 @@
 /* Cloud saves backend (see cloud.h). Windows only: WinHTTP + BCrypt. */
+#include "json.h"
 #include "cloud.h"
 
 #ifndef NOMINMAX
@@ -65,93 +66,14 @@ str sha_file(const fs::path& p) {
     return s.hex();
 }
 
-/* ----------------------------------------------------------------- tiny JSON */
-struct JV {
-    char t = 0;   // 'o' 'a' 's' 'n' 'b' '0'
-    str s;
-    std::vector<JV> a;
-    std::vector<std::pair<str, JV>> o;
-    const JV* get(const char* k) const { for (auto& kv : o) if (kv.first == k) return &kv.second; return nullptr; }
-    str str_of(const char* k) const { const JV* v = get(k); return v && (v->t == 's' || v->t == 'n') ? v->s : str(); }
-    long long num_of(const char* k) const { const JV* v = get(k); return v && v->t == 'n' ? atoll(v->s.c_str()) : 0; }
-};
-struct JP {
-    const str& s; size_t i = 0;
-    explicit JP(const str& x) : s(x) {}
-    void ws() { while (i < s.size() && isspace((unsigned char)s[i])) i++; }
-    static void utf8(str& o, unsigned c) {
-        if (c < 0x80) o += (char)c;
-        else if (c < 0x800) { o += (char)(0xC0 | (c >> 6)); o += (char)(0x80 | (c & 63)); }
-        else if (c < 0x10000) { o += (char)(0xE0 | (c >> 12)); o += (char)(0x80 | ((c >> 6) & 63)); o += (char)(0x80 | (c & 63)); }
-        else { o += (char)(0xF0 | (c >> 18)); o += (char)(0x80 | ((c >> 12) & 63)); o += (char)(0x80 | ((c >> 6) & 63)); o += (char)(0x80 | (c & 63)); }
-    }
-    bool string(str& out) {
-        if (i >= s.size() || s[i] != '"') return false;
-        i++;
-        while (i < s.size() && s[i] != '"') {
-            char c = s[i++];
-            if (c != '\\') { out += c; continue; }
-            if (i >= s.size()) return false;
-            char e = s[i++];
-            switch (e) {
-            case 'n': out += '\n'; break; case 't': out += '\t'; break; case 'r': out += '\r'; break;
-            case 'b': out += '\b'; break; case 'f': out += '\f'; break;
-            case 'u': {
-                if (i + 4 > s.size()) return false;
-                unsigned c1 = (unsigned)strtoul(s.substr(i, 4).c_str(), nullptr, 16); i += 4;
-                if (c1 >= 0xD800 && c1 < 0xDC00 && i + 6 <= s.size() && s[i] == '\\' && s[i + 1] == 'u') {
-                    unsigned c2 = (unsigned)strtoul(s.substr(i + 2, 4).c_str(), nullptr, 16);
-                    if (c2 >= 0xDC00 && c2 < 0xE000) { c1 = 0x10000 + ((c1 - 0xD800) << 10) + (c2 - 0xDC00); i += 6; }
-                }
-                utf8(out, c1); break;
-            }
-            default: out += e;
-            }
-        }
-        if (i >= s.size()) return false;
-        i++;
-        return true;
-    }
-    bool value(JV& v, int depth = 0) {
-        if (depth > 8) return false;
-        ws();
-        if (i >= s.size()) return false;
-        char c = s[i];
-        if (c == '{') {
-            v.t = 'o'; i++; ws();
-            if (i < s.size() && s[i] == '}') { i++; return true; }
-            for (;;) {
-                ws(); str k; if (!string(k)) return false;
-                ws(); if (i >= s.size() || s[i++] != ':') return false;
-                JV c2; if (!value(c2, depth + 1)) return false;
-                v.o.emplace_back(k, std::move(c2));
-                ws(); if (i >= s.size()) return false;
-                if (s[i] == ',') { i++; continue; }
-                if (s[i] == '}') { i++; return true; }
-                return false;
-            }
-        }
-        if (c == '[') {
-            v.t = 'a'; i++; ws();
-            if (i < s.size() && s[i] == ']') { i++; return true; }
-            for (;;) {
-                JV c2; if (!value(c2, depth + 1)) return false;
-                v.a.push_back(std::move(c2));
-                ws(); if (i >= s.size()) return false;
-                if (s[i] == ',') { i++; continue; }
-                if (s[i] == ']') { i++; return true; }
-                return false;
-            }
-        }
-        if (c == '"') { v.t = 's'; return string(v.s); }
-        size_t st = i;
-        while (i < s.size() && (isalnum((unsigned char)s[i]) || s[i] == '-' || s[i] == '+' || s[i] == '.')) i++;
-        if (i == st) return false;
-        v.s = s.substr(st, i - st);
-        v.t = (v.s == "true" || v.s == "false") ? 'b' : v.s == "null" ? '0' : 'n';
-        return true;
-    }
-};
+/* ----------------------------------------------------------------- JSON (shared reader, src/common/json.h) */
+typedef json::Value JV;
+bool jparse(const str& text, JV* out) { return json::parse(text, out, json::ParseOptions{64, true}); }
+str str_of(const JV& o, const char* k) {   // strings and numbers (raw text), else empty
+    const JV* v = o.get(k);
+    return v && v->type == JV::String ? v->s : v && v->type == JV::Number ? v->raw : str();
+}
+long long num_of(const JV& o, const char* k) { return o.i64(k, 0); }
 
 /* ----------------------------------------------------------------- http */
 std::wstring W(const str& s) {
@@ -377,18 +299,18 @@ bool fetch_list(Http& http, std::vector<RemoteFile>& out, CloudStatus* stat, str
             r.status == 429 ? "rate limited, try again in a minute" : "server error " + std::to_string(r.status);
         return false;
     }
-    JV root; JP p(r.body);
-    if (!p.value(root) || root.t != 'o') { if (err) *err = "bad list response"; return false; }
+    JV root;
+    if (!jparse(r.body, &root) || root.type != JV::Object) { if (err) *err = "bad list response"; return false; }
     const JV* files = root.get("files");
-    if (!files || files->t != 'a') { if (err) *err = "bad list response"; return false; }
+    if (!files || files->type != JV::Array) { if (err) *err = "bad list response"; return false; }
     for (auto& f : files->a) {
         RemoteFile rf;
-        rf.key = f.str_of("key"); rf.etag = f.str_of("etag"); rf.sha = f.str_of("sha"); rf.mtime = f.str_of("mtime");
-        rf.size = f.num_of("size");
+        rf.key = str_of(f, "key"); rf.etag = str_of(f, "etag"); rf.sha = str_of(f, "sha"); rf.mtime = str_of(f, "mtime");
+        rf.size = num_of(f, "size");
         if (!cloud_key_safe(rf.key)) continue;   // never trust a server-supplied path
         if (!rf.key.empty() && !rf.etag.empty()) out.push_back(rf);
     }
-    if (stat) { stat->used = root.num_of("used"); stat->quota = root.num_of("quota"); stat->files = (int)files->a.size(); }
+    if (stat) { stat->used = num_of(root, "used"); stat->quota = num_of(root, "quota"); stat->files = (int)files->a.size(); }
     return true;
 }
 
@@ -588,18 +510,18 @@ SyncReport sync_cloud(const CloudConfig& cfg) {
                                 (it != st.end() && !it->second.etag.empty()) ? "If-Match: " + it->second.etag : str("If-None-Match: *")};
         Resp r = http.call("PUT", "/saves/obj?key=" + url_enc(rel), hdr, data.data(), data.size(), sha);
         if (r.status == 200) {
-            JV j; JP jp(r.body);
-            str etag = (jp.value(j) && j.t == 'o') ? j.str_of("etag") : str();
+            JV j;
+            str etag = (jparse(r.body, &j) && j.type == JV::Object) ? str_of(j, "etag") : str();
             st[rel] = CS{etag, sha};
             rep.pushed++;
             rep.log.push_back("cloud push " + rel);
             continue;
         }
         if (r.status == 412) {
-            JV j; JP jp(r.body);
-            const JV* cur = (jp.value(j) && j.t == 'o') ? j.get("current") : nullptr;
-            if (cur && cur->t == 'o' && cur->str_of("sha") == sha) {    // our upload already landed (lost response)
-                st[rel] = CS{cur->str_of("etag"), sha};
+            JV j;
+            const JV* cur = (jparse(r.body, &j) && j.type == JV::Object) ? j.get("current") : nullptr;
+            if (cur && cur->type == JV::Object && str_of(*cur, "sha") == sha) {    // our upload already landed (lost response)
+                st[rel] = CS{str_of(*cur, "etag"), sha};
                 continue;
             }
             rep.log.push_back("deferred " + rel + ": changed in the cloud meanwhile, merged on the next sync");

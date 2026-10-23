@@ -1,3 +1,4 @@
+#include "json.h"
 #include "miniz.h"
 #include "library.h"
 #include "emu_formats.h"
@@ -1453,193 +1454,19 @@ bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint
 }
 
 /* ------------------------------------------------------------------ */
-/* tiny JSON                                                           */
+/* JSON: the shared reader/writer (json.h)                             */
 /* ------------------------------------------------------------------ */
 
 namespace {
 
-struct JV {
-    enum T { Null, Bool, Num, Str, Arr, Obj } t = Null;
-    bool b = false;
-    long long i = 0;
-    double d = 0;
-    std::string s;
-    std::vector<JV> a;
-    std::vector<std::pair<std::string, JV>> o;
-
-    const JV* get(const char* k) const {
-        for (const auto& kv : o)
-            if (kv.first == k) return &kv.second;
-        return nullptr;
-    }
-    std::string str(const char* k) const {
-        const JV* v = get(k);
-        return (v && v->t == Str) ? v->s : std::string();
-    }
-    long long num(const char* k, long long def = 0) const {
-        const JV* v = get(k);
-        return (v && v->t == Num) ? v->i : def;
-    }
-    bool boolean(const char* k) const {
-        const JV* v = get(k);
-        if (!v) return false;
-        if (v->t == Bool) return v->b;
-        if (v->t == Num) return v->i != 0;
-        return false;
-    }
-};
-
-struct JParser {
-    const char* p;
-    const char* e;
-    bool fail = false;
-
-    void ws() {
-        while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) ++p;
-    }
-    static void put_utf8(std::string& s, uint32_t cp) {
-        if (cp < 0x80) s.push_back((char)cp);
-        else if (cp < 0x800) { s.push_back((char)(0xC0 | (cp >> 6))); s.push_back((char)(0x80 | (cp & 0x3F))); }
-        else if (cp < 0x10000) {
-            s.push_back((char)(0xE0 | (cp >> 12)));
-            s.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back((char)(0x80 | (cp & 0x3F)));
-        } else {
-            s.push_back((char)(0xF0 | (cp >> 18)));
-            s.push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
-            s.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back((char)(0x80 | (cp & 0x3F)));
-        }
-    }
-    bool hex4(uint32_t* v) {
-        if (e - p < 4) return false;
-        uint32_t r = 0;
-        for (int k = 0; k < 4; ++k) {
-            char c = *p++;
-            r <<= 4;
-            if (c >= '0' && c <= '9') r |= (uint32_t)(c - '0');
-            else if (c >= 'a' && c <= 'f') r |= (uint32_t)(c - 'a' + 10);
-            else if (c >= 'A' && c <= 'F') r |= (uint32_t)(c - 'A' + 10);
-            else return false;
-        }
-        *v = r;
-        return true;
-    }
-    bool string(std::string* out) {
-        if (p >= e || *p != '"') return false;
-        ++p;
-        while (p < e && *p != '"') {
-            char c = *p++;
-            if (c != '\\') { out->push_back(c); continue; }
-            if (p >= e) return false;
-            char x = *p++;
-            switch (x) {
-            case 'n': out->push_back('\n'); break;
-            case 't': out->push_back('\t'); break;
-            case 'r': out->push_back('\r'); break;
-            case 'b': out->push_back('\b'); break;
-            case 'f': out->push_back('\f'); break;
-            case 'u': {
-                uint32_t cp;
-                if (!hex4(&cp)) return false;
-                if (cp >= 0xD800 && cp < 0xDC00 && e - p >= 6 && p[0] == '\\' && p[1] == 'u') {
-                    p += 2;
-                    uint32_t lo;
-                    if (!hex4(&lo)) return false;
-                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                }
-                put_utf8(*out, cp);
-                break;
-            }
-            default: out->push_back(x); break;  // " \ /
-            }
-        }
-        if (p >= e) return false;
-        ++p;
-        return true;
-    }
-    bool value(JV* v, int depth) {
-        if (depth > 32) return false;
-        ws();
-        if (p >= e) return false;
-        char c = *p;
-        if (c == '{') {
-            ++p;
-            v->t = JV::Obj;
-            ws();
-            if (p < e && *p == '}') { ++p; return true; }
-            for (;;) {
-                ws();
-                std::string k;
-                if (!string(&k)) return false;
-                ws();
-                if (p >= e || *p++ != ':') return false;
-                JV child;
-                if (!value(&child, depth + 1)) return false;
-                v->o.emplace_back(std::move(k), std::move(child));
-                ws();
-                if (p >= e) return false;
-                if (*p == ',') { ++p; continue; }
-                if (*p == '}') { ++p; return true; }
-                return false;
-            }
-        }
-        if (c == '[') {
-            ++p;
-            v->t = JV::Arr;
-            ws();
-            if (p < e && *p == ']') { ++p; return true; }
-            for (;;) {
-                JV child;
-                if (!value(&child, depth + 1)) return false;
-                v->a.push_back(std::move(child));
-                ws();
-                if (p >= e) return false;
-                if (*p == ',') { ++p; continue; }
-                if (*p == ']') { ++p; return true; }
-                return false;
-            }
-        }
-        if (c == '"') { v->t = JV::Str; return string(&v->s); }
-        if (e - p >= 4 && !std::strncmp(p, "true", 4)) { p += 4; v->t = JV::Bool; v->b = true; return true; }
-        if (e - p >= 5 && !std::strncmp(p, "false", 5)) { p += 5; v->t = JV::Bool; v->b = false; return true; }
-        if (e - p >= 4 && !std::strncmp(p, "null", 4)) { p += 4; v->t = JV::Null; return true; }
-        const char* st = p;
-        bool isf = false;
-        while (p < e && (std::strchr("+-0123456789.eE", *p))) {
-            if (*p == '.' || *p == 'e' || *p == 'E') isf = true;
-            ++p;
-        }
-        if (p == st) return false;
-        std::string tok(st, p);
-        v->t = JV::Num;
-        if (isf) { v->d = std::strtod(tok.c_str(), nullptr); v->i = (long long)v->d; }
-        else { v->i = std::strtoll(tok.c_str(), nullptr, 10); v->d = (double)v->i; }
-        return true;
-    }
-};
-
-bool json_parse(const std::string& text, JV* out) {
-    JParser ps{text.data(), text.data() + text.size()};
-    if (!ps.value(out, 0)) return false;
-    return true;
-}
-
-void jw_str(std::string& o, const std::string& s) {
-    o.push_back('"');
-    for (unsigned char c : s) {
-        switch (c) {
-        case '"': o += "\\\""; break;
-        case '\\': o += "\\\\"; break;
-        case '\n': o += "\\n"; break;
-        case '\r': o += "\\r"; break;
-        case '\t': o += "\\t"; break;
-        default:
-            if (c < 0x20) { char b[8]; std::snprintf(b, sizeof(b), "\\u%04x", c); o += b; }
-            else o.push_back((char)c);
-        }
-    }
-    o.push_back('"');
+typedef json::Value JV;
+bool json_parse(const std::string& text, JV* out) { return json::parse(text, out, json::ParseOptions{64, true}); }
+bool jbool(const JV& o, const char* k) {   // true/false, or a number (!= 0)
+    const JV* v = o.get(k);
+    if (!v) return false;
+    if (v->type == JV::Bool) return v->b;
+    if (v->type == JV::Number) return v->i != 0;
+    return false;
 }
 
 bool read_text(const fs::path& p, std::string* out) {
@@ -1703,15 +1530,15 @@ void state_load_locked() {
     std::string text;
     if (!read_text(lib_dir() / L"library.json", &text)) return;
     JV root;
-    if (!json_parse(text, &root) || root.t != JV::Obj) return;
+    if (!json_parse(text, &root) || root.type != JV::Object) return;
     const JV* games = root.get("games");
-    if (!games || games->t != JV::Obj) return;
+    if (!games || games->type != JV::Object) return;
     for (const auto& kv : games->o) {
-        if (kv.second.t != JV::Obj) continue;
+        if (kv.second.type != JV::Object) continue;
         GameState gs;
-        gs.favorite = kv.second.boolean("favorite");
-        gs.last_played = (uint64_t)std::max<long long>(0, kv.second.num("last_played"));
-        gs.play_seconds = (uint64_t)std::max<long long>(0, kv.second.num("play_seconds"));
+        gs.favorite = jbool(kv.second, "favorite");
+        gs.last_played = (uint64_t)std::max<long long>(0, kv.second.i64("last_played"));
+        gs.play_seconds = (uint64_t)std::max<long long>(0, kv.second.i64("play_seconds"));
         g_state[kv.first] = gs;
     }
 }
@@ -1725,7 +1552,7 @@ void state_flush_locked() {
         if (!g.favorite && g.last_played == 0 && g.play_seconds == 0) continue;
         if (!first) o.push_back(',');
         first = false;
-        jw_str(o, kv.first);
+        o += json::quote(kv.first);
         o += ":{\"favorite\":";
         o += g.favorite ? "true" : "false";
         o += ",\"last_played\":" + std::to_string(g.last_played);
@@ -1753,18 +1580,18 @@ std::unordered_map<std::string, CacheRec> cache_load() {
     std::string text;
     if (!read_text(lib_dir() / L"library_cache.json", &text)) return m;
     JV root;
-    if (!json_parse(text, &root) || root.t != JV::Obj) return m;
-    if (root.num("version") != kCacheVersion) return m;
+    if (!json_parse(text, &root) || root.type != JV::Object) return m;
+    if (root.i64("version") != kCacheVersion) return m;
     const JV* files = root.get("files");
-    if (!files || files->t != JV::Arr) return m;
+    if (!files || files->type != JV::Array) return m;
     for (const JV& f : files->a) {
-        if (f.t != JV::Obj) continue;
+        if (f.type != JV::Object) continue;
         CacheRec r;
         std::string path = f.str("p");
         if (path.empty()) continue;
-        r.size = (uint64_t)f.num("s");
-        r.mtime = f.num("m");
-        r.ok = f.boolean("ok");
+        r.size = (uint64_t)f.i64("s");
+        r.mtime = f.i64("m");
+        r.ok = jbool(f, "ok");
         if (r.ok) {
             r.e.key = f.str("k");
             r.e.system = system_from_short(f.str("sys"));
@@ -1774,7 +1601,7 @@ std::unordered_map<std::string, CacheRec> cache_load() {
             r.e.issue = f.str("is");
             r.e.path = f.str("lp").empty() ? path : f.str("lp");
             r.e.save_stem = f.str("ss");
-            r.e.unpacked = (uint64_t)f.num("us");
+            r.e.unpacked = (uint64_t)f.i64("us");
             {   /* catalog can change between versions: re-match instead of trusting the cache */
                 std::string md5 = (r.e.key.rfind("n64:", 0) == 0) ? r.e.key.substr(4) : std::string();
                 if (const GameInfo* g = find_game_for(f.str("sys"), r.e.serial, md5)) {
@@ -1800,18 +1627,18 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
         if (!first) o.push_back(',');
         first = false;
         o += "{\"p\":";
-        jw_str(o, pr.first);
+        o += json::quote(pr.first);
         o += ",\"s\":" + std::to_string(r.size) + ",\"m\":" + std::to_string(r.mtime);
         o += r.ok ? ",\"ok\":true" : ",\"ok\":false";
         if (r.ok) {
-            o += ",\"k\":"; jw_str(o, r.e.key);
-            o += ",\"sys\":"; jw_str(o, system_short(r.e.system));
-            o += ",\"t\":"; jw_str(o, r.e.title);
-            o += ",\"sn\":"; jw_str(o, r.e.serial);
-            o += ",\"c\":"; jw_str(o, r.e.catalog_id);
-            o += ",\"is\":"; jw_str(o, r.e.issue);
-            o += ",\"lp\":"; jw_str(o, r.e.path);   // launch path (differs for zipped ROMs)
-            if (!r.e.save_stem.empty()) { o += ",\"ss\":"; jw_str(o, r.e.save_stem); }
+            o += ",\"k\":"; o += json::quote(r.e.key);
+            o += ",\"sys\":"; o += json::quote(system_short(r.e.system));
+            o += ",\"t\":"; o += json::quote(r.e.title);
+            o += ",\"sn\":"; o += json::quote(r.e.serial);
+            o += ",\"c\":"; o += json::quote(r.e.catalog_id);
+            o += ",\"is\":"; o += json::quote(r.e.issue);
+            o += ",\"lp\":"; o += json::quote(r.e.path);   // launch path (differs for zipped ROMs)
+            if (!r.e.save_stem.empty()) { o += ",\"ss\":"; o += json::quote(r.e.save_stem); }
             if (r.e.unpacked) o += ",\"us\":" + std::to_string(r.e.unpacked);
         }
         o.push_back('}');

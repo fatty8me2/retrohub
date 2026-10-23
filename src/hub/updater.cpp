@@ -1,4 +1,5 @@
 /* RetroHub auto-updater. See updater.h. Ported from Smash Classic's Updater.cpp. */
+#include "json.h"
 #include "updater.h"
 #include "games.h"
 
@@ -92,115 +93,13 @@ void ulog(const char* fmt, ...) {
     std::fclose(f);
 }
 
-/* ---------------- minimal tolerant JSON ---------------- */
-struct JV {
-    enum T { Null, Bool, Num, Str, Arr, Obj } t = Null;
-    std::string s;
-    double n = 0;
-    std::vector<JV> a;
-    std::vector<std::pair<std::string, JV>> o;
-    const JV* get(const char* k) const {
-        if (t != Obj) return nullptr;
-        for (auto& kv : o) if (kv.first == k) return &kv.second;
-        return nullptr;
-    }
-};
-
-struct JP {
-    const std::string& s; size_t i = 0; int depth = 0; bool err = false;
-    explicit JP(const std::string& str) : s(str) {}
-    void ws() { while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n')) i++; }
-    static void utf8(std::string& out, unsigned cp) {
-        if (cp < 0x80) out += (char)cp;
-        else if (cp < 0x800) { out += (char)(0xC0 | (cp >> 6)); out += (char)(0x80 | (cp & 63)); }
-        else if (cp < 0x10000) { out += (char)(0xE0 | (cp >> 12)); out += (char)(0x80 | ((cp >> 6) & 63)); out += (char)(0x80 | (cp & 63)); }
-        else { out += (char)(0xF0 | (cp >> 18)); out += (char)(0x80 | ((cp >> 12) & 63)); out += (char)(0x80 | ((cp >> 6) & 63)); out += (char)(0x80 | (cp & 63)); }
-    }
-    unsigned hex4() {
-        unsigned v = 0;
-        for (int k = 0; k < 4; k++) {
-            if (i >= s.size()) { err = true; return 0; }
-            char c = s[i++]; v <<= 4;
-            if (c >= '0' && c <= '9') v |= c - '0';
-            else if (c >= 'a' && c <= 'f') v |= c - 'a' + 10;
-            else if (c >= 'A' && c <= 'F') v |= c - 'A' + 10;
-            else { err = true; return 0; }
-        }
-        return v;
-    }
-    std::string str() {
-        std::string out;
-        i++; // opening quote
-        while (i < s.size() && s[i] != '"') {
-            char c = s[i++];
-            if (c != '\\') { out += c; continue; }
-            if (i >= s.size()) break;
-            char e = s[i++];
-            switch (e) {
-            case 'n': out += '\n'; break;
-            case 't': out += '\t'; break;
-            case 'r': out += '\r'; break;
-            case 'b': out += '\b'; break;
-            case 'f': out += '\f'; break;
-            case 'u': {
-                unsigned cp = hex4();
-                if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < s.size() && s[i] == '\\' && s[i + 1] == 'u') {
-                    i += 2; unsigned lo = hex4();
-                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                }
-                utf8(out, cp); break;
-            }
-            default: out += e; break;
-            }
-        }
-        if (i >= s.size()) err = true; else i++;
-        return out;
-    }
-    JV val() {
-        JV v; ws();
-        if (i >= s.size() || ++depth > 64) { err = true; return v; }
-        char c = s[i];
-        if (c == '"') { v.t = JV::Str; v.s = str(); }
-        else if (c == '{') {
-            v.t = JV::Obj; i++; ws();
-            if (i < s.size() && s[i] == '}') i++;
-            else while (!err) {
-                ws();
-                if (i >= s.size() || s[i] != '"') { err = true; break; }
-                std::string k = str(); ws();
-                if (i >= s.size() || s[i] != ':') { err = true; break; }
-                i++;
-                v.o.emplace_back(std::move(k), val()); ws();
-                if (i < s.size() && s[i] == ',') { i++; continue; }
-                if (i < s.size() && s[i] == '}') { i++; break; }
-                err = true;
-            }
-        } else if (c == '[') {
-            v.t = JV::Arr; i++; ws();
-            if (i < s.size() && s[i] == ']') i++;
-            else while (!err) {
-                v.a.push_back(val()); ws();
-                if (i < s.size() && s[i] == ',') { i++; continue; }
-                if (i < s.size() && s[i] == ']') { i++; break; }
-                err = true;
-            }
-        } else if (s.compare(i, 4, "true") == 0) { v.t = JV::Bool; v.n = 1; i += 4; }
-        else if (s.compare(i, 5, "false") == 0) { v.t = JV::Bool; i += 5; }
-        else if (s.compare(i, 4, "null") == 0) { i += 4; }
-        else if (c == '-' || (c >= '0' && c <= '9')) {
-            size_t st = i;
-            while (i < s.size() && (std::strchr("+-.eE", s[i]) || (s[i] >= '0' && s[i] <= '9'))) i++;
-            v.t = JV::Num; v.n = std::atof(s.substr(st, i - st).c_str());
-        } else err = true;
-        depth--;
-        return v;
-    }
-};
+/* ---------------- JSON: shared reader (src/common/json.h); GitHub's payload is an object, extra bytes tolerated ---------------- */
+using JV = json::Value;
 
 bool json_parse(const std::string& text, JV* out) {
-    JP p(text);
-    *out = p.val();
-    return !p.err && out->t == JV::Obj;
+    json::ParseOptions o;
+    o.allow_trailing = true;
+    return json::parse(text, out, o) && out->type == JV::Object;
 }
 
 /* "v1.2.3" / "1.2" -> {1,2,3}; anything non-numeric ends the version. */
@@ -289,7 +188,7 @@ std::string read_skipped() {
     JV v;
     if (!json_parse(ss.str(), &v)) return "";
     const JV* s = v.get("skipped_version");
-    return (s && s->t == JV::Str) ? s->s : "";
+    return (s && s->type == JV::String) ? s->s : "";
 }
 
 } // namespace
@@ -365,22 +264,22 @@ Release parse_release(const std::string& json) {
     JV v;
     if (!json_parse(json, &v)) return r;
     const JV* tag = v.get("tag_name");
-    if (!tag || tag->t != JV::Str || tag->s.empty()) return r;
+    if (!tag || tag->type != JV::String || tag->s.empty()) return r;
     r.ok = true;
     r.tag = tag->s;
-    if (const JV* b = v.get("body")) if (b->t == JV::Str) r.body = b->s;
+    if (const JV* b = v.get("body")) if (b->type == JV::String) r.body = b->s;
     const JV* assets = v.get("assets");
-    if (assets && assets->t == JV::Arr) {
+    if (assets && assets->type == JV::Array) {
         for (const JV& a : assets->a) {
             const JV* name = a.get("name");
             const JV* url = a.get("browser_download_url");
-            if (!name || name->t != JV::Str || name->s != kPlatformAssetName || !url || url->t != JV::Str) continue;
+            if (!name || name->type != JV::String || name->s != kPlatformAssetName || !url || url->type != JV::String) continue;
             const JV* size = a.get("size");
-            long long sz = (size && size->t == JV::Num) ? (long long)size->n : 0;
+            long long sz = (size && size->type == JV::Number) ? (long long)size->n : 0;
             if (!is_trusted_download_url(url->s) || sz <= 0) break;
             r.has_asset = true; r.url = url->s; r.size = sz;
             const JV* d = a.get("digest");
-            if (d && d->t == JV::Str) r.digest = d->s;
+            if (d && d->type == JV::String) r.digest = d->s;
             break;
         }
     }
