@@ -138,6 +138,16 @@ int main() {
           j.get("np_link")->str("core") == "sameboy");
     CHECK(json_parse(launch_json("pokered", 1, 0, 5u), &j) && !j.get("np_link"));
 
+    {   /* DS wireless launch spec */
+        Json lj;
+        std::string mode;
+        CHECK(json_parse(launch_json("nds:x", 1, 0, 5u, "", false, nullptr, nullptr, ",\"np_ds\":" + np_ds_json()), &lj));
+        CHECK(parse_np_ds(lj, &mode) && mode == "wireless");
+        CHECK(json_parse(launch_json("nds:x", 1, 0, 5u), &lj) && !parse_np_ds(lj, &mode));   /* older host: absent */
+        CHECK(json_parse("{\"np_ds\":{\"v\":2,\"mode\":\"wireless\"}}", &lj) && !parse_np_ds(lj, &mode));   /* unknown version */
+        CHECK(json_parse("{\"np_ds\":{\"v\":1,\"mode\":\"other\"}}", &lj) && !parse_np_ds(lj, &mode) && mode == "other");
+    }
+
     /* library filtering / search / sorting */
     std::vector<ListItem> items = {
         {"n64:1", "Mario Party 2", "n64", false}, {"gba:1", "advance Wars", "gba", false},

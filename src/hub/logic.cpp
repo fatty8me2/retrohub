@@ -485,6 +485,15 @@ std::string launch_json(const std::string& game, int launch, int delay, unsigned
     return o + "}";
 }
 
+std::string np_ds_json() { return "{\"v\":1,\"mode\":\"wireless\"}"; }
+
+bool parse_np_ds(const Json& m, std::string* mode) {
+    const Json* n = m.get("np_ds");
+    if (!n || n->type != Json::Obj || (int)n->num("v", 0) != 1) return false;
+    if (mode) *mode = n->str("mode");
+    return n->str("mode") == "wireless";
+}
+
 bool parse_launch_plan(const Json& m, std::string* ports, int* players) {
     const Json* pa = m.get("ports");
     const Json* pl = m.get("players");
