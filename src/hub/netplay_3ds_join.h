@@ -10,6 +10,10 @@ namespace hubnp3ds {
 
 const char* join_driver_script();
 
+/* Pure: qt-config.ini text with the Direct Connect dialog prefilled ([UI] Multiplayer/ip,port,nickname), so the
+ * helper only has to click Connect when ValuePattern/WM_CHAR entry is unavailable. */
+std::string seed_join_config(const std::string& ini, const std::string& nick, const std::string& host, int port);
+
 /* Pure: the helper's command-line arguments. */
 std::string join_driver_args(unsigned long azahar_pid, const std::string& status_file, const std::string& nick,
                              const std::string& password, const std::string& host, int port, int timeout_s);
