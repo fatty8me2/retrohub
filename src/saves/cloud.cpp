@@ -98,11 +98,13 @@ struct Resp {
 /* Server-wide R2 free-tier guard (see server/cloudflare/src/r2budget.js): 429 cloud-saves-paused (monthly ops) and
  * 507 cloud-saves-full (total storage). Both are NOT transient within a sync run: never retry them. */
 static bool budget_paused(const Resp& r) {
-    return r.status == 429 && (r.body.find("cloud-saves-paused") != str::npos || r.body.find("cloud-saves-busy-today") != str::npos);
+    return r.status == 429 && (r.body.find("cloud-saves-paused") != str::npos || r.body.find("cloud-saves-busy-today") != str::npos ||
+                              r.body.find("cloud-saves-unavailable") != str::npos);
 }
 static bool budget_full(const Resp& r) { return r.status == 507 && r.body.find("cloud-saves-full") != str::npos; }
 static const char* budget_msg(const Resp& r) {
-    return r.status == 429 && r.body.find("cloud-saves-busy-today") != str::npos ? "Cloud saves are busy today, will retry later"
+    return r.status == 429 && r.body.find("cloud-saves-unavailable") != str::npos ? "Cloud saves temporarily unavailable"
+         : r.status == 429 && r.body.find("cloud-saves-busy-today") != str::npos ? "Cloud saves are busy today, will retry later"
          : budget_paused(r) ? "Cloud saves are paused this month" : budget_full(r) ? "Cloud saves are full" : nullptr;
 }
 
@@ -206,7 +208,7 @@ struct Http {
             std::vector<str> ex = extra_fn ? extra_fn() : extra;
             r = once(method, pq, ex, body, blen, body_sha, sink);
             if (r.status != 0 && r.status < 500 && r.status != 429) return r;
-            if (budget_paused(r) || budget_full(r)) return r;   // no retry storm (507 is >= 500 but permanent)
+            if (budget_paused(r) || r.status == 507) return r;   // no retry storm: 507 (full / quota / too many files) is permanent
             if (a + 1 < tries) std::this_thread::sleep_for(std::chrono::milliseconds(300 << a));
         }
         return r;
