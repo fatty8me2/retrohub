@@ -27,6 +27,7 @@
 #include "dsview.h"
 #include "image.h"
 #include "link_sync.h"
+#include "rollback.h"
 #include "lockstep.h"
 #include "log.h"
 #include "session.h"
@@ -51,6 +52,9 @@ struct Args {
     int frames = -1, scale = 3, slot = 0, players = 1, delay = -1;   // delay -1 = auto
     int ports[4] = {0, -1, -1, -1};
     bool ports_given = false;
+    bool rollback = false;        // --rollback: GGPO-style rollback netplay instead of lockstep (see rollback.h)
+    int synctest = 0;             // --synctest N: offline, every frame roll back N frames and re-simulate, compare
+    int rb_pred = 8;              // --rb-pred N: max predicted frames
     bool ds_link = false;   // DS local wireless over the room (netpacket interface), no lockstep
     std::vector<std::string> opts;
 };
@@ -61,7 +65,7 @@ static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
           "  [--system gba|gb|gbc|nds] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
-          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--pace vsync|audio|timer] [--list-options]\n"
+          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rollback] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
           stderr);
 }
@@ -114,6 +118,10 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
             if (!val(&v)) return false;
             if (sscanf(v.c_str(), "%lf,%lf", &o->stylus_u, &o->stylus_v) != 2) { fprintf(stderr, "bad --stylus (want U,V)\n"); return false; }
         }
+        else if (k == "--rollback") o->rollback = true;
+        else if (k == "--no-rollback") o->rollback = false;
+        else if (k == "--synctest") { if (!val(&v)) return false; o->synctest = std::max(1, atoi(v.c_str())); }
+        else if (k == "--rb-pred") { if (!val(&v)) return false; o->rb_pred = std::max(1, std::min(10, atoi(v.c_str()))); }
         else if (k == "--link") o->link = true;
         else if (k == "--share-host-save") o->share_host_save = true;
         else if (k == "--host-save-dir") { std::string ignored; if (!val(&ignored)) return false; }   // accepted for hub symmetry with n64run
@@ -347,6 +355,13 @@ class Frontend {
 
     hubnet::Session session;
     std::unique_ptr<n64run::Lockstep> lockstep;
+    std::unique_ptr<rb::Engine> rbe;   // rollback netplay (--rollback); replaces lockstep
+    bool resim = false;                // re-simulating: drop audio
+    uint64_t fr_audio = 0xCBF29CE484222325ull;   // hash of the audio of the frame being stepped
+    rb::Sim make_rb_sim();
+    int run_synctest();
+    void rb_warmup();
+    void rb_log_stats();
     uint32_t slot_mask = 1;
     double fps = 60.0;
     int64_t qpc_freq = 1, next_deadline = 0;
@@ -455,6 +470,8 @@ bool Frontend::setup_paths() {
         int li = dsview::layout_index(want);
         if (li >= 0) { ds_layout = li; core.overrides["melonds_screen_layout1"] = want; }
     }
+    // mGBA's idle-loop removal state is not part of its savestates, so a rolled-back run would diverge from a straight one.
+    if (a.rollback || a.synctest) core.overrides["mgba_idle_optimization"] = "Don't Remove";
     if (a.link) {
         // Deterministic link defaults (ini / --opt below may still override): cycle-based RTC, side-by-side layout, my console's audio.
         int mine = 0;
@@ -464,7 +481,7 @@ bool Frontend::setup_paths() {
         core.overrides["sameboy_screen_layout"] = "left-right";
         core.overrides["sameboy_audio_output"] = "Game Boy #" + std::to_string(std::min(1, mine) + 1);
     }
-    if (!a.net.empty() && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
+    if ((!a.net.empty() || a.synctest) && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
     rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
@@ -921,6 +938,30 @@ bool Frontend::setup_net() {
         link_loaded = true;
         rlog("link: saves exchanged and loaded for %d consoles", link_n);
     }
+    if (a.rollback) {
+        a.delay = a.delay >= 0 ? std::min(a.delay, 4) : 1;
+        rb::Config rc;
+        for (int i = 0; i < 4; i++) rc.owner[i] = owner[i];
+        rc.my_slot = a.slot;
+        rc.slot_mask = slot_mask;
+        rc.delay = a.delay;
+        rc.max_pred = a.rb_pred;
+        if (const char* hi = std::getenv("RB_HASH_INTERVAL")) rc.hash_interval = std::max(1, atoi(hi));
+        rc.use_state_hash = false;   // confirmed video hash: serialized bytes differ benignly after a load (audio state)
+        rb_warmup();
+        rb::Transport t;
+        t.pump = [this] { session.update(); };
+        t.send = [this](int to, const void* d, int n) { session.send(to, d, n); };
+        t.recv = [this](int* from, std::vector<uint8_t>* o) { return session.recv(from, o); };
+        t.now_ms = [] { return hubnet::now_ms(); };
+        t.log = [](const std::string& s) { rlog("%s", s.c_str()); };
+        rbe = std::make_unique<rb::Engine>(rc, make_rb_sim(), t);
+        rlog("net: ROLLBACK netplay, input delay %d, max prediction %d, state %zu bytes, sync hash %s", a.delay, rc.max_pred,
+             core.serialize_size(), "output");
+        if (!rbe->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = 4; return false; }
+        rlog("net: all %d players ready, starting", a.players);
+        return true;
+    }
     {
         n64run::DelayNegotiation dn;
         dn.fixed_delay = a.delay;
@@ -1047,7 +1088,7 @@ bool Frontend::setup_link() {
 /* ------------------------------------------------------------------ main loop */
 
 void Frontend::do_pacing() {
-    if (ff || (a.headless && !a.ds_link)) return;
+    if (ff || (a.headless && !a.ds_link && !rbe)) return;
     switch (pace) {
         case Pace::Audio:
             while (audio.fill() > audio.target() && !quit) {
@@ -1096,6 +1137,92 @@ void Frontend::finish() {
     }
 }
 
+rb::Sim Frontend::make_rb_sim() {
+    rb::Sim s;
+    s.state_size = [this] { return core.serialize_size(); };
+    s.save = [this](uint8_t* b, size_t n) { return core.serialize(b, n); };
+    s.load = [this](const uint8_t* b, size_t n) { return core.unserialize(b, n); };
+    s.step = [this](const uint32_t pads[4], bool visible) {
+        resim = !visible;
+        fr_audio = 0xCBF29CE484222325ull;
+        for (int p = 0; p < 4; p++) frame_pad[p] = pads[p];
+        core.run();
+        resim = false;
+    };
+    s.frame_sum = [this] {
+        const FrameBuf& f = core.frame();
+        uint64_t h = f.px.empty() ? 0 : n64run::hash_block(f.px.data(), f.px.size() * 4);
+        return h;   // video only: audio resampler state is not part of any core's savestate, and audio never feeds back into the game
+    };
+    s.mem_hash = [this]() -> uint64_t {
+        uint64_t h = 0xCBF29CE484222325ull;
+        for (unsigned k = 0; k < 10; k++)
+            for (unsigned t : {0u, 2u, 3u}) {
+                size_t sz = 0;
+                void* p = core.memory(t | (k << 8), &sz);
+                if (p && sz) h = (h ^ n64run::hash_block(p, sz)) * 0x100000001B3ull;
+            }
+        return h;
+    };
+    s.poll_local = [this] { poll_all_local(); };
+    s.read_local = [this](int port) -> uint32_t {
+        for (int i = 0; i < n_local; i++) if (local_ports[i] == port) return local_pad_cache_[i];
+        return 0;
+    };
+    s.idle = [this] { pump_events(true); };
+    return s;
+}
+
+/* Cores do not restore their very first frames faithfully (BIOS / boot state), so rollback never starts from power-on:
+ * every PC first runs the same few neutral frames (deterministic, no network needed). */
+void Frontend::rb_warmup() {
+    for (int i = 0; i < 12; i++) { memset(frame_pad, 0, sizeof frame_pad); resim = true; core.run(); resim = false; }
+}
+
+void Frontend::rb_log_stats() {
+    if (!rbe) return;
+    const rb::Stats& s = rbe->stats();
+    double secs_f = s.frames ? (double)s.frames / 60.0 : 1.0;
+    rlog("rollback-stats: input-delay %d frames, frames %llu, rollbacks %llu (%.2f/s of game time), resim frames %llu, max depth %d, avg depth %.2f, stalls %llu (%llu ms), sync-waits %llu, max-skew %.2f, hashes compared %llu",
+         rbe->delay(), (unsigned long long)s.frames, (unsigned long long)s.rollbacks, s.rollbacks / secs_f, (unsigned long long)s.resim_frames, s.max_depth,
+         s.rollbacks ? (double)s.depth_sum / (double)s.rollbacks : 0.0, (unsigned long long)s.stalls, (unsigned long long)s.stalled_ms,
+         (unsigned long long)s.sync_waits, s.max_skew, (unsigned long long)s.hashes_compared);
+    rlog("rollback-timing: serialize %.1f us avg, unserialize %.1f us avg, retro_run %.1f us avg", s.save_n ? s.save_us / s.save_n : 0.0,
+         s.load_n ? s.load_us / s.load_n : 0.0, s.step_n ? s.step_us / s.step_n : 0.0);
+}
+
+int Frontend::run_synctest() {
+    if (!core.serialize_size()) { rlog("SYNCTEST: core has no save states"); return 2; }
+    int frames = a.frames > 0 ? a.frames : 1800;
+    rb_warmup();
+    if (std::getenv("RB_MEMINFO"))
+        for (unsigned k = 0; k < 10; k++)
+            for (unsigned t = 0; t < 5; t++) { size_t sz = 0; void* m = core.memory(t | (k << 8), &sz); if (m && sz) rlog("MEMINFO id type %u inst-field %u: %zu bytes", t, k, sz); }
+    rb::Sim sim = make_rb_sim();
+    int nports = 0;
+    int ports[4];
+    for (int i = 0; i < 4; i++) if (owner[i] >= 0) ports[nports++] = i;
+    if (!nports) { ports[0] = 0; nports = 1; }
+    uint64_t seed = 0x1234567;
+    auto input = [&](int f, uint32_t pads[4]) {
+        for (int i = 0; i < 4; i++) pads[i] = 0;
+        for (int k = 0; k < nports; k++) {
+            uint32_t x = (uint32_t)(f / 2) * 2654435761u ^ (uint32_t)(ports[k] + 1) * 40503u ^ (uint32_t)seed;
+            x ^= x >> 15; x *= 2246822519u; x ^= x >> 13; x *= 3266489917u; x ^= x >> 16;
+            pads[ports[k]] = std::getenv("RB_NOINPUT") ? 0 : (x & 0xFF3u & ~0xCu);
+        }
+    };
+    rlog("SYNCTEST: %d frames, rollback depth %d, state %zu bytes, compare %s", frames, a.synctest, core.serialize_size(),
+         "video + memory hash");
+    uint64_t t0 = SDL_GetTicks64();
+    rb::SyncTestResult r = rb::run_synctest(sim, frames, a.synctest, true, input, [](const std::string& m) { rlog("%s", m.c_str()); });
+    rlog("SYNCTEST timing: serialize %.1f us avg (max %.1f), unserialize %.1f us avg (max %.1f), hash %.1f us, retro_run %.1f us avg; %llu ms total",
+         r.save_us, r.save_us_max, r.load_us, r.load_us_max, r.hash_us, r.step_us, (unsigned long long)(SDL_GetTicks64() - t0));
+    rlog("SYNCTEST frames %llu, re-simulated frames compared %llu, mismatches %llu -> %s", (unsigned long long)r.frames, (unsigned long long)r.checks,
+         (unsigned long long)r.mismatches, r.mismatches ? "FAIL" : "PASS");
+    return r.mismatches ? 1 : 0;
+}
+
 int Frontend::selftest() {
     // 1) in-memory round trip, 2) file round trip through the same code the F5/F7 hotkeys use.
     size_t n = core.serialize_size();
@@ -1129,6 +1256,20 @@ int Frontend::selftest() {
          (unsigned long long)h_c, (unsigned long long)h_d, (h_c == h_d) ? "IDENTICAL" : "DIFFERENT");
     std::error_code ec;
     fs::remove(fs::u8path(state_path("selftest")), ec);
+    {   // multi-frame: does load + N frames track the original N frames? (what rollback needs)
+        std::vector<uint8_t> s2(n);
+        core.serialize(s2.data(), n);
+        uint64_t ho[16], hr[16], vo[16], vr[16];
+        for (int i = 0; i < 16; i++) { core.run(); ho[i] = state_hash(); vo[i] = n64run::hash_block(core.frame().px.data(), core.frame().px.size() * 4); }
+        core.unserialize(s2.data(), n);
+        int first_bad = -1, first_bad_v = -1;
+        for (int i = 0; i < 16; i++) {
+            core.run(); hr[i] = state_hash(); vr[i] = n64run::hash_block(core.frame().px.data(), core.frame().px.size() * 4);
+            if (hr[i] != ho[i] && first_bad < 0) first_bad = i;
+            if (vr[i] != vo[i] && first_bad_v < 0) first_bad_v = i;
+        }
+        rlog("SELFTEST 16-frame replay after unserialize: first state divergence at step %d, first video divergence at step %d (-1 = none)", first_bad, first_bad_v);
+    }
     bool pass = ok1 && same_restore && h_a == h_b && saved && loaded && h_c == h_d;
     rlog("SELFTEST %s", pass ? "PASS" : "FAIL");
     return pass ? 0 : 1;
@@ -1195,8 +1336,9 @@ int Frontend::run(const Args& args) {
     };
     bool drc = false;
     core.on_audio = [this, &drc](const int16_t* d, size_t n) {
-        if (!link) for (size_t i = 0; i < n * 2; i++) out_hash = (out_hash ^ (uint16_t)d[i]) * 0x100000001B3ull;
-        if (!ff && audio.active()) audio.push(d, n, drc);
+        if (rbe || a.synctest) { if (!link) for (size_t i = 0; i < n * 2; i++) fr_audio = (fr_audio ^ (uint16_t)d[i]) * 0x100000001B3ull; }
+        else if (!link) for (size_t i = 0; i < n * 2; i++) out_hash = (out_hash ^ (uint16_t)d[i]) * 0x100000001B3ull;
+        if (!ff && !resim && audio.active()) audio.push(d, n, drc);
     };
 
     std::string err;
@@ -1215,6 +1357,20 @@ int Frontend::run(const Args& args) {
         if (!core.load_game_special(gt, roms, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
     } else if (!core.load_game(a.rom, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
     fps = core.av().timing.fps > 1 ? core.av().timing.fps : 60.0;
+    if (a.rollback && !a.synctest) {
+        // Only cores whose savestates were verified exact (SyncTest against a free-running reference) may roll back; others stay lockstep.
+        std::string ln = lower(core.info().library_name ? core.info().library_name : "");
+        bool safe = false;
+        std::string why;
+        if (ln.find("mgba link") != std::string::npos) safe = true;
+        else if (ln.find("sameboy") != std::string::npos)
+            why = "SameBoy: rollback desyncs under deep re-simulation (CGB states inexact, DMG failed a bad-network run)";
+        else if (ln.find("gambatte") != std::string::npos) why = "Gambatte states are not exact";
+        else why = "core " + ln + " is not verified for rollback";
+        if (!safe && std::getenv("RETRORUN_FORCE_ROLLBACK")) { rlog("rollback: forced on an unverified core (RETRORUN_FORCE_ROLLBACK)"); safe = true; }
+        if (!safe) { rlog("rollback: %s -> staying on lockstep netplay", why.empty() ? "unsupported core" : why.c_str()); a.rollback = false; }
+        else rlog("rollback: core %s verified for rollback netplay", ln.c_str());
+    }
     if (is_ds) {   // every option retrorun relies on must exist in the real core with that value, else F9/defaults would silently fail
         int nreq = 0;
         const dsview::ReqOpt* req = dsview::required_options(&nreq);
@@ -1272,6 +1428,55 @@ int Frontend::run(const Args& args) {
     int rc = 0;
     if (a.selftest) {
         rc = selftest();
+    } else if (a.synctest) {
+        rc = run_synctest();
+    } else if (rbe || (a.rollback && !a.net.empty())) {
+        if (!rbe && !setup_net()) { rc = net_rc; goto done; }
+        if (a.headless) pace = Pace::Timer;
+        {
+            uint64_t t_start = SDL_GetTicks64(), last_stat = t_start;
+            uint64_t last_rb = 0;
+            for (;;) {
+                if (quit) break;
+                if (a.frames >= 0 && rbe->cur() >= (uint32_t)a.frames) break;
+                pump_events(false);
+                if (quit) break;
+                if (session.failed()) { rlog("net: connection lost, leaving"); rc = 4; break; }
+                rb::Engine::Status st = rbe->prepare();
+                if (rbe->connection_lost()) { rlog("net: connection lost, leaving"); rc = 4; break; }
+                if (rbe->desync()) { rc = 5; break; }
+                if (st == rb::Engine::Status::Stalled) { Sleep(1); continue; }
+                if (st == rb::Engine::Status::SyncWait) { Sleep((DWORD)(1000.0 / (fps > 1 ? fps : 60.0))); continue; }
+                do_pacing();
+                rbe->run_frame();
+                frame_no = rbe->cur();
+                if (!a.headless) present();
+                if (SDL_GetTicks64() - last_stat >= 10000) {
+                    last_stat = SDL_GetTicks64();
+                    const rb::Stats& s = rbe->stats();
+                    rlog("rollback: frame %llu rollbacks %llu (%.1f/s) max depth %d stalls %llu sync-waits %llu", (unsigned long long)frame_no,
+                         (unsigned long long)s.rollbacks, (double)s.rollbacks * 1000.0 / (double)(last_stat - t_start), s.max_depth,
+                         (unsigned long long)s.stalls, (unsigned long long)s.sync_waits);
+                    (void)last_rb;
+                }
+                if ((frame_no & 63) == 0 && SDL_GetTicks64() - last_srm_check > 30000) {
+                    last_srm_check = SDL_GetTicks64();
+                    if (link) link_save(false); else save_srm(false);
+                }
+            }
+            double secs = (SDL_GetTicks64() - t_start) / 1000.0;
+            if (rc == 0 || rc == 5) {
+                bool ok = rbe->finish(8000);
+                if (!ok) rlog("net: finish: inputs not fully confirmed before timeout");
+                if (rbe->desync()) { rlog("RESULT: DESYNC detected"); rc = 5; }
+            }
+            out_hash = rbe->confirmed_out_hash();
+            in_hash = rbe->confirmed_in_hash();
+            rb_log_stats();
+            rlog("done: %llu frames in %.2f s (%.1f fps)", (unsigned long long)frame_no, secs, secs > 0 ? frame_no / secs : 0.0);
+            uint32_t t0 = hubnet::now_ms();
+            while (hubnet::now_ms() - t0 < 400) { session.update(); Sleep(5); }
+        }
     } else {
         if (a.ds_link) {
             if (!setup_link()) { rc = 3; goto done; }

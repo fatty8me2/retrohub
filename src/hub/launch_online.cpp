@@ -318,6 +318,9 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         ri.online = false;   // the vault save is used and written back: track/sync it like an offline session
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --link --save-dir " + quote(battery) +
                            " --state-dir " + quote(tmp) + lnet + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+        /* GGPO-style rollback (retrorun --rollback) for the GBA link core, whose savestates passed SyncTest and bad-network runs.
+         * SameBoy/Gambatte stay on lockstep (retrorun also refuses --rollback for any core it has not verified). */
+        if (e.system == hub::System::GBA) args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
