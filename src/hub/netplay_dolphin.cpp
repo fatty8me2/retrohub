@@ -1,3 +1,4 @@
+#include "winutil.h"
 #include "netplay_dolphin.h"
 
 #include <cctype>
@@ -278,14 +279,7 @@ try {
 }
 
 #ifdef _WIN32
-static std::wstring W(const std::string& s) {
-    if (s.empty()) return L"";
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    std::wstring w(n, 0);
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
-    w.resize(n - 1);
-    return w;
-}
+static std::wstring W(const std::string& s) { return winutil::to_wide(s); }
 
 static bool spawn(const std::wstring& cmd, const std::wstring& cwd, const std::wstring& desktop, bool minimized, DWORD* pid) {
     STARTUPINFOW si{};

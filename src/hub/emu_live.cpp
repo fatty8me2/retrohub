@@ -2,6 +2,7 @@
 //   find/install emulator -> unpack zip -> write config -> save copy-in -> spawn (job object) -> wait -> save copy-back.
 // Usage: hub_emu_live <game file> [--fullscreen] [--seconds N] [--shots <dir>] [--pads N]   (--pads: GameCube: pretend N XInput pads, 0 = none)
 // Set RETROHUB_NO_EXISTING_EMU=1 to ignore any Cemu install outside RetroHub's own data dir.
+#include "winutil.h"
 #include "emulators.h"
 #include "games.h"
 #include "library.h"
@@ -16,12 +17,7 @@
 #include <string>
 #include <vector>
 
-static std::wstring W(const std::string& s) {
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    std::wstring w(n > 0 ? n - 1 : 0, 0);
-    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
-    return w;
-}
+static std::wstring W(const std::string& s) { return winutil::to_wide(s); }
 static std::string slurp(const std::string& p) {
     std::ifstream f(W(p), std::ios::binary);
     std::stringstream ss;

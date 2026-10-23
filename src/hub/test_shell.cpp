@@ -1,4 +1,5 @@
 /* Console test for shell_integration: writes .lnk files into %TEMP% only (never the real Start Menu). */
+#include "winutil.h"
 #include "shell_integration.h"
 #include <windows.h>
 #include <shobjidl.h>
@@ -15,9 +16,7 @@ int main() {
     std::wstring dir = std::wstring(tmp) + L"retrohub_shell_test_" + std::to_wstring(GetCurrentProcessId());
     CreateDirectoryW(dir.c_str(), nullptr);
     std::wstring lnk = dir + L"\\sub\\RetroHub.lnk";   // sub-folder must be created on demand
-    wchar_t self[MAX_PATH];
-    GetModuleFileNameW(nullptr, self, MAX_PATH);
-    std::wstring exe = self;
+    std::wstring exe = winutil::exe_path_w();
 
     bool ok = false;
     bool wrote = shell_write_shortcut(lnk, exe, &ok);

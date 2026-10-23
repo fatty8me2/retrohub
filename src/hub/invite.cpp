@@ -1,4 +1,5 @@
 /* Clickable invite links: parsing, link building, and the single-instance pipe handoff (see invite.h). */
+#include "winutil.h"
 #include "invite.h"
 
 #include <shellapi.h>
@@ -178,8 +179,7 @@ void InviteServer::run() {
             else if (GetLastError() == ERROR_IO_PENDING) ok = wait_overlapped(pipe, &ov, kClientReadMs, &got);   // silent client: give up
             std::wstring text;
             if (ok && got > 0) {
-                int n = MultiByteToWideChar(CP_UTF8, 0, buf, (int)got, nullptr, 0);
-                if (n > 0) { text.resize(n); MultiByteToWideChar(CP_UTF8, 0, buf, (int)got, &text[0], n); }
+                text = winutil::to_wide(std::string(buf, got));
             }
             bool accepted = false;
             if (text == L"show") { push(2, L""); accepted = true; }
@@ -266,9 +266,8 @@ bool invite_parse_play(const std::wstring& cmdline, std::wstring* key) {
 std::wstring invite_play_arguments(const std::wstring& key) { return L"--play " + key; }
 
 static bool pipe_call(const std::wstring& pipe_name, const std::wstring& text, DWORD timeout_ms) {
-    int n = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0, nullptr, nullptr);
-    std::vector<char> msg((size_t)n);
-    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), msg.data(), n, nullptr, nullptr);
+    std::string msg_utf8 = winutil::to_utf8(text);
+    std::vector<char> msg(msg_utf8.begin(), msg_utf8.end());
     DWORD deadline = GetTickCount() + timeout_ms;
     for (;;) {
         char reply[8] = {};

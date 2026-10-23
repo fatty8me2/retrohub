@@ -1,3 +1,4 @@
+#include "winutil.h"
 #include "netplay_3ds_run.h"
 
 #include <winsock2.h>
@@ -10,13 +11,7 @@
 
 namespace hubnp3ds {
 
-static std::wstring W(const std::string& s) {
-    if (s.empty()) return L"";
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w((size_t)n, 0);
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
-}
+static std::wstring W(const std::string& s) { return winutil::to_wide(s); }
 
 std::string room_exe_for(const std::string& azahar_exe) {
     size_t p = azahar_exe.find_last_of("\\/");

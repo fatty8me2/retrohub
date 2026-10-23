@@ -2,6 +2,7 @@
 // single-instance handoff. Uses unique mutex and pipe names, never touches the registry, opens no windows.
 // Usage: hub_invite_test            (runs everything)
 //        hub_invite_test --send <pipe> <code>   (child mode: the second launch)
+#include "winutil.h"
 #include "invite.h"
 
 #include <cstdio>
@@ -14,11 +15,7 @@ static void check(bool ok, const char* what) {
     if (!ok) ++g_fail;
 }
 
-static std::wstring self_exe() {
-    wchar_t buf[MAX_PATH * 2];
-    DWORD n = GetModuleFileNameW(nullptr, buf, (DWORD)(sizeof(buf) / sizeof(buf[0])));
-    return std::wstring(buf, n);
-}
+static std::wstring self_exe() { return winutil::exe_path_w(); }
 
 static DWORD run_child(const std::wstring& args) {
     std::wstring cmd = L"\"" + self_exe() + L"\" " + args;

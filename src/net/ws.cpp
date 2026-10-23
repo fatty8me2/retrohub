@@ -1,3 +1,4 @@
+#include "winutil.h"
 #include "net_internal.h"
 #include "log.h"
 
@@ -13,14 +14,7 @@ struct WsClient::Handles {
     HINTERNET session = nullptr, connect = nullptr, request = nullptr, socket = nullptr;
 };
 
-static std::wstring widen(const std::string& s)
-{
-    if (s.empty()) return std::wstring();
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w(n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
-}
+static std::wstring widen(const std::string& s) { return winutil::to_wide(s); }
 
 WsClient::WsClient() : h_(new Handles) {}
 WsClient::~WsClient() { close(); }

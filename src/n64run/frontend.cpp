@@ -9,6 +9,7 @@
  *             6 host-save sync failed.
  * --slot may be any of 0..3 (lobby slots can have gaps); --players is the number of PCs.
  */
+#include "winutil.h"
 #include <windows.h>
 #include <shellapi.h>
 
@@ -337,9 +338,7 @@ static std::wstring wide_title_arg(const std::string& fallback_utf8) {
         LocalFree(wargv);
     }
     if (out.empty() && !fallback_utf8.empty()) {
-        int m = MultiByteToWideChar(CP_UTF8, 0, fallback_utf8.c_str(), -1, nullptr, 0);
-        out.assign(m > 0 ? m - 1 : 0, L'\0');
-        if (m > 1) MultiByteToWideChar(CP_UTF8, 0, fallback_utf8.c_str(), -1, out.data(), m);
+        out = winutil::to_wide(fallback_utf8);
     }
     return out;
 }

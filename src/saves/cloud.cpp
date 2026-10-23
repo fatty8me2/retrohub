@@ -1,4 +1,5 @@
 /* Cloud saves backend (see cloud.h). Windows only: WinHTTP + BCrypt. */
+#include "winutil.h"
 #include "json.h"
 #include "cloud.h"
 
@@ -76,13 +77,7 @@ str str_of(const JV& o, const char* k) {   // strings and numbers (raw text), el
 long long num_of(const JV& o, const char* k) { return o.i64(k, 0); }
 
 /* ----------------------------------------------------------------- http */
-std::wstring W(const str& s) {
-    if (s.empty()) return L"";
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w(n, 0);
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
-}
+std::wstring W(const std::string& s) { return winutil::to_wide(s); }
 
 str url_enc(const str& s) {
     str o; char b[4];
@@ -119,12 +114,8 @@ struct Http {
         if (!WinHttpCrackUrl(u.c_str(), 0, 0, &uc)) return;
         https = uc.nScheme == INTERNET_SCHEME_HTTPS;
         port = uc.nPort;
-        int n = WideCharToMultiByte(CP_UTF8, 0, hostw, -1, nullptr, 0, nullptr, nullptr);
-        host.resize(n > 0 ? n - 1 : 0);
-        WideCharToMultiByte(CP_UTF8, 0, hostw, -1, &host[0], n, nullptr, nullptr);
-        n = WideCharToMultiByte(CP_UTF8, 0, pathw, -1, nullptr, 0, nullptr, nullptr);
-        base_path.resize(n > 0 ? n - 1 : 0);
-        WideCharToMultiByte(CP_UTF8, 0, pathw, -1, &base_path[0], n, nullptr, nullptr);
+        host = winutil::to_utf8(hostw);
+        base_path = winutil::to_utf8(pathw);
         while (!base_path.empty() && base_path.back() == '/') base_path.pop_back();
         session = WinHttpOpen(L"RetroHub-CloudSaves/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
         if (!session) return;
@@ -178,10 +169,7 @@ struct Http {
             std::wstring w(n / 2, 0);
             if (!WinHttpQueryHeaders(req, WINHTTP_QUERY_CUSTOM, name, &w[0], &n, WINHTTP_NO_HEADER_INDEX)) return str();
             w.resize(n / 2);
-            int m = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-            str o(m, 0);
-            WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &o[0], m, nullptr, nullptr);
-            return o;
+            return winutil::to_utf8(w);
         };
         r.etag = qh(L"ETag"); r.sha = qh(L"X-RH-Sha"); r.mtime = qh(L"X-RH-Mtime");
         std::vector<char> buf(64 * 1024);

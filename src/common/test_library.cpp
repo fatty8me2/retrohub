@@ -1,5 +1,6 @@
 // Console test for the multi-system library (library.cpp). Exit code 0 = all passed.
 // Usage: hublibrary_test [folder-to-scan-and-print]
+#include "winutil.h"
 #include "library.h"
 #include "games.h"
 #include "miniz.h"
@@ -459,11 +460,8 @@ static void test_scan_cache_state(const fs::path& dir) {
     {   /* non-ASCII games folder: UTF-8 in settings -> wide path (e.g. DocumentsJeux Videos with an accent) */
         const fs::path jx = dir / fs::path(L"Jeux Vid\u00E9o") / "Game Boy";
         CHECK(write_file(jx / "uni.gb", make_gb("UNICODE", 0, 0x4321, 9)));
-        std::string u8root;
         std::wstring wroot = (dir / fs::path(L"Jeux Vid\u00E9o")).wstring();
-        int n = WideCharToMultiByte(CP_UTF8, 0, wroot.c_str(), (int)wroot.size(), nullptr, 0, nullptr, nullptr);
-        u8root.assign((size_t)n, 'x');
-        WideCharToMultiByte(CP_UTF8, 0, wroot.c_str(), (int)wroot.size(), &u8root[0], n, nullptr, nullptr);
+        std::string u8root = winutil::to_utf8(wroot);
         library_set_data_dir((dir / "userdata_u").string());
         std::vector<GameEntry> ru = scan_library({u8root}, nullptr);
         CHECK(ru.size() == 1);

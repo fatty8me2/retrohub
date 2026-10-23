@@ -65,7 +65,7 @@ target_include_directories(RetroHub PRIVATE ${RH_BRAND_RC_DIRS})
 target_link_libraries(RetroHub PRIVATE propsys)
 
 add_executable(hub_shell_test test_shell.cpp shell_integration.cpp)
-target_link_libraries(hub_shell_test PRIVATE SDL2::SDL2 ole32 shell32 uuid propsys user32)
+target_link_libraries(hub_shell_test PRIVATE hubbase SDL2::SDL2 ole32 shell32 uuid propsys user32)
 add_custom_command(TARGET hub_shell_test POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:hub_shell_test>)
 
@@ -81,6 +81,7 @@ target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt wi
 # GameCube online via Dolphin NetPlay
 target_sources(RetroHub PRIVATE netplay_dolphin.cpp)
 add_executable(hub_gcnp_test test_netplay_dolphin.cpp netplay_dolphin.cpp)
+target_link_libraries(hub_gcnp_test PRIVATE hubbase)
 add_executable(hub_gcnp_live gcnp_live.cpp netplay_dolphin.cpp netplay_3ds_run.cpp)
 target_include_directories(hub_gcnp_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gcnp_live PRIVATE hublogic hubcommon hubnet user32 ws2_32 winhttp)
@@ -96,12 +97,12 @@ target_link_libraries(hub_np3ds_test PRIVATE hublogic hubcommon)
 
 # Native update applier: unit tests + integration dry-run of `RetroHub.exe --apply-update` in scratch dirs.
 add_executable(hub_apply_test test_update_apply.cpp update_apply.cpp)
-target_link_libraries(hub_apply_test PRIVATE shell32)
+target_link_libraries(hub_apply_test PRIVATE hubbase shell32)
 add_dependencies(hub_apply_test RetroHub)
 # ---- Clickable invite links (retrohub://join/<CODE>, --join <CODE>, single-instance handoff) ----
 add_library(hubinvite STATIC invite.cpp)
 target_include_directories(hubinvite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hubinvite PUBLIC shell32 user32 advapi32)
+target_link_libraries(hubinvite PUBLIC hubbase shell32 user32 advapi32)
 target_compile_features(hubinvite PUBLIC cxx_std_17)
 target_link_libraries(RetroHub PRIVATE hubinvite advapi32)
 target_link_libraries(hub_shell_test PRIVATE hubinvite advapi32)

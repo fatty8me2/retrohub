@@ -1,4 +1,5 @@
 /* RetroHub auto-updater. See updater.h. Ported from Smash Classic's Updater.cpp. */
+#include "winutil.h"
 #include "json.h"
 #include "updater.h"
 #include "games.h"
@@ -55,20 +56,8 @@ std::mutex s_mu;
 /* Every path crosses the Win32 boundary as UTF-16 (the *W APIs and wide
  * streams). The ANSI (*A) APIs and narrow CRT calls would mangle paths that
  * contain non-ASCII characters, e.g. a profile folder with an accent. */
-std::wstring W(const std::string& s) {
-    if (s.empty()) return std::wstring();
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w(n > 0 ? (size_t)n : 0, L'\0');
-    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
-}
-std::string U8(const std::wstring& w) {
-    if (w.empty()) return std::string();
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    std::string s(n > 0 ? (size_t)n : 0, '\0');
-    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), &s[0], n, nullptr, nullptr);
-    return s;
-}
+std::wstring W(const std::string& s) { return winutil::to_wide(s); }
+std::string U8(const std::wstring& s) { return winutil::to_utf8(s); }
 std::filesystem::path P(const std::string& s) { return std::filesystem::path(W(s)); }
 void rm_file(const std::string& p) { DeleteFileW(W(p).c_str()); }
 
@@ -169,15 +158,7 @@ std::string sha256_file(const std::string& path) {
 }
 
 /* Growing UTF-16 buffer: long or non-ASCII install paths are not truncated. */
-std::string exe_path() {
-    std::wstring buf(MAX_PATH, L'\0');
-    for (;;) {
-        DWORD n = GetModuleFileNameW(nullptr, &buf[0], (DWORD)buf.size());
-        if (n == 0) return std::string();
-        if (n < buf.size()) { buf.resize(n); return U8(buf); }
-        buf.resize(buf.size() * 2);
-    }
-}
+std::string exe_path() { return winutil::exe_path(); }
 
 std::string settings_path() { return hub::data_dir() + "updater.json"; }
 
