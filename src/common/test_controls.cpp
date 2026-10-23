@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <set>
 #include <sstream>
 
 #include "controls.h"
@@ -365,7 +366,23 @@ static void test_port_assign() {
     CHECK(hubctl::order_pads({"padB"}, {"padA", "padB"})[0] == 1);
 }
 
+static void test_pad_sync_and_unique() {
+    hubctl::PortAssign pa;
+    pa.start(0);
+    pa.press("A", 1); pa.press("B", 2); pa.press("C", 3);
+    pa.sync({"A", "C", "D"});                         // B was unplugged
+    CHECK(pa.assigned().size() == 2 && pa.assigned()[0] == "A" && pa.assigned()[1] == "C" && pa.next_port() == 3);
+    CHECK(pa.press("D", 4) && pa.assigned().size() == 3);
+    std::vector<std::string> u = hubctl::uniquify_keys({"g1", "g2", "g1", "g1#7", "g1"});
+    CHECK(u[0] == "g1" && u[1] == "g2" && u[2] == "g1#dup2" && u[3] == "g1#7" && u[4] == "g1#dup3");
+    std::set<std::string> s(u.begin(), u.end());
+    CHECK(s.size() == u.size());
+    CHECK(hubctl::uniquify_keys({"x"})[0] == "x");    // single pad keeps its stored key
+    CHECK(hubctl::order_pads({"g1#dup2"}, {"g1", "g1#dup2"})[0] == 1);
+}
+
 int main() {
+    test_pad_sync_and_unique();
     test_port_assign();
     test_keyboard();
     test_describe();

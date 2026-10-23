@@ -591,6 +591,7 @@ void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC,
 
 /* ---- find_games_ui.cpp ---- */
 void find_games_open();   // start the scan + checklist modal (first run, Settings > ROM folders)
+void find_games_shutdown();   // cancel + join a running scan (call at app exit)
 void draw_find_games();   // call every frame
 
 

@@ -23,6 +23,10 @@ static Request rq(const char* uid, const char* name, int64_t at)
 
 int main()
 {
+    CHECK(retire_error_is_terminal("retire_old", "bad-secret"));
+    CHECK(!retire_error_is_terminal("retire_old", "retire-failed"));   // transient: keep resending
+    CHECK(!retire_error_is_terminal("retire_old", "rate-limited"));
+    CHECK(!retire_error_is_terminal("add_friend", "bad-secret"));
     {   // same uid twice: one entry, most present status wins, earliest "since" kept
         std::vector<Friend> v = {mk("a", "Mia", PresenceState::Offline, 10, 500), mk("b", "Jo", PresenceState::Online, 1, 5),
                                  mk("a", "Mia", PresenceState::InGame, 5, 900), mk("a", "Mia", PresenceState::Online, 99, 100)};

@@ -171,6 +171,8 @@ class PortAssign {
     bool timed_out(double now, double secs) const { return active_ && now - last_ >= secs; }
     int next_port() const { return (int)keys_.size() + 1; }   // 1-based port Player N presses for
     const std::vector<std::string>& assigned() const { return keys_; }   // assigned[i] = pad key for port i+1
+    /* Pads unplugged during the mode: drop every assigned key not in `present` (ports shift up). */
+    void sync(const std::vector<std::string>& present);
     /* Full port order to store: the assigned pads, then the others in `all_keys` order. */
     std::vector<std::string> order(const std::vector<std::string>& all_keys) const;
   private:
@@ -178,6 +180,10 @@ class PortAssign {
     double last_ = 0;
     std::vector<std::string> keys_;
 };
+
+/* Makes keys unique: a repeat of an earlier key gets "#dup<N>" (N = 2,3,..) appended; the first keeps its key, so
+ * a single pad's stored key never changes. Two identical controllers (same guid, no serial) get distinct keys. */
+std::vector<std::string> uniquify_keys(std::vector<std::string> keys);
 
 /* Pad key = guid, plus "#serial" when SDL reports one. order_pads returns indices into `pads` in port order: listed keys
  * first (exact key, else same guid), then the rest in their original order. Empty order = unchanged. */

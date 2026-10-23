@@ -87,6 +87,9 @@ struct Event {
  * the earliest `since` and a non-empty name/code/note are kept.
  * dedupe_requests: also one entry per uid; a person who is already a friend (or yourself) has no request;
  * a person with both an incoming and an outgoing request keeps only the incoming one (you can accept). */
+/* True when a server "error" reply to retire_old means it can never succeed (the saved old secret is wrong), so the
+ * client must drop pending-retire.json instead of resending it forever. */
+bool retire_error_is_terminal(const std::string& ref, const std::string& detail);
 void dedupe_friends(std::vector<Friend>& friends, const std::string& self_uid = "");
 void dedupe_requests(const std::vector<Friend>& friends, std::vector<Request>& incoming, std::vector<Request>& outgoing,
                      const std::string& self_uid = "");
