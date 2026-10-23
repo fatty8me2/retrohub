@@ -3,6 +3,8 @@
 #include <fstream>
 #include <sstream>
 
+#include "logic.h"
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -15,6 +17,23 @@ param([int]$AzPid, [string]$Status, [string]$Nick, [string]$Pw = "", [string]$Ad
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $UA = [System.Windows.Automation.AutomationElement]; $TS = [System.Windows.Automation.TreeScope]
 $CT = [System.Windows.Automation.ControlType]
+Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern bool PostMessage(System.IntPtr h, uint m, System.IntPtr w, System.IntPtr l);'
+function Read-Edit($e) { try { return $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch { return $null } }
+# Qt's QLineEdit often rejects ValuePattern.SetValue: fall back to focus + WM_CHAR posted to the dialog's own HWND
+# (works on a hidden desktop, unlike SendInput which only reaches the input desktop).
+function Set-Edit($dlg, $e, [string]$v) {
+  if ((Read-Edit $e) -eq $v) { return $true }   # prefilled from the seeded qt-config.ini
+  try { $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($v) } catch {}
+  if ((Read-Edit $e) -eq $v) { return $true }
+  $h = [IntPtr]$dlg.Current.NativeWindowHandle
+  if ($h -eq [IntPtr]::Zero) { return $false }
+  try { $e.SetFocus() } catch {}
+  Start-Sleep -Milliseconds 150
+  1..48 | ForEach-Object { [void][W.U]::PostMessage($h, 0x102, [IntPtr]8, [IntPtr]0) }
+  foreach ($c in $v.ToCharArray()) { [void][W.U]::PostMessage($h, 0x102, [IntPtr][int]$c, [IntPtr]0) }
+  Start-Sleep -Milliseconds 250
+  return ((Read-Edit $e) -eq $v)
+}
 function Say($t) { Add-Content -Encoding ascii $Status $t }
 function Prop($p, $v) { New-Object System.Windows.Automation.PropertyCondition($p, $v) }
 function Main() {
@@ -43,7 +62,7 @@ try {
   $edits = @($dlg.FindAll($TS::Descendants, (Prop $UA::ControlTypeProperty $CT::Edit)))
   if ($edits.Count -lt 4) { Say "error:Direct Connect dialog layout changed"; exit 1 }
   $vals = @($Addr, "$Port", $Nick, $Pw)
-  for ($i = 0; $i -lt 4; $i++) { $edits[$i].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($vals[$i]) }
+  for ($i = 0; $i -lt 4; $i++) { if (-not (Set-Edit $dlg $edits[$i] $vals[$i])) { Say "stage:edit$i-unset" } }
   Start-Sleep -Milliseconds 300
   $btn = $dlg.FindFirst($TS::Descendants, (Prop $UA::NameProperty "Connect"))
   $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
@@ -67,6 +86,18 @@ std::string join_driver_args(unsigned long pid, const std::string& status, const
                              const std::string& host, int port, int timeout_s) {
     return "-AzPid " + std::to_string(pid) + " -Status \"" + status + "\" -Nick \"" + nick + "\" -Pw \"" + pw + "\" -Addr \"" + host +
            "\" -Port " + std::to_string(port) + " -TimeoutS " + std::to_string(timeout_s);
+}
+
+std::string seed_join_config(const std::string& ini, const std::string& nick, const std::string& host, int port) {
+    std::string t = ini;
+    auto set = [&](const char* key, const std::string& v) {
+        t = hubui::ini_set(t, "UI", std::string("Multiplayer\\") + key + "\\default", "false");
+        t = hubui::ini_set(t, "UI", std::string("Multiplayer\\") + key, v);
+    };
+    set("ip", host);
+    set("port", std::to_string(port));
+    set("nickname", nick);
+    return t;
 }
 
 std::string join_state(const std::string& text) {
