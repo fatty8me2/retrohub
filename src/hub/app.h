@@ -49,6 +49,8 @@
 #include "session.h"
 #include "netplay_3ds_run.h"
 #include "ui_kit.h"
+#include "game_settings.h"
+#include "launch_settings.h"
 
 #ifndef HUB_VERSION_STR
 #define HUB_VERSION_STR "0.0.0"
@@ -449,7 +451,14 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
 void poll_np3ds();
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
-                          const hubui::MatchSpec* host_match = nullptr);
+                          const hubui::MatchSpec* host_match = nullptr, const std::string* launch_body = nullptr);
+
+/* settings_games_ui.cpp: per-game settings (vault: _settings\game_settings.json) */
+extern hub::gs::Store GSTORE;
+void gs_load();   // after the vault dir is known
+hub::gs::Values gs_values_for(const hub::GameEntry& e);   // resolved incl. the global fullscreen default
+void gs_draw_game_section(const hub::GameEntry& e);       // details modal
+void gs_draw_defaults_area();                              // Settings page
 
 
 /* ---- lobby.cpp ---- */
