@@ -596,26 +596,6 @@ void Frontend::open_pads() {
     for (size_t i = 0; i < names.size(); i++) rlog("controller %zu: %s", i, names[i].c_str());
 }
 
-static uint32_t kbd_mask() {
-    const Uint8* k = SDL_GetKeyboardState(nullptr);
-    uint32_t m = 0;
-    auto b = [&](SDL_Scancode s, int id) { if (k[s]) m |= 1u << id; };
-    b(SDL_SCANCODE_UP, RETRO_DEVICE_ID_JOYPAD_UP);
-    b(SDL_SCANCODE_DOWN, RETRO_DEVICE_ID_JOYPAD_DOWN);
-    b(SDL_SCANCODE_LEFT, RETRO_DEVICE_ID_JOYPAD_LEFT);
-    b(SDL_SCANCODE_RIGHT, RETRO_DEVICE_ID_JOYPAD_RIGHT);
-    b(SDL_SCANCODE_Z, RETRO_DEVICE_ID_JOYPAD_B);
-    b(SDL_SCANCODE_X, RETRO_DEVICE_ID_JOYPAD_A);
-    b(SDL_SCANCODE_A, RETRO_DEVICE_ID_JOYPAD_Y);
-    b(SDL_SCANCODE_S, RETRO_DEVICE_ID_JOYPAD_X);
-    b(SDL_SCANCODE_Q, RETRO_DEVICE_ID_JOYPAD_L);
-    b(SDL_SCANCODE_W, RETRO_DEVICE_ID_JOYPAD_R);
-    b(SDL_SCANCODE_RETURN, RETRO_DEVICE_ID_JOYPAD_START);
-    b(SDL_SCANCODE_KP_ENTER, RETRO_DEVICE_ID_JOYPAD_START);
-    b(SDL_SCANCODE_RSHIFT, RETRO_DEVICE_ID_JOYPAD_SELECT);
-    return m;
-}
-
 /* Pad for the i-th locally owned port. */
 uint32_t Frontend::poll_local(int i) {
     int port = local_ports[i];
@@ -626,7 +606,7 @@ uint32_t Frontend::poll_local(int i) {
     }
     if (a.headless) return 0;
     uint32_t m = 0;
-    if (i == 0) m |= kbd_mask();
+    if (i == 0 && retro_pad) m |= retro_pad->key_mask(SDL_GetKeyboardState(nullptr));
     if ((size_t)i < pads.size()) {
         hubctl::PadState st;
         hubctl::read_state(pads[i], &st);

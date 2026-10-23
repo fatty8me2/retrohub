@@ -51,6 +51,9 @@ struct CtlState {
     std::string cap_control, cap_label;
     double cap_t0 = 0;
     bool open_capture = false, fake_capture = false, demo_done = false;
+    int dev = 0;                           // 0 = controller bindings, 1 = keyboard bindings
+    bool cap_keyboard = false;
+    bool key_rest[hubctl::kKeyStateSize] = {};   // keys already down when the keyboard capture began
     std::string notice;
     double notice_until = 0;
 };
@@ -107,10 +110,16 @@ void ctl_move_pad(int from, int to) {
 bool has_override() { return !CTL.game.empty() && CTL.st.game_override.count(CTL.game) > 0; }
 
 void ctl_begin_capture(const std::string& control, const std::string& label) {
+    CTL.cap_keyboard = CTL.dev == 1;
+    if (CTL.cap_keyboard) {
+        int n = 0;
+        const Uint8* k = SDL_GetKeyboardState(&n);
+        for (int i = 0; i < hubctl::kKeyStateSize; ++i) CTL.key_rest[i] = k && i < n && k[i];
+    }
     CTL.cap_control = control;
     CTL.cap_label = label;
     CTL.cap_t0 = ImGui::GetTime();
-    CTL.cap.start("");
+    if (!CTL.cap_keyboard) CTL.cap.start("");
     CTL.open_capture = true;
 }
 
@@ -127,13 +136,22 @@ void draw_capture_modal() {
     ImGui::PopStyleVar(2);
     if (!open) return;
     double left = kCaptureSecs - (ImGui::GetTime() - CTL.cap_t0);
-    bool waiting = CTL.cap.active() || CTL.fake_capture;
+    bool waiting = CTL.cap_keyboard || CTL.cap.active() || CTL.fake_capture;
     bool close = false;
     std::string tok;
-    if (CTL.cap.active()) tok = CTL.cap.poll();
+    if (CTL.cap_keyboard) {
+        int n = 0;
+        const Uint8* k = SDL_GetKeyboardState(&n);
+        for (int i = 0; k && i < n && i < hubctl::kKeyStateSize && tok.empty(); ++i) {
+            if (!k[i]) CTL.key_rest[i] = false;
+            else if (!CTL.key_rest[i] && hubctl::key_name(i)[0] && i != SDL_SCANCODE_ESCAPE) tok = hubctl::key_name(i);
+        }
+    } else if (CTL.cap.active()) tok = CTL.cap.poll();
     if (!tok.empty()) {
         std::string err;
-        if (hubctl::set_mapping(CTL.st, kTabs[CTL.tab].key, CTL.game, CTL.cap_control, tok, &err)) ctl_save();
+        bool ok = CTL.cap_keyboard ? hubctl::set_key(CTL.st, kTabs[CTL.tab].key, CTL.game, CTL.cap_control, tok, &err)
+                                   : hubctl::set_mapping(CTL.st, kTabs[CTL.tab].key, CTL.game, CTL.cap_control, tok, &err);
+        if (ok) ctl_save();
         close = true;
     }
     if (left <= 0 && !CTL.fake_capture) close = true;
@@ -143,7 +161,7 @@ void draw_capture_modal() {
     ImGui::PopFont();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (waiting) {
-        ImGui::TextUnformatted("Press a button on your controller, or push a stick or trigger.");
+        ImGui::TextUnformatted(CTL.cap_keyboard ? "Press the key you want to use." : "Press a button on your controller, or push a stick or trigger.");
         float frac = CTL.fake_capture ? 0.6f : (float)std::max(0.0, std::min(1.0, left / kCaptureSecs));
         ImVec2 o = ImGui::GetCursorScreenPos();
         float w = ImGui::GetContentRegionAvail().x, h = sp(0.75f);
@@ -152,7 +170,7 @@ void draw_capture_modal() {
         o.y += sp(0.5f);
         dl->AddRectFilled(o, o + ImVec2(w, h), COL_PANEL2, h);
         dl->AddRectFilled(o, o + ImVec2(w * frac, h), COL_ACCENT, h);
-        ImGui::TextDisabled("Cancels by itself in %d s. Press Esc or click Cancel to stop now.", (int)std::ceil(std::max(0.0, left)));
+        ImGui::TextDisabled(CTL.cap_keyboard ? "Cancels by itself in %d s. Click Cancel to stop now." : "Cancels by itself in %d s. Press Esc or click Cancel to stop now.", (int)std::ceil(std::max(0.0, left)));
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextWrapped("No controller found. Plug one in and try again.");
@@ -263,6 +281,20 @@ void draw_mapping_panel() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (!editable) { end_panel(); return; }
 
+    const bool kb_ok = hubctl::has_keyboard(sys);
+    if (!kb_ok) CTL.dev = 0;
+    if (kb_ok) {
+        const char* dl[2] = {"Controller", "Keyboard"};
+        CTL.dev = ui::segmented("devtab", dl, 2, CTL.dev);
+        text_wrapped_disabled(CTL.dev == 1 ? "The keyboard is a pad of its own for Player 1, used together with the first controller. Click Change, then press a key."
+                                           : "Buttons and sticks of your controllers.");
+        ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    } else {
+        text_wrapped_disabled("The keyboard can't be remapped for this system: the emulator takes one input source per button.");
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    }
+    const bool keys = CTL.dev == 1;
+
     const int cols = ImGui::GetContentRegionAvail().x > sp(95.f) ? 2 : 1;
     std::vector<const hubctl::ControlInfo*> analogs;
     if (ImGui::BeginTable("mapgrid", cols * 3, ImGuiTableFlags_SizingStretchProp)) {
@@ -272,7 +304,7 @@ void draw_mapping_panel() {
             ImGui::TableSetupColumn("c", ImGuiTableColumnFlags_WidthFixed, sp(11.f));
         }
         int n = 0;
-        for (const auto& ci : hubctl::controls_for(sys)) {
+        for (const auto& ci : keys ? hubctl::key_controls_for(sys) : hubctl::controls_for(sys)) {
             if (ci.analog) { analogs.push_back(&ci); continue; }
             if (n % cols == 0) ImGui::TableNextRow(0, sp(5.5f));
             int c0 = (n % cols) * 3;
@@ -281,12 +313,14 @@ void draw_mapping_panel() {
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sp(1.1f));
             ImGui::TextUnformatted(ci.label.c_str());
             ImGui::TableSetColumnIndex(c0 + 1);
-            auto it = cur.buttons.find(ci.name);
-            std::string ex = it == cur.buttons.end() ? "" : it->second;
-            auto dit = def.buttons.find(ci.name);
-            bool changed = dit == def.buttons.end() || dit->second != ex;
+            const auto& cm = keys ? cur.keys : cur.buttons;
+            const auto& dm = keys ? def.keys : def.buttons;
+            auto it = cm.find(ci.name);
+            std::string ex = it == cm.end() ? "" : it->second;
+            auto dit = dm.find(ci.name);
+            bool changed = dit == dm.end() || dit->second != ex;
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sp(1.1f));
-            pill(hubctl::describe_expr(ex).c_str(), changed ? COL_ACCENT : ui::PANEL3);
+            pill((keys ? hubctl::describe_keys(ex) : hubctl::describe_expr(ex)).c_str(), changed ? COL_ACCENT : ui::PANEL3);
             ImGui::TableSetColumnIndex(c0 + 2);
             if (button("Change", ImVec2(sp(10.f), sp(4.5f)))) ctl_begin_capture(ci.name, ci.label);
             ImGui::PopID();
@@ -294,7 +328,7 @@ void draw_mapping_panel() {
         }
         ImGui::EndTable();
     }
-    if (!analogs.empty()) {
+    if (!keys && !analogs.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, sp(0.75f)));
@@ -309,14 +343,24 @@ void draw_mapping_panel() {
             edit |= ImGui::SliderFloat("##dz", &dz, 0.f, 0.95f, "Deadzone  %.2f");
             bool done = ImGui::IsItemDeactivatedAfterEdit();
             ImGui::SameLine(0, sp(2.f));
-            ImGui::SetNextItemWidth(sp(34.f));
-            edit |= ImGui::SliderFloat("##se", &se, 0.1f, 4.f, "Sensitivity  %.2f");
-            done |= ImGui::IsItemDeactivatedAfterEdit();
+            if (sys == "n64") {   // the only system whose stick RetroHub itself scales; emulators take a deadzone at most
+                ImGui::SetNextItemWidth(sp(34.f));
+                edit |= ImGui::SliderFloat("##se", &se, 0.1f, 4.f, "Sensitivity  %.2f");
+                done |= ImGui::IsItemDeactivatedAfterEdit();
+            }
             if (edit) hubctl::set_analog(CTL.st, sys, CTL.game, ci->name, dz, se);
             if (done) ctl_save();
             ImGui::Dummy(ImVec2(0, sp(0.75f)));
             ImGui::PopID();
         }
+    }
+    if (!keys && sys != "n64" && !analogs.empty()) text_wrapped_disabled("Sensitivity is only available for N64: the emulators for this system only take a deadzone.");
+    if (!keys && sys == "n64") {
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        bool rm = cur.rumble;
+        if (ImGui::Checkbox("Rumble Pak (offline only)", &rm)) { hubctl::set_rumble(CTL.st, sys, CTL.game, rm); ctl_save(); }
+        text_wrapped_disabled("Shakes a controller that supports rumble in games that use the Rumble Pak. It takes the place of the Controller Pak for this game, "
+                              "so memory pack saves are not used while it is on. Online games never use it.");
     }
     if (!game_mode) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -402,6 +446,28 @@ std::string controls_arg(const std::string& system_key, const std::string& game_
     return " --controls " + quote(path);
 }
 
+static std::vector<hubemu::PadDesc> pad_descs(const std::vector<hubctl::PadInfo>& v) {
+    std::vector<hubemu::PadDesc> out;
+    for (auto& p : v) { hubemu::PadDesc d; d.name = p.name; d.guid = p.guid; d.key = p.key; d.xinput = p.xinput; out.push_back(d); }
+    return out;
+}
+
+/* Dolphin: which device each port uses, following the RetroHub port order (XInput pads stay XInput, others go through
+ * Dolphin's SDL backend). */
+hubemu::DolphinPads dolphin_pads_for(const hubctl::Profile& prof) {
+    hubctl::load_bundled_db();
+    return hubemu::dolphin_pads_with(hubemu::detect_dolphin_pads(), pad_descs(hubctl::list_pads(prof.port_order)), pad_descs(hubctl::list_pads()));
+}
+
+/* Azahar: player 1's pad when the player chose a port order, else "any pad" as before. */
+hubemu::AzPad azahar_pad_for(const hubctl::Profile& prof) {
+    hubemu::AzPad pad;
+    if (prof.port_order.empty()) return pad;
+    hubctl::load_bundled_db();
+    hubemu::azahar_pad_select(pad_descs(hubctl::list_pads(prof.port_order)), pad_descs(hubctl::list_pads()), &pad);
+    return pad;
+}
+
 /* Profile for the external emulators' prepare_*: per-game override when the game has one. */
 hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key) {
     hubctl::Store st;
@@ -431,12 +497,13 @@ void page_controllers() {
         CTL.demo_done = true;
         for (const char* sys : {"n64", "retro", "gc"}) {
             std::string gm = (CTL.game.empty() || hubctl::system_key(find_entry(CTL.game) ? find_entry(CTL.game)->system : hub::System::N64) != sys) ? "" : CTL.game;
-            if (std::string(sys) == "n64") { hubctl::set_mapping(CTL.st, sys, gm, "a", "b"); hubctl::set_mapping(CTL.st, sys, gm, "z", "rightshoulder"); hubctl::set_analog(CTL.st, sys, gm, "stick", 0.15, 1.25); }
+            if (std::string(sys) == "n64") { hubctl::set_key(CTL.st, sys, gm, "a", "space|x"); hubctl::set_key(CTL.st, sys, gm, "start", "return|kp_enter"); hubctl::set_mapping(CTL.st, sys, gm, "a", "b"); hubctl::set_mapping(CTL.st, sys, gm, "z", "rightshoulder"); hubctl::set_analog(CTL.st, sys, gm, "stick", 0.15, 1.25); }
             else if (std::string(sys) == "gc") { hubctl::set_mapping(CTL.st, sys, gm, "x", "x|rightx+"); hubctl::set_analog(CTL.st, sys, gm, "main_stick", 0.12, 1.0); }
             else hubctl::set_mapping(CTL.st, sys, gm, "a", "a|y");
         }
         if (!CTL.game.empty()) hubctl::edit_profile(CTL.st, kTabs[CTL.tab].key, CTL.game);
     }
+    if (std::getenv("HUB_SHOT_CTL_KEYS")) CTL.dev = 1;   // screenshot aid: open on the Keyboard tab
     if (std::getenv("HUB_SHOT_CTL_CAPTURE")) {
         static bool once = false;
         if (!once) { once = true; CTL.fake_capture = CTL.fake_pads > 0; ctl_begin_capture("a", "A"); }

@@ -737,6 +737,69 @@ static void test_controls_emulators(const fs::path& dir) {
     CHECK(read_text(dod / "User" / "Config" / "GCPadNew.ini").find("custom") == std::string::npos);
 }
 
+static void test_controls2_emulators(const fs::path& dir) {
+    using hubemu::PadDesc;
+    PadDesc xb{"Xbox Controller", "guidX", "guidX#1", true}, ds{"DualSense Wireless Controller", "guidD", "guidD#a", false},
+            ds2{"DualSense Wireless Controller", "guidD", "guidD#b", false}, bd{"8BitDo Pro 2", "guidB", "guidB", false};
+    hubemu::DolphinPads base;
+    /* all XInput in order, or no pads: exactly the old output */
+    CHECK(hubemu::dolphin_pads_with(base, {xb}, {xb}).dev[0].empty());
+    CHECK(hubemu::dolphin_pad_ini("", hubemu::dolphin_pads_with(base, {xb}, {xb})) == hubemu::dolphin_pad_ini("", base));
+    /* DualSense on port 1, Xbox on port 2, a second DualSense on port 3 */
+    hubemu::DolphinPads mix = hubemu::dolphin_pads_with(base, {ds, xb, ds2}, {xb, ds, ds2});
+    CHECK(mix.dev[0] == "SDL/0/DualSense Wireless Controller" && mix.dev[1] == "XInput/0/Gamepad" && mix.dev[2] == "SDL/1/DualSense Wireless Controller");
+    std::string pi = hubemu::dolphin_pad_ini("", mix);
+    CHECK(pi.find("[GCPad1]\nDevice = SDL/0/DualSense Wireless Controller") != std::string::npos);
+    CHECK(pi.find("Buttons/A = `Button S` | `DInput/0/Keyboard Mouse:X`") != std::string::npos);
+    CHECK(pi.find("Buttons/B = `Button W`") != std::string::npos);   // GC B = SDL x = west
+    CHECK(pi.find("Main Stick/Up = `Left Y-` | `DInput/0/Keyboard Mouse:UP`") != std::string::npos);
+    CHECK(pi.find("Device = XInput/0/Gamepad") != std::string::npos);
+    CHECK(hubemu::dolphin_ini_ports("", mix).find("SIDevice2 = 6") != std::string::npos);   // SDL pad on port 3 counts as present
+    hubemu::DolphinPads bdp = hubemu::dolphin_pads_with(base, {bd}, {bd});
+    CHECK(hubemu::dolphin_pad_ini("", bdp).find("Device = SDL/0/8BitDo Pro 2") != std::string::npos);
+
+    /* keyboard remap reaches GCPad1 only */
+    hubctl::Store st;
+    CHECK(hubctl::set_key(st, "gc", "", "a", "space|n"));
+    std::string kp = hubemu::dolphin_pad_ini("", base, hubctl::resolve(st, "gc"));
+    CHECK(kp.find("Buttons/A = `Button A` | `DInput/0/Keyboard Mouse:SPACE` | `DInput/0/Keyboard Mouse:N`") != std::string::npos);
+    CHECK(kp.find("[GCPad2]") != std::string::npos && kp.find("Keyboard Mouse:SPACE", kp.find("[GCPad2]")) == std::string::npos);
+    CHECK(hubemu::dolphin_key_name("return") == "RETURN" && hubemu::dolphin_key_name("f5") == "F5" && hubemu::dolphin_key_name("kp3") == "NUMPAD3");
+
+    /* Azahar follows the first pad of the port order */
+    hubemu::AzPad az;
+    CHECK(!hubemu::azahar_pad_select({}, {xb}, &az) && az.guid.empty());
+    CHECK(hubemu::azahar_pad_select({ds2, ds}, {xb, ds, ds2}, &az) && az.guid == "guidD" && az.port == 1);
+    hubctl::Profile p3 = hubctl::default_profile("3ds");
+    std::string with = hubemu::azahar_config_patch("", p3, az);
+    CHECK(with.find("button_a = \"engine:sdl,api:controller,button:1,guid:guidD,port:1\"") != std::string::npos);
+    CHECK(with.find("maptype:all") == std::string::npos);
+    CHECK(hubemu::azahar_config_patch("", p3, hubemu::AzPad()) == hubemu::azahar_config_patch("", p3));
+    /* choosing another pad regenerates; the same choice keeps user edits */
+    fs::path azd = dir / "pad_az";
+    fs::path ini = azd / "user" / "config" / "qt-config.ini";
+    hubemu::prepare_azahar(azd.string(), p3, hubemu::AzPad());
+    write_text(ini, "[Controls]\nbutton_a = \"user-choice\"\n");
+    hubemu::prepare_azahar(azd.string(), p3, hubemu::AzPad());
+    CHECK(read_text(ini).find("user-choice") != std::string::npos);
+    hubemu::prepare_azahar(azd.string(), p3, az);
+    CHECK(read_text(ini).find("user-choice") == std::string::npos && read_text(ini).find("guid:guidD,port:1") != std::string::npos);
+
+    /* Dolphin: the pad file is rewritten when the device assignment changes, kept otherwise */
+    fs::path dod = dir / "pad_dol";
+    fs::path gcp = dod / "User" / "Config" / "GCPadNew.ini";
+    hubctl::Profile gcd = hubctl::default_profile("gc");
+    hubemu::prepare_dolphin(dod.string(), base, gcd);
+    write_text(gcp, "[GCPad1]\nButtons/A = user\n");
+    hubemu::prepare_dolphin(dod.string(), base, gcd);
+    CHECK(read_text(gcp).find("Buttons/A = user") != std::string::npos);
+    hubemu::prepare_dolphin(dod.string(), bdp, gcd);
+    CHECK(read_text(gcp).find("Device = SDL/0/8BitDo Pro 2") != std::string::npos);
+    write_text(gcp, "[GCPad1]\nButtons/A = user\n");
+    hubemu::prepare_dolphin(dod.string(), bdp, gcd);
+    CHECK(read_text(gcp).find("Buttons/A = user") != std::string::npos);
+}
+
 int main(int argc, char** argv) {
     test_3ds_header();
     test_wiiu_formats();
@@ -753,6 +816,7 @@ int main(int argc, char** argv) {
     test_sessions(dir / "sess");
     test_prepare_and_find(dir / "prep");
     test_controls_emulators(dir / "ctl");
+    test_controls2_emulators(dir / "ctl2");
     fs::remove_all(dir, ec);
 
     int dl_bad = 0;

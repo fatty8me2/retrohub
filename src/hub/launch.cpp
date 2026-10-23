@@ -187,10 +187,10 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         return;
     }
     if (kind == hubemu::Kind::Azahar) {
-        if (inst.managed) hubemu::prepare_azahar(inst.dir, controls_profile("3ds", e.key));
+        if (inst.managed) { hubctl::Profile p3 = controls_profile("3ds", e.key); hubemu::prepare_azahar(inst.dir, p3, azahar_pad_for(p3)); }
     } else if (kind == hubemu::Kind::Dolphin) {
         hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
-        hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads(), controls_profile("gc", e.key));
+        { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
     } else if (inst.managed) {
         hubemu::prepare_cemu_managed(inst.dir, controls_profile("wiiu", e.key));
     }
