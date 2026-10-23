@@ -664,6 +664,7 @@ struct FriendsClient::Impl {
                 for (const Json& m : a->a) add_msg(with, parse_msg(m), false);
         } else if (type == "error") {
             std::string reason = j.str("reason", "error");
+            if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) retire_done();   // can never succeed: stop resending
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
             Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref");
             push_event(std::move(e));
@@ -673,6 +674,8 @@ struct FriendsClient::Impl {
 };
 
 /* ====================================================================== public */
+
+bool retire_error_is_terminal(const std::string& ref, const std::string& detail) { return ref == "retire_old" && detail == "bad-secret"; }
 
 static std::string sanitize_name(const std::string& in)
 {

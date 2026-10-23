@@ -197,6 +197,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
 
     // clean shutdown
+    find_games_shutdown();
     if (A.dirty) hubui::save_settings(A.settings_path, A.st);
     invite_srv.stop();
     A.lobby.stop();

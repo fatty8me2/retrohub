@@ -68,6 +68,8 @@ std::vector<PadInfo> list_pads(const std::vector<std::string>& order) {
     }
     std::vector<std::string> keys;
     for (auto& p : v) keys.push_back(p.key);
+    keys = uniquify_keys(keys);   // two identical controllers must not share a key
+    for (size_t i = 0; i < v.size(); ++i) v[i].key = keys[i];
     std::vector<PadInfo> out;
     for (int idx : order_pads(order, keys)) { v[idx].port = (int)out.size(); out.push_back(v[idx]); }
     return out;
@@ -80,6 +82,7 @@ std::vector<SDL_GameController*> open_pads(const std::vector<std::string>& order
     for (int i = 0; i < SDL_NumJoysticks(); i++)
         if (SDL_IsGameController(i))
             if (SDL_GameController* c = SDL_GameControllerOpen(i)) { all.push_back(c); keys.push_back(pad_key(c)); }
+    keys = uniquify_keys(keys);
     for (int idx : order_pads(order, keys)) {
         out.push_back(all[idx]);
         if (names) names->push_back(SDL_GameControllerName(all[idx]) ? SDL_GameControllerName(all[idx]) : "");
@@ -105,12 +108,19 @@ bool Capture::start(const std::string& key) {
     cancel();
     ensure_init();
     SDL_JoystickUpdate();
+    std::vector<SDL_GameController*> opened;
+    std::vector<std::string> keys;
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
         if (!SDL_IsGameController(i)) continue;
         SDL_GameController* c = SDL_GameControllerOpen(i);
         if (!c) continue;
-        if (!key.empty() && pad_key(c) != key) { SDL_GameControllerClose(c); continue; }
-        pads_.push_back(c);
+        opened.push_back(c);
+        keys.push_back(pad_key(c));
+    }
+    keys = uniquify_keys(keys);
+    for (size_t i = 0; i < opened.size(); ++i) {
+        if (!key.empty() && keys[i] != key) { SDL_GameControllerClose(opened[i]); continue; }
+        pads_.push_back(opened[i]);
     }
     for (auto* c : pads_) { SDL_GameControllerUpdate(); PadState s; read_state(c, &s); rest_.push_back(s); }
     return !pads_.empty();

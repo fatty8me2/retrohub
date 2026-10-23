@@ -108,6 +108,20 @@ void finish_assign() {
 void poll_assign(double now) {
     if (!CTL.assign.active()) { finish_assign(); return; }
     SDL_GameControllerUpdate();
+    if (!CTL.shot_nosave && ImGui::GetTime() - CTL.pads_at >= 0.5) {   // hot-plug: refresh the pad list during the mode
+        ctl_reload_pads();
+        std::vector<std::string> present;
+        for (const auto& p : CTL.pads) present.push_back(p.key);
+        CTL.assign.sync(present);   // unplugged pads lose their port
+        for (auto it = CTL.assign_prev.begin(); it != CTL.assign_prev.end();) {
+            if (std::find(present.begin(), present.end(), it->first) == present.end()) it = CTL.assign_prev.erase(it); else ++it;
+        }
+        for (const auto& p : CTL.pads) {   // newly plugged: a button already held does not count
+            if (CTL.assign_prev.count(p.key)) continue;
+            SDL_GameController* c = open_handle_for(p);
+            CTL.assign_prev[p.key] = c && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A);
+        }
+    }
     for (const auto& p : CTL.pads) {
         SDL_GameController* c = open_handle_for(p);
         if (!c) continue;
