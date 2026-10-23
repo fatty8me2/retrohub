@@ -1,6 +1,7 @@
 #pragma once
 /* hubnet internals: UDP socket, WebSocket client, STUN, tiny JSON. Not public API. */
 
+#include "json.h"
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -91,21 +92,14 @@ class WsClient {
     std::thread thread_;
 };
 
-/* ---- JSON (just enough for the lobby protocol) ---- */
-struct Json {
-    enum Type { Null, Bool, Number, String, Array, Object } type = Null;
-    bool b = false;
-    double num = 0;
-    std::string str;
-    std::string raw;                       // original text of this value
-    std::vector<Json> arr;
-    std::map<std::string, Json> obj;
-    const Json* get(const char* key) const;
-    std::string s(const char* key, const std::string& def = "") const;
-    int i(const char* key, int def = 0) const;
-};
-bool json_parse(const std::string& text, Json* out);
-std::string json_escape(const std::string& s);
+/* ---- JSON: the shared reader (src/common/json.h); lobby messages may carry trailing bytes, so allow them ---- */
+using Json = json::Value;
+inline bool json_parse(const std::string& text, Json* out)
+{
+    json::ParseOptions o;
+    o.allow_trailing = true;
+    return json::parse(text, out, o);
+}
 std::string url_encode(const std::string& s);
 
 /* Join "server" + "/hub?..." */

@@ -1,6 +1,8 @@
 #pragma once
 /* Pure (UI/OS independent) logic for RetroHub: tiny JSON, settings, lobby rules. */
 
+#include "json.h"
+
 #include <map>
 #include <string>
 #include <utility>
@@ -8,21 +10,8 @@
 
 namespace hubui {
 
-/* ---- minimal JSON ---- */
-struct Json {
-    enum Type { Null, Bool, Num, Str, Obj, Arr } type = Null;
-    bool b = false;
-    double n = 0;
-    std::string s;
-    std::vector<std::string> keys;  // Obj: parallel to vals
-    std::vector<Json> vals;         // Obj values or Arr items
-
-    const Json* get(const std::string& key) const;
-    std::string str(const std::string& key, const std::string& def = "") const;
-    double num(const std::string& key, double def = 0) const;
-};
-bool json_parse(const std::string& text, Json* out);
-std::string json_escape(const std::string& s);   // no surrounding quotes
+/* ---- JSON: the shared reader/writer (src/common/json.h); json::parse / json::escape / json::Value ---- */
+using Json = json::Value;
 
 /* ---- settings (hub.json) ---- */
 struct Settings {

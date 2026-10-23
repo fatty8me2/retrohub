@@ -104,35 +104,35 @@ bool LobbyClient::handle_text(const std::string& text)
     {
         Json j;
         if (!json_parse(text, &j) || j.type != Json::Object) return true;
-        std::string type = j.s("type");
+        std::string type = j.str("type");
         if (type == "welcome") {
             d.welcomed = true;
-            d.slot = j.i("slot", -1);
+            d.slot = (int)j.i64("slot", -1);
             d.status = "connected";
             net_log("Lobby: welcome slot %d", d.slot);
         } else if (type == "members") {
             d.members.clear();
             if (const Json* a = j.get("members"))
-                for (const Json& m : a->arr) d.members.push_back({m.i("slot", -1), m.s("name")});
+                for (const Json& m : a->a) d.members.push_back({(int)m.i64("slot", -1), m.str("name")});
         } else if (type == "host_changed") {
-            int from = j.i("from_slot", -1);
+            int from = (int)j.i64("from_slot", -1);
             LobbyEvent e;
             e.type = LobbyEvent::HostChange;
             e.from_slot = from;
-            e.name = j.s("name");
+            e.name = j.str("name");
             d.events.push_back(std::move(e));
-            net_log("Lobby: host changed: slot %d (%s) is now the host", from, j.s("name").c_str());
+            net_log("Lobby: host changed: slot %d (%s) is now the host", from, j.str("name").c_str());
         } else if (type == "msg") {
             if (const Json* b = j.get("body")) {
                 LobbyEvent e;
                 e.type = LobbyEvent::Msg;
-                e.from_slot = j.i("from", -1);
-                e.body = b->raw;
+                e.from_slot = (int)j.i64("from", -1);
+                e.body = json::stringify(*b);
                 d.events.push_back(std::move(e));
             }
         } else if (type == "error") {
             d.failed = true;
-            d.status = friendly(j.s("reason", "error"));
+            d.status = friendly(j.str("reason", "error"));
             net_log("Lobby: error %s", d.status.c_str());
             return false;
         }

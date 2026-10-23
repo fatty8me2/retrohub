@@ -3,13 +3,13 @@
 namespace hubnp3ds {
 
 std::string plan_json_fragment(const Plan& p) {
-    return ",\"np_3ds\":{\"port\":" + std::to_string(p.port) + ",\"pw\":\"" + hubui::json_escape(p.password) +
+    return ",\"np_3ds\":{\"port\":" + std::to_string(p.port) + ",\"pw\":\"" + json::escape(p.password) +
            "\",\"n\":" + std::to_string(p.expected) + "}";
 }
 
 bool parse_plan(const hubui::Json& m, Plan* out) {
     const hubui::Json* o = m.get("np_3ds");
-    if (!o || o->type != hubui::Json::Obj) return false;
+    if (!o || o->type != hubui::Json::Object) return false;
     double port = o->num("port", -1), n = o->num("n", -1);
     if (port < 1024 || port > 65535 || port != (double)(int)port) return false;
     if (n < 2 || n > kMaxMembers || n != (double)(int)n) return false;

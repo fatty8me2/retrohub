@@ -80,14 +80,14 @@ int main() {
     /* hello v2 (+ old v1 shape without keys) */
     Json j;
     PeerInfo h;
-    CHECK(json_parse(hello_json("2", {{"mp1", "AAA"}, {"mp2", "BBB"}}, {"n64:aaa", "gb:x-1"}), &j));
+    CHECK(json::parse(hello_json("2", {{"mp1", "AAA"}, {"mp2", "BBB"}}, {"n64:aaa", "gb:x-1"}), &j));
     CHECK(j.str("version") == "2");
     CHECK(parse_hello(j, &h) && h.games.size() == 2 && h.games["mp2"] == "BBB");
     CHECK(h.keys.size() == 2 && h.keys[0] == "n64:aaa" && h.keys[1] == "gb:x-1");
-    CHECK(json_parse("{\"kind\":\"hello\",\"version\":\"1\",\"games\":{\"mp1\":\"AAA\"}}", &j));
+    CHECK(json::parse("{\"kind\":\"hello\",\"version\":\"1\",\"games\":{\"mp1\":\"AAA\"}}", &j));
     PeerInfo old;
     CHECK(parse_hello(j, &old) && old.hello && old.keys.empty() && old.games["mp1"] == "AAA");
-    CHECK(json_parse(hello_json("2", {}, {}), &j) && parse_hello(j, &h) && h.games.empty() && h.keys.empty());
+    CHECK(json::parse(hello_json("2", {}, {}), &j) && parse_hello(j, &h) && h.games.empty() && h.keys.empty());
     {   /* long key lists are split into <= 4096 byte messages and reassemble */
         std::vector<std::string> many;
         for (int i = 0; i < 500; ++i) many.push_back("gba:abcd-" + std::to_string(100000 + i));
@@ -96,7 +96,7 @@ int main() {
         PeerInfo r;
         bool allok = true;
         for (auto& m : msgs) {
-            allok = allok && m.size() <= 3100 && json_parse(m, &j) && parse_hello(j, &r);
+            allok = allok && m.size() <= 3100 && json::parse(m, &j) && parse_hello(j, &r);
         }
         CHECK(allok && r.keys == many && r.games["mp1"] == "AAA" && r.hello);
         CHECK(hello_messages("2", {}, {}).size() == 1);
@@ -104,12 +104,12 @@ int main() {
     {   /* app version gate */
         Json aj;
         PeerInfo ap;
-        CHECK(json_parse(hello_json("2", {}, {}, "1.10.0"), &aj) && parse_hello(aj, &ap) && ap.app == "1.10.0");
+        CHECK(json::parse(hello_json("2", {}, {}, "1.10.0"), &aj) && parse_hello(aj, &ap) && ap.app == "1.10.0");
         PeerInfo ap2;
         auto am = hello_messages("2", {{"mp1", "A"}}, {"n64:a"}, 3000, "1.9.1");
-        CHECK(json_parse(am[0], &aj) && parse_hello(aj, &ap2) && ap2.app == "1.9.1");
+        CHECK(json::parse(am[0], &aj) && parse_hello(aj, &ap2) && ap2.app == "1.9.1");
         PeerInfo ap3;
-        CHECK(json_parse(hello_json("2", {}, {}), &aj) && parse_hello(aj, &ap3) && ap3.app.empty());
+        CHECK(json::parse(hello_json("2", {}, {}), &aj) && parse_hello(aj, &ap3) && ap3.app.empty());
         CHECK(compare_app_versions("1.9.1", "1.10.0") == -1 && compare_app_versions("v1.10.0", "1.10") == 0 &&
               compare_app_versions("2.0.0", "1.99.9") == 1 && compare_app_versions("1.10.0-beta", "1.10.0") == 0 &&
               compare_app_versions("dev", "1.0") == 2);
@@ -133,21 +133,21 @@ int main() {
         CHECK(guest_version_action("1.10.0", "", false) == GuestVersionAction::Waiting);          /* no hello yet */
         CHECK(guest_version_action("1.10.0", "1.9.1", false) == GuestVersionAction::Waiting);
     }
-    CHECK(json_parse(launch_json("mp1", 3, 2, 77u), &j));
+    CHECK(json::parse(launch_json("mp1", 3, 2, 77u), &j));
     CHECK(j.str("game") == "mp1" && (int)j.num("launch") == 3 && (int)j.num("seed") == 77 && j.str("core").empty());
-    CHECK(json_parse(launch_json("gb:x-1", 1, 2, 5u, "gambatte"), &j) && j.str("core") == "gambatte");
-    CHECK(json_parse(launch_json("pokered", 1, 0, 5u, "", false, nullptr, nullptr, ",\"np_link\":{\"core\":\"sameboy\",\"consoles\":2}"), &j) && j.get("np_link") &&
+    CHECK(json::parse(launch_json("gb:x-1", 1, 2, 5u, "gambatte"), &j) && j.str("core") == "gambatte");
+    CHECK(json::parse(launch_json("pokered", 1, 0, 5u, "", false, nullptr, nullptr, ",\"np_link\":{\"core\":\"sameboy\",\"consoles\":2}"), &j) && j.get("np_link") &&
           j.get("np_link")->str("core") == "sameboy");
-    CHECK(json_parse(launch_json("pokered", 1, 0, 5u), &j) && !j.get("np_link"));
+    CHECK(json::parse(launch_json("pokered", 1, 0, 5u), &j) && !j.get("np_link"));
 
     {   /* DS wireless launch spec */
         Json lj;
         std::string mode;
-        CHECK(json_parse(launch_json("nds:x", 1, 0, 5u, "", false, nullptr, nullptr, ",\"np_ds\":" + np_ds_json()), &lj));
+        CHECK(json::parse(launch_json("nds:x", 1, 0, 5u, "", false, nullptr, nullptr, ",\"np_ds\":" + np_ds_json()), &lj));
         CHECK(parse_np_ds(lj, &mode) && mode == "wireless");
-        CHECK(json_parse(launch_json("nds:x", 1, 0, 5u), &lj) && !parse_np_ds(lj, &mode));   /* older host: absent */
-        CHECK(json_parse("{\"np_ds\":{\"v\":2,\"mode\":\"wireless\"}}", &lj) && !parse_np_ds(lj, &mode));   /* unknown version */
-        CHECK(json_parse("{\"np_ds\":{\"v\":1,\"mode\":\"other\"}}", &lj) && !parse_np_ds(lj, &mode) && mode == "other");
+        CHECK(json::parse(launch_json("nds:x", 1, 0, 5u), &lj) && !parse_np_ds(lj, &mode));   /* older host: absent */
+        CHECK(json::parse("{\"np_ds\":{\"v\":2,\"mode\":\"wireless\"}}", &lj) && !parse_np_ds(lj, &mode));   /* unknown version */
+        CHECK(json::parse("{\"np_ds\":{\"v\":1,\"mode\":\"other\"}}", &lj) && !parse_np_ds(lj, &mode) && mode == "other");
     }
 
     /* library filtering / search / sorting */
@@ -365,9 +365,9 @@ int main() {
         {
             Json lj; std::string pp; int pn = 0;
             PortPlan hp = build_ports({{0, 2}, {2, 1}});
-            CHECK(json_parse(launch_json("g", 1, 0, 5, "", false, &hp), &lj) && parse_launch_plan(lj, &pp, &pn));
+            CHECK(json::parse(launch_json("g", 1, 0, 5, "", false, &hp), &lj) && parse_launch_plan(lj, &pp, &pn));
             CHECK(pp == "0,0,2,-1" && pn == 2 && pp == hp.ports && pn == hp.players);
-            CHECK(json_parse(launch_json("g", 1, 0, 5), &lj) && !parse_launch_plan(lj, &pp, &pn));   // older host: absent
+            CHECK(json::parse(launch_json("g", 1, 0, 5), &lj) && !parse_launch_plan(lj, &pp, &pn));   // older host: absent
             const char* bad[] = {
                 "{\"ports\":[0,1,2],\"players\":3}",          "{\"ports\":[0,1,2,9],\"players\":4}",
                 "{\"ports\":[0,-1,1,-1],\"players\":2}",      "{\"ports\":[0,1,-1,-1],\"players\":3}",
@@ -375,8 +375,8 @@ int main() {
                 "{\"ports\":[-1,-1,-1,-1],\"players\":0}",    "{\"ports\":[0,1,-1,-1]}",
                 "{\"ports\":[0,1.5,-1,-1],\"players\":2}",
             };
-            for (const char* b : bad) CHECK(json_parse(b, &lj) && !parse_launch_plan(lj, &pp, &pn));
-            CHECK(json_parse("{\"ports\":[3,3,-1,-1],\"players\":1}", &lj) && parse_launch_plan(lj, &pp, &pn) && pp == "3,3,-1,-1" && pn == 1);
+            for (const char* b : bad) CHECK(json::parse(b, &lj) && !parse_launch_plan(lj, &pp, &pn));
+            CHECK(json::parse("{\"ports\":[3,3,-1,-1],\"players\":1}", &lj) && parse_launch_plan(lj, &pp, &pn) && pp == "3,3,-1,-1" && pn == 1);
         }
         Settings s2; s2.delay_auto = false; Settings s3;
         CHECK(settings_from_json(settings_to_json(s2), &s3) && !s3.delay_auto);
@@ -468,25 +468,25 @@ int main() {
         mp.p[0] = {0x1D, 2}; mp.p[1] = {0, 4};
         Json j;
         MemberPick got;
-        CHECK(json_parse(pick_json(mp), &j) && j.str("kind") == "pick" && parse_pick(j, &got) && got.p[0].fighter == 0x1D && got.p[0].costume == 2 && got.p[1].fighter == 0 && got.p[1].costume == 4);
-        CHECK(json_parse("{\"kind\":\"pick\",\"fighter\":3}", &j) && parse_pick(j, &got) && got.p[0].fighter == 3 && got.p[0].costume == 0 && got.p[1].fighter == -1);
-        CHECK(json_parse("{\"fighter\":0,\"costume\":5}", &j) && !parse_pick(j, &got));          // costume beyond Mario's 5
-        CHECK(json_parse("{\"fighter\":-1,\"costume\":2}", &j) && !parse_pick(j, &got));         // Random has no costume
-        CHECK(json_parse("{\"fighter\":34}", &j) && !parse_pick(j, &got));                        // 0x22 Dark Samus: not on the CSS
-        CHECK(json_parse("{\"fighter\":29}", &j) && parse_pick(j, &got) && !parse_pick(j, &got, false));
-        CHECK(json_parse("{\"fighter\":\"a\"}", &j) && !parse_pick(j, &got));
-        CHECK(json_parse("{\"costume\":1}", &j) && !parse_pick(j, &got));
+        CHECK(json::parse(pick_json(mp), &j) && j.str("kind") == "pick" && parse_pick(j, &got) && got.p[0].fighter == 0x1D && got.p[0].costume == 2 && got.p[1].fighter == 0 && got.p[1].costume == 4);
+        CHECK(json::parse("{\"kind\":\"pick\",\"fighter\":3}", &j) && parse_pick(j, &got) && got.p[0].fighter == 3 && got.p[0].costume == 0 && got.p[1].fighter == -1);
+        CHECK(json::parse("{\"fighter\":0,\"costume\":5}", &j) && !parse_pick(j, &got));          // costume beyond Mario's 5
+        CHECK(json::parse("{\"fighter\":-1,\"costume\":2}", &j) && !parse_pick(j, &got));         // Random has no costume
+        CHECK(json::parse("{\"fighter\":34}", &j) && !parse_pick(j, &got));                        // 0x22 Dark Samus: not on the CSS
+        CHECK(json::parse("{\"fighter\":29}", &j) && parse_pick(j, &got) && !parse_pick(j, &got, false));
+        CHECK(json::parse("{\"fighter\":\"a\"}", &j) && !parse_pick(j, &got));
+        CHECK(json::parse("{\"costume\":1}", &j) && !parse_pick(j, &got));
         CHECK(pick_label(mp, 1) == "Falco" && pick_label(mp, 2) == "Falco + Mario" && pick_label(MemberPick{}, 1) == "Random");
 
         MatchRules r;
         r.stage = 0x2A; r.stocks = 4;
         MatchRules rg;
-        CHECK(json_parse(rules_json(r), &j) && j.str("kind") == "rules" && parse_rules(j, &rg) && rg.stage == 0x2A && rg.stocks == 4);
-        CHECK(json_parse("{\"stage\":-1,\"stocks\":1}", &j) && parse_rules(j, &rg) && rg.stage == -1);
-        CHECK(json_parse("{\"stage\":6,\"stocks\":0}", &j) && !parse_rules(j, &rg));
-        CHECK(json_parse("{\"stage\":6,\"stocks\":6}", &j) && !parse_rules(j, &rg));
-        CHECK(json_parse("{\"stage\":41,\"stocks\":3}", &j) && !parse_rules(j, &rg));            // 0x29: not netplay legal
-        CHECK(json_parse("{\"stage\":6}", &j) && !parse_rules(j, &rg));
+        CHECK(json::parse(rules_json(r), &j) && j.str("kind") == "rules" && parse_rules(j, &rg) && rg.stage == 0x2A && rg.stocks == 4);
+        CHECK(json::parse("{\"stage\":-1,\"stocks\":1}", &j) && parse_rules(j, &rg) && rg.stage == -1);
+        CHECK(json::parse("{\"stage\":6,\"stocks\":0}", &j) && !parse_rules(j, &rg));
+        CHECK(json::parse("{\"stage\":6,\"stocks\":6}", &j) && !parse_rules(j, &rg));
+        CHECK(json::parse("{\"stage\":41,\"stocks\":3}", &j) && !parse_rules(j, &rg));            // 0x29: not netplay legal
+        CHECK(json::parse("{\"stage\":6}", &j) && !parse_rules(j, &rg));
 
         /* ports "0,0,1,2": slot 0 has two pads */
         std::map<int, MemberPick> picks;
@@ -519,12 +519,12 @@ int main() {
         pp.ports = "0,0,1,2"; pp.players = 3;
         std::string lm = launch_json("remix", 1, 0, 7u, "", false, &pp, &ms);
         MatchSpec back;
-        CHECK(json_parse(lm, &j) && parse_match(j, pp.ports, true, &back) && match_arg(back) == match_arg(ms));
+        CHECK(json::parse(lm, &j) && parse_match(j, pp.ports, true, &back) && match_arg(back) == match_arg(ms));
         CHECK(!parse_match(j, "0,1,2", true, &back) && !parse_match(j, "0,0,1,2", false, &back));      // wrong port count / vanilla roster
-        CHECK(json_parse(launch_json("remix", 1, 0, 7u), &j) && !parse_match(j, pp.ports, true, &back));   // older host: absent
-        CHECK(json_parse("{\"match\":{\"stage\":6,\"stocks\":3,\"players\":[[0,0],[-1,0]]}}", &j) && !parse_match(j, "0,1", true, &back));
-        CHECK(json_parse("{\"match\":{\"stage\":6,\"stocks\":3,\"players\":[[0,0],[1,9]]}}", &j) && !parse_match(j, "0,1", true, &back));
-        CHECK(json_parse("{\"match\":{\"stage\":6,\"stocks\":3,\"players\":[[0,0],[1,3]]}}", &j) && parse_match(j, "0,1", true, &back) && match_arg(back) == "stage=6;stocks=3;p0=0:0;p1=1:3");
+        CHECK(json::parse(launch_json("remix", 1, 0, 7u), &j) && !parse_match(j, pp.ports, true, &back));   // older host: absent
+        CHECK(json::parse("{\"match\":{\"stage\":6,\"stocks\":3,\"players\":[[0,0],[-1,0]]}}", &j) && !parse_match(j, "0,1", true, &back));
+        CHECK(json::parse("{\"match\":{\"stage\":6,\"stocks\":3,\"players\":[[0,0],[1,9]]}}", &j) && !parse_match(j, "0,1", true, &back));
+        CHECK(json::parse("{\"match\":{\"stage\":6,\"stocks\":3,\"players\":[[0,0],[1,3]]}}", &j) && parse_match(j, "0,1", true, &back) && match_arg(back) == "stage=6;stocks=3;p0=0:0;p1=1:3");
     }
 
 

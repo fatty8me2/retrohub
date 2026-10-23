@@ -138,7 +138,7 @@ void lobby_tick() {
         const std::string& body = ev.body;
         bool before_hc = last_hc != evs.size() && k < last_hc;
         hubui::Json j;
-        if (!hubui::json_parse(body, &j) || j.type != hubui::Json::Obj) continue;
+        if (!json::parse(body, &j) || j.type != hubui::Json::Object) continue;
         if (before_hc && j.str("kind") == "launch") continue;
         std::string kind = j.str("kind");
         if (kind == "hello") {
@@ -215,7 +215,7 @@ void lobby_tick() {
         A.lobby.send_msg(hubui::pick_json(A.my_pick));
         if (is_host()) A.lobby.send_msg(hubui::rules_json(A.rules));
         if (is_host() && !A.selected_game.empty())
-            A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + hubui::json_escape(A.selected_game) + "\"}");
+            A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + json::escape(A.selected_game) + "\"}");
     }
 
 }

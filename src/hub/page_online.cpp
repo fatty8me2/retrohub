@@ -217,7 +217,7 @@ void page_online_room() {
                 A.selected_game = rid;
                 A.st.last_game = rid;
                 mark_dirty();
-                A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + hubui::json_escape(rid) + "\"}");
+                A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + json::escape(rid) + "\"}");
             }
             ImGui::PopID();
         }
@@ -313,7 +313,7 @@ void page_online_room() {
         std::string t = A.chat_buf;
         A.chat_buf[0] = 0;
         if (!t.empty()) {
-            A.lobby.send_msg("{\"kind\":\"chat\",\"text\":\"" + hubui::json_escape(t) + "\"}");
+            A.lobby.send_msg("{\"kind\":\"chat\",\"text\":\"" + json::escape(t) + "\"}");
             A.chat.push_back({A.st.name, t});
             A.chat_scroll = true;
         }

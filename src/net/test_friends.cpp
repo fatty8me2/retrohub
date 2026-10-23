@@ -126,8 +126,8 @@ static void offline_tests(const std::string& root)
     /* JSON: escapes + unicode incl. surrogate pair, via the util parser */
     detail::Json j;
     CHECK(detail::json_parse("{\"t\":\"a\\\"b\\n\\u00e9\\ud83d\\ude00\\\\\",\"n\":[1,2.5,{\"x\":true}]}", &j));
-    CHECK(j.s("t") == "a\"b\n\xC3\xA9\xF0\x9F\x98\x80\\", "got len %zu", j.s("t").size());
-    CHECK(detail::json_parse("{\"t\":\"\\ud83dX\"}", &j) && j.s("t").size() >= 2);
+    CHECK(j.str("t") == "a\"b\n\xC3\xA9\xF0\x9F\x98\x80\\", "got len %zu", j.str("t").size());
+    CHECK(detail::json_parse("{\"t\":\"\\ud83dX\"}", &j) && j.str("t").size() >= 2);
     CHECK(!detail::json_parse("{\"t\":", &j));
 
     /* conversation persistence */
