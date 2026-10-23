@@ -123,3 +123,6 @@ config file is not rewritten into something that drops the pad (it should keep t
   `src/config/CemuConfig.cpp`, `src/gui/wxgui/wxCemuConfig.cpp`, `src/input/InputManager.cpp` + `src/input/emulated/*.cpp` (controller profile
   format and default XInput mapping), `src/input/api/ControllerState.h` (mapping ids).
 - ZArchive footer/tree layout: github.com/Exzap/ZArchive; NCSD/NCCH/CIA: 3dbrew.org.
+
+## Per-game settings (`src/common/game_settings.h`)
+Stored in the vault at `<vault>\_settings\game_settings.json`. Layers: option default, system defaults, per-game override (`Store::resolve`). Each option is Visual (local only), Sync (host's value goes in the launch JSON as `"gs":{...}` via `sync_fragment`; guests use `extract_sync` + `online_effective`) or Locked (forced to default online: GLideN64 framebuffer-emulation options). Runner wiring: `n64run --gfx Key=i|b|s:value` (GLideN64 config, locked keys ignored online), `retrorun --filter/--integer-scale/--opt`, and `hubemu::apply_game_settings` (Dolphin GFX.ini, Azahar qt-config.ini, Cemu graphic packs).
