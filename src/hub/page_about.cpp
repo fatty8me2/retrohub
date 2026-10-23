@@ -2,6 +2,7 @@
 
 void draw_overlays() {
     draw_emulator_dialogs();
+    draw_find_games();
     draw_details_modal();
 }
 

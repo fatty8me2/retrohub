@@ -14,7 +14,7 @@ target_link_libraries(hub_session_test PRIVATE hublogic)
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
     ui_common.cpp tiles.cpp shelves.cpp page_library.cpp match_ui.cpp page_online.cpp friends_ui.cpp
-    page_controllers.cpp page_saves.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp page_about.cpp frame.cpp shot.cpp)
+    page_controllers.cpp page_saves.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp find_games_ui.cpp page_about.cpp frame.cpp shot.cpp)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
