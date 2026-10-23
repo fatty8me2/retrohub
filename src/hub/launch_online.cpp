@@ -204,6 +204,7 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
         if (!NP3.start_guest(server_url(), A.code, launch_no, plan, A.lobby.my_slot(), &err)) { set_notice("3DS online: " + err, 12.0); return; }
     }
     NP3_mp = hubnp3ds::multiplayer_arg(hubnp3ds::nickname(A.st.name, A.lobby.my_slot()), plan.password, "127.0.0.1", NP3.connect_port());
+    hubnp3ds::seed_join_config_file(inst.dir, "", "127.0.0.1", NP3.connect_port());   // prefill Direct Connect before Azahar starts
     NP3_game = e;
     NP3_pending = true;
     set_notice("Connecting the 3DS wireless link...", 20.0);

@@ -19,8 +19,9 @@ int main() {
     CHECK(std::string(join_driver_script()).find("DirectConnectWindow") != std::string::npos);
     {
         std::string c = seed_join_config("[UI]\nfirstStart=false\n", "Host_1", "127.0.0.1", 24990);
-        CHECK(c.find("Multiplayer\\ip = 127.0.0.1") != std::string::npos && c.find("Multiplayer\\port = 24990") != std::string::npos);
-        CHECK(c.find("Multiplayer\\nickname = Host_1") != std::string::npos && c.find("firstStart=false") != std::string::npos);
+        CHECK(c.find("[Multiplayer]") != std::string::npos && c.find("ip = 127.0.0.1") != std::string::npos);
+        CHECK(c.find("port = 24990") != std::string::npos && c.find("firstStart=false") != std::string::npos);
+        CHECK(c.find("nickname") == std::string::npos);   // read-only in Azahar
     }
     /* launch spec key */
     Plan p;
