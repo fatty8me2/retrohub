@@ -22,3 +22,5 @@ qa/**/*.gbc
 shots/*.png
 shots/*.bmp
 qa/*.png
+shots/
+qa/**/*.png

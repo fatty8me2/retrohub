@@ -10,7 +10,7 @@
 param(
     [string]$Server = '',
     [string]$Build = 'build\bin\Release',
-    [string]$Rom = 'C:\Users\fatty\Desktop\Everything\N64Games\Mario Kart 64 (U) [!].z64',
+    [string]$Rom = '',   # N64 ROM path (required for the headless runs)
     [int]$Frames = 1800,
     [string]$TestInput = ''   # e.g. random:42 -> peers get scripted pseudo-random input
 )
@@ -49,7 +49,7 @@ if ($Server) {
 # ---- headless emulation (no window, no audio, no speed limit)
 . (Join-Path $PSScriptRoot 'n64run_headless_lib.ps1')
 $n64 = Join-Path $bin 'n64run.exe'
-if (-not (Test-Path $n64) -or -not (Test-Path -LiteralPath $Rom)) {
+if (-not (Test-Path $n64) -or -not $Rom -or -not (Test-Path -LiteralPath $Rom)) {
     Write-Output "SKIP headless runs (n64run.exe or ROM missing)"
 } else {
     $tmp = Join-Path $env:TEMP ("n64qa-" + [guid]::NewGuid().ToString('N').Substring(0, 8))

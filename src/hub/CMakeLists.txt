@@ -16,7 +16,6 @@ target_include_directories(RetroHub PRIVATE
 target_link_libraries(RetroHub PRIVATE hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
     ole32 shell32 uuid winhttp)
 # main.cpp defines SDL_MAIN_HANDLED and provides WinMain itself, so SDL2main is not needed.
-# Optional icon: add hub.rc (with an ICON resource) to the sources above.
 
 add_custom_command(TARGET RetroHub POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:RetroHub>)
