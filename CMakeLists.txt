@@ -91,5 +91,6 @@ add_test(NAME n64run_mempak_test COMMAND n64run_mempak_test)          # controll
 # Online: need the live server.
 add_test(NAME hubnet_test COMMAND hubnet_test ${RETROHUB_TEST_SERVER})
 add_test(NAME hubfriends_test COMMAND hubfriends_test ${RETROHUB_TEST_SERVER})
+add_test(NAME hublink_test COMMAND hublink_test)                         # link-a-new-PC crypto/adopt/export (no network)
 add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
 set_tests_properties(hubnet_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)
