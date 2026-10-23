@@ -413,6 +413,17 @@ int main() {
         CHECK(friend_status_line(rows[0], 0) == "Online" && friend_status_line(row("x", "x", FS_InGame, false, 0), 0) == "Playing");
         CHECK(friend_status_line(rows[4], 9000 + 3 * 3600 * 1000LL) == "Last seen 3h ago");
         CHECK(friend_status_line(row("x", "x", FS_Offline, false, 0), 100000) == "Offline");
+        {   // duplicates: a uid is placed once; a friend in our room is flagged once and is not "joinable"
+            std::vector<FriendRow> dup = {row("a", "Mia", FS_Online, false, 5), row("a", "Mia", FS_Offline, false, 1), row("b", "Jo", FS_Offline, false, 3)};
+            FriendGroups dg = group_friends(dup);
+            CHECK(dg.online.size() == 1 && dg.offline.size() == 1 && dg.online[0] == 0 && dg.offline[0] == 2);
+            FriendRow rm = row("r", "Rae", FS_InLobby, true, 5, "Mario Kart 64", 2, 4);
+            CHECK(friend_can_join(rm));
+            rm.in_my_room = true;
+            CHECK(!friend_can_join(rm) && friend_status_line(rm, 0) == "In your room");
+            rm.state = FS_InGame;
+            CHECK(friend_status_line(rm, 0) == "In your room Â· Playing");
+        }
         CHECK(format_ago_ms(100000, 90000) == "just now" && format_ago_ms(1000 * 600, 0) == "10 min ago" && format_ago_ms(86400000LL * 2, 0) == "2d ago");
         CHECK(normalize_friend_code("7kq2m9xd") == "RH-7KQ2-M9XD");
         CHECK(normalize_friend_code(" rh-7kq2-m9xd ") == "RH-7KQ2-M9XD");
@@ -425,7 +436,7 @@ int main() {
             FriendRow ig = row("h", "Hal", FS_InGame, true, 5, "Smash", 2, 4), full = row("i", "Ivy", FS_InGame, false, 5, "Smash", 4, 4);
             CHECK(friend_can_join(ig) && !friend_can_join(full) && friend_can_join(rows[2]) && !friend_can_join(rows[1]) && !friend_can_join(rows[0]));
             CHECK(friend_status_line(ig, 0) == "Playing Smash \xC2\xB7 2/4" && friend_status_line(full, 0) == "Playing Smash");
-            std::vector<FriendRow> r2 = {row("a", "plain", FS_InGame, false, 5), ig, rows[2], rows[0]};
+            std::vector<FriendRow> r2 = {row("p", "plain", FS_InGame, false, 5), ig, rows[2], rows[0]};
             CHECK((group_friends(r2).online == std::vector<int>{2, 1, 0, 3}));   // joinable lobby, joinable in-game, in game, online
             CHECK(queued_join_text("Mia") == "Will join Mia's room when your game closes." && queued_join_text("") == "Will join that room when your game closes.");
         }
