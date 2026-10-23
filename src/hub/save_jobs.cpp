@@ -7,6 +7,23 @@ void set_toast(const std::string& s, bool good, double secs) {
 }
 
 
+/* Runs on the job thread (identity.json may be read or created here, never on the UI thread). */
+static void fill_identity(hub::saves::CloudConfig& c) {
+    hubnet::Identity id = hubnet::identity_load_or_create(hub::data_dir(), hub::saves::vault_dir());
+    c.user_id = id.user_id;
+    c.secret = id.secret;
+}
+
+/* Cloud problems that are not shown as toasts go to cloud_saves.log in the data dir (job thread only). */
+static void log_cloud(const std::string& msg) {
+    std::ofstream f(hub::data_dir() + "cloud_saves.log", std::ios::app);
+    if (!f) return;
+    std::time_t t = std::time(nullptr);
+    char ts[32] = {};
+    std::strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S", std::localtime(&t));
+    f << ts << "  " << msg << "\n";
+}
+
 /* Cloud config from the friends identity. The Worker is reached over https; server_url() is the wss:// lobby URL. */
 static hub::saves::CloudConfig cloud_config() {
     hub::saves::CloudConfig c;
@@ -14,9 +31,6 @@ static hub::saves::CloudConfig cloud_config() {
     if (base.rfind("wss://", 0) == 0) base = "https://" + base.substr(6);
     else if (base.rfind("ws://", 0) == 0) base = "http://" + base.substr(5);
     c.base_url = base;
-    hubnet::Identity id = hubnet::identity_load_or_create(hub::data_dir(), hub::saves::vault_dir());
-    c.user_id = id.user_id;
-    c.secret = id.secret;
     c.include_states = A.st.sync_states;
     return c;
 }
@@ -51,18 +65,32 @@ void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
     A.job.export_err.clear();
     A.job.cloud = (k == SaveJob::Sync && A.st.cloud_saves) || k == SaveJob::Status;
     if (A.job.cloud) A.job.cloud_cfg = cloud_config();
+    A.job.cloud_skipped = false;
     A.job.th = std::thread([]() {
         SaveJob& j = A.job;
         if (j.kind == SaveJob::Sync) {
             hub::saves::SyncReport folder, cloud;
             if (!j.path.empty()) folder = hub::saves::sync_folder(j.path, j.include_states);
             if (j.cloud) {
-                cloud = hub::saves::sync_cloud(j.cloud_cfg);
+                fill_identity(j.cloud_cfg);
                 j.cloud_stat = hub::saves::cloud_status(j.cloud_cfg);
+                if (j.cloud_stat.unavailable) {
+                    // server has cloud saves off, or this account is not registered yet: no transfer, status line only
+                    j.cloud_skipped = true;
+                    log_cloud("cloud saves skipped: " + std::string(j.cloud_stat.error.empty() ? "unavailable" : j.cloud_stat.error));
+                } else {
+                    cloud = hub::saves::sync_cloud(j.cloud_cfg);
+                    j.cloud_stat = hub::saves::cloud_status(j.cloud_cfg);
+                    if (!cloud.ok) log_cloud("cloud sync failed: " + cloud.error);
+                }
             }
             j.report = merge_reports(folder, cloud);
         }
-        else if (j.kind == SaveJob::Status) j.cloud_stat = hub::saves::cloud_status(j.cloud_cfg);
+        else if (j.kind == SaveJob::Status) {
+            fill_identity(j.cloud_cfg);
+            j.cloud_stat = hub::saves::cloud_status(j.cloud_cfg);
+            if (j.cloud_stat.unavailable) log_cloud("cloud saves unavailable");
+        }
         else if (j.kind == SaveJob::Export) j.export_ok = hub::saves::export_zip(j.path, j.include_states, &j.export_err);
         else if (j.kind == SaveJob::Import) j.report = hub::saves::import_zip(j.path);
         j.done = true;
@@ -136,10 +164,18 @@ void poll_job() {
     if (j.kind == SaveJob::Status) {
         // probe only: no toast, no result line
     } else if (j.kind == SaveJob::Sync) {
-        A.sync_result = report_summary(j.report, "sent", "received");
+        bool nothing_ran = j.path.empty() && j.cloud_skipped;   // only cloud, and it is unavailable: the status line says why
+        A.sync_result = nothing_ran ? std::string() : report_summary(j.report, "sent", "received");
         A.sync_result_ok = j.report.ok;
         bool quiet = j.report.ok && j.report.pushed == 0 && j.report.pulled == 0 && j.report.conflicts == 0 && !j.manual;
-        if (!quiet) set_toast(j.report.ok ? "Saves synced: " + A.sync_result : "Save sync " + A.sync_result, j.report.ok);
+        if (nothing_ran || j.cloud_skipped && j.report.ok) {
+            // no toast for an unavailable cloud (status line + log only)
+        } else if (!j.report.ok) {
+            // real transfer errors: one toast per session, the result line keeps showing it
+            if (!A.sync_error_toasted) { A.sync_error_toasted = true; set_toast("Save sync " + A.sync_result, false); }
+        } else if (!quiet) {
+            set_toast("Saves synced: " + A.sync_result, true);
+        }
     } else if (j.kind == SaveJob::Export) {
         A.export_ok = j.export_ok;
         A.export_result = j.export_ok ? "Exported to " + j.path : "Export failed: " + j.export_err;
