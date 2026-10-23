@@ -27,6 +27,7 @@ struct Options {
     bool relaunch = true;
     int retries = 10;                        // per-file copy attempts
     int retry_ms = 500;
+    bool (*copy_hook)(const std::wstring& from, const std::wstring& to) = nullptr;   // tests only: replaces the copy
 };
 
 struct Result {

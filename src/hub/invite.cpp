@@ -2,6 +2,7 @@
 #include "invite.h"
 
 #include <shellapi.h>
+#include <sddl.h>
 
 #include <cstring>
 #include <cwctype>
@@ -102,6 +103,8 @@ std::wstring invite_protocol_command(const std::wstring& exe) {
     return L"\"" + exe + L"\" \"%1\"";
 }
 
+static const DWORD kClientReadMs = 2000;   // a connected client must send its message within this
+
 /* ---- single instance ---- */
 
 InviteInstance::InviteInstance(const std::wstring& mutex_name) {
@@ -130,16 +133,49 @@ bool InviteServer::start(const std::wstring& pipe_name) {
     return thread_ != nullptr;
 }
 
+/* Waits for an overlapped operation; false (and the I/O cancelled) on timeout. */
+static bool wait_overlapped(HANDLE pipe, OVERLAPPED* ov, DWORD ms, DWORD* bytes) {
+    if (WaitForSingleObject(ov->hEvent, ms) != WAIT_OBJECT_0) {
+        CancelIoEx(pipe, ov);
+        GetOverlappedResult(pipe, ov, bytes, TRUE);
+        return false;
+    }
+    return GetOverlappedResult(pipe, ov, bytes, FALSE) != FALSE;
+}
+
 void InviteServer::run() {
-    while (!InterlockedCompareExchange(&stop_, 0, 0)) {
-        HANDLE pipe = CreateNamedPipeW(pipe_.c_str(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-                                       PIPE_UNLIMITED_INSTANCES, 512, 512, 0, nullptr);
+    /* Only the current user may talk to the pipe (owner-rights SDDL, protected DACL). */
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, FALSE};
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;GA;;;OW)", SDDL_REVISION_1, &sd, nullptr))
+        sa.lpSecurityDescriptor = sd;
+    HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    while (ev && !InterlockedCompareExchange(&stop_, 0, 0)) {
+        HANDLE pipe = CreateNamedPipeW(pipe_.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                                       PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+                                       PIPE_UNLIMITED_INSTANCES, 512, 512, 0, sd ? &sa : nullptr);
         if (pipe == INVALID_HANDLE_VALUE) { Sleep(200); continue; }
-        BOOL connected = ConnectNamedPipe(pipe, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED;
+        OVERLAPPED ov{}; ov.hEvent = ev; ResetEvent(ev);
+        bool connected = false;
+        if (ConnectNamedPipe(pipe, &ov)) connected = true;
+        else {
+            DWORD e = GetLastError();
+            if (e == ERROR_PIPE_CONNECTED) connected = true;
+            else if (e == ERROR_IO_PENDING) {
+                DWORD d = 0;
+                while (!InterlockedCompareExchange(&stop_, 0, 0)) {
+                    if (WaitForSingleObject(ev, 200) == WAIT_OBJECT_0) { connected = GetOverlappedResult(pipe, &ov, &d, FALSE) != FALSE; break; }
+                }
+                if (!connected) { CancelIoEx(pipe, &ov); GetOverlappedResult(pipe, &ov, &d, TRUE); }
+            }
+        }
         if (connected && !InterlockedCompareExchange(&stop_, 0, 0)) {
             char buf[kPipeMsgMax + 1] = {};
             DWORD got = 0;
-            bool ok = ReadFile(pipe, buf, (DWORD)kPipeMsgMax, &got, nullptr) != FALSE;
+            ResetEvent(ev); ov = OVERLAPPED{}; ov.hEvent = ev;
+            bool ok = false;
+            if (ReadFile(pipe, buf, (DWORD)kPipeMsgMax, &got, &ov)) ok = true;
+            else if (GetLastError() == ERROR_IO_PENDING) ok = wait_overlapped(pipe, &ov, kClientReadMs, &got);   // silent client: give up
             std::wstring text;
             if (ok && got > 0) {
                 int n = MultiByteToWideChar(CP_UTF8, 0, buf, (int)got, nullptr, 0);
@@ -154,14 +190,19 @@ void InviteServer::run() {
                 std::wstring code = invite_normalize_code(text);
                 if (invite_is_valid_code(code)) { push(0, code); accepted = true; }
             }
-            const char* reply = accepted ? "OK" : "ERR";
-            DWORD wrote = 0;
-            WriteFile(pipe, reply, 2 + (accepted ? 0 : 1), &wrote, nullptr);
-            FlushFileBuffers(pipe);
+            if (ok) {
+                const char* reply = accepted ? "OK" : "ERR";
+                DWORD wrote = 0;
+                ResetEvent(ev); ov = OVERLAPPED{}; ov.hEvent = ev;
+                if (WriteFile(pipe, reply, 2 + (accepted ? 0 : 1), &wrote, &ov) || GetLastError() == ERROR_IO_PENDING)
+                    wait_overlapped(pipe, &ov, kClientReadMs, &wrote);
+            }
         }
         DisconnectNamedPipe(pipe);
         CloseHandle(pipe);
     }
+    if (ev) CloseHandle(ev);
+    if (sd) LocalFree(sd);
 }
 
 void InviteServer::stop() {

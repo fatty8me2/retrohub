@@ -117,6 +117,7 @@ bool is_safe_rel(const std::wstring& rel) {
     if (rel.empty()) return false;
     if (rel.size() >= 2 && rel[1] == L':') return false;
     if (rel[0] == L'\\' || rel[0] == L'/') return false;
+    if (rel.find(L':') != std::wstring::npos) return false;   // drive letters, NTFS alternate data streams
     for (auto& p : split(rel)) if (p == L".." || p == L".") return false;
     return true;
 }
@@ -172,11 +173,14 @@ Result apply_files(const Options& o) {
             backed.insert(rel);
         }
         if (!make_parent(dest)) { fail = last_error_text(L"could not create folder for", rel); break; }
-        if (!copy_retry(src, dest, o.retries, o.retry_ms)) {
+        /* Record before copying: a failed CopyFileW can leave dest truncated, and rollback must
+         * still restore it from the backup (or delete it if it was new). */
+        installed.push_back(rel);
+        bool copied = o.copy_hook ? o.copy_hook(src, dest) : copy_retry(src, dest, o.retries, o.retry_ms);
+        if (!copied) {
             fail = last_error_text(L"could not replace", rel);
             break;
         }
-        installed.push_back(rel);
         r.copied++;
     }
     if (!fail.empty()) {
@@ -293,7 +297,8 @@ int run(const Options& o) {
         opt.backup = norm(base) + L"\\RetroHub-update-" + std::to_wstring(GetCurrentProcessId()) + L"\\backup";
     }
     Result r = apply_files(opt);
-    fs::remove_all(fs::path(norm(o.staged)), ec);
+    /* Keep the staged files when the apply failed so a retry does not have to download again. */
+    if (r.ok) fs::remove_all(fs::path(norm(o.staged)), ec);
     if (gen_backup) fs::remove_all(fs::path(opt.backup).parent_path(), ec);
     if (r.ok) {
         alog(L"applied " + std::to_wstring(r.copied) + L" file(s)");

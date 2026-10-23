@@ -8,6 +8,8 @@
 #include <winhttp.h>
 
 #include <cctype>
+#include <cstdlib>
+#include <stdexcept>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -138,10 +140,21 @@ bool http_post(const std::string& server, const std::string& path, const std::st
         if (base.rfind(p, 0) == 0) { base = base.substr(std::strlen(p)); secure = false; }
     }
     while (!base.empty() && base.back() == '/') base.pop_back();
+    if (!secure) {
+        /* Credentials must not travel in clear text: plain http/ws only for loopback or an explicit dev flag. */
+        std::string h = base.substr(0, base.find(':'));
+        bool local = h == "localhost" || h == "127.0.0.1" || h == "[::1]";
+        const char* dev = std::getenv("RETROHUB_ALLOW_INSECURE_LINK");
+        if (!local && !(dev && dev[0] == '1')) { *err = "refusing an unencrypted link server"; return false; }
+    }
     INTERNET_PORT port = secure ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT;
     size_t colon = base.find(':');
     if (colon != std::string::npos) {
-        port = (INTERNET_PORT)std::stoi(base.substr(colon + 1));
+        try {
+            int pv = std::stoi(base.substr(colon + 1));
+            if (pv < 1 || pv > 65535) throw std::out_of_range("port");
+            port = (INTERNET_PORT)pv;
+        } catch (...) { *err = "invalid server address"; return false; }
         base = base.substr(0, colon);
     }
     std::wstring whost(base.begin(), base.end()), wpath(path.begin(), path.end());

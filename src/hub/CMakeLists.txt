@@ -100,7 +100,7 @@ add_dependencies(hub_apply_test RetroHub)
 # ---- Clickable invite links (retrohub://join/<CODE>, --join <CODE>, single-instance handoff) ----
 add_library(hubinvite STATIC invite.cpp)
 target_include_directories(hubinvite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hubinvite PUBLIC shell32 user32)
+target_link_libraries(hubinvite PUBLIC shell32 user32 advapi32)
 target_compile_features(hubinvite PUBLIC cxx_std_17)
 target_link_libraries(RetroHub PRIVATE hubinvite advapi32)
 target_link_libraries(hub_shell_test PRIVATE hubinvite advapi32)

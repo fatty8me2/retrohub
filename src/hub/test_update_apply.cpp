@@ -156,6 +156,25 @@ int main(int argc, char** argv) {
     check_old(install); check_untouched(install);
     CHECK(!has(install / L"sub\\deep\\c.txt"));
 
+    // ---- mid-copy failure: dest truncated, then copy fails => original bytes restored ----
+    make_scene(root / L"mid", &staged, &install);
+    o.staged = staged.wstring(); o.install = install.wstring(); o.backup = (root / L"mid" / L"bk").wstring();
+    o.copy_hook = [](const std::wstring& from, const std::wstring& to) -> bool {
+        if (to.size() >= 5 && to.compare(to.size() - 5, 5, L"b.dat") == 0) {
+            std::ofstream t(fs::path(to), std::ios::binary | std::ios::trunc); t << "PARTIAL";
+            return false;
+        }
+        return CopyFileW(from.c_str(), to.c_str(), FALSE) != FALSE;
+    };
+    r = apply_files(o);
+    o.copy_hook = nullptr;
+    CHECK(!r.ok); CHECK(r.rolled_back);
+    CHECK(get(install / L"b.dat") == "b-old");
+    check_old(install); check_untouched(install);
+
+    // ---- is_safe_rel rejects ':' (alternate data streams) ----
+    CHECK(!is_safe_rel(L"a.txt:evil")); CHECK(is_safe_rel(L"sub\a.txt"));
+
     // ---- missing required exe ----
     make_scene(root / L"req", &staged, &install);
     fs::remove(staged / L"BattleShip.exe");
