@@ -37,6 +37,7 @@
 
 #include "art.h"
 #include "updater.h"
+#include "update_apply.h"
 #include "games.h"
 #include "emulators.h"
 #include "netplay_dolphin.h"
