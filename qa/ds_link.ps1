@@ -2,7 +2,7 @@
 # Headless: no windows, muted. Passes when both cores start wireless and exchange link traffic.
 # Usage: qa\ds_link.ps1 [-Rom <nds or zip>] [-Frames 1500] [-Server wss://...] [-Players 2] [-Relay]
 param(
-    [string]$Rom = "C:\Users\fatty\Desktop\Everything\Games\NDS\Pokemon - Platinum Version (USA).zip",
+    [Parameter(Mandatory = $true)][string]$Rom,
     [int]$Frames = 1500,
     [string]$Server = "wss://smash-netplay.jumpcircuit.workers.dev",
     [int]$Players = 2,

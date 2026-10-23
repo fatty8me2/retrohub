@@ -1,5 +1,5 @@
 # Stall matrix: random input on every peer, local wrangler dev, optional --realtime pacing.
-#   powershell -NoProfile -File matrix.ps1 -N64Exe <exe> -Tag before [-Realtime 1] [-Games sf64,pokestadium2] [-Scen 2p,4p,relay,sim,4prelay]
+#   powershell -NoProfile -File matrix.ps1 -N64Exe <exe> -RomDir <folder of N64 ROMs> -Tag before [-Realtime 1] [-Games sf64,pokestadium2] [-Scen 2p,4p,relay,sim,4prelay]
 param(
     [string]$N64Exe,
     [string]$Tag = 'run',
@@ -8,12 +8,14 @@ param(
     [string]$Games = 'sf64,pokestadium2',
     [string]$Scen = '2p,4p,relay,sim',
     [string]$Server = 'ws://127.0.0.1:8791',
-    [string]$EmuDir = 'C:\Users\fatty\Desktop\SmashClassicPort\RetroHub\deps\emu',
-    [string]$TestInput = 'random:1'
+    [string]$EmuDir = '',
+    [string]$TestInput = 'random:1',
+    [Parameter(Mandatory = $true)][string]$RomDir
 )
 $ErrorActionPreference = 'Continue'
-$rh      = 'C:\Users\fatty\Desktop\SmashClassicPort\RetroHub'
-$romDir  = 'C:\Users\fatty\Desktop\Everything\Games\N64'
+$rh      = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$romDir  = $RomDir
+if (-not $EmuDir) { $EmuDir = Join-Path $rh 'deps\emu' }
 $scratch = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $rh 'qa\n64run_headless_lib.ps1')
 $stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
