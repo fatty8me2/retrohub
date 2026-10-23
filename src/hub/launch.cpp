@@ -69,7 +69,10 @@ bool spawn(const std::string& exe, const std::string& args, const std::string& c
     return true;
 }
 
+void sync_smash_prep();
+
 void poll_process() {
+    sync_smash_prep();
     if (!A.proc) return;
     if (WaitForSingleObject(A.proc, 0) != WAIT_OBJECT_0) return;
     if (A.job_h) {   // the emulator may have handed the game to a child: wait until the whole job is gone
@@ -82,6 +85,7 @@ void poll_process() {
     GetExitCodeProcess(A.proc, &code);
     CloseHandle(A.proc);
     A.proc = nullptr;
+    sync_smash_prep();
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
     uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
     if (!A.run.key.empty()) {
@@ -119,10 +123,15 @@ std::string save_stem_arg(const hub::GameEntry& e) {
 }
 
 /* Env for every Smash Classic launch: ROM hand-off + vault save path. Migrates the legacy save once (copy, never delete). */
-std::vector<std::pair<std::string, std::string>> smash_env(const std::string& exe) {
+/* The Smash ROM in the scanned library ("" when none). */
+std::string smash_rom_from_library() {
     std::vector<hubui::RomRef> refs;
     for (auto& g : A.lib) refs.push_back({g.catalog_id, g.serial, g.path});
-    std::string rom = hubui::find_smash_rom(refs);
+    return hubui::find_smash_rom(refs);
+}
+
+std::vector<std::pair<std::string, std::string>> smash_env(const std::string& exe) {
+    std::string rom = smash_rom_from_library();
     std::string save = hubui::smash_save_file(hub::saves::battery_dir(hubui::kSmashSaveSystem, hubui::kSmashSaveKey));
     std::string legacy = dir_of(exe) + "ssb64_save.bin";
     bool vault_has = file_exists(save), legacy_has = file_exists(legacy);
@@ -135,8 +144,21 @@ std::vector<std::pair<std::string, std::string>> smash_env(const std::string& ex
         mark_dirty();
         push_toast(hubui::smash_save_conflict_text(legacy), ui::WARN, 12.0);
     }
-    if (!file_exists(dir_of(exe) + "BattleShip.o2r")) push_toast("Preparing Smash Classic for first use (about 30 s)...", ui::WARN, 12.0);
     return hubui::smash_launch_env(rom, save);
+}
+
+/* "Preparing" toast: kept up while the native Smash process runs and BattleShip.o2r is still missing; removed when either ends. */
+void sync_smash_prep() {
+    const std::string txt = hubui::smash_prep_text();
+    bool want = A.proc && !A.run.o2r_prep.empty() && hubui::smash_prep_visible(true, file_exists(A.run.o2r_prep));
+    if (want) {
+        double now = ImGui::GetTime();
+        for (auto& t : A.toasts)
+            if (t.text == txt) { t.until = now + 14.0; return; }
+        push_toast(txt, ui::WARN, 14.0);
+        return;
+    }
+    A.toasts.erase(std::remove_if(A.toasts.begin(), A.toasts.end(), [&](const Toast& t) { return t.text == txt; }), A.toasts.end());
 }
 
 RunInfo run_info_for(const hub::GameEntry& e, bool online) {
@@ -286,6 +308,14 @@ void play_entry(const hub::GameEntry& e) {
     std::string sys = sys_short(e);
     if (is_native(e)) {
         std::string exe = smash_exe_path();
+        std::string o2r = dir_of(exe) + "BattleShip.o2r";
+        std::string rom = smash_rom_from_library();
+        bool o2r_ok = file_exists(o2r);
+        std::string md5 = (!o2r_ok && !rom.empty()) ? hubemu::md5_file(rom) : std::string();   // only the first run needs the ROM
+        hubui::SmashPlay d = hubui::smash_play_decision(o2r_ok, !rom.empty(), md5);
+        if (d == hubui::SmashPlay::NeedRom) { push_toast(hubui::smash_need_rom_text(), ui::WARN, 9.0); return; }
+        if (d == hubui::SmashPlay::WarnMd5) push_toast(hubui::smash_md5_warn_text(md5), ui::WARN, 12.0);
+        ri.o2r_prep = o2r;
         spawn(exe, "--from-hub --no-update-check", dir_of(exe), smash_env(exe), ri);   // RetroHub's updater is the only one
         return;
     }
