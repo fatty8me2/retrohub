@@ -40,7 +40,7 @@ struct Args {
     int frames = -1, scale = 3, slot = 0, players = 1, delay = -1;   // delay -1 = auto
     int ports[4] = {0, -1, -1, -1};
     bool ports_given = false;
-    bool link = false;   // DS local wireless over the room (netpacket interface), no lockstep
+    bool ds_link = false;   // DS local wireless over the room (netpacket interface), no lockstep
     std::vector<std::string> opts;
 };
 
@@ -108,7 +108,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--headless") o->headless = true;
         else if (k == "--fullscreen") o->fullscreen = true;
         else if (k == "--resume") o->resume = true;
-        else if (k == "--link") o->link = true;
+        else if (k == "--ds-link") o->ds_link = true;
         else if (k == "--fuzz-input") o->fuzz = true;
         else if (k == "--selftest") o->selftest = true;
         else if (k == "--pace") { if (!val(&o->pace_override)) return false; }
@@ -634,7 +634,7 @@ void Frontend::handle_key(const SDL_KeyboardEvent& k) {
             break;
         case SDLK_F5: want_save = true; break;
         case SDLK_F7:
-            if (online || a.link) set_status("Loading states is disabled during netplay");
+            if (online || a.ds_link) set_status("Loading states is disabled during netplay");
             else want_load = true;
             break;
         case SDLK_F6: slot_sel = (slot_sel + 9) % 10; set_status("State slot " + std::to_string(slot_sel)); break;
@@ -656,7 +656,7 @@ void Frontend::pump_events(bool idle) {
         }
     }
     const Uint8* k = SDL_GetKeyboardState(nullptr);
-    ff = !online && !a.link && k[SDL_SCANCODE_TAB];
+    ff = !online && !a.ds_link && k[SDL_SCANCODE_TAB];
     core.set_fast_forwarding(ff);
     if (win && status_until && SDL_GetTicks64() > status_until) {
         status_until = 0;
@@ -875,7 +875,7 @@ void Frontend::link_stop(const char* why) {
 
 bool Frontend::setup_link() {
     if (!core.has_netpacket()) { rlog("link: this core has no local-wireless netpacket interface"); return false; }
-    if (a.net.empty() || a.room.empty()) { rlog("link: --net and --room required with --link"); return false; }
+    if (a.net.empty() || a.room.empty()) { rlog("link: --net and --room required with --ds-link"); return false; }
     if (!a.log.empty()) net_set_log_file((a.log + ".net").c_str());
     hubnet::SessionConfig cfg;
     cfg.server = a.net;
@@ -908,7 +908,7 @@ bool Frontend::setup_link() {
 /* ------------------------------------------------------------------ main loop */
 
 void Frontend::do_pacing() {
-    if (ff || (a.headless && !a.link)) return;
+    if (ff || (a.headless && !a.ds_link)) return;
     switch (pace) {
         case Pace::Audio:
             while (audio.fill() > audio.target() && !quit) {
@@ -999,8 +999,8 @@ int Frontend::run(const Args& args) {
 
     // Port ownership: --ports, else (offline) the first --players ports are all local.
     for (int i = 0; i < 4; i++) owner[i] = a.ports[i];
-    if (a.link) { for (int i = 0; i < 4; i++) owner[i] = i == 0 ? a.slot : -1; a.ports_given = true; }   // every PC plays the DS's only pad
-    if (a.net.empty() && !a.ports_given && !a.link)
+    if (a.ds_link) { for (int i = 0; i < 4; i++) owner[i] = i == 0 ? a.slot : -1; a.ports_given = true; }   // every PC plays the DS's only pad
+    if (a.net.empty() && !a.ports_given && !a.ds_link)
         for (int i = 0; i < 4; i++) owner[i] = i < std::max(1, a.players) ? a.slot : -1;
     for (int i = 0; i < 4; i++)
         if (owner[i] == a.slot && owner[i] >= 0) local_ports[n_local++] = i;
@@ -1091,7 +1091,7 @@ int Frontend::run(const Args& args) {
     core.on_geometry = [this]() { fps = core.av().timing.fps > 1 ? core.av().timing.fps : fps; };
 
     load_srm();
-    if (a.resume && !online && a.net.empty() && !a.link) {
+    if (a.resume && !online && a.net.empty() && !a.ds_link) {
         if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
     }
 
@@ -1099,7 +1099,7 @@ int Frontend::run(const Args& args) {
     if (a.selftest) {
         rc = selftest();
     } else {
-        if (a.link) {
+        if (a.ds_link) {
             if (!setup_link()) { rc = 3; goto done; }
             if (a.headless) pace = Pace::Timer;
         } else if (!setup_net()) { rc = net_rc; goto done; }
@@ -1112,7 +1112,7 @@ int Frontend::run(const Args& args) {
                 if (quit) break;
 
                 if (want_save) { want_save = false; save_state("slot" + std::to_string(slot_sel)); }
-                if (want_load) { want_load = false; if (!online && !a.link) load_state("slot" + std::to_string(slot_sel)); }
+                if (want_load) { want_load = false; if (!online && !a.ds_link) load_state("slot" + std::to_string(slot_sel)); }
 
                 if (online) {
                     for (int p = 0; p < 4; p++) frame_pad[p] = lockstep->get_keys(p);   // lead port poll advances the sample
@@ -1156,7 +1156,7 @@ int Frontend::run(const Args& args) {
             if (online && lockstep) lockstep->log_stall_summary();
             rlog("done: %llu frames in %.2f s (%.1f fps)", (unsigned long long)frame_no, secs, secs > 0 ? frame_no / secs : 0.0);
         }
-        if (a.link) {
+        if (a.ds_link) {
             if (link_probe) rlog("link: PROBE tx %llu rx %llu corrupt %llu", (unsigned long long)probe_tx, (unsigned long long)probe_rx, (unsigned long long)probe_bad);
             rlog("link: final tx %llu (cmd %llu reply %llu) rx %llu (cmd %llu reply %llu)", (unsigned long long)link_tx,
                  (unsigned long long)link_tx_cmd, (unsigned long long)link_tx_reply, (unsigned long long)link_rx,

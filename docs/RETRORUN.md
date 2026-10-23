@@ -144,12 +144,12 @@ Windowed code paths can be smoke-tested with `SDL_VIDEODRIVER=dummy SDL_AUDIODRI
 - Core options changed while running are not supported (the core sees the values given at start).
 - Cores with real-time clocks (e.g. mGBA with RTC games) may use wall-clock time, which can desync netplay; Gambatte state is not byte-exact after load (affects rollback later, not lockstep).
 
-## Nintendo DS local wireless online (`--link`)
+## Nintendo DS local wireless online (`--ds-link`)
 
 Trades, battles and the Union Room are the DS's local wireless. The melonDS DS core emulates it by exchanging timestamped
 MP frames through libretro's **netpacket interface** (`RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE`), so retrorun implements
 that interface on top of `hubnet::Session` (STUN hole punch, WebSocket relay fallback; nobody port-forwards).
-`retrorun ... --link --net SERVER --room CODE-N --slot K --players N` (needs `--system nds`):
+`retrorun ... --ds-link --net SERVER --room CODE-N --slot K --players N` (needs `--system nds`):
 
 - No lockstep and no savestate sync: every PC runs its own emulator and its own real save; only wireless frames travel
   (DS client id = room slot, host = 0). Fast forward and state loading are off while linked.
