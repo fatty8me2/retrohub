@@ -132,6 +132,7 @@ struct SaveJob {
     std::string export_err, path;
     bool include_states = false, manual = false;
     bool cloud = false;                              // also sync through the RetroHub account
+    bool cloud_skipped = false;                      // cloud unavailable or unregistered: no transfer attempted
     hub::saves::CloudConfig cloud_cfg;
     hub::saves::CloudStatus cloud_stat;              // filled by Status jobs and by Sync jobs with cloud on
 };
@@ -197,6 +198,7 @@ struct App {
     hub::saves::CloudStatus cloud_stat;           // last cloud status (Saves page line)
     bool cloud_stat_known = false;                // a probe has answered since the toggle went on
     bool cloud_probed = false;                    // a probe was started for the current toggle state
+    bool sync_error_toasted = false;              // a real sync error toast was shown this session
     std::string export_result, import_result;
     bool export_ok = true, import_ok = true;
     std::vector<VaultRow> vault_rows;
