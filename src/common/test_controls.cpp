@@ -331,7 +331,42 @@ static void test_keyboard() {
     CHECK(PadMap(hot).word(ps) != PadMap(n).word(ps));
 }
 
+/* "Assign players" state machine, fed with fake pad presses (no SDL). */
+static void test_port_assign() {
+    hubctl::PortAssign pa;
+    CHECK(!pa.active() && pa.finished());
+    pa.start(0.0);
+    CHECK(pa.active() && pa.next_port() == 1);
+    CHECK(!pa.press("", 1.0));                       // empty key ignored
+    CHECK(pa.press("padB", 1.0) && pa.next_port() == 2);
+    CHECK(!pa.press("padB", 2.0));                   // same pad again: no second port
+    CHECK(pa.press("padA", 3.0) && pa.next_port() == 3);
+    CHECK(pa.assigned().size() == 2 && pa.assigned()[0] == "padB" && pa.assigned()[1] == "padA");
+    /* order: assigned first, the rest in their original order */
+    std::vector<std::string> all = {"padA", "padC", "padB", "padD"};
+    std::vector<std::string> o = pa.order(all);
+    CHECK(o.size() == 4 && o[0] == "padB" && o[1] == "padA" && o[2] == "padC" && o[3] == "padD");
+    /* timeout: 30 s without a press */
+    CHECK(!pa.timed_out(10.0, 30.0));
+    CHECK(pa.timed_out(33.0, 30.0));                 // last press at t=3
+    CHECK(pa.press("padC", 33.0) && !pa.timed_out(40.0, 30.0));
+    CHECK(pa.press("padD", 34.0) && pa.finished() && !pa.active());   // 4 ports: ends by itself
+    CHECK(!pa.press("padE", 35.0) && pa.assigned().size() == 4);
+    /* Esc / Done keeps what was assigned */
+    pa.start(50.0);
+    CHECK(pa.press("padD", 51.0) && pa.assigned().size() == 1);
+    pa.end();
+    CHECK(!pa.active() && pa.finished() && pa.assigned().size() == 1 && pa.assigned()[0] == "padD");
+    CHECK(!pa.press("padA", 52.0));                  // not accepting presses after end
+    /* restart clears the previous assignment */
+    pa.start(60.0);
+    CHECK(pa.assigned().empty() && pa.next_port() == 1);
+    /* the stored order is applied by order_pads as before */
+    CHECK(hubctl::order_pads({"padB"}, {"padA", "padB"})[0] == 1);
+}
+
 int main() {
+    test_port_assign();
     test_keyboard();
     test_describe();
     test_page_flows();

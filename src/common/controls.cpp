@@ -431,6 +431,30 @@ void reset(Store& s, const std::string& sys, const std::string& game) {
 
 void set_port_order(Store& s, const std::vector<std::string>& keys) { s.port_order = keys; s.stamp = (int64_t)std::time(nullptr); }
 
+void PortAssign::start(double now) {
+    active_ = true;
+    last_ = now;
+    keys_.clear();
+}
+
+bool PortAssign::press(const std::string& pad_key, double now) {
+    if (finished() || pad_key.empty()) return false;
+    for (const std::string& k : keys_) if (k == pad_key) return false;   // one port per pad
+    keys_.push_back(pad_key);
+    last_ = now;
+    if ((int)keys_.size() >= kPorts) active_ = false;
+    return true;
+}
+
+void PortAssign::end() { active_ = false; }
+
+std::vector<std::string> PortAssign::order(const std::vector<std::string>& all_keys) const {
+    std::vector<std::string> out = keys_;
+    for (const std::string& k : all_keys)
+        if (std::find(keys_.begin(), keys_.end(), k) == keys_.end()) out.push_back(k);
+    return out;
+}
+
 std::vector<int> order_pads(const std::vector<std::string>& order, const std::vector<std::string>& keys) {
     std::vector<int> out;
     std::vector<bool> used(keys.size(), false);
