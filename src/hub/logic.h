@@ -286,6 +286,7 @@ struct FriendRow {
     bool joinable = false;
     int players = 0, max_players = 0;
     long long updated_ms = 0;      // last presence update (offline: roughly "last seen")
+    bool in_my_room = false;       // this friend is in the room we are in: shown once, with an "In your room" status
 };
 struct FriendGroups { std::vector<int> online, offline; };
 /* Online first (joinable lobby, in game, in lobby, online; then name, case-insensitive), then offline (most
@@ -303,7 +304,7 @@ int invite_seconds_left(long long expires_at_ms, long long now_ms);
 /* A room can be joined while it has a free slot and the game has not been launched. */
 inline bool lobby_joinable(int players, int max_players, bool launched) { return !launched && players > 0 && players < max_players; }
 /* A friend row offers "Join": in a lobby, or in a game launched from a room, with a free slot (and a known code). */
-inline bool friend_can_join(const FriendRow& r) { return (r.state == FS_InLobby || r.state == FS_InGame) && r.joinable; }
+inline bool friend_can_join(const FriendRow& r) { return !r.in_my_room && (r.state == FS_InLobby || r.state == FS_InGame) && r.joinable; }
 /* Toast shown when a join is clicked while our own game is running (performed when the game closes). */
 std::string queued_join_text(const std::string& friend_name);
 /* Join click while our own game runs: queue it, or drop it when we are already in that room. */

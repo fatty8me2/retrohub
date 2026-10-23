@@ -95,3 +95,9 @@ Invite  = {lobby_code, game_id, game_title, system, expires_at}
 - Offline-device behaviour: a socket sending `state:"offline"` is "invisible" and does not count for the effective status; a second device that is online still shows the user online.
 - Messages to an online user are pushed and not stored in the inbox; if they have no socket they go to the inbox. Inbox messages are re-sent on every connect until acked.
 - Cross-user fan-out is one subrequest per friend (200 max); this exceeds the Workers Free subrequest limit (50) for users with many friends, so use a paid plan.
+
+## One entry per person (dedupe)
+- Lists are keyed by uid. The client runs `dedupe_friends` / `dedupe_requests` on welcome and before drawing: a person is never both a friend and a request, never both an incoming and outgoing request (incoming wins), and never in two list sections.
+- Identity adoption (link-a-new-PC, vault adopt): the client keeps the replaced identity in `<data_dir>/pending-retire.json` and sends `{"type":"retire_old","uid","secret"}` on the new authed socket after welcome. The server verifies the old secret, moves the old uid's friends/requests/blocks to the new uid (peers see the old entry swapped for the new one), retires the old uid (it can no longer connect: close 4005) and answers `{"type":"retired","uid"}` (idempotent; the client then deletes the file).
+- The server also cleans duplicate/crossed rows on every hello (idempotent).
+- Screenshot aid: `HUB_SHOT_FAKE_FRIENDS=1 HUB_SHOT_FAKE_DUPES=1` (add `HUB_SHOT_FAKE_ROOM=1` to see the "In your room" status).

@@ -81,6 +81,16 @@ struct Event {
     Invite invite;            // InviteReceived
 };
 
+/* ---- dedupe (pure; the list is keyed by uid) ----
+ * dedupe_friends: one entry per uid (empty uids and `self_uid` dropped). Duplicates merge into the first
+ * occurrence: the more "present" status wins (InGame > InLobby > Online > Offline, then newer `updated`),
+ * the earliest `since` and a non-empty name/code/note are kept.
+ * dedupe_requests: also one entry per uid; a person who is already a friend (or yourself) has no request;
+ * a person with both an incoming and an outgoing request keeps only the incoming one (you can accept). */
+void dedupe_friends(std::vector<Friend>& friends, const std::string& self_uid = "");
+void dedupe_requests(const std::vector<Friend>& friends, std::vector<Request>& incoming, std::vector<Request>& outgoing,
+                     const std::string& self_uid = "");
+
 class FriendsClient {
   public:
     FriendsClient();

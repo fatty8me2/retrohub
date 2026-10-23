@@ -239,6 +239,65 @@ struct Conv {
 };
 } // namespace
 
+static int presence_rank(PresenceState st)
+{
+    return st == PresenceState::InGame ? 3 : st == PresenceState::InLobby ? 2 : st == PresenceState::Online ? 1 : 0;
+}
+
+void dedupe_friends(std::vector<Friend>& friends, const std::string& self_uid)
+{
+    std::vector<Friend> out;
+    for (Friend& f : friends) {
+        if (f.uid.empty() || f.uid == self_uid) continue;
+        Friend* have = nullptr;
+        for (Friend& o : out) if (o.uid == f.uid) { have = &o; break; }
+        if (!have) { out.push_back(std::move(f)); continue; }
+        int ra = presence_rank(f.status.state), rb = presence_rank(have->status.state);
+        bool take = ra != rb ? ra > rb : f.status.updated > have->status.updated;
+        int64_t since = have->since && f.since ? std::min(have->since, f.since) : (have->since ? have->since : f.since);
+        std::string note = have->note.empty() ? f.note : have->note;
+        if (take) {
+            if (f.name.empty()) f.name = have->name;
+            if (f.code.empty()) f.code = have->code;
+            *have = std::move(f);
+        } else {
+            if (have->name.empty()) have->name = f.name;
+            if (have->code.empty()) have->code = f.code;
+        }
+        have->since = since;
+        have->note = note;
+    }
+    friends = std::move(out);
+}
+
+void dedupe_requests(const std::vector<Friend>& friends, std::vector<Request>& incoming, std::vector<Request>& outgoing,
+                     const std::string& self_uid)
+{
+    auto is_friend = [&](const std::string& u) {
+        if (u.empty() || u == self_uid) return true;
+        for (const Friend& f : friends) if (f.uid == u) return true;
+        return false;
+    };
+    auto uniq = [&](std::vector<Request>& v, const std::vector<Request>* other) {
+        std::vector<Request> out;
+        for (Request& r : v) {
+            if (is_friend(r.uid)) continue;
+            if (other) {
+                bool dup = false;
+                for (const Request& o : *other) if (o.uid == r.uid) dup = true;
+                if (dup) continue;
+            }
+            bool seen = false;
+            for (Request& o : out)
+                if (o.uid == r.uid) { seen = true; if (o.name.empty()) o.name = r.name; if (r.at > o.at) o.at = r.at; }
+            if (!seen) out.push_back(std::move(r));
+        }
+        v = std::move(out);
+    };
+    uniq(incoming, nullptr);
+    uniq(outgoing, &incoming);
+}
+
 struct FriendsClient::Impl {
     std::string data_dir = ".\\userdata\\", vault_dir;
     std::string server, name = "Player";
@@ -345,6 +404,11 @@ struct FriendsClient::Impl {
     {
         v.erase(std::remove_if(v.begin(), v.end(), [&](const Request& r) { return r.uid == uid; }), v.end());
     }
+    static bool has_req(const std::vector<Request>& v, const std::string& uid)
+    {
+        for (const Request& r : v) if (r.uid == uid) return true;
+        return false;
+    }
     static void put(std::vector<Request>& v, const Request& r)
     {
         drop(v, r.uid);
@@ -442,6 +506,32 @@ struct FriendsClient::Impl {
         ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\"}");
     }
 
+    void normalize_lists() { dedupe_friends(friends, id.user_id); dedupe_requests(friends, incoming, outgoing, id.user_id); }
+
+    /* Identity retirement: after this PC switches to an older/linked identity, the identity it replaced is
+     * handed to the server (over the NEW authed socket) so its friendships move to the new uid. Persisted
+     * until the server confirms, so a crash or an offline start does not lose it. */
+    Identity retire;
+    std::string retire_path() const { return data_dir + "pending-retire.json"; }
+    void load_retire()
+    {
+        retire = Identity();
+        Identity r;
+        if (identity_read(retire_path(), &r) && r.user_id != id.user_id) retire = r;
+        else { std::error_code ec; fs::remove(upath(retire_path()), ec); }
+    }
+    void send_retire()
+    {
+        if (!retire.valid()) return;
+        send("{\"type\":\"retire_old\",\"uid\":" + q(retire.user_id) + ",\"secret\":" + q(retire.secret) + "}");
+    }
+    void retire_done()
+    {
+        retire = Identity();
+        std::error_code ec;
+        fs::remove(upath(retire_path()), ec);
+    }
+
     void on_welcome(const Json& j)
     {
         welcomed = true;
@@ -456,6 +546,8 @@ struct FriendsClient::Impl {
         }
         if (const Json* a = j.get("blocked"))
             for (const Json& x : a->a) if (x.type == Json::String) blocked.push_back(x.s);
+        normalize_lists();
+        send_retire();
         if (have_status) send("{\"type\":\"status\",\"status\":" + status_json(my_status) + "}");
 
         std::vector<std::string> ids;
@@ -512,16 +604,22 @@ struct FriendsClient::Impl {
         std::string type = j.str("type");
         if (type == "welcome") on_welcome(j);
         else if (type == "presence") on_presence(j);
+        else if (type == "retired") retire_done();
         else if (type == "request") {
             const Json* r = j.get("req");
             if (!r) return false;
             Request rq = parse_req(*r);
-            if (j.str("dir") == "out") { put(outgoing, rq); return false; }
+            if (rq.uid == id.user_id || find(rq.uid)) return false;   // yourself / already a friend: not a request
+            if (j.str("dir") == "out") { if (!has_req(incoming, rq.uid)) put(outgoing, rq); return false; }
+            drop(outgoing, rq.uid);
             put(incoming, rq);
             Event e; e.kind = Event::RequestReceived; e.uid = rq.uid; e.name = rq.name; e.text = rq.code;
             push_event(std::move(e));
         } else if (type == "request_out") {   // optional: server confirms an outgoing request
-            if (const Json* r = j.get("req")) put(outgoing, parse_req(*r));
+            if (const Json* r = j.get("req")) {
+                Request rq = parse_req(*r);
+                if (rq.uid != id.user_id && !find(rq.uid) && !has_req(incoming, rq.uid)) put(outgoing, rq);
+            }
         } else if (type == "request_update") {
             std::string uid = j.str("uid");
             std::string name;
@@ -541,6 +639,7 @@ struct FriendsClient::Impl {
             if (!fj) return false;
             Friend f = parse_friend(*fj);
             drop(incoming, f.uid); drop(outgoing, f.uid);
+            if (f.uid == id.user_id) return false;
             if (Friend* old = find(f.uid)) *old = f; else friends.push_back(f);
             Event e; e.kind = Event::FriendAdded; e.uid = f.uid; e.name = f.name; e.text = f.code;
             push_event(std::move(e));
@@ -612,6 +711,7 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
     d.server = server;
     d.name = sanitize_name(name);
     d.id = identity_load_or_create(d.data_dir, d.vault_dir);
+    d.load_retire();
     d.started = true;
     d.gave_up = false;
     d.backoff_ms = 1000;
@@ -676,6 +776,13 @@ void FriendsClient::update()
             d.connect();
             return;
         }
+        if (code == 4005) {   // this uid was retired: its friendships moved to the identity that replaced it
+            d.ws.close();
+            d.welcomed = false;
+            d.gave_up = true;
+            d.status_text = "This identity was replaced by a newer one";
+            return;
+        }
         if (code == 4003) {
             d.ws.close();
             d.welcomed = false;
@@ -702,6 +809,11 @@ void FriendsClient::update()
 void FriendsClient::apply_adopted(const Identity& v)
 {
     Impl& d = *impl_;
+    {   // remember the identity being replaced so the server can retire it and move its friendships
+        Identity old = d.id;
+        if (!old.valid()) identity_read(d.data_dir + "identity.json", &old);
+        if (old.valid() && old.user_id != v.user_id) write_file(d.retire_path(), identity_json(old));
+    }
     if (d.started) {
         std::string server = d.server, name = d.name;
         start(server, name);   // reloads identity.json, drops per-account state, reconnects
