@@ -95,6 +95,14 @@ struct Resp {
     str etag, sha, mtime;
 };
 
+/* Server-wide R2 free-tier guard (see server/cloudflare/src/r2budget.js): 429 cloud-saves-paused (monthly ops) and
+ * 507 cloud-saves-full (total storage). Both are NOT transient within a sync run: never retry them. */
+static bool budget_paused(const Resp& r) { return r.status == 429 && r.body.find("cloud-saves-paused") != str::npos; }
+static bool budget_full(const Resp& r) { return r.status == 507 && r.body.find("cloud-saves-full") != str::npos; }
+static const char* budget_msg(const Resp& r) {
+    return budget_paused(r) ? "Cloud saves are paused this month" : budget_full(r) ? "Cloud saves are full" : nullptr;
+}
+
 struct Http {
     const CloudConfig& cfg;
     bool https = false;
@@ -195,6 +203,7 @@ struct Http {
             std::vector<str> ex = extra_fn ? extra_fn() : extra;
             r = once(method, pq, ex, body, blen, body_sha, sink);
             if (r.status != 0 && r.status < 500 && r.status != 429) return r;
+            if (budget_paused(r)) return r;   // no retry storm
             if (a + 1 < tries) std::this_thread::sleep_for(std::chrono::milliseconds(300 << a));
         }
         return r;
@@ -281,7 +290,7 @@ bool fetch_list(Http& http, std::vector<RemoteFile>& out, CloudStatus* stat, str
     Resp r = http.call("GET", "/saves/list");
     if (status) *status = r.status;
     if (r.status != 200) {
-        if (err) *err = r.status == 0 ? r.error :
+        if (err) *err = r.status == 0 ? r.error : budget_msg(r) ? budget_msg(r) :
             r.status == 503 ? "cloud saves are not enabled on the server" :
             r.status == 401 ? "cloud saves rejected this account (is the friends identity registered?)" :
             r.status == 429 ? "rate limited, try again in a minute" : "server error " + std::to_string(r.status);
@@ -344,6 +353,7 @@ bool download(Http& http, const fs::path& mirror, const RemoteFile& rf, str* err
                 });
             out.close();
             if (r.status == 404) { *err = "vanished: " + rf.key; return false; }
+            if (budget_msg(r)) { *err = budget_msg(r); return false; }
             if (r.status != 200 && r.status != 206) { *err = r.error.empty() ? "download failed (" + std::to_string(r.status) + ") " + rf.key : r.error; return false; }
             if (have != (uint64_t)rf.size) { fs::remove(tmp, ec); continue; }   // object changed mid-resume: restart clean
             if (!r.etag.empty() && r.etag != rf.etag) {}                          // newer than the listing; sha below decides
@@ -518,6 +528,7 @@ SyncReport sync_cloud(const CloudConfig& cfg) {
         }
         up_fail++;
         rep.log.push_back("upload failed " + rel + ": " + (r.status == 0 ? r.error : "HTTP " + std::to_string(r.status)));
+        if (budget_msg(r)) { rep.ok = false; rep.error = budget_msg(r); break; }   // stop; next scheduled sync retries
         if (r.status == 0 || r.status == 429) break;               // network down / throttled: stop, retry later
         if (r.status == 507) { rep.ok = false; rep.error = "cloud quota or file limit reached"; break; }
     }
