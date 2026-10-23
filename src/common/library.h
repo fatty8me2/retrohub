@@ -49,6 +49,10 @@ bool identify_game(const std::string& path, GameEntry* out);
 std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
                                     const std::function<void(int, int)>& progress);
 
+/* Two files that identify as the same game (same key): true when the challenger should be listed
+ * instead of the holder. An unzipped image beats a .zip/.7z copy; otherwise the holder (first found) stays. */
+bool dedupe_prefers(const std::string& challenger_path, const std::string& holder_path);
+
 /* Zipped 3DS images (GameEntry::issue == "extract"): Azahar cannot read .zip, so the player may unpack one on request
  * (never done silently). Target: data_dir()/rom-cache/3ds/<key>/<image name>. */
 std::string extracted_3ds_path(const GameEntry& e);   // the unpacked image if it exists, else ""
