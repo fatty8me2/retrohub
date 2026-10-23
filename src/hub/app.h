@@ -569,6 +569,8 @@ void stick(ImDrawList* dl, ImVec2 c, float r, float x, float y, const char* labe
 void btn_dot(ImDrawList* dl, ImVec2 c, float r, bool on, const char* label);
 void page_controllers();
 void open_controls_for(const hub::GameEntry& e);
+void open_port_assign();                         // Controllers page in "Assign players"
+bool draw_players_strip(int players);            // library details: "Players: 1 2 3 4" strip; true = Reassign clicked
 std::string controls_arg(const std::string& system_key, const std::string& game_key);
 hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key);
 hubemu::DolphinPads dolphin_pads_for(const hubctl::Profile& gc_profile);

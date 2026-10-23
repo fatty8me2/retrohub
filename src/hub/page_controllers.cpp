@@ -56,8 +56,101 @@ struct CtlState {
     bool key_rest[hubctl::kKeyStateSize] = {};   // keys already down when the keyboard capture began
     std::string notice;
     double notice_until = 0;
+    bool assign_on = false;                // "Assign players" mode
+    hubctl::PortAssign assign;
+    std::map<std::string, bool> assign_prev;   // pad key -> A held last frame (rising edge = press)
+    double assign_t = 0;                   // time of the last press (or of the start): the timeout counts from it
 };
 CtlState CTL;
+void ctl_save();
+void ctl_reload_pads();
+constexpr double kAssignTimeoutSecs = 30.0;
+
+SDL_GameController* open_handle_for(const hubctl::PadInfo& p) {
+    if (p.sdl_index < 0) return nullptr;
+    SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(p.sdl_index);
+    for (auto* c : A.pads) if (SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c)) == id) return c;
+    return nullptr;
+}
+
+std::string pad_name_for_key(const std::string& key) {
+    for (const auto& p : CTL.pads) if (p.key == key) return p.name;
+    return key;
+}
+
+void start_assign() {
+    ctl_reload_pads();   // pads may have changed since the page last looked
+    CTL.assign.start(ImGui::GetTime());
+    CTL.assign_t = ImGui::GetTime();
+    CTL.assign_on = true;
+    CTL.assign_prev.clear();
+    SDL_GameControllerUpdate();
+    for (const auto& p : CTL.pads) {   // a button already held when the mode opens does not count as a press
+        SDL_GameController* c = open_handle_for(p);
+        CTL.assign_prev[p.key] = c && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A);
+    }
+}
+
+/* Ends the mode and stores the ports assigned so far (the other pads keep their order after them). */
+void finish_assign() {
+    if (!CTL.assign.assigned().empty()) {
+        std::vector<std::string> all;
+        for (const auto& p : CTL.pads) all.push_back(p.key);
+        hubctl::set_port_order(CTL.st, CTL.assign.order(all));
+        ctl_save();
+        g_ctl_pads_dirty = true;
+    }
+    CTL.assign.end();
+    CTL.assign_on = false;
+}
+
+/* One frame of the mode: rising edge of A on a connected pad takes the next port; Esc or a timeout ends it. */
+void poll_assign(double now) {
+    if (!CTL.assign.active()) { finish_assign(); return; }
+    SDL_GameControllerUpdate();
+    for (const auto& p : CTL.pads) {
+        SDL_GameController* c = open_handle_for(p);
+        if (!c) continue;
+        bool down = SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A) != 0;
+        bool was = CTL.assign_prev[p.key];
+        CTL.assign_prev[p.key] = down;
+        if (down && !was && CTL.assign.press(p.key, now)) CTL.assign_t = now;
+    }
+    if (CTL.assign.finished() || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { finish_assign(); return; }
+    if (!CTL.shot_nosave && now - CTL.assign_t >= kAssignTimeoutSecs) finish_assign();
+}
+
+void draw_assign_panel() {
+    begin_panel("assign");
+    section_title("Assign players");
+    text_wrapped_disabled("Press A on the controller for each player in turn. The first controller to press A takes that port. "
+                          "Esc or Done keeps the ports set so far; the mode also ends after 30 seconds without a press.");
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    const int next = CTL.assign.next_port();
+    ImGui::PushFont(ui::F.h2);
+    if (CTL.assign.finished()) ImGui::TextUnformatted("All ports are set.");
+    else ImGui::Text("Press A on the controller for Player %d", next);
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    for (int port = 1; port <= hubctl::PortAssign::kPorts; ++port) {
+        const auto& got = CTL.assign.assigned();
+        bool set = port <= (int)got.size();
+        std::string line = "Port " + std::to_string(port) + "   " + (set ? pad_name_for_key(got[port - 1]) : (port == next && !CTL.assign.finished() ? "waiting for A" : "no controller"));
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 o = ImGui::GetCursorScreenPos();
+        float rh = sp(4.5f), rw = ImGui::GetContentRegionAvail().x;
+        dl->AddRectFilled(o, o + ImVec2(rw, rh), set ? ui::PANEL2 : ui::scale_alpha(ui::PANEL2, 0.45f), sp(1.5f));
+        dl->AddText(ui::F.bold, ui::F.bold->FontSize, o + ImVec2(sp(2.5f), (rh - ui::F.bold->FontSize) * 0.5f), set ? ui::TEXT : ui::TEXT2, line.c_str());
+        ImGui::Dummy(ImVec2(rw, rh + sp(0.75f)));
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    ImGui::TextDisabled("Ends in %d s without a press", (int)std::ceil(std::max(0.0, kAssignTimeoutSecs - (ImGui::GetTime() - CTL.assign_t))));
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (button("Done", ImVec2(sp(14.f), sp(5.f)), true, true, ui::Icon::Check)) finish_assign();
+    ImGui::SameLine(0, sp(1.5f));
+    if (button("Start over", ImVec2(sp(14.f), sp(5.f)), false, true, ui::Icon::Refresh)) start_assign();
+    end_panel();
+}
 
 int tab_for_key(const std::string& sys) {
     for (int i = 0; i < kNumTabs; ++i) if (sys == kTabs[i].key) return i;
@@ -186,6 +279,11 @@ void draw_pads_panel() {
     begin_panel("padlist");
     section_title("Connected controllers");
     ImGui::TextDisabled("Port 1 is Player 1. Reorder them here; the order is remembered for every system.");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (button("Assign players", ImVec2(0, sp(4.5f)), false, true, ui::Icon::Gamepad)) start_assign();
+    ImGui::SameLine(0, sp(1.f));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Press A on each controller in turn to set Player 1, 2, 3, 4.");
     ImGui::Dummy(ImVec2(0, sp(0.75f)));
     int move_from = -1, move_to = -1;
     for (size_t i = 0; i < CTL.pads.size(); ++i) {
@@ -481,6 +579,10 @@ void page_controllers() {
         inited = true;
         CTL.shot_nosave = std::getenv("HUB_SCREENSHOT") != nullptr;
         if (const char* f = std::getenv("HUB_SHOT_FAKE_PADS")) CTL.fake_pads = std::atoi(f);
+        if (const char* as = std::getenv("HUB_SHOT_ASSIGN")) {   // screenshot aid: assign mode with N fake presses already made
+            start_assign();
+            for (int i = 0, n = std::atoi(as); i < n; ++i) CTL.assign.press("fake-pad-" + std::to_string(i), ImGui::GetTime());
+        }
         hubctl::load_bundled_db();
         if (const char* t = std::getenv("HUB_SHOT_CTL_SYS")) CTL.tab = tab_for_key(t);
         if (const char* g = std::getenv("HUB_SHOT_CTL_GAME")) {
@@ -519,6 +621,11 @@ void page_controllers() {
         if (button("Back to all controllers", ImVec2(0, sp(4.5f)), false, true, ui::Icon::ChevronL)) { CTL.game.clear(); CTL.game_title.clear(); }
         ImGui::Dummy(ImVec2(0, sp(1.f)));
     }
+    if (CTL.assign_on) poll_assign(now);
+    if (CTL.assign_on) {   // "Assign players" replaces the page body until Done, Esc or the timeout
+        draw_assign_panel();
+        return;
+    }
     if (!CTL.notice.empty() && now < CTL.notice_until) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextUnformatted(CTL.notice.c_str());
@@ -536,4 +643,33 @@ void page_controllers() {
     draw_mapping_panel();
     if (!game_mode) draw_test_panel();
     draw_capture_modal();
+}
+
+/* Library details, local multiplayer: the ports with their current pad. Returns true when "Reassign" was clicked. */
+bool draw_players_strip(int players) {
+    if (players < 2) return false;
+    hubctl::Store st;
+    hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
+    std::vector<hubctl::PadInfo> pads = hubctl::list_pads(st.port_order);
+    bool clicked = false;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Players:");
+    for (int i = 0; i < players && i < hubctl::PortAssign::kPorts; ++i) {
+        ImGui::SameLine(0, sp(1.f));
+        bool has = i < (int)pads.size();
+        std::string t = std::to_string(i + 1) + "  " + (has ? pads[i].name : std::string("none"));
+        pill(t.c_str(), has ? COL_ACCENT : COL_PANEL2);
+    }
+    ImGui::SameLine(0, sp(1.5f));
+    if (button("Reassign", ImVec2(0, sp(4.f)), false, true, ui::Icon::Gamepad)) clicked = true;
+    return clicked;
+}
+
+/* Opens the Controllers page straight in "Assign players" (library details -> Reassign). */
+void open_port_assign() {
+    CTL.game.clear();
+    CTL.game_title.clear();
+    CTL.loaded = false;
+    A.page = Page::Controllers;
+    start_assign();
 }

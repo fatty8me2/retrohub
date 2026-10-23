@@ -153,6 +153,32 @@ bool set_rumble(Store& s, const std::string& system, const std::string& game_id,
 void reset(Store& s, const std::string& system, const std::string& game_id = "");   // back to the built-in default / the system default
 void set_port_order(Store& s, const std::vector<std::string>& pad_keys);
 
+/* "Assign players" (Controllers page): press A on the controller for Player 1, then Player 2, and so on. Pure state,
+ * fed with pad keys by the UI (rising edge of A on a connected pad). A pad that already has a port is ignored, and the
+ * assignment ends by itself after kPorts presses. The UI ends it on Esc / Done or after a timeout without a press; what
+ * was assigned so far is kept, the rest of the pads follow in their current order. */
+class PortAssign {
+  public:
+    static constexpr int kPorts = 4;
+    void start(double now);                          // begins an empty assignment
+    bool active() const { return active_; }
+    bool finished() const { return !active_ || (int)keys_.size() >= kPorts; }
+    /* A press by this pad. Returns true if it took the next port. */
+    bool press(const std::string& pad_key, double now);
+    /* Ends it (Esc / Done / timeout); the assigned ports stay. */
+    void end();
+    /* True when no press came for `secs` while active. */
+    bool timed_out(double now, double secs) const { return active_ && now - last_ >= secs; }
+    int next_port() const { return (int)keys_.size() + 1; }   // 1-based port Player N presses for
+    const std::vector<std::string>& assigned() const { return keys_; }   // assigned[i] = pad key for port i+1
+    /* Full port order to store: the assigned pads, then the others in `all_keys` order. */
+    std::vector<std::string> order(const std::vector<std::string>& all_keys) const;
+  private:
+    bool active_ = false;
+    double last_ = 0;
+    std::vector<std::string> keys_;
+};
+
 /* Pad key = guid, plus "#serial" when SDL reports one. order_pads returns indices into `pads` in port order: listed keys
  * first (exact key, else same guid), then the rest in their original order. Empty order = unchanged. */
 std::vector<int> order_pads(const std::vector<std::string>& port_order, const std::vector<std::string>& pad_keys);
