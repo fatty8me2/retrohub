@@ -30,6 +30,7 @@
 namespace rb {
 
 constexpr int kPorts = 4;
+constexpr int kMaxPred = 16;
 constexpr uint8_t kPktInput = 0x51;
 constexpr uint8_t kPktReady = 0x52;
 constexpr uint8_t kPktBye = 0x53;
@@ -61,8 +62,12 @@ struct Config {
     int owner[kPorts] = {0, -1, -1, -1};
     int my_slot = 0;
     uint32_t slot_mask = 1;
-    int delay = 1;
-    int max_pred = 8;
+    int delay = 1;                 // initial input delay (frames); adaptive_delay moves it within 0..delay_max
+    int max_pred = 8;              // 1..kMaxPred
+    bool adaptive_delay = false;   // choose the delay from the measured RTT (see Engine::adapt_delay)
+    int delay_max = 4;
+    int pred_budget = 6;           // frames of one-way latency the prediction window absorbs before any input delay is added
+    double frame_ms = 16.7;
     int hash_interval = 120;
     bool use_state_hash = true;
     uint32_t timeout_ms = 10000;
@@ -77,6 +82,9 @@ struct Stats {
     uint64_t stalls = 0;          // prepare() calls that could not advance (prediction limit)
     uint64_t stalled_ms = 0;
     uint64_t sync_waits = 0;
+    uint64_t delay_changes = 0;
+    int delay_min = 99, delay_max = 0;   // range of the input delay used during the session
+    double rtt_ms = 0;                   // smoothed RTT of the worst peer (0 = unmeasured)
     uint64_t hashes_compared = 0;
     double max_skew = 0;
     uint64_t save_n = 0, load_n = 0;
@@ -110,6 +118,7 @@ class Engine {
     uint64_t confirmed_in_hash() const { return roll_in_; }
     const Stats& stats() const { return st_; }
     int delay() const { return cfg_.delay; }
+    double rtt_ms() const { return st_.rtt_ms; }
     bool peer_left() const { return left_mask_ != 0; }
     /* Highest frame whose inputs are all confirmed and which has been simulated (-1 none). */
     int64_t confirmed_frame() const { return conf_eff_; }
@@ -131,6 +140,8 @@ class Engine {
     void pump_net();
     void on_packet(int from, const std::vector<uint8_t>& m);
     void send_packet(bool force);
+    void adapt_delay();
+    void note_rtt(int slot, uint32_t echo, uint32_t hold);
     void advance_confirmed();
     void resolve_hashes();
     void compare_hash(int slot, uint32_t frame, uint64_t h);
@@ -152,6 +163,10 @@ class Engine {
     int64_t peer_ack_[8][kPorts];
     uint32_t peer_cur_[8];
     int peer_adv_[8];
+    uint32_t peer_ts_[8], peer_ts_at_[8];   // last timestamp received from each peer and when (for the RTT echo)
+    double rtt_[8], rttdev_[8];
+    uint32_t last_adapt_ = 0;
+    int adapt_dn_ = 0;
     bool peer_seen_[8];
     uint32_t cur_ = 0;
     int64_t rb_to_ = -1;
@@ -166,6 +181,7 @@ class Engine {
     uint32_t last_send_ = 0, last_progress_ = 0, stall_since_ = 0;
     bool desync_ = false, lost_ = false, trace_ = false;
     double skew_ema_ = 0;
+    uint32_t skew_cur_ = 0xFFFFFFFFu;
     uint32_t last_wait_ = 0;
     Stats st_;
 };

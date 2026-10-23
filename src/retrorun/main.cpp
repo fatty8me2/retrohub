@@ -54,7 +54,8 @@ struct Args {
     bool ports_given = false;
     bool rollback = false;        // --rollback: GGPO-style rollback netplay instead of lockstep (see rollback.h)
     int synctest = 0;             // --synctest N: offline, every frame roll back N frames and re-simulate, compare
-    int rb_pred = 8;              // --rb-pred N: max predicted frames
+    int rb_pred = 14;             // --rb-pred N: max predicted frames (1..16)
+    bool rb_adaptive = true;      // --rb-delay-adapt / --no-rb-delay-adapt: pick the input delay from the measured RTT when --delay is auto
     bool ds_link = false;   // DS local wireless over the room (netpacket interface), no lockstep
     std::vector<std::string> opts;
 };
@@ -120,8 +121,9 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         }
         else if (k == "--rollback") o->rollback = true;
         else if (k == "--no-rollback") o->rollback = false;
+        else if (k == "--no-rb-delay-adapt") o->rb_adaptive = false;
         else if (k == "--synctest") { if (!val(&v)) return false; o->synctest = std::max(1, atoi(v.c_str())); }
-        else if (k == "--rb-pred") { if (!val(&v)) return false; o->rb_pred = std::max(1, std::min(10, atoi(v.c_str()))); }
+        else if (k == "--rb-pred") { if (!val(&v)) return false; o->rb_pred = std::max(1, std::min(rb::kMaxPred, atoi(v.c_str()))); }
         else if (k == "--link") o->link = true;
         else if (k == "--share-host-save") o->share_host_save = true;
         else if (k == "--host-save-dir") { std::string ignored; if (!val(&ignored)) return false; }   // accepted for hub symmetry with n64run
@@ -939,8 +941,11 @@ bool Frontend::setup_net() {
         rlog("link: saves exchanged and loaded for %d consoles", link_n);
     }
     if (a.rollback) {
+        const bool auto_delay = a.delay < 0;
         a.delay = a.delay >= 0 ? std::min(a.delay, 4) : 1;
         rb::Config rc;
+        rc.adaptive_delay = auto_delay && a.rb_adaptive;
+        rc.frame_ms = 1000.0 / (fps > 1 ? fps : 60.0);
         for (int i = 0; i < 4; i++) rc.owner[i] = owner[i];
         rc.my_slot = a.slot;
         rc.slot_mask = slot_mask;
@@ -1183,8 +1188,8 @@ void Frontend::rb_log_stats() {
     if (!rbe) return;
     const rb::Stats& s = rbe->stats();
     double secs_f = s.frames ? (double)s.frames / 60.0 : 1.0;
-    rlog("rollback-stats: input-delay %d frames, frames %llu, rollbacks %llu (%.2f/s of game time), resim frames %llu, max depth %d, avg depth %.2f, stalls %llu (%llu ms), sync-waits %llu, max-skew %.2f, hashes compared %llu",
-         rbe->delay(), (unsigned long long)s.frames, (unsigned long long)s.rollbacks, s.rollbacks / secs_f, (unsigned long long)s.resim_frames, s.max_depth,
+    rlog("rollback-stats: input-delay %d frames (range %d-%d, %llu changes, rtt %.0f ms), frames %llu, rollbacks %llu (%.2f/s of game time), resim frames %llu, max depth %d, avg depth %.2f, stalls %llu (%llu ms), sync-waits %llu, max-skew %.2f, hashes compared %llu",
+         rbe->delay(), s.delay_min, s.delay_max, (unsigned long long)s.delay_changes, s.rtt_ms, (unsigned long long)s.frames, (unsigned long long)s.rollbacks, s.rollbacks / secs_f, (unsigned long long)s.resim_frames, s.max_depth,
          s.rollbacks ? (double)s.depth_sum / (double)s.rollbacks : 0.0, (unsigned long long)s.stalls, (unsigned long long)s.stalled_ms,
          (unsigned long long)s.sync_waits, s.max_skew, (unsigned long long)s.hashes_compared);
     rlog("rollback-timing: serialize %.1f us avg, unserialize %.1f us avg, retro_run %.1f us avg", s.save_n ? s.save_us / s.save_n : 0.0,
@@ -1445,8 +1450,8 @@ int Frontend::run(const Args& args) {
                 rb::Engine::Status st = rbe->prepare();
                 if (rbe->connection_lost()) { rlog("net: connection lost, leaving"); rc = 4; break; }
                 if (rbe->desync()) { rc = 5; break; }
-                if (st == rb::Engine::Status::Stalled) { Sleep(1); continue; }
-                if (st == rb::Engine::Status::SyncWait) { Sleep((DWORD)(1000.0 / (fps > 1 ? fps : 60.0))); continue; }
+                if (st == rb::Engine::Status::Stalled) { Sleep(1); next_deadline = 0; continue; }
+                if (st == rb::Engine::Status::SyncWait) { Sleep((DWORD)(1000.0 / (fps > 1 ? fps : 60.0))); next_deadline = 0; continue; }   // re-anchor: otherwise pacing "catches up" the frame we just waited and time sync does nothing
                 do_pacing();
                 rbe->run_frame();
                 frame_no = rbe->cur();
