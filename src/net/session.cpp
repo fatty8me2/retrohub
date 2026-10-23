@@ -585,7 +585,7 @@ bool Session::start(const SessionConfig& cfg)
         d.status = "Couldn't open a UDP socket";
         return false;
     }
-    if (!d.force_relay) d.stun.start(&d.udp);
+    if (!d.force_relay && !getenv("HUBNET_LOOPBACK")) d.stun.start(&d.udp);
     else d.stun = Stun();
     d.started = true;
     net_log("Session: start room=%s slot=%d expected=%d force_relay=%d udp port %u", d.cfg.room.c_str(), d.slot,
