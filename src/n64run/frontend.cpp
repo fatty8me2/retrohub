@@ -41,6 +41,7 @@
 
 #include "headless.h"
 #include "local_input.h"
+#include "test_input.h"
 #include "match.h"
 #include "lockstep.h"
 #include "runstate.h"
@@ -100,6 +101,7 @@ struct Args {
     bool headless = false;
     long long frames = 0;
     std::string screenshot;
+    std::string test_input;   // --test-input / N64RUN_TEST_INPUT: scripted local input (QA)
     std::string match;   // --match spec (VS battle jump)
     struct RamDump { uint32_t offset, len; std::string file; };
     std::vector<RamDump> dumps;
@@ -164,9 +166,11 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--no-hash") a.no_hash = true;
         else if (k == "--fullscreen") a.fullscreen = true;
         else if (k == "--title") ok = val(&a.title);
+        else if (k == "--test-input") ok = val(&a.test_input);
         else { std::fprintf(stderr, "unknown argument: %s\n", k.c_str()); return false; }
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
     }
+    if (a.test_input.empty()) { const char* e = std::getenv("N64RUN_TEST_INPUT"); if (e && *e) a.test_input = e; }
     if (a.rom.empty()) { std::fprintf(stderr, "--rom is required\n"); return false; }
     if (!a.headless && (a.frames || !a.screenshot.empty() || !a.dumps.empty())) {
         std::fprintf(stderr, "--frames/--screenshot/--dump-ram need --headless\n"); return false;
@@ -370,6 +374,12 @@ int main(int argc, char** argv) {
         for (int p = 0; p < kPorts; p++) args.owner[p] = p < n ? 0 : -1;
     }
     int my_slot = online ? args.slot : 0;
+    TestInput test_input;
+    if (!args.test_input.empty()) {
+        std::string terr;
+        if (!test_input.configure(args.test_input, my_slot, &terr)) { logf_("n64run", "%s", terr.c_str()); return 2; }
+        logf_("n64run", "test input: %s (slot %d)", args.test_input.c_str(), my_slot);
+    }
     if (!online) for (int p = 0; p < kPorts; p++) if (args.owner[p] >= 0) args.owner[p] = 0;
     for (int p = 0; p < kPorts; p++) g_run.owner[p] = args.owner[p];
     logf_("n64run", "ports: %d %d %d %d (my slot %d, %d pad(s))", args.owner[0], args.owner[1], args.owner[2], args.owner[3], my_slot, input.pad_count());
@@ -572,8 +582,13 @@ int main(int argc, char** argv) {
         lo.online = online;
         lo.strict_sync = args.strict_sync;
         LockstepHooks hk;
-        hk.update_local = [&] { input.update(); };
-        hk.read_local = [&](int idx) { return input.read(idx); };
+        if (test_input.active()) {
+            hk.update_local = [&] { test_input.update(); };
+            hk.read_local = [&](int idx) { return test_input.read(idx); };
+        } else {
+            hk.update_local = [&] { input.update(); };
+            hk.read_local = [&](int idx) { return input.read(idx); };
+        }
         hk.idle = [] { SDL_PumpEvents(); };
         hk.request_stop = [] { g_core.DoCommand(M64CMD_STOP, 0, nullptr); };
         hk.log = [](const std::string& s) { logline("lockstep", s.c_str()); };
