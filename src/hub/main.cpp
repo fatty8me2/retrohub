@@ -3,7 +3,8 @@
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
-    shell_set_app_id();
+    const bool autotest = autotest_active();   // QA room driver: isolated instance, no shell/registry/update side effects
+    if (!autotest) shell_set_app_id();
     const char* shot_path = std::getenv("HUB_SCREENSHOT");
     // Single instance + command-line actions: `retrohub://join/<CODE>`, `--join <CODE>`, `--play <game key>`.
     std::wstring cmd_join, cmd_play;
@@ -11,7 +12,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     const bool has_play = invite_parse_play(GetCommandLineW(), &cmd_play);
     std::unique_ptr<InviteInstance> instance;
     InviteServer invite_srv;
-    if (!shot_path) {
+    if (!shot_path && !autotest) {
         instance.reset(new InviteInstance(INVITE_MUTEX_NAME));
         if (!instance->is_primary()) {   // already running: hand the request over (or just ask it to show itself) and leave
             bool sent = has_join ? invite_send(INVITE_PIPE_NAME, cmd_join) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play) : invite_send_show(INVITE_PIPE_NAME);
@@ -96,7 +97,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_SysWMinfo wm;
     SDL_VERSION(&wm.version);
     if (SDL_GetWindowWMInfo(A.win, &wm)) A.hwnd = wm.info.win.window;
-    if (!shot_path) {
+    if (!shot_path && !autotest) {
         shell_set_window_icon(A.win);
         shell_ensure_start_menu_shortcut();
         shell_ensure_url_protocol();
@@ -121,7 +122,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     start_scan();
     auto_sync();   // pull in saves from other PCs at start
     SH.init(shot_path);
-    if ((!shot_path || SH.update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
+    if (!autotest && (!shot_path || SH.update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
 
     bool running = true;
     while (running) {
@@ -152,6 +153,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         run_pending_sync();
         poll_emulators();
         lobby_tick();
+        autotest_tick();
         fr_tick();
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;

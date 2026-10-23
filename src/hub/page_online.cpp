@@ -68,6 +68,34 @@ void page_online_home() {
     end_panel();
 }
 
+void host_launch_selected() {
+    const hub::GameEntry* rg = find_room_entry(A.selected_game);
+    if (!rg) return;
+    std::vector<hubui::PeerInfo> peers = peer_list();
+            int delay = A.st.delay_auto ? 0 : A.st.input_delay;   // 0 = auto, same for everyone
+            bool share = A.share_host_save && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system));
+            unsigned seed = std::random_device{}();
+            ++A.launch_counter;
+            hubui::PortPlan plan = hubui::build_ports(member_pads());   // built once; guests use it verbatim
+            hubui::MatchSpec spec;   // Randoms are rolled here, once, from the launch seed
+            bool with_match = rg->system == hub::System::N64 && match_active();
+            gcnp::Spec gspec; bool gc_ok = true;
+            if (with_match) spec = hubui::resolve_match(plan.ports, all_picks(), A.rules, seed, match_remix_roster());
+            std::string np_extra;
+            if (rg->system == hub::System::N3DS) { hubnp3ds::Plan np; np.expected = (int)A.lobby.members().size(); np_extra = hubnp3ds::plan_json_fragment(np); }
+            if (rg->system == hub::System::GC) {
+                if (!gc_host_spec(*rg, (int)peers.size(), &gspec)) gc_ok = false;
+                else np_extra = gcnp::launch_fragment(gspec);
+            }
+            if ((rg->system == hub::System::GB || rg->system == hub::System::GBC || rg->system == hub::System::GBA) && hub::link_cable_game(rg->catalog_id))
+                np_extra += std::string(",\"np_link\":{\"core\":\"") + (rg->system == hub::System::GBA ? "mgba" : "sameboy") + "\",\"consoles\":2}";
+            if (rg->system == hub::System::NDS) np_extra += ",\"np_ds\":" + hubui::np_ds_json();
+            np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
+            if (gc_ok) {
+                A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra));
+                launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
+            } else --A.launch_counter;        }
+
 void page_online_room() {
     // Header: big code + actions
     ImGui::PushFont(ui::F.big);
@@ -234,7 +262,10 @@ void page_online_room() {
             ImGui::TextDisabled("%s", A.share_host_save ? "Using the host's save (unlocked characters/boards)." : "Starting from an empty save.");
         }
     }
-    if (rg && rg->system == hub::System::GC) ImGui::TextWrapped("GameCube online uses the host's save and memory card for everyone. Your own memory card is not changed.");
+    if (rg && rg->system == hub::System::GC) {
+        ImGui::TextWrapped("GameCube online uses the host's memory card for everyone. Guests' own cards are never touched.");
+        if (host) ImGui::Checkbox("Keep this session's progress on my memory card", &A.gc_write_save);
+    }
     if (match_active()) match_panel(host, left_w);
     if (host) {
         bool ok = false;
@@ -259,30 +290,7 @@ void page_online_room() {
             if (gc_needs_unpack(*rg)) { ok = false; why = "Unpacking " + rg->title + " (needed for GameCube online)..."; }
             else if (GCO.active) { ok = false; why = "In game..."; }
         }
-        if (button("Launch", ImVec2(220 * S, 60 * S), true, ok)) {
-            int delay = A.st.delay_auto ? 0 : A.st.input_delay;   // 0 = auto, same for everyone
-            bool share = A.share_host_save && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system));
-            unsigned seed = std::random_device{}();
-            ++A.launch_counter;
-            hubui::PortPlan plan = hubui::build_ports(member_pads());   // built once; guests use it verbatim
-            hubui::MatchSpec spec;   // Randoms are rolled here, once, from the launch seed
-            bool with_match = rg->system == hub::System::N64 && match_active();
-            gcnp::Spec gspec; bool gc_ok = true;
-            if (with_match) spec = hubui::resolve_match(plan.ports, all_picks(), A.rules, seed, match_remix_roster());
-            std::string np_extra;
-            if (rg->system == hub::System::N3DS) { hubnp3ds::Plan np; np.expected = (int)A.lobby.members().size(); np_extra = hubnp3ds::plan_json_fragment(np); }
-            if (rg->system == hub::System::GC) {
-                if (!gc_host_spec(*rg, (int)peers.size() + 1, &gspec)) gc_ok = false;
-                else np_extra = gcnp::launch_fragment(gspec);
-            }
-            if ((rg->system == hub::System::GB || rg->system == hub::System::GBC || rg->system == hub::System::GBA) && hub::link_cable_game(rg->catalog_id))
-                np_extra += std::string(",\"np_link\":{\"core\":\"") + (rg->system == hub::System::GBA ? "mgba" : "sameboy") + "\",\"consoles\":2}";
-            if (rg->system == hub::System::NDS) np_extra += ",\"np_ds\":" + hubui::np_ds_json();
-            np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
-            if (gc_ok) {
-                A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra));
-                launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
-            } else --A.launch_counter;        }
+        if (button("Launch", ImVec2(220 * S, 60 * S), true, ok)) host_launch_selected();
         ImGui::SameLine();
         ImGui::TextDisabled("%s", ok ? "Everyone is ready." : why.c_str());
     } else {

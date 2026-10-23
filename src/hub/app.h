@@ -186,6 +186,7 @@ struct App {
     SaveJob job;
     std::function<void()> after_job;              // run once the current job finishes (e.g. a queued launch)
     hubui::SyncGate sync_gate;                    // a sync was requested while a job or a game was running
+    bool gc_write_save = false;                   // GameCube room option (host only, local): keep this session's memory-card changes
     bool share_host_save = true;                  // room option (host-controlled): all PCs use the host's N64 save
     int my_locals = 1;                            // local controllers I play with online (1-2)
     std::map<int, int> locals;                    // other members' local counts by lobby slot
@@ -464,6 +465,10 @@ void gc_stop_all();
 void gc_tick();
 void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_no);
 void gc_guest_poll();
+void host_launch_selected();   // the Launch button's body (page_online.cpp); the autotest hook calls it too
+void autotest_tick();          // autotest.cpp: RETROHUB_AUTOTEST room driver (no-op when unset)
+bool autotest_active();
+void autotest_log(const std::string& line);
 void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg);
 void poll_np3ds();
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
