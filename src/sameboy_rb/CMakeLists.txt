@@ -53,7 +53,9 @@ set(SB_SRC
 # retrorun's rollback gate recognises this core by its library name ("SameBoy (rollback)") and by this DLL name.
 set(SB_DLL ${CMAKE_CURRENT_BINARY_DIR}/sameboy_rb_libretro.dll)
 add_custom_command(OUTPUT ${SB_DLL}
-    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SB_GCC_DIR};$ENV{PATH}" ${SAMEBOY_RB_GCC} -shared -w -O2 -std=gnu11 -D__LIBRETRO__ -D_GNU_SOURCE -D_USE_MATH_DEFINES
+    # PATH must contain only the gcc dir (cc1/as/ld, libwinpthread DLLs). Appending $ENV{PATH} breaks the VS custom-build
+    # command line: entries such as "C:\Program Files (x86)\..." are quoted, so cmd splits them into a bogus second command.
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SB_GCC_DIR}" ${SAMEBOY_RB_GCC} -shared -w -O2 -std=gnu11 -D__LIBRETRO__ -D_GNU_SOURCE -D_USE_MATH_DEFINES
             -DGB_DISABLE_TIMEKEEPING -DGB_DISABLE_REWIND -DGB_DISABLE_DEBUGGER -DGB_DISABLE_CHEATS -DGB_INTERNAL
             "-DGB_VERSION=\"1.0.4\"" "-DGIT_VERSION=\" aa158a8\""
             -I${SB} -I${SB}/libretro -I${LC}/include ${SB_SRC}
