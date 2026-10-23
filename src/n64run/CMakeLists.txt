@@ -6,7 +6,7 @@ target_include_directories(n64run_lockstep_core PUBLIC ${CMAKE_CURRENT_SOURCE_DI
 target_compile_features(n64run_lockstep_core PUBLIC cxx_std_17)
 
 # Host-save sharing (--share-host-save): protocol state machine + Session driver.
-add_library(n64run_save_sync STATIC save_sync.cpp save_sync_net.cpp)
+add_library(n64run_save_sync STATIC save_sync.cpp save_sync_net.cpp mempak.cpp)
 target_include_directories(n64run_save_sync PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(n64run_save_sync PUBLIC cxx_std_17)
 target_link_libraries(n64run_save_sync PUBLIC hubnet)
@@ -42,6 +42,10 @@ target_link_libraries(n64run_lockstep_test PRIVATE n64run_lockstep_core m64p_api
 # real Sessions through the live server (registered with CTest in the top-level CMakeLists.txt).
 add_executable(n64run_save_sync_test test_save_sync.cpp)
 target_link_libraries(n64run_save_sync_test PRIVATE n64run_save_sync)
+
+# Console test: Controller Pak policy and .mpk naming (pure logic).
+add_executable(n64run_mempak_test test_mempak.cpp)
+target_link_libraries(n64run_mempak_test PRIVATE n64run_save_sync)
 
 # Branding: same icon + version resources as RetroHub.exe (see src/hub/CMakeLists.txt for the generated header).
 target_sources(n64run PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/n64run.rc)
