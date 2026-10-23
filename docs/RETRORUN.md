@@ -143,3 +143,21 @@ Windowed code paths can be smoke-tested with `SDL_VIDEODRIVER=dummy SDL_AUDIODRI
 - Zipped ROMs are not unpacked by retrorun itself (the hub library extracts them first) (cores that handle zip themselves via `need_fullpath` work).
 - Core options changed while running are not supported (the core sees the values given at start).
 - Cores with real-time clocks (e.g. mGBA with RTC games) may use wall-clock time, which can desync netplay; Gambatte state is not byte-exact after load (affects rollback later, not lockstep).
+
+## Nintendo DS local wireless online (`--link`)
+
+Trades, battles and the Union Room are the DS's local wireless. The melonDS DS core emulates it by exchanging timestamped
+MP frames through libretro's **netpacket interface** (`RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE`), so retrorun implements
+that interface on top of `hubnet::Session` (STUN hole punch, WebSocket relay fallback; nobody port-forwards).
+`retrorun ... --link --net SERVER --room CODE-N --slot K --players N` (needs `--system nds`):
+
+- No lockstep and no savestate sync: every PC runs its own emulator and its own real save; only wireless frames travel
+  (DS client id = room slot, host = 0). Fast forward and state loading are off while linked.
+- Core packets (up to ~2.3 KB) are split into <= 1000-byte datagrams (`ds_link.h`, tested by `retrorun_dslink_test`).
+- Launch spec key `np_ds` = `{"v":1,"mode":"wireless"}` (written by the host; guests refuse a newer version).
+- Why not standalone melonDS: its LAN/Netplay start only from GUI dialogs (no command line), so a managed install would
+  need UI automation. The libretro core already exposes the same MP layer through netpacket.
+- `qa\ds_link.ps1` runs N headless instances through the live server (`-Relay`, `-Players 3`). `RETRORUN_LINK_PROBE=1`
+  adds synthetic 2.3 KB frames as a transport check. Real wireless traffic only appears once a game opens a wireless
+  session, which needs a save inside a Pokemon Center; that was not done headlessly.
+- Limit: the core waits only 25 ms per MP frame, so high-latency connections may drop frames.
