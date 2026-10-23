@@ -27,6 +27,7 @@ struct LockstepOptions {
     int delay = 2;
     bool online = false;
     bool strict_sync = false;
+    bool adaptive_delay = true;    // raise/lower the input delay from observed stalls (host orders, all follow)
     int hash_interval = 600;       // samples between RDRAM hashes
     uint32_t timeout_ms = 10000;   // no progress -> "Connection lost"
     std::string hash_label = "state";   // desync log text: "<label> hashes"
@@ -60,6 +61,13 @@ class Lockstep {
     uint64_t samples_done() const { return (uint64_t)(sample_ + 1); }
     void log_stall_summary() const;
 
+    /* Call once after emulation ended (online): tells the others "bye" so they end cleanly instead of timing out. */
+    void finish();
+    bool peer_left() const { return peer_left_; }          // a partner ended the session (clean)
+    int current_delay() const { return core_.delay(); }
+    uint32_t delay_changes() const { return core_.delay_changes(); }
+    uint32_t longest_stall_ms() const { return longest_stall_; }
+
     bool connection_lost() const { return lost_; }
     bool desync_detected() const { return desync_; }
     uint32_t sample() const { return (uint32_t)(sample_ + 1); }
@@ -72,6 +80,7 @@ class Lockstep {
 
     LockstepOptions opt_;
     LockstepCore core_;
+    DelayAdapter adapter_;
     hubnet::Session* net_;
     LockstepHooks hooks_;
     int64_t sample_ = -1;
@@ -82,6 +91,12 @@ class Lockstep {
     bool desync_ = false;
     bool hash_warned_ = false;
     uint64_t stall_ms_ = 0, stalled_ = 0;
+    uint32_t longest_stall_ = 0;
+    int logged_delay_ = 0;
+    uint32_t bye_mask_ = 0, bye_last_[kPorts] = {0, 0, 0, 0};
+    bool peer_left_ = false;
+    void adapt(uint32_t now, uint32_t stall_ms);
+    bool left_blocks(uint32_t n) const;
 };
 
 /* Auto input delay negotiation (call after Session::ready(), before creating Lockstep).

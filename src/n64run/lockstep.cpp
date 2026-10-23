@@ -35,9 +35,10 @@ static LockstepCore::Config make_core_config(const LockstepOptions& o) {
 }
 
 Lockstep::Lockstep(const LockstepOptions& opt, hubnet::Session* session, const LockstepHooks& hooks)
-    : opt_(opt), core_(make_core_config(opt)), net_(opt.online ? session : nullptr), hooks_(hooks) {
+    : opt_(opt), core_(make_core_config(opt)), adapter_(opt.delay < 1 ? 1 : opt.delay), net_(opt.online ? session : nullptr), hooks_(hooks) {
     for (int p = 0; p < kPorts; p++)
         if (core_.port_local(p)) local_ports_[n_local_++] = p;
+    logged_delay_ = core_.delay();
 }
 
 void Lockstep::send_packet() {
@@ -58,6 +59,14 @@ void Lockstep::pump() {
         if (msg[0] == kPktDelay && msg.size() >= 3 && opt_.my_slot != 0) {
             uint8_t ack[3] = {kPktDelayAck, (uint8_t)opt_.my_slot, msg[2]};   // late repeats of the host's D
             net_->send(0, ack, 3);
+        } else if (msg[0] == kPktBye) {
+            if (msg.size() >= 6 && msg[1] < kPorts && (int)msg[1] == from && msg[1] != opt_.my_slot) {
+                uint32_t last; std::memcpy(&last, &msg[2], 4);
+                if (!(bye_mask_ >> msg[1] & 1u) && hooks_.log) hooks_.log("partner in slot " + std::to_string((int)msg[1]) + " ended the session");
+                bye_mask_ |= 1u << msg[1];
+                bye_last_[msg[1]] = last;
+                core_.peer_left(msg[1]);
+            }
         } else if (msg[0] == kPktReady) {
             if (msg.size() >= 2 && msg[1] < 8) ready_mask_ |= 1u << msg[1];
         } else {
@@ -95,9 +104,9 @@ void Lockstep::log_stall_summary() const {
     if (!hooks_.log || !net_) return;
     char buf[200];
     uint64_t frames = samples_done();
-    std::snprintf(buf, sizeof buf, "netplay stalls: total %llu ms over %llu stalled samples, %llu samples (delay %d, %.2f ms stalled/sample)",
+    std::snprintf(buf, sizeof buf, "netplay stalls: total %llu ms over %llu stalled samples, %llu samples (delay %d, %.2f ms stalled/sample, longest %u ms, final delay %d after %u changes)",
                   (unsigned long long)stall_ms_, (unsigned long long)stalled_, (unsigned long long)frames, opt_.delay,
-                  frames ? (double)stall_ms_ / (double)frames : 0.0);
+                  frames ? (double)stall_ms_ / (double)frames : 0.0, longest_stall_, core_.delay(), core_.delay_changes());
     hooks_.log(buf);
 }
 
@@ -120,8 +129,48 @@ void Lockstep::report_mismatches() {
     }
 }
 
+bool Lockstep::left_blocks(uint32_t n) const {
+    for (int s = 0; s < kPorts; s++)
+        if ((bye_mask_ >> s & 1u) && n > bye_last_[s]) return true;
+    return false;
+}
+
+void Lockstep::adapt(uint32_t now, uint32_t stall_ms) {
+    adapter_.on_poll(now, stall_ms);
+    if (!opt_.adaptive_delay) return;
+    int mine = adapter_.want(core_.delay(), now);
+    core_.set_want(mine);
+    if (opt_.my_slot == 0) {
+        int wants[4];
+        for (int s = 0; s < 4; s++) wants[s] = s == 0 ? mine : (core_.peer_want(s) ? core_.peer_want(s) : core_.delay());
+        int d = adapter_.decide(core_.delay(), wants, core_.slot_mask(), now);
+        if (d != core_.delay()) core_.order_delay(d);
+    }
+    if (core_.delay() != logged_delay_) {
+        if (hooks_.log) {
+            char b[96];
+            std::snprintf(b, sizeof b, "input delay %d -> %d (sample %u)", logged_delay_, core_.delay(), (unsigned)(sample_ + 1));
+            hooks_.log(b);
+        }
+        logged_delay_ = core_.delay();
+    }
+}
+
+void Lockstep::finish() {
+    if (!net_ || lost_) return;
+    uint8_t bye[6] = {kPktBye, (uint8_t)opt_.my_slot, 0, 0, 0, 0};
+    uint32_t newest = core_.newest_local();
+    std::memcpy(bye + 2, &newest, 4);
+    for (int i = 0; i < 6; i++) {
+        send_packet();           // the input window first, so a partner still needing our last samples gets them
+        net_->send(-1, bye, 6);
+        uint32_t t0 = hubnet::now_ms();
+        while (hubnet::now_ms() - t0 < 25) { pump(); Sleep(2); }
+    }
+}
+
 uint32_t Lockstep::get_keys(int port) {
-    if (lost_ || !core_.port_present(port)) return 0;
+    if (lost_ || peer_left_ || !core_.port_present(port)) return 0;
     if (port != core_.lead_port()) {
         // Same poll round as the lead port: return the current sample's value.
         return sample_ < 0 ? 0u : core_.get((uint32_t)sample_, port);
@@ -151,6 +200,7 @@ uint32_t Lockstep::get_keys(int port) {
     core_.schedule_local(n, btn);
     send_packet();
 
+    uint32_t stall_this = 0;
     if (net_ && !core_.ready(n)) {
         uint32_t t0 = hubnet::now_ms(), last_send = t0;
         stalled_++;
@@ -159,6 +209,12 @@ uint32_t Lockstep::get_keys(int port) {
             if (hooks_.idle) hooks_.idle();
             pump();
             uint32_t now = hubnet::now_ms();
+            if (bye_mask_ && left_blocks(n) && !core_.ready(n)) {   // a partner finished and will send nothing more
+                peer_left_ = true;
+                if (hooks_.log) hooks_.log("session ended by a partner");
+                if (hooks_.request_stop) hooks_.request_stop();
+                return 0;
+            }
             if (net_->failed() || now - t0 > opt_.timeout_ms) {
                 abort_with("Connection lost (no input from peers for 10 s)");
                 return 0;
@@ -166,7 +222,10 @@ uint32_t Lockstep::get_keys(int port) {
             if (now - last_send >= 50) { send_packet(); last_send = now; }   // heal lost packets while stalled
             Sleep(1);
         }
+        stall_this = hubnet::now_ms() - t0;
+        if (stall_this > longest_stall_) longest_stall_ = stall_this;
     }
+    if (net_) adapt(hubnet::now_ms(), stall_this);
     if (net_) report_mismatches();
     return core_.get(n, port);
 }
