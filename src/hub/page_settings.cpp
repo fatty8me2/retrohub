@@ -78,7 +78,7 @@ void page_settings() {
     if (ImGui::RadioButton("Gambatte (lighter)", core == 1)) { A.st.gb_core = "gambatte"; mark_dirty(); }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ImGui::Checkbox("Start games fullscreen", &A.st.fullscreen)) mark_dirty();
-    text_wrapped_disabled("Applies to Game Boy, GameCube, 3DS and Wii U games. N64 games: press Alt+Enter.");
+    text_wrapped_disabled("Default for every system; each system or game can override it under Game defaults / Details.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("3DS and Wii U emulators");
     {
@@ -122,6 +122,7 @@ void page_settings() {
     }
     end_panel();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    gs_draw_defaults_area();
 
     begin_panel("set_friends");
     section_title("Friends");

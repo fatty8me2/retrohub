@@ -53,6 +53,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
     // No ROM folder is assumed: an empty library offers detected folders as one-click "Add" suggestions.
     if (!A.st.vault_dir.empty()) hub::saves::set_vault_dir(A.st.vault_dir);
+    gs_load();
 
     int win_w = (int)(1280 * S), win_h = (int)(780 * S);
     {   // never open larger than the screen

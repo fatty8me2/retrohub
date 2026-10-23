@@ -592,6 +592,8 @@ void draw_details_modal() {
         if (A.info_auto_state) sv += "  (+ resume point)";
         ImGui::TextUnformatted(sv.c_str());
     }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    gs_draw_game_section(e);
     ImGui::Dummy(ImVec2(0, sp(2.f)));
 
     float bh = sp(5.5f);
