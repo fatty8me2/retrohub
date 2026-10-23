@@ -38,6 +38,7 @@ int main() {
     CHECK(u.gb_core == "sameboy" && u.sync_auto && !u.sync_states && u.rom_folders.empty() && !u.sync_card_dismissed && !u.smash_save_notice_shown);
     CHECK(!settings_from_json("{bad", &u));
 
+    {   Settings f; f.find_games_done = true; Settings g; CHECK(settings_from_json(settings_to_json(f), &g) && g.find_games_done); CHECK(!t.find_games_done); }
     /* migration rom_folder -> rom_folders */
     Settings m;
     CHECK(settings_from_json("{\"name\":\"A\",\"rom_folder\":\"C:\\\\old\"}", &m));

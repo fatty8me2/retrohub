@@ -587,6 +587,11 @@ void page_settings();
 void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
 
 
+/* ---- find_games_ui.cpp ---- */
+void find_games_open();   // start the scan + checklist modal (first run, Settings > ROM folders)
+void draw_find_games();   // call every frame
+
+
 /* ---- emu_dialogs.cpp ---- */
 void poll_emulators();
 void emu_modal_begin(const char* name, bool* open_flag);
