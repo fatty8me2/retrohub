@@ -8,6 +8,7 @@
  *   'P' ping     [P, from, ts u32 LE]
  *   'Q' pong     [Q, from, ts u32 LE]
  *   'R' roster   [R, 0, mask]     host -> clients, bit s set = slot s reachable from the host
+ *   'B' bye      [B, from]        clean end: the sender is leaving on purpose (not a failure)
  */
 #include "net_internal.h"
 #include "log.h"
@@ -88,7 +89,11 @@ int env_int(const char* n, int def)
 
 struct Session::Impl {
     SessionConfig cfg;
-    bool started = false, failed = false, ready_ever = false;
+    bool started = false, failed = false, ready_ever = false, ended = false;
+    bool bye_from[kMaxSlots] = {};   // a partner said a clean 'bye' before leaving
+    bool departing = false;          // the host left without a bye yet: wait briefly for one, then fail
+    uint32_t depart_deadline = 0;
+    std::string depart_why;
     bool force_relay = false;
     std::string status = "idle";
     uint32_t start_ms = 0;
@@ -182,10 +187,36 @@ struct Session::Impl {
 
     void fail(const std::string& why)
     {
-        if (failed) return;
+        if (failed || ended) return;
         failed = true;
         status = why;
         net_log("Session %d: FAILED: %s", slot, why.c_str());
+    }
+
+    /* A partner left. If it said a clean bye first, the session simply ended; otherwise it is a failure. */
+    void departed(int s, const std::string& why)
+    {
+        if (bye_from[s]) { end_clean(s); return; }
+        // The bye can trail the membership change by a tick (UDP vs the lobby socket): give it a moment.
+        if (!departing) {
+            departing = true;
+            depart_deadline = now_ms() + 1500;
+            depart_why = why;
+        }
+    }
+    void end_clean(int s)
+    {
+        if (ended) return;
+        net_log("Session %d: slot %d ended the session", slot, s);
+        ended = true;
+        departing = false;
+        status = "partner ended the session";
+    }
+    void resolve_departure(uint32_t now)
+    {
+        if (!departing || ended || failed) return;
+        if (bye_from[0]) end_clean(0);
+        else if (now >= depart_deadline) fail(depart_why);
     }
 
     /* ---- sending ---- */
@@ -243,6 +274,11 @@ struct Session::Impl {
             p.last_relay = now;
         }
         switch (type) {
+        case 'B':
+            bye_from[path] = true;
+            if (departing && path == 0) end_clean(0);
+            else if (is_host()) end_clean(path);   // a guest signed off: the room session is over
+            break;
         case 'H':
             if (via_relay) send_relay(path, reply('A'), 2);
             else {
@@ -345,7 +381,7 @@ struct Session::Impl {
                     net_log("Session %d: slot %d left", slot, s);
                     peers[s].reset();
                     peers[s].present = false;
-                    if (!is_host() && s == 0) fail("The host left");
+                    if (!is_host() && s == 0) departed(0, "The host left");
                 }
             }
         } else if (type == "peers") {
@@ -380,7 +416,7 @@ struct Session::Impl {
     void pump_ws(uint32_t now)
     {
         std::string text;
-        while (ws.poll_text(&text) && !failed) on_ws_text(text, now);
+        while (ws.poll_text(&text) && !failed && !ended) on_ws_text(text, now);
         std::vector<uint8_t> bin;
         while (ws.poll_binary(&bin)) {
             if (bin.size() < 3) continue;
@@ -394,7 +430,7 @@ struct Session::Impl {
             if (ws_retrying) {
                 if (now >= ws_retry_at) { ws.close(); connect_ws(); ws_retrying = true; ws_retry_at = now + 700; }
             } else if (code == 4001) {
-                fail("The host left");
+                departed(0, "The host left");
             } else if (!ready_ever) {
                 fail(err.empty() ? "Lost connection to the lobby server" : err);
             } else if (welcomed) {
@@ -466,13 +502,24 @@ struct Session::Impl {
         }
     }
 
+    /* Tell every connected partner this end is intentional (sent a few times: UDP may drop). */
+    void say_bye(uint32_t now)
+    {
+        for (int s = 0; s < kMaxSlots; s++)
+            if (talks_to(s) && peers[s].present) {
+                uint8_t b[2] = {'B', (uint8_t)slot};
+                send_raw(s, b, 2, now);
+            }
+    }
+
     void update()
     {
-        if (!started || failed) return;
+        if (!started || failed || ended) return;
         uint32_t now = now_ms();
         if (sim_on) sim_flush(now);
         pump_ws(now);
-        if (failed) return;
+        resolve_departure(now);
+        if (failed || ended) return;
         pump_udp(now);
         stun.update(&udp, now);
         maybe_send_endpoint(now);
@@ -574,6 +621,13 @@ bool Session::ready() const
     return true;
 }
 bool Session::failed() const { return impl_->failed; }
+bool Session::ended() const { return impl_->ended; }
+void Session::say_bye()
+{
+    Impl& d = *impl_;
+    if (!d.started || d.failed) return;
+    d.say_bye(now_ms());
+}
 std::string Session::status() const { return impl_->status; }
 int Session::my_slot() const { return impl_->slot; }
 

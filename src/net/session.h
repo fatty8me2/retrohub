@@ -84,6 +84,10 @@ class Session {
 
     bool ready() const;          // every expected slot reachable
     bool failed() const;
+    /* A partner said a clean "bye" and left (or the host did): the session ended on purpose, not a failure. */
+    bool ended() const;
+    /* Tell the partners this end is intentional. Call once before stop(); sends repeat over a few updates. */
+    void say_bye();
     std::string status() const;
     bool is_relayed(int slot) const;
     int ping_ms(int slot) const; // -1 unknown
