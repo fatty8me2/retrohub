@@ -21,8 +21,9 @@ $cases = @(
     @{ n = 'gambatte-Red';     core = "$cores\gambatte_libretro.dll";        rom = 'Red.gb';        sys = 'gb';  extra = @() },
     @{ n = 'gambatte-Crystal'; core = "$cores\gambatte_libretro.dll";        rom = 'Crystal.gbc';   sys = 'gbc'; extra = @() },
     @{ n = 'sameboy-Red';      core = "$cores\sameboy_libretro.dll";         rom = 'Red.gb';        sys = 'gb';  extra = @() },
-    @{ n = 'sameboy-Crystal';  core = "$cores\sameboy_libretro.dll";         rom = 'Crystal.gbc';   sys = 'gbc'; extra = @() },
-    @{ n = 'sameboy-link-Gold'; core = "$cores\sameboy_libretro.dll";        rom = 'Gold.gbc';      sys = 'gbc'; extra = @('--link', '--players', '2', '--ports', '0,1,-1,-1') },
+    @{ n = 'sameboy_rb-Crystal'; core = "$bin\cores\sameboy_rb_libretro.dll"; rom = 'Crystal.gbc'; sys = 'gbc'; extra = @() },
+    @{ n = 'sameboy_rb-Red';   core = "$bin\cores\sameboy_rb_libretro.dll"; rom = 'Red.gb';        sys = 'gb';  extra = @() },
+    @{ n = 'sameboy_rb-link-Crystal'; core = "$bin\cores\sameboy_rb_libretro.dll"; rom = 'Crystal.gbc'; sys = 'gbc'; extra = @('--link', '--players', '2', '--ports', '0,1,-1,-1') },
     @{ n = 'mgba_link-Ruby';   core = "$bin\mgba_link_libretro.dll";         rom = 'Ruby.gba';      sys = 'gba'; extra = @('--link', '--players', '2', '--ports', '0,1,-1,-1') }
 )
 $fail = 0

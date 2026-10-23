@@ -556,6 +556,19 @@ SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_stat
     for (int f = 0; f < frames; f++) {
         int k = f % R;
         timed_save(before[k].data());
+        if (const char* wr = std::getenv("RB_WRONGRUN")) {
+            // deep misprediction: run K frames with wrong pads (a peer that predicted far ahead), then restore and play the real ones
+            int K = std::max(1, atoi(wr));
+            if (f % 3 == 0) {
+                for (int j = 0; j < K; j++) {
+                    uint32_t bad[kPorts];
+                    for (int i = 0; i < kPorts; i++) bad[i] = all_pads[std::min(frames - 1, f + j)][i] ^ (uint32_t)(1 + ((f + j) * 7 & 0x3F3));
+                    sim.save(tmp.data(), n);
+                    timed_step(bad);
+                }
+                sim.load(before[k].data(), n);
+            }
+        }
         if (f % 2 == 0 && !std::getenv("RB_NOWRONG")) {
             // mispredicted frame: run it with wrong pads first (as a predicting peer does), then roll it back and replay it right
             uint32_t bad[kPorts];

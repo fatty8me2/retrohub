@@ -58,3 +58,6 @@ RetroHub does not include game cover art, box art or screenshots. Art is fetched
 ## mGBA (mgba_link_libretro)
 mGBA 0.10.5, (c) 2013-2024 Jeffrey Pfau and contributors, Mozilla Public License 2.0. Built from the unmodified upstream tarball (https://github.com/mgba-emu/mgba, tag 0.10.5)
 as a static library into `mgba_link_libretro.dll` (src/mgba_link, also MPL-2.0). Source: the URL above plus src/mgba_link/mgba_link.c.
+
+## SameBoy (sameboy_rb_libretro)
+SameBoy (libretro fork, commit aa158a8), (c) Lior Halphon and contributors, MIT License. Built from the upstream tarball with a two-line determinism patch (src/sameboy_rb/patch_libretro.cmake) into `sameboy_rb_libretro.dll` for rollback netplay.
