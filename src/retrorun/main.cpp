@@ -32,6 +32,8 @@ namespace fs = std::filesystem;
 
 struct Args {
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
+    std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
+    int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
     std::string net, room, title, save_stem;   // save_stem: file stem for <stem>.srm (zipped ROMs); "" = rom file stem
     std::string sync_hash_mode = "auto", pace_override;
     bool link = false;            // two linked Game Boys in one SameBoy instance (see docs/RETRORUN.md)
@@ -53,7 +55,7 @@ static std::string narrow(const wchar_t* w) {
 
 static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
-          "  [--system gba|gb|gbc|nds] [--system-dir DIR] [--scale 3] [--fullscreen] [--resume] [--title TEXT]\n"
+          "  [--system gba|gb|gbc|nds] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
           "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
@@ -82,6 +84,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--room") { if (!val(&o->room)) return false; }
         else if (k == "--title") { if (!val(&o->title)) return false; }
         else if (k == "--save-stem") { if (!val(&o->save_stem)) return false; }
+        else if (k == "--filter") { if (!val(&v)) return false; if (v != "nearest" && v != "linear") { fprintf(stderr, "bad --filter\n"); return false; } o->scale_filter = v; }
+        else if (k == "--integer-scale") { if (!val(&v)) return false; o->integer_scale = atoi(v.c_str()) ? 1 : 0; }
         else if (k == "--opt") { if (!val(&v)) return false; o->opts.push_back(v); }
         else if (k == "--frames") { if (!val(&v)) return false; o->frames = atoi(v.c_str()); }
         else if (k == "--scale") { if (!val(&v)) return false; o->scale = std::max(1, atoi(v.c_str())); }
@@ -302,6 +306,8 @@ class Frontend {
         fs::create_directories(fs::u8path(userdata_dir), ec);
         write_atomic(layout_pref_path(), t.data(), t.size());
     }
+    std::string scale_filter_;   // "" = nearest (DS: linear)
+    bool integer_scale_ = true;
     bool is_ds = false;        // Nintendo DS: two-screen frame, fractional+linear scaling, stylus via the mouse
     int ds_layout = 0;         // dsview::layout_name index (F9 cycles)
     SDL_Rect last_dst{0, 0, 0, 0};   // where the frame was last drawn (stylus mapping)
@@ -405,6 +411,8 @@ bool Frontend::setup_paths() {
     core.content_dir = narrow(fs::u8path(a.rom).parent_path().wstring().c_str());
     core.system_tag = a.system;
     is_ds = lower(a.system) == "nds";
+    scale_filter_ = a.scale_filter;
+    if (a.integer_scale >= 0) integer_scale_ = a.integer_scale != 0;
     // Defaults for the DS core go in first (then the remembered layout) so ini / --opt below override them.
     if (is_ds) {
         // The DS core keeps its own files (Wi-Fi settings, SD card images, ...) in a scratch dir under userdata, never in
@@ -477,7 +485,7 @@ void Frontend::layout(SDL_Rect* dst) {
     if (aspect <= 0.f) aspect = (double)f.w / std::max(1, f.h);
     int fh = f.h;
     if (link) { SDL_Rect v = view_src(); aspect = (double)v.w / std::max(1, v.h); fh = v.h; }
-    dsview::Rect r = dsview::fit(ow, oh, fh, aspect, !is_ds);   // integer scale when it fits (not for DS)
+    dsview::Rect r = dsview::fit(ow, oh, fh, aspect, !is_ds && integer_scale_);   // integer scale when it fits (not for DS)
     dst->x = r.x; dst->y = r.y; dst->w = r.w; dst->h = r.h;
 }
 
@@ -486,7 +494,7 @@ void Frontend::present() {
     if (!ren || f.px.empty()) return;
     if (!tex || tex_w != f.w || tex_h != f.h) {
         if (tex) SDL_DestroyTexture(tex);
-        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, is_ds ? "linear" : "nearest");
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, (scale_filter_.empty() ? is_ds : scale_filter_ == "linear") ? "linear" : "nearest");
         tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, f.w, f.h);
         tex_w = f.w;
         tex_h = f.h;

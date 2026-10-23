@@ -757,6 +757,61 @@ std::string dolphin_card_root(const std::string& install_dir, const std::string&
     return join(install_dir, "User\\GC\\RetroHub\\" + k);
 }
 
+/* ---- per-game settings (src/common/game_settings.h): applied just before each launch ---- */
+std::string dolphin_gfx_apply(const std::string& in, const hub::gs::Values& v) {
+    std::string t = in;
+    auto g = [&](const char* k, const char* d) { auto i = v.find(k); return i == v.end() ? std::string(d) : i->second; };
+    t = hubui::ini_set(t, "Settings", "InternalResolution", g("gc.res", "2"));
+    t = hubui::ini_set(t, "Settings", "wideScreenHack", g("gc.widescreen", "false") == "true" ? "True" : "False");
+    return t;
+}
+
+std::string azahar_config_apply(const std::string& in, const hub::gs::Values& v) {
+    std::string t = in;
+    auto g = [&](const char* k, const char* d) { auto i = v.find(k); return i == v.end() ? std::string(d) : i->second; };
+    auto set = [&](const char* sec, const std::string& key, const std::string& val) {
+        t = hubui::ini_set(t, sec, key + "\\default", "false");
+        t = hubui::ini_set(t, sec, key, val);
+    };
+    set("Renderer", "resolution_factor", g("3ds.res", "1"));
+    std::string l = g("3ds.layout", "default");
+    set("Layout", "layout_option", l == "single" ? "1" : l == "large" ? "2" : l == "side" ? "3" : l == "hybrid" ? "5" : "0");
+    return t;
+}
+
+std::string cemu_settings_apply(const std::string& in, const hub::gs::Values& v) {
+    /* Cemu has no switch for graphic packs; the <GraphicPack> list (the user's enabled packs) is renamed away and back,
+     * so turning them off never loses the selection. */
+    auto i = v.find("wiiu.graphic_packs");
+    bool on = i == v.end() || i->second != "false";
+    std::string t = in;
+    auto rename = [&](const std::string& from, const std::string& to) {
+        for (const char* pre : {"<", "</"}) {
+            std::string a = std::string(pre) + from + ">", b = std::string(pre) + to + ">";
+            for (size_t p = 0; (p = t.find(a, p)) != std::string::npos; p += b.size()) t.replace(p, a.size(), b);
+        }
+    };
+    if (on) rename("GraphicPack_off_by_retrohub", "GraphicPack");
+    else rename("GraphicPack", "GraphicPack_off_by_retrohub");
+    return t;
+}
+
+void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::Values& v) {
+    if (k == Kind::Dolphin) {
+        std::string f = join(install_dir, "User\\Config\\GFX.ini");
+        make_dirs(join(install_dir, "User\\Config"));
+        write_text(f, dolphin_gfx_apply(read_text(f), v));
+    } else if (k == Kind::Azahar) {
+        std::string d = join(install_dir, "user\\config");
+        make_dirs(d);
+        std::string f = join(d, "qt-config.ini");
+        write_text(f, azahar_config_apply(read_text(f), v));
+    } else {
+        std::string f = join(install_dir, "portable\\settings.xml");
+        if (file_exists(f)) write_text(f, cemu_settings_apply(read_text(f), v));
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* launch arguments                                                    */
 /* ------------------------------------------------------------------ */

@@ -505,6 +505,23 @@ static void test_config() {
     CHECK(pi.find("Buttons/Z = `Shoulder R` | `DInput/0/Keyboard Mouse:D`") != std::string::npos);   // keyboard only on port 1
     CHECK(pi.find("Buttons/Z = `Shoulder R`\n") != std::string::npos || pi.find("Buttons/Z = `Shoulder R`\r\n") != std::string::npos);
     CHECK(hubemu::dolphin_gfx_ini_patch("").find("ShaderCompilationMode = 2") != std::string::npos);
+    // per-game settings
+    hub::gs::Values v = hub::gs::defaults_for(hub::System::GC);
+    v["gc.res"] = "4"; v["gc.widescreen"] = "true";
+    std::string gx = hubemu::dolphin_gfx_apply("[Settings]\nInternalResolution = 2\n", v);
+    CHECK(gx.find("InternalResolution = 4") != std::string::npos && gx.find("wideScreenHack = True") != std::string::npos);
+    hub::gs::Values a3 = hub::gs::defaults_for(hub::System::N3DS);
+    a3["3ds.res"] = "3"; a3["3ds.layout"] = "side";
+    std::string az = hubemu::azahar_config_apply("", a3);
+    CHECK(az.find("resolution_factor=3") != std::string::npos || az.find("resolution_factor = 3") != std::string::npos);
+    CHECK(az.find("layout_option=3") != std::string::npos || az.find("layout_option = 3") != std::string::npos);
+    hub::gs::Values w = hub::gs::defaults_for(hub::System::WiiU);
+    std::string cx = "<content><GraphicPack><Entry/></GraphicPack></content>";
+    w["wiiu.graphic_packs"] = "false";
+    std::string off = hubemu::cemu_settings_apply(cx, w);
+    CHECK(off.find("<GraphicPack>") == std::string::npos && off.find("GraphicPack_off_by_retrohub") != std::string::npos);
+    w["wiiu.graphic_packs"] = "true";
+    CHECK(hubemu::cemu_settings_apply(off, w) == cx);
 }
 
 static void test_prepare_and_find(const fs::path& dir) {
