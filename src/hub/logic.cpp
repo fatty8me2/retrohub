@@ -63,6 +63,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
       << "  \"appear_offline\": " << (s.appear_offline ? "true" : "false") << ",\n"
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
+      << "  \"find_games_done\": " << (s.find_games_done ? "true" : "false") << ",\n"
       << "  \"cemu_exe\": \"" << json::escape(s.cemu_exe) << "\"\n"
       << "}\n";
     return o.str();
@@ -111,6 +112,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->show_friends = json_bool(j, "show_friends", out->show_friends);
     out->appear_offline = json_bool(j, "appear_offline", out->appear_offline);
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
+    out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
     out->cemu_exe = j.str("cemu_exe", out->cemu_exe);
     return true;
 }

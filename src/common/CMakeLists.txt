@@ -8,7 +8,7 @@ target_link_libraries(json_test PRIVATE hubbase)
 add_executable(winutil_test test_winutil.cpp)
 target_link_libraries(winutil_test PRIVATE hubbase shell32)
 
-add_library(hubcommon STATIC controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp)
+add_library(hubcommon STATIC controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp)
 target_include_directories(hubcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcommon PUBLIC cxx_std_17)
 target_link_libraries(hubcommon PUBLIC hubbase PRIVATE bcrypt hubminiz)   # hubminiz: defined in src/saves (zipped ROMs)
@@ -35,3 +35,7 @@ target_link_libraries(hubcontrols_sdl PUBLIC hubcommon SDL2::SDL2)
 add_executable(hubcontrols_test test_controls.cpp)
 target_include_directories(hubcontrols_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../n64run ${CMAKE_CURRENT_SOURCE_DIR}/../retrorun)
 target_link_libraries(hubcontrols_test PRIVATE hubcommon)
+
+# "Find my games": folder ranking / collapsing, emulator config parsers, bounded scan of a scratch tree.
+add_executable(findgames_test test_findgames.cpp)
+target_link_libraries(findgames_test PRIVATE hubcommon)

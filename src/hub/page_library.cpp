@@ -245,7 +245,7 @@ void empty_library_state() {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float w = ImGui::GetContentRegionAvail().x;
     float h = std::min(ImGui::GetContentRegionAvail().y,
-                       sp(46.f) + (suggestions.empty() ? 0.f : sp(10.f) + sp(6.f) * (float)suggestions.size()));
+                       sp(53.f) + (suggestions.empty() ? 0.f : sp(10.f) + sp(6.f) * (float)suggestions.size()));
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
     dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.5f));
     dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.5f), 0, 1.f);
@@ -286,8 +286,11 @@ void empty_library_state() {
     float bw = sp(24.f);
     ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
     if (button("Add ROM folder", ImVec2(bw, sp(6.f)), true, true, ui::Icon::Folder)) add_rom_folder();
+    y += sp(7.f);
+    ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
+    if (button("Find my games...", ImVec2(bw, sp(4.5f)), false, !A.scanning, ui::Icon::Search)) find_games_open();
     if (!suggestions.empty()) {
-        y += sp(6.f) + sp(3.f);
+        y += sp(6.f) + sp(3.f) - sp(1.5f);
         centered_text(dl, ui::F.cap, cx, y, ui::TEXT2, "Found game files in these folders:");
         y += ui::F.cap->FontSize + sp(1.5f);
         for (size_t i = 0; i < suggestions.size(); ++i) {
