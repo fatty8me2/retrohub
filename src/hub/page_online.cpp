@@ -82,9 +82,14 @@ void page_online_room() {
     ImGui::Dummy(ImVec2(0, 8 * S));
     if (button("Copy code", ImVec2(150 * S, 44 * S), true)) { SDL_SetClipboardText(A.code.c_str()); set_notice("Room code copied.", 3); }
     ImGui::SameLine();
+    if (button("Copy invite link", ImVec2(200 * S, 44 * S), true)) {
+        std::wstring link = invite_web_link(W(A.code));
+        if (!link.empty() && invite_copy_text(link)) set_toast("Invite link copied", true, 3.0);
+        else set_notice("Could not copy the invite link.", 4);
+    }
     if (button("Leave room", ImVec2(150 * S, 44 * S))) { leave_room(); ImGui::EndGroup(); return; }
     ImGui::SameLine();
-    fr_invite_button_and_picker(170 * S, 44 * S);
+    fr_invite_button_and_picker(200 * S, 44 * S);
     ImGui::EndGroup();
 
     if (g_fake_room && A.selected_game.empty() && !A.lib.empty()) {
