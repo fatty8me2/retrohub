@@ -1161,7 +1161,7 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
     }
     if (e.system == hub::System::NDS) {
         /* DS local wireless: no lockstep. Every PC runs its own melonDS core and only the wireless frames travel through
-         * the room (retrorun --link), so the game's own save is used and trades/battles are real. */
+         * the room (retrorun --ds-link), so the game's own save is used and trades/battles are real. */
         std::string core = find_core("melondsds");
         if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }
         std::string mode;
@@ -1174,7 +1174,7 @@ static void launch_online(const hub::GameEntry& e, int launch_no, int delay, boo
         std::string battery = no_slash(hub::saves::battery_dir(sys, e.key));
         std::string states = no_slash(hub::saves::states_dir(sys, e.key));
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
-                           " --state-dir " + quote(states) + " --link --net " + quote(server_url()) + " --room " + A.code + "-" +
+                           " --state-dir " + quote(states) + " --ds-link --net " + quote(server_url()) + " --room " + A.code + "-" +
                            std::to_string(launch_no) + " --slot " + std::to_string(A.lobby.my_slot()) + " --players " +
                            std::to_string(plan.players) + title_arg(e.title) + save_stem_arg(e);
         if (A.st.fullscreen) args += " --fullscreen";

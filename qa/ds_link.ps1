@@ -23,7 +23,7 @@ for ($s = 0; $s -lt $Players; $s++) {
     New-Item -ItemType Directory -Force $d | Out-Null
     $log = Join-Path $d "retrorun.log"
     $a = @("--core", $core, "--rom", $Rom, "--system", "nds", "--save-dir", $d, "--state-dir", $d, "--headless", "--frames", $Frames,
-           "--net", $Server, "--room", "$code-1", "--slot", $s, "--players", $Players, "--link", "--log", $log)
+           "--net", $Server, "--room", "$code-1", "--slot", $s, "--players", $Players, "--ds-link", "--log", $log)
     $procs += Start-Process -FilePath $exe -ArgumentList ($a | ForEach-Object { if ("$_" -match "\s") { "`"$_`"" } else { "$_" } }) -WindowStyle Hidden -PassThru
 }
 $procs | ForEach-Object { $_.WaitForExit(240000) | Out-Null }
