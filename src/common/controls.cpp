@@ -178,6 +178,27 @@ std::string term_name(const Term& t) {
     return std::string(kAxes[t.idx]) + (t.sign > 0 ? "+" : t.sign < 0 ? "-" : "");
 }
 
+std::string describe_term(const Term& t) {
+    static const char* bn[kNumButtons] = {"A", "B", "X", "Y", "Back", "Guide", "Start", "L3 (stick click)", "R3 (stick click)", "LB", "RB",
+                                          "D-pad up", "D-pad down", "D-pad left", "D-pad right", "Share", "Paddle 1", "Paddle 2",
+                                          "Paddle 3", "Paddle 4", "Touchpad"};
+    if (!t.axis) return t.idx >= 0 && t.idx < kNumButtons ? bn[t.idx] : "?";
+    static const char* axn[4] = {"Left stick", "Left stick", "Right stick", "Right stick"};
+    if (t.idx == 4) return "LT";
+    if (t.idx == 5) return "RT";
+    if (t.idx < 0 || t.idx > 3) return "?";
+    bool horiz = (t.idx % 2) == 0;
+    const char* dir = horiz ? (t.sign < 0 ? "left" : "right") : (t.sign < 0 ? "up" : "down");
+    return std::string(axn[t.idx]) + " " + dir;
+}
+std::string describe_expr(const std::string& expr) {
+    std::vector<Term> terms;
+    if (!parse_expr(expr, kDefaultAxisThreshold, &terms) || terms.empty()) return "Unbound";
+    std::string out;
+    for (size_t i = 0; i < terms.size(); ++i) out += (i ? " / " : "") + describe_term(terms[i]);
+    return out;
+}
+
 /* ------------------------------------------------------------------ Mapper */
 
 Mapper::Mapper(const Profile& p) {

@@ -230,7 +230,50 @@ static void test_storage() {
     fs::remove_all(d);
 }
 
+static void test_describe() {
+    CHECK(hubctl::describe_expr("a") == "A");
+    CHECK(hubctl::describe_expr("x|b|y") == "X / B / Y");
+    CHECK(hubctl::describe_expr("leftx-@9000") == "Left stick left");
+    CHECK(hubctl::describe_expr("righty-") == "Right stick up");
+    CHECK(hubctl::describe_expr("lefty+") == "Left stick down");
+    CHECK(hubctl::describe_expr("lefttrigger@16000") == "LT");
+    CHECK(hubctl::describe_expr("rightshoulder|righttrigger") == "RB / RT");
+    CHECK(hubctl::describe_expr("dpup") == "D-pad up");
+    CHECK(hubctl::describe_expr("bogus") == "Unbound");
+    CHECK(hubctl::describe_expr("") == "Unbound");
+    /* every default binding of every system has a readable name */
+    for (auto& sys : hubctl::systems())
+        for (auto& kv : hubctl::default_profile(sys).buttons) CHECK(hubctl::describe_expr(kv.second) != "Unbound" && hubctl::describe_expr(kv.second) != "?");
+}
+
+/* Controls page flows: per-game override, reset, port order survive a store round trip. */
+static void test_page_flows() {
+    hubctl::Store s;
+    CHECK(hubctl::set_mapping(s, "n64", "", "a", "b"));
+    CHECK(hubctl::resolve(s, "n64").buttons["a"] == "b");
+    CHECK(hubctl::set_mapping(s, "n64", "gameX", "a", "y"));      // per-game copy starts from the system profile
+    CHECK(hubctl::resolve(s, "n64", "gameX").buttons["a"] == "y");
+    CHECK(hubctl::resolve(s, "n64", "gameX").buttons["start"] == "start");
+    CHECK(hubctl::resolve(s, "n64", "other").buttons["a"] == "b");  // others keep the system profile
+    hubctl::reset(s, "n64", "gameX");
+    CHECK(hubctl::resolve(s, "n64", "gameX").buttons["a"] == "b");
+    hubctl::reset(s, "n64");
+    CHECK(hubctl::resolve(s, "n64").buttons["a"] == "a");
+    hubctl::set_port_order(s, {"guidB", "guidA"});
+    hubctl::Store t;
+    CHECK(hubctl::from_json(hubctl::to_json(s), &t));
+    CHECK(t.port_order.size() == 2 && t.port_order[0] == "guidB");
+    /* profile file handed to a runner carries the mapping but the synced input format is unchanged: only the stick/buttons
+     * that feed the same PadState -> button bits; the mapping hash differs only when a binding changed */
+    hubctl::Store u;
+    CHECK(hubctl::mapping_hash(hubctl::resolve(u, "n64")) == hubctl::mapping_hash(hubctl::default_profile("n64")));
+    hubctl::set_analog(u, "n64", "", "stick", 0.2, 1.5);
+    CHECK(hubctl::mapping_hash(hubctl::resolve(u, "n64")) != hubctl::mapping_hash(hubctl::default_profile("n64")));
+}
+
 int main() {
+    test_describe();
+    test_page_flows();
     test_defaults_equal_legacy();
     test_custom_profile();
     test_expr();
