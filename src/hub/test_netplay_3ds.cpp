@@ -17,6 +17,11 @@ int main() {
     CHECK(join_state("error:join timed out\n").rfind("error:", 0) == 0);
     CHECK(join_driver_args(42, "s.txt", "Host_1", "", "127.0.0.1", 24990, 120).find("-Port 24990") != std::string::npos);
     CHECK(std::string(join_driver_script()).find("DirectConnectWindow") != std::string::npos);
+    {
+        std::string c = seed_join_config("[UI]\nfirstStart=false\n", "Host_1", "127.0.0.1", 24990);
+        CHECK(c.find("Multiplayer\\ip = 127.0.0.1") != std::string::npos && c.find("Multiplayer\\port = 24990") != std::string::npos);
+        CHECK(c.find("Multiplayer\\nickname = Host_1") != std::string::npos && c.find("firstStart=false") != std::string::npos);
+    }
     /* launch spec key */
     Plan p;
     p.port = 24872;
