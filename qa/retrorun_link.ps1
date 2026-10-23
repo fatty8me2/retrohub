@@ -7,6 +7,7 @@ param(
     [string]$Rom = 'deps\testroms\dmg-acid2.gb',
     [int]$Frames = 3000,
     [switch]$Relay,    # HUBNET_FORCE_RELAY=1
+    [switch]$Rollback, # GGPO rollback with the patched sameboy_rb core (what the hub launches for GB/GBC link)
     [switch]$Bad,      # simulated bad network: 60 ms +/- 30 ms, 5% loss
     [string]$Tag = 'link'
 )
@@ -14,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $exe = Join-Path $root 'build\bin\Release\retrorun.exe'
-$core = Join-Path $root 'deps\cores\sameboy_libretro.dll'
+$core = if ($Rollback) { Join-Path $root 'build\bin\Release\cores\sameboy_rb_libretro.dll' } else { Join-Path $root 'deps\cores\sameboy_libretro.dll' }
 $out = Join-Path $root ('qa\out\' + $Tag)
 Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $out | Out-Null
@@ -39,6 +40,7 @@ foreach ($slot in 0, 1) {
     $a = @('--core', $core, '--rom', (Join-Path $root $Rom), '--system', 'gb', '--link', '--save-dir', $sv, '--state-dir', (Join-Path $out ('st' + $slot)),
         '--headless', '--frames', $Frames, '--fuzz-input', '--net', $Server, '--room', $room, '--slot', $slot, '--players', 2,
         '--ports', '0,1,-1,-1', '--delay', 'auto', '--log', $log)
+    if ($Rollback) { $a += '--rollback' }
     $procs += [pscustomobject]@{ Slot = $slot; Log = $log; Proc = (Start-Process -FilePath $exe -ArgumentList $a -PassThru -WindowStyle Hidden) }
 }
 $t0 = Get-Date

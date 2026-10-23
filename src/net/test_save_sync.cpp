@@ -201,6 +201,12 @@ static void test_pacing() {
     long total = 0;
     for (auto& kv : per_ms) total += kv.second;
     CHECK(total <= (long)(400 / kDataIntervalMs + 1) * kDataPerTick, "DATA rate bounded (%ld in 400 ms)", total);
+    CHECK(total <= kSaveWindow, "un-ACKed DATA bounded by the window (%ld sent, window %d)", total, kSaveWindow);
+    // A slow relay delays ACKs; the host must wait for them instead of re-queueing the backlog.
+    for (int i = 0; i < 150; i++, now++) snd.tick(now, hs);   // up to 550 ms: still inside the 600 ms ACK window
+    long t2 = 0;
+    for (auto& kv : per_ms) t2 += kv.second;
+    CHECK(t2 <= kSaveWindow, "still no more than one window while ACKs are late (%ld sent)", t2);
     for (auto& kv : times_sent) CHECK(kv.second == 1, "chunk %d/%d re-sent before the ACK window (%d)", kv.first.first, kv.first.second, kv.second);
 }
 

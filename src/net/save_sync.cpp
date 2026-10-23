@@ -201,19 +201,32 @@ void SaveSender::tick(uint32_t now_ms, const SendFn& send) {
     int budget = kDataPerTick;
     size_t total = 0;
     for (size_t f = 0; f < files_.size(); f++) total += (size_t)nchunks_[f];
+    // Does some unverified peer still lack chunk c of file f? (no ACK yet: assume it lacks everything)
+    auto needed = [&](size_t f, size_t c) {
+        for (int s = 1; s < 8; s++) {
+            if (!((clients_ >> s) & 1u)) continue;
+            const Peer& pe = peers_[s];
+            if (pe.done[f]) continue;
+            if (pe.nch[f] == 0 || !pe.have[f][c]) return true;
+        }
+        return false;
+    };
+    // Window: chunks already sent and still inside their ACK window count as in flight. Without this cap a relay
+    // that drains slower than kDataPerTick/kDataIntervalMs (a loaded local workerd does ~250 frames/s) queues the
+    // ACKs behind the DATA backlog, the host re-sends everything, and the queue never empties.
+    int inflight = 0;
+    for (size_t f = 0; f < files_.size(); f++)
+        for (size_t c = 0; c < (size_t)nchunks_[f]; c++) {
+            const uint32_t at = sent_at_[f][c];
+            if (at && now_ms - at < kResendMs && needed(f, c)) inflight++;
+        }
+    budget = std::min(budget, kSaveWindow - inflight);
     for (size_t k = 0; k < total && budget > 0; k++) {
         size_t idx = (cursor_ + k) % total, f = 0, c = idx;
         while (c >= (size_t)nchunks_[f]) { c -= (size_t)nchunks_[f]; f++; }
         uint32_t& at = sent_at_[f][c];
         if (at && now_ms - at < kResendMs) continue;
-        bool need = false;
-        for (int s = 1; s < 8 && !need; s++) {
-            if (!((clients_ >> s) & 1u)) continue;
-            const Peer& pe = peers_[s];
-            if (pe.done[f]) continue;
-            if (pe.nch[f] == 0 || !pe.have[f][c]) need = true;   // no ACK yet: assume it lacks everything
-        }
-        if (!need) continue;
+        if (!needed(f, c)) continue;
         const SaveFile& sf = files_[f];
         size_t off = c * kSaveChunk;
         size_t len = std::min(kSaveChunk, sf.data.size() - off);
