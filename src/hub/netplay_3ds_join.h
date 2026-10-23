@@ -13,6 +13,8 @@ const char* join_driver_script();
 /* Pure: qt-config.ini text with the Direct Connect dialog prefilled ([UI] Multiplayer/ip,port,nickname), so the
  * helper only has to click Connect when ValuePattern/WM_CHAR entry is unavailable. */
 std::string seed_join_config(const std::string& ini, const std::string& nick, const std::string& host, int port);
+/* Applies it to <install_dir>/user/config/qt-config.ini (call before Azahar starts). */
+void seed_join_config_file(const std::string& install_dir, const std::string& nick, const std::string& host, int port);
 
 /* Pure: the helper's command-line arguments. */
 std::string join_driver_args(unsigned long azahar_pid, const std::string& status_file, const std::string& nick,
