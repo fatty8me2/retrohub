@@ -9,12 +9,18 @@ namespace retrorun {
 
 class RetroPad {
   public:
-    explicit RetroPad(const hubctl::Profile& p) : m_(p) {
-        for (int i = 0; i < 16; i++) id_[i] = m_.id(kCtl[i].name);
+    explicit RetroPad(const hubctl::Profile& p) : m_(p), k_(p) {
+        for (int i = 0; i < 16; i++) { id_[i] = m_.id(kCtl[i].name); kid_[i] = k_.id(kCtl[i].name); }
     }
     uint32_t mask(const hubctl::PadState& st) const {
         uint32_t r = 0;
         for (int i = 0; i < 16; i++) if (m_.down(id_[i], st)) r |= 1u << kCtl[i].retro;
+        return r;
+    }
+    /* Keyboard pad: state = SDL_GetKeyboardState. */
+    uint32_t key_mask(const uint8_t* state) const {
+        uint32_t r = 0;
+        for (int i = 0; i < 16; i++) if (k_.down(kid_[i], state)) r |= 1u << kCtl[i].retro;
         return r;
     }
   private:
@@ -26,7 +32,9 @@ class RetroPad {
         {"select", RETRO_DEVICE_ID_JOYPAD_SELECT}, {"up", RETRO_DEVICE_ID_JOYPAD_UP}, {"down", RETRO_DEVICE_ID_JOYPAD_DOWN},
         {"left", RETRO_DEVICE_ID_JOYPAD_LEFT}, {"right", RETRO_DEVICE_ID_JOYPAD_RIGHT}};
     hubctl::Mapper m_;
+    hubctl::KeyMapper k_;
     int id_[16];
+    int kid_[16];
 };
 
 }  // namespace retrorun
