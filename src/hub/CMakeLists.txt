@@ -9,11 +9,11 @@ target_link_libraries(hub_logic_test PRIVATE hublogic)
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
     ui_common.cpp tiles.cpp shelves.cpp page_library.cpp match_ui.cpp page_online.cpp friends_ui.cpp
-    page_controllers.cpp page_saves.cpp page_settings.cpp emu_dialogs.cpp page_about.cpp frame.cpp shot.cpp)
+    page_controllers.cpp page_saves.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp page_about.cpp frame.cpp shot.cpp)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(RetroHub PRIVATE hublogic imgui hubnet hubcommon hubsaves SDL2::SDL2
+target_link_libraries(RetroHub PRIVATE hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
     ole32 shell32 uuid winhttp)
 # main.cpp defines SDL_MAIN_HANDLED and provides WinMain itself, so SDL2main is not needed.
 # Optional icon: add hub.rc (with an ICON resource) to the sources above.
@@ -107,3 +107,7 @@ target_link_libraries(hub_shell_test PRIVATE hubinvite advapi32)
 
 add_executable(hub_invite_test test_invite.cpp)
 target_link_libraries(hub_invite_test PRIVATE hubinvite)
+
+# Per-game settings launch wiring helpers (pure).
+add_executable(hub_launchset_test test_launch_settings.cpp)
+target_link_libraries(hub_launchset_test PRIVATE hublogic hubcommon)

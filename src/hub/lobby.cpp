@@ -179,7 +179,7 @@ void lobby_tick() {
             }
             const hubui::Json* ss = j.get("share_save");
             launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
-                          ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j);   // --match comes from j["match"]
+                          ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j, nullptr, &body);   // --match comes from j["match"]
         }
 
     }

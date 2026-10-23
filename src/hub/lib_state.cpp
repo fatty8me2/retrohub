@@ -132,6 +132,10 @@ bool supports_online(const hub::GameEntry& e) {
         const GameInfo* g = hub::find_game(e.catalog_id);
         return g && g->online;
     }
+    if (e.system == hub::System::NDS) {   // local wireless (trades, battles, Union Room) through retrorun --ds-link; catalog games only
+        const GameInfo* g = hub::find_game(e.catalog_id);
+        return g && g->online;
+    }
     return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB ||
            e.system == hub::System::GBC || e.system == hub::System::N3DS;   // 3DS: Azahar room via np_3ds
 }

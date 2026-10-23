@@ -21,6 +21,12 @@
  *                                                           players pick fighter/stage in its Online window)
  *                       (no autostart: the host presses Start match in Smash)
  */
+#include "invite.h"
+#define STBI_ONLY_PNG
+#define STBI_NO_STDIO
+#define STBI_NO_LINEAR
+#define STBI_NO_HDR
+#include "third_party/stb_image.h"
 #include "app.h"
 
 hubemu::Installer EMU;   // download-on-demand job + its dialog state
@@ -181,18 +187,21 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         return;
     }
     if (kind == hubemu::Kind::Azahar) {
-        if (inst.managed) hubemu::prepare_azahar(inst.dir);
+        if (inst.managed) hubemu::prepare_azahar(inst.dir, controls_profile("3ds", e.key));
     } else if (kind == hubemu::Kind::Dolphin) {
         hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
-        hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads());
+        hubemu::prepare_dolphin(inst.dir, hubemu::detect_dolphin_pads(), controls_profile("gc", e.key));
     } else if (inst.managed) {
-        hubemu::prepare_cemu_managed(inst.dir);
+        hubemu::prepare_cemu_managed(inst.dir, controls_profile("wiiu", e.key));
     }
+    hub::gs::Values gsv = gs_values_for(e);
+    hubemu::apply_game_settings(kind, inst.dir, gsv);
+    bool fs = hub::gs::is_fullscreen(gsv);
     std::string game = launch_path_for(e);
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
-    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, A.st.fullscreen, mp_arg)
-                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, A.st.fullscreen, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
-                                                       : hubemu::cemu_args(game, A.st.fullscreen);
+    std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
+                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
+                                                       : hubemu::cemu_args(game, fs);
     if (e.issue == "encrypted") set_notice("This 3DS image is encrypted: Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder).", 12.0);
     if (e.issue == "keys") set_notice("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua needs no keys.", 12.0);
     RunInfo r = ri;
@@ -222,6 +231,48 @@ void start_unzip(const hub::GameEntry& e) {
         UNZ.done = true;
     });
 }
+void flash_taskbar() {
+    if (!A.hwnd || g_headless) return;
+    FLASHWINFO fi{};
+    fi.cbSize = sizeof(fi);
+    fi.hwnd = A.hwnd;
+    fi.dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG;   // taskbar button only, until the user looks at RetroHub; no activation
+    fi.uCount = 6;
+    FlashWindowEx(&fi);
+}
+
+void add_game_shortcut(const hub::GameEntry& e) {
+    std::wstring dir = shell_shortcut_dir();
+    if (dir.empty()) { set_notice("Desktop shortcuts are only created by an installed RetroHub."); return; }
+    std::wstring key = W(e.key);
+    if (!invite_is_valid_game_key(key)) { set_notice("This game cannot be added to the desktop."); return; }
+    std::wstring icon;
+    if (hubart::enabled()) {   // cover art as the icon when it is already cached
+        std::string name, png;
+        int w = 0, h = 0;
+        std::string err;
+        if (hubart::detail::resolve_name(e, &name, nullptr) &&
+            hubart::detail::fetch_decode(sys_short(e), name, hubart::Kind::Boxart, &w, &h, &err, &png)) {
+            int iw = 0, ih = 0, comp = 0;
+            std::ifstream pf(std::filesystem::path(W(png)), std::ios::binary);
+            std::string bytes((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+            unsigned char* px = bytes.empty() ? nullptr : stbi_load_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), &iw, &ih, &comp, 4);
+            if (px) {
+                std::wstring icodir = W(hub::data_dir() + "icons\\");
+                CreateDirectoryW(icodir.c_str(), nullptr);
+                std::wstring ico = icodir + key + L".ico";
+                if (shell_write_ico(ico, px, iw, ih)) icon = ico;
+                stbi_image_free(px);
+            }
+        }
+    }
+    wchar_t exe[MAX_PATH * 2];
+    DWORD n = GetModuleFileNameW(nullptr, exe, (DWORD)(sizeof(exe) / sizeof(exe[0])));
+    std::wstring lnk = dir + L"\\" + shell_game_shortcut_name(W(e.title));
+    if (shell_write_game_shortcut(lnk, std::wstring(exe, n), key, W(e.title), icon)) set_toast("Added " + e.title + " to your desktop.");
+    else set_notice("Could not create the shortcut.");
+}
+
 void play_entry(const hub::GameEntry& e) {
     if (A.proc) { set_notice("A game is already running."); return; }
     if (A.job.running) {
@@ -244,8 +295,8 @@ void play_entry(const hub::GameEntry& e) {
     switch (e.system) {
         case hub::System::N64: {
             std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) +
-                               " --save-dir " + quote(battery) + title_arg(e.title);
-            if (A.st.fullscreen) args += " --fullscreen";
+                               " --save-dir " + quote(battery) + title_arg(e.title) + controls_arg("n64", e.key);
+            args += hubui::n64_extra_args(gs_values_for(e));
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
                 std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
                 if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
@@ -259,8 +310,8 @@ void play_entry(const hub::GameEntry& e) {
             std::string core = find_core(e.system == hub::System::GBA ? "mgba" : A.st.gb_core);
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e);
-            if (A.st.fullscreen) args += " --fullscreen";
+                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+            args += hubui::retro_extra_args(e.system, gs_values_for(e));
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }
@@ -268,8 +319,8 @@ void play_entry(const hub::GameEntry& e) {
             std::string core = find_core("melondsds");
             if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e);
-            if (A.st.fullscreen) args += " --fullscreen";
+                               " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+            args += hubui::retro_extra_args(e.system, gs_values_for(e));
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }

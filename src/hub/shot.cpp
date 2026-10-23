@@ -42,6 +42,7 @@ void shot_init_ui() {
         if (m == "unavailable") A.cloud_stat.unavailable = true;
         else if (m == "ok") { A.cloud_stat.enabled = true; A.cloud_stat.files = 12; A.cloud_stat.used = 3250000; A.cloud_stat.quota = 500LL * 1048576; }
     }
+    if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n
     if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show a 3DS / Wii U dialog (azahar | cemu | unzip | failed)
         std::string m = se;
         if (m == "azahar" || m == "cemu") { EMU.kind = m == "cemu" ? hubemu::Kind::Cemu : hubemu::Kind::Azahar; EMU.state = hubemu::Installer::Asking; }

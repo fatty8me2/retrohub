@@ -82,9 +82,14 @@ void page_online_room() {
     ImGui::Dummy(ImVec2(0, 8 * S));
     if (button("Copy code", ImVec2(150 * S, 44 * S), true)) { SDL_SetClipboardText(A.code.c_str()); set_notice("Room code copied.", 3); }
     ImGui::SameLine();
+    if (button("Copy invite link", ImVec2(200 * S, 44 * S), true)) {
+        std::wstring link = invite_web_link(W(A.code));
+        if (!link.empty() && invite_copy_text(link)) set_toast("Invite link copied", true, 3.0);
+        else set_notice("Could not copy the invite link.", 4);
+    }
     if (button("Leave room", ImVec2(150 * S, 44 * S))) { leave_room(); ImGui::EndGroup(); return; }
     ImGui::SameLine();
-    fr_invite_button_and_picker(170 * S, 44 * S);
+    fr_invite_button_and_picker(200 * S, 44 * S);
     ImGui::EndGroup();
 
     if (g_fake_room && A.selected_game.empty() && !A.lib.empty()) {
@@ -272,6 +277,8 @@ void page_online_room() {
             }
             if ((rg->system == hub::System::GB || rg->system == hub::System::GBC) && hub::link_cable_game(rg->catalog_id))
                 np_extra += ",\"np_link\":{\"core\":\"sameboy\",\"consoles\":2}";
+            if (rg->system == hub::System::NDS) np_extra += ",\"np_ds\":" + hubui::np_ds_json();
+            np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
             if (gc_ok) {
                 A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra));
                 launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);

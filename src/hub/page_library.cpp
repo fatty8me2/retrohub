@@ -592,6 +592,8 @@ void draw_details_modal() {
         if (A.info_auto_state) sv += "  (+ resume point)";
         ImGui::TextUnformatted(sv.c_str());
     }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    gs_draw_game_section(e);
     ImGui::Dummy(ImVec2(0, sp(2.f)));
 
     float bh = sp(5.5f);
@@ -616,6 +618,12 @@ void draw_details_modal() {
         ImGui::SameLine(0, sp(1.5f));
         if (button("Locate BattleShip.exe", ImVec2(0, bh))) locate_smash();
     }
+    if (!hubctl::system_key(e.system).empty()) {
+        ImGui::SameLine(0, sp(1.5f));
+        if (button("Controls for this game", ImVec2(0, bh), false, true, ui::Icon::Gamepad)) { ImGui::CloseCurrentPopup(); open_controls_for(e); }
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (button("Add to desktop", ImVec2(0, bh), false, true, ui::Icon::Star)) add_game_shortcut(e);
     ImGui::SameLine(0, sp(1.5f));
     if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
