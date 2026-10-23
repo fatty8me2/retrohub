@@ -113,9 +113,18 @@ static bool event_order_check()
     return ok;
 }
 
+// Server for the online test: argv[1] > RETROHUB_TEST_SERVER (read at run time) > production default.
+// Usage: RETROHUB_TEST_SERVER=ws://localhost:8761 ctest --test-dir build -C Release -R hubnet_test
+static std::string test_server(int argc, char** argv)
+{
+    if (argc > 1) return argv[1];
+    const char* env = getenv("RETROHUB_TEST_SERVER");
+    return (env && *env) ? std::string(env) : std::string(hubnet::default_server());
+}
+
 int main(int argc, char** argv)
 {
-    std::string server = argc > 1 ? argv[1] : "ws://127.0.0.1:8799";
+    std::string server = test_server(argc, argv);
     int n = argc > 2 ? atoi(argv[2]) : 3;
     int count = argc > 3 ? atoi(argv[3]) : 1000;
     if (n < 2 || n > kMaxSlots) n = 3;
