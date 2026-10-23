@@ -12,6 +12,7 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <map>
 #include <vector>
 
 #include "save_sync.h"
@@ -180,6 +181,29 @@ static void test_no_files() {
     CHECK(rcv.host_has_no_files(), "receiver learns the host has no files");
 }
 
+// The relay (one Durable Object forwarding every frame) stalls above ~1000 frames/s and drops the clients'
+// ACKs first, so the sender must stay well below that and must not re-send a chunk before its ACK can arrive.
+static void test_pacing() {
+    std::vector<SaveFile> files = make_files(11);
+    SaveSender snd(files, 0x3, 1000, 60000);
+    std::map<uint32_t, int> per_ms;
+    std::map<std::pair<int, int>, int> times_sent;
+    uint32_t now = 1000;
+    SendFn hs = [&](const std::vector<uint8_t>& m) {
+        if (m.empty() || m[0] != kPktSaveData) return;
+        per_ms[now]++;
+        times_sent[{m[1], m[2] | (m[3] << 8)}]++;
+    };
+    for (int i = 0; i < 400; i++, now++) snd.tick(now, hs);   // no ACKs at all for 400 ms
+    int worst = 0;
+    for (auto& kv : per_ms) worst = std::max(worst, kv.second);
+    CHECK(worst <= kDataPerTick, "at most %d DATA per ms tick (got %d)", kDataPerTick, worst);
+    long total = 0;
+    for (auto& kv : per_ms) total += kv.second;
+    CHECK(total <= (long)(400 / kDataIntervalMs + 1) * kDataPerTick, "DATA rate bounded (%ld in 400 ms)", total);
+    for (auto& kv : times_sent) CHECK(kv.second == 1, "chunk %d/%d re-sent before the ACK window (%d)", kv.first.first, kv.first.second, kv.second);
+}
+
 // A client that cannot write the verified file must fail, not ACK it as verified.
 static void test_write_failure() {
     fs::path blocker = temp_root() / "blocker";
@@ -244,6 +268,7 @@ int main(int argc, char** argv) {
     run_sim("sparse {0,1,3}, 20% loss", 0xB, 0.20, 0.05, 15, 0.02, 8);
     run_sim("sparse {0,3}, 30% loss", 0x9, 0.30, 0.10, 20, 0.0, 9);
     test_no_files();
+    test_pacing();
     test_write_failure();
     if (argc > 1) {
         if (!live_test(argv[1])) g_fail++;
