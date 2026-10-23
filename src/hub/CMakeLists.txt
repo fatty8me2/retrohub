@@ -33,9 +33,9 @@ add_custom_command(TARGET hub_art_test POST_BUILD
 
 # Auto-updater (GitHub releases of fatty8me2/smash-classic). Console test: version/JSON/trust/markdown
 # cases + a live release check (never downloads or installs).
-target_sources(RetroHub PRIVATE updater.cpp)
+target_sources(RetroHub PRIVATE updater.cpp update_apply.cpp)
 target_link_libraries(RetroHub PRIVATE bcrypt)
-add_executable(hub_updater_test test_updater.cpp updater.cpp)
+add_executable(hub_updater_test test_updater.cpp updater.cpp update_apply.cpp)
 target_include_directories(hub_updater_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_updater_test PRIVATE hubcommon bcrypt shell32)
 if (DEFINED HUB_VERSION)
@@ -92,3 +92,18 @@ target_link_libraries(hub_emu_live PRIVATE hublogic hubcommon hubsaves hubminiz 
 # 3DS local wireless over rooms (np_3ds): pure-logic test (no network, no emulator)
 add_executable(hub_np3ds_test test_netplay_3ds.cpp)
 target_link_libraries(hub_np3ds_test PRIVATE hublogic hubcommon)
+
+# Native update applier: unit tests + integration dry-run of `RetroHub.exe --apply-update` in scratch dirs.
+add_executable(hub_apply_test test_update_apply.cpp update_apply.cpp)
+target_link_libraries(hub_apply_test PRIVATE shell32)
+add_dependencies(hub_apply_test RetroHub)
+# ---- Clickable invite links (retrohub://join/<CODE>, --join <CODE>, single-instance handoff) ----
+add_library(hubinvite STATIC invite.cpp)
+target_include_directories(hubinvite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hubinvite PUBLIC shell32 user32)
+target_compile_features(hubinvite PUBLIC cxx_std_17)
+target_link_libraries(RetroHub PRIVATE hubinvite advapi32)
+target_link_libraries(hub_shell_test PRIVATE hubinvite advapi32)
+
+add_executable(hub_invite_test test_invite.cpp)
+target_link_libraries(hub_invite_test PRIVATE hubinvite)

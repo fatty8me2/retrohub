@@ -18,7 +18,9 @@
 #include <string>
 #include <vector>
 
+#include "controls_sdl.h"
 #include "core.h"
+#include "retro_pad.h"
 #include "dsview.h"
 #include "image.h"
 #include "link_sync.h"
@@ -32,6 +34,9 @@ namespace fs = std::filesystem;
 
 struct Args {
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
+    std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
+    int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
+    std::string controls;         // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (src/common/controls.h)
     std::string net, room, title, save_stem;   // save_stem: file stem for <stem>.srm (zipped ROMs); "" = rom file stem
     std::string sync_hash_mode = "auto", pace_override;
     bool link = false;            // two linked Game Boys in one SameBoy instance (see docs/RETRORUN.md)
@@ -53,7 +58,7 @@ static std::string narrow(const wchar_t* w) {
 
 static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
-          "  [--system gba|gb|gbc|nds] [--system-dir DIR] [--scale 3] [--fullscreen] [--resume] [--title TEXT]\n"
+          "  [--system gba|gb|gbc|nds] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
           "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
@@ -71,6 +76,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         std::string v;
         if (k == "--core") { if (!val(&o->core)) return false; }
         else if (k == "--rom") { if (!val(&o->rom)) return false; }
+        else if (k == "--controls") { if (!val(&o->controls)) return false; }
         else if (k == "--save-dir") { if (!val(&o->save_dir)) return false; }
         else if (k == "--state-dir") { if (!val(&o->state_dir)) return false; }
         else if (k == "--system-dir") { if (!val(&o->system_dir)) return false; }
@@ -82,6 +88,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--room") { if (!val(&o->room)) return false; }
         else if (k == "--title") { if (!val(&o->title)) return false; }
         else if (k == "--save-stem") { if (!val(&o->save_stem)) return false; }
+        else if (k == "--filter") { if (!val(&v)) return false; if (v != "nearest" && v != "linear") { fprintf(stderr, "bad --filter\n"); return false; } o->scale_filter = v; }
+        else if (k == "--integer-scale") { if (!val(&v)) return false; o->integer_scale = atoi(v.c_str()) ? 1 : 0; }
         else if (k == "--opt") { if (!val(&v)) return false; o->opts.push_back(v); }
         else if (k == "--frames") { if (!val(&v)) return false; o->frames = atoi(v.c_str()); }
         else if (k == "--scale") { if (!val(&v)) return false; o->scale = std::max(1, atoi(v.c_str())); }
@@ -302,6 +310,8 @@ class Frontend {
         fs::create_directories(fs::u8path(userdata_dir), ec);
         write_atomic(layout_pref_path(), t.data(), t.size());
     }
+    std::string scale_filter_;   // "" = nearest (DS: linear)
+    bool integer_scale_ = true;
     bool is_ds = false;        // Nintendo DS: two-screen frame, fractional+linear scaling, stylus via the mouse
     int ds_layout = 0;         // dsview::layout_name index (F9 cycles)
     SDL_Rect last_dst{0, 0, 0, 0};   // where the frame was last drawn (stylus mapping)
@@ -313,6 +323,8 @@ class Frontend {
     void fold_frame();
     uint64_t sync_hash();
     std::vector<SDL_GameController*> pads;
+    hubctl::Profile prof = hubctl::default_profile("retro");
+    std::unique_ptr<retrorun::RetroPad> retro_pad;
 
     int owner[4] = {0, -1, -1, -1};
     int local_ports[4] = {-1, -1, -1, -1};
@@ -405,6 +417,8 @@ bool Frontend::setup_paths() {
     core.content_dir = narrow(fs::u8path(a.rom).parent_path().wstring().c_str());
     core.system_tag = a.system;
     is_ds = lower(a.system) == "nds";
+    scale_filter_ = a.scale_filter;
+    if (a.integer_scale >= 0) integer_scale_ = a.integer_scale != 0;
     // Defaults for the DS core go in first (then the remembered layout) so ini / --opt below override them.
     if (is_ds) {
         // The DS core keeps its own files (Wi-Fi settings, SD card images, ...) in a scratch dir under userdata, never in
@@ -477,7 +491,7 @@ void Frontend::layout(SDL_Rect* dst) {
     if (aspect <= 0.f) aspect = (double)f.w / std::max(1, f.h);
     int fh = f.h;
     if (link) { SDL_Rect v = view_src(); aspect = (double)v.w / std::max(1, v.h); fh = v.h; }
-    dsview::Rect r = dsview::fit(ow, oh, fh, aspect, !is_ds);   // integer scale when it fits (not for DS)
+    dsview::Rect r = dsview::fit(ow, oh, fh, aspect, !is_ds && integer_scale_);   // integer scale when it fits (not for DS)
     dst->x = r.x; dst->y = r.y; dst->w = r.w; dst->h = r.h;
 }
 
@@ -486,7 +500,7 @@ void Frontend::present() {
     if (!ren || f.px.empty()) return;
     if (!tex || tex_w != f.w || tex_h != f.h) {
         if (tex) SDL_DestroyTexture(tex);
-        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, is_ds ? "linear" : "nearest");
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, (scale_filter_.empty() ? is_ds : scale_filter_ == "linear") ? "linear" : "nearest");
         tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, f.w, f.h);
         tex_w = f.w;
         tex_h = f.h;
@@ -544,13 +558,9 @@ void Frontend::toggle_fullscreen() {
 
 void Frontend::open_pads() {
     for (auto* p : pads) SDL_GameControllerClose(p);
-    pads.clear();
-    for (int i = 0; i < SDL_NumJoysticks(); i++)
-        if (SDL_IsGameController(i))
-            if (auto* c = SDL_GameControllerOpen(i)) {
-                rlog("controller %zu: %s", pads.size(), SDL_GameControllerName(c));
-                pads.push_back(c);
-            }
+    std::vector<std::string> names;
+    pads = hubctl::open_pads(prof.port_order, &names);   // port order: the profile's pad list, else SDL order
+    for (size_t i = 0; i < names.size(); i++) rlog("controller %zu: %s", i, names[i].c_str());
 }
 
 static uint32_t kbd_mask() {
@@ -573,35 +583,6 @@ static uint32_t kbd_mask() {
     return m;
 }
 
-static uint32_t pad_mask(SDL_GameController* c) {
-    uint32_t m = 0;
-    auto b = [&](SDL_GameControllerButton s, int id) { if (SDL_GameControllerGetButton(c, s)) m |= 1u << id; };
-    // RetroPad B is the bottom face button (SDL A), RetroPad A the right one (SDL B), etc.
-    b(SDL_CONTROLLER_BUTTON_A, RETRO_DEVICE_ID_JOYPAD_B);
-    b(SDL_CONTROLLER_BUTTON_B, RETRO_DEVICE_ID_JOYPAD_A);
-    b(SDL_CONTROLLER_BUTTON_X, RETRO_DEVICE_ID_JOYPAD_Y);
-    b(SDL_CONTROLLER_BUTTON_Y, RETRO_DEVICE_ID_JOYPAD_X);
-    b(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, RETRO_DEVICE_ID_JOYPAD_L);
-    b(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, RETRO_DEVICE_ID_JOYPAD_R);
-    b(SDL_CONTROLLER_BUTTON_START, RETRO_DEVICE_ID_JOYPAD_START);
-    b(SDL_CONTROLLER_BUTTON_BACK, RETRO_DEVICE_ID_JOYPAD_SELECT);
-    b(SDL_CONTROLLER_BUTTON_LEFTSTICK, RETRO_DEVICE_ID_JOYPAD_L3);
-    b(SDL_CONTROLLER_BUTTON_RIGHTSTICK, RETRO_DEVICE_ID_JOYPAD_R3);
-    b(SDL_CONTROLLER_BUTTON_DPAD_UP, RETRO_DEVICE_ID_JOYPAD_UP);
-    b(SDL_CONTROLLER_BUTTON_DPAD_DOWN, RETRO_DEVICE_ID_JOYPAD_DOWN);
-    b(SDL_CONTROLLER_BUTTON_DPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_LEFT);
-    b(SDL_CONTROLLER_BUTTON_DPAD_RIGHT, RETRO_DEVICE_ID_JOYPAD_RIGHT);
-    int lx = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX), ly = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
-    const int dz = 16000;
-    if (lx < -dz) m |= 1u << RETRO_DEVICE_ID_JOYPAD_LEFT;
-    if (lx > dz) m |= 1u << RETRO_DEVICE_ID_JOYPAD_RIGHT;
-    if (ly < -dz) m |= 1u << RETRO_DEVICE_ID_JOYPAD_UP;
-    if (ly > dz) m |= 1u << RETRO_DEVICE_ID_JOYPAD_DOWN;
-    if (SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000) m |= 1u << RETRO_DEVICE_ID_JOYPAD_L2;
-    if (SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000) m |= 1u << RETRO_DEVICE_ID_JOYPAD_R2;
-    return m;
-}
-
 /* Pad for the i-th locally owned port. */
 uint32_t Frontend::poll_local(int i) {
     int port = local_ports[i];
@@ -613,7 +594,11 @@ uint32_t Frontend::poll_local(int i) {
     if (a.headless) return 0;
     uint32_t m = 0;
     if (i == 0) m |= kbd_mask();
-    if ((size_t)i < pads.size()) m |= pad_mask(pads[i]);
+    if ((size_t)i < pads.size()) {
+        hubctl::PadState st;
+        hubctl::read_state(pads[i], &st);
+        m |= retro_pad->mask(st);
+    }
     return m;
 }
 
@@ -1109,6 +1094,17 @@ int Frontend::run(const Args& args) {
     if (!setup_video()) return 1;
     drc = pace == Pace::Vsync;
     if (!a.headless && pace == Pace::None) pace = audio.active() ? Pace::Audio : Pace::Timer;
+    {
+        std::string cf = a.controls;
+        if (cf.empty()) { const char* e = std::getenv("RETROHUB_CONTROLS"); if (e && *e) cf = e; }
+        if (!cf.empty()) {
+            hubctl::Profile p;
+            if (hubctl::read_profile_file(cf, &p) && p.system == "retro") { prof = p; rlog("controls: profile '%s' (%s)", p.name.c_str(), cf.c_str()); }
+            else rlog("controls: cannot use %s; built-in mapping", cf.c_str());
+        }
+        retro_pad.reset(new retrorun::RetroPad(prof));
+        if (!a.headless) hubctl::load_bundled_db();
+    }
     if (!a.headless) open_pads();
     core.on_geometry = [this]() { fps = core.av().timing.fps > 1 ? core.av().timing.fps : fps; };
 

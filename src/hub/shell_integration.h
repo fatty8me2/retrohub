@@ -12,6 +12,7 @@ void shell_set_app_id();                       // SetCurrentProcessExplicitAppUs
 void shell_set_window_icon(SDL_Window* win);   // big + small WM_SETICON from the embedded IDI_APPICON
 void shell_ensure_start_menu_shortcut();       // %APPDATA%\...\Start Menu\Programs\RetroHub.lnk (only rewritten if missing/stale)
 void shell_ensure_desktop_shortcut(bool create);   // create=true: make Desktop\RetroHub.lnk if missing/stale; false: remove ours
+void shell_ensure_url_protocol();              // HKCU\Software\Classes\retrohub: "retrohub://join/<CODE>" -> RetroHub.exe "%1" (invite.h)
 
 /* Registration policy: only a real installed copy may touch the user's Start Menu / Desktop. A build tree, a git
  * worktree, a headless/screenshot/test run or RETROHUB_NO_SHELL=1 must never register shortcuts. */

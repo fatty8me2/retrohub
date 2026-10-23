@@ -1,6 +1,7 @@
 /* Windows shell integration (see shell_integration.h). */
 #include "shell_integration.h"
 #include "resource.h"
+#include "invite.h"
 
 #include <SDL.h>
 #include <SDL_syswm.h>
@@ -190,5 +191,24 @@ void shell_ensure_desktop_shortcut(bool create) {
     } else {
         ShellLinkInfo cur;   // only delete a shortcut that is ours
         if (shell_read_shortcut(lnk, &cur) && cur.app_id == RETROHUB_APP_ID) DeleteFileW(lnk.c_str());
+    }
+}
+
+void shell_ensure_url_protocol() {
+    if (!shell_registration_allowed()) return;   // dev builds and tests never claim retrohub:// on this machine
+    const std::wstring exe = exe_path();
+    const std::wstring cmd = invite_protocol_command(exe);
+    struct Value { const wchar_t* sub; const wchar_t* name; std::wstring data; };
+    const Value values[] = {
+        {L"Software\\Classes\\retrohub", nullptr, L"URL:RetroHub Invite"},
+        {L"Software\\Classes\\retrohub", L"URL Protocol", L""},
+        {L"Software\\Classes\\retrohub\\DefaultIcon", nullptr, exe + L",0"},
+        {L"Software\\Classes\\retrohub\\shell\\open\\command", nullptr, cmd},
+    };
+    for (const auto& v : values) {
+        HKEY key = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, v.sub, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) continue;
+        RegSetValueExW(key, v.name, 0, REG_SZ, (const BYTE*)v.data.c_str(), (DWORD)((v.data.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(key);
     }
 }

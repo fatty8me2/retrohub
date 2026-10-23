@@ -2,6 +2,7 @@
 #include "app.h"
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
     shell_set_app_id();
     const char* shot_path = std::getenv("HUB_SCREENSHOT");
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }

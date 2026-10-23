@@ -218,107 +218,6 @@ std::vector<int> parse_version(const std::string& v) {
     return parts;
 }
 
-/* Embedded Windows installer. Runs hidden under Windows PowerShell 5.1. */
-constexpr const char* kInstallerScript = R"PS(
-param(
-    [int]$WaitForPid,
-    [string]$ZipPath,
-    [string]$InstallDir,
-    [string]$GamePath,
-    [string]$Version
-)
-$ErrorActionPreference = "Stop"
-# Tell the waiting app we are running: only then does it quit and hand over.
-try { Set-Content -LiteralPath ($ZipPath + ".started") -Value $PID -ErrorAction Stop } catch { }
-$stage = Join-Path $env:TEMP ("RetroHub-update-" + [guid]::NewGuid().ToString("N"))
-$unpacked = Join-Path $stage "new"
-$backup = Join-Path $stage "backup"
-$required = @("RetroHub.exe", "BattleShip.exe")
-$installed = @()
-try {
-    try { Wait-Process -Id $WaitForPid -Timeout 20 -ErrorAction Stop } catch { }
-    # Any copy of RetroHub / BattleShip still running from this folder keeps its
-    # exe locked. Give it a few seconds, then close it - the player chose to update.
-    $dirFull = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
-    for ($i = 0; $i -lt 40; $i++) {
-        $running = @(Get-Process -Name "RetroHub","BattleShip" -ErrorAction SilentlyContinue | Where-Object {
-            try { ([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($_.Path))).TrimEnd('\') -ieq $dirFull } catch { $false } })
-        if ($running.Count -eq 0) { break }
-        if ($i -ge 10) { $running | Stop-Process -Force -ErrorAction SilentlyContinue }
-        Start-Sleep -Milliseconds 500
-    }
-    New-Item -ItemType Directory -Path $unpacked -Force | Out-Null
-    Expand-Archive -LiteralPath $ZipPath -DestinationPath $unpacked -Force
-    foreach ($name in $required) {
-        if (-not (Test-Path -LiteralPath (Join-Path $unpacked $name) -PathType Leaf)) {
-            throw ("the update is missing " + $name)
-        }
-    }
-    $files = Get-ChildItem -LiteralPath $unpacked -Recurse -File -Force |
-        ForEach-Object { $_.FullName.Substring($unpacked.Length + 1) }
-    New-Item -ItemType Directory -Path $backup -Force | Out-Null
-    try {
-        foreach ($rel in $files) {
-            $destination = Join-Path $InstallDir $rel
-            if (Test-Path -LiteralPath $destination -PathType Leaf) {
-                $saved = Join-Path $backup $rel
-                New-Item -ItemType Directory -Path (Split-Path $saved) -Force | Out-Null
-                Copy-Item -LiteralPath $destination -Destination $saved -Force
-            }
-            New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
-            # Antivirus scans can hold a just-released file for a moment.
-            for ($try = 1; ; $try++) {
-                try { Copy-Item -LiteralPath (Join-Path $unpacked $rel) -Destination $destination -Force; break }
-                catch { if ($try -ge 10) { throw } Start-Sleep -Milliseconds 500 }
-            }
-            $installed += $rel
-        }
-    } catch {
-        foreach ($rel in $installed) {
-            $destination = Join-Path $InstallDir $rel
-            $saved = Join-Path $backup $rel
-            try {
-                if (Test-Path -LiteralPath $saved -PathType Leaf) {
-                    Copy-Item -LiteralPath $saved -Destination $destination -Force
-                } else {
-                    Remove-Item -LiteralPath $destination -Force
-                }
-            } catch { }
-        }
-        throw
-    }
-    # Installed via RetroHub-Setup.exe? Keep Apps & features showing the right version.
-    # (AppId must match installer\RetroHub.iss in the BattleShip repo.)
-    try {
-        $uk = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B7F3C1A2-5D4E-4F6A-9C8B-3E1D2A7F5C90}_is1"
-        if (Test-Path -LiteralPath $uk) {
-            $loc = (Get-ItemProperty -LiteralPath $uk).InstallLocation
-            if ($loc -and ($loc.TrimEnd('\') -ieq $dirFull)) {
-                $dv = $Version.TrimStart('v','V')
-                Set-ItemProperty -LiteralPath $uk -Name DisplayVersion -Value $dv
-            }
-        }
-    } catch { }
-    Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath ($ZipPath + ".started") -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
-    Start-Process -FilePath $GamePath -WorkingDirectory $InstallDir
-} catch {
-    $message = "Could not install RetroHub " + $Version + ": " + $_.Exception.Message + "`nThe previous version will be opened."
-    try {
-        Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.MessageBox]::Show($message, "RetroHub Update", "OK", "Error") | Out-Null
-    } catch { }
-    Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath ($ZipPath + ".started") -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $GamePath -PathType Leaf) {
-        Start-Process -FilePath $GamePath -WorkingDirectory $InstallDir
-    }
-}
-)PS";
-
 int run_capture(std::string cmd, const std::function<void(const std::string&)>& onLine) {
     HANDLE rd = nullptr, wr = nullptr;
     SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof(sa); sa.bInheritHandle = TRUE;
@@ -598,7 +497,6 @@ void start_update() {
         CreateDirectoryW(W(updatesDir).c_str(), nullptr);
         std::string zipPath = updatesDir + "\\update.zip";
         rm_file(zipPath);
-        rm_file(zipPath + ".started");
 
         auto onLine = [](const std::string& line) {
             size_t p = line.rfind('%');
@@ -630,31 +528,56 @@ void start_update() {
             fail("download failed verification.");
             return;
         }
-        std::string scriptPath = updatesDir + "\\install_update.ps1";
-        {
-            std::ofstream script(P(scriptPath), std::ios::binary | std::ios::trunc);
-            script << kInstallerScript;
-            if (!script) { fail("could not prepare the installer."); return; }
-        }
+        /* Unpack the zip (Windows' own tar.exe, hidden), then hand over to a TEMP copy of
+         * RetroHub.exe running `--apply-update` (see update_apply.h). */
+        set_status("Preparing...");
         std::wstring systemRoot = L"C:\\Windows";
         if (DWORD need = GetEnvironmentVariableW(L"SystemRoot", nullptr, 0)) {
             std::wstring b(need, L'\0');
             DWORD got = GetEnvironmentVariableW(L"SystemRoot", &b[0], need);
             if (got > 0 && got < need) { b.resize(got); systemRoot = b; }
         }
-        std::string cmd = "\"" + U8(systemRoot) + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"" +
-                          " -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass" +
-                          " -File \"" + scriptPath + "\"" +
-                          " -WaitForPid " + std::to_string(GetCurrentProcessId()) +
-                          " -ZipPath \"" + zipPath + "\"" +
-                          " -InstallDir \"" + exeDir + "\"" +
-                          " -GamePath \"" + exePath + "\"" +
-                          " -Version \"" + version + "\"";
+        std::string staged = updatesDir + "\\staged";
+        std::error_code fec;
+        std::filesystem::remove_all(P(staged), fec);
+        std::filesystem::create_directories(P(staged), fec);
+        std::string tarCmd = "\"" + U8(systemRoot) + "\\System32\\tar.exe\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
+        int tarCode = run_capture(tarCmd, [](const std::string&) {});
+        rm_file(zipPath);
+        if (tarCode != 0) { std::filesystem::remove_all(P(staged), fec); fail("could not unpack the update."); return; }
+        for (const char* req : {"RetroHub.exe", "BattleShip.exe"})
+            if (GetFileAttributesW(W(staged + "\\" + req).c_str()) == INVALID_FILE_ATTRIBUTES) {
+                std::filesystem::remove_all(P(staged), fec);
+                fail(std::string("the update is missing ") + req);
+                return;
+            }
+
+        /* TEMP copy of this exe (+ its DLLs) so the install's RetroHub.exe is not locked. */
+        wchar_t tmpBuf[MAX_PATH + 1]; DWORD tn = GetTempPathW(MAX_PATH, tmpBuf);
+        std::filesystem::path tmpRoot = tn ? std::filesystem::path(std::wstring(tmpBuf, tn)) : P(updatesDir);
+        for (auto& e : std::filesystem::directory_iterator(tmpRoot, fec))   // best-effort: stale copies of earlier updates
+            if (e.path().filename().wstring().rfind(L"RetroHub-apply-", 0) == 0) {
+                std::error_code e2; std::filesystem::remove_all(e.path(), e2);
+            }
+        std::filesystem::path applyDir = tmpRoot / (L"RetroHub-apply-" + std::to_wstring(GetCurrentProcessId()));
+        std::filesystem::create_directories(applyDir, fec);
+        std::filesystem::path applyExe = applyDir / L"RetroHub.exe";
+        std::filesystem::copy_file(P(exePath), applyExe, std::filesystem::copy_options::overwrite_existing, fec);
+        if (fec) { fail("could not prepare the installer."); return; }
+        for (auto& e : std::filesystem::directory_iterator(P(exeDir), fec)) {
+            std::wstring ext = e.path().extension().wstring();
+            for (auto& c : ext) c = (wchar_t)towlower(c);
+            std::error_code e2;
+            if (ext == L".dll") std::filesystem::copy_file(e.path(), applyDir / e.path().filename(), std::filesystem::copy_options::overwrite_existing, e2);
+        }
+
+        std::wstring marker = W(updatesDir + "\\apply.started");
+        DeleteFileW(marker.c_str());
+        std::wstring wcmd = L"\"" + applyExe.wstring() + L"\" --apply-update \"" + W(staged) + L"\" \"" + W(exeDir) + L"\" " +
+                            std::to_wstring(GetCurrentProcessId()) + L" --version \"" + W(version) + L"\" --started-marker \"" + marker + L"\"";
         STARTUPINFOW si{}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
-        /* Hidden console of its own; break away from our job object (if any) so
-         * the installer outlives us, falling back to a plain launch. */
-        std::wstring wcmd = W(cmd), wdir = W(exeDir);
+        std::wstring wdir = applyDir.wstring();
         std::wstring cmdBreakaway = wcmd;
         if (!CreateProcessW(nullptr, cmdBreakaway.data(), nullptr, nullptr, FALSE,
                             CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB, nullptr, wdir.c_str(), &si, &pi) &&
@@ -668,11 +591,10 @@ void start_update() {
 
         /* Quit only once the installer is confirmed running; it waits for this
          * process to exit before touching any files. */
-        std::string marker = zipPath + ".started";
         bool started = false;
-        for (int i = 0; i < 300 && !started; i++) {   // PowerShell can take a while to cold-start
+        for (int i = 0; i < 300 && !started; i++) {   // the applier can take a moment to cold-start
             Sleep(100);
-            started = GetFileAttributesW(W(marker).c_str()) != INVALID_FILE_ATTRIBUTES;
+            started = GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES;
         }
         if (!started) { fail("the installer did not start."); return; }
         set_status("Installing " + version + " - RetroHub will restart...");

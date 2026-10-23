@@ -69,13 +69,17 @@ set(RETROHUB_TEST_SERVER "wss://smash-netplay.jumpcircuit.workers.dev" CACHE STR
 
 add_test(NAME hubcommon_test COMMAND hubcommon_test)
 add_test(NAME hublibrary_test COMMAND hublibrary_test)
+add_test(NAME hubgamesettings_test COMMAND hubgamesettings_test)
+add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
 add_test(NAME retrorun_link_test COMMAND retrorun_link_test)
 add_test(NAME hubsaves_test COMMAND hubsaves_test)
 add_test(NAME hub_logic_test COMMAND hub_logic_test)
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
+add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
 add_test(NAME hub_shell_test COMMAND hub_shell_test)
+add_test(NAME hub_invite_test COMMAND hub_invite_test)                   # invite parsing + pipe handoff (no network, no windows)
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
@@ -83,9 +87,11 @@ add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
 add_test(NAME n64run_match_test COMMAND n64run_match_test)
 add_test(NAME n64run_testinput_test COMMAND n64run_testinput_test)
 add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulated network only
+add_test(NAME n64run_mempak_test COMMAND n64run_mempak_test)          # controller pak policy (no network)
 
 # Online: need the live server.
 add_test(NAME hubnet_test COMMAND hubnet_test ${RETROHUB_TEST_SERVER})
 add_test(NAME hubfriends_test COMMAND hubfriends_test ${RETROHUB_TEST_SERVER})
+add_test(NAME hublink_test COMMAND hublink_test)                         # link-a-new-PC crypto/adopt/export (no network)
 add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
 set_tests_properties(hubnet_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)
