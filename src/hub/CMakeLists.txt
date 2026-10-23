@@ -1,10 +1,14 @@
-add_library(hublogic STATIC logic.cpp netplay_3ds.cpp)
+add_library(hublogic STATIC logic.cpp netplay_3ds.cpp smash_save.cpp)
 target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_compile_features(hublogic PUBLIC cxx_std_17)
 
 # Console-only unit test for the pure logic.
 add_executable(hub_logic_test test_logic.cpp)
 target_link_libraries(hub_logic_test PRIVATE hublogic)
+
+# Session-level rules: Smash save one-time copy (scratch dirs), post-exit touch/sync, queued friend join.
+add_executable(hub_session_test test_session.cpp)
+target_link_libraries(hub_session_test PRIVATE hublogic)
 
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
