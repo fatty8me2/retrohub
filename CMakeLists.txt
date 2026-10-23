@@ -58,6 +58,7 @@ add_subdirectory(src/saves)
 add_subdirectory(src/net)
 add_subdirectory(src/n64run)
 add_subdirectory(src/retrorun)
+add_subdirectory(src/mgba_link)
 add_subdirectory(src/hub)
 
 # ---- Tests (ctest) ----

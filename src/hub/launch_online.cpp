@@ -291,12 +291,14 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         spawn(n64run_path(), args, hub::exe_dir(), {}, ri);
         return;
     }
-    if ((e.system == hub::System::GB || e.system == hub::System::GBC) && hub::link_cable_game(e.catalog_id) &&
+    if ((e.system == hub::System::GB || e.system == hub::System::GBC || e.system == hub::System::GBA) && hub::link_cable_game(e.catalog_id) &&
         (is_host || (launch_msg && launch_msg->get("np_link")))) {
         /* Link cable: every PC runs BOTH Game Boys in one SameBoy simulation (np_link); each PC loads its own vault save into its
          * console, the saves are exchanged through the room, and only the own console's save is written back. */
-        std::string core = find_core("sameboy");
-        if (core.empty()) { set_notice("Emulator core 'sameboy' not found (cores folder)."); return; }
+        /* GBA: mgba_link_libretro = N mGBA cores joined by mGBA's lockstep SIO driver (src/mgba_link). */
+        const char* lcore = e.system == hub::System::GBA ? "mgba_link" : "sameboy";
+        std::string core = find_core(lcore);
+        if (core.empty()) { set_notice(std::string("Emulator core '") + lcore + "' not found (cores folder)."); return; }
         std::vector<std::string> owners;
         {
             std::string tok;

@@ -54,3 +54,7 @@ RetroHub does not include game cover art, box art or screenshots. Art is fetched
 - RetroHub itself is GPL-3.0-or-later (see `LICENSE`).
 - The mupen64plus and GLideN64 components are GPL-2.0-or-later, so they can be used under GPL-3.0-or-later.
 - Gambatte, melonDS DS and mupen64plus are used as separate programs, plugins or dynamically loaded libraries, not compiled into RetroHub.
+
+## mGBA (mgba_link_libretro)
+mGBA 0.10.5, (c) 2013-2024 Jeffrey Pfau and contributors, Mozilla Public License 2.0. Built from the unmodified upstream tarball (https://github.com/mgba-emu/mgba, tag 0.10.5)
+as a static library into `mgba_link_libretro.dll` (src/mgba_link, also MPL-2.0). Source: the URL above plus src/mgba_link/mgba_link.c.

@@ -176,6 +176,15 @@ plays that console's audio. The periodic state hash covers both consoles (SameBo
 - **Launch spec:** `"np_link":{"core":"sameboy","consoles":2}`; the hub then passes the vault battery dir. Catalog: Red/Yellow/Gold/Silver/Crystal `online=true`, 2 players.
 - **Limits:** both PCs need the same ROM unless `--link-roms` lists each console's ROM (cross-version trades Red<->Blue need both ROMs on both PCs);
   RTC is cycle-based (the in-game clock only advances while playing); SameBoy wants optional boot ROMs (`dmg_boot.bin`/`cgb_boot.bin`) in the system dir.
-- **GBA is not online:** mGBA/gpSP libretro cores expose no link port and a second core instance cannot be wired to the first one's SIO without
-  patching a core. Needs a custom mGBA build (mGBA's lockstep driver runs N cores in one process) - future work.
+- **GBA link (`mgba_link_libretro.dll`, `src/mgba_link`):** mGBA's libretro cores expose no link port, so RetroHub builds its own libretro core from mGBA 0.10.5
+  (CMake FetchContent, pinned tarball + SHA256, static `libmgba`, MPL-2.0). It creates 2 (up to 4) GBA cores in one process and joins them with mGBA's own
+  `GBASIOLockstep` driver (multiplayer SIO mode, used by Pokemon Ruby/Sapphire/Emerald/FireRed/LeafGreen for trades and battles). mGBA's Qt frontend runs one thread
+  per console; here the consoles are stepped cooperatively from one thread in a fixed order (wait/sleep are flags honoured after the event returns), so the
+  result is deterministic. retrorun uses it exactly like SameBoy dual: `--core mgba_link_libretro.dll --system gba --link`, side-by-side 240N x 160 frame cropped
+  to the own console, same memory-id layout (save exchange and own-console write-back unchanged), serialized state = all consoles + the lockstep bookkeeping
+  (state hash). HLE BIOS; fake-epoch RTC (option `mgbalink_rtc_epoch`) advancing with emulated frames. `MGBALINK_DEBUG=1` prints SIO state.
+  Catalog: Ruby/Sapphire/Emerald/FireRed/LeafGreen `online=true`, 2 players; spec `"np_link":{"core":"mgba","consoles":2}`.
+  Limits: the Wireless Adapter (RFU, SIO normal-32) is not emulated; entering a real game's link room was not exercised headlessly (needs a save inside a
+  Pokemon Center); the .srm is 128 KiB for Flash1M games (autodetected from the ROM).
+- Tests: `qa\retrorun_gbalink.ps1` (two peers via a local `wrangler dev`) and `qa\make_siotest_rom.py` (hand-assembled multiplayer-SIO test ROM).
 - Test: `qa\retrorun_link.ps1` (needs a local `wrangler dev`), `retrorun_link_test` (exchange logic with loss/reorder).

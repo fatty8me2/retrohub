@@ -281,7 +281,10 @@ int main() {
         const GameInfo* g = find_game(id);
         CHECK(g && g->online && online_max_for(*g) == 2 && link_cable_game(id));
     }
-    for (const char* id : {"pokeruby", "pokesapphire", "pokeemerald", "pokefirered", "pokeleafgreen"}) CHECK(find_game(id) && !find_game(id)->online && !link_cable_game(id));
+    for (const char* id : {"pokeruby", "pokesapphire", "pokeemerald", "pokefirered", "pokeleafgreen"}) {
+        const GameInfo* g = find_game(id);   /* GBA link: mgba_link_libretro (2 GBAs in one simulation) */
+        CHECK(g && g->online && online_max_for(*g) == 2 && link_cable_game(id));
+    }
     test_find_game_for();
 
     std::error_code ec;
