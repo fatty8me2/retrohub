@@ -26,6 +26,11 @@ Identity identity_generate();
  * <data_dir>/identity-backup-<timestamp>.json and switch identity.json to the vault's. Returns true (and
  * fills *adopted) when it switched. Pure file logic: does not touch any running client. */
 bool identity_adopt_vault_if_older(const std::string& data_dir, const std::string& vault_dir, Identity* adopted);
+/* Reads an identity.json-format file (validates both fields). */
+bool identity_read_file(const std::string& path, Identity* id);
+/* Unconditionally makes `v` the current identity: backs up a different existing identity.json to
+ * identity-backup-<timestamp>.json, then writes identity.json and the vault mirror. Pure file logic. */
+bool identity_adopt(const std::string& data_dir, const std::string& vault_dir, const Identity& v);
 std::string friend_code(const std::string& user_id);   // "RH-7KQ2-M9XD"
 
 /* ---- data ---- */
@@ -133,7 +138,12 @@ class FriendsClient {
      * reconnects with it if the client was started, queues Event::IdentityAdopted and returns true. */
     bool adopt_vault_identity_if_older();
 
+    /* Replaces this PC's identity with `v` (linked from another PC or imported from a file): backs up
+     * the current identity, reconnects with `v` if started, queues Event::IdentityAdopted. */
+    bool adopt_identity(const Identity& v);
+
   private:
+    void apply_adopted(const Identity& v);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

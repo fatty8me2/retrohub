@@ -202,7 +202,7 @@ n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N --p
 ### 3DS and Wii U
 
 `3ds` (Azahar, `Engine::Azahar`) and `wiiu` (Cemu, `Engine::Cemu`) entries live in the same catalog (8 Pokemon 3DS games, Twilight Princess HD).
-They run as external emulators started by `launch_external` in `src/hub/main.cpp`; everything else is in `src/hub/emulators.cpp`, with the header
+They run as external emulators started by `launch_external` in `src/hub/launch.cpp`; everything else is in `src/hub/emulators.cpp`, with the header
 parsers in `src/common/emu_formats.cpp` and the save mapping in `src/common/emu_saves.cpp`. See `docs/EMULATORS.md`.
 
 ROM files can be `.z64` (big-endian), `.v64` (byteswapped) or `.n64` (little-endian). Normalize to `.z64` byte order before hashing. Identification uses the MD5 of the normalized image, with a fallback to the header CRC1/CRC2 at offsets 0x10/0x14.

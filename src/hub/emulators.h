@@ -1,4 +1,5 @@
 #pragma once
+#include "controls.h"
 /* External emulators for Nintendo 3DS (Azahar) and Wii U (Cemu): locate / download-on-demand,
  * portable user dirs inside RetroHub's data dir, config pre-writing, launch arguments, and the
  * save-vault round trip. UI-free (main.cpp draws the modal and spawns the process).
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "library.h"
+#include "game_settings.h"
 
 namespace hubemu {
 
@@ -73,11 +75,15 @@ std::string sha256_file(const std::string& path);   // lowercase hex, "" on erro
 /* ---- config pre-writing (merged into what is already there) ---- */
 /* Azahar: creates <dir>\user (portable marker) and writes qt-config.ini defaults once: no first-run prompts,
  * no update check, controller 1 (any SDL game controller, so the first XInput pad) mapped by position. */
-void prepare_azahar(const std::string& install_dir);
+void prepare_azahar(const std::string& install_dir);   // profile = the stored 3ds profile
+void prepare_azahar(const std::string& install_dir, const hubctl::Profile& profile);
+std::string azahar_config_patch(const std::string& qt_config_ini, const hubctl::Profile& profile);
 std::string azahar_config_patch(const std::string& qt_config_ini);   // pure: the text transform
 /* Cemu (RetroHub's own download only): <dir>\portable, settings.xml (skips the Getting Started dialog, no update
  * check), controllerProfiles\controller0.xml = Wii U GamePad on XInput pad 0. An existing install is never touched. */
-void prepare_cemu_managed(const std::string& install_dir);
+void prepare_cemu_managed(const std::string& install_dir);   // profile = the stored wiiu profile
+void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& profile);
+std::string cemu_gamepad_profile_xml(const hubctl::Profile& profile);
 std::string cemu_default_settings_xml();
 std::string cemu_gamepad_profile_xml();
 
@@ -91,15 +97,23 @@ std::string dolphin_ini_ports(const std::string& ini, const DolphinPads& p);    
 std::string dolphin_dolphin_ini_patch(const std::string& ini, const DolphinPads& p);   // pure
 std::string dolphin_gfx_ini_patch(const std::string& ini);                              // pure
 std::string dolphin_pad_ini(const std::string& existing, const DolphinPads& p);         // pure: GCPad1..4
-void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads);
+void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads);   // profile = the stored gc profile
+void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, const hubctl::Profile& profile);
+std::string dolphin_pad_ini(const std::string& existing, const DolphinPads& p, const hubctl::Profile& profile);
 /* Tidy up after older RetroHub builds (see docs/DOLPHIN.md): saves stay where they are, nothing user-made is deleted. */
 void dolphin_migrate_old(const std::string& data_dir, const std::string& exe_dir, const std::string& install_dir);
 std::string dolphin_args(const std::string& game_path, bool fullscreen, const std::string& gci_dir);
 /* Where the emulator keeps this game's memory card folder (copied from / to the vault around a session). */
 std::string dolphin_card_root(const std::string& install_dir, const std::string& game_key);
 
+/* ---- per-game settings (game_settings.h): pure patchers + one writer called before launch ---- */
+std::string dolphin_gfx_apply(const std::string& gfx_ini, const hub::gs::Values& v);        // InternalResolution, wideScreenHack
+std::string azahar_config_apply(const std::string& qt_config, const hub::gs::Values& v);    // resolution_factor, layout_option
+std::string cemu_settings_apply(const std::string& settings_xml, const hub::gs::Values& v); // graphic packs on/off (reversible)
+void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::Values& resolved);
+
 /* ---- launch ---- */
-std::string azahar_args(const std::string& game_path, bool fullscreen);   // after the exe path
+std::string azahar_args(const std::string& game_path, bool fullscreen, const std::string& extra = "");   // extra: e.g. -m "nick@127.0.0.1:port"   // after the exe path
 std::string cemu_args(const std::string& game_path, bool fullscreen);
 
 /* ---- saves: emulator folder <-> vault ---- */

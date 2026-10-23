@@ -7,11 +7,12 @@ add_executable(retrorun
     main.cpp
     core.cpp
     image.cpp
+    link_sync.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run/lockstep.cpp)
 target_include_directories(retrorun PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
-target_link_libraries(retrorun PRIVATE n64run_lockstep_core hubnet hubcommon SDL2::SDL2)
+target_link_libraries(retrorun PRIVATE n64run_lockstep_core hubnet hubcommon hubcontrols_sdl SDL2::SDL2)
 set_target_properties(retrorun PROPERTIES WIN32_EXECUTABLE OFF)
 
 add_custom_command(TARGET retrorun POST_BUILD
@@ -28,3 +29,12 @@ target_include_directories(retrorun_dslink_test PRIVATE ${CMAKE_CURRENT_SOURCE_D
 # Branding: same icon + version resources as RetroHub.exe (see src/hub/CMakeLists.txt for the generated header).
 target_sources(retrorun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/retrorun.rc)
 target_include_directories(retrorun PRIVATE ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_CURRENT_SOURCE_DIR}/../hub)
+
+# Link-cable save exchange (retrorun --link): pure logic, console test with simulated loss/reorder.
+add_executable(retrorun_link_test test_link_sync.cpp link_sync.cpp)
+target_include_directories(retrorun_link_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+target_link_libraries(retrorun_link_test PRIVATE hubnet)
+
+# SDL_GameControllerDB (zlib, see THIRD_PARTY.md) next to the exe: <exe>/controls/gamecontrollerdb.txt
+add_custom_command(TARGET retrorun POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/controls/gamecontrollerdb.txt $<TARGET_FILE_DIR:retrorun>/controls/gamecontrollerdb.txt)

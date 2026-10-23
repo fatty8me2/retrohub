@@ -106,9 +106,9 @@ struct PortPlan;
 struct MatchSpec;
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed,
                         const std::string& core = "", bool share_host_save = false, const PortPlan* plan = nullptr,
-                        const MatchSpec* match = nullptr, const std::string& np_ds = "");
+                        const MatchSpec* match = nullptr, const std::string& extra_json = "");   // extra_json: ",\"np_x\":{...}" fragment
 /* The `np_ds` launch-spec value for Nintendo DS games ({"v":1,"mode":"wireless"}): every PC runs its own emulator and
- * only the DS local-wireless frames travel through the room (retrorun --link). */
+ * only the DS local-wireless frames travel through the room (retrorun --ds-link). Pass ",\"np_ds\":" + np_ds_json() as extra_json. */
 std::string np_ds_json();
 /* Guest side: true when the launch message carries a DS wireless spec this build understands (absent = older host,
  * which is still wireless for any DS game the catalog marks online). */

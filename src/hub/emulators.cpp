@@ -19,9 +19,11 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <vector>
 
+#include "controls.h"
 #include "emu_saves.h"
 #include "miniz.h"
 #include "games.h"
@@ -481,28 +483,32 @@ bool Installer::poll(bool* success) {
 /* config pre-writing                                                  */
 /* ------------------------------------------------------------------ */
 
-/* 3DS button -> SDL game-controller button, by position (3DS A = east = the Xbox B button). maptype "all" with
- * api "controller" means any connected game controller (so the first XInput pad), no GUID needed. */
-static const char* kAzPad[][2] = {
-    {"button_a", "engine:sdl,api:controller,button:1,maptype:all,port:0"},
-    {"button_b", "engine:sdl,api:controller,button:0,maptype:all,port:0"},
-    {"button_x", "engine:sdl,api:controller,button:3,maptype:all,port:0"},
-    {"button_y", "engine:sdl,api:controller,button:2,maptype:all,port:0"},
-    {"button_up", "engine:sdl,api:controller,button:11,maptype:all,port:0"},
-    {"button_down", "engine:sdl,api:controller,button:12,maptype:all,port:0"},
-    {"button_left", "engine:sdl,api:controller,button:13,maptype:all,port:0"},
-    {"button_right", "engine:sdl,api:controller,button:14,maptype:all,port:0"},
-    {"button_l", "engine:sdl,api:controller,button:9,maptype:all,port:0"},
-    {"button_r", "engine:sdl,api:controller,button:10,maptype:all,port:0"},
-    {"button_start", "engine:sdl,api:controller,button:6,maptype:all,port:0"},
-    {"button_select", "engine:sdl,api:controller,button:4,maptype:all,port:0"},
-    {"button_zl", "engine:sdl,api:controller,axis:4,direction:+,threshold:0.5,maptype:all,port:0"},
-    {"button_zr", "engine:sdl,api:controller,axis:5,direction:+,threshold:0.5,maptype:all,port:0"},
-    {"circle_pad", "engine:sdl,api:controller,axis_x:0,axis_y:1,deadzone:0.15,maptype:all,port:0"},
-    {"c_stick", "engine:sdl,api:controller,axis_x:2,axis_y:3,deadzone:0.15,maptype:all,port:0"},
-};
+/* Profile-driven 3DS pad: control -> qt-config key. The default profile maps by position (3DS A = east = the Xbox B
+ * button). maptype "all" with api "controller" means any connected game controller (so the first XInput pad). */
+static const char* const kAzButtons[] = {"a", "b", "x", "y", "up", "down", "left", "right", "l", "r", "start", "select", "zl", "zr"};
 
-std::string azahar_config_patch(const std::string& in) {
+static std::string fmt_g(double v) { char b[40]; std::snprintf(b, sizeof b, "%g", v); return b; }
+
+static std::string az_binding(const hubctl::Profile& p, const std::string& control) {
+    auto it = p.buttons.find(control);
+    std::vector<hubctl::Term> t;
+    if (it == p.buttons.end() || !hubctl::parse_expr(it->second, p.axis_threshold, &t) || t.empty()) return "";
+    const hubctl::Term& m = t[0];   // Azahar takes one source per button
+    if (!m.axis) return "engine:sdl,api:controller,button:" + std::to_string(m.idx) + ",maptype:all,port:0";
+    return "engine:sdl,api:controller,axis:" + std::to_string(m.idx) + ",direction:" + (m.sign < 0 ? "-" : "+") +
+           ",threshold:" + fmt_g(m.threshold / 32768.0) + ",maptype:all,port:0";
+}
+
+static std::string az_analog(const hubctl::Profile& p, const std::string& control) {
+    auto it = p.analogs.find(control);
+    if (it == p.analogs.end()) return "";
+    int ax = hubctl::axis_index(it->second.x), ay = hubctl::axis_index(it->second.y);
+    if (ax < 0 || ay < 0) return "";
+    return "engine:sdl,api:controller,axis_x:" + std::to_string(ax) + ",axis_y:" + std::to_string(ay) + ",deadzone:" +
+           fmt_g(it->second.deadzone) + ",maptype:all,port:0";
+}
+
+std::string azahar_config_patch(const std::string& in, const hubctl::Profile& prof) {
     std::string t = in;
     auto set = [&](const char* sec, const std::string& key, const std::string& val) {
         t = hubui::ini_set(t, sec, key + "\\default", "false");
@@ -512,22 +518,43 @@ std::string azahar_config_patch(const std::string& in) {
     set("UI", "firstStart", "false");
     set("UI", "enable_discord_presence", "false");
     set("Miscellaneous", "check_for_update_on_start", "false");
-    for (auto& kv : kAzPad) set("Controls", kv[0], std::string("\"") + kv[1] + "\"");
+    for (const char* c : kAzButtons) { std::string v = az_binding(prof, c); if (!v.empty()) set("Controls", std::string("button_") + c, "\"" + v + "\""); }
+    for (const char* c : {"circle_pad", "c_stick"}) { std::string v = az_analog(prof, c); if (!v.empty()) set("Controls", c, "\"" + v + "\""); }
     return t;
 }
+std::string azahar_config_patch(const std::string& in) { return azahar_config_patch(in, hubctl::default_profile("3ds")); }
 
-void prepare_azahar(const std::string& install_dir) {
+/* The generated pad configs are written when missing, and again only when the RetroHub profile they come from changed:
+ * the marker file holds the hash of the profile that was written ("profile-hash: ..."). A marker without a hash is from
+ * an older RetroHub that wrote the built-in default. Edits made in the emulator's own dialogs survive until then. */
+static std::string marker_hash(const std::string& marker_text, const std::string& system) {
+    size_t p = marker_text.find("profile-hash: ");
+    if (p == std::string::npos) return hubctl::hash_hex(hubctl::mapping_hash(hubctl::default_profile(system)));
+    size_t e = marker_text.find_first_of("\r\n", p);
+    return marker_text.substr(p + 14, e == std::string::npos ? std::string::npos : e - p - 14);
+}
+
+static hubctl::Profile stored_profile(const std::string& system) {
+    hubctl::Store st;
+    hubctl::load_store(hub::data_dir(), "", &st);
+    return hubctl::resolve(st, system);
+}
+
+void prepare_azahar(const std::string& install_dir, const hubctl::Profile& prof) {
     std::string user = join(install_dir, "user");   // a "user" folder beside azahar.exe makes it portable
     std::string cfgdir = join(user, "config");
     make_dirs(cfgdir);
     make_dirs(join(user, "sdmc"));
     std::string marker = join(cfgdir, "retrohub-pad.txt");
-    if (file_exists(marker)) return;   // defaults were written once; later edits (in Azahar's own Configure) are kept
+    std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof));
+    if (file_exists(marker) && marker_hash(read_text(marker), "3ds") == want) return;   // already written for this profile; later edits are kept
     std::string ini = join(cfgdir, "qt-config.ini");
-    write_text(ini, azahar_config_patch(read_text(ini)));
-    write_text(marker, "RetroHub wrote the default controller mapping (any game controller, by position) once.\n"
-                       "Delete this file to have it written again.\n");
+    write_text(ini, azahar_config_patch(read_text(ini), prof));
+    write_text(marker, "RetroHub wrote the controller mapping from its Controllers profile.\n"
+                       "It is rewritten only when that profile changes. Delete this file to have it written again.\n"
+                       "profile-hash: " + want + "\n");
 }
+void prepare_azahar(const std::string& install_dir) { prepare_azahar(install_dir, stored_profile("3ds")); }
 
 std::string cemu_default_settings_xml() {
     return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -544,39 +571,58 @@ std::string cemu_default_settings_xml() {
            "</content>\n";
 }
 
-std::string cemu_gamepad_profile_xml() {
-    /* VPAD ButtonId -> XInput-based mapping ids, copied from Cemu's own set_default_mapping (VPADController.cpp) */
-    static const int m[][2] = {
-        {1, 13}, {2, 12}, {3, 15}, {4, 14},          // A B X Y (Nintendo layout: A is the Xbox B button)
-        {5, 8}, {6, 9}, {7, 42}, {8, 43},            // L R ZL ZR (triggers = kTriggerXP/YP)
-        {9, 4}, {10, 5},                             // + -
-        {11, 0}, {12, 1}, {13, 2}, {14, 3},          // d-pad
-        {15, 6}, {16, 7},                            // stick clicks
-        {17, 39}, {18, 45}, {19, 44}, {20, 38},      // left stick up/down/left/right
-        {21, 41}, {22, 47}, {23, 46}, {24, 40},      // right stick
-    };
+/* SDL source -> Cemu's XInput mapping ids (from Cemu's own set_default_mapping, VPADController.cpp). */
+static int cemu_xinput_id(const hubctl::Term& t) {
+    static const std::map<std::string, int> m = {
+        {"a", 12}, {"b", 13}, {"x", 14}, {"y", 15}, {"leftshoulder", 8}, {"rightshoulder", 9}, {"start", 4}, {"back", 5},
+        {"dpup", 0}, {"dpdown", 1}, {"dpleft", 2}, {"dpright", 3}, {"leftstick", 6}, {"rightstick", 7},
+        {"lefttrigger", 42}, {"righttrigger", 43}, {"leftx+", 38}, {"lefty-", 39}, {"rightx+", 40}, {"righty-", 41},
+        {"leftx-", 44}, {"lefty+", 45}, {"rightx-", 46}, {"righty+", 47}};
+    auto it = m.find(hubctl::term_name(t));
+    return it == m.end() ? -1 : it->second;
+}
+
+std::string cemu_gamepad_profile_xml(const hubctl::Profile& prof) {
+    /* VPAD ButtonId (1..24) -> profile control. The default profile reproduces the old fixed table exactly. */
+    static const char* const vpad[] = {"a", "b", "x", "y", "l", "r", "zl", "zr", "plus", "minus", "dpup", "dpdown", "dpleft", "dpright",
+                                       "l3", "r3", "ls_up", "ls_down", "ls_left", "ls_right", "rs_up", "rs_down", "rs_left", "rs_right"};
+    auto dz = [&](const char* name) { auto it = prof.analogs.find(name); return fmt_g(it == prof.analogs.end() ? 0.25 : it->second.deadzone); };
     std::string x = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>Wii U GamePad</type>\n"
                     "\t<controller>\n\t\t<api>XInput</api>\n\t\t<uuid>0</uuid>\n\t\t<display_name>Controller 1</display_name>\n"
                     "\t\t<rumble>0</rumble>\n"
-                    "\t\t<axis>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n"
-                    "\t\t<rotation>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n"
+                    "\t\t<axis>\n\t\t\t<deadzone>" + dz("left_stick") + "</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n"
+                    "\t\t<rotation>\n\t\t\t<deadzone>" + dz("right_stick") + "</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n"
                     "\t\t<trigger>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</trigger>\n"
                     "\t\t<mappings>\n";
-    for (auto& e : m)
-        x += "\t\t\t<entry>\n\t\t\t\t<mapping>" + std::to_string(e[0]) + "</mapping>\n\t\t\t\t<button>" + std::to_string(e[1]) +
+    for (int i = 0; i < 24; i++) {
+        auto it = prof.buttons.find(vpad[i]);
+        std::vector<hubctl::Term> t;
+        if (it == prof.buttons.end() || !hubctl::parse_expr(it->second, prof.axis_threshold, &t) || t.empty()) continue;
+        int id = cemu_xinput_id(t[0]);   // one source per Wii U button
+        if (id < 0) continue;
+        x += "\t\t\t<entry>\n\t\t\t\t<mapping>" + std::to_string(i + 1) + "</mapping>\n\t\t\t\t<button>" + std::to_string(id) +
              "</button>\n\t\t\t</entry>\n";
+    }
     x += "\t\t</mappings>\n\t</controller>\n</emulated_controller>\n";
     return x;
 }
+std::string cemu_gamepad_profile_xml() { return cemu_gamepad_profile_xml(hubctl::default_profile("wiiu")); }
 
-void prepare_cemu_managed(const std::string& install_dir) {
+void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& prof) {
     std::string portable = join(install_dir, "portable");   // Cemu's portable marker + data folder
     make_dirs(join(portable, "controllerProfiles"));
     std::string settings = join(portable, "settings.xml");
     if (!file_exists(settings)) write_text(settings, cemu_default_settings_xml());   // its absence triggers the first-run dialog
     std::string pad = join(portable, "controllerProfiles\\controller0.xml");
-    if (!file_exists(pad)) write_text(pad, cemu_gamepad_profile_xml());
+    std::string marker = join(portable, "controllerProfiles\\retrohub-pad.txt");
+    std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof));
+    /* No marker = written by an older RetroHub (the built-in default) or never written. */
+    if (file_exists(pad) && marker_hash(file_exists(marker) ? read_text(marker) : "", "wiiu") == want) return;
+    write_text(pad, cemu_gamepad_profile_xml(prof));
+    write_text(marker, "RetroHub wrote controller0.xml from its Controllers profile; it is rewritten only when that profile changes.\n"
+                       "profile-hash: " + want + "\n");
 }
+void prepare_cemu_managed(const std::string& install_dir) { prepare_cemu_managed(install_dir, stored_profile("wiiu")); }
 
 /* ------------------------------------------------------------------ */
 /* Dolphin (GameCube)                                                  */
@@ -662,53 +708,103 @@ std::string dolphin_gfx_ini_patch(const std::string& in) {
     return t;
 }
 
-std::string dolphin_pad_ini(const std::string& in, const DolphinPads&) {
+/* SDL source -> Dolphin's XInput device control names. */
+static std::string dolphin_xinput_name(const hubctl::Term& t) {
+    static const std::map<std::string, const char*> m = {
+        {"a", "`Button A`"}, {"b", "`Button B`"}, {"x", "`Button X`"}, {"y", "`Button Y`"}, {"leftshoulder", "`Shoulder L`"},
+        {"rightshoulder", "`Shoulder R`"}, {"start", "Start"}, {"back", "Back"}, {"leftstick", "`Thumb L`"}, {"rightstick", "`Thumb R`"},
+        {"dpup", "`Pad N`"}, {"dpdown", "`Pad S`"}, {"dpleft", "`Pad W`"}, {"dpright", "`Pad E`"},
+        {"lefttrigger", "`Trigger L`"}, {"righttrigger", "`Trigger R`"},
+        {"leftx+", "`Left X+`"}, {"leftx-", "`Left X-`"}, {"lefty-", "`Left Y+`"}, {"lefty+", "`Left Y-`"},
+        {"rightx+", "`Right X+`"}, {"rightx-", "`Right X-`"}, {"righty-", "`Right Y+`"}, {"righty+", "`Right Y-`"}};
+    auto it = m.find(hubctl::term_name(t));
+    return it == m.end() ? "" : it->second;
+}
+
+std::string dolphin_pad_ini(const std::string& in, const DolphinPads&, const hubctl::Profile& prof) {
     std::string t = in;
     const std::string kb = "DInput/0/Keyboard Mouse";
-    struct M { const char* key; const char* xi; const char* key_kb; };
-    static const M map[] = {   // GC control <- Xbox control (by position), keyboard fallback on port 1 (Dolphin's own default keys)
-        {"Buttons/A", "`Button A`", "X"},        {"Buttons/B", "`Button X`", "Z"},      {"Buttons/X", "`Button B`", "C"},
-        {"Buttons/Y", "`Button Y`", "S"},        {"Buttons/Z", "`Shoulder R`", "D"},    {"Buttons/Start", "Start", "RETURN"},
-        {"Main Stick/Up", "`Left Y+`", "UP"},    {"Main Stick/Down", "`Left Y-`", "DOWN"},
-        {"Main Stick/Left", "`Left X-`", "LEFT"}, {"Main Stick/Right", "`Left X+`", "RIGHT"},
-        {"C-Stick/Up", "`Right Y+`", "I"},       {"C-Stick/Down", "`Right Y-`", "K"},
-        {"C-Stick/Left", "`Right X-`", "J"},     {"C-Stick/Right", "`Right X+`", "L"},
-        {"Triggers/L", "`Trigger L`", "Q"},      {"Triggers/R", "`Trigger R`", "W"},
-        {"Triggers/L-Analog", "`Trigger L`", ""}, {"Triggers/R-Analog", "`Trigger R`", ""},
-        {"D-Pad/Up", "`Pad N`", "T"},            {"D-Pad/Down", "`Pad S`", "G"},
-        {"D-Pad/Left", "`Pad W`", "F"},          {"D-Pad/Right", "`Pad E`", "H"},
+    struct M { const char* control; const char* key; const char* key_kb; };
+    static const M map[] = {   // profile control -> GC control; keyboard fallback on port 1 (Dolphin's own default keys)
+        {"a", "Buttons/A", "X"},        {"b", "Buttons/B", "Z"},      {"x", "Buttons/X", "C"},
+        {"y", "Buttons/Y", "S"},        {"z", "Buttons/Z", "D"},      {"start", "Buttons/Start", "RETURN"},
+        {"main_up", "Main Stick/Up", "UP"},    {"main_down", "Main Stick/Down", "DOWN"},
+        {"main_left", "Main Stick/Left", "LEFT"}, {"main_right", "Main Stick/Right", "RIGHT"},
+        {"c_up", "C-Stick/Up", "I"},       {"c_down", "C-Stick/Down", "K"},
+        {"c_left", "C-Stick/Left", "J"},     {"c_right", "C-Stick/Right", "L"},
+        {"l", "Triggers/L", "Q"},      {"r", "Triggers/R", "W"},
+        {"l_analog", "Triggers/L-Analog", ""}, {"r_analog", "Triggers/R-Analog", ""},
+        {"dpad_up", "D-Pad/Up", "T"},            {"dpad_down", "D-Pad/Down", "G"},
+        {"dpad_left", "D-Pad/Left", "F"},          {"dpad_right", "D-Pad/Right", "H"},
     };
     for (int i = 0; i < 4; ++i) {
         std::string sec = "GCPad" + std::to_string(i + 1);
         t = hubui::ini_set(t, sec, "Device", "XInput/" + std::to_string(i) + "/Gamepad");
         for (const auto& m : map) {
-            std::string v = m.xi;
-            if (i == 0 && m.key_kb[0]) v += " | `" + kb + ":" + m.key_kb + "`";
+            std::string v;
+            auto it = prof.buttons.find(m.control);
+            std::vector<hubctl::Term> terms;
+            if (it != prof.buttons.end() && hubctl::parse_expr(it->second, prof.axis_threshold, &terms))
+                for (const auto& term : terms) { std::string n = dolphin_xinput_name(term); if (!n.empty()) v += (v.empty() ? "" : " | ") + n; }
+            if (i == 0 && m.key_kb[0]) v += (v.empty() ? "" : " | ") + std::string("`") + kb + ":" + m.key_kb + "`";
             t = hubui::ini_set(t, sec, m.key, v);
+        }
+        /* A deadzone is only written when the player set one (0 = Dolphin's own default). */
+        for (const auto& st : {std::make_pair("main_stick", "Main Stick"), std::make_pair("c_stick", "C-Stick")}) {
+            auto it = prof.analogs.find(st.first);
+            if (it != prof.analogs.end() && it->second.deadzone > 0) t = hubui::ini_set(t, sec, std::string(st.second) + "/Dead Zone", fmt_g(it->second.deadzone * 100));
         }
         t = hubui::ini_set(t, sec, "Rumble/Motor", "`Motor L`|`Motor R`");
     }
     return t;
 }
+std::string dolphin_pad_ini(const std::string& in, const DolphinPads& p) { return dolphin_pad_ini(in, p, hubctl::default_profile("gc")); }
 
-void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads) {
+void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, const hubctl::Profile& prof) {
     std::string cfg = join(install_dir, "User\\Config");
     make_dirs(cfg);
     if (!file_exists(join(install_dir, "portable.txt"))) write_text(join(install_dir, "portable.txt"), "");
     /* Written once (marker), so settings changed later in Dolphin's own dialogs or by hand are kept: Dolphin.ini defaults,
-     * GFX.ini defaults and the pad mappings. */
+     * GFX.ini defaults and the pad mappings. The pad mappings are rewritten when the RetroHub profile changed. */
     std::string ini = join(cfg, "Dolphin.ini"), gfx = join(cfg, "GFX.ini"), pad = join(cfg, "GCPadNew.ini");
     std::string marker = join(cfg, "retrohub-defaults.txt");
+    std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof));
+    const char* kText = "RetroHub wrote its default Dolphin settings and pad mappings once. Delete this file to have them written again.\n";
     if (!file_exists(marker)) {
         write_text(ini, dolphin_ini_defaults(read_text(ini)));
         write_text(gfx, dolphin_gfx_ini_patch(read_text(gfx)));
-        write_text(pad, dolphin_pad_ini(read_text(pad), pads));
-        write_text(marker, "RetroHub wrote its default Dolphin settings and pad mappings once. Delete this file to have them written again.\n");
+        write_text(pad, dolphin_pad_ini(read_text(pad), pads, prof));
+        write_text(marker, std::string(kText) + "profile-hash: " + want + "\n");
+    } else if (marker_hash(read_text(marker), "gc") != want) {
+        write_text(pad, dolphin_pad_ini(read_text(pad), pads, prof));
+        write_text(marker, std::string(kText) + "profile-hash: " + want + "\n");
     }
     /* Every launch: only the memory card slots and which ports have a pad plugged in. */
     write_text(ini, dolphin_ini_ports(read_text(ini), pads));
 }
+void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads) { prepare_dolphin(install_dir, pads, stored_profile("gc")); }
 
+/* True when a process whose image is exactly this file is running (is_running matches the bare file name, so an unrelated
+ * Dolphin.exe elsewhere would wrongly keep an old download alive and make the cleanup depend on what else runs). */
+static bool running_from(const std::string& exe) {
+    std::wstring want = P(exe).wstring();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof pe;
+    bool found = false;
+    for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, P(exe).filename().wstring().c_str()) != 0) continue;
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+        if (!h) { found = true; continue; }   // cannot tell: be careful and treat it as running
+        wchar_t buf[MAX_PATH * 2];
+        DWORD n = (DWORD)(sizeof buf / sizeof buf[0]);
+        if (QueryFullProcessImageNameW(h, 0, buf, &n) && _wcsicmp(buf, want.c_str()) == 0) found = true;
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
+    return found;
+}
 /* Older RetroHub builds ran a Dolphin downloaded to <exe>\dolphin with its user folder at <data>\dolphin-user, and kept the
  * memory card straight in the vault (<vault>\gc\<game>\battery\GCI): that location is the one the new sync still reads, so
  * saves need no move. This only tidies up: save states move to the new User folder, the old user folder is renamed (never
@@ -726,7 +822,7 @@ void dolphin_migrate_old(const std::string& data_dir, const std::string& exe_dir
     }
     std::string old_inst = join(exe_dir, "dolphin");
     if (file_exists(join(old_inst, "Dolphin.exe")) && file_exists(join(old_inst, "portable.txt")) && !dir_exists(join(old_inst, "User")) &&
-        !file_exists(join(old_inst, "retrohub-install.txt")) && !is_running(join(old_inst, "Dolphin.exe")))
+        !file_exists(join(old_inst, "retrohub-install.txt")) && !running_from(join(old_inst, "Dolphin.exe")))
         remove_tree(old_inst);
 }
 
@@ -734,6 +830,61 @@ std::string dolphin_card_root(const std::string& install_dir, const std::string&
     std::string k = key;
     for (char& ch : k) if (!isalnum((unsigned char)ch) && ch != '-' && ch != '_' && ch != '.') ch = '_';
     return join(install_dir, "User\\GC\\RetroHub\\" + k);
+}
+
+/* ---- per-game settings (src/common/game_settings.h): applied just before each launch ---- */
+std::string dolphin_gfx_apply(const std::string& in, const hub::gs::Values& v) {
+    std::string t = in;
+    auto g = [&](const char* k, const char* d) { auto i = v.find(k); return i == v.end() ? std::string(d) : i->second; };
+    t = hubui::ini_set(t, "Settings", "InternalResolution", g("gc.res", "2"));
+    t = hubui::ini_set(t, "Settings", "wideScreenHack", g("gc.widescreen", "false") == "true" ? "True" : "False");
+    return t;
+}
+
+std::string azahar_config_apply(const std::string& in, const hub::gs::Values& v) {
+    std::string t = in;
+    auto g = [&](const char* k, const char* d) { auto i = v.find(k); return i == v.end() ? std::string(d) : i->second; };
+    auto set = [&](const char* sec, const std::string& key, const std::string& val) {
+        t = hubui::ini_set(t, sec, key + "\\default", "false");
+        t = hubui::ini_set(t, sec, key, val);
+    };
+    set("Renderer", "resolution_factor", g("3ds.res", "1"));
+    std::string l = g("3ds.layout", "default");
+    set("Layout", "layout_option", l == "single" ? "1" : l == "large" ? "2" : l == "side" ? "3" : l == "hybrid" ? "5" : "0");
+    return t;
+}
+
+std::string cemu_settings_apply(const std::string& in, const hub::gs::Values& v) {
+    /* Cemu has no switch for graphic packs; the <GraphicPack> list (the user's enabled packs) is renamed away and back,
+     * so turning them off never loses the selection. */
+    auto i = v.find("wiiu.graphic_packs");
+    bool on = i == v.end() || i->second != "false";
+    std::string t = in;
+    auto rename = [&](const std::string& from, const std::string& to) {
+        for (const char* pre : {"<", "</"}) {
+            std::string a = std::string(pre) + from + ">", b = std::string(pre) + to + ">";
+            for (size_t p = 0; (p = t.find(a, p)) != std::string::npos; p += b.size()) t.replace(p, a.size(), b);
+        }
+    };
+    if (on) rename("GraphicPack_off_by_retrohub", "GraphicPack");
+    else rename("GraphicPack", "GraphicPack_off_by_retrohub");
+    return t;
+}
+
+void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::Values& v) {
+    if (k == Kind::Dolphin) {
+        std::string f = join(install_dir, "User\\Config\\GFX.ini");
+        make_dirs(join(install_dir, "User\\Config"));
+        write_text(f, dolphin_gfx_apply(read_text(f), v));
+    } else if (k == Kind::Azahar) {
+        std::string d = join(install_dir, "user\\config");
+        make_dirs(d);
+        std::string f = join(d, "qt-config.ini");
+        write_text(f, azahar_config_apply(read_text(f), v));
+    } else {
+        std::string f = join(install_dir, "portable\\settings.xml");
+        if (file_exists(f)) write_text(f, cemu_settings_apply(read_text(f), v));
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -749,8 +900,8 @@ std::string dolphin_args(const std::string& game, bool fullscreen, const std::st
            quote("Dolphin.Core.GCIFolderAPathOverride=" + gci) + " -e " + quote(game);
 }
 
-std::string azahar_args(const std::string& game, bool fullscreen) {
-    return std::string(fullscreen ? "-f " : "-w ") + quote(game);   // the game path must be the last argument
+std::string azahar_args(const std::string& game, bool fullscreen, const std::string& extra) {
+    return std::string(fullscreen ? "-f " : "-w ") + (extra.empty() ? "" : extra + " ") + quote(game);   // the game path must be the last argument
 }
 std::string cemu_args(const std::string& game, bool fullscreen) {
     return "-g " + quote(game) + (fullscreen ? " -f" : "");

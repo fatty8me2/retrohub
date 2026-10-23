@@ -5,9 +5,13 @@ add_library(hubnet STATIC
     util.cpp
     lobby.cpp
     friends.cpp
+    identity_link.cpp
     session.cpp)
 target_include_directories(hubnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hubnet PUBLIC ws2_32 winhttp)
+target_link_libraries(hubnet PUBLIC ws2_32 winhttp bcrypt crypt32)
+
+add_executable(hublink_test test_link.cpp)
+target_link_libraries(hublink_test PRIVATE hubnet)
 
 add_executable(hubnet_test test_session.cpp)
 target_link_libraries(hubnet_test PRIVATE hubnet)

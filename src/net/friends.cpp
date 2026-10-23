@@ -205,6 +205,30 @@ bool identity_adopt_vault_if_older(const std::string& data_dir, const std::strin
     return true;
 }
 
+bool identity_read_file(const std::string& path, Identity* id)
+{
+    return identity_read(path, id);
+}
+
+bool identity_adopt(const std::string& data_dir, const std::string& vault_dir, const Identity& v)
+{
+    if (!is_b32(v.user_id, 26) || !is_b32(v.secret, 52)) return false;
+    std::string lp = with_sep(data_dir) + "identity.json";
+    Identity cur;
+    if (identity_read(lp, &cur) && cur.user_id != v.user_id) {
+        std::string text;
+        if (read_file(lp, &text)) {
+            std::string bp = with_sep(data_dir) + "identity-backup-" + backup_stamp() + ".json";
+            for (int n = 2; fs::exists(upath(bp)) && n < 100; n++)
+                bp = with_sep(data_dir) + "identity-backup-" + backup_stamp() + "-" + std::to_string(n) + ".json";
+            write_file(bp, text);
+        }
+    }
+    identity_save(v, data_dir, vault_dir);
+    net_log("Friends: identity replaced by linked/imported identity");
+    return true;
+}
+
 /* ====================================================================== impl */
 
 namespace {
@@ -675,11 +699,9 @@ void FriendsClient::update()
     }
 }
 
-bool FriendsClient::adopt_vault_identity_if_older()
+void FriendsClient::apply_adopted(const Identity& v)
 {
     Impl& d = *impl_;
-    Identity v;
-    if (!identity_adopt_vault_if_older(d.data_dir, d.vault_dir, &v)) return false;
     if (d.started) {
         std::string server = d.server, name = d.name;
         start(server, name);   // reloads identity.json, drops per-account state, reconnects
@@ -691,6 +713,22 @@ bool FriendsClient::adopt_vault_identity_if_older()
     e.uid = v.user_id;
     e.text = friend_code(v.user_id);
     d.events.push_back(e);
+}
+
+bool FriendsClient::adopt_vault_identity_if_older()
+{
+    Impl& d = *impl_;
+    Identity v;
+    if (!identity_adopt_vault_if_older(d.data_dir, d.vault_dir, &v)) return false;
+    apply_adopted(v);
+    return true;
+}
+
+bool FriendsClient::adopt_identity(const Identity& v)
+{
+    Impl& d = *impl_;
+    if (!identity_adopt(d.data_dir, d.vault_dir, v)) return false;
+    apply_adopted(v);
     return true;
 }
 
