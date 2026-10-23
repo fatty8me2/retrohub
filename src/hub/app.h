@@ -297,6 +297,28 @@ struct TileResult {
 struct Hint { const char* pad; const char* key; const char* label; };
 
 
+/* Headless screenshot driver state (HUB_SCREENSHOT / HUB_SHOT_* knobs; shot.cpp). */
+struct ShotDriver {
+    const char* path = nullptr;
+    bool update = false;                  // HUB_SHOT_UPDATE: also draw the update prompt
+    double secs = 4.0;                    // HUB_SHOT_SECS
+    std::vector<ImGuiKey> keys;           // HUB_SHOT_KEYS
+    ULONGLONG t0 = 0;
+    double el = 0;                        // seconds since start (set by pre_frame)
+    float wx = 0, wy = 0, wn = 0;         // HUB_SHOT_WHEEL=x,y,notches (notches > 0 scrolls right/down)
+    bool wheel = false;
+    int wheel_stage = 0;                  // 0 pending, 1 pointer placed, 2 wheel sent
+    double wheel_t = 0;
+    size_t key_i = 0;
+    bool key_down = false;
+    double last_key = 0;
+    void init(const char* shot_path);
+    void pre_frame(ImGuiIO& io);
+    bool ready() const;
+};
+extern ShotDriver SH;
+void shot_init_ui();
+
 /* ============================ globals ============================ */
 
 /* app.cpp */
