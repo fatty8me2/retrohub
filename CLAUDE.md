@@ -22,7 +22,7 @@ RetroHub is a Windows launcher for retro games (N64, GameCube, Wii U, 3DS, GBA, 
 Before any change is released, run **Haiku QA agents** in parallel, scoped to what changed. Typical lanes:
 - **Online:** use headless `retrorun --headless --net ...` peers against the live server and the online console tests (`ctest -L online`: `hubnet_test`, `hubfriends_test`). Also try relay mode (`HUBNET_FORCE_RELAY=1`) and bad networks.
 - **Saves across machines:** simulate two PCs sharing a sync folder, and check that the vault layout, the game keys and the runner save-file names are identical on every PC.
-- **UI:** use the headless screenshot mode (`HUB_SCREENSHOT=<file.bmp>`, `HUB_SHOT_*` env vars; see `src/hub/main.cpp`) and inspect the PNGs.
+- **UI:** use the headless screenshot mode (`HUB_SCREENSHOT=<file.bmp>`, `HUB_SHOT_*` env vars; see `src/hub/shot.cpp` and `main.cpp`) and inspect the PNGs.
 
 QA agents must:
 - test **headless only** and never open visible windows (the user is often gaming or watching something while work happens);

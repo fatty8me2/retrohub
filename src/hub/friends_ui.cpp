@@ -1,83 +1,43 @@
+#include "app.h"
+
+FriendsUi FR;
+
 /* friends_ui.inc - friends list panel, chat, lobby invites, notifications. Included by main.cpp (after the art helpers),
  * so it can use App A and its helpers. Data comes from hubnet::FriendsClient, or from fake data (HUB_SHOT_FAKE_FRIENDS). */
-#include "friends.h"
 
-#include <chrono>
 
-struct Notif {
-    int id = 0;
-    bool invite = true;            // false = friend-request toast (the bell lists live requests instead)
-    std::string uid, name;
-    hubnet::Invite inv;
-    double t0 = 0;                 // ImGui time of arrival
-    bool toast = true;             // toast still showing
-    bool done = false;
-};
 
-struct FriendsUi {
-    hubnet::FriendsClient cli;
-    bool started = false, fake = false;
-    std::vector<hubnet::Friend> f_friends;
-    std::vector<hubnet::Request> f_in, f_out;
-    std::map<std::string, std::vector<hubnet::Message>> f_conv;
-    std::map<std::string, int> f_unread;
 
-    std::string chat_uid;
-    int chat_unread = 0;           // unread count when the chat was opened ("New messages" marker)
-    size_t chat_seen = 0;
-    char chat_buf[512] = {0};
-    char add_buf[48] = {0};
-    std::string add_msg;
-    double add_msg_until = 0;
-
-    float panel_t = -1;
-    bool want_focus = false, panel_focused = false;
-    std::vector<Notif> notifs;
-    int next_id = 1;
-    hubnet::Status last_status;
-    bool status_sent = false;
-    struct PendingJoin { std::string code, game_id, title, name; } pending_join;   // queued while our own game runs
-    std::set<std::string> hist_asked;
-    std::string confirm_kind, confirm_uid, confirm_name;
-    bool confirm_open = false;
-    std::set<std::string> pick;
-    std::map<std::string, double> invited_at;
-    bool open_picker = false;
-    bool shot_bell = false;
-    std::string last_name;
-    double name_changed = 0;
-} FR;
-
-static long long wall_ms() {
+long long wall_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 /* ---------- data accessors (real client or fake) ---------- */
-static const std::vector<hubnet::Friend>& fr_friends() { return FR.fake ? FR.f_friends : FR.cli.friends(); }
-static const std::vector<hubnet::Request>& fr_incoming() { return FR.fake ? FR.f_in : FR.cli.incoming_requests(); }
-static const std::vector<hubnet::Request>& fr_outgoing() { return FR.fake ? FR.f_out : FR.cli.outgoing_requests(); }
-static const std::vector<hubnet::Message>& fr_conv(const std::string& uid) { return FR.fake ? FR.f_conv[uid] : FR.cli.conversation(uid); }
-static int fr_unread(const std::string& uid) {
+const std::vector<hubnet::Friend>& fr_friends() { return FR.fake ? FR.f_friends : FR.cli.friends(); }
+const std::vector<hubnet::Request>& fr_incoming() { return FR.fake ? FR.f_in : FR.cli.incoming_requests(); }
+const std::vector<hubnet::Request>& fr_outgoing() { return FR.fake ? FR.f_out : FR.cli.outgoing_requests(); }
+const std::vector<hubnet::Message>& fr_conv(const std::string& uid) { return FR.fake ? FR.f_conv[uid] : FR.cli.conversation(uid); }
+int fr_unread(const std::string& uid) {
     if (FR.fake) { auto it = FR.f_unread.find(uid); return it == FR.f_unread.end() ? 0 : it->second; }
     return FR.cli.unread(uid);
 }
-static int fr_total_unread() {
+int fr_total_unread() {
     if (!FR.fake) return FR.cli.total_unread();
     int n = 0;
     for (auto& kv : FR.f_unread) n += kv.second;
     return n;
 }
-static void fr_mark_read(const std::string& uid) { if (FR.fake) FR.f_unread[uid] = 0; else FR.cli.mark_read(uid); }
-static bool fr_connected() { return FR.fake || (FR.started && FR.cli.connected()); }
-static std::string fr_status_text() { return FR.fake ? "Online" : (FR.started ? FR.cli.status_text() : "Offline"); }
-static std::string fr_my_code() { return FR.fake ? "RH-7KQ2-M9XD" : (FR.started ? FR.cli.my_code() : ""); }
-static const hubnet::Friend* fr_find(const std::string& uid) {
+void fr_mark_read(const std::string& uid) { if (FR.fake) FR.f_unread[uid] = 0; else FR.cli.mark_read(uid); }
+bool fr_connected() { return FR.fake || (FR.started && FR.cli.connected()); }
+std::string fr_status_text() { return FR.fake ? "Online" : (FR.started ? FR.cli.status_text() : "Offline"); }
+std::string fr_my_code() { return FR.fake ? "RH-7KQ2-M9XD" : (FR.started ? FR.cli.my_code() : ""); }
+const hubnet::Friend* fr_find(const std::string& uid) {
     for (auto& f : fr_friends()) if (f.uid == uid) return &f;
     return nullptr;
 }
 
 /* ---------- small helpers ---------- */
-static hubui::FriendRow fr_row(const hubnet::Friend& f) {
+hubui::FriendRow fr_row(const hubnet::Friend& f) {
     hubui::FriendRow r;
     r.uid = f.uid; r.name = f.name; r.game_title = f.status.game_title;
     switch (f.status.state) {
@@ -91,7 +51,7 @@ static hubui::FriendRow fr_row(const hubnet::Friend& f) {
     r.updated_ms = f.status.updated;
     return r;
 }
-static ImU32 fr_state_col(int st) {
+ImU32 fr_state_col(int st) {
     switch (st) {
         case hubui::FS_Online: return ui::GOOD;
         case hubui::FS_InLobby: return ui::WARN;
@@ -99,14 +59,14 @@ static ImU32 fr_state_col(int st) {
         default: return ui::TEXT3;
     }
 }
-static ImU32 fr_avatar_col(const std::string& name) {
+ImU32 fr_avatar_col(const std::string& name) {
     static const ImU32 pal[] = {IM_COL32(108, 122, 255, 255), IM_COL32(232, 110, 150, 255), IM_COL32(60, 180, 160, 255),
                                 IM_COL32(230, 150, 70, 255), IM_COL32(160, 110, 235, 255), IM_COL32(90, 160, 235, 255)};
     unsigned h = 7;
     for (unsigned char c : name) h = h * 31 + c;
     return pal[h % 6];
 }
-static void fr_avatar(ImDrawList* dl, ImVec2 c, float r, const std::string& name, int state, ImU32 ring) {
+void fr_avatar(ImDrawList* dl, ImVec2 c, float r, const std::string& name, int state, ImU32 ring) {
     ImU32 col = state == hubui::FS_Offline ? ui::mix(fr_avatar_col(name), ui::PANEL2, 0.6f) : fr_avatar_col(name);
     dl->AddCircleFilled(c, r, col, 28);
     std::string in = name.empty() ? "?" : name.substr(0, 1);
@@ -119,14 +79,13 @@ static void fr_avatar(ImDrawList* dl, ImVec2 c, float r, const std::string& name
     dl->AddCircleFilled(dc, r * 0.34f, ring, 16);
     dl->AddCircleFilled(dc, r * 0.24f, fr_state_col(state), 16);
 }
-static void fr_text_c(ImDrawList* dl, ImFont* f, ImVec2 c, ImU32 col, const char* s) {
+void fr_text_c(ImDrawList* dl, ImFont* f, ImVec2 c, ImU32 col, const char* s) {
     ImVec2 ts = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, s);
     dl->AddText(f, f->FontSize, c - ts * 0.5f, col, s);
 }
-static float fr_tw(ImFont* f, const std::string& s) { return f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, s.c_str()).x; }
+float fr_tw(ImFont* f, const std::string& s) { return f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, s.c_str()).x; }
 
-enum class FrIcon { Bell, People, Chat, UserPlus, Copy, More, Send };
-static void fr_icon(ImDrawList* dl, FrIcon k, ImVec2 c, float s, ImU32 col) {
+void fr_icon(ImDrawList* dl, FrIcon k, ImVec2 c, float s, ImU32 col) {
     float t = std::max(1.5f, s * 0.085f);
     switch (k) {
         case FrIcon::Bell: {
@@ -190,7 +149,7 @@ static void fr_icon(ImDrawList* dl, FrIcon k, ImVec2 c, float s, ImU32 col) {
 }
 
 /* Square-ish icon button with optional badge. Returns pressed. */
-static bool fr_icon_button(const char* id, FrIcon k, float size, bool active, int badge, ImU32 badge_col, const char* tip, ImVec2* rect_max = nullptr) {
+bool fr_icon_button(const char* id, FrIcon k, float size, bool active, int badge, ImU32 badge_col, const char* tip, ImVec2* rect_max) {
     ImGui::PushID(id);
     bool pressed = ImGui::InvisibleButton("b", ImVec2(size, size), ImGuiButtonFlags_EnableNav);
     bool hov = ImGui::IsItemHovered(), focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
@@ -217,7 +176,7 @@ static bool fr_icon_button(const char* id, FrIcon k, float size, bool active, in
     return pressed;
 }
 /* Small text pill button drawn at a given screen position (no layout). */
-static bool fr_pill_button(const char* id, const char* label, ImVec2 pos, float h, bool primary, bool enabled = true, float* width_out = nullptr) {
+bool fr_pill_button(const char* id, const char* label, ImVec2 pos, float h, bool primary, bool enabled, float* width_out) {
     float w = fr_tw(ui::F.bold, label) + sp(2.5f);
     if (width_out) *width_out = w;
     ImGui::SetCursorScreenPos(pos);
@@ -238,7 +197,7 @@ static bool fr_pill_button(const char* id, const char* label, ImVec2 pos, float 
 }
 
 /* Game thumbnail: library/catalog art when we have it, otherwise a coloured tile with initials. */
-static void fr_game_thumb(ImDrawList* dl, const std::string& game_id, const std::string& title, ImVec2 p0, ImVec2 p1, float rad) {
+void fr_game_thumb(ImDrawList* dl, const std::string& game_id, const std::string& title, ImVec2 p0, ImVec2 p1, float rad) {
     ArtRef a;
     const hub::GameEntry* ge = nullptr;
     if (!game_id.empty()) { ge = find_entry(game_id); if (!ge) ge = find_room_entry(game_id); }
@@ -253,7 +212,7 @@ static void fr_game_thumb(ImDrawList* dl, const std::string& game_id, const std:
     fr_text_c(dl, ui::F.bold, (p0 + p1) * 0.5f, IM_COL32_WHITE, in.c_str());
 }
 
-static std::string fr_time(long long ms) {
+std::string fr_time(long long ms) {
     time_t t = (time_t)(ms / 1000);
     tm lt{};
     localtime_s(&lt, &t);
@@ -261,13 +220,13 @@ static std::string fr_time(long long ms) {
     std::snprintf(b, sizeof b, "%02d:%02d", lt.tm_hour, lt.tm_min);
     return b;
 }
-static int fr_day(long long ms) {
+int fr_day(long long ms) {
     time_t t = (time_t)(ms / 1000);
     tm lt{};
     localtime_s(&lt, &t);
     return lt.tm_year * 400 + lt.tm_yday;
 }
-static std::string fr_day_label(long long ms) {
+std::string fr_day_label(long long ms) {
     int d = fr_day(ms), today = fr_day(wall_ms());
     if (d == today) return "Today";
     if (d == today - 1) return "Yesterday";
@@ -280,7 +239,7 @@ static std::string fr_day_label(long long ms) {
 }
 
 /* ---------- actions ---------- */
-static hubnet::Invite fr_make_invite() {
+hubnet::Invite fr_make_invite() {
     hubnet::Invite inv;
     inv.lobby_code = A.code;
     inv.game_id = A.selected_game;
@@ -289,8 +248,8 @@ static hubnet::Invite fr_make_invite() {
     inv.expires_at = wall_ms() + 30LL * 60 * 1000;
     return inv;
 }
-static bool fr_in_my_room() { return A.in_room && room_connected(); }
-static void fr_invite_uids(const std::vector<std::string>& uids) {
+bool fr_in_my_room() { return A.in_room && room_connected(); }
+void fr_invite_uids(const std::vector<std::string>& uids) {
     if (uids.empty() || !fr_in_my_room()) return;
     if (!FR.fake) FR.cli.send_invite(uids, fr_make_invite());
     double now = ImGui::GetTime();
@@ -301,7 +260,7 @@ static void fr_invite_uids(const std::vector<std::string>& uids) {
     }
     set_toast("Invited " + names + " to room " + A.code + ".");
 }
-static void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who = "") {
+void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who) {
     if (!hubnet::valid_room_code(code)) { set_notice("That lobby code is not valid any more."); return; }
     if (A.proc) {   // our game is running: remember the room and join when it closes
         if (A.in_room && A.code == code) { FR.pending_join = {}; set_notice("You are already in that room."); return; }
@@ -317,7 +276,7 @@ static void fr_join_lobby(const std::string& code, const std::string& game_id, c
     if (A.in_room && A.code == code && !owned)
         set_notice("You don't have " + (title.empty() ? std::string("that game") : title) + " yet - you can still join the room.", 12.0);
 }
-static void fr_open_chat(const std::string& uid) {
+void fr_open_chat(const std::string& uid) {
     FR.chat_uid = uid;
     FR.chat_unread = fr_unread(uid);
     FR.chat_seen = 0;
@@ -325,13 +284,13 @@ static void fr_open_chat(const std::string& uid) {
     if (!FR.fake && FR.hist_asked.insert(uid).second) FR.cli.request_history(uid);
     A.st.show_friends = true;
 }
-static void fr_toggle_panel() {
+void fr_toggle_panel() {
     A.st.show_friends = !A.st.show_friends;
     if (A.st.show_friends && A.pad_mode) FR.want_focus = true;
     mark_dirty();
 }
 
-static void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv) {
+void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv) {
     for (auto& o : FR.notifs)
         if (!o.done && o.invite == invite && o.uid == uid && (!invite || o.inv.lobby_code == inv.lobby_code)) o.done = true;
     Notif n;
@@ -340,15 +299,15 @@ static void fr_notify(bool invite, const std::string& uid, const std::string& na
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
 }
-static int fr_pending_count() {
+int fr_pending_count() {
     int n = (int)fr_incoming().size();
     long long now = wall_ms();
     for (auto& x : FR.notifs) if (x.invite && !x.done && !hubui::invite_expired(x.inv.expires_at, now)) ++n;
     return n;
 }
-static bool fr_panel_shown() { return A.st.show_friends && FR.panel_t > 0.5f; }
+bool fr_panel_shown() { return A.st.show_friends && FR.panel_t > 0.5f; }
 
-static std::string fr_error_text(const std::string& r) {
+std::string fr_error_text(const std::string& r) {
     if (r == "unknown-code") return "No player has that friend code.";
     if (r == "self") return "That is your own friend code.";
     if (r == "already-friends") return "You are already friends.";
@@ -359,7 +318,7 @@ static std::string fr_error_text(const std::string& r) {
 }
 
 /* Presence derived from the hub state. */
-static hubnet::Status fr_desired_status() {
+hubnet::Status fr_desired_status() {
     hubnet::Status s;
     if (A.st.appear_offline) { s.state = hubnet::PresenceState::Offline; return s; }
     s.state = hubnet::PresenceState::Online;
@@ -395,7 +354,7 @@ static hubnet::Status fr_desired_status() {
     }
     return s;
 }
-static void fr_update_presence() {
+void fr_update_presence() {
     hubnet::Status s = fr_desired_status();
     const hubnet::Status& o = FR.last_status;
     bool same = FR.status_sent && s.state == o.state && s.game_id == o.game_id && s.game_title == o.game_title && s.system == o.system &&
@@ -406,14 +365,14 @@ static void fr_update_presence() {
     FR.cli.set_status(s);
 }
 
-static void fr_start() {
+void fr_start() {
     if (g_headless || FR.fake) return;
     FR.cli.set_paths(hub::data_dir(), hub::saves::vault_dir());
     FR.started = FR.cli.start("", A.st.name);
     FR.last_name = A.st.name;
 }
 
-static void fr_run_pending_join() {
+void fr_run_pending_join() {
     if (FR.pending_join.code.empty() || A.proc) return;
     auto pj = FR.pending_join;
     FR.pending_join = {};
@@ -421,7 +380,7 @@ static void fr_run_pending_join() {
 }
 
 /* After a save sync/import: a vault identity older than ours is the user's original account; adopt it. */
-static void fr_adopt_identity_after_vault_change() {
+void fr_adopt_identity_after_vault_change() {
     if (g_headless || FR.fake) return;
     if (FR.started) { FR.cli.adopt_vault_identity_if_older(); return; }   // toast comes from the IdentityAdopted event
     hubnet::Identity id;
@@ -429,7 +388,7 @@ static void fr_adopt_identity_after_vault_change() {
         set_toast("Signed in as " + hubnet::friend_code(id.user_id) + " (your account from your other PC)");
 }
 
-static void fr_tick() {
+void fr_tick() {
     fr_run_pending_join();
     if (!FR.started || FR.fake) return;
     FR.cli.update();
@@ -469,7 +428,7 @@ static void fr_tick() {
 }
 
 /* ---------- fake data for screenshots ---------- */
-static void fr_fake_init() {
+void fr_fake_init() {
     FR.fake = true;
     long long now = wall_ms();
     auto mk = [&](const char* uid, const char* name, hubnet::PresenceState st, const char* gid, const char* gt, const char* sys, const char* lobby,
@@ -515,8 +474,8 @@ static void fr_fake_init() {
 
 /* ============================ drawing ============================ */
 
-static float fr_panel_w(float disp_w) { return std::min(sp(37.5f), disp_w * 0.92f); }
-static void fr_anim_panel() {
+float fr_panel_w(float disp_w) { return std::min(sp(37.5f), disp_w * 0.92f); }
+void fr_anim_panel() {
     float target = A.st.show_friends ? 1.f : 0.f;
     if (FR.panel_t < 0) FR.panel_t = target;
     ui::anim(FR.panel_t, target, 16.f);
@@ -524,9 +483,9 @@ static void fr_anim_panel() {
 }
 
 /* ---- invite / request cards (toast + bell list) ---- */
-static float fr_invite_card_h() { return sp(1.75f) * 2 + sp(8.f) + sp(1.f) + sp(3.5f); }
+float fr_invite_card_h() { return sp(1.75f) * 2 + sp(8.f) + sp(1.f) + sp(3.5f); }
 /* Returns 1 = Join, 2 = Dismiss. frac >= 0 draws the remaining-time bar. */
-static int fr_invite_card(const Notif& n, float w, float frac, bool shadow) {
+int fr_invite_card(const Notif& n, float w, float frac, bool shadow) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     float pad = sp(1.75f), h = fr_invite_card_h();
@@ -564,9 +523,9 @@ static int fr_invite_card(const Notif& n, float w, float frac, bool shadow) {
     ImGui::Dummy(ImVec2(w, h));
     return act;
 }
-static float fr_request_card_h() { return sp(1.75f) * 2 + sp(4.f) + sp(1.f) + sp(3.5f); }
+float fr_request_card_h() { return sp(1.75f) * 2 + sp(4.f) + sp(1.f) + sp(3.5f); }
 /* 1 = Accept, 2 = Decline/Dismiss */
-static int fr_request_card(const std::string& name, const std::string& code, float w, float frac, bool shadow, const char* decline) {
+int fr_request_card(const std::string& name, const std::string& code, float w, float frac, bool shadow, const char* decline) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     float pad = sp(1.75f), h = fr_request_card_h();
@@ -592,19 +551,19 @@ static int fr_request_card(const std::string& name, const std::string& code, flo
     ImGui::Dummy(ImVec2(w, h));
     return act;
 }
-static void fr_accept(const std::string& uid, const std::string& name) {
+void fr_accept(const std::string& uid, const std::string& name) {
     if (FR.fake) {
         for (size_t i = 0; i < FR.f_in.size(); ++i) if (FR.f_in[i].uid == uid) { FR.f_in.erase(FR.f_in.begin() + i); break; }
     } else FR.cli.accept(uid);
     set_toast("You and " + name + " are now friends.");
 }
-static void fr_join_notif(Notif& n) {
+void fr_join_notif(Notif& n) {
     fr_join_lobby(n.inv.lobby_code, n.inv.game_id, n.inv.game_title, n.name);
     n.done = true;
 }
 
 /* Toast cards (top right, below the top bar). */
-static void fr_draw_toasts(float right_x, float top_y) {
+void fr_draw_toasts(float right_x, float top_y) {
     double now = ImGui::GetTime();
     float y = top_y, w = std::min(sp(45.f), right_x - sp(2.f));
     for (auto& n : FR.notifs) {
@@ -641,7 +600,7 @@ static void fr_draw_toasts(float right_x, float top_y) {
 }
 
 /* ---- top bar (inside the content column) ---- */
-static void fr_top_bar() {
+void fr_top_bar() {
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x, h = sp(4.5f);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -733,10 +692,10 @@ static void fr_top_bar() {
 }
 
 /* ---- friend row ---- */
-static void fr_confirm(const char* kind, const hubnet::Friend& f) {
+void fr_confirm(const char* kind, const hubnet::Friend& f) {
     FR.confirm_kind = kind; FR.confirm_uid = f.uid; FR.confirm_name = f.name; FR.confirm_open = true;
 }
-static void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w, long long now) {
+void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w, long long now) {
     float h = sp(7.f);
     ImGui::PushID(f.uid.c_str());
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -836,14 +795,14 @@ static void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, f
     ImGui::PopID();
 }
 
-static void fr_section(const std::string& title) {
+void fr_section(const std::string& title) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::GetWindowDrawList()->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + sp(0.5f), p.y + sp(0.5f)), ui::TEXT3, title.c_str());
     ImGui::Dummy(ImVec2(1, ui::F.cap->FontSize + sp(1.25f)));
 }
 
 /* ---- chat ---- */
-static void fr_chat_view(float cw) {
+void fr_chat_view(float cw) {
     const hubnet::Friend* f = fr_find(FR.chat_uid);
     if (!f) { FR.chat_uid.clear(); return; }
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -961,7 +920,7 @@ static void fr_chat_view(float cw) {
 }
 
 /* ---- the panel ---- */
-static void fr_draw_panel(float disp_w, float disp_h) {
+void fr_draw_panel(float disp_w, float disp_h) {
     float pw = fr_panel_w(disp_w);
     float shown = FR.panel_t;
     FR.panel_focused = false;
@@ -1147,7 +1106,7 @@ static void fr_draw_panel(float disp_w, float disp_h) {
 }
 
 /* Back / Esc: chat -> list -> hide. Returns true when consumed. */
-static bool fr_handle_back() {
+bool fr_handle_back() {
     if (!A.st.show_friends || !FR.panel_focused) return false;
     if (!FR.chat_uid.empty()) FR.chat_uid.clear();
     else { A.st.show_friends = false; mark_dirty(); ImGui::SetWindowFocus("##root"); }
@@ -1155,7 +1114,7 @@ static bool fr_handle_back() {
 }
 
 /* ---- invite picker (Play Online room page) ---- */
-static void fr_invite_button_and_picker(float btn_w, float btn_h) {
+void fr_invite_button_and_picker(float btn_w, float btn_h) {
     int online = 0;
     for (auto& f : fr_friends()) if (f.online()) ++online;
     bool can = fr_in_my_room();

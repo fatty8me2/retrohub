@@ -436,36 +436,36 @@ const std::vector<GameInfo>& catalog() {
          "Tony Hawk's Pro Skater 2 (USA, Europe)"},
 
         /* ---- Nintendo 3DS (Azahar). Serials = the 4-char game code of the NCCH product code (CTR-P-xxxx). ---- */
-        {"pokex", "Pokemon X", Engine::Azahar, 1, {}, "", "3ds",
-         {"EKJA"}, false, 2013,
+        {"pokex", "Pokemon X", Engine::Azahar, 2, {}, "", "3ds",
+         {"EKJA"}, true, 2013,
          "Explore the Kalos region, collect Pokemon and meet Mega Evolution in the first fully 3D mainline Pokemon game.",
          "Pokemon X (USA) (En,Ja,Fr,De,Es,It,Ko)"},
-        {"pokey", "Pokemon Y", Engine::Azahar, 1, {}, "", "3ds",
-         {"EK2A"}, false, 2013,
+        {"pokey", "Pokemon Y", Engine::Azahar, 2, {}, "", "3ds",
+         {"EK2A"}, true, 2013,
          "The Kalos adventure with its own Pokemon, a Mega Evolution twist and a mysterious team to stop.",
          "Pokemon Y (USA) (En,Ja,Fr,De,Es,It,Ko)"},
-        {"pokeor", "Pokemon Omega Ruby", Engine::Azahar, 1, {}, "", "3ds",
-         {"ECRA"}, false, 2014,
+        {"pokeor", "Pokemon Omega Ruby", Engine::Azahar, 2, {}, "", "3ds",
+         {"ECRA"}, true, 2014,
          "A remake of the Hoenn classic with Mega Evolution, soaring Primal Groudon and a new Delta Episode.",
          "Pokemon Omega Ruby (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2)"},
-        {"pokeas", "Pokemon Alpha Sapphire", Engine::Azahar, 1, {}, "", "3ds",
-         {"ECLA"}, false, 2014,
+        {"pokeas", "Pokemon Alpha Sapphire", Engine::Azahar, 2, {}, "", "3ds",
+         {"ECLA"}, true, 2014,
          "A remake of the Hoenn classic with Mega Evolution, Primal Kyogre and a new Delta Episode.",
          "Pokemon Alpha Sapphire (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2)"},
-        {"pokesun", "Pokemon Sun", Engine::Azahar, 1, {}, "", "3ds",
-         {"BNDA"}, false, 2016,
+        {"pokesun", "Pokemon Sun", Engine::Azahar, 2, {}, "", "3ds",
+         {"BNDA"}, true, 2016,
          "Island hopping through Alola with Island Challenges, Z-Moves and regional forms.",
          "Pokemon Sun (USA) (En,Ja,Fr,De,Es,It,Zh,Ko)"},
-        {"pokemoon", "Pokemon Moon", Engine::Azahar, 1, {}, "", "3ds",
-         {"BNEA"}, false, 2016,
+        {"pokemoon", "Pokemon Moon", Engine::Azahar, 2, {}, "", "3ds",
+         {"BNEA"}, true, 2016,
          "Island hopping through Alola with Island Challenges, Z-Moves and regional forms.",
          "Pokemon Moon (USA) (En,Ja,Fr,De,Es,It,Zh,Ko)"},
-        {"pokeusun", "Pokemon Ultra Sun", Engine::Azahar, 1, {}, "", "3ds",
-         {"A2AA"}, false, 2017,
+        {"pokeusun", "Pokemon Ultra Sun", Engine::Azahar, 2, {}, "", "3ds",
+         {"A2AA"}, true, 2017,
          "A new take on Alola with extra story, Ultra Beasts and Totem-sized surprises.",
          "Pokemon Ultra Sun (USA) (En,Ja,Fr,De,Es,It,Zh,Ko)"},
-        {"pokeumoon", "Pokemon Ultra Moon", Engine::Azahar, 1, {}, "", "3ds",
-         {"A2BA"}, false, 2017,
+        {"pokeumoon", "Pokemon Ultra Moon", Engine::Azahar, 2, {}, "", "3ds",
+         {"A2BA"}, true, 2017,
          "A new take on Alola with extra story, Ultra Beasts and Totem-sized surprises.",
          "Pokemon Ultra Moon (USA) (En,Ja,Fr,De,Es,It,Zh,Ko)"},
 
@@ -480,16 +480,16 @@ const std::vector<GameInfo>& catalog() {
          {"GZLE01", "GZLP01", "GZLJ01"}, false, 2002,
          "Link sails a drowned Hyrule on the King of Red Lions in a cel-shaded adventure.",
          "Legend of Zelda, The - The Wind Waker (USA)"},
-        {"gc_tp", "Zelda: Twilight Princess", Engine::Dolphin, 1, {}, "", "gc",
+        {"gc_tp", "The Legend of Zelda: Twilight Princess (GameCube)", Engine::Dolphin, 1, {}, "", "gc",
          {"GZ2E01", "GZ2P01", "GZ2J01"}, false, 2006,
          "Link shifts between Hyrule and the Twilight Realm as a wolf and a hero.",
          "Legend of Zelda, The - Twilight Princess (USA)"},
         {"mkdd", "Mario Kart: Double Dash!!", Engine::Dolphin, 4, {}, "", "gc",
-         {"GM4E01", "GM4P01", "GM4J01"}, false, 2003,
+         {"GM4E01", "GM4P01", "GM4J01"}, true, 2003,
          "Two racers share each kart, one driving and one throwing items.",
          "Mario Kart - Double Dash!! (USA)"},
         {"gc_mp6", "Mario Party 6", Engine::Dolphin, 4, {}, "", "gc",
-         {"GP6E01", "GP6P01", "GP6J01"}, false, 2004,
+         {"GP6E01", "GP6P01", "GP6J01"}, true, 2004,
          "Day and night change the board and the minigames, with a microphone for some.",
          "Mario Party 6 (USA)"},
         {"pokexd", "Pokemon XD: Gale of Darkness", Engine::Dolphin, 1, {}, "", "gc",
@@ -501,31 +501,32 @@ const std::vector<GameInfo>& catalog() {
          "Mario cleans up Isle Delfino with the water-powered F.L.U.D.D.",
          "Super Mario Sunshine (USA)"},
         {"melee", "Super Smash Bros. Melee", Engine::Dolphin, 4, {}, "", "gc",
-         {"GALE01", "GALP01", "GALJ01"}, false, 2001,
+         {"GALE01", "GALP01", "GALJ01"}, true, 2001,
          "The fast GameCube Smash with a huge roster and a tournament scene of its own.",
          "Super Smash Bros. Melee (USA) (En,Ja) (Rev 2)"},
         /* ---- Game Boy / Game Boy Color (Libretro). Serials are what library.cpp reads from the
          *      header: the manufacturer code (0x13F-0x142) on CGB carts that have one, otherwise
          *      the header title (CGB titles are 11 chars, DMG 16). Link-cable play is not
-         *      networked, so online=false. ---- */
+         *      networked in-core: online=true means retrorun --link (both consoles in one SameBoy
+         *      simulation, see docs/RETRORUN.md). ---- */
         {"pokered", "Pokemon Red", Engine::Libretro, 2, {}, "", "gb",
-         {"POKEMON RED"}, false, 1998,
+         {"POKEMON RED"}, true, 1998,
          "Explore Kanto, catch Pokemon, and trade or battle over a link cable.",
          "Pokemon - Red Version (USA, Europe) (SGB Enhanced)"},
         {"pokeyellow", "Pokemon Yellow", Engine::Libretro, 2, {}, "", "gbc",
-         {"POKEMON YEL"}, false, 1999,
+         {"POKEMON YEL"}, true, 1999,
          "Follow Pikachu through Kanto as your partner, with the link cable for trades and battles.",
          "Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced)"},
         {"pokegold", "Pokemon Gold", Engine::Libretro, 2, {}, "", "gbc",
-         {"AAUE", "POKEMON_GLD"}, false, 2000,
+         {"AAUE", "POKEMON_GLD"}, true, 2000,
          "Catch Pokemon in Johto and Kanto, with day and night, held items and link-cable trades.",
          "Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible)"},
         {"pokesilver", "Pokemon Silver", Engine::Libretro, 2, {}, "", "gbc",
-         {"AAXE", "POKEMON_SLV"}, false, 2000,
+         {"AAXE", "POKEMON_SLV"}, true, 2000,
          "The Silver version of Johto and Kanto, with its own version-exclusive Pokemon.",
          "Pokemon - Silver Version (USA, Europe) (SGB Enhanced) (GB Compatible)"},
         {"pokecrystal", "Pokemon Crystal", Engine::Libretro, 2, {}, "", "gbc",
-         {"BYTE", "PM_CRYSTAL"}, false, 2001,
+         {"BYTE", "PM_CRYSTAL"}, true, 2001,
          "Play as a girl or boy in Johto, with a roaming Raikou, Entei and Suicune and a day-night clock.",
          "Pokemon - Crystal Version (USA)"},
 
@@ -578,6 +579,12 @@ const GameInfo* find_game(const std::string& id) {
         if (g.id == id) return &g;
     }
     return nullptr;
+}
+
+bool link_cable_game(const std::string& id) {
+    static const char* ids[] = {"pokered", "pokeyellow", "pokegold", "pokesilver", "pokecrystal"};
+    for (const char* x : ids) if (id == x) return true;
+    return false;
 }
 
 int online_max_for(const GameInfo& g) {

@@ -134,11 +134,14 @@ int main() {
     CHECK(json_parse(launch_json("mp1", 3, 2, 77u), &j));
     CHECK(j.str("game") == "mp1" && (int)j.num("launch") == 3 && (int)j.num("seed") == 77 && j.str("core").empty());
     CHECK(json_parse(launch_json("gb:x-1", 1, 2, 5u, "gambatte"), &j) && j.str("core") == "gambatte");
+    CHECK(json_parse(launch_json("pokered", 1, 0, 5u, "", false, nullptr, nullptr, ",\"np_link\":{\"core\":\"sameboy\",\"consoles\":2}"), &j) && j.get("np_link") &&
+          j.get("np_link")->str("core") == "sameboy");
+    CHECK(json_parse(launch_json("pokered", 1, 0, 5u), &j) && !j.get("np_link"));
 
     {   /* DS wireless launch spec */
         Json lj;
         std::string mode;
-        CHECK(json_parse(launch_json("nds:x", 1, 0, 5u, "", false, nullptr, nullptr, np_ds_json()), &lj));
+        CHECK(json_parse(launch_json("nds:x", 1, 0, 5u, "", false, nullptr, nullptr, ",\"np_ds\":" + np_ds_json()), &lj));
         CHECK(parse_np_ds(lj, &mode) && mode == "wireless");
         CHECK(json_parse(launch_json("nds:x", 1, 0, 5u), &lj) && !parse_np_ds(lj, &mode));   /* older host: absent */
         CHECK(json_parse("{\"np_ds\":{\"v\":2,\"mode\":\"wireless\"}}", &lj) && !parse_np_ds(lj, &mode));   /* unknown version */

@@ -1,0 +1,730 @@
+#include "app.h"
+
+void go_add_rom(const GameInfo& g) {
+    A.page = Page::Settings;
+    push_toast("Put your " + g.title + " ROM in a ROM folder, then press Rescan.", ui::ACCENT, 7.0);
+}
+
+void home_shelves() {
+    float avail = ImGui::GetContentRegionAvail().x;
+    float gap = sp(2.f), bleed = sp(1.5f);
+    float max_w = std::max(sp(25.f), std::min(sp(37.5f), avail * 0.2f));
+    float tw = hubui::shelf_tile_w(avail, sp(24.f), max_w, gap);
+    float th = tw / kTileAspect;
+    for (size_t si = 0; si < A.shelves.size(); ++si) {
+        const hubui::Shelf& sh = A.shelves[si];
+        bool is_console = sh.id.compare(0, 8, "console:") == 0 && sh.id != "console:other";   // unknown systems have no filter chip
+        bool see_all = false;
+        bool overflow = hubui::shelf_max_scroll((int)sh.items.size(), tw, gap, bleed, avail) > 0;
+        shelf_header(sh.title.c_str(), is_console ? "See all" : "", bleed, (int)sh.items.size(), is_console ? &see_all : nullptr, overflow);
+        if (see_all) {   // jump to All Games filtered to this console
+            A.view = LibView::All;
+            A.sys_filter = sh.id.substr(8);
+            A.online_only = false;
+            A.grid_scroll_top = true;
+            A.search_buf[0] = 0;
+            A.vis_dirty = true;
+        }
+        bool recent = sh.id == "recent";
+        shelf_strip("shelf_" + sh.id, (int)sh.items.size(), tw, th, [&](int i, ImVec2 sz) {
+            const hub::GameEntry& e = A.lib[sh.items[i]];
+            TileSpec spec = spec_for_entry(e, sh.id.c_str(), recent, !is_console);
+            TileResult r = draw_tile(spec, sz);
+            handle_entry_result(e, spec, r);
+            return r;
+        });
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
+    if (!A.pick_idx.empty()) {   // upsell: below the console shelves, collapsed until asked for
+        const std::vector<GameInfo>& cat = hub::catalog();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + bleed);
+        std::string tl = std::string(A.picks_open ? "Hide" : "Show") + " top picks you don't have yet  (" + std::to_string(A.pick_idx.size()) + ")";
+        if (button(tl.c_str(), ImVec2(0, 0), false, true, A.picks_open ? ui::Icon::ChevronL : ui::Icon::ChevronR)) A.picks_open = !A.picks_open;
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
+    if (!A.pick_idx.empty() && A.picks_open) {
+        const std::vector<GameInfo>& cat = hub::catalog();
+        shelf_header("Top Picks You Don't Have Yet", "add the ROM to a ROM folder", bleed, (int)A.pick_idx.size(), nullptr,
+                     hubui::shelf_max_scroll((int)A.pick_idx.size(), tw, gap, bleed, avail) > 0);
+        shelf_strip("shelf_picks", (int)A.pick_idx.size(), tw, th, [&](int i, ImVec2 sz) {
+            const GameInfo& g = cat[A.pick_idx[i]];
+            TileSpec t;
+            t.id = "pick|" + g.id;
+            t.title = g.title;
+            hub::System sy = hub::system_from_short(g.system);
+            t.badge = sys_badge(sy);
+            system_colors(sy, &t.c0, &t.c1);
+            t.art = art_for_pick(g);
+            t.owned = false;
+            t.cta = "Add ROM";
+            t.online = g.online;
+            t.subtitle = g.year ? std::to_string(g.year) + " - not in your library" : std::string("Not in your library");
+            TileResult r = draw_tile(t, sz);
+            if (r.clicked || r.activated) go_add_rom(g);
+            return r;
+        });
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
+    ImGui::Dummy(ImVec2(0, sp(7.f)));   // room so the last shelf's covers clear the footer when scrolled to the end
+}
+
+/* ---------- hero ---------- */
+
+/* Gives the item just submitted the (not yet visible) nav focus. ImGui's own first-press behaviour would otherwise
+ * land on whatever is closest to the window corner (the search box). Called once per page/view change. */
+void set_nav_here() {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (!g.NavWindow) return;
+    ImVec2 off = g.NavWindow->DC.CursorStartPos;
+    ImRect rel(ImGui::GetItemRectMin() - off, ImGui::GetItemRectMax() - off);
+    ImGui::SetNavID(ImGui::GetItemID(), ImGuiNavLayer_Main, g.CurrentFocusScopeId, rel);
+}
+void seed_nav_here() {
+    if (!A.nav_seed || ImGui::GetIO().WantTextInput) return;
+    A.nav_seed = false;
+    set_nav_here();
+}
+
+float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool compact, bool seed_nav) {
+    bool idle = A.proc == nullptr;
+    const hub::GameState& gs = gstate(e.key);
+    bool gc = e.system == hub::System::GC;
+    bool online = supports_online(e) || gc;
+    if (gc && supports_online(e)) gc = false;   // online-capable GameCube games get the normal Play Online button
+    float gap = sp(1.5f), play_w = sp(compact ? 15.f : 18.f), on_w = compact ? bh : sp(21.f);
+    float total = play_w;
+    if (online) total += gap + on_w;
+    total += (gap + bh) * 2;
+    if (!draw) return total;
+    ImGui::SetCursorScreenPos(at);
+    if (button("Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; play_entry(c); }
+    if (seed_nav) seed_nav_here();
+    if (online) {
+        ImGui::SameLine(0, gap);
+        if (gc) {
+            button(compact ? "##onsoon" : "Online soon", ImVec2(on_w, bh), false, false, ui::Icon::Globe);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Online via Dolphin's own netplay - coming soon");
+        } else if (button(compact ? "##online" : "Play Online", ImVec2(on_w, bh), false, idle, ui::Icon::Globe)) {
+            A.pending_room_game = room_id(e);
+            enter_room(true, hubnet::new_room_code());
+        }
+        if (compact && ImGui::IsItemHovered()) ImGui::SetTooltip("Play online with friends");
+    }
+    ImGui::SameLine(0, gap);
+    if (ui::icon_button("fav", gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star, bh, gs.favorite, gs.favorite ? "Remove from favorites" : "Add to favorites", IM_COL32(236, 180, 40, 255)))
+        toggle_favorite(e.key);
+    ImGui::SameLine(0, gap);
+    if (ui::icon_button("more", ui::Icon::Dots, bh, false, "Details")) A.show_details = true;
+    return total;
+}
+
+void draw_hero(const hub::GameEntry& e, float h) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
+    float rad = sp(2.5f), ha = A.hero_t;
+    const hub::GameState& gs = gstate(e.key);
+    const GameInfo* cat = catalog_for(e);
+    ImU32 c0, c1;
+    entry_colors(e, &c0, &c1);
+    ArtRef art = art_for_entry(e);
+    bool compact = h < sp(29.f);
+
+    ui::shadow(dl, p0, p1, rad, 1.3f);
+    gradient_round_rect(dl, p0, p1, mix(c0, ui::BG, 0.68f), mix(c1, ui::BG, 0.78f), rad);
+    if (art.tex) ui::draw_art_bg(dl, art.tex, art.w, art.h, p0, p1, rad, 0.20f, ha);
+    ui::hfade_round_rect(dl, p0, p1, IM_COL32(14, 15, 20, 255), rad, 0, 0.96f, 0.66f);
+    ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.4f), p1, IM_COL32(14, 15, 20, 255), rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.6f);
+    dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
+
+    float pad = compact ? sp(2.5f) : sp(3.f), bh = compact ? sp(5.f) : sp(6.f);
+    float inner_h = h - pad * 2;
+    float art_h = inner_h, art_w = art_h * kTileAspect;
+    if (art_w > w * 0.32f) { art_w = w * 0.32f; art_h = art_w / kTileAspect; }
+    ImVec2 a0(p0.x + pad, p0.y + pad + (inner_h - art_h) * 0.5f), a1(a0.x + art_w, a0.y + art_h);
+    float arad = sp(1.75f);
+    ui::shadow(dl, a0, a1, arad, 1.4f);
+    TileSpec ts;
+    ts.title = e.title;
+    ts.c0 = c0;
+    ts.c1 = c1;
+    if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, arad, 1.f, ha);
+    else draw_no_art(dl, ts, a0, a1, arad, 1.f);
+    if (art.loading) ui::shimmer(dl, a0, a1, arad, IM_COL32(0, 0, 0, 0));
+    dl->AddRect(a0, a1, ui::HAIRLINE, arad, 0, 1.f);
+
+    float tx = a1.x + pad, tw = p1.x - pad - tx, ty = p0.y + pad;
+    ImFont* cf = ui::F.cap;
+    std::string eyebrow = gs.last_played ? "LAST PLAYED  " + fmt_ago(gs.last_played) : std::string("READY TO PLAY");
+    for (auto& ch : eyebrow) ch = (char)std::toupper((unsigned char)ch);
+    dl->AddText(cf, cf->FontSize, ImVec2(tx, ty), ui::scale_alpha(mix(c1, IM_COL32_WHITE, 0.45f), ha), eyebrow.c_str());
+    ty += cf->FontSize + sp(0.75f);
+
+    ImFont* tf = compact ? ui::F.title : ui::F.hero;
+    std::vector<std::string> lines = ui::wrap_lines(tf, tf->FontSize, e.title, tw, compact ? 1 : 2);
+    if (lines.size() == 1 && tf == ui::F.hero && ui::F.title != ui::F.hero &&
+        tf->CalcTextSizeA(tf->FontSize, FLT_MAX, 0.f, e.title.c_str()).x > tw) {
+        tf = ui::F.title;
+        lines = ui::wrap_lines(tf, tf->FontSize, e.title, tw, 2);
+    }
+    for (auto& ln : lines) {
+        ui::text_shadowed(dl, tf, tf->FontSize, ImVec2(tx, ty), ui::scale_alpha(IM_COL32_WHITE, ha), ln.c_str());
+        ty += tf->FontSize * 1.08f;
+    }
+    ty += sp(0.5f);
+
+    // meta pills
+    {
+        float x = tx, ph = cf->FontSize + sp(1.f);
+        auto put = [&](const std::string& s, ImU32 bg) {
+            float pw = cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, s.c_str()).x + sp(2.5f);
+            if (x + pw > tx + tw) return;
+            pill_at(dl, ImVec2(x, ty), s.c_str(), ui::scale_alpha(bg, ha), ui::scale_alpha(IM_COL32_WHITE, ha));
+            x += pw + sp(0.75f);
+        };
+        put(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.3f));
+        if (is_native(e)) put("Native port", IM_COL32(255, 255, 255, 30));
+        if (cat && cat->year) put(std::to_string(cat->year), IM_COL32(255, 255, 255, 30));
+        if (supports_online(e)) put("1-" + std::to_string(local_players_for(e)) + " players", IM_COL32(255, 255, 255, 30));
+        if (gs.play_seconds) put(hubui::format_play_time(gs.play_seconds) + " played", IM_COL32(255, 255, 255, 30));
+        ty += ph + sp(1.f);
+    }
+
+    float by = p1.y - pad - bh;
+    if (!compact && cat && !cat->blurb.empty()) {
+        float room = by - ty - sp(1.5f);
+        int nl = (int)(room / (ui::F.body->FontSize * 1.25f));
+        if (nl > 0) {
+            auto bl = ui::wrap_lines(ui::F.body, ui::F.body->FontSize, cat->blurb, tw, std::min(2, nl));
+            for (auto& ln : bl) {
+                dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, ty), ui::scale_alpha(ui::TEXT2, ha), ln.c_str());
+                ty += ui::F.body->FontSize * 1.25f;
+            }
+        }
+    }
+
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.3f + 0.7f * ha);
+    action_row(e, bh, true, ImVec2(tx, by), compact || tw < sp(70.f), true);
+    ImGui::PopStyleVar();
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
+    ImGui::Dummy(ImVec2(w, sp(2.f)));
+}
+
+/* ---------- skeleton / empty states ---------- */
+
+void skeleton_home() {
+    float w = ImGui::GetContentRegionAvail().x, h = std::max(sp(24.f), std::min(sp(38.f), ImGui::GetContentRegionAvail().y * 0.4f));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ui::shimmer(dl, p0, ImVec2(p0.x + w, p0.y + h), sp(2.5f), ui::PANEL);
+    float aw = std::min((h - sp(6.f)) * kTileAspect, w * 0.3f);
+    ui::shimmer(dl, ImVec2(p0.x + sp(3.f), p0.y + sp(3.f)), ImVec2(p0.x + sp(3.f) + aw, p0.y + h - sp(3.f)), sp(1.75f), ui::PANEL2);
+    float tx = p0.x + sp(6.f) + aw;
+    ui::shimmer(dl, ImVec2(tx, p0.y + sp(3.f)), ImVec2(tx + sp(12.f), p0.y + sp(4.f)), sp(0.5f), ui::PANEL2);
+    ui::shimmer(dl, ImVec2(tx, p0.y + sp(5.f)), ImVec2(tx + sp(34.f), p0.y + sp(8.f)), sp(1.f), ui::PANEL2);
+    ui::shimmer(dl, ImVec2(tx, p0.y + h - sp(9.f)), ImVec2(tx + sp(18.f), p0.y + h - sp(3.f)), sp(1.5f), ui::PANEL3);
+    ImGui::Dummy(ImVec2(w, h + sp(2.f)));
+    float tw = hubui::shelf_tile_w(w, sp(24.f), std::max(sp(25.f), std::min(sp(37.5f), w * 0.2f)), sp(2.f)), th = tw / kTileAspect;
+    for (int row = 0; row < 2; ++row) {
+        ImVec2 o = ImGui::GetCursorScreenPos();
+        ui::shimmer(dl, o + ImVec2(sp(1.5f), 0), o + ImVec2(sp(1.5f) + sp(18.f), sp(2.5f)), sp(0.75f), ui::PANEL);
+        float x = o.x + sp(1.5f), y = o.y + sp(4.f);
+        for (int i = 0; x < o.x + w && i < 12; ++i, x += tw + sp(2.f))
+            ui::shimmer(dl, ImVec2(x, y), ImVec2(x + tw, y + th), sp(1.75f), ui::PANEL);
+        ImGui::Dummy(ImVec2(w, th + sp(7.f)));
+    }
+}
+
+void centered_text(ImDrawList* dl, ImFont* f, float cx, float y, ImU32 col, const char* s) {
+    ImVec2 ts = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, s);
+    dl->AddText(f, f->FontSize, ImVec2(cx - ts.x * 0.5f, y), col, s);
+}
+
+void empty_library_state() {
+    static const std::vector<std::string> suggestions = hub::suggest_rom_folders(3);   // scanned once, on first empty view
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float w = ImGui::GetContentRegionAvail().x;
+    float h = std::min(ImGui::GetContentRegionAvail().y,
+                       sp(46.f) + (suggestions.empty() ? 0.f : sp(10.f) + sp(6.f) * (float)suggestions.size()));
+    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
+    dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.5f));
+    dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.5f), 0, 1.f);
+    float cx = (p0.x + p1.x) * 0.5f, y = p0.y + sp(3.f);
+    float ir = sp(5.f);
+    dl->AddCircleFilled(ImVec2(cx, y + ir), ir + sp(1.5f), ui::with_alpha(ui::ACCENT, 0.10f), 48);
+    dl->AddCircleFilled(ImVec2(cx, y + ir), ir, ui::with_alpha(ui::ACCENT, 0.22f), 48);
+    ui::icon(dl, ui::Icon::Gamepad, ImVec2(cx, y + ir), ir * 1.2f, ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.5f));
+    y += ir * 2 + sp(3.f);
+    centered_text(dl, ui::F.title, cx, y, ui::TEXT, "Let's find your games");
+    y += ui::F.title->FontSize + sp(1.f);
+    float tw = std::min(w - sp(6.f), sp(62.f));
+    auto lines = ui::wrap_lines(ui::F.body, ui::F.body->FontSize,
+                                "RetroHub doesn't include any games. Point it at the folder(s) that hold your own game files and "
+                                "everything is recognised by its contents, not its name.",
+                                tw, 3);
+    for (auto& ln : lines) {
+        centered_text(dl, ui::F.body, cx, y, ui::TEXT2, ln.c_str());
+        y += ui::F.body->FontSize * 1.3f;
+    }
+    y += sp(1.5f);
+    // supported systems
+    {
+        struct Sy { const char* label; hub::System s; };
+        static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB},
+                                {"Nintendo DS", hub::System::NDS},
+                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}};
+        float tot = 0;
+        for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
+        float x = cx - (tot - sp(0.75f)) * 0.5f;
+        for (auto& s2 : sys) {
+            ImU32 a, b;
+            system_colors(s2.s, &a, &b);
+            x += pill_at(dl, ImVec2(x, y), s2.label, mix(a, IM_COL32_BLACK, 0.2f)) + sp(0.75f);
+        }
+        y += ui::F.cap->FontSize + sp(4.f);
+    }
+    float bw = sp(24.f);
+    ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
+    if (button("Add ROM folder", ImVec2(bw, sp(6.f)), true, true, ui::Icon::Folder)) add_rom_folder();
+    if (!suggestions.empty()) {
+        y += sp(6.f) + sp(3.f);
+        centered_text(dl, ui::F.cap, cx, y, ui::TEXT2, "Found game files in these folders:");
+        y += ui::F.cap->FontSize + sp(1.5f);
+        for (size_t i = 0; i < suggestions.size(); ++i) {
+            const std::string& s = suggestions[i];
+            // show the last two path parts, e.g. "Desktop\Roms"
+            size_t cut = s.find_last_of('\\');
+            size_t cut2 = cut == std::string::npos || cut == 0 ? std::string::npos : s.find_last_of('\\', cut - 1);
+            std::string label = "Add  " + (cut2 == std::string::npos ? s : s.substr(cut2 + 1));
+            ImGui::PushID((int)i);
+            ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
+            if (button(label.c_str(), ImVec2(bw, sp(4.5f)), false, true, ui::Icon::Plus)) add_rom_folder_path(s);
+            ImGui::PopID();
+            y += sp(6.f);
+        }
+    }
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
+    ImGui::Dummy(ImVec2(w, sp(1.f)));
+}
+
+/* ---------- top bar ---------- */
+
+void library_top_bar() {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);   // D-pad focus starts on the hero / tiles, not here
+    static const char* tabs[] = {"Home", "All Games"};
+    int cur = A.view == LibView::Home ? 0 : 1;
+    int n = ui::segmented("view", tabs, 2, cur);
+    if (n != cur) {
+        A.view = n == 0 ? LibView::Home : LibView::All;
+        if (n == 0) A.search_buf[0] = 0;
+    }
+    ImGui::SameLine(0, sp(2.f));
+
+    float bh = sp(5.f);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) A.focus_search = true;
+    if (A.focus_search) { ImGui::SetKeyboardFocusHere(); A.focus_search = false; }
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(5.f), (bh - ImGui::GetFontSize()) * 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
+    ImGui::SetNextItemWidth(std::max(sp(20.f), std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.45f)));
+    ImGui::InputTextWithHint("##search", "Search games   (Ctrl+F)", A.search_buf, sizeof A.search_buf);
+    ImVec2 s0 = ImGui::GetItemRectMin(), s1 = ImGui::GetItemRectMax();
+    ImGui::GetWindowDrawList()->AddRect(s0, s1, ImGui::IsItemActive() ? ui::ACCENT : ui::HAIRLINE, bh * 0.5f, 0, 1.f);
+    ui::icon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(s0.x + sp(2.5f), (s0.y + s1.y) * 0.5f), sp(2.f), ui::TEXT2);
+    ImGui::PopStyleVar(2);
+    if (A.search_buf[0] && A.view == LibView::Home) A.view = LibView::All;
+
+    float total = bh * 2 + sp(1.f);
+    ImGui::SameLine(0, 0);
+    float ax = ImGui::GetContentRegionAvail().x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax - total));
+    ImGui::BeginDisabled(A.scanning);
+    if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, A.scanning ? "Scanning..." : "Rescan ROM folders")) start_scan();
+    ImGui::EndDisabled();
+    ImGui::SameLine(0, sp(1.f));
+    if (ui::icon_button("addfolder", ui::Icon::Plus, bh, false, "Add ROM folder")) add_rom_folder();
+    ImGui::PopItemFlag();
+
+    // scan progress: thin animated line under the bar
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    float lh = sp(0.25f);
+    if (A.scanning) {
+        int d = A.scan_done, t2 = A.scan_total;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImVec2(o.x, o.y + sp(0.5f)), ImVec2(o.x + w, o.y + sp(0.5f) + lh), ui::PANEL2, lh);
+        if (t2 > 0) dl->AddRectFilled(ImVec2(o.x, o.y + sp(0.5f)), ImVec2(o.x + w * d / (float)t2, o.y + sp(0.5f) + lh), ui::ACCENT, lh);
+        else {
+            float ph = std::fmod((float)ImGui::GetTime() * 0.8f, 1.f);
+            dl->AddRectFilled(ImVec2(o.x + w * ph * 0.8f, o.y + sp(0.5f)), ImVec2(o.x + w * (ph * 0.8f + 0.2f), o.y + sp(0.5f) + lh), ui::ACCENT, lh);
+        }
+        char buf[64];
+        std::snprintf(buf, sizeof buf, t2 > 0 ? "Scanning your games...  %d / %d" : "Scanning your games...", d, t2);
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(o.x + sp(0.25f), o.y + sp(1.25f)), ui::TEXT3, buf);
+    }
+    ImGui::Dummy(ImVec2(w, sp(A.scanning ? 3.25f : 1.5f)));
+}
+
+/* ---------- All Games ---------- */
+
+void selected_bar(const hub::GameEntry& e) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float w = ImGui::GetContentRegionAvail().x, h = sp(8.f);
+    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
+    dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.f));
+    dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.f), 0, 1.f);
+    ImU32 c0, c1;
+    entry_colors(e, &c0, &c1);
+    ArtRef art = art_for_entry(e);
+    float th = h - sp(2.f), tw = th * kTileAspect;
+    ImVec2 a0(p0.x + sp(1.f), p0.y + sp(1.f)), a1(a0.x + tw, a0.y + th);
+    TileSpec ts;
+    ts.title = e.title;
+    ts.c0 = c0;
+    ts.c1 = c1;
+    if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.25f));
+    else draw_no_art(dl, ts, a0, a1, sp(1.25f), 1.f);
+    float bh = sp(5.f);
+    float row_w = action_row(e, bh, false, ImVec2(0, 0), true);
+    float tx = a1.x + sp(2.f);
+    float text_w = std::max(sp(8.f), p1.x - sp(2.f) - row_w - tx - sp(2.f));
+    const hub::GameState& gs = gstate(e.key);
+    dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, p0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, e.title, text_w).c_str());
+    std::string sub = std::string(hub::system_name(e.system)) + "  -  " + hubui::format_play_time(gs.play_seconds);
+    dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f)), ui::TEXT2,
+                ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, text_w).c_str());
+    action_row(e, bh, true, ImVec2(p1.x - sp(2.f) - row_w, p0.y + (h - bh) * 0.5f), true);
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
+    ImGui::Dummy(ImVec2(w, 1));
+}
+
+void all_games_view() {
+    // system chips
+    struct Chip { const char* label; const char* sys; };
+    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
+                                {"Nintendo DS", "nds"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
+    if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
+    std::map<std::string, int>& counts = A.chip_counts;
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
+    bool first = true;
+    for (auto& c : chips) {
+        int n = c.sys[0] ? counts[c.sys] : A.chip_total;
+        if (c.sys[0] && n == 0 && A.sys_filter != c.sys) continue;
+        if (!first) ImGui::SameLine();
+        first = false;
+        char lab[48];
+        std::snprintf(lab, sizeof lab, "%s  %d", c.label, n);
+        ImU32 a = COL_ACCENT, b2;
+        if (c.sys[0]) system_colors(hub::system_from_short(c.sys), &a, &b2);
+        if (chip(lab, A.sys_filter == c.sys, a)) { A.sys_filter = c.sys; A.vis_dirty = true; A.grid_scroll_top = true; }
+    }
+    {   // Online filter chip
+        int n_online = 0;
+        for (auto& e : A.lib) {
+            const GameInfo* c = catalog_for(e);
+            if (is_native(e) || (c && c->online)) ++n_online;
+        }
+        char lab[48];
+        std::snprintf(lab, sizeof lab, "Online  %d", n_online);
+        ImGui::SameLine(0, sp(2.f));
+        if (chip(lab, A.online_only, ui::GOOD)) { A.online_only = !A.online_only; A.vis_dirty = true; }
+    }
+    ImGui::PopItemFlag();
+    ImGui::PopStyleVar();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
+
+    const hub::GameEntry* sel = find_entry(A.sel_game);
+    float bar_h = sel ? sp(8.f) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.5f)));
+    if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; }
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() - sp(1.5f));   // the grid's padding is the cover inset: first cover lines up with the chips
+    ImGui::BeginChild("grid", ImVec2(ImGui::GetContentRegionAvail().x + sp(1.5f), -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+    A.page_scrollable = true;
+    if (A.vis.empty()) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 o = ImGui::GetCursorScreenPos();
+        float cx = o.x + ImGui::GetContentRegionAvail().x * 0.5f;
+        ui::icon(dl, ui::Icon::Search, ImVec2(cx, o.y + sp(6.f)), sp(5.f), ui::TEXT3);
+        std::string msg = A.search_buf[0] ? std::string("No games match \"") + A.search_buf + "\"" : std::string("No games in this system yet");
+        centered_text(dl, ui::F.h2, cx, o.y + sp(10.f), ui::TEXT, msg.c_str());
+        centered_text(dl, ui::F.body, cx, o.y + sp(10.f) + ui::F.h2->FontSize + sp(1.f), ui::TEXT2, "Try a different spelling, or pick another system.");
+        ImGui::Dummy(ImVec2(0, sp(17.f)));
+        if (A.search_buf[0]) {
+            float bw = sp(18.f);
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - bw) * 0.5f);
+            if (button("Clear search", ImVec2(bw, sp(5.f)), false, true, ui::Icon::Close)) A.search_buf[0] = 0;
+        }
+    } else {
+        // one section per console (fixed order), A-Z inside; A.vis already holds the search/console/online filters
+        const std::vector<hubui::ConsoleSection>& secs = A.secs;
+        float gap = sp(2.f);
+        float avail = ImGui::GetContentRegionAvail().x;
+        hubui::GridLayout gl = hubui::grid_layout(avail, sp(26.f), sp(37.5f), gap);
+        ImVec2 sz(gl.tile_w, gl.tile_w / kTileAspect);
+        for (auto& sec : secs) {
+            if (sec.items.empty()) continue;
+            shelf_header(sec.title.c_str(), "", 0.f, (int)sec.items.size());
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
+            for (size_t k = 0; k < sec.items.size(); ++k) {
+                if (k % gl.cols) ImGui::SameLine();
+                const hub::GameEntry& e = A.lib[sec.items[k]];
+                TileSpec spec = spec_for_entry(e, "grid", false, sec.system == "other");
+                TileResult r = draw_tile(spec, sz);
+                handle_entry_result(e, spec, r);
+            }
+            ImGui::PopStyleVar();
+            ImGui::Dummy(ImVec2(0, sp(1.5f)));
+        }
+        ImGui::Dummy(ImVec2(0, sp(2.f)));
+    }
+    ImGui::EndChild();
+    if (sel) selected_bar(*sel);
+}
+
+/* ---------- details modal (Y / right-click / "...") ---------- */
+
+void draw_details_modal() {
+    if (A.show_details) {
+        A.show_details = false;
+        if (find_entry(A.sel_game)) ImGui::OpenPopup("##details");
+    }
+    const hub::GameEntry* ep = find_entry(A.sel_game);
+    ImGuiIO& io = ImGui::GetIO();
+    float w = std::min(sp(90.f), io.DisplaySize.x * 0.92f);
+    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(w, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
+    bool open = ImGui::BeginPopupModal("##details", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PopStyleVar(2);
+    if (!open) return;
+    if (!ep) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    const hub::GameEntry& e = *ep;
+    const hub::GameState& gs = gstate(e.key);
+    const GameInfo* cat = catalog_for(e);
+    if (A.info_key != e.key || ImGui::GetTime() - A.info_at > 4.0) refresh_save_info(e);
+    bool idle = A.proc == nullptr, native = is_native(e);
+    ImU32 c0, c1;
+    entry_colors(e, &c0, &c1);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    float avail = ImGui::GetContentRegionAvail().x;
+    bool with_art = avail > sp(62.f);
+    float aw = with_art ? sp(28.f) : 0, ah = aw / kTileAspect;
+    if (with_art) {
+        ArtRef art = art_for_entry(e);
+        TileSpec ts;
+        ts.title = e.title;
+        ts.c0 = c0;
+        ts.c1 = c1;
+        ImVec2 a0 = o, a1(o.x + aw, o.y + ah);
+        ui::shadow(dl, a0, a1, sp(1.75f), 1.2f);
+        if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.75f));
+        else draw_no_art(dl, ts, a0, a1, sp(1.75f), 1.f);
+        dl->AddRect(a0, a1, ui::HAIRLINE, sp(1.75f), 0, 1.f);
+    }
+    float tx = with_art ? aw + sp(3.f) : 0;
+    ImGui::SetCursorScreenPos(ImVec2(o.x + tx, o.y));
+    ImGui::BeginGroup();
+    float tw = avail - tx;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+    ImGui::PushFont(ui::F.title);
+    ImGui::TextWrapped("%s", e.title.c_str());
+    ImGui::PopFont();
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    pill(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.2f));
+    ImGui::SameLine(0, sp(0.75f));
+    pill(native ? "NATIVE PORT" : "EMULATED", ui::PANEL2);
+    if (supports_online(e)) {
+        char pl[32];
+        std::snprintf(pl, sizeof pl, "1-%d players", local_players_for(e));
+        ImGui::SameLine(0, sp(0.75f));
+        pill(pl, ui::PANEL2);
+    }
+    if (cat && cat->year) {
+        ImGui::SameLine(0, sp(0.75f));
+        pill(std::to_string(cat->year).c_str(), ui::PANEL2);
+    }
+    if (cat && !cat->blurb.empty()) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+        ImGui::TextWrapped("%s", cat->blurb.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::EndGroup();
+    if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(2.f)));
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+    ImGui::PushTextWrapPos(0.f);
+    ImGui::TextWrapped("%s", e.path.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    if (e.issue == "extract") {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+        ImGui::TextWrapped("Archived: %s cannot open %s files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your archive stays untouched.",
+                           e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);
+        ImGui::PopStyleColor();
+    } else if (e.issue == "encrypted") {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+        ImGui::TextWrapped("This 3DS image is encrypted. Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder) to run it.");
+        ImGui::PopStyleColor();
+    } else if (e.issue == "keys") {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+        ImGui::TextWrapped("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua archive needs no keys.");
+        ImGui::PopStyleColor();
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    ImGui::Text("Play time: %s      Last played: %s", hubui::format_play_time(gs.play_seconds).c_str(),
+                gs.last_played ? fmt_time(gs.last_played).c_str() : "never");
+    if (native) {
+        ImGui::TextDisabled("Smash Classic keeps its own saves.");
+    } else {
+        std::string sv = A.info_battery_files > 0 ? "Save data: " + std::to_string(A.info_battery_files) + " file(s), " + size_text(A.info_battery_bytes)
+                                                  : std::string("Save data: none yet");
+        sv += "      Save states: " + std::to_string(A.info_state_files);
+        if (A.info_auto_state) sv += "  (+ resume point)";
+        ImGui::TextUnformatted(sv.c_str());
+    }
+    ImGui::Dummy(ImVec2(0, sp(2.f)));
+
+    float bh = sp(5.5f);
+    if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play)) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry(c); }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine(0, sp(1.5f));
+    if (e.system == hub::System::GC && !supports_online(e)) {
+        button("Online soon", ImVec2(0, bh), false, false, ui::Icon::Globe);
+    } else if (supports_online(e)) {
+        if (button("Play Online", ImVec2(0, bh), false, idle, ui::Icon::Globe)) {
+            ImGui::CloseCurrentPopup();
+            A.pending_room_game = room_id(e);
+            enter_room(true, hubnet::new_room_code());
+        }
+    }
+    ImGui::SameLine(0, sp(1.5f));
+    if (button(gs.favorite ? "Unfavorite" : "Favorite", ImVec2(0, bh), false, true, gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star)) toggle_favorite(e.key);
+    if (!native) {
+        ImGui::SameLine(0, sp(1.5f));
+        if (button("Save folder", ImVec2(0, bh), false, true, ui::Icon::Folder)) open_in_explorer(hub::saves::game_dir(sys_short(e), e.key));
+    } else {
+        ImGui::SameLine(0, sp(1.5f));
+        if (button("Locate BattleShip.exe", ImVec2(0, bh))) locate_smash();
+    }
+    ImGui::SameLine(0, sp(1.5f));
+    if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+/* ---------- the page ---------- */
+
+void ensure_selection() {
+    if (A.lib.empty()) { A.sel_game.clear(); return; }
+    if (!A.env_select.empty() && find_entry(A.env_select)) { A.sel_game = A.env_select; A.env_select.clear(); }
+    if (find_entry(A.sel_game)) return;
+    int i = hubui::pick_hero(A.sg, "");
+    A.sel_game = i >= 0 ? A.lib[i].key : std::string();
+}
+
+/* Home card: shown until a sync folder is set or the player dismisses it ("Not now", saved in hub.json). */
+void sync_card() {
+    if (!A.st.sync_folder.empty() || A.st.sync_card_dismissed) return;
+    const auto& sugg = sync_suggestions();
+    bool busy = A.job.running;
+
+    begin_panel("sync_card");
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted("Keep your saves and friends on all your PCs");
+    ImGui::PopFont();
+    text_wrapped_disabled("Sync your save vault through a folder both PCs can see. RetroHub never deletes a save.");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (!sugg.empty() && button(("Use " + sugg[0].label).c_str(), ImVec2(0, 0), true, !busy)) {
+        make_dirs(sugg[0].path);
+        A.st.sync_folder = sugg[0].path;
+        A.st.sync_auto = true;
+        mark_dirty();
+        start_sync(true);
+    }
+    if (!sugg.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sugg[0].path.c_str());
+    ImGui::SameLine(0, sp(1.f));
+    if (button("Choose folder...", ImVec2(0, 0), false, !busy)) {
+        std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+        if (!p.empty()) {
+            A.st.sync_folder = p;
+            A.st.sync_auto = true;
+            mark_dirty();
+            start_sync(true);
+        }
+    }
+    ImGui::SameLine(0, sp(1.f));
+    if (button("Not now", ImVec2(0, 0))) {
+        A.st.sync_card_dismissed = true;
+        mark_dirty();
+    }
+    end_panel();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+}
+
+void page_library() {
+    if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
+    ensure_selection();
+    library_top_bar();
+    A.page_scrollable = false;
+
+    if (A.lib.empty()) {
+        if (A.scanning && !A.scanned_once) skeleton_home();
+        else if (A.scanning) {}   // rescan of an empty library: top bar shows the progress line
+        else empty_library_state();
+        return;
+    }
+    if (A.view == LibView::All) {
+        all_games_view();
+        return;
+    }
+    if (A.st.rom_folders.empty() && !A.scanning) {   // only the bundled game: ask for game folders
+        begin_panel("add_folders_card");
+        ImGui::PushFont(ui::F.bold);
+        ImGui::TextUnformatted("Add your game folders");
+        ImGui::PopFont();
+        text_wrapped_disabled("Only the bundled game is here. Point RetroHub at the folder(s) with your N64, GBA, GB, DS, 3DS and Wii U games and they all show up.");
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        if (button("Add ROM folder", ImVec2(0, 0), true, true, ui::Icon::Folder)) add_rom_folder();
+        static const std::vector<std::string> sugg2 = hub::suggest_rom_folders(2);
+        for (const std::string& s : sugg2) {
+            ImGui::SameLine(0, sp(1.f));
+            size_t cut = s.find_last_of('\\');
+            size_t cut2 = cut == std::string::npos || cut == 0 ? std::string::npos : s.find_last_of('\\', cut - 1);
+            if (button(("Add  " + (cut2 == std::string::npos ? s : s.substr(cut2 + 1))).c_str(), ImVec2(0, 0))) add_rom_folder_path(s);
+        }
+        end_panel();
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
+    if (!A.st.rom_folders.empty()) sync_card();
+
+    const hub::GameEntry* sel = find_entry(A.sel_game);
+    if (sel) {
+        if (A.hero_key != sel->key) { A.hero_key = sel->key; A.hero_t = 0.f; }
+        ui::anim(A.hero_t, 1.f, 9.f);
+        float avail_h = ImGui::GetContentRegionAvail().y;
+        float hero_h = std::min(sp(40.f), std::max(sp(21.f), std::min(avail_h * 0.36f, ImGui::GetIO().DisplaySize.y * 0.25f)));   // <= a quarter of the window
+        draw_hero(*sel, hero_h);
+    }
+    /* The shelf strips inset their covers by `bleed` (room for the hover grow); pull the child out by the same amount so
+     * headers and the first cover start on the same left edge as the hero and the top bar. */
+    const float lib_bleed = sp(1.5f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() - lib_bleed);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::BeginChild("shelves", ImVec2(ImGui::GetContentRegionAvail().x + lib_bleed, 0), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleVar();
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(2.f), 0));
+    A.page_scrollable = ImGui::GetScrollMaxY() > 0;
+    home_shelves();
+    ImGui::PopStyleVar();
+    ImGui::EndChild();
+}
+
