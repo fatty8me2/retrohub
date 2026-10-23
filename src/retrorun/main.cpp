@@ -470,6 +470,8 @@ bool Frontend::setup_paths() {
         int li = dsview::layout_index(want);
         if (li >= 0) { ds_layout = li; core.overrides["melonds_screen_layout1"] = want; }
     }
+    // mGBA's idle-loop removal state is not part of its savestates, so a rolled-back run would diverge from a straight one.
+    if (a.rollback || a.synctest) core.overrides["mgba_idle_optimization"] = "Don't Remove";
     if (a.link) {
         // Deterministic link defaults (ini / --opt below may still override): cycle-based RTC, side-by-side layout, my console's audio.
         int mine = 0;
@@ -479,7 +481,7 @@ bool Frontend::setup_paths() {
         core.overrides["sameboy_screen_layout"] = "left-right";
         core.overrides["sameboy_audio_output"] = "Game Boy #" + std::to_string(std::min(1, mine) + 1);
     }
-    if (!a.net.empty() && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
+    if ((!a.net.empty() || a.synctest) && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
     rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
@@ -944,7 +946,8 @@ bool Frontend::setup_net() {
         rc.slot_mask = slot_mask;
         rc.delay = a.delay;
         rc.max_pred = a.rb_pred;
-        rc.use_state_hash = use_state_hash;
+        if (const char* hi = std::getenv("RB_HASH_INTERVAL")) rc.hash_interval = std::max(1, atoi(hi));
+        rc.use_state_hash = false;   // confirmed video hash: serialized bytes differ benignly after a load (audio state)
         rb_warmup();
         rb::Transport t;
         t.pump = [this] { session.update(); };
@@ -954,7 +957,7 @@ bool Frontend::setup_net() {
         t.log = [](const std::string& s) { rlog("%s", s.c_str()); };
         rbe = std::make_unique<rb::Engine>(rc, make_rb_sim(), t);
         rlog("net: ROLLBACK netplay, input delay %d, max prediction %d, state %zu bytes, sync hash %s", a.delay, rc.max_pred,
-             core.serialize_size(), use_state_hash ? "state" : "output");
+             core.serialize_size(), "output");
         if (!rbe->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = 4; return false; }
         rlog("net: all %d players ready, starting", a.players);
         return true;
@@ -1151,6 +1154,16 @@ rb::Sim Frontend::make_rb_sim() {
         uint64_t h = f.px.empty() ? 0 : n64run::hash_block(f.px.data(), f.px.size() * 4);
         return h;   // video only: audio resampler state is not part of any core's savestate, and audio never feeds back into the game
     };
+    s.mem_hash = [this]() -> uint64_t {
+        uint64_t h = 0xCBF29CE484222325ull;
+        for (unsigned k = 0; k < 10; k++)
+            for (unsigned t : {0u, 2u, 3u}) {
+                size_t sz = 0;
+                void* p = core.memory(t | (k << 8), &sz);
+                if (p && sz) h = (h ^ n64run::hash_block(p, sz)) * 0x100000001B3ull;
+            }
+        return h;
+    };
     s.poll_local = [this] { poll_all_local(); };
     s.read_local = [this](int port) -> uint32_t {
         for (int i = 0; i < n_local; i++) if (local_ports[i] == port) return local_pad_cache_[i];
@@ -1200,9 +1213,9 @@ int Frontend::run_synctest() {
         }
     };
     rlog("SYNCTEST: %d frames, rollback depth %d, state %zu bytes, compare %s", frames, a.synctest, core.serialize_size(),
-         use_state_hash ? "output + state hash" : "output (video+audio) only");
+         "video + memory hash");
     uint64_t t0 = SDL_GetTicks64();
-    rb::SyncTestResult r = rb::run_synctest(sim, frames, a.synctest, use_state_hash, input, [](const std::string& m) { rlog("%s", m.c_str()); });
+    rb::SyncTestResult r = rb::run_synctest(sim, frames, a.synctest, true, input, [](const std::string& m) { rlog("%s", m.c_str()); });
     rlog("SYNCTEST timing: serialize %.1f us avg (max %.1f), unserialize %.1f us avg (max %.1f), hash %.1f us, retro_run %.1f us avg; %llu ms total",
          r.save_us, r.save_us_max, r.load_us, r.load_us_max, r.hash_us, r.step_us, (unsigned long long)(SDL_GetTicks64() - t0));
     rlog("SYNCTEST frames %llu, re-simulated frames compared %llu, mismatches %llu -> %s", (unsigned long long)r.frames, (unsigned long long)r.checks,
@@ -1344,6 +1357,20 @@ int Frontend::run(const Args& args) {
         if (!core.load_game_special(gt, roms, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
     } else if (!core.load_game(a.rom, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
     fps = core.av().timing.fps > 1 ? core.av().timing.fps : 60.0;
+    if (a.rollback && !a.synctest) {
+        // Only cores whose savestates were verified exact (SyncTest against a free-running reference) may roll back; others stay lockstep.
+        std::string ln = lower(core.info().library_name ? core.info().library_name : "");
+        bool safe = false;
+        std::string why;
+        if (ln.find("mgba link") != std::string::npos) safe = true;
+        else if (ln.find("sameboy") != std::string::npos)
+            why = "SameBoy: rollback desyncs under deep re-simulation (CGB states inexact, DMG failed a bad-network run)";
+        else if (ln.find("gambatte") != std::string::npos) why = "Gambatte states are not exact";
+        else why = "core " + ln + " is not verified for rollback";
+        if (!safe && std::getenv("RETRORUN_FORCE_ROLLBACK")) { rlog("rollback: forced on an unverified core (RETRORUN_FORCE_ROLLBACK)"); safe = true; }
+        if (!safe) { rlog("rollback: %s -> staying on lockstep netplay", why.empty() ? "unsupported core" : why.c_str()); a.rollback = false; }
+        else rlog("rollback: core %s verified for rollback netplay", ln.c_str());
+    }
     if (is_ds) {   // every option retrorun relies on must exist in the real core with that value, else F9/defaults would silently fail
         int nreq = 0;
         const dsview::ReqOpt* req = dsview::required_options(&nreq);

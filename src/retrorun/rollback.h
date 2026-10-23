@@ -46,6 +46,7 @@ struct Sim {
     std::function<uint32_t(int port)> read_local;  // current pad of a locally owned port
     std::function<void()> poll_local;              // poll devices once per run_frame (before read_local)
     std::function<void()> idle;                    // while blocked (pump window events)
+    std::function<uint64_t()> mem_hash;            // optional: hash of live emulator memory (synctest extra check)
 };
 
 struct Transport {
@@ -163,7 +164,7 @@ class Engine {
     std::deque<HEnt> peer_h_[8];
     uint32_t left_mask_ = 0, ready_mask_ = 0;
     uint32_t last_send_ = 0, last_progress_ = 0, stall_since_ = 0;
-    bool desync_ = false, lost_ = false;
+    bool desync_ = false, lost_ = false, trace_ = false;
     double skew_ema_ = 0;
     uint32_t last_wait_ = 0;
     Stats st_;
