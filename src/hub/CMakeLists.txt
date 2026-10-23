@@ -1,4 +1,4 @@
-add_library(hublogic STATIC logic.cpp netplay_3ds.cpp)
+add_library(hublogic STATIC logic.cpp netplay_3ds.cpp smash_save.cpp)
 target_link_libraries(hublogic PUBLIC hubbase)
 target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_compile_features(hublogic PUBLIC cxx_std_17)
@@ -6,6 +6,10 @@ target_compile_features(hublogic PUBLIC cxx_std_17)
 # Console-only unit test for the pure logic.
 add_executable(hub_logic_test test_logic.cpp)
 target_link_libraries(hub_logic_test PRIVATE hublogic)
+
+# Session-level rules: Smash save one-time copy (scratch dirs), post-exit touch/sync, queued friend join.
+add_executable(hub_session_test test_session.cpp)
+target_link_libraries(hub_session_test PRIVATE hublogic)
 
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
@@ -17,7 +21,6 @@ target_include_directories(RetroHub PRIVATE
 target_link_libraries(RetroHub PRIVATE hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
     ole32 shell32 uuid winhttp)
 # main.cpp defines SDL_MAIN_HANDLED and provides WinMain itself, so SDL2main is not needed.
-# Optional icon: add hub.rc (with an ICON resource) to the sources above.
 
 add_custom_command(TARGET RetroHub POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:RetroHub>)

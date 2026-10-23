@@ -88,7 +88,7 @@ only if the shell requires it; the `=` split means a bare `C:\a b` value works.
 
 - `-C Dolphin.Display.Fullscreen=True` sets `MAIN_FULLSCREEN` (`Source/Core/Core/Config/MainSettings.cpp`, `{System::Main, "Display", "Fullscreen"}`). [src]
 - In batch mode `MainWindow` skips `show()` and the render window is used instead (`RenderToMain` is forced off in batch; `CommandLineParse.cpp`). [src]
-- Whether the render window actually opens fullscreen in batch mode is [unverified]; test it.
+- Verified: the render window opens fullscreen in batch mode (Melee, scratch install, real launch path).
 - Borderless alternative: `-C Graphics.Settings.BorderlessFullscreen=True` [src, key from `VideoCommon/VideoConfig.cpp`].
 
 ### Making Escape / Stop exit in batch mode
@@ -271,13 +271,20 @@ Pre-write `Dolphin.ini` [Analytics], [AutoUpdate], [Interface] keys (section 4) 
 
 ---
 
-## 10. Unverified items (test before relying on them)
+## 10. Verified results and open items
 
+Verified so far:
+- Melee boots fullscreen through the real launch path in a scratch install; the memory card is detected.
+- Double Dash netplay ran 100 s through the relay forwarder with no desync (hidden desktop).
+- Pads 1-4 map from XInput.
+- Batch-mode fullscreen (section 2).
+
+Still open:
 1. Stable identity of 2509 (the stable API returned HTTP 500 during research).
-2. Batch-mode fullscreen behavior and whether ConfirmStop prompts in batch mode.
+2. Whether ConfirmStop prompts in batch mode. `[Interface] ConfirmStop = False` remains the safe setting.
 3. `Dolphin.ini` storage format of `SlotA` (integer assumed from the enum order).
 4. `GFX.ini` file name and the `GCPadNew.ini` section/key format.
-5. XInput and keyboard device string format in the GUI-generated profile.
+5. Keyboard device string format in the GUI-generated profile, and non-XInput pads (pending).
 6. Save-state folder name and file naming; whether Dolphin writes states on exit.
 7. Backend config names for `-v` / `GFXBackend`.
 8. Pipe line protocol and device string.

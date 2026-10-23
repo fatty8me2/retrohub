@@ -17,6 +17,7 @@
 #include "m64p_types.h"
 #include "m64p_common.h"
 
+#include "mempak.h"
 #include "runstate.h"
 
 namespace n64run { RunState g_run; }
@@ -58,7 +59,7 @@ PLUGIN_EXPORT void InitiateControllers(CONTROL_INFO info) {
     for (int i = 0; i < 4; i++) {
         info.Controls[i].Present = g_run.owner[i] >= 0 ? 1 : 0;
         info.Controls[i].RawData = 0;
-        info.Controls[i].Plugin = (info.Controls[i].Present && g_run.mempak) ? PLUGIN_MEMPAK : PLUGIN_NONE;
+        info.Controls[i].Plugin = !info.Controls[i].Present ? PLUGIN_NONE : g_run.rumble ? PLUGIN_RUMBLE_PAK : g_run.mempak ? PLUGIN_MEMPAK : PLUGIN_NONE;
         info.Controls[i].Type = CONT_TYPE_STANDARD;
     }
     char msg[128];
@@ -74,7 +75,10 @@ PLUGIN_EXPORT void GetKeys(int control, BUTTONS* keys) {
     keys->Value = g_run.lockstep->get_keys(control);
 }
 
-PLUGIN_EXPORT void ControllerCommand(int, unsigned char*) {}
+PLUGIN_EXPORT void ControllerCommand(int control, unsigned char* cmd) {
+    bool on = false;
+    if (g_run.rumble_cb && cmd && n64run::decode_rumble_command(cmd, &on)) g_run.rumble_cb(control, on);
+}
 PLUGIN_EXPORT void ReadController(int, unsigned char*) {}
 PLUGIN_EXPORT int RomOpen(void) { return 1; }
 PLUGIN_EXPORT void RomClosed(void) {}

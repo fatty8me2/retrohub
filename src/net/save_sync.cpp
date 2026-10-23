@@ -20,7 +20,7 @@ uint64_t save_hash(const uint8_t* p, size_t n) {
 }
 
 bool is_battery_ext(const std::string& name) {
-    static const char* exts[] = {".eep", ".sra", ".fla", ".mpk"};
+    static const char* exts[] = {".eep", ".sra", ".fla", ".mpk", ".srm", ".sav", ".rtc"};
     std::string low;
     for (char c : name) low += (char)std::tolower((unsigned char)c);
     for (const char* e : exts) {

@@ -263,7 +263,9 @@ void fr_invite_uids(const std::vector<std::string>& uids) {
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who) {
     if (!hubnet::valid_room_code(code)) { set_notice("That lobby code is not valid any more."); return; }
     if (A.proc) {   // our game is running: remember the room and join when it closes
-        if (A.in_room && A.code == code) { FR.pending_join = {}; set_notice("You are already in that room."); return; }
+        if (hubui::join_while_running(A.in_room && A.code == code) == hubui::JoinWhileRunning::AlreadyInRoom) {
+            FR.pending_join = {}; set_notice("You are already in that room."); return;
+        }
         FR.pending_join = {code, game_id, title, who};
         set_notice(hubui::queued_join_text(who), 20.0);
         set_toast(hubui::queued_join_text(who), true, 6.0);
@@ -374,7 +376,7 @@ void fr_start() {
 }
 
 void fr_run_pending_join() {
-    if (FR.pending_join.code.empty() || A.proc) return;
+    if (!hubui::pending_join_ready(!FR.pending_join.code.empty(), A.proc != nullptr)) return;
     auto pj = FR.pending_join;
     FR.pending_join = {};
     fr_join_lobby(pj.code, pj.game_id, pj.title, pj.name);

@@ -315,26 +315,26 @@ const std::vector<GameInfo>& catalog() {
          "Stunt-filled arcade racing through city courses, with two-player split screen.",
          "San Francisco Rush 2049 (USA)"},
 
-        /* ---- GBA library (Libretro). Link-cable games are online=false: the cable is
-         *      not networked yet. Serials from the No-Intro GBA DAT. ---- */
+        /* ---- GBA library (Libretro). Link-cable games are online via mgba_link_libretro
+         *      (two GBAs in one deterministic simulation, retrorun --link). Serials from the No-Intro GBA DAT. ---- */
         {"pokeruby", "Pokemon Ruby", Engine::Libretro, 2, {}, "", "gba",
-         {"AXVE", "AXVJ"}, false, 2003,
+         {"AXVE", "AXVJ"}, true, 2003,
          "Explore the Hoenn region, catch Pokemon, and trade or battle over a link cable.",
          "Pokemon - Ruby Version (USA, Europe)"},
         {"pokesapphire", "Pokemon Sapphire", Engine::Libretro, 2, {}, "", "gba",
-         {"AXPE", "AXPJ"}, false, 2003,
+         {"AXPE", "AXPJ"}, true, 2003,
          "The Hoenn adventure again, with a different set of version-exclusive Pokemon.",
          "Pokemon - Sapphire Version (USA, Europe)"},
         {"pokeemerald", "Pokemon Emerald", Engine::Libretro, 2, {}, "", "gba",
-         {"BPEE", "BPEJ"}, false, 2005,
+         {"BPEE", "BPEJ"}, true, 2005,
          "The expanded Hoenn story, with the Battle Frontier and more postgame content.",
          "Pokemon - Emerald Version (USA, Europe)"},
         {"pokefirered", "Pokemon FireRed", Engine::Libretro, 2, {}, "", "gba",
-         {"BPRE", "BPRJ"}, false, 2004,
+         {"BPRE", "BPRJ"}, true, 2004,
          "A remake of the first generation's Kanto adventure, with link-cable trading and battles.",
          "Pokemon - FireRed Version (USA, Europe)"},
         {"pokeleafgreen", "Pokemon LeafGreen", Engine::Libretro, 2, {}, "", "gba",
-         {"BPGE", "BPGJ"}, false, 2004,
+         {"BPGE", "BPGJ"}, true, 2004,
          "The Kanto remake in its Leaf Green form, with link-cable trading and battles.",
          "Pokemon - LeafGreen Version (USA, Europe)"},
         {"minishcap", "The Legend of Zelda: The Minish Cap", Engine::Libretro, 1, {}, "", "gba",
@@ -569,7 +569,8 @@ const GameInfo* find_game(const std::string& id) {
 }
 
 bool link_cable_game(const std::string& id) {
-    static const char* ids[] = {"pokered", "pokeyellow", "pokegold", "pokesilver", "pokecrystal"};
+    static const char* ids[] = {"pokered", "pokeyellow", "pokegold", "pokesilver", "pokecrystal",
+                                 "pokeruby", "pokesapphire", "pokeemerald", "pokefirered", "pokeleafgreen"};
     for (const char* x : ids) if (id == x) return true;
     return false;
 }

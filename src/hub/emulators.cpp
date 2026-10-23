@@ -1,4 +1,5 @@
 #include "winutil.h"
+#include <cctype>
 #include "emulators.h"
 
 #ifndef NOMINMAX
@@ -490,26 +491,33 @@ static const char* const kAzButtons[] = {"a", "b", "x", "y", "up", "down", "left
 
 static std::string fmt_g(double v) { char b[40]; std::snprintf(b, sizeof b, "%g", v); return b; }
 
-static std::string az_binding(const hubctl::Profile& p, const std::string& control) {
+/* Which pad Azahar's SDL input binds: a guid + the n-th pad with that guid ("port"). Without a choice every binding keeps
+ * "maptype:all,port:0" (any pad). */
+static std::string az_target(const AzPad& pad) {
+    if (pad.guid.empty()) return "maptype:all,port:0";
+    return "guid:" + pad.guid + ",port:" + std::to_string(pad.port);
+}
+
+static std::string az_binding(const hubctl::Profile& p, const std::string& control, const AzPad& pad) {
     auto it = p.buttons.find(control);
     std::vector<hubctl::Term> t;
     if (it == p.buttons.end() || !hubctl::parse_expr(it->second, p.axis_threshold, &t) || t.empty()) return "";
     const hubctl::Term& m = t[0];   // Azahar takes one source per button
-    if (!m.axis) return "engine:sdl,api:controller,button:" + std::to_string(m.idx) + ",maptype:all,port:0";
+    if (!m.axis) return "engine:sdl,api:controller,button:" + std::to_string(m.idx) + "," + az_target(pad);
     return "engine:sdl,api:controller,axis:" + std::to_string(m.idx) + ",direction:" + (m.sign < 0 ? "-" : "+") +
-           ",threshold:" + fmt_g(m.threshold / 32768.0) + ",maptype:all,port:0";
+           ",threshold:" + fmt_g(m.threshold / 32768.0) + "," + az_target(pad);
 }
 
-static std::string az_analog(const hubctl::Profile& p, const std::string& control) {
+static std::string az_analog(const hubctl::Profile& p, const std::string& control, const AzPad& pad) {
     auto it = p.analogs.find(control);
     if (it == p.analogs.end()) return "";
     int ax = hubctl::axis_index(it->second.x), ay = hubctl::axis_index(it->second.y);
     if (ax < 0 || ay < 0) return "";
     return "engine:sdl,api:controller,axis_x:" + std::to_string(ax) + ",axis_y:" + std::to_string(ay) + ",deadzone:" +
-           fmt_g(it->second.deadzone) + ",maptype:all,port:0";
+           fmt_g(it->second.deadzone) + "," + az_target(pad);
 }
 
-std::string azahar_config_patch(const std::string& in, const hubctl::Profile& prof) {
+std::string azahar_config_patch(const std::string& in, const hubctl::Profile& prof, const AzPad& pad) {
     std::string t = in;
     auto set = [&](const char* sec, const std::string& key, const std::string& val) {
         t = hubui::ini_set(t, sec, key + "\\default", "false");
@@ -519,11 +527,32 @@ std::string azahar_config_patch(const std::string& in, const hubctl::Profile& pr
     set("UI", "firstStart", "false");
     set("UI", "enable_discord_presence", "false");
     set("Miscellaneous", "check_for_update_on_start", "false");
-    for (const char* c : kAzButtons) { std::string v = az_binding(prof, c); if (!v.empty()) set("Controls", std::string("button_") + c, "\"" + v + "\""); }
-    for (const char* c : {"circle_pad", "c_stick"}) { std::string v = az_analog(prof, c); if (!v.empty()) set("Controls", c, "\"" + v + "\""); }
+    for (const char* c : kAzButtons) { std::string v = az_binding(prof, c, pad); if (!v.empty()) set("Controls", std::string("button_") + c, "\"" + v + "\""); }
+    for (const char* c : {"circle_pad", "c_stick"}) { std::string v = az_analog(prof, c, pad); if (!v.empty()) set("Controls", c, "\"" + v + "\""); }
     return t;
 }
-std::string azahar_config_patch(const std::string& in) { return azahar_config_patch(in, hubctl::default_profile("3ds")); }
+std::string azahar_config_patch(const std::string& in, const hubctl::Profile& prof) { return azahar_config_patch(in, prof, AzPad()); }
+std::string azahar_config_patch(const std::string& in) { return azahar_config_patch(in, hubctl::default_profile("3ds"), AzPad()); }
+
+/* Player 1's pad = first in port order. Its "port" is its rank among the pads with the same guid in SDL's own order. */
+bool azahar_pad_select(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl, AzPad* out) {
+    *out = AzPad();
+    if (by_port.empty()) return false;
+    const PadDesc& p = by_port[0];
+    int rank = 0;
+    for (const PadDesc& d : by_sdl) { if (d.key == p.key) break; if (d.guid == p.guid) ++rank; }
+    out->guid = p.guid;
+    out->port = rank;
+    return true;
+}
+
+/* Marker suffix for the chosen pad: nothing when none (default profiles keep their old marker hash). */
+static std::string pad_suffix(const std::string& sel) {
+    if (sel.empty()) return "";
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (unsigned char c : sel) h = (h ^ c) * 0x100000001B3ull;
+    return "-" + hubctl::hash_hex(h);
+}
 
 /* The generated pad configs are written when missing, and again only when the RetroHub profile they come from changed:
  * the marker file holds the hash of the profile that was written ("profile-hash: ..."). A marker without a hash is from
@@ -541,21 +570,22 @@ static hubctl::Profile stored_profile(const std::string& system) {
     return hubctl::resolve(st, system);
 }
 
-void prepare_azahar(const std::string& install_dir, const hubctl::Profile& prof) {
+void prepare_azahar(const std::string& install_dir, const hubctl::Profile& prof, const AzPad& pad) {
     std::string user = join(install_dir, "user");   // a "user" folder beside azahar.exe makes it portable
     std::string cfgdir = join(user, "config");
     make_dirs(cfgdir);
     make_dirs(join(user, "sdmc"));
     std::string marker = join(cfgdir, "retrohub-pad.txt");
-    std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof));
+    std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof)) + pad_suffix(pad.guid.empty() ? "" : pad.guid + "/" + std::to_string(pad.port));
     if (file_exists(marker) && marker_hash(read_text(marker), "3ds") == want) return;   // already written for this profile; later edits are kept
     std::string ini = join(cfgdir, "qt-config.ini");
-    write_text(ini, azahar_config_patch(read_text(ini), prof));
+    write_text(ini, azahar_config_patch(read_text(ini), prof, pad));
     write_text(marker, "RetroHub wrote the controller mapping from its Controllers profile.\n"
                        "It is rewritten only when that profile changes. Delete this file to have it written again.\n"
                        "profile-hash: " + want + "\n");
 }
-void prepare_azahar(const std::string& install_dir) { prepare_azahar(install_dir, stored_profile("3ds")); }
+void prepare_azahar(const std::string& install_dir, const hubctl::Profile& prof) { prepare_azahar(install_dir, prof, AzPad()); }
+void prepare_azahar(const std::string& install_dir) { prepare_azahar(install_dir, stored_profile("3ds"), AzPad()); }
 
 std::string cemu_default_settings_xml() {
     return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -690,7 +720,7 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
     t = hubui::ini_set(t, "Core", "SlotA", "8");
     t = hubui::ini_set(t, "Core", "SlotB", "255");
     for (int i = 0; i < 4; ++i)
-        t = hubui::ini_set(t, "Core", "SIDevice" + std::to_string(i), pads.adapter ? "12" : (i == 0 || pads.xinput[i]) ? "6" : "0");
+        t = hubui::ini_set(t, "Core", "SIDevice" + std::to_string(i), pads.adapter ? "12" : (i == 0 || pads.xinput[i] || !pads.dev[i].empty()) ? "6" : "0");
     return t;
 }
 
@@ -722,7 +752,53 @@ static std::string dolphin_xinput_name(const hubctl::Term& t) {
     return it == m.end() ? "" : it->second;
 }
 
-std::string dolphin_pad_ini(const std::string& in, const DolphinPads&, const hubctl::Profile& prof) {
+/* SDL source -> Dolphin's SDL device control names ("Button S" = SDL south = a; Y- is up on this backend). */
+static std::string dolphin_sdl_name(const hubctl::Term& t) {
+    static const std::map<std::string, const char*> m = {
+        {"a", "`Button S`"}, {"b", "`Button E`"}, {"x", "`Button W`"}, {"y", "`Button N`"}, {"leftshoulder", "`Shoulder L`"},
+        {"rightshoulder", "`Shoulder R`"}, {"start", "Start"}, {"back", "Back"}, {"guide", "Guide"}, {"leftstick", "`Thumb L`"},
+        {"rightstick", "`Thumb R`"}, {"dpup", "`Pad N`"}, {"dpdown", "`Pad S`"}, {"dpleft", "`Pad W`"}, {"dpright", "`Pad E`"},
+        {"lefttrigger", "`Trigger L`"}, {"righttrigger", "`Trigger R`"},
+        {"leftx+", "`Left X+`"}, {"leftx-", "`Left X-`"}, {"lefty-", "`Left Y-`"}, {"lefty+", "`Left Y+`"},
+        {"rightx+", "`Right X+`"}, {"rightx-", "`Right X-`"}, {"righty-", "`Right Y-`"}, {"righty+", "`Right Y+`"}};
+    auto it = m.find(hubctl::term_name(t));
+    return it == m.end() ? "" : it->second;
+}
+
+/* Key name -> Dolphin's DInput keyboard names (upper-case letters / digits; its defaults use UP, RETURN ...). */
+std::string dolphin_key_name(const std::string& k) {
+    if (k.size() == 1) return std::string(1, (char)std::toupper((unsigned char)k[0]));
+    static const std::map<std::string, const char*> m = {
+        {"up", "UP"}, {"down", "DOWN"}, {"left", "LEFT"}, {"right", "RIGHT"}, {"return", "RETURN"}, {"kp_enter", "NUMPADENTER"},
+        {"space", "SPACE"}, {"tab", "TAB"}, {"backspace", "BACK"}, {"lshift", "LSHIFT"}, {"rshift", "RSHIFT"}, {"lctrl", "LCONTROL"},
+        {"rctrl", "RCONTROL"}, {"lalt", "LMENU"}, {"ralt", "RMENU"}, {"comma", "COMMA"}, {"period", "PERIOD"}, {"slash", "SLASH"},
+        {"semicolon", "SEMICOLON"}, {"quote", "APOSTROPHE"}, {"lbracket", "LBRACKET"}, {"rbracket", "RBRACKET"}, {"minus", "MINUS"},
+        {"equals", "EQUALS"}, {"backslash", "BACKSLASH"}, {"grave", "GRAVE"}, {"insert", "INSERT"}, {"delete", "DELETE"},
+        {"home", "HOME"}, {"end", "END"}, {"pageup", "PRIOR"}, {"pagedown", "NEXT"}};
+    auto it = m.find(k);
+    if (it != m.end()) return it->second;
+    if (k.size() >= 2 && k[0] == 'f' && std::isdigit((unsigned char)k[1])) return "F" + k.substr(1);
+    if (k.size() == 3 && k[0] == 'k' && k[1] == 'p' && std::isdigit((unsigned char)k[2])) return std::string("NUMPAD") + k[2];
+    return "";
+}
+
+DolphinPads dolphin_pads_with(DolphinPads base, const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl) {
+    int xrank = 0;
+    for (size_t i = 0; i < by_port.size() && i < 4; ++i) {
+        const PadDesc& p = by_port[i];
+        if (p.xinput) {
+            if ((int)i != xrank) base.dev[i] = "XInput/" + std::to_string(xrank) + "/Gamepad";
+            ++xrank;
+        } else {
+            int n = 0;   // Dolphin numbers same-named SDL devices in SDL's order
+            for (const PadDesc& d : by_sdl) { if (d.key == p.key) break; if (d.name == p.name) ++n; }
+            base.dev[i] = "SDL/" + std::to_string(n) + "/" + p.name;
+        }
+    }
+    return base;
+}
+
+std::string dolphin_pad_ini(const std::string& in, const DolphinPads& pads, const hubctl::Profile& prof) {
     std::string t = in;
     const std::string kb = "DInput/0/Keyboard Mouse";
     struct M { const char* control; const char* key; const char* key_kb; };
@@ -740,14 +816,21 @@ std::string dolphin_pad_ini(const std::string& in, const DolphinPads&, const hub
     };
     for (int i = 0; i < 4; ++i) {
         std::string sec = "GCPad" + std::to_string(i + 1);
-        t = hubui::ini_set(t, sec, "Device", "XInput/" + std::to_string(i) + "/Gamepad");
+        const std::string dev = pads.dev[i].empty() ? "XInput/" + std::to_string(i) + "/Gamepad" : pads.dev[i];
+        const bool sdl = dev.compare(0, 4, "SDL/") == 0;
+        t = hubui::ini_set(t, sec, "Device", dev);
         for (const auto& m : map) {
             std::string v;
             auto it = prof.buttons.find(m.control);
             std::vector<hubctl::Term> terms;
             if (it != prof.buttons.end() && hubctl::parse_expr(it->second, prof.axis_threshold, &terms))
-                for (const auto& term : terms) { std::string n = dolphin_xinput_name(term); if (!n.empty()) v += (v.empty() ? "" : " | ") + n; }
-            if (i == 0 && m.key_kb[0]) v += (v.empty() ? "" : " | ") + std::string("`") + kb + ":" + m.key_kb + "`";
+                for (const auto& term : terms) { std::string n = sdl ? dolphin_sdl_name(term) : dolphin_xinput_name(term); if (!n.empty()) v += (v.empty() ? "" : " | ") + n; }
+            if (i == 0) {   // the keyboard pad (profile keys; the defaults are Dolphin's own)
+                auto kit = prof.keys.find(m.control);
+                std::vector<int> codes;
+                if (kit != prof.keys.end() && hubctl::parse_keys(kit->second, &codes))
+                    for (int c : codes) { std::string kn = dolphin_key_name(hubctl::key_name(c)); if (!kn.empty()) v += (v.empty() ? "" : " | ") + std::string("`") + kb + ":" + kn + "`"; }
+            }
             t = hubui::ini_set(t, sec, m.key, v);
         }
         /* A deadzone is only written when the player set one (0 = Dolphin's own default). */
@@ -760,6 +843,11 @@ std::string dolphin_pad_ini(const std::string& in, const DolphinPads&, const hub
     return t;
 }
 std::string dolphin_pad_ini(const std::string& in, const DolphinPads& p) { return dolphin_pad_ini(in, p, hubctl::default_profile("gc")); }
+static std::string dolphin_sel(const DolphinPads& p) {
+    std::string s;
+    for (int i = 0; i < 4; ++i) if (!p.dev[i].empty()) s += std::to_string(i) + "=" + p.dev[i] + ";";
+    return s;
+}
 
 void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, const hubctl::Profile& prof) {
     std::string cfg = join(install_dir, "User\\Config");
@@ -769,7 +857,7 @@ void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, co
      * GFX.ini defaults and the pad mappings. The pad mappings are rewritten when the RetroHub profile changed. */
     std::string ini = join(cfg, "Dolphin.ini"), gfx = join(cfg, "GFX.ini"), pad = join(cfg, "GCPadNew.ini");
     std::string marker = join(cfg, "retrohub-defaults.txt");
-    std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof));
+    std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof)) + pad_suffix(dolphin_sel(pads));
     const char* kText = "RetroHub wrote its default Dolphin settings and pad mappings once. Delete this file to have them written again.\n";
     if (!file_exists(marker)) {
         write_text(ini, dolphin_ini_defaults(read_text(ini)));

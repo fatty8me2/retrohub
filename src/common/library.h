@@ -14,6 +14,9 @@ namespace hub {
 enum class System { Unknown = 0, N64, GBA, GB, GBC, GC,
                     N3DS, WiiU,   // appended: 3DS (Azahar), Wii U (Cemu)
     NDS };
+/* GB/GBC/GBA run as one lockstepped console online (retrorun --net); the room can share the host's save with everyone. */
+inline bool is_lockstep_gb_system(System s) { return s == System::GB || s == System::GBC || s == System::GBA; }
+
 
 const char* system_name(System s);   // "Nintendo 64", "Game Boy Advance", "Game Boy", "Game Boy Color", "GameCube"
 const char* system_short(System s);  // "n64", "gba", "gb", "gbc", "gc" "3ds" "wiiu"  (stable; used in keys and paths)

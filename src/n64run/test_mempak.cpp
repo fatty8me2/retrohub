@@ -27,6 +27,18 @@ int main() {
     CHECK(!is_mempak_file("notes.mpk.txt"));
     CHECK(!is_mempak_file("mpk"));
     CHECK(!is_mempak_file("../x.mpk"));
+    // Rumble Pak: offline + profile option only; the core's rumble write is decoded to the motor state.
+    CHECK(rumble_enabled(false, true) && !rumble_enabled(true, true) && !rumble_enabled(false, false));
+    {
+        unsigned char cmd[0x26] = {0x23, 0x01, 0x03, 0xC0, 0x1B};
+        bool on = false;
+        for (int i = 5; i < 0x25; i++) cmd[i] = 0x01;
+        CHECK(decode_rumble_command(cmd, &on) && on);
+        for (int i = 5; i < 0x25; i++) cmd[i] = 0x00;
+        CHECK(decode_rumble_command(cmd, &on) && !on);
+        cmd[3] = 0x80;   // a different pak address is not rumble
+        CHECK(!decode_rumble_command(cmd, &on));
+    }
     CHECK(!is_mempak_file("a\\b.mpk"));
     CHECK(!is_mempak_file("Game.eep"));
 

@@ -384,11 +384,13 @@ int main(int argc, char** argv) {
 
     // ---- ports / local input
     LocalInput input;
+    bool want_rumble = false;
     if (!args.headless) hubctl::load_bundled_db();   // SDL_GameControllerDB: DualSense, Switch Pro, 8BitDo ...
     if (!args.controls.empty()) {
         hubctl::Profile prof;
         if (hubctl::read_profile_file(args.controls, &prof) && prof.system == "n64") {
             input.set_profile(prof);
+            want_rumble = prof.rumble;
             logf_("n64run", "controls: profile '%s' (%s)", prof.name.c_str(), args.controls.c_str());
         } else logf_("n64run", "controls: cannot use %s; built-in mapping", args.controls.c_str());
     }
@@ -409,6 +411,12 @@ int main(int argc, char** argv) {
     if (!online) for (int p = 0; p < kPorts; p++) if (args.owner[p] >= 0) args.owner[p] = 0;
     for (int p = 0; p < kPorts; p++) g_run.owner[p] = args.owner[p];
     g_run.mempak = mempak_enabled(online, args.share_host_save);
+    g_run.rumble = !args.headless && rumble_enabled(online, want_rumble);
+    if (g_run.rumble) {
+        static LocalInput* s_input; s_input = &input;
+        g_run.rumble_cb = [](int port, bool on) { if (s_input) s_input->rumble(port, on); };   // offline: owned index == port
+        logf_("n64run", "Rumble Pak: on (replaces the Controller Pak)");
+    }
     logf_("n64run", "controller paks: %s", g_run.mempak ? "on (saved as .mpk in the save dir)" : "off (online without shared host saves)");
     logf_("n64run", "ports: %d %d %d %d (my slot %d, %d pad(s))", args.owner[0], args.owner[1], args.owner[2], args.owner[3], my_slot, input.pad_count());
 

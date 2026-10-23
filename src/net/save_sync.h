@@ -1,8 +1,8 @@
 #pragma once
-/* Host-save sharing for online N64 sessions (--share-host-save).
+/* Host-save sharing for online sessions (n64run and retrorun --share-host-save; library hubsavesync).
  *
- * The host (slot 0) sends its battery saves (.eep .sra .fla .mpk) to every other PC before the
- * emulator starts, so that every PC boots from the same EEPROM/SRAM/FlashRAM/mempak bytes.
+ * The host (slot 0) sends its battery saves (N64: .eep .sra .fla .mpk; GB/GBC/GBA via retrorun: .srm .sav and the
+ * .rtc clock blob) to every other PC before the emulator starts, so that every PC boots from the same bytes.
  *
  * Protocol (all messages are Session datagrams, <= kMaxPayload bytes, loss/reorder tolerant):
  *   HDR  host -> all   {u8 type, u8 file, u8 nfiles, u8 namelen, name, u32 size, u64 hash}
@@ -17,7 +17,7 @@
  * The hash is 64-bit FNV-1a over the bytes plus the size: it catches corruption, not tampering.
  *
  * Limits: a file <= 128 KiB (largest N64 save: FlashRAM), total <= 256 KiB, <= 8 files.
- * Only the four battery extensions are shared; anything else in the save dir is ignored. */
+ * Only the battery extensions listed in is_battery_ext() are shared; anything else in the save dir is ignored. */
 
 #include <cstddef>
 #include <cstdint>

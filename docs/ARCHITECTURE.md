@@ -12,12 +12,20 @@ Users supply their own ROMs. Nothing copyrighted is shipped.
 ```
 Hub/
   CMakeLists.txt          top level; FetchContent: SDL2, Dear ImGui, mupen64plus-core (API headers only)
-  src/net/                static lib `hubnet`: UDP, WebSocket, STUN, room client (lobby + game session)
-  src/hub/                `RetroHub.exe`: ImGui launcher (library, ROMs, rooms, launch)
-  src/n64run/             `n64run.exe`: mupen64plus frontend + built-in netplay input plugin
-  src/common/             games catalog, ROM identification (MD5), paths, logging
-  server/                 Cloudflare Worker additions (new /hub endpoint, HubRoom Durable Object)
+  src/common/             static lib `hubcommon`: games catalog, library scan, ROM identification, game settings, controller profiles (SDL half in controls_sdl.cpp)
+  src/net/                static lib `hubnet`: UDP, WebSocket, STUN, room client (lobby + game session), friends, identity link
+  src/saves/              static libs `hubsaves` (save vault, two-way folder sync, zip export/import, cloud saves) and `hubminiz`
+  src/hub/                `RetroHub.exe`: ImGui launcher, split by concern: app/frame/lib_state/lobby (state and flow),
+                          logic.cpp (pure, `hublogic`), launch*.cpp (game launch, online launch), emulators.cpp (3DS/Wii U),
+                          netplay_3ds*.cpp, netplay_dolphin.cpp (GameCube), page_*.cpp and *_ui.cpp (screens), invite.cpp,
+                          updater.cpp / update_apply.cpp, shell_integration.cpp. Tests are the `test_*.cpp` files beside them.
+  src/n64run/             `n64run.exe`: mupen64plus frontend, in-exe input plugin, lockstep netplay, --match driver, save sync
+  src/retrorun/           `retrorun.exe`: libretro frontend for GBA/GB/GBC/DS cores; link cable and lockstep netplay
+  assets/                 brand, controller database, icons
   scripts/fetch-emu.ps1   downloads the mupen64plus 2.6.0 win64 bundle + GLideN64 into deps/emu
+
+The Cloudflare Worker (lobby, friends, saves, invite pages) lives in the BattleShip repo at `server/cloudflare`, not here.
+qa/ holds the headless QA scripts; they take ROM and game folders as parameters or env vars.
   docs/
 ```
 
@@ -188,6 +196,22 @@ n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N --p
 - **Launch (`play_entry`, `System::NDS`):** `retrorun.exe --core melondsds_libretro.dll --system nds --save-dir <vault battery> --state-dir <vault states>`, no `--resume`. Saves are `<rom stem>.srm` in the vault battery folder and sync like every other game; states are never synced (and DS states are not written at all).
 - **Online:** off. `supports_online()` is false for `nds`; the core's in-memory unserialize is not frame-exact and states are 19 MB, so lockstep/rollback is not planned.
 - **Hub UI:** "Nintendo DS" shelf, filter chip, `NINTENDO DS` badge, covers from libretro-thumbnails `Nintendo_-_Nintendo_DS` (No-Intro DAT `Nintendo - Nintendo DS`, matched by game code). Details: `docs/RETRORUN.md`, `docs/CORES.md`.
+
+## Netplay modes
+
+Every mode is opt-in per game. Each one has a headless QA path under `qa/` and a console test where the logic is pure.
+
+| Mode | Runner / code | Transport | Notes |
+|---|---|---|---|
+| N64 lockstep | `n64run` (`lockstep.cpp`, `lockstep_core.cpp`) | hubnet UDP, or WebSocket relay (`HUBNET_FORCE_RELAY=1`) | Input-only lockstep with auto input delay; desync detection with `--strict-sync`. Section above. |
+| N64 host-save sharing | `n64run` (`save_sync*.cpp`, `mempak.cpp`) | same session | `--share-host-save`; Controller Pak policy and `.mpk` naming. |
+| Smash Remix VS match | `n64run` (`match.cpp`) | same session | `--match` jumps straight into a VS battle from a spec string. |
+| Retro lockstep | `retrorun` (`--net`, reuses `n64run` lockstep glue) | same as above | GBA/GB/GBC netplay through the lobby. |
+| GB/GBC link cable | `retrorun` (`--link`, `link_sync.cpp`) | hubnet session | Exchanges save data over the link; console test with simulated loss and reorder. |
+| DS local wireless | `retrorun` (`ds_link.h`, `dsview.h`) | hubnet session (`HUBNET_FORCE_RELAY` for relay) | Packet framing in `ds_link.h`; `qa/ds_link.ps1`. |
+| 3DS rooms | `netplay_3ds.cpp`, `netplay_3ds_run.cpp` (Azahar) | Azahar's own ENet room server (`azahar-room.exe`), joined with a RetroHub room code | Azahar multiplayer config is generated per room; pure logic is tested in `test_netplay_3ds.cpp`. |
+| GameCube Dolphin netplay | `netplay_dolphin.cpp` (Dolphin, `gcnp_live.cpp` manual driver) | Dolphin's own NetPlay, through a relay forwarder for the live run | Smoke-tested live (Double Dash, 100 s through the relay, no desync). See `docs/DOLPHIN.md`. |
+| Smash Classic (BattleShip) | native port, own rollback netplay | its own Worker | Not run by RetroHub's transport; launched as a native game. |
 
 ## Games catalog (`src/common/games.cpp`)
 

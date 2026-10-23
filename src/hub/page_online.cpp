@@ -227,7 +227,7 @@ void page_online_room() {
 
     ImGui::Dummy(ImVec2(0, 6 * S));
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
-    if (rg && rg->system == hub::System::N64) {
+    if (rg && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system))) {
         if (host) {
             if (ImGui::Checkbox("Use host's save (unlocked characters/boards)", &A.share_host_save)) A.hello_dirty = true;
         } else {
@@ -261,7 +261,7 @@ void page_online_room() {
         }
         if (button("Launch", ImVec2(220 * S, 60 * S), true, ok)) {
             int delay = A.st.delay_auto ? 0 : A.st.input_delay;   // 0 = auto, same for everyone
-            bool share = A.share_host_save && rg->system == hub::System::N64;
+            bool share = A.share_host_save && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system));
             unsigned seed = std::random_device{}();
             ++A.launch_counter;
             hubui::PortPlan plan = hubui::build_ports(member_pads());   // built once; guests use it verbatim
@@ -275,8 +275,8 @@ void page_online_room() {
                 if (!gc_host_spec(*rg, (int)peers.size() + 1, &gspec)) gc_ok = false;
                 else np_extra = gcnp::launch_fragment(gspec);
             }
-            if ((rg->system == hub::System::GB || rg->system == hub::System::GBC) && hub::link_cable_game(rg->catalog_id))
-                np_extra += ",\"np_link\":{\"core\":\"sameboy\",\"consoles\":2}";
+            if ((rg->system == hub::System::GB || rg->system == hub::System::GBC || rg->system == hub::System::GBA) && hub::link_cable_game(rg->catalog_id))
+                np_extra += std::string(",\"np_link\":{\"core\":\"") + (rg->system == hub::System::GBA ? "mgba" : "sameboy") + "\",\"consoles\":2}";
             if (rg->system == hub::System::NDS) np_extra += ",\"np_ds\":" + hubui::np_ds_json();
             np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
             if (gc_ok) {
