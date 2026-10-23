@@ -67,6 +67,13 @@ int main() {
     CHECK(oh.find("UsePanicHandlers = False") != std::string::npos && oh.find("UpdateTrack =") != std::string::npos);
     CHECK(std::string(driver_script()).find("Start NetPlay...") != std::string::npos);
 
+    /* memory cards + desync-prone settings: guests never write; host writes only if it chose to; strict sync + code sync forced */
+    CHECK(oh.find("WriteSaveData = False") != std::string::npos);
+    { IniParams hw = h; hw.write_save = true; std::string ow = ini_patch("", d, hw); CHECK(ow.find("WriteSaveData = True") != std::string::npos); }
+    { IniParams gw = p; gw.write_save = true; CHECK(ini_patch("", s, gw).find("WriteSaveData = False") != std::string::npos); }
+    CHECK(o.find("SyncSaves = True") != std::string::npos && o.find("StrictSettingsSync = True") != std::string::npos && o.find("SyncCodes = True") != std::string::npos);
+    CHECK(o.find("GPUDeterminismMode = auto") != std::string::npos);
+
     if (!fails) printf("netplay_dolphin tests passed\n");
     return fails ? 1 : 0;
 }

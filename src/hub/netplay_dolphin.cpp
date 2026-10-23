@@ -183,14 +183,21 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
     }
     np.push_back({"UseIndex", "False"});
     np.push_back({"SyncSaves", "True"});
-    np.push_back({"WriteSaveData", p.host ? "True" : "False"});
+    np.push_back({"WriteSaveData", p.host && p.write_save ? "True" : "False"});
+    /* Dolphin copies the host's emulation settings to every client (CPU thread/core, cheats, DSP HLE, overclock, sync GPU, MMU,
+     * fastmem, EXI devices...). Not host-chosen and default off: strict graphics sync (internal resolution / EFB scaling differ per
+     * player in RetroHub), so force it on; Gecko codes come from the host (SyncCodes). */
+    np.push_back({"StrictSettingsSync", "True"});
+    np.push_back({"SyncCodes", "True"});
     KV gen, iface, an;
     if (!p.iso_dir.empty()) { gen.push_back({"ISOPath0", p.iso_dir}); gen.push_back({"ISOPaths", "1"}); }
     iface.push_back({"ConfirmStop", "False"});
     iface.push_back({"UsePanicHandlers", "False"});
     an.push_back({"Enabled", "False"});
     an.push_back({"PermissionAsked", "True"});
-    std::vector<std::pair<std::string, KV>> want = {{"NetPlay", np}, {"General", gen}, {"Interface", iface}, {"Analytics", an}, {"AutoUpdate", KV{{"UpdateTrack", ""}}}};
+    KV core;
+    core.push_back({"GPUDeterminismMode", "auto"});   // the one emulation setting NetPlay does not copy from the host
+    std::vector<std::pair<std::string, KV>> want = {{"NetPlay", np}, {"Core", core}, {"General", gen}, {"Interface", iface}, {"Analytics", an}, {"AutoUpdate", KV{{"UpdateTrack", ""}}}};
     if (p.mute) { want.push_back({"DSP", KV{{"Backend", "No Audio Output"}}}); }
     return ini_set_all(ini, want);
 }
