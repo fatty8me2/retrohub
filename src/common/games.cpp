@@ -1,3 +1,4 @@
+#include "winutil.h"
 #include "games.h"
 
 #include <windows.h>
@@ -21,23 +22,9 @@ constexpr size_t kMaxRomSize = 64u * 1024u * 1024u; // 64 MB
 
 /* ---- UTF-8 <-> UTF-16 helpers (paths may contain non-ASCII) ---- */
 
-std::wstring to_wide(const std::string& s) {
-    if (s.empty()) return std::wstring();
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    if (n <= 0) return std::wstring();
-    std::wstring w((size_t)n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
-}
+std::wstring to_wide(const std::string& s) { return winutil::to_wide(s); }
 
-std::string to_utf8(const std::wstring& w) {
-    if (w.empty()) return std::string();
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    if (n <= 0) return std::string();
-    std::string s((size_t)n, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), &s[0], n, nullptr, nullptr);
-    return s;
-}
+std::string to_utf8(const std::wstring& s) { return winutil::to_utf8(s); }
 
 fs::path utf8_path(const std::string& s) { return fs::path(to_wide(s)); }
 std::string path_utf8(const fs::path& p) { return to_utf8(p.native()); }
@@ -772,27 +759,7 @@ std::vector<std::string> suggest_rom_folders(size_t max_out) {
 
 /* ---- paths ---- */
 
-std::string exe_dir() {
-    static const std::string cached = [] {
-        std::wstring buf(MAX_PATH, L'\0');
-        for (;;) {
-            DWORD n = GetModuleFileNameW(nullptr, &buf[0], (DWORD)buf.size());
-            if (n == 0) return std::string();
-            if (n < buf.size()) {
-                buf.resize(n);
-                break;
-            }
-            buf.resize(buf.size() * 2);
-        }
-        size_t pos = buf.find_last_of(L"\\/");
-        if (pos == std::wstring::npos) return std::string();
-        buf.resize(pos + 1);
-        std::string s = to_utf8(buf);
-        if (!s.empty() && s.back() != '\\') s.push_back('\\');
-        return s;
-    }();
-    return cached;
-}
+std::string exe_dir() { return winutil::exe_dir(); }
 
 std::string data_dir() {
     std::string dir = exe_dir() + "userdata\\";

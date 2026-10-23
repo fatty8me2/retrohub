@@ -1,6 +1,7 @@
 /* retrorun: minimal libretro frontend for RetroHub (GBA / GB / GBC).
  * See docs/RETRORUN.md. */
 
+#include "winutil.h"
 #include <windows.h>
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -52,12 +53,7 @@ struct Args {
     std::vector<std::string> opts;
 };
 
-static std::string narrow(const wchar_t* w) {
-    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-    std::string s(n > 0 ? n - 1 : 0, '\0');
-    if (n > 1) WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
-    return s;
-}
+static std::string narrow(const wchar_t* w) { return winutil::to_utf8(w); }
 
 static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
@@ -428,16 +424,12 @@ bool Frontend::setup_paths() {
     fs::create_directories(fs::u8path(a.save_dir), ec);
     fs::create_directories(fs::u8path(a.state_dir), ec);
     if (a.system_dir.empty()) {
-        wchar_t exe[MAX_PATH];
-        GetModuleFileNameW(nullptr, exe, MAX_PATH);
-        a.system_dir = narrow((fs::path(exe).parent_path() / L"system").wstring().c_str());
+        a.system_dir = narrow((fs::path(winutil::exe_path_w()).parent_path() / L"system").wstring().c_str());
     }
     fs::create_directories(fs::u8path(a.system_dir), ec);
     core.system_dir = a.system_dir;
     core.save_dir = a.save_dir;
-    wchar_t exe_w[MAX_PATH];
-    GetModuleFileNameW(nullptr, exe_w, MAX_PATH);
-    userdata_dir = narrow((fs::path(exe_w).parent_path() / L"userdata").wstring().c_str());
+    userdata_dir = narrow((fs::path(winutil::exe_path_w()).parent_path() / L"userdata").wstring().c_str());
     core.content_dir = narrow(fs::u8path(a.rom).parent_path().wstring().c_str());
     core.system_tag = a.system;
     is_ds = lower(a.system) == "nds";

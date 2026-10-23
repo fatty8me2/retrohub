@@ -1,3 +1,4 @@
+#include "winutil.h"
 #include "emulators.h"
 
 #ifndef NOMINMAX
@@ -891,7 +892,7 @@ void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::
 /* launch arguments                                                    */
 /* ------------------------------------------------------------------ */
 
-static std::string quote(const std::string& s) { return "\"" + s + "\""; }
+static std::string quote(const std::string& s) { return winutil::quote_arg(s); }
 
 std::string dolphin_args(const std::string& game, bool fullscreen, const std::string& gci) {
     /* -b: no main window, Esc / closing the render window ends the process. The GCI override pins the memory card to the

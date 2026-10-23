@@ -1,4 +1,5 @@
 /* Save vault implementation. See savestore.h and docs/SAVES.md. */
+#include "winutil.h"
 #include "json.h"
 #include "savestore.h"
 #include "games.h"
@@ -41,20 +42,8 @@ typedef std::string str;
 
 /* ---------------------------------------------------------------- strings */
 
-ws W(const str& s) {
-    if (s.empty()) return ws();
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    ws w((size_t)n, L'\0');
-    if (n) MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
-}
-str U(const ws& w) {
-    if (w.empty()) return str();
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    str s((size_t)n, '\0');
-    if (n) WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), &s[0], n, nullptr, nullptr);
-    return s;
-}
+ws W(const std::string& s) { return winutil::to_wide(s); }
+str U(const std::wstring& s) { return winutil::to_utf8(s); }
 ws lower(ws w) {
     if (!w.empty()) CharLowerBuffW(&w[0], (DWORD)w.size());
     return w;

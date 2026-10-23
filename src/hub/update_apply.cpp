@@ -1,4 +1,5 @@
 /* Native update applier. See update_apply.h. */
+#include "winutil.h"
 #include "update_apply.h"
 
 #include <algorithm>
@@ -43,13 +44,7 @@ std::vector<std::wstring> split(const std::wstring& rel) {
     return out;
 }
 
-std::string u8(const std::wstring& w) {
-    if (w.empty()) return std::string();
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    std::string s(n > 0 ? (size_t)n : 0, '\0');
-    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), &s[0], n, nullptr, nullptr);
-    return s;
-}
+std::string u8(const std::wstring& s) { return winutil::to_utf8(s); }
 
 std::wstring g_log_path;
 void alog(const std::wstring& msg) {

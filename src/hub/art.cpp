@@ -1,3 +1,4 @@
+#include "winutil.h"
 #include "art.h"
 #include "art_match.h"
 
@@ -115,13 +116,7 @@ bool write_file_atomic(const fs::path& p, const std::string& data) {
 
 long long now_s() { return (long long)std::time(nullptr); }
 
-std::wstring widen(const std::string& s) {
-    if (s.empty()) return L"";
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w(n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
-}
+std::wstring widen(const std::string& s) { return winutil::to_wide(s); }
 
 const char* kind_name(Kind k) { return k == Kind::Boxart ? "boxart" : k == Kind::Title ? "title" : "snap"; }
 

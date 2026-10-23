@@ -21,6 +21,7 @@
  *                                                           players pick fighter/stage in its Online window)
  *                       (no autostart: the host presses Start match in Smash)
  */
+#include "winutil.h"
 #include "invite.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
@@ -103,7 +104,7 @@ std::string find_core(const std::string& name) {
     if (file_exists(p)) return p;
     return find_upward("deps\\cores\\" + f);
 }
-std::string quote(const std::string& s) { return "\"" + s + "\""; }
+std::string quote(const std::string& s) { return winutil::quote_arg(s); }
 
 /* Game window caption: "<title> — RetroHub" (UTF-8 em dash), quoted for the command line. */
 std::string title_arg(const std::string& game_title) {
@@ -266,10 +267,8 @@ void add_game_shortcut(const hub::GameEntry& e) {
             }
         }
     }
-    wchar_t exe[MAX_PATH * 2];
-    DWORD n = GetModuleFileNameW(nullptr, exe, (DWORD)(sizeof(exe) / sizeof(exe[0])));
     std::wstring lnk = dir + L"\\" + shell_game_shortcut_name(W(e.title));
-    if (shell_write_game_shortcut(lnk, std::wstring(exe, n), key, W(e.title), icon)) set_toast("Added " + e.title + " to your desktop.");
+    if (shell_write_game_shortcut(lnk, winutil::exe_path_w(), key, W(e.title), icon)) set_toast("Added " + e.title + " to your desktop.");
     else set_notice("Could not create the shortcut.");
 }
 

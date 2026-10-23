@@ -1,4 +1,5 @@
 /* Windows shell integration (see shell_integration.h). */
+#include "winutil.h"
 #include "shell_integration.h"
 #include "resource.h"
 #include "invite.h"
@@ -22,11 +23,7 @@
 
 namespace {
 
-std::wstring exe_path() {
-    wchar_t buf[MAX_PATH * 2];
-    DWORD n = GetModuleFileNameW(nullptr, buf, (DWORD)(sizeof(buf) / sizeof(buf[0])));
-    return std::wstring(buf, n);
-}
+std::wstring exe_path() { return winutil::exe_path_w(); }
 
 std::wstring dir_of(const std::wstring& p) {
     size_t s = p.find_last_of(L"\\/");
