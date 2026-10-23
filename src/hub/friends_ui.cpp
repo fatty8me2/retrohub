@@ -14,9 +14,20 @@ long long wall_ms() {
 }
 
 /* ---------- data accessors (real client or fake) ---------- */
-const std::vector<hubnet::Friend>& fr_friends() { return FR.fake ? FR.f_friends : FR.cli.friends(); }
-const std::vector<hubnet::Request>& fr_incoming() { return FR.fake ? FR.f_in : FR.cli.incoming_requests(); }
-const std::vector<hubnet::Request>& fr_outgoing() { return FR.fake ? FR.f_out : FR.cli.outgoing_requests(); }
+static void fr_refresh_lists() {
+    int fc = ImGui::GetCurrentContext() ? ImGui::GetFrameCount() : 0;
+    if (FR.d_frame == fc && fc != 0) return;
+    FR.d_frame = fc;
+    FR.d_friends = FR.fake ? FR.f_friends : FR.cli.friends();
+    FR.d_in = FR.fake ? FR.f_in : FR.cli.incoming_requests();
+    FR.d_out = FR.fake ? FR.f_out : FR.cli.outgoing_requests();
+    std::string me = FR.fake ? std::string() : FR.cli.my_uid();
+    hubnet::dedupe_friends(FR.d_friends, me);
+    hubnet::dedupe_requests(FR.d_friends, FR.d_in, FR.d_out, me);
+}
+const std::vector<hubnet::Friend>& fr_friends() { fr_refresh_lists(); return FR.d_friends; }
+const std::vector<hubnet::Request>& fr_incoming() { fr_refresh_lists(); return FR.d_in; }
+const std::vector<hubnet::Request>& fr_outgoing() { fr_refresh_lists(); return FR.d_out; }
 const std::vector<hubnet::Message>& fr_conv(const std::string& uid) { return FR.fake ? FR.f_conv[uid] : FR.cli.conversation(uid); }
 int fr_unread(const std::string& uid) {
     if (FR.fake) { auto it = FR.f_unread.find(uid); return it == FR.f_unread.end() ? 0 : it->second; }
@@ -50,6 +61,7 @@ hubui::FriendRow fr_row(const hubnet::Friend& f) {
     r.joinable = f.status.joinable && !f.status.lobby_code.empty();
     r.players = f.status.players; r.max_players = f.status.max_players;
     r.updated_ms = f.status.updated;
+    r.in_my_room = fr_in_my_room() && !f.status.lobby_code.empty() && f.status.lobby_code == A.code;
     return r;
 }
 ImU32 fr_state_col(int st) {
@@ -458,6 +470,17 @@ void fr_fake_init() {
     hubnet::Request o;
     o.uid = "rinuid"; o.name = "Rin"; o.code = "RH-ZX5C-VB6N"; o.at = now;
     FR.f_out.push_back(o);
+    if (std::getenv("HUB_SHOT_FAKE_DUPES")) {   // screenshot aid: the same people repeated in every way; the panel must still show each once
+        mk("miauid", "Mia", PS::Offline, "", "", "", "", false, 0, 0, now - 86400 * 1000LL);   // second row, same uid
+        mk("jakuid", "Jake", PS::Online, "", "", "", "", false, 0, 0, now - 5000);
+        mk("oliuid", "Oliver", PS::Online, "", "", "", "", false, 0, 0, now);                  // friend AND incoming request below
+        hubnet::Request d1 = FR.f_in[0];
+        FR.f_in.push_back(d1);                                                                 // duplicate incoming
+        hubnet::Request d2 = FR.f_out[0]; d2.uid = "oliuid"; d2.name = "Oliver";
+        FR.f_out.push_back(d2);                                                                // outgoing to a friend
+        hubnet::Request d3 = FR.f_in[0]; d3.uid = "rinuid"; d3.name = "Rin";
+        FR.f_in.push_back(d3);                                                                 // Rin incoming AND outgoing
+    }
     auto msg = [&](const char* from, bool mine, const char* text, long long at) {
         hubnet::Message m;
         m.id = std::to_string(at); m.from = mine ? "me" : from; m.to = mine ? from : "me"; m.mine = mine; m.text = text; m.at = at;

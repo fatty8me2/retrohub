@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <set>
 #include <sstream>
 
 namespace hubui {
@@ -960,7 +961,11 @@ static int online_rank(const FriendRow& r) {
 
 FriendGroups group_friends(const std::vector<FriendRow>& rows) {
     FriendGroups g;
-    for (int i = 0; i < (int)rows.size(); ++i) (rows[i].state != FS_Offline ? g.online : g.offline).push_back(i);
+    std::set<std::string> seen;   // each person (uid) is placed exactly once
+    for (int i = 0; i < (int)rows.size(); ++i) {
+        if (!rows[i].uid.empty() && !seen.insert(rows[i].uid).second) continue;
+        (rows[i].state != FS_Offline ? g.online : g.offline).push_back(i);
+    }
     std::stable_sort(g.online.begin(), g.online.end(), [&](int a, int b) {
         int ra = online_rank(rows[a]), rb = online_rank(rows[b]);
         if (ra != rb) return ra < rb;
@@ -984,6 +989,11 @@ std::string format_ago_ms(long long now_ms, long long then_ms) {
 }
 
 std::string friend_status_line(const FriendRow& r, long long now_ms) {
+    if (r.in_my_room && r.state != FS_Offline) {
+        std::string s = "In your room";
+        if (r.state == FS_InGame) s += " Â· Playing";
+        return s;
+    }
     switch (r.state) {
         case FS_InGame: {
             std::string s = r.game_title.empty() ? "Playing" : "Playing " + r.game_title;
