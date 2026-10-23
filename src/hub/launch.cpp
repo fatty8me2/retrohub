@@ -85,7 +85,7 @@ void poll_process() {
     uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
     if (!A.run.key.empty()) {
         if (secs >= 1) hub::record_play(A.run.key, A.run.start_unix, secs);
-        if (A.run.track && !A.run.online && !A.run.system_short.empty())
+        if (hubui::exit_should_touch_game(!A.run.key.empty(), A.run.track, A.run.online, A.run.system_short))
             hub::saves::touch_game(A.run.system_short, A.run.key, A.run.title);
         hub::flush_library_state();
         refresh_state(A.run.key);
@@ -125,8 +125,8 @@ std::vector<std::pair<std::string, std::string>> smash_env(const std::string& ex
     std::string save = hubui::smash_save_file(hub::saves::battery_dir(hubui::kSmashSaveSystem, hubui::kSmashSaveKey));
     std::string legacy = dir_of(exe) + "ssb64_save.bin";
     bool vault_has = file_exists(save), legacy_has = file_exists(legacy);
-    if (hubui::smash_should_migrate_save(vault_has, legacy_has)) {
-        CopyFileW(W(legacy).c_str(), W(save).c_str(), TRUE);
+    if (hubui::smash_migrate_legacy_save(legacy, save)) {
+        // copied once; the vault owns the save from now on
     } else if (!A.st.smash_save_notice_shown &&
                hubui::smash_save_conflict(vault_has, legacy_has, read_text_file(save), read_text_file(legacy))) {
         // both exist and differ: the vault wins; tell the player once where the old local save is

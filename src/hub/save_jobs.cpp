@@ -140,7 +140,7 @@ void run_pending_sync() {
     if (hubui::sync_take_pending(A.sync_gate, A.proc != nullptr, A.job.running, &manual)) start_job(SaveJob::Sync, A.st.sync_folder, manual);
 }
 void auto_sync() {
-    if (sync_enabled() && A.st.sync_auto) start_sync(false);
+    if (hubui::auto_sync_should_run(sync_enabled(), A.st.sync_auto)) start_sync(false);
 }
 
 std::string report_summary(const hub::saves::SyncReport& r, const char* sent_word, const char* got_word) {
