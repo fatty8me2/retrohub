@@ -683,7 +683,7 @@ size_t zip_prefix_cb(void* user, mz_uint64 /*ofs*/, const void* data, size_t len
 bool id_3ds_zip(const fs::path& zip, GameEntry* e) {
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
-    FILE* f = _wfopen(zip.wstring().c_str(), L"rb");
+    FILE* f = _wfopen(zip.wstring().c_str(), L"rbN");
     if (!f) return false;
     if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { std::fclose(f); return false; }
     bool ok = false;
@@ -823,7 +823,7 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path*
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
     std::string zpath = path_utf8(zip);
-    FILE* f = _wfopen(zip.wstring().c_str(), L"rb");
+    FILE* f = _wfopen(zip.wstring().c_str(), L"rbN");
     if (!f) return false;
     if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { std::fclose(f); return false; }
     bool ok = false;
@@ -848,7 +848,7 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path*
             fs::create_directories(wdir, ec);
             fs::path tmp = rom; tmp += L".part";
             bool done = false;
-            if (FILE* out = _wfopen(tmp.c_str(), L"wb")) {   // wide path: works past MAX_PATH
+            if (FILE* out = _wfopen(tmp.c_str(), L"wbN")) {   // wide path: works past MAX_PATH
                 done = mz_zip_reader_extract_to_cfile(&za, i, out, 0) != 0;
                 done = (std::fclose(out) == 0) && done;
             }
@@ -967,15 +967,26 @@ HANDLE tar_spawn(const std::wstring& args, HANDLE out) {
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
     HANDLE nul = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
     if (nul == INVALID_HANDLE_VALUE) return nullptr;
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = nul;
-    si.hStdOutput = out;
-    si.hStdError = nul;
+    /* Inherit ONLY the three std handles. A plain bInheritHandles=TRUE would also hand tar every file another scan
+     * thread has open at that moment (e.g. a half-extracted ROM's .part), which then can't be renamed or deleted. */
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof si;
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdInput = nul;
+    si.StartupInfo.hStdOutput = out;
+    si.StartupInfo.hStdError = nul;
+    HANDLE inherit[2] = {nul, out};
+    SIZE_T asz = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &asz);
+    std::vector<char> abuf(asz);
+    si.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)abuf.data();
+    bool have_list = InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &asz) &&
+                     UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof inherit, nullptr, nullptr);
+    if (!have_list) { CloseHandle(nul); return nullptr; }
     PROCESS_INFORMATION pi{};
     std::wstring cmd = L"\"" + tar_exe().wstring() + L"\" " + args;
-    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &si.StartupInfo, &pi);
+    DeleteProcThreadAttributeList(si.lpAttributeList);
     CloseHandle(nul);
     if (!ok) return nullptr;
     CloseHandle(pi.hThread);
@@ -1039,7 +1050,7 @@ bool list_archive(const std::string& archive, std::vector<ArchiveEntry>* out) {
     if (ext == ".zip") {
         mz_zip_archive za;
         std::memset(&za, 0, sizeof za);
-        FILE* f = _wfopen(utf8_path(archive).wstring().c_str(), L"rb");
+        FILE* f = _wfopen(utf8_path(archive).wstring().c_str(), L"rbN");
         if (!f) return false;
         if (mz_zip_reader_init_cfile(&za, f, 0, 0)) {
             mz_uint n = mz_zip_reader_get_num_files(&za);
@@ -1361,7 +1372,7 @@ uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
     if (e.system == System::GC) return gc_unpacked_size(e);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
-    FILE* zf = _wfopen(utf8_path(e.path).wstring().c_str(), L"rb");
+    FILE* zf = _wfopen(utf8_path(e.path).wstring().c_str(), L"rbN");
     if (!zf) return 0;
     if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); return 0; }
     uint64_t size = 0;
@@ -1395,7 +1406,7 @@ bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint
     fs::path zip = utf8_path(e.path);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
-    FILE* zf = _wfopen(zip.wstring().c_str(), L"rb");
+    FILE* zf = _wfopen(zip.wstring().c_str(), L"rbN");
     if (!zf) { *err = "cannot open the zip"; return false; }
     if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); *err = "not a valid zip"; return false; }
     bool ok = false;
@@ -1416,7 +1427,7 @@ bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint
         }
         fs::path final_path = dir / name, part = dir / (name.wstring() + L".part");
         ExtractCtx ctx;
-        ctx.f = _wfopen(part.wstring().c_str(), L"wb");
+        ctx.f = _wfopen(part.wstring().c_str(), L"wbN");
         if (!ctx.f) { *err = "cannot write " + path_utf8(part); break; }
         ctx.total = st.m_uncomp_size;
         ctx.cb = &progress;

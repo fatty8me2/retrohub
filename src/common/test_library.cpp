@@ -525,7 +525,49 @@ static void test_scan_cache_state(const fs::path& dir) {
     flush_library_state();
 }
 
+/* Regression: a parallel scan of many real-format zips (GBA/GB, long names, non-ASCII folder). Every zip also makes the
+ * scan spawn tar.exe to probe for a disc image; that child used to inherit other threads' open .part files, so the
+ * rename failed and whole systems came up empty (GBA 0, GB 0). All zips must be identified with the right system. */
+static void test_parallel_zip_scan(const fs::path& dir) {
+    fs::path root = dir / fs::path(L"zipscan éè ポケモン");
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "ud", ec);
+    library_set_data_dir(winutil::to_utf8((root / "ud").wstring()));
+    const int N = 40;
+    for (int i = 0; i < N; ++i) {
+        char t[32], nm[160], code[8];
+        std::snprintf(t, sizeof t, "ZIPTEST %02d", i);
+        std::snprintf(nm, sizeof nm, "Pokemon - Zip Regression Version %02d (USA, Europe) (SGB Enhanced) (GB Compatible)", i);
+        std::snprintf(code, sizeof code, "BZ%c%c", 'A' + i / 26, 'A' + i % 26);
+        bool gba = (i % 2) == 0;
+        Bytes rom = gba ? make_gba(t, code, 100 + i, 8 * 1024 * 1024) : make_gb(t, 0, (uint16_t)(0x2000 + i), 200 + i);
+        mz_zip_archive z;
+        std::memset(&z, 0, sizeof z);
+        FILE* zf = _wfopen((root / (std::string(nm) + ".zip")).wstring().c_str(), L"wb");   // wide: the folder name is non-ASCII
+        CHECK(zf != nullptr);
+        if (!zf) continue;
+        std::string inner = std::string(nm) + (gba ? ".gba" : ".gb");
+        CHECK(mz_zip_writer_init_cfile(&z, zf, 0));
+        CHECK(mz_zip_writer_add_mem(&z, inner.c_str(), rom.data(), rom.size(), MZ_BEST_COMPRESSION));
+        CHECK(mz_zip_writer_finalize_archive(&z));
+        mz_zip_writer_end(&z);
+        std::fclose(zf);
+    }
+    std::vector<GameEntry> r = scan_library({winutil::to_utf8(root.wstring())}, nullptr);
+    int gba = 0, gb = 0;
+    for (const auto& e : r) {
+        if (e.system == System::GBA) ++gba;
+        if (e.system == System::GB) ++gb;
+    }
+    CHECK(gba == N / 2);
+    CHECK(gb == N / 2);
+    library_set_data_dir("");
+    fs::remove_all(root, ec);
+}
+
 int main(int argc, char** argv) {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     if (argc == 4 && std::string(argv[1]) == "--unpack") {   // manual check: hublibrary_test --unpack <archive> <scratch data dir>
         library_set_data_dir(argv[3]);
         GameEntry g, back;
@@ -537,6 +579,13 @@ int main(int argc, char** argv) {
         auto s = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - t0).count();
         std::printf("unpack %s in %llds: %s %s\n", ok ? "ok" : "FAILED", (long long)s, out.c_str(), err.c_str());
         if (ok && identify_game(out, &back)) std::printf("extracted image: serial=%s key=%s title=%s size=%llu\n", back.serial.c_str(), back.key.c_str(), back.title.c_str(), (unsigned long long)back.size);
+        return ok ? 0 : 1;
+    }
+    if (argc == 4 && std::string(argv[1]) == "--ident") {   // manual check: hublibrary_test --ident <file> <scratch data dir>
+        library_set_data_dir(argv[3]);
+        GameEntry g;
+        bool ok = identify_game(argv[2], &g);
+        std::printf("identify %s sys=%s title=%s path=%s\n", ok ? "ok" : "FAILED", ok ? system_short(g.system) : "-", g.title.c_str(), g.path.c_str());
         return ok ? 0 : 1;
     }
     std::error_code ec;
@@ -556,6 +605,7 @@ int main(int argc, char** argv) {
 
     test_identify(dir);
     test_long_zip(dir);
+    test_parallel_zip_scan(dir);
     test_scan_cache_state(dir);
     library_set_data_dir("");
     fs::remove_all(dir, ec);
@@ -735,10 +785,15 @@ int main(int argc, char** argv) {
         std::printf("--- scanning %s ---\n", argv[1]);
         // Optional argv[2]: scratch data dir (cache, rom-cache), e.g. a deep path to test long-path handling.
         library_set_data_dir(argc > 2 ? std::string(argv[2]) : (fs::temp_directory_path() / "hublibrary_realscan").string());
+        std::vector<std::string> roots{argv[1]};
+        if (const char* extra = std::getenv("HUBLIB_EXTRA_FOLDERS")) {   // ';'-separated additional scan roots
+            std::string x = extra;
+            for (size_t a = 0; a < x.size();) { size_t b = x.find(';', a); if (b == std::string::npos) b = x.size(); if (b > a) roots.push_back(x.substr(a, b - a)); a = b + 1; }
+        }
         for (int pass = 0; pass < 2; ++pass) {
             uint64_t c = library_identify_count();
             auto t0 = std::chrono::steady_clock::now();
-            std::vector<GameEntry> r = scan_library({argv[1]}, nullptr);
+            std::vector<GameEntry> r = scan_library(roots, nullptr);
             auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
             std::printf("pass %d: %zu game(s), %llu identified, %lld ms\n", pass + 1, r.size(),
                         (unsigned long long)(library_identify_count() - c), (long long)ms);
