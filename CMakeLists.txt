@@ -76,6 +76,7 @@ add_test(NAME hub_logic_test COMMAND hub_logic_test)
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
 add_test(NAME hub_shell_test COMMAND hub_shell_test)
+add_test(NAME hub_invite_test COMMAND hub_invite_test)                   # invite parsing + pipe handoff (no network, no windows)
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
