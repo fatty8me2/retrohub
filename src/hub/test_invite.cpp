@@ -91,14 +91,42 @@ static void single_instance_tests() {
     check(rc != 0, "invalid code is refused (nonzero exit)");
     check(!server.take(&got), "invalid code is not queued");
 
+    rc = run_child(L"--sendplay \"" + pipe + L"\" mario-kart_64.v1");
+    check(rc == 0, "second process forwards --play key to the primary");
+    std::wstring key;
+    check(server.take_play(&key) && key == L"mario-kart_64.v1", "primary queued the play key");
+    check(!server.take(&got), "play key is not a join code");
+    rc = run_child(L"--sendplay \"" + pipe + L"\" Bad/Key");
+    check(rc != 0, "invalid play key refused");
+    check(!server.take_play(&key), "invalid play key not queued");
+    rc = run_child(L"--sendshow \"" + pipe + L"\"");
+    check(rc == 0 && server.take_show() && !server.take_show(), "show-yourself request delivered once");
+    run_child(L"--send \"" + pipe + L"\" ABCDEF");
+    run_child(L"--sendplay \"" + pipe + L"\" k1");
+    check(server.take_play(&key) && key == L"k1" && server.take(&got) && got == L"ABCDEF", "mixed queue keeps kinds separate");
+
     server.stop();
+}
+
+static void play_tests() {
+    std::wstring k;
+    check(invite_parse_play(L"\"C:\\x\\RetroHub.exe\" --play n64-abc123", &k) && k == L"n64-abc123", "--play <key> parses");
+    check(invite_parse_play(L"RetroHub.exe --PLAY gba-1234_5.x", &k) && k == L"gba-1234_5.x", "--play flag case-insensitive");
+    check(!invite_parse_play(L"RetroHub.exe --play", &k), "--play without key rejected");
+    check(!invite_parse_play(L"RetroHub.exe --play ..\\evil", &k), "--play with path chars rejected");
+    check(!invite_parse_play(L"RetroHub.exe --play UPPER", &k), "--play uppercase key rejected");
+    check(!invite_parse_play(L"RetroHub.exe --join ABCDEF", &k), "join is not play");
+    check(invite_play_arguments(L"abc") == L"--play abc", "shortcut arguments");
 }
 
 int wmain(int argc, wchar_t** argv) {
     if (argc == 4 && std::wstring(argv[1]) == L"--send") {
         return invite_send(argv[2], argv[3], 3000) ? 0 : 1;
     }
+    if (argc == 4 && std::wstring(argv[1]) == L"--sendplay") return invite_send_play(argv[2], argv[3], 3000) ? 0 : 1;
+    if (argc == 3 && std::wstring(argv[1]) == L"--sendshow") return invite_send_show(argv[2], 3000) ? 0 : 1;
     parsing_tests();
+    play_tests();
     link_tests();
     single_instance_tests();
     std::printf("%s\n", g_fail ? "FAILED" : "all passed");

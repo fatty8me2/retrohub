@@ -19,6 +19,16 @@ void shell_ensure_url_protocol();              // HKCU\Software\Classes\retrohub
 bool shell_path_looks_like_dev_build(const std::wstring& exe_path, bool (*dir_has)(const std::wstring& dir, const wchar_t* name) = nullptr);
 bool shell_registration_allowed();   // checks env (RETROHUB_NO_SHELL, HUB_SCREENSHOT) + this exe's location
 
+/* One-click favorites: a .lnk that runs `RetroHub.exe --play <game key>`.
+ * shell_shortcut_dir(): HUB_SHORTCUT_DIR (scratch override for tests/screenshots) if set, else the Desktop when
+ * shell_registration_allowed(), else "" (= refuse). icon_path may be an .ico; "" uses RetroHub's own icon. */
+std::wstring shell_shortcut_dir();
+std::wstring shell_game_shortcut_name(const std::wstring& title);   // file-name-safe "<title>.lnk"
+bool shell_write_game_shortcut(const std::wstring& lnk_path, const std::wstring& exe_path, const std::wstring& game_key,
+                               const std::wstring& title, const std::wstring& icon_path);
+/* Writes a 128x128 .ico (32-bit BMP entry) from RGBA pixels, scaled to fit. */
+bool shell_write_ico(const std::wstring& ico_path, const unsigned char* rgba, int w, int h);
+
 /* Lower-level, path-parameterised (used by the unit test so it never touches the real Start Menu). */
 struct ShellLinkInfo {
     std::wstring target, workdir, icon, description, app_id;

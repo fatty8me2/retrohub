@@ -21,6 +21,12 @@
  *                                                           players pick fighter/stage in its Online window)
  *                       (no autostart: the host presses Start match in Smash)
  */
+#include "invite.h"
+#define STBI_ONLY_PNG
+#define STBI_NO_STDIO
+#define STBI_NO_LINEAR
+#define STBI_NO_HDR
+#include "third_party/stb_image.h"
 #include "app.h"
 
 hubemu::Installer EMU;   // download-on-demand job + its dialog state
@@ -222,6 +228,48 @@ void start_unzip(const hub::GameEntry& e) {
         UNZ.done = true;
     });
 }
+void flash_taskbar() {
+    if (!A.hwnd || g_headless) return;
+    FLASHWINFO fi{};
+    fi.cbSize = sizeof(fi);
+    fi.hwnd = A.hwnd;
+    fi.dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG;   // taskbar button only, until the user looks at RetroHub; no activation
+    fi.uCount = 6;
+    FlashWindowEx(&fi);
+}
+
+void add_game_shortcut(const hub::GameEntry& e) {
+    std::wstring dir = shell_shortcut_dir();
+    if (dir.empty()) { set_notice("Desktop shortcuts are only created by an installed RetroHub."); return; }
+    std::wstring key = W(e.key);
+    if (!invite_is_valid_game_key(key)) { set_notice("This game cannot be added to the desktop."); return; }
+    std::wstring icon;
+    if (hubart::enabled()) {   // cover art as the icon when it is already cached
+        std::string name, png;
+        int w = 0, h = 0;
+        std::string err;
+        if (hubart::detail::resolve_name(e, &name, nullptr) &&
+            hubart::detail::fetch_decode(sys_short(e), name, hubart::Kind::Boxart, &w, &h, &err, &png)) {
+            int iw = 0, ih = 0, comp = 0;
+            std::ifstream pf(std::filesystem::path(W(png)), std::ios::binary);
+            std::string bytes((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+            unsigned char* px = bytes.empty() ? nullptr : stbi_load_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), &iw, &ih, &comp, 4);
+            if (px) {
+                std::wstring icodir = W(hub::data_dir() + "icons\\");
+                CreateDirectoryW(icodir.c_str(), nullptr);
+                std::wstring ico = icodir + key + L".ico";
+                if (shell_write_ico(ico, px, iw, ih)) icon = ico;
+                stbi_image_free(px);
+            }
+        }
+    }
+    wchar_t exe[MAX_PATH * 2];
+    DWORD n = GetModuleFileNameW(nullptr, exe, (DWORD)(sizeof(exe) / sizeof(exe[0])));
+    std::wstring lnk = dir + L"\\" + shell_game_shortcut_name(W(e.title));
+    if (shell_write_game_shortcut(lnk, std::wstring(exe, n), key, W(e.title), icon)) set_toast("Added " + e.title + " to your desktop.");
+    else set_notice("Could not create the shortcut.");
+}
+
 void play_entry(const hub::GameEntry& e) {
     if (A.proc) { set_notice("A game is already running."); return; }
     if (A.job.running) {
