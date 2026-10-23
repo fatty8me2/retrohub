@@ -80,7 +80,7 @@ bool UdpSocket::open()
     setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char*)&buf, sizeof(buf));
     sockaddr_in sa = {};
     sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = htonl(INADDR_ANY);
+    sa.sin_addr.s_addr = getenv("HUBNET_LOOPBACK") ? htonl(INADDR_LOOPBACK) : htonl(INADDR_ANY);   /* HUBNET_LOOPBACK=1: QA runs bind 127.0.0.1 only (no firewall prompt, nothing listening on the LAN) */
     sa.sin_port = 0;
     if (bind(s, (sockaddr*)&sa, sizeof(sa)) != 0) {
         closesocket(s);
@@ -125,6 +125,7 @@ int UdpSocket::recv_from(Addr* from, void* buf, int cap)
 std::string UdpSocket::local_endpoint() const
 {
     if (!is_open()) return "-";
+    if (getenv("HUBNET_LOOPBACK")) { Addr a; a.ip = 0x7F000001u; a.port = port_; return a.str(); }
     /* Connecting a throwaway UDP socket sends nothing but makes the OS pick the outbound interface. */
     SOCKET probe = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (probe == INVALID_SOCKET) return "-";
