@@ -70,6 +70,11 @@ target_link_libraries(RetroHub PRIVATE propsys windowsapp)
 add_executable(hub_toast_test test_toast.cpp)
 target_link_libraries(hub_toast_test PRIVATE hublogic)
 
+add_executable(hub_toast_win_test test_toast_win.cpp toast_win.cpp shell_integration.cpp)
+target_link_libraries(hub_toast_win_test PRIVATE hublogic hubbase SDL2::SDL2 ole32 shell32 uuid propsys user32 windowsapp)
+add_custom_command(TARGET hub_toast_win_test POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:hub_toast_win_test>)
+
 add_executable(hub_shell_test test_shell.cpp shell_integration.cpp)
 target_link_libraries(hub_shell_test PRIVATE hubbase SDL2::SDL2 ole32 shell32 uuid propsys user32)
 add_custom_command(TARGET hub_shell_test POST_BUILD
@@ -112,6 +117,7 @@ target_link_libraries(hubinvite PUBLIC hubbase shell32 user32 advapi32)
 target_compile_features(hubinvite PUBLIC cxx_std_17)
 target_link_libraries(RetroHub PRIVATE hubinvite advapi32)
 target_link_libraries(hub_shell_test PRIVATE hubinvite advapi32)
+target_link_libraries(hub_toast_win_test PRIVATE hubinvite advapi32)
 
 add_executable(hub_invite_test test_invite.cpp)
 target_link_libraries(hub_invite_test PRIVATE hubinvite)

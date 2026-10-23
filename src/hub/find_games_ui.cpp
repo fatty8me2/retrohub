@@ -11,14 +11,19 @@ namespace {
 struct FindGames {
     enum St { Idle, Scanning, Results } st = Idle;
     bool auto_tried = false, fake_scan = false, first_run = true;
-    std::thread th;
-    hub::fg::Control ctl;
+    hub::fg::ScanRunner run;   // worker thread + control; joins on destruction
     std::vector<hub::fg::Folder> found;
     std::vector<char> tick;
     std::vector<std::string> extra;   // folders the player added by hand
     std::vector<char> extra_tick;
 };
 FindGames FG;
+
+}  // namespace
+
+void find_games_shutdown() { FG.run.stop(); }   // app exit: cancel + join a scan still running
+
+namespace {
 
 bool already_added(const std::string& p) {
     std::string n = hub::fg::norm_path(p);
@@ -27,7 +32,7 @@ bool already_added(const std::string& p) {
 }
 
 void finish_scan() {
-    if (FG.th.joinable()) FG.th.join();
+    if (FG.run.th.joinable()) FG.run.join();
     FG.tick.assign(FG.found.size(), 0);
     for (size_t i = 0; i < FG.found.size(); ++i) FG.tick[i] = FG.found[i].ticked && !already_added(FG.found[i].path);
     FG.st = FindGames::Results;
@@ -58,7 +63,7 @@ void split_label(const std::string& p, float w, std::string* name, std::string* 
 }
 
 void close_flow(bool done) {
-    if (FG.th.joinable()) { FG.ctl.cancel = true; FG.th.join(); }
+    if (FG.run.th.joinable()) { FG.run.stop(); }
     FG.st = FindGames::Idle;
     if (done && !A.st.find_games_done) { A.st.find_games_done = true; mark_dirty(); }
 }
@@ -72,13 +77,13 @@ void find_games_open() {
     FG.tick.clear();
     FG.extra.clear();
     FG.extra_tick.clear();
-    FG.ctl.cancel = false;
-    FG.ctl.done = false;
-    FG.ctl.dirs = 0;
-    FG.ctl.games = 0;
+    FG.run.ctl.cancel = false;
+    FG.run.ctl.done = false;
+    FG.run.ctl.dirs = 0;
+    FG.run.ctl.games = 0;
     FG.st = FindGames::Scanning;
-    if (FG.th.joinable()) FG.th.join();
-    FG.th = std::thread([] { FG.found = hub::fg::scan_roots(hub::fg::default_roots(), &FG.ctl); });
+    if (FG.run.th.joinable()) FG.run.join();
+    FG.run.start([] { FG.found = hub::fg::scan_roots(hub::fg::default_roots(), &FG.run.ctl); });
 }
 
 static void find_games_modal() {
@@ -104,14 +109,14 @@ static void find_games_modal() {
                               "your emulators' game folders). Only folder listings are read; nothing is opened, moved or uploaded.");
         ImGui::Dummy(ImVec2(0, sp(1.5f)));
         ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(-1, sp(2.f)), "");
-        ImGui::Text("%d folders checked, %d game files found so far", FG.ctl.dirs.load(), FG.ctl.games.load());
+        ImGui::Text("%d folders checked, %d game files found so far", FG.run.ctl.dirs.load(), FG.run.ctl.games.load());
         std::string cur;
-        { std::lock_guard<std::mutex> lk(FG.ctl.mu); cur = FG.ctl.current; }
+        { std::lock_guard<std::mutex> lk(FG.run.ctl.mu); cur = FG.run.ctl.current; }
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
         ImGui::TextDisabled("%s", cur.size() > 90 ? ("..." + cur.substr(cur.size() - 87)).c_str() : cur.c_str());
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, sp(2.f)));
-        if (button("Stop and show what was found", ImVec2(sp(30.f), bsz.y), true)) FG.ctl.cancel = true;
+        if (button("Stop and show what was found", ImVec2(sp(30.f), bsz.y), true)) FG.run.ctl.cancel = true;
         ImGui::SameLine();
         if (button(skip_label, bsz)) close_flow(true);
     } else {
@@ -203,16 +208,16 @@ void draw_find_games() {
             if (std::string(shot) == "scanning") {   // screenshot aid: a frozen mid-scan state (no worker)
                 FG.first_run = true;
                 FG.st = FindGames::Scanning;
-                FG.ctl.dirs = 842;
-                FG.ctl.games = 37;
-                std::lock_guard<std::mutex> lk(FG.ctl.mu);
-                FG.ctl.current = "C:\\Users\\Player\\Documents\\Emulation\\ROMs\\Nintendo 64";
+                FG.run.ctl.dirs = 842;
+                FG.run.ctl.games = 37;
+                std::lock_guard<std::mutex> lk(FG.run.ctl.mu);
+                FG.run.ctl.current = "C:\\Users\\Player\\Documents\\Emulation\\ROMs\\Nintendo 64";
             } else find_games_open();
         } else if (!shot && !g_headless && A.scanned_once) {
             FG.auto_tried = true;
             if (A.st.rom_folders.empty() && !A.st.find_games_done) find_games_open();
         }
     }
-    if (FG.st == FindGames::Scanning && FG.ctl.done) finish_scan();
+    if (FG.st == FindGames::Scanning && FG.run.ctl.done) finish_scan();
     if (FG.st != FindGames::Idle) find_games_modal();
 }

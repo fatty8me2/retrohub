@@ -4,6 +4,8 @@
  * Counting is by file extension only (zip / 7z are counted as archives with no console); nothing is opened. */
 
 #include <atomic>
+#include <functional>
+#include <thread>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -64,6 +66,20 @@ struct Control {
     std::atomic<int> dirs{0}, games{0};
     std::mutex mu;
     std::string current;           // folder being read (guarded by mu)
+};
+
+/* Owns the worker thread of a scan. The destructor (and stop()) cancels and joins, so a scan still running at app
+ * exit can never reach std::terminate through a joinable std::thread member. */
+struct ScanRunner {
+    Control ctl;
+    std::thread th;
+    ScanRunner() = default;
+    ScanRunner(const ScanRunner&) = delete;
+    ScanRunner& operator=(const ScanRunner&) = delete;
+    ~ScanRunner() { stop(); }
+    void start(std::function<void()> job) { stop(); ctl.cancel = false; ctl.done = false; th = std::thread(std::move(job)); }
+    void join() { if (th.joinable()) th.join(); }
+    void stop() { ctl.cancel = true; join(); }   // cancel + join (no-op when idle)
 };
 
 /* Walks the roots (breadth first; junctions / symlinks, system folders and already-visited folders are skipped;

@@ -33,5 +33,7 @@ bool notify_invite(INotifier& n, bool setting_on, bool game_running, const std::
 /* The real notifier (toast_win.cpp). Only usable when shell_registration_allowed() (the Start-menu shortcut that
  * carries the AUMID exists); otherwise available() is false and show() does nothing. */
 INotifier& system_notifier();
+/* Windows only (toast_win.cpp): inits a WinRT apartment on a worker thread and loads the XML; shows nothing. */
+bool toast_winrt_selftest(const std::string& xml, std::string* err);
 
 }  // namespace hubtoast
