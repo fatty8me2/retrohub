@@ -21,6 +21,7 @@ add_executable(n64run
     frontend.cpp
     input_plugin.cpp
     local_input.cpp
+    test_input.cpp
     lockstep.cpp
     headless.cpp)
 target_link_libraries(n64run PRIVATE n64run_match n64run_lockstep_core n64run_save_sync hubnet hubcommon m64p_api SDL2::SDL2)
@@ -48,3 +49,7 @@ target_include_directories(n64run PRIVATE ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_
 
 add_executable(n64run_match_test test_match.cpp)
 target_link_libraries(n64run_match_test PRIVATE n64run_match)
+
+add_executable(n64run_testinput_test test_testinput.cpp test_input.cpp)
+target_include_directories(n64run_testinput_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(n64run_testinput_test PRIVATE cxx_std_17)
