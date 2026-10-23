@@ -13,7 +13,7 @@
  *   GO   host -> all   {u8 type}   sent for kGoGraceMs once every client has verified every file
  *
  * The host re-sends HDR every 50 ms and the chunks any client still lacks (round-robin, at most
- * kDataPerTick per kDataIntervalMs, each at most once per kResendMs). A client that fails the hash clears its bitmap, which makes the host resend the file.
+ * kDataPerTick per kDataIntervalMs and at most kSaveWindow un-ACKed, each at most once per kResendMs). A client that fails the hash clears its bitmap, which makes the host resend the file.
  * The hash is 64-bit FNV-1a over the bytes plus the size: it catches corruption, not tampering.
  *
  * Limits: a file <= 128 KiB (largest N64 save: FlashRAM), total <= 256 KiB, <= 8 files.
@@ -40,6 +40,7 @@ constexpr uint32_t kHdrIntervalMs = 50;
 constexpr uint32_t kGoGraceMs = 1000;
 constexpr int kDataPerTick = 4;           // 4 x 1000 B per 10 ms = ~400 KB/s: what the lobby relay forwards reliably
 constexpr uint32_t kDataIntervalMs = 10;
+constexpr int kSaveWindow = 48;          // max chunks sent-but-not-yet-ACKed: bounds the relay queue, so ACKs never wait behind a backlog
 constexpr uint32_t kResendMs = 600;       // a chunk is re-sent at most this often (ACK round trip over the relay)
 
 struct SaveFile { std::string name; std::vector<uint8_t> data; };
