@@ -22,6 +22,10 @@ struct FriendsUi {
     std::vector<hubnet::Request> f_in, f_out;
     std::map<std::string, std::vector<hubnet::Message>> f_conv;
     std::map<std::string, int> f_unread;
+    /* Render caches: the source lists run through hubnet::dedupe_* once per frame, so a person is never drawn twice. */
+    std::vector<hubnet::Friend> d_friends;
+    std::vector<hubnet::Request> d_in, d_out;
+    int d_frame = -1;
 
     std::string chat_uid;
     int chat_unread = 0;           // unread count when the chat was opened ("New messages" marker)
