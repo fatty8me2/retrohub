@@ -94,69 +94,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hubart::init(ren, hub::data_dir() + "art\\");
     hubart::set_enabled(A.st.download_art);
 
-    if (shot_path) {   // headless screenshot aids for the friends UI (never any network)
-        A.st.show_friends = std::getenv("HUB_SHOT_FRIENDS") != nullptr;
-        if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show a 3DS / Wii U dialog (azahar | cemu | unzip | failed)
-            std::string m = se;
-            if (m == "azahar" || m == "cemu") { EMU.kind = m == "cemu" ? hubemu::Kind::Cemu : hubemu::Kind::Azahar; EMU.state = hubemu::Installer::Asking; }
-            else if (m == "failed") { EMU.kind = hubemu::Kind::Azahar; EMU.error = "checksum mismatch: the download was rejected"; EMU.state = hubemu::Installer::Failed; }
-            else if (m == "unzip") { UNZ.key = A.env_select; UNZ.state = UnzipJob::Asking; }
-        }
-        if (std::getenv("HUB_SHOT_FAKE_FRIENDS")) {
-            fr_fake_init();
-            if (std::getenv("HUB_SHOT_CHAT")) { fr_open_chat("miauid"); FR.chat_unread = 2; }
-            if (std::getenv("HUB_SHOT_BELL")) FR.shot_bell = true;
-        }
-        if (std::getenv("HUB_SHOT_FAKE_ROOM")) {
-            g_fake_room = true;
-            if (const char* hcv = std::getenv("HUB_SHOT_HOSTCHANGE")) {   // screenshot aid: room right after a host change ("me" | "other")
-                g_fake_other_host = std::string(hcv) == "other";
-                std::string nm = g_fake_other_host ? "Mia" : "You";
-                push_toast(hubui::host_changed_text(nm, !g_fake_other_host), ui::GOOD, 60.0, /*top=*/true);
-            }
-            A.in_room = true;
-            A.code = "K7M2QX";
-            A.page = Page::Online;
-            if (std::getenv("HUB_SHOT_PICKER")) FR.open_picker = true;
-            if (const char* rg = std::getenv("HUB_SHOT_ROOM_GAME")) A.selected_game = rg;   // e.g. smash64, remix
-            if (A.selected_game == "remix" && std::getenv("HUB_SHOT_PICKS")) {   // fake picks for the match picker
-                A.my_pick.p[0] = {0x1D, 2};
-                A.picks[1].p[0] = {0x00, 0};
-                A.picks[2].p[0] = {0x20, 4};
-                A.rules.stage = 0x31;
-                A.rules.stocks = 4;
-            }
-            if (std::getenv("HUB_SHOT_LOCALS2")) A.my_locals = 2;
-        }
-    }
+    if (shot_path) shot_init_ui();
     fr_start();
 
     refresh_pads();
     start_scan();
     auto_sync();   // pull in saves from other PCs at start
-    const bool shot_update = shot_path && std::getenv("HUB_SHOT_UPDATE");   // screenshot the update prompt
-    if ((!shot_path || shot_update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
-
-    double shot_secs = 4.0;
-    std::vector<ImGuiKey> shot_keys;
-    ULONGLONG shot_t0 = GetTickCount64();
-    if (shot_path) {
-        if (const char* ss = std::getenv("HUB_SHOT_SECS")) shot_secs = std::atof(ss);
-        if (const char* ks = std::getenv("HUB_SHOT_KEYS")) {
-            std::stringstream kss(ks);
-            std::string tok;
-            while (std::getline(kss, tok, ',')) if (shot_key(tok) != ImGuiKey_None) shot_keys.push_back(shot_key(tok));
-        }
-        if (const char* pd = std::getenv("HUB_SHOT_PAD")) A.pad_mode = std::atoi(pd) != 0;
-    }
-    float shot_wx = 0, shot_wy = 0, shot_wn = 0;   // HUB_SHOT_WHEEL=x,y,notches (notches > 0 scrolls right/down)
-    int shot_wheel_stage = 0;                      // 0 pending, 1 pointer placed, 2 wheel sent
-    double shot_wheel_t = 0;
-    const bool shot_wheel = shot_path && std::getenv("HUB_SHOT_WHEEL") &&
-                            std::sscanf(std::getenv("HUB_SHOT_WHEEL"), "%f,%f,%f", &shot_wx, &shot_wy, &shot_wn) == 3;
-    size_t shot_key_i = 0;
-    bool shot_key_down = false;
-    double shot_last_key = 0;
+    SH.init(shot_path);
+    if ((!shot_path || SH.update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
 
     bool running = true;
     while (running) {
@@ -198,37 +143,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
-        double shot_el = (GetTickCount64() - shot_t0) / 1000.0;
-        if (shot_path && !shot_keys.empty()) {   // scripted keyboard navigation, starting once the library has loaded
-            double start = std::max(1.5, shot_secs - 0.35 * (shot_keys.size() + 1));
-            if (shot_key_down) { io.AddKeyEvent(shot_keys[shot_key_i - 1], false); shot_key_down = false; }
-            else if (shot_key_i < shot_keys.size() && shot_el > start && shot_el - shot_last_key > 0.3 && A.scanned_once) {
-                io.AddKeyEvent(shot_keys[shot_key_i++], true);
-                shot_key_down = true;
-                shot_last_key = shot_el;
-            }
-        }
-        if (shot_wheel && shot_wheel_stage == 0 && A.scanned_once && shot_el > std::max(2.0, shot_secs - 2.0)) {
-            io.AddMousePosEvent(shot_wx, shot_wy);   // window pixels
-            shot_wheel_stage = 1;
-        } else if (shot_wheel && shot_wheel_stage == 1) {
-            if (!route_wheel(shot_wx, shot_wy, 0.f, -shot_wn)) io.AddMouseWheelEvent(0.f, -shot_wn);
-            shot_wheel_stage = 2;
-            shot_wheel_t = shot_el;
-        }
+        SH.pre_frame(io);
         ImGui::NewFrame();
         ImGui::PushFont(ui::F.body);
         draw_frame();
-        if (!shot_path || shot_update) draw_update_popup();
+        if (!shot_path || SH.update) draw_update_popup();
         ImGui::PopFont();
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 16, 17, 22, 255);
         SDL_RenderClear(ren);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), ren);
         if (shot_path) {
-            bool ready = shot_el >= shot_secs && (A.scanned_once || shot_el > shot_secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && shot_key_i >= shot_keys.size() && !shot_key_down &&
-                         (!shot_wheel || (shot_wheel_stage == 2 && shot_el - shot_wheel_t > 1.5));
-            if (ready) { save_screenshot(ren, shot_path); running = false; }
+            if (SH.ready()) { save_screenshot(ren, shot_path); running = false; }
             SDL_Delay(8);
         }
         SDL_RenderPresent(ren);
