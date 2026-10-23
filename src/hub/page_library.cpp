@@ -622,6 +622,8 @@ void draw_details_modal() {
         ImGui::SameLine(0, sp(1.5f));
         if (button("Controls for this game", ImVec2(0, bh), false, true, ui::Icon::Gamepad)) { ImGui::CloseCurrentPopup(); open_controls_for(e); }
     }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (button("Add to desktop", ImVec2(0, bh), false, true, ui::Icon::Star)) add_game_shortcut(e);
     ImGui::SameLine(0, sp(1.5f));
     if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();

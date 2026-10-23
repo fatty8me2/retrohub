@@ -27,6 +27,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <set>
@@ -46,6 +47,7 @@
 #include "logic.h"
 #include "savestore.h"
 #include "shell_integration.h"
+#include "invite.h"
 #include "session.h"
 #include "netplay_3ds_run.h"
 #include "ui_kit.h"
@@ -227,6 +229,7 @@ struct App {
     bool focus_search = false;
     LibView view = LibView::Home;
     std::string env_select;      // HUB_SELECT_GAME
+    std::string pending_play;    // --play <key> (own command line or forwarded by a second launch): started once the library has loaded
     std::string hero_key;        // game the hero header currently shows (for the fade-in)
     float hero_t = 1.f;
     bool show_details = false;   // request to open the details modal
@@ -433,6 +436,8 @@ std::string launch_path_for(const hub::GameEntry& e);
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg = "");
 void start_unzip(const hub::GameEntry& e);
 void play_entry(const hub::GameEntry& e);
+void add_game_shortcut(const hub::GameEntry& e);   // "Add to desktop": .lnk to RetroHub.exe --play <key> (shell_shortcut_dir())
+void flash_taskbar();                              // FlashWindowEx on the hub window; never takes focus
 
 
 /* ---- launch_online.cpp ---- */

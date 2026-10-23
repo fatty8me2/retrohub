@@ -16,6 +16,9 @@
 #include <cstdlib>
 #include <cwctype>
 #include <string>
+#include <vector>
+#include <cstring>
+#include <cwchar>
 
 namespace {
 
@@ -142,6 +145,79 @@ bool shell_write_shortcut(const std::wstring& lnk_path, const std::wstring& exe,
     if (FAILED(pf->Save(lnk_path.c_str(), TRUE))) return false;
     if (ok) *ok = true;
     return true;
+}
+
+std::wstring shell_shortcut_dir() {
+    wchar_t ov[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"HUB_SHORTCUT_DIR", ov, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) return ov;
+    if (!shell_registration_allowed()) return L"";
+    return known_folder(FOLDERID_Desktop);
+}
+
+std::wstring shell_game_shortcut_name(const std::wstring& title) {
+    std::wstring s;
+    for (wchar_t ch : title) {
+        if (ch < 32 || wcschr(L"<>:\"/\\|?*", ch)) ch = L' ';
+        s += ch;
+    }
+    while (!s.empty() && (s.back() == L' ' || s.back() == L'.')) s.pop_back();
+    size_t b = 0;
+    while (b < s.size() && s[b] == L' ') ++b;
+    s = s.substr(b);
+    if (s.empty()) s = L"Game";
+    if (s.size() > 80) s.resize(80);
+    return s + L".lnk";
+}
+
+bool shell_write_game_shortcut(const std::wstring& lnk_path, const std::wstring& exe, const std::wstring& key,
+                               const std::wstring& title, const std::wstring& icon_path) {
+    ComScope com;
+    Rel<IShellLinkW> link;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(link.put())))) return false;
+    link->SetPath(exe.c_str());
+    link->SetArguments(invite_play_arguments(key).c_str());
+    link->SetWorkingDirectory(dir_of(exe).c_str());
+    link->SetDescription((L"Play " + title + L" with RetroHub").c_str());
+    if (!icon_path.empty()) link->SetIconLocation(icon_path.c_str(), 0);
+    else link->SetIconLocation(exe.c_str(), 0);
+    Rel<IPersistFile> pf;
+    if (FAILED(link->QueryInterface(IID_PPV_ARGS(pf.put())))) return false;
+    std::wstring d = dir_of(lnk_path);
+    if (!d.empty()) SHCreateDirectoryExW(nullptr, d.c_str(), nullptr);
+    return SUCCEEDED(pf->Save(lnk_path.c_str(), TRUE));
+}
+
+bool shell_write_ico(const std::wstring& ico_path, const unsigned char* rgba, int w, int h) {
+    if (!rgba || w <= 0 || h <= 0) return false;
+    const int N = 128;
+    std::vector<unsigned char> bgra((size_t)N * N * 4, 0);   // transparent canvas, image letter-boxed in the middle
+    double sc = std::min((double)N / w, (double)N / h);
+    int tw = std::max(1, (int)(w * sc)), th = std::max(1, (int)(h * sc));
+    int ox = (N - tw) / 2, oy = (N - th) / 2;
+    for (int y = 0; y < th; ++y)
+        for (int x = 0; x < tw; ++x) {
+            int sx = std::min(w - 1, (int)(x / sc)), sy = std::min(h - 1, (int)(y / sc));
+            const unsigned char* s = rgba + ((size_t)sy * w + sx) * 4;
+            unsigned char* d = &bgra[((size_t)(N - 1 - (oy + y)) * N + (ox + x)) * 4];   // bottom-up
+            d[0] = s[2]; d[1] = s[1]; d[2] = s[0]; d[3] = s[3];
+        }
+    std::vector<unsigned char> mask((size_t)N * N / 8, 0);   // AND mask ignored for 32-bit, all zero
+    BITMAPINFOHEADER bi{};
+    bi.biSize = sizeof(bi); bi.biWidth = N; bi.biHeight = N * 2; bi.biPlanes = 1; bi.biBitCount = 32;
+    bi.biSizeImage = (DWORD)(bgra.size() + mask.size());
+    unsigned char dir[22] = {0, 0, 1, 0, 1, 0};
+    dir[6] = (unsigned char)N; dir[7] = (unsigned char)N; dir[10] = 1; dir[12] = 32;
+    DWORD bytes = (DWORD)(sizeof(bi) + bi.biSizeImage), off = 22;
+    memcpy(dir + 14, &bytes, 4);
+    memcpy(dir + 18, &off, 4);
+    HANDLE f = CreateFileW(ico_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    DWORD wr = 0;
+    bool ok = WriteFile(f, dir, 22, &wr, nullptr) && WriteFile(f, &bi, sizeof(bi), &wr, nullptr) &&
+              WriteFile(f, bgra.data(), (DWORD)bgra.size(), &wr, nullptr) && WriteFile(f, mask.data(), (DWORD)mask.size(), &wr, nullptr);
+    CloseHandle(f);
+    return ok;
 }
 
 bool shell_path_looks_like_dev_build(const std::wstring& exe, bool (*dir_has)(const std::wstring&, const wchar_t*)) {
