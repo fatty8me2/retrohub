@@ -121,6 +121,8 @@ struct RunInfo {
     ULONGLONG start_tick = 0;
     bool track = true;      // record play time / touch the save vault (false for the native Smash port)
     bool online = false;
+    bool pad_exit = false;              // RetroHub watches the pads for Back+Start (1 s) and closes this game gracefully
+    std::function<void()> pad_exit_fn;  // custom graceful close (Kanto Together); default: WM_CLOSE to the game's windows
     std::string o2r_prep;   // native Smash only: BattleShip.o2r path, shown as "Preparing" while it is missing ("" otherwise)
     std::function<void()> after_exit;   // runs once when the process ended (3DS/Wii U: copy the emulator save folder into the vault)
 };
@@ -449,6 +451,8 @@ void poll_job();
 bool spawn(const std::string& exe, const std::string& args, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri);
 void poll_process();
+void pad_exit_watch();   // launch.cpp: Back+Start combo while an external game runs
+void focus_hub();
 std::string find_core(const std::string& name);
 std::string quote(const std::string& s);
 std::string title_arg(const std::string& game_title);

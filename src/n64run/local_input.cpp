@@ -54,18 +54,19 @@ void LocalInput::rumble(int owned_index, bool on) {
     if (on) SDL_GameControllerRumble(gc, 0xB000, 0xB000, 60000); else SDL_GameControllerRumble(gc, 0, 0, 0);
 }
 
-static uint32_t read_pad(SDL_GameController* gc, const PadMap& m) {
-    hubctl::PadState st;
-    hubctl::read_state(gc, &st);
-    return m.word(st);
-}
-
 void LocalInput::update() {
     if (!inited_) return;
     SDL_PumpEvents();
     if (SDL_NumJoysticks() != last_joysticks_) rescan();
     SDL_GameControllerUpdate();
-    for (size_t i = 0; i < pads_.size(); i++) pad_state_[i] = read_pad((SDL_GameController*)pads_[i], *map_);
+    bool combo = false;
+    for (size_t i = 0; i < pads_.size(); i++) {
+        hubctl::PadState st;
+        hubctl::read_state((SDL_GameController*)pads_[i], &st);
+        pad_state_[i] = map_->word(st);
+        if (hubctl::exit_combo_down(st)) combo = true;
+    }
+    if (combo_.update(combo, (long long)SDL_GetTicks64())) exit_fired_ = true;
 
     const Uint8* k = SDL_GetKeyboardState(nullptr);
     uint32_t v = 0;
