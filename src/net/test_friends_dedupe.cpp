@@ -2,6 +2,9 @@
 #include "friends.h"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <set>
 
 using namespace hubnet;
 
@@ -56,6 +59,44 @@ int main()
         dedupe_requests(fr, in, out, "me");
         CHECK(in.size() == 2 && in[0].uid == "x" && in[0].at == 5 && in[1].uid == "both");
         CHECK(out.size() == 1 && out[0].uid == "y");
+    }
+    {   // same name, different uid (a person's old identity that was never retired)
+        const int64_t DAY = 86400 * 1000LL;
+        std::vector<Friend> v = {mk("old", "Camer", PresenceState::Offline, 100 * DAY, 1 * DAY), mk("new", "camer ", PresenceState::Online, 200 * DAY, 90 * DAY),
+                                 mk("solo", "Solo", PresenceState::Offline, 1, 1)};
+        auto st = stale_same_name(v);
+        CHECK(st.size() == 1 && st[0] == "old");
+        std::vector<Friend> both_off = {mk("a", "Mike", PresenceState::Offline, 50 * DAY, 1), mk("b", "Mike", PresenceState::Offline, 51 * DAY, 1)};
+        CHECK(stale_same_name(both_off).empty());   // two real Mikes seen a day apart: keep both
+        std::vector<Friend> far = {mk("a", "Mike", PresenceState::Offline, 10 * DAY, 1), mk("b", "mike", PresenceState::Offline, 50 * DAY, 1)};
+        auto sf = stale_same_name(far);
+        CHECK(sf.size() == 1 && sf[0] == "a");      // one has been gone for 40 days
+        std::vector<Friend> two_on = {mk("a", "Ann", PresenceState::Online, 1, 1), mk("b", "Ann", PresenceState::Online, 2, 1)};
+        CHECK(stale_same_name(two_on).empty());     // both present: never hide
+    }
+    {   // every older identity on the PC is found (pending file, backups, vault), minus the current and the confirmed ones
+        namespace fs = std::filesystem;
+        fs::path root = fs::temp_directory_path() / "rh_older_ids_test";
+        std::error_code ec;
+        fs::remove_all(root, ec);
+        fs::create_directories(root / "data", ec);
+        fs::create_directories(root / "vault" / "_identity", ec);
+        auto idjson = [](char c, char d) { return std::string("{\"user_id\":\"") + std::string(26, c) + "\",\"secret\":\"" + std::string(52, d) + "\",\"created\":1}"; };
+        auto put = [](const fs::path& p, const std::string& t) { std::ofstream(p, std::ios::binary) << t; };
+        put(root / "data" / "identity.json", idjson('c', 'z'));
+        put(root / "data" / "pending-retire.json", idjson('b', 'y'));
+        put(root / "data" / "identity-backup-20260101-000000.json", idjson('a', 'x'));
+        put(root / "data" / "identity-backup-20260102-000000.json", idjson('b', 'y'));       // same uid as pending: once
+        put(root / "data" / "identity-backup-20260103-000000.json", idjson('c', 'z'));       // the current one: skipped
+        put(root / "vault" / "_identity" / "identity.json", idjson('d', 'w'));               // vault mirror, not an "older" one
+        put(root / "vault" / "_identity" / "old-pc.json", idjson('e', 'v'));
+        put(root / "data" / "retired-ids.txt", std::string(26, 'a') + '\n');                // a: already confirmed retired
+        std::string dd = (root / "data").string(), vd = (root / "vault").string();
+        auto ids = older_identities(dd, vd, std::string(26, 'c'));
+        std::set<std::string> got;
+        for (auto& i : ids) got.insert(i.user_id.substr(0, 1));
+        CHECK(ids.size() == 2 && got.count("b") && got.count("e"));
+        fs::remove_all(root, ec);
     }
     printf("%s (%d failures)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
