@@ -86,6 +86,7 @@ add_test(NAME retrorun_rollback_test COMMAND retrorun_rollback_test)
 add_test(NAME hubsaves_test COMMAND hubsaves_test)
 add_test(NAME hubsaves_cloud_test COMMAND hubsaves_cloud_test)   # e2e part runs only with RETROHUB_TEST_SAVES_URL (qa\saves_cloud.ps1)
 add_test(NAME hub_logic_test COMMAND hub_logic_test)
+add_test(NAME hub_osk_test COMMAND hub_osk_test)                         # OSK key layout / edit logic / folder browser (scratch dirs)
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live

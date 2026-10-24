@@ -142,6 +142,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             if (e.type == SDL_CONTROLLERDEVICEADDED || e.type == SDL_CONTROLLERDEVICEREMOVED) refresh_pads();
             // which device was used last decides whether the footer shows controller glyphs or key caps
             if (e.type == SDL_CONTROLLERBUTTONDOWN || (e.type == SDL_CONTROLLERAXISMOTION && std::abs((int)e.caxis.value) > 16000)) A.pad_mode = true;
+            if (e.type == SDL_KEYDOWN || e.type == SDL_TEXTINPUT) osk::note_keyboard();
             if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEMOTION) A.pad_mode = false;
         }
         hubart::pump();
@@ -194,6 +195,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
         if (SDL_GetWindowFlags(A.win) & SDL_WINDOW_MINIMIZED) { SDL_Delay(50); continue; }
 
+        osk::pre_frame(io);
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         SH.pre_frame(io);
@@ -201,6 +203,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         ImGui::PushFont(ui::F.body);
         draw_frame();
         if (!shot_path || SH.update) draw_update_popup();
+        osk::draw_root();
         ImGui::PopFont();
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 16, 17, 22, 255);

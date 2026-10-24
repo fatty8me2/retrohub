@@ -993,7 +993,7 @@ void fr_chat_view(float cw) {
 
     ImGui::SetNextItemWidth(cw - sp(9.f));
     std::string hint = "Message " + f->name;
-    bool enter = ImGui::InputTextWithHint("##fmsg", hint.c_str(), FR.chat_buf, 500, ImGuiInputTextFlags_EnterReturnsTrue);
+    bool enter = osk::input("##fmsg", hint.c_str(), FR.chat_buf, 500, ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine(0, sp(0.75f));
     bool send = ui::button("Send", ImVec2(sp(8.25f), ImGui::GetFrameHeight()), true, FR.chat_buf[0] != 0);
     if ((enter || send) && FR.chat_buf[0]) {
@@ -1073,7 +1073,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
         // add friend
         {
             ImGui::SetNextItemWidth(cw - sp(8.75f));
-            bool enter = ImGui::InputTextWithHint("##addf", "Add friend: RH-XXXX-XXXX", FR.add_buf, sizeof FR.add_buf, ImGuiInputTextFlags_EnterReturnsTrue);
+            bool enter = osk::input("##addf", "Add friend: RH-XXXX-XXXX", FR.add_buf, sizeof FR.add_buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsUppercase, osk::Kind::Code);
             ImGui::SameLine(0, sp(0.75f));
             bool add = ui::button("Add", ImVec2(sp(8.f), ImGui::GetFrameHeight()), true, FR.add_buf[0] != 0);
             if ((enter || add) && FR.add_buf[0]) {

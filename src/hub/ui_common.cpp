@@ -37,8 +37,8 @@ void add_rom_folder_path(const std::string& p) {
     mark_dirty();
     start_scan();
 }
-void add_rom_folder() {
-    std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+void add_rom_folder(bool clicked) {
+    std::string p = osk::folder("rom", clicked);
     if (p.empty()) return;
     add_rom_folder_path(p);
 }
