@@ -111,7 +111,7 @@ void page_online_room() {
     if (button("Copy code", ImVec2(150 * S, 44 * S), true)) { SDL_SetClipboardText(A.code.c_str()); set_notice("Room code copied.", 3); }
     ImGui::SameLine();
     if (button("Copy invite link", ImVec2(200 * S, 44 * S), true)) {
-        std::wstring link = invite_web_link(W(A.code));
+        std::wstring link = invite_web_link(W(A.code), W(A.st.name));
         if (!link.empty() && invite_copy_text(link)) set_toast("Invite link copied", true, 3.0);
         else set_notice("Could not copy the invite link.", 4);
     }

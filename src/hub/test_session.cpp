@@ -77,6 +77,18 @@ int main() {
     CHECK(pending_join_ready(true, false));    // game closed: run it
     CHECK(!pending_join_ready(false, false));  // nothing queued
 
+    /* 4. Cold-start / forwarded link join: held until a player name exists, then released once. */
+    {
+        LinkJoinQueue q;
+        std::string c;
+        CHECK(!q.pending() && !q.take(true, &c));
+        q.push("ABCDEF");                              // cold start, settings not loaded / no name yet
+        CHECK(q.needs_name(false) && !q.take(false, &c) && q.pending());
+        q.push("K7M2QX");                              // a later link replaces it
+        CHECK(!q.needs_name(true) && q.take(true, &c) && c == "K7M2QX");
+        CHECK(!q.pending() && !q.take(true, &c));      // released exactly once
+    }
+
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }

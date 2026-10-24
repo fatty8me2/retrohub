@@ -314,6 +314,22 @@ enum class JoinWhileRunning { Queue, AlreadyInRoom };
 inline JoinWhileRunning join_while_running(bool same_room) { return same_room ? JoinWhileRunning::AlreadyInRoom : JoinWhileRunning::Queue; }
 /* A queued join runs once our game has closed. */
 inline bool pending_join_ready(bool has_pending, bool game_running) { return has_pending && !game_running; }
+/* A retrohub:// / --join request from our own command line (cold start) or from a second launch: held until it can run.
+   It cannot run before a player name exists (enter_room refuses without one). If our game is running, fr_join_lobby queues it. */
+class LinkJoinQueue {
+public:
+    void push(const std::string& code) { code_ = code; }          // the latest link wins
+    bool pending() const { return !code_.empty(); }
+    bool needs_name(bool name_set) const { return pending() && !name_set; }
+    bool take(bool name_set, std::string* code) {
+        if (!pending() || !name_set) return false;
+        if (code) *code = code_;
+        code_.clear();
+        return true;
+    }
+private:
+    std::string code_;
+};
 /* After a game closes: play time goes to the vault only for tracked, offline launches of a known system. */
 inline bool exit_should_touch_game(bool has_key, bool track, bool online, const std::string& system_short) {
     return has_key && track && !online && !system_short.empty();

@@ -21,7 +21,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             invite_srv.start(INVITE_PIPE_NAME);
         }
     }
-    std::string first_join = has_join && !shot_path ? U(cmd_join) : std::string();
+    hubui::LinkJoinQueue link_join;   // cold-start --join / retrohub:// plus links forwarded by later launches
+    if (has_join && !shot_path) link_join.push(U(cmd_join));
+    bool told_need_name = false;
     if (has_play && !shot_path) A.pending_play = U(cmd_play);
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
     SDL_SetMainReady();
@@ -157,8 +159,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         fr_tick();
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;
-            if (!first_join.empty()) { std::string c = first_join; first_join.clear(); fr_join_lobby(c, "", "", ""); if (A.proc) flash_taskbar(); }
-            while (invite_srv.take(&w)) { fr_join_lobby(U(w), "", "", ""); if (A.proc) flash_taskbar(); }
+            while (invite_srv.take(&w)) { link_join.push(U(w)); told_need_name = false; }
+            const bool name_set = !A.st.name.empty();
+            if (link_join.needs_name(name_set) && !told_need_name) {
+                told_need_name = true;
+                A.page = Page::Settings;
+                set_notice("Pick a player name to join your friend's room. You will join right after.", 20.0);
+            }
+            std::string jc;
+            if (link_join.take(name_set, &jc)) {
+                fr_join_lobby(jc, "", "", "");
+                if (A.proc) flash_taskbar();
+                else if (A.win) { SDL_RestoreWindow(A.win); SDL_RaiseWindow(A.win); }
+            }
             while (invite_srv.take_play(&w)) A.pending_play = U(w);
             if (invite_srv.take_show()) {
                 if (A.proc) flash_taskbar();   // a game is running: never pull RetroHub in front of it

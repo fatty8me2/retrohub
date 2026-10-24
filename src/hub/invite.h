@@ -27,7 +27,10 @@ bool invite_parse_play(const std::wstring& cmdline, std::wstring* key);
 std::wstring invite_play_arguments(const std::wstring& key);
 
 /* https://smash-netplay.jumpcircuit.workers.dev/j/<CODE>. Returns "" for an invalid code. */
-std::wstring invite_web_link(const std::wstring& code);
+/* Optional host name (shown in the page title and chat previews as "Join <name>'s RetroHub room"). */
+std::wstring invite_web_link(const std::wstring& code, const std::wstring& host_name = L"");
+/* "?h=<url-encoded sanitized name>", or "" when nothing usable is left. */
+std::wstring invite_host_query(const std::wstring& host_name);
 /* Puts text on the clipboard. Returns false on failure. */
 bool invite_copy_text(const std::wstring& text);
 
