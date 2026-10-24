@@ -138,8 +138,11 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     hubui::GuestVersionAction gact;
     std::string block = room_block_reason(host, rg, peers, &gact);
     std::vector<hubui::RoomMember> mem;
+    std::vector<bool> in_game;
     int me = room_my_slot();
     for (auto& p : peers) {
+        auto ig = A.ingame.find(p.slot);
+        in_game.push_back(ig != A.ingame.end() && ig->second);
         bool rd = p.slot == 0 || (p.slot == me ? A.my_ready : A.ready[p.slot]);
         mem.push_back({p.name, rd, p.slot == 0, p.slot == me});
     }
@@ -187,9 +190,11 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     // readiness summary: dot + name per member
     {
         float x = tx, y = p1.y - 26 * S;
-        for (auto& m : mem) {
+        for (size_t mi = 0; mi < mem.size(); ++mi) {
+            auto& m = mem[mi];
             std::string nm = m.me ? "You" : m.name;
             if (m.host) nm += " (host)";
+            if (mi < in_game.size() && in_game[mi]) nm += " (in game)";
             ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
             if (x + 22 * S + ts.x > tx + tw) break;
             ImVec2 c(x + 7 * S, y + ts.y * 0.5f);
