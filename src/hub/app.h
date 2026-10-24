@@ -469,7 +469,7 @@ void host_launch_selected();   // the Launch button's body (page_online.cpp); th
 void autotest_tick();          // autotest.cpp: RETROHUB_AUTOTEST room driver (no-op when unset)
 bool autotest_active();
 void autotest_log(const std::string& line);
-void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg);
+void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg, const hubnp3ds::Plan* resumed = nullptr);
 void poll_np3ds();
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
