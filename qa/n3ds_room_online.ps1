@@ -26,7 +26,7 @@ public static class DeskLaunch3 {
   }
 }
 "@
-if (-not $Code) { $Code = -join ((65..90) | Get-Random -Count 6 | ForEach-Object { [char]$_ }) }
+if (-not $Code) { $Code = -join ((1..6) | ForEach-Object { "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[(Get-Random -Max 32)] }) }
 New-Item -ItemType Directory -Force $Work | Out-Null
 [DeskLaunch3]::Desk($Desktop)
 $pids = @(); $users = @($UserA, $UserB)

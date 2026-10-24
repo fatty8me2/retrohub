@@ -3,7 +3,7 @@
 # Why: SameBoy's joypad-bounce emulation compares a new key state with gb->keys, which is NOT part of the savestate, and its power-on
 # RAM comes from a global time-seeded RNG that is not saved either. After a rollback load the core therefore re-simulated a frame
 # differently (CGB: "video differs after a load"; DMG: rare desyncs). The patch (see patch_libretro.cmake) turns both off. Everything
-# else is the unmodified libretro/SameBoy tree.
+# else is the unmodified libretro/SameBoy tree. Built with -DNDEBUG like upstream libretro/Makefile (SameBoy has assert(fifo->size) in display.c which aborted retrorun during the Pokemon trade animation).
 #
 # SameBoy uses GNU C extensions (statement expressions, __typeof__, packed structs), which MSVC cannot compile, so the core is built
 # with a MinGW-w64 gcc (MSYS2 mingw64, or -DSAMEBOY_RB_GCC=<path>). Without one this target is skipped and retrorun stays on lockstep
@@ -55,7 +55,7 @@ set(SB_DLL ${CMAKE_CURRENT_BINARY_DIR}/sameboy_rb_libretro.dll)
 add_custom_command(OUTPUT ${SB_DLL}
     # PATH must contain only the gcc dir (cc1/as/ld, libwinpthread DLLs). Appending $ENV{PATH} breaks the VS custom-build
     # command line: entries such as "C:\Program Files (x86)\..." are quoted, so cmd splits them into a bogus second command.
-    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SB_GCC_DIR}" ${SAMEBOY_RB_GCC} -shared -w -O2 -std=gnu11 -D__LIBRETRO__ -D_GNU_SOURCE -D_USE_MATH_DEFINES
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SB_GCC_DIR}" ${SAMEBOY_RB_GCC} -shared -w -O2 -DNDEBUG -std=gnu11 -D__LIBRETRO__ -D_GNU_SOURCE -D_USE_MATH_DEFINES
             -DGB_DISABLE_TIMEKEEPING -DGB_DISABLE_REWIND -DGB_DISABLE_DEBUGGER -DGB_DISABLE_CHEATS -DGB_INTERNAL
             "-DGB_VERSION=\"1.0.4\"" "-DGIT_VERSION=\" aa158a8\""
             -I${SB} -I${SB}/libretro -I${LC}/include ${SB_SRC}
