@@ -332,6 +332,9 @@ struct ShotDriver {
     bool wheel = false;
     int wheel_stage = 0;                  // 0 pending, 1 pointer placed, 2 wheel sent
     double wheel_t = 0;
+    struct Click { float x, y; int btn; };
+    std::vector<Click> clicks;            // HUB_SHOT_CLICK=x,y;rx,y;... (r prefix = right click), window pixels, injected as real mouse events
+    size_t click_i = 0; int click_stage = 0; double click_t = 0;
     size_t key_i = 0;
     bool key_down = false;
     double last_key = 0;
