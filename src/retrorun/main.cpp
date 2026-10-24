@@ -608,8 +608,55 @@ void Frontend::open_pads() {
 }
 
 /* Pad for the i-th locally owned port. */
+/* QA-only scripted input: RETRORUN_INPUT_SCRIPT=<file> with lines "frame:BUTTONS" (BUTTONS = names joined by '+', e.g. A+UP; empty/-/0 = none;
+ * or 0x<hex> RetroPad mask). A mask applies from that frame until the next line. Used for every locally owned port. */
+struct ScriptShot { uint64_t frame; std::string path; bool done; };
+static std::vector<ScriptShot> g_script_shots;   // "frame:@shot <file.png>" lines: screenshot of the frame shown at that frame
+static uint32_t scripted_pad(uint64_t frame, bool* active) {
+    static bool loaded = false;
+    static std::vector<std::pair<uint64_t, uint32_t>> tab;
+    if (!loaded) {
+        loaded = true;
+        const char* f = getenv("RETRORUN_INPUT_SCRIPT");
+        std::ifstream in(f ? f : "");
+        std::string ln;
+        static const char* names[] = {"B", "Y", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "A", "X", "L", "R"};
+        while (f && std::getline(in, ln)) {
+            size_t c = ln.find(':');
+            if (c == std::string::npos || ln[0] == '#') continue;
+            uint64_t fr = strtoull(ln.c_str(), nullptr, 10);
+            std::string b = ln.substr(c + 1);
+            while (!b.empty() && (b.back() == '' || b.back() == ' ')) b.pop_back();
+            if (b.compare(0, 6, "@shot ") == 0) { g_script_shots.push_back({fr, b.substr(6), false}); continue; }
+            uint32_t m = 0;
+            if (b.size() > 2 && b[0] == '0' && b[1] == 'x') m = (uint32_t)strtoul(b.c_str(), nullptr, 16);
+            else {
+                size_t p = 0;
+                while (p <= b.size()) {
+                    size_t q = b.find('+', p); if (q == std::string::npos) q = b.size();
+                    std::string t = b.substr(p, q - p); p = q + 1;
+                    for (int k = 0; k < 12; k++) if (t == names[k]) m |= 1u << k;
+                }
+            }
+            tab.push_back({fr, m});
+        }
+        std::stable_sort(tab.begin(), tab.end(), [](auto& x, auto& y) { return x.first < y.first; });
+    }
+    *active = !tab.empty() || !g_script_shots.empty();
+    uint32_t m = 0;
+    for (auto& e : tab) { if (e.first > frame) break; m = e.second; }
+    return m;
+}
+
 uint32_t Frontend::poll_local(int i) {
     int port = local_ports[i];
+    {
+        bool act = false;
+        uint32_t sm = scripted_pad(frame_no, &act);
+        for (auto& sh : g_script_shots)
+            if (!sh.done && sh.frame <= frame_no) { sh.done = true; if (write_frame_image(sh.path, core.frame())) rlog("screenshot: %s (frame %llu)", sh.path.c_str(), (unsigned long long)frame_no); }
+        if (act) return sm;
+    }
     if (a.fuzz) {
         uint32_t x = (uint32_t)(frame_no / 3) * 2654435761u ^ (uint32_t)(port + 1) * 40503u ^ 0x9E3779B9u;
         x ^= x >> 15; x *= 2246822519u; x ^= x >> 13;
@@ -1124,6 +1171,25 @@ void Frontend::finish() {
     static bool done = false;
     if (done) return;
     done = true;
+    if (const char* pk = getenv("RETRORUN_PEEK"); pk && core.game_loaded()) {   // QA-only: "memid:offset:len[,..]" (libretro memory id, e.g. 2 = system RAM; link mode: raw ids) -> "peek:" log lines at exit
+        std::string spec = pk;
+        size_t p = 0;
+        while (p < spec.size()) {
+            size_t q = spec.find(',', p); if (q == std::string::npos) q = spec.size();
+            std::string t = spec.substr(p, q - p); p = q + 1;
+            unsigned id = 0, off = 0, len = 0;
+            if (sscanf(t.c_str(), "%i:%i:%i", &id, &off, &len) != 3) continue;
+            size_t n = 0;
+            const uint8_t* m = (const uint8_t*)core.memory(id, &n);
+            std::string hex;
+            for (unsigned i = 0; m && off + i < n && i < len; i++) { char b[4]; snprintf(b, sizeof b, "%02x", m[off + i]); hex += b; }
+            rlog("peek: %s size=%zu %s", t.c_str(), n, hex.c_str());
+        }
+    }
+    if (const char* sd = getenv("RETRORUN_STATE_DUMP"); sd && core.game_loaded() && core.serialize_size()) {   // QA-only: whole serialized core state (all consoles in --link mode) at exit
+        std::vector<uint8_t> buf(core.serialize_size());
+        if (core.serialize(buf.data(), buf.size()) && write_atomic(sd, buf.data(), buf.size())) rlog("state-dump: %s (%zu bytes)", sd, buf.size());
+    }
     if (core.game_loaded() && link) {
         link_save(false);
     } else if (core.game_loaded()) {

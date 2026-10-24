@@ -39,6 +39,21 @@ void autotest_tick() {
             seen_status = st;
         }
     }
+    if (role == "play") {   // single-player: press the same code path as the Play button for RETROHUB_AUTOTEST_GAME
+        if (stage == 0) {
+            if (A.scanning || now - started < 3000) return;
+            if (A.lib.empty() && now - started < 90000) return;
+            for (auto& e : A.lib) autotest_log("game " + room_id(e) + " | " + e.title + " | " + e.path);
+            const hub::GameEntry* g = find_room_entry(env("RETROHUB_AUTOTEST_GAME") ? env("RETROHUB_AUTOTEST_GAME") : "");
+            if (!g) { autotest_log("error:game not in library"); stage = 99; return; }
+            hub::GameEntry copy = *g;
+            autotest_log("play " + copy.title);
+            play_entry(copy);
+            autotest_log(A.proc ? "play: emulator started" : "play: NOT started");
+            stage = A.proc ? 1 : 99;
+        } else if (stage == 1 && !A.proc) { autotest_log("play: emulator process ended"); stage = 2; }
+        return;
+    }
     if (stage == 0) {
         if (A.scanning || now - started < 3000) return;
         if (A.lib.empty() && now - started < 90000) return;   // the first scan on a fresh data dir can take a while; a room hello must list the game
