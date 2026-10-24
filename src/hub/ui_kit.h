@@ -67,6 +67,8 @@ void icon(ImDrawList* dl, Icon ic, ImVec2 center, float size, ImU32 col);
 bool button(const char* label, ImVec2 size = ImVec2(0, 0), bool primary = false, bool enabled = true, Icon ic = Icon::None);
 bool icon_button(const char* id, Icon ic, float size, bool active = false, const char* tooltip = nullptr, ImU32 active_col = ACCENT);
 bool chip(const char* label, bool on, ImU32 col);
+/* Inside a modal: true on the frame B (pad) or Esc is pressed while this modal has the focus. ImGui never closes modals on its own. */
+bool modal_back();
 /* Pill-style segmented control; returns the (possibly new) selected index. */
 int segmented(const char* id, const char* const* labels, int n, int cur);
 float pill_at(ImDrawList* dl, ImVec2 p, const char* text, ImU32 bg, ImU32 fg = IM_COL32_WHITE, ImFont* font = nullptr);

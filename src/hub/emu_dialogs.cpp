@@ -46,7 +46,9 @@ void draw_emulator_dialogs() {
         bool open = false;
         emu_modal_begin("Emulator download", &open);
         if (open) {
+            const bool back = ui::modal_back();
             if (EMU.state == hubemu::Installer::Asking) {
+                if (back) EMU.state = hubemu::Installer::Idle;
                 ImGui::TextWrapped("%s games need the %s emulator (about %d MB download from its official release, %s). "
                                    "It is kept inside RetroHub's data folder. Download now?",
                                    EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : EMU.kind == hubemu::Kind::Dolphin ? "GameCube" : EMU.kind == hubemu::Kind::Pcsx2 ? "PlayStation 2" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
@@ -64,6 +66,7 @@ void draw_emulator_dialogs() {
                 ImGui::ProgressBar(EMU.phase > 0 ? 1.f : (tot ? (float)got / (float)tot : 0.f), ImVec2(-1, 24 * S), EMU.phase > 0 ? "" : ov);
                 ImGui::TextDisabled("Your game starts as soon as it is ready.");
             } else {
+                if (back) EMU.state = hubemu::Installer::Idle;
                 std::string err;
                 { std::lock_guard<std::mutex> lk(EMU.mu); err = EMU.error; }
                 ImGui::TextWrapped("Could not install %s: %s", nm.c_str(), err.c_str());
@@ -80,6 +83,10 @@ void draw_emulator_dialogs() {
         emu_modal_begin("Unpack game", &open);
         if (open) {
             const hub::GameEntry* g = find_entry(UNZ.key);
+            if (ui::modal_back()) {
+                if (UNZ.state == UnzipJob::Working) UNZ.cancel = true;
+                else UNZ.state = UnzipJob::Idle;
+            }
             if (UNZ.state == UnzipJob::Asking && g) {
                 ImGui::TextWrapped("%s cannot open archives. Unpack \"%s\" (about %.1f GB) into RetroHub's data folder?", g->system == hub::System::GC ? "Dolphin" : g->system == hub::System::PS1 ? "The PlayStation emulator" : g->system == hub::System::PS2 ? "PCSX2" : "Azahar", g->title.c_str(),
                                    unpacked_size(*g) / 1073741824.0);
