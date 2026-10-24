@@ -125,6 +125,25 @@ int main() {
         if (const char* real = std::getenv("N3DS_REAL_INSTALL")) CHECK(set_console_username_file(real, "TestNick_1"));
     }
 
+    /* guest resume gate */
+    {
+        ResumeGate g;
+        Plan p; p.port = 24999; p.password = "abc"; p.expected = 2;
+        int no = 0; Plan out;
+        CHECK(!g.take(true, 0, &no, &out));                 // not armed
+        g.arm("3ds:x", 7, p, 1000);
+        CHECK(g.armed() && g.key() == "3ds:x");
+        CHECK(!g.take(false, 2000, &no, &out) && g.armed());   // still unpacking
+        CHECK(g.take(true, 3000, &no, &out) && no == 7 && out.port == 24999 && out.password == "abc" && !g.armed());
+        CHECK(!g.take(true, 3001, &no, &out));              // fires once
+        g.arm("3ds:x", 8, p, 0);
+        CHECK(!g.take(true, ResumeGate::kTtlMs + 1, &no, &out) && !g.armed());   // expired
+        g.arm("3ds:x", 9, p, 0); g.arm("3ds:y", 10, p, 5);   // newer launch replaces
+        CHECK(g.key() == "3ds:y" && g.take(true, 6, &no, &out) && no == 10);
+        g.arm("3ds:x", 11, p, 0); g.cancel();
+        CHECK(!g.take(true, 1, &no, &out));
+    }
+
     /* catalog: all 8 3DS Pokemon games are 2-player; online verified live (n3ds_live, direct + forced relay) */
     int n = 0;
     for (const hub::GameInfo& g : hub::catalog())

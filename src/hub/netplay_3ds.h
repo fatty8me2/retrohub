@@ -74,4 +74,25 @@ class Reassembler {
     std::map<uint64_t, Part> parts_;
 };
 
+/* Guest-side resume: a launch that arrives while the archive is still unpacking is remembered (the host's plan + launch no)
+ * and started as soon as the unpack is done. Expires, and a newer launch replaces it. */
+class ResumeGate {
+  public:
+    static constexpr uint32_t kTtlMs = 10 * 60 * 1000;
+    void arm(const std::string& game_key, int launch_no, const Plan& plan, uint32_t now_ms) { key_ = game_key; no_ = launch_no; plan_ = plan; t_ = now_ms; armed_ = true; }
+    void cancel() { armed_ = false; }
+    bool armed() const { return armed_; }
+    const std::string& key() const { return key_; }
+    /* True once (and disarms) when the game is ready; false while waiting. Drops the request when it has expired. */
+    bool take(bool unpacked, uint32_t now_ms, int* launch_no, Plan* plan) {
+        if (!armed_) return false;
+        if (now_ms - t_ > kTtlMs) { armed_ = false; return false; }
+        if (!unpacked) return false;
+        armed_ = false; *launch_no = no_; *plan = plan_;
+        return true;
+    }
+  private:
+    bool armed_ = false; std::string key_; int no_ = 0; Plan plan_; uint32_t t_ = 0;
+};
+
 }  // namespace hubnp3ds

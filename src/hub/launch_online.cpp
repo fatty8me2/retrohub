@@ -193,13 +193,18 @@ void gc_guest_poll() {
 }
 
 /* 3DS: bring up the room server (host) + UDP forwarder, then poll_np3ds() starts Azahar once everyone is reachable. */
-void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg) {
+static hubnp3ds::ResumeGate NP3_resume;   // guest launch waiting for the archive to finish unpacking
+void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg, const hubnp3ds::Plan* resumed) {
     if (A.proc || NP3.active()) { set_notice("A game is already running."); return; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, e.path);
     if (inst.exe.empty()) { set_notice("Install Azahar first (start the game offline once), then join the room again.", 10.0); return; }
     if (gc_needs_unpack(e)) {   // normally done already (n3ds_prefetch on selection); never let Azahar's "unpack?" prompt swallow the launch
         n3ds_prefetch(e);
-        set_notice("Unpacking " + e.title + " first - join the room again when it is done.", 10.0);
+        hubnp3ds::Plan hp;
+        if (!is_host && !resumed && msg && hubnp3ds::parse_plan(*msg, &hp)) {   // guest: remember the launch, start it when the unpack finishes
+            NP3_resume.arm(e.key, launch_no, hp, GetTickCount());
+            set_notice("Unpacking " + e.title + " - the online game starts by itself when it is done.", 10.0);
+        } else set_notice("Unpacking " + e.title + " first - join the room again when it is done.", 10.0);
         return;
     }
     /* The room rejects a duplicate nickname, and every fresh Azahar is called "AZAHAR": give this PC's 3DS a unique username
@@ -218,7 +223,8 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
         make_dirs(wd);
         if (!NP3.start_host(server_url(), A.code, launch_no, plan, room, wd, &err)) { set_notice("3DS online: " + err, 12.0); return; }
     } else {
-        if (!msg || !hubnp3ds::parse_plan(*msg, &plan)) { set_notice("The host's 3DS room settings are missing - ask them to update RetroHub.", 10.0); return; }
+        if (resumed) plan = *resumed;
+        else if (!msg || !hubnp3ds::parse_plan(*msg, &plan)) { set_notice("The host's 3DS room settings are missing - ask them to update RetroHub.", 10.0); return; }
         if (!NP3.start_guest(server_url(), A.code, launch_no, plan, A.lobby.my_slot(), &err)) { set_notice("3DS online: " + err, 12.0); return; }
     }
     NP3_mp = hubnp3ds::multiplayer_arg(hubnp3ds::nickname(A.st.name, A.lobby.my_slot()), plan.password, "127.0.0.1", NP3.connect_port());
@@ -228,6 +234,14 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
     set_notice("Connecting the 3DS wireless link...", 20.0);
 }
 void poll_np3ds() {
+    if (NP3_resume.armed()) {
+        if (A.lobby.members().empty()) NP3_resume.cancel();   // left the room
+        else if (const hub::GameEntry* g = find_entry(NP3_resume.key())) {
+            int no = 0;
+            hubnp3ds::Plan p;
+            if (NP3_resume.take(!gc_needs_unpack(*g), GetTickCount(), &no, &p)) { hub::GameEntry copy = *g; launch_online_3ds(copy, no, false, nullptr, &p); }
+        } else NP3_resume.cancel();
+    }
     if (!NP3.active()) return;
     NP3.update();
     if (NP3.failed()) { set_notice("3DS online: " + NP3.status(), 12.0); NP3.stop(); NP3_pending = false; return; }
@@ -265,7 +279,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
     }
     RunInfo ri = run_info_for(e, true);
     hub::gs::Values gsv = hubui::online_values(e.system, gs_values_for(e), is_host, launch_body ? *launch_body : std::string());
-    if (e.system == hub::System::N3DS) { launch_online_3ds(e, launch_no, is_host, launch_msg); return; }
+    if (e.system == hub::System::N3DS) { launch_online_3ds(e, launch_no, is_host, launch_msg, nullptr); return; }
     if (is_native(e)) {
         std::string exe = smash_exe_path();
         std::vector<std::pair<std::string, std::string>> env;
