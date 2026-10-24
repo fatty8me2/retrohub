@@ -13,9 +13,7 @@
 
 #include "games.h"   // md5_hex
 
-extern "C" {
-#include <formats/rchd.h>
-}
+#include "disc_id.h"   // shared PS1/PS2 sector reader + SYSTEM.CNF (iso/bin/cso/chd via libchdr)
 
 namespace fs = std::filesystem;
 
@@ -281,52 +279,6 @@ bool open_binary(const std::string& path, const std::string& mode_hint, FileSect
     return fsr->open(path, 2048, 0);
 }
 
-struct ChdSectors : SectorReader {
-    FILE* fp = nullptr;
-    rchd_t* chd = nullptr;
-    ~ChdSectors() {
-        if (chd) rchd_free(chd);
-        if (fp) std::fclose(fp);
-    }
-    bool pump(rchd_request_t* rq, int (*step)(rchd_t*, rchd_request_t*)) {
-        std::vector<uint8_t> buf;
-        for (;;) {
-            int e = step(chd, rq);
-            if (e == RCHD_OK) return true;
-            if (e != RCHD_PENDING) return false;
-            if (rq->source != RCHD_SOURCE_SELF) return false;
-            buf.resize(rq->length);
-            if (_fseeki64(fp, (long long)rq->offset, SEEK_SET) != 0) return false;
-            size_t n = std::fread(buf.data(), 1, buf.size(), fp);
-            if (n == 0) return false;
-            if (rchd_feed(chd, buf.data(), n) < 0) return false;
-        }
-    }
-    bool open(const std::string& path) {
-        fp = _wfopen(fs::u8path(path).wstring().c_str(), L"rb");
-        if (!fp) return false;
-        chd = rchd_new();
-        if (!chd) return false;
-        rchd_request_t rq;
-        if (!pump(&rq, rchd_open_step)) return false;
-        return rchd_track_count(chd) > 0;
-    }
-    bool read(uint32_t lba, uint8_t* out) override {
-        const rchd_track_t* t = rchd_track_for_lba(chd, lba);
-        if (!t) return false;
-        uint8_t buf[2352 + 16];
-        uint32_t ds = t->data_size;
-        if (ds > 2352) return false;
-        if (rchd_read_sectors_begin(chd, lba, 1, buf, sizeof buf, 0) != RCHD_OK) return false;
-        rchd_request_t rq;
-        if (!pump(&rq, rchd_read_step)) return false;
-        if (ds == 2048) std::memcpy(out, buf, 2048);
-        else if (ds == 2352) std::memcpy(out, buf + (buf[15] == 2 ? 24 : 16), 2048);
-        else return false;
-        return true;
-    }
-};
-
 /* PBP (PSone Classics): DISC_ID from the embedded PARAM.SFO. */
 std::string pbp_disc_id(const std::string& path) {
     std::ifstream f(fs::u8path(path), std::ios::binary);
@@ -353,17 +305,19 @@ std::string pbp_disc_id(const std::string& path) {
 
 DiscInfo probe_disc_file(const std::string& path, const std::string& ext, const std::string& mode_hint) {
     DiscInfo di;
-    bool iso = false, boot = false;
-    if (ext == ".chd") {
-        ChdSectors c;
-        if (!c.open(path)) return di;
-        di.serial = serial_from_disc(c, &iso, &boot);
-    } else {
-        FileSectors fsr;
-        if (!open_binary(path, mode_hint, &fsr)) return di;
-        di.serial = serial_from_disc(fsr, &iso, &boot);
+    /* Shared reader first (iso / raw bin / cso / chd / cue): BOOT = PlayStation 1, BOOT2 = PlayStation 2 (not ours). */
+    disc::Info inf;
+    if (ext != ".img" && disc::probe_file(path, &inf)) {
+        di.ok = inf.kind == disc::Cnf::Ps1;
+        di.serial = di.ok ? inf.serial : std::string();
+        return di;
     }
-    di.ok = iso && (boot || !di.serial.empty());   // a data disc without a Sony BOOT line (PC/GameCube/Wii ISO) is not a PlayStation game
+    if (ext == ".chd") return di;
+    bool iso = false, boot = false;
+    FileSectors fsr;   // .img and anything the shared reader declined
+    if (!open_binary(path, mode_hint, &fsr)) return di;
+    di.serial = serial_from_disc(fsr, &iso, &boot);
+    di.ok = iso && (boot || !di.serial.empty());
     return di;
 }
 

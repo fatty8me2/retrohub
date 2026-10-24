@@ -54,6 +54,24 @@ add_library(m64p_api INTERFACE)
 target_include_directories(m64p_api INTERFACE ${m64p_core_SOURCE_DIR}/src/api)
 
 include(src/beetle_psx/fetch.cmake)   # pinned Beetle PSX tree + generated PS1 serial database (before hubcommon)
+# libchdr (BSD-3-Clause, github.com/rtissera/libchdr) pinned to commit 47d7941: reads .chd disc images (PS1/PS2) in src/common/disc_id.cpp.
+# It bundles lzma, zstd and miniz; its miniz symbols are renamed (third_party/chdr_miniz_rename.h, force-included) so they cannot
+# clash with the repo's own miniz (hubminiz).
+FetchContent_Declare(libchdr
+    URL https://github.com/rtissera/libchdr/archive/47d794151b2b64f6aba60304e6480f4f5a2bc24b.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+set(CHDR_WANT_TESTS OFF CACHE BOOL "" FORCE)
+set(WITH_LZMA_ASM OFF CACHE BOOL "" FORCE)
+set(INSTALL_STATIC_LIBS OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(libchdr)
+if(MSVC)
+    foreach(t chdr-static miniz)
+        target_compile_options(${t} PRIVATE /FI${CMAKE_CURRENT_SOURCE_DIR}/src/common/third_party/chdr_miniz_rename.h /W0)
+    endforeach()
+    target_compile_options(chdr-lzma PRIVATE /W0)
+    target_compile_options(zstd PRIVATE /W0)
+endif()
+
 add_subdirectory(src/common)
 add_subdirectory(src/saves)
 add_subdirectory(src/net)

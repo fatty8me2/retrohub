@@ -8,24 +8,11 @@ target_link_libraries(json_test PRIVATE hubbase)
 add_executable(winutil_test test_winutil.cpp)
 target_link_libraries(winutil_test PRIVATE hubbase shell32)
 
-# CHD reader (libretro-common's clean-room rchd + codecs, MIT/ISC) from the pinned Beetle PSX tree: lets the library read a PlayStation
-# .chd's boot serial. C sources, compiled with MSVC.
-set(LRC ${BEETLE_SRC}/libretro-common)
-add_library(hubchd STATIC ${LRC}/formats/chd/rchd.c ${LRC}/encodings/encoding_huffman.c ${LRC}/encodings/encoding_rzstd.c
-    ${LRC}/streams/trans_stream_rzstd.c ${LRC}/formats/7z/r7z_lzma.c ${LRC}/formats/flac/rflac.c ${LRC}/encodings/encoding_deflate.c
-    ${LRC}/features/features_cpu.c ${LRC}/encodings/encoding_crc32.c ${LRC}/streams/trans_stream.c ${LRC}/streams/trans_stream_pipe.c
-    ${LRC}/streams/trans_stream_deflate.c ${LRC}/time/rtime.c)
-target_include_directories(hubchd PUBLIC ${LRC}/include)
-target_compile_definitions(hubchd PUBLIC HAVE_RCHD HAVE_RCHD_DEFLATE HAVE_RCHD_LZMA HAVE_RCHD_FLAC HAVE_RCHD_ZSTD HAVE_RFLAC HAVE_RZSTD)
-if(MSVC)
-    target_compile_options(hubchd PRIVATE /w)
-endif()
-
-add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp addgames.cpp)
+add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} disc_id.cpp ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp addgames.cpp)
 target_include_directories(hubcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(hubcommon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcommon PUBLIC cxx_std_17)
-target_link_libraries(hubcommon PUBLIC hubbase ws2_32 PRIVATE bcrypt hubminiz hubchd)   # hubminiz: defined in src/saves (zipped ROMs)
+target_link_libraries(hubcommon PUBLIC hubbase ws2_32 PRIVATE bcrypt hubminiz chdr-static)   # hubminiz: defined in src/saves (zipped ROMs)
 
 # Console-only unit test (no WIN32 flag, so it stays a console app).
 add_executable(hubcommon_test test_games.cpp)
