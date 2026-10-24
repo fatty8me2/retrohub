@@ -313,6 +313,9 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::vector<std::pair<std::string, std::string>> env;
         env.push_back({is_host ? "SSB64_LOBBY_HOST" : "SSB64_LOBBY_JOIN", server_url()});
         env.push_back({"SSB64_LOBBY_CODE", A.code});
+        /* Smash's own lobby is driven by this room: it asks the server for the slot we hold here, and the server drops us from
+         * it when we leave this room (and follows this room's host changes). */
+        env.push_back({"SSB64_LOBBY_HUBSLOT", std::to_string(A.lobby.my_slot())});
         for (auto& kv : smash_env(exe)) env.push_back(kv);   // online uses the same vault save as offline
         spawn(exe, "--from-hub --no-update-check", dir_of(exe), env, ri);   // RetroHub's updater is the only one
         return;

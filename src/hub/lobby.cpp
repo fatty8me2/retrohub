@@ -50,11 +50,16 @@ void send_my_pick() { A.lobby.send_msg(hubui::pick_json(A.my_pick)); }
 void send_rules() { A.lobby.send_msg(hubui::rules_json(A.rules)); }
 
 void leave_room() {
+    /* Leaving the room ends our online game too: Smash's lobby is part of this room, so its player has to leave with us.
+     * (Only our own online child process; emulator sessions are not touched.) */
+    if (A.proc && A.run.online && !A.run.after_exit) TerminateProcess(A.proc, 0);
     kt_leave_room();
     A.lobby.stop();
     A.in_room = false;
     A.peers.clear();
     A.ready.clear();
+    A.ingame.clear();
+    A.prev_proc = false;
     A.last_slots.clear();
     A.chat.clear();
     A.selected_game.clear();
@@ -181,6 +186,7 @@ void lobby_tick() {
         if (ev.type == hubnet::LobbyEvent::HostChange) {
             hubui::remap_slot_key(A.peers, ev.from_slot, 0);
             hubui::remap_slot_key(A.ready, ev.from_slot, 0);
+            hubui::remap_slot_key(A.ingame, ev.from_slot, 0);
             hubui::remap_slot_key(A.locals, ev.from_slot, 0);
             hubui::remap_slot_key(A.picks, ev.from_slot, 0);
             A.hello_dirty = true;
@@ -209,6 +215,9 @@ void lobby_tick() {
         } else if (kind == "ready") {
             const hubui::Json* r = j.get("ready");
             A.ready[from] = r && r->type == hubui::Json::Bool && r->b;
+        } else if (kind == "ingame") {
+            const hubui::Json* r = j.get("v");
+            A.ingame[from] = r && r->type == hubui::Json::Bool && r->b;
         } else if (kind == "locals") {
             A.locals[from] = std::max(1, std::min(2, (int)j.num("n", 1)));
         } else if (kind == "opts") {
@@ -253,6 +262,14 @@ void lobby_tick() {
 
     }
 
+    /* Tell the room when our game starts / ends: a player who quit the game is back in the room (not in game) and
+     * has to ready up again. Their game's own lobby (Smash) has already dropped them by then. */
+    if ((A.proc != nullptr) != A.prev_proc) {
+        A.prev_proc = A.proc != nullptr;
+        A.ingame[room_my_slot()] = A.prev_proc;
+        A.lobby.send_msg(std::string("{\"kind\":\"ingame\",\"v\":") + (A.prev_proc ? "true" : "false") + "}");
+        if (!A.prev_proc && A.my_ready) { A.my_ready = false; A.hello_dirty = true; }
+    }
     gc_tick();
     gc_guest_poll();
     // Membership changes -> forget departed peers, re-announce ourselves.
@@ -264,6 +281,7 @@ void lobby_tick() {
         std::set<int> alive(slots.begin(), slots.end());
         for (auto it = A.peers.begin(); it != A.peers.end();) it = alive.count(it->first) ? std::next(it) : A.peers.erase(it);
         for (auto it = A.ready.begin(); it != A.ready.end();) it = alive.count(it->first) ? std::next(it) : A.ready.erase(it);
+        for (auto it = A.ingame.begin(); it != A.ingame.end();) it = alive.count(it->first) ? std::next(it) : A.ingame.erase(it);
         for (auto it = A.locals.begin(); it != A.locals.end();) it = alive.count(it->first) ? std::next(it) : A.locals.erase(it);
         for (auto it = A.picks.begin(); it != A.picks.end();) it = alive.count(it->first) ? std::next(it) : A.picks.erase(it);
         A.last_slots = slots;
