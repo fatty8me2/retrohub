@@ -372,6 +372,29 @@ std::string cmd_cancel() { return "cancel\n"; }
 std::string cmd_code(const std::string& c) { std::string n = normalize_code(c); return valid_code(n) ? "code " + n + "\n" : ""; }
 std::string cmd_quit() { return "quit\n"; }
 
+std::string redact_log_text(const std::string& in) {
+    static const std::regex ip(R"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})");
+    return std::regex_replace(in, ip, "x.x.x.x");
+}
+void write_log(const std::string& dir, const std::string& line) {
+    std::error_code ec;
+    fs::create_directories(P(dir), ec);
+    SYSTEMTIME t; GetLocalTime(&t);
+    char nm[64], ts[32];
+    std::snprintf(nm, sizeof nm, "kanto-%04d-%02d-%02d.log", t.wYear, t.wMonth, t.wDay);
+    std::snprintf(ts, sizeof ts, "%02d:%02d:%02d.%03d ", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+    std::ofstream f(P(dir) / nm, std::ios::binary | std::ios::app);
+    if (f) f << ts << redact_log_text(line) << "\r\n";
+    f.close();
+    std::vector<fs::path> all;
+    for (fs::directory_iterator it(P(dir), ec), end; !ec && it != end; it.increment(ec)) {
+        std::string n = winutil::to_utf8(it->path().filename().wstring());
+        if (n.compare(0, 6, "kanto-") == 0 && n.size() > 4 && n.compare(n.size() - 4, 4, ".log") == 0) all.push_back(it->path());
+    }
+    std::sort(all.begin(), all.end());
+    for (size_t i = 0; i + 10 < all.size(); ++i) fs::remove(all[i], ec);
+}
+
 /* ------------------------------ output -> state ------------------------------ */
 const char* phase_name(Phase p) {
     switch (p) {
@@ -415,6 +438,7 @@ bool feed_line(State& s, const std::string& raw) {
         s.detail = phase_text(s.phase, s.host);
         return true;
     }
+    if (l.find("world: snapshot applied") != std::string::npos) { s.synced_story = true; return true; }
     if (l.find(">>> Your partner is connected. <<<") != std::string::npos || l == "peer connected") {
         s.phase = Phase::Connected; s.ever_connected = true; s.detail = phase_text(s.phase, s.host); s.last_error.clear(); return true;
     }
@@ -474,7 +498,10 @@ std::string first_session_text(bool host) {
     return std::string("First time? Both of you choose NEW GAME and type your own names. ") +
            (host ? "You (host) pick your starter first; Oak then asks you to pick your partner's starter too (talk it over)."
                  : "Use a brand-new game: the first time you reach the game world you are synced to the host's story (you keep your own name, team and bag).") +
-           " Save in the game soon after (Start menu > SAVE).";
+           " Save in the game soon after (Start menu > SAVE).\n"
+           "Play the intro (Oak's speech, naming) until you are in your bedroom. Guest: do not leave the house before the host is in the overworld. "
+           "When you first step outside your game syncs to the host's story and may jump to the host's spot: that is the sync, not a reset. "
+           "Expect to wait outside Oak's lab while the host picks both starters.";
 }
 const char* credit_text() {
     return "Kanto Together is a fan project made by a friend; RetroHub only helps you run your own copy. It uses mGBA (MPL 2.0) and Node.js (MIT), and is derived from the "
@@ -637,6 +664,7 @@ void Session::update() {
         std::string line = trim(buf_.substr(0, nl));
         buf_.erase(0, nl + 1);
         if (line.empty()) continue;
+        if (sink_) sink_(line);
         log_.push_back(line);
         if (log_.size() > 300) log_.pop_front();
         feed_line(st_, line);
