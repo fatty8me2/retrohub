@@ -126,7 +126,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--rb-pred") { if (!val(&v)) return false; o->rb_pred = std::max(1, std::min(rb::kMaxPred, atoi(v.c_str()))); }
         else if (k == "--link") o->link = true;
         else if (k == "--share-host-save") o->share_host_save = true;
-        else if (k == "--host-save-dir") { std::string ignored; if (!val(&ignored)) return false; }   // accepted for hub symmetry with n64run
+        else if (k == "--host-save-dir") { std::string ignored; if (!val(&ignored)) return false; std::fprintf(stderr, "note: --host-save-dir is ignored by retrorun (--share-host-save shares the core's own save RAM)\n"); }
         else if (k == "--link-roms") { if (!val(&o->link_roms)) return false; }
         else if (k == "--headless") o->headless = true;
         else if (k == "--fullscreen") o->fullscreen = true;

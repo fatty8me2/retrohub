@@ -126,6 +126,7 @@ void page_online_room() {
     }
     if (!g_fake_room && A.lobby.failed()) {
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_BAD), "%s", A.lobby.status().c_str());
+        if (button("Rejoin room", ImVec2(180 * S, 44 * S), true)) rejoin_room();   // same code and role
         return;
     }
     if (!room_connected()) {
