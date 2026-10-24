@@ -3,7 +3,7 @@
 RetroHub is a Windows launcher for retro games. It puts your N64, GameCube, Wii U, Nintendo 3DS, Game Boy Advance, Game Boy, Game Boy Color and Nintendo DS games in one library, and it lets you play them online with friends.
 
 - **One library.** Browse and launch every game from a single window, with cover art and per-game details.
-- **Online play with friends.** Add friends by friend code, see who is online, send invites, and chat in a room. Rooms use a short room code.
+- **Online play with friends.** Add friends by friend code, see who is online, send invites, and chat in a room. Rooms use a short room code. The room page shows READY, then LAUNCH for the host once everyone is ready, and a Rejoin button if the connection drops.
 - **Netplay.** N64 games run through a lockstep input netplay built into the runner. Native ports can use their own rollback netplay.
 - **Save vault.** Save files are kept in one folder. Point it at OneDrive, Dropbox, a USB stick or a NAS and your saves follow you between PCs.
 - **Controllers.** Gamepads are configured once and used across all systems.

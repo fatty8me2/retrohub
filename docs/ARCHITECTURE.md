@@ -98,6 +98,18 @@ First byte is the type: `H` hello `[H,from]`, `A` helloack `[A,from]`, `D` data 
 - **Lobby room** (the code users share): used by `RetroHub.exe`.
 - **Game room** (`<CODE>` with a launch suffix, e.g. `ABC234-1`, which the server accepts as `room=` followed by `-` and digits): used by `n64run.exe` for the match itself. It joins with `slot=K` to request its lobby slot.
 
+### Daily request cost guard (Worker, `reqbudget.js`, `reqbudget_core.js`)
+
+Every Worker request counts 1 unit and each relayed WebSocket frame 1/20 unit (Durable Objects bill incoming WS messages 20:1). Units are counted per isolate and flushed to one ReqBudget DO at most every 30 s. The cap is `DAILY_REQ_CAP` (default 100,000 units per UTC day), and the thresholds are fractions of it:
+
+| Usage | Effect |
+|-------|--------|
+| >= 50% | No NEW relay sessions. Clients get `relay_denied` with `reason:"server-busy"`; direct UDP still works. |
+| >= 70% | No NEW rooms. `/ws role=host` is refused with `error` `server-busy`. |
+| >= 90% | Relayed frames are dropped. Relay sessions in progress stop; direct play is unaffected. |
+
+Each room's relay is also capped at 400 frames/s sustained (burst 2x). If the DO cannot be reached, the isolate's own count still applies (fails closed on the local number). The guard lives in BattleShip's Worker, so it covers RetroHub and native Smash alike. Tests: `server/cloudflare/test_reqbudget.mjs`.
+
 ## Hub lobby messages (`msg.body`, defined by the hub)
 
 | Body | Sent by | Meaning |
@@ -107,6 +119,12 @@ First byte is the type: `H` hello `[H,from]`, `A` helloack `[A,from]`, `D` data 
 | `{kind:"ready", ready}` | Anyone | Ready toggle |
 | `{kind:"launch", game, launch, delay, seed}` | Host | Everyone starts the game. Native Smash uses its own lobby (the hub passes the code); emulator games use `n64run` with game room `<CODE>-<launch>` |
 | `{kind:"chat", text}` | Anyone | Chat line |
+| `{kind:"np_fail", reason}` | Guest | The guest could not start the host's launch (the reason is shown to the host). Sent by `launch_fail` in `lobby.cpp`. |
+
+### Lobby room UI (v1.21.0)
+
+- **Action strip:** the host's button reads **LAUNCH** and is enabled only when a game is selected, there is no launch blocker, and everyone is ready. Until then it says who it is waiting for ("Waiting for Kai..."). Guests get **READY** / **NOT READY**. The state comes from `room_action_state` in `src/hub/logic.cpp`, which is unit tested.
+- **Rejoin:** if the connection drops, the room page shows a failure strip with a **Rejoin room** button in place of the action button. `rejoin_room()` reconnects with the same room code and the same role (`room_role_host`). A launch that failed on a guest is reported to the host with `np_fail`.
 
 ## hubnet library: what `n64run` needs (`src/net/session.h`)
 
@@ -163,6 +181,10 @@ n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N --p
 **Direct VS match (`--match "stage=<id>;stocks=<n>;[time=<min>;]p0=<fighter>:<costume>;p1=...;p2=...;p3=..."`, `src/n64run/match.{h,cpp}`):** for Smash Remix (`--game remix`) and vanilla Smash 64 (`ssb64rom`; same addresses). Numbers are decimal or `0x` hex; absent players are not present (at least two needed); all present players are human on controller port `pN`. Fighter/stage ids are in `src/common/remix_data.h` (`docs/REMIX.md`). The core frame callback steps a `MatchDriver` once per VI (the VI count is identical on every lockstep peer, so it is deterministic and desync-free). It waits until the scene byte (`0x800A4AD0`) is the title (`0x01`) for 30 VIs (VI ~699 on Remix, ~3716 on vanilla), writes the VS block + player blocks + `SCCommonData.gkind`, sets `previous=0x01`, `current=0x16` and `screen_interrupt=1`. Verified headless: the direct jump works for Remix-only fighters too (Wolf, Wario, Sonic, Marth, Banjo, Conker) and Remix stages (e.g. 0x31 Battlefield); `stocks` is written 0-based. Limits: Remix settings outside the VS block use their defaults; costumes are not validated (use <= `max_costume`). `--match` works offline or online (pass the same spec on every peer).
 
 **Input delay (`--delay auto|N`, default `auto` with `--net`, for `n64run` and `retrorun`):** lockstep throughput is about delay / RTT, so a fixed 2 frames stalls at 60-100 ms ping. With `auto`, after `Session::ready()` the host pings every client for about 1.5 s (`Session::ping_stats`), takes the worst effective RTT (the slowest client, or the sum of the two slowest because client-to-client traffic crosses the host), and computes `D = ceil((rtt/2 + 8 ms) / frame_ms) + 1` clamped to 1..10 (+1 if any path is relayed; `frame_ms` = 1000 / core fps, 16.7 for N64 and GB/GBA). The host sends D to everyone (`kPktDelay`, clients ack with `kPktDelayAck`) and logs `input delay auto: rtt=XXms -> D`. The host is always authoritative: a numeric host `--delay N` makes the host broadcast N (skipping the measurement), and every client always waits for and adopts the host's D regardless of its own `--delay` (logging when it differs), so mixed modes cannot disagree or hang. At the end of a session both runners log `netplay stalls: total X ms over Y stalled samples, Z samples`.
+
+**Adaptive delay and catch-up (v1.21.0, `lockstep.cpp`, `DelayAdapter` in `lockstep_core.h`):** the negotiated D is only the starting point. The host watches stalls and may order D up or down during play (at most one change per 1.5 s; lowering waits for 4 s of quiet). The cap is `max(floor, min(8, floor + 3))`, never more than the hard cap `kMaxDelay` (20 samples). Every change is logged as `input delay A -> B (sample N)`. When a poll gap shows a hiccup, the emulator runs unthrottled to repay the debt (`catch-up: N ms behind, running unthrottled`, then `catch-up: done`). Catch-up starts above 40 ms of debt, is capped at 1.5 s of debt, and ends after 4 s at most. Every 600 samples (about 10 s) both runners log `latency: sample N wall ... lag ... vs 60 Hz, delay D (floor F), rtt R ms, stalled S ms, peer-lead P`.
+
+**QA-only switches:** `HUBNET_LOOPBACK=1` (bind UDP to 127.0.0.1, skip STUN), the scripted input `N64RUN_TEST_INPUT`, `N64RUN_QA_AUDIO` and `N64RUN_QA_STALL` are honoured only with `RETROHUB_QA=1`, so a stray variable cannot change real play. Online tests refuse the production server unless `RETROHUB_ALLOW_PROD_TESTS=1`: `hubnet_test`, `hubfriends_test`, `qa/_guard.ps1` and the `RETROHUB_AUTOTEST` harness all check the URL (`hubnet::is_production_server`), and the Session helpers exit with code 2 if `RETROHUB_TEST_SERVER` is unset.
 
 **Network simulator (QA):** opt-in: nothing below has any effect unless `HUBNET_SIM_ENABLE=1` is also set (so a stray variable cannot degrade real play). Set in the environment of any process that uses `hubnet` (applies to every outgoing datagram, direct UDP and relay frames; relay frames stay in order): `HUBNET_SIM_LATENCY_MS` (added delay per send), `HUBNET_SIM_JITTER_MS` (extra uniform 0..J ms), `HUBNET_SIM_LOSS_PCT` (random drop, 0..100), optional `HUBNET_SIM_SEED` (reproducible). Each PC applies it to what it sends, so RTT is about 2 x latency + jitter. Example: `HUBNET_SIM_ENABLE=1 HUBNET_SIM_LATENCY_MS=80 HUBNET_SIM_JITTER_MS=20 HUBNET_SIM_LOSS_PCT=5 hubnet_test <server> 3 300`. `hubnet_test` relaxes its delivery threshold to 100 - 2*loss - 4 % when loss is set.
 

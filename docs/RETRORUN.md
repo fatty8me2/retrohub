@@ -17,7 +17,7 @@ retrorun --core <x_libretro.dll> --rom <file> --save-dir <battery dir> --state-d
 ```
 
 - `--net/--room/--slot/--players/--ports/--delay` mean the same as for `n64run` (ports map RetroPad ports 0-3 to owning slots,
-  `-1` = absent). Default delay is 2 frames.
+  `-1` = absent). Default delay is `auto` (the RTT-negotiated delay and the adaptive catch-up described in `docs/ARCHITECTURE.md`). With `--rollback`, `auto` starts at 1 frame and adapts; `--no-rb-delay-adapt` pins it.
 - Offline, `--players N` (without `--ports`) makes the first N ports local; controller *i* drives the *i*-th local port, the keyboard drives the first.
 - `--headless` opens no window and no audio device and runs `--frames` frames (default 600) as fast as possible.
   `--screenshot` writes the last frame (PNG, or BMP if the name ends in `.bmp`).
@@ -106,7 +106,7 @@ Fast forward (Tab, offline) discards audio, skips pacing and presents every 8th 
 Reuses `src/n64run/lockstep.cpp` + `lockstep_core` (compiled into retrorun, not modified): one "sample" is one `retro_run` frame. Each frame the local pads of owned ports
 are polled, scheduled for frame + D, exchanged through `hubnet::Session`, and the frame blocks until every present port's input is known (redundant packets + 50 ms
 retransmit while blocked, 10 s no-progress timeout = "Connection lost"). A "ready" barrier makes all peers start the same frame. Every 600 frames a 64-bit hash is
-compared among peers; a mismatch logs `DESYNC ...` and the exit code is 5. Fast forward and state loading are disabled online.
+compared among peers; a mismatch logs `DESYNC ...` and the exit code is 5. Fast forward and state loading are disabled online. If the Worker's daily cost guard is at 50% or more of its cap, new relay sessions are refused with `server-busy`; direct UDP still works (see `docs/ARCHITECTURE.md`).
 
 **Desync hash.** By default the hash is of the `retro_serialize` buffer (`--sync-hash state`). Gambatte's serialized state differs between runs even though its
 video+audio output is bit-identical (about 10-20 bytes of the 27-51 KB state; a core quirk), which would report false desyncs, so for Gambatte `auto` uses a rolling hash

@@ -55,7 +55,12 @@ Invite  = {lobby_code, game_id, game_title, system, expires_at}
 | `{type:"friend_added", friend}` | A new friend. |
 | `{type:"friend_removed", uid}` | A friend was removed. |
 | `{type:"msg", msg}` | A direct message or an invite. |
-| `{type:"error", reason, ref?}` | Reasons: `unknown-code`, `not-friends`, `blocked`, `rate-limited`, `self`, `already-friends`, `bad-request`. |
+| `{type:"error", reason, ref?, detail?}` | Reasons: `unknown-code`, `not-friends`, `blocked`, `rate-limited`, `self`, `already-friends`, `bad-request`. |
+| `{type:"invite_result", results:[{uid, ok, reason?}]}` | Reply to an `invite`: one entry per recipient. A failed entry has `reason` (default `undeliverable`). |
+
+**Error texts (v1.21.0, `logic.cpp`):** the client turns `error` into a toast. Reasons map to: `unknown-code` "No player has that friend code.", `self` "That is your own friend code.", `already-friends` "You are already friends.", `not-friends` "You can only do that with friends.", `rate-limited` "Slow down a little - too many requests.", `blocked` "That player is blocked.". The `detail` values `too-many-requests`, `already-requested`, `undeliverable`, `no-such-request`, `too-many-blocked` and `retired-elsewhere` each have their own sentence. Internal details (`retire-failed`, `bad-secret`, `text`, `too-large`) show nothing, because they are retried or not user-actionable. Anything else shows "Friends: <reason>".
+
+**Invite result toast:** `invite_result_text` joins the names. Examples: "Invited A, B to room ABC234.", "Invited A to room ABC234. Could not invite C.", and when the reason is `rate-limited` the failure part reads "Slow down - could not invite C.". A send with no results shows nothing.
 
 ## Invites and joining (the main feature)
 
