@@ -70,6 +70,8 @@ std::string settings_to_json(const Settings& s) {
       << "  \"find_games_done\": " << (s.find_games_done ? "true" : "false") << ",\n"
       << "  \"setup_done\": " << (s.setup_done ? "true" : "false") << ",\n"
       << "  \"games_dest\": \"" << json::escape(s.games_dest) << "\",\n"
+      << "  \"ps1_bios\": \"" << json::escape(s.ps1_bios) << "\",\n"
+      << "  \"ps1_openbios\": " << (s.ps1_openbios ? "true" : "false") << ",\n"
       << "  \"cemu_exe\": \"" << json::escape(s.cemu_exe) << "\"\n"
       << "}\n";
     return o.str();
@@ -124,6 +126,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
     out->setup_done = json_bool(j, "setup_done", out->setup_done);
     out->cemu_exe = j.str("cemu_exe", out->cemu_exe);
+    out->ps1_bios = j.str("ps1_bios", out->ps1_bios);
+    out->ps1_openbios = json_bool(j, "ps1_openbios", out->ps1_openbios);
     out->games_dest = j.str("games_dest", out->games_dest);
     return true;
 }
@@ -790,11 +794,12 @@ std::string system_shelf_title(const std::string& s) {
     if (s == "3ds") return "Nintendo 3DS";
     if (s == "wiiu") return "Wii U";
     if (s == "nds") return "Nintendo DS";
+    if (s == "ps1") return "PlayStation";
     return s;
 }
 
 const std::vector<std::string>& console_order() {
-    static const std::vector<std::string> v = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb"};
+    static const std::vector<std::string> v = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "gba", "gbc", "gb"};
     return v;
 }
 

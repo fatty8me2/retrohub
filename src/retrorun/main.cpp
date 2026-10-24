@@ -65,7 +65,7 @@ static std::string narrow(const wchar_t* w) { return winutil::to_utf8(w); }
 
 static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
-          "  [--system gba|gb|gbc|nds] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
+          "  [--system gba|gb|gbc|nds|ps1] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
           "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rollback] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
@@ -327,6 +327,9 @@ class Frontend {
     }
     std::string scale_filter_;   // "" = nearest (DS: linear)
     bool integer_scale_ = true;
+    bool is_ps1 = false;       // PlayStation (Beetle PSX): DualShock analog sticks, memory card 1 in the .srm
+    int16_t frame_stick[4][4] = {};         // analog sticks per port for the frame about to run: lx ly rx ry
+    int16_t local_stick_[4][4] = {};
     bool is_ds = false;        // Nintendo DS: two-screen frame, fractional+linear scaling, stylus via the mouse
     int ds_layout = 0;         // dsview::layout_name index (F9 cycles)
     SDL_Rect last_dst{0, 0, 0, 0};   // where the frame was last drawn (stylus mapping)
@@ -465,6 +468,7 @@ bool Frontend::setup_paths() {
     core.content_dir = narrow(fs::u8path(a.rom).parent_path().wstring().c_str());
     core.system_tag = a.system;
     is_ds = lower(a.system) == "nds";
+    is_ps1 = lower(a.system) == "ps1";
     scale_filter_ = a.scale_filter;
     if (a.integer_scale >= 0) integer_scale_ = a.integer_scale != 0;
     // Defaults for the DS core go in first (then the remembered layout) so ini / --opt below override them.
@@ -542,7 +546,7 @@ void Frontend::layout(SDL_Rect* dst) {
     if (aspect <= 0.f) aspect = (double)f.w / std::max(1, f.h);
     int fh = f.h;
     if (link) { SDL_Rect v = view_src(); aspect = (double)v.w / std::max(1, v.h); fh = v.h; }
-    dsview::Rect r = dsview::fit(ow, oh, fh, aspect, !is_ds && integer_scale_);   // integer scale when it fits (not for DS)
+    dsview::Rect r = dsview::fit(ow, oh, fh, aspect, !is_ds && !is_ps1 && integer_scale_);   // integer scale when it fits (not for DS)
     dst->x = r.x; dst->y = r.y; dst->w = r.w; dst->h = r.h;
 }
 
@@ -551,7 +555,7 @@ void Frontend::present() {
     if (!ren || f.px.empty()) return;
     if (!tex || tex_w != f.w || tex_h != f.h) {
         if (tex) SDL_DestroyTexture(tex);
-        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, (scale_filter_.empty() ? is_ds : scale_filter_ == "linear") ? "linear" : "nearest");
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, (scale_filter_.empty() ? (is_ds || is_ps1) : scale_filter_ == "linear") ? "linear" : "nearest");
         tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, f.w, f.h);
         tex_w = f.w;
         tex_h = f.h;
@@ -659,9 +663,20 @@ void Frontend::poll_all_local() {
         }
         if (exit_combo.update(combo, (long long)SDL_GetTicks64())) { rlog("exit combo (Back+Start held): leaving"); quit = true; }
     }
-    for (int i = 0; i < n_local; i++) local_pad_cache_[i] = poll_local(i);
+    for (int i = 0; i < n_local; i++) {
+        local_pad_cache_[i] = poll_local(i);
+        std::memset(local_stick_[i], 0, sizeof local_stick_[i]);
+        if (is_ps1 && !a.headless && (size_t)i < pads.size() && retro_pad) {
+            hubctl::PadState st;
+            hubctl::read_state(pads[i], &st);
+            retro_pad->sticks(st, local_stick_[i]);
+        }
+    }
     if (!online)
-        for (int i = 0; i < n_local; i++) frame_pad[local_ports[i]] = local_pad_cache_[i];
+        for (int i = 0; i < n_local; i++) {
+            frame_pad[local_ports[i]] = local_pad_cache_[i];
+            std::memcpy(frame_stick[local_ports[i]], local_stick_[i], sizeof local_stick_[i]);
+        }
 }
 
 void Frontend::handle_key(const SDL_KeyboardEvent& k) {
@@ -1394,6 +1409,14 @@ int Frontend::run(const Args& args) {
                 default: return 0;
             }
         }
+        if (is_ps1 && (dev & RETRO_DEVICE_MASK) == RETRO_DEVICE_ANALOG && port < 4) {   // DualShock sticks (and analog button pressure)
+            if (idx == RETRO_DEVICE_INDEX_ANALOG_LEFT || idx == RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
+                if (id > RETRO_DEVICE_ID_ANALOG_Y) return 0;
+                return frame_stick[port][(idx == RETRO_DEVICE_INDEX_ANALOG_RIGHT ? 2 : 0) + (int)id];
+            }
+            if (idx == RETRO_DEVICE_INDEX_ANALOG_BUTTON) return id < 16 ? (int16_t)(((frame_pad[port] >> id) & 1) ? 32767 : 0) : 0;
+            return 0;
+        }
         if ((dev & RETRO_DEVICE_MASK) != RETRO_DEVICE_JOYPAD || port >= 4 || idx != 0) return 0;
         uint32_t m = frame_pad[port];
         if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return (int16_t)(m & 0xFFFF);
@@ -1422,6 +1445,9 @@ int Frontend::run(const Args& args) {
         if (!core.load_game_special(gt, roms, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
     } else if (!core.load_game(a.rom, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
     fps = core.av().timing.fps > 1 ? core.av().timing.fps : 60.0;
+    if (is_ps1) {   // every port is a DualShock (digital pads work too; games switch the analog mode themselves)
+        for (unsigned p = 0; p < 4; p++) core.set_port_device(p, 0x205);   // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
+    }
     if (a.rollback && !a.synctest) {
         // Only cores whose savestates were verified exact (SyncTest against a free-running reference) may roll back; others stay lockstep.
         std::string ln = lower(core.info().library_name ? core.info().library_name : "");
@@ -1471,9 +1497,10 @@ int Frontend::run(const Args& args) {
     {
         std::string cf = a.controls;
         if (cf.empty()) { const char* e = std::getenv("RETROHUB_CONTROLS"); if (e && *e) cf = e; }
+        if (is_ps1) prof = hubctl::default_profile("ps1");
         if (!cf.empty()) {
             hubctl::Profile p;
-            if (hubctl::read_profile_file(cf, &p) && p.system == "retro") { prof = p; rlog("controls: profile '%s' (%s)", p.name.c_str(), cf.c_str()); }
+            if (hubctl::read_profile_file(cf, &p) && p.system == (is_ps1 ? "ps1" : "retro")) { prof = p; rlog("controls: profile '%s' (%s)", p.name.c_str(), cf.c_str()); }
             else rlog("controls: cannot use %s; built-in mapping", cf.c_str());
         }
         retro_pad.reset(new retrorun::RetroPad(prof));

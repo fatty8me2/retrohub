@@ -407,7 +407,7 @@ void selected_bar(const hub::GameEntry& e) {
 void all_games_view() {
     // system chips
     struct Chip { const char* label; const char* sys; };
-    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
+    static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"PlayStation", "ps1"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
                                 {"Nintendo DS", "nds"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
     if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     std::map<std::string, int>& counts = A.chip_counts;

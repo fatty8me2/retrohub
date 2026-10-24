@@ -28,7 +28,7 @@ constexpr int kNumButtons = 21;   // SDL_CONTROLLER_BUTTON_* order
 constexpr int kNumAxes = 6;       // leftx lefty rightx righty lefttrigger righttrigger
 constexpr int kDefaultAxisThreshold = 16384;
 
-/* System keys: "n64", "retro" (GBA/GB/GBC/DS libretro cores), "gc", "wiiu", "3ds". */
+/* System keys: "n64", "retro" (GBA/GB/GBC/DS libretro cores), "ps1" (PlayStation, DualShock), "gc", "wiiu", "3ds". */
 const std::vector<std::string>& systems();
 bool is_system(const std::string& s);
 std::string system_key(hub::System s);   // "" when RetroHub has no profile for it

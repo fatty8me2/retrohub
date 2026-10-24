@@ -67,6 +67,8 @@ class Core {
     bool unserialize(const void* buf, size_t size) { return fn_unserialize_(buf, size); }
 
     void set_fast_forwarding(bool ff) { ff_ = ff; }
+    /* retro_set_controller_port_device (PlayStation: DualShock on every port). */
+    void set_port_device(unsigned port, unsigned dev) { if (fn_set_port_dev_) fn_set_port_dev_(port, dev); }
     /* Netpacket interface the core registered (DS local wireless); null start = none. */
     const retro_netpacket_callback& netpacket() const { return np_; }
     bool has_netpacket() const { return np_.start != nullptr && np_.receive != nullptr; }

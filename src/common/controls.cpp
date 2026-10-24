@@ -24,7 +24,7 @@ const char* button_name(int i) { return i >= 0 && i < kNumButtons ? kButtons[i] 
 const char* axis_name(int i) { return i >= 0 && i < kNumAxes ? kAxes[i] : ""; }
 
 const std::vector<std::string>& systems() {
-    static const std::vector<std::string> v = {"n64", "retro", "gc", "wiiu", "3ds"};
+    static const std::vector<std::string> v = {"n64", "retro", "ps1", "gc", "wiiu", "3ds"};
     return v;
 }
 bool is_system(const std::string& s) { return std::find(systems().begin(), systems().end(), s) != systems().end(); }
@@ -33,6 +33,7 @@ std::string system_key(hub::System s) {
     switch (s) {
         case hub::System::N64: return "n64";
         case hub::System::GBA: case hub::System::GB: case hub::System::GBC: case hub::System::NDS: return "retro";
+        case hub::System::PS1: return "ps1";
         case hub::System::GC: return "gc";
         case hub::System::WiiU: return "wiiu";
         case hub::System::N3DS: return "3ds";
@@ -52,6 +53,12 @@ const std::vector<ControlInfo>& controls_for(const std::string& sys) {
                    {"l2", "L2", false}, {"r2", "R2", false}, {"l3", "L3", false}, {"r3", "R3", false}, {"start", "Start", false},
                    {"select", "Select", false}, {"up", "Up", false}, {"down", "Down", false}, {"left", "Left", false},
                    {"right", "Right", false}}},
+        /* PlayStation: the same libretro pad ids as "retro" (b = south = Cross ...), PlayStation names, plus DualShock analog sticks. */
+        {"ps1", {{"b", "Cross", false}, {"a", "Circle", false}, {"y", "Square", false}, {"x", "Triangle", false}, {"l", "L1", false},
+                 {"r", "R1", false}, {"l2", "L2", false}, {"r2", "R2", false}, {"l3", "L3 (stick click)", false},
+                 {"r3", "R3 (stick click)", false}, {"start", "Start", false}, {"select", "Select", false}, {"up", "D-pad up", false},
+                 {"down", "D-pad down", false}, {"left", "D-pad left", false}, {"right", "D-pad right", false},
+                 {"left_stick", "Left analog stick", true}, {"right_stick", "Right analog stick", true}}},
         {"gc", {{"a", "A", false}, {"b", "B", false}, {"x", "X", false}, {"y", "Y", false}, {"z", "Z", false}, {"start", "Start", false},
                 {"l", "L", false}, {"r", "R", false}, {"l_analog", "L analog", false}, {"r_analog", "R analog", false},
                 {"dpad_up", "D-pad up", false}, {"dpad_down", "D-pad down", false}, {"dpad_left", "D-pad left", false},
@@ -91,6 +98,12 @@ Profile default_profile(const std::string& sys) {
         B({{"b", "a"}, {"a", "b"}, {"y", "x"}, {"x", "y"}, {"l", "leftshoulder"}, {"r", "rightshoulder"}, {"start", "start"},
            {"select", "back"}, {"l3", "leftstick"}, {"r3", "rightstick"}, {"up", "dpup|lefty-@16000"}, {"down", "dpdown|lefty+@16000"},
            {"left", "dpleft|leftx-@16000"}, {"right", "dpright|leftx+@16000"}, {"l2", "lefttrigger@16000"}, {"r2", "righttrigger@16000"}});
+    } else if (sys == "ps1") {   // Xbox A = Cross, B = Circle, X = Square, Y = Triangle; sticks are analog (DualShock), not the D-pad
+        B({{"b", "a"}, {"a", "b"}, {"y", "x"}, {"x", "y"}, {"l", "leftshoulder"}, {"r", "rightshoulder"}, {"start", "start"},
+           {"select", "back"}, {"l3", "leftstick"}, {"r3", "rightstick"}, {"up", "dpup"}, {"down", "dpdown"},
+           {"left", "dpleft"}, {"right", "dpright"}, {"l2", "lefttrigger@16000"}, {"r2", "righttrigger@16000"}});
+        p.analogs["left_stick"] = {"leftx", "lefty", 0.08, 1.0};
+        p.analogs["right_stick"] = {"rightx", "righty", 0.08, 1.0};
     } else if (sys == "gc") {
         B({{"a", "a"}, {"b", "x"}, {"x", "b"}, {"y", "y"}, {"z", "rightshoulder"}, {"start", "start"}, {"main_up", "lefty-"},
            {"main_down", "lefty+"}, {"main_left", "leftx-"}, {"main_right", "leftx+"}, {"c_up", "righty-"}, {"c_down", "righty+"},
@@ -118,7 +131,7 @@ Profile default_profile(const std::string& sys) {
         K({{"a", "x"}, {"b", "c"}, {"z", "z"}, {"start", "return"}, {"l", "a"}, {"r", "s"}, {"c_up", "i"}, {"c_left", "j"}, {"c_down", "k"},
            {"c_right", "l"}, {"dpad_up", "t"}, {"dpad_left", "f"}, {"dpad_down", "g"}, {"dpad_right", "h"},
            {"stick_up", "up"}, {"stick_down", "down"}, {"stick_left", "left"}, {"stick_right", "right"}});
-    } else if (sys == "retro") {   // the old fixed keyboard map of retrorun
+    } else if (sys == "retro" || sys == "ps1") {   // the old fixed keyboard map of retrorun (ps1: Z = Cross, X = Circle, A = Square, S = Triangle)
         K({{"up", "up"}, {"down", "down"}, {"left", "left"}, {"right", "right"}, {"b", "z"}, {"a", "x"}, {"y", "a"}, {"x", "s"},
            {"l", "q"}, {"r", "w"}, {"start", "return|kp_enter"}, {"select", "rshift"}});
     } else if (sys == "gc") {   // Dolphin's own default keyboard keys for GCPad1
@@ -189,7 +202,7 @@ const std::vector<KeyDef>& key_defs() {
 const std::vector<ControlInfo>& key_controls_for(const std::string& sys) {
     static std::map<std::string, std::vector<ControlInfo>> m;
     static const std::vector<ControlInfo> none;
-    if (sys != "n64" && sys != "retro" && sys != "gc") return none;
+    if (sys != "n64" && sys != "retro" && sys != "ps1" && sys != "gc") return none;
     auto it = m.find(sys);
     if (it != m.end()) return it->second;
     std::vector<ControlInfo> v;
