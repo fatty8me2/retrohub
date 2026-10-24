@@ -56,7 +56,7 @@ RetroHub releases ship inside the Smash Classic package, not as a separate downl
 
 ## Install (Windows)
 
-Download **[RetroHub-Setup.exe](https://github.com/fatty8me2/smash-classic/releases/latest/download/RetroHub-Setup.exe)** from the latest release and run it. It installs per-user to `%LOCALAPPDATA%\Programs\RetroHub` (no admin needed), adds a Start-menu shortcut and an optional Desktop shortcut. Uninstall from Apps & features; your saves and settings are kept unless you choose to delete them. The portable alternative is `BattleShip-windows.zip` from the same release: extract it anywhere and run `RetroHub.exe`. The in-app updater works for both. Building the setup needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install --id JRSoftware.InnoSetup -e`); `package-windows.ps1` in the Smash Classic repo builds it.
+Download **[RetroHub-Setup.exe](https://github.com/fatty8me2/retrohub/releases/latest/download/RetroHub-Setup.exe)** from the latest release and run it. It installs per-user to `%LOCALAPPDATA%\Programs\RetroHub` (no admin needed), adds a Start-menu shortcut and an optional Desktop shortcut. Uninstall from Apps & features; your saves and settings are kept unless you choose to delete them. The portable alternative is `BattleShip-windows.zip` from the same release: extract it anywhere and run `RetroHub.exe`. The in-app updater works for both. Building the setup needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install --id JRSoftware.InnoSetup -e`); `package-windows.ps1` in the Smash Classic repo builds it.
 
 ## Windows SmartScreen warning
 
