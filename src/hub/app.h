@@ -303,6 +303,7 @@ struct TileSpec {
     std::string id, title, subtitle, badge;   // badge: system pill (empty inside a console section)
     std::string tag, tag_tip;                 // subtle state tag ("ZIP", "NATIVE", ...) + hover explanation
     bool tag_warn = false;                    // tint the tag as a warning (needs keys / encrypted)
+    bool tag_accent = false;                  // solid accent badge with white text (readable on any cover)
     ImU32 c0 = 0, c1 = 0;
     ArtRef art;
     bool favorite = false, online = false, selected = false, owned = true, show_star = true;
@@ -483,7 +484,9 @@ void kt_play(const hub::GameEntry& e);                  // library Play: install
 void kt_tick();                                         // every frame: prep, host/guest session, code relay
 std::string kt_launch_block(const hub::GameEntry& e);   // "" = the host may press Launch, else the reason
 void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host);   // launch_online hook
-void kt_on_code(const std::string& code, int launch_no);                // lobby np_kt message (guest)
+void kt_on_code(const std::string& code, int launch_no);                // lobby np_kt message (guest); "" = the host's session ended
+void kt_on_peer_fail(int slot, const std::string& reason);              // lobby np_kt_fail (host)
+void kt_on_request(int slot);                                           // lobby np_kt_req (host): a guest wants the code again
 void kt_room_panel(float width, bool early);   // early=true: drawn above the member cards while a session is live; false: below the game picker otherwise                        // status + trade panel in the room page
 void kt_draw_modals();                                  // install progress, "How to play" sheet, first-session note
 void kt_open_howto();

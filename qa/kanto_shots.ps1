@@ -17,3 +17,5 @@ Shot "room_conn"  @{ HUB_SHOT_KT = "connecting"; HUB_SHOT_SIZE = "1280x900"; HUB
 Shot "room_trade" @{ HUB_SHOT_KT = "trade"; HUB_SHOT_SIZE = "1280x900"; HUB_SHOT_FAKE_ROOM = "1"; HUB_SHOT_ROOM_GAME = "kanto" }
 Shot "setup"      @{ HUB_SHOT_KT = "installing" }
 Shot "howto"      @{ HUB_SHOT_KT = "howto" }
+Shot "guest_joinfail" @{ HUB_SHOT_KT = "joinfail"; HUB_SHOT_SIZE = "1280x1250"; HUB_SHOT_FAKE_ROOM = "1"; HUB_SHOT_ROOM_GAME = "kanto" }
+Shot "host_peerfail"  @{ HUB_SHOT_KT = "peerfail"; HUB_SHOT_SIZE = "1280x1250"; HUB_SHOT_FAKE_ROOM = "1"; HUB_SHOT_ROOM_GAME = "kanto" }

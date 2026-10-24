@@ -271,9 +271,14 @@ RomPick pick_rom(const std::vector<RomCandidate>& cands, const std::string& base
     for (auto& c : cands) {
         std::string ser = c.serial;
         for (auto& ch : ser) ch = (char)std::toupper((unsigned char)ch);
-        if (ser != "BPRE") continue;   // FireRed, USA/Europe game code
+        const bool firered = ser == "BPRE" || c.catalog_id == "pokefirered";   // FireRed game code / catalog id
+        if (!firered) {
+            if (!ser.empty() || (c.size != 0 && c.size != 16777216)) continue;   // another game, or too small/large to be it
+        }
         std::string h = lower(hash(c.path));
+        if (h.empty()) continue;
         if (h == lower(base_sha1)) { r.state = RomState::Ok; r.path = c.path; r.seen_sha1 = h; return r; }
+        if (!firered) continue;   // an unidentified 16 MiB file that is not FireRed 1.0: ignore
         r.state = RomState::WrongRevision;
         if (r.seen_sha1.empty()) r.seen_sha1 = h;
     }
@@ -286,6 +291,22 @@ std::string rom_message(const RomPick& p) {
         return "Kanto Together needs the original Pokemon FireRed (USA) version 1.0 (SHA-1 " + std::string(kBaseSha1) +
                "). The FireRed in your library is a different revision" + (p.seen_sha1.empty() ? "" : " (" + p.seen_sha1 + ")") + ".";
     return "Kanto Together needs your own Pokemon FireRed (USA) 1.0 ROM. Add it to a RetroHub ROM folder (Settings > ROM folders).";
+}
+
+std::string reason_for(RomState s) { return s == RomState::WrongRevision ? "wrong_rom" : "no_rom"; }
+bool valid_fail_reason(const std::string& r) {
+    for (const char* x : {"no_rom", "wrong_rom", "install", "patch", "cancelled", "package", "start"}) if (r == x) return true;
+    return false;
+}
+std::string fail_sentence(const std::string& r) {
+    if (r == "no_rom") return "they do not have Pokemon FireRed (USA) 1.0 in their library";
+    if (r == "wrong_rom") return "their FireRed is not the original USA 1.0 version";
+    if (r == "install") return "the Kanto Together package could not be installed on their PC";
+    if (r == "package") return "they do not have the Kanto Together package";
+    if (r == "patch") return "the game could not be built from their FireRed ROM";
+    if (r == "cancelled") return "they cancelled the setup";
+    if (r == "start") return "the game could not be started on their PC";
+    return "something went wrong on their PC";
 }
 
 /* ------------------------------ saves ------------------------------ */
@@ -418,7 +439,9 @@ bool feed_line(State& s, const std::string& raw) {
     /* trade (coop.lua LOG lines; species names already substituted by the bridge) */
     static const std::regex ro(R"(^you offer slot (\d+): (.+)$)");
     if (std::regex_search(l, m, ro)) {
-        s.trade.phase = TradePhase::Offered; s.trade.my_slot = std::stoi(m[1].str()); s.trade.mine = m[2].str();
+        const std::string slot_s = m[1].str();   // untrusted text: no exceptions, 1..6 only
+        if (slot_s.size() != 1 || slot_s[0] < '1' || slot_s[0] > '6') return false;
+        s.trade.phase = TradePhase::Offered; s.trade.my_slot = slot_s[0] - '0'; s.trade.mine = m[2].str();
         s.trade.i_confirmed = false; s.trade.peer_confirmed = false;
         s.trade.note = "You offer " + s.trade.mine + (s.trade.theirs.empty() ? ". Waiting for your partner's offer." : ". Both offers are in: confirm to swap.");
         return true;
@@ -511,23 +534,37 @@ static bool spawn_piped(const std::string& cmdline, const std::string& cwd, cons
     if (!CreatePipe(&in_r, &in_w, &sa, 0) || !CreatePipe(&out_r, &out_w, &sa, 0)) return false;
     SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = in_r; si.hStdOutput = out_w; si.hStdError = out_w;
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof si;
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdInput = in_r; si.StartupInfo.hStdOutput = out_w; si.StartupInfo.hStdError = out_w;
+    /* Inherit exactly the two pipe ends meant for the child, nothing else the hub holds. */
+    HANDLE inherit[2] = {in_r, out_w};
+    SIZE_T attr_sz = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_sz);
+    std::vector<char> attr_buf(attr_sz);
+    si.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)attr_buf.data();
+    bool attr_ok = attr_sz && InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &attr_sz) &&
+                   UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof inherit, nullptr, nullptr);
+    if (!attr_ok) { CloseHandle(in_r); CloseHandle(in_w); CloseHandle(out_r); CloseHandle(out_w); return false; }
     std::wstring desk = winutil::to_wide(desktop);
     if (!desk.empty()) {
         CreateDesktopW(desk.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
-        si.lpDesktop = &desk[0];
+        si.StartupInfo.lpDesktop = &desk[0];
     }
     std::wstring cmd = winutil::to_wide(cmdline);
     std::wstring blk = env_block(env);
     PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED, (LPVOID)blk.data(),
-                             cwd.empty() ? nullptr : winutil::to_wide(cwd).c_str(), &si, &pi);
+    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, (LPVOID)blk.data(),
+                             cwd.empty() ? nullptr : winutil::to_wide(cwd).c_str(), &si.StartupInfo, &pi);
+    DeleteProcThreadAttributeList(si.lpAttributeList);
     CloseHandle(in_r); CloseHandle(out_w);
     if (!ok) { CloseHandle(in_w); CloseHandle(out_r); return false; }
-    if (job) AssignProcessToJobObject(job, pi.hProcess);
+    if (job && !AssignProcessToJobObject(job, pi.hProcess)) {   // never let node/mGBA run outside the kill-on-close job
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread); CloseHandle(pi.hProcess); CloseHandle(in_w); CloseHandle(out_r);
+        return false;
+    }
     ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
     out->proc = pi.hProcess; out->in_w = in_w; out->out_r = out_r; out->pid = pi.dwProcessId;
@@ -558,15 +595,22 @@ bool Session::start(const LaunchOpts& o_in, std::string* err) {
     std::error_code ec;
     fs::create_directories(P(o.saves), ec);
     job_ = CreateJobObjectW(nullptr, nullptr);
-    if (job_) {
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
-        li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &li, sizeof li);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+    li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!job_ || !SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &li, sizeof li)) {
+        if (job_) { CloseHandle(job_); job_ = nullptr; }
+        *err = "Could not set up the safety job for the game (Windows refused). Kanto Together was not started.";
+        return false;
     }
     std::vector<std::pair<std::string, std::string>> env = {{"NODE_NO_WARNINGS", "1"}};
     if (!o.relay.empty()) env.push_back({"COOP_RELAY", o.relay});
     Spawned sp;
-    if (!spawn_piped(launcher_cmdline(o), o.dir, o.desktop, env, &sp, job_)) { *err = "Could not start the Kanto Together launcher."; return false; }
+    if (!spawn_piped(launcher_cmdline(o), o.dir, o.desktop, env, &sp, job_)) {
+        CloseHandle(job_); job_ = nullptr;
+        *err = "Could not start the Kanto Together launcher.";
+        return false;
+    }
+    desktop_ = o.desktop;
     proc_ = sp.proc; in_w_ = sp.in_w; out_r_ = sp.out_r; pid_ = sp.pid;
     started_ = true;
     st_ = State();
@@ -613,18 +657,65 @@ HANDLE Session::dup_handle() const {
     if (proc_) DuplicateHandle(GetCurrentProcess(), proc_, GetCurrentProcess(), &h, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, 0);
     return h;
 }
-void Session::stop() {
-    if (!started_) return;
-    if (running()) { send(cmd_quit()); WaitForSingleObject(proc_, 1500); }
-    if (job_) { CloseHandle(job_); job_ = nullptr; }   // kills node + mGBA if still alive
-    if (proc_) { WaitForSingleObject(proc_, 1000); CloseHandle(proc_); proc_ = nullptr; }
-    if (in_w_) { CloseHandle(in_w_); in_w_ = nullptr; }
-    if (out_r_) { CloseHandle(out_r_); out_r_ = nullptr; }
-    started_ = false;
-    if (st_.phase != Phase::Failed) { st_.phase = Phase::Ended; st_.detail = phase_text(Phase::Ended, st_.host); }
+static std::atomic<int> g_stops{0};
+int Session::stopping() { return g_stops.load(); }
+void Session::drain_stops(unsigned timeout_ms) {
+    ULONGLONG t0 = GetTickCount64();
+    while (g_stops.load() > 0 && GetTickCount64() - t0 < timeout_ms) Sleep(20);
 }
 
-bool run_hidden(const std::string& cmdline, const std::string& cwd, const std::string& desktop, DWORD timeout_ms, std::string* output, DWORD* code) {
+struct StopCtx { HANDLE proc, in_w, out_r, job; std::wstring desktop; };
+
+static BOOL CALLBACK close_enum(HWND h, LPARAM lp) {
+    const std::vector<DWORD>* pids = (const std::vector<DWORD>*)lp;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (std::find(pids->begin(), pids->end(), pid) != pids->end() && GetWindow(h, GW_OWNER) == nullptr) PostMessageW(h, WM_CLOSE, 0, 0);
+    return TRUE;
+}
+
+static void stop_worker(StopCtx c) {
+    auto alive = [&]() { return c.proc && WaitForSingleObject(c.proc, 0) == WAIT_TIMEOUT; };
+    if (alive()) {
+        /* mGBA (a child of node, inside the job) gets WM_CLOSE like a click on X: it flushes its save before exiting; node exits right after. */
+        std::vector<DWORD> pids;
+        if (c.job) {
+            std::vector<char> buf(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + 64 * sizeof(ULONG_PTR));
+            auto* l = (JOBOBJECT_BASIC_PROCESS_ID_LIST*)buf.data();
+            if (QueryInformationJobObject(c.job, JobObjectBasicProcessIdList, l, (DWORD)buf.size(), nullptr))
+                for (DWORD i = 0; i < l->NumberOfAssignedProcesses; ++i) pids.push_back((DWORD)l->ProcessIdList[i]);
+        }
+        HDESK hd = c.desktop.empty() ? nullptr : OpenDesktopW(c.desktop.c_str(), 0, FALSE, DESKTOP_READOBJECTS | DESKTOP_ENUMERATE);
+        if (hd) { EnumDesktopWindows(hd, close_enum, (LPARAM)&pids); CloseDesktop(hd); }
+        else EnumWindows(close_enum, (LPARAM)&pids);   // this thread's desktop (the normal one)
+        if (WaitForSingleObject(c.proc, 8000) != WAIT_OBJECT_0 && c.in_w) {
+            DWORD w = 0;
+            std::string q = cmd_quit();
+            WriteFile(c.in_w, q.data(), (DWORD)q.size(), &w, nullptr);
+            WaitForSingleObject(c.proc, 2000);
+        }
+    }
+    if (c.job) CloseHandle(c.job);   // kills anything still running
+    if (c.proc) CloseHandle(c.proc);
+    if (c.in_w) CloseHandle(c.in_w);
+    if (c.out_r) CloseHandle(c.out_r);
+    --g_stops;
+}
+
+void Session::stop(bool wait) {
+    if (!started_) return;
+    update();   // last output lines
+    StopCtx c{proc_, in_w_, out_r_, job_, winutil::to_wide(desktop_)};
+    proc_ = in_w_ = out_r_ = job_ = nullptr;
+    started_ = false;
+    if (st_.phase != Phase::Failed) { st_.phase = Phase::Ended; st_.detail = phase_text(Phase::Ended, st_.host); }
+    ++g_stops;
+    std::thread t(stop_worker, c);
+    if (wait) t.join(); else t.detach();
+}
+
+bool run_hidden(const std::string& cmdline, const std::string& cwd, const std::string& desktop, DWORD timeout_ms, std::string* output, DWORD* code,
+                const std::atomic<bool>* cancel) {
     Spawned sp;
     if (!spawn_piped(cmdline, cwd, desktop, {}, &sp, nullptr)) return false;
     ULONGLONG t0 = GetTickCount64();
@@ -637,7 +728,7 @@ bool run_hidden(const std::string& cmdline, const std::string& cwd, const std::s
             out.append(tmp, got);
         }
         if (WaitForSingleObject(sp.proc, 50) == WAIT_OBJECT_0) break;
-        if (GetTickCount64() - t0 > timeout_ms) { TerminateProcess(sp.proc, 1); break; }
+        if (GetTickCount64() - t0 > timeout_ms || (cancel && cancel->load())) { TerminateProcess(sp.proc, 1); WaitForSingleObject(sp.proc, 2000); break; }
     }
     DWORD avail = 0;
     while (PeekNamedPipe(sp.out_r, nullptr, 0, nullptr, &avail, nullptr) && avail) {
@@ -656,44 +747,49 @@ bool run_hidden(const std::string& cmdline, const std::string& cwd, const std::s
 /* ------------------------------ Prep ------------------------------ */
 float Prep::progress() const { uint64_t t = total_.load(); return t ? (float)((double)got_.load() / (double)t) : 0.f; }
 std::string Prep::message() const { std::lock_guard<std::mutex> l(mu_); return msg_; }
+std::string Prep::reason() const { std::lock_guard<std::mutex> l(mu_); return reason_; }
 
 void Prep::start(const Package& pkg, const std::string& data_dir, const std::vector<RomCandidate>& cands, const std::string& desktop) {
     if (busy()) return;
     join();
     cancel_ = false; got_ = 0; total_ = 0;
     rom_state_ = RomState::Ok;
-    { std::lock_guard<std::mutex> l(mu_); msg_ = "Preparing Kanto Together..."; }
+    { std::lock_guard<std::mutex> l(mu_); msg_ = "Preparing Kanto Together..."; reason_.clear(); }
     dir_ = install_dir(data_dir);
     stage_ = Stage::Installing;
     th_ = std::thread([this, pkg, data_dir, cands, desktop]() { run(pkg, data_dir, cands, desktop); });
 }
 
 void Prep::run(Package pkg, std::string data_dir, std::vector<RomCandidate> cands, std::string desktop) {
-    auto fail = [&](const std::string& m) { { std::lock_guard<std::mutex> l(mu_); msg_ = m; } stage_ = Stage::Failed; };
+    auto fail = [&](const std::string& m, const std::string& why) { { std::lock_guard<std::mutex> l(mu_); msg_ = m; reason_ = why; } stage_ = Stage::Failed; };
     std::string dir = install_dir(data_dir);
     if (!install_current(dir, pkg)) {
         { std::lock_guard<std::mutex> l(mu_); msg_ = "Installing Kanto Together..."; }
         std::string err;
         bool ok = install(pkg, dir, [this](uint64_t d, uint64_t t) { got_ = d; total_ = t; return !cancel_.load(); }, &err);
-        if (!ok) return fail("Install failed: " + err);
+        if (!ok) return fail("Install failed: " + err, cancel_.load() ? "cancelled" : "install");
     }
     stage_ = Stage::FindingRom;
     PatchManifest pm;
-    if (!read_manifest(dir + "patch\\patch.json", &pm)) return fail("The package's patch description is unreadable.");
+    if (!read_manifest(dir + "patch\\patch.json", &pm)) return fail("The package's patch description is unreadable.", "package");
+    if (pm.base_sha1 != lower(kBaseSha1)) return fail("This Kanto Together package expects a different base ROM than FireRed (USA) 1.0, which RetroHub does not support.", "package");
     std::string out = rom_path(dir);
     std::error_code ec;
     if (fs::exists(P(out), ec) && sha1_file(out) == pm.target_sha1) { stage_ = Stage::Done; { std::lock_guard<std::mutex> l(mu_); msg_ = "Ready."; } return; }
     { std::lock_guard<std::mutex> l(mu_); msg_ = "Checking your FireRed ROM..."; }
-    RomPick pick = pick_rom(cands, pm.base_sha1);
+    RomPick pick = pick_rom(cands, kBaseSha1);   // the constant, not only the package's own manifest
     rom_state_ = pick.state;
-    if (pick.state != RomState::Ok) return fail(rom_message(pick));
+    if (pick.state != RomState::Ok) return fail(rom_message(pick), reason_for(pick.state));
+    if (cancel_.load()) return fail("Cancelled.", "cancelled");
     stage_ = Stage::Patching;
     { std::lock_guard<std::mutex> l(mu_); msg_ = "Building the game from your FireRed..."; }
     fs::create_directories(P(dir) / "rom", ec);
     std::string output;
     DWORD code = 1;
-    if (!run_hidden(patch_cmdline(dir, pick.path), dir, desktop, 120000, &output, &code) || code != 0 || sha1_file(out) != pm.target_sha1)
-        return fail("Could not build the game: " + trim(output.substr(output.size() > 300 ? output.size() - 300 : 0)));
+    bool started = run_hidden(patch_cmdline(dir, pick.path), dir, desktop, 120000, &output, &code, &cancel_);
+    if (cancel_.load()) return fail("Cancelled.", "cancelled");
+    if (!started || code != 0 || sha1_file(out) != pm.target_sha1)
+        return fail("Could not build the game: " + trim(output.substr(output.size() > 300 ? output.size() - 300 : 0)), "patch");
     stage_ = Stage::Done;
     { std::lock_guard<std::mutex> l(mu_); msg_ = "Ready."; }
 }

@@ -63,12 +63,18 @@ bool install(const Package& p, const std::string& dir, const std::function<bool(
 struct PatchManifest { std::string base_sha1, target_sha1; uint64_t base_size = 0; };
 bool read_manifest(const std::string& patch_json_path, PatchManifest* out);
 
-struct RomCandidate { std::string path, serial; };   // library entries of the GBA system
+struct RomCandidate { std::string path, serial, catalog_id; uint64_t size = 0; };   // library entries of the GBA system (size 0 = unknown)
 enum class RomState { Ok, NoFireRed, WrongRevision };
 struct RomPick { RomState state = RomState::NoFireRed; std::string path; std::string seen_sha1; };
-/* First candidate whose SHA-1 is the base ROM. FireRed (serial BPRE/BPRJ-less: only BPRE counts) with another hash -> WrongRevision. */
+/* First candidate whose SHA-1 is the base ROM. Candidates with serial BPRE or catalog id pokefirered that hash differently -> WrongRevision.
+ * Candidates without any serial (e.g. a zipped ROM the scan could not read a header from) are matched by SHA-1 alone, but only hashed when
+ * their size is 16 MiB (or unknown). */
 RomPick pick_rom(const std::vector<RomCandidate>& cands, const std::string& base_sha1, const std::function<std::string(const std::string&)>& hash = sha1_file);
-std::string rom_message(const RomPick& p);   // user-facing text for a failed pick ("" when Ok)
+std::string rom_message(const RomPick& p);
+/* Machine-readable failure reasons (sent to the partner in np_kt_fail) and the fixed sentences shown for them (never raw error text / paths). */
+std::string fail_sentence(const std::string& reason);   // unknown reason -> generic sentence
+bool valid_fail_reason(const std::string& reason);
+std::string reason_for(RomState s);                       // "no_rom" | "wrong_rom"   // user-facing text for a failed pick ("" when Ok)
 
 /* ------------------------------ saves ------------------------------ */
 /* Top-level *.sav files only, the newer file wins (the loser is kept as <dst>\.kt-backup\<name>.<n>). Returns the number of files written. */
@@ -136,7 +142,7 @@ const char* credit_text();
 /* ------------------------------ a running launcher ------------------------------ */
 class Session {
   public:
-    ~Session() { stop(); }
+    ~Session() { stop(true); drain_stops(); }
     bool start(const LaunchOpts& o, std::string* err);
     void update();                              // read the launcher's output; call every frame
     bool running() const;                       // node.exe still alive
@@ -145,7 +151,11 @@ class Session {
     void confirm() { send(cmd_confirm()); }
     void cancel() { send(cmd_cancel()); }
     void rejoin(const std::string& code) { send(cmd_code(code)); }
-    void stop();                                // "quit", then terminate after a short grace
+    /* Ends the session: WM_CLOSE to mGBA's window (so the save flushes), wait for it, "quit", then the job object is closed (kills leftovers).
+     * Runs on a worker thread so the UI never blocks; wait=true joins it (shutdown). */
+    void stop(bool wait = false);
+    static int stopping();                      // number of stop workers still running
+    static void drain_stops(unsigned timeout_ms = 15000);
     const State& state() const { return st_; }
     State& mutable_state() { return st_; }
     const std::deque<std::string>& log() const { return log_; }
@@ -156,6 +166,7 @@ class Session {
     HANDLE proc_ = nullptr, in_w_ = nullptr, out_r_ = nullptr, job_ = nullptr;
     DWORD pid_ = 0;
     bool started_ = false;
+    std::string desktop_;
     std::string buf_;
     State st_;
     std::deque<std::string> log_;
@@ -173,6 +184,7 @@ class Prep {
     bool failed() const { return stage_.load() == Stage::Failed; }
     float progress() const;                      // 0..1 while installing
     std::string message() const;                 // progress / failure text
+    std::string reason() const;                  // failure reason code ("no_rom", "wrong_rom", "install", "patch", "cancelled", "package")
     RomState rom_state() const { return rom_state_.load(); }
     std::string dir() const { return dir_; }
     void join() { if (th_.joinable()) th_.join(); }
@@ -186,11 +198,12 @@ class Prep {
     std::atomic<uint64_t> got_{0}, total_{0};
     std::atomic<bool> cancel_{false};
     mutable std::mutex mu_;
-    std::string msg_, dir_;
+    std::string msg_, dir_, reason_;
 };
 int free_loopback_port();
 /* Run a hidden process to completion (patcher) capturing its output. false if it could not start; *code = exit code. */
-bool run_hidden(const std::string& cmdline, const std::string& cwd, const std::string& desktop, DWORD timeout_ms, std::string* output, DWORD* code);
+bool run_hidden(const std::string& cmdline, const std::string& cwd, const std::string& desktop, DWORD timeout_ms, std::string* output, DWORD* code,
+                const std::atomic<bool>* cancel = nullptr);   // cancel set -> the process is killed, *code = 1
 #endif
 
 }  // namespace kanto
