@@ -46,6 +46,12 @@ void gc_prefetch(const hub::GameEntry& e) {
     gc_fingerprint_ready(launch_path_for(e));
 }
 
+/* 3DS: an archived (.zip) image must be unpacked before Azahar can load it; do it as soon as the game is selected in the room
+ * (existing quiet progress UI), so neither the host's Launch nor a guest's launch handler ever waits on it. */
+void n3ds_prefetch(const hub::GameEntry& e) {
+    if (gc_needs_unpack(e) && UNZ.state == UnzipJob::Idle && !UNZ.th.joinable()) { UNZ.key = e.key; UNZ.quiet = true; start_unzip(e); }
+}
+
 /* Host: the NetPlay spec for the selected game. The sha is included when the background hash is already done. */
 bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
     if (gc_needs_unpack(e)) return false;
@@ -140,6 +146,7 @@ void gc_tick() {
         if (room_connected() && !A.selected_game.empty()) {
             const hub::GameEntry* g = find_room_entry(A.selected_game);
             if (g && g->system == hub::System::GC) gc_prefetch(*g);
+            if (g && g->system == hub::System::N3DS) n3ds_prefetch(*g);
         }
         return;
     }
@@ -190,6 +197,11 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
     if (A.proc || NP3.active()) { set_notice("A game is already running."); return; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, e.path);
     if (inst.exe.empty()) { set_notice("Install Azahar first (start the game offline once), then join the room again.", 10.0); return; }
+    if (gc_needs_unpack(e)) {   // normally done already (n3ds_prefetch on selection); never let Azahar's "unpack?" prompt swallow the launch
+        n3ds_prefetch(e);
+        set_notice("Unpacking " + e.title + " first - join the room again when it is done.", 10.0);
+        return;
+    }
     /* The room rejects a duplicate nickname, and every fresh Azahar is called "AZAHAR": give this PC's 3DS a unique username
      * (RetroHub profile name + slot) in the NAND config before it starts. The file exists once a game ran offline once. */
     if (!hubnp3ds::set_console_username_file(inst.dir, hubnp3ds::console_username(A.st.name, A.lobby.my_slot()))) {
@@ -221,10 +233,12 @@ void poll_np3ds() {
     if (NP3.failed()) { set_notice("3DS online: " + NP3.status(), 12.0); NP3.stop(); NP3_pending = false; return; }
     if (NP3_pending && NP3.ready()) {   // never start Azahar earlier: a failed join raises a modal error dialog in it
         NP3_pending = false;
+        autotest_log("3ds: forwarders ready, starting Azahar");
         launch_external(NP3_game, run_info_for(NP3_game, true), "", NP3_mp);
         /* Azahar's Qt frontend ignores -m: join the room through its Direct Connect dialog (UI Automation helper). */
         if (A.proc) {
             std::string st;
+            make_dirs(no_slash(hub::data_dir()) + "\\netplay\\3ds");   // only the host created it before: a guest's helper could not write its status file
             hubnp3ds::start_join_driver(GetProcessId(A.proc), no_slash(hub::data_dir()) + "\\netplay\\3ds", hubnp3ds::nickname(A.st.name, A.lobby.my_slot()),
                                         "", "127.0.0.1", NP3.connect_port(), L"", &st);
         }

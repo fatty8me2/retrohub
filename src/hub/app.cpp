@@ -22,7 +22,7 @@ void push_toast(const std::string& s, ImU32 col, double secs, bool top) {
     A.toasts.push_back({s, col, now, now + std::min(secs, 14.0), top});
     if (A.toasts.size() > 4) A.toasts.erase(A.toasts.begin());
 }
-void set_notice(const std::string& s, double secs) { push_toast(s, ui::WARN, secs); }
+void set_notice(const std::string& s, double secs) { autotest_log("notice: " + s); push_toast(s, ui::WARN, secs); }
 void mark_dirty() { A.dirty = true; }
 
 std::string server_url() {
