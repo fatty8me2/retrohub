@@ -42,7 +42,16 @@ struct Package {
     uint64_t size = 0;         // zip size (0 for a folder)
     uint64_t stamp = 0;        // zip mtime (seconds, 0 for a folder): with size it tells when a newer package replaces the installed one
     std::string prefix;        // zip only: folder inside the archive that holds app\, patch\, runtime\ ("KantoTogether-ROM/" or "")
+    std::string content_id;    // patch.json patchSha1 + "@" + built: identifies the build whether it comes as a zip or a folder ("" = unknown)
+    std::string built;         // patch.json "built" (ISO time; sorts chronologically)
 };
+/* "<patchSha1>@<built>" from patch.json text ("" if neither key is present); *built gets the built value. */
+std::string patch_content_id(const std::string& patch_json_text, std::string* built = nullptr);
+bool inspect_dir(const std::string& dir, Package* out);            // is_package_dir + content id
+/* Index of the package to use: newest build (patch.json built), else newest zip mtime; a tie prefers the extracted folder. -1 if empty. */
+int pick_package(const std::vector<Package>& v);
+/* Files of an installed package that the user's own runs rewrite (mGBA portable config): never overwritten by a reinstall once present. */
+bool keep_on_reinstall(const std::string& rel);
 /* Zip entry names that must exist for a usable package (relative to the package root). */
 const std::vector<std::string>& required_files();
 bool is_package_dir(const std::string& dir);                      // has app\coop-launch.mjs, patch\patch.json, runtime\node\node.exe, runtime\mgba\mGBA.exe
@@ -79,6 +88,18 @@ std::string reason_for(RomState s);                       // "no_rom" | "wrong_r
 /* ------------------------------ saves ------------------------------ */
 /* Top-level *.sav files only, the newer file wins (the loser is kept as <dst>\.kt-backup\<name>.<n>). Returns the number of files written. */
 int sync_saves(const std::string& src_dir, const std::string& dst_dir);
+/* Per-role saves. The vault keeps KantoTogether.host.sav and KantoTogether.guest.sav (a host save and a guest save are different stories: the
+ * guest's save carries the "synced" marker). The staged folder (what mGBA sees) always holds KantoTogether.sav + coop-trade-<role>.journal and is
+ * scratch for ONE role: use a separate staged folder per role. A legacy vault KantoTogether.sav seeds the first role that is played and is then
+ * renamed KantoTogether.sav.pre-roles (kept as a backup, ignored by everything). */
+std::string role_name(bool host);                    // "host" | "guest"
+std::string vault_sav_name(bool host);               // "KantoTogether.host.sav"
+std::string journal_name(bool host);                 // "coop-trade-host.journal"
+/* vault -> staged before a session. Journals: the newer copy wins (a journal left in the staged folder by a crash is real and must survive). */
+int stage_saves(const std::string& vault, const std::string& staged, bool host);
+/* staged -> vault after a clean exit. The journal is mirrored (a trade that completed deletes it in the vault too) and then removed from the
+ * staged folder, so a leftover journal there always means a crashed session. */
+int flush_saves(const std::string& staged, const std::string& vault, bool host);
 
 /* ------------------------------ launcher command lines ------------------------------ */
 struct LaunchOpts {
@@ -91,7 +112,14 @@ struct LaunchOpts {
     int lua_port = 0;          // loopback port between launcher and mGBA (0 = pick a free one)
     std::string relay;         // "" = the package's own default; else COOP_RELAY
     std::string desktop;       // tests: name of a (hidden) desktop to start everything on
+    bool preflight = true;     // run `coop-launch --dry-run` first (exit 2/3 -> clear message)
 };
+/* A message for a failed `coop-launch --dry-run` (exit 2: mGBA/ROM missing, 3: inside a temporary folder); "" for exit 0. */
+std::string preflight_message(unsigned long exit_code);
+/* Map a fatal "[launch] ..." line of the launcher to plain words ("" = not a failure: e.g. the verbose "[launch] <mGBA command line>"). */
+std::string launch_failure_text(const std::string& line);
+bool is_kanto_runtime_exe(const std::string& exe_path);   // runtime/mgba/mGBA.exe or runtime/node/node.exe under any package copy
+bool is_non_ascii(const std::string& s);
 std::string normalize_code(const std::string& s);   // upper-case [0-9A-F] only ("3f9a-0c7d 21" -> "3F9A0C7D21")
 bool valid_code(const std::string& code);           // exactly 10 hex characters
 std::string node_exe(const std::string& dir);
@@ -129,7 +157,8 @@ struct State {
     Trade trade;
     int trades_done = 0;
     bool mgba_exited = false;
-    bool synced_story = false;    // guest: the bridge applied the host's story snapshot (not a reset)
+    bool synced_story = false;    // guest: the bridge applied the host's story snapshot (not a reset; needs the launcher's --verbose output)
+    bool join_failed = false;     // guest: "Could not join" seen; the bridge keeps retrying by itself, so this is NOT terminal (cleared on connect)
     bool ever_connected = false;  // the partner was connected at least once this session
 };
 /* Guest: may RetroHub push a new host code (`code NEW`) into the running launcher by itself? Never once the pair has connected: the bridge
@@ -211,6 +240,10 @@ class Prep {
     std::string msg_, dir_, reason_;
 };
 int free_loopback_port();
+bool is_under_temp(const std::string& path);         // the launcher refuses rom/mGBA below %TEMP%
+std::string ascii_safe_path(const std::string& dir);  // 8.3 short form when the path has non-ASCII characters (mGBA's Lua io.open is ANSI)
+/* "" = free; else a sentence: an mGBA/Node of ANY Kanto Together package copy (e.g. the user started Host.cmd) is running, or its default port 8788 is taken. */
+std::string running_instance_block();
 /* Run a hidden process to completion (patcher) capturing its output. false if it could not start; *code = exit code. */
 bool run_hidden(const std::string& cmdline, const std::string& cwd, const std::string& desktop, DWORD timeout_ms, std::string* output, DWORD* code,
                 const std::atomic<bool>* cancel = nullptr);   // cancel set -> the process is killed, *code = 1
