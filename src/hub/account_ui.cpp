@@ -268,6 +268,7 @@ void draw_account_section() {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
     if (ImGui::BeginPopupModal("Replace the account on this PC?##acct", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        if (ui::modal_back()) ImGui::CloseCurrentPopup();
         ImGui::PushTextWrapPos(sp(44.f));
         ImGui::Text("Account to sign in with: %s", hubnet::friend_code(AC.pending.user_id).c_str());
         ImGui::Dummy(ImVec2(0, sp(0.5f)));

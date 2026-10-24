@@ -96,6 +96,8 @@ void fr_invite_uids(const std::vector<std::string>& uids);
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who = "");
 void fr_open_chat(const std::string& uid);
 void fr_toggle_panel();
+bool fr_invite_toast_visible();   // an invite toast is on screen (pad: Start joins it)
+bool fr_join_invite_toast();      // joins the newest visible invite toast
 void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv);
 int fr_pending_count();
 bool fr_panel_shown();

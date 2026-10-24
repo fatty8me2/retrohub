@@ -16,7 +16,7 @@ void begin_panel(const char* id, ImVec2 size, ImU32 bg) {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, sp(2.f));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.25f)));
-    ImGuiChildFlags fl = ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders;
+    ImGuiChildFlags fl = ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened;   // flattened: D-pad moves between the panel's items, never focuses the panel itself
     if (size.y == 0) fl |= ImGuiChildFlags_AutoResizeY;
     ImGui::BeginChild(id, size, fl);
 }

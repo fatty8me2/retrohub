@@ -109,11 +109,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavEscapeClearFocusItem = false;   // B / Esc must never drop the focus highlight (the app handles "back" itself)
     io.IniFilename = nullptr;
     ui::setup_fonts(S);
     ui::setup_theme(S);
     ImGui_ImplSDL2_InitForSDLRenderer(A.win, ren);
     ImGui_ImplSDLRenderer2_Init(ren);
+    ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);   // any connected pad drives the UI, hot-plug included
     hubart::init(ren, hub::data_dir() + "art\\");
     hubart::set_enabled(A.st.download_art);
 
@@ -141,7 +143,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) running = false;
             if (e.type == SDL_CONTROLLERDEVICEADDED || e.type == SDL_CONTROLLERDEVICEREMOVED) refresh_pads();
             // which device was used last decides whether the footer shows controller glyphs or key caps
-            if (e.type == SDL_CONTROLLERBUTTONDOWN || (e.type == SDL_CONTROLLERAXISMOTION && std::abs((int)e.caxis.value) > 16000)) A.pad_mode = true;
+            if (e.type == SDL_CONTROLLERBUTTONDOWN || (e.type == SDL_CONTROLLERAXISMOTION && std::abs((int)e.caxis.value) > 16000)) {
+                if (!A.pad_mode) A.pad_first = true;   // keyboard/mouse -> pad: make sure there is a focus to move
+                A.pad_mode = true;
+            }
             if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEMOTION) A.pad_mode = false;
         }
         hubart::pump();
@@ -197,7 +202,29 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         SH.pre_frame(io);
+        if (!g_headless && (A.proc || !(SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS))) {
+            /* A game is running (or another window has focus): pad buttons belong to that, never to the hub behind it. */
+            for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadRStickRight; ++k) io.AddKeyAnalogEvent((ImGuiKey)k, false, 0.f);
+        }
+        {   // LT / RT = page up / page down in whatever list has the focus (ImGui moves the focus along with the scroll)
+            static bool pg_up = false, pg_dn = false;
+            if (pg_up) { io.AddKeyEvent(ImGuiKey_PageUp, false); pg_up = false; }
+            if (pg_dn) { io.AddKeyEvent(ImGuiKey_PageDown, false); pg_dn = false; }
+            if (A.pad_mode && ImGui::IsKeyPressed(ImGuiKey_GamepadL2, true)) { io.AddKeyEvent(ImGuiKey_PageUp, true); pg_up = true; }
+            if (A.pad_mode && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, true)) { io.AddKeyEvent(ImGuiKey_PageDown, true); pg_dn = true; }
+        }
+        ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, 1);   // Y is a context-action button here: ImGui's own "Y activates the focused item" must not fire it
         ImGui::NewFrame();
+        {   // a held X/Menu would open ImGui's window switcher; this app has no use for it (X is a real button here)
+            ImGuiContext& g = *ImGui::GetCurrentContext();
+            g.NavWindowingTarget = g.NavWindowingTargetAnim = nullptr;
+            g.NavWindowingToggleLayer = false;
+            if (A.pad_mode && g.NavWindow) g.NavCursorVisible = true;   // pad users always see where the focus is (ImGui hides it after a mouse click)
+            if (A.pad_first) {   // first pad input after using the mouse/keyboard: if nothing is focused, land on the page's default item
+                A.pad_first = false;
+                if (!g.NavId || !g.NavWindow) A.nav_seed = true;
+            }
+        }
         ImGui::PushFont(ui::F.body);
         draw_frame();
         if (!shot_path || SH.update) draw_update_popup();
@@ -207,6 +234,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         SDL_RenderClear(ren);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), ren);
         if (shot_path) {
+            if (!SH.pending_shot.empty()) {   // shot:<name> from HUB_SHOT_PAD -> <stem>-<name>.bmp
+                std::string sp_ = shot_path;
+                size_t dot = sp_.rfind('.');
+                save_screenshot(ren, (sp_.substr(0, dot == std::string::npos ? sp_.size() : dot) + "-" + SH.pending_shot + ".bmp").c_str());
+                SH.pending_shot.clear();
+            }
             if (SH.ready()) { save_screenshot(ren, shot_path); running = false; }
             SDL_Delay(8);
         }

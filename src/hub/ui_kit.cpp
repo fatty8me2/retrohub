@@ -482,6 +482,12 @@ bool icon_button(const char* id, Icon ic, float size, bool active, const char* t
     return pressed;
 }
 
+bool modal_back() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput || !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return false;
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+}
+
 bool chip(const char* label, bool on, ImU32 col) {
     ImVec2 ts = ImGui::CalcTextSize(label);
     ImVec2 sz(ts.x + sp(3.25f), ts.y + sp(1.75f));

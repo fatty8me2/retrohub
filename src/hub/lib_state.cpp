@@ -53,6 +53,21 @@ void apply_scan() {
         }
     }
     for (auto& e : A.scan_result) A.lib.push_back(e);
+    if (const char* fl = std::getenv("HUB_SHOT_FAKE_LIB"); fl && g_headless) {   // screenshot/pad-nav aid: n made-up games, no scan result, no art, no finder
+        static const hub::System sy[] = {hub::System::N64, hub::System::GBA, hub::System::GC, hub::System::N64, hub::System::GB};
+        A.lib.clear();
+        int n = std::max(1, std::atoi(fl));
+        for (int i = 0; i < n; ++i) {
+            hub::GameEntry g;
+            g.system = sy[i % 5];
+            g.key = "fake:" + std::to_string(i);
+            g.title = "Test Game " + std::to_string(i + 1);
+            g.path = "C:\fake\game" + std::to_string(i) + ".z64";
+            A.lib.push_back(g);
+        }
+        A.st.find_games_done = true;
+        hubart::set_enabled(false);
+    }
     A.lib_index.clear();
     A.lib_state.clear();
     for (size_t i = 0; i < A.lib.size(); ++i) A.lib_index.emplace(A.lib[i].key, (int)i);   // first wins on duplicates

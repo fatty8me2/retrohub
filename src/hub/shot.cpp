@@ -107,7 +107,16 @@ void ShotDriver::init(const char* shot_path) {
             std::string tok;
             while (std::getline(kss, tok, ',')) if (shot_key(tok) != ImGuiKey_None) keys.push_back(shot_key(tok));
         }
-        if (const char* pd = std::getenv("HUB_SHOT_PAD")) A.pad_mode = std::atoi(pd) != 0;
+        if (const char* pd = std::getenv("HUB_SHOT_PAD")) {
+            std::string v = pd;
+            if (v == "0" || v == "1") A.pad_mode = v == "1";
+            else {
+                std::stringstream pss(v);
+                std::string tok;
+                while (std::getline(pss, tok, ',')) if (!tok.empty()) pad_seq.push_back(tok);
+                A.pad_mode = true;
+            }
+        }
     }
     if (const char* cl = std::getenv("HUB_SHOT_CLICK"); cl && shot_path) {
         std::string all = cl, tok;
@@ -123,9 +132,73 @@ void ShotDriver::init(const char* shot_path) {
             std::sscanf(std::getenv("HUB_SHOT_WHEEL"), "%f,%f,%f", &wx, &wy, &wn) == 3;
 }
 
+static ImGuiKey pad_token_key(const std::string& n) {
+    if (n == "up") return ImGuiKey_GamepadDpadUp;
+    if (n == "down") return ImGuiKey_GamepadDpadDown;
+    if (n == "left") return ImGuiKey_GamepadDpadLeft;
+    if (n == "right") return ImGuiKey_GamepadDpadRight;
+    if (n == "a") return ImGuiKey_GamepadFaceDown;
+    if (n == "b") return ImGuiKey_GamepadFaceRight;
+    if (n == "x") return ImGuiKey_GamepadFaceLeft;
+    if (n == "y") return ImGuiKey_GamepadFaceUp;
+    if (n == "lb") return ImGuiKey_GamepadL1;
+    if (n == "rb") return ImGuiKey_GamepadR1;
+    if (n == "lt") return ImGuiKey_GamepadL2;
+    if (n == "rt") return ImGuiKey_GamepadR2;
+    if (n == "start") return ImGuiKey_GamepadStart;
+    if (n == "back" || n == "view") return ImGuiKey_GamepadBack;
+    if (n == "pgdn") return ImGuiKey_PageDown;   // raw keys, to test ImGui's own paging without the LT/RT conversion
+    if (n == "pgup") return ImGuiKey_PageUp;
+    return ImGuiKey_None;
+}
+
+/* Generic trace line for UI actions that have no other observable effect headless (HUB_SHOT_TRACE). */
+void shot_trace(const char* what, const std::string& arg) {
+    static const char* tp = std::getenv("HUB_SHOT_TRACE");
+    if (!tp) return;
+    if (FILE* f = std::fopen(tp, "a")) { std::fprintf(f, "%s %s\n", what, arg.c_str()); std::fclose(f); }
+}
+
+/* One trace line per injected pad press: where the page / focus ended up (HUB_SHOT_TRACE). */
+void ShotDriver::pad_trace(const std::string& tok) {
+    static const char* tp = std::getenv("HUB_SHOT_TRACE");
+    if (!tp) return;
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    static const char* pn[] = {"library", "online", "saves", "controllers", "settings", "about"};
+    int pg = (int)A.page;
+    bool modal = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    ImVec2 r = g.NavWindow ? g.NavWindow->NavRectRel[g.NavLayer].GetCenter() + g.NavWindow->Pos : ImVec2(0, 0);
+    if (FILE* f = std::fopen(tp, "a")) {
+        std::fprintf(f, "pad %s page=%s popup=%d friends=%d nav=%08x at=%d,%d win=%s\n", tok.c_str(), pg >= 0 && pg < 6 ? pn[pg] : "?", modal ? 1 : 0,
+                     A.st.show_friends ? 1 : 0, (unsigned)g.NavId, g.NavId ? (int)r.x : -1, g.NavId ? (int)r.y : -1,
+                     g.NavWindow ? g.NavWindow->Name : "-");
+        std::fclose(f);
+    }
+}
+
 /* Called every frame after the SDL/ImGui backends' NewFrame: sends the scripted keys / wheel. */
 void ShotDriver::pre_frame(ImGuiIO& io) {
     el = (GetTickCount64() - t0) / 1000.0;
+    if (path && !pad_seq.empty()) {
+        io.BackendFlags |= ImGuiBackendFlags_HasGamepad;   // headless: no device, so the SDL backend would clear this every frame
+        if (pad_key != ImGuiKey_None) {
+            io.AddKeyAnalogEvent(pad_key, false, 0.f);
+            pad_key = ImGuiKey_None;
+        } else if (pad_i <= pad_seq.size() && el > 1.5 && A.scanned_once && el - pad_t > 0.4) {
+            if (!pad_last.empty()) { pad_trace(pad_last); pad_last.clear(); }   // the previous press has settled by now
+            if (pad_i < pad_seq.size()) {
+                const std::string& tok = pad_seq[pad_i++];
+                pad_t = el;
+                pad_last = tok;
+                A.pad_mode = true;
+                if (tok.rfind("shot:", 0) == 0) pending_shot = tok.substr(5);
+                else if (ImGuiKey k = pad_token_key(tok); k != ImGuiKey_None) {
+                    io.AddKeyAnalogEvent(k, true, 1.f);
+                    pad_key = k;
+                }
+            } else ++pad_i;
+        }
+    }
     if (path && !keys.empty()) {   // scripted keyboard navigation, starting once the library has loaded
         double start = std::max(1.5, secs - 0.35 * (keys.size() + 1));
         if (key_down) { io.AddKeyEvent(keys[key_i - 1], false); key_down = false; }
@@ -154,6 +227,6 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
 }
 
 bool ShotDriver::ready() const {
-    return el >= secs && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
+    return el >= secs && pad_i > pad_seq.size() && pad_key == ImGuiKey_None && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
            (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5));
 }

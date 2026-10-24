@@ -508,7 +508,7 @@ void draw_details_modal() {
     bool open = ImGui::BeginPopupModal("##details", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
     ImGui::PopStyleVar(2);
     if (!open) return;
-    if (!ep) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    if (!ep || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     const hub::GameEntry& e = *ep;
     const hub::GameState& gs = gstate(e.key);
     const GameInfo* cat = catalog_for(e);

@@ -22,7 +22,7 @@ void page_online_home() {
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Join a room");
     ImGui::PopFont();
-    text_wrapped_disabled("Type the code your friend gave you.");
+    text_wrapped_disabled("Type the 6-character code your friend gave you, or paste it here from a message or an invite link. Joining puts you in their room right away.");
     ImGui::Dummy(ImVec2(0, 8 * S));
     char buf[16];
     std::snprintf(buf, sizeof buf, "%s", A.join_buf.c_str());
@@ -243,8 +243,8 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
         hubupdate::check_async(true);
         A.room_update_pending = true;
         A.room_update_none = false;
-    } else if (st.is_launch) host_launch_selected();
-    else { A.my_ready = !A.my_ready; A.hello_dirty = true; }
+    } else if (st.is_launch) { shot_trace("launch"); host_launch_selected(); }
+    else { shot_trace("ready", A.my_ready ? "off" : "on"); A.my_ready = !A.my_ready; A.hello_dirty = true; }
 }
 
 void page_online_room() {
