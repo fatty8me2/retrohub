@@ -190,6 +190,12 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
     if (A.proc || NP3.active()) { set_notice("A game is already running."); return; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, e.path);
     if (inst.exe.empty()) { set_notice("Install Azahar first (start the game offline once), then join the room again.", 10.0); return; }
+    /* The room rejects a duplicate nickname, and every fresh Azahar is called "AZAHAR": give this PC's 3DS a unique username
+     * (RetroHub profile name + slot) in the NAND config before it starts. The file exists once a game ran offline once. */
+    if (!hubnp3ds::set_console_username_file(inst.dir, hubnp3ds::console_username(A.st.name, A.lobby.my_slot()))) {
+        set_notice("Start this game once offline in Azahar (to create its 3DS settings), then join the room again.", 10.0);
+        return;
+    }
     hubnp3ds::Plan plan;
     std::string err;
     if (is_host) {
