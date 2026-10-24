@@ -129,7 +129,11 @@ struct State {
     Trade trade;
     int trades_done = 0;
     bool mgba_exited = false;
+    bool ever_connected = false;  // the partner was connected at least once this session
 };
+/* Guest: may RetroHub push a new host code (`code NEW`) into the running launcher by itself? Never once the pair has connected: the bridge
+ * then reconnects/resumes by itself, and `code` throws away its campaign (a fresh join re-syncs the guest = the game appears reset). */
+inline bool guest_auto_rejoin_ok(const State& s) { return !s.ever_connected && s.phase != Phase::Connected; }
 /* Interpret one console line (with or without the "[bridge] " prefix). Returns true when the state changed. */
 bool feed_line(State& s, const std::string& line);
 
