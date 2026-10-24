@@ -16,7 +16,7 @@ param(
     [string]$Ports = '0,1,-1,-1',
     [string]$ClientDelay = '',   # optional: --delay for every non-host slot (host uses -Delay); the host's D must win
     [string]$Delay = 'auto',   # 'auto' or 0..30
-    [string]$Server = 'wss://smash-netplay.jumpcircuit.workers.dev',
+    [string]$Server = 'ws://127.0.0.1:8761',
     [string]$Room = '',
     [string]$Tag = 'run',
     [int]$KillSlot = -1,
@@ -25,6 +25,7 @@ param(
     [switch]$Rollback,            # --rollback (GGPO-style) instead of lockstep
     [string[]]$Extra = @()        # extra retrorun args, e.g. --link
 )
+. "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot

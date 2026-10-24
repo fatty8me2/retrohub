@@ -10,6 +10,7 @@ param(
   [int]$Players = 2, [int]$Seconds = 120, [string]$Server = "ws://127.0.0.1:8793", [switch]$WriteSave, [switch]$Relay, [switch]$SeedCards,
   [string]$Code = "", [string]$Desktop = "rhgc_room"
 )
+. "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = "Stop"
 Add-Type -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
@@ -46,9 +47,9 @@ for ($i = 0; $i -lt $Players; $i++) {
   }
   $disc = if ($i -gt 0 -and $GuestDiscDirs.Count -ge $i) { $GuestDiscDirs[$i - 1] } else { $DiscDir }
   $v = ($d -replace '\\', '/')
-  $json = '{"name":"At' + $i + '","rom_folders":["' + ($disc -replace '\\', '/') + '"],"server":"' + $Server + '","vault_dir":"' + $v + '/vault","sync_auto":false,"cloud_saves":false}'
+  $json = '{"name":"qa-At' + $i + '","rom_folders":["' + ($disc -replace '\\', '/') + '"],"server":"' + $Server + '","vault_dir":"' + $v + '/vault","sync_auto":false,"cloud_saves":false}'
   Set-Content "$d\userdata\hub.json" $json -Encoding ascii
-  $env:RETROHUB_AUTOTEST = $role; $env:RETROHUB_AUTOTEST_CODE = $Code; $env:RETROHUB_AUTOTEST_NAME = "At$i"
+  $env:RETROHUB_AUTOTEST = $role; $env:RETROHUB_AUTOTEST_CODE = $Code; $env:RETROHUB_AUTOTEST_NAME = "qa-At$i"
   $env:RETROHUB_AUTOTEST_GAME = $Game; $env:RETROHUB_AUTOTEST_PLAYERS = "$Players"
   $env:RETROHUB_ALLOW_VERSION_MISMATCH = "1"
   if ($WriteSave -and $i -eq 0) { $env:RETROHUB_AUTOTEST_WRITE = "1" } else { Remove-Item Env:RETROHUB_AUTOTEST_WRITE -ErrorAction SilentlyContinue }

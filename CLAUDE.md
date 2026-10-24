@@ -16,8 +16,8 @@ RetroHub is a Windows launcher for retro games (N64, GameCube, Wii U, 3DS, GBA, 
 ## Tests
 - Register new console tests in the top-level `CMakeLists.txt` with `add_test`. Network tests get `LABELS online`.
 - Offline run (no network, no visible windows): `ctest --test-dir build -C Release -LE online --output-on-failure`.
-- Online run (needs the live server): `ctest --test-dir build -C Release -L online`. The server is read at run time from `RETROHUB_TEST_SERVER` (env var), falling back to `hubnet::default_server()` (the production Cloudflare Worker). It is not baked into the ctest command lines, so set the env var when you run ctest.
-- Run online tests against a local worker, never production: `set RETROHUB_TEST_SERVER=ws://localhost:8761` (start `npx wrangler dev --port 8761` from `..\BattleShip\server\cloudflare`), then `ctest --test-dir build -C Release -L online`. Confirm in the wrangler log that requests arrive.
+- Online run (LOCAL server only): start `npx wrangler dev --ip 127.0.0.1 --port 8761 --persist-to <fresh dir>` in `..\BattleShip\server\cloudflare`, set `RETROHUB_TEST_SERVER=ws://127.0.0.1:8761`, then `ctest --test-dir build -C Release -L online`. Confirm in the wrangler log that requests arrive.
+- **Never test against production.** Test runs create throwaway accounts, and the production server auto-friends every new account to the owner. Online ctest tests (`hubnet_test`, `hubfriends_test`) exit with an error if `RETROHUB_TEST_SERVER` is unset, and refuse the production URL unless `RETROHUB_ALLOW_PROD_TESTS=1`. `qa\*.ps1` default to `ws://127.0.0.1:8761` and call `qa\_guard.ps1` (same refusal); the `RETROHUB_AUTOTEST` harness refuses a production server too. Test clients send `"test":true` in the friends hello and use `qa-` names; the server never auto-links those to the owner (and never lists them on the owner's account).
 
 ## Standard QA on every change (required)
 Before any change is released, run **Haiku QA agents** in parallel, scoped to what changed. Typical lanes:

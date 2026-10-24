@@ -2,6 +2,7 @@
 #include "session.h"
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <random>
@@ -9,6 +10,31 @@
 namespace hubnet {
 
 const char* default_server() { return "wss://smash-netplay.jumpcircuit.workers.dev"; }
+
+bool is_production_server(const std::string& url)
+{
+    return url.find("smash-netplay.jumpcircuit.workers.dev") != std::string::npos;
+}
+
+bool is_qa_run() { return std::getenv("RETROHUB_TEST_SERVER") || std::getenv("RETROHUB_AUTOTEST"); }
+
+std::string test_server_or_exit(int argc, char** argv)
+{
+    const char* env = std::getenv("RETROHUB_TEST_SERVER");
+    std::string s = argc > 1 ? std::string(argv[1]) : std::string(env && *env ? env : "");
+    if (s.empty()) {
+        fprintf(stderr, "ERROR: online test needs a LOCAL server. Start `npx wrangler dev --ip 127.0.0.1 --port 8761 --persist-to <fresh dir>` "
+                        "in BattleShip\\server\\cloudflare and set RETROHUB_TEST_SERVER=ws://127.0.0.1:8761 (never production).\n");
+        exit(2);
+    }
+    const char* allow = std::getenv("RETROHUB_ALLOW_PROD_TESTS");
+    if (is_production_server(s) && !(allow && allow[0] == '1')) {
+        fprintf(stderr, "ERROR: refusing to run tests against production (%s): they create throwaway accounts auto-friended to the owner. "
+                        "Use a local server, or set RETROHUB_ALLOW_PROD_TESTS=1 if you really mean it.\n", s.c_str());
+        exit(2);
+    }
+    return s;
+}
 
 uint32_t now_ms()
 {

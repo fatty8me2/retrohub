@@ -17,6 +17,11 @@ namespace hubnet {
 
 constexpr int kMaxSlots = 4;
 constexpr int kMaxPayload = 1100;   // bytes per send()
+bool is_production_server(const std::string& url);   // true for the production Worker host
+/* Test/QA harnesses: server = argv[1] > $RETROHUB_TEST_SERVER. Exits(2) with a clear message if neither is set, or if it is
+ * production and RETROHUB_ALLOW_PROD_TESTS=1 is not set (tests create throwaway accounts that get auto-friended to the owner). */
+std::string test_server_or_exit(int argc, char** argv);
+bool is_qa_run();                                    // $RETROHUB_TEST_SERVER or $RETROHUB_AUTOTEST set
 const char* default_server();       // "wss://smash-netplay.jumpcircuit.workers.dev"
 
 /* 6-char room code from the shared alphabet [A-HJ-NP-Z2-9]. */

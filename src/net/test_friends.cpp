@@ -149,24 +149,15 @@ static std::unique_ptr<Peer> make_peer(const std::string& root, const std::strin
     return p;
 }
 
-// Server for the online test: argv[1] > RETROHUB_TEST_SERVER (read at run time) > production default.
-// Usage: RETROHUB_TEST_SERVER=ws://localhost:8761 ctest --test-dir build -C Release -R hubfriends_test
-static std::string test_server(int argc, char** argv)
-{
-    if (argc > 1) return argv[1];
-    const char* env = getenv("RETROHUB_TEST_SERVER");
-    return (env && *env) ? std::string(env) : std::string(hubnet::default_server());
-}
-
 int main(int argc, char** argv)
 {
-    std::string server = test_server(argc, argv);
     std::string root = (fs::temp_directory_path() / ("hubfriends_" + std::to_string(now_ms()))).string() + "\\";
     fs::create_directories(root);
 
     offline_tests(root);
     if (getenv("HUBFRIENDS_OFFLINE")) { printf("%s (%d failures)\n", g_fail ? "FAILED" : "PASSED", g_fail); return g_fail ? 1 : 0; }
 
+    std::string server = hubnet::test_server_or_exit(argc, argv);
     printf("[online] %s\n", server.c_str());
     auto A = make_peer(root, "alice"), B = make_peer(root, "bob"), C = make_peer(root, "carol");
     g_all = {A.get(), B.get(), C.get()};

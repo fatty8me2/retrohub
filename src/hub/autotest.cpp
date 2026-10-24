@@ -44,7 +44,12 @@ void autotest_tick() {
         if (A.lib.empty() && now - started < 90000) return;   // the first scan on a fresh data dir can take a while; a room hello must list the game
         autotest_log("lib " + std::to_string(A.lib.size()) + " games");
         for (auto& e : A.lib) autotest_log("game " + room_id(e) + " | " + e.title + " | " + e.path);
-        A.st.name = env("RETROHUB_AUTOTEST_NAME") ? env("RETROHUB_AUTOTEST_NAME") : (role == "host" ? "AtHost" : "AtGuest");
+        if (hubnet::is_production_server(server_url()) && !(env("RETROHUB_ALLOW_PROD_TESTS") && env("RETROHUB_ALLOW_PROD_TESTS")[0] == '1')) {
+            autotest_log("error:refusing to run against production (" + server_url() + "); set st.server to a local worker or RETROHUB_ALLOW_PROD_TESTS=1");
+            stage = 99;
+            return;
+        }
+        A.st.name = env("RETROHUB_AUTOTEST_NAME") ? env("RETROHUB_AUTOTEST_NAME") : (role == "host" ? "qa-AtHost" : "qa-AtGuest");
         if (env("RETROHUB_AUTOTEST_WRITE")) A.gc_write_save = true;
         if (role == "host") A.pending_room_game = env("RETROHUB_AUTOTEST_GAME") ? env("RETROHUB_AUTOTEST_GAME") : "";
         enter_room(role == "host", env("RETROHUB_AUTOTEST_CODE") ? env("RETROHUB_AUTOTEST_CODE") : "ATGC01");

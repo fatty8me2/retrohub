@@ -11,6 +11,7 @@ param(
     [switch]$Lockstep,            # plain lockstep (no --rollback)
     [string]$Tag = 'rbm'
 )
+. "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $bin = if ([IO.Path]::IsPathRooted($BinDir)) { $BinDir } else { Join-Path $root $BinDir }
