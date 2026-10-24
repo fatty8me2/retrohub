@@ -116,6 +116,34 @@ static Bytes make_cso(const Bytes& iso) {
     return out;
 }
 
+/* CHD v5, uncompressed (compressors[0] = 0): header, big-endian hunk map, hunks. unit 2448 = CD frames, 2048 = DVD. */
+static void be32(Bytes& b, size_t at, uint32_t v) { for (int i = 0; i < 4; ++i) b[at + i] = uint8_t(v >> (24 - 8 * i)); }
+static Bytes make_chd(const Bytes& iso, bool cd) {
+    const uint32_t unit = cd ? 2448 : 2048, per = 8, hunk = unit * per;
+    size_t sectors = iso.size() / 2048, nh = (sectors + per - 1) / per;
+    size_t data_start = ((124 + 4 * nh + hunk - 1) / hunk) * hunk;
+    Bytes b(data_start + nh * hunk, 0);
+    std::memcpy(&b[0], "MComprHD", 8);
+    be32(b, 8, 124);
+    be32(b, 12, 5);
+    for (int i = 0; i < 8; ++i) b[32 + i] = uint8_t(uint64_t(nh) * hunk >> (56 - 8 * i));
+    for (int i = 0; i < 8; ++i) b[40 + i] = uint8_t(uint64_t(124) >> (56 - 8 * i));   // mapoffset
+    be32(b, 56, hunk);
+    be32(b, 60, unit);
+    for (size_t h = 0; h < nh; ++h) be32(b, 124 + 4 * h, uint32_t(data_start / hunk + h));
+    for (size_t sct = 0; sct < sectors; ++sct) {
+        size_t at = data_start + (sct / per) * hunk + (sct % per) * unit;
+        if (cd) {
+            for (int i = 1; i <= 10; ++i) b[at + i] = 0xFF;
+            b[at + 15] = 1;
+            std::memcpy(&b[at + 16], &iso[sct * 2048], 2048);
+        } else {
+            std::memcpy(&b[at], &iso[sct * 2048], 2048);
+        }
+    }
+    return b;
+}
+
 static void test_serials() {
     CHECK(ps2::normalize_serial("SLUS_209.46") == "SLUS-20946");
     CHECK(ps2::normalize_serial("slus-20946") == "SLUS-20946");
@@ -154,7 +182,7 @@ static void test_images(const fs::path& d) {
     id = ps2::Ident();
     CHECK(ps2::identify_file(U8(d / "game.cso"), &id) && id.serial == "SLUS-20946");
 
-    write_file(d / "Okage [SCUS-97129].chd", Bytes(64, 0));   // not decoded: serial from the name, must be a known PS2 game
+    write_file(d / "Okage [SCUS-97129].chd", Bytes(64, 0));   // unreadable as a CHD: falls back to the serial in the name (a known PS2 game)
     id = ps2::Ident();
     CHECK(ps2::identify_file(U8(d / "Okage [SCUS-97129].chd"), &id) && id.serial == "SCUS-97129" && id.title == "Okage - Shadow King");
     write_file(d / "unknown.chd", Bytes(64, 0));
@@ -166,6 +194,32 @@ static void test_images(const fs::path& d) {
     write_file(d / "junk.iso", Bytes(100000, 7));
     CHECK(!ps2::identify_file(U8(d / "junk.iso"), &id));
 
+    // real CHD files (libchdr): CD (2448-byte frames) and DVD (2048-byte units); the file name has no serial, so the disc itself is read
+    write_file(d / "cdgame.chd", make_chd(iso, true));
+    write_file(d / "dvdgame.chd", make_chd(iso, false));
+    id = ps2::Ident();
+    CHECK(ps2::identify_file(U8(d / "cdgame.chd"), &id) && id.serial == "SLUS-20946" && id.title == "Grand Theft Auto - San Andreas");
+    id = ps2::Ident();
+    CHECK(ps2::identify_file(U8(d / "dvdgame.chd"), &id) && id.serial == "SLUS-20946");
+    disc::Info di;
+    CHECK(disc::probe_file(U8(d / "dvdgame.chd"), &di) && di.kind == disc::Cnf::Ps2 && di.serial == "SLUS-20946");
+    write_file(d / "psxgame.chd", make_chd(make_iso("BOOT = cdrom:\\SCUS_941.63;1\r\n"), true));   // PlayStation 1 CHD: shared reader says Ps1
+    CHECK(disc::probe_file(U8(d / "psxgame.chd"), &di) && di.kind == disc::Cnf::Ps1 && di.serial == "SCUS-94163");
+    id = ps2::Ident();
+    CHECK(!ps2::identify_file(U8(d / "psxgame.chd"), &id) && id.ps1);
+    // a stored zip entry: the CHD is read in place
+    {
+        Bytes chd = make_chd(iso, true);
+        mz_zip_archive za;
+        std::memset(&za, 0, sizeof za);
+        std::string zp = U8(d / "stored.zip");
+        CHECK(mz_zip_writer_init_file(&za, zp.c_str(), 0));
+        CHECK(mz_zip_writer_add_mem(&za, "Some Game.chd", chd.data(), chd.size(), MZ_NO_COMPRESSION));
+        mz_zip_writer_finalize_archive(&za);
+        mz_zip_writer_end(&za);
+        GameEntry ge;
+        CHECK(identify_game(zp, &ge) && ge.system == System::PS2 && ge.key == "ps2:slus-20946" && ge.issue == "extract");
+    }
     auto buf = std::make_shared<std::string>((const char*)iso.data(), iso.size());   // archive probe path
     id = ps2::Ident();
     CHECK(ps2::identify_buffer(buf, &id) && id.serial == "SLUS-20946");
