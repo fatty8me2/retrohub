@@ -44,6 +44,7 @@
 #include "controls.h"
 #include "netplay_dolphin.h"
 #include "library.h"
+#include "osk.h"
 #include "logic.h"
 #include "savestore.h"
 #include "cloud.h"
@@ -540,7 +541,7 @@ void begin_panel(const char* id, ImVec2 size = ImVec2(0, 0), ImU32 bg = COL_PANE
 void end_panel();
 void text_wrapped_disabled(const std::string& s);
 void add_rom_folder_path(const std::string& p);
-void add_rom_folder();
+void add_rom_folder(bool clicked);   // call every frame with the button result (pad: folder browser, else Windows dialog)
 void locate_smash();
 
 

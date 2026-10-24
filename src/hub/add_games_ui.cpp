@@ -226,8 +226,8 @@ static void add_games_modal() {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
         ImGui::TextWrapped("Games folder: %s", root.c_str());
         ImGui::PopStyleColor();
-        if (button("Change...", ImVec2(sp(14.f), sp(4.f)), false, true, ui::Icon::Folder)) {
-            std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+        {
+            std::string p = osk::folder("ag_dest", button("Change...", ImVec2(sp(14.f), sp(4.f)), false, true, ui::Icon::Folder));
             if (ag::is_absolute_path(p)) { A.st.games_dest = p; mark_dirty(); }
         }
         if (!A.st.games_dest.empty()) {
@@ -240,8 +240,8 @@ static void add_games_modal() {
             if (!f.empty()) AG.queue.insert(AG.queue.end(), f.begin(), f.end());
         }
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        if (button("Choose a folder...", ImVec2(bw, bh), false, true, ui::Icon::Folder)) {
-            std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+        {
+            std::string p = osk::folder("ag_folder", button("Choose a folder...", ImVec2(bw, bh), false, true, ui::Icon::Folder));
             if (!p.empty()) {
                 bool added = add_folder_in_place(p);
                 set_toast(added ? "Folder added - scanning your games..." : "That folder is already in your library.", added);

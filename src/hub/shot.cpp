@@ -56,6 +56,7 @@ void shot_init_ui() {
         if (std::getenv("HUB_SHOT_BELL")) FR.shot_bell = true;
     }
     kt_shot_init();
+    osk::shot_init();
     if (const char* rj = std::getenv("HUB_SHOT_REJOIN")) {   // screenshot aid: the disconnected Rejoin strip (no network)
         g_shot_rejoin = true;
         g_shot_rejoin_why = *rj ? rj : "Connection to the lobby server was lost";
