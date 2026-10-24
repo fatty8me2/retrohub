@@ -247,7 +247,7 @@ void DelayAdapter::on_poll(uint32_t now, uint32_t stall_ms) {
         if (iv >= 0.5 && iv < 100.0) avg_ms_ += (iv - avg_ms_) * 0.02;
     }
     last_now_ = now; last_stall_ = stall_ms;
-    if (stall_ms >= kMinStallMs) {
+    if (stall_ms >= kMinStallMs && stall_ms <= kMaxStallMs) {
         ev_t_[ev_n_ & 7] = now; ev_ms_[ev_n_ & 7] = stall_ms; ev_n_++;
         last_event_ = now;
     }
@@ -272,7 +272,7 @@ int DelayAdapter::want(int cur, uint32_t now) {
     }
     if (cnt == 0 && cur > floor_) {
         uint32_t quiet_since = std::max(last_event_, std::max(last_lower_, std::max(last_raise_, start_)));
-        if (now - quiet_since >= 12000) { last_lower_ = now; want_val_ = cur - 1; want_until_ = now + 3000; return want_val_; }
+        if (now - quiet_since >= kQuietLowerMs) { last_lower_ = now; want_val_ = cur - 1; want_until_ = now + 3000; return want_val_; }
     }
     return cur;
 }
@@ -288,7 +288,7 @@ int DelayAdapter::decide(int cur, const int wants[4], uint32_t mask, uint32_t no
     else if (hi < cur) target = cur - 1;   // everybody wants lower: one step down
     target = std::max(floor_, std::min(max_, target));
     if (target != cur) {
-        if (last_decide_change_ && now - last_decide_change_ < (target > cur ? 1000u : 6000u)) return cur;
+        if (last_decide_change_ && now - last_decide_change_ < (target > cur ? 1000u : 2000u)) return cur;
         last_decide_change_ = now ? now : 1;
     }
     return target;
