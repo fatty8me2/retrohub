@@ -94,6 +94,24 @@ enum class GuestVersionAction { None, Waiting, UpdateNow, HostNeedsUpdate };
 /* Guest-side: host hello not received yet -> Waiting; older than the host -> UpdateNow; newer, or the host's
  * hello arrived without an app field (old build) -> HostNeedsUpdate. */
 GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app, bool host_hello);
+
+/* ---- room action banner (READY / LAUNCH at the top of the room) ---- */
+struct RoomMember { std::string name; bool ready = false; bool host = false; bool me = false; };
+enum class RoomTone { Neutral, Good, Warn, Bad };
+struct RoomActionState {
+    std::string headline, detail, button_label;
+    RoomTone tone = RoomTone::Neutral;
+    bool is_launch = false;        // host: the button is Launch; guest: the button toggles Ready
+    bool button_enabled = false;
+    bool ready_on = false;         // guest: currently ready
+    int ready_count = 0, total = 0;
+};
+/* "Mia", "Mia and Zed", "Mia, Zed and Kai". */
+std::string join_names(const std::vector<std::string>& names);
+/* `block` = reason the chosen game cannot start for this PC/room right now ("" = none; computed by the page from
+ * missing game / version / unpacking / Kanto / in-game checks). The host counts as ready. */
+RoomActionState room_action_state(bool host, bool have_game, const std::string& game_title, const std::string& block,
+                                  bool my_ready, const std::vector<RoomMember>& members);
 /* `core` (optional): the host's GB/GBC core so all peers run the same one. */
 /* `delay` 0 = auto. `share_host_save`: N64 online, every PC uses the host's save. */
 struct PortPlan;

@@ -579,6 +579,37 @@ int main() {
         CHECK(merge_installer_games_dir(&e, "E:\\G") && e.rom_folders.size() == 1);
     }
 
+    {   /* room action banner state */
+        using namespace hubui;
+        std::vector<RoomMember> m = {{"Host", true, true, false}, {"Mia", false, false, true}, {"Zed", false, false, false}};
+        auto g = room_action_state(false, true, "Kart", "", false, m);
+        CHECK(!g.is_launch && g.button_enabled && g.button_label == "READY" && g.headline == "Not ready" && g.ready_count == 1 && g.total == 3);
+        g = room_action_state(false, false, "", "", false, m);
+        CHECK(!g.button_enabled && g.headline.find("pick a game") != std::string::npos);
+        g = room_action_state(false, true, "Kart", "Update to v1.2", false, m);
+        CHECK(!g.button_enabled && g.detail == "Update to v1.2" && g.tone == RoomTone::Bad);
+        m[1].ready = true;
+        g = room_action_state(false, true, "Kart", "", true, m);
+        CHECK(g.ready_on && g.button_label == "NOT READY" && g.headline == "You're ready" && g.detail.find("Zed") != std::string::npos);
+        g = room_action_state(false, true, "Kart", "Some block", true, m);
+        CHECK(g.button_enabled);   // can un-ready even when blocked
+        m[2].ready = true;
+        g = room_action_state(false, true, "Kart", "", true, m);
+        CHECK(g.detail.find("host to launch") != std::string::npos);
+        // host
+        std::vector<RoomMember> h = {{"Me", true, true, true}, {"Mia", false, false, false}, {"Zed", false, false, false}};
+        auto s = room_action_state(true, true, "Kart", "", false, h);
+        CHECK(s.is_launch && !s.button_enabled && s.headline == "Waiting for Mia and Zed..." && s.ready_count == 1);
+        h[1].ready = true; h[2].ready = true;
+        s = room_action_state(true, true, "Kart", "", false, h);
+        CHECK(s.button_enabled && s.tone == RoomTone::Good && s.headline == "Everyone's ready - Launch!");
+        s = room_action_state(true, true, "Kart", "Unpacking Kart...", false, h);
+        CHECK(!s.button_enabled && s.detail == "Unpacking Kart...");
+        s = room_action_state(true, false, "", "", false, h);
+        CHECK(!s.button_enabled && s.headline == "Pick a game to start");
+        CHECK(join_names({}) == "" && join_names({"A"}) == "A" && join_names({"A", "B", "C"}) == "A, B and C");
+    }
+
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }
