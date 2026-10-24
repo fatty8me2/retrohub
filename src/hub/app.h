@@ -222,6 +222,8 @@ struct App {
     std::string join_buf;
     std::map<int, hubui::PeerInfo> peers;
     std::map<int, bool> ready;
+    std::map<int, bool> ingame;     // room members whose game (Smash lobby etc.) is running right now
+    bool prev_proc = false;         // A.proc seen last tick (edge detect for the in-game notice)
     std::vector<int> last_slots;
     bool hello_dirty = false, was_connected = false;
     bool room_update_pending = false;   // guest pressed "Update now": waiting for the release check
