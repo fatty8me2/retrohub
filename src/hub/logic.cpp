@@ -1041,6 +1041,43 @@ std::string queued_join_text(const std::string& friend_name) {
     return "Will join " + (friend_name.empty() ? std::string("that") : friend_name + "'s") + " room when your game closes.";
 }
 
+std::string queued_join_replaced_text(const std::string& old_who, const std::string& new_who) {
+    return "Replaced the queued join (" + (old_who.empty() ? std::string("another room") : old_who + "'s room") + "). " + queued_join_text(new_who);
+}
+
+std::string friends_error_text(const std::string& r, const std::string& d) {
+    if (r == "bad-request") {
+        if (d == "friends-full") return "Your friends list is full.";
+        if (d == "target-full") return "That player's friends list is full.";
+        if (d == "too-many-requests") return "You have too many pending requests - cancel some first.";
+        if (d == "already-requested") return "You already sent that player a request.";
+        if (d == "undeliverable") return "That message could not be delivered.";
+        if (d == "no-such-request") return "That request is no longer there.";
+        if (d == "too-many-blocked") return "Your block list is full.";
+        if (d == "retired-elsewhere") return "That account was already moved to another identity.";
+        return "";   // internal / retire-failed / bad-secret / text / too-large / none: retried or not user-actionable
+    }
+    if (r == "unknown-code") return "No player has that friend code.";
+    if (r == "self") return "That is your own friend code.";
+    if (r == "already-friends") return "You are already friends.";
+    if (r == "not-friends") return "You can only do that with friends.";
+    if (r == "rate-limited") return "Slow down a little - too many requests.";
+    if (r == "blocked") return "That player is blocked.";
+    return "Friends: " + r;
+}
+
+std::string invite_result_text(const std::vector<std::string>& ok, const std::vector<std::string>& bad,
+                               const std::string& reason, const std::string& code) {
+    auto join = [](const std::vector<std::string>& v) { std::string s; for (auto& n : v) { if (!s.empty()) s += ", "; s += n; } return s; };
+    std::string t;
+    if (!ok.empty()) t = "Invited " + join(ok) + " to room " + code + ".";
+    if (!bad.empty()) {
+        if (!t.empty()) t += " ";
+        t += std::string(reason == "rate-limited" ? "Slow down - could not invite " : "Could not invite ") + join(bad) + ".";
+    }
+    return t;
+}
+
 std::string normalize_friend_code(const std::string& in) {
     std::string t;
     for (unsigned char ch : in)

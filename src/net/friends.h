@@ -73,13 +73,17 @@ struct Message {
 struct Event {
     enum Kind { FriendOnline, FriendOffline, PresenceChanged, RequestReceived, RequestResolved,
                 FriendAdded, FriendRemoved, MessageReceived, InviteReceived, Error,
-                IdentityAdopted };   // IdentityAdopted: text = new friend code ("RH-XXXX-XXXX"), uid = new uid
+                IdentityAdopted,
+                InviteResult };   // IdentityAdopted: text = new friend code ("RH-XXXX-XXXX"), uid = new uid
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
     std::string name;
     std::string text;         // RequestResolved: "accepted"|"declined"|"cancelled"; Error: reason
     Message msg;              // MessageReceived / InviteReceived
     Invite invite;            // InviteReceived
+    std::string detail;       // Error: the server's "detail" (e.g. "friends-full"); empty if none
+    std::vector<std::string> ok_uids, failed_uids;   // InviteResult: per-target delivery outcome
+    std::vector<std::string> failed_reasons;         // InviteResult: parallel to failed_uids
 };
 
 /* ---- dedupe (pure; the list is keyed by uid) ----

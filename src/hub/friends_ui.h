@@ -97,7 +97,7 @@ void fr_toggle_panel();
 void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv);
 int fr_pending_count();
 bool fr_panel_shown();
-std::string fr_error_text(const std::string& r);
+std::string fr_error_text(const std::string& r, const std::string& detail = std::string());
 hubnet::Status fr_desired_status();
 void fr_update_presence();
 void fr_start();

@@ -311,6 +311,14 @@ inline bool lobby_joinable(int players, int max_players, bool launched) { return
 inline bool friend_can_join(const FriendRow& r) { return !r.in_my_room && (r.state == FS_InLobby || r.state == FS_InGame) && r.joinable; }
 /* Toast shown when a join is clicked while our own game is running (performed when the game closes). */
 std::string queued_join_text(const std::string& friend_name);
+/* A second join click while one is already queued replaces it (only one room can be joined): say so. */
+std::string queued_join_replaced_text(const std::string& old_who, const std::string& new_who);
+/* Friendly text for a friends-server error. `reason` is the server's reason, `detail` its optional detail
+   ("bad-request" + detail "friends-full" etc.). Empty string = nothing worth showing the user. */
+std::string friends_error_text(const std::string& reason, const std::string& detail);
+/* Toast for an invite_result: successes by name, failures by name. */
+std::string invite_result_text(const std::vector<std::string>& ok_names, const std::vector<std::string>& failed_names,
+                               const std::string& first_fail_reason, const std::string& code);
 /* Join click while our own game runs: queue it, or drop it when we are already in that room. */
 enum class JoinWhileRunning { Queue, AlreadyInRoom };
 inline JoinWhileRunning join_while_running(bool same_room) { return same_room ? JoinWhileRunning::AlreadyInRoom : JoinWhileRunning::Queue; }

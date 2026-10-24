@@ -35,6 +35,7 @@ static std::wstring invite_normalize_code_keep_case(const std::wstring& raw) {
     return raw.substr(b, e - b);
 }
 
+// Plain 6-char codes only: netplay rooms are never "-N" suffixed (the relay accepts exactly 6 chars), so no suffix is parsed.
 bool invite_is_valid_code(const std::wstring& code) {
     if (code.size() != 6) return false;
     for (wchar_t c : code) {
