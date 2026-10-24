@@ -8,7 +8,7 @@ target_link_libraries(json_test PRIVATE hubbase)
 add_executable(winutil_test test_winutil.cpp)
 target_link_libraries(winutil_test PRIVATE hubbase shell32)
 
-add_library(hubcommon STATIC kanto.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp)
+add_library(hubcommon STATIC kanto.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp addgames.cpp)
 target_include_directories(hubcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcommon PUBLIC cxx_std_17)
 target_link_libraries(hubcommon PUBLIC hubbase ws2_32 PRIVATE bcrypt hubminiz)   # hubminiz: defined in src/saves (zipped ROMs)
@@ -43,3 +43,7 @@ target_link_libraries(findgames_test PRIVATE hubcommon)
 # Kanto Together (friend's FireRed co-op hack): package detection/install, ROM pick, launcher output parsing (scratch dirs only).
 add_executable(hubkanto_test test_kanto.cpp)
 target_link_libraries(hubkanto_test PRIVATE hubcommon hubminiz)
+
+# "Add games": sorting / destination / dedupe / copy job (scratch dirs only).
+add_executable(addgames_test test_addgames.cpp)
+target_link_libraries(addgames_test PRIVATE hubcommon)
