@@ -99,6 +99,19 @@ void host_launch_selected() {
 /* Why the chosen game cannot start right now ("" = fine). Shared by the READY and LAUNCH buttons. */
 static std::string room_block_reason(bool host, const hub::GameEntry* rg, const std::vector<hubui::PeerInfo>& peers, hubui::GuestVersionAction* gact) {
     *gact = hubui::GuestVersionAction::None;
+    if (!host) {   // version mismatch blocks READY even before a game is picked (same rule as ready_block_reason_now)
+        std::string host_app;
+        bool host_hello = false;
+        for (auto& p : peers) if (p.slot == 0) { host_app = p.app; host_hello = p.hello; }
+        if (!allow_version_mismatch()) {
+            auto act = hubui::guest_version_action(HUB_VERSION_STR, host_app, host_hello);
+            *gact = act;
+            if (act != hubui::GuestVersionAction::None) {
+                std::string r = ready_block_reason_now();
+                if (!r.empty()) return r;
+            }
+        }
+    }
     if (!rg) return "";
     if (A.proc) return "You're in a game right now.";
     auto sel = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0);
@@ -117,14 +130,6 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
         }
         return "";
     }
-    if (allow_version_mismatch()) return "";
-    auto act = hubui::guest_version_action(HUB_VERSION_STR, host_app, host_hello);
-    *gact = act;
-    if (act == hubui::GuestVersionAction::UpdateNow)
-        return "The host is on " + hubui::app_version_label(host_app) + " and you have " + hubui::app_version_label(HUB_VERSION_STR) + ". Update to play.";
-    if (act == hubui::GuestVersionAction::HostNeedsUpdate)
-        return "Host needs to update (host is on " + (host_app.empty() ? std::string("an old version") : hubui::app_version_label(host_app)) + ", you have " + hubui::app_version_label(HUB_VERSION_STR) + ").";
-    if (act == hubui::GuestVersionAction::Waiting) return "Checking versions...";
     return "";
 }
 
@@ -276,8 +281,25 @@ void page_online_room() {
             if (supports_online(e)) { A.selected_game = room_id(e); if (e.title.find("Kart") != std::string::npos) break; }
     }
     if (!g_fake_room && A.lobby.failed()) {
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_BAD), "%s", A.lobby.status().c_str());
-        if (button("Rejoin room", ImVec2(180 * S, 44 * S), true)) rejoin_room();   // same code and role
+        // banner-styled failure strip: reason on the left, Rejoin where the action button normally sits
+        float W = ImGui::GetContentRegionAvail().x, H = 108 * S;
+        ImVec2 p0 = ImGui::GetCursorScreenPos(), p1 = p0 + ImVec2(W, H);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p0, p1, mix(COL_PANEL, ui::BAD, 0.16f), 16 * S);
+        dl->AddRect(p0, p1, with_alpha(ui::BAD, 0.75f), 16 * S, 0, 2 * S);
+        dl->AddRectFilled(p0 + ImVec2(0, 14 * S), p0 + ImVec2(6 * S, H - 14 * S), ui::BAD, 3 * S);
+        float bw = std::min(340 * S, W * 0.34f), bh = 80 * S;
+        ImVec2 bp(p1.x - bw - 14 * S, p0.y + (H - bh) * 0.5f);
+        float tx = p0.x + 24 * S, tw = bp.x - tx - 16 * S;
+        ImFont* hf = ui::F.title ? ui::F.title : ui::F.h2;
+        dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 10 * S), ui::TEXT, "Disconnected from the room");
+        auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), A.lobby.status(), tw, 2);
+        float ly = p0.y + 10 * S + hf->FontSize + 6 * S;
+        for (auto& l : lines) { dl->AddText(ImVec2(tx, ly), ui::TEXT2, l.c_str()); ly += ImGui::GetFontSize() + 2 * S; }
+        ImGui::SetCursorScreenPos(bp);
+        if (button("Rejoin room", ImVec2(bw, bh), true)) rejoin_room();   // same code and role
+        ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y + 12 * S));
+        ImGui::Dummy(ImVec2(0, 0));
         return;
     }
     if (!room_connected()) {
