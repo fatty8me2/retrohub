@@ -38,6 +38,7 @@ struct LockstepHooks {
     std::function<void()> update_local;                       // poll devices once per sample
     std::function<void()> idle;                               // called while blocked (pump SDL events)
     std::function<bool(uint64_t* out)> hash_rdram;            // false -> hashing unavailable
+    std::function<void(bool)> set_limiter;                    // speed limiter on/off (catch-up after a stall); may be empty
     std::function<void()> request_stop;                       // M64CMD_STOP
     std::function<void(const std::string&)> log;
 };
@@ -93,6 +94,13 @@ class Lockstep {
     uint64_t stall_ms_ = 0, stalled_ = 0;
     uint32_t longest_stall_ = 0;
     int logged_delay_ = 0;
+    uint32_t t_first_ = 0;
+    /* Catch-up: a stall/hiccup leaves the emulation behind the 60 Hz wall clock (the core's limiter never makes the time up),
+     * so the game would drift into slow motion by the sum of all hiccups. debt_ms_ = time lost, repaid by running unthrottled. */
+    double base_ms_ = 16.7, debt_ms_ = 0;
+    uint32_t last_poll_ = 0, catch_start_ = 0;
+    bool catching_ = false;
+    void catch_up(uint32_t now);
     uint32_t bye_mask_ = 0, bye_last_[kPorts] = {0, 0, 0, 0};
     bool peer_left_ = false;
     void adapt(uint32_t now, uint32_t stall_ms);
