@@ -471,6 +471,10 @@ bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out);
 bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port);
 void gc_stop_all();
 void gc_tick();
+void online_cancel_pending();   // drop a launch that is still being prepared (GC forwarder / 3DS link / unpack resume)
+void room_session_ended();      // a game from this room ended: ready flags back to off so the next game starts clean
+extern std::string g_shot_rejoin_why;
+extern bool g_shot_rejoin;      // screenshot aid: draw the disconnected "Rejoin room" strip
 void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_no);
 void gc_guest_poll();
 void host_launch_selected();   // the Launch button's body (page_online.cpp); the autotest hook calls it too

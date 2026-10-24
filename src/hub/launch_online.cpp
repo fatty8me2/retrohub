@@ -2,13 +2,25 @@
 #include "app.h"
 
 GcOnline GCO;
+static hubnp3ds::ResumeGate NP3_resume;   // guest launch waiting for the archive to finish unpacking
 
 bool gc_needs_unpack(const hub::GameEntry& e) { return e.issue == "extract" && hub::extracted_3ds_path(e).empty(); }
 
 /* One wording for "the archive is still being unpacked", everywhere. */
 static std::string unpack_msg(const hub::GameEntry& e) { return "Unpacking " + e.title + " first - try again when it is done."; }
 /* A launch problem: the host just sees the notice, a guest also tells the host why it cannot start (np_fail). */
-static void launch_note(bool host, const std::string& m, double secs = 8.0) { if (host) set_notice(m, secs); else launch_fail(m, secs); }
+/* A host failure after the launch message went out also tells the guests (np_abort), or they would wait for a game that never comes. */
+static void host_abort(const std::string& why) {
+    if (room_connected() && !g_fake_room) A.lobby.send_msg("{\"kind\":\"np_abort\",\"reason\":\"" + json::escape(why) + "\"}");
+}
+static void launch_note(bool host, const std::string& m, double secs = 8.0) { if (host) { set_notice(m, secs); host_abort(m); } else launch_fail(m, secs); }
+/* spawn(), but a host whose process could not start aborts the guests' wait too. */
+static bool spawn_room(bool host, const std::string& exe, const std::string& args, const std::string& cwd,
+                       const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
+    bool ok = spawn(exe, args, cwd, env, ri);
+    if (!ok) { if (host) host_abort("the game did not start"); else launch_fail("The game did not start on this PC."); }
+    return ok;
+}
 
 bool gc_fingerprint_ready(const std::string& path) {
     if (GCO.fp_path == path) return GCO.fp_done;
@@ -39,6 +51,15 @@ void gc_kill() {
         if (!pid) continue;
         if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid)) { TerminateProcess(h, 0); CloseHandle(h); }
     }
+}
+
+/* Drop a launch that is still being prepared (room left, host changed or aborted): GC forwarder + guest wait, 3DS link that
+ * has not started Azahar yet, an unpack-then-launch resume. A game that is already running is never touched. */
+void online_cancel_pending() {
+    if (GCO.guest_wait || (GCO.active && !gc_process_alive())) gc_stop_all();
+    else if (GCO.fw.active() && !GCO.active) GCO.fw.stop();
+    if (NP3_pending && !A.proc) { NP3.stop(); NP3_pending = false; }
+    NP3_resume.cancel();
 }
 
 /* Called while a GameCube game is selected in the room: unpack an archived copy (existing progress UI) and fingerprint the
@@ -151,6 +172,7 @@ void gc_tick() {
         if (autotest_active() && GCO.fw.status() != last_fw) { last_fw = GCO.fw.status(); autotest_log("fw " + last_fw); }
         if (GCO.fw.failed()) {
             launch_fail("GameCube online: " + GCO.fw.status(), 12.0);
+            if (GCO.host) host_abort("GameCube online: " + GCO.fw.status());
             gc_kill();
             gc_stop_all();
             return;
@@ -164,7 +186,13 @@ void gc_tick() {
         }
         return;
     }
-    if (!gc_process_alive()) { gc_stop_all(); return; }
+    if (!gc_process_alive()) {   // Dolphin closed: session over. Host: its vault card changed, sync it; everyone: back to un-ready for the next game.
+        bool was_host = GCO.host;
+        gc_stop_all();
+        room_session_ended();
+        if (was_host) { A.vault_dirty = true; auto_sync(); }
+        return;
+    }
     if (GCO.host && !GCO.ready_sent && gcnp::read_status(GCO.run).find("stage:netplay-open") != std::string::npos) {
         GCO.ready_sent = true;
         A.lobby.send_msg("{\"kind\":\"np_gc_ready\"}");
@@ -217,7 +245,6 @@ void gc_guest_poll() {
 }
 
 /* 3DS: bring up the room server (host) + UDP forwarder, then poll_np3ds() starts Azahar once everyone is reachable. */
-static hubnp3ds::ResumeGate NP3_resume;   // guest launch waiting for the archive to finish unpacking
 void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg, const hubnp3ds::Plan* resumed) {
     if (A.proc || NP3.active()) { launch_note(is_host, "A game is already running."); return; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, e.path);
@@ -268,7 +295,13 @@ void poll_np3ds() {
     }
     if (!NP3.active()) return;
     NP3.update();
-    if (NP3.failed()) { launch_fail("3DS online: " + NP3.status(), 12.0); NP3.stop(); NP3_pending = false; return; }
+    if (NP3.failed()) {
+        launch_fail("3DS online: " + NP3.status(), 12.0);
+        if (is_host()) host_abort("3DS online: " + NP3.status());
+        NP3.stop();
+        NP3_pending = false;
+        return;
+    }
     if (NP3_pending && NP3.ready()) {   // never start Azahar earlier: a failed join raises a modal error dialog in it
         NP3_pending = false;
         autotest_log("3ds: forwarders ready, starting Azahar");
@@ -314,7 +347,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         env.push_back({is_host ? "SSB64_LOBBY_HOST" : "SSB64_LOBBY_JOIN", server_url()});
         env.push_back({"SSB64_LOBBY_CODE", A.code});
         for (auto& kv : smash_env(exe)) env.push_back(kv);   // online uses the same vault save as offline
-        spawn(exe, "--from-hub --no-update-check", dir_of(exe), env, ri);   // RetroHub's updater is the only one
+        spawn_room(is_host, exe, "--from-hub --no-update-check", dir_of(exe), env, ri);   // RetroHub's updater is the only one
         return;
     }
     /* port i -> i-th member in slot order (slots may have gaps); --slot stays the real lobby slot */
@@ -369,7 +402,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
             /* n64run's save-sharing role is "lobby slot 0" - which is the host, also after a host change. */
             if (is_host || A.lobby.my_slot() == 0) {
                 std::string bd = no_slash(hub::saves::battery_dir(sys_short(e), e.key));
-                if (!dir_exists(bd)) launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
+                if (!dir_exists(bd)) set_notice("No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
                 args += " --host-save-dir " + quote(bd);
             }
         }
@@ -377,7 +410,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
             std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
             if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
         }
-        spawn(n64run_path(), args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, n64run_path(), args, hub::exe_dir(), {}, ri);
         return;
     }
     bool is_gb_family = e.system == hub::System::GB || e.system == hub::System::GBC || e.system == hub::System::GBA;
@@ -417,7 +450,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
          * SameBoy uses the patched sameboy_rb core (src/sameboy_rb); Gambatte stays on lockstep. */
         if (e.system == hub::System::GBA || std::string(lcore) == "sameboy_rb") args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
-        spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
     if (e.system == hub::System::GBA || e.system == hub::System::GB || e.system == hub::System::GBC) {
@@ -434,7 +467,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
                            " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
         if (gb_rb) args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
-        spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
     if (e.system == hub::System::NDS) {
@@ -454,9 +487,9 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
                            " --state-dir " + quote(states) + " --ds-link --net " + quote(server_url()) + " --room " + A.code + "-" +
                            std::to_string(launch_no) + " --slot " + std::to_string(A.lobby.my_slot()) + " --players " +
-                           std::to_string(plan.players) + title_arg(e.title) + save_stem_arg(e);
+                           std::to_string(plan.players) + " --ports " + plan.ports + title_arg(e.title) + save_stem_arg(e);   // --ports: the real member slots (gaps after a leave)
         args += hubui::retro_extra_args(e.system, gsv);
-        spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
     launch_note(is_host, "Online play is not available for this system yet.");
