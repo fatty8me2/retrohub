@@ -116,6 +116,31 @@ static void test_catalog() {
     CHECK(mp3 != nullptr && mp3->rom_md5s.size() == 1 &&
           mp3->rom_md5s[0] == "76A8BBC81BC2060EC99C9645867237CC");
 
+    /* PlayStation 1 / 2 entries: Redump serial format (AAAA-NNNNN), no duplicate ids, online off. */
+    {
+        std::set<std::string> ids;
+        for (const GameInfo& g : c) CHECK(ids.insert(g.id).second);   // ids unique (find_game returns the first match)
+        for (const GameInfo& g : c) {
+            if (g.system != "ps1" && g.system != "ps2") continue;
+            CHECK(!g.online);
+            CHECK(g.engine == Engine::Libretro);   // placeholder until the PCSX2 engine lands
+            CHECK(!g.serials.empty());
+            for (const std::string& s : g.serials) {
+                bool ok = s.size() == 10 && s[4] == '-';
+                for (size_t i = 0; ok && i < 10; ++i) {
+                    if (i == 4) continue;
+                    ok = (i < 4) ? (s[i] >= 'A' && s[i] <= 'Z') : (s[i] >= '0' && s[i] <= '9');
+                }
+                if (!ok) std::printf("bad PS serial '%s' for %s\n", s.c_str(), g.id.c_str());
+                CHECK(ok);
+            }
+        }
+        const GameInfo* crash = find_game_for("ps1", "SCUS-94570", "");
+        CHECK(crash && crash->id == "crashbash");
+        CHECK(find_game_for("ps1", "scus-94570", "") == crash);   // case-insensitive, like the other systems
+        CHECK(find_game_for("ps2", "SCUS-94570", "") == nullptr); // scoped to the system
+    }
+
     CHECK(find_game("nope") == nullptr);
     CHECK(find_game("") == nullptr);
 }
@@ -203,7 +228,7 @@ static void test_catalog_integrity() {
         CHECK(!g.nointro.empty());  // cover-art name; may be a base game's name for hacks
         CHECK(ids.insert(g.id).second);  // unique catalog id
         CHECK(g.system == "n64" || g.system == "gba" || g.system == "gb" || g.system == "gbc" || g.system == "nds" ||
-              g.system == "3ds" || g.system == "wiiu" || g.system == "gc");
+              g.system == "3ds" || g.system == "wiiu" || g.system == "gc" || g.system == "ps1" || g.system == "ps2");
         CHECK(g.max_players >= 1 && g.max_players <= 4);
         CHECK(!g.online || g.max_players >= 2);  // online only makes sense for multiplayer
         for (const auto& s : g.serials) {
@@ -213,6 +238,8 @@ static void test_catalog_integrity() {
                 CHECK(s.size() == 16);  // Wii U title id
             else if (g.system == "gc")
                 CHECK(s.size() == 6);   // GameCube disc ID
+            else if (g.system == "ps1" || g.system == "ps2")
+                CHECK(s.size() == 10);  // Redump serial, e.g. SCUS-94570 (format checked below)
             else
                 CHECK(s.size() == 4);  // N64 game ID / GBA / 3DS game code
             CHECK(serial_keys.insert(g.system + ":" + lower(s)).second);  // unique per system
