@@ -373,6 +373,12 @@ int main() {
         PortPlan d = build_ports({{0, 2}, {1, 2}, {2, 2}, {3, 2}});
         CHECK(d.ports == "0,1,2,3" && d.players == 4);
         CHECK(build_ports({{0, 9}}).ports == "0,0,-1,-1");
+        /* slots with gaps after leaves / local pads on one PC / 3-4 players */
+        { PortPlan g = build_ports({{3, 1}, {0, 1}, {1, 1}}); CHECK(g.ports == "0,1,3,-1" && g.players == 3); }
+        { PortPlan g = build_ports({{0, 1}, {2, 2}, {3, 1}}); CHECK(g.ports == "0,2,2,3" && g.players == 3 && g.locals[1] == 2); }
+        { Json pj; std::string pp; int pn = 0; CHECK(json::parse("{\"ports\":[0,2,2,3],\"players\":3}", &pj) && parse_launch_plan(pj, &pp, &pn) && pp == "0,2,2,3" && pn == 3); }
+        CHECK(invite_room_left(4, 4) == 0 && invite_room_left(2, 2) == 0 && invite_room_left(1, 4) == 3 && invite_room_left(3, 9) == 1);
+        CHECK(invite_room_block(1, 4, 3).empty() && !invite_room_block(4, 4, 1).empty() && !invite_room_block(2, 4, 3).empty() && invite_room_block(1, 2, 1).empty());
         CHECK(delay_arg(0) == " --delay auto" && delay_arg(3) == " --delay 3" && delay_arg(99) == " --delay 8");
         CHECK(launch_json("g", 1, 0, 5, "", true).find("\"share_save\":true") != std::string::npos);
         /* host-owned port plan travels in the launch message */

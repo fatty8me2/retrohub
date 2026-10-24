@@ -251,6 +251,10 @@ struct PortPlan {
 /* Members sorted by slot; each gets `locals` (clamped 1-2) consecutive ports; total capped at 4 (every
  * member keeps one port first, extra pads are granted in slot order while ports remain). */
 PortPlan build_ports(std::vector<MemberPads> members);
+/* How many more friends the room can take for the selected game (cap = min(4, game cap)); 0 = full. */
+int invite_room_left(int members, int game_max);
+/* "" when inviting `wanted` more friends fits; else the sentence to show ("The room is full (2/2 for this game)."). */
+std::string invite_room_block(int members, int game_max, int wanted);
 /* The HOST builds the plan once and ships it in the launch message ("ports":[4 owner slots or -1],
  * "players":n) so every PC passes identical --ports/--players. Guests call this: true + the --ports string and
  * player count when the message carries a well-formed plan (4 entries in -1..3, players == number of distinct

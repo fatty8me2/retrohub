@@ -280,7 +280,7 @@ void page_online_room() {
         for (auto& e : A.lib)
             if (supports_online(e)) { A.selected_game = room_id(e); if (e.title.find("Kart") != std::string::npos) break; }
     }
-    if (!g_fake_room && A.lobby.failed()) {
+    if (g_shot_rejoin || (!g_fake_room && A.lobby.failed())) {
         // banner-styled failure strip: reason on the left, Rejoin where the action button normally sits
         float W = ImGui::GetContentRegionAvail().x, H = 108 * S;
         ImVec2 p0 = ImGui::GetCursorScreenPos(), p1 = p0 + ImVec2(W, H);
@@ -293,7 +293,7 @@ void page_online_room() {
         float tx = p0.x + 24 * S, tw = bp.x - tx - 16 * S;
         ImFont* hf = ui::F.title ? ui::F.title : ui::F.h2;
         dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 10 * S), ui::TEXT, "Disconnected from the room");
-        auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), A.lobby.status(), tw, 2);
+        auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), g_shot_rejoin ? g_shot_rejoin_why : A.lobby.status(), tw, 2);
         float ly = p0.y + 10 * S + hf->FontSize + 6 * S;
         for (auto& l : lines) { dl->AddText(ImVec2(tx, ly), ui::TEXT2, l.c_str()); ly += ImGui::GetFontSize() + 2 * S; }
         ImGui::SetCursorScreenPos(bp);
