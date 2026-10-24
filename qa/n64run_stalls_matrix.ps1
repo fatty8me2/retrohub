@@ -12,6 +12,7 @@ param(
     [string]$TestInput = 'random:1',
     [Parameter(Mandatory = $true)][string]$RomDir
 )
+. "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = 'Continue'
 $rh      = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $romDir  = $RomDir

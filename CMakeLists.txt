@@ -66,7 +66,7 @@ add_subdirectory(src/hub)
 # Offline (no network, no emulator): ctest -C Release -LE online
 # Online (hit the live netplay/friends server): ctest -C Release -L online
 enable_testing()
-# Online tests read RETROHUB_TEST_SERVER at run time (env var > production default in hubnet::default_server()).
+# Online tests require RETROHUB_TEST_SERVER (a LOCAL worker) at run time; production is refused unless RETROHUB_ALLOW_PROD_TESTS=1.
 # Nothing is baked into the command lines, so set the env var when running ctest; never configure a URL here.
 
 add_test(NAME json_test COMMAND json_test)

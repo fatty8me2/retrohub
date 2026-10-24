@@ -9,6 +9,7 @@ param(
   [string]$Game = "pokex", [int]$Seconds = 150, [string]$Server = "ws://127.0.0.1:8793", [switch]$Relay,
   [string]$Code = "", [string]$Desktop = "rh3ds_room"
 )
+. "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = "Stop"
 Add-Type -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
@@ -44,9 +45,9 @@ for ($i = 0; $i -lt 2; $i++) {
   }
   Set-Content "$az\retrohub-install.txt" "autotest" -Encoding ascii
   $v = ($d -replace '\\', '/')
-  $json = '{"name":"At' + $i + '","rom_folders":["' + ($RomDir -replace '\\', '/') + '"],"server":"' + $Server + '","vault_dir":"' + $v + '/vault","sync_auto":false,"cloud_saves":false}'
+  $json = '{"name":"qa-At' + $i + '","rom_folders":["' + ($RomDir -replace '\\', '/') + '"],"server":"' + $Server + '","vault_dir":"' + $v + '/vault","sync_auto":false,"cloud_saves":false}'
   Set-Content "$d\userdata\hub.json" $json -Encoding ascii
-  $env:RETROHUB_AUTOTEST = $role; $env:RETROHUB_AUTOTEST_CODE = $Code; $env:RETROHUB_AUTOTEST_NAME = "At$i"
+  $env:RETROHUB_AUTOTEST = $role; $env:RETROHUB_AUTOTEST_CODE = $Code; $env:RETROHUB_AUTOTEST_NAME = "qa-At$i"
   $env:RETROHUB_AUTOTEST_GAME = $Game; $env:RETROHUB_AUTOTEST_PLAYERS = "2"
   $env:RETROHUB_ALLOW_VERSION_MISMATCH = "1"; $env:RETROHUB_NO_UPDATE_CHECK = "1"
   if ($Relay) { $env:HUBNET_FORCE_RELAY = "1" } else { Remove-Item Env:HUBNET_FORCE_RELAY -ErrorAction SilentlyContinue; $env:HUBNET_LOOPBACK = "1" }

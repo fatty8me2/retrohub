@@ -13,6 +13,7 @@ param(
     [switch]$Relay,
     [string]$Tag = 'hostsave'
 )
+. "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $root 'build\bin\Release\retrorun.exe'

@@ -4,10 +4,11 @@
 param(
     [Parameter(Mandatory = $true)][string]$Rom,
     [int]$Frames = 1500,
-    [string]$Server = "wss://smash-netplay.jumpcircuit.workers.dev",
+    [string]$Server = "ws://127.0.0.1:8761",
     [int]$Players = 2,
     [switch]$Relay
 )
+. "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $root = Split-Path $PSScriptRoot -Parent
 $exe = Join-Path $root "build\bin\Release\retrorun.exe"
 $core = Join-Path $root "deps\cores\melondsds_libretro.dll"

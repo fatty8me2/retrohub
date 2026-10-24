@@ -577,10 +577,12 @@ struct FriendsClient::Impl {
         backoff_ms = std::min<uint32_t>(backoff_ms * 2, 30000);
     }
 
+    /* QA/test clients are never auto-friended to the owner by the server. */
+    bool is_test_client() const { return is_qa_run() || name.rfind("qa-", 0) == 0; }
     void send_hello()
     {
         hello_sent = true;
-        ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\"}");
+        ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\"" + (is_test_client() ? ",\"test\":true" : "") + "}");
     }
 
     void normalize_lists() { dedupe_friends(friends, id.user_id); dedupe_requests(friends, incoming, outgoing, id.user_id); }

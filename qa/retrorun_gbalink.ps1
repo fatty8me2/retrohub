@@ -10,6 +10,7 @@ param(
     [switch]$Bad,      # simulated bad network: 60 ms +/- 30 ms, 5% loss
     [string]$Tag = 'link'
 )
+. "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root

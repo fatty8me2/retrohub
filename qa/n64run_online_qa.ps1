@@ -5,7 +5,7 @@
 #
 # Usage:
 #   powershell -File qa\n64run_online_qa.ps1                 (offline-safe checks only)
-#   powershell -File qa\n64run_online_qa.ps1 -Server wss://smash-netplay.jumpcircuit.workers.dev
+#   powershell -File qa\n64run_online_qa.ps1 -Server ws://127.0.0.1:8761
 #   $env:HUBNET_FORCE_RELAY=1 ... (forces the WebSocket relay path for the live tests)
 param(
     [string]$Server = '',
@@ -14,6 +14,7 @@ param(
     [int]$Frames = 1800,
     [string]$TestInput = ''   # e.g. random:42 -> peers get scripted pseudo-random input
 )
+. "$PSScriptRoot\_guard.ps1"; if ($Server) { Assert-LocalServer $Server }
 
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
