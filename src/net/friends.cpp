@@ -383,7 +383,7 @@ struct FriendsClient::Impl {
     bool started = false, hello_sent = false, welcomed = false, gave_up = false;
     std::string status_text = "Offline";
     uint32_t last_keepalive = 0, reconnect_at = 0, backoff_ms = 1000, last_flush = 0;
-    bool have_status = false;
+    bool have_status = false, auto_friend = true;
     Status my_status;
 
     std::vector<Friend> friends;
@@ -582,7 +582,7 @@ struct FriendsClient::Impl {
     void send_hello()
     {
         hello_sent = true;
-        ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\"" + (is_test_client() ? ",\"test\":true" : "") + "}");
+        ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\",\"auto_friend\":" + (auto_friend ? "true" : "false") + (is_test_client() ? ",\"test\":true" : "") + "}");
     }
 
     void normalize_lists() { dedupe_friends(friends, id.user_id); dedupe_requests(friends, incoming, outgoing, id.user_id); }
@@ -733,6 +733,7 @@ struct FriendsClient::Impl {
             if (f.uid == id.user_id) return false;
             if (Friend* old = find(f.uid)) *old = f; else friends.push_back(f);
             Event e; e.kind = Event::FriendAdded; e.uid = f.uid; e.name = f.name; e.text = f.code;
+            e.automatic = jbool(j, "auto");
             push_event(std::move(e));
         } else if (type == "friend_removed") {
             std::string uid = j.str("uid");
@@ -959,6 +960,12 @@ bool FriendsClient::connected() const { return impl_->welcomed; }
 std::string FriendsClient::status_text() const { return impl_->status_text; }
 std::string FriendsClient::my_code() const { return friend_code(impl_->id.user_id); }
 std::string FriendsClient::my_uid() const { return impl_->id.user_id; }
+std::string FriendsClient::my_secret() const { return impl_->id.secret; }
+void FriendsClient::set_auto_friend(bool on)
+{
+    impl_->auto_friend = on;
+    impl_->send(std::string("{\"type\":\"prefs\",\"auto_friend\":") + (on ? "true" : "false") + "}");
+}
 std::set<std::string> FriendsClient::retired_ids() const { return read_retired_ids(impl_->data_dir); }
 
 void FriendsClient::set_status(const Status& s)

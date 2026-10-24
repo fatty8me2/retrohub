@@ -74,6 +74,8 @@ void fr_mark_read(const std::string& uid);
 bool fr_connected();
 std::string fr_status_text();
 std::string fr_my_code();
+void fr_set_auto_friend(bool on);        // Settings toggle: tells the server (also sent in every hello)
+std::string fr_lobby_ident_msg();        // "ident" frame for the lobby socket ("" when there is no account yet)
 const hubnet::Friend* fr_find(const std::string& uid);
 hubui::FriendRow fr_row(const hubnet::Friend& f);
 ImU32 fr_state_col(int st);

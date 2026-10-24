@@ -81,6 +81,7 @@ struct Event {
     std::string text;         // RequestResolved: "accepted"|"declined"|"cancelled"; Error: reason
     Message msg;              // MessageReceived / InviteReceived
     Invite invite;            // InviteReceived
+    bool automatic = false;   // FriendAdded: made by the server because you joined a room / played together
     std::string detail;       // Error: the server's "detail" (e.g. "friends-full"); empty if none
     std::vector<std::string> ok_uids, failed_uids;   // InviteResult: per-target delivery outcome
     std::vector<std::string> failed_reasons;         // InviteResult: parallel to failed_uids
@@ -132,6 +133,9 @@ class FriendsClient {
     std::string status_text() const;      // "Connecting...", "Online", "Reconnecting in 4s", ...
     std::string my_code() const;          // "RH-XXXX-XXXX" (known immediately after start)
     std::string my_uid() const;
+    std::string my_secret() const;        // the account secret (only for authenticating the lobby seat)
+    /* "Automatically add people I play with as friends": sent in every hello and live via "prefs". Default on. */
+    void set_auto_friend(bool on);
     std::set<std::string> retired_ids() const;   // uids the server confirmed replaced (retired-ids.txt)
 
     /* actions (ignored/queued-as-dropped while disconnected, except set_status/rename which
