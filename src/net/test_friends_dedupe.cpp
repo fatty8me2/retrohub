@@ -60,19 +60,46 @@ int main()
         CHECK(in.size() == 2 && in[0].uid == "x" && in[0].at == 5 && in[1].uid == "both");
         CHECK(out.size() == 1 && out[0].uid == "y");
     }
-    {   // same name, different uid (a person's old identity that was never retired)
+    {   // same name, different uid: only the 7-day-older-and-offline rule applies, and it is never "confirmed"
         const int64_t DAY = 86400 * 1000LL;
         std::vector<Friend> v = {mk("old", "Camer", PresenceState::Offline, 100 * DAY, 1 * DAY), mk("new", "camer ", PresenceState::Online, 200 * DAY, 90 * DAY),
                                  mk("solo", "Solo", PresenceState::Offline, 1, 1)};
         auto st = stale_same_name(v);
-        CHECK(st.size() == 1 && st[0] == "old");
+        CHECK(st.size() == 1 && st[0].uid == "old" && !st[0].confirmed);
         std::vector<Friend> both_off = {mk("a", "Mike", PresenceState::Offline, 50 * DAY, 1), mk("b", "Mike", PresenceState::Offline, 51 * DAY, 1)};
         CHECK(stale_same_name(both_off).empty());   // two real Mikes seen a day apart: keep both
         std::vector<Friend> far = {mk("a", "Mike", PresenceState::Offline, 10 * DAY, 1), mk("b", "mike", PresenceState::Offline, 50 * DAY, 1)};
         auto sf = stale_same_name(far);
-        CHECK(sf.size() == 1 && sf[0] == "a");      // one has been gone for 40 days
+        CHECK(sf.size() == 1 && sf[0].uid == "a" && !sf[0].confirmed);      // one has been gone for 40 days
         std::vector<Friend> two_on = {mk("a", "Ann", PresenceState::Online, 1, 1), mk("b", "Ann", PresenceState::Online, 2, 1)};
         CHECK(stale_same_name(two_on).empty());     // both present: never hide
+        // an online same-name entry alone is NOT evidence (a different Kai who is online right now, the other seen 2 days ago)
+        std::vector<Friend> kai = {mk("k1", "Kai", PresenceState::Offline, 98 * DAY, 1), mk("k2", "Kai", PresenceState::Online, 100 * DAY, 1)};
+        CHECK(stale_same_name(kai).empty());
+        // confirmed (retired) identities are flagged regardless of the gap; the unconfirmed one is never promoted to confirmed
+        std::set<std::string> ret = {"k1"};
+        auto sc = stale_same_name(kai, ret);
+        CHECK(sc.size() == 1 && sc[0].uid == "k1" && sc[0].confirmed);
+        // three Kais: one retired, one genuinely different but seen recently, one online. Only the retired is bulk-removable.
+        std::vector<Friend> three = {mk("r", "Kai", PresenceState::Offline, 5 * DAY, 1), mk("d", "Kai", PresenceState::Offline, 98 * DAY, 1),
+                                     mk("o", "Kai", PresenceState::Online, 100 * DAY, 1)};
+        auto s3 = stale_same_name(three, {"r"});
+        int conf = 0, unconf = 0;
+        for (auto& e : s3) (e.confirmed ? conf : unconf)++;
+        CHECK(conf == 1 && unconf == 0);            // d was seen 2 days before o: not stale
+        // a retired entry never becomes the keeper that hides a live one
+        std::vector<Friend> keeper_retired = {mk("r", "Zed", PresenceState::Online, 100 * DAY, 1), mk("l", "Zed", PresenceState::Offline, 1, 1)};
+        CHECK(stale_same_name(keeper_retired, {"r"}).empty());
+        // retired-ids.txt round trip
+        namespace fs = std::filesystem;
+        fs::path rd = fs::temp_directory_path() / "rh_retired_ids_test";
+        std::error_code ec2;
+        fs::remove_all(rd, ec2);
+        fs::create_directories(rd, ec2);
+        { std::ofstream o(rd / "retired-ids.txt", std::ios::binary); o << "abc\r\n\n\r\n\ndef\n"; }
+        auto rs = read_retired_ids(rd.string());
+        CHECK(rs.size() == 2 && rs.count("abc") && rs.count("def"));
+        fs::remove_all(rd, ec2);
     }
     {   // every older identity on the PC is found (pending file, backups, vault), minus the current and the confirmed ones
         namespace fs = std::filesystem;

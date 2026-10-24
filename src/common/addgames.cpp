@@ -60,7 +60,33 @@ std::string console_folder(System s) {
     }
 }
 
-std::string games_root(const std::vector<std::string>& rom_folders, const std::string& documents_dir) {
+bool is_absolute_path(const std::string& p) {
+    if (p.size() >= 3 && std::isalpha((unsigned char)p[0]) && p[1] == ':' && (p[2] == '\\' || p[2] == '/')) return true;
+    return p.size() >= 3 && p[0] == '\\' && p[1] == '\\';
+}
+
+std::set<std::string> index_keys(const std::string& root, const std::atomic<bool>* stop) {
+    std::set<std::string> keys;
+    std::error_code ec;
+    if (root.empty() || !fs::is_directory(P(root), ec)) return keys;
+    for (fs::recursive_directory_iterator it(P(root), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        if (stop && *stop) break;
+        std::error_code fe;
+        if (!it->is_regular_file(fe)) continue;
+        std::string p = U8(it->path());
+        if (!is_game_file(p)) continue;
+        GameEntry g;
+        if (identify_game(p, &g) && !g.key.empty()) keys.insert(g.key);
+    }
+    return keys;
+}
+
+std::string games_root(const std::vector<std::string>& rom_folders, const std::string& documents_dir, const std::string& custom_root) {
+    if (is_absolute_path(custom_root)) {
+        std::string t = custom_root;
+        while (t.size() > 3 && (t.back() == '\\' || t.back() == '/')) t.pop_back();
+        return t;
+    }
     for (const std::string& f : rom_folders)
         if (lower(leaf_of(f)) == "retrohub games") {
             std::string t = f;
@@ -104,7 +130,7 @@ std::string summary_text(const std::vector<Item>& items) {
     };
     std::string out;
     int a = count_outcome(items, Outcome::Added), d = count_outcome(items, Outcome::Duplicate);
-    int f = count_outcome(items, Outcome::Failed), u = count_outcome(items, Outcome::Unsupported);
+    int f = count_outcome(items, Outcome::Failed), u = count_outcome(items, Outcome::Unsupported), c = count_outcome(items, Outcome::Cancelled);
     auto line = [&](const std::string& s) { out += (out.empty() ? "" : "\n") + s; };
     if (a) line("Added " + std::to_string(a) + (a == 1 ? " game: " : " games: ") + names(Outcome::Added));
     int other = 0;
@@ -117,6 +143,7 @@ std::string summary_text(const std::vector<Item>& items) {
         for (const Item& i : items) if (i.outcome == Outcome::Failed) { first = i.message; break; }
         line("Could not add " + names(Outcome::Failed) + (first.empty() ? "" : " - " + first));
     }
+    if (c) line("Cancelled: " + names(Outcome::Cancelled));
     if (out.empty()) out = "Nothing to add.";
     return out;
 }
@@ -176,6 +203,10 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
         uint64_t sz = fs::file_size(P(f), e2);
         if (!e2) bytes_total_ += sz;
     }
+    {   // fresh hash index of what is already in the destination, never an unfinished library scan
+        std::set<std::string> fresh = index_keys(root, &cancel_);
+        known_keys.insert(fresh.begin(), fresh.end());
+    }
     for (size_t i = 0; i < files.size() && !cancel_; ++i) {
         const std::string& src = files[i];
         file_idx_ = (int)i + 1;
@@ -222,7 +253,8 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
         bool ok = copy_file(src, it.dest, &counted, [&](uint64_t d, uint64_t) { bytes_done_ = base + d; return !cancel_; }, &err);
         bytes_done_ = base + size;
         if (ok) finish(Outcome::Added, "");
-        else if (err != "cancelled") finish(Outcome::Failed, err);
+        else if (err == "cancelled") finish(Outcome::Cancelled, "cancelled");
+        else finish(Outcome::Failed, err);
     }
     done_ = true;
 }
