@@ -134,6 +134,38 @@ int main() {
     items = run_job({(in / "mario.z64").string()}, (base / "afile").string(), {});
     CHECK(items.size() == 1 && items[0].outcome == Outcome::Failed);
 
+    // custom destination wins when absolute; relative/empty fall back
+    CHECK(games_root({"D:\\mine"}, "C:\\Docs", "E:\\MyGames\\") == "E:\\MyGames");
+    CHECK(games_root({"D:\\mine"}, "C:\\Docs", "rel\\x") == "C:\\Docs\\RetroHub Games" && is_absolute_path("\\\\nas\\share") && !is_absolute_path(""));
+    // dedupe against a FRESH hash index of the destination even when the caller knows no keys (unfinished library scan)
+    {
+        fs::remove_all(root, ec);
+        wr(root / "Nintendo 64" / "renamed.z64", n64);
+        auto idx = index_keys(root.string());
+        CHECK(idx.count(g64.key) == 1);
+        items = run_job({(in / "mario.z64").string()}, root.string(), {});
+        CHECK(items.size() == 1 && items[0].outcome == Outcome::Duplicate);
+        CHECK(!fs::exists(root / "Nintendo 64" / "mario.z64"));
+        CHECK(index_keys((base / "nope").string()).empty());
+    }
+    // a cancelled in-flight file is reported as cancelled (not failed), with no partial file left behind
+    {
+        fs::remove_all(root, ec);
+        wr(in / "big.z64", make_n64("BIG GAME", 77));
+        { std::ofstream f(in / "big.z64", std::ios::binary | std::ios::app); Bytes pad = noise(1 << 20, 5); for (int i = 0; i < 48; ++i) f.write((const char*)pad.data(), (std::streamsize)pad.size()); }
+        Job j;
+        j.start({(in / "big.z64").string()}, root.string(), {});
+        while (j.file_index() < 1 && !j.done()) std::this_thread::yield();
+        j.cancel();
+        j.join();
+        items = j.items();
+        CHECK(count_outcome(items, Outcome::Failed) == 0);
+        for (auto& it : items) if (it.outcome != Outcome::Added) CHECK(it.outcome == Outcome::Cancelled && it.message == "cancelled");
+        CHECK(!fs::exists(root / "Nintendo 64" / "big.z64.part"));
+        Item c; c.src = "x.z64"; c.title = "X"; c.outcome = Outcome::Cancelled;
+        CHECK(summary_text({c}).find("Cancelled: X") == 0 && summary_text({c}).find("Could not") == std::string::npos);
+    }
+
     // copy_file: progress + cancel leaves no partial file
     {
         std::string err;

@@ -235,14 +235,7 @@ std::vector<Identity> older_identities(const std::string& data_dir, const std::s
     std::vector<Identity> out;
     std::set<std::string> skip;
     std::string dd = with_sep(data_dir);
-    {   // uids the server already confirmed retired
-        std::string text;
-        if (read_file(dd + "retired-ids.txt", &text)) {
-            std::istringstream in(text);
-            std::string line;
-            while (std::getline(in, line)) { while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back(); if (!line.empty()) skip.insert(line); }
-        }
-    }
+    skip = read_retired_ids(data_dir);   // uids the server already confirmed retired
     auto take = [&](const fs::path& p) {
         Identity t;
         if (!identity_read(p.u8string(), &t)) return;
@@ -343,23 +336,40 @@ static std::string name_key(const std::string& n)
     return a == std::string::npos ? std::string() : k.substr(a, b - a + 1);
 }
 
-std::vector<std::string> stale_same_name(const std::vector<Friend>& friends, int64_t gap_ms)
+std::set<std::string> read_retired_ids(const std::string& data_dir)
+{
+    std::set<std::string> out;
+    std::string text;
+    if (!read_file(with_sep(data_dir) + "retired-ids.txt", &text)) return out;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back();
+        if (!line.empty()) out.insert(line);
+    }
+    return out;
+}
+
+std::vector<StaleEntry> stale_same_name(const std::vector<Friend>& friends, const std::set<std::string>& retired, int64_t gap_ms)
 {
     std::map<std::string, std::vector<const Friend*>> groups;
     for (const Friend& f : friends) { std::string k = name_key(f.name); if (!k.empty()) groups[k].push_back(&f); }
-    std::vector<std::string> out;
+    std::vector<StaleEntry> out;
+    auto seen = [](const Friend* x) { return std::max(x->status.updated, x->since); };
     for (auto& g : groups) {
         if (g.second.size() < 2) continue;
-        const Friend* keep = g.second[0];
+        const Friend* keep = nullptr;   // freshest entry that is not a confirmed-retired identity
         for (const Friend* f : g.second) {
+            if (retired.count(f->uid)) continue;
+            if (!keep) { keep = f; continue; }
             int rf = presence_rank(f->status.state), rk = presence_rank(keep->status.state);
             if (rf != rk ? rf > rk : f->status.updated > keep->status.updated) keep = f;
         }
+        if (!keep) continue;
         for (const Friend* f : g.second) {
             if (f == keep || f->status.state != PresenceState::Offline) continue;
-            bool keeper_present = presence_rank(keep->status.state) > 0;
-            auto seen = [](const Friend* x) { return std::max(x->status.updated, x->since); };
-            if (keeper_present || seen(keep) - seen(f) >= gap_ms) out.push_back(f->uid);
+            if (retired.count(f->uid)) out.push_back({f->uid, true});                   // the server confirmed this identity was replaced
+            else if (seen(keep) - seen(f) >= gap_ms) out.push_back({f->uid, false});   // heuristic only: needs a per-entry confirm
         }
     }
     return out;
@@ -937,6 +947,7 @@ bool FriendsClient::connected() const { return impl_->welcomed; }
 std::string FriendsClient::status_text() const { return impl_->status_text; }
 std::string FriendsClient::my_code() const { return friend_code(impl_->id.user_id); }
 std::string FriendsClient::my_uid() const { return impl_->id.user_id; }
+std::set<std::string> FriendsClient::retired_ids() const { return read_retired_ids(impl_->data_dir); }
 
 void FriendsClient::set_status(const Status& s)
 {

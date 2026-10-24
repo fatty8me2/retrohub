@@ -25,13 +25,21 @@ static void fr_refresh_lists() {
     hubnet::dedupe_friends(FR.d_friends, me);
     hubnet::dedupe_requests(FR.d_friends, FR.d_in, FR.d_out, me);
     FR.d_stale.clear();
+    FR.d_ask.clear();
     if (!FR.show_dupes) {
-        std::vector<std::string> stale = hubnet::stale_same_name(FR.d_friends);
+        std::set<std::string> retired;
+        if (!FR.fake && FR.started) retired = FR.cli.retired_ids();
+        std::vector<hubnet::StaleEntry> stale = hubnet::stale_same_name(FR.d_friends, retired);
         if (!stale.empty()) {
             std::vector<hubnet::Friend> keep;
             for (auto& f : FR.d_friends) {
-                if (std::find(stale.begin(), stale.end(), f.uid) != stale.end()) FR.d_stale.push_back(f);
-                else keep.push_back(f);
+                const hubnet::StaleEntry* e = nullptr;
+                for (auto& s : stale) if (s.uid == f.uid) e = &s;
+                if (e && e->confirmed) FR.d_stale.push_back(f);
+                else {
+                    if (e && !FR.kept_uids.count(f.uid)) FR.d_ask.push_back(f);
+                    keep.push_back(f);
+                }
             }
             FR.d_friends = std::move(keep);
         }
@@ -1101,12 +1109,12 @@ void fr_draw_panel(float disp_w, float disp_h) {
         for (auto& f : fr_friends()) rows.push_back(fr_row(f));
         hubui::FriendGroups g = hubui::group_friends(rows);
         const auto& fl = fr_friends();
-        if (!FR.d_stale.empty()) {   // old identities of people who are also listed under a newer one
+        if (!FR.d_stale.empty()) {   // identities the server confirmed were replaced by a newer one
             ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
             ImGui::PushTextWrapPos(lw);
             std::string names;
             for (auto& f : FR.d_stale) names += (names.empty() ? "" : ", ") + f.name;
-            ImGui::TextUnformatted(("These look like the same person on another account: " + names + ". Merge?").c_str());
+            ImGui::TextUnformatted(("These are old accounts of people also listed under a newer one: " + names + ". Merge?").c_str());
             ImGui::PopTextWrapPos();
             ImGui::PopStyleColor();
             ImVec2 bp = ImGui::GetCursorScreenPos();
@@ -1119,6 +1127,26 @@ void fr_draw_panel(float disp_w, float disp_h) {
                 FR.d_frame = -1;
             }
             if (fr_pill_button("keepboth", "Keep both", ImVec2(bp.x + pw + sp(1.f), bp.y), bh, false, true, nullptr)) { FR.show_dupes = true; FR.d_frame = -1; }
+            ImGui::Dummy(ImVec2(0, bh + sp(1.f)));
+        }
+        if (!FR.d_ask.empty()) {   // guesses only: one person at a time, never a bulk removal
+            const hubnet::Friend af = FR.d_ask[0];   // copy: the list is rebuilt when we act
+            long long now_ms = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            long long seen_ms = std::max(af.status.updated, af.since);
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+            ImGui::PushTextWrapPos(lw);
+            ImGui::TextUnformatted(("Remove the old '" + af.name + "' (last seen " + (seen_ms > 0 ? hubui::format_ago_ms(now_ms, seen_ms) : std::string("a while ago")) +
+                                    ")? Another friend with the same name was seen more recently. They may be a different person.").c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+            ImVec2 bp = ImGui::GetCursorScreenPos();
+            float bh = sp(3.f), pw = 0;
+            if (fr_pill_button("askrm", "Remove", bp, bh, true, true, &pw)) {
+                if (FR.fake) { for (size_t i = 0; i < FR.f_friends.size(); ++i) if (FR.f_friends[i].uid == af.uid) { FR.f_friends.erase(FR.f_friends.begin() + i); break; } }
+                else FR.cli.remove_friend(af.uid);
+                FR.d_frame = -1;
+            }
+            if (fr_pill_button("askkeep", "Keep", ImVec2(bp.x + pw + sp(1.f), bp.y), bh, false, true, nullptr)) { FR.kept_uids.insert(af.uid); FR.d_frame = -1; }
             ImGui::Dummy(ImVec2(0, bh + sp(1.f)));
         }
         if (!g.online.empty()) {
