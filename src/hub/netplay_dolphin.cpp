@@ -205,11 +205,13 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
 /* ---------- UIA driver ---------- */
 const char* driver_script() {
     return R"PS(
-param([string]$Role, [int]$DolphinPid, [string]$Status, [string]$Suffix, [int]$Players = 2, [int]$DelayS = 0, [int]$TimeoutS = 150, [string]$Code = "")
+param([string]$Role, [int]$DolphinPid, [string]$Status, [string]$Suffix, [int]$Players = 2, [int]$DelayS = 0, [int]$TimeoutS = 150, [string]$Code = "", [int]$NoCode = 0)
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $UA = [System.Windows.Automation.AutomationElement]; $TS = [System.Windows.Automation.TreeScope]
 $CT = [System.Windows.Automation.ControlType]
-function Say($t) { Add-Content -Encoding ascii $Status $t }
+function Say($t) {   # RetroHub reads this file while we append: retry on a sharing violation, a lost "stage:" line would stall the whole room
+  for ($k = 0; $k -lt 40; $k++) { try { [System.IO.File]::AppendAllText($Status, $t + "`r`n"); return } catch { Start-Sleep -Milliseconds 100 } }
+}
 function Top($pid_) {
   $pc = New-Object System.Windows.Automation.PropertyCondition($UA::ProcessIdProperty, $pid_)
   $UA::RootElement.FindAll($TS::Children, $pc)
@@ -225,7 +227,7 @@ function Click($el) { $el.GetCurrentPattern([System.Windows.Automation.InvokePat
 function Mini($w) { try { $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Minimized) } catch {} }
 try {
   Say "stage:driver-start"
-  $main = Wait-For { foreach ($w in (Top $DolphinPid)) { if ($w.Current.Name -match '^Dolphin \S+$') { return $w } } } 40
+  $main = Wait-For { foreach ($w in (Top $DolphinPid)) { if ($w.Current.ClassName -eq "MainWindow" -or $w.Current.Name -match '^Dolphin \S+$') { return $w } } } 60   # the title can still be the Qt app name ("dolphin-emu") on a fresh user dir, so match the class too
   if (-not $main) { Say "error:no Dolphin main window"; exit 1 }
   if ($DelayS -gt 0) { Start-Sleep $DelayS }
   $tools = El $main "Tools" $CT::MenuItem
@@ -252,8 +254,10 @@ try {
   Mini $np
   if ($Role -eq "host") {
     $c = New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::Text)
-    $code = Wait-For { foreach ($t in $np.FindAll($TS::Descendants, $c)) { $n = $t.Current.Name; if ($n -match '^[0-9A-Fa-f]{8}$') { return $n } } } 60
-    if ($code) { Say "code:$code" }
+    if (-not $NoCode) {   # direct mode has no host code to read
+      $code = Wait-For { foreach ($t in $np.FindAll($TS::Descendants, $c)) { $n = $t.Current.Name; if ($n -match '^[0-9A-Fa-f]{8}$') { return $n } } } 60
+      if ($code) { Say "code:$code" }
+    }
     $end = (Get-Date).AddSeconds($TimeoutS)
     $rows = 0
     while ((Get-Date) -lt $end) {
@@ -264,6 +268,12 @@ try {
       Start-Sleep 2
     }
     Start-Sleep -Seconds 3
+    try {   # evidence for pad-port order: the player table (name, ping, pad mapping) in connection order
+      $tbl2 = $np.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::Table)))
+      $cells = @(); foreach ($e in $tbl2.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) { if ($e.Current.Name) { $cells += $e.Current.Name } }
+      Say ("table:" + ($cells -join "|"))
+    } catch { Say "table:unreadable" }
+    Start-Sleep -Seconds 3
     Click (El $np "Start" $CT::Button)
     Say "stage:started"
   } else {
@@ -272,11 +282,15 @@ try {
   # watch: a RenderWidget window means the game runs; keep the chat for desync reports
   $g = Wait-For { foreach ($w in (Top $DolphinPid)) { if ($w.Current.ClassName -eq "RenderWidget") { return $w } } } 90
   if ($g) { Say "stage:in-game" } else { Say "error:game did not start" }
+  $t0 = Get-Date
+  $beat = 0
   while (Get-Process -Id $DolphinPid -ErrorAction SilentlyContinue) {
+    $beat += 5
+    if ($beat % 15 -eq 0) { Say ("alive:" + [int]((Get-Date) - $t0).TotalSeconds) }   # heartbeat: seconds since the game started
     try {
       $chat = El $np "Chat" $CT::Text
       $txt = $chat.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(-1)
-      if ($txt -match '(?i)desync') { Say ("desync:" + ($txt -replace '\s+', ' ')) }
+      if ($txt -match '(?i)desync|out of sync') { Say ("desync:" + ($txt -replace '\s+', ' ')) }
     } catch {}
     Start-Sleep 5
   }
@@ -319,7 +333,7 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
     if (!spawn(cmd, W(exe_dir), wd, desktop.empty(), &out->dolphin_pid)) { out->error = "could not start Dolphin"; return false; }
     std::string args = std::string("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"") + script + "\" -Role " + (host ? "host" : "guest") +
                        " -DolphinPid " + std::to_string(out->dolphin_pid) + " -Status \"" + out->status_path + "\" -Suffix \"" +
-                       list_item_suffix(s) + "\" -Players " + std::to_string(s.players) + " -DelayS " + std::to_string(host ? 0 : guest_connect_delay_s(my_slot));
+                       list_item_suffix(s) + "\" -Players " + std::to_string(s.players) + " -DelayS " + std::to_string(host ? 0 : guest_connect_delay_s(my_slot)) + (s.mode == "direct" ? " -NoCode 1" : "");
     if (!spawn(L"powershell.exe " + W(args), W(work_dir), wd, false, &out->driver_pid)) { out->error = "could not start the NetPlay driver"; return false; }
     return true;
 }

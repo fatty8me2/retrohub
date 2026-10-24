@@ -66,6 +66,8 @@ int main() {
     CHECK(launch_fragment(s).rfind(",\"np_gc\":{", 0) == 0);
     CHECK(oh.find("UsePanicHandlers = False") != std::string::npos && oh.find("UpdateTrack =") != std::string::npos);
     CHECK(std::string(driver_script()).find("Start NetPlay...") != std::string::npos);
+    CHECK(std::string(driver_script()).find("ClassName -eq \"MainWindow\"") != std::string::npos);   // main window found by class even when the title is "dolphin-emu"
+    CHECK(std::string(driver_script()).find("$k -lt 40") != std::string::npos && std::string(driver_script()).find(" < 40") == std::string::npos);   // PowerShell has no < operator (it broke the driver once)
 
     /* memory cards + desync-prone settings: guests never write; host writes only if it chose to; strict sync + code sync forced */
     CHECK(oh.find("WriteSaveData = False") != std::string::npos);

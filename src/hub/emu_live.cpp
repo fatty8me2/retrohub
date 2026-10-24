@@ -73,12 +73,13 @@ static void save_bmp(const std::string& path, HWND h) {
 int main(int argc, char** argv) {
     SetConsoleOutputCP(CP_UTF8);
     std::string game_path, shots;
-    bool fs = false;
+    bool fs = false, esc = false;
     int fake_pads = -1;
     int seconds = 60;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--fullscreen") fs = true;
+        else if (a == "--esc") esc = true;   // press Escape (posted key messages) before the WM_CLOSE fallback; reports which one ended it
         else if (a == "--seconds" && i + 1 < argc) seconds = atoi(argv[++i]);
         else if (a == "--shots" && i + 1 < argc) shots = argv[++i];
         else if (a == "--pads" && i + 1 < argc) fake_pads = atoi(argv[++i]);
@@ -194,6 +195,21 @@ int main(int argc, char** argv) {
                             r.left, r.top, (int)((style & WS_CAPTION) == WS_CAPTION), (int)covers);
             }
         }
+    }
+    if (esc) {
+        WinFind f;
+        f.pids = job_pids(job);
+        EnumWindows(enum_cb, (LPARAM)&f);
+        for (HWND h : f.wins) { PostMessageW(h, WM_KEYDOWN, VK_ESCAPE, 0x00010001); PostMessageW(h, WM_KEYUP, VK_ESCAPE, 0xC0010001); }
+        std::printf("[%.1fs] posted Escape to %zu windows\n", stamp(), f.wins.size());
+        bool gone = false;
+        for (int i = 0; i < 12 && !gone; ++i) {
+            Sleep(500);
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION ji{};
+            QueryInformationJobObject(job, JobObjectBasicAccountingInformation, &ji, sizeof ji, nullptr);
+            gone = ji.ActiveProcesses == 0;
+        }
+        std::printf("[%.1fs] after Escape: emulator %s\n", stamp(), gone ? "EXITED" : "still running (Escape not delivered by key messages)");
     }
     // graceful close
     {
