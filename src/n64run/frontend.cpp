@@ -182,7 +182,11 @@ static bool parse_args(int argc, char** argv, Args& a) {
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
     }
     if (a.controls.empty()) { const char* e = std::getenv("RETROHUB_CONTROLS"); if (e && *e) a.controls = e; }
-    if (a.test_input.empty()) { const char* e = std::getenv("N64RUN_TEST_INPUT"); if (e && *e) a.test_input = e; }
+    if (a.test_input.empty()) {   // the env var is QA-only: needs RETROHUB_QA=1 (the --test-input flag is explicit and always works)
+        const char* q = std::getenv("RETROHUB_QA");
+        const char* e = std::getenv("N64RUN_TEST_INPUT");
+        if (q && *q && std::string(q) != "0" && e && *e) a.test_input = e;
+    }
     if (a.rom.empty()) { std::fprintf(stderr, "--rom is required\n"); return false; }
     if (!a.headless && (a.frames || !a.screenshot.empty() || !a.dumps.empty())) {
         std::fprintf(stderr, "--frames/--screenshot/--dump-ram need --headless\n"); return false;

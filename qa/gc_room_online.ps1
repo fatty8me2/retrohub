@@ -52,6 +52,7 @@ for ($i = 0; $i -lt $Players; $i++) {
   $env:RETROHUB_AUTOTEST_GAME = $Game; $env:RETROHUB_AUTOTEST_PLAYERS = "$Players"
   $env:RETROHUB_ALLOW_VERSION_MISMATCH = "1"
   if ($WriteSave -and $i -eq 0) { $env:RETROHUB_AUTOTEST_WRITE = "1" } else { Remove-Item Env:RETROHUB_AUTOTEST_WRITE -ErrorAction SilentlyContinue }
+  $env:RETROHUB_QA = "1"   # QA switches (HUBNET_LOOPBACK) need this
   if ($Relay) { $env:HUBNET_FORCE_RELAY = "1"; Remove-Item Env:HUBNET_LOOPBACK -ErrorAction SilentlyContinue }   # relay path: UDP punching off
   else { $env:HUBNET_LOOPBACK = "1"; Remove-Item Env:HUBNET_FORCE_RELAY -ErrorAction SilentlyContinue }   # direct path on one PC: no STUN, loopback candidates
   $env:RETRORUN_MUTE = "1"; $env:SSB64_MUTE = "1"

@@ -19,7 +19,7 @@ $core = Join-Path $bin 'mgba_link_libretro.dll'
 $out = Join-Path $root ('qa\out\' + $Tag + '_' + $Case)
 Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $out | Out-Null
-$env:RETRORUN_MUTE = '1'; $env:HUBNET_LOOPBACK = '1'   # bind 127.0.0.1 only (no firewall prompts)
+$env:RETROHUB_QA = "1"; $env:RETRORUN_MUTE = '1'; $env:HUBNET_LOOPBACK = '1'   # bind 127.0.0.1 only (no firewall prompts)
 Remove-Item Env:HUBNET_FORCE_RELAY -ErrorAction SilentlyContinue
 if ($Case -eq 'relay') { $env:HUBNET_FORCE_RELAY = '1' }
 # per-slot one-way simulator settings: latency, jitter, loss

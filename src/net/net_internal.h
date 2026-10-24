@@ -4,6 +4,7 @@
 #include "json.h"
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <map>
 #include <memory>
@@ -101,6 +102,11 @@ inline bool json_parse(const std::string& text, Json* out)
     return json::parse(text, out, o);
 }
 std::string url_encode(const std::string& s);
+
+/* QA-only switches (HUBNET_LOOPBACK) are honoured only with an explicit RETROHUB_QA=1, so a stray variable in a
+ * normal user session can never change how the network code behaves. */
+inline bool qa_mode() { const char* e = std::getenv("RETROHUB_QA"); return e && *e && std::string(e) != "0"; }
+inline bool loopback_mode() { return qa_mode() && std::getenv("HUBNET_LOOPBACK") != nullptr; }
 
 /* Join "server" + "/hub?..." */
 std::string hub_url(const std::string& server, const std::string& room, bool host, const std::string& name, int slot);

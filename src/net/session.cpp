@@ -170,7 +170,7 @@ struct Session::Impl {
 
     void connect_ws()
     {
-        std::string url = hub_url(cfg.server, cfg.room, is_host(), "n64run", slot);
+        std::string url = hub_url(cfg.server, cfg.room, is_host(), "n64run", slot) + "&caps=reasons";
         net_log("Session: connecting %s", url.c_str());
         ws.connect(url);
         welcomed = false;
@@ -401,7 +401,7 @@ struct Session::Impl {
                 }
         } else if (type == "error") {
             std::string reason = j.str("reason", "error");
-            if (reason == "no-such-room" && !is_host()) {
+            if ((reason == "no-such-room" || reason == "host-reconnecting") && !is_host()) {
                 ws_retrying = true;
                 ws_retry_at = now + 700;
                 status = "waiting for host";
@@ -409,6 +409,8 @@ struct Session::Impl {
             }
             if (reason == "room-in-use") fail("Room code already in use");
             else if (reason == "room-full") fail("Room is full or slot taken");
+            else if (reason == "bad-slot") fail("That player slot is already taken");
+            else if (reason == "host-left-game") fail("The host left - game over");
             else fail(reason);
         }
     }
@@ -585,7 +587,7 @@ bool Session::start(const SessionConfig& cfg)
         d.status = "Couldn't open a UDP socket";
         return false;
     }
-    if (!d.force_relay && !getenv("HUBNET_LOOPBACK")) d.stun.start(&d.udp);
+    if (!d.force_relay && !loopback_mode()) d.stun.start(&d.udp);
     else d.stun = Stun();
     d.started = true;
     net_log("Session: start room=%s slot=%d expected=%d force_relay=%d udp port %u", d.cfg.room.c_str(), d.slot,
