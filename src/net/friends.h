@@ -91,6 +91,13 @@ struct Event {
  * client must drop pending-retire.json instead of resending it forever. */
 bool retire_error_is_terminal(const std::string& ref, const std::string& detail);
 void dedupe_friends(std::vector<Friend>& friends, const std::string& self_uid = "");
+/* Different uids, same display name (a person's old identity that was never retired): returns the uids of the OFFLINE
+ * entries that are stale next to a fresher same-named one (the keeper is online/in a lobby, or was seen `gap_ms` later).
+ * The UI hides them and offers "Merge" (remove the stale entries). Names compare case-insensitively, trimmed. */
+std::vector<std::string> stale_same_name(const std::vector<Friend>& friends, int64_t gap_ms = 7 * 86400 * 1000LL);
+/* Every identity older than `current_uid` that this PC still knows and the server has not confirmed retired: pending-retire.json,
+ * <data_dir>/identity-backup*.json and <vault>/_identity/*.json (other than identity.json). Skips uids listed in <data_dir>/retired-ids.txt. */
+std::vector<Identity> older_identities(const std::string& data_dir, const std::string& vault_dir, const std::string& current_uid);
 void dedupe_requests(const std::vector<Friend>& friends, std::vector<Request>& incoming, std::vector<Request>& outgoing,
                      const std::string& self_uid = "");
 

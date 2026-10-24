@@ -11,6 +11,7 @@
 #include <fstream>
 #include <map>
 #include <random>
+#include <set>
 #include <sstream>
 
 namespace hubnet {
@@ -229,6 +230,42 @@ bool identity_adopt(const std::string& data_dir, const std::string& vault_dir, c
     return true;
 }
 
+std::vector<Identity> older_identities(const std::string& data_dir, const std::string& vault_dir, const std::string& current_uid)
+{
+    std::vector<Identity> out;
+    std::set<std::string> skip;
+    std::string dd = with_sep(data_dir);
+    {   // uids the server already confirmed retired
+        std::string text;
+        if (read_file(dd + "retired-ids.txt", &text)) {
+            std::istringstream in(text);
+            std::string line;
+            while (std::getline(in, line)) { while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back(); if (!line.empty()) skip.insert(line); }
+        }
+    }
+    auto take = [&](const fs::path& p) {
+        Identity t;
+        if (!identity_read(p.u8string(), &t)) return;
+        if (t.user_id == current_uid || skip.count(t.user_id)) return;
+        for (const Identity& o : out) if (o.user_id == t.user_id) return;
+        out.push_back(t);
+    };
+    std::error_code ec;
+    take(upath(dd + "pending-retire.json"));
+    for (fs::directory_iterator it(upath(dd), ec), end; !ec && it != end; it.increment(ec)) {
+        std::string n = it->path().filename().u8string();
+        if (n.rfind("identity-backup", 0) == 0 && n.size() > 5 && n.substr(n.size() - 5) == ".json") take(it->path());
+    }
+    if (!vault_dir.empty()) {
+        std::string vd = with_sep(vault_dir) + "_identity";
+        for (fs::directory_iterator it(upath(vd), ec), end; !ec && it != end; it.increment(ec)) {
+            std::string n = it->path().filename().u8string();
+            if (n != "identity.json" && n.size() > 5 && n.substr(n.size() - 5) == ".json") take(it->path());
+        }
+    }
+    return out;
+}
+
 /* ====================================================================== impl */
 
 namespace {
@@ -296,6 +333,36 @@ void dedupe_requests(const std::vector<Friend>& friends, std::vector<Request>& i
     };
     uniq(incoming, nullptr);
     uniq(outgoing, &incoming);
+}
+
+static std::string name_key(const std::string& n)
+{
+    std::string k;
+    for (char c : n) k += (char)tolower((unsigned char)c);
+    size_t a = k.find_first_not_of(' '), b = k.find_last_not_of(' ');
+    return a == std::string::npos ? std::string() : k.substr(a, b - a + 1);
+}
+
+std::vector<std::string> stale_same_name(const std::vector<Friend>& friends, int64_t gap_ms)
+{
+    std::map<std::string, std::vector<const Friend*>> groups;
+    for (const Friend& f : friends) { std::string k = name_key(f.name); if (!k.empty()) groups[k].push_back(&f); }
+    std::vector<std::string> out;
+    for (auto& g : groups) {
+        if (g.second.size() < 2) continue;
+        const Friend* keep = g.second[0];
+        for (const Friend* f : g.second) {
+            int rf = presence_rank(f->status.state), rk = presence_rank(keep->status.state);
+            if (rf != rk ? rf > rk : f->status.updated > keep->status.updated) keep = f;
+        }
+        for (const Friend* f : g.second) {
+            if (f == keep || f->status.state != PresenceState::Offline) continue;
+            bool keeper_present = presence_rank(keep->status.state) > 0;
+            auto seen = [](const Friend* x) { return std::max(x->status.updated, x->since); };
+            if (keeper_present || seen(keep) - seen(f) >= gap_ms) out.push_back(f->uid);
+        }
+    }
+    return out;
 }
 
 struct FriendsClient::Impl {
@@ -511,25 +578,37 @@ struct FriendsClient::Impl {
     /* Identity retirement: after this PC switches to an older/linked identity, the identity it replaced is
      * handed to the server (over the NEW authed socket) so its friendships move to the new uid. Persisted
      * until the server confirms, so a crash or an offline start does not lose it. */
-    Identity retire;
+    std::vector<Identity> retire;   // every older identity of this person still to be retired (pending file, backups, vault)
     std::string retire_path() const { return data_dir + "pending-retire.json"; }
+    std::string retired_ids_path() const { return data_dir + "retired-ids.txt"; }
     void load_retire()
     {
-        retire = Identity();
+        retire = older_identities(data_dir, vault_dir, id.user_id);
+        std::error_code ec;
         Identity r;
-        if (identity_read(retire_path(), &r) && r.user_id != id.user_id) retire = r;
-        else { std::error_code ec; fs::remove(upath(retire_path()), ec); }
+        if (fs::exists(upath(retire_path()), ec) && identity_read(retire_path(), &r) && r.user_id == id.user_id) fs::remove(upath(retire_path()), ec);
     }
     void send_retire()
     {
-        if (!retire.valid()) return;
-        send("{\"type\":\"retire_old\",\"uid\":" + q(retire.user_id) + ",\"secret\":" + q(retire.secret) + "}");
+        int n = 0;
+        for (const Identity& r : retire) {
+            if (++n > 8) break;   // server allows 10 per hour
+            send("{\"type\":\"retire_old\",\"uid\":" + q(r.user_id) + ",\"secret\":" + q(r.secret) + "}");
+        }
     }
-    void retire_done()
+    /* uid empty: forget all (legacy single reply). */
+    void retire_done(const std::string& uid = std::string())
     {
-        retire = Identity();
         std::error_code ec;
-        fs::remove(upath(retire_path()), ec);
+        for (size_t i = 0; i < retire.size();) {
+            if (uid.empty() || retire[i].user_id == uid) {
+                std::ofstream f(upath(retired_ids_path()), std::ios::app);
+                f << retire[i].user_id << '\n';
+                Identity pr;
+                if (identity_read(retire_path(), &pr) && pr.user_id == retire[i].user_id) fs::remove(upath(retire_path()), ec);
+                retire.erase(retire.begin() + i);
+            } else ++i;
+        }
     }
 
     void on_welcome(const Json& j)
@@ -604,7 +683,7 @@ struct FriendsClient::Impl {
         std::string type = j.str("type");
         if (type == "welcome") on_welcome(j);
         else if (type == "presence") on_presence(j);
-        else if (type == "retired") retire_done();
+        else if (type == "retired") retire_done(j.str("uid"));
         else if (type == "request") {
             const Json* r = j.get("req");
             if (!r) return false;
@@ -664,7 +743,7 @@ struct FriendsClient::Impl {
                 for (const Json& m : a->a) add_msg(with, parse_msg(m), false);
         } else if (type == "error") {
             std::string reason = j.str("reason", "error");
-            if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) retire_done();   // can never succeed: stop resending
+            if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) retire_done(j.str("uid"));   // can never succeed: stop resending
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
             Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref");
             push_event(std::move(e));
@@ -815,7 +894,14 @@ void FriendsClient::apply_adopted(const Identity& v)
     {   // remember the identity being replaced so the server can retire it and move its friendships
         Identity old = d.id;
         if (!old.valid()) identity_read(d.data_dir + "identity.json", &old);
-        if (old.valid() && old.user_id != v.user_id) write_file(d.retire_path(), identity_json(old));
+        if (old.valid() && old.user_id != v.user_id) {
+            Identity prev;   // an earlier, still-unretired replaced identity: its backup file keeps it (older_identities scans them)
+            if (identity_read(d.retire_path(), &prev) && prev.user_id != old.user_id) {
+                std::string bp = d.data_dir + "identity-backup-pending-" + prev.user_id.substr(0, 8) + ".json";
+                if (!fs::exists(upath(bp))) write_file(bp, identity_json(prev));
+            }
+            write_file(d.retire_path(), identity_json(old));
+        }
     }
     if (d.started) {
         std::string server = d.server, name = d.name;

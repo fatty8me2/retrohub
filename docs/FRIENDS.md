@@ -101,3 +101,9 @@ Invite  = {lobby_code, game_id, game_title, system, expires_at}
 - Identity adoption (link-a-new-PC, vault adopt): the client keeps the replaced identity in `<data_dir>/pending-retire.json` and sends `{"type":"retire_old","uid","secret"}` on the new authed socket after welcome. The server verifies the old secret, moves the old uid's friends/requests/blocks to the new uid (peers see the old entry swapped for the new one), retires the old uid (it can no longer connect: close 4005) and answers `{"type":"retired","uid"}` (idempotent; the client then deletes the file).
 - The server also cleans duplicate/crossed rows on every hello (idempotent).
 - Screenshot aid: `HUB_SHOT_FAKE_FRIENDS=1 HUB_SHOT_FAKE_DUPES=1` (add `HUB_SHOT_FAKE_ROOM=1` to see the "In your room" status).
+
+## Round 2: why duplicates still appeared
+- The admin account (`ADMIN_UID`) is auto-linked with every identity ever created, so every reinstall or wiped data folder leaves one more offline-forever entry with the same display name. The old uid cannot be retired (its secret is gone).
+- Retire only covered the last replaced identity (`pending-retire.json` is overwritten). The client now retires every older identity it can find (`older_identities`: pending file, `identity-backup*.json`, `<vault>/_identity/*.json`), tracking confirmed ones in `retired-ids.txt`.
+- Server: completed retires write `old -> new` into the Directory (`alias` table). On every hello the user's friends/requests are swapped to the newest uid (`applyAliases`, chains followed, two-sided via `alias_link`). Outgoing requests older than 60 days are pruned.
+- Client: `stale_same_name` hides offline entries that share a name with a fresher entry and the panel asks "Merge?" (removes the stale ones) or "Keep both".
