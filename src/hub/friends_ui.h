@@ -4,6 +4,7 @@
 #include "friends.h"
 
 #include <chrono>
+#include <set>
 
 struct Notif {
     int id = 0;
@@ -25,7 +26,9 @@ struct FriendsUi {
     /* Render caches: the source lists run through hubnet::dedupe_* once per frame, so a person is never drawn twice. */
     std::vector<hubnet::Friend> d_friends;
     std::vector<hubnet::Request> d_in, d_out;
-    std::vector<hubnet::Friend> d_stale;   // same name as a fresher entry and offline: hidden until merged (see hubnet::stale_same_name)
+    std::vector<hubnet::Friend> d_stale;   // CONFIRMED old identities (server alias map / retired-ids.txt): hidden until merged (bulk merge is safe)
+    std::vector<hubnet::Friend> d_ask;     // UNCONFIRMED same-name guesses: stay visible, each needs its own "Remove the old ...?" confirm
+    std::set<std::string> kept_uids;       // user answered "Keep" for these this session
     bool show_dupes = false;
     int d_frame = -1;
 
