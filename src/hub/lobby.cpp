@@ -167,6 +167,10 @@ void lobby_tick() {
             if (from == 0 && !is_host() && GCO.guest_wait) GCO.host_ready = true;
         } else if (kind == "np_kt") {
             if (from == 0 && !is_host()) kt_on_code(j.str("code"), (int)j.num("launch", 0));
+        } else if (kind == "np_kt_fail") {
+            kt_on_peer_fail(from, j.str("reason"));
+        } else if (kind == "np_kt_req") {
+            kt_on_request(from);
         } else if (kind == "chat") {
             A.chat.push_back({member_name(from), j.str("text")});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());

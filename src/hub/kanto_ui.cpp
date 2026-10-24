@@ -24,6 +24,9 @@ struct Kt {
     bool howto = false, intro = false;
     bool fake = false;
     kanto::State fake_state;
+    std::string peer_fail;        // host: "<friend> can't start Kanto Together: <reason>"
+    std::string join_error;       // guest: the last join/start problem (panel offers Retry / a new code)
+    char code_buf[16] = {0};
     std::string fake_prep;        // screenshot aid: pretend prep message
     float fake_prog = -1.f;
     hub::GameEntry entry;
@@ -41,14 +44,28 @@ kanto::Package package_from(const std::string& path) {
 
 std::vector<kanto::RomCandidate> rom_candidates() {
     std::vector<kanto::RomCandidate> v;
-    for (auto& g : A.lib)
-        if (g.system == hub::System::GBA && !is_kanto(g) && !g.serial.empty()) v.push_back({g.path, g.serial});
+    for (auto& g : A.lib) {
+        if (g.system != hub::System::GBA || is_kanto(g)) continue;
+        /* FireRed by serial or catalog id; a zipped/odd entry without any serial is matched by SHA-1 alone (kanto::pick_rom) */
+        bool maybe = g.serial.empty() || g.catalog_id == "pokefirered" || g.serial == "BPRE";
+        if (!maybe) continue;
+        std::error_code ec;
+        uint64_t sz = (uint64_t)std::filesystem::file_size(std::filesystem::path(W(g.path)), ec);
+        v.push_back({g.path, g.serial, g.catalog_id, ec ? 0 : sz});
+    }
     return v;
 }
 
 std::string scratch_saves() { return no_slash(hub::data_dir()) + "\\netplay\\kanto\\saves"; }
 
 bool prep_ready() { return KT.prep.ok(); }
+
+/* tell the host (fixed reason codes only: no raw error text, no paths) */
+void send_fail(const std::string& reason) {
+    if (!room_connected()) return;
+    A.lobby.send_msg("{\"kind\":\"np_kt_fail\",\"reason\":\"" + reason + "\"}");
+    A.lobby.send_msg("{\"kind\":\"chat\",\"text\":\"[Kanto Together] I can't start it: " + json::escape(kanto::fail_sentence(reason)) + ".\"}");
+}
 
 void ensure_prep(const hub::GameEntry& e) {
     if (g_headless || KT.fake || KT.prep.busy() || KT.prep.ok()) return;
@@ -63,6 +80,7 @@ bool mute_tests() { return env_on("RETRORUN_MUTE") || env_on("RETROHUB_KT_MUTE")
 bool start_session(const hub::GameEntry& e, bool host, const std::string& code) {
     if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
     if (A.proc || KT.sess.active()) { set_notice("A game is already running."); return false; }
+    if (kanto::Session::stopping() > 0) { set_notice("The previous Kanto Together session is still closing - try again in a moment."); return false; }
     kanto::LaunchOpts o;
     o.host = host;
     o.code = code;
@@ -75,7 +93,12 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
     std::string vault = no_slash(hub::saves::battery_dir(sys_short(e), e.key));
     kanto::sync_saves(vault, o.saves);   // vault -> staged saves (newest wins)
     std::string err;
-    if (!KT.sess.start(o, &err)) { set_notice("Kanto Together: " + err, 12.0); return false; }
+    if (!KT.sess.start(o, &err)) {
+        set_notice("Kanto Together: " + err, 12.0);
+        if (!host) { KT.join_error = "The game could not be started on this PC."; send_fail("start"); }
+        return false;
+    }
+    KT.join_error.clear();
     A.proc = KT.sess.dup_handle();
     A.job_h = nullptr;
     A.proc_title = e.title;
@@ -83,11 +106,14 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
     A.run.start_unix = unix_now();
     A.run.start_tick = GetTickCount64();
     std::string saves = o.saves;
-    A.run.after_exit = [vault, saves]() {
-        KT.sess.stop();
+    const bool was_host = host;
+    A.run.after_exit = [vault, saves, was_host]() {
+        KT.sess.stop();                    // the launcher already exited (mGBA closed and flushed): this only releases handles
         kanto::sync_saves(saves, vault);   // staged saves -> vault, before the sync runs
         KT.arm_guest = false;
         KT.cur_code.clear();
+        KT.guest_code.clear();             // a code of a finished session must never auto-start the next one
+        if (was_host && room_connected()) A.lobby.send_msg("{\"kind\":\"np_kt\",\"code\":\"\",\"launch\":" + std::to_string(KT.launch_no) + "}");
     };
     KT.last_phase = kanto::Phase::Starting;
     KT.cur_code = code;
@@ -153,6 +179,7 @@ void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host) {
     KT.host = is_host;
     KT.entry = e;
     if (is_host) {
+        KT.peer_fail.clear();
         if (!prep_ready()) { set_notice("Kanto Together is not ready yet: " + KT.prep.message(), 10.0); return; }
         KT.sent_gen = 0;
         KT.sent_members = 0;
@@ -160,14 +187,30 @@ void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host) {
         return;
     }
     KT.arm_guest = true;
+    KT.guest_code.clear();   // the code for THIS launch follows in an np_kt message; an old one is stale
+    KT.join_error.clear();
     ensure_prep(e);
     push_toast("Joining the host's Kanto Together...", ui::GOOD, 6.0);
 }
 
 void kt_on_code(const std::string& code, int launch_no) {
     (void)launch_no;
+    if (code.empty()) { KT.guest_code.clear(); return; }   // the host's session ended
     std::string c = kanto::normalize_code(code);
-    if (kanto::valid_code(c)) KT.guest_code = c;
+    if (kanto::valid_code(c)) { KT.guest_code = c; KT.join_error.clear(); }
+}
+
+void kt_on_peer_fail(int slot, const std::string& reason) {
+    if (!is_host()) return;
+    std::string name = member_name(slot);
+    KT.peer_fail = name + " can't start Kanto Together: " + kanto::fail_sentence(kanto::valid_fail_reason(reason) ? reason : "");
+    push_toast(KT.peer_fail, ui::WARN, 12.0);
+    if (KT.sess.active() && KT.sess.state().phase != kanto::Phase::Connected) KT.sess.stop();   // stop waiting for a partner who cannot come
+}
+
+void kt_on_request(int slot) {   // a guest asks for the code again (join failed / typo)
+    (void)slot;
+    if (is_host() && KT.sess.active()) KT.sent_gen = -1;
 }
 
 void kt_tick() {
@@ -184,8 +227,10 @@ void kt_tick() {
     if (KT.prep.failed() && !KT.prep_reported) {
         KT.prep_reported = true;
         if (KT.play_wait || KT.arm_guest) set_notice(KT.prep.message(), 20.0);
-        if (KT.arm_guest && room_connected()) {
-            A.lobby.send_msg("{\"kind\":\"chat\",\"text\":\"[Kanto Together] I can't start it: " + json::escape(KT.prep.message()) + "\"}");
+        if (KT.arm_guest) {
+            std::string why = KT.prep.reason().empty() ? "install" : KT.prep.reason();
+            KT.join_error = "Kanto Together could not be prepared on this PC: " + kanto::fail_sentence(why).substr(0) + ".";
+            send_fail(why);
             KT.arm_guest = false;
         }
         KT.play_wait = false;
@@ -204,7 +249,11 @@ void kt_tick() {
         const kanto::State& st = KT.sess.state();
         if (st.phase != KT.last_phase) {
             if (st.phase == kanto::Phase::Connected) push_toast("Kanto Together: your partner is connected.", ui::GOOD, 5.0);
-            else if (st.phase == kanto::Phase::Failed) push_toast("Kanto Together: " + st.detail, ui::WARN, 10.0);
+            else if (st.phase == kanto::Phase::Failed) {
+                push_toast("Kanto Together: " + st.detail, ui::WARN, 10.0);
+                if (!KT.host) KT.join_error = st.detail;
+            }
+            if (st.phase == kanto::Phase::Connected) KT.join_error.clear();
             KT.last_phase = st.phase;
         }
         if (KT.host && room_connected()) {
@@ -240,7 +289,7 @@ static ImU32 phase_col(kanto::Phase p) {
 
 void kt_room_panel(float width, bool early) {
     bool sel = A.selected_game == kanto::kCatalogId;
-    bool live = (KT.fake && KT.fake_state.phase != kanto::Phase::Idle) || KT.sess.active();
+    bool live = (KT.fake && KT.fake_state.phase != kanto::Phase::Idle && KT.fake_state.phase != kanto::Phase::Failed) || KT.sess.active();
     if (!sel && !live) return;
     if (early != live) return;
     ImGui::Dummy(ImVec2(0, sp(0.75f)));
@@ -251,6 +300,11 @@ void kt_room_panel(float width, bool early) {
     ImGui::SameLine(0, sp(2.f));
     if (button("How to play", ImVec2(sp(14.f), sp(4.f)))) KT.howto = true;
 
+    if (!KT.peer_fail.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+        ImGui::TextWrapped("%s", KT.peer_fail.c_str());
+        ImGui::PopStyleColor();
+    }
     bool busy = KT.fake ? KT.fake_prog >= 0 : KT.prep.busy();
     if (busy) {
         float pr = KT.fake ? KT.fake_prog : KT.prep.progress();
@@ -264,6 +318,37 @@ void kt_room_panel(float width, bool early) {
     } else if (!live) {
         text_wrapped_disabled(KT.prep.ok() ? "Ready. Everyone ready? The host presses Launch; the game opens on both PCs and connects by itself."
                                            : "Preparing...");
+    }
+    const bool guest_stuck = !KT.fake ? (!KT.host && !KT.join_error.empty() && !(live && cur_state().phase == kanto::Phase::Connected))
+                                      : (KT.fake_state.phase == kanto::Phase::Failed && !KT.fake_state.host);
+    if (guest_stuck) {
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+        ImGui::TextWrapped("%s", KT.fake ? "Could not join: no such room" : KT.join_error.c_str());
+        ImGui::PopStyleColor();
+        text_wrapped_disabled("Ask the host for a new code (the game keeps trying by itself), or type the code the host gives you.");
+        if (button("Ask the host for a new code", ImVec2(sp(26.f), sp(5.f))) && !KT.fake) A.lobby.send_msg("{\"kind\":\"np_kt_req\"}");
+        ImGui::SameLine();
+        std::string retry_code = !KT.guest_code.empty() ? KT.guest_code : KT.cur_code;
+        if (button("Retry", ImVec2(sp(10.f), sp(5.f)), false, KT.fake || kanto::valid_code(retry_code))) {
+            if (!KT.fake) {
+                KT.join_error.clear();
+                if (KT.sess.active() && KT.sess.running()) KT.sess.rejoin(retry_code);
+                else { KT.guest_code = retry_code; KT.arm_guest = true; }
+            }
+        }
+        ImGui::SetNextItemWidth(sp(22.f));
+        ImGui::InputTextWithHint("##ktcode", "Room code (10 characters)", KT.code_buf, sizeof KT.code_buf, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SameLine();
+        std::string typed = kanto::normalize_code(KT.code_buf);
+        if (button("Join with this code", ImVec2(sp(20.f), sp(5.f)), true, KT.fake || kanto::valid_code(typed))) {
+            if (!KT.fake) {
+                KT.join_error.clear();
+                if (KT.sess.active() && KT.sess.running()) { KT.sess.rejoin(typed); KT.cur_code = typed; }
+                else { KT.guest_code = typed; KT.arm_guest = true; }
+                KT.code_buf[0] = 0;
+            }
+        }
     }
     if (live) {
         const kanto::State& st = cur_state();
@@ -417,6 +502,8 @@ void kt_shot_init() {
     st.phase = kanto::Phase::Connected;
     st.detail = kanto::phase_text(st.phase, true);
     if (s == "connecting") { st.phase = kanto::Phase::WaitingForPartner; st.detail = kanto::phase_text(st.phase, true); }
+    if (s == "joinfail") { st.host = false; st.phase = kanto::Phase::Failed; st.detail = "Could not join: no such room"; }
+    if (s == "peerfail") KT.peer_fail = "Mia can't start Kanto Together: " + kanto::fail_sentence("no_rom") + ".";
     if (s == "reconnecting") { st.phase = kanto::Phase::Reconnecting; st.detail = kanto::phase_text(st.phase, true); }
     if (s == "trade") {
         st.trade.phase = kanto::TradePhase::Offered;

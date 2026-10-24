@@ -160,7 +160,8 @@ TileResult draw_tile(const TileSpec& t, ImVec2 size) {
         ImVec2 bp = p0 + ImVec2(sp(1.25f), sp(1.25f));
         if (!t.badge.empty()) bp.x += ui::pill_at(dl, bp, t.badge.c_str(), IM_COL32(0, 0, 0, 150)) + sp(0.5f);
         if (!t.tag.empty()) {   // small corner tag: quiet unless it is a warning
-            float tw2 = ui::pill_at(dl, bp, t.tag.c_str(), IM_COL32(0, 0, 0, t.tag_warn ? 170 : 120), t.tag_warn ? ui::WARN : IM_COL32(255, 255, 255, 190));
+            float tw2 = t.tag_accent ? ui::pill_at(dl, bp, t.tag.c_str(), ui::ACCENT, IM_COL32_WHITE)
+                                 : ui::pill_at(dl, bp, t.tag.c_str(), IM_COL32(0, 0, 0, t.tag_warn ? 170 : 120), t.tag_warn ? ui::WARN : IM_COL32(255, 255, 255, 190));
             ImVec2 mp = io.MousePos;
             if (item_hov && !t.tag_tip.empty() && mp.x >= bp.x && mp.x <= bp.x + tw2 && mp.y >= bp.y && mp.y <= bp.y + ui::F.cap->FontSize + sp(1.f))
                 ImGui::SetTooltip("%s", t.tag_tip.c_str());
@@ -210,7 +211,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     t.title = e.title;
     if (show_sys) t.badge = sys_badge(e.system);   // inside a console section the header already says it
     if (is_native(e)) t.tag = "NATIVE";
-    if (is_kanto(e)) { t.tag = "CO-OP"; t.tag_tip = "Two-player online co-op FireRed (a friend's project). Host or join from a room."; }
+    if (is_kanto(e)) { t.tag = "CO-OP"; t.tag_accent = true; t.tag_tip = "Two-player online co-op FireRed (a friend's project). Host or join from a room."; }
     if (e.issue == "extract") {
         const bool sz = e.path.size() > 3 && e.path.compare(e.path.size() - 3, 3, ".7z") == 0;
         t.tag = sz ? "7Z" : "ZIP";

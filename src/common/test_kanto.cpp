@@ -110,6 +110,28 @@ int main() {
     CHECK(r.state == kanto::RomState::NoFireRed && kanto::rom_message(r).find("ROM folder") != std::string::npos);
     CHECK(kanto::pick_rom({}, kanto::kBaseSha1, fake).state == kanto::RomState::NoFireRed);
 
+    /* zipped / serial-less FireRed: matched by hash (or catalog id), size-gated */
+    {
+        kanto::RomCandidate zipped; zipped.path = "good.gba"; zipped.size = 16777216;   // no serial, no catalog id
+        r = kanto::pick_rom({zipped}, kanto::kBaseSha1, fake);
+        CHECK(r.state == kanto::RomState::Ok && r.path == "good.gba");
+        kanto::RomCandidate cat; cat.path = "good.gba"; cat.catalog_id = "pokefirered";
+        CHECK(kanto::pick_rom({cat}, kanto::kBaseSha1, fake).state == kanto::RomState::Ok);
+        kanto::RomCandidate small; small.path = "good.gba"; small.size = 1024;
+        CHECK(kanto::pick_rom({small}, kanto::kBaseSha1, fake).state == kanto::RomState::NoFireRed);   // not even hashed
+        kanto::RomCandidate other; other.path = "rev1.gba"; other.size = 16777216;   // unidentified 16 MiB, wrong hash: ignored, not "wrong revision"
+        CHECK(kanto::pick_rom({other}, kanto::kBaseSha1, fake).state == kanto::RomState::NoFireRed);
+        kanto::RomCandidate rev; rev.path = "rev1.gba"; rev.catalog_id = "pokefirered";
+        CHECK(kanto::pick_rom({rev}, kanto::kBaseSha1, fake).state == kanto::RomState::WrongRevision);
+        kanto::RomCandidate emerald; emerald.path = "good.gba"; emerald.serial = "BPEE";
+        CHECK(kanto::pick_rom({emerald}, kanto::kBaseSha1, fake).state == kanto::RomState::NoFireRed);
+    }
+    /* failure reasons: fixed sentences only */
+    CHECK(kanto::valid_fail_reason("no_rom") && kanto::valid_fail_reason("wrong_rom") && !kanto::valid_fail_reason("C:/Users/x") && !kanto::valid_fail_reason(""));
+    CHECK(kanto::fail_sentence("no_rom").find("FireRed") != std::string::npos);
+    CHECK(kanto::fail_sentence("C:/secret/path") == kanto::fail_sentence("") && kanto::fail_sentence("").find("secret") == std::string::npos);
+    CHECK(kanto::reason_for(kanto::RomState::WrongRevision) == "wrong_rom" && kanto::reason_for(kanto::RomState::NoFireRed) == "no_rom");
+
     /* codes + commands + command lines */
     CHECK(kanto::normalize_code("3f9a-0c7d 21") == "3F9A0C7D21");
     CHECK(kanto::valid_code("3F9A0C7D21") && !kanto::valid_code("3F9A0C7D2") && !kanto::valid_code("3f9a0c7d21") && !kanto::valid_code("ZZZZZZZZZZ"));
@@ -149,6 +171,13 @@ int main() {
     CHECK(kanto::feed_line(s, "[bridge] lua: usage: trade <party slot 1-6>") && s.trade.note.find("usage") != std::string::npos);
     CHECK(!kanto::feed_line(s, "[bridge] lua: coop.lua v1 loaded (mode=pose role=host bridge=127.0.0.1:8788)"));
     CHECK(!kanto::feed_line(s, ""));
+    /* hostile trade text: out-of-range / huge slot numbers are ignored, never throw */
+    {
+        kanto::State h;
+        CHECK(!kanto::feed_line(h, "[bridge] lua: you offer slot 99999999999999999999: X lvl 1") && h.trade.phase == kanto::TradePhase::None);
+        CHECK(!kanto::feed_line(h, "[bridge] lua: you offer slot 7: X lvl 1") && !kanto::feed_line(h, "[bridge] lua: you offer slot 0: X lvl 1"));
+        CHECK(kanto::feed_line(h, "[bridge] lua: you offer slot 6: X lvl 1") && h.trade.my_slot == 6);
+    }
     /* guest errors + end */
     kanto::State g;
     CHECK(kanto::feed_line(g, "[bridge] Could not join: no such room") && g.phase == kanto::Phase::Failed && g.last_error == "no such room");
