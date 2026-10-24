@@ -60,6 +60,8 @@ struct PeerInfo {
     std::map<std::string, std::string> games;   // catalog id -> md5 ("native" for native ports)
     std::vector<std::string> keys;              // library game keys the peer owns (hello v2)
     std::string app;                            // RetroHub release version from hello ("" = old build, unknown)
+    int parts_expected = 1, parts_got = 1;      // hello is split into several messages when the key list is long
+    bool hello_complete() const { return hello && parts_got >= parts_expected; }
 };
 struct Selectability { bool ok = false; std::string reason; };
 
@@ -91,6 +93,9 @@ struct VersionGate { bool ok = true; std::string reason; };
  * than `host_app`. `allow_mismatch` (dev override) always passes. */
 VersionGate version_gate(const std::string& host_app, const std::vector<PeerInfo>& peers, bool allow_mismatch = false);
 enum class GuestVersionAction { None, Waiting, UpdateNow, HostNeedsUpdate };
+/* Guest-side: why the "I'm ready" control must be disabled ("" = may ready up). Same inputs as guest_version_action;
+ * `allow_mismatch` is the dev override. The UI shows the returned text next to the disabled control. */
+std::string ready_block_reason(const std::string& my_app, const std::string& host_app, bool host_hello, bool allow_mismatch = false);
 /* Guest-side: host hello not received yet -> Waiting; older than the host -> UpdateNow; newer, or the host's
  * hello arrived without an app field (old build) -> HostNeedsUpdate. */
 GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app, bool host_hello);

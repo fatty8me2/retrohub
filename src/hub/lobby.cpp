@@ -62,14 +62,25 @@ void leave_room() {
     A.code.clear();
 }
 
-void enter_room(bool host, const std::string& code) {
+void enter_room(bool host, const std::string& code_in) {
+    const std::string code = code_in;   // may alias A.code, which leave_room() clears
     if (A.st.name.empty()) { set_notice("Pick a player name in Settings first."); return; }
     if (g_headless) { set_notice("Headless test run: online skipped."); return; }
     if (A.proc) { set_notice("Close the running game first."); return; }
+    /* Remember the room we are in: the single lobby socket has to be closed to open the new one, so if the new room
+     * cannot be entered (wrong code, full, server down) lobby_tick puts the player back into the old one. */
+    std::string pc = A.code;
+    bool ph = A.room_role_host, had_room = A.in_room && A.lobby.connected() && !pc.empty() && pc != code;
     leave_room();
+    A.prev_code = had_room ? pc : std::string();
+    A.prev_host = ph;
     A.code = code;
+    A.room_role_host = host;
+    A.entering_room = true;
     if (!A.lobby.start(server_url(), code, host, A.st.name)) {
+        A.entering_room = false;
         set_notice("Could not connect to the lobby server.");
+        if (!A.prev_code.empty()) { std::string c = A.prev_code; bool h = A.prev_host; A.prev_code.clear(); enter_room(h, c); }
         return;
     }
     A.in_room = true;
@@ -77,6 +88,25 @@ void enter_room(bool host, const std::string& code) {
     if (host && !A.pending_room_game.empty() && find_room_entry(A.pending_room_game)) A.selected_game = A.pending_room_game;
     else if (host && !A.st.last_game.empty() && find_room_entry(A.st.last_game)) A.selected_game = A.st.last_game;
     A.pending_room_game.clear();
+}
+
+void rejoin_room() {
+    if (A.code.empty()) return;
+    enter_room(A.room_role_host, A.code);
+}
+
+void launch_fail(const std::string& why, double secs) {
+    set_notice(why, secs);
+    if (room_connected() && !is_host())
+        A.lobby.send_msg("{\"kind\":\"np_fail\",\"reason\":\"" + json::escape(why) + "\"}");
+}
+
+std::string ready_block_reason_now() {
+    if (is_host()) return "";
+    std::string host_app;
+    bool host_hello = false;
+    for (auto& p : peer_list()) if (p.slot == 0) { host_app = p.app; host_hello = p.hello; }
+    return hubui::ready_block_reason(HUB_VERSION_STR, host_app, host_hello, allow_version_mismatch());
 }
 
 bool is_host() { return room_connected() && room_my_slot() == 0; }
@@ -108,7 +138,23 @@ std::vector<hubui::PeerInfo> peer_list() {
 void lobby_tick() {
     if (!A.in_room) return;
     A.lobby.update();
-    if (!A.lobby.connected()) return;
+    if (A.entering_room) {
+        if (A.lobby.connected()) { A.entering_room = false; A.prev_code.clear(); }
+        else if (A.lobby.failed()) {
+            A.entering_room = false;
+            if (!A.prev_code.empty()) {   // the new room did not work out: go back to the one the player left
+                std::string c = A.prev_code, why = A.lobby.status();
+                bool h = A.prev_host;
+                A.prev_code.clear();
+                set_notice(why + " - going back to your previous room.");
+                enter_room(h, c);
+                return;
+            }
+        }
+    }
+    if (!A.lobby.connected()) { A.was_connected = false; return; }   // dropped: re-announce ourselves when the link comes back
+    /* A guest on a different RetroHub version must not stay readied up. */
+    if (A.my_ready && !ready_block_reason_now().empty()) { A.my_ready = false; A.hello_dirty = true; }
 
     /* Lobby events are handled strictly in arrival order. A HostChange moves per-slot state from the promoted
      * member's old slot to 0 and drops the departed host's, so every message queued before it (old numbering)
@@ -131,6 +177,7 @@ void lobby_tick() {
             hubui::remap_slot_key(A.picks, ev.from_slot, 0);
             A.hello_dirty = true;
             bool me = A.lobby.my_slot() == 0;
+            if (me) A.room_role_host = true;
             A.chat.push_back({"", hubui::host_changed_text(ev.name, me)});
             A.chat_scroll = true;
             push_toast(hubui::host_changed_text(ev.name, me), ui::GOOD, 8.0, /*top=*/true);
@@ -141,7 +188,10 @@ void lobby_tick() {
         bool before_hc = last_hc != evs.size() && k < last_hc;
         hubui::Json j;
         if (!json::parse(body, &j) || j.type != hubui::Json::Object) continue;
-        if (before_hc && j.str("kind") == "launch") continue;
+        if (before_hc && j.str("kind") == "launch") {
+            set_notice("The host changed while the game was starting - ask the new host to launch again.");
+            continue;
+        }
         std::string kind = j.str("kind");
         if (kind == "hello") {
             hubui::PeerInfo& p = A.peers[from];
@@ -162,6 +212,8 @@ void lobby_tick() {
         } else if (kind == "rules") {
             hubui::MatchRules mr;
             if (from == 0 && !is_host() && hubui::parse_rules(j, &mr)) A.rules = mr;
+        } else if (kind == "np_fail") {
+            if (is_host()) set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0);
         } else if (kind == "np_gc_ready") {
             autotest_log("np_gc_ready from " + std::to_string(from) + " guest_wait=" + std::to_string((int)GCO.guest_wait));
             if (from == 0 && !is_host() && GCO.guest_wait) GCO.host_ready = true;
@@ -178,11 +230,11 @@ void lobby_tick() {
         } else if (kind == "launch") {
             if (from != 0 || is_host()) continue;
             const hub::GameEntry* g = find_room_entry(j.str("game"));
-            if (!g) { set_notice("The host started a game you don't have."); continue; }
-            if (A.proc) continue;
+            if (!g) { launch_fail("The host started a game you don't have."); continue; }
+            if (A.proc) { launch_fail("The host started a game, but a game is already running on this PC."); continue; }
             if (g->system == hub::System::GC) {
                 gcnp::Spec gs;
-                if (!gcnp::spec_parse(gcnp::extract_from_launch(body), &gs)) { set_notice("The host's GameCube launch is invalid - ask them to update RetroHub."); continue; }
+                if (!gcnp::spec_parse(gcnp::extract_from_launch(body), &gs)) { launch_fail("The host's GameCube launch is invalid - ask them to update RetroHub."); continue; }
                 gc_guest_prepare(*g, gs, (int)j.num("launch", 1));
                 continue;
             }

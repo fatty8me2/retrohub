@@ -102,6 +102,18 @@ int main() {
         }
         CHECK(allok && r.keys == many && r.games["mp1"] == "AAA" && r.hello);
         CHECK(hello_messages("2", {}, {}).size() == 1);
+        {   /* a peer is "waiting" until every hello part arrived */
+            PeerInfo part, ok;
+            ok.slot = 0; ok.name = "Ok"; ok.hello = true; ok.games["mp1"] = "AAA";
+            part.slot = 1; part.name = "Part";
+            CHECK(json::parse(msgs[0], &j) && parse_hello(j, &part) && part.hello && !part.hello_complete());
+            CHECK(game_selectable("mp1", 4, {ok, part}, 0).reason == "waiting for Part");
+            for (size_t m = 1; m < msgs.size(); ++m) CHECK(json::parse(msgs[m], &j) && parse_hello(j, &part));
+            CHECK(part.hello_complete());
+        }
+        CHECK(ready_block_reason("1.10.0", "1.10.0", true).empty() && ready_block_reason("1.9.0", "1.10.0", true).find("Update") == 0 &&
+              ready_block_reason("1.10.0", "1.9.0", true).find("host needs") != std::string::npos &&
+              ready_block_reason("1.10.0", "", false) == "Checking versions..." && ready_block_reason("1.9.0", "1.10.0", true, true).empty());
     }
     {   /* app version gate */
         Json aj;

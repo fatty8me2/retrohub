@@ -16,7 +16,13 @@ struct LobbyClient::Impl {
     std::vector<Member> members;
     std::deque<LobbyEvent> events;   // msgs and host changes in arrival order
     uint32_t last_keepalive = 0;
+    std::string server, code, name, url;   // kept so a dropped connection can be re-established with the same code
+    bool role_host = false, was_welcomed = false;
+    int attempts = 0;
+    uint32_t retry_at = 0;
+    bool waiting_retry = false;
 };
+static const int kMaxReconnects = 6;
 
 LobbyClient::LobbyClient() : impl_(new Impl) {}
 LobbyClient::~LobbyClient() { stop(); }
@@ -32,8 +38,11 @@ bool LobbyClient::start(const std::string& server, const std::string& code, bool
     d.events.clear();
     d.status = "connecting";
     d.last_keepalive = now_ms();
+    d.server = server; d.code = code; d.name = name; d.role_host = role_host;
+    d.was_welcomed = false; d.attempts = 0; d.waiting_retry = false;
     std::string url = hub_url(server.empty() ? default_server() : server, code, role_host, name, 0);
-    url += "&caps=hostmig";   // we understand host_changed: keep the room alive when the host leaves
+    url += "&caps=hostmig,reasons";   // we understand host_changed (keep the room alive when the host leaves) and the distinct error reasons
+    d.url = url;
     net_log("Lobby: connecting %s", url.c_str());
     return d.ws.connect(url);
 }
@@ -43,6 +52,7 @@ void LobbyClient::stop()
     Impl& d = *impl_;
     d.ws.close();
     d.started = d.welcomed = false;
+    d.waiting_retry = false;
     d.slot = -1;
     d.members.clear();
 }
@@ -77,6 +87,9 @@ static std::string friendly(const std::string& reason)
     if (reason == "no-such-room") return "No such room";
     if (reason == "room-full") return "The room is full";
     if (reason == "host-left") return "The host left the room";
+    if (reason == "host-left-game") return "The host left - game over";
+    if (reason == "bad-slot") return "That seat is already taken";
+    if (reason == "host-reconnecting") return "The host is reconnecting";
     return reason;
 }
 
@@ -107,6 +120,8 @@ bool LobbyClient::handle_text(const std::string& text)
         std::string type = j.str("type");
         if (type == "welcome") {
             d.welcomed = true;
+            d.was_welcomed = true;
+            d.attempts = 0;
             d.slot = (int)j.i64("slot", -1);
             d.status = "connected";
             net_log("Lobby: welcome slot %d", d.slot);
@@ -131,6 +146,16 @@ bool LobbyClient::handle_text(const std::string& text)
                 d.events.push_back(std::move(e));
             }
         } else if (type == "error") {
+            std::string why = j.str("reason", "error");
+            if (d.attempts > 0 && d.attempts < kMaxReconnects && (why == "room-in-use" || why == "bad-slot")) {
+                /* Our old socket has not been reaped by the server yet: try again shortly. */
+                ++d.attempts;
+                d.welcomed = false;
+                d.status = "Connection lost - reconnecting (" + std::to_string(d.attempts) + "/" + std::to_string(kMaxReconnects) + ")...";
+                d.retry_at = now_ms() + 1500;
+                d.waiting_retry = true;
+                return true;
+            }
             d.failed = true;
             d.status = friendly(j.str("reason", "error"));
             net_log("Lobby: error %s", d.status.c_str());
@@ -144,14 +169,33 @@ void LobbyClient::update_tail()
 {
     Impl& d = *impl_;
 
-    if (d.ws.state() == WsState::Failed) {
-        d.failed = true;
-        int code = d.ws.close_code();
-        d.status = (code == 4001) ? friendly("host-left") : d.ws.error();
-        net_log("Lobby: failed: %s", d.status.c_str());
+    uint32_t now = now_ms();
+    if (d.waiting_retry) {
+        if ((int32_t)(now - d.retry_at) < 0) return;
+        d.waiting_retry = false;
+        d.ws.close();
+        d.last_keepalive = now;
+        net_log("Lobby: reconnect attempt %d", d.attempts);
+        if (!d.ws.connect(d.url)) { d.failed = true; d.status = "Connection lost. Press Rejoin to try again."; }
         return;
     }
-    uint32_t now = now_ms();
+    if (d.ws.state() == WsState::Failed) {
+        int code = d.ws.close_code();
+        net_log("Lobby: socket failed (code %d): %s", code, d.ws.error().c_str());
+        if (code == 4001) { d.failed = true; d.status = friendly("host-left"); return; }
+        /* Anything else (network blip, Worker restart, Wi-Fi roam): reconnect by itself with the same room code. */
+        if (d.was_welcomed && d.attempts < kMaxReconnects) {
+            ++d.attempts;
+            d.welcomed = false;
+            d.status = "Connection lost - reconnecting (" + std::to_string(d.attempts) + "/" + std::to_string(kMaxReconnects) + ")...";
+            d.retry_at = now + 1000u * (uint32_t)d.attempts;
+            d.waiting_retry = true;
+            return;
+        }
+        d.failed = true;
+        d.status = d.was_welcomed ? "Connection lost. Press Rejoin to try again." : d.ws.error();
+        return;
+    }
     if (d.welcomed && now - d.last_keepalive >= 20000) {
         d.last_keepalive = now;
         d.ws.send_text("{\"type\":\"keepalive\"}");
