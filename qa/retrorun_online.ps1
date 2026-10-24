@@ -87,6 +87,7 @@ while ($true) {
 }
 $wall = ((Get-Date) - $start).TotalSeconds
 
+$failed = 0
 foreach ($x in $procs) {
     $rc = if ($x.Killed) { 'killed' } else { $x.Proc.ExitCode }
     $lines = @()
@@ -101,5 +102,17 @@ foreach ($x in $procs) {
     Write-Output ("   " + $(if ($done) { $done.Substring($done.IndexOf('done:')) } else { 'no done line' }) + " | " + $(if ($syncmode) { $syncmode.Substring($syncmode.IndexOf('sync hash:')) } else { '' }))
     foreach ($rl in @($lines | Where-Object { $_ -match 'rollback-stats|rollback-timing' })) { Write-Output ('   ' + $rl.Substring($rl.IndexOf('rollback-'))) }
     Write-Output ("   desync-lines=" + $desync + " stall-or-timeout-lines=" + $timeouts.Count + $(if ($timeouts.Count) { ' :: ' + ($timeouts[0]) } else { '' }))
+    if (-not $x.Killed) {
+        # With -KillSlot the survivors must exit 4 (peer lost); otherwise every peer must exit 0 with a final line and no desync.
+        $wantRc = if ($KillSlot -ge 0) { 4 } else { 0 }
+        $bad = @()
+        if ($rc -ne $wantRc) { $bad += "rc=$rc (want $wantRc)" }
+        if ($KillSlot -lt 0 -and -not $final) { $bad += 'no final line' }
+        if ($desync -gt 0) { $bad += "desync=$desync" }
+        if ($bad.Count) { $failed++; Write-Output ("   FAIL slot " + $x.Slot + ": " + ($bad -join ', ')) }
+    }
 }
 Write-Output ("wall=" + [int]$wall + "s")
+if ($failed -gt 0) { Write-Output ("RESULT: FAIL (" + $failed + " peer(s))"); exit 1 }
+Write-Output "RESULT: PASS"
+exit 0
