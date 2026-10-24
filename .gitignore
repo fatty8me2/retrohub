@@ -24,3 +24,8 @@ shots/*.bmp
 qa/*.png
 shots/
 qa/**/*.png
+
+wt/
+wt_tmp/
+qa/logs-qa-*/
+qa/results-qa-*.txt
