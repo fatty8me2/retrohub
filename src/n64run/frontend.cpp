@@ -237,6 +237,8 @@ static Core g_core;
 
 /* --headless: called by the core on every VI (emulator thread). Drops the speed limiter on the first
  * call (it cannot be changed before the emulation thread runs) and stops after --frames VIs. */
+static bool qa_nofix() { return std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_NOFIX"); }   // QA baseline: behave like before
+
 static void headless_frame_cb(unsigned int) {
     g_vi++;
     if (g_match && g_core.MemPtr && !g_match->done()) {
@@ -384,6 +386,11 @@ int main(int argc, char** argv) {
     }
 
     const bool online = !args.net.empty();
+    /* QA only (RETROHUB_QA=1 N64RUN_QA_AUDIO=1): headless peers with the real audio plugin on SDL's silent "dummy" driver,
+     * so the plugin's buffer / sync behaviour is exercised without any sound. */
+    const bool qa_audio = args.headless && args.realtime && std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_AUDIO");
+    if (qa_audio) _putenv("SDL_AUDIODRIVER=dummy");
+    const bool want_audio = !args.headless || qa_audio;
     const bool delay_auto = args.delay < 0;   // no explicit --delay: negotiate, then adapt during play
 
     // ---- ports / local input
@@ -496,8 +503,15 @@ int main(int argc, char** argv) {
         const char* m2 = std::getenv("SSB64_MUTE");
         bool mute = (m1 && m1[0] && m1[0] != '0') || (m2 && m2[0] && m2[0] != '0');
         m64p_handle aud_cfg = nullptr;
-        if (mute && g_core.OpenSection("Audio-SDL", &aud_cfg) == M64ERR_SUCCESS) {
-            cfg_int(aud_cfg, "VOLUME_DEFAULT", 0);
+        if (g_core.OpenSection("Audio-SDL", &aud_cfg) == M64ERR_SUCCESS) {
+            if (mute) cfg_int(aud_cfg, "VOLUME_DEFAULT", 0);
+            if (online && !qa_nofix()) {
+                /* Netplay: keep the plugin's queue short so audio can never lag far behind the picture
+                 * (defaults: 16384-sample ring = ~370 ms worst case). 4096 samples ~ 93 ms at 44.1 kHz. */
+                cfg_int(aud_cfg, "PRIMARY_BUFFER_SIZE", 4096);
+                cfg_int(aud_cfg, "PRIMARY_BUFFER_TARGET", 1536);
+                cfg_int(aud_cfg, "SECONDARY_BUFFER_SIZE", 1024);
+            }
         }
     }
     g_core.SaveFile();
@@ -614,7 +628,7 @@ int main(int argc, char** argv) {
         }
     }
     if (!start_plugin(gfx, emu_dir, "mupen64plus-video-GLideN64.dll", "Video") ||
-        (!args.headless && !start_plugin(aud, emu_dir, "mupen64plus-audio-sdl.dll", "Audio")) ||
+        (want_audio && !start_plugin(aud, emu_dir, "mupen64plus-audio-sdl.dll", "Audio")) ||
         !start_plugin(rsp, emu_dir, "mupen64plus-rsp-hle.dll", "RSP")) {
         g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
         g_core.Shutdown();
@@ -622,7 +636,7 @@ int main(int argc, char** argv) {
     }
     if (PluginStartup(g_core.dll, const_cast<char*>("Input"), m64p_debug_cb) != M64ERR_SUCCESS) return 3;
     HMODULE self = GetModuleHandle(nullptr);
-    if (g_core.Attach(M64PLUGIN_GFX, gfx.h) != M64ERR_SUCCESS || (!args.headless && g_core.Attach(M64PLUGIN_AUDIO, aud.h) != M64ERR_SUCCESS) ||
+    if (g_core.Attach(M64PLUGIN_GFX, gfx.h) != M64ERR_SUCCESS || (want_audio && g_core.Attach(M64PLUGIN_AUDIO, aud.h) != M64ERR_SUCCESS) ||
         g_core.Attach(M64PLUGIN_INPUT, self) != M64ERR_SUCCESS || g_core.Attach(M64PLUGIN_RSP, rsp.h) != M64ERR_SUCCESS) {
         logf_("n64run", "CoreAttachPlugin failed");
         g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
@@ -657,6 +671,12 @@ int main(int argc, char** argv) {
             hk.read_local = [&](int idx) { return input.read(idx); };
         }
         hk.idle = [] { SDL_PumpEvents(); };
+        if (online && !qa_nofix())
+            hk.set_limiter = [](bool on) {
+                if (g_headless_mode && !g_realtime) return;   // unthrottled test runs keep the limiter off
+                int v = on ? 1 : 0;
+                g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &v);
+            };
         hk.request_stop = [] { g_core.DoCommand(M64CMD_STOP, 0, nullptr); };
         hk.log = [](const std::string& s) { logline("lockstep", s.c_str()); };
         if (!args.no_hash && g_core.MemPtr) {
@@ -684,7 +704,7 @@ int main(int argc, char** argv) {
         }
         g_headless_mode = args.headless;
         g_realtime = args.realtime;
-        if (args.headless || g_match) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
+        if (args.headless || g_match || online) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         /* Boot watchdog: a game that never reads a controller within 90 s is stuck in its own boot code (seen with a
          * bad Pokemon Stadium dump: it spins in a `bal .` loop at 0x80000198). Say so instead of hanging silently. */
         std::thread([] {
