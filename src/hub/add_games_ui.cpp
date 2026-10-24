@@ -148,13 +148,13 @@ void add_games_header_button(float bh) {
 TileResult add_games_tile(ImVec2 size) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + size.x, p0.y + size.y);
-    ImGui::InvisibleButton("##addgames_tile", size);
+    bool pressed = ImGui::InvisibleButton("##addgames_tile", size, ImGuiButtonFlags_EnableNav);
     TileResult r;
     r.visible = ImGui::IsItemVisible();
     r.hovered = ImGui::IsItemHovered();
-    r.focused = ImGui::IsItemFocused();
+    r.focused = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
     r.clicked = ImGui::IsItemClicked(0) && !g_suppress_click;
-    r.activated = ImGui::IsItemActivated() && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+    r.activated = pressed && !ImGui::IsMouseReleased(0);   // A / Enter
     float rad = sp(1.75f);
     bool hot = r.hovered || r.focused;
     dl->AddRectFilled(p0, p1, ui::mix(ui::PANEL, ui::ACCENT, hot ? 0.18f : 0.08f), rad);
@@ -175,6 +175,7 @@ TileResult add_games_tile(ImVec2 size) {
     ty += sp(0.4f);
     centered(ui::F.cap, ui::TEXT2, "Drop ROM files here or click to choose", size.x - sp(3.f));
     if (r.hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (r.focused) ui::focus_ring(dl, p0, p1, rad);
     if (r.clicked || r.activated) add_games_open();
     return r;
 }
@@ -184,8 +185,9 @@ void add_games_banner() {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float w = ImGui::GetContentRegionAvail().x, h = sp(9.f);
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
-    ImGui::InvisibleButton("##addgames_banner", ImVec2(w, h));
+    bool pressed = ImGui::InvisibleButton("##addgames_banner", ImVec2(w, h), ImGuiButtonFlags_EnableNav);
     bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+    if (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible) ui::focus_ring(dl, p0, p1, sp(2.f));
     float rad = sp(2.f);
     dl->AddRectFilled(p0, p1, ui::mix(ui::PANEL, ui::ACCENT, hot ? 0.18f : 0.08f), rad);
     dl->AddRect(p0, p1, hot ? ui::ACCENT : ui::with_alpha(ui::ACCENT, 0.55f), rad, 0, hot ? 2.f : 1.5f);
@@ -196,7 +198,7 @@ void add_games_banner() {
     dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, cy - ui::F.h2->FontSize - sp(0.1f)), ui::TEXT, "Add your own games");
     dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, cy + sp(0.4f)), ui::TEXT2, "Drop ROM files here or click to choose");
     if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    if (ImGui::IsItemClicked(0) || (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) add_games_open();
+    if (ImGui::IsItemClicked(0) || pressed) add_games_open();
     ImGui::Dummy(ImVec2(0, sp(1.5f)));
 }
 
@@ -213,6 +215,7 @@ static void add_games_modal() {
     ImGui::PopStyleVar(2);
     if (!open) return;
     const float bh = sp(5.5f), bw = ImGui::GetContentRegionAvail().x;
+    if (ui::modal_back() && AG.st != AddGames::Importing) { AG.st = AddGames::Closed; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
 
     ImGui::PushFont(ui::F.title);
     ImGui::TextUnformatted(AG.st == AddGames::Done ? "All done" : AG.st == AddGames::Importing ? "Adding your games" : "Add your own games");

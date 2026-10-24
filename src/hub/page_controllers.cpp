@@ -315,7 +315,8 @@ void draw_pads_panel() {
         dl->AddText(ui::F.bold, ui::F.bold->FontSize, o + ImVec2(sp(5.f), (rh - ui::F.bold->FontSize) * 0.5f), ui::TEXT, nm);
         // click on the row to pick it for the test input
         ImGui::SetCursorScreenPos(o);
-        if (ImGui::InvisibleButton("row", ImVec2(std::max(1.f, rw * 0.35f), rh))) A.pad_sel = (int)i;
+        if (ImGui::InvisibleButton("row", ImVec2(std::max(1.f, rw * 0.35f), rh), ImGuiButtonFlags_EnableNav)) A.pad_sel = (int)i;
+        if (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible) ui::focus_ring(dl, o, o + ImVec2(rw, rh), sp(1.5f));
         // buttons from the right edge
         float bw = sp(11.f), gap = sp(0.75f), bh = rh - sp(1.f);
         float x = o.x + rw - sp(0.5f);

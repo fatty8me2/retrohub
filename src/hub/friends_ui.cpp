@@ -214,8 +214,9 @@ bool fr_pill_button(const char* id, const char* label, ImVec2 pos, float h, bool
     if (width_out) *width_out = w;
     ImGui::SetCursorScreenPos(pos);
     ImGui::BeginDisabled(!enabled);
-    bool pressed = ImGui::InvisibleButton(id, ImVec2(w, h));
-    bool hov = ImGui::IsItemHovered();
+    bool pressed = ImGui::InvisibleButton(id, ImVec2(w, h), ImGuiButtonFlags_EnableNav);
+    bool hov = ImGui::IsItemHovered() || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible);
+    const bool pad_focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
     float rd = h * 0.5f;
@@ -225,6 +226,7 @@ bool fr_pill_button(const char* id, const char* label, ImVec2 pos, float h, bool
         dl->AddRect(p0, p1, ui::HAIRLINE, rd, 0, 1.f);
     }
     fr_text_c(dl, ui::F.bold, (p0 + p1) * 0.5f, enabled ? IM_COL32_WHITE : ui::TEXT3, label);
+    if (pad_focus) ui::focus_ring(dl, p0, p1, rd);
     ImGui::EndDisabled();
     return pressed;
 }
@@ -345,6 +347,7 @@ void fr_open_chat(const std::string& uid) {
 void fr_toggle_panel() {
     A.st.show_friends = !A.st.show_friends;
     if (A.st.show_friends && A.pad_mode) FR.want_focus = true;
+    if (!A.st.show_friends && A.pad_mode) { ImGui::SetWindowFocus("##root"); A.nav_seed = true; A.page_focus_req = true; }
     mark_dirty();
 }
 
@@ -681,6 +684,21 @@ void fr_draw_toasts(float right_x, float bottom_y) {
         ImGui::PopStyleVar(2);
         y -= h + sp(1.f);
     }
+}
+
+bool fr_invite_toast_visible() {
+    for (auto& n : FR.notifs) if (!n.done && n.toast && n.invite && ImGui::GetTime() - n.t0 <= 30.0) return true;
+    return false;
+}
+bool fr_join_invite_toast() {
+    for (int i = (int)FR.notifs.size() - 1; i >= 0; --i) {
+        auto& n = FR.notifs[i];
+        if (n.done || !n.toast || !n.invite || ImGui::GetTime() - n.t0 > 30.0) continue;
+        shot_trace("join-toast", n.inv.lobby_code);
+        fr_join_notif(n);
+        return true;
+    }
+    return false;
 }
 
 /* ---- top bar (inside the content column) ---- */
@@ -1213,6 +1231,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
     if (ImGui::BeginPopupModal("Are you sure?##frconf", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        if (ui::modal_back()) ImGui::CloseCurrentPopup();
         bool block = FR.confirm_kind == "block";
         ImGui::PushTextWrapPos(sp(36.f));
         ImGui::TextUnformatted((std::string(block ? "Block " : "Remove ") + FR.confirm_name + (block ? "? They will be removed from your friends and can't contact you." : " from your friends?")).c_str());
@@ -1238,7 +1257,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
 bool fr_handle_back() {
     if (!A.st.show_friends || !FR.panel_focused) return false;
     if (!FR.chat_uid.empty()) FR.chat_uid.clear();
-    else { A.st.show_friends = false; mark_dirty(); ImGui::SetWindowFocus("##root"); }
+    else { A.st.show_friends = false; mark_dirty(); ImGui::SetWindowFocus("##root"); A.nav_seed = true; A.page_focus_req = true; }
     return true;
 }
 
@@ -1261,6 +1280,7 @@ void fr_invite_button_and_picker(float btn_w, float btn_h) {
     bool open = ImGui::BeginPopupModal("Invite friends##picker", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
     ImGui::PopStyleVar(2);
     if (!open) return;
+    if (ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     hubnet::Invite inv = fr_make_invite();
     float cw = ImGui::GetContentRegionAvail().x;
     ImDrawList* dl = ImGui::GetWindowDrawList();
