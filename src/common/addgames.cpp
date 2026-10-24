@@ -36,7 +36,7 @@ std::string pjoin(const std::string& a, const std::string& b) {
 const std::vector<std::string>& supported_exts() {
     static const std::vector<std::string> v = {".z64", ".n64", ".v64", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cci", ".cia", ".cxi",
                                                ".iso", ".gcm", ".rvz", ".ciso", ".wia", ".gcz", ".wua", ".wud", ".wux", ".rpx",
-                                               ".zip", ".7z"};
+                                               ".chd", ".cso", ".cue", ".zip", ".7z"};
     return v;
 }
 
@@ -56,6 +56,7 @@ std::string console_folder(System s) {
         case System::N3DS: return "3DS";
         case System::WiiU: return "Wii U";
         case System::NDS: return "DS";
+        case System::PS2: return "PlayStation 2";
         default: return "Other";
     }
 }

@@ -4,6 +4,7 @@
 #include "library.h"
 #include "emu_formats.h"
 #include "games.h"
+#include "ps2.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -771,6 +772,7 @@ const char* system_name(System s) {
     case System::N3DS: return "Nintendo 3DS";
     case System::WiiU: return "Wii U";
     case System::NDS: return "Nintendo DS";
+    case System::PS2: return "PlayStation 2";
     default:          return "Unknown";
     }
 }
@@ -785,6 +787,7 @@ const char* system_short(System s) {
     case System::N3DS: return "3ds";
     case System::WiiU: return "wiiu";
     case System::NDS: return "nds";
+    case System::PS2: return "ps2";
     default:          return "";
     }
 }
@@ -799,6 +802,7 @@ System system_from_short(const std::string& s) {
     if (l == "3ds") return System::N3DS;
     if (l == "wiiu") return System::WiiU;
     if (l == "nds") return System::NDS;
+    if (l == "ps2") return System::PS2;
     return System::Unknown;
 }
 
@@ -1096,10 +1100,12 @@ std::string member_skeleton(const std::string& name) {
 }
 
 /* The member must be unambiguous: exactly one entry in the archive matches the pattern we hand to tar. */
-bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out) {
+bool is_ps2_image_ext(const std::string& ext) { return ext == ".iso" || ext == ".chd" || ext == ".cso"; }
+
+bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, bool ps2 = false) {
     for (const auto& a : l) {
         if (!archive_entry_safe(a.name) || a.size < 0x1000) continue;
-        if (!is_gc_image_ext(ascii_lower(path_utf8(utf8_path(a.name).extension())))) continue;
+        { std::string xe = ascii_lower(path_utf8(utf8_path(a.name).extension())); if (!(ps2 ? is_ps2_image_ext(xe) : is_gc_image_ext(xe))) continue; }
         const std::string pat = member_skeleton(a.name);
         int matches = 0;
         for (const auto& b : l) if (glob_star(pat, 0, b.name, 0)) ++matches;
@@ -1110,7 +1116,7 @@ bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out) {
     return false;
 }
 
-fs::path gc_unpack_dir(const GameEntry& e) { return lib_dir() / L"rom-cache" / L"gc" / utf8_path(sanitize_key(e.key)); }
+fs::path gc_unpack_dir(const GameEntry& e) { return lib_dir() / L"rom-cache" / (e.system == System::PS2 ? L"ps2" : L"gc") / utf8_path(sanitize_key(e.key)); }
 
 } // namespace
 
@@ -1179,6 +1185,53 @@ static bool id_gc_archive(const fs::path& arch, GameEntry* e) {
     return true;
 }
 
+static void fill_ps2(const hub::ps2::Ident& id, const fs::path& name_src, GameEntry* e) {
+    e->system = System::PS2;
+    e->serial = id.serial;
+    e->key = hub::ps2::key_for(id.serial, sanitize_key(title_from_filename(name_src)));
+    e->title = !id.title.empty() ? id.title : title_from_filename(name_src);
+}
+
+static bool id_ps2_file(const fs::path& p, GameEntry* e) {
+    hub::ps2::Ident id;
+    if (!hub::ps2::identify_file(path_utf8(p), &id)) return false;
+    fill_ps2(id, p, e);
+    return true;
+}
+
+/* A PS2 image inside a .zip/.7z: the first 4 MB are streamed to find SYSTEM.CNF (plain .iso); .chd/.cso use the serial in the name. */
+static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
+    std::string ext = ascii_lower(path_utf8(arch.extension()));
+    if (ext == ".7z" && !is_7z_file(path_utf8(arch))) return false;
+    std::vector<ArchiveEntry> l;
+    ArchiveEntry ent;
+    if (!list_archive(path_utf8(arch), &l) || !find_gc_entry(l, &ent, true)) return false;
+    const std::string inner_ext = ascii_lower(path_utf8(utf8_path(ent.name).extension()));
+    hub::ps2::Ident id;
+    bool ok = false;
+    if (inner_ext == ".iso") {
+        auto head = std::make_shared<std::string>();
+        if (tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(ent.name), 4u << 20, 60000, head.get()) && head->size() > 0x10000)
+            ok = hub::ps2::identify_buffer(head, &id);
+        if (!ok && id.ps1) return false;
+    }
+    if (!ok) {
+        std::string s = hub::ps2::serial_from_filename(path_utf8(arch.filename()));
+        if (s.empty()) s = hub::ps2::serial_from_filename(ent.name);
+        if (s.empty() || hub::ps2::title_for(s).empty()) return false;
+        id = hub::ps2::Ident();
+        id.serial = s;
+        id.title = hub::ps2::title_for(s);
+    }
+    GameEntry g;
+    fill_ps2(id, utf8_path(ent.name), &g);
+    g.path = path_utf8(arch);
+    g.issue = "extract";
+    g.unpacked = ent.size;
+    *e = std::move(g);
+    return true;
+}
+
 /* Stamp written next to the unpacked image: archive size + mtime + image size + entry name. A changed or replaced archive
  * (or a truncated image) no longer matches, so it is unpacked again. */
 static std::string gc_stamp(const GameEntry& e, uint64_t image_size, const std::string& entry) {
@@ -1216,7 +1269,7 @@ static uint64_t gc_unpacked_size(const GameEntry& e) {
     if (e.unpacked) return e.unpacked;
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
-    return list_archive(e.path, &l) && find_gc_entry(l, &ent) ? ent.size : 0;
+    return list_archive(e.path, &l) && find_gc_entry(l, &ent, e.system == System::PS2) ? ent.size : 0;
 }
 
 static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, uint64_t)>& progress, std::string* out_path, std::string* err) {
@@ -1224,7 +1277,7 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
     ArchiveEntry ent;
     if (!fs::exists(tar_exe())) { *err = "Windows' tar.exe was not found (needs Windows 10 version 1803 or newer)"; return false; }
     if (!list_archive(e.path, &l)) { *err = "cannot read the archive"; return false; }
-    if (!find_gc_entry(l, &ent)) { *err = "no GameCube disc image inside the archive"; return false; }
+    if (!find_gc_entry(l, &ent, e.system == System::PS2)) { *err = "no disc image inside the archive"; return false; }
     fs::path dir = gc_unpack_dir(e);
     std::error_code ec;
     fs::remove_all(dir, ec);   // a stale or half-done extraction of the same key
@@ -1300,7 +1353,7 @@ bool identify_game(const std::string& path, GameEntry* out) {
         }
         {   /* a zip holding a GameCube disc image: listed, unpacked on Play */
             GameEntry g;
-            if (id_gc_archive(p, &g)) { g.size = size; g_identify_calls.fetch_add(1); *out = std::move(g); return true; }
+            if (id_gc_archive(p, &g) || id_ps2_archive(p, &g)) { g.size = size; g_identify_calls.fetch_add(1); *out = std::move(g); return true; }
         }
         fs::path rom, inner;
         if (!extract_zipped_rom(p, &rom, &inner)) return false;
@@ -1310,7 +1363,7 @@ bool identify_game(const std::string& path, GameEntry* out) {
     }
     if (ext == ".7z") {
         GameEntry g;
-        if (!id_gc_archive(p, &g)) return false;
+        if (!id_gc_archive(p, &g) && !id_ps2_archive(p, &g)) return false;
         g.size = size;
         g_identify_calls.fetch_add(1);
         *out = std::move(g);
@@ -1333,10 +1386,12 @@ static bool identify_rom(const fs::path& p, const fs::path& name_src, GameEntry*
     else if (ext == ".gba") ok = id_gba(p, name_src, size, &e);
     else if (ext == ".gb" || ext == ".gbc") ok = id_gb(p, name_src, size, &e);
     else if (ext == ".nds") ok = id_nds(p, name_src, size, &e);
+    else if (ext == ".chd" || ext == ".cso" || ext == ".cue" || ext == ".bin") ok = id_ps2_file(p, &e);
     else if (ext == ".iso" || ext == ".gcm" || ext == ".rvz" || ext == ".wia" || ext == ".ciso" || ext == ".gcz")
         ok = id_gc(p, ext, size, &e);
     else if (is_3ds_extension(ext)) ok = id_3ds(p, ext, &e);
     else if (ext == ".wua" || ext == ".wud" || ext == ".wux" || ext == ".rpx") ok = id_wiiu(p, ext, size, &e);
+    if (!ok && ext == ".iso") { e = GameEntry(); ok = id_ps2_file(p, &e); }
     if (!ok) return false;
     e.path = path_utf8(p);
     e.size = size;
@@ -1365,12 +1420,12 @@ size_t extract_write_cb(void* user, mz_uint64 /*ofs*/, const void* data, size_t 
 } // namespace
 
 std::string extract_3ds_dir(const GameEntry& e) {
-    if (e.system == System::GC) return path_utf8(gc_unpack_dir(e));
+    if (e.system == System::GC || e.system == System::PS2) return path_utf8(gc_unpack_dir(e));
     return path_utf8(utf8_path(data_dir()) / L"rom-cache" / L"3ds" / utf8_path(sanitize_key(e.key)));
 }
 
 uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
-    if (e.system == System::GC) return gc_unpacked_size(e);
+    if (e.system == System::GC || e.system == System::PS2) return gc_unpacked_size(e);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
     FILE* zf = _wfopen(utf8_path(e.path).wstring().c_str(), L"rbN");
@@ -1389,7 +1444,7 @@ uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
 }
 
 std::string extracted_3ds_path(const GameEntry& e) {
-    if (e.system == System::GC) return gc_extracted_path(e);
+    if (e.system == System::GC || e.system == System::PS2) return gc_extracted_path(e);
     std::error_code ec;
     fs::path dir = utf8_path(extract_3ds_dir(e));
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
@@ -1403,7 +1458,7 @@ bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint
                      std::string* out_path, std::string* err) {
     std::string dummy;
     if (!err) err = &dummy;
-    if (e.system == System::GC) return gc_extract(e, progress, out_path, err);
+    if (e.system == System::GC || e.system == System::PS2) return gc_extract(e, progress, out_path, err);
     fs::path zip = utf8_path(e.path);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
@@ -1572,7 +1627,7 @@ struct CacheRec {
     GameEntry e;
 };
 
-constexpr int kCacheVersion = 8;  // 2: serial matching + GBA catalog_id; 5: GB/GBC serials; 6: 3DS/Wii U/DS; 7: save_stem (short rom-cache names); 8: GB/GBC catalog titles; forces a rescan
+constexpr int kCacheVersion = 9;  // 2: serial matching + GBA catalog_id; 5: GB/GBC serials; 6: 3DS/Wii U/DS; 7: save_stem (short rom-cache names); 8: GB/GBC catalog titles; forces a rescan
 
 std::unordered_map<std::string, CacheRec> cache_load() {
     std::unordered_map<std::string, CacheRec> m;
@@ -1655,7 +1710,7 @@ bool scan_extension(const std::string& ext) {
     static const char* const kExt[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".7z",
                                        ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip", ".nds",
                                        ".3ds", ".cci", ".cia", ".cxi", ".3dsx", ".zcci", ".zcia", ".zcxi", ".z3dsx",
-                                       ".wua", ".wud", ".wux", ".rpx"};
+                                       ".wua", ".wud", ".wux", ".rpx", ".chd", ".cso", ".cue"};
     for (const char* e : kExt)
         if (ext == e) return true;
     return false;
