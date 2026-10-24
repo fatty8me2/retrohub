@@ -24,6 +24,18 @@ static void fr_refresh_lists() {
     std::string me = FR.fake ? std::string() : FR.cli.my_uid();
     hubnet::dedupe_friends(FR.d_friends, me);
     hubnet::dedupe_requests(FR.d_friends, FR.d_in, FR.d_out, me);
+    FR.d_stale.clear();
+    if (!FR.show_dupes) {
+        std::vector<std::string> stale = hubnet::stale_same_name(FR.d_friends);
+        if (!stale.empty()) {
+            std::vector<hubnet::Friend> keep;
+            for (auto& f : FR.d_friends) {
+                if (std::find(stale.begin(), stale.end(), f.uid) != stale.end()) FR.d_stale.push_back(f);
+                else keep.push_back(f);
+            }
+            FR.d_friends = std::move(keep);
+        }
+    }
 }
 const std::vector<hubnet::Friend>& fr_friends() { fr_refresh_lists(); return FR.d_friends; }
 const std::vector<hubnet::Request>& fr_incoming() { fr_refresh_lists(); return FR.d_in; }
@@ -471,6 +483,7 @@ void fr_fake_init() {
     o.uid = "rinuid"; o.name = "Rin"; o.code = "RH-ZX5C-VB6N"; o.at = now;
     FR.f_out.push_back(o);
     if (std::getenv("HUB_SHOT_FAKE_DUPES")) {   // screenshot aid: the same people repeated in every way; the panel must still show each once
+        mk("oldkai", "Kai", PS::Offline, "", "", "", "", false, 0, 0, now - 20 * 86400 * 1000LL);   // Kai's old identity (never retired), same name
         mk("miauid", "Mia", PS::Offline, "", "", "", "", false, 0, 0, now - 86400 * 1000LL);   // second row, same uid
         mk("jakuid", "Jake", PS::Online, "", "", "", "", false, 0, 0, now - 5000);
         mk("oliuid", "Oliver", PS::Online, "", "", "", "", false, 0, 0, now);                  // friend AND incoming request below
@@ -1088,6 +1101,26 @@ void fr_draw_panel(float disp_w, float disp_h) {
         for (auto& f : fr_friends()) rows.push_back(fr_row(f));
         hubui::FriendGroups g = hubui::group_friends(rows);
         const auto& fl = fr_friends();
+        if (!FR.d_stale.empty()) {   // old identities of people who are also listed under a newer one
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+            ImGui::PushTextWrapPos(lw);
+            std::string names;
+            for (auto& f : FR.d_stale) names += (names.empty() ? "" : ", ") + f.name;
+            ImGui::TextUnformatted(("These look like the same person on another account: " + names + ". Merge?").c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+            ImVec2 bp = ImGui::GetCursorScreenPos();
+            float bh = sp(3.f), pw = 0;
+            if (fr_pill_button("merge", "Merge", bp, bh, true, true, &pw)) {
+                for (auto& f : FR.d_stale) {
+                    if (FR.fake) { for (size_t i = 0; i < FR.f_friends.size(); ++i) if (FR.f_friends[i].uid == f.uid) { FR.f_friends.erase(FR.f_friends.begin() + i); break; } }
+                    else FR.cli.remove_friend(f.uid);
+                }
+                FR.d_frame = -1;
+            }
+            if (fr_pill_button("keepboth", "Keep both", ImVec2(bp.x + pw + sp(1.f), bp.y), bh, false, true, nullptr)) { FR.show_dupes = true; FR.d_frame = -1; }
+            ImGui::Dummy(ImVec2(0, bh + sp(1.f)));
+        }
         if (!g.online.empty()) {
             fr_section("ONLINE  -  " + std::to_string(g.online.size()));
             for (int i : g.online) fr_friend_row(fl[i], rows[i], lw, now);

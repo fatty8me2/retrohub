@@ -25,6 +25,8 @@ struct FriendsUi {
     /* Render caches: the source lists run through hubnet::dedupe_* once per frame, so a person is never drawn twice. */
     std::vector<hubnet::Friend> d_friends;
     std::vector<hubnet::Request> d_in, d_out;
+    std::vector<hubnet::Friend> d_stale;   // same name as a fresher entry and offline: hidden until merged (see hubnet::stale_same_name)
+    bool show_dupes = false;
     int d_frame = -1;
 
     std::string chat_uid;
