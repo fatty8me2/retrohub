@@ -50,6 +50,7 @@ for ($i = 0; $i -lt 2; $i++) {
   $env:RETROHUB_AUTOTEST = $role; $env:RETROHUB_AUTOTEST_CODE = $Code; $env:RETROHUB_AUTOTEST_NAME = "qa-At$i"
   $env:RETROHUB_AUTOTEST_GAME = $Game; $env:RETROHUB_AUTOTEST_PLAYERS = "2"
   $env:RETROHUB_ALLOW_VERSION_MISMATCH = "1"; $env:RETROHUB_NO_UPDATE_CHECK = "1"
+  $env:RETROHUB_QA = "1"
   if ($Relay) { $env:HUBNET_FORCE_RELAY = "1" } else { Remove-Item Env:HUBNET_FORCE_RELAY -ErrorAction SilentlyContinue; $env:HUBNET_LOOPBACK = "1" }
   $env:RETRORUN_MUTE = "1"; $env:SSB64_MUTE = "1"
   $pids += [DeskLaunch3]::Start("$d\RetroHub.exe", $d, $Desktop)

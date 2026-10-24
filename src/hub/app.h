@@ -216,6 +216,9 @@ struct App {
     hubnet::LobbyClient lobby;
     bool in_room = false;
     std::string code;
+    bool room_role_host = false;                 // role we (re)connect with: lets "Rejoin" keep the room code
+    bool entering_room = false;                  // enter_room() connect still in flight
+    std::string prev_code; bool prev_host = false;   // room we left to enter another one: restored if the new one fails
     std::string join_buf;
     std::map<int, hubui::PeerInfo> peers;
     std::map<int, bool> ready;
@@ -515,6 +518,9 @@ void send_my_pick();
 void send_rules();
 void leave_room();
 void enter_room(bool host, const std::string& code);
+void rejoin_room();   // reconnect to the room we were in (same code and role) after the connection was lost
+void launch_fail(const std::string& why, double secs = 8.0);   // guest couldn't start the host's launch: notice + np_fail to the host
+std::string ready_block_reason_now();   // "" or why the guest's "I'm ready" must stay disabled (version mismatch)
 bool is_host();
 bool allow_version_mismatch();
 std::vector<hubui::PeerInfo> peer_list();

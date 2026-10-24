@@ -161,7 +161,7 @@ Selectability game_selectable(const std::string& game_id, int max_players,
     for (auto& p : peers) if (p.slot == host_slot) host = &p;
     std::string t;
     for (auto& p : peers) {
-        if (!p.hello) { r.reason = "waiting for " + p.name; return r; }
+        if (!p.hello_complete()) { r.reason = "waiting for " + p.name; return r; }   // every hello part must have arrived
         if (!token(p, &t)) { r.reason = p.name + " doesn't have this game"; return r; }
     }
     if (host) {
@@ -199,7 +199,7 @@ std::vector<std::string> hello_messages(const std::string& version, const std::m
     size_t i = 0;
     int part = 0;
     do {
-        std::string o = "{\"kind\":\"hello\",\"version\":\"" + json::escape(version) + "\",\"part\":" + std::to_string(part);
+        std::string o = "{\"kind\":\"hello\",\"version\":\"" + json::escape(version) + "\",\"part\":" + std::to_string(part) + ",\"parts\":@@";
         if (part == 0) {
             if (!app.empty()) o += ",\"app\":\"" + json::escape(app) + "\"";
             o += ",\"games\":{";
@@ -223,6 +223,7 @@ std::vector<std::string> hello_messages(const std::string& version, const std::m
         out.push_back(o + "]}");
         ++part;
     } while (i < keys.size());
+    for (auto& m : out) m.replace(m.find("@@"), 2, std::to_string(out.size()));   // total part count, so receivers know when the hello is complete
     return out;
 }
 
@@ -234,6 +235,7 @@ bool parse_hello(const Json& body, PeerInfo* out) {
         if (k && k->type == Json::Array)
             for (auto& v : k->a)
                 if (v.type == Json::String) out->keys.push_back(v.s);
+        if (out->hello) ++out->parts_got;
         return true;
     }
     const Json* g = body.get("games");
@@ -247,6 +249,8 @@ bool parse_hello(const Json& body, PeerInfo* out) {
         for (auto& v : k->a)
             if (v.type == Json::String) out->keys.push_back(v.s);
     out->app = body.str("app");
+    out->parts_expected = std::max(1, (int)body.num("parts", 1));
+    out->parts_got = 1;
     out->hello = true;
     return true;
 }
@@ -306,6 +310,17 @@ VersionGate version_gate(const std::string& host_app, const std::vector<PeerInfo
         }
     }
     return g;
+}
+
+std::string ready_block_reason(const std::string& my_app, const std::string& host_app, bool host_hello, bool allow_mismatch) {
+    if (allow_mismatch) return "";
+    switch (guest_version_action(my_app, host_app, host_hello)) {
+        case GuestVersionAction::None: return "";
+        case GuestVersionAction::Waiting: return "Checking versions...";
+        case GuestVersionAction::UpdateNow: return "Update RetroHub to " + app_version_label(host_app) + " to match the host";
+        case GuestVersionAction::HostNeedsUpdate: return "The host needs to update RetroHub first";
+    }
+    return "";
 }
 
 GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app, bool host_hello) {

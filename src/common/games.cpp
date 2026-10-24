@@ -468,7 +468,7 @@ const std::vector<GameInfo>& catalog() {
          "Link crosses between Hyrule and the Twilight Realm in the remastered GameCube adventure.",
          "Legend of Zelda, The - Twilight Princess HD (USA) (En,Fr,Es) (Rev 2)"},
 
-        /* ---- GameCube (Dolphin). Serial = the 6-char disc ID. Online play is not wired for GC yet. ---- */
+        /* ---- GameCube (Dolphin). Serial = the 6-char disc ID. Online play (Dolphin NetPlay) is wired for the online-capable titles. ---- */
         {"gc_ww", "Zelda: The Wind Waker", Engine::Dolphin, 1, {}, "", "gc",
          {"GZLE01", "GZLP01", "GZLJ01"}, false, 2002,
          "Link sails a drowned Hyrule on the King of Red Lions in a cel-shaded adventure.",
