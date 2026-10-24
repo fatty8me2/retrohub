@@ -61,6 +61,9 @@ struct Profile {
 };
 
 Profile default_profile(const std::string& system);   // name "default-<system>"
+/* A profile whose mapping equals the built-in default goes by the built-in name (e.g. an untouched "n64-custom" copy), so a consumer
+ * that treats "default-<system>" specially (BattleShip keeps its own Smash layout) sees it. Customized profiles are unchanged. */
+Profile canonical_name(Profile p);
 uint64_t mapping_hash(const Profile& p);               // FNV-1a over the canonical mapping (not name / port_order)
 std::string hash_hex(uint64_t h);
 

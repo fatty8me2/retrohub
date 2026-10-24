@@ -598,6 +598,10 @@ int fr_invite_card(const Notif& n, float w, float frac, bool shadow) {
     float by = p1.y - pad - sp(3.5f), bw = (w - pad * 2 - sp(1.f)) * 0.5f;
     ImGui::SetCursorScreenPos(ImVec2(p0.x + pad, by));
     if (ui::button("Join", ImVec2(bw, sp(3.5f)), true, !expired)) act = 1;
+    if (shadow && A.pad_mode && !expired) {   // the toast: Menu (Start) joins it from anywhere, so show that on the card
+        float gw = ui::key_hint_width(true, "Menu", "", "");
+        ui::key_hint(dl, ImVec2(p0.x + pad + bw - gw - sp(1.f), by + (sp(3.5f) - (ui::F.cap->FontSize + sp(0.75f))) * 0.5f), true, "Menu", "", "");
+    }
     ImGui::SetCursorScreenPos(ImVec2(p0.x + pad + bw + sp(1.f), by));
     if (ui::button("Dismiss", ImVec2(bw, sp(3.5f)), false, true)) act = 2;
     if (frac >= 0.f) {

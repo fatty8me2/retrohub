@@ -107,8 +107,8 @@ void page_settings() {
         {
             text_wrapped_disabled(bi.file.empty() ? std::string("PS2 BIOS: not found - put your own scph*.bin in a BIOS folder next to your games, or choose the folder below")
                                                    : "PS2 BIOS: " + bi.dir + "\\" + bi.file);
-            if (button("Choose PS2 BIOS folder...", ImVec2(0, 0), false, true, ui::Icon::Folder)) {
-                std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+            {
+                std::string p = osk::folder("ps2bios_set", button("Choose PS2 BIOS folder...", ImVec2(0, 0), false, true, ui::Icon::Folder));
                 if (!p.empty()) { A.st.ps2_bios_dir = p; mark_dirty(); }
             }
             if (!A.st.ps2_bios_dir.empty()) {
