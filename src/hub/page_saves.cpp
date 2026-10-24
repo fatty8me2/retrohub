@@ -57,8 +57,8 @@ void page_saves() {
                           "it in step with the vault in both directions and never deletes a save; if both sides changed, the older copy is kept.");
     ImGui::TextUnformatted("Sync folder");
     text_wrapped_disabled(A.st.sync_folder.empty() ? "(not set)" : A.st.sync_folder);
-    if (button("Browse...", ImVec2(0, 0), A.st.sync_folder.empty())) {
-        std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+    {
+        std::string p = osk::folder("sv_sync", button("Browse...", ImVec2(0, 0), A.st.sync_folder.empty()));
         if (!p.empty()) { A.st.sync_folder = p; mark_dirty(); }
     }
     if (!A.st.sync_folder.empty()) {
