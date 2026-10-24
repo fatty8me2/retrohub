@@ -579,6 +579,21 @@ int main() {
         CHECK(merge_installer_games_dir(&e, "E:\\G") && e.rom_folders.size() == 1);
     }
 
+    {   /* friends error mapping, invite result, queued-join replacement */
+        CHECK(friends_error_text("bad-request", "friends-full") == "Your friends list is full.");
+        CHECK(friends_error_text("bad-request", "target-full").find("That player") == 0);
+        CHECK(!friends_error_text("bad-request", "too-many-requests").empty());
+        CHECK(!friends_error_text("bad-request", "already-requested").empty());
+        CHECK(!friends_error_text("bad-request", "undeliverable").empty());
+        CHECK(friends_error_text("bad-request", "").empty() && friends_error_text("bad-request", "internal").empty());
+        CHECK(friends_error_text("blocked", "") == "That player is blocked." && friends_error_text("weird", "") == "Friends: weird");
+        CHECK(invite_result_text({"A", "B"}, {}, "", "ABC234") == "Invited A, B to room ABC234.");
+        CHECK(invite_result_text({"A"}, {"C"}, "not-friends", "ABC234") == "Invited A to room ABC234. Could not invite C.");
+        CHECK(invite_result_text({}, {"C"}, "rate-limited", "X").find("Slow down") == 0);
+        CHECK(invite_result_text({}, {}, "", "X").empty());
+        CHECK(queued_join_replaced_text("Mia", "Bo").find("Replaced the queued join (Mia's room)") == 0 && queued_join_replaced_text("", "Bo").find("another room") != std::string::npos);
+    }
+
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }
