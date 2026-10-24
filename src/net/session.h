@@ -47,6 +47,9 @@ class LobbyClient {
     bool start(const std::string& server, const std::string& code, bool role_host, const std::string& name);
     void stop();
     void update();
+    /* Optional "ident" frame (account uid + secret) sent right after every welcome so the room can auto-friend
+     * the people who play together. Survives stop()/start(); "" = anonymous seat. */
+    void set_ident_msg(const std::string& json_frame);
 
     bool connected() const;     // welcome received
     bool failed() const;

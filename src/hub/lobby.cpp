@@ -85,6 +85,7 @@ void enter_room(bool host, const std::string& code_in) {
     A.code = code;
     A.room_role_host = host;
     A.entering_room = true;
+    A.lobby.set_ident_msg(A.st.auto_friend ? fr_lobby_ident_msg() : std::string());   // toggle off: stay anonymous in the room
     if (!A.lobby.start(server_url(), code, host, A.st.name)) {
         A.entering_room = false;
         set_notice("Could not connect to the lobby server.");

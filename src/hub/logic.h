@@ -37,6 +37,7 @@ struct Settings {
     bool appear_offline = false;       // friends see me as offline
     bool notify_in_game = true;        // Windows toast for invites while a game is running
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
+    bool auto_friend = true;           // "Automatically add people I play with as friends" (sent to the server in the hello)
     bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
     bool kt_intro_seen = false;        // Kanto Together: the "first session" guidance was shown once
     std::string games_dest;            // Add games: chosen destination folder ("" = the RetroHub Games folder)
@@ -420,6 +421,12 @@ template <class V> void remap_slot_key(std::map<int, V>& m, int from, int to) {
     m[to] = std::move(v);
 }
 /* Toast shown to the room when the host changes; `me` = the new host is this PC. */
+/* Toast for a server-made friendship (joined a room / played together). */
+inline std::string auto_friend_text(const std::string& name) { return "You and " + (name.empty() ? std::string("a new player") : name) + " are now friends"; }
+/* First message a lobby client sends after the welcome so the room can tell who is sitting where. */
+inline std::string lobby_ident_json(const std::string& uid, const std::string& secret) {
+    return "{\"type\":\"ident\",\"uid\":\"" + json::escape(uid) + "\",\"secret\":\"" + json::escape(secret) + "\"}";
+}
 inline std::string host_changed_text(const std::string& name, bool me) { return me ? "You are now the host" : name + " is now the host"; }
 
 } // namespace hubui
