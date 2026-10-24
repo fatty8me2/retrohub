@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "controls.h"
+#include "exit_combo.h"
 #include "pad_map.h"
 namespace n64run {
 
@@ -34,6 +35,8 @@ class LocalInput {
     void update();
     /* Packed BUTTONS word for the `owned_index`-th locally owned port (0 = first). */
     uint32_t read(int owned_index) const;
+    /* True once when Back+Start was held 1 s on any pad (the universal leave-game combo). */
+    bool exit_requested() { bool r = exit_fired_; exit_fired_ = false; return r; }
     /* Rumble Pak motor on the pad of the owned port (no-op without rumble support). */
     void rumble(int owned_index, bool on);
 
@@ -47,6 +50,8 @@ class LocalInput {
     uint32_t kbd_state_ = 0;
     int last_joysticks_ = -1;
     bool inited_ = false;
+    hubctl::ExitCombo combo_;
+    bool exit_fired_ = false;
 };
 
 /* Number of game controllers SDL currently sees (initialises the subsystem if needed). */

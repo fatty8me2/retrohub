@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "controls_sdl.h"
+#include "exit_combo.h"
 #include "core.h"
 #include "ds_link.h"
 #include "retro_pad.h"
@@ -329,6 +330,12 @@ class Frontend {
     bool is_ds = false;        // Nintendo DS: two-screen frame, fractional+linear scaling, stylus via the mouse
     int ds_layout = 0;         // dsview::layout_name index (F9 cycles)
     SDL_Rect last_dst{0, 0, 0, 0};   // where the frame was last drawn (stylus mapping)
+    dsview::PadCursor pad_cursor;    // DS: right stick moves it, the profile's R3 touches
+    bool pad_touch = false;
+    int last_mouse_x = -1, last_mouse_y = -1;
+    uint64_t cursor_tick = 0;
+    uint16_t rumble_lvl[4][2] = {};
+    hubctl::ExitCombo exit_combo;     // Back+Start held 1 s on any pad: leave (saves flush in finish())
     dsview::StylusLatch stylus;      // a press only counts if it began over the frame
     Pace pace = Pace::None;
     uint64_t frame_no = 0;
@@ -558,6 +565,15 @@ void Frontend::present() {
     last_dst = dst;
     if (link) { SDL_Rect v = view_src(); SDL_RenderCopy(ren, tex, &v, &dst); }
     else SDL_RenderCopy(ren, tex, nullptr, &dst);
+    if (is_ds && pad_cursor.active && last_dst.w > 0) {   // pad stylus marker
+        int cx = last_dst.x + (int)((pad_cursor.x * 0.5 + 0.5) * last_dst.w), cy = last_dst.y + (int)((pad_cursor.y * 0.5 + 0.5) * last_dst.h);
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        SDL_Rect h{cx - 7, cy - 1, 15, 3}, v{cx - 1, cy - 7, 3, 15};
+        SDL_RenderFillRect(ren, &h); SDL_RenderFillRect(ren, &v);
+        SDL_SetRenderDrawColor(ren, pad_touch ? 255 : 0, 0, 0, 255);
+        SDL_Rect c{cx - 1, cy - 1, 3, 3};
+        SDL_RenderFillRect(ren, &c);
+    }
     SDL_RenderPresent(ren);
 }
 
@@ -627,6 +643,22 @@ uint32_t Frontend::poll_local(int i) {
 }
 
 void Frontend::poll_all_local() {
+    if (!a.headless && !a.fuzz) {
+        bool combo = false;
+        for (size_t i = 0; i < pads.size(); i++) {
+            hubctl::PadState st;
+            hubctl::read_state(pads[i], &st);
+            if (hubctl::exit_combo_down(st)) combo = true;
+            if (i == 0 && is_ds) {
+                uint64_t now = SDL_GetTicks64();
+                double dt = cursor_tick ? std::min(0.1, (now - cursor_tick) / 1000.0) : 0.0;
+                cursor_tick = now;
+                pad_cursor.step(st.a[2] / 32767.0, st.a[3] / 32767.0, dt);   // rightx, righty
+                pad_touch = (retro_pad->mask(st) >> RETRO_DEVICE_ID_JOYPAD_R3) & 1;
+            }
+        }
+        if (exit_combo.update(combo, (long long)SDL_GetTicks64())) { rlog("exit combo (Back+Start held): leaving"); quit = true; }
+    }
     for (int i = 0; i < n_local; i++) local_pad_cache_[i] = poll_local(i);
     if (!online)
         for (int i = 0; i < n_local; i++) frame_pad[local_ports[i]] = local_pad_cache_[i];
@@ -1319,6 +1351,14 @@ int Frontend::run(const Args& args) {
     QueryPerformanceFrequency(&fq);
     qpc_freq = fq.QuadPart;
 
+    core.on_rumble = [this](unsigned port, bool strong, uint16_t str) {   // libretro rumble -> the pad of that local port
+        if (a.headless) return;
+        for (int i = 0; i < n_local; i++)
+            if ((unsigned)local_ports[i] == port && (size_t)i < pads.size()) {
+                rumble_lvl[i][strong ? 0 : 1] = str;
+                SDL_GameControllerRumble(pads[i], rumble_lvl[i][0], rumble_lvl[i][1], rumble_lvl[i][0] || rumble_lvl[i][1] ? 60000 : 0);
+            }
+    };
     core.on_input = [this](unsigned port, unsigned dev, unsigned idx, unsigned id) -> int16_t {
         if ((dev & RETRO_DEVICE_MASK) == RETRO_DEVICE_POINTER && is_ds && port == 0 && idx == 0) {
             // Stylus: the mouse over the drawn frame (libretro pointer coordinates span the displayed frame).
@@ -1330,6 +1370,16 @@ int Frontend::run(const Args& args) {
             if (a.headless || !win) return 0;
             int mx = 0, my = 0;
             Uint32 b = SDL_GetMouseState(&mx, &my);
+            if (mx != last_mouse_x || my != last_mouse_y || (b & SDL_BUTTON(SDL_BUTTON_LEFT))) { if (last_mouse_x >= 0) pad_cursor.active = false; last_mouse_x = mx; last_mouse_y = my; }
+            if (pad_cursor.active) {
+                switch (id) {
+                    case RETRO_DEVICE_ID_POINTER_X: return (int16_t)pad_cursor.px();
+                    case RETRO_DEVICE_ID_POINTER_Y: return (int16_t)pad_cursor.py();
+                    case RETRO_DEVICE_ID_POINTER_COUNT:
+                    case RETRO_DEVICE_ID_POINTER_PRESSED: return (int16_t)(pad_touch ? 1 : 0);
+                    default: return 0;
+                }
+            }
             int ww = 0, wh = 0, ow = 0, oh = 0;
             SDL_GetWindowSize(win, &ww, &wh);
             SDL_GetRendererOutputSize(ren, &ow, &oh);

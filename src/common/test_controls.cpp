@@ -12,6 +12,8 @@
 #include <sstream>
 
 #include "controls.h"
+#include "exit_combo.h"
+#include "dsview.h"
 #include "pad_map.h"
 #include "retro_pad.h"
 
@@ -381,7 +383,37 @@ static void test_pad_sync_and_unique() {
     CHECK(hubctl::order_pads({"g1#dup2"}, {"g1", "g1#dup2"})[0] == 1);
 }
 
+static void test_exit_combo_and_cursor() {
+    hubctl::ExitCombo c;
+    CHECK(!c.update(true, 0));
+    CHECK(!c.update(true, 999));
+    CHECK(c.update(true, 1000));
+    CHECK(!c.update(true, 5000));          // fires once per hold
+    CHECK(!c.update(false, 5100));
+    CHECK(!c.update(true, 6000));          // released: restarts
+    CHECK(!c.update(false, 6500));         // released early: no fire
+    CHECK(!c.update(true, 7000));
+    CHECK(c.update(true, 8000));
+    CHECK(c.progress(8000) == 1.f && c.progress(7500) == 0.5f);
+    PadState s;
+    CHECK(!hubctl::exit_combo_down(s));
+    s.b[hubctl::kBtnBack] = true;
+    CHECK(!hubctl::exit_combo_down(s));
+    s.b[hubctl::kBtnStart] = true;
+    CHECK(hubctl::exit_combo_down(s));
+    CHECK(hubctl::button_index("back") == hubctl::kBtnBack && hubctl::button_index("start") == hubctl::kBtnStart);
+    CHECK(hubctl::xinput_combo_down(0x30) && !hubctl::xinput_combo_down(0x10) && !hubctl::xinput_combo_down(0x20));
+    dsview::PadCursor pc;
+    pc.step(0.1, 0.1, 1.0);
+    CHECK(!pc.active && pc.x == 0);                 // inside the deadzone
+    pc.step(1.0, 0.0, 0.25);
+    CHECK(pc.active && pc.x > 0.3 && pc.x < 0.5 && pc.y == 0);
+    pc.step(1.0, 1.0, 10.0);
+    CHECK(pc.px() == 32767 && pc.py() == 32767);    // clamped
+}
+
 int main() {
+    test_exit_combo_and_cursor();
     test_pad_sync_and_unique();
     test_port_assign();
     test_keyboard();
