@@ -7,6 +7,9 @@
 
 namespace {
 
+void klog(const std::string& msg) { kanto::write_log(hub::data_dir() + "logs", msg); }
+
+
 struct Kt {
     kanto::Prep prep;
     kanto::Session sess;
@@ -101,6 +104,8 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
         return false;
     }
     KT.join_error.clear();
+    klog(std::string("start ") + (host ? "HOST" : "GUEST") + " launch=" + std::to_string(KT.launch_no) + " relay=" + (o.relay.empty() ? "(default)" : o.relay));
+    KT.sess.set_line_sink([](const std::string& l) { klog("| " + l); });
     A.proc = KT.sess.dup_handle();
     A.job_h = nullptr;
     A.proc_title = e.title;
@@ -110,6 +115,7 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
     std::string saves = o.saves;
     const bool was_host = host;
     A.run.after_exit = [vault, saves, was_host]() {
+        klog("session ended (launcher exited)");
         KT.sess.stop();                    // the launcher already exited (mGBA closed and flushed): this only releases handles
         kanto::sync_saves(saves, vault);   // staged saves -> vault, before the sync runs
         KT.arm_guest = false;
@@ -196,7 +202,7 @@ void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host) {
 }
 
 void kt_on_code(const std::string& code, int launch_no) {
-    (void)launch_no;
+    klog("np_kt received code=" + (code.empty() ? std::string("(none)") : code) + " launch=" + std::to_string(launch_no));
     if (code.empty()) { KT.guest_code.clear(); return; }   // the host's session ended
     std::string c = kanto::normalize_code(code);
     if (kanto::valid_code(c)) { KT.guest_code = c; KT.join_error.clear(); }
@@ -250,6 +256,7 @@ void kt_tick() {
         KT.sess.update();
         const kanto::State& st = KT.sess.state();
         if (st.phase != KT.last_phase) {
+            klog(std::string("phase ") + kanto::phase_name(KT.last_phase) + " -> " + kanto::phase_name(st.phase));
             if (st.phase == kanto::Phase::Connected) push_toast("Kanto Together: your partner is connected.", ui::GOOD, 5.0);
             else if (st.phase == kanto::Phase::Failed) {
                 push_toast("Kanto Together: " + st.detail, ui::WARN, 10.0);
@@ -263,11 +270,13 @@ void kt_tick() {
             if (!st.code.empty() && (st.code_gen != KT.sent_gen || members != KT.sent_members)) {
                 KT.sent_gen = st.code_gen;
                 KT.sent_members = members;
+                klog("np_kt sent code=" + st.code + " gen=" + std::to_string(st.code_gen) + " members=" + std::to_string(members));
                 A.lobby.send_msg("{\"kind\":\"np_kt\",\"code\":\"" + st.code + "\",\"launch\":" + std::to_string(KT.launch_no) + "}");
             }
         } else if (!KT.host && kanto::valid_code(KT.guest_code) && KT.guest_code != KT.cur_code) {
             /* the host restarted/refreshed its code. Only a guest that never got connected needs it: a connected one reconnects by
              * itself, and `code` would drop its campaign and re-sync it (its game would look reset while the host carries on). */
+            klog(std::string("new host code ") + KT.guest_code + (kanto::guest_auto_rejoin_ok(st) ? ": sending `code` (guest never connected)" : ": NOT sent (guest already connected)"));
             if (kanto::guest_auto_rejoin_ok(st)) KT.sess.rejoin(KT.guest_code);
             KT.cur_code = KT.guest_code;
         }
@@ -331,7 +340,7 @@ void kt_room_panel(float width, bool early) {
         ImGui::TextWrapped("%s", KT.fake ? "Could not join: no such room" : KT.join_error.c_str());
         ImGui::PopStyleColor();
         text_wrapped_disabled("Ask the host for a new code (the game keeps trying by itself), or type the code the host gives you.");
-        if (button("Ask the host for a new code", ImVec2(sp(26.f), sp(5.f))) && !KT.fake) A.lobby.send_msg("{\"kind\":\"np_kt_req\"}");
+        if (button("Ask the host for a new code", ImVec2(sp(26.f), sp(5.f))) && !KT.fake) { klog("np_kt_req sent"); A.lobby.send_msg("{\"kind\":\"np_kt_req\"}"); }
         ImGui::SameLine();
         std::string retry_code = !KT.guest_code.empty() ? KT.guest_code : KT.cur_code;
         if (button("Retry", ImVec2(sp(10.f), sp(5.f)), false, KT.fake || kanto::valid_code(retry_code))) {
@@ -348,7 +357,7 @@ void kt_room_panel(float width, bool early) {
         if (button("Join with this code", ImVec2(sp(20.f), sp(5.f)), true, KT.fake || kanto::valid_code(typed))) {
             if (!KT.fake) {
                 KT.join_error.clear();
-                if (KT.sess.active() && KT.sess.running()) { KT.sess.rejoin(typed); KT.cur_code = typed; }
+                if (KT.sess.active() && KT.sess.running()) { klog("manual `code` sent"); KT.sess.rejoin(typed); KT.cur_code = typed; }
                 else { KT.guest_code = typed; KT.arm_guest = true; }
                 KT.code_buf[0] = 0;
             }
@@ -367,6 +376,8 @@ void kt_room_panel(float width, bool early) {
         ImGui::PopStyleColor();
         if (st.host && !st.code.empty() && st.phase != kanto::Phase::Connected)
             text_wrapped_disabled("Your partner's RetroHub gets the connection code from this room automatically.");
+        if (!st.host && st.synced_story)
+            text_wrapped_disabled("Synced to the host's story. Your game may jump to the host's spot: that is the co-op sync, not a reset.");
         if (!st.last_error.empty() && st.phase != kanto::Phase::Connected) text_wrapped_disabled(st.last_error);
 
         if (st.phase == kanto::Phase::Connected || st.phase == kanto::Phase::Reconnecting || st.phase == kanto::Phase::PartnerAway) {
