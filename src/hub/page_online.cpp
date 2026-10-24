@@ -286,6 +286,7 @@ void page_online_room() {
                     if (p.slot != 0 && !A.ready[p.slot]) { ok = false; why = p.name + " isn't ready yet"; break; }
         }
         if (A.proc) { ok = false; why = "In game..."; }
+        if (rg && rg->system == hub::System::N3DS && gc_needs_unpack(*rg)) { ok = false; why = "Unpacking " + rg->title + " (needed for 3DS online)..."; }
         if (rg && rg->system == hub::System::GC) {
             if (gc_needs_unpack(*rg)) { ok = false; why = "Unpacking " + rg->title + " (needed for GameCube online)..."; }
             else if (GCO.active) { ok = false; why = "In game..."; }

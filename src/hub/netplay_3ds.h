@@ -50,6 +50,15 @@ std::string session_room(const std::string& lobby_code, int launch_no);
 /* Qt-config patch so Azahar's Direct Connect dialog is prefilled (ip/port/nickname). Section "UI" holds the keys. */
 std::string config_patch(const std::string& ini, const std::string& host, int port, const std::string& nick);
 
+/* The 3DS username (= the nickname Azahar joins a room with; rooms reject duplicates) is stored in the NAND config savegame, NOT in qt-config.
+ * console_username: unique per slot, 4..10 chars. set_console_username: patch block 0x000A0000 of that file image. */
+std::string console_username(const std::string& player, int slot);
+bool set_console_username(std::vector<uint8_t>* cfg, const std::string& name);
+std::string console_config_path(const std::string& install_dir);
+bool set_console_username_file(const std::string& install_dir, const std::string& name);   // false when the install has not run a game yet
+/* QA only: muted, no prompts. */
+std::string mute_config(const std::string& ini);
+
 /* ---- datagram fragmentation (hubnet payloads are <= 1100 bytes, ENet datagrams are up to ~1400) ---- */
 constexpr int kFragHeader = 5;   // magic 'F', msg id u16, index u8, count u8
 constexpr int kFragPayload = 1100 - kFragHeader;
