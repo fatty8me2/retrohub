@@ -43,6 +43,7 @@ struct Settings {
     bool kt_intro_seen = false;        // Kanto Together: the "first session" guidance was shown once
     std::string games_dest;            // Add games: chosen destination folder ("" = the RetroHub Games folder)
     std::string cemu_exe;              // user-chosen Cemu.exe ("" = find an existing install, else download one)
+    std::string ps2_bios_dir;          // user-chosen folder with the PS2 BIOS ("" = look next to the games / Desktop\Everything\BIOS)
 };
 std::string settings_to_json(const Settings& s);
 bool settings_from_json(const std::string& text, Settings* out);   // missing keys keep defaults in *out

@@ -200,7 +200,7 @@ int main() {
 
     /* All Games: grouped by console */
     {
-        const std::vector<std::string> want = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb"};
+        const std::vector<std::string> want = {"n64", "gc", "wiiu", "3ds", "nds", "ps2", "gba", "gbc", "gb"};
         CHECK(console_order() == want);
         std::vector<ListItem> it = {
             {"gb:1", "Tetris", "gb", false},          // 0
@@ -210,7 +210,7 @@ int main() {
             {"n64:2", "Banjo", "n64", false},         // 4
             {"wiiu:1", "Mario Kart 8", "wiiu", false},// 5
             {"gba:1", "Metroid", "gba", false},       // 6
-            {"x:1", "Weird", "ps2", false},           // 7
+            {"x:1", "Weird", "zzz", false},           // 7
         };
         auto secs = group_by_console(it);
         std::vector<std::string> sys;
@@ -260,7 +260,7 @@ int main() {
         CHECK(compose_shelves({}).empty());
         CHECK(compose_shelves(g, 2)[0].items.size() == 2);
         std::vector<ShelfGame> odd(1);
-        odd[0] = {"x:1", "Odd", "ps2", false, 0, false, false};
+        odd[0] = {"x:1", "Odd", "zzz", false, 0, false, false};
         auto so = compose_shelves(odd);
         CHECK(so.size() == 1 && so[0].id == "console:other" && so[0].items.size() == 1);
         CHECK(pick_hero(g, "gb:1") == 4 && pick_hero(g, "nope") == 1 && pick_hero(g, "") == 1);

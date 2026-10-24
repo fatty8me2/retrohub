@@ -335,7 +335,7 @@ void wizard_window() {
                 WZ.find_launched = true;
             }
             ImGui::SameLine();
-            if (button("Add a folder...", ImVec2(ui::sp(24.f), ui::sp(5.5f)), false, true, ui::Icon::Folder)) add_rom_folder();
+            add_rom_folder(button("Add a folder...", ImVec2(ui::sp(24.f), ui::sp(5.5f)), false, true, ui::Icon::Folder));
             break;
         }
         case Step::Name: {
