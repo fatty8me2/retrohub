@@ -614,6 +614,7 @@ std::string controls_arg(const std::string& system_key, const std::string& game_
 hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key);
 hubemu::DolphinPads dolphin_pads_for(const hubctl::Profile& gc_profile);
 hubemu::AzPad azahar_pad_for(const hubctl::Profile& profile_3ds);
+hubemu::CemuPads cemu_pads_for(const hubctl::Profile& profile_wiiu);
 
 
 /* ---- page_saves.cpp ---- */
