@@ -42,3 +42,17 @@ Applied by n64run to the N64 stick (deadzone + sensitivity). retrorun's cores ar
 
 ## N64 Rumble Pak
 Per-profile (so per game) option `rumble`, offline only. n64run reports a Rumble Pak (`PLUGIN_RUMBLE_PAK`) on every present port instead of the Controller Pak, decodes the core's pak write to 0xC000 in `ControllerCommand`, and rumbles the matching SDL pad (`SDL_GameControllerRumble`). Online games ignore it, so the pak seen by every player (and the shared host `.mpk` save) is unchanged.
+
+## Leave-game combo (all emulators)
+Hold **Back/View + Start/Menu** on one pad for **1 second** to leave a game and return to RetroHub. Logic: `src/common/exit_combo.h` (`ExitCombo`, fires once per hold; unit tested in `hubcontrols_test`).
+- **n64run, retrorun** (N64, GB/GBC/GBA/DS): checked every input poll on every connected pad; sets the normal quit flag (same path as Esc / closing the window), so saves flush in `finish()` and netplay leaves cleanly.
+- **BattleShip** (Smash): checked in its main loop when started with `--from-hub`; same path as closing the window. RetroHub's watcher also covers it.
+- **Dolphin, Azahar, Cemu, Kanto Together mGBA**: RetroHub watches the pads itself while the game runs (`pad_exit_watch` in `launch.cpp`: XInput for Xbox pads, SDL for the rest, hot-plug included) and sends `WM_CLOSE` to the emulator's windows (all processes of its job object), so the emulator saves and exits normally; Kanto uses its session stop. If an emulator ignores the close for 20 s RetroHub leaves it alone (it never kills it). When the emulator is gone RetroHub restores and focuses its own window.
+- The combo is fixed (not remappable); Back and Start still reach the game while held.
+
+## Built-in runners: what follows the profile
+- Port order (`port_order`), per-game override and system default are resolved by `hubctl::resolve` and passed with `--controls` (`controls_arg`). Pads hot-plug in n64run (rescan on joystick count change) and retrorun (device added/removed events).
+- **n64run**: C-buttons, Z, stick (deadzone, sensitivity) all from the profile; Rumble Pak per profile. **retrorun**: digital buttons from the profile; libretro rumble requests (cores that use them) drive the pad of that port.
+- **DS touch**: the right stick moves a stylus cursor (drawn as a cross); the profile's `r3` control (default: click right stick) touches. Moving the mouse switches back to the mouse stylus.
+- **Kanto Together mGBA**: `[gba.input.SDLC]` is rewritten from the `retro` profile whenever its hash changes (`kanto_pad`), so remaps carry over (first button term per control).
+- **Smash / BattleShip**: RetroHub writes the resolved `n64` profile to `controls_run_smash.json` and sets `SSB64_CONTROLS=<file>`; BattleShip (branch `agent/pad-int-bs`, `port/hub_controls.*`) maps it onto libultraship when started with `--from-hub`. Limits: pad port order and `@threshold` are not applied there (libultraship ties mappings to ports, not to a specific pad); the mapping persists in BattleShip's own config.

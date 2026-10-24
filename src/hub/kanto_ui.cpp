@@ -116,6 +116,8 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
     A.run = run_info_for(e, false);   // a real save: play time + vault like an offline session
     A.run.start_unix = unix_now();
     A.run.start_tick = GetTickCount64();
+    A.run.pad_exit = true;
+    A.run.pad_exit_fn = []() { KT.sess.stop(); };
     std::string saves = o.saves;
     const bool was_host = host;
     A.run.after_exit = [vault, saves, was_host]() {

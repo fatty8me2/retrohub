@@ -667,7 +667,7 @@ int main(int argc, char** argv) {
             hk.update_local = [&] { test_input.update(); };
             hk.read_local = [&](int idx) { return test_input.read(idx); };
         } else {
-            hk.update_local = [&] { input.update(); };
+            hk.update_local = [&] { input.update(); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
             hk.read_local = [&](int idx) { return input.read(idx); };
         }
         hk.idle = [] { SDL_PumpEvents(); };

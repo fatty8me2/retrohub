@@ -60,6 +60,27 @@ struct StylusLatch {
     }
 };
 
+/* Gamepad stylus: the right stick moves a cursor across the displayed frame (pointer coordinates -32767..32767), the
+ * profile's R3 control touches. Pure; `active` turns on when the stick moves and off again when the mouse takes over. */
+struct PadCursor {
+    double x = 0, y = 0;     // -1..1 across the frame
+    bool active = false;
+    /* sx, sy: stick -1..1 (SDL orientation, down = +y); dt: seconds since the last call. */
+    void step(double sx, double sy, double dt) {
+        const double dead = 0.2;
+        double m = std::sqrt(sx * sx + sy * sy);
+        if (m <= dead) return;
+        double k = (m - dead) / (1.0 - dead);
+        if (k > 1.0) k = 1.0;
+        k /= m;
+        active = true;
+        x = std::max(-1.0, std::min(1.0, x + sx * k * 1.6 * dt));
+        y = std::max(-1.0, std::min(1.0, y + sy * k * 1.6 * dt));
+    }
+    int px() const { return (int)std::lround(x * 32767.0); }
+    int py() const { return (int)std::lround(y * 32767.0); }
+};
+
 /* Core option defaults retrorun applies for the DS core (melonDS DS). Written into a callback so the test can
  * inspect them without a Core. User ini / --opt values are applied afterwards and win. */
 template <class F> void for_each_default_option(F&& f) {

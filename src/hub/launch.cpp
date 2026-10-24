@@ -29,6 +29,9 @@
 #define STBI_NO_HDR
 #include "third_party/stb_image.h"
 #include "app.h"
+#include "exit_combo.h"
+#include "controls_sdl.h"
+#include <xinput.h>
 
 hubemu::Installer EMU;   // download-on-demand job + its dialog state
 UnzipJob UNZ;
@@ -64,6 +67,7 @@ bool spawn(const std::string& exe, const std::string& args, const std::string& c
     A.proc = pi.hProcess;
     A.proc_title = ri.title;
     A.run = ri;
+    A.run.pad_exit = ri.after_exit != nullptr || !ri.o2r_prep.empty();   // external emulators and the native Smash port; n64run / retrorun handle the combo themselves
     A.run.start_unix = unix_now();
     A.run.start_tick = GetTickCount64();
     return true;
@@ -71,8 +75,72 @@ bool spawn(const std::string& exe, const std::string& args, const std::string& c
 
 void sync_smash_prep();
 
+/* ---------- universal leave-game combo for games RetroHub does not own (Dolphin / Azahar / Cemu / mGBA / BattleShip) ---------- */
+
+static bool any_pad_combo() {
+    for (DWORD i = 0; i < 4; ++i) {
+        XINPUT_STATE xs{};
+        if (XInputGetState(i, &xs) == ERROR_SUCCESS && hubctl::xinput_combo_down(xs.Gamepad.wButtons)) return true;
+    }
+    SDL_GameControllerUpdate();
+    for (auto* c : A.pads) {
+        hubctl::PadState st;
+        hubctl::read_state(c, &st);
+        if (hubctl::exit_combo_down(st)) return true;
+    }
+    return false;
+}
+
+static std::vector<DWORD> game_pids() {
+    std::vector<DWORD> v;
+    if (A.job_h) {
+        char buf[sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + 64 * sizeof(ULONG_PTR)];
+        auto* l = (JOBOBJECT_BASIC_PROCESS_ID_LIST*)buf;
+        if (QueryInformationJobObject(A.job_h, JobObjectBasicProcessIdList, l, sizeof buf, nullptr))
+            for (DWORD i = 0; i < l->NumberOfAssignedProcesses; ++i) v.push_back((DWORD)l->ProcessIdList[i]);
+    } else if (A.proc) v.push_back(GetProcessId(A.proc));
+    return v;
+}
+struct CloseCtx { std::vector<DWORD> pids; int n = 0; };
+static BOOL CALLBACK close_cb(HWND h, LPARAM lp) {
+    auto* c = (CloseCtx*)lp;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    for (DWORD p : c->pids) if (p == pid && IsWindowVisible(h)) { PostMessageW(h, WM_CLOSE, 0, 0); c->n++; break; }
+    return TRUE;
+}
+
+void focus_hub() {
+    if (!A.hwnd || g_headless) return;
+    if (IsIconic(A.hwnd)) ShowWindow(A.hwnd, SW_RESTORE);
+    keybd_event(VK_MENU, 0, 0, 0);   // lets SetForegroundWindow through the foreground lock
+    SetForegroundWindow(A.hwnd);
+    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+}
+
+void pad_exit_watch() {
+    static hubctl::ExitCombo combo;
+    static bool closing = false;
+    static ULONGLONG closed_at = 0;
+    if (!A.proc || !A.run.pad_exit || g_headless) { combo.reset(); closing = false; return; }
+    ULONGLONG now = GetTickCount64();
+    if (closing) {   // emulator ignored the close for 20 s: leave it alone (never kill the user's emulator)
+        if (now - closed_at > 20000) closing = false;
+        return;
+    }
+    if (!combo.update(any_pad_combo(), (long long)now)) return;
+    closing = true;
+    closed_at = now;
+    set_notice(A.proc_title + ": closing (Back + Start held)...", 8.0);
+    if (A.run.pad_exit_fn) { A.run.pad_exit_fn(); return; }
+    CloseCtx c;
+    c.pids = game_pids();
+    EnumWindows(close_cb, (LPARAM)&c);
+}
+
 void poll_process() {
     sync_smash_prep();
+    pad_exit_watch();
     if (!A.proc) return;
     if (WaitForSingleObject(A.proc, 0) != WAIT_OBJECT_0) return;
     if (A.job_h) {   // the emulator may have handed the game to a child: wait until the whole job is gone
@@ -85,6 +153,7 @@ void poll_process() {
     GetExitCodeProcess(A.proc, &code);
     CloseHandle(A.proc);
     A.proc = nullptr;
+    focus_hub();
     sync_smash_prep();
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
     uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
@@ -145,7 +214,13 @@ std::vector<std::pair<std::string, std::string>> smash_env(const std::string& ex
         mark_dirty();
         push_toast(hubui::smash_save_conflict_text(legacy), ui::WARN, 12.0);
     }
-    return hubui::smash_launch_env(rom, save);
+    auto env = hubui::smash_launch_env(rom, save);
+    {   // BattleShip applies RetroHub's n64 profile (with --from-hub): SSB64_CONTROLS=<resolved profile json>
+        hubctl::Profile p = controls_profile("n64", hubui::kSmashSaveKey);
+        std::string path = hub::data_dir() + "controls_run_smash.json";
+        if (hubctl::write_profile_file(path, p)) env.push_back({"SSB64_CONTROLS", path});
+    }
+    return env;
 }
 
 /* "Preparing" toast: kept up while the native Smash process runs and BattleShip.o2r is still missing; removed when either ends. */
