@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,7 @@
 
 #ifdef _WIN32
 #include <bcrypt.h>
+#include <tlhelp32.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -85,6 +87,45 @@ bool is_package_dir(const std::string& dir) {
 
 static std::string norm_entry(std::string n) { for (auto& c : n) if (c == '\\') c = '/'; return n; }
 
+std::string patch_content_id(const std::string& text, std::string* built) {
+    json::Value v;
+    if (text.empty() || !json::parse(text, &v) || !v.is_object()) return "";
+    std::string sha = lower(v.str("patchSha1")), b = v.str("built");
+    if (built) *built = b;
+    if (sha.empty() && b.empty()) return "";
+    return sha + "@" + b;
+}
+
+bool inspect_dir(const std::string& dir, Package* out) {
+    if (!is_package_dir(dir)) return false;
+    Package p;
+    p.path = dir;
+    std::string t;
+    if (winutil::read_file(dir + (dir.empty() || dir.back() == '\\' || dir.back() == '/' ? "" : "\\") + "patch\\patch.json", &t)) p.content_id = patch_content_id(t, &p.built);
+    *out = p;
+    return true;
+}
+
+int pick_package(const std::vector<Package>& v) {
+    int best = -1;
+    for (int i = 0; i < (int)v.size(); ++i) {
+        if (best < 0) { best = i; continue; }
+        const Package &a = v[i], &b = v[best];
+        int c = 0;   // >0: a is better
+        if (!a.built.empty() && !b.built.empty() && a.built != b.built) c = a.built > b.built ? 1 : -1;
+        else if (a.stamp != b.stamp && (a.is_zip && b.is_zip)) c = a.stamp > b.stamp ? 1 : -1;
+        else if (a.is_zip != b.is_zip) c = a.is_zip ? -1 : 1;   // same build: the extracted folder
+        if (c > 0) best = i;
+    }
+    return best;
+}
+
+bool keep_on_reinstall(const std::string& rel) {
+    std::string r = lower(rel);
+    for (auto& c : r) if (c == '\\') c = '/';
+    return r == "runtime/mgba/config.ini" || r == "runtime/mgba/qt.ini";
+}
+
 bool inspect_zip(const std::string& zip_path, Package* out) {
     FILE* f = nullptr;
     if (_wfopen_s(&f, winutil::to_wide(zip_path).c_str(), L"rb") != 0 || !f) return false;
@@ -98,8 +139,6 @@ bool inspect_zip(const std::string& zip_path, Package* out) {
         if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
         names.push_back(norm_entry(st.m_filename));
     }
-    mz_zip_reader_end(&za);
-    fclose(f);
     const std::string marker = "app/coop-launch.mjs";
     std::string prefix;
     bool found = false;
@@ -110,11 +149,20 @@ bool inspect_zip(const std::string& zip_path, Package* out) {
             prefix = pre; found = true; break;
         }
     }
+    std::string patch_text;
+    if (found) {
+        size_t sz = 0;
+        void* heap = mz_zip_reader_extract_file_to_heap(&za, (prefix + "patch/patch.json").c_str(), &sz, 0);
+        if (heap) { if (sz < (1u << 20)) patch_text.assign((const char*)heap, sz); mz_free(heap); }
+    }
+    mz_zip_reader_end(&za);
+    fclose(f);
     if (!found) return false;
     for (auto& r : required_files())
         if (std::find(names.begin(), names.end(), prefix + r) == names.end()) return false;
     std::error_code ec;
     Package p;
+    p.content_id = patch_content_id(patch_text, &p.built);
     p.path = zip_path;
     p.is_zip = true;
     p.size = (uint64_t)fs::file_size(P(zip_path), ec);
@@ -138,7 +186,7 @@ std::vector<Package> find_packages(const std::vector<std::string>& folders, int 
             if (it->is_directory(e2)) {
                 if (kanto && is_package_dir(winutil::to_utf8(p.wstring()))) {
                     Package pk;
-                    pk.path = winutil::to_utf8(p.wstring());
+                    if (!inspect_dir(winutil::to_utf8(p.wstring()), &pk)) { pk = Package(); pk.path = winutil::to_utf8(p.wstring()); }
                     res.push_back(pk);
                 } else if (depth < max_depth) walk(p, depth + 1);
             } else if (kanto && name.size() > 4 && name.compare(name.size() - 4, 4, ".zip") == 0) {
@@ -181,7 +229,11 @@ std::string install_dir(const std::string& data) {
 }
 static std::string slash(std::string d) { if (!d.empty() && d.back() != '\\' && d.back() != '/') d += '\\'; return d; }
 bool is_installed(const std::string& dir) { return is_package_dir(dir); }
-static std::string marker_text(const Package& p) { return std::to_string(p.size) + ":" + std::to_string(p.stamp) + ":" + (p.is_zip ? "z" : "d"); }
+/* Keyed on the build (patch.json patchSha1 + built) so the same package as a zip or as an extracted folder does not reinstall; falls back to size/mtime. */
+static std::string marker_text(const Package& p) {
+    if (!p.content_id.empty()) return "id:" + p.content_id;
+    return std::to_string(p.size) + ":" + std::to_string(p.stamp) + ":" + (p.is_zip ? "z" : "d");
+}
 bool install_current(const std::string& dir, const Package& p) {
     if (!is_installed(dir)) return false;
     std::string m;
@@ -222,6 +274,7 @@ bool install(const Package& p, const std::string& dir_in, const std::function<bo
             if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
             std::string rel = install_rel_path(st.m_filename, p.prefix);
             if (rel.empty()) continue;
+            if (keep_on_reinstall(rel) && fs::exists(P(dir) / P(rel), ec)) { done += st.m_uncomp_size; continue; }
             if (!write_stream(P(dir) / P(rel), [&](FILE* o) { return mz_zip_reader_extract_to_cfile(&za, i, o, 0) != 0; })) { *err = "Could not write " + rel + " (disk full or file in use?)."; ok = false; break; }
             done += st.m_uncomp_size;
             if (progress && !progress(done, total)) { *err = "Cancelled."; ok = false; }
@@ -244,6 +297,7 @@ bool install(const Package& p, const std::string& dir_in, const std::function<bo
             std::error_code e2;
             fs::path rel = fs::relative(src, P(p.path), e2);
             fs::create_directories((P(dir) / rel).parent_path(), e2);
+            if (keep_on_reinstall(winutil::to_utf8(rel.generic_wstring())) && fs::exists(P(dir) / rel, e2)) { done += (uint64_t)fs::file_size(src, e2); continue; }
             fs::copy_file(src, P(dir) / rel, fs::copy_options::overwrite_existing, e2);
             if (e2) { *err = "Could not copy " + winutil::to_utf8(rel.wstring()); return false; }
             done += (uint64_t)fs::file_size(src, e2);
@@ -310,6 +364,28 @@ std::string fail_sentence(const std::string& r) {
 }
 
 /* ------------------------------ saves ------------------------------ */
+/* Copies `from` over `to` when `from` is newer (content-equal files are skipped). The overwritten loser is kept in `bk` (if given). */
+static bool copy_if_newer(const fs::path& from, const fs::path& to, const fs::path& bk) {
+    std::error_code e2;
+    if (fs::exists(to, e2)) {
+        if (fs::file_size(to, e2) == fs::file_size(from, e2)) {
+            std::ifstream a(from, std::ios::binary), b(to, std::ios::binary);
+            std::string x((std::istreambuf_iterator<char>(a)), {}), y((std::istreambuf_iterator<char>(b)), {});
+            if (x == y) return false;
+        }
+        if (fs::last_write_time(to, e2) >= fs::last_write_time(from, e2)) return false;   // destination is as new or newer
+        if (!bk.empty()) {
+            fs::create_directories(bk, e2);
+            for (int k = 1; k < 1000; ++k) {
+                fs::path cand = bk / (from.filename().wstring() + L"." + std::to_wstring(k));
+                if (!fs::exists(cand, e2)) { fs::copy_file(to, cand, e2); break; }
+            }
+        }
+    }
+    fs::copy_file(from, to, fs::copy_options::overwrite_existing, e2);
+    return !e2;
+}
+
 int sync_saves(const std::string& src, const std::string& dst) {
     std::error_code ec;
     if (!fs::is_directory(P(src), ec)) return 0;
@@ -319,24 +395,49 @@ int sync_saves(const std::string& src, const std::string& dst) {
         std::error_code e2;
         if (!it->is_regular_file(e2)) continue;
         if (lower(winutil::to_utf8(it->path().extension().wstring())) != ".sav") continue;
-        fs::path to = P(dst) / it->path().filename();
-        if (fs::exists(to, e2)) {
-            if (fs::file_size(to, e2) == fs::file_size(it->path(), e2)) {
-                std::ifstream a(it->path(), std::ios::binary), b(to, std::ios::binary);
-                std::string x((std::istreambuf_iterator<char>(a)), {}), y((std::istreambuf_iterator<char>(b)), {});
-                if (x == y) continue;
-            }
-            if (fs::last_write_time(to, e2) >= fs::last_write_time(it->path(), e2)) continue;   // destination is as new or newer
-            fs::path bk = P(dst) / ".kt-backup";
-            fs::create_directories(bk, e2);
-            for (int k = 1; k < 1000; ++k) {
-                fs::path cand = bk / (it->path().filename().wstring() + L"." + std::to_wstring(k));
-                if (!fs::exists(cand, e2)) { fs::copy_file(to, cand, e2); break; }
-            }
-        }
-        fs::copy_file(it->path(), to, fs::copy_options::overwrite_existing, e2);
-        if (!e2) ++n;
+        if (copy_if_newer(it->path(), P(dst) / it->path().filename(), P(dst) / ".kt-backup")) ++n;
     }
+    return n;
+}
+
+std::string role_name(bool host) { return host ? "host" : "guest"; }
+std::string vault_sav_name(bool host) { return "KantoTogether." + role_name(host) + ".sav"; }
+std::string journal_name(bool host) { return "coop-trade-" + role_name(host) + ".journal"; }
+static const char* kStagedSav = "KantoTogether.sav";
+
+int stage_saves(const std::string& vault, const std::string& staged, bool host) {
+    std::error_code ec;
+    fs::create_directories(P(staged), ec);
+    fs::create_directories(P(vault), ec);
+    int n = 0;
+    fs::path v = P(vault), sd = P(staged);
+    fs::path role_sav = v / vault_sav_name(host), legacy = v / kStagedSav;
+    if (!fs::exists(role_sav, ec) && fs::is_regular_file(legacy, ec)) {   // pre-roles vault: the first role played inherits the save
+        fs::copy_file(legacy, role_sav, fs::copy_options::overwrite_existing, ec);
+        if (!ec) fs::rename(legacy, v / "KantoTogether.sav.pre-roles", ec);
+    }
+    if (fs::is_regular_file(role_sav, ec) && copy_if_newer(role_sav, sd / kStagedSav, sd / ".kt-backup")) ++n;
+    /* The vault is the only home of a journal; one in the staged folder is a crash leftover (clean exits remove it): the newer copy wins. */
+    fs::path vj = v / journal_name(host), sj = sd / journal_name(host);
+    bool hv = fs::is_regular_file(vj, ec), hs = fs::is_regular_file(sj, ec);
+    if (hv && !hs) { if (copy_if_newer(vj, sj, fs::path())) ++n; }
+    else if (!hv && hs) { if (copy_if_newer(sj, vj, fs::path())) ++n; }
+    else if (hv && hs) { if (copy_if_newer(vj, sj, fs::path()) || copy_if_newer(sj, vj, fs::path())) ++n; }
+    const std::string other = journal_name(!host);   // the other role's journal never belongs in this staged folder
+    fs::remove(sd / other, ec);
+    return n;
+}
+
+int flush_saves(const std::string& staged, const std::string& vault, bool host) {
+    std::error_code ec;
+    if (!fs::is_directory(P(staged), ec)) return 0;
+    fs::create_directories(P(vault), ec);
+    int n = 0;
+    fs::path v = P(vault), sd = P(staged);
+    if (fs::is_regular_file(sd / kStagedSav, ec) && copy_if_newer(sd / kStagedSav, v / vault_sav_name(host), v / ".kt-backup")) ++n;
+    fs::path sj = sd / journal_name(host), vj = v / journal_name(host);
+    if (fs::is_regular_file(sj, ec)) { fs::copy_file(sj, vj, fs::copy_options::overwrite_existing, ec); if (!ec) { ++n; fs::remove(sj, ec); } }
+    else fs::remove(vj, ec);   // the trade finished: the journal is gone
     return n;
 }
 
@@ -355,11 +456,39 @@ std::string node_exe(const std::string& d) { return slash(d) + "runtime\\node\\n
 std::string mgba_exe(const std::string& d) { return slash(d) + "runtime\\mgba\\mGBA.exe"; }
 std::string rom_path(const std::string& d) { return slash(d) + "rom\\KantoTogether.gba"; }
 
+std::string preflight_message(unsigned long code) {
+    if (code == 0) return "";
+    if (code == 2) return "Kanto Together's files are incomplete (mGBA or the built game is missing). Press Play on its library card again to reinstall.";
+    if (code == 3) return "Kanto Together cannot run from a temporary folder (RetroHub's data folder is under %TEMP%). Move RetroHub's data folder to a normal location.";
+    return "The Kanto Together launcher did not pass its self-check (exit code " + std::to_string(code) + ").";
+}
+
+std::string launch_failure_text(const std::string& line) {
+    std::string l = trim(line);
+    if (l.compare(0, 8, "[launch]") == 0) l = trim(l.substr(8));
+    if (l.find("temporary folder") != std::string::npos) return "Kanto Together cannot run from a temporary folder. Move RetroHub's data folder to a normal location.";
+    if (l.find("running already") != std::string::npos) return "Kanto Together seems to be running already. Close the other game window first, then try again.";
+    if (l.find("does not look like a room code") != std::string::npos || l.find("need the room code") != std::string::npos) return "That does not look like a room code.";
+    if (l.compare(0, 16, "Could not start:") == 0 || l.compare(0, 20, "could not start mGBA") == 0) return l;
+    if (l.find("mGBA not found") != std::string::npos || l.find("no ROM found") != std::string::npos) return "Kanto Together's files are incomplete (mGBA or the built game is missing).";
+    return "";   // anything else (the verbose "[launch] <exe> <args>" line, "Bridge is running...") is not a failure
+}
+
+bool is_kanto_runtime_exe(const std::string& exe) {
+    std::string p = lower(exe);
+    for (auto& c : p) if (c == '/') c = '\\';
+    auto ends = [&](const char* suf) { std::string s2 = suf; return p.size() >= s2.size() && p.compare(p.size() - s2.size(), s2.size(), s2) == 0; };
+    return ends("\\runtime\\mgba\\mgba.exe") || ends("\\runtime\\node\\node.exe");
+}
+
+bool is_non_ascii(const std::string& s) { for (unsigned char c : s) if (c >= 0x80) return true; return false; }
+
 std::string launcher_cmdline(const LaunchOpts& o) {
     std::string c = winutil::quote_arg(node_exe(o.dir)) + " " + winutil::quote_arg("app\\coop-launch.mjs") + (o.host ? " host" : " join " + o.code);
     c += " --rom " + winutil::quote_arg(o.rom) + " --saves " + winutil::quote_arg(o.saves) + " --mgba " + winutil::quote_arg(mgba_exe(o.dir));
     if (o.sound) c += " --unmute";
     if (o.lua_port > 0) c += " --lua-port " + std::to_string(o.lua_port);
+    c += " --verbose";   // the only way "world: snapshot applied" reaches us; feed_line ignores the "[launch] <mGBA command line>" line
     return c;
 }
 std::string patch_cmdline(const std::string& dir, const std::string& base) {
@@ -440,7 +569,7 @@ bool feed_line(State& s, const std::string& raw) {
     }
     if (l.find("world: snapshot applied") != std::string::npos) { s.synced_story = true; return true; }
     if (l.find(">>> Your partner is connected. <<<") != std::string::npos || l == "peer connected") {
-        s.phase = Phase::Connected; s.ever_connected = true; s.detail = phase_text(s.phase, s.host); s.last_error.clear(); return true;
+        s.phase = Phase::Connected; s.ever_connected = true; s.join_failed = false; s.detail = phase_text(s.phase, s.host); s.last_error.clear(); return true;
     }
     if (l.compare(0, 31, "Your partner is not connected r") == 0 || l == "peer disconnected") {
         s.phase = Phase::PartnerAway;
@@ -453,11 +582,19 @@ bool feed_line(State& s, const std::string& raw) {
         if (s.phase == Phase::Reconnecting) s.phase = Phase::WaitingForPartner;
         s.detail = "Connection is back."; return true;
     }
-    if (l.compare(0, 15, "Could not join:") == 0) { s.last_error = trim(l.substr(15)); s.phase = Phase::Failed; s.detail = "Could not join: " + s.last_error; return true; }
+    if (l.compare(0, 15, "Could not join:") == 0) {
+        /* Not terminal: the bridge keeps retrying (the host may not have registered yet); a later "peer connected" clears it. */
+        s.last_error = trim(l.substr(15)); s.join_failed = true;
+        if (s.phase == Phase::Idle || s.phase == Phase::Starting) s.phase = Phase::WaitingForPartner;
+        s.detail = "Could not join yet: " + s.last_error + " (still trying)";
+        return true;
+    }
     if (l.compare(0, 8, "[launch]") == 0) {
         if (l.find("mGBA exited") != std::string::npos) { s.mgba_exited = true; s.phase = Phase::Ended; s.detail = phase_text(s.phase, s.host); return true; }
         if (l.find("Starting the game window") != std::string::npos) { if (s.phase == Phase::Idle) s.phase = Phase::Starting; return false; }
-        s.last_error = trim(l.substr(8)); s.phase = Phase::Failed; s.detail = s.last_error; return true;
+        std::string why = launch_failure_text(l);
+        if (why.empty()) return false;   // e.g. the --verbose "[launch] <mGBA command line>" line
+        s.last_error = why; s.phase = Phase::Failed; s.detail = why; return true;
     }
     if (l.compare(0, 12, "relay error:") == 0) { s.last_error = trim(l.substr(12)); return true; }
     /* trade (coop.lua LOG lines; species names already substituted by the bridge) */
@@ -598,6 +735,65 @@ static bool spawn_piped(const std::string& cmdline, const std::string& cwd, cons
     return true;
 }
 
+bool is_under_temp(const std::string& path) {
+    wchar_t tb[MAX_PATH + 2];
+    DWORD n = GetTempPathW(MAX_PATH, tb);
+    if (!n || n > MAX_PATH) return false;
+    auto norm = [](std::wstring w) {
+        wchar_t lp[2 * MAX_PATH];
+        DWORD k = GetLongPathNameW(w.c_str(), lp, 2 * MAX_PATH);
+        if (k && k < 2 * MAX_PATH) w.assign(lp, k);
+        for (auto& c : w) { if (c == L'/') c = L'\\'; c = (wchar_t)towlower(c); }
+        while (!w.empty() && w.back() == L'\\') w.pop_back();
+        return w;
+    };
+    std::wstring t = norm(tb), p = norm(winutil::to_wide(path));
+    return !t.empty() && p.size() >= t.size() && p.compare(0, t.size(), t) == 0 && (p.size() == t.size() || p[t.size()] == L'\\');
+}
+
+std::string ascii_safe_path(const std::string& dir) {
+    if (!is_non_ascii(dir)) return dir;
+    std::wstring w = winutil::to_wide(dir);
+    wchar_t sp[2 * MAX_PATH];
+    DWORD k = GetShortPathNameW(w.c_str(), sp, 2 * MAX_PATH);
+    if (!k || k >= 2 * MAX_PATH) return dir;
+    std::string r = winutil::to_utf8(std::wstring(sp, k));
+    return is_non_ascii(r) ? dir : r;
+}
+
+std::string running_instance_block() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe{};
+        pe.dwSize = sizeof pe;
+        for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+            std::string nm = lower(winutil::to_utf8(pe.szExeFile));
+            if (nm != "mgba.exe" && nm != "node.exe") continue;
+            HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+            if (!h) continue;
+            wchar_t buf[2 * MAX_PATH];
+            DWORD len = 2 * MAX_PATH;
+            bool hit = QueryFullProcessImageNameW(h, 0, buf, &len) && is_kanto_runtime_exe(winutil::to_utf8(std::wstring(buf, len)));
+            CloseHandle(h);
+            if (hit) { CloseHandle(snap); return "Kanto Together (or its game window) is already running on this PC - for example started from its own folder with Host.cmd/Join.cmd. Close it first: two copies on the same save would corrupt it."; }
+        }
+        CloseHandle(snap);
+    }
+    WSADATA wd;
+    WSAStartup(MAKEWORD(2, 2), &wd);
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    std::string r;
+    if (s != INVALID_SOCKET) {
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        a.sin_port = htons(8788);   // the package's own default launcher port: busy = another Kanto Together copy
+        if (bind(s, (sockaddr*)&a, sizeof a) != 0) r = "Port 8788 on this PC is in use, probably by another Kanto Together copy. Close it first.";
+        closesocket(s);
+    }
+    return r;
+}
+
 int free_loopback_port() {
     WSADATA wd;
     WSAStartup(MAKEWORD(2, 2), &wd);
@@ -621,6 +817,20 @@ bool Session::start(const LaunchOpts& o_in, std::string* err) {
     if (!o.host && !valid_code(o.code)) { *err = "That does not look like a room code."; return false; }
     std::error_code ec;
     fs::create_directories(P(o.saves), ec);
+    std::string note;
+    if (is_non_ascii(o.saves)) {   // mGBA's Lua io.open (the trade journal) is ANSI-only: hand it the 8.3 form
+        std::string sh = ascii_safe_path(o.saves);
+        if (is_non_ascii(sh)) note = "[retrohub] warning: the saves folder has non-ASCII characters and no short name exists; the trade journal may not be written.";
+        else o.saves = sh;
+    }
+    if (is_under_temp(o.rom) || is_under_temp(mgba_exe(o.dir))) { *err = preflight_message(3); return false; }
+    if (o.preflight) {
+        std::string pout;
+        DWORD pcode = 1;
+        std::string cl = launcher_cmdline(o) + " --dry-run";
+        if (!run_hidden(cl, o.dir, o.desktop, 15000, &pout, &pcode)) { *err = "Could not start the Kanto Together launcher."; return false; }
+        if (pcode != 0) { *err = preflight_message(pcode); return false; }
+    }
     job_ = CreateJobObjectW(nullptr, nullptr);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
     li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -629,7 +839,7 @@ bool Session::start(const LaunchOpts& o_in, std::string* err) {
         *err = "Could not set up the safety job for the game (Windows refused). Kanto Together was not started.";
         return false;
     }
-    std::vector<std::pair<std::string, std::string>> env = {{"NODE_NO_WARNINGS", "1"}};
+    std::vector<std::pair<std::string, std::string>> env = {{"NODE_NO_WARNINGS", "1"}};   // --verbose output is needed for "snapshot applied"
     if (!o.relay.empty()) env.push_back({"COOP_RELAY", o.relay});
     Spawned sp;
     if (!spawn_piped(launcher_cmdline(o), o.dir, o.desktop, env, &sp, job_)) {
@@ -646,6 +856,7 @@ bool Session::start(const LaunchOpts& o_in, std::string* err) {
     st_.detail = phase_text(Phase::Starting, o.host);
     buf_.clear();
     log_.clear();
+    if (!note.empty()) log_.push_back(note);
     return true;
 }
 
@@ -746,6 +957,8 @@ bool run_hidden(const std::string& cmdline, const std::string& cwd, const std::s
                 const std::atomic<bool>* cancel) {
     Spawned sp;
     if (!spawn_piped(cmdline, cwd, desktop, {}, &sp, nullptr)) return false;
+    CloseHandle(sp.in_w);   // EOF on stdin: apply-patch's "drag your ROM" prompt gives up at once instead of waiting for the timeout
+    sp.in_w = nullptr;
     ULONGLONG t0 = GetTickCount64();
     std::string out;
     for (;;) {
@@ -766,7 +979,7 @@ bool run_hidden(const std::string& cmdline, const std::string& cwd, const std::s
     }
     DWORD c = 1;
     GetExitCodeProcess(sp.proc, &c);
-    CloseHandle(sp.proc); CloseHandle(sp.in_w); CloseHandle(sp.out_r);
+    CloseHandle(sp.proc); CloseHandle(sp.out_r);
     if (output) *output = out;
     if (code) *code = c;
     return true;
