@@ -196,15 +196,15 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
         bool differs = p->app.empty() || hubui::compare_app_versions(p->app, HUB_VERSION_STR) != 0;
         ImVec2 ts = ImGui::CalcTextSize(theirs.c_str());
         /* Right-aligned in the gap between the local-player controls and the console chips (which start at y=88). */
-        dl->AddText(ImVec2(p1.x - ts.x - 14 * S, p0.y + 68 * S), differs ? COL_BAD : ui::TEXT2, theirs.c_str());
+        dl->AddText(ImVec2(p1.x - ts.x - 14 * S, p0.y + 72 * S), differs ? COL_BAD : ui::TEXT2, theirs.c_str());
     }
     {   // local players (1-2 controllers on this PC)
         int n = locals_of(slot);
         bool mine = slot == room_my_slot();
-        ImGui::SetCursorScreenPos(ImVec2(p1.x - 150 * S, p0.y + 12 * S));
+        ImGui::SetCursorScreenPos(ImVec2(p1.x - 150 * S, p0.y + 10 * S));
         ImGui::PushID(slot);
         ImGui::TextDisabled("Local players");
-        ImGui::SetCursorScreenPos(ImVec2(p1.x - 150 * S, p0.y + 36 * S));
+        ImGui::SetCursorScreenPos(ImVec2(p1.x - 150 * S, p0.y + 30 * S));
         if (mine) {
             if (ImGui::RadioButton("1", n == 1)) { A.my_locals = 1; A.hello_dirty = true; }
             ImGui::SameLine();
