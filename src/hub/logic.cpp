@@ -308,6 +308,62 @@ VersionGate version_gate(const std::string& host_app, const std::vector<PeerInfo
     return g;
 }
 
+
+std::string join_names(const std::vector<std::string>& n) {
+    if (n.empty()) return "";
+    if (n.size() == 1) return n[0];
+    std::string s;
+    for (size_t i = 0; i + 1 < n.size(); ++i) s += (i ? ", " : "") + n[i];
+    return s + " and " + n.back();
+}
+
+RoomActionState room_action_state(bool host, bool have_game, const std::string& game_title, const std::string& block,
+                                  bool my_ready, const std::vector<RoomMember>& members) {
+    RoomActionState r;
+    r.total = (int)members.size();
+    std::vector<std::string> waiting;
+    for (auto& m : members) {
+        if (m.host || m.ready) ++r.ready_count;
+        else waiting.push_back(m.me ? "you" : m.name);
+    }
+    char cnt[48];
+    std::snprintf(cnt, sizeof cnt, "%d of %d ready", r.ready_count, r.total);
+    if (host) {
+        r.is_launch = true;
+        r.button_label = "LAUNCH";
+        if (!have_game) { r.headline = "Pick a game to start"; r.detail = "Choose a game below, then everyone presses Ready."; r.tone = RoomTone::Warn; return r; }
+        if (!block.empty()) { r.headline = "Can't launch yet"; r.detail = block; r.tone = RoomTone::Bad; return r; }
+        if (!waiting.empty()) {
+            r.headline = "Waiting for " + join_names(waiting) + "...";
+            r.detail = std::string(cnt) + ". Launch unlocks when everyone is ready.";
+            r.tone = RoomTone::Warn;
+            return r;
+        }
+        r.headline = r.total > 1 ? "Everyone's ready - Launch!" : "Ready - Launch!";
+        r.detail = "Starts " + game_title + " on every PC at the same moment.";
+        r.tone = RoomTone::Good;
+        r.button_enabled = true;
+        return r;
+    }
+    r.ready_on = my_ready;
+    r.button_label = my_ready ? "NOT READY" : "READY";
+    r.button_enabled = my_ready || (have_game && block.empty());   // you can always back out
+    if (!have_game) { r.headline = "Waiting for the host to pick a game"; r.detail = "You can press Ready once a game is chosen."; r.tone = RoomTone::Warn; return r; }
+    if (!block.empty()) { r.headline = "You can't ready up yet"; r.detail = block; r.tone = RoomTone::Bad; return r; }
+    if (my_ready) {
+        r.headline = "You're ready";
+        r.tone = RoomTone::Good;
+        std::vector<std::string> others;
+        for (auto& m : members) if (!m.host && !m.ready && !m.me) others.push_back(m.name);
+        r.detail = others.empty() ? "Waiting for the host to launch " + game_title + "." : "Waiting for " + join_names(others) + " (" + cnt + ").";
+        return r;
+    }
+    r.headline = "Not ready";
+    r.detail = "Press Ready when you're set to play " + game_title + ".";
+    r.tone = RoomTone::Warn;
+    return r;
+}
+
 GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app, bool host_hello) {
     if (!host_hello) return GuestVersionAction::Waiting;   // no hello yet: host_app is empty for a reason other than an old build
     if (host_app.empty()) return GuestVersionAction::HostNeedsUpdate;

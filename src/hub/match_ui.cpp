@@ -188,7 +188,7 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     ImGui::SetCursorScreenPos(p0 + ImVec2(74 * S, 46 * S));
     bool host = slot == 0;
     bool rd = host || A.ready[slot];
-    if (slot == A.lobby.my_slot()) rd = host || A.my_ready;
+    if (slot == room_my_slot()) rd = host || A.my_ready;
     if (host) pill("HOST", COL_ACCENT);
     else pill(rd ? "Ready" : "Not ready", rd ? COL_GOOD : IM_COL32(70, 72, 86, 255));
     if (p->hello) {   // RetroHub version, bottom-right of the card; red when it differs from ours

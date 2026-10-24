@@ -75,6 +75,14 @@ void shot_init_ui() {
             A.rules.stocks = 4;
         }
         if (std::getenv("HUB_SHOT_LOCALS2")) A.my_locals = 2;
+        if (const char* rd = std::getenv("HUB_SHOT_READY")) {   // screenshot aid: slots that are ready, e.g. "1,2" ("me" = us)
+            std::stringstream rs(rd);
+            std::string tok;
+            while (std::getline(rs, tok, ',')) {
+                if (tok == "me") A.my_ready = true;
+                else if (!tok.empty()) A.ready[std::atoi(tok.c_str())] = true;
+            }
+        }
     }
 }
 
