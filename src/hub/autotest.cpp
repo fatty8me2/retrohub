@@ -59,9 +59,15 @@ void autotest_tick() {
         } else {
             A.my_ready = true;
             A.hello_dirty = true;
+            if (env("RETROHUB_AUTOTEST_GAME")) A.my_ready = false;   // guests turn ready once the selected archive is unpacked (stage 2)
         }
         stage = 2;
         started = now;
+        return;
+    }
+    if (stage == 2 && role != "host" && !A.my_ready) {
+        const hub::GameEntry* rg = A.selected_game.empty() ? nullptr : find_room_entry(A.selected_game);
+        if (rg && !((rg->system == hub::System::GC || rg->system == hub::System::N3DS) && gc_needs_unpack(*rg))) { A.my_ready = true; A.hello_dirty = true; autotest_log("guest ready"); }
         return;
     }
     if (stage == 2 && role == "host") {
@@ -73,7 +79,7 @@ void autotest_tick() {
         auto s = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0);
         if (!s.ok) { if (now - started > 60000) { autotest_log("error:not selectable: " + s.reason); stage = 99; } return; }
         for (auto& p : peers) if (p.slot != 0 && !A.ready[p.slot]) return;
-        if (rg->system == hub::System::GC && gc_needs_unpack(*rg)) return;
+        if ((rg->system == hub::System::GC || rg->system == hub::System::N3DS) && gc_needs_unpack(*rg)) return;
         if (rg->system == hub::System::GC && !gc_fingerprint_ready(launch_path_for(*rg))) return;   // np_gc then carries the disc sha
         autotest_log("launching " + rg->title + " with " + std::to_string(room_members().size()) + " players");
         host_launch_selected();
