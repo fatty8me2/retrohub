@@ -15,7 +15,7 @@ void home_shelves() {
         const hubui::Shelf& sh = A.shelves[si];
         bool is_console = sh.id.compare(0, 8, "console:") == 0 && sh.id != "console:other";   // unknown systems have no filter chip
         bool see_all = false;
-        bool overflow = hubui::shelf_max_scroll((int)sh.items.size(), tw, gap, bleed, avail) > 0;
+        bool overflow = hubui::shelf_max_scroll((int)sh.items.size() + (si == 0 ? 1 : 0), tw, gap, bleed, avail) > 0;
         shelf_header(sh.title.c_str(), is_console ? "See all" : "", bleed, (int)sh.items.size(), is_console ? &see_all : nullptr, overflow);
         if (see_all) {   // jump to All Games filtered to this console
             A.view = LibView::All;
@@ -26,7 +26,10 @@ void home_shelves() {
             A.vis_dirty = true;
         }
         bool recent = sh.id == "recent";
-        shelf_strip("shelf_" + sh.id, (int)sh.items.size(), tw, th, [&](int i, ImVec2 sz) {
+        const int lead = si == 0 ? 1 : 0;   // the first shelf starts with the "Add your own games" tile
+        shelf_strip("shelf_" + sh.id, (int)sh.items.size() + lead, tw, th, [&](int i, ImVec2 sz) {
+            if (lead && i == 0) return add_games_tile(sz);
+            i -= lead;
             const hub::GameEntry& e = A.lib[sh.items[i]];
             TileSpec spec = spec_for_entry(e, sh.id.c_str(), recent, !is_console);
             TileResult r = draw_tile(spec, sz);
@@ -337,7 +340,7 @@ void library_top_bar() {
     ImGui::PopStyleVar(2);
     if (A.search_buf[0] && A.view == LibView::Home) A.view = LibView::All;
 
-    float total = bh * 2 + sp(1.f);
+    float total = bh + sp(1.f) + add_games_header_width(bh);
     ImGui::SameLine(0, 0);
     float ax = ImGui::GetContentRegionAvail().x;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax - total));
@@ -345,7 +348,7 @@ void library_top_bar() {
     if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, A.scanning ? "Scanning..." : "Rescan ROM folders")) start_scan();
     ImGui::EndDisabled();
     ImGui::SameLine(0, sp(1.f));
-    if (ui::icon_button("addfolder", ui::Icon::Plus, bh, false, "Add ROM folder")) add_rom_folder();
+    add_games_header_button(bh);
     ImGui::PopItemFlag();
 
     // scan progress: thin animated line under the bar
@@ -446,6 +449,7 @@ void all_games_view() {
     ImGui::BeginChild("grid", ImVec2(ImGui::GetContentRegionAvail().x + sp(1.5f), -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
     A.page_scrollable = true;
+    add_games_banner();
     if (A.vis.empty()) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 o = ImGui::GetCursorScreenPos();

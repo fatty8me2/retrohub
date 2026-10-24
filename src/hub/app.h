@@ -618,6 +618,17 @@ void find_games_open();   // start the scan + checklist modal (first run, Settin
 void find_games_shutdown();   // cancel + join a running scan (call at app exit)
 void draw_find_games();   // call every frame
 
+/* ---- add_games_ui.cpp: upload your own ROMs (copied into the games folder, sorted by console) ---- */
+void add_games_open();                                        // open the "Add your own games" dialog
+void add_games_drop(const std::string& path);                 // SDL_DROPFILE: a file or folder dropped on the window
+void add_games_paths(const std::vector<std::string>& paths);  // files are copied, folders added in place
+float add_games_header_width(float bh);
+void add_games_header_button(float bh);                       // "+ Add games" next to the library search
+TileResult add_games_tile(ImVec2 size);                       // leads the first Home shelf
+void add_games_banner();                                      // top of All Games
+void draw_add_games();                                        // call every frame
+void add_games_shutdown();                                    // app exit: cancel + join the copy job
+
 
 /* ---- emu_dialogs.cpp ---- */
 void poll_emulators();
