@@ -2,8 +2,10 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -156,6 +158,26 @@ void Lockstep::adapt(uint32_t now, uint32_t stall_ms) {
     }
 }
 
+void Lockstep::catch_up(uint32_t now) {
+    if (!hooks_.set_limiter) return;
+    if (last_poll_) {
+        double iv = (double)(now - last_poll_);
+        if (!catching_ && iv < base_ms_ + 100.0) base_ms_ += (std::min(iv, 100.0) - base_ms_) * 0.01;   // steady-state cost of one sample
+        if (iv >= base_ms_ + 100.0 && iv < 5000.0 && !catching_) debt_ms_ = std::min(1500.0, debt_ms_ + (iv - base_ms_));   // hiccup / peer wait
+        else if (catching_) debt_ms_ -= std::max(0.0, base_ms_ - iv);   // time saved per sample while unthrottled
+    }
+    last_poll_ = now;
+    if (!catching_ && debt_ms_ > 40.0) {
+        catching_ = true; catch_start_ = now;
+        hooks_.set_limiter(false);
+        if (hooks_.log) { char b[96]; std::snprintf(b, sizeof b, "catch-up: %.0f ms behind, running unthrottled", debt_ms_); hooks_.log(b); }
+    } else if (catching_ && (debt_ms_ <= 0.0 || now - catch_start_ > 4000)) {
+        catching_ = false; debt_ms_ = 0;
+        hooks_.set_limiter(true);
+        if (hooks_.log) hooks_.log("catch-up: done");
+    }
+}
+
 void Lockstep::finish() {
     if (!net_ || lost_) return;
     uint8_t bye[6] = {kPktBye, (uint8_t)opt_.my_slot, 0, 0, 0, 0};
@@ -177,6 +199,7 @@ uint32_t Lockstep::get_keys(int port) {
     }
 
     uint32_t n = (uint32_t)(++sample_);
+    if (!t_first_) t_first_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
 
     if (hooks_.update_local) hooks_.update_local();
     pump();
@@ -194,6 +217,11 @@ uint32_t Lockstep::get_keys(int port) {
         } else if (!hash_warned_) { hash_warned_ = true; if (hooks_.log) hooks_.log("state hashing unavailable; desync detection disabled"); }
     }
 
+    if (net_ && opt_.my_slot == 1 && n > 0) {   // QA: periodic hiccup on slot 1 ("period_samples,ms"), RETROHUB_QA=1 only
+        static int per = -1, ms = 0;
+        if (per < 0) { per = 0; const char* e = std::getenv("RETROHUB_QA") ? std::getenv("N64RUN_QA_STALL") : nullptr; if (e) std::sscanf(e, "%d,%d", &per, &ms); }
+        if (per > 0 && n % (uint32_t)per == 0) Sleep((DWORD)ms);
+    }
     uint32_t btn[kPorts] = {0, 0, 0, 0};
     for (int i = 0; i < n_local_; i++)
         btn[local_ports_[i]] = hooks_.read_local ? hooks_.read_local(i) : 0u;
@@ -226,6 +254,7 @@ uint32_t Lockstep::get_keys(int port) {
         if (stall_this > longest_stall_) longest_stall_ = stall_this;
     }
     if (net_) adapt(hubnet::now_ms(), stall_this);
+    if (net_) catch_up(hubnet::now_ms());
     if (net_ && n > 0 && n % 600 == 0 && hooks_.log) {   // periodic latency telemetry (~10 s)
         char b[160];
         int rtt = -1, lead = 0;
@@ -235,8 +264,8 @@ uint32_t Lockstep::get_keys(int port) {
             if (net_->ping_stats(s, &st) && st.n > 0) rtt = std::max(rtt, st.avg_ms);
             lead = std::max(lead, (int)core_.peer_lead(s, n));
         }
-        std::snprintf(b, sizeof b, "latency: sample %u delay %d (floor %d) rtt %d ms stalled %llu ms peer-lead %d",
-                      n, core_.delay(), opt_.delay, rtt, (unsigned long long)stall_ms_, lead);
+        std::snprintf(b, sizeof b, "latency: sample %u wall %u ms (lag %d ms vs 60 Hz) delay %d (floor %d) rtt %d ms stalled %llu ms peer-lead %d",
+                      n, (unsigned)(hubnet::now_ms() - t_first_), (int)((hubnet::now_ms() - t_first_) - (double)n * (1000.0 / 59.94)), core_.delay(), opt_.delay, rtt, (unsigned long long)stall_ms_, lead);
         hooks_.log(b);
     }
     if (net_) report_mismatches();
