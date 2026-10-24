@@ -1,5 +1,6 @@
 #include "netplay_3ds_join.h"
 #include "app.h"
+#include <filesystem>
 
 GcOnline GCO;
 
@@ -430,8 +431,19 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
         remove_tree(tmp);
         make_dirs(tmp);
+        /* Save policy (docs/SAVES.md): with "use host's save" the host's vault battery files are COPIED into the throwaway dir and
+         * retrorun --share-host-save broadcasts them (guests get the bytes before frame 0). Nobody writes into a vault. */
+        if (share_save && (is_host || A.lobby.my_slot() == 0)) {
+            std::error_code ec;
+            std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
+            if (std::filesystem::is_directory(bd, ec)) {
+                for (auto& de : std::filesystem::directory_iterator(bd, ec))
+                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+            } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
+        }
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
                            " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+        if (share_save) args += " --share-host-save";
         if (gb_rb) args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
         spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);

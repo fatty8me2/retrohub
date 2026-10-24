@@ -63,3 +63,22 @@ files are read into memory for zip export/import.
 
 **Tests**: `hubsaves_test` (console) simulates two PCs sharing one sync folder: push/pull, edit propagation,
 conflicts (both directions), states excluded/included, unicode and long paths, zip round trip, idempotency.
+
+## Online save policy
+
+"Use host's save" is a room option (host-controlled, default on) for lockstep/rollback modes that need every PC to boot from
+byte-identical save data. In those modes the HOST's vault save is copied into a throwaway dir (never edited in place), sent
+to every guest before frame 0 and loaded everywhere. Nobody writes back into a vault: the shared save is a *session* save, so
+progress made online is discarded (the host's vault stays exactly as it was). With the option off, everyone starts empty.
+
+| Mode | Save used | Vault written? |
+|---|---|---|
+| N64 lockstep (n64run) | host vault battery dir shared (`--share-host-save`, slot 0 = host) | no (temp dir) |
+| GB / GBC / GBA lockstep + rollback cores | host vault save RAM + RTC shared (`--share-host-save`) | no (temp dir) |
+| GB / GBC / GBA link cable (Pokemon trade/battle) | each player's OWN vault save, exchanged via the room | own console only |
+| DS wireless (`--ds-link`) | each player's own vault save | yes, own |
+| 3DS, GameCube | each player's own emulator/vault save | yes, own |
+| Kanto Together, Smash Classic | each player's own save | yes, own |
+
+Guests therefore never touch their vault in shared-save modes; vault sync (Sync button) is unaffected.
+Test: `qa\retrorun_hostsave.ps1 -Share` (guest save differs from host's; final state hashes must match).
