@@ -41,7 +41,7 @@ constexpr const char* kLatestReleaseApi = "https://api.github.com/repos/fatty8me
 constexpr const char* kDownloadPrefix = "https://github.com/fatty8me2/smash-classic/releases/download/";
 constexpr const char* kPlatformAssetName = "BattleShip-windows.zip";
 constexpr const char* kSumsAssetName = "SHA256SUMS.txt";
-constexpr const char* kManualUrl = "https://github.com/fatty8me2/smash-classic/releases/latest";
+constexpr const char* kManualUrl = "https://github.com/fatty8me2/retrohub/releases/latest";
 
 std::atomic<bool> s_checked{false};
 std::atomic<bool> s_available{false};
