@@ -35,7 +35,7 @@ static LockstepCore::Config make_core_config(const LockstepOptions& o) {
 }
 
 Lockstep::Lockstep(const LockstepOptions& opt, hubnet::Session* session, const LockstepHooks& hooks)
-    : opt_(opt), core_(make_core_config(opt)), adapter_(opt.delay < 1 ? 1 : opt.delay), net_(opt.online ? session : nullptr), hooks_(hooks) {
+    : opt_(opt), core_(make_core_config(opt)), adapter_(opt.delay < 1 ? 1 : opt.delay, DelayAdapter::cap_for_floor(opt.delay < 1 ? 1 : opt.delay)), net_(opt.online ? session : nullptr), hooks_(hooks) {
     for (int p = 0; p < kPorts; p++)
         if (core_.port_local(p)) local_ports_[n_local_++] = p;
     logged_delay_ = core_.delay();
@@ -226,6 +226,19 @@ uint32_t Lockstep::get_keys(int port) {
         if (stall_this > longest_stall_) longest_stall_ = stall_this;
     }
     if (net_) adapt(hubnet::now_ms(), stall_this);
+    if (net_ && n > 0 && n % 600 == 0 && hooks_.log) {   // periodic latency telemetry (~10 s)
+        char b[160];
+        int rtt = -1, lead = 0;
+        for (int s = 0; s < kPorts; s++) {
+            if (s == opt_.my_slot || !(core_.slot_mask() >> s & 1u)) continue;
+            hubnet::PingStats st;
+            if (net_->ping_stats(s, &st) && st.n > 0) rtt = std::max(rtt, st.avg_ms);
+            lead = std::max(lead, (int)core_.peer_lead(s, n));
+        }
+        std::snprintf(b, sizeof b, "latency: sample %u delay %d (floor %d) rtt %d ms stalled %llu ms peer-lead %d",
+                      n, core_.delay(), opt_.delay, rtt, (unsigned long long)stall_ms_, lead);
+        hooks_.log(b);
+    }
     if (net_) report_mismatches();
     return core_.get(n, port);
 }

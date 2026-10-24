@@ -51,6 +51,10 @@ double effective_rtt(std::vector<double> host_to_client_rtt);
 class DelayAdapter {
   public:
     static constexpr uint32_t kMinStallMs = 6;
+    static constexpr uint32_t kMaxStallMs = 250;     // longer stalls are loads/hiccups, not jitter: a bigger D cannot fix them
+    static constexpr uint32_t kQuietLowerMs = 4000;  // quiet time before stepping D down
+    /* Sane ceiling for the adaptive D given the negotiated (RTT-derived) floor. */
+    static int cap_for_floor(int floor_d) { return std::max(floor_d, std::min(8, floor_d + 3)); }
     explicit DelayAdapter(int floor_d = 1, int max_d = kMaxDelay) : floor_(floor_d), max_(max_d) {}
     /* One call per lead-port poll: `now` (ms) and the stall (ms) this poll spent waiting (0 if none). */
     void on_poll(uint32_t now, uint32_t stall_ms);
@@ -122,6 +126,8 @@ class LockstepCore {
     int peer_want(int slot) const { return slot >= 0 && slot < kPorts ? peer_want_[slot] : 0; }
     /* A peer said bye (it ended its emulation cleanly): stop gating on its progress. */
     void peer_left(int slot) { if (slot >= 0 && slot < kPorts) gate_mask_ &= ~(1u << slot); }
+    /* How many samples a peer is ahead of sample n by its reported progress (0 if not ahead): inbox backlog indicator. */
+    uint32_t peer_lead(int slot, uint32_t n) const { return slot >= 0 && slot < kPorts && peer_progress_[slot] > n ? peer_progress_[slot] - n : 0; }
     uint32_t delay_changes() const { return delay_changes_; }   // how many times D changed after start
 
     /* Serialize an input packet (all local ports, redundancy window, hash trailer).
