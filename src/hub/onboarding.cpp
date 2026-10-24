@@ -28,6 +28,7 @@ struct Wizard {
     int fake_n = -1;   // -1 = use real pads
     PadState fake;
     bool find_launched = false;
+    bool away = false;   // "Customize..." sent the user to the Controllers page; coming back (B / LB / RB / the bar) resumes here
 } WZ;
 
 float axis(SDL_GameController* c, SDL_GameControllerAxis a) {
@@ -164,6 +165,7 @@ void draw_pad(ImDrawList* dl, ImVec2 c, float u, const PadState& s) {
 
 void close_wizard(bool done) {
     WZ.open = false;
+    WZ.away = false;
     WZ.test = false;
     if (done && !A.st.setup_done) { A.st.setup_done = true; mark_dirty(); }
     if (done && !A.st.find_games_done) { A.st.find_games_done = true; mark_dirty(); }
@@ -239,9 +241,8 @@ void controller_body(float w) {
             if (button("Test buttons", ImVec2(ui::sp(20.f), ui::sp(5.f)), false, true, ui::Icon::Gamepad)) { WZ.test = true; WZ.focus_primary = true; }
             ImGui::SameLine();
             if (button("Customize...", ImVec2(ui::sp(20.f), ui::sp(5.f)), false, true, ui::Icon::Gear)) {
-                close_wizard(false);
+                WZ.away = true;   // setup stays open (same step); leaving the Controllers page brings the wizard back
                 A.page = Page::Controllers;
-                set_toast("Pick up setup later from Settings > Run setup again.", true);
             }
         }
         ImGui::EndGroup();
@@ -285,7 +286,7 @@ void wizard_window() {
 
     const float pad = ui::sp(4.f);
     ImGui::SetCursorPos(c0 + ImVec2(pad, ui::sp(4.f)));
-    ImGui::BeginChild("##wiz_body", ImVec2(card_w - pad * 2, card_h - ui::sp(4.f) - ui::sp(10.f)), false,
+    ImGui::BeginChild("##wiz_body", ImVec2(card_w - pad * 2, card_h - ui::sp(4.f) - ui::sp(10.f)), ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     const float bw = card_w - pad * 2;
     bool primary_done = false;   // the footer primary is drawn after the body but must take initial focus first
@@ -346,7 +347,7 @@ void wizard_window() {
             char nb[40];
             std::snprintf(nb, sizeof nb, "%s", A.st.name.c_str());
             ImGui::SetNextItemWidth(ui::sp(40.f));
-            if (ImGui::InputText("##wiz_name", nb, 25)) { A.st.name = nb; mark_dirty(); }
+            if (osk::input("##wiz_name", nullptr, nb, 25)) { A.st.name = nb; mark_dirty(); }
             ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
             if (ImGui::Checkbox("Automatically add people I play with as friends", &A.st.auto_friend)) mark_dirty();
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw);
@@ -412,9 +413,35 @@ void wizard_window() {
 
 void wizard_open() {
     WZ.open = true;
+    WZ.away = false;
     WZ.test = false;
     WZ.step = Step::Welcome;
     WZ.focus_primary = true;
+}
+
+int wizard_state() { return !WZ.open ? -1 : WZ.away ? -2 : hubui::wiz::index(WZ.step); }
+
+/* While "Customize..." has the user on the Controllers page: a small bar says how to get back to setup. */
+static void away_bar() {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float w = std::min(ui::sp(60.f), vp->Size.x - ui::sp(4.f)), h = ui::sp(6.5f);
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y - ui::sp(9.f)), ImGuiCond_Always, ImVec2(0.5f, 1.f));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ui::sp(1.5f), ui::sp(1.f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, ui::sp(2.f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::PANEL2);
+    if (ImGui::Begin("##wiz_away", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
+                                                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetWindowPos() + ImVec2(ui::sp(1.5f), (h - ui::F.cap->FontSize - ui::sp(0.75f)) * 0.5f);
+        float x = ui::key_hint(dl, p, A.pad_mode, "B", "Esc", "Back to setup");
+        (void)x;
+        ImGui::SetCursorPos(ImVec2(w - ui::sp(18.f), (h - ui::sp(4.f)) * 0.5f));
+        if (ui::button("Back to setup", ImVec2(ui::sp(16.5f), ui::sp(4.f)), true)) A.page = Page::Library;
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 void draw_wizard() {
@@ -436,5 +463,10 @@ void draw_wizard() {
         }
     }
     if (!WZ.open) return;
+    if (WZ.away) {
+        if (A.page == Page::Controllers) { away_bar(); return; }
+        WZ.away = false;   // left the Controllers page: pick setup up where it was
+        WZ.focus_primary = true;
+    }
     wizard_window();
 }

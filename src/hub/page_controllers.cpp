@@ -35,7 +35,7 @@ struct Tab { const char* key; const char* label; const char* long_name; };
 const Tab kTabs[] = {{"n64", "N64", "Nintendo 64"}, {"retro", "GB / GBA / DS", "Game Boy, GBA and DS"},
                      {"ps1", "PlayStation", "PlayStation (DualShock)"},
                      {"gc", "GameCube", "GameCube"}, {"wiiu", "Wii U", "Wii U"}, {"3ds", "3DS", "Nintendo 3DS"}, {"ps2", "PS2", "PlayStation 2"}};
-constexpr int kNumTabs = 6;
+constexpr int kNumTabs = 7;
 constexpr double kCaptureSecs = 8.0;
 
 struct CtlState {

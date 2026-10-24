@@ -49,6 +49,8 @@ void shot_init_ui() {
         if (m == "azahar" || m == "cemu") { EMU.kind = m == "cemu" ? hubemu::Kind::Cemu : hubemu::Kind::Azahar; EMU.state = hubemu::Installer::Asking; }
         else if (m == "failed") { EMU.kind = hubemu::Kind::Azahar; EMU.error = "checksum mismatch: the download was rejected"; EMU.state = hubemu::Installer::Failed; }
         else if (m == "unzip") { UNZ.key = A.env_select; UNZ.state = UnzipJob::Asking; }
+        else if (m == "ps2bios") ps2_bios_ask("");
+        else if (m == "ps1bios") ps1_bios_ask_shot();
     }
     if (std::getenv("HUB_SHOT_FAKE_FRIENDS")) {
         fr_fake_init();
@@ -168,11 +170,15 @@ void ShotDriver::pad_trace(const std::string& tok) {
     static const char* pn[] = {"library", "online", "saves", "controllers", "settings", "about"};
     int pg = (int)A.page;
     bool modal = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    char sy[32] = "-";   // scroll of the nearest scrollable window around the focus: "<scroll>/<max>"
+    for (ImGuiWindow* w = g.NavWindow; w; w = w->ParentWindow)
+        if (w->ScrollMax.y > 0.f) { std::snprintf(sy, sizeof sy, "%d/%d", (int)w->Scroll.y, (int)w->ScrollMax.y); break; }
     ImVec2 r = g.NavWindow ? g.NavWindow->NavRectRel[g.NavLayer].GetCenter() + g.NavWindow->Pos : ImVec2(0, 0);
     if (FILE* f = std::fopen(tp, "a")) {
-        std::fprintf(f, "pad %s page=%s popup=%d friends=%d nav=%08x at=%d,%d win=%s\n", tok.c_str(), pg >= 0 && pg < 6 ? pn[pg] : "?", modal ? 1 : 0,
+        std::fprintf(f, "pad %s page=%s popup=%d friends=%d nav=%08x at=%d,%d osk=%d wiz=%d name=[%s] oskt=[%s] sy=%s win=%s\n", tok.c_str(), pg >= 0 && pg < 6 ? pn[pg] : "?", modal ? 1 : 0,
                      A.st.show_friends ? 1 : 0, (unsigned)g.NavId, g.NavId ? (int)r.x : -1, g.NavId ? (int)r.y : -1,
-                     g.NavWindow ? g.NavWindow->Name : "-");
+                     osk::is_open() ? 1 : 0, wizard_state(), A.st.name.c_str(), osk::shot_text().c_str(),
+                     sy, g.NavWindow ? g.NavWindow->Name : "-");
         std::fclose(f);
     }
 }
@@ -193,6 +199,7 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
                 pad_last = tok;
                 A.pad_mode = true;
                 if (tok.rfind("shot:", 0) == 0) pending_shot = tok.substr(5);
+                else if (osk::inject(tok.c_str())) {}   // the on-screen keyboard owns the pad while it is open (it reads the SDL pad itself)
                 else if (ImGuiKey k = pad_token_key(tok); k != ImGuiKey_None) {
                     io.AddKeyAnalogEvent(k, true, 1.f);
                     pad_key = k;
