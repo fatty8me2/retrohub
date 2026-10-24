@@ -137,6 +137,9 @@ int main() {
     CHECK(kanto::valid_code("3F9A0C7D21") && !kanto::valid_code("3F9A0C7D2") && !kanto::valid_code("3f9a0c7d21") && !kanto::valid_code("ZZZZZZZZZZ"));
     CHECK(kanto::cmd_trade(1) == "trade 1\n" && kanto::cmd_trade(6) == "trade 6\n" && kanto::cmd_trade(0).empty() && kanto::cmd_trade(7).empty());
     CHECK(kanto::cmd_confirm() == "confirm\n" && kanto::cmd_cancel() == "cancel\n" && kanto::cmd_quit() == "quit\n");
+    { kanto::State g; g.host = false; CHECK(kanto::guest_auto_rejoin_ok(g));
+      kanto::feed_line(g, "[bridge] >>> Your partner is connected. <<<"); CHECK(g.ever_connected);
+      kanto::feed_line(g, "peer disconnected"); CHECK(!kanto::guest_auto_rejoin_ok(g)); }
     CHECK(kanto::cmd_code("3f9a-0c7d21") == "code 3F9A0C7D21\n" && kanto::cmd_code("nope").empty());
     kanto::LaunchOpts lo;
     lo.host = false; lo.code = "3F9A0C7D21"; lo.dir = "C:\\d\\apps\\KantoTogether\\"; lo.rom = "C:\\d\\rom.gba"; lo.saves = "C:\\s p"; lo.sound = true;

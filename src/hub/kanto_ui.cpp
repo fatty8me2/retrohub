@@ -264,7 +264,9 @@ void kt_tick() {
                 A.lobby.send_msg("{\"kind\":\"np_kt\",\"code\":\"" + st.code + "\",\"launch\":" + std::to_string(KT.launch_no) + "}");
             }
         } else if (!KT.host && kanto::valid_code(KT.guest_code) && KT.guest_code != KT.cur_code) {
-            KT.sess.rejoin(KT.guest_code);   // the host restarted: `code NEWCODE` into the running launcher
+            /* the host restarted/refreshed its code. Only a guest that never got connected needs it: a connected one reconnects by
+             * itself, and `code` would drop its campaign and re-sync it (its game would look reset while the host carries on). */
+            if (kanto::guest_auto_rejoin_ok(st)) KT.sess.rejoin(KT.guest_code);
             KT.cur_code = KT.guest_code;
         }
     } else if (KT.arm_guest && !A.proc && kanto::valid_code(KT.guest_code) && prep_ready()) {

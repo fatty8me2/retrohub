@@ -416,7 +416,7 @@ bool feed_line(State& s, const std::string& raw) {
         return true;
     }
     if (l.find(">>> Your partner is connected. <<<") != std::string::npos || l == "peer connected") {
-        s.phase = Phase::Connected; s.detail = phase_text(s.phase, s.host); s.last_error.clear(); return true;
+        s.phase = Phase::Connected; s.ever_connected = true; s.detail = phase_text(s.phase, s.host); s.last_error.clear(); return true;
     }
     if (l.compare(0, 31, "Your partner is not connected r") == 0 || l == "peer disconnected") {
         s.phase = Phase::PartnerAway;
