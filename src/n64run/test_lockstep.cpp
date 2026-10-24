@@ -257,6 +257,20 @@ static void test_delay_adapter() {
     t = 1000;
     for (int i = 0; i < 800; i++) { q.on_poll(t, 0); t += 16; }   // ~12.8 s quiet
     CHECK(q.want(5, t) == 4, "quiet lowers one step");
+    {   // regression: long stalls (loads/hiccups) must not ratchet D; D stays under the cap and comes back down
+        DelayAdapter r(3, DelayAdapter::cap_for_floor(3));
+        CHECK(DelayAdapter::cap_for_floor(3) == 6 && DelayAdapter::cap_for_floor(10) == 10, "cap bound");
+        uint32_t tt = 1000; int cur = 3;
+        for (int i = 0; i < 40; i++) { r.on_poll(tt, 900); tt += 950; cur = r.want(cur, tt); }
+        CHECK(cur == 3, "long stalls ignored (got %d)", cur);
+        for (int round = 0; round < 60; round++) {   // constant jitter: may climb but never above the cap
+            r.on_poll(tt, 30); tt += 50; r.on_poll(tt, 30); tt += 50; cur = r.want(cur, tt);
+            tt += 1500;
+        }
+        CHECK(cur <= 6, "capped (got %d)", cur);
+        for (int i = 0; i < 6 && cur > 3; i++) { for (int k = 0; k < 300; k++) { r.on_poll(tt, 0); tt += 16; } cur = r.want(cur, tt); }
+        CHECK(cur == 3, "returns to floor after quiet (got %d)", cur);
+    }
     std::printf("delay adapter tests done\n");
 }
 
