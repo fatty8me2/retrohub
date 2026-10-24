@@ -86,8 +86,8 @@ static std::string join(const std::string& a, const std::string& b) {
     return (c == '\\' || c == '/') ? a + b : a + "\\" + b;
 }
 
-const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : "Dolphin"; }
-Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : Kind::Azahar; }
+const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : "Dolphin"; }
+Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : s == hub::System::PS2 ? Kind::Pcsx2 : Kind::Azahar; }
 
 /* Pinned official releases. Azahar: github.com/azahar-emu/azahar (GPL-3.0), asset digest as published by GitHub.
  * Cemu: github.com/cemu-project/Cemu (MPL-2.0); GitHub lists no digest for the Windows zip, so the SHA-256 was
@@ -103,11 +103,15 @@ const Release& release(Kind k) {
     static const Release dol = {
         "2509", L"dl.dolphin-emu.org", L"/releases/2509/dolphin-2509-x64.7z",
         18402050ull, "3a910cd09887bdc17df0d344de18249ac9c060d006649cd8660b791a5e8ba355", L"Dolphin.exe", "GPL-2.0+"};
-    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : dol;
+    /* PCSX2 v2.8.2 stable (GPL-3.0+), github.com/PCSX2/pcsx2; the SHA-256 is GitHub's published asset digest. Portable via portable.ini. */
+    static const Release ps = {
+        "2.8.2", L"github.com", L"/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-windows-x64-Qt.7z",
+        25670075ull, "7dfc829ca1994cc1045ac49f05e39b6cf968b72e6a374c40e05c2a2b4ac200b4", L"pcsx2-qt.exe", "GPL-3.0+"};
+    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : dol;
 }
 
 std::string managed_root() { return join(hub::data_dir(), "emulators"); }
-std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : "dolphin"); }
+std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : "dolphin"); }
 
 /* ------------------------------------------------------------------ */
 /* locating                                                            */
@@ -429,6 +433,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         }
     }
     remove_tree(stage);
+    if (ok && k == Kind::Pcsx2) ok = write_text(join(dir, "portable.ini"), "");   // portable mode: all data beside the exe, a user's own PCSX2 is never touched
     if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");   // Dolphin keeps its User folder beside the exe
     if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");
     if (!ok) remove_tree(dir);   // never leave a half install behind
@@ -948,6 +953,13 @@ void dolphin_migrate_old(const std::string& data_dir, const std::string& exe_dir
         remove_tree(old_inst);
 }
 
+std::string pcsx2_safe_key(const std::string& key) {
+    std::string k = key;
+    for (char& ch : k) if (!isalnum((unsigned char)ch) && ch != '-' && ch != '_' && ch != '.') ch = '_';
+    return k;
+}
+std::string pcsx2_card_dir_rel(const std::string& key) { return "memcards/RetroHub/" + pcsx2_safe_key(key); }
+
 std::string dolphin_card_root(const std::string& install_dir, const std::string& key) {
     std::string k = key;
     for (char& ch : k) if (!isalnum((unsigned char)ch) && ch != '-' && ch != '_' && ch != '.') ch = '_';
@@ -1003,6 +1015,8 @@ void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::
         make_dirs(d);
         std::string f = join(d, "qt-config.ini");
         write_text(f, azahar_config_apply(read_text(f), v));
+    } else if (k == Kind::Pcsx2) {
+        return;   // written by prepare_pcsx2 (pcsx2.h)
     } else {
         std::string f = join(install_dir, "portable\\settings.xml");
         if (file_exists(f)) write_text(f, cemu_settings_apply(read_text(f), v));
@@ -1111,6 +1125,11 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         } else {
             s.rels = {hub::wiiu_save_rel(tid)};
         }
+    } else if (e.system == hub::System::PS2) {
+        if (inst.dir.empty()) return s;
+        s.emu_root = inst.dir;   // <install>/memcards/RetroHub/<game> <-> <vault>/ps2/<game>/battery/memcards/RetroHub/<game>
+        s.rels = {pcsx2_card_dir_rel(e.key)};
+        make_dirs(join(s.emu_root, s.rels[0]));
     } else if (e.system == hub::System::GC) {
         if (inst.dir.empty()) return s;
         s.emu_root = dolphin_card_root(inst.dir, e.key);   // <install>\User\GC\RetroHub\<game>\GCI  <->  <vault>\gc\<game>\battery\GCI
