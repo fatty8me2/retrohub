@@ -19,6 +19,7 @@ void start_scan() {
     std::vector<std::string> folders = A.st.rom_folders;
     A.scan_th = std::thread([folders]() {
         A.scan_result = hub::scan_library(folders, [](int d, int t) { A.scan_done = d; A.scan_total = t; });
+        kt_scan_append(&A.scan_result, folders);   // Kanto Together package (zip / folder), if the user has it
         A.scan_ready = true;
     });
 }
@@ -116,7 +117,7 @@ void rebuild_vis() {
     const std::vector<GameInfo>& cat = hub::catalog();
     std::vector<bool> owned(cat.size()), online(cat.size());
     for (size_t i = 0; i < cat.size(); ++i) {
-        owned[i] = cat[i].engine == hub::Engine::Native || owned_ids.count(cat[i].id) > 0;
+        owned[i] = cat[i].engine == hub::Engine::Native || owned_ids.count(cat[i].id) > 0 || cat[i].id == kanto::kCatalogId;   // never a top pick: it comes from a friend's package
         online[i] = cat[i].online;
     }
     A.pick_idx = hubui::pick_unowned(owned, online, 16);

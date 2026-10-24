@@ -583,6 +583,10 @@ void draw_details_modal() {
         ImGui::TextWrapped("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua archive needs no keys.");
         ImGui::PopStyleColor();
     }
+    if (is_kanto(e)) {
+        text_wrapped_disabled("A friend's two-player co-op version of Pokemon FireRed. It is played online: press Play to set it up (once), then host or join a room and pick it. Needs your own Pokemon FireRed (USA) 1.0 in the library.");
+        if (button("How to play", ImVec2(sp(14.f), sp(4.f)))) kt_open_howto();
+    }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     ImGui::Text("Play time: %s      Last played: %s", hubui::format_play_time(gs.play_seconds).c_str(),
                 gs.last_played ? fmt_time(gs.last_played).c_str() : "never");

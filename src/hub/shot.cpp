@@ -54,6 +54,7 @@ void shot_init_ui() {
         if (std::getenv("HUB_SHOT_CHAT")) { fr_open_chat("miauid"); FR.chat_unread = 2; }
         if (std::getenv("HUB_SHOT_BELL")) FR.shot_bell = true;
     }
+    kt_shot_init();
     if (std::getenv("HUB_SHOT_FAKE_ROOM")) {
         g_fake_room = true;
         if (const char* hcv = std::getenv("HUB_SHOT_HOSTCHANGE")) {   // screenshot aid: room right after a host change ("me" | "other")

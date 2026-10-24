@@ -149,7 +149,7 @@ const char* genre_of(const std::string& id) {
         {"oot", "Adventure"}, {"mm", "Adventure"}, {"ootmq", "Adventure"}, {"minishcap", "Adventure"},
         {"lttp", "Adventure"}, {"mzm", "Adventure"}, {"mfusion", "Adventure"}, {"pokesnap", "Adventure"},
         {"papermario", "RPG"}, {"pokeruby", "RPG"}, {"pokesapphire", "RPG"}, {"pokeemerald", "RPG"},
-        {"pokefirered", "RPG"}, {"pokeleafgreen", "RPG"}, {"mlss", "RPG"}, {"goldensun", "RPG"},
+        {"pokefirered", "RPG"}, {"kanto", "RPG"}, {"pokeleafgreen", "RPG"}, {"mlss", "RPG"}, {"goldensun", "RPG"},
         {"goldensunlostage", "RPG"}, {"bn3blue", "RPG"}, {"pmdred", "RPG"},
         {"aw1", "Strategy"}, {"aw2", "Strategy"}, {"fireemblem", "Strategy"}, {"ffta", "Strategy"},
         {"mariotennis", "Sports"}, {"mariogolf", "Sports"}, {"thps2", "Sports"},
@@ -332,6 +332,12 @@ const std::vector<GameInfo>& catalog() {
         {"pokefirered", "Pokemon FireRed", Engine::Libretro, 2, {}, "", "gba",
          {"BPRE", "BPRJ"}, true, 2004,
          "A remake of the first generation's Kanto adventure, with link-cable trading and battles.",
+         "Pokemon - FireRed Version (USA, Europe)"},
+        /* Kanto Together: a friend's 2-player co-op FireRed hack (src/common/kanto.h). No ROM serial on purpose: the library entry is made
+         * from the user's own package zip, never matched from a ROM header. Art is FireRed's cover. */
+        {"kanto", "Kanto Together (FireRed co-op)", Engine::Libretro, 2, {}, "", "gba",
+         {}, true, 2026,
+         "A friend's two-player co-op version of Pokemon FireRed: walk the story together online and trade Pokemon.",
          "Pokemon - FireRed Version (USA, Europe)"},
         {"pokeleafgreen", "Pokemon LeafGreen", Engine::Libretro, 2, {}, "", "gba",
          {"BPGE", "BPGJ"}, true, 2004,

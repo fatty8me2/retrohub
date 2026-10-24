@@ -61,3 +61,6 @@ as a static library into `mgba_link_libretro.dll` (src/mgba_link, also MPL-2.0).
 
 ## SameBoy (sameboy_rb_libretro)
 SameBoy (libretro fork, commit aa158a8), (c) Lior Halphon and contributors, MIT License. Built from the upstream tarball with a two-line determinism patch (src/sameboy_rb/patch_libretro.cmake) into `sameboy_rb_libretro.dll` for rollback netplay.
+
+## Kanto Together (not shipped)
+RetroHub can run a friend's Kanto Together co-op hack from the user's own package zip. Nothing from it is distributed with RetroHub. The package bundles mGBA (MPL 2.0), Node.js (MIT) and ws (MIT); see docs/KANTO_TOGETHER.md.

@@ -143,6 +143,7 @@ void page_online_room() {
 
     ImGui::BeginChild("roomleft", ImVec2(left_w, h), ImGuiChildFlags_NavFlattened);
 
+    kt_room_panel(left_w - ImGui::GetStyle().ScrollbarSize, true);   // Kanto Together: live status + trade panel first
     // member cards (4 slots)
     float gap = 14 * S;
     int cols = left_w > 560 * S ? 2 : 1;
@@ -255,7 +256,7 @@ void page_online_room() {
 
     ImGui::Dummy(ImVec2(0, 6 * S));
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
-    if (rg && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system))) {
+    if (rg && !is_kanto(*rg) && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system))) {
         if (host) {
             if (ImGui::Checkbox("Use host's save (unlocked characters/boards)", &A.share_host_save)) A.hello_dirty = true;
         } else {
@@ -267,6 +268,7 @@ void page_online_room() {
         if (host) ImGui::Checkbox("Keep this session's progress on my memory card", &A.gc_write_save);
     }
     if (match_active()) match_panel(host, left_w);
+    kt_room_panel(left_w - ImGui::GetStyle().ScrollbarSize, false);
     if (host) {
         bool ok = false;
         std::string why;
@@ -286,6 +288,7 @@ void page_online_room() {
                     if (p.slot != 0 && !A.ready[p.slot]) { ok = false; why = p.name + " isn't ready yet"; break; }
         }
         if (A.proc) { ok = false; why = "In game..."; }
+        if (ok && rg && is_kanto(*rg)) { std::string b = kt_launch_block(*rg); if (!b.empty()) { ok = false; why = b; } }
         if (rg && rg->system == hub::System::N3DS && gc_needs_unpack(*rg)) { ok = false; why = "Unpacking " + rg->title + " (needed for 3DS online)..."; }
         if (rg && rg->system == hub::System::GC) {
             if (gc_needs_unpack(*rg)) { ok = false; why = "Unpacking " + rg->title + " (needed for GameCube online)..."; }
