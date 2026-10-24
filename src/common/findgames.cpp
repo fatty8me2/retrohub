@@ -19,7 +19,7 @@
 namespace hub { namespace fg {
 
 const char* sys_label(int s) {
-    static const char* const n[kSysCount] = {"N64", "GameCube", "GBA", "Game Boy", "GBC", "DS", "3DS", "Wii U", "PlayStation"};
+    static const char* const n[kSysCount] = {"N64", "GameCube", "GBA", "Game Boy", "GBC", "DS", "3DS", "Wii U", "PS2", "PlayStation"};
     return s >= 0 && s < kSysCount ? n[s] : "";
 }
 
@@ -31,7 +31,8 @@ int classify_ext(const std::string& e) {
         {".gba", GBA}, {".gb", GB}, {".gbc", GBC}, {".nds", NDS},
         {".3ds", N3DS}, {".cci", N3DS}, {".cia", N3DS}, {".cxi", N3DS},
         {".wua", WIIU}, {".wud", WIIU}, {".wux", WIIU},
-        {".cue", PS1}, {".chd", PS1}, {".pbp", PS1}, {".m3u", PS1},
+        {".chd", PS2}, {".cso", PS2}, {".cue", PS2},   // .chd/.cue are PS1 or PS2: only the disc says, counted as PS2 here
+        {".pbp", PS1}, {".m3u", PS1},
         {".zip", kArchive}, {".7z", kArchive},
     };
     for (const M& m : map) if (e == m.ext) return m.sys;
@@ -319,6 +320,7 @@ std::vector<Root> default_roots() {
     for (const char* od : {"OneDrive", "OneDrive - Personal"})
         for (const char* sub : {"Desktop", "Documents"}) add(home + "\\" + od + "\\" + sub, false);
     for (const char* sub : {"Documents\\RetroHub Games", "Games", "ROMs", "Roms", "Emulation", "RetroArch\\roms"}) add(home + "\\" + sub, true);
+    add(home + "\\Desktop\\Everything\\GamesPS2", true);
     if (!test_home.empty()) return out;
 
     const std::string appdata = env("APPDATA"), local = env("LOCALAPPDATA");

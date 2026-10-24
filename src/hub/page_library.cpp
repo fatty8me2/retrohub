@@ -92,7 +92,8 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     bool idle = A.proc == nullptr;
     const hub::GameState& gs = gstate(e.key);
     bool gc = e.system == hub::System::GC;
-    bool online = supports_online(e) || gc;
+    bool ps2 = e.system == hub::System::PS2;   // PCSX2 has no netplay
+    bool online = supports_online(e) || gc || ps2;
     if (gc && supports_online(e)) gc = false;   // online-capable GameCube games get the normal Play Online button
     float gap = sp(1.5f), play_w = sp(compact ? 15.f : 18.f), on_w = compact ? bh : sp(21.f);
     float total = play_w;
@@ -104,9 +105,9 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     if (seed_nav) seed_nav_here();
     if (online) {
         ImGui::SameLine(0, gap);
-        if (gc) {
-            button(compact ? "##onsoon" : "Online soon", ImVec2(on_w, bh), false, false, ui::Icon::Globe);
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Online via Dolphin's own netplay - coming soon");
+        if (gc || ps2) {
+            button(compact ? "##onsoon" : (ps2 ? "Offline only" : "Online soon"), ImVec2(on_w, bh), false, false, ui::Icon::Globe);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(ps2 ? "PS2 online isn't supported yet" : "Online via Dolphin's own netplay - coming soon");
         } else if (button(compact ? "##online" : "Play Online", ImVec2(on_w, bh), false, idle, ui::Icon::Globe)) {
             A.pending_room_game = room_id(e);
             enter_room(true, hubnet::new_room_code());
@@ -275,7 +276,7 @@ void empty_library_state() {
         struct Sy { const char* label; hub::System s; };
         static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB},
                                 {"Nintendo DS", hub::System::NDS},
-                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}};
+                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}, {"PS2", hub::System::PS2}};
         float tot = 0;
         for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
         float x = cx - (tot - sp(0.75f)) * 0.5f;
@@ -408,7 +409,7 @@ void all_games_view() {
     // system chips
     struct Chip { const char* label; const char* sys; };
     static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"PlayStation", "ps1"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
-                                {"Nintendo DS", "nds"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
+                                {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
     if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     std::map<std::string, int>& counts = A.chip_counts;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
@@ -576,7 +577,7 @@ void draw_details_modal() {
     if (e.issue == "extract") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextWrapped("Archived: %s cannot open %s files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your archive stays untouched.",
-                           e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);
+                           e.system == hub::System::PS2 ? "PCSX2" : e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC || e.system == hub::System::PS2 ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);
         ImGui::PopStyleColor();
     } else if (e.issue == "encrypted") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
@@ -627,7 +628,11 @@ void draw_details_modal() {
     place(sp(17.f));
     if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play)) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry(c); }
     ImGui::SetItemDefaultFocus();
-    if (e.system == hub::System::GC && !supports_online(e)) {
+    if (e.system == hub::System::PS2) {
+        place(label_w("Offline only", true));
+        button("Offline only", ImVec2(0, bh), false, false, ui::Icon::Globe);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("PS2 online isn't supported yet");
+    } else if (e.system == hub::System::GC && !supports_online(e)) {
         place(label_w("Online soon", true));
         button("Online soon", ImVec2(0, bh), false, false, ui::Icon::Globe);
     } else if (supports_online(e)) {

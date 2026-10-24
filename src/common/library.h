@@ -14,6 +14,7 @@ namespace hub {
 enum class System { Unknown = 0, N64, GBA, GB, GBC, GC,
                     N3DS, WiiU,   // appended: 3DS (Azahar), Wii U (Cemu)
     NDS,
+    PS2,     // PlayStation 2 (PCSX2, downloaded on demand)
     PS1 };   // PlayStation (Beetle PSX via retrorun)
 /* GB/GBC/GBA run as one lockstepped console online (retrorun --net); the room can share the host's save with everyone. */
 inline bool is_lockstep_gb_system(System s) { return s == System::GB || s == System::GBC || s == System::GBA; }

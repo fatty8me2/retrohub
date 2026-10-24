@@ -126,3 +126,39 @@ config file is not rewritten into something that drops the pad (it should keep t
 
 ## Per-game settings (`src/common/game_settings.h`)
 Stored in the vault at `<vault>\_settings\game_settings.json`. Layers: option default, system defaults, per-game override (`Store::resolve`). Each option is Visual (local only), Sync (host's value goes in the launch JSON as `"gs":{...}` via `sync_fragment`; guests use `extract_sync` + `online_effective`) or Locked (forced to default online: GLideN64 framebuffer-emulation options). Runner wiring: `n64run --gfx Key=i|b|s:value` (GLideN64 config, locked keys ignored online), `retrorun --filter/--integer-scale/--opt`, and `hubemu::apply_game_settings` (Dolphin GFX.ini, Azahar qt-config.ini, Cemu graphic packs).
+
+# PlayStation 1 (Beetle PSX via retrorun)
+
+System short name `ps1` ("PlayStation", `System::PS1`). It runs through `retrorun.exe --system ps1` with `beetle_psx_libretro.dll` (docs/CORES.md). Code: `src/common/ps1.{h,cpp}` (probing, catalog, BIOS), `src/hub/ps1_ui.cpp` (launch, BIOS picker, settings), `src/beetle_psx/` (core build, serial database generator). Tests: `ps1_test` (synthetic discs in a scratch dir), plus `qa/make_ps1_testdisc.py` for a headless boot disc.
+
+## Library
+
+| Format | Identification | Key |
+|---|---|---|
+| `.cue` + `.bin` | the first FILE of the cue is read (MODE1/2048, MODE1/2352, MODE2/2352 all detected); ISO 9660 root -> `SYSTEM.CNF` -> `BOOT = cdrom:\SLUS_006.94;1` | `ps1:slus-00694` |
+| `.chd` | decoded sector by sector with libretro-common's `rchd` (compiled into `hubchd`); same SYSTEM.CNF walk | same |
+| `.iso` `.img` `.bin` | PVD at sector 16 (2048 or 2352 layout); GameCube `.iso` is tried first | same |
+| `.pbp` | `DISC_ID` in the embedded PARAM.SFO | same |
+| `.m3u` | the first disc is probed; the other discs listed in the m3u are hidden. Launched as the m3u (disc swap in the core) | disc 1's key |
+| `.zip` `.7z` | by Redump file name (title -> serial); unpacked on Play like GameCube (asks first) into `rom-cache\ps1\<key>\` | same |
+
+- **PS1 vs PS2** is decided by the disc: `BOOT =` is PS1, `BOOT2 =` is PS2 (PS1 is probed first, a miss falls to the PS2 reader). Homebrew with `BOOT = cdrom:\PSX.EXE` is a PS1 game with key `ps1:file-<name>`.
+- **Serial -> title** from a bundled Redump catalog (11,260 rows): `database/psx_games.inc` of the pinned Beetle tree, turned into `ps1_db_data.cpp` at CMake configure time (`src/beetle_psx/gen_ps1_db.cmake`). Titles are shown without region tags ("Crash Bash"); a single disc keeps "(Disc N)". Cover art uses the Redump name (`Sony - PlayStation` thumbnails).
+- Files a `.cue` (its bins) or `.m3u` (its discs) refers to are not listed as games of their own. A damaged/unreadable header falls back to a file name that exactly matches a Redump title.
+- Folders: any folder named `GamesPS1`, `Games*`, `PS1`, `PSX` or `PlayStation` below Desktop/Documents/Downloads is suggested ("Find my games" also finds `Desktop\Everything\GamesPS1` through its parent). Add games copies a cue with its bins (and an m3u with its discs) into `PlayStation\<name>\`.
+
+## BIOS
+
+PS1 needs a BIOS dump; RetroHub does not ship one. Searched (first hit wins per region): the file chosen in Settings, `<data>\system\ps1`, each game folder and its `BIOS` / `System` subfolders, a `BIOS` folder next to a game folder (up to two levels up, so `Desktop\Everything\BIOS` beside `Desktop\Everything\GamesPS1` works), `Documents\RetroHub Games\BIOS`, `<exe>\system`, `<exe>\bios`, `%APPDATA%\RetroArch\system`. Files must be 512 KB (or the 1 MB SCPH-5903) named `scph*.bin`. Known MD5s: scph5500 `8dd7d529...`, scph5501 `490f666e...`, scph5502 `32736f17...` (from the libretro `.info`), scph1001 `924e392e...`, scph7001 `1e68c231...`, scph7003 `8abc1b54...`. An unrecognised checksum is still used (with a toast).
+
+The best BIOS per region is copied to `<data>\system\ps1\scph5501.bin` / `scph5502.bin` / `scph5500.bin` (the names the core looks for; a region without its own BIOS borrows another: any retail BIOS runs any region's discs) and passed as `--system-dir`. With none found, Play shows "PS1 needs a BIOS file (scph5501.bin)" with **Choose BIOS file...**, **Use built-in OpenBIOS** and Cancel; Settings > Playing shows the BIOS in use and has the same picker.
+
+## Controls
+
+Controllers page, tab **PlayStation** (profile system `ps1`). Same libretro pad ids as the `retro` profile, PlayStation names: Xbox A = Cross, B = Circle, X = Square, Y = Triangle, LB/RB = L1/R1, LT/RT = L2/R2, Back = Select, Start, L3/R3 = stick clicks, D-pad = D-pad; the two sticks are **analog** (DualShock, deadzone 0.08), they do not press the D-pad. Keyboard: arrows, Z/X/A/S, Q/W, Enter, Right Shift (D-pad and buttons only). retrorun sets every port to DualShock (`0x205`), so rumble works and games can switch analog mode. Four players: **Multitap** setting (Automatic = on with 3+ controllers).
+
+## Saves, video, settings
+
+- Memory card 1 (128 KB) is the core's save RAM, saved as `<stem>.srm` in the game's vault battery folder (`saves\ps1\<key>`), so it syncs with the vault like any other save. Per game, not shared; an `.m3u` set shares one card. No `--resume`: states are 16 MB and a stale auto state must not overwrite a synced card.
+- Fullscreen (global default / per game) and the common scaling options work; PS1 uses smooth, non-integer scaling at the core's aspect ratio. Per-game settings: Internal resolution (1x-8x, software), Widescreen hack, Multitap.
+- Not done here: PS1 online (analog stick values are not part of the netplay input packet yet; the core is deterministic and savestate-capable, so lockstep/rollback can be added), memory card 2, card management UI, disc-swap hotkey.

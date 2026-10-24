@@ -41,6 +41,7 @@
 #include "update_apply.h"
 #include "games.h"
 #include "emulators.h"
+#include "pcsx2.h"
 #include "controls.h"
 #include "netplay_dolphin.h"
 #include "library.h"
@@ -618,6 +619,7 @@ bool draw_players_strip(int players);            // library details: "Players: 1
 std::string controls_arg(const std::string& system_key, const std::string& game_key);
 hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key);
 hubemu::DolphinPads dolphin_pads_for(const hubctl::Profile& gc_profile);
+hubemu::Ps2Pads ps2_pads_for(const hubctl::Profile& ps2_profile);   // page_controllers.cpp
 hubemu::AzPad azahar_pad_for(const hubctl::Profile& profile_3ds);
 hubemu::CemuPads cemu_pads_for(const hubctl::Profile& profile_wiiu);
 
@@ -655,6 +657,10 @@ void add_games_shutdown();                                    // app exit: cance
 
 /* ---- emu_dialogs.cpp ---- */
 void poll_emulators();
+void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states);   // ps1_ui.cpp
+void draw_ps1_dialogs();
+void ps1_settings_ui();
+void emu_modal_begin(const char* name, bool* open_flag);
 void emu_modal_begin(const char* name, bool* open_flag);
 void draw_emulator_dialogs();
 

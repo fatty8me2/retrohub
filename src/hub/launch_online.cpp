@@ -325,6 +325,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
     A.st.last_game = room_id(e);
     mark_dirty();
     if (is_kanto(e)) { kt_launch(e, launch_no, is_host); return; }
+    if (e.system == hub::System::PS2) { launch_fail("PS2 online isn't supported yet - PCSX2 has no netplay. Play it offline from your library.", 12.0); return; }
     if (e.system == hub::System::GC) {   // Dolphin NetPlay: the host starts now; guests start from the launch handler
         if (is_host) {
             gcnp::Spec s;

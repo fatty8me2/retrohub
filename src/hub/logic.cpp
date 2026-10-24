@@ -72,6 +72,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"games_dest\": \"" << json::escape(s.games_dest) << "\",\n"
       << "  \"ps1_bios\": \"" << json::escape(s.ps1_bios) << "\",\n"
       << "  \"ps1_openbios\": " << (s.ps1_openbios ? "true" : "false") << ",\n"
+      << "  \"ps2_bios_dir\": \"" << json::escape(s.ps2_bios_dir) << "\",\n"
       << "  \"cemu_exe\": \"" << json::escape(s.cemu_exe) << "\"\n"
       << "}\n";
     return o.str();
@@ -128,6 +129,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->cemu_exe = j.str("cemu_exe", out->cemu_exe);
     out->ps1_bios = j.str("ps1_bios", out->ps1_bios);
     out->ps1_openbios = json_bool(j, "ps1_openbios", out->ps1_openbios);
+    out->ps2_bios_dir = j.str("ps2_bios_dir", out->ps2_bios_dir);
     out->games_dest = j.str("games_dest", out->games_dest);
     return true;
 }
@@ -795,11 +797,12 @@ std::string system_shelf_title(const std::string& s) {
     if (s == "wiiu") return "Wii U";
     if (s == "nds") return "Nintendo DS";
     if (s == "ps1") return "PlayStation";
+    if (s == "ps2") return "PlayStation 2";
     return s;
 }
 
 const std::vector<std::string>& console_order() {
-    static const std::vector<std::string> v = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "gba", "gbc", "gb"};
+    static const std::vector<std::string> v = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "gba", "gbc", "gb"};
     return v;
 }
 

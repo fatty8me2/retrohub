@@ -22,6 +22,7 @@
  *                       (no autostart: the host presses Start match in Smash)
  */
 #include "winutil.h"
+#include "pcsx2.h"
 #include "invite.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
@@ -254,7 +255,7 @@ RunInfo run_info_for(const hub::GameEntry& e, bool online) {
 
 /* Size of the image inside a zipped 3DS game (read once from the zip's directory). */
 uint64_t unpacked_size(const hub::GameEntry& e) {
-    if (e.system == hub::System::GC) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
+    if (e.system == hub::System::GC || e.system == hub::System::PS2) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
     static std::map<std::string, uint64_t> cache;
     auto it = cache.find(e.path);
     if (it == cache.end()) it = cache.emplace(e.path, hub::zip_3ds_unpacked_size(e)).first;
@@ -268,10 +269,15 @@ std::string launch_path_for(const hub::GameEntry& e) {
 
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg) {
     hubemu::Kind kind = hubemu::kind_for(e.system);
-    if ((e.system == hub::System::N3DS || e.system == hub::System::GC) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
+    if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
         UNZ.key = e.key;
         UNZ.state = UnzipJob::Asking;
         return;
+    }
+    hubemu::Bios ps2_bios;
+    if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is downloaded or started
+        ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
+        if (ps2_bios.file.empty()) { set_notice(hubemu::pcsx2_bios_missing_text(), 15.0); return; }
     }
     hubemu::Install inst = hubemu::find(kind, A.st.cemu_exe, e.path);
     if (inst.exe.empty()) {   // not installed: ask, download, then start this game
@@ -290,6 +296,10 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     } else if (kind == hubemu::Kind::Dolphin) {
         hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
         { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
+    } else if (kind == hubemu::Kind::Pcsx2) {
+        hubctl::Profile pp = controls_profile("ps2", e.key);
+        std::string perr = hubemu::prepare_pcsx2(inst.dir, ps2_pads_for(pp), pp, ps2_bios, e.key, gs_values_for(e));
+        if (!perr.empty()) { set_notice("Could not set up PCSX2: " + perr, 12.0); return; }
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, cemu_pads_for(pw)); }
     }
@@ -300,6 +310,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
+                       : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
                                                        : hubemu::cemu_args(game, fs);
     if (e.issue == "encrypted") set_notice("This 3DS image is encrypted: Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder).", 12.0);
     if (e.issue == "keys") set_notice("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua needs no keys.", 12.0);
@@ -430,7 +441,11 @@ void play_entry(const hub::GameEntry& e) {
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }
+        case hub::System::PS1:   // Beetle PSX through retrorun; no --resume (the memory card is the save)
+            ps1_play(e, ri, battery, states);
+            break;
         case hub::System::GC:
+        case hub::System::PS2:
         case hub::System::N3DS:
         case hub::System::WiiU:
             launch_external(e, ri, battery);
