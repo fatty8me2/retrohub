@@ -105,10 +105,30 @@ int main() {
         CHECK(!r.add(0, (const uint8_t*)"Z12345", 6, 5000, &o));   // not a fragment
     }
 
-    /* catalog: all 8 3DS Pokemon games are 2-player; online stays off until the Azahar room join is verified live */
+    /* console username (3DS config savegame block 0x000A0000) */
+    {
+        CHECK(console_username("Brendan McCarthy", 1) == "Brendan__1");
+        CHECK(console_username("Al", 0) == "Al_0");
+        CHECK(console_username("Al", 0).size() >= 4 && console_username("Hello World Long Name", 7).size() <= 10);
+        CHECK(console_username("Sam", 0) != console_username("Sam", 1));
+        std::vector<uint8_t> cfg(64, 0);
+        cfg[0] = 1; cfg[2] = 16;                       // 1 entry, data at 16
+        cfg[4] = 0; cfg[5] = 0; cfg[6] = 0x0A; cfg[7] = 0;   // id 0x000A0000
+        cfg[8] = 32;                                   // offset 32
+        cfg[12] = 28;                                  // size 28
+        for (int i = 0; i < 6; ++i) cfg[32 + i * 2] = (uint8_t)"AZAHAR"[i];
+        CHECK(set_console_username(&cfg, "Bob_2"));
+        CHECK(cfg[32] == 'B' && cfg[33] == 0 && cfg[34] == 'o' && cfg[40] == '2' && cfg[42] == 0 && cfg[50] == 0);
+        CHECK(!set_console_username(&cfg, "ElevenChars"));
+        std::vector<uint8_t> none(8, 0);
+        CHECK(!set_console_username(&none, "Bob_2"));
+        if (const char* real = std::getenv("N3DS_REAL_INSTALL")) CHECK(set_console_username_file(real, "TestNick_1"));
+    }
+
+    /* catalog: all 8 3DS Pokemon games are 2-player; online verified live (n3ds_live, direct + forced relay) */
     int n = 0;
     for (const hub::GameInfo& g : hub::catalog())
-        if (g.engine == hub::Engine::Azahar) { ++n; CHECK(!g.online && g.max_players >= 2); }
+        if (g.engine == hub::Engine::Azahar) { ++n; CHECK(g.online && g.max_players == 2 && hub::online_max_for(g) == 2); }
     CHECK(n == 8);
 
     std::printf(g_fail ? "FAILED (%d)\n" : "np3ds tests passed\n", g_fail);

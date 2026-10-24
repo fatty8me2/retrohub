@@ -136,7 +136,8 @@ bool Runner::start_host(const std::string& server, const std::string& code, int 
     HANDLE r = nullptr, w = nullptr;
     CreatePipe(&r, &w, &sa, 0);
     SetHandleInformation(w, HANDLE_FLAG_INHERIT, 0);
-    HANDLE nul = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ, &sa, OPEN_EXISTING, 0, nullptr);
+    /* the room prints member joins/leaves to stdout: keep it (QA evidence), next to its --log-file */
+    HANDLE nul = CreateFileW(W(work_dir + "\\azahar-room.out").c_str(), GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ, &sa, CREATE_ALWAYS, 0, nullptr);
     STARTUPINFOW si{};
     si.cb = sizeof si;
     si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;

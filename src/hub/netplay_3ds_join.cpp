@@ -65,6 +65,7 @@ try {
   Park $dlg
   $edits = @($dlg.FindAll($TS::Descendants, (Prop $UA::ControlTypeProperty $CT::Edit)))
   if ($edits.Count -lt 4) { Say "error:Direct Connect dialog layout changed"; exit 1 }
+  Say ("stage:nickname=" + (Read-Edit $edits[2]))
   $vals = @($Addr, "$Port", $Nick, $Pw)
   # the nickname box is read-only in Azahar (it shows the 3DS username); the password box is only touched when needed
   for ($i = 0; $i -lt 4; $i++) { if ($i -eq 2 -or ($i -eq 3 -and -not $Pw)) { continue }; if (-not (Set-Edit $dlg $edits[$i] $vals[$i])) { Say "stage:edit$i-unset" } }
@@ -79,10 +80,20 @@ try {
     $l = $m.FindFirst($TS::Descendants, (Prop $UA::NameProperty "Leave Room"))
     if ($l -and $l.Current.IsEnabled) { return "joined" }
     foreach ($w in $m.FindAll($TS::Children, (Prop $UA::ControlTypeProperty $CT::Window))) {
+      if ($w.Current.Name -match 'members\) - connected') { return "joined" }   # the multiplayer room window: "RetroHub (2/8 members) - connected"
       if ($w.Current.ClassName -ne "DirectConnectWindow") { Park $w; return ("dialog:" + $w.Current.Name) }
     }
   } 40
-  if ($ok -eq "joined") { Say "joined" } elseif ($ok) { Say "error:$ok" } else { Say "error:join timed out" }
+  if ($ok -eq "joined") { Say "joined" } else {
+    # report what Azahar's own error box says (it may be a top-level window rather than a child of the main window)
+    $txt = @()
+    foreach ($w in $UA::RootElement.FindAll($TS::Children, (Prop $UA::ProcessIdProperty $AzPid))) {
+      if ($w.Current.Name -eq "Error") { Park $w; foreach ($t in $w.FindAll($TS::Descendants, (Prop $UA::ControlTypeProperty $CT::Text))) { $txt += $t.Current.Name } }
+    }
+    $why = if ($ok) { "$ok" } else { "join timed out" }
+    if ($txt.Count) { $why += " [" + ($txt -join " | ") + "]" }
+    Say "error:$why"
+  }
 } catch { Say "error:$($_.Exception.Message)" }
 )PS";
 }
