@@ -1085,8 +1085,17 @@ bool Frontend::setup_link() {
     link_active = true;
     link_probe = env_is("RETRORUN_LINK_PROBE");
     core.netpacket().start((uint16_t)a.slot, np_send, np_poll);
-    if (core.netpacket().connected && a.slot == 0)
-        for (int s = 1; s < std::max(1, a.players); s++) core.netpacket().connected((uint16_t)s);
+    if (core.netpacket().connected && a.slot == 0) {
+        /* Client ids are the lobby slots, which have gaps after somebody leaves: announce the real ones (--ports lists the members). */
+        bool seen[8] = {false};
+        int announced = 0;
+        for (int i = 0; i < 4; i++) {
+            int s = a.ports[i];
+            if (s > 0 && s < 8 && !seen[s]) { seen[s] = true; ++announced; core.netpacket().connected((uint16_t)s); }
+        }
+        if (!announced)   // older hub without --ports: slots 1..players-1
+            for (int s = 1; s < std::max(1, a.players); s++) core.netpacket().connected((uint16_t)s);
+    }
     rlog("link: wireless started as client id %d", a.slot);
     return true;
 }

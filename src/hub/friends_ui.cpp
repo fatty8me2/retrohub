@@ -291,10 +291,22 @@ static void fr_trace(const char* what, const std::string& arg = std::string()) {
 void fr_invite_uids(const std::vector<std::string>& uids) {
     fr_trace("invite", uids.empty() ? "" : uids[0]);
     if (uids.empty() || !fr_in_my_room()) return;
-    if (!FR.fake) FR.cli.send_invite(uids, fr_make_invite());
+    std::vector<std::string> send = uids;
+    {   // never invite past the room's capacity: the friend would only land on "room is full"
+        const hub::GameEntry* rg = find_room_entry(A.selected_game);
+        int members = (int)room_members().size(), gmax = rg ? max_players_for(*rg) : 4;
+        std::string block = hubui::invite_room_block(members, gmax, (int)send.size());
+        if (!block.empty()) {
+            int left = hubui::invite_room_left(members, gmax);
+            set_notice(block, 6.0);
+            if (left <= 0) return;
+            send.resize((size_t)left);
+        }
+    }
+    if (!FR.fake) FR.cli.send_invite(send, fr_make_invite());
     double now = ImGui::GetTime();
     std::string names;
-    for (auto& u : uids) {
+    for (auto& u : send) {
         FR.invited_at[u] = now;
         if (const hubnet::Friend* f = fr_find(u)) { if (!names.empty()) names += ", "; names += f->name; }
     }
@@ -771,6 +783,10 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
     bool can_join = hubui::friend_can_join(fr);
     const char* join_lbl = fr.state == hubui::FS_InGame ? "Join lobby" : "Join";
     bool can_invite = fr_in_my_room() && f.online() && f.status.lobby_code != A.code;
+    if (can_invite) {   // room already full for this game: no Invite button (the picker/menu explain why)
+        const hub::GameEntry* rg = find_room_entry(A.selected_game);
+        if (hubui::invite_room_left((int)room_members().size(), rg ? max_players_for(*rg) : 4) <= 0) can_invite = false;
+    }
     auto inv_it = FR.invited_at.find(f.uid);
     bool invited_recent = inv_it != FR.invited_at.end() && ImGui::GetTime() - inv_it->second < 20.0;
     static const char* shot_hover = std::getenv("HUB_SHOT_HOVER");   // screenshot aid: pretend this friend uid is hovered

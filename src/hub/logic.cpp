@@ -459,6 +459,18 @@ PortPlan build_ports(std::vector<MemberPads> m) {
     return p;
 }
 
+int invite_room_left(int members, int game_max) {
+    int cap = std::max(1, std::min(4, game_max > 0 ? game_max : 4));
+    return std::max(0, cap - members);
+}
+std::string invite_room_block(int members, int game_max, int wanted) {
+    int cap = std::max(1, std::min(4, game_max > 0 ? game_max : 4));
+    int left = invite_room_left(members, game_max);
+    if (left <= 0) return "The room is full (" + std::to_string(members) + "/" + std::to_string(cap) + "). Free a spot first.";
+    if (wanted > left) return "Only " + std::to_string(left) + " more can join this room (" + std::to_string(members) + "/" + std::to_string(cap) + ").";
+    return "";
+}
+
 /* ---- Smash match picker ---- */
 namespace {
 const remix::Fighter* find_fighter(int id) {
