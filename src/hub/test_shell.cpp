@@ -80,7 +80,11 @@ int main() {
         CHECK(shell_path_looks_like_dev_build(L"C:\\x\\RetroHub\\build\\bin\\RetroHub.exe", none));
         CHECK(shell_path_looks_like_dev_build(L"C:\\x\\foo\\bin\\Release\\RetroHub.exe", none));
         CHECK(shell_path_looks_like_dev_build(L"C:\\x\\app\\RetroHub.exe", [](const std::wstring& d, const wchar_t* n) {
-            return d == L"C:\\x" && std::wstring(n) == L".git"; }));
+            return d == L"C:\\x" && (std::wstring(n) == L".git" || std::wstring(n) == L"CMakeLists.txt"); }));   // source checkout above
+        CHECK(!shell_path_looks_like_dev_build(L"C:\\Users\\u\\Desktop\\smashClassic\\RetroHub.exe", [](const std::wstring& d, const wchar_t* n) {
+            return d == L"C:\\Users\\u" && std::wstring(n) == L".git"; }));   // git-tracked home folder: still a real install
+        CHECK(shell_path_looks_like_dev_build(L"C:\\x\\app\\RetroHub.exe", [](const std::wstring& d, const wchar_t* n) {
+            return d == L"C:\\x" && std::wstring(n) == L"CMakeCache.txt"; }));
         SetEnvironmentVariableA("RETROHUB_NO_SHELL", "1");
         CHECK(!shell_registration_allowed());
         SetEnvironmentVariableA("RETROHUB_NO_SHELL", nullptr);

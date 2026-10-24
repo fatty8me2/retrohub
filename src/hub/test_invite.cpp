@@ -56,6 +56,17 @@ static void parsing_tests() {
     check(!invite_parse_command_line(L"RetroHub.exe --join BAD0CODE", &c), "--join with bad code rejected");
     check(!invite_parse_command_line(L"RetroHub.exe --join", &c), "--join without value rejected");
     check(!invite_parse_command_line(L"RetroHub.exe", &c), "no join args: not a join");
+
+    check(invite_parse_url(L"retrohub:join/abcdef", &c) && c == L"ABCDEF", "single-colon form parses");
+    check(invite_parse_url(L"retrohub://ABCDEF", &c) && c == L"ABCDEF", "bare code parses");
+    check(invite_parse_url(L"retrohub://join/%41BCDEF/", &c) && c == L"ABCDEF", "percent-encoded char parses");
+    check(invite_parse_url(L"retrohub://join/ABCDEF?utm=x#y", &c) && c == L"ABCDEF", "query/fragment ignored");
+    check(invite_parse_url(L"  \"retrohub://join/ABCDEF/\"  ", &c) && c == L"ABCDEF", "quotes and spaces trimmed");
+    check(invite_parse_url(L"<retrohub://join/K7M2QX>", &c) && c == L"K7M2QX", "angle brackets trimmed");
+    check(!invite_parse_url(L"retrohub://join/", &c) && !invite_parse_url(L"retrohub://join", &c), "empty code rejected");
+    check(invite_parse_command_line(L"RetroHub.exe \"retrohub://join/k7m2qx/\"", &c) && c == L"K7M2QX", "windows-style launch line parses");
+    check(invite_web_link(L"ABCDEF", L"Oli <b>") == L"https://smash-netplay.jumpcircuit.workers.dev/j/ABCDEF?h=Oli%20b", "host name sanitized into link");
+    check(invite_web_link(L"ABCDEF", L"<>").find(L'?') == std::wstring::npos, "unusable host name dropped");
 }
 
 static void link_tests() {

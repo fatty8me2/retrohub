@@ -28,6 +28,13 @@ bool starts_with_ci(const std::wstring& s, const wchar_t* prefix) {
 
 }  // namespace
 
+static std::wstring invite_normalize_code_keep_case(const std::wstring& raw) {
+    size_t b = 0, e = raw.size();
+    while (b < e && iswspace(raw[b])) ++b;
+    while (e > b && iswspace(raw[e - 1])) --e;
+    return raw.substr(b, e - b);
+}
+
 bool invite_is_valid_code(const std::wstring& code) {
     if (code.size() != 6) return false;
     for (wchar_t c : code) {
@@ -46,9 +53,34 @@ std::wstring invite_normalize_code(const std::wstring& raw) {
     return s;
 }
 
-bool invite_parse_url(const std::wstring& url, std::wstring* code) {
-    if (!starts_with_ci(url, kScheme)) return false;
-    std::wstring rest = url.substr(wcslen(kScheme));
+/* Percent-decodes %XX escapes (ASCII results only; anything else is left as is). */
+static std::wstring url_unescape(const std::wstring& in) {
+    std::wstring out;
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == L'%' && i + 2 < in.size() && iswxdigit(in[i + 1]) && iswxdigit(in[i + 2])) {
+            int v = std::stoi(in.substr(i + 1, 2), nullptr, 16);
+            if (v > 0 && v < 128) { out += (wchar_t)v; i += 2; continue; }
+        }
+        out += in[i];
+    }
+    return out;
+}
+
+/* Accepts what Windows hands the protocol handler: retrohub://join/CODE, retrohub://join/CODE/, retrohub:join/CODE,
+   retrohub://CODE, %-encoded or mixed case, with a trailing query/fragment, wrapped in quotes or <>. */
+bool invite_parse_url(const std::wstring& url_in, std::wstring* code) {
+    std::wstring url = invite_normalize_code_keep_case(url_in);
+    while (!url.empty() && (url.front() == L'"' || url.front() == L'\'' || url.front() == L'<')) url.erase(url.begin());
+    while (!url.empty() && (url.back() == L'"' || url.back() == L'\'' || url.back() == L'>')) url.pop_back();
+    if (!starts_with_ci(url, L"retrohub:")) return false;
+    std::wstring rest = url.substr(9);
+    size_t cut = rest.find_first_of(L"?#");
+    if (cut != std::wstring::npos) rest.erase(cut);
+    size_t b = 0;
+    while (b < rest.size() && rest[b] == L'/') ++b;   // "//" (or none)
+    rest = url_unescape(rest.substr(b));
+    if (starts_with_ci(rest, L"join/")) rest = rest.substr(5);
+    else if (rest.size() == 4 && starts_with_ci(rest, L"join")) return false;
     if (!rest.empty() && rest.back() == L'/') rest.pop_back();
     std::wstring c = invite_normalize_code(rest);
     if (!invite_is_valid_code(c)) return false;
@@ -75,9 +107,29 @@ bool invite_parse_command_line(const std::wstring& cmdline, std::wstring* code) 
     return found;
 }
 
-std::wstring invite_web_link(const std::wstring& code) {
+std::wstring invite_host_query(const std::wstring& host_name) {
+    std::wstring name;
+    for (wchar_t ch : host_name) {
+        if (iswalnum(ch) || ch == L' ' || ch == L'.' || ch == L'_' || ch == L'-') name += ch;
+        if (name.size() >= 24) break;
+    }
+    while (!name.empty() && name.back() == L' ') name.pop_back();
+    while (!name.empty() && name.front() == L' ') name.erase(name.begin());
+    if (name.empty()) return L"";
+    std::string u = winutil::to_utf8(name), enc;
+    static const char hex[] = "0123456789ABCDEF";
+    for (unsigned char ch : u) {
+        if (isalnum(ch) || ch == '.' || ch == '_' || ch == '-') enc += (char)ch;
+        else { enc += '%'; enc += hex[ch >> 4]; enc += hex[ch & 15]; }
+    }
+    return L"?h=" + winutil::to_wide(enc);
+}
+
+std::wstring invite_web_link(const std::wstring& code, const std::wstring& host_name) {
     std::wstring c = invite_normalize_code(code);
     if (!invite_is_valid_code(c)) return L"";
+    std::wstring q = invite_host_query(host_name);
+    if (!q.empty()) return std::wstring(kWebBase) + c + q;
     return std::wstring(kWebBase) + c;
 }
 

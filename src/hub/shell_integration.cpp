@@ -233,7 +233,9 @@ bool shell_path_looks_like_dev_build(const std::wstring& exe, bool (*dir_has)(co
     }
     std::wstring cur = dir_of(exe);   // dev markers in the exe folder or up to 5 ancestors
     for (int i = 0; i < 6 && !cur.empty(); ++i) {
-        if (has(cur, L"CMakeCache.txt") || has(cur, L"CMakeLists.txt") || has(cur, L".git")) return true;
+        if (has(cur, L"CMakeCache.txt")) return true;   // a CMake build tree
+        if (has(cur, L"CMakeLists.txt") && (i == 0 || has(cur, L".git"))) return true;   // a source checkout (a bare .git in a parent, e.g. a git-tracked home folder, is not enough)
+        if (i == 0 && has(cur, L".git")) return true;
         cur = dir_of(cur);
     }
     return false;
