@@ -137,6 +137,14 @@ int main() {
     CHECK(kanto::valid_code("3F9A0C7D21") && !kanto::valid_code("3F9A0C7D2") && !kanto::valid_code("3f9a0c7d21") && !kanto::valid_code("ZZZZZZZZZZ"));
     CHECK(kanto::cmd_trade(1) == "trade 1\n" && kanto::cmd_trade(6) == "trade 6\n" && kanto::cmd_trade(0).empty() && kanto::cmd_trade(7).empty());
     CHECK(kanto::cmd_confirm() == "confirm\n" && kanto::cmd_cancel() == "cancel\n" && kanto::cmd_quit() == "quit\n");
+    CHECK(kanto::redact_log_text("relay 10.1.2.3:80 ok") == "relay x.x.x.x:80 ok");
+    std::printf("[%s]\n", kanto::redact_log_text("relay 10.1.2.3:80 ok").c_str());
+    { std::string ld = (tmp / "logs").string(); fs::create_directories(tmp / "logs");
+      for (int i = 0; i < 12; ++i) { std::ofstream((tmp / "logs").string() + "/kanto-2020-01-" + std::to_string(10 + i) + ".log").put('x'); }
+      kanto::write_log(ld, "hello");
+      int n = 0; for (auto& e : fs::directory_iterator(ld)) { (void)e; ++n; }
+      CHECK(n == 10); }
+    { kanto::State g; g.host = false; kanto::feed_line(g, "[bridge] lua: world: snapshot applied (join): 3 flag bytes, 1 vars, 0 dex bytes changed"); CHECK(g.synced_story); }
     { kanto::State g; g.host = false; CHECK(kanto::guest_auto_rejoin_ok(g));
       kanto::feed_line(g, "[bridge] >>> Your partner is connected. <<<"); CHECK(g.ever_connected);
       kanto::feed_line(g, "peer disconnected"); CHECK(!kanto::guest_auto_rejoin_ok(g)); }

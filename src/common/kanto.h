@@ -129,11 +129,15 @@ struct State {
     Trade trade;
     int trades_done = 0;
     bool mgba_exited = false;
+    bool synced_story = false;    // guest: the bridge applied the host's story snapshot (not a reset)
     bool ever_connected = false;  // the partner was connected at least once this session
 };
 /* Guest: may RetroHub push a new host code (`code NEW`) into the running launcher by itself? Never once the pair has connected: the bridge
  * then reconnects/resumes by itself, and `code` throws away its campaign (a fresh join re-syncs the guest = the game appears reset). */
 inline bool guest_auto_rejoin_ok(const State& s) { return !s.ever_connected && s.phase != Phase::Connected; }
+/* Diagnostics: appends "HH:MM:SS.mmm tag text" to <dir>\kanto-YYYY-MM-DD.log (keeps the newest 10 files). IPv4 addresses are masked. */
+std::string redact_log_text(const std::string& s);
+void write_log(const std::string& dir, const std::string& line);
 /* Interpret one console line (with or without the "[bridge] " prefix). Returns true when the state changed. */
 bool feed_line(State& s, const std::string& line);
 
@@ -160,6 +164,7 @@ class Session {
     void stop(bool wait = false);
     static int stopping();                      // number of stop workers still running
     static void drain_stops(unsigned timeout_ms = 15000);
+    void set_line_sink(std::function<void(const std::string&)> f) { sink_ = std::move(f); }   // every launcher output line (diagnostics)
     const State& state() const { return st_; }
     State& mutable_state() { return st_; }
     const std::deque<std::string>& log() const { return log_; }
@@ -174,6 +179,7 @@ class Session {
     std::string buf_;
     State st_;
     std::deque<std::string> log_;
+    std::function<void(const std::string&)> sink_;
 };
 
 /* ------------------------------ install + build the game (worker thread) ------------------------------ */
