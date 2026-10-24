@@ -68,6 +68,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
       << "  \"auto_friend\": " << (s.auto_friend ? "true" : "false") << ",\n"
       << "  \"find_games_done\": " << (s.find_games_done ? "true" : "false") << ",\n"
+      << "  \"setup_done\": " << (s.setup_done ? "true" : "false") << ",\n"
       << "  \"games_dest\": \"" << json::escape(s.games_dest) << "\",\n"
       << "  \"cemu_exe\": \"" << json::escape(s.cemu_exe) << "\"\n"
       << "}\n";
@@ -121,6 +122,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
+    out->setup_done = json_bool(j, "setup_done", out->setup_done);
     out->cemu_exe = j.str("cemu_exe", out->cemu_exe);
     out->games_dest = j.str("games_dest", out->games_dest);
     return true;
