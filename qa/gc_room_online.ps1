@@ -7,7 +7,7 @@
 param(
   [Parameter(Mandatory)][string]$Build, [Parameter(Mandatory)][string]$DolphinDir, [Parameter(Mandatory)][string]$Work,
   [Parameter(Mandatory)][string]$Game, [Parameter(Mandatory)][string]$DiscDir, [string[]]$GuestDiscDirs = @(),
-  [int]$Players = 2, [int]$Seconds = 120, [string]$Server = "ws://127.0.0.1:8793", [switch]$WriteSave, [switch]$Relay,
+  [int]$Players = 2, [int]$Seconds = 120, [string]$Server = "ws://127.0.0.1:8793", [switch]$WriteSave, [switch]$Relay, [switch]$SeedCards,
   [string]$Code = "", [string]$Desktop = "rhgc_room"
 )
 $ErrorActionPreference = "Stop"
@@ -26,7 +26,8 @@ public static class DeskLaunch {
   }
 }
 "@
-if (-not $Code) { $Code = -join ((65..90) | Get-Random -Count 6 | ForEach-Object { [char]$_ }) }
+# the Worker only accepts room codes from A-H J-N P-Z 2-9 (no I, O, 0, 1)
+if (-not $Code) { $alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'.ToCharArray(); $Code = -join (1..6 | ForEach-Object { $alpha | Get-Random }) }
 New-Item -ItemType Directory -Force $Work | Out-Null
 [DeskLaunch]::Desk($Desktop)
 $pids = @()
@@ -38,6 +39,11 @@ for ($i = 0; $i -lt $Players; $i++) {
   Copy-Item "$Build\*" $d -Recurse -Include *.exe, *.dll -Exclude hub_*.exe
   robocopy $DolphinDir "$d\userdata\emulators\dolphin" /E /XD _downloads User /NFL /NDL /NJH /NJS /NP | Out-Null
   Set-Content "$d\userdata\emulators\dolphin\retrohub-install.txt" "autotest" -Encoding ascii
+  if ($SeedCards) {   # sentinel file in every player's real card folder (guests' must stay untouched; the host's only changes with -WriteSave)
+    $cardDir = "$d\userdata\emulators\dolphin\User\GC\RetroHub\gc_gm4e01-0\GCI"
+    New-Item -ItemType Directory -Force $cardDir | Out-Null
+    Set-Content "$cardDir\sentinel_inst$i.bin" ("sentinel " + $i) -Encoding ascii
+  }
   $disc = if ($i -gt 0 -and $GuestDiscDirs.Count -ge $i) { $GuestDiscDirs[$i - 1] } else { $DiscDir }
   $v = ($d -replace '\\', '/')
   $json = '{"name":"At' + $i + '","rom_folders":["' + ($disc -replace '\\', '/') + '"],"server":"' + $Server + '","vault_dir":"' + $v + '/vault","sync_auto":false,"cloud_saves":false}'
@@ -46,7 +52,8 @@ for ($i = 0; $i -lt $Players; $i++) {
   $env:RETROHUB_AUTOTEST_GAME = $Game; $env:RETROHUB_AUTOTEST_PLAYERS = "$Players"
   $env:RETROHUB_ALLOW_VERSION_MISMATCH = "1"
   if ($WriteSave -and $i -eq 0) { $env:RETROHUB_AUTOTEST_WRITE = "1" } else { Remove-Item Env:RETROHUB_AUTOTEST_WRITE -ErrorAction SilentlyContinue }
-  if ($Relay) { $env:HUBNET_FORCE_RELAY = "1" }
+  if ($Relay) { $env:HUBNET_FORCE_RELAY = "1"; Remove-Item Env:HUBNET_LOOPBACK -ErrorAction SilentlyContinue }   # relay path: UDP punching off
+  else { $env:HUBNET_LOOPBACK = "1"; Remove-Item Env:HUBNET_FORCE_RELAY -ErrorAction SilentlyContinue }   # direct path on one PC: no STUN, loopback candidates
   $env:RETRORUN_MUTE = "1"; $env:SSB64_MUTE = "1"
   $pids += [DeskLaunch]::Start("$d\RetroHub.exe", $d, $Desktop)
   Write-Host "started $role inst$i pid $($pids[-1]) room $Code"
@@ -58,6 +65,13 @@ while ((Get-Date) -lt $end) { Start-Sleep 5; if (-not ($pids | Where-Object { Ge
 # evidence
 for ($i = 0; $i -lt $Players; $i++) {
   Write-Host "=== inst$i autotest.log"; Get-Content "$Work\inst$i\userdata\autotest.log" -ErrorAction SilentlyContinue | Select-Object -Last 40
+}
+if ($SeedCards) {
+  for ($i = 0; $i -lt $Players; $i++) {
+    $cardDir = "$Work\inst$i\userdata\emulators\dolphin\User\GC\RetroHub\gc_gm4e01-0\GCI"
+    Write-Host "=== inst$i real card folder after session:"; Get-ChildItem $cardDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host ("  " + $_.Name + " " + $_.Length + " bytes") }
+    Write-Host ("  WriteSaveData in Dolphin.ini: " + ((Select-String -Path "$Work\inst$i\userdata\emulators\dolphin\User\Config\Dolphin.ini" -Pattern "WriteSaveData" -ErrorAction SilentlyContinue | ForEach-Object { $_.Line.Trim() }) -join ","))
+  }
 }
 # kill only what we started: our RetroHub pids, and Dolphin/powershell processes whose image lives under $Work
 $procs = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*$Work*gc_netplay_driver*") }

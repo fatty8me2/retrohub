@@ -279,6 +279,11 @@ Verified so far:
 - Pads 1-4 map from XInput.
 - Batch-mode fullscreen (section 2).
 
+Live run 2026-10-24 (scratch install, hidden desktop, muted, `agent/gc-live`):
+- **Smoke (`hub_emu_live --fullscreen --pads 4 --esc`)**: Melee and Double Dash boot fullscreen through the real launch path (first window after 2-3 s); `GCPadNew.ini` has `GCPad1-4 = XInput/0-3/Gamepad`, `SIDevice0-3 = 6`; the card folder `User\GC\RetroHub\<key>\GCI` and the vault `saves\gc\<key>attery` are created. Posted Escape key messages do NOT stop Dolphin (it reads Escape through DInput, not window messages); WM_CLOSE ends it gracefully (job empty in 1.5 s, `end_session` clean). No save file was written: answering "Create Game Data?" needs real input, which cannot be injected into a hidden desktop (no virtual XInput driver, Pipes backend is not on Windows).
+- **Online (`qa\gc_room_online.ps1`, RETROHUB_AUTOTEST, local wrangler)**: Double Dash 2 players direct (`HUBNET_LOOPBACK=1`) and relay (`HUBNET_FORCE_RELAY=1`): both Dolphins in-game, alive 116-130 s, no desync line. Disc mismatch (1 byte flipped copy): `warn:different-disc` toast, session still runs. Mario Party 6 with 3 and 4 players: NetPlay player table `At0..At3 -> GC1..GC4` (room-slot order), alive 100+ s, no desync. Config checks: `WriteSaveData = False` on guests and on the host unless "Keep this session's progress"; the guests' real card folder and the host's sentinel files were untouched in both modes (no real save was created, see above).
+- Fixed on the way: the driver now finds the main window by class (title is `dolphin-emu` on a fresh user dir), status lines are written with retries (a lost `stage:netplay-open` stalled the room), no 60 s host-code wait in direct mode, the autotest bypasses the by-name `is_running` check so several Dolphins can run on one PC, and the QA script only uses valid room codes.
+
 Still open:
 1. Stable identity of 2509 (the stable API returned HTTP 500 during research).
 2. Whether ConfirmStop prompts in batch mode. `[Interface] ConfirmStop = False` remains the safe setting.

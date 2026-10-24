@@ -13,7 +13,10 @@ void autotest_log(const std::string& line) {
     if (!autotest_active()) return;
     static std::string path = hub::data_dir() + "autotest.log";
     std::ofstream f(path, std::ios::app | std::ios::binary);
-    f << line << "\n";
+    static ULONGLONG t0 = GetTickCount64();
+    char ts[24];
+    std::snprintf(ts, sizeof ts, "[%6.1fs] ", (double)(GetTickCount64() - t0) / 1000.0);
+    f << ts << line << "\n";
 }
 
 void autotest_tick() {
@@ -38,6 +41,7 @@ void autotest_tick() {
     }
     if (stage == 0) {
         if (A.scanning || now - started < 3000) return;
+        if (A.lib.empty() && now - started < 90000) return;   // the first scan on a fresh data dir can take a while; a room hello must list the game
         autotest_log("lib " + std::to_string(A.lib.size()) + " games");
         for (auto& e : A.lib) autotest_log("game " + room_id(e) + " | " + e.title + " | " + e.path);
         A.st.name = env("RETROHUB_AUTOTEST_NAME") ? env("RETROHUB_AUTOTEST_NAME") : (role == "host" ? "AtHost" : "AtGuest");

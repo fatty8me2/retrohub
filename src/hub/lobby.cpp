@@ -161,6 +161,7 @@ void lobby_tick() {
             hubui::MatchRules mr;
             if (from == 0 && !is_host() && hubui::parse_rules(j, &mr)) A.rules = mr;
         } else if (kind == "np_gc_ready") {
+            autotest_log("np_gc_ready from " + std::to_string(from) + " guest_wait=" + std::to_string((int)GCO.guest_wait));
             if (from == 0 && !is_host() && GCO.guest_wait) GCO.host_ready = true;
         } else if (kind == "chat") {
             A.chat.push_back({member_name(from), j.str("text")});
