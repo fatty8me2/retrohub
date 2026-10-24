@@ -459,6 +459,16 @@ int main() {
         fs.show_friends = false; fs.appear_offline = true; fs.notif_sound = false;
         Settings ft;
         CHECK(settings_from_json(settings_to_json(fs), &ft) && !ft.show_friends && ft.appear_offline && !ft.notif_sound);
+        {   // auto-friending: default ON, survives a round trip, missing key keeps the default
+            CHECK(fs.auto_friend);
+            Settings a; a.auto_friend = false;
+            Settings b;
+            CHECK(settings_from_json(settings_to_json(a), &b) && !b.auto_friend);
+            Settings c;
+            CHECK(settings_from_json("{\"name\":\"x\"}", &c) && c.auto_friend);
+            CHECK(auto_friend_text("Mia") == "You and Mia are now friends" && auto_friend_text("") == "You and a new player are now friends");
+            CHECK(lobby_ident_json("u1", "s\"2") == "{\"type\":\"ident\",\"uid\":\"u1\",\"secret\":\"s\\\"2\"}");
+        }
     }
 
     {   // Smash vault / hand-off

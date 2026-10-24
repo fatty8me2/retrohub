@@ -405,9 +405,16 @@ void fr_update_presence() {
     FR.cli.set_status(s);
 }
 
+void fr_set_auto_friend(bool on) { if (!FR.fake) FR.cli.set_auto_friend(on); }
+std::string fr_lobby_ident_msg() {
+    if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return "";
+    return hubui::lobby_ident_json(FR.cli.my_uid(), FR.cli.my_secret());
+}
+
 void fr_start() {
     if (g_headless || FR.fake) return;
     FR.cli.set_paths(hub::data_dir(), hub::saves::vault_dir());
+    FR.cli.set_auto_friend(A.st.auto_friend);
     FR.started = FR.cli.start("", A.st.name);
     FR.last_name = A.st.name;
 }
@@ -442,7 +449,9 @@ void fr_tick() {
             case hubnet::Event::IdentityAdopted:
                 set_toast("Signed in as " + e.text + " (your account from your other PC)");
                 break;
-            case hubnet::Event::FriendAdded: set_toast(e.name + " is now your friend."); break;
+            case hubnet::Event::FriendAdded:
+                set_toast(e.automatic ? hubui::auto_friend_text(e.name) : e.name + " is now your friend.");
+                break;
             case hubnet::Event::MessageReceived:
                 if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
                 else push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0);

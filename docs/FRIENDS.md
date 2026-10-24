@@ -113,3 +113,6 @@ Invite  = {lobby_code, game_id, game_title, system, expires_at}
 - The alias is written **before** the `retire_done:<old>` marker. If the POST fails, the replayed `retire_old` takes the already-done path and retries it (idempotent), so a transient Directory error cannot lose the mapping.
 - `applyAliases` never drops a friend for lack of room: if the friend list is full and the new identity is not already listed, the old row is kept (it is retried on the next hello once a slot is free).
 - Aliases are server-side trust only: the client treats `retired-ids.txt` (written after the server's `retired` reply) as the sole signal that an identity is a confirmed duplicate.
+
+## Automatic friends from rooms
+The lobby client sends an ident frame (uid + secret) after the welcome; HubRoom verifies it with the account's hub. Joining a room links guest and host; the host's launch links everyone present. Settings > Friends > Automatically add people I play with as friends (default on, sent as auto_friend in the hello and live as prefs). The server skips blocked, removed, test and full-list pairs. Toast: You and NAME are now friends.
