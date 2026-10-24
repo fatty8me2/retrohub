@@ -191,11 +191,107 @@ int main() {
     }
     /* guest errors + end */
     kanto::State g;
-    CHECK(kanto::feed_line(g, "[bridge] Could not join: no such room") && g.phase == kanto::Phase::Failed && g.last_error == "no such room");
+    CHECK(kanto::feed_line(g, "[bridge] Could not join: no such room") && g.phase != kanto::Phase::Failed && g.join_failed && g.last_error == "no such room");
+    CHECK(!kanto::feed_line(g, "[bridge]   (the host may not have started yet; retrying)"));
+    CHECK(kanto::feed_line(g, "[bridge] lua: peer connected") && g.phase == kanto::Phase::Connected && !g.join_failed && g.last_error.empty());   // recovers by itself
     kanto::State e;
     CHECK(kanto::feed_line(e, "[launch] mGBA exited") && e.phase == kanto::Phase::Ended && e.mgba_exited);
     kanto::State f2;
     CHECK(kanto::feed_line(f2, "[launch] Could not start: listen EADDRINUSE") && f2.phase == kanto::Phase::Failed);
+    /* --verbose: the "[launch] <mGBA command line>" line is never a failure; the snapshot line is seen with the bridge prefix */
+    {
+        kanto::State vs; vs.host = false;
+        CHECK(!kanto::feed_line(vs, "[launch] C:\\Users\\x\\runtime\\mgba\\mGBA.exe -C mute=1 -C savegamePath=C:\\s --script C:\\a\\coop.lua C:\\rom\\KantoTogether.gba") && vs.phase != kanto::Phase::Failed);
+        CHECK(!kanto::feed_line(vs, "[launch] Bridge is running. Start mGBA yourself") && vs.phase != kanto::Phase::Failed);
+        CHECK(kanto::feed_line(vs, "[bridge] lua: world: snapshot applied (boot): 3 flag bytes, 1 vars, 0 dex bytes changed") && vs.synced_story);
+        CHECK(kanto::feed_line(vs, "[launch] The game is inside a temporary folder (probably the unextracted zip). Extract it.") && vs.phase == kanto::Phase::Failed && vs.last_error.find("temporary") != std::string::npos);
+    }
+    CHECK(kanto::launch_failure_text("[launch] Kanto Together seems to be running already (its port is busy).").find("running already") != std::string::npos);
+    CHECK(kanto::launch_failure_text("[launch] C:\\x\\mGBA.exe -C mute=1").empty());
+    CHECK(kanto::preflight_message(0).empty() && kanto::preflight_message(2).find("incomplete") != std::string::npos && kanto::preflight_message(3).find("temporary") != std::string::npos && !kanto::preflight_message(9).empty());
+    CHECK(kanto::is_kanto_runtime_exe("C:\\Users\\x\\Desktop\\KantoTogether-ROM\\runtime\\mgba\\mGBA.exe") && kanto::is_kanto_runtime_exe("c:/a/runtime/node/node.exe"));
+    CHECK(!kanto::is_kanto_runtime_exe("C:\\Program Files\\mGBA\\mGBA.exe") && !kanto::is_kanto_runtime_exe("C:\\Program Files\\nodejs\\node.exe"));
+    CHECK(kanto::is_non_ascii("C:\\Users\\J\xc3\xb6rg") && !kanto::is_non_ascii("C:\\Users\\Jorg"));
+    CHECK(kanto::launcher_cmdline(lo).find("--verbose") != std::string::npos);
+    CHECK(kanto::is_under_temp(fs::temp_directory_path().string() + "\\x\\y") && !kanto::is_under_temp("C:\\Windows\\System32"));
+
+    /* package identity: patch.json build id, zip == folder, newest build wins, folder wins ties */
+    {
+        std::string pj = "{\"patchSha1\":\"ABC123\",\"built\":\"2026-10-24T08:38:50.934Z\"}", bt;
+        CHECK(kanto::patch_content_id(pj, &bt) == "abc123@2026-10-24T08:38:50.934Z" && bt == "2026-10-24T08:38:50.934Z");
+        CHECK(kanto::patch_content_id("not json").empty() && kanto::patch_content_id("{}").empty());
+        fs::path pd = tmp / "Games2" / "KantoTogether-ROM";
+        make_pkg_dir(pd);
+        put(pd / "patch" / "patch.json", pj);
+        kanto::Package dpk, zpk;
+        CHECK(kanto::inspect_dir(pd.string(), &dpk) && dpk.content_id == "abc123@2026-10-24T08:38:50.934Z");
+        fs::path z2 = tmp / "Games2" / "KantoTogether-ROM.zip";
+        { mz_zip_archive za; memset(&za, 0, sizeof za); mz_zip_writer_init_file(&za, z2.string().c_str(), 0);
+          for (auto& r : kanto::required_files()) { std::string n = "KantoTogether-ROM/" + r, d = "data:" + r; if (r == "patch/patch.json") d = pj; mz_zip_writer_add_mem(&za, n.c_str(), d.data(), d.size(), MZ_BEST_SPEED); }
+          mz_zip_writer_finalize_archive(&za); mz_zip_writer_end(&za); }
+        CHECK(kanto::inspect_zip(z2.string(), &zpk) && zpk.content_id == dpk.content_id);
+        /* the same build, installed from the zip, is "current" for the folder too: no reinstall loop */
+        std::string idir = (tmp / "data4").string() + "\\";
+        CHECK(kanto::install(zpk, idir, nullptr, &err) && kanto::install_current(idir, dpk) && kanto::install_current(idir, zpk));
+        kanto::Package other = dpk; other.content_id = "def@2026-11-01T00:00:00.000Z"; other.built = "2026-11-01T00:00:00.000Z";
+        CHECK(!kanto::install_current(idir, other));
+        /* mGBA's rewritten portable config survives a reinstall; other files are refreshed */
+        put(fs::path(idir) / "runtime" / "mgba" / "config.ini", "user-config");
+        put(fs::path(idir) / "app" / "coop.lua", "stale");
+        CHECK(kanto::install(zpk, idir, nullptr, &err));
+        std::string cfg, lua;
+        winutil::read_file((fs::path(idir) / "runtime" / "mgba" / "config.ini").string(), &cfg);
+        winutil::read_file((fs::path(idir) / "app" / "coop.lua").string(), &lua);
+        CHECK(cfg == "user-config" && lua != "stale");
+        CHECK(kanto::keep_on_reinstall("runtime/mgba/config.ini") && kanto::keep_on_reinstall("Runtime\\mgba\\qt.ini") && !kanto::keep_on_reinstall("runtime/mgba/mGBA.exe"));
+        kanto::Package old_zip = zpk; old_zip.built = "2026-01-01T00:00:00.000Z";
+        CHECK(kanto::pick_package({}) == -1);
+        CHECK(kanto::pick_package({zpk, dpk}) == 1 && kanto::pick_package({dpk, zpk}) == 0);   // same build: the folder
+        CHECK(kanto::pick_package({dpk, old_zip}) == 0 && kanto::pick_package({old_zip, dpk}) == 1);
+        kanto::Package newer_zip = zpk; newer_zip.built = "2026-12-01T00:00:00.000Z";
+        CHECK(kanto::pick_package({dpk, newer_zip}) == 1);
+    }
+
+    /* per-role saves + journal vaulting */
+    {
+        fs::path vault = tmp / "vault", sh = tmp / "stg_host", sg = tmp / "stg_guest";
+        put(vault / "KantoTogether.sav", "legacy-story");   // pre-roles vault
+        CHECK(kanto::vault_sav_name(true) == "KantoTogether.host.sav" && kanto::journal_name(false) == "coop-trade-guest.journal");
+        CHECK(kanto::stage_saves(vault.string(), sh.string(), true) >= 1);
+        std::string t;
+        winutil::read_file((sh / "KantoTogether.sav").string(), &t);
+        CHECK(t == "legacy-story" && fs::exists(vault / "KantoTogether.host.sav") && !fs::exists(vault / "KantoTogether.sav") && fs::exists(vault / "KantoTogether.sav.pre-roles"));
+        kanto::stage_saves(vault.string(), sg.string(), false);
+        CHECK(!fs::exists(sg / "KantoTogether.sav"));   // the guest does NOT inherit the host's save once the legacy one was claimed
+        /* a host session writes a save + an unfinished-trade journal */
+        put(sh / "KantoTogether.sav", "host-played");
+        fs::last_write_time(sh / "KantoTogether.sav", fs::last_write_time(vault / "KantoTogether.host.sav") + std::chrono::seconds(10));
+        put(sh / "coop-trade-host.journal", "7 COMMITTED host aa bb");
+        CHECK(kanto::flush_saves(sh.string(), vault.string(), true) == 2);
+        winutil::read_file((vault / "KantoTogether.host.sav").string(), &t);
+        CHECK(t == "host-played" && fs::exists(vault / "coop-trade-host.journal") && !fs::exists(sh / "coop-trade-host.journal") && !fs::exists(vault / "KantoTogether.guest.sav"));
+        /* another PC / wiped scratch: the journal comes back from the vault, and only for its own role */
+        fs::remove_all(sh);
+        put(sg / "coop-trade-host.journal", "stray");   // a host journal in the guest folder is dropped, not used
+        kanto::stage_saves(vault.string(), sh.string(), true);
+        winutil::read_file((sh / "coop-trade-host.journal").string(), &t);
+        CHECK(t == "7 COMMITTED host aa bb");
+        kanto::stage_saves(vault.string(), sg.string(), false);
+        CHECK(!fs::exists(sg / "coop-trade-host.journal"));
+        /* crash leftover: a NEWER staged journal is not clobbered by the vault's older one */
+        put(sh / "coop-trade-host.journal", "8 PREPARED host cc dd");
+        fs::last_write_time(sh / "coop-trade-host.journal", fs::last_write_time(vault / "coop-trade-host.journal") + std::chrono::seconds(10));
+        kanto::stage_saves(vault.string(), sh.string(), true);
+        winutil::read_file((sh / "coop-trade-host.journal").string(), &t);
+        winutil::read_file((vault / "coop-trade-host.journal").string(), &t);
+        CHECK(t == "8 PREPARED host cc dd");
+        /* a finished trade (journal deleted by the game) clears the vault copy too */
+        fs::remove(sh / "coop-trade-host.journal");
+        kanto::flush_saves(sh.string(), vault.string(), true);
+        CHECK(!fs::exists(vault / "coop-trade-host.journal"));
+    }
+
+
 
     /* saves: newer wins, backup kept, only .sav */
     fs::path a = tmp / "sa", b = tmp / "sb";

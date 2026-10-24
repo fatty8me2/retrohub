@@ -20,6 +20,7 @@ struct Kt {
     bool host = false;
     int launch_no = 0;
     bool arm_guest = false;
+    bool last_join_failed = false;
     std::string guest_code;       // the host's latest code (np_kt)
     std::string cur_code;         // the code this session joined with
     int sent_gen = 0;
@@ -42,7 +43,7 @@ std::string env_str(const char* n) { const char* v = std::getenv(n); return v ? 
 
 kanto::Package package_from(const std::string& path) {
     kanto::Package p;
-    if (!kanto::inspect_zip(path, &p)) { p = kanto::Package(); p.path = path; }   // a folder (or unreadable: install() reports it)
+    if (!kanto::inspect_zip(path, &p) && !kanto::inspect_dir(path, &p)) { p = kanto::Package(); p.path = path; }   // zip or extracted folder (else install() reports it)
     return p;
 }
 
@@ -60,7 +61,8 @@ std::vector<kanto::RomCandidate> rom_candidates() {
     return v;
 }
 
-std::string scratch_saves() { return no_slash(hub::data_dir()) + "\\netplay\\kanto\\saves"; }
+/* one staged folder per role: a host session and a guest session on the same PC never share a .sav or a trade journal */
+std::string scratch_saves(bool host) { return no_slash(hub::data_dir()) + "\\netplay\\kanto\\saves_" + kanto::role_name(host); }
 
 bool prep_ready() { return KT.prep.ok(); }
 
@@ -90,13 +92,14 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
     o.code = code;
     o.dir = KT.prep.dir();
     o.rom = kanto::rom_path(o.dir);
-    o.saves = scratch_saves();
+    o.saves = scratch_saves(host);
     o.sound = !mute_tests();
     o.relay = env_str("RETROHUB_KT_RELAY");
     o.desktop = env_str("RETROHUB_KT_DESKTOP");
+    if (std::string busy = kanto::running_instance_block(); !busy.empty()) { set_notice("Kanto Together: " + busy, 14.0); klog("start refused: another instance"); return false; }
     { hubctl::Store pst; hubctl::load_store(hub::data_dir(), "", &pst); kanto::prepare_pad(o.dir, hubctl::resolve(pst, "retro")); }   // Xbox pad bindings into the package mGBA (write once per profile)
     std::string vault = no_slash(hub::saves::battery_dir(sys_short(e), e.key));
-    kanto::sync_saves(vault, o.saves);   // vault -> staged saves (newest wins)
+    kanto::stage_saves(vault, o.saves, host);   // vault (per-role .sav + trade journal) -> this role's staged folder (newest wins)
     std::string err;
     if (!KT.sess.start(o, &err)) {
         set_notice("Kanto Together: " + err, 12.0);
@@ -104,8 +107,9 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
         return false;
     }
     KT.join_error.clear();
+    KT.last_join_failed = false;
     klog(std::string("start ") + (host ? "HOST" : "GUEST") + " launch=" + std::to_string(KT.launch_no) + " relay=" + (o.relay.empty() ? "(default)" : o.relay));
-    KT.sess.set_line_sink([](const std::string& l) { klog("| " + l); });
+    KT.sess.set_line_sink([](const std::string& l) { klog(l.compare(0, 9, "[launch] ") == 0 && l.find("mGBA.exe") != std::string::npos ? std::string("| [launch] (mGBA command line)") : "| " + l); });
     A.proc = KT.sess.dup_handle();
     A.job_h = nullptr;
     A.proc_title = e.title;
@@ -117,7 +121,7 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
     A.run.after_exit = [vault, saves, was_host]() {
         klog("session ended (launcher exited)");
         KT.sess.stop();                    // the launcher already exited (mGBA closed and flushed): this only releases handles
-        kanto::sync_saves(saves, vault);   // staged saves -> vault, before the sync runs
+        kanto::flush_saves(saves, vault, was_host);   // staged .sav + journal -> vault (per role), before the sync runs
         KT.arm_guest = false;
         KT.cur_code.clear();
         KT.guest_code.clear();             // a code of a finished session must never auto-start the next one
@@ -137,8 +141,9 @@ bool is_kanto(const hub::GameEntry& e) { return e.key == kanto::kKey; }
 void kt_scan_append(std::vector<hub::GameEntry>* out, const std::vector<std::string>& folders) {
     std::vector<kanto::Package> pk = kanto::find_packages(folders);
     std::string path;
-    uint64_t size = 0, best = 0;
-    for (auto& p : pk) if (path.empty() || p.stamp > best) { path = p.path; size = p.size; best = p.stamp; }
+    uint64_t size = 0;
+    int bi = kanto::pick_package(pk);   // newest build; a zip and its extracted folder are the same build
+    if (bi >= 0) { path = pk[bi].path; size = pk[bi].size; }
     if (path.empty() && env_on("HUB_SHOT_KT")) path = "C:\\Games\\KantoTogether-ROM.zip";   // screenshot aid
     if (path.empty()) return;
     hub::GameEntry e;
@@ -255,6 +260,14 @@ void kt_tick() {
     if (KT.sess.active()) {
         KT.sess.update();
         const kanto::State& st = KT.sess.state();
+        if (st.join_failed != KT.last_join_failed) {   // "Could not join": the bridge keeps retrying, so this is only a hint, never the end
+            KT.last_join_failed = st.join_failed;
+            if (st.join_failed && !KT.host) {
+                klog("join not accepted yet: " + st.last_error);
+                push_toast("Kanto Together: could not join yet (" + st.last_error + ") - still trying.", ui::WARN, 8.0);
+                KT.join_error = "Could not join: " + st.last_error;
+            }
+        }
         if (st.phase != KT.last_phase) {
             klog(std::string("phase ") + kanto::phase_name(KT.last_phase) + " -> " + kanto::phase_name(st.phase));
             if (st.phase == kanto::Phase::Connected) push_toast("Kanto Together: your partner is connected.", ui::GOOD, 5.0);
