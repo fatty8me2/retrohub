@@ -21,7 +21,7 @@ if(MSVC)
     target_compile_options(hubchd PRIVATE /w)
 endif()
 
-add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp addgames.cpp)
+add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp addgames.cpp)
 target_include_directories(hubcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(hubcommon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcommon PUBLIC cxx_std_17)
@@ -59,6 +59,10 @@ add_executable(hubkantopad_test test_kanto_pad.cpp)
 target_link_libraries(hubkantopad_test PRIVATE hubcommon hubminiz)
 add_executable(hubkanto_test test_kanto.cpp)
 target_link_libraries(hubkanto_test PRIVATE hubcommon hubminiz)
+
+# PlayStation 1: serials, catalog, synthetic discs (cue/bin, m3u, iso), PS1-vs-PS2, BIOS discovery, DualShock profile.
+add_executable(ps1_test test_ps1.cpp)
+target_link_libraries(ps1_test PRIVATE hubcommon)
 
 # "Add games": sorting / destination / dedupe / copy job (scratch dirs only).
 add_executable(addgames_test test_addgames.cpp)

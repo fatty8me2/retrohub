@@ -49,7 +49,7 @@ void draw_emulator_dialogs() {
             if (EMU.state == hubemu::Installer::Asking) {
                 ImGui::TextWrapped("%s games need the %s emulator (about %d MB download from its official release, %s). "
                                    "It is kept inside RetroHub's data folder. Download now?",
-                                   EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : EMU.kind == hubemu::Kind::Dolphin ? "GameCube" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
+                                   EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : EMU.kind == hubemu::Kind::Dolphin ? "GameCube" : EMU.kind == hubemu::Kind::Pcsx2 ? "PlayStation 2" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
                 ImGui::Dummy(ImVec2(0, 8 * S));
                 if (button("Download", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
                 ImGui::SetItemDefaultFocus();
@@ -81,7 +81,7 @@ void draw_emulator_dialogs() {
         if (open) {
             const hub::GameEntry* g = find_entry(UNZ.key);
             if (UNZ.state == UnzipJob::Asking && g) {
-                ImGui::TextWrapped("%s cannot open archives. Unpack \"%s\" (about %.1f GB) into RetroHub's data folder?", g->system == hub::System::GC ? "Dolphin" : "Azahar", g->title.c_str(),
+                ImGui::TextWrapped("%s cannot open archives. Unpack \"%s\" (about %.1f GB) into RetroHub's data folder?", g->system == hub::System::GC ? "Dolphin" : g->system == hub::System::PS1 ? "The PlayStation emulator" : g->system == hub::System::PS2 ? "PCSX2" : "Azahar", g->title.c_str(),
                                    unpacked_size(*g) / 1073741824.0);
                 ImGui::Dummy(ImVec2(0, 2 * S));
                 text_wrapped_disabled("The unpacked image goes to " + hub::extract_3ds_dir(*g) + " and needs the same amount of free disk space. "

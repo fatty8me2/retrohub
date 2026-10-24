@@ -24,7 +24,7 @@ const char* button_name(int i) { return i >= 0 && i < kNumButtons ? kButtons[i] 
 const char* axis_name(int i) { return i >= 0 && i < kNumAxes ? kAxes[i] : ""; }
 
 const std::vector<std::string>& systems() {
-    static const std::vector<std::string> v = {"n64", "retro", "ps1", "gc", "wiiu", "3ds"};
+    static const std::vector<std::string> v = {"n64", "retro", "ps1", "gc", "wiiu", "3ds", "ps2"};
     return v;
 }
 bool is_system(const std::string& s) { return std::find(systems().begin(), systems().end(), s) != systems().end(); }
@@ -37,6 +37,7 @@ std::string system_key(hub::System s) {
         case hub::System::GC: return "gc";
         case hub::System::WiiU: return "wiiu";
         case hub::System::N3DS: return "3ds";
+        case hub::System::PS2: return "ps2";
         default: return "";
     }
 }
@@ -78,6 +79,11 @@ const std::vector<ControlInfo>& controls_for(const std::string& sys) {
                  {"zl", "ZL", false}, {"zr", "ZR", false}, {"start", "Start", false}, {"select", "Select", false},
                  {"up", "D-pad up", false}, {"down", "D-pad down", false}, {"left", "D-pad left", false},
                  {"right", "D-pad right", false}, {"circle_pad", "Circle Pad", true}, {"c_stick", "C-Stick", true}}},
+        {"ps2", {{"cross", "Cross", false}, {"circle", "Circle", false}, {"square", "Square", false}, {"triangle", "Triangle", false},
+                 {"l1", "L1", false}, {"r1", "R1", false}, {"l2", "L2", false}, {"r2", "R2", false}, {"l3", "L3 (stick click)", false},
+                 {"r3", "R3 (stick click)", false}, {"start", "Start", false}, {"select", "Select", false},
+                 {"up", "D-pad up", false}, {"down", "D-pad down", false}, {"left", "D-pad left", false}, {"right", "D-pad right", false},
+                 {"left_stick", "Left stick (deadzone)", true}, {"right_stick", "Right stick (deadzone)", true}}},
     };
     static const std::vector<ControlInfo> none;
     auto it = m.find(sys);
@@ -125,6 +131,12 @@ Profile default_profile(const std::string& sys) {
            {"zr", "righttrigger"}});
         p.analogs["circle_pad"] = {"leftx", "lefty", 0.15, 1.0};
         p.analogs["c_stick"] = {"rightx", "righty", 0.15, 1.0};
+    } else if (sys == "ps2") {   // Xbox layout -> DualShock 2 by position: A=Cross, B=Circle, X=Square, Y=Triangle
+        B({{"cross", "a"}, {"circle", "b"}, {"square", "x"}, {"triangle", "y"}, {"l1", "leftshoulder"}, {"r1", "rightshoulder"},
+           {"l2", "lefttrigger"}, {"r2", "righttrigger"}, {"l3", "leftstick"}, {"r3", "rightstick"}, {"start", "start"}, {"select", "back"},
+           {"up", "dpup"}, {"down", "dpdown"}, {"left", "dpleft"}, {"right", "dpright"}});
+        p.analogs["left_stick"] = {"leftx", "lefty", 0.0, 1.0};   // 0 = PCSX2's own default dead zone
+        p.analogs["right_stick"] = {"rightx", "righty", 0.0, 1.0};
     }
     auto K = [&](std::initializer_list<std::pair<const char*, const char*>> l) { for (auto& kv : l) p.keys[kv.first] = kv.second; };
     if (sys == "n64") {   // the old fixed keyboard map of n64run

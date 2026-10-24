@@ -112,6 +112,7 @@ std::string serial_from_system_cnf(const std::string& text) {
         std::string l = trim(raw);
         if (l.size() < 5 || upper(l.substr(0, 4)) != "BOOT") continue;
         size_t eq = l.find('=');
+        if (eq != std::string::npos && trim(l.substr(4, eq - 4)) != "") continue;   // BOOT2 = ... is a PlayStation 2 disc
         if (eq == std::string::npos) continue;
         std::string v = trim(l.substr(eq + 1));
         std::string s = normalize_serial(v);
@@ -196,7 +197,7 @@ std::string serial_from_disc(SectorReader& r, bool* is_iso, bool* has_boot) {
                         if (!r.read(ext + k, f)) return "";
                         text.append((const char*)f, std::min<uint32_t>(2048, size - k * 2048));
                     }
-                    if (has_boot && upper(text).find("BOOT") != std::string::npos) *has_boot = true;
+                    if (has_boot) { for (const std::string& ln : split_lines(text)) { std::string u = upper(trim(ln)); size_t q = u.find('='); if (u.compare(0, 4, "BOOT") == 0 && q != std::string::npos && trim(u.substr(4, q - 4)).empty()) *has_boot = true; } }
                     return serial_from_system_cnf(text);
                 }
             }

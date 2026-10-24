@@ -34,7 +34,7 @@ namespace {
 struct Tab { const char* key; const char* label; const char* long_name; };
 const Tab kTabs[] = {{"n64", "N64", "Nintendo 64"}, {"retro", "GB / GBA / DS", "Game Boy, GBA and DS"},
                      {"ps1", "PlayStation", "PlayStation (DualShock)"},
-                     {"gc", "GameCube", "GameCube"}, {"wiiu", "Wii U", "Wii U"}, {"3ds", "3DS", "Nintendo 3DS"}};
+                     {"gc", "GameCube", "GameCube"}, {"wiiu", "Wii U", "Wii U"}, {"3ds", "3DS", "Nintendo 3DS"}, {"ps2", "PS2", "PlayStation 2"}};
 constexpr int kNumTabs = 6;
 constexpr double kCaptureSecs = 8.0;
 
@@ -570,6 +570,12 @@ static std::vector<hubemu::PadDesc> pad_descs(const std::vector<hubctl::PadInfo>
 hubemu::DolphinPads dolphin_pads_for(const hubctl::Profile& prof) {
     hubctl::load_bundled_db();
     return hubemu::dolphin_pads_with(hubemu::detect_dolphin_pads(), pad_descs(hubctl::list_pads(prof.port_order)), pad_descs(hubctl::list_pads()));
+}
+
+/* PCSX2: players in the RetroHub port order, SDL indices as PCSX2 enumerates them. */
+hubemu::Ps2Pads ps2_pads_for(const hubctl::Profile& prof) {
+    hubctl::load_bundled_db();
+    return hubemu::pcsx2_pads_with(pad_descs(hubctl::list_pads(prof.port_order)), pad_descs(hubctl::list_pads()));
 }
 
 /* Azahar: player 1's pad when the player chose a port order, else "any pad" as before. */

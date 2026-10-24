@@ -75,3 +75,18 @@ Options a frontend will most likely need to set: GB model selection, BIOS use, a
 - Confirm save-state support for SameBoy through the libretro build, not only the upstream README.
 - Confirm link-cable support for Gambatte and SameBoy. The current RetroHub netplay design is lockstep input, not link cable, so this matters only if link-cable games are wanted.
 - Decide the GameCube core. None is fetched.
+
+## PlayStation: Beetle PSX (`beetle_psx_libretro`)
+
+Built from source by `src/beetle_psx/CMakeLists.txt` (MinGW-w64 gcc, like `sameboy_rb`), from a pinned `libretro/beetle-psx-libretro` commit (`ea14d6a`, tarball SHA-256 verified). Output: `cores\beetle_psx_libretro.dll` (statically linked, about 10 MB). Without gcc the target is skipped and PS1 games stay listed but cannot start. GPL-2.0 (the hub ships it as a separate DLL that retrorun loads; see THIRD_PARTY.md).
+
+**Why this core** (evaluated: Beetle PSX, SwanStation, PCSX-ReARMed):
+- Pure C, bit-exact software GPU: retrorun refuses `SET_HW_RENDER`, so the HW renderers are out. The build has no GL/Vulkan code at all, and "internal resolution" 1x-8x is the software renderer's own option.
+- **Deterministic CPU.** Built without lightrec (the JIT), so it is the interpreter: same input, same result on every PC. This is what online play needs; `cpu_dynarec` does not exist in this build.
+- **Save states cover everything** (CPU, GPU/VRAM, SPU, CD controller, DMA, timers): about 16 MB in retrorun's view of `retro_serialize_size` (the core pads; the hub never resumes PS1 states, the memory card is the save). A 300-frame headless run gives identical state hashes on repeat runs of the same input.
+- **CHD, CUE/BIN, ISO, PBP, M3U, EXE** are read by the core itself (libretro-common's clean-room `rchd`, with deflate, LZMA, FLAC, zstd hunks). Multi-disc via `.m3u` with disc swap.
+- **Multitap**: `beetle_psx_enable_multitap_port1` gives four controllers on libretro ports 0-3 (Crash Bash, Tekken 3 with friends). DualShock analog and rumble work.
+- **OpenBIOS** is compiled in: with no `scph*.bin` the core boots it (fewer games run). A real BIOS is used first when found.
+- SwanStation: more accurate-looking and faster upscaling, but its software GPU is threaded and its states are not stable between runs in the way rollback needs, and it adds a C++/CMake dependency tree. PCSX-ReARMed: fast, but not cycle-exact.
+
+Options retrorun/the hub set (names verified with `retrorun --list-options`): `beetle_psx_internal_resolution` (1x(native) 2x 4x 8x), `beetle_psx_widescreen_hack`, `beetle_psx_enable_multitap_port1`. Memory card 1 is the core's libretro save RAM (128 KB), written as `<game>.srm` in the vault battery folder; card 2 stays off.
