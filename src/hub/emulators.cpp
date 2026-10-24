@@ -618,13 +618,32 @@ static int cemu_xinput_id(const hubctl::Term& t) {
     return it == m.end() ? -1 : it->second;
 }
 
-std::string cemu_gamepad_profile_xml(const hubctl::Profile& prof) {
+/* Wii U player N = the N-th XInput pad of the RetroHub port order (Cemu's XInput API numbers pads by XInput slot). Pads that are
+ * not XInput are skipped: Cemu's SDL API uses its own ids, so those pads are set up in Cemu's input dialog. */
+CemuPads cemu_pads_with(const std::vector<PadDesc>& by_port) {
+    CemuPads c;
+    int xrank = 0;
+    for (const PadDesc& p : by_port) {
+        if (!p.xinput) continue;
+        if (c.xinput.size() < 4) c.xinput.push_back(xrank);
+        ++xrank;
+    }
+    return c;
+}
+
+static std::string cemu_sel(const CemuPads& c) {
+    std::string s;
+    for (size_t i = 0; i < c.xinput.size(); ++i) s += std::to_string(i) + "=" + std::to_string(c.xinput[i]) + ";";
+    return s == "0=0;" ? "" : s;   // the old single-pad setup keeps its marker hash
+}
+
+static std::string cemu_pad_xml(const hubctl::Profile& prof, int xinput_idx, int player, bool pro) {
     /* VPAD ButtonId (1..24) -> profile control. The default profile reproduces the old fixed table exactly. */
     static const char* const vpad[] = {"a", "b", "x", "y", "l", "r", "zl", "zr", "plus", "minus", "dpup", "dpdown", "dpleft", "dpright",
                                        "l3", "r3", "ls_up", "ls_down", "ls_left", "ls_right", "rs_up", "rs_down", "rs_left", "rs_right"};
     auto dz = [&](const char* name) { auto it = prof.analogs.find(name); return fmt_g(it == prof.analogs.end() ? 0.25 : it->second.deadzone); };
-    std::string x = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>Wii U GamePad</type>\n"
-                    "\t<controller>\n\t\t<api>XInput</api>\n\t\t<uuid>0</uuid>\n\t\t<display_name>Controller 1</display_name>\n"
+    std::string x = std::string("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>") + (pro ? "Wii U Pro Controller" : "Wii U GamePad") + "</type>\n"
+                    "\t<controller>\n\t\t<api>XInput</api>\n\t\t<uuid>" + std::to_string(xinput_idx) + "</uuid>\n\t\t<display_name>Controller " + std::to_string(player + 1) + "</display_name>\n"
                     "\t\t<rumble>0</rumble>\n"
                     "\t\t<axis>\n\t\t\t<deadzone>" + dz("left_stick") + "</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n"
                     "\t\t<rotation>\n\t\t\t<deadzone>" + dz("right_stick") + "</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n"
@@ -642,22 +661,31 @@ std::string cemu_gamepad_profile_xml(const hubctl::Profile& prof) {
     x += "\t\t</mappings>\n\t</controller>\n</emulated_controller>\n";
     return x;
 }
+std::string cemu_gamepad_profile_xml(const hubctl::Profile& prof) { return cemu_pad_xml(prof, 0, 0, false); }
+std::string cemu_gamepad_profile_xml(const hubctl::Profile& prof, int xinput_idx) { return cemu_pad_xml(prof, xinput_idx, 0, false); }
+std::string cemu_pro_profile_xml(const hubctl::Profile& prof, int xinput_idx, int player) { return cemu_pad_xml(prof, xinput_idx, player, true); }
 std::string cemu_gamepad_profile_xml() { return cemu_gamepad_profile_xml(hubctl::default_profile("wiiu")); }
 
-void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& prof) {
+void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& prof, const CemuPads& pads) {
     std::string portable = join(install_dir, "portable");   // Cemu's portable marker + data folder
     make_dirs(join(portable, "controllerProfiles"));
     std::string settings = join(portable, "settings.xml");
     if (!file_exists(settings)) write_text(settings, cemu_default_settings_xml());   // its absence triggers the first-run dialog
     std::string pad = join(portable, "controllerProfiles\\controller0.xml");
     std::string marker = join(portable, "controllerProfiles\\retrohub-pad.txt");
-    std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof));
+    std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof)) + pad_suffix(cemu_sel(pads));
     /* No marker = written by an older RetroHub (the built-in default) or never written. */
     if (file_exists(pad) && marker_hash(file_exists(marker) ? read_text(marker) : "", "wiiu") == want) return;
-    write_text(pad, cemu_gamepad_profile_xml(prof));
-    write_text(marker, "RetroHub wrote controller0.xml from its Controllers profile; it is rewritten only when that profile changes.\n"
+    write_text(pad, cemu_gamepad_profile_xml(prof, pads.xinput.empty() ? 0 : pads.xinput[0]));   // player 1 = the Wii U GamePad
+    for (int i = 1; i < 4; ++i) {   // players 2-4 = Pro Controllers on the next pads; stale ones from an earlier setup go
+        std::string f = join(portable, "controllerProfiles\\controller" + std::to_string(i) + ".xml");
+        if (i < (int)pads.xinput.size()) write_text(f, cemu_pro_profile_xml(prof, pads.xinput[i], i));
+        else if (file_exists(f) && read_text(f).find("Wii U Pro Controller") != std::string::npos) { std::error_code ec; fs::remove(P(f), ec); }
+    }
+    write_text(marker, "RetroHub wrote controller0.xml (and controller1-3.xml for more pads) from its Controllers profile; it is rewritten only when that profile or the pad order changes.\n"
                        "profile-hash: " + want + "\n");
 }
+void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& prof) { prepare_cemu_managed(install_dir, prof, CemuPads()); }
 void prepare_cemu_managed(const std::string& install_dir) { prepare_cemu_managed(install_dir, stored_profile("wiiu")); }
 
 /* ------------------------------------------------------------------ */

@@ -216,7 +216,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
         { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
     } else if (inst.managed) {
-        hubemu::prepare_cemu_managed(inst.dir, controls_profile("wiiu", e.key));
+        { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, cemu_pads_for(pw)); }
     }
     hub::gs::Values gsv = gs_values_for(e);
     hubemu::apply_game_settings(kind, inst.dir, gsv);

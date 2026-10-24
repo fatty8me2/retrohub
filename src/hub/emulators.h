@@ -90,6 +90,13 @@ std::string azahar_config_patch(const std::string& qt_config_ini);   // pure: th
  * check), controllerProfiles\controller0.xml = Wii U GamePad on XInput pad 0. An existing install is never touched. */
 void prepare_cemu_managed(const std::string& install_dir);   // profile = the stored wiiu profile
 void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& profile);
+/* Wii U players in RetroHub port order: xinput[i] = the XInput slot of player i+1 (empty = player 1 on slot 0). Player 1 gets the
+ * GamePad profile (controller0.xml), players 2-4 Pro Controllers (controller1-3.xml). */
+struct CemuPads { std::vector<int> xinput; };
+CemuPads cemu_pads_with(const std::vector<PadDesc>& by_port);   // non-XInput pads are skipped
+void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& profile, const CemuPads& pads);
+std::string cemu_gamepad_profile_xml(const hubctl::Profile& profile, int xinput_idx);
+std::string cemu_pro_profile_xml(const hubctl::Profile& profile, int xinput_idx, int player);   // player 1..3 (0-based index)
 std::string cemu_gamepad_profile_xml(const hubctl::Profile& profile);
 std::string cemu_default_settings_xml();
 std::string cemu_gamepad_profile_xml();
