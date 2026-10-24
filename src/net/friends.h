@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -91,10 +92,15 @@ struct Event {
  * client must drop pending-retire.json instead of resending it forever. */
 bool retire_error_is_terminal(const std::string& ref, const std::string& detail);
 void dedupe_friends(std::vector<Friend>& friends, const std::string& self_uid = "");
-/* Different uids, same display name (a person's old identity that was never retired): returns the uids of the OFFLINE
- * entries that are stale next to a fresher same-named one (the keeper is online/in a lobby, or was seen `gap_ms` later).
- * The UI hides them and offers "Merge" (remove the stale entries). Names compare case-insensitively, trimmed. */
-std::vector<std::string> stale_same_name(const std::vector<Friend>& friends, int64_t gap_ms = 7 * 86400 * 1000LL);
+/* Different uids, same display name. Returns the OFFLINE entries that look like a person's older identity.
+ *  confirmed=true : the uid is in `retired` (the server's alias map / <data_dir>/retired-ids.txt says it was replaced). Safe to merge in bulk.
+ *  confirmed=false: heuristic only (the fresher same-name entry was seen >= `gap_ms` later). Could be a genuinely different friend,
+ *                   so the UI must ask per entry and never bulk-remove these. A merely-online same-name entry is NOT evidence.
+ * Names compare case-insensitively, trimmed. */
+struct StaleEntry { std::string uid; bool confirmed = false; };
+std::set<std::string> read_retired_ids(const std::string& data_dir);
+std::vector<StaleEntry> stale_same_name(const std::vector<Friend>& friends, const std::set<std::string>& retired = {},
+                                        int64_t gap_ms = 7 * 86400 * 1000LL);
 /* Every identity older than `current_uid` that this PC still knows and the server has not confirmed retired: pending-retire.json,
  * <data_dir>/identity-backup*.json and <vault>/_identity/*.json (other than identity.json). Skips uids listed in <data_dir>/retired-ids.txt. */
 std::vector<Identity> older_identities(const std::string& data_dir, const std::string& vault_dir, const std::string& current_uid);
@@ -122,6 +128,7 @@ class FriendsClient {
     std::string status_text() const;      // "Connecting...", "Online", "Reconnecting in 4s", ...
     std::string my_code() const;          // "RH-XXXX-XXXX" (known immediately after start)
     std::string my_uid() const;
+    std::set<std::string> retired_ids() const;   // uids the server confirmed replaced (retired-ids.txt)
 
     /* actions (ignored/queued-as-dropped while disconnected, except set_status/rename which
      * are remembered and re-sent on reconnect) */

@@ -20,6 +20,7 @@ struct AddGames {
     std::vector<ag::Item> result;
     std::string root;
     bool rescan_pending = false, shot_tried = false, fake_progress = false;
+    bool quiet = false;               // import started by a drop while the dialog was closed: toasts only, no modal
 };
 AddGames AG;
 
@@ -78,10 +79,12 @@ bool add_folder_in_place(const std::string& p) {
     return added;
 }
 
+std::string dest_root() { return ag::games_root(A.st.rom_folders, documents_dir(), A.st.games_dest); }
+
 void start_import(std::vector<std::string> files) {
     std::set<std::string> known;
     for (const hub::GameEntry& e : A.lib) known.insert(e.key);
-    AG.root = ag::games_root(A.st.rom_folders, documents_dir());
+    AG.root = dest_root();
     AG.result.clear();
     AG.st = AddGames::Importing;
     AG.job.start(std::move(files), AG.root, std::move(known));
@@ -90,7 +93,8 @@ void start_import(std::vector<std::string> files) {
 void finish_import() {
     AG.job.join();
     AG.result = AG.job.items();
-    AG.st = AddGames::Done;
+    AG.st = AG.quiet ? AddGames::Closed : AddGames::Done;
+    AG.quiet = false;
     int added = ag::count_outcome(AG.result, ag::Outcome::Added);
     if (added) {   // the games folder joins rom_folders (once), then the library rescans
         if (hubui::merge_installer_games_dir(&A.st, AG.root)) mark_dirty();
@@ -108,17 +112,25 @@ std::string bytes_text(uint64_t b) { return size_text(b); }
 /* Files and folders from the picker or a window drop. Folders are added in place; files are copied. */
 void add_games_paths(const std::vector<std::string>& paths) {
     int folders_added = 0, folders_seen = 0;
+    const bool was_closed = AG.st == AddGames::Closed;
+    const size_t queued_before = AG.queue.size();
     for (const std::string& p : paths) {
         if (is_dir(p)) { ++folders_seen; folders_added += add_folder_in_place(p); }
         else AG.queue.push_back(p);
     }
     if (folders_added) set_toast(folders_added == 1 ? "Folder added - scanning your games..." : "Folders added - scanning your games...");
     else if (folders_seen && AG.queue.empty()) set_toast("That folder is already in your library.", false);
+    if (was_closed && AG.queue.size() > queued_before) {   // a drop must not pop the dialog open: say so with a toast and import quietly
+        AG.quiet = true;
+        size_t n = AG.queue.size() - queued_before;
+        set_toast("Copying " + std::to_string(n) + (n == 1 ? " game" : " games") + " into your library...", true);
+    }
 }
 
 void add_games_drop(const std::string& path) { AG.drops.push_back(path); }
 
 void add_games_open() {
+    AG.quiet = false;   // opening the dialog while a quiet import runs shows its progress
     if (AG.st == AddGames::Importing) return;
     AG.st = AddGames::Choose;
 }
@@ -209,11 +221,19 @@ static void add_games_modal() {
 
     if (AG.st == AddGames::Choose) {
         text_wrapped_disabled("RetroHub copies your game files into its own games folder, sorted by console. Your original files are never moved or changed.");
-        std::string root = ag::games_root(A.st.rom_folders, documents_dir());
+        std::string root = dest_root();
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
         ImGui::TextWrapped("Games folder: %s", root.c_str());
         ImGui::PopStyleColor();
+        if (button("Change...", ImVec2(sp(14.f), sp(4.f)), false, true, ui::Icon::Folder)) {
+            std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+            if (ag::is_absolute_path(p)) { A.st.games_dest = p; mark_dirty(); }
+        }
+        if (!A.st.games_dest.empty()) {
+            ImGui::SameLine(0, sp(1.f));
+            if (button("Use default", ImVec2(sp(14.f), sp(4.f)), false, true)) { A.st.games_dest.clear(); mark_dirty(); }
+        }
         ImGui::Dummy(ImVec2(0, sp(1.5f)));
         if (button("Choose game files...", ImVec2(bw, bh), true, true, ui::Icon::Plus)) {
             std::vector<std::string> f = pick_game_files();
@@ -308,11 +328,12 @@ void draw_add_games() {
         add_games_paths(d);
     }
     if (AG.st == AddGames::Importing && !AG.fake_progress && AG.job.done()) finish_import();
-    if (!AG.queue.empty() && AG.st != AddGames::Importing) {
+    /* Wait for the library to be settled first: A.lib is only a trustworthy duplicate check after a finished, current scan. */
+    if (!AG.queue.empty() && AG.st != AddGames::Importing && A.scanned_once && !A.scanning && !AG.rescan_pending) {
         std::vector<std::string> f;
         f.swap(AG.queue);
         start_import(std::move(f));
     }
     if (AG.rescan_pending && !A.scanning) { AG.rescan_pending = false; start_scan(); }
-    if (AG.st != AddGames::Closed) add_games_modal();
+    if (AG.st != AddGames::Closed && !(AG.quiet && AG.st == AddGames::Importing)) add_games_modal();
 }

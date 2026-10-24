@@ -31,6 +31,7 @@ int main() {
     CHECK(t.input_delay == 4 && t.last_game == "mp2" && t.smash_exe == s.smash_exe);
     CHECK(t.gb_core == "gambatte" && t.fullscreen && t.sync_folder == s.sync_folder);
     CHECK(!t.sync_auto && t.sync_states && t.sync_card_dismissed && t.smash_save_notice_shown && t.cemu_exe == s.cemu_exe);
+    {   Settings g; g.games_dest = "E:\\MyGames"; Settings h; CHECK(settings_from_json(settings_to_json(g), &h) && h.games_dest == g.games_dest && Settings().games_dest.empty()); }
     CHECK(t.cloud_saves && !Settings().cloud_saves);   // cloud saves: stored, off by default
     Settings u;
     CHECK(u.cemu_exe.empty());

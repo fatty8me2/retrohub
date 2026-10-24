@@ -23,13 +23,19 @@ bool is_game_file(const std::string& path);   // by extension only
 std::string console_folder(System s);
 
 /* The games root: the first rom folder named "RetroHub Games" (the installer's choice), else <documents>\RetroHub Games. */
-std::string games_root(const std::vector<std::string>& rom_folders, const std::string& documents_dir);
+std::string games_root(const std::vector<std::string>& rom_folders, const std::string& documents_dir, const std::string& custom_root = "");
+/* custom_root (the player's chosen destination, persisted in settings) wins when it is an absolute path. */
+bool is_absolute_path(const std::string& p);
+
+/* Fresh index of the game keys already under `root` (every supported file is identified/hashed now), so duplicates are caught
+ * even when the library scan is unfinished or stale. Returns early (partial) when *stop becomes true. */
+std::set<std::string> index_keys(const std::string& root, const std::atomic<bool>* stop = nullptr);
 std::string dest_dir(const std::string& root, System s);   // root\<console>
 
 /* Destination file name that does not clash: "name.ext", then "name (2).ext", ... `exists` tests a full path. */
 std::string unique_name(const std::string& dir, const std::string& file_name, const std::function<bool(const std::string&)>& exists);
 
-enum class Outcome { Added, Duplicate, Unsupported, Failed };
+enum class Outcome { Added, Duplicate, Unsupported, Failed, Cancelled };
 struct Item {
     std::string src, title, dest, message;
     System system = System::Unknown;
