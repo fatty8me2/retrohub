@@ -1,4 +1,5 @@
 #include "app.h"
+#include "kanto_pad.h"
 
 /* Kanto Together inside RetroHub (see src/common/kanto.h and docs/KANTO_TOGETHER.md).
  * Library card -> first Play installs + builds the game -> rooms: the host's Launch starts the package's launcher HIDDEN (kanto::Session),
@@ -90,6 +91,7 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
     o.sound = !mute_tests();
     o.relay = env_str("RETROHUB_KT_RELAY");
     o.desktop = env_str("RETROHUB_KT_DESKTOP");
+    { hubctl::Store pst; hubctl::load_store(hub::data_dir(), "", &pst); kanto::prepare_pad(o.dir, hubctl::resolve(pst, "retro")); }   // Xbox pad bindings into the package mGBA (write once per profile)
     std::string vault = no_slash(hub::saves::battery_dir(sys_short(e), e.key));
     kanto::sync_saves(vault, o.saves);   // vault -> staged saves (newest wins)
     std::string err;
