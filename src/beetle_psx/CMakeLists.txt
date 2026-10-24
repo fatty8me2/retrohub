@@ -71,7 +71,7 @@ add_custom_command(OUTPUT ${BEETLE_DLL}
             -D__STDC_CONSTANT_MACROS -DNDEBUG
             -I${B} -I${B}/mednafen -I${B}/mednafen/include -I${LC}/include -I${B}/include -include ${B}/include/debug.h
             ${BEETLE_SOURCES}
-            -Wl,--no-undefined -Wl,--version-script=${B}/link.T -static -static-libgcc -o ${BEETLE_DLL} -lwinmm
+            -s -Wl,--no-undefined -Wl,--version-script=${B}/link.T -static -static-libgcc -o ${BEETLE_DLL} -lwinmm
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
     COMMENT "Building beetle_psx_libretro.dll (Beetle PSX, MinGW)"
     VERBATIM)

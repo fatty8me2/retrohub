@@ -136,7 +136,7 @@ System short name `ps1` ("PlayStation", `System::PS1`). It runs through `retroru
 | Format | Identification | Key |
 |---|---|---|
 | `.cue` + `.bin` | the first FILE of the cue is read (MODE1/2048, MODE1/2352, MODE2/2352 all detected); ISO 9660 root -> `SYSTEM.CNF` -> `BOOT = cdrom:\SLUS_006.94;1` | `ps1:slus-00694` |
-| `.chd` | decoded sector by sector with libretro-common's `rchd` (compiled into `hubchd`); same SYSTEM.CNF walk | same |
+| `.chd` | read with the shared `hub::disc` reader (libchdr, `src/common/disc_id.*`); same SYSTEM.CNF walk | same |
 | `.iso` `.img` `.bin` | PVD at sector 16 (2048 or 2352 layout); GameCube `.iso` is tried first | same |
 | `.pbp` | `DISC_ID` in the embedded PARAM.SFO | same |
 | `.m3u` | the first disc is probed; the other discs listed in the m3u are hidden. Launched as the m3u (disc swap in the core) | disc 1's key |

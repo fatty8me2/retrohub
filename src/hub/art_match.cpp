@@ -69,6 +69,7 @@ std::string dat_url(const std::string& s) {
     if (s == "gc") return std::string(base) + "redump/Nintendo%20-%20GameCube.dat";
     if (s == "3ds") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%203DS.dat";
     if (s == "nds") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%20DS.dat";
+    if (s == "ps2") return std::string(base) + "redump/Sony%20-%20PlayStation%202.dat";
     if (s == "ps1") return std::string(base) + "redump/Sony%20-%20PlayStation.dat";
     return "";
 }
