@@ -252,6 +252,9 @@ struct App {
     std::map<std::string, double> art_seen;   // first time art was requested per game (for the loading shimmer)
     bool page_scrollable = false;             // the Home shelves overflow vertically (plain wheel then scrolls the page)
     bool focused = true;                      // hub window has input focus
+    bool popup_last_frame = false;            // a popup/modal was open at the end of the previous frame
+    bool page_focus_req = false;              // page just changed: focus its first item
+    bool pad_first = false;                   // first pad input after keyboard/mouse (main loop seeds a focus)
     bool pad_mode = false;                    // last input came from a gamepad (footer shows controller glyphs)
     float side_w = 0;                         // animated sidebar width
     bool nav_seed = true;                     // put the (invisible) keyboard/gamepad focus on the hero Play / selected tile
@@ -337,6 +340,15 @@ struct ShotDriver {
     size_t click_i = 0; int click_stage = 0; double click_t = 0;
     size_t key_i = 0;
     bool key_down = false;
+    /* HUB_SHOT_PAD=down,down,right,a,shot:name,... gamepad injection (d-pad up/down/left/right, a b x y, lb rb lt rt, start, back, wait,
+     * shot:<name> saves <HUB_SCREENSHOT stem>-<name>.bmp). A bare "1"/"0" only forces the controller glyphs in the footer. */
+    std::vector<std::string> pad_seq;
+    size_t pad_i = 0;
+    ImGuiKey pad_key = ImGuiKey_None;     // key currently held down
+    double pad_t = 0;
+    std::string pad_last;                 // token just sent, traced once the nav result has settled
+    std::string pending_shot;             // shot:<name> waiting for the end of the frame
+    void pad_trace(const std::string& tok);
     double last_key = 0;
     void init(const char* shot_path);
     void pre_frame(ImGuiIO& io);
@@ -344,6 +356,7 @@ struct ShotDriver {
 };
 extern ShotDriver SH;
 void shot_init_ui();
+void shot_trace(const char* what, const std::string& arg = std::string());   // HUB_SHOT_TRACE action line
 
 /* ============================ globals ============================ */
 

@@ -12,6 +12,12 @@ void draw_update_popup() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(sp(52.f), 0), ImVec2(sp(80.f), vp->Size.y * 0.8f));
     if (!ImGui::BeginPopupModal("Update available", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
         return;
+    if (ui::modal_back() && !hubupdate::downloading()) {   // B = Later
+        A.update_prompt_dismissed = true;
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
     ImGui::PushFont(ui::F.h2);
     ImGui::Text("RetroHub %s is available", hubupdate::latest_version().c_str());
     ImGui::PopFont();
@@ -123,7 +129,12 @@ void draw_footer(float h) {
     dl->AddLine(p, ImVec2(p.x + w, p.y), ui::HAIRLINE, 1.f);
     bool pad = A.pad_mode;
     std::vector<Hint> hints;
-    if (A.page == Page::Library && !A.lib.empty()) {
+    const bool popup = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    if (popup) {
+        hints = {{"A", "Enter", "Select"}, {"B", "Esc", "Close"}};
+    } else if (A.st.show_friends && FR.panel_focused) {
+        hints = {{"A", "Enter", "Actions"}, {"X", "", "Join / invite"}, {"Y", "", "Menu"}, {"B", "Esc", "Close"}};
+    } else if (A.page == Page::Library && !A.lib.empty()) {
         hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}};
         if (A.view == LibView::All) hints.push_back({"B", "Esc", "Back"});
     } else if (A.page == Page::Library) {
@@ -131,8 +142,13 @@ void draw_footer(float h) {
     } else {
         hints = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}};
     }
-    if (pad) hints.push_back({"LB", "", "Prev page"}), hints.push_back({"RB", "", "Next page"});
-    hints.push_back({"Start", "F2", "Friends"});
+    if (pad && !popup) {
+        hints.push_back({"LB", "", "Prev page"});
+        hints.push_back({"RB", "", "Next page"});
+        if (A.page != Page::Library) hints.push_back({"LT", "", "Scroll up"}), hints.push_back({"RT", "", "Scroll down"});
+    }
+    if (!popup) hints.push_back(fr_invite_toast_visible() ? Hint{"Start", "", "Join invite"} : Hint{"Start", "F2", "Friends"});
+    if (!popup && pad && fr_invite_toast_visible()) hints.push_back({"View", "", "Friends"});
 
     std::string status;
     ImU32 dot = ui::TEXT3;
@@ -148,7 +164,7 @@ void draw_footer(float h) {
     float hy = p.y + (h - (cf->FontSize + sp(0.75f))) * 0.5f, x = p.x;
     for (auto& hn : hints) {
         bool is_shoulder = hn.pad[0] == 'L' || hn.pad[0] == 'R';
-        if (!pad && is_shoulder) continue;
+        if (!pad && (is_shoulder || hn.pad[0] == 'L' || !hn.key[0])) continue;
         float need = ui::key_hint_width(pad, hn.pad, hn.key, hn.label);
         if (x + need > p.x + w - sw - sp(2.f)) break;
         x += ui::key_hint(dl, ImVec2(x, hy), pad, hn.pad, hn.key, hn.label) + sp(3.f);
@@ -168,7 +184,9 @@ void global_input() {
     if (!A.focused || A.proc) return;
     if (ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
     if (io.WantTextInput) return;
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
+    if (A.popup_last_frame && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) return;   // that B just closed a menu/modal: not also "back"
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) && fr_invite_toast_visible()) fr_join_invite_toast();   // Start joins a pending invite
+    else if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
         if (fr_handle_back()) return;
     int dir = 0;
@@ -199,7 +217,13 @@ void draw_frame() {
     const float dock_w = fr_docked ? fr_pw * FR.panel_t : 0.f;
     const float view_w = io.DisplaySize.x - dock_w;
     A.focused = g_headless || (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
-    if (A.page != A.last_page || A.view != A.last_view) { A.last_page = A.page; A.last_view = A.view; A.nav_seed = true; }
+    if (A.page != A.last_page || A.view != A.last_view) { if (A.page != A.last_page) A.page_focus_req = true; A.last_page = A.page; A.last_view = A.view; A.nav_seed = true; }
+    {   // a modal/menu just closed and the pad lost its focus: land on the page's default item again
+        static bool was_popup = false;
+        bool pop = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        if (was_popup && !pop && A.pad_mode && !ImGui::GetCurrentContext()->NavId && !FR.panel_focused) { A.nav_seed = true; A.page_focus_req = true; }
+        was_popup = pop;
+    }
     /* D-pad zones: the sidebar and the content are separate focus zones, otherwise ImGui's scoring happily jumps diagonally
      * from a hero button to a sidebar entry. Left with nothing further left enters the sidebar, Right leaves it. */
     bool in_side = false;
@@ -331,6 +355,20 @@ void draw_frame() {
     float footer_h = sp(5.5f);
     ImGuiWindowFlags pf = A.page == Page::Library ? (ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse) : ImGuiWindowFlags_None;
     ImGui::BeginChild("page", ImVec2(0, -footer_h), ImGuiChildFlags_NavFlattened, pf);
+    if (A.page_focus_req) {   // arrived on a page (LB/RB, sidebar, B): put the focus on its first item unless the user is in the sidebar
+        A.page_focus_req = false;
+        if (!in_side && !io.WantTextInput) {
+            ImGuiContext& g = *ImGui::GetCurrentContext();
+            if (g.NavWindow != g.CurrentWindow) ImGui::FocusWindow(g.CurrentWindow);   // the previous page's panels are gone: without this ImGui falls back to the top bar
+            if (A.page != Page::Library) {   // the library seeds its own focus (hero Play); elsewhere the first item submitted from here on takes it
+                ImGui::SetNavID(0, ImGuiNavLayer_Main, g.CurrentWindow->NavRootFocusScopeId, ImRect());
+                g.NavInitRequest = true;
+                g.NavInitRequestFromMove = false;
+                g.NavInitResult.ID = 0;
+                g.NavAnyRequest = true;
+            }
+        }
+    }
     switch (A.page) {
         case Page::Library: page_library(); break;
         case Page::Online: page_online(); break;
@@ -355,6 +393,7 @@ void draw_frame() {
 
     draw_overlays();
     global_input();
+    A.popup_last_frame = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f), view_w - sp(3.f), sp(7.5f));
     ImGui::End();
     fr_draw_panel(io.DisplaySize.x, io.DisplaySize.y);

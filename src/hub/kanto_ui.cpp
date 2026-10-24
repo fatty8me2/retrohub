@@ -450,7 +450,7 @@ void kt_draw_modals() {
             ImGui::ProgressBar(pr, ImVec2(-1, 0));
             text_wrapped_disabled(KT.fake ? KT.fake_prep : KT.prep.message());
             ImGui::Dummy(ImVec2(0, sp(1.f)));
-            if (button("Cancel", ImVec2(sp(14.f), sp(5.f))) && !KT.fake) { KT.prep.cancel(); KT.play_wait = false; KT.show_install = false; }
+            if ((button("Cancel", ImVec2(sp(14.f), sp(5.f))) || ui::modal_back()) && !KT.fake) { KT.prep.cancel(); KT.play_wait = false; KT.show_install = false; }
             ImGui::EndPopup();
         }
         return;
@@ -465,7 +465,7 @@ void kt_draw_modals() {
             ImGui::PopFont();
             ImGui::TextWrapped("%s", kanto::first_session_text(KT.host).c_str());
             ImGui::Dummy(ImVec2(0, sp(1.f)));
-            if (button("Got it", ImVec2(sp(14.f), sp(5.f)), true)) {
+            if (button("Got it", ImVec2(sp(14.f), sp(5.f)), true) || ui::modal_back()) {
                 KT.intro = false;
                 A.st.kt_intro_seen = true;
                 mark_dirty();
@@ -503,7 +503,7 @@ void kt_draw_modals() {
             text_wrapped_disabled(kanto::credit_text());
             ImGui::EndChild();
             ImGui::Dummy(ImVec2(0, sp(1.f)));
-            if (button("Close", ImVec2(sp(14.f), sp(5.f)), true)) {
+            if (button("Close", ImVec2(sp(14.f), sp(5.f)), true) || ui::modal_back()) {
                 KT.howto = false;
                 A.st.kt_intro_seen = true;
                 mark_dirty();

@@ -95,6 +95,10 @@ static void find_games_modal() {
     bool open = ImGui::BeginPopupModal("Find my games", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
     ImGui::PopStyleVar(2);
     if (!open) return;
+    if (ui::modal_back()) {
+        if (FG.st == FindGames::Scanning) FG.run.ctl.cancel = true;
+        else { close_flow(true); ImGui::EndPopup(); return; }
+    }
 
     ImGui::PushFont(ui::F.title);
     ImGui::TextUnformatted("Find my games");
@@ -130,7 +134,7 @@ static void find_games_modal() {
         if (any) {
             float rows = (float)(FG.found.size() + FG.extra.size());
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::PANEL);
-            ImGui::BeginChild("fg_list", ImVec2(0, std::min(sp(56.f), rows * sp(14.f) + sp(2.f))), ImGuiChildFlags_Borders);
+            ImGui::BeginChild("fg_list", ImVec2(0, std::min(sp(56.f), rows * sp(14.f) + sp(2.f))), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
             for (size_t i = 0; i < FG.found.size(); ++i) {
                 ImGui::PushID((int)i);
                 const bool have = already_added(FG.found[i].path);
