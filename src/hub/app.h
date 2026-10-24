@@ -630,6 +630,8 @@ void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC,
 void find_games_open();   // start the scan + checklist modal (first run, Settings > ROM folders)
 void find_games_shutdown();   // cancel + join a running scan (call at app exit)
 void draw_find_games();   // call every frame
+void wizard_open();   // first-run setup wizard (Welcome, Controller, Games, Name); Settings > Run setup again
+void draw_wizard();   // call every frame; also decides the first-run auto-open
 
 /* ---- add_games_ui.cpp: upload your own ROMs (copied into the games folder, sorted by console) ---- */
 void add_games_open();                                        // open the "Add your own games" dialog

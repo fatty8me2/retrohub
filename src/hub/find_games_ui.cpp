@@ -216,7 +216,7 @@ void draw_find_games() {
             } else find_games_open();
         } else if (!shot && !g_headless && A.scanned_once) {
             FG.auto_tried = true;
-            if (A.st.rom_folders.empty() && !A.st.find_games_done) find_games_open();
+            if (A.st.setup_done && A.st.rom_folders.empty() && !A.st.find_games_done) find_games_open();
         }
     }
     if (FG.st == FindGames::Scanning && FG.run.ctl.done) finish_scan();

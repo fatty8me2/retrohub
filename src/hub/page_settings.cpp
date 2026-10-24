@@ -48,6 +48,8 @@ void page_settings() {
     ImGui::SameLine();
     if (button("Find my games...", ImVec2(0, 0), false, !A.scanning, ui::Icon::Search)) find_games_open();
     ImGui::SameLine();
+    if (button("Run setup again", ImVec2(0, 0), false, true, ui::Icon::Gamepad)) wizard_open();
+    ImGui::SameLine();
     if (button("Rescan", ImVec2(0, 0), false, !A.scanning, ui::Icon::Refresh)) start_scan();
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     ImGui::Separator();
