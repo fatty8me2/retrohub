@@ -785,6 +785,35 @@ static void test_controls2_emulators(const fs::path& dir) {
     hubemu::prepare_azahar(azd.string(), p3, az);
     CHECK(read_text(ini).find("user-choice") == std::string::npos && read_text(ini).find("guid:guidD,port:1") != std::string::npos);
 
+    if (const char* dump = std::getenv("RETROHUB_DUMP_DIR")) {   // QA aid: write the fake-pad configs (Xbox + DualSense + Xbox) for a readback launch
+        hubemu::DolphinPads fk = hubemu::dolphin_pads_with(base, {xb, ds, bd}, {xb, ds, bd});
+        hubemu::prepare_dolphin((fs::path(dump) / "dolphin").string(), fk, hubctl::default_profile("gc"));
+        hubemu::prepare_cemu_managed((fs::path(dump) / "cemu").string(), hubctl::default_profile("wiiu"), hubemu::cemu_pads_with({xb, xb, xb}));
+        hubemu::prepare_azahar((fs::path(dump) / "azahar").string(), hubctl::default_profile("3ds"), az);
+    }
+    /* Cemu: players follow the port order's XInput pads; GamePad for player 1, Pro Controllers after */
+    hubemu::CemuPads cp = hubemu::cemu_pads_with({ds, xb, bd});   // non-XInput skipped
+    CHECK(cp.xinput.size() == 1 && cp.xinput[0] == 0);
+    PadDesc xb2{"Xbox Controller", "guidX", "guidX#2", true};
+    cp = hubemu::cemu_pads_with({xb, bd, xb2});
+    CHECK(cp.xinput.size() == 2 && cp.xinput[1] == 1);
+    hubctl::Profile wup = hubctl::default_profile("wiiu");
+    CHECK(hubemu::cemu_gamepad_profile_xml(wup, 0) == hubemu::cemu_gamepad_profile_xml(wup));
+    std::string pro = hubemu::cemu_pro_profile_xml(wup, 1, 1);
+    CHECK(pro.find("<type>Wii U Pro Controller</type>") != std::string::npos && pro.find("<uuid>1</uuid>") != std::string::npos &&
+          pro.find("<display_name>Controller 2</display_name>") != std::string::npos);
+    fs::path ced = dir / "pad_cemu";
+    fs::path cdir = ced / "portable" / "controllerProfiles";
+    hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::CemuPads());
+    CHECK(!fs::exists(cdir / "controller1.xml"));
+    hubemu::prepare_cemu_managed(ced.string(), wup, cp);
+    CHECK(read_text(cdir / "controller1.xml") == hubemu::cemu_pro_profile_xml(wup, 1, 1));
+    CHECK(read_text(cdir / "controller0.xml") == hubemu::cemu_gamepad_profile_xml(wup, 0));
+    hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::CemuPads());   // fewer pads: stale Pro file goes
+    CHECK(!fs::exists(cdir / "controller1.xml"));
+    /* Xbox pad is the default for every console: GC/3DS/Wii U default profiles all bind the XInput names */
+    CHECK(hubemu::dolphin_pad_ini("", base).find("Device = XInput/0/Gamepad") != std::string::npos);
+
     /* Dolphin: the pad file is rewritten when the device assignment changes, kept otherwise */
     fs::path dod = dir / "pad_dol";
     fs::path gcp = dod / "User" / "Config" / "GCPadNew.ini";

@@ -580,6 +580,13 @@ hubemu::AzPad azahar_pad_for(const hubctl::Profile& prof) {
     return pad;
 }
 
+/* Cemu: Wii U player N = the N-th XInput pad of the port order (no stored order = the single pad on XInput slot 0 as before). */
+hubemu::CemuPads cemu_pads_for(const hubctl::Profile& prof) {
+    if (prof.port_order.empty()) return hubemu::CemuPads();
+    hubctl::load_bundled_db();
+    return hubemu::cemu_pads_with(pad_descs(hubctl::list_pads(prof.port_order)));
+}
+
 /* Profile for the external emulators' prepare_*: per-game override when the game has one. */
 hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key) {
     hubctl::Store st;
