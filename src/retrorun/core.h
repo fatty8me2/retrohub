@@ -41,6 +41,7 @@ class Core {
     std::function<void()> on_poll;                                            // retro_input_poll
     std::function<int16_t(unsigned, unsigned, unsigned, unsigned)> on_input;  // port, device, index, id
     std::function<void(const int16_t*, size_t)> on_audio;                     // interleaved stereo frames
+    std::function<void(unsigned, bool, uint16_t)> on_rumble;                  // port, strong motor?, strength 0..65535
     std::function<void()> on_geometry;                                        // SET_GEOMETRY / SET_SYSTEM_AV_INFO
 
     bool load_core(const std::string& dll_path, std::string* err);

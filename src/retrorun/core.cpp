@@ -221,8 +221,18 @@ void Core::parse_v2_defs(const retro_core_option_v2_definition* d) {
 
 /* ------------------------------------------------------------ environment */
 
+static bool rumble_cb(unsigned port, enum retro_rumble_effect effect, uint16_t strength) {
+    if (!g_core || !g_core->on_rumble) return false;
+    g_core->on_rumble(port, effect == RETRO_RUMBLE_STRONG, strength);
+    return true;
+}
+
 bool Core::environment(unsigned cmd, void* data) {
     switch (cmd) {
+        case RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE:
+            if (!data || !on_rumble) return false;
+            ((struct retro_rumble_interface*)data)->set_rumble_state = &rumble_cb;
+            return true;
         case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
             *(const char**)data = system_dir.c_str();
             return true;
