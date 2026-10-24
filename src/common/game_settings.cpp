@@ -21,9 +21,10 @@ const unsigned GB = (1u << (unsigned)System::GB) | (1u << (unsigned)System::GBC)
 const unsigned GBA = 1u << (unsigned)System::GBA;
 const unsigned NDS = 1u << (unsigned)System::NDS;
 const unsigned GC = 1u << (unsigned)System::GC;
+const unsigned PS1 = 1u << (unsigned)System::PS1;
 const unsigned N3DS = 1u << (unsigned)System::N3DS;
 const unsigned WIIU = 1u << (unsigned)System::WiiU;
-const unsigned ALL = N64 | GB | GBA | NDS | GC | N3DS | WIIU;
+const unsigned ALL = N64 | GB | GBA | NDS | PS1 | GC | N3DS | WIIU;
 
 Option mk(const char* key, const char* label, const char* group, unsigned sys, Kind k, Scope sc, const char* def,
           std::vector<Choice> ch = {}) {
@@ -59,7 +60,7 @@ std::vector<Option> build() {
                    {{"default", "Default"}, {"off", "Off"}, {"sw", "Software"}, {"fast", "Fast"}}));
 
     // ---- Game Boy / GBC / GBA / DS (retrorun)
-    v.push_back(mk("scale.filter", "Screen scaling", "Video", GB | GBA | NDS, K::Choice, S::Visual, "auto",
+    v.push_back(mk("scale.filter", "Screen scaling", "Video", GB | GBA | NDS | PS1, K::Choice, S::Visual, "auto",
                    {{"auto", "Automatic"}, {"nearest", "Sharp pixels"}, {"linear", "Smooth"}}));
     v.push_back(mk("scale.integer", "Integer scaling", "Video", GB | GBA, K::Bool, S::Visual, "true"));
     v.push_back(mk("gb.color", "Color correction", "Color", GB | GBA, K::Choice, S::Visual, "auto",
@@ -67,6 +68,12 @@ std::vector<Option> build() {
     v.push_back(mk("ds.layout", "Screen layout", "Video", NDS, K::Choice, S::Visual, "top-bottom",
                    {{"top-bottom", "Top / bottom"}, {"left-right", "Side by side"},
                     {"largescreen-top", "Large top screen"}, {"hybrid-top", "Hybrid"}}));
+    // ---- PlayStation (retrorun + Beetle PSX, software renderer)
+    v.push_back(mk("ps1.res", "Internal resolution", "Video", PS1, K::Choice, S::Visual, "1x(native)",
+                   {{"1x(native)", "1x native"}, {"2x", "2x"}, {"4x", "4x"}, {"8x", "8x"}}));
+    v.push_back(mk("ps1.widescreen", "Widescreen hack", "Video", PS1, K::Bool, S::Visual, "false"));
+    v.push_back(mk("ps1.multitap", "Multitap (3-4 players)", "Controls", PS1, K::Choice, S::Sync, "auto",
+                   {{"auto", "Automatic (3+ controllers)"}, {"off", "Off"}, {"on", "On"}}));
     // Results-changing: the host's value goes to guests.
     v.push_back(mk("gb.hardware", "Game Boy hardware", "Emulation", GB, K::Choice, S::Sync, "auto",
                    {{"auto", "Automatic"}, {"dmg", "Game Boy"}, {"cgb", "Game Boy Color"}, {"agb", "Game Boy Advance"}}));
@@ -412,7 +419,7 @@ std::vector<std::string> retrorun_args(System s, const Values& v) {
     auto opt = [&](const std::string& k, const std::string& val) { r.push_back("--opt"); r.push_back(k + "=" + val); };
     std::string f = get(v, "scale.filter");
     if (f != "auto") { r.push_back("--filter"); r.push_back(f); }
-    if (s != System::NDS && get(v, "scale.integer") == "false") { r.push_back("--integer-scale"); r.push_back("0"); }
+    if (s != System::NDS && s != System::PS1 && get(v, "scale.integer") == "false") { r.push_back("--integer-scale"); r.push_back("0"); }
     std::string cc = get(v, "gb.color");
     if (cc != "auto" && (s == System::GB || s == System::GBC)) {
         bool on = cc == "on";
@@ -430,6 +437,11 @@ std::vector<std::string> retrorun_args(System s, const Values& v) {
     }
     if (s == System::GBA && get(v, "gba.skip_bios") == "true") opt("mgba_skip_bios", "ON");
     if (s == System::NDS) opt("melonds_screen_layout1", get(v, "ds.layout"));
+    if (s == System::PS1) {
+        opt("beetle_psx_internal_resolution", get(v, "ps1.res"));
+        opt("beetle_psx_widescreen_hack", get(v, "ps1.widescreen") == "true" ? "enabled" : "disabled");
+        if (get(v, "ps1.multitap") == "on") opt("beetle_psx_enable_multitap_port1", "enabled");   // "auto" is resolved by the launcher (pad count)
+    }
     return r;
 }
 

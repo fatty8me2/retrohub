@@ -42,6 +42,8 @@ struct Settings {
     bool setup_done = false;           // the first-run setup wizard was finished or skipped
     bool kt_intro_seen = false;        // Kanto Together: the "first session" guidance was shown once
     std::string games_dest;            // Add games: chosen destination folder ("" = the RetroHub Games folder)
+    std::string ps1_bios;              // user-chosen PlayStation BIOS file ("" = look next to the games, in RetroArch's system folder, ...)
+    bool ps1_openbios = false;         // play PlayStation games with the bundled OpenBIOS when no real BIOS is found
     std::string cemu_exe;              // user-chosen Cemu.exe ("" = find an existing install, else download one)
 };
 std::string settings_to_json(const Settings& s);

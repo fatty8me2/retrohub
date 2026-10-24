@@ -1,4 +1,5 @@
 #include "addgames.h"
+#include "ps1.h"
 #include "winutil.h"
 
 #include <algorithm>
@@ -36,7 +37,7 @@ std::string pjoin(const std::string& a, const std::string& b) {
 const std::vector<std::string>& supported_exts() {
     static const std::vector<std::string> v = {".z64", ".n64", ".v64", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cci", ".cia", ".cxi",
                                                ".iso", ".gcm", ".rvz", ".ciso", ".wia", ".gcz", ".wua", ".wud", ".wux", ".rpx",
-                                               ".zip", ".7z"};
+                                               ".cue", ".chd", ".pbp", ".m3u", ".zip", ".7z"};
     return v;
 }
 
@@ -56,6 +57,7 @@ std::string console_folder(System s) {
         case System::N3DS: return "3DS";
         case System::WiiU: return "Wii U";
         case System::NDS: return "DS";
+        case System::PS1: return "PlayStation";
         default: return "Other";
     }
 }
@@ -234,6 +236,21 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
             known_keys.insert(g.key);   // also dedupes the same game appearing twice in one batch
         }
         std::string dir = dest_dir(root, it.system);
+        /* A PlayStation .cue / .m3u needs its bins / discs next to it: the set goes into its own folder, game name as folder name. */
+        std::vector<std::string> comps;
+        if (known && g.system == System::PS1) {
+            std::string ext = lower(U8(P(name).extension()));
+            if (ext == ".cue" || ext == ".m3u") {
+                for (const std::string& c : ps1::referenced_files(src)) {
+                    std::error_code ce;
+                    if (fs::is_regular_file(P(c), ce) && !ce) comps.push_back(c);
+                }
+            }
+            if (!comps.empty()) {
+                dir = pjoin(dir, U8(P(name).stem()));
+                for (const std::string& c : comps) { std::error_code ce; uint64_t cs = fs::file_size(P(c), ce); if (!ce) bytes_total_ += cs; }
+            }
+        }
         fs::create_directories(P(dir), ec);
         auto exists = [](const std::string& p) { std::error_code e; return fs::exists(P(p), e); };
         std::string same = pjoin(dir, name);
@@ -252,6 +269,16 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
         std::string err;
         bool ok = copy_file(src, it.dest, &counted, [&](uint64_t d, uint64_t) { bytes_done_ = base + d; return !cancel_; }, &err);
         bytes_done_ = base + size;
+        for (size_t ci = 0; ok && ci < comps.size(); ++ci) {
+            std::error_code ce;
+            std::string cdst = pjoin(dir, leaf_of(comps[ci]));
+            uint64_t cs = fs::file_size(P(comps[ci]), ce);
+            if (ce) continue;
+            if (fs::exists(P(cdst), ce) && fs::file_size(P(cdst), ce) == cs) { bytes_done_ += cs; continue; }
+            uint64_t cbase = bytes_done_;
+            ok = copy_file(comps[ci], cdst, &counted, [&](uint64_t d, uint64_t) { bytes_done_ = cbase + d; return !cancel_; }, &err);
+            bytes_done_ = cbase + cs;
+        }
         if (ok) finish(Outcome::Added, "");
         else if (err == "cancelled") finish(Outcome::Cancelled, "cancelled");
         else finish(Outcome::Failed, err);

@@ -19,7 +19,7 @@
 namespace hub { namespace fg {
 
 const char* sys_label(int s) {
-    static const char* const n[kSysCount] = {"N64", "GameCube", "GBA", "Game Boy", "GBC", "DS", "3DS", "Wii U"};
+    static const char* const n[kSysCount] = {"N64", "GameCube", "GBA", "Game Boy", "GBC", "DS", "3DS", "Wii U", "PlayStation"};
     return s >= 0 && s < kSysCount ? n[s] : "";
 }
 
@@ -31,6 +31,7 @@ int classify_ext(const std::string& e) {
         {".gba", GBA}, {".gb", GB}, {".gbc", GBC}, {".nds", NDS},
         {".3ds", N3DS}, {".cci", N3DS}, {".cia", N3DS}, {".cxi", N3DS},
         {".wua", WIIU}, {".wud", WIIU}, {".wux", WIIU},
+        {".cue", PS1}, {".chd", PS1}, {".pbp", PS1}, {".m3u", PS1},
         {".zip", kArchive}, {".7z", kArchive},
     };
     for (const M& m : map) if (e == m.ext) return m.sys;

@@ -680,7 +680,7 @@ std::vector<RomFile> scan_roms(const std::string& folder) {
 namespace {
 
 bool is_rom_like_file(const fs::path& p) {
-    static const char* const kExts[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".rvz", ".zip", ".nds", ".3ds", ".cci"};
+    static const char* const kExts[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".rvz", ".zip", ".nds", ".3ds", ".cci", ".cue", ".chd", ".pbp", ".m3u"};
     std::string ext = ascii_lower(path_utf8(p.extension()));
     for (const char* e : kExts)
         if (ext == e) return true;
@@ -689,7 +689,7 @@ bool is_rom_like_file(const fs::path& p) {
 
 bool is_library_folder_name(const fs::path& p) {
     std::string n = ascii_lower(path_utf8(p.filename()));
-    return n == "roms" || n == "games" || n == "n64" || n == "gba" || n == "gbc" || n == "gb" || n == "nds" || n == "3ds";
+    return n == "roms" || n == "games" || n == "n64" || n == "gba" || n == "gbc" || n == "gb" || n == "nds" || n == "3ds" || n == "ps1" || n == "psx" || n == "playstation" || n.rfind("games", 0) == 0;
 }
 
 /* True if dir (or a subfolder up to `depth` levels down) holds a ROM-like file.

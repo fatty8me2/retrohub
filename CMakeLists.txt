@@ -53,6 +53,7 @@ FetchContent_Populate(m64p_core)
 add_library(m64p_api INTERFACE)
 target_include_directories(m64p_api INTERFACE ${m64p_core_SOURCE_DIR}/src/api)
 
+include(src/beetle_psx/fetch.cmake)   # pinned Beetle PSX tree + generated PS1 serial database (before hubcommon)
 add_subdirectory(src/common)
 add_subdirectory(src/saves)
 add_subdirectory(src/net)
@@ -60,6 +61,7 @@ add_subdirectory(src/n64run)
 add_subdirectory(src/retrorun)
 add_subdirectory(src/mgba_link)
 add_subdirectory(src/sameboy_rb)
+add_subdirectory(src/beetle_psx)
 add_subdirectory(src/hub)
 
 # ---- Tests (ctest) ----

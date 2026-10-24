@@ -13,7 +13,8 @@ namespace hub {
 
 enum class System { Unknown = 0, N64, GBA, GB, GBC, GC,
                     N3DS, WiiU,   // appended: 3DS (Azahar), Wii U (Cemu)
-    NDS };
+    NDS,
+    PS1 };   // PlayStation (Beetle PSX via retrorun)
 /* GB/GBC/GBA run as one lockstepped console online (retrorun --net); the room can share the host's save with everyone. */
 inline bool is_lockstep_gb_system(System s) { return s == System::GB || s == System::GBC || s == System::GBA; }
 
@@ -27,6 +28,7 @@ struct GameEntry {
      *   n64:<MD5 of .z64-order image>     gba:<4-char game code>-<CRC32 of the whole file, hex>
      *   gb/gbc:<header title>-<global checksum hex>   gc:<6-char disc ID>-<disc number>
      *   nds:<4-char game code>-<ROM version hex><header CRC16 hex>
+     *   ps1:<boot serial, e.g. slus-00594>   (homebrew: ps1:file-<name>)
      * Lowercase, filesystem-safe ([a-z0-9._-]). */
     std::string key;
     System system = System::Unknown;
@@ -64,6 +66,9 @@ bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint
                      std::string* out_path, std::string* err);
 std::string extract_3ds_dir(const GameEntry& e);      // where it would go (for the confirm dialog)
 uint64_t zip_3ds_unpacked_size(const GameEntry& e);   // size of the image inside the zip (central directory only), 0 if unknown
+
+/* PlayStation games in .zip / .7z (issue == "extract", system PS1; identified by a Redump file name) also use those four calls: the whole archive
+ * unpacks to data_dir()/rom-cache/ps1/<key>/ (cue + bins together) and extracted_3ds_path() returns the .cue/.chd/.iso to launch. */
 
 /* GameCube discs in .7z / .zip (issue == "extract", system GC) use the same four calls above; they unpack with
  * Windows' tar.exe into data_dir()/rom-cache/gc/<key>/disc.<ext>. Pure helpers (exposed for tests): */
