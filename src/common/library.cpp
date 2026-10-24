@@ -1209,7 +1209,28 @@ static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
     const std::string inner_ext = ascii_lower(path_utf8(utf8_path(ent.name).extension()));
     hub::ps2::Ident id;
     bool ok = false;
-    if (inner_ext == ".iso") {
+    if (inner_ext == ".chd" && ascii_lower(path_utf8(arch.extension())) == ".zip") {   // a STORED zip entry is a plain byte range: libchdr reads the CHD in place
+        mz_zip_archive za;
+        std::memset(&za, 0, sizeof za);
+        FILE* zf = _wfopen(arch.wstring().c_str(), L"rbN");
+        if (zf) {
+            if (mz_zip_reader_init_cfile(&za, zf, 0, 0)) {
+                mz_uint n = mz_zip_reader_get_num_files(&za);
+                for (mz_uint i = 0; i < n && !ok; ++i) {
+                    mz_zip_archive_file_stat st;
+                    if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory || st.m_filename != ent.name || st.m_method != 0) continue;
+                    unsigned char lh[30];
+                    if (_fseeki64(zf, (long long)st.m_local_header_ofs, SEEK_SET) != 0 || std::fread(lh, 1, 30, zf) != 30) break;
+                    uint64_t data = st.m_local_header_ofs + 30 + (lh[26] | (lh[27] << 8)) + (lh[28] | (lh[29] << 8));
+                    ok = hub::ps2::identify_chd_slice(path_utf8(arch), data, st.m_uncomp_size, ent.name, &id);
+                    if (!ok && id.ps1) { mz_zip_reader_end(&za); std::fclose(zf); return false; }
+                }
+                mz_zip_reader_end(&za);
+            }
+            std::fclose(zf);
+        }
+    }
+    if (!ok && inner_ext == ".iso") {
         auto head = std::make_shared<std::string>();
         if (tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(ent.name), 4u << 20, 60000, head.get()) && head->size() > 0x10000)
             ok = hub::ps2::identify_buffer(head, &id);
