@@ -21,6 +21,7 @@ struct LobbyClient::Impl {
     int attempts = 0;
     uint32_t retry_at = 0;
     bool waiting_retry = false;
+    std::string ident;   // see set_ident_msg
 };
 static const int kMaxReconnects = 6;
 
@@ -46,6 +47,8 @@ bool LobbyClient::start(const std::string& server, const std::string& code, bool
     net_log("Lobby: connecting %s", url.c_str());
     return d.ws.connect(url);
 }
+
+void LobbyClient::set_ident_msg(const std::string& json_frame) { impl_->ident = json_frame; }
 
 void LobbyClient::stop()
 {
@@ -125,6 +128,7 @@ bool LobbyClient::handle_text(const std::string& text)
             d.slot = (int)j.i64("slot", -1);
             d.status = "connected";
             net_log("Lobby: welcome slot %d", d.slot);
+            if (!d.ident.empty()) d.ws.send_text(d.ident);
         } else if (type == "members") {
             d.members.clear();
             if (const Json* a = j.get("members"))
