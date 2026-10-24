@@ -1,4 +1,6 @@
 #include "netplay_3ds.h"
+#include <fstream>
+#include <iterator>
 
 namespace hubnp3ds {
 
@@ -110,6 +112,83 @@ bool Reassembler::add(int from, const uint8_t* f, size_t len, uint32_t now, std:
     for (auto& s : p.piece) *whole += s;
     parts_.erase(key);
     return true;
+}
+
+}  // namespace hubnp3ds
+
+namespace hubnp3ds {
+
+std::string mute_config(const std::string& in) {
+    std::string t = in;
+    auto set = [&](const char* sec, const char* key, const char* v) {
+        t = hubui::ini_set(t, sec, std::string(key) + "\\default", "false");
+        t = hubui::ini_set(t, sec, key, v);
+    };
+    set("Audio", "output_type", "1");
+    set("Audio", "volume", "0");
+    set("UI", "confirmClose", "false");
+    set("UI", "check_for_update_on_start", "false");
+    set("UI", "firstStart", "false");
+    set("UI", "showConsole", "false");
+    return t;
+}
+
+}  // namespace hubnp3ds
+
+namespace hubnp3ds {
+
+/* The 3DS username lives in the config savegame (NAND sysdata 00010017), block 0x000A0000: char16_t[10] + 8 bytes.
+ * Layout: u16 entry count, u16 data start, then {u32 id, u32 offset-or-data, u16 size, u16 flags} entries. */
+std::string console_username(const std::string& player, int slot) {
+    std::string s;
+    for (unsigned char c : player)
+        if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '_' || c == '-') s += (char)c;
+        else if (c == ' ') s += '_';
+    if (s.size() > 8) s.resize(8);
+    std::string suf = "_" + std::to_string(slot < 0 ? 0 : slot % 10);
+    s += suf;
+    while (s.size() < 4) s.insert(s.size() - suf.size(), "x");
+    return s;
+}
+
+static uint32_t rd32(const std::vector<uint8_t>& b, size_t o) { return b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | ((uint32_t)b[o + 3] << 24); }
+
+bool set_console_username(std::vector<uint8_t>* cfg, const std::string& name) {
+    std::vector<uint8_t>& b = *cfg;
+    if (b.size() < 4 || name.empty() || name.size() > 10) return false;
+    size_t n = b[0] | (b[1] << 8);
+    if (4 + n * 12 > b.size()) return false;
+    for (size_t i = 0; i < n; ++i) {
+        size_t e = 4 + i * 12;
+        if (rd32(b, e) != 0x000A0000) continue;
+        size_t off = rd32(b, e + 4), size = b[e + 8] | (b[e + 9] << 8);
+        if (size < 20 || off + size > b.size()) return false;
+        for (size_t k = 0; k < 10; ++k) {
+            uint8_t c = k < name.size() ? (uint8_t)name[k] : 0;
+            b[off + k * 2] = c;
+            b[off + k * 2 + 1] = 0;
+        }
+        return true;
+    }
+    return false;
+}
+
+std::string console_config_path(const std::string& install_dir) {
+    return install_dir + "\\user\\nand\\data\\00000000000000000000000000000000\\sysdata\\00010017\\00000000\\config";
+}
+
+bool set_console_username_file(const std::string& install_dir, const std::string& name) {
+    std::string p = console_config_path(install_dir);
+    std::vector<uint8_t> b;
+    {
+        std::ifstream f(p, std::ios::binary);
+        if (!f) return false;
+        b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    if (!set_console_username(&b, name)) return false;
+    std::ofstream o(p, std::ios::binary | std::ios::trunc);
+    o.write((const char*)b.data(), (std::streamsize)b.size());
+    return (bool)o;
 }
 
 }  // namespace hubnp3ds
