@@ -55,6 +55,7 @@ std::string thumb_repo(const std::string& s) {
     if (s == "3ds") return "Nintendo_-_Nintendo_3DS";
     if (s == "wiiu") return "Nintendo_-_Wii_U";
     if (s == "nds") return "Nintendo_-_Nintendo_DS";
+    if (s == "ps2") return "Sony_-_PlayStation_2";
     return "";
 }
 

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "pcsx2.h"
 
 /* ---------- Settings ---------- */
 
@@ -88,17 +89,33 @@ void page_settings() {
     {
         std::string wiiu_game;
         for (auto& g : A.lib) if (g.system == hub::System::WiiU) { wiiu_game = g.path; break; }
-        static hubemu::Install az, cm, dl;   // the lookups touch the disk: refresh every 2 s, not every frame
+        static hubemu::Install az, cm, dl, ps;
+        static hubemu::Bios bi;   // the lookups touch the disk: refresh every 2 s, not every frame
         static double looked_at = -100;
         static std::string looked_cemu;
-        if (ImGui::GetTime() - looked_at > 2.0 || looked_cemu != A.st.cemu_exe) {
+        if (ImGui::GetTime() - looked_at > 2.0 || looked_cemu != A.st.cemu_exe + A.st.ps2_bios_dir) {
             az = hubemu::find(hubemu::Kind::Azahar, "", "");
             dl = hubemu::find(hubemu::Kind::Dolphin, "", "");
+            ps = hubemu::find(hubemu::Kind::Pcsx2, "", "");
+            bi = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
             cm = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, wiiu_game);
             looked_at = ImGui::GetTime();
-            looked_cemu = A.st.cemu_exe;
+            looked_cemu = A.st.cemu_exe + A.st.ps2_bios_dir;
         }
         text_wrapped_disabled("Dolphin (GameCube): " + (dl.exe.empty() ? std::string("not installed - downloads the first time you play a GameCube game (about 18 MB)") : dl.exe));
+        text_wrapped_disabled("PCSX2 (PlayStation 2): " + (ps.exe.empty() ? std::string("not installed - downloads the first time you play a PS2 game (about 25 MB)") : ps.exe));
+        {
+            text_wrapped_disabled(bi.file.empty() ? std::string("PS2 BIOS: not found - put your own scph*.bin in a BIOS folder next to your games, or choose the folder below")
+                                                   : "PS2 BIOS: " + bi.dir + "\\" + bi.file);
+            if (button("Choose PS2 BIOS folder...", ImVec2(0, 0), false, true, ui::Icon::Folder)) {
+                std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+                if (!p.empty()) { A.st.ps2_bios_dir = p; mark_dirty(); }
+            }
+            if (!A.st.ps2_bios_dir.empty()) {
+                ImGui::SameLine();
+                if (button("Use automatic##ps2bios", ImVec2(0, 0))) { A.st.ps2_bios_dir.clear(); mark_dirty(); }
+            }
+        }
         text_wrapped_disabled("Azahar (3DS): " + (az.exe.empty() ? std::string("not installed - downloads the first time you play a 3DS game (about 42 MB)") : az.exe));
         text_wrapped_disabled("Cemu (Wii U): " + (cm.exe.empty() ? std::string("not found - downloads the first time you play a Wii U game (about 25 MB)") : cm.exe + "  (" + cm.how + ")"));
         if (button("Choose Cemu.exe...", ImVec2(0, 0), false, true, ui::Icon::Folder)) {

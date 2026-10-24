@@ -18,10 +18,10 @@
 
 namespace hubemu {
 
-enum class Kind { Azahar, Cemu, Dolphin };
+enum class Kind { Azahar, Cemu, Dolphin, Pcsx2 };   // Pcsx2: PlayStation 2 (pcsx2.h)
 
 const char* name(Kind k);                 // "Azahar" / "Cemu" / "Dolphin"
-Kind kind_for(hub::System s);             // N3DS -> Azahar, WiiU -> Cemu, GC -> Dolphin
+Kind kind_for(hub::System s);             // N3DS -> Azahar, WiiU -> Cemu, GC -> Dolphin, PS2 -> Pcsx2
 /* Pinned release: version, archive URL, exact size and SHA-256 (checked after the download). */
 struct Release {
     const char* version;
@@ -157,6 +157,10 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
                           const std::string& vault_root);
 /* After exit: emulator -> vault. */
 void end_session(SaveSession& s);
+
+/* PCSX2 memory card folder (relative to the install dir) for a game: synced with <vault>\ps2\<game>attery around a session. */
+std::string pcsx2_card_dir_rel(const std::string& game_key);   // "memcards/RetroHub/<key>"
+std::string pcsx2_safe_key(const std::string& game_key);
 
 /* True when a process with this exe's file name is already running (a new launch would hand over to it). */
 bool is_running(const std::string& exe);

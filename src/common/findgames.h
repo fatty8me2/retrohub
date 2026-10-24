@@ -12,7 +12,7 @@
 
 namespace hub { namespace fg {
 
-enum Sys { N64, GC, GBA, GB, GBC, NDS, N3DS, WIIU, kSysCount };
+enum Sys { N64, GC, GBA, GB, GBC, NDS, N3DS, WIIU, PS2, kSysCount };
 const char* sys_label(int s);                       // "N64", "GameCube", ...
 /* Lower-case extension with the dot: a Sys value, kArchive for .zip/.7z, or kNone. */
 constexpr int kNone = -1, kArchive = -2;
