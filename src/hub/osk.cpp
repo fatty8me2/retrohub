@@ -26,6 +26,7 @@ struct State {
     float hold_t[C_N] = {};
     std::vector<int> shot_cmds;
     double shot_t = 0;
+    std::vector<int> inject_q;
     bool saved = false;
     ImGuiConfigFlags saved_flags = 0;
 } S;
@@ -74,6 +75,10 @@ std::vector<int> gather_cmds() {
     if (!S.armed) {   // ignore the press that opened us until every button is up
         if (m == 0 && !ImGui::IsKeyDown(ImGuiKey_Enter)) S.armed = true;
         out.clear();
+    }
+    if (S.armed && !S.inject_q.empty()) {
+        out.push_back(S.inject_q.front());
+        S.inject_q.erase(S.inject_q.begin());
     }
     if (S.armed && !S.shot_cmds.empty() && ImGui::GetTime() > 1.5 && ImGui::GetTime() - S.shot_t > 0.3) {
         out.push_back(S.shot_cmds.front());
@@ -243,7 +248,7 @@ void draw_folder() {
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav;
     bool vis = ImGui::BeginPopupModal(FB_POPUP, nullptr, wf);
     ImGui::PopStyleVar(2);
-    if (!vis) { S.fb_open = false; return; }
+    if (!vis) { shot_trace("osk-folder-hidden", "frame " + std::to_string(ImGui::GetFrameCount())); S.fb_open = false; return; }
     S.last_drawn = ImGui::GetFrameCount();
     FolderBrowser& fb = S.fb;
 
@@ -345,9 +350,11 @@ void open_text(ImGuiID owner, Kind kind, const char* hint, const char* text, siz
 bool input(const char* id, const char* hint, char* buf, size_t size, ImGuiInputTextFlags flags, Kind kind) {
     bool r = hint ? ImGui::InputTextWithHint(id, hint, buf, size, flags) : ImGui::InputText(id, buf, size, flags);
     const ImGuiID wid = ImGui::GetItemID();
-    if (!S.open && !S.fb_open && ImGui::IsItemActivated()) {
+    /* ImGui activates a nav-focused InputText on Enter only (A is a "tap"), so A on the focused field opens the keyboard itself. */
+    const bool pad_a = A.pad_mode && ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_NavEnableGamepad;
+    if (!S.open && !S.fb_open && (ImGui::IsItemActivated() || pad_a)) {
         bool mouse = ImGui::IsItemHovered() && ImGui::IsMouseClicked(0);
-        if (should_open(A.pad_mode, S.kb_seen, mouse)) {
+        if (pad_a || should_open(A.pad_mode, S.kb_seen, mouse)) {
             ImGui::ClearActiveID();
             open_text(wid, kind, hint, buf, size, flags);
             r = false;
@@ -398,6 +405,15 @@ std::string folder(const char* tag, bool clicked) {
 void note_keyboard() { S.kb_seen = true; }
 bool keyboard_seen() { return S.kb_seen; }
 bool is_open() { return S.open || S.fb_open; }
+bool inject(const char* tok) {
+    if (!is_open()) return false;
+    static const char* names[] = {"up", "down", "left", "right", "a", "b", "x", "y", "start", "back", "lb", "rb"};
+    std::string t = tok;
+    if (t == "view") t = "back";
+    for (int i = 0; i < C_N; ++i) if (t == names[i]) S.inject_q.push_back(i);
+    return true;
+}
+std::string shot_text() { return S.open ? S.ses.ed.text : std::string(); }
 
 void pre_frame(ImGuiIO& io) {
     if ((S.open || S.fb_open) && ImGui::GetFrameCount() - S.last_drawn > 3) {   // nobody is drawing us any more

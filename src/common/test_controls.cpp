@@ -412,7 +412,20 @@ static void test_exit_combo_and_cursor() {
     CHECK(pc.px() == 32767 && pc.py() == 32767);    // clamped
 }
 
+static void test_canonical_name() {
+    hubctl::Store st;
+    CHECK(hubctl::resolve(st, "n64", "smash64").name == "default-n64");
+    hubctl::edit_profile(st, "n64", "");   // opening the page creates "n64-custom" as a copy of the default
+    hubctl::Profile p = hubctl::resolve(st, "n64", "smash64");
+    CHECK(p.name == "n64-custom");
+    CHECK(hubctl::canonical_name(p).name == "default-n64");
+    std::string err;
+    CHECK(hubctl::set_mapping(st, "n64", "", "z", "rightshoulder", &err));
+    CHECK(hubctl::canonical_name(hubctl::resolve(st, "n64", "smash64")).name == "n64-custom");
+}
+
 int main() {
+    test_canonical_name();
     test_exit_combo_and_cursor();
     test_pad_sync_and_unique();
     test_port_assign();
