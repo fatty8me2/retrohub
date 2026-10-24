@@ -11,9 +11,10 @@ $script:fail = 0
 function Run($name, $pad, $extra = @{}) {
   $trace = Join-Path $Out "$name.trace"
   Remove-Item $trace -ErrorAction SilentlyContinue
+  Remove-Item (Join-Path $root "build\bin\Release\userdata\hub.json") -ErrorAction SilentlyContinue   # worktree-local settings: every run starts fresh
   $set = @{ RETROHUB_NO_SHELL = "1"; SSB64_MUTE = "1"; RETRORUN_MUTE = "1"; N64RUN_MUTE = "1"; HUB_SCREENSHOT = (Join-Path $Out "$name.bmp");
-            HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_NOWAIT = "1"; HUB_SHOT_SECS = "3"; HUB_SHOT_FAKE_LIB = "14"; HUB_SHOT_PAD = $pad; HUB_SHOT_TRACE = $trace }
-  foreach ($k in $extra.Keys) { $set[$k] = $extra[$k] }
+            HUB_SHOT_SIZE = $(if ($extra.ContainsKey("SIZE")) { $extra["SIZE"] } else { "1280x800" }); HUB_SHOT_NOWAIT = "1"; HUB_SHOT_SECS = "3"; HUB_SHOT_FAKE_LIB = "14"; HUB_SHOT_PAD = $pad; HUB_SHOT_TRACE = $trace }
+  foreach ($k in $extra.Keys) { if ($k -ne "SIZE") { $set[$k] = $extra[$k] } }
   foreach ($k in $set.Keys) { Set-Item "env:$k" $set[$k] }
   $p = Start-Process $exe -PassThru -WindowStyle Hidden
   if (-not $p.WaitForExit(120000)) { $p.Kill() }
@@ -21,8 +22,8 @@ function Run($name, $pad, $extra = @{}) {
   $rows = @()
   if (Test-Path $trace) {
     foreach ($l in Get-Content $trace) {
-      if ($l -match '^pad (\S+) page=(\S+) popup=(\d) friends=(\d) nav=([0-9a-f]+) at=(-?\d+),(-?\d+) win=(.*)$') {
-        $rows += [pscustomobject]@{ tok = $Matches[1]; page = $Matches[2]; popup = [int]$Matches[3]; friends = [int]$Matches[4]; nav = $Matches[5]; x = [int]$Matches[6]; y = [int]$Matches[7]; win = $Matches[8] }
+      if ($l -match '^pad (\S+) page=(\S+) popup=(\d) friends=(\d) nav=([0-9a-f]+) at=(-?\d+),(-?\d+) osk=(\d) wiz=(-?\d+) name=\[(.*?)\] oskt=\[(.*?)\] sy=(\S+) win=(.*)$') {
+        $rows += [pscustomobject]@{ tok = $Matches[1]; page = $Matches[2]; popup = [int]$Matches[3]; friends = [int]$Matches[4]; nav = $Matches[5]; x = [int]$Matches[6]; y = [int]$Matches[7]; osk = [int]$Matches[8]; wiz = [int]$Matches[9]; name = $Matches[10]; oskt = $Matches[11]; sy = $Matches[12]; win = $Matches[13] }
       }
     }
   }
@@ -89,6 +90,53 @@ Check "B closes Add games" ($rows[-1].popup -eq 0 -and $rows[-1].nav -ne "000000
 $r = Run "room" "down,right,down,down,down" @{ HUB_SHOT_FAKE_ROOM = "1"; HUB_SHOT_ROOM_N = "3" }
 $d = Distinct $r.rows
 Check "room page reachable" ($d -ge 3) "distinct=$d"
+
+# 9. Setup wizard, pad only: every step, a name typed on the on-screen keyboard (B deletes there, never goes back), finish
+$typed = "a,shot:w_controller,a,shot:w_games,a,shot:w_name,up,up,a,shot:w_osk," + ((1..12 | ForEach-Object { "b" }) -join ",") + ",down,a,down,a,shot:w_typed,start,shot:w_after,down,down,a,shot:w_done,a"
+$r = Run "wizard" $typed @{ HUB_SHOT_WIZARD = "welcome"; HUB_SHOT_FAKE_PAD = "1" }
+$rows = @($r.rows)
+$steps = ($rows | Where-Object { $_.tok -eq "a" } | ForEach-Object { $_.wiz }) -join ","
+Check "wizard steps by A only" ($steps -like "1,2,3,*4,-1") $steps
+$open = @($rows | Where-Object { $_.tok -eq "a" -and $_.osk -eq 1 })[0]
+Check "A on the name field opens the keyboard" ($null -ne $open -and $open.wiz -eq 3) "no osk row"
+$ob = @($rows | Where-Object { $_.tok -eq "b" -and $_.osk -eq 1 })
+Check "B in the keyboard deletes, never goes back" ($ob.Count -ge 5 -and @($ob | Where-Object { $_.wiz -ne 3 -or $_.page -ne "library" }).Count -eq 0) "rows=$($ob.Count)"
+$st = @($rows | Where-Object { $_.tok -eq "start" })[0]
+Check "Start closes the keyboard with the typed name" ($st.osk -eq 0 -and $st.name -eq "qa" -and $st.wiz -eq 3) "osk=$($st.osk) name=$($st.name) wiz=$($st.wiz)"
+$field = @($rows | Where-Object { $_.tok -eq "up" })[-1].nav
+Check "focus returns to the name field" ($st.nav -eq $field -and $st.nav -ne "00000000") "nav=$($st.nav) field=$field"
+$dn = @($rows | Where-Object { $_.tok -eq "down" })[-2]
+Check "pad nav resumes after the keyboard" ($dn.nav -ne $field -and $dn.osk -eq 0) "nav=$($dn.nav)"
+Check "wizard finishes" (@($rows)[-1].wiz -eq -1) "wiz=$(@($rows)[-1].wiz)"
+
+# 10. Customize... goes to Controllers and B comes back to the same wizard step
+$r = Run "wiz_customize" "a,up,right,a,shot:w_cust,b,shot:w_back" @{ HUB_SHOT_WIZARD = "welcome"; HUB_SHOT_FAKE_PAD = "1" }
+$rows = @($r.rows)
+$c = @($rows | Where-Object { $_.tok -eq "a" })[1]
+Check "Customize opens Controllers, setup stays open" ($c.page -eq "controllers" -and $c.wiz -eq -2) "page=$($c.page) wiz=$($c.wiz)"
+$bk = @($rows | Where-Object { $_.tok -eq "shot:w_back" })[0]   # the b row itself is sampled before the wizard seeds its focus
+Check "B returns to the wizard controller step" ($bk.wiz -eq 1 -and $bk.nav -ne "00000000") "wiz=$($bk.wiz) nav=$($bk.nav)"
+
+# 11. LT / RT scroll whole pages (short window so they overflow) and the focus follows
+foreach ($pg in @(@("controllers", "rb,rb,rb"), @("settings", "rb,rb,rb,rb"), @("saves", "rb,rb"))) {
+  $r = Run "scroll_$($pg[0])" "$($pg[1]),down,rt,rt,lt,lt" @{ SIZE = "1280x500" }
+  $rows = @($r.rows)
+  $sc = @($rows | Where-Object { $_.tok -in @("rt", "lt") } | ForEach-Object { if ($_.sy -match '^(\d+)/') { [int]$Matches[1] } else { -1 } })
+  Check "LT/RT scroll $($pg[0])" ($sc.Count -eq 4 -and $sc[1] -gt $sc[0] -and $sc[3] -lt $sc[2] -and $sc[1] -gt 0) ($sc -join ",")
+  Check "focus stays on the page after LT/RT ($($pg[0]))" (@($rows | Where-Object { $_.tok -in @("rt", "lt") -and $_.win -notlike "*page_*" }).Count -eq 0) "focus left the page"
+}
+
+# 12. PlayStation BIOS prompts: A opens the pad folder browser, Back closes it, B closes the prompt
+foreach ($b in @("ps1bios", "ps2bios")) {
+  $r = Run "bios_$b" "shot:b0,down,left,a,shot:b_browser,back,shot:b_prompt,b,shot:b_closed" @{ HUB_SHOT_EMU = $b }
+  $rows = @($r.rows)
+  $a = @($rows | Where-Object { $_.tok -eq "a" })[0]
+  Check "${b}: A opens the folder browser" ($a.osk -eq 1) "osk=$($a.osk)"
+  $bk = @($rows | Where-Object { $_.tok -eq "back" })[0]
+  Check "${b}: Back closes the browser, prompt stays" ($bk.osk -eq 0 -and $bk.popup -eq 1) "osk=$($bk.osk) popup=$($bk.popup)"
+  $bb = @($rows | Where-Object { $_.tok -eq "b" })[0]
+  Check "${b}: B closes the prompt" ($bb.popup -eq 0 -and $bb.nav -ne "00000000") "popup=$($bb.popup) nav=$($bb.nav)"
+}
 
 Add-Type -AssemblyName System.Drawing
 Get-ChildItem "$Out\*.bmp" | ForEach-Object { $i = [System.Drawing.Image]::FromFile($_.FullName); $png = $_.FullName -replace '\.bmp$', '.png'; $i.Save($png, [System.Drawing.Imaging.ImageFormat]::Png); $i.Dispose() }

@@ -22,5 +22,7 @@ void pre_frame(ImGuiIO& io);           // before NewFrame: suspends ImGui nav wh
 void draw_root();                      // screenshot driver only (root-level popup)
 void shot_init();                      // HUB_SHOT_OSK=text|code|room|symbols[:initial]  HUB_SHOT_OSK=folder[:path]  HUB_SHOT_OSK_CMDS=right,a,...
 bool is_open();
+bool inject(const char* tok);          // headless QA: feed a pad token (up,down,left,right,a,b,x,y,start,back/view,lb,rb) to the open keyboard; false = not open
+std::string shot_text();               // current text of the open keyboard ("" when closed)
 
 } // namespace osk

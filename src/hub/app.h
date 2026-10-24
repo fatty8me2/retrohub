@@ -654,6 +654,7 @@ void find_games_open();   // start the scan + checklist modal (first run, Settin
 void find_games_shutdown();   // cancel + join a running scan (call at app exit)
 void draw_find_games();   // call every frame
 void wizard_open();   // first-run setup wizard (Welcome, Controller, Games, Name); Settings > Run setup again
+int wizard_state();   // HUB_SHOT_TRACE: -1 closed, -2 away on the Controllers page, else the step index
 void draw_wizard();   // call every frame; also decides the first-run auto-open
 
 /* ---- add_games_ui.cpp: upload your own ROMs (copied into the games folder, sorted by console) ---- */
@@ -672,6 +673,8 @@ void add_games_shutdown();                                    // app exit: cance
 void poll_emulators();
 void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states);   // ps1_ui.cpp
 void draw_ps1_dialogs();
+void ps1_bios_ask_shot();   // screenshot aid
+void ps2_bios_ask(const std::string& key);   // ps1_ui.cpp: "PlayStation 2 BIOS" prompt (pad-friendly folder choice)
 void ps1_settings_ui();
 void emu_modal_begin(const char* name, bool* open_flag);
 void emu_modal_begin(const char* name, bool* open_flag);

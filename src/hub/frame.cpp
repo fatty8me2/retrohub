@@ -184,6 +184,7 @@ void global_input() {
     if (!A.focused || A.proc) return;
     if (ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
     if (io.WantTextInput) return;
+    if (wizard_state() >= 0) return;   // the setup wizard owns the pad (its own B / Back / Next); Menu must not toggle the friends panel behind it
     if (A.popup_last_frame && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) return;   // that B just closed a menu/modal: not also "back"
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) && fr_invite_toast_visible()) fr_join_invite_toast();   // Start joins a pending invite
     else if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
