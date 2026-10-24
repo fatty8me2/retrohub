@@ -1,3 +1,4 @@
+#include <sstream>
 #include "app.h"
 
 /* ============================ main ============================ */
@@ -101,6 +102,16 @@ void ShotDriver::init(const char* shot_path) {
         }
         if (const char* pd = std::getenv("HUB_SHOT_PAD")) A.pad_mode = std::atoi(pd) != 0;
     }
+    if (const char* cl = std::getenv("HUB_SHOT_CLICK"); cl && shot_path) {
+        std::string all = cl, tok;
+        std::stringstream css(all);
+        while (std::getline(css, tok, ';')) {
+            int b = 0;
+            if (!tok.empty() && (tok[0] == 'r' || tok[0] == 'R')) { b = 1; tok.erase(0, 1); }
+            float x, y;
+            if (std::sscanf(tok.c_str(), "%f,%f", &x, &y) == 2) clicks.push_back({x, y, b});
+        }
+    }
     wheel = shot_path && std::getenv("HUB_SHOT_WHEEL") &&
             std::sscanf(std::getenv("HUB_SHOT_WHEEL"), "%f,%f,%f", &wx, &wy, &wn) == 3;
 }
@@ -117,6 +128,14 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
             last_key = el;
         }
     }
+    if (click_i < clicks.size() && A.scanned_once && el > std::max(2.0, secs - 1.5) && el - click_t > 0.35) {
+        const Click& c = clicks[click_i];
+        if (click_stage == 0) io.AddMousePosEvent(c.x, c.y);
+        else if (click_stage == 1) io.AddMouseButtonEvent(c.btn, true);
+        else { io.AddMouseButtonEvent(c.btn, false); ++click_i; }
+        click_stage = (click_stage + 1) % 3;
+        click_t = el;
+    }
     if (wheel && wheel_stage == 0 && A.scanned_once && el > std::max(2.0, secs - 2.0)) {
         io.AddMousePosEvent(wx, wy);   // window pixels
         wheel_stage = 1;
@@ -128,6 +147,6 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
 }
 
 bool ShotDriver::ready() const {
-    return el >= secs && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down &&
+    return el >= secs && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
            (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5));
 }
