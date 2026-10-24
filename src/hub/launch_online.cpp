@@ -69,12 +69,14 @@ bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
 }
 
 bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
+    autotest_log(std::string("gc_begin request ") + (host ? "host" : "guest") + " slot " + std::to_string(slot));
     if (GCO.active && gc_process_alive()) { set_notice("A GameCube online session is already running."); return false; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Dolphin, "", "");
     if (inst.exe.empty()) { set_notice("Dolphin isn't installed yet - start any GameCube game once so RetroHub can download it."); return false; }
     std::string game = launch_path_for(e);
     if (game.empty() || gc_needs_unpack(e)) { set_notice("Unpack " + e.title + " first."); return false; }
-    if (hubemu::is_running(inst.exe)) { set_notice("Dolphin is already running. Close it first."); return false; }
+    /* is_running() matches by image name, so on one PC (RETROHUB_AUTOTEST: several RetroHubs, each with its own Dolphin) it would always refuse the 2nd player. */
+    if (!autotest_active() && hubemu::is_running(inst.exe)) { set_notice("Dolphin is already running. Close it first."); return false; }
     if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
     hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
     { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }   // managed config: no update check, no analytics, no panic alerts
@@ -129,6 +131,8 @@ void gc_stop_all() {
 void gc_tick() {
     if (GCO.fw.active()) {
         GCO.fw.update();
+        static std::string last_fw;
+        if (autotest_active() && GCO.fw.status() != last_fw) { last_fw = GCO.fw.status(); autotest_log("fw " + last_fw); }
         if (GCO.fw.failed()) {
             set_notice("GameCube online: " + GCO.fw.status(), 12.0);
             gc_kill();
@@ -164,6 +168,7 @@ void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_n
     GCO.guest_wait = true;
     GCO.host_ready = false;
     GCO.checked = false;
+    autotest_log("gc_guest_prepare launch " + std::to_string(launch_no));
     gc_prefetch(e);   // archive: unpack automatically; disc fingerprint in the background
     hubnp3ds::Plan plan;
     plan.port = s.port;
