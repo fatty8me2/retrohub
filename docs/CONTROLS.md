@@ -15,6 +15,28 @@ The keyboard is a pad of its own: `Profile::keys` maps control names (n64 also `
 - **Dolphin** follows the RetroHub port order. XInput pads stay `XInput/<n>/Gamepad` (numbered among XInput pads); every other pad (DualSense, Switch Pro, 8BitDo) is written as `SDL/<n>/<SDL name>` using Dolphin's SDL backend names (`Button S/E/W/N`, `Shoulder L/R`, `Pad N/S/W/E`, `Left X-`, `Trigger L` ...; `Y-` is up). With only XInput pads in order the file is byte-identical to before. The marker hash includes the device assignment, so changing the port order rewrites GCPadNew.ini once; otherwise edits made in Dolphin stay.
 - **Azahar** binds player 1's pad (first in the port order) as `guid:<guid>,port:<n-th pad with that guid>`; with no stored port order it still uses "any pad" (`maptype:all`).
 
+- **Cemu** (RetroHub's own managed download only; an existing Cemu install such as a hand-set-up `Cemu_2.6` folder is never written to) uses the XInput API. Player 1 = Wii U GamePad (`portable\controllerProfiles\controller0.xml`) on the first XInput pad of the port order; players 2-4 = Wii U Pro Controllers (`controller1-3.xml`) on the next XInput pads. Pads that are not XInput are skipped (Cemu's SDL API uses its own ids: map those in Cemu's input dialog). Pro Controller button ids reuse the GamePad table (first 24 ids), unverified against a running Cemu. Changing the port order rewrites the files; stale Pro files RetroHub wrote are removed.
+- Every launch path (offline `launch_external`, online 3DS/GC through the same prepare calls) regenerates from the Controllers page profile (per-game override first) whenever the profile hash or pad choice changed.
+
+## Default Xbox Series X mapping (works with no setup)
+Position-based where a console's face buttons differ from the Xbox layout (Nintendo A is the east button).
+
+| Xbox | N64 | GameCube | Wii U (GamePad/Pro) | 3DS | GB/GBA/DS (retro) |
+|---|---|---|---|---|---|
+| A (south) | A | A | B | B | B |
+| B (east) | B | X | A | A | A |
+| X (west) | B | B | Y | Y | Y |
+| Y (north) | B | Y | X | X | X |
+| LB / RB | L / R | - / Z (RB) | L / R | L / R | L / R |
+| LT / RT | Z / R | L / R (analog) | ZL / ZR | ZL / ZR | L2 / R2 |
+| Menu / View | Start / - | Start / - | + / - | Start / Select | Start / Select |
+| Left stick | stick | main stick | left stick | Circle Pad | D-pad (digital) |
+| Right stick | C buttons | C-stick | right stick | C-Stick | - |
+| D-pad | D-pad | D-pad | D-pad | D-pad | D-pad |
+| Deadzone | 0.08 | Dolphin default | 0.25 | 0.15 | - |
+
+Dolphin also writes `Rumble/Motor` for all four ports and `SIDevice0-3` (pad present per port). Any change on the Controllers page (remap, deadzone, port order, per-game override) changes the profile hash, so the next launch rewrites the emulator config.
+
 ## Stick sensitivity
 Applied by n64run to the N64 stick (deadzone + sensitivity). retrorun's cores are digital only (D-pad, buttons, triggers; no analog device is passed), so nothing there can use a sensitivity; the left stick acts as a D-pad through the `@threshold` of its terms. Dolphin, Cemu and Azahar configs only take a deadzone, so the page shows just the deadzone slider for those systems.
 
