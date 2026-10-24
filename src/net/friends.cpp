@@ -757,7 +757,17 @@ struct FriendsClient::Impl {
             std::string reason = j.str("reason", "error");
             if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) retire_done(j.str("uid"));   // can never succeed: stop resending
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
-            Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref");
+            Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref"); e.detail = j.str("detail");
+            push_event(std::move(e));
+        } else if (type == "invite_result") {
+            Event e; e.kind = Event::InviteResult;
+            if (const Json* a = j.get("results"))
+                for (const Json& r : a->a) {
+                    std::string u = r.str("uid");
+                    if (!is_b32(u, 26)) continue;
+                    if (r.boolean("ok")) e.ok_uids.push_back(u);
+                    else { e.failed_uids.push_back(u); e.failed_reasons.push_back(r.str("reason", "undeliverable")); }
+                }
             push_event(std::move(e));
         }
         return false;

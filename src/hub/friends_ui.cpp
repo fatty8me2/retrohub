@@ -291,7 +291,7 @@ void fr_invite_uids(const std::vector<std::string>& uids) {
         FR.invited_at[u] = now;
         if (const hubnet::Friend* f = fr_find(u)) { if (!names.empty()) names += ", "; names += f->name; }
     }
-    set_toast("Invited " + names + " to room " + A.code + ".");
+    if (FR.fake) set_toast("Invited " + names + " to room " + A.code + ".");   // live: the server's invite_result reports who was reached
 }
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who) {
     if (!hubnet::valid_room_code(code)) { set_notice("That lobby code is not valid any more."); return; }
@@ -299,9 +299,11 @@ void fr_join_lobby(const std::string& code, const std::string& game_id, const st
         if (hubui::join_while_running(A.in_room && A.code == code) == hubui::JoinWhileRunning::AlreadyInRoom) {
             FR.pending_join = {}; set_notice("You are already in that room."); return;
         }
+        std::string msg = (!FR.pending_join.code.empty() && FR.pending_join.code != code)
+            ? hubui::queued_join_replaced_text(FR.pending_join.name, who) : hubui::queued_join_text(who);
         FR.pending_join = {code, game_id, title, who};
-        set_notice(hubui::queued_join_text(who), 20.0);
-        set_toast(hubui::queued_join_text(who), true, 6.0);
+        set_notice(msg, 20.0);
+        set_toast(msg, true, 6.0);
         return;
     }
     FR.pending_join = {};
@@ -344,15 +346,7 @@ int fr_pending_count() {
 }
 bool fr_panel_shown() { return A.st.show_friends && FR.panel_t > 0.5f; }
 
-std::string fr_error_text(const std::string& r) {
-    if (r == "unknown-code") return "No player has that friend code.";
-    if (r == "self") return "That is your own friend code.";
-    if (r == "already-friends") return "You are already friends.";
-    if (r == "not-friends") return "You can only do that with friends.";
-    if (r == "rate-limited") return "Slow down a little - too many requests.";
-    if (r == "blocked") return "That player is blocked.";
-    return "Friends: " + r;
-}
+std::string fr_error_text(const std::string& r, const std::string& detail) { return hubui::friends_error_text(r, detail); }
 
 /* Presence derived from the hub state. */
 hubnet::Status fr_desired_status() {
@@ -448,8 +442,17 @@ void fr_tick() {
                 if (!hubui::invite_expired(e.invite.expires_at, wall_ms())) fr_notify(true, e.uid, e.name, e.invite);
                 break;
             case hubnet::Event::Error:
-                if (e.text != "bad-request") push_toast(fr_error_text(e.text), ui::WARN, 6.0);
+                if (e.name == "invite") break;   // reported per target by InviteResult
+                { std::string t = fr_error_text(e.text, e.detail); if (!t.empty()) push_toast(t, ui::WARN, 6.0); }
                 break;
+            case hubnet::Event::InviteResult: {
+                std::vector<std::string> okn, badn;
+                for (auto& u : e.ok_uids) if (const hubnet::Friend* f = fr_find(u)) okn.push_back(f->name);
+                for (auto& u : e.failed_uids) { FR.invited_at.erase(u); if (const hubnet::Friend* f = fr_find(u)) badn.push_back(f->name); }
+                std::string t = hubui::invite_result_text(okn, badn, e.failed_reasons.empty() ? std::string() : e.failed_reasons[0], A.code);
+                if (!t.empty()) set_toast(t);
+                break;
+            }
             default: break;
         }
     }
