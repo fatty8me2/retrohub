@@ -364,7 +364,7 @@ void kt_room_panel(float width, bool early) {
             }
         }
         ImGui::SetNextItemWidth(sp(22.f));
-        ImGui::InputTextWithHint("##ktcode", "Room code (10 characters)", KT.code_buf, sizeof KT.code_buf, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+        osk::input("##ktcode", "Room code (10 characters)", KT.code_buf, sizeof KT.code_buf, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank, osk::Kind::Code);
         ImGui::SameLine();
         std::string typed = kanto::normalize_code(KT.code_buf);
         if (button("Join with this code", ImVec2(sp(20.f), sp(5.f)), true, KT.fake || kanto::valid_code(typed))) {

@@ -19,7 +19,7 @@ void page_settings() {
     char nb[40];
     std::snprintf(nb, sizeof nb, "%s", A.st.name.c_str());
     ImGui::SetNextItemWidth(sp(40.f));
-    if (ImGui::InputText("##name", nb, 25)) { A.st.name = nb; mark_dirty(); }
+    if (osk::input("##name", nullptr, nb, 25)) { A.st.name = nb; mark_dirty(); }
     end_panel();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
@@ -44,7 +44,7 @@ void page_settings() {
         mark_dirty();
         start_scan();
     }
-    if (button("Add folder...", ImVec2(0, 0), false, true, ui::Icon::Plus)) add_rom_folder();
+    add_rom_folder(button("Add folder...", ImVec2(0, 0), false, true, ui::Icon::Plus));
     ImGui::SameLine();
     if (button("Find my games...", ImVec2(0, 0), false, !A.scanning, ui::Icon::Search)) find_games_open();
     ImGui::SameLine();
@@ -167,7 +167,7 @@ void page_settings() {
         std::snprintf(sb, sizeof sb, "%s", A.st.server.c_str());
         ImGui::TextUnformatted("Lobby server URL");
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputTextWithHint("##srv", hubnet::default_server(), sb, sizeof sb)) { A.st.server = sb; mark_dirty(); }
+        if (osk::input("##srv", hubnet::default_server(), sb, sizeof sb)) { A.st.server = sb; mark_dirty(); }
         ImGui::TextDisabled("Leave empty for the default server.");
     }
     end_panel();

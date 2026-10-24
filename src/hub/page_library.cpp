@@ -288,7 +288,7 @@ void empty_library_state() {
     }
     float bw = sp(24.f);
     ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
-    if (button("Add ROM folder", ImVec2(bw, sp(6.f)), true, true, ui::Icon::Folder)) add_rom_folder();
+    add_rom_folder(button("Add ROM folder", ImVec2(bw, sp(6.f)), true, true, ui::Icon::Folder));
     y += sp(7.f);
     ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
     if (button("Find my games...", ImVec2(bw, sp(4.5f)), false, !A.scanning, ui::Icon::Search)) find_games_open();
@@ -333,7 +333,7 @@ void library_top_bar() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(5.f), (bh - ImGui::GetFontSize()) * 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
     ImGui::SetNextItemWidth(std::max(sp(20.f), std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.45f)));
-    ImGui::InputTextWithHint("##search", "Search games   (Ctrl+F)", A.search_buf, sizeof A.search_buf);
+    osk::input("##search", "Search games   (Ctrl+F)", A.search_buf, sizeof A.search_buf);
     ImVec2 s0 = ImGui::GetItemRectMin(), s1 = ImGui::GetItemRectMax();
     ImGui::GetWindowDrawList()->AddRect(s0, s1, ImGui::IsItemActive() ? ui::ACCENT : ui::HAIRLINE, bh * 0.5f, 0, 1.f);
     ui::icon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(s0.x + sp(2.5f), (s0.y + s1.y) * 0.5f), sp(2.f), ui::TEXT2);
@@ -690,8 +690,8 @@ void sync_card() {
     }
     if (!sugg.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sugg[0].path.c_str());
     ImGui::SameLine(0, sp(1.f));
-    if (button("Choose folder...", ImVec2(0, 0), false, !busy)) {
-        std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+    {
+        std::string p = osk::folder("lib_sync", button("Choose folder...", ImVec2(0, 0), false, !busy));
         if (!p.empty()) {
             A.st.sync_folder = p;
             A.st.sync_auto = true;
@@ -731,7 +731,7 @@ void page_library() {
         ImGui::PopFont();
         text_wrapped_disabled("Only the bundled game is here. Point RetroHub at the folder(s) with your N64, GBA, GB, DS, 3DS and Wii U games and they all show up.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        if (button("Add ROM folder", ImVec2(0, 0), true, true, ui::Icon::Folder)) add_rom_folder();
+        add_rom_folder(button("Add ROM folder", ImVec2(0, 0), true, true, ui::Icon::Folder));
         static const std::vector<std::string> sugg2 = hub::suggest_rom_folders(2);
         for (const std::string& s : sugg2) {
             ImGui::SameLine(0, sp(1.f));

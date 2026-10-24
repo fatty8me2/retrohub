@@ -44,7 +44,7 @@ bool option_row(const hub::gs::Option& o, const std::string& cur, int src, int l
     } else {
         char buf[260];
         std::snprintf(buf, sizeof buf, "%s", cur.c_str());
-        if (ImGui::InputText("##v", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue)) { *out = buf; changed = true; }
+        if (osk::input("##v", nullptr, buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue)) { *out = buf; changed = true; }
     }
     if (src >= level) {
         ImGui::SameLine(0, sp(1.f));

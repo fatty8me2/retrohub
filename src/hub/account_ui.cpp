@@ -242,8 +242,8 @@ void draw_account_section() {
                                                            "instead of its own.");
     ImGui::SetNextItemWidth(sp(26.f));
     bool redeeming = AC.redeem_job != nullptr;
-    bool enter = ImGui::InputTextWithHint("##linkcode", "XXXX-XXXX", AC.redeem_buf, sizeof AC.redeem_buf,
-                                          ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_EnterReturnsTrue);
+    bool enter = osk::input("##linkcode", "XXXX-XXXX", AC.redeem_buf, sizeof AC.redeem_buf,
+                                          ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Code);
     ImGui::SameLine();
     if (button(redeeming ? "Checking..." : "Redeem code", ImVec2(0, 0), false, !redeeming && !g_headless && AC.redeem_buf[0] != 0) || enter) {
         if (!redeeming && AC.redeem_buf[0] != 0) start_redeem();

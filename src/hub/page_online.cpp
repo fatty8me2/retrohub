@@ -28,7 +28,7 @@ void page_online_home() {
     std::snprintf(buf, sizeof buf, "%s", A.join_buf.c_str());
     ImGui::PushFont(ui::F.h2);
     ImGui::SetNextItemWidth(w * 0.5f);
-    bool enter = ImGui::InputTextWithHint("##code", "ABC234", buf, 7, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_EnterReturnsTrue);
+    bool enter = osk::input("##code", "ABC234", buf, 7, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Room);
     ImGui::PopFont();
     A.join_buf = hubui::normalize_code(buf);
     bool valid = hubnet::valid_room_code(A.join_buf);
@@ -432,7 +432,7 @@ void page_online_room() {
     if (A.chat_scroll) { ImGui::SetScrollHereY(1.f); A.chat_scroll = false; }
     ImGui::EndChild();
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::InputTextWithHint("##chat", "Say something...", A.chat_buf, sizeof A.chat_buf, ImGuiInputTextFlags_EnterReturnsTrue)) {
+    if (osk::input("##chat", "Say something...", A.chat_buf, sizeof A.chat_buf, ImGuiInputTextFlags_EnterReturnsTrue)) {
         std::string t = A.chat_buf;
         A.chat_buf[0] = 0;
         if (!t.empty()) {

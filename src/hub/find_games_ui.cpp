@@ -191,8 +191,8 @@ static void find_games_modal() {
             close_flow(true);
         }
         if (any) ImGui::SameLine();
-        if (button("Add another folder...", ImVec2(sp(26.f), bsz.y), !any, true, ui::Icon::Plus)) {
-            std::string p = pick_path(A.hwnd, true, nullptr, nullptr);
+        {
+            std::string p = osk::folder("fg_extra", button("Add another folder...", ImVec2(sp(26.f), bsz.y), !any, true, ui::Icon::Plus));
             if (!p.empty()) { FG.extra.push_back(p); FG.extra_tick.push_back(1); }
         }
         ImGui::SameLine();
