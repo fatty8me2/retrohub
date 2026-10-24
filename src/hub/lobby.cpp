@@ -1,6 +1,8 @@
 #include "app.h"
 
 bool g_fake_room = false;
+bool g_shot_rejoin = false;
+std::string g_shot_rejoin_why;
 bool g_fake_other_host = false;   // HUB_SHOT_HOSTCHANGE=other: Mia (slot 0) is the host, we are slot 1
 
 /* ---------- lobby ---------- */
@@ -49,7 +51,17 @@ std::map<int, hubui::MemberPick> all_picks() {
 void send_my_pick() { A.lobby.send_msg(hubui::pick_json(A.my_pick)); }
 void send_rules() { A.lobby.send_msg(hubui::rules_json(A.rules)); }
 
+/* A game from this room ended (or never started): nobody stays "ready" for the next one, so the host cannot relaunch a rematch
+ * before the others are back, and the old ready flags are not mistaken for fresh ones. Everyone re-announces their own state. */
+void room_session_ended() {
+    if (!A.in_room) return;
+    A.my_ready = false;
+    A.ready.clear();
+    A.hello_dirty = true;
+}
+
 void leave_room() {
+    online_cancel_pending();
     kt_leave_room();
     A.lobby.stop();
     A.in_room = false;
@@ -185,6 +197,8 @@ void lobby_tick() {
             hubui::remap_slot_key(A.locals, ev.from_slot, 0);
             hubui::remap_slot_key(A.picks, ev.from_slot, 0);
             A.hello_dirty = true;
+            if (!A.proc) { online_cancel_pending(); kt_leave_room(); }   // a launch the departed host was preparing is void
+            A.my_ready = false;                                           // the new host-to-be picks again; nobody is stuck "ready" for the old host's game
             bool me = A.lobby.my_slot() == 0;
             if (me) A.room_role_host = true;
             A.chat.push_back({"", hubui::host_changed_text(ev.name, me)});
@@ -221,6 +235,11 @@ void lobby_tick() {
         } else if (kind == "rules") {
             hubui::MatchRules mr;
             if (from == 0 && !is_host() && hubui::parse_rules(j, &mr)) A.rules = mr;
+        } else if (kind == "np_abort") {   // the host could not start the game it announced: stop waiting for it
+            if (from == 0 && !is_host()) {
+                online_cancel_pending();
+                set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + j.str("reason")), 10.0);
+            }
         } else if (kind == "np_fail") {
             if (is_host()) set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0);
         } else if (kind == "np_gc_ready") {

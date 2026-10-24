@@ -84,7 +84,7 @@ void shelf_strip(const std::string& id, int count, float tw, float th, const std
     ImVec2 la(v1.x - bleed - shelf_arrows_w(), by), ra(v1.x - bleed - bs, by);
     bool over_arrow = false;   // arrows are outside the strip, so a press on a tile is never an arrow press
 
-    bool hov = ImGui::IsMouseHoveringRect(c0, c1) && ImGui::IsWindowHovered();
+    bool hov = ImGui::IsMouseHoveringRect(c0, c1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     // click-and-drag panning (a press that moves past the threshold becomes a drag; a plain click is untouched)
     if (max_scroll > 0) {
         if (hov && !over_arrow && ImGui::IsMouseClicked(0)) {

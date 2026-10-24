@@ -97,6 +97,7 @@ void poll_process() {
     }
     A.vault_dirty = true;
     A.info_at = -100;
+    room_session_ended();
     set_notice(A.proc_title + ": " + (code == 0 ? std::string("closed.") : hubui::exit_code_text(code)), 20.0);
     auto_sync();
 }

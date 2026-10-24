@@ -27,7 +27,7 @@ struct Kt {
     size_t sent_members = 0;
     kanto::Phase last_phase = kanto::Phase::Idle;
     bool howto = false, intro = false;
-    bool fake = false;
+    bool fake = false, fake_block = false;   // fake_block: screenshot aid, apply the real launch block to a fake session
     kanto::State fake_state;
     std::string peer_fail;        // host: "<friend> can't start Kanto Together: <reason>"
     std::string join_error;       // guest: the last join/start problem (panel offers Retry / a new code)
@@ -177,7 +177,7 @@ void kt_play(const hub::GameEntry& e) {
 
 std::string kt_launch_block(const hub::GameEntry& e) {
     (void)e;
-    if (KT.fake) return "";
+    if (KT.fake && !KT.fake_block) return "";
     int n = (int)room_members().size();
     if (n != 2) return "Kanto Together is for exactly 2 players (" + std::to_string(n) + " in the room)";
     if (A.proc || KT.sess.active()) return "In game...";
@@ -542,6 +542,7 @@ void kt_shot_init() {
         st.trade.note = "You confirmed. Waiting for your partner.";
     }
     if (s == "installing") { KT.fake_prog = 0.62f; KT.fake_prep = "Installing Kanto Together..."; KT.show_install = true; }
+    if (s == "block") KT.fake_block = true;   // with HUB_SHOT_ROOM_N=3: shows the "exactly 2 players" block reason
     if (s == "howto") KT.howto = true;
     if (s == "intro") KT.intro = true;
     if (s != "installing") { /* connected / trade etc. run a live (fake) session panel */ }
