@@ -151,6 +151,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         poll_process();
         poll_np3ds();
+        kt_tick();
         poll_job();
         run_pending_sync();
         poll_emulators();

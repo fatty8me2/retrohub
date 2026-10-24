@@ -268,6 +268,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
     A.st.last_game = room_id(e);
     mark_dirty();
+    if (is_kanto(e)) { kt_launch(e, launch_no, is_host); return; }
     if (e.system == hub::System::GC) {   // Dolphin NetPlay: the host starts now; guests start from the launch handler
         if (is_host) {
             gcnp::Spec s;

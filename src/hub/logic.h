@@ -38,6 +38,7 @@ struct Settings {
     bool notify_in_game = true;        // Windows toast for invites while a game is running
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
     bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
+    bool kt_intro_seen = false;        // Kanto Together: the "first session" guidance was shown once
     std::string cemu_exe;              // user-chosen Cemu.exe ("" = find an existing install, else download one)
 };
 std::string settings_to_json(const Settings& s);

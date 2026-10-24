@@ -1,0 +1,24 @@
+# Kanto Together in RetroHub
+
+Kanto Together is a two-player co-op ROM hack of Pokemon FireRed made by a friend of the user. RetroHub does **not** ship it: it is installed from the user's own zip (`KantoTogether-ROM-*.zip`, or an extracted `KantoTogether-ROM` folder) found in the ROM folders. The zip is only ever read.
+
+Credit: the hack, its Node launcher/relay protocol and `coop.lua` are the friend's work. Bundled third party code inside the package: mGBA (MPL 2.0), Node.js (MIT), `ws` (MIT); see `LICENSES.txt` in the installed package (Open licences button in the How to play sheet). The patch derives from pret/pokefirered and contains no Nintendo ROM.
+
+## Flow
+
+1. **Library**: `kanto::find_packages` (src/common/kanto.cpp) walks the ROM folders (names containing "kanto" only) and `kt_scan_append` adds one card, `gba:kanto-together`, "Kanto Together (FireRed co-op)", catalog id `kanto` (2 players, online, FireRed cover art).
+2. **First Play = Install**: `kanto::Prep` (worker thread) copies the package into `<data>\apps\KantoTogether` (progress; skips the package's own `rom\` and `saves\`; rejects unsafe paths), picks the user's FireRed from the library by SHA-1 (`41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc`, USA v1.0; clear messages for "no FireRed" / "wrong revision") and runs the package's `apply-patch.mjs --rom <that file>` hidden to build `rom\KantoTogether.gba` (verified against the manifest's target SHA-1). Play then points to the Online page.
+3. **Rooms**: select Kanto Together (exactly 2 players). The host's Launch sends the usual `launch` message and starts `node app\coop-launch.mjs host ...` **hidden** (`CREATE_NO_WINDOW`, piped stdin/stdout, kill-on-close job; mGBA's game window shows normally). The ROOM CODE is read from the output and sent to the guest with `{"kind":"np_kt","code":"..","launch":N}`; the guest's RetroHub runs `join CODE` by itself. A new code (host restarted, idle refresh) is forwarded again and the guest's RetroHub types `code NEWCODE` into the running launcher. Sound is on (`--unmute`). Closing the game ends the session.
+4. **Panels** (room page): connection status (starting / waiting / partner connected / reconnecting / partner away / failed) and a Trade panel: slot 1-6 sends `trade N`, the partner's offer is parsed from the output, Confirm/Cancel send `confirm`/`cancel`.
+5. **Saves**: mGBA writes to a staged folder (`<data>\netplay\kanto\saves`); before launch the vault's `*.sav` is copied in, after exit the staged `*.sav` goes back to the vault (`hub::saves::battery_dir("gba", "gba:kanto-together")`), newest wins, loser kept in `.kt-backup`. Each player has their own; the vault syncs across PCs.
+6. **Controllers**: mGBA uses its own keys and its built-in XInput pad profile. RetroHub's pad profile is not written into mGBA's config (the Qt binding format could not be verified without driving its UI).
+
+## Network
+
+The package connects to its relay only: `COOP_RELAY` env > first non-comment line of its `online-address.txt` > `wss://77.113.17.34/kanto-relay` (the maintainer's default; the shipped `online-address.txt` has no address). The relay only forwards game-state lines (position, party, trade messages); the bridge whitelists which line types may reach mGBA's Lua. RetroHub passes a free loopback port with `--lua-port` (the package default 8788 would clash). Overrides for tests: `RETROHUB_KT_RELAY` (becomes `COOP_RELAY`), `RETROHUB_KT_DESKTOP` (start everything on a named hidden desktop), `RETROHUB_KT_MUTE` / `RETRORUN_MUTE` (mute).
+
+## Tests
+
+- `hubkanto_test` (ctest): package detection, install, SHA-1, ROM pick, command lines, output parsing, saves.
+- `kanto_live` (manual): installs from the zip into a scratch dir, builds the game, runs a local relay (`qa\kanto_local_relay.mjs`, 127.0.0.1) + host + guest on a hidden desktop, muted, and waits for both sides to report "Your partner is connected".
+- `qa\kanto_shots.ps1`: headless screenshots (card, room status, trade panel, setup, how-to).

@@ -306,6 +306,7 @@ void play_entry(const hub::GameEntry& e) {
     mark_dirty();
     RunInfo ri = run_info_for(e, false);
     std::string sys = sys_short(e);
+    if (is_kanto(e)) { kt_play(e); return; }
     if (is_native(e)) {
         std::string exe = smash_exe_path();
         std::string o2r = dir_of(exe) + "BattleShip.o2r";

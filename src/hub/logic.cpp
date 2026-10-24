@@ -58,6 +58,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"cloud_saves\": " << (s.cloud_saves ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
+      << "  \"kt_intro_seen\": " << (s.kt_intro_seen ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json::escape(s.vault_dir) << "\",\n"
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
@@ -108,6 +109,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->cloud_saves = json_bool(j, "cloud_saves", out->cloud_saves);
     out->sync_card_dismissed = json_bool(j, "sync_card_dismissed", out->sync_card_dismissed);
     out->smash_save_notice_shown = json_bool(j, "smash_save_notice_shown", out->smash_save_notice_shown);
+    out->kt_intro_seen = json_bool(j, "kt_intro_seen", out->kt_intro_seen);
     out->vault_dir = j.str("vault_dir", out->vault_dir);
     out->download_art = json_bool(j, "download_art", out->download_art);
     out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));

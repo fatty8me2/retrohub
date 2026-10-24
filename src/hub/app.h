@@ -54,6 +54,7 @@
 #include "ui_kit.h"
 #include "game_settings.h"
 #include "launch_settings.h"
+#include "kanto.h"
 
 #ifndef HUB_VERSION_STR
 #define HUB_VERSION_STR "0.0.0"
@@ -474,6 +475,20 @@ void poll_np3ds();
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
                           const hubui::MatchSpec* host_match = nullptr, const std::string* launch_body = nullptr);
+
+/* ---- kanto_ui.cpp: Kanto Together (friend's FireRed co-op hack) ---- */
+bool is_kanto(const hub::GameEntry& e);
+void kt_scan_append(std::vector<hub::GameEntry>* out, const std::vector<std::string>& folders);   // scan thread
+void kt_play(const hub::GameEntry& e);                  // library Play: install + build, then point to a room (it is online only)
+void kt_tick();                                         // every frame: prep, host/guest session, code relay
+std::string kt_launch_block(const hub::GameEntry& e);   // "" = the host may press Launch, else the reason
+void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host);   // launch_online hook
+void kt_on_code(const std::string& code, int launch_no);                // lobby np_kt message (guest)
+void kt_room_panel(float width, bool early);   // early=true: drawn above the member cards while a session is live; false: below the game picker otherwise                        // status + trade panel in the room page
+void kt_draw_modals();                                  // install progress, "How to play" sheet, first-session note
+void kt_open_howto();
+void kt_leave_room();
+void kt_shot_init();                                    // HUB_SHOT_KT screenshot aid
 
 /* settings_games_ui.cpp: per-game settings (vault: _settings\game_settings.json) */
 extern hub::gs::Store GSTORE;

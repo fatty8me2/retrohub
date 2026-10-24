@@ -9,6 +9,7 @@ bool g_fake_other_host = false;   // HUB_SHOT_HOSTCHANGE=other: Mia (slot 0) is 
 bool room_connected() { return g_fake_room || A.lobby.connected(); }
 std::vector<hubnet::Member> room_members() {
     if (g_fake_room && g_fake_other_host) return {{0, "Mia"}, {1, A.st.name}, {2, "Jake"}};
+    if (g_fake_room && std::getenv("HUB_SHOT_KT")) return {{0, A.st.name}, {1, "Mia"}};   // Kanto Together screenshots: exactly 2 players
     if (g_fake_room) return {{0, A.st.name}, {1, "Mia"}, {2, "Jake"}};
     return A.lobby.members();
 }
@@ -41,6 +42,7 @@ void send_my_pick() { A.lobby.send_msg(hubui::pick_json(A.my_pick)); }
 void send_rules() { A.lobby.send_msg(hubui::rules_json(A.rules)); }
 
 void leave_room() {
+    kt_leave_room();
     A.lobby.stop();
     A.in_room = false;
     A.peers.clear();
@@ -163,6 +165,8 @@ void lobby_tick() {
         } else if (kind == "np_gc_ready") {
             autotest_log("np_gc_ready from " + std::to_string(from) + " guest_wait=" + std::to_string((int)GCO.guest_wait));
             if (from == 0 && !is_host() && GCO.guest_wait) GCO.host_ready = true;
+        } else if (kind == "np_kt") {
+            if (from == 0 && !is_host()) kt_on_code(j.str("code"), (int)j.num("launch", 0));
         } else if (kind == "chat") {
             A.chat.push_back({member_name(from), j.str("text")});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());

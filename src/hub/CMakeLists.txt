@@ -13,7 +13,7 @@ target_link_libraries(hub_session_test PRIVATE hublogic)
 
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
-    ui_common.cpp tiles.cpp shelves.cpp page_library.cpp match_ui.cpp page_online.cpp friends_ui.cpp
+    ui_common.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp match_ui.cpp page_online.cpp friends_ui.cpp
     page_controllers.cpp page_saves.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp find_games_ui.cpp page_about.cpp frame.cpp shot.cpp autotest.cpp)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
 target_include_directories(RetroHub PRIVATE
@@ -128,3 +128,7 @@ target_link_libraries(hub_invite_test PRIVATE hubinvite)
 # Per-game settings launch wiring helpers (pure).
 add_executable(hub_launchset_test test_launch_settings.cpp)
 target_link_libraries(hub_launchset_test PRIVATE hublogic hubcommon)
+
+# Manual live driver for Kanto Together (hidden desktop, local relay). Not a ctest.
+add_executable(kanto_live kanto_live.cpp)
+target_link_libraries(kanto_live PRIVATE hubcommon hubminiz)
