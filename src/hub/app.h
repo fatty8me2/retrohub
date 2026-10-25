@@ -49,6 +49,8 @@
 #include "logic.h"
 #include "savestore.h"
 #include "cloud.h"
+#include "cloud_engine.h"
+#include "cloud_ui_logic.h"
 #include "shell_integration.h"
 #include "invite.h"
 #include "session.h"
@@ -317,6 +319,8 @@ struct ArtRef {
 
 struct TileSpec {
     std::string id, title, subtitle, badge;   // badge: system pill (empty inside a console section)
+    std::string cloud;                        // cloud status pill ("" = none)
+    ImU32 cloud_col = 0;
     std::string tag, tag_tip;                 // subtle state tag ("ZIP", "NATIVE", ...) + hover explanation
     bool tag_warn = false;                    // tint the tag as a warning (needs keys / encrypted)
     bool tag_accent = false;                  // solid accent badge with white text (readable on any cover)
@@ -673,6 +677,22 @@ void settings_label(const char* title, const char* hint = nullptr);
 void page_settings();
 void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
 
+
+/* ---- cloud_ui.cpp: cloud saves v2 UI (codes only against cloud_engine.h) ---- */
+void cloud_ui_tick();        // every frame: engine events -> toasts, cached status
+void cloud_ui_overlays();    // every frame: conflict / lease dialogs, "Getting your save..." strip
+void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history
+void cloud_ui_shot_init();   // HUB_SHOT_CLOUD_* seeds (screenshots only, no network)
+std::string cloud_ui_pill(const hub::GameEntry& e, ImU32* col);   // tile pill text ("" = none) + colour
+void cloud_ui_game_line(const hub::GameEntry& e);                  // details modal: status chip + line
+void cloud_ui_wizard_body(float w);                                // setup wizard "backed up automatically" step
+/* Launch plumbing (called by the Play path once Lane C wires cloud_prelaunch): */
+void cloud_ui_checking(const std::string& title, bool on);         // "Getting your save from the cloud..."
+void cloud_ui_prelaunch_notice(const hub::saves::PrelaunchResult& r);
+void cloud_ui_ask_conflict(const hub::saves::GameId& g, const std::string& title, const std::vector<hub::saves::ConflictItem>& items,
+                           std::function<void(hub::saves::ConflictChoice)> done);
+void cloud_ui_ask_lease(const hub::saves::GameId& g, const std::string& title, const std::string& held_by, int64_t since,
+                        std::function<void(hub::saves::LeaseChoice)> done);
 
 /* ---- find_games_ui.cpp ---- */
 void find_games_open();   // start the scan + checklist modal (first run, Settings > ROM folders)
