@@ -195,6 +195,16 @@ void account_panel() {
     ImGui::TextDisabled("Advanced: saves stay on this PC only while paused");
     if (on && ImGui::Checkbox("Back up screenshots", &A.st.backup_shots)) { hs::set_backup_screenshots(A.st.backup_shots); mark_dirty(); }
     if (on) { ImGui::SameLine(); ImGui::TextDisabled("They share the space used by save states"); }
+    {
+        bool st = A.st.cloud_states;
+        if (ImGui::Checkbox("Back up save states to the cloud", &st)) {
+            A.st.cloud_states = st;
+            hs::cloud_set_sync_states(st);
+            mark_dirty();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Resume points follow you between PCs. Uses the shared 50 MB space; turn off to keep states on this PC.");
+    }
     end_panel();
 }
 
@@ -275,9 +285,18 @@ void games_panel() {
         ImGui::TextDisabled("%s. Turn it back on above to see your games here.", paused_text(C.acct.queued_games).c_str());
     }
     const int64_t now = now_s();
-    if (!A.st.cloud_enabled) { end_panel(); return; }   // paused: do not list rows that would all say "Waiting to sync"
+    if (!A.st.cloud_enabled) { end_panel(); return; }
+    static bool only_attn = false;
+    const int attn = attention_count(C.games);
+    if (!C.games.empty()) {
+        if (button(only_attn ? "Show all games" : ("Needs attention (" + std::to_string(attn) + ")").c_str(), ImVec2(0, 0), only_attn || attn > 0)) only_attn = !only_attn;
+        if (attn > 0) { ImGui::SameLine(); pill((std::to_string(attn) + (attn == 1 ? " game needs you" : " games need you")).c_str(), ui::mix(ui::BAD, IM_COL32_BLACK, 0.5f)); }
+        if (only_attn && attn == 0) ImGui::TextDisabled("Nothing needs attention. All your saves are in step.");
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    }   // paused: do not list rows that would all say "Waiting to sync"
     for (size_t i = 0; i < C.games.size(); ++i) {
         const hs::GameCloudInfo& g = C.games[i];
+        if (only_attn && !needs_attention(g)) continue;
         ImGui::PushID(g.id.gkey().c_str());
         if (i) { ImGui::Separator(); }
         ImGui::Dummy(ImVec2(0, sp(0.25f)));
@@ -311,6 +330,8 @@ void games_panel() {
             if (open) g_open.clear();
             else { g_open = g.id.gkey(); open_history(g.id); }
         }
+        ImGui::SameLine();
+        if (button("Save history", ImVec2(0, 0), false, true)) history_ui_open(g.id.system, g.id.key);
         if (open) history_block(g);
         ImGui::PopID();
     }
@@ -326,6 +347,7 @@ void cloud_ui_tick() {
     if (!C.applied_pause) {
         C.applied_pause = true;
         if (!A.st.cloud_enabled) hs::cloud_set_paused(true);
+        hs::cloud_set_sync_states(A.st.cloud_states);
     }
     hs::CloudEvent ev;
     int guard = 8;

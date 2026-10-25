@@ -87,6 +87,16 @@ inline std::string paused_text(int queued) {
 }
 
 /* ---- plain conflicts (both sides edited): surfaced on the Saves nav item, the Saves page, the game chip and at launch ---- */
+/* Saves page "Needs attention" filter: conflicts, account problems, or a game stuck local-only because the cloud is full. */
+inline bool needs_attention(const GameCloudInfo& g) {
+    return g.state == CloudState::Conflict || g.state == CloudState::NeedsAttention ||
+           (g.state == CloudState::LocalOnly && g.local_only == LocalOnlyReason::OverCap);
+}
+inline int attention_count(const std::vector<GameCloudInfo>& games) {
+    int n = 0;
+    for (auto& g : games) if (needs_attention(g)) ++n;
+    return n;
+}
 inline int conflict_count(const std::vector<GameCloudInfo>& games) {
     int n = 0;
     for (auto& g : games) if (g.state == CloudState::Conflict) ++n;

@@ -164,6 +164,7 @@ struct Engine {
     str base_url, data_dir, uid, secret, device_id, device_name;
     bool id_override = false;
     int64_t id_stamp = 0;
+    bool sync_states = true;   // "Back up save states to the cloud": false = state/shot files neither push nor pull
     bool started = false, stop = false, paused = false, startup_done = false, startup_wanted = true;
     bool online_known = false, was_offline = false;
     CloudQueue queue;
@@ -463,6 +464,8 @@ struct Item {
     int base_ver = 0;
 };
 
+bool sync_states_on() { std::lock_guard<std::mutex> lk(E.mu); return E.sync_states; }
+
 std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, const WGame* cg) {
     std::vector<Item> items;
     std::set<str> paths;
@@ -505,6 +508,7 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
         if (is_shot) it.cls = FileClass::Shot; else
         it.cls = it.has_cv && !it.cv.cls.empty() ? class_from_name(it.cv.cls, classify_path(p, sz)) : classify_path(p, sz);
         if (it.local.present && it.local.size > kMaxPlain) { it.act = Act::Nothing; items.push_back(it); continue; }
+        if ((it.cls == FileClass::State || it.cls == FileClass::Shot) && !sync_states_on()) { it.act = Act::Nothing; items.push_back(it); continue; }
         it.act = three_way(it.local, it.base, it.cloud, it.evicted, it.cls);
         /* a file the server refused earlier (cap / too large) stays local only while unchanged */
         if (it.act == Act::Push && it.lo_marked && it.base.present && it.local.sha == it.base.sha) it.act = Act::Nothing;
@@ -1586,6 +1590,17 @@ void cloud_sync_all_now() {
         E.startup_wanted = true;
         for (auto& kv : E.info) if (kv.second.state != CloudState::LocalOnly || kv.second.local_only != LocalOnlyReason::User) E.queue.put(kv.first, "sync-all", now_s(), true);
         E.queue.save();
+    }
+    E.cv.notify_all();
+}
+
+void cloud_set_sync_states(bool on) {
+    bool changed;
+    {
+        std::lock_guard<std::mutex> lk(E.mu);
+        changed = E.sync_states != on;
+        E.sync_states = on;
+        if (changed && on) for (auto& kv : E.info) E.queue.put(kv.first, "sync-all", now_s(), true);   // catch up on the states skipped while off
     }
     E.cv.notify_all();
 }

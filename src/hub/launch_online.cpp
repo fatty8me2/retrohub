@@ -221,6 +221,7 @@ void gc_tick() {
         autotest_log(std::string("dolphin closed; session over") + (GCO.left_name.empty() ? "" : " (" + GCO.left_name + " left)"));
         if (!GCO.left_name.empty()) { set_notice(hubui::player_left_text(GCO.left_name), 20.0); GCO.left_name.clear(); }
         gc_stop_all();
+        group_session_ended(60);
         room_session_ended();
         if (was_host) { A.vault_dirty = true; auto_sync(); }
         return;

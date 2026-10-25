@@ -44,7 +44,8 @@ namespace fs = std::filesystem;
 /* ------------------------------------------------------------------ args */
 
 struct Args {
-    std::string control, game_key, shot_dir;   // --control FILE (runner_ctl.h), --game-key KEY, --shot-dir DIR
+    std::string control, game_key, shot_dir, load_state_path;   // --load-state FILE: restore this state right after boot (offline)
+    //   // --control FILE (runner_ctl.h), --game-key KEY, --shot-dir DIR
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
     std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
     int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
@@ -158,6 +159,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--headless") o->headless = true;
         else if (k == "--fullscreen") o->fullscreen = true;
         else if (k == "--resume") o->resume = true;
+        else if (k == "--load-state") { if (!val(&o->load_state_path)) return false; }
         else if (k == "--ds-link") o->ds_link = true;
         else if (k == "--fuzz-input") o->fuzz = true;
         else if (k == "--selftest") o->selftest = true;
@@ -1919,6 +1921,11 @@ int Frontend::run(const Args& args) {
     } else load_srm();
     if (!link && a.resume && !online && a.net.empty() && !a.ds_link) {
         if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
+    }
+    if (!a.load_state_path.empty() && !link && !online && a.net.empty() && !a.ds_link) {
+        std::vector<uint8_t> sb;
+        if (read_file(a.load_state_path, &sb) && core.unserialize(sb.data(), sb.size())) set_status("Resumed from saved state");
+        else rlog("load-state: could not restore %s", a.load_state_path.c_str());
     }
 
     cheats_init();

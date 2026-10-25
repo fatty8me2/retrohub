@@ -55,6 +55,8 @@ std::string settings_to_json(const Settings& s) {
       << "  \"sync_folder\": \"" << json::escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"backup_shots\": " << (s.backup_shots ? "true" : "false") << ",\n"
+      << "  \"cloud_states\": " << (s.cloud_states ? "true" : "false") << ",\n"
+      << "  \"library_sort\": \"" << json::escape(s.library_sort) << "\",\n"
       << "  \"cloud_enabled\": " << (s.cloud_enabled ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
@@ -114,6 +116,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->backup_shots = json_bool(j, "backup_shots", out->backup_shots);
+    out->cloud_states = json_bool(j, "cloud_states", out->cloud_states);
+    if (const json::Value* ls = j.get("library_sort")) if (ls->is_string()) out->library_sort = ls->s;
     out->cloud_enabled = json_bool(j, "cloud_enabled", out->cloud_enabled);   // legacy sync_states / cloud_saves keys are ignored
     out->sync_card_dismissed = json_bool(j, "sync_card_dismissed", out->sync_card_dismissed);
     out->smash_save_notice_shown = json_bool(j, "smash_save_notice_shown", out->smash_save_notice_shown);
@@ -769,8 +773,20 @@ static std::string lower(const std::string& s) {
     return o;
 }
 
+bool list_item_less(const ListItem& x, const ListItem& y, SortMode mode) {
+    if (x.pinned != y.pinned) return x.pinned;
+    unsigned long long a = 0, b = 0;
+    if (mode == SortMode::LastPlayed) { a = x.last_played; b = y.last_played; }
+    else if (mode == SortMode::MostPlayed) { a = x.play_seconds; b = y.play_seconds; }
+    else if (mode == SortMode::RecentlyAdded) { a = x.added; b = y.added; }
+    if (a != b) return a > b;
+    std::string lx = lower(x.title), ly = lower(y.title);
+    if (lx != ly) return lx < ly;
+    return x.key < y.key;
+}
+
 std::vector<int> filter_sort(const std::vector<ListItem>& items, const std::string& system_filter,
-                             const std::string& query) {
+                             const std::string& query, SortMode mode) {
     std::string q = lower(query);
     size_t b = q.find_first_not_of(' ');
     size_t e = q.find_last_not_of(' ');
@@ -781,13 +797,7 @@ std::vector<int> filter_sort(const std::vector<ListItem>& items, const std::stri
         if (!q.empty() && lower(items[i].title).find(q) == std::string::npos) continue;
         v.push_back((int)i);
     }
-    std::stable_sort(v.begin(), v.end(), [&](int a, int b2) {
-        const ListItem &x = items[a], &y = items[b2];
-        if (x.pinned != y.pinned) return x.pinned;
-        std::string lx = lower(x.title), ly = lower(y.title);
-        if (lx != ly) return lx < ly;
-        return x.key < y.key;
-    });
+    std::stable_sort(v.begin(), v.end(), [&](int a, int b2) { return list_item_less(items[a], items[b2], mode); });
     return v;
 }
 
@@ -821,17 +831,11 @@ const std::vector<std::string>& console_order() {
     return v;
 }
 
-std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items, const std::vector<int>* indices) {
+std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items, const std::vector<int>* indices, SortMode mode) {
     std::vector<int> idx;
     if (indices) idx = *indices;
     else for (size_t i = 0; i < items.size(); ++i) idx.push_back((int)i);
-    std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) {
-        const ListItem &x = items[a], &y = items[b];
-        if (x.pinned != y.pinned) return x.pinned;
-        std::string lx = lower(x.title), ly = lower(y.title);
-        if (lx != ly) return lx < ly;
-        return x.key < y.key;
-    });
+    std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) { return list_item_less(items[a], items[b], mode); });
     std::vector<ConsoleSection> out;
     for (const std::string& c : console_order()) {
         ConsoleSection s{c, system_shelf_title(c), {}};
@@ -847,7 +851,7 @@ std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items,
     return out;
 }
 
-std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_recent) {
+std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_recent, SortMode mode) {
     auto by_title = [&](std::vector<int>& v) {
         std::stable_sort(v.begin(), v.end(), [&](int a, int b) {
             if (g[a].pinned != g[b].pinned) return g[a].pinned;
@@ -867,8 +871,8 @@ std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_rece
     by_title(favs.items);
     if (!favs.items.empty()) out.push_back(favs);
     std::vector<ListItem> li;
-    for (auto& e : g) li.push_back({e.key, e.title, e.system, e.pinned});
-    for (auto& cs : group_by_console(li)) {
+    for (auto& e : g) li.push_back({e.key, e.title, e.system, e.pinned, e.last_played, e.play_seconds, e.added});
+    for (auto& cs : group_by_console(li, nullptr, mode)) {
         Shelf sh{"console:" + cs.system, cs.title, cs.items};
         out.push_back(sh);
     }
