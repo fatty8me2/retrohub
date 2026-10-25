@@ -32,7 +32,7 @@ Vocabulary. Class: `settings` (meta.json, `_account/*`), `battery` (SRAM/EEPROM/
 
 | Situation | Behaviour |
 |---|---|
-| First launch / wizard | No cloud question. The friends identity already exists, so the account is the cloud. The wizard gets one new step "Your saves are backed up automatically", showing a green check, the device name (editable, default computer name) and a **Recovery code** (uid + secret encoded in 8 groups of 4, Copy / Save as text file / Print). Skippable; a toast reminds once after the first successful push if skipped. A "Link a PC" / "I have a recovery code" entry sits beside it. |
+| First launch / wizard | No cloud question. The friends identity already exists, so the account is the cloud. The wizard gets one new step "Your saves are backed up automatically", showing a green check, the device name (editable, default computer name) and a **Recovery code** (uid + secret encoded as a 12-character code XXXX-XXXX-XXXX stored via /link/keep, Copy / Save as text file / Print). Skippable; a toast reminds once after the first successful push if skipped. A "Link a PC" / "I have a recovery code" entry sits beside it. |
 | Play a game on a 2nd PC | On Play: a short "Checking cloud saves..." line (<= 4 s for the manifest, <= 15 s total download, only the pulled game, protected class only). Newer cloud files are downloaded into the vault, then the emulator starts. States are not blocking: missing states download in the background after launch (never overwriting an existing local file). |
 | Offline | Manifest request fails or times out: the game starts at once from local files. Details line: "Offline: will sync when you are back". Exit queues a push; the persistent queue retries (30 s, 2 min, 10 min, 1 h, then on hub start / next launch / manual). No dialog ever blocks play. |
 | Conflict | Both the cloud and this PC changed the same file since the last sync (three-way compare, section 5). Detected before launch (cloud changed, local changed) or at push (CAS miss). Dialog before launch, never mid-game: "Saves for GAME differ. This PC: played 20 Oct 21:14, 412 KB. Cloud: PC-LIVINGROOM, 22 Oct 08:02, 410 KB." Buttons: **Use the newer one** (preselected, newest mtime), **Use this PC's**, **Use the cloud's**, **Decide later** (play local only, no push for that game, banner stays). Whatever loses is kept: as a cloud version (restorable) and locally in `_conflicts/`. States never prompt: newest wins silently, the replaced one goes to history if space allows. |
@@ -327,7 +327,7 @@ Facts the client lane needs, where the build is more specific than sections 3-4:
   `GET /blob` of it is `404 {evicted:true}`.
 - **Devices**: eight per account; a ninth is accepted only when the least recently seen device has been idle 24 h (it is then dropped), else `403 device-limit`.
   Lease calls need a valid `X-RH-Device`. Beat on a free/expired lease re-takes it; beat after a take-over is `423 lease-held`.
-- **Rate limits** are per account per minute: `plan/commit/restore/game/recovery` 30, blob PUT 120, blob GET 300, status/manifest/device/lease 60.
+- **Rate limits** are per account per minute: `plan/commit/restore/game` 30, blob PUT 120, blob GET 300, status/manifest/device/lease 60.
   Daily per account 1500 blob PUTs / 6000 blob GETs (`DAY_PUT_MAX`, `DAY_GET_MAX` override). Saves are capped at 35% of the `REQ_BUDGET` daily units
   and stop (`429 cloud-saves-busy-today`) when the global request budget passes 50%. Server vars: `SAVES_V2`, `ACCOUNT_CAP`, `PROT_CAP`, `POOL_TIGHT`, `POOL_FULL`.
 - **v1 compatibility**: v1 routes are unchanged for accounts that never called v2. The first v2 call converts the account's v1 objects to `ver 1` rows
@@ -336,17 +336,19 @@ Facts the client lane needs, where the build is more specific than sections 3-4:
   v2 account cap is `507 quota-exceeded`. v1 never sees v2 blobs (`o/...` is reserved) .
 - **DO schema tag**: `meta.schema = 2` in the R2Budget DO adds the v2 tables and columns once (no wrangler migration needed: same class).
 
-### Recovery code (decision: yes) - one mechanism with the link code
-There is deliberately **one** "add/recover this account" mechanism: the identity bundle `{salt, iv, ct}` that the link-a-PC flow already uses
-(client derives an AES-GCM key from a code with PBKDF2; the server only stores ciphertext). The recovery code is a **long-lived link code**:
-- The client generates a random code (160 bits, shown as 8 groups of 4, e.g. in the wizard), builds the same encrypted bundle as for `/link/put`,
-  and stores it with `POST /saves/v2/recovery {hash, salt, iv, ct}` (signed like every v2 call). `hash = sha256hex("rh-recover:" + normalized code)`;
-  the server keeps only that hash and the opaque bundle (never the code, the key or the identity). One slot per account; setting a new one replaces (revokes) the old
-  code; `{remove:true}` deletes it. `GET /saves/v2/status` shows `account.recovery`.
-- A new PC with no identity calls `POST /saves/v2/recover {hash}` **without** auth (throttled per IP, 10/hour, 200/hour overall) and gets `{salt, iv, ct}`,
-  decrypts the identity locally, adopts it exactly as after a link redeem, and from then on is the same account (same uid), so it reads the same cloud data.
-  Unlike a link code it is not single-use and does not expire; losing the code does not expose anything, replacing it does not touch the cloud data.
-- Cloud data is always keyed by the internal account uid. The visible username (see the usernames lane) maps to the uid and can be renamed without moving any data.
-  A PC added with a normal link code is the same uid with a new device id, so it needs nothing else to see the cloud saves.
-- Integration with the usernames lane: the shape returned by `/saves/v2/recover` equals the one from `/link/redeem` (minus `username`), so the client can share the
-  decrypt/adopt code. If the owner prefers a single endpoint, `recover` can be fronted by `POST /link/redeem {recovery: hash}` later without changing storage.
+### Recovery code (decision: yes) - one mechanism: the LinkBox, with a persistent variant
+There is deliberately **one** "add/recover this account" mechanism: the Worker's `/link/*` routes (`src/link.js`, LinkBox Durable Object). The server stores only
+a hash of the code plus an opaque encrypted identity bundle `{salt, iv, ct}` (client derives an AES-GCM key from the code with PBKDF2); it never sees the code,
+the key or the identity. There are no cloud-saves endpoints for this (the earlier `/saves/v2/recovery` and `/saves/v2/recover` were removed).
+- **Temporary link code**: 8 chars (`XXXX-XXXX`), `POST /link/create` + `/link/put`, single use, 10 minutes. Unchanged.
+- **Persistent account code**: 12 chars shown as `XXXX-XXXX-XXXX` (same 31-char alphabet `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, about 59 bits), shown in the wizard
+  (Copy / Save as text / Print). The client generates it, builds the same encrypted bundle and stores it with
+  `POST /link/keep {uid, secret, box, salt, iv, ct}` where `box = sha256hex(normalized 12-char code)` (authenticated with the account secret like `/link/create`,
+  shares its 5/hour per-account limit). Reply `{ok:true}`; `400 bad-request`, `403 auth`, `429 rate-limited`, `409 code-in-use` (hash belongs to another account).
+  One persistent code per account: a new `/link/keep` revokes the previous one; `POST /link/keep {uid, secret, remove:true}` deletes it.
+- A new PC with no identity calls the public `POST /link/redeem {code}` (8 or 12 chars; per-IP limit 20 per 10 minutes) and gets `{salt, iv, ct, username}`,
+  decrypts locally and adopts the identity exactly as after a link redeem. A persistent code is **not** consumed and does not expire; a temporary one still is.
+  Losing the code exposes nothing; replacing it does not touch cloud data. Unknown code: `404 {error:"invalid"}`.
+- Cloud data is always keyed by the internal account uid. The visible username maps to the uid and can be renamed without moving any data.
+  A PC added with either code kind is the same uid with a new device id, so it needs nothing else to see the cloud saves.
+- `GET /saves/v2/status` no longer has `account.recovery`; the client knows locally whether it has set a persistent code.

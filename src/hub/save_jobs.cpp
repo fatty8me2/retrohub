@@ -181,7 +181,7 @@ void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
     A.job.running = true;
     A.job.done = false;
     A.job.path = path;
-    A.job.include_states = A.st.sync_states;
+    A.job.include_states = k == SaveJob::Export;
     A.job.manual = manual;
     A.job.report = hub::saves::SyncReport();
     A.job.export_ok = false;
