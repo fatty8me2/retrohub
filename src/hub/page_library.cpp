@@ -68,6 +68,7 @@ void home_shelves() {
         });
         ImGui::Dummy(ImVec2(0, sp(1.f)));
     }
+    stats_ui_card();   // Your stats, below the shelves
     ImGui::Dummy(ImVec2(0, sp(7.f)));   // room so the last shelf's covers clear the footer when scrolled to the end
 }
 
@@ -606,6 +607,7 @@ void draw_details_modal() {
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     cloud_ui_game_line(e);
+    if (!native) history_ui_details_section(e);
     gs_draw_game_section(e);
     ImGui::Dummy(ImVec2(0, sp(2.f)));
     if (local_players_for(e) >= 2) {   // offline local multiplayer: who holds which port before Play

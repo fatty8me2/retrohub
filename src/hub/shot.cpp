@@ -40,6 +40,11 @@ ImGuiKey shot_key(const std::string& n) {
 /* Screenshot aids that seed UI state before the first frame (friends / room / emulator dialogs). Never any network. */
 void shot_init_ui() {
     A.st.show_friends = std::getenv("HUB_SHOT_FRIENDS") != nullptr;
+    if (const char* hh = std::getenv("HUB_SHOT_HISTORY")) {   // screenshot aid: open the save history of "<system>/<key>" on the Saves page
+        std::string h = hh;
+        auto sl = h.find('/');
+        if (sl != std::string::npos) { history_ui_open(h.substr(0, sl), h.substr(sl + 1)); A.page = Page::Saves; }
+    }
     if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
         if (std::string(pg) == "saves") A.page = Page::Saves;
         else if (std::string(pg) == "settings") A.page = Page::Settings;

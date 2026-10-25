@@ -13,6 +13,12 @@ int main() {
     GameCloudInfo g;
 
     g.state = CloudState::Synced; CHECK(game_chip(g, on).text == "Synced" && game_chip(g, on).tone == Tone::Good);
+    g.state = CloudState::Conflict; CHECK(needs_attention(g));
+    g.state = CloudState::Synced; CHECK(!needs_attention(g));
+    g.state = CloudState::LocalOnly; g.local_only = LocalOnlyReason::User; CHECK(!needs_attention(g));
+    g.local_only = LocalOnlyReason::OverCap; CHECK(needs_attention(g));
+    { std::vector<GameCloudInfo> v{g, GameCloudInfo()}; CHECK(attention_count(v) == 1); }
+    g.local_only = LocalOnlyReason::None;
     g.state = CloudState::Syncing; g.message = "Uploading"; CHECK(game_chip(g, on).text == "Uploading");
     g.message = "Downloading"; CHECK(game_chip(g, on).text == "Downloading");
     g.state = CloudState::Waiting; CHECK(game_chip(g, on).text == "Waiting to sync" && game_chip(g, off).text == "Offline");
