@@ -186,9 +186,9 @@ void poll_process() {
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
     uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
     if (!A.run.key.empty()) {
-        if (secs >= 1) hub::record_play(A.run.key, A.run.start_unix, secs);
+        if (secs >= 1) { hub::record_play(A.run.key, A.run.start_unix, secs); if (!A.run.system_short.empty()) hub::saves::playlog_append(A.run.system_short, A.run.key, (int64_t)A.run.start_unix, (int64_t)secs); }
         if (hubui::exit_should_touch_game(!A.run.key.empty(), A.run.track, A.run.online, A.run.system_short))
-            hub::saves::touch_game(A.run.system_short, A.run.key, A.run.title);
+            { hub::saves::touch_game(A.run.system_short, A.run.key, A.run.title); hub::saves::history_snapshot_game(A.run.system_short, A.run.key); }
         if (A.run.cloud_started) { A.run.cloud_started = false; hub::saves::cloud_game_exited(hub::saves::GameId{A.run.system_short, A.run.key}); }   // after touch_game: pushes this game in the background
         hub::flush_library_state();
         refresh_state(A.run.key);
