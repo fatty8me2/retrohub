@@ -67,3 +67,9 @@ Beetle PSX (libretro/beetle-psx-libretro, commit ea14d6a; Mednafen PSX by the Me
 
 ## Kanto Together (not shipped)
 RetroHub can run a friend's Kanto Together co-op hack from the user's own package zip. Nothing from it is distributed with RetroHub. The package bundles mGBA (MPL 2.0), Node.js (MIT) and ws (MIT); see docs/KANTO_TOGETHER.md.
+
+## Vendored data
+
+| Component | Version | License | Use |
+|---|---|---|---|
+| libretro-database `cht/` (N64, GB, GBC, GBA, PS1) | commit 12c21cf79f1e20eff6ac68b80875816c717d0a7a | CC BY-SA 4.0 | Cheat lists, converted by `scripts/build_cheats_db.py` into `data/cheats_db.bin` (2.2 MB). Must ship in `data/` next to the exe. |
