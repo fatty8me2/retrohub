@@ -1,6 +1,7 @@
 // Console test for the updater: pure logic + a live release check (no download/install).
 #include "updater.h"
 
+#include <process.h>
 #include <chrono>
 #include <cstring>
 #include <cstdio>
@@ -163,7 +164,7 @@ int main(int argc, char** argv) {
     {
         std::string zipBody(5000, '\0');
         for (size_t i = 0; i < zipBody.size(); i++) zipBody[i] = (char)(i * 31 + 7);
-        std::filesystem::path dir = std::filesystem::temp_directory_path() / "hub_updater_verify_test";
+        std::filesystem::path dir = std::filesystem::temp_directory_path() / ("hub_updater_verify_test_" + std::to_string(_getpid()));
         std::error_code ec; std::filesystem::remove_all(dir, ec); std::filesystem::create_directories(dir, ec);
         std::string zipPath = (dir / "update.zip").u8string();
         std::string refFile = (dir / "ref.bin").u8string();
