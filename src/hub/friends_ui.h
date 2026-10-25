@@ -14,6 +14,7 @@ struct Notif {
     double t0 = 0;                 // ImGui time of arrival
     bool toast = true;             // toast still showing
     bool done = false;
+    bool ask = false;              // "<name> wants to join your game": Accept sends them an invite (inv.game_* = the game they asked about)
 };
 
 struct FriendsUi {
@@ -56,6 +57,8 @@ struct FriendsUi {
     bool shot_bell = false;
     std::string last_name;
     double name_changed = 0;
+    hubui::AskLimiter ask_lim;                 // our own "Ask to join" requests
+    std::map<std::string, long long> ask_seen; // host side: last ask per person (repeat within 30 s is ignored)
 };
 
 enum class FrIcon { Bell, People, Chat, UserPlus, Copy, More, Send };
@@ -114,7 +117,12 @@ void fr_anim_panel();
 float fr_invite_card_h();
 int fr_invite_card(const Notif& n, float w, float frac, bool shadow);
 float fr_request_card_h();
-int fr_request_card(const std::string& name, const std::string& code, float w, float frac, bool shadow, const char* decline);
+int fr_request_card(const std::string& name, const std::string& code, float w, float frac, bool shadow, const char* decline,
+                    const std::string& title = std::string(), const char* accept = "Accept");
+void fr_ask_to_join(const std::string& uid);                       // "Ask to join": rate limited, over the invite channel
+void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet::Invite& game);
+void fr_ask_accept(Notif& n);                                       // host accepted: invite sent (needs a room)
+bool fr_home_shelf(float avail, float tw, float th, float gap, float bleed);   // Home "Friends are playing" (false = nothing to show)
 void fr_accept(const std::string& uid, const std::string& name);
 void fr_join_notif(Notif& n);
 void fr_draw_toasts(float right_x, float bottom_y);

@@ -200,12 +200,23 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
             std::string nm = m.me ? "You" : m.name;
             if (m.host) nm += " (host)";
             if (mi < in_game.size() && in_game[mi]) nm += " (in game)";
+            int prtt = -1; bool prelay = false;
+            hubui::PingClass pcl = hubui::PingClass::Unknown;
+            if (!m.me && room_ping_of(peers[mi].slot, &prtt, &prelay)) {   // per-member connection: "Mia (42 ms)" tinted by quality
+                pcl = hubui::ping_class(prtt, prelay);
+                if (pcl != hubui::PingClass::Unknown) nm += " \xC2\xB7 " + hubui::ping_text(prtt, prelay);
+            }
             ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
             if (x + 22 * S + ts.x > tx + tw) break;
             ImVec2 c(x + 7 * S, y + ts.y * 0.5f);
             if (m.ready) { dl->AddCircleFilled(c, 7 * S, ui::GOOD, 16); ui::icon(dl, ui::Icon::Check, c, 11 * S, IM_COL32(15, 20, 18, 255)); }
             else dl->AddCircle(c, 6.5f * S, ui::TEXT3, 16, 2 * S);
             dl->AddText(ImVec2(x + 20 * S, y), m.ready ? ui::TEXT : ui::TEXT2, nm.c_str());
+            if (pcl != hubui::PingClass::Unknown) {   // quality pip under the name's right end
+                ImU32 q = pcl == hubui::PingClass::Great ? ui::GOOD : pcl == hubui::PingClass::Ok ? ui::WARN : pcl == hubui::PingClass::Poor ? ui::BAD : ui::TEXT3;
+                dl->AddCircleFilled(ImVec2(x + 20 * S + ts.x + 8 * S, c.y), 4 * S, q, 12);
+                ts.x += 14 * S;
+            }
             x += 20 * S + ts.x + 18 * S;
         }
     }

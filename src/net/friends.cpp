@@ -466,8 +466,10 @@ struct FriendsClient::Impl {
         Message m;
         m.id = j.str("id"); m.from = j.str("from"); m.from_name = j.str("from_name"); m.to = j.str("to");
         m.invite = j.str("kind") == "invite";
+        m.ask = j.str("kind") == "ask";
+        if (m.ask) m.inv = parse_invite(j.get("ask"));
         m.text = j.str("text");
-        m.inv = parse_invite(j.get("invite"));
+        if (!m.ask) m.inv = parse_invite(j.get("invite"));
         m.at = jnum(j, "at");
         m.mine = (m.from == id.user_id);
         return m;
@@ -674,6 +676,12 @@ struct FriendsClient::Impl {
     void emit_message(const Message& m)
     {
         const std::string& peer = m.mine ? m.to : m.from;
+        if (m.ask) {   // a request, not a conversation line: event only, and nothing older than 5 minutes (it may have waited in the inbox)
+            if (m.mine || (m.at > 0 && unix_ms() - m.at > 5 * 60 * 1000)) return;
+            Event e; e.kind = Event::AskReceived; e.uid = m.from; e.name = m.from_name; e.msg = m; e.invite = m.inv;
+            push_event(std::move(e));
+            return;
+        }
         if (!add_msg(peer, m, true)) return;
         if (m.mine) return;
         Event e;
@@ -800,6 +808,9 @@ struct FriendsClient::Impl {
         } else if (type == "username") {   // pushed to every device of the account when the name changes elsewhere
             username = j.str("username"); needs_new_name = j.str("status") == "needs_new_name"; if (!username.empty()) name = username;
             Event e; e.kind = Event::UsernameChanged; e.name = username; e.ok = !username.empty() && !needs_new_name;
+            push_event(std::move(e));
+        } else if (type == "ask_result") {
+            Event e; e.kind = Event::AskResult; e.uid = j.str("to"); e.ok = jbool(j, "ok"); e.text = j.str("reason");
             push_event(std::move(e));
         } else if (type == "invite_result") {
             Event e; e.kind = Event::InviteResult;
@@ -1083,6 +1094,12 @@ void FriendsClient::send_invite(const std::vector<std::string>& uids, const Invi
     Invite v = inv;
     if (v.expires_at == 0) v.expires_at = unix_ms() + 30 * 60 * 1000;
     impl_->send(o + "],\"invite\":" + Impl::invite_json(v) + "}");
+}
+
+void FriendsClient::ask_to_join(const std::string& uid, const std::string& game_id, const std::string& game_title, const std::string& system)
+{
+    if (uid.empty() || !impl_->welcomed) return;
+    impl_->send("{\"type\":\"ask\",\"to\":" + q(uid) + ",\"game_id\":" + q(game_id) + ",\"game_title\":" + q(game_title) + ",\"system\":" + q(system) + "}");
 }
 
 void FriendsClient::ack(const std::vector<std::string>& ids) { if (!ids.empty()) impl_->ack_ids(ids); }

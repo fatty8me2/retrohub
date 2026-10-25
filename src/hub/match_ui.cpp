@@ -191,6 +191,21 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     if (slot == room_my_slot()) rd = host || A.my_ready;
     if (host) pill("HOST", COL_ACCENT);
     else pill(rd ? "Ready" : "Not ready", rd ? COL_GOOD : IM_COL32(70, 72, 86, 255));
+    {   // connection quality to this member (room round trip; "relay" for relay-only peers)
+        int rtt = -1; bool relay = false;
+        if (room_ping_of(slot, &rtt, &relay)) {
+            hubui::PingClass pc = hubui::ping_class(rtt, relay);
+            if (pc != hubui::PingClass::Unknown) {
+                ImU32 pcol = pc == hubui::PingClass::Great ? COL_GOOD : pc == hubui::PingClass::Ok ? ui::WARN : pc == hubui::PingClass::Poor ? COL_BAD : IM_COL32(70, 72, 86, 255);
+                ImGui::SetCursorScreenPos(p0 + ImVec2(74 * S, 67 * S));   // own row under Ready: clear of the "Local players" column
+                std::string lab = std::string("Connection: ") + hubui::ping_class_label(pc);
+                pill(lab.c_str(), pcol);
+                ImGui::SameLine(0, 6 * S);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextDisabled("%s", hubui::ping_text(rtt, relay).c_str());
+            }
+        }
+    }
     if (p->hello) {   // RetroHub version, bottom-right of the card; red when it differs from ours
         std::string theirs = p->app.empty() ? "version unknown" : hubui::app_version_label(p->app);
         bool differs = p->app.empty() || hubui::compare_app_versions(p->app, HUB_VERSION_STR) != 0;

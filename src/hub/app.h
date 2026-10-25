@@ -252,6 +252,9 @@ struct App {
     bool prev_proc = false;         // A.proc seen last tick (edge detect for the in-game notice)
     std::vector<int> last_slots;
     bool hello_dirty = false, was_connected = false;
+    hubui::PingBook pings;                 // room RTT per slot (rping/rpong over the room socket)
+    std::map<int, long long> ping_at;      // wall ms of the last sample per slot (stale after 25 s)
+    std::map<int, bool> ping_relay;        // member announced relay-only networking
     bool room_update_pending = false;   // guest pressed "Update now": waiting for the release check
     bool room_update_none = false;      // that check finished with no newer release
     bool my_ready = false;
@@ -601,6 +604,8 @@ void draw_cheats_modal();
 bool room_connected();
 std::vector<hubnet::Member> room_members();
 int room_my_slot();
+bool room_ping_of(int slot, int* rtt_ms, bool* relay);   // false for ourselves / no fresh sample
+void room_ping_tick();
 int locals_of(int slot);
 std::vector<hubui::MemberPads> member_pads();
 std::string member_name(int slot);
