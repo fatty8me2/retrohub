@@ -566,6 +566,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         }
         std::string args, err;
         if (!ps1_online_args(e, net, plan.ports, tmp, share_save, gsv, &args, &err)) { launch_note(is_host, err, 12.0); return; }
+        args += cheats_launch_args(e, true, is_host, launch_body);
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
