@@ -386,8 +386,10 @@ void wizard_window() {
             ImGui::BulletText("Controller: %s", n > 0 ? (std::to_string(n) + (n == 1 ? " connected" : " connected")).c_str() : "none yet (plug one in any time)");
             ImGui::BulletText("Games: %zu folder%s", A.st.rom_folders.size(), A.st.rom_folders.size() == 1 ? "" : "s");
             ImGui::BulletText("Username: %s", A.st.username_claimed ? A.st.name.c_str() : "not claimed yet (we will remind you)");
-            ImGui::Dummy(ImVec2(0, ui::sp(1.5f)));
-            text_wrapped_disabled("Run this again any time from Settings > Run setup again.");
+            ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+            if (ImGui::Checkbox("Automatically add people I play with as friends", &A.st.auto_friend)) { mark_dirty(); fr_set_auto_friend(A.st.auto_friend); }
+            ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+            text_wrapped_disabled("You can change this any time in Settings. Run this setup again from Settings > Run setup again.");
             break;
         }
     }

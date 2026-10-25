@@ -1,6 +1,27 @@
 {
   "versions": [
     {
+      "version": "1.25.0",
+      "date": "2026-10-25",
+      "title": "Cloud saves for everyone, and real usernames",
+      "new": [
+        "Cloud saves are now automatic for everyone: 50 MB per account, nothing to turn on, and your saves follow you to any PC",
+        "If your saves differ between two PCs, nothing is ever lost: you choose which one to keep, and the other stays as a copy you can bring back",
+        "Restore a previous version of any save from the Saves page",
+        "Unique usernames: pick yours in setup or in Settings, and change it later (your old name stays reserved for you for a while)",
+        "Add your account to another PC with a short code, then sign in as yourself and your cloud saves come along",
+        "Add friends by their username"
+      ],
+      "improved": [
+        "The Saves page shows games by their real names, a Resolve button for saves that differ, and a clear note when cloud sync is paused",
+        "A save conflict is flagged on the Saves tab and on the game, and you are asked again the next time you start the game",
+        "New accounts no longer take your Windows name by accident: you choose your username"
+      ],
+      "fixed": [
+        "Setup now offers the automatically-add-friends choice on its last page"
+      ]
+    },
+    {
       "version": "1.24.0",
       "date": "2026-10-25",
       "title": "PlayStation rooms, DS and PS1 cheats, steadier online",

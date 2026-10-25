@@ -579,12 +579,18 @@ struct FriendsClient::Impl {
         backoff_ms = std::min<uint32_t>(backoff_ms * 2, 30000);
     }
 
+    /* A brand-new account (identity created by this install) must NOT have its Windows name auto-claimed as the username: the player
+     * picks one (wizard Name step). The marker file lives until the server reports a username (or flags needs_new_name), so every
+     * reconnect in between keeps asking the server to skip the legacy name migration. Installs that already had an identity
+     * (accounts from before usernames) keep the one-time migration. */
+    std::string fresh_marker() const { return with_sep(data_dir) + "username-pending.flag"; }
+    bool username_pending() const { return fs::exists(upath(fresh_marker())); }
     /* QA/test clients are never auto-friended to the owner by the server. */
     bool is_test_client() const { return is_qa_run() || name.rfind("qa-", 0) == 0; }
     void send_hello()
     {
         hello_sent = true;
-        ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\",\"auto_friend\":" + (auto_friend ? "true" : "false") + (is_test_client() ? ",\"test\":true" : "") + "}");
+        ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\",\"auto_friend\":" + (auto_friend ? "true" : "false") + (is_test_client() ? ",\"test\":true" : "") + (username_pending() ? ",\"no_auto_username\":true" : "") + "}");
     }
 
     void normalize_lists() { dedupe_friends(friends, id.user_id); dedupe_requests(friends, incoming, outgoing, id.user_id); }
@@ -644,6 +650,7 @@ struct FriendsClient::Impl {
             needs_new_name = j.str("username_status") == "needs_new_name";
             username_known = true;
             if (!username.empty()) name = username;
+            if (!username.empty() || needs_new_name) { std::error_code rec; fs::remove(upath(fresh_marker()), rec); }
             Event e; e.kind = Event::UsernameChanged; e.name = username; e.ok = !username.empty() && !needs_new_name;
             events.push_back(std::move(e));
         }
@@ -849,7 +856,12 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
     Impl& d = *impl_;
     d.server = server;
     d.name = sanitize_name(name);
-    d.id = identity_load_or_create(d.data_dir, d.vault_dir);
+    {
+        const bool had_identity = fs::exists(upath(with_sep(d.data_dir) + "identity.json")) ||
+                                  (!d.vault_dir.empty() && fs::exists(upath(with_sep(d.vault_dir) + "_identity\\identity.json")));
+        d.id = identity_load_or_create(d.data_dir, d.vault_dir);
+        if (!had_identity) write_file(d.fresh_marker(), "1");
+    }
     d.load_retire();
     d.started = true;
     d.gave_up = false;

@@ -80,9 +80,84 @@ inline Tone quota_tone(const CloudAccountInfo& a) {
     return Tone::Good;
 }
 
+/* Paused page/headline wording: "Cloud sync is paused - 3 games waiting". */
+inline std::string paused_text(int queued) {
+    if (queued <= 0) return "Cloud sync is paused";
+    return "Cloud sync is paused - " + std::to_string(queued) + (queued == 1 ? " game waiting" : " games waiting");
+}
+
+/* ---- plain conflicts (both sides edited): surfaced on the Saves nav item, the Saves page, the game chip and at launch ---- */
+inline int conflict_count(const std::vector<GameCloudInfo>& games) {
+    int n = 0;
+    for (auto& g : games) if (g.state == CloudState::Conflict) ++n;
+    return n;
+}
+inline std::string conflict_banner(int n) {
+    if (n <= 0) return "";
+    if (n == 1) return "1 game has saves that differ between this PC and the cloud. Pick which one to keep.";
+    return std::to_string(n) + " games have saves that differ between this PC and the cloud. Pick which one to keep for each.";
+}
+
+/* ---- game titles: never show a raw game key ---- */
+struct CatalogName { std::string id, title, system; };
+
+inline std::vector<std::string> title_tokens(const std::string& s) {
+    std::vector<std::string> v;
+    std::string cur;
+    for (char c : s) {
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) cur += c;
+        else { if (!cur.empty()) v.push_back(cur); cur.clear(); }
+    }
+    if (!cur.empty()) v.push_back(cur);
+    return v;
+}
+/* Library keys look like "n64:3f2a...", "gba:bpee-1a2b3c4d"; hand-made ones like "zelda-ocarina". */
+inline bool key_is_machine_made(const std::string& key) {
+    if (key.find(':') != std::string::npos) return true;
+    for (auto& t : title_tokens(key)) {
+        if (t.size() < 8) continue;
+        bool hex = true;
+        for (char c : t) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) { hex = false; break; }
+        if (hex) return true;
+    }
+    return false;
+}
+inline std::string pretty_key_text(const std::string& k) {
+    std::string o;
+    bool up = true;
+    for (char c : k) {
+        if (c == '-' || c == '_') { o += ' '; up = true; continue; }
+        o += up && c >= 'a' && c <= 'z' ? (char)(c - 32) : c;
+        up = false;
+    }
+    return o;
+}
+/* known = title from the library / vault (may be empty or equal to the key). Falls back to the catalog (key words all
+ * appear in one title), then to "<System> game" for hash-like keys, then to a tidied version of the key. */
+inline std::string friendly_title(const std::string& known, const std::string& system, const std::string& key,
+                                  const std::vector<CatalogName>& catalog, const std::string& system_label) {
+    if (!known.empty() && known != key) return known;
+    for (auto& c : catalog) if (c.id == key && (c.system.empty() || c.system == system)) return c.title;
+    if (!key_is_machine_made(key)) {
+        const std::vector<std::string> kt = title_tokens(key);
+        const CatalogName* best = nullptr;
+        for (auto& c : catalog) {
+            if (!c.system.empty() && !system.empty() && c.system != system) continue;
+            std::vector<std::string> tt = title_tokens(c.title);
+            bool all = !kt.empty();
+            for (auto& k : kt) if (std::find(tt.begin(), tt.end(), k) == tt.end()) { all = false; break; }
+            if (all && !best) best = &c;   // first in catalog order = the main release
+        }
+        if (best) return best->title;
+        return pretty_key_text(key);
+    }
+    return system_label.empty() ? std::string("Game from another PC") : system_label + " game";
+}
+
 /* Account headline: one line + tone for the header card. */
 inline Chip account_headline(const CloudAccountInfo& a, bool enabled) {
-    if (!enabled) return {"Cloud backup is paused", Tone::Muted};
+    if (!enabled) return {paused_text(a.queued_games), Tone::Muted};
     if (!a.known) return {"Checking your cloud saves...", Tone::Muted};
     if (a.needs_attention) return {"Cloud backup needs attention", Tone::Bad};
     if (a.paused_by_server) return {"Cloud backup is paused for now", Tone::Warn};

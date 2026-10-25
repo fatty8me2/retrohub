@@ -279,7 +279,11 @@ void draw_frame() {
     ImU32 room_badge = A.in_room ? (A.lobby.connected() ? ui::GOOD : ui::WARN) : 0;
     if (nav_item(Page::Library, "Library", ui::Icon::Home, iw, expand, 0)) A.page = Page::Library;
     if (nav_item(Page::Online, A.in_room ? "Play Online  (in room)" : "Play Online", ui::Icon::Globe, iw, expand, room_badge)) A.page = Page::Online;
-    if (nav_item(Page::Saves, A.job.running ? "Saves  (syncing...)" : "Saves", ui::Icon::Cloud, iw, expand, A.job.running ? ui::ACCENT : 0)) A.page = Page::Saves;
+    const int cloud_conflicts = cloud_ui_conflict_count();
+    {
+        std::string saves_label = cloud_conflicts ? "Saves  (" + std::to_string(cloud_conflicts) + " to resolve)" : A.job.running ? "Saves  (syncing...)" : "Saves";
+        if (nav_item(Page::Saves, saves_label.c_str(), ui::Icon::Cloud, iw, expand, cloud_conflicts ? ui::BAD : A.job.running ? ui::ACCENT : 0)) A.page = Page::Saves;
+    }
     if (nav_item(Page::Controllers, "Controllers", ui::Icon::Gamepad, iw, expand, 0)) A.page = Page::Controllers;
     if (nav_item(Page::Settings, "Settings", ui::Icon::Gear, iw, expand, 0)) A.page = Page::Settings;
     if (nav_item(Page::Changelog, "What's new", ui::Icon::Star, iw, expand, 0)) A.page = Page::Changelog;

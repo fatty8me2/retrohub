@@ -28,6 +28,7 @@ struct UnState {
     bool change_open = false;        // Settings > Account change panel
     bool was_connected = false;
     bool seeded = false, shot = false;
+    bool popup_now = false, popup_last = false;   // the prompt modal was drawn this / last frame (QA reads popup_last between frames)
     double t_start = 0;
 } UN;
 
@@ -79,6 +80,13 @@ bool un_needs_new() { return UN.needs_new; }
 Avail un_state() { return UN.chk.state; }
 void un_open_prompt() { UN.prompt_open = true; UN.banner_hidden = false; }
 void un_open_change() { UN.change_open = true; }
+/* QA hooks (userflow.cpp): type into the box like a player would, and read what the UI shows. */
+void un_qa_type(const std::string& t) { seed_shot(); set_text(t); }
+std::string un_qa_status() {
+    const Avail a = UN.chk.state;
+    return UN.claiming ? "Claiming..." : (!UN.err.empty() && (a == Avail::Taken || a == Avail::NotAllowed) ? UN.err : status_text(UN.chk));
+}
+bool un_qa_prompt_open() { return UN.prompt_open || UN.popup_last; }   // no ImGui calls here: this runs between frames
 bool un_text_valid() { return !UN.chk.trimmed().empty() && hubnet::username_ok(UN.chk.trimmed()); }
 
 /* Seed the box for the wizard / prompt: the Windows account name, cleaned up, when nothing was typed yet. */
@@ -93,7 +101,7 @@ bool un_claim_start() {
     const std::string name = UN.chk.trimmed();
     if (!hubnet::username_ok(name)) return false;
     UN.err.clear();
-    if (g_headless || FR.fake) {   // screenshot runs: pretend
+    if ((g_headless && !shot_net()) || FR.fake) {   // screenshot runs: pretend
         UN.claiming = true;
         return true;
     }
@@ -107,19 +115,20 @@ bool un_claim_start() {
 /* Per frame (from fr_tick): connection edges and the debounced availability check. */
 void un_tick() {
     seed_shot();
-    if (g_headless) return;
+    if (g_headless && !shot_net()) return;
     const bool conn = fr_connected();
     if (conn != UN.was_connected) {
         UN.was_connected = conn;
         if (conn) UN.chk.on_connection_back(ImGui::GetTime());
         else { UN.chk.on_connection_lost(); UN.claiming = false; }
     }
-    if (UN.chk.want_send(ImGui::GetTime(), conn)) UN.chk.sent(FR.cli.check_username(UN.chk.trimmed()));
+    if (UN.chk.want_send(ImGui::GetTime(), conn)) { const int r = FR.cli.check_username(UN.chk.trimmed()); UN.chk.sent(r); shot_trace("un_check_sent", UN.chk.trimmed() + " ref=" + std::to_string(r)); }
 }
 
 void un_on_event(const hubnet::Event& e) {
     using K = hubnet::Event::Kind;
     if (e.kind == K::UsernameChecked) {
+        shot_trace("un_checked", e.name + " ok=" + std::to_string(e.ok) + " ref=" + std::to_string(e.ref) + " mine_ref=" + std::to_string(UN.chk.ref) + " text=" + e.text);
         UN.chk.on_result(e.ref, e.ok, e.text, e.suggestions, e.yours);
     } else if (e.kind == K::UsernameResult) {
         if (e.ref != UN.claim_ref && UN.claim_ref != 0) return;
@@ -158,6 +167,9 @@ void un_on_event(const hubnet::Event& e) {
 /* The box, the live status line and the suggestion chips. width 0 = fill. Returns true when Enter was pressed in the box. */
 bool un_picker(const char* id, float width) {
     seed_shot();
+    /* Screenshot / pad-nav runs have no network (fr_tick does not run): once the box is drawn, a typed name settles as "can't check right now,
+     * claim later", like a PC with no internet. */
+    if (g_headless && !shot_net()) UN.chk.want_send(ImGui::GetTime(), false);
     ImGui::PushID(id);
     bool enter = false;
     ImGui::SetNextItemWidth(width > 0 ? width : sp(34.f));
@@ -240,6 +252,8 @@ void un_account_block() {
 /* Banner (no confirmed username yet) and the one-time prompt modal. Called from draw_overlays(). */
 void draw_username_overlays() {
     seed_shot();
+    UN.popup_last = UN.popup_now;
+    UN.popup_now = false;
     if (wizard_state() != -1) return;   // the wizard has its own Name step
     const bool show_shot = g_headless && std::getenv("HUB_SHOT_USERNAME_BANNER");
     if (g_headless && !show_shot && !UN.prompt_open && !ImGui::IsPopupOpen("Pick your username##un")) return;
@@ -277,6 +291,7 @@ void draw_username_overlays() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.5f)));
     bool open = true;
     if (ImGui::BeginPopupModal("Pick your username##un", &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        UN.popup_now = true;
         if (ui::modal_back()) ImGui::CloseCurrentPopup();
         ImGui::PushTextWrapPos(sp(46.f));
         ImGui::PushFont(ui::F.h2);

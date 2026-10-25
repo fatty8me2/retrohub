@@ -51,7 +51,7 @@ std::string code_path() { return hub::data_dir() + "account_code.txt"; }
 
 /* The account code is kept next to identity.json (same protection) so Settings can show it again later. */
 void load_saved_code() {
-    if (AC.code_loaded || g_headless) return;
+    if (AC.code_loaded || (g_headless && !shot_net())) return;
     AC.code_loaded = true;
     std::ifstream f(code_path());
     std::string c;
@@ -72,7 +72,7 @@ std::string countdown_text(double secs_left) {
 }
 
 void start_create() {
-    if (g_headless || AC.create_job) return;
+    if ((g_headless && !shot_net()) || AC.create_job) return;
     hubnet::Identity id;
     AC.create_err.clear();
     if (!hubnet::identity_read_file(identity_path(), &id)) { AC.create_err = "There is no account on this PC yet."; return; }
@@ -92,7 +92,7 @@ void start_create() {
 }
 
 void start_redeem() {
-    if (g_headless || AC.redeem_job) return;
+    if ((g_headless && !shot_net()) || AC.redeem_job) return;
     std::string code = hubnet::link_normalize_code(AC.redeem_buf);
     AC.redeem_err.clear();
     if (code.empty()) { AC.redeem_err = "Enter the code from your other PC (XXXX-XXXX-XXXX)."; return; }
@@ -115,7 +115,7 @@ void start_redeem() {
 
 /* Applies the confirmed identity: backs up this PC's account, adopts the new one (reconnects if the friends client runs). */
 void adopt_pending() {
-    if (g_headless || FR.fake) return;
+    if ((g_headless && !shot_net()) || FR.fake) return;
     if (!FR.started) FR.cli.set_paths(hub::data_dir(), hub::saves::vault_dir());
     if (!FR.cli.adopt_identity(AC.pending)) {
         set_toast("Could not switch accounts. The current account is unchanged.", false, 8.0);
@@ -226,7 +226,7 @@ void draw_account_section() {
     poll_jobs();
 
     begin_panel("set_account");
-    section_title("Account");
+    section_title(A.st.username_claimed && !A.st.name.empty() ? "Account: " + A.st.name : std::string("Account"));
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
     un_account_block();
@@ -343,6 +343,17 @@ void draw_account_section() {
 /* ---------- Setup wizard: "I already have a username on another PC" ----------
  * Draws the code box + button. A good code signs this PC in at once (nothing to lose on a fresh install), turns cloud saves
  * on and starts the first pull. Returns true on the frame the account switched. Server calls run on the worker thread. */
+/* QA hooks (userflow.cpp): the same calls the buttons make. */
+void account_qa_poll() { poll_jobs(); }
+void account_qa_make_code() { start_create(); }
+std::string account_qa_code() { return AC.code; }
+std::string account_qa_err() { return AC.create_err.empty() ? AC.redeem_err : AC.create_err; }
+bool account_qa_busy() { return AC.create_job != nullptr || AC.redeem_job != nullptr; }
+void account_qa_redeem(const std::string& code) {
+    AC.auto_adopt = true;
+    std::snprintf(AC.redeem_buf, sizeof AC.redeem_buf, "%s", code.c_str());
+    start_redeem();
+}
 bool account_redeem_for_wizard() {
     seed_for_screenshots();
     AC.auto_adopt = true;
@@ -355,7 +366,7 @@ bool account_redeem_for_wizard() {
                             ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Code);
     ImGui::SameLine();
     const bool complete = hubui::un::link_code_complete(AC.redeem_buf);
-    if (button(redeeming ? "Checking..." : "Sign in", ImVec2(sp(14.f), 0), true, !redeeming && !g_headless && complete) || (enter && complete)) {
+    if (button(redeeming ? "Checking..." : "Sign in", ImVec2(sp(14.f), 0), true, !redeeming && (!g_headless || shot_net()) && complete) || (enter && complete)) {
         if (!redeeming && complete) start_redeem();
     }
     if (!AC.redeem_err.empty()) account_text_error(AC.redeem_err);

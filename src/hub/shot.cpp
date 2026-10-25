@@ -16,6 +16,14 @@ void save_screenshot(SDL_Renderer* ren, const char* path) {
     if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch) == 0) SDL_SaveBMP(s, path);
     SDL_FreeSurface(s);
 }
+/* Headless runs normally never touch the network. HUB_SHOT_NET=1 allows the friends client / account calls / username claims, but ONLY
+ * against a loopback server (the QA harness starts a local wrangler dev; production is unreachable from here by construction). */
+bool shot_net() {
+    if (!g_headless || !std::getenv("HUB_SHOT_NET")) return false;
+    const std::string s = server_url();
+    return s.rfind("ws://127.0.0.1", 0) == 0 || s.rfind("ws://localhost", 0) == 0;
+}
+
 ImGuiKey shot_key(const std::string& n) {
     if (n == "right") return ImGuiKey_RightArrow;
     if (n == "left") return ImGuiKey_LeftArrow;
@@ -249,5 +257,5 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
 
 bool ShotDriver::ready() const {
     return el >= secs && (pad_seq.empty() || pad_i > pad_seq.size()) && pad_key == ImGuiKey_None && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
-           (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5));
+           (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5)) && (!userflow_active() || userflow_done());
 }
