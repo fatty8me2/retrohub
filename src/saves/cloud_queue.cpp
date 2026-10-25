@@ -137,9 +137,9 @@ int64_t CloudQueue::earliest(int64_t now) const {
     return e;
 }
 
-void CloudQueue::wake_parked(int64_t now) {
+void CloudQueue::wake_parked(int64_t now, bool only_parked) {
     for (auto& q : items_)
-        if (q.next_at < 0 || q.next_at > now) { q.next_at = now; q.tries = 0; }
+        if (q.next_at < 0 || (!only_parked && q.next_at > now)) { q.next_at = now; q.tries = 0; }
 }
 
 bool CloudQueue::has(const std::string& gkey) const {

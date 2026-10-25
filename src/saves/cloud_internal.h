@@ -80,7 +80,7 @@ public:
     void fail(const std::string& gkey, const std::string& reason, int64_t now, int64_t retry_after = 0);   // backoff or park
     bool next_due(int64_t now, QItem* out) const;             // earliest item with next_at <= now (parked items have next_at = -1)
     int64_t earliest(int64_t now) const;                      // next_at of the first not-yet-due item, or 0
-    void wake_parked(int64_t now);                            // manual trigger: parked items become due
+    void wake_parked(int64_t now, bool only_parked = false);  // trigger (manual / hub start): backing-off items become due; only_parked = just the ones waiting for a trigger
     bool has(const std::string& gkey) const;
     size_t size() const { return items_.size(); }
     const std::vector<QItem>& items() const { return items_; }
@@ -129,6 +129,8 @@ bool cloud_take_recovery_reminder();                              // true once a
 void cloud_backup_progress(int* done, int* total);                // initial upload "12 of 41 games"
 PrelaunchResult cloud_prelaunch_ex(const GameId& g, SyncMode mode, int timeout_ms, int pull_budget_ms);
 std::string cloud_queue_dump();                                      // "gkey:reason:tries:next_at;..." for tests and the log
+void cloud_account_changed();                                     // identity.json now holds another account (link code, recovery code, vault adopt): switch, restore mode, pull
+bool cloud_adopt_account(const std::string& uid, const std::string& secret, std::string* err);   // THE add/recover-this-account path (recovery code decodes to this)
 void cloud_wake_queue();                                          // manual trigger: parked retries run again
 void cloud_set_identity(const std::string& uid, const std::string& secret);   // tests / after an identity change; resets restore mode
 

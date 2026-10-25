@@ -124,7 +124,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     refresh_pads();
     start_scan();
-    auto_sync();   // pull in saves from other PCs at start
+    cloud_boot();  // cloud saves v2: automatic for every account (startup delta + retry queue run in the background)
+    auto_sync();
     SH.init(shot_path);
     if (!autotest && (!shot_path || SH.update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
 
@@ -160,6 +161,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_np3ds();
         kt_tick();
         poll_job();
+        cloud_gate_tick();
         run_pending_sync();
         poll_emulators();
         lobby_tick();
@@ -308,6 +310,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     FR.cli.stop();
     if (A.scan_th.joinable()) A.scan_th.join();
     if (A.job.th.joinable()) A.job.th.join();
+    if (A.cloud_gate.th.joinable()) A.cloud_gate.th.join();
+    cloud_shutdown();
     hub::flush_library_state();
     if (A.proc) CloseHandle(A.proc);
     for (auto* p : A.pads) SDL_GameControllerClose(p);

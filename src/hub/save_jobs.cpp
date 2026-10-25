@@ -1,4 +1,5 @@
 #include "app.h"
+#include "cloud_internal.h"   // cloud_prelaunch_ex and the engine hooks (not part of the UI contract)
 
 /* ---------- save jobs (sync / export / import) ---------- */
 
@@ -6,13 +7,6 @@ void set_toast(const std::string& s, bool good, double secs) {
     push_toast(s, good ? COL_GOOD : COL_BAD, secs);
 }
 
-
-/* Runs on the job thread (identity.json may be read or created here, never on the UI thread). */
-static void fill_identity(hub::saves::CloudConfig& c) {
-    hubnet::Identity id = hubnet::identity_load_or_create(hub::data_dir(), hub::saves::vault_dir());
-    c.user_id = id.user_id;
-    c.secret = id.secret;
-}
 
 /* Cloud problems that are not shown as toasts go to cloud_saves.log in the data dir (job thread only). */
 static void log_cloud(const std::string& msg) {
@@ -24,18 +18,147 @@ static void log_cloud(const std::string& msg) {
     f << ts << "  " << msg << "\n";
 }
 
-/* Cloud config from the friends identity. The Worker is reached over https; server_url() is the wss:// lobby URL. */
-static hub::saves::CloudConfig cloud_config() {
-    hub::saves::CloudConfig c;
+/* The Worker is reached over https; server_url() is the wss:// lobby URL. */
+static std::string cloud_base_url() {
     std::string base = server_url();
     if (base.rfind("wss://", 0) == 0) base = "https://" + base.substr(6);
     else if (base.rfind("ws://", 0) == 0) base = "http://" + base.substr(5);
-    c.base_url = base;
-    c.include_states = A.st.sync_states;
-    return c;
+    return base;
 }
 
-bool sync_enabled() { return !A.st.sync_folder.empty() || A.st.cloud_saves; }
+static bool g_cloud_on = false;
+
+void cloud_boot() {
+    if (g_headless || std::getenv("RETROHUB_NO_CLOUD")) return;
+    hub::saves::cloud_engine_start(cloud_base_url());   // automatic for every account: no opt-in, identity = the account
+    g_cloud_on = true;
+}
+void cloud_shutdown() {
+    if (!g_cloud_on) return;
+    g_cloud_on = false;
+    hub::saves::cloud_engine_stop();
+}
+bool cloud_active() { return g_cloud_on; }
+
+hub::saves::GameId cloud_id_for(const hub::GameEntry& e) {
+    if (is_native(e)) return hub::saves::GameId{hubui::kSmashSaveSystem, hubui::kSmashSaveKey};
+    return hub::saves::GameId{sys_short(e), e.key};
+}
+
+/* Legacy status struct (Saves page line) filled from the engine, no network. */
+hub::saves::CloudStatus cloud_status_now() {
+    hub::saves::CloudStatus s;
+    if (!g_cloud_on) { s.unavailable = true; s.error = "cloud saves are off"; return s; }
+    hub::saves::CloudAccountInfo a = hub::saves::cloud_account();
+    s.enabled = a.known && a.online;
+    s.unavailable = a.needs_attention || a.paused_by_server;
+    s.used = a.used;
+    s.quota = a.cap;
+    for (auto& g : hub::saves::cloud_games()) if (g.cloud_bytes > 0) s.files++;
+    if (!s.enabled && !s.unavailable) s.error = a.known ? "offline" : "";
+    return s;
+}
+
+/* ---------- pre-launch gate (see CloudGate in app.h) ---------- */
+
+static void gate_finish() {
+    A.cloud_gate.phase = CloudGate::Idle;
+    A.cloud_gate.res = hub::saves::PrelaunchResult();
+    std::function<void()> go;
+    go.swap(A.cloud_gate.proceed);
+    if (go) go();
+}
+static void gate_task(std::function<void()> f) {
+    if (A.cloud_gate.th.joinable()) A.cloud_gate.th.join();
+    A.cloud_gate.phase = CloudGate::Running;
+    A.cloud_gate.done = false;
+    A.cloud_gate.th = std::thread([f]() { f(); A.cloud_gate.done = true; });
+}
+
+bool cloud_gate_begin(const hub::GameEntry& e, std::function<void()> proceed) {
+    if (A.cloud_gate.pass_key == e.key) { A.cloud_gate.pass_key.clear(); return false; }   // re-entered after the gate
+    if (!g_cloud_on || g_headless || A.cloud_gate.phase != CloudGate::Idle) return false;
+    hub::saves::GameId id = cloud_id_for(e);
+    if (id.system.empty() || id.key.empty()) return false;
+    A.cloud_gate.game = id;
+    A.cloud_gate.title = e.title;
+    A.cloud_gate.mode = hub::saves::SyncMode::ReadWrite;   // offline play from the library always uses the vault save
+    A.cloud_gate.proceed = std::move(proceed);
+    set_notice("Checking cloud saves...", 6.0);
+    gate_task([id]() { A.cloud_gate.res = hub::saves::cloud_prelaunch(id, hub::saves::SyncMode::ReadWrite); });
+    return true;
+}
+
+/* Decides what the last answer needs: continue, or ask (UI lane dialogs), or apply the default when nobody asks. */
+static void gate_handle_result() {
+    using hub::saves::PrelaunchResult;
+    const PrelaunchResult& r = A.cloud_gate.res;
+    if (r.offline) set_notice("Offline: playing with the saves on this PC; they will sync when you are back.", 6.0);
+    if (r.action == PrelaunchResult::NeedConflictDecision) {
+        A.cloud_gate.phase = CloudGate::AskConflict;
+        if (A.cloud_gate.on_ask) A.cloud_gate.on_ask();
+        else cloud_gate_choose_conflict(hub::saves::ConflictChoice::UseNewer);   // preselected default
+        return;
+    }
+    if (r.action == PrelaunchResult::NeedLeaseDecision) {
+        A.cloud_gate.phase = CloudGate::AskLease;
+        if (A.cloud_gate.on_ask) A.cloud_gate.on_ask();
+        else cloud_gate_choose_lease(hub::saves::LeaseChoice::PlayAnyway);
+        return;
+    }
+    gate_finish();
+}
+
+void cloud_gate_tick() {
+    if (A.cloud_gate.phase == CloudGate::Running && A.cloud_gate.done) {
+        if (A.cloud_gate.th.joinable()) A.cloud_gate.th.join();
+        gate_handle_result();
+    }
+}
+
+void cloud_gate_choose_conflict(hub::saves::ConflictChoice c) {
+    if (A.cloud_gate.phase != CloudGate::AskConflict) return;
+    hub::saves::GameId id = A.cloud_gate.game;
+    gate_task([id, c]() {
+        hub::saves::cloud_resolve_conflict(id, c);   // UseCloud downloads, so it runs off the UI thread
+        A.cloud_gate.res = hub::saves::PrelaunchResult();
+    });
+}
+
+void cloud_gate_choose_lease(hub::saves::LeaseChoice c) {
+    if (A.cloud_gate.phase != CloudGate::AskLease) return;
+    if (c == hub::saves::LeaseChoice::Cancel) {
+        hub::saves::cloud_resolve_lease(A.cloud_gate.game, c);
+        A.cloud_gate.phase = CloudGate::Idle;
+        A.cloud_gate.proceed = nullptr;
+        return;
+    }
+    hub::saves::GameId id = A.cloud_gate.game;
+    gate_task([id, c]() { A.cloud_gate.res = hub::saves::cloud_resolve_lease(id, c); });   // continues the pre-launch (pull / conflicts)
+}
+
+void cloud_account_changed() {
+    if (g_cloud_on) hub::saves::cloud_account_changed();
+}
+
+/* Online host: the normal pre-launch pull first, so the save it shares with the room is the freshest. The vault is only read
+ * afterwards; guests' throwaway saves never upload. Bounded (2.5 s manifest, 6 s pull) and silent when offline. */
+void cloud_host_pull(const hub::GameEntry& e) {
+    if (!g_cloud_on || g_headless) return;
+    hub::saves::GameId id = cloud_id_for(e);
+    if (id.system.empty() || id.key.empty()) return;
+    hub::saves::cloud_prelaunch_ex(id, hub::saves::SyncMode::ReadOnly, 2500, 6000);
+}
+
+/* spawn(): the session is tracked so the exit pushes the game (read-only sessions use a throwaway save dir: nothing is pushed). */
+void cloud_run_started() {
+    if (!g_cloud_on || A.run.key.empty() || A.run.system_short.empty()) return;
+    A.run.cloud_started = true;
+    hub::saves::cloud_game_started(hub::saves::GameId{A.run.system_short, A.run.key},
+                                   A.run.online ? hub::saves::SyncMode::ReadOnly : hub::saves::SyncMode::ReadWrite);
+}
+
+bool sync_enabled() { return !A.st.sync_folder.empty() || g_cloud_on; }   // the cloud is automatic; the folder is an optional extra
 
 /* Merges the folder and cloud reports of one sync run into the one line the Saves page shows. */
 static hub::saves::SyncReport merge_reports(const hub::saves::SyncReport& a, const hub::saves::SyncReport& b) {
@@ -63,33 +186,19 @@ void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
     A.job.report = hub::saves::SyncReport();
     A.job.export_ok = false;
     A.job.export_err.clear();
-    A.job.cloud = (k == SaveJob::Sync && A.st.cloud_saves) || k == SaveJob::Status;
-    if (A.job.cloud) A.job.cloud_cfg = cloud_config();
-    A.job.cloud_skipped = false;
+    A.job.cloud = false;
+    A.job.cloud_skipped = path.empty();   // nothing for this job to report when only the (automatic) cloud sync runs
     A.job.th = std::thread([]() {
         SaveJob& j = A.job;
         if (j.kind == SaveJob::Sync) {
-            hub::saves::SyncReport folder, cloud;
+            hub::saves::SyncReport folder;
+            /* order: cloud first (asynchronous, owned by the engine), the optional folder second and never the truth */
+            if (j.manual && g_cloud_on) hub::saves::cloud_sync_all_now();
             if (!j.path.empty()) folder = hub::saves::sync_folder(j.path, j.include_states);
-            if (j.cloud) {
-                fill_identity(j.cloud_cfg);
-                j.cloud_stat = hub::saves::cloud_status(j.cloud_cfg);
-                if (j.cloud_stat.unavailable) {
-                    // server has cloud saves off, or this account is not registered yet: no transfer, status line only
-                    j.cloud_skipped = true;
-                    log_cloud("cloud saves skipped: " + std::string(j.cloud_stat.error.empty() ? "unavailable" : j.cloud_stat.error));
-                } else {
-                    cloud = hub::saves::sync_cloud(j.cloud_cfg);
-                    j.cloud_stat = hub::saves::cloud_status(j.cloud_cfg);
-                    if (!cloud.ok) log_cloud("cloud sync failed: " + cloud.error);
-                }
-            }
-            j.report = merge_reports(folder, cloud);
+            j.report = folder;
         }
         else if (j.kind == SaveJob::Status) {
-            fill_identity(j.cloud_cfg);
-            j.cloud_stat = hub::saves::cloud_status(j.cloud_cfg);
-            if (j.cloud_stat.unavailable) log_cloud("cloud saves unavailable");
+            j.cloud_stat = cloud_status_now();
         }
         else if (j.kind == SaveJob::Export) j.export_ok = hub::saves::export_zip(j.path, j.include_states, &j.export_err);
         else if (j.kind == SaveJob::Import) j.report = hub::saves::import_zip(j.path);
