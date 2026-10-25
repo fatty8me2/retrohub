@@ -66,6 +66,7 @@ void leave_room() {
      * (Only our own online child process; emulator sessions are not touched.) */
     if (A.proc && A.run.online && !A.run.after_exit) TerminateProcess(A.proc, 0);
     kt_leave_room();
+    group_left_room();
     A.lobby.stop();
     A.in_room = false;
     A.peers.clear();

@@ -113,6 +113,7 @@ struct Args {
     bool realtime = false;   // --realtime (with --headless): keep the 60 Hz speed limiter, like a real game (QA of stalls)
     long long frames = 0;
     std::string screenshot;
+    std::string load_state;   // --load-state FILE: restore this state right after boot (offline)
     std::string control, state_dir, shot_dir, game_key;   // --control FILE (runner_ctl.h), --state-dir, --shot-dir, --game-key
     std::string cheats;     // --cheats FILE: cheat list JSON (cheats.h); polled for live toggles offline
     std::string controls;   // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (controls.h)
@@ -190,6 +191,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--controls") ok = val(&a.controls);
         else if (k == "--cheats") ok = val(&a.cheats);
         else if (k == "--control") ok = val(&a.control);
+        else if (k == "--load-state") ok = val(&a.load_state);
         else if (k == "--state-dir") ok = val(&a.state_dir);
         else if (k == "--shot-dir") ok = val(&a.shot_dir);
         else if (k == "--game-key") ok = val(&a.game_key);
@@ -415,6 +417,36 @@ static void ctl_finish(bool ok, const std::string& msg) {
     g_job = CtlJob();
 }
 
+/* Offline resume support: --load-state restores a state on the third VI; auto.state is rewritten every 30 s and when the hub asks
+ * for "quit" (the core offers no hook for a plain window close, so that case loses at most 30 s). */
+static std::string g_load_state_path, g_auto_dir, g_key_for_auto;
+static unsigned long long g_next_autosave = 0;
+static long long g_stop_at_vi = 0;
+static void auto_save_now() {
+    if (g_auto_dir.empty()) return;
+    std::error_code ec;
+    fs::create_directories(fs::path(g_auto_dir), ec);
+    std::string f = runctl::state_file(g_auto_dir, runctl::kAutoSlot);
+    if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) return;
+    runctl::Sidecar sc;
+    sc.game_key = g_key_for_auto; sc.time = (long long)std::time(nullptr); sc.playtime = (long long)(GetTickCount64() / 1000);
+    runctl::write_text_atomic(runctl::sidecar_file(g_auto_dir, runctl::kAutoSlot), runctl::make_sidecar(sc));
+}
+static void auto_tick() {
+    if (!g_load_state_path.empty() && g_vi >= 3) {
+        std::string f = g_load_state_path;
+        g_load_state_path.clear();
+        if (g_core.DoCommand(M64CMD_STATE_LOAD, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) logf_("n64run", "load-state: the core refused %s", f.c_str());
+        else logf_("n64run", "load-state: restoring %s", f.c_str());
+        g_next_autosave = GetTickCount64() + 30000;
+    }
+    if (g_stop_at_vi && g_vi >= g_stop_at_vi) { g_stop_at_vi = 0; g_core.DoCommand(M64CMD_STOP, 0, nullptr); return; }
+    if (!g_auto_dir.empty() && !g_stop_at_vi && g_vi > 600) {
+        unsigned long long now = GetTickCount64();
+        if (now >= g_next_autosave) { g_next_autosave = now + 30000; auto_save_now(); }
+    }
+}
+
 static void ctl_tick() {
     if (!g_ctl.enabled()) return;
     const long long vi = g_vi;
@@ -496,7 +528,8 @@ static void ctl_tick() {
             break;
         case runctl::Cmd::Quit:
             g_ctl.ack(true, "quitting");
-            g_core.DoCommand(M64CMD_STOP, 0, nullptr);
+            if (!g_auto_dir.empty() && !g_ctl_online) { auto_save_now(); g_stop_at_vi = vi + 12; }   // let the core write auto.state first
+            else g_core.DoCommand(M64CMD_STOP, 0, nullptr);
             break;
         default: ctl_finish(false, "not supported for this system"); break;
     }
@@ -513,6 +546,7 @@ static void headless_frame_cb(unsigned int) {
     }
     if (!g_gs.empty() && g_core.MemPtr) { uint8_t* r = static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)); if (r) n64run::gs_apply(r, 8u * 1024u * 1024u, g_gs); }
     cheats_tick();
+    auto_tick();
     ctl_tick();
     if (g_match && g_core.MemPtr && !g_match->done()) {
         std::string l = g_match->step(static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)), g_vi);
@@ -1010,13 +1044,16 @@ int main(int argc, char** argv) {
         }
         g_headless_mode = args.headless;
         g_ctl_online = online;
+        g_key_for_auto = args.game_key;
+        if (!online && !args.state_dir.empty() && !g_match) { g_auto_dir = args.state_dir; g_next_autosave = GetTickCount64() + 30000; }
+        if (!online && !args.load_state.empty()) g_load_state_path = args.load_state;
         if (!args.control.empty()) {
             g_ctl = runctl::Poller(args.control);
             g_ctl_state_dir = args.state_dir; g_ctl_shot_dir = args.shot_dir; g_ctl_key = args.game_key;
             if (!args.headless) g_ctl_shot_tmp = save_dir + "\\screenshots_tmp";
         }
         g_realtime = args.realtime;
-        if (args.headless || g_match || online || !g_gs.empty() || !g_cheats_path.empty() || !args.control.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
+        if (args.headless || g_match || online || !g_gs.empty() || !g_cheats_path.empty() || !args.control.empty() || !g_auto_dir.empty() || !g_load_state_path.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         /* Boot watchdog: a game that never reads a controller within 90 s is stuck in its own boot code (seen with a
          * bad Pokemon Stadium dump: it spins in a `bal .` loop at 0x80000198). Say so instead of hanging silently. */
         std::thread([] {

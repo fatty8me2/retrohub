@@ -772,6 +772,28 @@ static void test_daily_limit_and_auth() {
     CHECK(cloud_game(G, &gi) && gi.state == CloudState::NeedsAttention);
 }
 
+static void test_states_switch() {
+    printf(" Back up save states toggle: off keeps states and thumbnails local, battery still syncs\n");
+    Pc pc1("pc1");
+    use(pc1);
+    cloud_set_sync_states(false);
+    put(pc1.game() / "battery" / "ssb64.sra", rnd(4096, 31), now_unix() - 1000);
+    put(pc1.game() / "meta.json", "{\"title\":\"Smash\"}", now_unix() - 1000);
+    put(pc1.game() / "states" / "slot2.state", rnd(50000, 32), now_unix() - 1000);
+    put(pc1.game() / "states" / "slot2.png", rnd(3000, 33), now_unix() - 1000);
+    cloud_prelaunch(G, SyncMode::ReadWrite);
+    play();
+    exit_game();
+    CHECK(!g_srv->cur_sha(g_uid, GK, "battery/ssb64.sra").empty());
+    CHECK(g_srv->cur_sha(g_uid, GK, "states/slot2.state").empty());
+    CHECK(g_srv->cur_sha(g_uid, GK, "states/slot2.png").empty());
+    cloud_set_sync_states(true);
+    play();
+    exit_game();
+    CHECK(!g_srv->cur_sha(g_uid, GK, "states/slot2.state").empty());
+    CHECK(!g_srv->cur_sha(g_uid, GK, "states/slot2.png").empty());
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::set_terminate([]() {
@@ -798,6 +820,7 @@ int main() {
     { int f0 = g_fail; fresh_account(); test_offline_retry_resume(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_conflict(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_plain_conflict_surfaces(); if (g_fail != f0) dump_log(); }
+    { int f0 = g_fail; fresh_account(); test_states_switch(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_states_never_prompt(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_quota(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_lease_and_readonly(); if (g_fail != f0) dump_log(); }

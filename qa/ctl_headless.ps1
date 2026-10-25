@@ -35,6 +35,7 @@ function Drive($name, $p, $run, $states, $shots, $slotsOk) {
     foreach ($f in @('slot3.state', 'slot3.png', 'slot3.json')) {
         if (-not (Test-Path "$states\$f")) { Write-Host "FAIL[$name]: missing $f"; $script:fail++ }
     }
+    if (-not (Test-Path "$states\auto.state")) { Write-Host "FAIL[$name]: no auto.state after quit"; $script:fail++ }
     $png = Get-ChildItem $shots -Filter *.png -ErrorAction SilentlyContinue
     if (-not $png) { Write-Host "FAIL[$name]: no screenshot in $shots"; $script:fail++ }
     elseif ($png[0].Name -notmatch '^\d{8}-\d{6}\.png$') { Write-Host "FAIL[$name]: bad shot name $($png[0].Name)"; $script:fail++ }
@@ -50,6 +51,12 @@ $p = Start-Process -FilePath (Join-Path $Root 'build\bin\Release\retrorun.exe') 
     '--save-dir', "$work\sv", '--state-dir', "$work\st", '--headless', '--frames', '2000000', '--control', "$work\run\control.json",
     '--game-key', 'qa-gba', '--shot-dir', "$work\shots", '--log', "$work\rr.log")
 Drive 'retrorun' $p "$work\run" "$work\st" "$work\shots"
+# --load-state at boot
+$p2 = Start-Process -FilePath (Join-Path $Root 'build\bin\Release\retrorun.exe') -PassThru -WindowStyle Hidden -ArgumentList @(
+    '--core', (Join-Path $Root 'deps\cores\mgba_libretro.dll'), '--rom', (Join-Path $Root 'deps\testroms\arm.gba'), '--system', 'gba',
+    '--save-dir', "$work\sv", '--state-dir', "$work\st", '--headless', '--frames', '120', '--load-state', "$work\st\slot3.state", '--log', "$work\rr2.log")
+$p2.WaitForExit(60000) | Out-Null
+if (-not (Select-String -Path "$work\rr2.log" -Pattern 'Resumed from saved state' -Quiet)) { Write-Host 'FAIL[retrorun]: --load-state did not restore'; $fail++ } else { Write-Host 'ok[retrorun]: --load-state' }
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 
 # ---- n64run
