@@ -249,7 +249,7 @@ void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_n
     plan.port = s.port;
     plan.expected = (int)A.lobby.members().size();
     std::string err;
-    if (!GCO.fw.start_guest(server_url(), A.code, launch_no, plan, A.lobby.my_slot(), &err, "gc")) {
+    if (!GCO.fw.start_guest(server_url(), A.code, launch_no, plan, room_my_slot(), &err, "gc")) {
         launch_fail("GameCube online: " + err, 12.0);
         GCO.guest_wait = false;
     }
@@ -291,7 +291,7 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
     }
     /* The room rejects a duplicate nickname, and every fresh Azahar is called "AZAHAR": give this PC's 3DS a unique username
      * (RetroHub profile name + slot) in the NAND config before it starts. The file exists once a game ran offline once. */
-    if (!hubnp3ds::set_console_username_file(inst.dir, hubnp3ds::console_username(A.st.name, A.lobby.my_slot()))) {
+    if (!hubnp3ds::set_console_username_file(inst.dir, hubnp3ds::console_username(A.st.name, room_my_slot()))) {
         launch_note(is_host, "Start this game once offline in Azahar (to create its 3DS settings), then join the room again.", 10.0);
         return;
     }
@@ -307,9 +307,9 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
     } else {
         if (resumed) plan = *resumed;
         else if (!msg || !hubnp3ds::parse_plan(*msg, &plan)) { launch_note(is_host, "The host's 3DS room settings are missing - ask them to update RetroHub.", 10.0); return; }
-        if (!NP3.start_guest(server_url(), A.code, launch_no, plan, A.lobby.my_slot(), &err)) { launch_note(is_host, "3DS online: " + err, 12.0); return; }
+        if (!NP3.start_guest(server_url(), A.code, launch_no, plan, room_my_slot(), &err)) { launch_note(is_host, "3DS online: " + err, 12.0); return; }
     }
-    NP3_mp = hubnp3ds::multiplayer_arg(hubnp3ds::nickname(A.st.name, A.lobby.my_slot()), plan.password, "127.0.0.1", NP3.connect_port());
+    NP3_mp = hubnp3ds::multiplayer_arg(hubnp3ds::nickname(A.st.name, room_my_slot()), plan.password, "127.0.0.1", NP3.connect_port());
     hubnp3ds::seed_join_config_file(inst.dir, "", "127.0.0.1", NP3.connect_port());   // prefill Direct Connect before Azahar starts
     NP3_game = e;
     NP3_pending = true;
@@ -346,7 +346,7 @@ void poll_np3ds() {
         } else {
             std::string st;
             make_dirs(no_slash(hub::data_dir()) + "\\netplay\\3ds");   // only the host created it before: a guest's helper could not write its status file
-            hubnp3ds::start_join_driver(GetProcessId(A.proc), no_slash(hub::data_dir()) + "\\netplay\\3ds", hubnp3ds::nickname(A.st.name, A.lobby.my_slot()),
+            hubnp3ds::start_join_driver(GetProcessId(A.proc), no_slash(hub::data_dir()) + "\\netplay\\3ds", hubnp3ds::nickname(A.st.name, room_my_slot()),
                                         "", "127.0.0.1", NP3.connect_port(), L"", &st);
         }
     }
@@ -356,6 +356,11 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
     A.st.last_game = room_id(e);
     mark_dirty();
+    shot_trace("launch_online", std::string(is_host ? "host " : "guest ") + sys_short(e) + " " + room_id(e));
+    if (g_headless && g_fake_room && (is_kanto(e) || e.system == hub::System::GC || e.system == hub::System::N3DS)) {   // peer-hosted routes need sockets: stop at the route
+        shot_trace("online-route", std::string(is_kanto(e) ? "kanto" : e.system == hub::System::GC ? "dolphin-netplay" : "azahar-np3ds"));
+        return;
+    }
     if (is_kanto(e)) { kt_launch(e, launch_no, is_host); return; }
     if (e.system == hub::System::PS2) { launch_fail("PS2 online isn't supported yet - PCSX2 has no netplay. Play it offline from your library.", 12.0); return; }
     if (e.system == hub::System::GC) {   // Dolphin NetPlay: the host starts now; guests start from the launch handler
@@ -383,7 +388,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         env.push_back({"SSB64_LOBBY_CODE", A.code});
         /* Smash's own lobby is driven by this room: it asks the server for the slot we hold here, and the server drops us from
          * it when we leave this room (and follows this room's host changes). */
-        env.push_back({"SSB64_LOBBY_HUBSLOT", std::to_string(A.lobby.my_slot())});
+        env.push_back({"SSB64_LOBBY_HUBSLOT", std::to_string(room_my_slot())});
         for (auto& kv : smash_env(exe)) env.push_back(kv);   // online uses the same vault save as offline
         spawn_room(is_host, exe, "--from-hub --no-update-check", dir_of(exe), env, ri);   // RetroHub's updater is the only one
         return;
@@ -398,7 +403,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         bool mine = false;   // this PC's slot must own a port, else the launch cannot work
         std::string tok;
         for (size_t i = 0; i <= plan.ports.size(); ++i) {
-            if (i == plan.ports.size() || plan.ports[i] == ',') { if (tok == std::to_string(A.lobby.my_slot())) mine = true; tok.clear(); }
+            if (i == plan.ports.size() || plan.ports[i] == ',') { if (tok == std::to_string(room_my_slot())) mine = true; tok.clear(); }
             else tok += plan.ports[i];
         }
         if (!mine) { launch_note(is_host, "The host's port plan doesn't include this PC."); return; }
@@ -420,7 +425,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
             std::string tok;
             for (size_t i = 0; i <= plan.ports.size() && my < 0; ++i) {
                 if (i == plan.ports.size() || plan.ports[i] == ',') {
-                    if (tok == std::to_string(A.lobby.my_slot())) my = port;
+                    if (tok == std::to_string(room_my_slot())) my = port;
                     if (!tok.empty() && tok != "-1") ++port;
                     tok.clear();
                 } else tok += plan.ports[i];
@@ -429,7 +434,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         }
     }
     std::string net = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
-                      std::to_string(A.lobby.my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
+                      std::to_string(room_my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
                       plan.ports + hubui::delay_arg(delay);
     if (e.system == hub::System::N64) {
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
@@ -439,7 +444,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         if (share_save) {   // every PC must agree; only the host (slot 0) supplies its battery dir
             args += " --share-host-save";
             /* n64run's save-sharing role is "lobby slot 0" - which is the host, also after a host change. */
-            if (is_host || A.lobby.my_slot() == 0) {
+            if (is_host || room_my_slot() == 0) {
                 std::string bd = no_slash(hub::saves::battery_dir(sys_short(e), e.key));
                 if (!dir_exists(bd)) set_notice("No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
                 args += " --host-save-dir " + quote(bd);
@@ -478,7 +483,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         }
         if (owners.size() != 2) { launch_note(is_host, "Link cable games need exactly 2 players."); return; }
         std::string lnet = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
-                           std::to_string(A.lobby.my_slot()) + " --players 2 --ports " + owners[0] + "," + owners[1] + ",-1,-1" + hubui::delay_arg(delay);
+                           std::to_string(room_my_slot()) + " --players 2 --ports " + owners[0] + "," + owners[1] + ",-1,-1" + hubui::delay_arg(delay);
         std::string battery = no_slash(hub::saves::battery_dir(sys_short(e), e.key));
         std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
         make_dirs(tmp);
@@ -505,7 +510,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         make_dirs(tmp);
         /* Save policy (docs/SAVES.md): with "use host's save" the host's vault battery files are COPIED into the throwaway dir and
          * retrorun --share-host-save broadcasts them (guests get the bytes before frame 0). Nobody writes into a vault. */
-        if (share_save && (is_host || A.lobby.my_slot() == 0)) {
+        if (share_save && (is_host || room_my_slot() == 0)) {
             std::error_code ec;
             std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
             if (std::filesystem::is_directory(bd, ec)) {
@@ -538,7 +543,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::string states = no_slash(hub::saves::states_dir(sys, e.key));
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
                            " --state-dir " + quote(states) + " --ds-link --net " + quote(server_url()) + " --room " + A.code + "-" +
-                           std::to_string(launch_no) + " --slot " + std::to_string(A.lobby.my_slot()) + " --players " +
+                           std::to_string(launch_no) + " --slot " + std::to_string(room_my_slot()) + " --players " +
                            std::to_string(plan.players) + " --ports " + plan.ports + title_arg(e.title) + save_stem_arg(e);   // --ports: the real member slots (gaps after a leave)
         args += hubui::retro_extra_args(e.system, gsv);
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
@@ -550,7 +555,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
         remove_tree(tmp);
         make_dirs(tmp);
-        if (share_save && (is_host || A.lobby.my_slot() == 0)) {
+        if (share_save && (is_host || room_my_slot() == 0)) {
             std::error_code ec;
             std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
             if (std::filesystem::is_directory(bd, ec)) {
