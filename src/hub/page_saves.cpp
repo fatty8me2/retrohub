@@ -58,10 +58,12 @@ void page_saves() {
     end_panel();
     ImGui::Dummy(ImVec2(0, 4 * S));
 
+    // Cloud saves are automatic; the folder copy is an advanced extra, collapsed unless already in use.
+    ImGui::SetNextItemOpen(!A.st.sync_folder.empty(), ImGuiCond_Once);
+    if (!ImGui::CollapsingHeader("Advanced: also keep a copy in a folder")) { ImGui::Dummy(ImVec2(0, 4 * S)); goto after_sync; }
     begin_panel("sync");
-    section_title("Extra: also copy saves to a folder");
-    text_wrapped_disabled("Optional. Cloud saves already follow your account. If you also want a plain copy, pick a folder (OneDrive, Dropbox, Google Drive, a USB stick or a NAS). RetroHub keeps "
-                          "it in step with the vault in both directions and never deletes a save; if both sides changed, the older copy is kept.");
+    text_wrapped_disabled("You don't need this: cloud saves already follow your account to every PC. Only use it if you also want a plain copy "
+                          "in a folder of your own (a USB stick, a NAS...). RetroHub keeps it in step with the vault and never deletes a save.");
     ImGui::TextUnformatted("Sync folder");
     text_wrapped_disabled(A.st.sync_folder.empty() ? "(not set)" : A.st.sync_folder);
     {
@@ -72,24 +74,13 @@ void page_saves() {
         ImGui::SameLine();
         if (button("Stop syncing", ImVec2(0, 0))) { A.st.sync_folder.clear(); mark_dirty(); A.sync_result.clear(); }
     }
-    for (auto& sg : sync_suggestions()) {
-        if (sg.path == A.st.sync_folder) continue;
-        ImGui::SameLine();
-        std::string lab = "Use " + sg.label + "##" + sg.path;
-        if (button(lab.c_str(), ImVec2(0, 0))) {
-            make_dirs(sg.path);
-            A.st.sync_folder = sg.path;
-            mark_dirty();
-            start_sync(true);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sg.path.c_str());
-    }
     ImGui::Dummy(ImVec2(0, 4 * S));
     if (ImGui::Checkbox("Sync automatically after playing", &A.st.sync_auto)) mark_dirty();
     ImGui::Dummy(ImVec2(0, 2 * S));
     if (button("Copy to folder now", ImVec2(0, 0), false, !A.st.sync_folder.empty() && !A.job.running && !A.proc)) start_sync(true);
     end_panel();
     ImGui::Dummy(ImVec2(0, 4 * S));
+after_sync:
 
     begin_panel("backup");
     section_title("Backup and restore");

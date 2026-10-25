@@ -792,7 +792,8 @@ void page_library() {
         end_panel();
         ImGui::Dummy(ImVec2(0, sp(1.f)));
     }
-    if (!A.st.rom_folders.empty()) sync_card();
+    // The old "sync through a folder" Home card is gone: cloud saves are automatic (v1.25). Folder sync stays
+    // an optional extra on the Saves page.
 
     const hub::GameEntry* sel = find_entry(A.sel_game);
     if (sel) {
