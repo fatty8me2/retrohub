@@ -48,6 +48,7 @@ void page_saves() {
     if (A.vault_dirty) refresh_vault();
     bool busy = A.job.running;
 
+    history_ui_saves_page();
     cloud_ui_saves_page();
 
     begin_panel("vault");

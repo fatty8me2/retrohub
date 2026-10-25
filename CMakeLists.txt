@@ -114,6 +114,7 @@ add_test(NAME ps1_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass
 set_tests_properties(ps1_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "RETROHUB_QA=1")
 add_test(NAME ps1_discs COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_discs.ps1)   # 2-disc homebrew .m3u: libretro disk-control swap + rollback SyncTest with swap events
 set_tests_properties(ps1_discs PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
+add_test(NAME hubhistory_test COMMAND hubhistory_test)
 add_test(NAME hubsaves_test COMMAND hubsaves_test)
 add_test(NAME hubsaves_cloud_test COMMAND hubsaves_cloud_test)   # e2e part runs only with RETROHUB_TEST_SAVES_URL (qa\saves_cloud.ps1)
 add_test(NAME hubsaves_engine_test COMMAND hubsaves_engine_test)   # cloud saves v2 engine against an in-process mock Worker (loopback only)

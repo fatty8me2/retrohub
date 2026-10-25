@@ -16,7 +16,7 @@ if (MSVC)
     target_compile_options(hubminiz PRIVATE /W0)
 endif()
 
-add_library(hubsaves STATIC savestore.cpp cloud.cpp cloud_classify.cpp cloud_wire.cpp cloud_queue.cpp cloud_engine.cpp)
+add_library(hubsaves STATIC savestore.cpp cloud.cpp cloud_classify.cpp cloud_wire.cpp cloud_queue.cpp cloud_engine.cpp history.cpp playstats.cpp)
 target_include_directories(hubsaves PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubsaves PUBLIC cxx_std_17)
 target_link_libraries(hubsaves PUBLIC hubcommon PRIVATE hubnet hubminiz bcrypt winhttp)
@@ -48,3 +48,7 @@ target_link_libraries(cloud_mock_server PRIVATE hubsaves_mock)
 
 add_executable(qa_cloud_tool qa_cloud_tool.cpp)
 target_link_libraries(qa_cloud_tool PRIVATE hubsaves_mock hubnet)
+
+# Save history + play stats unit test.
+add_executable(hubhistory_test test_history.cpp)
+target_link_libraries(hubhistory_test PRIVATE hubsaves)
