@@ -2,6 +2,8 @@
 #include "winutil.h"
 #include "json.h"
 #include "cloud.h"
+#include "cloud_http.h"
+#include "miniz.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -11,6 +13,7 @@
 #include <bcrypt.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -93,7 +96,9 @@ struct Resp {
     str error;
     str body;                  // only when no sink
     str etag, sha, mtime;
+    std::map<str, str> hdr;    // lowercase name -> value for the X-RH-* / Retry-After / Content-Range headers
 };
+std::atomic<long long> g_skew_ms{0};   // server clock minus ours, learnt from a 401 stale-timestamp reply
 
 /* Server-wide R2 free-tier guard (see server/cloudflare/src/r2budget.js): 429 cloud-saves-paused (monthly ops) and
  * 507 cloud-saves-full (total storage). Both are NOT transient within a sync run: never retry them. */
@@ -116,8 +121,9 @@ struct Http {
     str base_path;
     HINTERNET session = nullptr, conn = nullptr;
     bool ok = false;
+    int tmo[4] = {8000, 8000, 30000, 30000};
 
-    explicit Http(const CloudConfig& c) : cfg(c) {
+    explicit Http(const CloudConfig& c, int resolve_ms = 8000, int connect_ms = 8000, int send_ms = 30000, int recv_ms = 30000) : cfg(c) {
         URL_COMPONENTSW uc = {};
         uc.dwStructSize = sizeof uc;
         wchar_t hostw[256] = {}, pathw[512] = {};
@@ -132,7 +138,8 @@ struct Http {
         while (!base_path.empty() && base_path.back() == '/') base_path.pop_back();
         session = WinHttpOpen(L"RetroHub-CloudSaves/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
         if (!session) return;
-        WinHttpSetTimeouts(session, 8000, 8000, 30000, 30000);
+        tmo[0] = resolve_ms; tmo[1] = connect_ms; tmo[2] = send_ms; tmo[3] = recv_ms;
+        WinHttpSetTimeouts(session, resolve_ms, connect_ms, send_ms, recv_ms);
         conn = WinHttpConnect(session, W(host).c_str(), port, 0);
         ok = conn != nullptr;
     }
@@ -143,10 +150,33 @@ struct Http {
               const str& body_sha, const std::function<bool(const char*, size_t)>& sink) {
         Resp r;
         auto ts = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+            std::chrono::system_clock::now().time_since_epoch()).count() + g_skew_ms.load();
         HINTERNET req = WinHttpOpenRequest(conn, W(method).c_str(), W(base_path + pq).c_str(), nullptr, WINHTTP_NO_REFERER,
                                            WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0);
         if (!req) { r.error = "WinHttpOpenRequest failed"; return r; }
+        WinHttpSetTimeouts(req, tmo[0], tmo[1], tmo[2], tmo[3]);
+        { DWORD rr = (DWORD)tmo[3]; WinHttpSetOption(req, 7 /*WINHTTP_OPTION_RECEIVE_RESPONSE_TIMEOUT*/, &rr, sizeof rr); }
+        /* WinHTTP's own timeouts proved unreliable for a slow first byte, so a watchdog cancels a request that makes no progress
+         * (send, response headers, each body chunk) for max(connect, receive) ms. Closing the handle makes the blocked call fail. */
+        std::atomic<long long> progress{(long long)GetTickCount64()};
+        std::atomic<bool> wd_done{false}, closed{false};
+        const long long limit = (long long)std::max(tmo[1], tmo[3]);
+        std::thread wd([&]() {
+            while (!wd_done) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                if (wd_done) break;
+                if ((long long)GetTickCount64() - progress.load() > limit) {
+                    if (!closed.exchange(true)) WinHttpCloseHandle(req);
+                    break;
+                }
+            }
+        });
+        auto finish = [&]() {
+            wd_done = true;
+            if (wd.joinable()) wd.join();
+            if (!closed.exchange(true)) WinHttpCloseHandle(req);
+        };
+        auto touch = [&]() { progress = (long long)GetTickCount64(); };
         auto xh = [&](const char* name) {
             str pre = str(name) + ": ";
             for (auto& e : extra) if (e.compare(0, pre.size(), pre) == 0) return e.substr(pre.size());
@@ -159,6 +189,7 @@ struct Http {
         if (!body_sha.empty()) hdr += "X-RH-Sha: " + body_sha + "\r\n";
         for (auto& e : extra) hdr += e + "\r\n";
         std::wstring wh = W(hdr);
+        touch();
         BOOL sent = WinHttpSendRequest(req, wh.c_str(), (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0, (DWORD)blen, 0);
         size_t off = 0;
         while (sent && off < blen) {
@@ -166,12 +197,15 @@ struct Http {
             DWORD chunk = (DWORD)std::min<size_t>(blen - off, 64 * 1024);
             if (!WinHttpWriteData(req, body + off, chunk, &w) || !w) { sent = FALSE; break; }
             off += w;
+            touch();
         }
+        if (sent) touch();
         if (!sent || !WinHttpReceiveResponse(req, nullptr)) {
-            r.error = "network error " + std::to_string(GetLastError());
-            WinHttpCloseHandle(req);
+            r.error = closed ? str("network timeout") : "network error " + std::to_string(GetLastError());
+            finish();
             return r;
         }
+        touch();
         DWORD st = 0, sz = sizeof st;
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &st, &sz, nullptr);
         r.status = (int)st;
@@ -185,15 +219,23 @@ struct Http {
             return winutil::to_utf8(w);
         };
         r.etag = qh(L"ETag"); r.sha = qh(L"X-RH-Sha"); r.mtime = qh(L"X-RH-Mtime");
+        for (const wchar_t* hn : {L"X-RH-Sha", L"X-RH-Plain-Sha", L"X-RH-Enc", L"X-RH-Size", L"Retry-After", L"Content-Range"}) {
+            str v = qh(hn);
+            if (v.empty()) continue;
+            str k = winutil::to_utf8(hn);
+            for (auto& ch : k) ch = (char)tolower((unsigned char)ch);
+            r.hdr[k] = v;
+        }
         std::vector<char> buf(64 * 1024);
         for (;;) {
             DWORD got = 0;
-            if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &got)) { r.status = 0; r.error = "read failed"; break; }
+            if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &got)) { r.hdr["x-partial-status"] = std::to_string(st); r.status = 0; r.error = closed ? "network timeout" : "read failed"; break; }
             if (!got) break;
-            if (sink && st >= 200 && st < 300) { if (!sink(buf.data(), got)) { r.status = 0; r.error = "sink failed"; break; } }
+            touch();
+            if (sink && st >= 200 && st < 300) { if (!sink(buf.data(), got)) { r.hdr["x-partial-status"] = std::to_string(st); r.status = 0; r.error = "sink failed"; break; } }
             else if (r.body.size() < (8u << 20)) r.body.append(buf.data(), got);
         }
-        WinHttpCloseHandle(req);
+        finish();
         return r;
     }
 
@@ -543,6 +585,94 @@ SyncReport sync_cloud(const CloudConfig& cfg) {
         rep.error = "some files could not be synced (" + std::to_string(dl_fail + up_fail) + "); will retry next sync";
     }
     return rep;
+}
+
+
+/* ----------------------------------------------------------------- public helpers for the v2 engine */
+std::string sha256_hex_file(const std::string& path_utf8) { return sha_file(fs::u8path(path_utf8)); }
+
+long long file_mtime_unix(const std::string& path_utf8) {
+    HANDLE h = CreateFileW(fs::u8path(path_utf8).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    FILETIME f = {};
+    GetFileTime(h, nullptr, nullptr, &f);
+    CloseHandle(h);
+    uint64_t ft = ((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime;
+    const uint64_t kEpoch = 116444736000000000ULL;
+    return ft >= kEpoch ? (long long)((ft - kEpoch) / 10000000ULL) : 0;
+}
+
+bool set_file_mtime_unix(const std::string& path_utf8, long long t) {
+    if (t <= 0) return false;
+    HANDLE h = CreateFileW(fs::u8path(path_utf8).c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    uint64_t ft = (uint64_t)t * 10000000ULL + 116444736000000000ULL;
+    FILETIME f; f.dwLowDateTime = (DWORD)ft; f.dwHighDateTime = (DWORD)(ft >> 32);
+    BOOL ok = SetFileTime(h, nullptr, nullptr, &f);
+    CloseHandle(h);
+    return ok != 0;
+}
+
+bool deflate_raw(const std::string& in, std::string* out) {
+    size_t n = 0;
+    void* p = tdefl_compress_mem_to_heap(in.data(), in.size(), &n, 6);   // no TDEFL_WRITE_ZLIB_HEADER: raw deflate
+    if (!p) return false;
+    out->assign((const char*)p, n);
+    mz_free(p);
+    return true;
+}
+bool inflate_raw(const std::string& in, std::string* out, size_t max_out) {
+    size_t n = 0;
+    void* p = tinfl_decompress_mem_to_heap(in.data(), in.size(), &n, 0);   // no TINFL_FLAG_PARSE_ZLIB_HEADER: raw deflate
+    if (!p) return false;
+    bool ok = n <= max_out;
+    if (ok) out->assign((const char*)p, n);
+    mz_free(p);
+    return ok;
+}
+
+/* ---- CloudHttp: signed JSON/blob calls for the engine ---- */
+struct CloudHttp::Impl {
+    CloudConfig cfg;
+    Http http;
+    Impl(const CloudConfig& c, int connect_ms, int io_ms) : cfg(c), http(cfg, connect_ms, connect_ms, io_ms, io_ms) {}
+};
+CloudHttp::CloudHttp(const CloudConfig& cfg, int connect_ms, int io_ms) : p_(new Impl(cfg, connect_ms, io_ms)) {}
+CloudHttp::~CloudHttp() { delete p_; }
+bool CloudHttp::ok() const { return p_->http.ok; }
+
+HttpReply CloudHttp::call(const std::string& method, const std::string& pq, const std::vector<std::string>& headers,
+                          const std::string& body, const std::function<bool(const char*, size_t)>& sink,
+                          const std::function<std::vector<std::string>()>& headers_fn) {
+    str body_sha = (method == "POST" && !body.empty()) ? sha256_hex_of(body) : str();
+    Resp r;
+    for (int pass = 0; pass < 2; pass++) {
+        std::vector<str> ex = headers_fn ? headers_fn() : headers;
+        if (method == "POST") ex.push_back("Content-Type: application/json");
+        str bsha = body_sha;
+        std::vector<str> ex2;
+        for (auto& e : ex) {
+            if (e.compare(0, 10, "X-RH-Sha: ") == 0) bsha = e.substr(10);   // blob PUT: hash of the stored bytes; once() signs and sends it
+            else ex2.push_back(e);
+        }
+        r = p_->http.once(method, pq, ex2, body.data(), body.size(), bsha, sink);
+        if (r.status == 401 && pass == 0 && r.body.find("stale-timestamp") != str::npos) {
+            JV j;
+            if (jparse(r.body, &j) && j.type == JV::Object && j.get("serverTime")) {
+                long long st = j.i64("serverTime", 0);
+                long long now = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                if (st > 0) { g_skew_ms = st - now; continue; }
+            }
+        }
+        break;
+    }
+    HttpReply o;
+    o.status = r.status; o.error = r.error; o.body = std::move(r.body); o.headers = r.hdr;
+    if (!r.etag.empty()) o.headers["etag"] = r.etag;
+    return o;
 }
 
 } // namespace hub::saves

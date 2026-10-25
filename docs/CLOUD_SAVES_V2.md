@@ -32,7 +32,7 @@ Vocabulary. Class: `settings` (meta.json, `_account/*`), `battery` (SRAM/EEPROM/
 
 | Situation | Behaviour |
 |---|---|
-| First launch / wizard | No cloud question. The friends identity already exists, so the account is the cloud. The wizard gets one new step "Your saves are backed up automatically", showing a green check, the device name (editable, default computer name) and a **Recovery code** (uid + secret encoded in 8 groups of 4, Copy / Save as text file / Print). Skippable; a toast reminds once after the first successful push if skipped. A "Link a PC" / "I have a recovery code" entry sits beside it. |
+| First launch / wizard | No cloud question. The friends identity already exists, so the account is the cloud. The wizard gets one new step "Your saves are backed up automatically", showing a green check, the device name (editable, default computer name) and a **Recovery code** (uid + secret encoded as a 12-character code XXXX-XXXX-XXXX stored via /link/keep, Copy / Save as text file / Print). Skippable; a toast reminds once after the first successful push if skipped. A "Link a PC" / "I have a recovery code" entry sits beside it. |
 | Play a game on a 2nd PC | On Play: a short "Checking cloud saves..." line (<= 4 s for the manifest, <= 15 s total download, only the pulled game, protected class only). Newer cloud files are downloaded into the vault, then the emulator starts. States are not blocking: missing states download in the background after launch (never overwriting an existing local file). |
 | Offline | Manifest request fails or times out: the game starts at once from local files. Details line: "Offline: will sync when you are back". Exit queues a push; the persistent queue retries (30 s, 2 min, 10 min, 1 h, then on hub start / next launch / manual). No dialog ever blocks play. |
 | Conflict | Both the cloud and this PC changed the same file since the last sync (three-way compare, section 5). Detected before launch (cloud changed, local changed) or at push (CAS miss). Dialog before launch, never mid-game: "Saves for GAME differ. This PC: played 20 Oct 21:14, 412 KB. Cloud: PC-LIVINGROOM, 22 Oct 08:02, 410 KB." Buttons: **Use the newer one** (preselected, newest mtime), **Use this PC's**, **Use the cloud's**, **Decide later** (play local only, no push for that game, banner stays). Whatever loses is kept: as a cloud version (restorable) and locally in `_conflicts/`. States never prompt: newest wins silently, the replaced one goes to history if space allows. |
@@ -300,3 +300,60 @@ Owns: `src/hub/page_saves.cpp` (account panel: usage bar, pool state, devices, "
 1. Recovery code is the only way back after a full wipe without a second PC; confirm showing it in the wizard (recommended) versus an optional email/Google sign-in later.
 2. Inactivity policy (90 days for large items under pressure, 24 months for everything) is a proposal.
 3. Is a 12 minute lease acceptable, given players on a single PC never see it?
+
+## 10. Lane S implementation notes (server, as built)
+
+Code: `BattleShip/server/cloudflare/src/{saves_v2,saves_pool,r2budget_v2}.js` (+ small hooks in `saves.js`, `r2budget.js`,
+`friends.js` UserHub `saves_auth`). Tests: `test_saves_v2.mjs`, `test_saves_pool.mjs`, `test_saves.mjs` (v1), `test_r2budget.mjs`;
+`run_all_tests.mjs` runs every server test sequentially on fresh isolated instances. Fixtures: `test_fixtures/v2/*.json` (real replies,
+regenerate with `node gen_fixtures.mjs`).
+
+Facts the client lane needs, where the build is more specific than sections 3-4:
+- **Signature**: as v1. `Content-Length` is part of the signed string for `PUT` only (`-` for POST/GET). JSON POST bodies need
+  `X-RH-Sha` = sha256 of the body (missing or wrong -> 400 `bad-sha`). `401 stale-timestamp` carries `serverTime` (ms).
+- **Blob addressing**: `?sha=` on `PUT /blob` is the **plain** sha from the plan; `X-RH-Sha` on the request is the sha of the **bytes sent**
+  (the same when `enc` is `none`). R2 verifies it while streaming. The server stores `saves/<uid>/o/<sha>` (`.z` suffix for deflate).
+  `GET /blob` answers `X-RH-Sha` (stored bytes, when known), `X-RH-Plain-Sha`, `X-RH-Enc`, `X-RH-Size` (plain), `X-RH-Stored`, `X-RH-Ver`, `X-RH-Mtime`;
+  `Range: bytes=N-` is over the stored bytes. A `have` reply carries the real `stored` and `enc` of the existing blob; commit uses those.
+- **Plan**: `mode` must be `rw` (a readonly session pushes nothing, so no plan: 400 `bad-plan`). Per-file `skip.reason`:
+  `over-cap`, `too-large`, `too-big-protected`, `too-many-files`. If the only outcome of a plan is protected-ceiling skips the reply is `507 too-big-protected` (with `files`).
+  The protected ceiling counts **kept history**, so a protected file can be at most about `PROT_CAP / 3` once it has three versions.
+  A reply without any `upload`/`have` has `ticket: null`. A plan that needs more PUTs than the account has left today is `429 account-daily-limit`
+  (nothing is reserved); `429 cloud-saves-paused` when the global Class A budget cannot cover the uploads; `507 cloud-saves-full` when the 7 GB guard cannot.
+- **Commit**: results per file are `{path, ver, cloud:"synced"}`, `{path, cloud:"conflict", current}`, `{path, cloud:"missing"}` (blob not uploaded: upload it
+  and commit the same ticket again), or `{path, cloud:"skipped", reason}`. A repeated commit of a finished ticket returns the same results with `replay:true`.
+  Tickets live 10 minutes. `evicted:[{game,path}]` lists what this commit pushed out of the cloud. Orphan blobs (lost races) are garbage collected after 1 hour.
+- **Tombstones**: an evicted file stays in the manifest as `cloud:"evicted"` with `cur` = its last version and `vers: []`. Pushing it again needs `base = cur`.
+  `GET /blob` of it is `404 {evicted:true}`.
+- **Devices**: eight per account; a ninth is accepted only when the least recently seen device has been idle 24 h (it is then dropped), else `403 device-limit`.
+  Lease calls need a valid `X-RH-Device`. Beat on a free/expired lease re-takes it; beat after a take-over is `423 lease-held`.
+- **Rate limits** are per account per minute: `plan/commit/restore/game` 30, blob PUT 120, blob GET 300, status/manifest/device/lease 60.
+  Daily per account 1500 blob PUTs / 6000 blob GETs (`DAY_PUT_MAX`, `DAY_GET_MAX` override). Saves are capped at 35% of the `REQ_BUDGET` daily units
+  and stop (`429 cloud-saves-busy-today`) when the global request budget passes 50%. Server vars: `SAVES_V2`, `ACCOUNT_CAP`, `PROT_CAP`, `POOL_TIGHT`, `POOL_FULL`.
+- **v1 compatibility**: v1 routes are unchanged for accounts that never called v2. The first v2 call converts the account's v1 objects to `ver 1` rows
+  (zero R2 ops, classes by `classifyPath`, games `system/game`, `_account/_`, `_misc/_`) and applies the new caps (oversized accounts lose large items,
+  least recently played game first). After conversion a v1 write goes through to the version table (no history), a v1 delete removes the file, and a v1 PUT over the
+  v2 account cap is `507 quota-exceeded`. v1 never sees v2 blobs (`o/...` is reserved) .
+- **DO schema tag**: `meta.schema = 2` in the R2Budget DO adds the v2 tables and columns once (no wrangler migration needed: same class).
+
+### Recovery code (decision: yes) - one mechanism: the LinkBox, with a persistent variant
+There is deliberately **one** "add/recover this account" mechanism: the Worker's `/link/*` routes (`src/link.js`, LinkBox Durable Object). The server stores only
+a hash of the code plus an opaque encrypted identity bundle `{salt, iv, ct}` (client derives an AES-GCM key from the code with PBKDF2); it never sees the code,
+the key or the identity. There are no cloud-saves endpoints for this (the earlier `/saves/v2/recovery` and `/saves/v2/recover` were removed).
+- **Temporary link code**: 8 chars (`XXXX-XXXX`), `POST /link/create` + `/link/put`, single use, 10 minutes. Unchanged.
+- **Persistent account code**: 12 chars shown as `XXXX-XXXX-XXXX` (same 31-char alphabet `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, about 59 bits), shown in the wizard
+  (Copy / Save as text / Print). The client generates it, builds the same encrypted bundle and stores it with
+  `POST /link/keep {uid, secret, box, salt, iv, ct}` where `box = sha256hex(normalized 12-char code)` (authenticated with the account secret like `/link/create`,
+  shares its 5/hour per-account limit). Reply `{ok:true}`; `400 bad-request`, `403 auth`, `429 rate-limited`, `409 code-in-use` (hash belongs to another account).
+  One persistent code per account: a new `/link/keep` revokes the previous one; `POST /link/keep {uid, secret, remove:true}` deletes it.
+- A new PC with no identity calls the public `POST /link/redeem {code}` (8 or 12 chars; brute-force limits below) and gets `{salt, iv, ct, username}`,
+  decrypts locally and adopts the identity exactly as after a link redeem. A persistent code is **not** consumed and does not expire; a temporary one still is.
+  Losing the code exposes nothing; replacing it does not touch cloud data. Unknown code: `404 {error:"invalid"}`.
+- **Brute-force safety of the account code.** The 12-character code is 31^12 = 2^59.4 combinations (the 8-character temporary code is 31^8 = 2^39.6 but
+  single use and valid 10 minutes). `/link/redeem` is limited three ways: per IP 10 attempts per hour, then that IP is locked out for an hour, doubling on each
+  further strike (cap 24 h; strikes decay after 24 h of quiet); globally 300 FAILED redeems per hour across all IPs, after which every redeem answers 429 until the
+  window ends; and the stored code hash is compared in constant time before any bundle is returned. Both limits answer `429 {error:"rate-limited", retryAfter}` with a
+  `Retry-After` header. At 300 guesses an hour a 2^59 space takes ~10^14 years. Env (optional): `LINK_REDEEM_LIMIT` (10), `LINK_GLOBAL_LIMIT` (300).
+- Cloud data is always keyed by the internal account uid. The visible username maps to the uid and can be renamed without moving any data.
+  A PC added with either code kind is the same uid with a new device id, so it needs nothing else to see the cloud saves.
+- `GET /saves/v2/status` no longer has `account.recovery`; the client knows locally whether it has set a persistent code.

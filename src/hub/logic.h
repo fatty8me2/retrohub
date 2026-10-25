@@ -26,8 +26,7 @@ struct Settings {
     bool fullscreen = false;           // start games fullscreen where the runner supports it
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start
-    bool sync_states = false;          // include save states in sync + export
-    bool cloud_saves = false;          // sync saves through the RetroHub account (Worker R2); off by default
+    bool cloud_enabled = true;         // cloud saves v2: automatic through the RetroHub account; false = "Pause cloud sync"
     bool sync_card_dismissed = false;  // "Keep your saves on all your PCs" card on Home was dismissed ("Not now")
     bool smash_save_notice_shown = false;  // the "Using your synced Smash save" toast has been shown once
     std::string vault_dir;             // "" = default (userdata/saves)
@@ -37,6 +36,7 @@ struct Settings {
     bool notify_in_game = true;        // Windows toast for invites while a game is running
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
     bool auto_friend = true;           // "Automatically add people I play with as friends" (sent to the server in the hello)
+    bool username_claimed = false;     // this PC has a username the server confirmed (name below IS that username); false = still the provisional Windows name
     bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
     bool setup_done = false;           // the first-run setup wizard was finished or skipped
     std::string changelog_seen;        // version whose "What's new" popup was shown/skipped ("" = never)

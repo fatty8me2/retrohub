@@ -159,13 +159,16 @@ TileResult draw_tile(const TileSpec& t, ImVec2 size) {
     {
         ImVec2 bp = p0 + ImVec2(sp(1.25f), sp(1.25f));
         if (!t.badge.empty()) bp.x += ui::pill_at(dl, bp, t.badge.c_str(), IM_COL32(0, 0, 0, 150)) + sp(0.5f);
+        float tw2 = 0;
         if (!t.tag.empty()) {   // small corner tag: quiet unless it is a warning
-            float tw2 = t.tag_accent ? ui::pill_at(dl, bp, t.tag.c_str(), ui::ACCENT, IM_COL32_WHITE)
+            tw2 = t.tag_accent ? ui::pill_at(dl, bp, t.tag.c_str(), ui::ACCENT, IM_COL32_WHITE)
                                  : ui::pill_at(dl, bp, t.tag.c_str(), IM_COL32(0, 0, 0, t.tag_warn ? 170 : 120), t.tag_warn ? ui::WARN : IM_COL32(255, 255, 255, 190));
             ImVec2 mp = io.MousePos;
             if (item_hov && !t.tag_tip.empty() && mp.x >= bp.x && mp.x <= bp.x + tw2 && mp.y >= bp.y && mp.y <= bp.y + ui::F.cap->FontSize + sp(1.f))
                 ImGui::SetTooltip("%s", t.tag_tip.c_str());
+            bp.x += tw2 + sp(0.5f);
         }
+        if (!t.cloud.empty()) ui::pill_at(dl, bp, t.cloud.c_str(), IM_COL32(0, 0, 0, 150), t.cloud_col);   // cloud saves status
     }
     if (t.show_star && t.owned && (t.favorite || e > 0.04f || star_hov)) {
         float sa = t.favorite ? 1.f : std::max(e, star_hov ? 1.f : 0.f);
@@ -220,6 +223,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     }
     else if (e.issue == "encrypted") { t.tag = "ENCRYPTED"; t.tag_warn = true; t.tag_tip = "Encrypted dump - it needs decrypting before it can run"; }
     else if (e.issue == "keys") { t.tag = "NEEDS KEYS"; t.tag_warn = true; t.tag_tip = "Needs decryption keys (see the 3DS setup dialog)"; }
+    t.cloud = cloud_ui_pill(e, &t.cloud_col);
     entry_colors(e, &t.c0, &t.c1);
     t.art = art_for_entry(e);
     const hub::GameState& gs = gstate(e.key);

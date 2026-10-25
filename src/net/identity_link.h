@@ -15,14 +15,19 @@
 
 namespace hubnet {
 
-/* "abcd-efgh" / "ABCD EFGH" / "abcdefgh" -> "ABCDEFGH", or "" when malformed. */
+/* "abcd-efgh" / "ABCD EFGH" / "abcdefgh" (8) or XXXX-XXXX-XXXX (12) -> upper case without separators, or "" when malformed. */
 std::string link_normalize_code(const std::string& code);
 
 /* Old PC. server "" = default_server(). On success *code_out is the code to type on the new PC. */
 bool link_create_code(const std::string& server, const Identity& id, std::string* code_out, std::string* err);
 
 /* New PC. On success *out is the linked identity; pass it to FriendsClient::adopt_identity(). */
-bool link_redeem_code(const std::string& server, const std::string& code, Identity* out, std::string* err);
+bool link_redeem_code(const std::string& server, const std::string& code, Identity* out, std::string* err, std::string* username_out = nullptr);
+
+/* Account code (the ONE add / recover mechanism): a persistent 12-character code (XXXX-XXXX-XXXX, made here, so the server only
+ * ever sees its hash and the encrypted identity). It does not expire and works on any number of new PCs; a new code replaces
+ * (revokes) the old one. Redeem it with link_redeem_code (8-character link codes still work too). */
+bool link_keep_code(const std::string& server, const Identity& id, std::string* code_out, std::string* err);
 
 /* Encrypted envelope (base64 fields). Pure: no network, used by the tests. */
 struct LinkEnvelope { std::string salt, iv, ct; };

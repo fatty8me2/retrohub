@@ -392,6 +392,8 @@ struct FriendsClient::Impl {
     std::map<std::string, Conv> convs;
     std::deque<Event> events;
     uint32_t local_seq = 0;
+    std::string username; bool needs_new_name = false, username_known = false; int ref_seq = 0, claim_ref = 0;
+    std::map<std::string, int> check_refs;   // name we asked about (lower case) -> ref; the server echoes the name, not the ref
 
     /* ---- sending */
     bool send(const std::string& s) { return welcomed && ws.send_text(s); }
@@ -577,12 +579,18 @@ struct FriendsClient::Impl {
         backoff_ms = std::min<uint32_t>(backoff_ms * 2, 30000);
     }
 
+    /* A brand-new account (identity created by this install) must NOT have its Windows name auto-claimed as the username: the player
+     * picks one (wizard Name step). The marker file lives until the server reports a username (or flags needs_new_name), so every
+     * reconnect in between keeps asking the server to skip the legacy name migration. Installs that already had an identity
+     * (accounts from before usernames) keep the one-time migration. */
+    std::string fresh_marker() const { return with_sep(data_dir) + "username-pending.flag"; }
+    bool username_pending() const { return fs::exists(upath(fresh_marker())); }
     /* QA/test clients are never auto-friended to the owner by the server. */
     bool is_test_client() const { return is_qa_run() || name.rfind("qa-", 0) == 0; }
     void send_hello()
     {
         hello_sent = true;
-        ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\",\"auto_friend\":" + (auto_friend ? "true" : "false") + (is_test_client() ? ",\"test\":true" : "") + "}");
+        ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\",\"auto_friend\":" + (auto_friend ? "true" : "false") + (is_test_client() ? ",\"test\":true" : "") + (username_pending() ? ",\"no_auto_username\":true" : "") + "}");
     }
 
     void normalize_lists() { dedupe_friends(friends, id.user_id); dedupe_requests(friends, incoming, outgoing, id.user_id); }
@@ -637,6 +645,15 @@ struct FriendsClient::Impl {
         }
         if (const Json* a = j.get("blocked"))
             for (const Json& x : a->a) if (x.type == Json::String) blocked.push_back(x.s);
+        {   // usernames: the server's name for this account wins over whatever we sent in the hello
+            username = j.str("username");
+            needs_new_name = j.str("username_status") == "needs_new_name";
+            username_known = true;
+            if (!username.empty()) name = username;
+            if (!username.empty() || needs_new_name) { std::error_code rec; fs::remove(upath(fresh_marker()), rec); }
+            Event e; e.kind = Event::UsernameChanged; e.name = username; e.ok = !username.empty() && !needs_new_name;
+            events.push_back(std::move(e));
+        }
         normalize_lists();
         send_retire();
         if (have_status) send("{\"type\":\"status\",\"status\":" + status_json(my_status) + "}");
@@ -760,6 +777,30 @@ struct FriendsClient::Impl {
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
             Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref"); e.detail = j.str("detail");
             push_event(std::move(e));
+        } else if (type == "username_result") {   // op "check" (answer to username_check) or "set" (answer to set_username)
+            const bool is_check = j.str("op") == "check";
+            Event e; e.kind = is_check ? Event::UsernameChecked : Event::UsernameResult;
+            e.ok = j.boolean("ok");
+            e.name = e.ok ? j.str("username") : j.str("name");
+            e.yours = j.boolean("yours");
+            e.text = e.ok ? std::string() : j.str("detail", j.str("reason", "unavailable"));   // taken | held | reserved | profanity | invalid-chars | rate-limited ...
+            if (is_check) {
+                std::string key = j.str("name");
+                for (char& c : key) c = (char)tolower((unsigned char)c);
+                auto it = check_refs.find(key);
+                if (it == check_refs.end()) it = check_refs.find(e.ok ? e.name : std::string());
+                e.ref = it == check_refs.end() ? 0 : it->second;
+                if (it != check_refs.end()) check_refs.erase(it);
+            } else {
+                e.ref = claim_ref;
+                claim_ref = 0;
+                if (e.ok) { username = e.name; needs_new_name = false; if (!e.name.empty()) name = e.name; }
+            }
+            push_event(std::move(e));
+        } else if (type == "username") {   // pushed to every device of the account when the name changes elsewhere
+            username = j.str("username"); needs_new_name = j.str("status") == "needs_new_name"; if (!username.empty()) name = username;
+            Event e; e.kind = Event::UsernameChanged; e.name = username; e.ok = !username.empty() && !needs_new_name;
+            push_event(std::move(e));
         } else if (type == "invite_result") {
             Event e; e.kind = Event::InviteResult;
             if (const Json* a = j.get("results"))
@@ -815,12 +856,18 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
     Impl& d = *impl_;
     d.server = server;
     d.name = sanitize_name(name);
-    d.id = identity_load_or_create(d.data_dir, d.vault_dir);
+    {
+        const bool had_identity = fs::exists(upath(with_sep(d.data_dir) + "identity.json")) ||
+                                  (!d.vault_dir.empty() && fs::exists(upath(with_sep(d.vault_dir) + "_identity\\identity.json")));
+        d.id = identity_load_or_create(d.data_dir, d.vault_dir);
+        if (!had_identity) write_file(d.fresh_marker(), "1");
+    }
     d.load_retire();
     d.started = true;
     d.gave_up = false;
     d.backoff_ms = 1000;
     d.convs.clear();
+    d.username.clear(); d.needs_new_name = false; d.username_known = false; d.check_refs.clear(); d.claim_ref = 0;
     d.friends.clear(); d.incoming.clear(); d.outgoing.clear(); d.blocked.clear();
     d.connect();
     return true;
@@ -1044,6 +1091,33 @@ void FriendsClient::rename(const std::string& name)
     impl_->name = sanitize_name(name);
     impl_->send("{\"type\":\"rename\",\"name\":" + q(impl_->name) + "}");
 }
+int FriendsClient::check_username(const std::string& name)
+{
+    Impl& d = *impl_;
+    if (!d.welcomed) return 0;
+    int ref = ++d.ref_seq;
+    std::string key = name;
+    for (char& c : key) c = (char)tolower((unsigned char)c);
+    d.check_refs[key] = ref;
+    if (d.check_refs.size() > 16) d.check_refs.erase(d.check_refs.begin());
+    d.send("{\"type\":\"username_check\",\"name\":" + q(name) + "}");
+    return ref;
+}
+int FriendsClient::claim_username(const std::string& name)
+{
+    Impl& d = *impl_;
+    if (!d.welcomed) return 0;
+    d.claim_ref = ++d.ref_seq;
+    d.send("{\"type\":\"set_username\",\"name\":" + q(name) + "}");
+    return d.claim_ref;
+}
+void FriendsClient::add_friend_username(const std::string& username)
+{
+    impl_->send("{\"type\":\"add_friend\",\"username\":" + q(username) + "}");
+}
+std::string FriendsClient::username() const { return impl_->username; }
+bool FriendsClient::needs_new_name() const { return impl_->needs_new_name; }
+bool FriendsClient::username_known() const { return impl_->username_known; }
 void FriendsClient::request_history(const std::string& uid)
 {
     impl_->send("{\"type\":\"history\",\"with\":" + q(uid) + "}");
