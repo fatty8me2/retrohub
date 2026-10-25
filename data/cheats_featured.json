@@ -1,0 +1,962 @@
+{
+  "Super Smash Bros. (USA)": [
+    {
+      "desc": "Enable All Hidden Characters",
+      "format": "gameshark",
+      "codes": [
+        "810A4938 0FF0"
+      ],
+      "source": "tested headless: n64run --gs-code + screenshot (Smash character select shows all 12 fighters; flag byte also unlocks Training/Bonus practice) ; libretro-database + mupen64plus cheat DB",
+      "verified": true
+    },
+    {
+      "desc": "Item Switch Menu",
+      "format": "gameshark",
+      "codes": [
+        "891348E2 0004"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Super%20Smash%20Bros.%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Lives P1",
+      "format": "gameshark",
+      "codes": [
+        "800A4B43 0004"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Super%20Smash%20Bros.%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Time",
+      "format": "gameshark",
+      "codes": [
+        "810A4B2E 43CB"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Super%20Smash%20Bros.%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Unlock Mushroom Kingdom + extra modes (flag byte 0A4937, also unlocks Ness/Falcon/Luigi/Jigglypuff)",
+      "format": "gameshark",
+      "codes": [
+        "800A4937 00FF"
+      ],
+      "source": "tested headless: n64run --gs-code + screenshot (Smash character select shows all 12 fighters; flag byte also unlocks Training/Bonus practice) ; libretro-database (Enable All Prizes)",
+      "verified": true
+    },
+    {
+      "desc": "Unlock Everything (characters + flag byte)",
+      "format": "gameshark",
+      "codes": [
+        "810A4938 0FF0+800A4937 00FF"
+      ],
+      "source": "tested headless: n64run --gs-code + screenshot (Smash character select shows all 12 fighters; flag byte also unlocks Training/Bonus practice)",
+      "verified": true
+    }
+  ],
+  "Mario Kart 64 (USA)": [
+    {
+      "desc": "Have Extra Option Open",
+      "format": "gameshark",
+      "codes": [
+        "8118ED12 FF00"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Kart%2064%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Mario Kart 300 CC Cup",
+      "format": "gameshark",
+      "codes": [
+        "810FBD2C 46FF+810F93A4 46FF+810F77F4 46FF+810FCB04 46FF+810F85CC 46FF+810FAF54 46FF+810FA17C 46FF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Kart%2064%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Mirror Mode Flag",
+      "format": "gameshark",
+      "codes": [
+        "800DC604 0001"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Kart%2064%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Unlock Extra (Bonus) mode and all gold cups",
+      "format": "gameshark",
+      "codes": [
+        "8018ED10 00FF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Kart%2064%20(USA).cht",
+      "verified": false
+    }
+  ],
+  "Mario Party (USA)": [
+    {
+      "desc": "Infinite Time (Face Lift)",
+      "format": "gameshark",
+      "codes": [
+        "800ED744 000D"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Party%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "999 Coins In Minigame Stadium (1st Slot)",
+      "format": "gameshark",
+      "codes": [
+        "811B571A 03E7"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Party%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "50 Mini-Game Island games beaten (unlock island progress)",
+      "format": "gameshark",
+      "codes": [
+        "800F37BC 00FF+800F37BD 00FF+800F37BE 00FF+800F37BF 00FF+800F37C0 00FF+800F37C1 00FF+800F37C2 00FF+800F37C3 00FF"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Party%20(USA).cht",
+      "verified": false
+    },
+    {
+      "desc": "99 lives on Mini-Game Island",
+      "format": "gameshark",
+      "codes": [
+        "800F37BB 0063"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Party%20(U).cht ; https://raw.githubusercontent.com/mupen64plus/mupen64plus-core/master/data/mupencheat.txt",
+      "verified": false
+    }
+  ],
+  "Mario Golf (USA)": [
+    {
+      "desc": "Unlock All levels",
+      "format": "gameshark",
+      "codes": [
+        ""
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Golf%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "All Characters",
+      "format": "gameshark",
+      "codes": [
+        ""
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Golf%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Have All Courses",
+      "format": "gameshark",
+      "codes": [
+        "81130CEE FFFF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Golf%20(USA).cht",
+      "verified": true
+    }
+  ],
+  "Pokemon Stadium (USA)": [
+    {
+      "desc": "Total Item Number Modifier",
+      "format": "gameshark",
+      "codes": [
+        "801720AC 0000"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Pokemon%20Stadium%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Infinite health P1 all Pokemon (battle)",
+      "format": "gameshark",
+      "codes": [
+        "81285A18 03E7"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Pokemon%20Stadium%20(U).cht",
+      "verified": false
+    }
+  ],
+  "Pokemon Stadium 2 (USA)": [
+    {
+      "desc": "Infinite Continues",
+      "format": "gameshark",
+      "codes": [
+        "8114738C 0009"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Pokemon%20Stadium%202%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Fake Level 255 Code (Player 1)",
+      "format": "gameshark",
+      "codes": [
+        "801DD0D6 00FF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Pokemon%20Stadium%202%20(USA).cht",
+      "verified": true
+    }
+  ],
+  "Star Fox 64 (USA)": [
+    {
+      "desc": "Infinite Lives",
+      "format": "gameshark",
+      "codes": [
+        "80157911 0009"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Star%20Fox%2064%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Energy",
+      "format": "gameshark",
+      "codes": [
+        "8013AB27 00FF+80137C47 00FF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Star%20Fox%2064%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Smart Bombs",
+      "format": "gameshark",
+      "codes": [
+        "8016DC13 0004"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Star%20Fox%2064%20(USA).cht",
+      "verified": true
+    }
+  ],
+  "Toy Story 2 - Buzz Lightyear to the Rescue! (USA)": [
+    {
+      "desc": "Infinite Lives",
+      "format": "gameshark",
+      "codes": [
+        "810BB10A 0005"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Toy%20Story%202%20-%20Buzz%20Lightyear%20to%20the%20Rescue!%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Have All Tokens",
+      "format": "gameshark",
+      "codes": [
+        "50000503 0000+801E2DD2 001F+50000503 0000+801E2DD3 001F+50000503 0000+801E2DD4 0080"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Toy%20Story%202%20-%20Buzz%20Lightyear%20to%20the%20Rescue!%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Have All Weapons",
+      "format": "gameshark",
+      "codes": [
+        "810B86E8 001F"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Toy%20Story%202%20-%20Buzz%20Lightyear%20to%20the%20Rescue!%20(USA).cht",
+      "verified": true
+    }
+  ],
+  "Yoshi's Story (USA) (En,Ja)": [
+    {
+      "desc": "Enable All Levels (Trial Mode)",
+      "format": "gameshark",
+      "codes": [
+        "810F8E5C 7FFF+810F8E5E FFFF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Yoshi's%20Story%20(USA)%20(En,Ja).cht",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Lives (All Yoshi's)",
+      "format": "gameshark",
+      "codes": [
+        "800F8DF7 00FF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Yoshi's%20Story%20(USA)%20(En,Ja).cht",
+      "verified": true
+    }
+  ],
+  "Legend of Zelda, The - Ocarina of Time (USA)": [
+    {
+      "desc": "Infinite Energy",
+      "format": "gameshark",
+      "codes": [
+        "8111A600 0140"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Legend%20of%20Zelda,%20The%20-%20Ocarina%20of%20Time%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "All Equipment",
+      "format": "gameshark",
+      "codes": [
+        "8111A66C 7777"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Legend%20of%20Zelda,%20The%20-%20Ocarina%20of%20Time%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "All Quest/Status Items",
+      "format": "gameshark",
+      "codes": [
+        "8111A674 30FF+8111A676 FFFF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Nintendo%2064/Legend%20of%20Zelda,%20The%20-%20Ocarina%20of%20Time%20(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Max heart containers",
+      "format": "gameshark",
+      "codes": [
+        "8111A5FE 0140"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Legend%20of%20Zelda,%20The%20-%20Ocarina%20of%20Time%20(USA).cht ; https://raw.githubusercontent.com/mupen64plus/mupen64plus-core/master/data/mupencheat.txt",
+      "verified": true
+    }
+  ],
+  "Pokemon - Crystal Version (USA)": [
+    {
+      "desc": "Infinite Money",
+      "format": "raw",
+      "codes": [
+        "010F4ED8+01424FD8+013F50D8"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Crystal%20Version%20(USA,%20Europe).cht",
+      "verified": true
+    },
+    {
+      "desc": "Have All Badges",
+      "format": "raw",
+      "codes": [
+        "01FF57D8+01FF58D8"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Crystal%20Version%20(USA,%20Europe).cht",
+      "verified": true
+    },
+    {
+      "desc": "Catch Any Pokemon In The Wild",
+      "format": "raw",
+      "codes": [
+        "010104D2"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Crystal%20Version%20(USA,%20Europe).cht",
+      "verified": true
+    },
+    {
+      "desc": "Item Slot 1 = Rare Candy x99",
+      "format": "raw",
+      "codes": [
+        "010192D8+012093D8+016394D8"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Crystal%20Version%20(USA%2C%20Europe).cht",
+      "verified": false
+    },
+    {
+      "desc": "Item Slot 1 = Master Ball x99",
+      "format": "raw",
+      "codes": [
+        "010192D8+010193D8+016394D8"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Crystal%20Version%20(USA%2C%20Europe).cht",
+      "verified": false
+    }
+  ],
+  "Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible)": [
+    {
+      "desc": "Infinite Item Slot 1",
+      "format": "gameshark",
+      "codes": [
+        "0163ACD5"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Gold%20_%20Silver%20Version%20(USA,%20Europe)%20(GameShark).cht",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Money",
+      "format": "raw",
+      "codes": [
+        "019973D5+019974D5+019975D5"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Gold%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced)%20(GB%20Compatible).cht ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Gold_and_Silver/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Walk Through Walls (can crash)",
+      "format": "raw",
+      "codes": [
+        "010AA6CE+010AA5CE+010AA4CE+010AA3CE"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Gold%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced)%20(GB%20Compatible).cht ; https://www.supercheats.com/gameboy/pokemoncrystalcheats.htm",
+      "verified": true
+    },
+    {
+      "desc": "Catch Any Pokemon In The Wild (modifier; 2nd hex digit pair = species, 00 here)",
+      "format": "raw",
+      "codes": [
+        "0100EDD0"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Gold%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced)%20(GB%20Compatible).cht",
+      "verified": false
+    },
+    {
+      "desc": "Item Slot 1 = Rare Candy x99",
+      "format": "raw",
+      "codes": [
+        "0101B7D5+0120B8D5+0163B9D5"
+      ],
+      "source": "https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Gold_and_Silver/RAM_map",
+      "verified": false
+    },
+    {
+      "desc": "Item Slot 1 = Master Ball x99",
+      "format": "raw",
+      "codes": [
+        "0101B7D5+0101B8D5+0163B9D5"
+      ],
+      "source": "https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Gold_and_Silver/RAM_map",
+      "verified": false
+    }
+  ],
+  "Pokemon - Silver Version (USA, Europe) (SGB Enhanced) (GB Compatible)": [
+    {
+      "desc": "Infinite Item Slot 1",
+      "format": "gameshark",
+      "codes": [
+        "0163ACD5"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Gold%20_%20Silver%20Version%20(USA,%20Europe)%20(GameShark).cht",
+      "verified": true
+    },
+    {
+      "desc": "Catch Any Pokemon In The Wild (modifier; 2nd hex digit pair = species, 00 here)",
+      "format": "raw",
+      "codes": [
+        "0100EDD0"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy%20Color/Pokemon%20-%20Silver%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced)%20(GB%20Compatible).cht",
+      "verified": false
+    },
+    {
+      "desc": "Item Slot 1 = Rare Candy x99",
+      "format": "raw",
+      "codes": [
+        "0101B7D5+0120B8D5+0163B9D5"
+      ],
+      "source": "https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Gold_and_Silver/RAM_map",
+      "verified": false
+    },
+    {
+      "desc": "Item Slot 1 = Master Ball x99",
+      "format": "raw",
+      "codes": [
+        "0101B7D5+0101B8D5+0163B9D5"
+      ],
+      "source": "https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Gold_and_Silver/RAM_map",
+      "verified": false
+    }
+  ],
+  "Pokemon - Ruby Version (USA, Europe)": [
+    {
+      "desc": "Infinite Cash",
+      "format": "codebreaker",
+      "codes": [
+        "82025BC4+E0FF+82025BC6+05F5"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Ruby%20Version%20(Code%20Breaker)(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Easily Caught",
+      "format": "codebreaker",
+      "codes": [
+        "72024C10+9EB7+32024C10+00C2"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Ruby%20Version%20(Code%20Breaker)(USA).cht",
+      "verified": true
+    },
+    {
+      "desc": "Complete Pokedex",
+      "format": "codebreaker",
+      "codes": [
+        "82026B00+0302+32024EBE+00DA+32026A5A+00F0+42024ECC+FFFF+00000034+0002+4202606C+FFFF+0000001A+0002+420291C0+FFFF+0000001A+0002"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Ruby%20Version%20(Code%20Breaker)(USA).cht",
+      "verified": true
+    }
+  ],
+  "Pokemon - Sapphire Version (USA, Europe)": [
+    {
+      "desc": "Infinite Cash",
+      "format": "codebreaker",
+      "codes": [
+        "82025BC4+E0FF+82025BC6+05F5"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Sapphire%20Version%20(USA)(Code%20Breaker).cht",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Easily Caught",
+      "format": "codebreaker",
+      "codes": [
+        "72024C10+9EB7+32024C10+00C2"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Sapphire%20Version%20(USA)(Code%20Breaker).cht",
+      "verified": true
+    },
+    {
+      "desc": "Complete Pokedex",
+      "format": "codebreaker",
+      "codes": [
+        "82026B00+0302+32024EBE+00DA+32026A5A+00F0+42024ECC+FFFF+00000034+0002+4202606C+FFFF+0000001A+0002+420291C0+FFFF+0000001A+0002"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Sapphire%20Version%20(USA)(Code%20Breaker).cht",
+      "verified": true
+    }
+  ],
+  "Pokemon - Emerald Version (USA, Europe)": [
+    {
+      "desc": "Max Money",
+      "format": "codebreaker",
+      "codes": [
+        "82000568+423F+8200056A+000F"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Emerald%20Version%20(USA,%20Europe)%20(Code%20Breaker).cht",
+      "verified": true
+    },
+    {
+      "desc": "Complete Pokedex",
+      "format": "codebreaker",
+      "codes": [
+        "32024AB0+00FF+32024AE0+0003+32026388+00FF+320263B8+0003+32029524+00FF+32029554+0003+32024A7C+00FF+32024AAC+0003"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Emerald%20Version%20(USA,%20Europe)%20(Code%20Breaker).cht",
+      "verified": true
+    }
+  ],
+  "Pokemon - FireRed Version (USA, Europe)": [
+    {
+      "desc": "Wild PKMN Easily Caught",
+      "format": "ar",
+      "codes": [
+        "72023D74+9A84+82023D74+9AC3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20FireRed%20Version%20(USA,%20Europe)%20(Rev%201).cht",
+      "verified": true
+    },
+    {
+      "desc": "Have All Badges",
+      "format": "ar",
+      "codes": [
+        "00226510+000000FF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20FireRed%20Version%20(USA,%20Europe)%20(Rev%201).cht",
+      "verified": true
+    }
+  ],
+  "Pokemon - LeafGreen Version (USA, Europe)": [
+    {
+      "desc": "Wild PKMN Easy Catch",
+      "format": "codebreaker",
+      "codes": [
+        "72023D74+9A6E+82023D74+9A9F"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Leaf%20Green%20Version%20(V1.1)(USA)(Code%20Breaker).cht",
+      "verified": true
+    },
+    {
+      "desc": "Quick Egg Hatch",
+      "format": "codebreaker",
+      "codes": [
+        "32028642+00FE"
+      ],
+      "source": "https://github.com/libretro/libretro-database/blob/master/cht/Nintendo%20-%20Game%20Boy%20Advance/Pokemon%20-%20Leaf%20Green%20Version%20(V1.1)(USA)(Code%20Breaker).cht",
+      "verified": true
+    }
+  ],
+  "Mario Party 2 (USA)": [
+    {
+      "desc": "Enable all Mini-Games (unlock)",
+      "format": "gameshark",
+      "codes": [
+        "810F8C7C FFFF+810F8C7E FFFF+810F8C80 FFFF+810F8C82 FFFF+810F8C84 FFFF+810F8C86 FFFF+810F8C88 FFFF+810F8C8A FFFF+810F8C8C FFFF"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Party%202%20(USA).cht",
+      "verified": false
+    }
+  ],
+  "Mario Party 3 (USA)": [
+    {
+      "desc": "Enable all Mini-Games (unlock)",
+      "format": "gameshark",
+      "codes": [
+        "810CC0DE FFFF+810CC0E0 FFFF+810CC0E2 FFFF+810CC0E4 FFFF"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Party%203%20(USA).cht",
+      "verified": false
+    },
+    {
+      "desc": "1000 coins in Game Guy's Room",
+      "format": "gameshark",
+      "codes": [
+        "810D1FE0 03E8"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Mario%20Party%203%20(USA).cht",
+      "verified": false
+    }
+  ],
+  "GoldenEye 007 (USA)": [
+    {
+      "desc": "Enable All Levels",
+      "format": "gameshark",
+      "codes": [
+        "80036FB7 0001"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/GoldenEye%20007%20(USA).cht ; https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Goldeneye%20007%20(U).cht ; https://raw.githubusercontent.com/mupen64plus/mupen64plus-core/master/data/mupencheat.txt",
+      "verified": true
+    },
+    {
+      "desc": "Enable All Agent (difficulty) Levels",
+      "format": "gameshark",
+      "codes": [
+        "80036FB3 0001"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/GoldenEye%20007%20(USA).cht",
+      "verified": false
+    },
+    {
+      "desc": "All 19 in-game cheats permanently",
+      "format": "gameshark",
+      "codes": [
+        "8006998E 00FF+8006998F 00FF+80069990 00FF"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/GoldenEye%20007%20(USA).cht",
+      "verified": false
+    },
+    {
+      "desc": "Enable All Levels and In-built Cheat Menu (Gent)",
+      "format": "gameshark",
+      "codes": [
+        "8006992E FFFF+80069930 FFFF+80069967 FFFF+8006996C FFFF+80069971 FFFF+80069976 FFFF+8006997B FFFF+8006992F FFFF+80069965 FFFF+8006996A FFFF+8006996F FFFF+80069974 FFFF+80069979 FFFF"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Goldeneye%20007%20(U).cht ; https://raw.githubusercontent.com/mupen64plus/mupen64plus-core/master/data/mupencheat.txt",
+      "verified": true
+    },
+    {
+      "desc": "Level Select",
+      "format": "gameshark",
+      "codes": [
+        "8002A8FB 0002"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/GoldenEye%20007%20(USA).cht",
+      "verified": false
+    }
+  ],
+  "Banjo-Kazooie (USA)": [
+    {
+      "desc": "Infinite health",
+      "format": "gameshark",
+      "codes": [
+        "80385F83 0008+80385F87 0008"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Banjo-Kazooie%20(USA).cht ; https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Banjo-Kazooie.cht",
+      "verified": true
+    },
+    {
+      "desc": "Access all moves",
+      "format": "gameshark",
+      "codes": [
+        "8037C3A0 0001+8037C3A1 007F+8037C3A2 00FF+8037C3A3 00FF"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Banjo-Kazooie.cht",
+      "verified": false
+    },
+    {
+      "desc": "Have all secret items",
+      "format": "gameshark",
+      "codes": [
+        "81283400 FFFF"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Banjo-Kazooie%20(USA).cht",
+      "verified": false
+    }
+  ],
+  "Donkey Kong 64 (USA)": [
+    {
+      "desc": "Have moves/weapon/instrument (slot 1)",
+      "format": "gameshark",
+      "codes": [
+        "817FC950 0103+817FC952 0103+817FC954 0103"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Donkey%20Kong%2064%20(USA).cht",
+      "verified": false
+    }
+  ],
+  "Paper Mario (USA)": [
+    {
+      "desc": "Have all Star Spirits",
+      "format": "gameshark",
+      "codes": [
+        "8010F51E 0007"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Paper%20Mario%20(USA).cht ; https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Paper%20Mario%20(U).cht",
+      "verified": true
+    },
+    {
+      "desc": "Infinite HP (addresses agree; USA file uses value 0032)",
+      "format": "gameshark",
+      "codes": [
+        "8010F292 0063+8010F293 0063"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Paper%20Mario%20(U).cht ; https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Paper%20Mario%20(USA).cht",
+      "verified": false
+    }
+  ],
+  "Kirby 64 - The Crystal Shards (USA)": [
+    {
+      "desc": "Infinite health",
+      "format": "gameshark",
+      "codes": [
+        "810D6E50 40C0"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Kirby%2064%20-%20The%20Crystal%20Shards%20(USA).cht ; https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Kirby%2064%20-%20The%20Crystal%20Shards%20(U).cht",
+      "verified": true
+    },
+    {
+      "desc": "All stages finished (needs 50xx serial-repeat support)",
+      "format": "gameshark",
+      "codes": [
+        "50002B01 0000+800D6BE0 0002"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Kirby%2064%20-%20The%20Crystal%20Shards%20(USA).cht ; https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Kirby%2064%20-%20The%20Crystal%20Shards%20(U).cht",
+      "verified": true
+    }
+  ],
+  "Legend of Zelda, The - Majora's Mask (USA)": [
+    {
+      "desc": "Infinite/max health",
+      "format": "gameshark",
+      "codes": [
+        "811EF6A4 0140+811EF6A6 0140"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Legend%20of%20Zelda,%20The%20-%20Majora's%20Mask%20(USA).cht ; https://raw.githubusercontent.com/mupen64plus/mupen64plus-core/master/data/mupencheat.txt",
+      "verified": true
+    },
+    {
+      "desc": "Have all quest/status items (Gent)",
+      "format": "gameshark",
+      "codes": [
+        "801EF72D 0005+811EF72E F7CF"
+      ],
+      "source": "https://raw.githubusercontent.com/mupen64plus/mupen64plus-core/master/data/mupencheat.txt",
+      "verified": false
+    }
+  ],
+  "Pokemon Snap (USA)": [
+    {
+      "desc": "Have all levels",
+      "format": "gameshark",
+      "codes": [
+        "810C2212 0006"
+      ],
+      "source": "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Pokemon%20Snap%20(USA).cht ; https://raw.githubusercontent.com/libretro/libretro-database/master/cht/Nintendo%20-%20Nintendo%2064/Pokemon%20Snap%20(U).cht",
+      "verified": true
+    }
+  ],
+  "Pokemon - Red Version (USA, Europe) (SGB Enhanced)": [
+    {
+      "desc": "Infinite Money",
+      "format": "raw",
+      "codes": [
+        "019947D3+019948D3+019949D3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/ ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Walk Through Walls (can crash)",
+      "format": "raw",
+      "codes": [
+        "010139CD"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Modifier: every wild encounter becomes Mew",
+      "format": "raw",
+      "codes": [
+        "0115D8CF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/ ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Modifier: every wild encounter becomes Mewtwo",
+      "format": "raw",
+      "codes": [
+        "0183D8CF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/ ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Modifier: every wild encounter becomes Pikachu",
+      "format": "raw",
+      "codes": [
+        "0154D8CF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/ ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Item Slot 1 = Rare Candy x99",
+      "format": "raw",
+      "codes": [
+        "01011DD3+01281ED3+01631FD3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Item Slot 1 = Master Ball x99",
+      "format": "raw",
+      "codes": [
+        "01011DD3+01011ED3+01631FD3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    }
+  ],
+  "Pokemon - Blue Version (USA, Europe) (SGB Enhanced)": [
+    {
+      "desc": "Infinite Money",
+      "format": "raw",
+      "codes": [
+        "019947D3+019948D3+019949D3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/ ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Walk Through Walls (can crash)",
+      "format": "raw",
+      "codes": [
+        "010139CD"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Modifier: every wild encounter becomes Mew",
+      "format": "raw",
+      "codes": [
+        "0115D8CF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/ ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Modifier: every wild encounter becomes Mewtwo",
+      "format": "raw",
+      "codes": [
+        "0183D8CF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/ ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Modifier: every wild encounter becomes Pikachu",
+      "format": "raw",
+      "codes": [
+        "0154D8CF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonred/gameshark/ ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Item Slot 1 = Rare Candy x99",
+      "format": "raw",
+      "codes": [
+        "01011DD3+01281ED3+01631FD3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    },
+    {
+      "desc": "Item Slot 1 = Master Ball x99",
+      "format": "raw",
+      "codes": [
+        "01011DD3+01011ED3+01631FD3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Red%20Version%20(USA%2C%20Europe)%20(SGB%20Enhanced).cht ; https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_Red_and_Blue/RAM_map",
+      "verified": true
+    }
+  ],
+  "Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced)": [
+    {
+      "desc": "Infinite Money",
+      "format": "raw",
+      "codes": [
+        "019946D3+019947D3+019948D3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Yellow%20Version%20-%20Special%20Pikachu%20Edition%20(USA%2C%20Europe)%20(GBC%2CSGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonyellow/gameshark/",
+      "verified": true
+    },
+    {
+      "desc": "Walk Through Walls (can crash)",
+      "format": "raw",
+      "codes": [
+        "010138CD"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Yellow%20Version%20-%20Special%20Pikachu%20Edition%20(USA%2C%20Europe)%20(GBC%2CSGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonyellow/gameshark/",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Modifier: every wild encounter becomes Mew",
+      "format": "raw",
+      "codes": [
+        "0115D7CF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Yellow%20Version%20-%20Special%20Pikachu%20Edition%20(USA%2C%20Europe)%20(GBC%2CSGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonyellow/gameshark/",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Modifier: every wild encounter becomes Mewtwo",
+      "format": "raw",
+      "codes": [
+        "0183D7CF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Yellow%20Version%20-%20Special%20Pikachu%20Edition%20(USA%2C%20Europe)%20(GBC%2CSGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonyellow/gameshark/",
+      "verified": true
+    },
+    {
+      "desc": "Wild Pokemon Modifier: every wild encounter becomes Pikachu",
+      "format": "raw",
+      "codes": [
+        "0154D7CF"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Yellow%20Version%20-%20Special%20Pikachu%20Edition%20(USA%2C%20Europe)%20(GBC%2CSGB%20Enhanced).cht ; https://almarsguides.com/retro/walkthroughs/gameboy/games/pokemonyellow/gameshark/",
+      "verified": true
+    },
+    {
+      "desc": "Item Slot 1 = Rare Candy x99",
+      "format": "raw",
+      "codes": [
+        "01011CD3+01281DD3+01631ED3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Yellow%20Version%20-%20Special%20Pikachu%20Edition%20(USA%2C%20Europe)%20(GBC%2CSGB%20Enhanced).cht",
+      "verified": false
+    },
+    {
+      "desc": "Item Slot 1 = Master Ball x99",
+      "format": "raw",
+      "codes": [
+        "01011CD3+01011DD3+01631ED3"
+      ],
+      "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Yellow%20Version%20-%20Special%20Pikachu%20Edition%20(USA%2C%20Europe)%20(GBC%2CSGB%20Enhanced).cht",
+      "verified": false
+    }
+  ]
+}

@@ -90,6 +90,12 @@ const std::vector<ControlInfo>& controls_for(const std::string& sys) {
     return it == m.end() ? none : it->second;
 }
 
+Profile canonical_name(Profile p) {
+    Profile d = default_profile(p.system);
+    if (p.same_mapping(d)) p.name = d.name;
+    return p;
+}
+
 Profile default_profile(const std::string& sys) {
     Profile p;
     p.name = "default-" + sys;

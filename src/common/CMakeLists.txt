@@ -8,7 +8,7 @@ target_link_libraries(json_test PRIVATE hubbase)
 add_executable(winutil_test test_winutil.cpp)
 target_link_libraries(winutil_test PRIVATE hubbase shell32)
 
-add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} disc_id.cpp ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp cheats.cpp cheats_db.cpp cheat_store.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp addgames.cpp)
+add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} disc_id.cpp ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp addgames.cpp cheats.cpp cheats_db.cpp cheat_store.cpp)
 target_include_directories(hubcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(hubcommon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcommon PUBLIC cxx_std_17)
@@ -58,3 +58,8 @@ target_link_libraries(addgames_test PRIVATE hubcommon)
 # Cheat choices per game (vault), custom codes, online rules, save backup/restore (scratch dirs only).
 add_executable(hubcheatstore_test test_cheat_store.cpp)
 target_link_libraries(hubcheatstore_test PRIVATE hubcommon)
+
+# Cheat database (libretro cht bundle + curated featured list): matching, regions, ranking, the user's real ROM names.
+add_executable(cheats_db_test test_cheats_db.cpp)
+target_link_libraries(cheats_db_test PRIVATE hubcommon hubminiz)
+target_compile_definitions(cheats_db_test PRIVATE CHEATS_DATA_DIR="${CMAKE_SOURCE_DIR}/data")

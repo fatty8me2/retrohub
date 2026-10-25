@@ -97,6 +97,7 @@ add_test(NAME hubkanto_test COMMAND hubkanto_test)                       # Kanto
 add_test(NAME hubkantopad_test COMMAND hubkantopad_test)               # Kanto Together mGBA gamepad config writer
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
 add_test(NAME ps1_test COMMAND ps1_test)                                 # PlayStation: serials, catalog, synthetic discs, BIOS discovery (scratch dirs)
+add_test(NAME cheats_db_test COMMAND cheats_db_test)
 add_test(NAME addgames_test COMMAND addgames_test)                     # Add games: console sorting, destination, dedupe, copy job (scratch dirs)
 add_test(NAME hubgamesettings_test COMMAND hubgamesettings_test)
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
@@ -125,6 +126,7 @@ add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
 add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
 add_test(NAME n64run_match_test COMMAND n64run_match_test)
+add_test(NAME n64run_gs_cheat_test COMMAND n64run_gs_cheat_test)
 add_test(NAME n64run_testinput_test COMMAND n64run_testinput_test)
 add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulated network only
 add_test(NAME n64run_mempak_test COMMAND n64run_mempak_test)          # controller pak policy (no network)
