@@ -39,6 +39,7 @@ static const uint64_t kFnvPrime = 0x100000001B3ull;
 Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(cfg), sim_(sim), net_(net) {
     cfg_.max_pred = std::max(1, std::min(kMaxPred, cfg_.max_pred));
     cfg_.delay = std::max(0, std::min(4, cfg_.delay));
+    cfg_.val_bytes = cfg_.val_bytes >= 6 ? 6 : 2;
     ring_n_ = cfg_.max_pred + 4;
     trace_ = std::getenv("RB_TRACE") != nullptr;
     state_n_ = sim_.state_size();
@@ -61,13 +62,13 @@ Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(c
     st_.delay_min = st_.delay_max = cfg_.delay;
 }
 
-void Engine::put_local(int p, int64_t f, uint16_t v) {
+void Engine::put_local(int p, int64_t f, uint64_t v) {
     in_[p][f % kInRing].tag = f;
     in_[p][f % kInRing].val = v;
     local_newest_ = std::max(local_newest_, f);
 }
 
-void Engine::put_remote(int p, int64_t f, uint16_t v) {
+void Engine::put_remote(int p, int64_t f, uint64_t v) {
     if (f < 0 || has(p, f)) return;
     if (f <= conf_eff_ && f < (int64_t)cur_ - kFrRing + 1) return;   // ancient
     in_[p][f % kInRing].tag = f;
@@ -79,16 +80,16 @@ void Engine::put_remote(int p, int64_t f, uint16_t v) {
     }
 }
 
-void Engine::build_pads(int64_t f, uint32_t pads[kPorts]) {
+void Engine::build_pads(int64_t f, uint64_t pads[kPorts]) {
     for (int p = 0; p < kPorts; p++) {
         if (!present(p)) { pads[p] = 0; continue; }
         pads[p] = has(p, f) ? get(p, f) : last_val_[p];
-        used_[f % kFrRing][p] = (uint16_t)pads[p];
+        used_[f % kFrRing][p] = pads[p];
     }
 }
 
 void Engine::sim_frame(int64_t f, bool visible) {
-    uint32_t pads[kPorts];
+    uint64_t pads[kPorts];
     build_pads(f, pads);
     double t0 = qpc_us();
     sim_.step(pads, visible);
@@ -148,7 +149,7 @@ static uint64_t r64(const uint8_t* p) { uint64_t v; memcpy(&v, p, 8); return v; 
 
 void Engine::send_packet(bool force) {
     uint32_t now = net_.now_ms();
-    if (!force && now - last_send_ < 8) return;
+    if (!force && now - last_send_ < cfg_.send_gap_ms) return;
     last_send_ = now;
     std::vector<uint8_t> b;
     b.push_back(kPktInput);
@@ -161,6 +162,8 @@ void Engine::send_packet(bool force) {
     for (int p = 0; p < kPorts; p++) w32(b, (uint32_t)(int32_t)(present(p) && !local(p) ? conf_upto_[p] : -1));
     int nloc = 0;
     for (int p = 0; p < kPorts; p++) if (local(p) && local_newest_ >= 0) nloc++;
+    /* one datagram: ~110 bytes of header/hashes/RTT, the rest split between the local ports (<= 100 frames each) */
+    const int maxcnt = std::max(8, std::min(100, (900 - 24 * nloc) / std::max(1, nloc * cfg_.val_bytes)));
     b.push_back((uint8_t)nloc);
     for (int p = 0; p < kPorts; p++) {
         if (!local(p) || local_newest_ < 0) continue;
@@ -172,13 +175,17 @@ void Engine::send_packet(bool force) {
             any = true;
         }
         if (!any) start = local_newest_;
-        start = std::max<int64_t>(start, local_newest_ - 99);
+        start = std::max<int64_t>(start, local_newest_ - maxcnt + 1);
         start = std::min<int64_t>(start, local_newest_ - 2);
         start = std::max<int64_t>(start, 0);
         b.push_back((uint8_t)p);
         w32(b, (uint32_t)start);
         b.push_back((uint8_t)(local_newest_ - start + 1));
-        for (int64_t f = start; f <= local_newest_; f++) w16(b, has(p, f) ? get(p, f) : 0);
+        for (int64_t f = start; f <= local_newest_; f++) {
+            uint64_t v = has(p, f) ? get(p, f) : 0;
+            w16(b, (uint16_t)v);
+            if (cfg_.val_bytes > 2) { w16(b, (uint16_t)(v >> 16)); w16(b, (uint16_t)(v >> 32)); }
+        }
     }
     int nh = (int)std::min<size_t>(4, my_h_.size());
     b.push_back((uint8_t)nh);
@@ -230,17 +237,19 @@ void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
         int p = d[o++];
         uint32_t start = r32(d + o); o += 4;
         int cnt = d[o++];
-        if (o + (size_t)cnt * 2 > n) return;
+        const size_t vb = (size_t)cfg_.val_bytes;
+        if (o + (size_t)cnt * vb > n) return;
         bool ok = p < kPorts && cfg_.owner[p] == slot;
         for (int k = 0; k < cnt; k++) {
-            uint16_t v = r16(d + o + k * 2);
+            uint64_t v = r16(d + o + k * vb);
+            if (vb > 2) v |= (uint64_t)r16(d + o + k * vb + 2) << 16 | (uint64_t)r16(d + o + k * vb + 4) << 32;
             if (ok) {
                 int64_t before = conf_upto_[p];
                 put_remote(p, (int64_t)start + k, v);
                 if (conf_upto_[p] != before) progress = true;
             }
         }
-        o += (size_t)cnt * 2;
+        o += (size_t)cnt * vb;
     }
     if (progress) last_progress_ = net_.now_ms();
     if (o < n) {
@@ -322,7 +331,7 @@ void Engine::advance_confirmed() {
     conf_eff_ = std::max(conf_eff_, c);
     while (roll_next_ <= conf_eff_) {
         int64_t f = roll_next_++;
-        if (trace_ && net_.log) { char b[120]; snprintf(b, sizeof b, "T %lld %016llx %04x %04x", (long long)f, (unsigned long long)fsum_[f % kFrRing], used_[f % kFrRing][0], used_[f % kFrRing][1]); net_.log(b); }
+        if (trace_ && net_.log) { char b[120]; snprintf(b, sizeof b, "T %lld %016llx %04x %04x", (long long)f, (unsigned long long)fsum_[f % kFrRing], (unsigned)used_[f % kFrRing][0], (unsigned)used_[f % kFrRing][1]); net_.log(b); }
         roll_out_ = (roll_out_ ^ fsum_[f % kFrRing]) * kFnvPrime;
         for (int p = 0; p < kPorts; p++) roll_in_ = (roll_in_ ^ used_[f % kFrRing][p]) * kFnvPrime;
         if (cfg_.hash_interval > 0 && (f + 1) % cfg_.hash_interval == 0) {
@@ -434,13 +443,14 @@ void Engine::run_frame() {
     for (int p = 0; p < kPorts; p++) {
         if (!local(p)) continue;
         int64_t tf = (int64_t)cur_ + cfg_.delay;
-        uint16_t v = (uint16_t)sim_.read_local(p);
+        uint64_t v = sim_.read_local(p) & vmask();
         if (tf <= base) continue;   // delay shrank: that frame already has its pad
-        uint16_t prev = has(p, base) ? get(p, base) : 0;
+        uint64_t prev = has(p, base) ? get(p, base) : 0;
         for (int64_t g = base + 1; g < tf; g++) put_local(p, g, prev);   // delay grew: hold the last pad over the gap
         put_local(p, tf, v);
     }
-    send_packet(true);
+    /* Over the relay a 4-PC room costs 12 server frames per input packet (the host forwards every client packet to the other clients): halve the rate there. */
+    send_packet(!(cfg_.relay_half_rate && net_.relayed && net_.relayed() && (cur_ & 1u)));
     double t0 = qpc_us();
     sim_.save(ring_state(cur_), state_n_);
     st_.save_us += qpc_us() - t0;
@@ -480,7 +490,7 @@ bool Engine::finish(uint32_t timeout_ms) {
 /* ------------------------------------------------------------------ synctest */
 
 SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_state_hash,
-                            const std::function<void(int, uint32_t[kPorts])>& input,
+                            const std::function<void(int, uint64_t[kPorts])>& input,
                             const std::function<void(const std::string&)>& log) {
     SyncTestResult r;
     size_t n = sim.state_size();
@@ -489,7 +499,7 @@ SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_stat
     std::vector<std::vector<uint8_t>> before(R, std::vector<uint8_t>(n));
     std::vector<uint8_t> tmp(n);
     std::vector<uint64_t> sum(R, 0), post(R, 0);
-    std::vector<std::array<uint32_t, kPorts>> pads(R);
+    std::vector<std::array<uint64_t, kPorts>> pads(R);
     bool dbg = std::getenv("RB_DIFF") != nullptr;
     std::vector<std::vector<uint8_t>> dbg_post(R);
     std::vector<uint8_t> dbg_last;
@@ -501,7 +511,7 @@ SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_stat
         double d = qpc_us() - t;
         r.save_us += d; r.save_n++; r.save_us_max = std::max(r.save_us_max, d);
     };
-    auto timed_step = [&](const uint32_t* p) {
+    auto timed_step = [&](const uint64_t* p) {
         double t = qpc_us();
         sim.step(p, true);
         r.step_us += qpc_us() - t; r.step_n++;
@@ -518,7 +528,7 @@ SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_stat
     // every frame; every frame (first run and re-simulation) must equal the reference. This catches drift that only appears once
     // a state has been loaded (comparing a reload with an earlier reload would not).
     std::vector<uint64_t> ref_sum(frames), ref_post(frames);
-    std::vector<std::array<uint32_t, kPorts>> all_pads(frames);
+    std::vector<std::array<uint64_t, kPorts>> all_pads(frames);
     std::vector<uint8_t> s0(n);
     int dumpf = std::getenv("RB_DUMPFRAME") ? atoi(std::getenv("RB_DUMPFRAME")) : -1;
     std::vector<uint8_t> dump_ref[4];
@@ -561,8 +571,8 @@ SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_stat
             int K = std::max(1, atoi(wr));
             if (f % 3 == 0) {
                 for (int j = 0; j < K; j++) {
-                    uint32_t bad[kPorts];
-                    for (int i = 0; i < kPorts; i++) bad[i] = all_pads[std::min(frames - 1, f + j)][i] ^ (uint32_t)(1 + ((f + j) * 7 & 0x3F3));
+                    uint64_t bad[kPorts];
+                    for (int i = 0; i < kPorts; i++) bad[i] = all_pads[std::min(frames - 1, f + j)][i] ^ (uint64_t)(1 + ((f + j) * 7 & 0x3F3)) ^ ((uint64_t)((f + j) * 131 & 0xFF) << 16);
                     sim.save(tmp.data(), n);
                     timed_step(bad);
                 }
@@ -571,8 +581,8 @@ SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_stat
         }
         if (f % 2 == 0 && !std::getenv("RB_NOWRONG")) {
             // mispredicted frame: run it with wrong pads first (as a predicting peer does), then roll it back and replay it right
-            uint32_t bad[kPorts];
-            for (int i = 0; i < kPorts; i++) bad[i] = all_pads[f][i] ^ 0x1u ^ (uint32_t)(f & 0x3F0);
+            uint64_t bad[kPorts];
+            for (int i = 0; i < kPorts; i++) bad[i] = all_pads[f][i] ^ 0x1u ^ (uint64_t)(f & 0x3F0) ^ ((uint64_t)((f * 37) & 0xFF) << 24);
             timed_step(bad);
             sim.load(before[k].data(), n);
         }

@@ -6,7 +6,7 @@
 # real BIOS. SwanStation was the other candidate: its software renderer is fine, but its C++/threaded GPU backend and larger,
 # non-bit-stable states are a worse fit for rollback.
 #
-# The tree is fetched at a pinned commit (SHA-256 verified) and compiled with MinGW-w64 gcc (the source uses GNU C extensions MSVC lacks).
+# The tree is fetched at a pinned commit (SHA-256 verified), patched in place for deterministic savestates (patch.cmake, called from fetch.cmake) and compiled with MinGW-w64 gcc (the source uses GNU C extensions MSVC lacks).
 # Without gcc this target is skipped: PlayStation games stay listed but "Play" tells the user the core is missing.
 # Also generates ps1_db_data.cpp (serial -> title, from the Redump-derived catalog in the same tree) for the hub's library scan.
 # (FetchContent + database generation live in fetch.cmake, included from the top-level CMakeLists before hubcommon)
@@ -72,7 +72,7 @@ add_custom_command(OUTPUT ${BEETLE_DLL}
             -I${B} -I${B}/mednafen -I${B}/mednafen/include -I${LC}/include -I${B}/include -include ${B}/include/debug.h
             ${BEETLE_SOURCES}
             -s -Wl,--no-undefined -Wl,--version-script=${B}/link.T -static -static-libgcc -o ${BEETLE_DLL} -lwinmm
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt ${CMAKE_CURRENT_SOURCE_DIR}/patch.cmake
     COMMENT "Building beetle_psx_libretro.dll (Beetle PSX, MinGW)"
     VERBATIM)
 add_custom_target(beetle_psx_libretro ALL DEPENDS ${BEETLE_DLL})

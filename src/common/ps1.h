@@ -71,5 +71,9 @@ std::vector<std::string> bios_search_dirs(const std::vector<std::string>& rom_fo
  * returns how many regions had a BIOS of their own. */
 int stage_bios(const std::vector<BiosFound>& found, const std::string& system_dir);
 
+/* Online: the --ports owner list of a room ("0,1,2,3", -1 = nobody on that port). The emulated multitap is needed as soon as a third or fourth
+ * controller port is taken (ports 0-1 are the console's own two ports; with the multitap on port 1 the four libretro ports are its four pads). Pure. */
+bool ports_need_multitap(const std::string& ports);
+
 } // namespace ps1
 } // namespace hub
