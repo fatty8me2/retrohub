@@ -537,6 +537,7 @@ void draw_test_panel() {
 }  // namespace
 
 /* Library details -> "Controls for this game". */
+std::string CTL_game_for_trace() { return CTL.game; }
 void open_controls_for(const hub::GameEntry& e) {
     std::string sys = hubctl::system_key(e.system);
     if (sys.empty()) { set_notice("There are no controller settings for this system."); return; }

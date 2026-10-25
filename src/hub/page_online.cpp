@@ -93,7 +93,9 @@ void host_launch_selected() {
             np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
             np_extra += cheats_launch_fragment(*rg);
             if (gc_ok) {
-                A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra));
+                std::string lmsg = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra);
+                shot_trace("host-msg", lmsg);
+                A.lobby.send_msg(lmsg);
                 launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
             } else --A.launch_counter;        }
 
@@ -208,6 +210,7 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     }
 
     // the button
+    shot_trace_once("room-button", std::string(host ? "host " : "guest ") + A.selected_game + " label=[" + st.button_label + "] enabled=" + (st.button_enabled ? "1" : "0") + " launch=" + (st.is_launch ? "1" : "0") + (block.empty() ? "" : " block=[" + block + "]"));
     ImGui::SetCursorScreenPos(bp);
     static std::string focus_code;
     static int focus_tries = 0;
@@ -364,6 +367,7 @@ void page_online_room() {
             std::string rid = room_id(g);
             auto sel = hubui::game_selectable(rid, max_players_for(g), peers, 0);
             bool chosen = A.selected_game == rid;
+            if (host || chosen) shot_trace_once("room-row", std::string(host ? "host " : "guest ") + rid + (sel.ok ? " ok" : " blocked:" + sel.reason) + (chosen ? " chosen" : ""));
             if (!sel.ok && !chosen) { ++hidden; continue; }
             if (!host && !chosen) continue;
             ImGui::PushID(rid.c_str());
