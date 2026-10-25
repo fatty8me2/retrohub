@@ -133,9 +133,19 @@ void pad_exit_watch() {
     closing = true;
     closed_at = now;
     set_notice(A.proc_title + ": closing (Back + Start held)...", 8.0);
+    request_game_close();
+}
+
+void request_game_close() {
     if (A.run.pad_exit_fn) { A.run.pad_exit_fn(); return; }
     CloseCtx c;
     c.pids = game_pids();
+    EnumWindows(close_cb, (LPARAM)&c);
+}
+
+void close_pid_windows(unsigned long pid) {
+    CloseCtx c;
+    c.pids.push_back((DWORD)pid);
     EnumWindows(close_cb, (LPARAM)&c);
 }
 
@@ -169,7 +179,8 @@ void poll_process() {
     A.vault_dirty = true;
     A.info_at = -100;
     room_session_ended();
-    set_notice(A.proc_title + ": " + (code == 0 ? std::string("closed.") : hubui::exit_code_text(code)), 20.0);
+    if (!A.run.left_name.empty() && (code == 0 || code == 4 || code == 8)) set_notice(hubui::exit_text_for(code, A.run.left_name), 20.0);
+    else set_notice(A.proc_title + ": " + (code == 0 ? std::string("closed.") : hubui::exit_code_text(code)), 20.0);
     auto_sync();
 }
 

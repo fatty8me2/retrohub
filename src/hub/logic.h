@@ -312,6 +312,10 @@ bool sync_take_pending(SyncGate& g, bool game_running, bool job_running, bool* m
 
 /* Human text for an n64run exit code. */
 std::string exit_code_text(unsigned long code);
+/* Message for a game that ended while a player was missing. `left_name` = who left ("" unknown); only the outcomes a leaver causes
+ * (clean 0, connection lost 4, "a player left" 8) are reworded, crashes/desyncs keep their own text. */
+std::string player_left_text(const std::string& left_name);
+std::string exit_text_for(unsigned long code, const std::string& left_name);
 
 /* Uppercase, strip blanks, cap at 6 chars. */
 std::string normalize_code(const std::string& s);
@@ -437,6 +441,9 @@ inline std::string auto_friend_text(const std::string& name) { return "You and "
 inline std::string lobby_ident_json(const std::string& uid, const std::string& secret) {
     return "{\"type\":\"ident\",\"uid\":\"" + json::escape(uid) + "\",\"secret\":\"" + json::escape(secret) + "\"}";
 }
+/* The host left: move every per-slot map to the promoted member's slot 0 in one go. `ready` is NOT carried over - the game it
+ * belonged to is gone, everyone re-announces (pass the same map the caller then clears). */
+template <class... M> void host_left_remap(int from_slot, M&... maps) { (remap_slot_key(maps, from_slot, 0), ...); }
 inline std::string host_changed_text(const std::string& name, bool me) { return me ? "You are now the host" : name + " is now the host"; }
 
 } // namespace hubui

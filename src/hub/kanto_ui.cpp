@@ -117,6 +117,7 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
     A.run.start_unix = unix_now();
     A.run.start_tick = GetTickCount64();
     A.run.pad_exit = true;
+    A.run.room = host ? false : true;   // a guest follows the host: the session is gone when the room host leaves
     A.run.pad_exit_fn = []() { KT.sess.stop(); };
     std::string saves = o.saves;
     const bool was_host = host;
