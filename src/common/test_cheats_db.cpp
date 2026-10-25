@@ -6,6 +6,7 @@
 #include <string>
 
 #include "cheats_db.h"
+#include "miniz.h"
 
 using namespace hub;
 namespace fs = std::filesystem;
@@ -107,6 +108,43 @@ int main() {
     }
     std::printf("real ROMs: %d with cheats / %d total\n", with, total);
     for (auto& kv : per) std::printf("  %s: %d/%d\n", kv.first.c_str(), kv.second.second, kv.second.first);
+
+    {   // Every N64 cheat in the bundled database: how many can the runner not use?
+        std::FILE* f = std::fopen(CHEATS_DATA_DIR "/cheats_db.bin", "rb");
+        if (f) {
+            std::string packed; char buf[65536]; size_t k;
+            while ((k = std::fread(buf, 1, sizeof buf, f)) > 0) packed.append(buf, k);
+            std::fclose(f);
+            size_t n = 0;
+            void* p = tinfl_decompress_mem_to_heap(packed.data(), packed.size(), &n, TINFL_FLAG_PARSE_ZLIB_HEADER);
+            std::string raw = p ? std::string((const char*)p, n) : std::string();
+            if (p) mz_free(p);
+            bool n64 = false; cheats::Format fmt = cheats::Format::GameShark;
+            size_t pos = 0, total = 0, rejected = 0, button = 0, noop = 0;
+            std::map<std::string, size_t> why;
+            while (pos < raw.size()) {
+                size_t nl = raw.find('\n', pos); if (nl == std::string::npos) nl = raw.size();
+                std::string line = raw.substr(pos, nl - pos); pos = nl + 1;
+                if (line.empty() || line.compare(0, 6, "RHCHT1") == 0) continue;
+                if (line[0] == '@') { n64 = line.compare(0, 4, "@n64") == 0; fmt = cheats::Format::GameShark; continue; }
+                if (!n64) continue;
+                cheats::Cheat c; c.format = fmt;
+                size_t t = line.rfind('\t'); if (t == std::string::npos) continue;
+                if (line[0] == '!') { size_t t1 = line.find('\t'); cheats::parse_format(line.substr(1, t1 - 1), &c.format); }
+                c.codes.push_back(line.substr(t + 1));   // n64_codes splits the joined codes itself
+                ++total;
+                std::vector<cheats::N64Code> v; std::string err;
+                if (!cheats::n64_codes(c, &v, &err)) {
+                    ++rejected;
+                    std::string key = err.find("XXXX") != std::string::npos ? "XXXX placeholder" : err.substr(0, err.find(':'));
+                    ++why[key];
+                } else { if (v.empty()) ++noop; if (cheats::n64_needs_gs_button(v)) ++button; }
+            }
+            std::printf("N64 cheats in bundle: %zu total, %zu rejected, %zu button-fire, %zu no-op\n", total, rejected, button, noop);
+            for (auto& kv : why) std::printf("  rejected: %-60s %zu\n", kv.first.c_str(), kv.second);
+            if (total > 100000) CHECK(rejected < 2500);   // regression guard (was ~3500 before 88/89 + joined-code support)
+        }
+    }
 
     std::printf(g_fail ? "cheats_db_test: %d FAILED\n" : "cheats_db_test: ok\n", g_fail);
     return g_fail ? 1 : 0;
