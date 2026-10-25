@@ -806,3 +806,4 @@ ImGuiKey shot_key(const std::string& n);
 
 
 #include "friends_ui.h"
+#include "group_ui.h"
