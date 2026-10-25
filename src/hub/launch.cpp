@@ -79,6 +79,14 @@ void sync_smash_prep();
 /* ---------- universal leave-game combo for games RetroHub does not own (Dolphin / Azahar / Cemu / mGBA / BattleShip) ---------- */
 
 static bool any_pad_combo() {
+    if (autotest_active()) {   // QA only: RETROHUB_AUTOTEST_COMBO_AFTER=<seconds> holds Back+Start virtually once the game has run that long
+        static const char* after = std::getenv("RETROHUB_AUTOTEST_COMBO_AFTER");
+        if (after && A.proc && GetTickCount64() - A.run.start_tick >= (ULONGLONG)(std::atof(after) * 1000.0)) {
+            static bool logged = false;
+            if (!logged) { logged = true; autotest_log("virtual exit combo (Back+Start) held"); }
+            return true;
+        }
+    }
     for (DWORD i = 0; i < 4; ++i) {
         XINPUT_STATE xs{};
         if (XInputGetState(i, &xs) == ERROR_SUCCESS && hubctl::xinput_combo_down(xs.Gamepad.wButtons)) return true;
