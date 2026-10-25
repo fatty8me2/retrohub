@@ -11,35 +11,29 @@ std::string lower(std::string s) {
     for (auto& c : s) { if (c == '\\') c = '/'; c = (char)tolower((unsigned char)c); }
     return s;
 }
-bool ends_with(const std::string& s, const char* suf) {
-    size_t n = std::char_traits<char>::length(suf);
-    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
-}
-bool image_ext(const std::string& s) {
-    return ends_with(s, ".png") || ends_with(s, ".jpg") || ends_with(s, ".jpeg") || ends_with(s, ".bmp") || ends_with(s, ".webp");
-}
-bool card_ext(const std::string& s) {
-    return ends_with(s, ".gci") || ends_with(s, ".gcs") || ends_with(s, ".mcd") || ends_with(s, ".mcr") || ends_with(s, ".mc") ||
-           ends_with(s, ".ps2") || ends_with(s, ".mcc") || ends_with(s, ".card") || ends_with(s, ".vmp") || ends_with(s, ".vmc") ||
-           ends_with(s, ".mpk") || ends_with(s, ".raw");
+std::string ext_of(const std::string& name) {
+    size_t i = name.rfind('.');
+    return i == std::string::npos ? std::string() : name.substr(i + 1);
 }
 }  // namespace
 
+/* Exact mirror of classifyPath() in the Worker (server/cloudflare/src/saves_pool.js); golden table docs/cloud_classify_cases.txt. */
 FileClass classify_path(const std::string& rel_in_game, int64_t size) {
     std::string p = lower(rel_in_game);
-    if (p == "meta.json" || p.rfind("_account/", 0) == 0) return FileClass::Settings;
-    if (p.rfind("states/", 0) == 0 || p.rfind("state/", 0) == 0) return image_ext(p) ? FileClass::Shot : FileClass::State;
-    if (p.rfind("cheat_backups/", 0) == 0) return FileClass::State;           // copies of battery files: never protected
-    if (image_ext(p)) return FileClass::Shot;
-    if (p.rfind("battery/", 0) == 0) {
-        std::string name = p.substr(8);
-        if (card_ext(name) || name.find("memcard") != std::string::npos || name.find("memory card") != std::string::npos) return FileClass::Card;
-        if (name.rfind("card", 0) == 0 && size > 64 * 1024) return FileClass::Card;
-        return FileClass::Battery;
+    size_t slash = p.find('/');
+    std::string seg0 = slash == std::string::npos ? p : p.substr(0, slash);
+    std::string name = p.substr(p.rfind('/') == std::string::npos ? 0 : p.rfind('/') + 1);
+    if (seg0 == "_account" || name == "meta.json") return FileClass::Settings;
+    std::string ext = ext_of(name);
+    if (seg0 == "states") {
+        static const char* shots[] = {"png", "jpg", "jpeg", "bmp", "tga", "webp"};
+        for (const char* e : shots) if (ext == e) return FileClass::Shot;
+        return FileClass::State;
     }
-    if (card_ext(p)) return FileClass::Card;
-    /* unknown location: small files behave like battery data, big ones like cards (limited protected share) */
-    return size <= 64 * 1024 ? FileClass::Battery : FileClass::Card;
+    static const char* cards[] = {"mcd", "mcr", "gci", "gcp", "vmp", "vmc", "ps2", "mc2", "card", "raw"};
+    for (const char* e : cards) if (ext == e) return FileClass::Card;
+    if (seg0 == "battery") return FileClass::Battery;
+    return size > kProtectedCardMax ? FileClass::Card : FileClass::Battery;
 }
 
 bool is_protected(FileClass c, int64_t size) {
