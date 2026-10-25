@@ -1,4 +1,5 @@
 #include "app.h"
+#include "online_caps.h"
 
 /* ---------- library / ROM scanning ---------- */
 
@@ -63,6 +64,16 @@ void apply_scan() {
             g.key = "fake:" + std::to_string(i);
             g.title = "Test Game " + std::to_string(i + 1);
             g.path = "C:\fake\game" + std::to_string(i) + ".z64";
+            A.lib.push_back(g);
+        }
+        {   // a catalog PlayStation game too, so the room picker / PS1 online path can be screenshotted (HUB_SHOT_ROOM_GAME=crashbash)
+            hub::GameEntry g;
+            g.system = hub::System::PS1;
+            g.key = "ps1:scus-94570";
+            g.catalog_id = "crashbash";
+            g.serial = "SCUS-94570";
+            g.title = "Crash Bash";
+            g.path = "C:\fake\crashbash.cue";
             A.lib.push_back(g);
         }
         A.st.find_games_done = true;
@@ -144,16 +155,9 @@ void rebuild_vis() {
 /* ---------- online capability ---------- */
 
 bool supports_online(const hub::GameEntry& e) {
-    if (e.system == hub::System::GC) {   // Dolphin NetPlay (netplay_dolphin.h); only catalog games flagged online
-        const GameInfo* g = hub::find_game(e.catalog_id);
-        return g && g->online;
-    }
-    if (e.system == hub::System::NDS) {   // local wireless (trades, battles, Union Room) through retrorun --ds-link; catalog games only
-        const GameInfo* g = hub::find_game(e.catalog_id);
-        return g && g->online;
-    }
-    return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB ||
-           e.system == hub::System::GBC || e.system == hub::System::N3DS;   // 3DS: Azahar room via np_3ds
+    /* hubcaps::online_capable: GC (Dolphin NetPlay), NDS (local wireless) and PS1 (retrorun rollback, multitap for 3-4) only for catalog
+     * games flagged online; N64/GB/GBC/GBA/3DS for every library game. Unit-tested against launch_online's branches. */
+    return hubcaps::online_capable(e.system, hub::find_game(e.catalog_id));
 }
 /* Online player cap for a room (online_max_for; 0 online_max = max_players). Every online limit uses this. */
 int max_players_for(const hub::GameEntry& e) {
