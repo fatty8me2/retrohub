@@ -47,6 +47,7 @@
 #include "test_input.h"
 #include "mempak.h"
 #include "match.h"
+#include "gs_cheat.h"
 #include "lockstep.h"
 #include "runstate.h"
 #include "save_sync.h"
@@ -63,7 +64,7 @@ static const char* kUsage =
     "              --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]\n"
     "              [--match SPEC] [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n"
     "              [--title TEXT] [--fullscreen] [--gfx Key=i|b|s:value]...\n"
-    "              [--headless [--realtime] [--frames N] [--screenshot OUT.png] [--dump-ram OFFSET,LEN,FILE]...]\n";
+    "              [--gs-code CODES] [--headless [--realtime] [--frames N] [--screenshot OUT.png] [--dump-ram OFFSET,LEN,FILE]...]\n";
 
 // ---------------------------------------------------------------- logging
 static FILE* g_logf = nullptr;
@@ -110,6 +111,7 @@ struct Args {
     std::string controls;   // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (controls.h)
     std::string test_input;   // --test-input / N64RUN_TEST_INPUT: scripted local input (QA)
     std::string match;   // --match spec (VS battle jump)
+    std::string gs_code;   // --gs-code "80ADDR 00VV+..." (headless QA: GameShark RAM writes every VI)
     struct RamDump { uint32_t offset, len; std::string file; };
     std::vector<RamDump> dumps;
 };
@@ -149,6 +151,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--frames") { int f = 0; ok = ival(&f) && f >= 0; a.frames = f; }
         else if (k == "--screenshot") ok = val(&a.screenshot);
         else if (k == "--match") ok = val(&a.match);
+        else if (k == "--gs-code") ok = val(&a.gs_code);
         else if (k == "--dump-ram") {
             std::string s;
             ok = val(&s);
@@ -216,6 +219,7 @@ static long long g_frame_count = 0;
 static bool g_limiter_off = false;
 static bool g_realtime = false;
 static std::unique_ptr<MatchDriver> g_match;
+static std::vector<n64run::GsLine> g_gs;
 static long long g_vi = 0;
 static bool g_headless_mode = false;
 
@@ -241,6 +245,7 @@ static bool qa_nofix() { return std::getenv("RETROHUB_QA") && std::getenv("N64RU
 
 static void headless_frame_cb(unsigned int) {
     g_vi++;
+    if (!g_gs.empty() && g_core.MemPtr) { uint8_t* r = static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)); if (r) n64run::gs_apply(r, 8u * 1024u * 1024u, g_gs); }
     if (g_match && g_core.MemPtr && !g_match->done()) {
         std::string l = g_match->step(static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)), g_vi);
         if (!l.empty()) { std::stringstream ls(l); std::string one; while (std::getline(ls, one)) logline("n64run", one.c_str()); }
@@ -644,6 +649,10 @@ int main(int argc, char** argv) {
         return 3;
     }
 
+    if (!args.gs_code.empty()) {
+        if (!n64run::gs_parse(args.gs_code, &g_gs)) { logf_("n64run", "bad --gs-code"); g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr); g_core.Shutdown(); return 2; }
+        logf_("n64run", "gs-code: %d lines", (int)g_gs.size());
+    }
     if (!args.match.empty()) {
         MatchSpec ms; std::string merr;
         if (!parse_match_spec(args.match, &ms, &merr)) { logf_("n64run", "bad --match: %s", merr.c_str()); g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr); g_core.Shutdown(); return 2; }
@@ -704,7 +713,7 @@ int main(int argc, char** argv) {
         }
         g_headless_mode = args.headless;
         g_realtime = args.realtime;
-        if (args.headless || g_match || online) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
+        if (args.headless || g_match || online || !g_gs.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         /* Boot watchdog: a game that never reads a controller within 90 s is stuck in its own boot code (seen with a
          * bad Pokemon Stadium dump: it spins in a `bal .` loop at 0x80000198). Say so instead of hanging silently. */
         std::thread([] {
