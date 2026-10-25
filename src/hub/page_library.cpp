@@ -625,46 +625,77 @@ void draw_details_modal() {
     auto label_w = [&](const char* label, bool icon) {   // matches button(): text + icon + gap + 2.5sp padding each side
         return ImGui::CalcTextSize(label).x + (icon ? sp(2.25f) + sp(1) : 0.f) + sp(5);
     };
+    /* Reachability QA (qa/reach_matrix.ps1): every action reports whether it is offered; HUB_SHOT_ACT=<name> presses it once. */
+    static const char* act = std::getenv("HUB_SHOT_ACT");
+    static std::string act_done;
+    auto tr = [&](const char* name, const std::string& state) { shot_trace_once("act", e.key + " " + name + " " + state); };
+    auto forced = [&](const char* name) {
+        if (!act || std::strcmp(act, name) != 0 || act_done == e.key + name) return false;
+        act_done = e.key + name;
+        return true;
+    };
     place(sp(17.f));
-    if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play)) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry(c); }
+    tr("play", idle ? "enabled" : "disabled");
+    if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play) || forced("play")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry(c); }
     ImGui::SetItemDefaultFocus();
-    if (e.system == hub::System::PS2) {
-        place(label_w("Offline only", true));
-        button("Offline only", ImVec2(0, bh), false, false, ui::Icon::Globe);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("PS2 online isn't supported yet");
-    } else if (e.system == hub::System::GC && !supports_online(e)) {
+    if (!supports_online(e) && e.system == hub::System::GC) {
         place(label_w("Online soon", true));
         button("Online soon", ImVec2(0, bh), false, false, ui::Icon::Globe);
-    } else if (supports_online(e)) {
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Only GameCube games with a verified online setup can be played online");
+        tr("online", "explained:online-soon");
+    } else if (!supports_online(e)) {
+        place(label_w("Offline only", true));
+        button("Offline only", ImVec2(0, bh), false, false, ui::Icon::Globe);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip(e.system == hub::System::PS2 ? "PS2 online isn't supported yet" : "Online play isn't available for this game");
+        tr("online", "explained:offline-only");
+    } else {
         place(label_w("Play Online", true));
-        if (button("Play Online", ImVec2(0, bh), false, idle, ui::Icon::Globe)) {
+        tr("online", idle ? "enabled" : "disabled");
+        if (button("Play Online", ImVec2(0, bh), false, idle, ui::Icon::Globe) || forced("online")) {
             ImGui::CloseCurrentPopup();
             A.pending_room_game = room_id(e);
-            enter_room(true, hubnet::new_room_code());
+            shot_trace("play-online", "pending_room_game=" + A.pending_room_game);
+            if (!g_headless) enter_room(true, hubnet::new_room_code());
         }
     }
     const char* fav_label = gs.favorite ? "Unfavorite" : "Favorite";
     place(label_w(fav_label, true));
-    if (button(fav_label, ImVec2(0, bh), false, true, gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star)) toggle_favorite(e.key);
+    tr("favorite", "enabled");
+    if (button(fav_label, ImVec2(0, bh), false, true, gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star) || forced("favorite")) {
+        const bool was_fav = gs.favorite;
+        toggle_favorite(e.key);
+        shot_trace("favorite", e.key + " was=" + (was_fav ? "1" : "0") + " now=" + (gstate(e.key).favorite ? "1" : "0"));
+    }
     if (!native) {
         place(label_w("Save folder", true));
-        if (button("Save folder", ImVec2(0, bh), false, true, ui::Icon::Folder)) open_in_explorer(hub::saves::game_dir(sys_short(e), e.key));
+        tr("savefolder", "enabled");
+        if (button("Save folder", ImVec2(0, bh), false, true, ui::Icon::Folder) || forced("savefolder")) {
+            std::string sd = hub::saves::game_dir(sys_short(e), e.key);
+            shot_trace("savefolder", sd);
+            if (!g_headless) open_in_explorer(sd);
+        }
     } else {
+        tr("savefolder", "hidden:native-keeps-own-saves");
         place(label_w("Locate BattleShip.exe", false));
         locate_smash(button("Locate BattleShip.exe", ImVec2(0, bh)));
     }
+    tr("cheats", cheats_supported(e) ? "enabled" : "hidden");
     if (cheats_supported(e)) {
         int cn = cheats_enabled_count(e);
         std::string cl = cn ? "Cheats (" + std::to_string(cn) + ")" : std::string("Cheats");
         place(label_w(cl.c_str(), true));
-        if (button(cl.c_str(), ImVec2(0, bh), cn > 0, true, ui::Icon::Bolt)) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; cheats_open(c); }
+        if (button(cl.c_str(), ImVec2(0, bh), cn > 0, true, ui::Icon::Bolt) || forced("cheats")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; cheats_open(c); shot_trace("cheats", "opened " + e.key); }
     }
+    tr("controls", hubctl::system_key(e.system).empty() ? "hidden" : "enabled:" + hubctl::system_key(e.system));
+    tr("settings", hub::gs::options_for(e.system).empty() ? "none" : "options=" + std::to_string(hub::gs::options_for(e.system).size()));
     if (!hubctl::system_key(e.system).empty()) {
         place(label_w("Controls for this game", true));
-        if (button("Controls for this game", ImVec2(0, bh), false, true, ui::Icon::Gamepad)) { ImGui::CloseCurrentPopup(); open_controls_for(e); }
+        if (button("Controls for this game", ImVec2(0, bh), false, true, ui::Icon::Gamepad) || forced("controls")) { ImGui::CloseCurrentPopup(); open_controls_for(e); shot_trace("controls", "tab-for " + hubctl::system_key(e.system) + " game=" + CTL_game_for_trace()); }
     }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    if (button("Add to desktop", ImVec2(0, bh), false, true, ui::Icon::Star)) add_game_shortcut(e);
+    tr("desktop", "enabled");
+    if (button("Add to desktop", ImVec2(0, bh), false, true, ui::Icon::Star) || forced("desktop")) { add_game_shortcut(e); shot_trace("desktop", e.key); }
     ImGui::SameLine(0, sp(1.5f));
     if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();

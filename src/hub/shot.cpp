@@ -162,6 +162,13 @@ void shot_trace(const char* what, const std::string& arg) {
     if (FILE* f = std::fopen(tp, "a")) { std::fprintf(f, "%s %s\n", what, arg.c_str()); std::fclose(f); }
 }
 
+void shot_trace_once(const char* what, const std::string& arg) {
+    static std::set<std::string> seen;
+    if (!std::getenv("HUB_SHOT_TRACE")) return;
+    if (!seen.insert(std::string(what) + " " + arg).second) return;
+    shot_trace(what, arg);
+}
+
 /* One trace line per injected pad press: where the page / focus ended up (HUB_SHOT_TRACE). */
 void ShotDriver::pad_trace(const std::string& tok) {
     static const char* tp = std::getenv("HUB_SHOT_TRACE");
@@ -214,6 +221,18 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
             io.AddKeyEvent(keys[key_i++], true);
             key_down = true;
             last_key = el;
+        }
+    }
+    /* Reachability QA (qa/reach_matrix.ps1): HUB_SHOT_HOSTLAUNCH=1 presses the room's Launch (host); HUB_SHOT_GUEST_MSG=<file> feeds a
+     * guest the host's launch message (written by the host run as "host-msg" in HUB_SHOT_TRACE). Fake room only, never any network. */
+    if (path && g_fake_room && A.scanned_once && el > 3.0 && !room_hook_done) {
+        if (std::getenv("HUB_SHOT_HOSTLAUNCH") && is_host()) { room_hook_done = true; host_launch_selected(); }
+        else if (const char* gm = std::getenv("HUB_SHOT_GUEST_MSG"); gm && !is_host()) {
+            room_hook_done = true;
+            std::ifstream f(gm, std::ios::binary);
+            std::string body((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            while (!body.empty() && (body.back() == 0x0A || body.back() == 0x0D)) body.pop_back();
+            guest_apply_launch(body);
         }
     }
     if (click_i < clicks.size() && A.scanned_once && el > std::max(2.0, secs - 1.5) && el - click_t > 0.35) {

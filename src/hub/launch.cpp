@@ -45,7 +45,13 @@ bool NP3_pending = false;
 
 bool spawn(const std::string& exe, const std::string& args, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
-    if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
+    if (g_headless) {
+        std::string ev;
+        for (auto& kv : env) ev += " " + kv.first + "=" + (kv.first == "SSB64_CONTROLS" ? std::string("<profile>") : kv.second);
+        shot_trace("spawn", file_name(exe) + " | " + args + (ev.empty() ? "" : " |env" + ev));
+        set_notice("Headless test run: launch skipped.");
+        return false;
+    }
     if (A.proc) { set_notice("A game is already running."); return false; }
     if (!file_exists(exe)) { set_notice("Cannot find " + file_name(exe) + " (" + exe + ")"); return false; }
     std::wstring cmd = L"\"" + W(exe) + L"\" " + W(args);
@@ -296,12 +302,23 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     }
     hubemu::Install inst = hubemu::find(kind, A.st.cemu_exe, e.path);
     if (inst.exe.empty()) {   // not installed: ask, download, then start this game
+        shot_trace("external", std::string(hubemu::name(kind)) + " not-installed -> install dialog");
         EMU.kind = kind;
         EMU.game_key = e.key;
         EMU.state = hubemu::Installer::Asking;
         return;
     }
-    if (g_headless) { set_notice("Headless test run: launch skipped."); return; }
+    if (g_headless) {
+        hub::gs::Values gv = gs_values_for(e);
+        bool fs0 = hub::gs::is_fullscreen(gv);
+        std::string g0 = launch_path_for(e);
+        std::string a0 = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(g0, fs0, mp_arg)
+                         : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(g0, fs0, "<card>")
+                         : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
+        shot_trace("external", std::string(hubemu::name(kind)) + " installed | " + a0);
+        set_notice("Headless test run: launch skipped.");
+        return;
+    }
     if (hubemu::is_running(inst.exe)) {   // a second launch would hand over to the running instance and end the session early
         set_notice(std::string(hubemu::name(kind)) + " is already running. Close it first, then start the game from RetroHub.", 10.0);
         return;

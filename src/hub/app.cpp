@@ -14,6 +14,7 @@ bool g_headless = false;   // HUB_SCREENSHOT run: never launch games or touch th
 
 
 void push_toast(const std::string& s, ImU32 col, double secs, bool top) {
+    shot_trace_once("notice", s);
     double now = ImGui::GetTime();
     if (!A.toasts.empty() && A.toasts.back().text == s && A.toasts.back().until > now) {   // same message again: just extend it
         A.toasts.back().until = now + secs;
