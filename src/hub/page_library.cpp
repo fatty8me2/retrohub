@@ -653,6 +653,12 @@ void draw_details_modal() {
         place(label_w("Locate BattleShip.exe", false));
         if (button("Locate BattleShip.exe", ImVec2(0, bh))) locate_smash();
     }
+    if (cheats_supported(e)) {
+        int cn = cheats_enabled_count(e);
+        std::string cl = cn ? "Cheats (" + std::to_string(cn) + ")" : std::string("Cheats");
+        place(label_w(cl.c_str(), true));
+        if (button(cl.c_str(), ImVec2(0, bh), cn > 0, true, ui::Icon::Bolt)) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; cheats_open(c); }
+    }
     if (!hubctl::system_key(e.system).empty()) {
         place(label_w("Controls for this game", true));
         if (button("Controls for this game", ImVec2(0, bh), false, true, ui::Icon::Gamepad)) { ImGui::CloseCurrentPopup(); open_controls_for(e); }

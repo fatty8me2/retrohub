@@ -401,6 +401,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
     if (e.system == hub::System::N64) {
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
         args += hubui::n64_extra_args(gsv);
+        args += cheats_launch_args(e, true, is_host, launch_body);
         args += match_args;
         if (share_save) {   // every PC must agree; only the host (slot 0) supplies its battery dir
             args += " --share-host-save";
@@ -455,6 +456,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
          * SameBoy uses the patched sameboy_rb core (src/sameboy_rb); Gambatte stays on lockstep. */
         if (e.system == hub::System::GBA || std::string(lcore) == "sameboy_rb") args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
+        args += cheats_launch_args(e, true, is_host, launch_body);
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
@@ -483,6 +485,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         if (share_save) args += " --share-host-save";
         if (gb_rb) args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
+        args += cheats_launch_args(e, true, is_host, launch_body);
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
