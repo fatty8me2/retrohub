@@ -19,8 +19,10 @@ struct FakeSim {
     uint64_t last_sum = 0;
     uint64_t pad_now[4] = {0, 0, 0, 0};
     uint64_t steps = 0;
+    uint32_t evs = 0;   // one-shot events seen (part of the saved state)
     void step(const uint64_t p[4]) {
         steps++;
+        for (int i = 0; i < 4; i++) if (p[i] >> 48 & 1) evs += 1 + (uint32_t)(p[i] >> 49 & 0xFF);
         for (int i = 0; i < 4; i++) { x = (x ^ p[i]) * 0x9E3779B97F4A7C15ull; x ^= x >> 31; y += x * (i + 3) + (y >> 5); }
         if (nondeterministic && frame == 300) y ^= (uint64_t)steps;   // depends on how often it was stepped
         frame++;
@@ -34,15 +36,16 @@ static int g_val_bytes = 2;   // 6 = PlayStation-wide inputs
 static rb::Sim make_sim(FakeSim* s, int owner_port, uint32_t seed) {
     rb::Sim sim;
     sim.state_size = [] { return sizeof(Blob); };
-    sim.save = [s](uint8_t* b, size_t) { Blob k{s->x, s->y, s->frame, 0}; memcpy(b, &k, sizeof k); return true; };
-    sim.load = [s](const uint8_t* b, size_t) { Blob k; memcpy(&k, b, sizeof k); s->x = k.x; s->y = k.y; s->frame = k.frame; return true; };
+    sim.save = [s](uint8_t* b, size_t) { Blob k{s->x, s->y, s->frame, s->evs}; memcpy(b, &k, sizeof k); return true; };
+    sim.load = [s](const uint8_t* b, size_t) { Blob k; memcpy(&k, b, sizeof k); s->x = k.x; s->y = k.y; s->frame = k.frame; s->evs = k.pad; return true; };
     sim.step = [s](const uint64_t p[4], bool) { s->step(p); };
     sim.frame_sum = [s] { return s->last_sum; };
     sim.poll_local = [s, owner_port, seed] {
         uint32_t f = s->frame;
         uint32_t v = ((f / 5) * 2654435761u) ^ (uint32_t)(owner_port + 1) * 40503u ^ seed;
         v ^= v >> 13; v *= 2246822519u; v ^= v >> 15;
-        s->pad_now[owner_port] = (v & 0x3FF) | (g_val_bytes > 2 ? ((uint64_t)(v * 2654435761u) & 0xFFFFFFFFull) << 16 : 0);   // wide: 4 more bytes (sticks)
+        const uint64_t ev = (g_val_bytes > 6 && f % 97 == 3) ? (1ull << 48 | (uint64_t)(f & 0xFF) << 49) : 0;   // a one-shot disc-swap style event
+        s->pad_now[owner_port] = ev | (v & 0x3FF) | (g_val_bytes > 2 ? ((uint64_t)(v * 2654435761u) & 0xFFFFFFFFull) << 16 : 0);   // wide: 4 more bytes (sticks)
     };
     sim.read_local = [s](int p) { return s->pad_now[p]; };
     return sim;
@@ -69,7 +72,7 @@ struct Link {
     }
 };
 
-struct Result { uint64_t x[2], y[2]; uint32_t frame[2]; bool desync[2]; rb::Stats st[2]; int delay[2]; };
+struct Result { uint32_t evs[2]; uint64_t x[2], y[2]; uint32_t frame[2]; bool desync[2]; rb::Stats st[2]; int delay[2]; };
 static bool g_adaptive = false;
 static int g_pred = 8;
 static int g_lat1 = -1;   // >=0: extra one-way latency for peer 1's packets only (asymmetric link)
@@ -85,7 +88,7 @@ static Result run(int frames, int latency, int jitter, int loss, int delay, bool
         rb::Config c;
         c.owner[0] = 0; c.owner[1] = 1; c.owner[2] = c.owner[3] = -1;
         c.my_slot = i; c.slot_mask = 3; c.delay = delay; c.hash_interval = 60;
-        c.max_pred = g_pred; c.adaptive_delay = g_adaptive; c.frame_ms = 16.0; c.val_bytes = g_val_bytes;
+        c.max_pred = g_pred; c.adaptive_delay = g_adaptive; c.frame_ms = 16.0; c.val_bytes = g_val_bytes; c.event_mask = g_val_bytes > 6 ? 0xFFFFull << 48 : 0;
         rb::Transport t;
         t.pump = [] {};
         t.send = [&link, i](int, const void* d, int n) { link.send(i, d, n); };
@@ -109,7 +112,7 @@ static Result run(int frames, int latency, int jitter, int loss, int delay, bool
     for (int i = 0; i < 2; i++) {
         // let both finish confirming
         eng[i]->service();
-        r.x[i] = sim[i].x; r.y[i] = sim[i].y; r.frame[i] = sim[i].frame; r.desync[i] = eng[i]->desync(); r.st[i] = eng[i]->stats(); r.delay[i] = eng[i]->delay();
+        r.evs[i] = sim[i].evs; r.x[i] = sim[i].x; r.y[i] = sim[i].y; r.frame[i] = sim[i].frame; r.desync[i] = eng[i]->desync(); r.st[i] = eng[i]->stats(); r.delay[i] = eng[i]->delay();
     }
     return r;
 }
@@ -229,6 +232,19 @@ int main() {
         Result n = run(600, 30, 0, 0, 1, true, 100);
         report("wide nondeterminism", n, false);
         CHECK(n.desync[0] || n.desync[1], "wide: desync not detected");
+        g_val_bytes = 2;
+    }
+    // 11b) 8-byte inputs with one-shot event bits (disc swap): applied once, on the same frame on both peers, through loss + rollbacks
+    {
+        g_val_bytes = 8; g_adaptive = true; g_pred = 14;
+        Result r = run(900, 60, 15, 8, 1, false, 100);
+        report("events 60ms 8%loss", r, true);
+        CHECK(r.frame[0] == 900 && r.frame[1] == 900, "events: frames reached");
+        CHECK(r.x[0] == r.x[1] && r.y[0] == r.y[1], "events: final state differs");
+        CHECK(r.evs[0] == r.evs[1] && r.evs[0] > 0, "events: peers disagree on the events seen (%u vs %u)", r.evs[0], r.evs[1]);
+        uint32_t expect = 0;   // 2 owners; frames 3, 100, 197... each contribute 1 + (frame & 0xFF); the last ones may still be in the input delay
+        for (uint32_t f = 3; f < 900 - 4; f += 97) expect += 2 * (1 + (f & 0xFF));
+        CHECK(r.evs[0] >= expect && r.evs[0] <= expect + 2 * 300, "events: count %u, expected about %u", r.evs[0], expect);
         g_val_bytes = 2;
     }
     // 12) PlayStation input packing: 8-bit sticks, identical on sender and receiver

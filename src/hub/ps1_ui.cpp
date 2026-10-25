@@ -2,6 +2,8 @@
 
 #include "ps1.h"
 
+#include <fstream>
+
 /* ---------- PlayStation 1 (retrorun + Beetle PSX): launch, BIOS discovery / picker, settings block. See docs/EMULATORS.md ---------- */
 
 namespace {
@@ -49,6 +51,56 @@ void ps2_bios_ask(const std::string& key) {
 /* Number of local pads (multitap "auto"). */
 static int local_pad_count() { return (int)A.pads.size(); }
 
+static std::string sanitize(std::string k) {
+    for (char& c : k) if (!(isalnum((unsigned char)c) || c == '_' || c == '-')) c = '_';
+    return k;
+}
+/* Disc-swap channel for a running game: retrorun watches this file (--disc-ctl) and inserts the next disc whenever it changes. */
+static std::string swap_file(const std::string& key) { return staging_dir() + "/m3u/" + sanitize(key) + ".swap"; }
+
+/* A numbered multi-disc set ("Game (Disc 1).cue" + "Game (Disc 2).cue" in one folder) becomes an auto-generated .m3u (named after the chosen
+ * file, so its save stays where it was); a real .m3u is passed as it is. Returns the file to hand the core. */
+static std::string with_m3u(const hub::GameEntry& e, const std::string& game) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path gp = fs::u8path(game);
+    std::vector<std::string> sib;
+    for (auto& de : fs::directory_iterator(gp.parent_path(), ec))
+        if (!ec && de.is_regular_file(ec)) sib.push_back(de.path().filename().u8string());
+    std::vector<std::string> set = hub::ps1::disc_set(gp.filename().u8string(), sib);
+    if (set.empty()) return game;
+    for (std::string& n : set) n = (gp.parent_path() / fs::u8path(n)).u8string();
+    fs::path m = fs::u8path(staging_dir() + "/m3u/" + sanitize(e.key));
+    fs::create_directories(m, ec);
+    m /= gp.stem().concat(".m3u");
+    std::string text = hub::ps1::make_m3u(set);
+    std::ofstream f(m, std::ios::binary);
+    if (!f) return game;
+    f << text;
+    return m.u8string();
+}
+
+/* " --disc-ctl <file>" (the file is created first so the runner's watch starts from it). */
+static std::string disc_ctl_arg(const std::string& key) {
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::u8path(swap_file(key)).parent_path(), ec);
+    std::ofstream f(std::filesystem::u8path(swap_file(key)), std::ios::binary | std::ios::trunc);
+    f << "0";
+    return " --disc-ctl " + quote(swap_file(key));
+}
+
+bool ps1_swap_available(const std::string& key) {
+    return A.proc && A.run.key == key && std::filesystem::exists(std::filesystem::u8path(swap_file(key)));
+}
+
+bool ps1_swap_disc(const std::string& key) {
+    if (!ps1_swap_available(key)) return false;
+    static unsigned n = 0;
+    std::ofstream f(std::filesystem::u8path(swap_file(key)), std::ios::binary | std::ios::trunc);
+    f << ++n << " " << GetTickCount64();   // any change of mtime/size counts
+    return (bool)f;
+}
+
 void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states) {
     std::string core = find_core("beetle_psx");
     if (core.empty()) { set_notice("The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder."); return; }
@@ -67,10 +119,10 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
     }
     if (!bios.empty()) hub::ps1::stage_bios(bios, sysdir);
     else { std::error_code ec; std::filesystem::create_directories(std::filesystem::u8path(sysdir), ec); }
-    std::string game = e.issue == "extract" ? hub::extracted_3ds_path(e) : e.path;
+    std::string game = with_m3u(e, e.issue == "extract" ? hub::extracted_3ds_path(e) : e.path);
     hub::gs::Values gsv = gs_values_for(e);
     std::string args = "--core " + quote(core) + " --rom " + quote(game) + " --system ps1 --save-dir " + quote(battery) + " --state-dir " + quote(states) +
-                       " --system-dir " + quote(sysdir) + title_arg(e.title) + save_stem_arg(e) + controls_arg("ps1", e.key);
+                       " --system-dir " + quote(sysdir) + title_arg(e.title) + save_stem_arg(e) + controls_arg("ps1", e.key) + disc_ctl_arg(e.key);
     args += hubui::retro_extra_args(e.system, gsv);
     auto mt = gsv.find("ps1.multitap");
     if ((mt == gsv.end() || mt->second == "auto") && local_pad_count() >= 3) args += " --opt beetle_psx_enable_multitap_port1=enabled";
@@ -129,9 +181,9 @@ bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std:
     const bool tap = hub::ps1::ports_need_multitap(ports);
     if (tap) gsv["ps1.multitap"] = "on";
     else if (gsv["ps1.multitap"] != "on") gsv["ps1.multitap"] = "off";
-    std::string game = e.issue == "extract" ? hub::extracted_3ds_path(e) : e.path;
+    std::string game = with_m3u(e, e.issue == "extract" ? hub::extracted_3ds_path(e) : e.path);
     *args = "--core " + quote(core) + " --rom " + quote(game) + " --system ps1 --save-dir " + quote(tmp_dir) + " --state-dir " + quote(tmp_dir) +
-            " --system-dir " + quote(sysdir) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("ps1", e.key);
+            " --system-dir " + quote(sysdir) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("ps1", e.key) + disc_ctl_arg(e.key);
     if (share_save) *args += " --share-host-save";
     *args += " --rollback --rb-pred 6";   // GGPO-style rollback (the core is verified with SyncTest); retrorun falls back to lockstep when the core is not the RetroHub build
     *args += hubui::retro_extra_args(e.system, gsv);
