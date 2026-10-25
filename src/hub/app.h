@@ -648,6 +648,7 @@ hubemu::DolphinPads dolphin_pads_for(const hubctl::Profile& gc_profile);
 hubemu::Ps2Pads ps2_pads_for(const hubctl::Profile& ps2_profile);   // page_controllers.cpp
 hubemu::AzPad azahar_pad_for(const hubctl::Profile& profile_3ds);
 hubemu::CemuPads cemu_pads_for(const hubctl::Profile& profile_wiiu);
+hubemu::CemuPads cemu_pads_for_own(const hubctl::Profile& profile_wiiu);   // like cemu_pads_for, non-XInput pads become SDL players
 
 
 /* ---- page_saves.cpp ---- */

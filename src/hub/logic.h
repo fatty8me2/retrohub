@@ -46,7 +46,8 @@ struct Settings {
     std::string ps1_bios;              // user-chosen PlayStation BIOS file ("" = look next to the games, in RetroArch's system folder, ...)
     bool ps1_openbios = false;         // play PlayStation games with the bundled OpenBIOS when no real BIOS is found
     std::string cemu_exe;              // user-chosen Cemu.exe ("" = find an existing install, else download one)
-    std::string ps2_bios_dir;          // user-chosen folder with the PS2 BIOS ("" = look next to the games / Desktop\Everything\BIOS)
+    bool cemu_manage_controls = true;  // "Let RetroHub manage Wii U controls" for the user's own Cemu (backup made first)
+    std::string ps2_bios_dir;         // user-chosen folder with the PS2 BIOS ("" = look next to the games / Desktop\Everything\BIOS)
 };
 std::string settings_to_json(const Settings& s);
 bool settings_from_json(const std::string& text, Settings* out);   // missing keys keep defaults in *out

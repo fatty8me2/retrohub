@@ -92,7 +92,19 @@ void prepare_cemu_managed(const std::string& install_dir);   // profile = the st
 void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& profile);
 /* Wii U players in RetroHub port order: xinput[i] = the XInput slot of player i+1 (empty = player 1 on slot 0). Player 1 gets the
  * GamePad profile (controller0.xml), players 2-4 Pro Controllers (controller1-3.xml). */
-struct CemuPads { std::vector<int> xinput; };
+struct CemuPads { std::vector<int> xinput; std::vector<std::string> sdl; };   // sdl[i] non-empty = player i is an SDL pad (xinput[i] = -1)
+/* Like cemu_pads_with but non-XInput pads become Cemu "SDLController" players. uuid = "<index>_<SDL GUID>" (index among same-GUID pads
+ * in `all_pads`, SDL order). */
+CemuPads cemu_pads_with_sdl(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& all_pads);
+std::string cemu_sdl_uuid(const std::string& guid, int same_guid_index);
+std::string cemu_gamepad_profile_xml_sdl(const hubctl::Profile& profile, const std::string& sdl_uuid);
+std::string cemu_pro_profile_xml_sdl(const hubctl::Profile& profile, const std::string& sdl_uuid, int player);
+/* A user's own Cemu: data folder (portable\ / beside settings.xml / %APPDATA%\Cemu), one-time backup of controllerProfiles to
+ * controllerProfiles.retrohub-backup, write RetroHub's controller0-3.xml only when `manage`, and restore the backup. */
+std::string cemu_user_data_dir(const std::string& exe_dir, const std::string& appdata);
+bool cemu_backup_controls(const std::string& user_data);
+void prepare_cemu_own(const std::string& user_data, const hubctl::Profile& profile, const CemuPads& pads, bool manage);
+bool cemu_restore_controls(const std::string& user_data);
 CemuPads cemu_pads_with(const std::vector<PadDesc>& by_port);   // non-XInput pads are skipped
 void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& profile, const CemuPads& pads);
 std::string cemu_gamepad_profile_xml(const hubctl::Profile& profile, int xinput_idx);
