@@ -46,6 +46,9 @@ static void test_buttons() {
     CHECK(b.Value == pack_stick(-80, 79), "stick pack %08x vs %08x", b.Value, pack_stick(-80, 79));
 }
 
+static bool g_wide = false;   // wide samples: every value carries a second word (PlayStation sticks)
+static uint32_t local_aux(int port, uint32_t sample) { return (uint32_t)((local_input(port + 7, sample) * 2654435761u) ^ 0x80808080u); }
+
 static uint32_t g_mask = 0;   // 0 = all slots 0..npeers-1 active; else sparse slot set
 static bool active(int i) { return g_mask == 0 || (g_mask >> i & 1u); }
 
@@ -80,6 +83,7 @@ struct Peer {
     bool scheduled = false;     // inputs for poll n already scheduled/sent
     int last_send_tick = -100;
     std::vector<std::vector<uint32_t>> seen;   // [port][sample]
+    std::vector<std::vector<uint32_t>> seen_aux;
     std::vector<uint64_t> hashes_sent;
 };
 
@@ -91,9 +95,10 @@ static void run_sim(const char* name, int npeers, const int owner[kPorts], int d
         if (!active(i)) continue;
         LockstepCore::Config cfg;
         for (int p = 0; p < kPorts; p++) cfg.owner[p] = owner[p];
-        cfg.my_slot = i; cfg.num_slots = npeers; cfg.slot_mask = g_mask; cfg.delay = delay;
+        cfg.my_slot = i; cfg.num_slots = npeers; cfg.slot_mask = g_mask; cfg.delay = delay; cfg.wide = g_wide;
         peers[i].core.reset(new LockstepCore(cfg));
         peers[i].seen.assign(kPorts, {});
+        peers[i].seen_aux.assign(kPorts, {});
     }
     int mismatches = 0;
     long ticks = 0;
@@ -128,15 +133,15 @@ static void run_sim(const char* name, int npeers, const int owner[kPorts], int d
             }
             all_done = false;
             if (!pe.scheduled) {
-                uint32_t btn[kPorts] = {0, 0, 0, 0};
-                for (int p = 0; p < kPorts; p++) if (pe.core->port_local(p)) btn[p] = local_input(p, pe.n);
+                uint32_t btn[kPorts] = {0, 0, 0, 0}, ax[kPorts] = {0, 0, 0, 0};
+                for (int p = 0; p < kPorts; p++) if (pe.core->port_local(p)) { btn[p] = local_input(p, pe.n); ax[p] = local_aux(p, pe.n); }
                 if (pe.n > 0 && pe.n % 600 == 0) {
                     uint64_t h = 0xABCDEF + pe.n;
                     if (corrupt_hash && i == (g_mask ? 2 : 1) && pe.n == 1200) h ^= 1;
                     pe.core->add_local_hash(pe.n, h);
                 }
                 if (orders && i == 0) for (auto& o : *orders) if (o.first == pe.n) pe.core->order_delay(o.second);
-                pe.core->schedule_local(pe.n, btn);
+                pe.core->schedule_local(pe.n, btn, ax);
                 pe.scheduled = true;
                 pe.core->set_progress(pe.n);
                 size_t len = pe.core->build_packet(buf, sizeof buf);
@@ -145,7 +150,7 @@ static void run_sim(const char* name, int npeers, const int owner[kPorts], int d
             }
             if (pe.core->ready(pe.n)) {
                 for (int p = 0; p < kPorts; p++)
-                    if (pe.core->port_present(p)) pe.seen[p].push_back(pe.core->get(pe.n, p));
+                    if (pe.core->port_present(p)) { pe.seen[p].push_back(pe.core->get(pe.n, p)); pe.seen_aux[p].push_back(pe.core->get_aux(pe.n, p)); }
                 pe.n++;
                 pe.scheduled = false;
             } else if ((int)ticks - pe.last_send_tick >= 4) {   // blocked: retransmit newest packet
@@ -187,6 +192,13 @@ static void run_sim(const char* name, int npeers, const int owner[kPorts], int d
                 if (peers[i].seen[p][s] != expect) {
                     CHECK(false, "%s: peer %d port %d sample %u got %08x want %08x", name, i, p, s, peers[i].seen[p][s], expect);
                     goto next_port;
+                }
+                if (g_wide) {
+                    uint32_t want_aux = s < (uint32_t)delay ? 0u : local_aux(p, s - delay);
+                    if (peers[i].seen_aux[p][s] != want_aux) {
+                        CHECK(false, "%s: peer %d port %d sample %u aux got %08x want %08x", name, i, p, s, peers[i].seen_aux[p][s], want_aux);
+                        goto next_port;
+                    }
                 }
             }
         }
@@ -323,6 +335,15 @@ int main() {
     run_sim("4 peers, D=0, 15% loss, 50k", 4, own4, 0, 0.15, 0.10, 4, 50000, false, 13);
     run_sim("4 peers, 40% loss (stress)", 4, own4, 3, 0.40, 0.10, 8, N, false, 14);
     run_sim("4 peers, hash corruption", 4, own4, 2, 0.15, 0.05, 6, N, true, 15);
+    /* Wide samples (PlayStation: buttons + packed sticks): same guarantees, 8 bytes per value; a 4-port owner must still fit one datagram. */
+    g_wide = true;
+    const int own1w[kPorts] = {0, 0, 0, 0};   // one PC owns a multitap's four pads
+    run_sim("wide 2 peers, lossy+reorder", 2, own2, 2, 0.30, 0.10, 6, N, false, 30);
+    run_sim("wide 4 peers, 15% loss", 4, own4, 3, 0.15, 0.05, 6, N, false, 31);
+    run_sim("wide 2 peers, 4 ports on slot 0", 2, own1w, 2, 0.25, 0.10, 6, N, false, 32);
+    run_sim("wide 3 peers, multi-port owner", 3, own3b, 3, 0.30, 0.10, 8, N, false, 33);
+    run_sim("wide 4 peers, hash corruption", 4, own4, 2, 0.15, 0.05, 6, N, true, 34);
+    g_wide = false;
     /* Sparse slot sets: lobby slot 1 left, members {0,2} / {0,3} / {1,2,3}. */
     const int sp02[kPorts] = {0, 2, -1, -1};
     g_mask = 0x5u;

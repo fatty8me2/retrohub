@@ -87,6 +87,7 @@ class LockstepCore {
         uint32_t slot_mask = 0;   // explicit (possibly sparse) slot set; overrides num_slots
         int delay = 2;         // D
         int redundancy = 8;    // minimum number of samples per port per packet (raised to cover kMaxDelay)
+        bool wide = false;     // every sample carries a second u32 ("aux", e.g. PlayStation analog sticks); all PCs must agree
     };
 
     struct Mismatch {
@@ -105,7 +106,7 @@ class LockstepCore {
 
     /* Schedule this PC's inputs read at poll `cur_sample` for sample cur_sample + D.
      * buttons[] is indexed by port; only locally owned ports are used. */
-    void schedule_local(uint32_t cur_sample, const uint32_t buttons[kPorts]);
+    void schedule_local(uint32_t cur_sample, const uint32_t buttons[kPorts], const uint32_t aux[kPorts] = nullptr);
 
     /* Report this PC's progress (= number of samples completed so far); sent in every packet so
      * that PCs with fast peers don't run further ahead than the redundancy window covers
@@ -141,6 +142,7 @@ class LockstepCore {
     /* True once every present port has its value for sample n and no peer lags more than max_lead() samples behind. */
     bool ready(uint32_t n) const;
     uint32_t get(uint32_t n, int port) const;
+    uint32_t get_aux(uint32_t n, int port) const;   // 0 unless Config::wide
 
     /* Desync hashes. */
     void add_local_hash(uint32_t sample, uint64_t hash);
@@ -149,9 +151,9 @@ class LockstepCore {
 
   private:
     static constexpr int kLeadFloor = 4;
-    struct Entry { uint32_t tag = 0xFFFFFFFFu; uint32_t val = 0; };
+    struct Entry { uint32_t tag = 0xFFFFFFFFu; uint32_t val = 0; uint32_t aux = 0; };
     static constexpr uint32_t kRing = 1024;
-    void put(int port, uint32_t sample, uint32_t val);
+    void put(int port, uint32_t sample, uint32_t val, uint32_t aux = 0);
     bool has(int port, uint32_t sample) const;
     void put_hash(int slot, uint32_t sample, uint64_t h);
 

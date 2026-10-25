@@ -17,3 +17,5 @@ if(NOT EXISTS ${PS1_DB_CPP} OR ${BEETLE_SRC}/database/psx_games.inc IS_NEWER_THA
     ps1_db_generate(${BEETLE_SRC}/database/psx_games.inc ${PS1_DB_CPP})
 endif()
 
+include(${CMAKE_CURRENT_LIST_DIR}/patch.cmake)
+beetle_apply_patches(${BEETLE_SRC})

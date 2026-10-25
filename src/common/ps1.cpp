@@ -546,5 +546,20 @@ int stage_bios(const std::vector<BiosFound>& found, const std::string& system_di
     return provided;
 }
 
+bool ports_need_multitap(const std::string& ports) {
+    int idx = 0;
+    std::string tok;
+    for (size_t i = 0; i <= ports.size(); ++i) {
+        if (i == ports.size() || ports[i] == ',') {
+            if (!tok.empty() && tok != "-1" && idx >= 2) return true;
+            ++idx;
+            tok.clear();
+        } else {
+            tok += ports[i];
+        }
+    }
+    return false;
+}
+
 } // namespace ps1
 } // namespace hub
