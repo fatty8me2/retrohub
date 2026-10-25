@@ -235,7 +235,8 @@ void group_title(const char* t, int n) {
 
 bool cheats_supported(const hub::GameEntry& e) {
     if (is_native(e) || is_kanto(e)) return false;
-    return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB || e.system == hub::System::GBC;
+    return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB || e.system == hub::System::GBC ||
+           e.system == hub::System::NDS || e.system == hub::System::PS1;   // DS / PS1: libretro retro_cheat_set through retrorun
 }
 
 int cheats_enabled_count(const hub::GameEntry& e) {
@@ -283,7 +284,7 @@ void cheats_pad_watch() {
 /* " --cheats <file>" for the runner. Offline: always (the runner live-reloads the file). Online: only when cheats are on,
  * from the host's list (guest: from the launch message); the runner does not take live changes then. */
 std::string cheats_launch_args(const hub::GameEntry& e, bool online, bool is_host_, const std::string* launch_body) {
-    if (!cheats_supported(e)) return "";
+    if (!cheats_supported(e) || (online && e.system == hub::System::NDS)) return "";
     std::string path = run_file(e.key), err;
     if (!online) {
         write_run(e);
@@ -300,13 +301,13 @@ std::string cheats_launch_args(const hub::GameEntry& e, bool online, bool is_hos
 
 /* ",\"cheats\":{...}" for the host's launch message. */
 std::string cheats_launch_fragment(const hub::GameEntry& e) {
-    if (!cheats_supported(e)) return "";
+    if (!cheats_supported(e) || e.system == hub::System::NDS) return "";   // DS wireless rooms ignore cheats
     return cheatstore::launch_fragment(cheatstore::enabled_only(rows_cached(e)));
 }
 
 /* Why the host cannot launch with cheats right now ("" = fine). */
 std::string cheats_launch_block(const hub::GameEntry& e, const std::vector<hubui::PeerInfo>& peers) {
-    if (!cheats_supported(e)) return "";
+    if (!cheats_supported(e) || e.system == hub::System::NDS) return "";
     std::vector<std::string> versions;
     for (auto& p : peers) if (p.slot != room_my_slot()) versions.push_back(p.app);
     return cheatstore::online_block(cheats_enabled_count(e), HUB_VERSION_STR, versions);
@@ -319,7 +320,7 @@ void cheats_on_room_msg(const std::string& game, const std::vector<std::string>&
 
 /* Room: "Cheats on: ..." for everyone, "Choose cheats" for the host. Also announces the host's list to the guests. */
 void cheats_room_strip(const hub::GameEntry* rg, bool host) {
-    if (!rg || !cheats_supported(*rg)) return;
+    if (!rg || !cheats_supported(*rg) || rg->system == hub::System::NDS) return;
     std::vector<std::string> names;
     if (host) {
         names = cheatstore::enabled_names(rows_cached(*rg));
