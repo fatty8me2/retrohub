@@ -80,7 +80,12 @@ function Online-Expected($g) {   # supports_online() as designed: catalog-gated 
     if ($g.sys -in 'gc', 'nds', 'ps1') { if ($g.key -like '*online*') { return 'enabled' } else { return 'explained' } }
     return 'explained'   # wiiu, ps2: an "Offline only" button with a tooltip, never silence
 }
-function Cheats-Expected($g) { if ($g.sys -in 'n64', 'gb', 'gbc', 'gba' -and -not $g.kanto) { return 'enabled' } else { return 'hidden' } }
+function Cheats-Expected($g) {   # n64 gb gbc gba nds ps1: the Cheats button; gc 3ds wiiu ps2: a disabled button with a tooltip; native / Kanto: hidden
+    if ($g.kanto) { return 'hidden' }
+    if ($g.sys -in 'n64', 'gb', 'gbc', 'gba', 'nds', 'ps1') { return 'enabled' }
+    if ($g.sys -in 'gc', '3ds', 'wiiu', 'ps2') { return 'explained' }
+    return 'hidden'
+}
 
 $rows = New-Object System.Collections.Generic.List[object]
 function Add-Row($g, $action, $expect, $actual, [bool]$ok) { $rows.Add([pscustomobject]@{ Sys = $g.sys; Game = $g.label; Action = $action; Expected = $expect; Actual = $actual; Ok = $ok }) }
@@ -121,7 +126,8 @@ for ($i = 0; $i -lt $games.Count; $i++) {
     $oa = if ($o -like 'explained:*') { 'explained' } elseif ($o) { $o } else { 'missing' }
     Add-Row $g 'Play Online / explanation' $oe "$o" ($oa -eq $oe)
     $c = Actstate $t $k 'cheats'; $ce = Cheats-Expected $g
-    Add-Row $g 'Cheats button' $ce $c ($c -eq $ce)
+    $ca = if ($c -like 'explained:*') { 'explained' } else { $c }
+    Add-Row $g 'Cheats button' $ce "$c" ($ca -eq $ce)
     $cn = Actstate $t $k 'controls'
     Add-Row $g 'Controls for this game' 'enabled' $cn ($cn -like 'enabled:*')
     $st = Actstate $t $k 'settings'
@@ -156,7 +162,7 @@ for ($i = 0; $i -lt $meta.Count; $i++) {
         continue
     }
     $tr = $t | Where-Object { $_ -like "$a *" } | Select-Object -First 1
-    $want = switch ($a) { 'favorite' { 'favorite <key> flips was/now' } 'savefolder' { 'savefolder <vault dir for key>' } 'cheats' { 'cheats opened <key> (n64/gb/gbc/gba only)' } 'controls' { 'controls tab-for <sys> game=<key>' } 'desktop' { 'desktop <key> (or a notice if not installed)' } }
+    $want = switch ($a) { 'favorite' { 'favorite <key> flips was/now' } 'savefolder' { 'savefolder <vault dir for key>' } 'cheats' { 'cheats opened <key> (cheat systems only)' } 'controls' { 'controls tab-for <sys> game=<key>' } 'desktop' { 'desktop <key> (or a notice if not installed)' } }
     $ok = switch ($a) {
         'favorite' { $tr -match "^favorite $([regex]::Escape($k)) was=(\d) now=(\d)$" -and $Matches[1] -ne $Matches[2] }
         'savefolder' { [bool]$tr -and $tr -like '*saves*' }

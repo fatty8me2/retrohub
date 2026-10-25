@@ -680,7 +680,14 @@ void draw_details_modal() {
         place(label_w("Locate BattleShip.exe", false));
         locate_smash(button("Locate BattleShip.exe", ImVec2(0, bh)));
     }
-    tr("cheats", cheats_supported(e) ? "enabled" : "hidden");
+    const bool cheats_na = !cheats_supported(e) && !is_native(e) && !is_kanto(e);   // GC / 3DS / Wii U / PS2: shown disabled, with the reason
+    tr("cheats", cheats_supported(e) ? "enabled" : cheats_na ? "explained:unavailable" : "hidden");
+    if (cheats_na) {
+        place(label_w("Cheats", true));
+        button("Cheats", ImVec2(0, bh), false, false, ui::Icon::Bolt);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Cheats aren't available for %s yet", hub::system_name(e.system));
+    }
     if (cheats_supported(e)) {
         int cn = cheats_enabled_count(e);
         std::string cl = cn ? "Cheats (" + std::to_string(cn) + ")" : std::string("Cheats");

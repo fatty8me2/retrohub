@@ -128,7 +128,7 @@ foreach ($pg in @(@("controllers", "rb,rb,rb"), @("settings", "rb,rb,rb,rb"), @(
 
 # 12. PlayStation BIOS prompts: A opens the pad folder browser, Back closes it, B closes the prompt
 foreach ($b in @("ps1bios", "ps2bios")) {
-  $nav = if ($b -eq "ps1bios") { "a" } else { "down,left,a" }   # PS1 prompt focuses Choose on open (OpenBIOS button added); PS2 needs down,left
+  $nav = "down,left,a"   # the first pad press only wakes nav inside the modal (headless); down,left then lands on Choose for both prompts
   $r = Run "bios_$b" "shot:b0,$nav,shot:b_browser,back,shot:b_prompt,b,shot:b_closed" @{ HUB_SHOT_EMU = $b }
   $rows = @($r.rows)
   $a = @($rows | Where-Object { $_.tok -eq "a" })[0]
