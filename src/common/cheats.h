@@ -31,6 +31,7 @@ struct Cheat {
     Format format = Format::Raw;
     std::vector<std::string> codes;
     bool enabled = false;
+    int fire = 0;   // N64 GameShark-button codes (88/89): runner fires them once each time this counter rises
 };
 
 struct CheatSet {
@@ -54,12 +55,17 @@ struct N64Code {
     uint32_t address;   // full GameShark word, type byte included (m64p_cheat_code.address)
     int value;          // low 16 bits
 };
-/* Convert one cheat. Supported types: 50 (repeater), 80/81 (8/16-bit write), 88/89 (write while the GS button is held),
- * A0/A1 (uncached write), D0..D3 (conditional), F0/F1 (write at boot). Anything else makes the whole cheat unusable
- * (skipping one line of a conditional would change what the rest means): returns false and explains in *err. */
+/* Convert one cheat. Codes may be joined with ';' '+' ',' or newlines. Supported types: 50 (repeater), 80/81 (8/16-bit
+ * write), 88/89 (GameShark-button writes: runners fire them once, see n64_split_button), A0/A1 (uncached write),
+ * D0..D3 (conditional), F0/F1 (write at boot). 00/DE/EE/FF are device-control words with no emulator effect and are
+ * dropped (a cheat made only of those yields an empty list, still true). Anything else (D8/D9..., XXXX placeholders)
+ * makes the whole cheat unusable (skipping one line of a conditional would change what the rest means): false + *err. */
 bool n64_codes(const Cheat& c, std::vector<N64Code>* out, std::string* err);
-/* True when a cheat contains an 88/89 code (only fires while the GameShark button is held; the runners do not map it). */
+/* True when a cheat contains an 88/89 code. */
 bool n64_needs_gs_button(const std::vector<N64Code>& codes);
+bool n64_is_button_cheat(const Cheat& c);
+/* Split into the always-on list (core cheat engine) and the fire-once list (88/89 plus the conditional guarding each). */
+void n64_split_button(const std::vector<N64Code>& codes, std::vector<N64Code>* core, std::vector<N64Code>* once);
 
 /* ---- libretro (retro_cheat_set) ---- */
 /* The string handed to retro_cheat_set for one cheat: normalized lines joined with '+'. False + *err when any line is
