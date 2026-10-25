@@ -28,6 +28,7 @@ constexpr uint8_t kPktReady = 2;   // start barrier packet {type, slot}   (handl
 constexpr uint8_t kPktDelay = 7;      // host -> clients {type, slot, D}: the negotiated input delay
 constexpr uint8_t kPktDelayAck = 8;   // client -> host {type, slot, D}
 constexpr uint8_t kPktBye = 9;        // {type, slot, u32 newest}: sender's emulation ended cleanly; newest = last sample it ever scheduled
+constexpr uint8_t kPktCheats = 10;    // {type, slot, u8 heard_mask, u64 hash}: cheat-list handshake (lockstep.h exchange_cheat_hash)
 constexpr int kMaxDelay = 20;         // hard cap of the (adaptive) input delay, in samples
 
 /* Slot set of a session: bit s = slot s is a PC in the session. Slots may be sparse ({0,2}).
