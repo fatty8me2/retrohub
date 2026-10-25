@@ -1,0 +1,448 @@
+{
+  "versions": [
+    {
+      "version": "1.22.0",
+      "date": "2026-10-24",
+      "title": "PlayStation, cheats and full controller support",
+      "new": [
+        "PlayStation 1 and PlayStation 2 games: add your discs (CHD, ISO, 7z, zip or rar) and RetroHub finds the game, its cover and your BIOS for you",
+        "PlayStation 1 online with rollback netplay, plus 4-player multitap",
+        "Cheats: a built-in database plus hand-picked unlocks for popular games, a Cheats menu on every game, and a live toggle while you play (View + Y)",
+        "Cheats back up your save first, and rooms sync the host's cheats to everyone",
+        "Use RetroHub with only a controller: every screen, popup and the new on-screen keyboard works from the pad",
+        "First-run setup wizard walks you through controller, games and name (Settings > Run setup again)",
+        "Hold Back + Start to leave any game, in every emulator",
+        "Friends are added automatically when you play together (turn it off in Settings)",
+        "What's new page and a short summary after each update"
+      ],
+      "improved": [
+        "Your controller settings now apply to every emulator, not just some",
+        "Smash Classic and RetroHub now share one room, so leaving in one leaves both",
+        "Game Boy and Game Boy Advance online now share the host's save so everyone sees the same progress",
+        "Add your games faster: .rar and archive files are recognised without unpacking first",
+        "Server traffic is capped to keep online play free for everyone"
+      ],
+      "fixed": [
+        "Rooms reset everyone's Ready state after a game ends",
+        "A failed host launch no longer leaves the room stuck",
+        "Invites to a full room are now blocked with a clear message",
+        "Nintendo DS wireless players in a room with gaps get the right slots",
+        "PlayStation 2 no longer asks to reset its settings every time it starts"
+      ]
+    },
+    {
+      "version": "1.21.0",
+      "date": "2026-10-24",
+      "title": "Big Ready button and smoother online",
+      "new": [
+        "A big READY button (LAUNCH for the host) sits under the room code and says who is ready and why a button is disabled",
+        "Dropped rooms reconnect on their own, with a Rejoin button if needed"
+      ],
+      "improved": [
+        "Nintendo 64 online stays smooth: the input delay stays low (about 6 frames), recovers quickly and catches up after hiccups",
+        "If a guest can't start, the host is told why",
+        "A guest on an older RetroHub can't ready up until they update",
+        "Friend errors and invites say exactly what happened",
+        "Kanto Together saves in-progress trades with your game, and host and guest keep separate saves",
+        "Smash Classic online waits for a slow host instead of giving up, and never drops a slow player"
+      ],
+      "fixed": [
+        "Buttons on friend rows work on the first click, and a left click opens a friend's actions",
+        "Kanto Together can no longer start twice, and gives clear messages when something is missing"
+      ]
+    },
+    {
+      "version": "1.20.0",
+      "date": "2026-10-24",
+      "title": "Add your own games and a cleaner friends list",
+      "new": [
+        "Add your own games: a big tile on Home, a + Add games button, or just drag files onto the window",
+        "ROMs and folders (zip and 7z too) are copied into your games folder sorted by console; your originals are never moved",
+        "Kanto Together works with an Xbox controller out of the box"
+      ],
+      "improved": [
+        "Old accounts of the same person are merged into their current one automatically",
+        "If two friends share a name, RetroHub asks before removing the old one",
+        "Kanto Together has first-session tips and a clear Synced to the host's story message"
+      ],
+      "fixed": [
+        "Kanto Together: the guest's game no longer resets after the title screen"
+      ]
+    },
+    {
+      "version": "1.19.0",
+      "date": "2026-10-24",
+      "title": "Kanto Together: FireRed co-op",
+      "new": [
+        "Play Kanto Together, a fan-made 2-player co-op version of Pokemon FireRed, from RetroHub",
+        "Both players join a room, the host presses Launch, and the game connects your friend automatically",
+        "Room page shows connection status and a Trade panel to swap Pokemon with your partner",
+        "Built-in guide on the game's card explains the first-time setup"
+      ]
+    },
+    {
+      "version": "1.18.0",
+      "date": "2026-10-24",
+      "title": "3DS online and sturdier GameCube online",
+      "new": [
+        "3DS online is on: trade and battle in Pokemon X/Y, ORAS, Sun/Moon and Ultra Sun/Moon through rooms",
+        "Each player automatically gets their own 3DS username"
+      ],
+      "improved": [
+        "Smash Classic online verified on every stage with 2 and 4 fighters",
+        "Mario Party 6 online checked with 3-4 players in the right controller order"
+      ],
+      "fixed": [
+        "GameCube online no longer stalls when the game window isn't detected on a fresh install",
+        "A lost message can no longer freeze a GameCube room"
+      ]
+    },
+    {
+      "version": "1.17.2",
+      "date": "2026-10-24",
+      "title": "Invite links fixed",
+      "fixed": [
+        "Invite page has a big Open in RetroHub button and shows the room code",
+        "Discord now shows a proper preview of your room invite",
+        "Clicking an invite while RetroHub is closed now joins once it's ready instead of dropping it",
+        "The installer now sets RetroHub up to open invite links"
+      ]
+    },
+    {
+      "version": "1.17.1",
+      "date": "2026-10-23",
+      "title": "Safer updates",
+      "improved": [
+        "Updates are now checked before installing, and corrupted or tampered downloads are refused"
+      ]
+    },
+    {
+      "version": "1.17.0",
+      "date": "2026-10-23",
+      "title": "Near-instant Pokemon trading, cloud saves on",
+      "new": [
+        "Cloud saves are live: sync saves through your RetroHub account, no OneDrive needed (200 MB per player)",
+        "Game Boy and Game Boy Color link trades and battles now feel almost instant online",
+        "Clear first-launch message and friendlier ROM warnings for Smash Classic"
+      ],
+      "improved": [
+        "Online play is smoother on laggy connections, with far fewer pauses",
+        "Host's save is more reliable to share on slow connections",
+        "GameCube online sessions use the host's memory card and never touch guests' cards"
+      ],
+      "fixed": [
+        "Pokemon Emerald no longer drifts out of sync in online trades and battles",
+        "Unzipped GameCube games now offer Play Online"
+      ]
+    },
+    {
+      "version": "1.16.0",
+      "date": "2026-10-23",
+      "title": "Friends list fixes and Find my games",
+      "new": [
+        "Find my games scans the usual places for game folders and lets you pick which to add",
+        "Windows notification when a friend invites you, without taking you out of your game",
+        "Press A to claim your player slot in Controllers before local multiplayer games",
+        "GBA link cable online now feels almost instant"
+      ],
+      "fixed": [
+        "Friends no longer show up twice after moving to a new PC",
+        "Only the person who received a friend request can accept it"
+      ]
+    },
+    {
+      "version": "1.15.0",
+      "date": "2026-10-23",
+      "title": "GBA link cable online, more controllers",
+      "new": [
+        "GBA link cable online: trade and battle in Pokemon Ruby, Sapphire, Emerald, FireRed and LeafGreen",
+        "Keyboard can now be remapped, plus a Rumble Pak option for N64 games",
+        "PlayStation, Switch Pro and 8BitDo pads now work in GameCube games"
+      ],
+      "improved": [
+        "Game Boy and GBA online can use the host's save so different saves can't break a session",
+        "Smash Classic online is safer: strangers with a room code can't pretend to be a player"
+      ],
+      "fixed": [
+        "Zipped GBA and Game Boy games could fail to show up when scanning several folders",
+        "DS online now ends cleanly when a partner leaves"
+      ]
+    },
+    {
+      "version": "1.14.0",
+      "date": "2026-10-23",
+      "title": "Play together: online for more systems",
+      "new": [
+        "GameCube online for Double Dash!!, Mario Party 6 and Melee",
+        "Game Boy and Game Boy Color link cable online for Pokemon Red, Yellow, Gold, Silver and Crystal",
+        "Online Pokemon trades and battles on 3DS and DS through rooms",
+        "Invite links: Copy invite link in a room and friends join with one click",
+        "Controllers page with remapping, per-game settings and desktop shortcuts for any game"
+      ],
+      "improved": [
+        "N64 online is much smoother, with input delay that adapts to your connection"
+      ],
+      "fixed": [
+        "Mario Party 2 and 3 no longer drift out of sync online"
+      ]
+    },
+    {
+      "version": "1.13.0",
+      "date": "2026-10-23",
+      "title": "GameCube games, properly",
+      "new": [
+        "GameCube games in zip and 7z archives now show up with real names and covers",
+        "Dolphin downloads itself and starts games fullscreen with up to 4 controllers",
+        "GameCube saves now live in your vault and follow you across PCs"
+      ],
+      "improved": [
+        "3DS and Wii U games now open fullscreen",
+        "Added Wind Waker, Twilight Princess, Double Dash, Mario Party 6, Sunshine and Melee to the catalog"
+      ]
+    },
+    {
+      "version": "1.12.2",
+      "date": "2026-10-22",
+      "title": "Proper names for Game Boy games",
+      "fixed": [
+        "Game Boy, Game Boy Color and GBA games now show proper names and cover art and sort A-Z",
+        "Your saves are unchanged"
+      ]
+    },
+    {
+      "version": "1.12.1",
+      "date": "2026-10-22",
+      "title": "A real Windows installer",
+      "new": [
+        "RetroHub-Setup.exe installs with a Start menu shortcut and an uninstall entry, no unzipping or admin prompt",
+        "Creates a RetroHub Games folder with a folder for each console"
+      ],
+      "improved": [
+        "Upgrades and uninstalls keep your saves, settings, friends account and games folder"
+      ]
+    },
+    {
+      "version": "1.12.0",
+      "date": "2026-10-22",
+      "title": "DS, 3DS and Wii U, rooms survive the host leaving",
+      "new": [
+        "Nintendo DS support with both screens, mouse as stylus, and saves in the vault",
+        "Nintendo 3DS and Wii U support, downloaded the first time you play one",
+        "Rooms survive the host leaving: the next player becomes host and the room code keeps working"
+      ],
+      "improved": [
+        "Home and All Games are now organised by console, with tidier cards",
+        "Pokemon Red, Yellow, Gold, Silver and Crystal are recognised with cover art"
+      ],
+      "fixed": [
+        "Zipped games now unpack correctly even in deep install folders"
+      ]
+    },
+    {
+      "version": "1.11.1",
+      "date": "2026-10-22",
+      "title": "Leaving players no longer freeze Smash",
+      "fixed": [
+        "If a player disconnects mid-match in Smash Classic online, the others no longer freeze",
+        "Their fighter is knocked out and the match carries on, and rematches work with whoever remains",
+        "The Online window now shows who left"
+      ]
+    },
+    {
+      "version": "1.11.0",
+      "date": "2026-10-22",
+      "title": "4-player Smash Classic online",
+      "new": [
+        "Smash Classic online now supports 3 and 4 players",
+        "In-game Online window lists every player with their fighter, connection and ping",
+        "Rematches work with 3-4 players"
+      ],
+      "improved": [
+        "RetroHub rooms now launch Smash Classic with 3 or 4 players",
+        "Safer lobby: bad picks from the network are rejected and two hosts can't grab the same room"
+      ],
+      "fixed": [
+        "Fixed a rare out-of-sync and a false out-of-sync at the start of some online matches"
+      ]
+    },
+    {
+      "version": "1.10.0",
+      "date": "2026-10-22",
+      "title": "Smash Remix online, smoother friends and saves",
+      "new": [
+        "Smash Remix online for up to 4 players, with the full roster and costumes",
+        "One-click Use OneDrive card on Home to keep saves and friends on all your PCs",
+        "Join a friend's room even while they're mid-game"
+      ],
+      "improved": [
+        "Smash Classic's save now lives in your vault and syncs like every other game",
+        "Smash Classic no longer asks for its ROM again if RetroHub already found it",
+        "An empty library suggests folders that contain games"
+      ],
+      "fixed": [
+        "A new PC no longer overwrites your friends account when it syncs",
+        "Rooms check that everyone runs the same RetroHub version",
+        "No more double update prompts, and updates work in folders with non-English names"
+      ]
+    },
+    {
+      "version": "1.9.1",
+      "date": "2026-10-20",
+      "title": "Smoother online and saves you can trust",
+      "new": [
+        "Two players on one PC can play online by setting Local players to 2",
+        "N64 rooms use the host's save so everyone gets the unlocked boards, characters and cups"
+      ],
+      "improved": [
+        "Input delay is picked automatically, so games stay at full speed over the internet",
+        "Saves never sync while a game is running"
+      ],
+      "fixed": [
+        "Rooms launch correctly even after someone left and rejoined",
+        "A game keeps its save even if the ROM is renamed on another PC",
+        "Online sessions no longer leave temporary save files in your vault"
+      ]
+    },
+    {
+      "version": "1.9.0",
+      "date": "2026-10-20",
+      "title": "Friends, invites and the new RetroHub look",
+      "new": [
+        "Friends panel with a shareable friend code, add friends, see who's online and what they're playing",
+        "Invite friends to your lobby and they join with one click",
+        "Chat with friends, even when they're offline",
+        "New RetroHub logo, Start Menu entry and its own taskbar icon"
+      ]
+    },
+    {
+      "version": "1.8.1",
+      "date": "2026-10-20",
+      "title": "Home grouped by genre",
+      "improved": [
+        "Home is grouped by genre, with each game shown once",
+        "Rows scroll sideways with the mouse wheel, arrows or dragging",
+        "All Games can group by Genre, System or A-Z, with an Online filter"
+      ]
+    },
+    {
+      "version": "1.8.0",
+      "date": "2026-10-20",
+      "title": "Classic Hub becomes RetroHub",
+      "new": [
+        "Now supports N64, GameCube, Game Boy Advance, Game Boy and Game Boy Color",
+        "New home screen with Continue Playing, Favorites, Online with Friends and box art",
+        "Saves follow you with a sync folder for OneDrive, Dropbox or Google Drive"
+      ],
+      "improved": [
+        "GBA and Game Boy games resume exactly where you left off",
+        "Checks for updates on start and has a Check for updates button"
+      ]
+    },
+    {
+      "version": "1.7.0",
+      "date": "2026-10-20",
+      "title": "Classic Hub launcher",
+      "new": [
+        "Classic Hub library for Smash Classic, Mario Party 1/2/3 and Smash Remix 2.0",
+        "Play Online: host a room, share the code, and pick a game everyone owns",
+        "Controllers and Settings pages"
+      ]
+    },
+    {
+      "version": "1.6.1",
+      "date": "2026-10-20",
+      "title": "False out-of-sync warning fixed",
+      "fixed": [
+        "Fixed the Out of sync warning appearing at the start of online matches when the fight was actually identical"
+      ]
+    },
+    {
+      "version": "1.6.0",
+      "date": "2026-10-19",
+      "title": "Online start-of-match sync fix",
+      "fixed": [
+        "Online matches no longer go out of sync at the very start",
+        "Settings that could change gameplay, like widescreen's effect on Link's boomerang, are neutralized online"
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "date": "2026-10-18",
+      "title": "Online sync fix",
+      "fixed": [
+        "Fixed online matches going out of sync from the first frame",
+        "Out-of-sync reports now say which part of the game differs"
+      ]
+    },
+    {
+      "version": "1.4.2",
+      "date": "2026-10-18",
+      "title": "Updater fix",
+      "fixed": [
+        "Updater no longer fails with a file-in-use error; it closes leftover game windows and retries"
+      ]
+    },
+    {
+      "version": "1.4.1",
+      "date": "2026-10-11",
+      "title": "Better post-match flow",
+      "fixed": [
+        "After an online match you now land on the VS menu instead of local 4-player character select",
+        "The Online window lets the host start a rematch"
+      ]
+    },
+    {
+      "version": "1.4.0",
+      "date": "2026-10-11",
+      "title": "Online diagnostics",
+      "improved": [
+        "When a match shows Out of sync, the log now records exactly what differs"
+      ]
+    },
+    {
+      "version": "1.3.0",
+      "date": "2026-10-11",
+      "title": "Version checks and logs",
+      "new": [
+        "Logs are now saved in the game's logs folder to help track down problems"
+      ],
+      "improved": [
+        "Both players must be on the same version to start a match, and the lobby tells you if not"
+      ]
+    },
+    {
+      "version": "1.2.0",
+      "date": "2026-10-11",
+      "title": "Online fixes",
+      "new": [
+        "On-screen warning if a match goes out of sync",
+        "After a match, an Online window shows you're still connected, with Start rematch and Leave"
+      ],
+      "fixed": [
+        "Both players now use the host's gameplay settings, fixing invisible characters",
+        "Extra controllers plugged in no longer leak into online matches",
+        "Online matches now play identically on Intel and AMD PCs"
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-10-10",
+      "title": "Automatic updates",
+      "new": [
+        "Smash Classic now checks for updates on start and shows what changed",
+        "Choose Update now, Later or Skip this version",
+        "Updates keep your saves and settings, and restore the old version if anything goes wrong"
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-10-10",
+      "title": "Online play arrives",
+      "new": [
+        "Play Super Smash Bros. 64 online in 1v1 with a 6-character room code",
+        "Rollback netcode keeps matches smooth, and no port forwarding is needed",
+        "Includes widescreen, texture packs and enhanced framerate"
+      ]
+    }
+  ]
+}

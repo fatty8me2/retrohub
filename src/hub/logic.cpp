@@ -58,6 +58,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"cloud_saves\": " << (s.cloud_saves ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
+      << "  \"changelog_seen\": \"" << json::escape(s.changelog_seen) << "\",\n"
       << "  \"kt_intro_seen\": " << (s.kt_intro_seen ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json::escape(s.vault_dir) << "\",\n"
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
@@ -126,6 +127,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
     out->setup_done = json_bool(j, "setup_done", out->setup_done);
+    out->changelog_seen = j.str("changelog_seen", out->changelog_seen);
     out->cemu_exe = j.str("cemu_exe", out->cemu_exe);
     out->ps1_bios = j.str("ps1_bios", out->ps1_bios);
     out->ps1_openbios = json_bool(j, "ps1_openbios", out->ps1_openbios);

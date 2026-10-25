@@ -120,6 +120,7 @@ add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
 add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
 add_test(NAME hub_shell_test COMMAND hub_shell_test)
+add_test(NAME hub_changelog_test COMMAND hub_changelog_test ${CMAKE_SOURCE_DIR}/data/changelog.json)   # patch notes parser + show-once rule
 add_test(NAME hub_toast_test COMMAND hub_toast_test)                   # toast XML/activation/policy with a mock notifier (no real toasts)
 add_test(NAME hub_wizard_test COMMAND hub_wizard_test)
 add_test(NAME hub_toast_win_test COMMAND hub_toast_win_test)               # real WinRT apartment init + XML load, nothing shown

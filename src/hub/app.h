@@ -90,7 +90,7 @@ static const ImU32 COL_REMIX = IM_COL32(250, 150, 40, 255);
 
 /* ============================ types ============================ */
 
-enum class Page { Library, Online, Saves, Controllers, Settings, About };
+enum class Page { Library, Online, Saves, Controllers, Settings, About, Changelog };
 
 enum class LibView { Home, All };
 
@@ -699,6 +699,8 @@ void draw_emulator_dialogs();
 /* ---- page_about.cpp ---- */
 void draw_overlays();
 void page_about();
+void page_changelog();          // page_changelog.cpp: What's new (patch notes)
+void draw_changelog_popup();    // call every frame: the one-time "What's new in vX" popup
 
 
 /* ---- frame.cpp ---- */
