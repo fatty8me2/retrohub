@@ -360,6 +360,7 @@ struct ShotDriver {
     std::string pending_shot;             // shot:<name> waiting for the end of the frame
     void pad_trace(const std::string& tok);
     double last_key = 0;
+    bool room_hook_done = false;
     void init(const char* shot_path);
     void pre_frame(ImGuiIO& io);
     bool ready() const;
@@ -367,6 +368,8 @@ struct ShotDriver {
 extern ShotDriver SH;
 void shot_init_ui();
 void shot_trace(const char* what, const std::string& arg = std::string());   // HUB_SHOT_TRACE action line
+void shot_trace_once(const char* what, const std::string& arg);               // same, but an identical line is written once (per-frame UI state)
+void guest_apply_launch(const std::string& body);                               // lobby.cpp: a guest handles the host's "launch" message (HUB_SHOT_GUEST_MSG drives it headless)
 
 /* ============================ globals ============================ */
 
@@ -647,6 +650,7 @@ void stick(ImDrawList* dl, ImVec2 c, float r, float x, float y, const char* labe
 void btn_dot(ImDrawList* dl, ImVec2 c, float r, bool on, const char* label);
 void page_controllers();
 void open_controls_for(const hub::GameEntry& e);
+std::string CTL_game_for_trace();   // QA trace: the game key the Controllers page is scoped to
 void open_port_assign();                         // Controllers page in "Assign players"
 bool draw_players_strip(int players);            // library details: "Players: 1 2 3 4" strip; true = Reassign clicked
 std::string controls_arg(const std::string& system_key, const std::string& game_key);

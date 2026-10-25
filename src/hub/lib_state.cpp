@@ -58,6 +58,33 @@ void apply_scan() {
         static const hub::System sy[] = {hub::System::N64, hub::System::GBA, hub::System::GC, hub::System::N64, hub::System::GB};
         A.lib.clear();
         int n = std::max(1, std::atoi(fl));
+        if (std::string(fl) == "all") {   // qa/reach_matrix.ps1: every system, an online catalog game + an uncatalogued one, plus Smash Classic, Remix and Kanto Together
+            static const hub::System all[] = {hub::System::N64, hub::System::GB, hub::System::GBC, hub::System::GBA, hub::System::NDS,
+                                              hub::System::N3DS, hub::System::GC, hub::System::WiiU, hub::System::PS1, hub::System::PS2};
+            for (hub::System s : all) {
+                std::string sh = hub::system_short(s);
+                for (int pass = 0; pass < 2; ++pass) {
+                    hub::GameEntry g;
+                    g.system = s;
+                    g.key = "fake:" + sh + (pass ? "-plain" : "-online");
+                    g.path = "C:/fake/" + sh + (pass ? "-plain" : "-online") + ".rom";
+                    if (pass == 0) {
+                        const GameInfo* ci = nullptr;
+                        for (const auto& c : hub::catalog()) if (c.system == sh && c.online && c.id != "smash64" && c.id != "remix" && c.id != kanto::kCatalogId) { ci = &c; break; }
+                        if (!ci) continue;
+                        g.catalog_id = ci->id;
+                        g.title = ci->title;
+                    } else g.title = std::string("Plain ") + hub::system_name(s) + " game";
+                    A.lib.push_back(g);
+                }
+            }
+            for (const char* lid : {"pokered", "pokeemerald"})   // link-cable games
+                if (const GameInfo* c = hub::find_game(lid)) { hub::GameEntry g; g.system = hub::system_from_short(c->system); g.key = std::string("fake:link-") + lid; g.title = c->title; g.catalog_id = lid; g.path = std::string("C:/fake/") + lid + ".rom"; A.lib.push_back(g); }
+            if (const GameInfo* c = hub::find_game("remix")) { hub::GameEntry g; g.system = hub::System::N64; g.key = "fake:remix"; g.title = c->title; g.catalog_id = "remix"; g.path = "C:/fake/remix.z64"; A.lib.push_back(g); }
+            { hub::GameEntry g; g.system = hub::System::GBA; g.key = kanto::kKey; g.title = kanto::kTitle; g.catalog_id = kanto::kCatalogId; g.issue = kanto::kIssue; g.path = "C:/fake/kanto.zip"; A.lib.push_back(g); }
+            { hub::GameEntry g; g.system = hub::System::N64; g.key = kNativeKey; g.title = "Super Smash Bros. 64"; g.catalog_id = "smash64"; g.path = "C:/fake/BattleShip.exe"; A.lib.insert(A.lib.begin(), g); }
+            n = 0;
+        }
         for (int i = 0; i < n; ++i) {
             hub::GameEntry g;
             g.system = sy[i % 5];

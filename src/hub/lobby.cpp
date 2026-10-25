@@ -161,6 +161,25 @@ std::vector<hubui::PeerInfo> peer_list() {
     return v;
 }
 
+/* A guest handles the host's launch message (also driven headless by HUB_SHOT_GUEST_MSG). */
+void guest_apply_launch(const std::string& body) {
+    hubui::Json j;
+    if (!json::parse(body, &j) || j.type != hubui::Json::Object) return;
+    const hub::GameEntry* g = find_room_entry(j.str("game"));
+    if (!g) { launch_fail("The host started a game you don't have."); return; }
+    if (A.proc) { launch_fail("The host started a game, but a game is already running on this PC."); return; }
+    if (g->system == hub::System::GC) {
+        gcnp::Spec gs;
+        if (!gcnp::spec_parse(gcnp::extract_from_launch(body), &gs)) { launch_fail("The host's GameCube launch is invalid - ask them to update RetroHub."); return; }
+        if (g_headless) { shot_trace("guest-route", "gc dolphin-netplay-guest"); return; }
+        gc_guest_prepare(*g, gs, (int)j.num("launch", 1));
+        return;
+    }
+    const hubui::Json* ss = j.get("share_save");
+    launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
+                  ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j, nullptr, &body);   // --match comes from j["match"]
+}
+
 void lobby_tick() {
     if (!A.in_room) return;
     A.lobby.update();
@@ -272,18 +291,7 @@ void lobby_tick() {
             A.chat_scroll = true;
         } else if (kind == "launch") {
             if (from != 0 || is_host()) continue;
-            const hub::GameEntry* g = find_room_entry(j.str("game"));
-            if (!g) { launch_fail("The host started a game you don't have."); continue; }
-            if (A.proc) { launch_fail("The host started a game, but a game is already running on this PC."); continue; }
-            if (g->system == hub::System::GC) {
-                gcnp::Spec gs;
-                if (!gcnp::spec_parse(gcnp::extract_from_launch(body), &gs)) { launch_fail("The host's GameCube launch is invalid - ask them to update RetroHub."); continue; }
-                gc_guest_prepare(*g, gs, (int)j.num("launch", 1));
-                continue;
-            }
-            const hubui::Json* ss = j.get("share_save");
-            launch_online(*g, (int)j.num("launch", 1), (int)j.num("delay", 0), false, j.str("core"),
-                          ss && ss->type == hubui::Json::Bool && ss->b, nullptr, &j, nullptr, &body);   // --match comes from j["match"]
+            guest_apply_launch(body);
         }
 
     }
