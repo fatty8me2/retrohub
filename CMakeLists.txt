@@ -91,6 +91,7 @@ enable_testing()
 
 add_test(NAME json_test COMMAND json_test)
 add_test(NAME winutil_test COMMAND winutil_test)
+add_test(NAME cheats_test COMMAND cheats_test)                         # cheat file model + code parsing per format
 add_test(NAME hubcommon_test COMMAND hubcommon_test)
 add_test(NAME hublibrary_test COMMAND hublibrary_test)
 add_test(NAME hubkanto_test COMMAND hubkanto_test)                       # Kanto Together: package, install, rom pick, output parsing

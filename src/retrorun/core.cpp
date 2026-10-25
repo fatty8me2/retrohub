@@ -104,6 +104,8 @@ bool Core::load_core(const std::string& dll_path, std::string* err) {
     S("retro_get_memory_size", fn_get_mem_size_);
 #undef S
     sym(dll_, "retro_load_game_special", &fn_load_game_special_);   // optional
+    sym(dll_, "retro_cheat_reset", &fn_cheat_reset_);               // optional
+    sym(dll_, "retro_cheat_set", &fn_cheat_set_);                   // optional
     if (!ok) { *err = "not a libretro core (missing retro_* exports): " + dll_path; return false; }
     if (fn_api_version_() != RETRO_API_VERSION) {
         *err = "libretro API version mismatch: core reports " + std::to_string(fn_api_version_());
