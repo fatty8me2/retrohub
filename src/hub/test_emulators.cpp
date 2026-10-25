@@ -11,6 +11,7 @@
 #include "miniz.h"
 
 #include <chrono>
+#include <process.h>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -883,7 +884,7 @@ int main(int argc, char** argv) {
     test_config();
 
     std::error_code ec;
-    fs::path dir = fs::temp_directory_path(ec) / "hub_emu_test_dir";
+    fs::path dir = fs::temp_directory_path(ec) / ("hub_emu_test_dir_" + std::to_string(_getpid()));   // per-process: concurrent runs (agents, parallel ctest) must not share/wipe one dir
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
     test_library_ids(dir / "lib");

@@ -1777,7 +1777,7 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
 std::string extract_3ds_dir(const GameEntry& e) {
     if (e.system == System::PS1) return path_utf8(ps1_unpack_dir(e));
     if (e.system == System::GC || e.system == System::PS2) return path_utf8(gc_unpack_dir(e));
-    return path_utf8(utf8_path(data_dir()) / L"rom-cache" / L"3ds" / utf8_path(sanitize_key(e.key)));
+    return path_utf8(lib_dir() / L"rom-cache" / L"3ds" / utf8_path(sanitize_key(e.key)));
 }
 
 uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
