@@ -2,13 +2,16 @@
 # Two scratch data+vault dirs share one account on a LOCAL mock Worker (cloud_mock_server.exe, loopback only). Nothing visible,
 # nothing from the user's install or saves is touched. Kills only the PIDs it started.
 #   powershell -ExecutionPolicy Bypass -File qa\cloud_two_pc.ps1 [-Port 10150] [-BuildDir build\bin\Release]
-param([int]$Port = 10150, [string]$BuildDir = "")
+#   -Real: run against the REAL local Cloudflare Worker (wrangler dev through server\cloudflare\scripts\qa_worker.mjs of the cloud-int-bs
+#   worktree; ports 10400-10449, isolated registry, state under C:\rhq\<port>) instead of the C++ mock: qa\cloud_two_pc_real.ps1.
+#   -RealPort 10410  -ServerDir <...\server\cloudflare>
+param([int]$Port = 10150, [string]$BuildDir = "", [switch]$Real, [int]$RealPort = 10410, [string]$ServerDir = "")
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 if (-not $BuildDir) { $BuildDir = Join-Path $Root "build\bin\Release" }
 $Mock = Join-Path $BuildDir "cloud_mock_server.exe"
 $Tool = Join-Path $BuildDir "qa_cloud_tool.exe"
-foreach ($f in @($Mock, $Tool)) { if (-not (Test-Path $f)) { throw "missing $f (build targets cloud_mock_server and qa_cloud_tool)" } }
+foreach ($f in @($(if ($Real) { $Tool } else { $Mock }), $Tool)) { if (-not (Test-Path $f)) { throw "missing $f (build targets cloud_mock_server and qa_cloud_tool)" } }
 
 $Scratch = Join-Path $env:TEMP "rhq_cloud_two_pc"
 if (Test-Path $Scratch) { Remove-Item $Scratch -Recurse -Force }
@@ -44,6 +47,7 @@ function Get-Text($pc) { $p = Save $pc; if (Test-Path $p) { [IO.File]::ReadAllTe
 function Ctl([string]$q) { Invoke-WebRequest -UseBasicParsing "$Url/__ctl?$q" | Out-Null }
 function Session($pc, [string[]]$extra = @(), [string]$url = $Url) { Run $pc (@("session", "n64", "smash-64") + $extra) $url }
 
+if ($Real) { . (Join-Path $PSScriptRoot "cloud_two_pc_real.ps1"); exit $script:fail }   # real local Worker scenarios (never returns)
 $srv = Start-Process $Mock -ArgumentList @("--port", $Port, "--account", "$Uid`:$Secret") -PassThru -WindowStyle Hidden
 try {
     for ($i = 0; $i -lt 40; $i++) { try { Ctl "delay=0"; break } catch { Start-Sleep -Milliseconds 250 } }

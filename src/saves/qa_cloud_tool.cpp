@@ -8,6 +8,11 @@
  *     flush                                   startup pass + drain the queue
  *     resolve <system> <key> <newer|local|cloud|later>
  *     status <system> <key>                   one line with the per-game state
+ *     versions <system> <key>                 lists retained cloud versions per file (ver/size/dev)
+ *     restore <system> <key> <path> <ver>     restore a previous cloud version, then pull it (prints ok/err)
+ *     session extras: --readonly (guest session: SyncMode::ReadOnly) --lease play|take|cancel (other-PC lease choice, default play)
+ *                     --writebig <rel> <bytes> (incompressible random file)
+ *     hold <system> <key> <readyfile> <stopfile>   a running session: pre-launch (takes the lease), writes readyfile, waits for stopfile (max 120 s), then exits the game
  *     recovery                                prints the length of the recovery code and whether adopt round-trips (never the code)
  */
 #include "cloud_internal.h"
@@ -15,6 +20,10 @@
 #include "savestore.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <chrono>
+#include <filesystem>
+#include <thread>
 #include <cstring>
 #include <string>
 
@@ -89,24 +98,42 @@ int main(int argc, char** argv) {
         /* one whole play session in one process (the lease and the running state live in the engine): pre-launch, optional
          * conflict decision, "play" (write a file), exit, drain the push queue. */
         GameId g{rest[1], rest[2]};
-        std::string resolve, wrel, wtext;
+        std::string resolve, wrel, wtext, lease = "play";
+        bool readonly = false;
+        std::vector<std::pair<std::string, int>> big;
         for (size_t i = 3; i < rest.size(); i++) {
+            if (rest[i] == "--readonly") readonly = true;
+            else if (rest[i] == "--lease" && i + 1 < rest.size()) lease = rest[++i];
+            else if (rest[i] == "--writebig" && i + 2 < rest.size()) { big.push_back({rest[i + 1], std::atoi(rest[i + 2].c_str())}); i += 2; }
+            else
             if (rest[i] == "--resolve" && i + 1 < rest.size()) resolve = rest[++i];
             else if (rest[i] == "--write" && i + 2 < rest.size()) { wrel = rest[i + 1]; wtext = rest[i + 2]; i += 2; }
         }
-        PrelaunchResult r = cloud_prelaunch(g, SyncMode::ReadWrite);
+        const SyncMode sm = readonly ? SyncMode::ReadOnly : SyncMode::ReadWrite;
+        PrelaunchResult r = cloud_prelaunch(g, sm);
         std::printf("prelaunch action=%s offline=%d pulled=%d conflicts=%d held_by=%s\n",
                     r.action == PrelaunchResult::Proceed ? "proceed" : r.action == PrelaunchResult::NeedConflictDecision ? "conflict" : "lease",
                     (int)r.offline, r.files_pulled, (int)r.conflicts.size(), r.held_by.c_str());
-        if (r.action == PrelaunchResult::NeedLeaseDecision) r = cloud_resolve_lease(g, LeaseChoice::PlayAnyway);
+        if (r.action == PrelaunchResult::NeedLeaseDecision) {
+            r = cloud_resolve_lease(g, lease == "take" ? LeaseChoice::TakeOver : lease == "cancel" ? LeaseChoice::Cancel : LeaseChoice::PlayAnyway);
+            std::printf("lease_choice=%s -> action=%s\n", lease.c_str(), r.action == PrelaunchResult::Proceed ? "proceed" : "other");
+            if (lease == "cancel") { print_state(g); cloud_engine_stop(); return 0; }
+        }
         if (r.action == PrelaunchResult::NeedConflictDecision && !resolve.empty()) {
             cloud_resolve_conflict(g, resolve == "local" ? ConflictChoice::UseLocal : resolve == "cloud" ? ConflictChoice::UseCloud :
                                       resolve == "later" ? ConflictChoice::DecideLater : ConflictChoice::UseNewer);
             std::printf("resolved=%s\n", resolve.c_str());
         }
-        cloud_game_started(g, SyncMode::ReadWrite);
+        cloud_game_started(g, sm);
+        for (auto& b : big) {
+            std::string data(b.second, 0); unsigned x = 2463534242u ^ (unsigned)b.second;
+            for (auto& c : data) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; c = (char)x; }
+            std::string path = game_dir(g.system, g.key) + b.first; std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+            FILE* f = std::fopen(path.c_str(), "wb"); if (f) { std::fwrite(data.data(), 1, data.size(), f); std::fclose(f); }
+        }
         if (!wrel.empty()) {
             std::string path = game_dir(g.system, g.key) + wrel;
+            std::filesystem::create_directories(std::filesystem::path(path).parent_path());
             FILE* f = std::fopen(path.c_str(), "wb");
             if (f) { std::fwrite(wtext.data(), 1, wtext.size(), f); std::fclose(f); }
         }
@@ -114,6 +141,31 @@ int main(int argc, char** argv) {
         cloud_game_exited(g);
         cloud_engine_pump(500);
         print_state(g);
+    } else if (cmd == "hold" && rest.size() >= 5) {
+        GameId g{rest[1], rest[2]};
+        PrelaunchResult r = cloud_prelaunch(g, SyncMode::ReadWrite);
+        if (r.action == PrelaunchResult::NeedLeaseDecision) r = cloud_resolve_lease(g, LeaseChoice::PlayAnyway);
+        cloud_game_started(g, SyncMode::ReadWrite);
+        std::printf("hold action=%s\n", r.action == PrelaunchResult::Proceed ? "proceed" : "other");
+        std::fflush(stdout);
+        if (FILE* f = std::fopen(rest[3].c_str(), "wb")) { std::fputs("ready", f); std::fclose(f); }
+        for (int i = 0; i < 1200 && !std::filesystem::exists(rest[4]); i++) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        touch_game(g.system, g.key, g.key);
+        cloud_game_exited(g);
+        cloud_engine_pump(500);
+        print_state(g);
+    } else if (cmd == "versions" && rest.size() >= 3) {
+        for (auto& pr : cloud_versions(GameId{rest[1], rest[2]})) {
+            std::printf("file=%s", pr.first.c_str());
+            for (auto& v : pr.second) std::printf(" [ver=%d size=%lld dev=%s]", v.ver, (long long)v.size, v.device_name.c_str());
+            std::printf("\n");
+        }
+    } else if (cmd == "restore" && rest.size() >= 5) {
+        std::string err;
+        bool ok = cloud_restore_version(GameId{rest[1], rest[2]}, rest[3], std::atoi(rest[4].c_str()), &err);
+        std::printf("restore ok=%d err=%s\n", (int)ok, err.c_str());
+        cloud_engine_pump(500);
+        print_state(GameId{rest[1], rest[2]});
     } else if (cmd == "flush") {
         cloud_wake_queue();                       // "Sync now": retries that were backing off run again
         cloud_engine_pump(500);
