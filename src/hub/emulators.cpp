@@ -624,7 +624,8 @@ static int cemu_xinput_id(const hubctl::Term& t) {
 }
 
 /* Wii U player N = the N-th XInput pad of the RetroHub port order (Cemu's XInput API numbers pads by XInput slot). Pads that are
- * not XInput are skipped: Cemu's SDL API uses its own ids, so those pads are set up in Cemu's input dialog. */
+ * not XInput are skipped here (managed download only): Cemu's SDL API uses its own ids. A user's own Cemu gets those pads
+ * as SDL players instead (cemu_pads_for_own, page_controllers.cpp). */
 CemuPads cemu_pads_with(const std::vector<PadDesc>& by_port) {
     CemuPads c;
     int xrank = 0;
