@@ -22,6 +22,7 @@
 
 #include "controls_sdl.h"
 #include "exit_combo.h"
+#include "runner_ctl.h"
 #include "core.h"
 #include "ds_link.h"
 #include "retro_pad.h"
@@ -43,6 +44,7 @@ namespace fs = std::filesystem;
 /* ------------------------------------------------------------------ args */
 
 struct Args {
+    std::string control, game_key, shot_dir;   // --control FILE (runner_ctl.h), --game-key KEY, --shot-dir DIR
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
     std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
     int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
@@ -106,6 +108,9 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
             o->mem_dumps.push_back({id, (size_t)off, (size_t)len, file});
         }
         else if (k == "--save-dir") { if (!val(&o->save_dir)) return false; }
+        else if (k == "--control") { if (!val(&o->control)) return false; }
+        else if (k == "--game-key") { if (!val(&o->game_key)) return false; }
+        else if (k == "--shot-dir") { if (!val(&o->shot_dir)) return false; }
         else if (k == "--state-dir") { if (!val(&o->state_dir)) return false; }
         else if (k == "--system-dir") { if (!val(&o->system_dir)) return false; }
         else if (k == "--system") { if (!val(&o->system)) return false; }
@@ -487,6 +492,9 @@ class Frontend {
     void disc_request();
     void disc_apply(unsigned target, bool visible);
     void disc_poll();
+    void ctl_poll();
+    bool take_screenshot(std::string* where);
+    runctl::Poller ctl_;
     void do_pacing();
     int selftest();
 
@@ -909,6 +917,7 @@ void Frontend::handle_key(const SDL_KeyboardEvent& k) {
             }
             break;
         case SDLK_F10: disc_request(); break;
+        case SDLK_F12: { std::string w; take_screenshot(&w); } break;
         case SDLK_F5: want_save = true; break;
         case SDLK_F7:
             if (online || a.ds_link) set_status("Loading states is disabled during netplay");
@@ -1056,8 +1065,55 @@ bool Frontend::save_state(const std::string& name) {
     std::vector<uint8_t> buf(n);
     if (!core.serialize(buf.data(), n)) { set_status("Save state failed (core error)"); return false; }
     if (!write_atomic(state_path(name), buf.data(), n)) { set_status("Save state failed (disk)"); return false; }
+    {   // thumbnail + sidecar next to the state (runner_ctl.h contract)
+        write_frame_image_scaled(a.state_dir + "\\" + name + ".png", core.frame(), runctl::kThumbWidth);
+        runctl::Sidecar sc;
+        sc.game_key = a.game_key;
+        sc.time = (long long)std::time(nullptr);
+        sc.playtime = (long long)(SDL_GetTicks64() / 1000);
+        sc.disc = is_ps1 ? (int)core.disc_index() : 0;
+        runctl::write_text_atomic(a.state_dir + "\\" + name + ".json", runctl::make_sidecar(sc));
+    }
     set_status("Saved state " + name);
     return true;
+}
+
+bool Frontend::take_screenshot(std::string* where) {
+    if (a.shot_dir.empty()) { set_status("Screenshots are not available here"); return false; }
+    std::string p = a.shot_dir + "\\" + runctl::shot_name(std::time(nullptr));
+    if (!write_frame_image(p, core.frame())) { set_status("Screenshot failed"); return false; }
+    if (where) *where = p;
+    set_status("Screenshot saved");
+    return true;
+}
+
+void Frontend::ctl_poll() {
+    runctl::Command c;
+    if (!ctl_.poll(SDL_GetTicks64(), &c)) return;
+    rlog("control: seq %lld %s slot %d", c.seq, runctl::cmd_name(c.cmd), c.slot);
+    switch (c.cmd) {
+        case runctl::Cmd::SaveState: {
+            if (online || a.ds_link) { ctl_.ack(false, "Save states are disabled in online sessions"); break; }
+            bool ok = save_state("slot" + std::to_string(c.slot));
+            ctl_.ack(ok, ok ? "saved" : status_msg);
+            break;
+        }
+        case runctl::Cmd::LoadState: {
+            if (online || a.ds_link) { ctl_.ack(false, "Load state is disabled in online sessions"); break; }
+            bool ok = load_state(c.slot < 0 ? "auto" : "slot" + std::to_string(c.slot));
+            ctl_.ack(ok, ok ? "loaded" : status_msg);
+            break;
+        }
+        case runctl::Cmd::Screenshot: {
+            std::string w;
+            bool ok = take_screenshot(&w);
+            ctl_.ack(ok, ok ? w : status_msg);
+            break;
+        }
+        case runctl::Cmd::SwapDisc: disc_request(); ctl_.ack(true, "requested"); break;
+        case runctl::Cmd::Quit: quit = true; ctl_.ack(true, "quitting"); break;
+        default: ctl_.ack(false, "unknown command"); break;
+    }
 }
 
 bool Frontend::load_state(const std::string& name) {
@@ -1867,6 +1923,7 @@ int Frontend::run(const Args& args) {
 
     cheats_init();
     if (!a.disc_ctl.empty()) disc_watch = cheats::FileWatch(a.disc_ctl);
+    if (!a.control.empty()) ctl_ = runctl::Poller(a.control);
     int rc = 0;
     if (a.selftest) {
         rc = selftest();
@@ -1892,6 +1949,7 @@ int Frontend::run(const Args& args) {
                 if (st == rb::Engine::Status::SyncWait) { Sleep((DWORD)(1000.0 / (fps > 1 ? fps : 60.0))); next_deadline = 0; continue; }   // re-anchor: otherwise pacing "catches up" the frame we just waited and time sync does nothing
                 cheats_poll();
                 disc_poll();
+                ctl_poll();
                 do_pacing();
                 rbe->run_frame();
                 frame_no = rbe->cur();
@@ -1967,6 +2025,7 @@ int Frontend::run(const Args& args) {
                 }
                 cheats_poll();
                 disc_poll();
+                ctl_poll();
                 do_pacing();
                 core.run();
                 if (link_active) {
