@@ -26,8 +26,7 @@ struct Settings {
     bool fullscreen = false;           // start games fullscreen where the runner supports it
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start
-    bool sync_states = false;          // include save states in sync + export
-    bool cloud_saves = false;          // sync saves through the RetroHub account (Worker R2); off by default
+    bool cloud_enabled = true;         // cloud saves v2: automatic through the RetroHub account; false = "Pause cloud sync"
     bool sync_card_dismissed = false;  // "Keep your saves on all your PCs" card on Home was dismissed ("Not now")
     bool smash_save_notice_shown = false;  // the "Using your synced Smash save" toast has been shown once
     std::string vault_dir;             // "" = default (userdata/saves)
