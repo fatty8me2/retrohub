@@ -152,9 +152,15 @@ static void test_wire() {
     CHECK(se.code == "account-daily-limit" && se.retry_after == 3600);
 }
 
+/* Per-process scratch root: parallel ctest runs (and stale dirs from crashed runs) must never share paths. */
+static fs::path scratch_root() {
+    static const fs::path r = fs::temp_directory_path() / ("rhq_cloudc_" + std::to_string((unsigned long)GetCurrentProcessId()));
+    return r;
+}
+
 static void test_queue_and_base() {
     CHECK(backoff_secs(1) == 30 && backoff_secs(2) == 120 && backoff_secs(3) == 600 && backoff_secs(4) == 3600 && backoff_secs(5) == -1);
-    str dir = (fs::temp_directory_path() / "rhq_cloudc_queue").u8string();
+    str dir = (scratch_root() / "queue").u8string();
     fs::remove_all(dir); fs::create_directories(dir);
     str qp = dir + "\\cloud-queue.json";
     CloudQueue q;
@@ -200,7 +206,7 @@ struct Pc {
     str name;
     fs::path root, data, vault;
     explicit Pc(const str& n) : name(n) {
-        root = fs::temp_directory_path() / ("rhq_cloudc_" + n);
+        root = scratch_root() / n;
         fs::remove_all(root);
         data = root / "data"; vault = root / "vault";
         fs::create_directories(data); fs::create_directories(vault);
@@ -245,7 +251,28 @@ static void dump_log() {
     str l = get(fs::u8path(g_last_data) / "cloud_saves.log");
     if (!l.empty()) printf("  --- cloud_saves.log ---\n%s  ---\n", l.c_str());
 }
-static void pump() { cloud_engine_pump(200); }
+/* Runs queued jobs. Jobs the engine deliberately delays by a second or two (e.g. a pull queued at now+1) are waited
+ * for, so the result does not depend on where the wall-clock second boundary falls or on machine load (parallel
+ * ctest). Long backoffs and parked items are NOT waited for - those tests assert they stay queued. */
+static void pump() {
+    cloud_engine_pump(200);
+    for (int spin = 0; spin < 60; spin++) {                       // at most ~6 s
+        str d = cloud_queue_dump();
+        bool soon = false;
+        size_t pos = 0;
+        while (pos < d.size()) {
+            size_t e = d.find(';', pos); if (e == str::npos) break;
+            str item = d.substr(pos, e - pos); pos = e + 1;
+            size_t c = item.rfind(':'); if (c == str::npos) continue;
+            long long at = atoll(item.c_str() + c + 1);
+            long long delta = at - (long long)now_unix();
+            if (at > 0 && delta >= 0 && delta <= 2) soon = true;
+        }
+        if (!soon) break;
+        Sleep(100);
+        cloud_engine_pump(200);
+    }
+}
 static void play(const GameId& g = G) { cloud_game_started(g, SyncMode::ReadWrite); }
 static void exit_game(const GameId& g = G) { cloud_game_exited(g); pump(); }
 
@@ -493,6 +520,30 @@ static void test_conflict() {
     exit_game();
     CHECK(cloud_game(G, &gi) && gi.state == CloudState::Conflict);
     CHECK(g_srv->cur_sha(g_uid, GK, "battery/s.sra") == sha256_hex_file((pc2.game() / "battery" / "s.sra").u8string()) == false);
+}
+
+/* A plain both-sides-edited conflict (no "decide later" involved) must be visible without launching the game:
+ * the background pass flags the game as Conflict with its sides, and the next launch asks. */
+static void test_plain_conflict_surfaces() {
+    printf(" plain conflict surfaces in the background and at next launch\n");
+    Pc pc1("pc1"), pc2("pc2");
+    use(pc1);
+    put(pc1.game() / "battery" / "s.sra", rnd(3000, 11), now_unix() - 5000);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    use(pc2);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();     // pc2 has the base
+    use(pc1);
+    put(pc1.game() / "battery" / "s.sra", rnd(3000, 12), now_unix() - 3000);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();     // cloud moves on
+    use(pc2);
+    put(pc2.game() / "battery" / "s.sra", rnd(3000, 13), now_unix() - 2000);   // pc2 edited too, never launched through the hub
+    cloud_sync_all_now();                                             // hub start / "Sync now": background pass
+    pump();
+    GameCloudInfo gi;
+    CHECK(cloud_game(G, &gi) && gi.state == CloudState::Conflict && gi.local_only == LocalOnlyReason::None && gi.conflicts.size() == 1);
+    CHECK(get(pc2.game() / "battery" / "s.sra") == rnd(3000, 13));      // nothing overwritten
+    PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
+    CHECK(r.action == PrelaunchResult::NeedConflictDecision && r.conflicts.size() == 1);
 }
 
 static void test_states_never_prompt() {
@@ -746,6 +797,7 @@ int main() {
     { int f0 = g_fail; fresh_account(); test_basic_two_pcs(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_offline_retry_resume(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_conflict(); if (g_fail != f0) dump_log(); }
+    { int f0 = g_fail; fresh_account(); test_plain_conflict_surfaces(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_states_never_prompt(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_quota(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_lease_and_readonly(); if (g_fail != f0) dump_log(); }
@@ -754,6 +806,7 @@ int main() {
     { int f0 = g_fail; fresh_account(); test_migration_and_restore(); if (g_fail != f0) dump_log(); }
     cloud_engine_stop();
     srv.stop();
+    { std::error_code ec; fs::remove_all(scratch_root(), ec); }
     CHECK(srv.sig_checks_failed == 0);                              // every request carried a valid RHSIG signature
     if (g_fail) dump_log();
     printf("%d checks, %d failed\n", g_checks, g_fail);

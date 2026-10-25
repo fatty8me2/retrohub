@@ -346,9 +346,14 @@ the key or the identity. There are no cloud-saves endpoints for this (the earlie
   `POST /link/keep {uid, secret, box, salt, iv, ct}` where `box = sha256hex(normalized 12-char code)` (authenticated with the account secret like `/link/create`,
   shares its 5/hour per-account limit). Reply `{ok:true}`; `400 bad-request`, `403 auth`, `429 rate-limited`, `409 code-in-use` (hash belongs to another account).
   One persistent code per account: a new `/link/keep` revokes the previous one; `POST /link/keep {uid, secret, remove:true}` deletes it.
-- A new PC with no identity calls the public `POST /link/redeem {code}` (8 or 12 chars; per-IP limit 20 per 10 minutes) and gets `{salt, iv, ct, username}`,
+- A new PC with no identity calls the public `POST /link/redeem {code}` (8 or 12 chars; brute-force limits below) and gets `{salt, iv, ct, username}`,
   decrypts locally and adopts the identity exactly as after a link redeem. A persistent code is **not** consumed and does not expire; a temporary one still is.
   Losing the code exposes nothing; replacing it does not touch cloud data. Unknown code: `404 {error:"invalid"}`.
+- **Brute-force safety of the account code.** The 12-character code is 31^12 = 2^59.4 combinations (the 8-character temporary code is 31^8 = 2^39.6 but
+  single use and valid 10 minutes). `/link/redeem` is limited three ways: per IP 10 attempts per hour, then that IP is locked out for an hour, doubling on each
+  further strike (cap 24 h; strikes decay after 24 h of quiet); globally 300 FAILED redeems per hour across all IPs, after which every redeem answers 429 until the
+  window ends; and the stored code hash is compared in constant time before any bundle is returned. Both limits answer `429 {error:"rate-limited", retryAfter}` with a
+  `Retry-After` header. At 300 guesses an hour a 2^59 space takes ~10^14 years. Env (optional): `LINK_REDEEM_LIMIT` (10), `LINK_GLOBAL_LIMIT` (300).
 - Cloud data is always keyed by the internal account uid. The visible username maps to the uid and can be renamed without moving any data.
   A PC added with either code kind is the same uid with a new device id, so it needs nothing else to see the cloud saves.
 - `GET /saves/v2/status` no longer has `account.recovery`; the client knows locally whether it has set a persistent code.

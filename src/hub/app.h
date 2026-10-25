@@ -544,6 +544,11 @@ extern bool g_shot_rejoin;      // screenshot aid: draw the disconnected "Rejoin
 void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_no);
 void gc_guest_poll();
 void host_launch_selected();   // the Launch button's body (page_online.cpp); the autotest hook calls it too
+bool shot_net();               // shot.cpp: headless run that may talk to a LOCAL (loopback) server: HUB_SHOT_NET=1 (qa\\username_flows.ps1)
+void userflow_tick();          // userflow.cpp: HUB_USERFLOW scripted username / account / friends flows (headless QA, no-op when unset)
+bool userflow_active();
+bool userflow_done();
+std::string userflow_take_shot();   // intermediate screenshot name requested by the script ("" = none)
 void autotest_tick();          // autotest.cpp: RETROHUB_AUTOTEST room driver (no-op when unset)
 bool autotest_active();
 void autotest_log(const std::string& line);
@@ -707,6 +712,12 @@ void page_saves();
 void settings_label(const char* title, const char* hint = nullptr);
 void page_settings();
 void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
+void account_qa_poll();            // QA hooks (userflow.cpp): the same calls the Account buttons make
+void account_qa_make_code();
+std::string account_qa_code();
+std::string account_qa_err();
+bool account_qa_busy();
+void account_qa_redeem(const std::string& code);
 bool account_redeem_for_wizard();   // setup wizard: code box + sign-in button; true on the frame this PC switched to the other account
 void account_redeem_reset();
 
@@ -714,6 +725,7 @@ void account_redeem_reset();
 /* ---- cloud_ui.cpp: cloud saves v2 UI (codes only against cloud_engine.h) ---- */
 void cloud_ui_tick();        // every frame: engine events -> toasts, cached status
 void cloud_ui_overlays();    // every frame: conflict / lease dialogs, "Getting your save..." strip
+int cloud_ui_conflict_count();  // games whose saves differ between this PC and the cloud (Saves nav badge)
 void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history
 void cloud_ui_shot_init();   // HUB_SHOT_CLOUD_* seeds (screenshots only, no network)
 std::string cloud_ui_pill(const hub::GameEntry& e, ImU32* col);   // tile pill text ("" = none) + colour

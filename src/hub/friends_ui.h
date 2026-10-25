@@ -140,6 +140,9 @@ void un_seed_text();                     // fill the box from the Windows name w
 void un_open_prompt();                   // the "Pick your username" dialog
 void un_open_change();                   // Settings > Account: open the change panel
 bool un_claim_start();                   // claim the name in the box (needs "available")
+void un_qa_type(const std::string& t);   // QA (userflow.cpp): type into the box
+std::string un_qa_status();              // QA: the status line the player sees
+bool un_qa_prompt_open();                // QA: the "Pick your username" dialog is up
 void un_tick();
 void un_on_event(const hubnet::Event& e);
 bool un_picker(const char* id, float width);   // box + live status + suggestions; true on Enter

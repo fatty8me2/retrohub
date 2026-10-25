@@ -10,7 +10,7 @@ $script:holds = @()
 function Start-Worker([int]$port, [string[]]$extra = @()) {
     $json = Join-Path $Scratch "worker$port.json"; $stop = Join-Path $Scratch "worker$port.stop"; $log = Join-Path $Scratch "worker$port.log"
     foreach ($f in @($json, $stop)) { if (Test-Path $f) { Remove-Item $f -Force } }
-    $a = @("scripts/qa_worker.mjs", "--port", $port, "--out", $json, "--stop-file", $stop, "--parent-pid", $PID, "--log", $log, "--accounts", 4) + $extra
+    $a = @("scripts/qa_worker.mjs", "--port", $port, "--out", $json, "--stop-file", $stop, "--parent-pid", $PID, "--log", $log, "--accounts", 4, "--rate-meta", 600) + $extra
     $p = Start-Process node -ArgumentList $a -WorkingDirectory $ServerDir -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput (Join-Path $Scratch "worker$port.out") -RedirectStandardError (Join-Path $Scratch "worker$port.err")
     $script:workers += @{ Pid = $p.Id; Stop = $stop }

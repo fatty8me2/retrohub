@@ -21,6 +21,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <cstdlib>
 #include <chrono>
 #include <filesystem>
 #include <thread>
@@ -49,6 +51,30 @@ static void print_state(const GameId& g) {
     if (!cloud_game(g, &gi)) { std::printf("state=none\n"); return; }
     std::printf("state=%s local_only=%d files_synced=%d files_local_only=%d conflicts=%d cloud_bytes=%lld\n", state_name(gi.state), (int)gi.local_only,
                 gi.files_synced, gi.files_local_only, (int)gi.conflicts.size(), (long long)gi.cloud_bytes);
+}
+
+/* Runs queued jobs, then waits for ones the engine deliberately delays by a second or two (a pull queued at now+1), so the
+ * printed state does not depend on where the wall-clock second boundary falls. Long backoffs / parked items are not waited for. */
+static void drain() {
+    cloud_engine_pump(500);
+    for (int spin = 0; spin < 60; spin++) {
+        const std::string d = cloud_queue_dump();
+        bool soon = false;
+        size_t pos = 0;
+        while (pos < d.size()) {
+            size_t e = d.find(';', pos);
+            if (e == std::string::npos) break;
+            const std::string item = d.substr(pos, e - pos);
+            pos = e + 1;
+            size_t c = item.rfind(':');
+            if (c == std::string::npos) continue;
+            const long long at = std::atoll(item.c_str() + c + 1), delta = at - (long long)std::time(nullptr);
+            if (at > 0 && delta >= 0 && delta <= 2) soon = true;
+        }
+        if (!soon) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        cloud_engine_pump(500);
+    }
 }
 
 int main(int argc, char** argv) {
@@ -139,7 +165,7 @@ int main(int argc, char** argv) {
         }
         touch_game(g.system, g.key, g.key);
         cloud_game_exited(g);
-        cloud_engine_pump(500);
+        drain();
         print_state(g);
     } else if (cmd == "hold" && rest.size() >= 5) {
         GameId g{rest[1], rest[2]};
@@ -152,7 +178,7 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 1200 && !std::filesystem::exists(rest[4]); i++) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         touch_game(g.system, g.key, g.key);
         cloud_game_exited(g);
-        cloud_engine_pump(500);
+        drain();
         print_state(g);
     } else if (cmd == "versions" && rest.size() >= 3) {
         for (auto& pr : cloud_versions(GameId{rest[1], rest[2]})) {
@@ -164,11 +190,11 @@ int main(int argc, char** argv) {
         std::string err;
         bool ok = cloud_restore_version(GameId{rest[1], rest[2]}, rest[3], std::atoi(rest[4].c_str()), &err);
         std::printf("restore ok=%d err=%s\n", (int)ok, err.c_str());
-        cloud_engine_pump(500);
+        drain();
         print_state(GameId{rest[1], rest[2]});
     } else if (cmd == "flush") {
         cloud_wake_queue();                       // "Sync now": retries that were backing off run again
-        cloud_engine_pump(500);
+        drain();
         CloudAccountInfo a = cloud_account();
         std::printf("online=%d queued=%d used=%lld devices=%d queue=%s\n", (int)a.online, a.queued_games, (long long)a.used, a.devices, cloud_queue_dump().c_str());
     } else if (cmd == "resolve" && rest.size() >= 4) {
@@ -176,7 +202,7 @@ int main(int argc, char** argv) {
         const std::string& c = rest[3];
         cloud_resolve_conflict(g, c == "local" ? ConflictChoice::UseLocal : c == "cloud" ? ConflictChoice::UseCloud :
                                   c == "later" ? ConflictChoice::DecideLater : ConflictChoice::UseNewer);
-        cloud_engine_pump(500);
+        drain();
         print_state(g);
     } else if (cmd == "status" && rest.size() >= 3) {
         print_state(GameId{rest[1], rest[2]});

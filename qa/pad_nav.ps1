@@ -92,17 +92,21 @@ $d = Distinct $r.rows
 Check "room page reachable" ($d -ge 3) "distinct=$d"
 
 # 9. Setup wizard, pad only: every step, a name typed on the on-screen keyboard (B deletes there, never goes back), finish
-$typed = "a,shot:w_controller,a,shot:w_games,a,shot:w_name,up,up,a,shot:w_osk," + ((1..12 | ForEach-Object { "b" }) -join ",") + ",down,a,down,a,shot:w_typed,start,shot:w_after,down,down,a,shot:w_done,a"
+$typed = "a,shot:w_controller,a,shot:w_games,a,shot:w_name,up,up,a,shot:w_osk," + ((1..12 | ForEach-Object { "b" }) -join ",") + ",down,a,down,a,right,a,shot:w_typed,start,shot:w_after,down,down,a,shot:w_done,a,a"
 $r = Run "wizard" $typed @{ HUB_SHOT_WIZARD = "welcome"; HUB_SHOT_FAKE_PAD = "1" }
 $rows = @($r.rows)
 $steps = ($rows | Where-Object { $_.tok -eq "a" } | ForEach-Object { $_.wiz }) -join ","
-Check "wizard steps by A only" ($steps -like "1,2,3,*4,-1") $steps
+Check "wizard steps by A only" ($steps -like "1,2,3,*4,5,-1") $steps
 $open = @($rows | Where-Object { $_.tok -eq "a" -and $_.osk -eq 1 })[0]
 Check "A on the name field opens the keyboard" ($null -ne $open -and $open.wiz -eq 3) "no osk row"
 $ob = @($rows | Where-Object { $_.tok -eq "b" -and $_.osk -eq 1 })
 Check "B in the keyboard deletes, never goes back" ($ob.Count -ge 5 -and @($ob | Where-Object { $_.wiz -ne 3 -or $_.page -ne "library" }).Count -eq 0) "rows=$($ob.Count)"
 $st = @($rows | Where-Object { $_.tok -eq "start" })[0]
-Check "Start closes the keyboard with the typed name" ($st.osk -eq 0 -and $st.name -eq "qa" -and $st.wiz -eq 3) "osk=$($st.osk) name=$($st.name) wiz=$($st.wiz)"
+# Name step = the username box (3+ letters; offline here, so "Continue (claim later)" keeps the typed name once Next is pressed)
+$ty = @($rows | Where-Object { $_.tok -eq "shot:w_typed" })[0]
+Check "Start closes the keyboard with the typed name" ($st.osk -eq 0 -and $ty.oskt -eq "qas" -and $st.wiz -eq 3) "osk=$($st.osk) typed=$($ty.oskt) wiz=$($st.wiz)"
+$dn1 = @($rows | Where-Object { $_.tok -eq "shot:w_done" })[0]
+Check "Next (claim later) keeps the typed name and moves on" ($dn1.name -eq "qas" -and $dn1.wiz -eq 4) "name=$($dn1.name) wiz=$($dn1.wiz)"
 $field = @($rows | Where-Object { $_.tok -eq "up" })[-1].nav
 Check "focus returns to the name field" ($st.nav -eq $field -and $st.nav -ne "00000000") "nav=$($st.nav) field=$field"
 $dn = @($rows | Where-Object { $_.tok -eq "down" })[-2]

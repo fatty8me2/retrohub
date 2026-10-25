@@ -315,7 +315,7 @@ bool link_redeem_code(const std::string& server, const std::string& code, Identi
     std::string e;
     if (!http_post(server, "/link/redeem", "{\"code\":\"" + c + "\"}", &r, &e)) { *err = e; return false; }
     if (r.status == 409) { *err = "The other PC has not finished uploading yet. Try again in a moment."; return false; }
-    if (r.status == 429) { *err = "Too many attempts. Wait a few minutes."; return false; }
+    if (r.status == 429) { *err = "Too many attempts. For safety, wait about an hour and try again."; return false; }
     if (r.status == 404) { *err = "Code is wrong, expired or already used."; return false; }
     Json j;
     if (r.status != 200 || !json_parse(r.body, &j)) { *err = "redeem failed: " + server_error(r); return false; }

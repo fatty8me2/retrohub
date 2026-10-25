@@ -38,7 +38,25 @@ int main() {
 
     CHECK(account_headline(on, true).text == "Your saves are backed up");
     CHECK(account_headline(off, true).tone == Tone::Muted);
-    CHECK(account_headline(on, false).text == "Cloud backup is paused");
+    CHECK(account_headline(on, false).text == "Cloud sync is paused");
+    { CloudAccountInfo q = on; q.queued_games = 3; CHECK(account_headline(q, false).text == "Cloud sync is paused - 3 games waiting"); q.queued_games = 1; CHECK(paused_text(1) == "Cloud sync is paused - 1 game waiting"); }
+    {
+        std::vector<GameCloudInfo> v(3);
+        v[0].state = CloudState::Synced; v[1].state = CloudState::Conflict; v[2].state = CloudState::Conflict;
+        CHECK(conflict_count(v) == 2 && conflict_banner(2).find("2 games have saves that differ") == 0 && conflict_banner(1).find("1 game has") == 0 && conflict_banner(0).empty());
+        v[1].local_only = LocalOnlyReason::None; CHECK(game_chip(v[1], on).text == "Conflict");   // plain conflict, not just "decide later"
+    }
+    {
+        std::vector<CatalogName> cat = {{"oot", "The Legend of Zelda: Ocarina of Time", "n64"}, {"ootmq", "Zelda: Ocarina of Time Master Quest", "n64"},
+                                         {"mm", "The Legend of Zelda: Majora's Mask", "n64"}, {"mp1", "Mario Party", "n64"}};
+        CHECK(friendly_title("Mario Kart 64", "n64", "n64:abc", cat, "Nintendo 64") == "Mario Kart 64");
+        CHECK(friendly_title("zelda-ocarina", "n64", "zelda-ocarina", cat, "Nintendo 64") == "The Legend of Zelda: Ocarina of Time");
+        CHECK(friendly_title("", "n64", "mp1", cat, "Nintendo 64") == "Mario Party");
+        CHECK(friendly_title("", "gba", "gba:bpee-1a2b3c4d", cat, "Game Boy Advance") == "Game Boy Advance game");
+        CHECK(friendly_title("", "n64", "3f2a9c1e8b7d4a5c", cat, "") == "Game from another PC");
+        CHECK(friendly_title("", "n64", "some-obscure-game", cat, "Nintendo 64") == "Some Obscure Game");
+        CHECK(friendly_title("", "n64", "zelda-ocarina", cat, "x").find("zelda-") == std::string::npos);
+    }
     CloudAccountInfo att = on; att.needs_attention = true; CHECK(account_headline(att, true).tone == Tone::Bad);
     CHECK(account_headline(CloudAccountInfo(), true).text.find("Checking") == 0);
 

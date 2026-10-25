@@ -26,16 +26,6 @@ ImU32 chip_bg(Tone t) { return t == Tone::Muted ? (ImU32)ui::PANEL3 : ui::mix(to
 
 void draw_chip(const Chip& c) { ui::pill(c.text.c_str(), chip_bg(c.tone), c.tone == Tone::Muted ? (ImU32)ui::TEXT : IM_COL32_WHITE); }
 
-std::string pretty_key(const std::string& k) {
-    std::string o;
-    bool up = true;
-    for (char c : k) {
-        if (c == '-' || c == '_') { o += ' '; up = true; continue; }
-        o += up ? (char)std::toupper((unsigned char)c) : c;
-        up = false;
-    }
-    return o;
-}
 
 /* Cached engine state; the engine calls are cheap but the list is copied, so refresh a few times a second. */
 struct Cache {
@@ -44,6 +34,7 @@ struct Cache {
     std::vector<hs::GameCloudInfo> games;
     std::map<std::string, std::string> titles;   // gkey -> title
     bool applied_pause = false;
+    int conflicts_told = 0;
     size_t vault_n = (size_t)-1;
 } C;
 
@@ -60,12 +51,26 @@ void refresh_cache(bool force = false) {
     }
     std::sort(C.games.begin(), C.games.end(), game_before);
 }
-std::string title_of(const hs::GameId& id) {
-    for (auto& e : A.lib) if (e.key == id.key) return e.title;
-    auto it = C.titles.find(id.gkey());
-    return it != C.titles.end() ? it->second : pretty_key(id.key);
-}
 std::string system_label(const hs::GameId& id) { return hub::system_name(hub::system_from_short(id.system)); }
+const std::vector<CatalogName>& catalog_names() {
+    static std::vector<CatalogName> v;
+    if (v.empty()) for (auto& g : hub::catalog()) v.push_back({g.id, g.title, g.system});
+    return v;
+}
+/* Library title, else the vault's, else the catalog / a "<System> game" fallback. Never a raw key like "zelda-ocarina". */
+std::string title_of(const hs::GameId& id) {
+    std::string known;
+    for (auto& e : A.lib) if (e.key == id.key) { known = e.title; break; }
+    if (known.empty()) { auto it = C.titles.find(id.gkey()); if (it != C.titles.end()) known = it->second; }
+    return friendly_title(known, id.system, id.key, catalog_names(), system_label(id));
+}
+/* Engine toasts are written with the raw game key; swap in the title. */
+std::string retitle(std::string text, const hs::GameId& id) {
+    if (id.key.empty()) return text;
+    const std::string t = title_of(id);
+    for (size_t p = 0; (p = text.find(id.key, p)) != std::string::npos; p += t.size()) text.replace(p, id.key.size(), t);
+    return text;
+}
 int64_t now_s() { return (int64_t)std::time(nullptr); }
 
 /* ---- async helpers (never block the UI thread; detached so exit never waits on the network) ---- */
@@ -125,7 +130,7 @@ void quota_bar(float w) {
 void account_panel() {
     const bool on = A.st.cloud_enabled;
     begin_panel("cloud_acct");
-    section_title(A.st.name.empty() ? std::string("Cloud saves") : "Cloud saves for " + A.st.name);   // TODO(usernames-c): use the unique username field once merged
+    section_title(A.st.username_claimed && !A.st.name.empty() ? "Cloud saves for " + A.st.name : std::string("Cloud saves"));   // the unique username, once claimed
     Chip head = account_headline(C.acct, on);
     ImGui::PushFont(ui::F.h2);
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tone_col(head.tone == Tone::Muted ? Tone::Muted : head.tone)));
@@ -265,7 +270,7 @@ void games_panel() {
         ImGui::TextDisabled(!C.acct.known ? "Checking your cloud saves..." : !C.acct.online ? "Offline: your cloud games show up here once you are back online."
                                                                                         : "Nothing yet. Play a game and its saves are backed up here automatically.");
     } else if (!A.st.cloud_enabled) {
-        ImGui::TextDisabled("Cloud sync is paused. Turn it back on above to see your games here.");
+        ImGui::TextDisabled("%s. Turn it back on above to see your games here.", paused_text(C.acct.queued_games).c_str());
     }
     const int64_t now = now_s();
     if (!A.st.cloud_enabled) { end_panel(); return; }   // paused: do not list rows that would all say "Waiting to sync"
@@ -324,12 +329,31 @@ void cloud_ui_tick() {
     int guard = 8;
     while (guard-- > 0 && hs::cloud_pop_event(&ev)) {
         ToastSpec t = event_toast(ev);
-        if (t.show) push_toast(t.text, t.good ? COL_GOOD : COL_WARN, t.secs);
+        if (t.show) push_toast(retitle(t.text, ev.game), t.good ? COL_GOOD : COL_WARN, t.secs);
+        if (ev.kind == hs::CloudEvent::ConflictFound) C.conflicts_told = hubui::cloudui::conflict_count(C.games);   // that toast already said it
+    }
+    if (C.acct.known && A.st.cloud_enabled) {   // a conflict found in the background (not at a launch): say so once per new one
+        const int n = hubui::cloudui::conflict_count(C.games);
+        if (n > C.conflicts_told && A.page != Page::Saves) push_toast(conflict_banner(n) + " Open Saves.", COL_WARN, 9.0);
+        C.conflicts_told = n;
     }
 }
 
+int cloud_ui_conflict_count() { return A.st.cloud_enabled ? hubui::cloudui::conflict_count(C.games) : 0; }
+
 void cloud_ui_saves_page() {
     cloud_ui_tick();
+    if (const int nc = cloud_ui_conflict_count()) {   // plain both-sides-edited conflicts, not only "decide later"
+        begin_panel("cloud_conflicts");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(COL_BAD));
+        ImGui::PushFont(ui::F.bold);
+        ImGui::TextWrapped("%s", conflict_banner(nc).c_str());
+        ImGui::PopFont();
+        ImGui::PopStyleColor();
+        text_wrapped_disabled("Nothing was overwritten. Use Resolve below; you are also asked when you start the game.");
+        end_panel();
+        ImGui::Dummy(ImVec2(0, 2 * S));
+    }
     account_panel();
     ImGui::Dummy(ImVec2(0, 4 * S));
     games_panel();

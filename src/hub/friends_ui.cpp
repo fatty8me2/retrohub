@@ -426,9 +426,18 @@ std::string fr_lobby_ident_msg() {
 }
 
 void fr_start() {
-    if (g_headless || FR.fake) return;
+    if ((g_headless && !shot_net()) || FR.fake) return;
     FR.cli.set_paths(hub::data_dir(), hub::saves::vault_dir());
     FR.cli.set_auto_friend(A.st.auto_friend);
+    /* Headless QA with HUB_SHOT_NET talks to the LOCAL worker only: pass it explicitly (start("") would mean the production default) and
+     * refuse anything that is not loopback, whatever server_url() says. */
+    if (g_headless) {
+        const std::string srv = server_url();
+        if (!shot_net() || hubnet::is_production_server(srv)) return;
+        FR.started = FR.cli.start(srv, A.st.name);
+        FR.last_name = A.st.name;
+        return;
+    }
     FR.started = FR.cli.start("", A.st.name);
     FR.last_name = A.st.name;
 }
@@ -442,7 +451,7 @@ void fr_run_pending_join() {
 
 /* After a save sync/import: a vault identity older than ours is the user's original account; adopt it. */
 void fr_adopt_identity_after_vault_change() {
-    if (g_headless || FR.fake) return;
+    if ((g_headless && !shot_net()) || FR.fake) return;
     if (FR.started) { FR.cli.adopt_vault_identity_if_older(); cloud_account_changed(); return; }   // toast comes from the IdentityAdopted event
     hubnet::Identity id;
     if (hubnet::identity_adopt_vault_if_older(hub::data_dir(), hub::saves::vault_dir(), &id)) {
