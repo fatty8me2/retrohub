@@ -128,7 +128,8 @@ foreach ($pg in @(@("controllers", "rb,rb,rb"), @("settings", "rb,rb,rb,rb"), @(
 
 # 12. PlayStation BIOS prompts: A opens the pad folder browser, Back closes it, B closes the prompt
 foreach ($b in @("ps1bios", "ps2bios")) {
-  $r = Run "bios_$b" "shot:b0,down,left,a,shot:b_browser,back,shot:b_prompt,b,shot:b_closed" @{ HUB_SHOT_EMU = $b }
+  $nav = if ($b -eq "ps1bios") { "a" } else { "down,left,a" }   # PS1 prompt focuses Choose on open (OpenBIOS button added); PS2 needs down,left
+  $r = Run "bios_$b" "shot:b0,$nav,shot:b_browser,back,shot:b_prompt,b,shot:b_closed" @{ HUB_SHOT_EMU = $b }
   $rows = @($r.rows)
   $a = @($rows | Where-Object { $_.tok -eq "a" })[0]
   Check "${b}: A opens the folder browser" ($a.osk -eq 1) "osk=$($a.osk)"
