@@ -228,6 +228,6 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
 }
 
 bool ShotDriver::ready() const {
-    return el >= secs && pad_i > pad_seq.size() && pad_key == ImGuiKey_None && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
+    return el >= secs && (pad_seq.empty() || pad_i > pad_seq.size()) && pad_key == ImGuiKey_None && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
            (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5));
 }

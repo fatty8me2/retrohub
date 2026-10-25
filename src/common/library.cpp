@@ -969,6 +969,30 @@ bool is_7z_file(const std::string& path) {
     return std::memcmp(h.data(), magic, 6) == 0;
 }
 
+bool is_rar_file(const std::string& path) {
+    std::vector<uint8_t> h;
+    if (!read_at(utf8_path(path), 0, 7, &h) || h.size() < 7) return false;
+    static const uint8_t rar4[7] = {'R', 'a', 'r', '!', 0x1A, 0x07, 0x00};   // RAR 1.5-4.x
+    return std::memcmp(h.data(), rar4, 6) == 0 && (h[6] == 0x00 || h[6] == 0x01);   // 0x01 = RAR5
+}
+
+bool archive_sig_ok(const std::string& path) {
+    std::string ext = ascii_lower(path_utf8(utf8_path(path).extension()));
+    if (ext == ".7z" || ext == ".rar") return is_7z_file(path) || is_rar_file(path);   // sniffed: a 7z named .rar (and the reverse) is still read by bsdtar
+    return true;
+}
+
+bool archive_truncated(const std::string& path) {
+    std::vector<uint8_t> h;
+    std::error_code ec;
+    uintmax_t size = fs::file_size(utf8_path(path), ec);
+    static const uint8_t magic[6] = {'7', 'z', 0xBC, 0xAF, 0x27, 0x1C};
+    if (ec || !read_at(utf8_path(path), 0, 32, &h) || h.size() < 32 || std::memcmp(h.data(), magic, 6) != 0) return false;
+    uint64_t off = 0, len = 0;
+    for (int i = 7; i >= 0; --i) { off = off << 8 | h[12 + i]; len = len << 8 | h[20 + i]; }
+    return 32 + off + len > size;   // the end header lies beyond the end of the file: an unfinished copy or download
+}
+
 std::vector<ArchiveEntry> parse_tar_listing(const std::string& text) {
     std::vector<ArchiveEntry> out;
     size_t pos = 0;
@@ -1163,6 +1187,8 @@ bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, bool p
     return false;
 }
 
+const char* const kTruncatedMsg = "this archive is incomplete (its end is missing, so a copy or download did not finish). Copy or download it again";
+
 fs::path gc_unpack_dir(const GameEntry& e) { return lib_dir() / L"rom-cache" / (e.system == System::PS2 ? L"ps2" : L"gc") / utf8_path(sanitize_key(e.key)); }
 
 } // namespace
@@ -1186,7 +1212,7 @@ std::string gc_serial_for_name(const std::string& name) {
 
 static bool id_gc_archive(const fs::path& arch, GameEntry* e) {
     std::string ext = ascii_lower(path_utf8(arch.extension()));
-    if (ext == ".7z" && !is_7z_file(path_utf8(arch))) return false;
+    if (!archive_sig_ok(path_utf8(arch))) return false;
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
     if (!list_archive(path_utf8(arch), &l) || !find_gc_entry(l, &ent)) return false;
@@ -1232,6 +1258,45 @@ static bool id_gc_archive(const fs::path& arch, GameEntry* e) {
     return true;
 }
 
+/* ---- Identify a disc archive by name (no archive content is read) ----
+ * 1. a serial in the archive / entry name ("[SCUS-94570]") that one of the two bundled Redump title databases knows;
+ * 2. the name (without extension / region tags) equal to a database title: PS1 titles carry their region, PS2 titles are matched with the
+ *    region tag of the name against the serial prefix;
+ * 3. when both consoles' databases match, the folder the archive sits in ("GamesPS1" / "GamesPS2") breaks the tie, and only then. */
+struct NameId { bool found = false; bool tiebreak = false; System sys = System::PS1; std::string serial; };
+static NameId id_disc_by_name(const std::string& archive_path, const std::string& entry_name) {
+    NameId r;
+    const fs::path ap = utf8_path(archive_path);
+    std::string low_dir = ascii_lower(path_utf8(ap.parent_path()));
+    int hint = 0;   // 1 = PS1 folder, 2 = PS2 folder (innermost wins)
+    {
+        size_t p1 = low_dir.rfind("ps1"), p2 = low_dir.rfind("ps2"), px = low_dir.rfind("psx");
+        if (px != std::string::npos && (p1 == std::string::npos || px > p1)) p1 = px;
+        if (p1 != std::string::npos || p2 != std::string::npos) hint = (p2 == std::string::npos || (p1 != std::string::npos && p1 > p2)) ? 1 : 2;
+    }
+    std::string stems[2] = {path_utf8(ap.stem()), entry_name.empty() ? std::string() : path_utf8(utf8_path(entry_name).stem())};
+    for (const std::string& st : stems) {
+        if (st.empty()) continue;
+        std::string p1s, p2s;
+        std::string sn = disc::serial_from_filename(st);
+        if (!sn.empty()) {
+            if (!ps1::title_for_serial(sn).empty()) p1s = sn;
+            if (!hub::ps2::title_for(sn).empty()) p2s = sn;
+        }
+        if (p1s.empty() && p2s.empty()) {
+            p1s = ps1::serial_for_name(st);
+            p2s = hub::ps2::serial_for_name(st);
+        }
+        if (p1s.empty() && p2s.empty()) continue;
+        r.tiebreak = !p1s.empty() && !p2s.empty();
+        r.serial = (p1s.empty() ? p2s : p2s.empty() ? p1s : hint == 2 ? p2s : p1s);
+        r.sys = (p1s.empty() ? System::PS2 : p2s.empty() ? System::PS1 : hint == 2 ? System::PS2 : System::PS1);
+        r.found = true;
+        return r;
+    }
+    return r;
+}
+
 static void fill_ps2(const hub::ps2::Ident& id, const fs::path& name_src, GameEntry* e) {
     e->system = System::PS2;
     e->serial = id.serial;
@@ -1249,7 +1314,7 @@ static bool id_ps2_file(const fs::path& p, GameEntry* e) {
 /* A PS2 image inside a .zip/.7z: the first 4 MB are streamed to find SYSTEM.CNF (plain .iso); .chd/.cso use the serial in the name. */
 static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
     std::string ext = ascii_lower(path_utf8(arch.extension()));
-    if (ext == ".7z" && !is_7z_file(path_utf8(arch))) return false;
+    if (!archive_sig_ok(path_utf8(arch))) return false;
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
     if (!list_archive(path_utf8(arch), &l) || !find_gc_entry(l, &ent, true)) return false;
@@ -1284,9 +1349,9 @@ static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
         if (!ok && id.ps1) return false;
     }
     if (!ok) {
-        std::string s = hub::ps2::serial_from_filename(path_utf8(arch.filename()));
-        if (s.empty()) s = hub::ps2::serial_from_filename(ent.name);
-        if (s.empty() || hub::ps2::title_for(s).empty()) return false;
+        NameId n = id_disc_by_name(path_utf8(arch), ent.name);
+        if (!n.found || n.sys != System::PS2) return false;
+        std::string s = n.serial;
         id = hub::ps2::Ident();
         id.serial = s;
         id.title = hub::ps2::title_for(s);
@@ -1344,7 +1409,7 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
     if (!fs::exists(tar_exe())) { *err = "Windows' tar.exe was not found (needs Windows 10 version 1803 or newer)"; return false; }
-    if (!list_archive(e.path, &l)) { *err = "cannot read the archive"; return false; }
+    if (!list_archive(e.path, &l)) { *err = archive_truncated(e.path) ? kTruncatedMsg : "cannot read the archive"; return false; }
     if (!find_gc_entry(l, &ent, e.system == System::PS2)) { *err = "no disc image inside the archive"; return false; }
     fs::path dir = gc_unpack_dir(e);
     std::error_code ec;
@@ -1401,6 +1466,29 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
 static bool identify_rom(const fs::path& p, const fs::path& name_src, GameEntry* out);
 static bool id_ps1_archive(const fs::path& arch, GameEntry* e);
 
+/* An archive whose directory cannot be read (an unfinished download, an unsupported method) still shows up when its name is exactly a Redump /
+ * PS2 title: Play then explains what is wrong with the archive. */
+static bool id_disc_archive_by_name_only(const fs::path& arch, GameEntry* e) {
+    NameId n = id_disc_by_name(path_utf8(arch), std::string());
+    if (!n.found) return false;
+    GameEntry g;
+    g.system = n.sys;
+    g.serial = n.serial;
+    if (n.sys == System::PS1) {
+        g.key = "ps1:" + sanitize_key(n.serial);
+        g.title = ps1_display_title(ps1::title_for_serial(n.serial), true);
+    } else {
+        hub::ps2::Ident id;
+        id.serial = n.serial;
+        id.title = hub::ps2::title_for(n.serial);
+        fill_ps2(id, arch, &g);
+    }
+    g.path = path_utf8(arch);
+    g.issue = "extract";
+    *e = std::move(g);
+    return true;
+}
+
 bool identify_game(const std::string& path, GameEntry* out) {
     if (!out) return false;
     std::error_code ec;
@@ -1434,9 +1522,12 @@ bool identify_game(const std::string& path, GameEntry* out) {
         out->save_stem = path_utf8(inner.stem());   // per-game files (DS .srm) keep the inner name's stem
         return true;
     }
-    if (ext == ".7z") {
+    if (ext == ".7z" || ext == ".rar") {
         GameEntry g;
-        if (!id_gc_archive(p, &g) && !id_ps1_archive(p, &g) && !id_ps2_archive(p, &g)) return false;
+        if (!id_gc_archive(p, &g) && !id_ps1_archive(p, &g) && !id_ps2_archive(p, &g)) {
+            std::vector<ArchiveEntry> l;
+            if (!archive_sig_ok(path_utf8(p)) || list_archive(path_utf8(p), &l) || !id_disc_archive_by_name_only(p, &g)) return false;
+        }
         g.size = size;
         g_identify_calls.fetch_add(1);
         *out = std::move(g);
@@ -1540,14 +1631,14 @@ std::string ps1_stamp(const GameEntry& e, const std::string& entry) {
 
 static bool id_ps1_archive(const fs::path& arch, GameEntry* e) {
     std::string ext = ascii_lower(path_utf8(arch.extension()));
-    if (ext == ".7z" && !is_7z_file(path_utf8(arch))) return false;
+    if (!archive_sig_ok(path_utf8(arch))) return false;
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
     uint64_t total = 0;
     if (!list_archive(path_utf8(arch), &l) || !find_ps1_entry(l, &ent, &total)) return false;
-    std::string serial = ps1::serial_for_name(path_utf8(arch.stem()));
-    if (serial.empty()) serial = ps1::serial_for_name(path_utf8(utf8_path(ent.name).stem()));
-    if (serial.empty()) return false;
+    NameId n = id_disc_by_name(path_utf8(arch), ent.name);
+    if (!n.found || n.sys != System::PS1) return false;
+    std::string serial = n.serial;
     GameEntry g;
     g.system = System::PS1;
     g.serial = serial;
@@ -1587,11 +1678,24 @@ static uint64_t ps1_unpacked_size(const GameEntry& e) {
     return list_archive(e.path, &l) && find_ps1_entry(l, &ent, &total) ? total : 0;
 }
 
+/* The unpacked disc is read: SYSTEM.CNF must agree with where the archive was filed (BOOT = PS1, BOOT2 = PS2). A mismatch removes the unpacked
+ * copy and says so. A disc that cannot be probed (.pbp, .m3u, unreadable) is allowed through. */
+static bool confirm_extracted_disc(const GameEntry& e, const std::string& path, std::string* err) {
+    disc::Info info;
+    if (!disc::probe_file(path, &info) || info.kind == disc::Cnf::None) return true;
+    bool want_ps2 = e.system == System::PS2;
+    if ((info.kind == disc::Cnf::Ps2) == want_ps2) return true;
+    std::error_code ec;
+    fs::remove_all((e.system == System::PS1 ? ps1_unpack_dir(e) : gc_unpack_dir(e)), ec);
+    *err = std::string("the disc inside is a PlayStation ") + (want_ps2 ? "1" : "2") + " game (" + info.serial + "), not PlayStation " + (want_ps2 ? "2" : "1") + ". Rescan after renaming the archive";
+    return false;
+}
+
 static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, uint64_t)>& progress, std::string* out_path, std::string* err) {
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
     uint64_t total = 0;
-    if (!list_archive(e.path, &l)) { *err = "cannot read the archive"; return false; }
+    if (!list_archive(e.path, &l)) { *err = archive_truncated(e.path) ? kTruncatedMsg : "cannot read the archive"; return false; }
     if (!find_ps1_entry(l, &ent, &total)) { *err = "no PlayStation disc image inside the archive"; return false; }
     fs::path dir = ps1_unpack_dir(e);
     std::error_code ec;
@@ -1712,8 +1816,14 @@ bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint
                      std::string* out_path, std::string* err) {
     std::string dummy;
     if (!err) err = &dummy;
-    if (e.system == System::PS1) return ps1_extract(e, progress, out_path, err);
-    if (e.system == System::GC || e.system == System::PS2) return gc_extract(e, progress, out_path, err);
+    if (e.system == System::PS1 || e.system == System::PS2) {
+        std::string got;
+        if (!(e.system == System::PS1 ? ps1_extract(e, progress, &got, err) : gc_extract(e, progress, &got, err))) return false;
+        if (!confirm_extracted_disc(e, got, err)) return false;
+        if (out_path) *out_path = got;
+        return true;
+    }
+    if (e.system == System::GC) return gc_extract(e, progress, out_path, err);
     fs::path zip = utf8_path(e.path);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
@@ -1958,11 +2068,11 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
 
 bool is_archive_file(const std::string& path) {
     std::string ext = ascii_lower(path_utf8(fs::path(utf8_path(path)).extension()));
-    return ext == ".zip" || ext == ".7z";
+    return ext == ".zip" || ext == ".7z" || ext == ".rar";
 }
 
 bool scan_extension(const std::string& ext) {
-    static const char* const kExt[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".7z",
+    static const char* const kExt[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".7z", ".rar",
                                        ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip", ".nds",
                                        ".3ds", ".cci", ".cia", ".cxi", ".3dsx", ".zcci", ".zcia", ".zcxi", ".z3dsx",
                                        ".wua", ".wud", ".wux", ".rpx", ".chd", ".cso", ".cue",
