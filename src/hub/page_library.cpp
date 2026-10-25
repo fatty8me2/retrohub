@@ -69,6 +69,7 @@ void home_shelves() {
         });
         ImGui::Dummy(ImVec2(0, sp(1.f)));
     }
+    stats_ui_card();   // Your stats, below the shelves
     ImGui::Dummy(ImVec2(0, sp(7.f)));   // room so the last shelf's covers clear the footer when scrolled to the end
 }
 
@@ -607,6 +608,7 @@ void draw_details_modal() {
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     cloud_ui_game_line(e);
+    if (!native) history_ui_details_section(e);
     gs_draw_game_section(e);
     ImGui::Dummy(ImVec2(0, sp(2.f)));
     if (local_players_for(e) >= 2) {   // offline local multiplayer: who holds which port before Play
@@ -793,7 +795,8 @@ void page_library() {
         end_panel();
         ImGui::Dummy(ImVec2(0, sp(1.f)));
     }
-    if (!A.st.rom_folders.empty()) sync_card();
+    // The old "sync through a folder" Home card is gone: cloud saves are automatic (v1.25). Folder sync stays
+    // an optional extra on the Saves page.
 
     const hub::GameEntry* sel = find_entry(A.sel_game);
     if (sel) {

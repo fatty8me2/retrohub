@@ -363,15 +363,12 @@ void fr_notify(bool invite, const std::string& uid, const std::string& name, con
     FR.notifs.push_back(n);
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
+    if (invite) group_note_invite(uid, name, inv);
     if (invite && A.proc && !g_headless) hubtoast::notify_invite(hubtoast::system_notifier(), A.st.notify_in_game, true, name, inv.game_title, inv.lobby_code);
     if (invite && A.proc) flash_taskbar();   // a game is in front: blink the taskbar button, never take focus
 }
 int fr_pending_count() {
-    int n = (int)fr_incoming().size();
-    long long now = wall_ms();
-    for (auto& x : FR.notifs) if (x.invite && !x.done && !hubui::invite_expired(x.inv.expires_at, now)) ++n;
-    for (auto& x : FR.notifs) if (x.ask && !x.done) ++n;
-    return n;
+    return group_unread();   // the bell badge: unread history entries (requests and invites included)
 }
 bool fr_panel_shown() { return A.st.show_friends && FR.panel_t > 0.5f; }
 
@@ -522,6 +519,7 @@ void fr_tick() {
 /* ---------- fake data for screenshots ---------- */
 void fr_fake_init() {
     FR.fake = true;
+    group_fake_seed();
     long long now = wall_ms();
     auto mk = [&](const char* uid, const char* name, hubnet::PresenceState st, const char* gid, const char* gt, const char* sys, const char* lobby,
                   bool joinable, int pl, int mx, long long upd) {
@@ -670,10 +668,12 @@ void fr_accept(const std::string& uid, const std::string& name) {
     if (FR.fake) {
         for (size_t i = 0; i < FR.f_in.size(); ++i) if (FR.f_in[i].uid == uid) { FR.f_in.erase(FR.f_in.begin() + i); break; }
     } else FR.cli.accept(uid);
+    group_resolve(hubui::group::Kind::FriendRequest, uid);
     set_toast("You and " + name + " are now friends.");
 }
 void fr_join_notif(Notif& n) {
     fr_join_lobby(n.inv.lobby_code, n.inv.game_id, n.inv.game_title, n.name);
+    group_resolve(hubui::group::Kind::Invite, n.uid, n.inv.lobby_code);
     n.done = true;
 }
 
@@ -697,6 +697,7 @@ void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet
     FR.notifs.push_back(n);
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
+    group_note_ask_join(uid, name, fr_in_my_room() ? A.code : std::string(), game.game_title);   // bell history: stays actionable
     if (A.proc) flash_taskbar();
 }
 void fr_ask_accept(Notif& n) {
@@ -822,45 +823,7 @@ void fr_top_bar() {
         ImGui::TextUnformatted("Notifications");
         ImGui::PopFont();
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        long long now = wall_ms();
-        bool any = false;
-        for (auto& n : FR.notifs) {
-            if (!n.invite || n.done) continue;
-            if (hubui::invite_expired(n.inv.expires_at, now) && now - n.inv.expires_at > 5 * 60 * 1000) { n.done = true; continue; }
-            any = true;
-            ImGui::PushID(n.id);
-            int a = fr_invite_card(n, cw, -1.f, false);
-            if (a == 1) { fr_join_notif(n); ImGui::CloseCurrentPopup(); }
-            if (a == 2) n.done = true;
-            ImGui::PopID();
-            ImGui::Dummy(ImVec2(0, sp(0.75f)));
-        }
-        for (auto& n : FR.notifs) {
-            if (!n.ask || n.done) continue;
-            if (ImGui::GetTime() - n.t0 > 1800.0) { n.done = true; continue; }
-            any = true;
-            ImGui::PushID(n.id);
-            int a = fr_request_card(n.name, "They will get an invite to your room", cw, -1.f, false, "Decline", hubui::ask_toast_title(n.name, n.inv.game_title), "Accept");
-            if (a == 1) { fr_ask_accept(n); ImGui::CloseCurrentPopup(); }
-            if (a == 2) n.done = true;
-            ImGui::PopID();
-            ImGui::Dummy(ImVec2(0, sp(0.75f)));
-        }
-        std::vector<hubnet::Request> in = fr_incoming();
-        for (auto& r : in) {
-            any = true;
-            ImGui::PushID(r.uid.c_str());
-            int a = fr_request_card(r.name, r.code, cw, -1.f, false, "Decline");
-            if (a == 1) fr_accept(r.uid, r.name);
-            if (a == 2) { if (!FR.fake) FR.cli.decline(r.uid); else FR.f_in.clear(); }
-            ImGui::PopID();
-            ImGui::Dummy(ImVec2(0, sp(0.75f)));
-        }
-        if (!any) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-            ImGui::TextUnformatted("Nothing new. Invites and friend requests show up here.");
-            ImGui::PopStyleColor();
-        }
+        group_draw_bell_list(cw);
         ImGui::EndPopup();
     }
     ImGui::PopStyleColor();
@@ -979,6 +942,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         ImGui::Separator();
         if (ImGui::MenuItem("Remove friend")) fr_confirm("remove", f);
         if (ImGui::MenuItem("Block")) fr_confirm("block", f);
+        { std::string lt = group_together_text(f.uid); if (!lt.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", lt.c_str()); } }   // last entry: keeps the other items' click positions
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar();

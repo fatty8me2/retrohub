@@ -273,9 +273,18 @@ void games_panel() {
         ImGui::TextDisabled("%s. Turn it back on above to see your games here.", paused_text(C.acct.queued_games).c_str());
     }
     const int64_t now = now_s();
-    if (!A.st.cloud_enabled) { end_panel(); return; }   // paused: do not list rows that would all say "Waiting to sync"
+    if (!A.st.cloud_enabled) { end_panel(); return; }
+    static bool only_attn = false;
+    const int attn = attention_count(C.games);
+    if (!C.games.empty()) {
+        if (button(only_attn ? "Show all games" : ("Needs attention (" + std::to_string(attn) + ")").c_str(), ImVec2(0, 0), only_attn || attn > 0)) only_attn = !only_attn;
+        if (attn > 0) { ImGui::SameLine(); pill((std::to_string(attn) + (attn == 1 ? " game needs you" : " games need you")).c_str(), ui::mix(ui::BAD, IM_COL32_BLACK, 0.5f)); }
+        if (only_attn && attn == 0) ImGui::TextDisabled("Nothing needs attention. All your saves are in step.");
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    }   // paused: do not list rows that would all say "Waiting to sync"
     for (size_t i = 0; i < C.games.size(); ++i) {
         const hs::GameCloudInfo& g = C.games[i];
+        if (only_attn && !needs_attention(g)) continue;
         ImGui::PushID(g.id.gkey().c_str());
         if (i) { ImGui::Separator(); }
         ImGui::Dummy(ImVec2(0, sp(0.25f)));
@@ -309,6 +318,8 @@ void games_panel() {
             if (open) g_open.clear();
             else { g_open = g.id.gkey(); open_history(g.id); }
         }
+        ImGui::SameLine();
+        if (button("Save history", ImVec2(0, 0), false, true)) history_ui_open(g.id.system, g.id.key);
         if (open) history_block(g);
         ImGui::PopID();
     }

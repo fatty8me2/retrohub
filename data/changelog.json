@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.25.1",
+      "date": "2026-10-25",
+      "title": "Cloud saves, without the folder talk",
+      "new": [],
+      "improved": [
+        "Removed the old \"keep your saves on all your PCs\" folder card from Home: cloud saves already do that automatically",
+        "Copying saves to your own folder is now a collapsed Advanced option on the Saves page"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.25.0",
       "date": "2026-10-25",
       "title": "Cloud saves for everyone, and real usernames",

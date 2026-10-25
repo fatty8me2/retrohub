@@ -14,6 +14,10 @@ void page_online_home() {
     text_wrapped_disabled("Create a room, pick a game everyone owns, and share the 6-letter code.");
     ImGui::Dummy(ImVec2(0, 8 * S));
     if (button("Host Room", ImVec2(-1, sp(7.f)), true, A.proc == nullptr, ui::Icon::Globe)) enter_room(true, hubnet::new_room_code());
+    if (!group_last_label().empty()) {
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        if (button(group_last_label().c_str(), ImVec2(-1, sp(5.f)), false, A.proc == nullptr, ui::Icon::Globe)) group_invite_last();
+    }
     end_panel();
 
     if (two) ImGui::SameLine();
@@ -71,6 +75,7 @@ void page_online_home() {
 void host_launch_selected() {
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
     if (!rg) return;
+    GRP.again = false;
     std::vector<hubui::PeerInfo> peers = peer_list();
             int delay = A.st.delay_auto ? 0 : A.st.input_delay;   // 0 = auto, same for everyone
             bool share = A.share_host_save && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system));
@@ -165,6 +170,7 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
         if (hubupdate::update_available()) hubupdate::start_update();
         else if (!hubupdate::check_failed()) A.room_update_none = true;
     }
+    group_decorate_room_action(update_mode, st.is_launch, st.ready_on, st.button_enabled, st.button_label, st.headline);
     std::string extra;
     if (update_mode && !dl_busy) {
         if (hubupdate::check_failed() && !hubupdate::status().empty()) extra = hubupdate::status();
