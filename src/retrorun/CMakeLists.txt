@@ -42,4 +42,4 @@ add_custom_command(TARGET retrorun POST_BUILD
 
 # Rollback netplay engine (rollback.h): console test with two peers over a simulated laggy/lossy link.
 add_executable(retrorun_rollback_test test_rollback.cpp rollback.cpp)
-target_include_directories(retrorun_rollback_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(retrorun_rollback_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)

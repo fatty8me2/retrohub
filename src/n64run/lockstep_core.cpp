@@ -73,19 +73,19 @@ void LockstepCore::order_delay(int d) {
 
 bool LockstepCore::ready(uint32_t n) const {
     for (int p = 0; p < kPorts; p++)
-        if (port_present(p) && !has(p, n)) return false;
+        if (port_present(p) && !has(p, n) && !neutral(p, n)) return false;
     for (int s = 0; s < kPorts; s++)
         if ((gate_mask_ >> s & 1u) && s != cfg_.my_slot && (uint64_t)peer_progress_[s] + (uint64_t)max_lead() < n) return false;
     return true;
 }
 
 uint32_t LockstepCore::get(uint32_t n, int port) const {
-    if (!port_present(port) || !has(port, n)) return 0;
+    if (!port_present(port) || neutral(port, n) || !has(port, n)) return 0;
     return ring_[port][n % kRing].val;
 }
 
 uint32_t LockstepCore::get_aux(uint32_t n, int port) const {
-    if (!port_present(port) || !has(port, n)) return 0;
+    if (!port_present(port) || neutral(port, n) || !has(port, n)) return 0;
     return ring_[port][n % kRing].aux;
 }
 
@@ -143,6 +143,8 @@ bool LockstepCore::on_packet(int from_slot, const uint8_t* data, size_t len) {
     if (!rd(p, end, &type) || type != kPktInput) return false;
     if (!rd(p, end, &slot) || !rd(p, end, &newest) || !rd(p, end, &progress) || !rd(p, end, &count) || !rd(p, end, &nports)) return false;
     if (slot != from_slot || slot == cfg_.my_slot || count == 0 || count > newest + 1u) return false;
+    if (slot < kPorts && (ignore_mask_ >> slot & 1u)) return true;   // dropped (or dropping): only relayed windows count now
+    if (slot < kPorts && newest > peer_newest_[slot]) peer_newest_[slot] = newest;
     if (slot < kPorts && progress > peer_progress_[slot]) peer_progress_[slot] = progress;
     for (int i = 0; i < nports; i++) {
         uint8_t port;
@@ -176,6 +178,53 @@ bool LockstepCore::on_packet(int from_slot, const uint8_t* data, size_t len) {
         }
     }
     return true;
+}
+
+uint32_t LockstepCore::begin_drop(int slot) {
+    if (slot < 0 || slot >= kPorts) return 0;
+    ignore_mask_ |= 1u << slot;
+    uint32_t known = peer_newest_[slot] + 1;
+    uint32_t base = (uint32_t)initial_delay_;
+    return std::max(known, base);
+}
+
+void LockstepCore::fill_drop_window(int slot, uint32_t hi, netdrop::Msg* m) const {
+    m->ports.clear();
+    uint32_t lo = hi > (uint32_t)netdrop::kWindow ? hi - netdrop::kWindow : 0;
+    lo = std::max(lo, (uint32_t)initial_delay_);
+    if (hi <= lo) { m->first = lo; return; }
+    m->first = lo;
+    for (int p = 0; p < kPorts; p++) {
+        if (cfg_.owner[p] != slot) continue;
+        netdrop::PortWin w;
+        w.port = (uint8_t)p;
+        for (uint32_t s = lo; s < hi; s++) {
+            const Entry& e = ring_[p][s % kRing];
+            w.vals.push_back(e.tag == s ? ((uint64_t)e.aux << 32 | e.val) : 0ull);
+        }
+        m->ports.push_back(std::move(w));
+    }
+}
+
+void LockstepCore::apply_drop_window(const netdrop::Msg& m) {
+    for (auto& w : m.ports) {
+        if (w.port >= kPorts || cfg_.owner[w.port] != m.dead) continue;
+        for (size_t i = 0; i < w.vals.size(); i++) {
+            uint32_t s = m.first + (uint32_t)i;
+            if (s < (uint32_t)initial_delay_ || has(w.port, s)) continue;
+            if (done_mask_ >> m.dead & 1u && s >= drop_cut_[m.dead]) continue;
+            put(w.port, s, (uint32_t)w.vals[i], cfg_.wide ? (uint32_t)(w.vals[i] >> 32) : 0u);
+        }
+    }
+}
+
+void LockstepCore::finish_drop(int slot, uint32_t cutoff) {
+    if (slot < 0 || slot >= kPorts || (done_mask_ >> slot & 1u)) return;
+    ignore_mask_ |= 1u << slot;
+    done_mask_ |= 1u << slot;
+    drop_cut_[slot] = cutoff;
+    gate_mask_ &= ~(1u << slot);
+    mask_ &= ~(1u << slot);   // no hash from it any more
 }
 
 void LockstepCore::put_hash(int slot, uint32_t sample, uint64_t h) {

@@ -59,6 +59,8 @@ void Lockstep::pump() {
     std::vector<uint8_t> msg;
     while (net_->recv(&from, &msg)) {
         if (msg.empty()) continue;
+        if (from >= 0 && from < kPorts) last_rx_[from] = hubnet::now_ms() ? hubnet::now_ms() : 1;
+        if (msg[0] == kPktDrop) { drop_on_msg(from, msg, hubnet::now_ms()); continue; }
         if (msg[0] == kPktDelay && msg.size() >= 3 && opt_.my_slot != 0) {
             uint8_t ack[3] = {kPktDelayAck, (uint8_t)opt_.my_slot, msg[2]};   // late repeats of the host's D
             net_->send(0, ack, 3);
@@ -113,6 +115,77 @@ void Lockstep::log_stall_summary() const {
                   (unsigned long long)stall_ms_, (unsigned long long)stalled_, (unsigned long long)frames, opt_.delay,
                   frames ? (double)stall_ms_ / (double)frames : 0.0, longest_stall_, core_.delay(), core_.delay_changes());
     hooks_.log(buf);
+}
+
+/* ---- mid-match drop of a silent guest (drop_agree.h) ---- */
+void Lockstep::drop_begin(int slot, uint32_t now) {
+    if (drops_.count(slot) || core_.drop_done(slot) || slot <= 0 || slot >= kPorts || slot == opt_.my_slot) return;
+    uint32_t prop = core_.begin_drop(slot);
+    uint32_t surv = core_.slot_mask() & ~(1u << slot);
+    for (int s = 0; s < kPorts; s++) if (core_.drop_begun(s)) surv &= ~(1u << s);
+    for (auto& kv : drops_) kv.second.remove_survivor(slot);
+    drops_[slot] = netdrop::Agreement(slot, surv | (1u << opt_.my_slot), opt_.my_slot, prop);
+    if (hooks_.log) { char b[120]; std::snprintf(b, sizeof b, "drop: slot %d silent, proposing cutoff sample %u", slot, prop); hooks_.log(b); }
+    last_drop_send_ = 0;
+    (void)now;
+}
+
+void Lockstep::drop_send(const netdrop::Agreement& ag) {
+    netdrop::Msg m;
+    m.from = (uint8_t)opt_.my_slot; m.dead = (uint8_t)ag.dead();
+    m.proposal = ag.my_proposal(); m.heard = ag.heard_mask();
+    core_.fill_drop_window(ag.dead(), ag.window_hi(), &m);
+    uint8_t buf[hubnet::kMaxPayload];
+    size_t n = netdrop::encode(kPktDrop, m, buf, sizeof buf);
+    if (n) net_->send(-1, buf, (int)n);
+}
+
+void Lockstep::drop_on_msg(int from, const std::vector<uint8_t>& msg, uint32_t now) {
+    netdrop::Msg m;
+    if (!netdrop::decode(kPktDrop, msg.data(), msg.size(), &m) || m.from != from || m.dead >= kPorts) return;
+    if (m.dead == opt_.my_slot || m.dead == 0 || !(core_.slot_mask() >> m.dead & 1u)) return;
+    if (core_.drop_done(m.dead) && !drops_.count(m.dead)) return;
+    if (!drops_.count(m.dead)) drop_begin(m.dead, now);
+    auto it = drops_.find(m.dead);
+    if (it == drops_.end()) return;
+    core_.apply_drop_window(m);
+    it->second.on_msg(from, m.proposal, m.heard);
+    if (it->second.decided() && !it->second.settled()) last_drop_send_ = 0;
+}
+
+void Lockstep::drop_service(uint32_t now) {
+    if (drops_.empty()) return;
+    bool send = now - last_drop_send_ >= 100;
+    for (auto it = drops_.begin(); it != drops_.end();) {
+        netdrop::Agreement& ag = it->second;
+        int dead = it->first;
+        if (ag.decided() && !core_.drop_done(dead)) {
+            uint32_t cut = ag.cutoff();
+            core_.finish_drop(dead, cut);
+            dropped_mask_ |= 1u << dead;
+            drop_done_at_[dead] = now;
+            if (hooks_.log) { char b[120]; std::snprintf(b, sizeof b, "drop: slot %d disconnected, neutral from sample %u - playing on", dead, cut); hooks_.log(b); }
+            if (hooks_.on_drop) hooks_.on_drop(dead, cut);
+        }
+        bool done = ag.settled() || (core_.drop_done(dead) && now - drop_done_at_[dead] > 8000);
+        if (send && !done) drop_send(ag);
+        if (done) it = drops_.erase(it); else ++it;
+    }
+    if (send) last_drop_send_ = now ? now : 1;
+}
+
+void Lockstep::drop_check(uint32_t now, uint32_t n) {
+    (void)n;
+    if (opt_.drop_silence_ms == 0) return;
+    const uint32_t mask = core_.slot_mask();
+    for (int s = 1; s < kPorts; s++) {
+        if (s == opt_.my_slot || !(mask >> s & 1u) || core_.drop_begun(s) || (bye_mask_ >> s & 1u)) continue;
+        if (!last_rx_[s] || now - last_rx_[s] < opt_.drop_silence_ms) continue;
+        int others = 0;   // survivors besides me: with nobody else left the old timeout (exit 4) ends the session
+        for (int q = 0; q < kPorts; q++) if (q != s && q != opt_.my_slot && (mask >> q & 1u) && !core_.drop_begun(q) && !(bye_mask_ >> q & 1u)) others++;
+        if (!others) continue;
+        drop_begin(s, now);
+    }
 }
 
 void Lockstep::abort_with(const std::string& why) {
@@ -207,7 +280,11 @@ uint32_t Lockstep::get_keys(int port) {
     }
 
     uint32_t n = (uint32_t)(++sample_);
-    if (!t_first_) t_first_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
+    if (!t_first_) {
+        t_first_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
+        for (int q = 0; q < kPorts; q++) if (!last_rx_[q]) last_rx_[q] = t_first_;
+    }
+    if (net_) drop_service(hubnet::now_ms());
 
     if (hooks_.update_local) hooks_.update_local();
     pump();
@@ -253,6 +330,8 @@ uint32_t Lockstep::get_keys(int port) {
                 if (hooks_.request_stop) hooks_.request_stop();
                 return 0;
             }
+            drop_check(now, n);
+            drop_service(now);
             if (net_->failed() || now - t0 > opt_.timeout_ms) {
                 abort_with("Connection lost (no input from peers for 10 s)");
                 return 0;

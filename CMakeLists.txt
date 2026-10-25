@@ -133,6 +133,7 @@ add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
 add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
+add_test(NAME n64run_dropagree_test COMMAND n64run_dropagree_test)
 add_test(NAME n64run_match_test COMMAND n64run_match_test)
 add_test(NAME n64run_gs_cheat_test COMMAND n64run_gs_cheat_test)
 add_test(NAME n64run_testinput_test COMMAND n64run_testinput_test)

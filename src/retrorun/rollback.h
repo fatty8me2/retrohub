@@ -25,7 +25,10 @@
 #include <deque>
 #include <functional>
 #include <string>
+#include <map>
 #include <vector>
+
+#include "drop_agree.h"
 
 namespace rb {
 
@@ -34,6 +37,7 @@ constexpr int kMaxPred = 16;
 constexpr uint8_t kPktInput = 0x51;
 constexpr uint8_t kPktReady = 0x52;
 constexpr uint8_t kPktBye = 0x53;
+constexpr uint8_t kPktDrop = 0x54;   // netdrop::Msg (drop_agree.h)
 
 uint64_t hash_bytes(const void* data, size_t bytes);
 
@@ -72,6 +76,7 @@ struct Config {
     int hash_interval = 120;
     bool use_state_hash = true;
     uint32_t timeout_ms = 10000;
+    uint32_t drop_silence_ms = 3000;   // a guest silent this long is dropped when 3+ PCs play: its port reads neutral from an agreed frame on (0 = off)
     bool relay_half_rate = false;  // with Transport::relayed(): send the per-frame packet every other frame only (PlayStation: 4-PC rooms)
     uint32_t send_gap_ms = 8;      // min ms between the non-forced packets (the per-frame input packet is always sent); PlayStation 30: a relayed 4-PC room is capped at 400 frames/s
     uint64_t event_mask = 0;       // one-shot event bits of the input value (PlayStation disc swap): never copied into predicted or held frames
@@ -124,6 +129,7 @@ class Engine {
     const Stats& stats() const { return st_; }
     int delay() const { return cfg_.delay; }
     double rtt_ms() const { return st_.rtt_ms; }
+    uint32_t dropped_mask() const { return done_mask_; }   // guests dropped mid-match (crashed); the game plays on without them
     bool peer_left() const { return left_mask_ != 0; }
     /* Every other player said bye: nobody is left to play with (a 3-4P game with one leaver keeps going with that port idle). */
     bool all_remote_left() const { for (int p = 0; p < kPorts; p++) if (present(p) && !local(p) && !(left_mask_ >> cfg_.owner[p] & 1u)) return false; return left_mask_ != 0; }
@@ -154,7 +160,23 @@ class Engine {
     void resolve_hashes();
     void compare_hash(int slot, uint32_t frame, uint64_t h);
     uint8_t* ring_state(int64_t f) { return ring_.data() + (size_t)(f % ring_n_) * state_n_; }
-    bool active_peer(int slot) const { return slot != cfg_.my_slot && (cfg_.slot_mask >> slot & 1u) && !(left_mask_ >> slot & 1u); }
+    bool active_peer(int slot) const { return slot != cfg_.my_slot && (cfg_.slot_mask >> slot & 1u) && !(left_mask_ >> slot & 1u) && !(ignore_mask_ >> slot & 1u); }
+    /* Does port p still hold back the confirmed frontier? (not for a left/dropped owner once every frame below the cutoff is known) */
+    bool gating(int p) const {
+        if (!present(p) || local(p)) return false;
+        int o = cfg_.owner[p];
+        if (left_mask_ >> o & 1u) return false;
+        if (done_mask_ >> o & 1u) return conf_upto_[p] < (int64_t)drop_cut_[o] - 1;
+        return true;
+    }
+    void drop_check(uint32_t now);
+    void drop_begin(int slot);
+    void drop_service(uint32_t now);
+    void drop_send(const netdrop::Agreement& ag);
+    void drop_on_msg(int from, const uint8_t* d, size_t n);
+    std::map<int, netdrop::Agreement> drops_;
+    uint32_t ignore_mask_ = 0, done_mask_ = 0, drop_cut_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    uint32_t last_rx_[8] = {0, 0, 0, 0, 0, 0, 0, 0}, last_drop_send_ = 0, drop_done_at_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
     Config cfg_;
     Sim sim_;
