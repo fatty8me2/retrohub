@@ -43,6 +43,7 @@ void shot_init_ui() {
     if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
         if (std::string(pg) == "saves") A.page = Page::Saves;
         else if (std::string(pg) == "settings") A.page = Page::Settings;
+        else if (std::string(pg) == "online") A.page = Page::Online;
     }
     if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n
     if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show a 3DS / Wii U dialog (azahar | cemu | unzip | failed)
@@ -87,6 +88,7 @@ void shot_init_ui() {
             A.rules.stage = 0x31;
             A.rules.stocks = 4;
         }
+        if (std::getenv("HUB_SHOT_PLAY_AGAIN")) { GRP.again = true; }   // banner: PLAY AGAIN
         if (std::getenv("HUB_SHOT_LOCALS2")) A.my_locals = 2;
         if (const char* rd = std::getenv("HUB_SHOT_READY")) {   // screenshot aid: slots that are ready, e.g. "1,2" ("me" = us)
             std::stringstream rs(rd);
