@@ -34,6 +34,7 @@ void shot_init_ui() {
     A.st.show_friends = std::getenv("HUB_SHOT_FRIENDS") != nullptr;
     if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
         if (std::string(pg) == "saves") A.page = Page::Saves;
+        else if (std::string(pg) == "settings") A.page = Page::Settings;
     }
     if (const char* cs = std::getenv("HUB_SHOT_CLOUD")) {   // screenshot aid: cloud saves toggle state, no network ("off" | "on" | "unavailable" | "ok")
         std::string m = cs;

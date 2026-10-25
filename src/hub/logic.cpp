@@ -67,6 +67,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"notify_in_game\": " << (s.notify_in_game ? "true" : "false") << ",\n"
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
       << "  \"auto_friend\": " << (s.auto_friend ? "true" : "false") << ",\n"
+      << "  \"username_claimed\": " << (s.username_claimed ? "true" : "false") << ",\n"
       << "  \"find_games_done\": " << (s.find_games_done ? "true" : "false") << ",\n"
       << "  \"setup_done\": " << (s.setup_done ? "true" : "false") << ",\n"
       << "  \"games_dest\": \"" << json::escape(s.games_dest) << "\",\n"
@@ -124,6 +125,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
+    out->username_claimed = json_bool(j, "username_claimed", out->username_claimed);
     out->cemu_manage_controls = json_bool(j, "cemu_manage_controls", out->cemu_manage_controls);
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
     out->setup_done = json_bool(j, "setup_done", out->setup_done);
@@ -1165,6 +1167,7 @@ std::string friends_error_text(const std::string& r, const std::string& d) {
         return "";   // internal / retire-failed / bad-secret / text / too-large / none: retried or not user-actionable
     }
     if (r == "unknown-code") return "No player has that friend code.";
+    if (r == "unknown-username") return "No player has that username.";
     if (r == "self") return "That is your own friend code.";
     if (r == "already-friends") return "You are already friends.";
     if (r == "not-friends") return "You can only do that with friends.";

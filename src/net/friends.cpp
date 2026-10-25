@@ -392,6 +392,7 @@ struct FriendsClient::Impl {
     std::map<std::string, Conv> convs;
     std::deque<Event> events;
     uint32_t local_seq = 0;
+    std::string username; bool needs_new_name = false, username_known = false; int ref_seq = 0;
 
     /* ---- sending */
     bool send(const std::string& s) { return welcomed && ws.send_text(s); }
@@ -637,6 +638,14 @@ struct FriendsClient::Impl {
         }
         if (const Json* a = j.get("blocked"))
             for (const Json& x : a->a) if (x.type == Json::String) blocked.push_back(x.s);
+        {   // usernames: the server's name for this account wins over whatever we sent in the hello
+            username = j.str("username");
+            needs_new_name = j.boolean("needs_new_name") || (username.empty() && j.get("username") != nullptr);
+            username_known = true;
+            if (!username.empty()) name = username;
+            Event e; e.kind = Event::UsernameChanged; e.name = username; e.ok = !username.empty() && !needs_new_name;
+            events.push_back(std::move(e));
+        }
         normalize_lists();
         send_retire();
         if (have_status) send("{\"type\":\"status\",\"status\":" + status_json(my_status) + "}");
@@ -760,6 +769,17 @@ struct FriendsClient::Impl {
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
             Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref"); e.detail = j.str("detail");
             push_event(std::move(e));
+        } else if (type == "username_check" || type == "username_result") {
+            Event e; e.kind = type == "username_check" ? Event::UsernameChecked : Event::UsernameResult;
+            e.ref = (int)j.num("ref", 0); e.name = j.str("name"); e.ok = j.boolean("ok") || j.boolean("available");
+            e.text = e.ok ? std::string() : j.str("reason", "unavailable"); e.hold_days = (int)j.num("hold_days", 0);
+            if (const Json* a = j.get("suggestions")) for (const Json& x : a->a) if (x.type == Json::String) e.suggestions.push_back(x.s);
+            if (e.kind == Event::UsernameResult && e.ok) { username = e.name; needs_new_name = false; if (!e.name.empty()) name = e.name; }
+            push_event(std::move(e));
+        } else if (type == "username") {   // pushed to every device of the account when the name changes elsewhere
+            username = j.str("name"); needs_new_name = j.boolean("needs_new_name"); if (!username.empty()) name = username;
+            Event e; e.kind = Event::UsernameChanged; e.name = username; e.ok = !username.empty() && !needs_new_name;
+            push_event(std::move(e));
         } else if (type == "invite_result") {
             Event e; e.kind = Event::InviteResult;
             if (const Json* a = j.get("results"))
@@ -821,6 +841,7 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
     d.gave_up = false;
     d.backoff_ms = 1000;
     d.convs.clear();
+    d.username.clear(); d.needs_new_name = false; d.username_known = false;
     d.friends.clear(); d.incoming.clear(); d.outgoing.clear(); d.blocked.clear();
     d.connect();
     return true;
@@ -1044,6 +1065,29 @@ void FriendsClient::rename(const std::string& name)
     impl_->name = sanitize_name(name);
     impl_->send("{\"type\":\"rename\",\"name\":" + q(impl_->name) + "}");
 }
+int FriendsClient::check_username(const std::string& name)
+{
+    Impl& d = *impl_;
+    if (!d.welcomed) return 0;
+    int ref = ++d.ref_seq;
+    d.send("{\"type\":\"username_check\",\"name\":" + q(name) + ",\"ref\":" + std::to_string(ref) + "}");
+    return ref;
+}
+int FriendsClient::claim_username(const std::string& name)
+{
+    Impl& d = *impl_;
+    if (!d.welcomed) return 0;
+    int ref = ++d.ref_seq;
+    d.send("{\"type\":\"username_claim\",\"name\":" + q(name) + ",\"ref\":" + std::to_string(ref) + "}");
+    return ref;
+}
+void FriendsClient::add_friend_username(const std::string& username)
+{
+    impl_->send("{\"type\":\"add_friend\",\"username\":" + q(username) + "}");
+}
+std::string FriendsClient::username() const { return impl_->username; }
+bool FriendsClient::needs_new_name() const { return impl_->needs_new_name; }
+bool FriendsClient::username_known() const { return impl_->username_known; }
 void FriendsClient::request_history(const std::string& uid)
 {
     impl_->send("{\"type\":\"history\",\"with\":" + q(uid) + "}");
