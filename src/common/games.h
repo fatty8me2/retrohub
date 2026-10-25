@@ -9,7 +9,8 @@ namespace hub {
 
 enum class Engine { Native, Mupen64Plus, Libretro, Dolphin,
                     Azahar,   // Nintendo 3DS (external emulator, downloaded on demand)
-                    Cemu };   // Wii U (external emulator; an existing install is reused)
+                    Cemu,     // Wii U (external emulator; an existing install is reused)
+                    Pcsx2 };  // PlayStation 2 (PCSX2 core)
 
 /* Curated metadata for well-known games. Any ROM plays without an entry here;
  * an entry adds a nicer title, player count, online flag and a blurb, and

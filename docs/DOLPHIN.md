@@ -113,7 +113,7 @@ deps\dolphin\
   User\
     Config\
       Dolphin.ini                   main settings
-      GFX.ini                       graphics settings  [unverified file name]
+      GFX.ini                       graphics settings  [confirmed: section 11]
       GCPadNew.ini                  GameCube pad profiles  [src: InputConfig "GCPadNew"]
     GC\
       USA\                          region folders: USA, EUR, JAP
@@ -177,8 +177,8 @@ the first run [unverified].
 Pad profiles live in `User\Config\GCPadNew.ini`. [src: `Source/Core/DolphinQt/...`, `InputConfig("GCPadNew", ..., "GCPad", "Pad")` in `Source/Core/Core/HW/GCPad.cpp`]
 
 Device strings are of the form `<Backend>/<index>/<name>`:
-- XInput gamepad: `XInput/0/Gamepad`. [src: backend in `Source/Core/InputCommon/ControllerInterface/XInput/XInput.cpp`; the exact format string for the device name is [unverified] and should be confirmed in the GUI mapping dialog after one run.]
-- Keyboard: `Keyboard/0/Keyboard` [unverified].
+- XInput gamepad: `XInput/0/Gamepad`. [src: backend in `Source/Core/InputCommon/ControllerInterface/XInput/XInput.cpp`; the device string `XInput/<n>/Gamepad` is confirmed by the live run (sections 10 and 11).]
+- Keyboard: `DInput/0/Keyboard Mouse` (live-verified, section 11).
 
 Example `GCPadNew.ini` fragment (section and button names [unverified]; they follow the
 `GCPad1` naming and the XInput button names in `XInput.cpp`, e.g. "Button A"):
@@ -247,7 +247,7 @@ Source: `Source/Core/Core/NetPlayClient.cpp`, `Source/Core/Core/Config/NetplaySe
 Realistic options:
 1. **Launch Dolphin normally (not batch), let the user start netplay in the GUI.** Lowest effort, works now. The launcher only passes the game and config.
 2. **Launcher drives the GUI** (UI automation to open the netplay dialog and enter a host code). Fragile across Dolphin versions and not recommended.
-3. **Launcher-owned lobby with input relay** over the Hub's own server, feeding each player's pad through the pipe mechanism (section 7). This is the only path with no GUI dependency, but it is a large project and the netplay sync (rollback, desync) would be entirely ours. [unverified feasibility]
+3. **Launcher-owned lobby with input relay** over the Hub's own server, feeding each player's pad through the pipe mechanism (section 7). This is the only path with no GUI dependency, but it is a large project and the netplay sync (rollback, desync) would be entirely ours. [relay netplay with 2-4 players verified, section 10; the full rollback design is still ours]
 
 Recommendation: option 1 for the first release. Keep batch mode for single-player and use a
 normal launch when netplay is needed.

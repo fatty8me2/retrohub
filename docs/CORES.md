@@ -73,8 +73,8 @@ Options a frontend will most likely need to set: GB model selection, BIOS use, a
 ## Open items
 - Confirm each core's option names from its libretro core-options source file.
 - Confirm save-state support for SameBoy through the libretro build, not only the upstream README.
-- Confirm link-cable support for Gambatte and SameBoy. The current RetroHub netplay design is lockstep input, not link cable, so this matters only if link-cable games are wanted.
-- Decide the GameCube core. None is fetched.
+- Link cable is shipped for GB/GBC (`retrorun --link`, `link_sync.cpp`; see docs/ARCHITECTURE.md, netplay modes).
+- The GameCube core is Dolphin, an external install (docs/DOLPHIN.md), not a libretro core.
 
 ## PlayStation: Beetle PSX (`beetle_psx_libretro`)
 
@@ -89,7 +89,7 @@ Built from source by `src/beetle_psx/CMakeLists.txt` (MinGW-w64 gcc, like `sameb
 - **OpenBIOS** is compiled in: with no `scph*.bin` the core boots it (fewer games run). A real BIOS is used first when found.
 - SwanStation: more accurate-looking and faster upscaling, but its software GPU is threaded and its states are not stable between runs in the way rollback needs, and it adds a C++/CMake dependency tree. PCSX-ReARMed: fast, but not cycle-exact.
 
-Options retrorun/the hub set (names verified with `retrorun --list-options`): `beetle_psx_internal_resolution` (1x(native) 2x 4x 8x), `beetle_psx_widescreen_hack`, `beetle_psx_enable_multitap_port1`. Memory card 1 is the core's libretro save RAM (128 KB), written as `<game>.srm` in the vault battery folder; card 2 stays off.
+Options retrorun/the hub set (names verified with `retrorun --list-options`): `beetle_psx_internal_resolution` (1x(native) 2x 4x 8x), `beetle_psx_widescreen_hack`, `beetle_psx_enable_multitap_port1`. Memory card 1 is the core's libretro save RAM (128 KB), written as `<game>.srm` in the vault battery folder. Memory card 2 (`beetle_psx_enable_memcard1`, `<game>.1.mcr`) is offline only: `ps1.memcard2` is locked off for online rooms.
 
 ### PS1 determinism (online play)
 
