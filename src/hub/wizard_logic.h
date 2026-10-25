@@ -5,8 +5,8 @@
 namespace hubui {
 namespace wiz {
 
-enum class Step { Welcome = 0, Controller, Games, Name, Done };
-constexpr int kStepCount = 5;
+enum class Step { Welcome = 0, Controller, Games, Name, Cloud, Done };
+constexpr int kStepCount = 6;
 
 inline Step next(Step s) { return s == Step::Done ? s : static_cast<Step>(static_cast<int>(s) + 1); }
 inline Step back(Step s) { return s == Step::Welcome ? s : static_cast<Step>(static_cast<int>(s) - 1); }

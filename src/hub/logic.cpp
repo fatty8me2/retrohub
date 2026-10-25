@@ -54,8 +54,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
       << "  \"sync_folder\": \"" << json::escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
-      << "  \"sync_states\": " << (s.sync_states ? "true" : "false") << ",\n"
-      << "  \"cloud_saves\": " << (s.cloud_saves ? "true" : "false") << ",\n"
+      << "  \"cloud_enabled\": " << (s.cloud_enabled ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
       << "  \"changelog_seen\": \"" << json::escape(s.changelog_seen) << "\",\n"
@@ -112,8 +111,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->fullscreen = json_bool(j, "fullscreen", out->fullscreen);
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
-    out->sync_states = json_bool(j, "sync_states", out->sync_states);
-    out->cloud_saves = json_bool(j, "cloud_saves", out->cloud_saves);
+    out->cloud_enabled = json_bool(j, "cloud_enabled", out->cloud_enabled);   // legacy sync_states / cloud_saves keys are ignored
     out->sync_card_dismissed = json_bool(j, "sync_card_dismissed", out->sync_card_dismissed);
     out->smash_save_notice_shown = json_bool(j, "smash_save_notice_shown", out->smash_save_notice_shown);
     out->kt_intro_seen = json_bool(j, "kt_intro_seen", out->kt_intro_seen);

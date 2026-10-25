@@ -177,7 +177,7 @@ void goto_step(Step s) {
     WZ.focus_primary = true;
 }
 
-const char* kStepNames[hubui::wiz::kStepCount] = {"Welcome", "Controller", "Games", "Name", "Done"};
+const char* kStepNames[hubui::wiz::kStepCount] = {"Welcome", "Controller", "Games", "Name", "Cloud", "Done"};
 
 void steps_header(ImDrawList* dl, ImVec2 origin, float w) {
     const float r = ui::sp(0.5f), gap = ui::sp(2.2f);
@@ -297,6 +297,7 @@ void wizard_window() {
         case Step::Controller: ImGui::TextUnformatted(WZ.test ? "Test your controller" : "Your controller"); break;
         case Step::Games: ImGui::TextUnformatted("Find your games"); break;
         case Step::Name: ImGui::TextUnformatted("Pick your name"); break;
+        case Step::Cloud: ImGui::TextUnformatted("Your saves"); break;
         case Step::Done: ImGui::TextUnformatted("You're all set"); break;
     }
     ImGui::PopFont();
@@ -356,6 +357,7 @@ void wizard_window() {
             ImGui::PopTextWrapPos();
             break;
         }
+        case Step::Cloud: cloud_ui_wizard_body(bw); break;
         case Step::Done: {
             ImGui::PushFont(ui::F.bold);
             ImGui::TextColored(ImColor(ui::GOOD), "Everything is ready");
@@ -456,6 +458,7 @@ void draw_wizard() {
             else if (s == "test") { WZ.step = Step::Controller; WZ.test = true; }
             else if (s == "games") WZ.step = Step::Games;
             else if (s == "name") WZ.step = Step::Name;
+            else if (s == "cloud") WZ.step = Step::Cloud;
             else if (s == "done") WZ.step = Step::Done;
         } else if (!shot && !g_headless && A.scanned_once) {
             WZ.auto_tried = true;
