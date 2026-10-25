@@ -65,7 +65,7 @@ void page_settings() {
     settings_label("Smash Classic location");
     std::string se = smash_exe_path();
     text_wrapped_disabled(se.empty() ? "BattleShip.exe not found" : se);
-    if (button("Browse for BattleShip.exe...", ImVec2(0, 0), false, true, ui::Icon::Folder)) locate_smash();
+    locate_smash(button("Browse for BattleShip.exe...", ImVec2(0, 0), false, true, ui::Icon::Folder));
     if (!A.st.smash_exe.empty()) {
         ImGui::SameLine();
         if (button("Use default", ImVec2(0, 0))) { A.st.smash_exe.clear(); mark_dirty(); A.hello_dirty = true; start_scan(); }
@@ -119,8 +119,8 @@ void page_settings() {
         ps1_settings_ui();
         text_wrapped_disabled("Azahar (3DS): " + (az.exe.empty() ? std::string("not installed - downloads the first time you play a 3DS game (about 42 MB)") : az.exe));
         text_wrapped_disabled("Cemu (Wii U): " + (cm.exe.empty() ? std::string("not found - downloads the first time you play a Wii U game (about 25 MB)") : cm.exe + "  (" + cm.how + ")"));
-        if (button("Choose Cemu.exe...", ImVec2(0, 0), false, true, ui::Icon::Folder)) {
-            std::string p = pick_path(A.hwnd, false, L"Cemu.exe", L"*.exe");
+        {
+            std::string p = osk::file("cemu_exe", button("Choose Cemu.exe...", ImVec2(0, 0), false, true, ui::Icon::Folder), {".exe"});
             if (!p.empty()) { A.st.cemu_exe = p; mark_dirty(); }
         }
         if (!A.st.cemu_exe.empty()) {

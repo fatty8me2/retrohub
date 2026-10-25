@@ -575,7 +575,7 @@ void end_panel();
 void text_wrapped_disabled(const std::string& s);
 void add_rom_folder_path(const std::string& p);
 void add_rom_folder(bool clicked);   // call every frame with the button result (pad: folder browser, else Windows dialog)
-void locate_smash();
+void locate_smash(bool clicked);   // call every frame with the button result
 
 
 /* ---- tiles.cpp ---- */

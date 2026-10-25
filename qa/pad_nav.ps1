@@ -139,6 +139,13 @@ foreach ($b in @("ps1bios", "ps2bios")) {
   Check "${b}: B closes the prompt" ($bb.popup -eq 0 -and $bb.nav -ne "00000000") "popup=$($bb.popup) nav=$($bb.nav)"
 }
 
+# 13. Pad file browser (account file / Cemu.exe / zip / BattleShip.exe): opens, lists, Back closes
+$r = Run "osk_file" "shot:f0,back,shot:f1" @{ HUB_SHOT_OSK = "file" }
+$rows = @($r.rows)
+Check "file browser shot opens (osk=1)" (@($rows | Where-Object { $_.osk -eq 1 }).Count -ge 1) "no osk row"
+$bk = @($rows | Where-Object { $_.tok -eq "back" })
+Check "Back closes the file browser" ($bk.Count -ge 1 -and $bk[0].osk -eq 0) "osk=$(if ($bk.Count) { $bk[0].osk })"
+
 Add-Type -AssemblyName System.Drawing
 Get-ChildItem "$Out\*.bmp" | ForEach-Object { $i = [System.Drawing.Image]::FromFile($_.FullName); $png = $_.FullName -replace '\.bmp$', '.png'; $i.Save($png, [System.Drawing.Imaging.ImageFormat]::Png); $i.Dispose() }
 Write-Host "screenshots/traces in $Out; failures: $($script:fail)"

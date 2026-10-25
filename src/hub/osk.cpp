@@ -88,12 +88,13 @@ std::vector<int> gather_cmds() {
     return out;
 }
 
-void hint_row(ImDrawList* dl, ImVec2 p, float maxw, bool kb) {
+void hint_row(ImDrawList* dl, ImVec2 p, float maxw, bool kb, bool filemode = false) {
     struct H { const char* btn; const char* label; };
     static const H kbh[] = {{"A", "Type"}, {"B", "Delete"}, {"X", "Space"}, {"Y", "Shift / symbols"}, {"LB/RB", "Move cursor"}, {"Start", "Done"}, {"Back", "Cancel"}};
     static const H fbh[] = {{"A", "Open / choose"}, {"B", "Up a level"}, {"Start", "Use this folder"}, {"Back", "Cancel"}};
-    const H* hs = kb ? kbh : fbh;
-    int n = kb ? 7 : 4;
+    static const H fih[] = {{"A", "Open / choose"}, {"B", "Up a level"}, {"Back", "Cancel"}};
+    const H* hs = kb ? kbh : filemode ? fih : fbh;
+    int n = kb ? 7 : filemode ? 3 : 4;
     float x = p.x, gap = ui::sp(2.f);
     for (int i = 0; i < n; ++i) {
         float w = ui::key_hint_width(true, hs[i].btn, "", hs[i].label);
@@ -278,7 +279,7 @@ void draw_folder() {
     ImVec2 wp = ImGui::GetWindowPos();
     dl->AddRect(wp, ImVec2(wp.x + W, wp.y + H), ui::with_alpha(ui::ACCENT, 0.5f), ui::sp(2.f), 0, 2.f);
     float pad = ui::sp(2.f), x0 = wp.x + pad, iw = W - 2 * pad, y = wp.y + pad;
-    dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(x0, y), ui::TEXT, "Choose a folder");
+    dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(x0, y), ui::TEXT, fb.pick_files ? "Choose a file" : "Choose a folder");
     y += ui::F.h2->FontSize + ui::sp(0.5f);
     std::string where = fb.cwd.empty() ? "This PC" : fb.cwd;
     where = ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, where, iw);
@@ -309,7 +310,7 @@ void draw_folder() {
         if (sel) bg = e.type == FolderEntry::Select ? ui::GOOD : ui::ACCENT;
         dl->AddRectFilled(r0, r1, bg, ui::sp(1.f));
         if (sel) ui::focus_ring(dl, r0, r1, ui::sp(1.f));
-        ui::Icon ic = e.type == FolderEntry::Select ? ui::Icon::Check : e.type == FolderEntry::Up ? ui::Icon::ChevronL : ui::Icon::Folder;
+        ui::Icon ic = e.type == FolderEntry::File ? ui::Icon::Check : e.type == FolderEntry::Select ? ui::Icon::Check : e.type == FolderEntry::Up ? ui::Icon::ChevronL : ui::Icon::Folder;
         ui::icon(dl, ic, ImVec2(r0.x + rowH * 0.6f, r0.y + rowH * 0.5f), rowH * 0.5f, ui::TEXT);
         std::string label = e.type == FolderEntry::Drive ? "Drive " + e.name : e.name;
         ImFont* f = ui::F.bold;
@@ -318,12 +319,12 @@ void draw_folder() {
     }
     if (fb.entries.empty()) dl->AddText(ui::F.body, ui::F.body->FontSize, l0, ui::TEXT3, "Nothing here.");
     if (click_on && click_row >= 0) fb.activate();
-    hint_row(dl, ImVec2(x0, wp.y + H - pad - hintsH + ui::sp(1.f)), iw, false);
+    hint_row(dl, ImVec2(x0, wp.y + H - pad - hintsH + ui::sp(1.f)), iw, false, fb.pick_files);
     ImGui::Dummy(ImVec2(1, 1));
 
     if (fb.done || fb.cancelled) {
         S.fb_result = fb.done ? fb.result : "";
-        if (fb.done) S.last_folder = fb.result;
+        if (fb.done) S.last_folder = fb.pick_files ? parent_of(fb.result) : fb.result;
         S.fb_open = false;
         ImGui::CloseCurrentPopup();
     }
@@ -378,6 +379,8 @@ std::string folder(const char* tag, bool clicked) {
     if (clicked && !S.open && !S.fb_open) {
         if (A.pad_mode) {
             S.fb_tag = tag;
+            S.fb.pick_files = false;
+            S.fb.filters.clear();
             S.fb.open(S.last_folder);
             S.fb_open = true;
             S.fb_need_popup = true;
@@ -396,6 +399,40 @@ std::string folder(const char* tag, bool clicked) {
             std::string out = S.fb_result;
             S.fb_tag.clear();
             S.fb.done = S.fb.cancelled = false;
+            return out;
+        }
+    }
+    return "";
+}
+
+std::string file(const char* tag, bool clicked, const std::vector<std::string>& filters) {
+    if (clicked && !S.open && !S.fb_open) {
+        if (A.pad_mode) {
+            S.fb_tag = tag;
+            S.fb.pick_files = true;
+            S.fb.filters = filters;
+            S.fb.open(S.last_folder);
+            S.fb_open = true;
+            S.fb_need_popup = true;
+            S.armed = false;
+            S.fb_last_sel = -1;
+            S.fb_top = 0;
+            S.fb_result.clear();
+            S.last_drawn = ImGui::GetFrameCount();
+        } else {
+            std::wstring spec;
+            for (const auto& f : filters) { if (!spec.empty()) spec += L";"; spec += L"*"; for (char ch : f) spec += (wchar_t)ch; }
+            if (spec.empty()) spec = L"*.*";
+            return pick_path(A.hwnd, false, L"Files", spec.c_str());
+        }
+    }
+    if (S.fb_tag == tag) {
+        if (S.fb_open) draw_folder();
+        if (!S.fb_open && (S.fb_need_popup == false) && S.fb.done + S.fb.cancelled) {
+            std::string out = S.fb_result;
+            S.fb_tag.clear();
+            S.fb.done = S.fb.cancelled = false;
+            S.fb.pick_files = false;
             return out;
         }
     }
@@ -447,7 +484,9 @@ void shot_init() {
     S.root = true;
     S.last_drawn = ImGui::GetFrameCount();
     A.pad_mode = true;
-    if (mode == "folder") {
+    if (mode == "folder" || mode == "file") {
+        S.fb.pick_files = mode == "file";
+        S.fb.filters = {".json", ".zip", ".exe"};
         S.fb_tag = "shot";
         S.fb.open(arg);
         S.fb_open = true;

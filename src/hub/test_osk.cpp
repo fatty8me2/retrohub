@@ -1,3 +1,4 @@
+#include <fstream>
 // Console test: on-screen keyboard layout, edit/session logic and the folder browser (scratch dirs only).
 #include "osk_logic.h"
 
@@ -175,6 +176,20 @@ int main() {
         FolderBrowser f4;
         f4.open("Z:\\definitely\\missing");
         CHECK(f4.cwd.empty());
+        // file mode
+        { std::ofstream(root / "acct.JSON") << "{}"; std::ofstream(root / "b.zip") << "z"; std::ofstream(root / "c.json") << "{}"; }
+        FolderBrowser f5;
+        f5.pick_files = true;
+        f5.filters = {".json"};
+        f5.open(root.string());
+        CHECK(f5.entries[0].type == FolderEntry::Up);   // no "Select this folder"
+        int nfile = 0;
+        for (auto& e : f5.entries) if (e.type == FolderEntry::File) ++nfile;
+        CHECK(nfile == 2);                              // acct.JSON + c.json, not b.zip
+        CHECK(f5.entries.back().type == FolderEntry::File && f5.entries[f5.entries.size() - 3].type == FolderEntry::Dir);   // dirs first
+        f5.choose_here(); CHECK(!f5.done);
+        f5.sel = (int)f5.entries.size() - 1; f5.activate();
+        CHECK(f5.done && f5.result.find("c.json") != std::string::npos);
         fs::remove_all(root, ec);
     }
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }

@@ -135,8 +135,8 @@ void page_saves() {
         if (!p.empty()) start_job(SaveJob::Export, p, true);
     }
     ImGui::SameLine();
-    if (button("Import saves...", ImVec2(0, 0), false, !busy)) {
-        std::string p = pick_path(A.hwnd, false, L"Zip archive", L"*.zip");
+    {
+        std::string p = osk::file("sv_import", button("Import saves...", ImVec2(0, 0), false, !busy), {".zip"});
         if (!p.empty()) start_job(SaveJob::Import, p, true);
     }
     if (busy && A.job.kind != SaveJob::Sync) { ImGui::SameLine(); ImGui::TextDisabled("Working..."); }
