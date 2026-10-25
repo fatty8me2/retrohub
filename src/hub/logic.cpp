@@ -74,6 +74,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"ps1_bios\": \"" << json::escape(s.ps1_bios) << "\",\n"
       << "  \"ps1_openbios\": " << (s.ps1_openbios ? "true" : "false") << ",\n"
       << "  \"ps2_bios_dir\": \"" << json::escape(s.ps2_bios_dir) << "\",\n"
+      << "  \"cemu_manage_controls\": " << (s.cemu_manage_controls ? "true" : "false") << ",\n"
       << "  \"cemu_exe\": \"" << json::escape(s.cemu_exe) << "\"\n"
       << "}\n";
     return o.str();
@@ -125,6 +126,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
+    out->cemu_manage_controls = json_bool(j, "cemu_manage_controls", out->cemu_manage_controls);
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
     out->setup_done = json_bool(j, "setup_done", out->setup_done);
     out->changelog_seen = j.str("changelog_seen", out->changelog_seen);

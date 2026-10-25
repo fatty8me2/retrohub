@@ -595,6 +595,13 @@ hubemu::CemuPads cemu_pads_for(const hubctl::Profile& prof) {
     return hubemu::cemu_pads_with(pad_descs(hubctl::list_pads(prof.port_order)));
 }
 
+hubemu::CemuPads cemu_pads_for_own(const hubctl::Profile& prof) {
+    hubctl::load_bundled_db();
+    auto all = pad_descs(hubctl::list_pads());
+    if (prof.port_order.empty()) return hubemu::cemu_pads_with_sdl(all, all);
+    return hubemu::cemu_pads_with_sdl(pad_descs(hubctl::list_pads(prof.port_order)), all);
+}
+
 /* Profile for the external emulators' prepare_*: per-game override when the game has one. */
 hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key) {
     hubctl::Store st;

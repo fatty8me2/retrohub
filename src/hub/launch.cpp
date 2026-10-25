@@ -311,6 +311,10 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         if (!perr.empty()) { set_notice("Could not set up PCSX2: " + perr, 12.0); return; }
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, cemu_pads_for(pw)); }
+    } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
+        const char* ad = std::getenv("APPDATA");
+        hubctl::Profile pw = controls_profile("wiiu", e.key);
+        hubemu::prepare_cemu_own(hubemu::cemu_user_data_dir(inst.dir, ad ? ad : ""), pw, cemu_pads_for_own(pw), true);
     }
     hub::gs::Values gsv = gs_values_for(e);
     hubemu::apply_game_settings(kind, inst.dir, gsv);
