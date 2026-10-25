@@ -260,12 +260,20 @@ static unsigned long long g_cheats_next_poll = 0;
 static std::map<std::string, std::string> g_cheats_applied;   // id -> signature of the code list the core holds
 static std::map<std::string, bool> g_cheats_state;            // id -> enabled in the core
 
+/* GameShark-button codes (88/89): written once, on a frame a little later, not every VI. */
+struct OnceJob { unsigned long long due; std::vector<n64run::GsLine> lines; };
+static std::vector<OnceJob> g_once;
+static std::map<std::string, std::vector<n64run::GsLine>> g_cheats_once;   // id -> its fire-once lines
+static std::map<std::string, int> g_cheats_fire;                           // id -> last "fire" counter acted on
+static std::map<std::string, bool> g_cheats_in_core;                       // id -> registered with the core
+
 static void cheats_apply(const cheats::CheatSet& set) {
     if (!g_core.AddCheat || !g_core.CheatEnabled) return;
+    const bool first = !g_cheats_first_done;
     std::map<std::string, bool> seen;
     for (const cheats::Cheat& c : set.cheats) {
         seen[c.id] = true;
-        std::vector<cheats::N64Code> codes;
+        std::vector<cheats::N64Code> codes, core_codes, once_codes;
         std::string err;
         if (!cheats::n64_codes(c, &codes, &err)) {
             auto pit = g_cheats_applied.find(c.id);
@@ -274,23 +282,51 @@ static void cheats_apply(const cheats::CheatSet& set) {
             g_cheats_applied[c.id] = "!" + err;
             continue;
         }
+        cheats::n64_split_button(codes, &core_codes, &once_codes);
         std::string sig;
         for (auto& k : codes) sig += std::to_string(k.address) + ":" + std::to_string(k.value) + ";";
         auto it = g_cheats_applied.find(c.id);
         if (it == g_cheats_applied.end() || it->second != sig) {
-            std::vector<m64p_cheat_code> list;
-            for (auto& k : codes) { m64p_cheat_code mc; mc.address = k.address; mc.value = k.value; list.push_back(mc); }
-            m64p_error e = g_core.AddCheat(c.id.c_str(), list.data(), (int)list.size());
-            if (e != M64ERR_SUCCESS) { logf_("cheats", "CoreAddCheat('%s') failed (%d)", c.id.c_str(), (int)e); continue; }
+            if (!core_codes.empty()) {
+                std::vector<m64p_cheat_code> list;
+                for (auto& k : core_codes) { m64p_cheat_code mc; mc.address = k.address; mc.value = k.value; list.push_back(mc); }
+                m64p_error e = g_core.AddCheat(c.id.c_str(), list.data(), (int)list.size());
+                if (e != M64ERR_SUCCESS) { logf_("cheats", "CoreAddCheat('%s') failed (%d)", c.id.c_str(), (int)e); continue; }
+                g_cheats_in_core[c.id] = true;
+            } else if (g_cheats_in_core[c.id]) {
+                g_core.CheatEnabled(c.id.c_str(), 0);
+                g_cheats_in_core[c.id] = false;
+            }
+            std::vector<n64run::GsLine> ol;
+            for (auto& k : once_codes) ol.push_back({(uint8_t)(k.address >> 24), k.address & 0xFFFFFFu, (uint16_t)k.value});
+            g_cheats_once[c.id] = std::move(ol);
             g_cheats_applied[c.id] = sig;
             g_cheats_state.erase(c.id);
-            if (cheats::n64_needs_gs_button(codes)) logf_("cheats", "note: '%s' has 88/89 codes that only fire while the GameShark button is held (not mapped)", c.id.c_str());
+            if (codes.empty()) logf_("cheats", "'%s' holds only device-control codes (nothing to do in an emulator)", c.id.c_str());
         }
         auto st = g_cheats_state.find(c.id);
         if (st == g_cheats_state.end() || st->second != c.enabled) {
-            if (g_core.CheatEnabled(c.id.c_str(), c.enabled ? 1 : 0) == M64ERR_SUCCESS) {
+            bool ok = true;
+            if (g_cheats_in_core[c.id]) ok = g_core.CheatEnabled(c.id.c_str(), c.enabled ? 1 : 0) == M64ERR_SUCCESS;
+            if (ok) {
                 g_cheats_state[c.id] = c.enabled;
                 logf_("cheats", "%s '%s' (%s, %zu code%s)", c.enabled ? "enabled" : "disabled", c.id.c_str(), c.desc.c_str(), codes.size(), codes.size() == 1 ? "" : "s");
+                auto ol = g_cheats_once.find(c.id);
+                if (c.enabled && ol != g_cheats_once.end() && !ol->second.empty()) {   // switched on: fire the button codes once
+                    g_once.push_back({(unsigned long long)g_vi + (first ? 180ull : 1ull), ol->second});
+                    logf_("cheats", "'%s': GameShark-button codes (%zu) fire once now", c.id.c_str(), ol->second.size());
+                }
+            }
+        }
+        /* "Activate": the hub bumps the fire counter; every rise fires the button codes once more (live sessions only). */
+        auto fi = g_cheats_fire.find(c.id);
+        if (fi == g_cheats_fire.end()) g_cheats_fire[c.id] = c.fire;
+        else if (c.fire > fi->second) {
+            fi->second = c.fire;
+            auto ol = g_cheats_once.find(c.id);
+            if (c.enabled && ol != g_cheats_once.end() && !ol->second.empty()) {
+                g_once.push_back({(unsigned long long)g_vi + 1ull, ol->second});
+                logf_("cheats", "'%s': activated (GameShark-button codes fire once)", c.id.c_str());
             }
         }
     }
@@ -298,7 +334,6 @@ static void cheats_apply(const cheats::CheatSet& set) {
         if (!seen.count(kv.first) && kv.second && g_core.CheatEnabled(kv.first.c_str(), 0) == M64ERR_SUCCESS) { kv.second = false; logf_("cheats", "disabled '%s' (removed from file)", kv.first.c_str()); }
 }
 
-/* Emulation thread, once per VI. */
 static void cheats_tick() {
     if (g_cheats_path.empty()) return;
     if (!g_cheats_first_done) {
@@ -320,6 +355,13 @@ static bool qa_nofix() { return std::getenv("RETROHUB_QA") && std::getenv("N64RU
 
 static void headless_frame_cb(unsigned int) {
     g_vi++;
+    if (!g_once.empty() && g_core.MemPtr) {
+        uint8_t* r = static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM));
+        for (size_t i = 0; i < g_once.size();) {
+            if (g_vi >= g_once[i].due) { if (r) n64run::gs_apply(r, 8u * 1024u * 1024u, g_once[i].lines); g_once.erase(g_once.begin() + i); }
+            else ++i;
+        }
+    }
     if (!g_gs.empty() && g_core.MemPtr) { uint8_t* r = static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)); if (r) n64run::gs_apply(r, 8u * 1024u * 1024u, g_gs); }
     cheats_tick();
     if (g_match && g_core.MemPtr && !g_match->done()) {

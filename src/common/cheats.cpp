@@ -70,6 +70,7 @@ bool parse_json(const std::string& text, CheatSet* out, std::string* err) {
         std::string f = c.str("format", "raw");
         if (!parse_format(f, &ch.format)) ch.format = Format::Raw;
         ch.enabled = c.boolean("enabled", false);
+        ch.fire = (int)c.i64("fire", 0);
         if (const json::Value* codes = c.get("codes")) {
             if (codes->is_array()) { for (auto& cv : codes->a) if (cv.is_string()) ch.codes.push_back(cv.s); }
             else if (codes->is_string()) ch.codes.push_back(codes->s);
@@ -93,6 +94,7 @@ std::string to_json(const CheatSet& set) {
         for (auto& s : c.codes) codes.a.push_back(json::make_string(s));
         o.o.push_back({"codes", std::move(codes)});
         o.o.push_back({"enabled", json::make_bool(c.enabled)});
+        if (c.fire > 0) o.o.push_back({"fire", json::make_int(c.fire)});
         arr.a.push_back(std::move(o));
     }
     root.o.push_back({"cheats", std::move(arr)});
@@ -207,29 +209,89 @@ static bool n64_type_ok(unsigned t) {
     }
 }
 
+/* Split one stored code line into single codes: databases join several with ';' (or '+', ',', newline). */
+static std::vector<std::string> n64_pieces(const std::string& line) {
+    std::vector<std::string> r;
+    std::string cur;
+    for (size_t i = 0; i <= line.size(); i++) {
+        if (i == line.size() || line[i] == ';' || line[i] == '+' || line[i] == ',' || line[i] == '\n' || line[i] == '\r') {
+            size_t a = cur.find_first_not_of(" \t");
+            if (a != std::string::npos) r.push_back(cur.substr(a, cur.find_last_not_of(" \t") - a + 1));
+            cur.clear();
+        } else cur += line[i];
+    }
+    return r;
+}
+
+/* Types with no effect in an emulator (cartridge/device control: Datel enable/boot/capture/padding). Dropped. */
+static bool n64_type_noop(unsigned t) { return t == 0x00 || t == 0xDE || t == 0xEE || t == 0xFF; }
+static bool n64_type_cond(unsigned t) { return t == 0x50 || (t >= 0xD0 && t <= 0xD3); }
+
 bool n64_codes(const Cheat& c, std::vector<N64Code>* out, std::string* err) {
     std::vector<N64Code> r;
-    for (const std::string& line : c.codes) {
-        std::string t;
-        if (!normalize_code(Target::N64, c.format, line, &t, err)) return false;
-        N64Code nc;
-        nc.address = (uint32_t)std::stoul(t.substr(0, 8), nullptr, 16);
-        nc.value = (int)std::stoul(t.substr(9), nullptr, 16);
-        unsigned type = nc.address >> 24;
-        if (!n64_type_ok(type)) {
-            if (err) { char b[96]; std::snprintf(b, sizeof b, "unsupported GameShark code type %02X in '%s'", type, line.c_str()); *err = b; }
-            return false;
+    bool any_line = false;
+    for (const std::string& raw : c.codes) {
+        for (const std::string& line : n64_pieces(raw)) {
+            any_line = true;
+            std::string sq = squeeze(line);
+            if (sq.size() >= 12 && sq.find('X') != std::string::npos && is_hex(sq, 0, 8)) {
+                if (err) *err = "needs a value typed in (XXXX placeholder): '" + line + "'";
+                return false;
+            }
+            /* "DE000400 EE000000": two device-control words run together. */
+            if (sq.size() == 16 && is_hex(sq, 0, 16) && n64_type_noop((unsigned)std::stoul(sq.substr(0, 2), nullptr, 16))) {
+                if (!r.empty() && n64_type_cond(r.back().address >> 24)) { if (err) *err = "device-control code after a conditional: '" + line + "'"; return false; }
+                continue;
+            }
+            std::string t;
+            if (!normalize_code(Target::N64, c.format, line, &t, err)) return false;
+            N64Code nc;
+            nc.address = (uint32_t)std::stoul(t.substr(0, 8), nullptr, 16);
+            nc.value = (int)std::stoul(t.substr(9), nullptr, 16);
+            unsigned type = nc.address >> 24;
+            if (n64_type_noop(type)) {
+                if (!r.empty() && n64_type_cond(r.back().address >> 24)) { if (err) *err = "device-control code after a conditional: '" + line + "'"; return false; }
+                continue;
+            }
+            if (!n64_type_ok(type)) {
+                if (err) { char b[96]; std::snprintf(b, sizeof b, "unsupported GameShark code type %02X in '%s'", type, line.c_str()); *err = b; }
+                return false;
+            }
+            if ((type == 0x88 || type == 0x89) && !r.empty() && r.back().address >> 24 == 0x50) {
+                if (err) *err = "repeater over a GameShark-button code is not supported: '" + line + "'";
+                return false;
+            }
+            r.push_back(nc);
         }
-        r.push_back(nc);
     }
-    if (r.empty()) { if (err) *err = "no codes"; return false; }
-    *out = std::move(r);
+    if (!any_line) { if (err) *err = "no codes"; return false; }
+    *out = std::move(r);   // may be empty: every line was a device-control code (nothing for an emulator to do)
     return true;
 }
 
 bool n64_needs_gs_button(const std::vector<N64Code>& codes) {
     for (auto& c : codes) { unsigned t = c.address >> 24; if (t == 0x88 || t == 0x89) return true; }
     return false;
+}
+
+bool n64_is_button_cheat(const Cheat& c) {
+    std::vector<N64Code> v;
+    return n64_codes(c, &v, nullptr) && n64_needs_gs_button(v);
+}
+
+void n64_split_button(const std::vector<N64Code>& codes, std::vector<N64Code>* core, std::vector<N64Code>* once) {
+    core->clear();
+    once->clear();
+    for (const N64Code& c : codes) {
+        unsigned t = c.address >> 24;
+        if (t == 0x88 || t == 0x89) {
+            if (!core->empty() && n64_type_cond(core->back().address >> 24)) {   // its guard goes with it
+                once->insert(once->begin() + 0, core->back());
+                core->pop_back();
+            }
+            once->push_back(c);
+        } else core->push_back(c);
+    }
 }
 
 /* ---------------------------------------------------------------- libretro */

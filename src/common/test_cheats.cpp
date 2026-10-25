@@ -45,7 +45,27 @@ int main() {
     CHECK(n64_codes(mk("n", Format::GameShark, {"8033b21e 0008", "D1330000:1234", "50000402 0000", "F1000000 00FF"}), &n, &err));
     CHECK(n.size() == 4 && n[0].address == 0x8033B21E && n[0].value == 8 && n[1].address == 0xD1330000 && n[1].value == 0x1234);
     CHECK(n64_codes(mk("n", Format::Raw, {"A0123456 0001"}), &n, &err));
-    CHECK(!n64_codes(mk("n", Format::GameShark, {"8033B21E 0008", "DE000000 0000"}), &n, &err) && err.find("DE") != std::string::npos);
+    // device-control words are dropped, not fatal
+    CHECK(n64_codes(mk("n", Format::GameShark, {"8033B21E 0008", "DE000000 0000", "EE000000 0000", "FF500000 0000", "00001300 0000"}), &n, &err) && n.size() == 1);
+    CHECK(n64_codes(mk("n", Format::GameShark, {"DE000400 EE000000"}), &n, &err) && n.empty());
+    CHECK(!n64_codes(mk("n", Format::GameShark, {"D0123456 0001", "DE000000 0000"}), &n, &err));   // would shift the guard
+    CHECK(!n64_codes(mk("n", Format::GameShark, {"D899BE59 00A9"}), &n, &err) && err.find("D8") != std::string::npos);
+    CHECK(!n64_codes(mk("n", Format::GameShark, {"8001A0E7 XXXX"}), &n, &err) && err.find("XXXX") != std::string::npos);
+    // joined codes
+    CHECK(n64_codes(mk("n", Format::GameShark, {"81103B66 0021;50000D01 0000;80118F38 0001"}), &n, &err) && n.size() == 3);
+    CHECK(n64_codes(mk("n", Format::GameShark, {"D0120F70 0020,801A719D 00EF"}), &n, &err) && n.size() == 2);
+    {   // 88/89: fire-once split, with the guarding conditional travelling along
+        std::vector<N64Code> core, once;
+        CHECK(n64_codes(mk("n", Format::GameShark, {"80000010 0001", "D1000020 0005", "89000030 1234", "88000040 0007"}), &n, &err));
+        n64_split_button(n, &core, &once);
+        CHECK(core.size() == 1 && core[0].address == 0x80000010u);
+        CHECK(once.size() == 3 && (once[0].address >> 24) == 0xD1 && (once[1].address >> 24) == 0x89 && (once[2].address >> 24) == 0x88);
+        CHECK(n64_is_button_cheat(mk("n", Format::GameShark, {"88000040 0007"})));
+        CHECK(!n64_is_button_cheat(mk("n", Format::GameShark, {"80000040 0007"})));
+        CHECK(!n64_codes(mk("n", Format::GameShark, {"50000201 0000", "88000040 0007"}), &n, &err));
+        CheatSet fs; fs.cheats.push_back(mk("f", Format::GameShark, {"88000040 0007"})); fs.cheats[0].fire = 3;
+        CheatSet f2; CHECK(parse_json(to_json(fs), &f2, &err) && f2.cheats[0].fire == 3);
+    }
     CHECK(!n64_codes(mk("n", Format::GameGenie, {"ABC-DEF"}), &n, &err));
     CHECK(!n64_codes(mk("n", Format::GameShark, {}), &n, &err));
     CHECK(n64_codes(mk("n", Format::ActionReplay, {"88123456 0001"}), &n, &err) && n64_needs_gs_button(n));

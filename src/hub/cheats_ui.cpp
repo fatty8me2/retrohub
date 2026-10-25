@@ -126,9 +126,14 @@ cheats::Target target_of(const hub::GameEntry& e) {
     return t;
 }
 
+/* "Activate" presses per game+cheat this hub session (the runner fires GameShark-button codes on each rise). */
+std::map<std::string, int> g_fire;
+
 void write_run(const hub::GameEntry& e) {
     std::string err;
-    cheats::save_file(run_file(e.key), cheatstore::runner_set(rows_cached(e)), &err);
+    cheats::CheatSet cs = cheatstore::runner_set(rows_cached(e));
+    for (auto& c : cs.cheats) { auto f = g_fire.find(e.key + "|" + c.id); if (f != g_fire.end()) c.fire = f->second; }
+    cheats::save_file(run_file(e.key), cs, &err);
 }
 
 bool in_room_for(const hub::GameEntry& e) { return A.in_room && A.selected_game == room_id(e); }
@@ -173,9 +178,10 @@ const char* fmt_label(cheats::Format f) {
 }
 
 /* One big row with a switch on the right. Returns true when toggled. `removed` (custom rows) gets a Remove button. */
-bool cheat_row(const cheatstore::Row& r, bool enabled, bool* removed) {
+bool cheat_row(const cheatstore::Row& r, bool enabled, bool* removed, bool* activate = nullptr) {
     float h = sp(7.f), w = ImGui::GetContentRegionAvail().x;
     float rm_w = r.custom ? sp(11.f) : 0.f;
+    float act_w = activate ? sp(13.f) : 0.f;
     ImGui::PushID(r.cheat.id.c_str());
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
     ImGui::InvisibleButton("##row", ImVec2(w - (r.custom ? rm_w + sp(1.f) : 0.f), h), ImGuiButtonFlags_EnableNav);
@@ -195,13 +201,17 @@ bool cheat_row(const cheatstore::Row& r, bool enabled, bool* removed) {
     dl->AddCircleFilled(ImVec2(on ? s1.x - sh * 0.5f : s0.x + sh * 0.5f, s0.y + sh * 0.5f), kr, IM_COL32_WHITE);
     if (!enabled) dl->AddRectFilled(p0, p1, IM_COL32(16, 17, 22, 110), rad);
     // text
-    float tx = p0.x + sp(2.f), tw = s0.x - tx - sp(1.5f);
+    float tx = p0.x + sp(2.f), tw = s0.x - tx - sp(1.5f) - (act_w > 0 ? act_w + sp(1.f) : 0.f);
     ImFont* bf = ui::F.bold;
     std::string t = ui::ellipsize(bf, bf->FontSize, r.cheat.desc, tw);
     dl->AddText(bf, bf->FontSize, ImVec2(tx, p0.y + sp(1.1f)), ui::TEXT, t.c_str());
     char sub[96];
     std::snprintf(sub, sizeof sub, "%s  -  %d line%s", fmt_label(r.cheat.format), (int)r.cheat.codes.size(), r.cheat.codes.size() == 1 ? "" : "s");
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.1f) + bf->FontSize + sp(0.4f)), ui::TEXT2, r.custom ? (std::string("Your code  -  ") + sub).c_str() : sub);
+    if (activate && r.cheat.enabled) {   // GameShark-button codes: fire again on demand
+        ImGui::SetCursorScreenPos(ImVec2(s0.x - act_w - sp(1.f), p0.y + (h - sp(4.4f)) * 0.5f));
+        if (button("Activate", ImVec2(act_w, sp(4.4f)), false, enabled)) *activate = true;
+    }
     if (r.custom) {
         ImGui::SameLine(0, sp(1.f));
         if (button("Remove", ImVec2(rm_w, h), false, enabled)) *removed = true;
@@ -515,6 +525,7 @@ void draw_cheats_modal() {
             it_key = e.key; it_rev = g_rev; it_q = g_search;
         }
         const float row_h = sp(7.75f);
+        const bool live_here = A.proc && !A.run.online && A.run.key == e.key && e.system == hub::System::N64;
         int toggled = -1;
         std::string removed_id;
         ImGuiListClipper clip;
@@ -534,8 +545,10 @@ void draw_cheats_modal() {
                     ImGui::Dummy(ImVec2(0, 0));
                     continue;
                 }
-                bool rm = false;
-                if (cheat_row(shown[it.row], can_toggle, &rm)) toggled = it.row;
+                bool rm = false, act = false;
+                bool btn = live_here && shown[it.row].cheat.enabled && cheats::n64_is_button_cheat(shown[it.row].cheat);
+                if (cheat_row(shown[it.row], can_toggle, &rm, btn ? &act : nullptr)) toggled = it.row;
+                if (act) { ++g_fire[e.key + "|" + shown[it.row].cheat.id]; write_run(e); push_toast("Activated: " + shown[it.row].cheat.desc, COL_GOOD, 2.5); }
                 if (rm) removed_id = shown[it.row].cheat.id;
             }
         if (toggled >= 0) { cheatstore::Row copy = shown[toggled]; toggle(e, copy); }
