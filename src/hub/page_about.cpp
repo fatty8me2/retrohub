@@ -11,6 +11,7 @@ void draw_overlays() {
     draw_details_modal();
     cloud_ui_overlays();
     draw_cheats_modal();
+    draw_quick_menu();
     kt_draw_modals();
 }
 

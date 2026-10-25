@@ -54,6 +54,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
       << "  \"sync_folder\": \"" << json::escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
+      << "  \"backup_shots\": " << (s.backup_shots ? "true" : "false") << ",\n"
       << "  \"cloud_states\": " << (s.cloud_states ? "true" : "false") << ",\n"
       << "  \"library_sort\": \"" << json::escape(s.library_sort) << "\",\n"
       << "  \"cloud_enabled\": " << (s.cloud_enabled ? "true" : "false") << ",\n"
@@ -114,6 +115,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->fullscreen = json_bool(j, "fullscreen", out->fullscreen);
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
+    out->backup_shots = json_bool(j, "backup_shots", out->backup_shots);
     out->cloud_states = json_bool(j, "cloud_states", out->cloud_states);
     if (const json::Value* ls = j.get("library_sort")) if (ls->is_string()) out->library_sort = ls->s;
     out->cloud_enabled = json_bool(j, "cloud_enabled", out->cloud_enabled);   // legacy sync_states / cloud_saves keys are ignored

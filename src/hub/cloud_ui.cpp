@@ -193,6 +193,8 @@ void account_panel() {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("Advanced: saves stay on this PC only while paused");
+    if (on && ImGui::Checkbox("Back up screenshots", &A.st.backup_shots)) { hs::set_backup_screenshots(A.st.backup_shots); mark_dirty(); }
+    if (on) { ImGui::SameLine(); ImGui::TextDisabled("They share the space used by save states"); }
     {
         bool st = A.st.cloud_states;
         if (ImGui::Checkbox("Back up save states to the cloud", &st)) {
