@@ -34,6 +34,13 @@ bool identify_buffer(std::shared_ptr<std::string> data, Ident* out);
 /* A stored (uncompressed) CHD at [base, base+size) of a file, e.g. a stored zip entry; falls back to the entry name's serial. */
 bool identify_chd_slice(const std::string& path_utf8, uint64_t base, uint64_t size, const std::string& entry_name, Ident* out);
 
+/* Region wanted by a Redump/No-Intro style name: "(USA)", "(Europe)", "(Japan)", "[NTSC-U]", "[PAL]" -> 'U' 'E' 'J'; 0 if none. */
+char region_from_name(const std::string& name);
+/* Serial of the PS2 game whose database title equals this name (archive / file name, extension and "(...)" "[...]" groups ignored, case and
+ * punctuation insensitive) and whose serial prefix fits the region in the name. "" when no title matches. *ambiguous is set when more than one
+ * serial still fits (the lowest serial is returned). */
+std::string serial_for_name(const std::string& name, bool* ambiguous = nullptr);
+
 /* Library key: "ps2:<serial lower>" or "ps2:file-<stem>". */
 std::string key_for(const std::string& serial, const std::string& file_stem_key);
 

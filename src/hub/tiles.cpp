@@ -214,7 +214,8 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     if (is_kanto(e)) { t.tag = "CO-OP"; t.tag_accent = true; t.tag_tip = "Two-player online co-op FireRed (a friend's project). Host or join from a room."; }
     if (e.issue == "extract") {
         const bool sz = e.path.size() > 3 && e.path.compare(e.path.size() - 3, 3, ".7z") == 0;
-        t.tag = sz ? "7Z" : "ZIP";
+        const bool rar = e.path.size() > 4 && e.path.compare(e.path.size() - 4, 4, ".rar") == 0;
+        t.tag = rar ? "RAR" : sz ? "7Z" : "ZIP";
         t.tag_tip = "Archived - RetroHub unpacks it the first time you play";
     }
     else if (e.issue == "encrypted") { t.tag = "ENCRYPTED"; t.tag_warn = true; t.tag_tip = "Encrypted dump - it needs decrypting before it can run"; }

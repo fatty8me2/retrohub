@@ -99,6 +99,7 @@ add_test(NAME hubkantopad_test COMMAND hubkantopad_test)               # Kanto T
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
 add_test(NAME ps1_test COMMAND ps1_test)                                 # PlayStation: serials, catalog, synthetic discs, BIOS discovery (scratch dirs)
 add_test(NAME cheats_db_test COMMAND cheats_db_test)
+add_test(NAME psarchive_test COMMAND psarchive_test)                       # PS1/PS2 disc archives: identify by name/DB, truncated, extract+confirm (scratch dirs)
 add_test(NAME addgames_test COMMAND addgames_test)                     # Add games: console sorting, destination, dedupe, copy job (scratch dirs)
 add_test(NAME hubgamesettings_test COMMAND hubgamesettings_test)
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
