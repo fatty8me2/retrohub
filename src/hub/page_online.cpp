@@ -91,6 +91,7 @@ void host_launch_selected() {
                 np_extra += std::string(",\"np_link\":{\"core\":\"") + (rg->system == hub::System::GBA ? "mgba" : "sameboy") + "\",\"consoles\":2}";
             if (rg->system == hub::System::NDS) np_extra += ",\"np_ds\":" + hubui::np_ds_json();
             np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
+            np_extra += cheats_launch_fragment(*rg);
             if (gc_ok) {
                 A.lobby.send_msg(hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra));
                 launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
@@ -123,6 +124,7 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
         auto vg = hubui::version_gate(host_app, peers, allow_version_mismatch());
         if (!vg.ok) return vg.reason;
         if (is_kanto(*rg)) { std::string b = kt_launch_block(*rg); if (!b.empty()) return b; }
+        { std::string b = cheats_launch_block(*rg, peers); if (!b.empty()) return b; }
         if (rg->system == hub::System::N3DS && gc_needs_unpack(*rg)) return "Unpacking " + rg->title + " (needed for 3DS online)...";
         if (rg->system == hub::System::GC) {
             if (gc_needs_unpack(*rg)) return "Unpacking " + rg->title + " (needed for GameCube online)...";
@@ -316,6 +318,7 @@ void page_online_room() {
     bool host = is_host();
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
     room_banner(host, rg, peers);
+    cheats_room_strip(rg, host);
     float total_w = ImGui::GetContentRegionAvail().x;
     float chat_w = std::max(280 * S, total_w * 0.34f);
     float left_w = total_w - chat_w - 20 * S;
