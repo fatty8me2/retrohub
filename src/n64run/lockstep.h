@@ -27,6 +27,7 @@ struct LockstepOptions {
     int delay = 2;
     bool online = false;
     bool strict_sync = false;
+    bool wide = false;             // second u32 per sample and port (hooks.read_local_aux; PlayStation analog sticks)
     bool adaptive_delay = true;    // raise/lower the input delay from observed stalls (host orders, all follow)
     int hash_interval = 600;       // samples between RDRAM hashes
     uint32_t timeout_ms = 10000;   // no progress -> "Connection lost"
@@ -35,6 +36,7 @@ struct LockstepOptions {
 
 struct LockstepHooks {
     std::function<uint32_t(int owned_index)> read_local;      // packed BUTTONS for the owned_index-th local port
+    std::function<uint32_t(int owned_index)> read_local_aux;  // wide only: the second word for the owned_index-th local port
     std::function<void()> update_local;                       // poll devices once per sample
     std::function<void()> idle;                               // called while blocked (pump SDL events)
     std::function<bool(uint64_t* out)> hash_rdram;            // false -> hashing unavailable
@@ -52,6 +54,8 @@ class Lockstep {
 
     /* Called by the input plugin's GetKeys. Returns the packed BUTTONS word. */
     uint32_t get_keys(int port);
+    /* Wide only: second word of `port` for the sample the last lead-port get_keys() returned (call after the whole poll round). */
+    uint32_t aux(int port) const;
 
     bool present(int port) const { return core_.port_present(port); }
     bool local(int port) const { return core_.port_local(port); }

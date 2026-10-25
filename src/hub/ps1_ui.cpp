@@ -54,6 +54,35 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
     spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
 }
 
+/* Online (launch_online.cpp): retrorun arguments for a PlayStation room, or false + `err`. `net` is the shared " --net ... --ports ..." tail,
+ * `ports` the plan's port owners ("0,1,2,3": -1 = nobody). Every PC must run the same BIOS (retrorun compares a fingerprint and refuses a
+ * mismatch), so a real BIOS is staged when one is found and OpenBIOS is the fallback only when no PC needs a prompt. The multitap follows
+ * the plan: a third or fourth port means the multitap is on, whatever the local setting says (the host's Sync value still forces it on). */
+bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std::string& ports, const std::string& tmp_dir, bool share_save,
+                     hub::gs::Values gsv, std::string* args, std::string* err) {
+    if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) { *err = "Unpacking " + e.title + " first - try again when it is done."; return false; }
+    std::string core = find_core("beetle_psx");
+    if (core.empty()) { *err = "The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder."; return false; }
+    std::vector<hub::ps1::BiosFound> bios = find_all();
+    std::string sysdir = staging_dir();
+    if (bios.empty() && !A.st.ps1_openbios) {
+        *err = "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Playing.";
+        return false;
+    }
+    if (!bios.empty()) hub::ps1::stage_bios(bios, sysdir);
+    else { std::error_code ec; std::filesystem::create_directories(std::filesystem::u8path(sysdir), ec); }
+    const bool tap = hub::ps1::ports_need_multitap(ports);
+    if (tap) gsv["ps1.multitap"] = "on";
+    else if (gsv["ps1.multitap"] != "on") gsv["ps1.multitap"] = "off";
+    std::string game = e.issue == "extract" ? hub::extracted_3ds_path(e) : e.path;
+    *args = "--core " + quote(core) + " --rom " + quote(game) + " --system ps1 --save-dir " + quote(tmp_dir) + " --state-dir " + quote(tmp_dir) +
+            " --system-dir " + quote(sysdir) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("ps1", e.key);
+    if (share_save) *args += " --share-host-save";
+    *args += " --rollback --rb-pred 6";   // GGPO-style rollback (the core is verified with SyncTest); retrorun falls back to lockstep when the core is not the RetroHub build
+    *args += hubui::retro_extra_args(e.system, gsv);
+    return true;
+}
+
 void draw_ps1_dialogs() {
     if (!ASK.open) return;
     bool open = false;

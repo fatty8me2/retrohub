@@ -32,6 +32,7 @@ static LockstepCore::Config make_core_config(const LockstepOptions& o) {
     c.my_slot = o.my_slot;
     c.num_slots = o.num_slots;
     c.slot_mask = o.slot_mask;
+    c.wide = o.wide;
     c.delay = o.online ? o.delay : 0;   // offline: no input delay needed
     return c;
 }
@@ -191,6 +192,11 @@ void Lockstep::finish() {
     }
 }
 
+uint32_t Lockstep::aux(int port) const {
+    if (lost_ || peer_left_ || !core_.port_present(port) || sample_ < 0) return 0;
+    return core_.get_aux((uint32_t)sample_, port);
+}
+
 uint32_t Lockstep::get_keys(int port) {
     if (lost_ || peer_left_ || !core_.port_present(port)) return 0;
     if (port != core_.lead_port()) {
@@ -222,10 +228,12 @@ uint32_t Lockstep::get_keys(int port) {
         if (per < 0) { per = 0; const char* e = std::getenv("RETROHUB_QA") ? std::getenv("N64RUN_QA_STALL") : nullptr; if (e) std::sscanf(e, "%d,%d", &per, &ms); }
         if (per > 0 && n % (uint32_t)per == 0) Sleep((DWORD)ms);
     }
-    uint32_t btn[kPorts] = {0, 0, 0, 0};
-    for (int i = 0; i < n_local_; i++)
+    uint32_t btn[kPorts] = {0, 0, 0, 0}, ax[kPorts] = {0, 0, 0, 0};
+    for (int i = 0; i < n_local_; i++) {
         btn[local_ports_[i]] = hooks_.read_local ? hooks_.read_local(i) : 0u;
-    core_.schedule_local(n, btn);
+        if (opt_.wide && hooks_.read_local_aux) ax[local_ports_[i]] = hooks_.read_local_aux(i);
+    }
+    core_.schedule_local(n, btn, ax);
     send_packet();
 
     uint32_t stall_this = 0;

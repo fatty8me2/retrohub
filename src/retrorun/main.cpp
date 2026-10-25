@@ -28,11 +28,14 @@
 #include "dsview.h"
 #include "image.h"
 #include "link_sync.h"
+#include "ps1_input.h"
 #include "rollback.h"
 #include "lockstep.h"
 #include "log.h"
 #include "session.h"
 #include "save_sync.h"
+
+constexpr uint8_t kPktCfg = 0x60;   // {type, slot, u64 PlayStation setup fingerprint}; unknown to lockstep/rollback (ignored there)
 
 namespace fs = std::filesystem;
 
@@ -417,6 +420,8 @@ class Frontend {
     bool load_state(const std::string& name);
     uint64_t state_hash();
     bool setup_net();
+    uint64_t ps1_config_fingerprint();
+    bool ps1_config_check();   // all PCs must run the same BIOS / core build / hardware options
     bool setup_link();
     void link_pump();
     void link_send(int flags, const void* buf, size_t len, uint16_t client_id);
@@ -532,6 +537,29 @@ bool Frontend::setup_paths() {
     for (auto& o : a.opts) {
         size_t eq = o.find('=');
         if (eq != std::string::npos) core.overrides[trim(o.substr(0, eq))] = trim(o.substr(eq + 1));
+    }
+    if (is_ps1 && (!a.net.empty() || a.synctest)) {
+        /* Online (and SyncTest): every PC must run the identical emulation AND produce the identical picture, because the picture
+         * hash is the desync check. Pin everything that changes timing, the video output or the state, whatever the user chose
+         * offline: the software renderer's resolution / widescreen / PGXP / dither, overclocks, CD speed and access method (the
+         * threaded async reader retries sectors by wall-clock), the on-screen messages and FPS counter (drawn into the frame),
+         * crop settings, analog-mode toggle, frame duping (the repeated frame depended on the local history), the second memory
+         * card, and the deinterlacer: "off" rasterises both fields into the surface, with no previous-field state outside the
+         * savestate (weave / FastMAD read it; verified with SyncTest on a 480i picture). */
+        static const char* const pins[][2] = {
+            {"beetle_psx_internal_resolution", "1x(native)"}, {"beetle_psx_widescreen_hack", "disabled"}, {"beetle_psx_pgxp_mode", "disabled"},
+            {"beetle_psx_pgxp_2d_tol", "disabled"}, {"beetle_psx_pgxp_nclip", "disabled"}, {"beetle_psx_pgxp_texture", "disabled"},
+            {"beetle_psx_dither_mode", "1x(native)"}, {"beetle_psx_cpu_freq_scale", "100%"}, {"beetle_psx_gpu_overclock", "1x(native)"},
+            {"beetle_psx_gte_overclock", "disabled"}, {"beetle_psx_cd_fastload", "2x(native)"}, {"beetle_psx_cd_access_method", "sync"},
+            {"beetle_psx_display_osd", "disabled"}, {"beetle_psx_display_internal_fps", "disabled"}, {"beetle_psx_frame_duping", "disabled"},
+            {"beetle_psx_deinterlacer", "off"}, {"beetle_psx_crop_overscan", "smart"}, {"beetle_psx_image_crop", "disabled"},
+            {"beetle_psx_image_offset", "disabled"}, {"beetle_psx_analog_toggle", "disabled"}, {"beetle_psx_analog_calibration", "disabled"},
+            {"beetle_psx_enable_memcard1", "disabled"}, {"beetle_psx_shared_memory_cards", "disabled"}, {"beetle_psx_skip_bios", "disabled"},
+            {"beetle_psx_override_bios", "disabled"}, {"beetle_psx_region", "auto"}, {"beetle_psx_core_timing_fps", "auto_toggle"},
+            {"beetle_psx_pal_video_timing_override", "disabled"}, {"beetle_psx_line_render", "default"}, {"beetle_psx_aspect_ratio", "corrected"},
+            {"beetle_psx_initial_scanline", "0"}, {"beetle_psx_initial_scanline_pal", "0"}, {"beetle_psx_last_scanline", "239"},
+            {"beetle_psx_last_scanline_pal", "287"}, {"beetle_psx_use_mednafen_memcard0_method", "libretro"}};
+        for (auto& pin : pins) core.overrides[pin[0]] = pin[1];
     }
     return true;
 }
@@ -666,7 +694,13 @@ void Frontend::poll_all_local() {
     for (int i = 0; i < n_local; i++) {
         local_pad_cache_[i] = poll_local(i);
         std::memset(local_stick_[i], 0, sizeof local_stick_[i]);
-        if (is_ps1 && !a.headless && (size_t)i < pads.size() && retro_pad) {
+        if (is_ps1 && a.fuzz) {   // QA: pseudo-random sticks, a new target every 5 frames
+            for (int k = 0; k < 4; k++) {
+                uint32_t x = (uint32_t)(frame_no / 5) * 2246822519u ^ (uint32_t)(local_ports[i] * 4 + k + 1) * 3266489917u ^ 0x85EBCA6Bu;
+                x ^= x >> 15; x *= 2654435761u; x ^= x >> 13;
+                local_stick_[i][k] = (int16_t)((int)(x & 0xFFFF) - 32768);
+            }
+        } else if (is_ps1 && !a.headless && (size_t)i < pads.size() && retro_pad) {
             hubctl::PadState st;
             hubctl::read_state(pads[i], &st);
             retro_pad->sticks(st, local_stick_[i]);
@@ -942,6 +976,74 @@ void Frontend::link_save(bool force) {
 
 /* ------------------------------------------------------------------ netplay */
 
+/* PlayStation netplay: the BIOS, the core build and the hardware options (multitap, pinned settings) decide what every instruction does:
+ * two PCs that differ would drift apart a few seconds in and show up as a desync. Compare a fingerprint of them up front instead. */
+uint64_t Frontend::ps1_config_fingerprint() {
+    uint64_t h = 0xCBF29CE484222325ull;
+    auto mix = [&](const std::string& t) { for (unsigned char c : t) h = (h ^ c) * 0x100000001B3ull; h = (h ^ 0xFF) * 0x100000001B3ull; };
+    mix(core.info().library_name ? core.info().library_name : "");
+    mix(core.info().library_version ? core.info().library_version : "");
+    for (auto& kv : core.overrides) if (kv.first.rfind("beetle_psx_", 0) == 0) mix(kv.first + "=" + kv.second);   // ordered map: same on every PC
+    std::vector<std::pair<std::string, uint64_t>> bios;
+    std::error_code ec;
+    for (auto& de : fs::directory_iterator(fs::u8path(a.system_dir), ec)) {
+        if (ec || !de.is_regular_file(ec)) continue;
+        std::string n = lower(de.path().filename().u8string());
+        if (n.rfind("scph", 0) != 0 || n.size() < 4 || n.substr(n.size() - 4) != ".bin") continue;
+        std::vector<uint8_t> d;
+        if (read_file(de.path().u8string(), &d)) bios.push_back({n, n64run::hash_block(d.data(), d.size())});
+    }
+    std::sort(bios.begin(), bios.end());
+    if (bios.empty()) mix("openbios");
+    for (auto& b : bios) { mix(b.first); mix(std::to_string((unsigned long long)b.second)); }
+    return h;
+}
+
+bool Frontend::ps1_config_check() {
+    const uint64_t mine = ps1_config_fingerprint();
+    rlog("net: PlayStation setup fingerprint %016llx (BIOS %s)", (unsigned long long)mine, ([&] {
+        std::error_code ec;
+        for (auto& de : fs::directory_iterator(fs::u8path(a.system_dir), ec)) { std::string n = lower(de.path().filename().u8string()); if (n.rfind("scph", 0) == 0) return "real"; }
+        return "OpenBIOS";
+    })());
+    uint32_t seen = 1u << a.slot, t0 = hubnet::now_ms(), last = 0, done_at = 0, bad_at = 0;
+    for (;;) {
+        session.update();
+        int from;
+        std::vector<uint8_t> m;
+        while (session.recv(&from, &m)) {
+            if (m.size() == 10 && m[0] == kPktCfg && m[1] < 8 && (int)m[1] == from) {
+                uint64_t theirs;
+                std::memcpy(&theirs, &m[2], 8);
+                if (theirs != mine) {
+                    if (!bad_at) {
+                        rlog("net: FAIL: slot %d runs a different PlayStation setup (BIOS, core build or console options differ; theirs %016llx, mine %016llx). "
+                             "Everyone in the room needs the same BIOS file (or all on the built-in OpenBIOS).", from, (unsigned long long)theirs, (unsigned long long)mine);
+                        bad_at = hubnet::now_ms() ? hubnet::now_ms() : 1;   // keep announcing ours for a moment so the other PCs report the mismatch too
+                    }
+                } else seen |= 1u << from;
+            }
+        }
+        uint32_t now = hubnet::now_ms();
+        if (session.failed()) return false;
+        if (now - last >= 100 || !last) {
+            uint8_t pkt[10] = {kPktCfg, (uint8_t)a.slot};
+            std::memcpy(pkt + 2, &mine, 8);
+            session.send(-1, pkt, 10);
+            last = now ? now : 1;
+        }
+        if (bad_at) { if (now - bad_at > 1500) return false; }
+        else if ((seen & slot_mask) == slot_mask) {
+            if (!done_at) done_at = now ? now : 1;   // keep announcing a moment so slower peers get ours
+            if (now - done_at > 1500) return true;
+        }
+        if (now - t0 > 40000) { rlog("net: FAIL: not every PC reported its PlayStation setup within 40 s"); return false; }
+        pump_events(false);
+        if (quit) return false;
+        Sleep(5);
+    }
+}
+
 bool Frontend::setup_net() {
     if (a.net.empty()) return true;
     if (a.room.empty()) { rlog("net: --room required with --net"); return false; }
@@ -988,6 +1090,7 @@ bool Frontend::setup_net() {
         link_loaded = true;
         rlog("link: saves exchanged and loaded for %d consoles", link_n);
     }
+    if (is_ps1 && !ps1_config_check()) { net_rc = 7; return false; }
     if (a.rollback) {
         const bool auto_delay = a.delay < 0;
         a.delay = a.delay >= 0 ? std::min(a.delay, 4) : 1;
@@ -1001,6 +1104,10 @@ bool Frontend::setup_net() {
         rc.max_pred = a.rb_pred;
         if (const char* hi = std::getenv("RB_HASH_INTERVAL")) rc.hash_interval = std::max(1, atoi(hi));
         rc.use_state_hash = false;   // confirmed video hash: serialized bytes differ benignly after a load (audio state)
+        rc.val_bytes = is_ps1 ? 6 : 2;   // PlayStation: buttons + 4 stick bytes per port
+        if (is_ps1) rc.relay_half_rate = true;
+        if (is_ps1) rc.send_gap_ms = 30;   // ~60 packets/s per PC: 4 PCs through the relay stay under its 400 frames/s room cap
+        if (is_ps1) rc.pred_budget = 3;   // a PlayStation frame costs 3-8 ms: re-simulating 6 frames per late input would drop frames, so the input delay takes over sooner
         rb_warmup();
         rb::Transport t;
         t.pump = [this] { session.update(); };
@@ -1008,6 +1115,7 @@ bool Frontend::setup_net() {
         t.recv = [this](int* from, std::vector<uint8_t>* o) { return session.recv(from, o); };
         t.now_ms = [] { return hubnet::now_ms(); };
         t.log = [](const std::string& s) { rlog("%s", s.c_str()); };
+        t.relayed = [this] { for (int sl = 0; sl < 8; sl++) if (sl != a.slot && (slot_mask >> sl & 1u) && session.is_relayed(sl)) return true; return false; };
         rbe = std::make_unique<rb::Engine>(rc, make_rb_sim(), t);
         rlog("net: ROLLBACK netplay, input delay %d, max prediction %d, state %zu bytes, sync hash %s", a.delay, rc.max_pred,
              core.serialize_size(), "output");
@@ -1037,11 +1145,13 @@ bool Frontend::setup_net() {
     o.num_slots = a.players;
     o.slot_mask = slot_mask;
     o.hash_label = use_state_hash ? "state" : "output";
+    o.wide = is_ps1;   // sticks travel as a second word per port
     o.delay = a.delay;
     o.online = true;
     o.hash_interval = 600;
     n64run::LockstepHooks h;
     h.read_local = [this](int i) { return local_pad_cache_[i]; };
+    h.read_local_aux = [this](int i) { return retrorun::pack_sticks(local_stick_[i]); };
     h.update_local = [this]() { pump_events(true); poll_all_local(); };
     h.idle = [this]() { pump_events(true); };
     h.hash_rdram = [this](uint64_t* out) {
@@ -1204,16 +1314,30 @@ rb::Sim Frontend::make_rb_sim() {
     s.state_size = [this] { return core.serialize_size(); };
     s.save = [this](uint8_t* b, size_t n) { return core.serialize(b, n); };
     s.load = [this](const uint8_t* b, size_t n) { return core.unserialize(b, n); };
-    s.step = [this](const uint32_t pads[4], bool visible) {
+    s.step = [this](const uint64_t pads[4], bool visible) {
         resim = !visible;
         fr_audio = 0xCBF29CE484222325ull;
-        for (int p = 0; p < 4; p++) frame_pad[p] = pads[p];
+        for (int p = 0; p < 4; p++) {
+            if (is_ps1) retrorun::unpack_pad(pads[p], &frame_pad[p], frame_stick[p]);   // buttons + quantised sticks, same on every PC
+            else frame_pad[p] = (uint32_t)pads[p];
+        }
         core.run();
         resim = false;
+        if (const char* dd = std::getenv("RB_SAVEFRAMES")) {   // QA: dump every stepped frame as dd\NNNN.bmp
+            static int n = 0;
+            char nm[512];
+            snprintf(nm, sizeof nm, "%s\\%04d.bmp", dd, n++);
+            write_frame_image(nm, core.frame());
+        }
     };
     s.frame_sum = [this] {
         const FrameBuf& f = core.frame();
         uint64_t h = f.px.empty() ? 0 : n64run::hash_block(f.px.data(), f.px.size() * 4);
+        if (const char* dd = std::getenv("RB_SAVEBYHASH")) {   // QA: write each distinct frame as dd\<hash>.bmp (find what differs after a rollback)
+            char nm[512];
+            snprintf(nm, sizeof nm, "%s\\%016llx.bmp", dd, (unsigned long long)h);
+            if (!fs::exists(fs::u8path(nm))) write_frame_image(nm, f);
+        }
         return h;   // video only: audio resampler state is not part of any core's savestate, and audio never feeds back into the game
     };
     s.mem_hash = [this]() -> uint64_t {
@@ -1227,8 +1351,9 @@ rb::Sim Frontend::make_rb_sim() {
         return h;
     };
     s.poll_local = [this] { poll_all_local(); };
-    s.read_local = [this](int port) -> uint32_t {
-        for (int i = 0; i < n_local; i++) if (local_ports[i] == port) return local_pad_cache_[i];
+    s.read_local = [this](int port) -> uint64_t {
+        for (int i = 0; i < n_local; i++)
+            if (local_ports[i] == port) return is_ps1 ? retrorun::pack_pad(local_pad_cache_[i], local_stick_[i]) : (uint64_t)local_pad_cache_[i];
         return 0;
     };
     s.idle = [this] { pump_events(true); };
@@ -1266,12 +1391,16 @@ int Frontend::run_synctest() {
     for (int i = 0; i < 4; i++) if (owner[i] >= 0) ports[nports++] = i;
     if (!nports) { ports[0] = 0; nports = 1; }
     uint64_t seed = 0x1234567;
-    auto input = [&](int f, uint32_t pads[4]) {
+    auto input = [&](int f, uint64_t pads[4]) {
         for (int i = 0; i < 4; i++) pads[i] = 0;
         for (int k = 0; k < nports; k++) {
             uint32_t x = (uint32_t)(f / 2) * 2654435761u ^ (uint32_t)(ports[k] + 1) * 40503u ^ (uint32_t)seed;
             x ^= x >> 15; x *= 2246822519u; x ^= x >> 13; x *= 3266489917u; x ^= x >> 16;
-            pads[ports[k]] = std::getenv("RB_NOINPUT") ? 0 : (x & 0xFF3u & ~0xCu);
+            uint32_t b = std::getenv("RB_NOINPUT") ? 0 : (x & 0xFF3u & ~0xCu);
+            int16_t st[4] = {0, 0, 0, 0};
+            if (is_ps1 && !std::getenv("RB_NOINPUT"))
+                for (int j = 0; j < 4; j++) { uint32_t y = (x + (uint32_t)j * 0x9E3779B9u) * 2246822519u; y ^= y >> 15; st[j] = (int16_t)((int)(y & 0xFFFF) - 32768); }
+            pads[ports[k]] = is_ps1 ? retrorun::pack_pad(b, st) : (uint64_t)b;
         }
     };
     rlog("SYNCTEST: %d frames, rollback depth %d, state %zu bytes, compare %s", frames, a.synctest, core.serialize_size(),
@@ -1455,6 +1584,8 @@ int Frontend::run(const Args& args) {
         std::string why;
         if (ln.find("mgba link") != std::string::npos) safe = true;
         else if (ln.find("sameboy (rollback)") != std::string::npos) safe = true;   // src/sameboy_rb: joypad-bounce + RNG patched, SyncTest exact
+        else if (ln.find("beetle psx (rollback)") != std::string::npos) safe = true;   // src/beetle_psx/patch.cmake: surface + scan-out cache in the state, SyncTest exact
+        else if (ln.find("beetle psx") != std::string::npos) why = "stock Beetle PSX: the video surface is not in its savestates (use the RetroHub build)";
         else if (ln.find("sameboy") != std::string::npos)
             why = "stock SameBoy: joypad-bounce state is not in its savestates (use sameboy_rb_libretro)";
         else if (ln.find("gambatte") != std::string::npos) why = "Gambatte states are not exact";
@@ -1486,7 +1617,8 @@ int Frontend::run(const Args& args) {
         std::string ln = lower(core.info().library_name ? core.info().library_name : "");
         // Gambatte's retro_serialize output differs run-to-run on identical emulation (see docs/RETRORUN.md),
         // so its state hash would flag false desyncs; fall back to a rolling video+audio output hash.
-        use_state_hash = a.sync_hash_mode == "state" || (a.sync_hash_mode == "auto" && ln.find("gambatte") == std::string::npos);
+        // PlayStation: the serialized state holds bytes that are not emulation state and differs between identical runs (docs/CORES.md).
+        use_state_hash = a.sync_hash_mode == "state" || (a.sync_hash_mode == "auto" && ln.find("gambatte") == std::string::npos && !is_ps1);
         if (use_state_hash && !core.serialize_size()) use_state_hash = false;
         rlog("sync hash: %s", use_state_hash ? "serialized state" : "video+audio output");
     }
@@ -1593,6 +1725,7 @@ int Frontend::run(const Args& args) {
 
                 if (online) {
                     for (int p = 0; p < 4; p++) frame_pad[p] = lockstep->get_keys(p);   // lead port poll advances the sample
+                    if (is_ps1) for (int p = 0; p < 4; p++) retrorun::unpack_sticks(lockstep->aux(p), frame_stick[p]);
                     if (lockstep->connection_lost()) { rlog("net: connection lost, leaving"); rc = 4; break; }
                 } else {
                     poll_all_local();
@@ -1659,6 +1792,11 @@ done:
         if (!a.net.empty() || a.selftest || a.headless)
             rlog("final: frame %llu state-hash %016llx output-hash %016llx input-hash %016llx", (unsigned long long)frame_no,
                  (unsigned long long)h, (unsigned long long)out_hash, (unsigned long long)in_hash);
+        if (const char* dr = std::getenv("RETRORUN_DUMP_RAM")) {   // QA: system RAM at exit
+            size_t rn = 0;
+            void* rp = core.game_loaded() ? core.memory(RETRO_MEMORY_SYSTEM_RAM, &rn) : nullptr;
+            if (rp && rn) write_atomic(dr, rp, rn);
+        }
         if (!a.screenshot.empty()) {
             if (write_frame_image(a.screenshot, core.frame()))
                 rlog("screenshot: %s (%dx%d)", a.screenshot.c_str(), core.frame().w, core.frame().h);

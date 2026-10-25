@@ -41,23 +41,24 @@ LockstepCore::LockstepCore(const Config& cfg) : cfg_(cfg) {
     }
 }
 
-void LockstepCore::put(int port, uint32_t sample, uint32_t val) {
+void LockstepCore::put(int port, uint32_t sample, uint32_t val, uint32_t aux) {
     Entry& e = ring_[port][sample % kRing];
     e.tag = sample;
     e.val = val;
+    e.aux = aux;
 }
 
 bool LockstepCore::has(int port, uint32_t sample) const {
     return ring_[port][sample % kRing].tag == sample;
 }
 
-void LockstepCore::schedule_local(uint32_t cur_sample, const uint32_t buttons[kPorts]) {
+void LockstepCore::schedule_local(uint32_t cur_sample, const uint32_t buttons[kPorts], const uint32_t aux[kPorts]) {
     int64_t target = (int64_t)cur_sample + delay_;
     // Fill every not-yet-scheduled sample up to the target with the current input. In steady state that is exactly
     // one sample; after D grew it holds the input over the gap; after D shrank it is empty (already scheduled).
     for (int64_t s = newest_ + 1; s <= target; s++)
         for (int p = 0; p < kPorts; p++)
-            if (port_local(p)) put(p, (uint32_t)s, buttons[p]);
+            if (port_local(p)) put(p, (uint32_t)s, buttons[p], aux && cfg_.wide ? aux[p] : 0u);
     if (target > newest_) newest_ = target;
     any_local_ = true;   // even a slot with no ports sends packets (hash trailer)
 }
@@ -83,18 +84,29 @@ uint32_t LockstepCore::get(uint32_t n, int port) const {
     return ring_[port][n % kRing].val;
 }
 
+uint32_t LockstepCore::get_aux(uint32_t n, int port) const {
+    if (!port_present(port) || !has(port, n)) return 0;
+    return ring_[port][n % kRing].aux;
+}
+
 /* Packet layout (little endian):
  *   u8 type=1, u8 slot, u32 newest, u32 progress, u8 count, u8 nports
- *   nports x { u8 port, u32 vals[count] }   vals for samples newest-count+1 .. newest
+ *   nports x { u8 port, vals[count] }   samples newest-count+1 .. newest; a value is u32 (wide: u32 val, u32 aux)
  *   u8 nhash, nhash x { u32 sample, u64 hash }
- */
+ *   u8 ord_gen, u8 delay, u8 want   (adaptive-delay trailer)
+ * `count` shrinks below the redundancy window when the ports of a wide session would not fit one datagram. */
 size_t LockstepCore::build_packet(uint8_t* out, size_t cap) const {
     if (!any_local_) return 0;
     uint32_t newest_local_ = (uint32_t)newest_;
     uint32_t count = std::min<uint32_t>((uint32_t)cfg_.redundancy, newest_local_ + 1);
     int nports = 0;
     for (int p = 0; p < kPorts; p++) nports += port_local(p) ? 1 : 0;
-    size_t need = 2 + 4 + 4 + 2 + (size_t)nports * (1 + 4 * (size_t)count) + 1 + recent_local_hashes_.size() * 12 + 3;
+    const size_t vb = cfg_.wide ? 8 : 4;
+    const size_t fixed = 2 + 4 + 4 + 2 + (size_t)nports + 1 + recent_local_hashes_.size() * 12 + 3;
+    if (nports && cap > fixed) count = std::min<uint32_t>(count, (uint32_t)((cap - fixed) / ((size_t)nports * vb)));
+    else if (nports) return 0;
+    if (count == 0) return 0;
+    size_t need = fixed + (size_t)nports * vb * (size_t)count;
     if (need > cap) return 0;
     uint8_t* p = out;
     wr<uint8_t>(p, kPktInput);
@@ -108,7 +120,10 @@ size_t LockstepCore::build_packet(uint8_t* out, size_t cap) const {
         wr<uint8_t>(p, (uint8_t)port);
         for (uint32_t i = 0; i < count; i++) {
             uint32_t s = newest_local_ - (count - 1) + i;
-            wr<uint32_t>(p, ring_[port][s % kRing].tag == s ? ring_[port][s % kRing].val : 0u);
+            const Entry& e = ring_[port][s % kRing];
+            const bool ok = e.tag == s;
+            wr<uint32_t>(p, ok ? e.val : 0u);
+            if (cfg_.wide) wr<uint32_t>(p, ok ? e.aux : 0u);
         }
     }
     wr<uint8_t>(p, (uint8_t)recent_local_hashes_.size());
@@ -134,12 +149,13 @@ bool LockstepCore::on_packet(int from_slot, const uint8_t* data, size_t len) {
         if (!rd(p, end, &port)) return false;
         if (port >= kPorts || cfg_.owner[port] != slot) return false;
         for (uint32_t k = 0; k < count; k++) {
-            uint32_t v;
+            uint32_t v, ax = 0;
             if (!rd(p, end, &v)) return false;
+            if (cfg_.wide && !rd(p, end, &ax)) return false;
             uint32_t s = newest - (count - 1) + k;
             if (s < (uint32_t)initial_delay_) continue;   // prefilled neutral
             // Never overwrite an existing value for the same sample: inputs are immutable once known.
-            if (!has(port, s)) put(port, s, v);
+            if (!has(port, s)) put(port, s, v, ax);
         }
     }
     uint8_t nh;
