@@ -17,7 +17,7 @@ target_link_libraries(hub_session_test PRIVATE hublogic)
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
     ui_common.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp match_ui.cpp page_online.cpp friends_ui.cpp
-    page_controllers.cpp page_saves.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp)
+    page_controllers.cpp page_saves.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp cheats_ui.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
@@ -30,6 +30,11 @@ add_custom_command(TARGET RetroHub POST_BUILD
 if (DEFINED HUB_VERSION)
     target_compile_definitions(RetroHub PRIVATE HUB_VERSION_STR="${HUB_VERSION}")
 endif()
+
+# Cheat database (data/cheats_db.bin + data/cheats_featured.json) ships next to RetroHub.exe in data\ (hub::cheats_db_set_dir default).
+add_custom_command(TARGET RetroHub POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:RetroHub>/data
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/cheats_db.bin ${CMAKE_SOURCE_DIR}/data/cheats_featured.json $<TARGET_FILE_DIR:RetroHub>/data)
 
 # Cover art: pure matching logic + console test (live network check with --live <cache> [rom]).
 add_executable(hub_art_test test_art.cpp art.cpp art_match.cpp)

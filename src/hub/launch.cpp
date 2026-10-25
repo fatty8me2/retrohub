@@ -142,6 +142,7 @@ void pad_exit_watch() {
 void poll_process() {
     sync_smash_prep();
     pad_exit_watch();
+    cheats_pad_watch();
     if (!A.proc) return;
     if (WaitForSingleObject(A.proc, 0) != WAIT_OBJECT_0) return;
     if (A.job_h) {   // the emulator may have handed the game to a child: wait until the whole job is gone
@@ -425,6 +426,7 @@ void play_entry(const hub::GameEntry& e) {
             std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) +
                                " --save-dir " + quote(battery) + title_arg(e.title) + controls_arg("n64", e.key);
             args += hubui::n64_extra_args(gs_values_for(e));
+            args += cheats_launch_args(e, false, true, nullptr);
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
                 std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
                 if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
@@ -440,6 +442,7 @@ void play_entry(const hub::GameEntry& e) {
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
                                " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
+            args += cheats_launch_args(e, false, true, nullptr);
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }

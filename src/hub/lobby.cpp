@@ -241,6 +241,12 @@ void lobby_tick() {
         } else if (kind == "pick") {
             hubui::MemberPick mp;
             if (from != room_my_slot() && hubui::parse_pick(j, &mp)) A.picks[from] = mp;
+        } else if (kind == "cheats") {
+            if (from == 0 && !is_host()) {
+                std::vector<std::string> names;
+                if (const hubui::Json* a = j.get("names")) for (auto& x : a->a) if (x.type == hubui::Json::String) names.push_back(x.s);
+                cheats_on_room_msg(j.str("game"), names);
+            }
         } else if (kind == "rules") {
             hubui::MatchRules mr;
             if (from == 0 && !is_host() && hubui::parse_rules(j, &mr)) A.rules = mr;
