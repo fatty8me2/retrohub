@@ -1,5 +1,5 @@
 # Shared JSON reader/writer + Windows helpers (UTF-8/UTF-16, exe dir, quoting, file I/O). Tiny static lib, no deps.
-add_library(hubbase STATIC json.cpp winutil.cpp cheats.cpp)
+add_library(hubbase STATIC json.cpp winutil.cpp cheats.cpp runner_ctl.cpp)
 target_include_directories(hubbase PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubbase PUBLIC cxx_std_17)
 
@@ -73,3 +73,6 @@ target_link_libraries(hubdolphincheats_test PRIVATE hubcommon)
 # Cheat model: JSON, per-format code validation (N64 mupen codes, libretro strings), netplay hash.
 add_executable(cheats_test test_cheats.cpp)
 target_link_libraries(cheats_test PRIVATE hubbase)
+
+add_executable(runner_ctl_test test_runner_ctl.cpp)
+target_link_libraries(runner_ctl_test PRIVATE hubbase)

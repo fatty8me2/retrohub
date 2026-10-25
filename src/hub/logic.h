@@ -27,6 +27,7 @@ struct Settings {
     bool fullscreen = false;           // start games fullscreen where the runner supports it
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start
+    bool backup_shots = false;         // "Back up screenshots": screenshots count toward the cloud large-item quota (default off)
     std::string library_sort = "title"; // SortMode key: title | last_played | most_played | recently_added
     bool cloud_states = true;          // "Back up save states to the cloud" (within the smart cap)
     bool cloud_enabled = true;         // cloud saves v2: automatic through the RetroHub account; false = "Pause cloud sync"

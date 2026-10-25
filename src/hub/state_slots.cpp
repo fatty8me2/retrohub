@@ -85,7 +85,7 @@ std::string state_slot_label(int slot) { return slot < 0 ? std::string("Auto") :
 
 bool system_has_states(const std::string& s, bool native) {
     if (native) return false;
-    return s == "gb" || s == "gbc" || s == "gba" || s == "nds" || s == "ps1";   // retrorun systems; N64 joins when n64run takes --state-dir
+    return s == "n64" || s == "gb" || s == "gbc" || s == "gba" || s == "nds" || s == "ps1";   // retrorun systems; n64run too (mupen64plus states)
 }
 
 std::string no_states_reason(const std::string& s, bool native) {

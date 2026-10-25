@@ -55,6 +55,7 @@ int main() {
 
     CHECK(state_slot_label(-1) == "Auto" && state_slot_label(4) == "Slot 4");
     CHECK(system_has_states("gba", false) && system_has_states("ps1", false) && !system_has_states("gc", false));
+    CHECK(system_has_states("n64", false));
     CHECK(!system_has_states("n64", true) && !no_states_reason("gc", false).empty() && no_states_reason("gba", false).empty());
 
     /* ---- resume wording ---- */
