@@ -1,6 +1,6 @@
 add_library(hublogic STATIC changelog.cpp osk_logic.cpp logic.cpp toast.cpp netplay_3ds.cpp smash_save.cpp)
 target_link_libraries(hublogic PUBLIC hubbase)
-target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
 target_compile_features(hublogic PUBLIC cxx_std_17)
 
 # Console-only unit test for the pure logic.
@@ -23,7 +23,7 @@ target_link_libraries(hub_session_test PRIVATE hublogic)
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
     ui_common.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp match_ui.cpp page_online.cpp friends_ui.cpp
-    page_controllers.cpp page_saves.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp)
+    page_controllers.cpp page_saves.cpp cloud_ui.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
@@ -80,6 +80,9 @@ set_source_files_properties(retrohub.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURC
 target_sources(RetroHub PRIVATE shell_integration.cpp toast_win.cpp retrohub.rc)
 target_include_directories(RetroHub PRIVATE ${RH_BRAND_RC_DIRS})
 target_link_libraries(RetroHub PRIVATE propsys windowsapp)
+
+add_executable(hub_cloud_ui_test test_cloud_ui.cpp)
+target_link_libraries(hub_cloud_ui_test PRIVATE hublogic)
 
 add_executable(hub_wizard_test test_wizard.cpp)
 target_link_libraries(hub_wizard_test PRIVATE hublogic)

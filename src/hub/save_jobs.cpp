@@ -31,11 +31,11 @@ static hub::saves::CloudConfig cloud_config() {
     if (base.rfind("wss://", 0) == 0) base = "https://" + base.substr(6);
     else if (base.rfind("ws://", 0) == 0) base = "http://" + base.substr(5);
     c.base_url = base;
-    c.include_states = A.st.sync_states;
+    c.include_states = false;   // deprecated (v2 class policy)
     return c;
 }
 
-bool sync_enabled() { return !A.st.sync_folder.empty() || A.st.cloud_saves; }
+bool sync_enabled() { return !A.st.sync_folder.empty() || A.st.cloud_enabled; }
 
 /* Merges the folder and cloud reports of one sync run into the one line the Saves page shows. */
 static hub::saves::SyncReport merge_reports(const hub::saves::SyncReport& a, const hub::saves::SyncReport& b) {
@@ -58,12 +58,12 @@ void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
     A.job.running = true;
     A.job.done = false;
     A.job.path = path;
-    A.job.include_states = A.st.sync_states;
+    A.job.include_states = k == SaveJob::Export;
     A.job.manual = manual;
     A.job.report = hub::saves::SyncReport();
     A.job.export_ok = false;
     A.job.export_err.clear();
-    A.job.cloud = (k == SaveJob::Sync && A.st.cloud_saves) || k == SaveJob::Status;
+    A.job.cloud = (k == SaveJob::Sync && A.st.cloud_enabled) || k == SaveJob::Status;
     if (A.job.cloud) A.job.cloud_cfg = cloud_config();
     A.job.cloud_skipped = false;
     A.job.th = std::thread([]() {

@@ -35,14 +35,6 @@ void shot_init_ui() {
     if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
         if (std::string(pg) == "saves") A.page = Page::Saves;
     }
-    if (const char* cs = std::getenv("HUB_SHOT_CLOUD")) {   // screenshot aid: cloud saves toggle state, no network ("off" | "on" | "unavailable" | "ok")
-        std::string m = cs;
-        A.st.cloud_saves = m != "off";
-        A.cloud_probed = true;                   // never probe the server from a screenshot
-        A.cloud_stat_known = true;
-        if (m == "unavailable") A.cloud_stat.unavailable = true;
-        else if (m == "ok") { A.cloud_stat.enabled = true; A.cloud_stat.files = 12; A.cloud_stat.used = 3250000; A.cloud_stat.quota = 500LL * 1048576; }
-    }
     if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n
     if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show a 3DS / Wii U dialog (azahar | cemu | unzip | failed)
         std::string m = se;
@@ -57,6 +49,7 @@ void shot_init_ui() {
         if (std::getenv("HUB_SHOT_CHAT")) { fr_open_chat("miauid"); FR.chat_unread = 2; }
         if (std::getenv("HUB_SHOT_BELL")) FR.shot_bell = true;
     }
+    cloud_ui_shot_init();
     kt_shot_init();
     osk::shot_init();
     if (const char* rj = std::getenv("HUB_SHOT_REJOIN")) {   // screenshot aid: the disconnected Rejoin strip (no network)

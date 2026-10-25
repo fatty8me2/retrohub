@@ -43,6 +43,8 @@ void page_saves() {
     if (A.vault_dirty) refresh_vault();
     bool busy = A.job.running;
 
+    cloud_ui_saves_page();
+
     begin_panel("vault");
     section_title("Save vault");
     text_wrapped_disabled(hub::saves::vault_dir());
@@ -52,8 +54,8 @@ void page_saves() {
     ImGui::Dummy(ImVec2(0, 4 * S));
 
     begin_panel("sync");
-    section_title("Sync between PCs");
-    text_wrapped_disabled("Pick a folder both PCs can see (OneDrive, Dropbox, Google Drive, a USB stick or a NAS). RetroHub keeps "
+    section_title("Extra: also copy saves to a folder");
+    text_wrapped_disabled("Optional. Cloud saves already follow your account. If you also want a plain copy, pick a folder (OneDrive, Dropbox, Google Drive, a USB stick or a NAS). RetroHub keeps "
                           "it in step with the vault in both directions and never deletes a save; if both sides changed, the older copy is kept.");
     ImGui::TextUnformatted("Sync folder");
     text_wrapped_disabled(A.st.sync_folder.empty() ? "(not set)" : A.st.sync_folder);
@@ -79,46 +81,8 @@ void page_saves() {
     }
     ImGui::Dummy(ImVec2(0, 4 * S));
     if (ImGui::Checkbox("Sync automatically after playing", &A.st.sync_auto)) mark_dirty();
-    if (ImGui::Checkbox("Include save states (bigger)", &A.st.sync_states)) mark_dirty();
-    ImGui::Dummy(ImVec2(0, 4 * S));
-    /* Server has no cloud saves yet: keep the user's choice in A.st.cloud_saves, but show the toggle off and disabled. */
-    const bool cloud_unavail = A.cloud_stat_known && A.cloud_stat.unavailable;
-    if (cloud_unavail) {
-        bool shown_off = false;
-        ImGui::BeginDisabled();
-        ImGui::Checkbox("Cloud saves", &shown_off);
-        ImGui::EndDisabled();
-    } else if (ImGui::Checkbox("Cloud saves", &A.st.cloud_saves)) {
-        mark_dirty();
-        A.cloud_probed = false;
-        A.cloud_stat_known = false;
-        A.cloud_stat = hub::saves::CloudStatus();
-    }
-    text_wrapped_disabled("Sync saves through your RetroHub account - no OneDrive needed");
-    if (A.st.cloud_saves) {
-        if (!A.cloud_probed && !busy) start_cloud_probe();
-        std::string line;
-        if (!A.cloud_stat_known) line = "Checking cloud saves...";
-        else if (A.cloud_stat.unavailable) line = "Cloud saves aren't available on the server yet. Will turn on when the server supports it.";
-        else if (A.cloud_stat.enabled) {
-            char b[160];
-            std::snprintf(b, sizeof b, "%d files, %.1f of %.0f MB", A.cloud_stat.files,
-                          A.cloud_stat.used / 1048576.0, A.cloud_stat.quota / 1048576.0);
-            line = b;
-        } else line = "Cloud saves: " + (A.cloud_stat.error.empty() ? std::string("could not reach the server") : A.cloud_stat.error);
-        text_wrapped_disabled(line.c_str());
-    }
     ImGui::Dummy(ImVec2(0, 2 * S));
-    bool can_sync = sync_enabled() && !busy && !A.proc;
-    if (button(busy && A.job.kind == SaveJob::Sync ? "Syncing..." : "Sync now", ImVec2(180 * S, 46 * S), true, can_sync)) start_sync(true);
-    if (A.proc && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("A game is running. Saves sync automatically when it closes.");
-    if (!A.sync_result.empty()) {
-        ImGui::SameLine();
-        ImGui::BeginGroup();
-        result_line(A.sync_result, A.sync_result_ok);
-        ImGui::EndGroup();
-    }
+    if (button("Copy to folder now", ImVec2(0, 0), false, !A.st.sync_folder.empty() && !A.job.running && !A.proc)) start_sync(true);
     end_panel();
     ImGui::Dummy(ImVec2(0, 4 * S));
 

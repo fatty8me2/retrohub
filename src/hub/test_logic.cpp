@@ -20,8 +20,7 @@ int main() {
     s.fullscreen = true;
     s.sync_folder = "C:\\Users\\a\\OneDrive\\RetroHub";
     s.sync_auto = false;
-    s.sync_states = true;
-    s.cloud_saves = true;
+    s.cloud_enabled = false;
     s.sync_card_dismissed = true;
     s.smash_save_notice_shown = true;
     s.cemu_exe = "D:\Wiiu\Cemu.exe";
@@ -30,13 +29,13 @@ int main() {
     CHECK(t.name == s.name && t.rom_folders == s.rom_folders && t.server == s.server);
     CHECK(t.input_delay == 4 && t.last_game == "mp2" && t.smash_exe == s.smash_exe);
     CHECK(t.gb_core == "gambatte" && t.fullscreen && t.sync_folder == s.sync_folder);
-    CHECK(!t.sync_auto && t.sync_states && t.sync_card_dismissed && t.smash_save_notice_shown && t.cemu_exe == s.cemu_exe);
+    CHECK(!t.sync_auto && t.sync_card_dismissed && t.smash_save_notice_shown && t.cemu_exe == s.cemu_exe);
     {   Settings g; g.games_dest = "E:\\MyGames"; Settings h; CHECK(settings_from_json(settings_to_json(g), &h) && h.games_dest == g.games_dest && Settings().games_dest.empty()); }
-    CHECK(t.cloud_saves && !Settings().cloud_saves);   // cloud saves: stored, off by default
+    CHECK(!t.cloud_enabled && Settings().cloud_enabled);   // cloud saves: automatic, on by default
     Settings u;
     CHECK(u.cemu_exe.empty());
     CHECK(settings_from_json("{\"input_delay\": 99}", &u) && u.input_delay == 8 && u.delay_auto && u.name.empty());
-    CHECK(u.gb_core == "sameboy" && u.sync_auto && !u.sync_states && u.rom_folders.empty() && !u.sync_card_dismissed && !u.smash_save_notice_shown);
+    CHECK(u.gb_core == "sameboy" && u.sync_auto && u.rom_folders.empty() && !u.sync_card_dismissed && !u.smash_save_notice_shown);
     CHECK(!settings_from_json("{bad", &u));
 
     {   Settings f; f.find_games_done = true; Settings g; CHECK(settings_from_json(settings_to_json(f), &g) && g.find_games_done); CHECK(!t.find_games_done); }

@@ -8,6 +8,7 @@ void draw_overlays() {
     draw_find_games();
     draw_add_games();
     draw_details_modal();
+    cloud_ui_overlays();
     draw_cheats_modal();
     kt_draw_modals();
 }
