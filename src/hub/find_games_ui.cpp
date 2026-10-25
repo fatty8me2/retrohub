@@ -42,7 +42,7 @@ std::string counts_text(const hub::fg::Counts& c) {
     std::string s;
     for (int i = 0; i < hub::fg::kSysCount; ++i)
         if (c.n[i]) s += (s.empty() ? "" : "   ") + std::string(hub::fg::sys_label(i)) + " " + std::to_string(c.n[i]);
-    if (c.archives) s += (s.empty() ? "" : "   ") + std::to_string(c.archives) + (c.archives == 1 ? " zip / 7z" : " zips / 7z");
+    if (c.archives) s += (s.empty() ? "" : "   ") + std::to_string(c.archives) + (c.archives == 1 ? " zip / 7z / rar" : " zips / 7z / rar");
     return s;
 }
 

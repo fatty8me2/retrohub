@@ -269,15 +269,15 @@ std::string launch_path_for(const hub::GameEntry& e) {
 
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg) {
     hubemu::Kind kind = hubemu::kind_for(e.system);
+    hubemu::Bios ps2_bios;
+    if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
+        ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
+        if (ps2_bios.file.empty()) { set_notice(hubemu::pcsx2_bios_missing_text(), 15.0); return; }
+    }
     if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
         UNZ.key = e.key;
         UNZ.state = UnzipJob::Asking;
         return;
-    }
-    hubemu::Bios ps2_bios;
-    if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is downloaded or started
-        ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
-        if (ps2_bios.file.empty()) { set_notice(hubemu::pcsx2_bios_missing_text(), 15.0); return; }
     }
     hubemu::Install inst = hubemu::find(kind, A.st.cemu_exe, e.path);
     if (inst.exe.empty()) {   // not installed: ask, download, then start this game

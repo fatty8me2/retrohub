@@ -33,7 +33,7 @@ int classify_ext(const std::string& e) {
         {".wua", WIIU}, {".wud", WIIU}, {".wux", WIIU},
         {".chd", PS2}, {".cso", PS2}, {".cue", PS2},   // .chd/.cue are PS1 or PS2: only the disc says, counted as PS2 here
         {".pbp", PS1}, {".m3u", PS1},
-        {".zip", kArchive}, {".7z", kArchive},
+        {".zip", kArchive}, {".7z", kArchive}, {".rar", kArchive},
     };
     for (const M& m : map) if (e == m.ext) return m.sys;
     return kNone;
@@ -321,6 +321,7 @@ std::vector<Root> default_roots() {
         for (const char* sub : {"Desktop", "Documents"}) add(home + "\\" + od + "\\" + sub, false);
     for (const char* sub : {"Documents\\RetroHub Games", "Games", "ROMs", "Roms", "Emulation", "RetroArch\\roms"}) add(home + "\\" + sub, true);
     add(home + "\\Desktop\\Everything\\GamesPS2", true);
+    add(home + "\\Desktop\\Everything\\GamesPS1", true);   // BIOS folders (GamesBios / BIOS) are found by the PS1/PS2 BIOS search, not added as game folders
     if (!test_home.empty()) return out;
 
     const std::string appdata = env("APPDATA"), local = env("LOCALAPPDATA");

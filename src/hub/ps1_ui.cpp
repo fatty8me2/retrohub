@@ -26,19 +26,19 @@ std::vector<hub::ps1::BiosFound> find_all() {
 static int local_pad_count() { return (int)A.pads.size(); }
 
 void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states) {
-    if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // zipped set: ask once, unpack, then start
-        UNZ.key = e.key;
-        UNZ.state = UnzipJob::Asking;
-        return;
-    }
     std::string core = find_core("beetle_psx");
     if (core.empty()) { set_notice("The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder."); return; }
     std::vector<hub::ps1::BiosFound> bios = find_all();
     std::string sysdir = staging_dir();
-    if (bios.empty() && !A.st.ps1_openbios) {
+    if (bios.empty() && !A.st.ps1_openbios) {   // BIOS first, so nothing big is unpacked for a game that cannot start yet
         ASK.open = true;
         ASK.key = e.key;
         ASK.warning.clear();
+        return;
+    }
+    if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived set: ask once, unpack, then start
+        UNZ.key = e.key;
+        UNZ.state = UnzipJob::Asking;
         return;
     }
     if (!bios.empty()) hub::ps1::stage_bios(bios, sysdir);

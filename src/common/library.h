@@ -76,6 +76,9 @@ uint64_t zip_3ds_unpacked_size(const GameEntry& e);   // size of the image insid
 struct ArchiveEntry { std::string name; uint64_t size = 0; };
 bool archive_entry_safe(const std::string& name);              // false for "..", absolute, drive-letter or control-char names
 bool is_7z_file(const std::string& path);                      // 7z signature check
+bool is_rar_file(const std::string& path);                     // RAR 4/5 signature check (read through Windows' bsdtar like 7z)
+bool archive_sig_ok(const std::string& path);                  // .7z / .rar: signature matches; other extensions: true
+bool archive_truncated(const std::string& path);               // 7z whose end header lies beyond the end of the file
 std::vector<ArchiveEntry> parse_tar_listing(const std::string& text);   // "tar -tvf" output -> regular files
 std::string gc_serial_for_name(const std::string& file_name);  // No-Intro style name -> catalog GC disc ID, "" if unknown
 

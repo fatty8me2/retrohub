@@ -267,6 +267,30 @@ static void test_bios(const fs::path& d) {
     CHECK(b.file == "scph39001.bin" && fs::path(b.dir).filename() == "BIOS");
     b = hubemu::pcsx2_find_bios({U8(root)});                           // BIOS subfolder
     CHECK(b.file == "scph39001.bin");
+    {   // vendor layout: GamesBios\ps2 bios usa\SCPH-xxxxx_BIOS_..._(NTSC)\files, macOS junk beside it
+        fs::path gb = d / "bios_vendor" / "GamesBios";
+        auto rom = [&](const fs::path& p, bool reset) {
+            fs::create_directories(p.parent_path());
+            Bytes z(4u << 20, 3);
+            if (reset) std::memcpy(z.data(), "RESET", 5);
+            std::ofstream f(p, std::ios::binary);
+            f.write((const char*)z.data(), (std::streamsize)z.size());
+        };
+        rom(gb / "ps2 bios usa" / "SCPH-39001_BIOS_V7_USA_160_(NTSC)" / "SCPH-39001_BIOS_V7_USA_160.BIN", true);
+        rom(gb / "ps2 bios usa" / "SCPH-70012_BIOS_V12_USA_200_(NTSC)" / "SCPH-70012_BIOS_V12_USA_200.BIN", true);
+        rom(gb / "ps2 bios usa" / "SCPH-90001_BIOS_V18_USA_230_(NTSC)" / "SCPH-90001_BIOS_V18_USA_230.DIFF", true);
+        rom(gb / "ps2 bios usa" / "SCPH-90001_BIOS_V18_USA_230_(NTSC)" / "SCPH-90001_BIOS_V18_USA_230.ROM1", true);
+        rom(gb / "__MACOSX" / "ps2 bios usa" / "._SCPH-99999_BIOS_USA.BIN", true);
+        write_file(gb / "._SCPH-88888.BIN", Bytes(4u << 20, 0));
+        write_file(d / "bios_vendor" / "GamesPS2" / "x.txt", Bytes(1, 0));
+        hubemu::Bios vb = hubemu::pcsx2_find_bios({U8(d / "bios_vendor" / "GamesPS2")});   // sibling GamesBios, nested folders
+        CHECK(vb.file == "SCPH-70012_BIOS_V12_USA_200.BIN" && vb.dir.find("(NTSC)") != std::string::npos);
+        rom(gb / "ps2 bios usa" / "SCPH-90001_BIOS_V18_USA_230_(NTSC)" / "SCPH-90001_BIOS_V18_USA_230.ROM0", true);   // newer split dump
+        vb = hubemu::pcsx2_find_bios({U8(d / "bios_vendor" / "GamesPS2")});
+        CHECK(vb.file == "SCPH-90001_BIOS_V18_USA_230.ROM0");
+        rom(gb / "ps2 bios usa" / "SCPH-91000_BIOS_USA.ROM0", false);   // no RESET magic: not a BIOS
+        CHECK(hubemu::pcsx2_find_bios({U8(d / "bios_vendor" / "GamesPS2")}).file == "SCPH-90001_BIOS_V18_USA_230.ROM0");
+    }
     auto dirs = hubemu::pcsx2_bios_search_dirs("D:\\chosen", {"E:\\Games"});
     CHECK(dirs.size() >= 3 && dirs[0] == "D:\\chosen");
     CHECK(std::string(hubemu::pcsx2_bios_missing_text()).find("BIOS") != std::string::npos);

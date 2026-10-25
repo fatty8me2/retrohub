@@ -428,8 +428,25 @@ std::vector<BiosFound> find_bios(const std::vector<std::string>& dirs) {
         std::error_code ec;
         fs::path dir = fs::u8path(d);
         if (!fs::is_directory(dir, ec)) continue;
-        for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-            if (!it->is_regular_file(ec)) continue;
+        /* a folder called *bios* is searched down to 4 levels (vendor folders like "ps2 bios usa\SCPH-39001..."); macOS junk is skipped */
+        std::vector<fs::path> files;
+        const bool deep = lower(dir.filename().u8string()).find("bios") != std::string::npos;
+        std::vector<std::pair<fs::path, int>> stack{{dir, 0}};
+        while (!stack.empty()) {
+            auto [cur, depth] = stack.back();
+            stack.pop_back();
+            for (fs::directory_iterator it(cur, ec), end; !ec && it != end; it.increment(ec)) {
+                std::string nm = it->path().filename().u8string();
+                if (nm.compare(0, 2, "._") == 0 || lower(nm) == "__macosx" || lower(nm) == ".ds_store") continue;
+                std::error_code e2;
+                if (it->is_directory(e2)) { if (deep && depth < 4 && !it->is_symlink(e2)) stack.push_back({it->path(), depth + 1}); continue; }
+                if (it->is_regular_file(e2)) files.push_back(it->path());
+            }
+            ec.clear();
+        }
+        for (const fs::path& fp : files) {
+            struct { const fs::path& p; const fs::path& path() const { return p; } uintmax_t file_size(std::error_code& e) const { return fs::file_size(p, e); } } entry{fp};
+            auto* it = &entry;
             std::string name = it->path().filename().u8string();
             if (!bios_name_plausible(name)) continue;
             uintmax_t sz = it->file_size(ec);
@@ -480,13 +497,14 @@ std::vector<std::string> bios_search_dirs(const std::vector<std::string>& rom_fo
     add(staging_dir);
     for (const std::string& f : rom_folders) {
         add(f);
-        for (const char* sub : {"BIOS", "bios", "System", "system"}) add(f + "\\" + sub);
+        for (const char* sub : {"BIOS", "bios", "System", "system", "GamesBios"}) add(f + "\\" + sub);
         std::string p = parent(f);
         for (int up = 0; up < 2 && !p.empty(); ++up, p = parent(p))
-            for (const char* sub : {"BIOS", "bios"}) add(p + "\\" + sub);
+            for (const char* sub : {"BIOS", "bios", "GamesBios", "Games BIOS"}) add(p + "\\" + sub);
     }
     if (!home.empty()) {
         add(home + "\\Desktop\\Everything\\BIOS");
+        add(home + "\\Desktop\\Everything\\GamesBios");
         add(home + "\\Documents\\RetroHub Games\\BIOS");
     }
     if (!exe_dir.empty()) { add(exe_dir + "\\system"); add(exe_dir + "\\bios"); }

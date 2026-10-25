@@ -257,7 +257,7 @@ static void add_games_modal() {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::TextUnformatted("A folder is added where it is (nothing is copied). You can also drag files or folders onto this window at any time.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        ImGui::TextUnformatted("Formats: .z64 .n64 .v64 .gba .gb .gbc .nds .3ds .cci .cia .iso .gcm .rvz .ciso .wia .gcz .wua .wud .wux, and .zip / .7z");
+        ImGui::TextUnformatted("Formats: .z64 .n64 .v64 .gba .gb .gbc .nds .3ds .cci .cia .iso .gcm .rvz .ciso .wia .gcz .wua .wud .wux, and .zip / .7z / .rar");
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
         ImGui::Dummy(ImVec2(0, sp(1.5f)));
