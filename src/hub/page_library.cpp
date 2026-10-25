@@ -11,6 +11,7 @@ void home_shelves() {
     float max_w = std::max(sp(25.f), std::min(sp(37.5f), avail * 0.2f));
     float tw = hubui::shelf_tile_w(avail, sp(24.f), max_w, gap);
     float th = tw / kTileAspect;
+    fr_home_shelf(avail, tw, th, gap, bleed);
     for (size_t si = 0; si < A.shelves.size(); ++si) {
         const hubui::Shelf& sh = A.shelves[si];
         bool is_console = sh.id.compare(0, 8, "console:") == 0 && sh.id != "console:other";   // unknown systems have no filter chip

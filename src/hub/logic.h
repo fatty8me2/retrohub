@@ -355,6 +355,60 @@ int invite_seconds_left(long long expires_at_ms, long long now_ms);
 inline bool lobby_joinable(int players, int max_players, bool launched) { return !launched && players > 0 && players < max_players; }
 /* A friend row offers "Join": in a lobby, or in a game launched from a room, with a free slot (and a known code). */
 inline bool friend_can_join(const FriendRow& r) { return !r.in_my_room && (r.state == FS_InLobby || r.state == FS_InGame) && r.joinable; }
+/* Rich presence for rows and the Home shelf: "Smash Classic \xC2\xB7 2/4 \xC2\xB7 12 min" (game, players when known, time in this state from
+ * the presence update). Online without a game = "Online"; offline = friend_status_line. */
+std::string friend_presence_line(const FriendRow& r, long long now_ms);
+/* "12 min" / "1h 5m" / "" (under a minute or unknown). */
+std::string format_dur_short(long long ms);
+/* "Ask to join": a friend is in a room/game we cannot just join (full, already launched, no known code). Not for people in our room. */
+inline bool friend_can_ask(const FriendRow& r) {
+    return !r.in_my_room && (r.state == FS_InLobby || r.state == FS_InGame) && !r.joinable;
+}
+/* Home "Friends are playing" shelf: indices into `rows` of friends in a lobby/game with a known game, joinable first, then the most recent. */
+std::vector<int> friends_playing(const std::vector<FriendRow>& rows, size_t max_n = 12);
+/* Ask-to-join rate limit, client side (the Worker enforces 1/60 s per target and 10/min overall as well). */
+class AskLimiter {
+public:
+    bool allow(const std::string& uid, long long now_ms) {
+        while (!recent_.empty() && now_ms - recent_.front() >= 300000) recent_.erase(recent_.begin());
+        auto it = last_.find(uid);
+        if (it != last_.end() && now_ms - it->second < 60000) return false;
+        if (recent_.size() >= 6) return false;
+        last_[uid] = now_ms; recent_.push_back(now_ms);
+        return true;
+    }
+    long long wait_ms(const std::string& uid, long long now_ms) const {
+        auto it = last_.find(uid);
+        return it == last_.end() ? 0 : std::max(0LL, 60000 - (now_ms - it->second));
+    }
+private:
+    std::map<std::string, long long> last_;
+    std::vector<long long> recent_;
+};
+/* The host receives an ask: ignore a repeat from the same person within 30 s so spam cannot stack toasts. */
+inline bool ask_is_repeat(long long last_ms, long long now_ms) { return last_ms > 0 && now_ms - last_ms < 30000; }
+std::string ask_toast_title(const std::string& name, const std::string& game);   // "Mia wants to join your game (Smash Classic)"
+std::string ask_sent_text(const std::string& name);
+std::string ask_limited_text(const std::string& name, long long wait_ms);
+
+/* ---- room connection quality (K) ----
+ * RTT is measured over the room WebSocket (member to member through the relay server), so it is the relay path: a "great" here means the
+ * direct path will be at least as good. `relay` = that member announced relay-only networking. */
+enum class PingClass { Unknown, Great, Ok, Poor, Relay };
+PingClass ping_class(int rtt_ms, bool relay);
+const char* ping_class_label(PingClass c);          // "Great" / "OK" / "Poor" / "Relay" / "..."
+std::string ping_text(int rtt_ms, bool relay);       // "42 ms" / "relay" / "-"
+/* Smoothed RTT per room slot: the median of the last 5 samples. */
+class PingBook {
+public:
+    void add(int slot, int rtt_ms) { auto& v = s_[slot]; v.push_back(rtt_ms < 0 ? 0 : rtt_ms); if (v.size() > 5) v.erase(v.begin()); }
+    int rtt(int slot) const;                        // -1 unknown
+    void clear() { s_.clear(); }
+    void drop(int slot) { s_.erase(slot); }
+private:
+    std::map<int, std::vector<int>> s_;
+};
+
 /* Toast shown when a join is clicked while our own game is running (performed when the game closes). */
 std::string queued_join_text(const std::string& friend_name);
 /* A second join click while one is already queued replaces it (only one room can be joined): say so. */
