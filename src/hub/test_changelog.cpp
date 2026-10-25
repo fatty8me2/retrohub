@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
         std::vector<Entry> all;
         CHECK(parse(ss.str(), &all));
         CHECK(all.size() >= 5);
-        CHECK(!all.empty() && all[0].version == "1.22.0");
+        CHECK(!all.empty() && !all[0].version.empty());   // newest entry; not pinned to a release number
         for (size_t i = 0; i < all.size(); ++i) {
             CHECK(!all[i].date.empty() && !all[i].title.empty());
             if (i) CHECK(all[i].date <= all[i - 1].date);   // newest first
