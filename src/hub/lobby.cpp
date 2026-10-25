@@ -307,7 +307,7 @@ void lobby_tick() {
         std::set<int> alive(slots.begin(), slots.end());
         if (A.proc && A.run.room && A.run.left_name.empty() && A.was_connected)   // a player vanished from the room during the game: the exit notice names them
             for (int s : A.last_slots)
-                if (!alive.count(s)) { auto pit = A.peers.find(s); A.run.left_name = pit != A.peers.end() && !pit->second.name.empty() ? pit->second.name : std::string("A player"); break; }
+                if (!alive.count(s)) { auto pit = A.peers.find(s); A.run.left_name = pit != A.peers.end() && !pit->second.name.empty() ? pit->second.name : std::string("A player"); if (s != 0) push_toast(A.run.left_name + " disconnected (the game plays on if it can)", ui::WARN, 6.0); break; }
         for (auto it = A.peers.begin(); it != A.peers.end();) it = alive.count(it->first) ? std::next(it) : A.peers.erase(it);
         for (auto it = A.ready.begin(); it != A.ready.end();) it = alive.count(it->first) ? std::next(it) : A.ready.erase(it);
         for (auto it = A.ingame.begin(); it != A.ingame.end();) it = alive.count(it->first) ? std::next(it) : A.ingame.erase(it);

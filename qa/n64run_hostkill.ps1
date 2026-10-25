@@ -7,7 +7,8 @@ param(
     [int]$Players = 2,
     [int]$KillSlot = 0,
     [int]$KillAfterSec = 20,
-    [int]$TimeoutSec = 120
+    [int]$TimeoutSec = 120,
+    [switch]$ExpectDrop   # kill a GUEST (-KillSlot 1+, -Players 3+): the survivors must keep playing (alive 15 s later, drop logged, sync-check hashes identical), then are stopped
 )
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 . "$PSScriptRoot\n64run_headless_lib.ps1"
@@ -32,9 +33,35 @@ while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
         $killed = $true
         Write-Output ("killed slot $KillSlot at " + [int]$sw.Elapsed.TotalSeconds + "s")
     }
+    if ($ExpectDrop -and $killed -and $sw.Elapsed.TotalSeconds -ge $KillAfterSec + 15) { break }
     $alive = @($procs.Keys | Where-Object { $_ -ne $KillSlot -and -not $procs[$_].HasExited })
     if ($killed -and $alive.Count -eq 0) { break }
     Start-Sleep -Milliseconds 200
+}
+if ($ExpectDrop) {
+    $fail = 0; $hs = @{}
+    foreach ($slot in 0..($Players - 1)) {
+        if ($slot -eq $KillSlot) { continue }
+        $p = $procs[$slot]
+        if ($p.HasExited) { Write-Output "slot $slot exited early (code $($p.ExitCode))"; $fail++; continue }
+        try { $p.Kill() } catch {}   # our own PID
+        $p.WaitForExit()
+        $err = Get-Content "$tmp\peer$slot.err.txt" -ErrorAction SilentlyContinue
+        $txt = $err | Out-String
+        $dropped = ([regex]::Matches($txt, 'disconnected, neutral from')).Count
+        $desync = ([regex]::Matches($txt, 'DESYNC')).Count
+        $m = @{}; foreach ($mm in [regex]::Matches($txt, 'sync check sample (\d+) \S+ ([0-9a-f]{16})')) { $m[[int]$mm.Groups[1].Value] = $mm.Groups[2].Value }
+        $hs[$slot] = $m
+        Write-Output ("slot $slot drop-lines=$dropped desync=$desync sync-checks=" + $m.Count)
+        if (-not $dropped -or $desync) { $fail++ }
+    }
+    $slots = @($hs.Keys); $common = 0
+    if ($slots.Count -ge 2) { foreach ($k in $hs[$slots[0]].Keys) { if ($hs[$slots[1]].ContainsKey($k)) { $common++; if ($hs[$slots[1]][$k] -ne $hs[$slots[0]][$k]) { Write-Output "HASH MISMATCH at sample $k"; $fail++ } } } }
+    Write-Output "common sync checks=$common"
+    if ($common -lt 2) { $fail++ }
+    foreach ($slot in 0..($Players - 1)) { if ($slot -ne $KillSlot) { } }
+    if ($fail) { Write-Output "RESULT: FAIL"; exit 1 }
+    Write-Output "RESULT: PASS"; exit 0
 }
 $want = if ($KillSlot -eq 0) { @(8) } else { @(4, 8) }
 $fail = 0

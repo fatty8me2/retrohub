@@ -61,3 +61,7 @@ add_custom_command(TARGET n64run POST_BUILD
 # --gs-code GameShark RAM writer (QA).
 add_executable(n64run_gs_cheat_test test_gs_cheat.cpp)
 target_compile_features(n64run_gs_cheat_test PRIVATE cxx_std_17)
+
+# Mid-match guest drop: cutoff agreement + LockstepCore neutralisation.
+add_executable(n64run_dropagree_test test_dropagree.cpp)
+target_link_libraries(n64run_dropagree_test PRIVATE n64run_lockstep_core)
