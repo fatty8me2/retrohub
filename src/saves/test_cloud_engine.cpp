@@ -67,7 +67,7 @@ static void test_classify() {
     CHECK(classify_path("states/auto.state", 1000) == FileClass::State);
     CHECK(classify_path("states/slot0.png", 1000) == FileClass::Shot);
     CHECK(classify_path("states/slot0.state.png", 1000) == FileClass::Shot);
-    CHECK(classify_path("cheat_backups/20250101/save.sra", 100) == FileClass::State);
+    CHECK(classify_path("cheat_backups/20250101/save.sra", 100) == FileClass::Battery);
     CHECK(is_protected(FileClass::Settings, 10) && is_protected(FileClass::Battery, 10 << 20));
     CHECK(is_protected(FileClass::Card, 512 * 1024) && !is_protected(FileClass::Card, 512 * 1024 + 1));
     CHECK(!is_protected(FileClass::State, 10) && !is_protected(FileClass::Shot, 10));
