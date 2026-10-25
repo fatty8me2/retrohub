@@ -90,7 +90,7 @@ void open_history(const hs::GameId& id) {
     H.gkey = id.gkey();
     H.load = std::make_shared<Task<Versions>>();
     auto t = H.load;
-    if (g_headless && !std::getenv("HUB_SHOT_CLOUD2")) { t->done = true; return; }
+    if (g_headless && !std::getenv("HUB_SHOT_CLOUD2") && !std::getenv("HUB_SHOT_CLOUD_REAL")) { t->done = true; return; }
     std::thread([t, id]() { t->val = hs::cloud_versions(id); t->done = true; }).detach();
 }
 
@@ -151,7 +151,7 @@ void account_panel() {
     }
     {   /* over the limit: which games are local only */
         std::vector<std::string> names;
-        for (auto& g : C.games) if (g.state == hs::CloudState::LocalOnly && g.local_only == hs::LocalOnlyReason::OverCap) names.push_back(title_of(g.id));
+        for (auto& g : C.games) if ((g.state == hs::CloudState::LocalOnly || g.state == hs::CloudState::Synced) && g.local_only == hs::LocalOnlyReason::OverCap) names.push_back(title_of(g.id));
         std::string t = on ? over_limit_text(C.acct, names) : std::string();
         if (!t.empty()) {
             ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -262,11 +262,13 @@ void games_panel() {
     section_title("Games in the cloud (" + std::to_string(C.games.size()) + ")");
     begin_panel("cloud_games");
     if (A.st.cloud_enabled && C.games.empty()) {
-        ImGui::TextDisabled(C.acct.known ? "Nothing yet. Play a game and its saves are backed up here automatically." : "Checking your cloud saves...");
+        ImGui::TextDisabled(!C.acct.known ? "Checking your cloud saves..." : !C.acct.online ? "Offline: your cloud games show up here once you are back online."
+                                                                                        : "Nothing yet. Play a game and its saves are backed up here automatically.");
     } else if (!A.st.cloud_enabled) {
         ImGui::TextDisabled("Cloud sync is paused. Turn it back on above to see your games here.");
     }
     const int64_t now = now_s();
+    if (!A.st.cloud_enabled) { end_panel(); return; }   // paused: do not list rows that would all say "Waiting to sync"
     for (size_t i = 0; i < C.games.size(); ++i) {
         const hs::GameCloudInfo& g = C.games[i];
         ImGui::PushID(g.id.gkey().c_str());

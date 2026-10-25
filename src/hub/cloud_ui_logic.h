@@ -155,6 +155,8 @@ inline std::string game_detail(const GameCloudInfo& g, const CloudAccountInfo& a
     else s = "Not synced yet";
     if (g.cloud_bytes > 0) s += " - " + mb_text(g.cloud_bytes) + " in the cloud";
     if (g.pinned) s += " - kept in cloud";
+    if (g.state == CloudState::Synced && g.local_only == LocalOnlyReason::OverCap) s += " - save states stay on this PC (cloud full)";
+    if (g.state == CloudState::Synced && g.local_only == LocalOnlyReason::TooLarge) s += " - a big file stays on this PC";
     return s;
 }
 

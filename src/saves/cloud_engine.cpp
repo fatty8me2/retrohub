@@ -384,6 +384,7 @@ void note_online(bool online) {
         push_event_locked(CloudEvent::OfflineStarted, GameId(), "Offline: your saves will sync when you are back.", false);
     } else if (!E.online_known) {
         E.was_offline = true;
+        E.acct.known = true;    // started offline: the UI says "Offline" instead of "Checking your cloud saves..." forever
     }
 }
 void apply_account(const WAccount& a) {
