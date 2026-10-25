@@ -78,6 +78,7 @@ void cloud_game_exited(const GameId& g);                   // touch_game must al
 void cloud_engine_start(const std::string& base_url);      // loads queue, schedules the one startup delta
 void cloud_engine_stop();                                  // joins the worker; queue is already persisted
 void cloud_sync_all_now();                                 // "Sync now"
+void cloud_set_sync_states(bool on);                      // Saves > "Back up save states to the cloud" (default on): off = states/thumbnails stay on this PC
 void cloud_set_paused(bool paused);                        // Advanced > Pause cloud sync
 
 /* ---- state for the UI (all thread-safe, cheap, no I/O) ---- */

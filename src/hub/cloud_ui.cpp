@@ -193,6 +193,16 @@ void account_panel() {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("Advanced: saves stay on this PC only while paused");
+    {
+        bool st = A.st.cloud_states;
+        if (ImGui::Checkbox("Back up save states to the cloud", &st)) {
+            A.st.cloud_states = st;
+            hs::cloud_set_sync_states(st);
+            mark_dirty();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Resume points follow you between PCs. Uses the shared 50 MB space; turn off to keep states on this PC.");
+    }
     end_panel();
 }
 
@@ -335,6 +345,7 @@ void cloud_ui_tick() {
     if (!C.applied_pause) {
         C.applied_pause = true;
         if (!A.st.cloud_enabled) hs::cloud_set_paused(true);
+        hs::cloud_set_sync_states(A.st.cloud_states);
     }
     hs::CloudEvent ev;
     int guard = 8;

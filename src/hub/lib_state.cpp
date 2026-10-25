@@ -125,12 +125,31 @@ const GameInfo* catalog_for(const hub::GameEntry& e) {
     return hub::find_game_for(sys_short(e), e.serial, md5);
 }
 
+/* "Recently added": when the game file appeared on disk (creation time, else last write); cached per path. */
+static unsigned long long added_unix(const std::string& path) {
+    static std::map<std::string, unsigned long long> cache;
+    auto it = cache.find(path);
+    if (it != cache.end()) return it->second;
+    unsigned long long v = 0;
+    WIN32_FILE_ATTRIBUTE_DATA d{};
+    if (GetFileAttributesExW(W(path).c_str(), GetFileExInfoStandard, &d)) {
+        ULARGE_INTEGER c, w;
+        c.LowPart = d.ftCreationTime.dwLowDateTime; c.HighPart = d.ftCreationTime.dwHighDateTime;
+        w.LowPart = d.ftLastWriteTime.dwLowDateTime; w.HighPart = d.ftLastWriteTime.dwHighDateTime;
+        ULONGLONG t = c.QuadPart && c.QuadPart < w.QuadPart ? c.QuadPart : w.QuadPart;
+        if (t > 116444736000000000ull) v = (t - 116444736000000000ull) / 10000000ull;
+    }
+    cache[path] = v;
+    return v;
+}
+
 void rebuild_vis() {
+    A.sort_mode = hubui::sort_from_key(A.st.library_sort);
     std::vector<hubui::ListItem> items;
     items.reserve(A.lib.size());
-    for (auto& e : A.lib) items.push_back({e.key, e.title, sys_short(e), is_native(e)});
+    for (auto& e : A.lib) { const hub::GameState& g0 = gstate(e.key); items.push_back({e.key, e.title, sys_short(e), is_native(e), g0.last_played, g0.play_seconds, added_unix(e.path)}); }
     std::string q = A.search_buf;
-    std::vector<int> base = hubui::filter_sort(items, "", q);   // search applied, all consoles
+    std::vector<int> base = hubui::filter_sort(items, "", q, A.sort_mode);   // search applied, all consoles
     if (A.online_only) {
         std::vector<int> keep;
         for (int i : base) {
@@ -147,7 +166,7 @@ void rebuild_vis() {
         ++A.chip_counts[items[i].system];
         if (A.sys_filter.empty() || items[i].system == A.sys_filter) A.vis.push_back(i);
     }
-    A.secs = hubui::group_by_console(items, &A.vis);
+    A.secs = hubui::group_by_console(items, &A.vis, A.sort_mode);
 
     // Home composition: shelves over the whole library, plus catalog games the player doesn't own.
     A.sg.clear();
@@ -164,9 +183,11 @@ void rebuild_vis() {
         g.last_played = gs.last_played;
         g.online = is_native(e) || (cat && cat->online);
         g.pinned = is_native(e);
+        g.play_seconds = gs.play_seconds;
+        g.added = added_unix(e.path);
         A.sg.push_back(g);
     }
-    A.shelves = hubui::compose_shelves(A.sg);
+    A.shelves = hubui::compose_shelves(A.sg, 12, A.sort_mode);
     const std::vector<GameInfo>& cat = hub::catalog();
     std::vector<bool> owned(cat.size()), online(cat.size());
     for (size_t i = 0; i < cat.size(); ++i) {
