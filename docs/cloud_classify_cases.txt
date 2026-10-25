@@ -1,0 +1,26 @@
+# Golden table for classify_path(rel_in_game, size): shared by the JS (BattleShip/server/cloudflare/src/saves_pool.js,
+# test_saves_pool.mjs) and the C++ (src/saves/cloud_classify.cpp) implementations. Columns: <TAB>-separated
+# rel_in_game, size in bytes, class (settings|battery|card|state|shot). Lines starting with # are ignored.
+# Rules: meta.json anywhere and _account/* = settings; states/* = shot when the extension is an image
+# (png jpg jpeg bmp tga webp, case-insensitive) else state; extension in (mcd mcr gci gcp vmp vmc ps2 mc2 card raw) = card;
+# battery/* = battery; any other layout = battery up to 512 KiB, card above.
+# "Protected" = settings, battery, card <= 512 KiB; everything else is the large pool.
+meta.json	120	settings
+_account/prefs.json	300	settings
+battery/ssb64.sra	32768	battery
+battery/pokemon.sav	131072	battery
+battery/big-flash.sav	3000000	battery
+battery/card.mcd	524288	card
+battery/Card A.gci	8192	card
+battery/ps2card.ps2	8388608	card
+battery/gc-card.raw	16777216	card
+battery/CARD.MCR	131072	card
+states/auto.state	4194304	state
+states/slot1.st	100	state
+states/auto.png	20000	shot
+states/slot1.PNG	20000	shot
+states/thumb.jpeg	500	shot
+other/odd.bin	1000	battery
+other/odd.bin	524288	battery
+other/big.bin	524289	card
+other/big.bin	900000	card

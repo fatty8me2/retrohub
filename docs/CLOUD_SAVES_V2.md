@@ -300,3 +300,53 @@ Owns: `src/hub/page_saves.cpp` (account panel: usage bar, pool state, devices, "
 1. Recovery code is the only way back after a full wipe without a second PC; confirm showing it in the wizard (recommended) versus an optional email/Google sign-in later.
 2. Inactivity policy (90 days for large items under pressure, 24 months for everything) is a proposal.
 3. Is a 12 minute lease acceptable, given players on a single PC never see it?
+
+## 10. Lane S implementation notes (server, as built)
+
+Code: `BattleShip/server/cloudflare/src/{saves_v2,saves_pool,r2budget_v2}.js` (+ small hooks in `saves.js`, `r2budget.js`,
+`friends.js` UserHub `saves_auth`). Tests: `test_saves_v2.mjs`, `test_saves_pool.mjs`, `test_saves.mjs` (v1), `test_r2budget.mjs`;
+`run_all_tests.mjs` runs every server test sequentially on fresh isolated instances. Fixtures: `test_fixtures/v2/*.json` (real replies,
+regenerate with `node gen_fixtures.mjs`).
+
+Facts the client lane needs, where the build is more specific than sections 3-4:
+- **Signature**: as v1. `Content-Length` is part of the signed string for `PUT` only (`-` for POST/GET). JSON POST bodies need
+  `X-RH-Sha` = sha256 of the body (missing or wrong -> 400 `bad-sha`). `401 stale-timestamp` carries `serverTime` (ms).
+- **Blob addressing**: `?sha=` on `PUT /blob` is the **plain** sha from the plan; `X-RH-Sha` on the request is the sha of the **bytes sent**
+  (the same when `enc` is `none`). R2 verifies it while streaming. The server stores `saves/<uid>/o/<sha>` (`.z` suffix for deflate).
+  `GET /blob` answers `X-RH-Sha` (stored bytes, when known), `X-RH-Plain-Sha`, `X-RH-Enc`, `X-RH-Size` (plain), `X-RH-Stored`, `X-RH-Ver`, `X-RH-Mtime`;
+  `Range: bytes=N-` is over the stored bytes. A `have` reply carries the real `stored` and `enc` of the existing blob; commit uses those.
+- **Plan**: `mode` must be `rw` (a readonly session pushes nothing, so no plan: 400 `bad-plan`). Per-file `skip.reason`:
+  `over-cap`, `too-large`, `too-big-protected`, `too-many-files`. If the only outcome of a plan is protected-ceiling skips the reply is `507 too-big-protected` (with `files`).
+  The protected ceiling counts **kept history**, so a protected file can be at most about `PROT_CAP / 3` once it has three versions.
+  A reply without any `upload`/`have` has `ticket: null`. A plan that needs more PUTs than the account has left today is `429 account-daily-limit`
+  (nothing is reserved); `429 cloud-saves-paused` when the global Class A budget cannot cover the uploads; `507 cloud-saves-full` when the 7 GB guard cannot.
+- **Commit**: results per file are `{path, ver, cloud:"synced"}`, `{path, cloud:"conflict", current}`, `{path, cloud:"missing"}` (blob not uploaded: upload it
+  and commit the same ticket again), or `{path, cloud:"skipped", reason}`. A repeated commit of a finished ticket returns the same results with `replay:true`.
+  Tickets live 10 minutes. `evicted:[{game,path}]` lists what this commit pushed out of the cloud. Orphan blobs (lost races) are garbage collected after 1 hour.
+- **Tombstones**: an evicted file stays in the manifest as `cloud:"evicted"` with `cur` = its last version and `vers: []`. Pushing it again needs `base = cur`.
+  `GET /blob` of it is `404 {evicted:true}`.
+- **Devices**: eight per account; a ninth is accepted only when the least recently seen device has been idle 24 h (it is then dropped), else `403 device-limit`.
+  Lease calls need a valid `X-RH-Device`. Beat on a free/expired lease re-takes it; beat after a take-over is `423 lease-held`.
+- **Rate limits** are per account per minute: `plan/commit/restore/game/recovery` 30, blob PUT 120, blob GET 300, status/manifest/device/lease 60.
+  Daily per account 1500 blob PUTs / 6000 blob GETs (`DAY_PUT_MAX`, `DAY_GET_MAX` override). Saves are capped at 35% of the `REQ_BUDGET` daily units
+  and stop (`429 cloud-saves-busy-today`) when the global request budget passes 50%. Server vars: `SAVES_V2`, `ACCOUNT_CAP`, `PROT_CAP`, `POOL_TIGHT`, `POOL_FULL`.
+- **v1 compatibility**: v1 routes are unchanged for accounts that never called v2. The first v2 call converts the account's v1 objects to `ver 1` rows
+  (zero R2 ops, classes by `classifyPath`, games `system/game`, `_account/_`, `_misc/_`) and applies the new caps (oversized accounts lose large items,
+  least recently played game first). After conversion a v1 write goes through to the version table (no history), a v1 delete removes the file, and a v1 PUT over the
+  v2 account cap is `507 quota-exceeded`. v1 never sees v2 blobs (`o/...` is reserved) .
+- **DO schema tag**: `meta.schema = 2` in the R2Budget DO adds the v2 tables and columns once (no wrangler migration needed: same class).
+
+### Recovery code (decision: yes) - one mechanism with the link code
+There is deliberately **one** "add/recover this account" mechanism: the identity bundle `{salt, iv, ct}` that the link-a-PC flow already uses
+(client derives an AES-GCM key from a code with PBKDF2; the server only stores ciphertext). The recovery code is a **long-lived link code**:
+- The client generates a random code (160 bits, shown as 8 groups of 4, e.g. in the wizard), builds the same encrypted bundle as for `/link/put`,
+  and stores it with `POST /saves/v2/recovery {hash, salt, iv, ct}` (signed like every v2 call). `hash = sha256hex("rh-recover:" + normalized code)`;
+  the server keeps only that hash and the opaque bundle (never the code, the key or the identity). One slot per account; setting a new one replaces (revokes) the old
+  code; `{remove:true}` deletes it. `GET /saves/v2/status` shows `account.recovery`.
+- A new PC with no identity calls `POST /saves/v2/recover {hash}` **without** auth (throttled per IP, 10/hour, 200/hour overall) and gets `{salt, iv, ct}`,
+  decrypts the identity locally, adopts it exactly as after a link redeem, and from then on is the same account (same uid), so it reads the same cloud data.
+  Unlike a link code it is not single-use and does not expire; losing the code does not expose anything, replacing it does not touch the cloud data.
+- Cloud data is always keyed by the internal account uid. The visible username (see the usernames lane) maps to the uid and can be renamed without moving any data.
+  A PC added with a normal link code is the same uid with a new device id, so it needs nothing else to see the cloud saves.
+- Integration with the usernames lane: the shape returned by `/saves/v2/recover` equals the one from `/link/redeem` (minus `username`), so the client can share the
+  decrypt/adopt code. If the owner prefers a single endpoint, `recover` can be fronted by `POST /link/redeem {recovery: hash}` later without changing storage.
