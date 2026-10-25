@@ -1,6 +1,26 @@
 {
   "versions": [
     {
+      "version": "1.23.0",
+      "date": "2026-10-25",
+      "title": "Multi-disc PlayStation, more cheats, smoother endings",
+      "new": [
+        "PlayStation multi-disc games: swap discs from the View + Y overlay (or F10), even online",
+        "Optional second memory card for PlayStation games (per game)",
+        "GameShark button cheats for N64 now work: they fire when switched on, with an Activate button while you play",
+        "Your own Cemu install can use RetroHub's controller settings, with a one-click Restore my Cemu controls"
+      ],
+      "improved": [
+        "Picking a file (Cemu.exe, an account or saves file, Smash Classic) works with only a controller",
+        "Far more N64 cheats from the database work (about 2,000 more)",
+        "Non-Xbox controllers (PlayStation, 8BitDo) work in Wii U games"
+      ],
+      "fixed": [
+        "When the host leaves mid-game, everyone gets a clear message and returns to the room with a new host instead of waiting",
+        "Ready flags reset after a host change so Play again works"
+      ]
+    },
+    {
       "version": "1.22.0",
       "date": "2026-10-24",
       "title": "PlayStation, cheats and full controller support",
