@@ -124,7 +124,7 @@ static void test_catalog() {
             if (g.system != "ps1" && g.system != "ps2") continue;
             if (g.system == "ps2") CHECK(!g.online);
             else CHECK(g.online == (g.max_players >= 2 && g.id != "buzz_junior_jungle"));   // Buzz! quiz buzzers are not DualShocks
-            CHECK(g.engine == Engine::Libretro);   // placeholder until the PCSX2 engine lands
+            CHECK(g.engine == (g.system == "ps2" ? Engine::Pcsx2 : Engine::Libretro));
             CHECK(!g.serials.empty());
             for (const std::string& s : g.serials) {
                 bool ok = s.size() == 10 && s[4] == '-';
@@ -246,6 +246,8 @@ static void test_catalog_integrity() {
             CHECK(serial_keys.insert(g.system + ":" + lower(s)).second);  // unique per system
         }
         if (g.system == "gba") CHECK(g.engine == Engine::Libretro);
+        if (g.system == "ps2") CHECK(g.engine == Engine::Pcsx2);
+        if (g.system == "ps1") CHECK(g.engine == Engine::Libretro);
         if (g.system == "3ds") CHECK(g.engine == Engine::Azahar);
         if (g.system == "wiiu") CHECK(g.engine == Engine::Cemu);
         if (g.system == "gc") CHECK(g.engine == Engine::Dolphin);
