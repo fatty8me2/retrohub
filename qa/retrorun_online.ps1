@@ -22,6 +22,7 @@ param(
     [int]$KillSlot = -1,
     [int]$KillAfterSec = 15,
     [int]$TimeoutSec = 900,
+    [switch]$ExpectDrop,          # with -KillSlot >0 and 3+ players: survivors must keep playing (rc 0), log the drop and end on identical final hashes
     [switch]$Rollback,            # --rollback (GGPO-style) instead of lockstep
     [string[]]$Extra = @()        # extra retrorun args, e.g. --link
 )
@@ -105,14 +106,20 @@ foreach ($x in $procs) {
     if (-not $x.Killed) {
         # With -KillSlot the survivors must exit 4 (peer lost); otherwise every peer must exit 0 with a final line and no desync.
         # Host killed (slot 0): the guests get the clean "host left" code 8. A guest killed: 4 (timeout) or 8 are both a clean end, never a hang.
-        $okRc = if ($KillSlot -eq 0) { @(8) } elseif ($KillSlot -gt 0) { @(4, 8) } else { @(0) }
+        $okRc = if ($KillSlot -eq 0) { @(8) } elseif ($ExpectDrop) { @(0) } elseif ($KillSlot -gt 0) { @(4, 8) } else { @(0) }
         $wantRc = $okRc -join '/' 
         $bad = @()
         if ($okRc -notcontains $rc) { $bad += "rc=$rc (want $wantRc)" }
-        if ($KillSlot -lt 0 -and -not $final) { $bad += 'no final line' }
+        if (($KillSlot -lt 0 -or $ExpectDrop) -and -not $final) { $bad += 'no final line' }
+        if ($ExpectDrop -and -not ($lines | Where-Object { $_ -match 'disconnected' })) { $bad += 'no drop line' }
         if ($desync -gt 0) { $bad += "desync=$desync" }
         if ($bad.Count) { $failed++; Write-Output ("   FAIL slot " + $x.Slot + ": " + ($bad -join ', ')) }
     }
+}
+if ($ExpectDrop) {
+    $hs = @($procs | Where-Object { -not $_.Killed -and (Test-Path $_.Log) } | ForEach-Object { $f = (Get-Content $_.Log | Where-Object { $_ -match 'final:' } | Select-Object -Last 1); if ($f) { ($f -replace '.*final: frame \d+ ', '') } })
+    Write-Output ("survivor final hashes: " + (($hs | Select-Object -Unique) -join ' || '))
+    if (@($hs | Select-Object -Unique).Count -gt 1) { $failed++; Write-Output "   FAIL survivors' final hashes differ" }
 }
 Write-Output ("wall=" + [int]$wall + "s")
 if ($failed -gt 0) { Write-Output ("RESULT: FAIL (" + $failed + " peer(s))"); exit 1 }

@@ -84,7 +84,9 @@ void Engine::put_remote(int p, int64_t f, uint64_t v) {
 void Engine::build_pads(int64_t f, uint64_t pads[kPorts]) {
     for (int p = 0; p < kPorts; p++) {
         if (!present(p)) { pads[p] = 0; continue; }
-        pads[p] = has(p, f) ? get(p, f) : (last_val_[p] & ~cfg_.event_mask);
+        int o = cfg_.owner[p];
+        if (o != cfg_.my_slot && (done_mask_ >> o & 1u) && f >= (int64_t)drop_cut_[o]) pads[p] = 0;   // dropped guest: neutral from the agreed cutoff
+        else pads[p] = has(p, f) ? get(p, f) : (last_val_[p] & ~cfg_.event_mask);
         used_[f % kFrRing][p] = pads[p];
     }
 }
@@ -205,6 +207,9 @@ void Engine::send_packet(bool force) {
 void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
     const uint8_t* d = m.data();
     size_t n = m.size();
+    if (from >= 0 && from < 8) last_rx_[from] = net_.now_ms() ? net_.now_ms() : 1;
+    if (d[0] == kPktDrop) { drop_on_msg(from, d, n); return; }
+    if (d[0] == kPktInput && from >= 0 && from < 8 && (ignore_mask_ >> from & 1u)) return;   // dropped: only relayed windows count
     if (d[0] == kPktReady) {
         if (n >= 2 && d[1] < 8) {
             ready_mask_ |= 1u << d[1];
@@ -330,7 +335,7 @@ void Engine::compare_hash(int slot, uint32_t frame, uint64_t h) {
 void Engine::advance_confirmed() {
     int64_t c = (int64_t)cur_ - 1;
     for (int p = 0; p < kPorts; p++)
-        if (present(p) && !local(p) && !(left_mask_ >> cfg_.owner[p] & 1u)) c = std::min(c, conf_upto_[p]);
+        if (gating(p)) c = std::min(c, conf_upto_[p]);
     conf_eff_ = std::max(conf_eff_, c);
     while (roll_next_ <= conf_eff_) {
         int64_t f = roll_next_++;
@@ -385,11 +390,98 @@ bool Engine::start_barrier(uint32_t timeout_ms) {
     uint8_t r[2] = {kPktReady, (uint8_t)cfg_.my_slot};
     net_.send(-1, r, 2);
     last_progress_ = net_.now_ms();
+    for (int q = 0; q < 8; q++) last_rx_[q] = last_progress_ ? last_progress_ : 1;
     return true;
+}
+
+/* ---- mid-match drop of a silent guest (drop_agree.h): frames >= cutoff read 0 for its ports ---- */
+void Engine::drop_begin(int slot) {
+    if (drops_.count(slot) || (done_mask_ >> slot & 1u) || slot <= 0 || slot >= 8 || slot == cfg_.my_slot) return;
+    int64_t prop = 0;
+    bool first = true;
+    for (int p = 0; p < kPorts; p++)
+        if (present(p) && cfg_.owner[p] == slot) { int64_t k = conf_upto_[p] + 1; prop = first ? k : std::min(prop, k); first = false; }
+    ignore_mask_ |= 1u << slot;
+    uint32_t surv = cfg_.slot_mask & ~(1u << slot) & ~left_mask_ & ~ignore_mask_;
+    for (auto& kv : drops_) kv.second.remove_survivor(slot);
+    drops_[slot] = netdrop::Agreement(slot, surv | (1u << cfg_.my_slot), cfg_.my_slot, (uint32_t)prop);
+    if (net_.log) net_.log("drop: slot " + std::to_string(slot) + " silent, proposing cutoff frame " + std::to_string((uint32_t)prop));
+    last_drop_send_ = 0;
+}
+
+void Engine::drop_send(const netdrop::Agreement& ag) {
+    netdrop::Msg m;
+    m.from = (uint8_t)cfg_.my_slot; m.dead = (uint8_t)ag.dead();
+    m.proposal = ag.my_proposal(); m.heard = ag.heard_mask();
+    uint32_t hi = ag.window_hi();
+    uint32_t lo = hi > (uint32_t)netdrop::kWindow ? hi - netdrop::kWindow : 0;
+    m.first = lo;
+    for (int p = 0; p < kPorts; p++) {
+        if (!present(p) || cfg_.owner[p] != ag.dead()) continue;
+        netdrop::PortWin w;
+        w.port = (uint8_t)p;
+        for (uint32_t f = lo; f < hi; f++) w.vals.push_back(has(p, f) ? get(p, f) : 0);
+        m.ports.push_back(std::move(w));
+    }
+    uint8_t buf[1100];
+    size_t n = netdrop::encode(kPktDrop, m, buf, sizeof buf);
+    if (n) net_.send(-1, buf, (int)n);
+}
+
+void Engine::drop_on_msg(int from, const uint8_t* d, size_t n) {
+    netdrop::Msg m;
+    if (!netdrop::decode(kPktDrop, d, n, &m) || m.from != from || m.dead >= 8) return;
+    if (m.dead == cfg_.my_slot || m.dead == 0 || !(cfg_.slot_mask >> m.dead & 1u)) return;
+    if ((done_mask_ >> m.dead & 1u) && !drops_.count(m.dead)) return;
+    if (!drops_.count(m.dead)) drop_begin(m.dead);
+    auto it = drops_.find(m.dead);
+    if (it == drops_.end()) return;
+    for (auto& w : m.ports) {
+        if (w.port >= kPorts || cfg_.owner[w.port] != m.dead) continue;
+        for (size_t i = 0; i < w.vals.size(); i++) {
+            int64_t f = (int64_t)m.first + (int64_t)i;
+            if ((done_mask_ >> m.dead & 1u) && f >= (int64_t)drop_cut_[m.dead]) continue;
+            put_remote(w.port, f, w.vals[i] & vmask());
+        }
+    }
+    it->second.on_msg(from, m.proposal, m.heard);
+    if (it->second.decided() && !it->second.settled()) last_drop_send_ = 0;
+}
+
+void Engine::drop_service(uint32_t now) {
+    if (drops_.empty()) return;
+    bool send = now - last_drop_send_ >= 100;
+    for (auto it = drops_.begin(); it != drops_.end();) {
+        netdrop::Agreement& ag = it->second;
+        int dead = it->first;
+        if (ag.decided() && !(done_mask_ >> dead & 1u)) {
+            uint32_t cut = ag.cutoff();
+            drop_cut_[dead] = cut;
+            done_mask_ |= 1u << dead;
+            drop_done_at_[dead] = now ? now : 1;
+            if (cut < cur_ && !desync_) rb_to_ = rb_to_ < 0 ? (int64_t)cut : std::min(rb_to_, (int64_t)cut);   // re-simulate frames already predicted past the cutoff
+            if (net_.log) net_.log("drop: slot " + std::to_string(dead) + " disconnected, neutral from frame " + std::to_string(cut) + " - playing on");
+        }
+        bool done = ag.settled() || ((done_mask_ >> dead & 1u) && now - drop_done_at_[dead] > 8000);
+        if (send && !done) drop_send(ag);
+        if (done) it = drops_.erase(it); else ++it;
+    }
+    if (send) last_drop_send_ = now ? now : 1;
+}
+
+void Engine::drop_check(uint32_t now) {
+    if (!cfg_.drop_silence_ms) return;
+    for (int s = 1; s < 8; s++) {
+        if (!active_peer(s) || !last_rx_[s] || now - last_rx_[s] < cfg_.drop_silence_ms) continue;
+        int others = 0;
+        for (int q = 0; q < 8; q++) if (q != s && q != cfg_.my_slot && active_peer(q)) others++;
+        if (others) drop_begin(s);
+    }
 }
 
 void Engine::service() {
     pump_net();
+    { uint32_t now = net_.now_ms(); drop_check(now); drop_service(now); }
     if (rb_to_ >= 0 && !desync_) do_rollback();
     advance_confirmed();
     send_packet(false);
@@ -401,7 +493,7 @@ Engine::Status Engine::prepare() {
     if ((int64_t)cur_ - 1 - conf_eff_ >= cfg_.max_pred) {
         // At the prediction limit: wait for the missing peer inputs.
         bool any_remote = false;
-        for (int p = 0; p < kPorts; p++) if (present(p) && !local(p) && !(left_mask_ >> cfg_.owner[p] & 1u)) any_remote = true;
+        for (int p = 0; p < kPorts; p++) if (gating(p)) any_remote = true;
         if (any_remote) {
             if (stall_since_ == 0) stall_since_ = now;
             st_.stalls++;
@@ -473,7 +565,7 @@ bool Engine::finish(uint32_t timeout_ms) {
         send_packet(false);
         bool conf = true, acked = true;
         for (int p = 0; p < kPorts; p++)
-            if (present(p) && !local(p) && !(left_mask_ >> cfg_.owner[p] & 1u) && conf_upto_[p] < (int64_t)cur_ - 1) conf = false;
+            if (gating(p) && conf_upto_[p] < (int64_t)cur_ - 1) conf = false;
         for (int s = 0; s < 8; s++) {
             if (!active_peer(s)) continue;
             for (int p = 0; p < kPorts; p++)
