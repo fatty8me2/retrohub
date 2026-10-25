@@ -42,8 +42,8 @@ void add_rom_folder(bool clicked) {
     if (p.empty()) return;
     add_rom_folder_path(p);
 }
-void locate_smash() {
-    std::string p = pick_path(A.hwnd, false, L"BattleShip.exe", L"*.exe");
+void locate_smash(bool clicked) {
+    std::string p = osk::file("smash_exe", clicked, {".exe"});
     if (p.empty()) return;
     A.st.smash_exe = p;
     mark_dirty();

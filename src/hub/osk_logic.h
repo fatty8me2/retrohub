@@ -75,7 +75,7 @@ struct Session {
 
 /* ---- pad-navigable folder browser ---- */
 struct FolderEntry {
-    enum Type { Select, Up, Drive, Dir, Shortcut } type = Dir;
+    enum Type { Select, Up, Drive, Dir, Shortcut, File } type = Dir;
     std::string name;   // shown
     std::string path;   // where it leads (Select: the folder chosen)
 };
@@ -85,7 +85,10 @@ struct FolderBrowser {
     int sel = 0;
     bool done = false, cancelled = false;
     std::string result;
+    bool pick_files = false;                // file mode: list matching files, no "Select this folder"
+    std::vector<std::string> filters;       // file mode: extensions incl. dot (".json"); empty = every file
 
+    bool matches(const std::string& filename) const;
     void open(const std::string& start);   // falls back to the drive list when start is not a folder
     void refresh();
     void activate();   // A: enter the highlighted folder, or choose it (Select entry)

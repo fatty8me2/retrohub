@@ -118,9 +118,9 @@ void do_export() {
     AC.io_msg = AC.io_ok ? "Account saved to " + path : "Export failed: " + err;
 }
 
-void do_import() {
+void do_import(bool clicked) {
     if (g_headless) return;
-    std::string path = pick_path(A.hwnd, false, L"Account file", L"*.json");
+    std::string path = osk::file("acct_import", clicked, {".json"});
     if (path.empty()) return;
     hubnet::Identity id;
     std::string err;
@@ -257,7 +257,8 @@ void draw_account_section() {
     settings_label("Account file", "The file contains your account secret. Keep it private: anyone who has it can sign in as you.");
     if (button("Export account to file...", ImVec2(0, 0), false, !g_headless, ui::Icon::Folder)) do_export();
     ImGui::SameLine();
-    if (button("Import account from file...", ImVec2(0, 0), false, !g_headless, ui::Icon::Folder)) do_import();
+    const bool imp_clicked = (button("Import account from file...", ImVec2(0, 0), false, !g_headless, ui::Icon::Folder));
+    do_import(imp_clicked);
     if (!AC.io_msg.empty()) {
         if (AC.io_ok) { ImGui::PushTextWrapPos(0.f); ImGui::TextUnformatted(AC.io_msg.c_str()); ImGui::PopTextWrapPos(); }
         else account_text_error(AC.io_msg);

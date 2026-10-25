@@ -651,7 +651,7 @@ void draw_details_modal() {
         if (button("Save folder", ImVec2(0, bh), false, true, ui::Icon::Folder)) open_in_explorer(hub::saves::game_dir(sys_short(e), e.key));
     } else {
         place(label_w("Locate BattleShip.exe", false));
-        if (button("Locate BattleShip.exe", ImVec2(0, bh))) locate_smash();
+        locate_smash(button("Locate BattleShip.exe", ImVec2(0, bh)));
     }
     if (cheats_supported(e)) {
         int cn = cheats_enabled_count(e);

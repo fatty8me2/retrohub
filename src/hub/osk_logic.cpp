@@ -252,6 +252,15 @@ static std::string lower(std::string s) { for (auto& c : s) c = (char)std::tolow
 static fs::path P(const std::string& s) { return fs::u8path(s); }
 static std::string S8(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
 
+bool FolderBrowser::matches(const std::string& filename) const {
+    if (filters.empty()) return true;
+    std::string n = lower(filename);
+    for (const auto& f : filters) {
+        std::string e = lower(f);
+        if (n.size() >= e.size() && n.compare(n.size() - e.size(), e.size(), e) == 0) return true;
+    }
+    return false;
+}
 void FolderBrowser::open(const std::string& start) {
     done = cancelled = false;
     result.clear();
@@ -282,21 +291,26 @@ void FolderBrowser::refresh() {
         if (sel >= (int)entries.size()) sel = 0;
         return;
     }
-    entries.push_back({FolderEntry::Select, "Select this folder", cwd});
+    if (!pick_files) entries.push_back({FolderEntry::Select, "Select this folder", cwd});
     entries.push_back({FolderEntry::Up, "..  (up one level)", parent_of(cwd)});
-    std::vector<FolderEntry> dirs;
+    std::vector<FolderEntry> dirs, files;
     for (fs::directory_iterator it(P(cwd), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code e2;
-        if (!it->is_directory(e2) || e2) continue;
+        bool isdir = it->is_directory(e2);
+        if (e2) continue;
         std::string name = S8(it->path().filename());
         if (name.empty() || name[0] == '.' || name[0] == '$') continue;
+        if (!isdir && (!pick_files || !it->is_regular_file(e2) || !matches(name))) continue;
 #ifdef _WIN32
         DWORD at = GetFileAttributesW(it->path().c_str());
         if (at != INVALID_FILE_ATTRIBUTES && (at & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) continue;
 #endif
-        dirs.push_back({FolderEntry::Dir, name, S8(it->path())});
+        (isdir ? dirs : files).push_back({isdir ? FolderEntry::Dir : FolderEntry::File, name, S8(it->path())});
     }
-    std::sort(dirs.begin(), dirs.end(), [](const FolderEntry& a, const FolderEntry& b) { return lower(a.name) < lower(b.name); });
+    auto byname = [](const FolderEntry& a, const FolderEntry& b) { return lower(a.name) < lower(b.name); };
+    std::sort(dirs.begin(), dirs.end(), byname);
+    std::sort(files.begin(), files.end(), byname);
+    dirs.insert(dirs.end(), files.begin(), files.end());
     entries.insert(entries.end(), dirs.begin(), dirs.end());
     if (sel >= (int)entries.size()) sel = (int)entries.size() - 1;
     if (sel < 0) sel = 0;
@@ -309,7 +323,7 @@ void FolderBrowser::move(int d) {
 void FolderBrowser::activate() {
     if (sel < 0 || sel >= (int)entries.size()) return;
     const FolderEntry e = entries[sel];
-    if (e.type == FolderEntry::Select) { result = e.path; done = true; return; }
+    if (e.type == FolderEntry::Select || e.type == FolderEntry::File) { result = e.path; done = true; return; }
     cwd = e.type == FolderEntry::Up ? e.path : e.path;
     sel = cwd.empty() ? 0 : 0;
     refresh();
@@ -322,7 +336,7 @@ void FolderBrowser::up() {
     refresh();
 }
 void FolderBrowser::choose_here() {
-    if (cwd.empty()) return;
+    if (cwd.empty() || pick_files) return;
     result = cwd;
     done = true;
 }
