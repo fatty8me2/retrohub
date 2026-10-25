@@ -19,6 +19,9 @@ enum class ShotMode { Off, Armed, Periodic };
 void headless_set_shot_mode(ShotMode m);
 
 /* Writes the most recently grabbed frame as PNG (or BMP by extension). False if nothing was grabbed. */
-bool headless_write_screenshot(const std::string& path);
+bool headless_write_screenshot(const std::string& path, int max_w = 0);   // max_w > 0: box-downscaled to at most that width
+
+/* Number of frames grabbed so far (a new value after headless_set_shot_mode(Armed) means the grab happened). */
+unsigned headless_shot_serial();
 
 }  // namespace n64run

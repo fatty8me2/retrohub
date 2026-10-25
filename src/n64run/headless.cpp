@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <vector>
@@ -26,6 +27,7 @@ int g_w = 640, g_h = 480;
 ShotMode g_mode = ShotMode::Off;
 unsigned g_swaps = 0;
 int g_shot_w = 0, g_shot_h = 0;
+unsigned g_grabs = 0;
 std::vector<uint8_t> g_shot;   // RGBA, top-down
 
 typedef void(__stdcall* PFN_ReadPixels)(int, int, int, int, unsigned, unsigned, void*);
@@ -151,6 +153,7 @@ void grab_frame() {
     for (int y = 0; y < h; y++)   // GL origin is bottom-left; store top-down
         std::memcpy(&g_shot[(size_t)y * w * 4], &raw[(size_t)(h - 1 - y) * w * 4], (size_t)w * 4);
     g_shot_w = w; g_shot_h = h;
+    g_grabs++;
 }
 
 m64p_error vx_gl_swap() {
@@ -198,13 +201,27 @@ bool headless_install_vidext(ptr_CoreOverrideVidExt override_fn) {
 
 void headless_set_shot_mode(ShotMode m) { g_mode = m; }
 
-bool headless_write_screenshot(const std::string& path) {
+unsigned headless_shot_serial() { return g_grabs; }
+
+bool headless_write_screenshot(const std::string& path, int max_w) {
     if (g_shot.empty() || g_shot_w <= 0 || g_shot_h <= 0) return false;
-    std::vector<uint8_t> rgb((size_t)g_shot_w * g_shot_h * 3);
-    for (size_t i = 0; i < (size_t)g_shot_w * g_shot_h; i++) {
-        rgb[i * 3 + 0] = g_shot[i * 4 + 0];
-        rgb[i * 3 + 1] = g_shot[i * 4 + 1];
-        rgb[i * 3 + 2] = g_shot[i * 4 + 2];
+    int ow = g_shot_w, oh = g_shot_h;
+    if (max_w > 0 && g_shot_w > max_w) { ow = max_w; oh = std::max(1, (int)((long long)g_shot_h * max_w / g_shot_w)); }
+    std::vector<uint8_t> rgb((size_t)ow * oh * 3);
+    for (int y = 0; y < oh; y++) {
+        int y0 = (int)((long long)y * g_shot_h / oh), y1 = std::max(y0 + 1, (int)((long long)(y + 1) * g_shot_h / oh));
+        for (int x = 0; x < ow; x++) {
+            int x0 = (int)((long long)x * g_shot_w / ow), x1 = std::max(x0 + 1, (int)((long long)(x + 1) * g_shot_w / ow));
+            unsigned acc[3] = {0, 0, 0}, n = 0;
+            for (int yy = y0; yy < y1 && yy < g_shot_h; yy++)
+                for (int xx = x0; xx < x1 && xx < g_shot_w; xx++) {
+                    const uint8_t* q = &g_shot[((size_t)yy * g_shot_w + xx) * 4];
+                    acc[0] += q[0]; acc[1] += q[1]; acc[2] += q[2]; n++;
+                }
+            if (!n) n = 1;
+            uint8_t* d = &rgb[((size_t)y * ow + x) * 3];
+            d[0] = (uint8_t)(acc[0] / n); d[1] = (uint8_t)(acc[1] / n); d[2] = (uint8_t)(acc[2] / n);
+        }
     }
     std::filesystem::path fp = std::filesystem::u8path(path);
     std::error_code ec;
@@ -213,8 +230,8 @@ bool headless_write_screenshot(const std::string& path) {
     if (!fh) return false;
     auto to_file = [](void* ctx, void* data, int size) { fwrite(data, 1, (size_t)size, (FILE*)ctx); };
     bool bmp = fp.extension() == ".bmp" || fp.extension() == ".BMP";
-    int ok = bmp ? stbi_write_bmp_to_func(to_file, fh, g_shot_w, g_shot_h, 3, rgb.data())
-                 : stbi_write_png_to_func(to_file, fh, g_shot_w, g_shot_h, 3, rgb.data(), g_shot_w * 3);
+    int ok = bmp ? stbi_write_bmp_to_func(to_file, fh, ow, oh, 3, rgb.data())
+                 : stbi_write_png_to_func(to_file, fh, ow, oh, 3, rgb.data(), ow * 3);
     fclose(fh);
     return ok != 0;
 }
