@@ -26,6 +26,15 @@ std::string title_for_serial(const std::string& serial);
 std::string serial_for_name(const std::string& file_stem);
 /* Disc number from "(Disc 2)" in a title/file name, 0 if none. */
 int disc_number(const std::string& name);
+/* Multi-disc sets. `chosen` is a file name ("Game (Disc 1).cue"), `siblings` the file names in the same folder. Returns the file names of
+ * every "(Disc N)" of the same game and extension, ordered by N (the chosen one included), or {} when it is not a numbered multi-disc set
+ * (fewer than 2 discs, or the chosen file has no "(Disc N)"). Pure. */
+std::vector<std::string> disc_set(const std::string& chosen, const std::vector<std::string>& siblings);
+/* Text of an .m3u listing `paths` one per line. */
+std::string make_m3u(const std::vector<std::string>& paths);
+/* Memory card 2 file the core writes next to the save ("<stem>.1.mcr" in the battery folder). */
+std::string memcard2_file(const std::string& rom_stem);
+
 /* Region from a serial prefix: 'U' North America, 'E' Europe, 'J' Japan, 0 unknown. */
 char serial_region(const std::string& serial);
 
