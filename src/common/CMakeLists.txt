@@ -51,6 +51,10 @@ target_link_libraries(hubkanto_test PRIVATE hubcommon hubminiz)
 add_executable(ps1_test test_ps1.cpp)
 target_link_libraries(ps1_test PRIVATE hubcommon)
 
+# PlayStation disc archives (.7z/.rar): name/title-DB identification, truncated archives, extraction + SYSTEM.CNF confirm.
+add_executable(psarchive_test test_psarchive.cpp)
+target_link_libraries(psarchive_test PRIVATE hubcommon)
+
 # "Add games": sorting / destination / dedupe / copy job (scratch dirs only).
 add_executable(addgames_test test_addgames.cpp)
 target_link_libraries(addgames_test PRIVATE hubcommon)

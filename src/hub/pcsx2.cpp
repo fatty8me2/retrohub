@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 
@@ -52,31 +53,79 @@ bool pcsx2_bios_name_ok(const std::string& name, uint64_t size) {
     return n.compare(0, 4, "ps2-") == 0 || n.compare(0, 3, "ps2") == 0;
 }
 
-static bool bios_in(const std::string& dir, Bios* out) {
+/* A PS2 BIOS dump that is not named like a .bin: "SCPH-90001_BIOS_V18_USA_230.ROM0" (the 4 MB main ROM of a split dump). */
+static bool bios_rom0_ok(const std::string& name, uint64_t size) {
+    std::string n = lower(name);
+    return n.size() > 9 && n.compare(n.size() - 5, 5, ".rom0") == 0 && n.compare(0, 4, "scph") == 0 && size == (4u << 20);
+}
+
+static bool bios_has_reset_magic(const fs::path& p) {   // every PS2 BIOS image starts with the ROMDIR entry "RESET"
+    std::ifstream f(p, std::ios::binary);
+    char b[5] = {};
+    f.read(b, 5);
+    return f.gcount() == 5 && std::memcmp(b, "RESET", 5) == 0;
+}
+
+/* newest USA dump first: (USA/NTSC in the name, model number, plain .bin over .rom0) */
+static long long bios_rank(const std::string& name) {
+    std::string n = lower(name);
+    long long usa = (n.find("usa") != std::string::npos || n.find("ntsc") != std::string::npos) ? 1 : 0;
+    long long model = 0;
+    size_t i = n.find("scph");
+    if (i != std::string::npos) {
+        i += 4;
+        if (i < n.size() && n[i] == '-') ++i;
+        for (int k = 0; k < 6 && i < n.size() && n[i] >= '0' && n[i] <= '9'; ++k, ++i) model = model * 10 + (n[i] - '0');
+    }
+    long long bin = n.size() > 4 && n.compare(n.size() - 4, 4, ".bin") == 0 ? 1 : 0;
+    return usa * 100000000000LL + model * 10 + bin;
+}
+
+/* Files in `dir` that look like a PS2 BIOS; `depth` > 0 also walks subfolders (vendor folders), skipping macOS junk and checking the ROM magic. */
+static void bios_collect(const std::string& dir, int depth, std::vector<std::pair<std::string, std::string>>* out) {
     std::error_code ec;
-    if (dir.empty() || !fs::is_directory(P(dir), ec)) return false;
-    std::vector<std::string> names;
+    if (dir.empty() || !fs::is_directory(P(dir), ec)) return;
     for (fs::directory_iterator it(P(dir), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code e2;
-        if (!it->is_regular_file(e2)) continue;
         std::string n = S(it->path().filename());
-        if (pcsx2_bios_name_ok(n, (uint64_t)it->file_size(e2))) names.push_back(n);
+        if (n.compare(0, 2, "._") == 0 || lower(n) == "__macosx" || lower(n) == ".ds_store") continue;
+        if (it->is_directory(e2)) {
+            if (depth > 0 && !it->is_symlink(e2)) bios_collect(S(it->path()), depth - 1, out);
+            continue;
+        }
+        if (!it->is_regular_file(e2)) continue;
+        uint64_t sz = (uint64_t)it->file_size(e2);
+        if (pcsx2_bios_name_ok(n, sz)) out->push_back({dir, n});
+        else if (bios_rom0_ok(n, sz) && bios_has_reset_magic(it->path())) out->push_back({dir, n});
     }
-    if (names.empty()) return false;
-    std::sort(names.begin(), names.end(), [](const std::string& a, const std::string& b) { return lower(a) < lower(b); });
-    out->dir = dir;
-    out->file = names.front();
+}
+
+static bool bios_in(const std::string& dir, Bios* out, int depth = 0) {
+    std::vector<std::pair<std::string, std::string>> c;
+    bios_collect(dir, depth, &c);
+    if (c.empty()) return false;
+    size_t best = 0;
+    for (size_t i = 1; i < c.size(); ++i) {
+        long long ra = bios_rank(c[i].second), rb = bios_rank(c[best].second);
+        if (ra > rb || (ra == rb && lower(c[i].second) < lower(c[best].second))) best = i;
+    }
+    out->dir = c[best].first;
+    out->file = c[best].second;
     return true;
 }
 
 Bios pcsx2_find_bios(const std::vector<std::string>& dirs) {
     Bios b;
     for (const std::string& d : dirs) {
-        if (bios_in(d, &b) || bios_in(join(d, "BIOS"), &b) || bios_in(join(d, "bios"), &b)) return b;
-        std::string leaf = lower(S(P(d).filename()));
+        const std::string leaf = lower(S(P(d).filename()));
+        const bool deep = leaf.find("bios") != std::string::npos;   // "GamesBios", "BIOS": vendor subfolders up to 4 levels down
+        if (bios_in(d, &b, deep ? 4 : 0)) return b;
+        for (const char* sub : {"BIOS", "bios", "Bios", "GamesBios"})
+            if (bios_in(join(d, sub), &b, 4)) return b;
         if (leaf.compare(0, 5, "games") == 0) {
             std::string par = S(P(d).parent_path());
-            if (bios_in(join(par, "BIOS"), &b)) return b;
+            for (const char* sub : {"BIOS", "Bios", "GamesBios"})
+                if (bios_in(join(par, sub), &b, 4)) return b;
         }
     }
     return Bios();
@@ -86,7 +135,7 @@ std::vector<std::string> pcsx2_bios_search_dirs(const std::string& chosen, const
     std::vector<std::string> v;
     if (!chosen.empty()) v.push_back(chosen);
     const char* up = std::getenv("USERPROFILE");
-    if (up) v.push_back(join(up, "Desktop\\Everything\\BIOS"));
+    if (up) { v.push_back(join(up, "Desktop\\Everything\\BIOS")); v.push_back(join(up, "Desktop\\Everything\\GamesBios")); }
     for (const auto& f : rom_folders) {
         v.push_back(f);
         std::string par = S(P(f).parent_path());
@@ -128,6 +177,7 @@ std::string pcsx2_binding(const hubctl::Term& t, int sdl) {
 
 std::string pcsx2_ini_defaults(const std::string& in) {
     std::string t = in;
+    t = hubui::ini_set(t, "UI", "SettingsVersion", "1");   // without it PCSX2 asks "Settings failed to load, or are the incorrect version" on every start
     t = hubui::ini_set(t, "UI", "SetupWizardIncomplete", "false");
     t = hubui::ini_set(t, "UI", "ConfirmShutdown", "false");
     t = hubui::ini_set(t, "UI", "StartFullscreen", "true");
@@ -218,6 +268,7 @@ static std::string gv(const hub::gs::Values& v, const char* k, const char* d) { 
 
 std::string pcsx2_ini_launch(const std::string& in, const Bios& bios, const std::string& card_rel, const hub::gs::Values& v) {
     std::string t = in;
+    t = hubui::ini_set(t, "UI", "SettingsVersion", "1");   // also for an ini written by an older RetroHub that lacked it
     if (!bios.file.empty()) {
         t = hubui::ini_set(t, "Folders", "Bios", bios.dir);
         t = hubui::ini_set(t, "Filenames", "BIOS", bios.file);
