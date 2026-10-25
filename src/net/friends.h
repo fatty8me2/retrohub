@@ -64,6 +64,7 @@ struct Invite {
 struct Message {
     std::string id, from, from_name, to;
     bool invite = false;      // kind == "invite"
+    bool ask = false;         // kind == "ask": "may I join your game?" (game in inv.game_id/game_title/system; never stored in the conversation)
     std::string text;
     Invite inv;
     int64_t at = 0;
@@ -77,7 +78,9 @@ struct Event {
                 InviteResult,     // IdentityAdopted: text = new friend code ("RH-XXXX-XXXX"), uid = new uid
                 UsernameChecked,  // answer to check_username(): ref, name, ok (= available), yours, text = reason when not (taken|held|reserved|profanity|...)
                 UsernameResult,   // answer to claim_username(): ref, name, ok, text = reason when not
-                UsernameChanged };// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
+                UsernameChanged,
+                AskReceived,      // a friend asks to join our game: uid, name, invite = the game they are in
+                AskResult };      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
     std::string name;
@@ -158,6 +161,8 @@ class FriendsClient {
     void send_message(const std::string& uid, const std::string& text);
     void send_invite(const std::vector<std::string>& uids, const Invite& inv);
     void ack(const std::vector<std::string>& ids);
+    /* "Ask to join": tells friend `uid` we would like an invite to the game they are in. The Worker rate limits it (1 per target per minute). */
+    void ask_to_join(const std::string& uid, const std::string& game_id, const std::string& game_title, const std::string& system);
     void rename(const std::string& name);   // legacy free-text display name (old servers); with usernames use claim_username()
 
     /* ---- usernames (docs/FRIENDS.md "Usernames"). All need a welcomed connection; they return the request ref, or 0 when

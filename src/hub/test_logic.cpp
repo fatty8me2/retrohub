@@ -460,6 +460,49 @@ int main() {
             CHECK((group_friends(r2).online == std::vector<int>{2, 1, 0, 3}));   // joinable lobby, joinable in-game, in game, online
             CHECK(queued_join_text("Mia") == "Will join Mia's room when your game closes." && queued_join_text("") == "Will join that room when your game closes.");
         }
+        {   // rich presence, ask to join, friends-playing shelf
+            const long long NOW = 100LL * 3600000;
+            FriendRow a = row("a", "Ann", FS_InLobby, true, NOW - 12 * 60000, "Smash Classic", 2, 4);
+            CHECK(friend_presence_line(a, NOW) == "Smash Classic \xC2\xB7 2/4 \xC2\xB7 12 min");
+            a.updated_ms = NOW - 30000;
+            CHECK(friend_presence_line(a, NOW) == "Smash Classic \xC2\xB7 2/4");
+            a.updated_ms = NOW - 65 * 60000;
+            CHECK(friend_presence_line(a, NOW) == "Smash Classic \xC2\xB7 2/4 \xC2\xB7 1h 5m");
+            FriendRow g = row("g", "Gus", FS_InGame, false, 0, "Mario Kart 64");
+            CHECK(friend_presence_line(g, NOW) == "Mario Kart 64");
+            CHECK(friend_presence_line(row("o", "Oz", FS_Online, false, 5), NOW) == "Online");
+            CHECK(friend_presence_line(row("z", "Zed", FS_Offline, false, NOW - 3 * 3600000LL), NOW) == "Last seen 3h ago");
+            CHECK(format_dur_short(59999) == "" && format_dur_short(60000) == "1 min" && format_dur_short(3600000) == "1h");
+            CHECK(!friend_can_ask(a) && friend_can_ask(g) && !friend_can_ask(row("o", "Oz", FS_Online, false, 5)));
+            g.in_my_room = true;
+            CHECK(!friend_can_ask(g));
+            FriendRow full = row("f", "Fay", FS_InLobby, false, NOW - 1000, "Smash Classic", 4, 4);
+            FriendRow j2 = row("j", "Jo", FS_InGame, true, NOW - 5000, "Kart", 2, 4);
+            FriendRow bare = row("b", "Bo", FS_InGame, false, NOW, "");
+            a.updated_ms = NOW - 12 * 60000;
+            std::vector<FriendRow> rs = {row("o", "Oz", FS_Online, false, 5), full, bare, j2, a};
+            CHECK((friends_playing(rs) == std::vector<int>{3, 4, 1}));   // joinable first (recent first), then the full lobby; no-game and online dropped
+            CHECK(friends_playing(rs, 2).size() == 2);
+            AskLimiter lim;
+            CHECK(lim.allow("u1", 1000) && !lim.allow("u1", 30000) && lim.wait_ms("u1", 30000) == 31000 && lim.allow("u1", 61000));
+            AskLimiter l2;
+            for (int i = 0; i < 6; ++i) CHECK(l2.allow("u" + std::to_string(i), 1000 + i));
+            CHECK(!l2.allow("u9", 2000) && l2.allow("u9", 1000 + 300000 + 1));
+            CHECK(ask_is_repeat(1000, 20000) && !ask_is_repeat(1000, 31000) && !ask_is_repeat(0, 5));
+            CHECK(ask_toast_title("Mia", "Smash Classic") == "Mia wants to join your game (Smash Classic)" && ask_toast_title("Mia", "") == "Mia wants to join your game");
+        }
+        {   // ping classification
+            CHECK(ping_class(-1, false) == PingClass::Unknown && ping_class(0, false) == PingClass::Great && ping_class(79, false) == PingClass::Great);
+            CHECK(ping_class(80, false) == PingClass::Ok && ping_class(159, false) == PingClass::Ok && ping_class(160, false) == PingClass::Poor);
+            CHECK(ping_class(10, true) == PingClass::Relay && ping_class(-1, true) == PingClass::Relay);
+            CHECK(std::string(ping_class_label(PingClass::Ok)) == "OK" && ping_text(42, false) == "42 ms" && ping_text(42, true) == "relay" && ping_text(-1, false) == "-");
+            PingBook pb;
+            CHECK(pb.rtt(1) == -1);
+            for (int v : {40, 400, 50}) pb.add(1, v);
+            CHECK(pb.rtt(1) == 50);   // a spike does not move the median
+            pb.drop(1);
+            CHECK(pb.rtt(1) == -1);
+        }
         Settings fs;
         CHECK(fs.show_friends && fs.notif_sound);
         fs.show_friends = false; fs.notif_sound = false;

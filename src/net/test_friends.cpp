@@ -251,6 +251,18 @@ int main(int argc, char** argv)
     A->c.request_history(B->c.my_uid());
     settle(500);
 
+    printf("[ask to join]\n");
+    A->clear(); B->clear();
+    A->c.ask_to_join(B->c.my_uid(), "smash64", "Super Smash Bros.", "n64");
+    CHECK(wait_for([&] { return B->find(Event::AskReceived); }));
+    const Event* ae = B->find(Event::AskReceived);
+    CHECK(ae && ae->uid == A->c.my_uid() && ae->invite.game_id == "smash64" && ae->invite.game_title == "Super Smash Bros.");
+    CHECK(wait_for([&] { return A->find(Event::AskResult); }) && A->find(Event::AskResult)->ok);
+    CHECK(!B->find(Event::MessageReceived), "an ask is not a chat line");
+    A->clear();
+    A->c.ask_to_join(B->c.my_uid(), "smash64", "Super Smash Bros.", "n64");
+    CHECK(wait_for([&] { return A->find(Event::AskResult); }) && !A->find(Event::AskResult)->ok && A->find(Event::AskResult)->text == "rate-limited");
+
     printf("[invite]\n");
     A->clear(); B->clear(); C->clear();
     Invite inv; inv.lobby_code = "XYZ789"; inv.game_id = "smash64"; inv.game_title = "Super Smash Bros."; inv.system = "n64";

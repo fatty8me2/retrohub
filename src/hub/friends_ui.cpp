@@ -232,12 +232,16 @@ bool fr_pill_button(const char* id, const char* label, ImVec2 pos, float h, bool
 }
 
 /* Game thumbnail: library/catalog art when we have it, otherwise a coloured tile with initials. */
-void fr_game_thumb(ImDrawList* dl, const std::string& game_id, const std::string& title, ImVec2 p0, ImVec2 p1, float rad) {
+static ArtRef fr_game_art(const std::string& game_id) {
     ArtRef a;
     const hub::GameEntry* ge = nullptr;
     if (!game_id.empty()) { ge = find_entry(game_id); if (!ge) ge = find_room_entry(game_id); }
     if (ge) a = art_for_entry(*ge);
     else if (const GameInfo* g = game_id.empty() ? nullptr : hub::find_game(game_id)) a = art_for_pick(*g);
+    return a;
+}
+void fr_game_thumb(ImDrawList* dl, const std::string& game_id, const std::string& title, ImVec2 p0, ImVec2 p1, float rad) {
+    ArtRef a = fr_game_art(game_id);
     if (a.tex) { ui::draw_art(dl, a.tex, a.w, a.h, p0, p1, rad); return; }
     ImU32 c0, c1;
     game_colors(game_id, &c0, &c1);
@@ -353,7 +357,7 @@ void fr_toggle_panel() {
 
 void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv) {
     for (auto& o : FR.notifs)
-        if (!o.done && o.invite == invite && o.uid == uid && (!invite || o.inv.lobby_code == inv.lobby_code)) o.done = true;
+        if (!o.done && !o.ask && o.invite == invite && o.uid == uid && (!invite || o.inv.lobby_code == inv.lobby_code)) o.done = true;
     Notif n;
     n.id = FR.next_id++; n.invite = invite; n.uid = uid; n.name = name; n.inv = inv; n.t0 = ImGui::GetTime();
     FR.notifs.push_back(n);
@@ -366,6 +370,7 @@ int fr_pending_count() {
     int n = (int)fr_incoming().size();
     long long now = wall_ms();
     for (auto& x : FR.notifs) if (x.invite && !x.done && !hubui::invite_expired(x.inv.expires_at, now)) ++n;
+    for (auto& x : FR.notifs) if (x.ask && !x.done) ++n;
     return n;
 }
 bool fr_panel_shown() { return A.st.show_friends && FR.panel_t > 0.5f; }
@@ -483,11 +488,20 @@ void fr_tick() {
                 if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
                 else push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0);
                 break;
+            case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite); break;
+            case hubnet::Event::AskResult:
+                if (!e.ok) {
+                    const hubnet::Friend* af = fr_find(e.uid);
+                    std::string nm = af ? af->name : std::string("that friend");
+                    if (e.text == "rate-limited") push_toast(hubui::ask_limited_text(nm, FR.ask_lim.wait_ms(e.uid, wall_ms())), ui::WARN, 6.0);
+                    else push_toast("Could not ask " + nm + " to join.", ui::WARN, 6.0);
+                }
+                break;
             case hubnet::Event::InviteReceived:
                 if (!hubui::invite_expired(e.invite.expires_at, wall_ms())) fr_notify(true, e.uid, e.name, e.invite);
                 break;
             case hubnet::Event::Error:
-                if (e.name == "invite") break;   // reported per target by InviteResult
+                if (e.name == "invite" || e.name == "ask") break;   // reported per target by InviteResult / AskResult
                 { std::string t = fr_error_text(e.text, e.detail); if (!t.empty()) push_toast(t, ui::WARN, 6.0); }
                 break;
             case hubnet::Event::InviteResult: {
@@ -518,11 +532,11 @@ void fr_fake_init() {
         FR.f_friends.push_back(f);
     };
     using PS = hubnet::PresenceState;
-    mk("miauid", "Mia", PS::InLobby, "mk64", "Mario Kart 64", "n64", "K7M2QX", true, 2, 4, now);
-    mk("jakuid", "Jake", PS::InGame, "smash64", "Super Smash Bros.", "n64", "QW8R2T", true, 2, 4, now);
-    mk("kaiuid", "Kai", PS::InGame, "mk64", "Mario Kart 64", "n64", "", false, 0, 0, now);
+    mk("miauid", "Mia", PS::InLobby, "mk64", "Mario Kart 64", "n64", "K7M2QX", true, 2, 4, now - 4 * 60000);
+    mk("jakuid", "Jake", PS::InGame, "smash64", "Smash Classic", "n64", "QW8R2T", true, 2, 4, now - 12 * 60000);
+    mk("kaiuid", "Kai", PS::InGame, "mk64", "Mario Kart 64", "n64", "", false, 0, 0, now - 25 * 60000);
     mk("lunuid", "Luna", PS::Online, "", "", "", "", false, 0, 0, now);
-    mk("devuid", "Dev", PS::InLobby, "mp2", "Mario Party 2", "n64", "ABC234", false, 4, 4, now);
+    mk("devuid", "Dev", PS::InLobby, "mp2", "Mario Party 2", "n64", "ABC234", false, 4, 4, now - 70 * 60000);
     mk("samuid", "Sam", PS::Offline, "", "", "", "", false, 0, 0, now - 3 * 3600 * 1000LL);
     mk("priuid", "Priya", PS::Offline, "", "", "", "", false, 0, 0, now - 2 * 86400 * 1000LL);
     hubnet::Request r;
@@ -560,6 +574,11 @@ void fr_fake_init() {
     FR.f_unread["jakuid"] = 0;
     hubnet::Invite inv = im.inv;
     fr_notify(true, "miauid", "Mia", inv);
+    if (std::getenv("HUB_SHOT_FAKE_ASK")) {   // screenshot aid: a friend asks to join our game
+        hubnet::Invite g;
+        g.game_id = "smash64"; g.game_title = "Smash Classic"; g.system = "n64";
+        fr_notify_ask("kaiuid", "Kai", g);
+    }
 }
 
 /* ============================ drawing ============================ */
@@ -619,7 +638,8 @@ int fr_invite_card(const Notif& n, float w, float frac, bool shadow) {
 }
 float fr_request_card_h() { return sp(1.75f) * 2 + sp(4.f) + sp(1.f) + sp(3.5f); }
 /* 1 = Accept, 2 = Decline/Dismiss */
-int fr_request_card(const std::string& name, const std::string& code, float w, float frac, bool shadow, const char* decline) {
+int fr_request_card(const std::string& name, const std::string& code, float w, float frac, bool shadow, const char* decline,
+                    const std::string& title, const char* accept) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     float pad = sp(1.75f), h = fr_request_card_h();
@@ -629,12 +649,12 @@ int fr_request_card(const std::string& name, const std::string& code, float w, f
     dl->AddRect(p0, p1, with_alpha(ui::GOOD, 0.45f), sp(2.f), 0, 1.f);
     fr_avatar(dl, ImVec2(p0.x + pad + sp(2.f), p0.y + pad + sp(2.f)), sp(2.f), name, hubui::FS_Online, ui::PANEL2);
     float tx = p0.x + pad + sp(5.f);
-    dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, p0.y + pad), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, name + " wants to be friends", p1.x - pad - tx).c_str());
+    dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, p0.y + pad), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, (title.empty() ? name + " wants to be friends" : title), p1.x - pad - tx).c_str());
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + pad + ui::F.bold->FontSize * 1.3f), ui::TEXT2, code.c_str());
     int act = 0;
     float by = p1.y - pad - sp(3.5f), bw = (w - pad * 2 - sp(1.f)) * 0.5f;
     ImGui::SetCursorScreenPos(ImVec2(p0.x + pad, by));
-    if (ui::button("Accept", ImVec2(bw, sp(3.5f)), true)) act = 1;
+    if (ui::button(accept, ImVec2(bw, sp(3.5f)), true)) act = 1;
     ImGui::SetCursorScreenPos(ImVec2(p0.x + pad + bw + sp(1.f), by));
     if (ui::button(decline, ImVec2(bw, sp(3.5f)))) act = 2;
     if (frac >= 0.f) {
@@ -657,6 +677,39 @@ void fr_join_notif(Notif& n) {
     n.done = true;
 }
 
+void fr_ask_to_join(const std::string& uid) {
+    const hubnet::Friend* f = fr_find(uid);
+    if (!f) return;
+    fr_trace("ask", uid);
+    long long now = wall_ms();
+    if (!FR.ask_lim.allow(uid, now)) { set_toast(hubui::ask_limited_text(f->name, FR.ask_lim.wait_ms(uid, now)), false, 5.0); return; }
+    if (!FR.fake) FR.cli.ask_to_join(uid, f->status.game_id, f->status.game_title, f->status.system);
+    set_toast(hubui::ask_sent_text(f->name), true, 5.0);
+}
+void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet::Invite& game) {
+    long long now = wall_ms();
+    auto it = FR.ask_seen.find(uid);
+    if (it != FR.ask_seen.end() && hubui::ask_is_repeat(it->second, now)) return;
+    FR.ask_seen[uid] = now;
+    for (auto& o : FR.notifs) if (o.ask && o.uid == uid) o.done = true;
+    Notif n;
+    n.id = FR.next_id++; n.invite = false; n.ask = true; n.uid = uid; n.name = name; n.inv = game; n.t0 = ImGui::GetTime();
+    FR.notifs.push_back(n);
+    FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
+    if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
+    if (A.proc) flash_taskbar();
+}
+void fr_ask_accept(Notif& n) {
+    fr_trace("ask-accept", n.uid);
+    if (!fr_in_my_room()) {
+        n.toast = false;   // stays in the bell
+        set_toast("Open or join a room first, then " + n.name + " can be invited.", false, 6.0);
+        return;
+    }
+    fr_invite_uids({n.uid});
+    n.done = true;
+}
+
 /* Toast cards (top right, below the top bar). */
 /* Friend request / invite cards stack upward from `bottom_y` (bottom right, clear of the page header buttons such as "Invite friends"). */
 void fr_draw_toasts(float right_x, float bottom_y) {
@@ -665,7 +718,7 @@ void fr_draw_toasts(float right_x, float bottom_y) {
     for (auto& n : FR.notifs) {
         if (n.done || !n.toast) continue;
         if (FR.fake && g_headless) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
-        double life = n.invite ? 30.0 : 20.0, age = now - n.t0;
+        double life = (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;
         if (age > life) { n.toast = false; continue; }
         float in = (float)std::min(1.0, age / 0.3);
         in = 1.f - (1.f - in) * (1.f - in);
@@ -682,6 +735,10 @@ void fr_draw_toasts(float right_x, float bottom_y) {
                 int a = fr_invite_card(n, w, frac, true);
                 if (a == 1) fr_join_notif(n);
                 if (a == 2) n.toast = false;
+            } else if (n.ask) {
+                int a = fr_request_card(n.name, "They will get an invite to your room", w, frac, true, "Decline", hubui::ask_toast_title(n.name, n.inv.game_title), "Accept");
+                if (a == 1) fr_ask_accept(n);
+                if (a == 2) n.done = true;
             } else {
                 int a = fr_request_card(n.name, "wants to be your friend", w, frac, true, "Dismiss");
                 if (a == 1) { fr_accept(n.uid, n.name); n.done = true; }
@@ -778,6 +835,17 @@ void fr_top_bar() {
             ImGui::PopID();
             ImGui::Dummy(ImVec2(0, sp(0.75f)));
         }
+        for (auto& n : FR.notifs) {
+            if (!n.ask || n.done) continue;
+            if (ImGui::GetTime() - n.t0 > 1800.0) { n.done = true; continue; }
+            any = true;
+            ImGui::PushID(n.id);
+            int a = fr_request_card(n.name, "They will get an invite to your room", cw, -1.f, false, "Decline", hubui::ask_toast_title(n.name, n.inv.game_title), "Accept");
+            if (a == 1) { fr_ask_accept(n); ImGui::CloseCurrentPopup(); }
+            if (a == 2) n.done = true;
+            ImGui::PopID();
+            ImGui::Dummy(ImVec2(0, sp(0.75f)));
+        }
         std::vector<hubnet::Request> in = fr_incoming();
         for (auto& r : in) {
             any = true;
@@ -816,6 +884,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
     bool focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
     bool hov = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseHoveringRect(p0, p1);
     bool can_join = hubui::friend_can_join(fr);
+    bool can_ask = hubui::friend_can_ask(fr);
     const char* join_lbl = fr.state == hubui::FS_InGame ? "Join lobby" : "Join";
     bool can_invite = fr_in_my_room() && f.online() && f.status.lobby_code != A.code;
     if (can_invite) {   // room already full for this game: no Invite button (the picker/menu explain why)
@@ -866,6 +935,12 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
             if (fr_pill_button("invite", il, ImVec2(x - pw, by), btn_h, false, !invited_recent)) fr_invite_uids({f.uid});
             x -= pw + sp(0.5f);
         }
+        if (can_ask) {
+            const char* al = "Ask to join";
+            pw = fr_tw(ui::F.bold, al) + sp(2.5f);
+            if (fr_pill_button("ask", al, ImVec2(x - pw, by), btn_h, false, true)) fr_ask_to_join(f.uid);
+            x -= pw + sp(0.5f);
+        }
         if (can_join) {
             if (fr_pill_button("join", join_lbl, ImVec2(x - fr_tw(ui::F.bold, join_lbl) - sp(2.5f), by), btn_h, true, true, &pw)) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
             x -= pw + sp(0.5f);
@@ -881,7 +956,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
                 ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, f.name, tw).c_str());
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.5f) + ui::F.bold->FontSize * 1.25f),
                 fr.state == hubui::FS_Offline ? ui::TEXT3 : ui::TEXT2,
-                ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, hubui::friend_status_line(fr, now), tw).c_str());
+                ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, hubui::friend_presence_line(fr, now), tw).c_str());
     if (focus) ui::focus_ring(dl, p0, p1, sp(1.5f));
 
     if (clicked) ImGui::OpenPopup("ctx");   // left-click on the row opens the actions menu (Message is its first entry); right-click does the same
@@ -890,6 +965,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) {
             if (can_join) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
             else if (can_invite) fr_invite_uids({f.uid});
+            else if (can_ask) fr_ask_to_join(f.uid);
         }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) ImGui::OpenPopup("ctx");
     }
@@ -897,6 +973,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
     if (ImGui::BeginPopup("ctx")) {
         if (ImGui::MenuItem("Message")) fr_open_chat(f.uid);
         if (can_join && ImGui::MenuItem("Join lobby")) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
+        if (can_ask && ImGui::MenuItem("Ask to join")) fr_ask_to_join(f.uid);
         if (can_invite && ImGui::MenuItem("Invite to my room")) fr_invite_uids({f.uid});
         if (ImGui::MenuItem("Copy friend code")) { SDL_SetClipboardText(f.code.c_str()); fr_trace("copy", f.uid); set_toast("Friend code copied.", true, 3.0); }
         ImGui::Separator();
@@ -1372,4 +1449,43 @@ void fr_invite_button_and_picker(float btn_w, float btn_h) {
         }
     }
     ImGui::EndPopup();
+}
+
+/* ---- Home: "Friends are playing" ---- */
+bool fr_home_shelf(float avail, float tw, float th, float gap, float bleed) {
+    if (!fr_connected()) return false;
+    std::vector<hubui::FriendRow> rows;
+    const auto& fl = fr_friends();
+    for (auto& f : fl) rows.push_back(fr_row(f));
+    std::vector<int> idx = hubui::friends_playing(rows);
+    if (idx.empty()) return false;
+    long long now = wall_ms();
+    shelf_header("Friends are playing", "", bleed, (int)idx.size(), nullptr, hubui::shelf_max_scroll((int)idx.size(), tw, gap, bleed, avail) > 0);
+    shelf_strip("shelf_friends_playing", (int)idx.size(), tw, th, [&](int i, ImVec2 sz) {
+        const hubnet::Friend* fp = fr_find(rows[idx[i]].uid);
+        const hubui::FriendRow& r = rows[idx[i]];
+        TileSpec t;
+        t.id = "frplay|" + r.uid;
+        t.title = r.game_title;
+        hubui::FriendRow nr = r;
+        nr.game_title.clear();
+        t.subtitle = r.name + " \xC2\xB7 " + hubui::friend_presence_line(nr, now);
+        bool join = hubui::friend_can_join(r);
+        t.tag = join ? "JOIN" : "ASK TO JOIN";
+        t.tag_accent = join;
+        t.tag_tip = join ? "Join " + r.name + "'s room" : r.name + "'s game cannot be joined right now - ask them to invite you";
+        t.show_star = false;
+        game_colors(fp ? fp->status.game_id : std::string(), &t.c0, &t.c1);
+        t.art = fr_game_art(fp ? fp->status.game_id : std::string());
+        TileResult res = draw_tile(t, sz);
+        ImVec2 a0 = ImGui::GetItemRectMin(), a1 = ImGui::GetItemRectMax();
+        fr_avatar(ImGui::GetWindowDrawList(), ImVec2(a1.x - sp(2.5f), a0.y + sp(2.5f)), sp(1.9f), r.name, r.state, IM_COL32(6, 7, 12, 255));
+        if (res.clicked || res.activated) {
+            if (join && fp) fr_join_lobby(fp->status.lobby_code, fp->status.game_id, fp->status.game_title, fp->name);
+            else fr_ask_to_join(r.uid);
+        }
+        return res;
+    });
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    return true;
 }

@@ -23,6 +23,43 @@ std::vector<hubnet::Member> room_members() {
     if (g_fake_room) return {{0, A.st.name}, {1, "Mia"}, {2, "Jake"}};
     return A.lobby.members();
 }
+/* Room latency, measured only while the room page is open and no game runs, every 8 s: one tiny broadcast per member (the others answer).
+ * Server cost is a handful of WebSocket messages per room per minute and nothing per frame. */
+void room_ping_tick() {
+    static ULONGLONG last = 0;
+    if (g_fake_room || !A.lobby.connected() || A.proc || A.page != Page::Online || A.lobby.members().size() < 2) return;
+    ULONGLONG t = GetTickCount64();
+    if (t - last < 8000) return;
+    last = t;
+    const char* fr = std::getenv("HUBNET_FORCE_RELAY");
+    A.lobby.send_msg("{\"kind\":\"rping\",\"t\":" + std::to_string((unsigned long long)(t & 0xFFFFFFFFu)) + ",\"relay\":" + (fr && fr[0] && fr[0] != '0' ? "1" : "0") + "}");
+}
+bool room_ping_of(int slot, int* rtt_ms, bool* relay) {
+    if (slot == room_my_slot()) return false;
+    if (g_fake_room) {   // screenshots: 1 = great, 2 = ok-ish, 3 = relay (HUB_SHOT_FAKE_PING=slot:ms,...,slot:relay overrides)
+        static const int def[4] = {24, 38, 132, 0};
+        int ms = slot >= 0 && slot < 4 ? def[slot] : 50;
+        bool rl = slot == 3;
+        if (const char* e = std::getenv("HUB_SHOT_FAKE_PING")) {
+            std::string s = e;
+            std::string key = std::to_string(slot) + ":";
+            size_t p = s.find(key);
+            if (p != std::string::npos && (p == 0 || s[p - 1] == ',')) {
+                std::string v = s.substr(p + key.size(), s.find(',', p) == std::string::npos ? std::string::npos : s.find(',', p) - p - key.size());
+                rl = v == "relay";
+                ms = rl ? 0 : std::atoi(v.c_str());
+            }
+        }
+        *rtt_ms = ms; *relay = rl;
+        return true;
+    }
+    auto at = A.ping_at.find(slot);
+    bool fresh = at != A.ping_at.end() && wall_ms() - at->second < 25000;
+    auto rl = A.ping_relay.find(slot);
+    *relay = rl != A.ping_relay.end() && rl->second;
+    *rtt_ms = fresh ? A.pings.rtt(slot) : -1;
+    return fresh || *relay;
+}
 int room_my_slot() { return g_fake_room ? (g_fake_other_host ? 1 : 0) : A.lobby.my_slot(); }
 int locals_of(int slot) {
     if (slot == room_my_slot()) return A.my_locals;
@@ -220,6 +257,7 @@ void lobby_tick() {
             std::string gone;   // the departed host's name, before the maps are renumbered
             { auto pit = A.peers.find(0); if (pit != A.peers.end()) gone = pit->second.name; }
             hubui::host_left_remap(ev.from_slot, A.peers, A.ready, A.ingame, A.locals, A.picks);
+            A.pings.clear(); A.ping_at.clear(); A.ping_relay.clear();     // slots were renumbered: re-measure
             A.ready.clear();                                              // every ready flag belonged to the old host's game: all re-announce
             online_host_left(gone);
             A.hello_dirty = true;
@@ -286,6 +324,15 @@ void lobby_tick() {
             kt_on_peer_fail(from, j.str("reason"));
         } else if (kind == "np_kt_req") {
             kt_on_request(from);
+        } else if (kind == "rping") {   // room latency probe: answer it (the asker times the round trip)
+            A.ping_relay[from] = j.num("relay", 0) != 0;
+            A.lobby.send_msg("{\"kind\":\"rpong\",\"to\":" + std::to_string(from) + ",\"t\":" + std::to_string((long long)j.num("t", 0)) + "}");
+        } else if (kind == "rpong") {
+            if ((int)j.num("to", -1) == room_my_slot()) {
+                long long rtt = (long long)(uint32_t)(GetTickCount64() & 0xFFFFFFFFu) - (long long)j.num("t", 0);
+                if (rtt < 0) rtt += 4294967296LL;
+                if (rtt >= 0 && rtt < 10000) { A.pings.add(from, (int)rtt); A.ping_at[from] = wall_ms(); }
+            }
         } else if (kind == "chat") {
             A.chat.push_back({member_name(from), j.str("text")});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
@@ -307,6 +354,7 @@ void lobby_tick() {
     }
     gc_tick();
     gc_guest_poll();
+    room_ping_tick();
     // Membership changes -> forget departed peers, re-announce ourselves.
     std::vector<int> slots;
     for (auto& m : A.lobby.members()) slots.push_back(m.slot);
@@ -322,6 +370,7 @@ void lobby_tick() {
         for (auto it = A.ingame.begin(); it != A.ingame.end();) it = alive.count(it->first) ? std::next(it) : A.ingame.erase(it);
         for (auto it = A.locals.begin(); it != A.locals.end();) it = alive.count(it->first) ? std::next(it) : A.locals.erase(it);
         for (auto it = A.picks.begin(); it != A.picks.end();) it = alive.count(it->first) ? std::next(it) : A.picks.erase(it);
+        for (int s = 0; s < 4; ++s) if (!alive.count(s)) { A.pings.drop(s); A.ping_at.erase(s); A.ping_relay.erase(s); }
         A.last_slots = slots;
         A.hello_dirty = true;
         A.was_connected = true;
