@@ -40,10 +40,11 @@ while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
 }
 if ($ExpectDrop) {
     $fail = 0; $hs = @{}
+    $early = @{}; foreach ($slot in 0..($Players - 1)) { if ($slot -ne $KillSlot) { $early[$slot] = $procs[$slot].HasExited } }   # decide BEFORE stopping anyone (stopping slot 0 makes the others see a lost peer)
     foreach ($slot in 0..($Players - 1)) {
         if ($slot -eq $KillSlot) { continue }
         $p = $procs[$slot]
-        if ($p.HasExited) { Write-Output "slot $slot exited early (code $($p.ExitCode))"; $fail++; continue }
+        if ($early[$slot]) { Write-Output "slot $slot exited early (code $($p.ExitCode))"; $fail++; continue }
         try { $p.Kill() } catch {}   # our own PID
         $p.WaitForExit()
         $err = Get-Content "$tmp\peer$slot.err.txt" -ErrorAction SilentlyContinue

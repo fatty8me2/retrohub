@@ -499,6 +499,7 @@ void play_entry(const hub::GameEntry& e) {
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
                                " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
+            args += cheats_launch_args(e, false, true, nullptr);
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }

@@ -19,21 +19,22 @@ function Run($name, $clicks, $expect, $size = "1280x800") {
   if (-not $p.WaitForExit(60000)) { $p.Kill() }
   foreach ($k in $set.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   $got = if (Test-Path $trace) { (Get-Content $trace) -join "|" } else { "" }
+  $got = (($got -split '\|') | Where-Object { $_ -notlike 'notice *' }) -join '|'   # toasts are not actions
   if ($got -eq $expect) { Write-Host "PASS $name -> '$got'" } else { Write-Host "FAIL $name expected '$expect' got '$got'"; $script:fail++ }
 }
-# Mia (in lobby, joinable) row at y=533; hover buttons: Join 1159, Message 1201, More 1230.
-Run "row_left"        "1080,533"                       ""
-Run "row_left_msg"    "1080,533;1136,552"              "chat miauid"
-Run "row_right_msg"   "r1080,533;1136,552"             "chat miauid"
-Run "row_left_join"   "1080,533;1140,587"              "join K7M2QX"
-Run "row_left_copy"   "1080,533;1160,622"              "copy miauid"
-Run "row_left_remove" "1080,533;1154,673"              "remove miauid"
-Run "row_left_block"  "1080,533;1125,708"              "block miauid"
-Run "btn_join"        "1159,533"                       "join K7M2QX"
-Run "btn_msg"         "1201,533"                       "chat miauid"
-Run "btn_more_msg"    "1230,533;1136,552"              "chat miauid"
-Run "req_accept"      "1144,341"                       "accept oliuid"
-Run "req_decline"     "1216,341"                       "decline oliuid"
+# Mia (in lobby, joinable) row at y=473 (shifted up when Appear offline was removed); hover buttons: Join 1159, Message 1201, More 1230.
+Run "row_left"        "1080,473"                       ""
+Run "row_left_msg"    "1080,473;1136,492"              "chat miauid"
+Run "row_right_msg"   "r1080,473;1136,492"             "chat miauid"
+Run "row_left_join"   "1080,473;1140,527"              "join K7M2QX"
+Run "row_left_copy"   "1080,473;1160,562"              "copy miauid"
+Run "row_left_remove" "1080,473;1154,613"              "remove miauid"
+Run "row_left_block"  "1080,473;1125,648"              "block miauid"
+Run "btn_join"        "1159,473"                       "join K7M2QX"
+Run "btn_msg"         "1201,473"                       "chat miauid"
+Run "btn_more_msg"    "1231,479;1150,498"              "chat miauid"
+Run "req_accept"      "1144,287"                       "accept oliuid"
+Run "req_decline"     "1216,287"                       "decline oliuid"
 Run "dead_zone"       "1100,440"                       ""
 Add-Type -AssemblyName System.Drawing
 Get-ChildItem "$Out\*.bmp" | ForEach-Object { $i = [System.Drawing.Image]::FromFile($_.FullName); $png = $_.FullName -replace '\.bmp$', '.png'; $i.Save($png, [System.Drawing.Imaging.ImageFormat]::Png); $i.Dispose() }
