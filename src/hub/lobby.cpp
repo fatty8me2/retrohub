@@ -197,11 +197,11 @@ void lobby_tick() {
     for (size_t k = 0; k < evs.size(); ++k) {
         const hubnet::LobbyEvent& ev = evs[k];
         if (ev.type == hubnet::LobbyEvent::HostChange) {
-            hubui::remap_slot_key(A.peers, ev.from_slot, 0);
-            hubui::remap_slot_key(A.ready, ev.from_slot, 0);
-            hubui::remap_slot_key(A.ingame, ev.from_slot, 0);
-            hubui::remap_slot_key(A.locals, ev.from_slot, 0);
-            hubui::remap_slot_key(A.picks, ev.from_slot, 0);
+            std::string gone;   // the departed host's name, before the maps are renumbered
+            { auto pit = A.peers.find(0); if (pit != A.peers.end()) gone = pit->second.name; }
+            hubui::host_left_remap(ev.from_slot, A.peers, A.ready, A.ingame, A.locals, A.picks);
+            A.ready.clear();                                              // every ready flag belonged to the old host's game: all re-announce
+            online_host_left(gone);
             A.hello_dirty = true;
             if (!A.proc) { online_cancel_pending(); kt_leave_room(); }   // a launch the departed host was preparing is void
             A.my_ready = false;                                           // the new host-to-be picks again; nobody is stuck "ready" for the old host's game
@@ -305,6 +305,9 @@ void lobby_tick() {
     bool changed = !A.was_connected || slots != A.last_slots;
     if (changed) {
         std::set<int> alive(slots.begin(), slots.end());
+        if (A.proc && A.run.room && A.run.left_name.empty() && A.was_connected)   // a player vanished from the room during the game: the exit notice names them
+            for (int s : A.last_slots)
+                if (!alive.count(s)) { auto pit = A.peers.find(s); A.run.left_name = pit != A.peers.end() && !pit->second.name.empty() ? pit->second.name : std::string("A player"); break; }
         for (auto it = A.peers.begin(); it != A.peers.end();) it = alive.count(it->first) ? std::next(it) : A.peers.erase(it);
         for (auto it = A.ready.begin(); it != A.ready.end();) it = alive.count(it->first) ? std::next(it) : A.ready.erase(it);
         for (auto it = A.ingame.begin(); it != A.ingame.end();) it = alive.count(it->first) ? std::next(it) : A.ingame.erase(it);

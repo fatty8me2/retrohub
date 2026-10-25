@@ -447,6 +447,8 @@ class Frontend {
     void link_pump_pub() { link_pump(); }
   private:
     int net_rc = 3;
+    /* Exit code when the session dies: 8 when a partner (usually the host) left on purpose or the host is gone, 4 for a plain connection loss. */
+    int lost_code() { std::string s = session.status(); return (s.find("host left") != std::string::npos || s.find("partner ended") != std::string::npos) ? 8 : 4; }
     bool link_active = false;
     uint16_t link_msg_id = 0;
     dslink::Reassembler link_reasm;
@@ -1193,7 +1195,7 @@ bool Frontend::setup_net() {
         uint64_t ch = cheats_on ? cheats::set_hash(cheat_boot, cheat_target) : cheats::kEmptyHash;
         n64run::CheatSync cs = n64run::exchange_cheat_hash(session, a.slot, slot_mask, ch, 8000, [this] { pump_events(false); }, [](const std::string& m) { rlog("%s", m.c_str()); });
         if (cs == n64run::CheatSync::Mismatch) { rlog("net: cheat lists differ between players; leaving"); net_rc = 5; return false; }
-        if (cs == n64run::CheatSync::Failed) { rlog("net: connection lost during the cheat check"); net_rc = 4; return false; }
+        if (cs == n64run::CheatSync::Failed) { rlog("net: connection lost during the cheat check"); net_rc = lost_code(); return false; }
     }
     if (a.share_host_save && !link && !is_ds && !share_host_save_run()) { net_rc = 6; return false; }
     if (link) {
@@ -1203,7 +1205,7 @@ bool Frontend::setup_net() {
         if (mine < 0) { rlog("link: this slot owns no console"); return false; }
         if (!rlink::run_link_exchange(session, a.slot, slot_mask, link_blob_from_disk(mine), 60000, &blobs, [this] { pump_events(false); }, &lerr)) {
             rlog("link: save exchange failed: %s", lerr.c_str());
-            net_rc = 4;
+            net_rc = lost_code();
             return false;
         }
         for (int i = 0; i < link_n; i++)
@@ -1240,7 +1242,7 @@ bool Frontend::setup_net() {
         rbe = std::make_unique<rb::Engine>(rc, make_rb_sim(), t);
         rlog("net: ROLLBACK netplay, input delay %d, max prediction %d, state %zu bytes, sync hash %s", a.delay, rc.max_pred,
              core.serialize_size(), "output");
-        if (!rbe->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = 4; return false; }
+        if (!rbe->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = lost_code(); return false; }
         rlog("net: all %d players ready, starting", a.players);
         return true;
     }
@@ -1253,7 +1255,7 @@ bool Frontend::setup_net() {
         int d = 2;
         if (!n64run::negotiate_delay(session, dn, [this] { pump_events(false); }, [](const std::string& m) { rlog("%s", m.c_str()); }, &d)) {
             rlog("net: input delay negotiation failed (%s)", session.status().c_str());
-            net_rc = 4;
+            net_rc = lost_code();
             return false;
         }
         a.delay = d;
@@ -1284,7 +1286,7 @@ bool Frontend::setup_net() {
     h.request_stop = [this]() { quit = true; };
     h.log = [](const std::string& s) { rlog("%s", s.c_str()); };
     lockstep = std::make_unique<n64run::Lockstep>(o, &session, h);
-    if (!lockstep->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = 4; return false; }
+    if (!lockstep->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = lost_code(); return false; }
     rlog("net: all %d players ready, starting", a.players);
     return true;
 }
@@ -1807,10 +1809,11 @@ int Frontend::run(const Args& args) {
                 if (a.frames >= 0 && rbe->cur() >= (uint32_t)a.frames) break;
                 pump_events(false);
                 if (quit) break;
-                if (session.failed()) { rlog("net: connection lost, leaving"); rc = 4; break; }
+                if (session.failed()) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
                 rb::Engine::Status st = rbe->prepare();
-                if (rbe->connection_lost()) { rlog("net: connection lost, leaving"); rc = 4; break; }
+                if (rbe->connection_lost()) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
                 if (rbe->desync()) { rc = 5; break; }
+                if (a.frames < 0 && rbe->all_remote_left()) { rlog("net: every partner left, game ended"); rc = 8; break; }
                 if (st == rb::Engine::Status::Stalled) { Sleep(1); next_deadline = 0; continue; }
                 if (st == rb::Engine::Status::SyncWait) { Sleep((DWORD)(1000.0 / (fps > 1 ? fps : 60.0))); next_deadline = 0; continue; }   // re-anchor: otherwise pacing "catches up" the frame we just waited and time sync does nothing
                 cheats_poll();
@@ -1859,8 +1862,10 @@ int Frontend::run(const Args& args) {
                 if (a.ds_link && session.ended()) {   // a partner signed off on purpose: not a failure
                     rlog("link: partner ended the session");
                     link_stop("partner ended the session");
+                    if (a.frames < 0) rc = 8;
                     break;
                 }
+                if (a.ds_link && session.failed()) { rlog("link: connection lost, leaving"); link_stop("connection lost"); rc = lost_code(); break; }
 
                 if (want_save) { want_save = false; save_state("slot" + std::to_string(slot_sel)); }
                 if (want_load) { want_load = false; if (!online && !a.ds_link) load_state("slot" + std::to_string(slot_sel)); }
@@ -1868,7 +1873,7 @@ int Frontend::run(const Args& args) {
                 if (online) {
                     for (int p = 0; p < 4; p++) frame_pad[p] = lockstep->get_keys(p);   // lead port poll advances the sample
                     if (is_ps1) for (int p = 0; p < 4; p++) retrorun::unpack_sticks(lockstep->aux(p), frame_stick[p]);
-                    if (lockstep->connection_lost()) { rlog("net: connection lost, leaving"); rc = 4; break; }
+                    if (lockstep->connection_lost()) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
                 } else {
                     poll_all_local();
                 }
@@ -1927,6 +1932,7 @@ int Frontend::run(const Args& args) {
             uint32_t t0 = hubnet::now_ms();
             while (hubnet::now_ms() - t0 < 400) { session.update(); Sleep(5); }
             if (lockstep->desync_detected()) { rlog("RESULT: DESYNC detected"); rc = rc ? rc : 5; }
+            if (rc == 0 && a.frames < 0 && lockstep->peer_left() && !lockstep->desync_detected()) { rlog("net: a partner left, game ended"); rc = 8; }
         }
     }
 done:

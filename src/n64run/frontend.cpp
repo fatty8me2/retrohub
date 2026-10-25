@@ -5,7 +5,7 @@
  *          [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]
  *
  * Exit codes (documented in docs/ARCHITECTURE.md): 0 ok, 2 bad args / ROM, 3 emulator load failure,
- *             4 netplay connection failure / connection lost, 5 desync detected (only with --strict-sync),
+ *             4 netplay connection failure / connection lost, 8 a player (host) left so the game ended, 5 desync detected (only with --strict-sync),
  *             6 host-save sync failed. 5 is also returned when the peers' cheat lists differ (--cheats).
  * --slot may be any of 0..3 (lobby slots can have gaps); --players is the number of PCs.
  */
@@ -896,8 +896,15 @@ int main(int argc, char** argv) {
 
     {
         int code = 0;
-        if (g_run.lockstep && g_run.lockstep->connection_lost()) { logf_("n64run", "Connection lost"); code = 4; }
-        else if (g_run.lockstep && g_run.lockstep->peer_left() && !g_run.lockstep->desync_detected()) logf_("n64run", "a partner ended the session");
+        if (g_run.lockstep && g_run.lockstep->connection_lost()) {
+            std::string why = session.status();   // 8: the host/partner left (exit_code_text), 4: plain connection loss
+            code = (why.find("host left") != std::string::npos || why.find("partner ended") != std::string::npos) ? 8 : 4;
+            logf_("n64run", code == 8 ? "A player left, game ended" : "Connection lost");
+        }
+        else if (g_run.lockstep && g_run.lockstep->peer_left() && !g_run.lockstep->desync_detected()) {
+            logf_("n64run", "a partner ended the session");
+            if (args.frames == 0) code = 8;   // interactive run: tell the hub (headless --frames runs end together and stay 0)
+        }
         else if (g_run.lockstep && g_run.lockstep->desync_detected()) {
             logf_("n64run", "desync was detected during the session");
             if (args.strict_sync) code = 5;

@@ -104,9 +104,11 @@ foreach ($x in $procs) {
     Write-Output ("   desync-lines=" + $desync + " stall-or-timeout-lines=" + $timeouts.Count + $(if ($timeouts.Count) { ' :: ' + ($timeouts[0]) } else { '' }))
     if (-not $x.Killed) {
         # With -KillSlot the survivors must exit 4 (peer lost); otherwise every peer must exit 0 with a final line and no desync.
-        $wantRc = if ($KillSlot -ge 0) { 4 } else { 0 }
+        # Host killed (slot 0): the guests get the clean "host left" code 8. A guest killed: 4 (timeout) or 8 are both a clean end, never a hang.
+        $okRc = if ($KillSlot -eq 0) { @(8) } elseif ($KillSlot -gt 0) { @(4, 8) } else { @(0) }
+        $wantRc = $okRc -join '/' 
         $bad = @()
-        if ($rc -ne $wantRc) { $bad += "rc=$rc (want $wantRc)" }
+        if ($okRc -notcontains $rc) { $bad += "rc=$rc (want $wantRc)" }
         if ($KillSlot -lt 0 -and -not $final) { $bad += 'no final line' }
         if ($desync -gt 0) { $bad += "desync=$desync" }
         if ($bad.Count) { $failed++; Write-Output ("   FAIL slot " + $x.Slot + ": " + ($bad -join ', ')) }
