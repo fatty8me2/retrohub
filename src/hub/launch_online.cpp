@@ -56,6 +56,24 @@ void gc_kill() {
 
 /* Drop a launch that is still being prepared (room left, host changed or aborted): GC forwarder + guest wait, 3DS link that
  * has not started Azahar yet, an unpack-then-launch resume. A game that is already running is never touched. */
+void online_host_left(const std::string& gone) {
+    /* Built-in runners (retrorun / n64run) see the host's socket close and exit 8 by themselves; Smash Classic migrates inside its own
+     * lobby. Peer-hosted emulator sessions (Dolphin NetPlay guest, Azahar, Kanto) have lost their server: close them gracefully so the
+     * emulator flushes its saves, then poll_process / gc_tick sync the vault and return the player to the room. */
+    std::string who = gone.empty() ? std::string("The host") : gone;
+    if (GCO.active && !GCO.host && gc_process_alive()) {
+        GCO.left_name = who;
+        close_pid_windows(GCO.run.dolphin_pid);
+        push_toast(who + " left - closing the game", ui::WARN, 8.0, true);
+        return;
+    }
+    if (A.proc && A.run.room) {
+        A.run.left_name = who;
+        push_toast(who + " left - game ended", ui::WARN, 8.0, true);
+        if (A.run.pad_exit && A.run.track) request_game_close();
+    }
+}
+
 void online_cancel_pending() {
     if (GCO.guest_wait || (GCO.active && !gc_process_alive())) gc_stop_all();
     else if (GCO.fw.active() && !GCO.active) GCO.fw.stop();
@@ -189,6 +207,7 @@ void gc_tick() {
     }
     if (!gc_process_alive()) {   // Dolphin closed: session over. Host: its vault card changed, sync it; everyone: back to un-ready for the next game.
         bool was_host = GCO.host;
+        if (!GCO.left_name.empty()) { set_notice(hubui::player_left_text(GCO.left_name), 20.0); GCO.left_name.clear(); }
         gc_stop_all();
         room_session_ended();
         if (was_host) { A.vault_dirty = true; auto_sync(); }
@@ -306,7 +325,9 @@ void poll_np3ds() {
     if (NP3_pending && NP3.ready()) {   // never start Azahar earlier: a failed join raises a modal error dialog in it
         NP3_pending = false;
         autotest_log("3ds: forwarders ready, starting Azahar");
-        launch_external(NP3_game, run_info_for(NP3_game, true), "", NP3_mp);
+        RunInfo r3 = run_info_for(NP3_game, true);
+        r3.room = true;
+        launch_external(NP3_game, r3, "", NP3_mp);
         /* Azahar's Qt frontend ignores -m: join the room through its Direct Connect dialog (UI Automation helper). */
         if (!A.proc) {   // Azahar did not start: nothing to drive, and the room link would sit idle
             launch_fail("Azahar did not start - 3DS online cancelled.", 12.0);
@@ -341,6 +362,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         return;
     }
     RunInfo ri = run_info_for(e, true);
+    ri.room = true;
     hub::gs::Values gsv = hubui::online_values(e.system, gs_values_for(e), is_host, launch_body ? *launch_body : std::string());
     if (e.system == hub::System::N3DS) { launch_online_3ds(e, launch_no, is_host, launch_msg, nullptr); return; }
     if (is_native(e)) {

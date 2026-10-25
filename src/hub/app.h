@@ -122,6 +122,8 @@ struct RunInfo {
     ULONGLONG start_tick = 0;
     bool track = true;      // record play time / touch the save vault (false for the native Smash port)
     bool online = false;
+    bool room = false;                  // started by the room's launch message (host-synced session): ends when the host leaves
+    std::string left_name;              // set when the host left mid-game: the exit notice names them
     bool pad_exit = false;              // RetroHub watches the pads for Back+Start (1 s) and closes this game gracefully
     std::function<void()> pad_exit_fn;  // custom graceful close (Kanto Together); default: WM_CLOSE to the game's windows
     std::string o2r_prep;   // native Smash only: BattleShip.o2r path, shown as "Preparing" while it is missing ("" otherwise)
@@ -299,6 +301,7 @@ struct GcOnline {
     gcnp::Spec spec;                 // host: what we announce; guest: what the host announced
     hub::GameEntry entry;
     int launch_no = 0, port = 0;
+    std::string left_name;           // guest: the host left mid-game, Dolphin is being closed
     std::string fp_path, fp_sha;     // disc fingerprint (computed once per path on a worker thread)
     uint64_t fp_size = 0;
     std::atomic<bool> fp_done{false};
@@ -492,6 +495,9 @@ bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out);
 bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port);
 void gc_stop_all();
 void gc_tick();
+void online_host_left(const std::string& gone);   // the room host left mid-game: end peer-hosted emulator sessions gracefully (launch_online.cpp)
+void request_game_close();       // graceful close of the running game (launch.cpp): custom close hook or WM_CLOSE to its windows
+void close_pid_windows(unsigned long pid);   // WM_CLOSE to a process's visible windows
 void online_cancel_pending();   // drop a launch that is still being prepared (GC forwarder / 3DS link / unpack resume)
 void room_session_ended();      // a game from this room ended: ready flags back to off so the next game starts clean
 extern std::string g_shot_rejoin_why;
