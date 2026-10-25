@@ -141,7 +141,7 @@ async function main() {
   check("non-friend gets nothing", await D.none(T("presence")));
   B.send({ type: "status", status: { state: "offline" } });
   const p2 = await A.wait((m) => m.type === "presence" && m.status.state === "offline");
-  check("invisible shows offline", p2 && p2.status.lobby_code === undefined, p2);
+  check("offline device shows offline", p2 && p2.status.lobby_code === undefined, p2);
   B.send({ type: "status", status: { state: "in_game", game_id: "g" } });
   await A.wait((m) => m.type === "presence" && m.status.state === "in_game");
 

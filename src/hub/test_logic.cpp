@@ -462,10 +462,14 @@ int main() {
             CHECK(queued_join_text("Mia") == "Will join Mia's room when your game closes." && queued_join_text("") == "Will join that room when your game closes.");
         }
         Settings fs;
-        CHECK(fs.show_friends && !fs.appear_offline && fs.notif_sound);
-        fs.show_friends = false; fs.appear_offline = true; fs.notif_sound = false;
+        CHECK(fs.show_friends && fs.notif_sound);
+        fs.show_friends = false; fs.notif_sound = false;
         Settings ft;
-        CHECK(settings_from_json(settings_to_json(fs), &ft) && !ft.show_friends && ft.appear_offline && !ft.notif_sound);
+        CHECK(settings_from_json(settings_to_json(fs), &ft) && !ft.show_friends && !ft.notif_sound);
+        {   // legacy hub.json with the removed appear_offline key still loads
+            Settings lg;
+            CHECK(settings_from_json("{\"show_friends\": false, \"appear_offline\": true}", &lg) && !lg.show_friends);
+        }
         {   // auto-friending: default ON, survives a round trip, missing key keeps the default
             CHECK(fs.auto_friend);
             Settings a; a.auto_friend = false;
