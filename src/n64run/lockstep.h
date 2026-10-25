@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -30,6 +31,7 @@ struct LockstepOptions {
     bool wide = false;             // second u32 per sample and port (hooks.read_local_aux; PlayStation analog sticks)
     bool adaptive_delay = true;    // raise/lower the input delay from observed stalls (host orders, all follow)
     int hash_interval = 600;       // samples between RDRAM hashes
+    uint32_t drop_silence_ms = 3000;   // a guest silent this long while we are blocked on it is dropped (3+ PCs): its port goes neutral, the rest play on
     uint32_t timeout_ms = 10000;   // no progress -> "Connection lost"
     std::string hash_label = "state";   // desync log text: "<label> hashes"
 };
@@ -41,6 +43,7 @@ struct LockstepHooks {
     std::function<void()> idle;                               // called while blocked (pump SDL events)
     std::function<bool(uint64_t* out)> hash_rdram;            // false -> hashing unavailable
     std::function<void(bool)> set_limiter;                    // speed limiter on/off (catch-up after a stall); may be empty
+    std::function<void(int slot, uint32_t cutoff)> on_drop;   // a guest dropped mid-match; its port is neutral from sample `cutoff` on (may be empty)
     std::function<void()> request_stop;                       // M64CMD_STOP
     std::function<void(const std::string&)> log;
 };
@@ -73,6 +76,7 @@ class Lockstep {
     uint32_t delay_changes() const { return core_.delay_changes(); }
     uint32_t longest_stall_ms() const { return longest_stall_; }
 
+    uint32_t dropped_mask() const { return dropped_mask_; }
     bool connection_lost() const { return lost_; }
     bool desync_detected() const { return desync_; }
     uint32_t sample() const { return (uint32_t)(sample_ + 1); }
@@ -109,6 +113,14 @@ class Lockstep {
     bool peer_left_ = false;
     void adapt(uint32_t now, uint32_t stall_ms);
     bool left_blocks(uint32_t n) const;
+    void drop_check(uint32_t now, uint32_t n);
+    void drop_begin(int slot, uint32_t now);
+    void drop_service(uint32_t now);
+    void drop_send(const netdrop::Agreement& ag);
+    void drop_on_msg(int from, const std::vector<uint8_t>& msg, uint32_t now);
+    std::map<int, netdrop::Agreement> drops_;
+    std::map<int, uint32_t> drop_done_at_;
+    uint32_t last_rx_[kPorts] = {0, 0, 0, 0}, last_drop_send_ = 0, dropped_mask_ = 0;
 };
 
 /* Auto input delay negotiation (call after Session::ready(), before creating Lockstep).

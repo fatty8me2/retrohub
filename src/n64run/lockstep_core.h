@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "drop_agree.h"
+
 namespace n64run {
 
 constexpr int kPorts = 4;
@@ -29,6 +31,7 @@ constexpr uint8_t kPktDelay = 7;      // host -> clients {type, slot, D}: the ne
 constexpr uint8_t kPktDelayAck = 8;   // client -> host {type, slot, D}
 constexpr uint8_t kPktBye = 9;        // {type, slot, u32 newest}: sender's emulation ended cleanly; newest = last sample it ever scheduled
 constexpr uint8_t kPktCheats = 10;    // {type, slot, u8 heard_mask, u64 hash}: cheat-list handshake (lockstep.h exchange_cheat_hash)
+constexpr uint8_t kPktDrop = 11;      // netdrop::Msg: a slot went silent, survivors agree on the cutoff (drop_agree.h)
 constexpr int kMaxDelay = 20;         // hard cap of the (adaptive) input delay, in samples
 
 /* Slot set of a session: bit s = slot s is a PC in the session. Slots may be sparse ({0,2}).
@@ -128,6 +131,15 @@ class LockstepCore {
     int peer_want(int slot) const { return slot >= 0 && slot < kPorts ? peer_want_[slot] : 0; }
     /* A peer said bye (it ended its emulation cleanly): stop gating on its progress. */
     void peer_left(int slot) { if (slot >= 0 && slot < kPorts) gate_mask_ &= ~(1u << slot); }
+    /* Mid-match drop (drop_agree.h). begin_drop: stop trusting packets from `slot`, returns my proposal (first sample of its
+     * ports I lack). Window/apply: relay and merge the dropped ports' last samples. finish_drop: from `cutoff` on the dropped
+     * ports read neutral (0) and the slot no longer gates or hashes. */
+    uint32_t begin_drop(int slot);
+    void fill_drop_window(int slot, uint32_t hi, netdrop::Msg* m) const;
+    void apply_drop_window(const netdrop::Msg& m);
+    void finish_drop(int slot, uint32_t cutoff);
+    bool drop_begun(int slot) const { return slot >= 0 && slot < kPorts && (ignore_mask_ >> slot & 1u); }
+    bool drop_done(int slot) const { return slot >= 0 && slot < kPorts && (done_mask_ >> slot & 1u); }
     /* How many samples a peer is ahead of sample n by its reported progress (0 if not ahead): inbox backlog indicator. */
     uint32_t peer_lead(int slot, uint32_t n) const { return slot >= 0 && slot < kPorts && peer_progress_[slot] > n ? peer_progress_[slot] - n : 0; }
     uint32_t delay_changes() const { return delay_changes_; }   // how many times D changed after start
@@ -160,6 +172,10 @@ class LockstepCore {
     struct HashRec { uint64_t h[kPorts] = {0, 0, 0, 0}; uint8_t known = 0; bool done = false; };
 
     Config cfg_;
+    uint32_t ignore_mask_ = 0, done_mask_ = 0;
+    uint32_t drop_cut_[kPorts] = {0, 0, 0, 0};
+    uint32_t peer_newest_[kPorts] = {0, 0, 0, 0};
+    bool neutral(int port, uint32_t n) const { int o = cfg_.owner[port]; return o >= 0 && o < kPorts && (done_mask_ >> o & 1u) && n >= drop_cut_[o]; }
     uint32_t mask_ = 1;
     uint32_t gate_mask_ = 1;   // slots whose progress gates ready()
     int lead_ = -1;

@@ -388,6 +388,7 @@ class Frontend {
 
     hubnet::Session session;
     std::unique_ptr<n64run::Lockstep> lockstep;
+    uint32_t rb_dropped_seen_ = 0;
     std::unique_ptr<rb::Engine> rbe;   // rollback netplay (--rollback); replaces lockstep
     bool resim = false;                // re-simulating: drop audio
     uint64_t fr_audio = 0xCBF29CE484222325ull;   // hash of the audio of the frame being stepped
@@ -1347,6 +1348,7 @@ bool Frontend::setup_net() {
         return true;
     };
     h.request_stop = [this]() { quit = true; };
+    h.on_drop = [this](int slot, uint32_t) { set_status("Player in slot " + std::to_string(slot) + " disconnected - playing on"); };
     h.log = [](const std::string& s) { rlog("%s", s.c_str()); };
     lockstep = std::make_unique<n64run::Lockstep>(o, &session, h);
     if (!lockstep->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = lost_code(); return false; }
@@ -1893,6 +1895,10 @@ int Frontend::run(const Args& args) {
                 do_pacing();
                 rbe->run_frame();
                 frame_no = rbe->cur();
+                if (uint32_t dm = rbe->dropped_mask(); dm != rb_dropped_seen_) {
+                    for (int sl = 0; sl < 8; sl++) if ((dm & ~rb_dropped_seen_) >> sl & 1u) set_status("Player in slot " + std::to_string(sl) + " disconnected - playing on");
+                    rb_dropped_seen_ = dm;
+                }
                 if (!a.headless) present();
                 if (SDL_GetTicks64() - last_stat >= 10000) {
                     last_stat = SDL_GetTicks64();
