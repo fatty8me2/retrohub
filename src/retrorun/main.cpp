@@ -33,6 +33,7 @@
 #include "log.h"
 #include "session.h"
 #include "save_sync.h"
+#include "cheats.h"
 
 namespace fs = std::filesystem;
 
@@ -42,6 +43,9 @@ struct Args {
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
     std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
     int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
+    std::string cheats;           // --cheats FILE: cheat list JSON (src/common/cheats.h); polled for live toggles offline
+    struct MemDump { unsigned id; size_t off, len; std::string file; };
+    std::vector<MemDump> mem_dumps;   // --dump-mem ID,OFFSET,LEN,FILE: raw libretro memory block dumped at exit (QA)
     std::string controls;         // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (src/common/controls.h)
     std::string net, room, title, save_stem;   // save_stem: file stem for <stem>.srm (zipped ROMs); "" = rom file stem
     std::string sync_hash_mode = "auto", pace_override;
@@ -84,6 +88,13 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         if (k == "--core") { if (!val(&o->core)) return false; }
         else if (k == "--rom") { if (!val(&o->rom)) return false; }
         else if (k == "--controls") { if (!val(&o->controls)) return false; }
+        else if (k == "--cheats") { if (!val(&o->cheats)) return false; }
+        else if (k == "--dump-mem") {
+            if (!val(&v)) return false;
+            unsigned id = 0; unsigned long long off = 0, len = 0; char file[1024] = {0};
+            if (sscanf(v.c_str(), "%u,%llu,%llu,%1023[^\n]", &id, &off, &len, file) != 4 || !len) { fprintf(stderr, "bad --dump-mem (want ID,OFFSET,LEN,FILE)\n"); return false; }
+            o->mem_dumps.push_back({id, (size_t)off, (size_t)len, file});
+        }
         else if (k == "--save-dir") { if (!val(&o->save_dir)) return false; }
         else if (k == "--state-dir") { if (!val(&o->state_dir)) return false; }
         else if (k == "--system-dir") { if (!val(&o->system_dir)) return false; }
@@ -439,6 +450,16 @@ class Frontend {
     bool link_probe = false;   // RETRORUN_LINK_PROBE=1: synthetic 2.3 KB frames, a transport check without a game in wireless mode
     uint64_t probe_tx = 0, probe_rx = 0, probe_bad = 0;
     void finish();
+    /* ---- cheats (--cheats; cheats.h). Offline: polled ~2x/s, edits apply live. Online: fixed at launch, hashed in the handshake. ---- */
+    cheats::CheatSet cheat_boot;
+    cheats::FileWatch cheat_watch;
+    cheats::Target cheat_target = cheats::Target::GBA;
+    bool cheats_on = false;
+    uint64_t cheat_next_poll = 0;
+    std::string cheat_applied_sig;
+    void cheats_init();
+    void cheats_apply(const cheats::CheatSet& set);
+    void cheats_poll();
     void do_pacing();
     int selftest();
 
@@ -446,6 +467,53 @@ class Frontend {
 };
 
 static Frontend* g_fe = nullptr;
+
+void Frontend::cheats_init() {
+    if (a.cheats.empty()) return;
+    if (a.ds_link) { rlog("cheats: ignored in DS wireless sessions (every player would need identical state)"); return; }
+    if (!core.cheats_supported()) { rlog("cheats: this core has no cheat support; --cheats ignored"); return; }
+    if (!cheats::target_for_system(a.system, &cheat_target)) { rlog("cheats: no cheat format known for system '%s'", a.system.c_str()); return; }
+    std::string err;
+    if (!cheats::load_file(a.cheats, &cheat_boot, &err)) { rlog("cheats: cannot read %s (%s); playing without cheats", a.cheats.c_str(), err.c_str()); return; }
+    cheats_on = true;
+    cheat_watch = cheats::FileWatch(a.cheats);
+    rlog("cheats: %zu in %s%s", cheat_boot.cheats.size(), a.cheats.c_str(), a.net.empty() ? "" : " (online: fixed for the session)");
+    cheats_apply(cheat_boot);
+}
+
+void Frontend::cheats_apply(const cheats::CheatSet& set) {
+    // The core only has "reset all" + "set slot": rebuild the whole table, but only when the effective list changed.
+    std::vector<std::pair<std::string, const cheats::Cheat*>> good;
+    std::string sig;
+    for (const cheats::Cheat& c : set.cheats) {
+        std::string code, err;
+        if (!cheats::retro_code_string(cheat_target, c, &code, &err)) { if (c.enabled) rlog("cheats: skipping '%s' (%s): %s", c.id.c_str(), c.desc.c_str(), err.c_str()); continue; }
+        if (!c.enabled) continue;   // some cores (mGBA) ignore the enabled flag of retro_cheat_set: only hand over active cheats
+        good.push_back({code, &c});
+        sig += (c.enabled ? "1" : "0") + code + "|";
+    }
+    if (sig == cheat_applied_sig) return;
+    cheat_applied_sig = sig;
+    core.cheat_reset();
+    unsigned idx = 0, on = 0;
+    for (auto& g : good) {
+        core.cheat_set(idx++, true, g.first.c_str());
+        { on++; rlog("cheats: enabled '%s' (%s): %s", g.second->id.c_str(), g.second->desc.c_str(), g.first.c_str()); }
+    }
+    rlog("cheats: applied, %u enabled", on);
+}
+
+void Frontend::cheats_poll() {
+    if (!cheats_on) return;
+    uint64_t now = SDL_GetTicks64();
+    if (now < cheat_next_poll) return;
+    cheat_next_poll = now + 500;
+    if (!cheat_watch.changed()) return;
+    if (!a.net.empty()) { rlog("cheats: file changed during an online session: ignored (all peers must run the same list)"); return; }
+    cheats::CheatSet set; std::string err;
+    if (!cheats::load_file(a.cheats, &set, &err)) { rlog("cheats: cannot reload %s: %s", a.cheats.c_str(), err.c_str()); return; }
+    cheats_apply(set);
+}
 
 void Frontend::set_status(const std::string& s) {
     rlog("%s", s.c_str());
@@ -1019,6 +1087,12 @@ bool Frontend::setup_net() {
         Sleep(5);
     }
     rlog("net: session ready");
+    {   // every PC must hold the same cheat list (an empty one included) or the emulations diverge
+        uint64_t ch = cheats_on ? cheats::set_hash(cheat_boot, cheat_target) : cheats::kEmptyHash;
+        n64run::CheatSync cs = n64run::exchange_cheat_hash(session, a.slot, slot_mask, ch, 8000, [this] { pump_events(false); }, [](const std::string& m) { rlog("%s", m.c_str()); });
+        if (cs == n64run::CheatSync::Mismatch) { rlog("net: cheat lists differ between players; leaving"); net_rc = 5; return false; }
+        if (cs == n64run::CheatSync::Failed) { rlog("net: connection lost during the cheat check"); net_rc = 4; return false; }
+    }
     if (a.share_host_save && !link && !is_ds && !share_host_save_run()) { net_rc = 6; return false; }
     if (link) {
         std::vector<std::vector<uint8_t>> blobs;
@@ -1584,6 +1658,7 @@ int Frontend::run(const Args& args) {
         if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
     }
 
+    cheats_init();
     int rc = 0;
     if (a.selftest) {
         rc = selftest();
@@ -1606,6 +1681,7 @@ int Frontend::run(const Args& args) {
                 if (rbe->desync()) { rc = 5; break; }
                 if (st == rb::Engine::Status::Stalled) { Sleep(1); next_deadline = 0; continue; }
                 if (st == rb::Engine::Status::SyncWait) { Sleep((DWORD)(1000.0 / (fps > 1 ? fps : 60.0))); next_deadline = 0; continue; }   // re-anchor: otherwise pacing "catches up" the frame we just waited and time sync does nothing
+                cheats_poll();
                 do_pacing();
                 rbe->run_frame();
                 frame_no = rbe->cur();
@@ -1672,6 +1748,7 @@ int Frontend::run(const Args& args) {
                     for (size_t i = 17; i < pr.size(); i++) pr[i] = (uint8_t)(i * 31);
                     link_send_probe(pr);
                 }
+                cheats_poll();
                 do_pacing();
                 core.run();
                 if (link_active) {
@@ -1721,6 +1798,15 @@ int Frontend::run(const Args& args) {
     }
 done:
     {
+        for (const auto& d : a.mem_dumps) {
+            size_t msz = 0;
+            uint8_t* mp = static_cast<uint8_t*>(core.memory(d.id, &msz));
+            if (!mp || d.off + d.len > msz) { rlog("dump-mem: block %u unavailable or too small (%zu bytes)", d.id, msz); continue; }
+            FILE* df = fopen(d.file.c_str(), "wb");
+            if (df && fwrite(mp + d.off, 1, d.len, df) == d.len) rlog("dump-mem: %zu bytes of block %u at 0x%zX -> %s", d.len, d.id, d.off, d.file.c_str());
+            else rlog("dump-mem: cannot write %s", d.file.c_str());
+            if (df) fclose(df);
+        }
         uint64_t h = core.game_loaded() ? state_hash() : 0;
         if (!a.net.empty() || a.selftest || a.headless)
             rlog("final: frame %llu state-hash %016llx output-hash %016llx input-hash %016llx", (unsigned long long)frame_no,
