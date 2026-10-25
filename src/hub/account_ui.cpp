@@ -1,6 +1,8 @@
 #include "app.h"
 #include "identity_link.h"
 
+#include <cstdio>
+#include <fstream>
 #include <memory>
 
 /* ---------- Settings: Account ----------
@@ -27,6 +29,8 @@ struct AccountState {
     bool show_code = false;
     std::string code;
     double code_t0 = 0;       // ImGui time when the code was created
+    bool permanent = true;    // the account code (XXXX-XXXX-XXXX) never expires; only the HUB_SHOT_ACCOUNT=expired aid is temporary
+    bool code_loaded = false; // account_code.txt was read
 
     char redeem_buf[24] = {0};
     std::string redeem_err;
@@ -43,6 +47,20 @@ struct AccountState {
 AccountState AC;
 
 std::string identity_path() { return hub::data_dir() + "identity.json"; }
+std::string code_path() { return hub::data_dir() + "account_code.txt"; }
+
+/* The account code is kept next to identity.json (same protection) so Settings can show it again later. */
+void load_saved_code() {
+    if (AC.code_loaded || g_headless) return;
+    AC.code_loaded = true;
+    std::ifstream f(code_path());
+    std::string c;
+    if (f && std::getline(f, c) && hubnet::link_normalize_code(c).size() == 12) { AC.code = c; AC.show_code = true; AC.permanent = true; }
+}
+void save_code(const std::string& c) {
+    std::ofstream f(code_path(), std::ios::trunc);
+    if (f) f << c << "\n";
+}
 
 /* "9:05" for 545 seconds; never negative. */
 std::string countdown_text(double secs_left) {
@@ -63,7 +81,7 @@ void start_create() {
     std::string server = server_url();
     std::thread([job, server, id]() {
         std::string code, err;
-        bool ok = hubnet::link_create_code(server, id, &code, &err);
+        bool ok = hubnet::link_keep_code(server, id, &code, &err);
         {
             std::lock_guard<std::mutex> lk(job->mu);
             job->ok = ok;
@@ -77,7 +95,7 @@ void start_redeem() {
     if (g_headless || AC.redeem_job) return;
     std::string code = hubnet::link_normalize_code(AC.redeem_buf);
     AC.redeem_err.clear();
-    if (code.empty()) { AC.redeem_err = "Enter the 8-character code from your other PC (XXXX-XXXX)."; return; }
+    if (code.empty()) { AC.redeem_err = "Enter the code from your other PC (XXXX-XXXX-XXXX)."; return; }
     auto job = std::make_shared<LinkJob>();
     AC.redeem_job = job;
     std::string server = server_url();
@@ -105,6 +123,7 @@ void adopt_pending() {
     }
     AC.redeem_buf[0] = 0;
     AC.show_code = false;
+    std::remove(code_path().c_str()); AC.code_loaded = false;   // the saved account code belonged to the previous account
     AC.io_msg.clear();
     cloud_account_changed();   // cloud saves follow the account: this PC pulls it (cloud wins where there is no local save)
     if (!FR.started)   // when the friends client runs, its IdentityAdopted event shows the same toast
@@ -141,7 +160,7 @@ void poll_jobs() {
             ok = AC.create_job->ok; text = AC.create_job->text;
         }
         AC.create_job.reset();
-        if (ok) { AC.show_code = true; AC.code = text; AC.code_t0 = ImGui::GetTime(); AC.create_err.clear(); }
+        if (ok) { AC.show_code = true; AC.code = text; AC.permanent = true; AC.code_t0 = ImGui::GetTime(); AC.create_err.clear(); save_code(text); }
         else AC.create_err = text;
     }
     if (AC.redeem_job && AC.redeem_job->done) {
@@ -169,7 +188,8 @@ void seed_for_screenshots() {
     std::string m = s;
     if (m == "code" || m == "expired") {
         AC.show_code = true;
-        AC.code = "K7M2-QX9P";
+        AC.code = m == "expired" ? "K7M2-QX9P" : "K7M2-QX9P-4HTW";
+        AC.permanent = m != "expired";
         AC.code_t0 = ImGui::GetTime() - (m == "expired" ? kCodeLifetime + 1 : 95.0);
     } else if (m == "redeem") {
         std::snprintf(AC.redeem_buf, sizeof AC.redeem_buf, "%s", "K7M2QX9P");
@@ -222,14 +242,16 @@ void draw_account_section() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
 
     /* ---- old PC: make a code ---- */
-    settings_label("Add this account to another PC", "Makes a short code. On the other PC choose \"I already have a username on another PC\" in setup (or enter it below in Settings) and type it. "
-                                                  "That PC then signs in as you and your cloud saves come with it. The code works once and expires after 10 minutes.");
+    settings_label("Add this account to another PC", "Your account code: 12 letters and digits. On the other PC choose \"I already have a username on another PC\" in setup "
+                                                  "(or enter it below in Settings) and type it. That PC then signs in as you and your cloud saves come with it. "
+                                                  "The same code also gets your account and cloud saves back if you lose this PC. Keep it somewhere safe; a new code replaces the old one.");
+    load_saved_code();
     bool creating = AC.create_job != nullptr;
-    if (button(creating ? "Creating code..." : ((AC.show_code ? "New code" : "Add this account to another PC")), ImVec2(0, 0), false, !creating && !g_headless, ui::Icon::Plus))
+    if (button(creating ? "Creating code..." : ((AC.show_code ? "Make a new code" : "Show my account code")), ImVec2(0, 0), false, !creating && !g_headless, ui::Icon::Plus))
         start_create();
     if (!AC.create_err.empty()) account_text_error(AC.create_err);
     if (AC.show_code) {
-        double left = kCodeLifetime - (ImGui::GetTime() - AC.code_t0);
+        double left = AC.permanent ? 1e9 : kCodeLifetime - (ImGui::GetTime() - AC.code_t0);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         {   // big, readable code in a box: type it on the other PC
             ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -248,13 +270,14 @@ void draw_account_section() {
                 SDL_SetClipboardText(AC.code.c_str());
                 set_toast("Link code copied.", true, 3.0);
             }
-            if (left > 0) {
+            if (AC.permanent) ImGui::TextDisabled("Does not expire");
+            else if (left > 0) {
                 ImGui::PushFont(ui::F.bold);
                 ImGui::TextColored(ImColor(left < 60 ? ui::WARN : ui::GOOD), "Expires in %s", countdown_text(left).c_str());
                 ImGui::PopFont();
             } else ImGui::TextDisabled("This code has expired. Make a new one.");
             ImGui::EndGroup();
-            if (left > 0) {   // countdown bar
+            if (!AC.permanent && left > 0) {   // countdown bar
                 ImVec2 q = ImGui::GetCursorScreenPos();
                 const float fw = std::min(1.f, (float)(left / kCodeLifetime));
                 dl->AddRectFilled(q, q + ImVec2(bw, sp(0.5f)), ui::PANEL3, sp(0.25f));
@@ -272,7 +295,7 @@ void draw_account_section() {
                                                            "instead of its own.");
     ImGui::SetNextItemWidth(sp(26.f));
     bool redeeming = AC.redeem_job != nullptr;
-    bool enter = osk::input("##linkcode", "XXXX-XXXX", AC.redeem_buf, sizeof AC.redeem_buf,
+    bool enter = osk::input("##linkcode", "XXXX-XXXX-XXXX", AC.redeem_buf, sizeof AC.redeem_buf,
                                           ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Code);
     ImGui::SameLine();
     if (button(redeeming ? "Checking..." : "Redeem code", ImVec2(0, 0), false, !redeeming && !g_headless && AC.redeem_buf[0] != 0) || enter) {
@@ -328,7 +351,7 @@ bool account_redeem_for_wizard() {
     if (AC.adopted) { AC.adopted = false; adopted = true; }
     bool redeeming = AC.redeem_job != nullptr;
     ImGui::SetNextItemWidth(sp(26.f));
-    bool enter = osk::input("##wizcode", "XXXX-XXXX", AC.redeem_buf, sizeof AC.redeem_buf,
+    bool enter = osk::input("##wizcode", "XXXX-XXXX-XXXX", AC.redeem_buf, sizeof AC.redeem_buf,
                             ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Code);
     ImGui::SameLine();
     const bool complete = hubui::un::link_code_complete(AC.redeem_buf);

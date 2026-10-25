@@ -207,7 +207,7 @@ std::string link_normalize_code(const std::string& code)
         if (c == '-' || c == ' ' || c == '\t') continue;
         s += (char)std::toupper((unsigned char)c);
     }
-    if (s.size() != 8) return "";
+    if (s.size() != 8 && s.size() != 12) return "";   // 8 = temporary link code, 12 = account code (XXXX-XXXX-XXXX)
     for (char c : s)
         if (!std::strchr(kAlphabet, c) || c == '\0') return "";
     return s;
@@ -265,10 +265,52 @@ bool link_create_code(const std::string& server, const Identity& id, std::string
     return true;
 }
 
-bool link_redeem_code(const std::string& server, const std::string& code, Identity* out, std::string* err)
+std::string sha256_hex(const std::string& s)
+{
+    BCRYPT_ALG_HANDLE h = nullptr;
+    uint8_t d[32] = {0};
+    if (BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&h, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) {
+        BCryptHash(h, nullptr, 0, (PUCHAR)s.data(), (ULONG)s.size(), d, 32);
+        BCryptCloseAlgorithmProvider(h, 0);
+    }
+    static const char* hx = "0123456789abcdef";
+    std::string o;
+    for (uint8_t b : d) { o += hx[b >> 4]; o += hx[b & 15]; }
+    return o;
+}
+
+std::string random_account_code()
+{
+    std::string c;
+    uint8_t buf[64];
+    while (c.size() < 12) {
+        if (!random_bytes(buf, sizeof buf)) return "";
+        for (uint8_t b : buf) if (b < 248 && c.size() < 12) c += kAlphabet[b % 31];   // rejection sampling: uniform over 31 symbols
+    }
+    return c;
+}
+
+bool link_keep_code(const std::string& server, const Identity& id, std::string* code_out, std::string* err)
+{
+    std::string c = random_account_code();
+    if (c.empty()) { *err = "could not make a code"; return false; }
+    LinkEnvelope env;
+    if (!link_seal(c, id, &env)) { *err = "could not encrypt the identity"; return false; }
+    std::string body = "{\"uid\":\"" + id.user_id + "\",\"secret\":\"" + id.secret + "\",\"box\":\"" + sha256_hex(c) + "\",\"salt\":\"" +
+                       env.salt + "\",\"iv\":\"" + env.iv + "\",\"ct\":\"" + env.ct + "\"}";
+    HttpResult r;
+    std::string e;
+    if (!http_post(server, "/link/keep", body, &r, &e)) { *err = e; return false; }
+    if (r.status == 429) { *err = "Too many new codes. Try again in a while."; return false; }
+    if (r.status != 200) { *err = "could not save the code: " + server_error(r); return false; }
+    *code_out = c.substr(0, 4) + "-" + c.substr(4, 4) + "-" + c.substr(8, 4);
+    return true;
+}
+
+bool link_redeem_code(const std::string& server, const std::string& code, Identity* out, std::string* err, std::string* username_out)
 {
     std::string c = link_normalize_code(code);
-    if (c.empty()) { *err = "Enter the 8-character code"; return false; }
+    if (c.empty()) { *err = "Enter the code from your other PC (XXXX-XXXX-XXXX)."; return false; }
     HttpResult r;
     std::string e;
     if (!http_post(server, "/link/redeem", "{\"code\":\"" + c + "\"}", &r, &e)) { *err = e; return false; }
@@ -279,6 +321,7 @@ bool link_redeem_code(const std::string& server, const std::string& code, Identi
     if (r.status != 200 || !json_parse(r.body, &j)) { *err = "redeem failed: " + server_error(r); return false; }
     LinkEnvelope env{j.str("salt"), j.str("iv"), j.str("ct")};
     if (!link_open(c, env, out)) { *err = "Could not decrypt the identity. Check the code and create a new one."; return false; }
+    if (username_out) *username_out = j.str("username");
     return true;
 }
 

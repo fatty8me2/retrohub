@@ -89,11 +89,11 @@ try {
     $r = Session $pc1; Check ($r -match "pulled=[1-9]") "PC1 receives the kept version ($r)"
     Check ((Get-Text $pc1) -like "progress-DDD*") "kept version is PC2's"
 
-    Write-Host "5. a brand new PC (account added): cloud wins, recovery code round-trips"
+    Write-Host "5. a brand new PC (account added): cloud wins, code scenario is in -Real R10"
     $pc3 = Pc "pc3"
     $r = Run $pc3 @("flush"); Check ($r -match "online=1") "new PC restored ($r)"
     Check ((Get-Text $pc3) -like "progress-DDD*") "new PC got the saves without any prompt"
-    $r = Run $pc3 @("recovery"); Check (($r -match "roundtrip=1") -and ($r -notmatch $Secret)) "recovery code encodes/decodes, secret not printed"
+    # the account code (add / recover) needs the real Worker: see -Real, scenario R10
 } finally {
     if ($srv -and -not $srv.HasExited) { & taskkill /PID $srv.Id /T /F | Out-Null }
 }

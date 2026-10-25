@@ -92,7 +92,8 @@ void cloud_set_local_only(const GameId& g, bool local_only);   // user "don't up
 void cloud_remove_game(const GameId& g);                       // remove from cloud (keeps local)
 std::vector<std::pair<std::string, std::vector<VersionInfo>>> cloud_versions(const GameId& g);  // blocking, job thread
 bool cloud_restore_version(const GameId& g, const std::string& path, int ver, std::string* err);  // blocking
-std::string cloud_recovery_code();                          // uid + secret, grouped; empty if no identity
-bool cloud_adopt_recovery_code(const std::string& code, std::string* err);
+std::string cloud_recovery_code();                          // the saved account code XXXX-XXXX-XXXX ("" if none was made on this PC)
+bool cloud_create_account_code(std::string* code, std::string* err);   // blocking: makes (or replaces) the account code on the server
+bool cloud_adopt_recovery_code(const std::string& code, std::string* err);   // blocking: redeem a code (also 8-char link codes), switch account, pull saves
 
 } // namespace hub::saves

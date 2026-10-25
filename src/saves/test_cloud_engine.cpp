@@ -195,26 +195,6 @@ static void test_queue_and_base() {
     fs::remove_all(dir);
 }
 
-static void test_recovery() {
-    str uid = b32(26, 1), secret = b32(52, 2);
-    str code = recovery_encode(uid, secret);
-    CHECK(code.size() == 80 + 19 && code.find('-') == 4);
-    str u2, s2, err;
-    CHECK(recovery_decode(code, &u2, &s2, &err) && u2 == uid && s2 == secret);
-    str spaced = code;
-    for (auto& c : spaced) if (c == '-') c = ' ';
-    str lowered = spaced;
-    for (auto& c : lowered) c = (char)tolower((unsigned char)c);
-    CHECK(recovery_decode(lowered, &u2, &s2, &err) && u2 == uid);
-    str bad = code;
-    bad[10] = bad[10] == 'A' ? 'B' : 'A';
-    CHECK(!recovery_decode(bad, &u2, &s2, &err) && !err.empty());
-    CHECK(err.find(secret) == str::npos && err.find(uid) == str::npos);       // errors never echo the secret
-    CHECK(!recovery_decode(code.substr(0, 50), &u2, &s2, &err));
-    CHECK(!recovery_decode("not a code!", &u2, &s2, &err));
-    CHECK(recovery_encode("short", secret).empty());
-}
-
 /* ---------------------------------------------------------------- engine scenarios */
 struct Pc {
     str name;
@@ -663,8 +643,6 @@ static void test_migration_and_restore() {
     CHECK(total >= 1 && done >= 1);
 
     /* a brand new PC adopts the account through the recovery code and pulls everything */
-    str code = cloud_recovery_code();
-    CHECK(code == recovery_encode(uid2, secret2));                    // the live identity gives the code
     Pc pc3("pc3");
     cloud_engine_stop();
     set_vault_dir(pc3.vault.u8string());
@@ -672,10 +650,8 @@ static void test_migration_and_restore() {
     cloud_engine_configure(ec);
     str err;
     CHECK(!cloud_adopt_recovery_code("garbage", &err) && !err.empty());
-    str good = recovery_encode(uid2, secret2);
-    CHECK(cloud_adopt_recovery_code(good, &err));
+    CHECK(cloud_adopt_account(uid2, secret2, &err));                  // the account code redeem ends here (identity_link is covered by hublink_test + the real-Worker QA)
     CHECK(fs::exists(pc3.data / "identity.json"));
-    CHECK(cloud_recovery_code() == good);                             // read back from the stored identity
     cloud_engine_start(g_srv->url());
     pump();
     CHECK(get(pc3.vault / "n64" / "cloud-only" / "battery" / "c.sra") == rnd(1000, 1));
@@ -758,7 +734,6 @@ int main() {
     test_three_way();
     test_wire();
     test_queue_and_base();
-    test_recovery();
 
     printf("engine against the mock Worker\n");
     MockServer srv;
