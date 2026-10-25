@@ -48,6 +48,8 @@
 #include "osk.h"
 #include "logic.h"
 #include "savestore.h"
+#include "history.h"
+#include "playstats.h"
 #include "cloud.h"
 #include "cloud_engine.h"
 #include "cloud_ui_logic.h"
@@ -733,6 +735,10 @@ void account_redeem_reset();
 void cloud_ui_tick();        // every frame: engine events -> toasts, cached status
 void cloud_ui_overlays();    // every frame: conflict / lease dialogs, "Getting your save..." strip
 int cloud_ui_conflict_count();  // games whose saves differ between this PC and the cloud (Saves nav badge)
+void history_ui_open(const std::string& system, const std::string& key);   // Saves page: unified save history of one game
+void history_ui_saves_page();
+void history_ui_details_section(const hub::GameEntry& e);   // details modal: one line + "History..." button
+void stats_ui_card();                                       // Home: "Your stats"
 void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history
 void cloud_ui_shot_init();   // HUB_SHOT_CLOUD_* seeds (screenshots only, no network)
 std::string cloud_ui_pill(const hub::GameEntry& e, ImU32* col);   // tile pill text ("" = none) + colour
@@ -805,3 +811,4 @@ ImGuiKey shot_key(const std::string& n);
 
 
 #include "friends_ui.h"
+#include "group_ui.h"
