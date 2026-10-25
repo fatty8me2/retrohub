@@ -658,6 +658,8 @@ void add_games_shutdown();                                    // app exit: cance
 /* ---- emu_dialogs.cpp ---- */
 void poll_emulators();
 void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states);   // ps1_ui.cpp
+bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std::string& ports, const std::string& tmp_dir, bool share_save,
+                     hub::gs::Values gsv, std::string* args, std::string* err);   // ps1_ui.cpp: retrorun args for a PlayStation room
 void draw_ps1_dialogs();
 void ps1_settings_ui();
 void emu_modal_begin(const char* name, bool* open_flag);

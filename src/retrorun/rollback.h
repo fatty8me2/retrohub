@@ -42,9 +42,9 @@ struct Sim {
     std::function<bool(uint8_t*, size_t)> save;
     std::function<bool(const uint8_t*, size_t)> load;
     /* Run one frame with these pads. visible=false: re-simulation (suppress audio and presenting). */
-    std::function<void(const uint32_t pads[kPorts], bool visible)> step;
+    std::function<void(const uint64_t pads[kPorts], bool visible)> step;   // pads: one input value per port (Config::val_bytes wide)
     std::function<uint64_t()> frame_sum;           // checksum of the output (video+audio) of the frame just stepped
-    std::function<uint32_t(int port)> read_local;  // current pad of a locally owned port
+    std::function<uint64_t(int port)> read_local;  // current input of a locally owned port (low Config::val_bytes*8 bits are used)
     std::function<void()> poll_local;              // poll devices once per run_frame (before read_local)
     std::function<void()> idle;                    // while blocked (pump window events)
     std::function<uint64_t()> mem_hash;            // optional: hash of live emulator memory (synctest extra check)
@@ -56,6 +56,7 @@ struct Transport {
     std::function<bool(int* from, std::vector<uint8_t>* out)> recv;
     std::function<uint32_t()> now_ms;
     std::function<void(const std::string&)> log;
+    std::function<bool()> relayed;   // optional: some peer is reached through the server relay (which caps a room at 400 frames/s): send every other frame only
 };
 
 struct Config {
@@ -71,6 +72,9 @@ struct Config {
     int hash_interval = 120;
     bool use_state_hash = true;
     uint32_t timeout_ms = 10000;
+    bool relay_half_rate = false;  // with Transport::relayed(): send the per-frame packet every other frame only (PlayStation: 4-PC rooms)
+    uint32_t send_gap_ms = 8;      // min ms between the non-forced packets (the per-frame input packet is always sent); PlayStation 30: a relayed 4-PC room is capped at 400 frames/s
+    int val_bytes = 2;             // bytes of one port's input on the wire: 2 (16 buttons: GB/GBA) or 6 (PlayStation: buttons + 4 stick bytes)
 };
 
 struct Stats {
@@ -126,15 +130,16 @@ class Engine {
   private:
     static constexpr int kInRing = 512;
     static constexpr int kFrRing = 64;
-    struct InEnt { int64_t tag = -1; uint16_t val = 0; };
+    struct InEnt { int64_t tag = -1; uint64_t val = 0; };
 
     bool present(int p) const { return cfg_.owner[p] >= 0; }
     bool local(int p) const { return present(p) && cfg_.owner[p] == cfg_.my_slot; }
     bool has(int p, int64_t f) const { return f >= 0 && in_[p][f % kInRing].tag == f; }
-    uint16_t get(int p, int64_t f) const { return in_[p][f % kInRing].val; }
-    void put_local(int p, int64_t f, uint16_t v);
-    void put_remote(int p, int64_t f, uint16_t v);
-    void build_pads(int64_t f, uint32_t pads[kPorts]);
+    uint64_t get(int p, int64_t f) const { return in_[p][f % kInRing].val; }
+    uint64_t vmask() const { return cfg_.val_bytes >= 8 ? ~0ull : ((1ull << (8 * cfg_.val_bytes)) - 1); }
+    void put_local(int p, int64_t f, uint64_t v);
+    void put_remote(int p, int64_t f, uint64_t v);
+    void build_pads(int64_t f, uint64_t pads[kPorts]);
     void sim_frame(int64_t f, bool visible);
     void do_rollback();
     void pump_net();
@@ -156,8 +161,8 @@ class Engine {
     std::vector<uint8_t> ring_, tmp_;
     InEnt in_[kPorts][kInRing];
     int64_t conf_upto_[kPorts];       // highest f with inputs 0..f all known (remote ports)
-    uint16_t last_val_[kPorts];
-    uint16_t used_[kFrRing][kPorts];
+    uint64_t last_val_[kPorts];
+    uint64_t used_[kFrRing][kPorts];
     uint64_t fsum_[kFrRing];
     int64_t local_newest_ = -1;
     int64_t peer_ack_[8][kPorts];
@@ -196,7 +201,7 @@ struct SyncTestResult {
     double save_us_max = 0, load_us_max = 0;
 };
 SyncTestResult run_synctest(const Sim& sim, int frames, int depth, bool use_state_hash,
-                            const std::function<void(int frame, uint32_t pads[kPorts])>& input,
+                            const std::function<void(int frame, uint64_t pads[kPorts])>& input,
                             const std::function<void(const std::string&)>& log);
 
 }  // namespace rb

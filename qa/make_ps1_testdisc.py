@@ -66,10 +66,10 @@ def mips_program():
     return b''.join(struct.pack('<I', c) for c in code), base
 
 
-def build(serial, name):
+def build(serial, name, program=None):
     cnf_serial = serial.replace('-', '_')
     exe_name = cnf_serial[:4] + '_' + serial[5:8] + '.' + serial[8:10]    # SCUS_945.70
-    code, base = mips_program()
+    code, base = program if program else mips_program()
     tsize = (len(code) + 2047) // 2048 * 2048
     hdr = bytearray(2048)
     hdr[0:8] = b'PS-X EXE'
@@ -102,6 +102,8 @@ def build(serial, name):
     for off in (813, 830, 847, 864):
         pvd[off:off + 16] = b'0' * 16
     pvd[881] = 1
+    lic = b'          Licensed  by          Sony Computer Entertainment Amer  ica '   # system-area license sector: the BIOS refuses discs without it
+    img[4 * SECTOR:4 * SECTOR + len(lic)] = lic
     img[16 * SECTOR:17 * SECTOR] = pvd
     term = bytearray(SECTOR)
     term[0] = 255
@@ -121,6 +123,75 @@ def build(serial, name):
     img[cnf_lba * SECTOR:cnf_lba * SECTOR + len(cnf)] = cnf
     img[exe_lba * SECTOR:exe_lba * SECTOR + len(exe)] = exe
     return bytes(img)
+
+
+def _luts():
+    f = [0] * 256
+    b = [0] * 256
+    edc = [0] * 256
+    for i in range(256):
+        j = (i << 1) ^ (0x11D if i & 0x80 else 0)
+        f[i] = j & 0xFF
+        b[i] = (i >> 1) ^ (0x8D if i & 1 else 0)
+        e = i
+        for _ in range(8):
+            e = (e >> 1) ^ (0xD8018001 if e & 1 else 0)
+        edc[i] = e
+    return f, b, edc
+
+
+_F, _B, _EDC = _luts()
+
+
+def _ecc(src, major_count, minor_count, major_mult, minor_inc):
+    size = major_count * minor_count
+    lo = bytearray(major_count)
+    hi = bytearray(major_count)
+    for major in range(major_count):
+        index = (major >> 1) * major_mult + (major & 1)
+        a = 0
+        bb = 0
+        for _ in range(minor_count):
+            t = src[index]
+            index += minor_inc
+            if index >= size:
+                index -= size
+            a ^= t
+            bb ^= t
+            a = _F[a]
+        a = _B[_F[a] ^ bb]
+        lo[major] = a
+        hi[major] = a ^ bb
+    return bytes(lo), bytes(hi)
+
+
+def raw_mode2(data):
+    """2048-byte sectors -> MODE2/2352 Form 1 raw sectors (sync, header, XA subheader, EDC, P/Q parity): a real PlayStation
+    disc layout. The core's disc layer rejects unchecked sectors and the BIOS reads user data at offset 24 (Mode 2)."""
+    out = bytearray()
+    for lba in range(len(data) // SECTOR):
+        s = bytearray(2352)
+        s[1:11] = bytes([255]) * 10
+        a = lba + 150
+        bcd = lambda v: ((v // 10) << 4) | (v % 10)
+        s[12:16] = bytes([bcd(a // 4500), bcd(a // 75 % 60), bcd(a % 75), 2])
+        s[16:24] = bytes([0, 0, 0x08, 0, 0, 0, 0x08, 0])
+        s[24:24 + SECTOR] = data[lba * SECTOR:(lba + 1) * SECTOR]
+        e = 0
+        for x in s[16:0x818]:
+            e = (e >> 8) ^ _EDC[(e ^ x) & 0xFF]
+        s[0x818:0x81C] = struct.pack('<I', e)
+        hdr = bytes(s[12:16])
+        s[12:16] = bytes(4)          # parity is computed with the address zeroed (Form 1)
+        plo, phi = _ecc(bytes(s[12:]), 86, 24, 2, 86)
+        s[0x81C:0x81C + 86] = plo
+        s[0x81C + 86:0x81C + 172] = phi
+        qlo, qhi = _ecc(bytes(s[12:]), 52, 43, 86, 88)
+        s[0x8C8:0x8C8 + 52] = qlo
+        s[0x8C8 + 52:0x8C8 + 104] = qhi
+        s[12:16] = hdr
+        out += s
+    return bytes(out)
 
 
 def main():

@@ -691,6 +691,7 @@ std::string exit_code_text(unsigned long code) {
         case 4: return "Connection lost during the match.";
         case 5: return "The game went out of sync (desync) and was stopped.";
         case 6: return "Couldn't share the host's save - check your connection and try again.";
+        case 7: return "The PlayStation setups differ: everyone in the room needs the same BIOS file (or all use the built-in OpenBIOS). Check Settings > Playing.";
         default: return "Game exited with code " + std::to_string(code) + ".";
     }
 }

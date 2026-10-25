@@ -170,6 +170,10 @@ int main() {
     CHECK(fs::exists(root / "stage" / "scph5502.bin") && fs::exists(root / "stage" / "scph5501.bin") && fs::exists(root / "stage" / "scph5500.bin"));   // others borrow it
     CHECK(ps1::find_bios({(root / "nothing").u8string()}).empty());
 
+    /* ---- online: multitap follows the port plan ---- */
+    CHECK(!ps1::ports_need_multitap("0,1,-1,-1") && !ps1::ports_need_multitap("0,-1,-1,-1") && !ps1::ports_need_multitap("") && !ps1::ports_need_multitap("1,3,-1,-1"));
+    CHECK(ps1::ports_need_multitap("0,1,2,-1") && ps1::ports_need_multitap("0,1,2,3") && ps1::ports_need_multitap("0,0,0,0") && ps1::ports_need_multitap("-1,-1,2,-1"));
+
     /* ---- controller profile: Xbox -> DualShock ---- */
     hubctl::Profile p = hubctl::default_profile("ps1");
     CHECK(p.system == "ps1" && p.buttons["b"] == "a" && p.buttons["a"] == "b" && p.buttons["y"] == "x" && p.buttons["x"] == "y");   // Cross=A, Circle=B, Square=X, Triangle=Y

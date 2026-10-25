@@ -6,6 +6,7 @@
 #include <deque>
 #include <memory>
 
+#include "ps1_input.h"
 #include "rollback.h"
 
 static int g_fail = 0;
@@ -16,9 +17,9 @@ struct FakeSim {
     uint32_t frame = 0;
     bool nondeterministic = false;
     uint64_t last_sum = 0;
-    uint32_t pad_now[4] = {0, 0, 0, 0};
+    uint64_t pad_now[4] = {0, 0, 0, 0};
     uint64_t steps = 0;
-    void step(const uint32_t p[4]) {
+    void step(const uint64_t p[4]) {
         steps++;
         for (int i = 0; i < 4; i++) { x = (x ^ p[i]) * 0x9E3779B97F4A7C15ull; x ^= x >> 31; y += x * (i + 3) + (y >> 5); }
         if (nondeterministic && frame == 300) y ^= (uint64_t)steps;   // depends on how often it was stepped
@@ -28,18 +29,20 @@ struct FakeSim {
 };
 struct Blob { uint64_t x, y; uint32_t frame; uint32_t pad; };
 
+static int g_val_bytes = 2;   // 6 = PlayStation-wide inputs
+
 static rb::Sim make_sim(FakeSim* s, int owner_port, uint32_t seed) {
     rb::Sim sim;
     sim.state_size = [] { return sizeof(Blob); };
     sim.save = [s](uint8_t* b, size_t) { Blob k{s->x, s->y, s->frame, 0}; memcpy(b, &k, sizeof k); return true; };
     sim.load = [s](const uint8_t* b, size_t) { Blob k; memcpy(&k, b, sizeof k); s->x = k.x; s->y = k.y; s->frame = k.frame; return true; };
-    sim.step = [s](const uint32_t p[4], bool) { s->step(p); };
+    sim.step = [s](const uint64_t p[4], bool) { s->step(p); };
     sim.frame_sum = [s] { return s->last_sum; };
     sim.poll_local = [s, owner_port, seed] {
         uint32_t f = s->frame;
         uint32_t v = ((f / 5) * 2654435761u) ^ (uint32_t)(owner_port + 1) * 40503u ^ seed;
         v ^= v >> 13; v *= 2246822519u; v ^= v >> 15;
-        s->pad_now[owner_port] = v & 0x3FF;
+        s->pad_now[owner_port] = (v & 0x3FF) | (g_val_bytes > 2 ? ((uint64_t)(v * 2654435761u) & 0xFFFFFFFFull) << 16 : 0);   // wide: 4 more bytes (sticks)
     };
     sim.read_local = [s](int p) { return s->pad_now[p]; };
     return sim;
@@ -82,7 +85,7 @@ static Result run(int frames, int latency, int jitter, int loss, int delay, bool
         rb::Config c;
         c.owner[0] = 0; c.owner[1] = 1; c.owner[2] = c.owner[3] = -1;
         c.my_slot = i; c.slot_mask = 3; c.delay = delay; c.hash_interval = 60;
-        c.max_pred = g_pred; c.adaptive_delay = g_adaptive; c.frame_ms = 16.0;
+        c.max_pred = g_pred; c.adaptive_delay = g_adaptive; c.frame_ms = 16.0; c.val_bytes = g_val_bytes;
         rb::Transport t;
         t.pump = [] {};
         t.send = [&link, i](int, const void* d, int n) { link.send(i, d, n); };
@@ -165,12 +168,12 @@ int main() {
         FakeSim s;
         rb::Sim sim = make_sim(&s, 0, 5);
         rb::SyncTestResult t = rb::run_synctest(sim, 500, 7, true,
-            [&](int f, uint32_t p[4]) { p[0] = (uint32_t)f * 2654435761u >> 22; p[1] = p[2] = p[3] = 0; }, [](const std::string& m) { printf("%s\n", m.c_str()); });
+            [&](int f, uint64_t p[4]) { p[0] = (uint32_t)f * 2654435761u >> 22; p[1] = p[2] = p[3] = 0; }, [](const std::string& m) { printf("%s\n", m.c_str()); });
         printf("synctest: frames %llu checks %llu mismatches %llu\n", (unsigned long long)t.frames, (unsigned long long)t.checks, (unsigned long long)t.mismatches);
         CHECK(t.mismatches == 0 && t.checks > 1000, "synctest clean");
         FakeSim s2; s2.nondeterministic = true;
         rb::Sim sim2 = make_sim(&s2, 0, 5);
-        rb::SyncTestResult t2 = rb::run_synctest(sim2, 500, 7, true, [&](int f, uint32_t p[4]) { p[0] = (uint32_t)f; p[1] = p[2] = p[3] = 0; }, nullptr);
+        rb::SyncTestResult t2 = rb::run_synctest(sim2, 500, 7, true, [&](int f, uint64_t p[4]) { p[0] = (uint32_t)f; p[1] = p[2] = p[3] = 0; }, nullptr);
         CHECK(t2.mismatches > 0, "synctest should catch nondeterminism");
     }
     // 7) adaptive delay + wide window on a 150 ms (one way) lossy link: fewer stalls than the old fixed delay 1 / window 8, never a desync
@@ -214,6 +217,36 @@ int main() {
         CHECK(r.st[0].sync_waits > 5, "fast peer should wait gradually");
         CHECK(r.st[0].max_depth <= 14 && r.st[1].max_depth <= 14, "depth bounded");
         CHECK(r.x[0] == r.x[1] && r.y[0] == r.y[1], "final state differs");
+    }
+    // 11) wide inputs (6 bytes per port: buttons + 4 stick bytes, PlayStation): same guarantees on a lossy link, and a stick change alone rolls back
+    {
+        g_val_bytes = 6; g_adaptive = true; g_pred = 14;
+        Result r = run(900, 60, 15, 8, 1, false, 100);
+        report("wide inputs 60ms 8%loss", r, true);
+        CHECK(r.frame[0] == 900 && r.frame[1] == 900, "frames reached");
+        CHECK(r.x[0] == r.x[1] && r.y[0] == r.y[1], "final state differs");
+        CHECK(r.st[0].rollbacks > 0 && r.st[0].hashes_compared > 3, "wide: rollbacks + hashes");
+        Result n = run(600, 30, 0, 0, 1, true, 100);
+        report("wide nondeterminism", n, false);
+        CHECK(n.desync[0] || n.desync[1], "wide: desync not detected");
+        g_val_bytes = 2;
+    }
+    // 12) PlayStation input packing: 8-bit sticks, identical on sender and receiver
+    {
+        using namespace retrorun;
+        int bad = 0;
+        for (int v = -32768; v <= 32767; v++) {
+            int16_t in[4] = {(int16_t)v, (int16_t)-v, (int16_t)(v / 2), (int16_t)(v ^ 0x55)}, out[4];
+            uint32_t b;
+            unpack_pad(pack_pad(0xA5A5u | 0xF0000u, in), &b, out);
+            if (b != 0xA5A5u) bad++;
+            for (int k = 0; k < 4; k++) if (out[k] != (int16_t)((in[k] >> 8) * 256) || (out[k] / 256) != (in[k] >> 8)) bad++;
+        }
+        CHECK(bad == 0, "stick packing (%d bad)", bad);
+        int16_t z[4] = {0, 0, 0, 0}, o[4] = {1, 1, 1, 1};
+        CHECK(pack_pad(0, z) == 0, "neutral pad packs to 0");
+        unpack_sticks(pack_sticks(z), o);
+        CHECK(o[0] == 0 && o[1] == 0 && o[2] == 0 && o[3] == 0, "neutral sticks");
     }
     printf(g_fail ? "ROLLBACK TEST FAILED (%d)\n" : "ROLLBACK TEST PASSED\n", g_fail);
     return g_fail ? 1 : 0;

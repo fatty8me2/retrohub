@@ -360,6 +360,7 @@ int main() {
     CHECK(normalize_code(" ab c2d3efg") == "ABC2D3");
     CHECK(exit_code_text(5).find("sync") != std::string::npos);
     CHECK(exit_code_text(6).find("share the host's save") != std::string::npos);
+    CHECK(exit_code_text(7).find("BIOS") != std::string::npos);
     CHECK(exit_code_text(2).find("couldn't start") != std::string::npos);
 
     /* ports with sparse slots and local players */

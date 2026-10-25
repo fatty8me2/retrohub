@@ -508,6 +508,25 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
+    if (e.system == hub::System::PS1) {
+        /* PlayStation (Beetle PSX): every PC runs the whole console; inputs (buttons + both analog sticks) travel through the room, the
+         * host's memory card is the shared session save (docs/SAVES.md). 3-4 players use the emulated multitap (ps1_online_args). */
+        std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
+        remove_tree(tmp);
+        make_dirs(tmp);
+        if (share_save && (is_host || A.lobby.my_slot() == 0)) {
+            std::error_code ec;
+            std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
+            if (std::filesystem::is_directory(bd, ec)) {
+                for (auto& de : std::filesystem::directory_iterator(bd, ec))
+                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+            } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty memory card.", 8.0);
+        }
+        std::string args, err;
+        if (!ps1_online_args(e, net, plan.ports, tmp, share_save, gsv, &args, &err)) { launch_note(is_host, err, 12.0); return; }
+        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        return;
+    }
     launch_note(is_host, "Online play is not available for this system yet.");
 }
 
