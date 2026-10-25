@@ -202,6 +202,7 @@ void global_input() {
             A.page = Page::Library;
         }
     }
+    if (A.page == Page::Library && !A.lib.empty() && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false)) cycle_sort(1);
     if (A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl)) A.show_details = true;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl)) toggle_favorite(A.sel_game);

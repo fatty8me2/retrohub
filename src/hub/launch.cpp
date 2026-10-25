@@ -43,8 +43,14 @@ bool NP3_pending = false;
 
 /* ---------- process launching ---------- */
 
-bool spawn(const std::string& exe, const std::string& args, const std::string& cwd,
+bool spawn(const std::string& exe, const std::string& args_in, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
+    std::string args = args_in;
+    if (!A.resume_key.empty()) {   // "Resume": one-shot --load-state for exactly this game on a retrorun launch (Lane 2 runners; docs/RUNNER_CTL)
+        if (A.resume_key == ri.key && file_name(exe) == "retrorun.exe" && !A.resume_state.empty()) args += " --load-state " + quote(A.resume_state);
+        A.resume_key.clear();
+        A.resume_state.clear();
+    }
     if (g_headless) {
         std::string ev;
         for (auto& kv : env) ev += " " + kv.first + "=" + (kv.first == "SSB64_CONTROLS" ? std::string("<profile>") : kv.second);

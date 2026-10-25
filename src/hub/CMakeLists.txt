@@ -1,4 +1,4 @@
-add_library(hublogic STATIC changelog.cpp osk_logic.cpp logic.cpp toast.cpp netplay_3ds.cpp smash_save.cpp)
+add_library(hublogic STATIC changelog.cpp osk_logic.cpp logic.cpp toast.cpp netplay_3ds.cpp smash_save.cpp state_slots.cpp)
 target_link_libraries(hublogic PUBLIC hubbase)
 target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
 target_compile_features(hublogic PUBLIC cxx_std_17)
@@ -6,6 +6,9 @@ target_compile_features(hublogic PUBLIC cxx_std_17)
 # Console-only unit test for the pure logic.
 add_executable(hub_logic_test test_logic.cpp)
 target_link_libraries(hub_logic_test PRIVATE hublogic)
+
+add_executable(hub_states_test test_state_slots.cpp)
+target_link_libraries(hub_states_test PRIVATE hublogic)
 
 add_executable(hub_online_caps_test test_online_caps.cpp)
 target_link_libraries(hub_online_caps_test PRIVATE hublogic hubcommon)
@@ -26,7 +29,7 @@ target_link_libraries(hub_session_test PRIVATE hublogic)
 
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
-    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp match_ui.cpp page_online.cpp friends_ui.cpp group_ui.cpp
+    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp friends_ui.cpp group_ui.cpp
     page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
 target_include_directories(RetroHub PRIVATE

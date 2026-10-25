@@ -2,6 +2,7 @@
 /* Pure (UI/OS independent) logic for RetroHub: tiny JSON, settings, lobby rules. */
 
 #include "json.h"
+#include "state_slots.h"
 
 #include <map>
 #include <string>
@@ -26,6 +27,8 @@ struct Settings {
     bool fullscreen = false;           // start games fullscreen where the runner supports it
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start
+    std::string library_sort = "title"; // SortMode key: title | last_played | most_played | recently_added
+    bool cloud_states = true;          // "Back up save states to the cloud" (within the smart cap)
     bool cloud_enabled = true;         // cloud saves v2: automatic through the RetroHub account; false = "Pause cloud sync"
     bool sync_card_dismissed = false;  // "Keep your saves on all your PCs" card on Home was dismissed ("Not now")
     bool smash_save_notice_shown = false;  // the "Using your synced Smash save" toast has been shown once
@@ -145,11 +148,15 @@ struct ListItem {
     std::string title;
     std::string system;     // system short code ("n64","gba",...)
     bool pinned = false;    // sorts before everything else (the native Smash entry)
+    unsigned long long last_played = 0, play_seconds = 0, added = 0;   // unix seconds / seconds / file time (sort modes)
 };
+/* Strict-weak order for the library: pinned first, then by `mode` (Title A-Z; Last played / Most played / Recently added newest or
+ * biggest first, never-played last), ties broken by title then key. */
+bool list_item_less(const ListItem& a, const ListItem& b, SortMode mode);
 /* Indices of items that match `system_filter` ("" = all) and contain `query` (case-insensitive
  * substring of the title), pinned first, then sorted by title (case-insensitive), then key. */
 std::vector<int> filter_sort(const std::vector<ListItem>& items, const std::string& system_filter,
-                             const std::string& query);
+                             const std::string& query, SortMode mode = SortMode::Title);
 /* Indices of the `n` entries with the largest non-zero last_played, newest first. */
 std::vector<int> pick_recent(const std::vector<unsigned long long>& last_played, int n);
 /* "Never played" / "Under a minute" / "35 min" / "2h 05m". */
@@ -165,7 +172,8 @@ struct ConsoleSection {
 };
 /* Groups items[indices] (all of them when `indices` is null) into console sections in console_order(), unknown
  * system codes last under "Other". Empty consoles are skipped. gb and gbc are separate sections. */
-std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items, const std::vector<int>* indices = nullptr);
+std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items, const std::vector<int>* indices = nullptr,
+                                             SortMode mode = SortMode::Title);
 
 /* ---- home screen composition (pure; the UI only draws the result) ---- */
 struct ShelfGame {
@@ -174,6 +182,7 @@ struct ShelfGame {
     unsigned long long last_played = 0;
     bool online = false;                // catalog says it is fun online with friends
     bool pinned = false;
+    unsigned long long play_seconds = 0, added = 0;
 };
 struct Shelf {
     std::string id;      // "recent" "favs" or "console:<system_short>" ("console:other" for unknown systems)
@@ -186,7 +195,7 @@ const std::vector<std::string>& console_order();
  * (console_order(), then "other" for unknown system codes). Every game lands in exactly ONE console shelf.
  * Empty shelves are omitted. Within a shelf: recent = newest first; the others pinned first then title
  * (case-insensitive). */
-std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& games, int max_recent = 12);
+std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& games, int max_recent = 12, SortMode mode = SortMode::Title);
 std::string system_shelf_title(const std::string& system_short);   // "Nintendo 64", ...
 /* Catalog entries to advertise ("Top picks you don't have yet"): indices where !owned[i], games
  * flagged online first, otherwise catalog order, at most max_n. */

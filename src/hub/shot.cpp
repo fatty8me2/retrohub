@@ -64,6 +64,7 @@ void shot_init_ui() {
         if (std::getenv("HUB_SHOT_CHAT")) { fr_open_chat("miauid"); FR.chat_unread = 2; }
         if (std::getenv("HUB_SHOT_BELL")) FR.shot_bell = true;
     }
+    states_shot_seed();
     cloud_ui_shot_init();
     kt_shot_init();
     osk::shot_init();

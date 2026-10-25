@@ -102,7 +102,9 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     total += (gap + bh) * 2;
     if (!draw) return total;
     ImGui::SetCursorScreenPos(at);
-    if (button("Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; play_entry(c); }
+    const bool resume = has_resume(e);   // one press: launch and load the auto state (plain Play when there is none)
+    if (button(resume ? "Resume" : "Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; if (resume) resume_entry(c, -1); else play_entry(c); }
+    if (resume && ImGui::IsItemHovered()) ImGui::SetTooltip("Continue from where you left off");
     if (seed_nav) seed_nav_here();
     if (online) {
         ImGui::SameLine(0, gap);
@@ -160,8 +162,9 @@ void draw_hero(const hub::GameEntry& e, float h) {
 
     float tx = a1.x + pad, tw = p1.x - pad - tx, ty = p0.y + pad;
     ImFont* cf = ui::F.cap;
-    std::string eyebrow = gs.last_played ? "LAST PLAYED  " + fmt_ago(gs.last_played) : std::string("READY TO PLAY");
-    for (auto& ch : eyebrow) ch = (char)std::toupper((unsigned char)ch);
+    std::string eyebrow = gs.last_played ? hubui::resume_line(e.title, unix_now(), gs.last_played, "  ·  ") : std::string("Ready to play");
+    eyebrow = ui::ellipsize(cf, cf->FontSize, eyebrow, tw);
+    shot_trace_once("hero", e.key + " " + eyebrow + (has_resume(e) ? " [resume]" : " [play]"));
     dl->AddText(cf, cf->FontSize, ImVec2(tx, ty), ui::scale_alpha(mix(c1, IM_COL32_WHITE, 0.45f), ha), eyebrow.c_str());
     ty += cf->FontSize + sp(0.75f);
 
@@ -342,6 +345,12 @@ void library_top_bar() {
     ImGui::PopStyleVar(2);
     if (A.search_buf[0] && A.view == LibView::Home) A.view = LibView::All;
 
+    {   // sort chip: A cycles Title / Last played / Most played / Recently added (RT on the pad)
+        ImGui::SameLine(0, sp(1.5f));
+        std::string sl = std::string("Sort: ") + hubui::sort_name(hubui::sort_from_key(A.st.library_sort));
+        if (chip(sl.c_str(), hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title, ui::ACCENT)) cycle_sort(1);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the order of your games  (RT on a controller)");
+    }
     float total = bh + sp(1.f) + add_games_header_width(bh);
     ImGui::SameLine(0, 0);
     float ax = ImGui::GetContentRegionAvail().x;
@@ -609,6 +618,8 @@ void draw_details_modal() {
     cloud_ui_game_line(e);
     if (!native) history_ui_details_section(e);
     gs_draw_game_section(e);
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    draw_state_strip(e);
     ImGui::Dummy(ImVec2(0, sp(2.f)));
     if (local_players_for(e) >= 2) {   // offline local multiplayer: who holds which port before Play
         if (draw_players_strip(local_players_for(e))) { ImGui::CloseCurrentPopup(); open_port_assign(); }
