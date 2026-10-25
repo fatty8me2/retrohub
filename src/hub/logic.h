@@ -40,6 +40,7 @@ struct Settings {
     bool auto_friend = true;           // "Automatically add people I play with as friends" (sent to the server in the hello)
     bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
     bool setup_done = false;           // the first-run setup wizard was finished or skipped
+    std::string changelog_seen;        // version whose "What's new" popup was shown/skipped ("" = never)
     bool kt_intro_seen = false;        // Kanto Together: the "first session" guidance was shown once
     std::string games_dest;            // Add games: chosen destination folder ("" = the RetroHub Games folder)
     std::string ps1_bios;              // user-chosen PlayStation BIOS file ("" = look next to the games, in RetroArch's system folder, ...)

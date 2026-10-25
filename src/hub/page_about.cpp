@@ -4,6 +4,7 @@ void draw_overlays() {
     draw_emulator_dialogs();
     draw_ps1_dialogs();
     draw_wizard();
+    draw_changelog_popup();
     draw_find_games();
     draw_add_games();
     draw_details_modal();
@@ -27,6 +28,7 @@ void page_about() {
                           "GameCube games use Dolphin, Nintendo 3DS games use Azahar and Wii U games use Cemu; those emulators are downloaded "
                           "the first time you need them (or an existing Cemu is used). You supply your own game files; none are included.");
     ImGui::Dummy(ImVec2(0, 6 * S));
+    if (button("What's new", ImVec2(0, 0), false, true, ui::Icon::Star)) A.page = Page::Changelog;
     ImGui::Dummy(ImVec2(0, 10 * S));
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Updates");
