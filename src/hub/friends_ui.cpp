@@ -1094,7 +1094,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
                 const bool is_code = hubnet::username_looks_like_code(typed);
                 std::string code = is_code ? hubui::normalize_friend_code(typed) : std::string();
                 if (is_code && code.empty()) { FR.add_msg = "That doesn't look like a friend code (RH-XXXX-XXXX)."; FR.add_msg_until = ImGui::GetTime() + 6; }
-                else if (!is_code && !hubnet::username_ok(typed)) { FR.add_msg = "That doesn't look like a username (3-16 letters, numbers or _) or a friend code."; FR.add_msg_until = ImGui::GetTime() + 6; }
+                else if (!is_code && !hubnet::username_ok(typed)) { FR.add_msg = "That doesn't look like a username (3-16 letters, numbers, _ . -) or a friend code."; FR.add_msg_until = ImGui::GetTime() + 6; }
                 else if (is_code ? code == fr_my_code() : hubnet::username_key(typed) == hubnet::username_key(A.st.name)) { FR.add_msg = is_code ? "That is your own code." : "That is your own username."; FR.add_msg_until = ImGui::GetTime() + 6; }
                 else {
                     if (!FR.fake) { if (is_code) FR.cli.add_friend(code); else FR.cli.add_friend_username(typed); }

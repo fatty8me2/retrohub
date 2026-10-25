@@ -15,6 +15,8 @@ int main() {
     CHECK(username_validate("ab") == NameCheck::TooShort);
     CHECK(username_validate("abcdefghijklmnopq") == NameCheck::TooLong && username_validate("abcdefghijklmnop") == NameCheck::Ok);
     CHECK(username_validate("kai smith") == NameCheck::BadChars && username_validate("kai!") == NameCheck::BadChars);
+    CHECK(username_validate("kai.64") == NameCheck::Ok && username_validate("ka-i_x") == NameCheck::Ok && username_validate("kai-") == NameCheck::BadEdge && username_validate("ka._i") == NameCheck::BadEdge);
+    CHECK(username_validate("RH-7KQ2-M9XD") == NameCheck::Reserved && username_validate("rhabcdefgh") == NameCheck::Ok);
     CHECK(username_validate("_kai") == NameCheck::BadEdge && username_validate("kai_") == NameCheck::BadEdge && username_validate("ka__i") == NameCheck::BadEdge);
     CHECK(username_validate("Admin") == NameCheck::Reserved && username_validate("RETROHUB") == NameCheck::Reserved);
     CHECK(username_validate("  kai  ") == NameCheck::Ok);
@@ -67,6 +69,9 @@ int main() {
         c.mine_key = "kai"; c.set_input("Kai", t + 10); CHECK(c.state == Avail::Yours);
         Checker d; d.set_input("zed1", 0); d.want_send(1, true); d.sent(1);
         CHECK(d.on_result(1, false, "reserved", {}) && d.state == Avail::NotAllowed);
+        d.set_input("zed3", 4); d.want_send(5, true); d.sent(3); CHECK(d.on_result(3, false, "held", {}) && d.state == Avail::Taken);
+        d.set_input("zed4", 6); d.want_send(7, true); d.sent(4); CHECK(d.on_result(4, true, "", {}, true) && d.state == Avail::Yours);
+        d.set_input("zed5", 8); d.want_send(9, true); d.sent(5); CHECK(d.on_result(5, false, "rate-limited", {}) && d.state == Avail::Offline);
         d.set_input("zed2", 2); d.want_send(3, true); d.sent(2); d.on_connection_lost(); CHECK(d.state == Avail::Offline); }
 
     // wizard name step
@@ -86,7 +91,7 @@ int main() {
     CHECK(!banner_text(false, false, false).empty() && banner_text(false, false, false) != banner_text(false, false, true));
     CHECK(banner_text(true, true, true).find("unique usernames") != std::string::npos);
     CHECK(should_prompt(true, false) && !should_prompt(true, true) && !should_prompt(false, false));
-    CHECK(hold_rule_text().find("30 days") != std::string::npos);
+    CHECK(hold_rule_text().find("7 days") != std::string::npos);
     CHECK(claim_error_text("taken").find("took") != std::string::npos);
     CHECK(countdown_text(545) == "9:05" && countdown_text(-3) == "0:00" && countdown_text(0.2) == "0:01");
     CHECK(link_code_complete("k7m2-qx9p") && link_code_complete("K7M2QX9P") && !link_code_complete("K7M2-QX9"));

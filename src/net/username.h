@@ -2,8 +2,8 @@
 /* RetroHub usernames: pure validation / normalization / suggestions (header-only, no I/O). See docs/FRIENDS.md "Usernames".
  *
  * A username is the account. It is unique case-insensitively (the "key" is the lower-case form) but displayed as typed.
- * Rules (the server enforces the same ones plus its own reserved list): 3-16 characters, letters, digits and underscore,
- * starts with a letter or digit, does not end in an underscore, no double underscore. */
+ * Rules (the server enforces the same ones plus its own reserved list): 3-16 characters, letters, digits and _ . - ,
+ * starts and ends with a letter or digit, no two symbols in a row, never shaped like a friend code (RH-XXXX-XXXX). */
 
 #include <cstdint>
 #include <string>
@@ -13,7 +13,7 @@ namespace hubnet {
 
 constexpr int kUsernameMin = 3;
 constexpr int kUsernameMax = 16;
-constexpr int kUsernameHoldDays = 30;   // after a change the old name stays reserved for you; nobody else can take it meanwhile
+constexpr int kUsernameHoldDays = 7;    // after a change the old name stays reserved for you; nobody else can take it meanwhile
 
 enum class NameCheck { Ok, Empty, TooShort, TooLong, BadChars, BadEdge, Reserved };
 
@@ -37,9 +37,19 @@ inline std::string username_key(const std::string& in)
 inline bool username_reserved(const std::string& key)
 {
     static const char* kWords[] = {"admin", "administrator", "moderator", "mod", "system", "retrohub", "support", "staff", "owner",
-                                   "root", "server", "null", "undefined", "player", "guest", "official", "everyone", "anonymous"};
+                                   "root", "server", "null", "undefined", "player", "guest", "official", "everyone", "anonymous", "retro", "hub", "smashclassic", "help", "bot", "dev", "team"};   // the server holds the full list and is authoritative
     for (const char* w : kWords) if (key == w) return true;
     return false;
+}
+
+/* RH-XXXX-XXXX / RHXXXXXXXX: would be mistaken for a friend code, so it can't be a username. */
+inline bool username_looks_like_code_shape(const std::string& s)
+{
+    std::string t;
+    for (char c : s) if (c != '-') t += (char)((c >= 'a' && c <= 'z') ? c - 32 : c);
+    if (t.size() != 10 || t.compare(0, 2, "RH") != 0) return false;
+    for (size_t i = 2; i < t.size(); i++) if (!((t[i] >= 'A' && t[i] <= 'Z') || (t[i] >= '2' && t[i] <= '7'))) return false;
+    return true;
 }
 
 inline NameCheck username_validate(const std::string& in)
@@ -47,12 +57,15 @@ inline NameCheck username_validate(const std::string& in)
     const std::string s = username_trim(in);
     if (s.empty()) return NameCheck::Empty;
     for (unsigned char c : s) {
-        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-';
         if (!ok) return NameCheck::BadChars;
     }
     if (s.size() < (size_t)kUsernameMin) return NameCheck::TooShort;
     if (s.size() > (size_t)kUsernameMax) return NameCheck::TooLong;
-    if (s.front() == '_' || s.back() == '_' || s.find("__") != std::string::npos) return NameCheck::BadEdge;
+    auto alnum = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'); };
+    if (!alnum(s.front()) || !alnum(s.back())) return NameCheck::BadEdge;
+    for (size_t i = 1; i < s.size(); i++) if (!alnum(s[i]) && !alnum(s[i - 1])) return NameCheck::BadEdge;
+    if (username_looks_like_code_shape(s)) return NameCheck::Reserved;
     if (username_reserved(username_key(s))) return NameCheck::Reserved;
     return NameCheck::Ok;
 }
@@ -65,8 +78,8 @@ inline std::string username_problem_text(NameCheck c)
     switch (c) {
         case NameCheck::TooShort: return "Too short: use at least 3 characters.";
         case NameCheck::TooLong: return "Too long: 16 characters at most.";
-        case NameCheck::BadChars: return "Use letters, numbers and _ only (no spaces).";
-        case NameCheck::BadEdge: return "Start with a letter or number, and don't end with _ or use __.";
+        case NameCheck::BadChars: return "Use letters, numbers, _ . - only (no spaces).";
+        case NameCheck::BadEdge: return "Start and end with a letter or number, and no two symbols in a row.";
         case NameCheck::Reserved: return "That name is not allowed.";
         default: return "";
     }
