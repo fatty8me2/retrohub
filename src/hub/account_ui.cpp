@@ -104,6 +104,7 @@ void adopt_pending() {
     AC.redeem_buf[0] = 0;
     AC.show_code = false;
     AC.io_msg.clear();
+    cloud_account_changed();   // cloud saves follow the account: this PC pulls it (cloud wins where there is no local save)
     if (!FR.started)   // when the friends client runs, its IdentityAdopted event shows the same toast
         push_toast("Signed in as " + hubnet::friend_code(AC.pending.user_id) + " (your account from your other PC)", ui::GOOD, 6.0);
 }

@@ -393,6 +393,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         spawn_room(is_host, exe, "--from-hub --no-update-check", dir_of(exe), env, ri);   // RetroHub's updater is the only one
         return;
     }
+    if (share_save && (is_host || room_my_slot() == 0)) cloud_host_pull(e);   // cloud saves: guests' online temp saves never upload; the host's shared save is pulled fresh first
     /* port i -> i-th member in slot order (slots may have gaps); --slot stays the real lobby slot */
     /* The host builds the plan once and ships it; guests use it verbatim (fallback: derive locally for older hosts). */
     hubui::PortPlan plan;

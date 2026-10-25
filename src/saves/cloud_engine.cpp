@@ -1476,10 +1476,11 @@ void cloud_engine_start(const std::string& base_url) {
         E.startup_done = false;
         E.queue.set_path(queue_path());
         E.queue.load(queue_path());
+        E.queue.wake_parked(now_s(), true);        // hub start is a trigger for retries that gave up
         E.acct.device_name = E.device_name;
         E.acct.queued_games = queued_count_locked();
     }
-    refresh_identity();
+    { bool inline_id; { std::lock_guard<std::mutex> lk(E.mu); inline_id = E.ecfg.no_threads || E.id_override; } if (inline_id) refresh_identity(); }   // identity.json is read/created on the worker thread otherwise
     {   // local games are listed right away (state Unknown until looked at)
         std::vector<GameId> games;
         std::error_code ec;
@@ -1544,6 +1545,17 @@ std::string cloud_queue_dump() {
     std::string s;
     for (auto& q : E.queue.items()) s += q.gkey + ":" + q.reason + ":" + std::to_string(q.tries) + ":" + std::to_string(q.next_at) + ";";
     return s;
+}
+
+void cloud_account_changed() {
+    {
+        std::lock_guard<std::mutex> lk(E.mu);
+        if (E.id_override) return;     // tests set the identity explicitly
+        E.id_stamp = 0;                // refresh_identity() re-reads identity.json on its next run
+        E.startup_wanted = true;
+        E.startup_done = false;
+    }
+    E.cv.notify_all();
 }
 
 void cloud_wake_queue() {
