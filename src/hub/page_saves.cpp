@@ -39,7 +39,12 @@ void result_line(const std::string& s, bool ok) {
 }
 
 void page_saves() {
-    page_header("Saves", "One portable save vault. Sync it between PCs or back it up; saves follow you across installs.");
+    {
+        std::string hdr = A.st.username_claimed && !A.st.name.empty()
+            ? "Your saves follow you: cloud backup for " + A.st.name + ", automatic on every PC you sign in on. You can also keep a copy in a folder or a file."
+            : "Your saves follow you: cloud backup follows your RetroHub account on every PC you sign in on. You can also keep a copy in a folder or a file.";
+        page_header("Saves", hdr.c_str());
+    }
     if (A.vault_dirty) refresh_vault();
     bool busy = A.job.running;
 

@@ -181,10 +181,15 @@ int main(int argc, char** argv) {
     } else if (cmd == "status" && rest.size() >= 3) {
         print_state(GameId{rest[1], rest[2]});
     } else if (cmd == "recovery") {
-        std::string code = cloud_recovery_code();
-        std::string u2, s2, err;
-        bool ok = recovery_decode(code, &u2, &s2, &err) && u2 == uid;
-        std::printf("recovery_code_len=%d roundtrip=%d\n", (int)code.size(), (int)ok);
+        /* the ONE account code: make it on the server, then redeem it in a second (empty) data dir via cloud_adopt_recovery_code */
+        std::string code, err;
+        bool made = cloud_create_account_code(&code, &err);
+        std::printf("recovery made=%d code_len=%d err=%s\n", (int)made, (int)code.size(), err.c_str());
+        if (made) std::printf("account_code=%s\n", code.c_str());
+    } else if (cmd == "adopt" && rest.size() >= 2) {
+        std::string err;
+        bool ok = cloud_adopt_recovery_code(rest[1], &err);
+        std::printf("adopt ok=%d err=%s\n", (int)ok, err.c_str());
     } else {
         std::fputs("unknown command\n", stderr);
         rc = 2;

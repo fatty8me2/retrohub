@@ -11,6 +11,7 @@
 #include "savestore.h"
 #include "games.h"
 #include "friends.h"
+#include "identity_link.h"
 #include "json.h"
 #include "winutil.h"
 
@@ -1818,19 +1819,25 @@ bool cloud_restore_version(const GameId& g, const std::string& path, int ver, st
     return true;
 }
 
+/* The account code (XXXX-XXXX-XXXX) is the ONE add / recover mechanism: the Settings > Account screen and this engine share
+ * identity_link (server: /link/keep + /link/redeem). The text is kept in account_code.txt next to identity.json. */
 std::string cloud_recovery_code() {
-    str uid, secret;
-    {
-        std::lock_guard<std::mutex> lk(E.mu);
-        uid = E.uid; secret = E.secret;
-    }
-    if (uid.empty()) {
-        hubnet::Identity id;
-        if (hubnet::identity_read_file(data_dir_s() + "identity.json", &id)) { uid = id.user_id; secret = id.secret; }
-    }
-    return recovery_encode(uid, secret);
+    std::ifstream f(data_dir_s() + "account_code.txt");
+    str c;
+    if (f && std::getline(f, c)) { while (!c.empty() && (c.back() == '\r' || c.back() == ' ')) c.pop_back(); }
+    return hubnet::link_normalize_code(c).size() == 12 ? c : str();
 }
-
+bool cloud_create_account_code(std::string* code, std::string* err) {
+    hubnet::Identity id;
+    if (!hubnet::identity_read_file(data_dir_s() + "identity.json", &id)) { if (err) *err = "There is no account on this PC yet."; return false; }
+    str base, e2, c;
+    { std::lock_guard<std::mutex> lk(E.mu); base = E.base_url; }
+    if (!hubnet::link_keep_code(base, id, &c, &e2)) { if (err) *err = e2; return false; }
+    std::ofstream f(data_dir_s() + "account_code.txt", std::ios::trunc);
+    if (f) f << c << "\n";
+    if (code) *code = c;
+    return true;
+}
 /* One "add / recover this account" path: recovery codes and link codes both end here. The identity files are replaced (the
  * old account is backed up by hubnet), the engine switches accounts and enters restore mode: cloud wins for every game this
  * PC has no save for, and a differing local save becomes a conflict at the game's next launch. */
@@ -1850,9 +1857,13 @@ bool cloud_adopt_account(const std::string& uid, const std::string& secret, std:
     return true;
 }
 bool cloud_adopt_recovery_code(const std::string& code, std::string* err) {
-    str uid, secret;
-    if (!recovery_decode(code, &uid, &secret, err)) return false;
-    return cloud_adopt_account(uid, secret, err);
+    str base;
+    { std::lock_guard<std::mutex> lk(E.mu); base = E.base_url; }
+    hubnet::Identity id;
+    str e2;
+    if (!hubnet::link_redeem_code(base, code, &id, &e2)) { if (err) *err = e2; return false; }
+    std::remove((data_dir_s() + "account_code.txt").c_str());   // the saved code belonged to the previous account
+    return cloud_adopt_account(id.user_id, id.secret, err);
 }
 
 void cloud_set_device_name(const std::string& name) {

@@ -171,7 +171,7 @@ inline bool link_code_complete(const std::string& typed)
 {
     int n = 0;
     for (unsigned char c : typed) if (std::isalnum(c)) n++;
-    return n == 8;
+    return n == 8 || n == 12;
 }
 
 }  // namespace un

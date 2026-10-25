@@ -106,9 +106,6 @@ struct BaseStore {
     bool save(const std::string& path) const;
 };
 
-/* ---- recovery code (cloud_recovery.cpp) ---- */
-std::string recovery_encode(const std::string& uid, const std::string& secret);                       // groups of 4, '-' separated
-bool recovery_decode(const std::string& code, std::string* uid, std::string* secret, std::string* err);
 
 /* ---- engine hooks for the app and tests (not part of the UI contract) ---- */
 struct EngineConfig {

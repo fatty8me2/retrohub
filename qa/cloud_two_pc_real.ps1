@@ -127,8 +127,30 @@ try {
     $hp.WaitForExit(30000) | Out-Null
     Check (LogHas $w "/saves/v2/lease") "wrangler log shows lease requests"
 
+    Write-Host "R10. fresh PC via the account code (XXXX-XXXX-XXXX), account 2"
+    Use-Worker $w 2
+    $a1 = Pc "a1"
+    $CG = "code-game"; GPut $a1 $CG $SaveRel ("progress-" + ("Z" * 3000)); Sess $a1 $CG | Out-Null
+    $r = Run $a1 @("recovery")
+    $m = [regex]::Match($r, "account_code=([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})")
+    Check ($m.Success -and $r -match "made=1") "the account code is made on the server ($($r -replace 'account_code=\S+','account_code=<hidden>'))"
+    $code = $m.Groups[1].Value
+    $a2 = Pc "a2"
+    $fakeUid = (B32 26); $fakeSecret = (B32 52)
+    $ad = @("--data", $a2.Data, "--vault", $a2.Vault, "--url", $Url, "--uid", $fakeUid, "--secret", $fakeSecret, "--name", "a2")
+    $r = (& $Tool @ad adopt "ABCD-EFGH-JKMN" 2>&1 | Out-String).Trim()
+    Check ($r -match "adopt ok=0") "a wrong code is refused ($r)"
+    $r = (& $Tool @ad adopt $code 2>&1 | Out-String).Trim()
+    Check ($r -match "adopt ok=1") "the right code adopts the account ($r)"
+    $idtxt = Get-Content (Join-Path $a2.Data "identity.json") -Raw
+    Check ($idtxt -match $Uid) "identity.json on the new PC now holds the account (uid match)"
+    $r = Run $a2 @("flush")
+    Check ((GText $a2 $CG $SaveRel) -like "progress-ZZZ*") "the new PC got the saves after adopting ($r)"
+    $r = (& $Tool @ad adopt ($code.ToLower().Replace("-", " ")) 2>&1 | Out-String).Trim()
+    Check ($r -match "adopt ok=1") "the code is not single-use and accepts lower case / spaces ($r)"
+
     Write-Host "R8. server log sanity"
-    $lg = Get-Content $w.Log -Raw
+    $lg = (Get-Content $w.Log | Where-Object { $_ -notmatch "/link/redeem" }) -join "`n"   # the deliberate wrong-code redeem is a 404
     Check (($lg -match "/saves/v2/manifest") -and ($lg -match "/saves/v2/plan") -and ($lg -match "/saves/v2/blob")) "manifest, plan and blob requests reached the Worker"
     Check ($lg -notmatch " 40[0134] ") "no 400/401/403/404 replies in the Worker log"
     Stop-Worker $w

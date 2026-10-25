@@ -29,7 +29,10 @@ static std::string cloud_base_url() {
 static bool g_cloud_on = false;
 
 void cloud_boot() {
-    if (g_headless || std::getenv("RETROHUB_NO_CLOUD")) return;
+    /* Screenshot/QA runs normally never touch the network. HUB_SHOT_CLOUD_REAL=1 lets a headless run start the REAL engine, but only
+     * against a loopback server (qa\cloud_ui_shots_real.ps1 uses a local Worker). */
+    const bool real_shot = g_headless && std::getenv("HUB_SHOT_CLOUD_REAL") && cloud_base_url().rfind("http://127.0.0.1", 0) == 0;
+    if ((g_headless && !real_shot) || std::getenv("RETROHUB_NO_CLOUD")) return;
     hub::saves::cloud_engine_start(cloud_base_url());   // automatic for every account: no opt-in, identity = the account
     g_cloud_on = true;
 }
@@ -62,6 +65,7 @@ hub::saves::CloudStatus cloud_status_now() {
 /* ---------- pre-launch gate (see CloudGate in app.h) ---------- */
 
 static void gate_finish() {
+    cloud_ui_checking("", false);
     A.cloud_gate.phase = CloudGate::Idle;
     A.cloud_gate.res = hub::saves::PrelaunchResult();
     std::function<void()> go;
@@ -84,7 +88,7 @@ bool cloud_gate_begin(const hub::GameEntry& e, std::function<void()> proceed) {
     A.cloud_gate.title = e.title;
     A.cloud_gate.mode = hub::saves::SyncMode::ReadWrite;   // offline play from the library always uses the vault save
     A.cloud_gate.proceed = std::move(proceed);
-    set_notice("Checking cloud saves...", 6.0);
+    cloud_ui_checking(e.title, true);   // "Getting your save from the cloud..." strip (Lane U)
     gate_task([id]() { A.cloud_gate.res = hub::saves::cloud_prelaunch(id, hub::saves::SyncMode::ReadWrite); });
     return true;
 }
@@ -93,17 +97,20 @@ bool cloud_gate_begin(const hub::GameEntry& e, std::function<void()> proceed) {
 static void gate_handle_result() {
     using hub::saves::PrelaunchResult;
     const PrelaunchResult& r = A.cloud_gate.res;
-    if (r.offline) set_notice("Offline: playing with the saves on this PC; they will sync when you are back.", 6.0);
+    cloud_ui_checking("", false);
+    cloud_ui_prelaunch_notice(r);   // offline / "pulled N files" notices
     if (r.action == PrelaunchResult::NeedConflictDecision) {
         A.cloud_gate.phase = CloudGate::AskConflict;
         if (A.cloud_gate.on_ask) A.cloud_gate.on_ask();
-        else cloud_gate_choose_conflict(hub::saves::ConflictChoice::UseNewer);   // preselected default
+        else cloud_ui_ask_conflict(A.cloud_gate.game, A.cloud_gate.title, r.conflicts,
+                                   [](hub::saves::ConflictChoice c) { cloud_gate_choose_conflict(c); });
         return;
     }
     if (r.action == PrelaunchResult::NeedLeaseDecision) {
         A.cloud_gate.phase = CloudGate::AskLease;
         if (A.cloud_gate.on_ask) A.cloud_gate.on_ask();
-        else cloud_gate_choose_lease(hub::saves::LeaseChoice::PlayAnyway);
+        else cloud_ui_ask_lease(A.cloud_gate.game, A.cloud_gate.title, r.held_by, r.held_since,
+                                [](hub::saves::LeaseChoice c) { cloud_gate_choose_lease(c); });
         return;
     }
     gate_finish();
@@ -119,6 +126,7 @@ void cloud_gate_tick() {
 void cloud_gate_choose_conflict(hub::saves::ConflictChoice c) {
     if (A.cloud_gate.phase != CloudGate::AskConflict) return;
     hub::saves::GameId id = A.cloud_gate.game;
+    cloud_ui_checking(A.cloud_gate.title, true);
     gate_task([id, c]() {
         hub::saves::cloud_resolve_conflict(id, c);   // UseCloud downloads, so it runs off the UI thread
         A.cloud_gate.res = hub::saves::PrelaunchResult();
