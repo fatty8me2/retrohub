@@ -4,7 +4,7 @@
 param([string]$Out = "$env:TEMP\cheat_shots", [string]$Exe = "$PSScriptRoot\..\build\bin\Release\RetroHub.exe")
 New-Item -ItemType Directory -Force $Out | Out-Null
 Remove-Item -Recurse -Force "$env:TEMP\hub_cheats_shot" -ErrorAction SilentlyContinue
-$env:RETROHUB_NO_SHELL = "1"; $env:HUB_SHOT_NOWAIT = "1"; $env:HUB_SHOT_SECS = "3"; $env:RETROHUB_QA = "1"
+$env:RETROHUB_NO_SHELL = "1"; $env:HUB_SHOT_PAD = "wait"; $env:HUB_SHOT_FAKE_LIB = "3"; $env:HUB_SHOT_NOWAIT = "1"; $env:HUB_SHOT_SECS = "3"; $env:RETROHUB_QA = "1"
 function Shot($name, $vars) {
   foreach ($k in $vars.Keys) { Set-Item "env:$k" $vars[$k] }
   $env:HUB_SCREENSHOT = "$Out\$name.bmp"

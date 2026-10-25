@@ -10,7 +10,14 @@ struct Ps1Ask {
     bool open = false;
     std::string key;       // game to start once a BIOS was chosen
     std::string warning;   // last pick was not a known dump
+    bool focused = false;
 } ASK;
+
+struct Ps2Ask {
+    bool open = false;
+    std::string key;
+    std::string warning;
+} ASK2;
 
 std::string staging_dir() { return hub::data_dir() + "system\\ps1"; }
 
@@ -20,7 +27,24 @@ std::vector<hub::ps1::BiosFound> find_all() {
     return hub::ps1::find_bios(hub::ps1::bios_search_dirs(A.st.rom_folders, A.st.ps1_bios, staging_dir(), home ? home : "", hub::exe_dir(), appdata ? appdata : ""));
 }
 
+/* A BIOS folder chosen with the pad folder browser. Returns true when a PS1 BIOS lives there. */
+bool use_ps1_bios_dir(const std::string& dir) {
+    std::vector<hub::ps1::BiosFound> found = hub::ps1::find_bios({dir});
+    if (found.empty()) return false;
+    A.st.ps1_bios = dir;
+    mark_dirty();
+    return true;
+}
+
 }  // namespace
+
+void ps1_bios_ask_shot() { ASK.open = true; ASK.key.clear(); ASK.warning.clear(); }
+
+void ps2_bios_ask(const std::string& key) {
+    ASK2.open = true;
+    ASK2.key = key;
+    ASK2.warning.clear();
+}
 
 /* Number of local pads (multitap "auto"). */
 static int local_pad_count() { return (int)A.pads.size(); }
@@ -54,7 +78,39 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
     spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
 }
 
+static void draw_ps2_ask() {
+    if (!ASK2.open) return;
+    bool open = false;
+    emu_modal_begin("PlayStation 2 BIOS", &open);
+    if (!open) return;
+    if (ui::modal_back()) ASK2.open = false;
+    ImGui::TextWrapped("PS2 needs a BIOS file.");
+    ImGui::Dummy(ImVec2(0, 2 * S));
+    text_wrapped_disabled(hubemu::pcsx2_bios_missing_text());
+    if (!ASK2.warning.empty()) { ImGui::Dummy(ImVec2(0, 2 * S)); ImGui::TextColored(ImColor(ui::WARN), "%s", ASK2.warning.c_str()); }
+    ImGui::Dummy(ImVec2(0, 8 * S));
+    static bool seen2 = false;
+    if (!seen2) { ImGui::SetKeyboardFocusHere(0); seen2 = true; }   // a pad lands on "Choose", not on Cancel
+    const bool choose = button("Choose BIOS folder...", ImVec2(240 * S, 44 * S), true, true, ui::Icon::Folder);
+    std::string dir = osk::folder("ps2bios", choose);
+    if (!dir.empty()) {
+        hubemu::Bios b = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(dir, A.st.rom_folders));
+        if (b.file.empty()) ASK2.warning = "No PS2 BIOS (scph*.bin) was found in that folder. Pick the folder that holds it.";
+        else {
+            A.st.ps2_bios_dir = dir;
+            mark_dirty();
+            ASK2.open = false;
+            if (const hub::GameEntry* g = find_entry(ASK2.key)) { hub::GameEntry copy = *g; play_entry(copy); }
+        }
+    }
+    ImGui::SameLine();
+    if (button("Cancel", ImVec2(140 * S, 44 * S))) ASK2.open = false;
+    if (!ASK2.open) { ImGui::CloseCurrentPopup(); seen2 = false; }
+    ImGui::EndPopup();
+}
+
 void draw_ps1_dialogs() {
+    draw_ps2_ask();
     if (!ASK.open) return;
     bool open = false;
     emu_modal_begin("PlayStation BIOS", &open);
@@ -66,7 +122,13 @@ void draw_ps1_dialogs() {
                               "is picked up automatically.");
         if (!ASK.warning.empty()) { ImGui::Dummy(ImVec2(0, 2 * S)); ImGui::TextColored(ImColor(ui::WARN), "%s", ASK.warning.c_str()); }
         ImGui::Dummy(ImVec2(0, 8 * S));
-        if (button("Choose BIOS file...", ImVec2(220 * S, 44 * S), true, true, ui::Icon::Folder)) {
+        if (ui::modal_back()) ASK.open = false;
+        const bool pad = A.pad_mode;
+        if (!ASK.focused) { ImGui::SetKeyboardFocusHere(0); ASK.focused = true; }   // a pad lands on "Choose", not on a later button
+        const bool choose = button(pad ? "Choose BIOS folder..." : "Choose BIOS file...", ImVec2(220 * S, 44 * S), true, true, ui::Icon::Folder);
+        std::string picked;
+        if (pad) picked = osk::folder("ps1bios", choose);
+        else if (choose) {
             std::string p = pick_path(A.hwnd, false, L"PlayStation BIOS", L"*.bin");
             if (!p.empty()) {
                 std::vector<hub::ps1::BiosFound> found = hub::ps1::find_bios({std::filesystem::u8path(p).parent_path().u8string()});
@@ -83,6 +145,13 @@ void draw_ps1_dialogs() {
                 }
             }
         }
+        if (!picked.empty()) {
+            if (!use_ps1_bios_dir(picked)) ASK.warning = "No PlayStation BIOS (scph*.bin) was found in that folder. Pick the folder that holds it.";
+            else {
+                ASK.open = false;
+                if (const hub::GameEntry* g = find_entry(ASK.key)) { hub::GameEntry copy = *g; play_entry(copy); }
+            }
+        }
         ImGui::SameLine();
         if (button("Use built-in OpenBIOS", ImVec2(220 * S, 44 * S))) {
             A.st.ps1_openbios = true;
@@ -90,9 +159,8 @@ void draw_ps1_dialogs() {
             ASK.open = false;
             if (const hub::GameEntry* g = find_entry(ASK.key)) { hub::GameEntry copy = *g; play_entry(copy); }
         }
-        ImGui::SameLine();
         if (button("Cancel", ImVec2(140 * S, 44 * S))) ASK.open = false;
-        if (!ASK.open) ImGui::CloseCurrentPopup();
+        if (!ASK.open) { ImGui::CloseCurrentPopup(); ASK.focused = false; }
         ImGui::EndPopup();
     }
 }
@@ -114,9 +182,15 @@ void ps1_settings_ui() {
         const hub::ps1::BiosFound& b = found[0];
         text_wrapped_disabled("PlayStation BIOS: " + b.path + (b.known ? std::string("  (") + b.known->desc + ")" : std::string("  (unrecognised checksum)")));
     }
-    if (button("Choose PlayStation BIOS...", ImVec2(0, 0), false, true, ui::Icon::Folder)) {
-        std::string p = pick_path(A.hwnd, false, L"PlayStation BIOS", L"*.bin");
-        if (!p.empty()) { A.st.ps1_bios = p; mark_dirty(); looked_at = -100; }
+    {
+        const bool choose = button(A.pad_mode ? "Choose PlayStation BIOS folder..." : "Choose PlayStation BIOS...", ImVec2(0, 0), false, true, ui::Icon::Folder);
+        if (A.pad_mode) {
+            std::string d = osk::folder("ps1bios_set", choose);
+            if (!d.empty()) { if (!use_ps1_bios_dir(d)) push_toast("No PlayStation BIOS (scph*.bin) in that folder.", ui::WARN, 6.0); looked_at = -100; }
+        } else if (choose) {
+            std::string p = pick_path(A.hwnd, false, L"PlayStation BIOS", L"*.bin");
+            if (!p.empty()) { A.st.ps1_bios = p; mark_dirty(); looked_at = -100; }
+        }
     }
     if (!A.st.ps1_bios.empty()) {
         ImGui::SameLine();

@@ -219,6 +219,9 @@ std::vector<std::pair<std::string, std::string>> smash_env(const std::string& ex
     auto env = hubui::smash_launch_env(rom, save);
     {   // BattleShip applies RetroHub's n64 profile (with --from-hub): SSB64_CONTROLS=<resolved profile json>
         hubctl::Profile p = controls_profile("n64", hubui::kSmashSaveKey);
+        /* Not customized (same mapping as the built-in default, even if an "n64-custom" copy exists from just opening the page):
+         * send the built-in name so BattleShip keeps its natural Smash layout (hub_controls_apply.cpp checks "default-n64"). */
+        p = hubctl::canonical_name(p);
         std::string path = hub::data_dir() + "controls_run_smash.json";
         if (hubctl::write_profile_file(path, p)) env.push_back({"SSB64_CONTROLS", path});
     }
@@ -278,7 +281,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is downloaded or started
         ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
-        if (ps2_bios.file.empty()) { set_notice(hubemu::pcsx2_bios_missing_text(), 15.0); return; }
+        if (ps2_bios.file.empty()) { ps2_bios_ask(e.key); return; }
     }
     hubemu::Install inst = hubemu::find(kind, A.st.cemu_exe, e.path);
     if (inst.exe.empty()) {   // not installed: ask, download, then start this game

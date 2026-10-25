@@ -210,10 +210,60 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         {   // LT / RT = page up / page down in whatever list has the focus (ImGui moves the focus along with the scroll)
             static bool pg_up = false, pg_dn = false;
+            static ImGuiKey nudge = ImGuiKey_None;   // one-shot d-pad press that lands the focus after a manual page scroll
+            struct Pend { int dir = 0, wait = 0, refocus = 0; ImGuiID nav = 0, wid = 0; float scroll = 0; };
+            static Pend pend;
+            ImGuiContext& pg = *ImGui::GetCurrentContext();
             if (pg_up) { io.AddKeyEvent(ImGuiKey_PageUp, false); pg_up = false; }
             if (pg_dn) { io.AddKeyEvent(ImGuiKey_PageDown, false); pg_dn = false; }
-            if (A.pad_mode && ImGui::IsKeyPressed(ImGuiKey_GamepadL2, true)) { io.AddKeyEvent(ImGuiKey_PageUp, true); pg_up = true; }
-            if (A.pad_mode && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, true)) { io.AddKeyEvent(ImGuiKey_PageDown, true); pg_dn = true; }
+            if (nudge != ImGuiKey_None) { io.AddKeyAnalogEvent(nudge, false, 0.f); nudge = ImGuiKey_None; }
+            const bool up = A.pad_mode && ImGui::IsKeyPressed(ImGuiKey_GamepadL2, true), dn = A.pad_mode && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, true);
+            /* Library / friends panel: ImGui's own page move (it lands the focus on the item a page away). Every other page keeps
+             * its items in nested panels, where that move jumps to the top bar: scroll by hand there and step the focus onto the screen. */
+            const bool manual = A.page != Page::Library && !A.st.show_friends;
+            if (up && !manual) { io.AddKeyEvent(ImGuiKey_PageUp, true); pg_up = true; }
+            if (dn && !manual) { io.AddKeyEvent(ImGuiKey_PageDown, true); pg_dn = true; }
+            auto scroller = [&](int dir) -> ImGuiWindow* {   // nearest scrollable window around the focus that still has room that way
+                for (ImGuiWindow* w = pg.NavWindow; w; w = w->ParentWindow)
+                    if (w->ScrollMax.y > 0.f && (dir > 0 ? w->Scroll.y < w->ScrollMax.y - 1.f : w->Scroll.y > 1.f)) return w;
+                return nullptr;
+            };
+            if (up || dn) {
+                ImGuiWindow* w = scroller(up ? -1 : 1);
+                pend = Pend{up ? -1 : 1, 3, 0, pg.NavId, w ? w->ID : 0, w ? w->Scroll.y : 0.f};
+                if (manual) {
+                    pend.wait = 0;
+                    if (w && !ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+                        ImGui::SetScrollY(w, std::max(0.f, std::min(w->ScrollMax.y, w->Scroll.y + pend.dir * w->InnerRect.GetHeight() * 0.85f)));
+                        pend.refocus = 3;
+                    } else pend.dir = 0;
+                }
+            } else if (pend.dir && pend.wait > 0 && --pend.wait == 0) {
+                /* ImGui's own page move found nothing to move to (the page's items sit in nested panels, or the focused panel is at its
+                 * end): scroll the nearest scrollable window by hand, then step the focus onto what is now on screen. */
+                ImGuiWindow* w = pend.wid ? ImGui::FindWindowByID(pend.wid) : nullptr;
+                const bool stuck = pg.NavId == pend.nav && (!w || std::abs(w->Scroll.y - pend.scroll) < 1.f);
+                if (stuck && !pg.NavWindowingTarget && !ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+                    ImGuiWindow* t = scroller(pend.dir);
+                    if (t) {
+                        ImGui::SetScrollY(t, std::max(0.f, std::min(t->ScrollMax.y, t->Scroll.y + pend.dir * t->InnerRect.GetHeight() * 0.85f)));
+                        pend.wid = t->ID;
+                        pend.refocus = 3;
+                    }
+                }
+                if (!pend.refocus) pend.dir = 0;
+            } else if (pend.refocus > 0 && --pend.refocus == 0) {
+                ImGuiWindow* w = ImGui::FindWindowByID(pend.wid);
+                if (w && pg.NavWindow) {
+                    ImRect r = ImGui::WindowRectRelToAbs(pg.NavWindow, pg.NavWindow->NavRectRel[pg.NavLayer]);
+                    const ImRect view = w->InnerRect;
+                    if (r.Min.y < view.Min.y || r.Max.y > view.Max.y) {   // the focused item scrolled out of view: ImGui steps from the clamped rect to what is on screen
+                        nudge = pend.dir > 0 ? ImGuiKey_GamepadDpadDown : ImGuiKey_GamepadDpadUp;
+                        io.AddKeyAnalogEvent(nudge, true, 1.f);
+                    }
+                }
+                pend.dir = 0;
+            }
         }
         ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, 1);   // Y is a context-action button here: ImGui's own "Y activates the focused item" must not fire it
         ImGui::NewFrame();

@@ -6,6 +6,8 @@
 #include "cheats.h"
 #include "cheats_db.h"
 
+namespace { int g_rev = 1; }   // bumped on every change of the store: invalidates the row caches
+
 /* ---------- Cheats: panel (details > Cheats, Y on a pad), in-game overlay, online room strip ----------
  * Choices live in the save vault (cheat_store.h, _settings\cheats.json) and follow the player to every PC. The runner gets
  * `--cheats <file>` and live-reloads it, so a toggle while a game runs just rewrites that file. Online, the host's list
@@ -41,8 +43,23 @@ void ensure_loaded() {
     g_loaded = true;
     g_store.load(vault());
 }
-void reload() { g_loaded = false; ensure_loaded(); }
-void persist() { g_store.save(vault()); A.vault_dirty = true; }
+void reload() { g_loaded = false; ++g_rev; ensure_loaded(); }
+void persist() { ++g_rev; g_store.save(vault()); A.vault_dirty = true; }
+
+std::string safe_name(std::string s);
+/* The game's vault folder and battery folder (headless runs use a temp folder instead of the real vault). */
+std::string gdir_of(const hub::GameEntry& e) {
+    if (!g_headless) return hub::saves::game_dir(sys_short(e), e.key);
+    std::string d = with_slash(vault()) + "games\\" + safe_name(sys_short(e) + "_" + e.key) + "\\";
+    make_dirs(d);
+    return d;
+}
+std::string battery_of(const hub::GameEntry& e) {
+    if (!g_headless) return hub::saves::battery_dir(sys_short(e), e.key);
+    std::string d = gdir_of(e) + "battery\\";
+    make_dirs(d);
+    return d;
+}
 
 std::string safe_name(std::string s) {
     for (auto& c : s) if (!(std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.')) c = '_';
@@ -64,15 +81,45 @@ std::string stamp_now() {
 }
 int64_t now_s() { return (int64_t)std::time(nullptr); }
 
-std::vector<cheatstore::DbItem> db_items(const hub::GameEntry& e) {
+/* Stable id from the cheat's own text (the database's positional ids would shift when the bundle is updated). */
+std::string stable_id(const cheats::Cheat& c, std::map<std::string, int>* seen) {
+    uint64_t h = 1469598103934665603ull;
+    auto mix1 = [&](const std::string& t) { for (unsigned char ch : t) { h ^= ch; h *= 1099511628211ull; } h ^= 0x1F; h *= 1099511628211ull; };
+    mix1(c.desc);
+    for (auto& l : c.codes) mix1(l);
+    char b[24];
+    std::snprintf(b, sizeof b, "c%012llx", (unsigned long long)(h & 0xFFFFFFFFFFFFull));
+    int n = (*seen)[b]++;
+    return n ? std::string(b) + "-" + std::to_string(n) : std::string(b);
+}
+
+/* The database list for one game, computed once (lists can have 12 000 entries). Masters + Popular lead and count as featured. */
+const std::vector<cheatstore::DbItem>& db_items(const hub::GameEntry& e) {
+    static std::map<std::string, std::vector<cheatstore::DbItem>> cache;
+    auto it = cache.find(e.key);
+    if (it != cache.end()) return it->second;
     std::vector<cheatstore::DbItem> v;
-    for (auto& d : cheatsdb::cheats_for(e)) { cheatstore::DbItem i; i.cheat = d.cheat; i.featured = d.featured; v.push_back(i); }
-    return v;
+    size_t prefix = 0;
+    std::vector<cheats::Cheat> all = hub::cheats_for(e, &prefix);
+    std::map<std::string, int> seen;
+    for (size_t i = 0; i < all.size(); ++i) {
+        cheatstore::DbItem d;
+        d.cheat = all[i];
+        d.cheat.id = stable_id(all[i], &seen);
+        d.featured = i < prefix;
+        v.push_back(std::move(d));
+    }
+    return cache.emplace(e.key, std::move(v)).first->second;
 }
-std::vector<cheatstore::Row> rows_for(const hub::GameEntry& e) {
+const std::vector<cheatstore::Row>& rows_cached(const hub::GameEntry& e) {
+    static std::string key;
+    static int rev = -1;
+    static std::vector<cheatstore::Row> rows;
     ensure_loaded();
-    return cheatstore::build_rows(g_store, e.key, db_items(e));
+    if (key != e.key || rev != g_rev) { rows = cheatstore::build_rows(g_store, e.key, db_items(e)); key = e.key; rev = g_rev; }
+    return rows;
 }
+std::vector<cheatstore::Row> rows_for(const hub::GameEntry& e) { return rows_cached(e); }
 cheats::Target target_of(const hub::GameEntry& e) {
     cheats::Target t = cheats::Target::N64;
     cheats::target_for_system(sys_short(e), &t);
@@ -81,7 +128,7 @@ cheats::Target target_of(const hub::GameEntry& e) {
 
 void write_run(const hub::GameEntry& e) {
     std::string err;
-    cheats::save_file(run_file(e.key), cheatstore::runner_set(rows_for(e)), &err);
+    cheats::save_file(run_file(e.key), cheatstore::runner_set(rows_cached(e)), &err);
 }
 
 bool in_room_for(const hub::GameEntry& e) { return A.in_room && A.selected_game == room_id(e); }
@@ -91,9 +138,9 @@ bool running_online(const hub::GameEntry& e) { return A.proc && A.run.online && 
 /* First time cheats go on in a game: copy its save aside, once. */
 void first_enable_backup(const hub::GameEntry& e) {
     const cheatstore::GameState* gs = g_store.game(e.key);
-    std::string gd = hub::saves::game_dir(sys_short(e), e.key);
+    std::string gd = gdir_of(e);
     if (gs && cheatstore::has_backup(gd, gs->backup)) return;
-    std::string bat = hub::saves::battery_dir(sys_short(e), e.key);
+    std::string bat = battery_of(e);
     int files = 0;
     uint64_t bytes = 0;
     count_files(bat, &files, &bytes);
@@ -184,9 +231,7 @@ bool cheats_supported(const hub::GameEntry& e) {
 int cheats_enabled_count(const hub::GameEntry& e) {
     if (!cheats_supported(e)) return 0;
     ensure_loaded();
-    int n = 0;
-    for (auto& r : rows_for(e)) if (r.cheat.enabled) ++n;   // only ids that still exist count
-    return n;
+    return g_store.on_count(e.key);
 }
 
 void cheats_open(const hub::GameEntry& e) {
@@ -235,7 +280,7 @@ std::string cheats_launch_args(const hub::GameEntry& e, bool online, bool is_hos
         return " --cheats " + quote(path);
     }
     cheats::CheatSet cs;
-    if (is_host_) cs = cheatstore::enabled_only(rows_for(e));
+    if (is_host_) cs = cheatstore::enabled_only(rows_cached(e));
     else if (!launch_body || !cheatstore::extract_launch(*launch_body, &cs)) return "";
     for (auto& c : cs.cheats) c.enabled = true;
     if (cs.cheats.empty()) return "";
@@ -246,7 +291,7 @@ std::string cheats_launch_args(const hub::GameEntry& e, bool online, bool is_hos
 /* ",\"cheats\":{...}" for the host's launch message. */
 std::string cheats_launch_fragment(const hub::GameEntry& e) {
     if (!cheats_supported(e)) return "";
-    return cheatstore::launch_fragment(cheatstore::enabled_only(rows_for(e)));
+    return cheatstore::launch_fragment(cheatstore::enabled_only(rows_cached(e)));
 }
 
 /* Why the host cannot launch with cheats right now ("" = fine). */
@@ -267,7 +312,7 @@ void cheats_room_strip(const hub::GameEntry* rg, bool host) {
     if (!rg || !cheats_supported(*rg)) return;
     std::vector<std::string> names;
     if (host) {
-        names = cheatstore::enabled_names(rows_for(*rg));
+        names = cheatstore::enabled_names(rows_cached(*rg));
         std::string sig = A.selected_game + "|" + std::to_string(A.peers.size()) + "|" + std::to_string(A.lobby.members().size());
         for (auto& n : names) sig += "|" + n;
         if (!g_fake_room && sig != g_sent_sig) {
@@ -309,9 +354,11 @@ void draw_cheats_modal() {
             ensure_loaded();
             std::string mode = m;
             if (mode != "empty") {
-                for (auto& d : cheatsdb::cheats_for(e)) { g_store.set_on(e.key, d.cheat.id, true, 1); break; }
+                { size_t k = 0; for (auto& d : db_items(e)) { if (d.featured && k++ < 2) g_store.set_on(e.key, d.cheat.id, true, 1); } }
                 g_store.set_backup(e.key, "20260101-120000", 1);
+                make_dirs(gdir_of(e) + "cheat_backups\\20260101-120000");
             }
+            persist();
             cheats_open(e);
             if (mode == "add") {
                 g_add = true;
@@ -329,7 +376,7 @@ void draw_cheats_modal() {
     ImGuiIO& io = ImGui::GetIO();
     float w = std::min(sp(80.f), io.DisplaySize.x * 0.94f), hmax = io.DisplaySize.y * 0.9f;
     ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(w, std::min(hmax, sp(72.f))));
+    ImGui::SetNextWindowSize(ImVec2(w, std::min(hmax, sp(110.f))));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.5f)));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
     bool open = ImGui::BeginPopupModal("##cheats", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
@@ -339,18 +386,19 @@ void draw_cheats_modal() {
         if (g_add) g_add = false;
         else { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     }
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.5f)));
 
     bool locked_guest = guest_locked(e), locked_run = running_online(e);
     bool can_toggle = !locked_guest && !locked_run;
-    auto rows = rows_for(e);
-    int on_n = 0;
-    for (auto& r : rows) on_n += r.cheat.enabled;
+    const auto& rows = rows_cached(e);
+    int on_n = g_store.on_count(e.key);
 
     ImGui::PushFont(ui::F.title);
     ImGui::Text("Cheats");
     ImGui::PopFont();
     ImGui::SameLine(0, sp(1.5f));
     if (on_n) pill((std::to_string(on_n) + " on").c_str(), ui::GOOD);
+    ImGui::SameLine(0, sp(1.5f));
     ImGui::TextDisabled("%s", e.title.c_str());
 
     if (locked_guest) {
@@ -372,10 +420,10 @@ void draw_cheats_modal() {
     // save safety
     {
         const cheatstore::GameState* gs = g_store.game(e.key);
-        std::string gd = hub::saves::game_dir(sys_short(e), e.key);
+        std::string gd = gdir_of(e);
         bool has_bk = gs && cheatstore::has_backup(gd, gs->backup);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        ImGui::AlignTextToFramePadding();
+        if (has_bk) ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled(has_bk ? "Your save was backed up before cheats were first turned on." : "Your save is backed up automatically the first time you turn a cheat on.");
         if (has_bk) {
             ImGui::SameLine(0, sp(1.5f));
@@ -383,7 +431,7 @@ void draw_cheats_modal() {
             if (g_confirm_restore) {
                 if (button("Really restore?", ImVec2(0, 0), true, ok)) {
                     std::string err;
-                    int n = cheatstore::restore_save(gd, hub::saves::battery_dir(sys_short(e), e.key), gs->backup, stamp_now(), &err);
+                    int n = cheatstore::restore_save(gd, battery_of(e), gs->backup, stamp_now(), &err);
                     push_toast(n >= 0 ? "Save restored (the previous one was kept as a copy)" : "Could not restore: " + err, n >= 0 ? COL_GOOD : COL_BAD, 6.0);
                     A.vault_dirty = true;
                     g_confirm_restore = false;
@@ -438,7 +486,11 @@ void draw_cheats_modal() {
         ImGui::SetNextItemWidth(-1);
         osk::input("##csearch", "Search cheats", g_search, sizeof g_search);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        auto shown = cheatstore::filter_rows(rows, g_search);
+        static std::string q_last;
+        static int q_rev = -1;
+        static std::string q_key;
+        static std::vector<cheatstore::Row> shown;
+        if (q_last != g_search || q_rev != g_rev || q_key != e.key) { shown = cheatstore::filter_rows(rows, g_search); q_last = g_search; q_rev = g_rev; q_key = e.key; }
         ImGui::BeginChild("##cheat_list", ImVec2(0, ImGui::GetContentRegionAvail().y - foot_h), ImGuiChildFlags_NavFlattened);
         if (rows.empty()) {
             text_wrapped_disabled("No ready-made cheats for this game yet. Use \"Add custom code\" to type or paste your own.");
@@ -447,22 +499,46 @@ void draw_cheats_modal() {
         }
         bool searching = g_search[0] != 0;
         const char* titles[3] = {"Popular", "All cheats", "My codes"};
-        const cheatstore::Row* toggled = nullptr;
-        std::string removed_id;
-        for (int g = 0; g < 3; ++g) {
-            int n = 0;
-            for (auto& r : shown) if (r.group == g) ++n;
-            if (!n) continue;
-            if (!searching || g != 1) group_title(titles[g], n);
-            else group_title("Matches", -1);
-            for (auto& r : shown) {
-                if (r.group != g) continue;
-                bool rm = false;
-                if (cheat_row(r, can_toggle, &rm)) toggled = &r;
-                if (rm) removed_id = r.cheat.id;
+        /* Flat display list (section headers + rows, all one height) so ImGuiListClipper can skip what is off screen. */
+        struct Item { int row; int group; int count; };   // row < 0: header
+        static std::vector<Item> items;
+        static std::string it_key; static int it_rev = -1; static std::string it_q;
+        if (it_key != e.key || it_rev != g_rev || it_q != g_search) {
+            items.clear();
+            int cnt[3] = {0, 0, 0};
+            for (auto& r : shown) ++cnt[r.group];
+            int last = -1;
+            for (size_t i = 0; i < shown.size(); ++i) {
+                if (shown[i].group != last) { last = shown[i].group; items.push_back({-1, last, cnt[last]}); }
+                items.push_back({(int)i, last, 0});
             }
+            it_key = e.key; it_rev = g_rev; it_q = g_search;
         }
-        if (toggled) { cheatstore::Row copy = *toggled; toggle(e, copy); }
+        const float row_h = sp(7.75f);
+        int toggled = -1;
+        std::string removed_id;
+        ImGuiListClipper clip;
+        clip.Begin((int)items.size(), row_h);
+        while (clip.Step())
+            for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
+                const Item& it = items[i];
+                if (it.row < 0) {
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    ImGui::PushFont(ui::F.h2);
+                    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + sp(3.f)));
+                    ImGui::TextUnformatted(searching && it.group == 1 ? "Matches" : titles[it.group]);
+                    ImGui::PopFont();
+                    ImGui::SameLine(0, sp(1.f));
+                    ImGui::TextDisabled("%d", it.count);
+                    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + row_h));
+                    ImGui::Dummy(ImVec2(0, 0));
+                    continue;
+                }
+                bool rm = false;
+                if (cheat_row(shown[it.row], can_toggle, &rm)) toggled = it.row;
+                if (rm) removed_id = shown[it.row].cheat.id;
+            }
+        if (toggled >= 0) { cheatstore::Row copy = shown[toggled]; toggle(e, copy); }
         if (!removed_id.empty()) { g_store.remove_custom(e.key, removed_id, now_s()); persist(); write_run(e); }
         ImGui::EndChild();
     }
@@ -472,5 +548,6 @@ void draw_cheats_modal() {
         ImGui::SameLine(0, sp(1.5f));
     }
     if (button("Close", ImVec2(sp(14.f), sp(5.5f)), true, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
+    ImGui::PopStyleVar();
     ImGui::EndPopup();
 }

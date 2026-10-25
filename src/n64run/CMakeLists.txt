@@ -57,3 +57,7 @@ target_compile_features(n64run_testinput_test PRIVATE cxx_std_17)
 # SDL_GameControllerDB (zlib, see THIRD_PARTY.md) next to the exe: <exe>/controls/gamecontrollerdb.txt
 add_custom_command(TARGET n64run POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/controls/gamecontrollerdb.txt $<TARGET_FILE_DIR:n64run>/controls/gamecontrollerdb.txt)
+
+# --gs-code GameShark RAM writer (QA).
+add_executable(n64run_gs_cheat_test test_gs_cheat.cpp)
+target_compile_features(n64run_gs_cheat_test PRIVATE cxx_std_17)
