@@ -8,7 +8,7 @@ param(
   [Parameter(Mandatory)][string]$Build, [Parameter(Mandatory)][string]$DolphinDir, [Parameter(Mandatory)][string]$Work,
   [Parameter(Mandatory)][string]$Game, [Parameter(Mandatory)][string]$DiscDir, [string[]]$GuestDiscDirs = @(),
   [int]$Players = 2, [int]$Seconds = 120, [string]$Server = "ws://127.0.0.1:8793", [switch]$WriteSave, [switch]$Relay, [switch]$SeedCards,
-  [string]$Code = "", [string]$Desktop = "rhgc_room"
+  [string]$Code = "", [string]$Desktop = "rhgc_room", [int]$KillHostAfter = 0
 )
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = "Stop"
@@ -31,6 +31,29 @@ public static class DeskLaunch {
 if (-not $Code) { $alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'.ToCharArray(); $Code = -join (1..6 | ForEach-Object { $alpha | Get-Random }) }
 New-Item -ItemType Directory -Force $Work | Out-Null
 [DeskLaunch]::Desk($Desktop)
+Add-Type -TypeDefinition @"
+using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
+public static class WinList {
+  delegate bool EP(IntPtr h, IntPtr l);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr OpenDesktop(string n, int f, bool i, uint a);
+  [DllImport("user32.dll")] static extern bool EnumDesktopWindows(IntPtr d, EP p, IntPtr l);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out int pid);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static int Close(string desk, int pid, string titlePart) {
+    IntPtr d = OpenDesktop(desk, 0, false, 0x1FF); int n = 0;
+    EnumDesktopWindows(d, (h, l) => { int p; GetWindowThreadProcessId(h, out p); if (p == pid && IsWindowVisible(h)) { var t = new StringBuilder(200); GetWindowText(h, t, 200); if (t.ToString().Contains(titlePart)) { PostMessage(h, 0x10, IntPtr.Zero, IntPtr.Zero); n++; } } return true; }, IntPtr.Zero);
+    return n;
+  }
+  public static string Of(string desk, int pid) {
+    IntPtr d = OpenDesktop(desk, 0, false, 0x1FF); var r = new List<string>();
+    EnumDesktopWindows(d, (h, l) => { int p; GetWindowThreadProcessId(h, out p); if (p == pid) { var t = new StringBuilder(200); var c = new StringBuilder(100); GetWindowText(h, t, 200); GetClassName(h, c, 100); r.Add((IsWindowVisible(h) ? "V " : "h ") + c + " '" + t + "'"); } return true; }, IntPtr.Zero);
+    return string.Join("; ", r);
+  }
+}
+"@
 $pids = @()
 for ($i = 0; $i -lt $Players; $i++) {
   $role = if ($i -eq 0) { "host" } else { "join" }
@@ -63,7 +86,32 @@ for ($i = 0; $i -lt $Players; $i++) {
   else { Start-Sleep 6 }
 }
 $end = (Get-Date).AddSeconds($Seconds)
-while ((Get-Date) -lt $end) { Start-Sleep 5; if (-not ($pids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })) { break } }
+# -KillHostAfter <s>: host-leaves QA. Once the first guest's Dolphin has run <s> seconds, everything of the HOST (inst0: RetroHub, Dolphin,
+# driver; own pids only) is killed. The guest must log "host left", close Dolphin gracefully (WM_CLOSE) and sync the vault.
+$killed = $null; $gDol = $null
+function GuestDol { Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "Dolphin.exe" -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$Work\inst1", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1 }
+while ((Get-Date) -lt $end) {
+  Start-Sleep 3
+  if ($KillHostAfter -gt 0) {
+    if (-not $killed) {
+      $g = GuestDol
+      if ($g -and -not $gDol) { $gDol = Get-Date; Write-Host "guest dolphin pid $($g.ProcessId) running" }
+      if ($gDol -and ((Get-Date) - $gDol).TotalSeconds -ge $KillHostAfter) {
+        Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$Work\inst0", [StringComparison]::OrdinalIgnoreCase) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*$Work\inst0*") } | ForEach-Object { Write-Host "killing host-side pid $($_.ProcessId) $($_.Name)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        $killed = Get-Date; $end = (Get-Date).AddSeconds(60)
+      }
+    } elseif ((GuestDol) -and ((Get-Date) - $killed).TotalSeconds -ge 8 -and -not $listed) {
+      $listed = $true; Write-Host ("guest dolphin windows 8s after the host died: " + [WinList]::Of($Desktop, (GuestDol).ProcessId))
+      if ($env:QA_PROBE_CLOSE) { Write-Host ("probe: WM_CLOSE to NetPlay -> " + [WinList]::Close($Desktop, (GuestDol).ProcessId, "NetPlay")); Start-Sleep 2; Write-Host ("after: " + [WinList]::Of($Desktop, (GuestDol).ProcessId)) }
+    } elseif (-not (GuestDol)) { Start-Sleep 5; break }
+    continue
+  }
+  if (-not ($pids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })) { break }
+}
+if ($KillHostAfter -gt 0) {
+  $gl = Get-Content "$Work\inst1\userdata\autotest.log" -Raw -ErrorAction SilentlyContinue
+  Write-Host ("HOSTLEFT-CHECK killed=" + [bool]$killed + " host-left-logged=" + ($gl -match "host left") + " toast=" + ($gl -match " left") + " guest-dolphin-closed=" + (-not (GuestDol)))
+}
 # evidence
 for ($i = 0; $i -lt $Players; $i++) {
   Write-Host "=== inst$i autotest.log"; Get-Content "$Work\inst$i\userdata\autotest.log" -ErrorAction SilentlyContinue | Select-Object -Last 40

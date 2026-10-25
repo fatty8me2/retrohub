@@ -7,7 +7,7 @@ param(
   [Parameter(Mandatory)][string]$Build, [Parameter(Mandatory)][string]$AzaharDir, [Parameter(Mandatory)][string]$UserA,
   [Parameter(Mandatory)][string]$UserB, [Parameter(Mandatory)][string]$Work, [Parameter(Mandatory)][string]$RomDir,
   [string]$Game = "pokex", [int]$Seconds = 150, [string]$Server = "ws://127.0.0.1:8793", [switch]$Relay,
-  [string]$Code = "", [string]$Desktop = "rh3ds_room"
+  [string]$Code = "", [string]$Desktop = "rh3ds_room", [int]$KillHostAfter = 0
 )
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = "Stop"
@@ -58,7 +58,32 @@ for ($i = 0; $i -lt 2; $i++) {
   Start-Sleep 8
 }
 $end = (Get-Date).AddSeconds($Seconds)
-while ((Get-Date) -lt $end) { Start-Sleep 5; if (-not ($pids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })) { break } }
+# -KillHostAfter <s>: host-leaves QA. Once the guest's Azahar has run <s> seconds, the HOST's RetroHub and its Azahar (own pids only: the
+# ones whose image lives under inst0) are killed; the guest must log "host left", close Azahar gracefully and run end_session.
+$killed = $null; $gAz = $null
+function GuestAz { Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "azahar.exe" -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$Work\inst1", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1 }
+while ((Get-Date) -lt $end) {
+  Start-Sleep 3
+  if ($KillHostAfter -gt 0) {
+    if (-not $killed) {
+      $g = GuestAz
+      if ($g -and -not $gAz) { $gAz = Get-Date; Write-Host "guest azahar pid $($g.ProcessId) running" }
+      if ($gAz -and ((Get-Date) - $gAz).TotalSeconds -ge $KillHostAfter) {
+        Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$Work\inst0", [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Write-Host "killing host-side pid $($_.ProcessId) $($_.Name)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        $killed = Get-Date; $end = (Get-Date).AddSeconds(60)
+      }
+    } else {
+      $gl = Get-Content "$Work\inst1\userdata\autotest.log" -Raw -ErrorAction SilentlyContinue
+      if ($gl -match "end_session") { break }
+    }
+    continue
+  }
+  if (-not ($pids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })) { break }
+}
+if ($KillHostAfter -gt 0) {
+  $gl = Get-Content "$Work\inst1\userdata\autotest.log" -Raw -ErrorAction SilentlyContinue
+  Write-Host ("HOSTLEFT-CHECK killed=" + [bool]$killed + " host-left-logged=" + ($gl -match "host left") + " toast=" + ($gl -match "left - game ended") + " guest-azahar-closed=" + (-not (GuestAz)) + " end_session=" + ($gl -match "end_session"))
+}
 for ($i = 0; $i -lt 2; $i++) {
   Write-Host "=== inst$i autotest.log"; Get-Content "$Work\inst$i\userdata\autotest.log" -ErrorAction SilentlyContinue | Select-Object -Last 30
   Write-Host "=== inst$i room log"; Get-Content "$Work\inst$i\userdata\netplay\3ds\azahar-room.out" -ErrorAction SilentlyContinue | Select-String "Network" | ForEach-Object { $_.Line }

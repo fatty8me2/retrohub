@@ -108,12 +108,20 @@ same relative paths, so the vault tree can be copied back verbatim on another PC
   `00000001.metadata` (`file_sys/archive_source_sd_savedata.cpp`); the whole `data` folder is mirrored. Extdata is best effort (its id is
   not always the title's unique id). `.3dsx` homebrew and anything without a title id has no mapping.
 
-## Needs a visible check (not done headlessly)
+## Verified headlessly (hidden desktop, muted, loopback) and what still needs eyes
 
-Launching a game was not done (no visible windows). To verify on the user's PC: play one 3DS game and one Wii U game and confirm
-(1) the emulator starts fullscreen with sound and the first controller, (2) the mapping feels right (Azahar `[Controls]` values and
-the Cemu profile were taken from the emulators' source, not from a run), (3) after exit the vault has `battery\...` files, (4) the Azahar
-config file is not rewritten into something that drops the pad (it should keep the `profiles` array it builds from our keys).
+Run through RetroHub's real Play path (`RETROHUB_AUTOTEST=play`, `qa\ext_play.ps1`); the leave combo is simulated by `RETROHUB_AUTOTEST_COMBO_AFTER=<s>`
+(it feeds the real `ExitCombo` timer in `pad_exit_watch`, so `request_game_close` -> WM_CLOSE runs as for a held View+Start).
+- **3DS (Azahar 2126.2, Pokemon X):** boots; `qt-config.ini` keeps `button_*`/`circle_pad` (`engine:sdl,api:controller,...`) after Azahar exited and
+  rewrote it, `confirmClose=false`; the combo closes Azahar gracefully; `title\00040000\00055d00\data` lands in the vault `battery\`.
+- **Wii U (scratch Cemu 2.6 with a `portable` folder, Twilight Princess HD .wua):** boots; `controller0.xml` written and `controllerProfiles.retrohub-backup`
+  created; combo closes Cemu; the save folder `usr\save\00050000\1019e500` is in the vault. Restore (`cemu_restore_controls`) is covered by `hub_emu_test`.
+  A hand-written SDL profile survives a Cemu run (`qa\cemu_sdl_readback.ps1`; that only proves Cemu keeps the file, not that it maps pads).
+- **Host leaves mid-game** (`qa\ds3ds_n3ds_room.ps1 -KillHostAfter`, `qa\gc_room_online.ps1 -KillHostAfter`; local worker): the 3DS guest logs "host left",
+  Azahar closes gracefully, `end_session` syncs, "The host left - game ended" notice. The GC guest's Dolphin ignores WM_CLOSE while NetPlay has lost the host, so
+  RetroHub now asks first and terminates after 20 s (it used to kill at once); the guest card is disposable. Kanto Together guest: code review only
+  (`A.run.room` -> `pad_exit_fn` -> `Session::stop` WM_CLOSE on mGBA); not run, its package is a network download.
+- **Still needs a person:** real pad feel, sound, fullscreen, and a game writing its own save with a physical pad.
 
 ## Sources
 
