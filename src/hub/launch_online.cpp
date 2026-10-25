@@ -61,6 +61,7 @@ void online_host_left(const std::string& gone) {
      * lobby. Peer-hosted emulator sessions (Dolphin NetPlay guest, Azahar, Kanto) have lost their server: close them gracefully so the
      * emulator flushes its saves, then poll_process / gc_tick sync the vault and return the player to the room. */
     std::string who = gone.empty() ? std::string("The host") : gone;
+    autotest_log("host left: " + who + " (emulator session " + std::string((GCO.active && !GCO.host && gc_process_alive()) || (A.proc && A.run.room) ? "open" : "none") + ")");
     if (GCO.active && !GCO.host && gc_process_alive()) {
         GCO.left_name = who;
         close_pid_windows(GCO.run.dolphin_pid);
@@ -192,11 +193,20 @@ void gc_tick() {
         if (GCO.fw.failed()) {
             launch_fail("GameCube online: " + GCO.fw.status(), 12.0);
             if (GCO.host) host_abort("GameCube online: " + GCO.fw.status());
-            gc_kill();
-            gc_stop_all();
-            return;
+            if (!GCO.host && GCO.active && gc_process_alive()) {   // the host's socket is gone mid-game: let Dolphin close itself (it flushes and exits), not a kill
+                autotest_log("guest: forwarder lost, closing Dolphin gracefully");
+                close_pid_windows(GCO.run.dolphin_pid);
+                GCO.fw.stop();
+                GCO.close_deadline = GetTickCount64() + 20000;
+            } else {
+                gc_kill();
+                gc_stop_all();
+                return;
+            }
         }
     }
+    if (GCO.close_deadline && GCO.active && gc_process_alive() && GetTickCount64() > GCO.close_deadline) { GCO.close_deadline = 0; gc_kill(); }
+    if (!GCO.active) GCO.close_deadline = 0;
     if (!GCO.active) {
         if (room_connected() && !A.selected_game.empty()) {
             const hub::GameEntry* g = find_room_entry(A.selected_game);
@@ -207,6 +217,7 @@ void gc_tick() {
     }
     if (!gc_process_alive()) {   // Dolphin closed: session over. Host: its vault card changed, sync it; everyone: back to un-ready for the next game.
         bool was_host = GCO.host;
+        autotest_log(std::string("dolphin closed; session over") + (GCO.left_name.empty() ? "" : " (" + GCO.left_name + " left)"));
         if (!GCO.left_name.empty()) { set_notice(hubui::player_left_text(GCO.left_name), 20.0); GCO.left_name.clear(); }
         gc_stop_all();
         room_session_ended();

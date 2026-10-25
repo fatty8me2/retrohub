@@ -10,7 +10,7 @@
 param(
     [Parameter(Mandatory)][string]$AzaharZip, [Parameter(Mandatory)][string]$Rom,
     [string]$Work = "", [string]$Server = "ws://127.0.0.1:9102", [int]$Seconds = 100, [int]$SeedSeconds = 40,
-    [string]$Game = "pokex", [switch]$Relay, [switch]$KeepSeeds,
+    [string]$Game = "pokex", [switch]$Relay, [switch]$KeepSeeds, [int]$KillHostAfter = 0,
     [string]$Sha256 = "4412eac8d13123c8840f11890fc26e5b0e4c76d16aa28a608941377b948a9db0"
 )
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
@@ -84,6 +84,7 @@ $code = -join ((1..6) | ForEach-Object { "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[(Get
 $args2 = @("-NoProfile", "-File", "$PSScriptRoot\n3ds_room_online.ps1", "-Code", $code,"-Build", $build, "-AzaharDir", $az, "-UserA", $users[0], "-UserB", $users[1],
            "-Work", "$Work\run", "-RomDir", $romdir, "-Game", $Game, "-Seconds", $Seconds, "-Server", $Server, "-Desktop", "rhn3_room")
 if ($Relay) { $args2 += "-Relay" }
+if ($KillHostAfter -gt 0) { $args2 += @("-KillHostAfter", $KillHostAfter) }
 $out = & powershell @args2 2>&1 | ForEach-Object { "$_" }
 $out | ForEach-Object { $_ }
 $txt = $out -join "`n"

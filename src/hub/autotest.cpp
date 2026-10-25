@@ -45,6 +45,10 @@ void autotest_tick() {
             if (A.lib.empty() && now - started < 90000) return;
             for (auto& e : A.lib) autotest_log("game " + room_id(e) + " | " + e.title + " | " + e.path);
             const hub::GameEntry* g = find_room_entry(env("RETROHUB_AUTOTEST_GAME") ? env("RETROHUB_AUTOTEST_GAME") : "");
+            if (!g) {   // single-player systems without online play (Wii U) are not room games: match by room id over the whole library
+                std::string want = env("RETROHUB_AUTOTEST_GAME") ? env("RETROHUB_AUTOTEST_GAME") : "";
+                for (auto& e : A.lib) if (room_id(e) == want) { g = &e; break; }
+            }
             if (!g) { autotest_log("error:game not in library"); stage = 99; return; }
             hub::GameEntry copy = *g;
             autotest_log("play " + copy.title);
