@@ -1,6 +1,26 @@
 {
   "versions": [
     {
+      "version": "1.24.0",
+      "date": "2026-10-25",
+      "title": "PlayStation rooms, DS and PS1 cheats, steadier online",
+      "new": [
+        "PlayStation games like Crash Bash can now be picked in online rooms; the room banner tells you if a PlayStation BIOS is missing",
+        "Cheats for Nintendo DS and PlayStation games, including the built-in PlayStation cheat database",
+        "Systems without cheats (GameCube, 3DS, Wii U, PlayStation 2) now show a greyed-out Cheats button that explains why"
+      ],
+      "improved": [
+        "3-4 player games keep going when one guest disconnects, instead of ending for everybody",
+        "Games that are offline-only say so, with the reason, instead of just missing the online button",
+        "3DS and Wii U launches were re-checked end to end",
+        "Docs updated to match what the app really does"
+      ],
+      "fixed": [
+        "A GameCube guest now closes cleanly when the host leaves",
+        "Removed the old Appear offline option, which did not behave as expected"
+      ]
+    },
+    {
       "version": "1.23.0",
       "date": "2026-10-25",
       "title": "Multi-disc PlayStation, more cheats, smoother endings",

@@ -126,6 +126,7 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
     args += hubui::retro_extra_args(e.system, gsv);
     auto mt = gsv.find("ps1.multitap");
     if ((mt == gsv.end() || mt->second == "auto") && local_pad_count() >= 3) args += " --opt beetle_psx_enable_multitap_port1=enabled";
+    args += cheats_launch_args(e, false, true, nullptr);
     // No real BIOS: the core falls back to its bundled OpenBIOS (fewer games run).
     spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
 }
