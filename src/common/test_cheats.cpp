@@ -89,7 +89,8 @@ int main() {
     Target t;
     CHECK(target_for_system("GBC", &t) && t == Target::GB);
     CHECK(target_for_system("nds", &t) && t == Target::DS);
-    CHECK(!target_for_system("gc", &t));
+    CHECK(target_for_system("gc", &t) && t == Target::GC);
+    CHECK(!target_for_system("wiiu", &t));
     CheatSet a, b;
     a.cheats = {mk("x", Format::GameShark, {"8033b21e 0008"}), mk("y", Format::GameShark, {"80000000 0001"}, false)};
     b.cheats = {mk("z", Format::ActionReplay, {"8033B21E:0008"}, true)};

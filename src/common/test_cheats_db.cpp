@@ -74,7 +74,38 @@ int main() {
     }
     {   // unknown game / unsupported system
         CHECK(cheats_for(mk(System::N64, "ZZZ NOT A GAME", "NZZE", "C:/x/zzz.z64")).empty());
-        CHECK(cheats_for(mk(System::GC, "Melee", "GALE01", "C:/x/melee.iso")).empty());
+        CHECK(cheats_for(mk(System::GC, "Nothing", "GZZE01", "C:/x/zzz.iso")).empty());
+        CHECK(cheats_for(mk(System::GC, "No id", "", "C:/x/zzz.iso")).empty());
+    }
+    {   // GameCube: matched by the 6-char disc ID against Dolphin's bundled per-game codes
+        size_t prefix = 0;
+        GameEntry melee = mk(System::GC, "Super Smash Bros. Melee", "GALE01", "C:/x/whatever name.iso");
+        for (auto& c : cheats_for(melee)) CHECK(c.desc.find("Unlock All Characters") == std::string::npos);   // unknown disc version: no per-revision (address-specific) codes
+        melee.gc_rev = 1;
+        { bool r1 = false; for (auto& c : cheats_for(melee)) if (c.desc.find("Unlock All Characters and Stages") != std::string::npos) r1 = c.codes[0] == "0445B240 FFFFFFFF"; CHECK(r1); }
+        melee.gc_rev = 0;
+        { bool r0 = false; for (auto& c : cheats_for(melee)) if (c.desc.find("Unlock All Characters and Stages") != std::string::npos) r0 = c.codes[0] == "04459F58 FFFFFFFF"; CHECK(r0); }
+        melee.gc_rev = 2;
+        auto v = cheats_for(melee, &prefix);
+        CHECK(v.size() > 20);
+        bool unlock = false;
+        for (auto& c : v) {
+            if (c.desc.find("Unlock All Characters and Stages") != std::string::npos) {
+                unlock = true;
+                CHECK(c.format == cheats::Format::Gecko);
+                CHECK(c.codes.size() == 2 && c.codes[0] == "0445BF28 FFFFFFFF");
+            }
+            std::string t;
+            CHECK(cheats::normalize_code(cheats::Target::GC, c.format, c.codes.empty() ? "" : c.codes[0], &t, nullptr));
+        }
+        CHECK(unlock);
+        CHECK(prefix > 0 && prefix < v.size());   // the unlock codes are ranked as Popular
+        CHECK(!cheats_for(mk(System::GC, "Mario Kart: Double Dash!!", "GM4E01", "C:/x/a.iso")).empty());
+        CHECK(!cheats_for(mk(System::GC, "Mario Party 5", "GP5E01", "C:/x/a.iso")).empty());
+        // the PAL disc has its own list; a different region's ID must not pick up the USA list
+        auto us = cheats_for(mk(System::GC, "Mario Kart: Double Dash!!", "GM4E01", "C:/x/a.iso"));
+        auto eu = cheats_for(mk(System::GC, "Mario Kart: Double Dash!!", "GM4P01", "C:/x/a.iso"));
+        CHECK(!eu.empty() && (us.size() != eu.size() || us[0].codes != eu[0].codes));
     }
 
     // The player's real ROMs (read-only listing; names are what matters, headers are read when identify works).

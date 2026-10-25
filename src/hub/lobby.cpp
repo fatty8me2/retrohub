@@ -172,6 +172,7 @@ void guest_apply_launch(const std::string& body) {
         gcnp::Spec gs;
         if (!gcnp::spec_parse(gcnp::extract_from_launch(body), &gs)) { launch_fail("The host's GameCube launch is invalid - ask them to update RetroHub."); return; }
         if (g_headless) { shot_trace("guest-route", "gc dolphin-netplay-guest"); return; }
+        GCO.launch_body = body;
         gc_guest_prepare(*g, gs, (int)j.num("launch", 1));
         return;
     }

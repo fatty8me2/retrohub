@@ -5,6 +5,7 @@
 #include "cheat_store.h"
 #include "cheats.h"
 #include "cheats_db.h"
+#include "dolphin_cheats.h"
 
 namespace { int g_rev = 1; }   // bumped on every change of the store: invalidates the row caches
 
@@ -94,10 +95,29 @@ std::string stable_id(const cheats::Cheat& c, std::map<std::string, int>* seen) 
 }
 
 /* The database list for one game, computed once (lists can have 12 000 entries). Masters + Popular lead and count as featured. */
-const std::vector<cheatstore::DbItem>& db_items(const hub::GameEntry& e) {
+/* GameCube: the disc's version byte (header 0x07) picks Dolphin's per-revision code list. Plain / WIA / RVZ / CISO discs; -1 otherwise. */
+int gc_disc_revision(const hub::GameEntry& e) {
+    std::string p = launch_path_for(e);
+    if (p.empty()) return -1;
+    std::string ext = p.size() > 4 ? p.substr(p.size() - 4) : p;
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    long off = ext == ".iso" || ext == ".gcm" ? 7 : ext == ".rvz" || ext == ".wia" ? 0x58 + 7 : ext == "ciso" ? 0x8000 + 7 : -1;
+    if (off < 0) return -1;
+    FILE* f = nullptr;
+    if (fopen_s(&f, p.c_str(), "rb") != 0 || !f) return -1;
+    unsigned char b = 0;
+    int r = -1;
+    if (std::fseek(f, off, SEEK_SET) == 0 && std::fread(&b, 1, 1, f) == 1) r = b;
+    std::fclose(f);
+    return r;
+}
+
+const std::vector<cheatstore::DbItem>& db_items(const hub::GameEntry& e0) {
     static std::map<std::string, std::vector<cheatstore::DbItem>> cache;
-    auto it = cache.find(e.key);
+    auto it = cache.find(e0.key);
     if (it != cache.end()) return it->second;
+    hub::GameEntry e = e0;
+    if (e.system == hub::System::GC) e.gc_rev = gc_disc_revision(e);
     std::vector<cheatstore::DbItem> v;
     size_t prefix = 0;
     std::vector<cheats::Cheat> all = hub::cheats_for(e, &prefix);
@@ -109,7 +129,7 @@ const std::vector<cheatstore::DbItem>& db_items(const hub::GameEntry& e) {
         d.featured = i < prefix;
         v.push_back(std::move(d));
     }
-    return cache.emplace(e.key, std::move(v)).first->second;
+    return cache.emplace(e0.key, std::move(v)).first->second;
 }
 const std::vector<cheatstore::Row>& rows_cached(const hub::GameEntry& e) {
     static std::string key;
@@ -173,6 +193,8 @@ const char* fmt_label(cheats::Format f) {
         case cheats::Format::ActionReplay: return "Action Replay";
         case cheats::Format::CodeBreaker: return "CodeBreaker";
         case cheats::Format::GameGenie: return "Game Genie";
+        case cheats::Format::Gecko: return "Gecko";
+        case cheats::Format::ActionReplayGC: return "Action Replay";
         default: return "Raw";
     }
 }
@@ -236,7 +258,8 @@ void group_title(const char* t, int n) {
 bool cheats_supported(const hub::GameEntry& e) {
     if (is_native(e) || is_kanto(e)) return false;
     return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB || e.system == hub::System::GBC ||
-           e.system == hub::System::NDS || e.system == hub::System::PS1;   // DS / PS1: libretro retro_cheat_set through retrorun
+           e.system == hub::System::NDS || e.system == hub::System::PS1 ||   // DS / PS1: libretro retro_cheat_set through retrorun
+           e.system == hub::System::GC;                                      // GameCube: Dolphin GameSettings ini, written at launch
 }
 
 int cheats_enabled_count(const hub::GameEntry& e) {
@@ -281,10 +304,50 @@ void cheats_pad_watch() {
     prev = down;
 }
 
+/* GameCube: write the enabled cheats into Dolphin's User\\GameSettings\\<GAMEID>.ini (and EnableCheats) right before Dolphin starts.
+ * Offline and the online host use the player's choices; an online guest uses the list in the host's launch message (the same
+ * list Dolphin NetPlay's code sync sends), so every PC holds identical codes. RetroHub's old entries are always removed first,
+ * so turning a cheat off (or all of them) cleans the file. Returns the number of codes written (-1: error, logged). */
+int cheats_apply_dolphin(const hub::GameEntry& e, const std::string& user_dir, bool online, bool is_host_, const std::string* launch_body) {
+    if (e.system != hub::System::GC) return 0;
+    std::string id = e.serial;
+    if (id.empty()) if (const hub::GameInfo* g = hub::find_game(e.catalog_id)) if (!g->serials.empty()) id = g->serials[0];
+    if (id.empty()) return 0;
+    cheats::CheatSet cs;
+    if (online && !is_host_) {
+        if (launch_body) cheatstore::extract_launch(*launch_body, &cs);
+    } else {
+        ensure_loaded();
+        if (autotest_active()) if (const char* want = std::getenv("RETROHUB_AUTOTEST_CHEATS")) {   // QA only: switch on database cheats by description ("a;b")
+            std::string w = want;
+            if (const cheatstore::GameState* gs0 = g_store.game(e.key)) { std::set<std::string> was = gs0->on; for (auto& id : was) g_store.set_on(e.key, id, false, now_s()); }   // exact set: clear the game's choices first ("-" = none)
+            if (w == "-") w.clear();
+            size_t from = 0;
+            while (from <= w.size()) {
+                size_t semi = w.find(';', from);
+                std::string part = w.substr(from, semi == std::string::npos ? std::string::npos : semi - from);
+                from = semi == std::string::npos ? w.size() + 1 : semi + 1;
+                if (part.empty()) continue;
+                for (auto& d : db_items(e)) if (d.cheat.desc.find(part) != std::string::npos) g_store.set_on(e.key, d.cheat.id, true, now_s());
+            }
+            persist();
+        }
+        cs = cheatstore::enabled_only(rows_cached(e));
+    }
+    for (auto& c : cs.cheats) c.enabled = true;
+    std::string err;
+    int n = dolphincheats::apply_for_game(user_dir, id, cs, &err);
+    if (n < 0) autotest_log("cheats: could not write Dolphin game ini: " + err);
+    else autotest_log("cheats: " + std::to_string(n) + " code set(s) written to Dolphin's " + id + ".ini");
+    if (n < 0) push_toast("Could not apply cheats (" + err + "). The game starts without them.", COL_WARN, 8.0);
+    else if (n > 0) push_toast(std::to_string(n) + (n == 1 ? " cheat" : " cheats") + " on for this game", COL_GOOD, 3.5);
+    return n;
+}
+
 /* " --cheats <file>" for the runner. Offline: always (the runner live-reloads the file). Online: only when cheats are on,
  * from the host's list (guest: from the launch message); the runner does not take live changes then. */
 std::string cheats_launch_args(const hub::GameEntry& e, bool online, bool is_host_, const std::string* launch_body) {
-    if (!cheats_supported(e) || (online && e.system == hub::System::NDS)) return "";
+    if (!cheats_supported(e) || e.system == hub::System::GC || (online && e.system == hub::System::NDS)) return "";   // GC: see cheats_apply_dolphin
     std::string path = run_file(e.key), err;
     if (!online) {
         write_run(e);
@@ -420,10 +483,16 @@ void draw_cheats_modal() {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextWrapped("Online game running: cheats are fixed for this match.");
         ImGui::PopStyleColor();
+    } else if (A.proc && A.run.key == e.key && e.system == hub::System::GC) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+        ImGui::TextWrapped("Dolphin can't change cheats mid-game: your changes apply the next time you start the game.");
+        ImGui::PopStyleColor();
     } else if (A.proc && A.run.key == e.key) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::GOOD);
         ImGui::TextWrapped("Game running: changes apply right away.");
         ImGui::PopStyleColor();
+    } else if (e.system == hub::System::GC) {
+        ImGui::TextDisabled("GameCube cheats are loaded by Dolphin when the game starts. Gecko and Action Replay codes both work.");
     } else {
         ImGui::TextDisabled("In a game, hold View and press Y to open this again.");
     }
@@ -459,7 +528,8 @@ void draw_cheats_modal() {
     if (g_add) {
         ImGui::BeginChild("##cheat_add", ImVec2(0, ImGui::GetContentRegionAvail().y - foot_h), ImGuiChildFlags_NavFlattened);
         group_title("Add custom code", -1);
-        text_wrapped_disabled("Paste GameShark, Action Replay, CodeBreaker or Game Genie codes. One code per line. The format is detected for you.");
+        text_wrapped_disabled(e.system == hub::System::GC ? "Paste Gecko or Action Replay codes (8 + 8 hex digits, or XXXX-XXXX-XXXXX). One line per code line."
+                                                          : "Paste GameShark, Action Replay, CodeBreaker or Game Genie codes. One code per line. The format is detected for you.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::TextDisabled("Name");
         ImGui::SetNextItemWidth(-1);

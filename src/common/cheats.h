@@ -16,13 +16,13 @@
 
 namespace cheats {
 
-enum class Format { GameShark, ActionReplay, CodeBreaker, GameGenie, Raw };
-const char* format_name(Format f);                       // "gameshark" | "ar" | "codebreaker" | "gamegenie" | "raw"
+enum class Format { GameShark, ActionReplay, CodeBreaker, GameGenie, Raw, ActionReplayGC, Gecko };
+const char* format_name(Format f);                       // "gameshark" | "ar" | "codebreaker" | "gamegenie" | "raw" | "ar_gc" | "gecko"
 bool parse_format(const std::string& s, Format* out);    // case-insensitive; also "actionreplay", "cb", "gg", "gs"
 
 /* Which emulator family consumes the codes. */
-enum class Target { N64, GBA, GB, DS, PS1 };
-/* "n64" / "gba" / "gb" / "gbc" / "nds" / "ps1" (case-insensitive) -> Target. False for other systems. */
+enum class Target { N64, GBA, GB, DS, PS1, GC };
+/* "n64" / "gba" / "gb" / "gbc" / "nds" / "ps1" / "gc" (case-insensitive) -> Target. False for other systems. */
 bool target_for_system(const std::string& system, Target* out);
 
 struct Cheat {
@@ -49,6 +49,11 @@ bool save_file(const std::string& path, const CheatSet& set, std::string* err); 
 /* Normalize one code line for `target` in `fmt`: upper-case, single separators. False + *err when the line is not a
  * valid code of that format on that system. */
 bool normalize_code(Target target, Format fmt, const std::string& line, std::string* out, std::string* err);
+
+/* ---- GameCube (Dolphin) ----
+ * "gecko": 8+8 hex lines ("0445BF28 FFFFFFFF"). "ar_gc": Action Replay, either decrypted 8+8 hex or the encrypted
+ * "XXXX-XXXX-XXXXX" form (Dolphin decrypts it itself). Both go to User\GameSettings\<GAMEID>.ini, see dolphin_cheats.h. */
+bool gc_is_encrypted_ar(const std::string& line);
 
 /* ---- N64 (mupen64plus core cheat API) ---- */
 struct N64Code {

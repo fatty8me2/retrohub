@@ -277,6 +277,11 @@ bool detect_format(cheats::Target t, const std::string& line, cheats::Format* ou
     size_t sp = line.find(' ');
     std::string a = line.substr(0, sp), b = sp == std::string::npos ? std::string() : line.substr(sp + 1);
     if (b.find(' ') != std::string::npos) return false;
+    if (t == Target::GC) {
+        if (sp == std::string::npos) { if (cheats::gc_is_encrypted_ar(line)) { *out = Format::ActionReplayGC; return true; } return false; }
+        if (a.size() == 8 && all_hex(a) && b.size() == 8 && all_hex(b)) { *out = Format::Gecko; return true; }   // 8+8 is ambiguous with decrypted AR; Gecko is the common case
+        return false;
+    }
     if (t == Target::GB && sp == std::string::npos) {
         if (a.size() == 8 && all_hex(a)) { *out = Format::GameShark; return true; }
         // Game Genie: XXX-XXX or XXX-XXX-XXX

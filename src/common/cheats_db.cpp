@@ -30,6 +30,8 @@ bool format_from(const std::string& s, Format* f) {
     else if (l == "ar" || l == "actionreplay") *f = Format::ActionReplay;
     else if (l == "codebreaker" || l == "cb") *f = Format::CodeBreaker;
     else if (l == "gamegenie" || l == "gg") *f = Format::GameGenie;
+    else if (l == "ar_gc") *f = Format::ActionReplayGC;
+    else if (l == "gecko") *f = Format::Gecko;
     else if (l == "raw") *f = Format::Raw;
     else return false;
     return true;
@@ -131,7 +133,7 @@ bool cheats_is_featured_desc(const std::string& desc) {
                                "999", "walk through wall", "moon jump", "all moves", "all weapons", "all keys",
                                "all upgrades", "all abilities", "all maps", "max coins", "max lives", "max hp", "max ammo",
                                "god mode", "master ball", "rare candy", "level select", "stage select", "all unlocked",
-                               "everything unlocked", "full health", "debug"};
+                               "everything unlocked", "unlock everything", "open all", "all mini", "full health", "debug"};
     for (auto* k : kw) if (d.find(k) != std::string::npos) return true;
     return false;
 }
@@ -140,6 +142,7 @@ namespace {
 
 struct Section {
     std::string sys, name, region;
+    int gc_rev = -1;           // gc: revision of "GALE01r2" (2); -1 = every revision
     Format fmt = Format::Raw;
     size_t begin = 0, end = 0;   // line range in Db::raw
 };
@@ -171,6 +174,23 @@ bool slurp(const std::string& p, std::string* out) {
     while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) out->append(buf, n);
     std::fclose(f);
     return true;
+}
+
+/* GameCube sections are named by Dolphin's game ini ("GALE01r2", "GM4"): lower-case ID without the revision suffix. */
+std::string gc_id_key(const std::string& stem) {
+    std::string k = lower(stem);
+    size_t r = k.find('r', 3);
+    if (r != std::string::npos && r >= 4 && r + 1 < k.size() && std::isdigit((unsigned char)k[r + 1])) k.resize(r);
+    return k;
+}
+
+/* "GALE01r2" -> 2; -1 when the name has no revision suffix. */
+int gc_rev_of(const std::string& stem) {
+    std::string k = lower(stem);
+    size_t r = k.find('r', 3);
+    if (r == std::string::npos || r < 4 || r + 1 >= k.size()) return -1;
+    for (size_t i = r + 1; i < k.size(); ++i) if (!std::isdigit((unsigned char)k[i])) return -1;
+    return std::atoi(k.c_str() + r + 1);
 }
 
 void load_featured(Db* db, const std::string& text) {
@@ -232,6 +252,7 @@ Db* db() {
                     s.fmt = f;
                     s.name = line.substr(t2 + 1);
                     s.region = cheats_region_of(s.name);
+                    s.gc_rev = s.sys == "gc" ? gc_rev_of(s.name) : -1;
                     s.begin = nl + 1;
                     s.end = r.size();
                     g_db->sections.push_back(std::move(s));
@@ -243,7 +264,8 @@ Db* db() {
         if (cur) cur->end = r.size();
         for (size_t i = 0; i < g_db->sections.size(); ++i) {
             auto& s = g_db->sections[i];
-            g_db->index[s.sys + "|" + cheats_norm_key(s.name)].push_back(i);
+            if (s.sys == "gc") g_db->index["gc|" + gc_id_key(s.name)].push_back(i);   // by game ID: "GALE01r2" -> "gale01"
+            else g_db->index[s.sys + "|" + cheats_norm_key(s.name)].push_back(i);
         }
     }
     std::string fj;
@@ -287,7 +309,7 @@ CheatList cheats_list_for(const GameEntry& e) {
     const char* ss = system_short(e.system);
     std::string sys = ss ? ss : "";
     std::vector<std::string> dbsys;
-    if (sys == "n64" || sys == "gba" || sys == "ps1") dbsys = {sys};
+    if (sys == "n64" || sys == "gba" || sys == "ps1" || sys == "gc") dbsys = {sys};
     else if (sys == "gb") dbsys = {"gb", "gbc"};
     else if (sys == "gbc") dbsys = {"gbc", "gb"};
     else return out;
@@ -316,6 +338,13 @@ CheatList cheats_list_for(const GameEntry& e) {
         std::string k = cheats_norm_key(n);
         if (!k.empty()) keys.insert(k);
     }
+    /* GameCube: the 6-char disc ID (header) is the key, for curated entries and for Dolphin's per-game sections. */
+    std::string gc_id = e.system == System::GC ? lower(e.serial) : std::string();
+    if (gc_id.size() >= 4 && gc_id.size() <= 6) {
+        keys.insert(cheats_norm_key(gc_id));
+        if (e.gc_rev >= 0) keys.insert(cheats_norm_key(gc_id + "r" + std::to_string(e.gc_rev)));   // curated "GALE01r2"
+    } else gc_id.clear();
+    if (e.system == System::GC) region.clear();   // IDs already pin the region
 
     std::vector<Cheat> found;
     std::set<std::string> seen;
@@ -336,6 +365,14 @@ CheatList cheats_list_for(const GameEntry& e) {
 
     for (auto& ds : dbsys) {
         std::vector<const Section*> hits;
+        if (ds == "gc") {
+            for (size_t n : {gc_id.size(), (size_t)4, (size_t)3}) {   // GALE01, then GALE and GAL (Dolphin merges the shorter files in)
+                if (gc_id.empty() || n > gc_id.size()) continue;
+                auto it = d->index.find("gc|" + gc_id.substr(0, n));
+                if (it == d->index.end()) continue;
+                for (size_t i : it->second) hits.push_back(&d->sections[i]);
+            }
+        } else
         for (auto& k : keys) {
             auto it = d->index.find(ds + "|" + k);
             if (it == d->index.end()) continue;
@@ -343,7 +380,13 @@ CheatList cheats_list_for(const GameEntry& e) {
         }
         // Region-unknown entries accept everything but only USA/world-tagged when such exist.
         std::vector<const Section*> pick;
-        for (auto* s : hits) if (region_ok(s->region, region)) pick.push_back(s);
+        for (auto* s : hits) {
+            if (!region_ok(s->region, region)) continue;
+            /* Dolphin keeps one ini per disc revision ("GALE01r1"): their addresses differ, so a revision-specific list
+             * is only offered when the disc's version byte is known and equal. */
+            if (s->gc_rev >= 0 && s->gc_rev != e.gc_rev) continue;
+            pick.push_back(s);
+        }
         for (auto* s : pick) {
             size_t pos = s->begin;
             while (pos < s->end) {
@@ -390,8 +433,10 @@ CheatList cheats_list_for(const GameEntry& e) {
         else rest.push_back(std::move(c));
     };
     seen.clear();
-    for (auto& c : feat) place(std::move(c), true);
-    for (auto& c : db_cheats) place(std::move(c), false);
+    std::set<std::string> curated_codes;   // a database entry with exactly a curated entry's codes is the same cheat under another name
+    auto codes_sig = [](const Cheat& c) { std::string t = std::to_string((int)c.format); for (auto& x : c.codes) t += "|" + x; return t; };
+    for (auto& c : feat) { curated_codes.insert(codes_sig(c)); place(std::move(c), true); }
+    for (auto& c : db_cheats) { if (curated_codes.count(codes_sig(c))) continue; place(std::move(c), false); }
     out.masters = masters.size();
     out.featured = pop.size();
     int n = 0;
