@@ -811,6 +811,52 @@ static void test_controls2_emulators(const fs::path& dir) {
     CHECK(read_text(cdir / "controller0.xml") == hubemu::cemu_gamepad_profile_xml(wup, 0));
     hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::CemuPads());   // fewer pads: stale Pro file goes
     CHECK(!fs::exists(cdir / "controller1.xml"));
+    /* A user's own Cemu: backup once, write only when managing, restore, SDL pads */
+    {
+        fs::path ud = dir / "own_cemu_data";
+        fs::create_directories(ud / "controllerProfiles");
+        write_text(ud / "controllerProfiles" / "controller0.xml", "users own");
+        write_text(ud / "controllerProfiles" / "mine.xml", "keep");
+        hubemu::prepare_cemu_own(ud.string(), wup, hubemu::CemuPads(), false);   // setting OFF: nothing touched, no backup
+        CHECK(read_text(ud / "controllerProfiles" / "controller0.xml") == "users own" && !fs::exists(ud / "controllerProfiles.retrohub-backup"));
+        hubemu::prepare_cemu_own(ud.string(), wup, hubemu::CemuPads(), true);
+        CHECK(read_text(ud / "controllerProfiles.retrohub-backup" / "controller0.xml") == "users own");
+        CHECK(read_text(ud / "controllerProfiles.retrohub-backup" / "mine.xml") == "keep");
+        CHECK(read_text(ud / "controllerProfiles" / "controller0.xml") == hubemu::cemu_gamepad_profile_xml(wup, 0));
+        write_text(ud / "controllerProfiles" / "controller0.xml", "edited later");   // backup is once only; our marker keeps edits
+        hubemu::prepare_cemu_own(ud.string(), wup, hubemu::CemuPads(), true);
+        CHECK(read_text(ud / "controllerProfiles.retrohub-backup" / "controller0.xml") == "users own");
+        CHECK(hubemu::cemu_restore_controls(ud.string()));
+        CHECK(read_text(ud / "controllerProfiles" / "controller0.xml") == "users own" && read_text(ud / "controllerProfiles" / "mine.xml") == "keep" &&
+              !fs::exists(ud / "controllerProfiles" / "retrohub-pad.txt"));
+        CHECK(!hubemu::cemu_restore_controls((dir / "no_such_cemu").string()));
+        /* no profiles at all: an empty backup restores to none */
+        fs::path ud2 = dir / "own_cemu_data2";
+        hubemu::prepare_cemu_own(ud2.string(), wup, hubemu::CemuPads(), true);
+        CHECK(fs::is_directory(ud2 / "controllerProfiles.retrohub-backup") && fs::exists(ud2 / "controllerProfiles" / "controller0.xml"));
+        hubemu::cemu_restore_controls(ud2.string());
+        CHECK(!fs::exists(ud2 / "controllerProfiles" / "controller0.xml"));
+        /* data dir: portable\ folder, else settings.xml beside the exe, else %APPDATA%\Cemu */
+        fs::path ex = dir / "own_cemu_exe";
+        fs::create_directories(ex);
+        CHECK(hubemu::cemu_user_data_dir(ex.string(), "C:\\AD") == "C:\\AD\\Cemu");
+        write_text(ex / "settings.xml", "<content/>");
+        CHECK(fs::path(hubemu::cemu_user_data_dir(ex.string(), "C:\\AD")) == ex);
+        fs::create_directories(ex / "portable");
+        CHECK(fs::path(hubemu::cemu_user_data_dir(ex.string(), "C:\\AD")) == ex / "portable");
+        /* SDL: Cemu uuid = "<index>_<guid>", index among same-GUID pads */
+        PadDesc s1{"DualSense", "guidDS", "guidDS", false}, s2{"DualSense", "guidDS", "guidDS#2", false};
+        hubemu::CemuPads sp = hubemu::cemu_pads_with_sdl({xb, s2, s1}, {s1, s2, xb});
+        CHECK(sp.xinput.size() == 3 && sp.xinput[0] == 0 && sp.xinput[1] == -1 && sp.sdl[1] == "1_guidDS" && sp.sdl[2] == "0_guidDS" && sp.sdl[0].empty());
+        std::string sx = hubemu::cemu_pro_profile_xml_sdl(wup, "0_guidDS", 1);
+        CHECK(sx.find("<api>SDLController</api>") != std::string::npos && sx.find("<uuid>0_guidDS</uuid>") != std::string::npos &&
+              (hubemu::cemu_pro_profile_xml(wup, 1, 1).find("<mapping>1</mapping>\n\t\t\t\t<button>12</button>") != std::string::npos
+                   ? sx.find("<mapping>1</mapping>\n\t\t\t\t<button>0</button>") : sx.find("<mapping>1</mapping>\n\t\t\t\t<button>1</button>")) != std::string::npos);
+        fs::path ud3 = dir / "own_cemu_data3";
+        hubemu::prepare_cemu_own(ud3.string(), wup, sp, true);
+        CHECK(read_text(ud3 / "controllerProfiles" / "controller1.xml") == hubemu::cemu_pro_profile_xml_sdl(wup, "1_guidDS", 1));
+        CHECK(read_text(ud3 / "controllerProfiles" / "controller0.xml").find("<api>XInput</api>") != std::string::npos);
+    }
     /* Xbox pad is the default for every console: GC/3DS/Wii U default profiles all bind the XInput names */
     CHECK(hubemu::dolphin_pad_ini("", base).find("Device = XInput/0/Gamepad") != std::string::npos);
 
