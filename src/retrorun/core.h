@@ -70,6 +70,18 @@ class Core {
     bool serialize(void* buf, size_t size) { return fn_serialize_(buf, size); }
     bool unserialize(const void* buf, size_t size) { return fn_unserialize_(buf, size); }
 
+    /* libretro disk control (multi-disc PlayStation games). The core registers it in retro_init / retro_load_game. */
+    bool has_disk_control() const { return dc_.set_eject_state && dc_.set_image_index && dc_.get_num_images; }
+    unsigned disc_count() const { return has_disk_control() ? dc_.get_num_images() : 0; }
+    unsigned disc_index() const { return dc_.get_image_index ? dc_.get_image_index() : 0; }
+    /* Swap to disc `idx` (eject, select, close the tray). Idempotent; false when unsupported or idx is out of range. */
+    bool disc_set(unsigned idx) {
+        if (!has_disk_control() || idx >= dc_.get_num_images()) return false;
+        dc_.set_eject_state(true);
+        bool ok = dc_.set_image_index(idx);
+        dc_.set_eject_state(false);
+        return ok;
+    }
     void set_fast_forwarding(bool ff) { ff_ = ff; }
     /* retro_set_controller_port_device (PlayStation: DualShock on every port). */
     void set_port_device(unsigned port, unsigned dev) { if (fn_set_port_dev_) fn_set_port_dev_(port, dev); }
@@ -136,6 +148,7 @@ class Core {
     bool vars_dirty_ = true;
     std::string lang_dummy_;
     retro_netpacket_callback np_{};
+    retro_disk_control_callback dc_{};
 };
 
 Core* active_core();

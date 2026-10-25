@@ -547,6 +547,10 @@ void draw_cheats_modal() {
         if (button("Add custom code", ImVec2(0, sp(5.5f)), false, can_toggle, ui::Icon::Plus)) { g_add = true; g_add_err.clear(); }
         ImGui::SameLine(0, sp(1.5f));
     }
+    if (g_ent.system == hub::System::PS1 && ps1_swap_available(g_ent.key)) {   // multi-disc: the same overlay (View+Y) swaps the disc
+        if (button("Swap disc", ImVec2(0, sp(5.5f)), false, true)) ps1_swap_disc(g_ent.key);
+        ImGui::SameLine(0, sp(1.5f));
+    }
     if (button("Close", ImVec2(sp(14.f), sp(5.5f)), true, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
     ImGui::PopStyleVar();
     ImGui::EndPopup();

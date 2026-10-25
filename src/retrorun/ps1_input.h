@@ -25,4 +25,14 @@ inline void unpack_pad(uint64_t v, uint32_t* buttons, int16_t out[4]) {
     unpack_sticks((uint32_t)(v >> 16), out);
 }
 
+/* One-shot events ride in the 16 spare high bits of a rollback input value (rb::Config::val_bytes = 8, event_mask = kEventMask):
+ * bit 48 = disc swap, bits 49..56 = the disc index to insert. The value is idempotent (insert disc N), so a repeated event cannot swap twice. */
+constexpr uint64_t kEventMask = 0xFFFFull << 48;
+inline uint64_t disc_event(unsigned target) { return (1ull << 48) | ((uint64_t)(target & 0xFFu) << 49); }
+inline bool disc_event_of(uint64_t v, unsigned* target) {
+    if (!(v >> 48 & 1)) return false;
+    *target = (unsigned)(v >> 49 & 0xFFu);
+    return true;
+}
+
 }  // namespace retrorun
