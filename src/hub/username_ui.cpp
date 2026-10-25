@@ -120,7 +120,7 @@ void un_tick() {
 void un_on_event(const hubnet::Event& e) {
     using K = hubnet::Event::Kind;
     if (e.kind == K::UsernameChecked) {
-        UN.chk.on_result(e.ref, e.ok, e.text, e.suggestions);
+        UN.chk.on_result(e.ref, e.ok, e.text, e.suggestions, e.yours);
     } else if (e.kind == K::UsernameResult) {
         if (e.ref != UN.claim_ref && UN.claim_ref != 0) return;
         UN.claiming = false;
@@ -139,7 +139,7 @@ void un_on_event(const hubnet::Event& e) {
             push_toast(changed ? "Your username is now " + e.name + "." : "You're " + e.name + " now. Welcome!", ui::GOOD, 5.0);
         } else {
             UN.err = claim_error_text(e.text);
-            UN.chk.state = (e.text == "invalid" || e.text == "reserved" || e.text == "not-allowed") ? Avail::NotAllowed : Avail::Taken;
+            UN.chk.state = (e.text == "taken" || e.text == "held" || e.text == "username-taken") ? Avail::Taken : Avail::NotAllowed;
             UN.chk.suggestions = e.suggestions.empty() ? hubnet::username_suggestions(UN.last_claim) : e.suggestions;
         }
     } else if (e.kind == K::UsernameChanged) {

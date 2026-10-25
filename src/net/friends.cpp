@@ -392,7 +392,8 @@ struct FriendsClient::Impl {
     std::map<std::string, Conv> convs;
     std::deque<Event> events;
     uint32_t local_seq = 0;
-    std::string username; bool needs_new_name = false, username_known = false; int ref_seq = 0;
+    std::string username; bool needs_new_name = false, username_known = false; int ref_seq = 0, claim_ref = 0;
+    std::map<std::string, int> check_refs;   // name we asked about (lower case) -> ref; the server echoes the name, not the ref
 
     /* ---- sending */
     bool send(const std::string& s) { return welcomed && ws.send_text(s); }
@@ -640,7 +641,7 @@ struct FriendsClient::Impl {
             for (const Json& x : a->a) if (x.type == Json::String) blocked.push_back(x.s);
         {   // usernames: the server's name for this account wins over whatever we sent in the hello
             username = j.str("username");
-            needs_new_name = j.boolean("needs_new_name") || (username.empty() && j.get("username") != nullptr);
+            needs_new_name = j.str("username_status") == "needs_new_name";
             username_known = true;
             if (!username.empty()) name = username;
             Event e; e.kind = Event::UsernameChanged; e.name = username; e.ok = !username.empty() && !needs_new_name;
@@ -769,15 +770,28 @@ struct FriendsClient::Impl {
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
             Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref"); e.detail = j.str("detail");
             push_event(std::move(e));
-        } else if (type == "username_check" || type == "username_result") {
-            Event e; e.kind = type == "username_check" ? Event::UsernameChecked : Event::UsernameResult;
-            e.ref = (int)j.num("ref", 0); e.name = j.str("name"); e.ok = j.boolean("ok") || j.boolean("available");
-            e.text = e.ok ? std::string() : j.str("reason", "unavailable"); e.hold_days = (int)j.num("hold_days", 0);
-            if (const Json* a = j.get("suggestions")) for (const Json& x : a->a) if (x.type == Json::String) e.suggestions.push_back(x.s);
-            if (e.kind == Event::UsernameResult && e.ok) { username = e.name; needs_new_name = false; if (!e.name.empty()) name = e.name; }
+        } else if (type == "username_result") {   // op "check" (answer to username_check) or "set" (answer to set_username)
+            const bool is_check = j.str("op") == "check";
+            Event e; e.kind = is_check ? Event::UsernameChecked : Event::UsernameResult;
+            e.ok = j.boolean("ok");
+            e.name = e.ok ? j.str("username") : j.str("name");
+            e.yours = j.boolean("yours");
+            e.text = e.ok ? std::string() : j.str("detail", j.str("reason", "unavailable"));   // taken | held | reserved | profanity | invalid-chars | rate-limited ...
+            if (is_check) {
+                std::string key = j.str("name");
+                for (char& c : key) c = (char)tolower((unsigned char)c);
+                auto it = check_refs.find(key);
+                if (it == check_refs.end()) it = check_refs.find(e.ok ? e.name : std::string());
+                e.ref = it == check_refs.end() ? 0 : it->second;
+                if (it != check_refs.end()) check_refs.erase(it);
+            } else {
+                e.ref = claim_ref;
+                claim_ref = 0;
+                if (e.ok) { username = e.name; needs_new_name = false; if (!e.name.empty()) name = e.name; }
+            }
             push_event(std::move(e));
         } else if (type == "username") {   // pushed to every device of the account when the name changes elsewhere
-            username = j.str("name"); needs_new_name = j.boolean("needs_new_name"); if (!username.empty()) name = username;
+            username = j.str("username"); needs_new_name = j.str("status") == "needs_new_name"; if (!username.empty()) name = username;
             Event e; e.kind = Event::UsernameChanged; e.name = username; e.ok = !username.empty() && !needs_new_name;
             push_event(std::move(e));
         } else if (type == "invite_result") {
@@ -841,7 +855,7 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
     d.gave_up = false;
     d.backoff_ms = 1000;
     d.convs.clear();
-    d.username.clear(); d.needs_new_name = false; d.username_known = false;
+    d.username.clear(); d.needs_new_name = false; d.username_known = false; d.check_refs.clear(); d.claim_ref = 0;
     d.friends.clear(); d.incoming.clear(); d.outgoing.clear(); d.blocked.clear();
     d.connect();
     return true;
@@ -1070,16 +1084,20 @@ int FriendsClient::check_username(const std::string& name)
     Impl& d = *impl_;
     if (!d.welcomed) return 0;
     int ref = ++d.ref_seq;
-    d.send("{\"type\":\"username_check\",\"name\":" + q(name) + ",\"ref\":" + std::to_string(ref) + "}");
+    std::string key = name;
+    for (char& c : key) c = (char)tolower((unsigned char)c);
+    d.check_refs[key] = ref;
+    if (d.check_refs.size() > 16) d.check_refs.erase(d.check_refs.begin());
+    d.send("{\"type\":\"username_check\",\"name\":" + q(name) + "}");
     return ref;
 }
 int FriendsClient::claim_username(const std::string& name)
 {
     Impl& d = *impl_;
     if (!d.welcomed) return 0;
-    int ref = ++d.ref_seq;
-    d.send("{\"type\":\"username_claim\",\"name\":" + q(name) + ",\"ref\":" + std::to_string(ref) + "}");
-    return ref;
+    d.claim_ref = ++d.ref_seq;
+    d.send("{\"type\":\"set_username\",\"name\":" + q(name) + "}");
+    return d.claim_ref;
 }
 void FriendsClient::add_friend_username(const std::string& username)
 {

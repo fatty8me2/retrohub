@@ -75,8 +75,8 @@ struct Event {
                 FriendAdded, FriendRemoved, MessageReceived, InviteReceived, Error,
                 IdentityAdopted,
                 InviteResult,     // IdentityAdopted: text = new friend code ("RH-XXXX-XXXX"), uid = new uid
-                UsernameChecked,  // answer to check_username(): ref, name, ok (= available), text = reason when not, suggestions
-                UsernameResult,   // answer to claim_username(): ref, name, ok, text = reason when not, suggestions, hold_days
+                UsernameChecked,  // answer to check_username(): ref, name, ok (= available), yours, text = reason when not (taken|held|reserved|profanity|...)
+                UsernameResult,   // answer to claim_username(): ref, name, ok, text = reason when not
                 UsernameChanged };// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
@@ -91,7 +91,7 @@ struct Event {
     int ref = 0;                                     // Username*: the id check_username()/claim_username() returned
     bool ok = false;                                 // Username*: available / claimed
     std::vector<std::string> suggestions;            // Username*: alternatives when taken / not allowed
-    int hold_days = 0;                               // UsernameResult: days your previous name stays reserved for you
+    bool yours = false;                              // UsernameChecked: the name is already this account's
 };
 
 /* ---- dedupe (pure; the list is keyed by uid) ----

@@ -1166,7 +1166,7 @@ std::string friends_error_text(const std::string& r, const std::string& d) {
         if (d == "retired-elsewhere") return "That account was already moved to another identity.";
         return "";   // internal / retire-failed / bad-secret / text / too-large / none: retried or not user-actionable
     }
-    if (r == "unknown-code") return "No player has that friend code.";
+    if (r == "unknown-code") return d == "unknown-username" ? "No player has that username." : "No player has that friend code.";
     if (r == "unknown-username") return "No player has that username.";
     if (r == "self") return "That is your own friend code.";
     if (r == "already-friends") return "You are already friends.";

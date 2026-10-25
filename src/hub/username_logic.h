@@ -61,13 +61,14 @@ struct Checker {
     }
     void sent(int r) { if (r > 0) ref = r; else state = Avail::Offline; }
     /* An answer arrived. Stale ones (another ref, or the text changed) are ignored. Returns true when applied. */
-    bool on_result(int r, bool available, const std::string& reason, const std::vector<std::string>& sugg)
+    bool on_result(int r, bool available, const std::string& reason, const std::vector<std::string>& sugg, bool yours = false)
     {
         if (state != Avail::Checking || r != ref) return false;
         suggestions = sugg;
-        if (available) state = Avail::Available;
-        else if (reason == "invalid" || reason == "reserved" || reason == "not-allowed" || reason == "blocked" || reason == "profanity") state = Avail::NotAllowed;
-        else state = Avail::Taken;   // taken / held / anything else that is not "free"
+        if (available) state = yours ? Avail::Yours : Avail::Available;
+        else if (reason == "rate-limited") state = Avail::Offline;   // too many checks: ask again in a moment
+        else if (reason == "taken" || reason == "held" || reason == "username-taken") state = Avail::Taken;   // held = reserved for its previous owner
+        else state = Avail::NotAllowed;   // reserved / profanity / looks-like-code / invalid-chars / ...
         if (!available && suggestions.empty()) suggestions = hubnet::username_suggestions(text);
         return true;
     }
@@ -147,9 +148,11 @@ inline std::string hold_rule_text()
 }
 inline std::string claim_error_text(const std::string& reason)
 {
-    if (reason == "taken") return "Someone just took that name. Try another.";
-    if (reason == "invalid" || reason == "reserved" || reason == "not-allowed") return "That name is not allowed. Try another.";
-    if (reason == "rate-limited" || reason == "too-soon") return "You changed your username recently. Try again a little later.";
+    if (reason == "taken" || reason == "username-taken") return "Someone just took that name. Try another.";
+    if (reason == "held") return "That name is reserved for its previous owner for a few days. Try another.";
+    if (reason == "rate-limited") return "You changed your username a lot lately. Try again later.";
+    if (reason == "reserved" || reason == "profanity" || reason == "looks-like-code" || reason == "invalid-chars" || reason == "too-short" ||
+        reason == "too-long" || reason == "bad-shape" || reason == "username-reserved" || reason == "username-invalid") return "That name is not allowed. Try another.";
     return "Could not claim that name right now. Try again.";
 }
 
