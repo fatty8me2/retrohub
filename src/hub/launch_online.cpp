@@ -442,6 +442,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
         args += hubui::n64_extra_args(gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
+        args += qm_args(ri, e, false);
         args += match_args;
         if (share_save) {   // every PC must agree; only the host (slot 0) supplies its battery dir
             args += " --share-host-save";
@@ -497,6 +498,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         if (e.system == hub::System::GBA || std::string(lcore) == "sameboy_rb") args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
+        args += qm_args(ri, e, false);
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
@@ -526,6 +528,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         if (gb_rb) args += " --rollback";
         args += hubui::retro_extra_args(e.system, gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
+        args += qm_args(ri, e, false);
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
@@ -568,6 +571,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::string args, err;
         if (!ps1_online_args(e, net, plan.ports, tmp, share_save, gsv, &args, &err)) { launch_note(is_host, err, 12.0); return; }
         args += cheats_launch_args(e, true, is_host, launch_body);
+        args += qm_args(ri, e, false);
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }

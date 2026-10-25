@@ -32,6 +32,7 @@ int main() {
     CHECK(!t.sync_auto && t.sync_card_dismissed && t.smash_save_notice_shown && t.cemu_exe == s.cemu_exe);
     {   Settings g; g.games_dest = "E:\\MyGames"; Settings h; CHECK(settings_from_json(settings_to_json(g), &h) && h.games_dest == g.games_dest && Settings().games_dest.empty()); }
     CHECK(!t.cloud_enabled && Settings().cloud_enabled);   // cloud saves: automatic, on by default
+    {   Settings g; g.backup_shots = true; Settings h; CHECK(settings_from_json(settings_to_json(g), &h) && h.backup_shots && !Settings().backup_shots); }   // screenshots backup: off by default
     Settings u;
     CHECK(u.cemu_exe.empty());
     CHECK(settings_from_json("{\"input_delay\": 99}", &u) && u.input_delay == 8 && u.delay_auto && u.name.empty());

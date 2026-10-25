@@ -5,7 +5,7 @@
  *   control file  <run_dir>/control.json      {"seq":N,"cmd":"save_state|load_state|screenshot|swap_disc|quit","slot":0-9}
  *   ack file      <run_dir>/control_ack.json  {"seq":N,"ok":true,"msg":"..."}   (written by the runner, once per seq)
  *   state slots   <state_dir>/slot<N>.state  (+ auto.state)   thumbnail slot<N>.png (<= 320 px wide), sidecar slot<N>.json
- *   screenshots   <vault>/<game_key>/shots/<yyyyMMdd-HHmmss>.png
+ *   screenshots   <vault>/<system>/<game_key>/shots/<yyyyMMdd-HHmmss>.png  (game_dir = hub::saves::game_dir)
  *
  * The runner polls the file's mtime/size ~4x/s, acts once per seq (seq must be larger than the last one seen; the value present at
  * start-up counts as already handled), then writes the ack. Pure helpers; no SDL. */
@@ -47,7 +47,7 @@ std::string ack_path_for(const std::string& ctl);
 std::string state_file(const std::string& state_dir, int slot);     // slot -1: auto.state
 std::string thumb_file(const std::string& state_dir, int slot);     // .png
 std::string sidecar_file(const std::string& state_dir, int slot);   // .json
-std::string shots_dir(const std::string& vault_dir, const std::string& game_key);
+std::string shots_dir(const std::string& game_dir);                 // <vault>/<system>/<game key>/shots
 std::string shot_name(std::time_t t);                               // yyyyMMdd-HHmmss.png (local time)
 
 /* Sidecar written next to every state. */
