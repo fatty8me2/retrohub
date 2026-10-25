@@ -120,6 +120,7 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
     std::string host_app;
     bool host_hello = false;
     for (auto& p : peers) if (p.slot == 0) { host_app = p.app; host_hello = p.hello; }
+    if (rg->system == hub::System::PS1) { std::string b = ps1_online_block(); if (!b.empty()) return b; }   // host and guest alike
     if (host) {
         auto vg = hubui::version_gate(host_app, peers, allow_version_mismatch());
         if (!vg.ok) return vg.reason;

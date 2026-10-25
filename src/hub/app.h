@@ -696,6 +696,7 @@ bool ps1_swap_available(const std::string& key);   // ps1_ui.cpp: the running ga
 void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states);   // ps1_ui.cpp
 bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std::string& ports, const std::string& tmp_dir, bool share_save,
                      hub::gs::Values gsv, std::string* args, std::string* err);   // ps1_ui.cpp: retrorun args for a PlayStation room
+std::string ps1_online_block();   // ps1_ui.cpp: "" or why this PC cannot play PS1 online (no BIOS/core)
 void draw_ps1_dialogs();
 void ps1_bios_ask_shot();   // screenshot aid
 void ps2_bios_ask(const std::string& key);   // ps1_ui.cpp: "PlayStation 2 BIOS" prompt (pad-friendly folder choice)
