@@ -16,7 +16,7 @@ int main() {
     CHECK(username_validate("abcdefghijklmnopq") == NameCheck::TooLong && username_validate("abcdefghijklmnop") == NameCheck::Ok);
     CHECK(username_validate("kai smith") == NameCheck::BadChars && username_validate("kai!") == NameCheck::BadChars);
     CHECK(username_validate("kai.64") == NameCheck::Ok && username_validate("ka-i_x") == NameCheck::Ok && username_validate("kai-") == NameCheck::BadEdge && username_validate("ka._i") == NameCheck::BadEdge);
-    CHECK(username_validate("RH-7KQ2-M9XD") == NameCheck::Reserved && username_validate("rhabcdefgh") == NameCheck::Ok);
+    CHECK(username_validate("RH-7KQ2-M3XD") == NameCheck::Reserved && username_validate("rhabcdefg1") == NameCheck::Ok);
     CHECK(username_validate("_kai") == NameCheck::BadEdge && username_validate("kai_") == NameCheck::BadEdge && username_validate("ka__i") == NameCheck::BadEdge);
     CHECK(username_validate("Admin") == NameCheck::Reserved && username_validate("RETROHUB") == NameCheck::Reserved);
     CHECK(username_validate("  kai  ") == NameCheck::Ok);
