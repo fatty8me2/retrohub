@@ -16,11 +16,11 @@ void page_settings() {
     begin_panel("set_player");
     section_title("Player");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    settings_label("Player name", "Shown to friends in online rooms.");
-    char nb[40];
-    std::snprintf(nb, sizeof nb, "%s", A.st.name.c_str());
-    ImGui::SetNextItemWidth(sp(40.f));
-    if (osk::input("##name", nullptr, nb, 25)) { A.st.name = nb; mark_dirty(); }
+    settings_label("Username", "This is the name friends and room-mates see. It is your account, so it is unique and managed under Account below.");
+    ImGui::PushFont(ui::F.h2);
+    ImGui::TextColored(ImColor(A.st.username_claimed ? ui::TEXT : ui::WARN), "%s", A.st.username_claimed ? A.st.name.c_str() : "Not claimed yet");
+    ImGui::PopFont();
+    if (button(A.st.username_claimed ? "Change username" : "Pick a username", ImVec2(0, 0), !A.st.username_claimed, true, ui::Icon::Gear)) un_open_prompt();
     end_panel();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 

@@ -707,6 +707,8 @@ void page_saves();
 void settings_label(const char* title, const char* hint = nullptr);
 void page_settings();
 void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
+bool account_redeem_for_wizard();   // setup wizard: code box + sign-in button; true on the frame this PC switched to the other account
+void account_redeem_reset();
 
 
 /* ---- cloud_ui.cpp: cloud saves v2 UI (codes only against cloud_engine.h) ---- */

@@ -74,7 +74,10 @@ struct Event {
     enum Kind { FriendOnline, FriendOffline, PresenceChanged, RequestReceived, RequestResolved,
                 FriendAdded, FriendRemoved, MessageReceived, InviteReceived, Error,
                 IdentityAdopted,
-                InviteResult };   // IdentityAdopted: text = new friend code ("RH-XXXX-XXXX"), uid = new uid
+                InviteResult,     // IdentityAdopted: text = new friend code ("RH-XXXX-XXXX"), uid = new uid
+                UsernameChecked,  // answer to check_username(): ref, name, ok (= available), yours, text = reason when not (taken|held|reserved|profanity|...)
+                UsernameResult,   // answer to claim_username(): ref, name, ok, text = reason when not
+                UsernameChanged };// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
     std::string name;
@@ -85,6 +88,10 @@ struct Event {
     std::string detail;       // Error: the server's "detail" (e.g. "friends-full"); empty if none
     std::vector<std::string> ok_uids, failed_uids;   // InviteResult: per-target delivery outcome
     std::vector<std::string> failed_reasons;         // InviteResult: parallel to failed_uids
+    int ref = 0;                                     // Username*: the id check_username()/claim_username() returned
+    bool ok = false;                                 // Username*: available / claimed
+    std::vector<std::string> suggestions;            // Username*: alternatives when taken / not allowed
+    bool yours = false;                              // UsernameChecked: the name is already this account's
 };
 
 /* ---- dedupe (pure; the list is keyed by uid) ----
@@ -151,7 +158,16 @@ class FriendsClient {
     void send_message(const std::string& uid, const std::string& text);
     void send_invite(const std::vector<std::string>& uids, const Invite& inv);
     void ack(const std::vector<std::string>& ids);
-    void rename(const std::string& name);
+    void rename(const std::string& name);   // legacy free-text display name (old servers); with usernames use claim_username()
+
+    /* ---- usernames (docs/FRIENDS.md "Usernames"). All need a welcomed connection; they return the request ref, or 0 when
+     * offline (the caller then offers "claim it later"). Answers arrive as Username* events. */
+    int check_username(const std::string& name);    // is it free (or already mine)?
+    int claim_username(const std::string& name);    // claim, or change to it (the old name is held for kUsernameHoldDays)
+    void add_friend_username(const std::string& username);
+    std::string username() const;                   // "" until claimed
+    bool needs_new_name() const;                    // the server flagged this older account: pick a username
+    bool username_known() const;                    // a welcome has told us (username() / needs_new_name() are meaningful)
     void request_history(const std::string& uid);
 
     /* state */

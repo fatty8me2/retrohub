@@ -126,3 +126,22 @@ void fr_chat_view(float cw);
 void fr_draw_panel(float disp_w, float disp_h);
 bool fr_handle_back();
 void fr_invite_button_and_picker(float btn_w, float btn_h);
+
+/* ---- username_ui.cpp ---- */
+#include "username_logic.h"
+bool un_claimed();                       // this PC has a server-confirmed username (A.st.name is it)
+bool un_claiming();                      // a claim is in flight
+bool un_take_claimed();                  // true once after a claim succeeded (the wizard advances)
+bool un_needs_new();                     // the server flagged this older account
+hubui::un::Avail un_state();
+bool un_text_valid();
+std::string un_text();                    // the trimmed text in the box
+void un_seed_text();                     // fill the box from the Windows name when empty
+void un_open_prompt();                   // the "Pick your username" dialog
+void un_open_change();                   // Settings > Account: open the change panel
+bool un_claim_start();                   // claim the name in the box (needs "available")
+void un_tick();
+void un_on_event(const hubnet::Event& e);
+bool un_picker(const char* id, float width);   // box + live status + suggestions; true on Enter
+void un_account_block();                 // Settings > Account top block
+void draw_username_overlays();           // banner + prompt

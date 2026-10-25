@@ -36,6 +36,7 @@ struct Settings {
     bool notify_in_game = true;        // Windows toast for invites while a game is running
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
     bool auto_friend = true;           // "Automatically add people I play with as friends" (sent to the server in the hello)
+    bool username_claimed = false;     // this PC has a username the server confirmed (name below IS that username); false = still the provisional Windows name
     bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
     bool setup_done = false;           // the first-run setup wizard was finished or skipped
     std::string changelog_seen;        // version whose "What's new" popup was shown/skipped ("" = never)

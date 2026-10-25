@@ -462,6 +462,7 @@ void fr_tick() {
             case hubnet::Event::RequestResolved:
                 if (e.text == "accepted") set_toast((e.name.empty() ? std::string("Your request") : e.name) + " accepted your friend request.");
                 break;
+            case hubnet::Event::UsernameChecked: case hubnet::Event::UsernameResult: case hubnet::Event::UsernameChanged: un_on_event(e); break;
             case hubnet::Event::IdentityAdopted:
                 cloud_account_changed();
                 set_toast("Signed in as " + e.text + " (your account from your other PC)");
@@ -492,14 +493,7 @@ void fr_tick() {
         }
     }
     fr_update_presence();
-    if (A.st.name != FR.last_name) {   // debounce: rename once typing stops
-        if (FR.name_changed == 0) FR.name_changed = ImGui::GetTime();
-        if (ImGui::GetTime() - FR.name_changed > 1.0 && !A.st.name.empty()) {
-            FR.cli.rename(A.st.name);
-            FR.last_name = A.st.name;
-            FR.name_changed = 0;
-        }
-    } else FR.name_changed = 0;
+    un_tick();
 }
 
 /* ---------- fake data for screenshots ---------- */
@@ -1095,16 +1089,19 @@ void fr_draw_panel(float disp_w, float disp_h) {
         // add friend
         {
             ImGui::SetNextItemWidth(cw - sp(8.75f));
-            bool enter = osk::input("##addf", "Add friend: RH-XXXX-XXXX", FR.add_buf, sizeof FR.add_buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsUppercase, osk::Kind::Code);
+            bool enter = osk::input("##addf", "Username or RH-XXXX-XXXX", FR.add_buf, sizeof FR.add_buf, ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Text);
             ImGui::SameLine(0, sp(0.75f));
             bool add = ui::button("Add", ImVec2(sp(8.f), ImGui::GetFrameHeight()), true, FR.add_buf[0] != 0);
             if ((enter || add) && FR.add_buf[0]) {
-                std::string code = hubui::normalize_friend_code(FR.add_buf);
-                if (code.empty()) { FR.add_msg = "That doesn't look like a friend code (RH-XXXX-XXXX)."; FR.add_msg_until = ImGui::GetTime() + 6; }
-                else if (code == fr_my_code()) { FR.add_msg = "That is your own code."; FR.add_msg_until = ImGui::GetTime() + 6; }
+                const std::string typed = hubnet::username_trim(FR.add_buf);
+                const bool is_code = hubnet::username_looks_like_code(typed);
+                std::string code = is_code ? hubui::normalize_friend_code(typed) : std::string();
+                if (is_code && code.empty()) { FR.add_msg = "That doesn't look like a friend code (RH-XXXX-XXXX)."; FR.add_msg_until = ImGui::GetTime() + 6; }
+                else if (!is_code && !hubnet::username_ok(typed)) { FR.add_msg = "That doesn't look like a username (3-16 letters, numbers, _ . -) or a friend code."; FR.add_msg_until = ImGui::GetTime() + 6; }
+                else if (is_code ? code == fr_my_code() : hubnet::username_key(typed) == hubnet::username_key(A.st.name)) { FR.add_msg = is_code ? "That is your own code." : "That is your own username."; FR.add_msg_until = ImGui::GetTime() + 6; }
                 else {
-                    if (!FR.fake) FR.cli.add_friend(code);
-                    FR.add_msg = "Friend request sent to " + code + ".";
+                    if (!FR.fake) { if (is_code) FR.cli.add_friend(code); else FR.cli.add_friend_username(typed); }
+                    FR.add_msg = "Friend request sent to " + (is_code ? code : typed) + ".";
                     FR.add_msg_until = ImGui::GetTime() + 5;
                     FR.add_buf[0] = 0;
                 }
