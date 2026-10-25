@@ -17,12 +17,16 @@ target_link_libraries(hub_changelog_test PRIVATE hublogic)
 add_executable(hub_osk_test test_osk.cpp)
 target_link_libraries(hub_osk_test PRIVATE hublogic)
 
+add_executable(hub_username_test test_username.cpp)
+target_link_libraries(hub_username_test PRIVATE hublogic)
+target_include_directories(hub_username_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+
 add_executable(hub_session_test test_session.cpp)
 target_link_libraries(hub_session_test PRIVATE hublogic)
 
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
-    ui_common.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp match_ui.cpp page_online.cpp friends_ui.cpp
+    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp match_ui.cpp page_online.cpp friends_ui.cpp
     page_controllers.cpp page_saves.cpp cloud_ui.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
 target_include_directories(RetroHub PRIVATE
@@ -86,6 +90,7 @@ target_link_libraries(hub_cloud_ui_test PRIVATE hublogic)
 
 add_executable(hub_wizard_test test_wizard.cpp)
 target_link_libraries(hub_wizard_test PRIVATE hublogic)
+target_include_directories(hub_wizard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 
 add_executable(hub_toast_test test_toast.cpp)
 target_link_libraries(hub_toast_test PRIVATE hublogic)

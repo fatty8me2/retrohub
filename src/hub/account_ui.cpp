@@ -37,6 +37,8 @@ struct AccountState {
     bool confirm_open = false;
     hubnet::Identity pending; // identity waiting for the user's confirmation
     bool seeded = false;
+    bool auto_adopt = false;  // setup wizard: a redeemed code signs in at once (no "replace account?" prompt: nothing to lose yet)
+    bool adopted = false;     // an adoption happened (the wizard moves on)
 };
 AccountState AC;
 
@@ -149,7 +151,11 @@ void poll_jobs() {
             ok = AC.redeem_job->ok; text = AC.redeem_job->text; id = AC.redeem_job->id;
         }
         AC.redeem_job.reset();
-        if (ok) { AC.pending = id; AC.redeem_err.clear(); AC.confirm_open = true; }
+        if (ok) {
+            AC.pending = id; AC.redeem_err.clear();
+            if (AC.auto_adopt) { adopt_pending(); AC.adopted = true; }
+            else AC.confirm_open = true;
+        }
         else AC.redeem_err = text;
     }
 }
@@ -203,43 +209,66 @@ void draw_account_section() {
     section_title("Account");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
+    un_account_block();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
     std::string mycode = fr_my_code();
     if (mycode.empty()) {
         hubnet::Identity id;
         if (hubnet::identity_read_file(identity_path(), &id)) mycode = hubnet::friend_code(id.user_id);
     }
     ImGui::TextUnformatted(("Friend code: " + (mycode.empty() ? std::string("none yet") : mycode)).c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("  Name: %s", A.st.name.c_str());
     ImGui::Dummy(ImVec2(0, sp(1.f)));
 
     /* ---- old PC: make a code ---- */
-    settings_label("Link a new PC", "Creates a code for another PC. Type it there to sign in with this account. "
-                                   "No sync folder needed. The code works once and expires after 10 minutes.");
+    settings_label("Add this account to another PC", "Makes a short code. On the other PC choose \"I already have a username on another PC\" in setup (or enter it below in Settings) and type it. "
+                                                  "That PC then signs in as you and your cloud saves come with it. The code works once and expires after 10 minutes.");
     bool creating = AC.create_job != nullptr;
-    if (button(creating ? "Creating code..." : (AC.show_code ? "New code" : "Link a new PC"), ImVec2(0, 0), false, !creating && !g_headless, ui::Icon::Plus))
+    if (button(creating ? "Creating code..." : ((AC.show_code ? "New code" : "Add this account to another PC")), ImVec2(0, 0), false, !creating && !g_headless, ui::Icon::Plus))
         start_create();
     if (!AC.create_err.empty()) account_text_error(AC.create_err);
     if (AC.show_code) {
         double left = kCodeLifetime - (ImGui::GetTime() - AC.code_t0);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        ImGui::PushFont(ui::F.title);
-        ImGui::TextUnformatted(AC.code.c_str());
-        ImGui::PopFont();
-        ImGui::SameLine(0, sp(2.f));
-        if (button("Copy", ImVec2(0, 0), false, left > 0, ui::Icon::None)) {
-            SDL_SetClipboardText(AC.code.c_str());
-            set_toast("Link code copied.", true, 3.0);
+        {   // big, readable code in a box: type it on the other PC
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImFont* cf = ui::F.hero ? ui::F.hero : ui::F.title;
+            const float fs = cf->FontSize;
+            ImVec2 ts = cf->CalcTextSizeA(fs, 1e5f, 0, AC.code.c_str());
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            const float bw = ts.x + sp(5.f), bh = ts.y + sp(2.5f);
+            dl->AddRectFilled(p, p + ImVec2(bw, bh), ui::PANEL3, sp(1.5f));
+            dl->AddRect(p, p + ImVec2(bw, bh), left > 0 ? ui::ACCENT : ui::HAIRLINE, sp(1.5f), 0, 2.f);
+            dl->AddText(cf, fs, p + ImVec2(sp(2.5f), sp(1.25f)), left > 0 ? ui::TEXT : ui::TEXT3, AC.code.c_str());
+            ImGui::Dummy(ImVec2(bw, bh));
+            ImGui::SameLine(0, sp(2.f));
+            ImGui::BeginGroup();
+            if (button("Copy code", ImVec2(sp(14.f), sp(4.5f)), true, left > 0, ui::Icon::None)) {
+                SDL_SetClipboardText(AC.code.c_str());
+                set_toast("Link code copied.", true, 3.0);
+            }
+            if (left > 0) {
+                ImGui::PushFont(ui::F.bold);
+                ImGui::TextColored(ImColor(left < 60 ? ui::WARN : ui::GOOD), "Expires in %s", countdown_text(left).c_str());
+                ImGui::PopFont();
+            } else ImGui::TextDisabled("This code has expired. Make a new one.");
+            ImGui::EndGroup();
+            if (left > 0) {   // countdown bar
+                ImVec2 q = ImGui::GetCursorScreenPos();
+                const float fw = std::min(1.f, (float)(left / kCodeLifetime));
+                dl->AddRectFilled(q, q + ImVec2(bw, sp(0.5f)), ui::PANEL3, sp(0.25f));
+                dl->AddRectFilled(q, q + ImVec2(bw * fw, sp(0.5f)), left < 60 ? ui::WARN : ui::ACCENT, sp(0.25f));
+                ImGui::Dummy(ImVec2(bw, sp(0.5f)));
+            }
         }
-        if (left > 0) ImGui::TextDisabled("Expires in %s", countdown_text(left).c_str());
-        else { ImGui::TextDisabled("This code has expired."); }
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
     /* ---- new PC: enter a code ---- */
-    settings_label("This is a new PC - enter a link code", "Type the code shown on your other PC. This PC then uses that account "
+    settings_label("This is a new PC - sign in with a code", "Type the code shown on your other PC. This PC then uses that account "
                                                            "instead of its own.");
     ImGui::SetNextItemWidth(sp(26.f));
     bool redeeming = AC.redeem_job != nullptr;
@@ -287,3 +316,26 @@ void draw_account_section() {
     end_panel();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 }
+
+/* ---------- Setup wizard: "I already have a username on another PC" ----------
+ * Draws the code box + button. A good code signs this PC in at once (nothing to lose on a fresh install), turns cloud saves
+ * on and starts the first pull. Returns true on the frame the account switched. Server calls run on the worker thread. */
+bool account_redeem_for_wizard() {
+    seed_for_screenshots();
+    AC.auto_adopt = true;
+    poll_jobs();
+    bool adopted = false;
+    if (AC.adopted) { AC.adopted = false; adopted = true; }
+    bool redeeming = AC.redeem_job != nullptr;
+    ImGui::SetNextItemWidth(sp(26.f));
+    bool enter = osk::input("##wizcode", "XXXX-XXXX", AC.redeem_buf, sizeof AC.redeem_buf,
+                            ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Code);
+    ImGui::SameLine();
+    const bool complete = hubui::un::link_code_complete(AC.redeem_buf);
+    if (button(redeeming ? "Checking..." : "Sign in", ImVec2(sp(14.f), 0), true, !redeeming && !g_headless && complete) || (enter && complete)) {
+        if (!redeeming && complete) start_redeem();
+    }
+    if (!AC.redeem_err.empty()) account_text_error(AC.redeem_err);
+    return adopted;
+}
+void account_redeem_reset() { AC.redeem_buf[0] = 0; AC.redeem_err.clear(); AC.auto_adopt = false; }

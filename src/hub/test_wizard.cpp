@@ -23,10 +23,13 @@ int main() {
     CHECK(pad_hint(0, true).find("Plug in a controller") != std::string::npos);
     CHECK(pad_hint(1, true) == "Press A to continue.");
     CHECK(player_label(1) == "Player 2");
-    CHECK(name_ok("Kai") && !name_ok("") && !name_ok("  \t"));
+    CHECK(name_ok("Kai") && !name_ok("") && !name_ok("  	") && !name_ok("ab") && !name_ok("a b"));
     {   hubui::Settings a, b; a.setup_done = true;
         CHECK(hubui::settings_from_json(hubui::settings_to_json(a), &b) && b.setup_done);
-        hubui::Settings c; CHECK(!c.setup_done); }
+        hubui::Settings c; CHECK(!c.setup_done && !c.username_claimed);
+        a.username_claimed = true; a.name = "kai_64";
+        hubui::Settings d; CHECK(hubui::settings_from_json(hubui::settings_to_json(a), &d) && d.username_claimed && d.name == "kai_64");
+        CHECK(hubui::friends_error_text("unknown-username", "") == "No player has that username."); }
     std::printf(fails ? "FAILED\n" : "wizard tests passed\n");
     return fails ? 1 : 0;
 }
