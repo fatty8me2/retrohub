@@ -532,6 +532,19 @@ void gs_draw_game_section(const hub::GameEntry& e);       // details modal
 void gs_draw_defaults_area();                              // Settings page
 
 
+/* ---- cheats_ui.cpp: per-game cheats (vault: _settings\cheats.json), runner file, room strip ---- */
+bool cheats_supported(const hub::GameEntry& e);                 // N64 / GB / GBC / GBA ROMs (not the native port)
+int cheats_enabled_count(const hub::GameEntry& e);
+void cheats_open(const hub::GameEntry& e);                      // the Cheats panel
+void cheats_open_live();                                        // in-game overlay: panel for the running game
+void cheats_pad_watch();                                        // View + Y while a game runs
+std::string cheats_launch_args(const hub::GameEntry& e, bool online, bool is_host, const std::string* launch_body);   // " --cheats <file>" or ""
+std::string cheats_launch_fragment(const hub::GameEntry& e);    // ,"cheats":{...} for the host's launch message
+std::string cheats_launch_block(const hub::GameEntry& e, const std::vector<hubui::PeerInfo>& peers);   // "" or why the host can't launch
+void cheats_on_room_msg(const std::string& game, const std::vector<std::string>& names);
+void cheats_room_strip(const hub::GameEntry* rg, bool host);
+void draw_cheats_modal();
+
 /* ---- lobby.cpp ---- */
 bool room_connected();
 std::vector<hubnet::Member> room_members();
