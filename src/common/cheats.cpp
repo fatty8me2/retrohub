@@ -18,6 +18,8 @@ const char* format_name(Format f) {
         case Format::ActionReplay: return "ar";
         case Format::CodeBreaker: return "codebreaker";
         case Format::GameGenie: return "gamegenie";
+        case Format::ActionReplayGC: return "ar_gc";
+        case Format::Gecko: return "gecko";
         default: return "raw";
     }
 }
@@ -31,6 +33,8 @@ bool parse_format(const std::string& in, Format* out) {
     else if (s == "ar" || s == "actionreplay" || s == "action replay") *out = Format::ActionReplay;
     else if (s == "codebreaker" || s == "cb") *out = Format::CodeBreaker;
     else if (s == "gamegenie" || s == "gg") *out = Format::GameGenie;
+    else if (s == "ar_gc" || s == "argc") *out = Format::ActionReplayGC;
+    else if (s == "gecko") *out = Format::Gecko;
     else if (s == "raw") *out = Format::Raw;
     else return false;
     return true;
@@ -43,6 +47,7 @@ bool target_for_system(const std::string& system, Target* out) {
     else if (s == "gb" || s == "gbc") *out = Target::GB;
     else if (s == "nds" || s == "ds") *out = Target::DS;
     else if (s == "ps1" || s == "psx") *out = Target::PS1;
+    else if (s == "gc" || s == "gamecube") *out = Target::GC;
     else return false;
     return true;
 }
@@ -162,9 +167,18 @@ static bool gg_code(const std::string& line, std::string* out) {
     return true;
 }
 
+/* Dolphin's encrypted Action Replay form: XXXX-XXXX-XXXXX (letters/digits). */
+bool gc_is_encrypted_ar(const std::string& line) {
+    std::string s = squeeze(line);
+    if (s.size() != 15 || s[4] != '-' || s[9] != '-') return false;
+    for (size_t i = 0; i < s.size(); i++) if (i != 4 && i != 9 && !std::isalnum((unsigned char)s[i])) return false;
+    return true;
+}
+
 bool normalize_code(Target target, Format fmt, const std::string& line, std::string* out, std::string* err) {
     auto bad = [&](const char* why) { if (err) *err = std::string(why) + ": '" + line + "'"; return false; };
     std::string r;
+    if (target != Target::GC && (fmt == Format::Gecko || fmt == Format::ActionReplayGC)) return bad("Gecko / GameCube Action Replay codes only work on GameCube");
     switch (target) {
         case Target::N64:
             if (fmt == Format::CodeBreaker || fmt == Format::GameGenie) return bad("only GameShark codes work on N64");
@@ -193,6 +207,13 @@ bool normalize_code(Target target, Format fmt, const std::string& line, std::str
         case Target::PS1:
             if (fmt == Format::GameGenie || fmt == Format::CodeBreaker) return bad("only GameShark/Action Replay codes work on PS1");
             if (!pair_code(line, 8, 4, &r)) return bad("expected AAAAAAAA VVVV");
+            break;
+        case Target::GC:
+            if (fmt == Format::Gecko) { if (!pair_code(line, 8, 8, &r)) return bad("expected AAAAAAAA VVVVVVVV (Gecko)"); }
+            else if (fmt == Format::ActionReplayGC || fmt == Format::ActionReplay) {
+                if (gc_is_encrypted_ar(line)) r = squeeze(line);
+                else if (!pair_code(line, 8, 8, &r)) return bad("expected AAAAAAAA VVVVVVVV or XXXX-XXXX-XXXXX (Action Replay)");
+            } else return bad("only Gecko and Action Replay codes work on GameCube");
             break;
     }
     *out = r;

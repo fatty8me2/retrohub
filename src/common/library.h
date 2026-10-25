@@ -40,6 +40,7 @@ struct GameEntry {
     uint64_t size = 0;
     std::string catalog_id;   // games.h catalog id when known (e.g. "mp1"), else ""
     uint64_t unpacked = 0;    // archived GC disc: size of the image inside (from the scan; 0 = unknown)
+    int gc_rev = -1;          // GC disc version byte (header 0x07); -1 = not read. Filled on demand (cheats), not cached.
     std::string issue;        // "" ok | "extract" zipped 3DS image Azahar cannot open | "encrypted" 3DS image needing AES keys |
                               // "keys" Wii U .wud/.wux needing keys.txt
 };

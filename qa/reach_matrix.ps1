@@ -80,10 +80,10 @@ function Online-Expected($g) {   # supports_online() as designed: catalog-gated 
     if ($g.sys -in 'gc', 'nds', 'ps1') { if ($g.key -like '*online*') { return 'enabled' } else { return 'explained' } }
     return 'explained'   # wiiu, ps2: an "Offline only" button with a tooltip, never silence
 }
-function Cheats-Expected($g) {   # n64 gb gbc gba nds ps1: the Cheats button; gc 3ds wiiu ps2: a disabled button with a tooltip; native / Kanto: hidden
+function Cheats-Expected($g) {   # n64 gb gbc gba nds ps1 gc: the Cheats button; 3ds wiiu ps2: a disabled button with a tooltip; native / Kanto: hidden
     if ($g.kanto) { return 'hidden' }
-    if ($g.sys -in 'n64', 'gb', 'gbc', 'gba', 'nds', 'ps1') { return 'enabled' }
-    if ($g.sys -in 'gc', '3ds', 'wiiu', 'ps2') { return 'explained' }
+    if ($g.sys -in 'n64', 'gb', 'gbc', 'gba', 'nds', 'ps1', 'gc') { return 'enabled' }
+    if ($g.sys -in '3ds', 'wiiu', 'ps2') { return 'explained' }
     return 'hidden'
 }
 

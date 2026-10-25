@@ -72,4 +72,5 @@ RetroHub can run a friend's Kanto Together co-op hack from the user's own packag
 
 | Component | Version | License | Use |
 |---|---|---|---|
+| Dolphin 2509 `Data/Sys/GameSettings/*.ini` [Gecko] / [ActionReplay] (GameCube) | tag 2509 | GPL-2.0-or-later | GameCube cheat lists, merged by `scripts/build_cheats_db.py` into `data/cheats_db.bin`, matched by 6-char disc ID + disc revision. |
 | libretro-database `cht/` (N64, GB, GBC, GBA, PS1) | commit 12c21cf79f1e20eff6ac68b80875816c717d0a7a | CC BY-SA 4.0 | Cheat lists, converted by `scripts/build_cheats_db.py` into `data/cheats_db.bin` (2.2 MB). Must ship in `data/` next to the exe. |

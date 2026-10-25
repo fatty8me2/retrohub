@@ -958,5 +958,17 @@
       "source": "https://github.com/libretro/libretro-database/tree/master/cht/Nintendo%20-%20Game%20Boy/Pokemon%20-%20Yellow%20Version%20-%20Special%20Pikachu%20Edition%20(USA%2C%20Europe)%20(GBC%2CSGB%20Enhanced).cht",
       "verified": false
     }
+  ],
+  "GALE01r2": [
+    {
+      "desc": "Unlock All Characters and Stages",
+      "format": "gecko",
+      "codes": [
+        "0445BF28 FFFFFFFF",
+        "0445BF2C FFFFFFFF"
+      ],
+      "source": "Dolphin 2509 Sys/GameSettings/GALE01r2.ini ('Unlock All Characters and Stages [Datel]'; the same two words are inside 'Netplay Community Settings'); tested: RetroHub Play path + Dolphin on a hidden desktop, qa/gc_cheats_play.ps1",
+      "verified": true
+    }
   ]
 }

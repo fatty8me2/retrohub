@@ -301,6 +301,7 @@ struct GcOnline {
     gcnp::Spec spec;                 // host: what we announce; guest: what the host announced
     hub::GameEntry entry;
     int launch_no = 0, port = 0;
+    std::string launch_body;         // guest: the host's launch message (its cheats list is applied to this PC's Dolphin too)
     std::string left_name;           // guest: the host left mid-game, Dolphin is being closed
     unsigned long long close_deadline = 0;   // guest: Dolphin was asked to close (forwarder lost); terminate only if it ignores that for 20 s
     std::string fp_path, fp_sha;     // disc fingerprint (computed once per path on a worker thread)
@@ -548,6 +549,7 @@ int cheats_enabled_count(const hub::GameEntry& e);
 void cheats_open(const hub::GameEntry& e);                      // the Cheats panel
 void cheats_open_live();                                        // in-game overlay: panel for the running game
 void cheats_pad_watch();                                        // View + Y while a game runs
+int cheats_apply_dolphin(const hub::GameEntry& e, const std::string& dolphin_user_dir, bool online, bool is_host, const std::string* launch_body);   // GameCube: enabled cheats -> User\\GameSettings\\<GAMEID>.ini before Dolphin starts
 std::string cheats_launch_args(const hub::GameEntry& e, bool online, bool is_host, const std::string* launch_body);   // " --cheats <file>" or ""
 std::string cheats_launch_fragment(const hub::GameEntry& e);    // ,"cheats":{...} for the host's launch message
 std::string cheats_launch_block(const hub::GameEntry& e, const std::vector<hubui::PeerInfo>& peers);   // "" or why the host can't launch
