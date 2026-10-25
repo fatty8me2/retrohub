@@ -1,6 +1,10 @@
 # RetroHub
 
-RetroHub is a Windows launcher for retro games. It puts your N64, GameCube, Wii U, Nintendo 3DS, Game Boy Advance, Game Boy, Game Boy Color and Nintendo DS games in one library, and it lets you play them online with friends.
+## ⬇️ [Download RetroHub for Windows (RetroHub-Setup.exe)](https://github.com/fatty8me2/retrohub/releases/latest/download/RetroHub-Setup.exe)
+
+Run the setup, and RetroHub walks you through your controller and games. No command line needed. Windows may show a SmartScreen warning: click **More info**, then **Run anyway** ([why](#windows-smartscreen-warning)). All versions and patch notes: [Releases](https://github.com/fatty8me2/retrohub/releases).
+
+RetroHub is a Windows launcher for retro games. It puts your N64, GameCube, Wii U, Nintendo 3DS, Game Boy Advance, Game Boy, Game Boy Color, Nintendo DS, PlayStation and PlayStation 2 games in one library, and it lets you play them online with friends.
 
 - **One library.** Browse and launch every game from a single window, with cover art and per-game details.
 - **Online play with friends.** Add friends by friend code, see who is online, send invites, and chat in a room. Rooms use a short room code. The room page shows READY, then LAUNCH for the host once everyone is ready, and a Rejoin button if the connection drops.
@@ -20,6 +24,8 @@ RetroHub is a Windows launcher for retro games. It puts your N64, GameCube, Wii 
 | Game Boy Advance | mGBA (libretro core) |
 | Game Boy / Game Boy Color | SameBoy by default, Gambatte as a fallback (libretro cores) |
 | Nintendo DS | melonDS DS (libretro core, built-in BIOS, two screens + mouse touch) |
+| PlayStation | Beetle PSX (libretro core, rollback online, multitap; needs your BIOS) |
+| PlayStation 2 | PCSX2, downloaded on demand (offline; needs your BIOS) |
 | Native ports | Run directly, for example Smash Classic (BattleShip) |
 
 See `docs/CORES.md`, `docs/DOLPHIN.md`, `docs/EMULATORS.md` (3DS and Wii U) and `docs/RETRORUN.md` for details.
@@ -52,7 +58,7 @@ The first configure downloads SDL2, Dear ImGui, the mupen64plus headers and mini
 
 ## Releases
 
-RetroHub releases ship inside the Smash Classic package, not as a separate download. The packaging script lives in the Smash Classic repository. It stamps the release version into `VERSION` and builds the package that is published on GitHub. The lobby and friends server is a Cloudflare Worker, and its code also lives in the Smash Classic repository.
+Every release is published here as `RetroHub-Setup.exe` (and the portable `BattleShip-windows.zip`), and the same files go to the Smash Classic repository for its built-in updater. The packaging script lives in the Smash Classic repository. It stamps the release version into `VERSION` and builds the package that is published on GitHub. The lobby and friends server is a Cloudflare Worker, and its code also lives in the Smash Classic repository.
 
 ## Install (Windows)
 
