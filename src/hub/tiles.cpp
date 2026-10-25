@@ -23,6 +23,8 @@ void refresh_save_info(const hub::GameEntry& e) {
     A.info_battery_files = A.info_state_files = 0;
     A.info_battery_bytes = 0;
     A.info_auto_state = false;
+    if (A.info_states_key != e.key) { A.info_states_key = e.key; A.state_sel = -3; A.state_confirm = -2; }
+    A.info_states.clear();
     if (is_native(e)) return;
     std::string sys = sys_short(e);
     uint64_t sb = 0;
@@ -31,6 +33,10 @@ void refresh_save_info(const hub::GameEntry& e) {
     count_files(sd, &A.info_state_files, &sb);
     A.info_auto_state = file_exists(with_slash(sd) + "auto.state");
     if (A.info_auto_state && A.info_state_files > 0) --A.info_state_files;
+    if (hubui::system_has_states(sys, false)) {
+        A.info_states = hubui::list_states(sd);
+        A.info_state_files = hubui::count_states(A.info_states, false);   // slots only: thumbnails and sidecars are not states
+    }
 }
 
 std::string size_text(uint64_t b) {

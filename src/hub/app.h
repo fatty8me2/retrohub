@@ -207,6 +207,12 @@ struct App {
     uint64_t info_battery_bytes = 0;
     bool info_auto_state = false;
     double info_at = -100;
+    std::vector<hubui::StateSlot> info_states;   // slots of the selected game (details modal), refreshed with the save info
+    std::string info_states_key;
+    int state_sel = -3;                          // slot highlighted in the strip (-1 = Auto)
+    int state_confirm = -2;                      // slot awaiting a second Delete press
+    std::string resume_key, resume_state;        // set by resume_entry(): the next launch of resume_key passes --load-state resume_state
+    hubui::SortMode sort_mode = hubui::SortMode::Title;
 
     // saves
     SaveJob job;
@@ -634,6 +640,12 @@ void locate_smash(bool clicked);   // call every frame with the button result
 void toggle_favorite(const std::string& key);
 void section_title(const std::string& t);
 void refresh_save_info(const hub::GameEntry& e);
+void resume_entry(const hub::GameEntry& e, int slot);   // slot -1 = auto; loads that state on launch (plain Play when it is missing)
+bool has_resume(const hub::GameEntry& e);               // this game can resume from its auto state right now
+void cycle_sort(int dir);                               // library sort chip / RT
+void draw_state_strip(const hub::GameEntry& e);         // details modal: slots 0-9 + auto
+void state_textures_clear();
+void states_shot_seed();                                // HUB_SHOT_STATES=1 (headless): fake states for screenshots
 std::string size_text(uint64_t b);
 void open_in_explorer(const std::string& dir);
 ArtRef art_lookup(const std::string& seen_key, bool have_name, SDL_Texture* tex, int w, int h);
