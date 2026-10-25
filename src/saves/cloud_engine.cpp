@@ -1311,9 +1311,12 @@ void startup_pass() {
             bool local_exists = fs::exists(game_root(g));
             bool mine;
             { std::lock_guard<std::mutex> lk(E.mu); mine = !w->device.empty() && w->device == E.device_name; }   // this PC pushed it last: nothing to fetch
-            if (local_exists && !mine) {
-                std::lock_guard<std::mutex> lk(E.mu);
-                E.queue.put(w->gkey, "pull", now_s() + 1, false);
+            (void)mine;   // even a game this PC pushed last is checked once per start so its status becomes Synced after a restart
+            std::lock_guard<std::mutex> lk(E.mu);
+            if (local_exists) E.queue.put(w->gkey, "pull", now_s() + 1, false);
+            else {   // only in the cloud: nothing is waiting, it comes down at the first launch here
+                GameCloudInfo& gi = info_of_locked(g);
+                if (gi.state == CloudState::Waiting) gi.state = CloudState::Synced;
             }
         }
         std::lock_guard<std::mutex> lk(E.mu);
