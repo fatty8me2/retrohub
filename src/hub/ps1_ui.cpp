@@ -165,6 +165,19 @@ static void draw_ps2_ask() {
  * `ports` the plan's port owners ("0,1,2,3": -1 = nobody). Every PC must run the same BIOS (retrorun compares a fingerprint and refuses a
  * mismatch), so a real BIOS is staged when one is found and OpenBIOS is the fallback only when no PC needs a prompt. The multitap follows
  * the plan: a third or fourth port means the multitap is on, whatever the local setting says (the host's Sync value still forces it on). */
+/* Why this PC cannot start a PlayStation room game ("" = fine): the room READY/LAUNCH buttons show it, so a guest without a BIOS
+ * is told up front instead of failing after the host launches. Same checks as ps1_online_args; cached 2 s (touches the disk). */
+std::string ps1_online_block() {
+    static double at = -10; static std::string cached;
+    double now = ImGui::GetTime();
+    if (now - at < 2.0) return cached;
+    at = now;
+    cached.clear();
+    if (find_core("beetle_psx").empty()) cached = "The PlayStation emulator core (beetle_psx_libretro.dll) is missing from the cores folder.";
+    else if (find_all().empty() && !A.st.ps1_openbios) cached = "Your PC has no PlayStation BIOS (scph5501.bin) - add it, or turn on OpenBIOS, in Settings > Playing. Everyone in the room needs the same setup.";
+    return cached;
+}
+
 bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std::string& ports, const std::string& tmp_dir, bool share_save,
                      hub::gs::Values gsv, std::string* args, std::string* err) {
     if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) { *err = "Unpacking " + e.title + " first - try again when it is done."; return false; }
