@@ -291,6 +291,10 @@ static void test_bios(const fs::path& d) {
         rom(gb / "ps2 bios usa" / "SCPH-91000_BIOS_USA.ROM0", false);   // no RESET magic: not a BIOS
         CHECK(hubemu::pcsx2_find_bios({U8(d / "bios_vendor" / "GamesPS2")}).file == "SCPH-90001_BIOS_V18_USA_230.ROM0");
     }
+    {   // PCSX2 asks "Settings failed to load, or are the incorrect version" unless [UI] SettingsVersion is present
+        CHECK(hubemu::pcsx2_ini_defaults("").find("SettingsVersion = 1") != std::string::npos);
+        CHECK(hubemu::pcsx2_ini_launch("[UI]\nStartFullscreen = true\n", hubemu::Bios(), "RetroHub/x/Mcd001.ps2", hub::gs::Values()).find("SettingsVersion = 1") != std::string::npos);
+    }
     auto dirs = hubemu::pcsx2_bios_search_dirs("D:\\chosen", {"E:\\Games"});
     CHECK(dirs.size() >= 3 && dirs[0] == "D:\\chosen");
     CHECK(std::string(hubemu::pcsx2_bios_missing_text()).find("BIOS") != std::string::npos);

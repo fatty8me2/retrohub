@@ -177,6 +177,7 @@ std::string pcsx2_binding(const hubctl::Term& t, int sdl) {
 
 std::string pcsx2_ini_defaults(const std::string& in) {
     std::string t = in;
+    t = hubui::ini_set(t, "UI", "SettingsVersion", "1");   // without it PCSX2 asks "Settings failed to load, or are the incorrect version" on every start
     t = hubui::ini_set(t, "UI", "SetupWizardIncomplete", "false");
     t = hubui::ini_set(t, "UI", "ConfirmShutdown", "false");
     t = hubui::ini_set(t, "UI", "StartFullscreen", "true");
@@ -267,6 +268,7 @@ static std::string gv(const hub::gs::Values& v, const char* k, const char* d) { 
 
 std::string pcsx2_ini_launch(const std::string& in, const Bios& bios, const std::string& card_rel, const hub::gs::Values& v) {
     std::string t = in;
+    t = hubui::ini_set(t, "UI", "SettingsVersion", "1");   // also for an ini written by an older RetroHub that lacked it
     if (!bios.file.empty()) {
         t = hubui::ini_set(t, "Folders", "Bios", bios.dir);
         t = hubui::ini_set(t, "Filenames", "BIOS", bios.file);
