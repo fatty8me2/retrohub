@@ -46,6 +46,8 @@ struct Args {
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
     std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
     int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
+    std::string disc_ctl;         // --disc-ctl FILE: RetroHub rewrites it to request "insert the next disc" (watched like --cheats)
+    std::vector<uint64_t> swap_at;   // --swap-disc-at N[,N]: QA, request a disc swap at these frames
     std::string cheats;           // --cheats FILE: cheat list JSON (src/common/cheats.h); polled for live toggles offline
     struct MemDump { unsigned id; size_t off, len; std::string file; };
     std::vector<MemDump> mem_dumps;   // --dump-mem ID,OFFSET,LEN,FILE: raw libretro memory block dumped at exit (QA)
@@ -92,6 +94,11 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--rom") { if (!val(&o->rom)) return false; }
         else if (k == "--controls") { if (!val(&o->controls)) return false; }
         else if (k == "--cheats") { if (!val(&o->cheats)) return false; }
+        else if (k == "--disc-ctl") { if (!val(&o->disc_ctl)) return false; }
+        else if (k == "--swap-disc-at") {
+            if (!val(&v)) return false;
+            for (size_t q = 0; q < v.size();) { o->swap_at.push_back(strtoull(v.c_str() + q, nullptr, 10)); size_t c = v.find(',', q); if (c == std::string::npos) break; q = c + 1; }
+        }
         else if (k == "--dump-mem") {
             if (!val(&v)) return false;
             unsigned id = 0; unsigned long long off = 0, len = 0; char file[1024] = {0};
@@ -465,6 +472,18 @@ class Frontend {
     void cheats_init();
     void cheats_apply(const cheats::CheatSet& set);
     void cheats_poll();
+    /* ---- multi-disc (libretro disk control). Offline a swap applies at once; with rollback netplay it travels as a one-shot event in the
+     * input stream (ps1_input.h) and every PC applies it on the same simulated frame. ---- */
+    cheats::FileWatch disc_watch;
+    uint64_t disc_next_poll = 0;
+    unsigned disc_want_ = 0;     // disc the next request starts from (the last one requested)
+    bool disc_want_init_ = false;
+    uint64_t disc_ev_pending_ = 0, disc_ev_now_ = 0;   // rollback: event queued by the user / the one carried by this frame's local input
+    bool swap_combo_prev_ = false;
+    size_t swap_at_i_ = 0;
+    void disc_request();
+    void disc_apply(unsigned target, bool visible);
+    void disc_poll();
     void do_pacing();
     int selftest();
 
@@ -518,6 +537,39 @@ void Frontend::cheats_poll() {
     cheats::CheatSet set; std::string err;
     if (!cheats::load_file(a.cheats, &set, &err)) { rlog("cheats: cannot reload %s: %s", a.cheats.c_str(), err.c_str()); return; }
     cheats_apply(set);
+}
+
+/* The user asked for the next disc (hotkey / pad combo / RetroHub overlay). */
+void Frontend::disc_request() {
+    unsigned n = core.disc_count();
+    if (n < 2) { set_status(n ? "This game has only one disc" : "This core cannot swap discs"); return; }
+    if (!disc_want_init_) { disc_want_ = core.disc_index(); disc_want_init_ = true; }
+    if (online && !rbe) { set_status("Disc swapping needs rollback netplay"); return; }
+    unsigned target = (disc_want_ + 1) % n;
+    disc_want_ = target;
+    if (rbe) disc_ev_pending_ = retrorun::disc_event(target);   // applied by every PC on the same frame (rollback input stream)
+    else disc_apply(target, true);
+}
+
+/* Insert disc `target`: eject, select, close the tray. Idempotent, so a re-simulated frame may repeat it. `visible` = not a rollback re-simulation. */
+void Frontend::disc_apply(unsigned target, bool visible) {
+    if (!core.disc_set(target)) { if (visible) rlog("disc: swap to %u failed", target + 1); return; }
+    disc_want_ = target; disc_want_init_ = true;
+    if (visible) {
+        rlog("disc: Disc %u inserted (frame %llu, core disc %u of %u)", target + 1, (unsigned long long)frame_no, core.disc_index() + 1, core.disc_count());
+        set_status("Disc " + std::to_string(target + 1) + " inserted");
+    }
+}
+
+void Frontend::disc_poll() {
+    while (swap_at_i_ < a.swap_at.size() && frame_no >= a.swap_at[swap_at_i_]) { swap_at_i_++; disc_request(); }
+    if (!a.disc_ctl.empty()) {
+        uint64_t now = SDL_GetTicks64();
+        if (now >= disc_next_poll) {
+            disc_next_poll = now + 250;
+            if (disc_watch.changed()) disc_request();
+        }
+    }
 }
 
 void Frontend::set_status(const std::string& s) {
@@ -804,6 +856,14 @@ void Frontend::poll_all_local() {
                 pad_touch = (retro_pad->mask(st) >> RETRO_DEVICE_ID_JOYPAD_R3) & 1;
             }
         }
+        bool swap_combo = false;   // Back + L3 + R3: next disc
+        for (size_t i = 0; i < pads.size(); i++) {
+            hubctl::PadState st;
+            hubctl::read_state(pads[i], &st);
+            if (st.b[hubctl::kBtnBack] && st.b[7] && st.b[8]) swap_combo = true;
+        }
+        if (swap_combo && !swap_combo_prev_) disc_request();
+        swap_combo_prev_ = swap_combo;
         if (exit_combo.update(combo, (long long)SDL_GetTicks64())) { rlog("exit combo (Back+Start held): leaving"); quit = true; }
     }
     for (int i = 0; i < n_local; i++) {
@@ -845,6 +905,7 @@ void Frontend::handle_key(const SDL_KeyboardEvent& k) {
                 set_status(std::string("Screen layout: ") + dsview::layout_name(ds_layout));
             }
             break;
+        case SDLK_F10: disc_request(); break;
         case SDLK_F5: want_save = true; break;
         case SDLK_F7:
             if (online || a.ds_link) set_status("Loading states is disabled during netplay");
@@ -1098,6 +1159,7 @@ uint64_t Frontend::ps1_config_fingerprint() {
     auto mix = [&](const std::string& t) { for (unsigned char c : t) h = (h ^ c) * 0x100000001B3ull; h = (h ^ 0xFF) * 0x100000001B3ull; };
     mix(core.info().library_name ? core.info().library_name : "");
     mix(core.info().library_version ? core.info().library_version : "");
+    mix("discs=" + std::to_string(core.disc_count()));   // a disc swap is an index: every PC needs the same number of discs
     for (auto& kv : core.overrides) if (kv.first.rfind("beetle_psx_", 0) == 0) mix(kv.first + "=" + kv.second);   // ordered map: same on every PC
     std::vector<std::pair<std::string, uint64_t>> bios;
     std::error_code ec;
@@ -1225,7 +1287,8 @@ bool Frontend::setup_net() {
         rc.max_pred = a.rb_pred;
         if (const char* hi = std::getenv("RB_HASH_INTERVAL")) rc.hash_interval = std::max(1, atoi(hi));
         rc.use_state_hash = false;   // confirmed video hash: serialized bytes differ benignly after a load (audio state)
-        rc.val_bytes = is_ps1 ? 6 : 2;   // PlayStation: buttons + 4 stick bytes per port
+        rc.val_bytes = is_ps1 ? 8 : 2;   // PlayStation: buttons + 4 stick bytes + 16 event bits (disc swap) per port
+        if (is_ps1) rc.event_mask = retrorun::kEventMask;
         if (is_ps1) rc.relay_half_rate = true;
         if (is_ps1) rc.send_gap_ms = 30;   // ~60 packets/s per PC: 4 PCs through the relay stay under its 400 frames/s room cap
         if (is_ps1) rc.pred_budget = 3;   // a PlayStation frame costs 3-8 ms: re-simulating 6 frames per late input would drop frames, so the input delay takes over sooner
@@ -1460,6 +1523,8 @@ rb::Sim Frontend::make_rb_sim() {
         for (int p = 0; p < 4; p++) {
             if (is_ps1) retrorun::unpack_pad(pads[p], &frame_pad[p], frame_stick[p]);   // buttons + quantised sticks, same on every PC
             else frame_pad[p] = (uint32_t)pads[p];
+            unsigned dt;
+            if (is_ps1 && retrorun::disc_event_of(pads[p], &dt)) disc_apply(dt, visible);   // before the frame runs, on every PC at the same frame
         }
         core.run();
         resim = false;
@@ -1490,10 +1555,10 @@ rb::Sim Frontend::make_rb_sim() {
             }
         return h;
     };
-    s.poll_local = [this] { poll_all_local(); };
+    s.poll_local = [this] { poll_all_local(); disc_ev_now_ = disc_ev_pending_; disc_ev_pending_ = 0; };
     s.read_local = [this](int port) -> uint64_t {
         for (int i = 0; i < n_local; i++)
-            if (local_ports[i] == port) return is_ps1 ? retrorun::pack_pad(local_pad_cache_[i], local_stick_[i]) : (uint64_t)local_pad_cache_[i];
+            if (local_ports[i] == port) return is_ps1 ? (retrorun::pack_pad(local_pad_cache_[i], local_stick_[i]) | (i == 0 ? disc_ev_now_ : 0)) : (uint64_t)local_pad_cache_[i];
         return 0;
     };
     s.idle = [this] { pump_events(true); };
@@ -1541,6 +1606,12 @@ int Frontend::run_synctest() {
             if (is_ps1 && !std::getenv("RB_NOINPUT"))
                 for (int j = 0; j < 4; j++) { uint32_t y = (x + (uint32_t)j * 0x9E3779B9u) * 2246822519u; y ^= y >> 15; st[j] = (int16_t)((int)(y & 0xFFFF) - 32768); }
             pads[ports[k]] = is_ps1 ? retrorun::pack_pad(b, st) : (uint64_t)b;
+        }
+        if (is_ps1) {   // QA: RB_SWAPDISC=N[,M] swaps to the next disc at those input frames (exercises the deterministic swap under rollback)
+            static std::vector<int> sw;
+            static bool sw_init = false;
+            if (!sw_init) { sw_init = true; if (const char* e = std::getenv("RB_SWAPDISC")) for (const char* q = e; *q;) { sw.push_back(atoi(q)); const char* c = strchr(q, ','); if (!c) break; q = c + 1; } }
+            for (size_t k = 0; k < sw.size(); k++) if (f == sw[k]) pads[ports[0]] |= retrorun::disc_event((unsigned)(k + 1) % std::max(1u, core.disc_count()));
         }
     };
     rlog("SYNCTEST: %d frames, rollback depth %d, state %zu bytes, compare %s", frames, a.synctest, core.serialize_size(),
@@ -1791,6 +1862,7 @@ int Frontend::run(const Args& args) {
     }
 
     cheats_init();
+    if (!a.disc_ctl.empty()) disc_watch = cheats::FileWatch(a.disc_ctl);
     int rc = 0;
     if (a.selftest) {
         rc = selftest();
@@ -1814,6 +1886,7 @@ int Frontend::run(const Args& args) {
                 if (st == rb::Engine::Status::Stalled) { Sleep(1); next_deadline = 0; continue; }
                 if (st == rb::Engine::Status::SyncWait) { Sleep((DWORD)(1000.0 / (fps > 1 ? fps : 60.0))); next_deadline = 0; continue; }   // re-anchor: otherwise pacing "catches up" the frame we just waited and time sync does nothing
                 cheats_poll();
+                disc_poll();
                 do_pacing();
                 rbe->run_frame();
                 frame_no = rbe->cur();
@@ -1882,6 +1955,7 @@ int Frontend::run(const Args& args) {
                     link_send_probe(pr);
                 }
                 cheats_poll();
+                disc_poll();
                 do_pacing();
                 core.run();
                 if (link_active) {

@@ -174,6 +174,19 @@ int main() {
     CHECK(!ps1::ports_need_multitap("0,1,-1,-1") && !ps1::ports_need_multitap("0,-1,-1,-1") && !ps1::ports_need_multitap("") && !ps1::ports_need_multitap("1,3,-1,-1"));
     CHECK(ps1::ports_need_multitap("0,1,2,-1") && ps1::ports_need_multitap("0,1,2,3") && ps1::ports_need_multitap("0,0,0,0") && ps1::ports_need_multitap("-1,-1,2,-1"));
 
+    /* ---- multi-disc sets ---- */
+    {
+        std::vector<std::string> sib = {"FF7 (USA) (Disc 3).cue", "FF7 (USA) (Disc 1).cue", "FF7 (USA) (Disc 2).cue", "FF7 (USA) (Disc 1).bin", "Crash (USA).cue", "FF7 (USA) (Disc 2).chd"};
+        std::vector<std::string> ds = ps1::disc_set("FF7 (USA) (Disc 2).cue", sib);
+        CHECK(ds.size() == 3 && ds[0] == "FF7 (USA) (Disc 1).cue" && ds[1] == "FF7 (USA) (Disc 2).cue" && ds[2] == "FF7 (USA) (Disc 3).cue");
+        CHECK(ps1::disc_set("Crash (USA).cue", sib).empty());                                  // no "(Disc N)"
+        CHECK(ps1::disc_set("FF7 (USA) (Disc 2).chd", sib).empty());                           // a single chd: not a set
+        CHECK(ps1::disc_set("ff7 (usa) (disc 1).CUE", sib).size() == 3);                       // case-insensitive
+        CHECK(ps1::disc_set("Game.m3u", {"Game.m3u"}).empty());
+        CHECK(ps1::make_m3u({"a.cue", "b.cue"}) == "a.cue\nb.cue\n");
+        CHECK(ps1::memcard2_file("Game (USA)") == "Game (USA).1.mcr");
+    }
+
     /* ---- controller profile: Xbox -> DualShock ---- */
     hubctl::Profile p = hubctl::default_profile("ps1");
     CHECK(p.system == "ps1" && p.buttons["b"] == "a" && p.buttons["a"] == "b" && p.buttons["y"] == "x" && p.buttons["x"] == "y");   // Cross=A, Circle=B, Square=X, Triangle=Y

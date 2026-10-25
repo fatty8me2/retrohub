@@ -75,6 +75,7 @@ std::vector<Option> build() {
     v.push_back(mk("ps1.widescreen", "Widescreen hack", "Video", PS1, K::Bool, S::Visual, "false"));
     v.push_back(mk("ps1.multitap", "Multitap (3-4 players)", "Controls", PS1, K::Choice, S::Sync, "auto",
                    {{"auto", "Automatic (3+ controllers)"}, {"off", "Off"}, {"on", "On"}}));
+    v.push_back(mk("ps1.memcard2", "Memory card 2", "Saves", PS1, K::Bool, S::Locked, "false"));   // <game>.1.mcr in the vault battery folder; offline only (online it stays off)
     // Results-changing: the host's value goes to guests.
     v.push_back(mk("gb.hardware", "Game Boy hardware", "Emulation", GB, K::Choice, S::Sync, "auto",
                    {{"auto", "Automatic"}, {"dmg", "Game Boy"}, {"cgb", "Game Boy Color"}, {"agb", "Game Boy Advance"}}));
@@ -448,6 +449,7 @@ std::vector<std::string> retrorun_args(System s, const Values& v) {
     if (s == System::PS1) {
         opt("beetle_psx_internal_resolution", get(v, "ps1.res"));
         opt("beetle_psx_widescreen_hack", get(v, "ps1.widescreen") == "true" ? "enabled" : "disabled");
+        if (get(v, "ps1.memcard2") == "true") opt("beetle_psx_enable_memcard1", "enabled");
         if (get(v, "ps1.multitap") == "on") opt("beetle_psx_enable_multitap_port1", "enabled");   // "auto" is resolved by the launcher (pad count)
     }
     return r;

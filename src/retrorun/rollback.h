@@ -74,7 +74,8 @@ struct Config {
     uint32_t timeout_ms = 10000;
     bool relay_half_rate = false;  // with Transport::relayed(): send the per-frame packet every other frame only (PlayStation: 4-PC rooms)
     uint32_t send_gap_ms = 8;      // min ms between the non-forced packets (the per-frame input packet is always sent); PlayStation 30: a relayed 4-PC room is capped at 400 frames/s
-    int val_bytes = 2;             // bytes of one port's input on the wire: 2 (16 buttons: GB/GBA) or 6 (PlayStation: buttons + 4 stick bytes)
+    uint64_t event_mask = 0;       // one-shot event bits of the input value (PlayStation disc swap): never copied into predicted or held frames
+    int val_bytes = 2;             // bytes of one port's input on the wire: 2 (16 buttons: GB/GBA) 6 (PlayStation: buttons + 4 stick bytes) or 8 (+ 16 event bits)
 };
 
 struct Stats {

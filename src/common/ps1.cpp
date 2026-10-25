@@ -154,6 +154,43 @@ int disc_number(const std::string& name) {
     return std::atoi(l.c_str() + p + 6);
 }
 
+static std::string disc_base(const std::string& name) {   // lowercase name without the "(disc N...)" tag
+    std::string l = lower(name);
+    size_t p = l.find("(disc ");
+    if (p == std::string::npos) return l;
+    size_t q = l.find(')', p);
+    return l.substr(0, p) + (q == std::string::npos ? "" : l.substr(q + 1));
+}
+static std::string set_ext_of(const std::string& n) {
+    size_t d = n.rfind('.');
+    return d == std::string::npos ? "" : lower(n.substr(d));
+}
+
+std::vector<std::string> disc_set(const std::string& chosen, const std::vector<std::string>& siblings) {
+    std::vector<std::string> out;
+    if (disc_number(chosen) <= 0) return out;
+    const std::string base = disc_base(chosen), ext = set_ext_of(chosen);
+    if (ext == ".m3u" || ext.empty()) return out;
+    std::vector<std::pair<int, std::string>> v;
+    for (const std::string& s : siblings)
+        if (set_ext_of(s) == ext && disc_number(s) > 0 && disc_base(s) == base) v.push_back({disc_number(s), s});
+    std::sort(v.begin(), v.end());
+    for (size_t i = 0; i < v.size(); i++) {
+        if (i && v[i].first == v[i - 1].first) continue;   // duplicate number: keep the first
+        out.push_back(v[i].second);
+    }
+    if (out.size() < 2) out.clear();
+    return out;
+}
+
+std::string make_m3u(const std::vector<std::string>& paths) {
+    std::string t;
+    for (const std::string& p : paths) t += p + '\n';
+    return t;
+}
+
+std::string memcard2_file(const std::string& rom_stem) { return rom_stem + ".1.mcr"; }
+
 char serial_region(const std::string& s) {
     std::string n = normalize_serial(s);
     if (n.size() < 4) return 0;

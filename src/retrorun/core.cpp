@@ -382,6 +382,15 @@ bool Core::environment(unsigned cmd, void* data) {
             }
             return true;
         }
+        case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE:
+            if (data) dc_ = *(const retro_disk_control_callback*)data; else dc_ = {};
+            return true;
+        case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:   // the first seven members match the legacy struct
+            if (data) memcpy(&dc_, data, sizeof dc_); else dc_ = {};
+            return true;
+        case RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION:
+            *(unsigned*)data = 1;
+            return true;
         case RETRO_ENVIRONMENT_SET_HW_RENDER:
             rlog("core requested hardware rendering: not supported (software cores only)");
             return false;

@@ -684,6 +684,8 @@ void add_games_shutdown();                                    // app exit: cance
 
 /* ---- emu_dialogs.cpp ---- */
 void poll_emulators();
+bool ps1_swap_disc(const std::string& key);        // ps1_ui.cpp: ask the running PlayStation game for its next disc
+bool ps1_swap_available(const std::string& key);   // ps1_ui.cpp: the running game is a PlayStation game started with a disc-swap channel
 void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states);   // ps1_ui.cpp
 bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std::string& ports, const std::string& tmp_dir, bool share_save,
                      hub::gs::Values gsv, std::string* args, std::string* err);   // ps1_ui.cpp: retrorun args for a PlayStation room

@@ -39,7 +39,8 @@ static const uint64_t kFnvPrime = 0x100000001B3ull;
 Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(cfg), sim_(sim), net_(net) {
     cfg_.max_pred = std::max(1, std::min(kMaxPred, cfg_.max_pred));
     cfg_.delay = std::max(0, std::min(4, cfg_.delay));
-    cfg_.val_bytes = cfg_.val_bytes >= 6 ? 6 : 2;
+    cfg_.val_bytes = cfg_.val_bytes >= 8 ? 8 : cfg_.val_bytes >= 6 ? 6 : 2;
+    if (cfg_.val_bytes < 8) cfg_.event_mask = 0;
     ring_n_ = cfg_.max_pred + 4;
     trace_ = std::getenv("RB_TRACE") != nullptr;
     state_n_ = sim_.state_size();
@@ -83,7 +84,7 @@ void Engine::put_remote(int p, int64_t f, uint64_t v) {
 void Engine::build_pads(int64_t f, uint64_t pads[kPorts]) {
     for (int p = 0; p < kPorts; p++) {
         if (!present(p)) { pads[p] = 0; continue; }
-        pads[p] = has(p, f) ? get(p, f) : last_val_[p];
+        pads[p] = has(p, f) ? get(p, f) : (last_val_[p] & ~cfg_.event_mask);
         used_[f % kFrRing][p] = pads[p];
     }
 }
@@ -185,6 +186,7 @@ void Engine::send_packet(bool force) {
             uint64_t v = has(p, f) ? get(p, f) : 0;
             w16(b, (uint16_t)v);
             if (cfg_.val_bytes > 2) { w16(b, (uint16_t)(v >> 16)); w16(b, (uint16_t)(v >> 32)); }
+            if (cfg_.val_bytes > 6) w16(b, (uint16_t)(v >> 48));
         }
     }
     int nh = (int)std::min<size_t>(4, my_h_.size());
@@ -243,6 +245,7 @@ void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
         for (int k = 0; k < cnt; k++) {
             uint64_t v = r16(d + o + k * vb);
             if (vb > 2) v |= (uint64_t)r16(d + o + k * vb + 2) << 16 | (uint64_t)r16(d + o + k * vb + 4) << 32;
+            if (vb > 6) v |= (uint64_t)r16(d + o + k * vb + 6) << 48;
             if (ok) {
                 int64_t before = conf_upto_[p];
                 put_remote(p, (int64_t)start + k, v);
@@ -446,7 +449,7 @@ void Engine::run_frame() {
         uint64_t v = sim_.read_local(p) & vmask();
         if (tf <= base) continue;   // delay shrank: that frame already has its pad
         uint64_t prev = has(p, base) ? get(p, base) : 0;
-        for (int64_t g = base + 1; g < tf; g++) put_local(p, g, prev);   // delay grew: hold the last pad over the gap
+        for (int64_t g = base + 1; g < tf; g++) put_local(p, g, prev & ~cfg_.event_mask);   // delay grew: hold the last pad over the gap
         put_local(p, tf, v);
     }
     /* Over the relay a 4-PC room costs 12 server frames per input packet (the host forwards every client packet to the other clients): halve the rate there. */
