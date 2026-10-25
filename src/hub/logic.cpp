@@ -1148,6 +1148,79 @@ std::string friend_status_line(const FriendRow& r, long long now_ms) {
     return "Offline";
 }
 
+std::string format_dur_short(long long ms) {
+    long long m = ms / 60000;
+    if (ms <= 0 || m < 1) return "";
+    if (m < 60) return std::to_string(m) + " min";
+    return std::to_string(m / 60) + "h" + (m % 60 ? " " + std::to_string(m % 60) + "m" : std::string());
+}
+
+std::string friend_presence_line(const FriendRow& r, long long now_ms) {
+    if (r.state != FS_InLobby && r.state != FS_InGame) return friend_status_line(r, now_ms);
+    if (r.in_my_room) return friend_status_line(r, now_ms);
+    std::string s = r.game_title.empty() ? (r.state == FS_InGame ? "Playing" : "In lobby") : r.game_title;
+    if (r.max_players > 0 && r.players > 0) s += " \xC2\xB7 " + std::to_string(r.players) + "/" + std::to_string(r.max_players);
+    std::string d = r.updated_ms > 0 ? format_dur_short(now_ms - r.updated_ms) : "";
+    if (!d.empty()) s += " \xC2\xB7 " + d;
+    return s;
+}
+
+std::vector<int> friends_playing(const std::vector<FriendRow>& rows, size_t max_n) {
+    std::vector<int> idx;
+    std::set<std::string> seen;
+    for (int i = 0; i < (int)rows.size(); ++i) {
+        const FriendRow& r = rows[i];
+        if (r.in_my_room || (r.state != FS_InLobby && r.state != FS_InGame) || r.game_title.empty()) continue;
+        if (!r.uid.empty() && !seen.insert(r.uid).second) continue;
+        idx.push_back(i);
+    }
+    std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) {
+        bool ja = friend_can_join(rows[a]), jb = friend_can_join(rows[b]);
+        if (ja != jb) return ja;
+        if (rows[a].updated_ms != rows[b].updated_ms) return rows[a].updated_ms > rows[b].updated_ms;
+        return lower_str(rows[a].name) < lower_str(rows[b].name);
+    });
+    if (idx.size() > max_n) idx.resize(max_n);
+    return idx;
+}
+
+std::string ask_toast_title(const std::string& name, const std::string& game) {
+    return name + " wants to join your game" + (game.empty() ? std::string() : " (" + game + ")");
+}
+std::string ask_sent_text(const std::string& name) { return "Asked " + name + " to join. They will get a request to invite you."; }
+std::string ask_limited_text(const std::string& name, long long wait_ms) {
+    if (wait_ms > 0) return "You already asked " + name + " - try again in " + std::to_string((wait_ms + 999) / 1000) + "s.";
+    return "You have asked a lot of people just now - wait a few minutes.";
+}
+
+PingClass ping_class(int rtt_ms, bool relay) {
+    if (relay) return PingClass::Relay;
+    if (rtt_ms < 0) return PingClass::Unknown;
+    if (rtt_ms < 80) return PingClass::Great;
+    if (rtt_ms < 160) return PingClass::Ok;
+    return PingClass::Poor;
+}
+const char* ping_class_label(PingClass c) {
+    switch (c) {
+        case PingClass::Great: return "Great";
+        case PingClass::Ok: return "OK";
+        case PingClass::Poor: return "Poor";
+        case PingClass::Relay: return "Relay";
+        default: return "...";
+    }
+}
+std::string ping_text(int rtt_ms, bool relay) {
+    if (relay) return "relay";
+    return rtt_ms < 0 ? "-" : std::to_string(rtt_ms) + " ms";
+}
+int PingBook::rtt(int slot) const {
+    auto it = s_.find(slot);
+    if (it == s_.end() || it->second.empty()) return -1;
+    std::vector<int> v = it->second;
+    std::sort(v.begin(), v.end());
+    return v[v.size() / 2];
+}
+
 std::string queued_join_text(const std::string& friend_name) {
     return "Will join " + (friend_name.empty() ? std::string("that") : friend_name + "'s") + " room when your game closes.";
 }
