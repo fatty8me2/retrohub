@@ -23,7 +23,7 @@ int main() {
     CHECK(parse_ack(make_ack({5, true, "x \"y\""}), &a) && a.seq == 5 && a.ok && a.msg == "x \"y\"");
     CHECK(state_file("d/", 3) == "d/slot3.state" && state_file("d", kAutoSlot) == "d/auto.state");
     CHECK(thumb_file("d", 0) == "d/slot0.png" && sidecar_file("d", 9) == "d/slot9.json");
-    CHECK(shots_dir("v\\", "n64_x") == "v/n64_x/shots");
+    CHECK(shots_dir("v/n64/k/") == "v/n64/k/shots");
     CHECK(shot_name(1000000000).size() == 19);
     Sidecar s;
     CHECK(parse_sidecar(make_sidecar({"k", 10, 20, 1}), &s) && s.game_key == "k" && s.time == 10 && s.playtime == 20 && s.disc == 1);

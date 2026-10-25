@@ -449,6 +449,21 @@ static void ctl_tick() {
         }
         return;
     }
+    {   // the core's own F12 hotkey drops screenshots into the scratch folder: file them into the vault
+        static unsigned long long next_sweep = 0;
+        unsigned long long now = GetTickCount64();
+        if (!g_headless_mode && !g_ctl_shot_tmp.empty() && !g_ctl_shot_dir.empty() && now >= next_sweep) {
+            next_sweep = now + 700;
+            for (auto& n : list_dir(g_ctl_shot_tmp)) {
+                std::error_code ec;
+                std::string dest = g_ctl_shot_dir + "/" + runctl::shot_name(std::time(nullptr));
+                fs::create_directories(fs::path(g_ctl_shot_dir), ec);
+                if (fs::exists(fs::path(dest), ec)) dest = dest.substr(0, dest.size() - 4) + "-" + n;
+                fs::rename(fs::path(g_ctl_shot_tmp) / n, fs::path(dest), ec);
+                if (!ec) logf_("control", "screenshot filed: %s", dest.c_str());
+            }
+        }
+    }
     runctl::Command c;
     if (!g_ctl.poll(GetTickCount64(), &c)) return;
     logf_("control", "seq %lld %s slot %d", c.seq, runctl::cmd_name(c.cmd), c.slot);

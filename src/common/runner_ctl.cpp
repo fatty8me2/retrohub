@@ -77,10 +77,10 @@ std::string state_file(const std::string& d, int s) { return slot_base(d, s) + "
 std::string thumb_file(const std::string& d, int s) { return slot_base(d, s) + ".png"; }
 std::string sidecar_file(const std::string& d, int s) { return slot_base(d, s) + ".json"; }
 
-std::string shots_dir(const std::string& vault, const std::string& key) {
-    std::string d = vault;
+std::string shots_dir(const std::string& game_dir) {
+    std::string d = game_dir;
     while (!d.empty() && (d.back() == '/' || d.back() == '\\')) d.pop_back();
-    return d + "/" + key + "/shots";
+    return d + "/shots";
 }
 
 std::string shot_name(std::time_t t) {
