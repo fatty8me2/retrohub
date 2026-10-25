@@ -167,6 +167,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         lobby_tick();
         autotest_tick();
         fr_tick();
+        group_tick();
         userflow_tick();
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;
