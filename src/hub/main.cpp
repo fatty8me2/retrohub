@@ -124,7 +124,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     refresh_pads();
     start_scan();
-    auto_sync();   // pull in saves from other PCs at start
+    cloud_boot();  // cloud saves v2: automatic for every account (startup delta + retry queue run in the background)
+    auto_sync();
     SH.init(shot_path);
     if (!autotest && (!shot_path || SH.update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
 
@@ -160,11 +161,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_np3ds();
         kt_tick();
         poll_job();
+        cloud_gate_tick();
         run_pending_sync();
         poll_emulators();
         lobby_tick();
         autotest_tick();
         fr_tick();
+        userflow_tick();
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;
             while (invite_srv.take(&w)) { link_join.push(U(w)); told_need_name = false; }
@@ -258,6 +261,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                     ImRect r = ImGui::WindowRectRelToAbs(pg.NavWindow, pg.NavWindow->NavRectRel[pg.NavLayer]);
                     const ImRect view = w->InnerRect;
                     if (r.Min.y < view.Min.y || r.Max.y > view.Max.y) {   // the focused item scrolled out of view: ImGui steps from the clamped rect to what is on screen
+                        /* The old rect can lie far outside the view (e.g. above it, level with the top bar that floats over the page): stepping from
+                         * there lands on the nearest thing to THAT spot, the top bar. Start the step from the edge of the view instead. */
+                        const float edge = pend.dir > 0 ? view.Min.y : view.Max.y;
+                        ImRect from(r.Min.x, edge, r.Max.x, edge);
+                        pg.NavWindow->NavRectRel[pg.NavLayer] = ImGui::WindowRectAbsToRel(pg.NavWindow, from);
                         nudge = pend.dir > 0 ? ImGuiKey_GamepadDpadDown : ImGuiKey_GamepadDpadUp;
                         io.AddKeyAnalogEvent(nudge, true, 1.f);
                     }
@@ -293,6 +301,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 save_screenshot(ren, (sp_.substr(0, dot == std::string::npos ? sp_.size() : dot) + "-" + SH.pending_shot + ".bmp").c_str());
                 SH.pending_shot.clear();
             }
+            if (std::string uf = userflow_take_shot(); !uf.empty()) {
+                std::string sp_ = shot_path;
+                size_t dot = sp_.rfind('.');
+                save_screenshot(ren, (sp_.substr(0, dot == std::string::npos ? sp_.size() : dot) + "-" + uf + ".bmp").c_str());
+            }
             if (SH.ready()) { save_screenshot(ren, shot_path); running = false; }
             SDL_Delay(8);
         }
@@ -308,6 +321,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     FR.cli.stop();
     if (A.scan_th.joinable()) A.scan_th.join();
     if (A.job.th.joinable()) A.job.th.join();
+    if (A.cloud_gate.th.joinable()) A.cloud_gate.th.join();
+    cloud_shutdown();
     hub::flush_library_state();
     if (A.proc) CloseHandle(A.proc);
     for (auto* p : A.pads) SDL_GameControllerClose(p);

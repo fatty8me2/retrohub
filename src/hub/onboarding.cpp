@@ -5,7 +5,7 @@
  * Fully usable with only a gamepad (D-pad/stick moves focus, A = activate/next, B = back) and with mouse/keyboard.
  * Opens by itself once on a fresh install (hub.json setup_done=false and no games set up yet); Settings > "Run setup again"
  * re-opens it. Pure step rules live in wizard_logic.h (unit tested). Screenshot aids:
- *   HUB_SHOT_WIZARD=welcome|controller|test|games|name|done   open that step
+ *   HUB_SHOT_WIZARD=welcome|controller|test|games|name|returning|done   open that step
  *   HUB_SHOT_FAKE_PAD=<n>[:button,button,...]   pretend n pads are connected (0 = none) with these held:
  *       a b x y lb rb back start guide ls rs up down left right, lt rt (full trigger), lx+ lx- ly+ ly- rx+ ... (stick throw) */
 
@@ -28,6 +28,8 @@ struct Wizard {
     int fake_n = -1;   // -1 = use real pads
     PadState fake;
     bool find_launched = false;
+    bool returning = false;   // Name step: "I already have a username on another PC" (enter the code)
+    bool signing_in = false;  // code accepted, waiting for the server to tell us the account's username
     bool away = false;   // "Customize..." sent the user to the Controllers page; coming back (B / LB / RB / the bar) resumes here
 } WZ;
 
@@ -164,6 +166,7 @@ void draw_pad(ImDrawList* dl, ImVec2 c, float u, const PadState& s) {
 }
 
 void close_wizard(bool done) {
+    account_redeem_reset();
     WZ.open = false;
     WZ.away = false;
     WZ.test = false;
@@ -177,7 +180,7 @@ void goto_step(Step s) {
     WZ.focus_primary = true;
 }
 
-const char* kStepNames[hubui::wiz::kStepCount] = {"Welcome", "Controller", "Games", "Name", "Done"};
+const char* kStepNames[hubui::wiz::kStepCount] = {"Welcome", "Controller", "Games", "Name", "Cloud", "Done"};
 
 void steps_header(ImDrawList* dl, ImVec2 origin, float w) {
     const float r = ui::sp(0.5f), gap = ui::sp(2.2f);
@@ -262,6 +265,38 @@ void controller_body(float w) {
     }
 }
 
+/* Name step: pick + claim a username, or sign in with the code from another PC. */
+void name_body(float bw) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw);
+    if (!WZ.returning) {
+        ImGui::TextWrapped("This is your RetroHub account. Friends find you by it, your cloud saves follow it to any PC, and nobody else can use it.");
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
+        un_seed_text();
+        un_picker("wiz", ui::sp(40.f));
+        ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
+        if (button("I already have a username on another PC", ImVec2(0, ui::sp(4.25f)), false, true, ui::Icon::Cloud)) { WZ.returning = true; account_redeem_reset(); }
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw);
+        text_wrapped_disabled(A.pad_mode ? "Press A on the box to type with the on-screen keyboard. No internet? You can continue and claim it later."
+                                         : "No internet? You can continue and claim it later.");
+        ImGui::PopTextWrapPos();
+    } else {
+        ImGui::TextWrapped("%s", hubui::wiz::returning_blurb().c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+        if (WZ.signing_in) {
+            ImGui::PushFont(ui::F.bold);
+            ImGui::TextColored(ImColor(ui::GOOD), "Code accepted. Signing in and fetching your saves...");
+            ImGui::PopFont();
+        } else if (account_redeem_for_wizard()) {
+            WZ.signing_in = true;
+            A.st.username_claimed = false;   // set again by the server's welcome (UsernameChanged)
+        }
+        ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+        if (!WZ.signing_in && button("Pick a new username instead", ImVec2(0, ui::sp(4.5f)), false, true, ui::Icon::ChevronL)) WZ.returning = false;
+    }
+}
+
 void wizard_window() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->Pos);
@@ -296,7 +331,8 @@ void wizard_window() {
         case Step::Welcome: ImGui::TextUnformatted("Welcome to RetroHub"); break;
         case Step::Controller: ImGui::TextUnformatted(WZ.test ? "Test your controller" : "Your controller"); break;
         case Step::Games: ImGui::TextUnformatted("Find your games"); break;
-        case Step::Name: ImGui::TextUnformatted("Pick your name"); break;
+        case Step::Name: ImGui::TextUnformatted(hubui::wiz::step_title(Step::Name).c_str()); break;
+        case Step::Cloud: ImGui::TextUnformatted("Your saves"); break;
         case Step::Done: ImGui::TextUnformatted("You're all set"); break;
     }
     ImGui::PopFont();
@@ -312,7 +348,7 @@ void wizard_window() {
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw - ui::sp(14.f));
             ImGui::TextWrapped("One place for all your retro games, with online play and saves that follow you from PC to PC.");
             ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
-            ImGui::TextDisabled("This takes about a minute: check your controller, find your games, pick a name. "
+            ImGui::TextDisabled("This takes about a minute: check your controller, find your games, pick a username. "
                                 "You can use a controller or the mouse and keyboard the whole way, and skip anything.");
             ImGui::PopTextWrapPos();
             ImGui::EndGroup();
@@ -339,23 +375,8 @@ void wizard_window() {
             add_rom_folder(button("Add a folder...", ImVec2(ui::sp(24.f), ui::sp(5.5f)), false, true, ui::Icon::Folder));
             break;
         }
-        case Step::Name: {
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw);
-            ImGui::TextWrapped("This is the name friends see in online rooms. You can change it any time in Settings.");
-            ImGui::PopTextWrapPos();
-            ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
-            char nb[40];
-            std::snprintf(nb, sizeof nb, "%s", A.st.name.c_str());
-            ImGui::SetNextItemWidth(ui::sp(40.f));
-            if (osk::input("##wiz_name", nullptr, nb, 25)) { A.st.name = nb; mark_dirty(); }
-            ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
-            if (ImGui::Checkbox("Automatically add people I play with as friends", &A.st.auto_friend)) mark_dirty();
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw);
-            text_wrapped_disabled(A.pad_mode ? "Using a controller? The name above is taken from your Windows account; just press A to keep it."
-                                             : "Tip: the name above is taken from your Windows account; keep it or type your own.");
-            ImGui::PopTextWrapPos();
-            break;
-        }
+        case Step::Name: name_body(bw); break;
+        case Step::Cloud: cloud_ui_wizard_body(bw); break;
         case Step::Done: {
             ImGui::PushFont(ui::F.bold);
             ImGui::TextColored(ImColor(ui::GOOD), "Everything is ready");
@@ -364,9 +385,11 @@ void wizard_window() {
             const int n = pad_count();
             ImGui::BulletText("Controller: %s", n > 0 ? (std::to_string(n) + (n == 1 ? " connected" : " connected")).c_str() : "none yet (plug one in any time)");
             ImGui::BulletText("Games: %zu folder%s", A.st.rom_folders.size(), A.st.rom_folders.size() == 1 ? "" : "s");
-            ImGui::BulletText("Name: %s", A.st.name.empty() ? "(not set)" : A.st.name.c_str());
-            ImGui::Dummy(ImVec2(0, ui::sp(1.5f)));
-            text_wrapped_disabled("Run this again any time from Settings > Run setup again.");
+            ImGui::BulletText("Username: %s", A.st.username_claimed ? A.st.name.c_str() : "not claimed yet (we will remind you)");
+            ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+            if (ImGui::Checkbox("Automatically add people I play with as friends", &A.st.auto_friend)) { mark_dirty(); fr_set_auto_friend(A.st.auto_friend); }
+            ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+            text_wrapped_disabled("You can change this any time in Settings. Run this setup again from Settings > Run setup again.");
             break;
         }
     }
@@ -382,9 +405,22 @@ void wizard_window() {
     if (!first) ImGui::SameLine();
     if (!last && button("Skip setup", ImVec2(ui::sp(16.f), bs.y))) skip = true;
     const char* next_label = first ? "Get started" : last ? "Start playing" : WZ.step == Step::Controller && !WZ.test ? (pad_count() > 0 ? "Continue" : "Continue without") : "Next";
-    ImGui::SetCursorPos(ImVec2(c0.x + card_w - pad - ui::sp(22.f), fy));
+    ImGui::SetCursorPos(ImVec2(c0.x + card_w - pad - ui::sp(WZ.step == Step::Name ? 28.f : 22.f), fy));
     if (WZ.focus_primary) { ImGui::SetKeyboardFocusHere(0); WZ.focus_primary = false; }
-    if (button(next_label, ImVec2(ui::sp(22.f), bs.y), true, WZ.step != Step::Name || hubui::wiz::name_ok(A.st.name), last ? ui::Icon::Check : ui::Icon::ChevronR)) go_next = true;
+    const hubui::un::NameAction nact = hubui::un::name_action(un_state(), A.st.username_claimed, un_claiming());
+    const bool on_name = WZ.step == Step::Name;
+    std::string nlabel = on_name ? hubui::un::name_action_label(nact, un_claiming()) : std::string(next_label);
+    if (on_name && WZ.returning) nlabel = WZ.signing_in ? "Signing in..." : "Next";
+    const bool name_enabled = !WZ.returning && nact != hubui::un::NameAction::Disabled;
+    if (button(nlabel.c_str(), ImVec2(ui::sp(on_name ? 28.f : 22.f), bs.y), true, !on_name || name_enabled, last ? ui::Icon::Check : ui::Icon::ChevronR)) {
+        if (!on_name) go_next = true;
+        else if (nact == hubui::un::NameAction::Claim) un_claim_start();
+        else if (nact == hubui::un::NameAction::ContinueOffline) {
+            if (hubnet::username_ok(un_text())) { A.st.name = hubnet::username_trim(un_text()); mark_dirty(); }   // remembered; the banner reminds us to claim it
+            go_next = true;
+        }
+        else go_next = true;
+    }
     {   // hint strip
         float hx = c0.x + card_w * 0.5f - ui::sp(11.f);
         ImVec2 o = wp + ImVec2(hx, fy + bs.y * 0.5f - ImGui::GetTextLineHeight() * 0.5f);
@@ -400,6 +436,11 @@ void wizard_window() {
     }
     ImGui::End();
 
+    if (on_name) {   // async results
+        if (un_take_claimed()) go_next = true;
+        if (WZ.signing_in && A.st.username_claimed) { WZ.signing_in = false; go_next = true; }
+        else if (WZ.signing_in && un_needs_new()) { WZ.signing_in = false; WZ.returning = false; un_seed_text(); }
+    }
     if (skip) { close_wizard(true); return; }
     if (go_back) goto_step(hubui::wiz::back(WZ.step));
     else if (go_next) {
@@ -415,6 +456,7 @@ void wizard_open() {
     WZ.open = true;
     WZ.away = false;
     WZ.test = false;
+    WZ.returning = WZ.signing_in = false;
     WZ.step = Step::Welcome;
     WZ.focus_primary = true;
 }
@@ -456,6 +498,8 @@ void draw_wizard() {
             else if (s == "test") { WZ.step = Step::Controller; WZ.test = true; }
             else if (s == "games") WZ.step = Step::Games;
             else if (s == "name") WZ.step = Step::Name;
+            else if (s == "cloud") WZ.step = Step::Cloud;
+            else if (s == "returning") { WZ.step = Step::Name; WZ.returning = true; }
             else if (s == "done") WZ.step = Step::Done;
         } else if (!shot && !g_headless && A.scanned_once) {
             WZ.auto_tried = true;

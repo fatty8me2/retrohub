@@ -74,9 +74,11 @@ bool spawn(const std::string& exe, const std::string& args, const std::string& c
     A.proc = pi.hProcess;
     A.proc_title = ri.title;
     A.run = ri;
+    A.run.cloud_started = false;
     A.run.pad_exit = ri.after_exit != nullptr || !ri.o2r_prep.empty();   // external emulators and the native Smash port; n64run / retrorun handle the combo themselves
     A.run.start_unix = unix_now();
     A.run.start_tick = GetTickCount64();
+    cloud_run_started();
     return true;
 }
 
@@ -187,6 +189,7 @@ void poll_process() {
         if (secs >= 1) hub::record_play(A.run.key, A.run.start_unix, secs);
         if (hubui::exit_should_touch_game(!A.run.key.empty(), A.run.track, A.run.online, A.run.system_short))
             hub::saves::touch_game(A.run.system_short, A.run.key, A.run.title);
+        if (A.run.cloud_started) { A.run.cloud_started = false; hub::saves::cloud_game_exited(hub::saves::GameId{A.run.system_short, A.run.key}); }   // after touch_game: pushes this game in the background
         hub::flush_library_state();
         refresh_state(A.run.key);
     }
@@ -436,6 +439,10 @@ void add_game_shortcut(const hub::GameEntry& e) {
 
 void play_entry(const hub::GameEntry& e) {
     if (A.proc) { set_notice("A game is already running."); return; }
+    if (A.cloud_gate.phase != CloudGate::Idle) { set_notice("Checking cloud saves...", 4.0); return; }
+    if (cloud_gate_begin(e, [key = e.key]() {
+            if (const hub::GameEntry* g = find_entry(key)) { A.sel_game = key; hub::GameEntry copy = *g; A.cloud_gate.pass_key = key; play_entry(copy); }
+        })) return;
     if (A.job.running) {
         std::string key = e.key;
         A.after_job = [key]() { if (const hub::GameEntry* g = find_entry(key)) { A.sel_game = key; hub::GameEntry copy = *g; play_entry(copy); } };

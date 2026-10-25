@@ -49,6 +49,8 @@
 #include "logic.h"
 #include "savestore.h"
 #include "cloud.h"
+#include "cloud_engine.h"
+#include "cloud_ui_logic.h"
 #include "shell_integration.h"
 #include "invite.h"
 #include "session.h"
@@ -128,6 +130,7 @@ struct RunInfo {
     std::function<void()> pad_exit_fn;  // custom graceful close (Kanto Together); default: WM_CLOSE to the game's windows
     std::string o2r_prep;   // native Smash only: BattleShip.o2r path, shown as "Preparing" while it is missing ("" otherwise)
     std::function<void()> after_exit;   // runs once when the process ended (3DS/Wii U: copy the emulator save folder into the vault)
+    bool cloud_started = false;         // cloud_game_started() was called for this session (set by spawn); exit pushes the game
 };
 
 /* Background save job (sync / export / import). */
@@ -143,6 +146,22 @@ struct SaveJob {
     bool cloud_skipped = false;                      // cloud unavailable or unregistered: no transfer attempted
     hub::saves::CloudConfig cloud_cfg;
     hub::saves::CloudStatus cloud_stat;              // filled by Status jobs and by Sync jobs with cloud on
+};
+
+/* Cloud saves pre-launch gate (docs/CLOUD_SAVES_V2.md 4.3). Play runs cloud_prelaunch on a worker thread (<= 4 s manifest, <= 15 s pull),
+ * then continues the launch on the UI thread. A conflict or "open on another PC" answer waits for a choice: the UI lane's dialogs read
+ * phase / game / res and call cloud_gate_choose_*; with on_ask unset the defaults apply (newest wins, play anyway). Never blocks play. */
+struct CloudGate {
+    enum Phase { Idle, Running, AskConflict, AskLease } phase = Idle;
+    std::thread th;
+    std::atomic<bool> done{false};
+    hub::saves::GameId game;
+    std::string title;
+    hub::saves::SyncMode mode = hub::saves::SyncMode::ReadWrite;
+    hub::saves::PrelaunchResult res;                    // last answer (conflicts / held_by for the dialogs)
+    std::function<void()> proceed;                      // continues the launch (UI thread)
+    std::string pass_key;                               // the gate for this game already ran: the re-entered play_entry skips it
+    std::function<void()> on_ask;                       // UI lane: called once when a decision is needed (optional)
 };
 
 struct VaultRow { hubui::VaultMeta m; };
@@ -191,6 +210,7 @@ struct App {
 
     // saves
     SaveJob job;
+    CloudGate cloud_gate;
     std::function<void()> after_job;              // run once the current job finishes (e.g. a queued launch)
     hubui::SyncGate sync_gate;                    // a sync was requested while a job or a game was running
     bool gc_write_save = false;                   // GameCube room option (host only, local): keep this session's memory-card changes
@@ -318,6 +338,8 @@ struct ArtRef {
 
 struct TileSpec {
     std::string id, title, subtitle, badge;   // badge: system pill (empty inside a console section)
+    std::string cloud;                        // cloud status pill ("" = none)
+    ImU32 cloud_col = 0;
     std::string tag, tag_tip;                 // subtle state tag ("ZIP", "NATIVE", ...) + hover explanation
     bool tag_warn = false;                    // tint the tag as a warning (needs keys / encrypted)
     bool tag_accent = false;                  // solid accent badge with white text (readable on any cover)
@@ -467,6 +489,19 @@ void run_pending_sync();
 void auto_sync();
 std::string report_summary(const hub::saves::SyncReport& r, const char* sent_word, const char* got_word);
 void poll_job();
+/* cloud saves v2 engine glue (save_jobs.cpp) */
+void cloud_boot();                                      // start the engine (hub start); no-op in screenshot mode or with RETROHUB_NO_CLOUD=1
+void cloud_shutdown();                                  // stop the engine (hub exit)
+bool cloud_active();                                    // engine running
+hub::saves::GameId cloud_id_for(const hub::GameEntry& e);
+bool cloud_gate_begin(const hub::GameEntry& e, std::function<void()> proceed);   // true = the gate took over, caller must return
+void cloud_gate_tick();                                 // every frame (UI thread)
+void cloud_gate_choose_conflict(hub::saves::ConflictChoice c);
+void cloud_gate_choose_lease(hub::saves::LeaseChoice c);
+void cloud_account_changed();                           // another account is now on this PC (link code / recovery code): the engine switches and pulls its saves
+void cloud_host_pull(const hub::GameEntry& e);          // online host: freshest vault save before it is shared (bounded, never blocks long)
+void cloud_run_started();                               // spawn(): lease heartbeat / read-only marking
+hub::saves::CloudStatus cloud_status_now();             // legacy status struct filled from the engine (Saves page line)
 
 
 /* ---- launch.cpp ---- */
@@ -510,6 +545,11 @@ extern bool g_shot_rejoin;      // screenshot aid: draw the disconnected "Rejoin
 void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_no);
 void gc_guest_poll();
 void host_launch_selected();   // the Launch button's body (page_online.cpp); the autotest hook calls it too
+bool shot_net();               // shot.cpp: headless run that may talk to a LOCAL (loopback) server: HUB_SHOT_NET=1 (qa\\username_flows.ps1)
+void userflow_tick();          // userflow.cpp: HUB_USERFLOW scripted username / account / friends flows (headless QA, no-op when unset)
+bool userflow_active();
+bool userflow_done();
+std::string userflow_take_shot();   // intermediate screenshot name requested by the script ("" = none)
 void autotest_tick();          // autotest.cpp: RETROHUB_AUTOTEST room driver (no-op when unset)
 bool autotest_active();
 void autotest_log(const std::string& line);
@@ -674,7 +714,32 @@ void page_saves();
 void settings_label(const char* title, const char* hint = nullptr);
 void page_settings();
 void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
+void account_qa_poll();            // QA hooks (userflow.cpp): the same calls the Account buttons make
+void account_qa_make_code();
+std::string account_qa_code();
+std::string account_qa_err();
+bool account_qa_busy();
+void account_qa_redeem(const std::string& code);
+bool account_redeem_for_wizard();   // setup wizard: code box + sign-in button; true on the frame this PC switched to the other account
+void account_redeem_reset();
 
+
+/* ---- cloud_ui.cpp: cloud saves v2 UI (codes only against cloud_engine.h) ---- */
+void cloud_ui_tick();        // every frame: engine events -> toasts, cached status
+void cloud_ui_overlays();    // every frame: conflict / lease dialogs, "Getting your save..." strip
+int cloud_ui_conflict_count();  // games whose saves differ between this PC and the cloud (Saves nav badge)
+void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history
+void cloud_ui_shot_init();   // HUB_SHOT_CLOUD_* seeds (screenshots only, no network)
+std::string cloud_ui_pill(const hub::GameEntry& e, ImU32* col);   // tile pill text ("" = none) + colour
+void cloud_ui_game_line(const hub::GameEntry& e);                  // details modal: status chip + line
+void cloud_ui_wizard_body(float w);                                // setup wizard "backed up automatically" step
+/* Launch plumbing (called by the Play path once Lane C wires cloud_prelaunch): */
+void cloud_ui_checking(const std::string& title, bool on);         // "Getting your save from the cloud..."
+void cloud_ui_prelaunch_notice(const hub::saves::PrelaunchResult& r);
+void cloud_ui_ask_conflict(const hub::saves::GameId& g, const std::string& title, const std::vector<hub::saves::ConflictItem>& items,
+                           std::function<void(hub::saves::ConflictChoice)> done);
+void cloud_ui_ask_lease(const hub::saves::GameId& g, const std::string& title, const std::string& held_by, int64_t since,
+                        std::function<void(hub::saves::LeaseChoice)> done);
 
 /* ---- find_games_ui.cpp ---- */
 void find_games_open();   // start the scan + checklist modal (first run, Settings > ROM folders)

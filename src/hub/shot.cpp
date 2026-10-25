@@ -16,6 +16,14 @@ void save_screenshot(SDL_Renderer* ren, const char* path) {
     if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch) == 0) SDL_SaveBMP(s, path);
     SDL_FreeSurface(s);
 }
+/* Headless runs normally never touch the network. HUB_SHOT_NET=1 allows the friends client / account calls / username claims, but ONLY
+ * against a loopback server (the QA harness starts a local wrangler dev; production is unreachable from here by construction). */
+bool shot_net() {
+    if (!g_headless || !std::getenv("HUB_SHOT_NET")) return false;
+    const std::string s = server_url();
+    return s.rfind("ws://127.0.0.1", 0) == 0 || s.rfind("ws://localhost", 0) == 0;
+}
+
 ImGuiKey shot_key(const std::string& n) {
     if (n == "right") return ImGuiKey_RightArrow;
     if (n == "left") return ImGuiKey_LeftArrow;
@@ -34,14 +42,7 @@ void shot_init_ui() {
     A.st.show_friends = std::getenv("HUB_SHOT_FRIENDS") != nullptr;
     if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
         if (std::string(pg) == "saves") A.page = Page::Saves;
-    }
-    if (const char* cs = std::getenv("HUB_SHOT_CLOUD")) {   // screenshot aid: cloud saves toggle state, no network ("off" | "on" | "unavailable" | "ok")
-        std::string m = cs;
-        A.st.cloud_saves = m != "off";
-        A.cloud_probed = true;                   // never probe the server from a screenshot
-        A.cloud_stat_known = true;
-        if (m == "unavailable") A.cloud_stat.unavailable = true;
-        else if (m == "ok") { A.cloud_stat.enabled = true; A.cloud_stat.files = 12; A.cloud_stat.used = 3250000; A.cloud_stat.quota = 500LL * 1048576; }
+        else if (std::string(pg) == "settings") A.page = Page::Settings;
     }
     if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n
     if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show a 3DS / Wii U dialog (azahar | cemu | unzip | failed)
@@ -57,6 +58,7 @@ void shot_init_ui() {
         if (std::getenv("HUB_SHOT_CHAT")) { fr_open_chat("miauid"); FR.chat_unread = 2; }
         if (std::getenv("HUB_SHOT_BELL")) FR.shot_bell = true;
     }
+    cloud_ui_shot_init();
     kt_shot_init();
     osk::shot_init();
     if (const char* rj = std::getenv("HUB_SHOT_REJOIN")) {   // screenshot aid: the disconnected Rejoin strip (no network)
@@ -255,5 +257,5 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
 
 bool ShotDriver::ready() const {
     return el >= secs && (pad_seq.empty() || pad_i > pad_seq.size()) && pad_key == ImGuiKey_None && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
-           (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5));
+           (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5)) && (!userflow_active() || userflow_done());
 }
