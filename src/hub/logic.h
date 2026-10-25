@@ -34,7 +34,6 @@ struct Settings {
     bool download_art = true;          // fetch cover art from the libretro-thumbnails project
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
     bool show_friends = true;          // friends panel open
-    bool appear_offline = false;       // friends see me as offline
     bool notify_in_game = true;        // Windows toast for invites while a game is running
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
     bool auto_friend = true;           // "Automatically add people I play with as friends" (sent to the server in the hello)

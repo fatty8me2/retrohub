@@ -375,7 +375,6 @@ std::string fr_error_text(const std::string& r, const std::string& detail) { ret
 /* Presence derived from the hub state. */
 hubnet::Status fr_desired_status() {
     hubnet::Status s;
-    if (A.st.appear_offline) { s.state = hubnet::PresenceState::Offline; return s; }
     s.state = hubnet::PresenceState::Online;
     auto fill_game = [&](const std::string& id) {
         const hub::GameEntry* g = find_entry(id);
@@ -714,8 +713,7 @@ void fr_top_bar() {
     // presence pill (left)
     std::string txt;
     ImU32 dot;
-    if (A.st.appear_offline) { txt = "Appearing offline"; dot = ui::TEXT3; }
-    else if (!fr_connected()) { txt = FR.started ? fr_status_text() : "Friends offline"; dot = ui::WARN; }
+    if (!fr_connected()) { txt = FR.started ? fr_status_text() : "Friends offline"; dot = ui::WARN; }
     else {
         hubnet::Status s = fr_desired_status();
         if (s.state == hubnet::PresenceState::InGame) { txt = "Playing " + s.game_title; dot = ui::ACCENT; }
@@ -1073,15 +1071,15 @@ void fr_draw_panel(float disp_w, float disp_h) {
             float ch = sp(9.f);
             dl->AddRectFilled(c0, c0 + ImVec2(cw, ch), ui::PANEL2, sp(1.75f));
             dl->AddRect(c0, c0 + ImVec2(cw, ch), ui::HAIRLINE, sp(1.75f), 0, 1.f);
-            fr_avatar(dl, c0 + ImVec2(sp(3.f), ch * 0.5f), sp(2.25f), A.st.name, A.st.appear_offline ? hubui::FS_Offline : (fr_connected() ? hubui::FS_Online : hubui::FS_Offline), ui::PANEL2);
+            fr_avatar(dl, c0 + ImVec2(sp(3.f), ch * 0.5f), sp(2.25f), A.st.name, fr_connected() ? hubui::FS_Online : hubui::FS_Offline, ui::PANEL2);
             float tx = c0.x + sp(6.5f), tw = cw - sp(6.5f) - sp(9.f);
             dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, c0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, A.st.name, tw).c_str());
             std::string code = fr_my_code().empty() ? "..." : fr_my_code();
             dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, c0.y + sp(1.25f) + ui::F.bold->FontSize * 1.25f), ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.55f), code.c_str());
-            ImU32 dc = A.st.appear_offline ? ui::TEXT3 : (fr_connected() ? ui::GOOD : ui::WARN);
+            ImU32 dc = fr_connected() ? ui::GOOD : ui::WARN;
             dl->AddCircleFilled(ImVec2(tx + sp(0.5f), c0.y + ch - sp(1.75f)), sp(0.45f), dc, 10);
             dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + sp(1.5f), c0.y + ch - sp(1.75f) - ui::F.cap->FontSize * 0.5f), ui::TEXT2,
-                        ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, A.st.appear_offline ? "Appearing offline" : fr_status_text(), tw).c_str());
+                        ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, fr_status_text(), tw).c_str());
             ImGui::SetCursorScreenPos(ImVec2(c0.x + cw - sp(8.5f), c0.y + (ch - sp(3.5f)) * 0.5f));
             if (ui::button("Copy", ImVec2(sp(7.25f), sp(3.5f)), false, !fr_my_code().empty())) {
                 SDL_SetClipboardText(fr_my_code().c_str());
@@ -1089,7 +1087,6 @@ void fr_draw_panel(float disp_w, float disp_h) {
             }
             ImGui::SetCursorScreenPos(ImVec2(c0.x, c0.y + ch + sp(0.75f)));
         }
-        if (ImGui::Checkbox("Appear offline", &A.st.appear_offline)) mark_dirty();
         ImGui::Dummy(ImVec2(0, sp(0.25f)));
 
         // add friend

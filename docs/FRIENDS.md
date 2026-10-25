@@ -34,7 +34,7 @@ Invite  = {lobby_code, game_id, game_title, system, expires_at}
 
 | Message | Effect |
 |---|---|
-| `{type:"status", status}` | Sets my presence. It is fanned out to every friend's UserHub, which pushes `presence` to that friend's sockets. `lobby_code` is only shared with friends. With `invisible` (`state:"offline"` sent while connected), friends see offline. |
+| `{type:"status", status}` | Sets my presence. It is fanned out to every friend's UserHub, which pushes `presence` to that friend's sockets. `lobby_code` is only shared with friends. A device that sends `state:"offline"` shows as offline to friends. |
 | `{type:"add_friend", code}` | Resolves the code via the directory. Creates an outgoing request for me and an incoming one for them, and pushes `request` to them. If they already requested me, it becomes a friendship right away. |
 | `{type:"accept", uid}` / `{type:"decline", uid}` / `{type:"cancel", uid}` | Accepts, declines or cancels a friend request. |
 | `{type:"remove_friend", uid}` | Removes the friendship on both sides and pushes `friend_removed`. |
@@ -97,7 +97,7 @@ Invite  = {lobby_code, game_id, game_title, system, expires_at}
 - `history` replies with `{type:"history", with, msgs:[Msg...]}` (oldest first, text messages only).
 - `error` may carry an extra `detail` string (for example `friends-full`, `too-many-requests`, `already-requested`, `no-such-request`, `target-full`, `text`, `too-large`) and `ref` is the request type, or the target uid for message/invite errors.
 - Blocking: the blocker's pending requests are resolved to the other side as `declined` (incoming) / `cancelled` (outgoing); a blocked user's `add_friend` to the blocker looks successful (pending) but is silently dropped. The blocked user does see `friend_removed` if they were friends.
-- Offline-device behaviour: a socket sending `state:"offline"` is "invisible" and does not count for the effective status; a second device that is online still shows the user online.
+- Offline-device behaviour: a socket sending `state:"offline"` is treated as offline and does not count for the effective status; a second device that is online still shows the user online.
 - Messages to an online user are pushed and not stored in the inbox; if they have no socket they go to the inbox. Inbox messages are re-sent on every connect until acked.
 - Cross-user fan-out is one subrequest per friend (200 max); this exceeds the Workers Free subrequest limit (50) for users with many friends, so use a paid plan.
 
