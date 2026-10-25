@@ -685,6 +685,15 @@ std::string ports_arg(std::vector<int> slots) {
     return o;
 }
 
+std::string player_left_text(const std::string& left_name) {
+    return (left_name.empty() ? std::string("A player") : left_name) + " left - game ended. You are back in the room.";
+}
+
+std::string exit_text_for(unsigned long code, const std::string& left_name) {
+    if (!left_name.empty() && (code == 0 || code == 4 || code == 8)) return player_left_text(left_name);
+    return exit_code_text(code);
+}
+
 std::string exit_code_text(unsigned long code) {
     switch (code) {
         case 0: return "Game closed normally.";
@@ -693,6 +702,7 @@ std::string exit_code_text(unsigned long code) {
         case 4: return "Connection lost during the match.";
         case 5: return "The game went out of sync (desync) and was stopped.";
         case 6: return "Couldn't share the host's save - check your connection and try again.";
+        case 8: return player_left_text("");
         case 7: return "The PlayStation setups differ: everyone in the room needs the same BIOS file (or all use the built-in OpenBIOS). Check Settings > Playing.";
         default: return "Game exited with code " + std::to_string(code) + ".";
     }

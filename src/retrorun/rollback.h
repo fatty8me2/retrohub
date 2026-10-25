@@ -124,6 +124,8 @@ class Engine {
     int delay() const { return cfg_.delay; }
     double rtt_ms() const { return st_.rtt_ms; }
     bool peer_left() const { return left_mask_ != 0; }
+    /* Every other player said bye: nobody is left to play with (a 3-4P game with one leaver keeps going with that port idle). */
+    bool all_remote_left() const { for (int p = 0; p < kPorts; p++) if (present(p) && !local(p) && !(left_mask_ >> cfg_.owner[p] & 1u)) return false; return left_mask_ != 0; }
     /* Highest frame whose inputs are all confirmed and which has been simulated (-1 none). */
     int64_t confirmed_frame() const { return conf_eff_; }
 

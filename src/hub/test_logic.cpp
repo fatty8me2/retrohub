@@ -594,6 +594,15 @@ int main() {
         std::map<int, int> same{{0, 1}};
         remap_slot_key(same, 0, 0);
         CHECK(same.size() == 1 && same[0] == 1);
+        {   // host leaves mid-game: every map follows the new host, ready flags are dropped
+            std::map<int, bool> ready{{0, true}, {1, true}, {2, true}}, ingame{{0, true}, {1, true}, {2, true}};
+            std::map<int, int> locals{{0, 2}, {1, 1}, {2, 2}};
+            host_left_remap(1, ready, ingame, locals);
+            ready.clear();
+            CHECK(ready.empty() && ingame.size() == 2 && ingame[0] && ingame[2] && !ingame.count(1) && locals[0] == 1 && locals[2] == 2 && locals.size() == 2);
+        }
+        CHECK(exit_code_text(8).find("left") != std::string::npos && exit_text_for(0, "Mia") == "Mia left - game ended. You are back in the room.");
+        CHECK(exit_text_for(4, "Mia") == player_left_text("Mia") && exit_text_for(4, "").find("Connection lost") == 0 && exit_text_for(5, "Mia").find("desync") != std::string::npos);
         CHECK(host_changed_text("Mia", false) == "Mia is now the host" && host_changed_text("Mia", true) == "You are now the host");
     }
 
