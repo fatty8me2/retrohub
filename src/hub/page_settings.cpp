@@ -127,8 +127,19 @@ void page_settings() {
             ImGui::SameLine();
             if (button("Use automatic", ImVec2(0, 0))) { A.st.cemu_exe.clear(); mark_dirty(); }
         }
-        text_wrapped_disabled("A Cemu you already have is used as it is: RetroHub never changes its settings or moves its saves; it only copies "
-                              "the game's save folder into the save vault after you play (and restores it into an empty one).");
+        text_wrapped_disabled("A Cemu you already have keeps its own settings and saves; RetroHub only copies the game's save folder into the "
+                              "save vault after you play (and restores it into an empty one).");
+        if (!cm.exe.empty() && !cm.managed) {
+            if (ImGui::Checkbox("Let RetroHub manage Wii U controls", &A.st.cemu_manage_controls)) mark_dirty();
+            text_wrapped_disabled("On: before each game RetroHub writes controller profiles from its Controllers page into your Cemu (Xbox and other "
+                                  "SDL pads). Your original controllerProfiles folder is first copied once to controllerProfiles.retrohub-backup. "
+                                  "Off: your Cemu controls are never touched.");
+            if (button("Restore my Cemu controls", ImVec2(0, 0))) {
+                const char* ad = std::getenv("APPDATA");
+                bool ok = hubemu::cemu_restore_controls(hubemu::cemu_user_data_dir(cm.dir, ad ? ad : ""));
+                set_toast(ok ? "Your Cemu controls were restored from the backup." : "No RetroHub backup of your Cemu controls exists yet.", ok, 4.0);
+            }
+        }
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("Online input delay");
