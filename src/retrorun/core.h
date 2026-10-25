@@ -53,6 +53,10 @@ class Core {
     /* Raw libretro memory block (RETRO_MEMORY_* | instance << 8 for the multi-GB cores); size 0 / null when absent. */
     void* memory(unsigned id, size_t* size);
     void run() { fn_run_(); }
+    /* libretro cheats (optional exports). cheat_set index is the slot, code the core-native string (lines joined with +). */
+    bool cheats_supported() const { return fn_cheat_reset_ && fn_cheat_set_; }
+    void cheat_reset() { if (fn_cheat_reset_) fn_cheat_reset_(); }
+    void cheat_set(unsigned index, bool enabled, const char* code) { if (fn_cheat_set_) fn_cheat_set_(index, enabled, code); }
     void unload();
 
     const retro_system_info& info() const { return sysinfo_; }
@@ -113,6 +117,8 @@ class Core {
     void (*fn_get_av_)(retro_system_av_info*) = nullptr;
     void (*fn_set_port_dev_)(unsigned, unsigned) = nullptr;
     void (*fn_reset_)() = nullptr;
+    void (*fn_cheat_reset_)() = nullptr;
+    void (*fn_cheat_set_)(unsigned, bool, const char*) = nullptr;
     void (*fn_run_)() = nullptr;
     size_t (*fn_serialize_size_)() = nullptr;
     bool (*fn_serialize_)(void*, size_t) = nullptr;

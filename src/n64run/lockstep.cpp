@@ -69,6 +69,8 @@ void Lockstep::pump() {
                 bye_last_[msg[1]] = last;
                 core_.peer_left(msg[1]);
             }
+        } else if (msg[0] == kPktCheats) {
+            // handshake leftovers: ignore
         } else if (msg[0] == kPktReady) {
             if (msg.size() >= 2 && msg[1] < 8) ready_mask_ |= 1u << msg[1];
         } else {
@@ -373,6 +375,54 @@ bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::
     if (dn.fixed_delay >= 0 && dn.fixed_delay != d) say("input delay: ignoring local --delay %d, using host's D=%d", dn.fixed_delay, d);
     *out_delay = d;
     return true;
+}
+
+CheatSync exchange_cheat_hash(hubnet::Session& s, int my_slot, uint32_t slot_mask, uint64_t hash, uint32_t timeout_ms,
+                              const std::function<void()>& idle, const std::function<void(const std::string&)>& log) {
+    const uint32_t others = slot_mask & ~(1u << my_slot);
+    if (!others) return CheatSync::Ok;
+    uint64_t theirs[8] = {};
+    uint32_t heard = 0;                  // peers whose hash I have
+    uint32_t heard_me[8] = {};           // per peer: their heard mask (do they have mine?)
+    uint32_t t0 = hubnet::now_ms(), last = 0, done_at = 0;
+    for (;;) {
+        s.update();
+        if (s.failed()) return CheatSync::Failed;
+        int from; std::vector<uint8_t> m;
+        while (s.recv(&from, &m)) {
+            if (m.size() < 11 || m[0] != kPktCheats || from < 0 || from >= 8 || !(others >> from & 1u)) continue;
+            std::memcpy(&theirs[from], &m[3], 8);
+            heard |= 1u << from;
+            heard_me[from] = m[2];
+        }
+        uint32_t now = hubnet::now_ms();
+        if ((heard & others) == others) {
+            for (int p = 0; p < 8; p++) {
+                if ((others >> p & 1u) && theirs[p] != hash) {
+                    char b[160];
+                    std::snprintf(b, sizeof b, "cheats: slot %d has a different cheat list (%016llx vs mine %016llx)", p,
+                                  (unsigned long long)theirs[p], (unsigned long long)hash);
+                    if (log) log(b);
+                    return CheatSync::Mismatch;
+                }
+            }
+        }
+        bool acked = (heard & others) == others;
+        for (int p = 0; p < 8 && acked; p++) if ((others >> p & 1u) && !(heard_me[p] >> my_slot & 1u)) acked = false;
+        if (acked) {
+            if (!done_at) done_at = now ? now : 1;
+            if (now - done_at > 300) { if (log) log("cheats: all peers agree on the cheat list"); return CheatSync::Ok; }
+        }
+        if (now - last >= 50 || !last) {
+            uint8_t pkt[11] = {kPktCheats, (uint8_t)my_slot, (uint8_t)heard};
+            std::memcpy(pkt + 3, &hash, 8);
+            s.send(-1, pkt, 11);
+            last = now ? now : 1;
+        }
+        if (now - t0 > timeout_ms) { if (log) log("cheats: not every peer answered the cheat-list check in time"); return CheatSync::Timeout; }
+        if (idle) idle();
+        Sleep(5);
+    }
 }
 
 }  // namespace n64run

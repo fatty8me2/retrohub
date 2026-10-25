@@ -122,6 +122,14 @@ struct DelayNegotiation {
 bool negotiate_delay(hubnet::Session& session, const DelayNegotiation& dn, const std::function<void()>& idle,
                      const std::function<void(const std::string&)>& log, int* out_delay);
 
+/* Netplay handshake: every PC announces the hash of its effective cheat list (cheats::set_hash; an empty list is
+ * cheats::kEmptyHash) and checks it equals everybody else's. Run once after the session is ready, before the emulator
+ * starts. Ok = all peers agree; Mismatch = somebody differs (cheats would desync: abort the session); Timeout = not
+ * every peer answered in time (logged; the RDRAM/state desync check still covers it). */
+enum class CheatSync { Ok, Mismatch, Timeout, Failed };
+CheatSync exchange_cheat_hash(hubnet::Session& session, int my_slot, uint32_t slot_mask, uint64_t hash, uint32_t timeout_ms,
+                              const std::function<void()>& idle, const std::function<void(const std::string&)>& log);
+
 /* 64-bit hash of a memory block (word-wise multiply/xorshift). */
 uint64_t hash_block(const void* data, size_t bytes);
 

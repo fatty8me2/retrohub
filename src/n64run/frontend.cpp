@@ -6,7 +6,7 @@
  *
  * Exit codes (documented in docs/ARCHITECTURE.md): 0 ok, 2 bad args / ROM, 3 emulator load failure,
  *             4 netplay connection failure / connection lost, 5 desync detected (only with --strict-sync),
- *             6 host-save sync failed.
+ *             6 host-save sync failed. 5 is also returned when the peers' cheat lists differ (--cheats).
  * --slot may be any of 0..3 (lobby slots can have gaps); --players is the number of PCs.
  */
 #include "winutil.h"
@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -40,6 +41,7 @@
 #include "games.h"
 #include "game_settings.h"
 #include "session.h"
+#include "cheats.h"
 
 #include "headless.h"
 #include "controls_sdl.h"
@@ -62,7 +64,7 @@ static const char* kUsage =
     "usage: n64run --rom PATH [--game ID] [--net SERVER --room CODE-N --slot K --players N\n"
     "              --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]\n"
     "              [--match SPEC] [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n"
-    "              [--title TEXT] [--fullscreen] [--gfx Key=i|b|s:value]...\n"
+    "              [--cheats FILE] [--title TEXT] [--fullscreen] [--gfx Key=i|b|s:value]...\n"
     "              [--headless [--realtime] [--frames N] [--screenshot OUT.png] [--dump-ram OFFSET,LEN,FILE]...]\n";
 
 // ---------------------------------------------------------------- logging
@@ -107,6 +109,7 @@ struct Args {
     bool realtime = false;   // --realtime (with --headless): keep the 60 Hz speed limiter, like a real game (QA of stalls)
     long long frames = 0;
     std::string screenshot;
+    std::string cheats;     // --cheats FILE: cheat list JSON (cheats.h); polled for live toggles offline
     std::string controls;   // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (controls.h)
     std::string test_input;   // --test-input / N64RUN_TEST_INPUT: scripted local input (QA)
     std::string match;   // --match spec (VS battle jump)
@@ -178,6 +181,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--gfx") { std::string g; hub::gs::GfxParam gp; ok = val(&g) && hub::gs::parse_gfx_arg(g, &gp); if (ok) a.gfx.push_back(g); }
         else if (k == "--test-input") ok = val(&a.test_input);
         else if (k == "--controls") ok = val(&a.controls);
+        else if (k == "--cheats") ok = val(&a.cheats);
         else { std::fprintf(stderr, "unknown argument: %s\n", k.c_str()); return false; }
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
     }
@@ -232,15 +236,87 @@ struct Core {
     ptr_ConfigSaveFile SaveFile = nullptr;
     ptr_DebugMemGetPointer MemPtr = nullptr;
     ptr_CoreOverrideVidExt OverrideVidExt = nullptr;
+    ptr_CoreAddCheat AddCheat = nullptr;
+    ptr_CoreCheatEnabled CheatEnabled = nullptr;
 };
 static Core g_core;
 
 /* --headless: called by the core on every VI (emulator thread). Drops the speed limiter on the first
  * call (it cannot be changed before the emulation thread runs) and stops after --frames VIs. */
+/* ---- cheats (--cheats FILE; format and contract in src/common/cheats.h) ----
+ * Offline: the file is polled (~2x/s) from the emulation thread's VI callback and enable/disable/edits apply live.
+ * Online: the list is read once at launch, hashed and compared with every peer in the handshake, and applied on the
+ * first VI of every PC (deterministic); later file changes are logged and ignored so peers cannot diverge. */
+static std::string g_cheats_path;
+static bool g_cheats_online = false;
+static cheats::CheatSet g_cheats_boot;           // the list read at launch (what the handshake hashed)
+static bool g_cheats_first_done = false;
+static cheats::FileWatch g_cheats_watch;
+static unsigned long long g_cheats_next_poll = 0;
+static std::map<std::string, std::string> g_cheats_applied;   // id -> signature of the code list the core holds
+static std::map<std::string, bool> g_cheats_state;            // id -> enabled in the core
+
+static void cheats_apply(const cheats::CheatSet& set) {
+    if (!g_core.AddCheat || !g_core.CheatEnabled) return;
+    std::map<std::string, bool> seen;
+    for (const cheats::Cheat& c : set.cheats) {
+        seen[c.id] = true;
+        std::vector<cheats::N64Code> codes;
+        std::string err;
+        if (!cheats::n64_codes(c, &codes, &err)) {
+            auto pit = g_cheats_applied.find(c.id);
+            if (pit == g_cheats_applied.end() || pit->second != "!" + err)
+                logf_("cheats", "skipping '%s' (%s): %s", c.id.c_str(), c.desc.c_str(), err.c_str());
+            g_cheats_applied[c.id] = "!" + err;
+            continue;
+        }
+        std::string sig;
+        for (auto& k : codes) sig += std::to_string(k.address) + ":" + std::to_string(k.value) + ";";
+        auto it = g_cheats_applied.find(c.id);
+        if (it == g_cheats_applied.end() || it->second != sig) {
+            std::vector<m64p_cheat_code> list;
+            for (auto& k : codes) { m64p_cheat_code mc; mc.address = k.address; mc.value = k.value; list.push_back(mc); }
+            m64p_error e = g_core.AddCheat(c.id.c_str(), list.data(), (int)list.size());
+            if (e != M64ERR_SUCCESS) { logf_("cheats", "CoreAddCheat('%s') failed (%d)", c.id.c_str(), (int)e); continue; }
+            g_cheats_applied[c.id] = sig;
+            g_cheats_state.erase(c.id);
+            if (cheats::n64_needs_gs_button(codes)) logf_("cheats", "note: '%s' has 88/89 codes that only fire while the GameShark button is held (not mapped)", c.id.c_str());
+        }
+        auto st = g_cheats_state.find(c.id);
+        if (st == g_cheats_state.end() || st->second != c.enabled) {
+            if (g_core.CheatEnabled(c.id.c_str(), c.enabled ? 1 : 0) == M64ERR_SUCCESS) {
+                g_cheats_state[c.id] = c.enabled;
+                logf_("cheats", "%s '%s' (%s, %zu code%s)", c.enabled ? "enabled" : "disabled", c.id.c_str(), c.desc.c_str(), codes.size(), codes.size() == 1 ? "" : "s");
+            }
+        }
+    }
+    for (auto& kv : g_cheats_state)   // cheats that vanished from the file: switch off
+        if (!seen.count(kv.first) && kv.second && g_core.CheatEnabled(kv.first.c_str(), 0) == M64ERR_SUCCESS) { kv.second = false; logf_("cheats", "disabled '%s' (removed from file)", kv.first.c_str()); }
+}
+
+/* Emulation thread, once per VI. */
+static void cheats_tick() {
+    if (g_cheats_path.empty()) return;
+    if (!g_cheats_first_done) {
+        cheats_apply(g_cheats_boot);
+        g_cheats_first_done = true;
+        return;
+    }
+    unsigned long long now = GetTickCount64();
+    if (now < g_cheats_next_poll) return;
+    g_cheats_next_poll = now + 500;
+    if (!g_cheats_watch.changed()) return;
+    if (g_cheats_online) { logf_("cheats", "cheats file changed during an online session: ignored (all peers must run the same list)"); return; }
+    cheats::CheatSet set; std::string err;
+    if (!cheats::load_file(g_cheats_path, &set, &err)) { logf_("cheats", "cannot reload cheats: %s", err.c_str()); return; }
+    cheats_apply(set);
+}
+
 static bool qa_nofix() { return std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_NOFIX"); }   // QA baseline: behave like before
 
 static void headless_frame_cb(unsigned int) {
     g_vi++;
+    cheats_tick();
     if (g_match && g_core.MemPtr && !g_match->done()) {
         std::string l = g_match->step(static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)), g_vi);
         if (!l.empty()) { std::stringstream ls(l); std::string one; while (std::getline(ls, one)) logline("n64run", one.c_str()); }
@@ -463,8 +539,19 @@ int main(int argc, char** argv) {
               sym(g_core.dll, "ConfigSetParameter", &g_core.SetParam) && sym(g_core.dll, "ConfigSaveFile", &g_core.SaveFile);
     if (!ok) return 3;
     sym(g_core.dll, "DebugMemGetPointer", &g_core.MemPtr);   // optional
+    if (!args.cheats.empty() && !(sym(g_core.dll, "CoreAddCheat", &g_core.AddCheat) && sym(g_core.dll, "CoreCheatEnabled", &g_core.CheatEnabled)))
+        logf_("n64run", "this emulator core has no cheat API: --cheats ignored");
     if (args.headless && !sym(g_core.dll, "CoreOverrideVidExt", &g_core.OverrideVidExt)) return 3;
 
+    if (!args.cheats.empty()) {
+        std::string cerr;
+        if (cheats::load_file(args.cheats, &g_cheats_boot, &cerr)) {
+            g_cheats_path = args.cheats;
+            g_cheats_online = online;
+            g_cheats_watch = cheats::FileWatch(args.cheats);
+            logf_("n64run", "cheats: %zu in %s%s", g_cheats_boot.cheats.size(), args.cheats.c_str(), online ? " (online: fixed for the session)" : "");
+        } else logf_("n64run", "cheats: cannot read %s (%s); playing without cheats", args.cheats.c_str(), cerr.c_str());
+    }
     m64p_error e = g_core.Startup(kFrontendApiVersion, cfg_dir.c_str(), emu_dir.c_str(), const_cast<char*>("Core"), m64p_debug_cb, nullptr, nullptr);
     if (e != M64ERR_SUCCESS) { logf_("n64run", "CoreStartup failed (%d)", (int)e); return 3; }
 
@@ -557,6 +644,19 @@ int main(int argc, char** argv) {
             args.delay = d;
         }
         logf_("n64run", "input delay: %d (%s)", args.delay, "in effect");
+
+        {   // every PC must run the same cheat list (an empty list included)
+            uint64_t ch = cheats::set_hash(g_cheats_boot, cheats::Target::N64);
+            n64run::CheatSync cs = n64run::exchange_cheat_hash(session, my_slot, args.slot_mask, ch, 8000, [] {}, [](const std::string& m) { logline("n64run", m.c_str()); });
+            if (cs == n64run::CheatSync::Mismatch) {
+                logf_("n64run", "netplay: cheat lists differ between players; leaving");
+                session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 5;
+            }
+            if (cs == n64run::CheatSync::Failed) {
+                logf_("n64run", "netplay connection lost during the cheat check");
+                session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 4;
+            }
+        }
 
         if (args.share_host_save) {
             std::vector<SaveFile> host_files;
@@ -704,7 +804,7 @@ int main(int argc, char** argv) {
         }
         g_headless_mode = args.headless;
         g_realtime = args.realtime;
-        if (args.headless || g_match || online) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
+        if (args.headless || g_match || online || !g_cheats_path.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         /* Boot watchdog: a game that never reads a controller within 90 s is stuck in its own boot code (seen with a
          * bad Pokemon Stadium dump: it spins in a `bal .` loop at 0x80000198). Say so instead of hanging silently. */
         std::thread([] {
