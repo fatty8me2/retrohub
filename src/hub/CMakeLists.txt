@@ -7,6 +7,9 @@ target_compile_features(hublogic PUBLIC cxx_std_17)
 add_executable(hub_logic_test test_logic.cpp)
 target_link_libraries(hub_logic_test PRIVATE hublogic)
 
+add_executable(hub_online_caps_test test_online_caps.cpp)
+target_link_libraries(hub_online_caps_test PRIVATE hublogic hubcommon)
+
 add_executable(hub_changelog_test test_changelog.cpp)
 target_link_libraries(hub_changelog_test PRIVATE hublogic)
 
