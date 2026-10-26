@@ -37,6 +37,19 @@ int main() {
     CHECK(compare_disc(s, 494961216ULL, "abc") == Match::Same);
     CHECK(compare_disc(s, 494961217ULL, "abc") == Match::DifferentDisc);
     CHECK(compare_disc(s, 494961216ULL, "def") == Match::DifferentDisc);
+    {   /* version check: ID + disc + revision only */
+        unsigned char hd[0x80] = {0};
+        memcpy(hd, "GM4E01", 6); hd[6] = 0; hd[7] = 1; hd[0x1C] = 0xC2; hd[0x1D] = 0x33; hd[0x1E] = 0x9F; hd[0x1F] = 0x3D;
+        DiscVer v = disc_version_from_header(hd, sizeof hd);
+        Spec hs; hs.game_id = "GM4E01"; hs.disc = 0; hs.rev = 1;
+        CHECK(v.ok && compare_version(hs, v) == Match::Same);
+        hs.rev = 0; CHECK(compare_version(hs, v) == Match::DifferentDisc && version_diff(hs, v).find("revision 1 vs 0") != std::string::npos);
+        hs.rev = 1; hs.game_id = "GM4P01"; CHECK(compare_version(hs, v) == Match::DifferentDisc);
+        hs.game_id = "GM4E01"; hs.disc = 1; CHECK(compare_version(hs, v) == Match::DifferentDisc);
+        hs.disc = -1; hs.rev = -1; CHECK(compare_version(hs, v) == Match::Same);   // old host: unknown never blocks
+        hd[0x1F] = 0; CHECK(!disc_version_from_header(hd, sizeof hd).ok);
+        Spec rt; CHECK(spec_parse(spec_json(hs), &rt) && rt.rev == -1);
+    }
     Spec nohash; CHECK(compare_disc(nohash, 5, "x") == Match::Unknown);
 
     CHECK(valid_host_code("deadBEEF") && !valid_host_code("deadbee") && !valid_host_code("deadbeeg"));

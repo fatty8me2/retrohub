@@ -145,7 +145,6 @@ void autotest_tick() {
         if (!s.ok) { if (now - started > 60000) { autotest_log("error:not selectable: " + s.reason); stage = 99; } return; }
         for (auto& p : peers) if (p.slot != 0 && !A.ready[p.slot]) return;
         if ((rg->system == hub::System::GC || rg->system == hub::System::N3DS) && gc_needs_unpack(*rg)) return;
-        if (rg->system == hub::System::GC && !gc_fingerprint_ready(launch_path_for(*rg))) return;   // np_gc then carries the disc sha
         autotest_log("launching " + rg->title + " with " + std::to_string(room_members().size()) + " players");
         host_launch_selected();
         stage = 3;
