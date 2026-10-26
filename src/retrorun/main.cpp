@@ -362,6 +362,7 @@ class Frontend {
     }
     std::string scale_filter_;   // "" = nearest (DS: linear)
     bool integer_scale_ = true;
+    bool is_ps2 = false;       // PS2 core (LRPS2 / ParaLLEl PS2): experimental lockstep only, behind RETROHUB_PS2_NETPLAY=1 (docs/PS2_ONLINE.md)
     bool is_ps1 = false;       // PlayStation (Beetle PSX): DualShock analog sticks, memory card 1 in the .srm
     int16_t frame_stick[4][4] = {};         // analog sticks per port for the frame about to run: lx ly rx ry
     int16_t local_stick_[4][4] = {};
@@ -1173,7 +1174,14 @@ void Frontend::fold_frame() {
 }
 
 /* Hash used for the periodic desync check. */
-uint64_t Frontend::sync_hash() { return use_state_hash ? state_hash() : out_hash; }
+uint64_t Frontend::sync_hash() {
+    if (is_ps2) {   // the PS2 core's serialized state holds host pointers (ASLR) and differs between identical runs: hash EE RAM instead
+        size_t sz = 0;
+        void* p = core.memory(RETRO_MEMORY_SYSTEM_RAM, &sz);
+        return p && sz ? n64run::hash_block(p, sz) : out_hash;
+    }
+    return use_state_hash ? state_hash() : out_hash;
+}
 
 uint64_t Frontend::state_hash() {
     size_t n = core.serialize_size();
@@ -1644,6 +1652,7 @@ rb::Sim Frontend::make_rb_sim() {
             snprintf(nm, sizeof nm, "%s\\%016llx.bmp", dd, (unsigned long long)h);
             if (!fs::exists(fs::u8path(nm))) write_frame_image(nm, f);
         }
+        if (is_ps2) return (uint64_t)0;   // the PS2 core shows no frame on some runs; EE RAM (mem_hash) is the check
         return h;   // video only: audio resampler state is not part of any core's savestate, and audio never feeds back into the game
     };
     s.mem_hash = [this]() -> uint64_t {
@@ -1930,6 +1939,11 @@ int Frontend::run(const Args& args) {
         // Gambatte's retro_serialize output differs run-to-run on identical emulation (see docs/RETRORUN.md),
         // so its state hash would flag false desyncs; fall back to a rolling video+audio output hash.
         // PlayStation: the serialized state holds bytes that are not emulation state and differs between identical runs (docs/CORES.md).
+        is_ps2 = ln.find("ps2") != std::string::npos || ln.find("pcsx2") != std::string::npos;
+        if (is_ps2 && (!a.net.empty() || a.synctest) && !(std::getenv("RETROHUB_PS2_NETPLAY") && std::string(std::getenv("RETROHUB_PS2_NETPLAY")) == "1")) {
+            rlog("PS2 online/synctest is experimental and off: set RETROHUB_PS2_NETPLAY=1 (docs/PS2_ONLINE.md)");
+            return 7;
+        }
         use_state_hash = a.sync_hash_mode == "state" || (a.sync_hash_mode == "auto" && ln.find("gambatte") == std::string::npos && !is_ps1);
         if (use_state_hash && !core.serialize_size()) use_state_hash = false;
         rlog("sync hash: %s", use_state_hash ? "serialized state" : "video+audio output");
@@ -1971,6 +1985,7 @@ int Frontend::run(const Args& args) {
     if (!a.disc_ctl.empty()) disc_watch = cheats::FileWatch(a.disc_ctl);
     if (!a.control.empty()) ctl_ = runctl::Poller(a.control);
     int rc = 0;
+    const uint64_t hashlog_n = std::getenv("RETRORUN_HASHLOG") ? (uint64_t)atoll(std::getenv("RETRORUN_HASHLOG")) : 0;   // QA/determinism spike: log state+output hash every N frames
     if (a.selftest) {
         rc = selftest();
     } else if (a.synctest) {
@@ -2087,6 +2102,7 @@ int Frontend::run(const Args& args) {
                 }
                 fold_frame();
                 frame_no++;
+                if (hashlog_n && frame_no % hashlog_n == 0) rlog("HASHLOG frame %llu state %016llx out %016llx video %016llx", (unsigned long long)frame_no, (unsigned long long)state_hash(), (unsigned long long)out_hash, (unsigned long long)(core.frame().px.empty() ? 0 : n64run::hash_block(core.frame().px.data(), core.frame().px.size() * 4)));
 
                 if (!a.headless && (!ff || (frame_no & 7) == 0)) present();
 
