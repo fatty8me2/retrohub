@@ -303,6 +303,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         ImGui::PushFont(ui::F.body);
         draw_frame();
+        if (shot_path) bootart_shot_draw(ren);   // HUB_SHOT_BOOTART gallery
         if (!shot_path || SH.update) draw_update_popup();
         osk::draw_root();
         ImGui::PopFont();

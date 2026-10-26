@@ -852,3 +852,5 @@ ImGuiKey shot_key(const std::string& n);
 
 #include "friends_ui.h"
 #include "group_ui.h"
+
+void bootart_shot_draw(SDL_Renderer* ren);   // boot_art_shot.cpp: HUB_SHOT_BOOTART=<system|all|shelf>
