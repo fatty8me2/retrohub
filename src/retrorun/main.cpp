@@ -1624,7 +1624,7 @@ bool Frontend::setup_net() {
         rc.use_state_hash = false;   // confirmed video hash: serialized bytes differ benignly after a load (audio state)
         rc.val_bytes = is_ps1 ? 8 : 2;   // PlayStation: buttons + 4 stick bytes + 16 event bits (disc swap) per port
         if (is_ps1) rc.event_mask = retrorun::kEventMask;
-        const bool big_room = (lower(a.system) == "snes" || lower(a.system) == "nes") && a.players >= 3;   // 3-4 PCs through the relay hit its 400 frames/s room cap
+        const bool big_room = a.players >= 3;   // any 3+ PC rollback room   // 3-4 PCs through the relay hit its 400 frames/s room cap
         if (is_ps1 || big_room) rc.relay_half_rate = true;
         if (is_ps1 || big_room) rc.send_gap_ms = 30;   // ~60 packets/s per PC: 4 PCs through the relay stay under its 400 frames/s room cap
         if (is_ps1) rc.pred_budget = 3;   // a PlayStation frame costs 3-8 ms: re-simulating 6 frames per late input would drop frames, so the input delay takes over sooner

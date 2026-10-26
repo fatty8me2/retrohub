@@ -125,6 +125,8 @@ struct Session::Impl {
     // slot HUBNET_SIM_SPIKE_SLOT (-1: all) sent inside the window are held until it ends (a 4-5 s round-trip spike).
     int sim_spike_ms = 0, sim_spike_every = 0, sim_spike_at = 0, sim_spike_slot = -1;
     uint32_t sim_t0 = 0;
+    // relay traffic meter (logged every 5 s once relaying): frames/bytes sent to / received from the lobby relay
+    uint32_t rl_tx = 0, rl_rx = 0, rl_txb = 0, rl_rxb = 0, rl_at = 0;
 
     void sim_init(int slot_)
     {
@@ -255,6 +257,7 @@ struct Session::Impl {
         buf[0] = (uint8_t)s;
         memcpy(buf + 1, pkt, len);
         if (sim_on) { sim_out(true, Addr(), buf, len + 1, now_ms()); return; }
+        rl_tx++; rl_txb += (uint32_t)len + 1;
         if (!ws.send_binary(buf, len + 1)) { static int cnt = 0; if (cnt++ < 20) net_log("relay send failed"); }
     }
     void send_ctl(int s, char type, uint32_t now, const uint8_t* extra = nullptr, int extra_len = 0)
@@ -279,6 +282,11 @@ struct Session::Impl {
         char type = (char)d[0];
         int from = d[1];
         if (from >= kMaxSlots || from == slot) return;
+        if (type == 'E') {
+            /* Relay-only broadcast from a guest: the lobby already fanned it out to every other PC, so it is delivered here and never re-forwarded. */
+            if (via_relay && relay_from == from && n >= 3) deliver(from, d + 3, n - 3);
+            return;
+        }
         int path = from;
         if (type == 'D') {
             if (n < 3) return;
@@ -440,6 +448,7 @@ struct Session::Impl {
         while (ws.poll_text(&text) && !failed && !ended) on_ws_text(text, now);
         std::vector<uint8_t> bin;
         while (ws.poll_binary(&bin)) {
+            rl_rx++; rl_rxb += (uint32_t)bin.size();
             if (bin.size() < 3) continue;
             int from = bin[0];
             if (from >= kMaxSlots) continue;
@@ -537,6 +546,10 @@ struct Session::Impl {
     {
         if (!started || failed || ended) return;
         uint32_t now = now_ms();
+        if (rl_tx + rl_rx && now - rl_at >= 5000) {
+            if (rl_at) net_log("Session %d: relay traffic %u frames/s sent (%u B/s), %u frames/s received (%u B/s)", slot, rl_tx / 5, rl_txb / 5, rl_rx / 5, rl_rxb / 5);
+            rl_at = now; rl_tx = rl_rx = rl_txb = rl_rxb = 0;
+        }
         if (sim_on) sim_flush(now);
         pump_ws(now);
         resolve_departure(now);
@@ -712,12 +725,34 @@ void Session::send(int to_slot, const void* data, int len)
     pkt[1] = (uint8_t)d.slot;
     if (len) memcpy(pkt + 3, data, len);
     if (d.is_host()) {
+        if (to_slot < 0) {
+            /* Broadcast with every present client reachable only through the relay: ONE relay frame to slot 0xFF (the lobby fans it out) instead of a copy per client. */
+            int n = 0;
+            bool all_relay = true;
+            for (int s = 1; s < kMaxSlots; s++) {
+                if (!d.peers[s].present) continue;
+                n++;
+                if (d.direct_fresh(d.peers[s], now) || !d.peers[s].relay_active) all_relay = false;
+            }
+            if (n >= 2 && all_relay) {
+                pkt[2] = 0xFF;
+                d.send_relay(0xFF, pkt, 3 + len);
+                return;
+            }
+        }
         for (int s = 1; s < kMaxSlots; s++) {
             if (!d.peers[s].present || (to_slot >= 0 && to_slot != s)) continue;
             pkt[2] = (to_slot < 0) ? 0xFF : (uint8_t)s;
             d.send_raw(s, pkt, 3 + len, now);
         }
     } else {
+        if (to_slot < 0 && popcount(d.roster_mask) >= 3 && !d.direct_fresh(d.peers[0], now) && d.peers[0].relay_active) {
+            /* Broadcast over the relay with 3+ PCs: ONE frame to everybody (the lobby fans it out) instead of one to the host that the host forwards twice. */
+            pkt[0] = 'E';
+            pkt[2] = 0xFF;
+            d.send_relay(0xFF, pkt, 3 + len);
+            return;
+        }
         pkt[2] = (to_slot < 0) ? 0xFF : (uint8_t)to_slot;
         d.send_raw(0, pkt, 3 + len, now);
     }
