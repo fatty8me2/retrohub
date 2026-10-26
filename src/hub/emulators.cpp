@@ -27,6 +27,7 @@
 
 #include "controls.h"
 #include "emu_saves.h"
+#include "wiiu_meta.h"
 #include "miniz.h"
 #include "games.h"
 #include "logic.h"
@@ -86,7 +87,7 @@ static std::string join(const std::string& a, const std::string& b) {
     return (c == '\\' || c == '/') ? a + b : a + "\\" + b;
 }
 
-const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : "Dolphin"; }
+const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : "Dolphin"; }
 Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : s == hub::System::PS2 ? Kind::Pcsx2 : Kind::Azahar; }
 
 /* Pinned official releases. Azahar: github.com/azahar-emu/azahar (GPL-3.0), asset digest as published by GitHub.
@@ -107,11 +108,17 @@ const Release& release(Kind k) {
     static const Release ps = {
         "2.8.2", L"github.com", L"/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-windows-x64-Qt.7z",
         25670075ull, "7dfc829ca1994cc1045ac49f05e39b6cf968b72e6a374c40e05c2a2b4ac200b4", L"pcsx2-qt.exe", "GPL-3.0+"};
-    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : dol;
+    /* LRPS2 / "ParaLLEl PS2" v2.0.0-38d3a83 (GPL-3.0), the libretro buildbot nightly of pcsx2_libretro.dll; used by retrorun for PS2 ONLINE rooms only
+     * (docs/PS2_ONLINE.md). "latest" is a moving URL: if the nightly changes, the pinned size/SHA-256 reject it (the install fails with a clear message)
+     * and this pin must be refreshed after re-running the determinism and lockstep QA. The DLL is never shipped in the package. */
+    static const Release lr = {
+        "2.0.0-38d3a83", L"buildbot.libretro.com", L"/nightly/windows/x86_64/latest/pcsx2_libretro.dll.zip",
+        3760634ull, "730112622345f0ca12e7650c6d4052f443603aa630e9b6ab8a68874a4d66bae6", L"pcsx2_libretro.dll", "GPL-3.0"};
+    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : dol;
 }
 
 std::string managed_root() { return join(hub::data_dir(), "emulators"); }
-std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : "dolphin"); }
+std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : k == Kind::Lrps2 ? "lrps2" : "dolphin"); }
 
 /* ------------------------------------------------------------------ */
 /* locating                                                            */
@@ -640,7 +647,7 @@ CemuPads cemu_pads_with(const std::vector<PadDesc>& by_port) {
 static std::string cemu_sel(const CemuPads& c) {
     std::string s;
     for (size_t i = 0; i < c.xinput.size(); ++i)
-        s += std::to_string(i) + "=" + (i < c.sdl.size() && !c.sdl[i].empty() ? c.sdl[i] : std::to_string(c.xinput[i])) + ";";
+        s += std::to_string(i) + "=" + (i < c.dsu.size() && c.dsu[i] >= 0 ? "dsu" + std::to_string(c.dsu[i]) : i < c.sdl.size() && !c.sdl[i].empty() ? c.sdl[i] : std::to_string(c.xinput[i])) + ";";
     return s == "0=0;" ? "" : s;   // the old single-pad setup keeps its marker hash
 }
 
@@ -673,14 +680,27 @@ CemuPads cemu_pads_with_sdl(const std::vector<PadDesc>& by_port, const std::vect
     return c;
 }
 
-static std::string cemu_pad_xml(const hubctl::Profile& prof, int xinput_idx, int player, bool pro, const std::string& sdl_uuid = "") {
-    const bool sdl = !sdl_uuid.empty();
+/* Cemu's DSUController ids (DSUController.cpp: bits of the DSU button bytes in order; sticks/triggers share the XInput ids).
+ * Wii U A/B/X/Y sit on the DSU A/B/X/Y bits; the remote pad's XInput layout is what dsu_server.cpp maps from. */
+static int cemu_dsu_id(const hubctl::Term& t) {
+    static const std::map<std::string, int> m = {
+        {"back", 0}, {"leftstick", 1}, {"rightstick", 2}, {"start", 3}, {"dpup", 4}, {"dpright", 5}, {"dpdown", 6}, {"dpleft", 7},
+        {"leftshoulder", 10}, {"rightshoulder", 11}, {"x", 12}, {"a", 13}, {"b", 14}, {"y", 15},
+        {"lefttrigger", 42}, {"righttrigger", 43}, {"leftx+", 38}, {"lefty-", 39}, {"rightx+", 40}, {"righty-", 41},
+        {"leftx-", 44}, {"lefty+", 45}, {"rightx-", 46}, {"righty+", 47}};
+    auto it = m.find(hubctl::term_name(t));
+    return it == m.end() ? -1 : it->second;
+}
+
+static std::string cemu_pad_xml(const hubctl::Profile& prof, int xinput_idx, int player, bool pro, const std::string& sdl_uuid = "", int dsu_slot = -1) {
+    const bool dsu = dsu_slot >= 0;
+    const bool sdl = !dsu && !sdl_uuid.empty();
     /* VPAD ButtonId (1..24) -> profile control. The default profile reproduces the old fixed table exactly. */
     static const char* const vpad[] = {"a", "b", "x", "y", "l", "r", "zl", "zr", "plus", "minus", "dpup", "dpdown", "dpleft", "dpright",
                                        "l3", "r3", "ls_up", "ls_down", "ls_left", "ls_right", "rs_up", "rs_down", "rs_left", "rs_right"};
     auto dz = [&](const char* name) { auto it = prof.analogs.find(name); return fmt_g(it == prof.analogs.end() ? 0.25 : it->second.deadzone); };
     std::string x = std::string("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>") + (pro ? "Wii U Pro Controller" : "Wii U GamePad") + "</type>\n"
-                    "\t<controller>\n\t\t<api>" + std::string(sdl ? "SDLController" : "XInput") + "</api>\n\t\t<uuid>" + (sdl ? sdl_uuid : std::to_string(xinput_idx)) + "</uuid>\n\t\t<display_name>Controller " + std::to_string(player + 1) + "</display_name>\n"
+                    "\t<controller>\n\t\t<api>" + std::string(dsu ? "DSUController" : sdl ? "SDLController" : "XInput") + "</api>\n\t\t<uuid>" + (dsu ? std::to_string(dsu_slot) : sdl ? sdl_uuid : std::to_string(xinput_idx)) + "</uuid>\n\t\t<display_name>Controller " + std::to_string(player + 1) + "</display_name>\n"
                     "\t\t<rumble>0</rumble>\n"
                     "\t\t<axis>\n\t\t\t<deadzone>" + dz("left_stick") + "</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n"
                     "\t\t<rotation>\n\t\t\t<deadzone>" + dz("right_stick") + "</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n"
@@ -690,7 +710,7 @@ static std::string cemu_pad_xml(const hubctl::Profile& prof, int xinput_idx, int
         auto it = prof.buttons.find(vpad[i]);
         std::vector<hubctl::Term> t;
         if (it == prof.buttons.end() || !hubctl::parse_expr(it->second, prof.axis_threshold, &t) || t.empty()) continue;
-        int id = sdl ? cemu_sdl_id(t[0]) : cemu_xinput_id(t[0]);   // one source per Wii U button
+        int id = dsu ? cemu_dsu_id(t[0]) : sdl ? cemu_sdl_id(t[0]) : cemu_xinput_id(t[0]);   // one source per Wii U button
         if (id < 0) continue;
         x += "\t\t\t<entry>\n\t\t\t\t<mapping>" + std::to_string(i + 1) + "</mapping>\n\t\t\t\t<button>" + std::to_string(id) +
              "</button>\n\t\t\t</entry>\n";
@@ -703,6 +723,15 @@ std::string cemu_gamepad_profile_xml(const hubctl::Profile& prof, int xinput_idx
 std::string cemu_pro_profile_xml(const hubctl::Profile& prof, int xinput_idx, int player) { return cemu_pad_xml(prof, xinput_idx, player, true); }
 std::string cemu_gamepad_profile_xml() { return cemu_gamepad_profile_xml(hubctl::default_profile("wiiu")); }
 std::string cemu_gamepad_profile_xml_sdl(const hubctl::Profile& prof, const std::string& sdl_uuid) { return cemu_pad_xml(prof, 0, 0, false, sdl_uuid); }
+std::string cemu_pro_profile_xml_dsu(const hubctl::Profile& prof, int dsu_slot, int player) { return cemu_pad_xml(prof, 0, player, true, "", dsu_slot); }
+CemuPads cemu_pads_with_dsu(const CemuPads& local, int remote_players) {
+    CemuPads c;
+    c.xinput.push_back(!local.xinput.empty() ? local.xinput[0] : 0);
+    c.sdl.push_back(!local.sdl.empty() ? local.sdl[0] : std::string());
+    c.dsu.push_back(-1);
+    for (int i = 0; i < remote_players && i < 3; ++i) { c.xinput.push_back(-1); c.sdl.push_back(std::string()); c.dsu.push_back(i); }
+    return c;
+}
 std::string cemu_pro_profile_xml_sdl(const hubctl::Profile& prof, const std::string& sdl_uuid, int player) { return cemu_pad_xml(prof, 0, player, true, sdl_uuid); }
 
 /* Writes controller0-3.xml into `cdir` (the controllerProfiles folder) when missing or when the profile/pad order changed.
@@ -717,7 +746,8 @@ static void write_cemu_profiles(const std::string& cdir, const hubctl::Profile& 
     auto xml = [&](int i) {
         bool sdl = i < (int)pads.sdl.size() && !pads.sdl[i].empty();
         int xi = i < (int)pads.xinput.size() && pads.xinput[i] >= 0 ? pads.xinput[i] : 0;
-        return cemu_pad_xml(prof, xi, i, i > 0, sdl ? pads.sdl[i] : std::string());
+        int ds = i < (int)pads.dsu.size() ? pads.dsu[i] : -1;
+        return cemu_pad_xml(prof, xi, i, i > 0, sdl ? pads.sdl[i] : std::string(), ds);
     };
     write_text(pad, xml(0));   // player 1 = the Wii U GamePad
     for (int i = 1; i < 4; ++i) {   // players 2-4 = Pro Controllers on the next pads; stale ones from an earlier setup go
@@ -1096,11 +1126,214 @@ void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::
         write_text(f, azahar_config_apply(read_text(f), v));
     } else if (k == Kind::Pcsx2) {
         return;   // written by prepare_pcsx2 (pcsx2.h)
-    } else {
+    } else {   // RetroHub's own portable Cemu (a user's own install goes through prepare_cemu_own_settings)
         std::string f = join(install_dir, "portable\\settings.xml");
-        if (file_exists(f)) write_text(f, cemu_settings_apply(read_text(f), v));
+        if (file_exists(f)) write_text(f, cemu_fullscreen_apply(cemu_settings_apply(read_text(f), v), hub::gs::is_fullscreen(v)));
     }
 }
+
+/* ---- Wii U: the user's own Cemu ---- */
+
+static std::string cemu_tag_value(const std::string& xml, const std::string& tag) {
+    std::string a = "<" + tag + ">", b = "</" + tag + ">";
+    size_t p = xml.find(a);
+    if (p == std::string::npos) return "";
+    size_t e = xml.find(b, p);
+    if (e == std::string::npos) return "";
+    return xml.substr(p + a.size(), e - p - a.size());
+}
+
+std::string cemu_fullscreen_value(const std::string& xml) {
+    std::string v = cemu_tag_value(xml, "fullscreen");
+    return v == "true" || v == "false" ? v : std::string();
+}
+
+std::string cemu_fullscreen_apply(const std::string& in, bool fs) {
+    const std::string val = fs ? "true" : "false";
+    std::string t = in;
+    size_t p = t.find("<fullscreen>");
+    if (p != std::string::npos) {
+        size_t e = t.find("</fullscreen>", p);
+        if (e != std::string::npos) { t.replace(p + 12, e - p - 12, val); return t; }
+    }
+    size_t sc = t.find("<fullscreen/>");
+    if (sc != std::string::npos) { t.replace(sc, 13, "<fullscreen>" + val + "</fullscreen>"); return t; }
+    size_t end = t.rfind("</content>");
+    if (end == std::string::npos) return t;   // not a Cemu settings file: leave it alone
+    t.insert(end, "\t<fullscreen>" + val + "</fullscreen>\n");
+    return t;
+}
+
+/* The <GraphicPack>...</GraphicPack> element (empty string when absent or self-closing = nothing enabled). */
+static bool cemu_gp_span(const std::string& xml, size_t* from, size_t* to) {
+    size_t p = xml.find("<GraphicPack>");
+    if (p == std::string::npos) return false;
+    size_t e = xml.find("</GraphicPack>", p);
+    if (e == std::string::npos) return false;
+    *from = p;
+    *to = e + 14;
+    return true;
+}
+
+std::string cemu_own_settings_apply(const std::string& in, const hub::gs::Values& v, CemuOwnState* st) {
+    std::string t = in;
+    const bool fs = hub::gs::is_fullscreen(v);
+    st->fs_orig = cemu_fullscreen_value(t);
+    t = cemu_fullscreen_apply(t, fs);
+    st->fs_written = fs ? "true" : "false";
+    st->fs_touched = true;
+    auto i = v.find("wiiu.graphic_packs");
+    if (i != v.end() && i->second == "false") {
+        size_t a, b;
+        if (cemu_gp_span(t, &a, &b)) {   // the user's selection is parked in the state file, Cemu sees no packs
+            st->gp_block = t.substr(a, b - a);
+            st->gp_stripped = true;
+            t.replace(a, b - a, "<GraphicPack/>");
+        }
+    }
+    return t;
+}
+
+std::string cemu_own_settings_revert(const std::string& in, const CemuOwnState& st) {
+    std::string t = in;
+    if (st.fs_touched && cemu_fullscreen_value(t) == st.fs_written)   // unchanged since: the user did not toggle it in the session
+        t = cemu_fullscreen_apply(t, st.fs_orig.empty() ? false : st.fs_orig == "true");
+    if (st.gp_stripped && !st.gp_block.empty()) {
+        size_t sc = t.find("<GraphicPack/>");
+        size_t a, b;
+        if (sc != std::string::npos) t.replace(sc, 14, st.gp_block);
+        else if (cemu_gp_span(t, &a, &b) && t.substr(a, b - a).find("<Entry") == std::string::npos) t.replace(a, b - a, st.gp_block);   // Cemu wrote an empty list
+        /* a non-empty list: the user enabled packs during the session; theirs wins */
+    }
+    return t;
+}
+
+static std::string state_esc(const std::string& s) {
+    std::string o;
+    for (char c : s) { if (c == '\\') o += "\\\\"; else if (c == '\n') o += "\\n"; else if (c == '\r') o += "\\r"; else o += c; }
+    return o;
+}
+static std::string state_unesc(const std::string& s) {
+    std::string o;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '\\' && i + 1 < s.size()) { char n = s[++i]; o += n == 'n' ? '\n' : n == 'r' ? '\r' : n; }
+        else o += s[i];
+    }
+    return o;
+}
+
+std::string cemu_own_state_text(const CemuOwnState& st) {
+    return std::string("RetroHub changed these Cemu settings for a game session and puts them back afterwards. Do not edit.\n") +
+           "fs_touched=" + (st.fs_touched ? "1" : "0") + "\nfs_orig=" + st.fs_orig + "\nfs_written=" + st.fs_written +
+           "\ngp_stripped=" + (st.gp_stripped ? "1" : "0") + "\ngp_block=" + state_esc(st.gp_block) + "\n";
+}
+
+bool cemu_own_state_parse(const std::string& text, CemuOwnState* st) {
+    CemuOwnState o;
+    bool any = false;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        while (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        if (k == "fs_touched") { o.fs_touched = v == "1"; any = true; }
+        else if (k == "fs_orig") o.fs_orig = v;
+        else if (k == "fs_written") o.fs_written = v;
+        else if (k == "gp_stripped") o.gp_stripped = v == "1";
+        else if (k == "gp_block") o.gp_block = state_unesc(v);
+    }
+    if (any) *st = o;
+    return any;
+}
+
+bool revert_cemu_own_settings(const std::string& user_data) {
+    std::string sf = join(user_data, "retrohub-cemu-state.txt"), settings = join(user_data, "settings.xml");
+    if (!file_exists(sf)) return false;
+    CemuOwnState st;
+    bool ok = cemu_own_state_parse(read_text(sf), &st);
+    if (ok && file_exists(settings)) write_text(settings, cemu_own_settings_revert(read_text(settings), st));
+    std::error_code ec;
+    fs::remove(P(sf), ec);
+    return ok;
+}
+
+bool prepare_cemu_own_settings(const std::string& user_data, const hub::gs::Values& v) {
+    std::string settings = join(user_data, "settings.xml");
+    if (!file_exists(settings)) return false;   // Cemu has not run yet: nothing of the user's to protect, and the first-run dialog stays theirs
+    revert_cemu_own_settings(user_data);        // leftovers of a session that never finished
+    std::string bak = settings + ".retrohub-backup";
+    std::string orig = read_text(settings);
+    if (!file_exists(bak) && !write_text(bak, orig)) return false;   // never change the file without a backup
+    CemuOwnState st;
+    std::string out = cemu_own_settings_apply(orig, v, &st);
+    if (!write_text(join(user_data, "retrohub-cemu-state.txt"), cemu_own_state_text(st))) return false;
+    return write_text(settings, out);
+}
+
+std::string cemu_profile_apply(const std::string& in, const hub::gs::Values& v) {
+    std::string t = in;
+    auto i = v.find("wiiu.cpu_mode");
+    const char* mode = i == v.end() ? "" : hub::wiiu_cpu_mode_ini(i->second);
+    if (*mode) t = hub::ini_put(t, "CPU", "cpuMode", mode);
+    return t;
+}
+
+bool apply_cemu_game_profile(const std::string& user_data, uint64_t tid, const hub::gs::Values& v) {
+    if (!tid) return false;
+    std::string dir = join(user_data, "gameProfiles"), f = join(dir, hub::wiiu_profile_file_name(tid));
+    revert_cemu_game_profile(user_data, tid);
+    std::string cur = file_exists(f) ? read_text(f) : std::string();
+    std::string out = cemu_profile_apply(cur, v);
+    if (out == cur) return false;   // nothing to set: leave the user's profile alone
+    make_dirs(dir);
+    if (file_exists(f)) { if (!write_text(f + ".retrohub-orig", cur)) return false; }
+    else if (!write_text(f + ".retrohub-new", "RetroHub created " + hub::wiiu_profile_file_name(tid) + " for a game session and removes it afterwards.\n")) return false;
+    return write_text(f, out);
+}
+
+bool revert_cemu_game_profile(const std::string& user_data, uint64_t tid) {
+    if (!tid) return false;
+    std::string f = join(join(user_data, "gameProfiles"), hub::wiiu_profile_file_name(tid));
+    std::error_code ec;
+    if (file_exists(f + ".retrohub-orig")) {
+        bool ok = write_text(f, read_text(f + ".retrohub-orig"));
+        if (ok) fs::remove(P(f + ".retrohub-orig"), ec);
+        return ok;
+    }
+    if (file_exists(f + ".retrohub-new")) { fs::remove(P(f), ec); fs::remove(P(f + ".retrohub-new"), ec); return true; }
+    return false;
+}
+
+std::string cemu_profile_summary(const std::string& exe_dir, const std::string& user_data, uint64_t tid) {
+    if (!tid) return "";
+    std::string name = hub::wiiu_profile_file_name(tid);
+    auto find_default = [&]() {   // Cemu ships names in mixed case; match case-insensitively
+        std::error_code ec;
+        std::string want = name;
+        for (char& c : want) c = (char)std::tolower((unsigned char)c);
+        for (fs::directory_iterator it(P(join(join(exe_dir, "gameProfiles"), "default")), ec), end; !ec && it != end; it.increment(ec)) {
+            std::string n = S(it->path().filename());
+            for (char& c : n) c = (char)std::tolower((unsigned char)c);
+            if (n == want) return S(it->path());
+        }
+        return std::string();
+    };
+    std::string dp = find_default(), up = join(join(user_data, "gameProfiles"), name);
+    std::string d = dp.empty() ? "" : read_text(dp), u = file_exists(up) ? read_text(up) : std::string();
+    if (d.empty() && u.empty()) return "";
+    std::string cpu = hub::wiiu_profile_value(d, u, "CPU", "cpuMode"), mul = hub::wiiu_profile_value(d, u, "Graphics", "accurateShaderMul"),
+                so = hub::wiiu_profile_value(d, u, "Graphics", "streamoutBufferCacheSize");
+    std::string o;
+    if (!cpu.empty()) o += "CPU mode " + cpu;
+    if (!mul.empty()) o += std::string(o.empty() ? "" : ", ") + "accurate shader multiplication " + mul;
+    if (!so.empty()) o += std::string(o.empty() ? "" : ", ") + "stream-out cache " + so;
+    return o.empty() ? "" : o + (u.empty() ? " (Cemu's default game profile)" : " (your game profile)");
+}
+
+std::vector<int> cemu_toggle_gamepad_keys() { return {VK_CONTROL, VK_TAB}; }
+bool cemu_toggle_combo(unsigned b) { return (b & XINPUT_GAMEPAD_BACK) && (b & XINPUT_GAMEPAD_RIGHT_SHOULDER); }
 
 /* ------------------------------------------------------------------ */
 /* launch arguments                                                    */
@@ -1169,7 +1402,30 @@ static hub::FsProbe probe() {
     return p;
 }
 
-SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& battery_in, const std::string&) {
+uint64_t wiiu_title_id_of_file(const std::string& path) {
+    std::string low = path;
+    for (char& c : low) c = (char)std::tolower((unsigned char)c);
+    if (low.size() < 4 || low.compare(low.size() - 4, 4, ".wua") != 0) return 0;
+    std::error_code ec;
+    uint64_t size = fs::file_size(P(path), ec);
+    if (ec) return 0;
+    std::ifstream f(P(path), std::ios::binary);
+    if (!f) return 0;
+    auto rd = [&](uint64_t off, void* buf, size_t n) -> bool {
+        f.clear();
+        f.seekg((std::streamoff)off, std::ios::beg);
+        f.read(static_cast<char*>(buf), (std::streamsize)n);
+        return f.gcount() == (std::streamsize)n;
+    };
+    hub::WiiuInfo w;
+    if (hub::parse_wua(rd, size, &w) && w.title_id) return w.title_id;
+    hub::WiiuMeta m;
+    return hub::wua_read_meta(rd, size, &m) ? m.title_id : 0;   // repacks with a 0000000000000000_v0 folder: the id is in meta.xml
+}
+
+hub::FsProbe wiiu_probe() { return probe(); }
+
+SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& battery_in, const std::string&, uint64_t tid_override) {
     SaveSession s;
     s.started_unix = (int64_t)std::time(nullptr);
     std::string battery = battery_in;
@@ -1180,7 +1436,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
     s.backup_dir = S(vault / L"_conflicts" / sysdir.filename() / game.filename() / L"battery");
     s.manifest_path = S(vault / L".sync" / (L"emu-" + sysdir.filename().wstring() + L"-" + game.filename().wstring() + L".json"));
 
-    uint64_t tid = title_id_from_key(e.key);
+    uint64_t tid = tid_override ? tid_override : title_id_from_key(e.key);
     if (e.system == hub::System::N3DS) {
         if (!tid || inst.dir.empty()) return s;   // homebrew (.3dsx) and unknown titles: nothing to map
         s.emu_root = hub::n3ds_sd_root(join(inst.dir, "user"));
@@ -1198,11 +1454,13 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         s.restore_only_if_missing = !inst.managed;   // the user's own install: never overwrite its saves
         s.wiiu_save_parent = join(d.mlc, "usr\\save\\00050000");
         if (!tid) {   // .wud/.wux: the title id is not readable without decrypting; reuse what an earlier session stored
-            auto known = hub::subdirs_modified_since(join(battery, "usr\\save\\00050000"), 0);
-            for (const auto& k : known) s.rels.push_back("usr/save/00050000/" + k);   // every folder an earlier session stored
+            for (const char* hi : {"00050000", "0005000e"}) {
+                auto known = hub::subdirs_modified_since(join(battery, std::string("usr\\save\\") + hi), 0);
+                for (const auto& k : known) s.rels.push_back(std::string("usr/save/") + hi + "/" + k);   // every folder an earlier session stored
+            }
             s.wiiu_unknown_title = true;
         } else {
-            s.rels = {hub::wiiu_save_rel(tid)};
+            s.rels = hub::wiiu_save_rels(tid);   // the game's save and its update title's; every account folder sits inside
         }
     } else if (e.system == hub::System::PS2) {
         if (inst.dir.empty()) return s;
@@ -1238,9 +1496,12 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
 void end_session(SaveSession& s) {
     if (!s.active) return;
     if (s.wiiu_unknown_title) {   // .wud/.wux: every save folder that changed during the session belongs to this game
-        for (const auto& c : hub::subdirs_modified_since(s.wiiu_save_parent, s.started_unix - 2)) {
-            std::string rel = "usr/save/00050000/" + c;
-            if (std::find(s.rels.begin(), s.rels.end(), rel) == s.rels.end()) s.rels.push_back(rel);
+        for (const char* hi : {"00050000", "0005000e"}) {
+            std::string parent = join(S(P(s.wiiu_save_parent).parent_path()), hi);
+            for (const auto& c : hub::subdirs_modified_since(parent, s.started_unix - 2)) {
+                std::string rel = std::string("usr/save/") + hi + "/" + c;
+                if (std::find(s.rels.begin(), s.rels.end(), rel) == s.rels.end()) s.rels.push_back(rel);
+            }
         }
     }
     std::string tag = stamp_tag();

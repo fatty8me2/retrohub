@@ -32,8 +32,7 @@ $cores = @(
 )
 
 # SHA-256 of the DLLs inside the buildbot zips that were SyncTest-verified (docs/CORES.md). The buildbot 'latest' folder moves,
-# so a different hash only warns (the newer build is installed anyway) -- re-run qa
-es_snes_synctest.ps1 and update these.
+# so a different hash only warns (the newer build is installed anyway) -- re-run qa\nes_snes_synctest.ps1 and update these.
 $pinned = @{
     'nestopia_libretro' = '57ef3b6a3face9b65bc5de65cd41453c35fb880d0437b0b2d3e44549c1c0a959'
     'snes9x_libretro' = '07534cc4018069840c7400c22adae4e508ac9d2fc8041e4aa6b50b04bf5d6eba'
@@ -77,8 +76,7 @@ foreach ($core in $cores) {
     Remove-Item -LiteralPath $extDir -Recurse -Force
     if ($pinned.ContainsKey($core)) {
         $got = (Get-FileHash -LiteralPath $dllPath -Algorithm SHA256).Hash.ToLower()
-        if ($got -ne $pinned[$core]) { Write-Warning "$dllName SHA-256 $got differs from the verified build $($pinned[$core]); run qa
-es_snes_synctest.ps1" }
+        if ($got -ne $pinned[$core]) { Write-Warning "$dllName SHA-256 $got differs from the verified build $($pinned[$core]); run qa\nes_snes_synctest.ps1" }
     }
     Write-Host "Installed: $dllName"
 }

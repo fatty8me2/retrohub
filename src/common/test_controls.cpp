@@ -424,7 +424,20 @@ static void test_canonical_name() {
     CHECK(hubctl::canonical_name(hubctl::resolve(st, "n64", "smash64")).name == "n64-custom");
 }
 
+/* PS2 online: DualShock 2 L2/R2 pressure comes from the analog trigger (0..255), a digital press is 255, nothing is 0. */
+static void test_ps2_pressure() {
+    retrorun::RetroPad rp(hubctl::default_profile("ps1"));
+    int16_t p[2];
+    PadState s;
+    rp.pressure(s, p);
+    CHECK(p[0] == 0 && p[1] == 0);
+    s.a[4] = 32000; s.a[5] = 20000;
+    rp.pressure(s, p);
+    CHECK(p[0] >= 240 && p[0] <= 255 && p[1] >= 150 && p[1] <= 160);
+}
+
 int main() {
+    test_ps2_pressure();
     test_canonical_name();
     test_exit_combo_and_cursor();
     test_pad_sync_and_unique();

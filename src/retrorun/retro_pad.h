@@ -1,5 +1,6 @@
 #pragma once
 /* Profile -> RetroPad bitmask for one pad (pure; unit tested against the old hardcoded mapping). */
+#include <algorithm>
 #include <cstdint>
 
 #include "controls.h"
@@ -29,6 +30,13 @@ class RetroPad {
             auto cv = [](float v) { return (int16_t)(v > 1.f ? 32767 : v < -1.f ? -32767 : (int)(v * 32767.f)); };
             out[s * 2] = cv(x);
             out[s * 2 + 1] = cv(y);
+        }
+    }
+    /* DualShock 2 L2/R2 pressure 0..255 (analog trigger axis when it is held far enough, else a digital press = 255). */
+    void pressure(const hubctl::PadState& st, int16_t out[2]) const {
+        for (int k = 0; k < 2; k++) {
+            int ax = st.a[4 + k] > 0 ? st.a[4 + k] >> 7 : 0;
+            out[k] = (int16_t)(m_.down(id_[6 + k], st) ? (ax >= 64 ? std::min(ax, 255) : 255) : 0);
         }
     }
     /* Keyboard pad: state = SDL_GetKeyboardState. */

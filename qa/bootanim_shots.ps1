@@ -15,7 +15,7 @@ foreach ($sys in $Systems.Split(",")) {
     $set = @{ RETROHUB_NO_SHELL = "1"; SSB64_MUTE = "1"; RETRORUN_MUTE = "1"; N64RUN_MUTE = "1"; HUB_SCREENSHOT = $bmp; HUB_SHOT_SIZE = "1280x800";
               HUB_SHOT_NOWAIT = "1"; HUB_SHOT_SECS = "2"; HUB_SHOT_FAKE_LIB = "14"; HUB_SHOT_BOOTANIM = "${sys}:$t" }
     foreach ($k in $set.Keys) { Set-Item "env:$k" $set[$k] }
-    $p = Start-Process $exe -PassThru -WindowStyle Hidden -NoNewWindow
+    $p = Start-Process $exe -PassThru -WindowStyle Hidden
     if (-not $p.WaitForExit(60000)) { $p.Kill() }
     foreach ($k in $set.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
     if (Test-Path $bmp) {

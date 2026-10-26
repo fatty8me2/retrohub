@@ -1,0 +1,22 @@
+add_library(rplaycore STATIC stream_core.cpp)
+target_include_directories(rplaycore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(stream_core_test test_stream_core.cpp)
+target_link_libraries(stream_core_test PRIVATE rplaycore)
+
+# streamrun: remote play host/guest (Media Foundation H.264/AAC, WGC capture, WASAPI process loopback, SDL guest window)
+add_executable(streamrun streamrun.cpp video.cpp capture.cpp audio.cpp upnp.cpp)
+target_link_libraries(streamrun PRIVATE rplaycore dsuserver hubnet SDL2::SDL2 d3d11 dxgi mfplat mfuuid mf mfreadwrite wmcodecdspuuid strmiids ole32 oleaut32 mmdevapi winhttp ws2_32 winmm windowsapp)
+target_compile_options(streamrun PRIVATE /EHsc)
+
+# DSU (cemuhook) server: virtual pads Cemu reads over UDP; embedded in `streamrun --host` (guest pads -> Cemu players 2-4)
+add_library(dsuserver STATIC dsu_server.cpp)
+target_include_directories(dsuserver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(dsuserver PUBLIC cxx_std_17)
+target_link_libraries(dsuserver PUBLIC ws2_32 rplaycore)
+add_executable(dsu_test test_dsu.cpp)
+target_link_libraries(dsu_test PRIVATE dsuserver)
+add_executable(dsu_feed dsu_feed.cpp)
+target_link_libraries(dsu_feed PRIVATE dsuserver)
+add_executable(dsu_probe dsu_probe.cpp)
+target_link_libraries(dsu_probe PRIVATE dsuserver)

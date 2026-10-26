@@ -1,6 +1,7 @@
 #include "logic.h"
 
 #include "remix_data.h"
+#include "ps2_online.h"
 
 #include <algorithm>
 #include <cctype>
@@ -186,7 +187,7 @@ bool save_settings(const std::string& path, const Settings& s) {
 /* ---------------- lobby rules ---------------- */
 
 Selectability game_selectable(const std::string& game_id, int max_players,
-                              const std::vector<PeerInfo>& peers, int host_slot) {
+                              const std::vector<PeerInfo>& peers, int host_slot, bool remote_play) {
     Selectability r;
     if ((int)peers.size() > max_players) { r.reason = "too many players (max " + std::to_string(max_players) + ")"; return r; }
     /* ownership token: the catalog md5 if advertised, else the key itself */
@@ -201,9 +202,10 @@ Selectability game_selectable(const std::string& game_id, int max_players,
     std::string t;
     for (auto& p : peers) {
         if (!p.hello_complete()) { r.reason = "waiting for " + p.name; return r; }   // every hello part must have arrived
+        if (remote_play && p.slot != host_slot) continue;   // guests stream: no copy needed
         if (!token(p, &t)) { r.reason = p.name + " doesn't have this game"; return r; }
     }
-    if (host) {
+    if (host && !remote_play) {
         std::string ref;
         token(*host, &ref);
         for (auto& p : peers) {
@@ -730,6 +732,7 @@ std::string exit_code_text(unsigned long code) {
         case 5: return "The game went out of sync (desync) and was stopped.";
         case 6: return "Couldn't share the host's save - check your connection and try again.";
         case 8: return player_left_text("");
+        case 9: case 10: case 11: return hubps2::setup_mismatch_text(code);
         case 7: return "The PlayStation setups differ: everyone in the room needs the same BIOS file (or all use the built-in OpenBIOS). Check Settings > Playing.";
         default: return "Game exited with code " + std::to_string(code) + ".";
     }
