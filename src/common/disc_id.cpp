@@ -124,6 +124,16 @@ bool read_system_cnf(const SectorFn& read, std::string* text) {
 }
 
 SectorFn buffer_reader(std::shared_ptr<std::string> data) {
+    static const uint8_t sync[12] = {0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0};
+    if (data->size() >= 2352 && std::memcmp(data->data(), sync, 12) == 0) {   // raw 2352-byte CD sectors (a Redump .bin streamed from an archive)
+        const uint32_t user = (uint8_t)(*data)[15] == 2 ? 24 : 16;
+        return SectorFn([data, user](uint32_t lba, uint8_t* out) {
+            uint64_t off = uint64_t(lba) * 2352 + user;
+            if (off + 2048 > data->size()) return false;
+            std::memcpy(out, data->data() + off, 2048);
+            return true;
+        });
+    }
     return [data](uint32_t lba, uint8_t* out) {
         uint64_t off = uint64_t(lba) * 2048;
         if (off + 2048 > data->size()) return false;

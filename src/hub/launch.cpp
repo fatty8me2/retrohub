@@ -584,6 +584,7 @@ void play_entry(const hub::GameEntry& e) {
     }
     A.st.last_game = room_id(e);
     mark_dirty();
+    hub::rom_cache_touch(e);   // LRU stamp for the unpacked copy (no-op for plain files)
     RunInfo ri = run_info_for(e, false);
     std::string sys = sys_short(e);
     if (is_kanto(e)) { kt_play(e); return; }

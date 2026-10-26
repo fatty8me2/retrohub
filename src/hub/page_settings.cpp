@@ -35,6 +35,87 @@ const EmuLook& emu_look() {
 
 void gap() { ImGui::Dummy(ImVec2(0, sp(0.5f))); }
 
+/* "Unpacked games" cache section. Disk usage is measured on a background thread (on open and after clearing), never per frame. */
+struct CacheUi {
+    std::atomic<uint64_t> bytes{0};
+    std::atomic<bool> measuring{false}, clearing{false}, clear_done{false};
+    bool measured = false, confirm = false;
+    int last_frame = -10;
+    std::vector<hub::SkippedArchive> skipped;
+};
+CacheUi CU;
+
+void cache_measure() {
+    if (CU.measuring.exchange(true)) return;
+    std::thread([] { CU.bytes = hub::rom_cache_bytes(); CU.measuring = false; }).detach();
+}
+
+void cache_section() {
+    int fr = ImGui::GetFrameCount();
+    if (!CU.measured || fr - CU.last_frame > 2) {   // tab just opened
+        CU.measured = true;
+        cache_measure();
+        CU.skipped = hub::scan_skipped_archives();
+    }
+    CU.last_frame = fr;
+    if (CU.clear_done.exchange(false)) { CU.clearing = false; cache_measure(); start_scan(); }
+
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    settings_label("Unpacked games");
+    char line[96];
+    std::snprintf(line, sizeof line, "Unpacked games use %.1f GB", (double)CU.bytes.load() / (double)(1ull << 30));
+    ImGui::TextUnformatted(line);
+    if (CU.clearing) {
+        text_wrapped_disabled("Clearing...");
+    } else if (!CU.confirm) {
+        if (button("Clear cache", ImVec2(0, 0), false, !A.scanning)) CU.confirm = true;
+    } else {
+        text_wrapped_disabled("Delete all unpacked games? Your archives are not touched; cartridges unpack again on the next scan.");
+        if (button("Yes, clear", ImVec2(0, 0))) {
+            CU.confirm = false;
+            CU.clearing = true;
+            std::thread([] { hub::rom_cache_clear(); CU.clear_done = true; }).detach();
+        }
+        ImGui::SameLine();
+        if (button("Cancel", ImVec2(0, 0))) CU.confirm = false;
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    static const int gbs[] = {10, 20, 40, 80, 0};
+    static const char* labels[] = {"10 GB", "20 GB", "40 GB", "80 GB", "No limit"};
+    int cur = 2;
+    for (int i = 0; i < 5; ++i) if (gbs[i] == A.st.rom_cache_limit_gb) cur = i;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Limit");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(sp(20.f));
+    if (ImGui::BeginCombo("##romcachelimit", labels[cur])) {
+        for (int i = 0; i < 5; ++i)
+            if (ImGui::Selectable(labels[i], i == cur)) {
+                A.st.rom_cache_limit_gb = gbs[i];
+                hub::rom_cache_set_limit((uint64_t)gbs[i] << 30);
+                mark_dirty();
+                std::thread([] { hub::rom_cache_trim(hub::rom_cache_limit()); }).detach();
+            }
+        ImGui::EndCombo();
+    }
+    text_wrapped_disabled("Oldest unpacked games are removed first; your archives are never touched.");
+    if (!CU.skipped.empty()) {
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        std::string title = std::to_string(CU.skipped.size()) + " archives skipped";
+        if (ImGui::CollapsingHeader(title.c_str())) {
+            for (auto& s : CU.skipped) {
+                std::string name = std::filesystem::path(s.path).filename().string();
+                ImGui::PushTextWrapPos(0.f);
+                ImGui::TextUnformatted(name.c_str());
+                ImGui::PopTextWrapPos();
+                text_wrapped_disabled(s.reason);
+            }
+        }
+    }
+}
+
 void tab_general() {
     begin_panel("set_lib");
     section_title("Library");
@@ -82,6 +163,7 @@ void tab_general() {
         ImGui::SameLine();
         if (button("Use default", ImVec2(0, 0))) { A.st.smash_exe.clear(); mark_dirty(); A.hello_dirty = true; start_scan(); }
     }
+    cache_section();
     end_panel();
     gap();
     begin_panel("set_app");
