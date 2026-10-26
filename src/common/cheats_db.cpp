@@ -27,7 +27,7 @@ std::string lower(std::string s) {
 bool format_from(const std::string& s, Format* f) {
     std::string l = lower(s);
     if (l == "gameshark" || l == "gs") *f = Format::GameShark;
-    else if (l == "ar" || l == "actionreplay") *f = Format::ActionReplay;
+    else if (l == "ar" || l == "actionreplay" || l == "par") *f = Format::ActionReplay;
     else if (l == "codebreaker" || l == "cb") *f = Format::CodeBreaker;
     else if (l == "gamegenie" || l == "gg") *f = Format::GameGenie;
     else if (l == "ar_gc") *f = Format::ActionReplayGC;
@@ -390,7 +390,7 @@ CheatList cheats_list_for(const GameEntry& e) {
     const char* ss = system_short(e.system);
     std::string sys = ss ? ss : "";
     std::vector<std::string> dbsys;
-    if (sys == "n64" || sys == "gba" || sys == "ps1" || sys == "gc") dbsys = {sys};
+    if (sys == "n64" || sys == "gba" || sys == "ps1" || sys == "gc" || sys == "nes" || sys == "snes") dbsys = {sys};
     else if (sys == "gb") dbsys = {"gb", "gbc"};
     else if (sys == "gbc") dbsys = {"gbc", "gb"};
     else return out;

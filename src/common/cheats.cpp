@@ -33,7 +33,7 @@ static std::string upper_s(std::string s) { for (auto& c : s) c = (char)std::tou
 bool parse_format(const std::string& in, Format* out) {
     std::string s = lower_s(in);
     if (s == "gameshark" || s == "gs") *out = Format::GameShark;
-    else if (s == "ar" || s == "actionreplay" || s == "action replay") *out = Format::ActionReplay;
+    else if (s == "ar" || s == "par" || s == "actionreplay" || s == "action replay") *out = Format::ActionReplay;
     else if (s == "codebreaker" || s == "cb") *out = Format::CodeBreaker;
     else if (s == "gamegenie" || s == "gg") *out = Format::GameGenie;
     else if (s == "ar_gc" || s == "argc") *out = Format::ActionReplayGC;

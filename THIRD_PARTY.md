@@ -24,6 +24,8 @@ RetroHub uses the components below. Each one keeps its own license. Components a
 | mGBA (libretro core) | nightly | MPL-2.0 | `scripts/fetch-cores.ps1` | Game Boy Advance, and fallback for GB and GBC. |
 | SameBoy (libretro core) | nightly | MIT | `scripts/fetch-cores.ps1` | Game Boy and Game Boy Color. |
 | Gambatte (libretro core) | nightly | GPL-2.0 | `scripts/fetch-cores.ps1` | Game Boy and Game Boy Color fallback. |
+| Nestopia UE (libretro core, `nestopia_libretro`) | 2.0.0 (nightly) | GPL-2.0 | `scripts/fetch-cores.ps1` | NES. SHA-256 recorded in the script. |
+| Snes9x (libretro core, `snes9x_libretro`) | 1.61 (nightly) | Snes9x license (non-commercial) | `scripts/fetch-cores.ps1` | SNES. Shipped unmodified in `cores\`; RetroHub is free and non-commercial. |
 | melonDS DS (libretro core, `melondsds_libretro`) | 1.4.0 (nightly) | GPL-3.0-or-later | `scripts/fetch-cores.ps1` | Nintendo DS. Uses its built-in FreeBIOS and generated firmware; no BIOS files are shipped or required. Based on melonDS (GPL-3.0-or-later). |
 | libretro frontend info files | nightly | per file (MIT for most) | `scripts/fetch-cores.ps1` | Core metadata (`.info`). |
 | Dolphin | 2509 | GPL-2.0-or-later | `scripts/fetch-dolphin.ps1` | GameCube emulation, downloaded on demand. |
