@@ -20,6 +20,7 @@ param(
   [int]$Port = 11600, [string]$Work = "C:\rhq\stress", [int]$Lane = 0, [string]$Out = "", [switch]$NoServer,
   [string]$WorkerDir = "C:\Users\fatty\Desktop\SmashClassicPort\BattleShip\server\cloudflare", [string]$Tag = ""
 )
+$Modes = @($Modes | ForEach-Object { $_ -split ',' })
 $Server = "ws://127.0.0.1:$Port"
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = "Stop"
@@ -98,7 +99,7 @@ $ModeDefs = @{
 }
 $alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'.ToCharArray()
 function DolphinOf($d) { Get-CimInstance Win32_Process -Filter "Name='Dolphin.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1 }
-function ReadAll($p) { if (Test-Path $p) { try { [System.IO.File]::ReadAllText($p) } catch { "" } } else { "" } }
+function ReadAll($p) { $t = ""; if (Test-Path $p) { try { $t = [System.IO.File]::ReadAllText($p) } catch { $t = "" } }; return [string]$t }
 function StatusOf($d, $role) { ReadAll "$d\userdata\gcnp\gc_${role}_status.txt" }
 function KillOwn() {
   $procs = Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*$Work*gc_netplay_driver*") }
@@ -198,7 +199,7 @@ function Run-One($mode, $n) {
 try {
   foreach ($mode in $Modes) {
     for ($n = 1; $n -le $Runs; $n++) {
-      $r = Run-One $mode $n
+      try { $r = Run-One $mode $n } catch { $r = [ordered]@{ mode = $mode; n = $n; started = $false; held = $false; desync = $false; start_s = $null; reason = "harness exception: $($_.Exception.Message) @ $($_.InvocationInfo.ScriptLineNumber)"; detail = "" }; KillOwn }
       $r["tag"] = $Tag
       $ok = $r.started -and $r.held -and -not $r.desync -and -not $r.reason
       $r["pass"] = [bool]$ok
