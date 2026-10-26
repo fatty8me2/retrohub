@@ -229,7 +229,8 @@ static void test_catalog_integrity() {
         CHECK(!g.nointro.empty());  // cover-art name; may be a base game's name for hacks
         CHECK(ids.insert(g.id).second);  // unique catalog id
         CHECK(g.system == "n64" || g.system == "gba" || g.system == "gb" || g.system == "gbc" || g.system == "nds" ||
-              g.system == "3ds" || g.system == "wiiu" || g.system == "gc" || g.system == "ps1" || g.system == "ps2");
+              g.system == "3ds" || g.system == "wiiu" || g.system == "gc" || g.system == "ps1" || g.system == "ps2" ||
+              g.system == "nes" || g.system == "snes");
         CHECK(g.max_players >= 1 && g.max_players <= 4);
         CHECK(!g.online || g.max_players >= 2);  // online only makes sense for multiplayer
         for (const auto& s : g.serials) {
@@ -247,13 +248,37 @@ static void test_catalog_integrity() {
         }
         if (g.system == "gba") CHECK(g.engine == Engine::Libretro);
         if (g.system == "ps2") CHECK(g.engine == Engine::Pcsx2);
-        if (g.system == "ps1") CHECK(g.engine == Engine::Libretro);
+        if (g.system == "ps1" || g.system == "nes" || g.system == "snes") CHECK(g.engine == Engine::Libretro);
+        if (g.system == "nes" || g.system == "snes") CHECK(g.serials.empty());   // headerless systems: matched by No-Intro name
         if (g.system == "3ds") CHECK(g.engine == Engine::Azahar);
         if (g.system == "wiiu") CHECK(g.engine == Engine::Cemu);
         if (g.system == "gc") CHECK(g.engine == Engine::Dolphin);
         if (g.system == "n64" && g.id != "smash64" && g.id != "remix") CHECK(g.engine == Engine::Mupen64Plus);
     }
     CHECK(ids.count("smash64") == 1 && ids.count("mp1") == 1 && ids.count("remix") == 1);
+}
+
+/* NES/SNES catalog: No-Intro cover names, id prefix, multiplayer entries online with sane caps. */
+static void test_nes_snes_catalog() {
+    int nes = 0, snes = 0, online = 0;
+    for (const GameInfo& g : catalog()) {
+        if (g.system != "nes" && g.system != "snes") continue;
+        (g.system == "nes" ? nes : snes)++;
+        CHECK(g.id.rfind(g.system + "_", 0) == 0);
+        CHECK(g.nointro.find(" (") != std::string::npos);          // "Title (Region)" No-Intro form
+        CHECK(g.nointro.find("(USA") != std::string::npos || g.nointro.find("(Japan") != std::string::npos ||
+              g.nointro.find("(World") != std::string::npos);
+        CHECK(g.year >= 1983 && g.year <= 1998 && !g.blurb.empty() && !g.genre.empty());
+        if (g.online) { ++online; CHECK(g.max_players >= 2); }
+    }
+    CHECK(nes >= 30 && snes >= 30 && online >= 30);
+    const GameInfo* gl = find_game("nes_gauntlet2");
+    CHECK(gl && gl->max_players == 4 && gl->online && online_max_for(*gl) == 4);
+    const GameInfo* sb = find_game("snes_sbomber");
+    CHECK(sb && sb->max_players == 4 && sb->online && sb->nointro == "Super Bomberman (USA)");
+    const GameInfo* som = find_game("snes_som");
+    CHECK(som && som->max_players == 3 && som->online);
+    CHECK(find_game("snes_smw") && !find_game("snes_smw")->online);
 }
 
 static void test_find_game_for() {
@@ -316,6 +341,7 @@ int main() {
         CHECK(g && g->online && online_max_for(*g) == 2 && link_cable_game(id));
     }
     test_find_game_for();
+    test_nes_snes_catalog();
 
     std::error_code ec;
     fs::path dir = fs::temp_directory_path(ec) / "hubcommon_test_dir";
