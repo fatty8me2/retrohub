@@ -60,7 +60,7 @@ void apply_scan() {
         int n = std::max(1, std::atoi(fl));
         if (std::string(fl) == "all") {   // qa/reach_matrix.ps1: every system, an online catalog game + an uncatalogued one, plus Smash Classic, Remix and Kanto Together
             static const hub::System all[] = {hub::System::N64, hub::System::GB, hub::System::GBC, hub::System::GBA, hub::System::NDS,
-                                              hub::System::N3DS, hub::System::GC, hub::System::WiiU, hub::System::PS1, hub::System::PS2};
+                                              hub::System::N3DS, hub::System::GC, hub::System::WiiU, hub::System::PS1, hub::System::PS2, hub::System::NES, hub::System::SNES};
             for (hub::System s : all) {
                 std::string sh = hub::system_short(s);
                 for (int pass = 0; pass < 2; ++pass) {

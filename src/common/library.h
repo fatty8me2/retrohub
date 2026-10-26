@@ -23,8 +23,23 @@ inline bool is_lockstep_gb_system(System s) { return s == System::GB || s == Sys
 
 
 const char* system_name(System s);   // "Nintendo 64", "Game Boy Advance", "Game Boy", "Game Boy Color", "GameCube"
-const char* system_short(System s);  // "n64", "gba", "gb", "gbc", "gc" "3ds" "wiiu"  (stable; used in keys and paths)
+const char* system_short(System s);  // "n64", "gba", "gb", "gbc", "gc" "3ds" "wiiu" "nes" "snes"  (stable; used in keys and paths)
 System system_from_short(const std::string& s);
+
+/* NES / SNES cartridge header detection (pure; unit-tested). */
+struct NesHeader {
+    bool nes2 = false, battery = false, trainer = false;
+    unsigned mapper = 0;
+    uint64_t prg = 0, chr = 0;     // bytes
+    uint64_t data_off = 16;        // first byte of PRG (after the 16-byte header and an optional 512-byte trainer)
+};
+/* iNES / NES 2.0 ("NES"). false if the magic is missing or the declared PRG+CHR does not fit file_size. */
+bool nes_parse_header(const uint8_t* h, size_t n, uint64_t file_size, NesHeader* out);
+/* SNES dumps may carry a 512-byte copier header (size % 1024 == 512). Returns 512 or 0. */
+size_t snes_copier_header_size(uint64_t file_size);
+struct SnesInfo { bool valid = false; bool hirom = false; bool checksum_ok = false; size_t header = 0; std::string title; };
+/* Looks for the internal header at LoROM 0x7FC0 / HiROM 0xFFC0 (after any copier header). valid=false if neither looks real. */
+SnesInfo snes_probe(const uint8_t* d, size_t n);
 
 struct GameEntry {
     /* Stable identity across PCs, used for saves and library state:
