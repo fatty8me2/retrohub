@@ -330,6 +330,21 @@ int main() {
         CHECK(!wide.cover && wide.w == 260 && wide.h < 100 && wide.y > 0);
     }
 
+    {   // friends' play time
+        CHECK(friend_hours_text(0) == "" && friend_hours_text(45) == "45m" && friend_hours_text(180) == "3h" && friend_hours_text(870) == "14h" && friend_hours_text(570) == "9h 30m");
+        std::map<std::string, std::vector<PlaytimeEntry>> by;
+        by["u1"] = {{"k1", "Smash", 840}, {"k2", "Metroid", 10}};
+        by["u2"] = {{"k1", "Smash", 180}};
+        by["u3"] = {{"k1", "Smash", 500}};   // blocked/removed: not in names
+        by["u4"] = {{"k1", "Smash", 60}};
+        by["u5"] = {{"k1", "Smash", 30}};
+        std::map<std::string, std::string> nm = {{"u1", "Mickey"}, {"u2", "camer"}, {"u4", "Zed"}, {"u5", "Al"}};
+        CHECK(friends_playtime_line(by, nm, "k1") == std::string("Mickey 14h \xC2\xB7 camer 3h \xC2\xB7 Zed 1h"));
+        CHECK(friends_playtime_line(by, nm, "k2") == "Mickey 10m" && friends_playtime_line(by, nm, "zz").empty());
+        CHECK(friend_top_games_text(by["u1"]) == "Top games: Smash 14h, Metroid 10m" && friend_top_games_text({}).empty());
+        Settings a; CHECK(a.share_playtime); a.share_playtime = false; Settings b;
+        CHECK(settings_from_json(settings_to_json(a), &b) && !b.share_playtime);
+    }
     CHECK(format_play_time(0) == "Never played");
     CHECK(format_play_time(30) == "Under a minute");
     CHECK(format_play_time(35 * 60) == "35 min");

@@ -610,6 +610,7 @@ void draw_details_modal() {
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     ImGui::Text("Play time: %s      Last played: %s", hubui::format_play_time(gs.play_seconds).c_str(),
                 gs.last_played ? fmt_time(gs.last_played).c_str() : "never");
+    { std::string fl = fr_playtime_line(e.key); if (!fl.empty()) ImGui::TextDisabled("Friends: %s", fl.c_str()); }
     if (native) {
         ImGui::TextDisabled("Smash Classic keeps its own saves.");
     } else {
