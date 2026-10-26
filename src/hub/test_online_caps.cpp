@@ -14,8 +14,9 @@ int main() {
         {System::Unknown, false, false}, {System::N64, true, false}, {System::GBA, true, false}, {System::GB, true, false},
         {System::GBC, true, false},      {System::GC, true, true},   {System::N3DS, true, false}, {System::WiiU, false, false},
         {System::NDS, true, true},       {System::PS2, false, false}, {System::PS1, true, true},
+        {System::NES, false, false},     {System::SNES, false, false},   // retrorun offline only until the netplay lane lands
     };
-    CHECK((int)System::PS1 + 1 == (int)(sizeof table / sizeof table[0]));   // a new System enum value must get a row here
+    CHECK((int)System::SNES + 1 == (int)(sizeof table / sizeof table[0]));   // a new System enum value must get a row here
     hub::GameInfo on = hub::GameInfo(), off = hub::GameInfo();
     on.online = true; off.online = false;
     for (const Row& r : table) {
@@ -37,7 +38,7 @@ int main() {
     for (const hub::GameInfo& g : hub::catalog()) {
         if (!g.online || g.engine == hub::Engine::Native) continue;
         System s = hub::system_from_short(g.system.c_str());
-        CHECK(hubcaps::online_capable(s, &g));
+        if (s != System::NES && s != System::SNES) CHECK(hubcaps::online_capable(s, &g));   // NES/SNES online: netplay lane
         if (s == System::PS1) { ++ps1_online; CHECK(hub::online_max_for(g) >= 2 && hub::online_max_for(g) <= 4); }
     }
     CHECK(ps1_online >= 6);

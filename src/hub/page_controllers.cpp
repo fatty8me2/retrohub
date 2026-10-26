@@ -34,8 +34,9 @@ namespace {
 struct Tab { const char* key; const char* label; const char* long_name; };
 const Tab kTabs[] = {{"n64", "N64", "Nintendo 64"}, {"retro", "GB / GBA / DS", "Game Boy, GBA and DS"},
                      {"ps1", "PlayStation", "PlayStation (DualShock)"},
-                     {"gc", "GameCube", "GameCube"}, {"wiiu", "Wii U", "Wii U"}, {"3ds", "3DS", "Nintendo 3DS"}, {"ps2", "PS2", "PlayStation 2"}};
-constexpr int kNumTabs = 7;
+                     {"gc", "GameCube", "GameCube"}, {"wiiu", "Wii U", "Wii U"}, {"3ds", "3DS", "Nintendo 3DS"}, {"ps2", "PS2", "PlayStation 2"},
+                     {"nes", "NES", "Nintendo Entertainment System"}, {"snes", "SNES", "Super Nintendo"}};
+constexpr int kNumTabs = 9;
 constexpr double kCaptureSecs = 8.0;
 
 struct CtlState {
@@ -475,6 +476,14 @@ void draw_mapping_panel() {
         if (ImGui::Checkbox("Rumble Pak (offline only)", &rm)) { hubctl::set_rumble(CTL.st, sys, CTL.game, rm); ctl_save(); }
         text_wrapped_disabled("Shakes a controller that supports rumble in games that use the Rumble Pak. It takes the place of the Controller Pak for this game, "
                               "so memory pack saves are not used while it is on. Online games never use it.");
+    }
+    if (sys == "nes" || sys == "snes") {
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        bool lab = hubctl::label_layout_active(CTL.st, sys, CTL.game);
+        if (ImGui::Checkbox("Use button labels (Xbox A = console A)", &lab)) { hubctl::set_label_layout(CTL.st, sys, CTL.game, lab); ctl_save(); }
+        text_wrapped_disabled("Off (default): positional, like a Nintendo pad. Xbox A (bottom) presses the console's B and Xbox B (right) presses A. "
+                              "On: buttons follow the letters printed on your controller.");
+        if (sys == "snes") text_wrapped_disabled("Players 3 and 4 use the multitap, which turns on by itself when three or more controllers are connected.");
     }
     if (!game_mode) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));

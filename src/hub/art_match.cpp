@@ -57,6 +57,8 @@ std::string thumb_repo(const std::string& s) {
     if (s == "nds") return "Nintendo_-_Nintendo_DS";
     if (s == "ps2") return "Sony_-_PlayStation_2";
     if (s == "ps1") return "Sony_-_PlayStation";
+    if (s == "nes") return "Nintendo_-_Nintendo_Entertainment_System";
+    if (s == "snes") return "Nintendo_-_Super_Nintendo_Entertainment_System";
     return "";
 }
 
@@ -71,6 +73,8 @@ std::string dat_url(const std::string& s) {
     if (s == "nds") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%20DS.dat";
     if (s == "ps2") return std::string(base) + "redump/Sony%20-%20PlayStation%202.dat";
     if (s == "ps1") return std::string(base) + "redump/Sony%20-%20PlayStation.dat";
+    if (s == "nes") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%20Entertainment%20System.dat";
+    if (s == "snes") return std::string(base) + "no-intro/Nintendo%20-%20Super%20Nintendo%20Entertainment%20System.dat";
     return "";
 }
 

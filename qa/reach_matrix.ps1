@@ -71,7 +71,11 @@ $games = @(
     @{ key = 'fake:wiiu-plain';  label = 'Wii U';                  sys = 'wiiu' },
     @{ key = 'fake:ps1-online';  label = 'PS1 catalog';            sys = 'ps1' },
     @{ key = 'fake:ps1-plain';   label = 'PS1 uncatalogued';       sys = 'ps1' },
-    @{ key = 'fake:ps2-plain';   label = 'PS2';                    sys = 'ps2' }
+    @{ key = 'fake:ps2-plain';   label = 'PS2';                    sys = 'ps2' },
+    @{ key = 'fake:nes-online';  label = 'NES catalog';            sys = 'nes' },
+    @{ key = 'fake:nes-plain';   label = 'NES uncatalogued';       sys = 'nes' },
+    @{ key = 'fake:snes-online'; label = 'SNES catalog';           sys = 'snes' },
+    @{ key = 'fake:snes-plain';  label = 'SNES uncatalogued';      sys = 'snes' }
 )
 $games[0].key = 'native:smash64'   # kNativeKey; verified below against the trace
 
@@ -81,7 +85,7 @@ function Online-Expected($g) {   # supports_online() as designed: every library 
 }
 function Cheats-Expected($g) {   # n64 gb gbc gba nds ps1 gc: the Cheats button; 3ds wiiu ps2: a disabled button with a tooltip; native / Kanto: hidden
     if ($g.kanto) { return 'hidden' }
-    if ($g.sys -in 'n64', 'gb', 'gbc', 'gba', 'nds', 'ps1', 'gc') { return 'enabled' }
+    if ($g.sys -in 'n64', 'gb', 'gbc', 'gba', 'nds', 'ps1', 'gc', 'nes', 'snes') { return 'enabled' }
     if ($g.sys -in '3ds', 'wiiu', 'ps2') { return 'explained' }
     return 'hidden'
 }
@@ -110,7 +114,7 @@ for ($i = 0; $i -lt $games.Count; $i++) {
     switch ($g.sys) {
         'native' { $want = 'BattleShip.exe --from-hub --no-update-check, or a need-ROM toast'; $got = "$sp$nt"; $ok = ($sp -match '\| --from-hub --no-update-check') -or ($nt -match 'ROM|BattleShip') }
         'n64'    { $want = 'n64run.exe --rom --game --save-dir'; $got = "$sp"; $ok = $sp -match 'n64run\.exe \| --rom .* --game .* --save-dir ' }
-        { $_ -in 'gb', 'gbc', 'gba', 'nds' } {
+        { $_ -in 'gb', 'gbc', 'gba', 'nds', 'nes', 'snes' } {
             if ($g.kanto) { $want = 'Kanto setup dialog (no spawn)'; $got = 'not driven (installs a package)'; $ok = $true; break }
             $want = "retrorun.exe --core --rom --system $($g.sys) --save-dir --state-dir"; $got = "$sp"
             $ok = ($sp -match 'retrorun\.exe \| --core ') -and ($sp -match " --system $($g.sys) ") -and ($sp -match '--save-dir') -and ($sp -match '--state-dir') -and (($g.sys -eq 'nds') -or ($sp -match '--resume')) }
