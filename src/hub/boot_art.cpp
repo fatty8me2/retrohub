@@ -7,12 +7,14 @@
 #include <vector>
 #include <string>
 #include <utility>
+#include <functional>
 #include <algorithm>
 
 namespace bootanim {
 using hub::System;
 
 namespace {
+std::function<void(ImDrawList*)> g_inner;   // drawn inside a console between its well/tray and its lid (disc media)
 constexpr float PI = 3.14159265f;
 inline float c01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
@@ -113,6 +115,15 @@ void console_n64(K& k, float lid, float power) {
     k.poly({{-58, -80}, {58, -80}, {68, -10}, {-68, -10}}, rgb(14, 14, 17));
     k.poly({{-78, -4}, {78, -4}, {82, 6}, {-82, 6}}, rgb(60, 62, 68));
     k.line(-58, -80, -68, -10, rgb(70, 72, 80), 1.5f); k.line(58, -80, 68, -10, rgb(70, 72, 80), 1.5f);
+    // distinctive slot: raised bezel frame with corner screws, guide rails, a dark depth gradient and gold edge-connector hints
+    k.rr4(-86, -92, 86, -86, rgb(120, 123, 132), 3, 3, 0, 0);
+    k.line(-86, -92, -96, 4, rgb(120, 123, 132), 3); k.line(86, -92, 96, 4, rgb(120, 123, 132), 3);
+    k.rr(-100, 4, 100, 10, rgb(132, 135, 144), 2);
+    k.circ(-80, -88, 2.6f, rgb(40, 41, 46)); k.circ(80, -88, 2.6f, rgb(40, 41, 46));
+    k.circ(-92, 0, 2.6f, rgb(40, 41, 46)); k.circ(92, 0, 2.6f, rgb(40, 41, 46));
+    k.grad4(-52, -76, 52, -12, rgb(4, 4, 6), rgb(26, 27, 32), 0, 0, 0, 0);
+    for (int i = 0; i < 14; i++) k.rr(-45 + i * 7.f, -14, -42 + i * 7.f, -8, rgb(150, 124, 56), 0);
+    k.line(-34, -78, -38, -14, rgb(90, 92, 102), 1.f); k.line(34, -78, 38, -14, rgb(90, 92, 102), 1.f);
     // buttons
     k.rr(-118, -26, -92, -12, rgb(120, 122, 130), 3);
     k.rr(-116, -24, -94, -18, rgb(150, 152, 160), 2);
@@ -224,9 +235,9 @@ void console_ds(K& k, bool is3, float lid, float power) {
     float rx = w - 26;
     for (auto [dx, dy] : {std::pair<float, float>{0, -12}, {12, 0}, {0, 12}, {-12, 0}}) k.circ(rx + dx, 82 + dy, 6.2f, pad);
     k.led(w - 12, 124, 2.6f, power, rgb(70, 220, 255));
-    // card slot on the lower bottom edge
-    k.rr(30, 138, 92, 146, rgb(10, 10, 12), 2);
-    k.rr(30, 138, 92, 140, rgb(90, 90, 100), 1);
+    // card slot in the top edge of the upper shell (the card sinks into it)
+    k.rr(-34, -153, 34, -145, rgb(10, 10, 12), 2);
+    k.rr(-34, -153, 34, -151, rgb(90, 90, 100), 1);
 }
 
 /* Elliptical top lid shared by the two top-loaders. hinge = y of the back hinge. */
@@ -234,6 +245,7 @@ void top_lid(K& k, float cx, float cy, float rx, float ry, float hinge, float op
     k.ell(cx, cy, rx, ry, well);
     k.ell(cx, cy, rx * 0.9f, ry * 0.88f, shade(well, 0.7f));
     k.ell(cx, cy, rx * 0.2f, ry * 0.2f, hub); k.ell(cx, cy, rx * 0.07f, ry * 0.07f, rgb(20, 20, 24));
+    if (g_inner) g_inner(k.d);
     float o = c01(open); o = o * o * (3 - 2 * o);
     float lcy = lerpf(cy, hinge - ry * 1.15f, o), lry = ry * lerpf(1.f, 1.12f, o);
     k.ell(cx, lcy + 4, rx + 1, lry, IM_COL32(0, 0, 0, 70));
@@ -305,6 +317,7 @@ void console_ps2(K& k, float lid, float power) {
         k.rr(-w - 2, wy - 5, w - 12, wy + 4, rgb(36, 38, 50), 3);
         float cy = (42.f + wy) * 0.5f; k.ell(-7, cy + 2, 48 + 6 * tray, 14 + 14 * tray, rgb(2, 2, 4)); k.ellr(-7, cy + 2, 48 + 6 * tray, 14 + 14 * tray, rgb(70, 76, 100), 1.5f);
     }
+    if (g_inner) g_inner(k.d);
     k.rr(86, 26, 112, 42, rgb(30, 32, 42), 4);   // power
     k.led(99, 34, 3.4f, power, rgb(60, 150, 255));
     for (int i = 0; i < 2; i++) { float x = 98.f + i * 0; (void)x; }
@@ -336,6 +349,57 @@ void console_wiiu(K& k, float lid, float power) {
     k.gloss(-138, 12, 138, 82, 4, 70);
 }
 
+
+void console_nes(K& k, float lid, float power) {
+    (void)lid;
+    k.shadow_ell(0, 92, 138, 12, 120);
+    ImU32 dark = rgb(58, 58, 62);
+    // top face with the front-loader bay
+    k.poly({{-128, -34}, {128, -34}, {142, 12}, {-142, 12}}, rgb(204, 202, 194));
+    k.poly({{-128, -34}, {128, -34}, {132, -26}, {-132, -26}}, rgb(222, 220, 212));
+    k.poly({{-86, -26}, {86, -26}, {94, 8}, {-94, 8}}, dark);
+    k.poly({{-78, -22}, {78, -22}, {86, 4}, {-86, 4}}, rgb(10, 10, 12));
+    for (int i = 0; i < 6; i++) k.line(-100 + i * 6.f, -18, -108 + i * 6.f, 2, IM_COL32(0, 0, 0, 40), 1.5f);
+    for (int i = 0; i < 6; i++) k.line(100 - i * 6.f, -18, 108 - i * 6.f, 2, IM_COL32(0, 0, 0, 40), 1.5f);
+    k.rr(-90, 6, 90, 14, rgb(120, 118, 114), 2);                  // spring-loaded flap lip
+    // front face
+    k.grad4(-142, 12, 142, 84, rgb(196, 194, 186), rgb(150, 148, 142), 0, 0, 8, 8);
+    k.line(-142, 12, 142, 12, rgb(238, 236, 228), 1.5f);
+    k.rr(-142, 34, 142, 62, dark, 0);                              // dark stripe
+    k.rr(-142, 34, 142, 37, rgb(90, 90, 96), 0);
+    k.rr(-120, 44, -74, 54, rgb(30, 30, 34), 3);                   // slot window
+    for (int i = 0; i < 5; i++) k.rr(-66 + i * 9.f, 44, -62 + i * 9.f, 54, rgb(30, 30, 34), 1);
+    k.rr(70, 40, 100, 58, rgb(180, 54, 50), 4); k.rr(106, 40, 126, 58, rgb(150, 150, 150), 4);   // power + reset
+    k.rr(-110, 68, -60, 78, rgb(40, 40, 44), 3); k.rr(60, 68, 110, 78, rgb(40, 40, 44), 3);       // controller ports
+    k.led(-124, 24, 3.2f, power, rgb(255, 70, 50));
+    k.gloss(-142, 12, 142, 84, 4, 26);
+}
+
+void console_snes(K& k, float lid, float power) {
+    (void)lid;
+    k.shadow_ell(0, 90, 150, 12, 120);
+    ImU32 top = rgb(196, 196, 202), dark = rgb(56, 52, 78);
+    // low slab with a raised centre block holding the top slot
+    k.poly({{-146, -22}, {146, -22}, {156, 18}, {-156, 18}}, top);
+    k.poly({{-110, -72}, {110, -72}, {120, -22}, {-120, -22}}, rgb(212, 212, 218));
+    k.poly({{-110, -72}, {110, -72}, {114, -62}, {-114, -62}}, rgb(236, 236, 242));
+    k.poly({{-72, -64}, {72, -64}, {78, -26}, {-78, -26}}, rgb(26, 24, 34));
+    k.poly({{-64, -60}, {64, -60}, {70, -30}, {-70, -30}}, rgb(6, 6, 10));
+    k.rr(-84, -28, 84, -22, rgb(130, 128, 140), 2);               // slot lip
+    k.line(-72, -64, -78, -26, rgb(120, 118, 134), 1.5f); k.line(72, -64, 78, -26, rgb(120, 118, 134), 1.5f);
+    k.rr(-140, -14, -96, -4, rgb(120, 118, 132), 3); k.rr(-132, -12, -116, -6, rgb(60, 56, 92), 2);
+    k.rr(96, -14, 140, -4, rgb(120, 118, 132), 3);
+    // front face
+    k.grad4(-156, 18, 156, 82, rgb(206, 206, 212), rgb(160, 160, 170), 0, 0, 8, 8);
+    k.line(-156, 18, 156, 18, rgb(246, 246, 250), 1.5f);
+    k.rr(-156, 40, 156, 52, dark, 0);                             // indigo band
+    k.circ(-110, 36, 5, rgb(214, 96, 84)); k.circ(-92, 36, 5, rgb(80, 150, 200)); k.circ(-74, 36, 5, rgb(236, 190, 70)); k.circ(-56, 36, 5, rgb(100, 190, 110));
+    k.rr(60, 58, 100, 70, rgb(64, 62, 84), 4); k.rr(108, 58, 140, 70, rgb(64, 62, 84), 4);
+    k.rr(-120, 62, -70, 76, rgb(34, 32, 44), 3); k.rr(-56, 62, -6, 76, rgb(34, 32, 44), 3);
+    k.led(-138, 30, 3.2f, power, rgb(255, 70, 50));
+    k.gloss(-156, 18, 156, 82, 4, 26);
+}
+
 } // namespace
 
 void draw_console(System s, ImDrawList* d, ImVec2 center, float scale, float lid, float power) {
@@ -351,6 +415,8 @@ void draw_console(System s, ImDrawList* d, ImVec2 center, float scale, float lid
     case System::PS1: console_ps1(k, lid, power); break;
     case System::PS2: console_ps2(k, lid, power); break;
     case System::WiiU: console_wiiu(k, lid, power); break;
+    case System::NES: console_nes(k, lid, power); break;
+    case System::SNES: console_snes(k, lid, power); break;
     case System::N64: case System::Unknown: default: console_n64(k, lid, power); break;
     }
 }
@@ -386,6 +452,36 @@ void media_n64(K& k, ImTextureID t, ImVec2 u0, ImVec2 u1) {
     k.rr4(-95, -80, 95, -76, IM_COL32(255, 255, 255, 50), 8, 8, 0, 0);
     k.rr(-10, 46, 10, 52, rgb(30, 30, 34), 2);
     k.line(-95, 48, -95, -70, IM_COL32(255, 255, 255, 40), 1.5f);
+}
+
+
+void media_nes(K& k, ImTextureID t, ImVec2 u0, ImVec2 u1) {
+    ImVec2 pts[] = {{-58, -80}, {58, -80}, {68, -70}, {68, 54}, {60, 64}, {-60, 64}, {-68, 54}, {-68, -70}};
+    poly_shadow(k, {pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[6], pts[7]}, 110);
+    ImVec2 q[8]; for (int i = 0; i < 8; i++) q[i] = k.p(pts[i].x, pts[i].y);
+    k.d->AddConvexPolyFilled(q, 8, rgb(124, 122, 126));
+    k.rr4(-68, -80, 68, -66, rgb(98, 96, 100), 6, 6, 0, 0);
+    for (int i = 0; i < 6; i++) k.line(-56, -76 + i * 2.2f, 56, -76 + i * 2.2f, IM_COL32(0, 0, 0, 50), 1.2f);
+    sticker(k, -52, -56, 52, 12, t, u0, u1, rgb(200, 90, 60));
+    k.rr(-52, 24, 52, 38, rgb(70, 68, 74), 2);
+    k.rr(-40, 28, 40, 34, rgb(90, 88, 94), 1);
+    k.rr4(-48, 54, 48, 70, rgb(48, 48, 54), 0, 0, 3, 3);
+    for (int i = 0; i < 12; i++) k.rr(-44 + i * 7.5f, 58, -40 + i * 7.5f, 68, rgb(206, 170, 80), 0);
+    k.d->AddPolyline(q, 8, IM_COL32(255, 255, 255, 45), ImDrawFlags_Closed, 1.2f);
+}
+
+void media_snes(K& k, ImTextureID t, ImVec2 u0, ImVec2 u1) {
+    ImVec2 pts[] = {{-74, -62}, {74, -62}, {84, -52}, {84, 40}, {72, 54}, {-72, 54}, {-84, 40}, {-84, -52}};
+    poly_shadow(k, {pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[6], pts[7]}, 110);
+    ImVec2 q[8]; for (int i = 0; i < 8; i++) q[i] = k.p(pts[i].x, pts[i].y);
+    k.d->AddConvexPolyFilled(q, 8, rgb(170, 170, 178));
+    k.rr4(-84, -62, 84, -46, rgb(144, 144, 154), 8, 8, 0, 0);
+    for (int i = 0; i < 4; i++) k.line(-70, -58 + i * 3.4f, 70, -58 + i * 3.4f, IM_COL32(0, 0, 0, 45), 1.4f);
+    sticker(k, -62, -38, 62, 14, t, u0, u1, rgb(120, 90, 180));
+    k.rr4(-60, 28, 60, 44, rgb(138, 138, 148), 2, 2, 2, 2);
+    k.rr4(-56, 48, 56, 66, rgb(50, 50, 58), 0, 0, 3, 3);
+    for (int i = 0; i < 14; i++) k.rr(-52 + i * 7.5f, 52, -48 + i * 7.5f, 64, rgb(206, 170, 80), 0);
+    k.d->AddPolyline(q, 8, IM_COL32(255, 255, 255, 55), ImDrawFlags_Closed, 1.2f);
 }
 
 enum class Cut { None, TopRight, TopLeft };
@@ -486,6 +582,8 @@ void draw_media(System s, ImDrawList* d, ImVec2 center, float scale, float rot, 
     case System::N3DS: media_card(k, true, label, u0, u1); break;
     case System::GC: media_disc(k, s, 80.f, rot, label, u0, u1); break;
     case System::PS1: case System::PS2: case System::WiiU: media_disc(k, s, 100.f, rot, label, u0, u1); break;
+    case System::NES: media_nes(k, label, u0, u1); break;
+    case System::SNES: media_snes(k, label, u0, u1); break;
     case System::N64: case System::Unknown: default: media_n64(k, label, u0, u1); break;
     }
 }
@@ -494,6 +592,7 @@ void draw_media(System s, ImDrawList* d, ImVec2 center, float scale, float rot, 
 namespace {
 std::vector<ImTextureID> g_covers;
 }
+void set_console_inner(std::function<void(ImDrawList*)> fn) { g_inner = std::move(fn); }
 void set_shelf_covers(const ImTextureID* tex, int n) { g_covers.assign(tex, tex + (tex ? std::max(n, 0) : 0)); }
 
 namespace {
@@ -576,14 +675,14 @@ const char* art_name(System s) {
     switch (s) {
     case System::N64: return "n64"; case System::GB: return "gb"; case System::GBC: return "gbc"; case System::GBA: return "gba";
     case System::NDS: return "ds"; case System::N3DS: return "3ds"; case System::GC: return "gc"; case System::PS1: return "ps1";
-    case System::PS2: return "ps2"; case System::WiiU: return "wiiu"; default: return "n64";
+    case System::PS2: return "ps2"; case System::WiiU: return "wiiu"; case System::NES: return "nes"; case System::SNES: return "snes"; default: return "n64";
     }
 }
 bool art_dedicated(System s) { return s != System::Unknown; }
 System art_system_from_name(const char* n) {
     if (!n) return System::Unknown;
     std::string l; for (const char* p = n; *p; p++) l += (char)std::tolower((unsigned char)*p);
-    for (System s : {System::N64, System::GB, System::GBC, System::GBA, System::NDS, System::N3DS, System::GC, System::PS1, System::PS2, System::WiiU})
+    for (System s : {System::N64, System::GB, System::GBC, System::GBA, System::NDS, System::N3DS, System::GC, System::PS1, System::PS2, System::WiiU, System::NES, System::SNES})
         if (l == art_name(s)) return s;
     return System::Unknown;
 }
@@ -594,12 +693,12 @@ void draw_gallery(ImDrawList* d, ImVec2 mn, ImVec2 mx, const char* which, ImText
     std::string w = which ? which : "all";
     for (auto& c : w) c = (char)std::tolower((unsigned char)c);
     if (w == "shelf") { draw_shelf(d, mn, mx, 1.f); return; }
-    const System all[] = {System::N64, System::GB, System::GBC, System::GBA, System::NDS, System::N3DS, System::GC, System::PS1, System::PS2, System::WiiU};
+    const System all[] = {System::N64, System::GB, System::GBC, System::GBA, System::NDS, System::N3DS, System::GC, System::PS1, System::PS2, System::WiiU, System::NES, System::SNES};
     System one = art_system_from_name(w.c_str());
     ImVec2 uv0(0, 0), uv1(1, 1);
     if (one == System::Unknown) {   // grid of everything
-        int cols = 5, rows = 2; float cw = W / cols, ch = H / rows;
-        for (int i = 0; i < 10; i++) {
+        int cols = 6, rows = 2; float cw = W / cols, ch = H / rows;
+        for (int i = 0; i < 12; i++) {
             System s = all[i]; ImVec2 c0(mn.x + (i % cols) * cw, mn.y + (i / cols) * ch);
             float sc = std::min(cw / 330.f, ch / 480.f);
             d->AddRect(ImVec2(c0.x + 4, c0.y + 4), ImVec2(c0.x + cw - 4, c0.y + ch - 4), IM_COL32(255, 255, 255, 18), 8);

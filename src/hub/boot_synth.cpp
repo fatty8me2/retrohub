@@ -271,6 +271,36 @@ std::vector<float> wiiu() {         // light bell motif: four rising notes, last
     return finish(S);
 }
 
+std::vector<float> nes() {          // spring-loaded two-step clack (in, then down), a quick 8-bit square arpeggio that lands on a held chord
+    Song S(1.5f); Rng r;
+    thunk(S, r, 0.00f, 0.55f, 120);
+    click(S, r, 0.14f, 0.35f);
+    thunk(S, r, 0.22f, 0.8f, 75);
+    const float m[6] = {60, 64, 67, 72, 76, 79};
+    for (int i = 0; i < 6; i++)
+        note(S, {0.42f + i * 0.07f, 0.05f, midi(m[i]), 0, Square, 0.18f, (i % 2 ? 0.25f : -0.25f), 0.002f, 0.03f, 0.6f, 0.06f});
+    note(S, {0.88f, 0.28f, midi(72), 0, Square, 0.13f, -0.2f, 0.003f, 0.05f, 0.6f, 0.35f});
+    note(S, {0.88f, 0.28f, midi(76), 0, Square, 0.11f, 0.2f, 0.003f, 0.05f, 0.6f, 0.35f});
+    note(S, {0.88f, 0.28f, midi(55), 0, Tri, 0.2f, 0, 0.003f, 0.05f, 0.7f, 0.35f});
+    echo(S, 0.12f, 0.35f, 0.4f);
+    return finish(S);
+}
+std::vector<float> snes() {         // soft cartridge thunk, a warm rising glide, then a shimmering chime chord with a long bright tail
+    Song S(2.4f); Rng r;
+    thunk(S, r, 0.00f, 0.7f, 95);
+    click(S, r, 0.06f, 0.2f);
+    note(S, {0.16f, 0.7f, midi(48), midi(60), Sine, 0.16f, 0, 0.2f, 0.2f, 0.7f, 0.5f});
+    const float m[4] = {72, 79, 84, 91};
+    for (int i = 0; i < 4; i++) {
+        note(S, {0.55f + i * 0.13f, 0.06f, midi(m[i]), 0, Sine, 0.2f, (i - 1.5f) * 0.4f, 0.004f, 0.25f, 0.25f, 1.1f, 0, 0, 0, 6, 0.4f});
+        note(S, {0.55f + i * 0.13f, 0.06f, midi(m[i] - 12), 0, Tri, 0.08f, 0, 0.004f, 0.25f, 0.25f, 0.9f, 0, 0, 1800});
+    }
+    note(S, {1.1f, 0.6f, midi(60), 0, Tri, 0.12f, -0.2f, 0.1f, 0.3f, 0.6f, 0.9f, 0.004f, 0, 1400});
+    note(S, {1.1f, 0.6f, midi(67), 0, Tri, 0.1f, 0.2f, 0.1f, 0.3f, 0.6f, 0.9f, 0.004f, 0, 1400});
+    reverb(S, 0.4f, 0.82f, 0.3f);
+    return finish(S);
+}
+
 } // namespace
 
 std::vector<float> render(hub::System s) {
@@ -285,6 +315,8 @@ std::vector<float> render(hub::System s) {
     case hub::System::PS1:  return ps1();
     case hub::System::PS2:  return ps2();
     case hub::System::WiiU: return wiiu();
+    case hub::System::NES:  return nes();
+    case hub::System::SNES: return snes();
     default: return {};
     }
 }

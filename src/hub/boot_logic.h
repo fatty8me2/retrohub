@@ -12,12 +12,48 @@ enum class Media { Cartridge, SmallCart /*GB/GBC/GBA*/, Card /*DS/3DS*/, MiniDis
 
 inline Media media_for(hub::System s) {
     switch (s) {
-        case hub::System::N64: return Media::Cartridge;
+        case hub::System::N64: case hub::System::NES: case hub::System::SNES: return Media::Cartridge;
         case hub::System::GB: case hub::System::GBC: case hub::System::GBA: return Media::SmallCart;
         case hub::System::NDS: case hub::System::N3DS: return Media::Card;
         case hub::System::GC: return Media::MiniDisc;
         case hub::System::PS1: case hub::System::PS2: case hub::System::WiiU: return Media::Disc;
         default: return Media::None;
+    }
+}
+
+
+/* How the media goes into the console, and where. All positions are in CONSOLE-LOCAL art units (the units of boot_art.cpp's console
+ * drawings; screen px = units * console scale). Retune here when the art changes (the HUB_SHOT_BOOTANIM frames show the result).
+ *   Behind: the media sinks behind the console's top edge (rear slot: GB/GBC/GBA/DS/3DS); console is drawn over it.
+ *   Slot:   the media is drawn over the console and clipped at the slot lip `clip` (N64/SNES top slot, NES front loader).
+ *   Lid:    the lid opens, the disc is squashed into the well (drawn between well and lid) and the lid closes (GC, PS1).
+ *   Tray:   the tray slides out, the disc lands on it and rides it back in (PS2).
+ *   Front:  the disc slides edge-on into a front slot, clipped at `clip` (Wii U). */
+enum class Insert { Behind, Slot, Lid, Tray, Front };
+struct Geo {
+    Insert kind;
+    float ms;        // media scale relative to the console scale
+    float ex, ey;    // media centre when inserted
+    float hover;     // how far above (ex, ey) the media hovers before it goes in
+    float clip;      // console-local y of the slot lip (Slot, Front)
+    float ys_end;    // disc squash (vertical scale) when it sits in the well / on the tray / at the slot
+    float push;      // Slot: extra final push down after the first insertion step (NES front loader)
+    float cs;        // console scale multiplier (tall handhelds are drawn smaller)
+    float cy;        // console centre as a fraction of the screen height
+};
+inline Geo geo_for(hub::System s) {
+    using S = hub::System;
+    switch (s) {
+        case S::NES:   return {Insert::Slot, 0.85f, 0, -18, 120, 6, 1.f, 24, 1.0f, 0.66f};
+        case S::SNES:  return {Insert::Slot, 0.70f, 0, -48, 110, -30, 1.f, 0, 1.0f, 0.66f};
+        case S::GB: case S::GBC: return {Insert::Behind, 0.85f, 0, -149, 100, 0, 1.f, 0, 0.76f, 0.62f};
+        case S::GBA:   return {Insert::Behind, 0.60f, 0, -86, 110, 0, 1.f, 0, 1.0f, 0.66f};
+        case S::NDS: case S::N3DS: return {Insert::Behind, 0.70f, 0, -148, 100, 0, 1.f, 0, 0.76f, 0.62f};
+        case S::GC:    return {Insert::Lid, 0.85f, 0, -28, 150, 0, 0.46f, 0, 1.0f, 0.66f};
+        case S::PS1:   return {Insert::Lid, 0.62f, 0, -34, 150, 0, 0.47f, 0, 1.0f, 0.66f};
+        case S::PS2:   return {Insert::Tray, 0.50f, -7, 93, 150, 0, 0.52f, 0, 1.0f, 0.66f};
+        case S::WiiU:  return {Insert::Front, 0.55f, 54, 46, 120, 37, 0.14f, 0, 1.0f, 0.66f};
+        case S::N64: default: return {Insert::Slot, 0.78f, 0, -38, 120, -2, 1.f, 0, 1.0f, 0.68f};
     }
 }
 
@@ -37,7 +73,7 @@ struct Timeline {
 };
 inline Timeline timeline_for(bool short_version) {
     return short_version ? Timeline{0.15f, 0.25f, 0.25f, 0.20f, 0.15f}    // 1.0 s
-                         : Timeline{0.60f, 0.70f, 0.75f, 0.65f, 0.40f};   // 3.1 s
+                         : Timeline{0.50f, 0.70f, 0.90f, 0.65f, 0.35f};   // 3.1 s
 }
 inline Phase phase_at(const Timeline& tl, float t) {
     if (t < 0.f) return Phase::Idle;

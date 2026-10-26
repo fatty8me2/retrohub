@@ -11,7 +11,7 @@ static int fails = 0;
 int main() {
     using hub::System;
     const System all[] = {System::N64, System::GB, System::GBC, System::GBA, System::NDS, System::N3DS,
-                          System::GC, System::PS1, System::PS2, System::WiiU};
+                          System::GC, System::PS1, System::PS2, System::WiiU, System::NES, System::SNES};
     std::filesystem::path dir = std::filesystem::path(BOOT_SOUND_OUT_DIR);
     std::filesystem::create_directories(dir);
     for (System s : all) {
