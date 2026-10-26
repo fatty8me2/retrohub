@@ -29,6 +29,13 @@ target_link_libraries(hubgamesettings_test PRIVATE hubcommon)
 add_executable(hublibrary_test test_library.cpp)
 target_link_libraries(hublibrary_test PRIVATE hubcommon hubminiz)
 
+# Archives (.zip/.7z) of every system: same key as the plain file, no re-identification on rescan, re-unpack on change, rom-cache API.
+add_executable(archives_all_test test_archives_all.cpp)
+target_link_libraries(archives_all_test PRIVATE hubcommon hubminiz)
+
+add_executable(scan_bench scan_bench.cpp)   # QA: times scan_library cold/warm on real folders (scratch data dir)
+target_link_libraries(scan_bench PRIVATE hubcommon)
+
 # SDL half of the controller profiles (pad list, capture, gamecontrollerdb); the runners and the Controllers page link this.
 add_library(hubcontrols_sdl STATIC controls_sdl.cpp)
 target_include_directories(hubcontrols_sdl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

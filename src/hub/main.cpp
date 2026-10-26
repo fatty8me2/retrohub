@@ -119,6 +119,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hubart::init(ren, hub::data_dir() + "art\\");
     qm_init(ren);
     hubart::set_enabled(A.st.download_art);
+    hub::rom_cache_set_limit((uint64_t)A.st.rom_cache_limit_gb << 30);
 
     if (shot_path) shot_init_ui();
     fr_start();

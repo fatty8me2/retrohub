@@ -71,6 +71,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"changelog_seen\": \"" << json::escape(s.changelog_seen) << "\",\n"
       << "  \"kt_intro_seen\": " << (s.kt_intro_seen ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json::escape(s.vault_dir) << "\",\n"
+      << "  \"rom_cache_limit_gb\": " << s.rom_cache_limit_gb << ",\n"
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
@@ -142,6 +143,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->smash_save_notice_shown = json_bool(j, "smash_save_notice_shown", out->smash_save_notice_shown);
     out->kt_intro_seen = json_bool(j, "kt_intro_seen", out->kt_intro_seen);
     out->vault_dir = j.str("vault_dir", out->vault_dir);
+    out->rom_cache_limit_gb = std::max(0, std::min(100000, (int)j.num("rom_cache_limit_gb", out->rom_cache_limit_gb)));
     out->download_art = json_bool(j, "download_art", out->download_art);
     out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));
     out->show_friends = json_bool(j, "show_friends", out->show_friends);
