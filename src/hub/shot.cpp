@@ -86,6 +86,7 @@ void shot_init_ui() {
         A.code = "K7M2QX";
         A.page = Page::Online;
         if (std::getenv("HUB_SHOT_PICKER")) FR.open_picker = true;
+        if (const char* pq = std::getenv("HUB_SHOT_PICKER_Q")) room_picker_set_query(pq);   // game picker search text
         if (const char* rg = std::getenv("HUB_SHOT_ROOM_GAME")) A.selected_game = rg;   // e.g. smash64, remix
         if (A.selected_game == "remix" && std::getenv("HUB_SHOT_PICKS")) {   // fake picks for the match picker
             A.my_pick.p[0] = {0x1D, 2};

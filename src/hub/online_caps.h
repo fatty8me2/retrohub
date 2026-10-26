@@ -16,17 +16,38 @@ inline bool system_has_online_launch(hub::System s) {
     }
 }
 
-/* Systems whose online play is opt-in per catalog game (the catalog `online` flag). Other netplay systems accept any library game.
- * GC/NDS/PS1 are catalog-gated because only vetted games have a working multi-player mode over the link (PS1: only titles with
- * 2+ DualShock players; unknown discs may be single-player or need Buzz/light-gun peripherals that rollback cannot carry). */
+/* Systems where only catalog-vetted games are KNOWN to work online. Every game of these systems is still offered in rooms (GC: any disc via
+ * Dolphin NetPlay; DS: any game via ds-link; PS1: any game via rollback), but a game outside the catalog (or not flagged online) is tagged
+ * "Untested online" because it may be single-player or need peripherals the link cannot carry. */
 inline bool online_needs_catalog_flag(hub::System s) {
     return s == hub::System::GC || s == hub::System::NDS || s == hub::System::PS1;
 }
 
-inline bool online_capable(hub::System s, const hub::GameInfo* cat) {
-    if (!system_has_online_launch(s)) return false;
-    if (online_needs_catalog_flag(s)) return cat && cat->online;
-    return true;
+/* Everything that can technically work online is capable; the catalog only changes the "untested" tag. */
+inline bool online_capable(hub::System s, const hub::GameInfo* /*cat*/) { return system_has_online_launch(s); }
+
+/* Capable, but not vetted: shown with an "Untested online" tag. */
+inline bool online_untested(hub::System s, const hub::GameInfo* cat) {
+    return online_capable(s, cat) && online_needs_catalog_flag(s) && !(cat && cat->online);
+}
+
+/* Short reason a system cannot play online at all ("" = it can). The picker still lists such games, greyed. */
+inline const char* online_unsupported_reason(hub::System s) {
+    if (system_has_online_launch(s)) return "";
+    switch (s) {
+        case hub::System::PS2: return "PS2 online isn't supported yet";
+        case hub::System::WiiU: return "Wii U online isn't supported yet";
+        default: return "Online play isn't available for this game";
+    }
+}
+
+/* Room player cap for a game that has no catalog entry. GB/GBC link cable, DS wireless and PS1 two-pad games default to 2;
+ * the rest to 4 (GameCube has four ports, N64/GBA/3DS rooms are up to four). The catalog's online_max wins when present. */
+inline int default_online_max(hub::System s) {
+    switch (s) {
+        case hub::System::GB: case hub::System::GBC: case hub::System::NDS: case hub::System::PS1: return 2;
+        default: return 4;
+    }
 }
 
 }  // namespace hubcaps

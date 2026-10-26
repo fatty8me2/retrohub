@@ -75,9 +75,8 @@ $games = @(
 )
 $games[0].key = 'native:smash64'   # kNativeKey; verified below against the trace
 
-function Online-Expected($g) {   # supports_online() as designed: catalog-gated for GC / DS / PS1 / Kanto, open for N64 GB GBC GBA 3DS
-    if ($g.sys -in 'native', 'n64', 'gb', 'gbc', 'gba', '3ds') { return 'enabled' }
-    if ($g.sys -in 'gc', 'nds', 'ps1') { if ($g.key -like '*online*') { return 'enabled' } else { return 'explained' } }
+function Online-Expected($g) {   # supports_online() as designed: every library game of N64 GB GBC GBA 3DS GC DS PS1 (non-catalog GC/DS/PS1 are tagged "Untested online"); only wiiu / ps2 are explained
+    if ($g.sys -in 'native', 'n64', 'gb', 'gbc', 'gba', '3ds', 'gc', 'nds', 'ps1') { return 'enabled' }
     return 'explained'   # wiiu, ps2: an "Offline only" button with a tooltip, never silence
 }
 function Cheats-Expected($g) {   # n64 gb gbc gba nds ps1 gc: the Cheats button; 3ds wiiu ps2: a disabled button with a tooltip; native / Kanto: hidden
@@ -175,7 +174,7 @@ for ($i = 0; $i -lt $meta.Count; $i++) {
 }
 
 # ---- pass 3: rooms. Host picks the game and presses Launch; a guest then receives the host's own launch message ----
-$roomGames = $games | Where-Object { (Online-Expected $_) -eq 'enabled' -and -not ($_.key -like '*plain*' -and $_.sys -in 'nds', 'gc', 'ps1') }
+$roomGames = $games | Where-Object { (Online-Expected $_) -eq 'enabled' }   # uncatalogued GC / DS / PS1 games are hostable too (Untested online)
 function Room-Id($g) {   # room id = catalog id when known, else the library key (room_id())
     switch ($g.key) {
         'native:smash64' { return 'smash64' } 'fake:remix' { return 'remix' } 'gba:kanto-together' { return 'kanto' }
