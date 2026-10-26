@@ -52,6 +52,7 @@ struct Settings {
     bool ps1_openbios = false;         // play PlayStation games with the bundled OpenBIOS when no real BIOS is found
     std::string cemu_exe;              // user-chosen Cemu.exe ("" = find an existing install, else download one)
     bool cemu_manage_controls = true;  // "Let RetroHub manage Wii U controls" for the user's own Cemu (backup made first)
+    int settings_tab = 0;             // last Settings tab (0 General .. 5 Account), remembered
     std::string ps2_bios_dir;         // user-chosen folder with the PS2 BIOS ("" = look next to the games / Desktop\Everything\BIOS)
 };
 std::string settings_to_json(const Settings& s);
