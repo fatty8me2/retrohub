@@ -65,7 +65,6 @@ time and RTT instead (not yet implemented: the protocol carries the capture time
 - `--selftest-wgc` proves Windows.Graphics.Capture on a real window (57 fps) and WASAPI process-loopback activation.
 - WGC and DXGI duplication do NOT work on a hidden (CreateDesktop) desktop, so the Cemu 3D World test on the hidden desktop falls back to PrintWindow,
   which returns Cemu's blank canvas (Vulkan surface is not readable that way). The pipeline, window discovery and process audio path ran, but the video
-  contents were a flat grey frame; a real Cemu capture has to be done on the interactive desktop (qa/stream_cemu.ps1 is ready for that with `-Desktop`
-  pointed at the default desktop, but it was not run because it would put a window on the user's screen).
+  contents were a flat grey frame; a real Cemu capture has to be done on the interactive desktop (qa/stream_cemu.ps1 does the hidden-desktop variant; the interactive-desktop run was not done because it would put a Cemu window on the user's screen).
 - Cemu must not be minimized (WGC delivers no frames) and the stream is of the whole window, so launch Cemu with `-f` (fullscreen) for a clean picture.
 - Intra-refresh is not exposed by the Media Foundation H.264 MFTs; recovery uses a 2 s GOP plus keyframe-on-request.
