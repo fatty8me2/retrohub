@@ -27,8 +27,8 @@ inline int guest_count(int members) { return members <= 1 ? 0 : (members - 1 > 3
 /* streamrun --host ... ; `capture_pid` is Cemu's PID (streamrun picks its biggest window and captures its audio). Guests' pads reach
  * Cemu through the DSU server embedded in streamrun (127.0.0.1:dsu_port, players 2-4); status_file feeds the room's "streaming to" line. */
 inline std::string host_args(unsigned long capture_pid, const std::string& net, const std::string& room, int members, bool upnp,
-                             const std::string& status_file = "", int dsu_port = 0) {
-    return "--host --capture-hwnd " + std::to_string(capture_pid) + " --net " + quote(net) + " --room " + room +
+                             const std::string& status_file = "", int dsu_port = 0, const std::string& await_file = "") {
+    return "--host " + (await_file.empty() ? "--capture-hwnd " + std::to_string(capture_pid) : "--await-pid-file " + quote(await_file)) + " --net " + quote(net) + " --room " + room +
            " --slot 0 --guests " + std::to_string(guest_count(members)) + (upnp ? " --upnp" : "") +
            (status_file.empty() ? "" : " --status-file " + quote(status_file)) + (dsu_port > 0 ? " --dsu-port " + std::to_string(dsu_port) : "");
 }

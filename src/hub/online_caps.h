@@ -41,9 +41,7 @@ inline bool online_untested(hub::System s, const hub::GameInfo* cat) {
 /* Short reason a system cannot play online at all ("" = it can). The picker still lists such games, greyed. */
 inline const char* online_unsupported_reason(hub::System s) {
     if (system_has_online_launch(s)) return "";
-    switch (s) {
-        default: return "Online play isn't available for this game";
-    }
+    return "Online play isn't available for this game";
 }
 
 /* Room player cap for a game that has no catalog entry. GB/GBC link cable, DS wireless and PS1 two-pad games default to 2;
