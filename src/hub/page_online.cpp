@@ -339,7 +339,6 @@ void page_online_room() {
     bool host = is_host();
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
     room_banner(host, rg, peers);
-    cheats_room_strip(rg, host);
     float total_w = ImGui::GetContentRegionAvail().x;
     float chat_w = std::max(280 * S, total_w * 0.34f);
     float left_w = total_w - chat_w - 20 * S;
@@ -349,6 +348,7 @@ void page_online_room() {
     ImGui::BeginChild("roomleft", ImVec2(left_w, h), ImGuiChildFlags_NavFlattened);
 
     room_game_hero(rg, host);   // the selected game, big, with its cover (guests: the host's pick)
+    cheats_room_strip(rg, host);   // under the game it applies to (the column beside the chat), so the game card stays high on the page
     kt_room_panel(left_w - ImGui::GetStyle().ScrollbarSize, true);   // Kanto Together: live status + trade panel first
     // member cards (4 slots)
     float gap = 14 * S;

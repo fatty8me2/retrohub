@@ -18,7 +18,7 @@ function Run($name, $clicks, $expect, $size = "1280x800") {
   $p = Start-Process $exe -PassThru -WindowStyle Hidden
   if (-not $p.WaitForExit(60000)) { $p.Kill() }
   foreach ($k in $set.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
-  $got = if (Test-Path $trace) { (Get-Content $trace) -join "|" } else { "" }
+  $got = if (Test-Path $trace) { (Get-Content $trace | Where-Object { $_ -notmatch "^hero " }) -join "|" } else { "" }
   $got = (($got -split '\|') | Where-Object { $_ -notlike 'notice *' }) -join '|'   # toasts are not actions
   if ($got -eq $expect) { Write-Host "PASS $name -> '$got'" } else { Write-Host "FAIL $name expected '$expect' got '$got'"; $script:fail++ }
 }

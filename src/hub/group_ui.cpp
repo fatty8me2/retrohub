@@ -9,7 +9,6 @@ GroupUi GRP;
 static std::string dir_a() { return hub::data_dir(); }
 static std::string dir_b() { return hub::saves::vault_dir(); }
 
-static std::string lower(std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; }
 
 static World world_now() {
     World w;
@@ -79,11 +78,11 @@ void group_session_ended(unsigned long long secs) {
     if (secs < 20) return;   // not a real session
     RecentGroup g;
     int me = room_my_slot();
-    for (auto& m : room_members()) {
-        if (m.slot == me) continue;
-        for (auto& f : fr_friends())
-            if (lower(f.name) == lower(m.name)) { g.members.push_back({f.uid, f.name}); break; }
-    }
+    std::vector<std::string> names;
+    for (auto& m : room_members()) if (m.slot != me) names.push_back(m.name);
+    std::vector<FriendRef> frs;
+    for (auto& f : fr_friends()) frs.push_back({f.uid, f.name, f.status.lobby_code});
+    g.members = match_friends(names, frs, A.code);
     g.game_id = A.selected_game;
     if (const hub::GameEntry* e = find_room_entry(A.selected_game)) g.game_title = e->title;
     else g.game_title = A.proc_title;

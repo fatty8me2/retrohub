@@ -98,6 +98,29 @@ struct RecentGroups {
     }
 };
 
+/* Who in the room is one of our friends, by ACCOUNT uid (names are only display text).
+ * A friend whose presence says they are in this room (`lobby_code` == `room_code`) is a member. Presence can lag at the
+ * end of a session, so a room member that no friend's presence explains is matched by name, but only when exactly one
+ * friend has that name (usernames are unique per account, old display names may not be) and that friend is not
+ * already matched. */
+struct FriendRef { std::string uid, name, lobby_code; };
+inline std::vector<Member> match_friends(const std::vector<std::string>& other_member_names, const std::vector<FriendRef>& friends, const std::string& room_code) {
+    auto low = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+    std::vector<Member> out;
+    auto have = [&](const std::string& uid) { for (auto& m : out) if (m.uid == uid) return true; return false; };
+    if (!room_code.empty())
+        for (auto& f : friends) if (!f.uid.empty() && f.lobby_code == room_code && !have(f.uid)) out.push_back({f.uid, f.name});
+    for (auto& n : other_member_names) {
+        bool explained = false;
+        for (auto& m : out) if (low(m.name) == low(n)) { explained = true; break; }
+        if (explained) continue;
+        const FriendRef* hit = nullptr; int cnt = 0;
+        for (auto& f : friends) if (!f.uid.empty() && low(f.name) == low(n)) { hit = &f; ++cnt; }
+        if (cnt == 1 && !have(hit->uid)) out.push_back({hit->uid, hit->name});
+    }
+    return out;
+}
+
 /* "Last played together: Mario Kart 64, 2 days ago" ("" when the friend never shared a session with us). */
 inline std::string together_text(const RecentGroup* g, int64_t now) {
     if (!g) return "";
