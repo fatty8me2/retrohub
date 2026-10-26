@@ -163,5 +163,13 @@ $b = $r.rows | Where-Object { $_.tok -eq "b" }
 Check "picker: B closes details, picker stays" ($b.win -like "*pkpick*" -and $b.popup -eq 1) "win=$($b.win) popup=$($b.popup)"
 $a = $r.rows | Where-Object { $_.tok -eq "a" }
 Check "picker: A chooses a game and closes the picker" ($a.popup -eq 0) "popup=$($a.popup)"
+# 11. friends' games (greyed out): the pad reaches a ghost tile, A opens the friend-game view (not Play), B closes it and keeps a focus
+$r = Run "ghost" "down,right,right,a,shot:ghost_open,b" @{ HUB_SHOT_FAKE_FRIENDS = "1"; HUB_SHOT_FAKE_LIB = "all"; HUB_SHOT_FAKE_FRIEND_LIBS = "30"; HUB_START_VIEW = "all"; HUB_START_SYS = "gc"; HUB_SHOT_SECS = "6" }
+$rows = @($r.rows)
+$ga = @($rows | Where-Object { $_.tok -eq "a" })[0]
+Check "A on a friend's game opens its view" ($ga.popup -eq 1 -and $ga.win -like "*ghost*") "popup=$($ga.popup) win=$($ga.win)"
+$gb = @($rows | Where-Object { $_.tok -eq "b" })[0]
+Check "B closes it and refocuses" ($gb.popup -eq 0 -and $gb.nav -ne "00000000") "popup=$($gb.popup) nav=$($gb.nav)"
+
 Write-Host "screenshots/traces in $Out; failures: $($script:fail)"
 exit $(if ($script:fail) { 1 } else { 0 })

@@ -166,6 +166,9 @@ void page_settings() {
     if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
     if (ImGui::Checkbox("Automatically add people I play with as friends", &A.st.auto_friend)) { mark_dirty(); fr_set_auto_friend(A.st.auto_friend); }
     text_wrapped_disabled("Joining a room, or playing a game together, makes you friends. Both people need this on.");
+    if (ImGui::Checkbox("Show my games to friends", &A.st.share_games)) mark_dirty();
+    text_wrapped_disabled("Friends see the names of your games greyed out in their library, so they can ask you to host. Only titles are shared, never game files. Turn off to hide your list.");
+    if (ImGui::Checkbox("Show friends' games in my library", &A.st.show_friend_games)) { mark_dirty(); A.vis_dirty = true; }
     std::string mycode = fr_my_code();
     if (!mycode.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));

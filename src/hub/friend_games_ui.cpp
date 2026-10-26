@@ -1,0 +1,311 @@
+#include "app.h"
+
+/* Friends' games shown greyed out in the library (metadata only: titles and ids, never files).
+ *   - ghost_tick():   publishes THIS PC's game list to the friends server (debounced, only when it changed, only when
+ *                     "Show my games to friends" is on) and re-composes the library when a friend's list changed.
+ *   - rebuild_ghosts(): friends' games you do not own, de-duplicated by game identity (friend_games.h).
+ *   - tiles / bar / details: greyed cover, friend avatars, "Ask <friend> to host", "Add your own copy".
+ * No polling loops: lists are fetched by FriendsClient only when a friend's version number changed. */
+
+/* ---------- state ---------- */
+
+static std::vector<hubui::fg::Owned> owned_snapshot() {
+    std::vector<hubui::fg::Owned> v;
+    v.reserve(A.lib.size());
+    for (const hub::GameEntry& e : A.lib) v.push_back({sys_short(e), e.key, e.catalog_id, e.title});
+    return v;
+}
+
+const hubui::fg::Ghost* find_ghost(const std::string& id) {
+    if (id.empty()) return nullptr;
+    for (const auto& g : A.ghosts) if (g.id == id) return &g;
+    return nullptr;
+}
+
+void rebuild_ghosts() {
+    A.ghosts.clear();
+    if (!A.st.show_friend_games || A.lib.empty()) return;   // nothing owned yet: the first-run "find your games" screen stays clean
+    std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>> libs;
+    fr_library_collect(&libs);
+    if (libs.empty()) return;
+    A.ghosts = hubui::fg::build_ghosts(owned_snapshot(), libs);
+}
+
+/* Screenshots (HUB_SHOT_FAKE_FRIENDS + HUB_SHOT_FAKE_FRIEND_LIBS=<n extra made-up games for one friend>): fake friends' libraries. */
+void fg_fake_libs() {
+    const char* env = std::getenv("HUB_SHOT_FAKE_FRIEND_LIBS");
+    if (!env) return;
+    int extra = std::max(0, std::atoi(env));
+    const std::vector<GameInfo>& cat = hub::catalog();
+    auto add = [&](const char* uid, size_t step, size_t off) {
+        std::vector<hubnet::LibGame>& v = FR.f_libs[uid];
+        for (size_t i = off; i < cat.size(); i += step) {
+            const GameInfo& g = cat[i];
+            if (g.engine == hub::Engine::Native || g.id == "remix") continue;
+            v.push_back({g.system, g.system + ":fake-" + g.id, g.id, g.title});
+        }
+    };
+    add("miauid", 2, 0);
+    add("jakuid", 3, 1);
+    add("lunuid", 5, 2);
+    add("devuid", 4, 3);
+    static const char* sys[] = {"n64", "gc", "gba", "gb", "gbc", "nds", "3ds", "ps1"};
+    std::vector<hubnet::LibGame>& big = FR.f_libs["kaiuid"];
+    for (int i = 0; i < extra; ++i) {
+        std::string t = "Friend Game " + std::to_string(1000 + i);
+        big.push_back({sys[i % 8], std::string(sys[i % 8]) + ":kai-" + std::to_string(i), "", t});
+    }
+}
+
+/* ---------- publish + refresh ---------- */
+
+void ghost_tick() {
+    static double next = 0;
+    static hubui::fg::PublishGate gate;
+    static uint32_t seen_epoch = 0xffffffffu;
+    static size_t seen_friends = (size_t)-1;
+    static bool seen_chip = true;
+    double now = ImGui::GetTime();
+    if (now < next) return;
+    next = now + 1.0;
+
+    /* a friend's list changed (or the friends list / chip did): recompose the library */
+    uint32_t ep = fr_library_epoch();
+    size_t nf = fr_friends().size();
+    if (ep != seen_epoch || nf != seen_friends || seen_chip != A.st.show_friend_games) {
+        seen_epoch = ep; seen_friends = nf; seen_chip = A.st.show_friend_games;
+        A.vis_dirty = true;
+    }
+
+    if (g_headless && !A.ghosts.empty() && std::getenv("HUB_SHOT_GHOST_OPEN")) {   // screenshots: open the first friend game's details (HUB_SHOT_GHOST_OPEN=<index>)
+        static bool done = false;
+        if (!done) {
+            done = true;
+            size_t ix = std::min<size_t>((size_t)std::max(0, std::atoi(std::getenv("HUB_SHOT_GHOST_OPEN"))), A.ghosts.size() - 1);
+            A.sel_ghost = A.ghosts[ix].id; A.sel_game.clear(); A.show_ghost = true;
+        }
+    }
+
+    /* my list -> the server. Signature = share flag + every game key; unchanged = nothing is ever sent. */
+    if (!A.scanned_once || A.scanning) return;
+    uint64_t h = 1469598103934665603ull;
+    for (const hub::GameEntry& e : A.lib) {
+        for (unsigned char c : e.key) { h ^= c; h *= 1099511628211ull; }
+        for (unsigned char c : e.title) { h ^= c; h *= 1099511628211ull; }
+        h ^= 0x1f; h *= 1099511628211ull;
+    }
+    std::string sig = std::string(A.st.share_games ? "1:" : "0:") + std::to_string(A.lib.size()) + ":" + std::to_string(h);
+    const bool withdraw = !A.st.share_games;
+    if (!gate.poll(sig, (long long)(now * 1000.0), withdraw ? 0 : 3000)) return;
+    fr_publish_library(A.st.share_games, A.st.share_games ? hubui::fg::publish_list(owned_snapshot(), kNativeKey) : std::vector<hubnet::LibGame>());
+}
+
+/* ---------- tiles ---------- */
+
+static std::vector<std::string> ghost_names(const hubui::fg::Ghost& g) {
+    std::vector<std::string> n;
+    for (const std::string& u : g.uids) if (const hubnet::Friend* f = fr_find(u)) n.push_back(f->name);
+    return n;
+}
+
+ArtRef art_for_ghost(const hubui::fg::Ghost& g) {
+    int w = 0, h = 0;
+    std::string name = g.title;
+    if (!g.cid.empty()) if (const GameInfo* ci = hub::find_game(g.cid)) if (!ci->nointro.empty()) name = ci->nointro;
+    SDL_Texture* t = hubart::get_by_name(g.sys, name, hubart::Kind::Boxart, &w, &h);
+    return art_lookup("ghost:" + g.id, true, t, w, h);
+}
+
+TileSpec spec_for_ghost(const hubui::fg::Ghost& g, const char* shelf, bool show_sys) {
+    TileSpec t;
+    t.id = std::string(shelf) + "|ghost|" + g.id;
+    t.title = g.title;
+    hub::System sy = hub::system_from_short(g.sys);
+    if (show_sys) t.badge = sys_badge(sy);
+    system_colors(sy, &t.c0, &t.c1);
+    t.c0 = mix(t.c0, IM_COL32(92, 95, 104, 255), 0.72f);   // no-cover tiles are grey too
+    t.c1 = mix(t.c1, IM_COL32(70, 73, 82, 255), 0.72f);
+    t.owned = false;       // greyed, no star
+    t.show_star = false;
+    t.selected = A.sel_ghost == g.id;
+    t.ghost = &g;
+    return t;
+}
+
+void handle_ghost_result(const hubui::fg::Ghost& g, const TileResult& r) {
+    if (r.focused && A.sel_ghost != g.id) { A.sel_ghost = g.id; A.sel_game.clear(); }
+    if (r.clicked || r.activated || r.details) {
+        A.sel_ghost = g.id;
+        A.sel_game.clear();
+        A.show_ghost = true;   // draw_details_modal() opens the friend-game view
+    }
+}
+
+void ghost_tile_decor(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVec2 p1, float e, std::string* subtitle) {
+    /* desaturate: a neutral grey wash over the cover (lighter on hover so it is clear it can be opened) */
+    dl->AddRectFilled(p0, p1, IM_COL32(96, 99, 108, (int)(150.f - 70.f * e)), sp(1.75f));
+    std::vector<std::string> names = ghost_names(g);
+    *subtitle = hubui::fg::badge_text(names);
+    float r = sp(1.45f);
+    size_t shown = std::min<size_t>(3, g.uids.size());
+    for (size_t i = 0; i < shown; ++i) {
+        const hubnet::Friend* f = fr_find(g.uids[i]);
+        if (!f) continue;
+        ImVec2 c(p1.x - sp(2.25f) - (float)i * r * 1.35f, p0.y + sp(2.25f));
+        fr_avatar(dl, c, r, f->name, fr_row(*f).state, IM_COL32(6, 7, 12, 255));
+    }
+    if (g.uids.size() > shown) {
+        char more[16];
+        std::snprintf(more, sizeof more, "+%d", (int)(g.uids.size() - shown));
+        ImVec2 ts = ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, more);
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p1.x - sp(2.25f) - (float)shown * r * 1.35f - ts.x - sp(0.25f), p0.y + sp(2.25f) - ts.y * 0.5f),
+                    IM_COL32(255, 255, 255, 230), more);
+    }
+}
+
+/* ---------- selected bar (All Games) ---------- */
+
+void selected_bar_ghost(const hubui::fg::Ghost& g) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float w = ImGui::GetContentRegionAvail().x, h = sp(8.f);
+    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
+    dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.f));
+    dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.f), 0, 1.f);
+    TileSpec ts = spec_for_ghost(g, "bar", false);
+    float th = h - sp(2.f), tw = th * kTileAspect;
+    ImVec2 a0(p0.x + sp(1.f), p0.y + sp(1.f)), a1(a0.x + tw, a0.y + th);
+    ArtRef art = art_for_ghost(g);
+    if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.25f), 0.8f);
+    else draw_no_art(dl, ts, a0, a1, sp(1.25f), 0.8f);
+    dl->AddRectFilled(a0, a1, IM_COL32(118, 122, 132, 120), sp(1.25f));
+    float bh = sp(5.f), bw = sp(16.f);
+    float tx = a1.x + sp(2.f);
+    float text_w = std::max(sp(8.f), p1.x - sp(2.f) - bw - tx - sp(2.f));
+    dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, p0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, g.title, text_w).c_str());
+    std::string sub = std::string(hub::system_name(hub::system_from_short(g.sys))) + "  -  " + hubui::fg::badge_text(ghost_names(g));
+    dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f)), ui::TEXT2,
+                ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, text_w).c_str());
+    ImGui::SetCursorScreenPos(ImVec2(p1.x - sp(2.f) - bw, p0.y + (h - bh) * 0.5f));
+    if (button("Details", ImVec2(bw, bh), true, true, ui::Icon::Dots)) A.show_ghost = true;
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
+    ImGui::Dummy(ImVec2(w, 1));
+}
+
+/* ---------- details view ---------- */
+
+void draw_ghost_modal() {
+    if (A.show_ghost) {
+        A.show_ghost = false;
+        if (find_ghost(A.sel_ghost)) ImGui::OpenPopup("##ghost");
+    }
+    const hubui::fg::Ghost* gp = find_ghost(A.sel_ghost);
+    ImGuiIO& io = ImGui::GetIO();
+    float w = std::min(sp(84.f), io.DisplaySize.x * 0.92f);
+    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(w, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
+    bool open = ImGui::BeginPopupModal("##ghost", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PopStyleVar(2);
+    if (!open) return;
+    if (!gp || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    const hubui::fg::Ghost& g = *gp;
+    const GameInfo* cat = g.cid.empty() ? nullptr : hub::find_game(g.cid);
+    hub::System sy = hub::system_from_short(g.sys);
+    ImU32 c0, c1;
+    system_colors(sy, &c0, &c1);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    float avail = ImGui::GetContentRegionAvail().x;
+    bool with_art = avail > sp(56.f);
+    float aw = with_art ? sp(24.f) : 0, ah = aw / kTileAspect;
+    if (with_art) {
+        ArtRef art = art_for_ghost(g);
+        TileSpec ts;
+        ts.title = g.title; ts.c0 = c0; ts.c1 = c1;
+        ImVec2 a0 = o, a1(o.x + aw, o.y + ah);
+        ui::shadow(dl, a0, a1, sp(1.75f), 1.2f);
+        if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.75f), 0.85f);
+        else draw_no_art(dl, ts, a0, a1, sp(1.75f), 0.85f);
+        dl->AddRectFilled(a0, a1, IM_COL32(118, 122, 132, 110), sp(1.75f));
+        dl->AddRect(a0, a1, ui::HAIRLINE, sp(1.75f), 0, 1.f);
+    }
+    float tx = with_art ? aw + sp(3.f) : 0;
+    ImGui::SetCursorScreenPos(ImVec2(o.x + tx, o.y));
+    ImGui::BeginGroup();
+    float tw = avail - tx;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+    ImGui::PushFont(ui::F.title);
+    ImGui::TextWrapped("%s", g.title.c_str());
+    ImGui::PopFont();
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    pill(hub::system_name(sy), mix(c0, IM_COL32_BLACK, 0.2f));
+    if (cat && cat->year) { ImGui::SameLine(0, sp(0.75f)); pill(std::to_string(cat->year).c_str(), ui::PANEL2); }
+    int players = cat ? cat->max_players : 0;
+    if (players > 0) {
+        char pl[32];
+        std::snprintf(pl, sizeof pl, "1-%d players", players);
+        ImGui::SameLine(0, sp(0.75f));
+        pill(pl, ui::PANEL2);
+    }
+    if (cat && !cat->blurb.empty()) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+        ImGui::TextWrapped("%s", cat->blurb.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+    ImGui::TextUnformatted("You don't have this game.");
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
+    if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(2.f)));
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+
+    /* who has it */
+    section_title("Friends who have it");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    const size_t kRows = 6;
+    float rh = sp(5.f), bw = sp(22.f);
+    for (size_t i = 0; i < g.uids.size() && i < kRows; ++i) {
+        const hubnet::Friend* f = fr_find(g.uids[i]);
+        if (!f) continue;
+        hubui::FriendRow fr = fr_row(*f);
+        bool online = fr.state != hubui::FS_Offline;
+        ImGui::PushID((int)i);
+        ImVec2 r0 = ImGui::GetCursorScreenPos();
+        float rw = ImGui::GetContentRegionAvail().x;
+        fr_avatar(dl, ImVec2(r0.x + sp(2.f), r0.y + rh * 0.5f), sp(2.f), f->name, fr.state, ui::PANEL);
+        std::string state = !online ? "Offline" : f->status.state == hubnet::PresenceState::InGame ? "Playing " + f->status.game_title
+                          : f->status.state == hubnet::PresenceState::InLobby ? "In a room" : "Online";
+        dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(r0.x + sp(5.f), r0.y + sp(0.5f)), ui::TEXT, f->name.c_str());
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(r0.x + sp(5.f), r0.y + sp(0.5f) + ui::F.bold->FontSize * 1.25f), ui::TEXT2,
+                    ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, state, rw - sp(5.f) - bw - sp(2.f)).c_str());
+        ImGui::SetCursorScreenPos(ImVec2(r0.x + rw - bw, r0.y + (rh - sp(4.f)) * 0.5f));
+        std::string lab = "Ask " + f->name + " to host";
+        if (ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, lab.c_str()).x > bw - sp(3.f)) lab = "Ask to host";
+        if (button(lab.c_str(), ImVec2(bw, sp(4.f)), false, online)) fr_ask_host(f->uid, g.cid.empty() ? g.key : g.cid, g.title, g.sys);
+        if (!online && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s is offline", f->name.c_str());
+        ImGui::SetCursorScreenPos(ImVec2(r0.x, r0.y + rh));
+        ImGui::Dummy(ImVec2(rw, 0));
+        ImGui::PopID();
+    }
+    if (g.uids.size() > kRows) text_wrapped_disabled("and " + std::to_string(g.uids.size() - kRows) + " more");
+    text_wrapped_disabled("They get a request to open a room with this game. Only the game's name is shared, never game files.");
+    ImGui::Dummy(ImVec2(0, sp(1.5f)));
+
+    /* actions: Play / Play Online are shown but disabled (you cannot play what you do not have) */
+    float bh = sp(5.5f);
+    button("Play", ImVec2(sp(16.f), bh), false, false, ui::Icon::Play);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
+    ImGui::SameLine(0, sp(1.5f));
+    button("Play Online", ImVec2(sp(18.f), bh), false, false, ui::Icon::Globe);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
+    ImGui::SameLine(0, sp(1.5f));
+    if (button("Add your own copy", ImVec2(sp(22.f), bh), true, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
+    ImGui::SameLine(0, sp(1.5f));
+    if (button("Close", ImVec2(sp(12.f), bh))) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
