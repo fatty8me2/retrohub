@@ -159,6 +159,15 @@ void host_video_thread(const Args* a, HostState* hs, CaptureSource* src, int enc
         if (last_cap && f.cap_us - last_cap < period * 7 / 10) continue;   // cap at ~fps
         last_cap = f.cap_us;
         if (hs->active.load() == 0) continue;   // nobody is watching
+        if (const char* shot = getenv("STREAMRUN_SHOT")) {   // QA: dump one captured frame (BMP) ~5 s in, to see what the capture really contains
+            static int cnt = 0;
+            if (++cnt == 300) if (FILE* bf = fopen(shot, "wb")) {
+                BITMAPFILEHEADER fh = {}; BITMAPINFOHEADER ih = {};
+                ih.biSize = sizeof ih; ih.biWidth = f.w; ih.biHeight = -f.h; ih.biPlanes = 1; ih.biBitCount = 32;
+                fh.bfType = 0x4D42; fh.bfOffBits = sizeof fh + sizeof ih; fh.bfSize = fh.bfOffBits + (DWORD)f.px.size();
+                fwrite(&fh, sizeof fh, 1, bf); fwrite(&ih, sizeof ih, 1, bf); fwrite(f.px.data(), 1, f.px.size(), bf); fclose(bf);
+            }
+        }
         int kb = hs->kbps.load();
         if (kb != cur_kbps) { enc->set_bitrate(kb); cur_kbps = kb; }
         bool key = hs->want_key.exchange(false);
@@ -782,8 +791,58 @@ int run_selftest(const Args& a)
     return 0;
 }
 
+/* Windows.Graphics.Capture check against a window of our own that is 1/255 opaque and click-through (effectively invisible; off-screen windows are not composed by DWM so produce no frames). */
+int run_selftest_wgc()
+{
+    HWND hw = nullptr; std::atomic<bool> stop{false}, ready{false};
+    std::thread ui([&] {
+        WNDCLASSW wc = {}; wc.lpfnWndProc = DefWindowProcW; wc.hInstance = GetModuleHandleW(nullptr); wc.lpszClassName = L"rpl_wgc_test";
+        RegisterClassW(&wc);
+        hw = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT, L"rpl_wgc_test", L"rpl wgc test", WS_POPUP, 200, 200, 800, 450, nullptr, nullptr, wc.hInstance, nullptr);
+        SetLayeredWindowAttributes(hw, 0, 1, LWA_ALPHA);   // 1/255 opaque: invisible and click-through, but still composed by DWM
+        ShowWindow(hw, SW_SHOWNOACTIVATE); ready = true;
+        int n = 0;
+        while (!stop) {
+            MSG m; while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&m);
+            HDC dc = GetDC(hw);
+            HBRUSH b = CreateSolidBrush(RGB((n * 3) & 255, 80, 200)); RECT r = {0, 0, 800, 450}; FillRect(dc, &r, b); DeleteObject(b);
+            HBRUSH b2 = CreateSolidBrush(RGB(255, 255, 255)); RECT r2 = {(n * 7) % 700, 100, (n * 7) % 700 + 60, 160}; FillRect(dc, &r2, b2); DeleteObject(b2);
+            ReleaseDC(hw, dc); n++; Sleep(8);
+        }
+        DestroyWindow(hw);
+    });
+    while (!ready) Sleep(10);
+    Sleep(300);
+    std::string err;
+    auto cap = make_window_capture(hw, 60, &err);
+    int rc = 1;
+    if (!cap) logf("selftest-wgc: no capture: %s", err.c_str());
+    else {
+        logf("selftest-wgc: capture backend = %s %s", cap->name().c_str(), err.c_str());
+        BgraFrame f, first; int n = 0, changed = 0; uint64_t t0 = steady_us(), lat = 0;
+        while (steady_us() - t0 < 3000000) {
+            if (!cap->grab(&f, 200)) continue;
+            lat += steady_us() - f.cap_us;
+            if (n == 0) first = f; else if (f.px.size() == first.px.size() && memcmp(f.px.data(), first.px.data(), f.px.size()) != 0) changed++;
+            n++;
+        }
+        logf("selftest-wgc: %d frames in 3 s (%.1f fps), %dx%d, %d differ from the first frame", n, n / 3.0, f.w, f.h, changed);
+        rc = (n > 20 && changed > 5) ? 0 : 1;
+    }
+    cap.reset();
+    {   // WASAPI process loopback activation on our own PID (silent, but proves the API path works on this machine)
+        std::string aerr; auto ac = make_process_loopback(GetCurrentProcessId(), &aerr);
+        if (!ac) logf("selftest-wgc: process loopback: FAILED (%s)", aerr.c_str());
+        else { std::vector<int16_t> pcm; for (int i = 0; i < 10; i++) ac->read(&pcm, 50); logf("selftest-wgc: process loopback activated OK (%zu samples read while silent)", pcm.size()); }
+    }
+    stop = true; ui.join();
+    logf(rc == 0 ? "selftest-wgc: PASS" : "selftest-wgc: FAIL");
+    return rc;
+}
+
 int main(int argc, char** argv)
 {
+    if (argc > 1 && std::string(argv[1]) == "--selftest-wgc") return run_selftest_wgc();
     Args a;
     if (!parse_args(argc, argv, &a)) { usage(); return 2; }
     timeBeginPeriod(1);

@@ -45,3 +45,27 @@ jitter -> multiply by 0.8 (min 3 Mbps); 5 clean seconds -> +10% (max 15 Mbps). A
 `stream_core_test` (packetizer, FEC, reassembler, NACK, jitter buffer, input codec, bitrate controller) runs under
 `ctest -LE online`. `qa/stream_loopback.ps1` runs host + guest on the hidden desktop through a LOCAL wrangler worker
 (test pattern source, headless guest) and prints capture->present latency percentiles.
+
+## Status and measured numbers (this PC: RTX 3090 Ti, other agents keeping the CPU ~85% busy during the runs)
+Loopback, 1280x720 test pattern, NVIDIA NVENC through MF, local wrangler for signalling only, direct UDP:
+- Software H.264 decode on the guest (default): capture->decoded avg 57 ms, p50 58, p95 84, p99 88 (headless); 38 fps (host thread starved by the
+  machine load; unloaded selftest runs 60 fps with encode ~4.5 ms + decode ~8 ms = ~16 ms capture->decoded).
+- Windowed SDL guest on a hidden desktop (latency measured after SDL_RenderPresent): avg 50 ms, p50 52, p95 72, p99 79.
+- D3D11/DXVA hardware decode (`--hw-decode`) is slower here (~40 ms/frame under load, GPU read-back through `Lock2D`), so software decode is the default;
+  720p software decode is ~5-8 ms. A zero-copy texture path to SDL is future work.
+- Bitrate adapts 3-15 Mbps (ran ~9.7 Mbps on the busy test pattern), 0 NACKs and 0 lost frames on loopback; FEC/NACK recovery is covered by unit tests
+  (2% random loss soak: 300/300 frames).
+- Audio: tone -> AAC-LC -> 48 kHz stereo over the same session -> jitter buffer -> decode, ~21 ms per packet, 3-packet target.
+- Input: 250 Hz state packets; the host forwarded every one to the localhost pad API (`pad_packets` ~= `inputs_sent`).
+
+Latency is `now - capture time` on one machine's steady clock. Across two PCs it needs the clock offset; the guest overlay then shows decode+present
+time and RTT instead (not yet implemented: the protocol carries the capture timestamp so it can be added).
+
+## Capture notes
+- `--selftest-wgc` proves Windows.Graphics.Capture on a real window (57 fps) and WASAPI process-loopback activation.
+- WGC and DXGI duplication do NOT work on a hidden (CreateDesktop) desktop, so the Cemu 3D World test on the hidden desktop falls back to PrintWindow,
+  which returns Cemu's blank canvas (Vulkan surface is not readable that way). The pipeline, window discovery and process audio path ran, but the video
+  contents were a flat grey frame; a real Cemu capture has to be done on the interactive desktop (qa/stream_cemu.ps1 is ready for that with `-Desktop`
+  pointed at the default desktop, but it was not run because it would put a window on the user's screen).
+- Cemu must not be minimized (WGC delivers no frames) and the stream is of the whole window, so launch Cemu with `-f` (fullscreen) for a clean picture.
+- Intra-refresh is not exposed by the Media Foundation H.264 MFTs; recovery uses a 2 s GOP plus keyframe-on-request.
