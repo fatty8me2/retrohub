@@ -491,6 +491,99 @@ bool id_nds(const fs::path& p, const fs::path& name, uint64_t size, GameEntry* e
     return true;
 }
 
+} // namespace
+
+bool nes_parse_header(const uint8_t* h, size_t n, uint64_t file_size, NesHeader* out) {
+    if (n < 16 || h[0] != 'N' || h[1] != 'E' || h[2] != 'S' || h[3] != 0x1A) return false;
+    NesHeader r;
+    r.nes2 = (h[7] & 0x0C) == 0x08;
+    r.battery = (h[6] & 2) != 0;
+    r.trainer = (h[6] & 4) != 0;
+    r.mapper = (unsigned)((h[6] >> 4) | (h[7] & 0xF0));
+    uint64_t prg_units = h[4], chr_units = h[5];
+    if (r.nes2) {
+        r.mapper |= (unsigned)(h[8] & 0x0F) << 8;
+        prg_units |= (uint64_t)(h[9] & 0x0F) << 8;
+        chr_units |= (uint64_t)(h[9] >> 4) << 8;
+    }
+    r.prg = prg_units * 16384u;
+    r.chr = chr_units * 8192u;
+    r.data_off = 16 + (r.trainer ? 512 : 0);
+    if (prg_units == 0) return false;
+    if (r.nes2 && ((h[9] & 0x0F) == 0x0F || (h[9] >> 4) == 0x0F)) {   // exponent-multiplier sizes: trust the file
+        *out = r;
+        return file_size > r.data_off;
+    }
+    if (r.data_off + r.prg > file_size) return false;   // truncated / not an iNES image
+    if (r.data_off + r.prg + r.chr > file_size) r.chr = file_size - r.data_off - r.prg;   // short CHR: dumps in the wild
+    *out = r;
+    return true;
+}
+
+size_t snes_copier_header_size(uint64_t file_size) { return (file_size % 1024u) == 512u ? 512u : 0u; }
+
+SnesInfo snes_probe(const uint8_t* d, size_t n) {
+    SnesInfo best;
+    int best_score = -1;
+    const size_t hdr = snes_copier_header_size(n);
+    for (int hi = 0; hi < 2; ++hi) {
+        size_t off = hdr + (hi ? 0xFFC0u : 0x7FC0u);
+        if (off + 0x30 > n) continue;
+        const uint8_t* h = d + off;
+        unsigned comp = (unsigned)(h[0x1C] | (h[0x1D] << 8)), sum = (unsigned)(h[0x1E] | (h[0x1F] << 8));
+        bool chk = (comp ^ sum) == 0xFFFFu;
+        int printable = 0;
+        for (int i = 0; i < 21; ++i) if (h[i] >= 0x20 && h[i] < 0x7F) ++printable;
+        int score = (chk ? 100 : 0) + printable;
+        unsigned mapmode = h[0x15] & 0x0F;   // 0 LoROM, 1 HiROM, 5 ExHiROM
+        if ((mapmode == 1 || mapmode == 5) == (hi == 1)) score += 10;
+        if ((h[0x15] & 0xE0) == 0x20) score += 5;   // 0x2x/0x3x map-mode byte
+        if (printable < 12 && !chk) continue;
+        if (score > best_score) {
+            best_score = score;
+            best.valid = true; best.hirom = hi == 1; best.checksum_ok = chk; best.header = hdr;
+            std::string t((const char*)h, 21);
+            for (auto& c : t) if ((unsigned char)c < 0x20 || (unsigned char)c >= 0x7F) c = ' ';
+            while (!t.empty() && t.back() == ' ') t.pop_back();
+            best.title = t;
+        }
+    }
+    return best;
+}
+
+namespace {
+
+bool id_nes(const fs::path& p, const fs::path& name, uint64_t size, GameEntry* e) {
+    if (size < 16 + 16384 || size > 8u * 1024u * 1024u) return false;
+    std::vector<uint8_t> d;
+    if (!read_at(p, 0, (size_t)size, &d) || d.size() < size) return false;
+    NesHeader h;
+    if (!nes_parse_header(d.data(), d.size(), size, &h)) return false;
+    uint64_t end = h.data_off + h.prg + h.chr;
+    if (end > d.size()) end = d.size();
+    uint32_t crc = crc32_update(0, d.data() + h.data_off, (size_t)(end - h.data_off));   // No-Intro (headerless) CRC32
+    e->system = System::NES;
+    e->key = "nes:" + hex32(crc);
+    e->title = pretty_title(std::string(), name);
+    return true;
+}
+
+bool id_snes(const fs::path& p, const fs::path& name, uint64_t size, GameEntry* e) {
+    if (size < 32u * 1024u || size > 12u * 1024u * 1024u) return false;
+    std::vector<uint8_t> d;
+    if (!read_at(p, 0, (size_t)size, &d) || d.size() < size) return false;
+    SnesInfo si = snes_probe(d.data(), d.size());
+    std::string ext = ascii_lower(path_utf8(p.extension()));
+    if (!si.valid && ext != ".sfc" && ext != ".smc") return false;   // an extension-less guess is not enough for other names
+    size_t hdr = si.valid ? si.header : snes_copier_header_size(size);
+    uint32_t crc = crc32_update(0, d.data() + hdr, d.size() - hdr);   // No-Intro (headerless) CRC32
+    e->system = System::SNES;
+    e->key = "snes:" + hex32(crc);
+    e->title = pretty_title(std::string(), name);
+    e->serial = si.title;
+    return true;
+}
+
 bool id_gb(const fs::path& p, const fs::path& name, uint64_t size, GameEntry* e) {
     if (size < kGbMin || size > kGbMax) return false;
     std::vector<uint8_t> h;
@@ -818,6 +911,8 @@ const char* system_name(System s) {
     case System::NDS: return "Nintendo DS";
     case System::PS1: return "PlayStation";
     case System::PS2: return "PlayStation 2";
+    case System::NES: return "Nintendo Entertainment System";
+    case System::SNES: return "Super Nintendo";
     default:          return "Unknown";
     }
 }
@@ -834,6 +929,8 @@ const char* system_short(System s) {
     case System::NDS: return "nds";
     case System::PS1: return "ps1";
     case System::PS2: return "ps2";
+    case System::NES: return "nes";
+    case System::SNES: return "snes";
     default:          return "";
     }
 }
@@ -850,6 +947,8 @@ System system_from_short(const std::string& s) {
     if (l == "nds") return System::NDS;
     if (l == "ps1") return System::PS1;
     if (l == "ps2") return System::PS2;
+    if (l == "nes") return System::NES;
+    if (l == "snes") return System::SNES;
     return System::Unknown;
 }
 
@@ -885,7 +984,8 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path*
         if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
         std::string name = st.m_filename;
         std::string ext = ascii_lower(path_utf8(utf8_path(name).extension()));
-        if (ext != ".z64" && ext != ".v64" && ext != ".n64" && ext != ".gba" && ext != ".gb" && ext != ".gbc" && ext != ".nds") continue;
+        if (ext != ".z64" && ext != ".v64" && ext != ".n64" && ext != ".gba" && ext != ".gb" && ext != ".gbc" && ext != ".nds" &&
+            ext != ".nes" && ext != ".sfc" && ext != ".smc") continue;
         /* DS cartridges go up to 512 MB (Black/White 2); the other cartridge systems stay under 128 MB. */
         if (st.m_uncomp_size < 16 * 1024 || st.m_uncomp_size > (ext == ".nds" ? 1024ull : 128ull) * 1024 * 1024) continue;
         char crc[16];
@@ -1550,6 +1650,8 @@ static bool identify_rom(const fs::path& p, const fs::path& name_src, GameEntry*
     else if (ext == ".gba") ok = id_gba(p, name_src, size, &e);
     else if (ext == ".gb" || ext == ".gbc") ok = id_gb(p, name_src, size, &e);
     else if (ext == ".nds") ok = id_nds(p, name_src, size, &e);
+    else if (ext == ".nes") ok = id_nes(p, name_src, size, &e);
+    else if (ext == ".sfc" || ext == ".smc") ok = id_snes(p, name_src, size, &e);
     else if (ext == ".cue" || ext == ".chd" || ext == ".m3u" || ext == ".pbp" || ext == ".bin" || ext == ".img" || ext == ".cso") {
         // PlayStation 1 or 2: the disc says (SYSTEM.CNF BOOT = PS1, BOOT2 = PS2). PS1 is probed first; a miss falls through to PS2.
         ok = id_ps1(p, ext, &e);
@@ -2073,7 +2175,7 @@ bool is_archive_file(const std::string& path) {
 
 bool scan_extension(const std::string& ext) {
     static const char* const kExt[] = {".z64", ".v64", ".n64", ".gba", ".gb", ".gbc", ".iso", ".7z", ".rar",
-                                       ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip", ".nds",
+                                       ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip", ".nds", ".nes", ".sfc", ".smc",
                                        ".3ds", ".cci", ".cia", ".cxi", ".3dsx", ".zcci", ".zcia", ".zcxi", ".z3dsx",
                                        ".wua", ".wud", ".wux", ".rpx", ".chd", ".cso", ".cue",
                                        ".m3u", ".pbp", ".bin", ".img"};
