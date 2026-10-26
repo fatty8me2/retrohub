@@ -555,6 +555,34 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
+    if (e.system == hub::System::NES || e.system == hub::System::SNES) {
+        /* NES (Nestopia UE) / SNES (snes9x) through retrorun: GGPO rollback when the core passes SyncTest (retrorun falls back to lockstep).
+         * Ports 3-4 in the plan switch on the Four Score / multitap inside retrorun. The host's battery save is the shared session
+         * save (docs/SAVES.md); guests' throwaway dir is never uploaded. */
+        const bool nes = e.system == hub::System::NES;
+        std::string core = find_core(nes ? "nestopia" : "snes9x");
+        if (core.empty()) { launch_note(is_host, std::string("Emulator core '") + (nes ? "nestopia" : "snes9x") + "' not found (cores folder)."); return; }
+        std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
+        remove_tree(tmp);
+        make_dirs(tmp);
+        if (share_save && (is_host || room_my_slot() == 0)) {
+            std::error_code ec;
+            std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
+            if (std::filesystem::is_directory(bd, ec)) {
+                for (auto& de : std::filesystem::directory_iterator(bd, ec))
+                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+            } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
+        }
+        std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
+                           " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+        if (share_save) args += " --share-host-save";
+        args += " --rollback";
+        args += hubui::retro_extra_args(e.system, gsv);
+        args += cheats_launch_args(e, true, is_host, launch_body);
+        args += qm_args(ri, e, false);
+        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        return;
+    }
     if (e.system == hub::System::PS1) {
         /* PlayStation (Beetle PSX): every PC runs the whole console; inputs (buttons + both analog sticks) travel through the room, the
          * host's memory card is the shared session save (docs/SAVES.md). 3-4 players use the emulated multitap (ps1_online_args). */
