@@ -583,6 +583,7 @@ void draw_details_modal() {
     ImGui::EndGroup();
     if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(2.f)));
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    gameinfo_ui_section(e, cat ? cat->title : std::string());
 
     ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
     ImGui::PushTextWrapPos(0.f);
