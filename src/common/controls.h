@@ -28,7 +28,7 @@ constexpr int kNumButtons = 21;   // SDL_CONTROLLER_BUTTON_* order
 constexpr int kNumAxes = 6;       // leftx lefty rightx righty lefttrigger righttrigger
 constexpr int kDefaultAxisThreshold = 16384;
 
-/* System keys: "n64", "retro" (GBA/GB/GBC/DS libretro cores), "ps1" (PlayStation, DualShock), "gc", "wiiu", "3ds". */
+/* System keys: "n64", "retro" (GBA/GB/GBC/DS libretro cores), "ps1" (PlayStation, DualShock), "nes", "snes", "gc", "wiiu", "3ds". */
 const std::vector<std::string>& systems();
 bool is_system(const std::string& s);
 std::string system_key(hub::System s);   // "" when RetroHub has no profile for it
@@ -146,6 +146,9 @@ Profile resolve(const Store& s, const std::string& system, const std::string& ga
  * default is copied first ("<system>-custom" / "game:<id>"), so the original is never modified. */
 Profile& edit_profile(Store& s, const std::string& system, const std::string& game_id = "");
 /* Controls page calls: */
+/* NES / SNES "label layout": console A/B(/X/Y) follow the Xbox button labels instead of the positional default. */
+bool label_layout_active(const Store& s, const std::string& system, const std::string& game_id);
+bool set_label_layout(Store& s, const std::string& system, const std::string& game_id, bool on);
 bool set_mapping(Store& s, const std::string& system, const std::string& game_id, const std::string& control,
                  const std::string& expr, std::string* err = nullptr);
 bool set_analog(Store& s, const std::string& system, const std::string& game_id, const std::string& control,

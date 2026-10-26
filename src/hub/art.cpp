@@ -291,6 +291,8 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
                 q.md5 = c == std::string::npos ? "" : g.key.substr(c + 1);
             } else if (g.system == hub::System::GBA) {
                 q.crc = tail_after_last(g.key, '-');
+            } else if (g.system == hub::System::NES || g.system == hub::System::SNES) {
+                q.crc = tail_after_last(g.key, ':');   // headerless CRC32 = the No-Intro DAT's rom crc
             }
             found = hm::match_name(*dat, q, &h);
         } else {
