@@ -22,6 +22,7 @@
 
 #include "controls_sdl.h"
 #include "exit_combo.h"
+#include "start_hint.h"
 #include "runner_ctl.h"
 #include "core.h"
 #include "ds_link.h"
@@ -334,6 +335,12 @@ class Frontend {
     SDL_Renderer* ren = nullptr;
     SDL_Texture* tex = nullptr;
     int tex_w = 0, tex_h = 0;
+    // Game-start controller tips (src/common/start_hint.h), drawn into our own frame. RETROHUB_START_HINT=0 turns it off.
+    SDL_Texture* hint_tex = nullptr;
+    int hint_w = 0, hint_h = 0, hint_for_h = 0;
+    uint64_t hint_t0 = 0;
+    bool hint_done = false;
+    void draw_hint();
     bool fullscreen = false, quit = false, muted = false, online = false, ff = false;
     bool srm_size_mismatch = false;
     std::string userdata_dir;
@@ -739,7 +746,39 @@ void Frontend::present() {
         SDL_Rect c{cx - 1, cy - 1, 3, 3};
         SDL_RenderFillRect(ren, &c);
     }
+    draw_hint();
     SDL_RenderPresent(ren);
+}
+
+void Frontend::draw_hint() {
+    static const char* off = std::getenv("RETROHUB_START_HINT");
+    if (hint_done || (off && off[0] == '0')) return;
+    uint64_t now = SDL_GetTicks64();
+    if (!hint_t0) hint_t0 = now;
+    long long el = (long long)(now - hint_t0);
+    if (starthint::finished(el)) {
+        hint_done = true;
+        if (hint_tex) { SDL_DestroyTexture(hint_tex); hint_tex = nullptr; }
+        return;
+    }
+    int ow = 0, oh = 0;
+    SDL_GetRendererOutputSize(ren, &ow, &oh);
+    if (ow <= 0 || oh <= 0) return;
+    if (!hint_tex || hint_for_h != oh) {
+        if (hint_tex) SDL_DestroyTexture(hint_tex);
+        starthint::Bitmap b = starthint::render(starthint::pick_mode(pads.empty(), true), starthint::scale_for_height(oh));
+        hint_tex = b.px.empty() ? nullptr : SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, b.w, b.h);
+        if (!hint_tex) { hint_done = true; return; }
+        SDL_UpdateTexture(hint_tex, nullptr, b.px.data(), b.w * 4);
+        SDL_SetTextureBlendMode(hint_tex, SDL_BLENDMODE_BLEND);
+        hint_w = b.w; hint_h = b.h; hint_for_h = oh;
+    }
+    starthint::Bitmap geo; geo.w = hint_w; geo.h = hint_h;
+    int x, y;
+    starthint::placement(ow, oh, geo, &x, &y);
+    SDL_SetTextureAlphaMod(hint_tex, (Uint8)(starthint::alpha_at(el) / starthint::kMaxAlpha * 255.f));
+    SDL_Rect dst{x, y, hint_w, hint_h};
+    SDL_RenderCopy(ren, hint_tex, nullptr, &dst);
 }
 
 bool Frontend::setup_video() {
@@ -2102,7 +2141,19 @@ done:
             if (rp && rn) write_atomic(dr, rp, rn);
         }
         if (!a.screenshot.empty()) {
-            if (write_frame_image(a.screenshot, core.frame()))
+            FrameBuf shot = core.frame();
+            if (const char* hs = std::getenv("RETRORUN_HINT_SHOT"); hs && hs[0] == '1' && shot.w > 0 && shot.px.size() >= (size_t)shot.w * shot.h) {   // QA: the tips card as seen ~1 s into a real run
+                int k = std::max(1, (540 + shot.h - 1) / shot.h);   // integer-upscale small frames to a window-like size so the card has its real proportions
+                if (k > 1) {
+                    FrameBuf up;
+                    up.w = shot.w * k; up.h = shot.h * k; up.px.resize((size_t)up.w * up.h);
+                    for (int y = 0; y < up.h; y++) for (int x = 0; x < up.w; x++) up.px[(size_t)y * up.w + x] = shot.px[(size_t)(y / k) * shot.w + x / k];
+                    shot = std::move(up);
+                }
+                starthint::Bitmap hb = starthint::render(starthint::pick_mode(false, true), starthint::scale_for_height(shot.h));
+                starthint::composite(shot.px.data(), shot.w, shot.h, shot.w, hb, starthint::alpha_at(1000));
+            }
+            if (write_frame_image(a.screenshot, shot))
                 rlog("screenshot: %s (%dx%d)", a.screenshot.c_str(), core.frame().w, core.frame().h);
             else
                 rlog("screenshot: FAILED to write %s", a.screenshot.c_str());
