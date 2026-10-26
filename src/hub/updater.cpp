@@ -29,9 +29,7 @@
 #include <bcrypt.h>
 #include <shellapi.h>
 
-#ifndef HUB_VERSION_STR
-#define HUB_VERSION_STR "dev"
-#endif
+#include "hub_version.h"
 
 namespace hubupdate {
 

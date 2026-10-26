@@ -45,7 +45,8 @@ target_link_libraries(n64run_mempak_test PRIVATE n64run_save_sync)
 
 # Branding: same icon + version resources as RetroHub.exe (see src/hub/CMakeLists.txt for the generated header).
 target_sources(n64run PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/n64run.rc)
-target_include_directories(n64run PRIVATE ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_CURRENT_SOURCE_DIR}/../hub)
+add_dependencies(n64run hubversion)   # generates version_gen/hub_version_rc.h (src/hub)
+target_include_directories(n64run PRIVATE ${CMAKE_BINARY_DIR}/version_gen ${CMAKE_CURRENT_SOURCE_DIR}/../hub)
 
 add_executable(n64run_match_test test_match.cpp)
 target_link_libraries(n64run_match_test PRIVATE n64run_match)
