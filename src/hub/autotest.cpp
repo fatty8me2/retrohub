@@ -104,7 +104,7 @@ void autotest_tick() {
         if (!rg) { if (now - started > 20000) { autotest_log("error:host game not in library"); stage = 99; } return; }
         if ((int)room_members().size() < want) return;
         std::vector<hubui::PeerInfo> peers = peer_list();
-        auto s = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0);
+        auto s = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0, remote_play_entry(*rg));
         if (!s.ok) { if (now - started > 60000) { autotest_log("error:not selectable: " + s.reason); stage = 99; } return; }
         for (auto& p : peers) if (p.slot != 0 && !A.ready[p.slot]) return;
         if ((rg->system == hub::System::GC || rg->system == hub::System::N3DS) && gc_needs_unpack(*rg)) return;

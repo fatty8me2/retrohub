@@ -149,8 +149,9 @@ void enter_room(bool host, const std::string& code_in) {
     }
     A.in_room = true;
     A.page = Page::Online;
-    if (host && !A.pending_room_game.empty() && find_room_entry(A.pending_room_game)) A.selected_game = A.pending_room_game;
-    else if (host && !A.st.last_game.empty() && find_room_entry(A.st.last_game)) A.selected_game = A.st.last_game;
+    auto owned = [](const std::string& id) { const hub::GameEntry* g = find_room_entry(id); return g && !is_remote_stand_in(*g); };   // a host needs its own copy
+    if (host && !A.pending_room_game.empty() && owned(A.pending_room_game)) A.selected_game = A.pending_room_game;
+    else if (host && !A.st.last_game.empty() && owned(A.st.last_game)) A.selected_game = A.st.last_game;
     A.pending_room_game.clear();
 }
 
@@ -190,6 +191,9 @@ std::vector<hubui::PeerInfo> peer_list() {
         if (m.slot == me || g_fake_room) {
             p.hello = true; p.games.clear(); p.keys.clear(); my_games(&p.games, &p.keys);
             p.app = HUB_VERSION_STR;
+            if (g_fake_room && m.slot == 0 && std::getenv("HUB_SHOT_NO_WIIU")) {   // screenshot aid: the host owns the Wii U game this PC (a guest) lacks
+                p.games.clear(); p.keys.push_back("sm3dw");
+            }
             if (g_fake_room && m.slot == 1 && std::getenv("HUB_SHOT_PEER_MISSING")) {   // screenshot aid: peer 1 lacks every Nth game (picker "missing" state)
                 int n = std::max(2, std::atoi(std::getenv("HUB_SHOT_PEER_MISSING")));
                 std::vector<std::string> kept;
@@ -209,7 +213,7 @@ std::vector<hubui::PeerInfo> peer_list() {
 void guest_apply_launch(const std::string& body) {
     hubui::Json j;
     if (!json::parse(body, &j) || j.type != hubui::Json::Object) return;
-    const hub::GameEntry* g = find_room_entry(j.str("game"));
+    const hub::GameEntry* g = find_room_entry(j.str("game"));   // remote play: a stand-in when this PC has no copy (streamed)
     if (!g) { launch_fail("The host started a game you don't have."); return; }
     if (A.proc) { launch_fail("The host started a game, but a game is already running on this PC."); return; }
     if (g->system == hub::System::GC) {
