@@ -61,6 +61,14 @@ Check "Y opens the details modal" ($y.popup -eq 1 -and $y.win -like "*details*")
 $b = @($r.rows | Where-Object { $_.tok -eq "b" })[0]
 Check "B closes details and refocuses" ($b.popup -eq 0 -and $b.nav -ne "00000000") "popup=$($b.popup) nav=$($b.nav)"
 
+# 3b. select -> details -> Play: clicking the selected game (same path as A on a focused tile) opens the details modal and does not launch;
+# Play in the details modal runs the start animation (HUB_BOOTANIM_FORCE: headless normally skips it). Trace lines: select-details / bootanim start.
+$r = Run "select_details" "wait" @{ HUB_SHOT_CLICK = "582,670;582,670" }
+Check "selecting a game opens details first" (@($r.other | Where-Object { $_ -like "select-details *" }).Count -eq 1) ($r.other -join "|")
+Check "selecting a game does not launch it" (@($r.other | Where-Object { $_ -like "bootanim start*" }).Count -eq 0) ($r.other -join "|")
+$r = Run "details_play" "wait" @{ HUB_SELECT_GAME = "fake:1"; HUB_SHOT_KEYS = "i"; HUB_SHOT_ACT = "play"; HUB_BOOTANIM_FORCE = "1" }
+Check "Play in details starts the animation" (@($r.other | Where-Object { $_ -like "bootanim start*" }).Count -eq 1) ($r.other -join "|")
+
 # 4. B goes back to the library from any page
 $r = Run "back" "rb,rb,rb,b"
 Check "B returns to the library" (@($r.rows)[-1].page -eq "library") (@($r.rows)[-1].page)

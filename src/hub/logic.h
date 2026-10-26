@@ -25,6 +25,11 @@ struct Settings {
     std::string smash_exe;     // user-chosen BattleShip.exe
     std::string gb_core = "sameboy";   // default GB/GBC core: "sameboy" | "gambatte"
     bool fullscreen = false;           // start games fullscreen where the runner supports it
+    bool boot_anim = true;             // "Play the start animation" (boot_anim.h)
+    bool boot_sounds = true;           // "Startup sounds"
+    int boot_volume = 70;              // startup sound volume 0-100
+    bool boot_short = false;           // "Short version" (~1 s)
+    bool boot_skip_online = true;      // "Skip in online games"
     bool start_hint = true;            // "Show controller tips when a game starts": ~5 s card (View+Y menu, View+Menu leave)
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start

@@ -539,6 +539,12 @@ std::string launch_path_for(const hub::GameEntry& e);
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg = "");
 void start_unzip(const hub::GameEntry& e);
 void play_entry(const hub::GameEntry& e);
+/* boot_flow.cpp: start animation, then `launch` (default play_entry). quick = short version (hero / resume). */
+void play_entry_anim(const hub::GameEntry& e, bool quick = false, std::function<void(const hub::GameEntry&)> launch = nullptr);
+void boot_sync_options();   // Settings -> bootanim::options()
+void boot_settings_ui();    // Settings page: "Game start animation" group
+void boot_shot_tick();      // HUB_SHOT_BOOTANIM aid
+void boot_draw_overlay();
 void add_game_shortcut(const hub::GameEntry& e);   // "Add to desktop": .lnk to RetroHub.exe --play <key> (shell_shortcut_dir())
 void flash_taskbar();                              // FlashWindowEx on the hub window; never takes focus
 
