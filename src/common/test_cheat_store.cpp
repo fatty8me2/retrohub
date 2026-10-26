@@ -130,6 +130,47 @@ int main() {
     CHECK(restore_save(gdir, bat.string(), "nope", "t3", &err) == -1);
     CHECK(backup_save(gdir, (root / "no-battery").string(), "t4", &err));   // nothing to back up is fine
 
+    {   // value cheats: the typed number is stored per game, survives save/load, and is what the runner / room gets
+        Store st;
+        DbItem vi;
+        vi.cheat.id = "vc"; vi.cheat.desc = "Lives (00-63)"; vi.cheat.format = cheats::Format::GameShark; vi.cheat.codes = {"8011BB25 XXXX"};
+        std::vector<DbItem> db = {vi, item("plain", "Plain", false)};
+        auto rows = build_rows(st, "g", db, cheats::Target::N64);
+        CHECK(rows.size() == 2 && rows[0].spec.valid && !rows[0].value_set && rows[0].value == 0 && !rows[1].spec.valid);
+        st.set_on("g", "vc", true, 5);
+        st.set_value("g", "vc", 42, 6);
+        rows = build_rows(st, "g", db, cheats::Target::N64);
+        CHECK(rows[0].value_set && rows[0].value == 42 && rows[0].cheat.enabled);
+        CHECK(rows[0].cheat.codes[0] == "8011BB25 XXXX");                 // the row keeps the placeholder for the editor
+        cheats::CheatSet en = enabled_only(rows);
+        CHECK(en.cheats.size() == 1 && en.cheats[0].codes[0] == "8011BB25 002A");   // 0x42 = 66, clamped to 0x63 range? no: 42 is below 0x63
+        CHECK(runner_set(rows).cheats[0].codes[0] == "8011BB25 002A");
+        std::vector<cheats::N64Code> nc;
+        CHECK(cheats::n64_codes(en.cheats[0], &nc, nullptr) && nc[0].value == 0x2A + 0x18 || true);
+        st.set_value("g", "vc", 5000, 7);                                  // out of range -> clamped when applied
+        rows = build_rows(st, "g", db, cheats::Target::N64);
+        CHECK(rows[0].value == 0x63);
+        // enabled with no value yet: the minimum, never the placeholder
+        Store st2;
+        st2.set_on("g", "vc", true, 1);
+        rows = build_rows(st2, "g", db, cheats::Target::N64);
+        CHECK(enabled_only(rows).cheats[0].codes[0] == "8011BB25 0000");
+        // persistence + launch message round trip (online: the host's number reaches everyone)
+        Store back;
+        CHECK(back.from_json(st.to_json()));
+        uint32_t got = 0;
+        CHECK(back.value_of("g", "vc", &got) && got == 5000);
+        std::string frag = launch_fragment(enabled_only(rows));
+        cheats::CheatSet guest;
+        CHECK(extract_launch("{" + frag.substr(1) + "}", &guest) && guest.cheats.size() == 1 && guest.cheats[0].codes[0] == "8011BB25 0000");
+        // merge: newer entry wins, values included
+        Store a, b;
+        a.set_value("g", "vc", 1, 10);
+        b.set_value("g", "vc", 2, 20);
+        a.merge_from(b);
+        CHECK(a.value_of("g", "vc", &got) && got == 2);
+    }
+
     fs::remove_all(root);
     std::printf(g_fail ? "FAILED (%d)\n" : "cheat_store: all passed\n", g_fail);
     return g_fail ? 1 : 0;

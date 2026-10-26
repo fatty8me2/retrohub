@@ -72,6 +72,30 @@ bool n64_is_button_cheat(const Cheat& c);
 /* Split into the always-on list (core cheat engine) and the fire-once list (88/89 plus the conditional guarding each). */
 void n64_split_button(const std::vector<N64Code>& codes, std::vector<N64Code>* core, std::vector<N64Code>* once);
 
+/* ---- value cheats ----
+ * ~6000 database cheats carry placeholder digits ("8001A0E7 XXXX", "01??DCC4", "800A0F34+000?") meaning "type a value".
+ * A run of X / x / ? characters in a hex code is one value slot; every run of the cheat takes the same number
+ * (a shorter run keeps the low digits). Hints in the description narrow it: "(00-63)", "(0-63 Hexidecimal)",
+ * "01=Potion 02=Antidote" lists. The filled-in cheat (value_apply) is an ordinary cheat everything else handles. */
+struct ValueOption { uint32_t value; std::string label; };
+struct ValueSpec {
+    bool valid = false;          // the cheat has a placeholder
+    int digits = 0;              // hex digits of the widest slot (1..8)
+    uint32_t min = 0, max = 0;   // inclusive, already clamped to the slot and the code type
+    bool hinted = false;         // the description gave a range or an option list
+    bool prefer_hex = false;     // the description talks in hex ("00-FF", "hexadecimal")
+    std::vector<ValueOption> options;   // known meanings (dropdown) when the description lists >= 2
+};
+/* True when some code line has a placeholder run (and is otherwise hex). */
+bool value_has_placeholder(const Cheat& c);
+ValueSpec value_spec(const Cheat& c, Target target);
+uint32_t value_clamp(const ValueSpec& s, uint32_t v);
+/* Replaces every placeholder run with `v` (clamped) as upper-case hex. False when the cheat has no placeholder. */
+bool value_apply(const Cheat& c, uint32_t v, Target target, Cheat* out);
+/* "99" / "0x63" / "63h": text -> number. dec: plain digits are decimal. False when empty / not a number / overflow. */
+bool value_parse(const std::string& text, bool dec, uint32_t* out);
+std::string value_format(uint32_t v, bool dec, int digits);
+
 /* ---- libretro (retro_cheat_set) ---- */
 /* The string handed to retro_cheat_set for one cheat: normalized lines joined with '+'. False + *err when any line is
  * invalid for `target`. */
