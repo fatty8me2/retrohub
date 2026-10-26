@@ -178,3 +178,4 @@ add_executable(hub_bootsound_test test_boot_sound.cpp boot_synth.cpp)
 target_include_directories(hub_bootsound_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_bootsound_test PRIVATE hubcommon)
 target_compile_definitions(hub_bootsound_test PRIVATE BOOT_SOUND_OUT_DIR="${CMAKE_SOURCE_DIR}/qa/out/boot_sounds")
+target_include_directories(RetroHub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)   # boot_anim.h includes "common/library.h"
