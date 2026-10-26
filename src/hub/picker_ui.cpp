@@ -164,6 +164,7 @@ void room_game_hero(const hub::GameEntry* rg, bool host) {
     float ph = H - 20 * S, pw = ph * 0.72f;
     ImVec2 a0 = p0 + ImVec2(10 * S, 10 * S), a1 = a0 + ImVec2(pw, ph);
     float tx = a1.x + 18 * S, tw = p1.x - tx - 16 * S;
+    if (host) tw -= std::min(260 * S, W * 0.3f) + 16 * S;   // keep text clear of the Choose/Change game button
     ImFont* hf = ui::F.title ? ui::F.title : ui::F.h2;
     const char* cap = host ? "YOUR PICK" : "HOST'S PICK";
     if (rg) {
@@ -190,7 +191,7 @@ void room_game_hero(const hub::GameEntry* rg, bool host) {
         }
         dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + 12 * S), ui::TEXT3, cap);
         dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 12 * S + ui::F.cap->FontSize + 4 * S), ui::TEXT, ui::ellipsize(hf, hf->FontSize, title, tw).c_str());
-        dl->AddText(ImVec2(tx, p0.y + 12 * S + ui::F.cap->FontSize + 4 * S + hf->FontSize + 10 * S), ui::TEXT2, sub.c_str());
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, p0.y + 12 * S + ui::F.cap->FontSize + 4 * S + hf->FontSize + 10 * S), ui::TEXT2, sub.c_str(), nullptr, tw);
     }
     if (host) {   // the host changes the pick in the big picker
         float bw = std::min(260 * S, W * 0.3f), bh = 52 * S;
