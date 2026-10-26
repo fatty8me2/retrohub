@@ -1,6 +1,24 @@
 {
   "versions": [
     {
+      "version": "1.27.3",
+      "date": "2026-10-26",
+      "title": "Longer startup sounds, zipped games everywhere",
+      "new": [
+        "Every console's startup sound is now a fuller 5-10 second piece that keeps playing as the game starts",
+        "Zip, 7z and rar work for every console: small games load straight away, big disc games unpack once and are reused",
+        "Settings shows how much space unpacked games use, with Clear cache and a size limit"
+      ],
+      "improved": [
+        "Zipped and unzipped copies count as the same game, so saves, cloud saves and online rooms match across friends",
+        "Library scanning is about twice as fast",
+        "Updates now come from the RetroHub releases page and are quicker to publish"
+      ],
+      "fixed": [
+        "Friends' games now show their cover art (for example PlayStation games when you own none)"
+      ]
+    },
+    {
       "version": "1.27.2",
       "date": "2026-10-26",
       "title": "A calmer start animation",
