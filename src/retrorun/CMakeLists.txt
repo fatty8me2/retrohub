@@ -13,7 +13,7 @@ add_executable(retrorun
 target_include_directories(retrorun PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
-target_link_libraries(retrorun PRIVATE hubsavesync n64run_lockstep_core hubnet hubcommon hubcontrols_sdl SDL2::SDL2)
+target_link_libraries(retrorun PRIVATE hubsavesync n64run_lockstep_core hubnet hubcommon hubcontrols_sdl hubminiz SDL2::SDL2)
 set_target_properties(retrorun PROPERTIES WIN32_EXECUTABLE OFF)
 
 add_custom_command(TARGET retrorun POST_BUILD

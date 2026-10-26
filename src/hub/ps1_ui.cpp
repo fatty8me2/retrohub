@@ -1,6 +1,8 @@
 #include "app.h"
 
 #include "ps1.h"
+#include "ps2_online.h"
+#include "pcsx2.h"
 
 #include <fstream>
 
@@ -293,4 +295,76 @@ void ps1_settings_ui() {
         if (button("Use automatic##ps1bios", ImVec2(0, 0))) { A.st.ps1_bios.clear(); mark_dirty(); looked_at = -100; }
     }
     if (ImGui::Checkbox("Use the built-in OpenBIOS when no BIOS is found", &A.st.ps1_openbios)) mark_dirty();
+}
+
+/* ---------- PlayStation 2 online (retrorun + LRPS2): core download, readiness, launch arguments. docs/PS2_ONLINE.md ---------- */
+
+namespace {
+hubemu::Installer LR_DL;          // on-demand download of pcsx2_libretro.dll (quiet: progress shows in the room banner, no modal)
+double lr_failed_at = -1000;
+std::string lr_error;
+
+std::string lrps2_core() {
+    hubemu::Install in = hubemu::find(hubemu::Kind::Lrps2, "", "");
+    if (!in.exe.empty()) return in.exe;
+    return find_core("pcsx2");   // dev builds / manual installs: pcsx2_libretro.dll in the cores folder
+}
+hubemu::Bios ps2_bios_now() { return hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders)); }
+}  // namespace
+
+/* Why this PC cannot start a PS2 room game ("" = fine). Starts the core download the first time it is asked (3.6 MB, hash-pinned). */
+std::string ps2_online_block(const hub::GameEntry& e) {
+    static double at = -10; static std::string cached; static std::string cached_key;
+    bool ok = false;
+    if (LR_DL.poll(&ok) && !ok) { std::lock_guard<std::mutex> lk(LR_DL.mu); lr_error = LR_DL.error; lr_failed_at = ImGui::GetTime(); }
+    double now = ImGui::GetTime();
+    const bool dl = LR_DL.state == hubemu::Installer::Working;
+    if (!dl && now - at < 2.0 && cached_key == e.key) return cached;
+    at = now;
+    cached_key = e.key;
+    hubps2::OnlineState st;
+    st.core_present = !lrps2_core().empty();
+    st.core_downloading = dl;
+    st.percent = LR_DL.phase > 0 ? 100 : (LR_DL.total ? (int)(LR_DL.got * 100 / LR_DL.total) : 0);
+    st.download_error = lr_error;
+    st.bios_found = !ps2_bios_now().file.empty();
+    st.needs_unpack = e.issue == "extract" && hub::extracted_3ds_path(e).empty();
+    st.title = e.title;
+    if (!st.core_present && !dl && (lr_error.empty() || now - lr_failed_at > 30.0)) {   // first ask, or a retry 30 s after a failure
+        lr_error.clear();
+        LR_DL.start(hubemu::Kind::Lrps2, hubemu::managed_root());
+        st.core_downloading = true;
+    }
+    cached = hubps2::online_block_reason(st);
+    return cached;
+}
+
+/* retrorun arguments for a PS2 room. `tmp_dir` is the throwaway session dir (netplay\ps2, emptied by the caller); the BIOS and the host's memory
+ * card are staged under tmp_dir\sys. The host's PCSX2 card is a plain 8 MB .ps2 (8,650,752 bytes, ECC) that LRPS2 reads as Mcd001.ps2. */
+bool ps2_online_args(const hub::GameEntry& e, const std::string& net, const std::string& tmp_dir, bool share_save, bool is_host_card,
+                     std::string* args, std::string* err) {
+    if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) { *err = "Unpacking " + e.title + " first - try again when it is done."; return false; }
+    std::string core = lrps2_core();
+    if (core.empty()) { *err = "The PlayStation 2 online core is not downloaded yet - wait for the room's status line to clear."; return false; }
+    hubemu::Bios bios = ps2_bios_now();
+    if (bios.file.empty()) { *err = hubemu::pcsx2_bios_missing_text(); return false; }
+    std::string sysdir = tmp_dir + "\\sys";
+    std::string bios_dir = sysdir + "\\" + hubps2::staged_bios_dir_rel();
+    make_dirs(bios_dir);
+    make_dirs(sysdir + "\\pcsx2\\memcards");
+    std::error_code ec;
+    std::filesystem::copy_file(std::filesystem::u8path(bios.dir + "\\" + bios.file), std::filesystem::u8path(bios_dir + "\\" + bios.file), std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) { *err = "Could not stage the PlayStation 2 BIOS: " + ec.message(); return false; }
+    if (share_save && is_host_card) {   // the host's vault card is COPIED; retrorun sends it to every guest, nothing is written back
+        std::filesystem::path card = std::filesystem::path(hub::saves::battery_dir(sys_short(e), e.key)) / std::filesystem::u8path(hubps2::vault_card_rel(hubemu::pcsx2_safe_key(e.key)));
+        if (std::filesystem::is_regular_file(card, ec)) std::filesystem::copy_file(card, std::filesystem::u8path(sysdir + "\\" + hubps2::staged_card_rel()), std::filesystem::copy_options::overwrite_existing, ec);
+        else set_notice("No memory card for " + e.title + " on this PC yet - everyone starts with a blank card.", 8.0);
+    }
+    const hub::GameInfo* cat = hub::find_game(e.catalog_id);
+    std::string serial = !e.serial.empty() ? e.serial : (cat && !cat->serials.empty() ? cat->serials[0] : "");
+    std::string game = e.issue == "extract" ? hub::extracted_3ds_path(e) : e.path;
+    *args = "--core " + quote(core) + " --rom " + quote(game) + " --save-dir " + quote(tmp_dir) + " --state-dir " + quote(tmp_dir) + " --system-dir " + quote(sysdir) +
+            net + title_arg(e.title) + save_stem_arg(e) + controls_arg("ps1", e.key);
+    *args += hubps2::retrorun_setup_args(bios.file, serial, share_save);
+    return true;
 }

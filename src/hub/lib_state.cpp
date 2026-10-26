@@ -224,8 +224,8 @@ void rebuild_vis() {
 /* ---------- online capability ---------- */
 
 bool supports_online(const hub::GameEntry& e) {
-    /* hubcaps::online_capable: every game of N64/GB/GBC/GBA/3DS/GC (Dolphin NetPlay, any disc)/NDS (ds-link)/PS1 (rollback, multitap for 3-4).
-     * Non-catalog GC/NDS/PS1 games are "untested" (online_untested). PS2 and Wii U stay out. Unit-tested against launch_online's branches. */
+    /* hubcaps::online_capable: every game of N64/GB/GBC/GBA/3DS/GC (Dolphin NetPlay, any disc)/NDS (ds-link)/PS1 (rollback, multitap for 3-4)/PS2 (lockstep, 2 players).
+     * Non-catalog GC/NDS/PS1 games are "untested" (online_untested). PS2 (retrorun + LRPS2, 2 players) is in; Wii U stays out. Unit-tested against launch_online's branches. */
     return hubcaps::online_capable(e.system, hub::find_game(e.catalog_id));
 }
 /* Capable but not vetted (GC/DS/PS1 outside the catalog's online list): the picker tags it "Untested online". */

@@ -75,6 +75,7 @@ progress made online is discarded (the host's vault stays exactly as it was). Wi
 |---|---|---|
 | N64 lockstep (n64run) | host vault battery dir shared (`--share-host-save`, slot 0 = host) | no (temp dir) |
 | GB / GBC / GBA lockstep + rollback cores | host vault save RAM + RTC shared (`--share-host-save`) | no (temp dir) |
+| PlayStation 2 lockstep (retrorun, LRPS2) | host's PCSX2 memory card 1 (`Mcd001.ps2`, 8 MB, deflated) sent before the core boots (`--share-host-save`, slot 0 = host); slot 2 blank | no (temp dir `netplay\ps2`) |
 | PlayStation rollback (retrorun, Beetle PSX) | host memory card 1 (128 KB save RAM) shared (`--share-host-save`, slot 0 = host) | no (temp dir) |
 | GB / GBC / GBA link cable (Pokemon trade/battle) | each player's OWN vault save, exchanged via the room | own console only |
 | DS wireless (`--ds-link`) | each player's own vault save | yes, own |
