@@ -1,6 +1,7 @@
 #include "logic.h"
 
 #include "remix_data.h"
+#include "ps2_online.h"
 
 #include <algorithm>
 #include <cctype>
@@ -730,6 +731,7 @@ std::string exit_code_text(unsigned long code) {
         case 5: return "The game went out of sync (desync) and was stopped.";
         case 6: return "Couldn't share the host's save - check your connection and try again.";
         case 8: return player_left_text("");
+        case 9: case 10: case 11: return hubps2::setup_mismatch_text(code);
         case 7: return "The PlayStation setups differ: everyone in the room needs the same BIOS file (or all use the built-in OpenBIOS). Check Settings > Playing.";
         default: return "Game exited with code " + std::to_string(code) + ".";
     }

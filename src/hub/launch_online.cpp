@@ -393,7 +393,6 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         return;
     }
     if (is_kanto(e)) { kt_launch(e, launch_no, is_host); return; }
-    if (e.system == hub::System::PS2) { launch_fail("PS2 online isn't supported yet - PCSX2 has no netplay. Play it offline from your library.", 12.0); return; }
     if (e.system == hub::System::GC) {   // Dolphin NetPlay: the host starts now; guests start from the launch handler
         if (is_host) {
             gcnp::Spec s;
@@ -629,6 +628,19 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::string args, err;
         if (!ps1_online_args(e, net, plan.ports, tmp, share_save, gsv, &args, &err)) { launch_note(is_host, err, 12.0); return; }
         args += cheats_launch_args(e, true, is_host, launch_body);
+        args += qm_args(ri, e, false);
+        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        return;
+    }
+    if (e.system == hub::System::PS2) {
+        /* PlayStation 2 (LRPS2 in retrorun): every PC runs the whole console; pad buttons, both sticks and L2/R2 pressure travel through the room with
+         * the N64-style adaptive input delay. The host's memory card is the shared session card (docs/SAVES.md); two ports (LRPS2 has no multitap). */
+        if (plan.players > 2) { launch_note(is_host, "PlayStation 2 online supports 2 players.", 12.0); return; }
+        std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\ps2";
+        remove_tree(tmp);
+        make_dirs(tmp);
+        std::string args, err;
+        if (!ps2_online_args(e, net, tmp, share_save, is_host || room_my_slot() == 0, &args, &err)) { launch_note(is_host, err, 12.0); return; }
         args += qm_args(ri, e, false);
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;

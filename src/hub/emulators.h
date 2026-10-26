@@ -18,7 +18,7 @@
 
 namespace hubemu {
 
-enum class Kind { Azahar, Cemu, Dolphin, Pcsx2 };   // Pcsx2: PlayStation 2 (pcsx2.h)
+enum class Kind { Azahar, Cemu, Dolphin, Pcsx2, Lrps2 };   // Pcsx2: PlayStation 2 (pcsx2.h); Lrps2: the libretro PS2 core for online rooms (a DLL for retrorun, not an exe)
 
 const char* name(Kind k);                 // "Azahar" / "Cemu" / "Dolphin"
 Kind kind_for(hub::System s);             // N3DS -> Azahar, WiiU -> Cemu, GC -> Dolphin, PS2 -> Pcsx2
