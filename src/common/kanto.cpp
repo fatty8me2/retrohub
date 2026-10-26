@@ -85,6 +85,7 @@ bool is_package_dir(const std::string& dir) {
     return true;
 }
 
+static std::string slash_end(std::string d) { if (!d.empty() && d.back() != '\\' && d.back() != '/') d += '\\'; return d; }
 static std::string norm_entry(std::string n) { for (auto& c : n) if (c == '\\') c = '/'; return n; }
 
 std::string patch_content_id(const std::string& text, std::string* built) {
@@ -94,6 +95,47 @@ std::string patch_content_id(const std::string& text, std::string* built) {
     if (built) *built = b;
     if (sha.empty() && b.empty()) return "";
     return sha + "@" + b;
+}
+
+PkgVer parse_pkg_ver(const std::string& text) {
+    PkgVer v;
+    json::Value j;
+    if (text.empty() || !json::parse(text, &j) || !j.is_object()) return v;
+    v.id = lower(j.str("patchSha1"));
+    v.built = j.str("built");
+    return v;
+}
+PkgVer read_pkg_ver(const std::string& dir) {
+    std::string t;
+    if (!winutil::read_file(slash_end(dir) + "patch\\patch.json", &t)) return PkgVer();
+    return parse_pkg_ver(t);
+}
+VerMatch compare_versions(const PkgVer& a, const PkgVer& b) {
+    if (a.id.empty() || b.id.empty()) return VerMatch::Unknown;
+    if (a.id == b.id) return VerMatch::Same;
+    if (!a.built.empty() && !b.built.empty() && a.built != b.built) return a.built < b.built ? VerMatch::MineOlder : VerMatch::MineNewer;
+    return VerMatch::Different;
+}
+std::string version_reason(VerMatch m) {
+    switch (m) { case VerMatch::MineOlder: return "pkg_old"; case VerMatch::MineNewer: return "pkg_new"; case VerMatch::Different: return "pkg_diff"; default: return ""; }
+}
+std::string version_block_text(VerMatch m, const std::string& n) {
+    std::string who = n.empty() ? std::string("Your partner") : n;
+    switch (m) {
+        case VerMatch::MineOlder: return who + " has a newer Kanto Together package - you need to update (replace the package zip; RetroHub reinstalls it)";
+        case VerMatch::MineNewer: return who + " has an older Kanto Together package - they need to update";
+        case VerMatch::Different: return who + " has a different Kanto Together package - you both need the same version";
+        default: return "";
+    }
+}
+bool valid_ver_id(const std::string& id) {
+    if (id.size() != 40) return false;
+    for (char ch : id) if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) return false;
+    return true;
+}
+bool has_barriers(const std::string& dir) {
+    std::string t;
+    return winutil::read_file(slash_end(dir) + "app\\coop-launch.mjs", &t) && t.find("no-barriers") != std::string::npos;
 }
 
 bool inspect_dir(const std::string& dir, Package* out) {
@@ -349,7 +391,7 @@ std::string rom_message(const RomPick& p) {
 
 std::string reason_for(RomState s) { return s == RomState::WrongRevision ? "wrong_rom" : "no_rom"; }
 bool valid_fail_reason(const std::string& r) {
-    for (const char* x : {"no_rom", "wrong_rom", "install", "patch", "cancelled", "package", "start"}) if (r == x) return true;
+    for (const char* x : {"no_rom", "wrong_rom", "install", "patch", "cancelled", "package", "start", "pkg_old", "pkg_new", "pkg_diff"}) if (r == x) return true;
     return false;
 }
 std::string fail_sentence(const std::string& r) {
@@ -359,6 +401,9 @@ std::string fail_sentence(const std::string& r) {
     if (r == "package") return "they do not have the Kanto Together package";
     if (r == "patch") return "the game could not be built from their FireRed ROM";
     if (r == "cancelled") return "they cancelled the setup";
+    if (r == "pkg_old") return "their Kanto Together package is older than yours - they need to update";
+    if (r == "pkg_new") return "their Kanto Together package is newer than yours - you need to update";
+    if (r == "pkg_diff") return "their Kanto Together package is a different version than yours";
     if (r == "start") return "the game could not be started on their PC";
     return "something went wrong on their PC";
 }
@@ -500,6 +545,7 @@ std::string cmd_confirm() { return "confirm\n"; }
 std::string cmd_cancel() { return "cancel\n"; }
 std::string cmd_code(const std::string& c) { std::string n = normalize_code(c); return valid_code(n) ? "code " + n + "\n" : ""; }
 std::string cmd_quit() { return "quit\n"; }
+std::string cmd_go() { return "go\n"; }
 
 std::string redact_log_text(const std::string& in) {
     static const std::regex ip(R"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})");
@@ -568,6 +614,30 @@ bool feed_line(State& s, const std::string& raw) {
         return true;
     }
     if (l.find("world: snapshot applied") != std::string::npos) { s.synced_story = true; return true; }
+    /* start-up barriers (package "sync barriers"): the script's user-facing SYNC: lines (human text, matched loosely) */
+    if (l.compare(0, 5, "SYNC:") == 0) {
+        if (l.find("Waiting for partner") != std::string::npos) {
+            std::string at, why;
+            size_t a = l.find("you are at "), b = l.find(';', a == std::string::npos ? 0 : a);
+            if (a != std::string::npos && b != std::string::npos) {
+                at = l.substr(a + 11, b - a - 11);
+                size_t e = l.find(". Your buttons", b);
+                why = trim(l.substr(b + 1, e == std::string::npos ? std::string::npos : e - b - 1));
+            }
+            s.barrier_waiting = true;
+            s.barrier_text = "Waiting for your partner" + (at.empty() ? std::string() : " (you are at: " + at + ")") + (why.empty() ? std::string() : " - " + why) + ". Your buttons are paused until they catch up.";
+            return true;
+        }
+        if (l.find("continuing together") != std::string::npos || l.find("both of you are in the game world") != std::string::npos) {
+            s.barrier_waiting = false; s.barrier_text.clear(); s.together = true; return true;
+        }
+        if (l.find("stopped waiting") != std::string::npos || l.find("you chose to continue") != std::string::npos) {
+            s.barrier_waiting = false; s.barrier_text = "Stopped waiting - your game continues; you catch up in the game world."; return true;
+        }
+        if (l.find("older version without start-up barriers") != std::string::npos) { s.legacy_peer = true; s.barrier_waiting = false; s.barrier_text.clear(); return true; }
+        if (l.find("start-up barriers are OFF") != std::string::npos || l.find("barriers are not available") != std::string::npos) { s.barriers_off = true; return true; }
+        return false;
+    }
     if (l.find(">>> Your partner is connected. <<<") != std::string::npos || l == "peer connected") {
         s.phase = Phase::Connected; s.ever_connected = true; s.join_failed = false; s.detail = phase_text(s.phase, s.host); s.last_error.clear(); return true;
     }
