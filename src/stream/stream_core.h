@@ -44,7 +44,7 @@ class Reassembler {
   private:
     struct Parity { bool have = false; int g = 0; Bytes data; };
     struct Pending {
-        uint16_t count = 0; bool key = false; uint32_t first_ms = 0;
+        uint16_t count = 0; bool key = false; uint32_t first_ms = 0, last_ms = 0;
         std::vector<Bytes> frag; std::vector<uint8_t> have; uint16_t got = 0;
         std::map<uint16_t, Parity> parity;
         std::map<uint16_t, uint32_t> last_nack;

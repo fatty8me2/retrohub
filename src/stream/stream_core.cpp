@@ -106,6 +106,7 @@ void Reassembler::feed(const uint8_t* pkt, int len, uint32_t now)
     Pending& p = it->second;
     if (p.count != count) return;
     if (flags & kVfKey) p.key = true;
+    p.last_ms = now;
     const uint8_t* pl = pkt + kVideoHdr; int pn = len - kVideoHdr;
     if (flags & kVfParity) {
         if (pn != kFragData + 2) return;
@@ -154,8 +155,11 @@ std::vector<MissingFrag> Reassembler::nacks(uint32_t now, uint32_t age_ms, uint3
     for (auto& kv : pend_) {
         Pending& p = kv.second;
         if (now - p.first_ms < age_ms) continue;
+        int hi = -1;
+        for (int i = 0; i < p.count; i++) if (p.have[i]) hi = i;
         for (uint16_t i = 0; i < p.count && out.size() < max_n; i++) {
             if (p.have[i]) continue;
+            if ((int)i > hi && now - p.last_ms < std::max<uint32_t>(age_ms * 2, 15)) continue;   // tail still being paced out unless the stream stalled
             auto ln = p.last_nack.find(i);
             if (ln != p.last_nack.end() && now - ln->second < retry_ms) continue;
             p.last_nack[i] = now;
