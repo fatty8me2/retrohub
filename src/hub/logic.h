@@ -89,7 +89,8 @@ struct Selectability { bool ok = false; std::string reason; };
  * everyone must have the SAME md5; host's is the reference) or a library game key (everyone must
  * list that key). */
 Selectability game_selectable(const std::string& game_id, int max_players,
-                              const std::vector<PeerInfo>& peers, int host_slot);
+                              const std::vector<PeerInfo>& peers, int host_slot, bool remote_play = false);
+/* remote_play: only the host needs the game (guests get a video stream), so only the host's ownership is checked. */
 
 /* hello v2: {"kind":"hello","version":"2","games":{catalogId:md5,...},"keys":["n64:..","gba:.."]}.
  * "games" is kept for old clients (N64 catalog md5s); "keys" advertises every game key. */

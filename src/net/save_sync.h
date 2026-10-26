@@ -16,7 +16,7 @@
  * kDataPerTick per kDataIntervalMs and at most kSaveWindow un-ACKed, each at most once per kResendMs). A client that fails the hash clears its bitmap, which makes the host resend the file.
  * The hash is 64-bit FNV-1a over the bytes plus the size: it catches corruption, not tampering.
  *
- * Limits: a file <= 128 KiB (largest N64 save: FlashRAM), total <= 256 KiB, <= 8 files.
+ * Limits: a file <= 2 MiB (N64 saves are <= 128 KiB; the PS2 memory card travels deflated), total <= 2 MiB, <= 8 files.
  * Only the battery extensions listed in is_battery_ext() are shared; anything else in the save dir is ignored. */
 
 #include <cstddef>
@@ -33,8 +33,8 @@ constexpr uint8_t kPktSaveAck = 5;
 constexpr uint8_t kPktSaveGo = 6;
 
 constexpr size_t kSaveChunk = 1000;
-constexpr size_t kSaveMaxFile = 128 * 1024;
-constexpr size_t kSaveMaxTotal = 256 * 1024;
+constexpr size_t kSaveMaxFile = 2 * 1024 * 1024;
+constexpr size_t kSaveMaxTotal = 2 * 1024 * 1024;
 constexpr size_t kSaveMaxFiles = 8;
 constexpr uint32_t kHdrIntervalMs = 50;
 constexpr uint32_t kGoGraceMs = 1000;

@@ -115,6 +115,16 @@ void apply_scan() {
             g.path = "C:\fake\crashbash.cue";
             A.lib.push_back(g);
         }
+        if (!std::getenv("HUB_SHOT_NO_WIIU")) {   // a catalog Wii U remote-play game (HUB_SHOT_ROOM_GAME=sm3dw); HUB_SHOT_NO_WIIU = this PC has no copy (guest view)
+            hub::GameEntry g;
+            g.system = hub::System::WiiU;
+            g.key = "wiiu:0005000010145d00";
+            g.catalog_id = "sm3dw";
+            g.serial = "0005000010145D00";
+            g.title = "Super Mario 3D World";
+            g.path = "C:\fake\sm3dw.rpx";
+            A.lib.push_back(g);
+        }
         gameinfo_ui_shot_lib();
         A.st.find_games_done = true;
         hubart::set_enabled(false);
@@ -240,8 +250,8 @@ void rebuild_vis() {
 /* ---------- online capability ---------- */
 
 bool supports_online(const hub::GameEntry& e) {
-    /* hubcaps::online_capable: every game of N64/GB/GBC/GBA/3DS/GC (Dolphin NetPlay, any disc)/NDS (ds-link)/PS1 (rollback, multitap for 3-4).
-     * Non-catalog GC/NDS/PS1 games are "untested" (online_untested). PS2 and Wii U stay out. Unit-tested against launch_online's branches. */
+    /* hubcaps::online_capable: every game of N64/GB/GBC/GBA/3DS/GC (Dolphin NetPlay, any disc)/NDS (ds-link)/PS1 (rollback, multitap for 3-4)/PS2 (lockstep, 2 players).
+     * Non-catalog GC/NDS/PS1 games are "untested" (online_untested). PS2 (retrorun + LRPS2, 2 players) is in; Wii U stays out. Unit-tested against launch_online's branches. */
     return hubcaps::online_capable(e.system, hub::find_game(e.catalog_id));
 }
 /* Capable but not vetted (GC/DS/PS1 outside the catalog's online list): the picker tags it "Untested online". */
@@ -258,10 +268,27 @@ int local_players_for(const hub::GameEntry& e) {
 }
 /* How a game is named in lobby messages: the N64 catalog id (back-compat) or the library key. */
 std::string room_id(const hub::GameEntry& e) { return e.catalog_id.empty() ? e.key : e.catalog_id; }
+/* Remote play: a guest needs no copy of the game, so a catalog remote-play id resolves to a stand-in entry (title, system, catalog id;
+ * no path) when the library has none. Nothing launches from it locally; launch_online streams instead. */
+static const hub::GameEntry* remote_stand_in(const std::string& id) {
+    static hub::GameEntry slot;
+    const GameInfo* g = hub::find_game(id);
+    if (!g || !g->online) return nullptr;
+    hub::System s = hub::system_from_short(g->system.c_str());
+    if (!hubcaps::remote_play_game(s, g)) return nullptr;
+    slot = hub::GameEntry();
+    slot.key = "remote:" + id;
+    slot.system = s;
+    slot.title = g->title;
+    slot.catalog_id = id;
+    return &slot;
+}
+bool is_remote_stand_in(const hub::GameEntry& e) { return e.key.compare(0, 7, "remote:") == 0; }
+bool remote_play_entry(const hub::GameEntry& e) { return hubcaps::remote_play_game(e.system, hub::find_game(e.catalog_id)); }
 const hub::GameEntry* find_room_entry(const std::string& id) {
     for (auto& e : A.lib)
         if (supports_online(e) && room_id(e) == id) return &e;
-    return nullptr;
+    return remote_stand_in(id);
 }
 std::string upper(std::string s) {
     for (auto& c : s) c = (char)std::toupper((unsigned char)c);

@@ -156,7 +156,8 @@ const char* genre_of(const std::string& id) {
         {"conker", "Action"}, {"bm64", "Action"}, {"aria", "Action"},
         {"pokex", "RPG"}, {"pokey", "RPG"}, {"pokeor", "RPG"}, {"pokeas", "RPG"},
         {"pokesun", "RPG"}, {"pokemoon", "RPG"}, {"pokeusun", "RPG"}, {"pokeumoon", "RPG"},
-        {"tphd", "Adventure"},
+        {"tphd", "Adventure"}, {"sm3dw", "Platformer"}, {"mk8", "Racing"}, {"nsmbu", "Platformer"}, {"captaintoad", "Puzzle"},
+        {"smash4wiiu", "Fighting"}, {"nland", "Party"}, {"pikmin3", "Strategy"},
         {"gc_ww", "Adventure"}, {"gc_tp", "Adventure"}, {"mkdd", "Racing"}, {"gc_mp6", "Party"}, {"pokexd", "RPG"},
         {"sunshine", "Platformer"}, {"melee", "Fighting"},
         {"pokered", "RPG"}, {"pokeyellow", "RPG"}, {"pokegold", "RPG"}, {"pokesilver", "RPG"}, {"pokecrystal", "RPG"},
@@ -486,6 +487,35 @@ const std::vector<GameInfo>& catalog() {
          {"000500001019E500"}, false, 2016,
          "Link crosses between Hyrule and the Twilight Realm in the remastered GameCube adventure.",
          "Legend of Zelda, The - Twilight Princess HD (USA) (En,Fr,Es) (Rev 2)"},
+        /* Wii U couch co-op: online = "Remote play" (the host's Cemu is streamed to guests; online_max is how many pads the host can bind). */
+        {"sm3dw", "Super Mario 3D World", Engine::Cemu, 4, {}, "", "wiiu",
+         {"0005000010145C00", "0005000010145D00", "0005000010106100"}, true, 2013,   /* USA, EUR, JPN */
+         "Run, jump and cat-suit through 3D courses with up to four players at once.",
+         "Super Mario 3D World (USA)"},
+        {"mk8", "Mario Kart 8", Engine::Cemu, 4, {}, "", "wiiu",
+         {"000500001010EC00"}, true, 2014,
+         "Anti-gravity racing for up to four players on one screen.",
+         "Mario Kart 8 (USA)"},
+        {"nsmbu", "New Super Mario Bros. U", Engine::Cemu, 4, {}, "", "wiiu",
+         {"0005000010101D00"}, true, 2012,
+         "Classic side-scrolling Mario with up to four players, plus Boost Mode.",
+         "New Super Mario Bros. U (USA)"},
+        {"captaintoad", "Captain Toad: Treasure Tracker", Engine::Cemu, 2, {}, "", "wiiu",
+         {}, true, 2014,
+         "Puzzle-box levels where a second player helps by tapping and shooting turnips.",
+         "Captain Toad - Treasure Tracker (USA)"},
+        {"smash4wiiu", "Super Smash Bros. for Wii U", Engine::Cemu, 4, {}, "", "wiiu",
+         {}, true, 2014,
+         "Up to eight fighters on Wii U; remote play carries four local pads.",
+         "Super Smash Bros. for Wii U (USA)"},
+        {"nland", "Nintendo Land", Engine::Cemu, 4, {}, "", "wiiu",
+         {}, true, 2012,
+         "Twelve attractions based on Nintendo franchises, most made for groups.",
+         "Nintendo Land (USA)"},
+        {"pikmin3", "Pikmin 3", Engine::Cemu, 2, {}, "", "wiiu",
+         {}, true, 2013,
+         "Lead Pikmin through a new world; Bingo Battle and Mission Mode are two-player.",
+         "Pikmin 3 (USA)"},
 
         /* ---- GameCube (Dolphin). Serial = the 6-char disc ID. Online play (Dolphin NetPlay) is wired for the online-capable titles. ---- */
         {"gc_ww", "Zelda: The Wind Waker", Engine::Dolphin, 1, {}, "", "gc",
@@ -649,7 +679,8 @@ const std::vector<GameInfo>& catalog() {
          "Resident Evil 2 (USA) (Disc 1)"},
 
         /* ---- PlayStation 2 (PCSX2 engine). Serials = Redump header IDs (SLUS-/SCUS-), region variants included.
-         * PS2 stays online=false. Engine::Pcsx2 runs the PCSX2 core. ---- */
+         * Engine::Pcsx2 runs the PCSX2 core offline; online=true games are 2-player versus/race titles played in rooms through retrorun + LRPS2
+         * (input-delay lockstep, 2 ports: LRPS2 has no multitap, see online_max_for). ---- */
         {"ratchet", "Ratchet & Clank", Engine::Pcsx2, 1, {}, "", "ps2",
          {"SCUS-97199"}, false, 2002,
          "Ratchet and the robot Clank blast through planets in a 3D action platformer.",
@@ -671,23 +702,23 @@ const std::vector<GameInfo>& catalog() {
          "Carl Johnson returns to Los Santos in an open-world crime sandbox.",
          "Grand Theft Auto - San Andreas (USA, Canada) (v3.00)"},
         {"tekken5", "Tekken 5", Engine::Pcsx2, 2, {}, "", "ps2",
-         {"SLUS-21059"}, false, 2005,
+         {"SLUS-21059"}, true, 2005,
          "The fifth Tekken tournament, with two-player versus fights and a large roster.",
          "Tekken 5 (USA)"},
         {"burnout3", "Burnout 3: Takedown", Engine::Pcsx2, 2, {}, "", "ps2",
-         {"SLUS-21050"}, false, 2004,
+         {"SLUS-21050"}, true, 2004,
          "Crash-focused racing with Takedown mode, and split-screen races for two players.",
          "Burnout 3 - Takedown (USA, Canada)"},
         {"crashnitro", "Crash Nitro Kart", Engine::Pcsx2, 4, {}, "", "ps2",
-         {"SLUS-20649"}, false, 2003,
+         {"SLUS-20649"}, true, 2003,
          "Kart racing with power-ups and a split-screen race for up to four; multitap needed for 3-4.",
          "Crash Nitro Kart (USA)"},
         {"crashtag", "Crash Tag Team Racing", Engine::Pcsx2, 4, {}, "", "ps2",
-         {"SLUS-21191"}, false, 2005,
+         {"SLUS-21191"}, true, 2005,
          "Crash and friends race in tag teams, with split-screen races for up to four; multitap for 3-4.",
          "Crash Tag Team Racing (USA)"},
         {"timesplitters2", "TimeSplitters 2", Engine::Pcsx2, 4, {}, "", "ps2",
-         {"SLUS-20314"}, false, 2002,
+         {"SLUS-20314"}, true, 2002,
          "Time-hopping shooter with split-screen deathmatch for up to four; multitap for 3-4.",
          "TimeSplitters 2 (USA)"},
         {"sotc", "Shadow of the Colossus", Engine::Pcsx2, 1, {}, "", "ps2",
@@ -999,7 +1030,9 @@ bool link_cable_game(const std::string& id) {
 }
 
 int online_max_for(const GameInfo& g) {
-    return g.online_max > 0 ? g.online_max : g.max_players;
+    int n = g.online_max > 0 ? g.online_max : g.max_players;
+    if (g.system == "ps2") n = std::min(n, 2);   // the LRPS2 core has two controller ports and no multitap option
+    return n;
 }
 
 const GameInfo* find_game_for(const std::string& system_short, const std::string& serial, const std::string& md5) {

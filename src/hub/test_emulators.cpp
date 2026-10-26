@@ -423,7 +423,7 @@ static void test_sessions(const fs::path& dir) {
     fs::path save = instc / "portable" / "mlc01" / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav";
     write_text(save, "ZELDA1");
     s = hubemu::begin_session(w, ci, vb.string(), vault.string());
-    CHECK(s.active && s.rels.size() == 1 && s.rels[0] == "usr/save/00050000/1019e500");
+    CHECK(s.active && s.rels.size() == 2 && s.rels[0] == "usr/save/00050000/1019e500" && s.rels[1] == "usr/save/0005000e/1019e500");
     hubemu::end_session(s);
     CHECK(read_text(vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav") == "ZELDA1");
 
@@ -790,6 +790,7 @@ static void test_controls2_emulators(const fs::path& dir) {
         hubemu::DolphinPads fk = hubemu::dolphin_pads_with(base, {xb, ds, bd}, {xb, ds, bd});
         hubemu::prepare_dolphin((fs::path(dump) / "dolphin").string(), fk, hubctl::default_profile("gc"));
         hubemu::prepare_cemu_managed((fs::path(dump) / "cemu").string(), hubctl::default_profile("wiiu"), hubemu::cemu_pads_with({xb, xb, xb}));
+        hubemu::prepare_cemu_managed((fs::path(dump) / "cemu_dsu").string(), hubctl::default_profile("wiiu"), hubemu::cemu_pads_with_dsu(hubemu::CemuPads(), 3));   // remote play: P1 local, P2-4 DSU
         hubemu::prepare_azahar((fs::path(dump) / "azahar").string(), hubctl::default_profile("3ds"), az);
     }
     /* Cemu: players follow the port order's XInput pads; GamePad for player 1, Pro Controllers after */
@@ -812,6 +813,21 @@ static void test_controls2_emulators(const fs::path& dir) {
     CHECK(read_text(cdir / "controller0.xml") == hubemu::cemu_gamepad_profile_xml(wup, 0));
     hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::CemuPads());   // fewer pads: stale Pro file goes
     CHECK(!fs::exists(cdir / "controller1.xml"));
+    /* Remote play: player 1 local pad, players 2-4 = DSU slots 0-2 */
+    {
+        hubemu::CemuPads dp = hubemu::cemu_pads_with_dsu(hubemu::CemuPads(), 3);
+        hubemu::prepare_cemu_managed(ced.string(), wup, dp);
+        std::string c0 = read_text(cdir / "controller0.xml"), c1 = read_text(cdir / "controller1.xml"), c3 = read_text(cdir / "controller3.xml");
+        CHECK(c0.find("<api>XInput</api>") != std::string::npos && c0.find("Wii U GamePad") != std::string::npos);
+        CHECK(c1.find("<api>DSUController</api>") != std::string::npos && c1.find("<uuid>0</uuid>") != std::string::npos && c1.find("Wii U Pro Controller") != std::string::npos);
+        CHECK(c3.find("<uuid>2</uuid>") != std::string::npos);
+        CHECK(c1 == hubemu::cemu_pro_profile_xml_dsu(wup, 0, 1));
+        CHECK(c1.find("<button>13</button>") != std::string::npos);   // Wii U A/B land on DSU face bits
+        hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::cemu_pads_with_dsu(hubemu::CemuPads(), 1));
+        CHECK(fs::exists(cdir / "controller1.xml") && !fs::exists(cdir / "controller2.xml"));
+        hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::CemuPads());
+        CHECK(!fs::exists(cdir / "controller1.xml"));
+    }
     /* A user's own Cemu: backup once, write only when managing, restore, SDL pads */
     {
         fs::path ud = dir / "own_cemu_data";
