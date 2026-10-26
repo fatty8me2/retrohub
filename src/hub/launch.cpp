@@ -71,7 +71,10 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     STARTUPINFOW si{};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, 0, nullptr, W(cwd).c_str(), &si, &pi);
+    /* CREATE_NO_WINDOW: n64run / retrorun are console-subsystem programs (they log to files). Without the flag Windows gives them a
+     * console, which on PCs where Windows Terminal is the default console host opens a visible terminal window over the game.
+     * GUI emulators (Dolphin, PCSX2, Azahar, Cemu) ignore the flag. */
+    BOOL ok = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(cwd).c_str(), &si, &pi);
     DWORD err = GetLastError();
     for (auto& e : env) SetEnvironmentVariableW(W(e.first).c_str(), nullptr);
     SetEnvironmentVariableW(L"RETROHUB_START_HINT", nullptr);
