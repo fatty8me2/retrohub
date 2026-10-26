@@ -138,3 +138,9 @@ Metadata only: a list of what each player owns (never files or ROMs), so friends
 - **Fetch:** `{type:"friend_library", uid, have}` -> `{type:"friend_library", uid, ver, unchanged:true}` when `have == ver`, else `{..., ver, games:[...]}`. `ver:0, games:[]` when unavailable (not shared, blocked, or a test account asking about a real one or vice versa). A non-friend gets `not-friends`. Limit 60 per minute (`rate-limited`).
 - **Privacy:** only friends, never blocked users; removing or blocking someone drops access at once. Deleting the account clears the list.
 - **Ask to host:** `ask` accepts `host:true`, delivered as `ask.host:true`.
+
+## Play time (friends' hours)
+- Setting "Share my play time with friends" (default on). When a game session ends the client sends `{type:"playtime", share, games:[{k,t,m}]}`: its top 30 games by whole minutes (key, title, minutes). Turning the setting off sends `share:false`, which erases the stored totals.
+- Server (UserHub): table `playtime` (max 30 rows), rate limited to 12 writes/hour; test accounts store nothing.
+- `{type:"playtime_get"}` (30/hour; sent once per connection and at most every 10 minutes when a game's details open) returns `{type:"playtime", friends:{uid:[{k,t,m}]}}` from a per-friend cache in the `friends` table. Stale entries (older than 6 h) are refreshed with at most 12 friend lookups per request (`pt_pull`, friends only, never blocked users). Removed or blocked friends drop out with their row.
+- UI: game details show "Friends: Mickey 14h . camer 3h" (top 3), and a friend's actions menu shows "Top games: ...". Screenshot aid: HUB_SHOT_FAKE_FRIENDS=1 with HUB_SHOT_FAKE_LIB and HUB_SELECT_GAME=fake:0.

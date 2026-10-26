@@ -4,6 +4,9 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <sstream>
 
 #include "json.h"
@@ -313,6 +316,221 @@ void n64_split_button(const std::vector<N64Code>& codes, std::vector<N64Code>* c
             once->push_back(c);
         } else core->push_back(c);
     }
+}
+
+/* ---------------------------------------------------------------- value cheats */
+
+namespace {
+
+struct Run { size_t code; size_t pos, len; };
+
+bool is_ph(char c) { return c == 'X' || c == 'x' || c == '?'; }
+bool is_sep(char c) { return c == ' ' || c == ';' || c == '+' || c == ',' || c == '\n' || c == '\r' || c == '\t' || c == '-' || c == ':'; }
+bool is_tokch(char c) { return is_ph(c) || std::isxdigit((unsigned char)c); }
+
+/* Placeholder runs of a cheat. Empty when no code has one, or a code holds anything but hex / placeholders / separators. */
+std::vector<Run> find_runs(const Cheat& c) {
+    std::vector<Run> runs;
+    if (c.format == Format::Gecko || c.format == Format::ActionReplayGC) return runs;
+    for (size_t k = 0; k < c.codes.size(); ++k) {
+        const std::string& s = c.codes[k];
+        for (size_t i = 0; i < s.size();) {
+            if (is_ph(s[i])) {
+                size_t j = i;
+                while (j < s.size() && is_ph(s[j])) ++j;
+                runs.push_back({k, i, j - i});
+                i = j;
+            } else if (std::isxdigit((unsigned char)s[i]) || is_sep(s[i])) ++i;
+            else return {};
+        }
+    }
+    return runs;
+}
+
+/* The 8-digit address word a run belongs to ("" when the run sits inside an 8-digit word itself, e.g. GB "01XXF8D4"). */
+std::string head_word(const std::string& s, size_t pos) {
+    size_t b = pos;
+    while (b > 0 && is_tokch(s[b - 1])) --b;
+    size_t e = pos;
+    while (e < s.size() && is_tokch(s[e])) ++e;
+    if (e - b >= 8) return std::string();
+    size_t p = b;
+    while (p > 0 && is_sep(s[p - 1])) --p;
+    size_t pb = p;
+    while (pb > 0 && is_tokch(s[pb - 1])) --pb;
+    if (p - pb != 8) return std::string();
+    return s.substr(pb, 8);
+}
+
+bool hex_tok(const std::string& s, size_t* p, uint32_t* v, bool* letters) {
+    size_t i = *p, st = i;
+    uint64_t x = 0;
+    bool l = false;
+    while (i < s.size() && std::isxdigit((unsigned char)s[i]) && i - st < 8) {
+        char ch = s[i];
+        if (std::isalpha((unsigned char)ch)) l = true;
+        x = x * 16 + (uint64_t)(std::isdigit((unsigned char)ch) ? ch - '0' : (std::tolower((unsigned char)ch) - 'a' + 10));
+        ++i;
+    }
+    if (i == st) return false;
+    if (i < s.size() && std::isalnum((unsigned char)s[i])) return false;   // a word, not a number ("Cart", "Fire")
+    *v = (uint32_t)x; *letters = l; *p = i;
+    return true;
+}
+
+/* "A-B" / "A to B" at s[p]; digit-only tokens are hex unless `dec`. */
+bool range_at(const std::string& s, size_t p, bool dec, uint32_t* lo, uint32_t* hi, bool* letters) {
+    while (p < s.size() && s[p] == ' ') ++p;
+    size_t a = p;
+    bool l1 = false, l2 = false;
+    uint32_t x, y;
+    if (!hex_tok(s, &p, &x, &l1)) return false;
+    size_t e1 = p;
+    size_t q = p;
+    while (q < s.size() && s[q] == ' ') ++q;
+    if (q < s.size() && s[q] == '-') ++q;
+    else if (s.compare(q, 2, "to") == 0 || s.compare(q, 2, "TO") == 0) q += 2;
+    else return false;
+    while (q < s.size() && s[q] == ' ') ++q;
+    size_t b = q;
+    if (!hex_tok(s, &q, &y, &l2)) return false;
+    if (dec && !l1 && !l2) {
+        x = (uint32_t)std::strtoul(s.substr(a, e1 - a).c_str(), nullptr, 10);
+        y = (uint32_t)std::strtoul(s.substr(b, q - b).c_str(), nullptr, 10);
+    }
+    *lo = x; *hi = y; *letters = l1 || l2;
+    return true;
+}
+
+}  // namespace
+
+bool value_has_placeholder(const Cheat& c) { return !find_runs(c).empty(); }
+
+ValueSpec value_spec(const Cheat& c, Target target) {
+    ValueSpec sp;
+    std::vector<Run> runs = find_runs(c);
+    if (runs.empty()) return sp;
+    sp.valid = true;
+    for (auto& r : runs) sp.digits = std::max(sp.digits, (int)r.len);
+    sp.digits = std::min(sp.digits, 8);
+    uint64_t slot = sp.digits >= 8 ? 0xFFFFFFFFull : ((1ull << (4 * sp.digits)) - 1);
+    /* 8-bit writes only keep the low byte: N64 GameShark 80/A0/88/D0/D2/F0, PS1 30. */
+    bool byte_type = false;
+    for (auto& r : runs) {
+        std::string head = head_word(c.codes[r.code], r.pos);
+        if (head.empty()) continue;
+        unsigned t = (unsigned)std::stoul(head.substr(0, 2), nullptr, 16);
+        if (target == Target::N64 && (t == 0x80 || t == 0xA0 || t == 0x88 || t == 0xD0 || t == 0xD2 || t == 0xF0)) byte_type = true;
+        if (target == Target::PS1 && t == 0x30) byte_type = true;
+    }
+    if (byte_type) slot = std::min<uint64_t>(slot, 0xFF);
+    sp.min = 0;
+    sp.max = (uint32_t)slot;
+
+    const std::string& d = c.desc;
+    std::string dl = lower_s(d);
+    bool word_hex = dl.find("hex") != std::string::npos;
+    bool dec = dl.find("dec") != std::string::npos && !word_hex;
+    sp.prefer_hex = word_hex;
+    /* range: "(00-63)", "(0-63 Hexidecimal)", "enter 0-99", "range 1-5"; the last one wins */
+    uint32_t lo = 0, hi = 0;
+    bool have = false, letters = false;
+    for (size_t i = 0; i < d.size(); ++i) {
+        size_t start = std::string::npos;
+        if (d[i] == '(') start = i + 1;
+        else if (i == 0 || !std::isalpha((unsigned char)dl[i - 1])) {
+            static const char* kw[] = {"enter ", "range ", "between "};
+            for (auto* k : kw) { size_t n = std::strlen(k); if (dl.compare(i, n, k) == 0) start = i + n; }
+        }
+        if (start == std::string::npos) continue;
+        uint32_t a, b;
+        bool l;
+        if (range_at(d, start, dec, &a, &b, &l) && a <= b) { lo = a; hi = b; letters = l; have = true; }
+    }
+    if (have && lo <= slot) {
+        sp.hinted = true;
+        sp.min = lo;
+        sp.max = (uint32_t)std::min<uint64_t>(hi, slot);
+        if (letters) sp.prefer_hex = true;
+    }
+    /* option list: "01=Potion 02=Antidote" */
+    struct Hit { size_t tok, lab; uint32_t v; };
+    std::vector<Hit> hits;
+    for (size_t i = 0; i < d.size(); ++i) {
+        if (d[i] != '=') continue;
+        size_t e = i;
+        while (e > 0 && d[e - 1] == ' ') --e;
+        size_t b = e;
+        while (b > 0 && std::isxdigit((unsigned char)d[b - 1])) --b;
+        if (e == b || e - b > 4) continue;
+        if (b > 0 && std::isalnum((unsigned char)d[b - 1])) continue;
+        hits.push_back({b, i + 1, (uint32_t)std::strtoul(d.substr(b, e - b).c_str(), nullptr, 16)});
+    }
+    if (hits.size() >= 2) {
+        for (size_t h = 0; h < hits.size(); ++h) {
+            size_t end = h + 1 < hits.size() ? hits[h + 1].tok : d.size();
+            std::string lab = d.substr(hits[h].lab, end - hits[h].lab);
+            while (!lab.empty() && (lab.back() == ' ' || lab.back() == ',' || lab.back() == ';' || lab.back() == '/' || lab.back() == '|' || lab.back() == ')')) lab.pop_back();
+            size_t f = lab.find_first_not_of(' ');
+            lab = f == std::string::npos ? std::string() : lab.substr(f);
+            if (lab.empty() || hits[h].v > slot) continue;
+            sp.options.push_back({hits[h].v, lab});
+        }
+        if (sp.options.size() < 2) sp.options.clear();
+        else {
+            uint32_t mn = UINT32_MAX, mx = 0;
+            for (auto& o : sp.options) { mn = std::min(mn, o.value); mx = std::max(mx, o.value); }
+            sp.min = mn; sp.max = mx;
+            sp.hinted = true;
+            sp.prefer_hex = true;
+        }
+    }
+    return sp;
+}
+
+uint32_t value_clamp(const ValueSpec& s, uint32_t v) { return v < s.min ? s.min : v > s.max ? s.max : v; }
+
+bool value_apply(const Cheat& c, uint32_t v, Target target, Cheat* out) {
+    std::vector<Run> runs = find_runs(c);
+    if (runs.empty()) return false;
+    v = value_clamp(value_spec(c, target), v);
+    Cheat r = c;
+    static const char* hx = "0123456789ABCDEF";
+    for (auto& run : runs) {
+        std::string& s = r.codes[run.code];
+        for (size_t i = 0; i < run.len; ++i) {
+            size_t nib = run.len - 1 - i;   // low digit last
+            s[run.pos + i] = nib >= 8 ? '0' : hx[(v >> (4 * nib)) & 0xF];
+        }
+    }
+    *out = std::move(r);
+    return true;
+}
+
+bool value_parse(const std::string& text, bool dec, uint32_t* out) {
+    std::string t;
+    for (char c : text) if (c != ' ') t += c;
+    if (t.empty()) return false;
+    bool hex = !dec;
+    if (t.size() > 2 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X')) { t = t.substr(2); hex = true; }
+    else if (t.size() > 1 && (t.back() == 'h' || t.back() == 'H')) { t.pop_back(); hex = true; }
+    if (t.empty() || t.size() > 10) return false;
+    uint64_t v = 0;
+    for (char c : t) {
+        int d = std::isdigit((unsigned char)c) ? c - '0' : hex && std::isxdigit((unsigned char)c) ? std::tolower((unsigned char)c) - 'a' + 10 : -1;
+        if (d < 0) return false;
+        v = v * (hex ? 16 : 10) + (uint64_t)d;
+        if (v > 0xFFFFFFFFull) return false;
+    }
+    *out = (uint32_t)v;
+    return true;
+}
+
+std::string value_format(uint32_t v, bool dec, int digits) {
+    char b[24];
+    if (dec) std::snprintf(b, sizeof b, "%u", v);
+    else std::snprintf(b, sizeof b, "%0*X", std::max(1, std::min(digits, 8)), v);
+    return b;
 }
 
 /* ---------------------------------------------------------------- libretro */

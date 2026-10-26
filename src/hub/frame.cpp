@@ -194,7 +194,11 @@ void global_input() {
     if (FR.panel_focused) {}
     else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) dir = 1;
     if (!FR.panel_focused && ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) dir = -1;
-    if (dir) A.page = static_cast<Page>((6 + (int)A.page + dir) % 6);
+    if (dir && A.page == Page::Settings) {   // Settings owns LB/RB for its tabs; past either end it carries on to the neighbouring page
+        int nt, pg = hubui::settings_tab_step(A.st.settings_tab, dir, &nt);
+        if (pg == 0) { A.st.settings_tab = nt; A.page_focus_req = true; mark_dirty(); }
+        else A.page = static_cast<Page>((6 + (int)A.page + pg) % 6);
+    } else if (dir) A.page = static_cast<Page>((6 + (int)A.page + dir) % 6);
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
         if (A.page == Page::Library) {
             if (A.view == LibView::All) { A.view = LibView::Home; A.search_buf[0] = 0; A.sys_filter.clear(); A.vis_dirty = true; }

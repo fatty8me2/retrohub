@@ -115,6 +115,7 @@ void apply_scan() {
             g.path = "C:\fake\crashbash.cue";
             A.lib.push_back(g);
         }
+        gameinfo_ui_shot_lib();
         A.st.find_games_done = true;
         hubart::set_enabled(false);
     }

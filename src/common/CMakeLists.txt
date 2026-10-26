@@ -1,5 +1,6 @@
 # Shared JSON reader/writer + Windows helpers (UTF-8/UTF-16, exe dir, quoting, file I/O). Tiny static lib, no deps.
-add_library(hubbase STATIC json.cpp winutil.cpp cheats.cpp runner_ctl.cpp)
+add_library(hubbase STATIC json.cpp winutil.cpp cheats.cpp runner_ctl.cpp start_hint.cpp hint_popup.cpp)
+target_link_libraries(hubbase PUBLIC user32 gdi32)
 target_include_directories(hubbase PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubbase PUBLIC cxx_std_17)
 
@@ -8,7 +9,7 @@ target_link_libraries(json_test PRIVATE hubbase)
 add_executable(winutil_test test_winutil.cpp)
 target_link_libraries(winutil_test PRIVATE hubbase shell32)
 
-add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} disc_id.cpp ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp addgames.cpp cheats.cpp cheats_db.cpp cheat_store.cpp dolphin_cheats.cpp)
+add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} disc_id.cpp ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp findgames.cpp addgames.cpp cheats.cpp cheats_db.cpp cheat_store.cpp dolphin_cheats.cpp gameinfo.cpp)
 target_include_directories(hubcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(hubcommon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcommon PUBLIC cxx_std_17)
@@ -76,3 +77,11 @@ target_link_libraries(cheats_test PRIVATE hubbase)
 
 add_executable(runner_ctl_test test_runner_ctl.cpp)
 target_link_libraries(runner_ctl_test PRIVATE hubbase)
+
+# Game-start controller tips: timing, row text, rendered card (pure logic + GDI rasteriser).
+add_executable(starthint_test test_start_hint.cpp)
+target_link_libraries(starthint_test PRIVATE hubbase)
+
+# Popup behaviour on a private desktop: no-activate, click-through, foreground unchanged, auto-closes (~6 s).
+add_executable(hint_popup_test test_hint_popup.cpp)
+target_link_libraries(hint_popup_test PRIVATE hubbase)

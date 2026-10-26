@@ -1,4 +1,7 @@
 #include "app.h"
+#include "gameinfo.h"
+
+void gameinfo_ui_section_query(const gameinfo::Query& q, const std::string& id);   // gameinfo_ui.cpp: description, ratings, facts
 
 /* Friends' games shown greyed out in the library (metadata only: titles and ids, never files).
  *   - ghost_tick():   publishes THIS PC's game list to the friends server (debounced, only when it changed, only when
@@ -263,6 +266,14 @@ void draw_ghost_modal() {
     ImGui::EndGroup();
     if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(2.f)));
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    {   // the same info block as owned games: description, ratings, facts (looked up by system + title)
+        gameinfo::Query q;
+        q.system = g.sys;
+        q.title = g.title;
+        q.alt_title = cat ? cat->title : std::string();
+        gameinfo_ui_section_query(q, "ghost:" + g.id);
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    }
 
     /* who has it */
     section_title("Friends who have it");

@@ -46,12 +46,14 @@ std::string settings_to_json(const Settings& s) {
         o << (i ? ", " : "") << "\"" << json::escape(s.rom_folders[i]) << "\"";
     o << "],\n"
       << "  \"server\": \"" << json::escape(s.server) << "\",\n"
+      << "  \"settings_tab\": " << s.settings_tab << ",\n"
       << "  \"input_delay\": " << s.input_delay << ",\n"
       << "  \"delay_auto\": " << (s.delay_auto ? "true" : "false") << ",\n"
       << "  \"last_game\": \"" << json::escape(s.last_game) << "\",\n"
       << "  \"smash_exe\": \"" << json::escape(s.smash_exe) << "\",\n"
       << "  \"gb_core\": \"" << json::escape(s.gb_core) << "\",\n"
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
+      << "  \"start_hint\": " << (s.start_hint ? "true" : "false") << ",\n"
       << "  \"sync_folder\": \"" << json::escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"backup_shots\": " << (s.backup_shots ? "true" : "false") << ",\n"
@@ -70,6 +72,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
       << "  \"share_games\": " << (s.share_games ? "true" : "false") << ",\n"
       << "  \"show_friend_games\": " << (s.show_friend_games ? "true" : "false") << ",\n"
+      << "  \"share_playtime\": " << (s.share_playtime ? "true" : "false") << ",\n"
       << "  \"auto_friend\": " << (s.auto_friend ? "true" : "false") << ",\n"
       << "  \"username_claimed\": " << (s.username_claimed ? "true" : "false") << ",\n"
       << "  \"find_games_done\": " << (s.find_games_done ? "true" : "false") << ",\n"
@@ -107,6 +110,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
             out->rom_folders.push_back(old);
     }
     out->server = j.str("server", out->server);
+    out->settings_tab = (int)j.num("settings_tab", out->settings_tab);
+    if (out->settings_tab < 0 || out->settings_tab > 5) out->settings_tab = 0;
     out->input_delay = (int)j.num("input_delay", out->input_delay);
     out->input_delay = std::max(1, std::min(8, out->input_delay));
     if (const Json* da = j.get("delay_auto")) if (da->type == Json::Bool) out->delay_auto = da->b;
@@ -115,6 +120,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     std::string core = j.str("gb_core", out->gb_core);
     out->gb_core = (core == "gambatte" || core == "sameboy") ? core : "sameboy";
     out->fullscreen = json_bool(j, "fullscreen", out->fullscreen);
+    out->start_hint = json_bool(j, "start_hint", out->start_hint);
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->backup_shots = json_bool(j, "backup_shots", out->backup_shots);
@@ -133,6 +139,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
     out->share_games = json_bool(j, "share_games", out->share_games);
     out->show_friend_games = json_bool(j, "show_friend_games", out->show_friend_games);
+    out->share_playtime = json_bool(j, "share_playtime", out->share_playtime);
     out->username_claimed = json_bool(j, "username_claimed", out->username_claimed);
     out->cemu_manage_controls = json_bool(j, "cemu_manage_controls", out->cemu_manage_controls);
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
@@ -987,6 +994,36 @@ std::string format_play_time(unsigned long long s) {
     char b[32];
     std::snprintf(b, sizeof b, "%lluh %02llum", s / 3600, (s % 3600) / 60);
     return b;
+}
+
+std::string friend_hours_text(int m) {
+    if (m < 1) return "";
+    if (m < 60) return std::to_string(m) + "m";
+    if (m % 60 == 0 || m >= 10 * 60) return std::to_string(m / 60) + "h";
+    return std::to_string(m / 60) + "h " + std::to_string(m % 60) + "m";
+}
+
+std::string friends_playtime_line(const std::map<std::string, std::vector<PlaytimeEntry>>& by_uid, const std::map<std::string, std::string>& names,
+                                  const std::string& game_key, size_t max_n) {
+    std::vector<std::pair<int, std::string>> v;   // (minutes, name)
+    for (const auto& kv : by_uid) {
+        auto n = names.find(kv.first);
+        if (n == names.end() || n->second.empty()) continue;
+        for (const auto& g : kv.second) if (g.game_key == game_key && g.minutes >= 1) { v.push_back({g.minutes, n->second}); break; }
+    }
+    std::stable_sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
+    std::string o;
+    for (size_t i = 0; i < v.size() && i < max_n; ++i) { if (i) o += " \xC2\xB7 "; o += v[i].second + " " + friend_hours_text(v[i].first); }
+    return o;
+}
+
+std::string friend_top_games_text(const std::vector<PlaytimeEntry>& games, size_t max_n) {
+    std::vector<PlaytimeEntry> v;
+    for (const auto& g : games) if (g.minutes >= 1) v.push_back(g);
+    std::stable_sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.minutes > b.minutes; });
+    std::string o;
+    for (size_t i = 0; i < v.size() && i < max_n; ++i) { o += (i ? ", " : "Top games: ") + (v[i].title.empty() ? v[i].game_key : v[i].title) + " " + friend_hours_text(v[i].minutes); }
+    return o;
 }
 
 std::string sanitize_player_name(const std::string& s) {

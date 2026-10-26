@@ -58,6 +58,8 @@ struct FriendsUi {
     bool shot_bell = false;
     std::string last_name;
     double name_changed = 0;
+    std::map<std::string, std::vector<hubnet::PlayGame>> f_pt;   // fake friends' play time (HUB_SHOT_FAKE_FRIENDS)
+    std::map<std::string, std::vector<hubui::PlaytimeEntry>> pt_cache; int pt_cache_ver = -1; long long pt_asked_ms = 0;
     hubui::AskLimiter ask_lim;                 // our own "Ask to join" requests
     std::map<std::string, std::vector<hubnet::LibGame>> f_libs;   // fake mode (screenshots): friends' game lists
     std::map<std::string, long long> ask_seen; // host side: last ask per person (repeat within 30 s is ignored)
@@ -80,6 +82,10 @@ bool fr_connected();
 std::string fr_status_text();
 std::string fr_my_code();
 void fr_set_auto_friend(bool on);        // Settings toggle: tells the server (also sent in every hello)
+void fr_set_share_playtime(bool on);     // Settings toggle: off erases my totals on the server, on re-sends them
+void fr_playtime_session_ended();        // a game session ended: send my per-game totals (when sharing is on)
+std::string fr_playtime_line(const std::string& game_key);   // "Mickey 14h · camer 3h" for the game details ("" = none); asks the server at most every 10 min
+std::string fr_top_games_text(const std::string& uid);       // "Top games: ..." for the friend's actions menu
 std::string fr_lobby_ident_msg();        // "ident" frame for the lobby socket ("" when there is no account yet)
 const hubnet::Friend* fr_find(const std::string& uid);
 hubui::FriendRow fr_row(const hubnet::Friend& f);
