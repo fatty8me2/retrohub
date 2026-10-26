@@ -421,6 +421,47 @@ void fr_update_presence() {
     FR.cli.set_status(s);
 }
 
+/* ---- friends' play time ---- */
+static std::vector<hubnet::PlayGame> fr_my_playtime() {
+    std::vector<hubnet::PlayGame> v;
+    for (const auto& e : A.lib) {
+        int m = hubnet::playtime_minutes(hub::game_state(e.key).play_seconds);
+        if (m >= 1) v.push_back({e.key, e.title, m});
+    }
+    return v;
+}
+void fr_playtime_session_ended() {
+    if (FR.fake || !FR.started || (g_headless && !shot_net())) return;
+    if (A.st.share_playtime) FR.cli.send_playtime(fr_my_playtime(), true);
+}
+void fr_set_share_playtime(bool on) {
+    if (FR.fake || !FR.started || (g_headless && !shot_net())) return;
+    FR.cli.send_playtime(on ? fr_my_playtime() : std::vector<hubnet::PlayGame>(), on);
+}
+static const std::map<std::string, std::vector<hubui::PlaytimeEntry>>& fr_pt_entries() {
+    const auto& src = FR.fake ? FR.f_pt : FR.cli.friend_playtime();
+    int ver = FR.fake ? 1 : FR.cli.playtime_version();
+    if (ver != FR.pt_cache_ver) {
+        FR.pt_cache.clear();
+        for (const auto& kv : src) for (const auto& g : kv.second) FR.pt_cache[kv.first].push_back({g.key, g.title, g.minutes});
+        FR.pt_cache_ver = ver;
+    }
+    return FR.pt_cache;
+}
+std::string fr_playtime_line(const std::string& game_key) {
+    if (!FR.fake && FR.started) {
+        long long now = wall_ms();
+        if (FR.pt_asked_ms == 0 || now - FR.pt_asked_ms > 10 * 60 * 1000LL) { FR.pt_asked_ms = now; FR.cli.request_playtime(); }
+    }
+    std::map<std::string, std::string> names;
+    for (const auto& f : fr_friends()) names[f.uid] = f.name;
+    return hubui::friends_playtime_line(fr_pt_entries(), names, game_key);
+}
+std::string fr_top_games_text(const std::string& uid) {
+    auto it = fr_pt_entries().find(uid);
+    return it == fr_pt_entries().end() ? std::string() : hubui::friend_top_games_text(it->second);
+}
+
 void fr_set_auto_friend(bool on) { if (!FR.fake) FR.cli.set_auto_friend(on); }
 std::string fr_lobby_ident_msg() {
     if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return "";
@@ -537,6 +578,10 @@ void fr_fake_init() {
     mk("devuid", "Dev", PS::InLobby, "mp2", "Mario Party 2", "n64", "ABC234", false, 4, 4, now - 70 * 60000);
     mk("samuid", "Sam", PS::Offline, "", "", "", "", false, 0, 0, now - 3 * 3600 * 1000LL);
     mk("priuid", "Priya", PS::Offline, "", "", "", "", false, 0, 0, now - 2 * 86400 * 1000LL);
+    FR.f_pt["miauid"] = {{"fake:0", "Smash Classic", 14 * 60 + 20}, {"n64:mk64", "Mario Kart 64", 9 * 60}, {"gba:mf", "Metroid Fusion", 95}};
+    FR.f_pt["jakuid"] = {{"fake:0", "Smash Classic", 3 * 60}, {"n64:mp2", "Mario Party 2", 40}};
+    FR.f_pt["kaiuid"] = {{"fake:0", "Smash Classic", 45}};
+    FR.f_pt["devuid"] = {{"fake:0", "Smash Classic", 22 * 60}};
     hubnet::Request r;
     r.uid = "oliuid"; r.name = "Oliver"; r.code = "RH-QW3E-RT4Y"; r.at = now;
     FR.f_in.push_back(r);
@@ -942,6 +987,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         ImGui::Separator();
         if (ImGui::MenuItem("Remove friend")) fr_confirm("remove", f);
         if (ImGui::MenuItem("Block")) fr_confirm("block", f);
+        { std::string tg = fr_top_games_text(f.uid); if (!tg.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", tg.c_str()); } }
         { std::string lt = group_together_text(f.uid); if (!lt.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", lt.c_str()); } }   // last entry: keeps the other items' click positions
         ImGui::EndPopup();
     }

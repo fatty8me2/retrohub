@@ -166,6 +166,8 @@ void page_settings() {
     if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
     if (ImGui::Checkbox("Automatically add people I play with as friends", &A.st.auto_friend)) { mark_dirty(); fr_set_auto_friend(A.st.auto_friend); }
     text_wrapped_disabled("Joining a room, or playing a game together, makes you friends. Both people need this on.");
+    if (ImGui::Checkbox("Share my play time with friends", &A.st.share_playtime)) { mark_dirty(); fr_set_share_playtime(A.st.share_playtime); }
+    text_wrapped_disabled("Friends see roughly how long you have played each game (whole hours). Turn it off to stop sharing and remove it from the server.");
     std::string mycode = fr_my_code();
     if (!mycode.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
