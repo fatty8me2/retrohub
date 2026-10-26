@@ -1,7 +1,7 @@
 #include "app.h"
 
 void go_add_rom(const GameInfo& g) {
-    A.page = Page::Settings;
+    settings_open(hubui::ST_General);
     push_toast("Put your " + g.title + " ROM in a ROM folder, then press Rescan.", ui::ACCENT, 7.0);
 }
 
