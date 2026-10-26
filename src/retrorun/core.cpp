@@ -395,6 +395,7 @@ bool Core::environment(unsigned cmd, void* data) {
             rlog("core requested hardware rendering: not supported (software cores only)");
             return false;
         default:
+            if (std::getenv("RETRORUN_TRACE_ENV")) rlog("env cmd %u unsupported", cmd & 0xFFFF);
             return false;   // unknown / unsupported: tell the core so
     }
 }

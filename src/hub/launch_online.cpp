@@ -556,12 +556,12 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         return;
     }
     if (e.system == hub::System::NES || e.system == hub::System::SNES) {
-        /* NES (Mesen) / SNES (snes9x) through retrorun: GGPO rollback when the core passes SyncTest (retrorun falls back to lockstep).
+        /* NES (Nestopia UE) / SNES (snes9x) through retrorun: GGPO rollback when the core passes SyncTest (retrorun falls back to lockstep).
          * Ports 3-4 in the plan switch on the Four Score / multitap inside retrorun. The host's battery save is the shared session
          * save (docs/SAVES.md); guests' throwaway dir is never uploaded. */
         const bool nes = e.system == hub::System::NES;
-        std::string core = find_core(nes ? "mesen" : "snes9x");
-        if (core.empty()) { launch_note(is_host, std::string("Emulator core '") + (nes ? "mesen" : "snes9x") + "' not found (cores folder)."); return; }
+        std::string core = find_core(nes ? "nestopia" : "snes9x");
+        if (core.empty()) { launch_note(is_host, std::string("Emulator core '") + (nes ? "nestopia" : "snes9x") + "' not found (cores folder)."); return; }
         std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
         remove_tree(tmp);
         make_dirs(tmp);

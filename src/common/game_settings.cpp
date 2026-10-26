@@ -25,7 +25,9 @@ const unsigned PS1 = 1u << (unsigned)System::PS1;
 const unsigned N3DS = 1u << (unsigned)System::N3DS;
 const unsigned WIIU = 1u << (unsigned)System::WiiU;
 const unsigned PS2 = 1u << (unsigned)System::PS2;
-const unsigned ALL = N64 | GB | GBA | NDS | PS1 | GC | N3DS | WIIU | PS2;
+const unsigned NES = 1u << (unsigned)System::NES;
+const unsigned SNES = 1u << (unsigned)System::SNES;
+const unsigned ALL = N64 | GB | GBA | NDS | PS1 | GC | N3DS | WIIU | PS2 | NES | SNES;
 
 Option mk(const char* key, const char* label, const char* group, unsigned sys, Kind k, Scope sc, const char* def,
           std::vector<Choice> ch = {}) {
@@ -61,14 +63,21 @@ std::vector<Option> build() {
                    {{"default", "Default"}, {"off", "Off"}, {"sw", "Software"}, {"fast", "Fast"}}));
 
     // ---- Game Boy / GBC / GBA / DS (retrorun)
-    v.push_back(mk("scale.filter", "Screen scaling", "Video", GB | GBA | NDS | PS1, K::Choice, S::Visual, "auto",
+    v.push_back(mk("scale.filter", "Screen scaling", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Choice, S::Visual, "auto",
                    {{"auto", "Automatic"}, {"nearest", "Sharp pixels"}, {"linear", "Smooth"}}));
-    v.push_back(mk("scale.integer", "Integer scaling", "Video", GB | GBA, K::Bool, S::Visual, "true"));
+    v.push_back(mk("scale.integer", "Integer scaling", "Video", GB | GBA | NES | SNES, K::Bool, S::Visual, "true"));
     v.push_back(mk("gb.color", "Color correction", "Color", GB | GBA, K::Choice, S::Visual, "auto",
                    {{"auto", "Core default"}, {"off", "Off"}, {"on", "On"}}));
     v.push_back(mk("ds.layout", "Screen layout", "Video", NDS, K::Choice, S::Visual, "top-bottom",
                    {{"top-bottom", "Top / bottom"}, {"left-right", "Side by side"},
                     {"largescreen-top", "Large top screen"}, {"hybrid-top", "Hybrid"}}));
+    // ---- NES (Nestopia UE) / SNES (Snes9x) through retrorun. Region changes the frame rate and timing: synced online.
+    v.push_back(mk("nes.region", "Video standard", "Emulation", NES, K::Choice, S::Sync, "auto",
+                   {{"auto", "Automatic (from the game)"}, {"ntsc", "NTSC (60 Hz)"}, {"pal", "PAL (50 Hz)"}}));
+    v.push_back(mk("snes.region", "Video standard", "Emulation", SNES, K::Choice, S::Sync, "auto",
+                   {{"auto", "Automatic (from the game)"}, {"ntsc", "NTSC (60 Hz)"}, {"pal", "PAL (50 Hz)"}}));
+    v.push_back(mk("snes.multitap", "Multitap (3-4 players)", "Controls", SNES, K::Choice, S::Sync, "auto",
+                   {{"auto", "Automatic (3+ controllers)"}, {"off", "Off"}, {"on", "On"}}));
     // ---- PlayStation (retrorun + Beetle PSX, software renderer)
     v.push_back(mk("ps1.res", "Internal resolution", "Video", PS1, K::Choice, S::Visual, "1x(native)",
                    {{"1x(native)", "1x native"}, {"2x", "2x"}, {"4x", "4x"}, {"8x", "8x"}}));
@@ -445,6 +454,12 @@ std::vector<std::string> retrorun_args(System s, const Values& v) {
         }
     }
     if (s == System::GBA && get(v, "gba.skip_bios") == "true") opt("mgba_skip_bios", "ON");
+    if (s == System::NES && get(v, "nes.region") != "auto") opt("nestopia_force_system", get(v, "nes.region") == "pal" ? "pal" : "ntsc");
+    if (s == System::SNES) {
+        if (get(v, "snes.region") != "auto") opt("snes9x_region", get(v, "snes.region") == "pal" ? "pal" : "ntsc");
+        std::string mt = get(v, "snes.multitap");
+        if (mt == "on") r.push_back("--multitap"); else if (mt == "off") r.push_back("--no-multitap");
+    }
     if (s == System::NDS) opt("melonds_screen_layout1", get(v, "ds.layout"));
     if (s == System::PS1) {
         opt("beetle_psx_internal_resolution", get(v, "ps1.res"));

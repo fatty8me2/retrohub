@@ -70,6 +70,7 @@ struct Args {
     int synctest = 0;             // --synctest N: offline, every frame roll back N frames and re-simulate, compare
     int rb_pred = 14;             // --rb-pred N: max predicted frames (1..16)
     bool rb_adaptive = true;      // --rb-delay-adapt / --no-rb-delay-adapt: pick the input delay from the measured RTT when --delay is auto
+    bool multitap = false, no_multitap = false;  // SNES multitap on port 2 (players 3-4); auto with --players >= 3 or 3+ pads
     bool ds_link = false;   // DS local wireless over the room (netpacket interface), no lockstep
     std::vector<std::string> opts;
 };
@@ -78,7 +79,7 @@ static std::string narrow(const wchar_t* w) { return winutil::to_utf8(w); }
 
 static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
-          "  [--system gba|gb|gbc|nds|ps1] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
+          "  [--system gba|gb|gbc|nds|ps1|nes|snes] [--multitap|--no-multitap] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
           "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rollback] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
@@ -116,6 +117,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--state-dir") { if (!val(&o->state_dir)) return false; }
         else if (k == "--system-dir") { if (!val(&o->system_dir)) return false; }
         else if (k == "--system") { if (!val(&o->system)) return false; }
+        else if (k == "--multitap") { o->multitap = true; }
+        else if (k == "--no-multitap") { o->no_multitap = true; }
         else if (k == "--screenshot") { if (!val(&o->screenshot)) return false; }
         else if (k == "--log") { if (!val(&o->log)) return false; }
         else if (k == "--ini") { if (!val(&o->ini)) return false; }
@@ -362,6 +365,7 @@ class Frontend {
     }
     std::string scale_filter_;   // "" = nearest (DS: linear)
     bool integer_scale_ = true;
+    bool is_ps2 = false;       // PS2 core (LRPS2 / ParaLLEl PS2): experimental lockstep only, behind RETROHUB_PS2_NETPLAY=1 (docs/PS2_ONLINE.md)
     bool is_ps1 = false;       // PlayStation (Beetle PSX): DualShock analog sticks, memory card 1 in the .srm
     int16_t frame_stick[4][4] = {};         // analog sticks per port for the frame about to run: lx ly rx ry
     int16_t local_stick_[4][4] = {};
@@ -639,7 +643,9 @@ bool Frontend::setup_paths() {
         core.overrides["sameboy_screen_layout"] = "left-right";
         core.overrides["sameboy_audio_output"] = "Game Boy #" + std::to_string(std::min(1, mine) + 1);
     }
-    if (!a.net.empty() || a.synctest) core.overrides["mesen_ramstate"] = "All 0s (Default)";   // random power-on RAM would differ per PC
+    if (lower(a.system) == "nes" && (a.ports[2] >= 0 || a.ports[3] >= 0 || (a.net.empty() && a.players >= 3)))
+        core.overrides["nestopia_select_adapter"] = "ntsc";   // 3-4 players: the Four Score adapter (every PC derives it from the same port plan)
+    if (lower(a.system) == "nes" && (!a.net.empty() || a.synctest)) core.overrides["nestopia_ram_power_state"] = "0x00";   // random power-on RAM would differ per PC
     if ((!a.net.empty() || a.synctest) && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
     rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
@@ -1174,7 +1180,14 @@ void Frontend::fold_frame() {
 }
 
 /* Hash used for the periodic desync check. */
-uint64_t Frontend::sync_hash() { return use_state_hash ? state_hash() : out_hash; }
+uint64_t Frontend::sync_hash() {
+    if (is_ps2) {   // the PS2 core's serialized state holds host pointers (ASLR) and differs between identical runs: hash EE RAM instead
+        size_t sz = 0;
+        void* p = core.memory(RETRO_MEMORY_SYSTEM_RAM, &sz);
+        return p && sz ? n64run::hash_block(p, sz) : out_hash;
+    }
+    return use_state_hash ? state_hash() : out_hash;
+}
 
 uint64_t Frontend::state_hash() {
     size_t n = core.serialize_size();
@@ -1646,6 +1659,7 @@ rb::Sim Frontend::make_rb_sim() {
             snprintf(nm, sizeof nm, "%s\\%016llx.bmp", dd, (unsigned long long)h);
             if (!fs::exists(fs::u8path(nm))) write_frame_image(nm, f);
         }
+        if (is_ps2) return (uint64_t)0;   // the PS2 core shows no frame on some runs; EE RAM (mem_hash) is the check
         return h;   // video only: audio resampler state is not part of any core's savestate, and audio never feeds back into the game
     };
     s.mem_hash = [this]() -> uint64_t {
@@ -1891,9 +1905,9 @@ int Frontend::run(const Args& args) {
     if (is_ps1) {   // every port is a DualShock (digital pads work too; games switch the analog mode themselves)
         for (unsigned p = 0; p < 4; p++) core.set_port_device(p, 0x205);   // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
     }
-    if (lower(a.system) == "snes" && (owner[2] >= 0 || owner[3] >= 0)) {   // 3-4 players: a multitap on port 2 (snes9x: libretro ports 1-4 are its four pads)
-        core.set_port_device(1, 0x101);   // RETRO_DEVICE_JOYPAD_MULTITAP ((1 << 8) | RETRO_DEVICE_JOYPAD)
-        rlog("snes: multitap on port 2 (players 2-4)");
+    if (lower(a.system) == "snes" && !a.no_multitap && (a.multitap || owner[2] >= 0 || owner[3] >= 0 || (!a.headless && SDL_NumJoysticks() >= 3))) {
+        core.set_port_device(1, 0x101);   // snes9x RETRO_DEVICE_JOYPAD_MULTITAP ((1 << 8) | RETRO_DEVICE_JOYPAD): players 3-4 (libretro ports 2-3)
+        rlog("snes: multitap on port 2 (players 3-4)");
     }
     if (a.rollback && !a.synctest) {
         // Only cores whose savestates were verified exact (SyncTest against a free-running reference) may roll back; others stay lockstep.
@@ -1901,7 +1915,7 @@ int Frontend::run(const Args& args) {
         bool safe = false;
         std::string why;
         if (ln.find("mgba link") != std::string::npos) safe = true;
-        else if (ln.find("mesen") != std::string::npos) safe = true;   // Mesen 0.9.9 (NES): SyncTest exact (qa/retrorun_synctest.ps1)
+        else if (ln.find("nestopia") != std::string::npos || ln.find("mesen") != std::string::npos) safe = true;   // NES: SyncTest exact (qa/nes_snes_online.ps1)
         else if (ln.find("snes9x") != std::string::npos) safe = true;   // Snes9x (SNES): SyncTest exact
         else if (ln.find("sameboy (rollback)") != std::string::npos) safe = true;   // src/sameboy_rb: joypad-bounce + RNG patched, SyncTest exact
         else if (ln.find("beetle psx (rollback)") != std::string::npos) safe = true;   // src/beetle_psx/patch.cmake: surface + scan-out cache in the state, SyncTest exact
@@ -1938,6 +1952,11 @@ int Frontend::run(const Args& args) {
         // Gambatte's retro_serialize output differs run-to-run on identical emulation (see docs/RETRORUN.md),
         // so its state hash would flag false desyncs; fall back to a rolling video+audio output hash.
         // PlayStation: the serialized state holds bytes that are not emulation state and differs between identical runs (docs/CORES.md).
+        is_ps2 = ln.find("ps2") != std::string::npos || ln.find("pcsx2") != std::string::npos;
+        if (is_ps2 && (!a.net.empty() || a.synctest) && !(std::getenv("RETROHUB_PS2_NETPLAY") && std::string(std::getenv("RETROHUB_PS2_NETPLAY")) == "1")) {
+            rlog("PS2 online/synctest is experimental and off: set RETROHUB_PS2_NETPLAY=1 (docs/PS2_ONLINE.md)");
+            return 7;
+        }
         use_state_hash = a.sync_hash_mode == "state" || (a.sync_hash_mode == "auto" && ln.find("gambatte") == std::string::npos && !is_ps1);
         if (use_state_hash && !core.serialize_size()) use_state_hash = false;
         rlog("sync hash: %s", use_state_hash ? "serialized state" : "video+audio output");
@@ -1949,10 +1968,11 @@ int Frontend::run(const Args& args) {
     {
         std::string cf = a.controls;
         if (cf.empty()) { const char* e = std::getenv("RETROHUB_CONTROLS"); if (e && *e) cf = e; }
-        if (is_ps1) prof = hubctl::default_profile("ps1");
+        const std::string psys = is_ps1 ? "ps1" : (lower(a.system) == "nes" || lower(a.system) == "snes") ? lower(a.system) : "retro";
+        if (psys != "retro") prof = hubctl::default_profile(psys);
         if (!cf.empty()) {
             hubctl::Profile p;
-            if (hubctl::read_profile_file(cf, &p) && p.system == (is_ps1 ? "ps1" : "retro")) { prof = p; rlog("controls: profile '%s' (%s)", p.name.c_str(), cf.c_str()); }
+            if (hubctl::read_profile_file(cf, &p) && p.system == psys) { prof = p; rlog("controls: profile '%s' (%s)", p.name.c_str(), cf.c_str()); }
             else rlog("controls: cannot use %s; built-in mapping", cf.c_str());
         }
         retro_pad.reset(new retrorun::RetroPad(prof));
@@ -1979,6 +1999,7 @@ int Frontend::run(const Args& args) {
     if (!a.disc_ctl.empty()) disc_watch = cheats::FileWatch(a.disc_ctl);
     if (!a.control.empty()) ctl_ = runctl::Poller(a.control);
     int rc = 0;
+    const uint64_t hashlog_n = std::getenv("RETRORUN_HASHLOG") ? (uint64_t)atoll(std::getenv("RETRORUN_HASHLOG")) : 0;   // QA/determinism spike: log state+output hash every N frames
     if (a.selftest) {
         rc = selftest();
     } else if (a.synctest) {
@@ -2095,6 +2116,7 @@ int Frontend::run(const Args& args) {
                 }
                 fold_frame();
                 frame_no++;
+                if (hashlog_n && frame_no % hashlog_n == 0) rlog("HASHLOG frame %llu state %016llx out %016llx video %016llx", (unsigned long long)frame_no, (unsigned long long)state_hash(), (unsigned long long)out_hash, (unsigned long long)(core.frame().px.empty() ? 0 : n64run::hash_block(core.frame().px.data(), core.frame().px.size() * 4)));
 
                 if (!a.headless && (!ff || (frame_no & 7) == 0)) present();
 
