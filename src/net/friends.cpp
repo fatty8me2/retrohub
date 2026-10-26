@@ -375,6 +375,39 @@ std::vector<StaleEntry> stale_same_name(const std::vector<Friend>& friends, cons
     return out;
 }
 
+std::string playtime_message_json(std::vector<PlayGame> games, bool share)
+{
+    std::string o = std::string("{\"type\":\"playtime\",\"share\":") + (share ? "true" : "false") + ",\"games\":[";
+    if (!share) games.clear();
+    games.erase(std::remove_if(games.begin(), games.end(), [](const PlayGame& g) { return g.minutes < 1 || g.key.empty(); }), games.end());
+    std::stable_sort(games.begin(), games.end(), [](const PlayGame& a, const PlayGame& b) { return a.minutes > b.minutes; });
+    if (games.size() > kPlaytimeMaxGames) games.resize(kPlaytimeMaxGames);
+    for (size_t i = 0; i < games.size(); ++i) {
+        if (i) o += ",";
+        o += "{\"k\":" + q(games[i].key) + ",\"t\":" + q(games[i].title) + ",\"m\":" + std::to_string(games[i].minutes) + "}";
+    }
+    return o + "]}";
+}
+
+bool parse_playtime_reply(const std::string& text, std::map<std::string, std::vector<PlayGame>>* out)
+{
+    Json j;
+    if (!json_parse(text, &j) || j.type != Json::Object || j.str("type") != "playtime") return false;
+    out->clear();
+    const Json* f = j.get("friends");
+    if (!f || f->type != Json::Object) return true;
+    for (const auto& kv : f->o) {
+        if (kv.second.type != Json::Array) continue;
+        std::vector<PlayGame>& v = (*out)[kv.first];
+        for (const Json& g : kv.second.a) {
+            PlayGame pg; pg.key = g.str("k"); pg.title = g.str("t"); pg.minutes = (int)g.num("m", 0);
+            if (!pg.key.empty() && pg.minutes >= 1 && v.size() < kPlaytimeMaxGames) v.push_back(pg);
+        }
+        if (v.empty()) out->erase(kv.first);
+    }
+    return true;
+}
+
 struct FriendsClient::Impl {
     std::string data_dir = ".\\userdata\\", vault_dir;
     std::string server, name = "Player";
@@ -385,6 +418,9 @@ struct FriendsClient::Impl {
     uint32_t last_keepalive = 0, reconnect_at = 0, backoff_ms = 1000, last_flush = 0;
     bool have_status = false, auto_friend = true;
     Status my_status;
+    std::string pt_pending;                                  // playtime message not delivered yet (sent after the next welcome)
+    bool pt_want = true;                                     // fetch friends' totals after (re)connecting
+    std::map<std::string, std::vector<PlayGame>> pt_friends; int pt_version = 0;
 
     std::vector<Friend> friends;
     std::vector<Request> incoming, outgoing;
@@ -741,6 +777,8 @@ struct FriendsClient::Impl {
         backoff_ms = 1000;
         last_keepalive = now_ms();
         status_text = "Online";
+        if (!pt_pending.empty()) { send(pt_pending); pt_pending.clear(); }
+        if (pt_want) send("{\"type\":\"playtime_get\"}");
         friends.clear(); incoming.clear(); outgoing.clear(); blocked.clear();
         if (const Json* a = j.get("friends")) for (const Json& f : a->a) friends.push_back(parse_friend(f));
         if (const Json* r = j.get("requests")) {
@@ -829,6 +867,10 @@ struct FriendsClient::Impl {
         else if (type == "presence") on_presence(j);
         else if (type == "friend_library") on_friend_library(j);
         else if (type == "library_ack") server_h = j.str("h");
+        else if (type == "playtime") {
+            std::map<std::string, std::vector<PlayGame>> m;
+            if (parse_playtime_reply(text, &m)) { pt_friends = std::move(m); ++pt_version; }
+        }
         else if (type == "retired") retire_done(j.str("uid"));
         else if (type == "request") {
             const Json* r = j.get("req");
@@ -858,7 +900,7 @@ struct FriendsClient::Impl {
         } else if (type == "block_update") {
             std::string uid = j.str("uid");
             blocked.erase(std::remove(blocked.begin(), blocked.end(), uid), blocked.end());
-            if (jbool(j, "blocked")) blocked.push_back(uid);
+            if (jbool(j, "blocked")) { blocked.push_back(uid); if (pt_friends.erase(uid)) ++pt_version; }
         } else if (type == "friend_added") {
             const Json* fj = j.get("friend");
             if (!fj) return false;
@@ -872,6 +914,7 @@ struct FriendsClient::Impl {
         } else if (type == "friend_removed") {
             std::string uid = j.str("uid");
             std::string nm;
+            if (pt_friends.erase(uid)) ++pt_version;
             if (Friend* f = find(uid)) nm = f->name;
             friends.erase(std::remove_if(friends.begin(), friends.end(), [&](const Friend& f) { return f.uid == uid; }), friends.end());
             prune_flibs();
@@ -1137,6 +1180,15 @@ void FriendsClient::set_auto_friend(bool on)
     impl_->auto_friend = on;
     impl_->send(std::string("{\"type\":\"prefs\",\"auto_friend\":") + (on ? "true" : "false") + "}");
 }
+void FriendsClient::send_playtime(const std::vector<PlayGame>& games, bool share)
+{
+    std::string m = playtime_message_json(games, share);
+    if (!impl_->send(m)) impl_->pt_pending = m;   // offline: delivered after the next welcome
+    else impl_->pt_pending.clear();
+}
+void FriendsClient::request_playtime() { impl_->send("{\"type\":\"playtime_get\"}"); }
+const std::map<std::string, std::vector<PlayGame>>& FriendsClient::friend_playtime() const { return impl_->pt_friends; }
+int FriendsClient::playtime_version() const { return impl_->pt_version; }
 std::set<std::string> FriendsClient::retired_ids() const { return read_retired_ids(impl_->data_dir); }
 
 void FriendsClient::set_status(const Status& s)
@@ -1308,3 +1360,4 @@ bool FriendsClient::poll_event(Event* out)
 }
 
 } // namespace hubnet
+

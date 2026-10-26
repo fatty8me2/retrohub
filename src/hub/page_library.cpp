@@ -1,7 +1,7 @@
 #include "app.h"
 
 void go_add_rom(const GameInfo& g) {
-    A.page = Page::Settings;
+    settings_open(hubui::ST_General);
     push_toast("Put your " + g.title + " ROM in a ROM folder, then press Rescan.", ui::ACCENT, 7.0);
 }
 
@@ -605,6 +605,7 @@ void draw_details_modal() {
     ImGui::EndGroup();
     if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(2.f)));
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    gameinfo_ui_section(e, cat ? cat->title : std::string());
 
     ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
     ImGui::PushTextWrapPos(0.f);
@@ -632,6 +633,7 @@ void draw_details_modal() {
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     ImGui::Text("Play time: %s      Last played: %s", hubui::format_play_time(gs.play_seconds).c_str(),
                 gs.last_played ? fmt_time(gs.last_played).c_str() : "never");
+    { std::string fl = fr_playtime_line(e.key); if (!fl.empty()) ImGui::TextDisabled("Friends: %s", fl.c_str()); }
     if (native) {
         ImGui::TextDisabled("Smash Classic keeps its own saves.");
     } else {

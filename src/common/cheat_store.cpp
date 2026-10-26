@@ -66,6 +66,20 @@ std::string Store::add_custom(const std::string& game, const std::string& desc, 
     s.updated = now;
     return id;
 }
+bool Store::value_of(const std::string& game, const std::string& id, uint32_t* out) const {
+    auto it = g_.find(game);
+    if (it == g_.end()) return false;
+    auto v = it->second.values.find(id);
+    if (v == it->second.values.end()) return false;
+    *out = v->second;
+    return true;
+}
+void Store::set_value(const std::string& game, const std::string& id, uint32_t v, int64_t now) {
+    if (game.empty() || id.empty()) return;
+    GameState& s = g_[game];
+    s.values[id] = v;
+    s.updated = now;
+}
 void Store::remove_custom(const std::string& game, const std::string& id, int64_t now) {
     auto it = g_.find(game);
     if (it == g_.end()) return;
@@ -91,7 +105,7 @@ std::string Store::to_json() const {
     json::Value games = json::make_object();
     for (auto& kv : g_) {
         const GameState& s = kv.second;
-        if (s.on.empty() && s.custom.empty() && s.backup.empty()) continue;
+        if (s.on.empty() && s.custom.empty() && s.backup.empty() && s.values.empty()) continue;
         json::Value o = json::make_object();
         json::Value on = json::make_array();
         for (auto& id : s.on) on.a.push_back(json::make_string(id));
@@ -108,6 +122,11 @@ std::string Store::to_json() const {
             cu.a.push_back(x);
         }
         o.o.push_back({"custom", cu});
+        if (!s.values.empty()) {
+            json::Value vals = json::make_object();
+            for (auto& kv2 : s.values) vals.o.push_back({kv2.first, json::make_int((int64_t)kv2.second)});
+            o.o.push_back({"vals", vals});
+        }
         if (!s.backup.empty()) o.o.push_back({"backup", json::make_string(s.backup)});
         o.o.push_back({"t", json::make_int(s.updated)});
         games.o.push_back({kv.first, o});
@@ -135,6 +154,10 @@ bool Store::from_json(const std::string& text) {
                     if (c.codes.empty()) continue;
                     s.custom.push_back(c);
                 }
+            if (const json::Value* vals = kv.second.get("vals"))
+                if (vals->is_object())
+                    for (auto& x : vals->o)
+                        if (x.second.is_number() && x.second.i >= 0 && x.second.i <= 0xFFFFFFFFll) s.values[x.first] = (uint32_t)x.second.i;
             s.backup = kv.second.str("backup");
             s.updated = kv.second.i64("t", 0);
             out[kv.first] = s;
@@ -188,7 +211,7 @@ bool Store::save(const std::string& vault_dir) const {
 
 /* ---------------- rows ---------------- */
 
-std::vector<Row> build_rows(const Store& st, const std::string& game, const std::vector<DbItem>& db) {
+std::vector<Row> build_rows(const Store& st, const std::string& game, const std::vector<DbItem>& db, cheats::Target target) {
     std::vector<Row> pop, all, mine;
     for (auto& d : db) {
         Row r;
@@ -196,6 +219,13 @@ std::vector<Row> build_rows(const Store& st, const std::string& game, const std:
         r.cheat.enabled = st.is_on(game, d.cheat.id);
         r.featured = d.featured;
         r.group = d.featured ? 0 : 1;
+        r.target = target;
+        r.spec = cheats::value_spec(d.cheat, target);
+        if (r.spec.valid) {
+            uint32_t v = 0;
+            r.value_set = st.value_of(game, d.cheat.id, &v);
+            r.value = cheats::value_clamp(r.spec, r.value_set ? v : r.spec.min);
+        }
         (d.featured ? pop : all).push_back(r);
     }
     if (const GameState* g = st.game(game))
@@ -224,14 +254,20 @@ std::vector<Row> filter_rows(const std::vector<Row>& rows, const std::string& q0
     return out;
 }
 
+cheats::Cheat effective_cheat(const Row& r) {
+    cheats::Cheat out;
+    if (r.spec.valid && cheats::value_apply(r.cheat, r.value, r.target, &out)) return out;
+    return r.cheat;
+}
+
 cheats::CheatSet runner_set(const std::vector<Row>& rows) {
     cheats::CheatSet s;
-    for (auto& r : rows) s.cheats.push_back(r.cheat);
+    for (auto& r : rows) s.cheats.push_back(effective_cheat(r));
     return s;
 }
 cheats::CheatSet enabled_only(const std::vector<Row>& rows) {
     cheats::CheatSet s;
-    for (auto& r : rows) if (r.cheat.enabled) s.cheats.push_back(r.cheat);
+    for (auto& r : rows) if (r.cheat.enabled) s.cheats.push_back(effective_cheat(r));
     return s;
 }
 std::vector<std::string> enabled_names(const std::vector<Row>& rows) {

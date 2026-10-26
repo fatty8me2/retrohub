@@ -25,6 +25,7 @@ struct Settings {
     std::string smash_exe;     // user-chosen BattleShip.exe
     std::string gb_core = "sameboy";   // default GB/GBC core: "sameboy" | "gambatte"
     bool fullscreen = false;           // start games fullscreen where the runner supports it
+    bool start_hint = true;            // "Show controller tips when a game starts": ~5 s card (View+Y menu, View+Menu leave)
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start
     bool backup_shots = false;         // "Back up screenshots": screenshots count toward the cloud large-item quota (default off)
@@ -41,6 +42,7 @@ struct Settings {
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
     bool share_games = true;           // "Show my games to friends": publish the list of game titles (never files) so friends see them greyed out
     bool show_friend_games = true;     // library chip "Show friends' games"
+    bool share_playtime = true;        // "Share my play time with friends": per-game totals (whole minutes) go to the friends server when a session ends
     bool auto_friend = true;           // "Automatically add people I play with as friends" (sent to the server in the hello)
     bool username_claimed = false;     // this PC has a username the server confirmed (name below IS that username); false = still the provisional Windows name
     bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
@@ -52,6 +54,7 @@ struct Settings {
     bool ps1_openbios = false;         // play PlayStation games with the bundled OpenBIOS when no real BIOS is found
     std::string cemu_exe;              // user-chosen Cemu.exe ("" = find an existing install, else download one)
     bool cemu_manage_controls = true;  // "Let RetroHub manage Wii U controls" for the user's own Cemu (backup made first)
+    int settings_tab = 0;             // last Settings tab (0 General .. 5 Account), remembered
     std::string ps2_bios_dir;         // user-chosen folder with the PS2 BIOS ("" = look next to the games / Desktop\Everything\BIOS)
 };
 std::string settings_to_json(const Settings& s);
@@ -165,6 +168,15 @@ std::vector<int> filter_sort(const std::vector<ListItem>& items, const std::stri
 std::vector<int> pick_recent(const std::vector<unsigned long long>& last_played, int n);
 /* "Never played" / "Under a minute" / "35 min" / "2h 05m". */
 std::string format_play_time(unsigned long long seconds);
+/* Friends' play time (coarse): "45m", "3h", "14h 30m" (minutes in, "" for < 1). */
+std::string friend_hours_text(int minutes);
+/* Game details line: the top `max_n` friends who played `game_key`, "Mickey 14h · camer 3h" ("" if none). `names` maps uid -> display name;
+ * friends missing from it, and uids in `hidden` (blocked), are skipped. Ties keep name order. */
+struct PlaytimeEntry { std::string game_key, title; int minutes = 0; };
+std::string friends_playtime_line(const std::map<std::string, std::vector<PlaytimeEntry>>& by_uid, const std::map<std::string, std::string>& names,
+                                  const std::string& game_key, size_t max_n = 3);
+/* Friend actions menu: "Top games: Smash 64 14h, Metroid 3h" for one friend ("" if none). */
+std::string friend_top_games_text(const std::vector<PlaytimeEntry>& games, size_t max_n = 3);
 /* Windows user name -> usable player name (printable, max 16 chars, "Player" if empty). */
 std::string sanitize_player_name(const std::string& s);
 

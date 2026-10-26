@@ -36,10 +36,10 @@ function Check($name, $ok, $detail) {
 function Moves($rows) { @($rows | Where-Object { $_.tok -in @("up", "down", "left", "right") }) }
 function Distinct($rows) { @($rows | Where-Object { $_.nav -ne "00000000" } | Select-Object -ExpandProperty nav -Unique).Count }
 
-# 1. LB/RB cycle through every top-level page and wrap
-$r = Run "pages" "rb,rb,rb,rb,rb,rb,lb"
+# 1. LB/RB cycle through every top-level page and wrap (Settings keeps LB/RB for its 6 tabs, then carries on)
+$r = Run "pages" "rb,rb,rb,rb,rb,rb,rb,rb,rb,rb,rb,lb"
 $seq = ($r.rows | ForEach-Object { $_.page }) -join ","
-Check "rb cycles pages" ($seq -eq "online,saves,controllers,settings,about,library,about") $seq
+Check "rb cycles pages" ($seq -eq "online,saves,controllers,settings,settings,settings,settings,settings,settings,about,library,about") $seq
 Check "page switch keeps a focus" (@($r.rows | Where-Object { $_.nav -eq "00000000" }).Count -eq 0) "focus lost after a page switch"
 
 # 2. every page: first focus exists and D-pad reaches several different items
@@ -164,7 +164,7 @@ Check "picker: B closes details, picker stays" ($b.win -like "*pkpick*" -and $b.
 $a = $r.rows | Where-Object { $_.tok -eq "a" }
 Check "picker: A chooses a game and closes the picker" ($a.popup -eq 0) "popup=$($a.popup)"
 # 11. friends' games (greyed out): the pad reaches a ghost tile, A opens the friend-game view (not Play), B closes it and keeps a focus
-$r = Run "ghost" "down,right,right,a,shot:ghost_open,b" @{ HUB_SHOT_FAKE_FRIENDS = "1"; HUB_SHOT_FAKE_LIB = "all"; HUB_SHOT_FAKE_FRIEND_LIBS = "30"; HUB_START_VIEW = "all"; HUB_START_SYS = "gc"; HUB_SHOT_SECS = "6" }
+$r = Run "ghost" "down,down,down,down,a,shot:ghost_open,b" @{ HUB_SHOT_FAKE_FRIENDS = "1"; HUB_SHOT_FAKE_LIB = "all"; HUB_SHOT_FAKE_FRIEND_LIBS = "30"; HUB_START_VIEW = "all"; HUB_START_SYS = "gc"; HUB_SHOT_SECS = "6" }
 $rows = @($r.rows)
 $ga = @($rows | Where-Object { $_.tok -eq "a" })[0]
 Check "A on a friend's game opens its view" ($ga.popup -eq 1 -and $ga.win -like "*ghost*") "popup=$($ga.popup) win=$($ga.win)"

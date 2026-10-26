@@ -125,6 +125,23 @@ int main()
         CHECK(ids.size() == 2 && got.count("b") && got.count("e"));
         fs::remove_all(root, ec);
     }
+    {   // play time payload / reply
+        std::vector<PlayGame> g = {{"a", "Alpha \"q\"", 5}, {"b", "Beta", 90}, {"c", "Zero", 0}, {"", "NoKey", 50}};
+        std::string m = playtime_message_json(g, true);
+        CHECK(m.find("\"share\":true") != std::string::npos && m.find("\"k\":\"c\"") == std::string::npos && m.find("NoKey") == std::string::npos);
+        CHECK(m.find("\"k\":\"b\"") < m.find("\"k\":\"a\""));                                    // biggest first
+        CHECK(m.find("Alpha \\\"q\\\"") != std::string::npos);                                    // title is escaped
+        CHECK(playtime_message_json(g, false) == "{\"type\":\"playtime\",\"share\":false,\"games\":[]}");
+        std::vector<PlayGame> many; for (int i = 0; i < 80; ++i) many.push_back({"k" + std::to_string(i), "t", i + 1});
+        std::string mm = playtime_message_json(many, true);
+        size_t n = 0; for (size_t p = mm.find("\"k\":"); p != std::string::npos; p = mm.find("\"k\":", p + 1)) ++n;
+        CHECK(n == kPlaytimeMaxGames && mm.find("\"k\":\"k79\"") != std::string::npos && mm.find("\"k\":\"k0\"") == std::string::npos);
+        CHECK(playtime_minutes(59) == 0 && playtime_minutes(119) == 1 && playtime_minutes(3600) == 60);
+        std::map<std::string, std::vector<PlayGame>> out;
+        CHECK(parse_playtime_reply("{\"type\":\"playtime\",\"friends\":{\"u1\":[{\"k\":\"n64:x\",\"t\":\"Smash\",\"m\":840},{\"k\":\"bad\",\"m\":0}],\"u2\":[]}}", &out));
+        CHECK(out.size() == 1 && out["u1"].size() == 1 && out["u1"][0].minutes == 840 && out["u1"][0].title == "Smash");
+        CHECK(!parse_playtime_reply("{\"type\":\"presence\"}", &out) && !parse_playtime_reply("junk", &out));
+    }
     printf("%s (%d failures)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }

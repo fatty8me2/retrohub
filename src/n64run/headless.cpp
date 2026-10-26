@@ -1,4 +1,6 @@
 #include "headless.h"
+#include "start_hint.h"
+#include <cstdlib>
 
 #include <windows.h>
 

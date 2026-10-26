@@ -39,5 +39,9 @@ std::string cheats_region_of(const std::string& name);         // subset of "UEJ
 bool cheats_is_featured_desc(const std::string& desc);         // keyword ranking
 bool cheats_is_master_desc(const std::string& desc);
 size_t cheats_db_game_count();                                  // sections loaded (0 = bundle missing)
+/* Whole-database census per system (tests / tooling): how many cheats carry value placeholders, and how many of those turn
+ * into a valid code once a value is typed (fillable). plain_ok = placeholder-free cheats a runner accepts. */
+struct ValueStats { std::string sys; int total = 0, plain_ok = 0, placeholder = 0, fillable = 0, hinted = 0, with_options = 0; };
+std::vector<ValueStats> cheats_db_value_stats();
 
 }  // namespace hub

@@ -1,5 +1,6 @@
 #include <sstream>
 #include "app.h"
+#include <cstring>
 
 /* ============================ main ============================ */
 
@@ -47,7 +48,10 @@ void shot_init_ui() {
     }
     if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
         if (std::string(pg) == "saves") A.page = Page::Saves;
-        else if (std::string(pg) == "settings") A.page = Page::Settings;
+        else if (std::string(pg).rfind("settings", 0) == 0) {   // "settings" or "settings:<tab 0-5>"
+            A.page = Page::Settings;
+            if (const char* c = std::strchr(pg, ':')) A.st.settings_tab = hubui::settings_tab_clamp(std::atoi(c + 1));
+        }
         else if (std::string(pg) == "online") A.page = Page::Online;
     }
     if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n

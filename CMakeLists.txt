@@ -92,6 +92,8 @@ enable_testing()
 add_test(NAME json_test COMMAND json_test)
 add_test(NAME runner_ctl_test COMMAND runner_ctl_test)   # hub<->runner control file, ack, slot/shot paths
 add_test(NAME winutil_test COMMAND winutil_test)
+add_test(NAME starthint_test COMMAND starthint_test)
+add_test(NAME hint_popup_test COMMAND hint_popup_test)
 add_test(NAME cheats_test COMMAND cheats_test)                         # cheat file model + code parsing per format
 add_test(NAME hubcommon_test COMMAND hubcommon_test)
 add_test(NAME hublibrary_test COMMAND hublibrary_test)
@@ -127,6 +129,7 @@ add_test(NAME hub_osk_test COMMAND hub_osk_test)                         # OSK k
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
+add_test(NAME hub_gameinfo_test COMMAND hub_gameinfo_test)   # game info: offline metadata, Wikidata matching on recorded fixtures, cache
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
 add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
 add_test(NAME hub_shell_test COMMAND hub_shell_test)

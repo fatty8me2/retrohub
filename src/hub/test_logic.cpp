@@ -1,8 +1,10 @@
 #include "logic.h"
+#include "settings_tabs.h"
 
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
@@ -33,6 +35,7 @@ int main() {
     {   Settings g; g.games_dest = "E:\\MyGames"; Settings h; CHECK(settings_from_json(settings_to_json(g), &h) && h.games_dest == g.games_dest && Settings().games_dest.empty()); }
     CHECK(!t.cloud_enabled && Settings().cloud_enabled);   // cloud saves: automatic, on by default
     {   Settings g; g.backup_shots = true; Settings h; CHECK(settings_from_json(settings_to_json(g), &h) && h.backup_shots && !Settings().backup_shots); }   // screenshots backup: off by default
+    {   Settings g; g.start_hint = false; Settings h; CHECK(settings_from_json(settings_to_json(g), &h) && !h.start_hint && Settings().start_hint); }   // controller tips: on by default
     Settings u;
     CHECK(u.cemu_exe.empty());
     CHECK(settings_from_json("{\"input_delay\": 99}", &u) && u.input_delay == 8 && u.delay_auto && u.name.empty());
@@ -330,6 +333,21 @@ int main() {
         CHECK(!wide.cover && wide.w == 260 && wide.h < 100 && wide.y > 0);
     }
 
+    {   // friends' play time
+        CHECK(friend_hours_text(0) == "" && friend_hours_text(45) == "45m" && friend_hours_text(180) == "3h" && friend_hours_text(870) == "14h" && friend_hours_text(570) == "9h 30m");
+        std::map<std::string, std::vector<PlaytimeEntry>> by;
+        by["u1"] = {{"k1", "Smash", 840}, {"k2", "Metroid", 10}};
+        by["u2"] = {{"k1", "Smash", 180}};
+        by["u3"] = {{"k1", "Smash", 500}};   // blocked/removed: not in names
+        by["u4"] = {{"k1", "Smash", 60}};
+        by["u5"] = {{"k1", "Smash", 30}};
+        std::map<std::string, std::string> nm = {{"u1", "Mickey"}, {"u2", "camer"}, {"u4", "Zed"}, {"u5", "Al"}};
+        CHECK(friends_playtime_line(by, nm, "k1") == std::string("Mickey 14h \xC2\xB7 camer 3h \xC2\xB7 Zed 1h"));
+        CHECK(friends_playtime_line(by, nm, "k2") == "Mickey 10m" && friends_playtime_line(by, nm, "zz").empty());
+        CHECK(friend_top_games_text(by["u1"]) == "Top games: Smash 14h, Metroid 10m" && friend_top_games_text({}).empty());
+        Settings a; CHECK(a.share_playtime); a.share_playtime = false; Settings b;
+        CHECK(settings_from_json(settings_to_json(a), &b) && !b.share_playtime);
+    }
     CHECK(format_play_time(0) == "Never played");
     CHECK(format_play_time(30) == "Under a minute");
     CHECK(format_play_time(35 * 60) == "35 min");
@@ -738,6 +756,27 @@ int main() {
         Settings back;
         CHECK(settings_from_json(settings_to_json(st), &back) && !back.share_games && !back.show_friend_games);
         CHECK(ask_host_toast_title("Mia", "Mario Kart 64") == "Mia wants to play Mario Kart 64 - host a room?");
+    }
+
+    {   // Settings tabs: every control of the old single-page Settings (plus the cloud toggles) still exists, exactly once
+        static const char* before[] = {"rom_folders_list", "rom_folder_remove", "add_folder", "find_games", "run_setup_again", "rescan", "download_art",
+            "smash_exe_browse", "smash_exe_default", "gb_core", "fullscreen", "dolphin_status", "pcsx2_status", "ps2_bios_dir", "ps2_bios_auto",
+            "ps1_bios", "ps1_openbios", "azahar_status", "cemu_exe", "cemu_exe_auto", "cemu_manage_controls", "cemu_restore_controls", "delay_auto",
+            "input_delay", "game_defaults", "show_friends", "notify_in_game", "notif_sound", "auto_friend", "friend_code_copy", "username",
+            "change_username", "friend_code", "account_code", "redeem_code", "export_account", "import_account", "sidebar_mode", "server_url",
+            "pause_cloud", "backup_shots", "cloud_states", "sync_folder", "sync_folder_stop", "sync_auto", "sync_copy_now"};
+        for (const char* id : before) CHECK(hubui::settings_control_tab(id) >= 0);
+        int n; const hubui::SettingsCtl* c = hubui::settings_controls(&n);
+        for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) CHECK(std::strcmp(c[i].id, c[j].id) != 0);
+        for (int i = 0; i < n; ++i) CHECK(c[i].tab >= 0 && c[i].tab < hubui::ST_Count);
+        CHECK(hubui::settings_control_tab("server_url") == hubui::ST_Online && hubui::settings_control_tab("change_username") == hubui::ST_Account);
+        int nx = -1;
+        CHECK(hubui::settings_tab_step(0, 1, &nx) == 0 && nx == 1);
+        CHECK(hubui::settings_tab_step(0, -1, &nx) == -1 && nx == 0);
+        CHECK(hubui::settings_tab_step(hubui::ST_Count - 1, 1, &nx) == 1);
+        CHECK(hubui::settings_tab_clamp(99) == 0 && hubui::settings_tab_clamp(-3) == 0 && hubui::settings_tab_clamp(5) == 5);
+        Settings a; a.settings_tab = 4; Settings b;
+        CHECK(settings_from_json(settings_to_json(a), &b) && b.settings_tab == 4);
     }
 
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
