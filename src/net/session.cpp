@@ -10,6 +10,8 @@
  *   'R' roster   [R, 0, mask]     host -> clients, bit s set = slot s reachable from the host
  *   'B' bye      [B, from]        clean end: the sender is leaving on purpose (not a failure)
  */
+#include <chrono>
+#include <algorithm>
 #include "net_internal.h"
 #include "log.h"
 #include "session.h"
@@ -118,13 +120,23 @@ struct Session::Impl {
     std::mt19937 sim_rng;
     std::vector<SimPkt> sim_q;
     uint32_t sim_last_relay_due = 0;
+    // stall spikes (QA): HUBNET_SIM_SPIKE_MS (length) every HUBNET_SIM_SPIKE_EVERY_MS (wall-clock phase, shared by peers on one PC), only after HUBNET_SIM_SPIKE_AT_MS since session start; outgoing datagrams of the
+    // slot HUBNET_SIM_SPIKE_SLOT (-1: all) sent inside the window are held until it ends (a 4-5 s round-trip spike).
+    int sim_spike_ms = 0, sim_spike_every = 0, sim_spike_at = 0, sim_spike_slot = -1;
+    uint32_t sim_t0 = 0;
 
     void sim_init(int slot_)
     {
         sim_latency = env_int("HUBNET_SIM_LATENCY_MS", 0);
         sim_jitter = env_int("HUBNET_SIM_JITTER_MS", 0);
         sim_loss = env_int("HUBNET_SIM_LOSS_PCT", 0);
-        sim_on = env_int("HUBNET_SIM_ENABLE", 0) == 1 && (sim_latency > 0 || sim_jitter > 0 || sim_loss > 0);   // opt-in so a stray env var cannot degrade real play
+        sim_spike_ms = env_int("HUBNET_SIM_SPIKE_MS", 0);
+        sim_spike_every = env_int("HUBNET_SIM_SPIKE_EVERY_MS", 0);
+        sim_spike_at = env_int("HUBNET_SIM_SPIKE_AT_MS", 10000);
+        sim_spike_slot = env_int("HUBNET_SIM_SPIKE_SLOT", -1);
+        if (sim_spike_slot >= 0 && sim_spike_slot != slot_) sim_spike_ms = 0;
+        sim_t0 = now_ms();
+        sim_on = env_int("HUBNET_SIM_ENABLE", 0) == 1 && (sim_latency > 0 || sim_jitter > 0 || sim_loss > 0 || sim_spike_ms > 0);   // opt-in so a stray env var cannot degrade real play
         int seed = env_int("HUBNET_SIM_SEED", 0);
         sim_rng.seed(seed ? (uint32_t)seed + (uint32_t)slot_ * 7919u : std::random_device()());
         sim_q.clear();
@@ -138,6 +150,12 @@ struct Session::Impl {
         uint32_t d = (uint32_t)sim_latency;
         if (sim_jitter > 0) d += sim_rng() % (uint32_t)(sim_jitter + 1);
         uint32_t due = now + d;
+        if (sim_spike_ms > 0 && (int32_t)(now - sim_t0) >= sim_spike_at) {
+            // phase from the wall clock so every peer on this PC stalls in the same window (whole-network spike)
+            int64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            int64_t k = sim_spike_every > 0 ? ms % sim_spike_every : 0;
+            if (sim_spike_every > 0 && k < sim_spike_ms) due = std::max(due, now + (uint32_t)(sim_spike_ms - k));
+        }
         if (relay) {
             if ((int32_t)(due - sim_last_relay_due) < 0) due = sim_last_relay_due;
             sim_last_relay_due = due;
