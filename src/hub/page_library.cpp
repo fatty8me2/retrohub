@@ -98,8 +98,7 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     bool idle = A.proc == nullptr;
     const hub::GameState& gs = gstate(e.key);
     bool gc = e.system == hub::System::GC;
-    bool ps2 = e.system == hub::System::PS2;   // PCSX2 has no netplay
-    bool online = supports_online(e) || gc || ps2;
+    bool online = supports_online(e) || gc;
     if (gc && supports_online(e)) gc = false;   // online-capable GameCube games get the normal Play Online button
     float gap = sp(1.5f), play_w = sp(compact ? 15.f : 18.f), on_w = compact ? bh : sp(21.f);
     float total = play_w;
@@ -113,9 +112,9 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     if (seed_nav) seed_nav_here();
     if (online) {
         ImGui::SameLine(0, gap);
-        if (gc || ps2) {
-            button(compact ? "##onsoon" : (ps2 ? "Offline only" : "Online soon"), ImVec2(on_w, bh), false, false, ui::Icon::Globe);
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(ps2 ? "PS2 online isn't supported yet" : "Online via Dolphin's own netplay - coming soon");
+        if (gc) {
+            button(compact ? "##onsoon" : "Online soon", ImVec2(on_w, bh), false, false, ui::Icon::Globe);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Online via Dolphin's own netplay - coming soon");
         } else if (button(compact ? "##online" : "Play Online", ImVec2(on_w, bh), false, idle, ui::Icon::Globe)) {
             A.pending_room_game = room_id(e);
             enter_room(true, hubnet::new_room_code());
@@ -670,7 +669,7 @@ void draw_details_modal() {
         place(label_w("Offline only", true));
         button("Offline only", ImVec2(0, bh), false, false, ui::Icon::Globe);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip(e.system == hub::System::PS2 ? "PS2 online isn't supported yet" : "Online play isn't available for this game");
+            ImGui::SetTooltip("Online play isn't available for this game");
         tr("online", "explained:offline-only");
     } else {
         place(label_w("Play Online", true));

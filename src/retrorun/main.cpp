@@ -37,8 +37,10 @@
 #include "session.h"
 #include "save_sync.h"
 #include "cheats.h"
+#include "miniz.h"
 
-constexpr uint8_t kPktCfg = 0x60;   // {type, slot, u64 PlayStation setup fingerprint}; unknown to lockstep/rollback (ignored there)
+constexpr uint8_t kPktCfg = 0x60;
+constexpr uint8_t kPktCfg2 = 0x61;   // PS2: {type, slot, u64 total, u32 core, u32 bios, u32 disc, u32 options}: which part differs is reported   // {type, slot, u64 PlayStation setup fingerprint}; unknown to lockstep/rollback (ignored there)
 
 namespace fs = std::filesystem;
 
@@ -56,6 +58,7 @@ struct Args {
     struct MemDump { unsigned id; size_t off, len; std::string file; };
     std::vector<MemDump> mem_dumps;   // --dump-mem ID,OFFSET,LEN,FILE: raw libretro memory block dumped at exit (QA)
     std::string controls;         // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (src/common/controls.h)
+    std::string setup_tag;        // --setup-tag TEXT: extra text mixed into the PS2 setup fingerprint (the hub passes the disc serial)
     std::string net, room, title, save_stem;   // save_stem: file stem for <stem>.srm (zipped ROMs); "" = rom file stem
     std::string sync_hash_mode = "auto", pace_override;
     bool share_host_save = false; // --share-host-save: lockstep session boots from the host's save (+ clock) on every PC
@@ -122,6 +125,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--net") { if (!val(&o->net)) return false; }
         else if (k == "--room") { if (!val(&o->room)) return false; }
         else if (k == "--title") { if (!val(&o->title)) return false; }
+        else if (k == "--setup-tag") { if (!val(&o->setup_tag)) return false; }
         else if (k == "--save-stem") { if (!val(&o->save_stem)) return false; }
         else if (k == "--filter") { if (!val(&v)) return false; if (v != "nearest" && v != "linear") { fprintf(stderr, "bad --filter\n"); return false; } o->scale_filter = v; }
         else if (k == "--integer-scale") { if (!val(&v)) return false; o->integer_scale = atoi(v.c_str()) ? 1 : 0; }
@@ -362,7 +366,8 @@ class Frontend {
     }
     std::string scale_filter_;   // "" = nearest (DS: linear)
     bool integer_scale_ = true;
-    bool is_ps2 = false;       // PS2 core (LRPS2 / ParaLLEl PS2): experimental lockstep only, behind RETROHUB_PS2_NETPLAY=1 (docs/PS2_ONLINE.md)
+    bool is_ps2 = false;       // PS2 core (LRPS2 / ParaLLEl PS2): input-delay lockstep only (no rollback), see docs/PS2_ONLINE.md
+    int16_t local_press_[4][2] = {};      // PS2: L2/R2 pressure 0..255 per local pad (rides in the upper 16 bits of the button word)
     bool is_ps1 = false;       // PlayStation (Beetle PSX): DualShock analog sticks, memory card 1 in the .srm
     int16_t frame_stick[4][4] = {};         // analog sticks per port for the frame about to run: lx ly rx ry
     int16_t local_stick_[4][4] = {};
@@ -455,6 +460,8 @@ class Frontend {
     uint64_t state_hash();
     bool setup_net();
     uint64_t ps1_config_fingerprint();
+    bool ps2_config_check();   // PS2: core build, BIOS file, disc and core options must match on every PC
+    bool ps2_card_presync();   // PS2: before the core boots, the host's memory card is sent to every PC
     bool ps1_config_check();   // all PCs must run the same BIOS / core build / hardware options
     bool setup_link();
     void link_pump();
@@ -615,6 +622,7 @@ bool Frontend::setup_paths() {
     core.system_tag = a.system;
     is_ds = lower(a.system) == "nds";
     is_ps1 = lower(a.system) == "ps1";
+    is_ps2 = lower(a.system) == "ps2";
     scale_filter_ = a.scale_filter;
     if (a.integer_scale >= 0) integer_scale_ = a.integer_scale != 0;
     // Defaults for the DS core go in first (then the remembered layout) so ini / --opt below override them.
@@ -701,6 +709,20 @@ bool Frontend::setup_paths() {
             {"beetle_psx_initial_scanline", "0"}, {"beetle_psx_initial_scanline_pal", "0"}, {"beetle_psx_last_scanline", "239"},
             {"beetle_psx_last_scanline_pal", "287"}, {"beetle_psx_use_mednafen_memcard0_method", "libretro"}};
         for (auto& pin : pins) core.overrides[pin[0]] = pin[1];
+    }
+    if (is_ps2 && (!a.net.empty() || a.synctest)) {
+        /* PS2 online: the software renderer (no GPU involved, bit-identical on every PC), no MTVU / renderer threads (thread timing), fast boot
+         * (the BIOS logo is skipped identically everywhere). Whatever the user chose offline, these are pinned; the rest of the pcsx2_* options
+         * are part of the setup fingerprint (ps2_config_check). */
+        static const char* const pins2[][2] = {
+            {"pcsx2_renderer", "Software (SW)"}, {"pcsx2_mtvu", "disabled"}, {"pcsx2_sw_renderer_threads", "0"}, {"pcsx2_fastboot", "enabled"},
+            {"pcsx2_analog_mode1", "enabled"}, {"pcsx2_analog_mode2", "enabled"}, {"pcsx2_axis_deadzone1", "0%"}, {"pcsx2_axis_deadzone2", "0%"},
+            {"pcsx2_axis_scale1", "100%"}, {"pcsx2_axis_scale2", "100%"}, {"pcsx2_button_deadzone1", "0%"}, {"pcsx2_button_deadzone2", "0%"},
+            {"pcsx2_invert_left_stick1", "disabled"}, {"pcsx2_invert_left_stick2", "disabled"}, {"pcsx2_invert_right_stick1", "disabled"},
+            {"pcsx2_invert_right_stick2", "disabled"}, {"pcsx2_enable_rumble1", "disabled"}, {"pcsx2_enable_rumble2", "disabled"},
+            {"pcsx2_shared_memory_cards", "enabled"}, {"pcsx2_enable_cheats", "disabled"}, {"pcsx2_dev9_eth", "disabled"}, {"pcsx2_dev9_hdd", "disabled"},
+            {"pcsx2_usb_camera", "disabled"}, {"pcsx2_ee_cpu", "Recompiler"}};
+        for (auto& pin : pins2) core.overrides[pin[0]] = pin[1];
     }
     return true;
 }
@@ -922,16 +944,32 @@ void Frontend::poll_all_local() {
     for (int i = 0; i < n_local; i++) {
         local_pad_cache_[i] = poll_local(i);
         std::memset(local_stick_[i], 0, sizeof local_stick_[i]);
-        if (is_ps1 && a.fuzz) {   // QA: pseudo-random sticks, a new target every 5 frames
-            for (int k = 0; k < 4; k++) {
+        local_press_[i][0] = local_press_[i][1] = 0;
+        if ((is_ps1 || is_ps2) && a.fuzz) {   // QA: pseudo-random sticks, a new target every 5 frames
+            for (int k = 0; k < 4 && !std::getenv("RETRORUN_NOSTICKS"); k++) {
                 uint32_t x = (uint32_t)(frame_no / 5) * 2246822519u ^ (uint32_t)(local_ports[i] * 4 + k + 1) * 3266489917u ^ 0x85EBCA6Bu;
                 x ^= x >> 15; x *= 2654435761u; x ^= x >> 13;
                 local_stick_[i][k] = (int16_t)((int)(x & 0xFFFF) - 32768);
             }
-        } else if (is_ps1 && !a.headless && (size_t)i < pads.size() && retro_pad) {
+            if (is_ps2 && !std::getenv("RETRORUN_NOSTICKS")) {   // pressure-sensitive L2/R2 (a DualShock 2 reports 0..255): a new level every 7 frames
+                uint32_t y = (uint32_t)(frame_no / 7) * 2654435761u ^ (uint32_t)(local_ports[i] + 7) * 0x9E3779B1u;
+                y ^= y >> 13; y *= 3266489917u; y ^= y >> 16;
+                local_press_[i][0] = (int16_t)((y & 3) ? (y >> 3) & 0xFF : 0);
+                local_press_[i][1] = (int16_t)(((y >> 2) & 3) ? (y >> 11) & 0xFF : 0);
+            }
+        } else if ((is_ps1 || is_ps2) && !a.headless && (size_t)i < pads.size() && retro_pad) {
             hubctl::PadState st;
             hubctl::read_state(pads[i], &st);
             retro_pad->sticks(st, local_stick_[i]);
+            if (is_ps2) retro_pad->pressure(st, local_press_[i]);
+        }
+        if (is_ps2) {   // buttons in the low 16 bits, L2/R2 pressure in the high 16; a pressed trigger is also its button bit
+            uint32_t m = local_pad_cache_[i] & 0xFFFFu;
+            for (int k = 0; k < 2; k++) {
+                if (local_press_[i][k]) m |= 1u << (RETRO_DEVICE_ID_JOYPAD_L2 + k);
+                else if (m >> (RETRO_DEVICE_ID_JOYPAD_L2 + k) & 1u) local_press_[i][k] = 255;
+            }
+            local_pad_cache_[i] = m | (uint32_t)(uint8_t)local_press_[i][0] << 16 | (uint32_t)(uint8_t)local_press_[i][1] << 24;
         }
     }
     if (!online)
@@ -1284,6 +1322,188 @@ uint64_t Frontend::ps1_config_fingerprint() {
     return h;
 }
 
+/* ---- PlayStation 2 online (LRPS2) ---------------------------------------------------------------------------------------------------- */
+
+namespace {
+uint64_t fnv_mix(uint64_t h, const void* p, size_t n) {
+    const unsigned char* c = (const unsigned char*)p;
+    for (size_t i = 0; i < n; i++) h = (h ^ c[i]) * 0x100000001B3ull;
+    return (h ^ 0xFF) * 0x100000001B3ull;
+}
+uint32_t fold32(uint64_t h) { return (uint32_t)(h ^ (h >> 32)); }
+
+/* Disc identity without reading 4 GB: size + 64 KiB blocks from 64 evenly spaced places (the first and the last included). */
+uint64_t disc_fingerprint(const std::string& path) {
+    FILE* f = _wfopen(fs::u8path(path).wstring().c_str(), L"rb");
+    if (!f) return 0;
+    _fseeki64(f, 0, SEEK_END);
+    long long size = _ftelli64(f);
+    uint64_t h = fnv_mix(0xCBF29CE484222325ull, &size, sizeof size);
+    std::vector<uint8_t> buf(65536);
+    const int n = 64;
+    for (int i = 0; i < n; i++) {
+        long long off = size > (long long)buf.size() ? (size - (long long)buf.size()) / (n - 1) * i : 0;
+        _fseeki64(f, off, SEEK_SET);
+        size_t got = fread(buf.data(), 1, buf.size(), f);
+        h = fnv_mix(h, buf.data(), got);
+        if (size <= (long long)buf.size()) break;
+    }
+    fclose(f);
+    return h;
+}
+
+std::string ps2_card_file(const std::string& system_dir) { return system_dir + "\\pcsx2\\memcards\\Mcd001.ps2"; }
+}  // namespace
+
+/* The four things that make two LRPS2 emulations differ: the core build, the BIOS file, the disc and the core options. */
+bool Frontend::ps2_config_check() {
+    uint32_t part[4] = {0, 0, 0, 0};   // core, bios, disc, options
+    uint64_t h = fnv_mix(0xCBF29CE484222325ull, core.info().library_name ? core.info().library_name : "", core.info().library_name ? strlen(core.info().library_name) : 0);
+    h = fnv_mix(h, core.info().library_version ? core.info().library_version : "", core.info().library_version ? strlen(core.info().library_version) : 0);
+    part[0] = fold32(h);
+    std::string bios_name;
+    auto it = core.overrides.find("pcsx2_bios");
+    if (it != core.overrides.end()) bios_name = it->second;
+    std::string bios_hash_txt = "none";
+    {
+        std::vector<uint8_t> d;
+        if (!bios_name.empty() && read_file(a.system_dir + "\\pcsx2\\bios\\" + bios_name, &d)) {
+            uint64_t bh = n64run::hash_block(d.data(), d.size());
+            part[1] = fold32(bh);
+            char t[64];
+            snprintf(t, sizeof t, "%s %08x", bios_name.c_str(), part[1]);
+            bios_hash_txt = t;
+        }
+    }
+    uint64_t dh = disc_fingerprint(a.rom);
+    dh = fnv_mix(dh, a.setup_tag.data(), a.setup_tag.size());
+    part[2] = fold32(dh);
+    uint64_t oh = 0xCBF29CE484222325ull;
+    for (auto& kv : core.overrides)
+        if (kv.first.rfind("pcsx2_", 0) == 0 && kv.first != "pcsx2_bios") { std::string t = kv.first + "=" + kv.second; oh = fnv_mix(oh, t.data(), t.size()); }
+    part[3] = fold32(oh);
+    uint64_t total = 0xCBF29CE484222325ull;
+    for (int i = 0; i < 4; i++) total = fnv_mix(total, &part[i], sizeof part[i]);
+    rlog("net: PS2 setup fingerprint %016llx (core %08x, BIOS %s, disc %08x [%s], options %08x)", (unsigned long long)total, part[0], bios_hash_txt.c_str(), part[2],
+         a.setup_tag.c_str(), part[3]);
+    static const char* const what[4] = {"emulator core build", "BIOS file", "game disc", "emulator options"};
+    static const int code[4] = {11, 9, 10, 11};   // exit codes: 9 BIOS, 10 disc, 11 core build / options (logic.cpp exit_code_text)
+    uint32_t seen = 1u << a.slot, t0 = hubnet::now_ms(), last = 0, done_at = 0, bad_at = 0;
+    for (;;) {
+        session.update();
+        int from;
+        std::vector<uint8_t> m;
+        while (session.recv(&from, &m)) {
+            if (m.size() == 26 && m[0] == kPktCfg2 && m[1] < 8 && (int)m[1] == from) {
+                uint64_t theirs;
+                uint32_t tp[4];
+                std::memcpy(&theirs, &m[2], 8);
+                std::memcpy(tp, &m[10], 16);
+                if (theirs != total) {
+                    if (!bad_at) {
+                        int w = tp[1] != part[1] ? 1 : tp[2] != part[2] ? 2 : tp[0] != part[0] ? 0 : 3;
+                        rlog("net: FAIL: slot %d runs a different %s (theirs %08x, mine %08x). Everyone in the room needs the same BIOS file, the same disc and the same emulator.",
+                             from, what[w], tp[w], part[w]);
+                        net_rc = code[w];
+                        bad_at = hubnet::now_ms() ? hubnet::now_ms() : 1;   // keep announcing ours for a moment so the other PCs report the mismatch too
+                    }
+                } else seen |= 1u << from;
+            }
+        }
+        uint32_t now = hubnet::now_ms();
+        if (session.failed()) return false;
+        if (now - last >= 100 || !last) {
+            uint8_t pkt[26] = {kPktCfg2, (uint8_t)a.slot};
+            std::memcpy(pkt + 2, &total, 8);
+            std::memcpy(pkt + 10, part, 16);
+            session.send(-1, pkt, 26);
+            last = now ? now : 1;
+        }
+        if (bad_at) { if (now - bad_at > 1500) return false; }
+        else if ((seen & slot_mask) == slot_mask) {
+            if (!done_at) done_at = now ? now : 1;
+            if (now - done_at > 1500) return true;
+        }
+        if (now - t0 > 40000) { rlog("net: FAIL: not every PC reported its PS2 setup within 40 s"); net_rc = 4; return false; }
+        pump_events(false);
+        if (quit) return false;
+        Sleep(5);
+    }
+}
+
+/* Memory card sharing (docs/SAVES.md, "PlayStation 2"): the host's Mcd001.ps2 is deflated and sent to every PC through a short-lived session on a
+ * sibling room, BEFORE the core boots (the core opens the card file while it loads the game). Guests overwrite their own throwaway copy;
+ * nobody's vault is written. A host without a card shares "no card": everyone starts with a blank one. */
+bool Frontend::ps2_card_presync() {
+    std::string err;
+    uint32_t mask = n64run::derive_slot_mask(owner, a.slot, std::max(1, a.players), &err);
+    if (!mask) { rlog("net: bad --slot/--players/--ports: %s", err.c_str()); net_rc = 2; return false; }
+    std::string room = a.room;   // "ABCDEF-n" -> "ABCDEF-(n + 100000)": a sibling game room for the card exchange
+    size_t dash = room.find('-');
+    if (dash == std::string::npos) room += "-100000";
+    else room = room.substr(0, dash + 1) + std::to_string(100000 + atoi(room.c_str() + dash + 1) % 800000);
+    hubnet::Session ps;
+    hubnet::SessionConfig cfg;
+    cfg.server = a.net;
+    cfg.room = room;
+    cfg.slot = a.slot;
+    cfg.expected = std::max(1, a.players);
+    if (!ps.start(cfg)) { rlog("net: cannot start the card session"); net_rc = 4; return false; }
+    uint32_t t0 = hubnet::now_ms();
+    while (!ps.ready()) {
+        ps.update();
+        if (ps.failed() || quit || hubnet::now_ms() - t0 > 60000) { rlog("net: card session failed: %s", ps.status().c_str()); net_rc = 4; ps.stop(); return false; }
+        Sleep(5);
+    }
+    const std::string card = ps2_card_file(a.system_dir);
+    std::error_code ec;
+    fs::create_directories(fs::u8path(a.system_dir + "\\pcsx2\\memcards"), ec);
+    std::vector<n64run::SaveFile> files;
+    if (a.slot == 0) {
+        std::vector<uint8_t> raw;
+        if (read_file(card, &raw) && !raw.empty()) {
+            mz_ulong zn = mz_compressBound((mz_ulong)raw.size());
+            std::vector<uint8_t> z(zn + 8);
+            uint64_t rn = raw.size();
+            std::memcpy(z.data(), &rn, 8);
+            if (mz_compress2(z.data() + 8, &zn, raw.data(), (mz_ulong)raw.size(), 9) != MZ_OK) { rlog("hostsave: cannot compress the memory card"); net_rc = 6; ps.stop(); return false; }
+            z.resize(zn + 8);
+            rlog("hostsave: host shares its memory card (%zu bytes, %zu compressed, hash %016llx)", raw.size(), z.size(), (unsigned long long)n64run::save_hash(raw.data(), raw.size()));
+            files.push_back({"card.srm", std::move(z)});
+        } else rlog("hostsave: host has no memory card; everyone starts with a blank one");
+    }
+    std::string dir = a.save_dir + "\\hostsave";
+    if (a.slot != 0) { fs::remove_all(fs::u8path(dir), ec); fs::create_directories(fs::u8path(dir), ec); }
+    std::string serr;
+    if (!n64run::run_save_sync(ps, a.slot, mask, a.slot == 0 ? &files : nullptr, dir, 60000, &serr)) {
+        rlog("hostsave: memory card sync failed: %s", serr.c_str());
+        net_rc = 6;
+        ps.stop();
+        return false;
+    }
+    if (a.slot != 0) {
+        std::vector<uint8_t> z;
+        fs::remove(fs::u8path(card), ec);
+        if (read_file(dir + "\\card.srm", &z) && z.size() > 8) {
+            uint64_t rn;
+            std::memcpy(&rn, z.data(), 8);
+            if (rn == 0 || rn > (64ull << 20)) { rlog("hostsave: implausible card size"); net_rc = 6; ps.stop(); return false; }
+            std::vector<uint8_t> raw((size_t)rn);
+            mz_ulong out = (mz_ulong)rn;
+            if (mz_uncompress(raw.data(), &out, z.data() + 8, (mz_ulong)(z.size() - 8)) != MZ_OK || out != rn) { rlog("hostsave: cannot unpack the host's memory card"); net_rc = 6; ps.stop(); return false; }
+            if (!write_atomic(card, raw.data(), raw.size())) { rlog("hostsave: cannot write %s", card.c_str()); net_rc = 6; ps.stop(); return false; }
+            rlog("hostsave: booted from the host's memory card (%zu bytes, hash %016llx)", raw.size(), (unsigned long long)n64run::save_hash(raw.data(), raw.size()));
+        } else rlog("hostsave: the host has no memory card; starting with a blank one");
+        guest_save_ro = true;
+    }
+    fs::remove(fs::u8path(ps2_card_file(a.system_dir).substr(0, ps2_card_file(a.system_dir).size() - 7) + "2.ps2"), ec);   // slot 2 always starts blank
+    ps.say_bye();
+    uint32_t t1 = hubnet::now_ms();
+    while (hubnet::now_ms() - t1 < 300) { ps.update(); Sleep(5); }
+    ps.stop();
+    return true;
+}
+
 bool Frontend::ps1_config_check() {
     const uint64_t mine = ps1_config_fingerprint();
     rlog("net: PlayStation setup fingerprint %016llx (BIOS %s)", (unsigned long long)mine, ([&] {
@@ -1365,7 +1585,7 @@ bool Frontend::setup_net() {
         if (cs == n64run::CheatSync::Mismatch) { rlog("net: cheat lists differ between players; leaving"); net_rc = 5; return false; }
         if (cs == n64run::CheatSync::Failed) { rlog("net: connection lost during the cheat check"); net_rc = lost_code(); return false; }
     }
-    if (a.share_host_save && !link && !is_ds && !share_host_save_run()) { net_rc = 6; return false; }
+    if (a.share_host_save && !link && !is_ds && !is_ps2 && !share_host_save_run()) { net_rc = 6; return false; }   // PS2: the card was exchanged before the core booted (ps2_card_presync)
     if (link) {
         std::vector<std::vector<uint8_t>> blobs;
         std::string lerr;
@@ -1382,6 +1602,7 @@ bool Frontend::setup_net() {
         rlog("link: saves exchanged and loaded for %d consoles", link_n);
     }
     if (is_ps1 && !ps1_config_check()) { net_rc = 7; return false; }
+    if (is_ps2 && !ps2_config_check()) { if (net_rc == 3 || net_rc == 4) net_rc = lost_code(); return false; }
     if (a.rollback) {
         const bool auto_delay = a.delay < 0;
         a.delay = a.delay >= 0 ? std::min(a.delay, 4) : 1;
@@ -1436,8 +1657,8 @@ bool Frontend::setup_net() {
     o.my_slot = a.slot;
     o.num_slots = a.players;
     o.slot_mask = slot_mask;
-    o.hash_label = use_state_hash ? "state" : "output";
-    o.wide = is_ps1;   // sticks travel as a second word per port
+    o.hash_label = is_ps2 ? "ee-ram" : use_state_hash ? "state" : "output";
+    o.wide = is_ps1 || is_ps2;   // sticks travel as a second word per port
     o.delay = a.delay;
     o.online = true;
     o.hash_interval = 600;
@@ -1859,7 +2080,14 @@ int Frontend::run(const Args& args) {
                 default: return 0;
             }
         }
-        if (is_ps1 && (dev & RETRO_DEVICE_MASK) == RETRO_DEVICE_ANALOG && port < 4) {   // DualShock sticks (and analog button pressure)
+        if (is_ps2 && (dev & RETRO_DEVICE_MASK) == RETRO_DEVICE_ANALOG && port < 4 && idx == RETRO_DEVICE_INDEX_ANALOG_BUTTON) {   // DualShock 2 pressure
+            if (id == RETRO_DEVICE_ID_JOYPAD_L2 || id == RETRO_DEVICE_ID_JOYPAD_R2) {
+                uint32_t pr = frame_pad[port] >> (id == RETRO_DEVICE_ID_JOYPAD_L2 ? 16 : 24) & 0xFF;
+                return (int16_t)(pr * 32767 / 255);
+            }
+            return id < 16 ? (int16_t)(((frame_pad[port] >> id) & 1) ? 32767 : 0) : 0;
+        }
+        if ((is_ps1 || is_ps2) && (dev & RETRO_DEVICE_MASK) == RETRO_DEVICE_ANALOG && port < 4) {   // DualShock sticks (and analog button pressure)
             if (idx == RETRO_DEVICE_INDEX_ANALOG_LEFT || idx == RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
                 if (id > RETRO_DEVICE_ID_ANALOG_Y) return 0;
                 return frame_stick[port][(idx == RETRO_DEVICE_INDEX_ANALOG_RIGHT ? 2 : 0) + (int)id];
@@ -1893,7 +2121,10 @@ int Frontend::run(const Args& args) {
         unsigned gt = 0x101;
         for (auto& ss : core.subsystems()) if (ss.num_roms == (unsigned)link_n) { gt = ss.id; break; }
         if (!core.load_game_special(gt, roms, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
-    } else if (!core.load_game(a.rom, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
+    } else {
+        if (is_ps2 && !a.net.empty() && a.share_host_save && !ps2_card_presync()) { rlog("net: memory card sharing failed"); return net_rc; }
+        if (!core.load_game(a.rom, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
+    }
     fps = core.av().timing.fps > 1 ? core.av().timing.fps : 60.0;
     if (is_ps1) {   // every port is a DualShock (digital pads work too; games switch the analog mode themselves)
         for (unsigned p = 0; p < 4; p++) core.set_port_device(p, 0x205);   // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
@@ -1939,11 +2170,7 @@ int Frontend::run(const Args& args) {
         // Gambatte's retro_serialize output differs run-to-run on identical emulation (see docs/RETRORUN.md),
         // so its state hash would flag false desyncs; fall back to a rolling video+audio output hash.
         // PlayStation: the serialized state holds bytes that are not emulation state and differs between identical runs (docs/CORES.md).
-        is_ps2 = ln.find("ps2") != std::string::npos || ln.find("pcsx2") != std::string::npos;
-        if (is_ps2 && (!a.net.empty() || a.synctest) && !(std::getenv("RETROHUB_PS2_NETPLAY") && std::string(std::getenv("RETROHUB_PS2_NETPLAY")) == "1")) {
-            rlog("PS2 online/synctest is experimental and off: set RETROHUB_PS2_NETPLAY=1 (docs/PS2_ONLINE.md)");
-            return 7;
-        }
+        is_ps2 = is_ps2 || ln.find("ps2") != std::string::npos || ln.find("pcsx2") != std::string::npos;
         use_state_hash = a.sync_hash_mode == "state" || (a.sync_hash_mode == "auto" && ln.find("gambatte") == std::string::npos && !is_ps1);
         if (use_state_hash && !core.serialize_size()) use_state_hash = false;
         rlog("sync hash: %s", use_state_hash ? "serialized state" : "video+audio output");
@@ -1955,10 +2182,10 @@ int Frontend::run(const Args& args) {
     {
         std::string cf = a.controls;
         if (cf.empty()) { const char* e = std::getenv("RETROHUB_CONTROLS"); if (e && *e) cf = e; }
-        if (is_ps1) prof = hubctl::default_profile("ps1");
+        if (is_ps1 || is_ps2) prof = hubctl::default_profile("ps1");   // PS2 online uses the DualShock layout of the ps1 profile
         if (!cf.empty()) {
             hubctl::Profile p;
-            if (hubctl::read_profile_file(cf, &p) && p.system == (is_ps1 ? "ps1" : "retro")) { prof = p; rlog("controls: profile '%s' (%s)", p.name.c_str(), cf.c_str()); }
+            if (hubctl::read_profile_file(cf, &p) && p.system == (is_ps1 || is_ps2 ? "ps1" : "retro")) { prof = p; rlog("controls: profile '%s' (%s)", p.name.c_str(), cf.c_str()); }
             else rlog("controls: cannot use %s; built-in mapping", cf.c_str());
         }
         retro_pad.reset(new retrorun::RetroPad(prof));
@@ -2070,7 +2297,7 @@ int Frontend::run(const Args& args) {
 
                 if (online) {
                     for (int p = 0; p < 4; p++) frame_pad[p] = lockstep->get_keys(p);   // lead port poll advances the sample
-                    if (is_ps1) for (int p = 0; p < 4; p++) retrorun::unpack_sticks(lockstep->aux(p), frame_stick[p]);
+                    if (is_ps1 || is_ps2) for (int p = 0; p < 4; p++) retrorun::unpack_sticks(lockstep->aux(p), frame_stick[p]);
                     if (lockstep->connection_lost()) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
                 } else {
                     poll_all_local();
@@ -2174,6 +2401,7 @@ done:
             else
                 rlog("screenshot: FAILED to write %s", a.screenshot.c_str());
         }
+        if (is_ps2 && rc != 0 && frame_no == 0) { std::fflush(nullptr); TerminateProcess(GetCurrentProcess(), (UINT)rc); }   // LRPS2 hangs when saving/unloading a VM that never ran a frame (failed setup check)
         finish();
     }
     if (tex) SDL_DestroyTexture(tex);

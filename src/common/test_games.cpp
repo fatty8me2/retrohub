@@ -116,13 +116,13 @@ static void test_catalog() {
     CHECK(mp3 != nullptr && mp3->rom_md5s.size() == 1 &&
           mp3->rom_md5s[0] == "76A8BBC81BC2060EC99C9645867237CC");
 
-    /* PlayStation 1 / 2 entries: Redump serial format (AAAA-NNNNN), no duplicate ids; PS2 online off, PS1 online only for the 2+ player DualShock games. */
+    /* PlayStation 1 / 2 entries: Redump serial format (AAAA-NNNNN), no duplicate ids; PS2 online for the 2+ player pad games (not Buzz!), PS1 online only for the 2+ player DualShock games. */
     {
         std::set<std::string> ids;
         for (const GameInfo& g : c) CHECK(ids.insert(g.id).second);   // ids unique (find_game returns the first match)
         for (const GameInfo& g : c) {
             if (g.system != "ps1" && g.system != "ps2") continue;
-            if (g.system == "ps2") CHECK(!g.online);
+            if (g.system == "ps2") CHECK(g.online == (g.max_players >= 2 && g.id != "buzz_hollywood"));   // 2-player DualShock games go online (LRPS2, 2 ports); Buzz! needs buzzers
             else CHECK(g.online == (g.max_players >= 2 && g.id != "buzz_junior_jungle"));   // Buzz! quiz buzzers are not DualShocks
             CHECK(g.engine == (g.system == "ps2" ? Engine::Pcsx2 : Engine::Libretro));
             CHECK(!g.serials.empty());

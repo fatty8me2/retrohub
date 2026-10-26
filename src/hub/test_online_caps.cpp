@@ -13,7 +13,7 @@ int main() {
     const Row table[] = {
         {System::Unknown, false, false}, {System::N64, true, false}, {System::GBA, true, false}, {System::GB, true, false},
         {System::GBC, true, false},      {System::GC, true, true},   {System::N3DS, true, false}, {System::WiiU, false, false},
-        {System::NDS, true, true},       {System::PS2, false, false}, {System::PS1, true, true},
+        {System::NDS, true, true},       {System::PS2, true, true},  {System::PS1, true, true},
     };
     CHECK((int)System::PS1 + 1 == (int)(sizeof table / sizeof table[0]));   // a new System enum value must get a row here
     hub::GameInfo on = hub::GameInfo(), off = hub::GameInfo();
@@ -30,7 +30,18 @@ int main() {
         CHECK((hubcaps::online_unsupported_reason(r.s)[0] == 0) == r.branch);   // only systems with no branch carry a reason
         CHECK(hubcaps::default_online_max(r.s) >= 2 && hubcaps::default_online_max(r.s) <= 4);
     }
-    CHECK(std::string(hubcaps::online_unsupported_reason(System::PS2)) == "PS2 online isn't supported yet");
+    CHECK(std::string(hubcaps::online_unsupported_reason(System::WiiU)) == "Wii U online isn't supported yet");
+    CHECK(hubcaps::default_online_max(System::PS2) == 2);
+    /* PS2: catalog games flagged online are capable and capped at 2 players (LRPS2 has no multitap); anything else is offered as "untested". */
+    {
+        const hub::GameInfo* t5 = hub::find_game("tekken5");
+        CHECK(t5 && t5->online && hubcaps::online_capable(System::PS2, t5) && !hubcaps::online_untested(System::PS2, t5));
+        const hub::GameInfo* cn = hub::find_game("crashnitro");
+        CHECK(cn && cn->max_players == 4 && hub::online_max_for(*cn) == 2);
+        const hub::GameInfo* kh = hub::find_game("kh");
+        CHECK(kh && hubcaps::online_capable(System::PS2, kh) && hubcaps::online_untested(System::PS2, kh));
+        CHECK(hubcaps::online_capable(System::PS2, nullptr) && hubcaps::online_untested(System::PS2, nullptr));
+    }
     CHECK(hubcaps::default_online_max(System::PS1) == 2 && hubcaps::default_online_max(System::GC) == 4 && hubcaps::default_online_max(System::GB) == 2);
     /* Every online catalog game belongs to a system that can launch online, and a PS1 game's cap comes from the catalog. */
     int ps1_online = 0;
