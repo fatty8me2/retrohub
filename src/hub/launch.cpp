@@ -47,7 +47,7 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
     std::string args = args_in;
     if (!A.resume_key.empty()) {   // "Resume": one-shot --load-state for exactly this game on a retrorun launch (Lane 2 runners; docs/RUNNER_CTL)
-        if (A.resume_key == ri.key && file_name(exe) == "retrorun.exe" && !A.resume_state.empty()) args += " --load-state " + quote(A.resume_state);
+        if (A.resume_key == ri.key && (file_name(exe) == "retrorun.exe" || file_name(exe) == "n64run.exe") && !A.resume_state.empty()) args += " --load-state " + quote(A.resume_state);
         A.resume_key.clear();
         A.resume_state.clear();
     }
@@ -156,6 +156,26 @@ void pad_exit_watch() {
     closed_at = now;
     set_notice(A.proc_title + ": closing (Back + Start held)...", 8.0);
     request_game_close();
+}
+
+void focus_game() {
+    if (g_headless) return;
+    CloseCtx c;
+    c.pids = game_pids();
+    struct Pick { std::vector<DWORD> pids; HWND hwnd = nullptr; } pk;
+    pk.pids = c.pids;
+    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+        auto* p = (Pick*)lp;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        for (DWORD q : p->pids) if (q == pid && IsWindowVisible(h) && !p->hwnd) { p->hwnd = h; return FALSE; }
+        return TRUE;
+    }, (LPARAM)&pk);
+    if (!pk.hwnd) return;
+    if (IsIconic(pk.hwnd)) ShowWindow(pk.hwnd, SW_RESTORE);
+    keybd_event(VK_MENU, 0, 0, 0);
+    SetForegroundWindow(pk.hwnd);
+    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
 }
 
 void request_game_close() {
@@ -284,6 +304,7 @@ RunInfo run_info_for(const hub::GameEntry& e, bool online) {
     ri.title = e.title;
     ri.track = true;   // the native port is tracked too: its save lives in the vault (n64 / native:smash64)
     ri.online = online;
+    qm_prepare(ri, e);
     return ri;
 }
 
@@ -482,6 +503,7 @@ void play_entry(const hub::GameEntry& e) {
                                " --save-dir " + quote(battery) + title_arg(e.title) + controls_arg("n64", e.key);
             args += hubui::n64_extra_args(gs_values_for(e));
             args += cheats_launch_args(e, false, true, nullptr);
+            args += qm_args(ri, e, true);
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
                 std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
                 if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
@@ -498,6 +520,7 @@ void play_entry(const hub::GameEntry& e) {
                                " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += cheats_launch_args(e, false, true, nullptr);
+            args += qm_args(ri, e, false);
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }
@@ -508,6 +531,7 @@ void play_entry(const hub::GameEntry& e) {
                                " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += cheats_launch_args(e, false, true, nullptr);
+            args += qm_args(ri, e, false);
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }

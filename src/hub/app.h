@@ -132,6 +132,7 @@ struct RunInfo {
     std::function<void()> pad_exit_fn;  // custom graceful close (Kanto Together); default: WM_CLOSE to the game's windows
     std::string o2r_prep;   // native Smash only: BattleShip.o2r path, shown as "Preparing" while it is missing ("" otherwise)
     std::function<void()> after_exit;   // runs once when the process ended (3DS/Wii U: copy the emulator save folder into the vault)
+    std::string ctl_path, shot_dir;     // runner control file (src/common/runner_ctl.h) and screenshots folder; empty = runner has no control channel
     bool cloud_started = false;         // cloud_game_started() was called for this session (set by spawn); exit pushes the game
 };
 
@@ -526,6 +527,7 @@ bool spawn(const std::string& exe, const std::string& args, const std::string& c
 void poll_process();
 void pad_exit_watch();   // launch.cpp: Back+Start combo while an external game runs
 void focus_hub();
+void focus_game();       // launch.cpp: bring the running game's window to the front (after the quick menu)
 std::string find_core(const std::string& name);
 std::string quote(const std::string& s);
 std::string title_arg(const std::string& game_title);
@@ -582,7 +584,8 @@ void kt_play(const hub::GameEntry& e);                  // library Play: install
 void kt_tick();                                         // every frame: prep, host/guest session, code relay
 std::string kt_launch_block(const hub::GameEntry& e);   // "" = the host may press Launch, else the reason
 void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host);   // launch_online hook
-void kt_on_code(const std::string& code, int launch_no);                // lobby np_kt message (guest); "" = the host's session ended
+void kt_on_code(const std::string& code, int launch_no, const std::string& pkg_id);                // lobby np_kt message (guest); "" = the host's session ended
+void kt_on_ver(int slot, const std::string& id, const std::string& built);   // lobby np_kt_ver: that player's installed package build
 void kt_on_peer_fail(int slot, const std::string& reason);              // lobby np_kt_fail (host)
 void kt_on_request(int slot);                                           // lobby np_kt_req (host): a guest wants the code again
 void kt_room_panel(float width, bool early);   // early=true: drawn above the member cards while a session is live; false: below the game picker otherwise                        // status + trade panel in the room page
@@ -612,6 +615,16 @@ std::string cheats_launch_block(const hub::GameEntry& e, const std::vector<hubui
 void cheats_on_room_msg(const std::string& game, const std::vector<std::string>& names);
 void cheats_room_strip(const hub::GameEntry* rg, bool host);
 void draw_cheats_modal();
+
+/* ---- quickmenu.cpp: in-game quick menu (View+Y), runner control channel, screenshots gallery ---- */
+struct SDL_Renderer;
+void qm_init(SDL_Renderer* ren);
+void qm_prepare(RunInfo& ri, const hub::GameEntry& e);                                  // run_info_for(): run dir + control file for the built-in runners
+std::string qm_args(const RunInfo& ri, const hub::GameEntry& e, bool n64_state_dir);    // " --control ... --game-key ... --shot-dir ..." or ""
+void qm_open_live();                                                                    // View+Y while a game runs
+void draw_quick_menu();
+void shots_gallery(const hub::GameEntry& e);                                            // details modal: screenshots strip
+void qm_seed_gallery(const hub::GameEntry& e);                                          // HUB_SHOT_GALLERY aid
 
 /* ---- lobby.cpp ---- */
 bool room_connected();

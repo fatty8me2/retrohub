@@ -41,6 +41,9 @@ namespace fs = std::filesystem;
 using str = std::string;
 
 namespace hub::saves {
+
+static std::atomic<bool> g_backup_shots{false};
+void set_backup_screenshots(bool on) { g_backup_shots = on; }
 namespace {
 
 const int64_t kMaxBlob = 16ll * 1024 * 1024;
@@ -475,6 +478,8 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
         if (it != E.base.games.end()) bg = it->second;
     }
     for (const str& p : paths) {
+        const bool is_shot = p.compare(0, 6, "shots/") == 0;   // screenshots (runner_ctl.h): large-pool "shot" class, only when "Back up screenshots" is on
+        if (is_shot && !g_backup_shots.load()) continue;
         Item it;
         it.path = p;
         auto lf = locals.find(p);
@@ -500,6 +505,7 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
             }
         }
         int64_t sz = it.local.present ? it.local.size : (it.has_cv ? it.cv.size : 0);
+        if (is_shot) it.cls = FileClass::Shot; else
         it.cls = it.has_cv && !it.cv.cls.empty() ? class_from_name(it.cv.cls, classify_path(p, sz)) : classify_path(p, sz);
         if (it.local.present && it.local.size > kMaxPlain) { it.act = Act::Nothing; items.push_back(it); continue; }
         if ((it.cls == FileClass::State || it.cls == FileClass::Shot) && !sync_states_on()) { it.act = Act::Nothing; items.push_back(it); continue; }

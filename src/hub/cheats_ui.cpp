@@ -300,7 +300,7 @@ void cheats_pad_watch() {
         }
         for (auto* c : A.pads) if (!down && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK) && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_Y)) down = true;
     }
-    if (down && !prev) cheats_open_live();
+    if (down && !prev) qm_open_live();
     prev = down;
 }
 

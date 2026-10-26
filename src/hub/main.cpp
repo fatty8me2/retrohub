@@ -117,6 +117,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     ImGui_ImplSDLRenderer2_Init(ren);
     ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);   // any connected pad drives the UI, hot-plug included
     hubart::init(ren, hub::data_dir() + "art\\");
+    qm_init(ren);
     hubart::set_enabled(A.st.download_art);
 
     if (shot_path) shot_init_ui();
