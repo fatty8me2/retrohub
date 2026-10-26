@@ -320,7 +320,9 @@ void lobby_tick() {
             autotest_log("np_gc_ready from " + std::to_string(from) + " guest_wait=" + std::to_string((int)GCO.guest_wait));
             if (from == 0 && !is_host() && GCO.guest_wait) GCO.host_ready = true;
         } else if (kind == "np_kt") {
-            if (from == 0 && !is_host()) kt_on_code(j.str("code"), (int)j.num("launch", 0));
+            if (from == 0 && !is_host()) kt_on_code(j.str("code"), (int)j.num("launch", 0), j.str("pkg"));
+        } else if (kind == "np_kt_ver") {
+            kt_on_ver(from, j.str("id"), j.str("built"));
         } else if (kind == "np_kt_fail") {
             kt_on_peer_fail(from, j.str("reason"));
         } else if (kind == "np_kt_req") {

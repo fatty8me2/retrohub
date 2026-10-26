@@ -579,7 +579,8 @@ void kt_play(const hub::GameEntry& e);                  // library Play: install
 void kt_tick();                                         // every frame: prep, host/guest session, code relay
 std::string kt_launch_block(const hub::GameEntry& e);   // "" = the host may press Launch, else the reason
 void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host);   // launch_online hook
-void kt_on_code(const std::string& code, int launch_no);                // lobby np_kt message (guest); "" = the host's session ended
+void kt_on_code(const std::string& code, int launch_no, const std::string& pkg_id);                // lobby np_kt message (guest); "" = the host's session ended
+void kt_on_ver(int slot, const std::string& id, const std::string& built);   // lobby np_kt_ver: that player's installed package build
 void kt_on_peer_fail(int slot, const std::string& reason);              // lobby np_kt_fail (host)
 void kt_on_request(int slot);                                           // lobby np_kt_req (host): a guest wants the code again
 void kt_room_panel(float width, bool early);   // early=true: drawn above the member cards while a session is live; false: below the game picker otherwise                        // status + trade panel in the room page

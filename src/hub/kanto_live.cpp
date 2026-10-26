@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -76,8 +77,24 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 100 && host.state().code.empty(); ++i) { host.update(); Sleep(100); }
     std::printf("host code: %s phase=%s\n", host.state().code.c_str(), kanto::phase_name(host.state().phase));
     int rc = 1;
+    /* KT_LIVE_GUEST_DELAY=<s>: the guest starts that long after the host (the host reaches the title screen first and must WAIT: barriers);
+     * KT_LIVE_GUEST_PKG=<zip|folder>: the guest runs a different package build (mixed-version session). */
+    if (const char* d = std::getenv("KT_LIVE_GUEST_DELAY")) { int n = atoi(d) * 10; for (int i = 0; i < n; ++i) { host.update(); Sleep(100); } std::printf("host after delay: phase=%s barrier=%d \"%s\"\n", kanto::phase_name(host.state().phase), (int)host.state().barrier_waiting, host.state().barrier_text.c_str()); }
+    kanto::Package gpkg_p;
+    std::string gdir = dir;
+    if (const char* g = std::getenv("KT_LIVE_GUEST_PKG")) {
+        if (!(kanto::inspect_zip(g, &gpkg_p) || kanto::inspect_dir(g, &gpkg_p))) { std::printf("guest pkg not a package\n"); return 1; }
+        kanto::Prep gp;
+        gp.start(gpkg_p, scratch + "\\gdata", {{rom, "BPRE"}}, desk);
+        while (gp.busy()) Sleep(250);
+        if (!gp.ok()) { std::printf("guest prep FAILED: %s\n", gp.message().c_str()); return 1; }
+        gdir = gp.dir();
+        std::printf("guest package: %s (has barriers: %d)  host package: %s\n", kanto::read_pkg_ver(gdir).id.c_str(), (int)kanto::has_barriers(gdir), kanto::read_pkg_ver(dir).id.c_str());
+        std::printf("compare (host view of guest): %d\n", (int)kanto::compare_versions(kanto::read_pkg_ver(dir), kanto::read_pkg_ver(gdir)));
+    }
     if (!host.state().code.empty()) {
         kanto::LaunchOpts go = ho;
+        go.dir = gdir; go.rom = kanto::rom_path(gdir);
         go.host = false; go.code = host.state().code; go.saves = scratch + "\\saves_guest";
         kanto::stage_saves(vault, go.saves, false);
         if (!guest.start(go, &err)) std::printf("guest start: %s\n", err.c_str());
@@ -90,6 +107,12 @@ int main(int argc, char** argv) {
             std::printf("host=%s guest=%s\n", kanto::phase_name(host.state().phase), kanto::phase_name(guest.state().phase));
             if (both) {
                 pump(host, guest, 6000);   // let coop.lua find the ROM
+                if (std::getenv("KT_LIVE_GUEST_DELAY") || std::getenv("KT_LIVE_GUEST_PKG")) {
+                    pump(host, guest, 25000);
+                    std::printf("barrier host=%d \"%s\" legacy=%d together=%d | guest=%d \"%s\" legacy=%d together=%d\n", (int)host.state().barrier_waiting, host.state().barrier_text.c_str(), (int)host.state().legacy_peer, (int)host.state().together,
+                                (int)guest.state().barrier_waiting, guest.state().barrier_text.c_str(), (int)guest.state().legacy_peer, (int)guest.state().together);
+                    host.send("barrier status\n"); pump(host, guest, 1500);
+                }
                 host.trade(1); guest.trade(1);   // no party yet at the title screen: expect the usage / no-valid-slot notes, not a crash
                 pump(host, guest, 2000);
                 std::printf("trade note host: %s\n", host.state().trade.note.c_str());

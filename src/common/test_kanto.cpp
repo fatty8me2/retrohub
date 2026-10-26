@@ -310,6 +310,47 @@ int main() {
 
     CHECK(!kanto::howto_text().empty() && kanto::howto_text().find("Trade panel") != std::string::npos);
 
+    /* package versions: both players must run the same build */
+    {
+        kanto::PkgVer oldv = kanto::parse_pkg_ver(R"({"patchSha1":"A6C685B09C5F78ADE7B014DE2C4377D47B5A6587","built":"2026-10-24T08:38:50.934Z"})");
+        kanto::PkgVer newv = kanto::parse_pkg_ver(R"({"patchSha1":"488ce08c8c9e93b6431aff321726416cae95d486","built":"2026-10-24T20:12:18.084Z"})");
+        CHECK(oldv.id == "a6c685b09c5f78ade7b014de2c4377d47b5a6587" && kanto::valid_ver_id(oldv.id) && !kanto::valid_ver_id("xyz"));
+        CHECK(kanto::compare_versions(oldv, oldv) == kanto::VerMatch::Same);
+        CHECK(kanto::compare_versions(oldv, newv) == kanto::VerMatch::MineOlder);
+        CHECK(kanto::compare_versions(newv, oldv) == kanto::VerMatch::MineNewer);
+        CHECK(kanto::compare_versions(oldv, kanto::PkgVer()) == kanto::VerMatch::Unknown);
+        kanto::PkgVer same_built = newv; same_built.id = oldv.id;
+        CHECK(kanto::compare_versions(same_built, newv) == kanto::VerMatch::Different);
+        CHECK(kanto::version_reason(kanto::VerMatch::MineOlder) == "pkg_old" && kanto::valid_fail_reason("pkg_old") && kanto::valid_fail_reason("pkg_new"));
+        CHECK(kanto::version_block_text(kanto::VerMatch::MineNewer, "Mickey") == "Mickey has an older Kanto Together package - they need to update");
+        CHECK(kanto::version_block_text(kanto::VerMatch::Same, "x").empty());
+        fs::path vd = tmp / "verpkg";
+        put(vd / "patch" / "patch.json", R"({"patchSha1":"488ce08c8c9e93b6431aff321726416cae95d486","built":"2026-10-24T20:12:18.084Z"})");
+        put(vd / "app" / "coop-launch.mjs", "// --no-barriers (do not wait)");
+        CHECK(kanto::read_pkg_ver(vd.string()).id == newv.id && kanto::has_barriers(vd.string()));
+        put(vd / "app" / "coop-launch.mjs", "// old launcher");
+        CHECK(!kanto::has_barriers(vd.string()));
+        /* seamless update: the newer build wins whether it is a zip or a folder, and replaces the old install by marker */
+        kanto::Package pa, pb;
+        pa.path = "a"; pa.built = oldv.built; pa.content_id = "a6c6@" + oldv.built;
+        pb.path = "b"; pb.built = newv.built; pb.content_id = "488c@" + newv.built;
+        CHECK(kanto::pick_package({pa, pb}) == 1 && kanto::pick_package({pb, pa}) == 0);
+        CHECK(kanto::cmd_go() == "go\n");
+    }
+    /* start-up barriers: the script's SYNC: lines */
+    {
+        kanto::State b; b.host = false;
+        CHECK(kanto::feed_line(b, "[bridge] lua: SYNC: Waiting for partner... you are at the title screen; your partner is still at: the main menu. Your buttons are paused (15s). Type  go  to continue without them."));
+        CHECK(b.barrier_waiting && b.barrier_text.find("the title screen") != std::string::npos && b.barrier_text.find("main menu") != std::string::npos);
+        CHECK(kanto::feed_line(b, "SYNC: continuing together (waited 12 s)") && !b.barrier_waiting && b.together);
+        CHECK(kanto::feed_line(b, "SYNC: Waiting for partner... you are at Oak's speech; waiting for a sign of life from your partner. Your buttons are paused (3s). Type  go  to continue without them."));
+        CHECK(kanto::feed_line(b, "SYNC: stopped waiting for your partner (offline); continuing on your own. The two games can catch up in the overworld.") && !b.barrier_waiting && !b.barrier_text.empty());
+        CHECK(kanto::feed_line(b, "SYNC: your partner's game is an older version without start-up barriers; no waiting at the title / intro (both of you should update).") && b.legacy_peer);
+        CHECK(kanto::feed_line(b, "SYNC: start-up barriers are OFF: this game file is a different build than coop.lua expects (3 code checks failed). Update both together.") && b.barriers_off);
+        CHECK(!kanto::feed_line(b, "SYNC: partner is in sight"));
+        CHECK(kanto::feed_line(b, "SYNC: both of you are in the game world") && b.together);
+    }
+
     fs::remove_all(tmp);
     std::printf(fails ? "kanto_test: %d FAILED\n" : "kanto_test: all passed\n", fails);
     return fails ? 1 : 0;
