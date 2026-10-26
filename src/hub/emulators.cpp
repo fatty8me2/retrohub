@@ -647,7 +647,7 @@ CemuPads cemu_pads_with(const std::vector<PadDesc>& by_port) {
 static std::string cemu_sel(const CemuPads& c) {
     std::string s;
     for (size_t i = 0; i < c.xinput.size(); ++i)
-        s += std::to_string(i) + "=" + (i < c.sdl.size() && !c.sdl[i].empty() ? c.sdl[i] : std::to_string(c.xinput[i])) + ";";
+        s += std::to_string(i) + "=" + (i < c.dsu.size() && c.dsu[i] >= 0 ? "dsu" + std::to_string(c.dsu[i]) : i < c.sdl.size() && !c.sdl[i].empty() ? c.sdl[i] : std::to_string(c.xinput[i])) + ";";
     return s == "0=0;" ? "" : s;   // the old single-pad setup keeps its marker hash
 }
 
@@ -680,14 +680,27 @@ CemuPads cemu_pads_with_sdl(const std::vector<PadDesc>& by_port, const std::vect
     return c;
 }
 
-static std::string cemu_pad_xml(const hubctl::Profile& prof, int xinput_idx, int player, bool pro, const std::string& sdl_uuid = "") {
-    const bool sdl = !sdl_uuid.empty();
+/* Cemu's DSUController ids (DSUController.cpp: bits of the DSU button bytes in order; sticks/triggers share the XInput ids).
+ * Wii U A/B/X/Y sit on the DSU A/B/X/Y bits; the remote pad's XInput layout is what dsu_server.cpp maps from. */
+static int cemu_dsu_id(const hubctl::Term& t) {
+    static const std::map<std::string, int> m = {
+        {"back", 0}, {"leftstick", 1}, {"rightstick", 2}, {"start", 3}, {"dpup", 4}, {"dpright", 5}, {"dpdown", 6}, {"dpleft", 7},
+        {"leftshoulder", 10}, {"rightshoulder", 11}, {"x", 12}, {"a", 13}, {"b", 14}, {"y", 15},
+        {"lefttrigger", 42}, {"righttrigger", 43}, {"leftx+", 38}, {"lefty-", 39}, {"rightx+", 40}, {"righty-", 41},
+        {"leftx-", 44}, {"lefty+", 45}, {"rightx-", 46}, {"righty+", 47}};
+    auto it = m.find(hubctl::term_name(t));
+    return it == m.end() ? -1 : it->second;
+}
+
+static std::string cemu_pad_xml(const hubctl::Profile& prof, int xinput_idx, int player, bool pro, const std::string& sdl_uuid = "", int dsu_slot = -1) {
+    const bool dsu = dsu_slot >= 0;
+    const bool sdl = !dsu && !sdl_uuid.empty();
     /* VPAD ButtonId (1..24) -> profile control. The default profile reproduces the old fixed table exactly. */
     static const char* const vpad[] = {"a", "b", "x", "y", "l", "r", "zl", "zr", "plus", "minus", "dpup", "dpdown", "dpleft", "dpright",
                                        "l3", "r3", "ls_up", "ls_down", "ls_left", "ls_right", "rs_up", "rs_down", "rs_left", "rs_right"};
     auto dz = [&](const char* name) { auto it = prof.analogs.find(name); return fmt_g(it == prof.analogs.end() ? 0.25 : it->second.deadzone); };
     std::string x = std::string("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>") + (pro ? "Wii U Pro Controller" : "Wii U GamePad") + "</type>\n"
-                    "\t<controller>\n\t\t<api>" + std::string(sdl ? "SDLController" : "XInput") + "</api>\n\t\t<uuid>" + (sdl ? sdl_uuid : std::to_string(xinput_idx)) + "</uuid>\n\t\t<display_name>Controller " + std::to_string(player + 1) + "</display_name>\n"
+                    "\t<controller>\n\t\t<api>" + std::string(dsu ? "DSUController" : sdl ? "SDLController" : "XInput") + "</api>\n\t\t<uuid>" + (dsu ? std::to_string(dsu_slot) : sdl ? sdl_uuid : std::to_string(xinput_idx)) + "</uuid>\n\t\t<display_name>Controller " + std::to_string(player + 1) + "</display_name>\n"
                     "\t\t<rumble>0</rumble>\n"
                     "\t\t<axis>\n\t\t\t<deadzone>" + dz("left_stick") + "</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n"
                     "\t\t<rotation>\n\t\t\t<deadzone>" + dz("right_stick") + "</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n"
@@ -697,7 +710,7 @@ static std::string cemu_pad_xml(const hubctl::Profile& prof, int xinput_idx, int
         auto it = prof.buttons.find(vpad[i]);
         std::vector<hubctl::Term> t;
         if (it == prof.buttons.end() || !hubctl::parse_expr(it->second, prof.axis_threshold, &t) || t.empty()) continue;
-        int id = sdl ? cemu_sdl_id(t[0]) : cemu_xinput_id(t[0]);   // one source per Wii U button
+        int id = dsu ? cemu_dsu_id(t[0]) : sdl ? cemu_sdl_id(t[0]) : cemu_xinput_id(t[0]);   // one source per Wii U button
         if (id < 0) continue;
         x += "\t\t\t<entry>\n\t\t\t\t<mapping>" + std::to_string(i + 1) + "</mapping>\n\t\t\t\t<button>" + std::to_string(id) +
              "</button>\n\t\t\t</entry>\n";
@@ -710,6 +723,15 @@ std::string cemu_gamepad_profile_xml(const hubctl::Profile& prof, int xinput_idx
 std::string cemu_pro_profile_xml(const hubctl::Profile& prof, int xinput_idx, int player) { return cemu_pad_xml(prof, xinput_idx, player, true); }
 std::string cemu_gamepad_profile_xml() { return cemu_gamepad_profile_xml(hubctl::default_profile("wiiu")); }
 std::string cemu_gamepad_profile_xml_sdl(const hubctl::Profile& prof, const std::string& sdl_uuid) { return cemu_pad_xml(prof, 0, 0, false, sdl_uuid); }
+std::string cemu_pro_profile_xml_dsu(const hubctl::Profile& prof, int dsu_slot, int player) { return cemu_pad_xml(prof, 0, player, true, "", dsu_slot); }
+CemuPads cemu_pads_with_dsu(const CemuPads& local, int remote_players) {
+    CemuPads c;
+    c.xinput.push_back(!local.xinput.empty() ? local.xinput[0] : 0);
+    c.sdl.push_back(!local.sdl.empty() ? local.sdl[0] : std::string());
+    c.dsu.push_back(-1);
+    for (int i = 0; i < remote_players && i < 3; ++i) { c.xinput.push_back(-1); c.sdl.push_back(std::string()); c.dsu.push_back(i); }
+    return c;
+}
 std::string cemu_pro_profile_xml_sdl(const hubctl::Profile& prof, const std::string& sdl_uuid, int player) { return cemu_pad_xml(prof, 0, player, true, sdl_uuid); }
 
 /* Writes controller0-3.xml into `cdir` (the controllerProfiles folder) when missing or when the profile/pad order changed.
@@ -724,7 +746,8 @@ static void write_cemu_profiles(const std::string& cdir, const hubctl::Profile& 
     auto xml = [&](int i) {
         bool sdl = i < (int)pads.sdl.size() && !pads.sdl[i].empty();
         int xi = i < (int)pads.xinput.size() && pads.xinput[i] >= 0 ? pads.xinput[i] : 0;
-        return cemu_pad_xml(prof, xi, i, i > 0, sdl ? pads.sdl[i] : std::string());
+        int ds = i < (int)pads.dsu.size() ? pads.dsu[i] : -1;
+        return cemu_pad_xml(prof, xi, i, i > 0, sdl ? pads.sdl[i] : std::string(), ds);
     };
     write_text(pad, xml(0));   // player 1 = the Wii U GamePad
     for (int i = 1; i < 4; ++i) {   // players 2-4 = Pro Controllers on the next pads; stale ones from an earlier setup go

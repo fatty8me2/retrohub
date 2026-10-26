@@ -329,6 +329,11 @@ void draw_quick_menu() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.75f)));
 
+    if (!g_shot_fake && !rplay_status_line().empty()) {   // Wii U remote play host: who is watching, how fast, how laggy
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::GOOD);
+        ImGui::TextUnformatted(rplay_status_line().c_str());
+        ImGui::PopStyleColor();
+    }
     if (menu_button("Resume", true, ui::Icon::Play, true)) { ImGui::CloseCurrentPopup(); focus_game(); }
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
     if (ctl) {

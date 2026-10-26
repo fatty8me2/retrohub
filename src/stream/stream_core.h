@@ -4,6 +4,8 @@
 #include "stream_proto.h"
 
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <deque>
 #include <map>
 #include <vector>
@@ -108,5 +110,53 @@ class BitrateController {
   private:
     int kbps_, min_, max_; int clean_ = 0; int loss_ = 0; int last_jitter_ = 0;
 };
+
+
+/* ---- guest in-stream menu (View + Y on a pad, F1 on the keyboard). Pure so a test can drive it. ---- */
+enum class MenuEv { Open, Up, Down, Ok, Back };
+enum class MenuAct { None, Opened, Closed, ToggleStats, ToggleFullscreen, Leave };
+struct GuestMenu {
+    static constexpr int kItems = 4;   // 0 Resume, 1 Stats, 2 Fullscreen, 3 Leave
+    static const char* item_name(int i) { static const char* n[kItems] = {"RESUME", "STATS", "FULLSCREEN", "LEAVE"}; return n[i < 0 || i >= kItems ? 0 : i]; }
+    bool open = false; int sel = 0;
+    MenuAct handle(MenuEv e) {
+        if (!open) { if (e == MenuEv::Open) { open = true; sel = 0; return MenuAct::Opened; } return MenuAct::None; }
+        switch (e) {
+            case MenuEv::Open: case MenuEv::Back: open = false; return MenuAct::Closed;
+            case MenuEv::Up: sel = (sel + kItems - 1) % kItems; return MenuAct::None;
+            case MenuEv::Down: sel = (sel + 1) % kItems; return MenuAct::None;
+            case MenuEv::Ok:
+                if (sel == 1) return MenuAct::ToggleStats;
+                if (sel == 2) return MenuAct::ToggleFullscreen;
+                if (sel == 3) { open = false; return MenuAct::Leave; }
+                open = false; return MenuAct::Closed;
+        }
+        return MenuAct::None;
+    }
+};
+/* Raw pad bits the menu cares about; edge detection turns held buttons into MenuEv. */
+struct MenuPadEdge {
+    bool chord = false, up = false, down = false, ok = false, back = false;
+    bool poll(bool back_btn, bool y_btn, bool up_btn, bool down_btn, bool ok_btn, bool cancel_btn, MenuEv* ev) {
+        bool c = back_btn && y_btn;
+        bool fire = false;
+        if (c && !chord) { *ev = MenuEv::Open; fire = true; }
+        else if (up_btn && !up) { *ev = MenuEv::Up; fire = true; }
+        else if (down_btn && !down) { *ev = MenuEv::Down; fire = true; }
+        else if (ok_btn && !ok) { *ev = MenuEv::Ok; fire = true; }
+        else if (cancel_btn && !back) { *ev = MenuEv::Back; fire = true; }
+        chord = c; up = up_btn; down = down_btn; ok = ok_btn; back = cancel_btn;
+        return fire;
+    }
+};
+
+/* Host status line for the hub: "streaming to Mickey - 12 Mbps - 48 ms". Pure formatting (the hub knows the names). */
+inline std::string status_line(const std::vector<std::string>& names, int kbps, int rtt_ms) {
+    if (names.empty()) return "";
+    std::string who;
+    for (size_t i = 0; i < names.size(); i++) who += (i ? (i + 1 == names.size() ? " and " : ", ") : "") + names[i];
+    char b[64]; snprintf(b, sizeof b, "%.0f Mbps", kbps / 1000.0);
+    return "streaming to " + who + " · " + b + (rtt_ms >= 0 ? " · " + std::to_string(rtt_ms) + " ms" : "");
+}
 
 } // namespace rplay

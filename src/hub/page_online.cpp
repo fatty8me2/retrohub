@@ -77,6 +77,7 @@ void page_online_home() {
 void host_launch_selected() {
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
     if (!rg) return;
+    if (remote_play_entry(*rg) && !rplay_precheck()) return;   // Wii U remote play: probe the direct paths first; poll_rplay re-enters here when they all work
     GRP.again = false;
     std::vector<hubui::PeerInfo> peers = peer_list();
             int delay = A.st.delay_auto ? 0 : A.st.input_delay;   // 0 = auto, same for everyone
@@ -128,6 +129,7 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
     auto sel = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0, remote_play_entry(*rg));   // remote play: guests need no copy
     if (!sel.ok) return sel.reason;
     if (host && remote_play_entry(*rg) && is_remote_stand_in(*rg)) return "You need your own copy of " + rg->title + " to host remote play.";
+    if (host && remote_play_entry(*rg)) { std::string b = rplay_block_reason(); if (!b.empty()) return b; }
     std::string host_app;
     bool host_hello = false;
     for (auto& p : peers) if (p.slot == 0) { host_app = p.app; host_hello = p.hello; }
@@ -139,6 +141,7 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
         if (is_kanto(*rg)) { std::string b = kt_launch_block(*rg); if (!b.empty()) return b; }
         { std::string b = cheats_launch_block(*rg, peers); if (!b.empty()) return b; }
         if (rg->system == hub::System::N3DS && gc_needs_unpack(*rg)) return "Unpacking " + rg->title + " (needed for 3DS online)...";
+        if (rg->system == hub::System::WiiU && gc_needs_unpack(*rg) && !is_remote_stand_in(*rg)) return "Unpacking " + rg->title + " (needed to stream it)...";
         if (rg->system == hub::System::GC) {
             if (gc_needs_unpack(*rg)) return "Unpacking " + rg->title + " (needed for GameCube online)...";
             if (GCO.active) return "A GameCube game is already running.";
@@ -184,6 +187,7 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
 
     if (extra.empty() && rg && remote_play_entry(*rg) && block.empty())   // remote play banner: who needs the game, and how it connects
         extra = host ? "Remote play: you run the game and stream it to the others." : hubcaps::remote_play_banner();
+    if (host && !rplay_status_line().empty()) extra = rplay_status_line();
     ImU32 tone = st.tone == hubui::RoomTone::Good ? ui::GOOD : st.tone == hubui::RoomTone::Bad ? ui::BAD : st.tone == hubui::RoomTone::Warn ? ui::WARN : ui::ACCENT;
     float W = ImGui::GetContentRegionAvail().x;
     float H = 108 * S;
