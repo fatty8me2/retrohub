@@ -1389,7 +1389,9 @@ uint64_t wiiu_title_id_of_file(const std::string& path) {
         return f.gcount() == (std::streamsize)n;
     };
     hub::WiiuInfo w;
-    return hub::parse_wua(rd, size, &w) ? w.title_id : 0;
+    if (hub::parse_wua(rd, size, &w) && w.title_id) return w.title_id;
+    hub::WiiuMeta m;
+    return hub::wua_read_meta(rd, size, &m) ? m.title_id : 0;   // repacks with a 0000000000000000_v0 folder: the id is in meta.xml
 }
 
 hub::FsProbe wiiu_probe() { return probe(); }

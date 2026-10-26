@@ -212,6 +212,7 @@ void focus_game() {
  * keyboard state of its window, so the game window is brought forward and the keys are injected. */
 void wiiu_toggle_gamepad_screen() {
     if (g_headless || !A.proc) return;
+    if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
     focus_game();
     std::vector<int> keys = hubemu::cemu_toggle_gamepad_keys();
     std::vector<INPUT> in;
@@ -460,11 +461,14 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         if (!wiiu_tid) wiiu_tid = hubemu::wiiu_title_id_of_file(game);   // archives / disc-less keys: read from the unpacked .wua
         if (inst.managed) hubemu::apply_game_settings(kind, inst.dir, gsv);
         else if (!hubemu::prepare_cemu_own_settings(cemu_user, gsv)) autotest_log("cemu: settings.xml of the own install left untouched (missing or no backup possible)");
+        autotest_log("cemu: user data " + cemu_user + " title " + hub::hex16(wiiu_tid));
         hubemu::apply_cemu_game_profile(cemu_user, wiiu_tid, gsv);
+        autotest_log("cemu: profile applied");
     } else {
         hubemu::apply_game_settings(kind, inst.dir, gsv);
     }
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid));
+    autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
@@ -488,7 +492,8 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         NP3.stop();
         if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (your emulator's copy is untouched)", ui::WARN, 15.0);
     };
-    if (!spawn(inst.exe, args, inst.dir, {}, r)) NP3.stop();
+    autotest_log("external: starting " + inst.exe + " " + args);
+    if (!spawn(inst.exe, args, inst.dir, {}, r)) { autotest_log("external: spawn failed"); NP3.stop(); }
 }
 
 void start_unzip(const hub::GameEntry& e) {

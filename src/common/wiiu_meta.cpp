@@ -273,8 +273,9 @@ std::vector<WuaTitle> wua_titles(const ReadAtFn& read, uint64_t file_size) {
         ZArc::Node n;
         std::string nm;
         if (!z.node(root.first + i, &n) || n.file || !z.name(n.name_at, &nm)) continue;
-        WuaTitle t = classify(nm);
-        if (t.title_id) v.push_back(t);
+        uint64_t probe = 0;
+        if (!parse_hex16(nm, 0, &probe)) continue;   // some repacks name the folder 0000000000000000_v0: the real id is in its meta.xml
+        v.push_back(classify(nm));
     }
     return v;
 }
