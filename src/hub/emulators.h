@@ -92,7 +92,7 @@ void prepare_cemu_managed(const std::string& install_dir);   // profile = the st
 void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& profile);
 /* Wii U players in RetroHub port order: xinput[i] = the XInput slot of player i+1 (empty = player 1 on slot 0). Player 1 gets the
  * GamePad profile (controller0.xml), players 2-4 Pro Controllers (controller1-3.xml). */
-struct CemuPads { std::vector<int> xinput; std::vector<std::string> sdl; };   // sdl[i] non-empty = player i is an SDL pad (xinput[i] = -1)
+struct CemuPads { std::vector<int> xinput; std::vector<std::string> sdl; std::vector<int> dsu; };   // dsu[i] >= 0 = player i is DSU slot dsu[i] (remote Wii U play; Cemu "DSUController" at 127.0.0.1:26760)   // sdl[i] non-empty = player i is an SDL pad (xinput[i] = -1)
 /* Like cemu_pads_with but non-XInput pads become Cemu "SDLController" players. uuid = "<index>_<SDL GUID>" (index among same-GUID pads
  * in `all_pads`, SDL order). */
 CemuPads cemu_pads_with_sdl(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& all_pads);
@@ -105,6 +105,9 @@ std::string cemu_user_data_dir(const std::string& exe_dir, const std::string& ap
 bool cemu_backup_controls(const std::string& user_data);
 void prepare_cemu_own(const std::string& user_data, const hubctl::Profile& profile, const CemuPads& pads, bool manage);
 bool cemu_restore_controls(const std::string& user_data);
+/* Remote play: player 1 = the host's own pad (`local`, XInput rank 0 / SDL as in cemu_pads_with_sdl, or XInput 0), players 2..1+remote = DSU slots 0..remote-1. */
+CemuPads cemu_pads_with_dsu(const CemuPads& local, int remote_players);
+std::string cemu_pro_profile_xml_dsu(const hubctl::Profile& profile, int dsu_slot, int player);
 CemuPads cemu_pads_with(const std::vector<PadDesc>& by_port);   // non-XInput pads are skipped
 void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& profile, const CemuPads& pads);
 std::string cemu_gamepad_profile_xml(const hubctl::Profile& profile, int xinput_idx);

@@ -80,6 +80,7 @@ add_subdirectory(src/retrorun)
 add_subdirectory(src/mgba_link)
 add_subdirectory(src/sameboy_rb)
 add_subdirectory(src/beetle_psx)
+add_subdirectory(src/stream)
 add_subdirectory(src/hub)
 
 # ---- Tests (ctest) ----
@@ -147,6 +148,7 @@ add_test(NAME hub_toast_win_test COMMAND hub_toast_win_test)               # rea
 add_test(NAME hub_invite_test COMMAND hub_invite_test)                   # invite parsing + pipe handoff (no network, no windows)
 add_test(NAME hub_bootsound_test COMMAND hub_bootsound_test)       # procedural startup sounds render to WAVs (not played)
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
+add_test(NAME dsu_test COMMAND dsu_test)   # DSU packets + loopback server round trip
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
