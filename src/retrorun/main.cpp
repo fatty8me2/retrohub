@@ -639,6 +639,7 @@ bool Frontend::setup_paths() {
         core.overrides["sameboy_screen_layout"] = "left-right";
         core.overrides["sameboy_audio_output"] = "Game Boy #" + std::to_string(std::min(1, mine) + 1);
     }
+    if (!a.net.empty() || a.synctest) core.overrides["mesen_ramstate"] = "All 0s (Default)";   // random power-on RAM would differ per PC
     if ((!a.net.empty() || a.synctest) && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
     rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
     srm_path = a.save_dir + "\\" + rom_stem + ".srm";
@@ -1389,8 +1390,9 @@ bool Frontend::setup_net() {
         rc.use_state_hash = false;   // confirmed video hash: serialized bytes differ benignly after a load (audio state)
         rc.val_bytes = is_ps1 ? 8 : 2;   // PlayStation: buttons + 4 stick bytes + 16 event bits (disc swap) per port
         if (is_ps1) rc.event_mask = retrorun::kEventMask;
-        if (is_ps1) rc.relay_half_rate = true;
-        if (is_ps1) rc.send_gap_ms = 30;   // ~60 packets/s per PC: 4 PCs through the relay stay under its 400 frames/s room cap
+        const bool big_room = (lower(a.system) == "snes" || lower(a.system) == "nes") && a.players >= 3;   // 3-4 PCs through the relay hit its 400 frames/s room cap
+        if (is_ps1 || big_room) rc.relay_half_rate = true;
+        if (is_ps1 || big_room) rc.send_gap_ms = 30;   // ~60 packets/s per PC: 4 PCs through the relay stay under its 400 frames/s room cap
         if (is_ps1) rc.pred_budget = 3;   // a PlayStation frame costs 3-8 ms: re-simulating 6 frames per late input would drop frames, so the input delay takes over sooner
         rb_warmup();
         rb::Transport t;
@@ -1889,12 +1891,18 @@ int Frontend::run(const Args& args) {
     if (is_ps1) {   // every port is a DualShock (digital pads work too; games switch the analog mode themselves)
         for (unsigned p = 0; p < 4; p++) core.set_port_device(p, 0x205);   // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
     }
+    if (lower(a.system) == "snes" && (owner[2] >= 0 || owner[3] >= 0)) {   // 3-4 players: a multitap on port 2 (snes9x: libretro ports 1-4 are its four pads)
+        core.set_port_device(1, 0x101);   // RETRO_DEVICE_JOYPAD_MULTITAP ((1 << 8) | RETRO_DEVICE_JOYPAD)
+        rlog("snes: multitap on port 2 (players 2-4)");
+    }
     if (a.rollback && !a.synctest) {
         // Only cores whose savestates were verified exact (SyncTest against a free-running reference) may roll back; others stay lockstep.
         std::string ln = lower(core.info().library_name ? core.info().library_name : "");
         bool safe = false;
         std::string why;
         if (ln.find("mgba link") != std::string::npos) safe = true;
+        else if (ln.find("mesen") != std::string::npos) safe = true;   // Mesen 0.9.9 (NES): SyncTest exact (qa/retrorun_synctest.ps1)
+        else if (ln.find("snes9x") != std::string::npos) safe = true;   // Snes9x (SNES): SyncTest exact
         else if (ln.find("sameboy (rollback)") != std::string::npos) safe = true;   // src/sameboy_rb: joypad-bounce + RNG patched, SyncTest exact
         else if (ln.find("beetle psx (rollback)") != std::string::npos) safe = true;   // src/beetle_psx/patch.cmake: surface + scan-out cache in the state, SyncTest exact
         else if (ln.find("beetle psx") != std::string::npos) why = "stock Beetle PSX: the video surface is not in its savestates (use the RetroHub build)";
