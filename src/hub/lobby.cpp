@@ -325,7 +325,7 @@ void lobby_tick() {
                 set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + j.str("reason")), 10.0);
             }
         } else if (kind == "np_fail") {
-            if (is_host()) set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0);
+            if (is_host()) { set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0); gc_host_guest_failed(member_name(from) + " can't start: " + j.str("reason")); }
         } else if (kind == "np_gc_ready") {
             autotest_log("np_gc_ready from " + std::to_string(from) + " guest_wait=" + std::to_string((int)GCO.guest_wait));
             if (from == 0 && !is_host() && (GCO.guest_wait || GCO.active)) GCO.host_ready = true;

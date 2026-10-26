@@ -566,6 +566,7 @@ bool gc_needs_unpack(const hub::GameEntry& e);
 bool gc_fingerprint_ready(const std::string& path);
 bool gc_process_alive();
 void gc_kill();
+void gc_host_guest_failed(const std::string& why);
 void gc_prefetch(const hub::GameEntry& e);
 bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out);
 bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port);

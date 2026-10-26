@@ -112,8 +112,7 @@ void n3ds_prefetch(const hub::GameEntry& e) {
 bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
     if (gc_needs_unpack(e)) { set_notice(unpack_msg(e)); return false; }
     std::string path = launch_path_for(e);
-    bool have = gc_fingerprint_ready(path);
-    if (!have) { set_notice("Checking " + e.title + "'s game file so guests can verify they have the same disc - try again in a moment.", 6.0); return false; }
+    bool have = gc_fingerprint_ready(path) && GCO.fp_path == path;   // optional extra (informational); guests compare game ID + disc + revision, not the file
     const GameInfo* g = hub::find_game(e.catalog_id);
     gcnp::Spec s;
     s.mode = "direct";
@@ -126,6 +125,7 @@ bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
     GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad);
     s.size = ((uint64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
     if (have) s.sha256 = GCO.fp_sha;
+    { gcnp::DiscVer dv = gcnp::disc_version(path); if (dv.ok) { s.disc = dv.disc; s.rev = dv.rev; } }
     s.players = std::max(2, std::min(4, players));
     *out = s;
     if (s.game_id.empty()) { set_notice("Can't identify " + e.title + " (no GameCube disc ID) - re-add the game in your library."); return false; }
@@ -188,6 +188,15 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     GCO.entry = e;
     push_toast(host ? "Starting GameCube NetPlay as host..." : "Joining the host's GameCube NetPlay...", ui::GOOD, 6.0);
     return true;
+}
+
+/* Host: a guest reported (np_fail) that it cannot join. Do not sit in Dolphin's lobby until the timeout: stop this launch now and tell the other guests. */
+void gc_host_guest_failed(const std::string& why) {
+    if (!GCO.active || !GCO.host) return;
+    if (gcnp::read_status(GCO.run).find("stage:in-game") != std::string::npos) return;   // already playing: not a launch failure
+    autotest_log("host: guest failed, aborting: " + why);
+    host_abort(why);
+    gc_kill();   // gc_tick then sees Dolphin gone and resets the room state
 }
 
 void gc_stop_all() {
@@ -272,11 +281,6 @@ void gc_tick() {
         GCO.ready_sent = true;
         A.lobby.send_msg("{\"kind\":\"np_gc_ready\"}");
     }
-    if (!GCO.host && !GCO.checked && GCO.fp_done && GCO.fp_path == launch_path_for(GCO.entry)) {
-        GCO.checked = true;
-        gcnp::Match m = gcnp::compare_disc(GCO.spec, GCO.fp_size, GCO.fp_sha);
-        if (m == gcnp::Match::DifferentDisc) { autotest_log("warn:different-disc"); push_toast(gcnp::match_text(m), ui::WARN, 20.0, true); }   // normally blocked before Dolphin starts (gc_guest_poll)
-    }
 }
 
 void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_no) {
@@ -306,13 +310,14 @@ void gc_guest_poll() {
     if (!GCO.guest_wait) return;
     if (gc_needs_unpack(GCO.entry)) { gc_prefetch(GCO.entry); return; }
     if (!GCO.fw.ready()) return;   // the host's Dolphin need not listen yet: ours starts now and waits for np_gc_ready at its Connect button
-    /* A different disc image desyncs Dolphin NetPlay: wait for the fingerprint and refuse to start on a mismatch. */
-    if (!gc_fingerprint_ready(launch_path_for(GCO.entry))) return;
-    gcnp::Match dm = gcnp::compare_disc(GCO.spec, GCO.fp_size, GCO.fp_sha);
-    if (dm == gcnp::Match::DifferentDisc) {
-        autotest_log("warn:different-disc");
+    /* Dolphin NetPlay compares game ID + disc number + revision (not the file format, size or hash): block only when those differ, and tell the host at once. */
+    gcnp::DiscVer mine = gcnp::disc_version(launch_path_for(GCO.entry));
+    std::string diff = gcnp::version_diff(GCO.spec, mine);
+    if (!diff.empty()) {
+        autotest_log("warn:different-disc " + diff);
         GCO.guest_wait = false;
-        launch_fail(std::string(gcnp::match_text(dm)) + " Not starting.", 20.0);
+        set_notice("Your copy is " + diff + " than the host's. Not starting.", 20.0);
+        if (room_connected()) A.lobby.send_msg("{\"kind\":\"np_fail\",\"reason\":\"" + json::escape("their copy is " + diff) + "\"}");
         gc_stop_all();
         return;
     }

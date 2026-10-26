@@ -3,6 +3,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -36,7 +37,8 @@ std::string spec_json(const Spec& s) {
     o += ",\"title\":\"" + esc(s.title) + "\"";
     o += ",\"sha256\":\"" + esc(s.sha256) + "\"";
     o += ",\"size\":" + std::to_string((unsigned long long)s.size);
-    o += ",\"players\":" + std::to_string(s.players) + "}";
+    o += ",\"players\":" + std::to_string(s.players);
+    o += ",\"disc\":" + std::to_string(s.disc) + ",\"rev\":" + std::to_string(s.rev) + "}";
     return o;
 }
 
@@ -78,6 +80,8 @@ bool spec_parse(const std::string& j, Spec* out) {
     if (find_value(j, "sha256", 0, &v, &n, &st) && st) s.sha256 = v;
     if (find_value(j, "size", 0, &v, &n, &st) && !st && n >= 0) s.size = (uint64_t)n;
     if (find_value(j, "players", 0, &v, &n, &st) && !st && n >= 2 && n <= 4) s.players = (int)n;
+    if (find_value(j, "disc", 0, &v, &n, &st) && !st && n >= 0 && n < 256) s.disc = (int)n;
+    if (find_value(j, "rev", 0, &v, &n, &st) && !st && n >= 0 && n < 256) s.rev = (int)n;
     if (s.mode == "direct" && s.addr.empty()) return false;
     if (!s.host_code.empty() && !valid_host_code(s.host_code)) return false;
     *out = s;
@@ -114,6 +118,53 @@ Match compare_disc(const Spec& host, uint64_t my_size, const std::string& my_sha
     if (host.size != 0 && my_size != host.size) return Match::DifferentDisc;
     if (!host.sha256.empty() && !my_sha.empty() && host.sha256 != my_sha) return Match::DifferentDisc;
     return Match::Same;
+}
+
+DiscVer disc_version_from_header(const unsigned char* h, size_t n) {
+    DiscVer d;
+    if (n < 0x20 || !(h[0x1C] == 0xC2 && h[0x1D] == 0x33 && h[0x1E] == 0x9F && h[0x1F] == 0x3D)) return d;   // GameCube magic 0xC2339F3D
+    for (int i = 0; i < 6; ++i) if (!isalnum(h[i])) return d;
+    d.id.assign((const char*)h, 6);
+    d.disc = h[6]; d.rev = h[7];
+    d.ok = true;
+    return d;
+}
+
+static bool read_range(const std::string& path, uint64_t off, size_t len, std::vector<unsigned char>* out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    f.seekg((std::streamoff)off);
+    out->assign(len, 0);
+    f.read((char*)out->data(), (std::streamsize)len);
+    return (size_t)f.gcount() == len;
+}
+
+DiscVer disc_version(const std::string& path) {
+    size_t dot = path.find_last_of('.');
+    std::string ext = dot == std::string::npos ? "" : path.substr(dot);
+    for (auto& c : ext) c = (char)tolower((unsigned char)c);
+    std::vector<unsigned char> h;
+    if (ext == ".iso" || ext == ".gcm") { if (read_range(path, 0, 0x80, &h)) return disc_version_from_header(h.data(), h.size()); }
+    else if (ext == ".ciso") {
+        if (read_range(path, 0, 0x8008, &h) && std::memcmp(h.data(), "CISO", 4) == 0 && h[8] == 1 && read_range(path, 0x8000, 0x80, &h)) return disc_version_from_header(h.data(), h.size());   // block 0 holds the header
+    } else if (ext == ".rvz" || ext == ".wia") {
+        if (read_range(path, 0, 0x58 + 0x80, &h) && (std::memcmp(h.data(), "RVZ\x01", 4) == 0 || std::memcmp(h.data(), "WIA\x01", 4) == 0)) return disc_version_from_header(h.data() + 0x58, 0x80);
+    }
+    return DiscVer();
+}
+
+std::string version_diff(const Spec& host, const DiscVer& mine) {
+    if (!mine.ok) return "";
+    std::string host_id = host.game_id;
+    if (!host_id.empty() && host_id != mine.id) return "a different game (" + mine.id + " vs " + host_id + ")";
+    if (host.disc >= 0 && host.disc != mine.disc) return "a different disc of this game (disc " + std::to_string(mine.disc + 1) + " vs " + std::to_string(host.disc + 1) + ")";
+    if (host.rev >= 0 && host.rev != mine.rev) return "a different version of this game (revision " + std::to_string(mine.rev) + " vs " + std::to_string(host.rev) + ")";
+    return "";
+}
+
+Match compare_version(const Spec& host, const DiscVer& mine) {
+    if (!mine.ok) return Match::Unknown;
+    return version_diff(host, mine).empty() ? Match::Same : Match::DifferentDisc;
 }
 
 const char* match_text(Match m) {

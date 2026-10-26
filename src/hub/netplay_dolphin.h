@@ -9,6 +9,8 @@
 
 namespace gcnp {
 
+enum class Match { Same, DifferentDisc, Unknown };
+
 struct Spec {                 // the "np_gc" object
     std::string mode = "traversal";   // "traversal" (host code via Dolphin's traversal server) or "direct" (addr:port)
     std::string host_code;            // traversal: 8 hex chars; empty until the host's Dolphin reports it
@@ -19,7 +21,18 @@ struct Spec {                 // the "np_gc" object
     std::string sha256;               // of the host's disc file ("" = unknown)
     uint64_t size = 0;                // bytes of the host's disc file
     int players = 2;                  // expected NetPlay players (room size)
+    int disc = -1;                    // disc number (header 0x06), -1 = unknown
+    int rev = -1;                     // disc revision (header 0x07), -1 = unknown
 };
+
+/* What Dolphin NetPlay itself compares: game ID + disc number + revision from the disc header. The container (iso/ciso/rvz/wia/gcz) and the
+ * file size/hash do not matter. Read from iso/gcm/ciso/rvz/wia; gcz (compressed header) and unreadable files are "unknown" and never block. */
+struct DiscVer { bool ok = false; std::string id; int disc = -1; int rev = -1; };
+DiscVer disc_version(const std::string& path);
+DiscVer disc_version_from_header(const unsigned char* h, size_t n);   // 0x80+ bytes of the disc header
+Match compare_version(const Spec& host, const DiscVer& mine);
+/* "<theirs> vs <mine>" wording for a blocked guest; "" when compatible. */
+std::string version_diff(const Spec& host, const DiscVer& mine);
 
 std::string spec_json(const Spec& s);                       // {"mode":...}  (no outer kind)
 bool spec_parse(const std::string& json, Spec* out);        // accepts the object text; false if game_id/mode invalid
@@ -30,7 +43,6 @@ std::string extract_from_launch(const std::string& launch_json);
 /* ",\"np_gc\":{...}" (leading comma) for hubui::launch_json's extra_json parameter. */
 std::string launch_fragment(const Spec& s);
 
-enum class Match { Same, DifferentDisc, Unknown };
 /* Identity check of this PC's disc file against the host's. Unknown when the host sent no hash. */
 Match compare_disc(const Spec& host, uint64_t my_size, const std::string& my_sha256);
 const char* match_text(Match m);
