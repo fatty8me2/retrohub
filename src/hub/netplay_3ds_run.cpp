@@ -11,6 +11,9 @@
 
 namespace hubnp3ds {
 
+/* GameCube: a guest may still be unpacking/hashing a disc or starting Dolphin; Dolphin NetPlay holds a long game, so be patient. */
+static const uint32_t kGcReadyMs = 90000, kGcSilenceMs = 30000;
+
 static std::wstring W(const std::string& s) { return winutil::to_wide(s); }
 
 std::string room_exe_for(const std::string& azahar_exe) {
@@ -185,6 +188,7 @@ bool Runner::start_host_forward(const std::string& server, const std::string& co
     c.room = m.room_id(code, launch_no);
     c.slot = 0;
     c.expected = plan.expected;
+    if (tag == "gc") { c.ready_timeout_ms = kGcReadyMs; c.silence_fail_ms = kGcSilenceMs; }
     if (!m.sess.start(c)) { if (err) *err = "could not start the session"; stop(); return false; }
     m.active = true;
     m.t0 = hubnet::now_ms();
@@ -207,6 +211,7 @@ bool Runner::start_guest(const std::string& server, const std::string& code, int
     c.room = m.room_id(code, launch_no);
     c.slot = my_slot;
     c.expected = plan.expected;
+    if (tag == "gc") { c.ready_timeout_ms = kGcReadyMs; c.silence_fail_ms = kGcSilenceMs; }
     if (!m.sess.start(c)) { if (err) *err = "could not start the session"; stop(); return false; }
     m.active = true;
     m.t0 = hubnet::now_ms();
@@ -222,8 +227,9 @@ void Runner::update() {
     if (m.sess.failed()) { m.failed = true; m.status = "Connection failed: " + m.sess.status(); return; }
     if (m.host && m.proc && WaitForSingleObject(m.proc, 0) == WAIT_OBJECT_0) { m.failed = true; m.status = "The room server exited (port in use?)"; return; }
     if (!m.sess.ready()) {
-        m.status = hubnet::now_ms() - m.t0 > 25000 ? "Timed out connecting to the other players" : "Connecting: " + m.sess.status();
-        if (hubnet::now_ms() - m.t0 > 25000) m.failed = true;
+        uint32_t lim = m.tag == "gc" ? kGcReadyMs + 10000 : 25000;   // the session fails first (with the reason); this is the backstop
+        m.status = hubnet::now_ms() - m.t0 > lim ? "Timed out connecting to the other players" : "Connecting: " + m.sess.status();
+        if (hubnet::now_ms() - m.t0 > lim) m.failed = true;
     } else m.status = "Connected";
 }
 
