@@ -25,6 +25,7 @@ struct Custom {
 struct GameState {
     std::set<std::string> on;
     std::vector<Custom> custom;
+    std::map<std::string, uint32_t> values;   // value cheats: id -> the number the player typed (cheats.h value_*)
     std::string backup;     // name of the backup made the first time cheats were enabled ("" = none yet)
     int64_t updated = 0;    // unix seconds of the last change (newer wins when two PCs merge)
 };
@@ -38,6 +39,9 @@ public:
     /* Parses `codes_text` (one code per line), auto-detects the format for `target`. Returns the new id, or "" and *err. */
     std::string add_custom(const std::string& game, const std::string& desc, const std::string& codes_text,
                            cheats::Target target, int64_t now, std::string* err);
+    /* Value cheats (placeholder digits): the number chosen for `id`. */
+    bool value_of(const std::string& game, const std::string& id, uint32_t* out) const;
+    void set_value(const std::string& game, const std::string& id, uint32_t v, int64_t now);
     void remove_custom(const std::string& game, const std::string& id, int64_t now);
     void set_backup(const std::string& game, const std::string& name, int64_t now);
 
@@ -58,11 +62,18 @@ struct Row {
     bool featured = false;
     bool custom = false;
     int group = 1;          // 0 Popular, 1 All cheats, 2 My codes
+    cheats::Target target = cheats::Target::N64;
+    cheats::ValueSpec spec;     // spec.valid: a value cheat (cheat.codes keep the placeholders)
+    uint32_t value = 0;         // the chosen number (spec.min until the player picks one)
+    bool value_set = false;
 };
 struct DbItem { cheats::Cheat cheat; bool featured = false; };
 
 /* Database items + the player's custom codes, state applied. Order: Popular, All (database order), My codes. */
-std::vector<Row> build_rows(const Store& st, const std::string& game, const std::vector<DbItem>& db);
+std::vector<Row> build_rows(const Store& st, const std::string& game, const std::vector<DbItem>& db,
+                            cheats::Target target = cheats::Target::N64);
+/* The cheat as the runner / room sees it: a value cheat gets its number substituted for the placeholders. */
+cheats::Cheat effective_cheat(const Row& r);
 /* Case-insensitive substring filter on the description; an empty query keeps everything. */
 std::vector<Row> filter_rows(const std::vector<Row>& rows, const std::string& query);
 

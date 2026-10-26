@@ -106,6 +106,92 @@ int main() {
     CHECK(set_hash(a, Target::N64) == set_hash(rev, Target::N64));
 
     if (g_fail) { std::printf("%d failure(s)\n", g_fail); return 1; }
+
+    // ---- value cheats (placeholder digits) ----
+    {
+        Cheat v = mk("v", Format::GameShark, {"8001A0E7 XXXX"}); v.desc = "Play As";
+        CHECK(value_has_placeholder(v));
+        CHECK(!value_has_placeholder(mk("p", Format::GameShark, {"8001A0E7 00FF"})));
+        std::vector<N64Code> nc; std::string e;
+        CHECK(!n64_codes(v, &nc, &e));                       // still rejected raw
+        ValueSpec sp = value_spec(v, Target::N64);
+        CHECK(sp.valid && sp.digits == 4 && sp.min == 0 && sp.max == 0xFF);   // 80 = 8-bit write
+        Cheat f;
+        CHECK(value_apply(v, 0x2A, Target::N64, &f) && f.codes[0] == "8001A0E7 002A");
+        CHECK(value_apply(v, 0x1234, Target::N64, &f) && f.codes[0] == "8001A0E7 00FF");   // clamped
+        CHECK(n64_codes(f, &nc, &e) && nc.size() == 1 && nc[0].value == 0xFF);
+        Cheat w = mk("w", Format::GameShark, {"8101A0E8 xxxx"});
+        sp = value_spec(w, Target::N64);
+        CHECK(sp.max == 0xFFFF);
+        CHECK(value_apply(w, 0xBEEF, Target::N64, &f) && f.codes[0] == "8101A0E8 BEEF");
+        // several lines / mixed with a plain guard, one value for all slots
+        Cheat m = mk("m", Format::GameShark, {"D01C6A7D 0010;8011895F XXXX", "80118960 ??"});
+        CHECK(value_has_placeholder(m));
+        sp = value_spec(m, Target::N64);
+        CHECK(sp.digits == 4);
+        CHECK(value_apply(m, 0x0C, Target::N64, &f) && f.codes[0] == "D01C6A7D 0010;8011895F 000C" && f.codes[1] == "80118960 0C");
+        // GB: 01VVAAAA
+        Cheat g = mk("g", Format::GameShark, {"01??DCC4"}); g.desc = "Level Modifier (00-0F)";
+        sp = value_spec(g, Target::GB);
+        CHECK(sp.digits == 2 && sp.min == 0 && sp.max == 0x0F && sp.prefer_hex);
+        CHECK(value_apply(g, 9, Target::GB, &f) && f.codes[0] == "0109DCC4");
+        std::string o;
+        CHECK(retro_code_string(Target::GB, f, &o, nullptr) && o == "0109DCC4");
+        Cheat g1 = mk("g1", Format::GameShark, {"010?07C0"});
+        CHECK(value_spec(g1, Target::GB).digits == 1 && value_spec(g1, Target::GB).max == 15);
+        // PS1 / GBA pairs
+        Cheat ps = mk("ps", Format::GameShark, {"800A0F34 000?"});
+        CHECK(value_spec(ps, Target::PS1).max == 15);
+        CHECK(value_apply(ps, 7, Target::PS1, &f) && f.codes[0] == "800A0F34 0007" && retro_code_string(Target::PS1, f, &o, nullptr));
+        Cheat ps8 = mk("ps8", Format::GameShark, {"300D1368 00??"});
+        CHECK(value_spec(ps8, Target::PS1).max == 0xFF);
+        Cheat ps16 = mk("ps16", Format::GameShark, {"800A0F34 ????"});
+        CHECK(value_spec(ps16, Target::PS1).max == 0xFFFF);
+        // hints
+        Cheat h1 = mk("h1", Format::GameShark, {"8011BB25 XXXX"}); h1.desc = "Lives You Start With (0-63 Hexidecimal)";
+        sp = value_spec(h1, Target::N64);
+        CHECK(sp.min == 0 && sp.max == 0x63 && sp.prefer_hex);
+        h1.desc = "Level (00-03)";
+        sp = value_spec(h1, Target::N64);
+        CHECK(sp.max == 3 && !sp.prefer_hex);
+        h1.desc = "Level (enter 1 to 9)";
+        sp = value_spec(h1, Target::N64);
+        CHECK(sp.min == 1 && sp.max == 9);
+        h1.desc = "Money - enter 0-99 decimal";
+        sp = value_spec(h1, Target::N64);
+        CHECK(sp.min == 0 && sp.max == 99);
+        h1.desc = "Catch Pokemon 152-251 (97-FB)";
+        sp = value_spec(h1, Target::N64);
+        CHECK(sp.min == 0x97 && sp.max == 0xFB);
+        h1.desc = "Item (Can still be killed)";
+        sp = value_spec(h1, Target::N64);
+        CHECK(sp.max == 0xFF && sp.options.empty());
+        h1.desc = "Hold item: 01=Potion 02=Antidote, 0A=Elixir";
+        sp = value_spec(h1, Target::N64);
+        CHECK(sp.options.size() == 3 && sp.options[0].value == 1 && sp.options[0].label == "Potion" && sp.options[2].value == 0x0A && sp.options[2].label == "Elixir");
+        CHECK(sp.min == 1 && sp.max == 0x0A);
+        CHECK(value_clamp(sp, 0) == 1 && value_clamp(sp, 99) == 0x0A);
+        // not a value cheat: other junk in the code
+        CHECK(!value_has_placeholder(mk("j", Format::GameShark, {"8001A0E7 XXXX", "GARBAGE"})));
+        CHECK(!value_has_placeholder(mk("gg", Format::GameGenie, {"0AF-4E1-3C1"})));
+        CHECK(!value_apply(mk("p", Format::GameShark, {"8001A0E7 00FF"}), 5, Target::N64, &f));
+        // number text
+        uint32_t n;
+        CHECK(value_parse("99", true, &n) && n == 99);
+        CHECK(value_parse("99", false, &n) && n == 0x99);
+        CHECK(value_parse("0x63", true, &n) && n == 0x63);
+        CHECK(value_parse("FFh", true, &n) && n == 255);
+        CHECK(!value_parse("", true, &n) && !value_parse("12a", true, &n) && !value_parse("FFFFFFFFFF", false, &n));
+        CHECK(value_format(99, true, 4) == "99" && value_format(99, false, 4) == "0063");
+        // the net hash follows the substituted value
+        CheatSet a, b;
+        Cheat e1 = v; e1.enabled = true; Cheat e2 = v; e2.enabled = true;
+        value_apply(v, 3, Target::N64, &e1); e1.enabled = true;
+        value_apply(v, 4, Target::N64, &e2); e2.enabled = true;
+        a.cheats.push_back(e1); b.cheats.push_back(e2);
+        CHECK(set_hash(a, Target::N64) != set_hash(b, Target::N64));
+    }
+
     std::printf("cheats_test: ok\n");
     return 0;
 }
