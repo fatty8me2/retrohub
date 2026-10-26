@@ -176,7 +176,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             const bool name_set = !A.st.name.empty();
             if (link_join.needs_name(name_set) && !told_need_name) {
                 told_need_name = true;
-                A.page = Page::Settings;
+                settings_open(hubui::ST_Account);
                 set_notice("Pick a player name to join your friend's room. You will join right after.", 20.0);
             }
             std::string jc;

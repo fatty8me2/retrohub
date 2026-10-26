@@ -36,10 +36,10 @@ function Check($name, $ok, $detail) {
 function Moves($rows) { @($rows | Where-Object { $_.tok -in @("up", "down", "left", "right") }) }
 function Distinct($rows) { @($rows | Where-Object { $_.nav -ne "00000000" } | Select-Object -ExpandProperty nav -Unique).Count }
 
-# 1. LB/RB cycle through every top-level page and wrap
-$r = Run "pages" "rb,rb,rb,rb,rb,rb,lb"
+# 1. LB/RB cycle through every top-level page and wrap (Settings keeps LB/RB for its 6 tabs, then carries on)
+$r = Run "pages" "rb,rb,rb,rb,rb,rb,rb,rb,rb,rb,rb,lb"
 $seq = ($r.rows | ForEach-Object { $_.page }) -join ","
-Check "rb cycles pages" ($seq -eq "online,saves,controllers,settings,about,library,about") $seq
+Check "rb cycles pages" ($seq -eq "online,saves,controllers,settings,settings,settings,settings,settings,settings,about,library,about") $seq
 Check "page switch keeps a focus" (@($r.rows | Where-Object { $_.nav -eq "00000000" }).Count -eq 0) "focus lost after a page switch"
 
 # 2. every page: first focus exists and D-pad reaches several different items

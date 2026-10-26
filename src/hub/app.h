@@ -47,6 +47,7 @@
 #include "library.h"
 #include "osk.h"
 #include "logic.h"
+#include "settings_tabs.h"
 #include "savestore.h"
 #include "history.h"
 #include "playstats.h"
@@ -750,6 +751,7 @@ void page_saves();
 /* ---- page_settings.cpp ---- */
 void settings_label(const char* title, const char* hint = nullptr);
 void page_settings();
+void settings_open(int tab);   // deep link: show Settings on that tab (hubui::SettingsTab)
 void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
 void account_qa_poll();            // QA hooks (userflow.cpp): the same calls the Account buttons make
 void account_qa_make_code();
