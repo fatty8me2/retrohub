@@ -15,7 +15,7 @@ int main() {
     ImGui::NewFrame();
     ImDrawList* d = ImGui::GetForegroundDrawList();
 
-    const System all[] = {System::Unknown, System::N64, System::GBA, System::GB, System::GBC, System::GC, System::N3DS, System::WiiU, System::NDS, System::PS2, System::PS1};
+    const System all[] = {System::Unknown, System::N64, System::GBA, System::GB, System::GBC, System::GC, System::N3DS, System::WiiU, System::NDS, System::PS2, System::PS1, System::NES, System::SNES};
     for (System s : all) {
         const char* nm = bootanim::art_name(s);
         CHECK(nm && *nm);

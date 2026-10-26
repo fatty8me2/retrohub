@@ -6,6 +6,7 @@
 #include <string>
 
 #include "art.h"
+#include "boot_art.h"
 #include "ui_kit.h"
 
 /* Game start animation engine: draws the timeline from boot_logic.h with the vector art from boot_art.cpp (or the stub), as a
@@ -24,20 +25,6 @@ hub::System g_frozen_sys = hub::System::N64;
 float g_frozen_t = 0.f;
 
 const char* kPopup = "##bootanim";
-
-/* Per-media geometry, in units of 100 px * console scale: where the media hovers above the console, where it ends up (the console
- * art is drawn over it, so it looks pushed in), and its size relative to the console. Retune here when the art changes. */
-struct Geo { float hover_dy, end_dy, size; bool lid; };
-Geo geo_for(Media m) {
-    switch (m) {
-        case Media::Cartridge: return {-2.7f, -1.05f, 0.80f, false};
-        case Media::SmallCart: return {-2.5f, -0.90f, 0.70f, false};
-        case Media::Card:      return {-2.2f, -0.60f, 0.55f, false};
-        case Media::MiniDisc:  return {-2.4f, -0.25f, 0.65f, true};
-        case Media::Disc:      return {-2.5f, -0.15f, 0.80f, true};
-        default:               return {-2.4f, -0.50f, 0.70f, false};
-    }
-}
 
 bool any_input() {
     for (int b = 0; b < 5; ++b) if (ImGui::IsMouseClicked(b)) return true;
@@ -67,67 +54,140 @@ void text_center(ImDrawList* dl, ImFont* f, float size, ImVec2 c, ImU32 col, con
     ui::text_shadowed(dl, f, size, ImVec2(c.x - sz.x * 0.5f, c.y), col, s);
 }
 
+/* Draws the media with an optional squash (disc seen at an angle) and rotation about its centre. */
+void draw_media_xf(hub::System sys, ImDrawList* dl, ImVec2 c, float scale, float rot, ImTextureID label, ImVec2 uv0, ImVec2 uv1,
+                   float xs, float ys, float ang) {
+    const int v0 = dl->VtxBuffer.Size;
+    draw_media(sys, dl, c, scale, rot, label, uv0, uv1);
+    if (xs == 1.f && ys == 1.f && ang == 0.f) return;
+    const float ca = std::cos(ang), sa = std::sin(ang);
+    for (int i = v0; i < dl->VtxBuffer.Size; ++i) {
+        ImVec2& p = dl->VtxBuffer[i].pos;
+        float x = (p.x - c.x) * xs, y = (p.y - c.y) * ys;
+        p = ImVec2(c.x + x * ca - y * sa, c.y + x * sa + y * ca);
+    }
+}
+
+float lerpf(float a, float b, float t) { return a + (b - a) * t; }
+
 void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, float t) {
     const float W = disp.x, H = disp.y;
     const Phase ph = phase_at(tl, t);
     const float p = phase_progress(tl, t);
-    const Media media = media_for(sys);
-    const Geo g = geo_for(media);
+    const Geo g = geo_for(sys);
+    const bool disc_kind = g.kind == Insert::Lid || g.kind == Insert::Tray || g.kind == Insert::Front;
 
-    const float cs = std::max(0.4f, std::min(W / 1280.f, H / 800.f) * 1.25f);   // console scale (1 = 300 px wide console)
-    const float u = 100.f * cs;
-    const ImVec2 console_c(W * 0.5f, H * 0.68f);
-    const float ms = cs * g.size * 1.35f;
+    const float cs = std::max(0.4f, std::min(W / 1280.f, H / 800.f) * 1.55f) * g.cs;   // console scale (1 = ~300 px wide console)
+    const ImVec2 console_c(W * 0.5f, H * g.cy);
+    const float ms = cs * g.ms;                       // media scale when seated
 
-    /* background */
     dl->AddRectFilledMultiColor(ImVec2(0, 0), disp, IM_COL32(18, 19, 26, 255), IM_COL32(18, 19, 26, 255), IM_COL32(10, 11, 15, 255), IM_COL32(10, 11, 15, 255));
 
-    const ImVec2 shelf_pos(W * 0.5f, H * 0.46f), out_pos(W * 0.5f, H * 0.30f);
-    const ImVec2 hover(console_c.x, console_c.y + g.hover_dy * u);
-    const ImVec2 end_pt(console_c.x, console_c.y + g.end_dy * u);
+    const ImVec2 shelf_pos(W * 0.5f, H * 0.46f), out_pos(W * 0.5f, H * 0.28f);
 
     float power = 0.f, lid = 0.f, console_dy = 0.f, shelf_dark = 0.f;
-    bool console_visible = true, media_visible = true, media_in_front = true;
+    bool console_visible = true, media_visible = true;
+    float mscale = ms * 1.5f, mrot = 0.f, mxs = 1.f, mys = 1.f, mang = 0.f;
+    float ex = g.ex, ey = g.ey;                       // media centre in console-local units
+    float hy = g.ey - g.hover;                        // hover height (console-local)
     ImVec2 mpos = shelf_pos;
-    float mscale = ms, mrot = 0.f;
-    const bool disc = media == Media::Disc || media == Media::MiniDisc;
+    bool tray_follow = false;                         // PS2: the disc rides the tray
+    const float tray_y0 = 42.f;
 
     switch (ph) {
         case Phase::Slide: {
             console_visible = false;
             float e = ease_out_back(p);
             lerp_pt(shelf_pos, out_pos, e, &mpos);
-            mscale = ms * (0.55f + 0.45f * ease_out(p));
+            mscale = ms * 1.5f * (0.55f + 0.45f * ease_out(p));
             break;
         }
         case Phase::Fly: {
             float e = ease_in_out(p);
-            lerp_pt(out_pos, hover, e, &mpos);
+            const float cdy = (1.f - ease_out(p)) * H * 0.35f;
+            console_dy = cdy;
+            ImVec2 hover_pt(console_c.x + ex * cs, console_c.y + hy * cs);
+            if (g.kind == Insert::Tray) hover_pt.y = console_c.y + (93.f - g.hover) * cs;
+            lerp_pt(out_pos, hover_pt, e, &mpos);
             mpos.x += std::sin(e * 3.14159f) * W * 0.06f;   // gentle arc
-            mscale = ms;
-            mrot = disc ? e * 6.2832f * 1.5f : std::sin(e * 6.2832f) * 0.12f;
+            mscale = ms * lerpf(1.5f, 1.f, e);
+            mrot = disc_kind ? e * 6.2832f * 1.5f : std::sin(e * 6.2832f) * 0.10f;
+            if (disc_kind) mys = lerpf(1.f, 0.8f, e);
             shelf_dark = ease_out(p);
-            console_dy = (1.f - ease_out(p)) * H * 0.35f;
-            if (g.lid) lid = ease_in_out(p);
+            if (g.kind == Insert::Lid || g.kind == Insert::Tray) lid = ease_in_out(p);
             break;
         }
         case Phase::Insert: {
-            float e = ease_in_out(std::min(1.f, p / 0.8f));
-            lerp_pt(hover, end_pt, e, &mpos);
-            media_in_front = false;
             shelf_dark = 1.f;
-            if (disc) mrot = e * 1.2f;
-            if (g.lid) lid = p < 0.55f ? 1.f : 1.f - ease_in_out((p - 0.55f) / 0.45f);
-            if (g.lid && p > 0.97f) media_visible = false;
+            const float hover_y = g.kind == Insert::Tray ? 93.f - g.hover : hy;
+            float y_local = ey, x_local = ex;
+            mscale = ms;
+            switch (g.kind) {
+                case Insert::Behind: {
+                    y_local = lerpf(hover_y, ey, ease_in_out(p));
+                    break;
+                }
+                case Insert::Slot: {
+                    if (g.push > 0.f) {   // front loader: pushed in first (tilted), then pressed down flat
+                        const float mid = ey - g.push, k1 = 0.70f;
+                        if (p < k1) { float e = ease_in_out(p / k1); y_local = lerpf(hover_y, mid, e); mang = -0.14f * e; }
+                        else { float e = ease_out((p - k1) / (1.f - k1)); y_local = lerpf(mid, ey, e); mang = -0.14f * (1.f - e); }
+                    } else {
+                        y_local = lerpf(hover_y, ey, ease_in_out(p));
+                    }
+                    break;
+                }
+                case Insert::Lid: {
+                    const float d1 = 0.55f;
+                    float e = ease_in_out(std::min(1.f, p / d1));
+                    y_local = lerpf(hover_y, ey, e);
+                    mys = lerpf(0.8f, g.ys_end, e);
+                    mrot = (1.5f + e * 0.3f) * 6.2832f;
+                    lid = p < d1 ? 1.f : 1.f - ease_in_out((p - d1) / (1.f - d1));
+                    break;
+                }
+                case Insert::Tray: {
+                    const float d1 = 0.5f;
+                    float e = ease_in_out(std::min(1.f, p / d1));
+                    mys = lerpf(0.8f, g.ys_end, e);
+                    mrot = (1.5f + e * 0.3f) * 6.2832f;
+                    lid = p < d1 ? 1.f : 1.f - ease_in_out((p - d1) / (1.f - d1));
+                    if (p < d1) y_local = lerpf(hover_y, 93.f, e);
+                    else tray_follow = true;
+                    break;
+                }
+                case Insert::Front: {
+                    float e = ease_in_out(p);
+                    y_local = lerpf(hover_y, ey, e);
+                    mys = lerpf(0.8f, g.ys_end, e);
+                    mrot = (1.5f + e * 0.2f) * 6.2832f;
+                    break;
+                }
+            }
+            if (tray_follow) {   // same formula as the console's tray drawing
+                const float tr = ease_in_out(lid);   // lid is the raw 0..1 amount; the art smooth-steps it again
+                (void)tr;
+                float tray = lid * lid * (3.f - 2.f * lid);
+                float wy = 44.f + 96.f * tray;
+                y_local = (tray_y0 + wy) * 0.5f + 2.f;   // centre of the tray ellipse
+            }
+            ey = y_local; ex = x_local;
             break;
         }
-        default: {
+        default: {   // Power, Fade, Done: the media is seated
             shelf_dark = 1.f;
-            media_visible = false;
             power = ph == Phase::Power ? ease_out(p) : 1.f;
+            mscale = ms;
+            mys = disc_kind ? g.ys_end : 1.f;
+            if (g.kind == Insert::Front) media_visible = false;   // swallowed by the slot
+            if (g.kind == Insert::Tray) media_visible = false;    // inside the closed tray bay
             break;
         }
     }
+    if (ph == Phase::Power || ph == Phase::Fade || ph == Phase::Done) { ex = g.ex; ey = g.ey; }
+    if (ph == Phase::Slide) { /* mpos already set */ }
+    else if (ph == Phase::Insert) mpos = ImVec2(console_c.x + ex * cs, console_c.y + console_dy + ey * cs);
+    else if (ph != Phase::Fly) mpos = ImVec2(console_c.x + ex * cs, console_c.y + ey * cs);
 
     if (shelf_dark < 1.f && ph != Phase::Idle) {
         dl->PushClipRect(ImVec2(0, 0), disp, true);
@@ -136,10 +196,11 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
         if (shelf_dark > 0.f) dl->AddRectFilled(ImVec2(0, 0), disp, IM_COL32(12, 13, 18, (int)(255 * shelf_dark)));
     }
 
+    const ImVec2 cpos(console_c.x, console_c.y + console_dy);
     if (console_visible) {   // soft glow under the console, brighter once powered
         float gl = 0.25f + 0.75f * power;
         for (int i = 0; i < 7; ++i)
-            dl->AddCircleFilled(ImVec2(console_c.x, console_c.y + console_dy), u * (3.4f - 0.4f * i), IM_COL32(108, 122, 255, (int)(7 * gl)), 64);
+            dl->AddCircleFilled(cpos, 100.f * cs * (3.4f - 0.4f * i), IM_COL32(108, 122, 255, (int)(7 * gl)), 64);
     }
 
     /* the cover art as the media's label */
@@ -153,11 +214,42 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
         }
     }
 
-    const ImVec2 cpos(console_c.x, console_c.y + console_dy);
-    auto draw_m = [&]() { if (media_visible) draw_media(sys, dl, mpos, mscale, mrot, label, uv0, uv1); };
-    auto draw_c = [&]() { if (console_visible) draw_console(sys, dl, cpos, cs, lid, power); };
-    if (media_in_front) { draw_c(); draw_m(); }
-    else { draw_m(); draw_c(); }
+    auto draw_m = [&]() { draw_media_xf(sys, dl, mpos, mscale, mrot, label, uv0, uv1, mxs, mys, mang); };
+    const bool in_console = (g.kind == Insert::Lid || g.kind == Insert::Tray) && (ph == Phase::Insert || ph == Phase::Power || ph == Phase::Fade || ph == Phase::Done);
+    const bool landing = g.kind == Insert::Tray && ph == Phase::Insert;
+
+    if (!media_visible || ph == Phase::Slide || ph == Phase::Fly || g.kind == Insert::Slot || g.kind == Insert::Front || g.kind == Insert::Behind) {}
+
+    if (g.kind == Insert::Behind) {
+        if (media_visible) draw_m();
+        if (console_visible) draw_console(sys, dl, cpos, cs, lid, power);
+    } else if ((g.kind == Insert::Lid || g.kind == Insert::Tray) && console_visible && ph != Phase::Fly) {
+        /* disc in the well / on the tray: drawn by the console between the well and the lid */
+        set_console_inner([&](ImDrawList*) {
+            if (!media_visible && g.kind == Insert::Tray) return;
+            if (g.kind == Insert::Tray) {
+                float tray = lid * lid * (3.f - 2.f * lid);
+                float wy = 44.f + 96.f * tray;
+                dl->PushClipRect(ImVec2(0, cpos.y + tray_y0 * cs), ImVec2(W, cpos.y + (wy + 6.f) * cs), true);
+                draw_m();
+                dl->PopClipRect();
+            } else {
+                draw_m();
+            }
+        });
+        draw_console(sys, dl, cpos, cs, lid, power);
+        set_console_inner(nullptr);
+        (void)in_console; (void)landing;
+    } else {
+        if (console_visible) draw_console(sys, dl, cpos, cs, lid, power);
+        if (media_visible) {
+            if (g.kind == Insert::Slot || g.kind == Insert::Front) {
+                dl->PushClipRect(ImVec2(0, 0), ImVec2(W, cpos.y + g.clip * cs), true);
+                draw_m();
+                dl->PopClipRect();
+            } else draw_m();
+        }
+    }
 
     /* title + system */
     {
