@@ -98,6 +98,7 @@ add_test(NAME hublibrary_test COMMAND hublibrary_test)
 add_test(NAME hubkanto_test COMMAND hubkanto_test)                       # Kanto Together: package, install, rom pick, output parsing
 add_test(NAME hubkantopad_test COMMAND hubkantopad_test)               # Kanto Together mGBA gamepad config writer
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
+add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-out friend games: identity, ghosts, badge text, publish hash/debounce
 add_test(NAME hub_picker_test COMMAND hub_picker_test)   # room game picker: search, chips, sections, virtual layout
 add_test(NAME hub_online_caps_test COMMAND hub_online_caps_test)   # supports_online <-> launch_online branches (table-driven)
 add_test(NAME ps1_test COMMAND ps1_test)                                 # PlayStation: serials, catalog, synthetic discs, BIOS discovery (scratch dirs)

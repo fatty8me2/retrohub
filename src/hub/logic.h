@@ -39,6 +39,8 @@ struct Settings {
     bool show_friends = true;          // friends panel open
     bool notify_in_game = true;        // Windows toast for invites while a game is running
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
+    bool share_games = true;           // "Show my games to friends": publish the list of game titles (never files) so friends see them greyed out
+    bool show_friend_games = true;     // library chip "Show friends' games"
     bool auto_friend = true;           // "Automatically add people I play with as friends" (sent to the server in the hello)
     bool username_claimed = false;     // this PC has a username the server confirmed (name below IS that username); false = still the provisional Windows name
     bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
@@ -150,6 +152,7 @@ struct ListItem {
     std::string system;     // system short code ("n64","gba",...)
     bool pinned = false;    // sorts before everything else (the native Smash entry)
     unsigned long long last_played = 0, play_seconds = 0, added = 0;   // unix seconds / seconds / file time (sort modes)
+    bool ghost = false;     // a friend's game you do not own: sorts after every owned game of its console
 };
 /* Strict-weak order for the library: pinned first, then by `mode` (Title A-Z; Last played / Most played / Recently added newest or
  * biggest first, never-played last), ties broken by title then key. */
@@ -184,6 +187,7 @@ struct ShelfGame {
     bool online = false;                // catalog says it is fun online with friends
     bool pinned = false;
     unsigned long long play_seconds = 0, added = 0;
+    bool ghost = false;                 // a friend's game you do not own: never in Continue Playing / Favorites / the hero, sorts last
 };
 struct Shelf {
     std::string id;      // "recent" "favs" or "console:<system_short>" ("console:other" for unknown systems)
@@ -389,6 +393,7 @@ private:
 /* The host receives an ask: ignore a repeat from the same person within 30 s so spam cannot stack toasts. */
 inline bool ask_is_repeat(long long last_ms, long long now_ms) { return last_ms > 0 && now_ms - last_ms < 30000; }
 std::string ask_toast_title(const std::string& name, const std::string& game);   // "Mia wants to join your game (Smash Classic)"
+std::string ask_host_toast_title(const std::string& name, const std::string& game);   // "Mia wants to play Mario Kart 64 - host a room?"
 std::string ask_sent_text(const std::string& name);
 std::string ask_limited_text(const std::string& name, long long wait_ms);
 
