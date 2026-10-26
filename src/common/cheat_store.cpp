@@ -318,6 +318,20 @@ bool detect_format(cheats::Target t, const std::string& line, cheats::Format* ou
         if (a.size() == 8 && all_hex(a) && b.size() == 8 && all_hex(b)) { *out = Format::Gecko; return true; }   // 8+8 is ambiguous with decrypted AR; Gecko is the common case
         return false;
     }
+    if (t == Target::NES) {
+        if (sp == std::string::npos) { if (cheats::nes_game_genie_ok(a)) { *out = Format::GameGenie; return true; } return false; }
+        if (a.size() == 4 && all_hex(a) && b.size() == 2 && all_hex(b)) { *out = Format::Raw; return true; }
+        return false;
+    }
+    if (t == Target::SNES) {
+        if (sp == std::string::npos) {
+            if (a.size() == 8 && all_hex(a)) { *out = Format::ActionReplay; return true; }
+            if (a.size() == 9 && a[4] == '-' && cheats::snes_game_genie_ok(a)) { *out = Format::GameGenie; return true; }
+            return false;
+        }
+        if (a.size() == 6 && all_hex(a) && b.size() == 2 && all_hex(b)) { *out = Format::ActionReplay; return true; }
+        return false;
+    }
     if (t == Target::GB && sp == std::string::npos) {
         if (a.size() == 8 && all_hex(a)) { *out = Format::GameShark; return true; }
         // Game Genie: XXX-XXX or XXX-XXX-XXX

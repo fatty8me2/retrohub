@@ -51,6 +51,8 @@ bool target_for_system(const std::string& system, Target* out) {
     else if (s == "nds" || s == "ds") *out = Target::DS;
     else if (s == "ps1" || s == "psx") *out = Target::PS1;
     else if (s == "gc" || s == "gamecube") *out = Target::GC;
+    else if (s == "nes") *out = Target::NES;
+    else if (s == "snes") *out = Target::SNES;
     else return false;
     return true;
 }
@@ -178,6 +180,26 @@ bool gc_is_encrypted_ar(const std::string& line) {
     return true;
 }
 
+static std::string up_nodash(const std::string& line) {
+    std::string r;
+    for (char c : line) if (!std::isspace((unsigned char)c) && c != '-') r += (char)std::toupper((unsigned char)c);
+    return r;
+}
+
+bool nes_game_genie_ok(const std::string& letters) {
+    std::string s = up_nodash(letters);
+    if (s.size() != 6 && s.size() != 8) return false;
+    for (char c : s) if (!std::strchr("APZLGITYEOXUKSVN", c)) return false;
+    return true;
+}
+
+bool snes_game_genie_ok(const std::string& code) {
+    std::string s = up_nodash(code);
+    if (s.size() != 8) return false;
+    for (char c : s) if (!std::strchr("DF4709156BC8A23E", c)) return false;
+    return true;
+}
+
 bool normalize_code(Target target, Format fmt, const std::string& line, std::string* out, std::string* err) {
     auto bad = [&](const char* why) { if (err) *err = std::string(why) + ": '" + line + "'"; return false; };
     std::string r;
@@ -211,6 +233,34 @@ bool normalize_code(Target target, Format fmt, const std::string& line, std::str
             if (fmt == Format::GameGenie || fmt == Format::CodeBreaker) return bad("only GameShark/Action Replay codes work on PS1");
             if (!pair_code(line, 8, 4, &r)) return bad("expected AAAAAAAA VVVV");
             break;
+        case Target::NES: {
+            if (fmt == Format::GameShark || fmt == Format::CodeBreaker || fmt == Format::ActionReplay || fmt == Format::Gecko || fmt == Format::ActionReplayGC)
+                return bad("only Game Genie and raw codes work on NES");
+            std::string s = up_nodash(line);
+            std::string raw = squeeze(line);
+            if (fmt == Format::GameGenie || (fmt == Format::Raw && !is_hex(raw, 0, raw.size()))) {
+                if (!nes_game_genie_ok(s)) return bad("expected a 6 or 8 letter Game Genie code (letters APZLGITYEOXUKSVN)");
+                r = s;
+            } else {   // raw: AAAA:VV or AAAA:CC:VV
+                std::string h = raw;
+                if (h.size() == 6 && is_hex(h, 0, 6)) r = h.substr(0, 4) + ":" + h.substr(4);
+                else if (h.size() == 8 && is_hex(h, 0, 8)) r = h.substr(0, 4) + ":" + h.substr(4, 2) + ":" + h.substr(6);
+                else return bad("expected AAAA:VV or AAAA:CC:VV (hex)");
+            }
+            break;
+        }
+        case Target::SNES: {
+            if (fmt == Format::CodeBreaker || fmt == Format::Gecko || fmt == Format::ActionReplayGC) return bad("only Game Genie and Pro Action Replay codes work on SNES");
+            std::string s = up_nodash(line);
+            if (fmt == Format::GameGenie || (fmt == Format::Raw && !is_hex(s, 0, s.size()) && snes_game_genie_ok(s))) {
+                if (!snes_game_genie_ok(s)) return bad("expected XXXX-XXXX (Game Genie)");
+                r = s.substr(0, 4) + "-" + s.substr(4);
+            } else {   // Pro Action Replay / raw: 8 hex digits AAAAAAVV
+                if (!is_hex(s, 0, s.size()) || s.size() != 8) return bad("expected 8 hex digits AAAAAAVV (Pro Action Replay)");
+                r = s;
+            }
+            break;
+        }
         case Target::GC:
             if (fmt == Format::Gecko) { if (!pair_code(line, 8, 8, &r)) return bad("expected AAAAAAAA VVVVVVVV (Gecko)"); }
             else if (fmt == Format::ActionReplayGC || fmt == Format::ActionReplay) {

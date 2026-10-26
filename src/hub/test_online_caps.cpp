@@ -14,8 +14,9 @@ int main() {
         {System::Unknown, false, false}, {System::N64, true, false}, {System::GBA, true, false}, {System::GB, true, false},
         {System::GBC, true, false},      {System::GC, true, true},   {System::N3DS, true, false}, {System::WiiU, false, false},
         {System::NDS, true, true},       {System::PS2, false, false}, {System::PS1, true, true},
+        {System::NES, false, false},     {System::SNES, false, false},   // retrorun offline only until the netplay lane lands
     };
-    CHECK((int)System::PS1 + 1 == (int)(sizeof table / sizeof table[0]));   // a new System enum value must get a row here
+    CHECK((int)System::SNES + 1 == (int)(sizeof table / sizeof table[0]));   // a new System enum value must get a row here
     hub::GameInfo on = hub::GameInfo(), off = hub::GameInfo();
     on.online = true; off.online = false;
     for (const Row& r : table) {

@@ -332,6 +332,8 @@ cheats::Target target_of_sys(const std::string& sys) {
     if (sys == "gb" || sys == "gbc") return cheats::Target::GB;
     if (sys == "ps1") return cheats::Target::PS1;
     if (sys == "gc") return cheats::Target::GC;
+    if (sys == "nes") return cheats::Target::NES;
+    if (sys == "snes") return cheats::Target::SNES;
     return cheats::Target::N64;
 }
 bool usable(cheats::Target t, const Cheat& c) {

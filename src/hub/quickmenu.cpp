@@ -227,7 +227,7 @@ static std::string run_dir_for(const std::string& key) {
 static bool runner_has_ctl(const hub::GameEntry& e) {
     if (is_native(e)) return false;
     switch (e.system) {
-        case hub::System::N64: case hub::System::GBA: case hub::System::GB: case hub::System::GBC: case hub::System::NDS: case hub::System::PS1: return true;
+        case hub::System::N64: case hub::System::GBA: case hub::System::GB: case hub::System::GBC: case hub::System::NDS: case hub::System::PS1: case hub::System::NES: case hub::System::SNES: return true;
         default: return false;
     }
 }
