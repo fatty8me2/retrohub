@@ -3,6 +3,7 @@
  * Non-blocking; reconnects automatically (backoff 1s..30s). */
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -97,6 +98,18 @@ struct Event {
     bool yours = false;                              // UsernameChecked: the name is already this account's
 };
 
+/* ---- friends' play time (docs/FRIENDS.md "Play time") ----
+ * One game's coarse total (whole minutes). The client sends its top kPlaytimeMaxGames games when a play session ends (only with
+ * "Share my play time with friends" on) and fetches friends' totals with request_playtime(). */
+struct PlayGame { std::string key, title; int minutes = 0; };
+constexpr size_t kPlaytimeMaxGames = 30;
+/* {"type":"playtime","share":bool,"games":[{k,t,m}...]}: games sorted by minutes (desc), minutes < 1 dropped, at most kPlaytimeMaxGames, empty when !share. */
+std::string playtime_message_json(std::vector<PlayGame> games, bool share);
+/* Parses the server's {"type":"playtime","friends":{uid:[{k,t,m}]}} reply (false when not that message). */
+bool parse_playtime_reply(const std::string& text, std::map<std::string, std::vector<PlayGame>>* out);
+/* Seconds -> whole minutes, rounded down (coarse on purpose). */
+inline int playtime_minutes(unsigned long long seconds) { return (int)(seconds / 60 > 600000 ? 600000 : seconds / 60); }
+
 /* ---- dedupe (pure; the list is keyed by uid) ----
  * dedupe_friends: one entry per uid (empty uids and `self_uid` dropped). Duplicates merge into the first
  * occurrence: the more "present" status wins (InGame > InLobby > Online > Offline, then newer `updated`),
@@ -146,6 +159,12 @@ class FriendsClient {
     std::string my_secret() const;        // the account secret (only for authenticating the lobby seat)
     /* "Automatically add people I play with as friends": sent in every hello and live via "prefs". Default on. */
     void set_auto_friend(bool on);
+    /* Play time sharing: send_playtime() after a session ends or the setting changes (remembered and re-sent after a reconnect, never more
+     * than the server's rate limit needs); request_playtime() asks for friends' totals (also done once per connection). */
+    void send_playtime(const std::vector<PlayGame>& games, bool share);
+    void request_playtime();
+    const std::map<std::string, std::vector<PlayGame>>& friend_playtime() const;   // uid -> that friend's games (top first); blocked/removed friends are never listed
+    int playtime_version() const;                                                   // bumps whenever friend_playtime() changes
     std::set<std::string> retired_ids() const;   // uids the server confirmed replaced (retired-ids.txt)
 
     /* actions (ignored/queued-as-dropped while disconnected, except set_status/rename which

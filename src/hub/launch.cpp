@@ -217,6 +217,7 @@ void poll_process() {
             { hub::saves::touch_game(A.run.system_short, A.run.key, A.run.title); hub::saves::history_snapshot_game(A.run.system_short, A.run.key); }
         if (A.run.cloud_started) { A.run.cloud_started = false; hub::saves::cloud_game_exited(hub::saves::GameId{A.run.system_short, A.run.key}); }   // after touch_game: pushes this game in the background
         hub::flush_library_state();
+        if (secs >= 1) fr_playtime_session_ended();
         refresh_state(A.run.key);
     }
     A.vault_dirty = true;

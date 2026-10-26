@@ -68,6 +68,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
       << "  \"notify_in_game\": " << (s.notify_in_game ? "true" : "false") << ",\n"
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
+      << "  \"share_playtime\": " << (s.share_playtime ? "true" : "false") << ",\n"
       << "  \"auto_friend\": " << (s.auto_friend ? "true" : "false") << ",\n"
       << "  \"username_claimed\": " << (s.username_claimed ? "true" : "false") << ",\n"
       << "  \"find_games_done\": " << (s.find_games_done ? "true" : "false") << ",\n"
@@ -129,6 +130,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
+    out->share_playtime = json_bool(j, "share_playtime", out->share_playtime);
     out->username_claimed = json_bool(j, "username_claimed", out->username_claimed);
     out->cemu_manage_controls = json_bool(j, "cemu_manage_controls", out->cemu_manage_controls);
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
@@ -982,6 +984,36 @@ std::string format_play_time(unsigned long long s) {
     char b[32];
     std::snprintf(b, sizeof b, "%lluh %02llum", s / 3600, (s % 3600) / 60);
     return b;
+}
+
+std::string friend_hours_text(int m) {
+    if (m < 1) return "";
+    if (m < 60) return std::to_string(m) + "m";
+    if (m % 60 == 0 || m >= 10 * 60) return std::to_string(m / 60) + "h";
+    return std::to_string(m / 60) + "h " + std::to_string(m % 60) + "m";
+}
+
+std::string friends_playtime_line(const std::map<std::string, std::vector<PlaytimeEntry>>& by_uid, const std::map<std::string, std::string>& names,
+                                  const std::string& game_key, size_t max_n) {
+    std::vector<std::pair<int, std::string>> v;   // (minutes, name)
+    for (const auto& kv : by_uid) {
+        auto n = names.find(kv.first);
+        if (n == names.end() || n->second.empty()) continue;
+        for (const auto& g : kv.second) if (g.game_key == game_key && g.minutes >= 1) { v.push_back({g.minutes, n->second}); break; }
+    }
+    std::stable_sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
+    std::string o;
+    for (size_t i = 0; i < v.size() && i < max_n; ++i) { if (i) o += " \xC2\xB7 "; o += v[i].second + " " + friend_hours_text(v[i].first); }
+    return o;
+}
+
+std::string friend_top_games_text(const std::vector<PlaytimeEntry>& games, size_t max_n) {
+    std::vector<PlaytimeEntry> v;
+    for (const auto& g : games) if (g.minutes >= 1) v.push_back(g);
+    std::stable_sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.minutes > b.minutes; });
+    std::string o;
+    for (size_t i = 0; i < v.size() && i < max_n; ++i) { o += (i ? ", " : "Top games: ") + (v[i].title.empty() ? v[i].game_key : v[i].title) + " " + friend_hours_text(v[i].minutes); }
+    return o;
 }
 
 std::string sanitize_player_name(const std::string& s) {
