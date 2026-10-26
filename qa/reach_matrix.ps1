@@ -79,9 +79,9 @@ $games = @(
 )
 $games[0].key = 'native:smash64'   # kNativeKey; verified below against the trace
 
-function Online-Expected($g) {   # supports_online() as designed: every library game of N64 GB GBC GBA 3DS GC DS PS1 (non-catalog GC/DS/PS1 are tagged "Untested online"); only wiiu / ps2 are explained
-    if ($g.sys -in 'native', 'n64', 'gb', 'gbc', 'gba', '3ds', 'gc', 'nds', 'ps1') { return 'enabled' }
-    return 'explained'   # wiiu, ps2: an "Offline only" button with a tooltip, never silence
+function Online-Expected($g) {   # supports_online() as designed: every library game of N64 GB GBC GBA 3DS GC DS PS1 (non-catalog GC/DS/PS1 are tagged "Untested online"); PS2 online too (LRPS2, 2 players); only wiiu is explained
+    if ($g.sys -in 'native', 'n64', 'gb', 'gbc', 'gba', '3ds', 'gc', 'nds', 'ps1', 'ps2') { return 'enabled' }
+    return 'explained'   # wiiu: an "Offline only" button with a tooltip, never silence
 }
 function Cheats-Expected($g) {   # n64 gb gbc gba nds ps1 gc: the Cheats button; 3ds wiiu ps2: a disabled button with a tooltip; native / Kanto: hidden
     if ($g.kanto) { return 'hidden' }

@@ -649,7 +649,8 @@ const std::vector<GameInfo>& catalog() {
          "Resident Evil 2 (USA) (Disc 1)"},
 
         /* ---- PlayStation 2 (PCSX2 engine). Serials = Redump header IDs (SLUS-/SCUS-), region variants included.
-         * PS2 stays online=false. Engine::Pcsx2 runs the PCSX2 core. ---- */
+         * Engine::Pcsx2 runs the PCSX2 core offline; online=true games are 2-player versus/race titles played in rooms through retrorun + LRPS2
+         * (input-delay lockstep, 2 ports: LRPS2 has no multitap, see online_max_for). ---- */
         {"ratchet", "Ratchet & Clank", Engine::Pcsx2, 1, {}, "", "ps2",
          {"SCUS-97199"}, false, 2002,
          "Ratchet and the robot Clank blast through planets in a 3D action platformer.",
@@ -671,23 +672,23 @@ const std::vector<GameInfo>& catalog() {
          "Carl Johnson returns to Los Santos in an open-world crime sandbox.",
          "Grand Theft Auto - San Andreas (USA, Canada) (v3.00)"},
         {"tekken5", "Tekken 5", Engine::Pcsx2, 2, {}, "", "ps2",
-         {"SLUS-21059"}, false, 2005,
+         {"SLUS-21059"}, true, 2005,
          "The fifth Tekken tournament, with two-player versus fights and a large roster.",
          "Tekken 5 (USA)"},
         {"burnout3", "Burnout 3: Takedown", Engine::Pcsx2, 2, {}, "", "ps2",
-         {"SLUS-21050"}, false, 2004,
+         {"SLUS-21050"}, true, 2004,
          "Crash-focused racing with Takedown mode, and split-screen races for two players.",
          "Burnout 3 - Takedown (USA, Canada)"},
         {"crashnitro", "Crash Nitro Kart", Engine::Pcsx2, 4, {}, "", "ps2",
-         {"SLUS-20649"}, false, 2003,
+         {"SLUS-20649"}, true, 2003,
          "Kart racing with power-ups and a split-screen race for up to four; multitap needed for 3-4.",
          "Crash Nitro Kart (USA)"},
         {"crashtag", "Crash Tag Team Racing", Engine::Pcsx2, 4, {}, "", "ps2",
-         {"SLUS-21191"}, false, 2005,
+         {"SLUS-21191"}, true, 2005,
          "Crash and friends race in tag teams, with split-screen races for up to four; multitap for 3-4.",
          "Crash Tag Team Racing (USA)"},
         {"timesplitters2", "TimeSplitters 2", Engine::Pcsx2, 4, {}, "", "ps2",
-         {"SLUS-20314"}, false, 2002,
+         {"SLUS-20314"}, true, 2002,
          "Time-hopping shooter with split-screen deathmatch for up to four; multitap for 3-4.",
          "TimeSplitters 2 (USA)"},
         {"sotc", "Shadow of the Colossus", Engine::Pcsx2, 1, {}, "", "ps2",
@@ -999,7 +1000,9 @@ bool link_cable_game(const std::string& id) {
 }
 
 int online_max_for(const GameInfo& g) {
-    return g.online_max > 0 ? g.online_max : g.max_players;
+    int n = g.online_max > 0 ? g.online_max : g.max_players;
+    if (g.system == "ps2") n = std::min(n, 2);   // the LRPS2 core has two controller ports and no multitap option
+    return n;
 }
 
 const GameInfo* find_game_for(const std::string& system_short, const std::string& serial, const std::string& md5) {

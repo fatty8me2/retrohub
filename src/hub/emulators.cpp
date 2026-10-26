@@ -86,7 +86,7 @@ static std::string join(const std::string& a, const std::string& b) {
     return (c == '\\' || c == '/') ? a + b : a + "\\" + b;
 }
 
-const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : "Dolphin"; }
+const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : "Dolphin"; }
 Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : s == hub::System::PS2 ? Kind::Pcsx2 : Kind::Azahar; }
 
 /* Pinned official releases. Azahar: github.com/azahar-emu/azahar (GPL-3.0), asset digest as published by GitHub.
@@ -107,11 +107,17 @@ const Release& release(Kind k) {
     static const Release ps = {
         "2.8.2", L"github.com", L"/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-windows-x64-Qt.7z",
         25670075ull, "7dfc829ca1994cc1045ac49f05e39b6cf968b72e6a374c40e05c2a2b4ac200b4", L"pcsx2-qt.exe", "GPL-3.0+"};
-    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : dol;
+    /* LRPS2 / "ParaLLEl PS2" v2.0.0-38d3a83 (GPL-3.0), the libretro buildbot nightly of pcsx2_libretro.dll; used by retrorun for PS2 ONLINE rooms only
+     * (docs/PS2_ONLINE.md). "latest" is a moving URL: if the nightly changes, the pinned size/SHA-256 reject it (the install fails with a clear message)
+     * and this pin must be refreshed after re-running the determinism and lockstep QA. The DLL is never shipped in the package. */
+    static const Release lr = {
+        "2.0.0-38d3a83", L"buildbot.libretro.com", L"/nightly/windows/x86_64/latest/pcsx2_libretro.dll.zip",
+        3760634ull, "730112622345f0ca12e7650c6d4052f443603aa630e9b6ab8a68874a4d66bae6", L"pcsx2_libretro.dll", "GPL-3.0"};
+    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : dol;
 }
 
 std::string managed_root() { return join(hub::data_dir(), "emulators"); }
-std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : "dolphin"); }
+std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : k == Kind::Lrps2 ? "lrps2" : "dolphin"); }
 
 /* ------------------------------------------------------------------ */
 /* locating                                                            */

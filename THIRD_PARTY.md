@@ -28,6 +28,7 @@ RetroHub uses the components below. Each one keeps its own license. Components a
 | Snes9x (libretro core, `snes9x_libretro`) | 1.61 (nightly) | Snes9x license (non-commercial) | `scripts/fetch-cores.ps1` | SNES. Shipped unmodified in `cores\`; RetroHub is free and non-commercial. |
 | melonDS DS (libretro core, `melondsds_libretro`) | 1.4.0 (nightly) | GPL-3.0-or-later | `scripts/fetch-cores.ps1` | Nintendo DS. Uses its built-in FreeBIOS and generated firmware; no BIOS files are shipped or required. Based on melonDS (GPL-3.0-or-later). |
 | libretro frontend info files | nightly | per file (MIT for most) | `scripts/fetch-cores.ps1` | Core metadata (`.info`). |
+| LRPS2 / ParaLLEl PS2 (libretro core `pcsx2_libretro`, based on PCSX2) | 2.0.0-38d3a83 (nightly) | GPL-3.0 | `src/hub/emulators.cpp` (buildbot.libretro.com) | PlayStation 2 online rooms only (retrorun). NOT shipped in the package: downloaded on demand into the data folder, size and SHA-256 pinned. Source: github.com/libretro/pcsx2 (LRPS2); PCSX2 itself is GPL-3.0-or-later. |
 | Dolphin | 2509 | GPL-2.0-or-later | `scripts/fetch-dolphin.ps1` | GameCube emulation, downloaded on demand. |
 | Azahar | 2126.2 | GPL-3.0 | `src/hub/emulators.cpp` (github.com/azahar-emu/azahar) | Nintendo 3DS emulation, downloaded on demand into the data folder; SHA-256 pinned. |
 | Cemu | 2.6 | MPL-2.0 | `src/hub/emulators.cpp` (github.com/cemu-project/Cemu) | Wii U emulation. An existing install is used; otherwise downloaded on demand into the data folder; SHA-256 pinned. |
