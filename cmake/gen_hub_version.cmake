@@ -1,0 +1,28 @@
+# Build-time generator for the release version files (run with cmake -P from a custom command):
+#   cmake -DVERSION_FILE=<repo>/VERSION -DOUT_DIR=<build>/version_gen -P gen_hub_version.cmake
+# Writes hub_version.cpp (kHubVersion) and hub_version_rc.h (RH_VER_*), touching an output only when its
+# text changes, so a VERSION bump rebuilds just hub_version.cpp + retrohub.rc and never needs a reconfigure.
+file(STRINGS "${VERSION_FILE}" HUB_VERSION LIMIT_COUNT 1)
+string(STRIP "${HUB_VERSION}" HUB_VERSION)
+string(REGEX MATCH "([0-9]+)\.([0-9]+)\.([0-9]+)" _rh_ver "${HUB_VERSION}")
+if (NOT _rh_ver)
+    set(CMAKE_MATCH_1 0)
+    set(CMAKE_MATCH_2 0)
+    set(CMAKE_MATCH_3 0)
+endif()
+set(_cpp "extern const char kHubVersion[];\nconst char kHubVersion[] = \"${HUB_VERSION}\";\n")
+set(_rc "#define RH_VER_MAJOR ${CMAKE_MATCH_1}\n#define RH_VER_MINOR ${CMAKE_MATCH_2}\n#define RH_VER_PATCH ${CMAKE_MATCH_3}\n#define RH_VER_STR \"${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}.0\"\n")
+file(MAKE_DIRECTORY "${OUT_DIR}")
+foreach(_pair "hub_version.cpp|_cpp" "hub_version_rc.h|_rc")
+    string(REPLACE "|" ";" _p "${_pair}")
+    list(GET _p 0 _name)
+    list(GET _p 1 _var)
+    set(_new "${${_var}}")
+    set(_old "")
+    if (EXISTS "${OUT_DIR}/${_name}")
+        file(READ "${OUT_DIR}/${_name}" _old)
+    endif()
+    if (NOT "${_old}" STREQUAL "${_new}")
+        file(WRITE "${OUT_DIR}/${_name}" "${_new}")
+    endif()
+endforeach()

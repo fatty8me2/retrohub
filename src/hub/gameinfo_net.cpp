@@ -13,9 +13,7 @@
 #include <windows.h>
 #include <winhttp.h>
 
-#ifndef HUB_VERSION_STR
-#define HUB_VERSION_STR "dev"
-#endif
+#include "hub_version.h"
 
 namespace gameinfo_net {
 

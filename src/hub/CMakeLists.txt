@@ -36,6 +36,16 @@ target_include_directories(hub_username_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(hub_session_test test_session.cpp)
 target_link_libraries(hub_session_test PRIVATE hublogic)
 
+# Release version: hub_version.cpp (kHubVersion -> HUB_VERSION_STR) and hub_version_rc.h (RH_VER_*) are generated AT BUILD TIME
+# from VERSION (cmake/gen_hub_version.cmake, writes a file only if its text changed). A VERSION bump therefore needs no
+# reconfigure and recompiles just hub_version.cpp + retrohub.rc; it is not a compile definition on any target.
+set(HUB_VERSION_GEN ${CMAKE_BINARY_DIR}/version_gen)
+add_custom_command(OUTPUT ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_GEN}/hub_version_rc.h
+    COMMAND ${CMAKE_COMMAND} -DVERSION_FILE=${CMAKE_SOURCE_DIR}/VERSION -DOUT_DIR=${HUB_VERSION_GEN}
+            -P ${CMAKE_SOURCE_DIR}/cmake/gen_hub_version.cmake
+    DEPENDS ${CMAKE_SOURCE_DIR}/VERSION ${CMAKE_SOURCE_DIR}/cmake/gen_hub_version.cmake
+    COMMENT "Generating hub version files" VERBATIM)
+add_library(hubversion STATIC ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_GEN}/hub_version_rc.h)
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
     ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_games_ui.cpp group_ui.cpp
@@ -43,15 +53,12 @@ set(RETROHUB_UI_SOURCES
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(RetroHub PRIVATE hubgameinfo_net hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
+target_link_libraries(RetroHub PRIVATE hubversion hubgameinfo_net hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
     ole32 shell32 uuid winhttp)
 # main.cpp defines SDL_MAIN_HANDLED and provides WinMain itself, so SDL2main is not needed.
 
 add_custom_command(TARGET RetroHub POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:RetroHub>)
-if (DEFINED HUB_VERSION)
-    target_compile_definitions(RetroHub PRIVATE HUB_VERSION_STR="${HUB_VERSION}")
-endif()
 
 # Cheat database (data/cheats_db.bin + data/cheats_featured.json) ships next to RetroHub.exe in data\ (hub::cheats_db_set_dir default).
 add_custom_command(TARGET RetroHub POST_BUILD
@@ -72,27 +79,11 @@ target_link_libraries(RetroHub PRIVATE bcrypt)
 add_executable(hub_updater_test test_updater.cpp updater.cpp update_apply.cpp)
 target_include_directories(hub_updater_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_updater_test PRIVATE hubcommon bcrypt shell32 ws2_32)
-if (DEFINED HUB_VERSION)
-    target_compile_definitions(hub_updater_test PRIVATE HUB_VERSION_STR="${HUB_VERSION}")
-endif()
+target_link_libraries(hub_updater_test PRIVATE hubversion)
 
 # ---- Branding: icon + version resources, Windows shell integration (assets/brand/retrohub.ico) ----
-string(REGEX MATCH "([0-9]+)\.([0-9]+)\.([0-9]+)" _rh_ver "${HUB_VERSION}")
-if (NOT _rh_ver)
-    set(CMAKE_MATCH_1 0)
-    set(CMAKE_MATCH_2 0)
-    set(CMAKE_MATCH_3 0)
-endif()
-set(RH_VER_MAJOR ${CMAKE_MATCH_1})
-set(RH_VER_MINOR ${CMAKE_MATCH_2})
-set(RH_VER_PATCH ${CMAKE_MATCH_3})
-set(RH_VER_STR "${RH_VER_MAJOR}.${RH_VER_MINOR}.${RH_VER_PATCH}.0")
-file(WRITE "${CMAKE_BINARY_DIR}/brand_gen/hub_version_rc.h.tmp"
-    "#define RH_VER_MAJOR ${RH_VER_MAJOR}\n#define RH_VER_MINOR ${RH_VER_MINOR}\n#define RH_VER_PATCH ${RH_VER_PATCH}\n#define RH_VER_STR \"${RH_VER_STR}\"\n")
-configure_file("${CMAKE_BINARY_DIR}/brand_gen/hub_version_rc.h.tmp" "${CMAKE_BINARY_DIR}/brand_gen/hub_version_rc.h" COPYONLY)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
-set(RH_BRAND_RC_DIRS ${CMAKE_BINARY_DIR}/brand_gen ${CMAKE_CURRENT_SOURCE_DIR})
-set_source_files_properties(retrohub.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/assets/brand/retrohub.ico")
+set(RH_BRAND_RC_DIRS ${HUB_VERSION_GEN} ${CMAKE_CURRENT_SOURCE_DIR})
+set_source_files_properties(retrohub.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/assets/brand/retrohub.ico;${HUB_VERSION_GEN}/hub_version_rc.h")
 target_sources(RetroHub PRIVATE shell_integration.cpp toast_win.cpp retrohub.rc)
 target_include_directories(RetroHub PRIVATE ${RH_BRAND_RC_DIRS})
 target_link_libraries(RetroHub PRIVATE propsys windowsapp)
@@ -191,9 +182,7 @@ target_link_libraries(hub_ps2_online_test PRIVATE hublogic hubcommon hubminiz bc
 add_library(hubgameinfo_net STATIC gameinfo_net.cpp)
 target_include_directories(hubgameinfo_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hubgameinfo_net PUBLIC hubcommon winhttp)
-if (DEFINED HUB_VERSION)
-    target_compile_definitions(hubgameinfo_net PRIVATE HUB_VERSION_STR="${HUB_VERSION}")
-endif()
+target_link_libraries(hubgameinfo_net PUBLIC hubversion)
 add_executable(gameinfo_record gameinfo_record.cpp)
 target_link_libraries(gameinfo_record PRIVATE hubgameinfo_net)
 add_executable(hub_gameinfo_test test_gameinfo.cpp)
