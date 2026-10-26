@@ -111,6 +111,9 @@ add_test(NAME hub_online_caps_test COMMAND hub_online_caps_test)   # supports_on
 add_test(NAME ps1_test COMMAND ps1_test)                                 # PlayStation: serials, catalog, synthetic discs, BIOS discovery (scratch dirs)
 add_test(NAME cheats_db_test COMMAND cheats_db_test)
 add_test(NAME psarchive_test COMMAND psarchive_test)                       # PS1/PS2 disc archives: identify by name/DB, truncated, extract+confirm (scratch dirs)
+add_test(NAME archives_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/archives_headless.ps1)   # GBA .zip, NES/SNES/N64 .7z, PS1 cue/bin .zip unpacked + retrorun --headless
+set_tests_properties(archives_headless PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME archives_all_test COMMAND archives_all_test)              # .zip/.7z of every system: keys, rescans, re-unpack, rom-cache (scratch dirs)
 add_test(NAME addgames_test COMMAND addgames_test)                     # Add games: console sorting, destination, dedupe, copy job (scratch dirs)
 add_test(NAME hubgamesettings_test COMMAND hubgamesettings_test)
 add_test(NAME hubdolphincheats_test COMMAND hubdolphincheats_test)   # GameCube cheats: gecko/ar_gc + Dolphin GameSettings ini writer

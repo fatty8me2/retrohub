@@ -40,7 +40,8 @@ struct Settings {
     bool sync_card_dismissed = false;  // "Keep your saves on all your PCs" card on Home was dismissed ("Not now")
     bool smash_save_notice_shown = false;  // the "Using your synced Smash save" toast has been shown once
     std::string vault_dir;             // "" = default (userdata/saves)
-    bool download_art = true;          // fetch cover art from the libretro-thumbnails project
+    int rom_cache_limit_gb = 40;       // unpacked-games cache limit in GB (0 = unlimited)
+    bool download_art = true;         // fetch cover art from the libretro-thumbnails project
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
     bool show_friends = true;          // friends panel open
     bool notify_in_game = true;        // Windows toast for invites while a game is running
