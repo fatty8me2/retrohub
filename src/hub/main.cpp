@@ -218,10 +218,23 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             static ImGuiKey nudge = ImGuiKey_None;   // one-shot d-pad press that lands the focus after a manual page scroll
             struct Pend { int dir = 0, wait = 0, refocus = 0; ImGuiID nav = 0, wid = 0; float scroll = 0; };
             static Pend pend;
+            /* After the step-onto-screen nudge: if nothing focusable is on screen (e.g. the page ends in a plain table) ImGui lets the focus
+             * escape to the top bar. Put it back where it was, on the page. */
+            struct Back { int wait = 0; ImGuiWindow* win = nullptr; ImGuiID wid = 0, nav = 0, scope = 0; ImGuiNavLayer layer = ImGuiNavLayer_Main; ImRect rel; };
+            static Back back;
             ImGuiContext& pg = *ImGui::GetCurrentContext();
             if (pg_up) { io.AddKeyEvent(ImGuiKey_PageUp, false); pg_up = false; }
             if (pg_dn) { io.AddKeyEvent(ImGuiKey_PageDown, false); pg_dn = false; }
             if (nudge != ImGuiKey_None) { io.AddKeyAnalogEvent(nudge, false, 0.f); nudge = ImGuiKey_None; }
+            if (back.wait > 0 && --back.wait == 0) {
+                ImGuiWindow* page = ImGui::FindWindowByID(back.wid);
+                bool inside = false;
+                for (ImGuiWindow* c = pg.NavWindow; c; c = c->ParentWindow) if (c == page) { inside = true; break; }
+                if (page && back.win && pg.NavWindow && !inside && pg.WindowsById.GetVoidPtr(back.win->ID) == back.win) {
+                    ImGui::FocusWindow(back.win);
+                    ImGui::SetNavID(back.nav, back.layer, back.scope, back.rel);
+                }
+            }
             const bool up = A.pad_mode && ImGui::IsKeyPressed(ImGuiKey_GamepadL2, true), dn = A.pad_mode && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, true);
             /* Library / friends panel: ImGui's own page move (it lands the focus on the item a page away). Every other page keeps
              * its items in nested panels, where that move jumps to the top bar: scroll by hand there and step the focus onto the screen. */
@@ -268,6 +281,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                         const float edge = pend.dir > 0 ? view.Min.y : view.Max.y;
                         ImRect from(r.Min.x, edge, r.Max.x, edge);
                         pg.NavWindow->NavRectRel[pg.NavLayer] = ImGui::WindowRectAbsToRel(pg.NavWindow, from);
+                        back = Back{3, pg.NavWindow, w->ID, pg.NavId, pg.NavFocusScopeId, pg.NavLayer, pg.NavWindow->NavRectRel[pg.NavLayer]};
                         nudge = pend.dir > 0 ? ImGuiKey_GamepadDpadDown : ImGuiKey_GamepadDpadUp;
                         io.AddKeyAnalogEvent(nudge, true, 1.f);
                     }

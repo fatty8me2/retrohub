@@ -21,6 +21,7 @@ struct PickerState {
     std::string detail_id;
     bool detail_open = false;
     bool open = false;          // the big picker modal
+    std::string auto_code;      // room the picker was already auto-opened for (host, no game yet)
     bool focus_first = false;   // pad: land on the selected tile when it opens
 } PK;
 
@@ -240,7 +241,7 @@ static void picker_modal(const std::vector<hubui::PeerInfo>& peers) {
     // ---- console chips (counts follow the search)
     std::vector<hubpick::Chip> chips = hubpick::chips(PK.items, PK.q);
     if (!PK.sys.empty() && std::none_of(chips.begin(), chips.end(), [](const hubpick::Chip& c) { return c.sys == PK.sys; })) PK.sys.clear();
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(0.75f), sp(0.4f)));
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
     {
         int all = 0;
@@ -252,7 +253,7 @@ static void picker_modal(const std::vector<hubui::PeerInfo>& peers) {
         for (auto& c : chips) {
             std::snprintf(lab, sizeof lab, "%s  %d", c.name.c_str(), c.count);
             float w = ImGui::CalcTextSize(lab).x + sp(3.5f);
-            if (ImGui::GetItemRectMax().x + sp(1.f) + w > lim) ImGui::NewLine(); else ImGui::SameLine();
+            if (ImGui::GetItemRectMax().x + sp(1.f) + w <= lim) ImGui::SameLine();   // otherwise the next chip starts a new line by itself
             ImU32 a = COL_ACCENT, b2;
             system_colors(hub::system_from_short(c.sys), &a, &b2);
             if (ui::chip(lab, PK.sys == c.sys, a)) { PK.sys = PK.sys == c.sys ? std::string() : c.sys; PK.scroll_top = true; }
@@ -289,9 +290,9 @@ static void picker_modal(const std::vector<hubui::PeerInfo>& peers) {
         ImGui::TextDisabled(PK.items.empty() ? "No games in your library yet." : "No games match your search.");
     } else {
         const float gap = 12 * S, aw = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize - 4 * S;
-        const float tmin = 172 * S;
+        const float tmin = 150 * S;
         int cols = std::max(1, (int)((aw + gap) / (tmin + gap)));
-        float tw = (aw - gap * (cols - 1)) / cols, th = tw * 1.30f;
+        float tw = (aw - gap * (cols - 1)) / cols, th = tw * 1.22f;
         const float hh = 38 * S, rh = th + gap;
         hubpick::Layout L = hubpick::build_layout(PK.secs, cols, hh, rh);
         int ra, rb;
@@ -365,5 +366,7 @@ void room_picker(bool host, float width, const std::vector<hubui::PeerInfo>& pee
     if (host && !shot_open_done && std::getenv("HUB_SHOT_PICKER_OPEN") && ImGui::GetFrameCount() > 8) { shot_open_done = true; PK.open = true; PK.focus_first = true; }
     if (const char* dq = std::getenv("HUB_SHOT_PICKER_DETAIL"); host && dq && !PK.detail_open && PK.open && ImGui::GetFrameCount() > 14) { static bool d = false; if (!d) { d = true; PK.detail_id = dq; PK.detail_open = true; } }
     if (!host) { PK.open = false; PK.detail_open = false; return; }
+    // A fresh room with no game: open the big picker straight away (once per room), so the room page stays clean.
+    if (A.selected_game.empty() && A.proc == nullptr && !A.code.empty() && PK.auto_code != A.code && !PK.items.empty()) { PK.auto_code = A.code; PK.open = true; PK.focus_first = true; }
     if (PK.open) picker_modal(peers);
 }

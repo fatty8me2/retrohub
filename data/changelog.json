@@ -1,6 +1,31 @@
 {
   "versions": [
     {
+      "version": "1.26.0",
+      "date": "2026-10-25",
+      "title": "Jump back in, and play with friends faster",
+      "new": [
+        "Resume from Home: the big Resume card puts you back in your last game, and save states now come with a picture so you can see where you were",
+        "In-game menu: press View + Y during a game for a quick menu, including save states for N64 games",
+        "Screenshots: take one from the in-game menu and browse them all in a gallery",
+        "Friends are playing: see on Home what your friends are playing right now, and ask to join with one click",
+        "Ping in rooms, so you can see how good everyone's connection is before you start",
+        "Play again: after a game, start another with the same people, or invite your last group in one click",
+        "Notification history in the bell, so a missed invite or request is never lost",
+        "Save history with Undo, a Needs attention filter, and export, all on the Saves page",
+        "Your stats on Home: games played, time played and your favorites",
+        "Every game can be hosted online now, with a new cover-art game picker: GameCube, PlayStation and DS games all show up, and ones we have not tested yet carry an Untested tag",
+        "Kanto Together keeps its package up to date automatically and checks that both players match before you start"
+      ],
+      "improved": [
+        "Home is arranged in a sensible order: Resume, Continue playing, Friends are playing, your shelves, then Your stats",
+        "Recent groups now recognise your friends by their account, so renaming yourself never breaks Play again"
+      ],
+      "fixed": [
+        "Pad navigation on the Saves page scrolls correctly with LT and RT again"
+      ]
+    },
+    {
       "version": "1.25.1",
       "date": "2026-10-25",
       "title": "Cloud saves, without the folder talk",

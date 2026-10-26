@@ -34,6 +34,11 @@ int main() {
     RecentGroup big = grp({{"a", "Ann"}, {"b", "Bob"}, {"c", "Cy"}, {"d", "Di"}, {"e", "Ed"}}, "g", "G", 1);
     CHECK(group_names(big) == "Ann, Bob, Cy +2");
     CHECK((invitable(big, {"a", "b", "c", "e"}, {"b"}) == std::vector<std::string>{"a", "c", "e"}));
+    { /* uid matching: presence in the room wins; unique-name fallback only */
+      std::vector<FriendRef> fr = {{"u1", "Mia", "ROOM01"}, {"u2", "Jake", ""}, {"u3", "Sam", ""}, {"u4", "Sam", ""}, {"u5", "Zed", "OTHER1"}};
+      auto m = match_friends({"mia2", "jake", "sam", "Zed"}, fr, "ROOM01");
+      CHECK(m.size() == 3 && m[0].uid == "u1" && m[1].uid == "u2" && m[2].uid == "u5");   /* mia2 renamed: matched by presence; sam is ambiguous: dropped; Zed: unique name */
+    }
 
     // persistence: two copies (PC + vault) union
     fs::path base = fs::temp_directory_path() / "rh_group_test";
