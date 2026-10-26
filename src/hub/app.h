@@ -135,6 +135,8 @@ struct RunInfo {
     std::string o2r_prep;   // native Smash only: BattleShip.o2r path, shown as "Preparing" while it is missing ("" otherwise)
     std::function<void()> after_exit;   // runs once when the process ended (3DS/Wii U: copy the emulator save folder into the vault)
     std::string ctl_path, shot_dir;     // runner control file (src/common/runner_ctl.h) and screenshots folder; empty = runner has no control channel
+    bool remote_play = false;           // Wii U remote play: this process is streamrun --guest (exit codes follow docs/REMOTE_PLAY.md)
+    int dsu_players = 0;                // Wii U remote play HOST: guests' pads (Cemu players 2..1+n) are DSU slots 0..n-1 in the Cemu profiles; 0 = every normal launch
     bool cloud_started = false;         // cloud_game_started() was called for this session (set by spawn); exit pushes the game
 };
 
@@ -334,7 +336,7 @@ struct UnzipJob {
 struct GcOnline {
     gcnp::Run run;
     hubnp3ds::Runner fw;
-    bool active = false, host = false, ready_sent = false, guest_wait = false, host_ready = false, checked = true;
+    bool active = false, host = false, ready_sent = false, guest_wait = false, host_ready = false, checked = true, go_sent = false;
     gcnp::Spec spec;                 // host: what we announce; guest: what the host announced
     hub::GameEntry entry;
     int launch_no = 0, port = 0;
@@ -498,7 +500,9 @@ void room_picker(bool host, float width, const std::vector<hubui::PeerInfo>& pee
 int max_players_for(const hub::GameEntry& e);
 int local_players_for(const hub::GameEntry& e);
 std::string room_id(const hub::GameEntry& e);
-const hub::GameEntry* find_room_entry(const std::string& id);
+const hub::GameEntry* find_room_entry(const std::string& id);   // also a stand-in entry for remote-play catalog games the guest does not own
+bool is_remote_stand_in(const hub::GameEntry& e);               // stand-in from find_room_entry (no local copy)
+bool remote_play_entry(const hub::GameEntry& e);                // Wii U remote play: host runs it, guests stream
 std::string upper(std::string s);
 void my_games(std::map<std::string, std::string>* games, std::vector<std::string>* keys);
 
@@ -562,6 +566,7 @@ bool gc_needs_unpack(const hub::GameEntry& e);
 bool gc_fingerprint_ready(const std::string& path);
 bool gc_process_alive();
 void gc_kill();
+void gc_host_guest_failed(const std::string& why);
 void gc_prefetch(const hub::GameEntry& e);
 bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out);
 bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port);
@@ -587,6 +592,15 @@ bool autotest_active();
 void autotest_log(const std::string& line);
 void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg, const hubnp3ds::Plan* resumed = nullptr);
 void poll_np3ds();
+void poll_rplay();                    // Wii U remote play (host): attach streamrun to Cemu once its window exists; follow it
+void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host);
+bool rplay_precheck();                     // host, before Launch: direct-UDP probe to every guest (true = already verified, go ahead)
+void rplay_probe_guest(const std::string& room, int pcs);   // guest: join the host's reachability probe (lobby "rplay_probe")
+std::string rplay_block_reason();          // "" or why Launch is blocked (a guest cannot be reached directly / probe running)
+std::string rplay_status_line();           // host: "streaming to Mickey - 12 Mbps - 48 ms" ("" when not streaming)
+void rplay_quit_current_guest();           // guest leaving the room: ask the streamrun viewer to quit cleanly (bye -> host drops the pad)
+bool game_window_pid(unsigned long* pid);   // launch.cpp: owner PID of the running game's main window (false until it exists)
+std::string streamrun_path();
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
                           const hubui::MatchSpec* host_match = nullptr, const std::string* launch_body = nullptr);
@@ -622,6 +636,8 @@ int cheats_enabled_count(const hub::GameEntry& e);
 void cheats_open(const hub::GameEntry& e);                      // the Cheats panel
 void cheats_open_live();                                        // in-game overlay: panel for the running game
 void cheats_pad_watch();                                        // View + Y while a game runs
+void wiiu_toggle_gamepad_screen();                               // Wii U: send Cemu's "toggle pad screen" hotkey (Ctrl+Tab); pad combo View + RB and the quick menu
+void wiiu_pad_watch();
 int cheats_apply_dolphin(const hub::GameEntry& e, const std::string& dolphin_user_dir, bool online, bool is_host, const std::string* launch_body);   // GameCube: enabled cheats -> User\\GameSettings\\<GAMEID>.ini before Dolphin starts
 std::string cheats_launch_args(const hub::GameEntry& e, bool online, bool is_host, const std::string* launch_body);   // " --cheats <file>" or ""
 std::string cheats_launch_fragment(const hub::GameEntry& e);    // ,"cheats":{...} for the host's launch message
@@ -838,6 +854,9 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
 bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std::string& ports, const std::string& tmp_dir, bool share_save,
                      hub::gs::Values gsv, std::string* args, std::string* err);   // ps1_ui.cpp: retrorun args for a PlayStation room
 std::string ps1_online_block();   // ps1_ui.cpp: "" or why this PC cannot play PS1 online (no BIOS/core)
+std::string ps2_online_block(const hub::GameEntry& e);   // ps1_ui.cpp: "" or why this PC cannot play this PS2 game online (core download, BIOS, unpack)
+bool ps2_online_args(const hub::GameEntry& e, const std::string& net, const std::string& tmp_dir, bool share_save, bool is_host_card,
+                     std::string* args, std::string* err);   // ps1_ui.cpp: retrorun args for a PS2 room (LRPS2 lockstep)
 void draw_ps1_dialogs();
 void ps1_bios_ask_shot();   // screenshot aid
 void ps2_bios_ask(const std::string& key);   // ps1_ui.cpp: "PlayStation 2 BIOS" prompt (pad-friendly folder choice)

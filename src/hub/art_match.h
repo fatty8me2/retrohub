@@ -20,6 +20,8 @@ std::string dat_url(const std::string& system_short);          // full raw.githu
 const char* kind_dir(int kind);                                // 0 Named_Boxarts, 1 Named_Titles, 2 Named_Snaps
 std::string thumb_url(const std::string& system_short, int kind, const std::string& nointro_name);
 /* URLs to try in order. gbc adds the Game Boy repo second: dual-mode carts (e.g. Pokemon Yellow) are filed there. */
+/* "gametdb:ALZE01:US" pseudo name for Wii U games libretro-thumbnails lacks (id4 from meta.xml's product code; "" if not 4 chars). */
+std::string gametdb_name(const std::string& game_id4, char region_letter);
 std::vector<std::string> thumb_urls(const std::string& system_short, int kind, const std::string& nointro_name);
 
 /* One ROM line of a DAT (game-level serial is inherited when the rom has none). */
@@ -30,6 +32,10 @@ struct DatRec {
     std::string crc;      // uppercase hex (8), may be empty
 };
 std::vector<DatRec> parse_dat(const std::string& text);
+/* Wii U: GitHub tree JSON of libretro-thumbnails/Nintendo_-_Wii_U -> one record per Named_Boxarts/<name>.png. */
+std::vector<DatRec> parse_wiiu_tree(const std::string& tree_json);
+/* "Legend of Zelda, The - X (USA)" -> "The Legend of Zelda - X (USA)" ("" article forms: The, A, An). */
+std::string unshift_article(const std::string& s);
 
 /* Lowercase, drop (...) and [...] tags, keep only [a-z0-9]. */
 std::string normalize_title(const std::string& s);
@@ -43,6 +49,7 @@ struct Query {
     std::string md5;      // any case, optional
     std::string crc;      // hex, optional
     std::string title;    // header / display title, optional
+    std::string region;   // Wii U: "USA" / "Europe" / "Japan" preferred among same-title records, optional
 };
 /* Best DAT name for the query; "" if none. *how (optional) is one of md5 crc serial title. */
 std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::string* how = nullptr);

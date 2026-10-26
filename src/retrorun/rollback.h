@@ -76,7 +76,7 @@ struct Config {
     int hash_interval = 120;
     bool use_state_hash = true;
     uint32_t timeout_ms = 10000;
-    uint32_t drop_silence_ms = 3000;   // a guest silent this long is dropped when 3+ PCs play: its port reads neutral from an agreed frame on (0 = off)
+    uint32_t drop_silence_ms = 8000;   // a guest silent this long (while others are heard; longer than any relay stall, shorter than timeout_ms) is dropped when 3+ PCs play: its port reads neutral from an agreed frame on (0 = off)
     bool relay_half_rate = false;  // with Transport::relayed(): send the per-frame packet every other frame only (PlayStation: 4-PC rooms)
     uint32_t send_gap_ms = 8;      // min ms between the non-forced packets (the per-frame input packet is always sent); PlayStation 30: a relayed 4-PC room is capped at 400 frames/s
     uint64_t event_mask = 0;       // one-shot event bits of the input value (PlayStation disc swap): never copied into predicted or held frames

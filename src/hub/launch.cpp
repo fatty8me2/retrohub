@@ -23,6 +23,7 @@
  */
 #include "winutil.h"
 #include "pcsx2.h"
+#include "wiiu_meta.h"
 #include "invite.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
@@ -31,6 +32,7 @@
 #include "third_party/stb_image.h"
 #include "app.h"
 #include "exit_combo.h"
+#include "remote_play.h"
 #include "hint_popup.h"
 #include "controls_sdl.h"
 #include <xinput.h>
@@ -71,7 +73,10 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     STARTUPINFOW si{};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, 0, nullptr, W(cwd).c_str(), &si, &pi);
+    /* CREATE_NO_WINDOW: n64run / retrorun are console-subsystem programs (they log to files). Without the flag Windows gives them a
+     * console, which on PCs where Windows Terminal is the default console host opens a visible terminal window over the game.
+     * GUI emulators (Dolphin, PCSX2, Azahar, Cemu) ignore the flag. */
+    BOOL ok = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(cwd).c_str(), &si, &pi);
     DWORD err = GetLastError();
     for (auto& e : env) SetEnvironmentVariableW(W(e.first).c_str(), nullptr);
     SetEnvironmentVariableW(L"RETROHUB_START_HINT", nullptr);
@@ -148,6 +153,15 @@ static HWND game_main_window() {
     return pk.best;
 }
 
+bool game_window_pid(unsigned long* pid) {
+    HWND h = game_main_window();
+    if (!h) return false;
+    DWORD p = 0;
+    GetWindowThreadProcessId(h, &p);
+    *pid = p;
+    return p != 0;
+}
+
 static void start_hint_tick() {
     if (g_headless || !A.proc || !A.run.pad_exit || !A.st.start_hint) { g_hint.close(); return; }
     g_hint.tick(game_main_window(), false, false);
@@ -207,6 +221,38 @@ void focus_game() {
     keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
 }
 
+/* Wii U: Cemu's default global hotkey "toggle pad screen" is Ctrl+Tab (shown in its first-run assistant). Cemu reads it from the
+ * keyboard state of its window, so the game window is brought forward and the keys are injected. */
+void wiiu_toggle_gamepad_screen() {
+    if (g_headless || !A.proc) return;
+    if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
+    focus_game();
+    std::vector<int> keys = hubemu::cemu_toggle_gamepad_keys();
+    std::vector<INPUT> in;
+    for (int k : keys) { INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)k; in.push_back(i); }
+    for (auto it = keys.rbegin(); it != keys.rend(); ++it) { INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)*it; i.ki.dwFlags = KEYEVENTF_KEYUP; in.push_back(i); }
+    SendInput((UINT)in.size(), in.data(), sizeof(INPUT));
+    autotest_log("wiiu: toggle pad screen hotkey sent");
+}
+
+/* View (Back) + right bumper while a Wii U game runs. Edge-triggered: one toggle per press. */
+void wiiu_pad_watch() {
+    static bool prev = false;
+    bool down = false;
+    if (A.proc && !g_headless && A.run.system_short == "wiiu") {
+        for (DWORD i = 0; i < 4 && !down; ++i) {
+            XINPUT_STATE xs{};
+            if (XInputGetState(i, &xs) == ERROR_SUCCESS && hubemu::cemu_toggle_combo(xs.Gamepad.wButtons)) down = true;
+        }
+        for (auto* c : A.pads)
+            if (!down && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK) && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) down = true;
+        if (autotest_active()) if (const char* after = std::getenv("RETROHUB_AUTOTEST_PADSWAP_AFTER"))   // QA only: press the combo once after N seconds
+            if (!prev && GetTickCount64() - A.run.start_tick >= (ULONGLONG)(std::atof(after) * 1000.0)) { static bool fired = false; if (!fired) { fired = true; down = true; } }
+    }
+    if (down && !prev) wiiu_toggle_gamepad_screen();
+    prev = down;
+}
+
 void request_game_close() {
     if (A.run.pad_exit_fn) { A.run.pad_exit_fn(); return; }
     CloseCtx c;
@@ -225,6 +271,7 @@ void poll_process() {
     pad_exit_watch();
     start_hint_tick();
     cheats_pad_watch();
+    wiiu_pad_watch();
     if (!A.proc) return;
     if (WaitForSingleObject(A.proc, 0) != WAIT_OBJECT_0) return;
     if (A.job_h) {   // the emulator may have handed the game to a child: wait until the whole job is gone
@@ -254,7 +301,8 @@ void poll_process() {
     A.info_at = -100;
     if (A.run.online) group_session_ended(secs);
     room_session_ended();
-    if (!A.run.left_name.empty() && (code == 0 || code == 4 || code == 8)) set_notice(hubui::exit_text_for(code, A.run.left_name), 20.0);
+    if (A.run.remote_play) set_notice(hubrp::exit_text(code, false), 20.0);   // streamrun guest: its own exit codes
+    else if (!A.run.left_name.empty() && (code == 0 || code == 4 || code == 8)) set_notice(hubui::exit_text_for(code, A.run.left_name), 20.0);
     else set_notice(A.proc_title + ": " + (code == 0 ? std::string("closed.") : hubui::exit_code_text(code)), 20.0);
     auto_sync();
 }
@@ -346,7 +394,7 @@ RunInfo run_info_for(const hub::GameEntry& e, bool online) {
 
 /* Size of the image inside a zipped 3DS game (read once from the zip's directory). */
 uint64_t unpacked_size(const hub::GameEntry& e) {
-    if (e.system == hub::System::GC || e.system == hub::System::PS2) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
+    if (e.system == hub::System::GC || e.system == hub::System::PS2 || (e.system == hub::System::WiiU && e.issue == "extract")) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
     static std::map<std::string, uint64_t> cache;
     auto it = cache.find(e.path);
     if (it == cache.end()) it = cache.emplace(e.path, hub::zip_3ds_unpacked_size(e)).first;
@@ -365,7 +413,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
         if (ps2_bios.file.empty()) { ps2_bios_ask(e.key); return; }
     }
-    if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
+    if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::WiiU) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
         UNZ.key = e.key;
         UNZ.state = UnzipJob::Asking;
         return;
@@ -409,17 +457,34 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         std::string perr = hubemu::prepare_pcsx2(inst.dir, ps2_pads_for(pp), pp, ps2_bios, e.key, gs_values_for(e), hubemu::pcsx2_is_buzz_game(e.catalog_id));
         if (!perr.empty()) { set_notice("Could not set up PCSX2: " + perr, 12.0); return; }
     } else if (inst.managed) {
-        { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, cemu_pads_for(pw)); }
+        { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for(pw), ri.dsu_players) : cemu_pads_for(pw)); }
     } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
         const char* ad = std::getenv("APPDATA");
         hubctl::Profile pw = controls_profile("wiiu", e.key);
-        hubemu::prepare_cemu_own(hubemu::cemu_user_data_dir(inst.dir, ad ? ad : ""), pw, cemu_pads_for_own(pw), true);
+        hubemu::prepare_cemu_own(hubemu::cemu_user_data_dir(inst.dir, ad ? ad : ""), pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw), true);
+    } else if (ri.dsu_players > 0) {
+        set_notice("Remote play needs RetroHub to manage Cemu's controls (Settings > Wii U) - the guests' controllers won't reach the game otherwise.", 15.0);
     }
     hub::gs::Values gsv = gs_values_for(e);
-    hubemu::apply_game_settings(kind, inst.dir, gsv);
     bool fs = hub::gs::is_fullscreen(gsv);
     std::string game = launch_path_for(e);
-    auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, ""));
+    uint64_t wiiu_tid = 0;
+    std::string cemu_user;   // Cemu's user data folder (portable\ / beside settings.xml / %APPDATA%\Cemu)
+    if (kind == hubemu::Kind::Cemu) {
+        const char* ad = std::getenv("APPDATA");
+        cemu_user = inst.managed ? inst.dir + "\\portable" : hubemu::cemu_user_data_dir(inst.dir, ad ? ad : "");
+        wiiu_tid = hubemu::title_id_from_key(e.key);
+        if (!wiiu_tid) wiiu_tid = hubemu::wiiu_title_id_of_file(game);   // archives / disc-less keys: read from the unpacked .wua
+        if (inst.managed) hubemu::apply_game_settings(kind, inst.dir, gsv);
+        else if (!hubemu::prepare_cemu_own_settings(cemu_user, gsv)) autotest_log("cemu: settings.xml of the own install left untouched (missing or no backup possible)");
+        autotest_log("cemu: user data " + cemu_user + " title " + hub::hex16(wiiu_tid));
+        hubemu::apply_cemu_game_profile(cemu_user, wiiu_tid, gsv);
+        autotest_log("cemu: profile applied");
+    } else {
+        hubemu::apply_game_settings(kind, inst.dir, gsv);
+    }
+    auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid));
+    autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
@@ -427,15 +492,24 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS") && kind == hubemu::Kind::Dolphin)   // QA only: extra Dolphin flags (e.g. -m movie.dtm)
         args = std::string(std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS")) + " " + args;
     if (e.issue == "encrypted") set_notice("This 3DS image is encrypted: Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder).", 12.0);
-    if (e.issue == "keys") set_notice("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua needs no keys.", 12.0);
+    if (e.issue == "keys") {
+        std::string why = hub::wiiu_keys_message(hub::wiiu_keys_check(cemu_user, inst.dir, hubemu::wiiu_probe()), "wud");
+        set_notice(why.empty() ? std::string("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua needs no keys.") : why, 20.0);
+    }
     RunInfo r = ri;
-    r.after_exit = [sess]() {   // emulator save folder -> vault, before the sync runs
+    const bool cemu_managed = inst.managed;
+    r.after_exit = [sess, kind, cemu_user, wiiu_tid, cemu_managed]() {   // emulator save folder -> vault, before the sync runs
+        if (kind == hubemu::Kind::Cemu) {   // put back everything RetroHub changed in the user's Cemu for this session
+            hubemu::revert_cemu_game_profile(cemu_user, wiiu_tid);
+            if (!cemu_managed) hubemu::revert_cemu_own_settings(cemu_user);
+        }
         hubemu::end_session(*sess);
         autotest_log("end_session: " + sess->summary + (sess->error.empty() ? "" : " ERROR " + sess->error));
         NP3.stop();
         if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (your emulator's copy is untouched)", ui::WARN, 15.0);
     };
-    if (!spawn(inst.exe, args, inst.dir, {}, r)) NP3.stop();
+    autotest_log("external: starting " + inst.exe + " " + args);
+    if (!spawn(inst.exe, args, inst.dir, {}, r)) { autotest_log("external: spawn failed"); NP3.stop(); }
 }
 
 void start_unzip(const hub::GameEntry& e) {

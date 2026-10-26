@@ -100,6 +100,10 @@ std::vector<Option> build() {
                    {{"default", "Default"}, {"single", "Single screen"}, {"large", "Large screen"},
                     {"side", "Side by side"}, {"hybrid", "Hybrid"}}));
     v.push_back(mk("wiiu.graphic_packs", "Graphic packs", "Video", WIIU, K::Bool, S::Visual, "true"));
+    // Written into Cemu's per-game profile (gameProfiles\<title id>.ini) for the session and put back afterwards.
+    v.push_back(mk("wiiu.cpu_mode", "CPU mode", "Emulation", WIIU, K::Choice, S::Visual, "game",
+                   {{"game", "Cemu's profile for this game"}, {"single-interp", "Single-core interpreter"}, {"single-rec", "Single-core recompiler"},
+                    {"dual-rec", "Dual-core recompiler"}, {"triple-rec", "Triple-core recompiler"}}));
     // ---- PlayStation 2 (PCSX2)
     v.push_back(mk("ps2.res", "Internal resolution", "Video", PS2, K::Choice, S::Visual, "2",
                    {{"1", "1x native"}, {"2", "2x"}, {"3", "3x"}, {"4", "4x"}, {"6", "6x"}, {"8", "8x"}}));

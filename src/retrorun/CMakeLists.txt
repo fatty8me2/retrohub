@@ -13,7 +13,7 @@ add_executable(retrorun
 target_include_directories(retrorun PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
-target_link_libraries(retrorun PRIVATE hubsavesync n64run_lockstep_core hubnet hubcommon hubcontrols_sdl SDL2::SDL2)
+target_link_libraries(retrorun PRIVATE hubsavesync n64run_lockstep_core hubnet hubcommon hubcontrols_sdl hubminiz SDL2::SDL2)
 set_target_properties(retrorun PROPERTIES WIN32_EXECUTABLE OFF)
 
 add_custom_command(TARGET retrorun POST_BUILD
@@ -43,3 +43,7 @@ add_custom_command(TARGET retrorun POST_BUILD
 # Rollback netplay engine (rollback.h): console test with two peers over a simulated laggy/lossy link.
 add_executable(retrorun_rollback_test test_rollback.cpp rollback.cpp)
 target_include_directories(retrorun_rollback_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
+
+# Rollback under long network stalls (2 and 4 peers, virtual clock): never a desync, no false drops, a dropped peer learns it.
+add_executable(retrorun_rollback_stall_test test_rollback_stall.cpp rollback.cpp)
+target_include_directories(retrorun_rollback_stall_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)

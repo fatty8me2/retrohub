@@ -1,6 +1,7 @@
 #include "winutil.h"
 #include "art.h"
 #include "art_match.h"
+#include "wiiu_meta.h"
 
 #include "library.h"
 #include "games.h"
@@ -240,7 +241,7 @@ const std::vector<hm::DatRec>* get_dat(const std::string& system) {
             return nullptr;
         }
     }
-    auto recs = hm::parse_dat(text);
+    auto recs = system == "wiiu" ? hm::parse_wiiu_tree(text) : hm::parse_dat(text);
     if (recs.empty()) { g_dat_failed[system] = true; return nullptr; }
     return &(g_dats[system] = std::move(recs));
 }
@@ -286,6 +287,11 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
             q.system = sys;
             q.serial = g.serial;
             q.title = g.title;
+            if (g.system == hub::System::WiiU) {   // region from the file / archive name; the USA release is the fallback
+                std::string pl = g.path;
+                for (auto& c : pl) c = (char)std::tolower((unsigned char)c);
+                q.region = pl.find("(europe") != std::string::npos ? "Europe" : pl.find("(japan") != std::string::npos ? "Japan" : "USA";
+            }
             if (g.system == hub::System::N64) {
                 size_t c = g.key.find(':');
                 q.md5 = c == std::string::npos ? "" : g.key.substr(c + 1);
@@ -298,6 +304,19 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
         } else {
             /* DAT unavailable (offline): don't remember a miss, try again next session */
             return false;
+        }
+    }
+    if (found.empty() && g.system == hub::System::WiiU) {   // libretro-thumbnails does not have it: GameTDB by the product code in meta.xml
+        std::string up = g.path;
+        if (up.size() > 4 && up.compare(up.size() - 4, 4, ".wua") == 0) {
+            std::ifstream f(P(up), std::ios::binary);
+            std::error_code ec;
+            uint64_t sz = fs::file_size(P(up), ec);
+            hub::WiiuMeta wm;
+            if (f && !ec) {
+                hub::ReadAtFn rd = [&](uint64_t off, void* buf, size_t n) { f.clear(); f.seekg((std::streamoff)off); f.read((char*)buf, (std::streamsize)n); return f.gcount() == (std::streamsize)n; };
+                if (hub::wua_read_meta(rd, sz, &wm)) { found = hm::gametdb_name(wm.game_id4, wm.region); h = "gametdb"; }
+            }
         }
     }
     if (found.empty()) {
