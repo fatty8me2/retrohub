@@ -30,6 +30,7 @@ struct Settings {
     int boot_volume = 70;              // startup sound volume 0-100
     bool boot_short = false;           // "Short version" (~1 s)
     bool boot_skip_online = true;      // "Skip in online games"
+    std::string real_boot_off;         // "Real console startup" turned OFF for these systems (comma separated short names); default on where the file exists
     bool start_hint = true;            // "Show controller tips when a game starts": ~5 s card (View+Y menu, View+Menu leave)
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start

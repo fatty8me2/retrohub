@@ -37,6 +37,7 @@
 #include <vector>
 
 #include "art.h"
+#include "real_boot.h"
 #include "updater.h"
 #include "update_apply.h"
 #include "games.h"
@@ -552,7 +553,15 @@ void play_entry(const hub::GameEntry& e);
 /* boot_flow.cpp: start animation, then `launch` (default play_entry). quick = short version (hero / resume). */
 void play_entry_anim(const hub::GameEntry& e, bool quick = false, std::function<void(const hub::GameEntry&)> launch = nullptr);
 void boot_sync_options();   // Settings -> bootanim::options()
-void boot_settings_ui();    // Settings page: "Game start animation" group
+void boot_settings_ui();
+/* real_boot_ui.cpp: "Real console startup" (the player's own IPL / BIOS / boot ROM; see common/real_boot.h) */
+struct RealBootPlan { bool supported = false, enabled = false, have = false, use = false; hub::realboot::Stage stage; };
+RealBootPlan real_boot_plan(const hub::GameEntry& e);
+bool real_boot_will_use(const hub::GameEntry& e);
+std::string real_boot_retro_args(const hub::GameEntry& e, const RealBootPlan& p, bool* drop_resume);   // " --system-dir .. --opt .."
+void real_boot_dolphin_apply(const std::string& install_dir, const RealBootPlan& p);
+void real_boot_pcsx2_apply(const std::string& install_dir, const RealBootPlan& p);
+void real_boot_settings_ui();    // Settings page: "Game start animation" group
 void boot_shot_tick();      // HUB_SHOT_BOOTANIM aid
 void boot_draw_overlay();
 void add_game_shortcut(const hub::GameEntry& e);   // "Add to desktop": .lnk to RetroHub.exe --play <key> (shell_shortcut_dir())

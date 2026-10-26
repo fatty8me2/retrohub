@@ -60,6 +60,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"boot_volume\": " << s.boot_volume << ",\n"
       << "  \"boot_short\": " << (s.boot_short ? "true" : "false") << ",\n"
       << "  \"boot_skip_online\": " << (s.boot_skip_online ? "true" : "false") << ",\n"
+      << "  \"real_boot_off\": \"" << json::escape(s.real_boot_off) << "\",\n"
       << "  \"sync_folder\": \"" << json::escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"backup_shots\": " << (s.backup_shots ? "true" : "false") << ",\n"
@@ -133,6 +134,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->boot_volume = std::max(0, std::min(100, (int)j.num("boot_volume", out->boot_volume)));
     out->boot_short = json_bool(j, "boot_short", out->boot_short);
     out->boot_skip_online = json_bool(j, "boot_skip_online", out->boot_skip_online);
+    out->real_boot_off = j.str("real_boot_off", out->real_boot_off);
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->backup_shots = json_bool(j, "backup_shots", out->backup_shots);

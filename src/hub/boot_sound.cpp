@@ -2,6 +2,8 @@
  * touches, ducks or interrupts the game's audio. Non-blocking: rendering a 5-10 s sound takes a few ms. It plays to its natural end even after the game launches. */
 #include "boot_anim.h"
 #include "boot_synth.h"
+#include "games.h"
+#include "real_boot.h"
 #include <SDL.h>
 #include <atomic>
 #include <cstdlib>
@@ -55,7 +57,10 @@ bool open_dev() {
 
 } // namespace
 
+std::string custom_dir() { return hub::data_dir() + "boot_sounds"; }
+
 bool sound_available(hub::System s) {
+    if (!hub::realboot::custom_sound_path(custom_dir(), s).empty()) return true;
     switch (s) {
     case hub::System::N64: case hub::System::GB: case hub::System::GBC: case hub::System::GBA: case hub::System::NDS:
     case hub::System::N3DS: case hub::System::GC: case hub::System::PS1: case hub::System::PS2: case hub::System::WiiU:
@@ -76,7 +81,9 @@ void sound_play(hub::System s, bool short_cut) {
     float vol = options().volume < 0 ? 0 : options().volume > 1 ? 1 : options().volume;
     if (!sound_available(s) || muted() || vol <= 0.f) return;
     if (!open_dev()) return;
-    std::vector<float> b = bootsynth::render(s);
+    std::vector<float> b;   // the player's own file (userdata\boot_sounds\<system>.wav|ogg|mp3, max 15 s) replaces the synthesized sound
+    const std::string custom = hub::realboot::custom_sound_path(custom_dir(), s);
+    if (custom.empty() || !hub::realboot::decode_sound(custom, bootsynth::kSampleRate, &b)) b = bootsynth::render(s);
     if (short_cut) {   // ~2 s cut, quick 250 ms fade
         size_t keep = size_t(2.0 * bootsynth::kSampleRate) * 2, fade = size_t(0.25 * bootsynth::kSampleRate) * 2;
         if (b.size() > keep) {

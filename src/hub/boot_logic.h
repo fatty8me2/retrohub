@@ -140,9 +140,12 @@ struct Runner {
     Timeline tl{};
     float t = -1.f;
     bool running = false, finished_ = false, skipped = false, sound_started = false, armed = false;
+    bool real = false;   // the console's own startup follows: no synthesized/custom sound, and the Power phase hands straight to the game
 
-    void begin(Mode m) {
+    float end_t() const { return real ? phase_start(tl, Phase::Power) : tl.total(); }
+    void begin(Mode m, bool real_boot = false) {
         *this = Runner();
+        real = real_boot;
         if (m == Mode::Skip) { finished_ = true; return; }
         tl = timeline_for(m == Mode::Short);
         t = 0.f;
@@ -153,7 +156,7 @@ struct Runner {
         if (!running) return false;
         if (!armed) { armed = true; return false; }   // first frame: no time passes, input ignored
         t += std::max(0.f, std::min(dt, 0.1f));       // a hitch never eats the whole animation
-        if (t >= tl.total()) return finish();
+        if (t >= end_t()) return finish();
         return false;
     }
     bool skip() {
@@ -164,7 +167,7 @@ struct Runner {
     bool finish() { running = false; finished_ = true; return true; }
     /* True once, when the Power phase is first entered: start the startup sound here. */
     bool want_sound() {
-        if (!running || sound_started || t < phase_start(tl, Phase::Power)) return false;
+        if (!running || real || sound_started || t < phase_start(tl, Phase::Power)) return false;
         sound_started = true;
         return true;
     }

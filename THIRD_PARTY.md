@@ -81,3 +81,6 @@ RetroHub can run a friend's Kanto Together co-op hack from the user's own packag
 
 ## Online game info (fetched on demand, not shipped)
 The details modal fetches a game description and review/age ratings, at most about one request a second and cached per game, from Wikipedia (REST page summary; text CC BY-SA 4.0, shown with a "From Wikipedia" link) and Wikidata (CC0). Requests identify themselves as `RetroHub/<version> (https://github.com/fatty8me2/retrohub)`. A result is shown only when the Wikidata item matches both the game title and its platform.
+
+## Custom startup sounds (decoders)
+- dr_wav.h, dr_mp3.h (mackron/dr_libs): public domain / MIT-0. stb_vorbis.c (nothings/stb): public domain / MIT. In src/common/third_party, used by real_boot.cpp.

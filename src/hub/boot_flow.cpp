@@ -31,7 +31,7 @@ void play_entry_anim(const hub::GameEntry& e, bool quick, std::function<void(con
         if (const hub::GameEntry* g = find_entry(key)) c = *g;   // the library may have refreshed meanwhile
         A.sel_game = key;
         launch(c);
-    }, /*online=*/A.in_room, quick);
+    }, /*online=*/A.in_room, quick, /*real_boot=*/!A.in_room && real_boot_will_use(e));
 }
 
 void boot_settings_ui() {
@@ -49,6 +49,7 @@ void boot_settings_ui() {
         if (ImGui::Checkbox("Skip in online games", &A.st.boot_skip_online)) mark_dirty();
         text_wrapped_disabled("Rooms start right away; nobody waits for an animation.");
     }
+    real_boot_settings_ui();
 }
 
 /* Screenshot aid: HUB_SHOT_BOOTANIM=<system>:<t> freezes the animation at t seconds for the first game of that system. */

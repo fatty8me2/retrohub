@@ -138,6 +138,7 @@ add_test(NAME hub_osk_test COMMAND hub_osk_test)                         # OSK k
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
 add_test(NAME hub_boot_anim_test COMMAND hub_boot_anim_test)           # start animation: media map, timeline, launch rules, state machine, settings
+add_test(NAME real_boot_test COMMAND real_boot_test)                       # real console startup: own IPL/BIOS detection, config edits, custom sound decode
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
 add_test(NAME hub_gameinfo_test COMMAND hub_gameinfo_test)   # game info: offline metadata, Wikidata matching on recorded fixtures, cache
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only

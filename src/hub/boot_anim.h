@@ -32,7 +32,7 @@ Options& options();               // live options; the hub mirrors its Settings 
 
 /* `online`: a room launch (never longer than the short version). `quick`: resume/quick-launch path (short version).
  * on_done fires exactly once: when the animation ends, is skipped, or immediately when it is disabled. */
-void start(const hub::GameEntry&, std::function<void()> on_done, bool online = false, bool quick = false);
+void start(const hub::GameEntry&, std::function<void()> on_done, bool online = false, bool quick = false, bool real_boot = false);
 bool active();
 void draw();     // call every frame from the overlay pass (modal full-screen); fires on_done once when finished or skipped
 void skip();     // any button/click/Esc

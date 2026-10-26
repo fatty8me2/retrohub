@@ -283,7 +283,7 @@ Options& options() { return g_opt; }
 void shot_freeze(hub::System s, float t) { g_frozen = true; g_frozen_sys = s; g_frozen_t = t; }
 bool shot_frozen() { return g_frozen; }
 
-void start(const hub::GameEntry& e, std::function<void()> on_done, bool online, bool quick) {
+void start(const hub::GameEntry& e, std::function<void()> on_done, bool online, bool quick, bool real_boot) {
     Mode m = choose_mode(g_opt, online, quick);
     if (g_frozen) m = Mode::Full;
     if (const char* tr = std::getenv("HUB_SHOT_TRACE"); tr && *tr) {
@@ -292,7 +292,7 @@ void start(const hub::GameEntry& e, std::function<void()> on_done, bool online, 
     if (R.running) { skip(); }   // a second start never stacks: finish the first (launches it) -- callers guard against this anyway
     G = e;
     g_done = std::move(on_done);
-    R.begin(m);
+    R.begin(m, real_boot);
     if (g_frozen) { R.armed = true; R.t = g_frozen_t; G.system = g_frozen_sys; }
     if (m == Mode::Skip) {
         auto cb = std::move(g_done);
