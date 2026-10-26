@@ -167,6 +167,22 @@ int main()
         CHECK(k == 15000);
         CHECK(bc.fec_group() == 8);
     }
+    // guest menu
+    {
+        GuestMenu m; CHECK(m.handle(MenuEv::Down) == MenuAct::None && !m.open);
+        CHECK(m.handle(MenuEv::Open) == MenuAct::Opened && m.open && m.sel == 0);
+        m.handle(MenuEv::Down); CHECK(m.sel == 1 && m.handle(MenuEv::Ok) == MenuAct::ToggleStats && m.open);
+        m.handle(MenuEv::Down); CHECK(m.handle(MenuEv::Ok) == MenuAct::ToggleFullscreen);
+        m.handle(MenuEv::Down); CHECK(m.sel == 3 && m.handle(MenuEv::Ok) == MenuAct::Leave && !m.open);
+        m.handle(MenuEv::Open); m.handle(MenuEv::Up); CHECK(m.sel == 3); CHECK(m.handle(MenuEv::Back) == MenuAct::Closed);
+        MenuPadEdge e; MenuEv ev;
+        CHECK(!e.poll(true, false, false, false, false, false, &ev));
+        CHECK(e.poll(true, true, false, false, false, false, &ev) && ev == MenuEv::Open);
+        CHECK(!e.poll(true, true, false, false, false, false, &ev));   // held: no repeat
+        CHECK(!e.poll(false, false, false, false, false, false, &ev) && e.poll(false, false, true, false, false, false, &ev) && ev == MenuEv::Up);
+        CHECK(status_line({"Mickey"}, 12000, 48) == "streaming to Mickey · 12 Mbps · 48 ms");
+        CHECK(status_line({"A", "B", "C"}, 9500, -1) == "streaming to A, B and C · 10 Mbps" && status_line({}, 1, 1).empty());
+    }
     printf(g_fail ? "stream_core_test: %d FAILED\n" : "stream_core_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

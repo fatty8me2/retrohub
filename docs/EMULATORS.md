@@ -135,6 +135,33 @@ Run through RetroHub's real Play path (`RETROHUB_AUTOTEST=play`, `qa\ext_play.ps
 ## Per-game settings (`src/common/game_settings.h`)
 Stored in the vault at `<vault>\_settings\game_settings.json`. Layers: option default, system defaults, per-game override (`Store::resolve`). Each option is Visual (local only), Sync (host's value goes in the launch JSON as `"gs":{...}` via `sync_fragment`; guests use `extract_sync` + `online_effective`) or Locked (forced to default online: GLideN64 framebuffer-emulation options). Runner wiring: `n64run --gfx Key=i|b|s:value` (GLideN64 config, locked keys ignored online), `retrorun --filter/--integer-scale/--opt`, and `hubemu::apply_game_settings` (Dolphin GFX.ini, Azahar qt-config.ini, Cemu graphic packs).
 
+## Wii U offline details (user-style Cemu, `%APPDATA%\Cemu`)
+
+- **Own install, reversible.** Before each launch RetroHub changes only these things in the user's Cemu data folder (portable\, beside
+  `settings.xml`, or `%APPDATA%\Cemu`) and puts them back when the session ends (or at the next launch after a crash):
+  `<fullscreen>` (made to agree with `-f`: `-f` is passed only when the game's Fullscreen setting is on, otherwise the tag is set to false),
+  and the `<GraphicPack>` list when the game's "Graphic packs" setting is off (the list is parked in `retrohub-cemu-state.txt`). `settings.xml` is
+  copied once to `settings.xml.retrohub-backup`; nothing is written if that copy fails or Cemu has not run yet (no `settings.xml`). Changes the
+  user makes inside the session (toggled fullscreen, newly enabled packs) win. RetroHub's own portable download follows the same settings without the revert.
+- **Per-game profile.** The "CPU mode" game setting writes `[CPU] cpuMode` into `gameProfiles\<title id>.ini` (the user layer Cemu applies over its
+  shipped `gameProfiles\default\`), keeping the previous file as `.retrohub-orig` (or a `.retrohub-new` marker) and restoring it afterwards. The
+  details page shows what the shipped/user profile says (CPU mode, accurate shader multiplication, stream-out cache).
+- **Names.** `.wua` files are read as ZArchive (zstd blocks): `<title>/meta/meta.xml` gives the title id, English long name and product code. A loadiine folder
+  uses its `meta.xml` the same way. `.wud`/`.wux` are encrypted: title from the file name, and the key check below applies.
+- **Archives.** A `.7z`/`.zip` holding one `.wua` (a readme next to it is ignored) is listed by its entry name, key `wiiu:file-<name>`, and unpacked on first Play
+  (with the usual progress dialog) to `rom-cache\wiiu\<key>\disc.wua`. The real title id is read from the unpacked file, so the save mapping is the same as for a plain `.wua`.
+- **Updates and DLC** (details page): installed ones from `mlc01\usr\title\0005000e` / `0005000c` (version from `code\app.xml`) and ones bundled inside a `.wua`.
+- **Keys.** For `.wud`/`.wux` the details page and the launch notice say whether `keys.txt` exists (`<user data>\keys.txt` or beside Cemu.exe) and whether it has
+  32-digit key lines; they never print key material.
+- **Saves.** Synced folders per game: `usr/save/00050000/<id low>` and `usr/save/0005000e/<id low>`; every account (`user/<persistentId>`, `user/common`) is inside them. Vault
+  layout: `<vault>\wiiu\<game key>\battery\usr\save\...`. Unknown-title discs pick up changed folders under both ids. The shader cache is not vaulted.
+- **GamePad screen.** Cemu 2.6's default hotkey "toggle pad screen" is Ctrl+Tab (its first-run assistant lists it). RetroHub sends it when View (Back) + right bumper are held,
+  and from Game menu > "Swap GamePad / TV screen". The keys are injected into the focused Cemu window, so the hidden-desktop QA only logs it.
+- **Cover art.** libretro-thumbnails "Nintendo - Wii U": the repository's file list (one GitHub API request, cached) is matched by title with the article moved
+  ("Legend of Zelda, The - ..."), USA release first. Fallback: GameTDB front cover by the product code (`art.gametdb.com/wiiu/cover/<US|EN|JA>/<id>01.jpg`), one image per game, fetched on demand and cached.
+  GameTDB states no explicit usage terms for covers; credit: covers by GameTDB. Info rows come from the existing Wikidata path (platform Wii U, Q56942).
+- QA: `qa\wiiu_offline_play.ps1` (user-style scratch Cemu, scratch APPDATA, hidden desktop, PrintWindow capture via `qa\wiiu_capture.ps1`), `hub_wiiu_test`.
+
 # PlayStation 1 (Beetle PSX via retrorun)
 
 System short name `ps1` ("PlayStation", `System::PS1`). It runs through `retrorun.exe --system ps1` with `beetle_psx_libretro.dll` (docs/CORES.md). Code: `src/common/ps1.{h,cpp}` (probing, catalog, BIOS), `src/hub/ps1_ui.cpp` (launch, BIOS picker, settings), `src/beetle_psx/` (core build, serial database generator). Tests: `ps1_test` (synthetic discs in a scratch dir), plus `qa/make_ps1_testdisc.py` for a headless boot disc.

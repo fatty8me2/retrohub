@@ -23,6 +23,7 @@ enum : uint8_t {
     kPktInput    = 'I',   // guest -> host: controller state (250 Hz)
     kPktStats    = 'S',   // guest -> host: receiver report (loss/jitter) for adaptive bitrate
     kPktHello    = 'h',   // guest -> host: guest is ready, start sending (repeated until video arrives)
+    kPktBye      = 'B',   // guest -> host: this guest is leaving on purpose (host reports the pad gone at once instead of after a 4 s timeout)
 };
 
 /* Video datagram:  'V' flags frame_id(u32) idx(u16) count(u16) extra(u16) payload...

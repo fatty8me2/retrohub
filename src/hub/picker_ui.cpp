@@ -46,11 +46,12 @@ void build_items(const std::vector<hubui::PeerInfo>& peers) {
         it.min_players = 1;
         it.max_players = local_players_for(e);
         it.supported = supports_online(e);
+        it.remote = remote_play_entry(e);
         if (!it.supported) {
             it.selectable = false;
             it.reason = hubcaps::online_unsupported_reason(e.system);
         } else {
-            auto sel = hubui::game_selectable(rid, max_players_for(e), peers, 0);
+            auto sel = hubui::game_selectable(rid, max_players_for(e), peers, 0, remote_play_entry(e));
             it.selectable = sel.ok;
             it.reason = sel.reason;
             it.untested = online_untested(e);
@@ -132,6 +133,7 @@ void detail_popup(bool host) {
     std::string body;
     if (!it->supported) body = it->reason + ". You can still play it offline from your library.";
     else if (!it->selectable) body = it->reason + ". Everyone in the room needs this exact game.";
+    else if (it->remote) body = "Remote play: your PC runs the game and streams it to everyone else. They don't need their own copy. Needs a direct connection.";
     else if (it->untested) body = "This game isn't on the verified online list. It should start for everyone, but it may be single-player only or need accessories that don't work online.";
     else body = "Everyone in the room has this game. The host can pick it.";
     if (it->supported && e->system == hub::System::GC) body += " GameCube online needs the same disc image on every PC.";
@@ -175,7 +177,8 @@ void room_game_hero(const hub::GameEntry* rg, bool host) {
         x += pill_at(dl, ImVec2(x, y), hub::system_name(rg->system), mix(c0, IM_COL32_BLACK, 0.2f)) + 6 * S;
         x += pill_at(dl, ImVec2(x, y), hubpick::players_text(1, local_players_for(*rg)).c_str(), IM_COL32(0, 0, 0, 120)) + 6 * S;
         bool unt = online_untested(*rg);
-        pill_at(dl, ImVec2(x, y), unt ? "Untested online" : "Online ready", unt ? IM_COL32(0, 0, 0, 170) : ui::GOOD, unt ? ui::WARN : IM_COL32(8, 28, 16, 255));
+        x += pill_at(dl, ImVec2(x, y), unt ? "Untested online" : "Online ready", unt ? IM_COL32(0, 0, 0, 170) : ui::GOOD, unt ? ui::WARN : IM_COL32(8, 28, 16, 255)) + 6 * S;
+        if (remote_play_entry(*rg)) pill_at(dl, ImVec2(x, y), "Remote play", IM_COL32(40, 90, 170, 255));
         if (!host) dl->AddText(ImVec2(tx, p1.y - 14 * S - ImGui::GetFontSize()), ui::TEXT2, "The host picks the game.");
     } else {
         dl->AddRectFilled(a0, a1, ui::PANEL2, 10 * S);
@@ -329,7 +332,8 @@ static void picker_modal(const std::vector<hubui::PeerInfo>& peers) {
                 t.online = it.supported && !it.untested;
                 if (!it.supported) { t.tag = "NO ONLINE"; t.tag_warn = true; t.tag_tip = it.reason; }
                 else if (!it.selectable) { t.tag = "MISSING"; t.tag_warn = true; t.tag_tip = it.reason; }
-                else if (it.untested) { t.tag = "UNTESTED"; t.tag_warn = false; t.tag_tip = "Untested online: not on the verified list, but it should work. May be single-player only."; }
+                else if (it.remote) { t.tag = "REMOTE PLAY"; t.tag_warn = false; t.tag_tip = "Remote play: you run the game and stream it; guests need no copy."; }
+    else if (it.untested) { t.tag = "UNTESTED"; t.tag_warn = false; t.tag_tip = "Untested online: not on the verified list, but it should work. May be single-player only."; }
                 t.id += "|" + std::to_string(row.section);
                 if (pad_seed && (t.selected || !sel_visible)) { ImGui::SetKeyboardFocusHere(); pad_seed = false; PK.focus_first = false; }
                 TileResult tr = draw_tile(t, ImVec2(tw, th));

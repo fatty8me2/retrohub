@@ -160,6 +160,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         poll_process();
         poll_np3ds();
+        poll_rplay();
         kt_tick();
         poll_job();
         cloud_gate_tick();

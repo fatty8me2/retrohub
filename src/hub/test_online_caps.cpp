@@ -1,4 +1,6 @@
 #include "online_caps.h"
+#include "logic.h"
+#include "remote_play.h"
 
 #include <cstdio>
 #include <string>
@@ -12,7 +14,7 @@ int main() {
     struct Row { System s; bool branch; bool gated; };   // branch: launch_online has a branch; gated: needs the catalog online flag
     const Row table[] = {
         {System::Unknown, false, false}, {System::N64, true, false}, {System::GBA, true, false}, {System::GB, true, false},
-        {System::GBC, true, false},      {System::GC, true, true},   {System::N3DS, true, false}, {System::WiiU, false, false},
+        {System::GBC, true, false},      {System::GC, true, true},   {System::N3DS, true, false}, {System::WiiU, true, true},
         {System::NDS, true, true},       {System::PS2, true, true} , {System::PS1, true, true},
         {System::NES, true, false},      {System::SNES, true, false},
     };
@@ -31,7 +33,7 @@ int main() {
         CHECK((hubcaps::online_unsupported_reason(r.s)[0] == 0) == r.branch);   // only systems with no branch carry a reason
         CHECK(hubcaps::default_online_max(r.s) >= 2 && hubcaps::default_online_max(r.s) <= 4);
     }
-    CHECK(std::string(hubcaps::online_unsupported_reason(System::WiiU)) == "Wii U online isn't supported yet");
+    CHECK(std::string(hubcaps::online_unsupported_reason(System::WiiU)).empty() && hubcaps::remote_play_system(System::WiiU) && !hubcaps::remote_play_system(System::GC));   // Wii U = remote play now
     CHECK(hubcaps::default_online_max(System::PS2) == 2);
     /* PS2: catalog games flagged online are capable and capped at 2 players (LRPS2 has no multitap); anything else is offered as "untested". */
     {
@@ -59,6 +61,55 @@ int main() {
     const hub::GameInfo* sp = hub::find_game("spyro");
     CHECK(sp && hubcaps::online_capable(System::PS1, sp) && hubcaps::online_untested(System::PS1, sp));   // single-player: offered, tagged untested
     CHECK(hubcaps::online_capable(System::PS1, nullptr) && hubcaps::online_untested(System::PS1, nullptr));   // unknown disc: offered, untested
+
+    /* Wii U remote play: catalog couch co-op games are online, 1-4 pads, host-only ownership. */
+    for (System s : {System::Unknown, System::N64, System::GC, System::PS2, System::WiiU, System::N3DS})
+        CHECK(hubcaps::remote_play_system(s) == (s == System::WiiU));
+    const hub::GameInfo* sm = hub::find_game("sm3dw");
+    CHECK(sm && sm->online && sm->system == "wiiu" && hub::online_max_for(*sm) == 4);
+    CHECK(sm && hubcaps::online_capable(System::WiiU, sm) && !hubcaps::online_untested(System::WiiU, sm) && hubcaps::remote_play_game(System::WiiU, sm));
+    CHECK(hubcaps::online_untested(System::WiiU, nullptr) && hubcaps::default_online_max(System::WiiU) == 2);
+    for (const char* id : {"mk8", "nsmbu", "captaintoad", "smash4wiiu", "nland", "pikmin3"}) {
+        const hub::GameInfo* g = hub::find_game(id);
+        CHECK(g && g->online && g->system == "wiiu" && hub::online_max_for(*g) >= 2);
+    }
+    {   /* room logic: guests without the game may still be selected for a remote-play game */
+        hubui::PeerInfo h{0, "Host", true, {}, {"wiiu:sm3dw"}}, g1{1, "Ann", true, {}, {}}, g2{2, "Bo", true, {}, {}};
+        CHECK(!hubui::game_selectable("wiiu:sm3dw", 4, {h, g1, g2}, 0).ok);
+        CHECK(hubui::game_selectable("wiiu:sm3dw", 4, {h, g1, g2}, 0, true).ok);
+        hubui::PeerInfo nh{0, "Host", true, {}, {}};
+        CHECK(!hubui::game_selectable("wiiu:sm3dw", 4, {nh, g1}, 0, true).ok);   // the host must own it
+        CHECK(!hubui::game_selectable("wiiu:sm3dw", 2, {h, g1, g2}, 0, true).ok);   // cap still applies
+    }
+
+    /* remote_play.h: args per docs/REMOTE_PLAY.md, exit texts, attach timing, launch fragment */
+    CHECK(hubrp::room_name("ABCD", 3) == "ABCD-3");
+    CHECK(hubrp::guest_count(1) == 0 && hubrp::guest_count(2) == 1 && hubrp::guest_count(4) == 3 && hubrp::guest_count(9) == 3);
+    CHECK(hubrp::host_args(1234, "wss://x", "ABCD-3", 3, false) == "--host --capture-hwnd 1234 --net \"wss://x\" --room ABCD-3 --slot 0 --guests 2");
+    CHECK(hubrp::host_args(1, "wss://x", "R-1", 2, true).find(" --upnp") != std::string::npos);
+    CHECK(hubrp::guest_args("wss://x", "ABCD-3", 2, true) == "--guest --net \"wss://x\" --room ABCD-3 --slot 2 --fullscreen");
+    CHECK(hubrp::exit_text(3, false) == hubrp::kNoDirectText && hubrp::exit_text(3, true) == hubrp::kNoDirectText);
+    CHECK(hubrp::exit_text(4, false).find("host's game ended") != std::string::npos && hubrp::exit_text(5, true).find("capture") != std::string::npos);
+    CHECK(hubrp::attach_decision(true, false, 1000) == hubrp::Attach::Wait && hubrp::attach_decision(true, true, 1000) == hubrp::Attach::Now);
+    CHECK(hubrp::attach_decision(false, true, 0) == hubrp::Attach::GiveUp && hubrp::attach_decision(true, false, 91000) == hubrp::Attach::GiveUp);
+    {   // direct-connection pre-check + host status line
+        CHECK(hubrp::probe_host_args("wss://x", "AB-101", 3, true, "r.json").find("--probe --host") == 0 && hubrp::probe_guest_args("wss://x", "AB-101", 2, 3, false).find("--slot 2") != std::string::npos);
+        CHECK(hubrp::probe_msg_is(hubrp::probe_msg("AB-101", 3)) && !hubrp::probe_msg_is("{\"kind\":\"launch\"}"));
+        auto m = hubrp::parse_probe_slots("{\"ok\":false,\"slots\":{\"1\":12,\"2\":-1}}");
+        CHECK(m.size() == 2 && m[1] == 12 && m[2] == -1);
+        std::map<int, std::string> names = {{0, "Host"}, {1, "Mickey"}, {2, "Minnie"}};
+        std::string why = hubrp::probe_block_reason(m, names);
+        CHECK(why.find("Minnie") != std::string::npos && why.find("Mickey") == std::string::npos && why.find("UPnP") != std::string::npos);
+        CHECK(hubrp::probe_block_reason(hubrp::parse_probe_slots("{\"ok\":true,\"slots\":{\"1\":5,\"2\":9}}"), names).empty());
+        CHECK(hubrp::probe_block_reason({}, names).find("Mickey and Minnie") != std::string::npos);   // no result file = nobody reachable
+        std::string st = "{\"t\":1,\"kbps\":12000,\"guests\":[{\"slot\":1,\"rtt_ms\":48,\"loss_permille\":0}]}";
+        CHECK(hubrp::status_text(st, names) == "streaming to Mickey · 12 Mbps · 48 ms");
+        CHECK(hubrp::status_text("{\"kbps\":5,\"guests\":[]}", names).empty());
+        CHECK(hubrp::host_args(0, "wss://x", "R-1", 2, false, "s.json", 0, "p.pid").find("--await-pid-file \"p.pid\"") != std::string::npos && hubrp::host_args(0, "wss://x", "R-1", 2, false, "s.json", 0, "p.pid").find("--capture-hwnd") == std::string::npos);   // streamrun first (DSU up before Cemu), Cemu's PID later
+        CHECK(hubrp::host_args(7, "wss://x", "R-1", 2, false, "s.json", 26761).find("--status-file \"s.json\" --dsu-port 26761") != std::string::npos);
+    }
+    CHECK(hubrp::launch_is_remote("{\"kind\":\"launch\"" + hubrp::launch_fragment(3) + "}") && !hubrp::launch_is_remote("{\"kind\":\"launch\"}"));
+    CHECK(hubrp::host_left_text("Ann") == "Ann left - the stream ended." && hubrp::host_left_text("").find("The host") == 0);
 
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;

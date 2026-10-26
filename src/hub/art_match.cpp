@@ -62,7 +62,11 @@ std::string thumb_repo(const std::string& s) {
     return "";
 }
 
+/* libretro-thumbnails has no DAT for Wii U: the repository's file list (GitHub tree API, one request, cached) is the name index. */
+static const char* const kWiiuTreeUrl = "https://api.github.com/repos/libretro-thumbnails/Nintendo_-_Wii_U/git/trees/master?recursive=1";
+
 std::string dat_url(const std::string& s) {
+    if (s == "wiiu") return kWiiuTreeUrl;
     const char* base = "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/";
     if (s == "n64") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%2064.dat";
     if (s == "gba") return std::string(base) + "no-intro/Nintendo%20-%20Game%20Boy%20Advance.dat";
@@ -93,8 +97,20 @@ std::string thumb_url(const std::string& system_short, int kind, const std::stri
            kind_dir(kind) + "/" + url_encode(thumb_name(nointro_name)) + ".png";
 }
 
+std::string gametdb_name(const std::string& game_id4, char region_letter) {
+    if (game_id4.size() != 4) return "";
+    const char* r = (region_letter == 'P' || region_letter == 'p') ? "EN" : (region_letter == 'J' || region_letter == 'j') ? "JA" : "US";
+    return "gametdb:" + game_id4 + "01:" + r;   // 01 = Nintendo; other publishers use other codes and simply 404
+}
+
 std::vector<std::string> thumb_urls(const std::string& system_short, int kind, const std::string& nointro_name) {
     std::vector<std::string> out;
+    if (nointro_name.compare(0, 8, "gametdb:") == 0) {   // Wii U cover from GameTDB (front cover only), fetched on demand and cached like the rest
+        size_t c = nointro_name.rfind(':');
+        if (kind == 0 && system_short == "wiiu" && c > 8)
+            out.push_back("https://art.gametdb.com/wiiu/cover/" + nointro_name.substr(c + 1) + "/" + nointro_name.substr(8, c - 8) + ".jpg");
+        return out;
+    }
     std::string u = thumb_url(system_short, kind, nointro_name);
     if (u.empty()) return out;
     out.push_back(u);
@@ -169,7 +185,41 @@ std::vector<DatRec> parse_dat(const std::string& text) {
     return out;
 }
 
+std::vector<DatRec> parse_wiiu_tree(const std::string& text) {
+    std::vector<DatRec> out;
+    json::Value root;
+    if (!json::parse(text, &root, json::ParseOptions{64, true}) || root.type != json::Value::Object) return out;
+    const json::Value* tree = root.get("tree");
+    if (!tree || !tree->is_array()) return out;
+    const std::string pre = "Named_Boxarts/";
+    for (const auto& n : tree->a) {
+        std::string p = n.str("path");
+        if (p.compare(0, pre.size(), pre) != 0 || p.size() < pre.size() + 5 || p.compare(p.size() - 4, 4, ".png") != 0) continue;
+        DatRec r;
+        r.name = p.substr(pre.size(), p.size() - pre.size() - 4);
+        out.push_back(r);
+    }
+    return out;
+}
+
 /* ---- matching ---- */
+
+/* "Legend of Zelda, The - Twilight Princess HD" -> "The Legend of Zelda - Twilight Princess HD" (Redump/No-Intro article placement). */
+std::string unshift_article(const std::string& s) {
+    for (const char* art : {"The", "A", "An"}) {
+        std::string tail = std::string(", ") + art;
+        size_t p = s.find(tail);
+        while (p != std::string::npos) {
+            size_t after = p + tail.size();
+            if (after == s.size() || s[after] == ' ' || s[after] == '(') {
+                std::string base = s.substr(0, p), rest = s.substr(after);
+                return std::string(art) + " " + base + rest;
+            }
+            p = s.find(tail, p + 1);
+        }
+    }
+    return s;
+}
 
 std::string normalize_title(const std::string& s) {
     std::string r;
@@ -260,7 +310,19 @@ std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::stri
         if (auto r = best(dat, [&](const DatRec& d) { return serial_equal(q.system, d.serial, q.serial); }))
             return done(r, "serial");
     }
-    std::string nt = normalize_title(q.title);
+    std::string nt = normalize_title(q.system == "wiiu" ? unshift_article(q.title) : q.title);
+    if (nt.size() >= 3 && q.system == "wiiu") {   // title without article placement; the USA release wins, then the region asked for
+        const DatRec* b = nullptr;
+        int bs = 1 << 30;
+        for (const auto& r : dat) {
+            if (normalize_title(unshift_article(r.name)) != nt) continue;
+            int s = release_score(r.name);
+            std::string l = lower(r.name);
+            if (!q.region.empty() && l.find("(" + lower(q.region)) != std::string::npos) s -= 5;
+            if (s < bs) { bs = s; b = &r; }
+        }
+        if (b) return done(b, "title");
+    }
     if (nt.size() >= 3) {
         if (auto r = best(dat, [&](const DatRec& d) { return normalize_title(d.name) == nt; }))
             return done(r, "title");

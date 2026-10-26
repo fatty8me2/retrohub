@@ -151,6 +151,7 @@ add_test(NAME hub_invite_test COMMAND hub_invite_test)                   # invit
 add_test(NAME hub_bootsound_test COMMAND hub_bootsound_test)       # procedural startup sounds render to WAVs (not played)
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
+add_test(NAME hub_wiiu_test COMMAND hub_wiiu_test)               # offline Wii U: meta.xml/.wua, own-Cemu settings backup+revert, profiles, saves, archives, art names
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
 add_test(NAME stream_core_test COMMAND stream_core_test)            # remote play: packetizer, FEC, NACK, jitter buffer, codecs, bitrate
@@ -168,7 +169,6 @@ add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # serve
 add_test(NAME hubfriends_dedupe_test COMMAND hubfriends_dedupe_test)   # friends list: one entry per uid (no network)
 add_test(NAME hublink_test COMMAND hublink_test)                         # link-a-new-PC crypto/adopt/export (no network)
 set_tests_properties(hubnet_test hublink_test n64run_save_sync_test n64run_lockstep_test n64run_testinput_test retrorun_link_test
-                     retrorun_rollback_test retrorun_dslink_test hub_bootsound_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
-                     retrorun_rollback_test retrorun_rollback_stall_test retrorun_dslink_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
+                     retrorun_rollback_test retrorun_rollback_stall_test retrorun_dslink_test hub_bootsound_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
 add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
 set_tests_properties(hubnet_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)
