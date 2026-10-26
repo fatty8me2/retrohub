@@ -67,6 +67,10 @@ int main() {
     CHECK(resolve_online(Q("n64", "The Legend of Zelda: Ocarina of Time"), f, &o) == ResolveResult::Ok);
     CHECK(o.ratings.size() == 1 && o.ratings[0].source == "Metacritic" && o.ratings[0].text == "99");
     Online zelda = o;
+    /* Wii U: the library title (meta.xml long name) and the archive file name both resolve against the Wii U platform */
+    CHECK(resolve_online(Q("wiiu", "The Legend of Zelda: Twilight Princess HD"), f, &o) == ResolveResult::Ok && o.qid == "Q23008476" && o.esrb == "T" && o.year == 2016);
+    CHECK(resolve_online(Q("wiiu", "Super Mario 3D World (USA) (En,Fr,Es) (Rev 2)"), f, &o) == ResolveResult::Ok && o.qid == "Q13426947" && o.pegi == "PEGI 3");
+    CHECK(resolve_online(Q("3ds", "Super Mario 3D World"), f, &o) == ResolveResult::NotFound);   // right title, wrong console
     /* title right, platform wrong -> not confident, nothing shown */
     CHECK(resolve_online(Q("gba", "Super Smash Bros."), f, &o) == ResolveResult::NotFound && o.status == Online::NotFound && o.description.empty());
     CHECK(resolve_online(Q("n64", "Zzqx Nonexistent Game"), f, &o) == ResolveResult::NotFound);
