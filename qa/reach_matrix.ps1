@@ -79,9 +79,9 @@ $games = @(
 )
 $games[0].key = 'native:smash64'   # kNativeKey; verified below against the trace
 
-function Online-Expected($g) {   # supports_online() as designed: every library game of N64 GB GBC GBA 3DS GC DS PS1 (non-catalog GC/DS/PS1 are tagged "Untested online"); PS2 online too (LRPS2, 2 players); only wiiu is explained
-    if ($g.sys -in 'native', 'n64', 'gb', 'gbc', 'gba', '3ds', 'gc', 'nds', 'ps1', 'ps2') { return 'enabled' }
-    return 'explained'   # wiiu: an "Offline only" button with a tooltip, never silence
+function Online-Expected($g) {   # supports_online() as designed: every library game of N64 GB GBC GBA 3DS GC DS PS1 (non-catalog GC/DS/PS1 are tagged "Untested online"); every system is enabled (wiiu = remote play)
+    if ($g.sys -in 'native', 'n64', 'gb', 'gbc', 'gba', '3ds', 'gc', 'nds', 'ps1', 'ps2', 'wiiu') { return 'enabled' }   # wiiu = remote play
+    return 'explained'   # (none left; an unsupported system gets an "Offline only" button with a tooltip, never silence)
 }
 function Cheats-Expected($g) {   # n64 gb gbc gba nds ps1 gc: the Cheats button; 3ds wiiu ps2: a disabled button with a tooltip; native / Kanto: hidden
     if ($g.kanto) { return 'hidden' }
@@ -235,6 +235,7 @@ for ($i = 0; $i -lt $roomGames.Count; $i++) {
         'ps1'    { $want = 'retrorun beetle_psx --net --players 2'; $ok = $sp -match 'retrorun\.exe' -and $sp -match '--net ' -and $sp -match '--players 2' }
         'gc'     { $want = 'route dolphin-netplay'; $ok = $rt -match 'dolphin-netplay' }
         '3ds'    { $want = 'route azahar-np3ds'; $ok = $rt -match 'azahar-np3ds' }
+        'wiiu'   { $want = 'route wiiu-remote-play host'; $ok = $rt -match 'wiiu-remote-play host' }
         default  { $want = '(none)'; $ok = $false }
     }
     $got = "$sp$rt"; if (-not $got) { $got = "no launch ($lo) $nt" }
@@ -256,6 +257,7 @@ for ($i = 0; $i -lt $roomGames.Count; $i++) {
         'ps1'    { $gwant = 'retrorun --net --slot 1'; $gok = $gsp -match '--net ' -and $gsp -match '--slot 1' }
         'gc'     { $gwant = 'route dolphin-netplay-guest'; $gok = $grt -match 'dolphin-netplay' }
         '3ds'    { $gwant = 'route azahar-np3ds'; $gok = $grt -match 'azahar-np3ds' }
+        'wiiu'   { $gwant = 'route wiiu-remote-play guest'; $gok = $grt -match 'wiiu-remote-play guest' }
     }
     $ggot = "$gsp$grt"; if (-not $ggot) { $ggot = 'no launch: ' + (($gt | Where-Object { $_ -like 'notice *' }) -join ' / ') }
     Add-Row $g 'room: guest join args' $gwant $ggot ([bool]$gok)

@@ -18,6 +18,7 @@ struct Item {
     bool supported = true;  // false: the system cannot play online at all (PS2, Wii U): listed greyed with `reason`
     bool untested = false;  // capable, but not in the catalog's vetted online list
     bool selectable = true; // supported AND every room member owns this exact game AND it fits the room
+    bool remote = false;    // Wii U remote play: the host streams it; only the host needs the game
     bool pinned = false;    // the native Smash port: sorts first
     bool favorite = false;
     uint64_t last_played = 0;

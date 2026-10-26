@@ -135,6 +135,7 @@ struct RunInfo {
     std::string o2r_prep;   // native Smash only: BattleShip.o2r path, shown as "Preparing" while it is missing ("" otherwise)
     std::function<void()> after_exit;   // runs once when the process ended (3DS/Wii U: copy the emulator save folder into the vault)
     std::string ctl_path, shot_dir;     // runner control file (src/common/runner_ctl.h) and screenshots folder; empty = runner has no control channel
+    bool remote_play = false;           // Wii U remote play: this process is streamrun --guest (exit codes follow docs/REMOTE_PLAY.md)
     bool cloud_started = false;         // cloud_game_started() was called for this session (set by spawn); exit pushes the game
 };
 
@@ -498,7 +499,9 @@ void room_picker(bool host, float width, const std::vector<hubui::PeerInfo>& pee
 int max_players_for(const hub::GameEntry& e);
 int local_players_for(const hub::GameEntry& e);
 std::string room_id(const hub::GameEntry& e);
-const hub::GameEntry* find_room_entry(const std::string& id);
+const hub::GameEntry* find_room_entry(const std::string& id);   // also a stand-in entry for remote-play catalog games the guest does not own
+bool is_remote_stand_in(const hub::GameEntry& e);               // stand-in from find_room_entry (no local copy)
+bool remote_play_entry(const hub::GameEntry& e);                // Wii U remote play: host runs it, guests stream
 std::string upper(std::string s);
 void my_games(std::map<std::string, std::string>* games, std::vector<std::string>* keys);
 
@@ -587,6 +590,10 @@ bool autotest_active();
 void autotest_log(const std::string& line);
 void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg, const hubnp3ds::Plan* resumed = nullptr);
 void poll_np3ds();
+void poll_rplay();                    // Wii U remote play (host): attach streamrun to Cemu once its window exists; follow it
+void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host);
+bool game_window_pid(unsigned long* pid);   // launch.cpp: owner PID of the running game's main window (false until it exists)
+std::string streamrun_path();
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan = nullptr, const hubui::Json* launch_msg = nullptr,
                           const hubui::MatchSpec* host_match = nullptr, const std::string* launch_body = nullptr);
