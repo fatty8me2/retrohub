@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.27.4",
+      "date": "2026-10-26",
+      "title": "The real console startup, and better-looking consoles",
+      "new": [
+        "Real console startup: games can boot through your own console BIOS so the genuine startup plays (PS1 and PS2 with your BIOS; GameCube with your IPL.bin; Game Boy, GBA and DS with their boot files). Turn it on or off per console in Settings",
+        "Custom startup sounds: drop a .wav, .ogg or .mp3 named after the console into userdata\\boot_sounds and it plays at game start"
+      ],
+      "improved": [
+        "Every console, cartridge and disc in the start animation is redrawn to look like the real hardware",
+        "More lifelike start animation: carts line up and seat into the slot, lids hinge open, discs tumble and spin"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.27.3",
       "date": "2026-10-26",
       "title": "Longer startup sounds, zipped games everywhere",
