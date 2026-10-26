@@ -34,6 +34,11 @@ SDL_Texture* get(const hub::GameEntry& game, Kind kind, int* w, int* h);
 /* Same, for catalog entries the player doesn't own (no GameEntry): by system + No-Intro name. */
 SDL_Texture* get_by_name(const std::string& system_short, const std::string& nointro_name, Kind kind, int* w, int* h);
 
+/* Cover for a friend's game you do not own: same name resolution as an owned copy (catalog, serial/crc from the key,
+ * DAT title, fuzzy title) so it gets the same art; loads that system's DAT on demand even if you own nothing there. */
+SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
+                       const std::string& title, Kind kind, int* w, int* h);
+
 bool enabled();             // user setting "Download cover art" (default on)
 void set_enabled(bool on);
 
