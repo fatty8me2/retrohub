@@ -446,7 +446,8 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     } else if (kind == hubemu::Kind::Dolphin) {
         hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
         { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
-        cheats_apply_dolphin(e, inst.dir + "\\User", false, true, nullptr);   // enabled cheats -> GameSettings\<GAMEID>.ini (stale RetroHub entries removed)
+        real_boot_dolphin_apply(inst.dir, real_boot_plan(e));   // GameCube IPL startup (this launch only)
+        cheats_apply_dolphin(e, inst.dir +"\\User", false, true, nullptr);   // enabled cheats -> GameSettings\<GAMEID>.ini (stale RetroHub entries removed)
         if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_GCPAD_INI")) {   // QA only: scripted pad (constant/timer expressions) instead of the user's mapping
             std::error_code ec;
             std::filesystem::copy_file(std::getenv("RETROHUB_AUTOTEST_GCPAD_INI"), std::filesystem::path(inst.dir) / "User" / "Config" / "GCPadNew.ini", std::filesystem::copy_options::overwrite_existing, ec);
@@ -456,6 +457,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         hubctl::Profile pp = controls_profile("ps2", e.key);
         std::string perr = hubemu::prepare_pcsx2(inst.dir, ps2_pads_for(pp), pp, ps2_bios, e.key, gs_values_for(e), hubemu::pcsx2_is_buzz_game(e.catalog_id));
         if (!perr.empty()) { set_notice("Could not set up PCSX2: " + perr, 12.0); return; }
+        real_boot_pcsx2_apply(inst.dir, real_boot_plan(e));   // fast boot off = the PS2 BIOS intro plays
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for(pw), ri.dsu_players) : cemu_pads_for(pw)); }
     } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
@@ -625,6 +627,12 @@ void play_entry(const hub::GameEntry& e) {
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
                                " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
+            {   // the console's own startup (boot ROM / BIOS of the player); a resumed state would skip it
+                bool dr = false;
+                std::string rb = real_boot_retro_args(e, real_boot_plan(e), &dr);
+                if (dr) { size_t k = args.find(" --resume"); if (k != std::string::npos) args.erase(k, 9); }
+                args += rb;
+            }
             args += cheats_launch_args(e, false, true, nullptr);
             args += qm_args(ri, e, false);
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
@@ -649,6 +657,7 @@ void play_entry(const hub::GameEntry& e) {
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
                                " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
+            args += real_boot_retro_args(e, real_boot_plan(e), nullptr);   // DS menu through the player's BIOS + firmware
             args += cheats_launch_args(e, false, true, nullptr);
             args += qm_args(ri, e, false);
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);

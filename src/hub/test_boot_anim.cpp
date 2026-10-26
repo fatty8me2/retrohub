@@ -98,6 +98,27 @@ int main() {
         CHECK(n >= 55 && n <= 70);
     }
 
+    /* real console startup: hands off at the Power phase, never plays our sound */
+    {
+        Runner r;
+        r.begin(Mode::Full, true);
+        float end = r.end_t();
+        CHECK(std::fabs(end - phase_start(r.tl, Phase::Power)) < 1e-4f && end < r.tl.total());
+        bool snd = false; int n = 0;
+        while (r.running && n < 2000) { r.tick(1.f / 60.f); snd |= r.want_sound(); ++n; }
+        CHECK(!snd && r.finished_ && r.t < r.tl.total());
+        Runner q;
+        q.begin(Mode::Full, false);
+        bool snd2 = false; n = 0;
+        while (q.running && n < 2000) { q.tick(1.f / 60.f); snd2 |= q.want_sound(); ++n; }
+        CHECK(snd2);
+        hubui::Settings g, h;
+        g.real_boot_off = "gc,ps1";
+        CHECK(hubui::settings_from_json(hubui::settings_to_json(g), &h) && h.real_boot_off == "gc,ps1");
+        hubui::Settings k;
+        CHECK(hubui::settings_from_json("{\"name\":\"x\"}", &k) && k.real_boot_off.empty());
+    }
+
     /* settings: defaults, round trip, clamping */
     {
         hubui::Settings d;

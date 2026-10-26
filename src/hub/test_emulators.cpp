@@ -8,6 +8,7 @@
 #include "games.h"
 #include "library.h"
 #include "logic.h"
+#include "real_boot.h"
 #include "miniz.h"
 
 #include <chrono>
@@ -570,6 +571,17 @@ static void test_prepare_and_find(const fs::path& dir) {
     CHECK(read_text(dd / "User" / "Config" / "GCPadNew.ini").find("custom") != std::string::npos);
     std::string di2 = read_text(dd / "User" / "Config" / "Dolphin.ini");
     CHECK(di2.find("ConfirmStop = True") != std::string::npos && di2.find("SIDevice1 = 6") != std::string::npos);
+    /* real console startup: SkipIPL is True after every prepare (also online), real boot flips it for one launch only */
+    CHECK(hubui::ini_get(di2, "Core", "SkipIPL") == "True");
+    write_text(dd / "User" / "Config" / "Dolphin.ini", hub::realboot::dolphin_skip_ipl(di2, false));
+    CHECK(hubui::ini_get(read_text(dd / "User" / "Config" / "Dolphin.ini"), "Core", "SkipIPL") == "False");
+    hubemu::prepare_dolphin(dd.string(), two);
+    CHECK(hubui::ini_get(read_text(dd / "User" / "Config" / "Dolphin.ini"), "Core", "SkipIPL") == "True");
+    {   /* PCSX2: fast boot on by default, off for real startup */
+        std::string pi = hub::realboot::pcsx2_fast_boot("", true);
+        CHECK(hubui::ini_get(pi, "EmuCore", "EnableFastBoot") == "true");
+        CHECK(hubui::ini_get(hub::realboot::pcsx2_fast_boot(pi, false), "EmuCore", "EnableFastBoot") == "false");
+    }
     fs::path od = dir / "olddata";
     write_text(od / "dolphin-user" / "StateSaves" / "a.sav", "s");
     write_text(od / "saves" / "gc" / "g" / "battery" / "GCI" / "x.gci", "card");

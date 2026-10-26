@@ -9,7 +9,7 @@ target_link_libraries(json_test PRIVATE hubbase)
 add_executable(winutil_test test_winutil.cpp)
 target_link_libraries(winutil_test PRIVATE hubbase shell32)
 
-add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} disc_id.cpp ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp wiiu_meta.cpp findgames.cpp addgames.cpp cheats.cpp cheats_db.cpp cheat_store.cpp dolphin_cheats.cpp gameinfo.cpp)
+add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} disc_id.cpp ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp wiiu_meta.cpp findgames.cpp addgames.cpp cheats.cpp cheats_db.cpp cheat_store.cpp dolphin_cheats.cpp gameinfo.cpp real_boot.cpp)
 target_include_directories(hubcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(hubcommon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcommon PUBLIC cxx_std_17)
@@ -97,3 +97,7 @@ target_link_libraries(starthint_test PRIVATE hubbase)
 # Popup behaviour on a private desktop: no-activate, click-through, foreground unchanged, auto-closes (~6 s).
 add_executable(hint_popup_test test_hint_popup.cpp)
 target_link_libraries(hint_popup_test PRIVATE hubbase)
+
+# Real console startup (own IPL / BIOS / boot ROM detection, config edits) + custom startup sound decoding.
+add_executable(real_boot_test test_real_boot.cpp)
+target_link_libraries(real_boot_test PRIVATE hubcommon)

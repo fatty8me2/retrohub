@@ -103,6 +103,8 @@ bool ps1_swap_disc(const std::string& key) {
     return (bool)f;
 }
 
+bool ps1_real_bios_present() { return !find_all().empty(); }
+
 void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states) {
     std::string core = find_core("beetle_psx");
     if (core.empty()) { set_notice("The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder."); return; }
@@ -126,6 +128,7 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
     std::string args = "--core " + quote(core) + " --rom " + quote(game) + " --system ps1 --save-dir " + quote(battery) + " --state-dir " + quote(states) +
                        " --system-dir " + quote(sysdir) + title_arg(e.title) + save_stem_arg(e) + controls_arg("ps1", e.key) + disc_ctl_arg(e.key);
     args += hubui::retro_extra_args(e.system, gsv);
+    args += real_boot_retro_args(e, real_boot_plan(e), nullptr);   // PlayStation logo + sound through the player's own BIOS (skip_bios off)
     auto mt = gsv.find("ps1.multitap");
     if ((mt == gsv.end() || mt->second == "auto") && local_pad_count() >= 3) args += " --opt beetle_psx_enable_multitap_port1=enabled";
     args += cheats_launch_args(e, false, true, nullptr);
