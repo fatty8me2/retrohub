@@ -1,7 +1,7 @@
 #pragma once
 /* RetroHub auto-updater (ported from Smash Classic's verified Updater.cpp).
  *
- * Checks the latest GitHub release of fatty8me2/smash-classic (asset
+ * Checks the latest GitHub release of fatty8me2/retrohub (asset
  * BattleShip-windows.zip), accepts only a strictly newer semver, downloads
  * with curl, verifies size + SHA-256, unpacks with tar.exe, then runs a TEMP copy of
  * RetroHub.exe as `--apply-update` (see update_apply.h): it waits for the old

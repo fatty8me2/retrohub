@@ -65,7 +65,7 @@ target_link_libraries(hub_art_test PRIVATE hubcommon SDL2::SDL2 winhttp)
 add_custom_command(TARGET hub_art_test POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:hub_art_test>)
 
-# Auto-updater (GitHub releases of fatty8me2/smash-classic). Console test: version/JSON/trust/markdown
+# Auto-updater (GitHub releases of fatty8me2/retrohub). Console test: version/JSON/trust/markdown
 # cases + a live release check (never downloads or installs).
 target_sources(RetroHub PRIVATE updater.cpp update_apply.cpp)
 target_link_libraries(RetroHub PRIVATE bcrypt)

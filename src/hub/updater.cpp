@@ -37,8 +37,11 @@ namespace hubupdate {
 
 namespace {
 
-constexpr const char* kLatestReleaseApi = "https://api.github.com/repos/fatty8me2/smash-classic/releases/latest";
-constexpr const char* kDownloadPrefix = "https://github.com/fatty8me2/smash-classic/releases/download/";
+/* Updates come from the RetroHub repo (from v1.27.3). The old Smash Classic repo stays trusted for downloads so a release
+ * published there during the move still installs. */
+constexpr const char* kLatestReleaseApi = "https://api.github.com/repos/fatty8me2/retrohub/releases/latest";
+constexpr const char* kDownloadPrefix = "https://github.com/fatty8me2/retrohub/releases/download/";
+constexpr const char* kLegacyDownloadPrefix = "https://github.com/fatty8me2/smash-classic/releases/download/";
 constexpr const char* kPlatformAssetName = "BattleShip-windows.zip";
 constexpr const char* kSumsAssetName = "SHA256SUMS.txt";
 constexpr const char* kManualUrl = "https://github.com/fatty8me2/retrohub/releases/latest";
@@ -192,7 +195,7 @@ int compare_versions(const std::string& a, const std::string& b) {
 /* Only this repo's release downloads are trusted, and the URL is spliced into
  * a command line, so it must not contain quoting characters. */
 bool is_trusted_download_url(const std::string& url) {
-    if (url.rfind(kDownloadPrefix, 0) != 0) return false;
+    if (url.rfind(kDownloadPrefix, 0) != 0 && url.rfind(kLegacyDownloadPrefix, 0) != 0) return false;
     for (char c : url)
         if (c == '"' || c == '\'' || c == '\\' || c == '%' || c == '^' || c == '&' || c == '|' ||
             c == '<' || c == '>' || (unsigned char)c <= 0x20 || c == 0x7F) return false;
