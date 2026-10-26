@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.27.1",
+      "date": "2026-10-26",
+      "title": "GameCube online: faster and rock solid",
+      "new": [],
+      "improved": [
+        "GameCube online gets into the game about twice as fast (around 20 seconds from Launch)",
+        "Passed 140 of 140 stress-test games (direct, relay, bad connections, late or slow players) with no desyncs"
+      ],
+      "fixed": [
+        "Players with the same GameCube game in different file formats (.iso, .ciso, .rvz) can now play together; only a genuinely different version is refused, with a clear message",
+        "The host is told right away when a guest can't start, instead of waiting"
+      ]
+    },
+    {
       "version": "1.27.0",
       "date": "2026-10-26",
       "title": "NES, SNES, Wii U couch co-op and a lot more",
