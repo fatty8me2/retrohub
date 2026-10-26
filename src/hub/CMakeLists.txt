@@ -128,6 +128,9 @@ target_link_libraries(RetroHub PRIVATE hubminiz)
 add_executable(hub_emu_test test_emulators.cpp emulators.cpp)
 target_include_directories(hub_emu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+add_executable(hub_wiiu_test test_wiiu_offline.cpp emulators.cpp art_match.cpp)   # offline Wii U: .wua/meta.xml, own-Cemu settings, profiles, saves, art names
+target_include_directories(hub_wiiu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${libchdr_SOURCE_DIR}/deps/zstd-1.5.7)
+target_link_libraries(hub_wiiu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # GameCube online via Dolphin NetPlay
 target_sources(RetroHub PRIVATE netplay_dolphin.cpp)

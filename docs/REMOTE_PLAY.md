@@ -16,13 +16,52 @@ falls back to the WebSocket relay; it exits with code 3 and:
 ## CLI
 ```
 streamrun --host --capture-hwnd <hwnd|pid> | --test-pattern  --net <wss://server> --room <CODE-N> --slot 0 [--guests 1]
-          [--pad-port 26760] [--bitrate 8000] [--fps 60] [--max-height 720] [--no-audio] [--upnp]
+          [--dsu-port 26760] [--no-dsu] [--status-file F] [--bitrate 8000] [--fps 60] [--max-height 720] [--no-audio] [--upnp]
 streamrun --guest --net <wss://server> --room <CODE-N> --slot K [--fullscreen] [--overlay] [--headless]
-          [--test-input] [--duration SECONDS] [--stats-file F]
+          [--test-input] [--test-menu] [--duration SECONDS] [--stats-file F]
+streamrun --probe (--host|--guest) --net <wss://server> --room <CODE-N> --slot K --pcs N [--probe-ms 9000] [--stats-file F]
 ```
 `--capture-hwnd` takes a window handle (decimal/0x hex), or a PID (then the largest visible top-level window of that
 process is captured; its audio is captured with WASAPI process loopback). Exit codes: 0 ok, 2 usage, 3 no direct
 connection, 4 session failed/ended, 5 capture/encode/decode init failed.
+
+## Guest pads -> Cemu (DSU)
+`streamrun --host` embeds the cemuhook/DSU server (`dsu_server.*`, 127.0.0.1:`--dsu-port`, default 26760). A guest in room slot K (1..3) is DSU
+slot K-1 = Cemu player K+1 (a Pro Controller bound to `DSUController` slot K-1). The hub writes those Cemu profiles ONLY for a remote-play launch
+(`RunInfo::dsu_players` -> `cemu_pads_with_dsu`, managed Cemu and the user's own Cemu with managed controls); every other launch keeps XInput/SDL
+profiles. Button mapping is in `pad_convert.h` (the guest's Nintendo east button is the DSU "B" bit, which the default RetroHub profile maps to Wii U A).
+`--pad-port P` still sends the old localhost RPAD/RGON datagrams, but it is off by default (the DSU server was the only consumer).
+Tools: `dsu_feed` (scripted pads), `dsu_probe` (what a cemuhook client sees: connected + button bytes), `dsu_test`.
+
+## Leaving cleanly
+- The hub never `TerminateProcess`es a streamrun while it can ask: every streamrun creates the named event `Local\RetroHubStreamrunQuit_<pid>`; the hub sets it
+  (`quit_gracefully`, 4 s grace, then kills its own child). Works for windowless viewers and the host alike.
+- A leaving guest sends a `B` (bye) datagram, so the host drops that pad at once (DSU slot goes "disconnected", one final disconnected data packet) instead
+  of after the 4 s silence timeout; the host keeps streaming and Cemu keeps running. The host ignores `Session::ended()` for exactly this reason.
+- The host quitting (Cemu closed, hub quit event) ends every guest's session; a guest viewer exits 0 and the hub returns to the room ("The stream ended").
+
+## Direct-connection pre-check
+Before the host's Launch for a remote-play game the hub runs `streamrun --probe` on the host and, via the lobby message `rplay_probe`, on every guest. They join a
+throwaway session room (`CODE-1xx`), the relay is disabled, and a guest counts as reachable when a direct UDP ping answered (`{"ok":..,"slots":{"1":rtt|-1}}`).
+If anyone fails, Launch stays blocked ~25 s with "Can't reach Mickey directly ... try enabling UPnP ..." (`hubrp::probe_block_reason`); a pass is cached for 90 s
+for the same room membership, and the real launch follows automatically.
+
+## Guest menu (View + Y, F1 on the keyboard)
+Resume / Stats (overlay) / Fullscreen / Leave, driven by the D-pad + A (B closes) while the menu owns the pad (the stream sees neutral input). `GuestMenu` /
+`MenuPadEdge` in stream_core.h are unit tested; `--test-menu` scripts the presses for QA.
+
+## Host status line
+`streamrun --host --status-file F` writes `{"kbps":..,"guests":[{"slot":1,"rtt_ms":48,...}],"dsu_clients":N}` once a second; the hub shows
+"streaming to Mickey · 12 Mbps · 48 ms" in the room banner and at the top of the in-game quick menu.
+
+## End-to-end test (two hubs, hidden desktop)
+`qa/wiiu_remote_room.ps1 -Scenario leave|hostquit` (run through `node qa/online_local.mjs <port>`): host hub with a scratch managed Cemu + the archived Super Mario 3D World
+(unpacked by the hub), guest hub with no game and no Cemu, local worker for signalling. Covers room -> Launch -> probe -> Cemu start (DSU server already
+listening) -> streamrun attaches -> guest streams (scripted pad) -> Cemu attaches to the DSU server as a client -> guest View+Y -> Leave (host drops the pad at once,
+Cemu keeps running) -> host closes Cemu (quit event) / or host quits while the guest streams and the guest hub is back in the room. `qa/rplay_dsu_loopback.ps1` is the
+console-only version (probe, DSU round trip via `dsu_probe`, menu, bye). The video in these runs is the TEST PATTERN: WGC/DXGI cannot capture Cemu on a hidden
+desktop. One real run on the interactive desktop (host with Cemu visible, a second PC or this one as guest) is still needed to see Cemu's picture on the guest.
+Cemu's DSU client does not retry after a failed first connect, which is why `streamrun --host` is started before Cemu (`--await-pid-file`; the hub writes Cemu's PID once its window exists).
 
 ## Pipeline
 Host: Windows.Graphics.Capture (window; falls back to DXGI desktop duplication cropped to the window rect; test

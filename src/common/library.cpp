@@ -3,6 +3,7 @@
 #include "miniz.h"
 #include "library.h"
 #include "emu_formats.h"
+#include "wiiu_meta.h"
 #include "games.h"
 #include "ps1.h"
 #include "ps2.h"
@@ -858,10 +859,16 @@ bool id_wiiu(const fs::path& p, const std::string& ext, uint64_t size, GameEntry
     };
     bool ok = false;
     std::string name_stem;   // the game's display name when the header has none
+    std::string meta_name;   // longname from meta.xml (.wua / loadiine), "" when unknown
     fs::path name_src = p;
     if (ext == ".wua") {
         ok = parse_wua(reader, size, &w);
         if (!ok) { w = WiiuInfo{}; w.container = "wua"; ok = true; }   // unknown layout: still launchable, keyed by file name
+        WiiuMeta wm;   // the game's real name (meta.xml longname) beats the file name; repacks whose folder is 0000000000000000_v0 carry the id only here
+        if (wua_read_meta(reader, size, &wm)) {
+            if (!wm.longname.empty()) meta_name = wm.longname;
+            if (!w.title_id && wm.title_id) { w.title_id = wm.title_id; w.serial = hex16(wm.title_id); for (char& c : w.serial) if (c >= 'a' && c <= 'f') c = char(c - 32); }
+        }
     } else if (ext == ".wud") {
         std::vector<uint8_t> h;
         ok = read_prefix(p, 16, &h) && parse_wud_header(h.data(), h.size(), &w);
@@ -880,12 +887,14 @@ bool id_wiiu(const fs::path& p, const std::string& ext, uint64_t size, GameEntry
         w.serial = hex16(tid);
         for (char& c : w.serial) if (c >= 'a' && c <= 'f') c = char(c - 32);
         name_src = fs::path(game_dir.filename().wstring() + L".rpx");   // the folder name is the game name
+        WiiuMeta wm;
+        if (parse_wiiu_meta_xml(xml, &wm) && !wm.longname.empty()) meta_name = wm.longname;
         ok = true;
     }
     if (!ok) return false;
     e->system = System::WiiU;
     e->serial = w.serial;
-    e->title = title_from_filename(name_src);
+    e->title = meta_name.empty() ? title_from_filename(name_src) : meta_name;
     std::string k = wiiu_key(w);
     e->key = k.empty() ? "wiiu:file-" + sanitize_key(e->title) : k;
     if (const GameInfo* g = find_game_for("wiiu", e->serial, std::string())) { e->catalog_id = g->id; e->title = g->title; }
@@ -1273,10 +1282,11 @@ std::string member_skeleton(const std::string& name) {
 /* The member must be unambiguous: exactly one entry in the archive matches the pattern we hand to tar. */
 bool is_ps2_image_ext(const std::string& ext) { return ext == ".iso" || ext == ".chd" || ext == ".cso"; }
 
-bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, bool ps2 = false) {
+/* mode 0 GameCube image, 1 PS2 image, 2 Wii U .wua (a "Vimm's Lair.txt" next to it is ignored) */
+bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, int mode = 0) {
     for (const auto& a : l) {
         if (!archive_entry_safe(a.name) || a.size < 0x1000) continue;
-        { std::string xe = ascii_lower(path_utf8(utf8_path(a.name).extension())); if (!(ps2 ? is_ps2_image_ext(xe) : is_gc_image_ext(xe))) continue; }
+        { std::string xe = ascii_lower(path_utf8(utf8_path(a.name).extension())); if (!(mode == 2 ? xe == ".wua" : mode == 1 ? is_ps2_image_ext(xe) : is_gc_image_ext(xe))) continue; }
         const std::string pat = member_skeleton(a.name);
         int matches = 0;
         for (const auto& b : l) if (glob_star(pat, 0, b.name, 0)) ++matches;
@@ -1289,7 +1299,8 @@ bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, bool p
 
 const char* const kTruncatedMsg = "this archive is incomplete (its end is missing, so a copy or download did not finish). Copy or download it again";
 
-fs::path gc_unpack_dir(const GameEntry& e) { return lib_dir() / L"rom-cache" / (e.system == System::PS2 ? L"ps2" : L"gc") / utf8_path(sanitize_key(e.key)); }
+int entry_mode(System s) { return s == System::WiiU ? 2 : s == System::PS2 ? 1 : 0; }
+fs::path gc_unpack_dir(const GameEntry& e) { return lib_dir() / L"rom-cache" / (e.system == System::WiiU ? L"wiiu" : e.system == System::PS2 ? L"ps2" : L"gc") / utf8_path(sanitize_key(e.key)); }
 
 } // namespace
 
@@ -1308,6 +1319,26 @@ std::string gc_serial_for_name(const std::string& name) {
         if (ascii_lower(g.nointro) == want) return g.serials[0];
     }
     return "";
+}
+
+/* A Wii U game in a .7z / .zip: "<name>.wua" next to a readme. Listed by its entry name (the real title id and the meta.xml name
+ * are read from the unpacked .wua on Play); unpacked into rom-cache\wiiu\<key>\disc.wua. */
+static bool id_wiiu_archive(const fs::path& arch, GameEntry* e) {
+    if (!archive_sig_ok(path_utf8(arch))) return false;
+    std::vector<ArchiveEntry> l;
+    ArchiveEntry ent;
+    if (!list_archive(path_utf8(arch), &l) || !find_gc_entry(l, &ent, 2)) return false;
+    GameEntry g;
+    g.system = System::WiiU;
+    g.title = title_from_filename(utf8_path(path_utf8(utf8_path(ent.name).filename())));
+    g.key = "wiiu:file-" + sanitize_key(g.title);
+    for (const auto& c : catalog())   // no title id before unpacking: a catalog game of the same name still gets its catalog id (remote-play rooms name games by it, so guests can find the stand-in)
+        if (c.system == "wiiu" && ascii_lower(c.title) == ascii_lower(g.title)) { g.catalog_id = c.id; break; }
+    g.path = path_utf8(arch);
+    g.issue = "extract";
+    g.unpacked = ent.size;
+    *e = std::move(g);
+    return true;
 }
 
 static bool id_gc_archive(const fs::path& arch, GameEntry* e) {
@@ -1502,7 +1533,7 @@ static uint64_t gc_unpacked_size(const GameEntry& e) {
     if (e.unpacked) return e.unpacked;
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
-    return list_archive(e.path, &l) && find_gc_entry(l, &ent, e.system == System::PS2) ? ent.size : 0;
+    return list_archive(e.path, &l) && find_gc_entry(l, &ent, entry_mode(e.system)) ? ent.size : 0;
 }
 
 static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, uint64_t)>& progress, std::string* out_path, std::string* err) {
@@ -1510,7 +1541,7 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
     ArchiveEntry ent;
     if (!fs::exists(tar_exe())) { *err = "Windows' tar.exe was not found (needs Windows 10 version 1803 or newer)"; return false; }
     if (!list_archive(e.path, &l)) { *err = archive_truncated(e.path) ? kTruncatedMsg : "cannot read the archive"; return false; }
-    if (!find_gc_entry(l, &ent, e.system == System::PS2)) { *err = "no disc image inside the archive"; return false; }
+    if (!find_gc_entry(l, &ent, entry_mode(e.system))) { *err = e.system == System::WiiU ? "no .wua inside the archive" : "no disc image inside the archive"; return false; }
     fs::path dir = gc_unpack_dir(e);
     std::error_code ec;
     fs::remove_all(dir, ec);   // a stale or half-done extraction of the same key
@@ -1610,7 +1641,7 @@ bool identify_game(const std::string& path, GameEntry* out) {
         }
         {   /* a zip holding a GameCube disc image: listed, unpacked on Play */
             GameEntry g;
-            if (id_gc_archive(p, &g) || id_ps2_archive(p, &g)) { g.size = size; g_identify_calls.fetch_add(1); *out = std::move(g); return true; }
+            if (id_gc_archive(p, &g) || id_ps2_archive(p, &g) || id_wiiu_archive(p, &g)) { g.size = size; g_identify_calls.fetch_add(1); *out = std::move(g); return true; }
         }
         {   /* a zip holding a PlayStation disc (cue + bins / chd), named like its Redump title: listed, unpacked on Play */
             GameEntry g;
@@ -1624,7 +1655,7 @@ bool identify_game(const std::string& path, GameEntry* out) {
     }
     if (ext == ".7z" || ext == ".rar") {
         GameEntry g;
-        if (!id_gc_archive(p, &g) && !id_ps1_archive(p, &g) && !id_ps2_archive(p, &g)) {
+        if (!id_gc_archive(p, &g) && !id_wiiu_archive(p, &g) && !id_ps1_archive(p, &g) && !id_ps2_archive(p, &g)) {
             std::vector<ArchiveEntry> l;
             if (!archive_sig_ok(path_utf8(p)) || list_archive(path_utf8(p), &l) || !id_disc_archive_by_name_only(p, &g)) return false;
         }
@@ -1878,13 +1909,13 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
 
 std::string extract_3ds_dir(const GameEntry& e) {
     if (e.system == System::PS1) return path_utf8(ps1_unpack_dir(e));
-    if (e.system == System::GC || e.system == System::PS2) return path_utf8(gc_unpack_dir(e));
+    if (e.system == System::GC || e.system == System::PS2 || e.system == System::WiiU) return path_utf8(gc_unpack_dir(e));
     return path_utf8(lib_dir() / L"rom-cache" / L"3ds" / utf8_path(sanitize_key(e.key)));
 }
 
 uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
     if (e.system == System::PS1) return ps1_unpacked_size(e);
-    if (e.system == System::GC || e.system == System::PS2) return gc_unpacked_size(e);
+    if (e.system == System::GC || e.system == System::PS2 || e.system == System::WiiU) return gc_unpacked_size(e);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
     FILE* zf = _wfopen(utf8_path(e.path).wstring().c_str(), L"rbN");
@@ -1904,7 +1935,7 @@ uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
 
 std::string extracted_3ds_path(const GameEntry& e) {
     if (e.system == System::PS1) return ps1_extracted_path(e);
-    if (e.system == System::GC || e.system == System::PS2) return gc_extracted_path(e);
+    if (e.system == System::GC || e.system == System::PS2 || e.system == System::WiiU) return gc_extracted_path(e);
     std::error_code ec;
     fs::path dir = utf8_path(extract_3ds_dir(e));
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
@@ -1925,7 +1956,7 @@ bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint
         if (out_path) *out_path = got;
         return true;
     }
-    if (e.system == System::GC) return gc_extract(e, progress, out_path, err);
+    if (e.system == System::GC || e.system == System::WiiU) return gc_extract(e, progress, out_path, err);
     fs::path zip = utf8_path(e.path);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));

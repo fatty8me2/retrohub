@@ -4,6 +4,8 @@
 #include "media.h"
 #include "session.h"
 #include "stream_core.h"
+#include "dsu_server.h"
+#include "pad_convert.h"
 
 #include <SDL.h>
 #include <winsock2.h>
@@ -34,20 +36,34 @@ const char* kNoDirect = "Couldn't connect directly to the host - remote play nee
 struct Args {
     bool host = false, guest = false, headless = false, fullscreen = false, overlay = true, upnp = false, test_pattern = false;
     bool selftest = false, test_input = false, no_audio = false, pcm_audio = false, sw_enc = false, sw_dec = true;
-    std::string capture, net, room, stats_file;
-    int slot = 0, pcs = 2, pad_port = kPadApiPort, bitrate = 8000, fps = 60, max_height = 720, duration = 0;
+    bool probe = false, test_menu = false, no_dsu = false; int menu_at = 3;
+    std::string await_file;   // --await-pid-file: start the DSU server now, capture the PID written to this file later (Cemu must find the DSU server already up)
+    std::string capture, net, room, stats_file, status_file;
+    int slot = 0, pcs = 2, pad_port = 0 /* 0 = legacy localhost pad API off */, dsu_port = dsu::kDefaultPort, bitrate = 8000, fps = 60, max_height = 720, duration = 0, probe_ms = 9000;
 };
 
 std::atomic<bool> g_stop{false};
 BOOL WINAPI on_ctrl(DWORD) { g_stop = true; return TRUE; }
 
+/* Clean-quit request from the hub: it sets the named event "Local\RetroHubStreamrunQuit_<pid>" instead of TerminateProcess, so the
+ * guest sends its bye (the host reports the pad gone at once) and the host tells every guest the stream ended. */
+HANDLE g_quit_ev = nullptr;
+void make_quit_event() {
+    char name[96]; snprintf(name, sizeof name, "Local\\RetroHubStreamrunQuit_%lu", (unsigned long)GetCurrentProcessId());
+    g_quit_ev = CreateEventA(nullptr, TRUE, FALSE, name);
+}
+bool quit_requested() { return g_quit_ev && WaitForSingleObject(g_quit_ev, 0) == WAIT_OBJECT_0; }
+
 uint32_t now32() { return (uint32_t)steady_us(); }
 
 void logf(const char* fmt, ...)
 {
+    char buf[1024];
     va_list ap; va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap); va_end(ap);
-    fputc('\n', stderr); fflush(stderr);
+    vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
+    fprintf(stderr, "%s\n", buf); fflush(stderr);
+    static FILE* lf = [] { const char* p = getenv("STREAMRUN_LOG"); return p && *p ? fopen(p, "ab") : nullptr; }();   // QA: console-less children (hub-spawned) log here
+    if (lf) { fprintf(lf, "[%lu] %s\n", (unsigned long)GetCurrentProcessId(), buf); fflush(lf); }
 }
 
 bool parse_args(int argc, char** argv, Args* a)
@@ -66,6 +82,14 @@ bool parse_args(int argc, char** argv, Args* a)
         else if (s == "--upnp") a->upnp = true;
         else if (s == "--test-pattern") a->test_pattern = true;
         else if (s == "--test-input") a->test_input = true;
+        else if (s == "--test-menu") a->test_menu = true;
+        else if (s == "--test-menu-at") { if (!ival(&a->menu_at)) return false; }
+        else if (s == "--probe") a->probe = true;
+        else if (s == "--no-dsu") a->no_dsu = true;
+        else if (s == "--dsu-port") { if (!ival(&a->dsu_port)) return false; }
+        else if (s == "--probe-ms") { if (!ival(&a->probe_ms)) return false; }
+        else if (s == "--await-pid-file") { if (!val(&a->await_file)) return false; }
+        else if (s == "--status-file") { if (!val(&a->status_file)) return false; }
         else if (s == "--no-audio") a->no_audio = true;
         else if (s == "--pcm-audio") a->pcm_audio = true;
         else if (s == "--sw-encode") a->sw_enc = true;
@@ -90,7 +114,7 @@ bool parse_args(int argc, char** argv, Args* a)
     if (a->net.empty() || a->room.empty()) return false;
     if (a->host && a->slot != 0) return false;
     if (a->guest && a->slot < 1) return false;
-    if (a->host && !a->test_pattern && a->capture.empty()) return false;
+    if (a->host && !a->test_pattern && !a->probe && a->capture.empty() && a->await_file.empty()) return false;
     return true;
 }
 
@@ -98,9 +122,11 @@ void usage()
 {
     fprintf(stderr,
         "usage: streamrun --host (--capture-hwnd <hwnd|pid> | --test-pattern) --net <wss://server> --room <CODE-N> --slot 0 [--pcs 2]\n"
-        "                 [--pad-port 26760] [--bitrate 8000] [--fps 60] [--max-height 720] [--no-audio] [--pcm-audio] [--sw-encode] [--upnp]\n"
+        "                 [--await-pid-file F (instead of --capture-hwnd)] [--dsu-port 26760] [--no-dsu] [--status-file F] [--pad-port P (legacy RPAD datagrams)] [--bitrate 8000] [--fps 60] [--max-height 720] [--no-audio] [--pcm-audio] [--sw-encode] [--upnp]\n"
         "       streamrun --guest --net <wss://server> --room <CODE-N> --slot K [--pcs 2] [--fullscreen] [--no-overlay] [--headless]\n"
-        "                 [--test-input] [--hw-decode] [--duration S] [--stats-file F]\n");
+        "                 [--test-input] [--test-menu] [--hw-decode] [--duration S] [--stats-file F]\n"
+        "       streamrun --probe (--host|--guest) --net <wss://server> --room <CODE-P> --slot K [--pcs N] [--probe-ms 9000] [--stats-file F]\n"
+        "                 direct-UDP reachability check, no media; exit 0 = every guest reachable, 3 = not\n");
 }
 
 double pct(std::vector<double>& v, double p)
@@ -217,9 +243,25 @@ void host_audio_thread(const Args* a, HostState* hs, AudioCapture* cap)
     }
 }
 
-int run_host(const Args& a)
+int run_host(const Args& a_in)
 {
+    Args a = a_in;
     HostState hs; hs.kbps = a.bitrate;
+    /* The DSU server comes up BEFORE Cemu is started: Cemu's DSU client does not retry once its first connect attempt failed. */
+    dsu::DsuServer dsus; bool dsu_on = false;
+    if (!a.no_dsu) {
+        dsu_on = dsus.start((uint16_t)a.dsu_port, true);
+        logf("host: DSU server on 127.0.0.1:%d %s", a.dsu_port, dsu_on ? "listening" : "FAILED to bind (guest pads will not reach Cemu)");
+    }
+    if (!a.await_file.empty() && !a.test_pattern) {   // the hub writes Cemu's PID here once the game window exists
+        uint32_t t0w = hubnet::now_ms();
+        while (a.capture.empty() && !g_stop && !quit_requested() && hubnet::now_ms() - t0w < 180000) {
+            if (FILE* f = fopen(a.await_file.c_str(), "rb")) { char b[64] = {0}; size_t n = fread(b, 1, sizeof b - 1, f); fclose(f); if (n) { a.capture = b; while (!a.capture.empty() && (a.capture.back() == '\n' || a.capture.back() == '\r' || a.capture.back() == ' ')) a.capture.pop_back(); } }
+            if (a.capture.empty()) Sleep(100);
+        }
+        if (a.capture.empty()) { logf("host: no capture target was given"); return g_stop || quit_requested() ? 0 : 5; }
+        logf("host: capture target %s", a.capture.c_str());
+    }
     std::unique_ptr<CaptureSource> src; uint32_t pid = 0;
     if (a.test_pattern) src = make_test_pattern(1280, 720, a.fps);
     else {
@@ -268,16 +310,40 @@ int run_host(const Args& a)
     uint16_t pad_seq = 0; uint64_t bucket_us = steady_us(); double budget = 0;
     uint32_t t_start = hubnet::now_ms(); int rc = 0;
     StatsReport last_stats; uint32_t last_stat_ms = 0;
+    std::map<int, StatsReport> gstats; std::map<int, uint32_t> gpads, left_until;   // per-guest receiver report / pad packets seen
+    uint32_t last_status_ms = 0; uint64_t status_bytes = 0; int status_kbps = 0;
     auto send_gone = [&](int slot) {
+        if (dsu_on) { int ds = dsu_slot_for_guest(slot); if (ds >= 0) dsus.set_connected(ds, false); }   // Cemu sees the pad disconnect
+        logf("host: guest slot %d gone (pad disconnected)", slot);
+        if (a.pad_port <= 0) return;
         PadApiPacket pk = {}; memcpy(pk.magic, "RGON", 4); pk.version = 1; pk.pad.buttons = 0xFFFF; pk.pad.slot = (uint8_t)slot;
         sendto(padsock, (const char*)&pk, sizeof pk, 0, (sockaddr*)&pad_to, sizeof pad_to);
+    };
+    auto write_status = [&](uint32_t now) {
+        if (a.status_file.empty() || now - last_status_ms < 1000) return;
+        double secs = last_status_ms ? (now - last_status_ms) / 1000.0 : 1.0; last_status_ms = now;
+        uint64_t by = hs.bytes.load(); status_kbps = (int)((by - status_bytes) * 8.0 / 1000.0 / secs); status_bytes = by;
+        std::string j = "{\"t\":" + std::to_string(now) + ",\"kbps\":" + std::to_string(status_kbps) + ",\"target_kbps\":" + std::to_string(hs.kbps.load()) +
+                        ",\"dsu_clients\":" + std::to_string(dsu_on ? dsus.clients() : 0) + ",\"guests\":[";
+        bool first = true;
+        for (auto& g : guests) {
+            int rtt = sess.ping_ms(g.first); auto st = gstats.find(g.first);
+            if (rtt < 0 && st != gstats.end()) rtt = st->second.rtt_ms;
+            j += std::string(first ? "" : ",") + "{\"slot\":" + std::to_string(g.first) + ",\"rtt_ms\":" + std::to_string(rtt) + ",\"loss_permille\":" +
+                 std::to_string(st != gstats.end() ? st->second.loss_permille : 0) + ",\"pads\":" + std::to_string(gpads[g.first]) + "}";
+            first = false;
+        }
+        j += "]}\n";
+        std::string tmp = a.status_file + ".tmp";
+        if (FILE* f = fopen(tmp.c_str(), "wb")) { fwrite(j.data(), 1, j.size(), f); fclose(f); MoveFileExA(tmp.c_str(), a.status_file.c_str(), MOVEFILE_REPLACE_EXISTING); }
     };
 
     while (!g_stop) {
         sess.update();
         uint32_t now = hubnet::now_ms();
         if (sess.failed()) { rc = session_fail_code(sess, true); break; }
-        if (sess.ended()) { logf("session ended"); break; }
+        if (quit_requested()) { logf("host: quit requested"); break; }
+        // sess.ended() is ignored on the host: a guest's clean bye is handled per slot (kPktBye) and the host session and Cemu carry on
         if (a.duration && now - t_start > (uint32_t)a.duration * 1000 + (sess.ready() ? 0 : 25000)) break;
         if (sess.ready() && !threads) {
             threads = true;
@@ -293,12 +359,25 @@ int run_host(const Args& a)
                 if (!guests.count(from)) { logf("host: guest slot %d joined", from); hs.want_key = true; }
                 guests[from] = now; break;
             case kPktKeyReq: hs.want_key = true; guests[from] = now; break;
+            case kPktBye:
+                if (guests.erase(from)) { logf("host: guest slot %d left", from); send_gone(from); }
+                left_until[from] = now + 3000;
+                break;
             case kPktInput: {
                 uint16_t sq; PadState ps;
                 if (parse_input_pkt(d.data(), (int)d.size(), &sq, &ps)) {
                     ps.slot = (uint8_t)from;
-                    PadApiPacket pk = {}; memcpy(pk.magic, "RPAD", 4); pk.version = 1; pk.seq = pad_seq++; pk.host_ms = now; pk.pad = ps;
-                    sendto(padsock, (const char*)&pk, sizeof pk, 0, (sockaddr*)&pad_to, sizeof pad_to);
+                    auto lu = left_until.find(from);
+                    if (lu != left_until.end() && (int32_t)(now - lu->second) < 0) break;   // input still in flight from a guest that just said bye
+                    int ds = dsu_slot_for_guest(from);
+                    if (dsu_on && ds >= 0) dsus.set_pad(ds, to_dsu(ps));
+                    if (a.pad_port > 0) {
+                        PadApiPacket pk = {}; memcpy(pk.magic, "RPAD", 4); pk.version = 1; pk.seq = pad_seq++; pk.host_ms = now; pk.pad = ps;
+                        sendto(padsock, (const char*)&pk, sizeof pk, 0, (sockaddr*)&pad_to, sizeof pad_to);
+                    }
+                    if (!guests.count(from)) { guests[from] = now; hs.want_key = true; logf("host: guest slot %d joined (input)", from); }
+                    else guests[from] = now;
+                    gpads[from]++;
                     hs.pads++;
                 }
                 break; }
@@ -314,7 +393,7 @@ int run_host(const Args& a)
             case kPktStats: {
                 StatsReport s;
                 if (parse_stats_pkt(d.data(), (int)d.size(), &s)) {
-                    last_stats = s; last_stat_ms = now;
+                    last_stats = s; last_stat_ms = now; gstats[from] = s;
                     hs.kbps = brc.update(s); hs.fec = brc.fec_group();
                 }
                 break; }
@@ -325,6 +404,7 @@ int run_host(const Args& a)
             else ++it;
         }
         hs.active = (int)guests.size();
+        write_status(now);
         // paced send: audio and retransmits first, then video
         uint64_t t = steady_us();
         double rate = std::max(30000.0, hs.kbps.load() * 4.0) * 1000.0 / 8.0 / 1e6;   // bytes per microsecond
@@ -413,6 +493,8 @@ struct GuestState {
     std::string dec_name;
     Args a;
     std::atomic<int> lat_last_ms{0};
+    std::mutex mem; std::deque<MenuEv> menu_evs;   // View+Y / D-pad / A / B edges from the pad thread (or F1 / arrows / Enter from the window)
+    std::atomic<bool> menu_open{false};            // while open the pad sends neutral input so menu presses don't reach the game
 };
 
 void record_latency(GuestState* gs, uint32_t cap32)
@@ -499,9 +581,11 @@ void SDLCALL sdl_audio_cb(void* ud, Uint8* stream, int len) { audio_fill((GuestS
 void guest_pad_thread(GuestState* gs)
 {
     SDL_GameController* gc = nullptr; uint64_t n = 0; uint64_t last_scan = 0;
-    uint64_t next = steady_us();
+    uint64_t next = steady_us(); uint64_t t_begin = steady_us();
+    MenuPadEdge edge;
     while (!g_stop) {
         PadState p = {};
+        bool m_back = false, m_y = false, m_up = false, m_down = false, m_ok = false, m_cancel = false;
         if (gs->a.test_input) {
             p.buttons = (uint16_t)((n / 40) & 0x7FFF); p.lx = (int16_t)(((n * 97) % 65535) - 32768); p.ly = (int16_t)(n & 0x7FFF); p.lt = (uint8_t)(n & 255);
         } else if (gc || steady_us() - last_scan > 1000000) {
@@ -540,12 +624,26 @@ void guest_pad_thread(GuestState* gs)
                     p.lt = (uint8_t)(A(SDL_CONTROLLER_AXIS_TRIGGERLEFT) >> 7); p.rt = (uint8_t)(A(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) >> 7);
                     if (p.lt > 128) p.buttons |= kPadZL;
                     if (p.rt > 128) p.buttons |= kPadZR;
+                    m_back = B(SDL_CONTROLLER_BUTTON_BACK); m_y = B(SDL_CONTROLLER_BUTTON_Y);
+                    m_up = B(SDL_CONTROLLER_BUTTON_DPAD_UP); m_down = B(SDL_CONTROLLER_BUTTON_DPAD_DOWN);
+                    m_ok = B(SDL_CONTROLLER_BUTTON_A); m_cancel = B(SDL_CONTROLLER_BUTTON_B);
                     SDL_GameControllerGetSensorData(gc, SDL_SENSOR_GYRO, p.gyro, 3);
                     SDL_GameControllerGetSensorData(gc, SDL_SENSOR_ACCEL, p.accel, 3);
                 }
             }
             SDL_UnlockJoysticks();
         }
+        if (gs->a.test_menu) {   // scripted presses (no pad on a hidden desktop): chord, then Down/OK x3 = stats, fullscreen, leave; 600 ms per step from t=3 s
+            if (!gs->got_video) t_begin = steady_us();   // the script starts --test-menu-at seconds after the first video frame
+            int64_t ms = (int64_t)(steady_us() - t_begin) / 1000 - (int64_t)gs->a.menu_at * 1000;
+            if (ms >= 0) {
+                int step = (int)(ms / 600); bool held = (ms % 600) < 300;
+                if (held) switch (step) { case 0: m_back = m_y = true; break; case 1: case 3: case 5: m_down = true; break; case 2: case 4: case 6: m_ok = true; break; }
+            }
+        }
+        MenuEv mev;
+        if (edge.poll(m_back, m_y, m_up, m_down, m_ok, m_cancel, &mev)) { std::lock_guard<std::mutex> g(gs->mem); gs->menu_evs.push_back(mev); }
+        if (gs->menu_open.load()) p = PadState{};   // the menu owns the pad
         n++;
         { std::lock_guard<std::mutex> g(gs->pm); gs->pad = p; }
         next += 1000000 / kInputHz;
@@ -566,6 +664,7 @@ void guest_net_thread(GuestState* gs, hubnet::Session* sess)
     while (!g_stop) {
         sess->update();
         uint32_t now = hubnet::now_ms();
+        if (quit_requested()) { logf("guest: quit requested"); gs->fatal = true; break; }
         if (sess->failed()) { gs->fatal_code = session_fail_code(*sess, true); gs->fatal = true; break; }
         if (sess->ended()) { logf("guest: host ended the session"); gs->fatal_code = 0; gs->fatal = true; break; }
         if (a.duration && now - t_start > (uint32_t)a.duration * 1000 + (sess->ready() ? 0 : 25000)) { gs->fatal = true; break; }
@@ -628,11 +727,52 @@ void guest_net_thread(GuestState* gs, hubnet::Session* sess)
         }
         Sleep(1);
     }
+    if (started && !sess->ended()) { uint8_t b = kPktBye; for (int i = 0; i < 4; i++) { sess->send(0, &b, 1); sess->update(); Sleep(5); } logf("guest: sent bye"); }   // the host drops our pad at once
     sess->say_bye(); for (int i = 0; i < 5; i++) { sess->update(); Sleep(10); }
     gs->nacks_tx += 0;
     logf("guest: reassembler packets=%llu frames=%llu dropped=%llu fec_recovered=%llu dup=%llu nack_frags=%llu", (unsigned long long)ra.packets, (unsigned long long)ra.frames_done,
          (unsigned long long)ra.frames_dropped, (unsigned long long)ra.recovered_by_fec, (unsigned long long)ra.dup_packets, (unsigned long long)nack_frags);
     g_stop = true;
+}
+
+/* Reachability probe (no media): the host expects `pcs` PCs, every guest joins the same room, and each guest slot counts as
+ * reachable once a direct (never relayed) ping answered. Host writes {"slots":{"1":rtt,...}} to --stats-file and exits 0 only when all
+ * guests are reachable; a guest exits 0 once connected to the host. The relay is disabled (Session::set_no_relay). */
+int run_probe(const Args& a)
+{
+    WSADATA wd; WSAStartup(MAKEWORD(2, 2), &wd);
+    hubnet::Session sess; std::thread up;
+    Args b = a; (void)b;
+    if (!start_session(sess, a, a.upnp, &up)) return 4;
+    uint32_t t0 = hubnet::now_ms(); std::map<int, int> rtt; int rc = 3; uint32_t all_ok_at = 0;
+    while (!g_stop) {
+        sess.update(); uint32_t now = hubnet::now_ms();
+        if (quit_requested() || now - t0 > (uint32_t)a.probe_ms) break;
+        if (a.host) {
+            bool all = a.pcs > 1;
+            for (int sl = 1; sl < a.pcs; sl++) {
+                int r = sess.ping_ms(sl);
+                if (r >= 0 && !sess.is_relayed(sl)) rtt[sl] = r; else all = false;
+            }
+            if (all) { if (!all_ok_at) all_ok_at = now; if (now - all_ok_at > 1200) { rc = 0; break; } }   // hold a moment so the guests see the host answer too
+        } else {
+            int r = sess.ping_ms(0);
+            if (sess.ready() && r >= 0) { if (!all_ok_at) all_ok_at = now; rc = 0; if (sess.ended() || now - all_ok_at > 6000) break; }
+            if (sess.ended()) break;
+        }
+        Sleep(5);
+    }
+    if (a.host && !a.stats_file.empty()) {
+        std::string j = "{\"ok\":" + std::string(rc == 0 ? "true" : "false") + ",\"slots\":{";
+        for (int sl = 1; sl < a.pcs; sl++) { j += (sl > 1 ? "," : "") + std::string("\"") + std::to_string(sl) + "\":" + std::to_string(rtt.count(sl) ? rtt[sl] : -1); }
+        j += "}}\n";
+        if (FILE* f = fopen(a.stats_file.c_str(), "wb")) { fwrite(j.data(), 1, j.size(), f); fclose(f); }
+        fputs(j.c_str(), stderr);
+    }
+    sess.say_bye(); for (int i = 0; i < 5; i++) { sess.update(); Sleep(10); }
+    sess.stop(); if (up.joinable()) up.join();
+    logf("probe (%s): %s", a.host ? "host" : "guest", rc == 0 ? "direct connection OK" : "no direct connection");
+    return rc;
 }
 
 int run_guest(const Args& a)
@@ -664,16 +804,37 @@ int run_guest(const Args& a)
 
     std::thread nt(guest_net_thread, &gs, &sess), dt(guest_decode_thread, &gs), pt(guest_pad_thread, &gs);
     bool overlay = a.overlay; uint64_t shown_seq = 0; uint64_t t_start = steady_us();
+    GuestMenu menu; bool menu_dirty = false;
+    auto menu_event = [&](MenuEv ev) {
+        MenuAct act = menu.handle(ev); gs.menu_open = menu.open; menu_dirty = true;
+        switch (act) {
+            case MenuAct::Opened: logf("guest: menu opened"); break;
+            case MenuAct::Closed: logf("guest: menu closed"); break;
+            case MenuAct::ToggleStats: overlay = !overlay; logf("guest: menu stats %s", overlay ? "on" : "off"); break;
+            case MenuAct::ToggleFullscreen:
+                if (win) SDL_SetWindowFullscreen(win, (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP) ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                logf("guest: menu fullscreen toggled"); break;
+            case MenuAct::Leave: logf("guest: menu leave"); g_stop = true; break;
+            default: break;
+        }
+    };
     uint64_t next_audio = steady_us();
     std::vector<int16_t> sink(960);
     uint64_t fps_t = steady_us(), fps_n = 0; int shown_fps = 0;
     while (!g_stop) {
+        if (quit_requested()) { logf("guest: quit requested"); g_stop = true; break; }
+        { std::deque<MenuEv> evs; { std::lock_guard<std::mutex> g(gs.mem); evs.swap(gs.menu_evs); } for (MenuEv ev : evs) menu_event(ev); }
         if (!a.headless) {
             SDL_Event e;
             while (SDL_PollEvent(&e)) {
                 if (e.type == SDL_QUIT) g_stop = true;
                 else if (e.type == SDL_KEYDOWN) {
-                    if (e.key.keysym.sym == SDLK_F3) overlay = !overlay;
+                    if (e.key.keysym.sym == SDLK_F1) menu_event(MenuEv::Open);
+                    else if (menu.open && e.key.keysym.sym == SDLK_UP) menu_event(MenuEv::Up);
+                    else if (menu.open && e.key.keysym.sym == SDLK_DOWN) menu_event(MenuEv::Down);
+                    else if (menu.open && (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_SPACE)) menu_event(MenuEv::Ok);
+                    else if (menu.open && e.key.keysym.sym == SDLK_ESCAPE) menu_event(MenuEv::Back);
+                    else if (e.key.keysym.sym == SDLK_F3) overlay = !overlay;
                     else if (e.key.keysym.sym == SDLK_F11 || (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)))
                         SDL_SetWindowFullscreen(win, (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP) ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
                     else if (e.key.keysym.sym == SDLK_ESCAPE && (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP)) SDL_SetWindowFullscreen(win, 0);
@@ -684,16 +845,17 @@ int run_guest(const Args& a)
                 std::lock_guard<std::mutex> g(gs.fm);
                 if (gs.latest_seq != shown_seq) { f = std::move(gs.latest); shown_seq = gs.latest_seq; have_new = true; }
             }
-            if (have_new) {
-                if (!tex || tw != f.w || th != f.h) {
+            if (have_new || (menu_dirty && tex)) {
+                menu_dirty = false;
+                if (have_new && (!tex || tw != f.w || th != f.h)) {
                     if (tex) SDL_DestroyTexture(tex);
                     tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_NV12, SDL_TEXTUREACCESS_STREAMING, f.w, f.h); tw = f.w; th = f.h;
                 }
-                SDL_UpdateNVTexture(tex, nullptr, f.nv12.data(), f.w, f.nv12.data() + (size_t)f.w * f.h, f.w);
+                if (have_new) SDL_UpdateNVTexture(tex, nullptr, f.nv12.data(), f.w, f.nv12.data() + (size_t)f.w * f.h, f.w);
                 SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren);
                 int ow, oh; SDL_GetRendererOutputSize(ren, &ow, &oh);
-                double sc = std::min((double)ow / f.w, (double)oh / f.h);
-                SDL_Rect dst = {(int)((ow - f.w * sc) / 2), (int)((oh - f.h * sc) / 2), (int)(f.w * sc), (int)(f.h * sc)};
+                double sc = std::min((double)ow / tw, (double)oh / th);
+                SDL_Rect dst = {(int)((ow - tw * sc) / 2), (int)((oh - th * sc) / 2), (int)(tw * sc), (int)(th * sc)};
                 SDL_RenderCopy(ren, tex, nullptr, &dst);
                 if (overlay) {
                     char buf[160];
@@ -702,8 +864,18 @@ int run_guest(const Args& a)
                     SDL_Rect bg = {4, 4, (int)strlen(buf) * 8 + 8, 24}; SDL_RenderFillRect(ren, &bg);
                     SDL_SetRenderDrawColor(ren, 80, 255, 120, 255); draw_text(ren, 8, 8, 2, buf);
                 }
+                if (menu.open) {   // View+Y menu: Resume / Stats / Fullscreen / Leave
+                    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+                    int pw = 360, ph = 200, px = (ow - pw) / 2, py = (oh - ph) / 2;
+                    SDL_SetRenderDrawColor(ren, 10, 12, 20, 225); SDL_Rect pn = {px, py, pw, ph}; SDL_RenderFillRect(ren, &pn);
+                    SDL_SetRenderDrawColor(ren, 255, 255, 255, 255); draw_text(ren, px + 16, py + 12, 3, "REMOTE PLAY");
+                    for (int i = 0; i < GuestMenu::kItems; i++) {
+                        if (i == menu.sel) { SDL_SetRenderDrawColor(ren, 60, 120, 255, 255); SDL_Rect hl = {px + 8, py + 48 + i * 34, pw - 16, 30}; SDL_RenderFillRect(ren, &hl); }
+                        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255); draw_text(ren, px + 20, py + 54 + i * 34, 3, GuestMenu::item_name(i));
+                    }
+                }
                 SDL_RenderPresent(ren);
-                record_latency(&gs, (uint32_t)f.cap_us); gs.frames_shown++;
+                if (have_new) { record_latency(&gs, (uint32_t)f.cap_us); gs.frames_shown++; }
                 fps_n++;
                 if (steady_us() - fps_t >= 1000000) { shown_fps = (int)fps_n; fps_n = 0; fps_t += 1000000; }
             } else SDL_Delay(1);
@@ -848,5 +1020,7 @@ int main(int argc, char** argv)
     timeBeginPeriod(1);
     SetConsoleCtrlHandler(on_ctrl, TRUE);
     if (a.selftest) return run_selftest(a);
+    make_quit_event();
+    if (a.probe) return run_probe(a);
     return a.host ? run_host(a) : run_guest(a);
 }

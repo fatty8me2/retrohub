@@ -1,8 +1,10 @@
 #include "netplay_3ds_join.h"
 #include "app.h"
+#include "remote_play.h"
 #include <filesystem>
 
 GcOnline GCO;
+void rplay_stop();
 static hubnp3ds::ResumeGate NP3_resume;   // guest launch waiting for the archive to finish unpacking
 
 bool gc_needs_unpack(const hub::GameEntry& e) { return e.issue == "extract" && hub::extracted_3ds_path(e).empty(); }
@@ -68,6 +70,13 @@ void online_host_left(const std::string& gone) {
         push_toast(who + " left - closing the game", ui::WARN, 8.0, true);
         return;
     }
+    if (A.proc && A.run.room && A.run.remote_play) {   // the host's stream is over: close the viewer, back to the room
+        A.run.left_name = who;
+        push_toast(hubrp::host_left_text(gone), ui::WARN, 8.0, true);
+        rplay_quit_current_guest();   // windowless viewers (and the real one) get the quit event; the window close below covers an older streamrun
+        request_game_close();
+        return;
+    }
     if (A.proc && A.run.room) {
         A.run.left_name = who;
         push_toast(who + " left - game ended", ui::WARN, 8.0, true);
@@ -80,6 +89,7 @@ void online_cancel_pending() {
     else if (GCO.fw.active() && !GCO.active) GCO.fw.stop();
     if (NP3_pending && !A.proc) { NP3.stop(); NP3_pending = false; }
     NP3_resume.cancel();
+    rplay_stop();   // remote-play host leaving the room: stop streaming (Cemu itself is the user's game, left alone)
 }
 
 /* Called while a GameCube game is selected in the room: unpack an archived copy (existing progress UI) and fingerprint the
@@ -216,6 +226,8 @@ void gc_tick() {
             const hub::GameEntry* g = find_room_entry(A.selected_game);
             if (g && g->system == hub::System::GC) gc_prefetch(*g);
             if (g && g->system == hub::System::N3DS) n3ds_prefetch(*g);
+            if (g && g->system == hub::System::WiiU && is_host() && !is_remote_stand_in(*g) && gc_needs_unpack(*g) && !A.proc)   // remote play host with an archived Wii U game: unpack it ahead of Launch
+                if (UNZ.state == UnzipJob::Idle && !UNZ.th.joinable()) { UNZ.key = g->key; UNZ.quiet = true; start_unzip(*g); }
         }
         return;
     }
@@ -382,6 +394,270 @@ void poll_np3ds() {
         }
     }
 }
+/* ---------- Wii U remote play (docs/REMOTE_PLAY.md) ----------
+ * Host: Cemu starts like an offline game (managed controls; players 2-4 are the guests' pads, fed to Cemu by the DSU server from
+ * streamrun's localhost pad API), then poll_rplay() attaches `streamrun --host` to Cemu's window once it exists. Guests run
+ * `streamrun --guest` and need no copy of the game. Video/audio/input go direct UDP only; the room server is signalling. */
+namespace {
+struct RPlay {
+    bool pending = false;       // host: Cemu started, streamrun not attached yet
+    HANDLE proc = nullptr;      // host: our streamrun process
+    ULONGLONG t0 = 0;
+    std::string room;
+    int members = 1;
+    std::string pid_file;       // streamrun --await-pid-file: we write Cemu's PID here once its window exists
+    std::string status_file, status_text;   // streamrun --status-file (1 Hz JSON) -> "streaming to ..." line
+    ULONGLONG status_at = 0;
+    std::map<int, std::string> names;       // slot -> name of the guests being streamed to
+    /* direct-connection pre-check (streamrun --probe) */
+    HANDLE probe = nullptr;     // host: the probe process
+    std::string probe_file;
+    ULONGLONG probe_t0 = 0;
+    std::map<int, std::string> probe_names;
+    int probe_no = 0;
+    ULONGLONG ok_at = 0;        // last passing probe...
+    unsigned ok_sig = 0;        // ...for this room membership
+    std::string block;          // why Launch is blocked after a failed probe
+    ULONGLONG block_at = 0;
+    unsigned block_sig = 0;
+    std::vector<HANDLE> guest_probes;                       // guest side helpers (streamrun --probe --guest)
+    std::vector<std::pair<HANDLE, ULONGLONG>> quitting;     // asked to quit cleanly: (handle, kill deadline)
+} RP;
+
+unsigned member_sig() {
+    unsigned h = 17;
+    for (auto& m : room_members()) h = h * 131u + (unsigned)(m.slot + 1);
+    return h;
+}
+
+std::map<int, std::string> member_names() {
+    std::map<int, std::string> n;
+    for (auto& m : room_members()) n[m.slot] = m.name;
+    return n;
+}
+
+/* Ask a streamrun to quit: sets its named event (src/stream/streamrun.cpp make_quit_event). It then says bye (guest) or tells the guests
+ * the stream ended (host). Falls back to TerminateProcess after `grace_ms`. Own PIDs only. */
+bool signal_quit(DWORD pid) {
+    char n[96];
+    std::snprintf(n, sizeof n, "Local\\RetroHubStreamrunQuit_%lu", (unsigned long)pid);
+    HANDLE ev = OpenEventA(EVENT_MODIFY_STATE, FALSE, n);
+    if (!ev) return false;
+    SetEvent(ev);
+    CloseHandle(ev);
+    return true;
+}
+void quit_gracefully(HANDLE h, DWORD grace_ms) {   // does not take ownership of h
+    if (!h) return;
+    if (WaitForSingleObject(h, 0) == WAIT_OBJECT_0) return;
+    HANDLE d = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &d, 0, FALSE, DUPLICATE_SAME_ACCESS)) { TerminateProcess(h, 0); return; }
+    bool signalled = signal_quit(GetProcessId(h));
+    RP.quitting.push_back({d, GetTickCount64() + (signalled ? grace_ms : 300)});
+    autotest_log(std::string("rplay: asked pid ") + std::to_string(GetProcessId(h)) + " to quit" + (signalled ? "" : " (no quit event yet)"));
+}
+
+bool start_hidden(const std::string& exe, const std::string& args, HANDLE* out) {
+    std::wstring cmd = L"\"" + W(exe) + L"\" " + W(args);
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(0);
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(dir_of(exe)).c_str(), &si, &pi)) return false;
+    CloseHandle(pi.hThread);
+    *out = pi.hProcess;
+    return true;
+}
+
+std::string read_small(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+bool qa_pattern() { const char* v = std::getenv("RETROHUB_AUTOTEST_TESTPATTERN"); return autotest_active() && v && *v == '1'; }   // QA only: hidden desktops cannot capture Cemu, stream the test pattern
+std::string qa_extra() { const char* v = std::getenv("RETROHUB_AUTOTEST_STREAMRUN_ARGS"); return autotest_active() && v ? std::string(" ") + v : std::string(); }
+
+}  // namespace
+
+void rplay_stop() {   // host left the room / Cemu closed: end the stream (our own PIDs only)
+    if (RP.proc) { quit_gracefully(RP.proc, 4000); CloseHandle(RP.proc); RP.proc = nullptr; }
+    if (RP.probe) { quit_gracefully(RP.probe, 1500); CloseHandle(RP.probe); RP.probe = nullptr; }
+    for (HANDLE h : RP.guest_probes) { quit_gracefully(h, 1500); CloseHandle(h); }
+    RP.guest_probes.clear();
+    RP.pending = false;
+    RP.status_text.clear();
+}
+
+void rplay_quit_current_guest() {
+    if (A.proc) quit_gracefully(A.proc, 4000);
+}
+
+std::string rplay_status_line() { return RP.proc ? RP.status_text : std::string(); }
+
+std::string rplay_block_reason() {
+    if (RP.probe) return "Checking that everyone can connect directly...";
+    if (RP.block.empty()) return "";
+    if (member_sig() != RP.block_sig || GetTickCount64() - RP.block_at > 25000) { RP.block.clear(); return ""; }   // new people / time passed: allow another try
+    return RP.block;
+}
+
+bool rplay_precheck() {
+    unsigned sig = member_sig();
+    if ((int)room_members().size() <= 1) return true;   // nobody to stream to yet
+    if (RP.probe) { set_notice("Still checking everyone's connection...", 6.0); return false; }
+    if (RP.ok_at && RP.ok_sig == sig && GetTickCount64() - RP.ok_at < 90000) return true;
+    std::string sr = streamrun_path();
+    if (sr.empty() || !file_exists(sr)) return true;   // launch_online_wiiu reports the missing streamrun
+    if (g_headless) return true;
+    RP.probe_no++;
+    std::string room = hubrp::probe_room(A.code, RP.probe_no);
+    RP.probe_file = hub::data_dir() + "rplay_probe.json";
+    std::remove(RP.probe_file.c_str());
+    int members = (int)room_members().size();
+    if (!start_hidden(sr, hubrp::probe_host_args(server_url(), room, members, !autotest_active(), RP.probe_file), &RP.probe)) {
+        set_notice("Could not start the connection check (streamrun error " + std::to_string(GetLastError()) + ").", 10.0);
+        return false;
+    }
+    RP.probe_t0 = GetTickCount64();
+    RP.probe_names = member_names();
+    RP.block.clear();
+    A.lobby.send_msg(hubrp::probe_msg(room, members));
+    set_notice("Checking that everyone can connect directly...", 12.0);
+    autotest_log("rplay: probe started room " + room);
+    return false;
+}
+
+void rplay_probe_guest(const std::string& room, int pcs) {
+    std::string sr = streamrun_path();
+    if (g_headless || sr.empty() || !file_exists(sr) || room.empty()) return;
+    HANDLE h = nullptr;
+    if (start_hidden(sr, hubrp::probe_guest_args(server_url(), room, room_my_slot(), pcs, !autotest_active()), &h)) { RP.guest_probes.push_back(h); autotest_log("rplay: probe joined " + room); }
+}
+
+void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
+    if (A.proc) { launch_note(is_host, "A game is already running."); return; }
+    std::string sr = streamrun_path();
+    if (g_headless) { shot_trace("online-route", std::string("wiiu-remote-play ") + (is_host ? "host" : "guest")); return; }
+    if (sr.empty() || !file_exists(sr)) { launch_note(is_host, "Remote play isn't installed (streamrun.exe is missing) - update RetroHub."); return; }
+    std::string room = hubrp::room_name(A.code, launch_no);
+    if (is_host) {
+        if (is_remote_stand_in(e)) { launch_note(true, "Remote play needs your own copy of " + e.title + " on the host's PC."); return; }
+        RunInfo r = run_info_for(e, true);
+        r.room = true;
+        r.dsu_players = hubrp::guest_count((int)A.lobby.members().size());   // guests' pads = Cemu players 2.. on DSU slots (this launch only)
+        RP.room = room;
+        RP.members = (int)A.lobby.members().size();
+        RP.names = member_names();
+        /* streamrun --host starts first: its DSU server has to be listening when Cemu starts (Cemu's DSU client does not retry). It captures
+         * Cemu once poll_rplay() writes the PID of Cemu's window owner into RP.pid_file. */
+        RP.pid_file = hub::data_dir() + "rplay_cemu.pid";
+        RP.status_file = hub::data_dir() + "rplay_status.json";
+        std::remove(RP.pid_file.c_str());
+        std::remove(RP.status_file.c_str());
+        std::string args = hubrp::host_args(0, server_url(), RP.room, RP.members, !autotest_active(), RP.status_file, 0, RP.pid_file);
+        if (qa_pattern()) { size_t p = args.find("--await-pid-file "); if (p != std::string::npos) { size_t e2 = args.find(" --net", p); args.replace(p, e2 - p, "--test-pattern"); } }
+        args += qa_extra();
+        if (RP.proc) { CloseHandle(RP.proc); RP.proc = nullptr; }
+        if (!start_hidden(sr, args, &RP.proc)) { launch_note(true, "Could not start remote play (streamrun error " + std::to_string(GetLastError()) + ")."); return; }
+        autotest_log("rplay: streamrun started before Cemu, args " + args);
+        Sleep(400);   // let the DSU server bind before Cemu reads its controller profiles
+        launch_external(e, r, "");   // the host's Cemu + save sync work exactly like offline play
+        if (!A.proc) { rplay_stop(); host_abort("the host's Cemu did not start"); return; }
+        RP.pending = true;
+        RP.t0 = GetTickCount64();
+        set_notice("Starting " + e.title + " - remote play connects once the game window appears...", 10.0);
+        return;
+    }
+    RunInfo ri;   // a guest runs no game of its own: no library key, no play time, no save
+    ri.title = e.title;
+    ri.system_short = "wiiu";
+    ri.online = true;
+    ri.room = true;
+    ri.track = false;
+    ri.remote_play = true;
+    if (!spawn_room(false, sr, hubrp::guest_args(server_url(), room, room_my_slot(), hub::gs::is_fullscreen(gs_values_for(e))) + qa_extra(), dir_of(sr), {}, ri)) return;
+    push_toast("Joining the host's stream... (View + Y opens the menu)", ui::GOOD, 6.0);
+}
+
+void poll_rplay() {
+    ULONGLONG nowt = GetTickCount64();
+    for (size_t i = 0; i < RP.quitting.size();) {   // clean-quit requests: reap, or kill (own PID) when the grace period ran out
+        auto& q = RP.quitting[i];
+        bool done = WaitForSingleObject(q.first, 0) == WAIT_OBJECT_0;
+        if (!done && nowt > q.second) { TerminateProcess(q.first, 0); done = true; autotest_log("rplay: streamrun did not quit in time, terminated"); }
+        if (done) { CloseHandle(q.first); RP.quitting.erase(RP.quitting.begin() + i); } else ++i;
+    }
+    for (size_t i = 0; i < RP.guest_probes.size();)
+        if (WaitForSingleObject(RP.guest_probes[i], 0) == WAIT_OBJECT_0) { CloseHandle(RP.guest_probes[i]); RP.guest_probes.erase(RP.guest_probes.begin() + i); } else ++i;
+    if (RP.probe && WaitForSingleObject(RP.probe, 0) == WAIT_OBJECT_0) {   // the direct-connection check finished
+        DWORD code = 0;
+        GetExitCodeProcess(RP.probe, &code);
+        CloseHandle(RP.probe);
+        RP.probe = nullptr;
+        auto rtt = hubrp::parse_probe_slots(read_small(RP.probe_file));
+        std::string why = hubrp::probe_block_reason(rtt, RP.probe_names);
+        if (code == 0 && why.empty()) {
+            RP.ok_at = GetTickCount64();
+            RP.ok_sig = member_sig();
+            autotest_log("rplay: probe OK, launching");
+            if (A.in_room && is_host() && !A.proc) host_launch_selected();   // re-enters; rplay_precheck now passes
+        } else {
+            if (why.empty()) why = hubrp::kNoDirectText;
+            RP.block = why;
+            RP.block_at = GetTickCount64();
+            RP.block_sig = member_sig();
+            set_notice(why, 20.0);
+            push_toast(why, ui::BAD, 12.0, true);
+            autotest_log("rplay: probe FAILED: " + why);
+        }
+    } else if (RP.probe && GetTickCount64() - RP.probe_t0 > 30000) { quit_gracefully(RP.probe, 1000); }
+    if (RP.proc && WaitForSingleObject(RP.proc, 0) == WAIT_OBJECT_0) {   // streamrun --host ended
+        DWORD code = 0;
+        GetExitCodeProcess(RP.proc, &code);
+        CloseHandle(RP.proc);
+        RP.proc = nullptr;
+        RP.status_text.clear();
+        if (code != 0 && A.proc) {   // never leave Cemu running with nobody watching: say why, tell the guests, close Cemu
+            std::string why = hubrp::exit_text(code, true);
+            set_notice(why, 15.0);
+            host_abort(why);
+            request_game_close();
+        }
+    }
+    if (RP.proc && !A.proc) rplay_stop();   // Cemu closed: end the stream (guests see the host's game end)
+    if (RP.proc && nowt - RP.status_at > 1000) {   // "streaming to Mickey - 12 Mbps - 48 ms"
+        RP.status_at = nowt;
+        std::string raw = read_small(RP.status_file);
+        if (autotest_active()) {   // QA evidence: is Cemu (a DSU client) attached, and have the guest's pad packets arrived
+            static int last_dsu = -1, last_pads = -1;
+            size_t d = raw.find("\"dsu_clients\":"), pp = raw.find("\"pads\":");
+            int dc = d == std::string::npos ? -1 : std::atoi(raw.c_str() + d + 14), pc = pp == std::string::npos ? -1 : std::atoi(raw.c_str() + pp + 7);
+            if (dc != last_dsu) { last_dsu = dc; autotest_log("rplay-dsu: clients=" + std::to_string(dc) + " (Cemu attached to the DSU server when >= 1)"); }
+            if ((pc > 0) != (last_pads > 0)) { last_pads = pc; autotest_log("rplay-pads: guest pad packets seen by the host = " + std::to_string(pc)); }
+        }
+        std::string st = hubrp::status_text(raw, RP.names);
+        if (st != RP.status_text && autotest_active() && !st.empty()) autotest_log("rplay-status: " + st);
+        RP.status_text = st;
+    }
+    if (!RP.pending) return;
+    unsigned long pid = 0;
+    bool win = A.proc && game_window_pid(&pid);
+    switch (hubrp::attach_decision(A.proc != nullptr, win, GetTickCount64() - RP.t0)) {
+        case hubrp::Attach::Wait: return;
+        case hubrp::Attach::GiveUp:
+            RP.pending = false;
+            if (A.proc) { set_notice("Cemu's window never appeared - remote play cancelled.", 12.0); host_abort("the host's game window never appeared"); request_game_close(); }
+            return;
+        case hubrp::Attach::Now: break;
+    }
+    RP.pending = false;
+    if (FILE* f = fopen(RP.pid_file.c_str(), "wb")) { std::string v = std::to_string(pid); fwrite(v.data(), 1, v.size(), f); fclose(f); }   // streamrun captures this PID's window
+        autotest_log("rplay: streamrun attached to Cemu pid " + std::to_string(pid));
+}
+
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan, const hubui::Json* launch_msg,
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
@@ -393,6 +669,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         return;
     }
     if (is_kanto(e)) { kt_launch(e, launch_no, is_host); return; }
+    if (e.system == hub::System::WiiU) { launch_online_wiiu(e, launch_no, is_host); return; }
     if (e.system == hub::System::GC) {   // Dolphin NetPlay: the host starts now; guests start from the launch handler
         if (is_host) {
             gcnp::Spec s;
