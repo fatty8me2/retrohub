@@ -1,6 +1,9 @@
 # Summarize results_<Tag>_lane*.jsonl into a markdown table (success rate per mode, failure reasons, start-time stats).
 param([Parameter(Mandatory)][string]$Tag, [string]$Dir = "C:\rhq")
 $rows = Get-ChildItem $Dir -Filter "results_${Tag}_lane*.jsonl" | ForEach-Object { Get-Content $_.FullName -Encoding utf8 | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } }
+$harness = @($rows | Where-Object { $_.reason -like 'harness exception*' }).Count
+$rows = @($rows | Where-Object { $_.reason -notlike 'harness exception*' })   # harness-side cleanup errors are not product results
+"(excluded $harness runs lost to harness exceptions)"
 $order = "direct","relay","sim","simrelay","gfirst","glate","slowhost"
 "| mode | runs | pass | started | held 60s | desync | median start s | max start s |"
 "|---|---|---|---|---|---|---|---|"
