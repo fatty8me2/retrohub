@@ -73,7 +73,7 @@ if (-not $NoServer) {
   $env:WRANGLER_REGISTRY_PATH = "C:\rhq\reg$Port"; New-Item -ItemType Directory -Force $env:WRANGLER_REGISTRY_PATH | Out-Null
   $persist = "C:\rhq\s$Port"; if (Test-Path $persist) { Remove-Item -Recurse -Force $persist }
   $psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = (Get-Command node).Source; $psi.WorkingDirectory = $WorkerDir
-  $psi.Arguments = "node_modules\wranglerin\wrangler.js dev --ip 127.0.0.1 --port $Port --persist-to $persist"
+  $psi.Arguments = "node_modules\wrangler/bin\wrangler.js dev --ip 127.0.0.1 --port $Port --persist-to $persist"
   $psi.CreateNoWindow = $true; $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
   $wr = [System.Diagnostics.Process]::Start($psi)   # no console window; drain the pipes so wrangler never blocks
   $null = $wr.StandardOutput.BaseStream.CopyToAsync([System.IO.Stream]::Null); $null = $wr.StandardError.BaseStream.CopyToAsync([System.IO.Stream]::Null)
