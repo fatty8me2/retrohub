@@ -171,3 +171,10 @@ target_sources(RetroHub PRIVATE pcsx2.cpp)
 add_executable(hub_ps2_test test_pcsx2.cpp pcsx2.cpp emulators.cpp)
 target_include_directories(hub_ps2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
+# Startup sounds: original procedural synth (docs/BOOT_SOUNDS.md). Test renders to memory + qa/out/boot_sounds/*.wav (never played).
+target_sources(RetroHub PRIVATE boot_synth.cpp boot_sound.cpp)
+add_executable(hub_bootsound_test test_boot_sound.cpp boot_synth.cpp)
+target_include_directories(hub_bootsound_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_bootsound_test PRIVATE hubcommon)
+target_compile_definitions(hub_bootsound_test PRIVATE BOOT_SOUND_OUT_DIR="${CMAKE_SOURCE_DIR}/qa/out/boot_sounds")
