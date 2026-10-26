@@ -53,7 +53,7 @@ inline Geo geo_for(hub::System s) {
         case S::PS1:   return {Insert::Lid, 0.62f, 0, -34, 150, 0, 0.47f, 0, 1.0f, 0.66f};
         case S::PS2:   return {Insert::Tray, 0.50f, -7, 93, 150, 0, 0.52f, 0, 1.0f, 0.66f};
         case S::WiiU:  return {Insert::Front, 0.55f, 54, 46, 120, 37, 0.14f, 0, 1.0f, 0.66f};
-        case S::N64: default: return {Insert::Slot, 0.78f, 0, -38, 120, -2, 1.f, 0, 1.0f, 0.68f};
+        case S::N64: default: return {Insert::Slot, 0.78f, 0, -38, 120, -8, 1.f, 0, 1.0f, 0.68f};
     }
 }
 
