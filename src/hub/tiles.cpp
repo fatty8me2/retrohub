@@ -240,7 +240,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     t.favorite = gs.favorite;
     t.selected = A.sel_game == e.key;
     const GameInfo* cat = catalog_for(e);
-    t.online = is_native(e) || (cat && cat->online);
+    t.online = is_native(e) || supports_online(e);
     if (recent_sub && gs.last_played) t.subtitle = fmt_ago(gs.last_played);
     else if (gs.play_seconds) t.subtitle = hubui::format_play_time(gs.play_seconds) + " played";
     else t.subtitle = cat && cat->year ? std::to_string(cat->year) : std::string("Not played yet");
