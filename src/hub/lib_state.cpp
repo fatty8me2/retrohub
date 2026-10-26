@@ -189,12 +189,12 @@ void rebuild_vis() {
             if (i >= (int)A.lib.size()) {   // a friend's game: online-capable when the catalog says so
                 const hubui::fg::Ghost& g = A.ghosts[i - A.lib.size()];
                 const GameInfo* gc = g.cid.empty() ? nullptr : hub::find_game(g.cid);
-                if (gc && gc->online) keep.push_back(i);
+                if (hubcaps::online_capable(hub::system_from_short(g.sys), gc)) keep.push_back(i);
                 continue;
             }
             const hub::GameEntry& e = A.lib[i];
             const GameInfo* c = catalog_for(e);
-            if (is_native(e) || (c && c->online)) keep.push_back(i);
+            (void)c; if (is_native(e) || supports_online(e)) keep.push_back(i);
         }
         base.swap(keep);
     }
@@ -220,7 +220,7 @@ void rebuild_vis() {
         g.system = sys_short(e);
         g.favorite = gs.favorite;
         g.last_played = gs.last_played;
-        g.online = is_native(e) || (cat && cat->online);
+        g.online = is_native(e) || supports_online(e);
         g.pinned = is_native(e);
         g.play_seconds = gs.play_seconds;
         g.added = added_unix(e.path);

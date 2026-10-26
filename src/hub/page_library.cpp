@@ -458,7 +458,7 @@ void all_games_view() {
         int n_online = 0;
         for (auto& e : A.lib) {
             const GameInfo* c = catalog_for(e);
-            if (is_native(e) || (c && c->online)) ++n_online;
+            (void)c; if (is_native(e) || supports_online(e)) ++n_online;
         }
         char lab[48];
         std::snprintf(lab, sizeof lab, "Online  %d", n_online);
