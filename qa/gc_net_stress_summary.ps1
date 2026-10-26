@@ -16,4 +16,4 @@ foreach ($m in $order) {
 }
 ""
 "Failure reasons:"
-$rows | Where-Object { -not $_.pass } | Group-Object mode, reason | ForEach-Object { "- {0}: {1} x  e.g. {2}" -f $_.Name, $_.Count, (($_.Group[0].detail -replace '\s+', ' ').Substring(0, [Math]::Min(220, ($_.Group[0].detail).Length))) }
+$rows | Where-Object { -not $_.pass } | Group-Object mode, reason | ForEach-Object { $d = ([string]$_.Group[0].detail -replace '\s+', ' '); "- {0}: {1} x  e.g. {2}" -f $_.Name, $_.Count, $d.Substring(0, [Math]::Min(260, $d.Length)) }
