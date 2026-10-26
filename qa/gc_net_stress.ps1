@@ -116,7 +116,7 @@ function Run-One($mode, $n) {
   KillOwn
   $code = -join (1..6 | ForEach-Object { $alpha | Get-Random })
   $runDir = "$Work\run"
-  if (Test-Path $runDir) { Remove-Item -Recurse -Force $runDir }
+  for ($k = 0; $k -lt 15 -and (Test-Path $runDir); $k++) { try { Remove-Item -Recurse -Force $runDir -ErrorAction Stop } catch { KillOwn; Start-Sleep 2 } }   # a just-killed RetroHub/Dolphin can still hold its files for a moment
   $pids = @(); $t0 = Get-Date
   for ($i = 0; $i -lt 2; $i++) {
     $role = if ($i -eq 0) { "host" } else { "join" }
@@ -203,7 +203,7 @@ function Run-One($mode, $n) {
 try {
   foreach ($mode in $Modes) {
     for ($n = 1; $n -le $Runs; $n++) {
-      try { $r = Run-One $mode $n } catch { $r = [ordered]@{ mode = $mode; n = $n; started = $false; held = $false; desync = $false; start_s = $null; reason = "harness exception: $($_.Exception.Message) @ $($_.InvocationInfo.ScriptLineNumber)"; detail = "" }; KillOwn }
+      try { try { $r = Run-One $mode $n } catch { KillOwn; Start-Sleep 5; $r = Run-One $mode $n } } catch { $r = [ordered]@{ mode = $mode; n = $n; started = $false; held = $false; desync = $false; start_s = $null; reason = "harness exception: $($_.Exception.Message) @ $($_.InvocationInfo.ScriptLineNumber)"; detail = "" }; KillOwn }
       $r["tag"] = $Tag
       $ok = $r.started -and $r.held -and -not $r.desync -and -not $r.reason
       $r["pass"] = [bool]$ok
