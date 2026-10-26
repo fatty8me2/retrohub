@@ -37,6 +37,7 @@ struct Args {
     bool host = false, guest = false, headless = false, fullscreen = false, overlay = true, upnp = false, test_pattern = false;
     bool selftest = false, test_input = false, no_audio = false, pcm_audio = false, sw_enc = false, sw_dec = true;
     bool probe = false, test_menu = false, no_dsu = false; int menu_at = 3;
+    std::string await_file;   // --await-pid-file: start the DSU server now, capture the PID written to this file later (Cemu must find the DSU server already up)
     std::string capture, net, room, stats_file, status_file;
     int slot = 0, pcs = 2, pad_port = 0 /* 0 = legacy localhost pad API off */, dsu_port = dsu::kDefaultPort, bitrate = 8000, fps = 60, max_height = 720, duration = 0, probe_ms = 9000;
 };
@@ -87,6 +88,7 @@ bool parse_args(int argc, char** argv, Args* a)
         else if (s == "--no-dsu") a->no_dsu = true;
         else if (s == "--dsu-port") { if (!ival(&a->dsu_port)) return false; }
         else if (s == "--probe-ms") { if (!ival(&a->probe_ms)) return false; }
+        else if (s == "--await-pid-file") { if (!val(&a->await_file)) return false; }
         else if (s == "--status-file") { if (!val(&a->status_file)) return false; }
         else if (s == "--no-audio") a->no_audio = true;
         else if (s == "--pcm-audio") a->pcm_audio = true;
@@ -112,7 +114,7 @@ bool parse_args(int argc, char** argv, Args* a)
     if (a->net.empty() || a->room.empty()) return false;
     if (a->host && a->slot != 0) return false;
     if (a->guest && a->slot < 1) return false;
-    if (a->host && !a->test_pattern && !a->probe && a->capture.empty()) return false;
+    if (a->host && !a->test_pattern && !a->probe && a->capture.empty() && a->await_file.empty()) return false;
     return true;
 }
 
@@ -120,7 +122,7 @@ void usage()
 {
     fprintf(stderr,
         "usage: streamrun --host (--capture-hwnd <hwnd|pid> | --test-pattern) --net <wss://server> --room <CODE-N> --slot 0 [--pcs 2]\n"
-        "                 [--dsu-port 26760] [--no-dsu] [--status-file F] [--pad-port P (legacy RPAD datagrams)] [--bitrate 8000] [--fps 60] [--max-height 720] [--no-audio] [--pcm-audio] [--sw-encode] [--upnp]\n"
+        "                 [--await-pid-file F (instead of --capture-hwnd)] [--dsu-port 26760] [--no-dsu] [--status-file F] [--pad-port P (legacy RPAD datagrams)] [--bitrate 8000] [--fps 60] [--max-height 720] [--no-audio] [--pcm-audio] [--sw-encode] [--upnp]\n"
         "       streamrun --guest --net <wss://server> --room <CODE-N> --slot K [--pcs 2] [--fullscreen] [--no-overlay] [--headless]\n"
         "                 [--test-input] [--test-menu] [--hw-decode] [--duration S] [--stats-file F]\n"
         "       streamrun --probe (--host|--guest) --net <wss://server> --room <CODE-P> --slot K [--pcs N] [--probe-ms 9000] [--stats-file F]\n"
@@ -241,9 +243,25 @@ void host_audio_thread(const Args* a, HostState* hs, AudioCapture* cap)
     }
 }
 
-int run_host(const Args& a)
+int run_host(const Args& a_in)
 {
+    Args a = a_in;
     HostState hs; hs.kbps = a.bitrate;
+    /* The DSU server comes up BEFORE Cemu is started: Cemu's DSU client does not retry once its first connect attempt failed. */
+    dsu::DsuServer dsus; bool dsu_on = false;
+    if (!a.no_dsu) {
+        dsu_on = dsus.start((uint16_t)a.dsu_port, true);
+        logf("host: DSU server on 127.0.0.1:%d %s", a.dsu_port, dsu_on ? "listening" : "FAILED to bind (guest pads will not reach Cemu)");
+    }
+    if (!a.await_file.empty() && !a.test_pattern) {   // the hub writes Cemu's PID here once the game window exists
+        uint32_t t0w = hubnet::now_ms();
+        while (a.capture.empty() && !g_stop && !quit_requested() && hubnet::now_ms() - t0w < 180000) {
+            if (FILE* f = fopen(a.await_file.c_str(), "rb")) { char b[64] = {0}; size_t n = fread(b, 1, sizeof b - 1, f); fclose(f); if (n) { a.capture = b; while (!a.capture.empty() && (a.capture.back() == '\n' || a.capture.back() == '\r' || a.capture.back() == ' ')) a.capture.pop_back(); } }
+            if (a.capture.empty()) Sleep(100);
+        }
+        if (a.capture.empty()) { logf("host: no capture target was given"); return g_stop || quit_requested() ? 0 : 5; }
+        logf("host: capture target %s", a.capture.c_str());
+    }
     std::unique_ptr<CaptureSource> src; uint32_t pid = 0;
     if (a.test_pattern) src = make_test_pattern(1280, 720, a.fps);
     else {
@@ -281,11 +299,6 @@ int run_host(const Args& a)
     WSADATA wd; WSAStartup(MAKEWORD(2, 2), &wd);
     SOCKET padsock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     sockaddr_in pad_to = {}; pad_to.sin_family = AF_INET; pad_to.sin_port = htons((u_short)a.pad_port); inet_pton(AF_INET, "127.0.0.1", &pad_to.sin_addr);
-    dsu::DsuServer dsus; bool dsu_on = false;   // guests' pads reach Cemu (players 2-4, DSUController) through this embedded cemuhook server
-    if (!a.no_dsu) {
-        dsu_on = dsus.start((uint16_t)a.dsu_port, true);
-        logf("host: DSU server on 127.0.0.1:%d %s", a.dsu_port, dsu_on ? "listening" : "FAILED to bind (guest pads will not reach Cemu)");
-    }
 
     hubnet::Session sess; std::thread up;
     if (!start_session(sess, a, a.upnp, &up)) return 4;

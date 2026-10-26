@@ -43,7 +43,6 @@ if (Test-Path $Work) {   # previous run: only processes that live under $Work
 }
 New-Item -ItemType Directory -Force $Work, "$Work\games", "$Work\noroms" | Out-Null
 if (-not (Get-ChildItem "$Work\games" -ErrorAction SilentlyContinue)) { Copy-Item $Archive "$Work\games\" }   # the original archive is only ever read
-RDesk::Desk($Desktop) 2>$null
 [RDesk]::Desk($Desktop)
 $pids = @()
 for ($i = 0; $i -lt 2; $i++) {
@@ -111,9 +110,9 @@ Check ((Txt "$cz\portable\controllerProfiles\controller0.xml") -notmatch "DSUCon
 Check ($hs -match "guest slot 1 joined") "guest slot 1 joined the stream"
 Check ($gs -match "session ready \(direct UDP, relay disabled\)") "guest connected directly (relay disabled)"
 $st = Txt "$Work\inst0\userdata\rplay_status.json"
-Check ($st -match '"pads":[1-9]') "guest pad packets reached the host DSU feed ($($st.Trim()))"
+Check ($ht -match "rplay-pads: guest pad packets seen by the host = [1-9]" -and $hs -match "pads=[1-9]\d*") "guest scripted pad packets reached the host's DSU feed (host streamrun: $([regex]::Match($hs, 'pads=\d+').Value))"
 $clog = Txt "$cz\portable\log.txt"
-Check ($clog -match "DSU|dsu|Controller" -or $st -match '"dsu_clients":[1-9]') "Cemu connected to the DSU server (status dsu_clients >= 1 / Cemu log)"
+Check ($ht -match "rplay-dsu: clients=[1-9]") "Cemu connected to the DSU server as a client (status dsu_clients >= 1)"
 Check ($ht -match "rplay-status: streaming to") "host status line produced ('streaming to <guest> . Mbps . ms')"
 if ($Scenario -eq "leave") {
   Check ($gs -match "menu opened" -and $gs -match "menu leave") "guest View+Y menu opened and Leave chosen"
@@ -130,3 +129,4 @@ Check ($ht -match "rplay: asked pid") "hub used the quit event, not TerminatePro
 foreach ($p in Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase) }) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 foreach ($p in $pids) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }
 if ($fail) { "RESULT: $fail FAILED"; exit 1 } else { "RESULT: all passed" }
+

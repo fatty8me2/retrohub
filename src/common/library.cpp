@@ -1332,6 +1332,8 @@ static bool id_wiiu_archive(const fs::path& arch, GameEntry* e) {
     g.system = System::WiiU;
     g.title = title_from_filename(utf8_path(path_utf8(utf8_path(ent.name).filename())));
     g.key = "wiiu:file-" + sanitize_key(g.title);
+    for (const auto& c : catalog())   // no title id before unpacking: a catalog game of the same name still gets its catalog id (remote-play rooms name games by it, so guests can find the stand-in)
+        if (c.system == "wiiu" && ascii_lower(c.title) == ascii_lower(g.title)) { g.catalog_id = c.id; break; }
     g.path = path_utf8(arch);
     g.issue = "extract";
     g.unpacked = ent.size;

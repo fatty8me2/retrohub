@@ -33,7 +33,7 @@ int main() {
         CHECK((hubcaps::online_unsupported_reason(r.s)[0] == 0) == r.branch);   // only systems with no branch carry a reason
         CHECK(hubcaps::default_online_max(r.s) >= 2 && hubcaps::default_online_max(r.s) <= 4);
     }
-    CHECK(std::string(hubcaps::online_unsupported_reason(System::WiiU)) == "Wii U online isn't supported yet");
+    CHECK(std::string(hubcaps::online_unsupported_reason(System::WiiU)).empty() && hubcaps::remote_play_system(System::WiiU) && !hubcaps::remote_play_system(System::GC));   // Wii U = remote play now
     CHECK(hubcaps::default_online_max(System::PS2) == 2);
     /* PS2: catalog games flagged online are capable and capped at 2 players (LRPS2 has no multitap); anything else is offered as "untested". */
     {
@@ -105,6 +105,7 @@ int main() {
         std::string st = "{\"t\":1,\"kbps\":12000,\"guests\":[{\"slot\":1,\"rtt_ms\":48,\"loss_permille\":0}]}";
         CHECK(hubrp::status_text(st, names) == "streaming to Mickey · 12 Mbps · 48 ms");
         CHECK(hubrp::status_text("{\"kbps\":5,\"guests\":[]}", names).empty());
+        CHECK(hubrp::host_args(0, "wss://x", "R-1", 2, false, "s.json", 0, "p.pid").find("--await-pid-file \"p.pid\"") != std::string::npos && hubrp::host_args(0, "wss://x", "R-1", 2, false, "s.json", 0, "p.pid").find("--capture-hwnd") == std::string::npos);   // streamrun first (DSU up before Cemu), Cemu's PID later
         CHECK(hubrp::host_args(7, "wss://x", "R-1", 2, false, "s.json", 26761).find("--status-file \"s.json\" --dsu-port 26761") != std::string::npos);
     }
     CHECK(hubrp::launch_is_remote("{\"kind\":\"launch\"" + hubrp::launch_fragment(3) + "}") && !hubrp::launch_is_remote("{\"kind\":\"launch\"}"));

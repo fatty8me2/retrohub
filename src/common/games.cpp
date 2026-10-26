@@ -489,7 +489,7 @@ const std::vector<GameInfo>& catalog() {
          "Legend of Zelda, The - Twilight Princess HD (USA) (En,Fr,Es) (Rev 2)"},
         /* Wii U couch co-op: online = "Remote play" (the host's Cemu is streamed to guests; online_max is how many pads the host can bind). */
         {"sm3dw", "Super Mario 3D World", Engine::Cemu, 4, {}, "", "wiiu",
-         {"0005000010145D00"}, true, 2013,
+         {"0005000010145C00", "0005000010145D00", "0005000010106100"}, true, 2013,   /* USA, EUR, JPN */
          "Run, jump and cat-suit through 3D courses with up to four players at once.",
          "Super Mario 3D World (USA)"},
         {"mk8", "Mario Kart 8", Engine::Cemu, 4, {}, "", "wiiu",

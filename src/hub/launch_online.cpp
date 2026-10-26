@@ -405,6 +405,7 @@ struct RPlay {
     ULONGLONG t0 = 0;
     std::string room;
     int members = 1;
+    std::string pid_file;       // streamrun --await-pid-file: we write Cemu's PID here once its window exists
     std::string status_file, status_text;   // streamrun --status-file (1 Hz JSON) -> "streaming to ..." line
     ULONGLONG status_at = 0;
     std::map<int, std::string> names;       // slot -> name of the guests being streamed to
@@ -547,13 +548,26 @@ void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
         RunInfo r = run_info_for(e, true);
         r.room = true;
         r.dsu_players = hubrp::guest_count((int)A.lobby.members().size());   // guests' pads = Cemu players 2.. on DSU slots (this launch only)
-        launch_external(e, r, "");   // the host's Cemu + save sync work exactly like offline play
-        if (!A.proc) { host_abort("the host's Cemu did not start"); return; }
-        RP.pending = true;
-        RP.t0 = GetTickCount64();
         RP.room = room;
         RP.members = (int)A.lobby.members().size();
         RP.names = member_names();
+        /* streamrun --host starts first: its DSU server has to be listening when Cemu starts (Cemu's DSU client does not retry). It captures
+         * Cemu once poll_rplay() writes the PID of Cemu's window owner into RP.pid_file. */
+        RP.pid_file = hub::data_dir() + "rplay_cemu.pid";
+        RP.status_file = hub::data_dir() + "rplay_status.json";
+        std::remove(RP.pid_file.c_str());
+        std::remove(RP.status_file.c_str());
+        std::string args = hubrp::host_args(0, server_url(), RP.room, RP.members, !autotest_active(), RP.status_file, 0, RP.pid_file);
+        if (qa_pattern()) { size_t p = args.find("--await-pid-file "); if (p != std::string::npos) { size_t e2 = args.find(" --net", p); args.replace(p, e2 - p, "--test-pattern"); } }
+        args += qa_extra();
+        if (RP.proc) { CloseHandle(RP.proc); RP.proc = nullptr; }
+        if (!start_hidden(sr, args, &RP.proc)) { launch_note(true, "Could not start remote play (streamrun error " + std::to_string(GetLastError()) + ")."); return; }
+        autotest_log("rplay: streamrun started before Cemu, args " + args);
+        Sleep(400);   // let the DSU server bind before Cemu reads its controller profiles
+        launch_external(e, r, "");   // the host's Cemu + save sync work exactly like offline play
+        if (!A.proc) { rplay_stop(); host_abort("the host's Cemu did not start"); return; }
+        RP.pending = true;
+        RP.t0 = GetTickCount64();
         set_notice("Starting " + e.title + " - remote play connects once the game window appears...", 10.0);
         return;
     }
@@ -616,7 +630,15 @@ void poll_rplay() {
     if (RP.proc && !A.proc) rplay_stop();   // Cemu closed: end the stream (guests see the host's game end)
     if (RP.proc && nowt - RP.status_at > 1000) {   // "streaming to Mickey - 12 Mbps - 48 ms"
         RP.status_at = nowt;
-        std::string st = hubrp::status_text(read_small(RP.status_file), RP.names);
+        std::string raw = read_small(RP.status_file);
+        if (autotest_active()) {   // QA evidence: is Cemu (a DSU client) attached, and have the guest's pad packets arrived
+            static int last_dsu = -1, last_pads = -1;
+            size_t d = raw.find("\"dsu_clients\":"), pp = raw.find("\"pads\":");
+            int dc = d == std::string::npos ? -1 : std::atoi(raw.c_str() + d + 14), pc = pp == std::string::npos ? -1 : std::atoi(raw.c_str() + pp + 7);
+            if (dc != last_dsu) { last_dsu = dc; autotest_log("rplay-dsu: clients=" + std::to_string(dc) + " (Cemu attached to the DSU server when >= 1)"); }
+            if ((pc > 0) != (last_pads > 0)) { last_pads = pc; autotest_log("rplay-pads: guest pad packets seen by the host = " + std::to_string(pc)); }
+        }
+        std::string st = hubrp::status_text(raw, RP.names);
         if (st != RP.status_text && autotest_active() && !st.empty()) autotest_log("rplay-status: " + st);
         RP.status_text = st;
     }
@@ -632,19 +654,8 @@ void poll_rplay() {
         case hubrp::Attach::Now: break;
     }
     RP.pending = false;
-    std::string sr = streamrun_path();
-    RP.status_file = hub::data_dir() + "rplay_status.json";
-    std::remove(RP.status_file.c_str());
-    std::string args = hubrp::host_args(pid, server_url(), RP.room, RP.members, !autotest_active(), RP.status_file);
-    if (qa_pattern()) { size_t p = args.find("--capture-hwnd "); if (p != std::string::npos) { size_t e2 = args.find(' ', p + 15); args.replace(p, e2 - p, "--test-pattern"); } }
-    args += qa_extra();
-    if (!start_hidden(sr, args, &RP.proc)) {
-        set_notice("Could not start remote play (streamrun error " + std::to_string(GetLastError()) + ").", 12.0);
-        host_abort("remote play could not start");
-        request_game_close();
-        return;
-    }
-    autotest_log("rplay: streamrun attached to pid " + std::to_string(pid) + " args " + args);
+    if (FILE* f = fopen(RP.pid_file.c_str(), "wb")) { std::string v = std::to_string(pid); fwrite(v.data(), 1, v.size(), f); fclose(f); }   // streamrun captures this PID's window
+        autotest_log("rplay: streamrun attached to Cemu pid " + std::to_string(pid));
 }
 
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
