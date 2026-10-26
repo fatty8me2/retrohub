@@ -1,4 +1,6 @@
 #include "app.h"
+#include "online_caps.h"
+#include "remote_play.h"
 
 void page_online_home() {
     page_header("Play Online", "Host a room and share the code, or join a friend's room.");
@@ -95,6 +97,7 @@ void host_launch_selected() {
             if ((rg->system == hub::System::GB || rg->system == hub::System::GBC || rg->system == hub::System::GBA) && hub::link_cable_game(rg->catalog_id))
                 np_extra += std::string(",\"np_link\":{\"core\":\"") + (rg->system == hub::System::GBA ? "mgba" : "sameboy") + "\",\"consoles\":2}";
             if (rg->system == hub::System::NDS) np_extra += ",\"np_ds\":" + hubui::np_ds_json();
+            if (remote_play_entry(*rg)) np_extra += hubrp::launch_fragment((int)peers.size());
             np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
             np_extra += cheats_launch_fragment(*rg);
             if (gc_ok) {
@@ -122,8 +125,9 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
     }
     if (!rg) return "";
     if (A.proc) return "You're in a game right now.";
-    auto sel = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0);
+    auto sel = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0, remote_play_entry(*rg));   // remote play: guests need no copy
     if (!sel.ok) return sel.reason;
+    if (host && remote_play_entry(*rg) && is_remote_stand_in(*rg)) return "You need your own copy of " + rg->title + " to host remote play.";
     std::string host_app;
     bool host_hello = false;
     for (auto& p : peers) if (p.slot == 0) { host_app = p.app; host_hello = p.hello; }
@@ -177,6 +181,8 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
         else if (A.room_update_none) extra = "No newer release is published yet. Ask the host which version they're on.";
     }
 
+    if (extra.empty() && rg && remote_play_entry(*rg) && block.empty())   // remote play banner: who needs the game, and how it connects
+        extra = host ? "Remote play: you run the game and stream it to the others." : hubcaps::remote_play_banner();
     ImU32 tone = st.tone == hubui::RoomTone::Good ? ui::GOOD : st.tone == hubui::RoomTone::Bad ? ui::BAD : st.tone == hubui::RoomTone::Warn ? ui::WARN : ui::ACCENT;
     float W = ImGui::GetContentRegionAvail().x;
     float H = 108 * S;

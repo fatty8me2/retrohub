@@ -41,4 +41,8 @@ std::string smash_exe_path() {
     return "";
 }
 std::string n64run_path() { return hub::exe_dir() + "n64run.exe"; }
+std::string streamrun_path() {
+    std::string p = hub::exe_dir() + "streamrun.exe";
+    return file_exists(p) ? p : find_upward("build\\Release\\streamrun.exe");
+}
 
