@@ -80,7 +80,7 @@ if (-not $NoServer) {
   $srvPid = $wr.Id
   $ok = $false
   for ($i = 0; $i -lt 90; $i++) { Start-Sleep 1; try { $c = New-Object Net.Sockets.TcpClient; $c.Connect("127.0.0.1", $Port); $c.Close(); $ok = $true; break } catch {} }
-  if (-not $ok) { Stop-Process -Id $srvPid -Force -ErrorAction SilentlyContinue; throw "wrangler did not come up on $Port (port $Port)" }
+  if (-not $ok) { Stop-Process -Id $srvPid -Force -ErrorAction SilentlyContinue; throw "wrangler did not come up on $Port" }
   Write-Host "local wrangler pid $srvPid on $Port"
 }
 
