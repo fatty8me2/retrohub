@@ -1,7 +1,7 @@
 # Rollback netplay under 4-5 s network stalls (HUBNET_SIM_SPIKE_*), headless + muted, LOCAL server only.
 # Usage: powershell -File qa\rb_stall_online.ps1 [-Server ws://127.0.0.1:11700] [-Iter 2]
 # SNES 4-player multitap (relay and direct), NES/SNES 2-player, plus an every-peer spike: nobody may desync, be dropped, or exit non-zero.
-param([string]$Server = 'ws://127.0.0.1:8761', [int]$Iter = 1, [switch]$Relay4P)   # 4P over the local-wrangler relay fails even without any stall on this PC (pre-existing, load-dependent): opt in with -Relay4P
+param([string]$Server = 'ws://127.0.0.1:8761', [int]$Iter = 1, [switch]$Relay4P)     # 4P relay scenarios are slow (opt in)
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $fail = 0
 $env:HUBNET_SIM_ENABLE = '1'; $env:HUBNET_SIM_LATENCY_MS = '40'; $env:HUBNET_SIM_JITTER_MS = '30'; $env:HUBNET_SIM_LOSS_PCT = '2'
