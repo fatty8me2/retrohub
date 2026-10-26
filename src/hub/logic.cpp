@@ -55,6 +55,11 @@ std::string settings_to_json(const Settings& s) {
       << "  \"gb_core\": \"" << json::escape(s.gb_core) << "\",\n"
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
       << "  \"start_hint\": " << (s.start_hint ? "true" : "false") << ",\n"
+      << "  \"boot_anim\": " << (s.boot_anim ? "true" : "false") << ",\n"
+      << "  \"boot_sounds\": " << (s.boot_sounds ? "true" : "false") << ",\n"
+      << "  \"boot_volume\": " << s.boot_volume << ",\n"
+      << "  \"boot_short\": " << (s.boot_short ? "true" : "false") << ",\n"
+      << "  \"boot_skip_online\": " << (s.boot_skip_online ? "true" : "false") << ",\n"
       << "  \"sync_folder\": \"" << json::escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"backup_shots\": " << (s.backup_shots ? "true" : "false") << ",\n"
@@ -71,6 +76,8 @@ std::string settings_to_json(const Settings& s) {
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
       << "  \"notify_in_game\": " << (s.notify_in_game ? "true" : "false") << ",\n"
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
+      << "  \"share_games\": " << (s.share_games ? "true" : "false") << ",\n"
+      << "  \"show_friend_games\": " << (s.show_friend_games ? "true" : "false") << ",\n"
       << "  \"share_playtime\": " << (s.share_playtime ? "true" : "false") << ",\n"
       << "  \"auto_friend\": " << (s.auto_friend ? "true" : "false") << ",\n"
       << "  \"username_claimed\": " << (s.username_claimed ? "true" : "false") << ",\n"
@@ -120,6 +127,11 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->gb_core = (core == "gambatte" || core == "sameboy") ? core : "sameboy";
     out->fullscreen = json_bool(j, "fullscreen", out->fullscreen);
     out->start_hint = json_bool(j, "start_hint", out->start_hint);
+    out->boot_anim = json_bool(j, "boot_anim", out->boot_anim);
+    out->boot_sounds = json_bool(j, "boot_sounds", out->boot_sounds);
+    out->boot_volume = std::max(0, std::min(100, (int)j.num("boot_volume", out->boot_volume)));
+    out->boot_short = json_bool(j, "boot_short", out->boot_short);
+    out->boot_skip_online = json_bool(j, "boot_skip_online", out->boot_skip_online);
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->backup_shots = json_bool(j, "backup_shots", out->backup_shots);
@@ -136,6 +148,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
+    out->share_games = json_bool(j, "share_games", out->share_games);
+    out->show_friend_games = json_bool(j, "show_friend_games", out->show_friend_games);
     out->share_playtime = json_bool(j, "share_playtime", out->share_playtime);
     out->username_claimed = json_bool(j, "username_claimed", out->username_claimed);
     out->cemu_manage_controls = json_bool(j, "cemu_manage_controls", out->cemu_manage_controls);
@@ -784,6 +798,7 @@ static std::string lower(const std::string& s) {
 
 bool list_item_less(const ListItem& x, const ListItem& y, SortMode mode) {
     if (x.pinned != y.pinned) return x.pinned;
+    if (x.ghost != y.ghost) return y.ghost;
     unsigned long long a = 0, b = 0;
     if (mode == SortMode::LastPlayed) { a = x.last_played; b = y.last_played; }
     else if (mode == SortMode::MostPlayed) { a = x.play_seconds; b = y.play_seconds; }
@@ -832,11 +847,13 @@ std::string system_shelf_title(const std::string& s) {
     if (s == "nds") return "Nintendo DS";
     if (s == "ps1") return "PlayStation";
     if (s == "ps2") return "PlayStation 2";
+    if (s == "nes") return "Nintendo Entertainment System";
+    if (s == "snes") return "Super Nintendo";
     return s;
 }
 
 const std::vector<std::string>& console_order() {
-    static const std::vector<std::string> v = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "gba", "gbc", "gb"};
+    static const std::vector<std::string> v = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "nes", "snes", "gba", "gbc", "gb"};
     return v;
 }
 
@@ -871,16 +888,16 @@ std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_rece
     };
     std::vector<Shelf> out;
     std::vector<unsigned long long> lp;
-    for (auto& e : g) lp.push_back(e.last_played);
+    for (auto& e : g) lp.push_back(e.ghost ? 0 : e.last_played);
     Shelf recent{"recent", "Continue Playing", pick_recent(lp, max_recent)};
     if (!recent.items.empty()) out.push_back(recent);
     Shelf favs{"favs", "Favorites", {}};
     for (size_t i = 0; i < g.size(); ++i)
-        if (g[i].favorite) favs.items.push_back((int)i);
+        if (g[i].favorite && !g[i].ghost) favs.items.push_back((int)i);
     by_title(favs.items);
     if (!favs.items.empty()) out.push_back(favs);
     std::vector<ListItem> li;
-    for (auto& e : g) li.push_back({e.key, e.title, e.system, e.pinned, e.last_played, e.play_seconds, e.added});
+    for (auto& e : g) { ListItem it{e.key, e.title, e.system, e.pinned, e.last_played, e.play_seconds, e.added}; it.ghost = e.ghost; li.push_back(it); }
     for (auto& cs : group_by_console(li, nullptr, mode)) {
         Shelf sh{"console:" + cs.system, cs.title, cs.items};
         out.push_back(sh);
@@ -923,15 +940,15 @@ std::vector<int> pick_unowned(const std::vector<bool>& owned, const std::vector<
 }
 
 int pick_hero(const std::vector<ShelfGame>& g, const std::string& preferred_key) {
-    if (g.empty()) return -1;
+    if (g.empty() || g[0].ghost) return -1;   // ghosts sort after owned games, so a leading ghost means nothing is owned
     for (size_t i = 0; i < g.size(); ++i)
-        if (!preferred_key.empty() && g[i].key == preferred_key) return (int)i;
+        if (!g[i].ghost && !preferred_key.empty() && g[i].key == preferred_key) return (int)i;
     int best = -1;
     for (size_t i = 0; i < g.size(); ++i)
-        if (g[i].last_played > 0 && (best < 0 || g[i].last_played > g[best].last_played)) best = (int)i;
+        if (!g[i].ghost && g[i].last_played > 0 && (best < 0 || g[i].last_played > g[best].last_played)) best = (int)i;
     if (best >= 0) return best;
     for (size_t i = 0; i < g.size(); ++i)
-        if (g[i].favorite) return (int)i;
+        if (!g[i].ghost && g[i].favorite) return (int)i;
     return 0;
 }
 
@@ -1227,6 +1244,9 @@ std::vector<int> friends_playing(const std::vector<FriendRow>& rows, size_t max_
 
 std::string ask_toast_title(const std::string& name, const std::string& game) {
     return name + " wants to join your game" + (game.empty() ? std::string() : " (" + game + ")");
+}
+std::string ask_host_toast_title(const std::string& name, const std::string& game) {
+    return name + " wants to play" + (game.empty() ? std::string(" a game") : " " + game) + " - host a room?";
 }
 std::string ask_sent_text(const std::string& name) { return "Asked " + name + " to join. They will get a request to invite you."; }
 std::string ask_limited_text(const std::string& name, long long wait_ms) {

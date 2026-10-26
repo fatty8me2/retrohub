@@ -38,6 +38,10 @@ add_executable(hubcontrols_test test_controls.cpp)
 target_include_directories(hubcontrols_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../n64run ${CMAKE_CURRENT_SOURCE_DIR}/../retrorun)
 target_link_libraries(hubcontrols_test PRIVATE hubcommon)
 
+# NES / SNES: header detection, scan, cheat formats, profiles, settings.
+add_executable(nes_snes_test test_nes_snes.cpp)
+target_link_libraries(nes_snes_test PRIVATE hubcommon hubminiz)
+
 # "Find my games": folder ranking / collapsing, emulator config parsers, bounded scan of a scratch tree.
 add_executable(findgames_test test_findgames.cpp)
 target_link_libraries(findgames_test PRIVATE hubcommon)

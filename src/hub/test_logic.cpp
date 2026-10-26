@@ -203,7 +203,7 @@ int main() {
 
     /* All Games: grouped by console */
     {
-        const std::vector<std::string> want = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "gba", "gbc", "gb"};
+        const std::vector<std::string> want = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "nes", "snes", "gba", "gbc", "gb"};
         CHECK(console_order() == want);
         std::vector<ListItem> it = {
             {"gb:1", "Tetris", "gb", false},          // 0
@@ -726,6 +726,36 @@ int main() {
         s = room_action_state(true, false, "", "", false, h);
         CHECK(!s.button_enabled && s.headline == "Pick a game to start");
         CHECK(join_names({}) == "" && join_names({"A"}) == "A" && join_names({"A", "B", "C"}) == "A, B and C");
+    }
+
+    {   // friends' games (ghosts): after owned games in their console, never in Continue Playing / Favorites / hero
+        std::vector<ShelfGame> g(4);
+        g[0].key = "a"; g[0].title = "Zebra"; g[0].system = "n64"; g[0].last_played = 100;
+        g[1].key = "ghost:g1"; g[1].title = "Aardvark"; g[1].system = "n64"; g[1].ghost = true; g[1].last_played = 999; g[1].favorite = true;
+        g[2].key = "b"; g[2].title = "Mango"; g[2].system = "n64"; g[2].favorite = true;
+        g[3].key = "ghost:g2"; g[3].title = "Solo"; g[3].system = "gc"; g[3].ghost = true;
+        auto sh = compose_shelves(g, 12, SortMode::Title);
+        bool ok_recent = false, ok_console = false, only_ghost_console = false;
+        for (auto& s : sh) {
+            if (s.id == "recent") ok_recent = s.items.size() == 1 && s.items[0] == 0;
+            if (s.id == "favs") CHECK(s.items.size() == 1 && s.items[0] == 2);
+            if (s.id == "console:n64") ok_console = s.items.size() == 3 && s.items[0] == 2 && s.items[1] == 0 && s.items[2] == 1;
+            if (s.id == "console:gc") only_ghost_console = s.items.size() == 1;
+        }
+        CHECK(ok_recent && ok_console && only_ghost_console);
+        CHECK(pick_hero(g, "") == 0);
+        std::vector<ShelfGame> only = {g[1], g[3]};
+        CHECK(pick_hero(only, "") == -1);
+        std::vector<ListItem> li = {{"a", "Zed", "n64", false, 0, 0, 0}, {"g", "Abe", "n64", false, 0, 0, 0}};
+        li[1].ghost = true;
+        CHECK(filter_sort(li, "", "", SortMode::Title).front() == 0);       // owned first even though the ghost is alphabetically earlier
+        CHECK(filter_sort(li, "", "", SortMode::MostPlayed).front() == 0);
+        Settings st;
+        CHECK(st.share_games && st.show_friend_games);   // both default on
+        st.share_games = false; st.show_friend_games = false;
+        Settings back;
+        CHECK(settings_from_json(settings_to_json(st), &back) && !back.share_games && !back.show_friend_games);
+        CHECK(ask_host_toast_title("Mia", "Mario Kart 64") == "Mia wants to play Mario Kart 64 - host a room?");
     }
 
     {   // Settings tabs: every control of the old single-page Settings (plus the cloud toggles) still exists, exactly once

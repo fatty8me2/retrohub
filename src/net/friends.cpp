@@ -480,6 +480,7 @@ struct FriendsClient::Impl {
         Friend f;
         f.uid = j.str("uid"); f.code = j.str("code"); f.name = j.str("name"); f.note = j.str("note");
         f.since = jnum(j, "since");
+        f.lib_ver = jnum(j, "lib");
         f.status = parse_status(j.get("status"));
         return f;
     }
@@ -503,7 +504,7 @@ struct FriendsClient::Impl {
         m.id = j.str("id"); m.from = j.str("from"); m.from_name = j.str("from_name"); m.to = j.str("to");
         m.invite = j.str("kind") == "invite";
         m.ask = j.str("kind") == "ask";
-        if (m.ask) m.inv = parse_invite(j.get("ask"));
+        if (m.ask) { m.inv = parse_invite(j.get("ask")); if (const Json* a = j.get("ask")) m.ask_host = jbool(*a, "host"); }
         m.text = j.str("text");
         if (!m.ask) m.inv = parse_invite(j.get("invite"));
         m.at = jnum(j, "at");
@@ -631,6 +632,107 @@ struct FriendsClient::Impl {
         ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\",\"auto_friend\":" + (auto_friend ? "true" : "false") + (is_test_client() ? ",\"test\":true" : "") + (username_pending() ? ",\"no_auto_username\":true" : "") + "}");
     }
 
+    /* ---- game libraries (metadata only; docs/FRIENDS.md "Game libraries") */
+    std::vector<LibGame> pub_games; bool pub_share = true, pub_set = false;
+    std::string pub_h, server_h, sent_h;
+    struct FLib { int64_t ver = 0; std::vector<LibGame> games; };
+    std::map<std::string, FLib> flibs;
+    uint32_t lib_epoch = 0, last_lib_save = 0, last_fetch = 0, fetch_at = 0;
+    bool flibs_dirty = false;
+    std::string fetching;
+    std::string flibs_path() const { return data_dir + "friend_libs.json"; }
+    static void parse_games(const Json* a, std::vector<LibGame>* out)
+    {
+        if (!a) return;
+        for (const Json& g : a->a) {
+            LibGame x; x.sys = g.str("s"); x.key = g.str("k"); x.cid = g.str("c"); x.title = g.str("t");
+            if (!x.sys.empty() && !x.key.empty() && out->size() < kMaxLibGames) out->push_back(std::move(x));
+        }
+    }
+    static std::string games_json(const std::vector<LibGame>& v)
+    {
+        std::string o = "[";
+        for (size_t i = 0; i < v.size(); i++) {
+            if (i) o += ",";
+            o += "{\"s\":" + q(v[i].sys) + ",\"k\":" + q(v[i].key) + (v[i].cid.empty() ? "" : ",\"c\":" + q(v[i].cid)) + ",\"t\":" + q(v[i].title) + "}";
+        }
+        return o + "]";
+    }
+    void load_flibs()
+    {
+        flibs.clear();
+        std::string txt; Json j;
+        if (!read_file(flibs_path(), &txt) || !json_parse(txt, &j) || j.type != Json::Object) return;
+        const Json* m = j.get("libs");
+        if (!m || m->type != Json::Object) return;
+        for (auto& kv : m->o) {
+            if (!is_b32(kv.first, 26)) continue;
+            FLib f; f.ver = jnum(kv.second, "ver");
+            parse_games(kv.second.get("games"), &f.games);
+            if (f.ver > 0) flibs[kv.first] = std::move(f);
+        }
+    }
+    void save_flibs(bool force)
+    {
+        uint32_t now = now_ms();
+        if (!flibs_dirty || (!force && now - last_lib_save < 5000)) return;
+        last_lib_save = now; flibs_dirty = false;
+        std::string o = "{\"libs\":{";
+        bool first = true;
+        for (auto& kv : flibs) {
+            o += (first ? "" : ",") + q(kv.first) + ":{\"ver\":" + std::to_string(kv.second.ver) + ",\"games\":" + games_json(kv.second.games) + "}";
+            first = false;
+        }
+        o += "}}";
+        std::error_code ec; fs::create_directories(upath(data_dir), ec);
+        write_file(flibs_path(), o);
+    }
+    void send_library()
+    {
+        if (!pub_set || !welcomed || pub_h == server_h || pub_h == sent_h) return;
+        sent_h = pub_h;
+        send(std::string("{\"type\":\"library\",\"share\":") + (pub_share ? "true" : "false") + ",\"h\":" + q(pub_h) +
+             ",\"games\":" + (pub_share ? games_json(pub_games) : "[]") + "}");
+    }
+    /* Drops cached lists of people who are no longer friends or stopped sharing. */
+    void prune_flibs()
+    {
+        for (auto it = flibs.begin(); it != flibs.end();) {
+            const Friend* f = find(it->first);
+            if (!f || f->lib_ver == 0) { it = flibs.erase(it); flibs_dirty = true; ++lib_epoch; } else ++it;
+        }
+    }
+    /* One request at a time, at least 2 s apart (the server allows 60 a minute), only for lists whose version changed. */
+    void pump_fetch(uint32_t now)
+    {
+        if (!welcomed) return;
+        if (!fetching.empty() && now - fetch_at > 15000) fetching.clear();
+        if (!fetching.empty() || now - last_fetch < 2000) return;
+        for (const Friend& f : friends) {
+            if (f.lib_ver <= 0) continue;
+            auto it = flibs.find(f.uid);
+            if (it != flibs.end() && it->second.ver == f.lib_ver) continue;
+            fetching = f.uid; fetch_at = last_fetch = now;
+            send("{\"type\":\"friend_library\",\"uid\":" + q(f.uid) + ",\"have\":" + std::to_string(it == flibs.end() ? 0 : it->second.ver) + "}");
+            return;
+        }
+    }
+    void on_friend_library(const Json& j)
+    {
+        std::string uid = j.str("uid");
+        if (uid == fetching) fetching.clear();
+        Friend* f = find(uid);
+        if (!f) return;
+        int64_t ver = jnum(j, "ver");
+        if (ver <= 0) { f->lib_ver = 0; prune_flibs(); return; }
+        f->lib_ver = ver;
+        FLib& fl = flibs[uid];
+        if (jbool(j, "unchanged")) { fl.ver = ver; return; }
+        fl.ver = ver; fl.games.clear();
+        parse_games(j.get("games"), &fl.games);
+        flibs_dirty = true; ++lib_epoch;
+    }
+
     void normalize_lists() { dedupe_friends(friends, id.user_id); dedupe_requests(friends, incoming, outgoing, id.user_id); }
 
     /* Identity retirement: after this PC switches to an older/linked identity, the identity it replaced is
@@ -695,6 +797,10 @@ struct FriendsClient::Impl {
             events.push_back(std::move(e));
         }
         normalize_lists();
+        if (const Json* l = j.get("lib")) server_h = l->str("h"); else server_h.clear();
+        sent_h.clear(); fetching.clear();
+        prune_flibs();
+        send_library();
         send_retire();
         if (have_status) send("{\"type\":\"status\",\"status\":" + status_json(my_status) + "}");
 
@@ -743,6 +849,7 @@ struct FriendsClient::Impl {
         std::string nm = j.str("name");
         if (!nm.empty()) f->name = nm;
         f->status = parse_status(j.get("status"));
+        if (j.get("lib")) { f->lib_ver = jnum(j, "lib"); if (f->lib_ver == 0) prune_flibs(); }
         Event e;
         e.uid = f->uid; e.name = f->name;
         bool now = f->online();
@@ -758,6 +865,8 @@ struct FriendsClient::Impl {
         std::string type = j.str("type");
         if (type == "welcome") on_welcome(j);
         else if (type == "presence") on_presence(j);
+        else if (type == "friend_library") on_friend_library(j);
+        else if (type == "library_ack") server_h = j.str("h");
         else if (type == "playtime") {
             std::map<std::string, std::vector<PlayGame>> m;
             if (parse_playtime_reply(text, &m)) { pt_friends = std::move(m); ++pt_version; }
@@ -808,6 +917,7 @@ struct FriendsClient::Impl {
             if (pt_friends.erase(uid)) ++pt_version;
             if (Friend* f = find(uid)) nm = f->name;
             friends.erase(std::remove_if(friends.begin(), friends.end(), [&](const Friend& f) { return f.uid == uid; }), friends.end());
+            prune_flibs();
             Event e; e.kind = Event::FriendRemoved; e.uid = uid; e.name = nm;
             push_event(std::move(e));
         } else if (type == "msg") {
@@ -917,6 +1027,7 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
         if (!had_identity) write_file(d.fresh_marker(), "1");
     }
     d.load_retire();
+    d.load_flibs();
     d.started = true;
     d.gave_up = false;
     d.backoff_ms = 1000;
@@ -931,6 +1042,7 @@ void FriendsClient::stop()
 {
     Impl& d = *impl_;
     d.flush(true);
+    d.save_flibs(true);
     d.ws.close();
     d.started = d.welcomed = d.hello_sent = false;
     d.status_text = "Offline";
@@ -943,7 +1055,7 @@ void FriendsClient::update()
     if (!d.started) return;
     uint32_t now = now_ms();
 
-    if (now - d.last_flush > 2000) { d.last_flush = now; d.flush(false); }
+    if (now - d.last_flush > 2000) { d.last_flush = now; d.flush(false); d.save_flibs(false); }
     if (d.gave_up) return;
 
     if (d.reconnect_at) {
@@ -1006,6 +1118,7 @@ void FriendsClient::update()
         return;
     }
 
+    d.pump_fetch(now);
     if (d.welcomed && now - d.last_keepalive >= 20000) {
         d.last_keepalive = now;
         d.ws.send_text("{\"type\":\"keepalive\"}");
@@ -1148,11 +1261,27 @@ void FriendsClient::send_invite(const std::vector<std::string>& uids, const Invi
     impl_->send(o + "],\"invite\":" + Impl::invite_json(v) + "}");
 }
 
-void FriendsClient::ask_to_join(const std::string& uid, const std::string& game_id, const std::string& game_title, const std::string& system)
+void FriendsClient::ask_to_join(const std::string& uid, const std::string& game_id, const std::string& game_title, const std::string& system, bool host)
 {
     if (uid.empty() || !impl_->welcomed) return;
-    impl_->send("{\"type\":\"ask\",\"to\":" + q(uid) + ",\"game_id\":" + q(game_id) + ",\"game_title\":" + q(game_title) + ",\"system\":" + q(system) + "}");
+    impl_->send("{\"type\":\"ask\",\"to\":" + q(uid) + ",\"game_id\":" + q(game_id) + ",\"game_title\":" + q(game_title) + ",\"system\":" + q(system) + (host ? ",\"host\":true" : "") + "}");
 }
+
+void FriendsClient::publish_library(bool share, std::vector<LibGame> games)
+{
+    Impl& d = *impl_;
+    d.pub_share = share;
+    d.pub_games = share ? lib_normalize(std::move(games)) : std::vector<LibGame>();
+    d.pub_h = lib_hash(share, d.pub_games);
+    d.pub_set = true;
+    d.send_library();   // no-op until welcomed (the welcome sends it) and when the server already holds this exact list
+}
+const std::vector<LibGame>* FriendsClient::friend_library(const std::string& uid) const
+{
+    auto it = impl_->flibs.find(uid);
+    return it == impl_->flibs.end() ? nullptr : &it->second.games;
+}
+uint32_t FriendsClient::library_epoch() const { return impl_->lib_epoch; }
 
 void FriendsClient::ack(const std::vector<std::string>& ids) { if (!ids.empty()) impl_->ack_ids(ids); }
 void FriendsClient::rename(const std::string& name)

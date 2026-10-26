@@ -116,12 +116,12 @@ bool Core::load_core(const std::string& dll_path, std::string* err) {
          sysinfo_.library_version ? sysinfo_.library_version : "?", (int)sysinfo_.need_fullpath,
          (int)sysinfo_.block_extract, sysinfo_.valid_extensions ? sysinfo_.valid_extensions : "");
     fn_set_env_(t_env);
+    fn_init_();   // RetroArch order: Mesen's retro_set_video_refresh dereferences the console that retro_init creates
     fn_set_video_(t_video);
     fn_set_audio_(t_audio);
     fn_set_audio_batch_(t_audio_batch);
     fn_set_poll_(t_poll);
     fn_set_input_(t_input);
-    fn_init_();
     inited_ = true;
     return true;
 }
@@ -395,6 +395,7 @@ bool Core::environment(unsigned cmd, void* data) {
             rlog("core requested hardware rendering: not supported (software cores only)");
             return false;
         default:
+            if (std::getenv("RETRORUN_TRACE_ENV")) rlog("env cmd %u unsupported", cmd & 0xFFFF);
             return false;   // unknown / unsupported: tell the core so
     }
 }

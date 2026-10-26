@@ -224,3 +224,6 @@ Safety: retrorun only rolls back on cores whose savestates passed SyncTest, othe
 - **Tests**: `qa\ps1_synctest.ps1` (also `ctest -R ps1_synctest`), `qa\ps1_online.ps1 -Server ws://127.0.0.1:<port> -Scenarios quick|long|all` (direct, relay, bad network, 2 and 4 peers, host memory card, BIOS mismatch, peer kill; every peer must exit 0 with identical output + input hashes), unit tests in `n64run_lockstep_test` (wide packets under loss) and `retrorun_rollback_test` (6-byte inputs, stick packing).
 - **Discs**: `qa\make_ps1_netdisc.py` (4-pad SIO0 homebrew, `--interlace` for 480i) builds a MODE2/2352 `.cue/.bin` with EDC/ECC that boots from OpenBIOS; `qa\make_ps1_testdisc.py` has the ISO builder (`raw_mode2`).
 
+
+## NES / SNES online
+Rollback (--rollback) via Nestopia UE / Snes9x, verified with --synctest 8/16; qa\nes_snes_online.ps1 runs direct, relay, 3-4 player (SNES multitap on port 2), guest drop and host leave. NES 3-4 players: retrorun sets nestopia_select_adapter=ntsc (Four Score), but the test ROM does not see pads 3-4 yet, so NES 3-4P is unverified. retro_init now runs before the set_* callbacks (RetroArch order).

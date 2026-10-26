@@ -168,6 +168,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         lobby_tick();
         autotest_tick();
         fr_tick();
+        ghost_tick();
         group_tick();
         userflow_tick();
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
@@ -193,7 +194,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             if (!A.pending_play.empty() && !A.scanning) {   // library is loaded: start the favorite (offline)
                 std::string key = A.pending_play;
                 A.pending_play.clear();
-                if (const hub::GameEntry* g = find_entry(key)) { A.sel_game = key; hub::GameEntry copy = *g; play_entry(copy); }
+                if (const hub::GameEntry* g = find_entry(key)) { A.sel_game = key; hub::GameEntry copy = *g; play_entry_anim(copy, true); }
                 else set_notice("That game is not in your library any more.");
             }
         }
@@ -303,6 +304,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         ImGui::PushFont(ui::F.body);
         draw_frame();
+        if (shot_path) bootart_shot_draw(ren);   // HUB_SHOT_BOOTART gallery
         if (!shot_path || SH.update) draw_update_popup();
         osk::draw_root();
         ImGui::PopFont();

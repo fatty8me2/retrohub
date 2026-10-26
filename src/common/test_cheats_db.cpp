@@ -1,5 +1,7 @@
 /* Cheat database: normalization, region, matching (synthetic entries + the player's real ROMs, read-only), ranking. */
+#include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <map>
 #include <filesystem>
@@ -186,6 +188,76 @@ int main() {
         }
         std::printf("value cheats total: %d placeholders, %d fillable\n", ph, fill);
         if (total > 100000) { CHECK(ph > 4000); CHECK(fill * 100 >= ph * 95); }
+    }
+
+    {   // NES / SNES sections in the bundle: counts, format names ("gamegenie" | "par" | "raw") and code shapes per format
+        std::FILE* f = std::fopen(CHEATS_DATA_DIR "/cheats_db.bin", "rb");
+        CHECK(f != nullptr);
+        if (f) {
+            std::string packed; char buf[65536]; size_t k;
+            while ((k = std::fread(buf, 1, sizeof buf, f)) > 0) packed.append(buf, k);
+            std::fclose(f);
+            size_t n = 0;
+            void* p = tinfl_decompress_mem_to_heap(packed.data(), packed.size(), &n, TINFL_FLAG_PARSE_ZLIB_HEADER);
+            std::string raw = p ? std::string((const char*)p, n) : std::string();
+            if (p) mz_free(p);
+            auto hexn = [](const std::string& x, size_t from, size_t len) {
+                if (x.size() < from + len) return false;
+                for (size_t i = from; i < from + len; ++i) if (!std::isxdigit((unsigned char)x[i])) return false;
+                return true;
+            };
+            auto shape_ok = [&](bool snes, const std::string& fmt, const std::string& part) {
+                if (fmt == "gamegenie") {
+                    if (snes) return part.size() == 9 && hexn(part, 0, 4) && part[4] == '-' && hexn(part, 5, 4);
+                    if (part.size() != 6 && part.size() != 8) return false;
+                    for (char c : part) if (!std::strchr("APZLGITYEOXUKSVN", c)) return false;
+                    return true;
+                }
+                if (fmt == "par") return snes && part.size() == 8 && hexn(part, 0, 8);
+                if (fmt == "raw")
+                    return snes ? (part.size() == 9 && hexn(part, 0, 6) && part[6] == ':' && hexn(part, 7, 2))
+                                : (part.size() == 7 && hexn(part, 0, 4) && part[4] == ':' && hexn(part, 5, 2));
+                return false;
+            };
+            size_t games[2] = {0, 0}, cheats_n[2] = {0, 0}, bad = 0;
+            std::map<std::string, size_t> fmts;
+            int cur = -1; std::string secfmt;
+            size_t pos = 0;
+            while (pos < raw.size()) {
+                size_t nl = raw.find('\n', pos); if (nl == std::string::npos) nl = raw.size();
+                std::string line = raw.substr(pos, nl - pos); pos = nl + 1;
+                if (line.empty() || line.compare(0, 6, "RHCHT1") == 0) continue;
+                if (line[0] == '@') {
+                    size_t t1 = line.find('\t'), t2 = line.find('\t', t1 + 1);
+                    std::string sysn = line.substr(1, t1 - 1);
+                    cur = sysn == "nes" ? 0 : sysn == "snes" ? 1 : -1;
+                    secfmt = line.substr(t1 + 1, t2 - t1 - 1);
+                    if (cur >= 0) ++games[cur];
+                    continue;
+                }
+                if (cur < 0) continue;
+                std::string fmt = secfmt;
+                if (line[0] == '!') { size_t t1 = line.find('\t'); fmt = line.substr(1, t1 - 1); line = line.substr(t1 + 1); }
+                size_t t = line.rfind('\t'); if (t == std::string::npos) { ++bad; continue; }
+                ++cheats_n[cur]; ++fmts[std::string(cur ? "snes " : "nes ") + fmt];
+                std::string codes = line.substr(t + 1);
+                size_t b = 0; bool ok = !codes.empty();
+                while (ok && b <= codes.size()) {
+                    size_t e = codes.find('+', b); if (e == std::string::npos) e = codes.size();
+                    ok = shape_ok(cur == 1, fmt, codes.substr(b, e - b));
+                    b = e + 1;
+                }
+                if (!ok) ++bad;
+            }
+            std::printf("NES: %zu games %zu cheats; SNES: %zu games %zu cheats; %zu malformed\n", games[0], cheats_n[0], games[1], cheats_n[1], bad);
+            for (auto& kv : fmts) std::printf("  %-16s %zu\n", kv.first.c_str(), kv.second);
+            CHECK(bad == 0);
+            CHECK(games[0] > 1500 && cheats_n[0] > 30000);
+            CHECK(games[1] > 1800 && cheats_n[1] > 50000);
+            CHECK(fmts["nes gamegenie"] > 10000 && fmts["nes raw"] > 5000);
+            CHECK(fmts["snes gamegenie"] > 10000 && fmts["snes par"] > 10000);
+            CHECK(fmts.count("nes par") == 0 && fmts.count("snes ar") == 0);
+        }
     }
 
     std::printf(g_fail ? "cheats_db_test: %d FAILED\n" : "cheats_db_test: ok\n", g_fail);

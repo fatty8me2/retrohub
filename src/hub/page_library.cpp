@@ -34,6 +34,13 @@ void home_shelves() {
         shelf_strip("shelf_" + sh.id, (int)sh.items.size() + lead, tw, th, [&](int i, ImVec2 sz) {
             if (lead && i == 0) return add_games_tile(sz);
             i -= lead;
+            if (sh.items[i] >= (int)A.lib.size()) {   // a friend's game you do not own
+                const hubui::fg::Ghost& g = A.ghosts[sh.items[i] - A.lib.size()];
+                TileSpec gs = spec_for_ghost(g, sh.id.c_str(), !is_console);
+                TileResult gr = draw_tile(gs, sz);
+                handle_ghost_result(g, gr);
+                return gr;
+            }
             const hub::GameEntry& e = A.lib[sh.items[i]];
             TileSpec spec = spec_for_entry(e, sh.id.c_str(), recent, !is_console);
             TileResult r = draw_tile(spec, sz);
@@ -107,7 +114,7 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     if (!draw) return total;
     ImGui::SetCursorScreenPos(at);
     const bool resume = has_resume(e);   // one press: launch and load the auto state (plain Play when there is none)
-    if (button(resume ? "Resume" : "Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; if (resume) resume_entry(c, -1); else play_entry(c); }
+    if (button(resume ? "Resume" : "Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; if (resume) play_entry_anim(c, true, [](const hub::GameEntry& g) { resume_entry(g, -1); }); else play_entry_anim(c, true); }
     if (resume && ImGui::IsItemHovered()) ImGui::SetTooltip("Continue from where you left off");
     if (seed_nav) seed_nav_here();
     if (online) {
@@ -284,7 +291,8 @@ void empty_library_state() {
         struct Sy { const char* label; hub::System s; };
         static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB},
                                 {"Nintendo DS", hub::System::NDS},
-                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}, {"PS2", hub::System::PS2}};
+                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}, {"PS2", hub::System::PS2},
+                                {"NES", hub::System::NES}, {"SNES", hub::System::SNES}};
         float tot = 0;
         for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
         float x = cx - (tot - sp(0.75f)) * 0.5f;
@@ -341,7 +349,7 @@ void library_top_bar() {
     if (A.focus_search) { ImGui::SetKeyboardFocusHere(); A.focus_search = false; }
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(5.f), (bh - ImGui::GetFontSize()) * 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
-    ImGui::SetNextItemWidth(std::max(sp(20.f), std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.45f)));
+    ImGui::SetNextItemWidth(std::max(sp(20.f), std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f)));
     osk::input("##search", "Search games   (Ctrl+F)", A.search_buf, sizeof A.search_buf);
     ImVec2 s0 = ImGui::GetItemRectMin(), s1 = ImGui::GetItemRectMax();
     ImGui::GetWindowDrawList()->AddRect(s0, s1, ImGui::IsItemActive() ? ui::ACCENT : ui::HAIRLINE, bh * 0.5f, 0, 1.f);
@@ -354,6 +362,11 @@ void library_top_bar() {
         std::string sl = std::string("Sort: ") + hubui::sort_name(hubui::sort_from_key(A.st.library_sort));
         if (chip(sl.c_str(), hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title, ui::ACCENT)) cycle_sort(1);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the order of your games  (RT on a controller)");
+    }
+    {   // "Show friends' games": friends' titles you do not own, greyed out (metadata only)
+        ImGui::SameLine(0, sp(1.f));
+        if (chip("Friends' games", A.st.show_friend_games, ui::ACCENT)) { A.st.show_friend_games = !A.st.show_friend_games; mark_dirty(); A.vis_dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Games your friends have that you don't, shown greyed out (%d now)", (int)A.ghosts.size());
     }
     float total = bh + sp(1.f) + add_games_header_width(bh);
     ImGui::SameLine(0, 0);
@@ -423,7 +436,7 @@ void all_games_view() {
     // system chips
     struct Chip { const char* label; const char* sys; };
     static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"PlayStation", "ps1"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
-                                {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
+                                {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
     if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     std::map<std::string, int>& counts = A.chip_counts;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
@@ -457,7 +470,8 @@ void all_games_view() {
     if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
     const hub::GameEntry* sel = find_entry(A.sel_game);
-    float bar_h = sel ? sp(8.f) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
+    const hubui::fg::Ghost* selg = sel ? nullptr : find_ghost(A.sel_ghost);
+    float bar_h = (sel || selg) ? sp(8.f) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.5f)));
     if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; }
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() - sp(1.5f));   // the grid's padding is the cover inset: first cover lines up with the chips
@@ -492,6 +506,13 @@ void all_games_view() {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
             for (size_t k = 0; k < sec.items.size(); ++k) {
                 if (k % gl.cols) ImGui::SameLine();
+                if (sec.items[k] >= (int)A.lib.size()) {   // a friend's game you do not own
+                    const hubui::fg::Ghost& g = A.ghosts[sec.items[k] - A.lib.size()];
+                    TileSpec gs = spec_for_ghost(g, "grid", sec.system == "other");
+                    TileResult gr = draw_tile(gs, sz);
+                    handle_ghost_result(g, gr);
+                    continue;
+                }
                 const hub::GameEntry& e = A.lib[sec.items[k]];
                 TileSpec spec = spec_for_entry(e, "grid", false, sec.system == "other");
                 TileResult r = draw_tile(spec, sz);
@@ -504,11 +525,13 @@ void all_games_view() {
     }
     ImGui::EndChild();
     if (sel) selected_bar(*sel);
+    else if (selg) selected_bar_ghost(*selg);
 }
 
 /* ---------- details modal (Y / right-click / "...") ---------- */
 
 void draw_details_modal() {
+    draw_ghost_modal();   // a friend's game you do not own (friend_games_ui.cpp)
     if (A.show_details) {
         A.show_details = false;
         if (find_entry(A.sel_game)) ImGui::OpenPopup("##details");
@@ -658,7 +681,7 @@ void draw_details_modal() {
     };
     place(sp(17.f));
     tr("play", idle ? "enabled" : "disabled");
-    if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play) || forced("play")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry(c); }
+    if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play) || forced("play")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry_anim(c); }
     ImGui::SetItemDefaultFocus();
     if (!supports_online(e) && e.system == hub::System::GC) {
         place(label_w("Online soon", true));

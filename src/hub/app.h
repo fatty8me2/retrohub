@@ -46,6 +46,7 @@
 #include "netplay_dolphin.h"
 #include "library.h"
 #include "osk.h"
+#include "friend_games.h"
 #include "logic.h"
 #include "settings_tabs.h"
 #include "savestore.h"
@@ -199,6 +200,7 @@ struct App {
     char search_buf[64] = {0};
     std::string vis_filter, vis_query;            // last inputs used to build `vis`
     std::vector<int> vis;                         // filtered + sorted indices into lib
+    std::vector<hubui::fg::Ghost> ghosts;         // friends' games you do not own (rebuild_vis); item index >= lib.size() means ghosts[index - lib.size()]
     std::vector<hubui::ShelfGame> sg;             // parallel to `lib`, input of the shelf composition
     std::vector<hubui::Shelf> shelves;            // Home screen shelves (indices into lib)
     std::vector<int> pick_idx;                    // "Top Picks you don't have": indices into hub::catalog()
@@ -282,6 +284,8 @@ struct App {
 
     // ui
     std::string sel_game;        // library selection (game key)
+    bool show_ghost = false;     // open the friend-game view (draw_ghost_modal)
+    std::string sel_ghost;       // library selection when it is a friend's game you do not own (Ghost::id); sel_game is empty then
     bool focus_search = false;
     LibView view = LibView::Home;
     std::string env_select;      // HUB_SELECT_GAME
@@ -336,6 +340,8 @@ struct GcOnline {
     int launch_no = 0, port = 0;
     std::string launch_body;         // guest: the host's launch message (its cheats list is applied to this PC's Dolphin too)
     std::string left_name;           // guest: the host left mid-game, Dolphin is being closed
+    size_t status_seen = 0;          // bytes of the driver's status file already scanned for error:/desync: lines
+    bool desync_told = false;
     unsigned long long close_deadline = 0;   // guest: Dolphin was asked to close (forwarder lost); terminate only if it ignores that for 20 s
     std::string fp_path, fp_sha;     // disc fingerprint (computed once per path on a worker thread)
     uint64_t fp_size = 0;
@@ -360,6 +366,7 @@ struct TileSpec {
     ArtRef art;
     bool favorite = false, online = false, selected = false, owned = true, show_star = true;
     const char* cta = nullptr;   // hover caption for catalog tiles ("Add ROM")
+    const hubui::fg::Ghost* ghost = nullptr;   // a friend's game you do not own: greyed cover, friend avatars, art fetched only while visible
 };
 
 struct TileResult {
@@ -540,6 +547,12 @@ std::string launch_path_for(const hub::GameEntry& e);
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg = "");
 void start_unzip(const hub::GameEntry& e);
 void play_entry(const hub::GameEntry& e);
+/* boot_flow.cpp: start animation, then `launch` (default play_entry). quick = short version (hero / resume). */
+void play_entry_anim(const hub::GameEntry& e, bool quick = false, std::function<void(const hub::GameEntry&)> launch = nullptr);
+void boot_sync_options();   // Settings -> bootanim::options()
+void boot_settings_ui();    // Settings page: "Game start animation" group
+void boot_shot_tick();      // HUB_SHOT_BOOTANIM aid
+void boot_draw_overlay();
 void add_game_shortcut(const hub::GameEntry& e);   // "Add to desktop": .lnk to RetroHub.exe --play <key> (shell_shortcut_dir())
 void flash_taskbar();                              // FlashWindowEx on the hub window; never takes focus
 
@@ -706,6 +719,17 @@ void library_top_bar();
 void selected_bar(const hub::GameEntry& e);
 void all_games_view();
 void draw_details_modal();
+/* friend_games_ui.cpp: friends' games shown greyed out (metadata only) */
+void rebuild_ghosts();                                                    // A.ghosts from the friends' libraries and A.lib (empty when the chip is off)
+TileSpec spec_for_ghost(const hubui::fg::Ghost& g, const char* shelf, bool show_sys);
+ArtRef art_for_ghost(const hubui::fg::Ghost& g);
+void handle_ghost_result(const hubui::fg::Ghost& g, const TileResult& r);
+const hubui::fg::Ghost* find_ghost(const std::string& id);
+void ghost_tile_decor(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVec2 p1, float hover, std::string* subtitle);
+void selected_bar_ghost(const hubui::fg::Ghost& g);
+void draw_ghost_modal();
+void fg_fake_libs();                                                      // screenshots: fake friends' libraries
+void ghost_tick();                                                        // publish my library (debounced) and refresh ghosts when a friend's list changed
 void ensure_selection();
 void sync_card();
 void page_library();
@@ -849,3 +873,5 @@ ImGuiKey shot_key(const std::string& n);
 
 #include "friends_ui.h"
 #include "group_ui.h"
+
+void bootart_shot_draw(SDL_Renderer* ren);   // boot_art_shot.cpp: HUB_SHOT_BOOTART=<system|all|shelf>

@@ -14,6 +14,7 @@ struct Notif {
     double t0 = 0;                 // ImGui time of arrival
     bool toast = true;             // toast still showing
     bool done = false;
+    bool ask_host = false;         // the ask is "can you host this?" (they do not own the game)
     bool ask = false;              // "<name> wants to join your game": Accept sends them an invite (inv.game_* = the game they asked about)
 };
 
@@ -60,6 +61,7 @@ struct FriendsUi {
     std::map<std::string, std::vector<hubnet::PlayGame>> f_pt;   // fake friends' play time (HUB_SHOT_FAKE_FRIENDS)
     std::map<std::string, std::vector<hubui::PlaytimeEntry>> pt_cache; int pt_cache_ver = -1; long long pt_asked_ms = 0;
     hubui::AskLimiter ask_lim;                 // our own "Ask to join" requests
+    std::map<std::string, std::vector<hubnet::LibGame>> f_libs;   // fake mode (screenshots): friends' game lists
     std::map<std::string, long long> ask_seen; // host side: last ask per person (repeat within 30 s is ignored)
 };
 
@@ -126,7 +128,12 @@ float fr_request_card_h();
 int fr_request_card(const std::string& name, const std::string& code, float w, float frac, bool shadow, const char* decline,
                     const std::string& title = std::string(), const char* accept = "Accept");
 void fr_ask_to_join(const std::string& uid);                       // "Ask to join": rate limited, over the invite channel
-void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet::Invite& game);
+void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet::Invite& game, bool host = false);
+/* game libraries (friend_games_ui.cpp): who owns what, metadata only */
+void fr_library_collect(std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>>* out);   // friends (not blocked) with a shared list
+uint32_t fr_library_epoch();                                                                              // changes when any friend list changed
+void fr_publish_library(bool share, std::vector<hubnet::LibGame> games);
+void fr_ask_host(const std::string& uid, const std::string& game_id, const std::string& title, const std::string& system);
 void fr_ask_accept(Notif& n);                                       // host accepted: invite sent (needs a room)
 bool fr_home_shelf(float avail, float tw, float th, float gap, float bleed);   // Home "Friends are playing" (false = nothing to show)
 void fr_accept(const std::string& uid, const std::string& name);

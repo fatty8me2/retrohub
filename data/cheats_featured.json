@@ -970,5 +970,232 @@
       "source": "Dolphin 2509 Sys/GameSettings/GALE01r2.ini ('Unlock All Characters and Stages [Datel]'; the same two words are inside 'Netplay Community Settings'); tested: RetroHub Play path + Dolphin on a hidden desktop, qa/gc_cheats_play.ps1",
       "verified": true
     }
+  ],
+  "Super Mario Bros. (World)": [
+    {
+      "desc": "Infinite Lives",
+      "format": "raw",
+      "codes": [
+        "075A:09"
+      ],
+      "source": "libretro-database Super Mario Bros. (World).cht; https://datacrystal.tcrf.net/wiki/Super_Mario_Bros./RAM_map ($075A = Lives)",
+      "verified": true
+    }
+  ],
+  "Super Mario Bros. 3 (USA)": [
+    {
+      "desc": "Infinite Lives",
+      "format": "raw",
+      "codes": [
+        "0736:63"
+      ],
+      "source": "libretro-database Super Mario Bros. 3 (USA).cht; https://datacrystal.tcrf.net/wiki/Super_Mario_Bros._3/RAM_map ($0736 = Mario lives, max 99)",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Time",
+      "format": "raw",
+      "codes": [
+        "05EE:09",
+        "05EF:09",
+        "05F0:09"
+      ],
+      "source": "libretro-database Super Mario Bros. 3 (USA).cht; https://datacrystal.tcrf.net/wiki/Super_Mario_Bros._3/RAM_map ($05EE-$05F0 = time remaining)",
+      "verified": true
+    }
+  ],
+  "Contra (USA)": [
+    {
+      "desc": "Infinite Lives",
+      "format": "raw",
+      "codes": [
+        "0032:09"
+      ],
+      "source": "libretro-database Contra (USA).cht; https://datacrystal.tcrf.net/wiki/Contra_(NES)/RAM_map ($0032 = P1 lives)",
+      "verified": true
+    },
+    {
+      "desc": "Invincible",
+      "format": "raw",
+      "codes": [
+        "00AE:77"
+      ],
+      "source": "libretro-database Contra (USA).cht; https://datacrystal.tcrf.net/wiki/Contra_(NES)/RAM_map ($00AE = P1 invincibility timer)",
+      "verified": true
+    }
+  ],
+  "Metroid (USA)": [
+    {
+      "desc": "Infinite Energy",
+      "format": "raw",
+      "codes": [
+        "0106:90",
+        "0107:79"
+      ],
+      "source": "libretro-database Metroid (USA).cht; https://datacrystal.tcrf.net/wiki/Metroid/RAM_map ($0106/$0107 = BCD energy and tanks)",
+      "verified": true
+    }
+  ],
+  "Mega Man 2 (USA)": [
+    {
+      "desc": "Infinite Lives",
+      "format": "raw",
+      "codes": [
+        "00A8:04"
+      ],
+      "source": "libretro-database Mega Man 2 (USA).cht; https://datacrystal.tcrf.net/wiki/Mega_Man_2/RAM_map ($00A8 = lives remaining)",
+      "verified": true
+    }
+  ],
+  "Castlevania III - Dracula's Curse (USA)": [
+    {
+      "desc": "Infinite Energy",
+      "format": "raw",
+      "codes": [
+        "003C:40"
+      ],
+      "source": "libretro-database Castlevania III - Dracula's Curse (USA).cht; https://datacrystal.tcrf.net/wiki/Castlevania_III:_Dracula's_Curse/RAM_map ($003C = health, 40 = full)",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Lives",
+      "format": "raw",
+      "codes": [
+        "0035:99"
+      ],
+      "source": "libretro-database Castlevania III - Dracula's Curse (USA).cht; https://datacrystal.tcrf.net/wiki/Castlevania_III:_Dracula's_Curse/RAM_map ($0035 = lives)",
+      "verified": true
+    }
+  ],
+  "Kirby's Adventure (USA)": [
+    {
+      "desc": "Infinite Lives",
+      "format": "raw",
+      "codes": [
+        "0599:09"
+      ],
+      "source": "libretro-database Kirby's Adventure (USA).cht; https://datacrystal.tcrf.net/wiki/Kirby's_Adventure/RAM_map ($0599 = lives, max 99)",
+      "verified": true
+    }
+  ],
+  "Legend of Zelda, The (USA)": [
+    {
+      "desc": "Infinite Health",
+      "format": "raw",
+      "codes": [
+        "066F:FF"
+      ],
+      "source": "libretro-database Legend of Zelda, The (USA).cht; https://datacrystal.tcrf.net/wiki/The_Legend_of_Zelda/RAM_map ($066F = heart containers/filled hearts)",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Rupees",
+      "format": "raw",
+      "codes": [
+        "066D:FF"
+      ],
+      "source": "libretro-database Legend of Zelda, The (USA).cht; https://datacrystal.tcrf.net/wiki/The_Legend_of_Zelda/RAM_map ($066D = rupees)",
+      "verified": true
+    }
+  ],
+  "Zelda II - The Adventure of Link (USA)": [
+    {
+      "desc": "Infinite Lives",
+      "format": "raw",
+      "codes": [
+        "0700:04"
+      ],
+      "source": "libretro-database Zelda II - The Adventure of Link (USA).cht; https://datacrystal.tcrf.net/wiki/Zelda_II:_The_Adventure_of_Link/RAM_map ($0700 = lives)",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Health",
+      "format": "raw",
+      "codes": [
+        "0774:FF"
+      ],
+      "source": "libretro-database Zelda II - The Adventure of Link (USA).cht; https://datacrystal.tcrf.net/wiki/Zelda_II:_The_Adventure_of_Link/RAM_map ($0774 = life meter)",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Magic",
+      "format": "raw",
+      "codes": [
+        "0773:FF"
+      ],
+      "source": "libretro-database Zelda II - The Adventure of Link (USA).cht; https://datacrystal.tcrf.net/wiki/Zelda_II:_The_Adventure_of_Link/RAM_map ($0773 = magic meter)",
+      "verified": true
+    }
+  ],
+  "Super Metroid (Japan, USA) (En,Ja)": [
+    {
+      "desc": "Infinite Energy",
+      "format": "par",
+      "codes": [
+        "7E09C2DB",
+        "7E09C305"
+      ],
+      "source": "libretro-database Super Metroid (Japan, USA) (En,Ja).cht; https://jathys.zophar.net/supermetroid/kejardon/RAMMap.txt (09C2 = Samus current health, 16-bit)",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Missiles",
+      "format": "par",
+      "codes": [
+        "7E09C6E7",
+        "7E09C703"
+      ],
+      "source": "libretro-database Super Metroid (Japan, USA) (En,Ja).cht; https://jathys.zophar.net/supermetroid/kejardon/RAMMap.txt (09C6 = current missiles, 16-bit)",
+      "verified": true
+    },
+    {
+      "desc": "Infinite Power Bombs",
+      "format": "par",
+      "codes": [
+        "7E09CE63"
+      ],
+      "source": "libretro-database Super Metroid (Japan, USA) (En,Ja).cht; https://jathys.zophar.net/supermetroid/kejardon/RAMMap.txt (09CE = current power bombs)",
+      "verified": true
+    }
+  ],
+  "Super Mario World (USA)": [
+    {
+      "desc": "Infinite 99 Lives",
+      "format": "par",
+      "codes": [
+        "7E0DBE63"
+      ],
+      "source": "libretro-database Super Mario World (USA).cht; https://almarsguides.com/retro/walkthroughs/snes/games/supermarioallstarsandsupermarioworld/proactionreplay/supermarioworld/ (AR list: 7E0DBE lives) (second source not opened: search snippet only)",
+      "verified": false
+    },
+    {
+      "desc": "Infinite Coins",
+      "format": "par",
+      "codes": [
+        "7E0DBF63"
+      ],
+      "source": "libretro-database Super Mario World (USA).cht; https://almarsguides.com/retro/walkthroughs/snes/games/supermarioallstarsandsupermarioworld/proactionreplay/supermarioworld/ (AR list: 7E0DBF coins) (second source not opened: search snippet only)",
+      "verified": false
+    }
+  ],
+  "Legend of Zelda, The - A Link to the Past (USA)": [
+    {
+      "desc": "Infinite Bombs",
+      "format": "par",
+      "codes": [
+        "7EF34309"
+      ],
+      "source": "libretro-database Legend of Zelda, The - A Link to the Past (USA).cht; https://almarsguides.com/retro/walkthroughs/snes/games/alinktothepast,zelda/proactionreplay/ (AR list: 7EF343 bomb count) (second source not opened: search snippet only)",
+      "verified": false
+    },
+    {
+      "desc": "Infinite Arrows",
+      "format": "par",
+      "codes": [
+        "7EF3771E"
+      ],
+      "source": "libretro-database Legend of Zelda, The - A Link to the Past (USA).cht; https://almarsguides.com/retro/walkthroughs/snes/games/alinktothepast,zelda/proactionreplay/ (AR list: 7EF377 arrow count) (second source not opened: search snippet only)",
+      "verified": false
+    }
   ]
 }
