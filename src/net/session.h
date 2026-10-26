@@ -106,6 +106,9 @@ class Session {
     /* RTT samples since the last clear (last 32), for the auto input delay. */
     bool ping_stats(int slot, PingStats* out) const;
     void clear_ping_stats();
+    /* Remote play: media must never ride the Cloudflare relay. Call before start(); the relay is then never activated
+     * (and HUBNET_FORCE_RELAY is ignored), so a failed hole punch ends in failed() instead of a costly fallback. */
+    void set_no_relay(bool v);
     void set_ping_interval(uint32_t ms);   // default 500; min 20
 
     /* Unreliable datagram to one slot or -1 = all other slots. */

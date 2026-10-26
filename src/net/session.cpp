@@ -95,6 +95,7 @@ struct Session::Impl {
     uint32_t depart_deadline = 0;
     std::string depart_why;
     bool force_relay = false;
+    bool no_relay = false;   // media sessions (remote play): never fall back to the WebSocket relay
     std::string status = "idle";
     uint32_t start_ms = 0;
     int slot = 0;
@@ -475,7 +476,7 @@ struct Session::Impl {
         if (!talks_to(s) || !p.present) return;
         bool direct_ok = direct_fresh(p, now);
 
-        if (!p.relay_active && !direct_ok && (force_relay || now - p.since >= kRelayAfterMs)) {
+        if (!no_relay && !p.relay_active && !direct_ok && (force_relay || now - p.since >= kRelayAfterMs)) {
             p.relay_active = true;
             net_log("Session %d: slot %d falling back to relay", slot, s);
         }
@@ -585,7 +586,7 @@ bool Session::start(const SessionConfig& cfg)
     d.roster_mask = 0;
     d.ping_every = kPingMs;
     const char* fr = getenv("HUBNET_FORCE_RELAY");
-    d.force_relay = fr && fr[0] && fr[0] != '0';
+    d.force_relay = fr && fr[0] && fr[0] != '0' && !d.no_relay;
     d.sim_init(d.slot);
     d.start_ms = now_ms();
     d.last_ws_keepalive = d.start_ms;
@@ -656,6 +657,7 @@ int Session::ping_ms(int slot) const
     return d.peers[slot].ping;
 }
 
+void Session::set_no_relay(bool v) { impl_->no_relay = v; }
 void Session::set_ping_interval(uint32_t ms) { impl_->ping_every = ms < 20 ? 20 : ms; }
 
 void Session::clear_ping_stats()
