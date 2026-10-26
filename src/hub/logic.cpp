@@ -46,6 +46,7 @@ std::string settings_to_json(const Settings& s) {
         o << (i ? ", " : "") << "\"" << json::escape(s.rom_folders[i]) << "\"";
     o << "],\n"
       << "  \"server\": \"" << json::escape(s.server) << "\",\n"
+      << "  \"settings_tab\": " << s.settings_tab << ",\n"
       << "  \"input_delay\": " << s.input_delay << ",\n"
       << "  \"delay_auto\": " << (s.delay_auto ? "true" : "false") << ",\n"
       << "  \"last_game\": \"" << json::escape(s.last_game) << "\",\n"
@@ -105,6 +106,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
             out->rom_folders.push_back(old);
     }
     out->server = j.str("server", out->server);
+    out->settings_tab = (int)j.num("settings_tab", out->settings_tab);
+    if (out->settings_tab < 0 || out->settings_tab > 5) out->settings_tab = 0;
     out->input_delay = (int)j.num("input_delay", out->input_delay);
     out->input_delay = std::max(1, std::min(8, out->input_delay));
     if (const Json* da = j.get("delay_auto")) if (da->type == Json::Bool) out->delay_auto = da->b;

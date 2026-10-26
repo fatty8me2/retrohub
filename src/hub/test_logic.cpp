@@ -1,8 +1,10 @@
 #include "logic.h"
+#include "settings_tabs.h"
 
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
@@ -708,6 +710,27 @@ int main() {
         s = room_action_state(true, false, "", "", false, h);
         CHECK(!s.button_enabled && s.headline == "Pick a game to start");
         CHECK(join_names({}) == "" && join_names({"A"}) == "A" && join_names({"A", "B", "C"}) == "A, B and C");
+    }
+
+    {   // Settings tabs: every control of the old single-page Settings (plus the cloud toggles) still exists, exactly once
+        static const char* before[] = {"rom_folders_list", "rom_folder_remove", "add_folder", "find_games", "run_setup_again", "rescan", "download_art",
+            "smash_exe_browse", "smash_exe_default", "gb_core", "fullscreen", "dolphin_status", "pcsx2_status", "ps2_bios_dir", "ps2_bios_auto",
+            "ps1_bios", "ps1_openbios", "azahar_status", "cemu_exe", "cemu_exe_auto", "cemu_manage_controls", "cemu_restore_controls", "delay_auto",
+            "input_delay", "game_defaults", "show_friends", "notify_in_game", "notif_sound", "auto_friend", "friend_code_copy", "username",
+            "change_username", "friend_code", "account_code", "redeem_code", "export_account", "import_account", "sidebar_mode", "server_url",
+            "pause_cloud", "backup_shots", "cloud_states", "sync_folder", "sync_folder_stop", "sync_auto", "sync_copy_now"};
+        for (const char* id : before) CHECK(hubui::settings_control_tab(id) >= 0);
+        int n; const hubui::SettingsCtl* c = hubui::settings_controls(&n);
+        for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) CHECK(std::strcmp(c[i].id, c[j].id) != 0);
+        for (int i = 0; i < n; ++i) CHECK(c[i].tab >= 0 && c[i].tab < hubui::ST_Count);
+        CHECK(hubui::settings_control_tab("server_url") == hubui::ST_Online && hubui::settings_control_tab("change_username") == hubui::ST_Account);
+        int nx = -1;
+        CHECK(hubui::settings_tab_step(0, 1, &nx) == 0 && nx == 1);
+        CHECK(hubui::settings_tab_step(0, -1, &nx) == -1 && nx == 0);
+        CHECK(hubui::settings_tab_step(hubui::ST_Count - 1, 1, &nx) == 1);
+        CHECK(hubui::settings_tab_clamp(99) == 0 && hubui::settings_tab_clamp(-3) == 0 && hubui::settings_tab_clamp(5) == 5);
+        Settings a; a.settings_tab = 4; Settings b;
+        CHECK(settings_from_json(settings_to_json(a), &b) && b.settings_tab == 4);
     }
 
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
