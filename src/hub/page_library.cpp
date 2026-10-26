@@ -1,4 +1,5 @@
 #include "app.h"
+#include "wiiu_meta.h"
 
 void go_add_rom(const GameInfo& g) {
     settings_open(hubui::ST_General);
@@ -529,6 +530,55 @@ void all_games_view() {
     else if (selg) selected_bar_ghost(*selg);
 }
 
+/* ---------- Wii U details: updates / DLC, Cemu game profile, save accounts, key help ---------- */
+
+static std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
+    static std::string s_key;
+    static double s_at = -100;
+    static std::vector<std::string> s_lines;
+    if (s_key == e.key && ImGui::GetTime() - s_at < 4.0) return s_lines;
+    s_key = e.key;
+    s_at = ImGui::GetTime();
+    s_lines.clear();
+    hubemu::Install inst = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, e.path);
+    std::string game = launch_path_for(e);
+    if (e.issue == "extract" && game == e.path) game.clear();   // still packed: nothing to read yet
+    uint64_t tid = hubemu::title_id_from_key(e.key);
+    if (!tid && !game.empty()) tid = hubemu::wiiu_title_id_of_file(game);
+    hub::FsProbe fp = hubemu::wiiu_probe();
+    std::string user_data, mlc;
+    if (!inst.exe.empty()) {
+        if (inst.managed) { user_data = inst.dir + "\\portable"; mlc = user_data + "\\mlc01"; }
+        else {
+            const char* ad = std::getenv("APPDATA");
+            hub::CemuDirs d = hub::cemu_dirs_for(inst.dir, ad ? ad : "", fp);
+            user_data = d.user_data;
+            mlc = d.mlc;
+        }
+    }
+    if (tid) {
+        hub::WiiuAddons a = hub::wiiu_installed_addons(tid, mlc, fp);
+        if (!game.empty() && game.size() > 4) {
+            std::ifstream f(std::filesystem::u8path(game), std::ios::binary);
+            std::error_code ec;
+            uint64_t sz = std::filesystem::file_size(std::filesystem::u8path(game), ec);
+            if (f && !ec) {
+                hub::ReadAtFn rd = [&](uint64_t off, void* buf, size_t n) { f.clear(); f.seekg((std::streamoff)off); f.read((char*)buf, (std::streamsize)n); return f.gcount() == (std::streamsize)n; };
+                hub::wiiu_addons_from_wua(hub::wua_titles(rd, sz), &a);
+            }
+        }
+        s_lines.push_back("Updates and DLC: " + hub::wiiu_addons_text(a));
+        if (!mlc.empty()) {
+            auto rels = hub::wiiu_save_rels(tid);
+            std::vector<std::string> acc = hub::wiiu_save_accounts(mlc + "/" + rels[0]);
+            if (!acc.empty()) { std::string t = "Cemu save accounts:"; for (auto& x : acc) t += " " + x; s_lines.push_back(t); }
+        }
+        std::string prof = hubemu::cemu_profile_summary(inst.dir, user_data, tid);
+        if (!prof.empty()) s_lines.push_back("Cemu profile: " + prof);
+    }
+    return s_lines;
+}
+
 /* ---------- details modal (Y / right-click / "...") ---------- */
 
 void draw_details_modal() {
@@ -624,8 +674,16 @@ void draw_details_modal() {
         ImGui::PopStyleColor();
     } else if (e.issue == "keys") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
-        ImGui::TextWrapped("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua archive needs no keys.");
+        std::string ud;
+        hubemu::Install ki = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, e.path);
+        if (!ki.exe.empty()) { const char* ad = std::getenv("APPDATA"); ud = ki.managed ? ki.dir + "\\portable" : hub::cemu_dirs_for(ki.dir, ad ? ad : "", hubemu::wiiu_probe()).user_data; }
+        std::string why = hub::wiiu_keys_message(hub::wiiu_keys_check(ud, ki.dir, hubemu::wiiu_probe()), "wud");
+        ImGui::TextWrapped("%s", why.empty() ? "Disc images (.wud/.wux) are decrypted with the disc keys in Cemu's keys.txt (found). A .wua archive needs no keys." : why.c_str());
         ImGui::PopStyleColor();
+    }
+    if (e.system == hub::System::WiiU) {
+        for (const std::string& l : wiiu_info_lines(e)) ImGui::TextDisabled("%s", l.c_str());
+        ImGui::TextDisabled("GamePad screen: hold View + RB, or Game menu > Swap GamePad / TV screen (Cemu: Ctrl+Tab).");
     }
     if (is_kanto(e)) {
         text_wrapped_disabled("A friend's two-player co-op version of Pokemon FireRed. It is played online: press Play to set it up (once), then host or join a room and pick it. Needs your own Pokemon FireRed (USA) 1.0 in the library.");
