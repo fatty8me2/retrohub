@@ -54,6 +54,15 @@ Resume / Stats (overlay) / Fullscreen / Leave, driven by the D-pad + A (B closes
 `streamrun --host --status-file F` writes `{"kbps":..,"guests":[{"slot":1,"rtt_ms":48,...}],"dsu_clients":N}` once a second; the hub shows
 "streaming to Mickey · 12 Mbps · 48 ms" in the room banner and at the top of the in-game quick menu.
 
+## End-to-end test (two hubs, hidden desktop)
+`qa/wiiu_remote_room.ps1 -Scenario leave|hostquit` (run through `node qa/online_local.mjs <port>`): host hub with a scratch managed Cemu + the archived Super Mario 3D World
+(unpacked by the hub), guest hub with no game and no Cemu, local worker for signalling. Covers room -> Launch -> probe -> Cemu start (DSU server already
+listening) -> streamrun attaches -> guest streams (scripted pad) -> Cemu attaches to the DSU server as a client -> guest View+Y -> Leave (host drops the pad at once,
+Cemu keeps running) -> host closes Cemu (quit event) / or host quits while the guest streams and the guest hub is back in the room. `qa/rplay_dsu_loopback.ps1` is the
+console-only version (probe, DSU round trip via `dsu_probe`, menu, bye). The video in these runs is the TEST PATTERN: WGC/DXGI cannot capture Cemu on a hidden
+desktop. One real run on the interactive desktop (host with Cemu visible, a second PC or this one as guest) is still needed to see Cemu's picture on the guest.
+Cemu's DSU client does not retry after a failed first connect, which is why `streamrun --host` is started before Cemu (`--await-pid-file`; the hub writes Cemu's PID once its window exists).
+
 ## Pipeline
 Host: Windows.Graphics.Capture (window; falls back to DXGI desktop duplication cropped to the window rect; test
 pattern for CI) -> BGRA->NV12 -> Media Foundation H.264 MFT (hardware NVENC/AMF/QSV first, Microsoft software encoder
