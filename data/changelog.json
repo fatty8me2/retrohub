@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.27.2",
+      "date": "2026-10-26",
+      "title": "A calmer start animation",
+      "new": [],
+      "improved": [
+        "The game start animation takes its time: the cartridge or disc lines up over the console, slides in, and settles before the power comes on",
+        "Remote play for Wii U: groundwork so Cemu picks up remote players' controllers as players 2-4"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.27.1",
       "date": "2026-10-26",
       "title": "GameCube online: faster and rock solid",

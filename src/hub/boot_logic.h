@@ -73,7 +73,7 @@ struct Timeline {
 };
 inline Timeline timeline_for(bool short_version) {
     return short_version ? Timeline{0.15f, 0.25f, 0.25f, 0.20f, 0.15f}    // 1.0 s
-                         : Timeline{0.50f, 0.70f, 0.90f, 0.65f, 0.35f};   // 3.1 s
+                         : Timeline{0.80f, 1.10f, 1.60f, 1.20f, 0.50f};   // 5.2 s: unhurried, the insertion and power-on get room to breathe
 }
 inline Phase phase_at(const Timeline& tl, float t) {
     if (t < 0.f) return Phase::Idle;

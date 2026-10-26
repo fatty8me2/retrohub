@@ -73,7 +73,7 @@ float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, float t) {
     const float W = disp.x, H = disp.y;
     const Phase ph = phase_at(tl, t);
-    const float p = phase_progress(tl, t);
+    float p = phase_progress(tl, t);
     const Geo g = geo_for(sys);
     const bool disc_kind = g.kind == Insert::Lid || g.kind == Insert::Tray || g.kind == Insert::Front;
 
@@ -119,6 +119,8 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
         }
         case Phase::Insert: {
             shelf_dark = 1.f;
+            /* let it breathe: the media hangs lined up over the slot for a beat, slides in, then sits still a moment before power */
+            p = std::min(1.f, std::max(0.f, (p - 0.20f) / 0.65f));
             const float hover_y = g.kind == Insert::Tray ? 93.f - g.hover : hy;
             float y_local = ey, x_local = ex;
             mscale = ms;
