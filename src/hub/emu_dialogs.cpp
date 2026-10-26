@@ -88,7 +88,7 @@ void draw_emulator_dialogs() {
                 else UNZ.state = UnzipJob::Idle;
             }
             if (UNZ.state == UnzipJob::Asking && g) {
-                ImGui::TextWrapped("%s cannot open archives. Unpack \"%s\" (about %.1f GB) into RetroHub's data folder?", g->system == hub::System::GC ? "Dolphin" : g->system == hub::System::PS1 ? "The PlayStation emulator" : g->system == hub::System::PS2 ? "PCSX2" : "Azahar", g->title.c_str(),
+                ImGui::TextWrapped("%s cannot open archives. Unpack \"%s\" (about %.1f GB) into RetroHub's data folder?", g->system == hub::System::GC ? "Dolphin" : g->system == hub::System::PS1 ? "The PlayStation emulator" : g->system == hub::System::PS2 ? "PCSX2" : g->system == hub::System::WiiU ? "Cemu" : "Azahar", g->title.c_str(),
                                    unpacked_size(*g) / 1073741824.0);
                 ImGui::Dummy(ImVec2(0, 2 * S));
                 text_wrapped_disabled("The unpacked image goes to " + hub::extract_3ds_dir(*g) + " and needs the same amount of free disk space. "

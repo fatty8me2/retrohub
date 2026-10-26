@@ -340,6 +340,9 @@ void draw_quick_menu() {
     if (e && cheats_supported(*e)) {
         if (menu_button("Cheats", true, ui::Icon::Bolt)) { hub::GameEntry c = *e; cheats_open(c); ImGui::CloseCurrentPopup(); }
     }
+    if (g_shot_fake ? false : (e && e->system == hub::System::WiiU)) {   // Cemu: Ctrl+Tab = toggle pad screen (also View + RB held)
+        if (menu_button("Swap GamePad / TV screen", true, ui::Icon::Refresh)) { ImGui::CloseCurrentPopup(); wiiu_toggle_gamepad_screen(); }
+    }
     if (!g_shot_fake && e && e->system == hub::System::PS1 && ps1_swap_available(e->key)) {
         if (menu_button("Swap disc", true, ui::Icon::Refresh)) { ps1_swap_disc(e->key); push_toast("Swapping to the next disc", COL_GOOD, 3.0); ImGui::CloseCurrentPopup(); focus_game(); }
     }

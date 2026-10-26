@@ -629,6 +629,8 @@ int cheats_enabled_count(const hub::GameEntry& e);
 void cheats_open(const hub::GameEntry& e);                      // the Cheats panel
 void cheats_open_live();                                        // in-game overlay: panel for the running game
 void cheats_pad_watch();                                        // View + Y while a game runs
+void wiiu_toggle_gamepad_screen();                               // Wii U: send Cemu's "toggle pad screen" hotkey (Ctrl+Tab); pad combo View + RB and the quick menu
+void wiiu_pad_watch();
 int cheats_apply_dolphin(const hub::GameEntry& e, const std::string& dolphin_user_dir, bool online, bool is_host, const std::string* launch_body);   // GameCube: enabled cheats -> User\\GameSettings\\<GAMEID>.ini before Dolphin starts
 std::string cheats_launch_args(const hub::GameEntry& e, bool online, bool is_host, const std::string* launch_body);   // " --cheats <file>" or ""
 std::string cheats_launch_fragment(const hub::GameEntry& e);    // ,"cheats":{...} for the host's launch message
