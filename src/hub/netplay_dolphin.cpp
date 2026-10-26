@@ -215,7 +215,7 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
 /* ---------- UIA driver ---------- */
 const char* driver_script() {
     return R"PS(
-param([string]$Role, [int]$DolphinPid, [string]$Status, [string]$Suffix, [int]$Players = 2, [int]$DelayS = 0, [int]$TimeoutS = 150, [string]$Code = "", [int]$NoCode = 0)
+param([string]$Role, [int]$DolphinPid, [string]$Status, [string]$Suffix, [int]$Players = 2, [int]$DelayS = 0, [int]$TimeoutS = 150, [string]$Code = "", [int]$NoCode = 0, [string]$GoFile = "")
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $UA = [System.Windows.Automation.AutomationElement]; $TS = [System.Windows.Automation.TreeScope]
 $CT = [System.Windows.Automation.ControlType]
@@ -232,35 +232,45 @@ function El($root, $name, $type) {
   if ($type) { $c = New-Object System.Windows.Automation.AndCondition($c, (New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $type))) }
   $root.FindFirst($TS::Descendants, $c)
 }
-function Wait-For([scriptblock]$f, $secs) { $end = (Get-Date).AddSeconds($secs); while ((Get-Date) -lt $end) { $r = & $f; if ($r) { return $r }; Start-Sleep -Milliseconds 400 }; return $null }
+$SW = [System.Diagnostics.Stopwatch]::StartNew()
+function Mark($what) { Say ("t:" + $what + " " + [int]$SW.Elapsed.TotalMilliseconds) }   # timing evidence (ms since the driver started)
+function Wait-For([scriptblock]$f, $secs) { $end = (Get-Date).AddSeconds($secs); $ms = 60; while ((Get-Date) -lt $end) { $r = $null; try { $r = & $f } catch {}; if ($r) { return $r }; Start-Sleep -Milliseconds $ms; if ($ms -lt 300) { $ms = [int]($ms * 1.6) } }; return $null }   # fast polls first, backing off to 300 ms
+function Find-Main { foreach ($w in (Top $DolphinPid)) { if ($w.Current.ClassName -eq "MainWindow" -or $w.Current.Name -match '^Dolphin \S+$') { return $w } } }
 function Click($el) { $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
 function Mini($w) { try { $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Minimized) } catch {} }
 try {
   Say "stage:driver-start"
-  $main = Wait-For { foreach ($w in (Top $DolphinPid)) { if ($w.Current.ClassName -eq "MainWindow" -or $w.Current.Name -match '^Dolphin \S+$') { return $w } } } 60   # the title can still be the Qt app name ("dolphin-emu") on a fresh user dir, so match the class too
-  if (-not $main) { Say "error:no Dolphin main window"; exit 1 }
-  if ($DelayS -gt 0) { Start-Sleep $DelayS }
   function Need($el, $what) { if (-not $el) { throw "Dolphin's $what was not found (Dolphin changed or was still starting)" }; $el }
-  $tools = Wait-For { El $main "Tools" $CT::MenuItem } 30
+  if ($DelayS -gt 0) { Start-Sleep $DelayS }
+  # Wait up to 120 s for the main window AND its Tools menu; the window can be recreated while Dolphin starts (title/class change, a splash), so re-find it every poll. A dead Dolphin ends the wait.
+  $main = $null; $tools = $null
+  $endM = (Get-Date).AddSeconds(120); $msM = 60
+  while ((Get-Date) -lt $endM) {
+    if (-not (Get-Process -Id $DolphinPid -ErrorAction SilentlyContinue)) { Say "error:Dolphin closed while starting"; exit 1 }
+    try { $main = Find-Main; if ($main) { $tools = El $main "Tools" $CT::MenuItem; if ($tools) { break } } } catch { $main = $null; $tools = $null }
+    Start-Sleep -Milliseconds $msM; if ($msM -lt 400) { $msM = [int]($msM * 1.5) }
+  }
+  if (-not $main) { Say "error:no Dolphin main window"; exit 1 }
   Need $tools "Tools menu" | Out-Null
-  Start-Sleep -Seconds 2   # game list scan
+  Mark "tools-menu"
   $dlg = $null
   for ($try = 1; $try -le 3 -and -not $dlg; $try++) {
     try { $tools.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand() } catch {}
-    Start-Sleep -Milliseconds 500
     $it = Wait-For { El $tools "Start NetPlay..." $CT::MenuItem } 8
     if ($it) { Click $it }
     $dlg = Wait-For { El $main "NetPlay Setup" $null } 10
-    if (-not $dlg) { Say "retry:open-netplay-dialog $try" }
+    if (-not $dlg) { Say "retry:open-netplay-dialog $try"; try { $main = Find-Main; $tools = El $main "Tools" $CT::MenuItem } catch {} }
   }
+  Mark "setup-dialog"
+  if ($Role -ne "host" -and $GoFile) { if (-not (Wait-For { Test-Path -LiteralPath $GoFile } 180)) { Say "error:the host's NetPlay server never became ready"; exit 1 }; Mark "go" }
   if (-not $dlg) { Say "error:Dolphin's NetPlay Setup dialog did not open"; exit 1 }
   if ($Role -eq "host") {
     (Need (El $dlg "Host" $CT::TabItem) "Host tab").GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
-    Start-Sleep -Milliseconds 600
+    Mark "host-tab"
     $item = Wait-For { $c = New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::ListItem); $dlg.FindAll($TS::Descendants, $c) | Where-Object { $_.Current.Name -like "*$Suffix" } | Select-Object -First 1 } 20
     if (-not $item) { Say "error:game $Suffix not in Dolphin's list (is its folder scanned?)"; exit 1 }
     $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
-    Start-Sleep -Milliseconds 400
+    Mark "game-selected"
     Click (Need (El $dlg "Host" $CT::Button) "Host button")
     $np = Wait-For { $w = Win $DolphinPid "NetPlay"; if ($w -and $w.Current.Name -eq "NetPlay") { $w } } 40
   } else {
@@ -270,18 +280,22 @@ try {
       if ($try -gt 1) {
         Say "retry:connect $try"
         foreach ($w in (Top $DolphinPid)) { if ($w.Current.Name -ne "NetPlay Setup" -and $w.Current.ClassName -ne "MainWindow") { $ok = El $w "OK" $CT::Button; if ($ok) { try { Click $ok } catch {} } } }   # dismiss Dolphin's "failed to connect" box
-        Start-Sleep -Seconds 3
+        Start-Sleep -Milliseconds 700
         $dlg = Wait-For { El $main "NetPlay Setup" $null } 5
-        if (-not $dlg) { $tools.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand(); Start-Sleep -Milliseconds 500; Click (Need (El $tools "Start NetPlay..." $CT::MenuItem) "Start NetPlay item"); $dlg = Wait-For { El $main "NetPlay Setup" $null } 10 }
+        if (-not $dlg) { $tools.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand(); Click (Need (El $tools "Start NetPlay..." $CT::MenuItem) "Start NetPlay item"); $dlg = Wait-For { El $main "NetPlay Setup" $null } 10 }
       }
       if (-not $dlg) { break }
       Click (Need (El $dlg "Connect" $CT::Button) "Connect button")
-      $np = Wait-For { $w = Win $DolphinPid "NetPlay"; if ($w -and $w.Current.Name -eq "NetPlay") { $w } } 20
+      # fail fast: Dolphin's "failed to connect" box (any extra top-level window with an OK button) ends the wait for this attempt
+      $np = Wait-For { $w = Win $DolphinPid "NetPlay"; if ($w -and $w.Current.Name -eq "NetPlay") { return $w }; foreach ($x in (Top $DolphinPid)) { if ($x.Current.Name -ne "NetPlay Setup" -and $x.Current.ClassName -ne "MainWindow" -and $x.Current.Name -ne "NetPlay") { if (El $x "OK" $CT::Button) { return "ERR" } } } } 20
+      if ($np -is [string]) { $np = $null }
     }
   }
   if (-not $np) { Say "error:Dolphin could not connect to the host's NetPlay server (it did not answer; the host may have closed it)"; exit 1 }
   Say "stage:netplay-open"
+  Mark "netplay-open"
   Mini $np
+  Mark "minimized"
   if ($Role -eq "host") {
     $c = New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::Text)
     if (-not $NoCode) {   # direct mode has no host code to read
@@ -289,30 +303,31 @@ try {
       if ($code) { Say "code:$code" }
     }
     $end = (Get-Date).AddSeconds($TimeoutS)
-    $rows = 0
+    $rows = 0; $lastRows = -1
     while ((Get-Date) -lt $end) {
       $tbl = $np.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::Table)))
       try { $rows = $tbl.GetCurrentPattern([System.Windows.Automation.GridPattern]::Pattern).Current.RowCount } catch { $rows = 0 }
-      Say "players:$rows"
+      if ($rows -ne $lastRows) { Say "players:$rows"; $lastRows = $rows }
       if ($rows -ge $Players) { break }
-      Start-Sleep 2
+      Start-Sleep -Milliseconds 300
     }
-    Start-Sleep -Seconds 3
+    Mark "players-ready"
     try {   # evidence for pad-port order: the player table (name, ping, pad mapping) in connection order
       $tbl2 = $np.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::Table)))
       $cells = @(); foreach ($e in $tbl2.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) { if ($e.Current.Name) { $cells += $e.Current.Name } }
       Say ("table:" + ($cells -join "|"))
     } catch { Say "table:unreadable" }
     if ($rows -lt $Players) { Say "error:only $rows of $Players players joined the NetPlay lobby, not starting"; exit 1 }
-    Start-Sleep -Seconds 3
+    Start-Sleep -Milliseconds 800   # let the last client finish its join handshake (Start before that excludes it)
     Click (Need (El $np "Start" $CT::Button) "Start button")
     Say "stage:started"
   } else {
     Say "stage:joined"
+    Mark "joined"
   }
   # watch: a RenderWidget window means the game runs; keep the chat for desync reports
   $g = Wait-For { foreach ($w in (Top $DolphinPid)) { if ($w.Current.ClassName -eq "RenderWidget") { return $w } } } 90
-  if ($g) { Say "stage:in-game" } else { Say "error:the game did not start in Dolphin (disc mismatch or the host did not press Start)" }
+  if ($g) { Say "stage:in-game"; Mark "in-game" } else { Say "error:the game did not start in Dolphin (disc mismatch or the host did not press Start)" }
   $t0 = Get-Date
   $beat = 0
   while (Get-Process -Id $DolphinPid -ErrorAction SilentlyContinue) {
@@ -355,6 +370,8 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
     CreateDirectoryA(work_dir.c_str(), nullptr);
     std::string script = work_dir + "\\gc_netplay_driver.ps1";
     { std::ofstream f(script, std::ios::binary); f << driver_script(); }
+    out->go_path = work_dir + "\\gc_guest_go.txt";
+    DeleteFileA(out->go_path.c_str());
     out->status_path = work_dir + std::string(host ? "\\gc_host_status.txt" : "\\gc_guest_status.txt");
     DeleteFileA(out->status_path.c_str());
     std::wstring wd;
@@ -367,9 +384,15 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
     if (!spawn(cmd, W(exe_dir), wd, desktop.empty(), &out->dolphin_pid)) { out->error = "could not start Dolphin"; return false; }
     std::string args = std::string("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"") + script + "\" -Role " + (host ? "host" : "guest") +
                        " -DolphinPid " + std::to_string(out->dolphin_pid) + " -Status \"" + out->status_path + "\" -Suffix \"" +
-                       list_item_suffix(s) + "\" -Players " + std::to_string(s.players) + " -DelayS " + std::to_string(host ? 0 : guest_connect_delay_s(my_slot)) + (s.mode == "direct" ? " -NoCode 1" : "");
+                       list_item_suffix(s) + "\" -Players " + std::to_string(s.players) + " -DelayS " + std::to_string(host ? 0 : guest_connect_delay_s(my_slot)) + (s.mode == "direct" ? " -NoCode 1" : "") + (!host && out->wait_go ? " -GoFile \"" + out->go_path + "\"" : "");
     if (!spawn(L"powershell.exe " + W(args), W(work_dir), wd, false, &out->driver_pid)) { out->error = "could not start the NetPlay driver"; return false; }
     return true;
+}
+
+void signal_go(const Run& r) {
+    if (r.go_path.empty()) return;
+    HANDLE h = CreateFileA(r.go_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
 }
 
 std::string read_status(const Run& r) {

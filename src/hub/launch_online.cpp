@@ -161,6 +161,8 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     std::string next = gcnp::ini_patch(cur, sp, ip);
     { std::ofstream f(ini, std::ios::binary | std::ios::trunc); f << next; }
     GCO.run = gcnp::Run();
+    GCO.run.wait_go = !host;   // a guest's Dolphin boots right away and connects when the host's NetPlay server is up
+    GCO.go_sent = false;
     GCO.status_seen = 0;
     GCO.desync_told = false;
     /* Memory card: the host plays on (and syncs to everyone) its real vault card, the same folder offline play uses; whether the
@@ -265,6 +267,7 @@ void gc_tick() {
             }
         }
     }
+    if (!GCO.host && !GCO.go_sent && GCO.host_ready) { GCO.go_sent = true; gcnp::signal_go(GCO.run); autotest_log("guest: go"); }
     if (GCO.host && !GCO.ready_sent && gcnp::read_status(GCO.run).find("stage:netplay-open") != std::string::npos) {
         GCO.ready_sent = true;
         A.lobby.send_msg("{\"kind\":\"np_gc_ready\"}");
@@ -302,7 +305,7 @@ void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_n
 void gc_guest_poll() {
     if (!GCO.guest_wait) return;
     if (gc_needs_unpack(GCO.entry)) { gc_prefetch(GCO.entry); return; }
-    if (!GCO.host_ready || !GCO.fw.ready()) return;
+    if (!GCO.fw.ready()) return;   // the host's Dolphin need not listen yet: ours starts now and waits for np_gc_ready at its Connect button
     /* A different disc image desyncs Dolphin NetPlay: wait for the fingerprint and refuse to start on a mismatch. */
     if (!gc_fingerprint_ready(launch_path_for(GCO.entry))) return;
     gcnp::Match dm = gcnp::compare_disc(GCO.spec, GCO.fp_size, GCO.fp_sha);
