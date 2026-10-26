@@ -152,6 +152,7 @@ struct DsuServer::Impl {
     Pad pads[kSlots];
     bool conn[kSlots] = {};
     uint32_t pkt[kSlots] = {};
+    bool announced[kSlots] = {};   /* clients were told this slot is connected: send one last 'disconnected' packet when it drops */
     struct Client { sockaddr_in addr; int slot; Clock::time_point seen; };   /* slot -1 = all */
     std::vector<Client> clients;
     std::atomic<unsigned long long> sent{0};
@@ -191,12 +192,13 @@ struct DsuServer::Impl {
             if (now - clients[i].seen > std::chrono::seconds(5)) { clients.erase(clients.begin() + i); continue; }
             for (int sl = 0; sl < kSlots; ++sl) {
                 if (clients[i].slot != -1 && clients[i].slot != sl) continue;
-                if (!conn[sl]) continue;
+                if (!conn[sl]) { if (announced[sl]) { uint64_t us0 = std::chrono::duration_cast<std::chrono::microseconds>(now - t0).count(); send_to(clients[i].addr, build_data(server_id, sl, false, pkt[sl]++, us0, pads[sl])); } continue; }
                 uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(now - t0).count();
                 send_to(clients[i].addr, build_data(server_id, sl, true, pkt[sl]++, us, pads[sl]));
             }
             ++i;
         }
+        for (int sl = 0; sl < kSlots; ++sl) announced[sl] = conn[sl] && !clients.empty();
     }
     void loop() {
         auto last = Clock::now();

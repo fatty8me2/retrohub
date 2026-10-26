@@ -1,6 +1,46 @@
 {
   "versions": [
     {
+      "version": "1.27.1",
+      "date": "2026-10-26",
+      "title": "GameCube online: faster and rock solid",
+      "new": [],
+      "improved": [
+        "GameCube online gets into the game about twice as fast (around 20 seconds from Launch)",
+        "Passed 140 of 140 stress-test games (direct, relay, bad connections, late or slow players) with no desyncs"
+      ],
+      "fixed": [
+        "Players with the same GameCube game in different file formats (.iso, .ciso, .rvz) can now play together; only a genuinely different version is refused, with a clear message",
+        "The host is told right away when a guest can't start, instead of waiting"
+      ]
+    },
+    {
+      "version": "1.27.0",
+      "date": "2026-10-26",
+      "title": "NES, SNES, Wii U couch co-op and a lot more",
+      "new": [
+        "NES and SNES are here: online play with rollback, multitap support, cheats and game info",
+        "Wii U remote play for couch co-op (3D World and friends): only the host needs the game, and a direct connection is required",
+        "PlayStation 2 online for 2 players",
+        "A game start animation with startup sounds, plus controller tips when a game starts",
+        "Game info with descriptions and ratings",
+        "Your friends' games show greyed out in your library, so you can see what you could play together",
+        "See your friends' play time",
+        "Cheats can take typed values",
+        "Buzz! buzzers are supported",
+        "Settings is now split into tabs"
+      ],
+      "improved": [
+        "Better Wii U support: proper names and cover art, updates, saves, graphic packs, and a GamePad swap with View + RB",
+        "GameCube online is more reliable: a better handshake, desync warnings and consistent settings for everyone"
+      ],
+      "fixed": [
+        "Online freezes and relay problems are fixed",
+        "No more terminal windows popping up",
+        "Room card fixes"
+      ]
+    },
+    {
       "version": "1.26.0",
       "date": "2026-10-25",
       "title": "Jump back in, and play with friends faster",

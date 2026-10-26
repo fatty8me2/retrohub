@@ -152,7 +152,10 @@ static uint64_t r64(const uint8_t* p) { uint64_t v; memcpy(&v, p, 8); return v; 
 
 void Engine::send_packet(bool force) {
     uint32_t now = net_.now_ms();
-    if (!force && now - last_send_ < cfg_.send_gap_ms) return;
+    /* While stalled at the prediction limit the packets are repeats of the same cumulative window: slow them down so a multi-second stall does not pile hundreds
+     * of datagrams into the relay (which caps a room at 400 frames/s and would then deliver the backlog for much longer than the stall itself). */
+    const uint32_t gap = stall_since_ ? std::max<uint32_t>(cfg_.send_gap_ms, 40) : cfg_.send_gap_ms;
+    if (!force && now - last_send_ < gap) return;
     last_send_ = now;
     std::vector<uint8_t> b;
     b.push_back(kPktInput);
@@ -431,7 +434,12 @@ void Engine::drop_send(const netdrop::Agreement& ag) {
 void Engine::drop_on_msg(int from, const uint8_t* d, size_t n) {
     netdrop::Msg m;
     if (!netdrop::decode(kPktDrop, d, n, &m) || m.from != from || m.dead >= 8) return;
-    if (m.dead == cfg_.my_slot || m.dead == 0 || !(cfg_.slot_mask >> m.dead & 1u)) return;
+    if (m.dead == cfg_.my_slot) {   // the others gave up on us (we were silent for them, e.g. a multi-second stall): we cannot rejoin, so leave cleanly instead of playing on alone
+        if (!lost_ && net_.log) net_.log("drop: the other players dropped this PC (silent too long) - leaving");
+        lost_ = true;
+        return;
+    }
+    if (m.dead == 0 || !(cfg_.slot_mask >> m.dead & 1u)) return;
     if ((done_mask_ >> m.dead & 1u) && !drops_.count(m.dead)) return;
     if (!drops_.count(m.dead)) drop_begin(m.dead);
     auto it = drops_.find(m.dead);
@@ -471,6 +479,11 @@ void Engine::drop_service(uint32_t now) {
 
 void Engine::drop_check(uint32_t now) {
     if (!cfg_.drop_silence_ms) return;
+    /* Only drop a peer while we hear somebody else: if EVERY peer is silent the problem is our own link (a multi-second relay stall), and dropping
+     * them all would split the session. The timeout (lost_) handles a link that never comes back. */
+    bool heard_any = false;
+    for (int s = 0; s < 8; s++) if (active_peer(s) && last_rx_[s] && now - last_rx_[s] < cfg_.drop_silence_ms / 2) heard_any = true;
+    if (!heard_any) return;
     for (int s = 1; s < 8; s++) {
         if (!active_peer(s) || !last_rx_[s] || now - last_rx_[s] < cfg_.drop_silence_ms) continue;
         int others = 0;

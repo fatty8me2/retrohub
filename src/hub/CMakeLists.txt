@@ -128,6 +128,9 @@ target_link_libraries(RetroHub PRIVATE hubminiz)
 add_executable(hub_emu_test test_emulators.cpp emulators.cpp)
 target_include_directories(hub_emu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+add_executable(hub_wiiu_test test_wiiu_offline.cpp emulators.cpp art_match.cpp)   # offline Wii U: .wua/meta.xml, own-Cemu settings, profiles, saves, art names
+target_include_directories(hub_wiiu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${libchdr_SOURCE_DIR}/deps/zstd-1.5.7)
+target_link_libraries(hub_wiiu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # GameCube online via Dolphin NetPlay
 target_sources(RetroHub PRIVATE netplay_dolphin.cpp)
@@ -178,6 +181,11 @@ target_sources(RetroHub PRIVATE pcsx2.cpp)
 add_executable(hub_ps2_test test_pcsx2.cpp pcsx2.cpp emulators.cpp)
 target_include_directories(hub_ps2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
+# PS2 online (docs/PS2_ONLINE.md): readiness reasons, retrorun arguments, exit-code texts, the pinned LRPS2 download
+add_executable(hub_ps2_online_test test_ps2_online.cpp emulators.cpp)
+target_include_directories(hub_ps2_online_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_ps2_online_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # Game info (details modal): WinHTTP + fixture layer, the fixture recorder (live network, never run by tests) and the offline test.
 add_library(hubgameinfo_net STATIC gameinfo_net.cpp)

@@ -101,7 +101,7 @@ void leave_room() {
     online_cancel_pending();
     /* Leaving the room ends our online game too: Smash's lobby is part of this room, so its player has to leave with us.
      * (Only our own online child process; emulator sessions are not touched.) */
-    if (A.proc && A.run.online && !A.run.after_exit) TerminateProcess(A.proc, 0);
+    if (A.proc && A.run.online && !A.run.after_exit) { if (A.run.remote_play) rplay_quit_current_guest(); else TerminateProcess(A.proc, 0); }
     kt_leave_room();
     group_left_room();
     A.lobby.stop();
@@ -149,8 +149,9 @@ void enter_room(bool host, const std::string& code_in) {
     }
     A.in_room = true;
     A.page = Page::Online;
-    if (host && !A.pending_room_game.empty() && find_room_entry(A.pending_room_game)) A.selected_game = A.pending_room_game;
-    else if (host && !A.st.last_game.empty() && find_room_entry(A.st.last_game)) A.selected_game = A.st.last_game;
+    auto owned = [](const std::string& id) { const hub::GameEntry* g = find_room_entry(id); return g && !is_remote_stand_in(*g); };   // a host needs its own copy
+    if (host && !A.pending_room_game.empty() && owned(A.pending_room_game)) A.selected_game = A.pending_room_game;
+    else if (host && !A.st.last_game.empty() && owned(A.st.last_game)) A.selected_game = A.st.last_game;
     A.pending_room_game.clear();
 }
 
@@ -190,6 +191,9 @@ std::vector<hubui::PeerInfo> peer_list() {
         if (m.slot == me || g_fake_room) {
             p.hello = true; p.games.clear(); p.keys.clear(); my_games(&p.games, &p.keys);
             p.app = HUB_VERSION_STR;
+            if (g_fake_room && m.slot == 0 && std::getenv("HUB_SHOT_NO_WIIU")) {   // screenshot aid: the host owns the Wii U game this PC (a guest) lacks
+                p.games.clear(); p.keys.push_back("sm3dw");
+            }
             if (g_fake_room && m.slot == 1 && std::getenv("HUB_SHOT_PEER_MISSING")) {   // screenshot aid: peer 1 lacks every Nth game (picker "missing" state)
                 int n = std::max(2, std::atoi(std::getenv("HUB_SHOT_PEER_MISSING")));
                 std::vector<std::string> kept;
@@ -209,7 +213,7 @@ std::vector<hubui::PeerInfo> peer_list() {
 void guest_apply_launch(const std::string& body) {
     hubui::Json j;
     if (!json::parse(body, &j) || j.type != hubui::Json::Object) return;
-    const hub::GameEntry* g = find_room_entry(j.str("game"));
+    const hub::GameEntry* g = find_room_entry(j.str("game"));   // remote play: a stand-in when this PC has no copy (streamed)
     if (!g) { launch_fail("The host started a game you don't have."); return; }
     if (A.proc) { launch_fail("The host started a game, but a game is already running on this PC."); return; }
     if (g->system == hub::System::GC) {
@@ -321,10 +325,10 @@ void lobby_tick() {
                 set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + j.str("reason")), 10.0);
             }
         } else if (kind == "np_fail") {
-            if (is_host()) set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0);
+            if (is_host()) { set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0); gc_host_guest_failed(member_name(from) + " can't start: " + j.str("reason")); }
         } else if (kind == "np_gc_ready") {
             autotest_log("np_gc_ready from " + std::to_string(from) + " guest_wait=" + std::to_string((int)GCO.guest_wait));
-            if (from == 0 && !is_host() && GCO.guest_wait) GCO.host_ready = true;
+            if (from == 0 && !is_host() && (GCO.guest_wait || GCO.active)) GCO.host_ready = true;
         } else if (kind == "np_kt") {
             if (from == 0 && !is_host()) kt_on_code(j.str("code"), (int)j.num("launch", 0), j.str("pkg"));
         } else if (kind == "np_kt_ver") {
@@ -346,6 +350,8 @@ void lobby_tick() {
             A.chat.push_back({member_name(from), j.str("text")});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
             A.chat_scroll = true;
+        } else if (kind == "rplay_probe") {   // the host checks that it can reach us directly before launching a remote-play game
+            if (from == 0 && !is_host()) rplay_probe_guest(j.str("room"), (int)j.num("pcs", 2));
         } else if (kind == "launch") {
             if (from != 0 || is_host()) continue;
             guest_apply_launch(body);

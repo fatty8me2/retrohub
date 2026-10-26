@@ -423,7 +423,7 @@ static void test_sessions(const fs::path& dir) {
     fs::path save = instc / "portable" / "mlc01" / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav";
     write_text(save, "ZELDA1");
     s = hubemu::begin_session(w, ci, vb.string(), vault.string());
-    CHECK(s.active && s.rels.size() == 1 && s.rels[0] == "usr/save/00050000/1019e500");
+    CHECK(s.active && s.rels.size() == 2 && s.rels[0] == "usr/save/00050000/1019e500" && s.rels[1] == "usr/save/0005000e/1019e500");
     hubemu::end_session(s);
     CHECK(read_text(vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav") == "ZELDA1");
 

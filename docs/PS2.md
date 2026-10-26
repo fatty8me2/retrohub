@@ -16,4 +16,5 @@ Test: `hub_ps2_test` (offline; `--download <dir>` also downloads and installs PC
 - **Saves.** Memory card 1 is `memcards\RetroHub\<key>\Mcd001.ps2`, synced with `<vault>\ps2\<key>\battery\memcards\RetroHub\<key>` (newest wins).
 - **Controls.** Profile system `ps2`: Xbox A/B/X/Y -> Cross/Circle/Square/Triangle, triggers -> L2/R2 (analog = pressure), sticks, rumble. Players follow the
   RetroHub port order; 3-4 pads switch on the multitap. No pads = PCSX2's keyboard defaults on Pad1. Back + Start held closes the game gracefully (`pad_exit_watch`).
-- **Online.** Not supported: `docs/PS2_ONLINE.md`.
+- **Online.** Offline play always uses PCSX2. Online rooms (2 players) run retrorun + the LRPS2 libretro core, downloaded on demand and hash-pinned; the room blocks READY until the core and a BIOS are there, and
+  every player must have the same BIOS file and disc image (checked before the game starts). The host's PCSX2 memory card is shared for the session and never written back. See `docs/PS2_ONLINE.md`.

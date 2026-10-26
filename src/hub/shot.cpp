@@ -241,7 +241,16 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
     /* Reachability QA (qa/reach_matrix.ps1): HUB_SHOT_HOSTLAUNCH=1 presses the room's Launch (host); HUB_SHOT_GUEST_MSG=<file> feeds a
      * guest the host's launch message (written by the host run as "host-msg" in HUB_SHOT_TRACE). Fake room only, never any network. */
     if (path && g_fake_room && A.scanned_once && el > 3.0 && !room_hook_done) {
-        if (std::getenv("HUB_SHOT_HOSTLAUNCH") && is_host()) { room_hook_done = true; host_launch_selected(); }
+        if (std::getenv("HUB_SHOT_HOSTLAUNCH") && is_host()) {
+            /* a GameCube Launch waits for the background disc fingerprint ("try again in a moment"): start it and let it finish first, as a person would */
+            bool gc_wait = false;
+            const hub::GameEntry* ge = find_room_entry(A.selected_game);
+            if (ge && ge->system == hub::System::GC && el < 9.0) {
+                gc_prefetch(*ge);
+                if (!gc_fingerprint_ready(launch_path_for(*ge))) gc_wait = true;
+            }
+            if (!gc_wait) { room_hook_done = true; host_launch_selected(); }
+        }
         else if (const char* gm = std::getenv("HUB_SHOT_GUEST_MSG"); gm && !is_host()) {
             room_hook_done = true;
             std::ifstream f(gm, std::ios::binary);

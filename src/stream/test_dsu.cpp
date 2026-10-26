@@ -1,4 +1,5 @@
 #include "dsu_server.h"
+#include "pad_convert.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <cstdio>
@@ -16,6 +17,13 @@ int main() {
     const uint8_t nine[] = {'1','2','3','4','5','6','7','8','9'};
     CHECK(crc32(nine, 9) == 0xCBF43926u);
 
+    {   // guest pad -> DSU pad (Wii U A = east = DSU B bit)
+        rplay::PadState g{}; g.buttons = rplay::kPadA | rplay::kPadZR | rplay::kPadPlus; g.buttons2 = rplay::kPad2StickR; g.lx = 100; g.accel[2] = 9.80665f;
+        Pad d = rplay::to_dsu(g);
+        CHECK((d.buttons & kB) && !(d.buttons & kA) && (d.buttons & kStart) && (d.buttons & kR3) && d.rt == 255 && d.lt == 0 && d.lx == 100);
+        CHECK(d.accel[2] > 0.99f && d.accel[2] < 1.01f);
+        CHECK(rplay::dsu_slot_for_guest(1) == 0 && rplay::dsu_slot_for_guest(3) == 2 && rplay::dsu_slot_for_guest(0) == -1 && rplay::dsu_slot_for_guest(4) == -1);
+    }
     auto v = build_version(7);
     uint32_t type = 0, sid = 0; std::vector<uint8_t> pl;
     CHECK(v.size() == 22 && std::memcmp(v.data(), "DSUS", 4) == 0);

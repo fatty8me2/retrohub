@@ -15,10 +15,11 @@
 
 #include "library.h"
 #include "game_settings.h"
+#include "emu_saves.h"
 
 namespace hubemu {
 
-enum class Kind { Azahar, Cemu, Dolphin, Pcsx2 };   // Pcsx2: PlayStation 2 (pcsx2.h)
+enum class Kind { Azahar, Cemu, Dolphin, Pcsx2, Lrps2 };   // Pcsx2: PlayStation 2 (pcsx2.h); Lrps2: the libretro PS2 core for online rooms (a DLL for retrorun, not an exe)
 
 const char* name(Kind k);                 // "Azahar" / "Cemu" / "Dolphin"
 Kind kind_for(hub::System s);             // N3DS -> Azahar, WiiU -> Cemu, GC -> Dolphin, PS2 -> Pcsx2
@@ -146,11 +147,39 @@ std::string dolphin_card_root(const std::string& install_dir, const std::string&
 std::string dolphin_gfx_apply(const std::string& gfx_ini, const hub::gs::Values& v);        // InternalResolution, wideScreenHack
 std::string azahar_config_apply(const std::string& qt_config, const hub::gs::Values& v);    // resolution_factor, layout_option
 std::string cemu_settings_apply(const std::string& settings_xml, const hub::gs::Values& v); // graphic packs on/off (reversible)
-void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::Values& resolved);
+void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::Values& resolved);   // Cemu: RetroHub's own portable download only
+
+/* ---- Wii U: the user's OWN Cemu (portable\ / beside settings.xml / %APPDATA%\Cemu). Everything RetroHub changes is recorded in
+ * <user data> retrohub-cemu-state.txt and put back after the session (or at the next launch after a crash). settings.xml is backed up
+ * once to settings.xml.retrohub-backup. Only these are touched: <fullscreen> (made to agree with the -f flag) and, when the game's
+ * "Graphic packs" setting is off, the <GraphicPack> list (saved in the state file, restored afterwards). ---- */
+struct CemuOwnState {
+    bool fs_touched = false;  std::string fs_orig, fs_written;   // fs_orig "" = the tag was absent
+    bool gp_stripped = false; std::string gp_block;               // the user's <GraphicPack>...</GraphicPack> text
+};
+std::string cemu_fullscreen_apply(const std::string& settings_xml, bool fullscreen);     // sets <fullscreen> (adds it when missing)
+std::string cemu_fullscreen_value(const std::string& settings_xml);                      // "true" / "false" / ""
+std::string cemu_own_settings_apply(const std::string& settings_xml, const hub::gs::Values& v, CemuOwnState* st);
+std::string cemu_own_settings_revert(const std::string& settings_xml, const CemuOwnState& st);
+std::string cemu_own_state_text(const CemuOwnState& st);
+bool cemu_own_state_parse(const std::string& text, CemuOwnState* st);
+bool prepare_cemu_own_settings(const std::string& user_data, const hub::gs::Values& v);   // revert leftovers, back up once, apply, record
+bool revert_cemu_own_settings(const std::string& user_data);                              // false when there was nothing to revert
+/* Per-game Cemu profile (gameProfiles\<title id>.ini in the user data dir; Cemu layers it over its shipped gameProfiles\default\).
+ * Only keys the game's RetroHub settings set are written (wiiu.cpu_mode); the previous file is kept as <file>.retrohub-orig
+ * (or a ".retrohub-new" marker when there was none) and restored after the session. */
+std::string cemu_profile_apply(const std::string& ini, const hub::gs::Values& v);
+bool apply_cemu_game_profile(const std::string& user_data, uint64_t title_id, const hub::gs::Values& v);
+bool revert_cemu_game_profile(const std::string& user_data, uint64_t title_id);
+/* What the profile files say today: "CPU mode: Singlecore-Recompiler (Cemu default profile) ..." for the game's details page. */
+std::string cemu_profile_summary(const std::string& exe_dir, const std::string& user_data, uint64_t title_id);
+/* Cemu 2.6 default hotkey "toggle pad screen" = Ctrl+Tab. RetroHub sends it when View (Back) + Right bumper are held. */
+std::vector<int> cemu_toggle_gamepad_keys();                // virtual-key codes, modifier first
+bool cemu_toggle_combo(unsigned xinput_buttons);            // XINPUT_GAMEPAD_BACK + RIGHT_SHOULDER
 
 /* ---- launch ---- */
 std::string azahar_args(const std::string& game_path, bool fullscreen, const std::string& extra = "");   // extra: e.g. -m "nick@127.0.0.1:port"   // after the exe path
-std::string cemu_args(const std::string& game_path, bool fullscreen);
+std::string cemu_args(const std::string& game_path, bool fullscreen);   // -g <game> [-f]; windowed = settings.xml fullscreen=false (see cemu_fullscreen_apply)
 
 /* ---- saves: emulator folder <-> vault ---- */
 struct SaveSession {
@@ -169,7 +198,7 @@ struct SaveSession {
 };
 /* Before launch: vault -> emulator (newest wins; see sync_tree_newest). */
 SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& vault_battery_dir,
-                          const std::string& vault_root);
+                          const std::string& vault_root, uint64_t title_id_override = 0);   // override: Wii U title id read from an unpacked .wua
 /* After exit: emulator -> vault. */
 void end_session(SaveSession& s);
 
@@ -182,5 +211,8 @@ bool is_running(const std::string& exe);
 
 /* "3ds:0004000000055d00" / "wiiu:000500001019e500" -> title id (0 if the key carries none). */
 uint64_t title_id_from_key(const std::string& key);
+/* Title id (base game) read from a .wua file, 0 when the file has no readable ZArchive footer or is another container. */
+uint64_t wiiu_title_id_of_file(const std::string& path);
+hub::FsProbe wiiu_probe();   // real file system, for hub::cemu_dirs_for / wiiu_keys_check / wiiu_installed_addons
 
 } // namespace hubemu
