@@ -26,8 +26,18 @@ $cores = @(
     'mgba_libretro',       # GBA (also GB/GBC)
     'gambatte_libretro',   # GB/GBC
     'sameboy_libretro',    # GB/GBC, accuracy-focused
-    'melondsds_libretro'   # Nintendo DS (melonDS DS; software renderer, built-in FreeBIOS/firmware)
+    'melondsds_libretro',  # Nintendo DS (melonDS DS; software renderer, built-in FreeBIOS/firmware)
+    'nestopia_libretro',   # NES (Nestopia UE 2.0.0, GPLv2, deterministic savestates)
+    'snes9x_libretro'      # SNES (Snes9x 1.61, non-commercial license, deterministic savestates)
 )
+
+# SHA-256 of the DLLs inside the buildbot zips that were SyncTest-verified (docs/CORES.md). The buildbot 'latest' folder moves,
+# so a different hash only warns (the newer build is installed anyway) -- re-run qa
+es_snes_synctest.ps1 and update these.
+$pinned = @{
+    'nestopia_libretro' = '57ef3b6a3face9b65bc5de65cd41453c35fb880d0437b0b2d3e44549c1c0a959'
+    'snes9x_libretro' = '07534cc4018069840c7400c22adae4e508ac9d2fc8041e4aa6b50b04bf5d6eba'
+}
 
 New-Item -ItemType Directory -Force -Path $coresDir, $dlDir, $infoDir | Out-Null
 
@@ -65,6 +75,11 @@ foreach ($core in $cores) {
     $src = Expand-Find $zip $extDir $dllName
     Copy-Item -LiteralPath $src -Destination $dllPath -Force
     Remove-Item -LiteralPath $extDir -Recurse -Force
+    if ($pinned.ContainsKey($core)) {
+        $got = (Get-FileHash -LiteralPath $dllPath -Algorithm SHA256).Hash.ToLower()
+        if ($got -ne $pinned[$core]) { Write-Warning "$dllName SHA-256 $got differs from the verified build $($pinned[$core]); run qa
+es_snes_synctest.ps1" }
+    }
     Write-Host "Installed: $dllName"
 }
 

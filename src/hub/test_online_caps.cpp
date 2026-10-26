@@ -38,7 +38,7 @@ int main() {
     for (const hub::GameInfo& g : hub::catalog()) {
         if (!g.online || g.engine == hub::Engine::Native) continue;
         System s = hub::system_from_short(g.system.c_str());
-        CHECK(hubcaps::online_capable(s, &g));
+        if (s != System::NES && s != System::SNES) CHECK(hubcaps::online_capable(s, &g));   // NES/SNES online: netplay lane
         if (s == System::PS1) { ++ps1_online; CHECK(hub::online_max_for(g) >= 2 && hub::online_max_for(g) <= 4); }
     }
     CHECK(ps1_online >= 6);

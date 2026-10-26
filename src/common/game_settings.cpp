@@ -71,7 +71,7 @@ std::vector<Option> build() {
     v.push_back(mk("ds.layout", "Screen layout", "Video", NDS, K::Choice, S::Visual, "top-bottom",
                    {{"top-bottom", "Top / bottom"}, {"left-right", "Side by side"},
                     {"largescreen-top", "Large top screen"}, {"hybrid-top", "Hybrid"}}));
-    // ---- NES (Mesen) / SNES (Snes9x) through retrorun. Region changes the frame rate and timing: synced online.
+    // ---- NES (Nestopia UE) / SNES (Snes9x) through retrorun. Region changes the frame rate and timing: synced online.
     v.push_back(mk("nes.region", "Video standard", "Emulation", NES, K::Choice, S::Sync, "auto",
                    {{"auto", "Automatic (from the game)"}, {"ntsc", "NTSC (60 Hz)"}, {"pal", "PAL (50 Hz)"}}));
     v.push_back(mk("snes.region", "Video standard", "Emulation", SNES, K::Choice, S::Sync, "auto",
@@ -454,7 +454,7 @@ std::vector<std::string> retrorun_args(System s, const Values& v) {
         }
     }
     if (s == System::GBA && get(v, "gba.skip_bios") == "true") opt("mgba_skip_bios", "ON");
-    if (s == System::NES && get(v, "nes.region") != "auto") opt("mesen_region", get(v, "nes.region") == "pal" ? "PAL" : "NTSC");
+    if (s == System::NES && get(v, "nes.region") != "auto") opt("nestopia_force_system", get(v, "nes.region") == "pal" ? "pal" : "ntsc");
     if (s == System::SNES) {
         if (get(v, "snes.region") != "auto") opt("snes9x_region", get(v, "snes.region") == "pal" ? "pal" : "ntsc");
         std::string mt = get(v, "snes.multitap");

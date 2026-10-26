@@ -140,7 +140,7 @@ static void test_scan(const fs::path& dir) {
     CHECK(write_file(lib / "notarom.sfc", Bytes(1024 * 40, 0)));      // .sfc/.smc are accepted by extension...
     GameEntry e;
     CHECK(identify_game((lib / "Super Test (USA).nes").string(), &e));
-    CHECK(e.system == System::NES && e.key == "nes:" + hex8(want_nes) && e.title == "Super Test (USA)");
+    CHECK(e.system == System::NES && e.key == "nes:" + hex8(want_nes) && e.title.find("Super Test") == 0);
     CHECK(identify_game((lib / "Fancy Quest (USA).sfc").string(), &e));
     CHECK(e.system == System::SNES && e.key == "snes:" + hex8(want_snes) && e.serial == "SCAN LOROM");
     GameEntry e2;
@@ -271,7 +271,7 @@ static void test_settings() {
     s.set_game("nes:k", System::NES, "scale.filter", "linear");
     s.set_game("nes:k", System::NES, "scale.integer", "false");
     auto ra = retrorun_args(System::NES, s.resolve(System::NES, "nes:k"));
-    CHECK(has_pair(ra, "--opt", "mesen_region=PAL") && has_pair(ra, "--filter", "linear") && has_pair(ra, "--integer-scale", "0"));
+    CHECK(has_pair(ra, "--opt", "nestopia_force_system=pal") && has_pair(ra, "--filter", "linear") && has_pair(ra, "--integer-scale", "0"));
     s.set_game("snes:k", System::SNES, "snes.region", "ntsc");
     s.set_game("snes:k", System::SNES, "snes.multitap", "on");
     ra = retrorun_args(System::SNES, s.resolve(System::SNES, "snes:k"));

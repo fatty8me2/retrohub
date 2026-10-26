@@ -556,9 +556,9 @@ void play_entry(const hub::GameEntry& e) {
             break;
         }
         case hub::System::NES:
-        case hub::System::SNES: {   // Mesen (NES) / Snes9x (SNES) through retrorun; battery .srm in the vault, auto-resume state like GBA
+        case hub::System::SNES: {   // Nestopia UE (NES) / Snes9x (SNES) through retrorun; battery .srm in the vault, auto-resume state like GBA
             const bool nes = e.system == hub::System::NES;
-            std::string core = find_core(nes ? "mesen" : "snes9x");
+            std::string core = find_core(nes ? "nestopia" : "snes9x");
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
                                " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
