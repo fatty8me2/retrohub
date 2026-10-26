@@ -17,6 +17,10 @@ target_include_directories(hub_picker_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(hub_friend_games_test test_friend_games.cpp)
 target_include_directories(hub_friend_games_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+add_executable(hub_boot_art_test test_boot_art.cpp boot_art.cpp)
+target_include_directories(hub_boot_art_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_boot_art_test PRIVATE imgui)
+target_compile_features(hub_boot_art_test PRIVATE cxx_std_17)
 
 add_executable(hub_changelog_test test_changelog.cpp)
 target_link_libraries(hub_changelog_test PRIVATE hublogic)
@@ -35,8 +39,8 @@ target_link_libraries(hub_session_test PRIVATE hublogic)
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
     ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_games_ui.cpp group_ui.cpp
-    page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp)
-add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
+    page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp)
+add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(RetroHub PRIVATE hubgameinfo_net hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
@@ -187,3 +191,11 @@ target_link_libraries(gameinfo_record PRIVATE hubgameinfo_net)
 add_executable(hub_gameinfo_test test_gameinfo.cpp)
 target_link_libraries(hub_gameinfo_test PRIVATE hubgameinfo_net)
 target_compile_definitions(hub_gameinfo_test PRIVATE GAMEINFO_FIXTURES="${CMAKE_SOURCE_DIR}/src/hub/testdata/gameinfo" GAMEINFO_DB="${CMAKE_SOURCE_DIR}/data/gameinfo.tsv")
+add_executable(hub_boot_anim_test test_boot_anim.cpp)
+target_link_libraries(hub_boot_anim_test PRIVATE hublogic)
+# Startup sounds: original procedural synth (docs/BOOT_SOUNDS.md). Test renders to memory + qa/out/boot_sounds/*.wav (never played).
+add_executable(hub_bootsound_test test_boot_sound.cpp boot_synth.cpp)
+target_include_directories(hub_bootsound_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_bootsound_test PRIVATE hubcommon)
+target_compile_definitions(hub_bootsound_test PRIVATE BOOT_SOUND_OUT_DIR="${CMAKE_SOURCE_DIR}/qa/out/boot_sounds")
+target_include_directories(RetroHub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)   # boot_anim.h includes "common/library.h"

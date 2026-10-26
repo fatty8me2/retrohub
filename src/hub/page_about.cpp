@@ -13,6 +13,7 @@ void draw_overlays() {
     draw_cheats_modal();
     draw_quick_menu();
     kt_draw_modals();
+    boot_draw_overlay();
 }
 
 void page_about() {
