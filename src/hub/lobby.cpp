@@ -190,6 +190,12 @@ std::vector<hubui::PeerInfo> peer_list() {
         if (m.slot == me || g_fake_room) {
             p.hello = true; p.games.clear(); p.keys.clear(); my_games(&p.games, &p.keys);
             p.app = HUB_VERSION_STR;
+            if (g_fake_room && m.slot == 1 && std::getenv("HUB_SHOT_PEER_MISSING")) {   // screenshot aid: peer 1 lacks every Nth game (picker "missing" state)
+                int n = std::max(2, std::atoi(std::getenv("HUB_SHOT_PEER_MISSING")));
+                std::vector<std::string> kept;
+                for (size_t ki = 0; ki < p.keys.size(); ++ki) if ((int)(ki % n) != 0) kept.push_back(p.keys[ki]);
+                p.keys.swap(kept); p.games.clear();
+            }
             if (g_fake_room && m.slot == 1 && std::getenv("HUB_SHOT_FAKE_APP")) p.app = std::getenv("HUB_SHOT_FAKE_APP");   // screenshot aid: fake version mismatch (e.g. 1.9.1)
         }
         p.slot = m.slot;

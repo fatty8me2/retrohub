@@ -233,7 +233,7 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     static std::string focus_code;
     static int focus_tries = 0;
     if (focus_code != A.code) { focus_code = A.code; focus_tries = 40; }
-    if (focus_tries > 0) ImGui::SetKeyboardFocusHere();
+    if (focus_tries > 0 && st.button_enabled) ImGui::SetKeyboardFocusHere();   // a disabled button cannot take it: the request would land on the next field (the picker search box)
     ImGui::BeginDisabled(!st.button_enabled);
     bool pressed = ImGui::InvisibleButton("##roomaction", ImVec2(bw, bh), ImGuiButtonFlags_EnableNav);
     if (ImGui::IsItemFocused()) focus_tries = 0; else if (focus_tries > 0) --focus_tries;
@@ -348,6 +348,7 @@ void page_online_room() {
 
     ImGui::BeginChild("roomleft", ImVec2(left_w, h), ImGuiChildFlags_NavFlattened);
 
+    room_game_hero(rg, host);   // the selected game, big, with its cover (guests: the host's pick)
     kt_room_panel(left_w - ImGui::GetStyle().ScrollbarSize, true);   // Kanto Together: live status + trade panel first
     // member cards (4 slots)
     float gap = 14 * S;
@@ -361,66 +362,7 @@ void page_online_room() {
         member_card(by_slot.count(s) ? by_slot[s] : nullptr, s, ImVec2(mw, 146 * S));   // room for two chip rows when the console chips wrap
     }
 
-    ImGui::Dummy(ImVec2(0, 4 * S));
-    ImGui::PushFont(ui::F.h2);
-    ImGui::TextUnformatted(host ? "1. Choose a game" : "Host's game");
-    ImGui::PopFont();
-
-    // game picker: games every member owns (plus the current pick); the rest are summarised
-    {
-        std::vector<const hub::GameEntry*> cands;
-        std::set<std::string> seen;
-        for (auto& e : A.lib)
-            if (supports_online(e) && seen.insert(room_id(e)).second) cands.push_back(&e);
-        std::sort(cands.begin(), cands.end(), [](const hub::GameEntry* a, const hub::GameEntry* b) {
-            if (is_native(*a) != is_native(*b)) return is_native(*a);
-            std::string x = a->title, y = b->title;
-            for (auto& c : x) c = (char)std::tolower((unsigned char)c);
-            for (auto& c : y) c = (char)std::tolower((unsigned char)c);
-            return x != y ? x < y : a->key < b->key;
-        });
-        int hidden = 0;
-        for (auto* ep : cands) {
-            const hub::GameEntry& g = *ep;
-            std::string rid = room_id(g);
-            auto sel = hubui::game_selectable(rid, max_players_for(g), peers, 0);
-            bool chosen = A.selected_game == rid;
-            if (host || chosen) shot_trace_once("room-row", std::string(host ? "host " : "guest ") + rid + (sel.ok ? " ok" : " blocked:" + sel.reason) + (chosen ? " chosen" : ""));
-            if (!sel.ok && !chosen) { ++hidden; continue; }
-            if (!host && !chosen) continue;
-            ImGui::PushID(rid.c_str());
-            ImVec2 sz(left_w, 54 * S);
-            bool can_click = host && sel.ok;
-            if (!can_click) ImGui::BeginDisabled();
-            bool clicked = ImGui::InvisibleButton("row", sz, ImGuiButtonFlags_EnableNav);
-            bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-            if (!can_click) ImGui::EndDisabled();
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
-            ImU32 a, b;
-            entry_colors(g, &a, &b);
-            dl->AddRectFilled(p0, p1, chosen ? with_alpha(a, 0.35f) : (hov ? COL_PANEL2 : COL_PANEL), 12 * S);
-            if (chosen) dl->AddRect(p0, p1, b, 12 * S, 0, 2 * S);
-            dl->AddRectFilled(p0 + ImVec2(10 * S, 10 * S), p0 + ImVec2(16 * S, 44 * S), sel.ok ? b : IM_COL32(90, 92, 105, 255), 3 * S);
-            std::string label = g.title + "   " + sys_badge(g.system);
-            dl->AddText(p0 + ImVec2(30 * S, 13 * S), sel.ok ? IM_COL32_WHITE : IM_COL32(130, 132, 145, 255), label.c_str());
-            if (!sel.ok) {
-                ImVec2 ts = ImGui::CalcTextSize(sel.reason.c_str());
-                dl->AddText(ImVec2(p1.x - ts.x - 16 * S, p0.y + 14 * S), mix(COL_BAD, IM_COL32_WHITE, 0.25f), sel.reason.c_str());
-            } else if (chosen) {
-                dl->AddText(ImVec2(p1.x - ImGui::CalcTextSize("Selected").x - 16 * S, p0.y + 14 * S), IM_COL32(255, 255, 255, 220), "Selected");
-            }
-            if (clicked && can_click) {
-                A.selected_game = rid;
-                A.st.last_game = rid;
-                mark_dirty();
-                A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + json::escape(rid) + "\"}");
-            }
-            ImGui::PopID();
-        }
-        if (host && hidden > 0) ImGui::TextDisabled("%d more game(s) are hidden because not everyone in the room has them.", hidden);
-        if (host && cands.empty()) ImGui::TextDisabled("No online-capable games in your library yet.");
-    }
+    room_picker(host, left_w - ImGui::GetStyle().ScrollbarSize - 2 * S, peers);
 
     ImGui::Dummy(ImVec2(0, 6 * S));
     if (rg && !is_kanto(*rg) && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system))) {

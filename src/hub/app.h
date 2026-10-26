@@ -481,6 +481,11 @@ void apply_scan();
 const GameInfo* catalog_for(const hub::GameEntry& e);
 void rebuild_vis();
 bool supports_online(const hub::GameEntry& e);
+bool online_untested(const hub::GameEntry& e);
+/* picker_ui.cpp: room game picker (host) and the selected-game hero card (everyone) */
+void room_picker_set_query(const char* q);
+void room_game_hero(const hub::GameEntry* rg, bool host);
+void room_picker(bool host, float width, const std::vector<hubui::PeerInfo>& peers);
 int max_players_for(const hub::GameEntry& e);
 int local_players_for(const hub::GameEntry& e);
 std::string room_id(const hub::GameEntry& e);

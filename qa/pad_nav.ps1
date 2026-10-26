@@ -152,5 +152,16 @@ Check "Back closes the file browser" ($bk.Count -ge 1 -and $bk[0].osk -eq 0) "os
 
 Add-Type -AssemblyName System.Drawing
 Get-ChildItem "$Out\*.bmp" | ForEach-Object { $i = [System.Drawing.Image]::FromFile($_.FullName); $png = $_.FullName -replace '\.bmp$', '.png'; $i.Save($png, [System.Drawing.Imaging.ImageFormat]::Png); $i.Dispose() }
+# 7. room game picker (600-game fake library): lands in the grid, d-pad moves in 2D, Y opens details, B closes them, A chooses and closes the picker
+$r = Run "picker" "wait,wait,right,down,down,down,y,wait,b,wait,a,wait" @{ HUB_SHOT_FAKE_LIB = "600"; HUB_SHOT_FAKE_TITLES = "1"; HUB_SHOT_FAKE_ROOM = "1"; HUB_SHOT_ROOM_N = "3"; HUB_SHOT_ROOM_GAME = "fake:3"; HUB_SHOT_PICKER_OPEN = "1" }
+$mv = Moves $r.rows
+Check "picker: focus starts in the grid" ($r.rows[0].win -like "*pkpick/pickgrid*") "win=$($r.rows[0].win)"
+Check "picker: d-pad reaches different games" ((Distinct $mv) -ge 3) "distinct=$(Distinct $mv)"
+$y = $r.rows | Where-Object { $_.tok -eq "y" }
+Check "picker: Y opens game details" ($y.win -like "*pkdetail*") "win=$($y.win)"
+$b = $r.rows | Where-Object { $_.tok -eq "b" }
+Check "picker: B closes details, picker stays" ($b.win -like "*pkpick*" -and $b.popup -eq 1) "win=$($b.win) popup=$($b.popup)"
+$a = $r.rows | Where-Object { $_.tok -eq "a" }
+Check "picker: A chooses a game and closes the picker" ($a.popup -eq 0) "popup=$($a.popup)"
 Write-Host "screenshots/traces in $Out; failures: $($script:fail)"
 exit $(if ($script:fail) { 1 } else { 0 })

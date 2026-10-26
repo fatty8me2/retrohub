@@ -74,7 +74,10 @@ void apply_scan() {
                         if (!ci) continue;
                         g.catalog_id = ci->id;
                         g.title = ci->title;
-                    } else g.title = std::string("Plain ") + hub::system_name(s) + " game";
+                    } else {
+                        g.title = std::string("Plain ") + hub::system_name(s) + " game";
+                        if (s == hub::System::GC) g.serial = "GPLN01";   // a scanned disc always has its game ID
+                    }
                     A.lib.push_back(g);
                 }
             }
@@ -90,6 +93,15 @@ void apply_scan() {
             g.system = sy[i % 5];
             g.key = "fake:" + std::to_string(i);
             g.title = "Test Game " + std::to_string(i + 1);
+            if (std::getenv("HUB_SHOT_FAKE_TITLES")) {   // picker screenshots: a big mixed library with real-looking names
+                static const hub::System mix[] = {hub::System::N64, hub::System::GC, hub::System::PS1, hub::System::GBA, hub::System::NDS,
+                                                  hub::System::N3DS, hub::System::GBC, hub::System::PS2, hub::System::WiiU, hub::System::GB};
+                static const char* a1[] = {"Super", "Mega", "Turbo", "Legend of", "Mystic", "Dark", "Crystal", "Pocket", "Neon", "Royal"};
+                static const char* a2[] = {"Kart", "Quest", "Arena", "Strike", "Tactics", "Racers", "Party", "Tennis", "Fighters", "Stadium"};
+                static const char* a3[] = {"Remix", "Advance", "Deluxe", "World", "Rumble", "Legends", "Origins", "Zero", "Plus", "Blitz"};
+                g.system = mix[i % 10];
+                g.title = std::string(a1[i % 10]) + " " + a2[(i / 10) % 10] + " " + a3[(i / 7) % 10] + (i >= 100 ? " " + std::to_string(i / 100 + 1) : "");
+            }
             g.path = "C:\fake\game" + std::to_string(i) + ".z64";
             A.lib.push_back(g);
         }
@@ -108,6 +120,14 @@ void apply_scan() {
     }
     A.lib_index.clear();
     A.lib_state.clear();
+    if (std::getenv("HUB_SHOT_FAKE_TITLES") && g_headless) {   // picker screenshots: some favourites and recently played games
+        for (size_t i = 0; i < A.lib.size(); ++i) {
+            hub::GameState gs;
+            if (i % 11 == 3) gs.favorite = true;
+            if (i % 13 == 5) gs.last_played = 1760000000ull + i * 3600;
+            if (gs.favorite || gs.last_played) A.lib_state[A.lib[i].key] = gs;
+        }
+    }
     for (size_t i = 0; i < A.lib.size(); ++i) A.lib_index.emplace(A.lib[i].key, (int)i);   // first wins on duplicates
     A.vis_dirty = true;
     A.hello_dirty = true;
@@ -203,14 +223,16 @@ void rebuild_vis() {
 /* ---------- online capability ---------- */
 
 bool supports_online(const hub::GameEntry& e) {
-    /* hubcaps::online_capable: GC (Dolphin NetPlay), NDS (local wireless) and PS1 (retrorun rollback, multitap for 3-4) only for catalog
-     * games flagged online; N64/GB/GBC/GBA/3DS for every library game. Unit-tested against launch_online's branches. */
+    /* hubcaps::online_capable: every game of N64/GB/GBC/GBA/3DS/GC (Dolphin NetPlay, any disc)/NDS (ds-link)/PS1 (rollback, multitap for 3-4).
+     * Non-catalog GC/NDS/PS1 games are "untested" (online_untested). PS2 and Wii U stay out. Unit-tested against launch_online's branches. */
     return hubcaps::online_capable(e.system, hub::find_game(e.catalog_id));
 }
+/* Capable but not vetted (GC/DS/PS1 outside the catalog's online list): the picker tags it "Untested online". */
+bool online_untested(const hub::GameEntry& e) { return hubcaps::online_untested(e.system, hub::find_game(e.catalog_id)); }
 /* Online player cap for a room (online_max_for; 0 online_max = max_players). Every online limit uses this. */
 int max_players_for(const hub::GameEntry& e) {
     if (const GameInfo* g = hub::find_game(e.catalog_id)) return hub::online_max_for(*g);
-    return (e.system == hub::System::GB || e.system == hub::System::GBC) ? 2 : 4;
+    return hubcaps::default_online_max(e.system);   // not in the catalog: GB/GBC/DS/PS1 2, the rest 4
 }
 /* Local player count shown on cards (not the online cap). */
 int local_players_for(const hub::GameEntry& e) {
