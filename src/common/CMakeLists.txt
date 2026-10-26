@@ -1,5 +1,6 @@
 # Shared JSON reader/writer + Windows helpers (UTF-8/UTF-16, exe dir, quoting, file I/O). Tiny static lib, no deps.
-add_library(hubbase STATIC json.cpp winutil.cpp cheats.cpp runner_ctl.cpp)
+add_library(hubbase STATIC json.cpp winutil.cpp cheats.cpp runner_ctl.cpp start_hint.cpp hint_popup.cpp)
+target_link_libraries(hubbase PUBLIC user32 gdi32)
 target_include_directories(hubbase PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubbase PUBLIC cxx_std_17)
 
@@ -76,3 +77,11 @@ target_link_libraries(cheats_test PRIVATE hubbase)
 
 add_executable(runner_ctl_test test_runner_ctl.cpp)
 target_link_libraries(runner_ctl_test PRIVATE hubbase)
+
+# Game-start controller tips: timing, row text, rendered card (pure logic + GDI rasteriser).
+add_executable(starthint_test test_start_hint.cpp)
+target_link_libraries(starthint_test PRIVATE hubbase)
+
+# Popup behaviour on a private desktop: no-activate, click-through, foreground unchanged, auto-closes (~6 s).
+add_executable(hint_popup_test test_hint_popup.cpp)
+target_link_libraries(hint_popup_test PRIVATE hubbase)
