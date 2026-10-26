@@ -60,3 +60,6 @@ Hold **Back/View + Start/Menu** on one pad for **1 second** to leave a game and 
 ## Pad-only setup and paging
 - The first-run wizard (Settings > Run setup again) works with a pad alone: A/B/D-pad, the name is typed on the on-screen keyboard (A on the field; B deletes, Start = Done, View = Cancel; the pad keeps navigating afterwards and focus returns to the field). "Customize..." opens the Controllers page; B (or LB/RB) returns to the same wizard step.
 - LT / RT page up / down on every page, including Controllers, Settings and Saves (the focus follows onto what is on screen). `qa\pad_nav.ps1` walks all of this headless.
+
+## NES and SNES
+System keys `nes` and `snes` (retrorun `--system nes|snes`). Positional (Nintendo) layout by default: Xbox A presses the console's B, Xbox B presses A, and on SNES X/Y press Y/X; LB/RB are L/R, View is Select, Menu is Start. The Controllers page has "Use button labels" (`hubctl::set_label_layout`) to follow the printed letters instead. SNES players 3-4 use the multitap (automatic with three or more pads).
