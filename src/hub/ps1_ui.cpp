@@ -330,7 +330,7 @@ std::string ps2_online_block(const hub::GameEntry& e) {
     st.bios_found = !ps2_bios_now().file.empty();
     st.needs_unpack = e.issue == "extract" && hub::extracted_3ds_path(e).empty();
     st.title = e.title;
-    if (!st.core_present && !dl && (lr_error.empty() || now - lr_failed_at > 30.0)) {   // first ask, or a retry 30 s after a failure
+    if (!g_headless && !st.core_present && !dl && (lr_error.empty() || now - lr_failed_at > 30.0)) {   // first ask, or a retry 30 s after a failure
         lr_error.clear();
         LR_DL.start(hubemu::Kind::Lrps2, hubemu::managed_root());
         st.core_downloading = true;
