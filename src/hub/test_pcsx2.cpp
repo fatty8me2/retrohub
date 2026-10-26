@@ -440,6 +440,23 @@ static int test_download(const std::string& root) {
     return g_fail ? 1 : 0;
 }
 
+static void test_buzz() {
+    using namespace hubemu;
+    CHECK(pcsx2_is_buzz_game("buzz_hollywood") && !pcsx2_is_buzz_game("ratchet") && !pcsx2_is_buzz_game(""));
+    std::vector<PadDesc> sdl = {pad("Xbox One", "k0"), pad("DualSense", "k1")};
+    Ps2Pads two = pcsx2_pads_with(sdl, sdl);
+    std::string ini = pcsx2_ini_buzz("", two, true);
+    CHECK(hubui::ini_get(ini, "USB1", "Type", "") == "BuzzDevice");
+    CHECK(hubui::ini_get(ini, "USB2", "Type", "") == "None");
+    CHECK(hubui::ini_get(ini, "USB1", "BuzzDevice_Red1", "") == "SDL-0/A");
+    CHECK(hubui::ini_get(ini, "USB1", "BuzzDevice_Blue1", "") == "SDL-0/B");
+    CHECK(hubui::ini_get(ini, "USB1", "BuzzDevice_Yellow2", "") == "SDL-1/Start");
+    CHECK(hubui::ini_get(ini, "USB1", "BuzzDevice_Red3", "") == "");   // no third pad
+    std::string off = pcsx2_ini_buzz(ini, two, false);
+    CHECK(hubui::ini_get(off, "USB1", "Type", "") == "None");
+    std::printf("buzz: %s\n", g_fail ? "FAIL" : "OK");
+}
+
 int main(int argc, char** argv) {
     fs::path d = fs::temp_directory_path() / ("hub_ps2_test_" + std::to_string((unsigned long long)std::time(nullptr)));
     fs::create_directories(d);
@@ -451,6 +468,7 @@ int main(int argc, char** argv) {
     std::printf("bios\n"); test_bios(d / "bios");
     std::printf("cfg\n"); test_config(d / "cfg");
     std::printf("tbl\n"); test_emulator_table(d / "tbl");
+    std::printf("buzz\n"); test_buzz();
     } catch (const std::exception& ex) { std::printf("EXCEPTION %s\n", ex.what()); return 2; }
     int dl = 0;
     if (argc >= 3 && std::string(argv[1]) == "--download") dl = test_download(argv[2]);

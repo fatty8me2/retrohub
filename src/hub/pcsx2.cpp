@@ -262,6 +262,29 @@ std::string pcsx2_ini_pads(const std::string& in, const Ps2Pads& pads, const hub
     return t;
 }
 
+/* ------------------------------------------------------------------ Buzz! */
+
+bool pcsx2_is_buzz_game(const std::string& id) { return id.compare(0, 5, "buzz_") == 0; }
+
+/* Keys and binding names from PCSX2 v2.8.2 pcsx2/USB/USB.cpp (section "USB<port+1>", key "Type", bindings "<devtype>_<bind>")
+ * and pcsx2/USB/usb-pad/usb-buzz.cpp (BuzzDevice, bindings Red1..Yellow4). */
+std::string pcsx2_ini_buzz(const std::string& in, const Ps2Pads& pads, bool buzz) {
+    std::string t = in;
+    t = hubui::ini_set(t, "USB1", "Type", buzz ? "BuzzDevice" : "None");
+    t = hubui::ini_set(t, "USB2", "Type", "None");
+    if (!buzz) return t;
+    static const char* kColour[5] = {"Red", "Blue", "Orange", "Green", "Yellow"};
+    static const char* kButton[5] = {"A", "B", "X", "Y", "Start"};
+    for (int n = 1; n <= 4; ++n) {
+        for (int k = 0; k < 5; ++k) {
+            std::string key = "BuzzDevice_" + std::string(kColour[k]) + std::to_string(n);
+            std::string val = (n <= pads.count) ? "SDL-" + std::to_string(pads.sdl[n - 1]) + "/" + kButton[k] : "";
+            t = hubui::ini_set(t, "USB1", key, val);
+        }
+    }
+    return t;
+}
+
 /* ------------------------------------------------------------------ per launch */
 
 static std::string gv(const hub::gs::Values& v, const char* k, const char* d) { auto i = v.find(k); return i == v.end() ? std::string(d) : i->second; }
@@ -286,18 +309,20 @@ std::string pcsx2_ini_launch(const std::string& in, const Bios& bios, const std:
 std::string pcsx2_card_rel(const std::string& key) { return "RetroHub/" + pcsx2_safe_key(key) + "/Mcd001.ps2"; }
 
 std::string prepare_pcsx2(const std::string& install_dir, const Ps2Pads& pads, const hubctl::Profile& prof, const Bios& bios,
-                          const std::string& key, const hub::gs::Values& v) {
+                          const std::string& key, const hub::gs::Values& v, bool buzz) {
     if (!fs::exists(P(join(install_dir, "portable.ini")))) write_text(join(install_dir, "portable.ini"), "");   // never touches the user's own PCSX2
     std::string ini = join(install_dir, "inis\\PCSX2.ini");
     std::string marker = join(install_dir, "inis\\retrohub-defaults.txt");
     std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof));
     for (int i = 0; i < pads.count; ++i) want += ";" + std::to_string(pads.sdl[i]);
     want += pads.multitap ? ";tap" : "";
+    want += buzz ? ";buzz" : "";
     std::string have = read_text(marker);
     std::string t = read_text(ini);
     bool first = have.empty();
     if (first) t = pcsx2_ini_defaults(t);
     if (first || have.find("pads: " + want + "\n") == std::string::npos) t = pcsx2_ini_pads(t, pads, prof);
+    t = pcsx2_ini_buzz(t, pads, buzz);
     t = pcsx2_ini_launch(t, bios, pcsx2_card_rel(key), v);
     if (!write_text(ini, t)) return "could not write PCSX2.ini";
     if (first || have.find("pads: " + want + "\n") == std::string::npos)
