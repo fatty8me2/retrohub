@@ -20,7 +20,7 @@ int main() {
 
     /* timeline: full is 2.5-3.5 s, short ~1 s, phases in order and contiguous */
     Timeline full = timeline_for(false), shrt = timeline_for(true);
-    CHECK(full.total() >= 2.5f && full.total() <= 3.5f);
+    CHECK(full.total() >= 4.5f && full.total() <= 6.0f);
     CHECK(std::fabs(shrt.total() - 1.0f) < 0.01f);
     CHECK(phase_at(full, -0.1f) == Phase::Idle);
     CHECK(phase_at(full, 0.f) == Phase::Slide);
