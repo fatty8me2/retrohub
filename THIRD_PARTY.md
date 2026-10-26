@@ -74,3 +74,7 @@ RetroHub can run a friend's Kanto Together co-op hack from the user's own packag
 |---|---|---|---|
 | Dolphin 2509 `Data/Sys/GameSettings/*.ini` [Gecko] / [ActionReplay] (GameCube) | tag 2509 | GPL-2.0-or-later | GameCube cheat lists, merged by `scripts/build_cheats_db.py` into `data/cheats_db.bin`, matched by 6-char disc ID + disc revision. |
 | libretro-database `cht/` (N64, GB, GBC, GBA, PS1) | commit 12c21cf79f1e20eff6ac68b80875816c717d0a7a | CC BY-SA 4.0 | Cheat lists, converted by `scripts/build_cheats_db.py` into `data/cheats_db.bin` (2.2 MB). Must ship in `data/` next to the exe. |
+| libretro-database `metadat/` (N64, GB, GBC, GBA, NDS, PS1, PS2: developer, publisher, genre, release year/month, max users, ESRB rating, Famitsu/Edge scores) | commit d5e2e4d2453e3726f6c6a569b0504653eca436ff | CC BY-SA 4.0 | Offline game info in the details modal, condensed by `scripts/gameinfo_build.js` into `data/gameinfo.tsv` (about 0.7 MB; ships in `data/`). The file keeps this attribution in its header. |
+
+## Online game info (fetched on demand, not shipped)
+The details modal fetches a game description and review/age ratings, at most about one request a second and cached per game, from Wikipedia (REST page summary; text CC BY-SA 4.0, shown with a "From Wikipedia" link) and Wikidata (CC0). Requests identify themselves as `RetroHub/<version> (https://github.com/fatty8me2/retrohub)`. A result is shown only when the Wikidata item matches both the game title and its platform.

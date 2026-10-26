@@ -768,6 +768,8 @@ int cloud_ui_conflict_count();  // games whose saves differ between this PC and 
 void history_ui_open(const std::string& system, const std::string& key);   // Saves page: unified save history of one game
 void history_ui_saves_page();
 void history_ui_details_section(const hub::GameEntry& e);   // details modal: one line + "History..." button
+void gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_title);   // details modal: facts, rating chips, description (gameinfo_ui.cpp)
+void gameinfo_ui_shot_lib();   // HUB_SHOT_INFO screenshot aid
 void stats_ui_card();                                       // Home: "Your stats"
 void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history
 void cloud_ui_shot_init();   // HUB_SHOT_CLOUD_* seeds (screenshots only, no network)
