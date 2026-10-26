@@ -53,8 +53,21 @@ void autotest_tick() {
             hub::GameEntry copy = *g;
             autotest_log("play " + copy.title);
             play_entry(copy);
-            autotest_log(A.proc ? "play: emulator started" : "play: NOT started");
-            stage = A.proc ? 1 : 99;
+            if (!A.proc && UNZ.state == UnzipJob::Asking) {   // archived game (.7z / .zip): press "Unpack and play"; the dialog's poll starts the emulator afterwards
+                autotest_log("play: unpack requested (" + UNZ.key + ")");
+                start_unzip(copy);
+                stage = 3;
+                return;
+            }
+            if (A.proc) { autotest_log("play: emulator started"); stage = 1; }
+            else { started = now; stage = 3; }   // the launch may finish a few frames later (cloud gate, unpack, install check)
+        } else if (stage == 3) {
+            if (!A.proc && UNZ.state == UnzipJob::Asking) {   // the unpack question appeared a few frames after Play
+                if (const hub::GameEntry* g = find_entry(UNZ.key)) { autotest_log("play: unpack requested (" + UNZ.key + ")"); hub::GameEntry copy = *g; start_unzip(copy); }
+            }
+            if (A.proc) { autotest_log("play: emulator started"); stage = 1; }
+            else if (UNZ.state == UnzipJob::Failed) { autotest_log("play: NOT started (unpack failed: " + UNZ.error + ")"); stage = 99; }
+            else if (now - started > (UNZ.state == UnzipJob::Working ? 900000u : 20000u)) { autotest_log("play: NOT started"); stage = 99; }
         } else if (stage == 1 && !A.proc) { autotest_log("play: emulator process ended"); stage = 2; }
         return;
     }

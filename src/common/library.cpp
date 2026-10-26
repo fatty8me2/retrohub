@@ -864,9 +864,10 @@ bool id_wiiu(const fs::path& p, const std::string& ext, uint64_t size, GameEntry
     if (ext == ".wua") {
         ok = parse_wua(reader, size, &w);
         if (!ok) { w = WiiuInfo{}; w.container = "wua"; ok = true; }   // unknown layout: still launchable, keyed by file name
-        else {   // the game's real name (meta.xml longname) beats the file name
-            WiiuMeta wm;
-            if (wua_read_meta(reader, size, &wm) && !wm.longname.empty()) meta_name = wm.longname;
+        WiiuMeta wm;   // the game's real name (meta.xml longname) beats the file name; repacks whose folder is 0000000000000000_v0 carry the id only here
+        if (wua_read_meta(reader, size, &wm)) {
+            if (!wm.longname.empty()) meta_name = wm.longname;
+            if (!w.title_id && wm.title_id) { w.title_id = wm.title_id; w.serial = hex16(wm.title_id); for (char& c : w.serial) if (c >= 'a' && c <= 'f') c = char(c - 32); }
         }
     } else if (ext == ".wud") {
         std::vector<uint8_t> h;
