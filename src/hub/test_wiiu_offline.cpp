@@ -62,8 +62,8 @@ static const char* kBaseMeta =
 static const char* kUpdMeta = "<menu><title_id type=\"hexBinary\" length=\"8\">0005000E1019E500</title_id><longname_en>UPD</longname_en></menu>";
 
 /* A ZArchive with <base>/meta/meta.xml (block 0 stored raw: exactly 64 KiB) and <update>/meta/meta.xml (block 1, zstd). */
-static Bytes make_wua_with_meta() {
-    const std::string base = "000500001019e500_v0", upd = "0005000e1019e500_v81";
+static Bytes make_wua_with_meta(const std::string& base = "000500001019e500_v0") {
+    const std::string upd = "0005000e1019e500_v81";
     Bytes data(65536, 0);
     std::string m0 = kBaseMeta, m1 = kUpdMeta;
     std::memcpy(data.data(), m0.data(), m0.size());
@@ -137,6 +137,9 @@ static void test_meta_and_wua() {
     wiiu_addons_from_wua(ts, &a);
     CHECK(a.update_in_archive && a.archive_update_version == 81 && !a.dlc_in_archive);
     CHECK(wiiu_addons_text(a).find("Update v81 (inside the .wua)") != std::string::npos);
+    /* a repack whose title folder is 0000000000000000_v0 (Vimm's Lair): the id and name come from meta.xml */
+    Bytes z = make_wua_with_meta("0000000000000000_v0");
+    CHECK(wua_read_meta(reader_for(z), z.size(), &m) && m.title_id == 0x000500001019e500ull && m.longname == "The Legend of Zelda: Twilight Princess HD");
     Bytes bad = w;
     bad[bad.size() - 1] ^= 1;
     CHECK(wua_titles(reader_for(bad), bad.size()).empty());
@@ -351,6 +354,14 @@ static void test_archive_and_library(const fs::path& dir) {
         CHECK(out.find("rom-cache") != std::string::npos && out.find("wiiu") != std::string::npos);
         CHECK(hubemu::wiiu_title_id_of_file(out) == 0x000500001019e500ull);   // the save mapping reads the real id from the unpacked file
         CHECK(hubemu::wiiu_title_id_of_file(out + ".missing") == 0);
+        {   // same archive layout as the real download: the only folder is 0000000000000000_v0
+            fs::path zz = dir / "zero.wua";
+            Bytes zb = make_wua_with_meta("0000000000000000_v0");
+            std::ofstream f(zz, std::ios::binary);
+            f.write((const char*)zb.data(), (std::streamsize)zb.size());
+            f.close();
+            CHECK(hubemu::wiiu_title_id_of_file(zz.string()) == 0x000500001019e500ull);
+        }
     }
     library_set_data_dir("");
 }
