@@ -23,8 +23,8 @@ void draw_media(hub::System, ImDrawList*, ImVec2 center, float scale, float rot,
 
 /* ---- boot_sound.cpp (agent/boot-sound) implements. sound_play is non-blocking; sound_stop cuts it.
  *      Master volume: scale the output by bootanim::options().volume (0..1) at play time. ---- */
-void sound_play(hub::System);
-void sound_stop();
+void sound_play(hub::System, bool short_cut = false);   // short_cut: ~2 s cut with a quick fade (short animation)
+void sound_stop();   // 150 ms fade-out; only for a user skip (the sound otherwise plays to its end after launch)
 bool sound_available(hub::System);
 
 /* ---- boot_anim.cpp (engine) ---- */

@@ -22,10 +22,14 @@ int main() {
         for (float v : a) { if (!std::isfinite(v)) bad = true; peak = std::fmax(peak, std::fabs(v)); sq += double(v) * v; }
         double rms = std::sqrt(sq / (a.size() ? a.size() : 1));
         CHECK(!bad, "%s has NaN/inf", name.c_str());
-        CHECK(sec >= 1.0 && sec <= 3.0, "%s length %.2fs", name.c_str(), sec);
+        struct R { System s; double lo, hi; };
+        static const R rg[] = {{System::N64, 5.5, 6.5}, {System::GB, 4.5, 5.5}, {System::GBC, 5.0, 6.2}, {System::GBA, 5.5, 6.5},
+            {System::NDS, 5.5, 6.5}, {System::N3DS, 6.0, 7.0}, {System::GC, 7.5, 8.5}, {System::PS1, 9.0, 10.0},
+            {System::PS2, 9.0, 10.0}, {System::WiiU, 6.5, 7.5}, {System::NES, 4.5, 5.5}, {System::SNES, 6.5, 7.5}};
+        for (auto& e : rg) if (e.s == s) CHECK(sec >= e.lo && sec <= e.hi, "%s length %.2fs outside %.1f-%.1f", name.c_str(), sec, e.lo, e.hi);
         CHECK(peak <= 0.95f, "%s clips (peak %.3f)", name.c_str(), peak);
-        CHECK(peak >= 0.5f && rms > 0.01, "%s too quiet (peak %.3f rms %.4f)", name.c_str(), peak, rms);
-        CHECK(std::fabs(a[a.size() - 1]) < 0.01f && std::fabs(a[a.size() - 2]) < 0.01f, "%s tail not silent", name.c_str());
+        CHECK(peak >= 0.3f && rms > 0.05 && rms < 0.2, "%s too quiet (peak %.3f rms %.4f)", name.c_str(), peak, rms);
+        CHECK(std::fabs(a[a.size() - 1]) < 0.001f && std::fabs(a[a.size() - 2]) < 0.001f, "%s tail not silent", name.c_str());
         CHECK(a == b, "%s not deterministic", name.c_str());
         CHECK(bootsynth::write_wav((dir / (name + ".wav")).string().c_str(), a), "%s wav write", name.c_str());
         std::printf("%-5s %.2fs peak %.2f rms %.3f\n", name.c_str(), sec, peak, rms);
