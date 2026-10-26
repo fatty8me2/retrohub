@@ -80,6 +80,7 @@ add_subdirectory(src/retrorun)
 add_subdirectory(src/mgba_link)
 add_subdirectory(src/sameboy_rb)
 add_subdirectory(src/beetle_psx)
+add_subdirectory(src/stream)
 add_subdirectory(src/hub)
 
 # ---- Tests (ctest) ----
@@ -152,6 +153,7 @@ add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCub
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
+add_test(NAME stream_core_test COMMAND stream_core_test)            # remote play: packetizer, FEC, NACK, jitter buffer, codecs, bitrate
 add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
 add_test(NAME n64run_dropagree_test COMMAND n64run_dropagree_test)
 add_test(NAME n64run_match_test COMMAND n64run_match_test)
