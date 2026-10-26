@@ -108,7 +108,7 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     if (!draw) return total;
     ImGui::SetCursorScreenPos(at);
     const bool resume = has_resume(e);   // one press: launch and load the auto state (plain Play when there is none)
-    if (button(resume ? "Resume" : "Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; if (resume) resume_entry(c, -1); else play_entry(c); }
+    if (button(resume ? "Resume" : "Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; if (resume) play_entry_anim(c, true, [](const hub::GameEntry& g) { resume_entry(g, -1); }); else play_entry_anim(c, true); }
     if (resume && ImGui::IsItemHovered()) ImGui::SetTooltip("Continue from where you left off");
     if (seed_nav) seed_nav_here();
     if (online) {
@@ -659,7 +659,7 @@ void draw_details_modal() {
     };
     place(sp(17.f));
     tr("play", idle ? "enabled" : "disabled");
-    if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play) || forced("play")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry(c); }
+    if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play) || forced("play")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry_anim(c); }
     ImGui::SetItemDefaultFocus();
     if (!supports_online(e) && e.system == hub::System::GC) {
         place(label_w("Online soon", true));

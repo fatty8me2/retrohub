@@ -252,10 +252,10 @@ void handle_entry_result(const hub::GameEntry& e, const TileSpec& spec, const Ti
     }
     if (r.star) { A.sel_game = e.key; toggle_favorite(e.key); }
     if (r.details) { A.sel_game = e.key; A.show_details = true; }
-    if (play) {
+    if (play) {   // selecting a game opens its details first; Play there runs the start animation and launches
         A.sel_game = e.key;
-        hub::GameEntry copy = e;
-        play_entry(copy);
+        A.show_details = true;
+        shot_trace("select-details", e.key);
     }
 }
 
