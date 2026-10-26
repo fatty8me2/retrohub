@@ -100,6 +100,22 @@ bool archive_truncated(const std::string& path);               // 7z whose end h
 std::vector<ArchiveEntry> parse_tar_listing(const std::string& text);   // "tar -tvf" output -> regular files
 std::string gc_serial_for_name(const std::string& file_name);  // No-Intro style name -> catalog GC disc ID, "" if unknown
 
+/* Why an archive that holds no recognizable game was skipped ("contains another archive ...", "damaged ...", "no game files ..."). */
+std::string archive_skip_reason(const std::string& path);
+/* Archives the LAST scan_library() skipped, with the reason (cached with the scan results). */
+struct SkippedArchive { std::string path, reason; };
+std::vector<SkippedArchive> scan_skipped_archives();
+
+/* ---- unpacked-games cache (data_dir()/rom-cache) ----
+ * Archives are unpacked ONCE (cartridge ROMs at scan time, discs on first Play) and reused until the archive changes.
+ * The user's archive is never touched. Entries are evicted least-recently-used when a limit is set. */
+uint64_t rom_cache_bytes();                          // disk space used by unpacked games
+bool rom_cache_clear();                              // delete every unpacked game (the next scan unpacks cartridges again)
+void rom_cache_set_limit(uint64_t bytes);            // 0 = unlimited (default 40 GB until the hub sets it)
+uint64_t rom_cache_limit();
+uint64_t rom_cache_trim(uint64_t max_bytes);         // evict LRU entries (not used in the last hour) until under max_bytes; returns bytes freed
+void rom_cache_touch(const GameEntry& e);            // mark the unpacked copy of e as just used (call at launch)
+
 /* Per-user library state, persisted to data_dir()/library.json. */
 struct GameState {
     bool favorite = false;

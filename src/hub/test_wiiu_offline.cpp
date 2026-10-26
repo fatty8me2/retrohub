@@ -343,7 +343,7 @@ static void test_archive_and_library(const fs::path& dir) {
         else if (e.system == System::WiiU) plain = &e;
     }
     CHECK(plain && plain->title == "The Legend of Zelda: Twilight Princess HD" && plain->key == "wiiu:000500001019e500");
-    CHECK(arch && arch->system == System::WiiU && arch->title == "Super Mario 3D World" && arch->key == "wiiu:file-super-mario-3d-world");
+    CHECK(arch && arch->system == System::WiiU && arch->title == "Super Mario 3D World" && arch->key == "wiiu:0005000010145c00");
     CHECK(lib.size() == 2);   // the readme inside the archive is not a game
     if (arch) {
         CHECK(!fs::exists(dir / "data" / "rom-cache"));   // listed only

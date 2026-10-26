@@ -671,6 +671,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
     A.st.last_game = room_id(e);
     mark_dirty();
+    hub::rom_cache_touch(e);
     shot_trace("launch_online", std::string(is_host ? "host " : "guest ") + sys_short(e) + " " + room_id(e));
     if (g_headless && g_fake_room && (is_kanto(e) || e.system == hub::System::GC || e.system == hub::System::N3DS)) {   // peer-hosted routes need sockets: stop at the route
         shot_trace("online-route", std::string(is_kanto(e) ? "kanto" : e.system == hub::System::GC ? "dolphin-netplay" : "azahar-np3ds"));

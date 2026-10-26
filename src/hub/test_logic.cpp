@@ -199,6 +199,11 @@ int main() {
         CHECK(settings_from_json(settings_to_json(x), &y) && !y.download_art && y.sidebar_mode == 2);
         CHECK(settings_from_json("{\"sidebar_mode\": 9}", &y) && y.sidebar_mode == 2);
         CHECK(settings_from_json("{}", &d) && d.download_art);
+        CHECK(Settings().rom_cache_limit_gb == 40);
+        x.rom_cache_limit_gb = 0;
+        CHECK(settings_from_json(settings_to_json(x), &y) && y.rom_cache_limit_gb == 0);
+        x.rom_cache_limit_gb = 80;
+        CHECK(settings_from_json(settings_to_json(x), &y) && y.rom_cache_limit_gb == 80);
     }
 
     /* All Games: grouped by console */
