@@ -341,7 +341,10 @@ static bool spawn(const std::wstring& cmd, const std::wstring& cwd, const std::w
     if (minimized) { si.dwFlags |= STARTF_USESHOWWINDOW; si.wShowWindow = SW_SHOWMINNOACTIVE; }
     PROCESS_INFORMATION pi{};
     std::wstring c = cmd;
-    if (!CreateProcessW(nullptr, &c[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW * 0, nullptr, cwd.empty() ? nullptr : cwd.c_str(), &si, &pi)) return false;
+    /* CREATE_NO_WINDOW: the NetPlay driver is powershell.exe, a console program. Without it Windows allocates a console, and on
+     * PCs where Windows Terminal is the default console host that pops a visible terminal window on the user's screen (even with
+     * -WindowStyle Hidden, and even when lpDesktop points elsewhere). GUI programs (Dolphin) ignore the flag. */
+    if (!CreateProcessW(nullptr, &c[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, cwd.empty() ? nullptr : cwd.c_str(), &si, &pi)) return false;
     *pid = pi.dwProcessId;
     CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
     return true;

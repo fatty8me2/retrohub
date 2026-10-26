@@ -230,6 +230,8 @@ void tab_video() {
     if (ImGui::Checkbox("Show controller tips when a game starts", &A.st.start_hint)) mark_dirty();
     text_wrapped_disabled("A small card for about 5 seconds: hold View + Y for the game menu, View + Menu to return to RetroHub.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    boot_settings_ui();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
     {
         const EmuLook& el = emu_look();
         const hubemu::Install &az = el.az, &cm = el.cm, &dl = el.dl, &ps = el.ps;
