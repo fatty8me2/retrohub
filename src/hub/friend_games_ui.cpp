@@ -48,10 +48,18 @@ void fg_fake_libs() {
             v.push_back({g.system, g.system + ":fake-" + g.id, g.id, g.title});
         }
     };
-    add("miauid", 2, 0);
-    add("jakuid", 3, 1);
-    add("lunuid", 5, 2);
-    add("devuid", 4, 3);
+    const char* rg = std::getenv("HUB_SHOT_FAKE_REAL_GHOSTS");
+    if (!(rg && *rg == '2')) add("miauid", 2, 0);
+    if (!(rg && *rg == '2')) { add("jakuid", 3, 1); add("lunuid", 5, 2); add("devuid", 4, 3); }
+    if (std::getenv("HUB_SHOT_FAKE_REAL_GHOSTS")) {   // real titles with real identity keys, no catalog id: exercises DAT art resolution
+        std::vector<hubnet::LibGame>& r = FR.f_libs["miauid"];
+        r.push_back({"ps1", "ps1:slus-01188", "", "Woody Woodpecker Racing"});
+        r.push_back({"ps1", "ps1:scus-94570", "", "Crash Bash"});
+        r.push_back({"ps2", "ps2:slus-20398", "", "Road Trip"});
+        r.push_back({"snes", "snes:fake", "", "Super Mario World"});
+        r.push_back({"nes", "nes:fake", "", "Super Mario Bros."});
+    }
+    if (rg && *rg == '2') return;
     static const char* sys[] = {"n64", "gc", "gba", "gb", "gbc", "nds", "3ds", "ps1"};
     std::vector<hubnet::LibGame>& big = FR.f_libs["kaiuid"];
     for (int i = 0; i < extra; ++i) {
@@ -113,9 +121,7 @@ static std::vector<std::string> ghost_names(const hubui::fg::Ghost& g) {
 
 ArtRef art_for_ghost(const hubui::fg::Ghost& g) {
     int w = 0, h = 0;
-    std::string name = g.title;
-    if (!g.cid.empty()) if (const GameInfo* ci = hub::find_game(g.cid)) if (!ci->nointro.empty()) name = ci->nointro;
-    SDL_Texture* t = hubart::get_by_name(g.sys, name, hubart::Kind::Boxart, &w, &h);
+    SDL_Texture* t = hubart::get_ghost(g.sys, g.key, g.cid, g.title, hubart::Kind::Boxart, &w, &h);
     return art_lookup("ghost:" + g.id, true, t, w, h);
 }
 

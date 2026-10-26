@@ -287,6 +287,7 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
             q.system = sys;
             q.serial = g.serial;
             q.title = g.title;
+            q.fuzzy = g.path == "ghost";   // friend-game ghost entry (see get_ghost)
             if (g.system == hub::System::WiiU) {   // region from the file / archive name; the USA release is the fallback
                 std::string pl = g.path;
                 for (auto& c : pl) c = (char)std::tolower((unsigned char)c);
@@ -560,6 +561,25 @@ SDL_Texture* get_by_name(const std::string& system_short, const std::string& noi
     j.system = system_short;
     j.name = nointro_name;
     j.kind = kind;
+    return lookup_or_queue(std::move(j), w, h);
+}
+
+SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
+                       const std::string& title, Kind kind, int* w, int* h) {
+    if (!g_enabled.load()) return nullptr;
+    Job j;
+    j.id = slot_id("ghost:" + system_short + ":" + key + ":" + title, kind);
+    j.kind = kind;
+    auto it = g_slots.find(j.id);
+    if (it == g_slots.end()) {
+        /* Resolve exactly like an owned copy: catalog name, serial/crc from the identity key, DAT title, then fuzzy. */
+        j.game.system = hub::system_from_short(system_short);
+        j.game.key = key.empty() ? "ghost:" + system_short + ":" + title : key;
+        j.game.title = title;
+        j.game.catalog_id = catalog_id;
+        j.game.serial = hm::serial_from_key(system_short, key);
+        j.game.path = "ghost";
+    }
     return lookup_or_queue(std::move(j), w, h);
 }
 

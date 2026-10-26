@@ -118,6 +118,50 @@ int main(int argc, char** argv) {
     CHECK_EQ(dat[1].crc, "635A2BFF");
     CHECK_EQ(dat[6].serial, "");
 
+
+    /* ---- ghost (friend-owned) entries: same resolution as an owned copy, even for systems the user owns nothing of ---- */
+    {
+        static const char* kPs = R"DAT(game (
+	name "Woody Woodpecker Racing (Europe) (En,Fr,De,Es,It)"
+	rom ( name "a.bin" size 1 crc FCF215DE md5 AA serial "SLES-02972" )
+)
+game (
+	name "Woody Woodpecker Racing (USA)"
+	rom ( name "b.bin" size 1 crc 670AEB6E md5 BB serial "SLUS-01188" )
+)
+game (
+	name "Crash Bash (USA)"
+	rom ( name "c.bin" size 1 crc 1 md5 CC serial "SCUS-94570" )
+)
+)DAT";
+        auto pd = hm::parse_dat(kPs);
+        std::string how;
+        CHECK_EQ(hm::serial_from_key("ps1", "ps1:slus-01188"), "slus-01188");
+        CHECK_EQ(hm::serial_from_key("ps1", "ps1:file-foo"), "");
+        CHECK_EQ(hm::serial_from_key("gc", "gc:gm4e01-0"), "gm4e01");
+        CHECK_EQ(hm::serial_from_key("nes", "nes:abcd1234"), "");
+        hm::Query g; g.system = "ps1"; g.title = "Woody Woodpecker Racing"; g.serial = hm::serial_from_key("ps1", "ps1:slus-01188"); g.fuzzy = true;
+        CHECK_EQ(hm::match_name(pd, g, &how), "Woody Woodpecker Racing (USA)");   // by serial
+        CHECK_EQ(how, "serial");
+        g.serial.clear();
+        CHECK_EQ(hm::match_name(pd, g, &how), "Woody Woodpecker Racing (USA)");   // by title, USA release wins
+        CHECK_EQ(how, "title");
+        g.title = "Woody Woodpecker Racing - Special"; 
+        CHECK_EQ(hm::match_name(pd, g, &how), "Woody Woodpecker Racing (USA)");     // fuzzy: DAT name is a prefix of the title
+        g.title = "Totally Different Game";
+        CHECK_EQ(hm::match_name(pd, g, &how), "");
+        g.title = "Crash Bash Party Edition";
+        CHECK_EQ(hm::match_name(pd, g, &how), "Crash Bash (USA)");                  // fuzzy: DAT name is a prefix
+        CHECK_EQ(how, "fuzzy");
+        g.fuzzy = false;
+        CHECK_EQ(hm::match_name(pd, g, &how), "");
+        /* every system the hub knows has a thumbnail repo and a DAT, so a ghost never depends on owned games */
+        for (const char* s : {"n64", "gba", "gb", "gbc", "gc", "nds", "3ds", "ps1", "ps2", "nes", "snes", "wiiu"}) {
+            CHECK(!hm::thumb_repo(s).empty());
+            CHECK(!hm::dat_url(s).empty());
+        }
+    }
+
     /* ---- matching ---- */
     std::string how;
     hm::Query q;

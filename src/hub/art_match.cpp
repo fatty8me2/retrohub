@@ -291,6 +291,14 @@ static const DatRec* best(const std::vector<DatRec>& dat, Pred pred) {
     return b;
 }
 
+std::string serial_from_key(const std::string& system, const std::string& key) {
+    size_t c = key.find(':');
+    std::string r = c == std::string::npos ? key : key.substr(c + 1);
+    if (system == "ps1" || system == "ps2") return r.compare(0, 5, "file-") == 0 ? "" : r;
+    if (system == "gc" || system == "gba" || system == "nds") { size_t d = r.find('-'); if (d != std::string::npos) r.resize(d); return r; }
+    return "";
+}
+
 std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::string* how) {
     auto done = [&](const DatRec* r, const char* h) -> std::string {
         if (!r) return "";
@@ -333,6 +341,13 @@ std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::stri
                     return dn.size() > nt.size() && dn.compare(0, nt.size(), nt) == 0;
                 }))
                 return done(r, "title");
+        }
+        if (q.fuzzy && nt.size() >= 6) {
+            if (auto r = best(dat, [&](const DatRec& d) {
+                    std::string dn = normalize_title(d.name);
+                    return dn.size() >= 6 && (dn.compare(0, nt.size(), nt) == 0 || nt.compare(0, dn.size(), dn) == 0);
+                }))
+                return done(r, "fuzzy");
         }
     }
     return "";
