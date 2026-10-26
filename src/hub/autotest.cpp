@@ -7,6 +7,18 @@
 
 static const char* env(const char* k) { const char* v = std::getenv(k); return v && *v ? v : nullptr; }
 
+/* RETROHUB_AUTOTEST_GAME may be "title:<part of the title>": the room id of the first matching library game ("" until the scan found it). */
+static std::string game_id_from_env() {
+    const char* v = env("RETROHUB_AUTOTEST_GAME");
+    if (!v) return "";
+    std::string g = v;
+    if (g.rfind("title:", 0) != 0) return g;
+    std::string want = g.substr(6);
+    auto low = [](std::string x) { for (auto& c : x) c = (char)std::tolower((unsigned char)c); return x; };
+    for (auto& e : A.lib) if (low(e.title).find(low(want)) != std::string::npos) return room_id(e);
+    return "";
+}
+
 bool autotest_active() { static bool on = env("RETROHUB_AUTOTEST") != nullptr; return on; }
 
 void autotest_log(const std::string& line) {
@@ -37,6 +49,18 @@ void autotest_tick() {
             size_t i = 0;
             while (std::getline(b, l)) if (i++ >= n) autotest_log("driver " + l);
             seen_status = st;
+        }
+    }
+    {   // remote-play QA: RETROHUB_AUTOTEST_LEAVE_AFTER=<s> (guest leaves the room N s after its viewer started), RETROHUB_AUTOTEST_QUIT_AFTER=<s> (host closes Cemu)
+        static ULONGLONG proc_since = 0; static bool acted = false, was = false;
+        if (A.proc && A.run.room) { if (!proc_since) proc_since = now; } else proc_since = 0;
+        if (A.proc) was = true;
+        else if (was) { was = false; autotest_log(std::string("game process ended; in room=") + (A.in_room ? "yes" : "no") + " connected=" + (room_connected() ? "yes" : "no")); }
+        if (proc_since && !acted) {
+            const char* la = env("RETROHUB_AUTOTEST_LEAVE_AFTER");
+            const char* qa = env("RETROHUB_AUTOTEST_QUIT_AFTER");
+            if (la && role != "host" && now - proc_since >= (ULONGLONG)(std::atof(la) * 1000.0)) { acted = true; autotest_log("leaving the room (guest)"); leave_room(); }
+            if (qa && role == "host" && now - proc_since >= (ULONGLONG)(std::atof(qa) * 1000.0)) { acted = true; autotest_log("closing the game (host)"); request_game_close(); }
         }
     }
     if (role == "play") {   // single-player: press the same code path as the Play button for RETROHUB_AUTOTEST_GAME
@@ -70,7 +94,7 @@ void autotest_tick() {
         }
         A.st.name = env("RETROHUB_AUTOTEST_NAME") ? env("RETROHUB_AUTOTEST_NAME") : (role == "host" ? "qa-AtHost" : "qa-AtGuest");
         if (env("RETROHUB_AUTOTEST_WRITE")) A.gc_write_save = true;
-        if (role == "host") A.pending_room_game = env("RETROHUB_AUTOTEST_GAME") ? env("RETROHUB_AUTOTEST_GAME") : "";
+        if (role == "host") A.pending_room_game = game_id_from_env();
         enter_room(role == "host", env("RETROHUB_AUTOTEST_CODE") ? env("RETROHUB_AUTOTEST_CODE") : "ATGC01");
         stage = 1;
         started = now;
@@ -81,7 +105,7 @@ void autotest_tick() {
         autotest_log("connected slot " + std::to_string(room_my_slot()));
         if (role == "host") {
             if (env("RETROHUB_AUTOTEST_GAME")) {
-                A.selected_game = env("RETROHUB_AUTOTEST_GAME");
+                A.selected_game = game_id_from_env();
                 A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + json::escape(A.selected_game) + "\"}");
             }
         } else {

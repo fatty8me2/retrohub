@@ -92,6 +92,21 @@ int main() {
     CHECK(hubrp::exit_text(4, false).find("host's game ended") != std::string::npos && hubrp::exit_text(5, true).find("capture") != std::string::npos);
     CHECK(hubrp::attach_decision(true, false, 1000) == hubrp::Attach::Wait && hubrp::attach_decision(true, true, 1000) == hubrp::Attach::Now);
     CHECK(hubrp::attach_decision(false, true, 0) == hubrp::Attach::GiveUp && hubrp::attach_decision(true, false, 91000) == hubrp::Attach::GiveUp);
+    {   // direct-connection pre-check + host status line
+        CHECK(hubrp::probe_host_args("wss://x", "AB-101", 3, true, "r.json").find("--probe --host") == 0 && hubrp::probe_guest_args("wss://x", "AB-101", 2, 3, false).find("--slot 2") != std::string::npos);
+        CHECK(hubrp::probe_msg_is(hubrp::probe_msg("AB-101", 3)) && !hubrp::probe_msg_is("{\"kind\":\"launch\"}"));
+        auto m = hubrp::parse_probe_slots("{\"ok\":false,\"slots\":{\"1\":12,\"2\":-1}}");
+        CHECK(m.size() == 2 && m[1] == 12 && m[2] == -1);
+        std::map<int, std::string> names = {{0, "Host"}, {1, "Mickey"}, {2, "Minnie"}};
+        std::string why = hubrp::probe_block_reason(m, names);
+        CHECK(why.find("Minnie") != std::string::npos && why.find("Mickey") == std::string::npos && why.find("UPnP") != std::string::npos);
+        CHECK(hubrp::probe_block_reason(hubrp::parse_probe_slots("{\"ok\":true,\"slots\":{\"1\":5,\"2\":9}}"), names).empty());
+        CHECK(hubrp::probe_block_reason({}, names).find("Mickey and Minnie") != std::string::npos);   // no result file = nobody reachable
+        std::string st = "{\"t\":1,\"kbps\":12000,\"guests\":[{\"slot\":1,\"rtt_ms\":48,\"loss_permille\":0}]}";
+        CHECK(hubrp::status_text(st, names) == "streaming to Mickey · 12 Mbps · 48 ms");
+        CHECK(hubrp::status_text("{\"kbps\":5,\"guests\":[]}", names).empty());
+        CHECK(hubrp::host_args(7, "wss://x", "R-1", 2, false, "s.json", 26761).find("--status-file \"s.json\" --dsu-port 26761") != std::string::npos);
+    }
     CHECK(hubrp::launch_is_remote("{\"kind\":\"launch\"" + hubrp::launch_fragment(3) + "}") && !hubrp::launch_is_remote("{\"kind\":\"launch\"}"));
     CHECK(hubrp::host_left_text("Ann") == "Ann left - the stream ended." && hubrp::host_left_text("").find("The host") == 0);
 

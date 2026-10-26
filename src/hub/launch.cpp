@@ -456,11 +456,13 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         std::string perr = hubemu::prepare_pcsx2(inst.dir, ps2_pads_for(pp), pp, ps2_bios, e.key, gs_values_for(e), hubemu::pcsx2_is_buzz_game(e.catalog_id));
         if (!perr.empty()) { set_notice("Could not set up PCSX2: " + perr, 12.0); return; }
     } else if (inst.managed) {
-        { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, cemu_pads_for(pw)); }
+        { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for(pw), ri.dsu_players) : cemu_pads_for(pw)); }
     } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
         const char* ad = std::getenv("APPDATA");
         hubctl::Profile pw = controls_profile("wiiu", e.key);
-        hubemu::prepare_cemu_own(hubemu::cemu_user_data_dir(inst.dir, ad ? ad : ""), pw, cemu_pads_for_own(pw), true);
+        hubemu::prepare_cemu_own(hubemu::cemu_user_data_dir(inst.dir, ad ? ad : ""), pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw), true);
+    } else if (ri.dsu_players > 0) {
+        set_notice("Remote play needs RetroHub to manage Cemu's controls (Settings > Wii U) - the guests' controllers won't reach the game otherwise.", 15.0);
     }
     hub::gs::Values gsv = gs_values_for(e);
     bool fs = hub::gs::is_fullscreen(gsv);

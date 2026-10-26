@@ -136,6 +136,7 @@ struct RunInfo {
     std::function<void()> after_exit;   // runs once when the process ended (3DS/Wii U: copy the emulator save folder into the vault)
     std::string ctl_path, shot_dir;     // runner control file (src/common/runner_ctl.h) and screenshots folder; empty = runner has no control channel
     bool remote_play = false;           // Wii U remote play: this process is streamrun --guest (exit codes follow docs/REMOTE_PLAY.md)
+    int dsu_players = 0;                // Wii U remote play HOST: guests' pads (Cemu players 2..1+n) are DSU slots 0..n-1 in the Cemu profiles; 0 = every normal launch
     bool cloud_started = false;         // cloud_game_started() was called for this session (set by spawn); exit pushes the game
 };
 
@@ -592,6 +593,11 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
 void poll_np3ds();
 void poll_rplay();                    // Wii U remote play (host): attach streamrun to Cemu once its window exists; follow it
 void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host);
+bool rplay_precheck();                     // host, before Launch: direct-UDP probe to every guest (true = already verified, go ahead)
+void rplay_probe_guest(const std::string& room, int pcs);   // guest: join the host's reachability probe (lobby "rplay_probe")
+std::string rplay_block_reason();          // "" or why Launch is blocked (a guest cannot be reached directly / probe running)
+std::string rplay_status_line();           // host: "streaming to Mickey - 12 Mbps - 48 ms" ("" when not streaming)
+void rplay_quit_current_guest();           // guest leaving the room: ask the streamrun viewer to quit cleanly (bye -> host drops the pad)
 bool game_window_pid(unsigned long* pid);   // launch.cpp: owner PID of the running game's main window (false until it exists)
 std::string streamrun_path();
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,

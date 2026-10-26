@@ -169,7 +169,6 @@ add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # serve
 add_test(NAME hubfriends_dedupe_test COMMAND hubfriends_dedupe_test)   # friends list: one entry per uid (no network)
 add_test(NAME hublink_test COMMAND hublink_test)                         # link-a-new-PC crypto/adopt/export (no network)
 set_tests_properties(hubnet_test hublink_test n64run_save_sync_test n64run_lockstep_test n64run_testinput_test retrorun_link_test
-                     retrorun_rollback_test retrorun_dslink_test hub_bootsound_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
-                     retrorun_rollback_test retrorun_rollback_stall_test retrorun_dslink_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
+                     retrorun_rollback_test retrorun_rollback_stall_test retrorun_dslink_test hub_bootsound_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
 add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
 set_tests_properties(hubnet_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)

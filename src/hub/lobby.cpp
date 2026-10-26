@@ -101,7 +101,7 @@ void leave_room() {
     online_cancel_pending();
     /* Leaving the room ends our online game too: Smash's lobby is part of this room, so its player has to leave with us.
      * (Only our own online child process; emulator sessions are not touched.) */
-    if (A.proc && A.run.online && !A.run.after_exit) TerminateProcess(A.proc, 0);
+    if (A.proc && A.run.online && !A.run.after_exit) { if (A.run.remote_play) rplay_quit_current_guest(); else TerminateProcess(A.proc, 0); }
     kt_leave_room();
     group_left_room();
     A.lobby.stop();
@@ -350,6 +350,8 @@ void lobby_tick() {
             A.chat.push_back({member_name(from), j.str("text")});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
             A.chat_scroll = true;
+        } else if (kind == "rplay_probe") {   // the host checks that it can reach us directly before launching a remote-play game
+            if (from == 0 && !is_host()) rplay_probe_guest(j.str("room"), (int)j.num("pcs", 2));
         } else if (kind == "launch") {
             if (from != 0 || is_host()) continue;
             guest_apply_launch(body);
