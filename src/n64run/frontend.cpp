@@ -52,6 +52,9 @@
 #include "gs_cheat.h"
 #include "lockstep.h"
 #include "runstate.h"
+#include "runner_ctl.h"
+#include <set>
+#include <ctime>
 #include "save_sync.h"
 
 namespace fs = std::filesystem;
@@ -110,6 +113,8 @@ struct Args {
     bool realtime = false;   // --realtime (with --headless): keep the 60 Hz speed limiter, like a real game (QA of stalls)
     long long frames = 0;
     std::string screenshot;
+    std::string load_state;   // --load-state FILE: restore this state right after boot (offline)
+    std::string control, state_dir, shot_dir, game_key;   // --control FILE (runner_ctl.h), --state-dir, --shot-dir, --game-key
     std::string cheats;     // --cheats FILE: cheat list JSON (cheats.h); polled for live toggles offline
     std::string controls;   // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (controls.h)
     std::string test_input;   // --test-input / N64RUN_TEST_INPUT: scripted local input (QA)
@@ -185,6 +190,11 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--test-input") ok = val(&a.test_input);
         else if (k == "--controls") ok = val(&a.controls);
         else if (k == "--cheats") ok = val(&a.cheats);
+        else if (k == "--control") ok = val(&a.control);
+        else if (k == "--load-state") ok = val(&a.load_state);
+        else if (k == "--state-dir") ok = val(&a.state_dir);
+        else if (k == "--shot-dir") ok = val(&a.shot_dir);
+        else if (k == "--game-key") ok = val(&a.game_key);
         else { std::fprintf(stderr, "unknown argument: %s\n", k.c_str()); return false; }
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
     }
@@ -353,6 +363,178 @@ static void cheats_tick() {
 
 static bool qa_nofix() { return std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_NOFIX"); }   // QA baseline: behave like before
 
+
+/* ---- hub control channel (--control FILE; contract in src/common/runner_ctl.h) ----
+ * Polled from the VI callback (emulation thread). Save/load go through the core's own state commands (done on the next VI), so
+ * every command is a small state machine that acks once its file exists. One command at a time. */
+struct CtlJob {
+    enum Kind { None, SaveWait, SaveShot, LoadWait, Shot } kind = None;
+    long long start_vi = 0;
+    int slot = 0;
+    unsigned serial0 = 0;
+    std::string dest, thumb;
+};
+static runctl::Poller g_ctl;
+static CtlJob g_job;
+static std::string g_ctl_state_dir, g_ctl_shot_dir, g_ctl_key, g_ctl_shot_tmp;
+static bool g_ctl_online = false;
+static std::set<std::string> g_ctl_shot_seen;
+
+static std::set<std::string> list_dir(const std::string& d) {
+    std::set<std::string> r;
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(fs::path(d), ec)) r.insert(e.path().filename().string());
+    return r;
+}
+
+/* Starts a frame grab: headless arms the video extension; a real window asks the core for its own screenshot. */
+static void ctl_grab_begin() {
+    if (g_headless_mode) { g_job.serial0 = n64run::headless_shot_serial(); headless_set_shot_mode(ShotMode::Armed); }
+    else if (!g_ctl_shot_tmp.empty()) { g_ctl_shot_seen = list_dir(g_ctl_shot_tmp); g_core.DoCommand(M64CMD_TAKE_NEXT_SCREENSHOT, 0, nullptr); }
+}
+/* True once the grab was written to dest (max_w 0 = full size). Sets *failed when it cannot happen. */
+static bool ctl_grab_end(const std::string& dest, int max_w, bool* failed) {
+    if (g_headless_mode) {
+        if (n64run::headless_shot_serial() == g_job.serial0) return false;
+        if (!headless_write_screenshot(dest, max_w)) *failed = true;
+        return true;
+    }
+    for (auto& n : list_dir(g_ctl_shot_tmp)) {
+        if (g_ctl_shot_seen.count(n)) continue;
+        std::error_code ec;
+        fs::create_directories(fs::path(dest).parent_path(), ec);
+        fs::copy_file(fs::path(g_ctl_shot_tmp) / n, fs::path(dest), fs::copy_options::overwrite_existing, ec);
+        fs::remove(fs::path(g_ctl_shot_tmp) / n, ec);
+        if (ec) *failed = true;
+        return true;
+    }
+    return false;
+}
+
+static void ctl_finish(bool ok, const std::string& msg) {
+    g_ctl.ack(ok, msg);
+    logf_("control", "%s: %s", ok ? "ok" : "FAILED", msg.c_str());
+    g_job = CtlJob();
+}
+
+/* Offline resume support: --load-state restores a state on the third VI; auto.state is rewritten every 30 s and when the hub asks
+ * for "quit" (the core offers no hook for a plain window close, so that case loses at most 30 s). */
+static std::string g_load_state_path, g_auto_dir, g_key_for_auto;
+static unsigned long long g_next_autosave = 0;
+static long long g_stop_at_vi = 0;
+static void auto_save_now() {
+    if (g_auto_dir.empty()) return;
+    std::error_code ec;
+    fs::create_directories(fs::path(g_auto_dir), ec);
+    std::string f = runctl::state_file(g_auto_dir, runctl::kAutoSlot);
+    if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) return;
+    runctl::Sidecar sc;
+    sc.game_key = g_key_for_auto; sc.time = (long long)std::time(nullptr); sc.playtime = (long long)(GetTickCount64() / 1000);
+    runctl::write_text_atomic(runctl::sidecar_file(g_auto_dir, runctl::kAutoSlot), runctl::make_sidecar(sc));
+}
+static void auto_tick() {
+    if (!g_load_state_path.empty() && g_vi >= 3) {
+        std::string f = g_load_state_path;
+        g_load_state_path.clear();
+        if (g_core.DoCommand(M64CMD_STATE_LOAD, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) logf_("n64run", "load-state: the core refused %s", f.c_str());
+        else logf_("n64run", "load-state: restoring %s", f.c_str());
+        g_next_autosave = GetTickCount64() + 30000;
+    }
+    if (g_stop_at_vi && g_vi >= g_stop_at_vi) { g_stop_at_vi = 0; g_core.DoCommand(M64CMD_STOP, 0, nullptr); return; }
+    if (!g_auto_dir.empty() && !g_stop_at_vi && g_vi > 600) {
+        unsigned long long now = GetTickCount64();
+        if (now >= g_next_autosave) { g_next_autosave = now + 30000; auto_save_now(); }
+    }
+}
+
+static void ctl_tick() {
+    if (!g_ctl.enabled()) return;
+    const long long vi = g_vi;
+    if (g_job.kind != CtlJob::None) {
+        bool failed = false;
+        switch (g_job.kind) {
+            case CtlJob::SaveWait: {
+                std::error_code ec;
+                auto sz = fs::file_size(fs::path(runctl::state_file(g_ctl_state_dir, g_job.slot)), ec);
+                if (!ec && sz > 0 && vi > g_job.start_vi + 1) {
+                    g_job.kind = CtlJob::SaveShot; g_job.start_vi = vi;
+                    ctl_grab_begin();
+                } else if (vi > g_job.start_vi + 600) ctl_finish(false, "the core did not write the state");
+                break;
+            }
+            case CtlJob::SaveShot:
+                if (ctl_grab_end(g_job.thumb, runctl::kThumbWidth, &failed) || vi > g_job.start_vi + 300) {
+                    runctl::Sidecar sc;
+                    sc.game_key = g_ctl_key; sc.time = (long long)std::time(nullptr); sc.playtime = (long long)(GetTickCount64() / 1000);
+                    runctl::write_text_atomic(runctl::sidecar_file(g_ctl_state_dir, g_job.slot), runctl::make_sidecar(sc));
+                    ctl_finish(true, "saved slot " + std::to_string(g_job.slot));
+                }
+                break;
+            case CtlJob::LoadWait:
+                if (vi > g_job.start_vi + 2) ctl_finish(true, "loaded");
+                break;
+            case CtlJob::Shot:
+                if (ctl_grab_end(g_job.dest, 0, &failed)) ctl_finish(!failed, failed ? "could not write the screenshot" : g_job.dest);
+                else if (vi > g_job.start_vi + 300) ctl_finish(false, "no frame was captured");
+                break;
+            default: break;
+        }
+        return;
+    }
+    {   // the core's own F12 hotkey drops screenshots into the scratch folder: file them into the vault
+        static unsigned long long next_sweep = 0;
+        unsigned long long now = GetTickCount64();
+        if (!g_headless_mode && !g_ctl_shot_tmp.empty() && !g_ctl_shot_dir.empty() && now >= next_sweep) {
+            next_sweep = now + 700;
+            for (auto& n : list_dir(g_ctl_shot_tmp)) {
+                std::error_code ec;
+                std::string dest = g_ctl_shot_dir + "/" + runctl::shot_name(std::time(nullptr));
+                fs::create_directories(fs::path(g_ctl_shot_dir), ec);
+                if (fs::exists(fs::path(dest), ec)) dest = dest.substr(0, dest.size() - 4) + "-" + n;
+                fs::rename(fs::path(g_ctl_shot_tmp) / n, fs::path(dest), ec);
+                if (!ec) logf_("control", "screenshot filed: %s", dest.c_str());
+            }
+        }
+    }
+    runctl::Command c;
+    if (!g_ctl.poll(GetTickCount64(), &c)) return;
+    logf_("control", "seq %lld %s slot %d", c.seq, runctl::cmd_name(c.cmd), c.slot);
+    switch (c.cmd) {
+        case runctl::Cmd::SaveState:
+        case runctl::Cmd::LoadState: {
+            if (g_ctl_online) { ctl_finish(false, "Save states are disabled in online sessions"); break; }
+            if (g_ctl_state_dir.empty()) { ctl_finish(false, "no state folder"); break; }
+            std::error_code ec;
+            fs::create_directories(fs::path(g_ctl_state_dir), ec);
+            std::string f = runctl::state_file(g_ctl_state_dir, c.slot);
+            g_job.slot = c.slot; g_job.start_vi = vi;
+            if (c.cmd == runctl::Cmd::SaveState) {
+                fs::remove(fs::path(f), ec);
+                g_job.thumb = runctl::thumb_file(g_ctl_state_dir, c.slot);
+                if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) { ctl_finish(false, "the core refused to save"); break; }
+                g_job.kind = CtlJob::SaveWait;
+            } else {
+                if (!fs::exists(fs::path(f), ec)) { ctl_finish(false, "no state in that slot"); break; }
+                if (g_core.DoCommand(M64CMD_STATE_LOAD, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) { ctl_finish(false, "the core refused to load"); break; }
+                g_job.kind = CtlJob::LoadWait;
+            }
+            break;
+        }
+        case runctl::Cmd::Screenshot:
+            if (g_ctl_shot_dir.empty()) { ctl_finish(false, "no screenshot folder"); break; }
+            g_job.kind = CtlJob::Shot; g_job.start_vi = vi;
+            g_job.dest = g_ctl_shot_dir + "/" + runctl::shot_name(std::time(nullptr));
+            ctl_grab_begin();
+            break;
+        case runctl::Cmd::Quit:
+            g_ctl.ack(true, "quitting");
+            if (!g_auto_dir.empty() && !g_ctl_online) { auto_save_now(); g_stop_at_vi = vi + 12; }   // let the core write auto.state first
+            else g_core.DoCommand(M64CMD_STOP, 0, nullptr);
+            break;
+        default: ctl_finish(false, "not supported for this system"); break;
+    }
+}
+
 static void headless_frame_cb(unsigned int) {
     g_vi++;
     if (!g_once.empty() && g_core.MemPtr) {
@@ -364,6 +546,8 @@ static void headless_frame_cb(unsigned int) {
     }
     if (!g_gs.empty() && g_core.MemPtr) { uint8_t* r = static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)); if (r) n64run::gs_apply(r, 8u * 1024u * 1024u, g_gs); }
     cheats_tick();
+    auto_tick();
+    ctl_tick();
     if (g_match && g_core.MemPtr && !g_match->done()) {
         std::string l = g_match->step(static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)), g_vi);
         if (!l.empty()) { std::stringstream ls(l); std::string one; while (std::getline(ls, one)) logline("n64run", one.c_str()); }
@@ -615,6 +799,11 @@ int main(int argc, char** argv) {
     cfg_bool(core_cfg, "AutoStateSlotIncrement", 0);
     cfg_str(core_cfg, "SaveSRAMPath", with_sep(save_dir));
     cfg_str(core_cfg, "SaveStatePath", with_sep(save_dir));
+    if (!args.control.empty() && !args.headless) {   // windowed screenshots: the core writes into a scratch folder, ctl_tick moves them
+        std::string st = save_dir + "\\screenshots_tmp";
+        fs::create_directories(st, ec);
+        cfg_str(core_cfg, "ScreenshotPath", with_sep(st));
+    }
     cfg_str(core_cfg, "SharedDataPath", emu_dir);
     // Disable emulator hotkeys that change emulation state (keep Esc = stop, Alt+Enter = fullscreen).
     if (g_core.OpenSection("CoreEvents", &ev_cfg) == M64ERR_SUCCESS) {
@@ -854,8 +1043,17 @@ int main(int argc, char** argv) {
             title_thread = std::thread(title_watch, wtitle);
         }
         g_headless_mode = args.headless;
+        g_ctl_online = online;
+        g_key_for_auto = args.game_key;
+        if (!online && !args.state_dir.empty() && !g_match) { g_auto_dir = args.state_dir; g_next_autosave = GetTickCount64() + 30000; }
+        if (!online && !args.load_state.empty()) g_load_state_path = args.load_state;
+        if (!args.control.empty()) {
+            g_ctl = runctl::Poller(args.control);
+            g_ctl_state_dir = args.state_dir; g_ctl_shot_dir = args.shot_dir; g_ctl_key = args.game_key;
+            if (!args.headless) g_ctl_shot_tmp = save_dir + "\\screenshots_tmp";
+        }
         g_realtime = args.realtime;
-        if (args.headless || g_match || online || !g_gs.empty() || !g_cheats_path.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
+        if (args.headless || g_match || online || !g_gs.empty() || !g_cheats_path.empty() || !args.control.empty() || !g_auto_dir.empty() || !g_load_state_path.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         /* Boot watchdog: a game that never reads a controller within 90 s is stuck in its own boot code (seen with a
          * bad Pokemon Stadium dump: it spins in a `bal .` loop at 0x80000198). Say so instead of hanging silently. */
         std::thread([] {

@@ -617,6 +617,8 @@ void draw_details_modal() {
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     cloud_ui_game_line(e);
+    qm_seed_gallery(e);
+    shots_gallery(e);
     if (!native) history_ui_details_section(e);
     gs_draw_game_section(e);
     ImGui::Dummy(ImVec2(0, sp(1.f)));

@@ -68,6 +68,20 @@ bool install_current(const std::string& dir, const Package& p);    // files pres
 /* Copy the package into `dir`. progress(done_bytes, total_bytes) returns false to cancel. Overwrites package files, deletes nothing. */
 bool install(const Package& p, const std::string& dir, const std::function<bool(uint64_t, uint64_t)>& progress, std::string* err);
 
+/* ------------------------------ package version (both players must run the same build) ------------------------------ */
+struct PkgVer { std::string id, built; };           // id = patch.json patchSha1 (lower case), built = ISO time
+enum class VerMatch { Same, MineOlder, MineNewer, Different, Unknown };   // Unknown: one side has no version (e.g. an older RetroHub)
+PkgVer parse_pkg_ver(const std::string& patch_json_text);
+PkgVer read_pkg_ver(const std::string& dir);       // the INSTALLED package's patch.json
+VerMatch compare_versions(const PkgVer& mine, const PkgVer& theirs);
+/* Fixed reason code for a mismatch ("pkg_old": my package is older than the other one, "pkg_new", "pkg_diff"; "" for Same/Unknown). */
+std::string version_reason(VerMatch m);
+/* Host-side sentence for the Launch block: "Mickey has an older Kanto Together package - they need to update". `m` is from the HOST's point of view. */
+std::string version_block_text(VerMatch m, const std::string& partner_name);
+bool valid_ver_id(const std::string& id);          // 40 hex chars (lobby input validation)
+/* The installed launcher knows the start-up barriers (--no-barriers / PH sync): app\coop-launch.mjs mentions "no-barriers". */
+bool has_barriers(const std::string& dir);
+
 /* ------------------------------ ROM ------------------------------ */
 struct PatchManifest { std::string base_sha1, target_sha1; uint64_t base_size = 0; };
 bool read_manifest(const std::string& patch_json_path, PatchManifest* out);
@@ -133,6 +147,7 @@ std::string cmd_confirm();
 std::string cmd_cancel();
 std::string cmd_code(const std::string& code);   // guest: re-join with the host's new code ("" if invalid)
 std::string cmd_quit();
+std::string cmd_go();                  // skip a start-up wait (barrier) by hand
 
 /* ------------------------------ launcher output -> state ------------------------------ */
 enum class Phase { Idle, Starting, WaitingForPartner, Connected, Reconnecting, PartnerAway, Failed, Ended };
@@ -160,6 +175,12 @@ struct State {
     bool synced_story = false;    // guest: the bridge applied the host's story snapshot (not a reset; needs the launcher's --verbose output)
     bool join_failed = false;     // guest: "Could not join" seen; the bridge keeps retrying by itself, so this is NOT terminal (cleared on connect)
     bool ever_connected = false;  // the partner was connected at least once this session
+    /* start-up barriers (title screen to the first overworld step; package with "sync barriers") */
+    bool barrier_waiting = false; // the game is paused waiting for the partner right now
+    std::string barrier_text;     // plain words for the status panel while waiting ("" otherwise)
+    bool barriers_off = false;    // the script switched them off (other ROM build) or the partner runs an older package
+    bool legacy_peer = false;     // the partner's game has no barriers (older package): "both should update"
+    bool together = false;        // "continuing together" / "both of you are in the game world" seen
 };
 /* Guest: may RetroHub push a new host code (`code NEW`) into the running launcher by itself? Never once the pair has connected: the bridge
  * then reconnects/resumes by itself, and `code` throws away its campaign (a fresh join re-syncs the guest = the game appears reset). */
@@ -187,6 +208,7 @@ class Session {
     void trade(int slot) { send(cmd_trade(slot)); }
     void confirm() { send(cmd_confirm()); }
     void cancel() { send(cmd_cancel()); }
+    void go() { send(cmd_go()); }                // skip a start-up wait
     void rejoin(const std::string& code) { send(cmd_code(code)); }
     /* Ends the session: WM_CLOSE to mGBA's window (so the save flushes), wait for it, "quit", then the job object is closed (kills leftovers).
      * Runs on a worker thread so the UI never blocks; wait=true joins it (shutdown). */

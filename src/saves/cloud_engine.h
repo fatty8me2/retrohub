@@ -11,6 +11,7 @@ enum class LocalOnlyReason { None, OverCap, TooLarge, User, DecideLater };
 enum class SyncMode { ReadWrite, ReadOnly };            // ReadOnly = online session using a throwaway save dir
 
 FileClass classify_path(const std::string& rel_in_game, int64_t size);   // pure; unit tested
+void set_backup_screenshots(bool on);                                   // default off: files under shots/ stay local
 bool is_protected(FileClass c, int64_t size);                            // settings, battery, card <= 512 KB
 
 struct GameId { std::string system, key; std::string gkey() const { return system + "/" + key; } };

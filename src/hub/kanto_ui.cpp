@@ -1,5 +1,7 @@
 #include "app.h"
 #include "kanto_pad.h"
+#include <shlobj.h>
+#include "winutil.h"
 
 /* Kanto Together inside RetroHub (see src/common/kanto.h and docs/KANTO_TOGETHER.md).
  * Library card -> first Play installs + builds the game -> rooms: the host's Launch starts the package's launcher HIDDEN (kanto::Session),
@@ -29,6 +31,12 @@ struct Kt {
     bool howto = false, intro = false;
     bool fake = false, fake_block = false;   // fake_block: screenshot aid, apply the real launch block to a fake session
     kanto::State fake_state;
+    std::map<int, kanto::PkgVer> peer_ver;   // lobby slot -> that player's installed package version (np_kt_ver); cleared when the room changes
+    std::string sent_ver;         // package id last broadcast
+    size_t ver_members = 0;
+    std::string prep_pkg_id;      // content id of the package the current prep was made for
+    std::string probe_path;       // package path the last update probe looked at
+    std::string probe_id;         // ... and its content id
     std::string peer_fail;        // host: "<friend> can't start Kanto Together: <reason>"
     std::string join_error;       // guest: the last join/start problem (panel offers Retry / a new code)
     char code_buf[16] = {0};
@@ -73,12 +81,44 @@ void send_fail(const std::string& reason) {
     A.lobby.send_msg("{\"kind\":\"chat\",\"text\":\"[Kanto Together] I can't start it: " + json::escape(kanto::fail_sentence(reason)) + ".\"}");
 }
 
+/* My installed package version (only meaningful once the prep is done: the installed copy is what runs). */
+kanto::PkgVer my_ver() { return KT.prep.ok() ? kanto::read_pkg_ver(KT.prep.dir()) : kanto::PkgVer(); }
+
+/* The other player in the (2-player) room, or -1. */
+int partner_slot() {
+    int me = room_my_slot();
+    for (auto& m : room_members()) if (m.slot != me) return m.slot;
+    return -1;
+}
+
+/* Seamless updates: a newer package in the library (zip replaced / new build dropped in a game folder or Downloads) than the one the
+ * finished prep was made for -> forget the prep so the next ensure_prep reinstalls over the old copy (saves live in the vault, untouched). */
+void check_package_update(const hub::GameEntry& e) {
+    if (KT.fake || KT.prep.busy() || !KT.prep.ok() || KT.sess.active() || A.proc) return;
+    if (e.path != KT.probe_path) {
+        KT.probe_path = e.path;
+        KT.probe_id = package_from(e.path).content_id;
+    }
+    if (!KT.probe_id.empty() && !KT.prep_pkg_id.empty() && KT.probe_id != KT.prep_pkg_id) {
+        klog("package update: " + KT.prep_pkg_id + " -> " + KT.probe_id + " (reinstalling)");
+        KT.prep.reset();
+        KT.prep_reported = false;
+        KT.sent_ver.clear();
+    }
+}
+
 void ensure_prep(const hub::GameEntry& e) {
-    if (g_headless || KT.fake || KT.prep.busy() || KT.prep.ok()) return;
+    if (g_headless || KT.fake || KT.prep.busy()) return;
+    check_package_update(e);
+    if (KT.prep.ok()) return;
     if (KT.prep.failed()) return;   // stays failed until Retry / another selection
     KT.prep.reset();
     KT.prep_reported = false;
-    KT.prep.start(package_from(e.path), hub::data_dir(), rom_candidates(), env_str("RETROHUB_KT_DESKTOP"));
+    kanto::Package pk = package_from(e.path);
+    KT.prep_pkg_id = pk.content_id;
+    KT.probe_path = e.path;
+    KT.probe_id = pk.content_id;
+    KT.prep.start(pk, hub::data_dir(), rom_candidates(), env_str("RETROHUB_KT_DESKTOP"));
 }
 
 bool mute_tests() { return env_on("RETRORUN_MUTE") || env_on("RETROHUB_KT_MUTE") || env_on("SSB64_MUTE"); }
@@ -143,6 +183,18 @@ bool is_kanto(const hub::GameEntry& e) { return e.key == kanto::kKey; }
 
 void kt_scan_append(std::vector<hub::GameEntry>* out, const std::vector<std::string>& folders) {
     std::vector<kanto::Package> pk = kanto::find_packages(folders);
+    /* a package the user just downloaded and has not moved yet: Downloads, top level only, kanto-named zips/folders only */
+    {
+        PWSTR dl = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads, 0, nullptr, &dl)) && dl) {
+            for (auto& p : kanto::find_packages({winutil::to_utf8(dl)}, 1)) {
+                bool dup = false;
+                for (auto& q : pk) if (q.path == p.path) dup = true;
+                if (!dup) pk.push_back(p);
+            }
+        }
+        if (dl) CoTaskMemFree(dl);
+    }
     std::string path;
     uint64_t size = 0;
     int bi = kanto::pick_package(pk);   // newest build; a zip and its extracted folder are the same build
@@ -165,6 +217,9 @@ void kt_open_howto() { KT.howto = true; }
 void kt_leave_room() {
     KT.arm_guest = false;
     KT.guest_code.clear();
+    KT.peer_ver.clear();
+    KT.sent_ver.clear();
+    KT.ver_members = 0;
     if (KT.prep.failed()) KT.prep.reset();
 }
 
@@ -187,7 +242,25 @@ std::string kt_launch_block(const hub::GameEntry& e) {
     if (KT.prep.busy()) return KT.prep.message();
     if (KT.prep.failed()) return KT.prep.message();
     if (!KT.prep.ok()) return "Preparing Kanto Together...";
+    /* both players must run the same package build, or the start-up barriers switch off and the old behaviour returns */
+    if (!KT.fake && room_connected()) {
+        int ps = partner_slot();
+        auto it = KT.peer_ver.find(ps);
+        if (it != KT.peer_ver.end()) {
+            kanto::VerMatch m = kanto::compare_versions(my_ver(), it->second);
+            if (m != kanto::VerMatch::Same && m != kanto::VerMatch::Unknown) return kanto::version_block_text(m, member_name(ps));
+        }
+    }
     return "";
+}
+
+void kt_on_ver(int slot, const std::string& id, const std::string& built) {
+    if (slot == room_my_slot() || !kanto::valid_ver_id(id)) return;
+    kanto::PkgVer v;
+    v.id = id;
+    v.built = built.substr(0, 40);
+    KT.peer_ver[slot] = v;
+    klog("np_kt_ver from slot " + std::to_string(slot) + " id=" + id.substr(0, 10) + " built=" + v.built);
 }
 
 void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host) {
@@ -197,6 +270,11 @@ void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host) {
     if (is_host) {
         KT.peer_fail.clear();
         if (!prep_ready()) { set_notice("Kanto Together is not ready yet: " + KT.prep.message(), 10.0); return; }
+        if (std::string vb = kt_launch_block(e); !vb.empty() && vb.find("Kanto Together package") != std::string::npos) {   // version mismatch (the Launch button already blocks it; this is the net)
+            set_notice(vb, 12.0);
+            A.lobby.send_msg("{\"kind\":\"np_abort\",\"reason\":\"" + json::escape(vb) + "\"}");
+            return;
+        }
         KT.sent_gen = 0;
         KT.sent_members = 0;
         if (start_session(e, true, "")) push_toast("Starting Kanto Together - your partner joins automatically.", ui::GOOD, 6.0);
@@ -209,9 +287,28 @@ void kt_launch(const hub::GameEntry& e, int launch_no, bool is_host) {
     push_toast("Joining the host's Kanto Together...", ui::GOOD, 6.0);
 }
 
-void kt_on_code(const std::string& code, int launch_no) {
+void kt_on_code(const std::string& code, int launch_no, const std::string& pkg_id) {
     klog("np_kt received code=" + (code.empty() ? std::string("(none)") : code) + " launch=" + std::to_string(launch_no));
     if (code.empty()) { KT.guest_code.clear(); return; }   // the host's session ended
+    if (kanto::valid_ver_id(pkg_id) && KT.prep.ok()) {      // the host's package build rides on the code message: refuse a mismatch
+        kanto::PkgVer host_v; host_v.id = pkg_id;
+        kanto::PkgVer mine = my_ver();
+        auto it = KT.peer_ver.find(0);
+        if (it != KT.peer_ver.end() && it->second.id == pkg_id) host_v.built = it->second.built;
+        kanto::VerMatch m = kanto::compare_versions(mine, host_v);
+        if (m == kanto::VerMatch::Different || m == kanto::VerMatch::MineOlder || m == kanto::VerMatch::MineNewer) {
+            std::string reason = kanto::version_reason(m);
+            if (!reason.empty()) {
+                KT.join_error = m == kanto::VerMatch::MineOlder ? "Your Kanto Together package is older than the host's - update it (replace the package zip; RetroHub reinstalls it)."
+                              : m == kanto::VerMatch::MineNewer ? "The host has an older Kanto Together package - ask them to update."
+                                                                : "You and the host have different Kanto Together packages.";
+                klog("version mismatch with host: " + reason);
+                KT.arm_guest = false;
+                send_fail(reason);
+                return;
+            }
+        }
+    }
     std::string c = kanto::normalize_code(code);
     if (kanto::valid_code(c)) { KT.guest_code = c; KT.join_error.clear(); }
 }
@@ -239,6 +336,17 @@ void kt_tick() {
         }
         if (A.selected_game == kanto::kCatalogId)
             if (const hub::GameEntry* g = find_room_entry(A.selected_game)) ensure_prep(*g);
+    }
+    /* tell the room which package build is installed here (re-sent when the member list or the build changes) */
+    if (room_connected() && A.selected_game == kanto::kCatalogId && KT.prep.ok()) {
+        kanto::PkgVer mv = my_ver();
+        size_t nm = room_members().size();
+        if (nm != KT.ver_members) { KT.ver_members = nm; KT.peer_ver.clear(); KT.sent_ver.clear(); }   // member list changed: everybody announces again
+        std::string key = mv.id;
+        if (key != KT.sent_ver && !mv.id.empty()) {
+            KT.sent_ver = key;
+            A.lobby.send_msg("{\"kind\":\"np_kt_ver\",\"id\":\"" + mv.id + "\",\"built\":\"" + json::escape(mv.built) + "\",\"bar\":" + (kanto::has_barriers(KT.prep.dir()) ? "1" : "0") + "}");
+        }
     }
     if (KT.prep.failed() && !KT.prep_reported) {
         KT.prep_reported = true;
@@ -287,7 +395,7 @@ void kt_tick() {
                 KT.sent_gen = st.code_gen;
                 KT.sent_members = members;
                 klog("np_kt sent code=" + st.code + " gen=" + std::to_string(st.code_gen) + " members=" + std::to_string(members));
-                A.lobby.send_msg("{\"kind\":\"np_kt\",\"code\":\"" + st.code + "\",\"launch\":" + std::to_string(KT.launch_no) + "}");
+                A.lobby.send_msg("{\"kind\":\"np_kt\",\"code\":\"" + st.code + "\",\"launch\":" + std::to_string(KT.launch_no) + ",\"pkg\":\"" + my_ver().id + "\"}");
             }
         } else if (!KT.host && kanto::valid_code(KT.guest_code) && KT.guest_code != KT.cur_code) {
             /* the host restarted/refreshed its code. Only a guest that never got connected needs it: a connected one reconnects by
@@ -390,6 +498,15 @@ void kt_room_panel(float width, bool early) {
         ImGui::PushStyleColor(ImGuiCol_Text, phase_col(st.phase));
         ImGui::TextWrapped("%s", (st.detail.empty() ? kanto::phase_text(st.phase, st.host) : st.detail).c_str());
         ImGui::PopStyleColor();
+        if (st.barrier_waiting) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+            ImGui::TextWrapped("%s", st.barrier_text.c_str());
+            ImGui::PopStyleColor();
+            if (button("Skip waiting", ImVec2(sp(16.f), sp(4.f))) && !KT.fake) KT.sess.go();
+        } else if (!st.barrier_text.empty()) text_wrapped_disabled(st.barrier_text);
+        if (st.legacy_peer || st.barriers_off)
+            text_wrapped_disabled(st.legacy_peer ? "Your partner's Kanto Together package is older: the games do not wait for each other at the title screen. Both of you should update the package."
+                                                 : "Start-up waiting is off in this game build; both games continue on their own.");
         if (st.host && !st.code.empty() && st.phase != kanto::Phase::Connected)
             text_wrapped_disabled("Your partner's RetroHub gets the connection code from this room automatically.");
         if (!st.host && st.synced_story)
