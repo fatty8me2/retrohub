@@ -109,6 +109,7 @@ class Session {
     /* Remote play: media must never ride the Cloudflare relay. Call before start(); the relay is then never activated
      * (and HUBNET_FORCE_RELAY is ignored), so a failed hole punch ends in failed() instead of a costly fallback. */
     void set_no_relay(bool v);
+    uint16_t local_port() const;   // the Session's UDP port (for UPnP mapping)
     void set_ping_interval(uint32_t ms);   // default 500; min 20
 
     /* Unreliable datagram to one slot or -1 = all other slots. */
