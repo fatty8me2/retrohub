@@ -49,8 +49,11 @@ struct Query {
     std::string md5;      // any case, optional
     std::string crc;      // hex, optional
     std::string title;    // header / display title, optional
+    bool fuzzy = false;   // last resort: prefix match on the normalized title (friend-game "ghost" entries with no hash)
     std::string region;   // Wii U: "USA" / "Europe" / "Japan" preferred among same-title records, optional
 };
+/* Serial for a ghost entry derived from its identity key ("ps1:slus-01188" -> "slus-01188", "gc:gm4e01-0" -> "gm4e01"). */
+std::string serial_from_key(const std::string& system, const std::string& key);
 /* Best DAT name for the query; "" if none. *how (optional) is one of md5 crc serial title. */
 std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::string* how = nullptr);
 
