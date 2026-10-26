@@ -1,5 +1,5 @@
 /* Playback of the procedural startup sounds (boot_synth.cpp) on its OWN SDL audio device, so it never
- * touches, ducks or interrupts the game's audio. Non-blocking: rendering a ~2 s sound takes a few ms. */
+ * touches, ducks or interrupts the game's audio. Non-blocking: rendering a 5-10 s sound takes a few ms. It plays to its natural end even after the game launches. */
 #include "boot_anim.h"
 #include "boot_synth.h"
 #include <SDL.h>
@@ -16,6 +16,8 @@ std::vector<float> g_buf;        // guarded by the device lock
 size_t g_pos = 0;                // in floats
 std::atomic<float> g_vol{0.7f};
 bool g_tried = false;
+int g_fade = -1;                 // samples of fade-out left (-1 = none); total kFade
+constexpr int kFade = 6615;      // 150 ms
 
 bool muted() {
     for (const char* e : {"SSB64_MUTE", "RETRORUN_MUTE", "N64RUN_MUTE", "RETROHUB_QA"}) {
@@ -29,7 +31,12 @@ void SDLCALL cb(void*, Uint8* out, int len) {
     float* f = reinterpret_cast<float*>(out);
     size_t n = size_t(len) / sizeof(float), i = 0;
     float v = g_vol.load();
-    for (; i < n && g_pos < g_buf.size(); i++) f[i] = g_buf[g_pos++] * v;
+    for (; i + 1 < n && g_pos + 1 < g_buf.size(); i += 2) {
+        float g = v;
+        if (g_fade >= 0) { g *= float(g_fade) / kFade; if (--g_fade < 0) { g_buf.clear(); g_pos = 0; g = 0; } }
+        if (g_buf.empty()) break;
+        f[i] = g_buf[g_pos++] * g; f[i + 1] = g_buf[g_pos++] * g;
+    }
     for (; i < n; i++) f[i] = 0.f;
 }
 
@@ -61,18 +68,24 @@ bool sound_available(hub::System s) {
 void sound_stop() {
     if (!g_dev) return;
     SDL_LockAudioDevice(g_dev);
-    g_buf.clear(); g_pos = 0;
+    if (g_pos < g_buf.size()) g_fade = kFade;     // fade out then silence (callback clears the buffer)
     SDL_UnlockAudioDevice(g_dev);
-    SDL_PauseAudioDevice(g_dev, 1);
 }
 
-void sound_play(hub::System s) {
+void sound_play(hub::System s, bool short_cut) {
     float vol = options().volume < 0 ? 0 : options().volume > 1 ? 1 : options().volume;
     if (!sound_available(s) || muted() || vol <= 0.f) return;
     if (!open_dev()) return;
     std::vector<float> b = bootsynth::render(s);
+    if (short_cut) {   // ~2 s cut, quick 250 ms fade
+        size_t keep = size_t(2.0 * bootsynth::kSampleRate) * 2, fade = size_t(0.25 * bootsynth::kSampleRate) * 2;
+        if (b.size() > keep) {
+            b.resize(keep);
+            for (size_t i = 0; i < fade; i += 2) { float g = float(fade - i) / fade; b[keep - fade + i] *= g; b[keep - fade + i + 1] *= g; }
+        }
+    }
     SDL_LockAudioDevice(g_dev);
-    g_buf = std::move(b); g_pos = 0; g_vol.store(vol);
+    g_buf = std::move(b); g_pos = 0; g_fade = -1; g_vol.store(vol);
     SDL_UnlockAudioDevice(g_dev);
     SDL_PauseAudioDevice(g_dev, 0);
 }

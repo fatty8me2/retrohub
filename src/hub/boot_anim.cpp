@@ -320,7 +320,7 @@ void draw() {
     if (!g_frozen) {
         if (any_input() && R.skip()) { fire = true; stop_snd = true; }
         else if (R.tick(io.DeltaTime)) fire = true;
-        if (!fire && g_opt.sounds && R.want_sound() && sound_available(G.system)) sound_play(G.system);
+        if (!fire && g_opt.sounds && R.want_sound() && sound_available(G.system)) sound_play(G.system, R.tl.total() < 2.f);
     }
     if (!fire) {
         if (!ImGui::IsPopupOpen(kPopup)) ImGui::OpenPopup(kPopup);
