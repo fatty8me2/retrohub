@@ -1,6 +1,6 @@
 # Headless key-frame screenshots of the game start animation (HUB_SHOT_BOOTANIM=<system>:<t seconds>), 1280x800, converted to PNG.
 # Usage: qa\bootanim_shots.ps1 [outdir] [systems csv] [times csv]      No window is ever shown, no network, fake library.
-param([string]$Out = "$env:TEMP\bootanim_shots", [string]$Systems = "n64,gba,nds,gc,ps1,wiiu", [string]$Times = "0.3,0.9,1.5,2.0,2.8")
+param([string]$Out = "$env:TEMP\bootanim_shots", [string]$Systems = "n64,nes,snes,gb,gbc,gba,nds,3ds,gc,ps1,ps2,wiiu", [string]$Times = "0.3,0.9,1.5,2.1,2.7")
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 $root = Split-Path $PSScriptRoot -Parent
@@ -26,4 +26,18 @@ foreach ($sys in $Systems.Split(",")) {
       Write-Host "OK   $name"
     } else { Write-Host "FAIL $name (no frame)" }
   }
+}
+
+# One contact sheet per system (all key frames side by side) for quick review.
+foreach ($sys in $Systems.Split(",")) {
+  $files = @(); foreach ($t in $Times.Split(",")) { $f = Join-Path $Out "boot_${sys}_$t.png"; if (Test-Path $f) { $files += $f } }
+  if ($files.Count -eq 0) { continue }
+  $w = 640; $h = 400
+  $sheet = New-Object System.Drawing.Bitmap ($w * $files.Count), $h
+  $g = [System.Drawing.Graphics]::FromImage($sheet)
+  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  for ($i = 0; $i -lt $files.Count; $i++) {
+    $im = [System.Drawing.Image]::FromFile($files[$i]); $g.DrawImage($im, $i * $w, 0, $w, $h); $im.Dispose()
+  }
+  $g.Dispose(); $sheet.Save((Join-Path $Out "sheet_$sys.png"), [System.Drawing.Imaging.ImageFormat]::Png); $sheet.Dispose()
 }
