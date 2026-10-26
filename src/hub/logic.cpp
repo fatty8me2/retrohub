@@ -53,6 +53,11 @@ std::string settings_to_json(const Settings& s) {
       << "  \"gb_core\": \"" << json::escape(s.gb_core) << "\",\n"
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
       << "  \"start_hint\": " << (s.start_hint ? "true" : "false") << ",\n"
+      << "  \"boot_anim\": " << (s.boot_anim ? "true" : "false") << ",\n"
+      << "  \"boot_sounds\": " << (s.boot_sounds ? "true" : "false") << ",\n"
+      << "  \"boot_volume\": " << s.boot_volume << ",\n"
+      << "  \"boot_short\": " << (s.boot_short ? "true" : "false") << ",\n"
+      << "  \"boot_skip_online\": " << (s.boot_skip_online ? "true" : "false") << ",\n"
       << "  \"sync_folder\": \"" << json::escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"backup_shots\": " << (s.backup_shots ? "true" : "false") << ",\n"
@@ -116,6 +121,11 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->gb_core = (core == "gambatte" || core == "sameboy") ? core : "sameboy";
     out->fullscreen = json_bool(j, "fullscreen", out->fullscreen);
     out->start_hint = json_bool(j, "start_hint", out->start_hint);
+    out->boot_anim = json_bool(j, "boot_anim", out->boot_anim);
+    out->boot_sounds = json_bool(j, "boot_sounds", out->boot_sounds);
+    out->boot_volume = std::max(0, std::min(100, (int)j.num("boot_volume", out->boot_volume)));
+    out->boot_short = json_bool(j, "boot_short", out->boot_short);
+    out->boot_skip_online = json_bool(j, "boot_skip_online", out->boot_skip_online);
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->backup_shots = json_bool(j, "backup_shots", out->backup_shots);

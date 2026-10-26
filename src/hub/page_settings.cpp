@@ -87,6 +87,8 @@ void page_settings() {
     if (ImGui::Checkbox("Show controller tips when a game starts", &A.st.start_hint)) mark_dirty();
     text_wrapped_disabled("A small card for about 5 seconds: hold View + Y for the game menu, View + Menu to return to RetroHub.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    boot_settings_ui();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("3DS and Wii U emulators");
     {
         std::string wiiu_game;

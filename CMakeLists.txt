@@ -127,6 +127,7 @@ add_test(NAME hub_states_test COMMAND hub_states_test)               # save-stat
 add_test(NAME hub_osk_test COMMAND hub_osk_test)                         # OSK key layout / edit logic / folder browser (scratch dirs)
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
+add_test(NAME hub_boot_anim_test COMMAND hub_boot_anim_test)           # start animation: media map, timeline, launch rules, state machine, settings
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
 add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches

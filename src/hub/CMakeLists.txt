@@ -33,7 +33,7 @@ set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
     ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp group_ui.cpp
     page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp quickmenu.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp)
-add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
+add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(RetroHub PRIVATE hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
@@ -171,3 +171,18 @@ target_sources(RetroHub PRIVATE pcsx2.cpp)
 add_executable(hub_ps2_test test_pcsx2.cpp pcsx2.cpp emulators.cpp)
 target_include_directories(hub_ps2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
+# ---- Game start animation (boot_anim.h): engine + flow here; art and sound come from agent/boot-art and agent/boot-sound.
+# The stub files are compiled only while the real boot_art.cpp / boot_sound.cpp do not exist. ----
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/boot_art.cpp)
+    target_sources(RetroHub PRIVATE boot_art.cpp)
+else()
+    target_sources(RetroHub PRIVATE boot_stub_art.cpp)
+endif()
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/boot_sound.cpp)
+    target_sources(RetroHub PRIVATE boot_sound.cpp)
+else()
+    target_sources(RetroHub PRIVATE boot_stub_sound.cpp)
+endif()
+add_executable(hub_boot_anim_test test_boot_anim.cpp)
+target_link_libraries(hub_boot_anim_test PRIVATE hublogic)
