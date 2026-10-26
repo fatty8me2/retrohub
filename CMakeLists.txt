@@ -118,6 +118,7 @@ add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
 add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
 add_test(NAME retrorun_link_test COMMAND retrorun_link_test)
 add_test(NAME retrorun_rollback_test COMMAND retrorun_rollback_test)
+add_test(NAME retrorun_rollback_stall_test COMMAND retrorun_rollback_stall_test)
 add_test(NAME ps1_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_synctest.ps1)   # Beetle PSX rollback SyncTest on homebrew discs (skips without the core / python)
 set_tests_properties(ps1_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "RETROHUB_QA=1")
 add_test(NAME ps1_discs COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_discs.ps1)   # 2-disc homebrew .m3u: libretro disk-control swap + rollback SyncTest with swap events
@@ -165,5 +166,6 @@ add_test(NAME hubfriends_dedupe_test COMMAND hubfriends_dedupe_test)   # friends
 add_test(NAME hublink_test COMMAND hublink_test)                         # link-a-new-PC crypto/adopt/export (no network)
 set_tests_properties(hubnet_test hublink_test n64run_save_sync_test n64run_lockstep_test n64run_testinput_test retrorun_link_test
                      retrorun_rollback_test retrorun_dslink_test hub_bootsound_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
+                     retrorun_rollback_test retrorun_rollback_stall_test retrorun_dslink_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
 add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
 set_tests_properties(hubnet_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)
