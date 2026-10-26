@@ -14,8 +14,9 @@ int main() {
         {System::Unknown, false, false}, {System::N64, true, false}, {System::GBA, true, false}, {System::GB, true, false},
         {System::GBC, true, false},      {System::GC, true, true},   {System::N3DS, true, false}, {System::WiiU, false, false},
         {System::NDS, true, true},       {System::PS2, false, false}, {System::PS1, true, true},
+        {System::NES, true, false},      {System::SNES, true, false},
     };
-    CHECK((int)System::PS1 + 1 == (int)(sizeof table / sizeof table[0]));   // a new System enum value must get a row here
+    CHECK((int)System::SNES + 1 == (int)(sizeof table / sizeof table[0]));   // a new System enum value must get a row here
     hub::GameInfo on = hub::GameInfo(), off = hub::GameInfo();
     on.online = true; off.online = false;
     for (const Row& r : table) {
@@ -32,6 +33,7 @@ int main() {
     }
     CHECK(std::string(hubcaps::online_unsupported_reason(System::PS2)) == "PS2 online isn't supported yet");
     CHECK(hubcaps::default_online_max(System::PS1) == 2 && hubcaps::default_online_max(System::GC) == 4 && hubcaps::default_online_max(System::GB) == 2);
+    CHECK(hubcaps::default_online_max(System::NES) == 2 && hubcaps::default_online_max(System::SNES) == 2);
     /* Every online catalog game belongs to a system that can launch online, and a PS1 game's cap comes from the catalog. */
     int ps1_online = 0;
     for (const hub::GameInfo& g : hub::catalog()) {
