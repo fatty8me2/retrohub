@@ -336,7 +336,7 @@ struct UnzipJob {
 struct GcOnline {
     gcnp::Run run;
     hubnp3ds::Runner fw;
-    bool active = false, host = false, ready_sent = false, guest_wait = false, host_ready = false, checked = true;
+    bool active = false, host = false, ready_sent = false, guest_wait = false, host_ready = false, checked = true, go_sent = false;
     gcnp::Spec spec;                 // host: what we announce; guest: what the host announced
     hub::GameEntry entry;
     int launch_no = 0, port = 0;

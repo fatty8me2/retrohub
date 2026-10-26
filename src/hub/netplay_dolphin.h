@@ -63,6 +63,8 @@ struct Run {
     unsigned long driver_pid = 0;
     std::string status_path;      // driver appends lines: "stage:<name>", "code:<hostcode>", "players:<n>", "error:<text>"
     std::string error;
+    bool wait_go = false;         // guest: the driver stops at the open Setup dialog and presses Connect only once signal_go() ran (Dolphin boots while the host is still starting)
+    std::string go_path;
 };
 /* Starts Dolphin (-b not used: the main window must exist) minimized without activation plus the driver.
  * desktop = "" runs on the user's desktop; a name (tests) runs both on a private invisible desktop. */
@@ -71,6 +73,7 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
 /* Last "code:" value written by the host driver ("" if none yet). */
 std::string read_code(const Run& r);
 std::string read_status(const Run& r);   // whole status file
+void signal_go(const Run& r);            // guest: the host's NetPlay server is listening, connect now
 #endif
 
 } // namespace gcnp

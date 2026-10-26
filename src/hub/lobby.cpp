@@ -328,7 +328,7 @@ void lobby_tick() {
             if (is_host()) set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0);
         } else if (kind == "np_gc_ready") {
             autotest_log("np_gc_ready from " + std::to_string(from) + " guest_wait=" + std::to_string((int)GCO.guest_wait));
-            if (from == 0 && !is_host() && GCO.guest_wait) GCO.host_ready = true;
+            if (from == 0 && !is_host() && (GCO.guest_wait || GCO.active)) GCO.host_ready = true;
         } else if (kind == "np_kt") {
             if (from == 0 && !is_host()) kt_on_code(j.str("code"), (int)j.num("launch", 0), j.str("pkg"));
         } else if (kind == "np_kt_ver") {

@@ -166,6 +166,8 @@ function Run-One($mode, $n) {
   $res.host_stage = (([regex]::Matches($hs, '(?m)^stage:\S+') | ForEach-Object { $_.Value.Substring(6) }) -join ">")
   $res.guest_stage = (([regex]::Matches($gs, '(?m)^stage:\S+') | ForEach-Object { $_.Value.Substring(6) }) -join ">")
   $hl = ReadAll "$h\userdata\autotest.log"; $gl = ReadAll "$g\userdata\autotest.log"
+  $res.timing = "host[" + (([regex]::Matches($hs, '(?m)^t:\S+ \d+') | ForEach-Object { $_.Value.Substring(2) }) -join ",") + "] guest[" + (([regex]::Matches($gs, '(?m)^t:\S+ \d+') | ForEach-Object { $_.Value.Substring(2) }) -join ",") + "]"
+  $res.launch = ([regex]::Match($hl, '\[\s*([\d.]+)s\] launching').Groups[1].Value) + "/" + ([regex]::Match($gl, '\[\s*([\d.]+)s\] gc_begin request guest').Groups[1].Value)
   $hdl = ReadAll "$h\userdata\emulators\dolphin\User\Logs\dolphin.log"; $gdl = ReadAll "$g\userdata\emulators\dolphin\User\Logs\dolphin.log"
   if (($hdl -match $descRx) -or ($gdl -match $descRx)) { $res.desync = $true; $res.detail += " dolphin.log: " + ((($hdl + "`n" + $gdl) -split "`n" | Where-Object { $_ -match $descRx } | Select-Object -First 2) -join " | ") }
   if ($hs -match $descRx -or $gs -match $descRx) { $res.desync = $true }
