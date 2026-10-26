@@ -25,6 +25,7 @@ struct Settings {
     std::string smash_exe;     // user-chosen BattleShip.exe
     std::string gb_core = "sameboy";   // default GB/GBC core: "sameboy" | "gambatte"
     bool fullscreen = false;           // start games fullscreen where the runner supports it
+    bool start_hint = true;            // "Show controller tips when a game starts": ~5 s card (View+Y menu, View+Menu leave)
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start
     bool backup_shots = false;         // "Back up screenshots": screenshots count toward the cloud large-item quota (default off)

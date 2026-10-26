@@ -44,6 +44,7 @@
 #include "cheats.h"
 
 #include "headless.h"
+#include "hint_popup.h"
 #include "controls_sdl.h"
 #include "local_input.h"
 #include "test_input.h"
@@ -621,6 +622,18 @@ static BOOL CALLBACK find_game_window(HWND hwnd, LPARAM lp) {
     if (GetWindowTextLengthW(hwnd) == 0) return TRUE;   // needs a caption
     *reinterpret_cast<HWND*>(lp) = hwnd;
     return FALSE;
+}
+
+/* Game-start controller tips (src/common/start_hint.h): a click-through popup over the plugin's window, on its own thread.
+ * Off with RETROHUB_START_HINT=0 (the hub sets it from "Show controller tips when a game starts"). */
+static void hint_watch(bool keyboard) {
+    starthint::Popup pop;
+    while (!g_title_stop.load() && !pop.done()) {
+        HWND hwnd = nullptr;
+        EnumWindows(find_game_window, reinterpret_cast<LPARAM>(&hwnd));
+        pop.tick(hwnd, keyboard, true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    }
 }
 
 static void title_watch(std::wstring title) {
