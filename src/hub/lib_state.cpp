@@ -166,14 +166,22 @@ static unsigned long long added_unix(const std::string& path) {
 
 void rebuild_vis() {
     A.sort_mode = hubui::sort_from_key(A.st.library_sort);
+    rebuild_ghosts();   // friends' games you do not own (index >= lib.size() in items / vis / shelves)
     std::vector<hubui::ListItem> items;
-    items.reserve(A.lib.size());
+    items.reserve(A.lib.size() + A.ghosts.size());
     for (auto& e : A.lib) { const hub::GameState& g0 = gstate(e.key); items.push_back({e.key, e.title, sys_short(e), is_native(e), g0.last_played, g0.play_seconds, added_unix(e.path)}); }
+    for (auto& g : A.ghosts) { hubui::ListItem li{"ghost:" + g.id, g.title, g.sys, false, 0, 0, 0}; li.ghost = true; items.push_back(li); }
     std::string q = A.search_buf;
     std::vector<int> base = hubui::filter_sort(items, "", q, A.sort_mode);   // search applied, all consoles
     if (A.online_only) {
         std::vector<int> keep;
         for (int i : base) {
+            if (i >= (int)A.lib.size()) {   // a friend's game: online-capable when the catalog says so
+                const hubui::fg::Ghost& g = A.ghosts[i - A.lib.size()];
+                const GameInfo* gc = g.cid.empty() ? nullptr : hub::find_game(g.cid);
+                if (gc && gc->online) keep.push_back(i);
+                continue;
+            }
             const hub::GameEntry& e = A.lib[i];
             const GameInfo* c = catalog_for(e);
             if (is_native(e) || (c && c->online)) keep.push_back(i);
@@ -206,6 +214,14 @@ void rebuild_vis() {
         g.pinned = is_native(e);
         g.play_seconds = gs.play_seconds;
         g.added = added_unix(e.path);
+        A.sg.push_back(g);
+    }
+    for (auto& gh : A.ghosts) {
+        hubui::ShelfGame g;
+        g.key = "ghost:" + gh.id;
+        g.title = gh.title;
+        g.system = gh.sys;
+        g.ghost = true;
         A.sg.push_back(g);
     }
     A.shelves = hubui::compose_shelves(A.sg, 12, A.sort_mode);

@@ -46,6 +46,7 @@
 #include "netplay_dolphin.h"
 #include "library.h"
 #include "osk.h"
+#include "friend_games.h"
 #include "logic.h"
 #include "settings_tabs.h"
 #include "savestore.h"
@@ -199,6 +200,7 @@ struct App {
     char search_buf[64] = {0};
     std::string vis_filter, vis_query;            // last inputs used to build `vis`
     std::vector<int> vis;                         // filtered + sorted indices into lib
+    std::vector<hubui::fg::Ghost> ghosts;         // friends' games you do not own (rebuild_vis); item index >= lib.size() means ghosts[index - lib.size()]
     std::vector<hubui::ShelfGame> sg;             // parallel to `lib`, input of the shelf composition
     std::vector<hubui::Shelf> shelves;            // Home screen shelves (indices into lib)
     std::vector<int> pick_idx;                    // "Top Picks you don't have": indices into hub::catalog()
@@ -282,6 +284,8 @@ struct App {
 
     // ui
     std::string sel_game;        // library selection (game key)
+    bool show_ghost = false;     // open the friend-game view (draw_ghost_modal)
+    std::string sel_ghost;       // library selection when it is a friend's game you do not own (Ghost::id); sel_game is empty then
     bool focus_search = false;
     LibView view = LibView::Home;
     std::string env_select;      // HUB_SELECT_GAME
@@ -360,6 +364,7 @@ struct TileSpec {
     ArtRef art;
     bool favorite = false, online = false, selected = false, owned = true, show_star = true;
     const char* cta = nullptr;   // hover caption for catalog tiles ("Add ROM")
+    const hubui::fg::Ghost* ghost = nullptr;   // a friend's game you do not own: greyed cover, friend avatars, art fetched only while visible
 };
 
 struct TileResult {
@@ -706,6 +711,17 @@ void library_top_bar();
 void selected_bar(const hub::GameEntry& e);
 void all_games_view();
 void draw_details_modal();
+/* friend_games_ui.cpp: friends' games shown greyed out (metadata only) */
+void rebuild_ghosts();                                                    // A.ghosts from the friends' libraries and A.lib (empty when the chip is off)
+TileSpec spec_for_ghost(const hubui::fg::Ghost& g, const char* shelf, bool show_sys);
+ArtRef art_for_ghost(const hubui::fg::Ghost& g);
+void handle_ghost_result(const hubui::fg::Ghost& g, const TileResult& r);
+const hubui::fg::Ghost* find_ghost(const std::string& id);
+void ghost_tile_decor(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVec2 p1, float hover, std::string* subtitle);
+void selected_bar_ghost(const hubui::fg::Ghost& g);
+void draw_ghost_modal();
+void fg_fake_libs();                                                      // screenshots: fake friends' libraries
+void ghost_tick();                                                        // publish my library (debounced) and refresh ghosts when a friend's list changed
 void ensure_selection();
 void sync_card();
 void page_library();

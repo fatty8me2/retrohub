@@ -15,6 +15,9 @@ target_link_libraries(hub_online_caps_test PRIVATE hublogic hubcommon)
 add_executable(hub_picker_test test_picker.cpp)
 target_include_directories(hub_picker_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(hub_friend_games_test test_friend_games.cpp)
+target_include_directories(hub_friend_games_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+
 add_executable(hub_changelog_test test_changelog.cpp)
 target_link_libraries(hub_changelog_test PRIVATE hublogic)
 
@@ -31,7 +34,7 @@ target_link_libraries(hub_session_test PRIVATE hublogic)
 
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
-    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp group_ui.cpp
+    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_games_ui.cpp group_ui.cpp
     page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp)
 target_include_directories(RetroHub PRIVATE
