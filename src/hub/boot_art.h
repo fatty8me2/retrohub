@@ -11,6 +11,9 @@ void set_shelf_covers(const ImTextureID* tex, int n);
  * Pass an empty function to clear. Set it only around one draw_console call. */
 void set_console_inner(std::function<void(ImDrawList*)> fn);
 
+/* Disc media: true draws the data side (mirror finish with rainbow diffraction) instead of the printed label. Set around one draw_media call. */
+void set_media_back(bool back);
+
 /* Short lowercase name for a system's art ("n64", "gb", "gbc", "gba", "ds", "3ds", "gc", "ps1", "ps2", "wiiu", "nes", "snes"); never null. */
 const char* art_name(hub::System);
 /* True when the system has dedicated console + media art (Unknown falls back to N64 art and reports false). */

@@ -88,6 +88,17 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
     float power = 0.f, lid = 0.f, console_dy = 0.f, shelf_dark = 0.f;
     bool console_visible = true, media_visible = true;
     float mscale = ms * 1.5f, mrot = 0.f, mxs = 1.f, mys = 1.f, mang = 0.f;
+    bool mback = false;                               // disc flipped to its data side (rainbow) mid-flight
+    float mspin = 0.f;                                // disc spin rate (rad/s) for the motion blur
+    float mshadow = 0.f;                              // 0..1 soft shadow of the hovering media on the console top
+    /* insertion with a little resistance at the start and a tiny 'seat' bump at the end (q 0..1; returns the position a->b) */
+    auto insert_y = [](float a, float b, float q) {
+        const float k0 = 0.9f;
+        float e = q < k0 ? std::pow(ease_in_out(q / k0), 1.35f) : 1.f;
+        float y = lerpf(a, b, e);
+        if (q >= k0) y += std::sin((q - k0) / (1.f - k0) * 3.14159f) * 3.2f;
+        return y;
+    };
     float ex = g.ex, ey = g.ey;                       // media centre in console-local units
     float hy = g.ey - g.hover;                        // hover height (console-local)
     ImVec2 mpos = shelf_pos;
@@ -111,8 +122,18 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
             lerp_pt(out_pos, hover_pt, e, &mpos);
             mpos.x += std::sin(e * 3.14159f) * W * 0.06f;   // gentle arc
             mscale = ms * lerpf(1.5f, 1.f, e);
-            mrot = disc_kind ? e * 6.2832f * 1.5f : std::sin(e * 6.2832f) * 0.10f;
-            if (disc_kind) mys = lerpf(1.f, 0.8f, e);
+            if (disc_kind) {
+                mrot = e * 6.2832f * 1.5f;
+                mspin = 6.2832f * 1.5f * 6.f * (1.f - e) * e * 4.f / 5.f;   // fastest mid-flight
+                const float flip = std::cos(e * 6.2832f);                  // one full tumble: label, data side (rainbow), label
+                mback = flip < 0.f;
+                mys = lerpf(1.f, 0.8f, e) * std::max(0.06f, std::fabs(flip));
+            } else {                                                        // cart rolls upright toward the slot, turning to face the viewer
+                mrot = lerpf(-0.5f, 0.f, ease_out(p)) + std::sin(p * 9.4f) * 0.035f * (1.f - p);
+                mxs = lerpf(0.74f, 1.f, ease_out(p));
+                mys = 1.f + 0.05f * std::sin(e * 3.14159f);
+            }
+            mshadow = e * e * 0.7f;
             shelf_dark = ease_out(p);
             if (g.kind == Insert::Lid || g.kind == Insert::Tray) lid = ease_in_out(p);
             break;
@@ -126,17 +147,19 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
             mscale = ms;
             switch (g.kind) {
                 case Insert::Behind: {
-                    y_local = lerpf(hover_y, ey, ease_in_out(p));
+                    y_local = insert_y(hover_y, ey, p);
+                    mshadow = 0.7f;
                     break;
                 }
                 case Insert::Slot: {
                     if (g.push > 0.f) {   // front loader: pushed in first (tilted), then pressed down flat
                         const float mid = ey - g.push, k1 = 0.70f;
                         if (p < k1) { float e = ease_in_out(p / k1); y_local = lerpf(hover_y, mid, e); mang = -0.14f * e; }
-                        else { float e = ease_out((p - k1) / (1.f - k1)); y_local = lerpf(mid, ey, e); mang = -0.14f * (1.f - e); }
+                        else { float e = ease_out((p - k1) / (1.f - k1)); y_local = lerpf(mid, ey, e) + std::sin(e * 3.14159f) * 2.5f; mang = -0.14f * (1.f - e); }
                     } else {
-                        y_local = lerpf(hover_y, ey, ease_in_out(p));
+                        y_local = insert_y(hover_y, ey, p);
                     }
+                    mshadow = 0.7f;
                     break;
                 }
                 case Insert::Lid: {
@@ -160,9 +183,10 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
                 }
                 case Insert::Front: {
                     float e = ease_in_out(p);
-                    y_local = lerpf(hover_y, ey, e);
+                    y_local = insert_y(hover_y, ey, p);
                     mys = lerpf(0.8f, g.ys_end, e);
                     mrot = (1.5f + e * 0.2f) * 6.2832f;
+                    mspin = 6.2832f * 0.2f * 3.f * (1.f - e);
                     break;
                 }
             }
@@ -216,7 +240,18 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
         }
     }
 
-    auto draw_m = [&]() { draw_media_xf(sys, dl, mpos, mscale, mrot, label, uv0, uv1, mxs, mys, mang); };
+    auto draw_m = [&]() {
+        set_media_back(mback);
+        draw_media_xf(sys, dl, mpos, mscale, mrot, label, uv0, uv1, mxs, mys, mang);
+        set_media_back(false);
+        if (disc_kind && mspin > 1.5f) {   // motion blur: faint translucent streak rings over the fast-spinning disc
+            const float R = (sys == hub::System::GC ? 80.f : 100.f) * mscale, a = std::min(1.f, mspin / 40.f);
+            for (int i = 0; i < 6; ++i) {
+                const float r = R * (0.34f + 0.1f * i);
+                dl->AddEllipse(mpos, ImVec2(r * mxs, r * mys), IM_COL32(255, 255, 255, (int)(34 * a)), 0.f, 64, std::max(2.f, R * 0.07f));
+            }
+        }
+    };
     const bool in_console = (g.kind == Insert::Lid || g.kind == Insert::Tray) && (ph == Phase::Insert || ph == Phase::Power || ph == Phase::Fade || ph == Phase::Done);
     const bool landing = g.kind == Insert::Tray && ph == Phase::Insert;
 
@@ -242,6 +277,21 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
         draw_console(sys, dl, cpos, cs, lid, power);
         set_console_inner(nullptr);
         (void)in_console; (void)landing;
+    } else if ((g.kind == Insert::Slot || g.kind == Insert::Front) && console_visible && ph != Phase::Fly && ph != Phase::Slide) {
+        /* the media is drawn by the console between its slot well and its front lip, clipped at the lip, so it really goes in */
+        set_console_inner([&](ImDrawList*) {
+            if (!media_visible) return;
+            if (g.kind == Insert::Slot && mshadow > 0.f) {   // soft shadow of the cart on the console top, tightening as it nears the slot
+                const float sw = 52.f * mscale / ms * g.ms * 0.8f;
+                for (int i = 3; i >= 1; --i)
+                    dl->AddEllipseFilled(ImVec2(mpos.x, cpos.y + (g.clip - 6.f) * cs), ImVec2((sw + i * 6.f) * cs, (7.f + i * 2.5f) * cs), IM_COL32(0, 0, 0, (int)(28 * mshadow)), 0.f, 32);
+            }
+            dl->PushClipRect(ImVec2(0, 0), ImVec2(W, cpos.y + g.clip * cs), true);
+            draw_m();
+            dl->PopClipRect();
+        });
+        draw_console(sys, dl, cpos, cs, lid, power);
+        set_console_inner(nullptr);
     } else {
         if (console_visible) draw_console(sys, dl, cpos, cs, lid, power);
         if (media_visible) {
