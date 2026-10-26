@@ -78,6 +78,8 @@ struct SessionConfig {
     std::string room;     // game room, e.g. "ABC234-1"
     int slot = 0;         // my slot (0 = host)
     int expected = 2;     // number of PCs in the session (slots may be sparse, e.g. {0,2})
+    uint32_t ready_timeout_ms = 0;   // 0 = default (15 s): how long to wait for everyone before failing
+    uint32_t silence_fail_ms = 0;    // 0 = default (10 s): guest gives up when the host is silent this long after ready
 };
 
 struct PingStats { int n = 0, avg_ms = 0, min_ms = 0, max_ms = 0; };
