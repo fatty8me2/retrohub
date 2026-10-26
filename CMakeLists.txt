@@ -92,6 +92,8 @@ enable_testing()
 add_test(NAME json_test COMMAND json_test)
 add_test(NAME runner_ctl_test COMMAND runner_ctl_test)   # hub<->runner control file, ack, slot/shot paths
 add_test(NAME winutil_test COMMAND winutil_test)
+add_test(NAME starthint_test COMMAND starthint_test)
+add_test(NAME hint_popup_test COMMAND hint_popup_test)
 add_test(NAME cheats_test COMMAND cheats_test)                         # cheat file model + code parsing per format
 add_test(NAME hubcommon_test COMMAND hubcommon_test)
 add_test(NAME hublibrary_test COMMAND hublibrary_test)

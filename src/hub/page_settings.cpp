@@ -84,6 +84,8 @@ void page_settings() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ImGui::Checkbox("Start games fullscreen", &A.st.fullscreen)) mark_dirty();
     text_wrapped_disabled("Default for every system; each system or game can override it under Game defaults / Details.");
+    if (ImGui::Checkbox("Show controller tips when a game starts", &A.st.start_hint)) mark_dirty();
+    text_wrapped_disabled("A small card for about 5 seconds: hold View + Y for the game menu, View + Menu to return to RetroHub.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("3DS and Wii U emulators");
     {

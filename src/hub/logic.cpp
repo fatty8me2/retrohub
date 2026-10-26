@@ -52,6 +52,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"smash_exe\": \"" << json::escape(s.smash_exe) << "\",\n"
       << "  \"gb_core\": \"" << json::escape(s.gb_core) << "\",\n"
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
+      << "  \"start_hint\": " << (s.start_hint ? "true" : "false") << ",\n"
       << "  \"sync_folder\": \"" << json::escape(s.sync_folder) << "\",\n"
       << "  \"sync_auto\": " << (s.sync_auto ? "true" : "false") << ",\n"
       << "  \"backup_shots\": " << (s.backup_shots ? "true" : "false") << ",\n"
@@ -113,6 +114,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     std::string core = j.str("gb_core", out->gb_core);
     out->gb_core = (core == "gambatte" || core == "sameboy") ? core : "sameboy";
     out->fullscreen = json_bool(j, "fullscreen", out->fullscreen);
+    out->start_hint = json_bool(j, "start_hint", out->start_hint);
     out->sync_folder = j.str("sync_folder", out->sync_folder);
     out->sync_auto = json_bool(j, "sync_auto", out->sync_auto);
     out->backup_shots = json_bool(j, "backup_shots", out->backup_shots);

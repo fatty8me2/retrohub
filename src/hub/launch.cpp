@@ -31,6 +31,7 @@
 #include "third_party/stb_image.h"
 #include "app.h"
 #include "exit_combo.h"
+#include "hint_popup.h"
 #include "controls_sdl.h"
 #include <xinput.h>
 
@@ -42,6 +43,8 @@ hub::GameEntry NP3_game;
 bool NP3_pending = false;
 
 /* ---------- process launching ---------- */
+
+static starthint::Popup g_hint;
 
 bool spawn(const std::string& exe, const std::string& args_in, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
@@ -60,6 +63,7 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     }
     if (A.proc) { set_notice("A game is already running."); return false; }
     if (!file_exists(exe)) { set_notice("Cannot find " + file_name(exe) + " (" + exe + ")"); return false; }
+    if (!A.st.start_hint) SetEnvironmentVariableW(L"RETROHUB_START_HINT", L"0");   // retrorun / n64run read it (inherited by the child)
     std::wstring cmd = L"\"" + W(exe) + L"\" " + W(args);
     std::vector<wchar_t> buf(cmd.begin(), cmd.end());
     buf.push_back(0);
@@ -70,6 +74,7 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     BOOL ok = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, 0, nullptr, W(cwd).c_str(), &si, &pi);
     DWORD err = GetLastError();
     for (auto& e : env) SetEnvironmentVariableW(W(e.first).c_str(), nullptr);
+    SetEnvironmentVariableW(L"RETROHUB_START_HINT", nullptr);
     if (!ok) { set_notice("Could not start " + file_name(exe) + " (error " + std::to_string(err) + ")"); return false; }
     CloseHandle(pi.hThread);
     if (ri.after_exit) {   // external emulator: follow every process it starts, so a relaunch / hand-off keeps the session open
@@ -84,6 +89,7 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     A.run.pad_exit = ri.after_exit != nullptr || !ri.o2r_prep.empty();   // external emulators and the native Smash port; n64run / retrorun handle the combo themselves
     A.run.start_unix = unix_now();
     A.run.start_tick = GetTickCount64();
+    g_hint = starthint::Popup();   // fresh 5 s controller-tips card for this game (external emulators; the runners draw their own)
     cloud_run_started();
     return true;
 }
@@ -124,6 +130,29 @@ static std::vector<DWORD> game_pids() {
     } else if (A.proc) v.push_back(GetProcessId(A.proc));
     return v;
 }
+/* Largest visible, captioned top-level window of the running game's processes (the one the tips card is anchored to). */
+static HWND game_main_window() {
+    struct Pick { std::vector<DWORD> pids; HWND best = nullptr; long long area = 0; } pk;
+    pk.pids = game_pids();
+    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+        auto* p = (Pick*)lp;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        if (std::find(p->pids.begin(), p->pids.end(), pid) == p->pids.end() || !IsWindowVisible(h) || (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)) return TRUE;
+        RECT r{};
+        if (!GetClientRect(h, &r)) return TRUE;
+        long long a = (long long)(r.right - r.left) * (r.bottom - r.top);
+        if (a > p->area) { p->area = a; p->best = h; }
+        return TRUE;
+    }, (LPARAM)&pk);
+    return pk.best;
+}
+
+static void start_hint_tick() {
+    if (g_headless || !A.proc || !A.run.pad_exit || !A.st.start_hint) { g_hint.close(); return; }
+    g_hint.tick(game_main_window(), false, false);
+}
+
 struct CloseCtx { std::vector<DWORD> pids; int n = 0; };
 static BOOL CALLBACK close_cb(HWND h, LPARAM lp) {
     auto* c = (CloseCtx*)lp;
@@ -194,6 +223,7 @@ void close_pid_windows(unsigned long pid) {
 void poll_process() {
     sync_smash_prep();
     pad_exit_watch();
+    start_hint_tick();
     cheats_pad_watch();
     if (!A.proc) return;
     if (WaitForSingleObject(A.proc, 0) != WAIT_OBJECT_0) return;
