@@ -103,6 +103,7 @@ bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
     if (gc_needs_unpack(e)) { set_notice(unpack_msg(e)); return false; }
     std::string path = launch_path_for(e);
     bool have = gc_fingerprint_ready(path);
+    if (!have) { set_notice("Checking " + e.title + "'s game file so guests can verify they have the same disc - try again in a moment.", 6.0); return false; }
     const GameInfo* g = hub::find_game(e.catalog_id);
     gcnp::Spec s;
     s.mode = "direct";
@@ -150,6 +151,8 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     std::string next = gcnp::ini_patch(cur, sp, ip);
     { std::ofstream f(ini, std::ios::binary | std::ios::trunc); f << next; }
     GCO.run = gcnp::Run();
+    GCO.status_seen = 0;
+    GCO.desync_told = false;
     /* Memory card: the host plays on (and syncs to everyone) its real vault card, the same folder offline play uses; whether the
      * session's changes stay is Dolphin's WriteSaveData (the host's room choice). Guests get a wiped scratch folder: Dolphin
      * replaces their card with the host's copy in its own Netplay folder, and their real card is never opened. */
@@ -226,6 +229,30 @@ void gc_tick() {
         if (was_host) { A.vault_dirty = true; auto_sync(); }
         return;
     }
+    {   // driver lines: surface what actually failed (was silently ignored: a crashed guest driver left the host waiting for 15 s)
+        std::string st = gcnp::read_status(GCO.run);
+        if (st.size() > GCO.status_seen) {
+            std::istringstream is(st.substr(GCO.status_seen));
+            GCO.status_seen = st.size();
+            std::string l;
+            while (std::getline(is, l)) {
+                while (!l.empty() && (l.back() == '' || l.back() == ' ')) l.pop_back();
+                if (l.rfind("error:", 0) == 0) {
+                    std::string why = "GameCube online: " + l.substr(6);
+                    autotest_log("driver " + l);
+                    if (GCO.host) { set_notice(why, 12.0); host_abort(why); } else launch_fail(why, 12.0);
+                    gc_kill();
+                    gc_stop_all();
+                    return;
+                }
+                if (l.rfind("desync:", 0) == 0 && !GCO.desync_told) {
+                    GCO.desync_told = true;
+                    autotest_log("driver " + l.substr(0, 200));
+                    push_toast("Dolphin reported the game may be out of sync. If it keeps happening, make sure everyone has the same game file and restart the game.", ui::WARN, 15.0, true);
+                }
+            }
+        }
+    }
     if (GCO.host && !GCO.ready_sent && gcnp::read_status(GCO.run).find("stage:netplay-open") != std::string::npos) {
         GCO.ready_sent = true;
         A.lobby.send_msg("{\"kind\":\"np_gc_ready\"}");
@@ -238,7 +265,9 @@ void gc_tick() {
 }
 
 void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_no) {
-    if (GCO.active && gc_process_alive()) return;
+    if (GCO.active && gc_process_alive()) { launch_fail("A GameCube session is still open on this PC (Dolphin) - close it, then the host can start again."); return; }
+    GCO.status_seen = 0;
+    GCO.desync_told = false;
     GCO.spec = s;
     GCO.entry = e;
     GCO.launch_no = launch_no;

@@ -340,6 +340,8 @@ struct GcOnline {
     int launch_no = 0, port = 0;
     std::string launch_body;         // guest: the host's launch message (its cheats list is applied to this PC's Dolphin too)
     std::string left_name;           // guest: the host left mid-game, Dolphin is being closed
+    size_t status_seen = 0;          // bytes of the driver's status file already scanned for error:/desync: lines
+    bool desync_told = false;
     unsigned long long close_deadline = 0;   // guest: Dolphin was asked to close (forwarder lost); terminate only if it ignores that for 20 s
     std::string fp_path, fp_sha;     // disc fingerprint (computed once per path on a worker thread)
     uint64_t fp_size = 0;
