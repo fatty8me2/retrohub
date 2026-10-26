@@ -40,7 +40,7 @@ Not shipped: behind `RETROHUB_PS2_NETPLAY=1` in retrorun only, hub still shows P
   `730112622345f0ca12e7650c6d4052f443603aa630e9b6ab8a68874a4d66bae6`; DLL 11,074,048 bytes, SHA-256 starts `c3d278c0dd27ab06`).
 - **PCEE2** (WizzardSK/pcee2-libretro): no releases, source only (needs a full PCSX2 build); not tested.
 - LRPS2 asks for a HW context, retrorun refuses, and the core falls back to its **software renderer** (`pcsx2_renderer=Software (SW)`),
-  so no GPU is needed. BIOS: any `scph*.bin` placed in `<system-dir>\pcsx2ios\` (used SCPH-70012, `pcsx2_bios=` option).
+  so no GPU is needed. BIOS: any `scph*.bin` placed in `<system-dir>/pcsx2/bios/` (used SCPH-70012, `pcsx2_bios=` option).
   Options used: `pcsx2_renderer=Software (SW)`, `pcsx2_mtvu=disabled`, `pcsx2_sw_renderer_threads=0`, fastboot on. Output 640x448 @ 59.94 Hz.
 
 ### Measurements (retrorun headless, hidden, muted, loopback, Windows 11)
