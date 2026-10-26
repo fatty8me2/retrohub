@@ -18,7 +18,7 @@ param(
   [int]$HoldSeconds = 60, [int]$StartTimeout = 150, [int]$SlowHostSeconds = 15,
   [int]$SimLatency = 80, [int]$SimJitter = 40, [int]$SimLoss = 3,
   [int]$Port = 11600, [string]$Work = "C:\rhq\stress", [int]$Lane = 0, [string]$Out = "", [switch]$NoServer,
-  [string]$WorkerDir = "C:\Users\fatty\Desktop\SmashClassicPort\BattleShip\server\cloudflare", [string]$Tag = ""
+  [string]$WorkerDir = "C:\Users\fatty\Desktop\SmashClassicPort\BattleShip\server\cloudflare", [string]$Tag = "", [string]$GuestDiscDir = ""
 )
 $Modes = @($Modes | ForEach-Object { $_ -split ',' })
 $Server = "ws://127.0.0.1:$Port"
@@ -125,7 +125,7 @@ function Run-One($mode, $n) {
     Copy-Item "$Build\*" $d -Recurse -Include *.exe, *.dll -Exclude hub_*.exe
     robocopy $tmpl "$d\userdata\emulators\dolphin" /E /NFL /NDL /NJH /NJS /NP | Out-Null
     $v = ($d -replace '\\', '/')
-    $json = '{"name":"qa-St' + $i + '","rom_folders":["' + ($DiscDir -replace '\\', '/') + '"],"server":"' + $Server + '","vault_dir":"' + $v + '/vault","sync_auto":false,"cloud_saves":false}'
+    $json = '{"name":"qa-St' + $i + '","rom_folders":["' + ($(if ($i -eq 1 -and $GuestDiscDir) { $GuestDiscDir } else { $DiscDir }) -replace '\\', '/') + '"],"server":"' + $Server + '","vault_dir":"' + $v + '/vault","sync_auto":false,"cloud_saves":false}'
     Set-Content "$d\userdata\hub.json" $json -Encoding ascii
     $env:RETROHUB_AUTOTEST = $role; $env:RETROHUB_AUTOTEST_CODE = $code; $env:RETROHUB_AUTOTEST_NAME = "qa-St$i"
     $env:RETROHUB_AUTOTEST_GAME = $Game; $env:RETROHUB_AUTOTEST_PLAYERS = "2"
