@@ -34,6 +34,10 @@ Ps2Pads pcsx2_pads_with(const std::vector<PadDesc>& by_port, const std::vector<P
 std::string pcsx2_binding(const hubctl::Term& t, int sdl_index);
 std::string pcsx2_ini_defaults(const std::string& ini);                                                // once
 std::string pcsx2_ini_pads(const std::string& ini, const Ps2Pads& pads, const hubctl::Profile& profile);   // on profile / pad change
+/* Buzz! quiz games (catalog ids "buzz_*"): USB1 = BuzzDevice, bindings BuzzDevice_<Colour><n> = SDL pad buttons for player n
+ * (Red = A, Blue = B, Orange = X, Green = Y, Yellow = Start). Other games get USB1 = None. USB2 = None always. */
+bool pcsx2_is_buzz_game(const std::string& catalog_id);
+std::string pcsx2_ini_buzz(const std::string& ini, const Ps2Pads& pads, bool buzz);
 /* Every launch: BIOS, this game's memory card, renderer / upscale / widescreen. */
 std::string pcsx2_ini_launch(const std::string& ini, const Bios& bios, const std::string& card_rel, const hub::gs::Values& v);
 /* Memory card path relative to <install>\memcards: "RetroHub/<game key>/Mcd001.ps2". */
@@ -41,7 +45,7 @@ std::string pcsx2_card_rel(const std::string& game_key);
 
 /* Writes <install>\inis\PCSX2.ini (portable.ini beside the exe is written by the installer). Returns "" or an error. */
 std::string prepare_pcsx2(const std::string& install_dir, const Ps2Pads& pads, const hubctl::Profile& profile, const Bios& bios,
-                          const std::string& game_key, const hub::gs::Values& v);
+                          const std::string& game_key, const hub::gs::Values& v, bool buzz = false);
 /* -batch -nogui [-fullscreen] -- "<game>" (the game path last). */
 std::string pcsx2_args(const std::string& game_path, bool fullscreen);
 

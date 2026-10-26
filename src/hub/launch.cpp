@@ -375,7 +375,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         }
     } else if (kind == hubemu::Kind::Pcsx2) {
         hubctl::Profile pp = controls_profile("ps2", e.key);
-        std::string perr = hubemu::prepare_pcsx2(inst.dir, ps2_pads_for(pp), pp, ps2_bios, e.key, gs_values_for(e));
+        std::string perr = hubemu::prepare_pcsx2(inst.dir, ps2_pads_for(pp), pp, ps2_bios, e.key, gs_values_for(e), hubemu::pcsx2_is_buzz_game(e.catalog_id));
         if (!perr.empty()) { set_notice("Could not set up PCSX2: " + perr, 12.0); return; }
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, cemu_pads_for(pw)); }
