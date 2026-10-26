@@ -6,22 +6,28 @@
 namespace hubcaps {
 
 /* Systems launch_online() has a real online branch for. KEEP IN SYNC with launch_online.cpp: add the system here when you add a branch
- * (the test hub_online_caps_test then forces supports_online to follow). PS2 (PCSX2 has no netplay) and Wii U are deliberately absent. */
+ * (the test hub_online_caps_test then forces supports_online to follow). PS2 (PCSX2 has no netplay) is deliberately absent. Wii U = remote play (streamed). */
 inline bool system_has_online_launch(hub::System s) {
     switch (s) {
         case hub::System::N64: case hub::System::GBA: case hub::System::GB: case hub::System::GBC:
         case hub::System::N3DS: case hub::System::GC: case hub::System::NDS: case hub::System::PS1:
-        case hub::System::NES: case hub::System::SNES:
+        case hub::System::NES: case hub::System::SNES: case hub::System::WiiU:
             return true;
         default: return false;
     }
 }
 
+/* Remote play: the host runs the emulator and streams video to guests (streamrun), guests send pad input back. Guests need no copy
+ * of the game. Today: Wii U (Cemu) only. */
+inline bool remote_play_system(hub::System s) { return s == hub::System::WiiU; }
+inline bool remote_play_game(hub::System s, const hub::GameInfo*) { return remote_play_system(s); }
+inline const char* remote_play_banner() { return "Mickey streams the game to you - you don't need your own copy."; }
+
 /* Systems where only catalog-vetted games are KNOWN to work online. Every game of these systems is still offered in rooms (GC: any disc via
  * Dolphin NetPlay; DS: any game via ds-link; PS1: any game via rollback), but a game outside the catalog (or not flagged online) is tagged
  * "Untested online" because it may be single-player or need peripherals the link cannot carry. */
 inline bool online_needs_catalog_flag(hub::System s) {
-    return s == hub::System::GC || s == hub::System::NDS || s == hub::System::PS1;
+    return s == hub::System::GC || s == hub::System::NDS || s == hub::System::PS1 || s == hub::System::WiiU;
 }
 
 /* Everything that can technically work online is capable; the catalog only changes the "untested" tag. */
@@ -37,7 +43,6 @@ inline const char* online_unsupported_reason(hub::System s) {
     if (system_has_online_launch(s)) return "";
     switch (s) {
         case hub::System::PS2: return "PS2 online isn't supported yet";
-        case hub::System::WiiU: return "Wii U online isn't supported yet";
         default: return "Online play isn't available for this game";
     }
 }
@@ -47,7 +52,7 @@ inline const char* online_unsupported_reason(hub::System s) {
 inline int default_online_max(hub::System s) {
     switch (s) {
         case hub::System::GB: case hub::System::GBC: case hub::System::NDS: case hub::System::PS1:
-        case hub::System::NES: case hub::System::SNES: return 2;   // NES/SNES: two pads unless the catalog says multitap / Four Score
+        case hub::System::NES: case hub::System::SNES: case hub::System::WiiU: return 2;   // Wii U: 2 unless the catalog lists more couch pads   // NES/SNES: two pads unless the catalog says multitap / Four Score
         default: return 4;
     }
 }

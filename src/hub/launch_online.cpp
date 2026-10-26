@@ -1,8 +1,10 @@
 #include "netplay_3ds_join.h"
 #include "app.h"
+#include "remote_play.h"
 #include <filesystem>
 
 GcOnline GCO;
+void rplay_stop();
 static hubnp3ds::ResumeGate NP3_resume;   // guest launch waiting for the archive to finish unpacking
 
 bool gc_needs_unpack(const hub::GameEntry& e) { return e.issue == "extract" && hub::extracted_3ds_path(e).empty(); }
@@ -68,6 +70,12 @@ void online_host_left(const std::string& gone) {
         push_toast(who + " left - closing the game", ui::WARN, 8.0, true);
         return;
     }
+    if (A.proc && A.run.room && A.run.remote_play) {   // the host's stream is over: close the viewer, back to the room
+        A.run.left_name = who;
+        push_toast(hubrp::host_left_text(gone), ui::WARN, 8.0, true);
+        request_game_close();
+        return;
+    }
     if (A.proc && A.run.room) {
         A.run.left_name = who;
         push_toast(who + " left - game ended", ui::WARN, 8.0, true);
@@ -80,6 +88,7 @@ void online_cancel_pending() {
     else if (GCO.fw.active() && !GCO.active) GCO.fw.stop();
     if (NP3_pending && !A.proc) { NP3.stop(); NP3_pending = false; }
     NP3_resume.cancel();
+    rplay_stop();   // remote-play host leaving the room: stop streaming (Cemu itself is the user's game, left alone)
 }
 
 /* Called while a GameCube game is selected in the room: unpack an archived copy (existing progress UI) and fingerprint the
@@ -382,6 +391,100 @@ void poll_np3ds() {
         }
     }
 }
+/* ---------- Wii U remote play (docs/REMOTE_PLAY.md) ----------
+ * Host: Cemu starts like an offline game (managed controls; players 2-4 are the guests' pads, fed to Cemu by the DSU server from
+ * streamrun's localhost pad API), then poll_rplay() attaches `streamrun --host` to Cemu's window once it exists. Guests run
+ * `streamrun --guest` and need no copy of the game. Video/audio/input go direct UDP only; the room server is signalling. */
+namespace {
+struct RPlay {
+    bool pending = false;       // host: Cemu started, streamrun not attached yet
+    HANDLE proc = nullptr;      // host: our streamrun process
+    ULONGLONG t0 = 0;
+    std::string room;
+    int members = 1;
+} RP;
+
+}  // namespace
+
+void rplay_stop() {   // host left the room / Cemu closed: end the stream (our own PID only)
+    if (RP.proc) { TerminateProcess(RP.proc, 0); CloseHandle(RP.proc); RP.proc = nullptr; }
+    RP.pending = false;
+}
+
+void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
+    if (A.proc) { launch_note(is_host, "A game is already running."); return; }
+    std::string sr = streamrun_path();
+    if (g_headless) { shot_trace("online-route", std::string("wiiu-remote-play ") + (is_host ? "host" : "guest")); return; }
+    if (sr.empty() || !file_exists(sr)) { launch_note(is_host, "Remote play isn't installed (streamrun.exe is missing) - update RetroHub."); return; }
+    std::string room = hubrp::room_name(A.code, launch_no);
+    if (is_host) {
+        if (is_remote_stand_in(e)) { launch_note(true, "Remote play needs your own copy of " + e.title + " on the host's PC."); return; }
+        RunInfo r = run_info_for(e, true);
+        r.room = true;
+        launch_external(e, r, "");   // the host's Cemu + save sync work exactly like offline play
+        if (!A.proc) { host_abort("the host's Cemu did not start"); return; }
+        RP.pending = true;
+        RP.t0 = GetTickCount64();
+        RP.room = room;
+        RP.members = (int)A.lobby.members().size();
+        set_notice("Starting " + e.title + " - remote play connects once the game window appears...", 10.0);
+        return;
+    }
+    RunInfo ri;   // a guest runs no game of its own: no library key, no play time, no save
+    ri.title = e.title;
+    ri.system_short = "wiiu";
+    ri.online = true;
+    ri.room = true;
+    ri.track = false;
+    ri.remote_play = true;
+    if (!spawn_room(false, sr, hubrp::guest_args(server_url(), room, room_my_slot(), hub::gs::is_fullscreen(gs_values_for(e))), dir_of(sr), {}, ri)) return;
+    push_toast("Joining the host's stream... (View + Y opens the menu)", ui::GOOD, 6.0);
+}
+
+void poll_rplay() {
+    if (RP.proc && WaitForSingleObject(RP.proc, 0) == WAIT_OBJECT_0) {   // streamrun --host ended
+        DWORD code = 0;
+        GetExitCodeProcess(RP.proc, &code);
+        CloseHandle(RP.proc);
+        RP.proc = nullptr;
+        if (code != 0 && A.proc) {   // never leave Cemu running with nobody watching: say why, tell the guests, close Cemu
+            std::string why = hubrp::exit_text(code, true);
+            set_notice(why, 15.0);
+            host_abort(why);
+            request_game_close();
+        }
+    }
+    if (RP.proc && !A.proc) rplay_stop();   // Cemu closed: end the stream (guests see the host's game end)
+    if (!RP.pending) return;
+    unsigned long pid = 0;
+    bool win = A.proc && game_window_pid(&pid);
+    switch (hubrp::attach_decision(A.proc != nullptr, win, GetTickCount64() - RP.t0)) {
+        case hubrp::Attach::Wait: return;
+        case hubrp::Attach::GiveUp:
+            RP.pending = false;
+            if (A.proc) { set_notice("Cemu's window never appeared - remote play cancelled.", 12.0); host_abort("the host's game window never appeared"); request_game_close(); }
+            return;
+        case hubrp::Attach::Now: break;
+    }
+    RP.pending = false;
+    std::string sr = streamrun_path();
+    std::wstring cmd = L"\"" + W(sr) + L"\" " + W(hubrp::host_args(pid, server_url(), RP.room, RP.members, true));
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(0);
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(W(sr).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(dir_of(sr)).c_str(), &si, &pi)) {
+        set_notice("Could not start remote play (streamrun error " + std::to_string(GetLastError()) + ").", 12.0);
+        host_abort("remote play could not start");
+        request_game_close();
+        return;
+    }
+    CloseHandle(pi.hThread);
+    RP.proc = pi.hProcess;
+    autotest_log("rplay: streamrun attached to pid " + std::to_string(pid));
+}
+
 void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan, const hubui::Json* launch_msg,
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
@@ -393,6 +496,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         return;
     }
     if (is_kanto(e)) { kt_launch(e, launch_no, is_host); return; }
+    if (e.system == hub::System::WiiU) { launch_online_wiiu(e, launch_no, is_host); return; }
     if (e.system == hub::System::PS2) { launch_fail("PS2 online isn't supported yet - PCSX2 has no netplay. Play it offline from your library.", 12.0); return; }
     if (e.system == hub::System::GC) {   // Dolphin NetPlay: the host starts now; guests start from the launch handler
         if (is_host) {

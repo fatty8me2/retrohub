@@ -186,7 +186,7 @@ bool save_settings(const std::string& path, const Settings& s) {
 /* ---------------- lobby rules ---------------- */
 
 Selectability game_selectable(const std::string& game_id, int max_players,
-                              const std::vector<PeerInfo>& peers, int host_slot) {
+                              const std::vector<PeerInfo>& peers, int host_slot, bool remote_play) {
     Selectability r;
     if ((int)peers.size() > max_players) { r.reason = "too many players (max " + std::to_string(max_players) + ")"; return r; }
     /* ownership token: the catalog md5 if advertised, else the key itself */
@@ -201,9 +201,10 @@ Selectability game_selectable(const std::string& game_id, int max_players,
     std::string t;
     for (auto& p : peers) {
         if (!p.hello_complete()) { r.reason = "waiting for " + p.name; return r; }   // every hello part must have arrived
+        if (remote_play && p.slot != host_slot) continue;   // guests stream: no copy needed
         if (!token(p, &t)) { r.reason = p.name + " doesn't have this game"; return r; }
     }
-    if (host) {
+    if (host && !remote_play) {
         std::string ref;
         token(*host, &ref);
         for (auto& p : peers) {
