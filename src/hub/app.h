@@ -64,9 +64,7 @@
 #include "launch_settings.h"
 #include "kanto.h"
 
-#ifndef HUB_VERSION_STR
-#define HUB_VERSION_STR "0.0.0"
-#endif
+#include "hub_version.h"
 
 using hub::GameInfo;
 using hub::RomFile;
