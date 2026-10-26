@@ -72,11 +72,15 @@ $srvPid = $null
 if (-not $NoServer) {
   $env:WRANGLER_REGISTRY_PATH = "C:\rhq\reg$Port"; New-Item -ItemType Directory -Force $env:WRANGLER_REGISTRY_PATH | Out-Null
   $persist = "C:\rhq\s$Port"; if (Test-Path $persist) { Remove-Item -Recurse -Force $persist }
-  $wr = Start-Process node -ArgumentList @("node_modules\wrangler\bin\wrangler.js","dev","--ip","127.0.0.1","--port","$Port","--persist-to",$persist) -WorkingDirectory $WorkerDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$Work\wrangler.log" -RedirectStandardError "$Work\wrangler.err"
+  $psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = (Get-Command node).Source; $psi.WorkingDirectory = $WorkerDir
+  $psi.Arguments = "node_modules\wranglerin\wrangler.js dev --ip 127.0.0.1 --port $Port --persist-to $persist"
+  $psi.CreateNoWindow = $true; $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  $wr = [System.Diagnostics.Process]::Start($psi)   # no console window; drain the pipes so wrangler never blocks
+  $null = $wr.StandardOutput.BaseStream.CopyToAsync([System.IO.Stream]::Null); $null = $wr.StandardError.BaseStream.CopyToAsync([System.IO.Stream]::Null)
   $srvPid = $wr.Id
   $ok = $false
   for ($i = 0; $i -lt 90; $i++) { Start-Sleep 1; try { $c = New-Object Net.Sockets.TcpClient; $c.Connect("127.0.0.1", $Port); $c.Close(); $ok = $true; break } catch {} }
-  if (-not $ok) { Stop-Process -Id $srvPid -Force -ErrorAction SilentlyContinue; throw "wrangler did not come up on $Port (see $Work\wrangler.err)" }
+  if (-not $ok) { Stop-Process -Id $srvPid -Force -ErrorAction SilentlyContinue; throw "wrangler did not come up on $Port (port $Port)" }
   Write-Host "local wrangler pid $srvPid on $Port"
 }
 
