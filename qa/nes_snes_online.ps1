@@ -1,4 +1,4 @@
-# NES (Mesen) + SNES (snes9x) rollback netplay QA, headless + muted, LOCAL server only (qa\_guard.ps1).
+# NES (Nestopia UE) + SNES (snes9x) rollback netplay QA, headless + muted, LOCAL server only (qa\_guard.ps1).
 # Usage: powershell -File qa\nes_snes_online.ps1 [-Server ws://127.0.0.1:11310]
 # Generates deps\testroms\netplay.nes / .sfc (qa\make_nesnes_roms.py) when missing. Runs: synctest, direct 2P, relay 2P/4P, 3P, 4P multitap, guest drop, host leave.
 param([string]$Server = 'ws://127.0.0.1:8761')
@@ -9,7 +9,7 @@ if (-not (Test-Path "$roms\netplay.nes") -or -not (Test-Path "$roms\netplay.sfc"
 $env:RETRORUN_MUTE = '1'
 $exe = Join-Path $root 'build\bin\Release\retrorun.exe'
 $fail = 0
-$sets = @(@{ n = 'nes'; core = 'mesen_libretro.dll'; rom = 'deps\testroms\netplay.nes'; sys = 'nes' }, @{ n = 'snes'; core = 'snes9x_libretro.dll'; rom = 'deps\testroms\netplay.sfc'; sys = 'snes' })
+$sets = @(@{ n = 'nes'; core = 'nestopia_libretro.dll'; rom = 'deps\testroms\netplay.nes'; sys = 'nes' }, @{ n = 'snes'; core = 'snes9x_libretro.dll'; rom = 'deps\testroms\netplay.sfc'; sys = 'snes' })
 foreach ($s in $sets) {
     $sv = Join-Path $root ('qa\out\nss_' + $s.n); New-Item -ItemType Directory -Force $sv | Out-Null
     $p = Start-Process $exe -ArgumentList @('--core', (Join-Path $root ('deps\cores\' + $s.core)), '--rom', (Join-Path $root $s.rom), '--system', $s.sys, '--save-dir', $sv, '--state-dir', $sv, '--headless', '--frames', 1500, '--synctest', 8, '--fuzz-input', '--log', "$sv\sync.log") -Wait -PassThru -WindowStyle Hidden

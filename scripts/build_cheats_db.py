@@ -14,7 +14,7 @@ GameCube cht files. Sections are keyed by the 4..6 char game ID (revision suffix
 
 Bundle = zlib-compressed UTF-8 text:
     RHCHT1\n
-    @<sys>\t<format>\t<game file stem>\n      one section per .cht file (sys: n64 gb gbc gba ps1 gc)
+    @<sys>\t<format>\t<game file stem>\n      one section per .cht file (sys: n64 gb gbc gba ps1 gc nes snes)
     <desc>\t<code>[+<code>...]\n               one line per cheat (default format of the section)
     !<format>\t<desc>\t<code>\n               same, with a format that differs from the section
 """
@@ -30,6 +30,8 @@ DIRS = {
     "Nintendo - Game Boy Color": "gbc",
     "Nintendo - Game Boy Advance": "gba",
     "Sony - PlayStation": "ps1",
+    "Nintendo - Nintendo Entertainment System": "nes",
+    "Nintendo - Super Nintendo Entertainment System": "snes",
 }
 KV = re.compile(r'^cheat(\d+)_(desc|code)\s*=\s*"(.*)"\s*$')
 HEX = re.compile(r'^[0-9A-Fa-f]+$')
@@ -39,13 +41,39 @@ def file_format(sys_, stem):
     s = stem.lower()
     if "game genie" in s: return "gamegenie"
     if "code breaker" in s or "codebreaker" in s: return "codebreaker"
-    if "action replay" in s: return "ar"
+    if "action replay" in s: return "par" if sys_ == "snes" else "ar"
     if "gameshark" in s: return "gameshark"
-    return {"n64": "gameshark", "gb": "gameshark", "gbc": "gameshark", "gba": "", "ps1": "gameshark"}[sys_]
+    return {"n64": "gameshark", "gb": "gameshark", "gbc": "gameshark", "gba": "", "ps1": "gameshark", "nes": "raw", "snes": "raw"}[sys_]
+
+
+NES_GG = re.compile(r'^[APZLGITYEOXUKSVN]{6}$|^[APZLGITYEOXUKSVN]{8}$')
+NES_RAW = re.compile(r'^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}$')
+SNES_GG = re.compile(r'^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$')
+SNES_PAR = re.compile(r'^[0-9A-Fa-f]{8}$')
+SNES_RAW = re.compile(r'^[0-9A-Fa-f]{6}:[0-9A-Fa-f]{2}$')
+
+
+def nes_snes_format(sys_, code):
+    """Classify a NES/SNES cheat from the shape of every '+' part: "gamegenie" | "par" (SNES Pro Action Replay) | "raw"
+    (address:value RAM write). Returns None when a part is wildcarded/unknown or the parts mix formats (cheat is dropped)."""
+    pats = ([("gamegenie", NES_GG), ("raw", NES_RAW)] if sys_ == "nes" else
+            [("gamegenie", SNES_GG), ("par", SNES_PAR), ("raw", SNES_RAW)])
+    found = set()
+    for part in code.split("+"):
+        part = part.strip()
+        for name, rx in pats:
+            if rx.match(part):
+                found.add(name)
+                break
+        else:
+            return None
+    return found.pop() if len(found) == 1 else None
 
 
 def code_format(sys_, fmt, code):
     """Per-cheat format; GBA files without a device tag are classified from the code shape."""
+    if sys_ in ("nes", "snes"):
+        return nes_snes_format(sys_, code)
     first = code.split("+")[0].strip()
     if sys_ in ("gb", "gbc") and re.match(r'^[0-9A-Fa-f]{3}-[0-9A-Fa-f]{3}', first):
         return "gamegenie"
@@ -194,6 +222,7 @@ def main():
             code = c["code"].strip()
             if not desc or not code or code.upper() in ("N/A", "NONE"): continue
             f = code_format(sys_, fmt, code)
+            if f is None: continue
             if (desc, code) in seen: continue
             seen.add((desc, code))
             lines.append(("!%s\t" % f if f != fmt else "") + "%s\t%s\n" % (desc, code))

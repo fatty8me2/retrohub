@@ -24,7 +24,7 @@ const char* button_name(int i) { return i >= 0 && i < kNumButtons ? kButtons[i] 
 const char* axis_name(int i) { return i >= 0 && i < kNumAxes ? kAxes[i] : ""; }
 
 const std::vector<std::string>& systems() {
-    static const std::vector<std::string> v = {"n64", "retro", "ps1", "gc", "wiiu", "3ds", "ps2"};
+    static const std::vector<std::string> v = {"n64", "retro", "ps1", "gc", "wiiu", "3ds", "ps2", "nes", "snes"};
     return v;
 }
 bool is_system(const std::string& s) { return std::find(systems().begin(), systems().end(), s) != systems().end(); }
@@ -38,6 +38,8 @@ std::string system_key(hub::System s) {
         case hub::System::WiiU: return "wiiu";
         case hub::System::N3DS: return "3ds";
         case hub::System::PS2: return "ps2";
+        case hub::System::NES: return "nes";
+        case hub::System::SNES: return "snes";
         default: return "";
     }
 }
@@ -60,6 +62,12 @@ const std::vector<ControlInfo>& controls_for(const std::string& sys) {
                  {"r3", "R3 (stick click)", false}, {"start", "Start", false}, {"select", "Select", false}, {"up", "D-pad up", false},
                  {"down", "D-pad down", false}, {"left", "D-pad left", false}, {"right", "D-pad right", false},
                  {"left_stick", "Left analog stick", true}, {"right_stick", "Right analog stick", true}}},
+        /* NES / SNES: libretro pad ids (b = south ... as "retro"), console button names. Xbox A -> B, B -> A (positional). */
+        {"nes", {{"a", "A", false}, {"b", "B", false}, {"start", "Start", false}, {"select", "Select", false}, {"up", "D-pad up", false},
+                 {"down", "D-pad down", false}, {"left", "D-pad left", false}, {"right", "D-pad right", false}}},
+        {"snes", {{"a", "A", false}, {"b", "B", false}, {"x", "X", false}, {"y", "Y", false}, {"l", "L", false}, {"r", "R", false},
+                  {"start", "Start", false}, {"select", "Select", false}, {"up", "D-pad up", false}, {"down", "D-pad down", false},
+                  {"left", "D-pad left", false}, {"right", "D-pad right", false}}},
         {"gc", {{"a", "A", false}, {"b", "B", false}, {"x", "X", false}, {"y", "Y", false}, {"z", "Z", false}, {"start", "Start", false},
                 {"l", "L", false}, {"r", "R", false}, {"l_analog", "L analog", false}, {"r_analog", "R analog", false},
                 {"dpad_up", "D-pad up", false}, {"dpad_down", "D-pad down", false}, {"dpad_left", "D-pad left", false},
@@ -116,6 +124,13 @@ Profile default_profile(const std::string& sys) {
            {"left", "dpleft"}, {"right", "dpright"}, {"l2", "lefttrigger@16000"}, {"r2", "righttrigger@16000"}});
         p.analogs["left_stick"] = {"leftx", "lefty", 0.08, 1.0};
         p.analogs["right_stick"] = {"rightx", "righty", 0.08, 1.0};
+    } else if (sys == "nes") {   // positional (Nintendo layout): Xbox A (south) = NES B, Xbox B (east) = NES A; X also = B so run+jump is natural
+        B({{"b", "a|x"}, {"a", "b|y"}, {"start", "start"}, {"select", "back"}, {"up", "dpup|lefty-@16000"}, {"down", "dpdown|lefty+@16000"},
+           {"left", "dpleft|leftx-@16000"}, {"right", "dpright|leftx+@16000"}});
+    } else if (sys == "snes") {   // positional: Xbox A->B, B->A, X->Y, Y->X (same as the Super Famicom pad); View = Select, Menu = Start
+        B({{"b", "a"}, {"a", "b"}, {"y", "x"}, {"x", "y"}, {"l", "leftshoulder"}, {"r", "rightshoulder"}, {"start", "start"},
+           {"select", "back"}, {"up", "dpup|lefty-@16000"}, {"down", "dpdown|lefty+@16000"},
+           {"left", "dpleft|leftx-@16000"}, {"right", "dpright|leftx+@16000"}});
     } else if (sys == "gc") {
         B({{"a", "a"}, {"b", "x"}, {"x", "b"}, {"y", "y"}, {"z", "rightshoulder"}, {"start", "start"}, {"main_up", "lefty-"},
            {"main_down", "lefty+"}, {"main_left", "leftx-"}, {"main_right", "leftx+"}, {"c_up", "righty-"}, {"c_down", "righty+"},
@@ -149,7 +164,7 @@ Profile default_profile(const std::string& sys) {
         K({{"a", "x"}, {"b", "c"}, {"z", "z"}, {"start", "return"}, {"l", "a"}, {"r", "s"}, {"c_up", "i"}, {"c_left", "j"}, {"c_down", "k"},
            {"c_right", "l"}, {"dpad_up", "t"}, {"dpad_left", "f"}, {"dpad_down", "g"}, {"dpad_right", "h"},
            {"stick_up", "up"}, {"stick_down", "down"}, {"stick_left", "left"}, {"stick_right", "right"}});
-    } else if (sys == "retro" || sys == "ps1") {   // the old fixed keyboard map of retrorun (ps1: Z = Cross, X = Circle, A = Square, S = Triangle)
+    } else if (sys == "retro" || sys == "ps1" || sys == "nes" || sys == "snes") {   // the old fixed keyboard map of retrorun (ps1: Z = Cross, X = Circle, A = Square, S = Triangle)
         K({{"up", "up"}, {"down", "down"}, {"left", "left"}, {"right", "right"}, {"b", "z"}, {"a", "x"}, {"y", "a"}, {"x", "s"},
            {"l", "q"}, {"r", "w"}, {"start", "return|kp_enter"}, {"select", "rshift"}});
     } else if (sys == "gc") {   // Dolphin's own default keyboard keys for GCPad1
@@ -220,7 +235,7 @@ const std::vector<KeyDef>& key_defs() {
 const std::vector<ControlInfo>& key_controls_for(const std::string& sys) {
     static std::map<std::string, std::vector<ControlInfo>> m;
     static const std::vector<ControlInfo> none;
-    if (sys != "n64" && sys != "retro" && sys != "ps1" && sys != "gc") return none;
+    if (sys != "n64" && sys != "retro" && sys != "ps1" && sys != "gc" && sys != "nes" && sys != "snes") return none;
     auto it = m.find(sys);
     if (it != m.end()) return it->second;
     std::vector<ControlInfo> v;
@@ -409,6 +424,23 @@ Profile& edit_profile(Store& s, const std::string& sys, const std::string& game)
     if (game.empty()) s.system_default[sys] = name; else s.game_override[game] = name;
     s.stamp = (int64_t)std::time(nullptr);
     return it->second;
+}
+
+bool label_layout_active(const Store& s, const std::string& sys, const std::string& game) {
+    if (sys != "nes" && sys != "snes") return false;
+    Profile p = resolve(s, sys, game);
+    Profile d = default_profile(sys);
+    return p.buttons["a"] == d.buttons["b"] && p.buttons["b"] == d.buttons["a"] && p.buttons["a"] != p.buttons["b"];
+}
+
+bool set_label_layout(Store& s, const std::string& sys, const std::string& game, bool on) {
+    if (sys != "nes" && sys != "snes") return false;
+    Profile d = default_profile(sys);
+    Profile& p = edit_profile(s, sys, game);
+    p.buttons["a"] = on ? d.buttons["b"] : d.buttons["a"];   // label layout: Xbox A -> console A, B -> B (X/Y likewise on SNES)
+    p.buttons["b"] = on ? d.buttons["a"] : d.buttons["b"];
+    if (sys == "snes") { p.buttons["x"] = on ? d.buttons["y"] : d.buttons["x"]; p.buttons["y"] = on ? d.buttons["x"] : d.buttons["y"]; }
+    return true;
 }
 
 bool set_mapping(Store& s, const std::string& sys, const std::string& game, const std::string& control, const std::string& expr, std::string* err) {

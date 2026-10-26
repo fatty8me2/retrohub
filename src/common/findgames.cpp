@@ -19,7 +19,7 @@
 namespace hub { namespace fg {
 
 const char* sys_label(int s) {
-    static const char* const n[kSysCount] = {"N64", "GameCube", "GBA", "Game Boy", "GBC", "DS", "3DS", "Wii U", "PS2", "PlayStation"};
+    static const char* const n[kSysCount] = {"N64", "GameCube", "GBA", "Game Boy", "GBC", "DS", "3DS", "Wii U", "PS2", "PlayStation", "NES", "SNES"};
     return s >= 0 && s < kSysCount ? n[s] : "";
 }
 
@@ -28,7 +28,7 @@ int classify_ext(const std::string& e) {
     static const M map[] = {
         {".z64", N64}, {".v64", N64}, {".n64", N64},
         {".gcm", GC}, {".iso", GC}, {".rvz", GC}, {".gcz", GC}, {".ciso", GC}, {".wbfs", GC},
-        {".gba", GBA}, {".gb", GB}, {".gbc", GBC}, {".nds", NDS},
+        {".nes", NES}, {".sfc", SNES}, {".smc", SNES}, {".gba", GBA}, {".gb", GB}, {".gbc", GBC}, {".nds", NDS},
         {".3ds", N3DS}, {".cci", N3DS}, {".cia", N3DS}, {".cxi", N3DS},
         {".wua", WIIU}, {".wud", WIIU}, {".wux", WIIU},
         {".chd", PS2}, {".cso", PS2}, {".cue", PS2},   // .chd/.cue are PS1 or PS2: only the disc says, counted as PS2 here
@@ -321,6 +321,8 @@ std::vector<Root> default_roots() {
         for (const char* sub : {"Desktop", "Documents"}) add(home + "\\" + od + "\\" + sub, false);
     for (const char* sub : {"Documents\\RetroHub Games", "Games", "ROMs", "Roms", "Emulation", "RetroArch\\roms"}) add(home + "\\" + sub, true);
     add(home + "\\Desktop\\Everything\\GamesPS2", true);
+    add(home + "\\Desktop\\Everything\\GamesNES", true);
+    add(home + "\\Desktop\\Everything\\GamesSNES", true);
     add(home + "\\Desktop\\Everything\\GamesPS1", true);   // BIOS folders (GamesBios / BIOS) are found by the PS1/PS2 BIOS search, not added as game folders
     if (!test_home.empty()) return out;
 

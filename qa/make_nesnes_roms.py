@@ -33,7 +33,7 @@ class Asm:
 def nes():
     a = Asm(0xC000)
     a.raw(0x78, 0xD8, 0xA2, 0xFF, 0x9A)                      # sei cld ldx #$ff txs
-    a.raw(0xA9, 0x00); a.abs_(0x8D, 0x2000); a.abs_(0x8D, 0x2001)   # PPUCTRL = PPUMASK = 0
+    a.raw(0xA9, 0x00); a.abs_(0x8D, 0x2000); a.raw(0xA9, 0x0A); a.abs_(0x8D, 0x2001)   # PPUCTRL = 0, PPUMASK = background on (a repainted frame, not a stale blank buffer)
     a.raw(0xA9, 0x00, 0x85, 0x10)                            # hash = 0
     a.label('vb'); a.abs_(0x2C, 0x2002); a.rel(0x10, 'vb')   # bit $2002 / bpl: wait for vblank
     a.raw(0xA9, 0x01); a.abs_(0x8D, 0x4016); a.raw(0xA9, 0x00); a.abs_(0x8D, 0x4016)   # strobe
@@ -50,6 +50,7 @@ def nes():
     a.raw(0x85, 0x10)
     a.raw(0xA9, 0x3F); a.abs_(0x8D, 0x2006); a.raw(0xA9, 0x00); a.abs_(0x8D, 0x2006)
     a.raw(0xA5, 0x10, 0x29, 0x3F); a.abs_(0x8D, 0x2007)       # backdrop colour = hash & $3f
+    a.raw(0xA9, 0x00); a.abs_(0x8D, 0x2006); a.abs_(0x8D, 0x2006)   # reset the VRAM address (scroll) inside vblank
     a.jmp('vb')
     prg = a.done().ljust(16384 - 6, b'\xEA') + struct.pack('<HHH', 0xC000, 0xC000, 0xC000)   # nmi, reset, irq
     return b'NES\x1a\x01\x01\x00\x00' + bytes(8) + prg + bytes(8192)

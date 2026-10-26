@@ -308,7 +308,7 @@ void group_title(const char* t, int n) {
 bool cheats_supported(const hub::GameEntry& e) {
     if (is_native(e) || is_kanto(e)) return false;
     return e.system == hub::System::N64 || e.system == hub::System::GBA || e.system == hub::System::GB || e.system == hub::System::GBC ||
-           e.system == hub::System::NDS || e.system == hub::System::PS1 ||   // DS / PS1: libretro retro_cheat_set through retrorun
+           e.system == hub::System::NDS || e.system == hub::System::PS1 || e.system == hub::System::NES || e.system == hub::System::SNES ||   // DS / PS1: libretro retro_cheat_set through retrorun
            e.system == hub::System::GC;                                      // GameCube: Dolphin GameSettings ini, written at launch
 }
 

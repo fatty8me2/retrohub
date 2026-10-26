@@ -14,6 +14,8 @@ Verification key: **[verified]** = confirmed in the core's `.info` file or upstr
 | N64 | mupen64plus (not a libretro core here) | none | Shipped via `n64run.exe` |
 | GameCube | not decided | none fetched | Future; no core chosen |
 | Nintendo DS | **melonDS DS** (`melondsds_libretro`) | melonDS, DeSmuME (not fetched) | Recommended |
+| NES | **Nestopia UE** (`nestopia_libretro`) | FCEUmm (tested, not shipped), Mesen (see below) | Recommended |
+| SNES | **Snes9x** (`snes9x_libretro`) | none | Recommended |
 
 ### GBA: mGBA
 mGBA is the accuracy-focused GBA choice and is the only GBA core fetched. It also handles GB and GBC, so it can serve as a fallback. Its README describes it as a high-accuracy, high-performance emulator and the "generally good first choice" for GBA [verified: mGBA README, https://github.com/libretro/mgba].
@@ -100,3 +102,16 @@ Options retrorun/the hub set (names verified with `retrorun --list-options`): `b
 - **Input**: buttons (16 bits) + both sticks of every port. A DualShock axis is one byte, so sticks travel as 8-bit values (`axis >> 8`, `src/retrorun/ps1_input.h`) and every PC, the sender included, feeds the core the same quantised value. Lockstep carries them as a second u32 per sample ("wide" `LockstepCore`), rollback as 6 bytes per port (`rb::Config::val_bytes`).
 - **Verified** (qa/ps1_synctest.ps1, qa/ps1_online.ps1): the homebrew `qa/make_ps1_netdisc.py` boots from OpenBIOS as a MODE2/2352 disc with EDC/ECC (the disc layer rejects unchecked 2048-byte sectors), switches the pads to analog through SIO0 and draws every frame from both sticks, all buttons and a hardware timer, so any divergence is visible and permanent. SyncTest (depth 6-8, mispredicted frames included) passes on a 240p and a 480i disc, 2/4 headless peers (direct, relay, 60 ms / 25 ms jitter / 4% loss) end with identical output + input hashes over 3+ minutes.
 - **Not covered**: the matrix runs the homebrew, not commercial discs (none here): CD streaming/XA/MDEC video, memory-card writes and multi-disc play are exercised by the core's own state code but not by a SyncTest. Cost: 16 MB per saved state, about 0.5-1 ms to save and 1 ms to load; retrorun keeps `--rb-pred 6` (10 states) for PlayStation.
+
+### NES: Nestopia UE (and why not Mesen)
+- Candidates tried headless under retrorun on a generated homebrew ROM (`qa/make_nes_snes_roms.py`, original code, public domain; NROM, battery RAM, NMI-driven colour counter): **Mesen 0.9.9** (GPLv3), **FCEUmm**, **Nestopia UE 2.0.0**.
+- Mesen declares `savestate_features = deterministic` but its libretro DLL crashes inside `retro_load_game` under retrorun (access violation, with and without battery RAM), so it is not shipped.
+- FCEUmm and Nestopia both pass `retrorun --synctest 8` over 600 frames (5344 re-simulated frames, 0 mismatches) and write the battery `.srm`. Nestopia is chosen for accuracy (PAL/NTSC/Dendy via `nestopia_force_system`, Game Genie in `retro_cheat_set`); FCEUmm is the faster fallback (state 13.7 KB vs 21.8 KB, about 300 us vs 900 us per frame).
+- Binary: libretro buildbot nightly. DLL SHA-256 `57ef3b6a3face9b65bc5de65cd41453c35fb880d0437b0b2d3e44549c1c0a959`, recorded in `scripts/fetch-cores.ps1` (a different nightly only warns).
+
+### SNES: Snes9x
+- Snes9x 1.61 (`snes9x_libretro`, license "Non-commercial", see THIRD_PARTY.md), `savestate_features = deterministic`. SyncTest depth 8 over 600 frames on the homebrew LoROM test ROM: 0 mismatches; 2 KB SRAM written to the `.srm`.
+- DLL SHA-256 `07534cc4018069840c7400c22adae4e508ac9d2fc8041e4aa6b50b04bf5d6eba`.
+- Multitap: retrorun sets port 2 to `RETRO_DEVICE_JOYPAD_MULTITAP` (0x101) with `--multitap`, `--players >= 3` or three or more pads; `--no-multitap` forces it off (game setting "Multitap").
+- Cheats via `retro_cheat_set`: SNES Game Genie `XXXX-XXXX` or Pro Action Replay `AAAAAAVV` (format `par`/`ar`); NES Game Genie 6/8 letters or raw `AAAA:VV` / `AAAA:CC:VV`.
+- Re-verify both cores with `powershell -File qa\nes_snes_synctest.ps1` after changing a nightly.
