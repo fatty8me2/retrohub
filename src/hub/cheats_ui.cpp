@@ -29,6 +29,12 @@ bool g_confirm_restore = false;
 std::vector<std::string> g_room_names;   // guest: what the host announced
 std::string g_room_game;
 std::string g_sent_sig;
+/* Value editor (cheats with X/? placeholders): one cheat at a time, replaces the list while open. */
+bool g_val_open = false;
+cheatstore::Row g_val_row;
+char g_val_buf[24] = {0};
+bool g_val_dec = true;
+cheats::Target target_of(const hub::GameEntry& e);
 
 std::string vault() {
     if (g_headless) {   // screenshots/tests: never touch the player's vault
@@ -136,7 +142,7 @@ const std::vector<cheatstore::Row>& rows_cached(const hub::GameEntry& e) {
     static int rev = -1;
     static std::vector<cheatstore::Row> rows;
     ensure_loaded();
-    if (key != e.key || rev != g_rev) { rows = cheatstore::build_rows(g_store, e.key, db_items(e)); key = e.key; rev = g_rev; }
+    if (key != e.key || rev != g_rev) { rows = cheatstore::build_rows(g_store, e.key, db_items(e), target_of(e)); key = e.key; rev = g_rev; }
     return rows;
 }
 std::vector<cheatstore::Row> rows_for(const hub::GameEntry& e) { return rows_cached(e); }
@@ -155,6 +161,22 @@ void write_run(const hub::GameEntry& e) {
     for (auto& c : cs.cheats) { auto f = g_fire.find(e.key + "|" + c.id); if (f != g_fire.end()) c.fire = f->second; }
     cheats::save_file(run_file(e.key), cs, &err);
 }
+
+/* "42 (0x2A)" */
+std::string value_text(const cheatstore::Row& r) {
+    return std::to_string(r.value) + " (0x" + cheats::value_format(r.value, false, r.spec.digits) + ")";
+}
+
+void open_value_editor(const cheatstore::Row& r) {
+    g_val_row = r;
+    g_val_dec = !r.spec.prefer_hex;
+    std::snprintf(g_val_buf, sizeof g_val_buf, "%s", cheats::value_format(r.value, g_val_dec, r.spec.digits).c_str());
+    g_val_open = true;
+}
+
+bool value_buf_number(uint32_t* v) { return cheats::value_parse(g_val_buf, g_val_dec, v); }
+
+void value_buf_set(uint32_t v) { std::snprintf(g_val_buf, sizeof g_val_buf, "%s", cheats::value_format(v, g_val_dec, g_val_row.spec.digits).c_str()); }
 
 bool in_room_for(const hub::GameEntry& e) { return A.in_room && A.selected_game == room_id(e); }
 bool guest_locked(const hub::GameEntry& e) { return in_room_for(e) && !is_host(); }
@@ -185,6 +207,22 @@ void toggle(const hub::GameEntry& e, const cheatstore::Row& r) {
     persist();
     write_run(e);
     push_toast((now ? "Cheat on: " : "Cheat off: ") + r.cheat.desc, now ? COL_GOOD : COL_PANEL, 3.5);
+    if (now && r.spec.valid && !r.value_set) open_value_editor(r);   // a value cheat needs its number
+}
+
+/* Store the typed number (clamped to the cheat's range), switch the cheat on, hand it to the runner. */
+void value_commit(const hub::GameEntry& e) {
+    uint32_t v = 0;
+    if (!value_buf_number(&v)) v = g_val_row.value;
+    v = cheats::value_clamp(g_val_row.spec, v);
+    if (!g_store.is_on(e.key, g_val_row.cheat.id)) { first_enable_backup(e); g_store.set_on(e.key, g_val_row.cheat.id, true, now_s()); }
+    g_store.set_value(e.key, g_val_row.cheat.id, v, now_s());
+    persist();
+    write_run(e);
+    cheatstore::Row r = g_val_row;
+    r.value = v;
+    push_toast("Cheat on: " + g_val_row.cheat.desc + "  (" + value_text(r) + ")", COL_GOOD, 3.5);
+    g_val_open = false;
 }
 
 const char* fmt_label(cheats::Format f) {
@@ -200,10 +238,10 @@ const char* fmt_label(cheats::Format f) {
 }
 
 /* One big row with a switch on the right. Returns true when toggled. `removed` (custom rows) gets a Remove button. */
-bool cheat_row(const cheatstore::Row& r, bool enabled, bool* removed, bool* activate = nullptr) {
+bool cheat_row(const cheatstore::Row& r, bool enabled, bool* removed, bool* activate = nullptr, bool* edit = nullptr) {
     float h = sp(7.f), w = ImGui::GetContentRegionAvail().x;
     float rm_w = r.custom ? sp(11.f) : 0.f;
-    float act_w = activate ? sp(13.f) : 0.f;
+    float act_w = (activate ? sp(13.f) : 0.f) + (edit ? sp(14.f) + (activate ? sp(1.f) : 0.f) : 0.f);
     ImGui::PushID(r.cheat.id.c_str());
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
     ImGui::InvisibleButton("##row", ImVec2(w - (r.custom ? rm_w + sp(1.f) : 0.f), h), ImGuiButtonFlags_EnableNav);
@@ -229,10 +267,22 @@ bool cheat_row(const cheatstore::Row& r, bool enabled, bool* removed, bool* acti
     dl->AddText(bf, bf->FontSize, ImVec2(tx, p0.y + sp(1.1f)), ui::TEXT, t.c_str());
     char sub[96];
     std::snprintf(sub, sizeof sub, "%s  -  %d line%s", fmt_label(r.cheat.format), (int)r.cheat.codes.size(), r.cheat.codes.size() == 1 ? "" : "s");
+    if (r.spec.valid) {
+        std::string vt = std::string(sub) + "  -  Value: " + (r.value_set ? value_text(r) : "not set yet");
+        std::snprintf(sub, sizeof sub, "%s", vt.c_str());
+    }
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.1f) + bf->FontSize + sp(0.4f)), ui::TEXT2, r.custom ? (std::string("Your code  -  ") + sub).c_str() : sub);
-    if (activate && r.cheat.enabled) {   // GameShark-button codes: fire again on demand
-        ImGui::SetCursorScreenPos(ImVec2(s0.x - act_w - sp(1.f), p0.y + (h - sp(4.4f)) * 0.5f));
-        if (button("Activate", ImVec2(act_w, sp(4.4f)), false, enabled)) *activate = true;
+    {
+        float bx = s0.x - act_w - sp(1.f);
+        if (edit) {   // value cheats: change the number
+            ImGui::SetCursorScreenPos(ImVec2(bx, p0.y + (h - sp(4.4f)) * 0.5f));
+            if (button("Set value", ImVec2(sp(14.f), sp(4.4f)), false, enabled)) *edit = true;
+            bx += sp(15.f);
+        }
+        if (activate && r.cheat.enabled) {   // GameShark-button codes: fire again on demand
+            ImGui::SetCursorScreenPos(ImVec2(bx, p0.y + (h - sp(4.4f)) * 0.5f));
+            if (button("Activate", ImVec2(sp(13.f), sp(4.4f)), false, enabled)) *activate = true;
+        }
     }
     if (r.custom) {
         ImGui::SameLine(0, sp(1.f));
@@ -276,6 +326,7 @@ void cheats_open(const hub::GameEntry& e) {
     g_open_req = true;
     g_search[0] = 0;
     g_add = false;
+    g_val_open = false;
     g_confirm_restore = false;
 }
 
@@ -439,6 +490,22 @@ void draw_cheats_modal() {
                 std::snprintf(g_add_name, sizeof g_add_name, "%s", "Infinite health");
                 std::snprintf(g_add_codes, sizeof g_add_codes, "%s", sy == "gba" ? "82003000 0000FFFF" : sy == "gb" ? "01FF5CD1" : "8033B21E 00FF");
             }
+            if (mode == "value" || mode == "valuehex" || mode == "valuelist") {
+                for (auto& r : rows_cached(e))
+                    if (r.spec.valid) {
+                        cheatstore::Row v = r;
+                        v.value_set = true;
+                        v.value = mode == "valuehex" ? v.spec.max : std::min<uint32_t>(v.spec.max, 42);
+                        if (mode == "valuelist") {
+                            v.cheat.desc = "Hold item: 01=Potion 02=Antidote 03=Ether 04=Elixir";
+                            v.spec = cheats::value_spec(v.cheat, v.target);
+                            v.value = v.spec.options.empty() ? v.value : v.spec.options[1].value;
+                        }
+                        open_value_editor(v);
+                        if (mode == "valuehex") g_val_dec = false, value_buf_set(v.value);
+                        break;
+                    }
+            }
             if (mode == "locked") {
                 A.in_room = true; A.selected_game = room_id(e); g_fake_other_host = true;
             }
@@ -457,7 +524,8 @@ void draw_cheats_modal() {
     ImGui::PopStyleVar(2);
     if (!open) return;
     if (ui::modal_back()) {
-        if (g_add) g_add = false;
+        if (g_val_open) g_val_open = false;
+        else if (g_add) g_add = false;
         else { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     }
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.5f)));
@@ -525,7 +593,83 @@ void draw_cheats_modal() {
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
     float foot_h = sp(7.5f);
-    if (g_add) {
+    if (g_val_open) {
+        const cheats::ValueSpec& sp_ = g_val_row.spec;
+        ImGui::BeginChild("##cheat_val", ImVec2(0, ImGui::GetContentRegionAvail().y - foot_h), ImGuiChildFlags_NavFlattened);
+        group_title("Choose a value", -1);
+        ImGui::PushFont(ui::F.bold);
+        ImGui::TextWrapped("%s", g_val_row.cheat.desc.c_str());
+        ImGui::PopFont();
+        char range[160];
+        std::snprintf(range, sizeof range, "Allowed: %u to %u  (0x%s to 0x%s)", sp_.min, sp_.max, cheats::value_format(sp_.min, false, sp_.digits).c_str(), cheats::value_format(sp_.max, false, sp_.digits).c_str());
+        ImGui::TextDisabled("%s", range);
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        // number field + decimal / hex switch
+        ImGui::SetNextItemWidth(sp(32.f));
+        osk::input("##vval", g_val_dec ? "0" : "00", g_val_buf, sizeof g_val_buf, g_val_dec ? ImGuiInputTextFlags_CharsDecimal : ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_CharsUppercase);
+        ImGui::SameLine(0, sp(1.5f));
+        if (button("Decimal", ImVec2(0, sp(5.f)), g_val_dec, true)) { uint32_t v; bool ok = value_buf_number(&v); g_val_dec = true; if (ok) value_buf_set(v); }
+        ImGui::SameLine(0, sp(0.75f));
+        if (button("Hex", ImVec2(0, sp(5.f)), !g_val_dec, true)) { uint32_t v; bool ok = value_buf_number(&v); g_val_dec = false; if (ok) value_buf_set(v); }
+        if (!sp_.options.empty()) {
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            uint32_t cur = 0;
+            bool have = value_buf_number(&cur);
+            std::string pv = "Pick a known value";
+            for (auto& o : sp_.options) if (have && o.value == cur) pv = o.label + "  (" + std::to_string(o.value) + ")";
+            ImGui::SetNextItemWidth(sp(48.f));
+            if (ImGui::BeginCombo("##vopts", pv.c_str())) {
+                for (auto& o : sp_.options)
+                    if (ImGui::Selectable((o.label + "  (" + std::to_string(o.value) + ")").c_str(), have && o.value == cur)) value_buf_set(o.value);
+                ImGui::EndCombo();
+            }
+        }
+        // keypad: 3x4 digits, hex letters beside them
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        const float kw = sp(11.f), kh = sp(6.5f), kg = sp(0.75f);
+        const size_t maxlen = g_val_dec ? 10 : (size_t)std::max(1, sp_.digits);
+        auto key = [&](const char* label, char ch, float w = 0.f) {
+            if (button(label, ImVec2(w > 0 ? w : kw, kh), false, true)) {
+                size_t n = std::strlen(g_val_buf);
+                if (ch == '<') { if (n) g_val_buf[n - 1] = 0; }
+                else if (ch == 'C') g_val_buf[0] = 0;
+                else if (n + 1 < sizeof g_val_buf && n < maxlen) {
+                    if (n == 1 && g_val_buf[0] == '0') n = 0;
+                    g_val_buf[n] = ch; g_val_buf[n + 1] = 0;
+                }
+            }
+        };
+        const char* digs[4][3] = {{"7", "8", "9"}, {"4", "5", "6"}, {"1", "2", "3"}, {"0", "Back", "Clear"}};
+        const char* hexl[4][2] = {{"A", "B"}, {"C", "D"}, {"E", "F"}, {"", ""}};
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 3; ++c) {
+                if (c) ImGui::SameLine(0, kg);
+                const char* l = digs[r][c];
+                key(l, l[0] == 'B' ? '<' : l[0] == 'C' ? 'C' : l[0]);
+            }
+            if (!g_val_dec && r < 3)
+                for (int c = 0; c < 2; ++c) { ImGui::SameLine(0, c ? kg : kg * 4); key(hexl[r][c], hexl[r][c][0]); }
+        }
+        // live result
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        uint32_t typed = 0;
+        bool ok = value_buf_number(&typed);
+        if (!ok) { ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN); ImGui::TextWrapped("Type a number."); ImGui::PopStyleColor(); }
+        else {
+            uint32_t cl = cheats::value_clamp(sp_, typed);
+            cheats::Cheat filled;
+            cheats::value_apply(g_val_row.cheat, cl, g_val_row.target, &filled);
+            std::string code = filled.codes.empty() ? "" : filled.codes[0];
+            if (cl != typed) { ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN); ImGui::TextWrapped("Out of range: %u will be used instead.", cl); ImGui::PopStyleColor(); }
+            else ImGui::TextDisabled("%u  =  0x%s", cl, cheats::value_format(cl, false, sp_.digits).c_str());
+            ImGui::TextDisabled("Code: %s%s", code.c_str(), filled.codes.size() > 1 ? "  ..." : "");
+        }
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        if (button("Set value", ImVec2(sp(18.f), sp(5.5f)), true, ok && can_toggle, ui::Icon::Plus)) value_commit(e);
+        ImGui::SameLine(0, sp(1.5f));
+        if (button("Cancel", ImVec2(0, sp(5.5f)))) g_val_open = false;
+        ImGui::EndChild();
+    } else if (g_add) {
         ImGui::BeginChild("##cheat_add", ImVec2(0, ImGui::GetContentRegionAvail().y - foot_h), ImGuiChildFlags_NavFlattened);
         group_title("Add custom code", -1);
         text_wrapped_disabled(e.system == hub::System::GC ? "Paste Gecko or Action Replay codes (8 + 8 hex digits, or XXXX-XXXX-XXXXX). One line per code line."
@@ -616,9 +760,10 @@ void draw_cheats_modal() {
                     ImGui::Dummy(ImVec2(0, 0));
                     continue;
                 }
-                bool rm = false, act = false;
+                bool rm = false, act = false, ed = false;
                 bool btn = live_here && shown[it.row].cheat.enabled && cheats::n64_is_button_cheat(shown[it.row].cheat);
-                if (cheat_row(shown[it.row], can_toggle, &rm, btn ? &act : nullptr)) toggled = it.row;
+                if (cheat_row(shown[it.row], can_toggle, &rm, btn ? &act : nullptr, shown[it.row].spec.valid && shown[it.row].cheat.enabled ? &ed : nullptr)) toggled = it.row;
+                if (ed) open_value_editor(shown[it.row]);
                 if (act) { ++g_fire[e.key + "|" + shown[it.row].cheat.id]; write_run(e); push_toast("Activated: " + shown[it.row].cheat.desc, COL_GOOD, 2.5); }
                 if (rm) removed_id = shown[it.row].cheat.id;
             }
@@ -627,7 +772,7 @@ void draw_cheats_modal() {
         ImGui::EndChild();
     }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    if (!g_add) {
+    if (!g_add && !g_val_open) {
         if (button("Add custom code", ImVec2(0, sp(5.5f)), false, can_toggle, ui::Icon::Plus)) { g_add = true; g_add_err.clear(); }
         ImGui::SameLine(0, sp(1.5f));
     }
