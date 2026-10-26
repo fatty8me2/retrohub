@@ -526,7 +526,7 @@ void fr_tick() {
                 if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
                 else push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0);
                 break;
-            case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite); break;
+            case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite, e.msg.ask_host); break;
             case hubnet::Event::AskResult:
                 if (!e.ok) {
                     const hubnet::Friend* af = fr_find(e.uid);
@@ -578,6 +578,7 @@ void fr_fake_init() {
     mk("devuid", "Dev", PS::InLobby, "mp2", "Mario Party 2", "n64", "ABC234", false, 4, 4, now - 70 * 60000);
     mk("samuid", "Sam", PS::Offline, "", "", "", "", false, 0, 0, now - 3 * 3600 * 1000LL);
     mk("priuid", "Priya", PS::Offline, "", "", "", "", false, 0, 0, now - 2 * 86400 * 1000LL);
+    fg_fake_libs();
     FR.f_pt["miauid"] = {{"fake:0", "Smash Classic", 14 * 60 + 20}, {"n64:mk64", "Mario Kart 64", 9 * 60}, {"gba:mf", "Metroid Fusion", 95}};
     FR.f_pt["jakuid"] = {{"fake:0", "Smash Classic", 3 * 60}, {"n64:mp2", "Mario Party 2", 40}};
     FR.f_pt["kaiuid"] = {{"fake:0", "Smash Classic", 45}};
@@ -731,14 +732,39 @@ void fr_ask_to_join(const std::string& uid) {
     if (!FR.fake) FR.cli.ask_to_join(uid, f->status.game_id, f->status.game_title, f->status.system);
     set_toast(hubui::ask_sent_text(f->name), true, 5.0);
 }
-void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet::Invite& game) {
+void fr_ask_host(const std::string& uid, const std::string& game_id, const std::string& title, const std::string& system) {
+    const hubnet::Friend* f = fr_find(uid);
+    if (!f) return;
+    fr_trace("ask-host", uid);
+    long long now = wall_ms();
+    if (!FR.ask_lim.allow(uid, now)) { set_toast(hubui::ask_limited_text(f->name, FR.ask_lim.wait_ms(uid, now)), false, 5.0); return; }
+    if (!FR.fake) FR.cli.ask_to_join(uid, game_id, title, system, /*host=*/true);
+    set_toast("Asked " + f->name + " to host " + title + ".", true, 5.0);
+}
+
+
+void fr_library_collect(std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>>* out) {
+    for (const hubnet::Friend& f : fr_friends()) {
+        const std::vector<hubnet::LibGame>* l = nullptr;
+        if (FR.fake) { auto it = FR.f_libs.find(f.uid); if (it != FR.f_libs.end()) l = &it->second; }
+        else if (FR.started) l = FR.cli.friend_library(f.uid);
+        if (l && !l->empty()) out->push_back({f.uid, l});
+    }
+}
+uint32_t fr_library_epoch() { return FR.fake ? (uint32_t)FR.f_libs.size() : (FR.started ? FR.cli.library_epoch() : 0u); }
+void fr_publish_library(bool share, std::vector<hubnet::LibGame> games) {
+    if (FR.fake || !FR.started) return;
+    FR.cli.publish_library(share, std::move(games));
+}
+
+void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet::Invite& game, bool host) {
     long long now = wall_ms();
     auto it = FR.ask_seen.find(uid);
     if (it != FR.ask_seen.end() && hubui::ask_is_repeat(it->second, now)) return;
     FR.ask_seen[uid] = now;
     for (auto& o : FR.notifs) if (o.ask && o.uid == uid) o.done = true;
     Notif n;
-    n.id = FR.next_id++; n.invite = false; n.ask = true; n.uid = uid; n.name = name; n.inv = game; n.t0 = ImGui::GetTime();
+    n.id = FR.next_id++; n.invite = false; n.ask = true; n.ask_host = host; n.uid = uid; n.name = name; n.inv = game; n.t0 = ImGui::GetTime();
     FR.notifs.push_back(n);
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
@@ -782,7 +808,8 @@ void fr_draw_toasts(float right_x, float bottom_y) {
                 if (a == 1) fr_join_notif(n);
                 if (a == 2) n.toast = false;
             } else if (n.ask) {
-                int a = fr_request_card(n.name, "They will get an invite to your room", w, frac, true, "Decline", hubui::ask_toast_title(n.name, n.inv.game_title), "Accept");
+                int a = fr_request_card(n.name, n.ask_host ? "Open a room with it and they get an invite" : "They will get an invite to your room", w, frac, true, "Decline",
+                                        n.ask_host ? hubui::ask_host_toast_title(n.name, n.inv.game_title) : hubui::ask_toast_title(n.name, n.inv.game_title), "Accept");
                 if (a == 1) fr_ask_accept(n);
                 if (a == 2) n.done = true;
             } else {

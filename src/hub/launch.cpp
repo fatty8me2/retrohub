@@ -555,6 +555,19 @@ void play_entry(const hub::GameEntry& e) {
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
         }
+        case hub::System::NES:
+        case hub::System::SNES: {   // Nestopia UE (NES) / Snes9x (SNES) through retrorun; battery .srm in the vault, auto-resume state like GBA
+            const bool nes = e.system == hub::System::NES;
+            std::string core = find_core(nes ? "nestopia" : "snes9x");
+            if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
+            std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
+                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
+            args += hubui::retro_extra_args(e.system, gs_values_for(e));
+            args += cheats_launch_args(e, false, true, nullptr);
+            args += qm_args(ri, e, false);
+            spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+            break;
+        }
         case hub::System::NDS: {   // melonDS DS core; no --resume (a stale auto state could overwrite a save synced from another PC)
             std::string core = find_core("melondsds");
             if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }

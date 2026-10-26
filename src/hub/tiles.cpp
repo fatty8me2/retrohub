@@ -125,6 +125,8 @@ TileResult draw_tile(const TileSpec& t, ImVec2 size) {
         return r;
     }
     ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+    ArtRef tart = t.art;
+    if (t.ghost && !tart.tex) tart = art_for_ghost(*t.ghost);   // only visible ghost tiles ever fetch cover art (600+ friend games stay cheap)
     float sr = sp(1.5f);
     ImVec2 sc(r1.x - sp(2.25f), r0.y + sp(2.25f));
     bool star_hov = item_hov && t.show_star && t.owned && std::fabs(io.MousePos.x - sc.x) < sr + sp(0.75f) && std::fabs(io.MousePos.y - sc.y) < sr + sp(0.75f);
@@ -147,18 +149,20 @@ TileResult draw_tile(const TileSpec& t, ImVec2 size) {
     float lift = e * sp(0.5f), grow = e * sp(0.375f);
     ImVec2 p0(r0.x - grow, r0.y - grow - lift), p1(r1.x + grow, r1.y + grow - lift);
     float rad = sp(1.75f), h = p1.y - p0.y, w = p1.x - p0.x;
-    float dim = t.owned ? 1.f : 0.52f + 0.3f * e;
+    float dim = t.ghost ? 0.85f : t.owned ? 1.f : 0.52f + 0.3f * e;
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
     ui::shadow(dl, p0, p1, rad, 0.8f + 0.7f * e, e * sp(0.5f));
     ui::glow(dl, p0, p1, rad, t.c1, e);
-    if (t.art.tex) ui::draw_art(dl, t.art.tex, t.art.w, t.art.h, p0, p1, rad, dim);
+    if (tart.tex) ui::draw_art(dl, tart.tex, tart.w, tart.h, p0, p1, rad, dim);
     else draw_no_art(dl, t, p0, p1, rad, dim);
-    if (t.art.loading) ui::shimmer(dl, p0, p1, rad, IM_COL32(0, 0, 0, 0));
+    if (tart.loading) ui::shimmer(dl, p0, p1, rad, IM_COL32(0, 0, 0, 0));
+    std::string ghost_sub;
+    if (t.ghost) ghost_tile_decor(dl, *t.ghost, p0, p1, e, &ghost_sub);   // grey wash + friend avatars + "Mickey, camer have this"
     // scrims keep the badge and title readable on any artwork
     ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.30f), p1, IM_COL32(6, 7, 12, 255), rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.96f);
     ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.58f), p1, IM_COL32(6, 7, 12, 255), rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.55f);
-    if (t.art.tex) ui::vfade_round_rect(dl, p0, ImVec2(p1.x, p0.y + h * 0.28f), IM_COL32(6, 7, 12, 255), rad, ImDrawFlags_RoundCornersTop, 0.5f, 0.f);
+    if (tart.tex) ui::vfade_round_rect(dl, p0, ImVec2(p1.x, p0.y + h * 0.28f), IM_COL32(6, 7, 12, 255), rad, ImDrawFlags_RoundCornersTop, 0.5f, 0.f);
     if (e > 0.01f) dl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, (int)(12 * e)), rad);
 
     float pad = sp(1.5f);
@@ -194,7 +198,7 @@ TileResult draw_tile(const TileSpec& t, ImVec2 size) {
     ui::text_shadowed(dl, tf, tfs, ImVec2(p0.x + pad, ty), IM_COL32_WHITE, title_line.c_str());
     if (title_line != t.title && item_hov && t.tag_tip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) &&
         !(io.MousePos.y < p0.y + sp(4.f))) ImGui::SetTooltip("%s", t.title.c_str());
-    std::string sub = ui::ellipsize(ui::F.cap, cap, t.subtitle, maxw);
+    std::string sub = ui::ellipsize(ui::F.cap, cap, t.ghost ? ghost_sub : t.subtitle, maxw);
     dl->AddText(ui::F.cap, cap, ImVec2(p0.x + pad, sub_y), IM_COL32(255, 255, 255, 190), sub.c_str());
     if (t.online && t.owned) ui::icon(dl, ui::Icon::Globe, ImVec2(p1.x - pad - sp(1), sub_y + cap * 0.5f), sp(2), ui::GOOD);
     if (!t.owned && t.cta && e > 0.02f) {
@@ -245,6 +249,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
 
 void handle_entry_result(const hub::GameEntry& e, const TileSpec& spec, const TileResult& r) {
     if (r.focused && A.sel_game != e.key) A.sel_game = e.key;
+    if (!A.sel_ghost.empty() && (r.focused || r.clicked || r.activated)) A.sel_ghost.clear();
     bool play = r.activated;
     if (r.clicked) {
         if (spec.selected) play = true;   // second click on the selected game plays it
@@ -252,10 +257,10 @@ void handle_entry_result(const hub::GameEntry& e, const TileSpec& spec, const Ti
     }
     if (r.star) { A.sel_game = e.key; toggle_favorite(e.key); }
     if (r.details) { A.sel_game = e.key; A.show_details = true; }
-    if (play) {
+    if (play) {   // selecting a game opens its details first; Play there runs the start animation and launches
         A.sel_game = e.key;
-        hub::GameEntry copy = e;
-        play_entry(copy);
+        A.show_details = true;
+        shot_trace("select-details", e.key);
     }
 }
 

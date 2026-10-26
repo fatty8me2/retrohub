@@ -2,6 +2,8 @@
 /* hubnet friends client (see docs/FRIENDS.md). Single UI thread: call update() every frame.
  * Non-blocking; reconnects automatically (backoff 1s..30s). */
 
+#include "library_share.h"
+
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -52,6 +54,7 @@ struct Friend {
     Status status;
     int64_t since = 0;
     std::string note;
+    int64_t lib_ver = 0;   // version of the games list this friend shares (0 = none); see library_share.h
     bool online() const { return status.state != PresenceState::Offline; }
 };
 
@@ -65,6 +68,7 @@ struct Invite {
 struct Message {
     std::string id, from, from_name, to;
     bool invite = false;      // kind == "invite"
+    bool ask_host = false;    // kind == "ask" with host:true: "will you host this game?" (they do not have it)
     bool ask = false;         // kind == "ask": "may I join your game?" (game in inv.game_id/game_title/system; never stored in the conversation)
     std::string text;
     Invite inv;
@@ -181,7 +185,14 @@ class FriendsClient {
     void send_invite(const std::vector<std::string>& uids, const Invite& inv);
     void ack(const std::vector<std::string>& ids);
     /* "Ask to join": tells friend `uid` we would like an invite to the game they are in. The Worker rate limits it (1 per target per minute). */
-    void ask_to_join(const std::string& uid, const std::string& game_id, const std::string& game_title, const std::string& system);
+    void ask_to_join(const std::string& uid, const std::string& game_id, const std::string& game_title, const std::string& system, bool host = false);
+
+    /* ---- game libraries (metadata only). publish_library: the games this PC owns (share=false withdraws them). Remembered and sent
+     * once welcomed, only when its hash differs from what the server holds. Friends' lists are fetched only when their version
+     * changed (one at a time, paced) and cached in <data_dir>/friend_libs.json. */
+    void publish_library(bool share, std::vector<LibGame> games);
+    const std::vector<LibGame>* friend_library(const std::string& uid) const;   // null = none
+    uint32_t library_epoch() const;                                              // bumps whenever any cached friend list changed
     void rename(const std::string& name);   // legacy free-text display name (old servers); with usernames use claim_username()
 
     /* ---- usernames (docs/FRIENDS.md "Usernames"). All need a welcomed connection; they return the request ref, or 0 when

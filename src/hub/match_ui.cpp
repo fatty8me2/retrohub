@@ -191,18 +191,17 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     if (slot == room_my_slot()) rd = host || A.my_ready;
     if (host) pill("HOST", COL_ACCENT);
     else pill(rd ? "Ready" : "Not ready", rd ? COL_GOOD : IM_COL32(70, 72, 86, 255));
-    {   // connection quality to this member (room round trip; "relay" for relay-only peers)
+    // connection quality to this member (room round trip; "relay" for relay-only peers): drawn as the first chip of the
+    // games row below, so it never collides with the Ready/HOST pill or the "Local players" column
+    std::string ping_lab;
+    ImU32 ping_col = 0;
+    {
         int rtt = -1; bool relay = false;
         if (room_ping_of(slot, &rtt, &relay)) {
             hubui::PingClass pc = hubui::ping_class(rtt, relay);
             if (pc != hubui::PingClass::Unknown) {
-                ImU32 pcol = pc == hubui::PingClass::Great ? COL_GOOD : pc == hubui::PingClass::Ok ? ui::WARN : pc == hubui::PingClass::Poor ? COL_BAD : IM_COL32(70, 72, 86, 255);
-                ImGui::SetCursorScreenPos(p0 + ImVec2(74 * S, 67 * S));   // own row under Ready: clear of the "Local players" column
-                std::string lab = std::string("Connection: ") + hubui::ping_class_label(pc);
-                pill(lab.c_str(), pcol);
-                ImGui::SameLine(0, 6 * S);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextDisabled("%s", hubui::ping_text(rtt, relay).c_str());
+                ping_col = pc == hubui::PingClass::Great ? COL_GOOD : pc == hubui::PingClass::Ok ? ui::WARN : pc == hubui::PingClass::Poor ? COL_BAD : IM_COL32(70, 72, 86, 255);
+                ping_lab = std::string(hubui::ping_class_label(pc)) + " \xC2\xB7 " + hubui::ping_text(rtt, relay);
             }
         }
     }
@@ -249,16 +248,28 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
             pill(text, bg);
             chip_x += w + 6 * S;
         };
-        if (!p->keys.empty()) {   // v2 peers: games per system
-            std::map<std::string, int> per;
-            for (auto& k : p->keys) ++per[k.substr(0, k.find(':'))];
+        if (!ping_lab.empty()) chip(ping_lab.c_str(), ping_col);
+        if (!p->keys.empty()) {   // v2 peers: games per system; keys without a known system prefix count as "Other"
+            std::map<int, int> per;
+            int other = 0;
+            for (auto& k : p->keys) {
+                size_t c = k.find(':');
+                hub::System s = c == std::string::npos ? hub::System::Unknown : hub::system_from_short(k.substr(0, c));
+                if (s == hub::System::Unknown) ++other; else ++per[(int)s];
+            }
             for (auto& kv : per) {
                 ImU32 a, b;
-                system_colors(hub::system_from_short(kv.first), &a, &b);
+                system_colors((hub::System)kv.first, &a, &b);
                 char lab[48];
-                std::snprintf(lab, sizeof lab, "%s %d", sys_badge(hub::system_from_short(kv.first)), kv.second);
+                std::snprintf(lab, sizeof lab, "%s %d", sys_badge((hub::System)kv.first), kv.second);
                 first = false;
                 chip(lab, mix(a, IM_COL32_BLACK, 0.15f));
+            }
+            if (other) {
+                char lab[32];
+                std::snprintf(lab, sizeof lab, "OTHER %d", other);
+                first = false;
+                chip(lab, IM_COL32(70, 72, 86, 255));
             }
         } else {
             for (auto& g : hub::catalog()) {

@@ -274,6 +274,36 @@ int main(int argc, char** argv)
     CHECK(wait_for([&] { return A->find(Event::Error); }));
     CHECK(A->find(Event::Error)->text == "not-friends", "%s", A->find(Event::Error)->text.c_str());
 
+    printf("[game libraries]\n");
+    {
+        std::vector<LibGame> mine = {{"n64", "n64:aaa", "mk64", "Mario Kart 64"}, {"gba", "gba:bbb-1", "", "Metroid Fusion (USA)"}};
+        B->c.publish_library(true, mine);   // B shares; A (friends with B) must see the list after the version arrives
+        CHECK(wait_for([&] { const Friend* f = A->c.find_friend(B->c.my_uid()); return f && f->lib_ver > 0; }), "version via presence");
+        CHECK(wait_for([&] { const auto* l = A->c.friend_library(B->c.my_uid()); return l && l->size() == 2; }), "list fetched");
+        const auto* gl = A->c.friend_library(B->c.my_uid());
+        CHECK(gl && (*gl)[1].key == "n64:aaa" && (*gl)[1].cid == "mk64" && (*gl)[0].title == "Metroid Fusion (USA)");   // sorted by system, key
+        uint32_t ep = A->c.library_epoch();
+        B->c.publish_library(true, mine);   // identical: nothing is sent, nothing changes
+        settle(1500);
+        CHECK(A->c.library_epoch() == ep, "unchanged publish causes no refetch");
+        mine.push_back({"gb", "gb:t", "", "Tetris"});
+        B->c.publish_library(true, mine);
+        CHECK(wait_for([&] { const auto* l = A->c.friend_library(B->c.my_uid()); return l && l->size() == 3; }), "changed list refetched");
+        /* the cache survives a restart (shown without a refetch) */
+        A->c.stop(); settle(300);
+        { FriendsClient again; again.set_paths(A->dir, A->vault); again.start(server, "qa-alice"); const auto* l = again.friend_library(B->c.my_uid()); CHECK(l && l->size() == 3, "cache on disk"); again.stop(); }
+        A->c.start(server, "qa-alice");
+        CHECK(wait_for([&] { return A->c.connected(); }));
+        /* privacy: share off withdraws the list for friends */
+        B->c.publish_library(false, {});
+        CHECK(wait_for([&] { return A->c.friend_library(B->c.my_uid()) == nullptr; }), "withdrawn");
+        const Friend* fz = A->c.find_friend(B->c.my_uid());
+        CHECK(fz && fz->lib_ver == 0);
+        B->c.publish_library(true, mine);
+        CHECK(wait_for([&] { const auto* l = A->c.friend_library(B->c.my_uid()); return l && l->size() == 3; }), "shared again");
+        CHECK(C->c.friend_library(B->c.my_uid()) == nullptr, "a stranger never sees it");
+    }
+
     printf("[remove / block]\n");
     A->clear(); B->clear();
     A->c.remove_friend(B->c.my_uid());

@@ -204,6 +204,9 @@ void system_colors(hub::System s, ImU32* a, ImU32* b) {
         case hub::System::N3DS: *a = IM_COL32(170, 25, 55, 255); *b = IM_COL32(235, 90, 105, 255); break;
         case hub::System::WiiU: *a = IM_COL32(0, 100, 170, 255); *b = IM_COL32(60, 190, 230, 255); break;
         case hub::System::NDS: *a = IM_COL32(184, 108, 16, 255); *b = IM_COL32(242, 190, 76, 255); break;
+        case hub::System::NES: *a = IM_COL32(150, 30, 35, 255); *b = IM_COL32(225, 95, 80, 255); break;
+        case hub::System::SNES: *a = IM_COL32(80, 75, 150, 255); *b = IM_COL32(160, 155, 215, 255); break;
+        case hub::System::PS1: *a = IM_COL32(95, 100, 115, 255); *b = IM_COL32(165, 170, 185, 255); break;
         case hub::System::PS2: *a = IM_COL32(20, 40, 120, 255); *b = IM_COL32(70, 110, 220, 255); break;
         default: *a = IM_COL32(70, 78, 100, 255); *b = IM_COL32(120, 130, 160, 255); break;
     }
@@ -218,7 +221,10 @@ const char* sys_badge(hub::System s) {
         case hub::System::N3DS: return "3DS";
         case hub::System::WiiU: return "WII U";
         case hub::System::NDS: return "NINTENDO DS";
+        case hub::System::PS1: return "PLAYSTATION";
         case hub::System::PS2: return "PLAYSTATION 2";
+        case hub::System::NES: return "NES";
+        case hub::System::SNES: return "SNES";
         default: return "?";
     }
 }
