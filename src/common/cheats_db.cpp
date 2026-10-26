@@ -273,6 +273,28 @@ Db* db() {
     return g_db;
 }
 
+/* "AAAAAAAA+VVVV+BBBBBBBB+WWWW" -> {"AAAAAAAA VVVV", "BBBBBBBB WWWW"}. PlayStation and GBA files join the address and the value of
+ * one code with '+' too; N64 files already write "AAAAAAAA VVVV" with a space and use '+' only between codes. */
+std::vector<std::string> split_plus(const std::string& codes, const std::string& sys, Format fmt) {
+    std::vector<std::string> tok, out;
+    std::string cur;
+    for (size_t i = 0; i <= codes.size(); ++i) {
+        if (i == codes.size() || codes[i] == '+') {
+            if (!cur.empty()) tok.push_back(cur);
+            cur.clear();
+        } else cur += codes[i];
+    }
+    bool pair8 = sys == "ps1" || sys == "gba";
+    for (size_t i = 0; i < tok.size(); ++i) {
+        if (pair8 && tok[i].size() == 8 && tok[i].find(' ') == std::string::npos && i + 1 < tok.size() && tok[i + 1].find(' ') == std::string::npos &&
+            (tok[i + 1].size() == 4 || (sys == "gba" && tok[i + 1].size() == 8 && (fmt == Format::ActionReplay || fmt == Format::Raw)))) {
+            out.push_back(tok[i] + " " + tok[i + 1]);
+            ++i;
+        } else out.push_back(tok[i]);
+    }
+    return out;
+}
+
 /* Region sets: empty = any/world. */
 bool region_ok(const std::string& cht, const std::string& entry) {
     if (cht.empty() || entry.empty()) return true;
@@ -303,6 +325,63 @@ void cheats_db_set_dir(const std::string& d) {
 }
 
 size_t cheats_db_game_count() { return db()->sections.size(); }
+
+namespace {
+cheats::Target target_of_sys(const std::string& sys) {
+    if (sys == "gba") return cheats::Target::GBA;
+    if (sys == "gb" || sys == "gbc") return cheats::Target::GB;
+    if (sys == "ps1") return cheats::Target::PS1;
+    if (sys == "gc") return cheats::Target::GC;
+    return cheats::Target::N64;
+}
+bool usable(cheats::Target t, const Cheat& c) {
+    if (t == cheats::Target::N64) { std::vector<cheats::N64Code> v; return cheats::n64_codes(c, &v, nullptr); }
+    std::string o;
+    return cheats::retro_code_string(t, c, &o, nullptr);
+}
+}  // namespace
+
+std::vector<ValueStats> cheats_db_value_stats() {
+    Db* d = db();
+    std::vector<ValueStats> out;
+    for (auto& sc : d->sections) {
+        ValueStats* vs = nullptr;
+        for (auto& x : out) if (x.sys == sc.sys) vs = &x;
+        if (!vs) { out.push_back(ValueStats()); vs = &out.back(); vs->sys = sc.sys; }
+        cheats::Target tg = target_of_sys(sc.sys);
+        size_t pos = sc.begin;
+        while (pos < sc.end) {
+            size_t nl = d->raw.find('\n', pos);
+            if (nl == std::string::npos || nl > sc.end) nl = sc.end;
+            std::string line = d->raw.substr(pos, nl - pos);
+            pos = nl + 1;
+            if (line.empty()) continue;
+            Format f = sc.fmt;
+            if (line[0] == '!') {
+                size_t t = line.find('\t');
+                if (t == std::string::npos) continue;
+                format_from(line.substr(1, t - 1), &f);
+                line = line.substr(t + 1);
+            }
+            size_t t = line.find('\t');
+            if (t == std::string::npos) continue;
+            Cheat c;
+            c.desc = line.substr(0, t);
+            c.format = f;
+            c.codes = split_plus(line.substr(t + 1), sc.sys, f);
+            if (c.codes.empty()) continue;
+            ++vs->total;
+            if (!cheats::value_has_placeholder(c)) { if (usable(tg, c)) ++vs->plain_ok; continue; }
+            ++vs->placeholder;
+            cheats::ValueSpec sp = cheats::value_spec(c, tg);
+            if (sp.hinted) ++vs->hinted;
+            if (!sp.options.empty()) ++vs->with_options;
+            Cheat filled;
+            if (cheats::value_apply(c, sp.min, tg, &filled) && usable(tg, filled)) ++vs->fillable;
+        }
+    }
+    return out;
+}
 
 CheatList cheats_list_for(const GameEntry& e) {
     CheatList out;
@@ -407,13 +486,7 @@ CheatList cheats_list_for(const GameEntry& e) {
                 Cheat c;
                 c.desc = line.substr(0, t);
                 c.format = f;
-                std::string codes = line.substr(t + 1), cur;
-                for (size_t i = 0; i <= codes.size(); ++i) {
-                    if (i == codes.size() || codes[i] == '+') {
-                        if (!cur.empty()) c.codes.push_back(cur);
-                        cur.clear();
-                    } else cur += codes[i];
-                }
+                c.codes = split_plus(line.substr(t + 1), s->sys, f);
                 if (c.codes.empty()) continue;
                 found.push_back(std::move(c));   // deduped below
             }

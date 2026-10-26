@@ -177,6 +177,17 @@ int main() {
         }
     }
 
+    {   // value cheats: every placeholder cheat must become a valid code once a value is typed
+        int ph = 0, fill = 0, total = 0;
+        for (auto& v : cheats_db_value_stats()) {
+            std::printf("value cheats %-4s: %6d cheats, %5d with placeholders (was rejected), %5d usable now, %5d with range hint, %d with option list\n",
+                        v.sys.c_str(), v.total, v.placeholder, v.fillable, v.hinted, v.with_options);
+            ph += v.placeholder; fill += v.fillable; total += v.total;
+        }
+        std::printf("value cheats total: %d placeholders, %d fillable\n", ph, fill);
+        if (total > 100000) { CHECK(ph > 4000); CHECK(fill * 100 >= ph * 95); }
+    }
+
     std::printf(g_fail ? "cheats_db_test: %d FAILED\n" : "cheats_db_test: ok\n", g_fail);
     return g_fail ? 1 : 0;
 }

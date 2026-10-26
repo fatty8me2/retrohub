@@ -27,6 +27,15 @@ $off | Set-Content $cj -Encoding ascii; $r2 = Run 300
 Write-Host "enabled : $r1"; Write-Host "disabled: $r2"
 if ($r1 -ne 'BE-EF-00-00') { Write-Host 'FAIL: enabled cheat did not write'; $fail++ }
 if ($r2 -ne '00-00-00-00') { Write-Host "FAIL: disabled run not clean ($r2)"; $fail++ }
+# value cheat: the hub substitutes the player's number for the XXXX placeholder before the runner sees it (cheats.h value_apply,
+# unit tested in cheats_test / hubcheatstore_test). Raw placeholder = rejected (nothing written); filled-in value 1234 = written.
+$ph = '{"version":1,"cheats":[{"id":"v1","desc":"value","format":"gameshark","codes":["817F0000 XXXX"],"enabled":true}]}'
+$vf = $ph -replace 'XXXX', '1234'
+$ph | Set-Content $cj -Encoding ascii; $r4 = Run 300
+$vf | Set-Content $cj -Encoding ascii; $r5 = Run 300
+Write-Host "placeholder: $r4"; Write-Host "value 1234 : $r5"
+if ($r4 -ne '00-00-00-00') { Write-Host 'FAIL: raw placeholder must not write'; $fail++ }
+if ($r5 -ne '12-34-00-00') { Write-Host 'FAIL: value cheat did not write the chosen value'; $fail++ }
 # live: start disabled, enable after ~4 s
 $off | Set-Content $cj -Encoding ascii
 Remove-Item $dump -ErrorAction SilentlyContinue
