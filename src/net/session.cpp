@@ -546,11 +546,19 @@ struct Session::Impl {
         }
 
         if (ready_ever) {
-            if (!is_host() && now - peers[0].last_rx > kSilenceFailMs) fail("Lost connection to the host");
+            if (!is_host() && now - peers[0].last_rx > (cfg.silence_fail_ms ? cfg.silence_fail_ms : kSilenceFailMs)) fail("Lost connection to the host");
             status = "connected";
         } else {
-            if (now - start_ms > kNotReadyFailMs) {
-                fail("Couldn't connect to the other players");
+            if (now - start_ms > (cfg.ready_timeout_ms ? cfg.ready_timeout_ms : kNotReadyFailMs)) {
+                int absent = 0, present_n = 0;
+                if (is_host()) {
+                    for (int s = 1; s < kMaxSlots; s++) if (peers[s].present) present_n++;
+                    absent = cfg.expected - 1 - present_n;
+                }
+                if (!is_host() && !peers[0].present) fail("The host never opened this game session (their RetroHub did not start it)");
+                else if (is_host() && absent > 0)
+                    fail(std::to_string(absent) + " player(s) never joined the game session (their RetroHub did not start it or lost the room connection)");
+                else fail("Couldn't connect to the other players (the game room is reachable, but neither direct UDP nor the relay got through)");
             } else if (!welcomed) {
                 if (!ws_retrying) status = "contacting server";
             } else {
