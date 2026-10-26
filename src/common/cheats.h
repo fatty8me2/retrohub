@@ -21,8 +21,8 @@ const char* format_name(Format f);                       // "gameshark" | "ar" |
 bool parse_format(const std::string& s, Format* out);    // case-insensitive; also "actionreplay", "cb", "gg", "gs"
 
 /* Which emulator family consumes the codes. */
-enum class Target { N64, GBA, GB, DS, PS1, GC };
-/* "n64" / "gba" / "gb" / "gbc" / "nds" / "ps1" / "gc" (case-insensitive) -> Target. False for other systems. */
+enum class Target { N64, GBA, GB, DS, PS1, GC, NES, SNES };
+/* "n64" / "gba" / "gb" / "gbc" / "nds" / "ps1" / "gc" / "nes" / "snes" (case-insensitive) -> Target. False for other systems. */
 bool target_for_system(const std::string& system, Target* out);
 
 struct Cheat {
@@ -49,6 +49,13 @@ bool save_file(const std::string& path, const CheatSet& set, std::string* err); 
 /* Normalize one code line for `target` in `fmt`: upper-case, single separators. False + *err when the line is not a
  * valid code of that format on that system. */
 bool normalize_code(Target target, Format fmt, const std::string& line, std::string* out, std::string* err);
+
+/* ---- NES / SNES (libretro retro_cheat_set through retrorun) ----
+ * NES: Game Genie 6 or 8 letters from APZLGITYEOXUKSVN ("SXIOPO"), normalized upper-case; Raw "AAAA:VV" (address 0000-FFFF,
+ *      value 00-FF) or "AAAA:CC:VV" (with compare byte). SNES: Game Genie "XXXX-XXXX" (hex digits DF4709156BC8A23E),
+ *      Pro Action Replay / Raw 8 hex digits "AAAAAAVV" ("7E0DBE05"; a "AAAAAA:VV" pair is accepted). Pure helpers, unit tested. */
+bool nes_game_genie_ok(const std::string& letters);   // 6 or 8 letters of the NES alphabet
+bool snes_game_genie_ok(const std::string& code);     // XXXX-XXXX (dash optional on input)
 
 /* ---- GameCube (Dolphin) ----
  * "gecko": 8+8 hex lines ("0445BF28 FFFFFFFF"). "ar_gc": Action Replay, either decrypted 8+8 hex or the encrypted

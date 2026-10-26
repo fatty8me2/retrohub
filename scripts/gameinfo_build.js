@@ -27,6 +27,8 @@ const CRC_SYSTEMS = {
   gb:  { name: 'Nintendo - Game Boy' },
   gbc: { name: 'Nintendo - Game Boy Color' },
   nds: { name: 'Nintendo - Nintendo DS' },
+  nes: { name: 'Nintendo - Nintendo Entertainment System' },
+  snes: { name: 'Nintendo - Super Nintendo Entertainment System' },
 };
 const SERIAL_SYSTEMS = { ps1: 'Sony - PlayStation', ps2: 'Sony - PlayStation 2' };
 
