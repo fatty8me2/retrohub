@@ -141,6 +141,7 @@ void apply_scan() {
             if (gs.favorite || gs.last_played) A.lib_state[A.lib[i].key] = gs;
         }
     }
+    custom_reset_originals();   // user renames (synced prefs) replace the scanned titles in A.lib; the scanned ones are kept for lookups + search
     for (size_t i = 0; i < A.lib.size(); ++i) A.lib_index.emplace(A.lib[i].key, (int)i);   // first wins on duplicates
     A.vis_dirty = true;
     A.hello_dirty = true;
@@ -197,7 +198,7 @@ std::string genre_of_entry(const hub::GameEntry& e) {
     gameinfo::Query q;
     if (e.catalog_id != "remix" && e.catalog_id != "kanto") {
         q.system = hub::system_short(e.system);
-        q.title = e.title;
+        q.title = custom_original_title(e);
         q.serial = e.serial;
         if (e.catalog_id == "smash64") q.alt_title = "Super Smash Bros.";
         else if (const GameInfo* c = catalog_for(e)) q.alt_title = c->title;
@@ -228,7 +229,12 @@ void rebuild_vis() {
     rebuild_ghosts();   // friends' games you do not own (index >= lib.size() in items / vis / shelves)
     std::vector<hubui::ListItem> items;
     items.reserve(A.lib.size() + A.ghosts.size());
-    for (auto& e : A.lib) { const hub::GameState& g0 = gstate(e.key); items.push_back({e.key, e.title, sys_short(e), is_native(e), g0.last_played, g0.play_seconds, added_unix(e.path)}); }
+    for (auto& e : A.lib) {
+        const hub::GameState& g0 = gstate(e.key);
+        hubui::ListItem li{e.key, e.title, sys_short(e), is_native(e), g0.last_played, g0.play_seconds, added_unix(e.path)};
+        if (custom_is_renamed(e.key)) li.alt_title = custom_original_title(e);   // search also matches the scanned name
+        items.push_back(li);
+    }
     for (auto& g : A.ghosts) { hubui::ListItem li{"ghost:" + g.id, g.title, g.sys, false, 0, 0, 0}; li.ghost = true; items.push_back(li); }
     std::string q = A.search_buf;
     std::vector<int> base = hubui::filter_sort(items, "", q, A.sort_mode);   // search applied, all consoles

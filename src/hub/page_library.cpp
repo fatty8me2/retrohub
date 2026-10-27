@@ -51,6 +51,7 @@ void home_shelves() {
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         if ((int)si == recent_si) fr_home_shelf(avail, tw, th, gap, bleed);
     }
+    custom_home_shelves(avail, tw, th, gap, bleed);   // the user's own shelves, after the built-in ones (customize_ui.cpp)
     if (!A.pick_idx.empty()) {   // upsell: below the console shelves, collapsed until asked for
         const std::vector<GameInfo>& cat = hub::catalog();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + bleed);
@@ -890,6 +891,11 @@ void draw_details_modal() {
     tr("desktop", "enabled");
     place(label_w("Add to desktop", true));
     if (button("Add to desktop", ImVec2(0, bh2), false, true, ui::Icon::Star) || forced("desktop")) { add_game_shortcut(e); shot_trace("desktop", e.key); }
+    place(label_w("Customize", true));   // rename / cover / reset (customize_ui.cpp)
+    if (button("Customize", ImVec2(0, bh2), false, true, ui::Icon::Gear)) custom_open_customize(e.key);
+    place(label_w("Add to shelf...", true));
+    if (button("Add to shelf...", ImVec2(0, bh2), false, true, ui::Icon::Plus)) custom_open_picker(e.key, true);
+    custom_draw(1);   // Customize / Add to shelf modals nest inside this one
     ImGui::EndPopup();
 }
 
