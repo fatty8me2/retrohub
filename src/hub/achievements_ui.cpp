@@ -183,7 +183,7 @@ bool achievements_home_strip(float avail, float bleed) {
     if (RA.recent.empty()) return false;
     shelf_header("Recent unlocks", "", bleed, (int)RA.recent.size());
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float cw = sp(30.f), ch = sp(8.f), gap = sp(2.f);
+    const float cw = sp(36.f), ch = sp(10.f), gap = sp(2.f);
     int fit = std::max(1, (int)((avail - bleed) / (cw + gap)));
     ImVec2 o = ImGui::GetCursorScreenPos();
     o.x += bleed;
