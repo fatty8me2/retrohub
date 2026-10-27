@@ -9,6 +9,7 @@ void draw_overlays() {
     draw_find_games();
     draw_add_games();
     draw_details_modal();
+    custom_draw(0);   // customize_ui.cpp: Add to shelf / Manage shelves opened outside the details modal; polls synced prefs
     cloud_ui_overlays();
     draw_cheats_modal();
     draw_quick_menu();
