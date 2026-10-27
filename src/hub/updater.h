@@ -26,7 +26,8 @@ std::string release_notes();       // plain text, markdown stripped
 std::string current_version();     // HUB_VERSION_STR
 std::string status();              // human-readable status / error line
 
-void start_update();               // download + verify + launch installer (background thread)
+void set_game_probe(bool (*fn)());  // RetroHub.exe: "is a game active?" (hub::game_active); passed to the applier as --game-active
+void start_update();             // download + verify + launch installer (background thread)
 bool downloading();                // true from start_update() until failure or handoff
 float download_progress();         // 0..1, or -1 when unknown
 bool installer_started();          // true => quit the app now

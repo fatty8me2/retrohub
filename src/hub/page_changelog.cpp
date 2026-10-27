@@ -118,6 +118,12 @@ void draw_changelog_popup() {
     bool open = ImGui::BeginPopupModal("What's new##popup", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
     ImGui::PopStyleVar(2);
     if (!open) return;
+    if (!g_headless && game_active()) {   // a game started while it was open: close it, NOT marked seen, so it is offered again later
+        CL.popup_open = false;
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
     if (ui::modal_back()) { dismiss_popup(false); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     ImGui::PushFont(ui::F.title);
     ImGui::Text("What's new in v%s", e->version.c_str());

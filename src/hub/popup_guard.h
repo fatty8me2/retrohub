@@ -12,6 +12,20 @@ namespace hubguard {
  * RetroHub run or by hand. */
 inline bool game_active(bool hub_session_alive, bool os_fullscreen_or_busy) { return hub_session_alive || os_fullscreen_or_busy; }
 
+/* Every kind of session the hub can have running. Most set A.proc (offline games, Wii U/3DS/PS2 emulators, Smash Classic, Kanto's mGBA,
+ * remote-play guests via spawn_room), but several run WITHOUT it, so each is its own input here. */
+struct Sessions {
+    bool proc = false;         // A.proc: the one session handle (offline, PS2 online, Smash Classic, Kanto mGBA, remote-play guest viewer)
+    bool job = false;          // A.job_h: external emulator job object still holding processes
+    bool gc_online = false;    // GameCube NetPlay: GCO.active / Dolphin alive (never sets A.proc)
+    bool remote_play = false;  // Wii U remote play host: streamrun process or attach pending
+    bool kanto = false;        // Kanto Together session object active
+    bool n3ds_room = false;    // 3DS room link up or Azahar start pending
+    bool os_busy = false;      // another full-screen / presentation / busy app owns the screen
+};
+inline bool any_session(const Sessions& s) { return s.proc || s.job || s.gc_online || s.remote_play || s.kanto || s.n3ds_room; }
+inline bool game_active(const Sessions& s) { return any_session(s) || s.os_busy; }
+
 /* Raise / restore / show / focus / MessageBox: only with no game active. With a game active the caller flashes the taskbar instead. */
 inline bool may_surface(bool game_active_) { return !game_active_; }
 

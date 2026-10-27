@@ -27,11 +27,13 @@ static void save_rect(SDL_Window* win) {
     Uint32 fl = SDL_GetWindowFlags(win);
     if (fl & SDL_WINDOW_FULLSCREEN_DESKTOP) return;   // already fullscreen: keep what we saved
     g_saved.maximized = (fl & SDL_WINDOW_MAXIMIZED) != 0;
-    if (g_saved.maximized) SDL_RestoreWindow(win);    // popup-guard: ok (F11 / startup, hub focused or not yet shown) read the normal rect, then maximize again on leave
+    /* Restore-then-maximize only to read the normal rect; never while a game is up (the maximized rect is saved instead). */
+    const bool can_restore = g_saved.maximized && !game_active() && hub_has_focus();
+    if (can_restore) SDL_RestoreWindow(win);    // popup-guard: ok (guarded: no game, hub focused) read the normal rect, then maximize again on leave
     SDL_GetWindowPosition(win, &g_saved.x, &g_saved.y);
     SDL_GetWindowSize(win, &g_saved.w, &g_saved.h);
     g_saved.valid = true;
-    if (g_saved.maximized) SDL_MaximizeWindow(win);
+    if (can_restore) SDL_MaximizeWindow(win);
 }
 
 static int display_h(SDL_Window* win) {

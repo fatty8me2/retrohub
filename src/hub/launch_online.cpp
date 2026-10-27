@@ -455,6 +455,10 @@ struct RPlay {
     std::vector<std::pair<HANDLE, ULONGLONG>> quitting;     // asked to quit cleanly: (handle, kill deadline)
 } RP;
 
+}  // namespace
+bool rplay_session_alive() { return RP.proc != nullptr || RP.pending; }   // the guest viewer runs through spawn_room() and so sets A.proc
+namespace {
+
 unsigned member_sig() {
     unsigned h = 17;
     for (auto& m : room_members()) h = h * 131u + (unsigned)(m.slot + 1);

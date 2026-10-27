@@ -30,6 +30,24 @@ static void logic() {
     CHECK(may_open_prompt(true, false, true));     // screenshot / QA harness
     CHECK(may_restore_after_exit(true) && !may_restore_after_exit(false));
     CHECK(start_quiet(true, false) && start_quiet(false, true) && !start_quiet(false, false));
+    {   // every session kind alone makes a game active, including the ones that never set A.proc
+        Sessions none;
+        CHECK(!any_session(none) && !game_active(none));
+        auto only = [](bool Sessions::*m) { Sessions s; s.*m = true; return s; };
+        CHECK(game_active(only(&Sessions::proc)));          // offline, PS2 online, Smash Classic, Kanto mGBA, remote-play guest viewer, 3DS/Wii U emulator
+        CHECK(game_active(only(&Sessions::job)));           // emulator job object still holding processes
+        CHECK(game_active(only(&Sessions::gc_online)));     // GameCube NetPlay (GCO.active; no A.proc)
+        CHECK(game_active(only(&Sessions::remote_play)));   // Wii U remote-play host streamrun
+        CHECK(game_active(only(&Sessions::kanto)));
+        CHECK(game_active(only(&Sessions::n3ds_room)));     // 3DS room link / Azahar start pending
+        CHECK(game_active(only(&Sessions::os_busy)) && !any_session(only(&Sessions::os_busy)));   // OS full-screen guess: not a hub session
+        // a prompt needs NO session of any kind, no full-screen app, and the hub focused
+        for (bool Sessions::*m : {&Sessions::proc, &Sessions::job, &Sessions::gc_online, &Sessions::remote_play, &Sessions::kanto, &Sessions::n3ds_room, &Sessions::os_busy})
+            CHECK(!may_open_prompt(game_active(only(m)), true, false) && !may_surface(game_active(only(m))));
+        CHECK(may_open_prompt(game_active(none), true, false) && may_surface(game_active(none)));
+        // update relaunch: quiet only for an active game (flag from the hub, or the OS full-screen state); a browser in front changes nothing
+        CHECK(start_quiet(false, game_active(true, false)) && start_quiet(false, game_active(false, true)) && !start_quiet(false, game_active(false, false)));
+    }
     CHECK(is_shell_class(L"Shell_TrayWnd") && is_shell_class(L"Progman") && is_shell_class(L"WorkerW"));
     CHECK(!is_shell_class(L"SDL_app") && !is_shell_class(L"") && !is_shell_class(nullptr) && !is_shell_class(L"Shell_TrayWndX"));
 }

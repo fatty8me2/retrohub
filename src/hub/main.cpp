@@ -151,6 +151,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     cloud_boot();  // cloud saves v2: automatic for every account (startup delta + retry queue run in the background)
     auto_sync();
     SH.init(shot_path);
+    hubupdate::set_game_probe(&game_active);
     if (!autotest && (!shot_path || SH.update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
 
     bool running = true;

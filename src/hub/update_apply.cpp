@@ -260,11 +260,13 @@ void update_display_version(const Options& o) {
 void relaunch(const Options& o) {
     std::wstring exe = norm(o.install) + L"\\RetroHub.exe";
     std::wstring cmd = L"\"" + exe + L"\"", dir = norm(o.install);
-    {   /* Something that is not the desktop shell is in front (a game the user switched to while the update ran): reopen the hub
-         * minimised without activation instead of over it. */
-        HWND fg = GetForegroundWindow();
-        wchar_t cls[64] = {0};
-        if (fg && GetClassNameW(fg, cls, 64) && !hubguard::is_shell_class(cls)) cmd += L" --background";
+    {   /* Only when a game is actually active: the hub told us (--game-active: any session it knew of when the update started) or the OS
+         * reports a full-screen / presentation / busy app now. Then RetroHub reopens minimised without activation. A normal update with a
+         * browser open reopens it normally. */
+        QUERY_USER_NOTIFICATION_STATE qs = QUNS_ACCEPTS_NOTIFICATIONS;
+        const bool os_busy = SUCCEEDED(SHQueryUserNotificationState(&qs)) &&
+                             (qs == QUNS_BUSY || qs == QUNS_RUNNING_D3D_FULL_SCREEN || qs == QUNS_PRESENTATION_MODE);
+        if (hubguard::start_quiet(false, hubguard::game_active(o.game_active, os_busy))) cmd += L" --background";
     }
     STARTUPINFOW si{}; si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
@@ -329,6 +331,7 @@ bool try_apply_mode(int* exit_code) {
             std::wstring a = argv[i];
             bool more = i + 1 < argc;
             if (a == L"--no-relaunch") o.relaunch = false;
+            else if (a == L"--game-active") o.game_active = true;
             else if (a == L"--version" && more) o.version = argv[++i];
             else if (a == L"--retries" && more) o.retries = std::max(1, _wtoi(argv[++i]));
             else if (a == L"--retry-ms" && more) o.retry_ms = std::max(0, _wtoi(argv[++i]));

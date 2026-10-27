@@ -440,6 +440,9 @@ void check_async(bool force) {
     }).detach();
 }
 
+static bool (*s_game_probe)() = nullptr;
+void set_game_probe(bool (*fn)()) { s_game_probe = fn; }
+
 void start_update() {
     bool expected = false;
     if (!s_downloading.compare_exchange_strong(expected, true)) return;
@@ -538,7 +541,8 @@ void start_update() {
         std::wstring marker = W(updatesDir + "\\apply.started");
         DeleteFileW(marker.c_str());
         std::wstring wcmd = L"\"" + applyExe.wstring() + L"\" --apply-update \"" + W(staged) + L"\" \"" + W(exeDir) + L"\" " +
-                            std::to_wstring(GetCurrentProcessId()) + L" --version \"" + W(version) + L"\" --started-marker \"" + marker + L"\"";
+                            std::to_wstring(GetCurrentProcessId()) + L" --version \"" + W(version) + L"\" --started-marker \"" + marker + L"\"" +
+                            ((s_game_probe && s_game_probe()) ? L" --game-active" : L"");
         STARTUPINFOW si{}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
         std::wstring wdir = applyDir.wstring();

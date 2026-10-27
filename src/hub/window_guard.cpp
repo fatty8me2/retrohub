@@ -17,9 +17,25 @@ static bool os_busy() {
     return busy;
 }
 
+static hubguard::Sessions sessions_now();
+
+bool session_active() { return hubguard::any_session(sessions_now()); }
+
 bool game_active() {
-    if (g_headless) return A.proc != nullptr;
-    return hubguard::game_active(A.proc != nullptr || A.job_h != nullptr, os_busy());
+    hubguard::Sessions s = sessions_now();
+    s.os_busy = !g_headless && os_busy();
+    return hubguard::game_active(s);
+}
+
+static hubguard::Sessions sessions_now() {
+    hubguard::Sessions s;
+    s.proc = A.proc != nullptr;
+    s.job = A.job_h != nullptr;
+    s.gc_online = GCO.active || gc_process_alive();
+    s.remote_play = rplay_session_alive();
+    s.kanto = kt_session_active();
+    s.n3ds_room = NP3.active() || NP3_pending;
+    return s;
 }
 
 bool hub_has_focus() { return g_headless || (A.win && (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0); }

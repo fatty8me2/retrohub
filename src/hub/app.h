@@ -582,7 +582,10 @@ void boot_draw_overlay();
 void add_game_shortcut(const hub::GameEntry& e);   // "Add to desktop": .lnk to RetroHub.exe --play <key> (shell_shortcut_dir())
 void flash_taskbar();                              // FlashWindowEx on the hub window; never takes focus; no-op while a game is active
 /* window_guard.cpp: the one place that may raise/restore/show the hub window (popup_guard.h has the policy). */
-bool game_active();          // hub session alive, or another full-screen / busy app owns the screen
+bool game_active();          // ANY session (A.proc, GC NetPlay, remote play, Kanto, 3DS room...) or another full-screen / busy app owns the screen
+bool session_active();       // like game_active() but only sessions the hub knows about (no OS full-screen guess)
+bool rplay_session_alive();  // launch_online.cpp: remote-play host streamrun running or attach pending
+bool kt_session_active();    // kanto_ui.cpp: a Kanto Together session object is active
 bool hub_has_focus();
 bool prompt_allowed();       // update prompt / what's new / join prompts: no game AND the hub already focused
 bool hub_surface();          // restore+raise the hub; refused (returns false, nothing shown) while a game is active

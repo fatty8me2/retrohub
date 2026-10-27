@@ -323,7 +323,7 @@ void fr_invite_uids(const std::vector<std::string>& uids) {
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who) {
     fr_trace("join", code);
     if (!hubnet::valid_room_code(code)) { set_notice("That lobby code is not valid any more."); return; }
-    if (A.proc) {   // our game is running: NEVER auto-join or launch after it closes; keep the invite in the bell, joinable by hand
+    if (session_active()) {   // any session (A.proc, GC NetPlay, remote play, Kanto, 3DS room) or a full-screen app: NEVER auto-join or launch after it closes; keep the invite in the bell, joinable by hand
         if (hubui::join_while_running(A.in_room && A.code == code) == hubui::JoinWhileRunning::AlreadyInRoom) {
             FR.pending_join = {}; set_notice("You are already in that room."); return;
         }
@@ -366,7 +366,7 @@ void fr_notify(bool invite, const std::string& uid, const std::string& name, con
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
     if (invite) group_note_invite(uid, name, inv);
-    if (invite && A.proc && !g_headless) hubtoast::notify_invite(hubtoast::system_notifier(), A.st.notify_in_game, true, name, inv.game_title, inv.lobby_code);
+    if (invite && game_active() && !g_headless) hubtoast::notify_invite(hubtoast::system_notifier(), A.st.notify_in_game, true, name, inv.game_title, inv.lobby_code);
     /* A game is running: no flash, no hub window. The invite is in the bell (above); the runner's own OSD tells the player. */
     if (invite && A.proc && !A.run.ctl_path.empty() && !g_headless) {
         runctl::Command c;
@@ -495,7 +495,7 @@ static void fr_friend_online(const std::string& uid, const std::string& name) {
     const std::string who = !name.empty() ? name : (f ? f->name : std::string());
     group_note(hubui::group::Kind::FriendOnline, uid, who, "", "", "", "", 0);
     push_toast((who.empty() ? std::string("A friend") : who) + " came online", ui::ACCENT, 5.0);
-    if (A.proc && !g_headless) hubtoast::notify_online(hubtoast::system_notifier(), A.st.notify_in_game, true, who);
+    if (game_active() && !g_headless) hubtoast::notify_online(hubtoast::system_notifier(), A.st.notify_in_game, true, who);
 }
 std::string fr_lobby_ident_msg() {
     if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return "";
