@@ -56,6 +56,8 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
         A.resume_key.clear();
         A.resume_state.clear();
     }
+    if (file_name(exe) == "retrorun.exe" && args.find(" --net") == std::string::npos && args.find("--net ") != 0)
+        args += achievements_launch_args();   // RetroAchievements: offline runs only (never online/rollback/DS wireless)
     if (g_headless) {
         std::string ev;
         for (auto& kv : env) ev += " " + kv.first + "=" + (kv.first == "SSB64_CONTROLS" ? std::string("<profile>") : kv.second);
@@ -200,6 +202,9 @@ void pad_exit_watch() {
     set_notice(A.proc_title + ": closing (Back + Start held)...", 8.0);
     request_game_close();
 }
+
+void* running_game_hwnd() { return g_headless ? nullptr : (void*)game_main_window(); }
+std::vector<unsigned long> running_game_pids() { std::vector<unsigned long> v; for (DWORD p : game_pids()) v.push_back(p); return v; }
 
 void focus_game() {
     if (g_headless) return;
@@ -489,7 +494,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid));
     autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
-                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
+                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI", hub::gs::volume_of(gsv))
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
                                                        : hubemu::cemu_args(game, fs);
     if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS") && kind == hubemu::Kind::Dolphin)   // QA only: extra Dolphin flags (e.g. -m movie.dtm)
@@ -588,6 +593,7 @@ void play_entry(const hub::GameEntry& e) {
     A.st.last_game = room_id(e);
     mark_dirty();
     hub::rom_cache_touch(e);   // LRU stamp for the unpacked copy (no-op for plain files)
+    if (rom_missing(e)) { missing_rom_ask(e.key); return; }   // the file is gone: Locate / Rescan / Remove popup
     RunInfo ri = run_info_for(e, false);
     std::string sys = sys_short(e);
     if (is_kanto(e)) { kt_play(e); return; }

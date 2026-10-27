@@ -18,15 +18,15 @@ void refresh_pads() {
 
 void stick(ImDrawList* dl, ImVec2 c, float r, float x, float y, const char* label) {
     dl->AddCircleFilled(c, r, COL_PANEL2, 40);
-    dl->AddCircle(c, r, IM_COL32(255, 255, 255, 40), 40, 2);
+    dl->AddCircle(c, r, ui::veil(40/255.f), 40, 2);
     dl->AddCircleFilled(c + ImVec2(x, y) * (r * 0.7f), r * 0.28f, COL_ACCENT, 24);
     ImVec2 ts = ImGui::CalcTextSize(label);
-    dl->AddText(c + ImVec2(-ts.x * 0.5f, r + 6 * S), IM_COL32(150, 152, 165, 255), label);
+    dl->AddText(c + ImVec2(-ts.x * 0.5f, r + 6 * S), ui::TEXT2, label);
 }
 void btn_dot(ImDrawList* dl, ImVec2 c, float r, bool on, const char* label) {
     dl->AddCircleFilled(c, r, on ? COL_ACCENT : COL_PANEL2, 24);
     ImVec2 ts = ImGui::CalcTextSize(label);
-    dl->AddText(c - ts * 0.5f, on ? IM_COL32_WHITE : IM_COL32(150, 152, 165, 255), label);
+    dl->AddText(c - ts * 0.5f, on ? IM_COL32_WHITE : ui::TEXT2, label);
 }
 
 namespace {
@@ -539,8 +539,8 @@ void draw_test_panel() {
     dl->AddRectFilled(o + ImVec2(20 * S, 200 * S), o + ImVec2(20 * S + 100 * S * std::max(0.f, lt), 212 * S), COL_ACCENT, 6 * S);
     dl->AddRectFilled(o + ImVec2(450 * S, 200 * S), o + ImVec2(550 * S, 212 * S), COL_PANEL2, 6 * S);
     dl->AddRectFilled(o + ImVec2(450 * S, 200 * S), o + ImVec2(450 * S + 100 * S * std::max(0.f, rt), 212 * S), COL_ACCENT, 6 * S);
-    dl->AddText(o + ImVec2(20 * S, 214 * S), IM_COL32(150, 152, 165, 255), "LT");
-    dl->AddText(o + ImVec2(450 * S, 214 * S), IM_COL32(150, 152, 165, 255), "RT");
+    dl->AddText(o + ImVec2(20 * S, 214 * S), ui::TEXT2, "LT");
+    dl->AddText(o + ImVec2(450 * S, 214 * S), ui::TEXT2, "RT");
 }
 
 }  // namespace

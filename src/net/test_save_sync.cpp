@@ -2,6 +2,7 @@
 //   n64run_save_sync_test                 simulated lossy network (no server needed)
 //   n64run_save_sync_test wss://HOST     also: two real hubnet::Sessions through the live server
 // The simulated part covers loss, duplication, reordering, corrupted DATA and the limits.
+#include <windows.h>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -25,7 +26,7 @@ static int g_fail = 0;
 #define CHECK(c, ...) do { if (!(c)) { g_fail++; std::printf("FAIL %s:%d: ", __FILE__, __LINE__); std::printf(__VA_ARGS__); std::printf("\n"); } } while (0)
 
 static fs::path temp_root() {
-    fs::path p = fs::temp_directory_path() / "n64run_save_sync_test";
+    fs::path p = fs::temp_directory_path() / ("n64run_save_sync_test_" + std::to_string(GetCurrentProcessId()));
     std::error_code ec;
     fs::remove_all(p, ec);
     fs::create_directories(p, ec);

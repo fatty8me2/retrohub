@@ -16,7 +16,7 @@
 namespace runctl {
 
 enum class Cmd { None, SaveState, LoadState, Screenshot, SwapDisc, Quit,
-                 /* added for the quick menu / OSD (docs/RUNNER_CTL.md); all but OsdMsg are refused online */
+                 /* added for the quick menu / OSD (docs/RUNNER_CTL.md); all but OsdMsg, Volume and Mute are refused online */
                  Volume,    // value 0-100
                  Mute,      // value 1 = mute, 0 = unmute
                  Ff,        // value 1 = on (the last chosen fast speed, default 2x), 0 = off (1x)
@@ -40,7 +40,7 @@ constexpr double kSpeeds[] = {0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0};
 bool speed_valid(double s);                                   // in kSpeeds, or 0 (= max)
 bool parse_speed_arg(const std::string& s, double* out);      // "2", "2x", "1.5", "max" -> out (0 = max); false if not allowed
 std::string speed_label(double s);                            // "Speed 2x", "Speed 0.5x", "Speed max"
-bool offline_only(Cmd c);                                     // true for everything except Quit/Screenshot/OsdMsg (online: refuse)
+bool offline_only(Cmd c);                                     // true for everything except Quit/Screenshot/OsdMsg/Volume/Mute (volume and mute are local, allowed online)
 
 constexpr int kSlots = 10;
 constexpr int kAutoSlot = -1;

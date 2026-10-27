@@ -25,6 +25,7 @@ struct Settings {
     std::string smash_exe;     // user-chosen BattleShip.exe
     std::string gb_core = "sameboy";   // default GB/GBC core: "sameboy" | "gambatte"
     bool fullscreen = false;           // start games fullscreen where the runner supports it
+    int volume = 100;                  // global game volume 0-100 (per-game "volume" option overrides; Settings > Video & Games)
     bool boot_anim = true;             // "Play the start animation" (boot_anim.h)
     bool boot_sounds = true;           // "Startup sounds"
     int boot_volume = 70;              // startup sound volume 0-100
@@ -48,8 +49,15 @@ struct Settings {
     bool download_art = true;         // fetch cover art from the libretro-thumbnails project
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
     bool show_friends = true;          // friends panel open
+    bool tv_start = false;             // start RetroHub in TV mode (fullscreen 10-foot layout)
+    bool tv_windows = false;           // mirrors the HKCU Run entry that starts with Windows into TV mode
     bool notify_in_game = true;        // Windows toast for invites while a game is running
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
+    std::string watch_online;          // friends with "Notify me when they come online" on: comma separated uids (at most 50), none by default
+    bool menu_sounds = true;           // soft UI sounds in the hub (Settings > General)
+    int menu_volume = 30;              // menu sound volume 0..100 (low by default)
+    bool menu_music = false;           // quiet ambient menu loop (OFF by default)
+    bool attract_mode = true;          // Home hero turns into a slideshow of your own screenshots / save-state pictures after ~60 s idle (attract.cpp)
     bool share_games = true;           // "Show my games to friends": publish the list of game titles (never files) so friends see them greyed out
     bool show_friend_games = true;     // library chip "Show friends' games"
     bool share_playtime = true;        // "Share my play time with friends": per-game totals (whole minutes) go to the friends server when a session ends

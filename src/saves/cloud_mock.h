@@ -35,13 +35,14 @@ public:
     std::atomic<int> sig_checks_failed{0};
 
     /* counters / inspection */
-    std::atomic<int> n_manifest{0}, n_plan{0}, n_put{0}, n_get{0}, n_commit{0}, n_lease{0};
+    std::atomic<int> n_manifest{0}, n_plan{0}, n_put{0}, n_get{0}, n_commit{0}, n_lease{0}, n_revoke{0}, n_devices{0};
     std::string cur_sha(const std::string& uid, const std::string& gkey, const std::string& path);   // "" when none
     int cur_ver(const std::string& uid, const std::string& gkey, const std::string& path);
     int versions(const std::string& uid, const std::string& gkey, const std::string& path);
     bool evicted(const std::string& uid, const std::string& gkey, const std::string& path);
     int64_t used(const std::string& uid);
     int devices(const std::string& uid);
+    int revoked(const std::string& uid);   // device ids signed out with POST /saves/v2/device/revoke
     void seed_file(const std::string& uid, const std::string& gkey, const std::string& path, const std::string& plain,
                    int64_t mtime, const std::string& device_name, int64_t played_at);   // as if another PC had pushed it
     void set_played(const std::string& uid, const std::string& gkey, int64_t played_at);

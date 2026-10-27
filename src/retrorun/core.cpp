@@ -321,9 +321,11 @@ bool Core::environment(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
             ((retro_log_callback*)data)->log = core_log;
             return true;
+        case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
+            if (data) { const auto* mm = (const retro_memory_map*)data; mmap_.assign(mm->descriptors, mm->descriptors + mm->num_descriptors); }   // RetroAchievements (cheevos.cpp)
+            return true;
         case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
         case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
-        case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
         case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
         case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
         case RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY:

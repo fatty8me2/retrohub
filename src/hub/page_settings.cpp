@@ -145,6 +145,7 @@ void tab_general() {
     if (button("Run setup again", ImVec2(0, 0), false, true, ui::Icon::Gamepad)) wizard_open();
     ImGui::SameLine();
     if (button("Rescan", ImVec2(0, 0), false, !A.scanning, ui::Icon::Refresh)) start_scan();
+    { ImGui::SameLine(); hidden_games_row(); }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -169,6 +170,8 @@ void tab_general() {
     begin_panel("set_app");
     section_title("Startup, sidebar and sounds");
     gap();
+    theme_settings_row();
+    gap();
     settings_label("Sidebar");
     int sm = A.st.sidebar_mode;
     if (ImGui::RadioButton("Automatic", sm == 0)) { A.st.sidebar_mode = 0; mark_dirty(); }
@@ -182,6 +185,16 @@ void tab_general() {
     if (ImGui::Checkbox("Notify me about invites while I'm playing", &A.st.notify_in_game)) mark_dirty();
     text_wrapped_disabled("Shows a Windows notification that never takes focus from your game. Click Join to enter the room when your game ends.");
     if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
+    if (ImGui::Checkbox("Menu sounds", &A.st.menu_sounds)) mark_dirty();
+    if (A.st.menu_sounds) {
+        ImGui::SameLine(); ImGui::SetNextItemWidth(sp(28.f));
+        if (ImGui::SliderInt("##menu_vol", &A.st.menu_volume, 0, 100, "%d%%")) mark_dirty();
+    }
+    if (ImGui::Checkbox("Menu music", &A.st.menu_music)) mark_dirty();
+    text_wrapped_disabled("Soft sounds and an optional quiet ambient loop in RetroHub. Always silent while a game is running or RetroHub is in the background.");
+    tvmode::settings_ui();
+    if (ImGui::Checkbox("Show my screenshots when RetroHub is idle", &A.st.attract_mode)) mark_dirty();
+    text_wrapped_disabled("After about a minute with no input on Home, the top card slowly pans through your own screenshots and save-state pictures. Any button brings it back. Nothing is downloaded.");
     end_panel();
 }
 
@@ -309,6 +322,9 @@ void tab_video() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ImGui::Checkbox("Start games fullscreen", &A.st.fullscreen)) mark_dirty();
     text_wrapped_disabled("Default for every system; each system or game can override it under Game defaults / Details.");
+    ImGui::SetNextItemWidth(sp(30.f));
+    if (ImGui::SliderInt("Game volume", &A.st.volume, 0, 100, "%d%%")) mark_dirty();
+    text_wrapped_disabled("Default for every game, set at launch. Each system or game can override it (Game defaults / Details), and the game menu (View + Y) changes it live.");
     if (ImGui::Checkbox("Show controller tips when a game starts", &A.st.start_hint)) mark_dirty();
     text_wrapped_disabled("A small card for about 5 seconds: hold View + Y for the game menu, View + Menu to return to RetroHub.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));

@@ -17,6 +17,8 @@ std::string xml_escape(const std::string& s);
 std::string build_invite_xml(const std::string& friend_name, const std::string& game_title, const std::string& code);
 /* Extracts the room code from an activation argument string (retrohub://join/<CODE>); false if it is anything else. */
 bool parse_activation_code(const std::string& args, std::string* code);
+/* Toast XML: "<friend> came online" (no button; clicking just brings RetroHub up). */
+std::string build_online_xml(const std::string& friend_name);
 
 struct INotifier {
     virtual ~INotifier() = default;
@@ -29,6 +31,9 @@ bool should_toast(bool setting_on, bool game_running, bool notifier_available);
 /* Shows the invite toast when the policy allows. Returns true if a toast was handed to the notifier. */
 bool notify_invite(INotifier& n, bool setting_on, bool game_running, const std::string& friend_name,
                    const std::string& game_title, const std::string& code);
+
+/* "<friend> came online" toast, same policy as the invite toast (only while a game runs, honours the in-game notification setting). */
+bool notify_online(INotifier& n, bool setting_on, bool game_running, const std::string& friend_name);
 
 /* The real notifier (toast_win.cpp). Only usable when shell_registration_allowed() (the Start-menu shortcut that
  * carries the AUMID exists); otherwise available() is false and show() does nothing. */

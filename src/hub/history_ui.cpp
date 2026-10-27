@@ -1,4 +1,5 @@
 #include "app.h"
+#include "homefun.h"
 
 /* ---------- Save history (Wave 2 G) and "Your stats" (Wave 2 H) ----------
  * History: one unified list per game on the Saves page (local snapshots + cloud versions), with Restore / Undo restore / Export.
@@ -222,6 +223,7 @@ void stat_cell(const char* label, const std::string& value) {
 }  // namespace
 
 void stats_ui_card() {
+    wrapped_ui_modal();   // L8: RetroHub Wrapped popup (opened by the button below)
     if (ImGui::GetTime() - SC.at > 30.0) {
         SC.at = ImGui::GetTime();
         std::vector<hs::GameTotal> tot;
@@ -247,6 +249,9 @@ void stats_ui_card() {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(2.f), sp(1.f)));
     begin_panel("stats_card", ImVec2(ImGui::GetContentRegionAvail().x - bleed, 0));
     section_title("Your stats");
+    ImGui::SameLine(0, sp(2.f));
+    if (button("Wrapped", ImVec2(0, 0), false, true, ui::Icon::Star)) wrapped_ui_open();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Your month or year in games");
     const float w = ImGui::GetContentRegionAvail().x;
     const bool wide = w > sp(70.f);
     stat_cell("Total play time", hours_text(st.total_secs));

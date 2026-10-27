@@ -76,6 +76,8 @@ add_subdirectory(src/common)
 add_subdirectory(src/saves)
 add_subdirectory(src/net)
 add_subdirectory(src/n64run)
+add_subdirectory(third_party/rcheevos)   # RetroAchievements rcheevos (vendored, see THIRD_PARTY.md)
+add_subdirectory(src/cheevos)
 add_subdirectory(src/retrorun)
 add_subdirectory(src/mgba_link)
 add_subdirectory(src/sameboy_rb)
@@ -92,6 +94,7 @@ enable_testing()
 
 add_test(NAME json_test COMMAND json_test)
 add_test(NAME runner_ctl_test COMMAND runner_ctl_test)   # hub<->runner control file, ack, slot/shot paths
+add_test(NAME cheevos_test COMMAND cheevos_test)   # RetroAchievements: config/cache, hardcore rules, mocked login + rc_client session (no network, no RA account)
 add_test(NAME osd_test COMMAND osd_test)   # OSD toast queue + font renderer
 add_test(NAME prefs_test COMMAND prefs_test)   # synced account prefs: field-wise merge, library favorites mirror
 add_test(NAME winutil_test COMMAND winutil_test)
@@ -107,6 +110,7 @@ add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypa
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
 add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-out friend games: identity, ghosts, badge text, publish hash/debounce
 add_test(NAME hub_boot_art_test COMMAND hub_boot_art_test)   # boot-animation art: every System has console + media art
+add_test(NAME hub_theme_test COMMAND hub_theme_test)   # every theme preset defines every palette slot and meets text contrast
 add_test(NAME hub_picker_test COMMAND hub_picker_test)   # room game picker: search, chips, sections, virtual layout
 add_test(NAME hub_ps2_online_test COMMAND hub_ps2_online_test)   # PS2 online: readiness reasons, retrorun args, exit texts, pinned LRPS2 download
 add_test(NAME hub_online_caps_test COMMAND hub_online_caps_test)   # supports_online <-> launch_online branches (table-driven)
@@ -122,9 +126,11 @@ add_test(NAME hubdolphincheats_test COMMAND hubdolphincheats_test)   # GameCube 
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
 add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
+add_test(NAME retrorun_fx_test COMMAND retrorun_fx_test)
 add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
 add_test(NAME retrorun_link_test COMMAND retrorun_link_test)
 add_test(NAME retrorun_rollback_test COMMAND retrorun_rollback_test)
+add_test(NAME retrorun_rewind_test COMMAND retrorun_rewind_test)   # rewind ring size/limits, rewind->replay hashes, run-ahead == normal shifted (fake core)
 add_test(NAME retrorun_rollback_stall_test COMMAND retrorun_rollback_stall_test)
 add_test(NAME ps1_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_synctest.ps1)   # Beetle PSX rollback SyncTest on homebrew discs (skips without the core / python)
 set_tests_properties(ps1_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "RETROHUB_QA=1")
@@ -135,9 +141,11 @@ add_test(NAME hubsaves_test COMMAND hubsaves_test)
 add_test(NAME hubsaves_cloud_test COMMAND hubsaves_cloud_test)   # e2e part runs only with RETROHUB_TEST_SAVES_URL (qa\saves_cloud.ps1)
 add_test(NAME hubsaves_engine_test COMMAND hubsaves_engine_test)   # cloud saves v2 engine against an in-process mock Worker (loopback only)
 add_test(NAME hub_logic_test COMMAND hub_logic_test)
+add_test(NAME hub_homefun_test COMMAND hub_homefun_test)               # attract mode idle/slideshow, Surprise-me weighting + reel, Wrapped aggregation
 add_test(NAME hub_states_test COMMAND hub_states_test)               # save-state slot listing, resume wording, library sort
 add_test(NAME hub_osk_test COMMAND hub_osk_test)                         # OSK key layout / edit logic / folder browser (scratch dirs)
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
+add_test(NAME hub_qm_test COMMAND hub_qm_test)
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
 add_test(NAME hub_boot_anim_test COMMAND hub_boot_anim_test)           # start animation: media map, timeline, launch rules, state machine, settings
 add_test(NAME real_boot_test COMMAND real_boot_test)                       # real console startup: own IPL/BIOS detection, config edits, custom sound decode
@@ -152,9 +160,11 @@ add_test(NAME hub_rivals_test COMMAND hub_rivals_test)         # rivalry result 
 add_test(NAME hub_toast_test COMMAND hub_toast_test)                   # toast XML/activation/policy with a mock notifier (no real toasts)
 add_test(NAME hub_wizard_test COMMAND hub_wizard_test)
 add_test(NAME hub_cloud_ui_test COMMAND hub_cloud_ui_test)             # cloud saves v2 status/label/dialog logic
-add_test(NAME hub_username_test COMMAND hub_username_test)         # username rules, suggestions, availability checker, wizard name step
+add_test(NAME hub_tv_test COMMAND hub_tv_test)   # TV mode scale, hero, Run-key value, clock, avatar plan
+add_test(NAME hub_username_test COMMAND hub_username_test)        # username rules, suggestions, availability checker, wizard name step
 add_test(NAME hub_toast_win_test COMMAND hub_toast_win_test)               # real WinRT apartment init + XML load, nothing shown
 add_test(NAME hub_invite_test COMMAND hub_invite_test)                   # invite parsing + pipe handoff (no network, no windows)
+add_test(NAME hub_uisound_test COMMAND hub_uisound_test)   # menu UI sounds + ambient render non-silent within limits; mute policy (not played)
 add_test(NAME hub_bootsound_test COMMAND hub_bootsound_test)       # procedural startup sounds render to WAVs (not played)
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
 add_test(NAME dsu_test COMMAND dsu_test)   # DSU packets + loopback server round trip

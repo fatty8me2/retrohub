@@ -22,9 +22,11 @@
 
 #include "controls_sdl.h"
 #include "exit_combo.h"
+#include "features.h"
 #include "start_hint.h"
 #include "runner_ctl.h"
 #include "osd.h"
+#include "present_fx.h"
 #include "core.h"
 #include "ds_link.h"
 #include "retro_pad.h"
@@ -38,6 +40,7 @@
 #include "session.h"
 #include "save_sync.h"
 #include "cheats.h"
+#include "cheevos.h"
 #include "miniz.h"
 
 constexpr uint8_t kPktCfg = 0x60;
@@ -48,14 +51,18 @@ namespace fs = std::filesystem;
 /* ------------------------------------------------------------------ args */
 
 struct Args {
+    int volume = 100;   // --volume N (0-100): starting volume, applied once audio opens
     std::string control, game_key, shot_dir, load_state_path;   // --load-state FILE: restore this state right after boot (offline)
     //   // --control FILE (runner_ctl.h), --game-key KEY, --shot-dir DIR
     std::string osd_msg;   // --osd-msg TEXT: QA, a toast that stays up (use with RETRORUN_OSD_SHOT=1 and --screenshot)
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
     std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
     int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
+    std::string fx;             // --fx off|crt|lcd|dmg|sharp (screen filter, default off = the classic look)
+    int bezel = 0;              // --bezel 0|1 (procedural console frame in the pillarbox bars, default off)
     std::string disc_ctl;         // --disc-ctl FILE: RetroHub rewrites it to request "insert the next disc" (watched like --cheats)
     std::vector<uint64_t> swap_at;   // --swap-disc-at N[,N]: QA, request a disc swap at these frames
+    std::string ra_cfg, ra_cache;   // --ra-cfg FILE / --ra-cache DIR: RetroAchievements token file + cache dir (cheevos.h); offline only
     std::string cheats;           // --cheats FILE: cheat list JSON (src/common/cheats.h); polled for live toggles offline
     struct MemDump { unsigned id; size_t off, len; std::string file; };
     std::vector<MemDump> mem_dumps;   // --dump-mem ID,OFFSET,LEN,FILE: raw libretro memory block dumped at exit (QA)
@@ -78,15 +85,17 @@ struct Args {
     bool multitap = false, no_multitap = false;  // SNES multitap on port 2 (players 3-4); auto with --players >= 3 or 3+ pads
     bool ds_link = false;   // DS local wireless over the room (netpacket interface), no lockstep
     std::vector<std::string> opts;
+    int rewind_mode = 0, runahead = 0;   // --rewind auto|on|off, --runahead off|1|2|auto (offline only; see features.h)
+    int selftest_rewind_frames = 0, selftest_rewind_back = 0, selftest_runahead_frames = 0;   // QA: --rewind-selftest N,K / --runahead-selftest N (headless)
 };
 
 static std::string narrow(const wchar_t* w) { return winutil::to_utf8(w); }
 
 static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
-          "  [--system gba|gb|gbc|nds|ps1|nes|snes] [--multitap|--no-multitap] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
+          "  [--system gba|gb|gbc|nds|ps1|nes|snes] [--multitap|--no-multitap] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fx off|crt|lcd|dmg|sharp] [--bezel 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
-          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rollback] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
+          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rewind auto|on|off] [--runahead off|1|2|auto] [--rollback] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
           stderr);
 }
@@ -104,6 +113,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--rom") { if (!val(&o->rom)) return false; }
         else if (k == "--controls") { if (!val(&o->controls)) return false; }
         else if (k == "--cheats") { if (!val(&o->cheats)) return false; }
+        else if (k == "--ra-cfg") { if (!val(&o->ra_cfg)) return false; }
+        else if (k == "--ra-cache") { if (!val(&o->ra_cache)) return false; }
         else if (k == "--disc-ctl") { if (!val(&o->disc_ctl)) return false; }
         else if (k == "--swap-disc-at") {
             if (!val(&v)) return false;
@@ -116,6 +127,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
             o->mem_dumps.push_back({id, (size_t)off, (size_t)len, file});
         }
         else if (k == "--save-dir") { if (!val(&o->save_dir)) return false; }
+        else if (k == "--volume") { if (!val(&v)) return false; o->volume = std::max(0, std::min(100, atoi(v.c_str()))); }
         else if (k == "--control") { if (!val(&o->control)) return false; }
         else if (k == "--game-key") { if (!val(&o->game_key)) return false; }
         else if (k == "--shot-dir") { if (!val(&o->shot_dir)) return false; }
@@ -134,6 +146,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--setup-tag") { if (!val(&o->setup_tag)) return false; }
         else if (k == "--save-stem") { if (!val(&o->save_stem)) return false; }
         else if (k == "--filter") { if (!val(&v)) return false; if (v != "nearest" && v != "linear") { fprintf(stderr, "bad --filter\n"); return false; } o->scale_filter = v; }
+        else if (k == "--fx") { if (!val(&v)) return false; if (!fx::parse_filter(v, nullptr)) { fprintf(stderr, "bad --fx\n"); return false; } o->fx = v; }
+        else if (k == "--bezel") { if (!val(&v)) return false; o->bezel = atoi(v.c_str()) ? 1 : 0; }
         else if (k == "--integer-scale") { if (!val(&v)) return false; o->integer_scale = atoi(v.c_str()) ? 1 : 0; }
         else if (k == "--opt") { if (!val(&v)) return false; o->opts.push_back(v); }
         else if (k == "--frames") { if (!val(&v)) return false; o->frames = atoi(v.c_str()); }
@@ -167,6 +181,10 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--share-host-save") o->share_host_save = true;
         else if (k == "--host-save-dir") { std::string ignored; if (!val(&ignored)) return false; std::fprintf(stderr, "note: --host-save-dir is ignored by retrorun (--share-host-save shares the core's own save RAM)\n"); }
         else if (k == "--link-roms") { if (!val(&o->link_roms)) return false; }
+        else if (k == "--rewind") { if (!val(&v) || !rwd::parse_mode(v, &o->rewind_mode)) { fprintf(stderr, "bad --rewind (auto|on|off)\n"); return false; } }
+        else if (k == "--runahead") { if (!val(&v) || !runahead::parse(v, &o->runahead)) { fprintf(stderr, "bad --runahead (off|1|2|auto)\n"); return false; } }
+        else if (k == "--rewind-selftest") { if (!val(&v) || sscanf(v.c_str(), "%d,%d", &o->selftest_rewind_frames, &o->selftest_rewind_back) != 2) return false; }
+        else if (k == "--runahead-selftest") { if (!val(&v)) return false; o->selftest_runahead_frames = atoi(v.c_str()); }
         else if (k == "--headless") o->headless = true;
         else if (k == "--fullscreen") o->fullscreen = true;
         else if (k == "--resume") o->resume = true;
@@ -373,6 +391,7 @@ class Frontend {
     /* runner_ctl "speed" / "ff" (offline only). speed = multiplier (1 = normal); speed_max = uncapped (also what the Tab key does);
      * fast_speed_ = what "ff on" selects (0 = max), the last fast speed chosen, default 2x. */
     double speed = 1.0, fast_speed_ = 2.0;
+    bool boost_active_ = false;   // View+RT quick boost is on
     bool speed_max = false;
     void apply_speed(double s);
     SDL_Texture* osd_tex = nullptr;
@@ -399,6 +418,18 @@ class Frontend {
     }
     std::string scale_filter_;   // "" = nearest (DS: linear)
     bool integer_scale_ = true;
+    /* Screen filters + bezel (present_fx.cpp). Off + no bezel = the classic path, untouched. */
+    fx::Engine fxe_;
+    fx::Filter fx_filter_ = fx::Filter::Off;
+    bool bezel_on_ = false;
+    std::vector<uint32_t> fx_px_;
+    SDL_Texture* fx_tex_ = nullptr; int fx_tex_w_ = 0, fx_tex_h_ = 0;
+    SDL_Texture* bezel_tex_ = nullptr; int bezel_tex_w_ = 0, bezel_tex_h_ = 0;
+    std::string bezel_key_;
+    bool fx_draw(const SDL_Rect& dst);          // draws bezel + filtered frame; false = caller draws the plain frame
+    bool fx_set(const std::string& what, std::string* msg);   // runner_ctl "shader"
+    FrameBuf fx_compose(const FrameBuf& f, int ow, int oh);   // headless screenshot of the filtered/bezelled window
+    void layout_for(int ow, int oh, SDL_Rect* dst);
     bool is_ps2 = false;       // PS2 core (LRPS2 / ParaLLEl PS2): input-delay lockstep only (no rollback), see docs/PS2_ONLINE.md
     int16_t local_press_[4][2] = {};      // PS2: L2/R2 pressure 0..255 per local pad (rides in the upper 16 bits of the button word)
     bool is_ps1 = false;       // PlayStation (Beetle PSX): DualShock analog sticks, memory card 1 in the .srm
@@ -412,6 +443,12 @@ class Frontend {
     int last_mouse_x = -1, last_mouse_y = -1;
     uint64_t cursor_tick = 0;
     uint16_t rumble_lvl[4][2] = {};
+    /* Rewind + run-ahead (features.h): offline only. spec_ = a rewind / run-ahead frame is running (audio muted). */
+    std::unique_ptr<retrofeat::Features> feat_;
+    bool spec_ = false;
+    std::unique_ptr<retrofeat::Features> make_feat(bool measure);
+    int run_feat_selftest();
+    void run_core_frame() { if (feat_) feat_->frame(); else core.run(); }
     hubctl::ExitCombo exit_combo;     // Back+Start held 1 s on any pad: leave (saves flush in finish())
     dsview::StylusLatch stylus;      // a press only counts if it began over the frame
     Pace pace = Pace::None;
@@ -528,6 +565,8 @@ class Frontend {
     uint64_t cheat_next_poll = 0;
     std::string cheat_applied_sig;
     void cheats_init();
+    cheevos::Session ra_;   // RetroAchievements (cheevos.cpp); inactive unless --ra-cfg and offline
+    void ra_start();
     void cheats_apply(const cheats::CheatSet& set);
     void cheats_poll();
     /* ---- multi-disc (libretro disk control). Offline a swap applies at once; with rollback netplay it travels as a one-shot event in the
@@ -553,6 +592,23 @@ class Frontend {
 
 static Frontend* g_fe = nullptr;
 
+void Frontend::ra_start() {
+    if (a.ra_cfg.empty() || !a.net.empty() || a.ds_link || link || a.synctest || a.selftest || a.rollback) return;   // offline play only
+    cheevos::Params p;
+    if (!cheevos::load_config(a.ra_cfg, &p.cfg)) { rlog("cheevos: cannot read %s", a.ra_cfg.c_str()); return; }
+    p.cache_dir = a.ra_cache;
+    p.game_key = a.game_key;
+    p.game_title_hint = a.title;
+    p.system = lower(a.system);
+    p.rom_path = a.rom;
+    cheevos::Host h;
+    h.http = cheevos::real_http();
+    h.mmap = core.memory_map();
+    h.core_memory = [this](unsigned id, uint8_t** d, size_t* n) { size_t sz = 0; void* m = core.memory(id, &sz); *d = (uint8_t*)m; *n = m ? sz : 0; };
+    h.log = [](const std::string& m) { rlog("%s", m.c_str()); };
+    ra_.start(p, h);
+}
+
 void Frontend::cheats_init() {
     if (a.cheats.empty()) return;
     if (a.ds_link) { rlog("cheats: ignored in DS wireless sessions (every player would need identical state)"); return; }
@@ -567,6 +623,7 @@ void Frontend::cheats_init() {
 }
 
 void Frontend::cheats_apply(const cheats::CheatSet& set) {
+    if (ra_.active() && !ra_.allow(cheevos::Feature::Cheats)) return;   // hardcore
     // The core only has "reset all" + "set slot": rebuild the whole table, but only when the effective list changed.
     std::vector<std::pair<std::string, const cheats::Cheat*>> good;
     std::string sig;
@@ -659,6 +716,8 @@ bool Frontend::setup_paths() {
     is_ps2 = lower(a.system) == "ps2";
     scale_filter_ = a.scale_filter;
     if (a.integer_scale >= 0) integer_scale_ = a.integer_scale != 0;
+    fx::parse_filter(a.fx, &fx_filter_);
+    bezel_on_ = a.bezel != 0;
     // Defaults for the DS core go in first (then the remembered layout) so ini / --opt below override them.
     if (is_ds) {
         // The DS core keeps its own files (Wi-Fi settings, SD card images, ...) in a scratch dir under userdata, never in
@@ -769,6 +828,10 @@ bool Frontend::setup_paths() {
 void Frontend::layout(SDL_Rect* dst) {
     int ow = 0, oh = 0;
     SDL_GetRendererOutputSize(ren, &ow, &oh);
+    layout_for(ow, oh, dst);
+}
+
+void Frontend::layout_for(int ow, int oh, SDL_Rect* dst) {
     const FrameBuf& f = core.frame();
     double aspect = core.av().geometry.aspect_ratio;
     if (aspect <= 0.f) aspect = (double)f.w / std::max(1, f.h);
@@ -795,7 +858,8 @@ void Frontend::present() {
     SDL_Rect dst;
     layout(&dst);
     last_dst = dst;
-    if (link) { SDL_Rect v = view_src(); SDL_RenderCopy(ren, tex, &v, &dst); }
+    if (fx_draw(dst)) {}   // bezel and/or screen filter (present_fx.cpp); otherwise the classic copy below
+    else if (link) { SDL_Rect v = view_src(); SDL_RenderCopy(ren, tex, &v, &dst); }
     else SDL_RenderCopy(ren, tex, nullptr, &dst);
     if (is_ds && pad_cursor.active && last_dst.w > 0) {   // pad stylus marker
         int cx = last_dst.x + (int)((pad_cursor.x * 0.5 + 0.5) * last_dst.w), cy = last_dst.y + (int)((pad_cursor.y * 0.5 + 0.5) * last_dst.h);
@@ -809,6 +873,88 @@ void Frontend::present() {
     draw_hint();
     draw_osd();
     SDL_RenderPresent(ren);
+}
+
+/* ------------------------------------------------------------------ screen filters + bezel (present_fx.cpp) */
+
+bool Frontend::fx_draw(const SDL_Rect& dst) {
+    if (fx_filter_ == fx::Filter::Off && !bezel_on_) return false;
+    if (dst.w <= 0 || dst.h <= 0) return false;
+    int ow = 0, oh = 0;
+    SDL_GetRendererOutputSize(ren, &ow, &oh);
+    if (bezel_on_ && ow > 0 && oh > 0) {
+        std::string key = a.system + "|" + std::to_string(ow) + "x" + std::to_string(oh) + "|" + std::to_string(dst.x) + "," + std::to_string(dst.y) + "," + std::to_string(dst.w) + "," + std::to_string(dst.h);
+        if (!bezel_tex_ || bezel_tex_w_ != ow || bezel_tex_h_ != oh || key != bezel_key_) {
+            const auto& bz = fxe_.bezel(a.system, ow, oh, fx::Rect{dst.x, dst.y, dst.w, dst.h});
+            if (!bezel_tex_ || bezel_tex_w_ != ow || bezel_tex_h_ != oh) {
+                if (bezel_tex_) SDL_DestroyTexture(bezel_tex_);
+                bezel_tex_ = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, ow, oh);
+                bezel_tex_w_ = ow; bezel_tex_h_ = oh;
+            }
+            if (bezel_tex_) SDL_UpdateTexture(bezel_tex_, nullptr, bz.data(), ow * 4);
+            bezel_key_ = key;
+        }
+        if (bezel_tex_) SDL_RenderCopy(ren, bezel_tex_, nullptr, nullptr);
+    }
+    if (fx_filter_ == fx::Filter::Off) return false;   // bezel only: the plain frame copy follows
+    const FrameBuf& f = core.frame();
+    SDL_Rect v{0, 0, f.w, f.h};
+    if (link) v = view_src();
+    fx::Src src{f.px.data() + (size_t)v.y * f.w + v.x, f.w, v.w, v.h};
+    fxe_.render(fx_filter_, src, dst.w, dst.h, &fx_px_);
+    if (!fx_tex_ || fx_tex_w_ != dst.w || fx_tex_h_ != dst.h) {
+        if (fx_tex_) SDL_DestroyTexture(fx_tex_);
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+        fx_tex_ = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, dst.w, dst.h);
+        fx_tex_w_ = dst.w; fx_tex_h_ = dst.h;
+        if (!fx_tex_) return false;
+    }
+    SDL_UpdateTexture(fx_tex_, nullptr, fx_px_.data(), dst.w * 4);
+    SDL_RenderCopy(ren, fx_tex_, nullptr, &dst);
+    return true;
+}
+
+/* runner_ctl "shader <name>": off|crt|lcd|dmg|sharp, "next" (cycle), "bezel:on|off|toggle". */
+bool Frontend::fx_set(const std::string& what, std::string* msg) {
+    std::string w = lower(trim(what));
+    if (w.rfind("bezel", 0) == 0) {
+        std::string arg = w.size() > 6 ? w.substr(6) : "toggle";
+        if (arg == "on" || arg == "1") bezel_on_ = true;
+        else if (arg == "off" || arg == "0") bezel_on_ = false;
+        else if (arg == "toggle") bezel_on_ = !bezel_on_;
+        else { *msg = "unknown bezel option"; return false; }
+        *msg = bezel_on_ ? "Bezel on" : "Bezel off";
+        return true;
+    }
+    fx::Filter f;
+    if (w == "next") f = fx::next_filter(fx_filter_);
+    else if (!fx::parse_filter(w, &f)) { *msg = "unknown shader"; return false; }
+    fx_filter_ = f;
+    *msg = std::string("Filter: ") + fx::filter_label(f);
+    return true;
+}
+
+FrameBuf Frontend::fx_compose(const FrameBuf& f, int ow, int oh) {
+    FrameBuf out;
+    out.w = ow; out.h = oh;
+    SDL_Rect dst{0, 0, 0, 0};
+    layout_for(ow, oh, &dst);
+    if (bezel_on_ && dst.w > 0) out.px = fxe_.bezel(a.system, ow, oh, fx::Rect{dst.x, dst.y, dst.w, dst.h});
+    else out.px.assign((size_t)ow * oh, 0xFF000000u);
+    if (dst.w <= 0 || dst.h <= 0 || f.px.empty()) return out;
+    if (fx_filter_ != fx::Filter::Off) {
+        fx_px_.clear();
+        fxe_.render(fx_filter_, fx::Src{f.px.data(), f.w, f.w, f.h}, dst.w, dst.h, &fx_px_);
+    } else {
+        fx_px_.resize((size_t)dst.w * dst.h);
+        for (int y = 0; y < dst.h; y++) for (int x = 0; x < dst.w; x++) fx_px_[(size_t)y * dst.w + x] = f.px[(size_t)(y * f.h / dst.h) * f.w + x * f.w / dst.w];
+    }
+    for (int y = 0; y < dst.h; y++) {
+        int oy = dst.y + y;
+        if (oy < 0 || oy >= oh) continue;
+        for (int x = 0; x < dst.w; x++) { int ox = dst.x + x; if (ox >= 0 && ox < ow) out.px[(size_t)oy * ow + ox] = fx_px_[(size_t)y * dst.w + x]; }
+    }
+    return out;
 }
 
 void Frontend::draw_osd() {
@@ -829,6 +975,7 @@ void Frontend::draw_osd() {
 }
 
 void Frontend::apply_speed(double s) {
+    if (!ra_.allow_speed(s == 0 ? 2.0 : s)) return;   // hardcore: only 1x
     speed_max = (s == 0);
     speed = speed_max ? 1.0 : s;
     if (s == 0 || s > 1.0) fast_speed_ = s;
@@ -936,7 +1083,8 @@ static uint32_t scripted_pad(uint64_t frame, bool* active) {
             if (c == std::string::npos || ln[0] == '#') continue;
             uint64_t fr = strtoull(ln.c_str(), nullptr, 10);
             std::string b = ln.substr(c + 1);
-            while (!b.empty() && (b.back() == '' || b.back() == ' ')) b.pop_back();
+            while (!b.empty() && (b.back() == '
+' || b.back() == ' ')) b.pop_back();
             if (b.compare(0, 6, "@shot ") == 0) { g_script_shots.push_back({fr, b.substr(6), false}); continue; }
             uint32_t m = 0;
             if (b.size() > 2 && b[0] == '0' && b[1] == 'x') m = (uint32_t)strtoul(b.c_str(), nullptr, 16);
@@ -1004,8 +1152,27 @@ void Frontend::poll_all_local() {
             hubctl::read_state(pads[i], &st);
             if (st.b[hubctl::kBtnBack] && st.b[7] && st.b[8]) swap_combo = true;
         }
+        bool boost = false;   // View + RT held: quick boost at the last fast speed (offline only)
+        for (size_t i = 0; i < pads.size(); i++) {
+            hubctl::PadState st;
+            hubctl::read_state(pads[i], &st);
+            if (hubctl::boost_combo_down(st)) boost = true;
+        }
+        if (!online && !a.ds_link) {
+            if (boost && !boost_active_ && speed == 1.0 && !speed_max) { boost_active_ = true; apply_speed(fast_speed_); }
+            else if (!boost && boost_active_) { boost_active_ = false; apply_speed(1.0); }
+        } else boost_active_ = false;
         if (swap_combo && !swap_combo_prev_) disc_request();
         swap_combo_prev_ = swap_combo;
+        if (feat_) {   // hold LT + View (not with Start / Y: those are the exit and quick-menu combos) to rewind
+            bool rw = false;
+            for (size_t i = 0; i < pads.size(); i++) {
+                hubctl::PadState st;
+                hubctl::read_state(pads[i], &st);
+                if (st.a[4] > hubctl::kDefaultAxisThreshold && st.b[hubctl::kBtnBack] && !st.b[hubctl::kBtnStart] && !st.b[3]) rw = true;
+            }
+            feat_->set_held(rw);
+        }
         if (exit_combo.update(combo, (long long)SDL_GetTicks64())) { rlog("exit combo (Back+Start held): leaving"); quit = true; }
     }
     for (int i = 0; i < n_local; i++) {
@@ -1089,7 +1256,7 @@ void Frontend::pump_events(bool idle) {
         }
     }
     const Uint8* k = SDL_GetKeyboardState(nullptr);
-    ff = !online && !a.ds_link && (k[SDL_SCANCODE_TAB] || speed_max);
+    ff = !online && !a.ds_link && ((k[SDL_SCANCODE_TAB] && ra_.allow(cheevos::Feature::FastForward)) || speed_max);
     core.set_fast_forwarding(ff);
     if (win && status_until && SDL_GetTicks64() > status_until) {
         status_until = 0;
@@ -1262,7 +1429,7 @@ void Frontend::ctl_poll() {
         case runctl::Cmd::OsdMsg: osd::push(c.text); ctl_.ack(true, "shown"); break;
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
         case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Clip:
-            if (online || a.ds_link) { ctl_.ack(false, "Not available in online sessions"); break; }
+            if ((online || a.ds_link) && runctl::offline_only(c.cmd)) { ctl_.ack(false, "Not available in online sessions"); break; }
             if (c.cmd == runctl::Cmd::Volume) {
                 audio.set_volume(c.value);
                 osd::push("Volume " + std::to_string(c.value) + "%");
@@ -1277,6 +1444,14 @@ void Frontend::ctl_poll() {
             } else if (c.cmd == runctl::Cmd::Speed) {
                 apply_speed(c.speed);
                 ctl_.ack(true, runctl::speed_label(c.speed));
+            } else if (c.cmd == runctl::Cmd::Shader) {
+                std::string m;
+                bool ok = fx_set(c.text, &m);
+                if (ok) osd::push(m);
+                ctl_.ack(ok, m);
+            } else if (c.cmd == runctl::Cmd::Rewind) {
+                bool ok = feat_ && feat_->set_latched(c.value != 0);
+                ctl_.ack(ok, ok ? (c.value ? "rewinding" : "rewind off") : "Rewind is not available for this game");
             } else {
                 ctl_.ack(false, "unsupported");
             }
@@ -1286,6 +1461,7 @@ void Frontend::ctl_poll() {
 }
 
 bool Frontend::load_state(const std::string& name) {
+    if (ra_.active() && !ra_.allow(cheevos::Feature::LoadState)) { set_status("Hardcore: save states are off"); return false; }
     std::vector<uint8_t> buf;
     if (!read_file(state_path(name), &buf)) { set_status("No state " + name); return false; }
     if (!core.unserialize(buf.data(), buf.size())) { set_status("Load state failed (core error)"); return false; }
@@ -1890,6 +2066,41 @@ void Frontend::do_pacing() {
     }
 }
 
+std::unique_ptr<retrofeat::Features> Frontend::make_feat(bool measure) {
+    retrofeat::Hooks h;
+    h.run = [this] { core.run(); };
+    h.state_size = [this] { return core.serialize_size(); };
+    h.save = [this](void* b, size_t n) { return core.serialize(b, n); };
+    h.load = [this](const void* b, size_t n) { return core.unserialize(b, n); };
+    h.video_hash = [this] { const FrameBuf& f = core.frame(); return f.px.empty() ? (uint64_t)0 : n64run::hash_block(f.px.data(), f.px.size() * 4); };
+    h.speculative = [this](bool s) { spec_ = s; };
+    h.notify = [](const std::string& t, retrofeat::Note n) {
+        osd::push(t, n == retrofeat::Note::Warn ? osd::Kind::Warn : n == retrofeat::Note::Error ? osd::Kind::Error : n == retrofeat::Note::Good ? osd::Kind::Good : osd::Kind::Info);
+    };
+    h.corner = [](const std::string& t) { osd::set_corner(t, osd::Kind::Warn); };
+    retrofeat::Settings st;
+    st.system = lower(a.system);
+    st.rewind = a.rewind_mode;
+    st.runahead = a.runahead;
+    st.fps = fps > 1 ? fps : 60.0;
+    st.measure = measure;
+    auto f = std::make_unique<retrofeat::Features>(h, st);
+    rlog("features: rewind %s, run-ahead %d frame(s)", f->rewind_active() ? "on" : "off", f->runahead_frames());
+    return f;
+}
+
+/* QA (headless, constant zero input): --rewind-selftest N,K and --runahead-selftest N. */
+int Frontend::run_feat_selftest() {
+    feat_ = make_feat(false);
+    for (int i = 0; i < 30; i++) core.run();   // past the boot frames
+    std::string rep;
+    bool ok = true;
+    if (a.selftest_rewind_frames) { ok = feat_->selftest_rewind(a.selftest_rewind_frames, a.selftest_rewind_back, &rep) && ok; rlog("%s", rep.c_str()); }
+    if (a.selftest_runahead_frames) { ok = feat_->selftest_runahead(a.selftest_runahead_frames, &rep) && ok; rlog("%s", rep.c_str()); }
+    rlog("FEATTEST %s", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 6;
+}
+
 void Frontend::finish() {
     static bool done = false;
     if (done) return;
@@ -2194,7 +2405,7 @@ int Frontend::run(const Args& args) {
     core.on_audio = [this, &drc](const int16_t* d, size_t n) {
         if (rbe || a.synctest) { if (!link) for (size_t i = 0; i < n * 2; i++) fr_audio = (fr_audio ^ (uint16_t)d[i]) * 0x100000001B3ull; }
         else if (!link) for (size_t i = 0; i < n * 2; i++) out_hash = (out_hash ^ (uint16_t)d[i]) * 0x100000001B3ull;
-        if (!ff && !resim && audio.active() && speed <= 2.0) audio.push(d, n, drc && speed == 1.0);   // above 2x the audio is dropped, not squealed
+        if (!ff && !resim && !spec_ && audio.active() && speed <= 2.0) audio.push(d, n, drc && speed == 1.0);   // above 2x the audio is dropped, not squealed
     };
 
     std::string err;
@@ -2271,6 +2482,7 @@ int Frontend::run(const Args& args) {
         if (use_state_hash && !core.serialize_size()) use_state_hash = false;
         rlog("sync hash: %s", use_state_hash ? "serialized state" : "video+audio output");
     }
+    audio.set_volume(a.volume);
     if (!a.headless && !muted) audio.open(core.av().timing.sample_rate > 1000 ? core.av().timing.sample_rate : 32768.0);
     if (!setup_video()) return 1;
     drc = pace == Pace::Vsync;
@@ -2296,10 +2508,11 @@ int Frontend::run(const Args& args) {
         if (a.net.empty())
             { for (int i = 0; i < link_n; i++) if (owner[i] >= 0) link_apply_blob(i, link_blob_from_disk(i)); link_loaded = true; }
     } else load_srm();
+    ra_start();
     if (!link && a.resume && !online && a.net.empty() && !a.ds_link) {
         if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
     }
-    if (!a.load_state_path.empty() && !link && !online && a.net.empty() && !a.ds_link) {
+    if (!a.load_state_path.empty() && !link && !online && a.net.empty() && !a.ds_link && ra_.allow(cheevos::Feature::LoadState)) {
         std::vector<uint8_t> sb;
         if (read_file(a.load_state_path, &sb) && core.unserialize(sb.data(), sb.size())) set_status("Resumed from saved state");
         else rlog("load-state: could not restore %s", a.load_state_path.c_str());
@@ -2315,6 +2528,8 @@ int Frontend::run(const Args& args) {
         rc = selftest();
     } else if (a.synctest) {
         rc = run_synctest();
+    } else if (a.selftest_rewind_frames || a.selftest_runahead_frames) {
+        rc = run_feat_selftest();
     } else if (rbe || (a.rollback && !a.net.empty())) {
         if (!rbe && !setup_net()) { rc = net_rc; goto done; }
         if (a.headless) pace = Pace::Timer;
@@ -2375,6 +2590,8 @@ int Frontend::run(const Args& args) {
             if (!setup_link()) { rc = 3; goto done; }
             if (a.headless) pace = Pace::Timer;
         } else if (!setup_net()) { rc = net_rc; goto done; }
+        if (!online && a.net.empty() && !a.ds_link && !link && !is_ps2) feat_ = make_feat(!a.headless);
+        else if (a.rewind_mode == 1 || a.runahead != 0) rlog("rewind / run-ahead are offline only: ignored here");
         {
             uint64_t t_start = SDL_GetTicks64();
             for (;;) {
@@ -2413,7 +2630,8 @@ int Frontend::run(const Args& args) {
                 disc_poll();
                 ctl_poll();
                 do_pacing();
-                core.run();
+                run_core_frame();
+                ra_.frame();
                 if (link_active) {
                     link_pump();
                     if (SDL_GetTicks64() - link_last_log >= 5000) {
@@ -2483,6 +2701,11 @@ done:
         }
         if (!a.screenshot.empty()) {
             FrameBuf shot = core.frame();
+            if ((fx_filter_ != fx::Filter::Off || bezel_on_) && shot.w > 0 && !shot.px.empty()) {   // QA: the filtered/bezelled window (RETRORUN_FX_SHOT_SIZE=WxH, default 1280x720)
+                int sow = 1280, soh = 720;
+                if (const char* sz = std::getenv("RETRORUN_FX_SHOT_SIZE")) sscanf(sz, "%dx%d", &sow, &soh);
+                shot = fx_compose(shot, std::max(16, sow), std::max(16, soh));
+            }
             if (const char* hs = std::getenv("RETRORUN_HINT_SHOT"); hs && hs[0] == '1' && shot.w > 0 && shot.px.size() >= (size_t)shot.w * shot.h) {   // QA: the tips card as seen ~1 s into a real run
                 int k = std::max(1, (540 + shot.h - 1) / shot.h);   // integer-upscale small frames to a window-like size so the card has its real proportions
                 if (k > 1) {
@@ -2515,10 +2738,13 @@ done:
     }
     if (tex) SDL_DestroyTexture(tex);
     if (osd_tex) SDL_DestroyTexture(osd_tex);
+    if (fx_tex_) SDL_DestroyTexture(fx_tex_);
+    if (bezel_tex_) SDL_DestroyTexture(bezel_tex_);
     if (ren) SDL_DestroyRenderer(ren);
     if (win) SDL_DestroyWindow(win);
     audio.close();
     for (auto* p : pads) SDL_GameControllerClose(p);
+    ra_.stop();
     session.stop();
     core.unload();
     SDL_Quit();
