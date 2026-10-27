@@ -1,6 +1,7 @@
 #include "winutil.h"
 #include "art.h"
 #include "art_match.h"
+#include "art_lru.h"
 #include "wiiu_meta.h"
 
 #include "library.h"
@@ -79,6 +80,7 @@ std::condition_variable g_cv;
 std::deque<Job> g_jobs;
 std::deque<Done> g_done;
 std::unordered_map<std::string, Slot> g_slots;   // UI thread only (plus shutdown)
+Lru g_lru;                                       // UI thread only: Ready textures by last-drawn frame
 std::map<std::string, std::string> g_names;      // game key -> No-Intro name
 std::map<std::string, std::string> g_misses;     // id -> unix time
 bool g_names_dirty = false, g_misses_dirty = false;
@@ -467,6 +469,7 @@ SDL_Texture* lookup_or_queue(Job&& j, int* w, int* h) {
         if (it->second.st == State::Ready) {
             if (w) *w = it->second.w;
             if (h) *h = it->second.h;
+            g_lru.touch(it->first);
             return it->second.tex;
         }
         return nullptr;
@@ -515,6 +518,12 @@ void shutdown() {
 
 void pump() {
     if (!g_renderer) return;
+    g_lru.tick();
+    for (auto& id : g_lru.victims(kMaxCoverTextures)) {   // before any draw this frame: safe to destroy; re-fetched from the disk cache if needed again
+        auto it = g_slots.find(id);
+        if (it != g_slots.end()) { if (it->second.tex) SDL_DestroyTexture(it->second.tex); g_slots.erase(it); }
+        g_lru.remove(id);
+    }
     for (int n = 0; n < kUploadsPerFrame; ++n) {
         Done d;
         {
@@ -530,7 +539,7 @@ void pump() {
         SDL_UpdateTexture(t, nullptr, d.px.rgba.data(), d.px.w * 4);
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
-        s.tex = t; s.w = d.px.w; s.h = d.px.h; s.st = State::Ready;
+        s.tex = t; s.w = d.px.w; s.h = d.px.h; s.st = State::Ready; g_lru.touch(d.id);
     }
 }
 
@@ -545,6 +554,7 @@ SDL_Texture* get(const hub::GameEntry& game, Kind kind, int* w, int* h) {
         if (it->second.st == State::Ready) {
             if (w) *w = it->second.w;
             if (h) *h = it->second.h;
+            g_lru.touch(it->first);
             return it->second.tex;
         }
         return nullptr;

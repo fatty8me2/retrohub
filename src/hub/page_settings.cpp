@@ -145,6 +145,7 @@ void tab_general() {
     if (button("Run setup again", ImVec2(0, 0), false, true, ui::Icon::Gamepad)) wizard_open();
     ImGui::SameLine();
     if (button("Rescan", ImVec2(0, 0), false, !A.scanning, ui::Icon::Refresh)) start_scan();
+    { ImGui::SameLine(); hidden_games_row(); }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
