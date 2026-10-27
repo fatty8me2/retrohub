@@ -81,6 +81,7 @@ void home_shelves() {
         });
         ImGui::Dummy(ImVec2(0, sp(1.f)));
     }
+    achievements_home_strip(avail, bleed);   // Recent unlocks (RetroAchievements; only when signed in and something unlocked)
     stats_ui_card();   // Your stats, below the shelves
     ImGui::Dummy(ImVec2(0, sp(7.f)));   // room so the last shelf's covers clear the footer when scrolled to the end
 }
@@ -808,6 +809,7 @@ void draw_details_modal() {
     ImGui::BeginChild("##tabbody", ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AutoResizeY);
     if (tab == TabAbout) {
         gameinfo_ui_section(e, cat ? cat->title : std::string(), 2);
+        achievements_ui_section(e);   // RetroAchievements progress (only when signed in)
         if (e.system == hub::System::WiiU) {
             for (const std::string& l : wiiu_info_lines(e)) ImGui::TextDisabled("%s", l.c_str());
             ImGui::TextDisabled("GamePad screen: hold View + RB, or Game menu > Swap GamePad / TV screen (Cemu: Ctrl+Tab).");

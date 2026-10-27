@@ -11,6 +11,12 @@ RetroHub uses the components below. Each one keeps its own license. Components a
 | mupen64plus-core | 2.6.0 | GPL-2.0-or-later | API headers only, at build time. |
 | miniz | 3.0.2 | MIT | Zip handling for zipped ROMs and saves. |
 
+## Vendored in the source tree
+
+| Component | Version | License | Where | Use |
+|---|---|---|---|---|
+| rcheevos (RetroAchievements) | v12.2.1 (`https://github.com/RetroAchievements/rcheevos`, tag v12.2.1) | MIT | `third_party/rcheevos/` (src + include + LICENSE, unmodified; our `CMakeLists.txt` and `VENDORED.txt` added) | RetroAchievements `rc_client` in `retrorun.exe`, and the one-time account login. |
+
 ## Downloaded by scripts
 
 | Component | Version | License | Fetched by | Use |

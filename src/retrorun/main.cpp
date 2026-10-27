@@ -38,6 +38,7 @@
 #include "session.h"
 #include "save_sync.h"
 #include "cheats.h"
+#include "cheevos.h"
 #include "miniz.h"
 
 constexpr uint8_t kPktCfg = 0x60;
@@ -56,6 +57,7 @@ struct Args {
     int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
     std::string disc_ctl;         // --disc-ctl FILE: RetroHub rewrites it to request "insert the next disc" (watched like --cheats)
     std::vector<uint64_t> swap_at;   // --swap-disc-at N[,N]: QA, request a disc swap at these frames
+    std::string ra_cfg, ra_cache;   // --ra-cfg FILE / --ra-cache DIR: RetroAchievements token file + cache dir (cheevos.h); offline only
     std::string cheats;           // --cheats FILE: cheat list JSON (src/common/cheats.h); polled for live toggles offline
     struct MemDump { unsigned id; size_t off, len; std::string file; };
     std::vector<MemDump> mem_dumps;   // --dump-mem ID,OFFSET,LEN,FILE: raw libretro memory block dumped at exit (QA)
@@ -104,6 +106,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--rom") { if (!val(&o->rom)) return false; }
         else if (k == "--controls") { if (!val(&o->controls)) return false; }
         else if (k == "--cheats") { if (!val(&o->cheats)) return false; }
+        else if (k == "--ra-cfg") { if (!val(&o->ra_cfg)) return false; }
+        else if (k == "--ra-cache") { if (!val(&o->ra_cache)) return false; }
         else if (k == "--disc-ctl") { if (!val(&o->disc_ctl)) return false; }
         else if (k == "--swap-disc-at") {
             if (!val(&v)) return false;
@@ -528,6 +532,8 @@ class Frontend {
     uint64_t cheat_next_poll = 0;
     std::string cheat_applied_sig;
     void cheats_init();
+    cheevos::Session ra_;   // RetroAchievements (cheevos.cpp); inactive unless --ra-cfg and offline
+    void ra_start();
     void cheats_apply(const cheats::CheatSet& set);
     void cheats_poll();
     /* ---- multi-disc (libretro disk control). Offline a swap applies at once; with rollback netplay it travels as a one-shot event in the
@@ -553,6 +559,23 @@ class Frontend {
 
 static Frontend* g_fe = nullptr;
 
+void Frontend::ra_start() {
+    if (a.ra_cfg.empty() || !a.net.empty() || a.ds_link || link || a.synctest || a.selftest || a.rollback) return;   // offline play only
+    cheevos::Params p;
+    if (!cheevos::load_config(a.ra_cfg, &p.cfg)) { rlog("cheevos: cannot read %s", a.ra_cfg.c_str()); return; }
+    p.cache_dir = a.ra_cache;
+    p.game_key = a.game_key;
+    p.game_title_hint = a.title;
+    p.system = lower(a.system);
+    p.rom_path = a.rom;
+    cheevos::Host h;
+    h.http = cheevos::real_http();
+    h.mmap = core.memory_map();
+    h.core_memory = [this](unsigned id, uint8_t** d, size_t* n) { size_t sz = 0; void* m = core.memory(id, &sz); *d = (uint8_t*)m; *n = m ? sz : 0; };
+    h.log = [](const std::string& m) { rlog("%s", m.c_str()); };
+    ra_.start(p, h);
+}
+
 void Frontend::cheats_init() {
     if (a.cheats.empty()) return;
     if (a.ds_link) { rlog("cheats: ignored in DS wireless sessions (every player would need identical state)"); return; }
@@ -567,6 +590,7 @@ void Frontend::cheats_init() {
 }
 
 void Frontend::cheats_apply(const cheats::CheatSet& set) {
+    if (ra_.active() && !ra_.allow(cheevos::Feature::Cheats)) return;   // hardcore
     // The core only has "reset all" + "set slot": rebuild the whole table, but only when the effective list changed.
     std::vector<std::pair<std::string, const cheats::Cheat*>> good;
     std::string sig;
@@ -829,6 +853,7 @@ void Frontend::draw_osd() {
 }
 
 void Frontend::apply_speed(double s) {
+    if (!ra_.allow_speed(s == 0 ? 2.0 : s)) return;   // hardcore: only 1x
     speed_max = (s == 0);
     speed = speed_max ? 1.0 : s;
     if (s == 0 || s > 1.0) fast_speed_ = s;
@@ -1089,7 +1114,7 @@ void Frontend::pump_events(bool idle) {
         }
     }
     const Uint8* k = SDL_GetKeyboardState(nullptr);
-    ff = !online && !a.ds_link && (k[SDL_SCANCODE_TAB] || speed_max);
+    ff = !online && !a.ds_link && ((k[SDL_SCANCODE_TAB] && ra_.allow(cheevos::Feature::FastForward)) || speed_max);
     core.set_fast_forwarding(ff);
     if (win && status_until && SDL_GetTicks64() > status_until) {
         status_until = 0;
@@ -1286,6 +1311,7 @@ void Frontend::ctl_poll() {
 }
 
 bool Frontend::load_state(const std::string& name) {
+    if (ra_.active() && !ra_.allow(cheevos::Feature::LoadState)) { set_status("Hardcore: save states are off"); return false; }
     std::vector<uint8_t> buf;
     if (!read_file(state_path(name), &buf)) { set_status("No state " + name); return false; }
     if (!core.unserialize(buf.data(), buf.size())) { set_status("Load state failed (core error)"); return false; }
@@ -2296,10 +2322,11 @@ int Frontend::run(const Args& args) {
         if (a.net.empty())
             { for (int i = 0; i < link_n; i++) if (owner[i] >= 0) link_apply_blob(i, link_blob_from_disk(i)); link_loaded = true; }
     } else load_srm();
+    ra_start();
     if (!link && a.resume && !online && a.net.empty() && !a.ds_link) {
         if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
     }
-    if (!a.load_state_path.empty() && !link && !online && a.net.empty() && !a.ds_link) {
+    if (!a.load_state_path.empty() && !link && !online && a.net.empty() && !a.ds_link && ra_.allow(cheevos::Feature::LoadState)) {
         std::vector<uint8_t> sb;
         if (read_file(a.load_state_path, &sb) && core.unserialize(sb.data(), sb.size())) set_status("Resumed from saved state");
         else rlog("load-state: could not restore %s", a.load_state_path.c_str());
@@ -2414,6 +2441,7 @@ int Frontend::run(const Args& args) {
                 ctl_poll();
                 do_pacing();
                 core.run();
+                ra_.frame();
                 if (link_active) {
                     link_pump();
                     if (SDL_GetTicks64() - link_last_log >= 5000) {
@@ -2519,6 +2547,7 @@ done:
     if (win) SDL_DestroyWindow(win);
     audio.close();
     for (auto* p : pads) SDL_GameControllerClose(p);
+    ra_.stop();
     session.stop();
     core.unload();
     SDL_Quit();

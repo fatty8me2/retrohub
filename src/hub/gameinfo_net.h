@@ -16,6 +16,8 @@ std::string fixture_name(const std::string& url);   // "<16 hex>"
 bool fetch(const std::string& url, std::string* body, int* status);
 /* Live request only (no fixtures); used by the recorder tool. */
 bool http_get(const std::string& url, std::string* body, int* status);
+/* Live POST (RetroAchievements client; same WinHTTP path, no fixtures, no rate limit). Never logs the body. */
+bool http_post(const std::string& url, const std::string& content_type, const std::string& post_body, std::string* body, int* status);
 
 std::string user_agent();   // "RetroHub/<version> (https://github.com/fatty8me2/retrohub)"
 

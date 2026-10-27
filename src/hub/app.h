@@ -813,6 +813,11 @@ void page_saves();
 void settings_label(const char* title, const char* hint = nullptr);
 void page_settings();
 void settings_open(int tab);   // deep link: show Settings on that tab (hubui::SettingsTab)
+/* achievements_ui.cpp: RetroAchievements (runner writes a local cache; the hub only reads it) */
+std::string achievements_launch_args();                           // " --ra-cfg .. --ra-cache .." for offline retrorun launches ("" when off)
+void achievements_ui_section(const hub::GameEntry& e);            // details modal: progress + list
+bool achievements_home_strip(float avail, float bleed);           // Home "Recent unlocks" (false = nothing to show)
+void achievements_account_section();                              // Settings > Account sign-in, hardcore toggle
 void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
 void account_qa_poll();            // QA hooks (userflow.cpp): the same calls the Account buttons make
 void account_qa_make_code();
