@@ -47,7 +47,7 @@ struct AccountState {
 };
 AccountState AC;
 
-/* Linked PCs: the PCs on this account (server list), each with "Sign out this PC" except the one in use. The list is fetched when the
+/* Linked PCs: the PCs on this account (server list), each with "Stop syncing on this PC" except the one in use. The list is fetched when the
  * Account page opens (and again after 5 minutes or on Refresh): one small request, never a poll. */
 namespace hs = hub::saves;
 struct PcJob {
@@ -106,7 +106,7 @@ void pcs_poll() {
         auto j = PC.revoke_job;
         PC.revoke_job.reset();
         if (j->ok) {
-            PC.msg = "Signed out " + hubui::cloudui::pc_name(PC.pending) + ".";
+            PC.msg = "Stopped syncing on " + hubui::cloudui::pc_name(PC.pending) + ".";
             PC.msg_ok = true;
             PC.pcs.erase(std::remove_if(PC.pcs.begin(), PC.pcs.end(), [&](const hs::LinkedPc& p) { return p.dev == PC.pending.dev; }), PC.pcs.end());
             PC.loaded_at = -1e9;   // reload once to be sure
@@ -120,7 +120,7 @@ void pcs_seed_for_screenshots(const std::string& m) {
               {"d-living", "PC-LIVING-ROOM", now - 86400 * 40, now - 2 * 3600, false},
               {"d-laptop", "LAPTOP-KAI", now - 86400 * 12, now - 3 * 86400, false}};
     if (m == "pcs_confirm") { PC.pending = PC.pcs[1]; PC.confirm_open = true; }
-    if (m == "pcs_done") { PC.msg = "Signed out PC-LIVING-ROOM."; PC.msg_ok = true; PC.pcs.erase(PC.pcs.begin() + 1); }
+    if (m == "pcs_done") { PC.msg = "Stopped syncing on PC-LIVING-ROOM."; PC.msg_ok = true; PC.pcs.erase(PC.pcs.begin() + 1); }
     if (m == "pcs_err") { PC.pcs.clear(); PC.err = "Can't reach the server. Check your internet connection."; }
 }
 
@@ -326,15 +326,15 @@ void draw_account_section() {
     /* ---- your PCs (linked PCs) ---- */
     {
         namespace cu = hubui::cloudui;
-        settings_label("Your PCs", "The PCs signed in to this account. Signing a PC out stops it syncing saves until someone signs in there again; "
-                                   "nothing is deleted. You can't sign out the PC you are using here.");
+        settings_label("Your PCs", "The PCs that use this account. \"Stop syncing\" switches cloud saves off on that PC until someone there turns sync back on; "
+                                   "nothing is deleted. It is not a lock-out: to fully lock someone out, create a new account code. You can't do this to the PC you are using.");
         if (hs::cloud_revoked()) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(COL_BAD));
             ImGui::PushTextWrapPos(0.f);
             ImGui::TextUnformatted(cu::attention_help("device-revoked").c_str());
             ImGui::PopTextWrapPos();
             ImGui::PopStyleColor();
-            if (button("Sign in again on this PC", ImVec2(0, 0), true, !g_headless)) { hs::cloud_sign_in_again(); PC.loaded_at = -1e9; set_toast("Signed in again. Your saves are syncing.", true, 4.0); }
+            if (button("Turn sync back on", ImVec2(0, 0), true, !g_headless)) { hs::cloud_sign_in_again(); PC.loaded_at = -1e9; set_toast("Cloud sync is back on. Your saves are syncing.", true, 4.0); }
         } else {
             const bool cloud_on = A.st.cloud_enabled;
             if (cloud_on && !g_headless && !PC.list_job && ImGui::GetTime() - PC.loaded_at > 300.0) pcs_start_list();
@@ -348,7 +348,7 @@ void draw_account_section() {
                 ImGui::TextDisabled("%s", cu::pc_last_seen(p, now).c_str());
                 if (cu::pc_can_revoke(p)) {
                     ImGui::SameLine(0, sp(2.f));
-                    if (button("Sign out this PC", ImVec2(0, 0), false, !PC.revoke_job && !g_headless)) { PC.pending = p; PC.confirm_open = true; }
+                    if (button("Stop syncing on this PC", ImVec2(0, 0), false, !PC.revoke_job && !g_headless)) { PC.pending = p; PC.confirm_open = true; }
                 }
                 ImGui::PopID();
             }
@@ -442,11 +442,11 @@ void draw_account_section() {
         else account_text_error(AC.io_msg);
     }
 
-    /* ---- confirmation before signing another PC out ---- */
-    if (PC.confirm_open) { ImGui::OpenPopup("Sign out this PC?##pc"); PC.confirm_open = false; }
+    /* ---- confirmation before stopping sync on another PC ---- */
+    if (PC.confirm_open) { ImGui::OpenPopup("Stop syncing on this PC?##pc"); PC.confirm_open = false; }
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
-    if (ImGui::BeginPopupModal("Sign out this PC?##pc", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+    if (ImGui::BeginPopupModal("Stop syncing on this PC?##pc", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
         if (ui::modal_back()) ImGui::CloseCurrentPopup();
         ImGui::PushFont(ui::F.bold);
         ImGui::TextUnformatted(hubui::cloudui::pc_revoke_title(PC.pending).c_str());
@@ -456,7 +456,7 @@ void draw_account_section() {
         ImGui::TextUnformatted(hubui::cloudui::pc_revoke_body(PC.pending).c_str());
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, sp(1.f)));
-        if (button("Sign out", ImVec2(sp(16.f), sp(5.f)), true, !PC.revoke_job)) { pcs_start_revoke(PC.pending); ImGui::CloseCurrentPopup(); }
+        if (button("Stop syncing", ImVec2(sp(16.f), sp(5.f)), true, !PC.revoke_job)) { pcs_start_revoke(PC.pending); ImGui::CloseCurrentPopup(); }
         ImGui::SameLine();
         if (button("Cancel", ImVec2(sp(12.f), sp(5.f)))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
