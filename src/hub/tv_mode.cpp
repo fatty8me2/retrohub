@@ -4,6 +4,7 @@
 #include "tv_mode.h"
 #include "tv_logic.h"
 #include "friends_ui.h"
+#include "popup_guard.h"
 
 namespace tvmode {
 
@@ -26,7 +27,7 @@ static void save_rect(SDL_Window* win) {
     Uint32 fl = SDL_GetWindowFlags(win);
     if (fl & SDL_WINDOW_FULLSCREEN_DESKTOP) return;   // already fullscreen: keep what we saved
     g_saved.maximized = (fl & SDL_WINDOW_MAXIMIZED) != 0;
-    if (g_saved.maximized) SDL_RestoreWindow(win);    // read the normal rect, then maximize again on leave
+    if (g_saved.maximized) SDL_RestoreWindow(win);    // popup-guard: ok (F11 / startup, hub focused or not yet shown) read the normal rect, then maximize again on leave
     SDL_GetWindowPosition(win, &g_saved.x, &g_saved.y);
     SDL_GetWindowSize(win, &g_saved.w, &g_saved.h);
     g_saved.valid = true;
@@ -49,7 +50,8 @@ float init(SDL_Window* win, bool headless, float base_scale, bool cmd_flag, bool
     g_active = true;
     if (!headless && win) {
         save_rect(win);
-        SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        if (!game_active())   // started while a game is up (autostart / update relaunch): no fullscreen grab
+            SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);   // popup-guard: ok (guarded by game_active)
     }
     return hubtv::tv_scale(base_scale, display_h(win));
 }
@@ -77,11 +79,11 @@ void frame_begin(SDL_Window* win, SDL_Renderer*) {
     g_active = on;
     if (on) {
         save_rect(win);
-        if (!g_headless_mode) SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        if (!g_headless_mode) SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);   // popup-guard: ok (F11 pressed in the focused hub)
         rebuild_fonts(hubtv::tv_scale(g_base_s, display_h(win)));
     } else {
         if (!g_headless_mode) {
-            SDL_SetWindowFullscreen(win, 0);
+            SDL_SetWindowFullscreen(win, 0);   // popup-guard: ok (F11 pressed in the focused hub)
             if (g_saved.valid) {
                 SDL_SetWindowSize(win, g_saved.w, g_saved.h);
                 SDL_SetWindowPosition(win, g_saved.x, g_saved.y);
@@ -94,11 +96,10 @@ void frame_begin(SDL_Window* win, SDL_Renderer*) {
 }
 
 void tick(SDL_Window* win, bool game_running) {
-    if (g_prev_game && !game_running && g_active && !g_headless_mode && win) {   // game closed: back to the full-screen hub
-        SDL_RestoreWindow(win);
-        SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
-        SDL_RaiseWindow(win);
-    }
+    /* Game closed: NEVER raise/restore the hub (it must not jump over whatever the user does next). Only re-assert fullscreen when the
+     * hub already has the focus; otherwise it stays as it is and goes fullscreen when the user opens it. */
+    if (g_prev_game && !game_running && g_active && !g_headless_mode && win && hubguard::may_restore_after_exit(hub_has_focus()))
+        SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);   // popup-guard: ok (hub already focused)
     g_prev_game = game_running;
 }
 

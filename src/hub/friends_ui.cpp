@@ -1,4 +1,5 @@
 #include "app.h"
+#include "runner_ctl.h"
 #include "toast.h"
 #include "ui_sound.h"
 
@@ -322,16 +323,15 @@ void fr_invite_uids(const std::vector<std::string>& uids) {
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who) {
     fr_trace("join", code);
     if (!hubnet::valid_room_code(code)) { set_notice("That lobby code is not valid any more."); return; }
-    if (A.proc) {   // our game is running: remember the room and join when it closes
+    if (A.proc) {   // our game is running: NEVER auto-join or launch after it closes; keep the invite in the bell, joinable by hand
         if (hubui::join_while_running(A.in_room && A.code == code) == hubui::JoinWhileRunning::AlreadyInRoom) {
             FR.pending_join = {}; set_notice("You are already in that room."); return;
         }
-        std::string msg = (!FR.pending_join.code.empty() && FR.pending_join.code != code)
-            ? hubui::queued_join_replaced_text(FR.pending_join.name, who) : hubui::queued_join_text(who);
-        FR.pending_join = {code, game_id, title, who};
-        set_notice(msg, 20.0);
-        set_toast(msg, true, 6.0);
-        return;
+        FR.pending_join = {};
+        hubnet::Invite inv;
+        inv.lobby_code = code; inv.game_id = game_id; inv.game_title = title;
+        group_note_invite("link:" + code, who.empty() ? std::string("A friend") : who, inv);
+        return;   // no notice/toast either: the bell badge shows it when the hub is next opened
     }
     FR.pending_join = {};
     if (A.in_room && A.code == code) { A.page = Page::Online; return; }
@@ -367,7 +367,13 @@ void fr_notify(bool invite, const std::string& uid, const std::string& name, con
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
     if (invite) group_note_invite(uid, name, inv);
     if (invite && A.proc && !g_headless) hubtoast::notify_invite(hubtoast::system_notifier(), A.st.notify_in_game, true, name, inv.game_title, inv.lobby_code);
-    if (invite && A.proc) flash_taskbar();   // a game is in front: blink the taskbar button, never take focus
+    /* A game is running: no flash, no hub window. The invite is in the bell (above); the runner's own OSD tells the player. */
+    if (invite && A.proc && !A.run.ctl_path.empty() && !g_headless) {
+        runctl::Command c;
+        c.cmd = runctl::Cmd::OsdMsg;
+        c.text = (name.empty() ? std::string("A friend") : name) + " invited you - open RetroHub to join";
+        runctl::send_command_ex(A.run.ctl_path, c);
+    }
 }
 int fr_pending_count() {
     return group_unread();   // the bell badge: unread history entries (requests and invites included)
@@ -516,6 +522,7 @@ void fr_start() {
 }
 
 void fr_run_pending_join() {
+    /* Joins are no longer queued behind a running game (they sit in the bell), so this only drains a stale entry. */
     if (!hubui::pending_join_ready(!FR.pending_join.code.empty(), A.proc != nullptr)) return;
     auto pj = FR.pending_join;
     FR.pending_join = {};

@@ -786,6 +786,13 @@ int main() {
         Settings back;
         CHECK(settings_from_json(settings_to_json(st), &back) && !back.share_games && !back.show_friend_games);
         CHECK(ask_host_toast_title("Mia", "Mario Kart 64") == "Mia wants to play Mario Kart 64 - host a room?");
+        /* in-game toasts: off by default; an old settings file (no migration flag) that had it on is forced off exactly once */
+        CHECK(!Settings().notify_in_game);
+        Settings old;
+        CHECK(settings_from_json("{\"notify_in_game\": true}", &old) && !old.notify_in_game);
+        Settings on; on.notify_in_game = true;
+        Settings rt;
+        CHECK(settings_from_json(settings_to_json(on), &rt) && rt.notify_in_game);   // the user turned it back on after the migration: kept
     }
 
     {   // Settings tabs: every control of the old single-page Settings (plus the cloud toggles) still exists, exactly once

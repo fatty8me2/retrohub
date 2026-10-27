@@ -83,6 +83,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"tv_start\": " << (s.tv_start ? "true" : "false") << ",\n"
       << "  \"tv_windows\": " << (s.tv_windows ? "true" : "false") << ",\n"
       << "  \"notify_in_game\": " << (s.notify_in_game ? "true" : "false") << ",\n"
+      << "  \"notify_migrated\": true,\n"
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
       << "  \"watch_online\": \"" << json::escape(s.watch_online) << "\",\n"
       << "  \"menu_sounds\": " << (s.menu_sounds ? "true" : "false") << ",\n"
@@ -167,6 +168,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->tv_start = json_bool(j, "tv_start", out->tv_start);
     out->tv_windows = json_bool(j, "tv_windows", out->tv_windows);
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
+    if (!json_bool(j, "notify_migrated", false)) out->notify_in_game = false;   // one-time: older installs had it on by default
+    out->notify_migrated = true;
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
     out->watch_online = j.str("watch_online", out->watch_online);
     out->menu_sounds = json_bool(j, "menu_sounds", out->menu_sounds);

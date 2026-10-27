@@ -181,9 +181,9 @@ int main(int argc, char** argv) {
                 char title[256]; GetWindowTextA(best, title, sizeof title);
                 RECT r; GetWindowRect(best, &r);
                 char p[512]; std::snprintf(p, sizeof p, "%s\\shot_%02d_%ds.bmp", shots.c_str(), nshot++, s + 1);
-                ShowWindow(best, SW_SHOWNORMAL);
-                SetWindowPos(best, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-                SetForegroundWindow(best);
+                ShowWindow(best, SW_SHOWNORMAL);   // popup-guard: ok (manual dev tool hub_emu_live, not part of RetroHub.exe)
+                SetWindowPos(best, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);   // popup-guard: ok (dev tool)
+                SetForegroundWindow(best);   // popup-guard: ok (dev tool)
                 Sleep(500);
                 save_bmp(p, best);
                 LONG style = GetWindowLongW(best, GWL_STYLE);

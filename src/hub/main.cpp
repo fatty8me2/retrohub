@@ -3,6 +3,7 @@
 #include "prefs.h"
 #include "tv_logic.h"
 #include "homefun.h"
+#include "popup_guard.h"
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
@@ -35,7 +36,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");   // smooth downscaling of cover art
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
-        MessageBoxA(nullptr, SDL_GetError(), "RetroHub", MB_ICONERROR);
+        std::fprintf(stderr, "RetroHub: SDL_Init failed: %s\n", SDL_GetError());   // no MessageBox: it could land over a game
         return 1;
     }
 
@@ -103,11 +104,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         win_h = (int)(780 * S);
         if (const char* sz = std::getenv("HUB_SHOT_SIZE")) std::sscanf(sz, "%dx%d", &win_w, &win_h);
     }
+    /* Never open over a running game: `--background` (the update relaunch passes it) or a full-screen / busy app up front means the
+     * window is shown minimised without activation instead (see popup_guard.h). */
+    const bool quiet_start = !shot_path && hubguard::start_quiet(wcsstr(GetCommandLineW(), L"--background") != nullptr, game_active());
     A.win = SDL_CreateWindow("RetroHub", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, win_w, win_h,
-                             SDL_WINDOW_RESIZABLE | (shot_path ? 0 : SDL_WINDOW_SHOWN));
+                             SDL_WINDOW_RESIZABLE | ((shot_path || quiet_start) ? 0 : SDL_WINDOW_SHOWN));
     SDL_Renderer* ren = A.win ? SDL_CreateRenderer(A.win, -1, shot_path ? SDL_RENDERER_SOFTWARE : (SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC)) : nullptr;
     if (!A.win || !ren) {
-        MessageBoxA(nullptr, SDL_GetError(), "RetroHub", MB_ICONERROR);
+        std::fprintf(stderr, "RetroHub: window/renderer failed: %s\n", SDL_GetError());   // no MessageBox: it could land over a game
         return 1;
     }
     SDL_SetWindowMinimumSize(A.win, (int)(960 * S), (int)(600 * S));
@@ -115,6 +119,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_SysWMinfo wm;
     SDL_VERSION(&wm.version);
     if (SDL_GetWindowWMInfo(A.win, &wm)) A.hwnd = wm.info.win.window;
+    if (quiet_start) hub_show_noactivate();
     if (!shot_path && !autotest) {
         shell_set_window_icon(A.win);
         shell_ensure_start_menu_shortcut();
@@ -210,14 +215,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             std::string jc;
             if (link_join.take(name_set, &jc)) {
                 fr_join_lobby(jc, "", "", "");
-                if (A.proc) flash_taskbar();
-                else if (A.win) { SDL_RestoreWindow(A.win); SDL_RaiseWindow(A.win); }
+                hub_surface();   // no-op while a game runs: the join is queued and starts after the game; nothing is shown or flashed
             }
             while (invite_srv.take_play(&w)) A.pending_play = U(w);
-            if (invite_srv.take_show()) {
-                if (A.proc) flash_taskbar();   // a game is running: never pull RetroHub in front of it
-                else { SDL_RestoreWindow(A.win); SDL_RaiseWindow(A.win); }
-            }
+            if (invite_srv.take_show()) hub_surface();   // a game is running: never pull RetroHub in front of it (refused inside)
             if (!A.pending_play.empty() && !A.scanning) {   // library is loaded: start the favorite (offline)
                 std::string key = A.pending_play;
                 A.pending_play.clear();
@@ -337,7 +338,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         ImGui::PushFont(ui::F.body);
         draw_frame();
         if (shot_path) bootart_shot_draw(ren);   // HUB_SHOT_BOOTART gallery
-        if (!shot_path || SH.update) draw_update_popup();
+        if (!shot_path || SH.update) draw_update_popup();   // opens itself only when prompt_allowed()
         osk::draw_root();
         ImGui::PopFont();
         ImGui::Render();

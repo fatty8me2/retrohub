@@ -1,6 +1,7 @@
 /* Native update applier. See update_apply.h. */
 #include "winutil.h"
 #include "update_apply.h"
+#include "popup_guard.h"
 
 #include <algorithm>
 #include <cwchar>
@@ -259,6 +260,12 @@ void update_display_version(const Options& o) {
 void relaunch(const Options& o) {
     std::wstring exe = norm(o.install) + L"\\RetroHub.exe";
     std::wstring cmd = L"\"" + exe + L"\"", dir = norm(o.install);
+    {   /* Something that is not the desktop shell is in front (a game the user switched to while the update ran): reopen the hub
+         * minimised without activation instead of over it. */
+        HWND fg = GetForegroundWindow();
+        wchar_t cls[64] = {0};
+        if (fg && GetClassNameW(fg, cls, 64) && !hubguard::is_shell_class(cls)) cmd += L" --background";
+    }
     STARTUPINFOW si{}; si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
     std::wstring c1 = cmd, c2 = cmd;
@@ -301,11 +308,8 @@ int run(const Options& o) {
         if (gen_backup) fs::remove_all(fs::path(opt.backup).parent_path(), ec);
     } else {
         alog(L"update failed: " + r.error);
-        if (o.relaunch) {
-            std::wstring msg = L"Could not install RetroHub " + o.version + L": " + r.error +
-                               L"\nThe previous version will be opened.";
-            MessageBoxW(nullptr, msg.c_str(), L"RetroHub Update", MB_OK | MB_ICONERROR);
-        }
+        /* No MessageBox here: this runs with the user possibly in a game, and a modal box would land on top of it. The error is in the
+         * apply log; the previous version is reopened (quietly, see relaunch). */
     }
     if (o.relaunch) relaunch(o);
     return r.ok ? 0 : 1;

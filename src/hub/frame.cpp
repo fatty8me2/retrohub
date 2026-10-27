@@ -8,7 +8,7 @@
 void draw_update_popup() {
     bool want = hubupdate::update_available() && !A.update_prompt_dismissed &&
                 (A.update_check_requested || !hubupdate::latest_skipped());
-    if (want && !ImGui::IsPopupOpen("Update available")) ImGui::OpenPopup("Update available");
+    if (want && !ImGui::IsPopupOpen("Update available") && prompt_allowed()) ImGui::OpenPopup("Update available");   // waits for: no game running, hub focused
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSizeConstraints(ImVec2(sp(52.f), 0), ImVec2(sp(80.f), vp->Size.y * 0.8f));

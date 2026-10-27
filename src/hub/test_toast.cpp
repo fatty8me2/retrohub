@@ -25,6 +25,11 @@ int main() {
     CHECK(build_invite_xml("A", "B", "").empty());
     CHECK(build_invite_xml("", "", "ABC234").find("A friend invited you to a game") != std::string::npos);
 
+    /* quiet toasts: default scenario only (incomingCall / alarm / reminder can take priority), silent audio */
+    CHECK(x.find("scenario=\"default\"") != std::string::npos && x.find("incomingCall") == std::string::npos &&
+          x.find("alarm") == std::string::npos && x.find("reminder") == std::string::npos && x.find("<audio silent=\"true\"/>") != std::string::npos);
+    CHECK(build_online_xml("Mia").find("scenario=\"default\"") != std::string::npos && build_online_xml("Mia").find("<audio silent=\"true\"/>") != std::string::npos);
+
     std::string c;
     CHECK(parse_activation_code("retrohub://join/ABC234", &c) && c == "ABC234");
     CHECK(parse_activation_code("RetroHub://join/abc234/", &c) && c == "ABC234");

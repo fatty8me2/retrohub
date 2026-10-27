@@ -36,7 +36,7 @@ std::string build_invite_xml(const std::string& friend_name, const std::string& 
            "<visual><binding template=\"ToastGeneric\">"
            "<text>" + xml_escape(who) + " invited you to " + xml_escape(game) + "</text>"
            "<text>Join after your current game ends.</text>"
-           "</binding></visual>"
+           "</binding></visual><audio silent=\"true\"/>"
            "<actions><action content=\"Join\" arguments=\"" + url + "\" activationType=\"protocol\"/></actions>"
            "</toast>";
 }
@@ -45,7 +45,7 @@ std::string build_online_xml(const std::string& friend_name) {
     std::string who = friend_name.empty() ? "A friend" : friend_name;
     return "<toast scenario=\"default\"><visual><binding template=\"ToastGeneric\">"
            "<text>" + xml_escape(who) + " came online</text>"
-           "</binding></visual></toast>";
+           "</binding></visual><audio silent=\"true\"/></toast>";
 }
 
 bool parse_activation_code(const std::string& args, std::string* code) {
