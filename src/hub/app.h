@@ -636,6 +636,7 @@ void kt_shot_init();                                    // HUB_SHOT_KT screensho
 extern hub::gs::Store GSTORE;
 void gs_load();   // after the vault dir is known
 hub::gs::Values gs_values_for(const hub::GameEntry& e);   // resolved incl. the global fullscreen default
+bool gs_has_game_section(const hub::GameEntry& e);
 void gs_draw_game_section(const hub::GameEntry& e);       // details modal
 void gs_draw_defaults_area();                              // Settings page
 
@@ -663,6 +664,7 @@ void qm_prepare(RunInfo& ri, const hub::GameEntry& e);                          
 std::string qm_args(const RunInfo& ri, const hub::GameEntry& e, bool n64_state_dir);    // " --control ... --game-key ... --shot-dir ..." or ""
 void qm_open_live();                                                                    // View+Y while a game runs
 void draw_quick_menu();
+int shots_count(const hub::GameEntry& e);
 void shots_gallery(const hub::GameEntry& e);                                            // details modal: screenshots strip
 void qm_seed_gallery(const hub::GameEntry& e);                                          // HUB_SHOT_GALLERY aid
 
@@ -820,7 +822,7 @@ int cloud_ui_conflict_count();  // games whose saves differ between this PC and 
 void history_ui_open(const std::string& system, const std::string& key);   // Saves page: unified save history of one game
 void history_ui_saves_page();
 void history_ui_details_section(const hub::GameEntry& e);   // details modal: one line + "History..." button
-void gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_title);   // details modal: facts, rating chips, description (gameinfo_ui.cpp)
+bool gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_title, int part = 0);   // details modal: part 0 all, 1 description only (returns whether drawn), 2 facts + ratings
 void gameinfo_ui_shot_lib();   // HUB_SHOT_INFO screenshot aid
 void stats_ui_card();                                       // Home: "Your stats"
 void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history

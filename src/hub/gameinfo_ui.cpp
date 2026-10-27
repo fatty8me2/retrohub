@@ -164,7 +164,8 @@ void fact(const char* label, const std::string& value, float col_w) {
 }  // namespace
 
 /* Draws the info block for any game (library entry or a friend's game). `id` only disambiguates widget ids. */
-void gameinfo_ui_section_query(const Query& q, const std::string& id) {
+bool gameinfo_ui_section_query(const Query& q, const std::string& id, int part) {   // part: 0 all, 1 description only, 2 facts + ratings only
+    bool drew_desc = false;
     drain_results();
     {   /* A tall modal opens scrolled to its default-focused Play button (at the bottom); keep the info block in view for the first frames. */
         static double keep_until = 0;
@@ -194,6 +195,7 @@ void gameinfo_ui_section_query(const Query& q, const std::string& id) {
     add("Released", gameinfo::release_text(m, o));
     add("Players", gameinfo::players_text(m.players));
     const float col_w = avail * 0.5f;
+    if (part == 1) facts.clear();
     for (size_t i = 0; i < facts.size(); ++i) {
         if (avail > sp(50.f)) {
             if (i % 2 == 1) ImGui::SameLine(col_w);
@@ -206,6 +208,7 @@ void gameinfo_ui_section_query(const Query& q, const std::string& id) {
     /* badges: age rating + review scores */
     std::string age = gameinfo::age_badge(m, o);
     auto chips = gameinfo::rating_chips(m, o);
+    if (part == 1) { age.clear(); chips.clear(); }
     if (!age.empty() || !chips.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.75f)));
         ImVec2 p0 = ImGui::GetCursorScreenPos();
@@ -224,7 +227,9 @@ void gameinfo_ui_section_query(const Query& q, const std::string& id) {
     }
 
     /* description */
-    if (s.st == Slot::Loading) {
+    if (part == 2) {}
+    else if (s.st == Slot::Loading) {
+        drew_desc = true;
         ImGui::Dummy(ImVec2(0, sp(0.75f)));
         for (int i = 0; i < 3; ++i) {
             ImVec2 a = ImGui::GetCursorScreenPos();
@@ -233,6 +238,7 @@ void gameinfo_ui_section_query(const Query& q, const std::string& id) {
             ImGui::Dummy(ImVec2(w, sp(1.25f) + sp(0.75f)));
         }
     } else if (!o.description.empty()) {
+        drew_desc = true;
         ImGui::Dummy(ImVec2(0, sp(0.75f)));
         ImFont* f = ImGui::GetFont();
         float fs = ImGui::GetFontSize();
@@ -254,25 +260,26 @@ void gameinfo_ui_section_query(const Query& q, const std::string& id) {
         } else {
             ImGui::TextDisabled("Wikipedia");
         }
-    } else if (s.st == Slot::Offline) {
+    } else if (s.st == Slot::Offline && part != 1) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         text_wrapped_disabled("A description and review scores load when you are online.");
     }
     ImGui::PopStyleVar();
     ImGui::PopID();
+    return drew_desc;
 }
 
-void gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_title) {
-    if (e.catalog_id == "remix" || e.catalog_id == "kanto") return;   // hacks: nothing reliable to match
+bool gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_title, int part) {
+    if (e.catalog_id == "remix" || e.catalog_id == "kanto") return false;   // hacks: nothing reliable to match
     Query q;
     q.system = hub::system_short(e.system);
     q.title = e.title;
     q.serial = e.serial;
     q.alt_title = e.catalog_id == "smash64" ? "Super Smash Bros." : catalog_title;
-    if (q.system.empty()) return;
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-    gameinfo_ui_section_query(q, e.key);
+    if (q.system.empty()) return false;
+    bool d = gameinfo_ui_section_query(q, e.key, part);
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    return d;
 }
 
 /* Screenshot aid: HUB_SHOT_INFO="n64;Super Smash Bros.;NALE|gba;Pokemon Emerald;BPEE" replaces the fake library with these games
