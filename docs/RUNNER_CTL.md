@@ -41,7 +41,8 @@ Same file and `seq` rules as above. Extra fields in `control.json`: `"value"` (i
 | `ff` | `value` 1 = on, 0 = off | on = the last fast speed chosen (default 2x), off = 1x | same |
 | `osd_msg` | `text` | shows a toast | shows a toast |
 | `shader` | `text`: `off`, `crt`, `lcd`, `dmg`, `sharp`, `next` (cycle), `bezel:on`, `bezel:off`, `bezel:toggle` | switches the screen filter / console frame live (OSD shows `Filter: CRT`); unknown name = `ok:false` | ack `ok:false`, msg `unsupported` (retrorun only) |
-| `rewind`, `overlay`, `clip` | `value` / `text` | ack `ok:false`, msg `unsupported` | same |
+| `rewind` | `value` 1/0 | retrorun: 1 rewinds continuously until 0 (or the history runs out); `ok:false` "Rewind is not available for this game" when rewind is off (PS1/DS default, `--rewind off`). n64run: `unsupported` | same |
+| `overlay`, `clip` | `value` / `text` | ack `ok:false`, msg `unsupported` | same |
 
 - **Offline only:** `speed`, `ff`, `rewind`, `shader`, `overlay`, `clip` are refused online (`ok:false`, `Not available in online sessions`), like save states. `volume`, `mute`, `osd_msg`, `screenshot` and `quit` work online (volume and mute are local: they never touch the emulation). `runctl::offline_only()` is the single rule both runners use.
 - `speed` shows `Speed 2x` / `Speed 0.5x` / `Speed max` on the OSD whenever it changes. The Tab key still fast-forwards while held (retrorun).

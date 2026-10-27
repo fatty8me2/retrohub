@@ -10,6 +10,9 @@ add_executable(retrorun
     link_sync.cpp
     rollback.cpp
     present_fx.cpp
+    rewind.cpp
+    runahead.cpp
+    features.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run/lockstep.cpp)
 target_include_directories(retrorun PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -53,3 +56,6 @@ target_include_directories(retrorun_rollback_stall_test PRIVATE ${CMAKE_CURRENT_
 # Screen filters + bezels (present_fx.h): pure CPU, console test + benchmark.
 add_executable(retrorun_fx_test test_present_fx.cpp present_fx.cpp)
 target_include_directories(retrorun_fx_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Rewind ring + run-ahead + scripted rewind/run-ahead checks against a deterministic fake core (no SDL, no real core).
+add_executable(retrorun_rewind_test test_rewind.cpp rewind.cpp runahead.cpp features.cpp)
+target_include_directories(retrorun_rewind_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
