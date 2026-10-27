@@ -409,8 +409,11 @@ void page_online_room() {
     }
     if (A.chat_scroll) { ImGui::SetScrollHereY(1.f); A.chat_scroll = false; }
     ImGui::EndChild();
+    static bool had_game = false;
+    const bool launched = A.proc && !had_game;
+    had_game = A.proc != nullptr;
     const bool chat_blocked = osk::hub_input_blocked();
-    if (chat_blocked) {   // a game is running / the hub is unfocused: the chat box must not keep the keyboard
+    if (chat_blocked || launched) {   // a game is running / the hub is unfocused: the chat box must not keep the keyboard
         ImGui::ClearActiveID();
         A.chat_buf[0] = 0;
     }

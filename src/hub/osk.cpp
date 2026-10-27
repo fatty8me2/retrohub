@@ -460,11 +460,21 @@ std::string shot_text() { return S.open ? S.ses.ed.text : std::string(); }
 
 bool hub_input_blocked() {
     if (g_headless) return false;
-    return input_blocked(A.proc != nullptr, A.win && (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS));
+    static FocusGate gate;
+    static Uint32 last_tick = 0xFFFFFFFFu;
+    static bool cached = false;
+    const Uint32 t = SDL_GetTicks();
+    if (t == last_tick) return cached;   // one answer per millisecond keeps the gate's edge detection stable
+    last_tick = t;
+    cached = gate.blocked(A.win && (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS), t / 1000.0);
+    return cached;
 }
 
 void pre_frame(ImGuiIO& io) {
-    if (hub_input_blocked() && (S.open || S.fb_open)) {   // a game started behind an open keyboard: cancel it, nothing typed is kept
+    static bool had_game = false;
+    const bool launched = A.proc && !had_game;
+    had_game = A.proc != nullptr;
+    if ((launched || hub_input_blocked()) && (S.open || S.fb_open)) {   // a game launched / focus left: cancel the keyboard, nothing typed is kept
         S.open = S.fb_open = false;
         S.fb_tag.clear();
         S.owner = 0;

@@ -242,7 +242,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             io.ClearInputKeys();
             io.InputQueueCharacters.resize(0);
         }
-        if (!g_headless && (A.proc || !(SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS))) {
+        if (!g_headless && !(SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS)) {
             /* A game is running (or another window has focus): pad buttons belong to that, never to the hub behind it. */
             for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadRStickRight; ++k) io.AddKeyAnalogEvent((ImGuiKey)k, false, 0.f);
         }
