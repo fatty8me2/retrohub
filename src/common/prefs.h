@@ -27,6 +27,7 @@ struct Prefs {
     std::vector<std::string> hidden;               // game keys hidden from the library
     std::map<std::string, std::string> renames;    // game key -> display name
     std::map<std::string, std::string> covers;     // game key -> cover image path
+    std::map<std::string, std::string> preferred_copy;   // game key -> path of the duplicate copy to use (library scan)
     std::string theme;
     Profile profile;
     std::map<std::string, long long> ts;           // field name -> last modified (unix ms); absent = 0
@@ -47,6 +48,7 @@ bool set_user_shelves(Prefs* p, std::vector<Shelf> shelves, long long t = 0);
 bool set_hidden(Prefs* p, std::vector<std::string> keys, long long t = 0);
 bool set_renames(Prefs* p, std::map<std::string, std::string> m, long long t = 0);
 bool set_covers(Prefs* p, std::map<std::string, std::string> m, long long t = 0);
+bool set_preferred_copy(Prefs* p, std::map<std::string, std::string> m, long long t = 0);
 bool set_theme(Prefs* p, const std::string& theme, long long t = 0);
 bool set_profile_avatar(Prefs* p, const std::string& v, long long t = 0);
 bool set_profile_fav_game(Prefs* p, const std::string& v, long long t = 0);
