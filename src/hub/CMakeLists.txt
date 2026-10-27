@@ -98,6 +98,9 @@ target_include_directories(hub_wizard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.
 add_executable(hub_group_test test_group.cpp)
 target_link_libraries(hub_group_test PRIVATE hublogic)
 
+add_executable(hub_rivals_test test_rivals.cpp)
+target_link_libraries(hub_rivals_test PRIVATE hublogic)
+
 add_executable(hub_toast_test test_toast.cpp)
 target_link_libraries(hub_toast_test PRIVATE hublogic)
 

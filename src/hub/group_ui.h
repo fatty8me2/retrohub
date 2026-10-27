@@ -2,6 +2,7 @@
 /* group_ui.h - play again / recent groups / notification history (group_ui.cpp). Included at the end of app.h.
  * Pure rules live in group_logic.h (unit tested). */
 #include "group_logic.h"
+#include "rivals_logic.h"
 
 struct GroupUi {
     hubui::group::RecentGroups groups;
@@ -28,6 +29,14 @@ void group_invite_last();                       // Play Online: open a room and 
 const hubui::group::RecentGroup* group_last();  // newest group (nullptr = none)
 std::string group_last_label();                 // "Invite last group (Mia, Jake)"
 std::string group_together_text(const std::string& uid);   // "Last played together: ..." or ""
+/* rivalries (Wave 4 S2; rivals_logic.h) */
+void rivals_ingest(const std::string& result_file);                 // the game exited: read + store its match result (file is deleted)
+std::string rivals_record_text(const std::string& uid, const std::string& name);   // "You 12 - 9 Mickey" ("" = no games yet)
+std::string rivals_mains_text(const std::string& uid);              // "Mario vs Fox"
+std::string rivals_last5(const std::string& uid);                   // "WLWWL" oldest to newest
+std::string rivals_sessions_text(const std::string& uid);           // other games: "3 sessions together"
+void rivals_draw_card();                                            // Your stats card: top rivals (draws nothing when empty)
+void rivals_fake_seed();                                            // screenshots
 int group_unread();                             // bell badge
 void group_note(hubui::group::Kind k, const std::string& uid, const std::string& name, const std::string& game_id,
                 const std::string& title, const std::string& code, const std::string& text, long long expires_at);

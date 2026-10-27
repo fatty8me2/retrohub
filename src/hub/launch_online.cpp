@@ -729,6 +729,9 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
          * it when we leave this room (and follows this room's host changes). */
         env.push_back({"SSB64_LOBBY_HUBSLOT", std::to_string(room_my_slot())});
         for (auto& kv : smash_env(exe)) env.push_back(kv);   // online uses the same vault save as offline
+        ri.result_file = hub::data_dir() + "smash_result.json";   // Smash writes the finished match here (rivalries); read on exit
+        { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(ri.result_file), ec); }
+        env.push_back({"SSB64_RESULT_FILE", ri.result_file});
         spawn_room(is_host, exe, "--from-hub --no-update-check", dir_of(exe), env, ri);   // RetroHub's updater is the only one
         return;
     }
