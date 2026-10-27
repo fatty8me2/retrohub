@@ -1,4 +1,6 @@
 /* Kanto Together mGBA gamepad config writer: exact text, merge, write-once. Scratch dirs only. */
+#include <windows.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -44,7 +46,7 @@ int main() {
     CHECK(kanto::pad_bindings(def)[1] == std::make_pair(std::string("keyB"), std::string("1")));
 
     /* write once */
-    fs::path tmp = fs::temp_directory_path() / ("kt_pad_" + std::to_string(std::rand()));
+    fs::path tmp = fs::temp_directory_path() / ("kt_pad_" + std::to_string(GetCurrentProcessId()));
     fs::remove_all(tmp);
     fs::create_directories(tmp / "runtime" / "mgba");
     winutil::write_file((tmp / "runtime" / "mgba" / "config.ini").string(), "[gba.input.QT_K]\nkeyA=88\n");

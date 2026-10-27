@@ -1,4 +1,5 @@
 /* Console test: local save history (prune / restore / undo / merge / export) and play stats aggregation. */
+#include <windows.h>
 #include "history.h"
 #include "playstats.h"
 
@@ -22,7 +23,7 @@ static std::string get(const fs::path& p) { std::ifstream i(p, std::ios::binary)
 static std::string U(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
 
 int main() {
-    fs::path root = fs::temp_directory_path() / "rh_hist_test";
+    fs::path root = fs::temp_directory_path() / ("rh_hist_test_" + std::to_string(GetCurrentProcessId()));
     fs::remove_all(root);
     fs::path bat = root / "battery", hist = root / "hist";
     std::string B = U(bat), H = U(hist);
