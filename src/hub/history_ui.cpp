@@ -242,6 +242,11 @@ void stats_ui_card() {
         SC.st = hs::compute_stats(tot, hs::playlog_read_all(), (int64_t)t, tz);
         SC.any = SC.st.total_secs > 0;
     }
+    if (!SC.any && std::getenv("HUB_SHOT_FAKE_FRIENDS")) {   // screenshot aid: a stats card with fake numbers so the Rivals section shows
+        SC.st.total_secs = 90000; SC.st.week_secs = 7200; SC.st.longest.secs = 5400; SC.st.streak_days = 3;
+        SC.st.top = {{"n64", "smash64", 50000}, {"gba", "x", 20000}}; SC.st.systems = {{"n64", 60000}, {"gba", 30000}};
+        SC.any = true;
+    }
     if (!SC.any) return;
     const hs::Stats& st = SC.st;
     const float bleed = sp(1.5f);

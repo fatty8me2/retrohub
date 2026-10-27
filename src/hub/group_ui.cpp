@@ -240,7 +240,7 @@ void rivals_ingest(const std::string& result_file) {
     }
     hubui::rivals::Match m = hubui::rivals::build_match(raw, slots, wall_ms());
     if (!hubui::rivals::has_me(m)) return;
-    if (!g_headless && !FR.fake) hubui::rivals::save_match(m, dir_a(), dir_b());
+    if (!g_headless && !FR.fake) { hubui::rivals::save_match(m, dir_a(), dir_b()); hub::saves::cloud_account_prefs_changed(); }   // the vault copy syncs with the account
     auto& v = rv_matches();
     for (auto& x : v) if (x.id == m.id) return;
     v.insert(v.begin(), m);

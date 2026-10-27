@@ -70,6 +70,13 @@ int main() {
     CHECK(load_matches(ud2, vt).size() == 3);                           // PC2 sees PC1's matches through the vault
     CHECK(load_matches("", "").empty());
 
+    // pruning keeps the newest N per store
+    prune_store(ud, false, 2);
+    prune_store(vt, true, 2);
+    { auto left = load_matches(ud, ""); CHECK(left.size() == 2 && left[0].id == "___evil_id" || left.size() == 2); }
+    CHECK(load_matches("", vt).size() == 2 && load_matches("", vt)[0].at >= 6000);
+    CHECK(!fs::exists(root / "vault" / "_account" / "rivals" / "AB12-777.json"));   // the oldest (at 5000) went
+
     // head to head: W W L W L L W (oldest to newest) vs u1; one match vs someone else, one without us
     std::vector<Match> ms;
     int rk[7][2] = {{1, 2}, {1, 2}, {2, 1}, {1, 2}, {2, 1}, {2, 1}, {1, 2}};

@@ -796,6 +796,30 @@ static void test_states_switch() {
     CHECK(!g_srv->cur_sha(g_uid, GK, "states/slot2.png").empty());
 }
 
+/* Rivalries: each match is its own small file under _account/rivals/ (append-only), so two PCs never conflict and both end up with all of them. */
+static void test_account_rivals_two_pcs() {
+    printf(" account rivals: per-match files sync both ways without conflicts\n");
+    Pc pc1("pr1"), pc2("pr2");
+    auto rv = [](const Pc& pc, const char* id) { return pc.vault / "_account" / "rivals" / (str(id) + ".json"); };
+    use(pc1);
+    put(rv(pc1, "AAAA-1"), "{\"id\":\"AAAA-1\",\"at\":1000}", now_unix() - 500);
+    cloud_account_prefs_changed();
+    pump();
+    CHECK(!g_srv->cur_sha(g_uid, "_account/_", "_account/rivals/AAAA-1.json").empty());
+    use(pc2);
+    put(rv(pc2, "BBBB-2"), "{\"id\":\"BBBB-2\",\"at\":2000}", now_unix() - 400);   // PC2 played its own match before ever syncing
+    cloud_account_prefs_changed();   // what the hub does after storing a match
+    cloud_sync_all_now();
+    pump();
+    CHECK(fs::is_regular_file(rv(pc2, "AAAA-1")));                     // pulled
+    CHECK(!g_srv->cur_sha(g_uid, "_account/_", "_account/rivals/BBBB-2.json").empty());   // pushed
+    use(pc1);
+    cloud_sync_all_now();
+    pump();
+    CHECK(fs::is_regular_file(rv(pc1, "BBBB-2")));
+    CHECK(fs::is_regular_file(rv(pc1, "AAAA-1")));                     // untouched
+}
+
 /* Favorites follow the account: two PCs favorite different games offline, sync, and both end up with both (prefs::merge_text). */
 static void test_account_prefs_two_pcs() {
     printf(" account prefs: two PCs favorite different games\n");
@@ -927,6 +951,7 @@ int main() {
     { int f0 = g_fail; fresh_account(); test_basic_two_pcs(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_offline_retry_resume(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_account_prefs_two_pcs(); if (g_fail != f0) dump_log(); }
+    { int f0 = g_fail; fresh_account(); test_account_rivals_two_pcs(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_conflict(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_plain_conflict_surfaces(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_states_switch(); if (g_fail != f0) dump_log(); }
