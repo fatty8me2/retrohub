@@ -14,6 +14,7 @@
 #include "identity_link.h"
 #include "json.h"
 #include "winutil.h"
+#include "prefs.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -75,8 +76,10 @@ GameId id_of_wire(const str& gkey) {
     size_t p = gkey.find('/');
     return p == str::npos ? GameId{gkey, ""} : GameId{gkey.substr(0, p), gkey.substr(p + 1)};
 }
+bool is_account_game(const GameId& g) { return g.system == "_account"; }   // wire game "_account/_": the synced prefs (src/common/prefs.h)
 fs::path game_root(const GameId& g) {   // does not create anything
     str v = vault_dir();
+    if (is_account_game(g)) return fs::u8path(v);   // the only synced file is <vault>/_account/prefs.json (scan_game below)
     return fs::u8path(v) / fs::u8path(sanitize(g.system)) / fs::u8path(sanitize(g.key));
 }
 str norm_rel(str p) { for (auto& c : p) if (c == '\\') c = '/'; return p; }
@@ -423,16 +426,23 @@ std::map<str, LFile> scan_game(const GameId& g) {
     fs::path root = game_root(g);
     std::error_code ec;
     if (!fs::is_directory(root, ec)) return out;
-    for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (!it->is_regular_file(ec)) continue;
-        str name = it->path().filename().u8string();
+    std::vector<fs::path> acct_only;
+    const bool acct = is_account_game(g);
+    if (acct) { fs::path f = root / "_account" / "prefs.json"; if (fs::is_regular_file(f, ec)) acct_only.push_back(f); }
+    fs::recursive_directory_iterator rit, rend;
+    if (!acct) rit = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+    size_t ai = 0;
+    for (;;) {
+        fs::path cur;
+        if (acct) { if (ai >= acct_only.size()) break; cur = acct_only[ai++]; }
+        else { if (ec || rit == rend) break; if (!rit->is_regular_file(ec)) { rit.increment(ec); continue; } cur = rit->path(); rit.increment(ec); }
+        str name = cur.filename().u8string();
         if (name.size() > 7 && name.compare(name.size() - 7, 7, ".hubtmp") == 0) continue;
-        str rel = norm_rel(fs::relative(it->path(), root, ec).u8string());
+        str rel = norm_rel(fs::relative(cur, root, ec).u8string());
         if (rel.empty() || rel[0] == '.' || rel.rfind("_conflicts/", 0) == 0 || rel.rfind("_identity", 0) == 0) continue;
         LFile lf;
-        lf.abs = it->path().u8string();
-        lf.size = (int64_t)it->file_size(ec);
+        lf.abs = cur.u8string();
+        lf.size = (int64_t)fs::file_size(cur, ec);
         lf.mtime = file_mtime_unix(lf.abs);
         if (lf.size > kMaxPlain) { out[rel] = lf; continue; }   // sha left empty: too large, never hashed
         {
@@ -638,6 +648,45 @@ bool class_ok(const SyncOpts& o, FileClass c, int64_t size) {
     return true;
 }
 
+/* The synced account prefs (_account/prefs.json): a both-sides-changed conflict is MERGED (prefs::merge_text), never keep-both.
+ * Pulls the cloud copy to a scratch file, writes merge(local, cloud) over the local file and, when that differs from the cloud
+ * copy, queues a re-push against the cloud version. Returns false if it could not (caller falls back to the normal path). */
+bool is_prefs_conflict(const GameId& g, const str& path) { return is_account_game(g) && path == "_account/prefs.json"; }
+
+void prefs_after_change() {   // library.json favorites follow the merged prefs
+    hub::prefs::Prefs p;
+    if (hub::prefs::load(vault_dir(), &p)) hub::prefs::apply_favorites_to_library(p);
+}
+
+bool merge_prefs_conflict(Api& api, const GameId& g, const str& gkey, const str& path, const WVer& cv, int64_t deadline_ms, Item* repush, int* pulled) {
+    fs::path local = abs_of(g, path);
+    fs::path scratch = local; scratch += ".merge.hubtmp";
+    str mine, theirs;
+    read_all(local, &mine);
+    PullResult r = pull_file(api, g, gkey, path, cv, deadline_ms, &scratch);
+    std::error_code ec;
+    if (!r.ok || !read_all(scratch, &theirs)) { fs::remove(scratch, ec); return false; }
+    fs::remove(scratch, ec);
+    str merged = hub::prefs::merge_text(mine, theirs);
+    backup_local(g, path, "pc");
+    if (!write_atomic(local, merged)) return false;
+    ++*pulled;
+    prefs_after_change();
+    if (merged == theirs) {   // the cloud copy already contains everything
+        set_file_mtime_unix(local.u8string(), cv.mtime);
+        base_set(gkey, path, cv.ver, cv.sha, cv.size, cv.mtime);
+        return true;
+    }
+    base_set(gkey, path, cv.ver, cv.sha, cv.size, cv.mtime);
+    if (repush) {
+        Item re;
+        re.path = path; re.cls = FileClass::Settings; re.act = Act::Push; re.base_ver = cv.ver;
+        re.local.present = true; re.local.size = (int64_t)merged.size(); re.local.sha = sha256_hex_of(merged); re.local.mtime = file_mtime_unix(local.u8string());
+        *repush = re;
+    }
+    return true;
+}
+
 struct Prep { str path; FileClass cls; LFile lf; str stored; str enc = "none"; str stored_sha; int base = 0; };
 
 /* plan -> blobs -> commit. Returns false when the sequence stopped on a network/server problem (out.oc set). */
@@ -730,6 +779,10 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                         it.base_ver = a.current.ver;
                     }
                     it.local.present = true; it.local.sha = p.lf.sha; it.local.size = p.lf.size; it.local.mtime = p.lf.mtime;
+                    if (a.has_current && is_prefs_conflict(g, p.path)) {
+                        Item re;
+                        if (merge_prefs_conflict(api, g, gkey, p.path, a.current, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) next.push_back(re); continue; }
+                    }
                     if (it.cls == FileClass::Battery || it.cls == FileClass::Card || !a.has_current) out.conflicts.push_back(conflict_item(it));
                     else if (a.current.mtime > p.lf.mtime) {    // newest wins: cloud
                         PullResult r = pull_file(api, g, gkey, p.path, a.current, opts.deadline_ms);
@@ -772,6 +825,10 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                         it.cloud_dev_name = r.current.dev_name;
                     }
                     it.local.present = true; it.local.sha = pp->lf.sha; it.local.size = pp->lf.size; it.local.mtime = pp->lf.mtime;
+                    if (r.has_current && is_prefs_conflict(g, r.path)) {
+                        Item re;
+                        if (merge_prefs_conflict(api, g, gkey, r.path, r.current, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) next.push_back(re); continue; }
+                    }
                     if ((it.cls == FileClass::Battery || it.cls == FileClass::Card) || !r.has_current) out.conflicts.push_back(conflict_item(it));
                     else if (r.current.mtime > pp->lf.mtime) {
                         PullResult pr2 = pull_file(api, g, gkey, r.path, r.current, opts.deadline_ms);
@@ -872,6 +929,7 @@ SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpt
         if (r.ok) {
             base_set(gkey, it->path, it->cv.ver, it->cv.sha, it->cv.size, it->cv.mtime);
             out.pulled++;
+            if (is_prefs_conflict(g, it->path)) prefs_after_change();
         } else {
             out.pending_bytes += it->cloud.size;
             if (!r.oc.ok()) { out.oc = r.oc; if (r.oc.k != Outcome::Other) break; }
@@ -893,6 +951,10 @@ SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpt
                 break;
             }
             case Act::Conflict: {
+                if (it.has_cv && is_prefs_conflict(g, it.path) && !opts.auto_newest) {
+                    Item re;
+                    if (merge_prefs_conflict(api, g, gkey, it.path, it.cv, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) push_items.push_back(re); break; }
+                }
                 if (opts.auto_newest) {   // read-only session: newest wins, the loser is kept
                     if (it.cloud.mtime > it.local.mtime) {
                         backup_local(g, it.path, "pc");
@@ -1215,6 +1277,10 @@ void queue_initial_backup_locked_free() {
             if (!gd.is_directory(ec)) continue;
             games.push_back(GameId{sn, gd.path().filename().u8string()});
         }
+    }
+    {   // the synced account prefs ride along as the pseudo game "_account/_"
+        std::error_code ec2;
+        if (fs::is_regular_file(fs::u8path(v) / "_account" / "prefs.json", ec2)) games.push_back(GameId{"_account", "_"});
     }
     {
         std::lock_guard<std::mutex> lk(E.mu);
@@ -1732,7 +1798,7 @@ CloudAccountInfo cloud_account() {
 std::vector<GameCloudInfo> cloud_games() {
     std::lock_guard<std::mutex> lk(E.mu);
     std::vector<GameCloudInfo> v;
-    for (auto& kv : E.info) v.push_back(kv.second);
+    for (auto& kv : E.info) if (kv.second.id.system != "_account") v.push_back(kv.second);
     return v;
 }
 
@@ -1750,6 +1816,11 @@ bool cloud_pop_event(CloudEvent* out) {
     if (out) *out = E.events.front();
     E.events.pop_front();
     return true;
+}
+
+void cloud_account_prefs_changed() {   // favorites etc. changed locally: push _account/prefs.json soon
+    if (!enabled_now()) return;
+    enqueue("_account/_", "push");
 }
 
 void cloud_set_pin(const GameId& g, bool pinned) {

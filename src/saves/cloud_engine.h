@@ -89,6 +89,7 @@ bool cloud_game(const GameId& g, GameCloudInfo* out);
 bool cloud_pop_event(CloudEvent* out);
 
 /* ---- actions ---- */
+void cloud_account_prefs_changed();                          // synced account prefs (favorites...) changed on this PC: queue a push
 void cloud_set_pin(const GameId& g, bool pinned);
 void cloud_set_local_only(const GameId& g, bool local_only);   // user "don't upload this game"
 void cloud_remove_game(const GameId& g);                       // remove from cloud (keeps local)

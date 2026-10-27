@@ -1,5 +1,6 @@
 #include "app.h"
 #include "online_caps.h"
+#include "gameinfo.h"
 
 /* ---------- library / ROM scanning ---------- */
 
@@ -174,6 +175,30 @@ static unsigned long long added_unix(const std::string& path) {
     return v;
 }
 
+std::string genre_of_entry(const hub::GameEntry& e) {
+    static std::map<std::string, std::string> cache;
+    auto it = cache.find(e.key);
+    if (it != cache.end()) return it->second;
+    std::string g;
+    if (e.catalog_id != "remix" && e.catalog_id != "kanto") {
+        gameinfo::Query q;
+        q.system = hub::system_short(e.system);
+        q.title = e.title;
+        q.serial = e.serial;
+        if (e.catalog_id == "smash64") q.alt_title = "Super Smash Bros.";
+        else if (const GameInfo* c = catalog_for(e)) q.alt_title = c->title;
+        if (!q.system.empty()) g = gameinfo::shared_db(hub::exe_dir() + "data/").lookup(q).genre;
+    }
+    size_t cut = g.find_first_of(",;/");
+    if (cut != std::string::npos) g.resize(cut);
+    size_t b = g.find_first_not_of(' ');
+    g = b == std::string::npos ? std::string() : g.substr(b);
+    while (!g.empty() && g.back() == ' ') g.pop_back();
+    if (g.empty()) g = "Other";
+    cache[e.key] = g;
+    return g;
+}
+
 void rebuild_vis() {
     A.sort_mode = hubui::sort_from_key(A.st.library_sort);
     rebuild_ghosts();   // friends' games you do not own (index >= lib.size() in items / vis / shelves)
@@ -198,6 +223,19 @@ void rebuild_vis() {
         }
         base.swap(keep);
     }
+    if (A.st.lib_favs_only) {   // Favorites chip: owned favorites only
+        std::vector<int> keep;
+        for (int i : base) if (i < (int)A.lib.size() && gstate(A.lib[i].key).favorite) keep.push_back(i);
+        base.swap(keep);
+    }
+    A.genre_counts.clear();
+    for (int i : base) ++A.genre_counts[i < (int)A.lib.size() ? genre_of_entry(A.lib[i]) : std::string("Other")];
+    if (!A.st.lib_genre.empty() && !A.lib.empty() && !A.scanning && !A.st.lib_favs_only && A.search_buf[0] == 0 && !A.online_only && !A.genre_counts.count(A.st.lib_genre)) { A.st.lib_genre.clear(); mark_dirty(); }   // the saved genre no longer exists in the library (only judged on an unfiltered, fully scanned library)
+    if (!A.st.lib_genre.empty()) {
+        std::vector<int> keep;
+        for (int i : base) if ((i < (int)A.lib.size() ? genre_of_entry(A.lib[i]) : std::string("Other")) == A.st.lib_genre) keep.push_back(i);
+        base.swap(keep);
+    }
     A.chip_counts.clear();
     A.chip_total = (int)base.size();
     A.vis.clear();
@@ -206,6 +244,15 @@ void rebuild_vis() {
         if (A.sys_filter.empty() || items[i].system == A.sys_filter) A.vis.push_back(i);
     }
     A.secs = hubui::group_by_console(items, &A.vis, A.sort_mode);
+    if (A.st.lib_group_genre) {   // Group by Genre: A-Z genre sections, "Other" last; tiles keep their console label
+        std::vector<int> idx = A.vis;
+        std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) { return hubui::list_item_less(items[a], items[b], A.sort_mode); });
+        std::map<std::string, std::vector<int>> by;
+        for (int i : idx) by[i < (int)A.lib.size() ? genre_of_entry(A.lib[i]) : std::string("Other")].push_back(i);
+        A.secs.clear();
+        for (auto& kv : by) if (kv.first != "Other") A.secs.push_back({"other", kv.first, kv.second});
+        if (by.count("Other")) A.secs.push_back({"other", "Other", by["Other"]});
+    }
 
     // Home composition: shelves over the whole library, plus catalog games the player doesn't own.
     A.sg.clear();

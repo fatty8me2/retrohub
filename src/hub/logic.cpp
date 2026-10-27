@@ -66,6 +66,9 @@ std::string settings_to_json(const Settings& s) {
       << "  \"backup_shots\": " << (s.backup_shots ? "true" : "false") << ",\n"
       << "  \"cloud_states\": " << (s.cloud_states ? "true" : "false") << ",\n"
       << "  \"library_sort\": \"" << json::escape(s.library_sort) << "\",\n"
+      << "  \"lib_favs_only\": " << (s.lib_favs_only ? "true" : "false") << ",\n"
+      << "  \"lib_genre\": \"" << json::escape(s.lib_genre) << "\",\n"
+      << "  \"lib_group_genre\": " << (s.lib_group_genre ? "true" : "false") << ",\n"
       << "  \"cloud_enabled\": " << (s.cloud_enabled ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
@@ -140,6 +143,9 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->backup_shots = json_bool(j, "backup_shots", out->backup_shots);
     out->cloud_states = json_bool(j, "cloud_states", out->cloud_states);
     if (const json::Value* ls = j.get("library_sort")) if (ls->is_string()) out->library_sort = ls->s;
+    out->lib_favs_only = json_bool(j, "lib_favs_only", out->lib_favs_only);
+    out->lib_genre = j.str("lib_genre", out->lib_genre);
+    out->lib_group_genre = json_bool(j, "lib_group_genre", out->lib_group_genre);
     out->cloud_enabled = json_bool(j, "cloud_enabled", out->cloud_enabled);   // legacy sync_states / cloud_saves keys are ignored
     out->sync_card_dismissed = json_bool(j, "sync_card_dismissed", out->sync_card_dismissed);
     out->smash_save_notice_shown = json_bool(j, "smash_save_notice_shown", out->smash_save_notice_shown);
