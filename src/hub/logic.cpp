@@ -88,6 +88,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"menu_sounds\": " << (s.menu_sounds ? "true" : "false") << ",\n"
       << "  \"menu_volume\": " << s.menu_volume << ",\n"
       << "  \"menu_music\": " << (s.menu_music ? "true" : "false") << ",\n"
+      << "  \"attract_mode\": " << (s.attract_mode ? "true" : "false") << ",\n"
       << "  \"share_games\": " << (s.share_games ? "true" : "false") << ",\n"
       << "  \"show_friend_games\": " << (s.show_friend_games ? "true" : "false") << ",\n"
       << "  \"share_playtime\": " << (s.share_playtime ? "true" : "false") << ",\n"
@@ -171,6 +172,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->menu_sounds = json_bool(j, "menu_sounds", out->menu_sounds);
     out->menu_music = json_bool(j, "menu_music", out->menu_music);
     out->menu_volume = std::max(0, std::min(100, (int)j.num("menu_volume", out->menu_volume)));
+    out->attract_mode = json_bool(j, "attract_mode", out->attract_mode);
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
     out->share_games = json_bool(j, "share_games", out->share_games);
     out->show_friend_games = json_bool(j, "show_friend_games", out->show_friend_games);

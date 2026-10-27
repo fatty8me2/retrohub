@@ -2,6 +2,7 @@
 #include "app.h"
 #include "prefs.h"
 #include "tv_logic.h"
+#include "homefun.h"
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
@@ -156,6 +157,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { wx = -wx; wy = -wy; }
                 if (route_wheel(io.MousePos.x, io.MousePos.y, wx, wy)) continue;   // over a shelf: scroll that row, not the page
             }
+            if (attract_swallow_event(e)) continue;   // attract mode: this event only wakes the hub
             ImGui_ImplSDL2_ProcessEvent(&e);
             tvmode::handle_event(e, io.WantTextInput);
             if (e.type == SDL_DROPFILE && e.drop.file) { add_games_drop(e.drop.file); SDL_free(e.drop.file); }
