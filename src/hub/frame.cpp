@@ -136,7 +136,7 @@ void draw_footer(float h) {
     } else if (A.st.show_friends && FR.panel_focused) {
         hints = {{"A", "Enter", "Actions"}, {"X", "", "Join / invite"}, {"Y", "", "Menu"}, {"B", "Esc", "Close"}};
     } else if (A.page == Page::Library && !A.lib.empty()) {
-        hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}};
+        hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}, {"R3", "S", "Add to shelf"}};
         if (A.view == LibView::All) hints.push_back({"B", "Esc", "Back"});
     } else if (A.page == Page::Library) {
         hints = {{"A", "Enter", "Select"}};
@@ -213,6 +213,8 @@ void global_input() {
     if (A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl)) A.show_details = true;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl)) toggle_favorite(A.sel_game);
+        if (!io.WantTextInput && (ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false) || (ImGui::IsKeyPressed(ImGuiKey_S, false) && !io.KeyCtrl)))
+            custom_open_picker(A.sel_game, false);   // tile action: Add to shelf (R3 on a pad, S on a keyboard)
     }
 }
 

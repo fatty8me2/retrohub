@@ -90,14 +90,7 @@ bool shot_copy_to_clipboard(const std::string& path) {
 
 /* prefs covers[key] = path (field-wise merge keeps this PC's other prefs; L3 reads it later). */
 bool shot_set_cover(const std::string& game_key, const std::string& path) {
-    if (game_key.empty()) return false;
-    const std::string root = hub::saves::vault_dir();
-    hub::prefs::Prefs p;
-    hub::prefs::load(root, &p);
-    auto m = p.covers;
-    m[game_key] = path;
-    hub::prefs::set_covers(&p, m);
-    return hub::prefs::save(root, p);
+    return custom_set_cover(game_key, path);   // customize_ui.cpp: copies it into the vault (synced) and stores that path
 }
 
 /* STUB: sending a screenshot to a friend as a DM attachment.

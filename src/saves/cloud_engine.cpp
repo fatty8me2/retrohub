@@ -551,6 +551,7 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
         }
         int64_t sz = it.local.present ? it.local.size : (it.has_cv ? it.cv.size : 0);
         if (is_shot) it.cls = FileClass::Shot; else
+        if (p == "cover.png") it.cls = FileClass::Settings; else   // the user's custom cover (<game>/cover.png, <= 800 px): tiny, newest wins, never prompts
         it.cls = it.has_cv && !it.cv.cls.empty() ? class_from_name(it.cv.cls, classify_path(p, sz)) : classify_path(p, sz);
         if (it.local.present && it.local.size > kMaxPlain) { it.act = Act::Nothing; items.push_back(it); continue; }
         if ((it.cls == FileClass::State || it.cls == FileClass::Shot) && !sync_states_on()) { it.act = Act::Nothing; items.push_back(it); continue; }
