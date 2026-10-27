@@ -1,5 +1,6 @@
 #include "app.h"
 #include "toast.h"
+#include "ui_sound.h"
 
 FriendsUi FR;
 
@@ -356,6 +357,7 @@ void fr_toggle_panel() {
 }
 
 void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv) {
+    ui_sound::play(ui_sound::Sfx::Notify);
     for (auto& o : FR.notifs)
         if (!o.done && !o.ask && o.invite == invite && o.uid == uid && (!invite || o.inv.lobby_code == inv.lobby_code)) o.done = true;
     Notif n;
@@ -552,7 +554,7 @@ void fr_tick() {
                 break;
             case hubnet::Event::MessageReceived:
                 if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
-                else push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0);
+                else { ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0); }
                 break;
             case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite, e.msg.ask_host); break;
             case hubnet::Event::WatchedOnline: fr_friend_online(e.uid, e.name); break;
