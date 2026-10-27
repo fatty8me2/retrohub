@@ -429,7 +429,70 @@ std::vector<float> snes() {         // 7.2 s: soft thunk, warm glide, FM pluck a
     return finish(S, 1.4f);
 }
 
+
+/* ---------------- menu UI sounds + ambient loop ---------------- */
+
+/* Short sounds: fade tail, peak-limited, but kept QUIET (no RMS normalisation to the boot level). */
+std::vector<float> finish_ui(Song& S, float gain) {
+    size_t n = S.n(), nf = std::min(n, size_t(0.03f * kSampleRate));
+    std::vector<float> out(n * 2);
+    for (size_t i = 0; i < n; i++) {
+        float g = gain;
+        if (i + nf >= n) g *= 0.5f - 0.5f * std::cos(kPi * float(n - 1 - i) / float(nf));
+        out[2 * i] = std::tanh(S.L[i] * g) * 0.9f; out[2 * i + 1] = std::tanh(S.R[i] * g) * 0.9f;
+    }
+    return out;
+}
+void tone(Song& S, float t, float m, float amp, float dur, float rel, float pan = 0) {   // soft sine blip with a faint 2nd partial
+    Note x{t, dur, midi(m), 0, Sine, amp, pan, 0.004f, 0.05f, 0.6f, rel};
+    x.fm = 0.6f; x.fmdecay = 30; x.fmratio = 1;
+    note(S, x);
+}
+
+std::vector<float> ui_sound(Ui u) {
+    Song S(u == Ui::Chime ? 1.5f : u == Ui::Error ? 0.4f : 0.25f); Rng r;
+    switch (u) {
+    case Ui::Move:   tone(S, 0.f, 84, 0.5f, 0.02f, 0.06f); break;
+    case Ui::Select: tone(S, 0.f, 79, 0.5f, 0.03f, 0.07f, -0.1f); tone(S, 0.05f, 86, 0.5f, 0.04f, 0.1f, 0.1f); break;
+    case Ui::Back:   tone(S, 0.f, 83, 0.45f, 0.03f, 0.06f, 0.1f); tone(S, 0.05f, 76, 0.45f, 0.04f, 0.09f, -0.1f); break;
+    case Ui::Error:  tone(S, 0.f, 60, 0.5f, 0.07f, 0.08f); tone(S, 0.12f, 57, 0.5f, 0.09f, 0.12f); break;
+    case Ui::Popup: {
+        Note x{0.f, 0.08f, midi(72), midi(84), Sine, 0.4f, 0, 0.01f, 0.05f, 0.5f, 0.1f}; note(S, x);
+        tone(S, 0.07f, 91, 0.25f, 0.03f, 0.08f); break; }
+    case Ui::Chime:
+        bell(S, 0.f, 88, 0.35f, -0.15f, 0.8f); bell(S, 0.16f, 95, 0.3f, 0.15f, 1.0f); bell(S, 0.16f, 83, 0.12f, 0.f, 1.0f);
+        break;
+    default: break;
+    }
+    return finish_ui(S, u == Ui::Chime ? 1.4f : 1.f);
+}
+
+/* 24 s calm pad loop: slow chords (Cmaj9 / Am9 / Fmaj7 / G6), very soft, lowpassed; each chord's release wraps around. */
+std::vector<float> ambient() {
+    Song S(kAmbientSeconds); Rng r;
+    static const float ch[4][4] = {{48, 59, 64, 71}, {45, 55, 64, 71}, {41, 55, 64, 69}, {43, 59, 62, 69}};
+    for (int c = 0; c < 4; c++) {
+        float t0 = c * 6.f;
+        for (int k = 0; k < 4; k++) {
+            Note x{t0, 6.2f, midi(ch[c][k]), 0, Sine, 0.12f, (k - 1.5f) * 0.4f, 2.5f, 0.3f, 0.9f, 2.5f, 0.0015f * k, 0, 0, 6.f + 3.f * k};
+            note(S, x);
+        }
+        tone(S, t0 + 1.5f, ch[c][3] + 12, 0.07f, 0.1f, 2.0f, (c % 2 ? 0.4f : -0.4f));
+    }
+    reverb(S, 0.5f, 0.85f, 0.4f);
+    size_t n = S.n();   // equal-power-ish loop: fade the first/last 2 s so the seam is silent-smooth
+    std::vector<float> out(n * 2);
+    size_t f = size_t(2.f * kSampleRate);
+    for (size_t i = 0; i < n; i++) {
+        float g = i < f ? float(i) / f : (i + f >= n ? float(n - 1 - i) / f : 1.f);
+        out[2 * i] = std::tanh(S.L[i] * 0.9f) * g * 0.8f; out[2 * i + 1] = std::tanh(S.R[i] * 0.9f) * g * 0.8f;
+    }
+    return out;
+}
 } // namespace
+
+std::vector<float> render_ui(Ui u) { return ui_sound(u); }
+std::vector<float> render_ambient() { return ambient(); }
 
 std::vector<float> render(hub::System s) {
     switch (s) {
