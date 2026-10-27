@@ -6,8 +6,7 @@
  * top game of the period (<vault>/<system>/<game key>/shots/wrapped-<period>.png). The aggregation is pure (wrapped_logic.h, unit tested).
  * Screenshot aids (headless only): HUB_SHOT_WRAPPED=month|year opens it, HUB_SHOT_WRAPPED_CARD=0-4, HUB_SHOT_WRAPPED_FAKE=1 uses made-up
  * sessions and friends over the fake library, HUB_SHOT_WRAPPED_SAVE=1 saves the image once (path goes to HUB_SHOT_TRACE). */
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STBI_WRITE_NO_STDIO
+#define STBI_WRITE_NO_STDIO   /* implementation lives in ext_media.cpp (one definition per link) */
 #include "../retrorun/third_party/stb_image_write.h"
 #include "app.h"
 #include "homefun.h"
