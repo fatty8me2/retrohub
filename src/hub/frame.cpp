@@ -212,6 +212,8 @@ void global_input() {
     if (A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl)) A.show_details = true;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl)) toggle_favorite(A.sel_game);
+        if (!io.WantTextInput && (ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false) || (ImGui::IsKeyPressed(ImGuiKey_S, false) && !io.KeyCtrl)))
+            custom_open_picker(A.sel_game, false);   // tile action: Add to shelf (R3 on a pad, S on a keyboard)
     }
 }
 

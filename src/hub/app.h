@@ -742,6 +742,17 @@ bool route_wheel(float px, float py, float wx, float wy);
 void shelf_strip(const std::string& id, int count, float tw, float th, const std::function<TileResult(int, ImVec2)>& draw_one);
 
 
+/* ---- customize_ui.cpp: per-game rename + custom cover, custom shelves (synced prefs; logic in customize_logic.h) ---- */
+void custom_reset_originals();                                   // after a library rebuild: forget scanned titles, reload prefs, re-apply renames to A.lib
+std::string custom_original_title(const hub::GameEntry& e);     // the scanned name (art/genre lookups use it; search matches it too)
+bool custom_is_renamed(const std::string& key);
+bool custom_cover(const std::string& key, SDL_Texture** tex, int* w, int* h);   // the user's cover picture for this game, if set and readable
+void custom_open_customize(const std::string& key);              // details modal: Customize (rename / cover / reset)
+void custom_open_picker(const std::string& key, bool from_details);   // "Add to shelf..."
+void custom_open_manager();                                      // new / rename / reorder / delete shelves
+void custom_draw(int loc);                                       // 0 = overlays (also polls prefs), 1 = inside the details modal
+void custom_home_shelves(float avail, float tw, float th, float gap, float bleed);   // Home: user shelves after the built-in ones
+
 /* ---- page_library.cpp ---- */
 void go_add_rom(const GameInfo& g);
 void home_shelves();

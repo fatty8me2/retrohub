@@ -835,7 +835,8 @@ std::vector<int> filter_sort(const std::vector<ListItem>& items, const std::stri
     std::vector<int> v;
     for (size_t i = 0; i < items.size(); ++i) {
         if (!system_filter.empty() && items[i].system != system_filter) continue;
-        if (!q.empty() && lower(items[i].title).find(q) == std::string::npos) continue;
+        if (!q.empty() && lower(items[i].title).find(q) == std::string::npos &&
+            (items[i].alt_title.empty() || lower(items[i].alt_title).find(q) == std::string::npos)) continue;
         v.push_back((int)i);
     }
     std::stable_sort(v.begin(), v.end(), [&](int a, int b2) { return list_item_less(items[a], items[b2], mode); });
