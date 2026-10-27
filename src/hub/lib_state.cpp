@@ -110,7 +110,7 @@ void apply_scan() {
                 g.system = mix[i % 10];
                 g.title = std::string(a1[i % 10]) + " " + a2[(i / 10) % 10] + " " + a3[(i / 7) % 10] + (i >= 100 ? " " + std::to_string(i / 100 + 1) : "");
             }
-            g.path = "C:\fake\game" + std::to_string(i) + ".z64";
+            g.path = "C:/fake/game" + std::to_string(i) + ".z64";
             A.lib.push_back(g);
         }
         {   // a catalog PlayStation game too, so the room picker / PS1 online path can be screenshotted (HUB_SHOT_ROOM_GAME=crashbash)
@@ -120,7 +120,7 @@ void apply_scan() {
             g.catalog_id = "crashbash";
             g.serial = "SCUS-94570";
             g.title = "Crash Bash";
-            g.path = "C:\fake\crashbash.cue";
+            g.path = "C:/fake/crashbash.cue";
             A.lib.push_back(g);
         }
         if (!std::getenv("HUB_SHOT_NO_WIIU")) {   // a catalog Wii U remote-play game (HUB_SHOT_ROOM_GAME=sm3dw); HUB_SHOT_NO_WIIU = this PC has no copy (guest view)
@@ -130,7 +130,7 @@ void apply_scan() {
             g.catalog_id = "sm3dw";
             g.serial = "0005000010145D00";
             g.title = "Super Mario 3D World";
-            g.path = "C:\fake\sm3dw.rpx";
+            g.path = "C:/fake/sm3dw.rpx";
             A.lib.push_back(g);
         }
         if (std::getenv("HUB_SHOT_FAKE_DUPES") && A.lib.size() > 2) {   // details > About shows "3 copies found"
