@@ -44,6 +44,8 @@ struct Acct {
     std::map<str, Game> games;
     std::map<str, Blob> blobs;            // plain sha -> stored bytes
     std::map<str, str> devices;
+    std::map<str, int64_t> dev_first, dev_seen;
+    std::set<str> revoked;
     std::map<str, Ticket> tickets;
     int64_t rev = 0;
     int puts = 0;
@@ -195,6 +197,8 @@ struct MockServer::Impl {
         if (want != sig) { self->sig_checks_failed++; return jerr(401, "unauthorized"); }
         if (rq.method == "POST" && !rq.body.empty() && sha256_hex_of(rq.body) != hv("X-RH-Sha")) return jerr(400, "bad-sha");
         str dev = hv("X-RH-Device");
+        if (!dev.empty() && A.revoked.count(dev)) return jerr(401, "device-revoked");
+        if (!dev.empty() && A.devices.count(dev)) A.dev_seen[dev] = now_s();
         str devname = A.devices.count(dev) ? A.devices[dev] : dev;
 
         const str& P = rq.path;
@@ -215,7 +219,28 @@ struct MockServer::Impl {
             str d = body.str("dev"), n = body.str("name");
             if (d.size() < 8) return jerr(400, "bad-body");
             if (!A.devices.count(d) && A.devices.size() >= 8) return jerr(403, "device-limit");
+            if (!A.devices.count(d)) A.dev_first[d] = now_s();
             A.devices[d] = n;
+            A.dev_seen[d] = now_s();
+            return jok("\"devices\":" + std::to_string(A.devices.size()));
+        }
+        if (P == "/saves/v2/devices" && rq.method == "GET") {
+            self->n_devices++;
+            str list;
+            for (auto& d : A.devices)
+                list += (list.empty() ? "" : ",") + str("{\"dev\":") + json::quote(d.first) + ",\"name\":" + json::quote(d.second) + ",\"first\":" +
+                        std::to_string(A.dev_first[d.first]) + ",\"lastSeen\":" + std::to_string(A.dev_seen[d.first]) + ",\"current\":" + (d.first == dev ? "true" : "false") + "}";
+            return jok("\"devices\":[" + list + "],\"max\":8");
+        }
+        if (P == "/saves/v2/device/revoke" && rq.method == "POST") {
+            self->n_revoke++;
+            str d = body.str("dev");
+            if (dev.size() < 8) return jerr(400, "bad-device");
+            if (d.size() < 8) return jerr(400, "bad-body");
+            if (d == dev) return jerr(400, "cannot-revoke-self");
+            if (!A.devices.count(d)) return jerr(404, "not-found");
+            A.devices.erase(d);
+            A.revoked.insert(d);
             return jok("\"devices\":" + std::to_string(A.devices.size()));
         }
         if (P == "/saves/v2/manifest") {
@@ -593,6 +618,7 @@ bool MockServer::evicted(const std::string& uid, const std::string& gkey, const 
     return f != g->second.files.end() && f->second.evicted;
 }
 int64_t MockServer::used(const std::string& uid) { std::lock_guard<std::mutex> lk(p_->mu); return p_->used_of(p_->accts[uid]); }
+int MockServer::revoked(const std::string& uid) { std::lock_guard<std::mutex> lk(p_->mu); return (int)p_->accts[uid].revoked.size(); }
 int MockServer::devices(const std::string& uid) { std::lock_guard<std::mutex> lk(p_->mu); return (int)p_->accts[uid].devices.size(); }
 void MockServer::seed_file(const std::string& uid, const std::string& gkey, const std::string& path, const std::string& plain, int64_t mtime,
                            const std::string& device_name, int64_t played_at) {

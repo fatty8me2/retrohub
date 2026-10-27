@@ -253,6 +253,36 @@ async function main() {
   const rp = await A.wait((m) => m.type === "presence" && m.uid === E.id.uid && m.name === "qa-New Name");
   check("rename fans out sanitized name", !!rp, rp);
 
+  console.log("friend came online (opt-in watch)");
+  const G = new Client(makeId(), "qa-gina");
+  G.code = (await G.welcome()).code;
+  await befriend(G, E);
+  const presOf = (u, state) => (m) => m.type === "presence" && m.uid === u && m.status.state === state;
+  A.send({ type: "watch_online", uids: [E.id.uid, D.id.uid, "notauid", E.id.uid] });
+  const wk = await A.wait(T("watch_online"));
+  check("watch list keeps friends only, no duplicates", wk && wk.uids.length === 1 && wk.uids[0] === E.id.uid, wk);
+  E.send({ type: "status", status: { state: "offline" } });
+  check("watched friend goes offline", !!(await A.wait(presOf(E.id.uid, "offline"))));
+  await G.wait(presOf(E.id.uid, "offline"));
+  check("going offline pings nobody", await A.none(T("friend_online")));
+  E.send({ type: "status", status: { state: "online" } });
+  const fo = await A.wait(T("friend_online"));
+  check("watcher gets friend_online (uid + name)", fo && fo.uid === E.id.uid && fo.name === "qa-New Name", fo);
+  check("non-watching friend still gets presence", !!(await G.wait(presOf(E.id.uid, "online"))));
+  check("non-watching friend gets no friend_online", await G.none(T("friend_online")));
+  E.send({ type: "status", status: { state: "in_game", game_id: "g" } });
+  await A.wait(presOf(E.id.uid, "in_game"));
+  check("online -> in_game is not 'came online'", await A.none(T("friend_online")));
+  E.send({ type: "status", status: { state: "offline" } });
+  await A.wait(presOf(E.id.uid, "offline"));
+  E.send({ type: "status", status: { state: "online" } });
+  await A.wait(presOf(E.id.uid, "online"));
+  check("flapping inside the cooldown pings once", await A.none(T("friend_online"), 700));
+  A.send({ type: "watch_online", uids: [] });
+  const wk2 = await A.wait(T("watch_online"));
+  check("empty list stops watching", wk2 && wk2.uids.length === 0, wk2);
+  G.close();
+
   console.log("limits");
   E.ws.send(JSON.stringify({ type: "message", to: A.id.uid, text: "y".repeat(9000) }));
   const e11 = await E.wait(T("error"));

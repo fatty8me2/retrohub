@@ -130,6 +130,15 @@ static void offline_tests(const std::string& root)
     CHECK(detail::json_parse("{\"t\":\"\\ud83dX\"}", &j) && j.str("t").size() >= 2);
     CHECK(!detail::json_parse("{\"t\":", &j));
 
+    /* "Notify me when they come online": the watch list message */
+    {
+        CHECK(watch_message_json({}) == "{\"type\":\"watch_online\",\"uids\":[]}");
+        CHECK(watch_message_json({"aaa", "bbb", "aaa", ""}) == "{\"type\":\"watch_online\",\"uids\":[\"aaa\",\"bbb\"]}");
+        std::vector<std::string> many;
+        for (int i = 0; i < 80; ++i) many.push_back("u" + std::to_string(i));
+        CHECK(watch_clean(many).size() == kWatchMax && watch_clean(many).back() == "u49");
+    }
+
     /* conversation persistence */
     {
         FriendsClient c;
@@ -213,6 +222,26 @@ int main(int argc, char** argv)
     A->clear();
     B->c.rename("qa-bobby \xC3\xA9");
     CHECK(wait_for([&] { fb = A->c.find_friend(B->c.my_uid()); return fb && fb->name == "qa-bobby \xC3\xA9"; }));
+
+    printf("[watch: came online]\n");
+    A->clear();
+    A->c.set_watch_online({B->c.my_uid(), B->c.my_uid(), C->c.my_uid()});   // C is no friend of A: the server drops it
+    settle(500);
+    {
+        Status off; off.state = PresenceState::Offline;
+        B->c.set_status(off);
+        CHECK(wait_for([&] { fb = A->c.find_friend(B->c.my_uid()); return fb && fb->status.state == PresenceState::Offline; }));
+        settle(300);
+        CHECK(!A->find(Event::WatchedOnline), "no ping when a friend goes offline");
+        Status on; on.state = PresenceState::Online;
+        B->c.set_status(on);
+        CHECK(wait_for([&] { return A->find(Event::WatchedOnline); }), "watched friend came online");
+        const Event* we = A->find(Event::WatchedOnline);
+        CHECK(we && we->uid == B->c.my_uid());
+        CHECK(!C->find(Event::WatchedOnline), "a friend that watches nobody gets no ping");
+    }
+    A->c.set_watch_online({});
+    settle(300);
 
     printf("[messages]\n");
     A->clear(); B->clear();
