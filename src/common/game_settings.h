@@ -12,7 +12,7 @@
  * File: <vault>\_settings\game_settings.json   (Store::load(vault_dir) / save(vault_dir)).
  * Pure logic: no UI, no process handling. The emitters at the bottom turn resolved values into runner arguments:
  *   n64run   : --gfx Key=t:value (GLideN64 config, t = i|b|s)  + --fullscreen
- *   retrorun : --opt key=value (core options), --filter, --integer-scale, --fullscreen
+ *   retrorun : --opt key=value (core options), --filter, --integer-scale, --fx, --bezel, --fullscreen
  * Dolphin / Azahar / Cemu config writers live in src/hub/emulators.{h,cpp} (dolphin_gfx_apply etc.). */
 #include <map>
 #include <string>

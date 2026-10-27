@@ -25,6 +25,7 @@
 #include "start_hint.h"
 #include "runner_ctl.h"
 #include "osd.h"
+#include "present_fx.h"
 #include "core.h"
 #include "ds_link.h"
 #include "retro_pad.h"
@@ -55,6 +56,8 @@ struct Args {
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
     std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
     int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
+    std::string fx;             // --fx off|crt|lcd|dmg|sharp (screen filter, default off = the classic look)
+    int bezel = 0;              // --bezel 0|1 (procedural console frame in the pillarbox bars, default off)
     std::string disc_ctl;         // --disc-ctl FILE: RetroHub rewrites it to request "insert the next disc" (watched like --cheats)
     std::vector<uint64_t> swap_at;   // --swap-disc-at N[,N]: QA, request a disc swap at these frames
     std::string cheats;           // --cheats FILE: cheat list JSON (src/common/cheats.h); polled for live toggles offline
@@ -85,7 +88,7 @@ static std::string narrow(const wchar_t* w) { return winutil::to_utf8(w); }
 
 static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
-          "  [--system gba|gb|gbc|nds|ps1|nes|snes] [--multitap|--no-multitap] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
+          "  [--system gba|gb|gbc|nds|ps1|nes|snes] [--multitap|--no-multitap] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fx off|crt|lcd|dmg|sharp] [--bezel 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
           "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rollback] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
@@ -136,6 +139,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--setup-tag") { if (!val(&o->setup_tag)) return false; }
         else if (k == "--save-stem") { if (!val(&o->save_stem)) return false; }
         else if (k == "--filter") { if (!val(&v)) return false; if (v != "nearest" && v != "linear") { fprintf(stderr, "bad --filter\n"); return false; } o->scale_filter = v; }
+        else if (k == "--fx") { if (!val(&v)) return false; if (!fx::parse_filter(v, nullptr)) { fprintf(stderr, "bad --fx\n"); return false; } o->fx = v; }
+        else if (k == "--bezel") { if (!val(&v)) return false; o->bezel = atoi(v.c_str()) ? 1 : 0; }
         else if (k == "--integer-scale") { if (!val(&v)) return false; o->integer_scale = atoi(v.c_str()) ? 1 : 0; }
         else if (k == "--opt") { if (!val(&v)) return false; o->opts.push_back(v); }
         else if (k == "--frames") { if (!val(&v)) return false; o->frames = atoi(v.c_str()); }
@@ -402,6 +407,18 @@ class Frontend {
     }
     std::string scale_filter_;   // "" = nearest (DS: linear)
     bool integer_scale_ = true;
+    /* Screen filters + bezel (present_fx.cpp). Off + no bezel = the classic path, untouched. */
+    fx::Engine fxe_;
+    fx::Filter fx_filter_ = fx::Filter::Off;
+    bool bezel_on_ = false;
+    std::vector<uint32_t> fx_px_;
+    SDL_Texture* fx_tex_ = nullptr; int fx_tex_w_ = 0, fx_tex_h_ = 0;
+    SDL_Texture* bezel_tex_ = nullptr; int bezel_tex_w_ = 0, bezel_tex_h_ = 0;
+    std::string bezel_key_;
+    bool fx_draw(const SDL_Rect& dst);          // draws bezel + filtered frame; false = caller draws the plain frame
+    bool fx_set(const std::string& what, std::string* msg);   // runner_ctl "shader"
+    FrameBuf fx_compose(const FrameBuf& f, int ow, int oh);   // headless screenshot of the filtered/bezelled window
+    void layout_for(int ow, int oh, SDL_Rect* dst);
     bool is_ps2 = false;       // PS2 core (LRPS2 / ParaLLEl PS2): input-delay lockstep only (no rollback), see docs/PS2_ONLINE.md
     int16_t local_press_[4][2] = {};      // PS2: L2/R2 pressure 0..255 per local pad (rides in the upper 16 bits of the button word)
     bool is_ps1 = false;       // PlayStation (Beetle PSX): DualShock analog sticks, memory card 1 in the .srm
@@ -662,6 +679,8 @@ bool Frontend::setup_paths() {
     is_ps2 = lower(a.system) == "ps2";
     scale_filter_ = a.scale_filter;
     if (a.integer_scale >= 0) integer_scale_ = a.integer_scale != 0;
+    fx::parse_filter(a.fx, &fx_filter_);
+    bezel_on_ = a.bezel != 0;
     // Defaults for the DS core go in first (then the remembered layout) so ini / --opt below override them.
     if (is_ds) {
         // The DS core keeps its own files (Wi-Fi settings, SD card images, ...) in a scratch dir under userdata, never in
@@ -772,6 +791,10 @@ bool Frontend::setup_paths() {
 void Frontend::layout(SDL_Rect* dst) {
     int ow = 0, oh = 0;
     SDL_GetRendererOutputSize(ren, &ow, &oh);
+    layout_for(ow, oh, dst);
+}
+
+void Frontend::layout_for(int ow, int oh, SDL_Rect* dst) {
     const FrameBuf& f = core.frame();
     double aspect = core.av().geometry.aspect_ratio;
     if (aspect <= 0.f) aspect = (double)f.w / std::max(1, f.h);
@@ -798,7 +821,8 @@ void Frontend::present() {
     SDL_Rect dst;
     layout(&dst);
     last_dst = dst;
-    if (link) { SDL_Rect v = view_src(); SDL_RenderCopy(ren, tex, &v, &dst); }
+    if (fx_draw(dst)) {}   // bezel and/or screen filter (present_fx.cpp); otherwise the classic copy below
+    else if (link) { SDL_Rect v = view_src(); SDL_RenderCopy(ren, tex, &v, &dst); }
     else SDL_RenderCopy(ren, tex, nullptr, &dst);
     if (is_ds && pad_cursor.active && last_dst.w > 0) {   // pad stylus marker
         int cx = last_dst.x + (int)((pad_cursor.x * 0.5 + 0.5) * last_dst.w), cy = last_dst.y + (int)((pad_cursor.y * 0.5 + 0.5) * last_dst.h);
@@ -812,6 +836,88 @@ void Frontend::present() {
     draw_hint();
     draw_osd();
     SDL_RenderPresent(ren);
+}
+
+/* ------------------------------------------------------------------ screen filters + bezel (present_fx.cpp) */
+
+bool Frontend::fx_draw(const SDL_Rect& dst) {
+    if (fx_filter_ == fx::Filter::Off && !bezel_on_) return false;
+    if (dst.w <= 0 || dst.h <= 0) return false;
+    int ow = 0, oh = 0;
+    SDL_GetRendererOutputSize(ren, &ow, &oh);
+    if (bezel_on_ && ow > 0 && oh > 0) {
+        std::string key = a.system + "|" + std::to_string(ow) + "x" + std::to_string(oh) + "|" + std::to_string(dst.x) + "," + std::to_string(dst.y) + "," + std::to_string(dst.w) + "," + std::to_string(dst.h);
+        if (!bezel_tex_ || bezel_tex_w_ != ow || bezel_tex_h_ != oh || key != bezel_key_) {
+            const auto& bz = fxe_.bezel(a.system, ow, oh, fx::Rect{dst.x, dst.y, dst.w, dst.h});
+            if (!bezel_tex_ || bezel_tex_w_ != ow || bezel_tex_h_ != oh) {
+                if (bezel_tex_) SDL_DestroyTexture(bezel_tex_);
+                bezel_tex_ = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, ow, oh);
+                bezel_tex_w_ = ow; bezel_tex_h_ = oh;
+            }
+            if (bezel_tex_) SDL_UpdateTexture(bezel_tex_, nullptr, bz.data(), ow * 4);
+            bezel_key_ = key;
+        }
+        if (bezel_tex_) SDL_RenderCopy(ren, bezel_tex_, nullptr, nullptr);
+    }
+    if (fx_filter_ == fx::Filter::Off) return false;   // bezel only: the plain frame copy follows
+    const FrameBuf& f = core.frame();
+    SDL_Rect v{0, 0, f.w, f.h};
+    if (link) v = view_src();
+    fx::Src src{f.px.data() + (size_t)v.y * f.w + v.x, f.w, v.w, v.h};
+    fxe_.render(fx_filter_, src, dst.w, dst.h, &fx_px_);
+    if (!fx_tex_ || fx_tex_w_ != dst.w || fx_tex_h_ != dst.h) {
+        if (fx_tex_) SDL_DestroyTexture(fx_tex_);
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+        fx_tex_ = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, dst.w, dst.h);
+        fx_tex_w_ = dst.w; fx_tex_h_ = dst.h;
+        if (!fx_tex_) return false;
+    }
+    SDL_UpdateTexture(fx_tex_, nullptr, fx_px_.data(), dst.w * 4);
+    SDL_RenderCopy(ren, fx_tex_, nullptr, &dst);
+    return true;
+}
+
+/* runner_ctl "shader <name>": off|crt|lcd|dmg|sharp, "next" (cycle), "bezel:on|off|toggle". */
+bool Frontend::fx_set(const std::string& what, std::string* msg) {
+    std::string w = lower(trim(what));
+    if (w.rfind("bezel", 0) == 0) {
+        std::string arg = w.size() > 6 ? w.substr(6) : "toggle";
+        if (arg == "on" || arg == "1") bezel_on_ = true;
+        else if (arg == "off" || arg == "0") bezel_on_ = false;
+        else if (arg == "toggle") bezel_on_ = !bezel_on_;
+        else { *msg = "unknown bezel option"; return false; }
+        *msg = bezel_on_ ? "Bezel on" : "Bezel off";
+        return true;
+    }
+    fx::Filter f;
+    if (w == "next") f = fx::next_filter(fx_filter_);
+    else if (!fx::parse_filter(w, &f)) { *msg = "unknown shader"; return false; }
+    fx_filter_ = f;
+    *msg = std::string("Filter: ") + fx::filter_label(f);
+    return true;
+}
+
+FrameBuf Frontend::fx_compose(const FrameBuf& f, int ow, int oh) {
+    FrameBuf out;
+    out.w = ow; out.h = oh;
+    SDL_Rect dst{0, 0, 0, 0};
+    layout_for(ow, oh, &dst);
+    if (bezel_on_ && dst.w > 0) out.px = fxe_.bezel(a.system, ow, oh, fx::Rect{dst.x, dst.y, dst.w, dst.h});
+    else out.px.assign((size_t)ow * oh, 0xFF000000u);
+    if (dst.w <= 0 || dst.h <= 0 || f.px.empty()) return out;
+    if (fx_filter_ != fx::Filter::Off) {
+        fx_px_.clear();
+        fxe_.render(fx_filter_, fx::Src{f.px.data(), f.w, f.w, f.h}, dst.w, dst.h, &fx_px_);
+    } else {
+        fx_px_.resize((size_t)dst.w * dst.h);
+        for (int y = 0; y < dst.h; y++) for (int x = 0; x < dst.w; x++) fx_px_[(size_t)y * dst.w + x] = f.px[(size_t)(y * f.h / dst.h) * f.w + x * f.w / dst.w];
+    }
+    for (int y = 0; y < dst.h; y++) {
+        int oy = dst.y + y;
+        if (oy < 0 || oy >= oh) continue;
+        for (int x = 0; x < dst.w; x++) { int ox = dst.x + x; if (ox >= 0 && ox < ow) out.px[(size_t)oy * ow + ox] = fx_px_[(size_t)y * dst.w + x]; }
+    }
+    return out;
 }
 
 void Frontend::draw_osd() {
@@ -1290,6 +1396,11 @@ void Frontend::ctl_poll() {
             } else if (c.cmd == runctl::Cmd::Speed) {
                 apply_speed(c.speed);
                 ctl_.ack(true, runctl::speed_label(c.speed));
+            } else if (c.cmd == runctl::Cmd::Shader) {
+                std::string m;
+                bool ok = fx_set(c.text, &m);
+                if (ok) osd::push(m);
+                ctl_.ack(ok, m);
             } else {
                 ctl_.ack(false, "unsupported");
             }
@@ -2497,6 +2608,11 @@ done:
         }
         if (!a.screenshot.empty()) {
             FrameBuf shot = core.frame();
+            if ((fx_filter_ != fx::Filter::Off || bezel_on_) && shot.w > 0 && !shot.px.empty()) {   // QA: the filtered/bezelled window (RETRORUN_FX_SHOT_SIZE=WxH, default 1280x720)
+                int sow = 1280, soh = 720;
+                if (const char* sz = std::getenv("RETRORUN_FX_SHOT_SIZE")) sscanf(sz, "%dx%d", &sow, &soh);
+                shot = fx_compose(shot, std::max(16, sow), std::max(16, soh));
+            }
             if (const char* hs = std::getenv("RETRORUN_HINT_SHOT"); hs && hs[0] == '1' && shot.w > 0 && shot.px.size() >= (size_t)shot.w * shot.h) {   // QA: the tips card as seen ~1 s into a real run
                 int k = std::max(1, (540 + shot.h - 1) / shot.h);   // integer-upscale small frames to a window-like size so the card has its real proportions
                 if (k > 1) {
@@ -2529,6 +2645,8 @@ done:
     }
     if (tex) SDL_DestroyTexture(tex);
     if (osd_tex) SDL_DestroyTexture(osd_tex);
+    if (fx_tex_) SDL_DestroyTexture(fx_tex_);
+    if (bezel_tex_) SDL_DestroyTexture(bezel_tex_);
     if (ren) SDL_DestroyRenderer(ren);
     if (win) SDL_DestroyWindow(win);
     audio.close();

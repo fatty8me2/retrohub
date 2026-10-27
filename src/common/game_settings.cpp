@@ -69,6 +69,9 @@ std::vector<Option> build() {
     v.push_back(mk("scale.filter", "Screen scaling", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Choice, S::Visual, "auto",
                    {{"auto", "Automatic"}, {"nearest", "Sharp pixels"}, {"linear", "Smooth"}}));
     v.push_back(mk("scale.integer", "Integer scaling", "Video", GB | GBA | NES | SNES, K::Bool, S::Visual, "true"));
+    v.push_back(mk("fx.filter", "Screen filter", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Choice, S::Visual, "off",
+                   {{"off", "Off"}, {"crt", "CRT"}, {"lcd", "LCD grid"}, {"dmg", "Game Boy green"}, {"sharp", "Sharp bilinear"}}));
+    v.push_back(mk("fx.bezel", "Console frame (bezel)", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Bool, S::Visual, "false"));
     v.push_back(mk("gb.color", "Color correction", "Color", GB | GBA, K::Choice, S::Visual, "auto",
                    {{"auto", "Core default"}, {"off", "Off"}, {"on", "On"}}));
     v.push_back(mk("ds.layout", "Screen layout", "Video", NDS, K::Choice, S::Visual, "top-bottom",
@@ -451,6 +454,8 @@ std::vector<std::string> retrorun_args(System s, const Values& v) {
     std::string f = get(v, "scale.filter");
     if (f != "auto") { r.push_back("--filter"); r.push_back(f); }
     if (s != System::NDS && s != System::PS1 && get(v, "scale.integer") == "false") { r.push_back("--integer-scale"); r.push_back("0"); }
+    if (get(v, "fx.filter") != "off" && !get(v, "fx.filter").empty()) { r.push_back("--fx"); r.push_back(get(v, "fx.filter")); }
+    if (get(v, "fx.bezel") == "true") { r.push_back("--bezel"); r.push_back("1"); }
     std::string cc = get(v, "gb.color");
     if (cc != "auto" && (s == System::GB || s == System::GBC)) {
         bool on = cc == "on";

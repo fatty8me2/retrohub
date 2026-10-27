@@ -122,6 +122,7 @@ add_test(NAME hubdolphincheats_test COMMAND hubdolphincheats_test)   # GameCube 
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
 add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
+add_test(NAME retrorun_fx_test COMMAND retrorun_fx_test)
 add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
 add_test(NAME retrorun_link_test COMMAND retrorun_link_test)
 add_test(NAME retrorun_rollback_test COMMAND retrorun_rollback_test)
