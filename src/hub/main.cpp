@@ -128,6 +128,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     io.IniFilename = nullptr;
     ui::setup_fonts(S);
     ui::setup_theme(S);
+    theme_init();
     ImGui_ImplSDL2_InitForSDLRenderer(A.win, ren);
     ImGui_ImplSDLRenderer2_Init(ren);
     ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);   // any connected pad drives the UI, hot-plug included
