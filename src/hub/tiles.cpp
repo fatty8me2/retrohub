@@ -68,7 +68,13 @@ ArtRef art_lookup(const std::string& seen_key, bool have_name, SDL_Texture* tex,
 }
 ArtRef art_for_entry(const hub::GameEntry& e) {
     int w = 0, h = 0;
-    SDL_Texture* t = hubart::get(e, hubart::Kind::Boxart, &w, &h);
+    SDL_Texture* t = nullptr;
+    if (custom_cover(e.key, &t, &w, &h)) return art_lookup(e.key, false, t, w, h);   // the user's own cover (customize_ui.cpp)
+    if (custom_is_renamed(e.key)) {   // art matching must see the scanned name, not the user's rename
+        hub::GameEntry c = e;
+        c.title = custom_original_title(e);
+        t = hubart::get(c, hubart::Kind::Boxart, &w, &h);
+    } else t = hubart::get(e, hubart::Kind::Boxart, &w, &h);
     return art_lookup(e.key, true, t, w, h);
 }
 ArtRef art_for_pick(const GameInfo& g) {
