@@ -71,9 +71,19 @@ struct Timeline {
     float slide, fly, insert, power, fade;
     float total() const { return slide + fly + insert + power + fade; }
 };
-inline Timeline timeline_for(bool short_version) {
-    return short_version ? Timeline{0.15f, 0.25f, 0.25f, 0.20f, 0.15f}    // 1.0 s
-                         : Timeline{0.80f, 1.10f, 1.60f, 1.20f, 0.50f};   // 5.2 s: unhurried, the insertion and power-on get room to breathe
+/* Full version: 5.2 s base (unhurried; the insertion and power-on get room to breathe). Disc consoles (lid / tray / front slot) need
+ * more room for the lid or tray to open, the disc to settle and the lid to close, so their Insert phase is 1.6x longer.
+ * `sound_s` (startup sound length, 0 = none): the Power phase is held so the sound plays out before the game window appears
+ * (N64 keeps its tuned 5.2 s). `real`: the console's own startup follows, so the animation still plays in full but without our sound. */
+inline Timeline timeline_for(bool short_version, hub::System sys = hub::System::N64, float sound_s = 0.f, bool real = false) {
+    if (short_version) return Timeline{0.15f, 0.25f, 0.25f, 0.20f, 0.15f};   // 1.0 s
+    Timeline tl{0.80f, 1.10f, 1.60f, 1.20f, 0.50f};
+    if (sys == hub::System::N64) return tl;
+    const Geo g = geo_for(sys);
+    if (g.kind == Insert::Lid || g.kind == Insert::Tray || g.kind == Insert::Front) tl.insert = 2.6f;
+    if (real) tl.power = 2.0f;
+    else if (sound_s > 0.f) tl.power = std::min(6.0f, std::max(tl.power, sound_s - 1.0f));
+    return tl;
 }
 inline Phase phase_at(const Timeline& tl, float t) {
     if (t < 0.f) return Phase::Idle;
@@ -115,12 +125,12 @@ inline float phase_progress(const Timeline& tl, float t) {   // 0..1 within the 
 }
 
 enum class Mode { Skip, Short, Full };
-/* online_launch: a room launch (or the player is in a room). quick_path: resume / quick-launch. Online never gets the full version:
+/* online_launch: a room launch (or the player is in a room). quick_path: resume / quick-launch (same as a normal launch now). Online never gets the full version:
  * with "Skip in online games" it is skipped, otherwise at most the short version, so online sync never waits on it. */
 inline Mode choose_mode(const Options& o, bool online_launch, bool quick_path) {
     if (!o.enabled) return Mode::Skip;
     if (online_launch) return o.skip_online ? Mode::Skip : Mode::Short;
-    if (quick_path) return Mode::Short;
+    (void)quick_path;   // resume / quick-launch used to force the 1 s version, which made every non-details launch feel rushed
     return o.short_version ? Mode::Short : Mode::Full;
 }
 
@@ -140,14 +150,14 @@ struct Runner {
     Timeline tl{};
     float t = -1.f;
     bool running = false, finished_ = false, skipped = false, sound_started = false, armed = false;
-    bool real = false;   // the console's own startup follows: no synthesized/custom sound, and the Power phase hands straight to the game
+    bool real = false;   // the console's own startup follows: no synthesized/custom sound, and the animation still plays in full, then the console's own startup follows
 
-    float end_t() const { return real ? phase_start(tl, Phase::Power) : tl.total(); }
-    void begin(Mode m, bool real_boot = false) {
+    float end_t() const { return tl.total(); }   // real boot plays the whole animation too, then hands off
+    void begin(Mode m, bool real_boot = false, hub::System sys = hub::System::N64, float sound_s = 0.f) {
         *this = Runner();
         real = real_boot;
         if (m == Mode::Skip) { finished_ = true; return; }
-        tl = timeline_for(m == Mode::Short);
+        tl = timeline_for(m == Mode::Short, sys, sound_s, real_boot);
         t = 0.f;
         running = true;
     }

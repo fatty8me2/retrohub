@@ -342,8 +342,10 @@ void start(const hub::GameEntry& e, std::function<void()> on_done, bool online, 
     if (R.running) { skip(); }   // a second start never stacks: finish the first (launches it) -- callers guard against this anyway
     G = e;
     g_done = std::move(on_done);
-    R.begin(m, real_boot);
-    if (g_frozen) { R.armed = true; R.t = g_frozen_t; G.system = g_frozen_sys; }
+    if (g_frozen) G.system = g_frozen_sys;
+    const float snd = (g_opt.sounds && !real_boot && m == Mode::Full && sound_available(G.system) && options().volume > 0.f) ? sound_seconds(G.system) : 0.f;
+    R.begin(m, real_boot, G.system, snd);
+    if (g_frozen) { R.armed = true; R.t = g_frozen_t; }
     if (m == Mode::Skip) {
         auto cb = std::move(g_done);
         g_done = nullptr;
