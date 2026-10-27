@@ -21,7 +21,9 @@ static void test_attract() {
     for (int i = 0; i < 5; ++i) id.step(1.0, false, true);
     CHECK(id.active && id.shown >= 4.9 && id.shown <= 5.1);
     CHECK(id.step(0.016, true, true));                // any input ends it and reports the wake
-    CHECK(!id.active && id.idle == 0);
+    CHECK(!id.active && id.idle == 0 && id.just_woke);   // that frame is flagged so its press can be swallowed
+    id.step(0.016, false, true);
+    CHECK(!id.just_woke);                              // and only that frame
     CHECK(!id.step(0.016, true, true));               // input while idle-inactive: no "wake"
     for (int i = 0; i < 100; ++i) id.step(1.0, false, false);
     CHECK(!id.active);                                // not eligible (other page, no focus, game running): never starts
