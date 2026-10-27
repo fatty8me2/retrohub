@@ -215,6 +215,7 @@ str state_path() { return data_dir_s() + "cloud-state.json"; }
 str queue_path() { return data_dir_s() + "cloud-queue.json"; }
 
 void push_event_locked(CloudEvent::Kind k, const GameId& g, const str& text, bool good) {
+    if (g.system == "_account") return;   // the synced prefs are not a game: no toasts / bell entries for them
     CloudEvent e;
     e.kind = k; e.game = g; e.text = text; e.good = good;
     E.events.push_back(e);
@@ -375,7 +376,7 @@ void set_state(const GameId& g, CloudState s, LocalOnlyReason lo = LocalOnlyReas
 }
 int queued_count_locked() {   // games waiting, not counting internal bookkeeping items
     std::set<str> g;
-    for (auto& q : E.queue.items()) if (q.gkey != "*") g.insert(q.gkey);
+    for (auto& q : E.queue.items()) if (q.gkey != "*" && q.gkey != "_account/_") g.insert(q.gkey);
     return (int)g.size();
 }
 void note_online(bool online) {
@@ -667,9 +668,13 @@ bool merge_prefs_conflict(Api& api, const GameId& g, const str& gkey, const str&
     std::error_code ec;
     if (!r.ok || !read_all(scratch, &theirs)) { fs::remove(scratch, ec); return false; }
     fs::remove(scratch, ec);
-    str merged = hub::prefs::merge_text(mine, theirs);
+    (void)mine;
+    hub::prefs::Prefs incoming;
+    hub::prefs::parse(theirs, &incoming);
     backup_local(g, path, "pc");
-    if (!write_atomic(local, merged)) return false;
+    hub::prefs::merge_into_file(vault_dir(), incoming);   // merges with the CURRENT local file under the prefs lock (no race with favorite toggles)
+    str merged;
+    if (!read_all(local, &merged)) return false;
     ++*pulled;
     prefs_after_change();
     if (merged == theirs) {   // the cloud copy already contains everything

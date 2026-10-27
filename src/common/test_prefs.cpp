@@ -71,6 +71,28 @@ int main() {
     }
     CHECK(merge_text(serialize(a), "not json").find("k1") != std::string::npos);
 
+    // legacy (no per-key stamps) removal must not resurrect; a newer key still survives
+    {
+        Prefs newer, older;
+        CHECK(parse("{\"favorites\":[],\"ts\":{\"favorites\":500}}", &newer) && newer.legacy_favorites);
+        set_favorites(&older, {"k"}, 100);
+        CHECK(merge(newer, older).favorites.empty() && merge(older, newer).favorites.empty());
+        Prefs newer_key; set_favorites(&newer_key, {"k"}, 900);
+        CHECK(merge(newer, newer_key).favorites == V{"k"});
+        // two new-format PCs: the one that never saw "k" must not tombstone it
+        Prefs x, y; set_favorites(&x, {"a"}, 500); set_favorites(&y, {"k"}, 100);
+        CHECK(merge(x, y).favorites == (V{"a", "k"}));
+    }
+    // tombstones older than 90 days are dropped on save, fresh ones stay
+    {
+        Prefs g; long long now = 200ll * 24 * 3600 * 1000;
+        set_favorites(&g, {"old", "new"}, now - 120ll * 24 * 3600 * 1000);
+        set_favorite(&g, "old", false, now - 100ll * 24 * 3600 * 1000);
+        set_favorite(&g, "new", false, now - 1000);
+        gc_tombstones(&g, now);
+        CHECK(!g.favorites_ts.count("old") && g.favorites_ts.count("new") && g.favorites_ts["new"] < 0);
+    }
+
     fs::path root = fs::temp_directory_path() / "rh_prefs_test";
     std::error_code ec; fs::remove_all(root, ec);
     std::string r = root.string();
