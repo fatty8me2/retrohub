@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.28.1",
+      "date": "2026-10-27",
+      "title": "No more stray chat while you play",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Pressing buttons in a game no longer types and sends junk into the room chat (the on-screen keyboard was reading your controller in the background)",
+        "RetroHub ignores your keyboard and controller while a game has the focus; Alt-Tab back and everything works as normal",
+        "An in-game A press can no longer claim a player slot on the Controllers page"
+      ]
+    },
+    {
       "version": "1.28.0",
       "date": "2026-10-27",
       "title": "Rewind, themes, TV mode and a lot more",
