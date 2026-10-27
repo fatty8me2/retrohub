@@ -48,6 +48,7 @@ namespace fs = std::filesystem;
 /* ------------------------------------------------------------------ args */
 
 struct Args {
+    int volume = 100;   // --volume N (0-100): starting volume, applied once audio opens
     std::string control, game_key, shot_dir, load_state_path;   // --load-state FILE: restore this state right after boot (offline)
     //   // --control FILE (runner_ctl.h), --game-key KEY, --shot-dir DIR
     std::string osd_msg;   // --osd-msg TEXT: QA, a toast that stays up (use with RETRORUN_OSD_SHOT=1 and --screenshot)
@@ -116,6 +117,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
             o->mem_dumps.push_back({id, (size_t)off, (size_t)len, file});
         }
         else if (k == "--save-dir") { if (!val(&o->save_dir)) return false; }
+        else if (k == "--volume") { if (!val(&v)) return false; o->volume = std::max(0, std::min(100, atoi(v.c_str()))); }
         else if (k == "--control") { if (!val(&o->control)) return false; }
         else if (k == "--game-key") { if (!val(&o->game_key)) return false; }
         else if (k == "--shot-dir") { if (!val(&o->shot_dir)) return false; }
@@ -373,6 +375,7 @@ class Frontend {
     /* runner_ctl "speed" / "ff" (offline only). speed = multiplier (1 = normal); speed_max = uncapped (also what the Tab key does);
      * fast_speed_ = what "ff on" selects (0 = max), the last fast speed chosen, default 2x. */
     double speed = 1.0, fast_speed_ = 2.0;
+    bool boost_active_ = false;   // View+RT quick boost is on
     bool speed_max = false;
     void apply_speed(double s);
     SDL_Texture* osd_tex = nullptr;
@@ -1004,6 +1007,16 @@ void Frontend::poll_all_local() {
             hubctl::read_state(pads[i], &st);
             if (st.b[hubctl::kBtnBack] && st.b[7] && st.b[8]) swap_combo = true;
         }
+        bool boost = false;   // View + RT held: quick boost at the last fast speed (offline only)
+        for (size_t i = 0; i < pads.size(); i++) {
+            hubctl::PadState st;
+            hubctl::read_state(pads[i], &st);
+            if (hubctl::boost_combo_down(st)) boost = true;
+        }
+        if (!online && !a.ds_link) {
+            if (boost && !boost_active_ && speed == 1.0 && !speed_max) { boost_active_ = true; apply_speed(fast_speed_); }
+            else if (!boost && boost_active_) { boost_active_ = false; apply_speed(1.0); }
+        } else boost_active_ = false;
         if (swap_combo && !swap_combo_prev_) disc_request();
         swap_combo_prev_ = swap_combo;
         if (exit_combo.update(combo, (long long)SDL_GetTicks64())) { rlog("exit combo (Back+Start held): leaving"); quit = true; }
@@ -1262,7 +1275,7 @@ void Frontend::ctl_poll() {
         case runctl::Cmd::OsdMsg: osd::push(c.text); ctl_.ack(true, "shown"); break;
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
         case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Clip:
-            if (online || a.ds_link) { ctl_.ack(false, "Not available in online sessions"); break; }
+            if ((online || a.ds_link) && runctl::offline_only(c.cmd)) { ctl_.ack(false, "Not available in online sessions"); break; }
             if (c.cmd == runctl::Cmd::Volume) {
                 audio.set_volume(c.value);
                 osd::push("Volume " + std::to_string(c.value) + "%");
@@ -2271,6 +2284,7 @@ int Frontend::run(const Args& args) {
         if (use_state_hash && !core.serialize_size()) use_state_hash = false;
         rlog("sync hash: %s", use_state_hash ? "serialized state" : "video+audio output");
     }
+    audio.set_volume(a.volume);
     if (!a.headless && !muted) audio.open(core.av().timing.sample_rate > 1000 ? core.av().timing.sample_rate : 32768.0);
     if (!setup_video()) return 1;
     drc = pace == Pace::Vsync;

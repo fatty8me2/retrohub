@@ -60,11 +60,13 @@ void LocalInput::update() {
     if (SDL_NumJoysticks() != last_joysticks_) rescan();
     SDL_GameControllerUpdate();
     bool combo = false;
+    boost_ = false;
     for (size_t i = 0; i < pads_.size(); i++) {
         hubctl::PadState st;
         hubctl::read_state((SDL_GameController*)pads_[i], &st);
         pad_state_[i] = map_->word(st);
         if (hubctl::exit_combo_down(st)) combo = true;
+        if (hubctl::boost_combo_down(st)) boost_ = true;
     }
     if (combo_.update(combo, (long long)SDL_GetTicks64())) exit_fired_ = true;
 

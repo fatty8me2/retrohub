@@ -310,6 +310,9 @@ void tab_video() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ImGui::Checkbox("Start games fullscreen", &A.st.fullscreen)) mark_dirty();
     text_wrapped_disabled("Default for every system; each system or game can override it under Game defaults / Details.");
+    ImGui::SetNextItemWidth(sp(30.f));
+    if (ImGui::SliderInt("Game volume", &A.st.volume, 0, 100, "%d%%")) mark_dirty();
+    text_wrapped_disabled("Default for every game, set at launch. Each system or game can override it (Game defaults / Details), and the game menu (View + Y) changes it live.");
     if (ImGui::Checkbox("Show controller tips when a game starts", &A.st.start_hint)) mark_dirty();
     text_wrapped_disabled("A small card for about 5 seconds: hold View + Y for the game menu, View + Menu to return to RetroHub.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));

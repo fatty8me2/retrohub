@@ -41,6 +41,9 @@ std::vector<Option> build() {
     using S = Scope; using K = Kind;
     std::vector<Option> v;
     v.push_back(mk("fullscreen", "Fullscreen", "Video", ALL, K::Bool, S::Visual, "false"));
+    v.push_back(mk("volume", "Volume", "Audio", ALL, K::Choice, S::Visual, "100",
+                   {{"0", "0% (silent)"}, {"10", "10%"}, {"20", "20%"}, {"30", "30%"}, {"40", "40%"}, {"50", "50%"}, {"60", "60%"},
+                    {"70", "70%"}, {"80", "80%"}, {"90", "90%"}, {"100", "100%"}}));
 
     // ---- N64 (GLideN64 via n64run)
     v.push_back(mk("n64.res", "Internal resolution", "Video", N64, K::Choice, S::Visual, "0",
@@ -381,6 +384,12 @@ bool n64_key_locked_online(const std::string& k) {
     return k == "EnableFBEmulation" || k == "EnableCopyColorToRDRAM" || k == "EnableCopyDepthToRDRAM";
 }
 
+int volume_of(const Values& v) {
+    auto i = v.find("volume");
+    if (i == v.end()) return 100;
+    int n = std::atoi(i->second.c_str());
+    return n < 0 ? 0 : n > 100 ? 100 : n;
+}
 bool is_fullscreen(const Values& v) { auto i = v.find("fullscreen"); return i != v.end() && i->second == "true"; }
 
 static std::string get(const Values& v, const char* k) {

@@ -32,9 +32,10 @@ inline std::string join_cmd(const std::vector<std::string>& a) {
 
 /* Settings of one game: option defaults <- system defaults <- game override. The hub's global "Start games fullscreen"
  * is the default for every system: it applies unless the system or the game set "fullscreen" themselves. */
-inline hub::gs::Values effective_values(const hub::gs::Store& st, hub::System s, const std::string& game_key, bool global_fullscreen) {
+inline hub::gs::Values effective_values(const hub::gs::Store& st, hub::System s, const std::string& game_key, bool global_fullscreen, int global_volume = 100) {
     hub::gs::Values v = st.resolve(s, game_key);
     if (st.source(s, game_key, "fullscreen") == 0) v["fullscreen"] = global_fullscreen ? "true" : "false";
+    if (st.source(s, game_key, "volume") == 0) v["volume"] = std::to_string(global_volume < 0 ? 0 : global_volume > 100 ? 100 : global_volume);   // global volume is the default
     return v;
 }
 
@@ -49,6 +50,7 @@ inline hub::gs::Values online_values(hub::System s, const hub::gs::Values& local
 inline std::string n64_extra_args(const hub::gs::Values& v) {
     std::string a = join_cmd(hub::gs::n64_args(v));
     if (hub::gs::is_fullscreen(v)) a += " --fullscreen";
+    if (hub::gs::volume_of(v) != 100) a += " --volume " + std::to_string(hub::gs::volume_of(v));
     return a;
 }
 
@@ -56,6 +58,7 @@ inline std::string n64_extra_args(const hub::gs::Values& v) {
 inline std::string retro_extra_args(hub::System s, const hub::gs::Values& v) {
     std::string a = join_cmd(hub::gs::retrorun_args(s, v));
     if (hub::gs::is_fullscreen(v)) a += " --fullscreen";
+    if (hub::gs::volume_of(v) != 100) a += " --volume " + std::to_string(hub::gs::volume_of(v));
     return a;
 }
 
