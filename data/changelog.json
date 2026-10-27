@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.27.6",
+      "date": "2026-10-26",
+      "title": "GameCube online stays up",
+      "new": [],
+      "improved": [
+        "RetroHub keeps a small online log (userdata\\logs\\online.log) so dropped GameCube sessions can be diagnosed"
+      ],
+      "fixed": [
+        "A GameCube guest's game is no longer closed the moment the host's connection blips: RetroHub waits, tells you the host disconnected, and lets you choose when to leave"
+      ]
+    },{
       "version": "1.27.5",
       "date": "2026-10-26",
       "title": "Online badges that match",
