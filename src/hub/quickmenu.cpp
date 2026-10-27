@@ -398,6 +398,11 @@ void shots_gallery(const hub::GameEntry& e) {
         std::sort(s_files.begin(), s_files.end(), std::greater<std::string>());   // newest first (names are timestamps)
     }
     if (s_files.empty()) return;   // the tab is hidden when there are none
+    if (g_headless && std::getenv("HUB_SHOT_VIEWER")) {   // screenshot aid: open the full-size viewer once
+        static bool once = false;
+        if (!once) { once = true; std::vector<std::string> all; for (auto& f : s_files) all.push_back(dir + "\\" + f);
+            shot_viewer_open(e, all, 1, [](const std::string& p, int* w, int* h) -> SDL_Texture* { Tex* t = tex_for(p); if (!t) return nullptr; *w = t->w; *h = t->h; return t->t; }); }
+    }
     if (ImGui::SmallButton("Open folder")) ShellExecuteW(nullptr, L"open", std::filesystem::u8path(dir).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     const float th = sp(13.f), tw = th * 1.6f;
     ImGui::BeginChild("##shots", ImVec2(0, th + sp(7.f)), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_HorizontalScrollbar);
@@ -423,11 +428,17 @@ void shots_gallery(const hub::GameEntry& e) {
             if (ImGui::SmallButton("Delete")) s_confirm = s_files[i];
         }
         ImGui::EndGroup();
-        if (open_it) ShellExecuteW(nullptr, L"open", std::filesystem::u8path(path).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        if (open_it) {   // full-size in-app viewer (shot_viewer.cpp); "Open in viewer" lives inside it
+            std::vector<std::string> all;
+            for (auto& f : s_files) all.push_back(dir + "\\" + f);
+            shot_viewer_open(e, all, (int)i, [](const std::string& p, int* w, int* h) -> SDL_Texture* {
+                Tex* t = tex_for(p); if (!t) return nullptr; *w = t->w; *h = t->h; return t->t; });
+        }
         ImGui::PopID();
         ImGui::SameLine(0, sp(1.f));
     }
     ImGui::EndChild();
+    if (shot_viewer_draw()) s_at = -10;   // a picture was deleted: rescan
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 }
 

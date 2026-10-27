@@ -53,4 +53,4 @@ Same file and `seq` rules as above. Extra fields in `control.json`: `"value"` (i
 - **QA:** `retrorun --headless --osd-msg "text" --screenshot out.png` with `RETRORUN_OSD_SHOT=1` composites the OSD into the screenshot (frame upscaled to ~480 px high).
 
 ## Quick menu (hub)
-View + Y while a game runs opens the menu (`src/hub/quickmenu.cpp`): Resume, Save state (slot picker with thumbnails), Load state, Take a screenshot, Cheats, Swap disc (PS1), Invite a friend (when in a room), Quit to RetroHub. For other emulators (Dolphin, Azahar, Cemu, PCSX2) only Resume, Cheats, Invite and Quit appear. The details modal shows a screenshots strip (open, delete, open folder).
+View + Y while a game runs opens the menu (`src/hub/quickmenu.cpp`): Resume, Save state (slot picker with thumbnails), Load state, Take a screenshot, Cheats, Swap disc (PS1), Invite a friend (when in a room), Quit to RetroHub. For other emulators (Dolphin, Azahar, Cemu, PCSX2) only Resume, Cheats, Invite and Quit appear. The details modal shows a screenshots strip (click opens the full-size viewer, which has Copy, Set as cover, Delete and Open in viewer; plus Open folder).

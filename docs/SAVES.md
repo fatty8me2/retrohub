@@ -64,6 +64,10 @@ files are read into memory for zip export/import.
 **Tests**: `hubsaves_test` (console) simulates two PCs sharing one sync folder: push/pull, edit propagation,
 conflicts (both directions), states excluded/included, unicode and long paths, zip round trip, idempotency.
 
+## Account prefs (`_account/prefs.json`)
+`src/common/prefs.h` defines a typed file in the vault's `_account/` folder (class `settings` in the cloud, so it is always synced): `favorites`, `user_shelves`, `hidden`, `renames`, `covers` (game key -> image path), `theme`, `profile.avatar|fav_game|status`. Each field carries its own modified time (unix ms) in `ts`; `merge()` keeps the newer side per field, so two PCs editing different fields never overwrite each other (`merge_text()` is the conflict-resolver entry point; tested by `prefs_test`). `hub::set_favorite` mirrors into it once `set_vault_root()` is armed (the hub does not arm it yet), and the screenshot viewer's "Set as cover" writes `covers[key]`. Nothing displays covers yet.
+Screenshots live in `<vault>/<system>/<game key>/shots/` and stay local unless "Back up screenshots" is on.
+
 ## Online save policy
 
 "Use host's save" is a room option (host-controlled, default on) for lockstep/rollback modes that need every PC to boot from
