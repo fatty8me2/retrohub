@@ -49,7 +49,8 @@ bool gc_process_alive() {
     return alive;
 }
 
-void gc_kill() {
+void gc_kill(const char* why) {
+    online_log(std::string("gc_kill: ") + why);
     for (DWORD pid : {GCO.run.driver_pid, GCO.run.dolphin_pid}) {
         if (!pid) continue;
         if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid)) { TerminateProcess(h, 0); CloseHandle(h); }
@@ -63,11 +64,14 @@ void online_host_left(const std::string& gone) {
      * lobby. Peer-hosted emulator sessions (Dolphin NetPlay guest, Azahar, Kanto) have lost their server: close them gracefully so the
      * emulator flushes its saves, then poll_process / gc_tick sync the vault and return the player to the room. */
     std::string who = gone.empty() ? std::string("The host") : gone;
-    autotest_log("host left: " + who + " (emulator session " + std::string((GCO.active && !GCO.host && gc_process_alive()) || (A.proc && A.run.room) ? "open" : "none") + ")");
+    online_log("host left event: " + who + " (emulator session " + std::string((GCO.active && !GCO.host && gc_process_alive()) || (A.proc && A.run.room) ? "open" : "none") + ")");
     if (GCO.active && !GCO.host && gc_process_alive()) {
+        /* Do not close a running game on the lobby's word alone: a network blip on the host's side looks the same. Start a grace
+         * timer; gc_tick tells the player and only closes if Dolphin's own NetPlay link is dead too. */
         GCO.left_name = who;
-        close_pid_windows(GCO.run.dolphin_pid);
-        push_toast(who + " left - closing the game", ui::WARN, 8.0, true);
+        GCO.host_gone_at = GetTickCount64();
+        GCO.host_gone_told = false;
+        online_log("host left: " + who + " (guest Dolphin running, grace timer started, not closing)");
         return;
     }
     if (A.proc && A.run.room && A.run.remote_play) {   // the host's stream is over: close the viewer, back to the room
@@ -85,7 +89,7 @@ void online_host_left(const std::string& gone) {
 }
 
 void online_cancel_pending() {
-    if (GCO.guest_wait || (GCO.active && !gc_process_alive())) gc_stop_all();
+    if (GCO.guest_wait || (GCO.active && !gc_process_alive())) gc_stop_all("online_cancel_pending");
     else if (GCO.fw.active() && !GCO.active) GCO.fw.stop();
     if (NP3_pending && !A.proc) { NP3.stop(); NP3_pending = false; }
     NP3_resume.cancel();
@@ -196,10 +200,11 @@ void gc_host_guest_failed(const std::string& why) {
     if (gcnp::read_status(GCO.run).find("stage:in-game") != std::string::npos) return;   // already playing: not a launch failure
     autotest_log("host: guest failed, aborting: " + why);
     host_abort(why);
-    gc_kill();   // gc_tick then sees Dolphin gone and resets the room state
+    gc_kill("host: guest failed to join");   // gc_tick then sees Dolphin gone and resets the room state
 }
 
-void gc_stop_all() {
+void gc_stop_all(const char* why) {
+    online_log(std::string("gc_stop_all: ") + why);
     if (GCO.run.driver_pid) {   // the UI-automation driver can outlive Dolphin; never leave it behind
         if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, GCO.run.driver_pid)) { TerminateProcess(h, 0); CloseHandle(h); }
         GCO.run.driver_pid = 0;
@@ -218,20 +223,37 @@ void gc_tick() {
         if (GCO.fw.failed()) {
             launch_fail("GameCube online: " + GCO.fw.status(), 12.0);
             if (GCO.host) host_abort("GameCube online: " + GCO.fw.status());
-            if (!GCO.host && GCO.active && gc_process_alive()) {   // the host's socket is gone mid-game: let Dolphin close itself (it flushes and exits), not a kill
-                autotest_log("guest: forwarder lost, closing Dolphin gracefully");
-                close_pid_windows(GCO.run.dolphin_pid);
+            if (!GCO.host && GCO.active && gc_process_alive()) {   // the host's socket is gone mid-game: Dolphin notices by itself; the player decides, no force-close here
+                online_log("guest: forwarder lost mid-game (" + GCO.fw.status() + "); leaving Dolphin running");
                 GCO.fw.stop();
-                GCO.close_deadline = GetTickCount64() + 20000;
+                GCO.fw_dead = true;
+                if (!GCO.host_gone_at) GCO.host_gone_at = GetTickCount64();
             } else {
-                gc_kill();
-                gc_stop_all();
+                gc_kill("forwarder failed before the game started");
+                gc_stop_all("forwarder failed before the game started");
                 return;
             }
         }
     }
-    if (GCO.close_deadline && GCO.active && gc_process_alive() && GetTickCount64() > GCO.close_deadline) { GCO.close_deadline = 0; gc_kill(); }
-    if (!GCO.active) GCO.close_deadline = 0;
+    if (GCO.close_deadline && GCO.active && gc_process_alive() && GetTickCount64() > GCO.close_deadline) { GCO.close_deadline = 0; gc_kill("Dolphin ignored the graceful close for 20 s"); }
+    if (GCO.active && !GCO.host && GCO.host_gone_at && gc_process_alive()) {
+        unsigned long long now = GetTickCount64();
+        switch (hubui::host_gone_decide(true, now - GCO.host_gone_at, GCO.host_gone_told, GCO.fw_dead)) {
+            case hubui::HostGoneAct::Notify:
+                GCO.host_gone_told = true;
+                online_log("host gone > 20 s; told the player (netplay link " + std::string(GCO.fw_dead ? "dead" : "not known dead") + ")");
+                push_toast((GCO.left_name.empty() ? std::string("The host") : GCO.left_name) + " disconnected - press View+Start (or close Dolphin) to leave", ui::WARN, 15.0, true);
+                break;
+            case hubui::HostGoneAct::Close:
+                GCO.host_gone_at = 0;
+                online_log("host gone and netplay link dead: closing Dolphin gracefully");
+                close_pid_windows(GCO.run.dolphin_pid);
+                GCO.close_deadline = now + 20000;
+                break;
+            default: break;
+        }
+    }
+    if (!GCO.active) { GCO.close_deadline = 0; GCO.host_gone_at = 0; GCO.host_gone_told = false; GCO.fw_dead = false; }
     if (!GCO.active) {
         if (room_connected() && !A.selected_game.empty()) {
             const hub::GameEntry* g = find_room_entry(A.selected_game);
@@ -244,6 +266,7 @@ void gc_tick() {
     }
     if (!gc_process_alive()) {   // Dolphin closed: session over. Host: its vault card changed, sync it; everyone: back to un-ready for the next game.
         bool was_host = GCO.host;
+        online_log(std::string("dolphin closed; session over (") + (was_host ? "host" : "guest") + ")");
         autotest_log(std::string("dolphin closed; session over") + (GCO.left_name.empty() ? "" : " (" + GCO.left_name + " left)"));
         if (!GCO.left_name.empty()) { set_notice(hubui::player_left_text(GCO.left_name), 20.0); GCO.left_name.clear(); }
         gc_stop_all();
@@ -264,8 +287,8 @@ void gc_tick() {
                     std::string why = "GameCube online: " + l.substr(6);
                     autotest_log("driver " + l);
                     if (GCO.host) { set_notice(why, 12.0); host_abort(why); } else launch_fail(why, 12.0);
-                    gc_kill();
-                    gc_stop_all();
+                    gc_kill("driver error line");
+                    gc_stop_all("driver error line");
                     return;
                 }
                 if (l.rfind("desync:", 0) == 0 && !GCO.desync_told) {
@@ -318,12 +341,12 @@ void gc_guest_poll() {
         GCO.guest_wait = false;
         set_notice("Your copy is " + diff + " than the host's. Not starting.", 20.0);
         if (room_connected()) A.lobby.send_msg("{\"kind\":\"np_fail\",\"reason\":\"" + json::escape("their copy is " + diff) + "\"}");
-        gc_stop_all();
+        gc_stop_all("different disc version");
         return;
     }
     GCO.checked = true;
     GCO.guest_wait = false;
-    if (!gc_begin(GCO.entry, false, room_my_slot(), GCO.fw.connect_port())) gc_stop_all();
+    if (!gc_begin(GCO.entry, false, room_my_slot(), GCO.fw.connect_port())) gc_stop_all("gc_begin failed");
 }
 
 /* 3DS: bring up the room server (host) + UDP forwarder, then poll_np3ds() starts Azahar once everyone is reachable. */

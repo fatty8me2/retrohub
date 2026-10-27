@@ -343,6 +343,8 @@ struct GcOnline {
     std::string left_name;           // guest: the host left mid-game, Dolphin is being closed
     size_t status_seen = 0;          // bytes of the driver's status file already scanned for error:/desync: lines
     bool desync_told = false;
+    unsigned long long host_gone_at = 0;     // guest: tick count when the room host vanished (0 = host present)
+    bool host_gone_told = false, fw_dead = false;
     unsigned long long close_deadline = 0;   // guest: Dolphin was asked to close (forwarder lost); terminate only if it ignores that for 20 s
     std::string fp_path, fp_sha;     // disc fingerprint (computed once per path on a worker thread)
     uint64_t fp_size = 0;
@@ -572,12 +574,13 @@ void flash_taskbar();                              // FlashWindowEx on the hub w
 bool gc_needs_unpack(const hub::GameEntry& e);
 bool gc_fingerprint_ready(const std::string& path);
 bool gc_process_alive();
-void gc_kill();
+void gc_kill(const char* why = "unspecified");
+void online_log(const std::string& line);   // persistent userdata\logs\online.log (rotated, ~1 MB cap) for real online runs
 void gc_host_guest_failed(const std::string& why);
 void gc_prefetch(const hub::GameEntry& e);
 bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out);
 bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port);
-void gc_stop_all();
+void gc_stop_all(const char* why = "unspecified");
 void gc_tick();
 void online_host_left(const std::string& gone);   // the room host left mid-game: end peer-hosted emulator sessions gracefully (launch_online.cpp)
 void request_game_close();       // graceful close of the running game (launch.cpp): custom close hook or WM_CLOSE to its windows
