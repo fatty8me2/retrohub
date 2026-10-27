@@ -37,6 +37,7 @@
 #include <vector>
 
 #include "art.h"
+#include "dupes_logic.h"
 #include "real_boot.h"
 #include "updater.h"
 #include "update_apply.h"
@@ -189,6 +190,7 @@ struct App {
     std::atomic<int> scan_done{0}, scan_total{0};
     std::vector<hub::GameEntry> scan_result;
     std::vector<hub::GameEntry> lib;              // scanned games (+ native Smash entry first)
+    hubdupes::Dupes dupes;                        // key -> every path found (only games with 2+ copies); lib keeps one
     std::map<std::string, int> lib_index;         // key -> index in lib
     std::map<std::string, hub::GameState> lib_state;   // cached game_state per key
     std::string sys_filter;                       // "" = all, else system short
@@ -870,6 +872,15 @@ std::string ps2_online_block(const hub::GameEntry& e);   // ps1_ui.cpp: "" or wh
 bool ps2_online_args(const hub::GameEntry& e, const std::string& net, const std::string& tmp_dir, bool share_save, bool is_host_card,
                      std::string* args, std::string* err);   // ps1_ui.cpp: retrorun args for a PS2 room (LRPS2 lockstep)
 void draw_ps1_dialogs();
+/* libcopies_ui.cpp: missing ROM popup at Play, duplicate copies in the details About tab, prefs-backed scan choices */
+bool rom_missing(const hub::GameEntry& e);
+void missing_rom_ask(const std::string& key);
+void missing_rom_ask_shot();
+void draw_missing_rom_dialog();
+void dupes_details_section(const hub::GameEntry& e);
+std::map<std::string, std::string> preferred_copies();
+std::set<std::string> hidden_game_keys();
+void apply_located_paths(std::vector<hub::GameEntry>* lib, const std::map<std::string, std::string>& preferred);
 void ps1_bios_ask_shot();   // screenshot aid
 void ps2_bios_ask(const std::string& key);   // ps1_ui.cpp: "PlayStation 2 BIOS" prompt (pad-friendly folder choice)
 void ps1_settings_ui();

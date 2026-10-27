@@ -784,6 +784,7 @@ void draw_details_modal() {
             ImGui::Dummy(ImVec2(0, sp(0.5f)));
             if (draw_players_strip(local_players_for(e))) { ImGui::CloseCurrentPopup(); open_port_assign(); }
         }
+        dupes_details_section(e);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
         ImGui::PushTextWrapPos(0.f);
