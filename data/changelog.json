@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.27.7",
+      "date": "2026-10-27",
+      "title": "Unhurried startups, cleaner game page",
+      "new": [],
+      "improved": [
+        "Every console now gets the full start animation (Play and Resume from Home no longer use the 1 second version), and the startup sound plays out before the game appears",
+        "GameCube, PlayStation and Wii U discs take their time: the lid or tray opens, the disc settles, and it closes",
+        "The game page is decluttered: cover, title, one line of facts, Play / Play Online, and tabs for About, Saves, Screenshots and Settings. Empty sections are hidden"
+      ],
+      "fixed": [
+        "Your console's own startup (IPL/BIOS) no longer cuts the animation short"
+      ]
+    },{
       "version": "1.27.6",
       "date": "2026-10-26",
       "title": "GameCube online stays up",
