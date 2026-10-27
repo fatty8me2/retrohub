@@ -25,6 +25,7 @@ struct Options {
     std::wstring version;                    // release tag, for DisplayVersion
     std::wstring started_marker;             // created as soon as the applier is running
     bool relaunch = true;
+    bool game_active = false;                // --game-active: a game was running when the update started; relaunch RetroHub minimised (no focus)
     int retries = 10;                        // per-file copy attempts
     int retry_ms = 500;
     bool (*copy_hook)(const std::wstring& from, const std::wstring& to) = nullptr;   // tests only: replaces the copy

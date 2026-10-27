@@ -179,6 +179,8 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
 
 }  // namespace
 
+bool kt_session_active() { return KT.sess.active(); }
+
 bool is_kanto(const hub::GameEntry& e) { return e.key == kanto::kKey; }
 
 void kt_scan_append(std::vector<hub::GameEntry>* out, const std::vector<std::string>& folders) {

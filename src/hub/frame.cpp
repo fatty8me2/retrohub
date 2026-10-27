@@ -14,6 +14,11 @@ void draw_update_popup() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(sp(52.f), 0), ImVec2(sp(80.f), vp->Size.y * 0.8f));
     if (!ImGui::BeginPopupModal("Update available", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
         return;
+    if (!g_headless && game_active() && !hubupdate::downloading()) {   // a game started while it was open: close it (not dismissed), re-offered later
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
     if (ui::modal_back() && !hubupdate::downloading()) {   // B = Later
         A.update_prompt_dismissed = true;
         ImGui::CloseCurrentPopup();
