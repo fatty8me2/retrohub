@@ -14,7 +14,7 @@ param(
 . "$PSScriptRoot\n64run_headless_lib.ps1"
 $root = Split-Path -Parent $PSScriptRoot
 $n64 = Join-Path $root 'build\bin\Release\n64run.exe'
-if (-not (Test-Path -LiteralPath $Rom)) { Write-Output "SKIP: pass -Rom"; exit 0 }
+if (-not $Rom -or -not (Test-Path -LiteralPath $Rom)) { Write-Output "SKIP: pass -Rom"; exit 0 }
 $tmp = Join-Path $root ('qa\out\n64hk' + $Players + 'k' + $KillSlot)
 if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
 New-Item -ItemType Directory -Force $tmp | Out-Null
