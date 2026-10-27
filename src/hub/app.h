@@ -544,6 +544,8 @@ bool spawn(const std::string& exe, const std::string& args, const std::string& c
 void poll_process();
 void pad_exit_watch();   // launch.cpp: Back+Start combo while an external game runs
 void focus_hub();
+void* running_game_hwnd();                 // launch.cpp: main window of the running game (HWND), nullptr if none
+std::vector<unsigned long> running_game_pids();   // launch.cpp: every process of the running game (job object)
 void focus_game();       // launch.cpp: bring the running game's window to the front (after the quick menu)
 std::string find_core(const std::string& name);
 std::string quote(const std::string& s);

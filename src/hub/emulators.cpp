@@ -1342,10 +1342,11 @@ bool cemu_toggle_combo(unsigned b) { return (b & XINPUT_GAMEPAD_BACK) && (b & XI
 
 static std::string quote(const std::string& s) { return winutil::quote_arg(s); }
 
-std::string dolphin_args(const std::string& game, bool fullscreen, const std::string& gci) {
+std::string dolphin_args(const std::string& game, bool fullscreen, const std::string& gci, int volume) {
     /* -b: no main window, Esc / closing the render window ends the process. The GCI override pins the memory card to the
      * folder RetroHub syncs with the vault. The game path must be the last argument. */
-    return std::string("-b -C Dolphin.Display.Fullscreen=") + (fullscreen ? "True" : "False") + " -C Dolphin.Core.SlotA=8 -C " +
+    return std::string("-b -C Dolphin.Display.Fullscreen=") + (fullscreen ? "True" : "False") + " -C Dolphin.Core.SlotA=8" +
+           (volume >= 0 ? " -C Dolphin.DSP.Volume=" + std::to_string(volume > 100 ? 100 : volume) : std::string()) + " -C " +
            quote("Dolphin.Core.GCIFolderAPathOverride=" + gci) + " -e " + quote(game);
 }
 

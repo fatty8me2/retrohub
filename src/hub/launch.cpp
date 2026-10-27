@@ -201,6 +201,9 @@ void pad_exit_watch() {
     request_game_close();
 }
 
+void* running_game_hwnd() { return g_headless ? nullptr : (void*)game_main_window(); }
+std::vector<unsigned long> running_game_pids() { std::vector<unsigned long> v; for (DWORD p : game_pids()) v.push_back(p); return v; }
+
 void focus_game() {
     if (g_headless) return;
     CloseCtx c;
@@ -488,7 +491,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid));
     autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
-                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
+                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI", hub::gs::volume_of(gsv))
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
                                                        : hubemu::cemu_args(game, fs);
     if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS") && kind == hubemu::Kind::Dolphin)   // QA only: extra Dolphin flags (e.g. -m movie.dtm)
