@@ -160,6 +160,21 @@ inline std::filesystem::path match_path(const std::string& dir, const std::strin
     if (vault) base /= "_account";
     return base / "rivals" / (safe_id(id) + ".json");
 }
+constexpr size_t kMaxStored = 400;   // per store; the cloud engine syncs at most this many files (cloud_engine.cpp kRivalsSyncMax)
+/* Deletes the oldest match files beyond `keep` in one store dir (userdata: <dir>/rivals, vault: <dir>/_account/rivals). */
+inline void prune_store(const std::string& dir, bool vault, size_t keep = kMaxStored) {
+    if (dir.empty()) return;
+    std::error_code ec;
+    std::vector<std::pair<int64_t, std::filesystem::path>> v;
+    for (auto& e : std::filesystem::directory_iterator(match_path(dir, "x", vault).parent_path(), ec)) {
+        if (e.path().extension() != ".json") continue;
+        Match m;
+        v.push_back({match_from_json(group::slurp(e.path()), &m) ? m.at : 0, e.path()});
+    }
+    if (v.size() <= keep) return;
+    std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (size_t i = keep; i < v.size(); ++i) std::filesystem::remove(v[i].second, ec);
+}
 /* Writes the match under the user-data dir and the vault (either may be empty to skip). An existing file is kept. */
 inline bool save_match(const Match& m, const std::string& userdata, const std::string& vault) {
     std::string j = match_to_json(m);
@@ -167,6 +182,8 @@ inline bool save_match(const Match& m, const std::string& userdata, const std::s
     std::error_code ec;
     if (!userdata.empty()) { auto p = match_path(userdata, m.id, false); if (!std::filesystem::exists(p, ec)) ok = group::spit(p, j) && ok; }
     if (!vault.empty()) { auto p = match_path(vault, m.id, true); if (!std::filesystem::exists(p, ec)) ok = group::spit(p, j) && ok; }
+    prune_store(userdata, false);
+    prune_store(vault, true);
     return ok;
 }
 /* Union of both stores by match id, newest first. */

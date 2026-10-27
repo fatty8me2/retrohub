@@ -1036,6 +1036,8 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) ImGui::OpenPopup("ctx");
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.f), sp(1.f)));
+    { static const char* shot_ctx = std::getenv("HUB_SHOT_CTX"); static bool ctx_done = false;   // screenshot aid: open this friend uid's actions menu once
+      if (shot_ctx && !ctx_done && f.uid == shot_ctx) { ctx_done = true; ImGui::OpenPopup("ctx"); } }
     if (ImGui::BeginPopup("ctx")) {
         if (ImGui::MenuItem("Message")) fr_open_chat(f.uid);
         if (can_join && ImGui::MenuItem("Join lobby")) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
