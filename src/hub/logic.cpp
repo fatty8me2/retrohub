@@ -718,6 +718,12 @@ std::string ports_arg(std::vector<int> slots) {
     return o;
 }
 
+HostGoneAct host_gone_decide(bool gone, unsigned long long gone_for_ms, bool notified, bool netplay_dead, unsigned long long grace_ms) {
+    if (!gone || gone_for_ms < grace_ms) return HostGoneAct::Wait;
+    if (!notified) return HostGoneAct::Notify;
+    return netplay_dead ? HostGoneAct::Close : HostGoneAct::Wait;
+}
+
 std::string player_left_text(const std::string& left_name) {
     return (left_name.empty() ? std::string("A player") : left_name) + " left - game ended. You are back in the room.";
 }

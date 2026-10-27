@@ -349,6 +349,10 @@ std::string exit_code_text(unsigned long code);
  * (clean 0, connection lost 4, "a player left" 8) are reworded, crashes/desyncs keep their own text. */
 std::string player_left_text(const std::string& left_name);
 std::string exit_text_for(unsigned long code, const std::string& left_name);
+/* A GameCube guest whose room host vanished mid-game: never end the session on a brief blip. Wait out a grace period, then tell the
+ * player once (they decide), and force-close only when Dolphin's NetPlay link is really dead too. */
+enum class HostGoneAct { Wait, Notify, Close };
+HostGoneAct host_gone_decide(bool gone, unsigned long long gone_for_ms, bool notified, bool netplay_dead, unsigned long long grace_ms = 20000);
 
 /* Uppercase, strip blanks, cap at 6 chars. */
 std::string normalize_code(const std::string& s);

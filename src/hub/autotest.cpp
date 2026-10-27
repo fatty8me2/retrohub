@@ -31,6 +31,20 @@ void autotest_log(const std::string& line) {
     f << ts << line << "\n";
 }
 
+void online_log(const std::string& line) {
+    static std::string dir = hub::data_dir() + "logs\\";
+    static std::string path = dir + "online.log";
+    CreateDirectoryA(dir.c_str(), nullptr);
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad) && fad.nFileSizeHigh == 0 && fad.nFileSizeLow > 1000000)
+        MoveFileExA(path.c_str(), (path + ".1").c_str(), MOVEFILE_REPLACE_EXISTING);
+    SYSTEMTIME st; GetLocalTime(&st);
+    char ts[40];
+    std::snprintf(ts, sizeof ts, "%04d-%02d-%02d %02d:%02d:%02d ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    { std::ofstream f(path, std::ios::app | std::ios::binary); f << ts << line << "\n"; }
+    autotest_log(line);
+}
+
 void autotest_tick() {
     if (!autotest_active()) return;
     static int stage = 0;
