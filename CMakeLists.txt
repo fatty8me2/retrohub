@@ -155,6 +155,7 @@ add_test(NAME hub_cloud_ui_test COMMAND hub_cloud_ui_test)             # cloud s
 add_test(NAME hub_username_test COMMAND hub_username_test)         # username rules, suggestions, availability checker, wizard name step
 add_test(NAME hub_toast_win_test COMMAND hub_toast_win_test)               # real WinRT apartment init + XML load, nothing shown
 add_test(NAME hub_invite_test COMMAND hub_invite_test)                   # invite parsing + pipe handoff (no network, no windows)
+add_test(NAME hub_uisound_test COMMAND hub_uisound_test)   # menu UI sounds + ambient render non-silent within limits; mute policy (not played)
 add_test(NAME hub_bootsound_test COMMAND hub_bootsound_test)       # procedural startup sounds render to WAVs (not played)
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
 add_test(NAME dsu_test COMMAND dsu_test)   # DSU packets + loopback server round trip

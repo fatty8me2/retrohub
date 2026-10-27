@@ -1,4 +1,5 @@
 #include "app.h"
+#include "ui_sound.h"
 
 /* Startup "new version available" prompt. Shown once per run when the launch
  * check finds a newer release that the player hasn't chosen to skip (a manual
@@ -224,12 +225,15 @@ void draw_frame() {
     const float fr_pw = fr_panel_w(io.DisplaySize.x);
     const float dock_w = fr_docked ? fr_pw * FR.panel_t : 0.f;
     const float view_w = io.DisplaySize.x - dock_w;
+    ui_sound::configure(A.st.menu_sounds, A.st.menu_volume, A.st.menu_music, A.st.notif_sound);
+    ui_sound::tick(A.proc != nullptr, g_headless ? false : (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0);
     A.focused = g_headless || (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
     if (A.page != A.last_page || A.view != A.last_view) { if (A.page != A.last_page) A.page_focus_req = true; A.last_page = A.page; A.last_view = A.view; A.nav_seed = true; }
     {   // a modal/menu just closed and the pad lost its focus: land on the page's default item again
         static bool was_popup = false;
         bool pop = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
         if (was_popup && !pop && A.pad_mode && !ImGui::GetCurrentContext()->NavId && !FR.panel_focused) { A.nav_seed = true; A.page_focus_req = true; }
+        if (pop && !was_popup) ui_sound::play(ui_sound::Sfx::Popup);
         was_popup = pop;
     }
     /* D-pad zones: the sidebar and the content are separate focus zones, otherwise ImGui's scoring happily jumps diagonally

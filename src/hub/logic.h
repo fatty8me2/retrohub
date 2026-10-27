@@ -52,6 +52,9 @@ struct Settings {
     bool notify_in_game = true;        // Windows toast for invites while a game is running
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
     std::string watch_online;          // friends with "Notify me when they come online" on: comma separated uids (at most 50), none by default
+    bool menu_sounds = true;           // soft UI sounds in the hub (Settings > General)
+    int menu_volume = 30;              // menu sound volume 0..100 (low by default)
+    bool menu_music = false;           // quiet ambient menu loop (OFF by default)
     bool share_games = true;           // "Show my games to friends": publish the list of game titles (never files) so friends see them greyed out
     bool show_friend_games = true;     // library chip "Show friends' games"
     bool share_playtime = true;        // "Share my play time with friends": per-game totals (whole minutes) go to the friends server when a session ends

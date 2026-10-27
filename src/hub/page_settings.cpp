@@ -183,6 +183,13 @@ void tab_general() {
     if (ImGui::Checkbox("Notify me about invites while I'm playing", &A.st.notify_in_game)) mark_dirty();
     text_wrapped_disabled("Shows a Windows notification that never takes focus from your game. Click Join to enter the room when your game ends.");
     if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
+    if (ImGui::Checkbox("Menu sounds", &A.st.menu_sounds)) mark_dirty();
+    if (A.st.menu_sounds) {
+        ImGui::SameLine(); ImGui::SetNextItemWidth(sp(28.f));
+        if (ImGui::SliderInt("##menu_vol", &A.st.menu_volume, 0, 100, "%d%%")) mark_dirty();
+    }
+    if (ImGui::Checkbox("Menu music", &A.st.menu_music)) mark_dirty();
+    text_wrapped_disabled("Soft sounds and an optional quiet ambient loop in RetroHub. Always silent while a game is running or RetroHub is in the background.");
     end_panel();
 }
 
