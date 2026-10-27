@@ -91,6 +91,7 @@ void autotest_tick() {
             hub::GameEntry copy = *g;
             autotest_log("play " + copy.title);
             play_entry(copy);
+            if (!A.proc && missing_rom_open()) { autotest_log("play: missing-rom popup opened (" + copy.key + ")"); stage = 99; return; }
             if (!A.proc && UNZ.state == UnzipJob::Asking) {   // archived game (.7z / .zip): press "Unpack and play"; the dialog's poll starts the emulator afterwards
                 autotest_log("play: unpack requested (" + UNZ.key + ")");
                 start_unzip(copy);

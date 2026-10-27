@@ -94,7 +94,7 @@ std::string hidden_label(const std::string& key) {
 }  // namespace
 
 bool rom_missing(const hub::GameEntry& e) {
-    if (g_headless) return false;                  // headless runs use made-up paths and trace the spawn instead
+    if (g_headless && !std::getenv("HUB_REAL_ROMCHECK")) return false;   // headless runs use made-up paths and trace the spawn instead; HUB_REAL_ROMCHECK=1 (QA) runs the real check
     if (is_native(e) || is_kanto(e) || !e.issue.empty()) return false;   // exe / package / archived images have their own checks
     return !path_present(e.path);
 }
@@ -106,6 +106,8 @@ void missing_rom_ask(const std::string& key) {
     MA.key = key;
     if (e) { MA.title = e->title; MA.path = e->path; }
 }
+
+bool missing_rom_open() { return MA.open; }
 
 void missing_rom_ask_shot() {
     MA = MissingAsk();   // screenshot aid: the library is not scanned yet when shot.cpp runs, so use made-up values
