@@ -73,6 +73,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
     // No ROM folder is assumed: an empty library offers detected folders as one-click "Add" suggestions.
     if (!A.st.vault_dir.empty()) hub::saves::set_vault_dir(A.st.vault_dir);
+    if (g_headless) {   // screenshot mode never touches a real vault: HUB_SHOT_VAULT=<dir>, else a scratch dir under %TEMP%
+        const char* sv = std::getenv("HUB_SHOT_VAULT");
+        std::string dir = sv && *sv ? sv : (std::filesystem::temp_directory_path() / "retrohub-shot-vault").u8string();
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
+        hub::saves::set_vault_dir(dir);
+    }
     gs_load();
 
     int win_w = (int)(1280 * S), win_h = (int)(780 * S);
