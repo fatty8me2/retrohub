@@ -79,6 +79,8 @@ std::string settings_to_json(const Settings& s) {
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
+      << "  \"tv_start\": " << (s.tv_start ? "true" : "false") << ",\n"
+      << "  \"tv_windows\": " << (s.tv_windows ? "true" : "false") << ",\n"
       << "  \"notify_in_game\": " << (s.notify_in_game ? "true" : "false") << ",\n"
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
       << "  \"share_games\": " << (s.share_games ? "true" : "false") << ",\n"
@@ -155,6 +157,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->download_art = json_bool(j, "download_art", out->download_art);
     out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));
     out->show_friends = json_bool(j, "show_friends", out->show_friends);
+    out->tv_start = json_bool(j, "tv_start", out->tv_start);
+    out->tv_windows = json_bool(j, "tv_windows", out->tv_windows);
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);

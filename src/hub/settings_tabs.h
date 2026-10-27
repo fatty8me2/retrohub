@@ -29,6 +29,7 @@ inline const SettingsCtl* settings_controls(int* n) {
         {"rom_folders_list", ST_General}, {"rom_folder_remove", ST_General}, {"add_folder", ST_General}, {"find_games", ST_General},
         {"run_setup_again", ST_General}, {"rescan", ST_General}, {"download_art", ST_General}, {"smash_exe_browse", ST_General},
         {"smash_exe_default", ST_General}, {"sidebar_mode", ST_General}, {"show_friends", ST_General}, {"notify_in_game", ST_General},
+        {"tv_mode", ST_General}, {"tv_start", ST_General}, {"tv_windows", ST_General},
         {"notif_sound", ST_General}, {"rom_cache_clear", ST_General}, {"rom_cache_limit", ST_General}, {"skipped_archives", ST_General},
         {"delay_auto", ST_Online}, {"input_delay", ST_Online}, {"auto_friend", ST_Online}, {"share_playtime", ST_Online}, {"share_games", ST_Online}, {"show_friend_games", ST_Online}, {"friend_code_copy", ST_Online}, {"server_url", ST_Online},
         {"cloud_summary", ST_Saves}, {"saves_page_link", ST_Saves}, {"pause_cloud", ST_Saves}, {"backup_shots", ST_Saves},

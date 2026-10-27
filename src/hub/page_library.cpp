@@ -985,6 +985,7 @@ void page_library() {
         ui::anim(A.hero_t, 1.f, 9.f);
         float avail_h = ImGui::GetContentRegionAvail().y;
         float hero_h = std::min(sp(40.f), std::max(sp(21.f), std::min(avail_h * 0.36f, ImGui::GetIO().DisplaySize.y * 0.25f)));   // <= a quarter of the window
+        hero_h = tvmode::hero_h(hero_h, avail_h);
         draw_hero(*sel, hero_h);
     }
     /* The shelf strips inset their covers by `bleed` (room for the hover grow); pull the child out by the same amount so

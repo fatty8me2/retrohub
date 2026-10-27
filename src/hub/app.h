@@ -50,6 +50,7 @@
 #include "friend_games.h"
 #include "logic.h"
 #include "settings_tabs.h"
+#include "tv_mode.h"
 #include "savestore.h"
 #include "history.h"
 #include "playstats.h"

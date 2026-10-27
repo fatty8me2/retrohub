@@ -151,7 +151,8 @@ add_test(NAME hub_group_test COMMAND hub_group_test)             # recent groups
 add_test(NAME hub_toast_test COMMAND hub_toast_test)                   # toast XML/activation/policy with a mock notifier (no real toasts)
 add_test(NAME hub_wizard_test COMMAND hub_wizard_test)
 add_test(NAME hub_cloud_ui_test COMMAND hub_cloud_ui_test)             # cloud saves v2 status/label/dialog logic
-add_test(NAME hub_username_test COMMAND hub_username_test)         # username rules, suggestions, availability checker, wizard name step
+add_test(NAME hub_tv_test COMMAND hub_tv_test)   # TV mode scale, hero, Run-key value, clock, avatar plan
+add_test(NAME hub_username_test COMMAND hub_username_test)        # username rules, suggestions, availability checker, wizard name step
 add_test(NAME hub_toast_win_test COMMAND hub_toast_win_test)               # real WinRT apartment init + XML load, nothing shown
 add_test(NAME hub_invite_test COMMAND hub_invite_test)                   # invite parsing + pipe handoff (no network, no windows)
 add_test(NAME hub_bootsound_test COMMAND hub_bootsound_test)       # procedural startup sounds render to WAVs (not played)
