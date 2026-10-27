@@ -180,9 +180,10 @@ static BOOL CALLBACK close_cb(HWND h, LPARAM lp) {
 
 void focus_hub() {
     if (!A.hwnd || g_headless) return;
-    if (IsIconic(A.hwnd)) ShowWindow(A.hwnd, SW_RESTORE);
+    /* Only for the user's own View+Y / cheats pad combo during a game (qm_open_live, cheats_open_live). Never automatic. */
+    if (IsIconic(A.hwnd)) ShowWindow(A.hwnd, SW_RESTORE);   // popup-guard: ok (user hotkey)
     keybd_event(VK_MENU, 0, 0, 0);   // lets SetForegroundWindow through the foreground lock
-    SetForegroundWindow(A.hwnd);
+    SetForegroundWindow(A.hwnd);   // popup-guard: ok (user hotkey)
     keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
 }
 
@@ -220,9 +221,9 @@ void focus_game() {
         return TRUE;
     }, (LPARAM)&pk);
     if (!pk.hwnd) return;
-    if (IsIconic(pk.hwnd)) ShowWindow(pk.hwnd, SW_RESTORE);
+    if (IsIconic(pk.hwnd)) ShowWindow(pk.hwnd, SW_RESTORE);   // popup-guard: ok (raises the GAME, not the hub)
     keybd_event(VK_MENU, 0, 0, 0);
-    SetForegroundWindow(pk.hwnd);
+    SetForegroundWindow(pk.hwnd);   // popup-guard: ok (raises the GAME, not the hub)
     keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
 }
 
@@ -289,7 +290,7 @@ void poll_process() {
     GetExitCodeProcess(A.proc, &code);
     CloseHandle(A.proc);
     A.proc = nullptr;
-    focus_hub();
+    /* no focus_hub() here: the game just closed, the hub must not jump in front of whatever the user does next */
     sync_smash_prep();
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
     uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
@@ -539,13 +540,13 @@ void start_unzip(const hub::GameEntry& e) {
     });
 }
 void flash_taskbar() {
-    if (!A.hwnd || g_headless) return;
+    if (!A.hwnd || g_headless || game_active()) return;   // a flash is still a popup: nothing while a game runs
     FLASHWINFO fi{};
     fi.cbSize = sizeof(fi);
     fi.hwnd = A.hwnd;
     fi.dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG;   // taskbar button only, until the user looks at RetroHub; no activation
     fi.uCount = 6;
-    FlashWindowEx(&fi);
+    FlashWindowEx(&fi);   // popup-guard: ok (guarded by game_active above)
 }
 
 void add_game_shortcut(const hub::GameEntry& e) {

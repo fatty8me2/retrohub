@@ -100,7 +100,7 @@ target_link_libraries(hub_updater_test PRIVATE hubversion)
 # ---- Branding: icon + version resources, Windows shell integration (assets/brand/retrohub.ico) ----
 set(RH_BRAND_RC_DIRS ${HUB_VERSION_GEN} ${CMAKE_CURRENT_SOURCE_DIR})
 set_source_files_properties(retrohub.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/assets/brand/retrohub.ico;${HUB_VERSION_GEN}/hub_version_rc.h")
-target_sources(RetroHub PRIVATE shell_integration.cpp toast_win.cpp ext_media.cpp retrohub.rc)
+target_sources(RetroHub PRIVATE shell_integration.cpp toast_win.cpp ext_media.cpp window_guard.cpp retrohub.rc)
 target_include_directories(RetroHub PRIVATE ${RH_BRAND_RC_DIRS})
 target_link_libraries(RetroHub PRIVATE propsys windowsapp)
 
@@ -119,6 +119,9 @@ target_link_libraries(hub_rivals_test PRIVATE hublogic)
 
 add_executable(hub_toast_test test_toast.cpp)
 target_link_libraries(hub_toast_test PRIVATE hublogic)
+
+add_executable(hub_popup_guard_test test_popup_guard.cpp)
+target_compile_definitions(hub_popup_guard_test PRIVATE HUB_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_executable(hub_toast_win_test test_toast_win.cpp toast_win.cpp shell_integration.cpp)
 target_link_libraries(hub_toast_win_test PRIVATE hublogic hubbase SDL2::SDL2 ole32 shell32 uuid propsys user32 windowsapp)

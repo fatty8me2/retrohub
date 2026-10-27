@@ -51,7 +51,8 @@ struct Settings {
     bool show_friends = true;          // friends panel open
     bool tv_start = false;             // start RetroHub in TV mode (fullscreen 10-foot layout)
     bool tv_windows = false;           // mirrors the HKCU Run entry that starts with Windows into TV mode
-    bool notify_in_game = true;        // Windows toast for invites while a game is running
+    bool notify_in_game = false;       // Windows toast for invites while a game is running (OFF by default: nothing may pop up over a game)
+    bool notify_migrated = true;       // one-time migration flag: settings files without it get notify_in_game forced off once
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
     std::string watch_online;          // friends with "Notify me when they come online" on: comma separated uids (at most 50), none by default
     bool menu_sounds = true;           // soft UI sounds in the hub (Settings > General)

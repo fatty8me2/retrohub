@@ -91,7 +91,7 @@ void draw_changelog_popup() {
         const char* v = std::getenv("HUB_SHOT_CHANGELOG_VER");
         CL.popup_ver = v ? v : (CL.entries.empty() ? "" : CL.entries[0].version);
         CL.popup_request = true;
-    } else if (!CL.popup_request && !CL.popup_open && !shot && !g_headless && A.scanned_once && !CL.env_done) {
+    } else if (!CL.popup_request && !CL.popup_open && !shot && !g_headless && A.scanned_once && !CL.env_done && prompt_allowed()) {
         using hubui::changelog::Popup;
         std::string cur = HUB_VERSION_STR;
         bool fresh = hubui::wiz::should_autorun(A.st.setup_done, A.st.find_games_done, !A.st.rom_folders.empty());
