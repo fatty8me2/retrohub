@@ -259,7 +259,7 @@ void draw_frame() {
     ImGui::PopStyleVar(2);
 
     /* ---- sidebar (icons + labels; shrinks to icons only when narrow) ---- */
-    bool collapsed = hubui::sidebar_collapsed(A.st.sidebar_mode, view_w, 1040.f * S);
+    bool collapsed = tvmode::force_icon_sidebar() || hubui::sidebar_collapsed(A.st.sidebar_mode, view_w, 1040.f * S);
     float full_w = sp(29.f), mini_w = sp(9.f), target = collapsed ? mini_w : full_w;
     if (A.side_w <= 0) A.side_w = target;
     ui::anim(A.side_w, target, 14.f);
@@ -409,6 +409,7 @@ void draw_frame() {
         }
     }
 
+    tvmode::draw_corner(view_w - hpad - sp(10.5f), sp(3.f), sp(4.5f));
     draw_overlays();
     global_input();
     A.popup_last_frame = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
