@@ -182,6 +182,7 @@ void tab_general() {
     if (ImGui::Checkbox("Notify me about invites while I'm playing", &A.st.notify_in_game)) mark_dirty();
     text_wrapped_disabled("Shows a Windows notification that never takes focus from your game. Click Join to enter the room when your game ends.");
     if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
+    tvmode::settings_ui();
     end_panel();
 }
 
