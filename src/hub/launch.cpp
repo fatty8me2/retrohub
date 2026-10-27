@@ -35,6 +35,8 @@
 #include "remote_play.h"
 #include "hint_popup.h"
 #include "controls_sdl.h"
+#include "qm_logic.h"
+#include <thread>
 #include <xinput.h>
 
 hubemu::Installer EMU;   // download-on-demand job + its dialog state
@@ -239,6 +241,40 @@ void wiiu_toggle_gamepad_screen() {
     for (auto it = keys.rbegin(); it != keys.rend(); ++it) { INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)*it; i.ki.dwFlags = KEYEVENTF_KEYUP; in.push_back(i); }
     SendInput((UINT)in.size(), in.data(), sizeof(INPUT));
     autotest_log("wiiu: toggle pad screen hotkey sent");
+}
+
+/* Dolphin Speed row: Dolphin's emulation-speed hotkeys are bound to Ctrl+Shift+F13..F15 (emulators.cpp, dolphin_hotkeys_ini).
+ * After the menu closes and focus_game() ran, wait (up to 3 s) until a game window is the foreground window, then press each key.
+ * Keys are only ever sent while the game is foreground, so they cannot reach another app. Runs off the UI thread (70 presses at
+ * 8x take a few seconds). Nothing is raised or shown here. */
+void dolphin_send_speed_keys(const std::vector<int>& vks) {
+    if (g_headless || !A.proc || vks.empty()) return;
+    if (autotest_active()) { autotest_log("dolphin: speed hotkeys (" + std::to_string(vks.size()) + ") not injected: QA runs on a hidden desktop"); return; }
+    std::vector<DWORD> pids = game_pids();
+    std::thread([pids, vks]() {
+        auto game_fg = [&]() {
+            DWORD pid = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+            for (DWORD p : pids) if (p == pid) return true;
+            return false;
+        };
+        for (int i = 0; i < 60 && !game_fg(); ++i) Sleep(50);
+        if (!game_fg()) return;
+        Sleep(150);
+        auto key = [](int vk, bool up) {
+            INPUT i{};
+            i.type = INPUT_KEYBOARD;
+            i.ki.wScan = (WORD)MapVirtualKeyW((UINT)vk, MAPVK_VK_TO_VSC);
+            i.ki.dwFlags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0);
+            SendInput(1, &i, sizeof(INPUT));
+        };
+        key(hubqm::kDolphinVkCtrl, false); key(hubqm::kDolphinVkShift, false);
+        for (int vk : vks) {
+            if (!game_fg()) break;
+            key(vk, false); Sleep(35); key(vk, true); Sleep(35);
+        }
+        key(hubqm::kDolphinVkShift, true); key(hubqm::kDolphinVkCtrl, true);
+    }).detach();
 }
 
 /* View (Back) + right bumper while a Wii U game runs. Edge-triggered: one toggle per press. */
