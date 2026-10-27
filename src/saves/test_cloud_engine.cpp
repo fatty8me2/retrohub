@@ -83,6 +83,7 @@ static void test_classify() {
         std::istringstream ls(line);
         str path, cls; long long size = 0;
         if (!(ls >> path >> size >> cls)) continue;
+        if (str(class_name(classify_path(path, size))) != cls) printf("  golden mismatch: '%s' %lld want %s\n", path.c_str(), size, cls.c_str());
         CHECK(str(class_name(classify_path(path, size))) == cls);
         n++;
     }
