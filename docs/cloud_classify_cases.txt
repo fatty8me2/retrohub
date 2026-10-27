@@ -7,6 +7,8 @@
 # "Protected" = settings, battery, card <= 512 KiB; everything else is the large pool.
 meta.json	120	settings
 _account/prefs.json	300	settings
+cover.png	40960	settings
+games/cover.png	40960	battery
 battery/ssb64.sra	32768	battery
 battery/pokemon.sav	131072	battery
 battery/big-flash.sav	3000000	battery
