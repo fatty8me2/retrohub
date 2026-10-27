@@ -2,6 +2,7 @@
 #include "json.h"
 #include "miniz.h"
 #include "library.h"
+#include "prefs.h"
 #include "emu_formats.h"
 #include "wiiu_meta.h"
 #include "games.h"
@@ -2717,6 +2718,15 @@ void set_favorite(const std::string& key, bool fav) {
     g.favorite = fav;
     g_state_dirty = true;
     state_flush_locked();
+    prefs::mirror_favorite(key, fav);
+}
+
+std::vector<std::string> favorite_keys() {
+    std::lock_guard<std::mutex> lk(g_state_mu);
+    state_load_locked();
+    std::vector<std::string> r;
+    for (const auto& kv : g_state) if (kv.second.favorite) r.push_back(kv.first);
+    return r;
 }
 
 void record_play(const std::string& key, uint64_t started_unix, uint64_t seconds) {

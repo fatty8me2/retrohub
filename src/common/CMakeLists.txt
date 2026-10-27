@@ -1,5 +1,5 @@
 # Shared JSON reader/writer + Windows helpers (UTF-8/UTF-16, exe dir, quoting, file I/O). Tiny static lib, no deps.
-add_library(hubbase STATIC json.cpp winutil.cpp cheats.cpp runner_ctl.cpp start_hint.cpp hint_popup.cpp)
+add_library(hubbase STATIC json.cpp winutil.cpp cheats.cpp runner_ctl.cpp start_hint.cpp hint_popup.cpp osd.cpp)
 target_link_libraries(hubbase PUBLIC user32 gdi32)
 target_include_directories(hubbase PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubbase PUBLIC cxx_std_17)
@@ -9,7 +9,7 @@ target_link_libraries(json_test PRIVATE hubbase)
 add_executable(winutil_test test_winutil.cpp)
 target_link_libraries(winutil_test PRIVATE hubbase shell32)
 
-add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} disc_id.cpp ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp wiiu_meta.cpp findgames.cpp addgames.cpp cheats.cpp cheats_db.cpp cheat_store.cpp dolphin_cheats.cpp gameinfo.cpp real_boot.cpp)
+add_library(hubcommon STATIC ps1.cpp ${PS1_DB_CPP} disc_id.cpp ps2.cpp ps2_db.cpp kanto.cpp kanto_pad.cpp controls.cpp game_settings.cpp games.cpp library.cpp emu_formats.cpp emu_saves.cpp wiiu_meta.cpp findgames.cpp addgames.cpp cheats.cpp cheats_db.cpp cheat_store.cpp dolphin_cheats.cpp gameinfo.cpp real_boot.cpp prefs.cpp)
 target_include_directories(hubcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(hubcommon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcommon PUBLIC cxx_std_17)
@@ -101,3 +101,11 @@ target_link_libraries(hint_popup_test PRIVATE hubbase)
 # Real console startup (own IPL / BIOS / boot ROM detection, config edits) + custom startup sound decoding.
 add_executable(real_boot_test test_real_boot.cpp)
 target_link_libraries(real_boot_test PRIVATE hubcommon)
+
+# OSD: toast queue, corner slot, bitmap font renderer + blend (pure).
+add_executable(osd_test test_osd.cpp)
+target_link_libraries(osd_test PRIVATE hubbase)
+
+# Synced account prefs: JSON, field-wise merge with per-field timestamps, library favorites mirror (scratch dirs).
+add_executable(prefs_test test_prefs.cpp)
+target_link_libraries(prefs_test PRIVATE hubcommon)
