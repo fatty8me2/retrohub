@@ -11,6 +11,7 @@ struct State {
     bool kb_seen = false;
     // text keyboard
     bool open = false, need_popup = false, root = false, accepted = false, finished = false;
+    bool mask = false;   // ImGuiInputTextFlags_Password: the preview shows bullets, never the text
     ImGuiID owner = 0;
     Session ses;
     std::string hint;
@@ -183,14 +184,17 @@ void draw_keyboard() {
         dl->AddRect(b0, b1, ui::with_alpha(ui::ACCENT, 0.7f), ui::sp(1.f), 0, 1.5f);
         ImFont* f = ui::F.h2;
         float fs = f->FontSize;
-        ImVec2 tsz = f->CalcTextSizeA(fs, FLT_MAX, 0.f, ss.ed.text.c_str());
-        float cx = f->CalcTextSizeA(fs, FLT_MAX, 0.f, ss.ed.text.substr(0, (size_t)ss.ed.cursor).c_str()).x;
+        auto masked = [](const std::string& t) { std::string m; for (unsigned char c : t) if ((c & 0xC0) != 0x80) m += '*'; return m; };
+        const std::string shown = S.mask ? masked(ss.ed.text) : ss.ed.text;
+        const std::string shown_to_cursor = S.mask ? masked(ss.ed.text.substr(0, (size_t)ss.ed.cursor)) : ss.ed.text.substr(0, (size_t)ss.ed.cursor);
+        ImVec2 tsz = f->CalcTextSizeA(fs, FLT_MAX, 0.f, shown.c_str());
+        float cx = f->CalcTextSizeA(fs, FLT_MAX, 0.f, shown_to_cursor.c_str()).x;
         float room = iw - sp1 * 2;
         float off = cx > room ? cx - room : 0.f;
         float ty = y + (prevH - tsz.y) * 0.5f;
         dl->PushClipRect(ImVec2(b0.x + 2, b0.y), ImVec2(b1.x - 2, b1.y), true);
         if (ss.ed.text.empty()) dl->AddText(f, fs, ImVec2(b0.x + sp1, ty), ui::TEXT3, "...");
-        else dl->AddText(f, fs, ImVec2(b0.x + sp1 - off, ty), ui::TEXT, ss.ed.text.c_str());
+        else dl->AddText(f, fs, ImVec2(b0.x + sp1 - off, ty), ui::TEXT, shown.c_str());
         if (std::fmod(ImGui::GetTime(), 1.0) < 0.6)
             dl->AddRectFilled(ImVec2(b0.x + sp1 - off + cx, y + ui::sp(1.f)), ImVec2(b0.x + sp1 - off + cx + 2.f * ui::S, y + prevH - ui::sp(1.f)), ui::ACCENT);
         dl->PopClipRect();
@@ -339,6 +343,7 @@ void open_text(ImGuiID owner, Kind kind, const char* hint, const char* text, siz
     }
     S.hint = hint && *hint ? hint : "Type here";
     S.owner = owner;
+    S.mask = (flags & ImGuiInputTextFlags_Password) != 0;
     S.open = true;
     S.need_popup = true;
     S.finished = false;
@@ -493,8 +498,9 @@ void shot_init() {
         S.fb_need_popup = true;
     } else {
         Kind k = mode == "room" ? Kind::Room : mode == "code" ? Kind::Code : Kind::Text;
-        open_text(1, k, k == Kind::Room ? "Room code" : k == Kind::Code ? "Friend code" : "Search games", arg.c_str(), k == Kind::Room ? 7 : 64,
-                  k == Kind::Code ? ImGuiInputTextFlags_CharsUppercase : 0);
+        const bool pw = mode == "password";   // HUB_SHOT_OSK=password:<text>: QA that the preview is masked
+        open_text(1, k, k == Kind::Room ? "Room code" : k == Kind::Code ? "Friend code" : pw ? "Password" : "Search games", arg.c_str(), k == Kind::Room ? 7 : 64,
+                  k == Kind::Code ? ImGuiInputTextFlags_CharsUppercase : pw ? ImGuiInputTextFlags_Password : 0);
         if (mode == "symbols") S.ses.set_page(Page::Symbols);
     }
     if (const char* cm = std::getenv("HUB_SHOT_OSK_CMDS")) {
