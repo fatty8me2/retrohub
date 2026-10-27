@@ -123,7 +123,8 @@ struct GameState {
     uint64_t play_seconds = 0;
 };
 GameState game_state(const std::string& key);
-void set_favorite(const std::string& key, bool fav);
+void set_favorite(const std::string& key, bool fav);   // also mirrored into the synced account prefs (prefs.h) once prefs::set_vault_root() was called
+std::vector<std::string> favorite_keys();               // every favorited key (sorted)
 void record_play(const std::string& key, uint64_t started_unix, uint64_t seconds);
 void flush_library_state();
 
