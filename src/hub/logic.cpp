@@ -54,6 +54,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"smash_exe\": \"" << json::escape(s.smash_exe) << "\",\n"
       << "  \"gb_core\": \"" << json::escape(s.gb_core) << "\",\n"
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
+      << "  \"volume\": " << s.volume << ",\n"
       << "  \"start_hint\": " << (s.start_hint ? "true" : "false") << ",\n"
       << "  \"boot_anim\": " << (s.boot_anim ? "true" : "false") << ",\n"
       << "  \"boot_sounds\": " << (s.boot_sounds ? "true" : "false") << ",\n"
@@ -128,6 +129,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     std::string core = j.str("gb_core", out->gb_core);
     out->gb_core = (core == "gambatte" || core == "sameboy") ? core : "sameboy";
     out->fullscreen = json_bool(j, "fullscreen", out->fullscreen);
+    out->volume = std::max(0, std::min(100, (int)j.num("volume", out->volume)));
     out->start_hint = json_bool(j, "start_hint", out->start_hint);
     out->boot_anim = json_bool(j, "boot_anim", out->boot_anim);
     out->boot_sounds = json_bool(j, "boot_sounds", out->boot_sounds);

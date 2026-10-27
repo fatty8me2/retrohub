@@ -36,6 +36,7 @@ class LocalInput {
     /* Packed BUTTONS word for the `owned_index`-th locally owned port (0 = first). */
     uint32_t read(int owned_index) const;
     /* True once when Back+Start was held 1 s on any pad (the universal leave-game combo). */
+    bool boost_held() const { return boost_; }   // View + RT
     bool exit_requested() { bool r = exit_fired_; exit_fired_ = false; return r; }
     /* Rumble Pak motor on the pad of the owned port (no-op without rumble support). */
     void rumble(int owned_index, bool on);
@@ -51,7 +52,7 @@ class LocalInput {
     int last_joysticks_ = -1;
     bool inited_ = false;
     hubctl::ExitCombo combo_;
-    bool exit_fired_ = false;
+    bool exit_fired_ = false, boost_ = false;
 };
 
 /* Number of game controllers SDL currently sees (initialises the subsystem if needed). */

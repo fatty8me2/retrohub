@@ -25,6 +25,7 @@ struct Settings {
     std::string smash_exe;     // user-chosen BattleShip.exe
     std::string gb_core = "sameboy";   // default GB/GBC core: "sameboy" | "gambatte"
     bool fullscreen = false;           // start games fullscreen where the runner supports it
+    int volume = 100;                  // global game volume 0-100 (per-game "volume" option overrides; Settings > Video & Games)
     bool boot_anim = true;             // "Play the start animation" (boot_anim.h)
     bool boot_sounds = true;           // "Startup sounds"
     int boot_volume = 70;              // startup sound volume 0-100

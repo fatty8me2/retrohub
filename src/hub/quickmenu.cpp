@@ -9,6 +9,8 @@
 
 #include "runner_ctl.h"
 #include "cloud_engine.h"
+#include "qm_logic.h"
+#include "ext_media.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
@@ -195,6 +197,78 @@ void slot_page(bool saving) {
     else if (ui::button("Back", ImVec2(sp(14.f), sp(5.5f)), false, true, ui::Icon::ChevronL)) g_page = QPage::Main;
 }
 
+/* ---- speed / volume / mute / external screenshot state (one game session) ---- */
+int g_speed_idx = hubqm::kSpeedNormal;   // resets to 1x every session
+int g_vol = 100, g_launch_vol = 100;     // slider and the volume the game was launched with
+bool g_mute = false;
+bool g_ext_dirty = false, g_shot_online = false, g_shot_ext = false;   // g_shot_*: HUB_SHOT_QM_ONLINE / HUB_SHOT_QM_EXT stand-ins
+std::string g_sess_key;
+ULONGLONG g_sess_tick = 0;
+double g_ext_next = 0, g_ext_shot_at = 0;
+int g_ext_sessions = -1;                 // audio sessions found at the last attempt (-1 = none tried yet)
+std::string g_ext_shot_path;
+
+/* Fire and forget: the menu stays open and responsive; the runner acts at its next poll. */
+void send_quiet(runctl::Command c) {
+    if (g_shot_fake || !ctl_ready()) return;
+    if (!runctl::send_command_ex(A.run.ctl_path, c)) push_toast("Could not talk to the game.", COL_WARN, 4.0);
+}
+
+bool is_dolphin(const hub::GameEntry* e) { return e && e->system == hub::System::GC; }
+
+void ext_apply(const hub::GameEntry* e) {
+    int base = is_dolphin(e) ? g_launch_vol : 100;
+    g_ext_sessions = extmedia::set_audio(running_game_pids(), hubqm::ext_session_scalar(g_vol, base), g_mute);
+    if (g_ext_sessions > 0) g_ext_dirty = false;
+}
+
+/* A stepper row: label, "< value >", optional fill bar. Returns -1 / 0 / +1: Left / Right on the pad or keyboard while focused,
+ * a click on the left or right half with the mouse, or A on the pad (+1; the Sound row treats any of them as a toggle). */
+int stepper_row(const char* id, const char* label, const std::string& value, float fill, bool enabled, float width) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float h = sp(5.2f);
+    ImGui::PushID(id);
+    ImGui::BeginDisabled(!enabled);
+    bool clicked = ImGui::InvisibleButton("##step", ImVec2(width, h), ImGuiButtonFlags_EnableNav);
+    ImGui::EndDisabled();
+    bool hovered = ImGui::IsItemHovered(), focused = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
+    bool hot = enabled && (hovered || focused);
+    int dir = 0;
+    if (enabled) {
+        if (clicked) dir = hovered && ImGui::GetIO().MousePos.x < p.x + width * 0.5f ? -1 : 1;
+        if (focused) {
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) dir = -1;
+            else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) dir = 1;
+            if (dir && !clicked) ImGui::NavMoveRequestCancel();   // left/right belongs to this row, not to ImGui's focus movement
+        }
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 q(p.x + width, p.y + h);
+    dl->AddRectFilled(p, q, hot ? ui::PANEL2 : ui::PANEL, sp(1.25f));
+    dl->AddRect(p, q, IM_COL32(255, 255, 255, 22), sp(1.25f));
+    if (fill >= 0.f) {
+        float bx0 = p.x + sp(1.2f), bx1 = q.x - sp(1.2f), by = q.y - sp(0.9f);
+        dl->AddRectFilled(ImVec2(bx0, by - sp(0.35f)), ImVec2(bx1, by), IM_COL32(255, 255, 255, 28), sp(0.3f));
+        if (fill > 0.f) dl->AddRectFilled(ImVec2(bx0, by - sp(0.35f)), ImVec2(bx0 + (bx1 - bx0) * std::min(1.f, fill), by), enabled ? ui::ACCENT : ui::TEXT3, sp(0.3f));
+    }
+    ImU32 tc = enabled ? ui::TEXT : ui::TEXT3;
+    ImVec2 ls = ImGui::CalcTextSize(label);
+    dl->AddText(ImVec2(p.x + sp(1.4f), p.y + (h - ls.y) * 0.5f - (fill >= 0.f ? sp(0.3f) : 0.f)), tc, label);
+    ImGui::PushFont(ui::F.bold);
+    ImVec2 vs = ImGui::CalcTextSize(value.c_str());
+    ImGui::PopFont();
+    float vx = q.x - sp(4.2f) - vs.x;
+    float vy = p.y + (h - vs.y) * 0.5f - (fill >= 0.f ? sp(0.3f) : 0.f);
+    dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(vx, vy), tc, value.c_str());
+    if (enabled) {
+        ui::icon(dl, ui::Icon::ChevronL, ImVec2(vx - sp(1.6f), vy + vs.y * 0.5f), sp(1.7f), hot ? ui::TEXT : ui::TEXT2);
+        ui::icon(dl, ui::Icon::ChevronR, ImVec2(q.x - sp(1.9f), vy + vs.y * 0.5f), sp(1.7f), hot ? ui::TEXT : ui::TEXT2);
+    }
+    if (hot) dl->AddRect(p, q, ui::ACCENT, sp(1.25f), 0, 2.f);
+    ImGui::PopID();
+    return dir;
+}
+
 void check_ack() {
     if (!g_pending) return;
     std::string txt;
@@ -262,13 +336,47 @@ void qm_open_live() {
     focus_hub();
 }
 
+static bool runner_has_ctl(const hub::GameEntry& e);   // below
+
+/* One game session = one (key, start tick): speed back to 1x, mute off, volume from the settings. External emulators get their
+ * Windows audio session scaled (re-applied every 2 s until it exists, and whenever it is not at full volume). */
+static void qm_session_tick(const hub::GameEntry* e) {
+    if (!A.proc || A.run.key.empty()) { g_sess_key.clear(); return; }
+    if (g_sess_key != A.run.key || g_sess_tick != A.run.start_tick) {
+        g_sess_key = A.run.key; g_sess_tick = A.run.start_tick;
+        g_speed_idx = hubqm::kSpeedNormal;
+        g_mute = false;
+        g_vol = e ? hub::gs::volume_of(gs_values_for(*e)) : 100;
+        g_launch_vol = g_vol;
+        g_ext_sessions = -1;
+        g_ext_dirty = true;
+    }
+    if (e && !is_native(*e) && !runner_has_ctl(*e)) {
+        double now = ImGui::GetTime();
+        bool need = g_ext_dirty || g_mute || hubqm::ext_session_scalar(g_vol, is_dolphin(e) ? g_launch_vol : 100) < 1.f;
+        if (need && now >= g_ext_next) { g_ext_next = now + 2.0; ext_apply(e); }
+    }
+}
+
 void qm_tick() {
     hub::saves::set_backup_screenshots(A.st.backup_shots);
+    if (A.proc) qm_session_tick(find_entry(A.run.key));
+    {   // finished external-emulator window capture
+        std::string m;
+        int st = extmedia::capture_poll(&m);
+        if (st == 2) push_toast("Screenshot saved", COL_GOOD, 3.0);
+        else if (st == 3) push_toast(m.empty() ? std::string("Could not capture the game window.") : m, COL_WARN, 5.0);
+    }
     static const char* shot = std::getenv("HUB_SHOT_QM");   // screenshot aid: main | save | load (opens on a stand-in running game)
     static bool done = false;
     if (shot && !done && g_headless) {
         done = true;
         g_shot_fake = true;
+        g_shot_online = std::getenv("HUB_SHOT_QM_ONLINE") != nullptr;
+        g_shot_ext = std::getenv("HUB_SHOT_QM_EXT") != nullptr;
+        g_vol = std::getenv("HUB_SHOT_QM_VOL") ? std::atoi(std::getenv("HUB_SHOT_QM_VOL")) : 100;
+        g_speed_idx = std::getenv("HUB_SHOT_QM_SPEED") ? std::atoi(std::getenv("HUB_SHOT_QM_SPEED")) : hubqm::kSpeedNormal;
+        g_mute = std::getenv("HUB_SHOT_QM_MUTE") != nullptr;
         g_sys = "n64"; g_key = "n64:shot"; g_title = "Super Smash Bros.";
         g_page = std::string(shot) == "save" ? QPage::Save : std::string(shot) == "load" ? QPage::Load : QPage::Main;
         g_open_req = true;
@@ -313,9 +421,10 @@ void draw_quick_menu() {
     }
     check_ack();
 
-    const bool online = g_shot_fake ? false : A.run.online;
-    const bool ctl = g_shot_fake || ctl_ready();
+    const bool online = g_shot_fake ? g_shot_online : A.run.online;
+    const bool ctl = g_shot_fake ? !g_shot_ext : ctl_ready();
     const hub::GameEntry* e = g_shot_fake ? nullptr : find_entry(g_key);
+    const bool ext = g_shot_fake ? g_shot_ext : (e && !is_native(*e) && !runner_has_ctl(*e));
 
     if (g_page != QPage::Main) {
         slot_page(g_page == QPage::Save);
@@ -336,11 +445,51 @@ void draw_quick_menu() {
     }
     if (menu_button("Resume", true, ui::Icon::Play, true)) { ImGui::CloseCurrentPopup(); focus_game(); }
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
+    if (ctl || ext) {   // Speed (built-in runners, offline), Volume + Mute (everything; local only, so online too)
+        const float fw = ImGui::GetContentRegionAvail().x;
+        const bool can_speed = hubqm::speed_available(ctl, online);
+        if (ctl) {
+            int d = stepper_row("speed", "Speed", can_speed ? hubqm::speed_text(g_speed_idx) : std::string("1x"), -1.f, can_speed && g_pending == 0, fw);
+            if (d) {
+                int ni = hubqm::speed_step(g_speed_idx, d);
+                if (ni != g_speed_idx) {
+                    g_speed_idx = ni;
+                    runctl::Command c; c.cmd = runctl::Cmd::Speed; c.speed = hubqm::speed_value(ni);
+                    send_quiet(c);
+                }
+            }
+            if (!can_speed) text_wrapped_disabled("Not available online: everyone has to stay in step.");
+        }
+        int d = stepper_row("volume", "Volume", std::to_string(g_vol) + "%", g_mute ? 0.f : g_vol / 100.f, g_pending == 0, fw);
+        if (d) {
+            int nv = hubqm::volume_step(g_vol, d);
+            if (nv != g_vol) {
+                g_vol = nv;
+                if (ctl) { runctl::Command c; c.cmd = runctl::Cmd::Volume; c.value = nv; send_quiet(c); }
+                else { g_ext_dirty = true; g_ext_next = 0; }
+            }
+        }
+        if (stepper_row("mute", "Sound", g_mute ? "Muted" : "On", -1.f, g_pending == 0, fw)) {   // any left / right / A toggles
+            g_mute = !g_mute;
+            if (ctl) { runctl::Command c; c.cmd = runctl::Cmd::Mute; c.value = g_mute ? 1 : 0; send_quiet(c); }
+            else { g_ext_dirty = true; g_ext_next = 0; }
+        }
+        if (ext && g_ext_sessions == 0 && !g_shot_fake) text_wrapped_disabled("The game has not started its sound yet.");
+    }
     if (ctl) {
         if (menu_button("Save state", !online, ui::Icon::Check)) g_page = QPage::Save;
         if (menu_button("Load state", !online, ui::Icon::Refresh)) g_page = QPage::Load;
         if (online) text_wrapped_disabled("Save states are off in online games: everyone has to stay in step.");
         if (menu_button("Take a screenshot", true, ui::Icon::Search)) send(runctl::Cmd::Screenshot, 0, "Screenshot saved", true);
+    } else if (ext) {   // Dolphin, Cemu, Azahar, PCSX2: capture the emulator's window into the vault's shots folder
+        if (menu_button("Screenshot", true, ui::Icon::Search)) {
+            if (g_shot_fake) { push_toast("Screenshot saved", COL_GOOD, 3.0); }
+            else if (e) {
+                std::string out = trim_sep(hub::saves::game_dir(sys_short(*e), e->key)) + "\\shots\\" + runctl::shot_name(std::time(nullptr));
+                if (extmedia::capture_start(running_game_hwnd(), out)) { ImGui::CloseCurrentPopup(); focus_game(); }
+                else push_toast("Could not find the game window.", COL_WARN, 4.0);
+            }
+        }
     }
     if (e && cheats_supported(*e)) {
         if (menu_button("Cheats", true, ui::Icon::Bolt)) { hub::GameEntry c = *e; cheats_open(c); ImGui::CloseCurrentPopup(); }

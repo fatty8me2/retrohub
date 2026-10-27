@@ -84,7 +84,7 @@ target_link_libraries(hub_updater_test PRIVATE hubversion)
 # ---- Branding: icon + version resources, Windows shell integration (assets/brand/retrohub.ico) ----
 set(RH_BRAND_RC_DIRS ${HUB_VERSION_GEN} ${CMAKE_CURRENT_SOURCE_DIR})
 set_source_files_properties(retrohub.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/assets/brand/retrohub.ico;${HUB_VERSION_GEN}/hub_version_rc.h")
-target_sources(RetroHub PRIVATE shell_integration.cpp toast_win.cpp retrohub.rc)
+target_sources(RetroHub PRIVATE shell_integration.cpp toast_win.cpp ext_media.cpp retrohub.rc)
 target_include_directories(RetroHub PRIVATE ${RH_BRAND_RC_DIRS})
 target_link_libraries(RetroHub PRIVATE propsys windowsapp)
 
@@ -159,7 +159,10 @@ target_link_libraries(hub_toast_win_test PRIVATE hubinvite advapi32)
 add_executable(hub_invite_test test_invite.cpp)
 target_link_libraries(hub_invite_test PRIVATE hubinvite)
 
-# Per-game settings launch wiring helpers (pure).
+# Quick menu speed/volume logic (pure), then per-game settings launch wiring helpers (pure).
+add_executable(hub_qm_test test_qm_logic.cpp)
+target_link_libraries(hub_qm_test PRIVATE hubcommon)
+
 add_executable(hub_launchset_test test_launch_settings.cpp)
 target_link_libraries(hub_launchset_test PRIVATE hublogic hubcommon)
 

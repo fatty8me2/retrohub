@@ -54,6 +54,19 @@ int main(int argc, char** argv) {
     Values lv = hubui::effective_values(lk, System::N64, "l", false);
     Values lo = hubui::online_values(System::N64, lv, true, "");
     for (auto& o : options()) if (o.scope == Scope::Locked && o.key.rfind("n64.", 0) == 0) CHECK(lo[o.key] == o.def);
+    // volume: global default (100 = no argument), system / game override, clamped
+    {
+        Store v;
+        CHECK(hub::gs::volume_of(hubui::effective_values(v, System::GB, "g", false)) == 100);
+        CHECK(hubui::retro_extra_args(System::GB, hubui::effective_values(v, System::GB, "g", false)).find("--volume") == std::string::npos);
+        Values g40 = hubui::effective_values(v, System::GB, "g", false, 40);
+        CHECK(hub::gs::volume_of(g40) == 40 && hubui::retro_extra_args(System::GB, g40).find("--volume 40") != std::string::npos);
+        CHECK(hubui::n64_extra_args(hubui::effective_values(v, System::N64, "g", false, 0)).find("--volume 0") != std::string::npos);
+        v.set_game("g", System::GB, "volume", "70");
+        CHECK(hub::gs::volume_of(hubui::effective_values(v, System::GB, "g", false, 40)) == 70);   // per-game beats the global default
+        CHECK(!v.set_game("g", System::GB, "volume", "101") && !v.set_game("g", System::GB, "volume", "loud"));
+        CHECK(hub::gs::volume_of(Values{{"volume", "999"}}) == 100 && hub::gs::volume_of(Values{{"volume", "-5"}}) == 0 && hub::gs::volume_of(Values()) == 100);
+    }
     std::printf(g_fail ? "FAILED\n" : "launch settings OK\n");
     return g_fail != 0;
 }
