@@ -44,16 +44,16 @@ struct Geo {
 inline Geo geo_for(hub::System s) {
     using S = hub::System;
     switch (s) {
-        case S::NES:   return {Insert::Slot, 0.85f, 0, -18, 120, 6, 1.f, 24, 1.0f, 0.66f};
+        case S::NES:   return {Insert::Slot, 0.85f, 0, -18, 120, 6, 1.f, 34, 1.0f, 0.66f};
         case S::SNES:  return {Insert::Slot, 0.70f, 0, -48, 110, -30, 1.f, 0, 1.0f, 0.66f};
         case S::GB: case S::GBC: return {Insert::Behind, 0.85f, 0, -149, 100, 0, 1.f, 0, 0.76f, 0.62f};
-        case S::GBA:   return {Insert::Behind, 0.60f, 0, -86, 110, 0, 1.f, 0, 1.0f, 0.66f};
+        case S::GBA:   return {Insert::Behind, 0.83f, 0, -82, 110, 0, 1.f, 0, 1.0f, 0.66f};   // short, wide cart (65x35 mm) in the rear housing
         case S::NDS: case S::N3DS: return {Insert::Behind, 0.70f, 0, -148, 100, 0, 1.f, 0, 0.76f, 0.62f};
-        case S::GC:    return {Insert::Lid, 0.85f, 0, -28, 150, 0, 0.46f, 0, 1.0f, 0.66f};
+        case S::GC:    return {Insert::Lid, 0.70f, 0, -35, 150, 0, 0.46f, 0, 1.0f, 0.66f};   // 8 cm mini disc: about half the console width
         case S::PS1:   return {Insert::Lid, 0.62f, 0, -34, 150, 0, 0.47f, 0, 1.0f, 0.66f};
         case S::PS2:   return {Insert::Tray, 0.50f, -7, 93, 150, 0, 0.52f, 0, 1.0f, 0.66f};
         case S::WiiU:  return {Insert::Front, 0.55f, 54, 46, 120, 37, 0.14f, 0, 1.0f, 0.66f};
-        case S::N64: default: return {Insert::Slot, 0.78f, 0, -38, 120, -8, 1.f, 0, 1.0f, 0.68f};
+        case S::N64: default: return {Insert::Slot, 0.56f, 0, -32, 120, -8, 1.f, 0, 1.0f, 0.68f};   // cart is ~28% of the console width
     }
 }
 

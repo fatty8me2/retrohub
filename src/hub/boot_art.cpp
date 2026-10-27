@@ -1,4 +1,4 @@
-/* Game start animation: hand-built vector art (ImDrawList only) for every console, its media and the shelf.
+﻿/* Game start animation: hand-built vector art (ImDrawList only) for every console, its media and the shelf.
  * Original stylised shapes: no logos, no brand names, no textures except the `label` cover art. */
 #include "boot_art.h"
 #include "imgui_internal.h"
@@ -167,19 +167,19 @@ void console_n64(K& k, float lid, float power) {
     k.line(-120, -70, 120, -70, rgb(120, 123, 130), 1.5f);
     k.line(-120, -70, -138, 26, IM_COL32(255, 255, 255, 36), 1.2f); k.line(120, -70, 138, 26, IM_COL32(255, 255, 255, 36), 1.2f);
     // raised bezel around the slot
-    k.vquad({-84, -66}, {84, -66}, {92, -4}, {-92, -4}, rgb(98, 100, 108), rgb(116, 118, 126));
-    k.vquad({-92, -4}, {92, -4}, {94, 6}, {-94, 6}, rgb(46, 47, 52), rgb(28, 29, 33));     // vertical lip face
-    k.line(-84, -66, 84, -66, IM_COL32(255, 255, 255, 60), 1.f);
-    // the slot: black well, rails, gold edge connector at the bottom
-    k.quadg({-66, -60}, {66, -60}, {72, -12}, {-72, -12}, rgb(2, 2, 3), rgb(2, 2, 3), rgb(20, 21, 25), rgb(20, 21, 25));
-    k.line(-66, -60, -72, -12, rgb(120, 123, 132), 1.5f); k.line(66, -60, 72, -12, rgb(120, 123, 132), 1.5f);
-    k.line(-40, -58, -43, -14, rgb(44, 46, 52), 1.f); k.line(40, -58, 43, -14, rgb(44, 46, 52), 1.f);
-    for (int i = 0; i < 16; i++) k.rr(-45 + i * 6.f, -26, -42 + i * 6.f, -14, rgb(150, 124, 56), 0);
-    for (int i = 0; i < 4; i++) k.screw(i < 2 ? -80.f + i * 160.f : -86.f + (i - 2) * 172.f, i < 2 ? -62.f : -8.f, 2.4f, rgb(30, 31, 35));
+    k.vquad({-60, -66}, {60, -66}, {66, -4}, {-66, -4}, rgb(98, 100, 108), rgb(116, 118, 126));
+    k.vquad({-66, -4}, {66, -4}, {68, 6}, {-68, 6}, rgb(46, 47, 52), rgb(28, 29, 33));     // vertical lip face
+    k.line(-60, -66, 60, -66, IM_COL32(255, 255, 255, 60), 1.f);
+    // the slot: black well, rails, gold edge connector at the bottom (sized for the real cart: about a quarter of the console width)
+    k.quadg({-47, -60}, {47, -60}, {52, -12}, {-52, -12}, rgb(2, 2, 3), rgb(2, 2, 3), rgb(20, 21, 25), rgb(20, 21, 25));
+    k.line(-47, -60, -52, -12, rgb(120, 123, 132), 1.5f); k.line(47, -60, 52, -12, rgb(120, 123, 132), 1.5f);
+    k.line(-28, -58, -31, -14, rgb(44, 46, 52), 1.f); k.line(28, -58, 31, -14, rgb(44, 46, 52), 1.f);
+    for (int i = 0; i < 16; i++) k.rr(-32 + i * 4.2f, -26, -30 + i * 4.2f, -14, rgb(150, 124, 56), 0);
+    for (int i = 0; i < 4; i++) k.screw(i < 2 ? -56.f + i * 112.f : -62.f + (i - 2) * 124.f, i < 2 ? -62.f : -8.f, 2.4f, rgb(30, 31, 35));
     if (g_inner) g_inner(k.d);                                                           // the cartridge sits here
     // front spring flap + expansion-pak cover, in front of the cartridge
-    k.rr(-70, -14, 70, -7, rgb(18, 19, 22), 2); k.rr(-70, -14, 70, -12, IM_COL32(255, 255, 255, 70), 1);
-    for (int i = 0; i < 5; i++) k.rr(-64 + i * 32.f, -10, -48 + i * 32.f, -8, rgb(60, 62, 68), 1);   // flap fingers
+    k.rr(-52, -14, 52, -7, rgb(18, 19, 22), 2); k.rr(-52, -14, 52, -12, IM_COL32(255, 255, 255, 70), 1);
+    for (int i = 0; i < 4; i++) k.rr(-46 + i * 25.f, -10, -30 + i * 25.f, -8, rgb(60, 62, 68), 1);   // flap fingers
     k.well(-60, 4, 60, 22, 4, rgb(22, 23, 27), 50);
     k.grad(-56, 7, 56, 20, rgb(74, 76, 83), rgb(58, 60, 66), 3);
     k.rr(-22, 7, 22, 12, rgb(38, 39, 44), 2);                                           // finger notch
@@ -356,9 +356,9 @@ void console_gc(K& k, float lid, float power) {
     k.shadow_ell(0, 98, 124, 13, 140);
     ImU32 f0 = rgb(104, 90, 184), f1 = rgb(58, 48, 122), top0 = rgb(116, 102, 198), top1 = rgb(132, 118, 212);
     // carry handle behind the top, with its opening
-    k.rr4(-54, -108, 54, -62, rgb(78, 66, 150), 20, 20, 0, 0);
-    k.rr4(-40, -98, 40, -66, rgb(14, 12, 24), 12, 12, 0, 0);
-    k.rr4(-54, -108, 54, -104, IM_COL32(255, 255, 255, 50), 20, 20, 0, 0);
+    k.rr4(-62, -112, 62, -62, rgb(78, 66, 150), 24, 24, 0, 0);
+    k.rr4(-46, -101, 46, -66, rgb(14, 12, 24), 14, 14, 0, 0);
+    k.rr4(-62, -112, 62, -108, IM_COL32(255, 255, 255, 50), 24, 24, 0, 0);
     // top face (cube: the back is a bit narrower), rounded back corners
     k.vquad({-98, -78}, {98, -78}, {108, 8}, {-108, 8}, top0, top1);
     k.quadg({-108, 8}, {-98, -78}, {-102, -76}, {-112, 8}, rgb(70, 60, 140), rgb(70, 60, 140), rgb(50, 42, 104), rgb(50, 42, 104));
@@ -369,7 +369,9 @@ void console_gc(K& k, float lid, float power) {
     k.line(-108, 8, 108, 8, rgb(186, 174, 248), 1.8f);
     k.rr(-110, 8, -108, 92, IM_COL32(255, 255, 255, 30));
     // disc well + hinged round lid
-    const float R = 70.f, ry = R * 0.5f, hinge = -73.f;
+    const float R = 58.f, ry = R * 0.5f, hinge = -64.f;   // the round lid only covers an 8 cm mini disc: about half the console width
+    k.ell(0, hinge + ry, R + 7, ry + 4, rgb(86, 74, 160));                  // raised ring around the disc well
+    k.ellr(0, hinge + ry, R + 7, ry + 4, IM_COL32(255, 255, 255, 50), 1.2f);
     well_with_disc_slot(k, 0, hinge + ry, R - 2, ry - 1, rgb(14, 13, 22), rgb(66, 62, 90));
     if (g_inner) g_inner(k.d);
     hinge_lid(k, 0, hinge, R, lid, rgb(142, 130, 222), rgb(54, 46, 100), rgb(88, 76, 164), 7.f, rgb(150, 138, 230));
@@ -489,12 +491,11 @@ void console_wiiu(K& k, float lid, float power) {
 }
 
 void console_nes(K& k, float lid, float power) {
-    (void)lid;
     k.shadow_ell(0, 92, 146, 12, 130);
-    ImU32 dark = rgb(54, 54, 58), cream = rgb(208, 206, 198);
+    ImU32 dark = rgb(48, 48, 52), cream = rgb(184, 184, 180);   // light grey body, charcoal trim
     // top slab
-    k.vquad({-130, -36}, {130, -36}, {148, 12}, {-148, 12}, rgb(196, 194, 186), cream);
-    k.vquad({-130, -36}, {130, -36}, {134, -28}, {-134, -28}, rgb(228, 226, 218), rgb(214, 212, 204));
+    k.vquad({-130, -36}, {130, -36}, {148, 12}, {-148, 12}, rgb(166, 166, 162), cream);
+    k.vquad({-130, -36}, {130, -36}, {134, -28}, {-134, -28}, rgb(206, 206, 202), rgb(190, 190, 186));
     k.quadg({-148, 12}, {-130, -36}, {-134, -36}, {-152, 12}, rgb(150, 148, 142), rgb(150, 148, 142), rgb(126, 124, 120), rgb(126, 124, 120));
     // ribbed grip lines either side of the bay
     for (int s = -1; s <= 1; s += 2) for (int i = 0; i < 6; i++) k.line(s * (102.f + i * 5.f), -22, s * (110.f + i * 5.f), 0, IM_COL32(0, 0, 0, 36), 1.4f);
@@ -503,16 +504,20 @@ void console_nes(K& k, float lid, float power) {
     k.quadg({-78, -24}, {78, -24}, {86, 4}, {-86, 4}, rgb(2, 2, 3), rgb(2, 2, 3), rgb(14, 14, 16), rgb(14, 14, 16));
     for (int i = 0; i < 15; i++) k.rr(-56 + i * 8.f, -4, -53 + i * 8.f, 3, rgb(150, 124, 56), 0);
     if (g_inner) g_inner(k.d);
-    k.vquad({-96, 6}, {96, 6}, {98, 17}, {-98, 17}, rgb(118, 116, 112), rgb(92, 90, 88));     // door lip over the cart
-    k.rr(-96, 6, 96, 8, IM_COL32(255, 255, 255, 60), 1);
-    for (int i = 0; i < 4; i++) k.rr(-30 + i * 16.f, 11, -20 + i * 16.f, 15, IM_COL32(0, 0, 0, 70), 1);
+    k.rr(-96, 4, 96, 8, rgb(70, 70, 74), 1);                                              // door hinge bar
     // power / reset on the top left, LED
     k.well(-132, -20, -102, -4, 2, rgb(60, 60, 64), 30);
     k.button(-128, -18, -116, -6, rgb(56, 56, 60), 2); k.button(-114, -18, -102, -6, rgb(56, 56, 60), 2);
     k.led(-120, -26, 2.4f, power, rgb(255, 50, 40));
     // front face: cream upper band, black stripe, ports
-    k.vquad({-148, 12}, {148, 12}, {148, 82}, {-148, 82}, rgb(200, 198, 190), rgb(158, 156, 150));
-    k.line(-148, 12, 148, 12, rgb(240, 238, 230), 1.5f);
+    k.vquad({-148, 12}, {148, 12}, {148, 82}, {-148, 82}, rgb(186, 186, 182), rgb(150, 150, 146));
+    k.line(-148, 12, 148, 12, rgb(226, 226, 222), 1.5f);
+    {   // black flap door on the front, hinged along its top edge: swings up and back as the cart goes in (lid = openness), then drops shut over it
+        const float dh = 28.f * (1.f - 0.86f * lid);
+        k.vquad({-98, 8}, {98, 8}, {100, 8 + dh}, {-100, 8 + dh}, rgb(58, 58, 62), rgb(24, 24, 27));
+        k.rr(-98, 8, 98, 10, IM_COL32(255, 255, 255, 60), 1);
+        if (lid < 0.5f) for (int i = 0; i < 5; i++) k.rr(-40 + i * 20.f, 16, -30 + i * 20.f, 30, IM_COL32(255, 255, 255, 22), 1);
+    }
     k.rr(-148, 36, 148, 64, dark, 0); k.rr(-148, 36, 148, 38, rgb(100, 100, 106), 0); k.rr(-148, 62, 148, 64, rgb(28, 28, 32), 0);
     for (int i = 0; i < 4; i++) k.rr(-98 + i * 8.f, 41, -95 + i * 8.f, 58, rgb(22, 22, 26), 1);    // vents
     for (int i = 0; i < 4; i++) k.rr(66 + i * 8.f, 41, 69 + i * 8.f, 58, rgb(22, 22, 26), 1);
@@ -548,7 +553,7 @@ void console_snes(K& k, float lid, float power) {
     // front face: grey panel, indigo band, controller port door
     k.vquad({-160, 18}, {160, 18}, {160, 82}, {-160, 82}, rgb(214, 214, 220), rgb(164, 164, 174));
     k.line(-160, 18, 160, 18, rgb(248, 248, 252), 1.6f);
-    k.rr(-160, 40, 160, 52, dark, 0); k.rr(-160, 40, 160, 42, IM_COL32(255, 255, 255, 40), 0);
+    k.rr(-160, 44, 160, 47, rgb(150, 150, 162), 0); k.rr(-160, 47, 160, 48, IM_COL32(255, 255, 255, 60), 0); (void)dark;   // US model: plain grey with a thin seam, only the buttons are purple
     k.rr(-118, 58, -4, 78, rgb(36, 34, 48), 5); k.rr(4, 58, 118, 78, rgb(36, 34, 48), 5);          // two controller ports
     k.well(-110, 62, -12, 74, 3, rgb(6, 6, 10), 30); k.well(12, 62, 110, 74, 3, rgb(6, 6, 10), 30);
     k.led(-144, 30, 3.0f, power, rgb(255, 60, 44));
@@ -653,36 +658,46 @@ void media_snes(K& k, ImTextureID t, ImVec2 u0, ImVec2 u1) {
     pins(k, -52, 52, 46, 58, 17);
 }
 
+/* Game Boy family cartridges. GB / GBC: small, square-shouldered, top-right corner cut, a recessed label well and a narrower
+ * connector foot (DMG grey, Colour dual-mode charcoal). GBA: short and WIDE with rounded top corners and a wide recessed label. */
 void media_gb(K& k, System s, ImTextureID t, ImVec2 u0, ImVec2 u1) {
-    bool gba = s == System::GBA, gbc = s == System::GBC;
-    float hw = gba ? 56.f : 62.f, top = gba ? -84.f : -78.f, bot = gba ? 72.f : 74.f;
-    ImU32 base = gbc ? rgb(54, 52, 70) : (gba ? rgb(150, 152, 164) : rgb(176, 176, 172));
+    const bool gba = s == System::GBA, gbc = s == System::GBC;
+    const float hw = gba ? 72.f : 62.f, top = gba ? -44.f : -78.f, bot = gba ? 44.f : 74.f;
+    const ImU32 base = gbc ? rgb(70, 68, 80) : (gba ? rgb(158, 160, 170) : rgb(168, 168, 164));
+    const float body_b = bot - (gba ? 12.f : 16.f);
     k.shadow(-hw, top, hw, bot, 6, 12, 120);
-    float neck = hw - 10;
-    shell(k, -neck, bot - 16, neck, bot + 4, shade(base, 0.78f), 0, 0, 3, 3);            // connector neck (gba: a bit wider)
-    if (gbc) {   // dual-mode carts have the top-right corner chamfered; GBA carts the top-left; DMG are square with deep side notches
-        float cut = 22.f;
-        ImVec2 pts[] = {{-hw, top}, {hw - cut, top}, {hw, top + cut}, {hw, bot - 16}, {-hw, bot - 16}};
-        ImVec2 q[5]; for (int i = 0; i < 5; i++) q[i] = k.p(pts[i].x, pts[i].y);
-        k.d->AddConvexPolyFilled(q, 5, base);
-        k.rr(-hw + 1, top + 2, hw - cut - 4, top + 5, IM_COL32(255, 255, 255, 50), 1);
-    } else if (gba) {
-        float cut = 16.f;
-        ImVec2 pts[] = {{-hw + cut, top}, {hw, top}, {hw, bot - 16}, {-hw, bot - 16}, {-hw, top + cut}};
-        ImVec2 q[5]; for (int i = 0; i < 5; i++) q[i] = k.p(pts[i].x, pts[i].y);
-        k.d->AddConvexPolyFilled(q, 5, base);
-        k.rr(-hw + cut, top + 2, hw - 3, top + 5, IM_COL32(255, 255, 255, 50), 1);
+    const float neck = hw - (gba ? 14.f : 12.f);
+    shell(k, -neck, body_b - 4, neck, bot + 2, shade(base, 0.74f), 0, 0, 3, 3);          // connector foot
+    if (gba) {
+        shell(k, -hw, top, hw, body_b, base, 16, 16, 2, 2);                                  // rounded top
+        k.rr(-hw, body_b - 5, -hw + 5, body_b, shade(base, 0.7f), 0); k.rr(hw - 5, body_b - 5, hw, body_b, shade(base, 0.7f), 0);   // shoulder steps
     } else {
-        shell(k, -hw, top, hw, bot - 16, base, 4, 4, 0, 0);
-        k.rr(-hw - 1, top + 70, -hw + 5, top + 82, rgb(36, 36, 40), 2); k.rr(hw - 5, top + 70, hw + 1, top + 82, rgb(36, 36, 40), 2);   // side notches
+        const float cut = gbc ? 18.f : 14.f;                                                 // top-right corner cut (the DMG/Colour notch)
+        ImVec2 pts[] = {{-hw, top}, {hw - cut, top}, {hw, top + cut}, {hw, body_b}, {-hw, body_b}};
+        ImVec2 q[5]; for (int i = 0; i < 5; i++) q[i] = k.p(pts[i].x, pts[i].y);
+        k.d->AddConvexPolyFilled(q, 5, base);
+        k.d->AddPolyline(q, 5, IM_COL32(255, 255, 255, 48), ImDrawFlags_Closed, std::max(1.f, 1.2f * k.s));
+        k.rr(-hw + 1, top + 2, hw - cut - 3, top + 4, IM_COL32(255, 255, 255, 60), 1);
+        k.rr(-hw, top + 64, -hw + 4, top + 74, shade(base, 0.6f), 1); k.rr(hw - 4, top + 64, hw, top + 74, shade(base, 0.6f), 1);   // side notches
     }
-    k.rr(-hw + 1, top + 8, -hw + 3, bot - 20, IM_COL32(255, 255, 255, 36), 1);
-    k.rr(hw - 3, top + 8, hw - 1, bot - 20, IM_COL32(0, 0, 0, 44), 1);
-    for (int i = 0; i < 4; i++) k.line(-hw + 10, top + 7 + i * 4.f, hw - 10, top + 7 + i * 4.f, IM_COL32(0, 0, 0, 74), 2.f);   // grip ridges
-    float lw = hw - 14;
-    if (gba) sticker(k, -lw, top + 28, lw, top + 106, t, u0, u1, rgb(80, 120, 200), 2);
-    else sticker(k, -lw, top + 28, lw, top + 104, t, u0, u1, rgb(120, 160, 70), 2);
-    pins(k, -neck + 6, neck - 6, bot - 4, bot + 2, gba ? 10 : 14);
+    k.rr(-hw + 1, top + 10, -hw + 3, body_b - 4, IM_COL32(255, 255, 255, 36), 1);
+    k.rr(hw - 3, top + 10, hw - 1, body_b - 4, IM_COL32(0, 0, 0, 44), 1);
+    const int ridges = gba ? 3 : 4;
+    for (int i = 0; i < ridges; i++) {                                                       // grip ridges along the top shoulder
+        const float yy = top + 6 + i * 4.f;
+        k.line(-hw + (gba ? 22.f : 10.f), yy, hw - (gba ? 22.f : 24.f), yy, IM_COL32(0, 0, 0, 74), 2.f);
+    }
+    if (gba) {
+        const float ly0 = top + 17, ly1 = body_b - 6;
+        k.rr(-hw + 8, ly0 - 2, hw - 8, ly1 + 2, shade(base, 0.66f), 4);                      // label recess
+        sticker(k, -hw + 15, ly0 + 3, hw - 15, ly1 - 2, t, u0, u1, rgb(80, 120, 200), 2);
+    } else {
+        const float ly0 = top + 24, ly1 = top + 106;
+        k.rr(-hw + 8, ly0 - 4, hw - 8, ly1 + 4, shade(base, 0.66f), 5);                      // label recess
+        k.rr(-hw + 8, ly0 - 4, hw - 8, ly0 - 2, IM_COL32(0, 0, 0, 60), 2);
+        sticker(k, -hw + 17, ly0 + 2, hw - 17, ly1 - 2, t, u0, u1, gbc ? rgb(120, 90, 200) : rgb(120, 160, 70), 2);
+    }
+    pins(k, -neck + 6, neck - 6, bot - 5, bot + 1, gba ? 14 : 12);
 }
 
 void media_card(K& k, bool is3, ImTextureID t, ImVec2 u0, ImVec2 u1) {
