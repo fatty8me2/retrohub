@@ -24,6 +24,7 @@ FileClass classify_path(const std::string& rel_in_game, int64_t size) {
     std::string seg0 = slash == std::string::npos ? p : p.substr(0, slash);
     std::string name = p.substr(p.rfind('/') == std::string::npos ? 0 : p.rfind('/') + 1);
     if (seg0 == "_account" || name == "meta.json") return FileClass::Settings;
+    if (p == "cover.png") return FileClass::Settings;   // the user's custom cover at the game root (mirror of saves_pool.js)
     std::string ext = ext_of(name);
     if (seg0 == "states") {
         static const char* shots[] = {"png", "jpg", "jpeg", "bmp", "tga", "webp"};
