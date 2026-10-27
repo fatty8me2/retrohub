@@ -1,4 +1,5 @@
 #include "logic.h"
+#include "dupes_logic.h"
 #include "settings_tabs.h"
 
 #include <cmath>
@@ -9,7 +10,26 @@
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
 
+static int dupes_fail = 0;
+static void test_dupes() {
+    std::vector<hub::GameEntry> lib(4);
+    lib[0].key = "n64:a"; lib[0].path = "C:/one/a.z64";
+    lib[1].key = "n64:b"; lib[1].path = "C:/one/b.z64";
+    lib[2].key = "n64:a"; lib[2].path = "C:/two/a.z64";
+    lib[3].key = "n64:a"; lib[3].path = "C:/three/a.z64";
+    auto l1 = lib; hubdupes::Dupes d;
+    hubdupes::collapse(&l1, {}, &d);
+    if (l1.size() != 2 || l1[0].path != "C:/one/a.z64" || d.size() != 1 || d["n64:a"].size() != 3 || d["n64:a"][1] != "C:/two/a.z64") { std::printf("FAIL dupes default\n"); ++dupes_fail; }
+    auto l2 = lib;
+    hubdupes::collapse(&l2, {{"n64:a", "C:/three/a.z64"}}, &d);
+    if (l2.size() != 2 || l2[0].path != "C:/three/a.z64" || l2[1].key != "n64:b") { std::printf("FAIL dupes preferred\n"); ++dupes_fail; }
+    auto l3 = lib;
+    hubdupes::collapse(&l3, {{"n64:a", "C:/gone/a.z64"}}, &d);
+    if (l3[0].path != "C:/one/a.z64") { std::printf("FAIL dupes stale preferred\n"); ++dupes_fail; }
+}
+
 int main() {
+    test_dupes();
     using namespace hubui;
     Settings s;
     s.name = "Zed \"the\" \\ \xC3\xA9";
@@ -789,6 +809,7 @@ int main() {
         CHECK(settings_from_json(settings_to_json(a), &b) && b.settings_tab == 4);
     }
 
+    fails += dupes_fail;
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }

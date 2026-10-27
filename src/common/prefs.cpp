@@ -13,8 +13,9 @@
 namespace hub { namespace prefs {
 
 const char* const kFields[] = {"favorites", "user_shelves", "hidden", "renames", "covers", "theme",
+                               "preferred_copy",
                                "profile.avatar", "profile.fav_game", "profile.status", nullptr};
-const int kFieldCount = 9;
+const int kFieldCount = 10;
 
 long long Prefs::stamp(const std::string& f) const {
     auto it = ts.find(f);
@@ -134,6 +135,7 @@ std::string field_repr(const Prefs& p, const std::string& f) {
     else if (f == "hidden") one.hidden = p.hidden;
     else if (f == "renames") one.renames = p.renames;
     else if (f == "covers") one.covers = p.covers;
+    else if (f == "preferred_copy") one.preferred_copy = p.preferred_copy;
     else if (f == "theme") one.theme = p.theme;
     else if (f == "profile.avatar") one.profile.avatar = p.profile.avatar;
     else if (f == "profile.fav_game") one.profile.fav_game = p.profile.fav_game;
@@ -147,6 +149,7 @@ void copy_field(const Prefs& from, Prefs* to, const std::string& f) {
     else if (f == "hidden") to->hidden = from.hidden;
     else if (f == "renames") to->renames = from.renames;
     else if (f == "covers") to->covers = from.covers;
+    else if (f == "preferred_copy") to->preferred_copy = from.preferred_copy;
     else if (f == "theme") to->theme = from.theme;
     else if (f == "profile.avatar") to->profile.avatar = from.profile.avatar;
     else if (f == "profile.fav_game") to->profile.fav_game = from.profile.fav_game;
@@ -168,6 +171,7 @@ bool set_user_shelves(Prefs* p, std::vector<Shelf> v, long long t) {
 bool set_hidden(Prefs* p, std::vector<std::string> k, long long t) { return set_keyset(p, &p->hidden, &p->hidden_ts, std::move(k), "hidden", t); }
 bool set_renames(Prefs* p, std::map<std::string, std::string> m, long long t) { return set_field(p, &p->renames, std::move(m), "renames", t); }
 bool set_covers(Prefs* p, std::map<std::string, std::string> m, long long t) { return set_field(p, &p->covers, std::move(m), "covers", t); }
+bool set_preferred_copy(Prefs* p, std::map<std::string, std::string> m, long long t) { return set_field(p, &p->preferred_copy, std::move(m), "preferred_copy", t); }
 bool set_theme(Prefs* p, const std::string& v, long long t) { return set_field(p, &p->theme, v, "theme", t); }
 bool set_profile_avatar(Prefs* p, const std::string& v, long long t) { return set_field(p, &p->profile.avatar, v, "profile.avatar", t); }
 bool set_profile_fav_game(Prefs* p, const std::string& v, long long t) { return set_field(p, &p->profile.fav_game, v, "profile.fav_game", t); }
@@ -192,6 +196,7 @@ bool parse(const std::string& text, Prefs* out) {
     p.hidden = norm(p.hidden);
     read_map(v.get("renames"), &p.renames);
     read_map(v.get("covers"), &p.covers);
+    read_map(v.get("preferred_copy"), &p.preferred_copy);
     p.theme = v.str("theme");
     if (const json::Value* pr = v.get("profile"); pr && pr->is_object()) {
         p.profile.avatar = pr->str("avatar");
@@ -239,6 +244,7 @@ std::string serialize(const Prefs& p) {
     add("hidden_ts", key_stamps(p.hidden_ts));
     add("renames", str_map(p.renames));
     add("covers", str_map(p.covers));
+    add("preferred_copy", str_map(p.preferred_copy));
     add("theme", json::make_string(p.theme));
     json::Value pr = json::make_object();
     pr.o.push_back({"avatar", json::make_string(p.profile.avatar)});
