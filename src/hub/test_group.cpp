@@ -106,6 +106,21 @@ int main() {
     CHECK(play_again_label("LAUNCH", true, false, true, false) == "LAUNCH");
     CHECK(play_again_applies(true, false, false) && !play_again_applies(true, true, false) && !play_again_applies(true, false, true));
 
+    {   // "Notify me when they come online": per-friend toggle list
+        std::string w;
+        CHECK(!watch_has(w, "u1") && watch_split("").empty());
+        CHECK(watch_set(&w, "u1", true) && watch_has(w, "u1") && w == "u1");
+        CHECK(watch_set(&w, "u2", true) && watch_set(&w, "u2", true) && w == "u1,u2");   // no duplicates
+        CHECK(watch_set(&w, "u1", false) && w == "u2" && !watch_has(w, "u1"));
+        CHECK(watch_set(&w, "nobody", false) && w == "u2");
+        std::string full;
+        for (size_t i = 0; i < kWatchMax; ++i) full += (i ? "," : "") + std::string("f") + std::to_string(i);
+        CHECK(watch_split(full).size() == kWatchMax);
+        CHECK(!watch_set(&full, "extra", true) && !watch_has(full, "extra") && watch_split(full).size() == kWatchMax);   // at the cap: refused
+        std::vector<std::string> keep = {"f0", "f1"};
+        CHECK(watch_set(&full, "extra", true, &keep) && watch_split(full).size() == 3 && watch_has(full, "extra"));       // removed friends make room
+    }
+
     fs::remove_all(base);
     if (fails) { std::printf("%d failures\n", fails); return 1; }
     std::printf("hub_group_test: ok\n");

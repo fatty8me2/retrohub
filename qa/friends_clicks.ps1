@@ -22,17 +22,18 @@ function Run($name, $clicks, $expect, $size = "1280x800") {
   $got = (($got -split '\|') | Where-Object { $_ -notlike 'notice *' }) -join '|'   # toasts are not actions
   if ($got -eq $expect) { Write-Host "PASS $name -> '$got'" } else { Write-Host "FAIL $name expected '$expect' got '$got'"; $script:fail++ }
 }
+# The actions menu is taller since "Notify me when they come online" was added, so it opens at the top of the window (Message 164, Join 199, Copy 234, Notify 269, Remove 320, Block 355).
 # Mia (in lobby, joinable) row at y=473 (shifted up when Appear offline was removed); hover buttons: Join 1159, Message 1201, More 1230.
 Run "row_left"        "1080,473"                       ""
-Run "row_left_msg"    "1080,473;1136,492"              "chat miauid"
-Run "row_right_msg"   "r1080,473;1136,492"             "chat miauid"
-Run "row_left_join"   "1080,473;1140,527"              "join K7M2QX"
-Run "row_left_copy"   "1080,473;1160,562"              "copy miauid"
-Run "row_left_remove" "1080,473;1154,613"              "remove miauid"
-Run "row_left_block"  "1080,473;1125,648"              "block miauid"
+Run "row_left_msg"    "1080,473;1136,164"              "chat miauid"
+Run "row_right_msg"   "r1080,473;1136,164"             "chat miauid"
+Run "row_left_join"   "1080,473;1140,199"              "join K7M2QX"
+Run "row_left_copy"   "1080,473;1160,234"              "copy miauid"
+Run "row_left_remove" "1080,473;1154,320"              "remove miauid"
+Run "row_left_block"  "1080,473;1125,355"              "block miauid"
 Run "btn_join"        "1159,473"                       "join K7M2QX"
 Run "btn_msg"         "1201,473"                       "chat miauid"
-Run "btn_more_msg"    "1231,479;1150,498"              "chat miauid"
+Run "btn_more_msg"    "1231,479;1150,164"              "chat miauid"
 Run "req_accept"      "1144,287"                       "accept oliuid"
 Run "req_decline"     "1216,287"                       "decline oliuid"
 Run "dead_zone"       "1100,440"                       ""

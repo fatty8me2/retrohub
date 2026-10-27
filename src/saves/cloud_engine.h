@@ -94,6 +94,13 @@ void cloud_set_local_only(const GameId& g, bool local_only);   // user "don't up
 void cloud_remove_game(const GameId& g);                       // remove from cloud (keeps local)
 std::vector<std::pair<std::string, std::vector<VersionInfo>>> cloud_versions(const GameId& g);  // blocking, job thread
 bool cloud_restore_version(const GameId& g, const std::string& path, int ver, std::string* err);  // blocking
+/* ---- linked PCs (Settings > Account) ---- */
+struct LinkedPc { std::string dev, name; int64_t first = 0, last_seen = 0; bool current = false; };   // unix seconds
+bool cloud_list_pcs(std::vector<LinkedPc>* out, std::string* err);   // blocking (GET /saves/v2/devices), job thread
+bool cloud_revoke_pc(const std::string& dev, std::string* err);       // blocking: sign another PC out; this PC is refused
+bool cloud_revoked();                                                 // another PC signed this one out (cloud sync stopped, local saves untouched)
+void cloud_sign_in_again();                                           // after a revoke: new device id, sync resumes
+
 std::string cloud_recovery_code();                          // the saved account code XXXX-XXXX-XXXX ("" if none was made on this PC)
 bool cloud_create_account_code(std::string* code, std::string* err);   // blocking: makes (or replaces) the account code on the server
 bool cloud_adopt_recovery_code(const std::string& code, std::string* err);   // blocking: redeem a code (also 8-char link codes), switch account, pull saves
