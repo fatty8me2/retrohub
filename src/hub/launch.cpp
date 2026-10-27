@@ -56,6 +56,8 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
         A.resume_key.clear();
         A.resume_state.clear();
     }
+    if (file_name(exe) == "retrorun.exe" && args.find(" --net") == std::string::npos && args.find("--net ") != 0)
+        args += achievements_launch_args();   // RetroAchievements: offline runs only (never online/rollback/DS wireless)
     if (g_headless) {
         std::string ev;
         for (auto& kv : env) ev += " " + kv.first + "=" + (kv.first == "SSB64_CONTROLS" ? std::string("<profile>") : kv.second);

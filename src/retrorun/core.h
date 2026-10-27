@@ -52,6 +52,8 @@ class Core {
     const std::vector<Subsystem>& subsystems() const { return subsystems_; }
     /* Raw libretro memory block (RETRO_MEMORY_* | instance << 8 for the multi-GB cores); size 0 / null when absent. */
     void* memory(unsigned id, size_t* size);
+    /* SET_MEMORY_MAPS descriptors the core gave us (empty if none); RetroAchievements uses them. */
+    const std::vector<retro_memory_descriptor>& memory_map() const { return mmap_; }
     void run() { fn_run_(); }
     /* libretro cheats (optional exports). cheat_set index is the slot, code the core-native string (lines joined with +). */
     bool cheats_supported() const { return fn_cheat_reset_ && fn_cheat_set_; }
@@ -147,6 +149,7 @@ class Core {
     std::map<std::string, CoreOption> opts_;
     bool vars_dirty_ = true;
     std::string lang_dummy_;
+    std::vector<retro_memory_descriptor> mmap_;
     retro_netpacket_callback np_{};
     retro_disk_control_callback dc_{};
 };
