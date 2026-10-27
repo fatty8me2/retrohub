@@ -354,7 +354,13 @@ void library_top_bar() {
     if (A.focus_search) { ImGui::SetKeyboardFocusHere(); A.focus_search = false; }
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(5.f), (bh - ImGui::GetFontSize()) * 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
-    ImGui::SetNextItemWidth(std::max(sp(20.f), std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f)));
+    const bool dice = A.view == LibView::Home && !A.lib.empty();   // L7: Surprise me
+    float total = bh + sp(1.f) + add_games_header_width(bh) + (dice ? bh + sp(1.f) : 0.f);
+    {   // the search box gives way so the pinned right-hand buttons (Add games...) are never pushed past the edge (narrow window / Friends panel open)
+        const float chips = ImGui::CalcTextSize("Sort: Recently added").x + ImGui::CalcTextSize("Friends' games").x + sp(14.f) + sp(4.f);
+        const float room = ImGui::GetContentRegionAvail().x - total - chips;
+        ImGui::SetNextItemWidth(std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room)));
+    }
     osk::input("##search", "Search games   (Ctrl+F)", A.search_buf, sizeof A.search_buf);
     ImVec2 s0 = ImGui::GetItemRectMin(), s1 = ImGui::GetItemRectMax();
     ImGui::GetWindowDrawList()->AddRect(s0, s1, ImGui::IsItemActive() ? ui::ACCENT : ui::HAIRLINE, bh * 0.5f, 0, 1.f);
@@ -373,8 +379,6 @@ void library_top_bar() {
         if (chip("Friends' games", A.st.show_friend_games, ui::ACCENT)) { A.st.show_friend_games = !A.st.show_friend_games; mark_dirty(); A.vis_dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Games your friends have that you don't, shown greyed out (%d now)", (int)A.ghosts.size());
     }
-    const bool dice = A.view == LibView::Home && !A.lib.empty();   // L7: Surprise me
-    float total = bh + sp(1.f) + add_games_header_width(bh) + (dice ? bh + sp(1.f) : 0.f);
     ImGui::SameLine(0, 0);
     float ax = ImGui::GetContentRegionAvail().x;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax - total));
@@ -622,7 +626,7 @@ static std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
 
 void draw_details_modal() {
     draw_ghost_modal();   // a friend's game you do not own (friend_games_ui.cpp)
-    if (A.show_details) {
+    if (A.show_details && !(g_headless && A.lib.empty())) {   // headless aids (HUB_SHOT_DETAILS) set this before the library exists: keep it pending until then
         A.show_details = false;
         if (find_entry(A.sel_game)) ImGui::OpenPopup("##details");
     }

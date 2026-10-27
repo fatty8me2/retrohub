@@ -25,6 +25,7 @@ struct Viewer {
     std::string game_key, game_name;
     ShotTexFn tex;
     bool confirm_delete = false;
+    bool focus_first = false;   // land the pad on the first action each time the viewer (or its delete question) shows
 };
 Viewer V;
 
@@ -109,6 +110,7 @@ void shot_viewer_open(const hub::GameEntry& e, const std::vector<std::string>& p
     V.tex = tex;
     V.confirm_delete = false;
     V.want_open = true;
+    V.focus_first = true;
 }
 
 /* Returns true if a picture was deleted (the strip should refresh). */
@@ -140,7 +142,7 @@ bool shot_viewer_draw() {
             V.idx = (V.idx + 1) % n;
     }
     if (ui::modal_back()) {
-        if (V.confirm_delete) V.confirm_delete = false;
+        if (V.confirm_delete) { V.confirm_delete = false; V.focus_first = true; }
         else { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return false; }
     }
 
@@ -173,11 +175,11 @@ bool shot_viewer_draw() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     const ImVec2 bsz(-FLT_MIN, sp(5.f));
     if (!V.confirm_delete) {
+        if (V.focus_first) { ImGui::SetKeyboardFocusHere(0); V.focus_first = false; }
         if (ui::button("Copy to clipboard", bsz, true, true, ui::Icon::Check)) {
             if (shot_copy_to_clipboard(path)) push_toast("Copied to the clipboard", COL_GOOD, 3.0);
             else push_toast("Couldn't copy that picture", COL_BAD, 4.0);
         }
-        ImGui::SetItemDefaultFocus();
         if (ui::button("Set as cover", bsz)) {
             if (shot_set_cover(V.game_key, path)) push_toast("Saved as this game's cover", COL_GOOD, 3.0);
             else push_toast("Couldn't save the cover", COL_BAD, 4.0);
@@ -187,13 +189,14 @@ bool shot_viewer_draw() {
         }
         if (ui::button("Open in viewer", bsz))
             ShellExecuteW(nullptr, L"open", std::filesystem::u8path(path).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-        if (ui::button("Delete", bsz)) V.confirm_delete = true;
+        if (ui::button("Delete", bsz)) { V.confirm_delete = true; V.focus_first = true; }
         if (ui::button("Close", bsz)) { ImGui::EndChild(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return false; }
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         ImGui::TextDisabled("Left / Right: next picture\nB: close");
     } else {
         ImGui::TextWrapped("Delete this picture for good?");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        if (V.focus_first) { ImGui::SetKeyboardFocusHere(0); V.focus_first = false; }
         if (ui::button("Yes, delete", bsz, true)) {
             std::error_code ec;
             std::filesystem::remove(std::filesystem::u8path(path), ec);
@@ -205,7 +208,7 @@ bool shot_viewer_draw() {
                 if (V.idx >= (int)V.files.size()) V.idx = (int)V.files.size() - 1;
             } else push_toast("Couldn't delete that picture", COL_BAD, 4.0);
         }
-        if (ui::button("Cancel", bsz)) V.confirm_delete = false;
+        if (ui::button("Cancel", bsz)) { V.confirm_delete = false; V.focus_first = true; }
     }
     ImGui::EndChild();
     ImGui::EndPopup();

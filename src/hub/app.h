@@ -911,6 +911,7 @@ void draw_ps1_dialogs();
 bool rom_missing(const hub::GameEntry& e);
 void missing_rom_ask(const std::string& key);
 void missing_rom_ask_shot();
+bool missing_rom_open();   // QA: is the "Can't find game" popup requested
 void draw_missing_rom_dialog();
 void hidden_games_row();         // Settings > General: "Hidden games (N)" -> Unhide list
 void hidden_games_open_shot();
