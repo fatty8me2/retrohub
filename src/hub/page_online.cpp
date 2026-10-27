@@ -409,16 +409,21 @@ void page_online_room() {
     }
     if (A.chat_scroll) { ImGui::SetScrollHereY(1.f); A.chat_scroll = false; }
     ImGui::EndChild();
+    const bool chat_blocked = osk::hub_input_blocked();
+    if (chat_blocked) {   // a game is running / the hub is unfocused: the chat box must not keep the keyboard
+        ImGui::ClearActiveID();
+        A.chat_buf[0] = 0;
+    }
     ImGui::SetNextItemWidth(-1);
     if (osk::input("##chat", "Say something...", A.chat_buf, sizeof A.chat_buf, ImGuiInputTextFlags_EnterReturnsTrue)) {
         std::string t = A.chat_buf;
         A.chat_buf[0] = 0;
-        if (!t.empty()) {
+        if (osk::chat_may_send(t, osk::hub_input_blocked())) {
             A.lobby.send_msg("{\"kind\":\"chat\",\"text\":\"" + json::escape(t) + "\"}");
             A.chat.push_back({A.st.name, t});
             A.chat_scroll = true;
         }
-        ImGui::SetKeyboardFocusHere(-1);
+        if (!osk::hub_input_blocked()) ImGui::SetKeyboardFocusHere(-1);
     }
     end_panel();
 }

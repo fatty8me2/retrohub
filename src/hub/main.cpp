@@ -157,6 +157,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { wx = -wx; wy = -wy; }
                 if (route_wheel(io.MousePos.x, io.MousePos.y, wx, wy)) continue;   // over a shelf: scroll that row, not the page
             }
+            if (osk::hub_input_blocked()) {   // game running / hub unfocused: no key, text or pad event may reach the UI (quit, window, drop, device events still pass)
+                if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_TEXTINPUT || e.type == SDL_TEXTEDITING ||
+                    e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONUP || e.type == SDL_CONTROLLERAXISMOTION ||
+                    e.type == SDL_JOYBUTTONDOWN || e.type == SDL_JOYBUTTONUP || e.type == SDL_JOYAXISMOTION || e.type == SDL_JOYHATMOTION) continue;
+            }
             if (attract_swallow_event(e)) continue;   // attract mode: this event only wakes the hub
             ImGui_ImplSDL2_ProcessEvent(&e);
             tvmode::handle_event(e, io.WantTextInput);
@@ -233,6 +238,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         SH.pre_frame(io);
+        if (osk::hub_input_blocked()) {   // also stop ImGui's own pad/keyboard nav so nothing is activated or typed
+            io.ClearInputKeys();
+            io.InputQueueCharacters.resize(0);
+        }
         if (!g_headless && (A.proc || !(SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS))) {
             /* A game is running (or another window has focus): pad buttons belong to that, never to the hub behind it. */
             for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadRStickRight; ++k) io.AddKeyAnalogEvent((ImGuiKey)k, false, 0.f);

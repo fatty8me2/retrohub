@@ -101,4 +101,11 @@ std::string parent_of(const std::string& path);   // "" when path is a drive roo
 /* A pad (or no keyboard seen yet) wants the on-screen keyboard instead of ImGui's own text editing. */
 bool should_open(bool pad_mode, bool keyboard_seen, bool mouse_activated);
 
+/* The hub must ignore keyboard, text and pad input for its UI while a game runs or its window is not focused (SDL background
+ * joystick events stay on so the runner/quick menu still work; they must never drive the hub's own widgets). */
+inline bool input_blocked(bool game_running, bool window_focused) { return game_running || !window_focused; }
+inline unsigned gate_pad_mask(unsigned mask, bool blocked) { return blocked ? 0u : mask; }
+/* A chat line may be sent: not blocked, and not empty / whitespace only. */
+bool chat_may_send(const std::string& text, bool blocked);
+
 } // namespace osk

@@ -346,4 +346,10 @@ bool should_open(bool pad_mode, bool keyboard_seen, bool mouse_activated) {
     return pad_mode || !keyboard_seen;
 }
 
+bool chat_may_send(const std::string& text, bool blocked) {
+    if (blocked) return false;
+    for (unsigned char c : text) if (c > ' ') return true;
+    return false;
+}
+
 } // namespace osk
