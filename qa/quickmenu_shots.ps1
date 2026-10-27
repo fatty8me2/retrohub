@@ -22,3 +22,6 @@ Shot "qm_offline_1280" @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_
 Shot "qm_online_1280"  @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_ONLINE = "1"; HUB_SHOT_QM_VOL = "35"; HUB_SHOT_QM_MUTE = "1" }
 Shot "qm_ext_1280"     @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_EXT = "1"; HUB_SHOT_QM_VOL = "80" }
 Shot "qm_speednav_1280" @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_PAD = "wait,up,up,right,right,right,down,right,right,down,right"; HUB_SHOT_SECS = "8" }
+# Dolphin: Speed row enabled offline (6 = 3x, applies on resume), disabled online, other external emulator: "not supported"
+Shot "qm_dolphin_1280"  @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_EXT = "1"; HUB_SHOT_QM_DOLPHIN = "1"; HUB_SHOT_QM_SPEED = "5" }
+Shot "qm_dolphin_online_1280" @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_EXT = "1"; HUB_SHOT_QM_DOLPHIN = "1"; HUB_SHOT_QM_ONLINE = "1" }

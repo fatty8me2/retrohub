@@ -216,6 +216,27 @@ void send_quiet(runctl::Command c) {
 
 bool is_dolphin(const hub::GameEntry* e) { return e && e->system == hub::System::GC; }
 
+/* Dolphin's real speed state (the keys sent so far) and the HUB_SHOT_QM_DOLPHIN stand-in. */
+hubqm::DolphinSpeed g_dolphin;
+bool g_shot_dolphin = false;
+std::string ext_emu_name(const hub::GameEntry* e) {
+    if (!e) return "this emulator";
+    switch (e->system) {
+        case hub::System::GC: return "Dolphin";
+        case hub::System::WiiU: return "Cemu";
+        case hub::System::N3DS: return "Azahar";
+        case hub::System::PS2: return "PCSX2";
+        default: return "this emulator";
+    }
+}
+/* Menu closed: press the Dolphin hotkeys that take it to the chosen step (offline GameCube only). */
+void dolphin_apply_pending(const hub::GameEntry* e) {
+    if (!is_dolphin(e) || A.run.online || hubqm::dolphin_idx(g_dolphin) == g_speed_idx) return;
+    std::vector<int> vks;
+    for (auto k : hubqm::dolphin_plan(g_dolphin, g_speed_idx)) vks.push_back(hubqm::dolphin_vk(k));
+    dolphin_send_speed_keys(vks);
+}
+
 void ext_apply(const hub::GameEntry* e) {
     int base = is_dolphin(e) ? g_launch_vol : 100;
     g_ext_sessions = extmedia::set_audio(running_game_pids(), hubqm::ext_session_scalar(g_vol, base), g_mute);
@@ -345,6 +366,7 @@ static void qm_session_tick(const hub::GameEntry* e) {
     if (g_sess_key != A.run.key || g_sess_tick != A.run.start_tick) {
         g_sess_key = A.run.key; g_sess_tick = A.run.start_tick;
         g_speed_idx = hubqm::kSpeedNormal;
+        g_dolphin = hubqm::DolphinSpeed();   // Dolphin.ini was written with EmulationSpeed = 1.0 at launch
         g_mute = false;
         g_vol = e ? hub::gs::volume_of(gs_values_for(*e)) : 100;
         g_launch_vol = g_vol;
@@ -374,6 +396,7 @@ void qm_tick() {
         g_shot_fake = true;
         g_shot_online = std::getenv("HUB_SHOT_QM_ONLINE") != nullptr;
         g_shot_ext = std::getenv("HUB_SHOT_QM_EXT") != nullptr;
+        g_shot_dolphin = std::getenv("HUB_SHOT_QM_DOLPHIN") != nullptr;   // with HUB_SHOT_QM_EXT: the external emulator is Dolphin
         g_vol = std::getenv("HUB_SHOT_QM_VOL") ? std::atoi(std::getenv("HUB_SHOT_QM_VOL")) : 100;
         g_speed_idx = std::getenv("HUB_SHOT_QM_SPEED") ? std::atoi(std::getenv("HUB_SHOT_QM_SPEED")) : hubqm::kSpeedNormal;
         g_mute = std::getenv("HUB_SHOT_QM_MUTE") != nullptr;
@@ -413,6 +436,9 @@ void draw_quick_menu() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
     bool open = ImGui::BeginPopupModal("##quickmenu", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::PopStyleVar(2);
+    static bool was_open = false;
+    if (was_open && !open && !g_shot_fake && A.proc) dolphin_apply_pending(find_entry(g_key));   // closed this frame (Resume / B / pad combo)
+    was_open = open;
     if (!open) return;
     if (!g_shot_fake && !A.proc) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     if (ui::modal_back()) {
@@ -459,6 +485,18 @@ void draw_quick_menu() {
                 }
             }
             if (!can_speed) text_wrapped_disabled("Not available online: everyone has to stay in step.");
+        } else {   // external emulators: Dolphin through its speed hotkeys (sent on Resume); the others show why it is off
+            const bool dol = g_shot_fake ? g_shot_dolphin : is_dolphin(e);
+            const auto row = hubqm::speed_row(false, dol, online, true);
+            if (row == hubqm::SpeedRow::Enabled) {
+                int d = stepper_row("speed", "Speed", hubqm::dolphin_speed_text(g_speed_idx), -1.f, true, fw);
+                if (d) g_speed_idx = hubqm::speed_step(g_speed_idx, d);   // applied when the menu closes (keys need Dolphin in front)
+                if (g_speed_idx != hubqm::dolphin_idx(g_dolphin)) text_wrapped_disabled("Applies when you resume.");
+            } else {
+                stepper_row("speed", "Speed", "1x", -1.f, false, fw);
+                if (row == hubqm::SpeedRow::Online) text_wrapped_disabled("Not available online: everyone has to stay in step.");
+                else text_wrapped_disabled("Speed isn't supported by " + ext_emu_name(e) + ".");
+            }
         }
         int d = stepper_row("volume", "Volume", std::to_string(g_vol) + "%", g_mute ? 0.f : g_vol / 100.f, g_pending == 0, fw);
         if (d) {

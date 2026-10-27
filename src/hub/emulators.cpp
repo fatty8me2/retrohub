@@ -31,6 +31,7 @@
 #include "miniz.h"
 #include "games.h"
 #include "logic.h"
+#include "qm_logic.h"
 
 namespace hubemu {
 
@@ -866,9 +867,20 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
     std::string t = in;
     t = hubui::ini_set(t, "Core", "SlotA", "8");
     t = hubui::ini_set(t, "Core", "SlotB", "255");
+    t = hubui::ini_set(t, "Core", "EmulationSpeed", "1.0");   // the Game menu's Speed row starts every session at 1x
     t = hubui::ini_set(t, "Core", "SkipIPL", "True");   // every launch; the offline "real console startup" turns it off for that launch only (real_boot_ui.cpp)
     for (int i = 0; i < 4; ++i)
         t = hubui::ini_set(t, "Core", "SIDevice" + std::to_string(i), pads.adapter ? "12" : (i == 0 || pads.xinput[i] || !pads.dev[i].empty()) ? "6" : "0");
+    return t;
+}
+
+/* Hotkeys.ini: the three emulation-speed hotkeys on Ctrl+Shift+F13..F15 (keys nobody presses), which the Game menu's Speed row
+ * sends after focusing Dolphin. Other lines (the user's own hotkeys) are kept. */
+std::string dolphin_hotkeys_ini(const std::string& in) {
+    std::string t = in;
+    if (hubui::ini_get(t, "Hotkeys", "Device").empty()) t = hubui::ini_set(t, "Hotkeys", "Device", "DInput/0/Keyboard Mouse");
+    for (auto k : {hubqm::DolphinKey::Increase, hubqm::DolphinKey::Decrease, hubqm::DolphinKey::ToggleLimit})
+        t = hubui::ini_set(t, "Hotkeys", hubqm::dolphin_hotkey_name(k), hubqm::dolphin_hotkey_expr(k));
     return t;
 }
 
@@ -1018,6 +1030,7 @@ void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, co
     }
     /* Every launch: only the memory card slots and which ports have a pad plugged in. */
     write_text(ini, dolphin_ini_ports(read_text(ini), pads));
+    write_text(join(cfg, "Hotkeys.ini"), dolphin_hotkeys_ini(read_text(join(cfg, "Hotkeys.ini"))));
 }
 void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads) { prepare_dolphin(install_dir, pads, stored_profile("gc")); }
 

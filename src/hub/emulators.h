@@ -130,7 +130,8 @@ DolphinPads dolphin_pads_with(DolphinPads base, const std::vector<PadDesc>& by_p
 std::string dolphin_key_name(const std::string& key);   // profile key name -> Dolphin DInput keyboard name ("" = none)
 DolphinPads detect_dolphin_pads();                        // XInputGetState x4 + USB 057E:0337
 std::string dolphin_ini_defaults(const std::string& ini);                               // pure: written once
-std::string dolphin_ini_ports(const std::string& ini, const DolphinPads& p);            // pure: every launch
+std::string dolphin_hotkeys_ini(const std::string& ini);   // pure: Hotkeys.ini with the emulation-speed hotkeys (Ctrl+Shift+F13..F15), every launch
+std::string dolphin_ini_ports(const std::string& ini, const DolphinPads& p);          // pure: every launch
 std::string dolphin_dolphin_ini_patch(const std::string& ini, const DolphinPads& p);   // pure
 std::string dolphin_gfx_ini_patch(const std::string& ini);                              // pure
 std::string dolphin_pad_ini(const std::string& existing, const DolphinPads& p);         // pure: GCPad1..4
