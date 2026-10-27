@@ -1015,6 +1015,17 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         if (ImGui::MenuItem("Remove friend")) fr_confirm("remove", f);
         if (ImGui::MenuItem("Block")) fr_confirm("block", f);
         { std::string tg = fr_top_games_text(f.uid); if (!tg.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", tg.c_str()); } }
+        { std::string rv = rivals_record_text(f.uid, f.name); if (!rv.empty()) {   // Smash rivalry: record, mains, last-5 strip
+            ImGui::Separator();
+            ImGui::TextUnformatted(rv.c_str());
+            std::string mt = rivals_mains_text(f.uid); if (!mt.empty()) ImGui::TextDisabled("%s", mt.c_str());
+            std::string l5 = rivals_last5(f.uid);
+            ImGui::TextDisabled("Last %d:", (int)l5.size());
+            for (size_t i = 0; i < l5.size(); ++i) {
+                ImGui::SameLine(0, sp(0.7f));
+                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(l5[i] == 'W' ? ui::GOOD : l5[i] == 'L' ? ui::BAD : ui::TEXT3), "%c", l5[i]);
+            }
+        } else { std::string st = rivals_sessions_text(f.uid); if (!st.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", st.c_str()); } } }
         { std::string lt = group_together_text(f.uid); if (!lt.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", lt.c_str()); } }   // last entry: keeps the other items' click positions
         ImGui::EndPopup();
     }

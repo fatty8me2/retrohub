@@ -296,6 +296,7 @@ void stats_ui_card() {
         }
         ImGui::EndGroup();
     }
+    rivals_draw_card();
     end_panel();
     ImGui::PopStyleVar();
     ImGui::Dummy(ImVec2(0, sp(1.f)));
