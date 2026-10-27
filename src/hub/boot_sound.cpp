@@ -70,6 +70,24 @@ bool sound_available(hub::System s) {
     }
 }
 
+namespace {
+hub::System g_pre_sys = hub::System::Unknown;
+std::vector<float> g_pre;   // last rendered sound (so sound_seconds + sound_play render once)
+std::vector<float> load_sound(hub::System s) {
+    if (g_pre_sys == s && !g_pre.empty()) return g_pre;
+    std::vector<float> b;
+    const std::string custom = hub::realboot::custom_sound_path(custom_dir(), s);
+    if (custom.empty() || !hub::realboot::decode_sound(custom, bootsynth::kSampleRate, &b)) b = bootsynth::render(s);
+    g_pre_sys = s; g_pre = b;
+    return b;
+}
+}
+
+float sound_seconds(hub::System s) {
+    if (!sound_available(s)) return 0.f;
+    return float(load_sound(s).size() / 2) / float(bootsynth::kSampleRate);
+}
+
 void sound_stop() {
     if (!g_dev) return;
     SDL_LockAudioDevice(g_dev);
@@ -81,9 +99,7 @@ void sound_play(hub::System s, bool short_cut) {
     float vol = options().volume < 0 ? 0 : options().volume > 1 ? 1 : options().volume;
     if (!sound_available(s) || muted() || vol <= 0.f) return;
     if (!open_dev()) return;
-    std::vector<float> b;   // the player's own file (userdata\boot_sounds\<system>.wav|ogg|mp3, max 15 s) replaces the synthesized sound
-    const std::string custom = hub::realboot::custom_sound_path(custom_dir(), s);
-    if (custom.empty() || !hub::realboot::decode_sound(custom, bootsynth::kSampleRate, &b)) b = bootsynth::render(s);
+    std::vector<float> b = load_sound(s);   // the player's own file (userdata boot_sounds) replaces the synthesized sound
     if (short_cut) {   // ~2 s cut, quick 250 ms fade
         size_t keep = size_t(2.0 * bootsynth::kSampleRate) * 2, fade = size_t(0.25 * bootsynth::kSampleRate) * 2;
         if (b.size() > keep) {

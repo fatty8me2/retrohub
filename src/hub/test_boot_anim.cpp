@@ -20,7 +20,7 @@ int main() {
 
     /* timeline: full is 2.5-3.5 s, short ~1 s, phases in order and contiguous */
     Timeline full = timeline_for(false), shrt = timeline_for(true);
-    CHECK(full.total() >= 4.5f && full.total() <= 6.0f);
+    CHECK(full.total() >= 4.5f && full.total() <= 6.0f);   // N64 / default
     CHECK(std::fabs(shrt.total() - 1.0f) < 0.01f);
     CHECK(phase_at(full, -0.1f) == Phase::Idle);
     CHECK(phase_at(full, 0.f) == Phase::Slide);
@@ -42,7 +42,8 @@ int main() {
     /* launch mode */
     Options o;
     CHECK(choose_mode(o, false, false) == Mode::Full);
-    CHECK(choose_mode(o, false, true) == Mode::Short);
+    CHECK(choose_mode(o, false, true) == Mode::Full);   // resume / quick-launch is no longer rushed
+    CHECK(choose_mode(o, true, true) == Mode::Skip);
     CHECK(choose_mode(o, true, false) == Mode::Skip);   // online skipped by default
     o.skip_online = false;
     CHECK(choose_mode(o, true, false) == Mode::Short);  // never the full version online
@@ -98,15 +99,14 @@ int main() {
         CHECK(n >= 55 && n <= 70);
     }
 
-    /* real console startup: hands off at the Power phase, never plays our sound */
+    /* real console startup: the whole animation still plays (insert + power), no sound of ours, then hands off */
     {
         Runner r;
-        r.begin(Mode::Full, true);
-        float end = r.end_t();
-        CHECK(std::fabs(end - phase_start(r.tl, Phase::Power)) < 1e-4f && end < r.tl.total());
-        bool snd = false; int n = 0;
-        while (r.running && n < 2000) { r.tick(1.f / 60.f); snd |= r.want_sound(); ++n; }
-        CHECK(!snd && r.finished_ && r.t < r.tl.total());
+        r.begin(Mode::Full, true, hub::System::GC);
+        CHECK(std::fabs(r.end_t() - r.tl.total()) < 1e-4f && r.tl.total() >= timeline_for(false).total());
+        bool snd = false; int n = 0; float tt = 0;
+        while (r.running && n < 2000) { r.tick(1.f / 60.f); snd |= r.want_sound(); ++n; tt += 1.f / 60.f; }
+        CHECK(!snd && r.finished_ && tt > r.tl.total() - 0.2f);
         Runner q;
         q.begin(Mode::Full, false);
         bool snd2 = false; n = 0;
@@ -117,6 +117,24 @@ int main() {
         CHECK(hubui::settings_from_json(hubui::settings_to_json(g), &h) && h.real_boot_off == "gc,ps1");
         hubui::Settings k;
         CHECK(hubui::settings_from_json("{\"name\":\"x\"}", &k) && k.real_boot_off.empty());
+    }
+
+    /* every console is at least as long as N64's 5.2 s; sound is held to play out; disc consoles get a longer insert */
+    {
+        const float n64 = timeline_for(false, hub::System::N64, 6.f).total();
+        using S = hub::System;
+        for (S sy : {S::GB, S::GBC, S::GBA, S::NDS, S::N3DS, S::GC, S::PS1, S::PS2, S::WiiU, S::NES, S::SNES}) {
+            for (float snd : {0.f, 5.f, 9.5f}) {
+                Timeline t = timeline_for(false, sy, snd);
+                CHECK(t.total() >= n64 - 1e-3f);
+                if (snd > 0.f) CHECK(t.slide + t.fly + t.insert + t.power >= std::min(snd - 1.f, 6.f) + t.slide + t.fly + t.insert - 1e-3f);
+            }
+            CHECK(timeline_for(false, sy, 0.f, true).total() >= n64 - 1e-3f);
+        }
+        CHECK(timeline_for(false, S::GC, 8.f).insert > timeline_for(false, S::N64).insert);
+        CHECK(timeline_for(false, S::GC, 8.f).total() > 9.f && timeline_for(false, S::GC, 8.f).total() < 13.f);
+        CHECK(std::fabs(timeline_for(false, S::N64, 6.f).total() - 5.2f) < 1e-3f);
+        CHECK(std::fabs(timeline_for(true, S::GC, 8.f).total() - 1.0f) < 1e-3f);
     }
 
     /* settings: defaults, round trip, clamping */

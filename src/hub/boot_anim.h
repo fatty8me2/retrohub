@@ -26,6 +26,7 @@ void draw_media(hub::System, ImDrawList*, ImVec2 center, float scale, float rot,
 void sound_play(hub::System, bool short_cut = false);   // short_cut: ~2 s cut with a quick fade (short animation)
 void sound_stop();   // 150 ms fade-out; only for a user skip (the sound otherwise plays to its end after launch)
 bool sound_available(hub::System);
+float sound_seconds(hub::System);   // length of the sound sound_play would play (custom file or synth), 0 = none; cached for sound_play
 
 /* ---- boot_anim.cpp (engine) ---- */
 Options& options();               // live options; the hub mirrors its Settings into this (boot_sync_options in launch.cpp)
