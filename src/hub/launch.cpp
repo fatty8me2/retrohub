@@ -304,6 +304,7 @@ void poll_process() {
     }
     A.vault_dirty = true;
     A.info_at = -100;
+    if (!A.run.result_file.empty()) { rivals_ingest(A.run.result_file); A.run.result_file.clear(); }   // before the room state is reset
     if (A.run.online) group_session_ended(secs);
     room_session_ended();
     if (A.run.remote_play) set_notice(hubrp::exit_text(code, false), 20.0);   // streamrun guest: its own exit codes

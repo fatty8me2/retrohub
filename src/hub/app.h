@@ -138,6 +138,7 @@ struct RunInfo {
     std::string ctl_path, shot_dir;     // runner control file (src/common/runner_ctl.h) and screenshots folder; empty = runner has no control channel
     bool remote_play = false;           // Wii U remote play: this process is streamrun --guest (exit codes follow docs/REMOTE_PLAY.md)
     int dsu_players = 0;                // Wii U remote play HOST: guests' pads (Cemu players 2..1+n) are DSU slots 0..n-1 in the Cemu profiles; 0 = every normal launch
+    std::string result_file;            // native Smash online: SSB64_RESULT_FILE the game writes the finished match to (rivalries)
     bool cloud_started = false;         // cloud_game_started() was called for this session (set by spawn); exit pushes the game
 };
 
