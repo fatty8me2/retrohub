@@ -47,6 +47,19 @@ int main() {
     m.avail = true;
     CHECK(!notify_invite(m, true, true, "Bob", "Smash 64", "bad") && m.shown == 1);       // invalid code
 
+    /* "came online" toast: same policy as the invite toast */
+    {
+        std::string ox = build_online_xml("Mia <3>");
+        CHECK(ox.find("Mia &lt;3&gt; came online") != std::string::npos && ox.find("<action") == std::string::npos);
+        CHECK(build_online_xml("").find("A friend came online") != std::string::npos);
+        Mock o;
+        CHECK(notify_online(o, true, true, "Mia") && o.shown == 1 && o.last_xml.find("Mia came online") != std::string::npos);
+        CHECK(!notify_online(o, false, true, "Mia") && o.shown == 1);   // in-game notifications off
+        CHECK(!notify_online(o, true, false, "Mia") && o.shown == 1);   // no game running: the hub shows its own toast
+        o.avail = false;
+        CHECK(!notify_online(o, true, true, "Mia") && o.shown == 1);    // dev build
+    }
+
     std::printf(fails ? "hub_toast_test FAILED\n" : "hub_toast_test OK\n");
     return fails ? 1 : 0;
 }

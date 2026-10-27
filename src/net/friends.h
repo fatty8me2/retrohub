@@ -85,6 +85,7 @@ struct Event {
                 UsernameResult,   // answer to claim_username(): ref, name, ok, text = reason when not
                 UsernameChanged,
                 AskReceived,      // a friend asks to join our game: uid, name, invite = the game they are in
+                WatchedOnline,    // a friend you opted in to ("Notify me when they come online") went offline -> online: uid, name
                 AskResult };      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
@@ -111,6 +112,13 @@ constexpr size_t kPlaytimeMaxGames = 30;
 std::string playtime_message_json(std::vector<PlayGame> games, bool share);
 /* Parses the server's {"type":"playtime","friends":{uid:[{k,t,m}]}} reply (false when not that message). */
 bool parse_playtime_reply(const std::string& text, std::map<std::string, std::vector<PlayGame>>* out);
+/* ---- "Notify me when they come online" ----
+ * The watched friends (per-friend opt-in, off by default). The client sends {"type":"watch_online","uids":[...]} when the list changes
+ * and after every welcome; the server only pushes {"type":"friend_online"} for those friends (at most kWatchMax). */
+constexpr size_t kWatchMax = 50;
+/* Unique, non-empty uids, at most kWatchMax, in order. */
+std::vector<std::string> watch_clean(const std::vector<std::string>& uids);
+std::string watch_message_json(const std::vector<std::string>& uids);
 /* Seconds -> whole minutes, rounded down (coarse on purpose). */
 inline int playtime_minutes(unsigned long long seconds) { return (int)(seconds / 60 > 600000 ? 600000 : seconds / 60); }
 
@@ -167,6 +175,8 @@ class FriendsClient {
      * than the server's rate limit needs); request_playtime() asks for friends' totals (also done once per connection). */
     void send_playtime(const std::vector<PlayGame>& games, bool share);
     void request_playtime();
+    /* Opt-in "came online" pings for these friends (replaces the list; remembered and re-sent after every reconnect). Events: WatchedOnline. */
+    void set_watch_online(const std::vector<std::string>& uids);
     const std::map<std::string, std::vector<PlayGame>>& friend_playtime() const;   // uid -> that friend's games (top first); blocked/removed friends are never listed
     int playtime_version() const;                                                   // bumps whenever friend_playtime() changes
     std::set<std::string> retired_ids() const;   // uids the server confirmed replaced (retired-ids.txt)

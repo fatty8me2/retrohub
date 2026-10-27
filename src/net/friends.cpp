@@ -389,6 +389,24 @@ std::string playtime_message_json(std::vector<PlayGame> games, bool share)
     return o + "]}";
 }
 
+std::vector<std::string> watch_clean(const std::vector<std::string>& uids)
+{
+    std::vector<std::string> out;
+    for (const std::string& u : uids) {
+        if (u.empty() || std::find(out.begin(), out.end(), u) != out.end()) continue;
+        out.push_back(u);
+        if (out.size() >= kWatchMax) break;
+    }
+    return out;
+}
+std::string watch_message_json(const std::vector<std::string>& uids)
+{
+    std::string o = "{\"type\":\"watch_online\",\"uids\":[";
+    std::vector<std::string> v = watch_clean(uids);
+    for (size_t i = 0; i < v.size(); ++i) o += (i ? "," : "") + q(v[i]);
+    return o + "]}";
+}
+
 bool parse_playtime_reply(const std::string& text, std::map<std::string, std::vector<PlayGame>>* out)
 {
     Json j;
@@ -420,6 +438,7 @@ struct FriendsClient::Impl {
     Status my_status;
     std::string pt_pending;                                  // playtime message not delivered yet (sent after the next welcome)
     bool pt_want = true;                                     // fetch friends' totals after (re)connecting
+    std::vector<std::string> watch;                          // friends whose "came online" ping is on (re-sent after every welcome)
     std::map<std::string, std::vector<PlayGame>> pt_friends; int pt_version = 0;
 
     std::vector<Friend> friends;
@@ -779,6 +798,7 @@ struct FriendsClient::Impl {
         status_text = "Online";
         if (!pt_pending.empty()) { send(pt_pending); pt_pending.clear(); }
         if (pt_want) send("{\"type\":\"playtime_get\"}");
+        if (!watch.empty()) send(watch_message_json(watch));
         friends.clear(); incoming.clear(); outgoing.clear(); blocked.clear();
         if (const Json* a = j.get("friends")) for (const Json& f : a->a) friends.push_back(parse_friend(f));
         if (const Json* r = j.get("requests")) {
@@ -866,6 +886,13 @@ struct FriendsClient::Impl {
         if (type == "welcome") on_welcome(j);
         else if (type == "presence") on_presence(j);
         else if (type == "friend_library") on_friend_library(j);
+        else if (type == "friend_online") {   // only ever for friends we asked about; anything else is ignored
+            const std::string u = j.str("uid");
+            if (find(u) && std::find(watch.begin(), watch.end(), u) != watch.end()) {
+                Event e; e.kind = Event::WatchedOnline; e.uid = u; e.name = find(u)->name;
+                push_event(std::move(e));
+            }
+        }
         else if (type == "library_ack") server_h = j.str("h");
         else if (type == "playtime") {
             std::map<std::string, std::vector<PlayGame>> m;
@@ -1185,6 +1212,13 @@ void FriendsClient::send_playtime(const std::vector<PlayGame>& games, bool share
     std::string m = playtime_message_json(games, share);
     if (!impl_->send(m)) impl_->pt_pending = m;   // offline: delivered after the next welcome
     else impl_->pt_pending.clear();
+}
+void FriendsClient::set_watch_online(const std::vector<std::string>& uids)
+{
+    std::vector<std::string> v = watch_clean(uids);
+    if (v == impl_->watch) return;
+    impl_->watch = v;
+    impl_->send(watch_message_json(v));   // offline: delivered by the next welcome
 }
 void FriendsClient::request_playtime() { impl_->send("{\"type\":\"playtime_get\"}"); }
 const std::map<std::string, std::vector<PlayGame>>& FriendsClient::friend_playtime() const { return impl_->pt_friends; }

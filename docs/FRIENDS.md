@@ -144,3 +144,10 @@ Metadata only: a list of what each player owns (never files or ROMs), so friends
 - Server (UserHub): table `playtime` (max 30 rows), rate limited to 12 writes/hour; test accounts store nothing.
 - `{type:"playtime_get"}` (30/hour; sent once per connection and at most every 10 minutes when a game's details open) returns `{type:"playtime", friends:{uid:[{k,t,m}]}}` from a per-friend cache in the `friends` table. Stale entries (older than 6 h) are refreshed with at most 12 friend lookups per request (`pt_pull`, friends only, never blocked users). Removed or blocked friends drop out with their row.
 - UI: game details show "Friends: Mickey 14h . camer 3h" (top 3), and a friend's actions menu shows "Top games: ...". Screenshot aid: HUB_SHOT_FAKE_FRIENDS=1 with HUB_SHOT_FAKE_LIB and HUB_SELECT_GAME=fake:0.
+
+## Friend came online (opt-in)
+- Per-friend toggle "Notify me when they come online" in the friend's actions menu, off by default. The list is `watch_online` in settings.json (comma separated uids, at most 50).
+- `{type:"watch_online", uids:[...]}` (client -> server; 20/min) replaces the list: friends only, unique, at most 50. The server answers `{type:"watch_online", uids}` with what it kept. The client sends it when the list changes and after every welcome (when non-empty).
+- The server checks in the WATCHER's own UserHub when a friend's `presence` arrives (so there is no extra fan-out and no extra subrequest): offline -> online for a watched friend pushes `{type:"friend_online", uid, name, at}` to the watcher's sockets only. Non-watchers get nothing new.
+- Cost rules: the one new inbound message counts like any other in REQ_BUDGET (`meter(..., "ws")`, 1/20 unit); the push is outbound and free. Pings are skipped at >= 90% of the daily budget (same gate as the presence alarms) and limited to one per friend per 10 minutes (flapping offline/online).
+- Client: `Event::WatchedOnline` -> a bell entry (`Kind::FriendOnline`, "NAME came online"), an in-hub toast, and, while a game runs and "Notify me about invites while I'm playing" is on, a Windows toast (`hubtoast::notify_online`).

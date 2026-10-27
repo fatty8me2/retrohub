@@ -34,6 +34,19 @@ int main() {
     g.state = CloudState::Unknown; CHECK(tile_pill(g, on).empty());
     g.state = CloudState::Waiting; CHECK(tile_pill(g, off) == "OFFLINE" && tile_pill(g, on).empty());
 
+    {   // linked PCs
+        LinkedPc me{"d-me", "PC-DESK", 100, 100000, true}, tv{"d-tv", "PC-LIVING", 100, 100000 - 7200, false}, old{"d-old", "", 100, 0, false};
+        const int64_t now = 100000;
+        CHECK(!pc_can_revoke(me) && pc_can_revoke(tv) && pc_can_revoke(old) && !pc_can_revoke(LinkedPc()));
+        CHECK(pc_last_seen(me, now) == "This PC" && pc_last_seen(tv, now) == "Last seen 2 hours ago" && pc_last_seen(old, now) == "Last seen: not yet");
+        CHECK(pc_name(old) == "Unnamed PC" && pc_revoke_title(tv) == "Sign out PC-LIVING?");
+        CHECK(pc_revoke_body(tv).find("PC-LIVING") == 0 && pc_revoke_body(tv).find("Nothing is deleted") != std::string::npos);
+        auto s = pcs_sorted({old, tv, me});
+        CHECK(s.size() == 3 && s[0].current && s[1].dev == "d-tv" && s[2].dev == "d-old");
+        CloudAccountInfo rv = on; rv.needs_attention = true; rv.attention = "device-revoked";
+        CHECK(account_headline(rv, true).text == "This PC was signed out" && account_headline(rv, true).tone == Tone::Bad);
+        CHECK(attention_help("device-revoked").find("signed this PC out") != std::string::npos);
+    }
     CHECK(quota_text(on) == "18 MB of 50 MB");
     CHECK(quota_text(CloudAccountInfo()).empty());
     CHECK(mb_text(300 * 1024) == "300 KB");

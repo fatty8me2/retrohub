@@ -840,6 +840,68 @@ static void test_account_prefs_two_pcs() {
     hub::library_set_data_dir("");
 }
 
+static void test_linked_pcs() {
+    printf(" linked PCs: list, revoke, signed-out PC, sign in again\n");
+    Pc pc1("pc1"), pc2("pc2");
+    use(pc1);
+    put(pc1.game() / "battery" / "p.sra", rnd(600, 1), now_unix() - 100);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    use(pc2);
+    put(pc2.game() / "battery" / "q.sra", rnd(600, 2), now_unix() - 50);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    CHECK(g_srv->devices(g_uid) == 2);
+
+    use(pc1);
+    std::vector<LinkedPc> pcs;
+    str err;
+    CHECK(cloud_list_pcs(&pcs, &err) && pcs.size() == 2);
+    const LinkedPc* me = nullptr; const LinkedPc* other = nullptr;
+    for (auto& p : pcs) (p.current ? me : other) = &p;
+    CHECK(me && other && me->name == "pc1" && other->name == "pc2" && other->last_seen > 0 && !other->current);
+    /* this PC cannot sign itself out: refused by the client before any request */
+    int rv0 = g_srv->n_revoke;
+    CHECK(me && !cloud_revoke_pc(me->dev, &err) && !err.empty() && g_srv->n_revoke == rv0 && g_srv->devices(g_uid) == 2);
+    CHECK(!cloud_revoke_pc("", &err));
+    CHECK(!cloud_revoke_pc("d-nosuchpc0", &err) && err.find("no longer") != str::npos);   // unknown PC: 404 from the server
+    CHECK(!cloud_revoked());
+
+    /* sign pc2 out from pc1 */
+    CHECK(other && cloud_revoke_pc(other->dev, &err) && g_srv->devices(g_uid) == 1 && g_srv->revoked(g_uid) == 1);
+    CHECK(cloud_list_pcs(&pcs, &err) && pcs.size() == 1 && pcs[0].current);
+
+    /* pc2 finds out on its next cloud call: clean signed-out state, local saves untouched, no more traffic */
+    use(pc2);
+    CHECK(!cloud_revoked());
+    PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
+    CHECK(r.action == PrelaunchResult::Proceed);                    // play is never blocked
+    CHECK(cloud_revoked());
+    CloudAccountInfo ai = cloud_account();
+    CHECK(ai.needs_attention && ai.attention == "device-revoked");
+    CloudEvent ev;
+    CHECK(pop_event(CloudEvent::NeedsAttention, &ev) && ev.text.find("signed out") != str::npos && !ev.good);
+    CHECK(fs::exists(pc2.game() / "battery" / "q.sra"));
+    put(pc2.game() / "battery" / "r.sra", rnd(600, 3), now_unix());
+    int m0 = g_srv->n_manifest, d0 = g_srv->n_devices;
+    play(); exit_game();
+    cloud_sync_all_now(); pump();
+    CHECK(g_srv->n_manifest == m0 && g_srv->devices(g_uid) == 1);   // nothing sent while signed out
+    CHECK(!cloud_list_pcs(&pcs, &err) && g_srv->n_devices == d0);
+    CHECK(g_srv->cur_sha(g_uid, GK, "battery/r.sra").empty());
+    /* the signed-out state survives a restart of the app */
+    use(pc2);
+    CHECK(cloud_revoked());
+    r = cloud_prelaunch(G, SyncMode::ReadWrite);
+    CHECK(r.action == PrelaunchResult::Proceed && g_srv->n_manifest == m0);
+
+    /* sign in again: a new device id, sync resumes, the saves go up */
+    cloud_sign_in_again();
+    CHECK(!cloud_revoked() && !cloud_account().needs_attention);
+    r = cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    CHECK(g_srv->devices(g_uid) == 2 && g_srv->n_manifest > m0);
+    CHECK(!g_srv->cur_sha(g_uid, GK, "battery/r.sra").empty());
+    CHECK(cloud_list_pcs(&pcs, &err) && pcs.size() == 2);
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::set_terminate([]() {
@@ -874,6 +936,7 @@ int main() {
     { int f0 = g_fail; fresh_account(); test_local_flags(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_daily_limit_and_auth(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_migration_and_restore(); if (g_fail != f0) dump_log(); }
+    { int f0 = g_fail; fresh_account(); test_linked_pcs(); if (g_fail != f0) dump_log(); }
     cloud_engine_stop();
     srv.stop();
     { std::error_code ec; fs::remove_all(scratch_root(), ec); }
