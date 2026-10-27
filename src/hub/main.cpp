@@ -1,5 +1,6 @@
 /* RetroHub.exe entry point. */
 #include "app.h"
+#include "prefs.h"
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
@@ -74,6 +75,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     // No ROM folder is assumed: an empty library offers detected folders as one-click "Add" suggestions.
     if (!A.st.vault_dir.empty()) hub::saves::set_vault_dir(A.st.vault_dir);
     gs_load();
+    if (!shot_path) {   // favorites follow the account: mirror them into <vault>/_account/prefs.json and tell the cloud engine on change
+        hub::prefs::set_vault_root(hub::saves::vault_dir());
+        hub::prefs::set_change_hook([] { hub::saves::cloud_account_prefs_changed(); });
+        hub::prefs::seed_from_library();
+    }
 
     int win_w = (int)(1280 * S), win_h = (int)(780 * S);
     {   // never open larger than the screen

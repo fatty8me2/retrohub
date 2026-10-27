@@ -38,7 +38,7 @@ int main() {
     set_favorites(&a, {"k1"}, 100); set_theme(&a, "old", 50);
     set_favorites(&b, {"k2"}, 90);  set_theme(&b, "new", 200);
     Prefs m = merge(a, b);
-    CHECK(m.favorites == V{"k1"} && m.theme == "new");
+    CHECK(m.favorites == (V{"k1", "k2"}) && m.theme == "new");   // favorites union per key
     CHECK(m.stamp("favorites") == 100 && m.stamp("theme") == 200);
     CHECK(same(merge(a, b), merge(b, a)) && same(merge(m, a), m) && same(merge(m, m), m));
     Prefs c, d;
@@ -46,8 +46,52 @@ int main() {
     CHECK(same(merge(c, d), merge(d, c)));
     CHECK(same(merge(a, Prefs()), a));
     Prefs e = a; set_favorites(&e, {}, 300);
-    CHECK(merge(a, e).favorites.empty());   // a newer deletion wins over an older value
+    CHECK(merge(a, e).favorites.empty());   // a newer tombstone wins over an older value
+    Prefs e2 = e; set_favorite(&e2, "k1", true, 400);
+    CHECK(merge(e, e2).favorites == V{"k1"} && same(merge(e, e2), merge(e2, e)));   // re-favorited after the tombstone
+
+    // two PCs, offline, favorite/hide different games, then sync both ways
+    {
+        Prefs base; set_favorites(&base, {"n64:shared", "gb:old"}, 1000); set_hidden(&base, {"x:h"}, 1000);
+        Prefs pc1 = base, pc2 = base;
+        set_favorite(&pc1, "n64:one", true, 2000);
+        set_favorite(&pc1, "gb:old", false, 2100);
+        set_favorite(&pc2, "snes:two", true, 2050);
+        set_hidden(&pc2, {"x:h", "x:h2"}, 2060);
+        set_hidden(&pc1, {}, 2200);   // pc1 unhides x:h
+        Prefs m1 = merge(pc1, pc2), m2 = merge(pc2, pc1);
+        CHECK(same(m1, m2));
+        CHECK(m1.favorites == (V{"n64:one", "n64:shared", "snes:two"}));
+        CHECK(m1.hidden == V{"x:h2"});
+        std::string txt = merge_text(serialize(pc1), serialize(pc2));
+        Prefs rt; CHECK(parse(txt, &rt) && same(rt, m1));
+        CHECK(same(merge(m1, pc1), m1) && same(merge(m1, pc2), m1));
+        Prefs legacy; CHECK(parse("{\"favorites\":[\"a\"],\"ts\":{\"favorites\":50}}", &legacy));
+        Prefs lm = merge(legacy, pc2); CHECK(lm.favorites.size() == 4);
+    }
     CHECK(merge_text(serialize(a), "not json").find("k1") != std::string::npos);
+
+    // legacy (no per-key stamps) removal must not resurrect; a newer key still survives
+    {
+        Prefs newer, older;
+        CHECK(parse("{\"favorites\":[],\"ts\":{\"favorites\":500}}", &newer) && newer.legacy_favorites);
+        set_favorites(&older, {"k"}, 100);
+        CHECK(merge(newer, older).favorites.empty() && merge(older, newer).favorites.empty());
+        Prefs newer_key; set_favorites(&newer_key, {"k"}, 900);
+        CHECK(merge(newer, newer_key).favorites == V{"k"});
+        // two new-format PCs: the one that never saw "k" must not tombstone it
+        Prefs x, y; set_favorites(&x, {"a"}, 500); set_favorites(&y, {"k"}, 100);
+        CHECK(merge(x, y).favorites == (V{"a", "k"}));
+    }
+    // tombstones older than 90 days are dropped on save, fresh ones stay
+    {
+        Prefs g; long long now = 200ll * 24 * 3600 * 1000;
+        set_favorites(&g, {"old", "new"}, now - 120ll * 24 * 3600 * 1000);
+        set_favorite(&g, "old", false, now - 100ll * 24 * 3600 * 1000);
+        set_favorite(&g, "new", false, now - 1000);
+        gc_tombstones(&g, now);
+        CHECK(!g.favorites_ts.count("old") && g.favorites_ts.count("new") && g.favorites_ts["new"] < 0);
+    }
 
     fs::path root = fs::temp_directory_path() / "rh_prefs_test";
     std::error_code ec; fs::remove_all(root, ec);
