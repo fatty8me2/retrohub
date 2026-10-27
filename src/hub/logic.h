@@ -175,6 +175,7 @@ struct ListItem {
     bool pinned = false;    // sorts before everything else (the native Smash entry)
     unsigned long long last_played = 0, play_seconds = 0, added = 0;   // unix seconds / seconds / file time (sort modes)
     bool ghost = false;     // a friend's game you do not own: sorts after every owned game of its console
+    std::string alt_title;  // the scanned name when `title` is a user rename: search matches either
 };
 /* Strict-weak order for the library: pinned first, then by `mode` (Title A-Z; Last played / Most played / Recently added newest or
  * biggest first, never-played last), ties broken by title then key. */
