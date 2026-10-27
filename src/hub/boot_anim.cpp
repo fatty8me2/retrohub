@@ -135,7 +135,7 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
             }
             mshadow = e * e * 0.7f;
             shelf_dark = ease_out(p);
-            if (g.kind == Insert::Lid || g.kind == Insert::Tray) lid = ease_in_out(p);
+            if (g.kind == Insert::Lid || g.kind == Insert::Tray || (g.kind == Insert::Slot && g.push > 0.f)) lid = ease_in_out(p);   // NES: the flap door swings open
             break;
         }
         case Phase::Insert: {
@@ -154,8 +154,9 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
                 case Insert::Slot: {
                     if (g.push > 0.f) {   // front loader: pushed in first (tilted), then pressed down flat
                         const float mid = ey - g.push, k1 = 0.70f;
+                        lid = 1.f;
                         if (p < k1) { float e = ease_in_out(p / k1); y_local = lerpf(hover_y, mid, e); mang = -0.14f * e; }
-                        else { float e = ease_out((p - k1) / (1.f - k1)); y_local = lerpf(mid, ey, e) + std::sin(e * 3.14159f) * 2.5f; mang = -0.14f * (1.f - e); }
+                        else { float e = ease_out((p - k1) / (1.f - k1)); y_local = lerpf(mid, ey, e) + std::sin(e * 3.14159f) * 2.5f; mang = -0.14f * (1.f - e); lid = 1.f - ease_in_out((p - k1) / (1.f - k1)); }
                     } else {
                         y_local = insert_y(hover_y, ey, p);
                     }
