@@ -16,6 +16,7 @@ enum class Note { Info, Good, Warn, Error };
 
 struct Hooks {
     std::function<void()> run;                                  // one retro_run()
+    std::function<void()> real_frame;                           // right after the REAL frame ran (before any run-ahead / never on rewind steps): RetroAchievements
     std::function<size_t()> state_size;
     std::function<bool(void*, size_t)> save;
     std::function<bool(const void*, size_t)> load;
