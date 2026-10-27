@@ -190,6 +190,46 @@ inline bool groups_from_json(const std::string& text, RecentGroups* out) {
     return true;
 }
 
+/* ------------------------------------------------------------------ "Notify me when they come online" (per friend, off by default)
+ * The setting is a comma separated list of friend uids (Settings::watch_online), at most kWatchMax (the server's cap too). */
+constexpr size_t kWatchMax = 50;
+inline std::vector<std::string> watch_split(const std::string& csv) {
+    std::vector<std::string> v;
+    size_t i = 0;
+    while (i <= csv.size()) {
+        size_t j = csv.find(',', i);
+        if (j == std::string::npos) j = csv.size();
+        std::string u = csv.substr(i, j - i);
+        if (!u.empty() && std::find(v.begin(), v.end(), u) == v.end()) v.push_back(u);
+        i = j + 1;
+    }
+    return v;
+}
+inline std::string watch_join(const std::vector<std::string>& v) {
+    std::string o;
+    for (auto& u : v) o += (o.empty() ? "" : ",") + u;
+    return o;
+}
+inline bool watch_has(const std::string& csv, const std::string& uid) {
+    auto v = watch_split(csv);
+    return std::find(v.begin(), v.end(), uid) != v.end();
+}
+/* Turns the toggle for `uid` on/off. Turning on at the cap is refused (returns false, list unchanged). `keep` (when non-null) lists the
+ * uids that are still friends: anyone else is dropped from the list first, so removed friends never fill the 50 slots. */
+inline bool watch_set(std::string* csv, const std::string& uid, bool on, const std::vector<std::string>* keep = nullptr) {
+    auto v = watch_split(*csv);
+    if (keep) v.erase(std::remove_if(v.begin(), v.end(), [&](const std::string& u) { return u != uid && std::find(keep->begin(), keep->end(), u) == keep->end(); }), v.end());
+    auto it = std::find(v.begin(), v.end(), uid);
+    if (on) {
+        if (it == v.end()) {
+            if (v.size() >= kWatchMax) { *csv = watch_join(v); return false; }
+            v.push_back(uid);
+        }
+    } else if (it != v.end()) v.erase(it);
+    *csv = watch_join(v);
+    return true;
+}
+
 /* ------------------------------------------------------------------ notification history */
 enum class Kind { Invite, FriendRequest, AskJoin, FriendOnline, CloudConflict, Update, Info };
 inline const char* kind_name(Kind k) {

@@ -1,6 +1,7 @@
 /* Console test for cover-art logic. Usage: hub_art_test [--live <cache_dir> [rom_path]] */
 #include "art.h"
 #include "art_match.h"
+#include "art_lru.h"
 #include "library.h"
 #include "games.h"
 
@@ -78,7 +79,30 @@ game (
 )
 )DAT";
 
+static void test_lru() {
+    hubart::Lru l;
+    for (int i = 0; i < 10; ++i) { l.tick(); l.touch("a" + std::to_string(i)); }
+    CHECK(l.victims(10).empty());
+    l.tick(); l.tick();
+    auto v = l.victims(7);
+    CHECK(v.size() == 3 && v[0] == "a0" && v[1] == "a1" && v[2] == "a2");   // oldest first
+    l.touch("a0");                                                           // drawn now: protected
+    v = l.victims(7);
+    CHECK(v.size() == 3 && v[0] == "a1");
+    for (auto& id : v) l.remove(id);
+    CHECK(l.size() == 7);
+    hubart::Lru b;                                                           // everything drawn this frame: nothing evictable
+    b.tick();
+    for (int i = 0; i < 5; ++i) b.touch("x" + std::to_string(i));
+    CHECK(b.victims(2).empty());
+    b.tick();
+    CHECK(b.victims(2).empty());                                             // still within kMinIdleFrames
+    b.tick();
+    CHECK(b.victims(2).size() == 3);
+}
+
 int main(int argc, char** argv) {
+    test_lru();
     /* ---- naming / url ---- */
     CHECK_EQ(hm::thumb_name("Mario & Luigi - Superstar Saga (USA)"), "Mario _ Luigi - Superstar Saga (USA)");
     CHECK_EQ(hm::url_encode(hm::thumb_name("Mario & Luigi - Superstar Saga (USA)")),

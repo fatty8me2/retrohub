@@ -107,6 +107,7 @@ add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypa
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
 add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-out friend games: identity, ghosts, badge text, publish hash/debounce
 add_test(NAME hub_boot_art_test COMMAND hub_boot_art_test)   # boot-animation art: every System has console + media art
+add_test(NAME hub_theme_test COMMAND hub_theme_test)   # every theme preset defines every palette slot and meets text contrast
 add_test(NAME hub_picker_test COMMAND hub_picker_test)   # room game picker: search, chips, sections, virtual layout
 add_test(NAME hub_ps2_online_test COMMAND hub_ps2_online_test)   # PS2 online: readiness reasons, retrorun args, exit texts, pinned LRPS2 download
 add_test(NAME hub_online_caps_test COMMAND hub_online_caps_test)   # supports_online <-> launch_online branches (table-driven)
@@ -122,6 +123,7 @@ add_test(NAME hubdolphincheats_test COMMAND hubdolphincheats_test)   # GameCube 
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
 add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
+add_test(NAME retrorun_fx_test COMMAND retrorun_fx_test)
 add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
 add_test(NAME retrorun_link_test COMMAND retrorun_link_test)
 add_test(NAME retrorun_rollback_test COMMAND retrorun_rollback_test)
@@ -139,6 +141,7 @@ add_test(NAME hub_states_test COMMAND hub_states_test)               # save-stat
 add_test(NAME hub_customize_test COMMAND hub_customize_test)   # custom shelves ops, Home composition, renames, rename-aware search
 add_test(NAME hub_osk_test COMMAND hub_osk_test)                        # OSK key layout / edit logic / folder browser (scratch dirs)
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
+add_test(NAME hub_qm_test COMMAND hub_qm_test)
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
 add_test(NAME hub_boot_anim_test COMMAND hub_boot_anim_test)           # start animation: media map, timeline, launch rules, state machine, settings
 add_test(NAME real_boot_test COMMAND real_boot_test)                       # real console startup: own IPL/BIOS detection, config edits, custom sound decode
@@ -152,9 +155,11 @@ add_test(NAME hub_group_test COMMAND hub_group_test)             # recent groups
 add_test(NAME hub_toast_test COMMAND hub_toast_test)                   # toast XML/activation/policy with a mock notifier (no real toasts)
 add_test(NAME hub_wizard_test COMMAND hub_wizard_test)
 add_test(NAME hub_cloud_ui_test COMMAND hub_cloud_ui_test)             # cloud saves v2 status/label/dialog logic
-add_test(NAME hub_username_test COMMAND hub_username_test)         # username rules, suggestions, availability checker, wizard name step
+add_test(NAME hub_tv_test COMMAND hub_tv_test)   # TV mode scale, hero, Run-key value, clock, avatar plan
+add_test(NAME hub_username_test COMMAND hub_username_test)        # username rules, suggestions, availability checker, wizard name step
 add_test(NAME hub_toast_win_test COMMAND hub_toast_win_test)               # real WinRT apartment init + XML load, nothing shown
 add_test(NAME hub_invite_test COMMAND hub_invite_test)                   # invite parsing + pipe handoff (no network, no windows)
+add_test(NAME hub_uisound_test COMMAND hub_uisound_test)   # menu UI sounds + ambient render non-silent within limits; mute policy (not played)
 add_test(NAME hub_bootsound_test COMMAND hub_bootsound_test)       # procedural startup sounds render to WAVs (not played)
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
 add_test(NAME dsu_test COMMAND dsu_test)   # DSU packets + loopback server round trip

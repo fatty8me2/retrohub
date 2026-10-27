@@ -41,6 +41,13 @@ std::string build_invite_xml(const std::string& friend_name, const std::string& 
            "</toast>";
 }
 
+std::string build_online_xml(const std::string& friend_name) {
+    std::string who = friend_name.empty() ? "A friend" : friend_name;
+    return "<toast scenario=\"default\"><visual><binding template=\"ToastGeneric\">"
+           "<text>" + xml_escape(who) + " came online</text>"
+           "</binding></visual></toast>";
+}
+
 bool parse_activation_code(const std::string& args, std::string* code) {
     static const char kPre[] = "retrohub://join/";
     const size_t n = sizeof(kPre) - 1;
@@ -68,6 +75,11 @@ bool notify_invite(INotifier& n, bool setting_on, bool game_running, const std::
     std::string xml = build_invite_xml(friend_name, game_title, code);
     if (xml.empty()) return false;
     return n.show(xml, code);
+}
+
+bool notify_online(INotifier& n, bool setting_on, bool game_running, const std::string& friend_name) {
+    if (!should_toast(setting_on, game_running, n.available())) return false;
+    return n.show(build_online_xml(friend_name), "online");
 }
 
 }  // namespace hubtoast

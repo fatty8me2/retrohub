@@ -37,6 +37,7 @@
 #include <vector>
 
 #include "art.h"
+#include "dupes_logic.h"
 #include "real_boot.h"
 #include "updater.h"
 #include "update_apply.h"
@@ -50,6 +51,7 @@
 #include "friend_games.h"
 #include "logic.h"
 #include "settings_tabs.h"
+#include "tv_mode.h"
 #include "savestore.h"
 #include "history.h"
 #include "playstats.h"
@@ -82,12 +84,12 @@ using ui::with_alpha;
 
 /* shared constants (internal linkage: every file gets its own copy) */
 static float& S = ui::S;  // DPI scale (lives in ui_kit)
-static const ImU32 COL_ACCENT = ui::ACCENT;
-static const ImU32 COL_GOOD = ui::GOOD;
-static const ImU32 COL_BAD = ui::BAD;
-static const ImU32 COL_WARN = ui::WARN;
-static const ImU32 COL_PANEL = ui::PANEL;
-static const ImU32 COL_PANEL2 = ui::PANEL2;
+static const ImU32& COL_ACCENT = ui::ACCENT;
+static const ImU32& COL_GOOD = ui::GOOD;
+static const ImU32& COL_BAD = ui::BAD;
+static const ImU32& COL_WARN = ui::WARN;
+static const ImU32& COL_PANEL = ui::PANEL;
+static const ImU32& COL_PANEL2 = ui::PANEL2;
 static const char* kNativeKey = "native:smash64";
 static const float kTileAspect = 1.3f;   // tile width / height, shared by shelves, grid and hero art
 static const ImU32 COL_REMIX = IM_COL32(250, 150, 40, 255);
@@ -189,6 +191,7 @@ struct App {
     std::atomic<int> scan_done{0}, scan_total{0};
     std::vector<hub::GameEntry> scan_result;
     std::vector<hub::GameEntry> lib;              // scanned games (+ native Smash entry first)
+    hubdupes::Dupes dupes;                        // key -> every path found (only games with 2+ copies); lib keeps one
     std::map<std::string, int> lib_index;         // key -> index in lib
     std::map<std::string, hub::GameState> lib_state;   // cached game_state per key
     std::string sys_filter;                       // "" = all, else system short
@@ -422,6 +425,11 @@ void guest_apply_launch(const std::string& body);                               
 
 /* app.cpp */
 extern App A;
+/* theme_ui.cpp: runtime palette + picker (Settings > General). Choice lives in the synced prefs `theme` field. */
+void theme_init();                     // after ImGui setup: load the saved choice (HUB_THEME=<id>[+cover] overrides it in screenshots)
+void theme_tick();                     // once per frame: applies preview / accent animation
+void theme_hero_art(SDL_Texture* tex); // the Home hero's cover, feeds "Accent from cover"
+void theme_settings_row();             // the picker with live preview
 extern bool g_headless;   // HUB_SCREENSHOT run: never launch games or touch the lobby
 
 /* launch.cpp */
@@ -542,6 +550,8 @@ bool spawn(const std::string& exe, const std::string& args, const std::string& c
 void poll_process();
 void pad_exit_watch();   // launch.cpp: Back+Start combo while an external game runs
 void focus_hub();
+void* running_game_hwnd();                 // launch.cpp: main window of the running game (HWND), nullptr if none
+std::vector<unsigned long> running_game_pids();   // launch.cpp: every process of the running game (job object)
 void focus_game();       // launch.cpp: bring the running game's window to the front (after the quick menu)
 std::string find_core(const std::string& name);
 std::string quote(const std::string& s);
@@ -747,7 +757,8 @@ void custom_reset_originals();                                   // after a libr
 std::string custom_original_title(const hub::GameEntry& e);     // the scanned name (art/genre lookups use it; search matches it too)
 bool custom_is_renamed(const std::string& key);
 bool custom_cover(const std::string& key, SDL_Texture** tex, int* w, int* h);   // the user's cover picture for this game, if set and readable
-void custom_open_customize(const std::string& key);              // details modal: Customize (rename / cover / reset)
+bool custom_set_cover(const std::string& key, const std::string& path);   // copies the picture into <vault>/<system>/<key>/cover.png (synced) and stores that path
+void custom_open_customize(const std::string& key);            // details modal: Customize (rename / cover / reset)
 void custom_open_picker(const std::string& key, bool from_details);   // "Add to shelf..."
 void custom_open_manager();                                      // new / rename / reorder / delete shelves
 void custom_draw(int loc);                                       // 0 = overlays (also polls prefs), 1 = inside the details modal
@@ -890,6 +901,17 @@ std::string ps2_online_block(const hub::GameEntry& e);   // ps1_ui.cpp: "" or wh
 bool ps2_online_args(const hub::GameEntry& e, const std::string& net, const std::string& tmp_dir, bool share_save, bool is_host_card,
                      std::string* args, std::string* err);   // ps1_ui.cpp: retrorun args for a PS2 room (LRPS2 lockstep)
 void draw_ps1_dialogs();
+/* libcopies_ui.cpp: missing ROM popup at Play, duplicate copies in the details About tab, prefs-backed scan choices */
+bool rom_missing(const hub::GameEntry& e);
+void missing_rom_ask(const std::string& key);
+void missing_rom_ask_shot();
+void draw_missing_rom_dialog();
+void hidden_games_row();         // Settings > General: "Hidden games (N)" -> Unhide list
+void hidden_games_open_shot();
+void dupes_details_section(const hub::GameEntry& e);
+std::map<std::string, std::string> preferred_copies();
+std::set<std::string> hidden_game_keys();
+void apply_located_paths(std::vector<hub::GameEntry>* lib, const std::map<std::string, std::string>& preferred);
 void ps1_bios_ask_shot();   // screenshot aid
 void ps2_bios_ask(const std::string& key);   // ps1_ui.cpp: "PlayStation 2 BIOS" prompt (pad-friendly folder choice)
 void ps1_settings_ui();

@@ -23,6 +23,7 @@ int main() {
     set_hidden(&p, {"gb:h", "gb:h"}, 21);
     set_renames(&p, {{"n64:a", "Smash \"64\""}}, 22);
     set_covers(&p, {{"n64:a", "C:\\covers\\a.png"}}, 23);
+    set_preferred_copy(&p, {{"n64:a", "D:/roms/a.z64"}}, 28);
     set_theme(&p, "midnight", 24);
     set_profile_avatar(&p, "fox", 25);
     set_profile_fav_game(&p, "n64:a", 26);
@@ -30,6 +31,7 @@ int main() {
     CHECK(p.user_shelves[0].keys.size() == 2 && p.hidden.size() == 1);
     Prefs q;
     CHECK(parse(serialize(p), &q) && same(p, q) && q.renames["n64:a"] == "Smash \"64\"" && q.profile.status == "afk" && q.stamp("theme") == 24);
+    CHECK(q.preferred_copy["n64:a"] == "D:/roms/a.z64" && q.stamp("preferred_copy") == 28);
     CHECK(!parse("garbage", &q) && q.favorites.empty());
     CHECK(parse("{\"theme\":\"x\",\"unknown\":[1,2]}", &q) && q.theme == "x");
 

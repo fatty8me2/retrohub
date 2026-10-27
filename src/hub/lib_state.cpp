@@ -56,6 +56,14 @@ void apply_scan() {
         }
     }
     for (auto& e : A.scan_result) A.lib.push_back(e);
+    {   // prefs: hidden games drop out; duplicates collapse to one copy (the preferred path if it was found, else the first scanned)
+        std::map<std::string, std::string> pref = preferred_copies();
+        std::set<std::string> hid = hidden_game_keys();
+        if (!hid.empty())
+            A.lib.erase(std::remove_if(A.lib.begin(), A.lib.end(), [&](const hub::GameEntry& g) { return g.key != kNativeKey && hid.count(g.key) > 0; }), A.lib.end());
+        hubdupes::collapse(&A.lib, pref, &A.dupes);
+        apply_located_paths(&A.lib, pref);
+    }
     if (const char* fl = std::getenv("HUB_SHOT_FAKE_LIB"); fl && g_headless) {   // screenshot/pad-nav aid: n made-up games, no scan result, no art, no finder
         static const hub::System sy[] = {hub::System::N64, hub::System::GBA, hub::System::GC, hub::System::N64, hub::System::GB};
         A.lib.clear();
@@ -104,7 +112,7 @@ void apply_scan() {
                 g.system = mix[i % 10];
                 g.title = std::string(a1[i % 10]) + " " + a2[(i / 10) % 10] + " " + a3[(i / 7) % 10] + (i >= 100 ? " " + std::to_string(i / 100 + 1) : "");
             }
-            g.path = "C:\fake\game" + std::to_string(i) + ".z64";
+            g.path = "C:/fake/game" + std::to_string(i) + ".z64";
             A.lib.push_back(g);
         }
         {   // a catalog PlayStation game too, so the room picker / PS1 online path can be screenshotted (HUB_SHOT_ROOM_GAME=crashbash)
@@ -114,7 +122,7 @@ void apply_scan() {
             g.catalog_id = "crashbash";
             g.serial = "SCUS-94570";
             g.title = "Crash Bash";
-            g.path = "C:\fake\crashbash.cue";
+            g.path = "C:/fake/crashbash.cue";
             A.lib.push_back(g);
         }
         if (!std::getenv("HUB_SHOT_NO_WIIU")) {   // a catalog Wii U remote-play game (HUB_SHOT_ROOM_GAME=sm3dw); HUB_SHOT_NO_WIIU = this PC has no copy (guest view)
@@ -124,8 +132,12 @@ void apply_scan() {
             g.catalog_id = "sm3dw";
             g.serial = "0005000010145D00";
             g.title = "Super Mario 3D World";
-            g.path = "C:\fake\sm3dw.rpx";
+            g.path = "C:/fake/sm3dw.rpx";
             A.lib.push_back(g);
+        }
+        if (std::getenv("HUB_SHOT_FAKE_DUPES") && A.lib.size() > 2) {   // details > About shows "3 copies found"
+            A.dupes.clear();
+            A.dupes[A.lib[2].key] = {A.lib[2].path, "D:/Roms/N64 backup/" + A.lib[2].title + ".z64", "E:/Old PC/Games/" + A.lib[2].title + " (copy).z64"};
         }
         gameinfo_ui_shot_lib();
         A.st.find_games_done = true;

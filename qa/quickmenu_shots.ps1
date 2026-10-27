@@ -17,3 +17,8 @@ Shot "qm_save_1280"  @{ HUB_SHOT_QM = "save"; HUB_SHOT_SIZE = "1280x800" }
 Shot "qm_load_1600"  @{ HUB_SHOT_QM = "load"; HUB_SHOT_SIZE = "1600x1000" }
 Shot "qm_main_1600"  @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1600x1000" }
 Shot "gallery_1280"  @{ HUB_SHOT_GALLERY = "1"; HUB_START_PAGE = "0"; HUB_SELECT_GAME = "fake:0"; HUB_SHOT_KEYS = "i"; HUB_SHOT_SIZE = "1280x800" }
+# speed / volume / mute rows: offline, online (speed disabled), an external emulator (no speed, screenshot entry), and pad nav (down, right, right)
+Shot "qm_offline_1280" @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_VOL = "65" }
+Shot "qm_online_1280"  @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_ONLINE = "1"; HUB_SHOT_QM_VOL = "35"; HUB_SHOT_QM_MUTE = "1" }
+Shot "qm_ext_1280"     @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_EXT = "1"; HUB_SHOT_QM_VOL = "80" }
+Shot "qm_speednav_1280" @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_PAD = "wait,up,up,right,right,right,down,right,right,down,right"; HUB_SHOT_SECS = "8" }

@@ -10,7 +10,7 @@ if (-not (Test-Path $core)) { $core = "$root\..\..\RetroHub\build\bin\Release\co
 $exe = "$root\build\bin\Release\retrorun.exe"
 if (-not (Test-Path $core) -or -not (Test-Path $exe)) { Write-Output 'SKIP: beetle_psx_libretro.dll / retrorun.exe not built'; exit 77 }
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) { Write-Output 'SKIP: python not found'; exit 77 }
-$out = Join-Path $root 'qa\out\ps1discs'
+$out = Join-Path $root "qa\out\ps1discs_$PID"
 Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $out, "$out\sys", "$out\sv" | Out-Null
 python (Join-Path $root 'qa\make_ps1_netdisc.py') $out --name 'Test (Disc 1)' | Out-Null

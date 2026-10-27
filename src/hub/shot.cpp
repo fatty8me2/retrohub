@@ -70,6 +70,8 @@ void shot_init_ui() {
         else if (m == "failed") { EMU.kind = hubemu::Kind::Azahar; EMU.error = "checksum mismatch: the download was rejected"; EMU.state = hubemu::Installer::Failed; }
         else if (m == "unzip") { UNZ.key = A.env_select; UNZ.state = UnzipJob::Asking; }
         else if (m == "ps2bios") ps2_bios_ask("");
+        else if (m == "missingrom") missing_rom_ask_shot();
+        else if (m == "hidden") hidden_games_open_shot();
         else if (m == "ps1bios") ps1_bios_ask_shot();
     }
     if (std::getenv("HUB_SHOT_FAKE_FRIENDS")) {

@@ -54,6 +54,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"smash_exe\": \"" << json::escape(s.smash_exe) << "\",\n"
       << "  \"gb_core\": \"" << json::escape(s.gb_core) << "\",\n"
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
+      << "  \"volume\": " << s.volume << ",\n"
       << "  \"start_hint\": " << (s.start_hint ? "true" : "false") << ",\n"
       << "  \"boot_anim\": " << (s.boot_anim ? "true" : "false") << ",\n"
       << "  \"boot_sounds\": " << (s.boot_sounds ? "true" : "false") << ",\n"
@@ -79,8 +80,14 @@ std::string settings_to_json(const Settings& s) {
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
+      << "  \"tv_start\": " << (s.tv_start ? "true" : "false") << ",\n"
+      << "  \"tv_windows\": " << (s.tv_windows ? "true" : "false") << ",\n"
       << "  \"notify_in_game\": " << (s.notify_in_game ? "true" : "false") << ",\n"
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
+      << "  \"watch_online\": \"" << json::escape(s.watch_online) << "\",\n"
+      << "  \"menu_sounds\": " << (s.menu_sounds ? "true" : "false") << ",\n"
+      << "  \"menu_volume\": " << s.menu_volume << ",\n"
+      << "  \"menu_music\": " << (s.menu_music ? "true" : "false") << ",\n"
       << "  \"share_games\": " << (s.share_games ? "true" : "false") << ",\n"
       << "  \"show_friend_games\": " << (s.show_friend_games ? "true" : "false") << ",\n"
       << "  \"share_playtime\": " << (s.share_playtime ? "true" : "false") << ",\n"
@@ -131,6 +138,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     std::string core = j.str("gb_core", out->gb_core);
     out->gb_core = (core == "gambatte" || core == "sameboy") ? core : "sameboy";
     out->fullscreen = json_bool(j, "fullscreen", out->fullscreen);
+    out->volume = std::max(0, std::min(100, (int)j.num("volume", out->volume)));
     out->start_hint = json_bool(j, "start_hint", out->start_hint);
     out->boot_anim = json_bool(j, "boot_anim", out->boot_anim);
     out->boot_sounds = json_bool(j, "boot_sounds", out->boot_sounds);
@@ -155,8 +163,14 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->download_art = json_bool(j, "download_art", out->download_art);
     out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));
     out->show_friends = json_bool(j, "show_friends", out->show_friends);
+    out->tv_start = json_bool(j, "tv_start", out->tv_start);
+    out->tv_windows = json_bool(j, "tv_windows", out->tv_windows);
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
+    out->watch_online = j.str("watch_online", out->watch_online);
+    out->menu_sounds = json_bool(j, "menu_sounds", out->menu_sounds);
+    out->menu_music = json_bool(j, "menu_music", out->menu_music);
+    out->menu_volume = std::max(0, std::min(100, (int)j.num("menu_volume", out->menu_volume)));
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
     out->share_games = json_bool(j, "share_games", out->share_games);
     out->show_friend_games = json_bool(j, "show_friend_games", out->show_friend_games);

@@ -259,7 +259,7 @@ bool cheat_row(const cheatstore::Row& r, bool enabled, bool* removed, bool* acti
     dl->AddRectFilled(s0, s1, on ? ui::GOOD : ui::PANEL3, sh * 0.5f);
     float kr = sh * 0.5f - sp(0.4f);
     dl->AddCircleFilled(ImVec2(on ? s1.x - sh * 0.5f : s0.x + sh * 0.5f, s0.y + sh * 0.5f), kr, IM_COL32_WHITE);
-    if (!enabled) dl->AddRectFilled(p0, p1, IM_COL32(16, 17, 22, 110), rad);
+    if (!enabled) dl->AddRectFilled(p0, p1, ui::with_alpha(ui::BG, 110/255.f), rad);
     // text
     float tx = p0.x + sp(2.f), tw = s0.x - tx - sp(1.5f) - (act_w > 0 ? act_w + sp(1.f) : 0.f);
     ImFont* bf = ui::F.bold;

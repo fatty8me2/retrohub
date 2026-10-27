@@ -211,6 +211,7 @@ bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std:
 }
 
 void draw_ps1_dialogs() {
+    draw_missing_rom_dialog();
     draw_ps2_ask();
     if (!ASK.open) return;
     bool open = false;

@@ -1,5 +1,6 @@
 #include "app.h"
 #include "toast.h"
+#include "ui_sound.h"
 
 FriendsUi FR;
 
@@ -193,7 +194,7 @@ bool fr_icon_button(const char* id, FrIcon k, float size, bool active, int badge
     float rd = sp(1.5f);
     dl->AddRectFilled(p0, p1, active ? with_alpha(ui::ACCENT, 0.28f) : ui::mix(ui::PANEL, ui::PANEL3, *an), rd);
     dl->AddRect(p0, p1, ui::HAIRLINE, rd, 0, 1.f);
-    fr_icon(dl, k, (p0 + p1) * 0.5f, size * 0.52f, active ? ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.55f) : ui::mix(ui::TEXT2, IM_COL32_WHITE, *an));
+    fr_icon(dl, k, (p0 + p1) * 0.5f, size * 0.52f, active ? ui::mix(ui::ACCENT, ui::HILITE, 0.55f) : ui::mix(ui::TEXT2, ui::HILITE, *an));
     if (badge > 0) {
         char b[8];
         std::snprintf(b, sizeof b, "%d", std::min(badge, 99));
@@ -222,10 +223,10 @@ bool fr_pill_button(const char* id, const char* label, ImVec2 pos, float h, bool
     float rd = h * 0.5f;
     if (primary) dl->AddRectFilled(p0, p1, ui::mix(ui::ACCENT, IM_COL32_WHITE, hov ? 0.2f : 0.f), rd);
     else {
-        dl->AddRectFilled(p0, p1, ui::mix(ui::PANEL3, IM_COL32_WHITE, hov ? 0.1f : 0.f), rd);
+        dl->AddRectFilled(p0, p1, ui::mix(ui::PANEL3, ui::HILITE, hov ? 0.1f : 0.f), rd);
         dl->AddRect(p0, p1, ui::HAIRLINE, rd, 0, 1.f);
     }
-    fr_text_c(dl, ui::F.bold, (p0 + p1) * 0.5f, enabled ? IM_COL32_WHITE : ui::TEXT3, label);
+    fr_text_c(dl, ui::F.bold, (p0 + p1) * 0.5f, enabled ? (primary ? IM_COL32_WHITE : ui::TEXT) : ui::TEXT3, label);
     if (pad_focus) ui::focus_ring(dl, p0, p1, rd);
     ImGui::EndDisabled();
     return pressed;
@@ -356,6 +357,7 @@ void fr_toggle_panel() {
 }
 
 void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv) {
+    ui_sound::play(ui_sound::Sfx::Notify);
     for (auto& o : FR.notifs)
         if (!o.done && !o.ask && o.invite == invite && o.uid == uid && (!invite || o.inv.lobby_code == inv.lobby_code)) o.done = true;
     Notif n;
@@ -463,6 +465,32 @@ std::string fr_top_games_text(const std::string& uid) {
 }
 
 void fr_set_auto_friend(bool on) { if (!FR.fake) FR.cli.set_auto_friend(on); }
+
+/* "Notify me when they come online" (per friend, off by default): the list lives in Settings::watch_online; the client sends it to the
+ * server, which pings only the friends on it. */
+static void fr_apply_watch() {
+    if (!FR.fake && FR.started) FR.cli.set_watch_online(hubui::group::watch_split(A.st.watch_online));
+}
+static void fr_toggle_watch(const hubnet::Friend& f) {
+    std::vector<std::string> keep;
+    for (const auto& x : fr_friends()) keep.push_back(x.uid);
+    const bool on = !hubui::group::watch_has(A.st.watch_online, f.uid);
+    if (!hubui::group::watch_set(&A.st.watch_online, f.uid, on, &keep)) {
+        set_toast("You can watch up to " + std::to_string(hubui::group::kWatchMax) + " friends. Turn one off first.", true, 4.0);
+        return;
+    }
+    mark_dirty();
+    fr_apply_watch();
+    set_toast(on ? "You'll be told when " + f.name + " comes online." : "Online alerts for " + f.name + " are off.", true, 3.0);
+}
+/* The server says a watched friend just came online: a bell entry, an in-hub toast, and (while a game runs) a Windows toast. */
+static void fr_friend_online(const std::string& uid, const std::string& name) {
+    const hubnet::Friend* f = fr_find(uid);
+    const std::string who = !name.empty() ? name : (f ? f->name : std::string());
+    group_note(hubui::group::Kind::FriendOnline, uid, who, "", "", "", "", 0);
+    push_toast((who.empty() ? std::string("A friend") : who) + " came online", ui::ACCENT, 5.0);
+    if (A.proc && !g_headless) hubtoast::notify_online(hubtoast::system_notifier(), A.st.notify_in_game, true, who);
+}
 std::string fr_lobby_ident_msg() {
     if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return "";
     return hubui::lobby_ident_json(FR.cli.my_uid(), FR.cli.my_secret());
@@ -479,10 +507,12 @@ void fr_start() {
         if (!shot_net() || hubnet::is_production_server(srv)) return;
         FR.started = FR.cli.start(srv, A.st.name);
         FR.last_name = A.st.name;
+        fr_apply_watch();
         return;
     }
     FR.started = FR.cli.start("", A.st.name);
     FR.last_name = A.st.name;
+    fr_apply_watch();
 }
 
 void fr_run_pending_join() {
@@ -524,9 +554,10 @@ void fr_tick() {
                 break;
             case hubnet::Event::MessageReceived:
                 if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
-                else push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0);
+                else { ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0); }
                 break;
             case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite, e.msg.ask_host); break;
+            case hubnet::Event::WatchedOnline: fr_friend_online(e.uid, e.name); break;
             case hubnet::Event::AskResult:
                 if (!e.ok) {
                     const hubnet::Friend* af = fr_find(e.uid);
@@ -951,7 +982,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         ImGui::SetCursorScreenPos(mp);
         if (ImGui::InvisibleButton("more", ImVec2(sp(3.25f), btn_h))) ImGui::OpenPopup("ctx");
         bool mh = ImGui::IsItemHovered();
-        dl->AddRectFilled(mp, mp + ImVec2(sp(3.25f), btn_h), ui::mix(ui::PANEL3, IM_COL32_WHITE, mh ? 0.1f : 0.f), btn_h * 0.5f);
+        dl->AddRectFilled(mp, mp + ImVec2(sp(3.25f), btn_h), ui::mix(ui::PANEL3, ui::HILITE, mh ? 0.1f : 0.f), btn_h * 0.5f);
         fr_icon(dl, FrIcon::More, mp + ImVec2(sp(1.625f), btn_h * 0.5f), sp(2.6f), ui::TEXT);
         if (mh) ImGui::SetTooltip("More");
         x = mp.x - sp(0.5f);
@@ -959,7 +990,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         ImGui::SetCursorScreenPos(cp);
         if (ImGui::InvisibleButton("msg", ImVec2(sp(3.25f), btn_h))) fr_open_chat(f.uid);
         bool ch = ImGui::IsItemHovered();
-        dl->AddRectFilled(cp, cp + ImVec2(sp(3.25f), btn_h), ui::mix(ui::PANEL3, IM_COL32_WHITE, ch ? 0.1f : 0.f), btn_h * 0.5f);
+        dl->AddRectFilled(cp, cp + ImVec2(sp(3.25f), btn_h), ui::mix(ui::PANEL3, ui::HILITE, ch ? 0.1f : 0.f), btn_h * 0.5f);
         fr_icon(dl, FrIcon::Chat, cp + ImVec2(sp(1.625f), btn_h * 0.5f), sp(2.4f), ui::TEXT);
         if (ch) ImGui::SetTooltip("Message");
         x = cp.x - sp(0.5f);
@@ -1011,6 +1042,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         if (can_ask && ImGui::MenuItem("Ask to join")) fr_ask_to_join(f.uid);
         if (can_invite && ImGui::MenuItem("Invite to my room")) fr_invite_uids({f.uid});
         if (ImGui::MenuItem("Copy friend code")) { SDL_SetClipboardText(f.code.c_str()); fr_trace("copy", f.uid); set_toast("Friend code copied.", true, 3.0); }
+        if (ImGui::MenuItem("Notify me when they come online", nullptr, hubui::group::watch_has(A.st.watch_online, f.uid))) fr_toggle_watch(f);
         ImGui::Separator();
         if (ImGui::MenuItem("Remove friend")) fr_confirm("remove", f);
         if (ImGui::MenuItem("Block")) fr_confirm("block", f);
@@ -1195,7 +1227,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
             float tx = c0.x + sp(6.5f), tw = cw - sp(6.5f) - sp(9.f);
             dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, c0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, A.st.name, tw).c_str());
             std::string code = fr_my_code().empty() ? "..." : fr_my_code();
-            dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, c0.y + sp(1.25f) + ui::F.bold->FontSize * 1.25f), ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.55f), code.c_str());
+            dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, c0.y + sp(1.25f) + ui::F.bold->FontSize * 1.25f), ui::mix(ui::ACCENT, ui::HILITE, 0.55f), code.c_str());
             ImU32 dc = fr_connected() ? ui::GOOD : ui::WARN;
             dl->AddCircleFilled(ImVec2(tx + sp(0.5f), c0.y + ch - sp(1.75f)), sp(0.45f), dc, 10);
             dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + sp(1.5f), c0.y + ch - sp(1.75f) - ui::F.cap->FontSize * 0.5f), ui::TEXT2,

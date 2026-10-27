@@ -148,13 +148,14 @@ void draw_hero(const hub::GameEntry& e, float h) {
     ImU32 c0, c1;
     entry_colors(e, &c0, &c1);
     ArtRef art = art_for_entry(e);
+    theme_hero_art(art.tex);
     bool compact = h < sp(29.f);
 
     ui::shadow(dl, p0, p1, rad, 1.3f);
-    gradient_round_rect(dl, p0, p1, mix(c0, ui::BG, 0.68f), mix(c1, ui::BG, 0.78f), rad);
+    gradient_round_rect(dl, p0, p1, mix(c0, ui::HERO_BASE, 0.68f), mix(c1, ui::HERO_BASE, 0.78f), rad);
     if (art.tex) ui::draw_art_bg(dl, art.tex, art.w, art.h, p0, p1, rad, 0.20f, ha);
-    ui::hfade_round_rect(dl, p0, p1, IM_COL32(14, 15, 20, 255), rad, 0, 0.96f, 0.66f);
-    ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.4f), p1, IM_COL32(14, 15, 20, 255), rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.6f);
+    ui::hfade_round_rect(dl, p0, p1, ui::SCRIM, rad, 0, 0.96f, 0.66f);
+    ui::vfade_round_rect(dl, ImVec2(p0.x, p0.y + h * 0.4f), p1, ui::SCRIM, rad, ImDrawFlags_RoundCornersBottom, 0.f, 0.6f);
     dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
 
     float pad = compact ? sp(2.5f) : sp(3.f), bh = compact ? sp(5.f) : sp(6.f);
@@ -218,7 +219,7 @@ void draw_hero(const hub::GameEntry& e, float h) {
         if (nl > 0) {
             auto bl = ui::wrap_lines(ui::F.body, ui::F.body->FontSize, cat->blurb, tw, std::min(2, nl));
             for (auto& ln : bl) {
-                dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, ty), ui::scale_alpha(ui::TEXT2, ha), ln.c_str());
+                dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, ty), ui::scale_alpha(IM_COL32(152, 157, 175, 255), ha), ln.c_str());
                 ty += ui::F.body->FontSize * 1.25f;
             }
         }
@@ -819,6 +820,7 @@ void draw_details_modal() {
             ImGui::Dummy(ImVec2(0, sp(0.5f)));
             if (draw_players_strip(local_players_for(e))) { ImGui::CloseCurrentPopup(); open_port_assign(); }
         }
+        dupes_details_section(e);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
         ImGui::PushTextWrapPos(0.f);
@@ -991,6 +993,7 @@ void page_library() {
         ui::anim(A.hero_t, 1.f, 9.f);
         float avail_h = ImGui::GetContentRegionAvail().y;
         float hero_h = std::min(sp(40.f), std::max(sp(21.f), std::min(avail_h * 0.36f, ImGui::GetIO().DisplaySize.y * 0.25f)));   // <= a quarter of the window
+        hero_h = tvmode::hero_h(hero_h, avail_h);
         draw_hero(*sel, hero_h);
     }
     /* The shelf strips inset their covers by `bleed` (room for the hover grow); pull the child out by the same amount so

@@ -15,6 +15,12 @@ constexpr int kExitHoldMs = 1000;
 inline bool xinput_combo_down(unsigned short w) { return (w & 0x30) == 0x30; }
 inline bool exit_combo_down(const PadState& s) { return s.b[kBtnBack] && s.b[kBtnStart]; }
 
+/* Quick boost: hold View/Back + right trigger. Start (exit) and Y (RetroHub's game menu) must NOT be held, so the combos never overlap. */
+constexpr int kBtnYButton = 3;        // SDL_CONTROLLER_BUTTON_Y
+constexpr int kAxisRT = 5;      // righttrigger
+constexpr int kTriggerOn = 16000;
+inline bool boost_combo_down(const PadState& s) { return s.b[kBtnBack] && s.a[kAxisRT] > kTriggerOn && !s.b[kBtnStart] && !s.b[kBtnYButton]; }
+
 class ExitCombo {
   public:
     explicit ExitCombo(int hold_ms = kExitHoldMs) : hold_(hold_ms) {}

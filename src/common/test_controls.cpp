@@ -401,6 +401,11 @@ static void test_exit_combo_and_cursor() {
     CHECK(!hubctl::exit_combo_down(s));
     s.b[hubctl::kBtnStart] = true;
     CHECK(hubctl::exit_combo_down(s));
+    { hubctl::PadState b; b.b[hubctl::kBtnBack] = true; b.a[hubctl::kAxisRT] = 30000;
+      CHECK(hubctl::boost_combo_down(b) && !hubctl::exit_combo_down(b));
+      b.b[hubctl::kBtnStart] = true; CHECK(!hubctl::boost_combo_down(b) && hubctl::exit_combo_down(b));
+      b.b[hubctl::kBtnStart] = false; b.b[hubctl::kBtnYButton] = true; CHECK(!hubctl::boost_combo_down(b));
+      b.b[hubctl::kBtnYButton] = false; b.a[hubctl::kAxisRT] = 100; CHECK(!hubctl::boost_combo_down(b)); }
     CHECK(hubctl::button_index("back") == hubctl::kBtnBack && hubctl::button_index("start") == hubctl::kBtnStart);
     CHECK(hubctl::xinput_combo_down(0x30) && !hubctl::xinput_combo_down(0x10) && !hubctl::xinput_combo_down(0x20));
     dsview::PadCursor pc;
