@@ -56,7 +56,7 @@ int main() {
     /* files with non-ASCII paths */
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);
-    std::wstring dir = std::wstring(tmp) + L"winutil_test_\u00e9\u65e5\\";
+    std::wstring dir = std::wstring(tmp) + L"winutil_test_" + std::to_wstring(GetCurrentProcessId()) + L"_\u00e9\u65e5\\";
     CreateDirectoryW(dir.c_str(), nullptr);
     std::string p = winutil::to_utf8(dir) + "f\xC3\xA9.bin";
     std::string data("bin\0data\r\n\xFF", 11);

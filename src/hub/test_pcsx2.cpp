@@ -3,6 +3,7 @@
 // Usage: hub_ps2_test                    offline unit checks (what ctest runs)
 //        hub_ps2_test --download <dir>   also download + verify + install PCSX2 into <dir> (network; never launched), then
 //                                        run prepare_pcsx2 on it and read the config back.
+#include <windows.h>
 #include "emulators.h"
 #include "library.h"
 #include "logic.h"
@@ -458,7 +459,7 @@ static void test_buzz() {
 }
 
 int main(int argc, char** argv) {
-    fs::path d = fs::temp_directory_path() / ("hub_ps2_test_" + std::to_string((unsigned long long)std::time(nullptr)));
+    fs::path d = fs::temp_directory_path() / ("hub_ps2_test_" + std::to_string((unsigned long long)GetCurrentProcessId()));
     fs::create_directories(d);
     setvbuf(stdout, nullptr, _IONBF, 0);
     try {

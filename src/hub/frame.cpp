@@ -1,4 +1,5 @@
 #include "app.h"
+#include "ui_sound.h"
 
 /* Startup "new version available" prompt. Shown once per run when the launch
  * check finds a newer release that the player hasn't chosen to skip (a manual
@@ -102,9 +103,9 @@ bool nav_item(Page pg, const char* label, ui::Icon ic, float w, float expand, Im
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
     float rd = sp(1.5f);
-    dl->AddRectFilled(p0, p1, with_alpha(sel ? ui::ACCENT : IM_COL32_WHITE, sel ? 0.20f : 0.07f * (*an * 2.f)), rd);
+    dl->AddRectFilled(p0, p1, with_alpha(sel ? ui::ACCENT : ui::HILITE, sel ? 0.20f : 0.07f * (*an * 2.f)), rd);
     if (*an > 0.6f) dl->AddRectFilled(ImVec2(p0.x, p0.y + sp(1.25f)), ImVec2(p0.x + sp(0.5f), p1.y - sp(1.25f)), ui::ACCENT, sp(0.25f));
-    ImU32 col = mix(ui::TEXT2, IM_COL32_WHITE, std::min(1.f, *an * 1.4f));
+    ImU32 col = mix(ui::TEXT2, ui::HILITE, std::min(1.f, *an * 1.4f));
     ImVec2 ic_c(p0.x + sp(3.f), (p0.y + p1.y) * 0.5f);
     ui::icon(dl, ic, ic_c, sp(3.f), sel ? mix(ui::ACCENT, IM_COL32_WHITE, 0.55f) : col);
     if (badge) dl->AddCircleFilled(ic_c + ImVec2(sp(1.5f), -sp(1.5f)), sp(0.625f), badge, 12);
@@ -135,7 +136,7 @@ void draw_footer(float h) {
     } else if (A.st.show_friends && FR.panel_focused) {
         hints = {{"A", "Enter", "Actions"}, {"X", "", "Join / invite"}, {"Y", "", "Menu"}, {"B", "Esc", "Close"}};
     } else if (A.page == Page::Library && !A.lib.empty()) {
-        hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}};
+        hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}, {"R3", "S", "Add to shelf"}};
         if (A.view == LibView::All) hints.push_back({"B", "Esc", "Back"});
     } else if (A.page == Page::Library) {
         hints = {{"A", "Enter", "Select"}};
@@ -221,17 +222,21 @@ void global_input() {
 
 void draw_frame() {
     ImGuiIO& io = ImGui::GetIO();
+    theme_tick();
     fr_anim_panel();
     const bool fr_docked = io.DisplaySize.x >= 1100.f * S;
     const float fr_pw = fr_panel_w(io.DisplaySize.x);
     const float dock_w = fr_docked ? fr_pw * FR.panel_t : 0.f;
     const float view_w = io.DisplaySize.x - dock_w;
+    ui_sound::configure(A.st.menu_sounds, A.st.menu_volume, A.st.menu_music, A.st.notif_sound);
+    ui_sound::tick(A.proc != nullptr, g_headless ? false : (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0);
     A.focused = g_headless || (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
     if (A.page != A.last_page || A.view != A.last_view) { if (A.page != A.last_page) A.page_focus_req = true; A.last_page = A.page; A.last_view = A.view; A.nav_seed = true; }
     {   // a modal/menu just closed and the pad lost its focus: land on the page's default item again
         static bool was_popup = false;
         bool pop = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
         if (was_popup && !pop && A.pad_mode && !ImGui::GetCurrentContext()->NavId && !FR.panel_focused) { A.nav_seed = true; A.page_focus_req = true; }
+        if (pop && !was_popup) ui_sound::play(ui_sound::Sfx::Popup);
         was_popup = pop;
     }
     /* D-pad zones: the sidebar and the content are separate focus zones, otherwise ImGui's scoring happily jumps diagonally
@@ -257,7 +262,7 @@ void draw_frame() {
     ImGui::PopStyleVar(2);
 
     /* ---- sidebar (icons + labels; shrinks to icons only when narrow) ---- */
-    bool collapsed = hubui::sidebar_collapsed(A.st.sidebar_mode, view_w, 1040.f * S);
+    bool collapsed = tvmode::force_icon_sidebar() || hubui::sidebar_collapsed(A.st.sidebar_mode, view_w, 1040.f * S);
     float full_w = sp(29.f), mini_w = sp(9.f), target = collapsed ? mini_w : full_w;
     if (A.side_w <= 0) A.side_w = target;
     ui::anim(A.side_w, target, 14.f);
@@ -407,6 +412,7 @@ void draw_frame() {
         }
     }
 
+    tvmode::draw_corner(view_w - hpad - sp(10.5f), sp(3.f), sp(4.5f));
     draw_overlays();
     global_input();
     A.popup_last_frame = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);

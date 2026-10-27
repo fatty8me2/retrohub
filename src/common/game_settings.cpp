@@ -41,6 +41,9 @@ std::vector<Option> build() {
     using S = Scope; using K = Kind;
     std::vector<Option> v;
     v.push_back(mk("fullscreen", "Fullscreen", "Video", ALL, K::Bool, S::Visual, "false"));
+    v.push_back(mk("volume", "Volume", "Audio", ALL, K::Choice, S::Visual, "100",
+                   {{"0", "0% (silent)"}, {"10", "10%"}, {"20", "20%"}, {"30", "30%"}, {"40", "40%"}, {"50", "50%"}, {"60", "60%"},
+                    {"70", "70%"}, {"80", "80%"}, {"90", "90%"}, {"100", "100%"}}));
 
     // ---- N64 (GLideN64 via n64run)
     v.push_back(mk("n64.res", "Internal resolution", "Video", N64, K::Choice, S::Visual, "0",
@@ -66,6 +69,9 @@ std::vector<Option> build() {
     v.push_back(mk("scale.filter", "Screen scaling", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Choice, S::Visual, "auto",
                    {{"auto", "Automatic"}, {"nearest", "Sharp pixels"}, {"linear", "Smooth"}}));
     v.push_back(mk("scale.integer", "Integer scaling", "Video", GB | GBA | NES | SNES, K::Bool, S::Visual, "true"));
+    v.push_back(mk("fx.filter", "Screen filter", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Choice, S::Visual, "off",
+                   {{"off", "Off"}, {"crt", "CRT"}, {"lcd", "LCD grid"}, {"dmg", "Game Boy green"}, {"sharp", "Sharp bilinear"}}));
+    v.push_back(mk("fx.bezel", "Console frame (bezel)", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Bool, S::Visual, "false"));
     v.push_back(mk("gb.color", "Color correction", "Color", GB | GBA, K::Choice, S::Visual, "auto",
                    {{"auto", "Core default"}, {"off", "Off"}, {"on", "On"}}));
     v.push_back(mk("ds.layout", "Screen layout", "Video", NDS, K::Choice, S::Visual, "top-bottom",
@@ -381,6 +387,12 @@ bool n64_key_locked_online(const std::string& k) {
     return k == "EnableFBEmulation" || k == "EnableCopyColorToRDRAM" || k == "EnableCopyDepthToRDRAM";
 }
 
+int volume_of(const Values& v) {
+    auto i = v.find("volume");
+    if (i == v.end()) return 100;
+    int n = std::atoi(i->second.c_str());
+    return n < 0 ? 0 : n > 100 ? 100 : n;
+}
 bool is_fullscreen(const Values& v) { auto i = v.find("fullscreen"); return i != v.end() && i->second == "true"; }
 
 static std::string get(const Values& v, const char* k) {
@@ -442,6 +454,8 @@ std::vector<std::string> retrorun_args(System s, const Values& v) {
     std::string f = get(v, "scale.filter");
     if (f != "auto") { r.push_back("--filter"); r.push_back(f); }
     if (s != System::NDS && s != System::PS1 && get(v, "scale.integer") == "false") { r.push_back("--integer-scale"); r.push_back("0"); }
+    if (get(v, "fx.filter") != "off" && !get(v, "fx.filter").empty()) { r.push_back("--fx"); r.push_back(get(v, "fx.filter")); }
+    if (get(v, "fx.bezel") == "true") { r.push_back("--bezel"); r.push_back("1"); }
     std::string cc = get(v, "gb.color");
     if (cc != "auto" && (s == System::GB || s == System::GBC)) {
         bool on = cc == "on";

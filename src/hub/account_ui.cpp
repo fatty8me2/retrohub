@@ -1,5 +1,6 @@
 #include "app.h"
 #include "identity_link.h"
+#include "cloud_ui_logic.h"
 
 #include <cstdio>
 #include <fstream>
@@ -45,6 +46,83 @@ struct AccountState {
     bool adopted = false;     // an adoption happened (the wizard moves on)
 };
 AccountState AC;
+
+/* Linked PCs: the PCs on this account (server list), each with "Stop syncing on this PC" except the one in use. The list is fetched when the
+ * Account page opens (and again after 5 minutes or on Refresh): one small request, never a poll. */
+namespace hs = hub::saves;
+struct PcJob {
+    std::atomic<bool> done{false};
+    bool ok = false;
+    std::string err;
+    std::vector<hs::LinkedPc> pcs;
+};
+struct PcState {
+    std::shared_ptr<PcJob> list_job, revoke_job;
+    std::vector<hs::LinkedPc> pcs;
+    bool loaded = false;
+    double loaded_at = -1e9;
+    std::string err;
+    hs::LinkedPc pending;        // the PC the confirmation is about
+    bool confirm_open = false;
+    std::string msg;             // "Signed out PC-LIVING."
+    bool msg_ok = true;
+};
+PcState PC;
+
+void pcs_start_list() {
+    if (PC.list_job || g_headless) return;
+    auto job = std::make_shared<PcJob>();
+    PC.list_job = job;
+    std::thread([job]() {
+        std::string e;
+        job->ok = hs::cloud_list_pcs(&job->pcs, &e);
+        job->err = e;
+        job->done = true;
+    }).detach();
+}
+void pcs_start_revoke(const hs::LinkedPc& pc) {
+    if (PC.revoke_job || g_headless) return;
+    auto job = std::make_shared<PcJob>();
+    PC.revoke_job = job;
+    PC.pending = pc;
+    const std::string dev = pc.dev;
+    std::thread([job, dev]() {
+        std::string e;
+        job->ok = hs::cloud_revoke_pc(dev, &e);
+        job->err = e;
+        job->done = true;
+    }).detach();
+}
+void pcs_poll() {
+    if (PC.list_job && PC.list_job->done) {
+        auto j = PC.list_job;
+        PC.list_job.reset();
+        PC.loaded = true;
+        PC.loaded_at = ImGui::GetTime();
+        if (j->ok) { PC.pcs = j->pcs; PC.err.clear(); }
+        else PC.err = j->err;
+    }
+    if (PC.revoke_job && PC.revoke_job->done) {
+        auto j = PC.revoke_job;
+        PC.revoke_job.reset();
+        if (j->ok) {
+            PC.msg = "Stopped syncing on " + hubui::cloudui::pc_name(PC.pending) + ".";
+            PC.msg_ok = true;
+            PC.pcs.erase(std::remove_if(PC.pcs.begin(), PC.pcs.end(), [&](const hs::LinkedPc& p) { return p.dev == PC.pending.dev; }), PC.pcs.end());
+            PC.loaded_at = -1e9;   // reload once to be sure
+        } else { PC.msg = j->err; PC.msg_ok = false; }
+    }
+}
+void pcs_seed_for_screenshots(const std::string& m) {
+    int64_t now = (int64_t)std::time(nullptr);
+    PC.loaded = true; PC.loaded_at = 1e12;
+    PC.pcs = {{"d-desk", "PC-DESK", now - 86400 * 90, now, true},
+              {"d-living", "PC-LIVING-ROOM", now - 86400 * 40, now - 2 * 3600, false},
+              {"d-laptop", "LAPTOP-KAI", now - 86400 * 12, now - 3 * 86400, false}};
+    if (m == "pcs_confirm") { PC.pending = PC.pcs[1]; PC.confirm_open = true; }
+    if (m == "pcs_done") { PC.msg = "Stopped syncing on PC-LIVING-ROOM."; PC.msg_ok = true; PC.pcs.erase(PC.pcs.begin() + 1); }
+    if (m == "pcs_err") { PC.pcs.clear(); PC.err = "Can't reach the server. Check your internet connection."; }
+}
 
 std::string identity_path() { return hub::data_dir() + "identity.json"; }
 std::string code_path() { return hub::data_dir() + "account_code.txt"; }
@@ -186,6 +264,7 @@ void seed_for_screenshots() {
     const char* s = std::getenv("HUB_SHOT_ACCOUNT");
     if (!s || !g_headless) return;
     std::string m = s;
+    if (m.rfind("pcs", 0) == 0) { pcs_seed_for_screenshots(m); return; }
     if (m == "code" || m == "expired") {
         AC.show_code = true;
         AC.code = m == "expired" ? "K7M2-QX9P" : "K7M2-QX9P-4HTW";
@@ -224,6 +303,7 @@ void account_text_error(const std::string& s) {
 void draw_account_section() {
     seed_for_screenshots();
     poll_jobs();
+    pcs_poll();
 
     begin_panel("set_account");
     section_title(A.st.username_claimed && !A.st.name.empty() ? "Account: " + A.st.name : std::string("Account"));
@@ -240,6 +320,51 @@ void draw_account_section() {
     }
     ImGui::TextUnformatted(("Friend code: " + (mycode.empty() ? std::string("none yet") : mycode)).c_str());
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+
+    /* ---- your PCs (linked PCs) ---- */
+    {
+        namespace cu = hubui::cloudui;
+        settings_label("Your PCs", "The PCs that use this account. \"Stop syncing\" switches cloud saves off on that PC until someone there turns sync back on; "
+                                   "nothing is deleted. It is not a lock-out: to fully lock someone out, create a new account code. You can't do this to the PC you are using.");
+        if (hs::cloud_revoked()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(COL_BAD));
+            ImGui::PushTextWrapPos(0.f);
+            ImGui::TextUnformatted(cu::attention_help("device-revoked").c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+            if (button("Turn sync back on", ImVec2(0, 0), true, !g_headless)) { hs::cloud_sign_in_again(); PC.loaded_at = -1e9; set_toast("Cloud sync is back on. Your saves are syncing.", true, 4.0); }
+        } else {
+            const bool cloud_on = A.st.cloud_enabled;
+            if (cloud_on && !g_headless && !PC.list_job && ImGui::GetTime() - PC.loaded_at > 300.0) pcs_start_list();
+            const int64_t now = (int64_t)std::time(nullptr);
+            for (const auto& p : cu::pcs_sorted(PC.pcs)) {
+                ImGui::PushID(p.dev.c_str());
+                ImGui::PushFont(ui::F.bold);
+                ImGui::TextUnformatted(cu::pc_name(p).c_str());
+                ImGui::PopFont();
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", cu::pc_last_seen(p, now).c_str());
+                if (cu::pc_can_revoke(p)) {
+                    ImGui::SameLine(0, sp(2.f));
+                    if (button("Stop syncing on this PC", ImVec2(0, 0), false, !PC.revoke_job && !g_headless)) { PC.pending = p; PC.confirm_open = true; }
+                }
+                ImGui::PopID();
+            }
+            if (PC.list_job && PC.pcs.empty()) ImGui::TextDisabled("Loading your PCs...");
+            else if (PC.loaded && PC.pcs.empty() && PC.err.empty()) ImGui::TextDisabled(cloud_on ? "No other PCs yet." : "Turn on cloud sync to see your PCs.");
+            if (!PC.err.empty()) account_text_error(PC.err);
+            if (!PC.msg.empty()) {
+                if (PC.msg_ok) { ImGui::PushTextWrapPos(0.f); ImGui::TextUnformatted(PC.msg.c_str()); ImGui::PopTextWrapPos(); }
+                else account_text_error(PC.msg);
+            }
+            if (cloud_on && button(PC.list_job ? "Refreshing..." : "Refresh", ImVec2(0, 0), false, !PC.list_job && !g_headless, ui::Icon::Refresh)) pcs_start_list();
+        }
+    }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
     /* ---- old PC: make a code ---- */
     settings_label("Add this account to another PC", "Your account code: 12 letters and digits. On the other PC choose \"I already have a username on another PC\" in setup "
@@ -316,6 +441,27 @@ void draw_account_section() {
         if (AC.io_ok) { ImGui::PushTextWrapPos(0.f); ImGui::TextUnformatted(AC.io_msg.c_str()); ImGui::PopTextWrapPos(); }
         else account_text_error(AC.io_msg);
     }
+
+    /* ---- confirmation before stopping sync on another PC ---- */
+    if (PC.confirm_open) { ImGui::OpenPopup("Stop syncing on this PC?##pc"); PC.confirm_open = false; }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
+    if (ImGui::BeginPopupModal("Stop syncing on this PC?##pc", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        if (ui::modal_back()) ImGui::CloseCurrentPopup();
+        ImGui::PushFont(ui::F.bold);
+        ImGui::TextUnformatted(hubui::cloudui::pc_revoke_title(PC.pending).c_str());
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        ImGui::PushTextWrapPos(sp(44.f));
+        ImGui::TextUnformatted(hubui::cloudui::pc_revoke_body(PC.pending).c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        if (button("Stop syncing", ImVec2(sp(16.f), sp(5.f)), true, !PC.revoke_job)) { pcs_start_revoke(PC.pending); ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (button("Cancel", ImVec2(sp(12.f), sp(5.f)))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
 
     /* ---- confirmation before replacing this PC's account ---- */
     if (AC.confirm_open) { ImGui::OpenPopup("Replace the account on this PC?##acct"); AC.confirm_open = false; }

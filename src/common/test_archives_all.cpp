@@ -211,7 +211,7 @@ struct Cart {
 };
 
 int main() {
-    fs::path root = fs::temp_directory_path() / L"archives_all_test";
+    fs::path root = fs::temp_directory_path() / (L"archives_all_test_" + std::to_wstring(GetCurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
     library_set_data_dir((root / "data").u8string());

@@ -192,6 +192,7 @@ struct Engine {
     int64_t pull_cool_until = 0;
     bool reminder_pending = false, ack = false, reminded = false;
     std::set<str> registered;                  // uid8 values this device registered for
+    str revoked_uid;                           // uid8 this PC was signed out of from another PC ("" = not revoked); persisted
     bool busy = false;                         // worker is running a job
     int64_t cap_warn_day = 0;
     str migrate_mirror;                        // old v1 mirror folder to delete after the first full pass
@@ -242,7 +243,8 @@ void save_state_file() {
         std::lock_guard<std::mutex> lk(E.mu);
         for (auto& r : E.registered) reg += (reg.empty() ? "" : ",") + json::quote(r);
         o = "{\"device_id\":" + json::quote(E.device_id) + ",\"device_name\":" + json::quote(E.device_name) + ",\"registered\":[" + reg +
-            "],\"ack\":" + (E.ack ? "true" : "false") + ",\"reminded\":" + (E.reminded ? "true" : "false") + "}";
+            "],\"ack\":" + (E.ack ? "true" : "false") + ",\"reminded\":" + (E.reminded ? "true" : "false") +
+            (E.revoked_uid.empty() ? str() : ",\"revoked\":" + json::quote(E.revoked_uid)) + "}";
     }
     write_atomic(fs::u8path(state_path()), o);
 }
@@ -256,6 +258,7 @@ void load_state_file() {
         E.device_name = j.str("device_name");
         E.ack = j.boolean("ack", false);
         E.reminded = j.boolean("reminded", false);
+        E.revoked_uid = j.str("revoked");
         if (const json::Value* r = j.get("registered")) if (r->type == json::Value::Array) for (auto& v : r->a) E.registered.insert(v.s);
     }
     bool fresh = E.device_id.size() < 8;
@@ -407,8 +410,25 @@ void apply_account(const WAccount& a) {
     E.acct.device_name = E.device_name;
     E.acct.queued_games = queued_count_locked();
 }
+/* Another PC of this account signed this one out (server answered 401 device-revoked). Clean signed-out state: cloud work stops
+ * (enabled_now() is false), local saves are untouched, the queue keeps what is waiting, and one event tells the player how to come back. */
+void mark_revoked() {
+    bool first;
+    {
+        std::lock_guard<std::mutex> lk(E.mu);
+        first = E.revoked_uid.empty();
+        E.revoked_uid = uid8();
+        E.acct.known = true;
+        E.acct.online = true;
+        E.acct.needs_attention = true;
+        E.acct.attention = "device-revoked";
+        if (first) push_event_locked(CloudEvent::NeedsAttention, GameId(), "Cloud sync was stopped on this PC from another PC. Turn it back on in Settings > Account.", false);
+    }
+    if (first) { save_state_file(); log_line("this PC was signed out from another PC (device-revoked)"); }
+}
 void apply_outcome_account(const Outcome& o) {
     if (o.k == Outcome::Offline) note_online(false);
+    else if (o.k == Outcome::Auth && o.code == "device-revoked") mark_revoked();
     else if (o.k == Outcome::Auth) {
         std::lock_guard<std::mutex> lk(E.mu);
         E.acct.needs_attention = true;
@@ -517,6 +537,7 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
         }
         int64_t sz = it.local.present ? it.local.size : (it.has_cv ? it.cv.size : 0);
         if (is_shot) it.cls = FileClass::Shot; else
+        if (p == "cover.png") it.cls = FileClass::Settings; else   // the user's custom cover (<game>/cover.png, <= 800 px): tiny, newest wins, never prompts
         it.cls = it.has_cv && !it.cv.cls.empty() ? class_from_name(it.cv.cls, classify_path(p, sz)) : classify_path(p, sz);
         if (it.local.present && it.local.size > kMaxPlain) { it.act = Act::Nothing; items.push_back(it); continue; }
         if ((it.cls == FileClass::State || it.cls == FileClass::Shot) && !sync_states_on()) { it.act = Act::Nothing; items.push_back(it); continue; }
@@ -1096,6 +1117,7 @@ Outcome ensure_device(Api& api) {
 
 bool enabled_now() {
     std::lock_guard<std::mutex> lk(E.mu);
+    if (!E.revoked_uid.empty() && E.revoked_uid == uid8()) return false;   // signed out from another PC: no cloud traffic until "Sign in again"
     return E.started && !E.base_url.empty() && !E.paused && !E.stop;
 }
 
@@ -1425,6 +1447,7 @@ bool work_once() {
     {
         std::lock_guard<std::mutex> lk(E.mu);
         if (E.stop || !E.started || E.paused || E.base_url.empty()) return false;
+        if (!E.revoked_uid.empty() && E.revoked_uid == uid8()) return false;   // signed out from another PC: queue waits for "Sign in again"
         do_start = E.startup_wanted;
         E.startup_wanted = false;
     }
@@ -1610,6 +1633,7 @@ void cloud_engine_stop() {
     E.base = BaseStore();
     E.base_loaded = false;
     E.registered.clear();
+    E.revoked_uid.clear();            // re-read from cloud-state.json on the next start
     E.init_total = E.init_done = 0;
     E.init_large_queued = false;
     E.pull_cool_until = 0;
@@ -1797,6 +1821,7 @@ CloudAccountInfo cloud_account() {
     CloudAccountInfo a = E.acct;
     a.queued_games = queued_count_locked();
     if (E.paused) a.paused_by_server = false;
+    if (!E.revoked_uid.empty() && E.revoked_uid == uid8()) { a.known = true; a.needs_attention = true; a.attention = "device-revoked"; }
     return a;
 }
 
@@ -1978,6 +2003,63 @@ void cloud_set_device_name(const std::string& name) {
     save_state_file();
     cloud_wake_queue();
 }
+bool cloud_revoked() { std::lock_guard<std::mutex> lk(E.mu); return !E.revoked_uid.empty() && E.revoked_uid == uid8(); }
+
+void cloud_sign_in_again() {
+    {
+        std::lock_guard<std::mutex> lk(E.mu);
+        E.revoked_uid.clear();
+        E.device_id = "d-" + random_hex(10);      // the revoked id stays refused by the server; this PC becomes a new device
+        E.base.device = E.device_id;
+        E.registered.clear();
+        E.acct.needs_attention = false;
+        E.acct.attention.clear();
+    }
+    save_state_file();
+    cloud_sync_all_now();
+}
+
+bool cloud_list_pcs(std::vector<LinkedPc>* out, std::string* err) {
+    auto fail = [&](const str& m) { if (err) *err = m; return false; };
+    if (cloud_revoked()) return fail("Cloud sync was stopped on this PC from another PC.");
+    if (!enabled_now() || !refresh_identity()) return fail("Cloud saves are not available right now.");
+    Api api(3000, 10000);
+    HttpReply r = api.req("GET", "/saves/v2/devices");
+    Outcome o = oc_of(r);
+    apply_outcome_account(o);
+    if (!o.ok()) return fail(o.k == Outcome::Offline ? "Can't reach the server. Check your internet connection." : "Could not load your PCs right now.");
+    json::Value j;
+    if (!json::parse(r.body, &j) || j.type != json::Value::Object) return fail("Could not read the list of PCs.");
+    if (out) {
+        out->clear();
+        if (const json::Value* a = j.get("devices")) if (a->type == json::Value::Array)
+            for (auto& d : a->a) {
+                if (d.type != json::Value::Object) continue;
+                LinkedPc p;
+                p.dev = d.str("dev"); p.name = d.str("name"); p.first = d.i64("first", 0); p.last_seen = d.i64("lastSeen", 0);
+                p.current = d.boolean("current", false);
+                if (!p.dev.empty()) out->push_back(p);
+            }
+    }
+    return true;
+}
+
+bool cloud_revoke_pc(const std::string& dev, std::string* err) {
+    auto fail = [&](const str& m) { if (err) *err = m; return false; };
+    str mine;
+    { std::lock_guard<std::mutex> lk(E.mu); mine = E.device_id; }
+    if (dev.empty() || dev == mine) return fail("This PC can't sign itself out here.");
+    if (!enabled_now() || !refresh_identity()) return fail("Cloud saves are not available right now.");
+    Api api(3000, 10000);
+    HttpReply r = api.req("POST", "/saves/v2/device/revoke", "{\"dev\":" + json::quote(dev) + "}");
+    Outcome o = oc_of(r);
+    apply_outcome_account(o);
+    if (o.ok()) return true;
+    if (r.status == 404) return fail("That PC is no longer on your account.");
+    if (r.status == 400 && o.code == "cannot-revoke-self") return fail("This PC can't sign itself out here.");
+    return fail(o.k == Outcome::Offline ? "Can't reach the server. Check your internet connection." : "Could not sign that PC out. Try again later.");
+}
+
 std::string cloud_device_name() { std::lock_guard<std::mutex> lk(E.mu); return E.device_name.empty() ? computer_name() : E.device_name; }
 bool cloud_recovery_acknowledged() { std::lock_guard<std::mutex> lk(E.mu); return E.ack; }
 void cloud_recovery_set_acknowledged(bool v) { { std::lock_guard<std::mutex> lk(E.mu); E.ack = v; } save_state_file(); }

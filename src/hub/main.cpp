@@ -1,6 +1,7 @@
 /* RetroHub.exe entry point. */
 #include "app.h"
 #include "prefs.h"
+#include "tv_logic.h"
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
@@ -109,6 +110,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         return 1;
     }
     SDL_SetWindowMinimumSize(A.win, (int)(960 * S), (int)(600 * S));
+    S = tvmode::init(A.win, g_headless, S, hubtv::has_tv_flag(GetCommandLineW()) || std::getenv("HUB_TV") != nullptr, A.st.tv_start, win_h);   // TV mode scale (fonts are built next)
     SDL_SysWMinfo wm;
     SDL_VERSION(&wm.version);
     if (SDL_GetWindowWMInfo(A.win, &wm)) A.hwnd = wm.info.win.window;
@@ -126,6 +128,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     io.IniFilename = nullptr;
     ui::setup_fonts(S);
     ui::setup_theme(S);
+    theme_init();
     ImGui_ImplSDL2_InitForSDLRenderer(A.win, ren);
     ImGui_ImplSDLRenderer2_Init(ren);
     ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);   // any connected pad drives the UI, hot-plug included
@@ -154,6 +157,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 if (route_wheel(io.MousePos.x, io.MousePos.y, wx, wy)) continue;   // over a shelf: scroll that row, not the page
             }
             ImGui_ImplSDL2_ProcessEvent(&e);
+            tvmode::handle_event(e, io.WantTextInput);
             if (e.type == SDL_DROPFILE && e.drop.file) { add_games_drop(e.drop.file); SDL_free(e.drop.file); }
             if (e.type == SDL_QUIT) running = false;
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) running = false;
@@ -173,6 +177,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             apply_scan();
         }
         poll_process();
+        tvmode::tick(A.win, A.proc != nullptr);
         poll_np3ds();
         poll_rplay();
         kt_tick();
@@ -222,6 +227,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         if (SDL_GetWindowFlags(A.win) & SDL_WINDOW_MINIMIZED) { SDL_Delay(50); continue; }
 
         osk::pre_frame(io);
+        tvmode::frame_begin(A.win, ren);
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         SH.pre_frame(io);

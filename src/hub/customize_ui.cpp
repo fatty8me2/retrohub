@@ -10,9 +10,10 @@
 #define STBI_NO_LINEAR
 #define STBI_NO_HDR
 #include "third_party/stb_image.h"
+#include <miniz.h>   // PNG encoder for the vault copy of a cover
 
 /* ---------- Make it yours: per-game rename + custom cover (L3) and custom shelves (L4) ----------
- * Data: synced prefs (common/prefs.h): renames[key], covers[key], user_shelves. This file only uses the setters; the merge is prefs.cpp'CU.
+ * Data: synced prefs (common/prefs.h): renames[key], covers[key], user_shelves. This file only uses the setters; the merge is prefs.cpp's.
  *  - A rename is applied to A.lib[].title (so tiles, hero, details and search all show it); the scanned name is kept here
  *    (custom_original_title) for art/genre lookups and so search still matches it (ListItem::alt_title).
  *  - A custom cover replaces the box art in art_for_entry (tiles.cpp).
@@ -94,6 +95,81 @@ Tex* tex_for(const std::string& path) {
     return nt.t ? &CU.tex[path] : nullptr;
 }
 
+/* PNG / BMP file -> RGBA pixels (top-down). */
+bool decode_rgba(const std::string& path, std::vector<unsigned char>* px, int* w, int* h) {
+    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
+    std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (data.empty() || data.size() > (48u << 20)) return false;
+    if (path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".bmp") == 0) {
+        SDL_RWops* rw = SDL_RWFromConstMem(data.data(), (int)data.size());
+        SDL_Surface* s = rw ? SDL_LoadBMP_RW(rw, 1) : nullptr;
+        if (!s) return false;
+        SDL_Surface* c = SDL_ConvertSurfaceFormat(s, SDL_PIXELFORMAT_ABGR8888, 0);
+        SDL_FreeSurface(s);
+        if (!c) return false;
+        *w = c->w; *h = c->h;
+        px->resize((size_t)c->w * c->h * 4);
+        for (int y = 0; y < c->h; ++y) std::memcpy(px->data() + (size_t)y * c->w * 4, (unsigned char*)c->pixels + (size_t)y * c->pitch, (size_t)c->w * 4);
+        SDL_FreeSurface(c);
+        return true;
+    }
+    int n = 0;
+    unsigned char* p = stbi_load_from_memory((const unsigned char*)data.data(), (int)data.size(), w, h, &n, 4);
+    if (!p) return false;
+    px->assign(p, p + (size_t)*w * *h * 4);
+    stbi_image_free(p);
+    return *w > 0 && *h > 0;
+}
+
+/* Where a game's own cover lives in the vault: <vault>/<system>/<key>/cover.png (the cloud engine syncs it with the game's other files). */
+std::string vault_cover_path(const hub::GameEntry& e) {
+    std::string d = hub::saves::game_dir(sys_short(e), e.key);
+    while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
+    return d + "\\cover.png";
+}
+
+/* Decode `src` (PNG or BMP), shrink it to at most 800 px on the long side (a cover is a small picture: keeps the synced file tiny),
+ * write it as PNG to the vault path (temp file + rename). */
+bool write_vault_cover(const hub::GameEntry& e, const std::string& src, std::string* dst) {
+    std::vector<unsigned char> px; int w = 0, h = 0;
+    if (!decode_rgba(src, &px, &w, &h)) return false;
+    const int longest = std::max(w, h);
+    if (longest > 800) {   // integer box-average downscale
+        const int k = (longest + 799) / 800;
+        const int nw = std::max(1, w / k), nh = std::max(1, h / k);
+        std::vector<unsigned char> o((size_t)nw * nh * 4);
+        for (int y = 0; y < nh; ++y)
+            for (int x = 0; x < nw; ++x) {
+                unsigned sum[4] = {0, 0, 0, 0};
+                for (int dy = 0; dy < k; ++dy)
+                    for (int dx = 0; dx < k; ++dx) {
+                        const unsigned char* s = &px[((size_t)(y * k + dy) * w + (x * k + dx)) * 4];
+                        for (int c = 0; c < 4; ++c) sum[c] += s[c];
+                    }
+                for (int c = 0; c < 4; ++c) o[((size_t)y * nw + x) * 4 + c] = (unsigned char)(sum[c] / (unsigned)(k * k));
+            }
+        px.swap(o); w = nw; h = nh;
+    }
+    size_t len = 0;
+    void* png = tdefl_write_image_to_png_file_in_memory_ex(px.data(), w, h, 4, &len, 6, MZ_FALSE);
+    if (!png) return false;
+    const std::string out = vault_cover_path(e);
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::u8path(out).parent_path(), ec);
+    const std::string tmp = out + ".hubtmp";
+    bool ok = false;
+    {
+        std::ofstream f(std::filesystem::u8path(tmp), std::ios::binary | std::ios::trunc);
+        f.write((const char*)png, (std::streamsize)len);
+        ok = f.good();
+    }
+    mz_free(png);
+    if (ok) { std::filesystem::rename(std::filesystem::u8path(tmp), std::filesystem::u8path(out), ec); ok = !ec; }
+    if (!ok) std::filesystem::remove(std::filesystem::u8path(tmp), ec);
+    if (ok) *dst = out;
+    return ok;
+}
+
 /* ---- prefs cache ---- */
 
 std::string prefs_sig() {
@@ -131,6 +207,18 @@ bool commit(const std::function<bool(hub::prefs::Prefs&)>& f) {
     if (f(p)) ok = hub::prefs::save(root, p);
     reload(true);
     return ok;
+}
+
+const hub::GameEntry* entry_of(const std::string& key);
+
+/* Cover from any picture: a copy goes into the vault (so it syncs and survives the source being moved), prefs store that copy's path. */
+bool set_cover(const std::string& key, const std::string& src) {
+    std::string path = src;
+    if (const hub::GameEntry* e = entry_of(key)) {
+        std::string d;
+        if (write_vault_cover(*e, src, &d)) path = d;
+    }
+    return commit([&](hub::prefs::Prefs& p) { auto m = p.covers; m[key] = path; return hub::prefs::set_covers(&p, m); });
 }
 
 bool commit_shelves(const std::function<bool(Shelves*)>& edit) {
@@ -218,7 +306,7 @@ void draw_shots() {
         if (hot) ui::focus_ring(dl, p, p1, sp(1.f));
         ImGui::PopID();
         if (pick) {
-            bool ok = commit([&](hub::prefs::Prefs& pr) { auto m = pr.covers; m[CU.key] = path; return hub::prefs::set_covers(&pr, m); });
+            bool ok = set_cover(CU.key, path);
             push_toast(ok ? "Cover set from the screenshot" : "Couldn't save the cover", ok ? COL_GOOD : COL_BAD, 3.0);
             ImGui::CloseCurrentPopup();
         }
@@ -387,7 +475,7 @@ void draw_customize() {
             if (!tex_for(f)) push_toast("Couldn't read that picture (PNG or BMP)", COL_BAD, 4.0);
             else {
                 const std::string key = e.key;
-                bool ok = commit([&](hub::prefs::Prefs& p) { auto m = p.covers; m[key] = f; return hub::prefs::set_covers(&p, m); });
+                bool ok = set_cover(key, f);
                 push_toast(ok ? "Cover set" : "Couldn't save the cover", ok ? COL_GOOD : COL_BAD, 3.0);
             }
         }
@@ -405,6 +493,7 @@ void draw_customize() {
         if (ui::button("Back to box art", ImVec2(0, sp(4.f)))) {
             const std::string key = e.key;
             commit([&](hub::prefs::Prefs& p) { auto m = p.covers; m.erase(key); return hub::prefs::set_covers(&p, m); });
+            std::error_code ec; std::filesystem::remove(std::filesystem::u8path(vault_cover_path(e)), ec);
         }
     }
 
@@ -425,6 +514,7 @@ void draw_customize() {
                 bool a = hub::prefs::set_renames(&p, r), b = hub::prefs::set_covers(&p, c);
                 return a || b;
             });
+            { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(vault_cover_path(e)), ec); }
             CU.name_key.clear();
             push_toast("Back to the original name and cover", COL_GOOD, 2.5);
         }
@@ -457,10 +547,16 @@ bool custom_cover(const std::string& key, SDL_Texture** tex, int* w, int* h) {
     auto it = CU.P.covers.find(key);
     if (it == CU.P.covers.end() || it->second.empty()) return false;
     Tex* t = tex_for(it->second);
+    if (!t) {   // the stored path is from another PC (or moved): this PC's synced vault copy of the cover
+        const hub::GameEntry* e = find_entry(key);
+        if (e) t = tex_for(vault_cover_path(*e));
+    }
     if (!t) return false;
     *tex = t->t; *w = t->w; *h = t->h;
     return true;
 }
+
+bool custom_set_cover(const std::string& key, const std::string& path) { return !key.empty() && set_cover(key, path); }
 
 void custom_open_customize(const std::string& key) {
     CU.key = key;
@@ -488,6 +584,7 @@ void custom_draw(int loc) {
                 if (m == "customize" || m == "shots") { A.show_details = true; custom_open_customize(A.sel_game); CU.shots.parent = LocCustomize; CU.shots.want = m == "shots"; }
                 else if (m == "picker") custom_open_picker(A.sel_game, false);
                 else if (m == "manager") custom_open_manager();
+                else if (m.compare(0, 6, "cover:") == 0) custom_set_cover(A.sel_game, m.substr(6));   // QA: copy this picture in as the selected game's cover
             }
         }
     }
@@ -516,7 +613,9 @@ void custom_home_shelves(float avail, float tw, float th, float gap, float bleed
         });
         ImGui::Dummy(ImVec2(0, sp(1.f)));
     }
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + bleed);
-    if (ui::button(CU.P.user_shelves.empty() ? "Make your own shelf..." : "Edit your shelves...", ImVec2(0, 0), false, true, ui::Icon::Plus)) custom_open_manager();
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (!CU.P.user_shelves.empty()) {   // only once a shelf exists; before that, Manage shelves is reached from "Add to shelf..."
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + bleed);
+        if (ui::button("Edit your shelves...", ImVec2(0, 0), false, true, ui::Icon::Plus)) custom_open_manager();
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
 }

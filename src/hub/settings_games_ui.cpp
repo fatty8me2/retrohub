@@ -7,7 +7,7 @@ hub::gs::Store GSTORE;
 void gs_load() { GSTORE.load(hub::saves::vault_dir()); }
 
 hub::gs::Values gs_values_for(const hub::GameEntry& e) {
-    return hubui::effective_values(GSTORE, e.system, e.key, A.st.fullscreen);
+    return hubui::effective_values(GSTORE, e.system, e.key, A.st.fullscreen, A.st.volume);
 }
 
 namespace {
@@ -60,15 +60,16 @@ bool option_row(const hub::gs::Option& o, const std::string& cur, int src, int l
 
 void options_grouped(hub::System sys, const std::string& game_key, int level) {
     auto opts = hub::gs::options_for(sys);
-    const char* order[] = {"Graphics", "Display", "Gameplay", "Advanced"};
+    const char* order[] = {"Graphics", "Display", "Audio", "Gameplay", "Advanced"};
     for (const char* grp : order) {
         bool any = false;
         for (auto* o : opts) {
             if (std::string(group_label(o->group)) != grp) continue;
             if (!any) { ImGui::Dummy(ImVec2(0, sp(0.4f))); ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted(grp); ImGui::PopFont(); any = true; }
-            hub::gs::Values v = level == 2 ? hubui::effective_values(GSTORE, sys, game_key, A.st.fullscreen)
+            hub::gs::Values v = level == 2 ? hubui::effective_values(GSTORE, sys, game_key, A.st.fullscreen, A.st.volume)
                                            : GSTORE.resolve(sys, "");
             if (level == 1 && o->key == "fullscreen" && GSTORE.source(sys, "", "fullscreen") == 0) v["fullscreen"] = A.st.fullscreen ? "true" : "false";
+            if (level == 1 && o->key == "volume" && GSTORE.source(sys, "", "volume") == 0) v["volume"] = std::to_string(A.st.volume);
             int src = GSTORE.source(sys, game_key, o->key);
             std::string nv;
             if (option_row(*o, v[o->key], src, level, &nv)) {

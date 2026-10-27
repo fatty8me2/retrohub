@@ -589,7 +589,7 @@ int main(int argc, char** argv) {
         return ok ? 0 : 1;
     }
     std::error_code ec;
-    fs::path dir = fs::temp_directory_path(ec) / "hublibrary_test_dir";
+    fs::path dir = fs::temp_directory_path(ec) / ("hublibrary_test_dir_" + std::to_string(GetCurrentProcessId()));
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
 
@@ -633,7 +633,7 @@ int main(int argc, char** argv) {
         CHECK(gc_serial_for_name("Totally Unknown Game (USA).7z").empty());
         CHECK(find_game_for("gc", "GXXE01", "") && find_game_for("gc", "GMSE01", "") && find_game_for("gc", "GP6E01", ""));
 
-        fs::path gdir = fs::temp_directory_path() / "hublibrary_gc_archive";
+        fs::path gdir = fs::temp_directory_path() / ("hublibrary_gc_archive_" + std::to_string(GetCurrentProcessId()));
         std::error_code gec;
         fs::remove_all(gdir, gec);
         fs::create_directories(gdir / "data");

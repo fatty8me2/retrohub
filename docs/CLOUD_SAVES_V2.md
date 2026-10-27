@@ -357,3 +357,10 @@ the key or the identity. There are no cloud-saves endpoints for this (the earlie
 - Cloud data is always keyed by the internal account uid. The visible username maps to the uid and can be renamed without moving any data.
   A PC added with either code kind is the same uid with a new device id, so it needs nothing else to see the cloud saves.
 - `GET /saves/v2/status` no longer has `account.recovery`; the client knows locally whether it has set a persistent code.
+## Linked PCs (Settings > Account > Your PCs)
+- `GET /saves/v2/devices` -> `{devices:[{dev,name,first,lastSeen,current}], max:8}` (meta class, counted against the daily guard and the 35% saves share like any other route). `current` marks the PC that sent `X-RH-Device`. The hub asks when the Account page opens (then at most every 5 minutes, or on Refresh); never a poll.
+- `POST /saves/v2/device/revoke` `{dev}` makes the Worker refuse another PC's device id: the device row and its leases go, and the id is remembered in the `revoked` table (64 per account). The UI calls this **"Stop syncing on this PC"**. The calling PC (needs a valid `X-RH-Device`) can never do it to itself (`400 cannot-revoke-self`); an unknown id is `404`.
+- A revoked device id is refused on every v2 route with `401 device-revoked` (also when it tries to register again).
+- **This is not a lock-out.** Every PC holds the account secret, so a PC that wants back in can register a new device id. The confirmation says so: it stops cloud saves there until someone on that PC turns sync back on, and to fully lock someone out you create a new account code. (Per-device keys are deliberately not built.)
+- Client (`cloud_engine`): `device-revoked` stops all cloud traffic for that account on this PC (`cloud_revoked()`, persisted as `revoked` in `cloud-state.json`; the queue keeps waiting), local saves stay untouched, one NeedsAttention event/toast, and the Account page shows "Turn sync back on" (`cloud_sign_in_again()`: new device id, sync resumes).
+- Free tier: no R2 operations; 1 DO request per list/revoke; no background polling.
