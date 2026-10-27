@@ -76,6 +76,7 @@ GameId id_of_wire(const str& gkey) {
     size_t p = gkey.find('/');
     return p == str::npos ? GameId{gkey, ""} : GameId{gkey.substr(0, p), gkey.substr(p + 1)};
 }
+constexpr size_t kRivalsSyncMax = 400;   // matches synced per account (keep in step with hubui::rivals::kMaxStored)
 bool is_account_game(const GameId& g) { return g.system == "_account"; }   // wire game "_account/_": the synced prefs (src/common/prefs.h)
 fs::path game_root(const GameId& g) {   // does not create anything
     str v = vault_dir();
@@ -449,7 +450,20 @@ std::map<str, LFile> scan_game(const GameId& g) {
     if (!fs::is_directory(root, ec)) return out;
     std::vector<fs::path> acct_only;
     const bool acct = is_account_game(g);
-    if (acct) { fs::path f = root / "_account" / "prefs.json"; if (fs::is_regular_file(f, ec)) acct_only.push_back(f); }
+    if (acct) {
+        fs::path f = root / "_account" / "prefs.json";
+        if (fs::is_regular_file(f, ec)) acct_only.push_back(f);
+        /* rivalries (src/hub/rivals_logic.h): one small append-only JSON per match, so two PCs never conflict. Capped well under
+         * the server's per-game file limit; the hub prunes the oldest beyond the same cap. */
+        std::vector<std::pair<int64_t, fs::path>> rv;
+        for (auto& e : fs::directory_iterator(root / "_account" / "rivals", ec)) {
+            if (!e.is_regular_file(ec) || e.path().extension() != ".json") continue;
+            rv.push_back({file_mtime_unix(e.path().u8string()), e.path()});
+        }
+        std::sort(rv.begin(), rv.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        if (rv.size() > kRivalsSyncMax) rv.resize(kRivalsSyncMax);
+        for (auto& r : rv) acct_only.push_back(r.second);
+    }
     fs::recursive_directory_iterator rit, rend;
     if (!acct) rit = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
     size_t ai = 0;
@@ -1307,7 +1321,7 @@ void queue_initial_backup_locked_free() {
     }
     {   // the synced account prefs ride along as the pseudo game "_account/_"
         std::error_code ec2;
-        if (fs::is_regular_file(fs::u8path(v) / "_account" / "prefs.json", ec2)) games.push_back(GameId{"_account", "_"});
+        if (fs::is_regular_file(fs::u8path(v) / "_account" / "prefs.json", ec2) || fs::is_directory(fs::u8path(v) / "_account" / "rivals", ec2)) games.push_back(GameId{"_account", "_"});
     }
     {
         std::lock_guard<std::mutex> lk(E.mu);

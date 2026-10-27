@@ -208,5 +208,77 @@ void group_fake_seed() {
     GRP.hist.add({Kind::Invite, "kaiuid", "Kai", "mk64", "Mario Kart 64", "ZXCV23", "", now - 3 * 3600000LL, now - 2 * 3600000LL, true, false});
     GRP.hist.add({Kind::Invite, "miauid", "Mia", "mk64", "Mario Kart 64", "K7M2QX", "", now - 4 * 60000LL, now + 25 * 60000LL, false, false});
     GRP.hist.add({Kind::FriendRequest, "oliuid", "Oliver", "", "", "", "", now - 60000, 0, false, false});
-    GRP.hist.dirty = false;
+    GRP.hist.dirty = false; rivals_fake_seed();
+}
+
+/* ---- rivalries (Wave 4 S2): see rivals_logic.h ---- */
+namespace {
+std::vector<hubui::rivals::Match>& rv_matches() {
+    static std::vector<hubui::rivals::Match> ms;
+    static bool loaded = false;
+    if (!loaded) { loaded = true; if (!g_headless && !FR.fake) ms = hubui::rivals::load_matches(dir_a(), dir_b()); }
+    return ms;
+}
+}
+void rivals_ingest(const std::string& result_file) {
+    std::error_code ec;
+    auto p = std::filesystem::u8path(result_file);
+    if (!std::filesystem::exists(p, ec)) return;   // no match finished (menu quit, offline, crash)
+    std::string text = hubui::group::slurp(p);
+    std::filesystem::remove(p, ec);
+    hubui::rivals::RawResult raw;
+    if (!hubui::rivals::parse_result(text, &raw)) return;
+    int me = room_my_slot();
+    std::vector<hubui::rivals::SlotInfo> slots;
+    std::vector<FriendRef> frs;
+    for (auto& f : fr_friends()) frs.push_back({f.uid, f.name, f.status.lobby_code});
+    for (auto& m : room_members()) {
+        hubui::rivals::SlotInfo s;
+        s.slot = m.slot; s.name = m.name; s.me = (m.slot == me);
+        if (!s.me) { auto hit = match_friends({m.name}, frs, A.code); if (!hit.empty()) s.uid = hit[0].uid; }
+        slots.push_back(s);
+    }
+    hubui::rivals::Match m = hubui::rivals::build_match(raw, slots, wall_ms());
+    if (!hubui::rivals::has_me(m)) return;
+    if (!g_headless && !FR.fake) { hubui::rivals::save_match(m, dir_a(), dir_b()); hub::saves::cloud_account_prefs_changed(); }   // the vault copy syncs with the account
+    auto& v = rv_matches();
+    for (auto& x : v) if (x.id == m.id) return;
+    v.insert(v.begin(), m);
+}
+std::string rivals_record_text(const std::string& uid, const std::string& name) {
+    auto h = hubui::rivals::head_to_head(rv_matches(), uid);
+    return h.games() ? hubui::rivals::record_text(h, name) : std::string();
+}
+std::string rivals_mains_text(const std::string& uid) { return hubui::rivals::mains_text(hubui::rivals::head_to_head(rv_matches(), uid)); }
+std::string rivals_last5(const std::string& uid) { return hubui::rivals::head_to_head(rv_matches(), uid).last5; }
+std::string rivals_sessions_text(const std::string& uid) { return hubui::rivals::sessions_text(hubui::rivals::sessions_together(GRP.groups, uid)); }
+void rivals_draw_card() {
+    auto rv = hubui::rivals::top_rivals(rv_matches(), 3);
+    if (rv.empty()) return;
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted("Rivals");
+    ImGui::PopFont();
+    for (auto& r : rv) {
+        ImGui::TextUnformatted(ui::ellipsize(ui::F.body, ui::F.body->FontSize, hubui::rivals::record_text(r.h, r.name), sp(34.f)).c_str());
+        for (size_t i = 0; i < r.h.last5.size(); ++i) {
+            char c = r.h.last5[i];
+            ImGui::SameLine(0, sp(i ? 0.7f : 2.f));
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(c == 'W' ? ui::GOOD : c == 'L' ? ui::BAD : ui::TEXT3), "%c", c);
+        }
+    }
+}
+void rivals_fake_seed() {
+    using namespace hubui::rivals;
+    auto& v = rv_matches();
+    v.clear();
+    auto mk = [](const char* id, int64_t at, int mr, int tr, int mc, int tc, const char* uid, const char* nm) {
+        Match m; m.id = id; m.game = "smash64"; m.at = at;
+        Player a; a.me = true; a.name = "You"; a.rank = mr; a.ch = mc;
+        Player b; b.uid = uid; b.name = nm; b.rank = tr; b.ch = tc;
+        m.players = {a, b}; return m; };
+    const int mia[] = {1, 1, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}, kai[] = {2, 1, 2, 2, 1};
+    for (int i = 0; i < 12; ++i) v.insert(v.begin(), mk(("fm" + std::to_string(i)).c_str(), 1000 + i, mia[i], 3 - mia[i], 0, 1, "miauid", "Mia"));
+    for (int i = 0; i < 5; ++i) v.insert(v.begin(), mk(("fk" + std::to_string(i)).c_str(), 2000 + i, kai[i], 3 - kai[i], 7, 9, "kaiuid", "Kai"));
+    std::stable_sort(v.begin(), v.end(), [](const Match& a, const Match& b) { return a.at > b.at; });
 }
