@@ -1083,7 +1083,7 @@ static uint32_t scripted_pad(uint64_t frame, bool* active) {
             if (c == std::string::npos || ln[0] == '#') continue;
             uint64_t fr = strtoull(ln.c_str(), nullptr, 10);
             std::string b = ln.substr(c + 1);
-            while (!b.empty() && (b.back() == '' || b.back() == ' ')) b.pop_back();
+            while (!b.empty() && (b.back() == '\r' || b.back() == ' ')) b.pop_back();
             if (b.compare(0, 6, "@shot ") == 0) { g_script_shots.push_back({fr, b.substr(6), false}); continue; }
             uint32_t m = 0;
             if (b.size() > 2 && b[0] == '0' && b[1] == 'x') m = (uint32_t)strtoul(b.c_str(), nullptr, 16);
