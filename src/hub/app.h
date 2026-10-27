@@ -82,12 +82,12 @@ using ui::with_alpha;
 
 /* shared constants (internal linkage: every file gets its own copy) */
 static float& S = ui::S;  // DPI scale (lives in ui_kit)
-static const ImU32 COL_ACCENT = ui::ACCENT;
-static const ImU32 COL_GOOD = ui::GOOD;
-static const ImU32 COL_BAD = ui::BAD;
-static const ImU32 COL_WARN = ui::WARN;
-static const ImU32 COL_PANEL = ui::PANEL;
-static const ImU32 COL_PANEL2 = ui::PANEL2;
+static const ImU32& COL_ACCENT = ui::ACCENT;
+static const ImU32& COL_GOOD = ui::GOOD;
+static const ImU32& COL_BAD = ui::BAD;
+static const ImU32& COL_WARN = ui::WARN;
+static const ImU32& COL_PANEL = ui::PANEL;
+static const ImU32& COL_PANEL2 = ui::PANEL2;
 static const char* kNativeKey = "native:smash64";
 static const float kTileAspect = 1.3f;   // tile width / height, shared by shelves, grid and hero art
 static const ImU32 COL_REMIX = IM_COL32(250, 150, 40, 255);
@@ -422,6 +422,11 @@ void guest_apply_launch(const std::string& body);                               
 
 /* app.cpp */
 extern App A;
+/* theme_ui.cpp: runtime palette + picker (Settings > General). Choice lives in the synced prefs `theme` field. */
+void theme_init();                     // after ImGui setup: load the saved choice (HUB_THEME=<id>[+cover] overrides it in screenshots)
+void theme_tick();                     // once per frame: applies preview / accent animation
+void theme_hero_art(SDL_Texture* tex); // the Home hero's cover, feeds "Accent from cover"
+void theme_settings_row();             // the picker with live preview
 extern bool g_headless;   // HUB_SCREENSHOT run: never launch games or touch the lobby
 
 /* launch.cpp */

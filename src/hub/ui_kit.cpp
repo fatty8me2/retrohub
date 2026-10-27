@@ -19,6 +19,25 @@ Fonts F;
 
 static const float kPi = 3.14159265f;
 
+#define UI_PAL(n, slot) ImU32 n = hubtheme::preset(hubtheme::P_MIDNIGHT).c[hubtheme::slot];
+UI_PAL(BG, S_BG) UI_PAL(SIDEBAR, S_SIDEBAR) UI_PAL(PANEL, S_PANEL) UI_PAL(PANEL2, S_PANEL2) UI_PAL(PANEL3, S_PANEL3)
+UI_PAL(HAIRLINE, S_HAIRLINE) UI_PAL(TEXT, S_TEXT) UI_PAL(TEXT2, S_TEXT2) UI_PAL(TEXT3, S_TEXT3) UI_PAL(ACCENT, S_ACCENT)
+UI_PAL(GOOD, S_GOOD) UI_PAL(BAD, S_BAD) UI_PAL(WARN, S_WARN) UI_PAL(FRAME, S_FRAME) UI_PAL(FRAME_HOV, S_FRAME_HOV)
+UI_PAL(FRAME_ACT, S_FRAME_ACT) UI_PAL(HILITE, S_HILITE) UI_PAL(GHOST, S_GHOST) UI_PAL(HERO_BASE, S_HERO_BASE) UI_PAL(SCRIM, S_SCRIM)
+#undef UI_PAL
+
+static void apply_style_colors();
+
+void apply_palette(const hubtheme::Palette& p) {
+    using namespace hubtheme;
+    BG = p.c[S_BG]; SIDEBAR = p.c[S_SIDEBAR]; PANEL = p.c[S_PANEL]; PANEL2 = p.c[S_PANEL2]; PANEL3 = p.c[S_PANEL3];
+    HAIRLINE = p.c[S_HAIRLINE]; TEXT = p.c[S_TEXT]; TEXT2 = p.c[S_TEXT2]; TEXT3 = p.c[S_TEXT3]; ACCENT = p.c[S_ACCENT];
+    GOOD = p.c[S_GOOD]; BAD = p.c[S_BAD]; WARN = p.c[S_WARN]; FRAME = p.c[S_FRAME]; FRAME_HOV = p.c[S_FRAME_HOV];
+    FRAME_ACT = p.c[S_FRAME_ACT]; HILITE = p.c[S_HILITE]; GHOST = p.c[S_GHOST]; HERO_BASE = p.c[S_HERO_BASE]; SCRIM = p.c[S_SCRIM];
+    if (ImGui::GetCurrentContext()) apply_style_colors();
+}
+ImU32 veil(float a) { return (HILITE & 0x00FFFFFFu) | ((ImU32)(std::max(0.f, std::min(1.f, a)) * 255.f + 0.5f) << 24); }
+
 ImU32 mix(ImU32 a, ImU32 b, float t) {
     ImVec4 x = ImGui::ColorConvertU32ToFloat4(a), y = ImGui::ColorConvertU32ToFloat4(b);
     return ImGui::ColorConvertFloat4ToU32(ImVec4(x.x + (y.x - x.x) * t, x.y + (y.y - x.y) * t, x.z + (y.z - x.z) * t, x.w + (y.w - x.w) * t));
@@ -93,20 +112,24 @@ void setup_theme(float scale) {
     s.PopupBorderSize = 1;
     s.ScaleAllSizes(scale);
 
-    ImVec4* c = s.Colors;
+    apply_style_colors();
+}
+
+static void apply_style_colors() {
+    ImVec4* c = ImGui::GetStyle().Colors;
     auto cv = [](ImU32 u) { return ImGui::ColorConvertU32ToFloat4(u); };
     c[ImGuiCol_WindowBg] = cv(BG);
     c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_PopupBg] = cv(PANEL);
-    c[ImGuiCol_Border] = cv(IM_COL32(255, 255, 255, 26));
+    c[ImGuiCol_Border] = cv(veil(26/255.f));
     c[ImGuiCol_Text] = cv(TEXT);
     c[ImGuiCol_TextDisabled] = cv(TEXT2);
     c[ImGuiCol_Button] = cv(PANEL2);
     c[ImGuiCol_ButtonHovered] = cv(PANEL3);
     c[ImGuiCol_ButtonActive] = cv(mix(PANEL3, ACCENT, 0.4f));
-    c[ImGuiCol_FrameBg] = cv(IM_COL32(30, 32, 42, 255));
-    c[ImGuiCol_FrameBgHovered] = cv(IM_COL32(40, 43, 56, 255));
-    c[ImGuiCol_FrameBgActive] = cv(IM_COL32(46, 49, 64, 255));
+    c[ImGuiCol_FrameBg] = cv(FRAME);
+    c[ImGuiCol_FrameBgHovered] = cv(FRAME_HOV);
+    c[ImGuiCol_FrameBgActive] = cv(FRAME_ACT);
     c[ImGuiCol_SliderGrab] = cv(ACCENT);
     c[ImGuiCol_SliderGrabActive] = cv(mix(ACCENT, IM_COL32_WHITE, 0.25f));
     c[ImGuiCol_CheckMark] = cv(ACCENT);
@@ -114,13 +137,13 @@ void setup_theme(float scale) {
     c[ImGuiCol_HeaderHovered] = cv(with_alpha(ACCENT, 0.50f));
     c[ImGuiCol_HeaderActive] = cv(with_alpha(ACCENT, 0.70f));
     c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_ScrollbarGrab] = cv(IM_COL32(255, 255, 255, 40));
-    c[ImGuiCol_ScrollbarGrabHovered] = cv(IM_COL32(255, 255, 255, 80));
-    c[ImGuiCol_ScrollbarGrabActive] = cv(IM_COL32(255, 255, 255, 110));
+    c[ImGuiCol_ScrollbarGrab] = cv(veil(40/255.f));
+    c[ImGuiCol_ScrollbarGrabHovered] = cv(veil(80/255.f));
+    c[ImGuiCol_ScrollbarGrabActive] = cv(veil(110/255.f));
     c[ImGuiCol_Separator] = cv(HAIRLINE);
     c[ImGuiCol_TableHeaderBg] = cv(PANEL2);
     c[ImGuiCol_TableRowBg] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_TableRowBgAlt] = cv(IM_COL32(255, 255, 255, 6));
+    c[ImGuiCol_TableRowBgAlt] = cv(veil(6/255.f));
     c[ImGuiCol_NavCursor] = cv(mix(TEXT, ACCENT, 0.25f));
     c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.02f, 0.02f, 0.04f, 0.72f);
 }
@@ -200,7 +223,7 @@ void shimmer(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float rounding, ImU32 base) {
     float phase = std::fmod((float)ImGui::GetTime() * 0.55f, 1.6f) - 0.3f;   // band centre in 0..1 widths
     float cx = p0.x + w * phase, bw = std::max(sp(4), w * 0.28f);
     dl->PushClipRect(ImVec2(p0.x + inset, p0.y), ImVec2(p1.x - inset, p1.y), true);
-    ImU32 hi = IM_COL32(255, 255, 255, 16), lo = IM_COL32(255, 255, 255, 0);
+    ImU32 hi = veil(16/255.f), lo = veil(0.f);
     dl->AddRectFilledMultiColor(ImVec2(cx - bw, p0.y), ImVec2(cx, p1.y), lo, hi, hi, lo);
     dl->AddRectFilledMultiColor(ImVec2(cx, p0.y), ImVec2(cx + bw, p1.y), hi, lo, lo, hi);
     dl->PopClipRect();
@@ -446,7 +469,7 @@ bool button(const char* label, ImVec2 size, bool primary, bool enabled, Icon ic)
         glow(dl, p0, p1, rd, ACCENT, *hv * al * 0.8f);
     } else {
         bg = mix(PANEL2, PANEL3, *hv);
-        fg = mix(IM_COL32(214, 217, 228, 255), IM_COL32_WHITE, *hv);
+        fg = mix(GHOST, HILITE, *hv);
     }
     dl->AddRectFilled(p0, p1, scale_alpha(bg, al), rd);
     if (!primary) dl->AddRect(p0, p1, scale_alpha(HAIRLINE, al), rd, 0, 1.f);
@@ -475,7 +498,7 @@ bool icon_button(const char* id, Icon ic, float size, bool active, const char* t
     if (active) glow(dl, p0, p1, size * 0.5f, active_col, *hv * 0.6f);
     dl->AddCircleFilled(c, size * 0.5f, bg, 32);
     if (!active) dl->AddCircle(c, size * 0.5f, HAIRLINE, 32, 1.f);
-    icon(dl, ic, c, size * 0.5f, active ? IM_COL32_WHITE : mix(TEXT2, IM_COL32_WHITE, *hv));
+    icon(dl, ic, c, size * 0.5f, active ? IM_COL32_WHITE : mix(TEXT2, HILITE, *hv));
     if (focus) focus_ring(dl, p0, p1, size * 0.5f);
     if (tooltip && hov) ImGui::SetTooltip("%s", tooltip);
     ImGui::PopID();
@@ -529,7 +552,7 @@ int segmented(const char* id, const char* const* labels, int n, int cur) {
         ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
         float r = (p1.y - p0.y) * 0.5f;
         if (i == cur) dl->AddRectFilled(p0, p1, mix(ACCENT, IM_COL32_WHITE, 0.1f * *hv), r);
-        else if (*hv > 0.01f) dl->AddRectFilled(p0, p1, with_alpha(IM_COL32_WHITE, 0.07f * *hv), r);
+        else if (*hv > 0.01f) dl->AddRectFilled(p0, p1, with_alpha(HILITE, 0.07f * *hv), r);
         ImVec2 ts = ImGui::CalcTextSize(labels[i]);
         dl->AddText(F.bold ? F.bold : nullptr, F.bold ? F.bold->FontSize : 0, ImVec2((p0.x + p1.x - ts.x) * 0.5f, (p0.y + p1.y - ts.y) * 0.5f),
                     i == cur ? IM_COL32_WHITE : mix(TEXT2, TEXT, *hv), labels[i]);
@@ -599,7 +622,7 @@ float key_hint(ImDrawList* dl, ImVec2 p, bool pad, const char* pad_btn, const ch
         if (pad) dl->AddRectFilled(p, q1, pad_color(pad_btn), h * 0.4f);
         else {
             dl->AddRectFilled(p, q1, PANEL3, sp(0.6f));
-            dl->AddRect(p, q1, IM_COL32(255, 255, 255, 40), sp(0.6f), 0, 1.f);
+            dl->AddRect(p, q1, veil(40/255.f), sp(0.6f), 0, 1.f);
         }
         dl->AddText(f, fs, ImVec2(p.x + (gw - ts.x) * 0.5f, p.y + (h - ts.y) * 0.5f), pad ? IM_COL32_WHITE : TEXT, t);
     }

@@ -102,9 +102,9 @@ bool nav_item(Page pg, const char* label, ui::Icon ic, float w, float expand, Im
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
     float rd = sp(1.5f);
-    dl->AddRectFilled(p0, p1, with_alpha(sel ? ui::ACCENT : IM_COL32_WHITE, sel ? 0.20f : 0.07f * (*an * 2.f)), rd);
+    dl->AddRectFilled(p0, p1, with_alpha(sel ? ui::ACCENT : ui::HILITE, sel ? 0.20f : 0.07f * (*an * 2.f)), rd);
     if (*an > 0.6f) dl->AddRectFilled(ImVec2(p0.x, p0.y + sp(1.25f)), ImVec2(p0.x + sp(0.5f), p1.y - sp(1.25f)), ui::ACCENT, sp(0.25f));
-    ImU32 col = mix(ui::TEXT2, IM_COL32_WHITE, std::min(1.f, *an * 1.4f));
+    ImU32 col = mix(ui::TEXT2, ui::HILITE, std::min(1.f, *an * 1.4f));
     ImVec2 ic_c(p0.x + sp(3.f), (p0.y + p1.y) * 0.5f);
     ui::icon(dl, ic, ic_c, sp(3.f), sel ? mix(ui::ACCENT, IM_COL32_WHITE, 0.55f) : col);
     if (badge) dl->AddCircleFilled(ic_c + ImVec2(sp(1.5f), -sp(1.5f)), sp(0.625f), badge, 12);
@@ -219,6 +219,7 @@ void global_input() {
 
 void draw_frame() {
     ImGuiIO& io = ImGui::GetIO();
+    theme_tick();
     fr_anim_panel();
     const bool fr_docked = io.DisplaySize.x >= 1100.f * S;
     const float fr_pw = fr_panel_w(io.DisplaySize.x);
