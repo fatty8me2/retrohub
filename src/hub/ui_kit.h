@@ -3,6 +3,7 @@
  * Depends only on Dear ImGui (+ SDL_Texture handles); no app state, so main.cpp stays about the pages. */
 
 #include "imgui.h"
+#include "theme.h"
 
 #include <string>
 #include <vector>
@@ -20,20 +21,30 @@ struct Fonts {
 extern Fonts F;
 
 /* ---- palette: one accent, neutral surfaces, semantic colours ---- */
-constexpr ImU32 BG = IM_COL32(16, 17, 22, 255);
-constexpr ImU32 SIDEBAR = IM_COL32(12, 13, 17, 255);
-constexpr ImU32 PANEL = IM_COL32(26, 28, 36, 255);
-constexpr ImU32 PANEL2 = IM_COL32(37, 39, 51, 255);
-constexpr ImU32 PANEL3 = IM_COL32(50, 53, 69, 255);
-constexpr ImU32 HAIRLINE = IM_COL32(255, 255, 255, 20);
-constexpr ImU32 TEXT = IM_COL32(238, 240, 246, 255);
-constexpr ImU32 TEXT2 = IM_COL32(152, 157, 175, 255);
-constexpr ImU32 TEXT3 = IM_COL32(104, 109, 127, 255);
-constexpr ImU32 ACCENT = IM_COL32(108, 122, 255, 255);
-constexpr ImU32 GOOD = IM_COL32(56, 200, 120, 255);
-constexpr ImU32 BAD = IM_COL32(232, 95, 85, 255);
-constexpr ImU32 WARN = IM_COL32(240, 176, 64, 255);
+extern ImU32 BG;
+extern ImU32 SIDEBAR;
+extern ImU32 PANEL;
+extern ImU32 PANEL2;
+extern ImU32 PANEL3;
+extern ImU32 HAIRLINE;
+extern ImU32 TEXT;
+extern ImU32 TEXT2;
+extern ImU32 TEXT3;
+extern ImU32 ACCENT;
+extern ImU32 GOOD;
+extern ImU32 BAD;
+extern ImU32 WARN;
+extern ImU32 FRAME;
+extern ImU32 FRAME_HOV;
+extern ImU32 FRAME_ACT;
+extern ImU32 HILITE;
+extern ImU32 GHOST;
+extern ImU32 HERO_BASE;
+extern ImU32 SCRIM;
 
+/* Runtime palette (theme.h presets): these globals are rewritten by apply_palette(), so colours are looked up at draw time. */
+void apply_palette(const hubtheme::Palette& p);
+ImU32 veil(float a);                       // HILITE (white on dark themes, black on light ones) at alpha 0..1
 ImU32 mix(ImU32 a, ImU32 b, float t);
 ImU32 with_alpha(ImU32 c, float a);        // sets alpha (0..1)
 ImU32 scale_alpha(ImU32 c, float k);       // multiplies alpha

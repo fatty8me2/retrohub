@@ -9,6 +9,7 @@
  *   when drawing a card: if (SDL_Texture* t = hubart::get(entry, hubart::Kind::Boxart, &w, &h)) draw it,
  *                        else draw the gradient placeholder (a fetch is queued automatically). */
 
+#include <cstdint>
 #include <string>
 
 struct SDL_Renderer;
@@ -38,6 +39,9 @@ SDL_Texture* get_by_name(const std::string& system_short, const std::string& noi
  * DAT title, fuzzy title) so it gets the same art; loads that system's DAT on demand even if you own nothing there. */
 SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
                        const std::string& title, Kind kind, int* w, int* h);
+
+/* Average saturated colour of a texture returned by get() (packed r|g<<8|b<<16|255<<24), 0 if unknown / greyscale. */
+uint32_t average_color(SDL_Texture* tex);
 
 bool enabled();             // user setting "Download cover art" (default on)
 void set_enabled(bool on);
