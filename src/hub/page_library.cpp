@@ -588,7 +588,7 @@ void draw_details_modal() {
     }
     const hub::GameEntry* ep = find_entry(A.sel_game);
     ImGuiIO& io = ImGui::GetIO();
-    float w = std::min(sp(90.f), io.DisplaySize.x * 0.92f);
+    float w = std::min(sp(104.f), io.DisplaySize.x * 0.92f);
     ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(w, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
@@ -609,7 +609,7 @@ void draw_details_modal() {
     ImVec2 o = ImGui::GetCursorScreenPos();
     float avail = ImGui::GetContentRegionAvail().x;
     bool with_art = avail > sp(62.f);
-    float aw = with_art ? sp(28.f) : 0, ah = aw / kTileAspect;
+    float aw = with_art ? sp(20.f) : 0, ah = aw / kTileAspect;
     if (with_art) {
         ArtRef art = art_for_entry(e);
         TileSpec ts;
@@ -631,37 +631,36 @@ void draw_details_modal() {
     ImGui::TextWrapped("%s", e.title.c_str());
     ImGui::PopFont();
     ImGui::PopTextWrapPos();
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    pill(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.2f));
-    ImGui::SameLine(0, sp(0.75f));
-    pill(native ? "NATIVE PORT" : "EMULATED", ui::PANEL2);
-    if (supports_online(e)) {
-        char pl[32];
-        std::snprintf(pl, sizeof pl, "1-%d players", local_players_for(e));
-        ImGui::SameLine(0, sp(0.75f));
-        pill(pl, ui::PANEL2);
-    }
-    if (cat && cat->year) {
-        ImGui::SameLine(0, sp(0.75f));
-        pill(std::to_string(cat->year).c_str(), ui::PANEL2);
-    }
-    if (cat && !cat->blurb.empty()) {
+    {   /* one short line of key facts */
+        const char* dot = "  \xC2\xB7  ";
+        std::string facts = hub::system_name(e.system);
+        if (native) facts += std::string(dot) + "Native port";
+        if (local_players_for(e) >= 2) facts += std::string(dot) + "1-" + std::to_string(local_players_for(e)) + " players";
+        if (supports_online(e)) facts += std::string(dot) + "Online";
+        if (cat && cat->year) facts += std::string(dot) + std::to_string(cat->year);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-        ImGui::TextWrapped("%s", cat->blurb.c_str());
+        ImGui::TextWrapped("%s", facts.c_str());
         ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+        std::string played = gs.last_played ? hubui::format_play_time(gs.play_seconds) + " played" + dot + "last played " + fmt_time(gs.last_played)
+                                            : std::string("Not played yet");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+        ImGui::TextWrapped("%s", played.c_str());
         ImGui::PopTextWrapPos();
     }
     ImGui::EndGroup();
-    if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(2.f)));
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-    gameinfo_ui_section(e, cat ? cat->title : std::string());
-
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-    ImGui::PushTextWrapPos(0.f);
-    ImGui::TextWrapped("%s", e.path.c_str());
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
+    if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(1.f)));
+    {   /* short description (clamped, More expands); falls back to the built-in blurb when nothing loaded */
+        bool drew = gameinfo_ui_section(e, cat ? cat->title : std::string(), 1);
+        if (!drew && cat && !cat->blurb.empty()) {
+            ImGui::PushTextWrapPos(0.f);
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+            ImGui::TextWrapped("%s", cat->blurb.c_str());
+            ImGui::PopStyleColor();
+            ImGui::PopTextWrapPos();
+        }
+    }
     if (e.issue == "extract") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextWrapped("Archived: %s cannot open %s files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your archive stays untouched.",
@@ -680,43 +679,15 @@ void draw_details_modal() {
         ImGui::TextWrapped("%s", why.empty() ? "Disc images (.wud/.wux) are decrypted with the disc keys in Cemu's keys.txt (found). A .wua archive needs no keys." : why.c_str());
         ImGui::PopStyleColor();
     }
-    if (e.system == hub::System::WiiU) {
-        for (const std::string& l : wiiu_info_lines(e)) ImGui::TextDisabled("%s", l.c_str());
-        ImGui::TextDisabled("GamePad screen: hold View + RB, or Game menu > Swap GamePad / TV screen (Cemu: Ctrl+Tab).");
-    }
     if (is_kanto(e)) {
         text_wrapped_disabled("A friend's two-player co-op version of Pokemon FireRed. It is played online: press Play to set it up (once), then host or join a room and pick it. Needs your own Pokemon FireRed (USA) 1.0 in the library.");
         if (button("How to play", ImVec2(sp(14.f), sp(4.f)))) kt_open_howto();
     }
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    ImGui::Text("Play time: %s      Last played: %s", hubui::format_play_time(gs.play_seconds).c_str(),
-                gs.last_played ? fmt_time(gs.last_played).c_str() : "never");
-    { std::string fl = fr_playtime_line(e.key); if (!fl.empty()) ImGui::TextDisabled("Friends: %s", fl.c_str()); }
-    if (native) {
-        ImGui::TextDisabled("Smash Classic keeps its own saves.");
-    } else {
-        std::string sv = A.info_battery_files > 0 ? "Save data: " + std::to_string(A.info_battery_files) + " file(s), " + size_text(A.info_battery_bytes)
-                                                  : std::string("Save data: none yet");
-        sv += "      Save states: " + std::to_string(A.info_state_files);
-        if (A.info_auto_state) sv += "  (+ resume point)";
-        ImGui::TextUnformatted(sv.c_str());
-    }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
-    cloud_ui_game_line(e);
-    qm_seed_gallery(e);
-    shots_gallery(e);
-    if (!native) history_ui_details_section(e);
-    gs_draw_game_section(e);
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-    draw_state_strip(e);
-    ImGui::Dummy(ImVec2(0, sp(2.f)));
-    if (local_players_for(e) >= 2) {   // offline local multiplayer: who holds which port before Play
-        if (draw_players_strip(local_players_for(e))) { ImGui::CloseCurrentPopup(); open_port_assign(); }
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
-    }
 
-    float bh = sp(5.5f);
-    /* Action row: each button joins the row only if it fits the modal width, otherwise it wraps to the next line. */
+    const float bh = sp(5.5f);
+    const float bh2 = sp(4.5f);
+    /* Action rows: each button joins the row only if it fits the modal width, otherwise it wraps to the next line. */
     const float row_gap = sp(1.5f), row_avail = ImGui::GetContentRegionAvail().x;
     float row_used = 0.f;
     bool row_started = false;
@@ -737,9 +708,12 @@ void draw_details_modal() {
         act_done = e.key + name;
         return true;
     };
+    /* primary: Play (Resume when a resume point exists) + Play Online */
+    const bool resume = !native && A.info_auto_state && e.issue.empty();
+    const char* play_label = resume ? "Resume" : "Play";
     place(sp(17.f));
     tr("play", idle ? "enabled" : "disabled");
-    if (button("Play", ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play) || forced("play")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry_anim(c); }
+    if (button(play_label, ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play) || forced("play")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry_anim(c); }
     ImGui::SetItemDefaultFocus();
     if (!supports_online(e) && e.system == hub::System::GC) {
         place(label_w("Online soon", true));
@@ -762,10 +736,86 @@ void draw_details_modal() {
             if (!g_headless) enter_room(true, hubnet::new_room_code());
         }
     }
+    place(label_w("Close", true));
+    if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+
+    /* tabs: only the ones that have something to show */
+    enum { TabAbout, TabSaves, TabShots, TabSettings };
+    static int tab = TabAbout;
+    static std::string tab_key;
+    if (tab_key != e.key || ImGui::IsWindowAppearing()) { tab_key = e.key; tab = TabAbout; if (const char* st = g_headless ? std::getenv("HUB_SHOT_TAB") : nullptr) tab = std::atoi(st); }   // HUB_SHOT_TAB=0..3 for screenshots
+    qm_seed_gallery(e);   // HUB_SHOT_GALLERY screenshot aid
+    const int nshots = shots_count(e);
+    const bool has_settings = gs_has_game_section(e);
+    struct TabDef { int id; std::string label; };
+    std::vector<TabDef> tabs;
+    tabs.push_back({TabAbout, "About"});
+    if (!native) tabs.push_back({TabSaves, "Saves"});
+    if (nshots > 0) tabs.push_back({TabShots, "Screenshots (" + std::to_string(nshots) + ")"});
+    if (has_settings) tabs.push_back({TabSettings, "Settings"});
+    {
+        bool ok = false;
+        for (auto& t : tabs) ok |= t.id == tab;
+        if (!ok && !(g_headless && std::getenv("HUB_SHOT_TAB"))) tab = TabAbout;
+    }
+    for (size_t i = 0; i < tabs.size(); ++i) {
+        float w = label_w(tabs[i].label.c_str(), false) - sp(1.5f);
+        if (i) ImGui::SameLine(0, sp(1.f));
+        ImGui::PushID((int)i);
+        if (button(tabs[i].label.c_str(), ImVec2(w, sp(4.f)), tab == tabs[i].id)) tab = tabs[i].id;
+        ImGui::PopID();
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    /* the content area keeps one height for every tab so the page does not jump; it scrolls inside if needed */
+    float room = io.DisplaySize.y * 0.92f - ImGui::GetCursorPosY() - (bh2 + sp(1.5f) + sp(3.f) + sp(1.f));
+    float tabh = std::max(sp(12.f), std::min(sp(36.f), room));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, std::min(tabh, sp(15.f))), ImVec2(FLT_MAX, tabh));
+    ImGui::BeginChild("##tabbody", ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AutoResizeY);
+    if (tab == TabAbout) {
+        gameinfo_ui_section(e, cat ? cat->title : std::string(), 2);
+        if (e.system == hub::System::WiiU) {
+            for (const std::string& l : wiiu_info_lines(e)) ImGui::TextDisabled("%s", l.c_str());
+            ImGui::TextDisabled("GamePad screen: hold View + RB, or Game menu > Swap GamePad / TV screen (Cemu: Ctrl+Tab).");
+        }
+        { std::string fl = fr_playtime_line(e.key); if (!fl.empty()) ImGui::TextDisabled("Friends: %s", fl.c_str()); }
+        if (native) ImGui::TextDisabled("Smash Classic keeps its own saves.");
+        if (local_players_for(e) >= 2) {   // offline local multiplayer: who holds which port before Play
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            if (draw_players_strip(local_players_for(e))) { ImGui::CloseCurrentPopup(); open_port_assign(); }
+        }
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+        ImGui::PushTextWrapPos(0.f);
+        ImGui::TextWrapped("%s", e.path.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    } else if (tab == TabSaves) {
+        std::string sv;
+        if (A.info_battery_files > 0) sv = "Save data: " + std::to_string(A.info_battery_files) + " file(s), " + size_text(A.info_battery_bytes);
+        if (A.info_state_files > 0 || A.info_auto_state) {
+            if (!sv.empty()) sv += "   ";
+            sv += std::to_string(A.info_state_files) + " save state(s)" + (A.info_auto_state ? " + resume point" : "");
+        }
+        if (sv.empty()) sv = "No save data yet.";
+        ImGui::TextUnformatted(sv.c_str());
+        cloud_ui_game_line(e);
+        history_ui_details_section(e);
+        draw_state_strip(e);
+    } else if (tab == TabShots) {
+        shots_gallery(e);
+    } else if (tab == TabSettings) {
+        gs_draw_game_section(e);
+    }
+    ImGui::EndChild();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+
+    /* secondary actions */
+    row_started = false;
     const char* fav_label = gs.favorite ? "Unfavorite" : "Favorite";
     place(label_w(fav_label, true));
     tr("favorite", "enabled");
-    if (button(fav_label, ImVec2(0, bh), false, true, gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star) || forced("favorite")) {
+    if (button(fav_label, ImVec2(0, bh2), false, true, gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star) || forced("favorite")) {
         const bool was_fav = gs.favorite;
         toggle_favorite(e.key);
         shot_trace("favorite", e.key + " was=" + (was_fav ? "1" : "0") + " now=" + (gstate(e.key).favorite ? "1" : "0"));
@@ -773,7 +823,7 @@ void draw_details_modal() {
     if (!native) {
         place(label_w("Save folder", true));
         tr("savefolder", "enabled");
-        if (button("Save folder", ImVec2(0, bh), false, true, ui::Icon::Folder) || forced("savefolder")) {
+        if (button("Save folder", ImVec2(0, bh2), false, true, ui::Icon::Folder) || forced("savefolder")) {
             std::string sd = hub::saves::game_dir(sys_short(e), e.key);
             shot_trace("savefolder", sd);
             if (!g_headless) open_in_explorer(sd);
@@ -781,13 +831,13 @@ void draw_details_modal() {
     } else {
         tr("savefolder", "hidden:native-keeps-own-saves");
         place(label_w("Locate BattleShip.exe", false));
-        locate_smash(button("Locate BattleShip.exe", ImVec2(0, bh)));
+        locate_smash(button("Locate BattleShip.exe", ImVec2(0, bh2)));
     }
     const bool cheats_na = !cheats_supported(e) && !is_native(e) && !is_kanto(e);   // GC / 3DS / Wii U / PS2: shown disabled, with the reason
     tr("cheats", cheats_supported(e) ? "enabled" : cheats_na ? "explained:unavailable" : "hidden");
     if (cheats_na) {
         place(label_w("Cheats", true));
-        button("Cheats", ImVec2(0, bh), false, false, ui::Icon::Bolt);
+        button("Cheats", ImVec2(0, bh2), false, false, ui::Icon::Bolt);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("Cheats aren't available for %s yet", hub::system_name(e.system));
     }
@@ -795,19 +845,17 @@ void draw_details_modal() {
         int cn = cheats_enabled_count(e);
         std::string cl = cn ? "Cheats (" + std::to_string(cn) + ")" : std::string("Cheats");
         place(label_w(cl.c_str(), true));
-        if (button(cl.c_str(), ImVec2(0, bh), cn > 0, true, ui::Icon::Bolt) || forced("cheats")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; cheats_open(c); shot_trace("cheats", "opened " + e.key); }
+        if (button(cl.c_str(), ImVec2(0, bh2), cn > 0, true, ui::Icon::Bolt) || forced("cheats")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; cheats_open(c); shot_trace("cheats", "opened " + e.key); }
     }
     tr("controls", hubctl::system_key(e.system).empty() ? "hidden" : "enabled:" + hubctl::system_key(e.system));
     tr("settings", hub::gs::options_for(e.system).empty() ? "none" : "options=" + std::to_string(hub::gs::options_for(e.system).size()));
     if (!hubctl::system_key(e.system).empty()) {
-        place(label_w("Controls for this game", true));
-        if (button("Controls for this game", ImVec2(0, bh), false, true, ui::Icon::Gamepad) || forced("controls")) { ImGui::CloseCurrentPopup(); open_controls_for(e); shot_trace("controls", "tab-for " + hubctl::system_key(e.system) + " game=" + CTL_game_for_trace()); }
+        place(label_w("Controls", true));
+        if (button("Controls", ImVec2(0, bh2), false, true, ui::Icon::Gamepad) || forced("controls")) { ImGui::CloseCurrentPopup(); open_controls_for(e); shot_trace("controls", "tab-for " + hubctl::system_key(e.system) + " game=" + CTL_game_for_trace()); }
     }
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
     tr("desktop", "enabled");
-    if (button("Add to desktop", ImVec2(0, bh), false, true, ui::Icon::Star) || forced("desktop")) { add_game_shortcut(e); shot_trace("desktop", e.key); }
-    ImGui::SameLine(0, sp(1.5f));
-    if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
+    place(label_w("Add to desktop", true));
+    if (button("Add to desktop", ImVec2(0, bh2), false, true, ui::Icon::Star) || forced("desktop")) { add_game_shortcut(e); shot_trace("desktop", e.key); }
     ImGui::EndPopup();
 }
 

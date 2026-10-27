@@ -91,16 +91,13 @@ void options_grouped(hub::System sys, const std::string& game_key, int level) {
 
 }  // namespace
 
-void gs_draw_game_section(const hub::GameEntry& e) {
-    static bool shot_open = std::getenv("HUB_SHOT_GS") != nullptr;
-    if (shot_open) { ImGui::SetNextItemOpen(true, ImGuiCond_Once); shot_open = false; }
+bool gs_has_game_section(const hub::GameEntry& e) { return !hub::gs::options_for(e.system).empty(); }
+
+void gs_draw_game_section(const hub::GameEntry& e) {   // body of the details "Settings" tab
     bool over = GSTORE.has_game_overrides(e.key);
-    std::string title = over ? "Settings  (this game has overrides)" : "Settings";
-    if (!ImGui::CollapsingHeader(title.c_str())) return;
-    if (hub::gs::options_for(e.system).empty()) { ImGui::TextDisabled("No per-game settings for this system."); return; }
-    ImGui::BeginChild("##gsopts", ImVec2(0, sp(24.f)), ImGuiChildFlags_None);
+    if (over) ImGui::TextDisabled("This game has its own overrides.");
+    if (!gs_has_game_section(e)) return;
     options_grouped(e.system, e.key, 2);
-    ImGui::EndChild();
     if (button("Reset this game", ImVec2(0, 0), false, over)) { GSTORE.reset_game(e.key); gs_save(); }
 }
 

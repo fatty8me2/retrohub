@@ -1,7 +1,7 @@
 #include "app.h"
 #include "gameinfo.h"
 
-void gameinfo_ui_section_query(const gameinfo::Query& q, const std::string& id);   // gameinfo_ui.cpp: description, ratings, facts
+bool gameinfo_ui_section_query(const gameinfo::Query& q, const std::string& id, int part = 0);   // gameinfo_ui.cpp: description, ratings, facts
 
 /* Friends' games shown greyed out in the library (metadata only: titles and ids, never files).
  *   - ghost_tick():   publishes THIS PC's game list to the friends server (debounced, only when it changed, only when
