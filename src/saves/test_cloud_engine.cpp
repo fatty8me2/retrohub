@@ -878,7 +878,7 @@ static void test_linked_pcs() {
     CloudAccountInfo ai = cloud_account();
     CHECK(ai.needs_attention && ai.attention == "device-revoked");
     CloudEvent ev;
-    CHECK(pop_event(CloudEvent::NeedsAttention, &ev) && ev.text.find("signed out") != str::npos && !ev.good);
+    CHECK(pop_event(CloudEvent::NeedsAttention, &ev) && ev.text.find("stopped") != str::npos && !ev.good);
     CHECK(fs::exists(pc2.game() / "battery" / "q.sra"));
     put(pc2.game() / "battery" / "r.sra", rnd(600, 3), now_unix());
     int m0 = g_srv->n_manifest, d0 = g_srv->n_devices;

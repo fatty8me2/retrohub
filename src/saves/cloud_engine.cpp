@@ -422,7 +422,7 @@ void mark_revoked() {
         E.acct.online = true;
         E.acct.needs_attention = true;
         E.acct.attention = "device-revoked";
-        if (first) push_event_locked(CloudEvent::NeedsAttention, GameId(), "This PC was signed out of your account from another PC. Sign in again in Settings > Account.", false);
+        if (first) push_event_locked(CloudEvent::NeedsAttention, GameId(), "Cloud sync was stopped on this PC from another PC. Turn it back on in Settings > Account.", false);
     }
     if (first) { save_state_file(); log_line("this PC was signed out from another PC (device-revoked)"); }
 }
@@ -2020,7 +2020,7 @@ void cloud_sign_in_again() {
 
 bool cloud_list_pcs(std::vector<LinkedPc>* out, std::string* err) {
     auto fail = [&](const str& m) { if (err) *err = m; return false; };
-    if (cloud_revoked()) return fail("This PC was signed out from another PC.");
+    if (cloud_revoked()) return fail("Cloud sync was stopped on this PC from another PC.");
     if (!enabled_now() || !refresh_identity()) return fail("Cloud saves are not available right now.");
     Api api(3000, 10000);
     HttpReply r = api.req("GET", "/saves/v2/devices");

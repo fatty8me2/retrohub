@@ -281,6 +281,14 @@ async function main() {
   A.send({ type: "watch_online", uids: [] });
   const wk2 = await A.wait(T("watch_online"));
   check("empty list stops watching", wk2 && wk2.uids.length === 0, wk2);
+  A.send({ type: "watch_online", uids: [E.id.uid] });
+  A.send({ type: "watch_online", uids: [E.id.uid] });   // same list again: acked, nothing written
+  const wk3 = await A.wait((m) => m.type === "watch_online" && m.uids.length === 1);
+  const wk4 = await A.wait((m) => m.type === "watch_online" && m.uids.length === 1);
+  check("unchanged list is still acknowledged", !!wk3 && !!wk4);
+  A.send({ type: "watch_online", uids: [] });
+  const wrl = await A.wait((m) => m.type === "error" && m.reason === "rate-limited" && m.ref === "watch_online");
+  check("watch_online limited to ~4 changes per 10 min per socket", !!wrl, wrl);
   G.close();
 
   console.log("limits");
