@@ -3,6 +3,7 @@
 #include "art_match.h"
 #include "art_lru.h"
 #include "wiiu_meta.h"
+#include "theme.h"
 
 #include "library.h"
 #include "games.h"
@@ -53,6 +54,7 @@ struct Slot {
     State st = State::Pending;
     SDL_Texture* tex = nullptr;
     int w = 0, h = 0;
+    uint32_t avg = 0;   // average saturated colour (theme "Accent from cover"), 0 = none
 };
 
 struct Job {
@@ -540,7 +542,14 @@ void pump() {
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
         s.tex = t; s.w = d.px.w; s.h = d.px.h; s.st = State::Ready; g_lru.touch(d.id);
+        s.avg = hubtheme::average_saturated(d.px.rgba.data(), d.px.w, d.px.h, 4);
     }
+}
+
+uint32_t average_color(SDL_Texture* tex) {
+    if (!tex) return 0;
+    for (auto& kv : g_slots) if (kv.second.tex == tex) return kv.second.avg;
+    return 0;
 }
 
 SDL_Texture* get(const hub::GameEntry& game, Kind kind, int* w, int* h) {

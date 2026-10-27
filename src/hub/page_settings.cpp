@@ -170,6 +170,8 @@ void tab_general() {
     begin_panel("set_app");
     section_title("Startup, sidebar and sounds");
     gap();
+    theme_settings_row();
+    gap();
     settings_label("Sidebar");
     int sm = A.st.sidebar_mode;
     if (ImGui::RadioButton("Automatic", sm == 0)) { A.st.sidebar_mode = 0; mark_dirty(); }

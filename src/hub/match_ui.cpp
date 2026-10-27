@@ -13,7 +13,7 @@ bool match_tile(const char* id, const std::string& label, ImVec2 sz, bool sel, I
     ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
     float rd = 8 * S, pad = 8 * S;
     dl->AddRectFilled(p0, p1, sel ? with_alpha(tint, 0.35f) : (hov ? COL_PANEL2 : COL_PANEL), rd);
-    dl->AddRect(p0, p1, sel ? tint : (hov ? IM_COL32(255, 255, 255, 60) : ui::HAIRLINE), rd, 0, sel ? 2 * S : 1.f);
+    dl->AddRect(p0, p1, sel ? tint : (hov ? ui::veil(60/255.f) : ui::HAIRLINE), rd, 0, sel ? 2 * S : 1.f);
     ImVec2 ts = ImGui::CalcTextSize(label.c_str());
     dl->PushClipRect(p0 + ImVec2(pad * 0.5f, 0), p1 - ImVec2(pad * 0.5f, 0), true);
     dl->AddText(ImVec2(p0.x + std::max(pad, (sz.x - ts.x) * 0.5f), p0.y + (sz.y - ts.y) * 0.5f), sel ? IM_COL32_WHITE : ui::TEXT, label.c_str());

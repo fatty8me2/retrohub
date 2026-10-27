@@ -194,7 +194,7 @@ bool fr_icon_button(const char* id, FrIcon k, float size, bool active, int badge
     float rd = sp(1.5f);
     dl->AddRectFilled(p0, p1, active ? with_alpha(ui::ACCENT, 0.28f) : ui::mix(ui::PANEL, ui::PANEL3, *an), rd);
     dl->AddRect(p0, p1, ui::HAIRLINE, rd, 0, 1.f);
-    fr_icon(dl, k, (p0 + p1) * 0.5f, size * 0.52f, active ? ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.55f) : ui::mix(ui::TEXT2, IM_COL32_WHITE, *an));
+    fr_icon(dl, k, (p0 + p1) * 0.5f, size * 0.52f, active ? ui::mix(ui::ACCENT, ui::HILITE, 0.55f) : ui::mix(ui::TEXT2, ui::HILITE, *an));
     if (badge > 0) {
         char b[8];
         std::snprintf(b, sizeof b, "%d", std::min(badge, 99));
@@ -223,10 +223,10 @@ bool fr_pill_button(const char* id, const char* label, ImVec2 pos, float h, bool
     float rd = h * 0.5f;
     if (primary) dl->AddRectFilled(p0, p1, ui::mix(ui::ACCENT, IM_COL32_WHITE, hov ? 0.2f : 0.f), rd);
     else {
-        dl->AddRectFilled(p0, p1, ui::mix(ui::PANEL3, IM_COL32_WHITE, hov ? 0.1f : 0.f), rd);
+        dl->AddRectFilled(p0, p1, ui::mix(ui::PANEL3, ui::HILITE, hov ? 0.1f : 0.f), rd);
         dl->AddRect(p0, p1, ui::HAIRLINE, rd, 0, 1.f);
     }
-    fr_text_c(dl, ui::F.bold, (p0 + p1) * 0.5f, enabled ? IM_COL32_WHITE : ui::TEXT3, label);
+    fr_text_c(dl, ui::F.bold, (p0 + p1) * 0.5f, enabled ? (primary ? IM_COL32_WHITE : ui::TEXT) : ui::TEXT3, label);
     if (pad_focus) ui::focus_ring(dl, p0, p1, rd);
     ImGui::EndDisabled();
     return pressed;
@@ -982,7 +982,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         ImGui::SetCursorScreenPos(mp);
         if (ImGui::InvisibleButton("more", ImVec2(sp(3.25f), btn_h))) ImGui::OpenPopup("ctx");
         bool mh = ImGui::IsItemHovered();
-        dl->AddRectFilled(mp, mp + ImVec2(sp(3.25f), btn_h), ui::mix(ui::PANEL3, IM_COL32_WHITE, mh ? 0.1f : 0.f), btn_h * 0.5f);
+        dl->AddRectFilled(mp, mp + ImVec2(sp(3.25f), btn_h), ui::mix(ui::PANEL3, ui::HILITE, mh ? 0.1f : 0.f), btn_h * 0.5f);
         fr_icon(dl, FrIcon::More, mp + ImVec2(sp(1.625f), btn_h * 0.5f), sp(2.6f), ui::TEXT);
         if (mh) ImGui::SetTooltip("More");
         x = mp.x - sp(0.5f);
@@ -990,7 +990,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         ImGui::SetCursorScreenPos(cp);
         if (ImGui::InvisibleButton("msg", ImVec2(sp(3.25f), btn_h))) fr_open_chat(f.uid);
         bool ch = ImGui::IsItemHovered();
-        dl->AddRectFilled(cp, cp + ImVec2(sp(3.25f), btn_h), ui::mix(ui::PANEL3, IM_COL32_WHITE, ch ? 0.1f : 0.f), btn_h * 0.5f);
+        dl->AddRectFilled(cp, cp + ImVec2(sp(3.25f), btn_h), ui::mix(ui::PANEL3, ui::HILITE, ch ? 0.1f : 0.f), btn_h * 0.5f);
         fr_icon(dl, FrIcon::Chat, cp + ImVec2(sp(1.625f), btn_h * 0.5f), sp(2.4f), ui::TEXT);
         if (ch) ImGui::SetTooltip("Message");
         x = cp.x - sp(0.5f);
@@ -1227,7 +1227,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
             float tx = c0.x + sp(6.5f), tw = cw - sp(6.5f) - sp(9.f);
             dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, c0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, A.st.name, tw).c_str());
             std::string code = fr_my_code().empty() ? "..." : fr_my_code();
-            dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, c0.y + sp(1.25f) + ui::F.bold->FontSize * 1.25f), ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.55f), code.c_str());
+            dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, c0.y + sp(1.25f) + ui::F.bold->FontSize * 1.25f), ui::mix(ui::ACCENT, ui::HILITE, 0.55f), code.c_str());
             ImU32 dc = fr_connected() ? ui::GOOD : ui::WARN;
             dl->AddCircleFilled(ImVec2(tx + sp(0.5f), c0.y + ch - sp(1.75f)), sp(0.45f), dc, 10);
             dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + sp(1.5f), c0.y + ch - sp(1.75f) - ui::F.cap->FontSize * 0.5f), ui::TEXT2,
