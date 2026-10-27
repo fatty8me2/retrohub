@@ -13,6 +13,8 @@ param(
   [int]$EscAfter = 15, [string]$Pattern = "amash", [string]$Desktop = "rhgc_save", [string]$Shots = "", [string]$DolphinExtra = "", [int]$Lead = 600, [int]$CloseAfter = 0, [switch]$DebugLog, [string]$PadA = "", [switch]$Movie
 )
 $ErrorActionPreference = "Stop"
+$Work = [IO.Path]::GetFullPath($Work)   # guard: the scratch dir must be a real, separate folder (it is wiped and its processes are stopped)
+if ($Work.Length -lt 8 -or (Test-Path (Join-Path $Work ".git")) -or (Test-Path (Join-Path $Work "CMakeLists.txt"))) { throw "-Work must be a dedicated scratch folder, not $Work" }
 Add-Type -AssemblyName System.Drawing
 Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @"
 using System; using System.Collections.Generic; using System.Runtime.InteropServices;
@@ -163,7 +165,8 @@ if (-not $vf) { Fail "card file did not reach the vault" } else { $vf | ForEach-
 if ($vf -and (Sha $vf[0].FullName) -ne $script:injHash) { Fail "vault copy differs from the card file" }
 
 # second PC: empty emulator card folder, the vault restores it when RetroHub starts the game
-Get-ChildItem (Find-CardDir) -File -ErrorAction SilentlyContinue | Remove-Item -Force
+$cardDir = Find-CardDir   # never fall back to the current directory: an empty path made Get-ChildItem list (and delete) the cwd's files
+if ($cardDir -and (Test-Path $cardDir) -and $cardDir.StartsWith($d, [StringComparison]::OrdinalIgnoreCase)) { Get-ChildItem $cardDir -File | Remove-Item -Force } else { Fail "card folder not found; skipped emptying it" }
 Run-Session "2-restore" -ExpectHash $script:injHash
 Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 if ($fail -eq 0) { Write-Host "GC VAULT+EXIT QA PASS" } else { Write-Host "GC VAULT+EXIT QA FAIL ($fail)"; exit 1 }
