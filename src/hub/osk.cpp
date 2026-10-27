@@ -38,6 +38,7 @@ constexpr ImGuiConfigFlags NAV_MASK = ImGuiConfigFlags_NavEnableKeyboard | ImGui
 
 unsigned pad_mask() {
     unsigned m = 0;
+    if (hub_input_blocked()) return 0;
     for (SDL_GameController* p : A.pads) {
         if (!p) continue;
         auto b = [&](SDL_GameControllerButton x) { return SDL_GameControllerGetButton(p, x) != 0; };
@@ -357,7 +358,7 @@ bool input(const char* id, const char* hint, char* buf, size_t size, ImGuiInputT
     bool r = hint ? ImGui::InputTextWithHint(id, hint, buf, size, flags) : ImGui::InputText(id, buf, size, flags);
     const ImGuiID wid = ImGui::GetItemID();
     /* ImGui activates a nav-focused InputText on Enter only (A is a "tap"), so A on the focused field opens the keyboard itself. */
-    const bool pad_a = A.pad_mode && ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_NavEnableGamepad;
+    const bool pad_a = !hub_input_blocked() && A.pad_mode && ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_NavEnableGamepad;
     if (!S.open && !S.fb_open && (ImGui::IsItemActivated() || pad_a)) {
         bool mouse = ImGui::IsItemHovered() && ImGui::IsMouseClicked(0);
         if (pad_a || should_open(A.pad_mode, S.kb_seen, mouse)) {
@@ -457,7 +458,18 @@ bool inject(const char* tok) {
 }
 std::string shot_text() { return S.open ? S.ses.ed.text : std::string(); }
 
+bool hub_input_blocked() {
+    if (g_headless) return false;
+    return input_blocked(A.proc != nullptr, A.win && (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS));
+}
+
 void pre_frame(ImGuiIO& io) {
+    if (hub_input_blocked() && (S.open || S.fb_open)) {   // a game started behind an open keyboard: cancel it, nothing typed is kept
+        S.open = S.fb_open = false;
+        S.fb_tag.clear();
+        S.owner = 0;
+        S.finished = false;
+    }
     if ((S.open || S.fb_open) && ImGui::GetFrameCount() - S.last_drawn > 3) {   // nobody is drawing us any more
         S.open = S.fb_open = false;
         S.fb_tag.clear();

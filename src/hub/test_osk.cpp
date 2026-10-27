@@ -18,6 +18,15 @@ static void press_char(Session& s, const char* ch) {
 }
 
 int main() {
+    // chat-leak guard: a running game or an unfocused hub blocks all UI input; empty / blocked chat is never sent
+    CHECK(input_blocked(true, true) && input_blocked(false, false) && input_blocked(true, false) && !input_blocked(false, true));
+    for (unsigned m : {1u, 0xFFFu, 1u << 4, 1u << 8}) CHECK(gate_pad_mask(m, true) == 0 && gate_pad_mask(m, false) == m);
+    CHECK(!chat_may_send("", false) && !chat_may_send("   	", false) && !chat_may_send("hi", true) && chat_may_send("hi", false));
+    {   // injected pad presses while blocked never type into a keyboard session
+        Session s; s.start(Kind::Text, "", 100, false, false);
+        for (int i = 0; i < 20; ++i) if (gate_pad_mask(1u << 4, input_blocked(true, true))) press_char(s, "1");
+        CHECK(s.ed.text.empty());
+    }
     // layouts: every page non-empty, valid positions, vertical/horizontal moves stay in range and wrap
     for (Page p : {Page::Lower, Page::Upper, Page::Symbols, Page::Code}) {
         const auto& L = layout(p);
