@@ -232,3 +232,7 @@ Safety: retrorun only rolls back on cores whose savestates passed SyncTest, othe
 
 ## NES / SNES online
 Rollback (--rollback) via Nestopia UE / Snes9x, verified with --synctest 8/16; qa\nes_snes_online.ps1 runs direct, relay, 3-4 player (SNES multitap on port 2), guest drop and host leave. NES 3-4 players: retrorun sets nestopia_select_adapter=ntsc (Four Score), but the test ROM does not see pads 3-4 yet, so NES 3-4P is unverified. retro_init now runs before the set_* callbacks (RetroArch order).
+
+## Screen filters and bezels (`present_fx.cpp`)
+
+`--fx off|crt|lcd|dmg|sharp` picks a CPU post-process on the scaled frame (~1 ms at 1080p, benchmarked by `retrorun_fx_test`); `--bezel 1` paints a procedural per-console frame (GB, GBC, GBA, NES, SNES, DS, PS1, generic) in the pillarbox bars. Both default off, which keeps the classic path (including `--filter` and integer scaling) untouched. The OSD is drawn after both. Settings: `fx.filter` and `fx.bezel` in Per-game settings (console default or per game); runner_ctl `shader <name>` changes them live. Headless: `--screenshot` renders the filtered, bezelled window (`RETRORUN_FX_SHOT_SIZE=WxH`, default 1280x720).

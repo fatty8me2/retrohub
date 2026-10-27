@@ -148,6 +148,12 @@ int main() {
     rr.set_game("nds:k", System::NDS, "ds.layout", "left-right");
     CHECK(has_pair(retrorun_args(System::NDS, rr.resolve(System::NDS, "nds:k")), "--opt", "melonds_screen_layout1=left-right"));
     CHECK(is_fullscreen(Values{{"fullscreen", "true"}}) && !is_fullscreen(Values()));
+    // screen filter + bezel: per console default and per-game override reach retrorun as --fx / --bezel
+    rr.set_system(System::GBA, "fx.filter", "lcd");
+    rr.set_game("gba:k", System::GBA, "fx.bezel", "true");
+    CHECK(has_pair(retrorun_args(System::GBA, rr.resolve(System::GBA, "gba:k")), "--fx", "lcd") && has_pair(retrorun_args(System::GBA, rr.resolve(System::GBA, "gba:k")), "--bezel", "1"));
+    CHECK(!rr.set_game("gba:k", System::GBA, "fx.filter", "bogus"));
+    CHECK(!has_pair(retrorun_args(System::GBA, rr.resolve(System::GBA, "other:k")), "--bezel", "1"));
 
     std::printf(g_fail ? "FAILED (%d)\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;
