@@ -9,11 +9,16 @@ add_executable(retrorun
     image.cpp
     link_sync.cpp
     rollback.cpp
+    present_fx.cpp
+    rewind.cpp
+    runahead.cpp
+    features.cpp
+    cheevos.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run/lockstep.cpp)
 target_include_directories(retrorun PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
-target_link_libraries(retrorun PRIVATE hubsavesync n64run_lockstep_core hubnet hubcommon hubcontrols_sdl hubminiz SDL2::SDL2)
+target_link_libraries(retrorun PRIVATE hubcheevos hubsavesync n64run_lockstep_core hubnet hubcommon hubcontrols_sdl hubminiz SDL2::SDL2)
 set_target_properties(retrorun PROPERTIES WIN32_EXECUTABLE OFF)
 
 add_custom_command(TARGET retrorun POST_BUILD
@@ -48,3 +53,10 @@ target_include_directories(retrorun_rollback_test PRIVATE ${CMAKE_CURRENT_SOURCE
 # Rollback under long network stalls (2 and 4 peers, virtual clock): never a desync, no false drops, a dropped peer learns it.
 add_executable(retrorun_rollback_stall_test test_rollback_stall.cpp rollback.cpp)
 target_include_directories(retrorun_rollback_stall_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
+
+# Screen filters + bezels (present_fx.h): pure CPU, console test + benchmark.
+add_executable(retrorun_fx_test test_present_fx.cpp present_fx.cpp)
+target_include_directories(retrorun_fx_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Rewind ring + run-ahead + scripted rewind/run-ahead checks against a deterministic fake core (no SDL, no real core).
+add_executable(retrorun_rewind_test test_rewind.cpp rewind.cpp runahead.cpp features.cpp)
+target_include_directories(retrorun_rewind_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

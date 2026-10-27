@@ -139,7 +139,7 @@ void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, co
 std::string dolphin_pad_ini(const std::string& existing, const DolphinPads& p, const hubctl::Profile& profile);
 /* Tidy up after older RetroHub builds (see docs/DOLPHIN.md): saves stay where they are, nothing user-made is deleted. */
 void dolphin_migrate_old(const std::string& data_dir, const std::string& exe_dir, const std::string& install_dir);
-std::string dolphin_args(const std::string& game_path, bool fullscreen, const std::string& gci_dir);
+std::string dolphin_args(const std::string& game_path, bool fullscreen, const std::string& gci_dir, int volume = -1);   // volume 0-100 -> -C Dolphin.DSP.Volume (-1: leave the ini value)
 /* Where the emulator keeps this game's memory card folder (copied from / to the vault around a session). */
 std::string dolphin_card_root(const std::string& install_dir, const std::string& game_key);
 

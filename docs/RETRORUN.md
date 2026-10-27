@@ -142,11 +142,12 @@ Windowed code paths can be smoke-tested with `SDL_VIDEODRIVER=dummy SDL_AUDIODRI
 
 ## On-screen display, volume and speed
 - Every status message (state saved/loaded, slot, screenshot, disc, ...) is shown as an OSD toast (`src/common/osd.h`) as well as in the window title. `--osd-msg TEXT` plus `RETRORUN_OSD_SHOT=1` with `--screenshot` composites it into a QA picture. See RUNNER_CTL.md for the layer details.
-- RetroHub steers a running retrorun through `control.json` (`src/common/runner_ctl.h`): `volume` (0-100), `mute`, `speed` (0.25 0.5 1 1.5 2 3 5 8 or max; shows "Speed 2x" on the OSD), `ff`, `osd_msg`. All but `osd_msg`, `screenshot` and `quit` are refused in online sessions. `rewind`, `shader`, `overlay` and `clip` are reserved and answer `unsupported`. Full table: RUNNER_CTL.md.
+- RetroHub steers a running retrorun through `control.json` (`src/common/runner_ctl.h`): `volume` (0-100), `mute`, `speed` (0.25 0.5 1 1.5 2 3 5 8 or max; shows "Speed 2x" on the OSD), `ff`, `osd_msg`. All but `osd_msg`, `screenshot` and `quit` are refused in online sessions. `rewind` (value 1/0) is implemented, `shader`, `overlay` and `clip` are reserved and answer `unsupported`. Full table: RUNNER_CTL.md.
 
 ## Limitations
 
-- No hardware rendering, no sensors/camera, no core-options UI (use `--opt` / ini), no rewind, no shaders.
+- No hardware rendering, no sensors/camera, no core-options UI (use `--opt` / ini), no shaders.
+- **Rewind and run-ahead (offline only; refused online, in `--link` and on PS2):** `--rewind auto|on|off` keeps a ring of XOR-delta compressed states (`rewind.h`): about 20 s for NES/SNES/GB/GBC/GBA, off by default for PS1/DS (`on` gives 5 s). Hold LT + View (not with Start or Y) or send runner_ctl `rewind`; the OSD corner shows `REWIND n.ns`. `--runahead off|1|2|auto` runs 1-2 speculative frames after the real one with audio muted and restores the state (`runahead.h`); Auto = 1 on NES/SNES/GB/GBC/GBA. Settings: per-game "Run-ahead" (play.runahead). Both measure their cost over the first 120 frames and turn themselves off with an OSD message if too slow (not in headless). QA: `--headless --rewind-selftest N,K` / `--runahead N --runahead-selftest N` (frame hashes after rewind-replay, and run-ahead output == normal shifted by N); `retrorun_rewind_test` covers the ring limits and the same checks on a fake core.
 - Supported: cheats (`--cheats FILE`, live toggles offline), multi-disc swap (`--disc-ctl FILE`, libretro disk-control interface), rumble (libretro rumble -> `SDL_GameControllerRumble` on the pad of that local port).
 - Zipped ROMs are not unpacked by retrorun itself (the hub library extracts them first) (cores that handle zip themselves via `need_fullpath` work).
 - Core options changed while running are not supported (the core sees the values given at start).
@@ -232,3 +233,7 @@ Safety: retrorun only rolls back on cores whose savestates passed SyncTest, othe
 
 ## NES / SNES online
 Rollback (--rollback) via Nestopia UE / Snes9x, verified with --synctest 8/16; qa\nes_snes_online.ps1 runs direct, relay, 3-4 player (SNES multitap on port 2), guest drop and host leave. NES 3-4 players: retrorun sets nestopia_select_adapter=ntsc (Four Score), but the test ROM does not see pads 3-4 yet, so NES 3-4P is unverified. retro_init now runs before the set_* callbacks (RetroArch order).
+
+## Screen filters and bezels (`present_fx.cpp`)
+
+`--fx off|crt|lcd|dmg|sharp` picks a CPU post-process on the scaled frame (~1 ms at 1080p, benchmarked by `retrorun_fx_test`); `--bezel 1` paints a procedural per-console frame (GB, GBC, GBA, NES, SNES, DS, PS1, generic) in the pillarbox bars. Both default off, which keeps the classic path (including `--filter` and integer scaling) untouched. The OSD is drawn after both. Settings: `fx.filter` and `fx.bezel` in Per-game settings (console default or per game); runner_ctl `shader <name>` changes them live. Headless: `--screenshot` renders the filtered, bezelled window (`RETRORUN_FX_SHOT_SIZE=WxH`, default 1280x720).

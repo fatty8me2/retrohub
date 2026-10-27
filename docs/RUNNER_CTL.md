@@ -40,11 +40,17 @@ Same file and `seq` rules as above. Extra fields in `control.json`: `"value"` (i
 | `speed` | `speed` 0.25, 0.5, 1, 1.5, 2, 3, 5, 8 or `"max"` (0 = uncapped) | timer pacing at `fps*speed`; audio is resampled up to 2x (pitch follows) and dropped above 2x; video presents every `ceil(speed)` frames; `max` = the Tab fast-forward | core `M64CORE_SPEED_FACTOR` (percent); `max` turns the limiter off |
 | `ff` | `value` 1 = on, 0 = off | on = the last fast speed chosen (default 2x), off = 1x | same |
 | `osd_msg` | `text` | shows a toast | shows a toast |
-| `rewind`, `shader`, `overlay`, `clip` | `value` / `text` | ack `ok:false`, msg `unsupported` | same |
+| `shader` | `text`: `off`, `crt`, `lcd`, `dmg`, `sharp`, `next` (cycle), `bezel:on`, `bezel:off`, `bezel:toggle` | switches the screen filter / console frame live (OSD shows `Filter: CRT`); unknown name = `ok:false` | ack `ok:false`, msg `unsupported` (retrorun only) |
+| `rewind` | `value` 1/0 | retrorun: 1 rewinds continuously until 0 (or the history runs out); `ok:false` "Rewind is not available for this game" when rewind is off (PS1/DS default, `--rewind off`). n64run: `unsupported` | same |
+| `overlay`, `clip` | `value` / `text` | ack `ok:false`, msg `unsupported` | same |
 
-- **Offline only:** `volume`, `mute`, `speed`, `ff`, `rewind`, `shader`, `overlay`, `clip` are refused online (`ok:false`, `Not available in online sessions`), like save states. `osd_msg`, `screenshot` and `quit` work online.
+- **Offline only:** `speed`, `ff`, `rewind`, `shader`, `overlay`, `clip` are refused online (`ok:false`, `Not available in online sessions`), like save states. `volume`, `mute`, `osd_msg`, `screenshot` and `quit` work online (volume and mute are local: they never touch the emulation). `runctl::offline_only()` is the single rule both runners use.
 - `speed` shows `Speed 2x` / `Speed 0.5x` / `Speed max` on the OSD whenever it changes. The Tab key still fast-forwards while held (retrorun).
-- The hub's View+Y speed slider is a later lane; it only needs `send_command_ex(ctl, {Cmd::Speed, speed=...})`. `runctl::parse_speed_arg("2x")`, `speed_label()` and `kSpeeds` are the shared helpers.
+- The hub's View+Y menu sends `speed` / `volume` / `mute` with `send_command_ex()` (fire and forget, no ack wait). `runctl::parse_speed_arg("2x")`, `speed_label()` and `kSpeeds` are the shared helpers; the menu's pure logic is `src/hub/qm_logic.h`.
+
+## Launch volume and the quick boost
+- `--volume N` (0-100) on `retrorun` and `n64run` sets the starting volume (hub: the global Settings > Video & Games > Game volume, overridden per system or per game by the `volume` option in `src/common/game_settings.h`). Dolphin gets `-C Dolphin.DSP.Volume=N`. The default 100 adds no argument.
+- **Quick boost:** hold View (Back) + RT. While held, the runner runs at the last fast speed chosen (default 2x); on release it returns to 1x. Offline only (retrorun: `poll_all_local`, n64run: `LocalInput::boost_held`). `hubctl::boost_combo_down()` (`src/common/exit_combo.h`) is false whenever Start (exit) or Y (RetroHub's menu) is also held, so it never overlaps those combos.
 
 ## On-screen display (`src/common/osd.h`)
 `osd::push(text, kind, seconds)` queues a toast (newest four shown, bottom-left, fades); `osd::set_corner(text, kind)` is a persistent top-right slot (`""` clears) for overlays. `osd::render()` fills an ARGB layer with a built-in 5x7 font; each runner blends it in its own renderer.
@@ -53,4 +59,7 @@ Same file and `seq` rules as above. Extra fields in `control.json`: `"value"` (i
 - **QA:** `retrorun --headless --osd-msg "text" --screenshot out.png` with `RETRORUN_OSD_SHOT=1` composites the OSD into the screenshot (frame upscaled to ~480 px high).
 
 ## Quick menu (hub)
-View + Y while a game runs opens the menu (`src/hub/quickmenu.cpp`): Resume, Save state (slot picker with thumbnails), Load state, Take a screenshot, Cheats, Swap disc (PS1), Invite a friend (when in a room), Quit to RetroHub. For other emulators (Dolphin, Azahar, Cemu, PCSX2) only Resume, Cheats, Invite and Quit appear. The details modal shows a screenshots strip (click opens the full-size viewer, which has Copy, Set as cover, Delete and Open in viewer; plus Open folder).
+View + Y while a game runs opens the menu (`src/hub/quickmenu.cpp`): Resume, Speed, Volume + Mute, Save state (slot picker with thumbnails), Load state, Take a screenshot, Cheats, Swap disc (PS1), Invite a friend (when in a room), Quit to RetroHub.
+- **Speed** (built-in runners): 0.25x, 0.5x, 1x, 1.5x, 2x, 3x, 5x, 8x, Max. Left/right on the pad changes it live and the OSD shows `Speed 2x`. Offline only; online the row is disabled with "Not available online". It resets to 1x every session.
+- **Volume** (0-100, steps of 5) and **Mute**: allowed online. Built-in runners get `volume` / `mute`; for the external emulators the hub scales the emulator's own Windows audio session (like the Volume Mixer; Dolphin additionally starts at its DSP volume, and the slider then scales that). The session is re-applied every 2 s until the emulator opens its audio.
+- **Screenshot** (Dolphin, Azahar, Cemu, PCSX2): captures the emulator's window with Windows Graphics Capture (PrintWindow as a fallback) into the same `<vault>/<system>/<game key>/shots/` folder the gallery reads (`src/hub/ext_media.cpp`). Cheats, Invite and Quit are unchanged for them. The details modal shows a screenshots strip (click opens the full-size viewer, which has Copy, Set as cover, Delete and Open in viewer; plus Open folder).

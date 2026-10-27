@@ -169,6 +169,7 @@ inline std::string friendly_title(const std::string& known, const std::string& s
 inline Chip account_headline(const CloudAccountInfo& a, bool enabled) {
     if (!enabled) return {paused_text(a.queued_games), Tone::Muted};
     if (!a.known) return {"Checking your cloud saves...", Tone::Muted};
+    if (a.needs_attention && a.attention == "device-revoked") return {"Cloud sync was stopped on this PC", Tone::Bad};
     if (a.needs_attention) return {"Cloud backup needs attention", Tone::Bad};
     if (a.paused_by_server) return {"Cloud backup is paused for now", Tone::Warn};
     if (!a.online) return {"Offline: saves sync when you are back online", Tone::Muted};
@@ -177,6 +178,7 @@ inline Chip account_headline(const CloudAccountInfo& a, bool enabled) {
 }
 
 inline std::string attention_help(const std::string& why) {
+    if (why == "device-revoked") return "Another PC of this account stopped cloud sync on this PC. Your saves here are untouched, but they stay out of the cloud until you turn sync back on.";
     if (why == "identity-missing") return "This PC has lost its account file. Use \"Recover with code\" below with your recovery code.";
     return "RetroHub could not sign in to your account. Check your internet connection, or use \"Recover with code\" if you changed PCs.";
 }
@@ -192,6 +194,23 @@ inline std::string over_limit_text(const CloudAccountInfo& a, const std::vector<
     if (names.size() > 3) list += " and " + std::to_string(names.size() - 3) + " more";
     return "Cloud space is full: older save states of " + list + " stay on this PC only. Your regular saves are still backed up. "
            "Remove a game from the cloud below to make room.";
+}
+
+/* ---- linked PCs (Settings > Account): the PCs on this account, with a "Stop syncing on this PC" for every PC but the one in use ---- */
+inline std::string pc_name(const LinkedPc& p) { return p.name.empty() ? std::string("Unnamed PC") : p.name; }
+inline bool pc_can_revoke(const LinkedPc& p) { return !p.current && !p.dev.empty(); }
+inline std::string pc_revoke_title(const LinkedPc& p) { return "Stop syncing on " + pc_name(p) + "?"; }
+inline std::string pc_revoke_body(const LinkedPc& p) {
+    return pc_name(p) + " stops syncing cloud saves until someone on that PC turns sync back on. Nothing is deleted on that PC or in the cloud. "
+           "This does not lock anyone out: to fully lock someone out, create a new account code.";
+}
+/* This PC first, then the most recently seen. */
+inline std::vector<LinkedPc> pcs_sorted(std::vector<LinkedPc> v) {
+    std::stable_sort(v.begin(), v.end(), [](const LinkedPc& a, const LinkedPc& b) {
+        if (a.current != b.current) return a.current;
+        return a.last_seen > b.last_seen;
+    });
+    return v;
 }
 
 /* "20 Oct 21:14" style, local time. */
@@ -217,6 +236,11 @@ inline std::string ago_text(int64_t now, int64_t t) {
     if (d < 3600) return std::to_string(std::max<int64_t>(1, d / 60)) + (d / 60 <= 1 ? " minute ago" : " minutes ago");
     if (d < 86400) return std::to_string(d / 3600) + (d / 3600 == 1 ? " hour ago" : " hours ago");
     return when_text(t);
+}
+
+inline std::string pc_last_seen(const LinkedPc& p, int64_t now) {
+    if (p.current) return "This PC";
+    return p.last_seen > 0 ? "Last seen " + ago_text(now, p.last_seen) : std::string("Last seen: not yet");
 }
 
 /* Details line under a game row: "Last synced 5 minutes ago - 1 MB in the cloud" / message. */
