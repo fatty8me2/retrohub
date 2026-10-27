@@ -372,6 +372,18 @@ static bool is_image(const std::string& n) {
     return x == ".png" || x == ".bmp";
 }
 
+int shots_count(const hub::GameEntry& e) {
+    if (is_native(e)) return 0;
+    static std::string k; static double at = -10; static int n = 0;
+    if (k != e.key || ImGui::GetTime() - at > 2.0) {
+        k = e.key; at = ImGui::GetTime(); n = 0;
+        std::error_code ec;
+        for (auto& it : std::filesystem::directory_iterator(std::filesystem::u8path(trim_sep(hub::saves::game_dir(sys_short(e), e.key)) + "\\shots"), ec))
+            if (it.is_regular_file(ec) && is_image(it.path().filename().u8string())) ++n;
+    }
+    return n;
+}
+
 void shots_gallery(const hub::GameEntry& e) {
     if (is_native(e)) return;
     std::string dir = trim_sep(hub::saves::game_dir(sys_short(e), e.key)) + "\\shots";
@@ -385,17 +397,7 @@ void shots_gallery(const hub::GameEntry& e) {
             if (it.is_regular_file(ec) && is_image(it.path().filename().u8string())) s_files.push_back(it.path().filename().u8string());
         std::sort(s_files.begin(), s_files.end(), std::greater<std::string>());   // newest first (names are timestamps)
     }
-    ImGui::PushFont(ui::F.bold);
-    ImGui::Text("Screenshots");
-    ImGui::PopFont();
-    ImGui::SameLine(0, sp(1.f));
-    ImGui::TextDisabled("%d", (int)s_files.size());
-    if (s_files.empty()) {
-        text_wrapped_disabled("None yet. Press F12 in a game, or choose \"Take a screenshot\" from the menu (View + Y on a controller).");
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
-        return;
-    }
-    ImGui::SameLine(0, sp(2.f));
+    if (s_files.empty()) return;   // the tab is hidden when there are none
     if (ImGui::SmallButton("Open folder")) ShellExecuteW(nullptr, L"open", std::filesystem::u8path(dir).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     const float th = sp(13.f), tw = th * 1.6f;
     ImGui::BeginChild("##shots", ImVec2(0, th + sp(7.f)), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_HorizontalScrollbar);
