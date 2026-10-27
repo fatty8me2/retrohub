@@ -1,19 +1,41 @@
 {
   "versions": [
     {
-      "version": "1.27.7",
+      "version": "1.28.0",
       "date": "2026-10-27",
-      "title": "Unhurried startups, cleaner game page",
-      "new": [],
+      "title": "Rewind, themes, TV mode and a lot more",
+      "new": [
+        "Game speed slider in the View + Y menu: 0.25x up to 8x or Max, changed on the fly (offline). Hold View + RT for a quick boost",
+        "Rewind: hold LT + View to go back about 20 seconds in NES, SNES, Game Boy and GBA games (offline)",
+        "Run-ahead for less input lag, per game (Auto turns it on for NES, SNES, Game Boy and GBA)",
+        "Screen filters (CRT, LCD grid, Game Boy green, sharp) and console bezels, per console or per game",
+        "RetroAchievements: sign in with your own account, unlock achievements in NES, SNES, Game Boy, GBA, DS and PS1 games, with hardcore mode",
+        "Themes: Midnight, OLED Black, Light, Atomic Purple, GameCube Indigo and Famicom, plus colours from the game's cover",
+        "TV mode (F11): a big-screen, controller-first RetroHub, and an option to start with Windows",
+        "Soft menu sounds and optional menu music",
+        "Custom shelves, rename any game and pick your own cover; they follow you to your other PCs",
+        "Smash rivalries: see your head-to-head record and mains against each friend",
+        "Surprise me, an idle slideshow of your own screenshots, and RetroHub Wrapped for your month and year",
+        "Volume and mute in the View + Y menu and in Settings, per game too (also online)",
+        "Get a notification when a friend comes online (turn it on per friend)",
+        "Your PCs: see the PCs on your account and stop syncing on one",
+        "Full-size screenshot viewer with copy, set as cover and delete; screenshots for GameCube, Wii U, 3DS and PS2 games too",
+        "Favorites and Genre filters, and group All Games by genre"
+      ],
       "improved": [
         "Every console now gets the full start animation (Play and Resume from Home no longer use the 1 second version), and the startup sound plays out before the game appears",
         "GameCube, PlayStation and Wii U discs take their time: the lid or tray opens, the disc settles, and it closes",
-        "The game page is decluttered: cover, title, one line of facts, Play / Play Online, and tabs for About, Saves, Screenshots and Settings. Empty sections are hidden"
+        "The game page is decluttered: cover, title, one line of facts, Play / Play Online, and tabs for About, Saves, Screenshots and Settings. Empty sections are hidden",
+        "Favorites, hidden games and shelves sync between your PCs without ever losing a change",
+        "If a game file is missing you can locate it, rescan, or remove it (with Undo, and a Hidden games list in Settings)",
+        "Duplicate copies of a game are shown on its page, and you can choose which one to use",
+        "Cover art uses less memory in big libraries"
       ],
       "fixed": [
         "Your console's own startup (IPL/BIOS) no longer cuts the animation short"
       ]
-    },{
+    },
+    {
       "version": "1.27.6",
       "date": "2026-10-26",
       "title": "GameCube online stays up",
@@ -24,7 +46,8 @@
       "fixed": [
         "A GameCube guest's game is no longer closed the moment the host's connection blips: RetroHub waits, tells you the host disconnected, and lets you choose when to leave"
       ]
-    },{
+    },
+    {
       "version": "1.27.5",
       "date": "2026-10-26",
       "title": "Online badges that match",
