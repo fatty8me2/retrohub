@@ -99,6 +99,11 @@ static void test_three_way() {
     CHECK(three_way(S("a"), S("a"), S("b"), false, B) == Act::Pull);
     CHECK(three_way(S("c"), S("a"), S("c"), false, B) == Act::Adopt);
     CHECK(three_way(S("b"), S("a"), S("c"), false, B) == Act::Conflict);
+    /* the custom cover (game root cover.png) is settings-class: both PCs edited it, newest wins, never a prompt */
+    const FileClass CV = classify_path("cover.png", 40960);
+    CHECK(CV == FileClass::Settings);
+    CHECK(three_way(S("b", 300), S("a"), S("c", 200), false, CV) == Act::Push);
+    CHECK(three_way(S("b", 100), S("a"), S("c", 200), false, CV) == Act::Pull);
     CHECK(three_way(S(""), S("a"), S("a"), false, B) == Act::Pull);                 // absent locally, present in cloud: heal
     CHECK(three_way(S(""), S(""), S("a"), false, B) == Act::Pull);                  // new game on this PC
     CHECK(three_way(S("a"), S(""), S(""), false, B) == Act::Push);                  // present, cloud absent, base absent
