@@ -482,6 +482,8 @@ void draw_account_section() {
     }
     ImGui::PopStyleVar();
 
+    achievements_account_section();
+
     end_panel();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 }

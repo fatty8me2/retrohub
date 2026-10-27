@@ -55,6 +55,7 @@ void shot_init_ui() {
         auto sl = h.find('/');
         if (sl != std::string::npos) { history_ui_open(h.substr(0, sl), h.substr(sl + 1)); A.page = Page::Saves; }
     }
+    if (const char* dk = std::getenv("HUB_SHOT_DETAILS")) { A.sel_game = dk; A.show_details = true; }   // screenshot aid: open the details modal of this game key
     if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
         if (std::string(pg) == "saves") A.page = Page::Saves;
         else if (std::string(pg).rfind("settings", 0) == 0) {   // "settings" or "settings:<tab 0-5>"
