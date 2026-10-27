@@ -40,7 +40,8 @@ Same file and `seq` rules as above. Extra fields in `control.json`: `"value"` (i
 | `speed` | `speed` 0.25, 0.5, 1, 1.5, 2, 3, 5, 8 or `"max"` (0 = uncapped) | timer pacing at `fps*speed`; audio is resampled up to 2x (pitch follows) and dropped above 2x; video presents every `ceil(speed)` frames; `max` = the Tab fast-forward | core `M64CORE_SPEED_FACTOR` (percent); `max` turns the limiter off |
 | `ff` | `value` 1 = on, 0 = off | on = the last fast speed chosen (default 2x), off = 1x | same |
 | `osd_msg` | `text` | shows a toast | shows a toast |
-| `rewind`, `shader`, `overlay`, `clip` | `value` / `text` | ack `ok:false`, msg `unsupported` | same |
+| `rewind` | `value` 1/0 | retrorun: 1 rewinds continuously until 0 (or the history runs out); `ok:false` "Rewind is not available for this game" when rewind is off (PS1/DS default, `--rewind off`). n64run: `unsupported` | same |
+| `shader`, `overlay`, `clip` | `value` / `text` | ack `ok:false`, msg `unsupported` | same |
 
 - **Offline only:** `volume`, `mute`, `speed`, `ff`, `rewind`, `shader`, `overlay`, `clip` are refused online (`ok:false`, `Not available in online sessions`), like save states. `osd_msg`, `screenshot` and `quit` work online.
 - `speed` shows `Speed 2x` / `Speed 0.5x` / `Speed max` on the OSD whenever it changes. The Tab key still fast-forwards while held (retrorun).

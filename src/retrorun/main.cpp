@@ -22,6 +22,7 @@
 
 #include "controls_sdl.h"
 #include "exit_combo.h"
+#include "features.h"
 #include "start_hint.h"
 #include "runner_ctl.h"
 #include "osd.h"
@@ -78,6 +79,8 @@ struct Args {
     bool multitap = false, no_multitap = false;  // SNES multitap on port 2 (players 3-4); auto with --players >= 3 or 3+ pads
     bool ds_link = false;   // DS local wireless over the room (netpacket interface), no lockstep
     std::vector<std::string> opts;
+    int rewind_mode = 0, runahead = 0;   // --rewind auto|on|off, --runahead off|1|2|auto (offline only; see features.h)
+    int selftest_rewind_frames = 0, selftest_rewind_back = 0, selftest_runahead_frames = 0;   // QA: --rewind-selftest N,K / --runahead-selftest N (headless)
 };
 
 static std::string narrow(const wchar_t* w) { return winutil::to_utf8(w); }
@@ -86,7 +89,7 @@ static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
           "  [--system gba|gb|gbc|nds|ps1|nes|snes] [--multitap|--no-multitap] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
-          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rollback] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
+          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rewind auto|on|off] [--runahead off|1|2|auto] [--rollback] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
           stderr);
 }
@@ -167,6 +170,10 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--share-host-save") o->share_host_save = true;
         else if (k == "--host-save-dir") { std::string ignored; if (!val(&ignored)) return false; std::fprintf(stderr, "note: --host-save-dir is ignored by retrorun (--share-host-save shares the core's own save RAM)\n"); }
         else if (k == "--link-roms") { if (!val(&o->link_roms)) return false; }
+        else if (k == "--rewind") { if (!val(&v) || !rwd::parse_mode(v, &o->rewind_mode)) { fprintf(stderr, "bad --rewind (auto|on|off)\n"); return false; } }
+        else if (k == "--runahead") { if (!val(&v) || !runahead::parse(v, &o->runahead)) { fprintf(stderr, "bad --runahead (off|1|2|auto)\n"); return false; } }
+        else if (k == "--rewind-selftest") { if (!val(&v) || sscanf(v.c_str(), "%d,%d", &o->selftest_rewind_frames, &o->selftest_rewind_back) != 2) return false; }
+        else if (k == "--runahead-selftest") { if (!val(&v)) return false; o->selftest_runahead_frames = atoi(v.c_str()); }
         else if (k == "--headless") o->headless = true;
         else if (k == "--fullscreen") o->fullscreen = true;
         else if (k == "--resume") o->resume = true;
@@ -412,6 +419,12 @@ class Frontend {
     int last_mouse_x = -1, last_mouse_y = -1;
     uint64_t cursor_tick = 0;
     uint16_t rumble_lvl[4][2] = {};
+    /* Rewind + run-ahead (features.h): offline only. spec_ = a rewind / run-ahead frame is running (audio muted). */
+    std::unique_ptr<retrofeat::Features> feat_;
+    bool spec_ = false;
+    std::unique_ptr<retrofeat::Features> make_feat(bool measure);
+    int run_feat_selftest();
+    void run_core_frame() { if (feat_) feat_->frame(); else core.run(); }
     hubctl::ExitCombo exit_combo;     // Back+Start held 1 s on any pad: leave (saves flush in finish())
     dsview::StylusLatch stylus;      // a press only counts if it began over the frame
     Pace pace = Pace::None;
@@ -1006,6 +1019,15 @@ void Frontend::poll_all_local() {
         }
         if (swap_combo && !swap_combo_prev_) disc_request();
         swap_combo_prev_ = swap_combo;
+        if (feat_) {   // hold LT + View (not with Start / Y: those are the exit and quick-menu combos) to rewind
+            bool rw = false;
+            for (size_t i = 0; i < pads.size(); i++) {
+                hubctl::PadState st;
+                hubctl::read_state(pads[i], &st);
+                if (st.a[4] > hubctl::kDefaultAxisThreshold && st.b[hubctl::kBtnBack] && !st.b[hubctl::kBtnStart] && !st.b[3]) rw = true;
+            }
+            feat_->set_held(rw);
+        }
         if (exit_combo.update(combo, (long long)SDL_GetTicks64())) { rlog("exit combo (Back+Start held): leaving"); quit = true; }
     }
     for (int i = 0; i < n_local; i++) {
@@ -1277,6 +1299,9 @@ void Frontend::ctl_poll() {
             } else if (c.cmd == runctl::Cmd::Speed) {
                 apply_speed(c.speed);
                 ctl_.ack(true, runctl::speed_label(c.speed));
+            } else if (c.cmd == runctl::Cmd::Rewind) {
+                bool ok = feat_ && feat_->set_latched(c.value != 0);
+                ctl_.ack(ok, ok ? (c.value ? "rewinding" : "rewind off") : "Rewind is not available for this game");
             } else {
                 ctl_.ack(false, "unsupported");
             }
@@ -1890,6 +1915,41 @@ void Frontend::do_pacing() {
     }
 }
 
+std::unique_ptr<retrofeat::Features> Frontend::make_feat(bool measure) {
+    retrofeat::Hooks h;
+    h.run = [this] { core.run(); };
+    h.state_size = [this] { return core.serialize_size(); };
+    h.save = [this](void* b, size_t n) { return core.serialize(b, n); };
+    h.load = [this](const void* b, size_t n) { return core.unserialize(b, n); };
+    h.video_hash = [this] { const FrameBuf& f = core.frame(); return f.px.empty() ? (uint64_t)0 : n64run::hash_block(f.px.data(), f.px.size() * 4); };
+    h.speculative = [this](bool s) { spec_ = s; };
+    h.notify = [](const std::string& t, retrofeat::Note n) {
+        osd::push(t, n == retrofeat::Note::Warn ? osd::Kind::Warn : n == retrofeat::Note::Error ? osd::Kind::Error : n == retrofeat::Note::Good ? osd::Kind::Good : osd::Kind::Info);
+    };
+    h.corner = [](const std::string& t) { osd::set_corner(t, osd::Kind::Warn); };
+    retrofeat::Settings st;
+    st.system = lower(a.system);
+    st.rewind = a.rewind_mode;
+    st.runahead = a.runahead;
+    st.fps = fps > 1 ? fps : 60.0;
+    st.measure = measure;
+    auto f = std::make_unique<retrofeat::Features>(h, st);
+    rlog("features: rewind %s, run-ahead %d frame(s)", f->rewind_active() ? "on" : "off", f->runahead_frames());
+    return f;
+}
+
+/* QA (headless, constant zero input): --rewind-selftest N,K and --runahead-selftest N. */
+int Frontend::run_feat_selftest() {
+    feat_ = make_feat(false);
+    for (int i = 0; i < 30; i++) core.run();   // past the boot frames
+    std::string rep;
+    bool ok = true;
+    if (a.selftest_rewind_frames) { ok = feat_->selftest_rewind(a.selftest_rewind_frames, a.selftest_rewind_back, &rep) && ok; rlog("%s", rep.c_str()); }
+    if (a.selftest_runahead_frames) { ok = feat_->selftest_runahead(a.selftest_runahead_frames, &rep) && ok; rlog("%s", rep.c_str()); }
+    rlog("FEATTEST %s", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 6;
+}
+
 void Frontend::finish() {
     static bool done = false;
     if (done) return;
@@ -2194,7 +2254,7 @@ int Frontend::run(const Args& args) {
     core.on_audio = [this, &drc](const int16_t* d, size_t n) {
         if (rbe || a.synctest) { if (!link) for (size_t i = 0; i < n * 2; i++) fr_audio = (fr_audio ^ (uint16_t)d[i]) * 0x100000001B3ull; }
         else if (!link) for (size_t i = 0; i < n * 2; i++) out_hash = (out_hash ^ (uint16_t)d[i]) * 0x100000001B3ull;
-        if (!ff && !resim && audio.active() && speed <= 2.0) audio.push(d, n, drc && speed == 1.0);   // above 2x the audio is dropped, not squealed
+        if (!ff && !resim && !spec_ && audio.active() && speed <= 2.0) audio.push(d, n, drc && speed == 1.0);   // above 2x the audio is dropped, not squealed
     };
 
     std::string err;
@@ -2315,6 +2375,8 @@ int Frontend::run(const Args& args) {
         rc = selftest();
     } else if (a.synctest) {
         rc = run_synctest();
+    } else if (a.selftest_rewind_frames || a.selftest_runahead_frames) {
+        rc = run_feat_selftest();
     } else if (rbe || (a.rollback && !a.net.empty())) {
         if (!rbe && !setup_net()) { rc = net_rc; goto done; }
         if (a.headless) pace = Pace::Timer;
@@ -2375,6 +2437,8 @@ int Frontend::run(const Args& args) {
             if (!setup_link()) { rc = 3; goto done; }
             if (a.headless) pace = Pace::Timer;
         } else if (!setup_net()) { rc = net_rc; goto done; }
+        if (!online && a.net.empty() && !a.ds_link && !link && !is_ps2) feat_ = make_feat(!a.headless);
+        else if (a.rewind_mode == 1 || a.runahead != 0) rlog("rewind / run-ahead are offline only: ignored here");
         {
             uint64_t t_start = SDL_GetTicks64();
             for (;;) {
@@ -2413,7 +2477,7 @@ int Frontend::run(const Args& args) {
                 disc_poll();
                 ctl_poll();
                 do_pacing();
-                core.run();
+                run_core_frame();
                 if (link_active) {
                     link_pump();
                     if (SDL_GetTicks64() - link_last_log >= 5000) {
