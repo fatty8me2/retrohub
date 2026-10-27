@@ -19,6 +19,32 @@ int main() {
     CHECK(!parse_control("garbage", &c));
     Command r;
     CHECK(parse_control(make_control({7, Cmd::Quit, 0}), &r) && r.seq == 7 && r.cmd == Cmd::Quit);
+    {   // OSD / audio / speed commands
+        Command q;
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"volume\",\"value\":40}", &q) && q.cmd == Cmd::Volume && q.value == 40);
+        CHECK(!parse_control("{\"seq\":1,\"cmd\":\"volume\",\"value\":101}", &q));
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"mute\",\"value\":1}", &q) && q.cmd == Cmd::Mute && q.value == 1);
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"ff\",\"value\":0}", &q) && q.cmd == Cmd::Ff && q.value == 0);
+        CHECK(!parse_control("{\"seq\":1,\"cmd\":\"ff\",\"value\":2}", &q));
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"speed\",\"speed\":1.5}", &q) && q.speed == 1.5);
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"speed\",\"speed\":\"max\"}", &q) && q.speed == 0);
+        CHECK(!parse_control("{\"seq\":1,\"cmd\":\"speed\",\"speed\":4}", &q));
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"osd_msg\",\"text\":\"Hello\"}", &q) && q.text == "Hello");
+        CHECK(!parse_control("{\"seq\":1,\"cmd\":\"osd_msg\"}", &q));
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"shader\",\"text\":\"crt\"}", &q) && q.cmd == Cmd::Shader);
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"clip\"}", &q) && q.cmd == Cmd::Clip);
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"overlay\",\"value\":1}", &q) && q.cmd == Cmd::Overlay);
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"rewind\",\"value\":1}", &q) && q.cmd == Cmd::Rewind);
+        double sp = -1;
+        CHECK(parse_speed_arg("2x", &sp) && sp == 2 && parse_speed_arg("max", &sp) && sp == 0 && parse_speed_arg("0.25", &sp) && sp == 0.25);
+        CHECK(!parse_speed_arg("4", &sp) && !parse_speed_arg("fast", &sp) && !parse_speed_arg("", &sp));
+        CHECK(speed_label(2) == "Speed 2x" && speed_label(0.5) == "Speed 0.5x" && speed_label(0) == "Speed max");
+        CHECK(offline_only(Cmd::Volume) && offline_only(Cmd::SaveState) && !offline_only(Cmd::OsdMsg) && !offline_only(Cmd::Quit));
+        Command w; w.cmd = Cmd::OsdMsg; w.text = "a \"q\""; w.seq = 9;
+        CHECK(parse_control(make_control(w), &q) && q.text == w.text && q.seq == 9);
+        w = Command(); w.cmd = Cmd::Speed; w.speed = 0.25; w.seq = 2;
+        CHECK(parse_control(make_control(w), &q) && q.speed == 0.25);
+    }
     Ack a;
     CHECK(parse_ack(make_ack({5, true, "x \"y\""}), &a) && a.seq == 5 && a.ok && a.msg == "x \"y\"");
     CHECK(state_file("d/", 3) == "d/slot3.state" && state_file("d", kAutoSlot) == "d/auto.state");

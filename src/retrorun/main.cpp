@@ -24,6 +24,7 @@
 #include "exit_combo.h"
 #include "start_hint.h"
 #include "runner_ctl.h"
+#include "osd.h"
 #include "core.h"
 #include "ds_link.h"
 #include "retro_pad.h"
@@ -49,6 +50,7 @@ namespace fs = std::filesystem;
 struct Args {
     std::string control, game_key, shot_dir, load_state_path;   // --load-state FILE: restore this state right after boot (offline)
     //   // --control FILE (runner_ctl.h), --game-key KEY, --shot-dir DIR
+    std::string osd_msg;   // --osd-msg TEXT: QA, a toast that stays up (use with RETRORUN_OSD_SHOT=1 and --screenshot)
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
     std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
     int integer_scale = -1;     // --integer-scale 0|1 (default: on, DS off)
@@ -127,6 +129,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--ini") { if (!val(&o->ini)) return false; }
         else if (k == "--net") { if (!val(&o->net)) return false; }
         else if (k == "--room") { if (!val(&o->room)) return false; }
+        else if (k == "--osd-msg") { if (!val(&o->osd_msg)) return false; }
         else if (k == "--title") { if (!val(&o->title)) return false; }
         else if (k == "--setup-tag") { if (!val(&o->setup_tag)) return false; }
         else if (k == "--save-stem") { if (!val(&o->save_stem)) return false; }
@@ -243,6 +246,15 @@ static bool write_atomic(const std::string& path, const void* data, size_t size)
     return true;
 }
 
+/* Status line -> OSD colour. */
+static osd::Kind osd_kind_for(const std::string& s) {
+    auto has = [&](const char* w) { return s.find(w) != std::string::npos; };
+    if (has("failed") || has("FAILED") || has("Cannot") || has("cannot") || has("No state")) return osd::Kind::Error;
+    if (has("disabled") || has("needs") || has("disconnected") || has("not available") || has("only one") || has("does not support")) return osd::Kind::Warn;
+    if (has("Saved") || has("Loaded") || has("saved") || has("inserted")) return osd::Kind::Good;
+    return osd::Kind::Info;
+}
+
 /* ------------------------------------------------------------------ audio */
 
 /* SPSC ring of stereo int16 frames feeding an SDL audio device. The producer (emulation thread)
@@ -273,6 +285,11 @@ class AudioOut {
     bool active() const { return dev_ != 0; }
     size_t fill() const { return (size_t)(wr_.load(std::memory_order_acquire) - rd_.load(std::memory_order_acquire)); }
     size_t target() const { return target_; }
+    void set_volume(int v) { vol_.store(std::max(0, std::min(100, v)), std::memory_order_relaxed); }   // 0-100 (squared curve), runner_ctl "volume"
+    void set_mute(bool m) { mute_.store(m, std::memory_order_relaxed); }
+    void set_speed(double s) { speed_ = s > 0 ? s : 1.0; }   // runner_ctl "speed": input consumed s times faster (emulation thread only)
+    int volume() const { return vol_.load(std::memory_order_relaxed); }
+    bool muted_now() const { return mute_.load(std::memory_order_relaxed); }
 
     void push(const int16_t* in, size_t frames, bool drc) {
         if (!dev_) return;
@@ -281,7 +298,8 @@ class AudioOut {
             double err = ((double)target_ - (double)fill()) / (double)target_;
             ratio = 1.0 + std::max(-1.0, std::min(1.0, err)) * 0.005;
         }
-        const double step = 1.0 / ratio;
+        const double step = speed_ / ratio;   // speed_ > 1: consume input faster (pitch up); < 1: slower
+        const double gain = mute_.load(std::memory_order_relaxed) ? 0.0 : std::pow(vol_.load(std::memory_order_relaxed) / 100.0, 2.0);
         uint64_t w = wr_.load(std::memory_order_relaxed);
         const uint64_t r = rd_.load(std::memory_order_acquire);
         for (size_t i = 0; i < frames; i++) {
@@ -289,8 +307,8 @@ class AudioOut {
             while (phase_ < 1.0) {
                 if (w - r >= kCap) { phase_ = 0; break; }   // full: drop
                 size_t idx = (size_t)(w & (kCap - 1)) * 2;
-                ring_[idx] = (int16_t)std::lround(prev_[0] + (cl - prev_[0]) * phase_);
-                ring_[idx + 1] = (int16_t)std::lround(prev_[1] + (cr - prev_[1]) * phase_);
+                ring_[idx] = (int16_t)std::lround((prev_[0] + (cl - prev_[0]) * phase_) * gain);
+                ring_[idx + 1] = (int16_t)std::lround((prev_[1] + (cr - prev_[1]) * phase_) * gain);
                 w++;
                 phase_ += step;
             }
@@ -326,6 +344,9 @@ class AudioOut {
     std::atomic<uint64_t> rd_{0}, wr_{0};
     size_t target_ = 0;
     double rate_ = 0, phase_ = 0, prev_[2] = {0, 0};
+    double speed_ = 1.0;
+    std::atomic<int> vol_{100};
+    std::atomic<bool> mute_{false};
     std::atomic<uint32_t> underruns_{0};
 };
 
@@ -349,6 +370,15 @@ class Frontend {
     bool hint_done = false;
     void draw_hint();
     bool fullscreen = false, quit = false, muted = false, online = false, ff = false;
+    /* runner_ctl "speed" / "ff" (offline only). speed = multiplier (1 = normal); speed_max = uncapped (also what the Tab key does);
+     * fast_speed_ = what "ff on" selects (0 = max), the last fast speed chosen, default 2x. */
+    double speed = 1.0, fast_speed_ = 2.0;
+    bool speed_max = false;
+    void apply_speed(double s);
+    SDL_Texture* osd_tex = nullptr;
+    int osd_tex_w = 0, osd_tex_h = 0;
+    osd::Layer osd_layer;
+    void draw_osd();
     bool srm_size_mismatch = false;
     std::string userdata_dir;
     std::string layout_pref_path() const { return userdata_dir + "\\retrorun_layout.txt"; }
@@ -608,6 +638,7 @@ void Frontend::set_status(const std::string& s) {
     status_msg = s;
     status_until = SDL_GetTicks64() + 2500;
     if (win) SDL_SetWindowTitle(win, (window_base() + "  |  " + s).c_str());
+    osd::push(s, osd_kind_for(s));
 }
 
 bool Frontend::setup_paths() {
@@ -776,7 +807,37 @@ void Frontend::present() {
         SDL_RenderFillRect(ren, &c);
     }
     draw_hint();
+    draw_osd();
     SDL_RenderPresent(ren);
+}
+
+void Frontend::draw_osd() {
+    int w = 0, h = 0;
+    SDL_GetRendererOutputSize(ren, &w, &h);
+    bool changed = false;
+    if (w <= 0 || h <= 0 || !osd::render(&osd_layer, w, h, &changed)) return;
+    if (!osd_tex || osd_tex_w != w || osd_tex_h != h) {
+        if (osd_tex) SDL_DestroyTexture(osd_tex);
+        osd_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+        if (!osd_tex) return;
+        SDL_SetTextureBlendMode(osd_tex, SDL_BLENDMODE_BLEND);
+        osd_tex_w = w; osd_tex_h = h;
+        changed = true;
+    }
+    if (changed) SDL_UpdateTexture(osd_tex, nullptr, osd_layer.px.data(), w * 4);
+    SDL_RenderCopy(ren, osd_tex, nullptr, nullptr);
+}
+
+void Frontend::apply_speed(double s) {
+    speed_max = (s == 0);
+    speed = speed_max ? 1.0 : s;
+    if (s == 0 || s > 1.0) fast_speed_ = s;
+    ff = speed_max;
+    core.set_fast_forwarding(ff);
+    audio.set_speed(speed);
+    next_deadline = 0;   // re-anchor the timer pacing at the new rate
+    osd::push(runctl::speed_label(s));
+    rlog("speed: %s", runctl::speed_label(s).c_str());
 }
 
 void Frontend::draw_hint() {
@@ -1028,7 +1089,7 @@ void Frontend::pump_events(bool idle) {
         }
     }
     const Uint8* k = SDL_GetKeyboardState(nullptr);
-    ff = !online && !a.ds_link && k[SDL_SCANCODE_TAB];
+    ff = !online && !a.ds_link && (k[SDL_SCANCODE_TAB] || speed_max);
     core.set_fast_forwarding(ff);
     if (win && status_until && SDL_GetTicks64() > status_until) {
         status_until = 0;
@@ -1198,6 +1259,28 @@ void Frontend::ctl_poll() {
         }
         case runctl::Cmd::SwapDisc: disc_request(); ctl_.ack(true, "requested"); break;
         case runctl::Cmd::Quit: quit = true; ctl_.ack(true, "quitting"); break;
+        case runctl::Cmd::OsdMsg: osd::push(c.text); ctl_.ack(true, "shown"); break;
+        case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
+        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Clip:
+            if (online || a.ds_link) { ctl_.ack(false, "Not available in online sessions"); break; }
+            if (c.cmd == runctl::Cmd::Volume) {
+                audio.set_volume(c.value);
+                osd::push("Volume " + std::to_string(c.value) + "%");
+                ctl_.ack(true, "volume " + std::to_string(c.value));
+            } else if (c.cmd == runctl::Cmd::Mute) {
+                audio.set_mute(c.value != 0);
+                osd::push(c.value ? "Muted" : "Sound on");
+                ctl_.ack(true, c.value ? "muted" : "unmuted");
+            } else if (c.cmd == runctl::Cmd::Ff) {
+                apply_speed(c.value ? fast_speed_ : 1.0);
+                ctl_.ack(true, c.value ? "fast-forward on" : "fast-forward off");
+            } else if (c.cmd == runctl::Cmd::Speed) {
+                apply_speed(c.speed);
+                ctl_.ack(true, runctl::speed_label(c.speed));
+            } else {
+                ctl_.ack(false, "unsupported");
+            }
+            break;
         default: ctl_.ack(false, "unknown command"); break;
     }
 }
@@ -1782,7 +1865,7 @@ bool Frontend::setup_link() {
 
 void Frontend::do_pacing() {
     if (ff || (a.headless && !a.ds_link && !rbe)) return;
-    switch (pace) {
+    switch (speed != 1.0 ? Pace::Timer : pace) {   // a changed speed paces by timer (vsync/audio pacing are tied to 1x)
         case Pace::Audio:
             while (audio.fill() > audio.target() && !quit) {
                 SDL_Delay(1);
@@ -1792,7 +1875,7 @@ void Frontend::do_pacing() {
         case Pace::Timer: {
             LARGE_INTEGER now;
             QueryPerformanceCounter(&now);
-            int64_t period = (int64_t)((double)qpc_freq / fps);
+            int64_t period = (int64_t)((double)qpc_freq / (fps * speed));
             if (next_deadline == 0 || now.QuadPart - next_deadline > qpc_freq / 10) next_deadline = now.QuadPart;
             next_deadline += period;
             while (!quit) {
@@ -2111,7 +2194,7 @@ int Frontend::run(const Args& args) {
     core.on_audio = [this, &drc](const int16_t* d, size_t n) {
         if (rbe || a.synctest) { if (!link) for (size_t i = 0; i < n * 2; i++) fr_audio = (fr_audio ^ (uint16_t)d[i]) * 0x100000001B3ull; }
         else if (!link) for (size_t i = 0; i < n * 2; i++) out_hash = (out_hash ^ (uint16_t)d[i]) * 0x100000001B3ull;
-        if (!ff && !resim && audio.active()) audio.push(d, n, drc);
+        if (!ff && !resim && audio.active() && speed <= 2.0) audio.push(d, n, drc && speed == 1.0);   // above 2x the audio is dropped, not squealed
     };
 
     std::string err;
@@ -2225,6 +2308,7 @@ int Frontend::run(const Args& args) {
     cheats_init();
     if (!a.disc_ctl.empty()) disc_watch = cheats::FileWatch(a.disc_ctl);
     if (!a.control.empty()) ctl_ = runctl::Poller(a.control);
+    if (!a.osd_msg.empty()) osd::push(a.osd_msg, osd::Kind::Info, 3600);
     int rc = 0;
     const uint64_t hashlog_n = std::getenv("RETRORUN_HASHLOG") ? (uint64_t)atoll(std::getenv("RETRORUN_HASHLOG")) : 0;   // QA/determinism spike: log state+output hash every N frames
     if (a.selftest) {
@@ -2345,7 +2429,7 @@ int Frontend::run(const Args& args) {
                 frame_no++;
                 if (hashlog_n && frame_no % hashlog_n == 0) rlog("HASHLOG frame %llu state %016llx out %016llx video %016llx", (unsigned long long)frame_no, (unsigned long long)state_hash(), (unsigned long long)out_hash, (unsigned long long)(core.frame().px.empty() ? 0 : n64run::hash_block(core.frame().px.data(), core.frame().px.size() * 4)));
 
-                if (!a.headless && (!ff || (frame_no & 7) == 0)) present();
+                if (!a.headless && (!ff || (frame_no & 7) == 0) && (speed <= 1.0 || frame_no % (uint64_t)std::ceil(speed) == 0)) present();
 
                 if ((frame_no & 63) == 0 && SDL_GetTicks64() - last_srm_check > 30000) {
                     last_srm_check = SDL_GetTicks64();
@@ -2410,6 +2494,17 @@ done:
                 starthint::Bitmap hb = starthint::render(starthint::pick_mode(false, true), starthint::scale_for_height(shot.h));
                 starthint::composite(shot.px.data(), shot.w, shot.h, shot.w, hb, starthint::alpha_at(1000));
             }
+            if (const char* os = std::getenv("RETRORUN_OSD_SHOT"); os && os[0] == '1' && shot.w > 0 && shot.px.size() >= (size_t)shot.w * shot.h) {   // QA: composite the OSD into the frame
+                int k = std::max(1, (480 + shot.h - 1) / shot.h);
+                if (k > 1) {
+                    FrameBuf up;
+                    up.w = shot.w * k; up.h = shot.h * k; up.px.resize((size_t)up.w * up.h);
+                    for (int y = 0; y < up.h; y++) for (int x = 0; x < up.w; x++) up.px[(size_t)y * up.w + x] = shot.px[(size_t)(y / k) * shot.w + x / k];
+                    shot = std::move(up);
+                }
+                osd::Layer ol; bool oc = false;
+                if (osd::render(&ol, shot.w, shot.h, &oc)) osd::blend(shot.px.data(), shot.w, shot.h, shot.w, ol);
+            }
             if (write_frame_image(a.screenshot, shot))
                 rlog("screenshot: %s (%dx%d)", a.screenshot.c_str(), core.frame().w, core.frame().h);
             else
@@ -2419,6 +2514,7 @@ done:
         finish();
     }
     if (tex) SDL_DestroyTexture(tex);
+    if (osd_tex) SDL_DestroyTexture(osd_tex);
     if (ren) SDL_DestroyRenderer(ren);
     if (win) SDL_DestroyWindow(win);
     audio.close();

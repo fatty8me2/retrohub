@@ -54,6 +54,8 @@
 #include "lockstep.h"
 #include "runstate.h"
 #include "runner_ctl.h"
+#include "osd.h"
+#include <GL/gl.h>
 #include <set>
 #include <ctime>
 #include "save_sync.h"
@@ -413,6 +415,12 @@ static bool ctl_grab_end(const std::string& dest, int max_w, bool* failed) {
 }
 
 static void ctl_finish(bool ok, const std::string& msg) {
+    switch (g_job.kind) {   // the OSD mirrors what the hub is told
+        case CtlJob::SaveShot: case CtlJob::SaveWait: osd::push(ok ? "Saved state slot " + std::to_string(g_job.slot) : "Save state failed", ok ? osd::Kind::Good : osd::Kind::Error); break;
+        case CtlJob::LoadWait: osd::push(ok ? "Loaded state slot " + std::to_string(g_job.slot) : "Load state failed", ok ? osd::Kind::Good : osd::Kind::Error); break;
+        case CtlJob::Shot: osd::push(ok ? "Screenshot saved" : "Screenshot failed", ok ? osd::Kind::Good : osd::Kind::Error); break;
+        default: if (!ok) osd::push(msg, osd::Kind::Warn); break;
+    }
     g_ctl.ack(ok, msg);
     logf_("control", "%s: %s", ok ? "ok" : "FAILED", msg.c_str());
     g_job = CtlJob();
@@ -446,6 +454,20 @@ static void auto_tick() {
         unsigned long long now = GetTickCount64();
         if (now >= g_next_autosave) { g_next_autosave = now + 30000; auto_save_now(); }
     }
+}
+
+/* runner_ctl "speed" / "ff": the core's speed factor (percent) with the limiter on; "max" turns the limiter off. g_fast_speed is what
+ * "ff on" selects (last fast speed chosen, 0 = max). Unthrottled headless test runs keep their limiter off. */
+static double g_fast_speed = 2.0;
+static void set_speed(double sp) {
+    const bool free_run = g_headless_mode && !g_realtime;
+    int lim = (sp == 0 || free_run) ? 0 : 1;
+    int pct = sp == 0 ? 100 : (int)(sp * 100.0 + 0.5);
+    g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_FACTOR, &pct);
+    if (!free_run) g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &lim);
+    if (sp == 0 || sp > 1.0) g_fast_speed = sp;
+    osd::push(runctl::speed_label(sp));
+    logf_("control", "%s", runctl::speed_label(sp).c_str());
 }
 
 static void ctl_tick() {
@@ -493,7 +515,7 @@ static void ctl_tick() {
                 fs::create_directories(fs::path(g_ctl_shot_dir), ec);
                 if (fs::exists(fs::path(dest), ec)) dest = dest.substr(0, dest.size() - 4) + "-" + n;
                 fs::rename(fs::path(g_ctl_shot_tmp) / n, fs::path(dest), ec);
-                if (!ec) logf_("control", "screenshot filed: %s", dest.c_str());
+                if (!ec) { logf_("control", "screenshot filed: %s", dest.c_str()); osd::push("Screenshot saved", osd::Kind::Good); }
             }
         }
     }
@@ -532,8 +554,85 @@ static void ctl_tick() {
             if (!g_auto_dir.empty() && !g_ctl_online) { auto_save_now(); g_stop_at_vi = vi + 12; }   // let the core write auto.state first
             else g_core.DoCommand(M64CMD_STOP, 0, nullptr);
             break;
+        case runctl::Cmd::OsdMsg: osd::push(c.text); g_ctl.ack(true, "shown"); break;
+        case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
+        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Clip:
+            if (g_ctl_online) { g_ctl.ack(false, "Not available in online sessions"); break; }
+            if (c.cmd == runctl::Cmd::Volume) {
+                int v = c.value;
+                g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_VOLUME, &v);
+                osd::push("Volume " + std::to_string(v) + "%");
+                g_ctl.ack(true, "volume " + std::to_string(v));
+            } else if (c.cmd == runctl::Cmd::Mute) {
+                int m = c.value ? 1 : 0;
+                g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_MUTE, &m);
+                osd::push(m ? "Muted" : "Sound on");
+                g_ctl.ack(true, m ? "muted" : "unmuted");
+            } else if (c.cmd == runctl::Cmd::Ff || c.cmd == runctl::Cmd::Speed) {
+                double sp = c.cmd == runctl::Cmd::Speed ? c.speed : (c.value ? g_fast_speed : 1.0);
+                set_speed(sp);
+                g_ctl.ack(true, runctl::speed_label(sp));
+            } else {
+                g_ctl.ack(false, "unsupported");
+            }
+            break;
         default: ctl_finish(false, "not supported for this system"); break;
     }
+}
+
+/* ---- OSD as a GL overlay (EXPERIMENTAL, off unless N64RUN_OSD_GL=1) ----
+ * Draws the osd layer as a textured quad with fixed-function GL on the context current in the VI callback, then restores the
+ * state it touched. Limits: needs a compatibility context (GLideN64 on wgl normally is one); whether the quad is visible depends
+ * on the callback running between the plugin's draw and its buffer swap, which differs per core build, so this is not enabled by
+ * default. Without it n64run shows OSD text in the window caption (title_watch) so nothing is lost. */
+static void osd_gl_draw() {
+    static const bool on = [] { const char* e = std::getenv("N64RUN_OSD_GL"); return e && e[0] == '1'; }();
+    if (!on || g_headless_mode || !wglGetCurrentContext()) return;
+    GLint vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    static osd::Layer layer;
+    static GLuint tex = 0;
+    static int tw = 0, th = 0;
+    bool changed = false;
+    // The layer covers the whole framebuffer area (vp[0]+vp[2] x vp[1]+vp[3] is not needed: the quad is mapped onto the viewport).
+    if (vp[2] <= 0 || vp[3] <= 0 || !osd::render(&layer, vp[2], vp[3], &changed)) return;
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glPushClientAttrib(GL_CLIENT_ALL_ATTRIB_BITS);
+    GLint prog = 0;
+    glGetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &prog);
+    typedef void(WINAPI * UseProgramFn)(GLuint);
+    static UseProgramFn use_program = reinterpret_cast<UseProgramFn>(wglGetProcAddress("glUseProgram"));
+    if (use_program) use_program(0);   // fixed function needs no shader bound
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_LIGHTING);
+    if (!tex) glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    if (changed || tw != vp[2] || th != vp[3]) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, vp[2], vp[3], 0, 0x80E1 /* GL_BGRA */, GL_UNSIGNED_BYTE, layer.px.data());
+        tw = vp[2]; th = vp[3];
+    }
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); glOrtho(0, 1, 1, 0, -1, 1);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(0, 0);
+    glTexCoord2f(1, 0); glVertex2f(1, 0);
+    glTexCoord2f(1, 1); glVertex2f(1, 1);
+    glTexCoord2f(0, 1); glVertex2f(0, 1);
+    glEnd();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glPopClientAttrib();
+    glPopAttrib();
+    if (use_program) use_program((GLuint)prog);
 }
 
 static void headless_frame_cb(unsigned int) {
@@ -549,6 +648,7 @@ static void headless_frame_cb(unsigned int) {
     cheats_tick();
     auto_tick();
     ctl_tick();
+    osd_gl_draw();
     if (g_match && g_core.MemPtr && !g_match->done()) {
         std::string l = g_match->step(static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)), g_vi);
         if (!l.empty()) { std::stringstream ls(l); std::string one; while (std::getline(ls, one)) logline("n64run", one.c_str()); }
@@ -636,12 +736,22 @@ static void hint_watch(bool keyboard) {
     }
 }
 
-static void title_watch(std::wstring title) {
+static std::wstring widen_ascii(const std::string& s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+    std::wstring w((size_t)std::max(0, n), L' ');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &w[0], n);
+    return w;
+}
+
+static void title_watch(std::wstring base_title) {
     using namespace std::chrono;
     const auto start = steady_clock::now();
+    std::string shown_osd;
     while (!g_title_stop.load()) {
         HWND hwnd = nullptr;
         EnumWindows(find_game_window, reinterpret_cast<LPARAM>(&hwnd));
+        shown_osd = osd::latest_text();   // OSD toasts also go to the caption (the GL overlay is experimental)
+        std::wstring title = shown_osd.empty() ? base_title : base_title + L"  |  " + widen_ascii(shown_osd);
         if (hwnd) {
             wchar_t cur[512] = {0};
             GetWindowTextW(hwnd, cur, 512);
@@ -649,7 +759,10 @@ static void title_watch(std::wstring title) {
                 SendMessageTimeoutW(hwnd, WM_SETTEXT, 0, (LPARAM)title.c_str(), SMTO_ABORTIFHUNG, 200, nullptr);
         }
         bool early = steady_clock::now() - start < seconds(10);
-        for (int i = 0; i < (early ? 1 : 8) && !g_title_stop.load(); i++) std::this_thread::sleep_for(milliseconds(250));
+        for (int i = 0; i < (early ? 1 : 8) && !g_title_stop.load(); i++) {
+            std::this_thread::sleep_for(milliseconds(250));
+            if (osd::latest_text() != shown_osd) break;   // a toast came or went: update the caption now
+        }
     }
 }
 
