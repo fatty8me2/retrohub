@@ -1,6 +1,21 @@
 {
   "versions": [
     {
+      "version": "1.28.2",
+      "date": "2026-10-27",
+      "title": "Nothing pops up over your game",
+      "new": [],
+      "improved": [
+        "Invites that arrive while you play wait in the bell (and show briefly inside the game) instead of a Windows notification; you can turn the notification back on in Settings"
+      ],
+      "fixed": [
+        "RetroHub never comes to the front while a game is running: not after an update, not when a game closes, not for invites, update prompts or What's new",
+        "This covers every kind of game, including GameCube online, remote play, Kanto Together and 3DS rooms",
+        "After an update RetroHub reopens quietly in the taskbar if you are playing",
+        "Smash Classic only offers its update on the title and menu screens, never during a match"
+      ]
+    },
+    {
       "version": "1.28.1",
       "date": "2026-10-27",
       "title": "No more stray chat while you play",
