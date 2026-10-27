@@ -92,13 +92,14 @@ void Features::rewind_step() {
 }
 
 void Features::frame() {
-    if (!rewind_on_ && ra_frames_ == 0) { h_.run(); return; }
-    if (!ensure_buffers()) { h_.run(); return; }
+    if (!rewind_on_ && ra_frames_ == 0) { h_.run(); if (h_.real_frame) h_.real_frame(); return; }
+    if (!ensure_buffers()) { h_.run(); if (h_.real_frame) h_.real_frame(); return; }
     if (rewinding_) { rewind_step(); return; }
     steps_back_ = 0;
 
     const uint64_t t0 = now();
     h_.run();
+    if (h_.real_frame) h_.real_frame();   // the core is on the real frame here; run-ahead has not touched it yet
     const uint64_t t_run = now();
     if (!h_.save(scratch_.data(), scratch_.size())) { disable_rewind("Rewind stopped: the core cannot save states"); ra_frames_ = 0; return; }
     if (rewind_on_) ring_->push(scratch_.data());
