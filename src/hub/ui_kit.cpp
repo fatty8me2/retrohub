@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "logic.h"
+#include "ui_sound.h"
 
 namespace ui {
 
@@ -418,6 +419,12 @@ void icon(ImDrawList* dl, Icon ic, ImVec2 c, float s, ImU32 col) {
 /* ============================ widgets ============================ */
 
 static bool nav_focus_visible() { return ImGui::GetIO().NavVisible; }
+/* Menu sounds: one call per interactive widget. Focus moving onto a new item = Move, activation = Select. */
+static void sfx_item(bool focus, bool pressed) {
+    static ImGuiID last = 0;
+    if (focus) { ImGuiID id = ImGui::GetItemID(); if (id != last) { last = id; ui_sound::play(ui_sound::Sfx::Move); } }
+    if (pressed) ui_sound::play(ui_sound::Sfx::Select);
+}
 
 bool button(const char* label, ImVec2 size, bool primary, bool enabled, Icon ic) {
     const char* end = ImGui::FindRenderedTextEnd(label);
@@ -431,7 +438,7 @@ bool button(const char* label, ImVec2 size, bool primary, bool enabled, Icon ic)
     bool pressed = ImGui::InvisibleButton(label, ImVec2(std::max(1.f, w), std::max(1.f, h)), ImGuiButtonFlags_EnableNav);
     bool hov = ImGui::IsItemHovered();
     bool held = ImGui::IsItemActive();
-    bool focus = ImGui::IsItemFocused() && nav_focus_visible();
+    bool focus = ImGui::IsItemFocused() && nav_focus_visible(); sfx_item(focus, pressed);
     float* hv = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), 0.f);
     anim(*hv, (hov || focus) ? 1.f : 0.f, 16.f);
     float al = ImGui::GetStyle().Alpha;
@@ -466,7 +473,7 @@ bool icon_button(const char* id, Icon ic, float size, bool active, const char* t
     ImGui::PushID(id);
     bool pressed = ImGui::InvisibleButton("##ib", ImVec2(size, size), ImGuiButtonFlags_EnableNav);
     bool hov = ImGui::IsItemHovered();
-    bool focus = ImGui::IsItemFocused() && nav_focus_visible();
+    bool focus = ImGui::IsItemFocused() && nav_focus_visible(); sfx_item(focus, pressed);
     float* hv = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), 0.f);
     anim(*hv, (hov || focus) ? 1.f : 0.f, 16.f);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -485,7 +492,9 @@ bool icon_button(const char* id, Icon ic, float size, bool active, const char* t
 bool modal_back() {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return false;
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    const bool back = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    if (back) ui_sound::play(ui_sound::Sfx::Back);
+    return back;
 }
 
 bool chip(const char* label, bool on, ImU32 col) {
@@ -493,7 +502,7 @@ bool chip(const char* label, bool on, ImU32 col) {
     ImVec2 sz(ts.x + sp(3.25f), ts.y + sp(1.75f));
     bool pressed = ImGui::InvisibleButton(label, sz, ImGuiButtonFlags_EnableNav);
     bool hov = ImGui::IsItemHovered();
-    bool focus = ImGui::IsItemFocused() && nav_focus_visible();
+    bool focus = ImGui::IsItemFocused() && nav_focus_visible(); sfx_item(focus, pressed);
     float* hv = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), 0.f);
     anim(*hv, (hov || focus) ? 1.f : 0.f, 16.f);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -523,7 +532,7 @@ int segmented(const char* id, const char* const* labels, int n, int cur) {
         ImGui::PushID(i);
         bool pr = ImGui::InvisibleButton("seg", ImVec2(ws[i], h - inner * 2), ImGuiButtonFlags_EnableNav);
         bool hov = ImGui::IsItemHovered();
-        bool focus = ImGui::IsItemFocused() && nav_focus_visible();
+        bool focus = ImGui::IsItemFocused() && nav_focus_visible(); sfx_item(focus, pr);
         float* hv = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), 0.f);
         anim(*hv, (hov || focus) ? 1.f : 0.f, 16.f);
         ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
