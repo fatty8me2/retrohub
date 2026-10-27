@@ -182,6 +182,8 @@ void tab_general() {
     if (ImGui::Checkbox("Notify me about invites while I'm playing", &A.st.notify_in_game)) mark_dirty();
     text_wrapped_disabled("Shows a Windows notification that never takes focus from your game. Click Join to enter the room when your game ends.");
     if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
+    if (ImGui::Checkbox("Show my screenshots when RetroHub is idle", &A.st.attract_mode)) mark_dirty();
+    text_wrapped_disabled("After about a minute with no input on Home, the top card slowly pans through your own screenshots and save-state pictures. Any button brings it back. Nothing is downloaded.");
     end_panel();
 }
 

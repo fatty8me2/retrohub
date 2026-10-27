@@ -1,5 +1,6 @@
 #include "app.h"
 #include "wiiu_meta.h"
+#include "homefun.h"
 
 void go_add_rom(const GameInfo& g) {
     settings_open(hubui::ST_General);
@@ -369,10 +370,12 @@ void library_top_bar() {
         if (chip("Friends' games", A.st.show_friend_games, ui::ACCENT)) { A.st.show_friend_games = !A.st.show_friend_games; mark_dirty(); A.vis_dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Games your friends have that you don't, shown greyed out (%d now)", (int)A.ghosts.size());
     }
-    float total = bh + sp(1.f) + add_games_header_width(bh);
+    const bool dice = A.view == LibView::Home && !A.lib.empty();   // L7: Surprise me
+    float total = bh + sp(1.f) + add_games_header_width(bh) + (dice ? bh + sp(1.f) : 0.f);
     ImGui::SameLine(0, 0);
     float ax = ImGui::GetContentRegionAvail().x;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax - total));
+    if (dice) { surprise_ui_button(bh); ImGui::SameLine(0, sp(1.f)); }
     ImGui::BeginDisabled(A.scanning);
     if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, A.scanning ? "Scanning..." : "Rescan ROM folders")) start_scan();
     ImGui::EndDisabled();
@@ -985,7 +988,8 @@ void page_library() {
         ui::anim(A.hero_t, 1.f, 9.f);
         float avail_h = ImGui::GetContentRegionAvail().y;
         float hero_h = std::min(sp(40.f), std::max(sp(21.f), std::min(avail_h * 0.36f, ImGui::GetIO().DisplaySize.y * 0.25f)));   // <= a quarter of the window
-        draw_hero(*sel, hero_h);
+        if (attract_update()) attract_draw_hero(hero_h);   // L6: idle slideshow in place of the hero
+        else draw_hero(*sel, hero_h);
     }
     /* The shelf strips inset their covers by `bleed` (room for the hover grow); pull the child out by the same amount so
      * headers and the first cover start on the same left edge as the hero and the top bar. */
