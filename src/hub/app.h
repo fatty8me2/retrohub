@@ -196,6 +196,7 @@ struct App {
     std::vector<hubui::ConsoleSection> secs;     // All Games sections (cached by rebuild_vis)
     std::map<std::string, int> chip_counts;      // per-console counts under the current search + Online toggle
     int chip_total = 0;
+    std::map<std::string, int> genre_counts;     // All Games Genre chip: genre -> games (after search / Online / Favorites; "Other" = no genre)
     bool grid_scroll_top = false;                // reset the All Games scroll on the next frame
     bool picks_open = false;                      // Home: "Top picks you don't have yet" expanded
     char search_buf[64] = {0};
@@ -491,6 +492,7 @@ void refresh_state(const std::string& key);
 const hub::GameEntry* find_entry(const std::string& key);
 void apply_scan();
 const GameInfo* catalog_for(const hub::GameEntry& e);
+std::string genre_of_entry(const hub::GameEntry& e);   // first genre from the bundled game info ("Other" when unknown); cached per game key
 void rebuild_vis();
 bool supports_online(const hub::GameEntry& e);
 bool online_untested(const hub::GameEntry& e);

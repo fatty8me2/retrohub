@@ -29,6 +29,9 @@ struct Prefs {
     std::map<std::string, std::string> covers;     // game key -> cover image path
     std::string theme;
     Profile profile;
+    /* Per-key stamps for favorites and hidden (unix ms). Positive = key present as of that time, negative = tombstone
+     * (removed at -value). merge() unions these, newest per key wins, so two PCs favoriting different games both keep them. */
+    std::map<std::string, long long> favorites_ts, hidden_ts;
     std::map<std::string, long long> ts;           // field name -> last modified (unix ms); absent = 0
 
     long long stamp(const std::string& field) const;
@@ -73,6 +76,8 @@ Prefs merge_into_file(const std::string& vault_root, const Prefs& incoming);
  * library.json stays the source of truth for the library UI. set_vault_root() arms the mirror: after that, every
  * hub::set_favorite() also records the change here (stamped now). "" disarms it (the default). */
 void set_vault_root(const std::string& vault_root);
+/* Called (outside any lock) after a local change was written to prefs.json: the cloud engine uses it to queue a push. */
+void set_change_hook(void (*fn)());
 void mirror_favorite(const std::string& key, bool fav);          // called from hub::set_favorite
 /* After prefs were merged from the cloud: make library.json's favorites equal prefs.favorites. Returns how many changed.
  * Does nothing when prefs has no favorites stamp (a fresh prefs never wipes the library). Does not echo back into prefs. */

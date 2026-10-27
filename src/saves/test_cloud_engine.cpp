@@ -5,6 +5,8 @@
 #include "cloud_http.h"
 #include "cloud_mock.h"
 #include "savestore.h"
+#include "prefs.h"
+#include "library.h"
 #include "json.h"
 
 #ifndef NOMINMAX
@@ -794,6 +796,50 @@ static void test_states_switch() {
     CHECK(!g_srv->cur_sha(g_uid, GK, "states/slot2.png").empty());
 }
 
+/* Favorites follow the account: two PCs favorite different games offline, sync, and both end up with both (prefs::merge_text). */
+static void test_account_prefs_two_pcs() {
+    printf(" account prefs: two PCs favorite different games\n");
+    namespace pf = hub::prefs;
+    Pc pc1("pa1"), pc2("pa2");
+    fs::path lib = scratch_root() / "pa_lib";
+    fs::remove_all(lib); fs::create_directories(lib);
+    hub::library_set_data_dir(lib.u8string());
+    auto write_prefs = [&](const Pc& pc, const std::vector<str>& favs, long long t) {
+        pf::Prefs p; pf::load(pc.vault.u8string(), &p);
+        pf::set_favorites(&p, favs, t);
+        CHECK(pf::save(pc.vault.u8string(), p));
+    };
+    use(pc1);
+    write_prefs(pc1, {"n64:one"}, 1000);
+    cloud_account_prefs_changed();
+    pump();
+    CHECK(!g_srv->cur_sha(g_uid, "_account/_", "_account/prefs.json").empty());
+    /* PC2 starts empty, pulls the prefs, and its library favorites follow */
+    use(pc2);
+    cloud_sync_all_now();
+    pump();
+    pf::Prefs got;
+    CHECK(pf::load(pc2.vault.u8string(), &got) && got.favorites == std::vector<str>{"n64:one"});
+    CHECK(hub::game_state("n64:one").favorite);
+    /* both go "offline" (no sync in between) and each favorites a different game */
+    { pf::Prefs p; pf::load(pc2.vault.u8string(), &p); pf::set_favorite(&p, "gba:two", true, 3000); pf::save(pc2.vault.u8string(), p); }
+    cloud_account_prefs_changed();
+    pump();                                                     // PC2 pushes first
+    use(pc1);
+    { pf::Prefs p; pf::load(pc1.vault.u8string(), &p); pf::set_favorite(&p, "snes:three", true, 2000); pf::save(pc1.vault.u8string(), p); }
+    cloud_account_prefs_changed();
+    pump();                                                     // PC1 conflicts with the cloud copy -> merged, not keep-both
+    pf::Prefs m1; pf::load(pc1.vault.u8string(), &m1);
+    CHECK(m1.favorites == (std::vector<str>{"gba:two", "n64:one", "snes:three"}));
+    pump();
+    use(pc2);
+    cloud_sync_all_now();
+    pump();
+    pf::Prefs m2; pf::load(pc2.vault.u8string(), &m2);
+    CHECK(m2.favorites == m1.favorites);
+    hub::library_set_data_dir("");
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::set_terminate([]() {
@@ -818,6 +864,7 @@ int main() {
     test_http_timeout();
     { int f0 = g_fail; fresh_account(); test_basic_two_pcs(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_offline_retry_resume(); if (g_fail != f0) dump_log(); }
+    { int f0 = g_fail; fresh_account(); test_account_prefs_two_pcs(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_conflict(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_plain_conflict_surfaces(); if (g_fail != f0) dump_log(); }
     { int f0 = g_fail; fresh_account(); test_states_switch(); if (g_fail != f0) dump_log(); }

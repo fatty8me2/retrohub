@@ -42,6 +42,54 @@ template <class T> bool set_field(Prefs* p, T* slot, T val, const char* field, l
     return true;
 }
 
+/* Keys without a per-key stamp (legacy files, hand-built Prefs) inherit the field stamp. */
+void fill_key_stamps(const std::vector<std::string>& live, std::map<std::string, long long>* kts, long long field_t) {
+    for (const auto& k : live) if (!kts->count(k)) (*kts)[k] = field_t > 0 ? field_t : 1;
+}
+
+bool set_keyset(Prefs* p, std::vector<std::string>* live, std::map<std::string, long long>* kts, std::vector<std::string> nv,
+                const char* field, long long t) {
+    nv = norm(std::move(nv));
+    fill_key_stamps(*live, kts, p->stamp(field));
+    if (nv == *live) return false;
+    if (!t) t = now_ms();
+    for (const auto& k : nv) if (!std::binary_search(live->begin(), live->end(), k)) (*kts)[k] = t;
+    for (const auto& k : *live) if (!std::binary_search(nv.begin(), nv.end(), k)) (*kts)[k] = -t;
+    *live = std::move(nv);
+    p->ts[field] = t;
+    return true;
+}
+
+void merge_keyset(const std::vector<std::string>& la, const std::map<std::string, long long>& ka, long long fa,
+                  const std::vector<std::string>& lb, const std::map<std::string, long long>& kb, long long fb,
+                  std::vector<std::string>* out, std::map<std::string, long long>* kout) {
+    std::map<std::string, long long> A = ka, B = kb;
+    fill_key_stamps(la, &A, fa);
+    fill_key_stamps(lb, &B, fb);
+    kout->clear();
+    for (const auto& kv : A) (*kout)[kv.first] = kv.second;
+    for (const auto& kv : B) {
+        auto it = kout->find(kv.first);
+        if (it == kout->end()) { (*kout)[kv.first] = kv.second; continue; }
+        long long x = it->second, y = kv.second;
+        long long ax = x < 0 ? -x : x, ay = y < 0 ? -y : y;
+        if (ay > ax || (ay == ax && y > x)) it->second = y;   // tie: present beats tombstone
+    }
+    out->clear();
+    for (const auto& kv : *kout) if (kv.second > 0) out->push_back(kv.first);
+}
+
+json::Value key_stamps(const std::map<std::string, long long>& m) {
+    json::Value o = json::make_object();
+    for (const auto& kv : m) o.o.push_back({kv.first, json::make_int(kv.second)});
+    return o;
+}
+void read_key_stamps(const json::Value* v, std::map<std::string, long long>* out) {
+    out->clear();
+    if (!v || !v->is_object()) return;
+    for (const auto& kv : v->o) if (kv.second.is_number() && kv.second.i != 0) (*out)[kv.first] = kv.second.i;
+}
+
 json::Value str_array(const std::vector<std::string>& v) {
     json::Value a = json::make_array();
     for (const auto& s : v) a.a.push_back(json::make_string(s));
@@ -92,7 +140,7 @@ void copy_field(const Prefs& from, Prefs* to, const std::string& f) {
 
 }  // namespace
 
-bool set_favorites(Prefs* p, std::vector<std::string> k, long long t) { return set_field(p, &p->favorites, norm(std::move(k)), "favorites", t); }
+bool set_favorites(Prefs* p, std::vector<std::string> k, long long t) { return set_keyset(p, &p->favorites, &p->favorites_ts, std::move(k), "favorites", t); }
 bool set_favorite(Prefs* p, const std::string& key, bool fav, long long t) {
     std::set<std::string> s(p->favorites.begin(), p->favorites.end());
     if (fav) s.insert(key); else s.erase(key);
@@ -102,7 +150,7 @@ bool set_user_shelves(Prefs* p, std::vector<Shelf> v, long long t) {
     for (auto& s : v) { std::vector<std::string> seen; for (auto& k : s.keys) if (!k.empty() && std::find(seen.begin(), seen.end(), k) == seen.end()) seen.push_back(k); s.keys = seen; }
     return set_field(p, &p->user_shelves, std::move(v), "user_shelves", t);
 }
-bool set_hidden(Prefs* p, std::vector<std::string> k, long long t) { return set_field(p, &p->hidden, norm(std::move(k)), "hidden", t); }
+bool set_hidden(Prefs* p, std::vector<std::string> k, long long t) { return set_keyset(p, &p->hidden, &p->hidden_ts, std::move(k), "hidden", t); }
 bool set_renames(Prefs* p, std::map<std::string, std::string> m, long long t) { return set_field(p, &p->renames, std::move(m), "renames", t); }
 bool set_covers(Prefs* p, std::map<std::string, std::string> m, long long t) { return set_field(p, &p->covers, std::move(m), "covers", t); }
 bool set_theme(Prefs* p, const std::string& v, long long t) { return set_field(p, &p->theme, v, "theme", t); }
@@ -137,6 +185,21 @@ bool parse(const std::string& text, Prefs* out) {
     }
     if (const json::Value* t = v.get("ts"); t && t->is_object())
         for (const auto& kv : t->o) if (kv.second.is_number()) p.ts[kv.first] = kv.second.i;
+    read_key_stamps(v.get("favorites_ts"), &p.favorites_ts);
+    read_key_stamps(v.get("hidden_ts"), &p.hidden_ts);
+    {   // tombstones carry no live key; live keys with no stamp inherit the field stamp; stamps must agree with the live list
+        for (auto* pr : {&p.favorites_ts, &p.hidden_ts}) {
+            const auto& live = pr == &p.favorites_ts ? p.favorites : p.hidden;
+            long long ft = p.ts.count(pr == &p.favorites_ts ? "favorites" : "hidden") ? p.ts[pr == &p.favorites_ts ? "favorites" : "hidden"] : 0;
+            for (auto it = pr->begin(); it != pr->end();) {
+                bool isl = std::binary_search(live.begin(), live.end(), it->first);
+                if (isl && it->second < 0) it->second = -it->second;
+                else if (!isl && it->second > 0) it->second = -it->second;
+                ++it;
+            }
+            fill_key_stamps(live, pr, ft);
+        }
+    }
     if (out) *out = std::move(p);
     return true;
 }
@@ -155,6 +218,8 @@ std::string serialize(const Prefs& p) {
     }
     add("user_shelves", std::move(shelves));
     add("hidden", str_array(p.hidden));
+    add("favorites_ts", key_stamps(p.favorites_ts));
+    add("hidden_ts", key_stamps(p.hidden_ts));
     add("renames", str_map(p.renames));
     add("covers", str_map(p.covers));
     add("theme", json::make_string(p.theme));
@@ -172,9 +237,12 @@ std::string serialize(const Prefs& p) {
 Prefs merge(const Prefs& a, const Prefs& b) {
     Prefs r = a;
     r.ts.clear();
+    merge_keyset(a.favorites, a.favorites_ts, a.stamp("favorites"), b.favorites, b.favorites_ts, b.stamp("favorites"), &r.favorites, &r.favorites_ts);
+    merge_keyset(a.hidden, a.hidden_ts, a.stamp("hidden"), b.hidden, b.hidden_ts, b.stamp("hidden"), &r.hidden, &r.hidden_ts);
     for (int i = 0; i < kFieldCount; i++) {
         const std::string f = kFields[i];
         long long ta = a.stamp(f), tb = b.stamp(f);
+        if (f == "favorites" || f == "hidden") { long long t = std::max(ta, tb); if (t) r.ts[f] = t; continue; }
         bool take_b;
         if (ta != tb) take_b = tb > ta;
         else take_b = field_repr(b, f) > field_repr(a, f);   // equal stamps: deterministic, order independent
@@ -221,14 +289,21 @@ std::string g_root;
 bool g_applying = false;
 }
 
+static void (*g_hook)() = nullptr;
+void set_change_hook(void (*fn)()) { std::lock_guard<std::mutex> lk(g_mu); g_hook = fn; }
+
 void set_vault_root(const std::string& root) { std::lock_guard<std::mutex> lk(g_mu); g_root = root; }
 
 void mirror_favorite(const std::string& key, bool fav) {
-    std::lock_guard<std::mutex> lk(g_mu);
-    if (g_root.empty() || g_applying || key.empty()) return;
-    Prefs p;
-    load(g_root, &p);
-    if (set_favorite(&p, key, fav)) save(g_root, p);
+    void (*hook)() = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (g_root.empty() || g_applying || key.empty()) return;
+        Prefs p;
+        load(g_root, &p);
+        if (set_favorite(&p, key, fav) && save(g_root, p)) hook = g_hook;
+    }
+    if (hook) hook();
 }
 
 int apply_favorites_to_library(const Prefs& p) {

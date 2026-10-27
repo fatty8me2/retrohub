@@ -465,6 +465,40 @@ void all_games_view() {
         ImGui::SameLine(0, sp(2.f));
         if (chip(lab, A.online_only, ui::GOOD)) { A.online_only = !A.online_only; A.vis_dirty = true; }
     }
+    {   // Favorites chip, Genre picker and Group by Genre (saved like library_sort)
+        int n_fav = 0;
+        for (auto& e : A.lib) if (gstate(e.key).favorite) ++n_fav;
+        char lab[48];
+        std::snprintf(lab, sizeof lab, "Favorites  %d", n_fav);
+        ImGui::SameLine(0, sp(2.f));
+        if (chip(lab, A.st.lib_favs_only, COL_ACCENT)) { A.st.lib_favs_only = !A.st.lib_favs_only; mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only your favorite games");
+        ImGui::SameLine();
+        std::string gl = A.st.lib_genre.empty() ? std::string("Genre: All") : "Genre: " + A.st.lib_genre;
+        if (chip(gl.c_str(), !A.st.lib_genre.empty(), COL_ACCENT)) ImGui::OpenPopup("##genre_pick");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show one genre only");
+        ImGui::SameLine();
+        if (chip(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", A.st.lib_group_genre, COL_ACCENT)) {
+            A.st.lib_group_genre = !A.st.lib_group_genre; mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Group the library by console or by genre");
+        if (ImGui::BeginPopup("##genre_pick")) {
+            if (ImGui::Selectable("All genres", A.st.lib_genre.empty())) { A.st.lib_genre.clear(); mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true; }
+            for (auto& kv : A.genre_counts) {
+                if (kv.first == "Other") continue;
+                char row[96];
+                std::snprintf(row, sizeof row, "%s  (%d)", kv.first.c_str(), kv.second);
+                if (ImGui::Selectable(row, A.st.lib_genre == kv.first)) { A.st.lib_genre = kv.first; mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true; }
+            }
+            auto oi = A.genre_counts.find("Other");
+            if (oi != A.genre_counts.end()) {
+                char row[96];
+                std::snprintf(row, sizeof row, "Other  (%d)", oi->second);
+                if (ImGui::Selectable(row, A.st.lib_genre == "Other")) { A.st.lib_genre = "Other"; mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true; }
+            }
+            ImGui::EndPopup();
+        }
+    }
     ImGui::PopItemFlag();
     ImGui::PopStyleVar();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
