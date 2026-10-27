@@ -57,6 +57,7 @@ struct Settings {
     bool menu_sounds = true;           // soft UI sounds in the hub (Settings > General)
     int menu_volume = 30;              // menu sound volume 0..100 (low by default)
     bool menu_music = false;           // quiet ambient menu loop (OFF by default)
+    bool attract_mode = true;          // Home hero turns into a slideshow of your own screenshots / save-state pictures after ~60 s idle (attract.cpp)
     bool share_games = true;           // "Show my games to friends": publish the list of game titles (never files) so friends see them greyed out
     bool show_friend_games = true;     // library chip "Show friends' games"
     bool share_playtime = true;        // "Share my play time with friends": per-game totals (whole minutes) go to the friends server when a session ends

@@ -193,6 +193,8 @@ void tab_general() {
     if (ImGui::Checkbox("Menu music", &A.st.menu_music)) mark_dirty();
     text_wrapped_disabled("Soft sounds and an optional quiet ambient loop in RetroHub. Always silent while a game is running or RetroHub is in the background.");
     tvmode::settings_ui();
+    if (ImGui::Checkbox("Show my screenshots when RetroHub is idle", &A.st.attract_mode)) mark_dirty();
+    text_wrapped_disabled("After about a minute with no input on Home, the top card slowly pans through your own screenshots and save-state pictures. Any button brings it back. Nothing is downloaded.");
     end_panel();
 }
 
