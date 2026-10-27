@@ -39,13 +39,13 @@ int main() {
         const int64_t now = 100000;
         CHECK(!pc_can_revoke(me) && pc_can_revoke(tv) && pc_can_revoke(old) && !pc_can_revoke(LinkedPc()));
         CHECK(pc_last_seen(me, now) == "This PC" && pc_last_seen(tv, now) == "Last seen 2 hours ago" && pc_last_seen(old, now) == "Last seen: not yet");
-        CHECK(pc_name(old) == "Unnamed PC" && pc_revoke_title(tv) == "Sign out PC-LIVING?");
-        CHECK(pc_revoke_body(tv).find("PC-LIVING") == 0 && pc_revoke_body(tv).find("Nothing is deleted") != std::string::npos);
+        CHECK(pc_name(old) == "Unnamed PC" && pc_revoke_title(tv) == "Stop syncing on PC-LIVING?");
+        CHECK(pc_revoke_body(tv).find("PC-LIVING") == 0 && pc_revoke_body(tv).find("Nothing is deleted") != std::string::npos && pc_revoke_body(tv).find("new account code") != std::string::npos && pc_revoke_body(tv).find("turns sync back on") != std::string::npos);
         auto s = pcs_sorted({old, tv, me});
         CHECK(s.size() == 3 && s[0].current && s[1].dev == "d-tv" && s[2].dev == "d-old");
         CloudAccountInfo rv = on; rv.needs_attention = true; rv.attention = "device-revoked";
-        CHECK(account_headline(rv, true).text == "This PC was signed out" && account_headline(rv, true).tone == Tone::Bad);
-        CHECK(attention_help("device-revoked").find("signed this PC out") != std::string::npos);
+        CHECK(account_headline(rv, true).text == "Cloud sync was stopped on this PC" && account_headline(rv, true).tone == Tone::Bad);
+        CHECK(attention_help("device-revoked").find("stopped cloud sync on this PC") != std::string::npos);
     }
     CHECK(quota_text(on) == "18 MB of 50 MB");
     CHECK(quota_text(CloudAccountInfo()).empty());

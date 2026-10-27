@@ -169,7 +169,7 @@ inline std::string friendly_title(const std::string& known, const std::string& s
 inline Chip account_headline(const CloudAccountInfo& a, bool enabled) {
     if (!enabled) return {paused_text(a.queued_games), Tone::Muted};
     if (!a.known) return {"Checking your cloud saves...", Tone::Muted};
-    if (a.needs_attention && a.attention == "device-revoked") return {"This PC was signed out", Tone::Bad};
+    if (a.needs_attention && a.attention == "device-revoked") return {"Cloud sync was stopped on this PC", Tone::Bad};
     if (a.needs_attention) return {"Cloud backup needs attention", Tone::Bad};
     if (a.paused_by_server) return {"Cloud backup is paused for now", Tone::Warn};
     if (!a.online) return {"Offline: saves sync when you are back online", Tone::Muted};
@@ -178,7 +178,7 @@ inline Chip account_headline(const CloudAccountInfo& a, bool enabled) {
 }
 
 inline std::string attention_help(const std::string& why) {
-    if (why == "device-revoked") return "Another PC of this account signed this PC out. Your saves on this PC are untouched, but they stay out of the cloud until you sign in again.";
+    if (why == "device-revoked") return "Another PC of this account stopped cloud sync on this PC. Your saves here are untouched, but they stay out of the cloud until you turn sync back on.";
     if (why == "identity-missing") return "This PC has lost its account file. Use \"Recover with code\" below with your recovery code.";
     return "RetroHub could not sign in to your account. Check your internet connection, or use \"Recover with code\" if you changed PCs.";
 }
@@ -196,12 +196,13 @@ inline std::string over_limit_text(const CloudAccountInfo& a, const std::vector<
            "Remove a game from the cloud below to make room.";
 }
 
-/* ---- linked PCs (Settings > Account): the PCs on this account, with a "Sign out this PC" for every PC but the one in use ---- */
+/* ---- linked PCs (Settings > Account): the PCs on this account, with a "Stop syncing on this PC" for every PC but the one in use ---- */
 inline std::string pc_name(const LinkedPc& p) { return p.name.empty() ? std::string("Unnamed PC") : p.name; }
 inline bool pc_can_revoke(const LinkedPc& p) { return !p.current && !p.dev.empty(); }
-inline std::string pc_revoke_title(const LinkedPc& p) { return "Sign out " + pc_name(p) + "?"; }
+inline std::string pc_revoke_title(const LinkedPc& p) { return "Stop syncing on " + pc_name(p) + "?"; }
 inline std::string pc_revoke_body(const LinkedPc& p) {
-    return pc_name(p) + " stops syncing saves with your account until someone signs in there again. Nothing is deleted on that PC or in the cloud.";
+    return pc_name(p) + " stops syncing cloud saves until someone on that PC turns sync back on. Nothing is deleted on that PC or in the cloud. "
+           "This does not lock anyone out: to fully lock someone out, create a new account code.";
 }
 /* This PC first, then the most recently seen. */
 inline std::vector<LinkedPc> pcs_sorted(std::vector<LinkedPc> v) {

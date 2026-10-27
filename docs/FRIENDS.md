@@ -147,7 +147,7 @@ Metadata only: a list of what each player owns (never files or ROMs), so friends
 
 ## Friend came online (opt-in)
 - Per-friend toggle "Notify me when they come online" in the friend's actions menu, off by default. The list is `watch_online` in settings.json (comma separated uids, at most 50).
-- `{type:"watch_online", uids:[...]}` (client -> server; 20/min) replaces the list: friends only, unique, at most 50. The server answers `{type:"watch_online", uids}` with what it kept. The client sends it when the list changes and after every welcome (when non-empty).
+- `{type:"watch_online", uids:[...]}` (client -> server; about 4 changes per 10 minutes per socket, in memory; refused at >= 90% of the daily budget; an unchanged list writes nothing) replaces the list: friends only, unique, at most 50. The server answers `{type:"watch_online", uids}` with what it kept. The client sends it when the list changes and after every welcome (when non-empty).
 - The server checks in the WATCHER's own UserHub when a friend's `presence` arrives (so there is no extra fan-out and no extra subrequest): offline -> online for a watched friend pushes `{type:"friend_online", uid, name, at}` to the watcher's sockets only. Non-watchers get nothing new.
 - Cost rules: the one new inbound message counts like any other in REQ_BUDGET (`meter(..., "ws")`, 1/20 unit); the push is outbound and free. Pings are skipped at >= 90% of the daily budget (same gate as the presence alarms) and limited to one per friend per 10 minutes (flapping offline/online).
 - Client: `Event::WatchedOnline` -> a bell entry (`Kind::FriendOnline`, "NAME came online"), an in-hub toast, and, while a game runs and "Notify me about invites while I'm playing" is on, a Windows toast (`hubtoast::notify_online`).
