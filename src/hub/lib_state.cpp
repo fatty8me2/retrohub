@@ -1,6 +1,7 @@
 #include "app.h"
 #include "online_caps.h"
 #include "gameinfo.h"
+#include <mutex>
 
 /* ---------- library / ROM scanning ---------- */
 
@@ -175,28 +176,51 @@ static unsigned long long added_unix(const std::string& path) {
     return v;
 }
 
-std::string genre_of_entry(const hub::GameEntry& e) {
-    static std::map<std::string, std::string> cache;
-    auto it = cache.find(e.key);
-    if (it != cache.end()) return it->second;
+static std::string genre_lookup(const gameinfo::Query& q) {
     std::string g;
-    if (e.catalog_id != "remix" && e.catalog_id != "kanto") {
-        gameinfo::Query q;
-        q.system = hub::system_short(e.system);
-        q.title = e.title;
-        q.serial = e.serial;
-        if (e.catalog_id == "smash64") q.alt_title = "Super Smash Bros.";
-        else if (const GameInfo* c = catalog_for(e)) q.alt_title = c->title;
-        if (!q.system.empty()) g = gameinfo::shared_db(hub::exe_dir() + "data/").lookup(q).genre;
-    }
+    if (!q.system.empty()) g = gameinfo::shared_db(hub::exe_dir() + "data/").lookup(q).genre;
     size_t cut = g.find_first_of(",;/");
     if (cut != std::string::npos) g.resize(cut);
     size_t b = g.find_first_not_of(' ');
     g = b == std::string::npos ? std::string() : g.substr(b);
     while (!g.empty() && g.back() == ' ') g.pop_back();
-    if (g.empty()) g = "Other";
-    cache[e.key] = g;
-    return g;
+    return g.empty() ? std::string("Other") : g;
+}
+
+/* Called from rebuild_vis (UI thread); the mutex keeps the caches safe if anything else ever asks. */
+std::string genre_of_entry(const hub::GameEntry& e) {
+    static std::mutex mu;
+    static std::map<std::string, std::string> cache;
+    std::lock_guard<std::mutex> lk(mu);
+    auto it = cache.find(e.key);
+    if (it != cache.end()) return it->second;
+    gameinfo::Query q;
+    if (e.catalog_id != "remix" && e.catalog_id != "kanto") {
+        q.system = hub::system_short(e.system);
+        q.title = e.title;
+        q.serial = e.serial;
+        if (e.catalog_id == "smash64") q.alt_title = "Super Smash Bros.";
+        else if (const GameInfo* c = catalog_for(e)) q.alt_title = c->title;
+    }
+    return cache[e.key] = genre_lookup(q);
+}
+
+/* A friend's game you do not own: the same lookup through its catalog title, so filter and grouping treat it like owned games. */
+std::string genre_of_ghost(const hubui::fg::Ghost& g) {
+    static std::mutex mu;
+    static std::map<std::string, std::string> cache;
+    std::lock_guard<std::mutex> lk(mu);
+    auto it = cache.find(g.id);
+    if (it != cache.end()) return it->second;
+    gameinfo::Query q;
+    q.system = g.sys;
+    q.title = g.title;
+    if (const GameInfo* c = g.cid.empty() ? nullptr : hub::find_game(g.cid)) q.alt_title = c->title;
+    return cache[g.id] = genre_lookup(q);
+}
+
+static std::string genre_of_index(int i) {
+    return i < (int)A.lib.size() ? genre_of_entry(A.lib[i]) : genre_of_ghost(A.ghosts[i - A.lib.size()]);
 }
 
 void rebuild_vis() {
@@ -229,11 +253,11 @@ void rebuild_vis() {
         base.swap(keep);
     }
     A.genre_counts.clear();
-    for (int i : base) ++A.genre_counts[i < (int)A.lib.size() ? genre_of_entry(A.lib[i]) : std::string("Other")];
+    for (int i : base) ++A.genre_counts[genre_of_index(i)];
     if (!A.st.lib_genre.empty() && !A.lib.empty() && !A.scanning && !A.st.lib_favs_only && A.search_buf[0] == 0 && !A.online_only && !A.genre_counts.count(A.st.lib_genre)) { A.st.lib_genre.clear(); mark_dirty(); }   // the saved genre no longer exists in the library (only judged on an unfiltered, fully scanned library)
     if (!A.st.lib_genre.empty()) {
         std::vector<int> keep;
-        for (int i : base) if ((i < (int)A.lib.size() ? genre_of_entry(A.lib[i]) : std::string("Other")) == A.st.lib_genre) keep.push_back(i);
+        for (int i : base) if ((genre_of_index(i)) == A.st.lib_genre) keep.push_back(i);
         base.swap(keep);
     }
     A.chip_counts.clear();
@@ -248,7 +272,7 @@ void rebuild_vis() {
         std::vector<int> idx = A.vis;
         std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) { return hubui::list_item_less(items[a], items[b], A.sort_mode); });
         std::map<std::string, std::vector<int>> by;
-        for (int i : idx) by[i < (int)A.lib.size() ? genre_of_entry(A.lib[i]) : std::string("Other")].push_back(i);
+        for (int i : idx) by[genre_of_index(i)].push_back(i);
         A.secs.clear();
         for (auto& kv : by) if (kv.first != "Other") A.secs.push_back({"other", kv.first, kv.second});
         if (by.count("Other")) A.secs.push_back({"other", "Other", by["Other"]});

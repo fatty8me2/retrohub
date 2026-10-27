@@ -32,6 +32,7 @@ struct Prefs {
     /* Per-key stamps for favorites and hidden (unix ms). Positive = key present as of that time, negative = tombstone
      * (removed at -value). merge() unions these, newest per key wins, so two PCs favoriting different games both keep them. */
     std::map<std::string, long long> favorites_ts, hidden_ts;
+    bool legacy_favorites = false, legacy_hidden = false;   // parsed from a file that had no per-key stamps (older client); cleared by the setters
     std::map<std::string, long long> ts;           // field name -> last modified (unix ms); absent = 0
 
     long long stamp(const std::string& field) const;
@@ -62,6 +63,8 @@ std::string serialize(const Prefs& p);
 /* Field-wise merge: per field the newer stamp wins; equal stamps with different values pick deterministically (the
  * lexicographically larger serialization), so merge(a,b) == merge(b,a) and merge is idempotent. */
 Prefs merge(const Prefs& a, const Prefs& b);
+/* Drops tombstones (favorites / hidden) older than 90 days relative to `now` (default: the wall clock). Called when saving, never inside merge(). */
+void gc_tombstones(Prefs* p, long long now = 0);
 /* Text convenience for a sync conflict resolver: parse both, merge, serialize. A side that fails to parse is treated as empty. */
 std::string merge_text(const std::string& local, const std::string& remote);
 
