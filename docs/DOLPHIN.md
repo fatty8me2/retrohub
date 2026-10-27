@@ -316,7 +316,8 @@ Still open:
 - Pads: `GCPadNew.ini` regenerated each launch (XInput/0..3, Xbox A/X/B/Y -> GC A/B/X/Y, Z = RB, analog L/R triggers, C-stick = right stick); port 1 also accepts Dolphin's default keyboard keys (`DInput/0/Keyboard Mouse:*`). `SIDevice0..3` follow connected XInput pads; a WUP-028 adapter with a WinUSB/libusbK driver switches all ports to the adapter (12).
 - Saves: card folder `User\GC\RetroHub\<key>\GCI` is synced with `<vault>\gc\<key>\battery\GCI` (manifest/conflict rules of emu_saves).
 - Graphics (GFX.ini, written once): 2x internal resolution, no widescreen hack, async ubershaders, Direct3D 11.
-- Defaults (Dolphin.ini, GFX.ini, GCPadNew.ini) are written once behind `User\Configetrohub-defaults.txt`; later edits are kept. Every launch only updates `SlotA/SlotB` and `SIDevice0-3` (which ports have a pad).
+- Defaults (Dolphin.ini, GFX.ini, GCPadNew.ini) are written once behind `User\Config
+etrohub-defaults.txt`; later edits are kept. Every launch only updates `SlotA/SlotB` and `SIDevice0-3` (which ports have a pad).
 - Migration from older builds (`hubemu::dolphin_migrate_old`): the old download in `<exe>\dolphin` is removed when untouched; `<data>\dolphin-user` is renamed to `dolphin-user.migrated` (save states copied to the new User folder). Memory cards were already kept in the vault (`battery\GCI`), which the new sync still reads, so saves stay put.
 - GC keys: disc ID (`gc:<id>-<disc>`) from the header for iso/gcm/rvz/wia/ciso/gcz and archive entries; only an unreadable .gcz falls back to `gc:file-<name>`.
 
@@ -328,4 +329,8 @@ Still open:
 - Verified: `qa\gc_cheats_play.ps1` runs RetroHub's real Play path on a hidden desktop (muted), then reads game RAM through Dolphin's GDB stub (`qa\gdb_read_mem.py`): Melee r2 "Unlock All Characters and Stages" gives `FFFFFFFF` at 0x8045BF28/2C, the control run gives 0.
 
 ## Game menu Speed row (offline only)
-RetroHub writes `[Core] EmulationSpeed = 1.0` every launch and binds Dolphin's Increase / Decrease Emulation Speed and Disable Emulation Speed Limit hotkeys to Ctrl+Shift+F13/F14/F15 in `Hotkeys.ini`. When the Game menu closes, `dolphin_send_speed_keys` (launch.cpp) presses them with SendInput while Dolphin is foreground. Steps are 0.1x per press (0.25x becomes 0.3x). Unverified in a live Dolphin: binding syntax and key delivery (hidden-desktop SendInput does not reach it).
+RetroHub writes `[Core] EmulationSpeed = 1.0` every launch and binds Dolphin's Increase / Decrease Emulation Speed hotkeys in `Hotkeys.ini` (`[Hotkeys]`, `Device = DInput/0/Keyboard Mouse` if unset) to `@(Ctrl+Shift+F13)` and `@(Ctrl+Shift+F14)`. When the Game menu closes, `dolphin_send_speed_keys` (launch.cpp) sends them as scancodes with SendInput while Dolphin is foreground (Quit sends nothing).
+Verified in dolphin-emu/dolphin tag 2509 [src]: hotkey names `Core/HotkeyManager.cpp` 49-51; `@(a+b)` combo syntax, same file 445-447; key names F13-F15 and combined `Ctrl`/`Shift` in `InputCommon/ControllerInterface/DInput/NamedKeys.h` 18 and `DInputKeyboardMouse.cpp` 139-140; step 0.1 with snap to 1.0 within 0.95..1.05, decrease ignored at <= 0, no upper cap in `DolphinQt/HotkeyScheduler.cpp` 519-535; presses are edge-triggered (`HotkeyManager.cpp` IsPressed 237-255).
+- 0.25x runs as 0.3x (nearest reachable). There is no Max: "Disable Emulation Speed Limit" (default TAB) is hold-to-disable, not a toggle.
+- DirectInput opens the keyboard `DISCL_BACKGROUND | DISCL_NONEXCLUSIVE` (`DInputKeyboardMouse.cpp` 82) and reads `GetDeviceState`, i.e. system keyboard state, so SendInput scancodes reach it (virtual-key-only events and PostMessage WM_KEYDOWN do not, so PostMessage is not a usable fallback). Hotkeys only fire while Dolphin is focused (`Core::UpdateInputGate(MAIN_FOCUSED_HOTKEYS)`, default true), hence the foreground guard.
+- Not run against a live Dolphin; hidden-desktop SendInput does not reach it.

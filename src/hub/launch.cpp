@@ -243,7 +243,7 @@ void wiiu_toggle_gamepad_screen() {
     autotest_log("wiiu: toggle pad screen hotkey sent");
 }
 
-/* Dolphin Speed row: Dolphin's emulation-speed hotkeys are bound to Ctrl+Shift+F13..F15 (emulators.cpp, dolphin_hotkeys_ini).
+/* Dolphin Speed row: Dolphin's emulation-speed hotkeys are bound to Ctrl+Shift+F13/F14 (emulators.cpp, dolphin_hotkeys_ini).
  * After the menu closes and focus_game() ran, wait (up to 3 s) until a game window is the foreground window, then press each key.
  * Keys are only ever sent while the game is foreground, so they cannot reach another app. Runs off the UI thread (70 presses at
  * 8x take a few seconds). Nothing is raised or shown here. */
@@ -264,16 +264,16 @@ void dolphin_send_speed_keys(const std::vector<int>& vks) {
         auto key = [](int vk, bool up) {
             INPUT i{};
             i.type = INPUT_KEYBOARD;
-            i.ki.wScan = (WORD)MapVirtualKeyW((UINT)vk, MAPVK_VK_TO_VSC);
+            i.ki.wScan = (WORD)vk;   // a scancode: DirectInput (Dolphin's keyboard backend) ignores virtual-key-only events
             i.ki.dwFlags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0);
             SendInput(1, &i, sizeof(INPUT));
         };
-        key(hubqm::kDolphinVkCtrl, false); key(hubqm::kDolphinVkShift, false);
+        key(hubqm::kDolphinScanCtrl, false); key(hubqm::kDolphinScanShift, false);
         for (int vk : vks) {
             if (!game_fg()) break;
-            key(vk, false); Sleep(35); key(vk, true); Sleep(35);
+            key(vk, false); Sleep(35); key(vk, true); Sleep(35);   // edge-triggered in Dolphin: hold, then release
         }
-        key(hubqm::kDolphinVkShift, true); key(hubqm::kDolphinVkCtrl, true);
+        key(hubqm::kDolphinScanShift, true); key(hubqm::kDolphinScanCtrl, true);
     }).detach();
 }
 

@@ -233,7 +233,7 @@ std::string ext_emu_name(const hub::GameEntry* e) {
 void dolphin_apply_pending(const hub::GameEntry* e) {
     if (!is_dolphin(e) || A.run.online || hubqm::dolphin_idx(g_dolphin) == g_speed_idx) return;
     std::vector<int> vks;
-    for (auto k : hubqm::dolphin_plan(g_dolphin, g_speed_idx)) vks.push_back(hubqm::dolphin_vk(k));
+    for (auto k : hubqm::dolphin_plan(g_dolphin, g_speed_idx)) vks.push_back(hubqm::dolphin_scan(hubqm::dolphin_vk(k)));
     dolphin_send_speed_keys(vks);
 }
 
@@ -490,7 +490,7 @@ void draw_quick_menu() {
             const auto row = hubqm::speed_row(false, dol, online, true);
             if (row == hubqm::SpeedRow::Enabled) {
                 int d = stepper_row("speed", "Speed", hubqm::dolphin_speed_text(g_speed_idx), -1.f, true, fw);
-                if (d) g_speed_idx = hubqm::speed_step(g_speed_idx, d);   // applied when the menu closes (keys need Dolphin in front)
+                if (d) g_speed_idx = hubqm::dolphin_speed_step(g_speed_idx, d);   // applied when the menu closes (keys need Dolphin in front)
                 if (g_speed_idx != hubqm::dolphin_idx(g_dolphin)) text_wrapped_disabled("Applies when you resume.");
             } else {
                 stepper_row("speed", "Speed", "1x", -1.f, false, fw);
@@ -540,6 +540,7 @@ void draw_quick_menu() {
     }
     if (g_shot_fake || fr_in_my_room()) fr_invite_button_and_picker(ImGui::GetContentRegionAvail().x, sp(6.5f));
     if (menu_button("Quit to RetroHub", true, ui::Icon::Close)) {
+        g_speed_idx = hubqm::dolphin_idx(g_dolphin);   // Dolphin: quitting never sends speed keys (a pending change is dropped)
         if (!g_shot_fake) { if (ctl_ready()) runctl::send_command(A.run.ctl_path, runctl::Cmd::Quit, 0); else request_game_close(); }
         ImGui::CloseCurrentPopup();
     }

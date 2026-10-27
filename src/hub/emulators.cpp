@@ -874,12 +874,12 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
     return t;
 }
 
-/* Hotkeys.ini: the three emulation-speed hotkeys on Ctrl+Shift+F13..F15 (keys nobody presses), which the Game menu's Speed row
+/* Hotkeys.ini: the two emulation-speed hotkeys on Ctrl+Shift+F13 / F14 (keys nobody presses), which the Game menu's Speed row
  * sends after focusing Dolphin. Other lines (the user's own hotkeys) are kept. */
 std::string dolphin_hotkeys_ini(const std::string& in) {
     std::string t = in;
     if (hubui::ini_get(t, "Hotkeys", "Device").empty()) t = hubui::ini_set(t, "Hotkeys", "Device", "DInput/0/Keyboard Mouse");
-    for (auto k : {hubqm::DolphinKey::Increase, hubqm::DolphinKey::Decrease, hubqm::DolphinKey::ToggleLimit})
+    for (auto k : {hubqm::DolphinKey::Increase, hubqm::DolphinKey::Decrease})
         t = hubui::ini_set(t, "Hotkeys", hubqm::dolphin_hotkey_name(k), hubqm::dolphin_hotkey_expr(k));
     return t;
 }
