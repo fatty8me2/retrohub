@@ -21,13 +21,16 @@ constexpr size_t kPerGame = 3;        // pictures per game
 struct Idle {
     double idle = 0;
     bool active = false;
+    bool just_woke = false;   // true only for the step that ended attract mode: that press must do nothing else
     double shown = 0;   // seconds attract mode has been running (drives the slideshow clock)
     bool step(double dt, bool input, bool eligible, double threshold = kIdleSecs) {
+        just_woke = false;
         if (!eligible || input) {
             const bool was = active;
             idle = 0;
             shown = 0;
             active = false;
+            just_woke = was;
             return was;
         }
         idle += dt;

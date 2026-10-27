@@ -1,4 +1,5 @@
 #include "app.h"
+#include "homefun.h"
 #include "ui_sound.h"
 
 /* Startup "new version available" prompt. Shown once per run when the launch
@@ -183,6 +184,7 @@ void draw_footer(float h) {
 void global_input() {
     ImGuiIO& io = ImGui::GetIO();
     if (!A.focused || A.proc) return;
+    if (attract_woke_this_frame()) return;   // the press that woke attract mode only wakes it
     if (ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
     if (io.WantTextInput) return;
     if (wizard_state() >= 0) return;   // the setup wizard owns the pad (its own B / Back / Next); Menu must not toggle the friends panel behind it

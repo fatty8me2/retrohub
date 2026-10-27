@@ -12,6 +12,8 @@ void attract_draw_hero(float h);
 /* Main loop: while attract mode runs, keyboard / mouse events only wake it up and are not passed on (true = swallowed). */
 bool attract_swallow_event(const SDL_Event& e);
 bool attract_active();
+/* True during the frame attract mode was woken: that press is consumed (global shortcuts must ignore it). */
+bool attract_woke_this_frame();
 
 /* ---- surprise.cpp (L7) ---- */
 /* The dice button for the Home top bar (size = button height). Also runs the spin popup and opens the picked game's details. */

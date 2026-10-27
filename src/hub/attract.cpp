@@ -20,6 +20,7 @@ namespace at = hubui::attract;
 namespace fs = std::filesystem;
 
 at::Idle IDLE;
+int g_woke_frame = -1;   // ImGui frame count of the wake
 bool g_wake = false;   // an event was swallowed (attract_swallow_event): count it as input
 std::vector<at::Slide> SLIDES;
 
@@ -157,6 +158,7 @@ void draw_slide_image(ImDrawList* dl, const at::Slide& s, Tex* t, int idx, float
 }  // namespace
 
 bool attract_active() { return IDLE.active; }
+bool attract_woke_this_frame() { return g_woke_frame >= 0 && g_woke_frame == ImGui::GetFrameCount(); }
 
 bool attract_swallow_event(const SDL_Event& e) {
     if (!IDLE.active) return false;
@@ -185,6 +187,7 @@ bool attract_update() {
     }
     if (woke || (!IDLE.active && !TEX.empty())) {
         if (woke) {
+            g_woke_frame = ImGui::GetFrameCount();
             A.nav_seed = true;       // focus goes back to the hero's Play button
             {   // a D-pad / arrow press that woke us must not also move the focus somewhere else
                 ImGuiContext& g = *ImGui::GetCurrentContext();
