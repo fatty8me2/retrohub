@@ -117,6 +117,7 @@ struct Args {
     long long frames = 0;
     std::string screenshot;
     std::string load_state;   // --load-state FILE: restore this state right after boot (offline)
+    int volume = 100;   // --volume N (0-100): applied once the core runs
     std::string control, state_dir, shot_dir, game_key;   // --control FILE (runner_ctl.h), --state-dir, --shot-dir, --game-key
     std::string cheats;     // --cheats FILE: cheat list JSON (cheats.h); polled for live toggles offline
     std::string controls;   // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (controls.h)
@@ -193,6 +194,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--test-input") ok = val(&a.test_input);
         else if (k == "--controls") ok = val(&a.controls);
         else if (k == "--cheats") ok = val(&a.cheats);
+        else if (k == "--volume") { std::string s; ok = val(&s); if (ok) a.volume = std::max(0, std::min(100, atoi(s.c_str()))); }
         else if (k == "--control") ok = val(&a.control);
         else if (k == "--load-state") ok = val(&a.load_state);
         else if (k == "--state-dir") ok = val(&a.state_dir);
@@ -470,6 +472,20 @@ static void set_speed(double sp) {
     logf_("control", "%s", runctl::speed_label(sp).c_str());
 }
 
+/* View + RT held: quick boost at the last fast speed (offline only); released: back to 1x, unless a speed was chosen meanwhile. */
+static int g_start_volume = 100;
+static void n64_apply_start_volume() {   // once, from the first frame callback (the core is running by then)
+    static bool done = false;
+    if (done) return;
+    done = true;
+    if (g_start_volume != 100) { int v = g_start_volume; g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_VOLUME, &v); }
+}
+static void n64_boost_tick(bool held) {
+    static bool active = false;
+    if (held && !active) { active = true; set_speed(g_fast_speed); }
+    else if (!held && active) { active = false; set_speed(1.0); }
+}
+
 static void ctl_tick() {
     if (!g_ctl.enabled()) return;
     const long long vi = g_vi;
@@ -557,7 +573,7 @@ static void ctl_tick() {
         case runctl::Cmd::OsdMsg: osd::push(c.text); g_ctl.ack(true, "shown"); break;
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
         case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Clip:
-            if (g_ctl_online) { g_ctl.ack(false, "Not available in online sessions"); break; }
+            if (g_ctl_online && runctl::offline_only(c.cmd)) { g_ctl.ack(false, "Not available in online sessions"); break; }
             if (c.cmd == runctl::Cmd::Volume) {
                 int v = c.value;
                 g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_VOLUME, &v);
@@ -819,6 +835,7 @@ int main(int argc, char** argv) {
     }
 
     const bool online = !args.net.empty();
+    g_start_volume = args.volume;
     /* QA only (RETROHUB_QA=1 N64RUN_QA_AUDIO=1): headless peers with the real audio plugin on SDL's silent "dummy" driver,
      * so the plugin's buffer / sync behaviour is exercised without any sound. */
     const bool qa_audio = args.headless && args.realtime && std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_AUDIO");
@@ -1133,7 +1150,7 @@ int main(int argc, char** argv) {
             hk.update_local = [&] { test_input.update(); };
             hk.read_local = [&](int idx) { return test_input.read(idx); };
         } else {
-            hk.update_local = [&] { input.update(); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
+            hk.update_local = [&] { input.update(); n64_apply_start_volume(); n64_boost_tick(input.boost_held() && !online); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
             hk.read_local = [&](int idx) { return input.read(idx); };
         }
         hk.idle = [] { SDL_PumpEvents(); };

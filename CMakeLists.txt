@@ -138,6 +138,7 @@ add_test(NAME hub_logic_test COMMAND hub_logic_test)
 add_test(NAME hub_states_test COMMAND hub_states_test)               # save-state slot listing, resume wording, library sort
 add_test(NAME hub_osk_test COMMAND hub_osk_test)                         # OSK key layout / edit logic / folder browser (scratch dirs)
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
+add_test(NAME hub_qm_test COMMAND hub_qm_test)
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
 add_test(NAME hub_boot_anim_test COMMAND hub_boot_anim_test)           # start animation: media map, timeline, launch rules, state machine, settings
 add_test(NAME real_boot_test COMMAND real_boot_test)                       # real console startup: own IPL/BIOS detection, config edits, custom sound decode

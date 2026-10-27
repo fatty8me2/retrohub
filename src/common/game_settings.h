@@ -106,6 +106,7 @@ std::vector<std::pair<std::string, std::string>> n64_gliden_params(const Values&
 /* retrorun: --opt k=v ..., --filter nearest|linear, --integer-scale 0|1 (not --fullscreen: the hub decides). */
 std::vector<std::string> retrorun_args(System s, const Values& v);
 bool is_fullscreen(const Values& v);
+int volume_of(const Values& v);   // "volume" option, 0-100 (100 when absent); the hub passes --volume to the runners when it is not 100
 /* GLideN64 config keys that n64run must ignore in an online session (Locked options). */
 bool n64_key_locked_online(const std::string& gliden_key);
 
