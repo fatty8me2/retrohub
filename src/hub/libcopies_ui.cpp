@@ -40,6 +40,57 @@ bool path_present(const std::string& p) {
     return !p.empty() && std::filesystem::exists(std::filesystem::u8path(p), ec);
 }
 
+struct UndoRemove {
+    std::string key, title;
+    double until = 0;
+} UNDO;
+
+std::map<std::string, std::string> g_hidden_titles;   // key -> title, remembered this session for the Hidden games list
+
+void hide_game(const std::string& key, const std::string& title) {
+    hub::prefs::Prefs p = load_prefs();
+    std::vector<std::string> h = p.hidden;
+    h.push_back(key);
+    if (hub::prefs::set_hidden(&p, h)) store_prefs(p);
+    g_hidden_titles[key] = title;
+    A.lib.erase(std::remove_if(A.lib.begin(), A.lib.end(), [&](const hub::GameEntry& g) { return g.key == key; }), A.lib.end());
+    A.lib_index.clear();
+    for (size_t i = 0; i < A.lib.size(); ++i) A.lib_index.emplace(A.lib[i].key, (int)i);
+    A.vis_dirty = true;
+    UNDO.key = key;
+    UNDO.title = title;
+    UNDO.until = ImGui::GetTime() + 10.0;
+    push_toast("Removed " + title + " from the library.", ui::WARN, 10.0);
+}
+
+void unhide_game(const std::string& key) {
+    hub::prefs::Prefs p = load_prefs();
+    std::vector<std::string> h;
+    for (auto& k : p.hidden) if (k != key) h.push_back(k);
+    if (hub::prefs::set_hidden(&p, h)) store_prefs(p);
+    start_scan();   // the game comes back with the rescan
+}
+
+struct HiddenList {
+    bool open = false, seen = false;
+    std::vector<std::string> keys;
+    double loaded = -100;
+} HL;
+
+void refresh_hidden() {
+    if (HL.loaded > ImGui::GetTime() - 2.0 && HL.loaded <= ImGui::GetTime()) return;
+    HL.loaded = ImGui::GetTime();
+    if (g_headless && std::getenv("HUB_SHOT_HIDDEN")) { HL.keys = {"n64:0123456789abcdef0123456789abcdef", "gba:agbj-1a2b3c4d", "gc:gm4e01-0"}; return; }
+    HL.keys = load_prefs().hidden;
+}
+
+std::string hidden_label(const std::string& key) {
+    auto it = g_hidden_titles.find(key);
+    if (it != g_hidden_titles.end()) return it->second;
+    if (g_headless && std::getenv("HUB_SHOT_HIDDEN")) return key == "gba:agbj-1a2b3c4d" ? "Test Game 5" : key == "gc:gm4e01-0" ? "Test Game 3" : "Test Game 1";
+    return key;
+}
+
 }  // namespace
 
 bool rom_missing(const hub::GameEntry& e) {
@@ -87,7 +138,73 @@ static void set_pref_copy(const std::string& key, const std::string& path) {
     if (hub::prefs::set_preferred_copy(&p, m)) store_prefs(p);
 }
 
+/* Settings > General: "Hidden games (N)" opens the list with Unhide per game. */
+void hidden_games_row() {
+    refresh_hidden();
+    if (HL.keys.empty()) return;
+    char lab[64];
+    std::snprintf(lab, sizeof lab, "Hidden games (%d)", (int)HL.keys.size());
+    if (button(lab, ImVec2(0, 0), false, true, ui::Icon::Close)) { HL.open = true; HL.seen = false; }
+}
+
+void hidden_games_open_shot() { HL.open = true; HL.seen = false; }
+
+static void draw_hidden_list() {
+    if (!HL.open) return;
+    refresh_hidden();
+    bool open = false;
+    emu_modal_begin("Hidden games", &open);
+    if (!open) return;
+    if (ui::modal_back()) HL.open = false;
+    ImGui::TextWrapped("Games you removed from the library. Unhide brings one back after a rescan.");
+    ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+    if (HL.keys.empty()) text_wrapped_disabled("Nothing is hidden.");
+    ImGui::BeginChild("##hiddenlist", ImVec2(0, std::min(ui::sp(28.f), (float)HL.keys.size() * ui::sp(7.f) + ui::sp(1.f))), ImGuiChildFlags_NavFlattened);
+    std::string unhide;
+    for (size_t i = 0; i < HL.keys.size(); ++i) {
+        ImGui::PushID((int)i);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(hidden_label(HL.keys[i]).c_str());
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - ui::sp(10.f));
+        if (!HL.seen) { ImGui::SetKeyboardFocusHere(0); HL.seen = true; }   // a pad lands on the first Unhide
+        if (button("Unhide", ImVec2(ui::sp(10.f), ui::sp(4.f)), false, true)) unhide = HL.keys[i];
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    if (!unhide.empty()) {
+        if (!(g_headless && std::getenv("HUB_SHOT_HIDDEN"))) unhide_game(unhide);
+        HL.keys.erase(std::remove(HL.keys.begin(), HL.keys.end(), unhide), HL.keys.end());
+        HL.loaded = ImGui::GetTime();
+        set_notice("Unhid " + hidden_label(unhide) + ". Rescanning...", 4.0);
+        if (HL.keys.empty()) HL.open = false;
+    }
+    ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+    if (button("Close", ImVec2(ui::sp(12.f), ui::sp(4.f)))) HL.open = false;
+    if (!HL.open) { ImGui::CloseCurrentPopup(); HL.seen = false; }
+    ImGui::EndPopup();
+}
+
+/* Undo after "Remove from library": a small clickable card above the toasts (the toast list itself is draw-only). */
+static void draw_undo_card() {
+    double now = ImGui::GetTime();
+    if (UNDO.key.empty() || now > UNDO.until) { UNDO.key.clear(); return; }
+    ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(ds.x - ui::sp(3.f), ds.y - ui::sp(12.f)), ImGuiCond_Always, ImVec2(1.f, 1.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ui::sp(1.f), ui::sp(1.f)));
+    ImGui::Begin("##undoremove", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    if (button("Undo", ImVec2(ui::sp(10.f), ui::sp(4.f)), true)) {
+        std::string k = UNDO.key;
+        UNDO.key.clear();
+        unhide_game(k);
+        set_notice("Restored " + UNDO.title + ". Rescanning...", 4.0);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
 void draw_missing_rom_dialog() {
+    draw_hidden_list();
+    draw_undo_card();
     if (!MA.open) return;
     bool open = false;
     emu_modal_begin("Can't find game", &open);
@@ -117,16 +234,8 @@ void draw_missing_rom_dialog() {
     ImGui::SameLine();
     if (button("Rescan", bs, false, !A.scanning, ui::Icon::Refresh)) { start_scan(); MA.open = false; set_notice("Scanning your games...", 4.0); }
     if (button("Remove from library", bs, false, true)) {
-        hub::prefs::Prefs p = load_prefs();
-        std::vector<std::string> h = p.hidden;
-        h.push_back(MA.key);
-        if (hub::prefs::set_hidden(&p, h)) store_prefs(p);
-        A.lib.erase(std::remove_if(A.lib.begin(), A.lib.end(), [&](const hub::GameEntry& g) { return g.key == MA.key; }), A.lib.end());
-        A.lib_index.clear();
-        for (size_t i = 0; i < A.lib.size(); ++i) A.lib_index.emplace(A.lib[i].key, (int)i);
-        A.vis_dirty = true;
+        hide_game(MA.key, MA.title);
         MA.open = false;
-        set_notice("Removed " + MA.title + " from the library.", 5.0);
     }
     ImGui::SameLine();
     if (button("Cancel", bs)) MA.open = false;

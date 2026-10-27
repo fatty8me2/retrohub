@@ -877,6 +877,8 @@ bool rom_missing(const hub::GameEntry& e);
 void missing_rom_ask(const std::string& key);
 void missing_rom_ask_shot();
 void draw_missing_rom_dialog();
+void hidden_games_row();         // Settings > General: "Hidden games (N)" -> Unhide list
+void hidden_games_open_shot();
 void dupes_details_section(const hub::GameEntry& e);
 std::map<std::string, std::string> preferred_copies();
 std::set<std::string> hidden_game_keys();
