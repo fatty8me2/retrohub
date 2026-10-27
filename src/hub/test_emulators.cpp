@@ -582,7 +582,7 @@ static void test_prepare_and_find(const fs::path& dir) {
         std::string hk = read_text(dd / "User" / "Config" / "Hotkeys.ini");
         CHECK(hk.find("Increase Emulation Speed = @(Ctrl+Shift+F13)") != std::string::npos);
         CHECK(hk.find("Decrease Emulation Speed = @(Ctrl+Shift+F14)") != std::string::npos);
-        CHECK(hk.find("Disable Emulation Speed Limit = @(Ctrl+Shift+F15)") != std::string::npos);
+        CHECK(hk.find("Disable Emulation Speed Limit") == std::string::npos);   // hold-only in Dolphin: not bound
         CHECK(hubui::ini_get(hk, "Hotkeys", "Device") == "DInput/0/Keyboard Mouse");
         std::string mine = hubemu::dolphin_hotkeys_ini("[Hotkeys]\nDevice = XInput/0/Gamepad\nStop = Escape\nIncrease Emulation Speed = F5\n");
         CHECK(hubui::ini_get(mine, "Hotkeys", "Stop") == "Escape" && hubui::ini_get(mine, "Hotkeys", "Device") == "XInput/0/Gamepad");

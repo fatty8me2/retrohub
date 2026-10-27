@@ -38,43 +38,39 @@ inline float ext_session_scalar(int cur, int base) {
 /* Speed: built-in runners only (control channel), and never online. */
 inline bool speed_available(bool has_ctl, bool online) { return has_ctl && !online; }
 
-/* ---- Dolphin (no control channel): speed through its own emulation-speed hotkeys, bound by RetroHub to Ctrl+Shift+F13..F15 ----
- * Dolphin's Increase / Decrease Emulation Speed move Core EmulationSpeed by 0.1 per press (snapping to 1.0 around 1x; Decrease
- * wraps to 1.0 at 0.0, so the floor is 0.1); "Disable Emulation Speed Limit" is a toggle. The session starts at 1.0 (written to
- * Dolphin.ini every launch). Our steps map to the nearest reachable value, counted in 0.1 presses from 1x: */
-constexpr int kDolphinMaxIdx = kSpeedSteps - 1;                       // "Max" = limit off
-inline int dolphin_tenths(int idx) {                                  // target speed in tenths of 1x (Max is not a tenths value)
-    static const int t[kSpeedSteps - 1] = {3, 5, 10, 15, 20, 30, 50, 80};   // 0.25x -> 0.3 (nearest reachable, ties up)
-    idx = std::max(0, std::min(kSpeedSteps - 2, idx));
+/* ---- Dolphin (no control channel): speed through its own emulation-speed hotkeys, bound by RetroHub to Ctrl+Shift+F13 / F14 ----
+ * Verified against dolphin-emu/dolphin tag 2509 (the bundled build): DolphinQt/HotkeyScheduler.cpp ~519-535: Decrease Emulation
+ * Speed = EmulationSpeed - 0.1 (ignored when the result would be <= 0, so the floor is 0.1), Increase = + 0.1 (no cap); a result
+ * within 0.95..1.05 snaps to exactly 1.0. Presses are edge-triggered (Core/HotkeyManager.cpp IsPressed), so each needs a release.
+ * "Disable Emulation Speed Limit" (HK_TOGGLE_THROTTLE, default TAB) is HOLD-to-disable, not a toggle, so there is no Max step for
+ * Dolphin: the row stops at 8x. The session starts at 1.0 (written to Dolphin.ini every launch). Our steps map to the nearest
+ * reachable value, counted in 0.1 presses from 1x. */
+constexpr int kDolphinSteps = kSpeedSteps - 1;                        // 0.25x .. 8x (no Max)
+inline int dolphin_tenths(int idx) {                                  // target speed in tenths of 1x
+    static const int t[kDolphinSteps] = {3, 5, 10, 15, 20, 30, 50, 80};   // 0.25x -> 0.3 (nearest reachable, ties up)
+    idx = std::max(0, std::min(kDolphinSteps - 1, idx));
     return t[idx];
 }
 inline std::string dolphin_speed_text(int idx) {                      // what Dolphin really runs at ("0.3x" for our 0.25x)
-    if (idx >= kDolphinMaxIdx) return "Max";
     int t = dolphin_tenths(idx);
     return t % 10 == 0 ? std::to_string(t / 10) + "x" : std::to_string(t / 10) + "." + std::to_string(t % 10) + "x";
 }
-enum class DolphinKey { Increase, Decrease, ToggleLimit };
-inline constexpr int kDolphinVkCtrl = 0x11, kDolphinVkShift = 0x10;
-inline int dolphin_vk(DolphinKey k) { return k == DolphinKey::Increase ? 0x7C : k == DolphinKey::Decrease ? 0x7D : 0x7E; }   // F13 F14 F15
-inline const char* dolphin_hotkey_name(DolphinKey k) {
-    return k == DolphinKey::Increase ? "Increase Emulation Speed" : k == DolphinKey::Decrease ? "Decrease Emulation Speed" : "Disable Emulation Speed Limit";
-}
-inline const char* dolphin_hotkey_expr(DolphinKey k) {
-    return k == DolphinKey::Increase ? "@(Ctrl+Shift+F13)" : k == DolphinKey::Decrease ? "@(Ctrl+Shift+F14)" : "@(Ctrl+Shift+F15)";
-}
-/* What Dolphin is doing now: the speed step it is set to (never Max) and whether its limit is off (our "Max"). */
-struct DolphinSpeed { int base = kSpeedNormal; bool unlimited = false; };
-inline int dolphin_idx(const DolphinSpeed& s) { return s.unlimited ? kDolphinMaxIdx : s.base; }
-/* Key presses (in order) that take Dolphin to step `to`; `s` is updated to the state after they are sent. Going to Max only
- * toggles the limit (the base speed is kept, and comes back when leaving Max). */
+inline int dolphin_speed_step(int idx, int dir) { return std::max(0, std::min(kDolphinSteps - 1, idx + (dir < 0 ? -1 : dir > 0 ? 1 : 0))); }
+enum class DolphinKey { Increase, Decrease };
+inline int dolphin_vk(DolphinKey k) { return k == DolphinKey::Increase ? 0x7C : 0x7D; }              // VK_F13 / VK_F14
+inline int dolphin_scan(int vk) { return vk == 0x7C ? 0x64 : vk == 0x7D ? 0x65 : 0; }               // DIK_F13 / DIK_F14 (DirectInput reads scancodes)
+constexpr int kDolphinScanCtrl = 0x1D, kDolphinScanShift = 0x2A;
+inline const char* dolphin_hotkey_name(DolphinKey k) { return k == DolphinKey::Increase ? "Increase Emulation Speed" : "Decrease Emulation Speed"; }
+inline const char* dolphin_hotkey_expr(DolphinKey k) { return k == DolphinKey::Increase ? "@(Ctrl+Shift+F13)" : "@(Ctrl+Shift+F14)"; }
+/* Dolphin's current speed step. `cur` is updated to `to`; returns the key presses (in order) that get there. */
+struct DolphinSpeed { int cur = kSpeedNormal; };
+inline int dolphin_idx(const DolphinSpeed& s) { return s.cur; }
 inline std::vector<DolphinKey> dolphin_plan(DolphinSpeed& s, int to) {
     std::vector<DolphinKey> v;
-    to = std::max(0, std::min(kDolphinMaxIdx, to));
-    if (to == kDolphinMaxIdx) { if (!s.unlimited) { v.push_back(DolphinKey::ToggleLimit); s.unlimited = true; } return v; }
-    if (s.unlimited) { v.push_back(DolphinKey::ToggleLimit); s.unlimited = false; }
-    int d = dolphin_tenths(to) - dolphin_tenths(s.base);
+    to = std::max(0, std::min(kDolphinSteps - 1, to));
+    int d = dolphin_tenths(to) - dolphin_tenths(s.cur);
     for (int i = 0; i < (d < 0 ? -d : d); ++i) v.push_back(d < 0 ? DolphinKey::Decrease : DolphinKey::Increase);
-    s.base = to;
+    s.cur = to;
     return v;
 }
 

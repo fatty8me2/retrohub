@@ -16,9 +16,10 @@ int main() {
     CHECK(speed_available(true, false) && !speed_available(true, true) && !speed_available(false, false));
     // volume / mute are local: allowed online; speed is not
     CHECK(!runctl::offline_only(runctl::Cmd::Volume) && !runctl::offline_only(runctl::Cmd::Mute) && runctl::offline_only(runctl::Cmd::Speed));
-    // ---- Dolphin speed: 0.1 hotkey steps from 1x
+    // ---- Dolphin speed: 0.1 hotkey steps from 1x, no Max (Dolphin's speed-limit hotkey is hold-only)
     CHECK(dolphin_speed_text(0) == "0.3x" && dolphin_speed_text(1) == "0.5x" && dolphin_speed_text(2) == "1x" && dolphin_speed_text(3) == "1.5x");
-    CHECK(dolphin_speed_text(4) == "2x" && dolphin_speed_text(5) == "3x" && dolphin_speed_text(6) == "5x" && dolphin_speed_text(7) == "8x" && dolphin_speed_text(8) == "Max");
+    CHECK(dolphin_speed_text(4) == "2x" && dolphin_speed_text(5) == "3x" && dolphin_speed_text(6) == "5x" && dolphin_speed_text(7) == "8x");
+    CHECK(dolphin_speed_step(7, 1) == 7 && dolphin_speed_step(0, -1) == 0 && dolphin_speed_step(2, 1) == 3);
     {
         auto count = [](const std::vector<DolphinKey>& v, DolphinKey k) { int n = 0; for (auto x : v) n += x == k; return n; };
         DolphinSpeed s;
@@ -27,17 +28,18 @@ int main() {
         CHECK(p.size() == 5 && count(p, DolphinKey::Increase) == 5 && dolphin_idx(s) == 3);
         p = dolphin_plan(s, 7);        // 1.5x -> 8x: 65 increases
         CHECK(p.size() == 65 && count(p, DolphinKey::Increase) == 65 && dolphin_idx(s) == 7);
-        p = dolphin_plan(s, 8);        // Max: one toggle, base kept
-        CHECK(p.size() == 1 && p[0] == DolphinKey::ToggleLimit && s.unlimited && s.base == 7 && dolphin_idx(s) == 8);
-        CHECK(dolphin_plan(s, 8).empty());
-        p = dolphin_plan(s, 1);        // out of Max to 0.5x: toggle, then 70 - 5 = 75 decreases
-        CHECK(p.size() == 76 && p[0] == DolphinKey::ToggleLimit && count(p, DolphinKey::Decrease) == 75 && !s.unlimited && dolphin_idx(s) == 1);
+        p = dolphin_plan(s, 1);        // 8x -> 0.5x: 75 decreases
+        CHECK(p.size() == 75 && count(p, DolphinKey::Decrease) == 75 && dolphin_idx(s) == 1);
         p = dolphin_plan(s, 0);        // 0.5x -> 0.3x
         CHECK(p.size() == 2 && count(p, DolphinKey::Decrease) == 2);
-        DolphinSpeed m; dolphin_plan(m, 8); p = dolphin_plan(m, 2);   // Max -> 1x: only the toggle
-        CHECK(p.size() == 1 && p[0] == DolphinKey::ToggleLimit && dolphin_idx(m) == 2);
+        p = dolphin_plan(s, 2);        // 0.3x -> 1x: 7 increases (never below Dolphin's 0.1 floor on the way)
+        CHECK(p.size() == 7 && count(p, DolphinKey::Increase) == 7);
+        CHECK(dolphin_plan(s, 99).size() == 70 && dolphin_idx(s) == 7);   // out-of-range clamps to 8x
     }
-    CHECK(dolphin_vk(DolphinKey::Increase) == 0x7C && dolphin_vk(DolphinKey::Decrease) == 0x7D && dolphin_vk(DolphinKey::ToggleLimit) == 0x7E);
+    CHECK(dolphin_vk(DolphinKey::Increase) == 0x7C && dolphin_vk(DolphinKey::Decrease) == 0x7D);
+    CHECK(dolphin_scan(0x7C) == 0x64 && dolphin_scan(0x7D) == 0x65);   // DIK_F13 / DIK_F14
+    CHECK(std::string(dolphin_hotkey_name(DolphinKey::Increase)) == "Increase Emulation Speed" && std::string(dolphin_hotkey_name(DolphinKey::Decrease)) == "Decrease Emulation Speed");
+    CHECK(std::string(dolphin_hotkey_expr(DolphinKey::Increase)) == "@(Ctrl+Shift+F13)" && std::string(dolphin_hotkey_expr(DolphinKey::Decrease)) == "@(Ctrl+Shift+F14)");
     CHECK(speed_row(true, false, false, false) == SpeedRow::Enabled && speed_row(true, false, true, false) == SpeedRow::Online);
     CHECK(speed_row(false, true, false, true) == SpeedRow::Enabled && speed_row(false, true, true, true) == SpeedRow::Online);
     CHECK(speed_row(false, false, false, true) == SpeedRow::Unsupported && speed_row(false, false, true, true) == SpeedRow::Unsupported);
