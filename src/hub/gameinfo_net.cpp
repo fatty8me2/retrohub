@@ -59,7 +59,8 @@ std::string user_agent() {
     return "RetroHub/" + v + " (https://github.com/fatty8me2/retrohub)";
 }
 
-bool http_get(const std::string& url, std::string* body, int* status) {
+namespace {
+bool http_request(const wchar_t* method, const std::string& url, const std::string& ctype, const std::string& post, std::string* body, int* status) {
     *status = 0;
     body->clear();
     std::wstring wurl = widen(url);
@@ -78,14 +79,18 @@ bool http_get(const std::string& url, std::string* body, int* status) {
     WinHttpSetTimeouts(ses, 5000, 5000, 8000, 15000);
     bool ok = false;
     HINTERNET con = WinHttpConnect(ses, host, uc.nPort, 0);
-    HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", full.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+    HINTERNET req = con ? WinHttpOpenRequest(con, method, full.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                              uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)
                         : nullptr;
     if (req) {
         const wchar_t* hdr = L"Accept: application/json\r\nApi-User-Agent: RetroHub (https://github.com/fatty8me2/retrohub)\r\n";
         WinHttpAddRequestHeaders(req, hdr, (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
+        if (!ctype.empty()) {
+            std::wstring ch = L"Content-Type: " + widen(ctype);
+            WinHttpAddRequestHeaders(req, ch.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+        }
     }
-    if (req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(req, nullptr)) {
+    if (req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, post.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)post.data(), (DWORD)post.size(), (DWORD)post.size(), 0) && WinHttpReceiveResponse(req, nullptr)) {
         DWORD code = 0, sz = sizeof code;
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code, &sz, WINHTTP_NO_HEADER_INDEX);
         *status = (int)code;
@@ -107,6 +112,12 @@ bool http_get(const std::string& url, std::string* body, int* status) {
     WinHttpCloseHandle(ses);
     if (!ok) *status = 0;
     return ok;
+}
+}  // namespace
+
+bool http_get(const std::string& url, std::string* body, int* status) { return http_request(L"GET", url, "", "", body, status); }
+bool http_post(const std::string& url, const std::string& content_type, const std::string& post_body, std::string* body, int* status) {
+    return http_request(L"POST", url, content_type, post_body, body, status);
 }
 
 bool fetch(const std::string& url, std::string* body, int* status) {

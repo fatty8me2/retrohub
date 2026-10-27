@@ -76,6 +76,8 @@ add_subdirectory(src/common)
 add_subdirectory(src/saves)
 add_subdirectory(src/net)
 add_subdirectory(src/n64run)
+add_subdirectory(third_party/rcheevos)   # RetroAchievements rcheevos (vendored, see THIRD_PARTY.md)
+add_subdirectory(src/cheevos)
 add_subdirectory(src/retrorun)
 add_subdirectory(src/mgba_link)
 add_subdirectory(src/sameboy_rb)
@@ -92,6 +94,7 @@ enable_testing()
 
 add_test(NAME json_test COMMAND json_test)
 add_test(NAME runner_ctl_test COMMAND runner_ctl_test)   # hub<->runner control file, ack, slot/shot paths
+add_test(NAME cheevos_test COMMAND cheevos_test)   # RetroAchievements: config/cache, hardcore rules, mocked login + rc_client session (no network, no RA account)
 add_test(NAME osd_test COMMAND osd_test)   # OSD toast queue + font renderer
 add_test(NAME prefs_test COMMAND prefs_test)   # synced account prefs: field-wise merge, library favorites mirror
 add_test(NAME winutil_test COMMAND winutil_test)
