@@ -51,6 +51,12 @@ RetroHub/
   hub.json    user settings: name, ROM folder, server URL, controller
 ```
 
+## Runner control, OSD and prefs (hub <-> runners)
+- `src/common/runner_ctl.h`: the hub writes `control.json` in the runner's run dir (commands incl. `volume`, `mute`, `speed`, `ff`, `osd_msg`; reserved: `rewind`, `shader`, `overlay`, `clip`), the runner acks in `control_ack.json`. Spec: `docs/RUNNER_CTL.md`.
+- `src/common/osd.h`: runner toast layer; drawn over the frame by retrorun, mirrored into the window caption by n64run (GL overlay behind `N64RUN_OSD_GL=1`).
+- `src/common/prefs.h`: synced account prefs `<vault>/_account/prefs.json` (favorites, user_shelves, hidden, renames, covers, theme, profile.*), field-wise newest-wins merge. See `docs/SAVES.md`.
+- `src/hub/shot_viewer.cpp`: full-size screenshot viewer opened from the screenshots strip (copy to clipboard, set as cover, delete, open in default viewer; "Send to a friend" is a stub until the server has DM attachments).
+
 ## Lobby server: `/hub` endpoint (new; the Smash `/ws` endpoint is untouched)
 
 The URL is `wss://smash-netplay.jumpcircuit.workers.dev/hub?room=CODE&role=host|join&name=NAME`.
