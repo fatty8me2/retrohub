@@ -1,4 +1,5 @@
 #include "app.h"
+#include "osk.h"
 #include "wizard_logic.h"
 
 /* ---------- First-run setup wizard: Welcome > Controller > Find my games > Name > Done ----------
@@ -49,6 +50,7 @@ std::string pad_name(int i) {
 PadState pad_state(int i) {
     PadState s;
     if (WZ.fake_n >= 0) return i == 0 ? WZ.fake : s;
+    if (osk::hub_input_blocked()) return s;
     SDL_GameController* c = A.pads[i];
     for (int k = 0; k < SDL_CONTROLLER_BUTTON_MAX; ++k) s.b[k] = SDL_GameControllerGetButton(c, (SDL_GameControllerButton)k) != 0;
     s.lx = axis(c, SDL_CONTROLLER_AXIS_LEFTX);

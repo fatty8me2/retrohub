@@ -1,4 +1,5 @@
 #include "app.h"
+#include "osk.h"
 
 #include "controls_sdl.h"
 
@@ -108,7 +109,7 @@ void finish_assign() {
 
 /* One frame of the mode: rising edge of A on a connected pad takes the next port; Esc or a timeout ends it. */
 void poll_assign(double now) {
-    if (!CTL.assign.active()) { finish_assign(); return; }
+    if (!CTL.assign.active() || (osk::hub_input_blocked() && !CTL.shot_nosave)) { finish_assign(); return; }   // unfocused: end the mode, an in-game press must not claim a port
     SDL_GameControllerUpdate();
     if (!CTL.shot_nosave && ImGui::GetTime() - CTL.pads_at >= 0.5) {   // hot-plug: refresh the pad list during the mode
         ctl_reload_pads();
@@ -509,6 +510,7 @@ void draw_test_panel() {
     if (sel >= 0 && CTL.pads[sel].sdl_index >= 0) {
         SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(CTL.pads[sel].sdl_index);
         for (auto* c : A.pads) if (SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c)) == id) pad = c;
+        if (osk::hub_input_blocked()) pad = nullptr;   // unfocused: show an idle pad, never the game's inputs
     }
     ImVec2 o = ImGui::GetCursorScreenPos();
     float h = 230 * S;
