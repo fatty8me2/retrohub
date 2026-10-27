@@ -49,6 +49,8 @@ struct Settings {
     bool download_art = true;         // fetch cover art from the libretro-thumbnails project
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
     bool show_friends = true;          // friends panel open
+    bool tv_start = false;             // start RetroHub in TV mode (fullscreen 10-foot layout)
+    bool tv_windows = false;           // mirrors the HKCU Run entry that starts with Windows into TV mode
     bool notify_in_game = true;        // Windows toast for invites while a game is running
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
     std::string watch_online;          // friends with "Notify me when they come online" on: comma separated uids (at most 50), none by default

@@ -190,6 +190,7 @@ void tab_general() {
     }
     if (ImGui::Checkbox("Menu music", &A.st.menu_music)) mark_dirty();
     text_wrapped_disabled("Soft sounds and an optional quiet ambient loop in RetroHub. Always silent while a game is running or RetroHub is in the background.");
+    tvmode::settings_ui();
     end_panel();
 }
 
