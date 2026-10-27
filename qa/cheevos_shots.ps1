@@ -47,7 +47,7 @@ foreach ($sz in "1280x800", "1600x1000") {
   Shot "account_out_$w" @{ HUB_CHEEVOS_CFG = "$mock\off.json"; HUB_SHOT_PAGE = "settings:5"; HUB_SHOT_SIZE = $sz }
 }
 # Tall window (everything below the fold) and the masked password keyboard.
-Shot "home_tall" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_SIZE = "1280x2000" }
-Shot "account_out_tall" @{ HUB_CHEEVOS_CFG = "$mock\off.json"; HUB_SHOT_PAGE = "settings:5"; HUB_SHOT_SIZE = "1280x2000" }
-Shot "account_in_tall" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_PAGE = "settings:5"; HUB_SHOT_SIZE = "1280x2000" }
+Shot "home_tall" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_SIZE = "1280x2600" }
+Shot "account_out_tall" @{ HUB_CHEEVOS_CFG = "$mock\off.json"; HUB_SHOT_PAGE = "settings:5"; HUB_SHOT_SIZE = "1280x2600" }
+Shot "account_in_tall" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_PAGE = "settings:5"; HUB_SHOT_SIZE = "1280x2600" }
 Shot "osk_password" @{ HUB_SHOT_OSK = "password:hunter2secret" }
