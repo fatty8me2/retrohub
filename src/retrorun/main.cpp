@@ -448,7 +448,11 @@ class Frontend {
     bool spec_ = false;
     std::unique_ptr<retrofeat::Features> make_feat(bool measure);
     int run_feat_selftest();
-    void run_core_frame() { if (feat_) feat_->frame(); else core.run(); }
+    bool ra_rewound_ = false;   // a rewind ran since the last real frame: rc_client is reset once play resumes
+    void run_core_frame() {
+        if (feat_) { feat_->frame(); if (feat_->rewinding()) ra_rewound_ = true; }
+        else { core.run(); ra_.frame(); }
+    }
     hubctl::ExitCombo exit_combo;     // Back+Start held 1 s on any pad: leave (saves flush in finish())
     dsview::StylusLatch stylus;      // a press only counts if it began over the frame
     Pace pace = Pace::None;
@@ -1170,6 +1174,7 @@ void Frontend::poll_all_local() {
                 hubctl::read_state(pads[i], &st);
                 if (st.a[4] > hubctl::kDefaultAxisThreshold && st.b[hubctl::kBtnBack] && !st.b[hubctl::kBtnStart] && !st.b[3]) rw = true;
             }
+            if (rw && !ra_.allow(cheevos::Feature::Rewind)) rw = false;   // hardcore: no rewind (OSD message)
             feat_->set_held(rw);
         }
         if (exit_combo.update(combo, (long long)SDL_GetTicks64())) { rlog("exit combo (Back+Start held): leaving"); quit = true; }
@@ -1449,6 +1454,7 @@ void Frontend::ctl_poll() {
                 if (ok) osd::push(m);
                 ctl_.ack(ok, m);
             } else if (c.cmd == runctl::Cmd::Rewind) {
+                if (c.value && !ra_.allow(cheevos::Feature::Rewind)) { ctl_.ack(false, "Hardcore: rewind is off"); break; }
                 bool ok = feat_ && feat_->set_latched(c.value != 0);
                 ctl_.ack(ok, ok ? (c.value ? "rewinding" : "rewind off") : "Rewind is not available for this game");
             } else {
@@ -1465,6 +1471,7 @@ bool Frontend::load_state(const std::string& name) {
     if (!read_file(state_path(name), &buf)) { set_status("No state " + name); return false; }
     if (!core.unserialize(buf.data(), buf.size())) { set_status("Load state failed (core error)"); return false; }
     set_status("Loaded state " + name);
+    ra_.reset();   // a restored moment is not progress: restart achievement trigger tracking
     return true;
 }
 
@@ -2068,6 +2075,10 @@ void Frontend::do_pacing() {
 std::unique_ptr<retrofeat::Features> Frontend::make_feat(bool measure) {
     retrofeat::Hooks h;
     h.run = [this] { core.run(); };
+    h.real_frame = [this] {   // RetroAchievements sees only the real frame: never a run-ahead or rewound one
+        if (ra_rewound_) { ra_rewound_ = false; ra_.reset(); }   // rewound memory is not progress: restart trigger tracking
+        ra_.frame();
+    };
     h.state_size = [this] { return core.serialize_size(); };
     h.save = [this](void* b, size_t n) { return core.serialize(b, n); };
     h.load = [this](const void* b, size_t n) { return core.unserialize(b, n); };
@@ -2630,7 +2641,6 @@ int Frontend::run(const Args& args) {
                 ctl_poll();
                 do_pacing();
                 run_core_frame();
-                ra_.frame();
                 if (link_active) {
                     link_pump();
                     if (SDL_GetTicks64() - link_last_log >= 5000) {
