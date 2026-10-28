@@ -238,6 +238,7 @@ struct App {
     std::function<void()> after_job;              // run once the current job finishes (e.g. a queued launch)
     hubui::SyncGate sync_gate;                    // a sync was requested while a job or a game was running
     bool gc_write_save = false;                   // GameCube room option (host only, local): keep this session's memory-card changes
+    bool room_turbo = false;                      // room option (host-controlled): turbo buttons allowed online for everyone (default off)
     bool share_host_save = true;                  // room option (host-controlled): all PCs use the host's N64 save
     int my_locals = 1;                            // local controllers I play with online (1-2)
     std::map<int, int> locals;                    // other members' local counts by lobby slot

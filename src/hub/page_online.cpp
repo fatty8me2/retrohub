@@ -385,6 +385,11 @@ void page_online_room() {
             ImGui::TextDisabled("%s", A.share_host_save ? "Using the host's save (unlocked characters/boards)." : "Starting from an empty save.");
         }
     }
+    if (rg && !is_kanto(*rg) && hubctl::turbo_supported(hubctl::system_key(rg->system))) {   // turbo buttons are local-only input; off online unless the host allows it for everyone
+        if (host) {
+            if (ImGui::Checkbox("Allow turbo buttons for everyone", &A.room_turbo)) A.hello_dirty = true;
+        } else if (A.room_turbo) ImGui::TextDisabled("The host allows turbo buttons in this room.");
+    }
     if (rg && rg->system == hub::System::GC) {
         ImGui::TextWrapped("GameCube online uses the host's memory card for everyone. Guests' own cards are never touched.");
         if (host) ImGui::Checkbox("Keep this session's progress on my memory card", &A.gc_write_save);

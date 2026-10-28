@@ -14,10 +14,17 @@ class PadMap {
     explicit PadMap(const hubctl::Profile& p) : m_(p) {
         for (int i = 0; i < 14; i++) id_[i] = m_.id(kCtl[i].name);
         stick_ = m_.id("stick");
+        for (int i = 0; i < 14; i++) if (p.turbo.count(kCtl[i].name)) turbo_bits_ |= kCtl[i].bit;
     }
-    uint32_t word(const hubctl::PadState& st) const {
+    /* Turbo buttons read as released on the off half of the cycle (only when `turbo_on`: offline, or enabled by the room host). */
+    uint32_t turbo(uint32_t v, uint64_t frame, bool turbo_on) const {
+        return turbo_on && !hubctl::turbo_phase_on(frame) ? v & ~turbo_bits_ : v;
+    }
+    bool has_turbo() const { return turbo_bits_ != 0; }
+    uint32_t word(const hubctl::PadState& st, uint64_t frame = 0, bool turbo_on = false) const {
         uint32_t v = 0;
         for (int i = 0; i < 14; i++) if (m_.down(id_[i], st)) v |= kCtl[i].bit;
+        v = turbo(v, frame, turbo_on);
         float fx, fy;
         m_.stick(stick_, st, &fx, &fy);
         int ox = (int)std::lround(fx * 80.0f), oy = (int)std::lround(-fy * 80.0f);   // SDL: down is +; N64: up is +
@@ -34,6 +41,7 @@ class PadMap {
     hubctl::Mapper m_;
     int id_[14];
     int stick_;
+    uint32_t turbo_bits_ = 0;
 };
 
 }  // namespace n64run

@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,7 @@ struct Profile {
     std::map<std::string, Analog> analogs;
     int axis_threshold = kDefaultAxisThreshold;
     std::map<std::string, std::string> keys;      // keyboard "pad": control -> key expr ("x|space"), see key_controls_for()
+    std::set<std::string> turbo;                  // controls (keys of `buttons`) that auto-fire while held; see turbo_supported()
     bool rumble = false;                          // n64 only: attach a Rumble Pak instead of a Controller Pak (offline)
     std::vector<std::string> port_order;          // filled by resolve(): pad keys, first = port 1
     /* Equality ignores name and port_order (what the emulator configs are generated from). */
@@ -93,6 +95,16 @@ class KeyMapper {
     std::vector<std::vector<int>> codes_;
     std::map<std::string, int> ids_;
 };
+
+/* ---- turbo (auto-fire) ----
+ * Applied by retrorun and n64run on the LOCAL input only (before it is sent anywhere), so it cannot desync a session.
+ * Dolphin, PCSX2, Cemu and Azahar read the pad themselves: "not supported" there. Online it is off unless the room's host
+ * enabled it for everyone (turbo_allowed). */
+constexpr int kTurboPeriod = 4;   // frames per cycle: held, released, ... = 15 presses a second at 60 fps
+inline bool turbo_phase_on(uint64_t frame, int period = kTurboPeriod) { return period < 2 || (frame % (uint64_t)period) < (uint64_t)(period / 2); }
+inline bool turbo_allowed(bool online, bool host_enabled) { return !online || host_enabled; }
+bool turbo_supported(const std::string& system);   // n64, retro, ps1, nes, snes
+bool is_turbo(const Profile& p, const std::string& control);
 
 /* ---- source expressions ---- */
 struct Term {
@@ -156,6 +168,7 @@ bool set_analog(Store& s, const std::string& system, const std::string& game_id,
 bool set_key(Store& s, const std::string& system, const std::string& game_id, const std::string& control,
              const std::string& keys, std::string* err = nullptr);
 bool set_rumble(Store& s, const std::string& system, const std::string& game_id, bool on, std::string* err = nullptr);   // n64 only
+bool set_turbo(Store& s, const std::string& system, const std::string& game_id, const std::string& control, bool on, std::string* err = nullptr);
 void reset(Store& s, const std::string& system, const std::string& game_id = "");   // back to the built-in default / the system default
 void set_port_order(Store& s, const std::vector<std::string>& pad_keys);
 
