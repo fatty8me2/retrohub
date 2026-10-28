@@ -57,6 +57,7 @@
 #include "runstate.h"
 #include "runner_ctl.h"
 #include "osd.h"
+#include "fbmask.h"
 #include "clip.h"
 #include <GL/gl.h>
 #include <set>
@@ -109,6 +110,7 @@ struct Args {
     int owner[kPorts] = {0, -1, -1, -1};
     bool ports_given = false;
     bool strict_sync = false, no_hash = false, share_host_save = false;
+    bool full_hash = false;       // --full-hash (with --spectate): the host predates the framebuffer-masked sync hash
     bool legacy_host = false;     // --legacy-host (with --spectate): the host predates N64 live join (keeps RDRAM dithering; no knock)
     bool spectate = false;        // --spectate: watch a running online match as a port-less spectator (server picks the slot; needs --net --room --ports)
     bool no_spectators = false;   // --no-spectators: as the host, do not record/serve the input history to spectators
@@ -194,6 +196,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--share-host-save") a.share_host_save = true;
         else if (k == "--spectate") a.spectate = true;
         else if (k == "--legacy-host") a.legacy_host = true;
+        else if (k == "--full-hash") a.full_hash = true;
         else if (k == "--no-spectators") a.no_spectators = true;
         else if (k == "--ports") { std::string s; ok = val(&s) && parse_ports(s, a.owner); a.ports_given = ok; }
         else if (k == "--strict-sync") a.strict_sync = true;
@@ -465,6 +468,7 @@ static void ctl_finish(bool ok, const std::string& msg) {
 
 /* Offline resume support: --load-state restores a state on the third VI; auto.state is rewritten every 30 s and when the hub asks
  * for "quit" (the core offers no hook for a plain window close, so that case loses at most 30 s). */
+static fbmask::Tracker g_fb;   // framebuffers found from the VI registers (fbmask.h); lead-poll thread only
 static std::string g_load_state_path, g_auto_dir, g_key_for_auto;
 static unsigned long long g_next_autosave = 0;
 static long long g_stop_at_vi = 0;
@@ -1619,6 +1623,7 @@ int main(int argc, char** argv) {
         lo.delay = args.delay;
         lo.online = online;
         lo.spectator = args.spectate;
+        lo.full_hash = args.full_hash;
         lo.serve_spectators = !args.no_spectators;
         lo.strict_sync = args.strict_sync;
         lo.adaptive_delay = delay_auto && !args.spectate && !std::getenv("N64RUN_FIXED_DELAY");
@@ -1637,13 +1642,21 @@ int main(int argc, char** argv) {
                 int v = on ? 1 : 0;
                 g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &v);
             };
+        if (online && g_core.MemPtr) {
+            hk.vi_poll = [] {
+                static const uint32_t* vi = static_cast<const uint32_t*>(g_core.MemPtr(M64P_DBG_PTR_VI_REG));
+                if (vi) g_fb.sample(vi[0], vi[1], vi[2]);
+            };
+            hk.vi_reset = [] { g_fb.reset(); };
+        }
         hk.request_stop = [] { g_core.DoCommand(M64CMD_STOP, 0, nullptr); };
         hk.log = [](const std::string& s) { logline("lockstep", s.c_str()); };
         if (!args.no_hash && g_core.MemPtr) {
             hk.hash_rdram = [](uint64_t* out) {
                 void* p = g_core.MemPtr(M64P_DBG_PTR_RDRAM);
                 if (!p) return false;
-                *out = hash_block(p, 8u * 1024u * 1024u);
+                if (g_run.lockstep && g_run.lockstep->masked_hash()) *out = fbmask::hash(p, 8u * 1024u * 1024u, g_fb.ranges(8u * 1024u * 1024u));
+                else *out = hash_block(p, 8u * 1024u * 1024u);
                 if (std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_BLOCKS")) { std::string l = "QA-BLOCKS"; char b[24]; for (int i = 0; i < 128; i++) { std::snprintf(b, sizeof b, " %04x", (unsigned)(hash_block(static_cast<uint8_t*>(p) + i * 65536, 65536) & 0xFFFF)); l += b; } logf_("qa", "%s", l.c_str()); }
                 return true;
             };

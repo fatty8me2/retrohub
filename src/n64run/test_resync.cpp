@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lockstep_core.h"
+#include "fbmask.h"
 #include "resync.h"
 #include "state_xfer.h"
 
@@ -191,7 +192,51 @@ static void test_transfer(double loss, uint32_t one_way_ms) {
     std::printf("  transfer loss %.0f%% rtt %u ms: %u ms for %zu bytes\n", loss * 100, one_way_ms * 2, finished - 1000, state.size());
 }
 
+static uint64_t plain_hash(const void* data, size_t bytes) {   // = hash_block in lockstep.cpp
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (size_t i = 0; i < bytes / 8; i++) { uint64_t w; std::memcpy(&w, p + i * 8, 8); h = (h ^ w) * 0x9E3779B97F4A7C15ull; h ^= h >> 29; }
+    return h;
+}
+
+static void test_fbmask() {
+    const uint32_t kRam = 8u << 20;
+    std::vector<uint8_t> ram(kRam);
+    uint32_t x = 99;
+    for (auto& b : ram) { x = x * 1664525u + 1013904223u; b = (uint8_t)(x >> 24); }
+    fbmask::Tracker t;
+    CHECK(fbmask::hash(ram.data(), ram.size(), t.ranges(kRam)) == plain_hash(ram.data(), ram.size()));   // nothing seen: the plain hash
+    // MK64: 320x240 16 bit, three buffers
+    const uint32_t o[3] = {0x31f780, 0x345f80, 0x36b780};
+    for (int i = 0; i < 9; i++) t.sample(0x3002, o[i % 3], 320);
+    CHECK(t.count() == 3);
+    t.sample(0, 0x100000, 320);          // blank screen: ignored
+    t.sample(0x3002, 0x200000, 0);       // no width: ignored
+    CHECK(t.count() == 3);
+    auto r = t.ranges(kRam);
+    CHECK(r.size() == 1 && r[0].lo <= 0x31f780 && r[0].hi >= 0x36b780 + 320 * 240 * 2);   // adjacent buffers merge into one range
+    uint64_t base = fbmask::hash(ram.data(), ram.size(), r);
+    ram[0x330000] ^= 0xFF; ram[o[2] + 1000] ^= 0x5A;   // inside a framebuffer: not a desync
+    CHECK(fbmask::hash(ram.data(), ram.size(), r) == base);
+    ram[0x7F0000] ^= 1;                                // outside: still detected
+    CHECK(fbmask::hash(ram.data(), ram.size(), r) != base);
+    ram[0x7F0000] ^= 1;
+    ram[0x31f780 - 0x900] ^= 1;                        // just below the margin
+    CHECK(fbmask::hash(ram.data(), ram.size(), r) != base);
+    // order independent set, 4 kept, the oldest dropped
+    fbmask::Tracker a, b;
+    for (int i : {0, 1, 2, 0, 1, 2}) a.sample(0x3002, o[i], 320);
+    for (int i : {2, 1, 0, 2, 1, 0}) b.sample(0x3002, o[i], 320);
+    CHECK(a.ranges(kRam).size() == b.ranges(kRam).size() && a.ranges(kRam)[0].lo == b.ranges(kRam)[0].lo && a.ranges(kRam)[0].hi == b.ranges(kRam)[0].hi);
+    fbmask::Tracker c;
+    for (uint32_t i = 0; i < 6; i++) c.sample(0x3002, 0x100000 + i * 0x100000, 320);
+    CHECK(c.count() == fbmask::kKeep);
+    c.reset();
+    CHECK(c.count() == 0 && c.ranges(kRam).empty());
+}
+
 int main() {
+    test_fbmask();
     test_codec();
     test_capability();
     test_handshake();
