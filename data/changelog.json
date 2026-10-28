@@ -3,15 +3,17 @@
     {
       "version": "1.29.1",
       "date": "2026-10-28",
-      "title": "Watch live",
+      "title": "Watch live and extra shared game packs",
       "new": [
-        "More games to install: paste a friend's public Google Drive folder link in Settings > Online to install greyed-out games from their pack too. Games that aren't in any pack show why Install is unavailable"
+        "Greyed-out games can be installed from extra shared packs: paste public Google Drive folder links in Settings > Online (one subfolder per console, each game in its own folder) and their games become installable too",
+        "The Install button is greyed out when a game is in no shared pack, with a hint for the owner to add it and share their link"
       ],
       "improved": [
         "Watch joins a friend's match live: you see what's happening right now, within a second, instead of the game starting from the beginning (GB, GBC, GBA, NES, SNES). N64 matches still replay from the start at full speed to catch up"
       ],
       "fixed": []
-    },{
+    },
+    {
       "version": "1.29.0",
       "date": "2026-10-28",
       "title": "Watch friends, resync instead of game over, profiles, game nights, turbo and instant replay",
