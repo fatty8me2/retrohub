@@ -13,7 +13,7 @@
 #include "cloud_engine.h"
 #include "qm_logic.h"
 #include "ext_media.h"
-#include "qm_pad.h"
+#include "qm_card.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
