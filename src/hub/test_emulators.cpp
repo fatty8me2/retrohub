@@ -580,13 +580,13 @@ static void test_prepare_and_find(const fs::path& dir) {
     {   /* Speed row: Core EmulationSpeed back to 1.0 each launch, speed hotkeys in Hotkeys.ini, user's other hotkeys kept */
         CHECK(hubui::ini_get(read_text(dd / "User" / "Config" / "Dolphin.ini"), "Core", "EmulationSpeed") == "1.0");
         std::string hk = read_text(dd / "User" / "Config" / "Hotkeys.ini");
-        CHECK(hk.find("Increase Emulation Speed = @(Ctrl+Shift+F13)") != std::string::npos);
-        CHECK(hk.find("Decrease Emulation Speed = @(Ctrl+Shift+F14)") != std::string::npos);
+        CHECK(hk.find("Emulation Speed/Increase Emulation Speed = @(Ctrl+Shift+F13)") != std::string::npos);
+        CHECK(hk.find("Emulation Speed/Decrease Emulation Speed = @(Ctrl+Shift+F14)") != std::string::npos);
         CHECK(hk.find("Disable Emulation Speed Limit") == std::string::npos);   // hold-only in Dolphin: not bound
         CHECK(hubui::ini_get(hk, "Hotkeys", "Device") == "DInput/0/Keyboard Mouse");
         std::string mine = hubemu::dolphin_hotkeys_ini("[Hotkeys]\nDevice = XInput/0/Gamepad\nStop = Escape\nIncrease Emulation Speed = F5\n");
         CHECK(hubui::ini_get(mine, "Hotkeys", "Stop") == "Escape" && hubui::ini_get(mine, "Hotkeys", "Device") == "XInput/0/Gamepad");
-        CHECK(hubui::ini_get(mine, "Hotkeys", "Increase Emulation Speed") == "@(Ctrl+Shift+F13)");
+        CHECK(hubui::ini_get(mine, "Hotkeys", "Emulation Speed/Increase Emulation Speed") == "@(Ctrl+Shift+F13)");
         CHECK(hubemu::dolphin_hotkeys_ini(mine) == mine);   // idempotent
     }
     {   /* PCSX2: fast boot on by default, off for real startup */
