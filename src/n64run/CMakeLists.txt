@@ -24,7 +24,7 @@ add_executable(n64run
     test_input.cpp
     lockstep.cpp
     headless.cpp)
-target_link_libraries(n64run PRIVATE n64run_match n64run_lockstep_core n64run_save_sync hubnet hubcommon hubcontrols_sdl m64p_api SDL2::SDL2 opengl32)
+target_link_libraries(n64run PRIVATE n64run_match n64run_lockstep_core n64run_save_sync hubnet hubcommon hubcontrols_sdl hubclip m64p_api SDL2::SDL2 opengl32)
 # Console subsystem on purpose (logs to the console too); the hub launches it hidden/with a console as needed.
 set_target_properties(n64run PROPERTIES WIN32_EXECUTABLE OFF)
 # The input plugin entry points are __declspec(dllexport) from the exe; keep them even with /OPT:REF.
