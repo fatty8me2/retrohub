@@ -12,6 +12,25 @@ constexpr int kSpeedSteps = 9;      // 0.25x 0.5x 1x 1.5x 2x 3x 5x 8x Max
 constexpr int kSpeedNormal = 2;     // index of 1x: every session starts here
 constexpr int kVolumeStep = 5;
 
+/* Synthesized hotkey burst (Dolphin speed): a modifier pair is held around the presses. Before EVERY key event the target must
+ * still be the foreground window and no hub menu may be open; otherwise the burst aborts. Modifiers that were pressed are ALWAYS
+ * released (the key-ups are harmless to whatever has focus), so Ctrl/Shift can never stay stuck. Returns presses completed. */
+template <class FgOk, class Send>
+int run_key_burst(const std::vector<int>& vks, int mod_a, int mod_b, FgOk fg_ok, Send send /* (scan, up) */) {
+    if (!fg_ok()) return 0;
+    send(mod_a, false); send(mod_b, false);
+    int done = 0;
+    for (int vk : vks) {
+        if (!fg_ok()) break;
+        send(vk, false);
+        if (!fg_ok()) { send(vk, true); break; }   // never leave the key itself down
+        send(vk, true);
+        ++done;
+    }
+    send(mod_b, true); send(mod_a, true);
+    return done;
+}
+
 /* index -> runner_ctl speed value (0 = max) */
 inline double speed_value(int idx) {
     idx = std::max(0, std::min(kSpeedSteps - 1, idx));

@@ -73,7 +73,7 @@ static void lint() {
     // Every marked site, by file -> number of lines. A new marked site means editing this table on purpose.
     const std::map<std::string, int> known = {
         {"tv_mode.cpp", 5},    // F11 toggle / startup fullscreen (guarded by game_active) / post-exit re-fullscreen (hub already focused)
-        {"launch.cpp", 5},     // focus_hub (user's View+Y combo only), focus_game (raises the GAME), flash_taskbar (guarded by game_active)
+        {"launch.cpp", 5},     // force_foreground (2: user's View+Y open / close only), focus_hub restore, focus_game restore, flash_taskbar (guarded by game_active), focus_game (raises the GAME), flash_taskbar (guarded by game_active)
         {"emu_live.cpp", 3},   // manual dev tool hub_emu_live, not part of RetroHub.exe
     };
     std::map<std::string, int> seen;

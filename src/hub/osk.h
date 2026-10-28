@@ -21,7 +21,8 @@ std::string folder(const char* tag, bool clicked);
  * button result. Pad (A.pad_mode): file browser over drives / shortcuts / folders / matching files; else the Windows dialog. */
 std::string file(const char* tag, bool clicked, const std::vector<std::string>& filters);
 
-bool hub_input_blocked();              // a game runs or the hub window is unfocused: UI ignores keys / text / pad (headless never blocks)
+bool hub_pad_blocked();                // like hub_input_blocked but false while the View+Y quick menu is open (pad only; chat/OSK use hub_input_blocked)
+bool hub_input_blocked();             // a game runs or the hub window is unfocused: UI ignores keys / text / pad (headless never blocks)
 void note_keyboard();                  // a physical keyboard key / text was seen
 bool keyboard_seen();
 void pre_frame(ImGuiIO& io);           // before NewFrame: suspends ImGui nav while a keyboard / browser is open

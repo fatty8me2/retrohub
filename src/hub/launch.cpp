@@ -180,13 +180,31 @@ static BOOL CALLBACK close_cb(HWND h, LPARAM lp) {
     return TRUE;
 }
 
+/* Reliable foreground for a USER-requested raise (View+Y open / close). The foreground lock is bypassed by attaching to the current
+ * foreground thread's input queue plus the Alt-key trick; verified with GetForegroundWindow and retried briefly (<= ~200 ms). */
+static bool force_foreground(HWND target) {
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        if (GetForegroundWindow() == target) return true;
+        HWND fg = GetForegroundWindow();
+        DWORD fgt = fg ? GetWindowThreadProcessId(fg, nullptr) : 0, me = GetCurrentThreadId();
+        const bool attached = fgt && fgt != me && AttachThreadInput(me, fgt, TRUE);
+        keybd_event(VK_MENU, 0, 0, 0);
+        BringWindowToTop(target);   // popup-guard: ok (user hotkey)
+        SetForegroundWindow(target);   // popup-guard: ok (user hotkey)
+        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+        if (attached) AttachThreadInput(me, fgt, FALSE);
+        if (GetForegroundWindow() == target) return true;
+        Sleep(40);
+    }
+    return GetForegroundWindow() == target;
+}
+
 void focus_hub() {
     if (!A.hwnd || g_headless) return;
     /* Only for the user's own View+Y / cheats pad combo during a game (qm_open_live, cheats_open_live). Never automatic. */
     if (IsIconic(A.hwnd)) ShowWindow(A.hwnd, SW_RESTORE);   // popup-guard: ok (user hotkey)
-    keybd_event(VK_MENU, 0, 0, 0);   // lets SetForegroundWindow through the foreground lock
-    SetForegroundWindow(A.hwnd);   // popup-guard: ok (user hotkey)
-    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+    if (!force_foreground(A.hwnd))
+        std::fprintf(stderr, "focus_hub: could not take the foreground (foreground=%p hub=%p); the quick menu still reads the pad directly\n", (void*)GetForegroundWindow(), (void*)A.hwnd);
 }
 
 void pad_exit_watch() {
@@ -224,9 +242,8 @@ void focus_game() {
     }, (LPARAM)&pk);
     if (!pk.hwnd) return;
     if (IsIconic(pk.hwnd)) ShowWindow(pk.hwnd, SW_RESTORE);   // popup-guard: ok (raises the GAME, not the hub)
-    keybd_event(VK_MENU, 0, 0, 0);
-    SetForegroundWindow(pk.hwnd);   // popup-guard: ok (raises the GAME, not the hub)
-    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+    if (!force_foreground(pk.hwnd))   // popup-guard: ok (raises the GAME, not the hub)
+        std::fprintf(stderr, "focus_game: game did not become the foreground window\n");
 }
 
 /* Wii U: Cemu's default global hotkey "toggle pad screen" is Ctrl+Tab (shown in its first-run assistant). Cemu reads it from the
@@ -268,12 +285,9 @@ void dolphin_send_speed_keys(const std::vector<int>& vks) {
             i.ki.dwFlags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0);
             SendInput(1, &i, sizeof(INPUT));
         };
-        key(hubqm::kDolphinScanCtrl, false); key(hubqm::kDolphinScanShift, false);
-        for (int vk : vks) {
-            if (!game_fg()) break;
-            key(vk, false); Sleep(35); key(vk, true); Sleep(35);   // edge-triggered in Dolphin: hold, then release
-        }
-        key(hubqm::kDolphinScanShift, true); key(hubqm::kDolphinScanCtrl, true);
+        /* re-checked before every key event: game still foreground and the hub menu not open; modifiers always released */
+        hubqm::run_key_burst(vks, hubqm::kDolphinScanCtrl, hubqm::kDolphinScanShift, [&] { return game_fg() && !qm_is_open(); },
+                             [&](int sc, bool up) { key(sc, up); Sleep(up ? 35 : 20); });   // edge-triggered in Dolphin: hold, then release
     }).detach();
 }
 

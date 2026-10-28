@@ -470,6 +470,8 @@ bool hub_input_blocked() {
     return cached;
 }
 
+bool hub_pad_blocked() { return pad_blocked(hub_input_blocked(), qm_is_open()); }
+
 void pre_frame(ImGuiIO& io) {
     static bool had_game = false;
     const bool launched = A.proc && !had_game;
