@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.0",
+      "date": "2026-10-28",
+      "title": "Instant replay",
+      "new": [
+        "Save the last 30 seconds of your game as a video clip: tap View + LB on your controller. Clips go into the game's screenshots, show a play button in the gallery, and open in your default video player. Works in GBA, GB, GBC, NES, SNES, DS, PlayStation and N64 games, online too"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.28.8",
       "date": "2026-10-27",
       "title": "Install a greyed-out game",

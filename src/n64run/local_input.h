@@ -36,6 +36,7 @@ class LocalInput {
     /* Packed BUTTONS word for the `owned_index`-th locally owned port (0 = first). */
     uint32_t read(int owned_index) const;
     /* True once when Back+Start was held 1 s on any pad (the universal leave-game combo). */
+    bool clip_held() const { return clip_; }   // View + LB (instant replay)
     bool boost_held() const { return boost_; }   // View + RT
     bool view_y_held() const { return view_y_; }   // View + Y (the hub's quick menu combo)
     bool exit_requested() { bool r = exit_fired_; exit_fired_ = false; return r; }
@@ -54,7 +55,7 @@ class LocalInput {
     int last_joysticks_ = -1;
     bool inited_ = false;
     hubctl::ExitCombo combo_;
-    bool exit_fired_ = false, boost_ = false;
+    bool exit_fired_ = false, boost_ = false, clip_ = false;
 };
 
 /* Number of game controllers SDL currently sees (initialises the subsystem if needed). */

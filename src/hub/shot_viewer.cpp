@@ -31,7 +31,9 @@ Viewer V;
 
 /* Decode a PNG/BMP into 32-bit RGBA (top-down). */
 bool load_rgba(const std::string& path, std::vector<unsigned char>* px, int* w, int* h) {
-    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
+    std::string lp = path;
+    if (lp.size() > 4 && _stricmp(lp.c_str() + lp.size() - 4, ".mp4") == 0) lp += ".jpg";   // a clip: use its thumbnail
+    std::ifstream f(std::filesystem::u8path(lp), std::ios::binary);
     std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     if (data.empty()) return false;
     bool bmp = path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".bmp") == 0;
@@ -132,6 +134,7 @@ bool shot_viewer_draw() {
     if (V.idx >= n) V.idx = n - 1;
     const std::string path = V.files[V.idx];
     const std::string nm = std::filesystem::u8path(path).filename().u8string();
+    const bool is_clip = path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0;
 
     ImGuiIO& io = ImGui::GetIO();
     const bool typing = io.WantTextInput;
@@ -181,13 +184,13 @@ bool shot_viewer_draw() {
             else push_toast("Couldn't copy that picture", COL_BAD, 4.0);
         }
         if (ui::button("Set as cover", bsz)) {
-            if (shot_set_cover(V.game_key, path)) push_toast("Saved as this game's cover", COL_GOOD, 3.0);
+            if (shot_set_cover(V.game_key, is_clip ? path + ".jpg" : path)) push_toast("Saved as this game's cover", COL_GOOD, 3.0);
             else push_toast("Couldn't save the cover", COL_BAD, 4.0);
         }
         if (ui::button("Send to a friend", bsz)) {
             if (!shot_send_to_friend(path)) push_toast("Sending pictures to friends isn't available yet", COL_BAD, 4.0);
         }
-        if (ui::button("Open in viewer", bsz))
+        if (ui::button(is_clip ? "Play clip" : "Open in viewer", bsz, is_clip, true, is_clip ? ui::Icon::Play : ui::Icon::None))
             ShellExecuteW(nullptr, L"open", std::filesystem::u8path(path).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         if (ui::button("Delete", bsz)) { V.confirm_delete = true; V.focus_first = true; }
         if (ui::button("Close", bsz)) { ImGui::EndChild(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return false; }
@@ -200,6 +203,7 @@ bool shot_viewer_draw() {
         if (ui::button("Yes, delete", bsz, true)) {
             std::error_code ec;
             std::filesystem::remove(std::filesystem::u8path(path), ec);
+            if (is_clip) { std::error_code ec2; std::filesystem::remove(std::filesystem::u8path(path + ".jpg"), ec2); }
             V.confirm_delete = false;
             if (!ec) {
                 deleted = true;

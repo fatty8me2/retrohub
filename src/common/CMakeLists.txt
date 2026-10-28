@@ -109,3 +109,11 @@ target_link_libraries(osd_test PRIVATE hubbase)
 # Synced account prefs: JSON, field-wise merge with per-field timestamps, library favorites mirror (scratch dirs).
 add_executable(prefs_test test_prefs.cpp)
 target_link_libraries(prefs_test PRIVATE hubcommon)
+
+# Instant replay (docs/RUNNER_CTL.md): downscaled frame ring + Media Foundation H.264 MP4 writer/verifier. Used by retrorun and n64run.
+add_library(hubclip STATIC clip.cpp)
+target_include_directories(hubclip PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hubclip PUBLIC cxx_std_17)
+target_link_libraries(hubclip PUBLIC mfplat mf mfreadwrite mfuuid ole32)
+add_executable(clip_test test_clip.cpp)
+target_link_libraries(clip_test PRIVATE hubclip)
