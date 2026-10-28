@@ -413,17 +413,20 @@ void draw_mapping_panel() {
 
     const int cols = ImGui::GetContentRegionAvail().x > sp(95.f) ? 2 : 1;
     std::vector<const hubctl::ControlInfo*> analogs;
-    if (ImGui::BeginTable("mapgrid", cols * 3, ImGuiTableFlags_SizingStretchProp)) {
+    const bool turbo_ui = !keys && hubctl::turbo_supported(sys);
+    const int tc = turbo_ui ? 4 : 3;
+    if (ImGui::BeginTable("mapgrid", cols * tc, ImGuiTableFlags_SizingStretchProp)) {
         for (int c = 0; c < cols; ++c) {
             ImGui::TableSetupColumn("l", ImGuiTableColumnFlags_WidthStretch, 1.f);
             ImGui::TableSetupColumn("b", ImGuiTableColumnFlags_WidthStretch, 1.6f);
             ImGui::TableSetupColumn("c", ImGuiTableColumnFlags_WidthFixed, sp(11.f));
+            if (turbo_ui) ImGui::TableSetupColumn("t", ImGuiTableColumnFlags_WidthFixed, sp(11.f));
         }
         int n = 0;
         for (const auto& ci : keys ? hubctl::key_controls_for(sys) : hubctl::controls_for(sys)) {
             if (ci.analog) { analogs.push_back(&ci); continue; }
             if (n % cols == 0) ImGui::TableNextRow(0, sp(5.5f));
-            int c0 = (n % cols) * 3;
+            int c0 = (n % cols) * tc;
             ImGui::PushID(ci.name.c_str());
             ImGui::TableSetColumnIndex(c0);
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sp(1.1f));
@@ -439,6 +442,13 @@ void draw_mapping_panel() {
             pill((keys ? hubctl::describe_keys(ex) : hubctl::describe_expr(ex)).c_str(), changed ? COL_ACCENT : ui::PANEL3);
             ImGui::TableSetColumnIndex(c0 + 2);
             if (button("Change", ImVec2(sp(10.f), sp(4.5f)))) ctl_begin_capture(ci.name, ci.label);
+            if (turbo_ui) {
+                ImGui::TableSetColumnIndex(c0 + 3);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sp(0.3f));
+                bool tb = hubctl::is_turbo(cur, ci.name);
+                if (ImGui::Checkbox("Turbo", &tb)) { hubctl::set_turbo(CTL.st, sys, CTL.game, ci.name, tb); ctl_save(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-fire: hold the button to press it over and over (15 times a second).");
+            }
             ImGui::PopID();
             ++n;
         }
@@ -470,6 +480,8 @@ void draw_mapping_panel() {
             ImGui::PopID();
         }
     }
+    if (!keys && turbo_ui) text_wrapped_disabled("Turbo buttons auto-fire while held. They are off in online games unless the room host allows them for everyone.");
+    else if (!keys && !hubctl::turbo_supported(sys)) text_wrapped_disabled("Turbo buttons: not supported for this system (the emulator reads the controller itself).");
     if (!keys && sys != "n64" && !analogs.empty()) text_wrapped_disabled("Sensitivity is only available for N64: the emulators for this system only take a deadzone.");
     if (!keys && sys == "n64") {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -569,7 +581,7 @@ std::string controls_arg(const std::string& system_key, const std::string& game_
     hubctl::Profile p = hubctl::resolve(st, system_key, game_key);
     std::string path = hub::data_dir() + "controls_run_" + system_key + ".json";
     if (!hubctl::write_profile_file(path, p)) return "";
-    return " --controls " + quote(path);
+    return " --controls " + quote(path) + (A.in_room && A.room_turbo && hubctl::turbo_supported(system_key) ? " --turbo-online" : "");
 }
 
 static std::vector<hubemu::PadDesc> pad_descs(const std::vector<hubctl::PadInfo>& v) {

@@ -120,6 +120,7 @@ struct Args {
     int volume = 100;   // --volume N (0-100): applied once the core runs
     std::string control, state_dir, shot_dir, game_key;   // --control FILE (runner_ctl.h), --state-dir, --shot-dir, --game-key
     std::string cheats;     // --cheats FILE: cheat list JSON (cheats.h); polled for live toggles offline
+    bool turbo_online = false;   // --turbo-online: the room host allowed turbo buttons for everyone (offline they are always on)
     std::string controls;   // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (controls.h)
     std::string test_input;   // --test-input / N64RUN_TEST_INPUT: scripted local input (QA)
     std::string match;   // --match spec (VS battle jump)
@@ -193,6 +194,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--gfx") { std::string g; hub::gs::GfxParam gp; ok = val(&g) && hub::gs::parse_gfx_arg(g, &gp); if (ok) a.gfx.push_back(g); }
         else if (k == "--test-input") ok = val(&a.test_input);
         else if (k == "--controls") ok = val(&a.controls);
+        else if (k == "--turbo-online") a.turbo_online = true;
         else if (k == "--cheats") ok = val(&a.cheats);
         else if (k == "--volume") { std::string s; ok = val(&s); if (ok) a.volume = std::max(0, std::min(100, atoi(s.c_str()))); }
         else if (k == "--control") ok = val(&a.control);
@@ -857,6 +859,7 @@ int main(int argc, char** argv) {
             logf_("n64run", "controls: profile '%s' (%s)", prof.name.c_str(), args.controls.c_str());
         } else logf_("n64run", "controls: cannot use %s; built-in mapping", args.controls.c_str());
     }
+    input.set_turbo(hubctl::turbo_allowed(online, args.turbo_online));
     // Headless never reads pads or the keyboard: stray input must not reach a background test run.
     if (!args.headless && !input.init()) logf_("n64run", "SDL game controller init failed; keyboard only");
     if (!online && !args.ports_given) {

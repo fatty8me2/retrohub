@@ -41,6 +41,8 @@ class LocalInput {
     bool exit_requested() { bool r = exit_fired_; exit_fired_ = false; return r; }
     /* Rumble Pak motor on the pad of the owned port (no-op without rumble support). */
     void rumble(int owned_index, bool on);
+    /* Turbo (auto-fire) for buttons the profile marks: off by default; the frontend turns it on offline or when the room host allowed it. */
+    void set_turbo(bool on) { turbo_on_ = on; }
 
   private:
     void rescan();
@@ -53,6 +55,8 @@ class LocalInput {
     uint32_t kbd_state_ = 0;
     int last_joysticks_ = -1;
     bool inited_ = false;
+    bool turbo_on_ = false;
+    uint64_t tick_ = 0;   // update() calls: the turbo clock
     hubctl::ExitCombo combo_;
     bool exit_fired_ = false, boost_ = false;
 };

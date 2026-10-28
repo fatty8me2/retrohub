@@ -121,6 +121,7 @@ void leave_room() {
     A.rules = hubui::MatchRules();
     A.pick_edit = 0;
     A.share_host_save = true;
+    A.room_turbo = false;
     A.was_connected = false;
     A.code.clear();
 }
@@ -307,6 +308,8 @@ void lobby_tick() {
         } else if (kind == "opts") {
             const hubui::Json* r = j.get("share_save");
             if (from == 0 && r && r->type == hubui::Json::Bool) A.share_host_save = r->b;
+            const hubui::Json* tb = j.get("turbo");
+            if (from == 0 && !is_host()) A.room_turbo = tb && tb->type == hubui::Json::Bool && tb->b;
         } else if (kind == "pick") {
             hubui::MemberPick mp;
             if (from != room_my_slot() && hubui::parse_pick(j, &mp)) A.picks[from] = mp;
@@ -400,7 +403,7 @@ void lobby_tick() {
         }
         A.lobby.send_msg(std::string("{\"kind\":\"ready\",\"ready\":") + (A.my_ready ? "true" : "false") + "}");
         A.lobby.send_msg("{\"kind\":\"locals\",\"n\":" + std::to_string(A.my_locals) + "}");
-        if (is_host()) A.lobby.send_msg(std::string("{\"kind\":\"opts\",\"share_save\":") + (A.share_host_save ? "true" : "false") + "}");
+        if (is_host()) A.lobby.send_msg(std::string("{\"kind\":\"opts\",\"share_save\":") + (A.share_host_save ? "true" : "false") + ",\"turbo\":" + (A.room_turbo ? "true" : "false") + "}");
         A.lobby.send_msg(hubui::pick_json(A.my_pick));
         if (is_host()) A.lobby.send_msg(hubui::rules_json(A.rules));
         if (is_host() && !A.selected_game.empty())

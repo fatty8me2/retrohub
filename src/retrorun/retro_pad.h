@@ -12,14 +12,21 @@ class RetroPad {
   public:
     explicit RetroPad(const hubctl::Profile& p) : m_(p), k_(p) {
         for (int i = 0; i < 16; i++) { id_[i] = m_.id(kCtl[i].name); kid_[i] = k_.id(kCtl[i].name); }
+        for (int i = 0; i < 16; i++) if (p.turbo.count(kCtl[i].name)) turbo_bits_ |= 1u << kCtl[i].retro;
         ls_ = m_.id("left_stick");
         rs_ = m_.id("right_stick");
     }
-    uint32_t mask(const hubctl::PadState& st) const {
+    /* `turbo_on` (offline, or the host enabled it for the room) makes the turbo-marked buttons auto-fire while held: they read
+     * as released on the off half of the cycle, so the cores only ever see a different but ordinary input. */
+    uint32_t mask(const hubctl::PadState& st, uint64_t frame = 0, bool turbo_on = false) const {
         uint32_t r = 0;
         for (int i = 0; i < 16; i++) if (m_.down(id_[i], st)) r |= 1u << kCtl[i].retro;
-        return r;
+        return turbo(r, frame, turbo_on);
     }
+    uint32_t turbo(uint32_t r, uint64_t frame, bool turbo_on) const {
+        return turbo_on && !hubctl::turbo_phase_on(frame) ? r & ~turbo_bits_ : r;
+    }
+    bool has_turbo() const { return turbo_bits_ != 0; }
     /* Analog stick ("left_stick" / "right_stick" controls of the ps1 profile) as libretro axes -32767..32767, screen orientation
      * (down = +y). Profiles without the control (every non-PlayStation system) give 0. */
     void sticks(const hubctl::PadState& st, int16_t out[4]) const {
@@ -40,10 +47,10 @@ class RetroPad {
         }
     }
     /* Keyboard pad: state = SDL_GetKeyboardState. */
-    uint32_t key_mask(const uint8_t* state) const {
+    uint32_t key_mask(const uint8_t* state, uint64_t frame = 0, bool turbo_on = false) const {
         uint32_t r = 0;
         for (int i = 0; i < 16; i++) if (k_.down(kid_[i], state)) r |= 1u << kCtl[i].retro;
-        return r;
+        return turbo(r, frame, turbo_on);
     }
   private:
     struct C { const char* name; unsigned retro; };
@@ -58,6 +65,7 @@ class RetroPad {
     int id_[16];
     int kid_[16];
     int ls_ = -1, rs_ = -1;
+    uint32_t turbo_bits_ = 0;
 };
 
 }  // namespace retrorun
