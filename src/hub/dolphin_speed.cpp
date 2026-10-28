@@ -25,7 +25,10 @@ bool dolphin_speed_start() {
     std::lock_guard<std::mutex> g(g_mu);
     if (g_srv) return true;
     auto s = std::make_unique<dsu::DsuServer>();
-    if (!s->start((uint16_t)hubds::kPort, true)) return false;
+    bool ok = false;
+    for (int i = 0; i < hubds::kPortTries && !ok; ++i)
+        if (s->start((uint16_t)(hubds::kPort + i), true)) { ok = true; hubds::active_port() = hubds::kPort + i; }
+    if (!ok) return false;
     s->set_pad(hubds::kSlot, dsu::Pad());   // connected, nothing pressed
     g_srv = std::move(s);
     return true;

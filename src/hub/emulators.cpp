@@ -880,6 +880,35 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
 
 /* Hotkeys.ini: the two emulation-speed hotkeys on Ctrl+Shift+F13 / F14 (keys nobody presses), which the Game menu's Speed row
  * sends after focusing Dolphin. Other lines (the user's own hotkeys) are kept. */
+/* True when a Dolphin hotkey expression reads the keyboard / mouse: an explicit `...Keyboard Mouse:...` term, or a bare term (no backticks)
+ * while the section's default Device is the keyboard. Dolphin's expression language has no focus function, so such a binding cannot be
+ * guarded; pad-only bindings (`XInput/0/Gamepad:...`, `SDL/...`, `DSUClient/...`, or bare names with a pad Device) are safe and kept. */
+static bool hotkey_reads_keyboard(const std::string& expr, bool device_is_keyboard) {
+    std::string bare;
+    bool in_tick = false;
+    std::string term;
+    for (char c : expr) {
+        if (c == '`') {
+            if (in_tick) { if (term.find("Keyboard") != std::string::npos || term.find("Mouse") != std::string::npos) return true; term.clear(); }
+            in_tick = !in_tick;
+            continue;
+        }
+        if (in_tick) term += c; else bare += c;
+    }
+    if (!device_is_keyboard) return false;
+    // bare text: drop function names ("name(" / "@("), numbers and operators; any name left is a control of the default device
+    for (size_t i = 0; i < bare.size(); ++i) {
+        if (!std::isalpha((unsigned char)bare[i])) continue;
+        size_t j = i;
+        while (j < bare.size() && (std::isalnum((unsigned char)bare[j]) || bare[j] == '_')) ++j;
+        size_t k = j;
+        while (k < bare.size() && bare[k] == ' ') ++k;
+        if (k < bare.size() && bare[k] == '(') { i = j; continue; }   // a function, not a control
+        return true;
+    }
+    return false;
+}
+
 /* Dolphin.ini sets HotkeysRequireFocus = False (the speed pad must work without focus). In Dolphin 2509 that one switch opens the focus
  * gate for EVERY hotkey (DolphinQt/HotkeyScheduler.cpp: Core::UpdateInputGate(MAIN_FOCUSED_HOTKEYS) before all of them), and its
  * keyboard backend reads keys globally: a default binding such as Stop = Escape or Toggle Pause = F10 would fire while the user types in
@@ -887,6 +916,8 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
 static std::string blank_other_hotkeys(const std::string& in) {
     std::string out, line;
     bool in_hk = false;
+    const std::string dev = hubui::ini_get(in, "Hotkeys", "Device");
+    const bool dev_kb = dev.empty() || dev.find("Keyboard") != std::string::npos;
     size_t i = 0;
     while (i <= in.size()) {
         size_t nl = in.find('\n', i);
@@ -901,7 +932,7 @@ static std::string blank_other_hotkeys(const std::string& in) {
                 std::string key = tl.substr(a, eq - a), val = tl.substr(eq + 1);
                 while (!key.empty() && key.back() == ' ') key.pop_back();
                 const bool ours = key == "Device" || key == hubqm::dolphin_hotkey_name(hubqm::DolphinKey::Increase) || key == hubqm::dolphin_hotkey_name(hubqm::DolphinKey::Decrease);
-                if (!ours && val.find_first_not_of(" ") != std::string::npos) line = key + " = " + (!line.empty() && line.back() == '\r' ? "\r" : "");
+                if (!ours && val.find_first_not_of(" ") != std::string::npos && hotkey_reads_keyboard(val, dev_kb)) line = key + " = " + (!line.empty() && line.back() == '\r' ? "\r" : "");
             }
         }
         out += line;
@@ -923,9 +954,9 @@ std::string dolphin_hotkeys_ini(const std::string& in) {
 /* DSUClient.ini (Dolphin's DSU client): one server, the hub's speed pad (dolphin_speed.cpp). Other entries are kept. */
 std::string dolphin_dsu_ini(const std::string& in) {
     std::string t = hubui::ini_set(in, "Server", "Enabled", "True");
-    std::string e = hubui::ini_get(t, "Server", "Entries");
-    const std::string mine = hubds::server_entries();
-    if (e.find(mine) == std::string::npos) t = hubui::ini_set(t, "Server", "Entries", e + (!e.empty() && e.back() != ';' ? ";" : "") + mine);
+    const std::string e = hubui::ini_get(t, "Server", "Entries");
+    const std::string want = hubds::merge_entries(e);   // the port the server got (dolphin_speed_start runs before prepare_dolphin)
+    if (e != want) t = hubui::ini_set(t, "Server", "Entries", want);
     return t;
 }
 
@@ -1075,7 +1106,13 @@ void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, co
     }
     /* Every launch: only the memory card slots and which ports have a pad plugged in. */
     write_text(ini, dolphin_ini_ports(read_text(ini), pads));
-    write_text(join(cfg, "Hotkeys.ini"), dolphin_hotkeys_ini(read_text(join(cfg, "Hotkeys.ini"))));
+    {   // keyboard hotkeys are unbound (focus-free hotkeys would fire in other apps); the user's originals are kept once in a backup
+        const std::string hk_path = join(cfg, "Hotkeys.ini"), old = read_text(hk_path), now = dolphin_hotkeys_ini(old);
+        const std::string bak = join(cfg, "Hotkeys.retrohub-backup.ini");
+        std::error_code ec;
+        if (!old.empty() && old != now && !std::filesystem::exists(std::filesystem::u8path(bak), ec)) write_text(bak, old);
+        write_text(hk_path, now);
+    }
     write_text(join(cfg, "DSUClient.ini"), dolphin_dsu_ini(read_text(join(cfg, "DSUClient.ini"))));
 }
 void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads) { prepare_dolphin(install_dir, pads, stored_profile("gc")); }

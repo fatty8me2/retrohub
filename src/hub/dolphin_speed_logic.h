@@ -16,7 +16,9 @@
 
 namespace hubds {
 
-constexpr int kPort = 26761;                      /* distinct from the Wii U remote-play DSU port (26760) */
+constexpr int kPort = 26761;                      /* first choice; the Wii U remote-play DSU server owns 26760 (never in this range) */
+constexpr int kPortTries = 8;                     /* 26761..26768: a busy port (another app, a second hub) moves to the next */
+inline int& active_port() { static int p = kPort; return p; }   /* the port the server really listens on (dolphin_speed_start) */
 constexpr const char* kDeviceName = "RHSpeed";    /* the "description" field of the DSU server entry = Dolphin's device name */
 constexpr int kSlot = 0;                          /* DSU pad id 0 -> Dolphin device "DSUClient/0/RHSpeed" */
 
@@ -25,7 +27,22 @@ constexpr uint16_t kBtnStart = 0x0010, kBtnBack = 0x0020;
 inline uint16_t pad_buttons(hubqm::DolphinKey k) { return k == hubqm::DolphinKey::Increase ? kBtnStart : kBtnBack; }
 inline const char* dolphin_control(hubqm::DolphinKey k) { return k == hubqm::DolphinKey::Increase ? "Options" : "Share"; }
 
-inline std::string server_entries() { return std::string(kDeviceName) + ":127.0.0.1:" + std::to_string(kPort) + ";"; }
+inline std::string server_entries(int port = active_port()) { return std::string(kDeviceName) + ":127.0.0.1:" + std::to_string(port) + ";"; }
+
+/* DSUClient.ini Entries: drop any old RHSpeed entry (another port), keep the user's entries, append ours. */
+inline std::string merge_entries(const std::string& cur, int port = active_port()) {
+    std::string out, item;
+    const std::string mine = std::string(kDeviceName) + ":";
+    size_t i = 0;
+    while (i < cur.size()) {
+        size_t semi = cur.find(';', i);
+        item = cur.substr(i, semi == std::string::npos ? std::string::npos : semi - i);
+        if (!item.empty() && item.rfind(mine, 0) != 0) out += item + ";";
+        if (semi == std::string::npos) break;
+        i = semi + 1;
+    }
+    return out + server_entries(port);
+}
 
 /* Hotkey expression: the DSU button OR the old Ctrl+Shift+F13/F14 chord (harmless: nobody has an F13 key). */
 inline std::string hotkey_expr(hubqm::DolphinKey k) {
