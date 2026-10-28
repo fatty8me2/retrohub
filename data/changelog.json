@@ -16,8 +16,17 @@
         "Game menu has a Stats overlay switch: FPS, and online also ping, input delay and rollback frames, in the corner of the game (GB, GBA, DS, PlayStation, NES, SNES games)",
         "Game menu has How do I play: your controller drawn with what each button does in this game, from your own Controllers profile"
       ],
-      "improved": [],
-      "fixed": []
+      "improved": [
+        "GameCube speed changes instantly, even while the game menu is open",
+        "RetroHub's Dolphin no longer uses Dolphin's own keyboard shortcuts (Esc, F10, F1-F8): the game menu (View + Y) covers stop, pause and save states"
+      ],
+      "fixed": [
+        "The View + Y menu reads your controller directly, so it always opens, stays open and responds, whatever Windows does with focus",
+        "Buttons held from the game can no longer press anything in the menu; it only closes on B, Resume or a menu action",
+        "Speed up and slow down land exactly where you pick on every system, and going back to 1x always works",
+        "Letting go of View + RT goes back to the speed you chose in the menu instead of always 1x",
+        "Leaving a GameCube game with Back + Start never shows Dolphin's stop box"
+      ]
     },
     {
       "version": "1.28.8",
