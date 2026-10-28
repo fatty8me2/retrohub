@@ -78,7 +78,7 @@ std::string speed_label(double s) {
 }
 
 bool offline_only(Cmd c) {
-    return c != Cmd::None && c != Cmd::Quit && c != Cmd::Screenshot && c != Cmd::OsdMsg && c != Cmd::Volume && c != Cmd::Mute && c != Cmd::Input;
+    return c != Cmd::None && c != Cmd::Quit && c != Cmd::Screenshot && c != Cmd::OsdMsg && c != Cmd::Volume && c != Cmd::Mute && c != Cmd::Input && c != Cmd::Overlay;
 }
 
 bool parse_control(const std::string& text, Command* out) {

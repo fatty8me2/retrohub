@@ -690,6 +690,7 @@ void qm_init(SDL_Renderer* ren);
 void qm_prepare(RunInfo& ri, const hub::GameEntry& e);                                  // run_info_for(): run dir + control file for the built-in runners
 std::string qm_args(const RunInfo& ri, const hub::GameEntry& e, bool n64_state_dir);    // " --control ... --game-key ... --shot-dir ..." or ""
 bool qm_is_open();                                                                      // quick menu requested or showing (exempt from the pad focus gate)
+void qm_chat_incoming(bool dm, const std::string& uid, const std::string& who, const std::string& text);   // room / friend message -> running game's OSD (setting game_chat)
 void qm_open_live();                                                                   // View+Y while a game runs
 void draw_quick_menu();
 int shots_count(const hub::GameEntry& e);

@@ -18,6 +18,8 @@ enum class Kind { Info, Good, Warn, Error };
 
 void push(const std::string& text, Kind kind = Kind::Info, double seconds = 2.5);
 void set_corner(const std::string& text, Kind kind = Kind::Info);
+/* Performance / online overlay (FPS, ping ...): one persistent line, top-left; set_stats("") removes it. Independent of the corner slot. */
+void set_stats(const std::string& text);
 void clear();                     // drop every toast and the corner text
 
 /* The newest toast text still alive ("" if none): for runners that also mirror status into a window title. */
