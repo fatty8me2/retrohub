@@ -2969,7 +2969,7 @@ void Frontend::spec_snap_service(uint32_t sm) {
             m.hash = x.raw_hash; m.a = x.ro; m.b = x.ri;
             spec_h()->start_peer_at(s, x.frame, now);   // inputs from F stream right away; the spectator buffers them while the state downloads
             spec_snap_epoch_ = (uint8_t)((spec_snap_epoch_ + 1) & 0x7F);
-            x.snd.start((uint8_t)(0x80 | spec_snap_epoch_), m, std::move(x.z), 1u << s, now ? now : 1, rel ? 100.0 : 1200.0);   // direct: ~840 KB/s; relay: the room's frame cap
+            x.snd.start((uint8_t)(0x80 | spec_snap_epoch_), m, std::move(x.z), 1u << s, now ? now : 1, rel ? 100.0 : 1200.0);
             x.raw.clear(); x.raw.shrink_to_fit();
             x.sending = true; x.t_send = now;
             rlog("spectate: sending the live state to slot %d: frame %u, %u bytes, %u on the wire in %u chunks (%s), ready %u ms after the join", s, m.frame, m.raw,

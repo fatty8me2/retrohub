@@ -36,9 +36,9 @@ function Start-Peer([int]$slot, [string[]]$extra) {
     $log = Join-Path $outDir ('slot' + $slot + '.log')
     $sv = Join-Path $outDir ('sv' + $slot); $st = Join-Path $outDir ('st' + $slot)
     New-Item -ItemType Directory -Force -Path $sv, $st | Out-Null
-    $args = @('--core', $corePath, '--rom', $romPath, '--system', $System, '--save-dir', $sv, '--state-dir', $st, '--headless', '--frames', $Frames, '--fuzz-input',
+    $pargs = @('--core', $corePath, '--rom', $romPath, '--system', $System, '--save-dir', $sv, '--state-dir', $st, '--headless', '--frames', $Frames, '--fuzz-input',
         '--net', $Server, '--room', $room, '--slot', $slot, '--rollback', '--delay', 'auto', '--log', $log) + $extra
-    $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -WindowStyle Hidden
+    $p = Start-Process -FilePath $exe -ArgumentList $pargs -PassThru -WindowStyle Hidden
     return [pscustomobject]@{ Slot = $slot; Proc = $p; Log = $log }
 }
 function Wait-Log($peer, [string]$pattern, [int]$sec) {
