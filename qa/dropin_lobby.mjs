@@ -1,6 +1,6 @@
 // Scripted lobby side of the drop-in QA (what the hub does, without the hub window): a host lobby seat sends the launch message, a drop-in seat
 // (role=watch&dropin=1) receives the replayed launch and derives the joiner's runner arguments exactly like hubui::dropin_port_plan, and a second
-// drop-in seat afterwards must be refused no-free-port once the runner has joined the game room (the server committed the port).
+// drop-in seat afterwards is still served (the server keeps no port count).
 // usage: node dropin_lobby.mjs <ws://server> <CODE> <join_after_sec> <out.json> <hold_sec>
 const [server, code, joinAfter, out, hold] = process.argv.slice(2);
 import { writeFileSync, appendFileSync } from "node:fs";

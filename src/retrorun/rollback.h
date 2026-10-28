@@ -40,12 +40,15 @@ constexpr uint8_t kPktReady = 0x52;
 constexpr uint8_t kPktBye = 0x53;
 constexpr uint8_t kPktDrop = 0x54;   // netdrop::Msg (drop_agree.h)
 /* Drop-in (a friend joins the running game into an empty port, see Engine::host_admit):
- *   Admit    host -> everybody  [0x56, 0, joiner, port, epoch, from u32, owners[4] i8 (after the admit), left_mask, done_mask, name_len, name...]
+ *   Admit    host -> everybody  [0x56, 0, joiner, port, epoch, from u32, owners[4] i8 (after the admit), left_mask, done_mask, id, window_s, name_len, name...]
  *            from port `port` is played by slot `joiner` from frame `from` on; before it the port reads neutral. Repeated until acked.
- *   AdmitAck peer -> host       [0x57, my_slot, joiner]
+ *   AdmitAck peer -> host       [0x57, my_slot, joiner, id]
  * Peers that do not advertise kCapDropIn (the caps byte after the slot in kPktReady) make the host refuse the join. */
 constexpr uint8_t kPktAdmit = 0x56;
 constexpr uint8_t kPktAdmitAck = 0x57;
+constexpr uint8_t kPktAdmitAbort = 0x58;   // host -> everybody [0x58, 0, joiner, id]: the admit is cancelled (a peer never acknowledged it)
+constexpr uint32_t kJoinWindowMs = 30000;     // a joiner has this long after the Admit to start playing (carried in the Admit, in seconds); the runner keeps 5 s of it as margin
+constexpr uint32_t kAdmitAckLimitMs = 5000;   // the host cancels an admit nobody started to play on after this long without every ack
 constexpr uint8_t kCapDropIn = 1;
 constexpr int kAdmitLeadFrames = 30;      // the admit frame is this many frames (plus the RTT) ahead of the host
 constexpr int kGhostLeadFrames = 30;      // a joiner that is still catching up claims neutral input this far ahead of the players
@@ -78,6 +81,7 @@ struct Transport {
     std::function<uint32_t()> now_ms;
     std::function<void(const std::string&)> log;
     std::function<void(const std::string&)> notice;   // optional: short user-facing note ("Resynced")
+    std::function<void(int slot, int port)> admit_reverted;   // optional: an admit was cancelled, the port is as before
     std::function<void(int slot, int port, uint32_t from, const std::string& name)> admitted;   // optional: a drop-in was applied (the runner updates its port map)
     std::function<bool()> relayed;   // optional: some peer is reached through the server relay (which caps a room at 400 frames/s): send every other frame only
 };
@@ -185,12 +189,18 @@ class Engine {
     bool host_admit(int slot, int port, const std::string& name);
     void set_admit_lead_for_test(int frames) { admit_lead_ = frames; }   // tests: a tiny or negative lead makes a late Admit
     void note_join_active(int slot);             // host: the joiner finished fast-forwarding and plays
+    bool port_reusable(int p) const;             // the owner of port p was dropped and all its frames are settled: the port can be given away
+    bool dropin_busy() const;                    // an admit / resync is in flight: a new join must wait
     bool admit_pending() const { return !admits_.empty() || join_pending_mask_ != 0; }
+    bool slot_dropped(int slot) const { return slot >= 0 && slot < 8 && (done_mask_ >> slot & 1u); }
     bool is_player(int slot) const { return slot >= 0 && slot < 8 && (cfg_.slot_mask >> slot & 1u); }
     uint32_t slot_mask() const { return cfg_.slot_mask; }
     int owner_of(int port) const { return port >= 0 && port < kPorts ? cfg_.owner[port] : -1; }
     /* Joiner side. */
     bool joining() const { return joining_; }
+    bool join_aborted() const { return join_aborted_; }      // the host cancelled our admit
+    uint32_t join_window_ms() const { return join_window_ms_; }   // from the Admit: how long we have after join_admit_at() to play
+    uint32_t join_admit_at() const { return join_admit_at_; }
     bool join_admitted() const { return join_port_ >= 0; }   // the Admit arrived: port and start frame are known
     int join_port() const { return join_port_; }
     uint32_t join_from() const { return join_port_ >= 0 ? join_from_[join_port_] : 0; }
@@ -231,11 +241,18 @@ class Engine {
         if (done_mask_ >> o & 1u) return conf_upto_[p] < (int64_t)drop_cut_[o] - 1;
         return true;
     }
-    void apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, const int8_t owners[kPorts], uint8_t left, uint8_t done, const std::string& name);
+    bool apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, const int8_t owners[kPorts], uint8_t left, uint8_t done, uint8_t id, uint8_t window_s, const std::string& name);
+    void revert_admit(int joiner, uint8_t id);
     void admit_on_msg(int from, const uint8_t* d, size_t n);
     void admit_service(uint32_t now);
     void join_service(uint32_t now);
-    struct AdmitRec { int port = 0; uint32_t from = 0, last_send = 0, started = 0, ack_mask = 0; std::string name; };
+    struct AdmitRec { int port = 0; uint32_t from = 0, last_send = 0, started = 0, ack_mask = 0; uint8_t id = 0; bool aborting = false; int abort_sends = 0; std::string name; };
+    struct PortPrev { int owner = -1; uint32_t from = 0; int64_t conf = -1; uint64_t val = 0; uint32_t slots = 0, done = 0; bool valid = false; };
+    PortPrev prev_[kPorts];
+    int admit_port_[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    uint8_t admit_seq_ = 0, admit_seen_[8] = {0, 0, 0, 0, 0, 0, 0, 0}, join_id_ = 0;
+    uint32_t admit_seen_valid_ = 0, join_window_ms_ = 0, join_admit_at_ = 0;
+    bool join_aborted_ = false;
     std::map<int, AdmitRec> admits_;
     uint32_t join_pending_mask_ = 0, join_pending_at_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     uint8_t peer_caps_[8] = {0, 0, 0, 0, 0, 0, 0, 0};

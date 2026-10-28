@@ -67,12 +67,14 @@ struct Net {
     std::deque<Msg> q[4];
     uint32_t now = 1000, rng = 4242;
     int latency = 30, jitter = 10, loss = 3;
+    bool deaf[4] = {false, false, false, false};   // never receives an Admit
     bool dead[4] = {false, false, false, false};   // a crashed PC: nothing goes in or out
     uint32_t rnd() { rng = rng * 1664525u + 1013904223u; return rng >> 8; }
     void send(int from, int to, const void* d, int n) {
         if (dead[from]) return;
         for (int t = 0; t < 4; t++) {
             if (t == from || (to >= 0 && t != to) || dead[t]) continue;
+            if (deaf[t] && n > 0 && ((const uint8_t*)d)[0] == rb::kPktAdmit) continue;
             if ((int)(rnd() % 100) < loss) continue;
             q[t].push_back({now + latency + (jitter ? rnd() % (jitter + 1) : 0), from, std::vector<uint8_t>((const uint8_t*)d, (const uint8_t*)d + n)});
         }
@@ -92,10 +94,13 @@ struct Run {
     bool old_peer = false;      // slot 1 does not advertise drop-in
     int join_at[2] = {300, -1}; // host frame at which the next joiner (slot 2, then slot 3) is admitted; -1 none
     bool joiner_crashes = false;
+    int kill_j0_at = -1;        // host frame at which the first joiner dies after it played (its port must become free again)
+    bool deaf1 = false;         // slot 1 never receives an Admit (never acks)
+    int j_hold_rounds = 0;      // the joiner waits this many rounds after the Admit before it takes over
     int admit_lead = INT_MIN;   // INT_MIN: the engine default; otherwise Engine::set_admit_lead_for_test
     // results
     bool desync[4] = {}; uint32_t frame[4] = {}; uint64_t h[4] = {}, chain_out[4] = {}, chain_in[4] = {}; uint64_t stalled_ms[4] = {}, stalls[4] = {};
-    bool admitted[2] = {}; int notices[4] = {}; bool refused_old = false; uint32_t dropped_mask[4] = {};
+    bool aborted = false; int port_after_abort = -2; int second_port = -2; bool admitted[2] = {}; int notices[4] = {}; bool refused_old = false; uint32_t dropped_mask[4] = {};
     uint64_t j_local[4] = {}; uint32_t takeover[4] = {}; uint32_t admit_from[4] = {};
     int max_gap_frames = 0;     // longest run of rounds the host did not advance (stall seen by an existing player)
 };
@@ -124,9 +129,10 @@ static void run(Run& r) {
         eng[i].reset(new rb::Engine(c, make_sim(&sim[i], i, 91 + i), t));
     }
     for (int i = 0; i < r.players; i++) { uint8_t rd[3] = {rb::kPktReady, (uint8_t)i, (uint8_t)(r.old_peer && i == 1 ? 0 : rb::kCapDropIn)}; net.send(i, -1, rd, 3); }   // the start barrier's caps exchange
+    net.deaf[1] = r.deaf1;
     eng[0]->set_confirmed_sink([&hist](uint32_t f, const uint64_t pads[4]) { if (f == hist.size()) hist.push_back({pads[0], pads[1], pads[2], pads[3]}); });
 
-    struct J { bool started = false, loaded = false, done = false; uint32_t f = 0; uint64_t ro = 0, ri = 0; int idx = 0; } js[2];
+    struct J { bool started = false, loaded = false, done = false; uint32_t f = 0; uint64_t ro = 0, ri = 0; int idx = 0; int rounds = 0; } js[2];
     const uint64_t kPrime = 0x100000001B3ull;
     int host_gap = 0;
     uint32_t last_host_cur = 0;
@@ -145,6 +151,7 @@ static void run(Run& r) {
         for (int k = 0; k < 2; k++) {
             const int slot = r.players + k;
             if (r.join_at[k] < 0 || js[k].started || (k == 1 && !js[0].done && !r.joiner_crashes) || eng[0]->cur() < (uint32_t)r.join_at[k]) continue;
+            if (k == 1 && eng[0]->free_port() < 0) continue;   // wait until the first joiner's port was given up by the drop logic
             if (!eng[0]->dropin_capable()) { if (r.old_peer) { r.refused_old = true; js[k].started = true; js[k].done = true; r.join_at[k] = -1; } continue; }
             std::vector<uint8_t> raw; uint32_t F; uint64_t ro, ri;
             if (!eng[0]->snapshot_confirmed(&raw, &F, &ro, &ri)) continue;
@@ -154,7 +161,8 @@ static void run(Run& r) {
             js_sim.load(raw.data(), raw.size());
             js[k].f = F; js[k].ro = ro; js[k].ri = ri; js[k].loaded = true;
             const int port = eng[0]->free_port();
-            CHECK(port == slot, "free port %d, expected %d", port, slot);
+            r.second_port = k == 1 ? port : r.second_port;
+            CHECK(port == (r.kill_j0_at > 0 && k == 1 ? 2 : slot), "free port %d, expected %d", port, slot);
             if (r.admit_lead != INT_MIN) eng[0]->set_admit_lead_for_test(r.admit_lead);
             r.admitted[k] = eng[0]->host_admit(slot, port, "Kai");
             CHECK(r.admitted[k], "host_admit refused");
@@ -180,7 +188,9 @@ static void run(Run& r) {
                     for (int q = 0; q < 4; q++) j.ri = (j.ri ^ p4[q]) * kPrime;
                     j.f++; steps++;
                 }
-                if (eng[i]->join_admitted() && hist.size() - j.f <= 3 && j.f > 0) {
+                if (eng[i]->join_aborted()) { j.done = true; r.aborted = true; r.port_after_abort = eng[0]->free_port(); continue; }
+                if (eng[i]->join_admitted()) j.rounds++;
+                if (eng[i]->join_admitted() && j.rounds >= r.j_hold_rounds && hist.size() - j.f <= 3 && j.f > 0) {
                     const auto& lp = hist[j.f - 1];
                     uint64_t p4[4] = {lp[0], lp[1], lp[2], lp[3]};
                     eng[i]->join_finish(j.f, j.ro, j.ri, p4);
@@ -193,6 +203,7 @@ static void run(Run& r) {
             if (eng[i]->cur() >= (uint32_t)r.frames) { eng[i]->service(); continue; }
             if (eng[i]->prepare() == rb::Engine::Status::Ready) eng[i]->run_frame();
         }
+        if (r.kill_j0_at > 0 && js[0].done && eng[0]->cur() >= (uint32_t)r.kill_j0_at) net.dead[r.players] = true;
         // stall seen by the host: rounds in a row without a new frame (a round is one 16 ms frame time)
         if (eng[0]->cur() == last_host_cur && eng[0]->cur() < (uint32_t)r.frames) { host_gap++; r.max_gap_frames = std::max(r.max_gap_frames, host_gap); } else host_gap = 0;
         last_host_cur = eng[0]->cur();
@@ -276,6 +287,23 @@ int main() {
         grab(old_host, co); grab(new_host, cn);
         CHECK(co.ready(0) && co.get(0, 0) == 5 && co.get(0, 1) == 6 && co.get(0, 2) == 0 && co.get(0, 3) == 0, "old host stream: absent ports read 0 (%llu %llu)", (unsigned long long)co.get(0, 2), (unsigned long long)co.get(0, 3));
         CHECK(cn.ready(0) && cn.get(0, 2) == 7 && cn.get(0, 3) == 8, "new host stream carries all four ports");
+    }
+    // 4d) a peer never acknowledges the Admit: the host cancels it after ~5 s for everybody, the joiner is told, the match goes on untouched, the port is free again
+    {
+        Run r; r.deaf1 = true; r.j_hold_rounds = 600; r.frames = 1500; run(r);
+        printf("peer never acks: aborted %d, free port after %d, frames %u/%u desync %d%d\n", r.aborted, r.port_after_abort, r.frame[0], r.frame[1], r.desync[0], r.desync[1]);
+        CHECK(r.aborted, "the joiner was not told the admit was cancelled");
+        CHECK(r.port_after_abort == 2, "the port is not free again (%d)", r.port_after_abort);
+        CHECK(!r.desync[0] && !r.desync[1] && r.frame[0] == 1500 && r.frame[1] == 1500 && r.h[0] == r.h[1] && r.chain_out[0] == r.chain_out[1], "the match diverged after a cancelled admit");
+    }
+    // 4e) a joiner plays and disconnects: the drop logic frees its port, and somebody else drops into the SAME port; everybody converges
+    {
+        Run r; r.kill_j0_at = 700; r.join_at[0] = 300; r.join_at[1] = 1500; r.frames = 2600; run(r);
+        printf("joiner leaves, another drops into its port: second joiner's port %d, frames %u/%u/%u desync %d%d%d dropped(host) 0x%x\n", r.second_port, r.frame[0], r.frame[1], r.frame[3], r.desync[0], r.desync[1], r.desync[3], r.dropped_mask[0]);
+        CHECK(r.second_port == 2, "second joiner did not get the freed port (%d)", r.second_port);
+        CHECK(r.admitted[0] && r.admitted[1], "admits");
+        CHECK(!r.desync[0] && !r.desync[1] && !r.desync[3] && r.frame[0] == 2600 && r.frame[1] == 2600 && r.frame[3] == 2600, "frames / desync");
+        CHECK(r.h[0] == r.h[1] && r.h[1] == r.h[3] && r.chain_out[0] == r.chain_out[3] && r.chain_in[0] == r.chain_in[3], "state / chains differ");
     }
     // 6) the joiner crashes right after the admit: the others stall only briefly, then play on without it
     {

@@ -215,7 +215,7 @@ void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
     const uint8_t* d = m.data();
     size_t n = m.size();
     if (from >= 0 && from < 8) last_rx_[from] = net_.now_ms() ? net_.now_ms() : 1;
-    if (d[0] == kPktAdmit || d[0] == kPktAdmitAck) { admit_on_msg(from, d, n); return; }
+    if (d[0] == kPktAdmit || d[0] == kPktAdmitAck || d[0] == kPktAdmitAbort) { admit_on_msg(from, d, n); return; }
     if (joining_ && (d[0] == kPktDrop || d[0] == xfer::kPkt)) return;   // a joiner has no state to agree on or to replace yet
     if (d[0] == kPktDrop) { drop_on_msg(from, d, n); return; }
     if (d[0] == xfer::kPkt) { resync_on_msg(from, d, n); return; }
@@ -779,21 +779,35 @@ bool Engine::finish(uint32_t timeout_ms) {
     return ok;
 }
 
-/* ---- drop-in: a friend takes an empty port of the running game ---- */
+/* ---- drop-in: a friend takes an empty port of the running game ----
+ * The host runner is the only authority on ports: free_port() / host_admit() decide, the server only relays. Admit / AdmitAbort carry a per-admit id (host counter): a
+ * peer applies an id once (admit_seen_), so a retransmit that arrives after the joiner was dropped or the admit aborted is ignored. */
+static bool id_newer(uint8_t id, uint8_t seen) { return (int8_t)(uint8_t)(id - seen) > 0; }
+
 bool Engine::peers_support_dropin() const {
     for (int s = 0; s < 8; s++)
         if (s != cfg_.my_slot && active_peer(s) && !(peer_caps_[s] & kCapDropIn)) return false;
     return true;
 }
 
+/* A port whose owner was dropped (crashed / silent) and whose frames are all confirmed can be given to somebody else. */
+bool Engine::port_reusable(int p) const {
+    if (p < 0 || p >= kPorts || !present(p) || local(p)) return false;
+    const int o = cfg_.owner[p];
+    return o >= 0 && o < 8 && (done_mask_ >> o & 1u) && (int64_t)drop_cut_[o] <= conf_eff_ + 1 && conf_upto_[p] >= (int64_t)drop_cut_[o] - 1;
+}
+
+bool Engine::dropin_busy() const {
+    return rs_ != Rs::None || rs_want_ || !admits_.empty() || join_pending_mask_ != 0;
+}
+
 bool Engine::dropin_capable() const {
-    if (rs_ != Rs::None || rs_want_ || finishing_ || desync_ || joining_ || cfg_.my_slot != host_slot()) return false;
-    if (!admits_.empty() || join_pending_mask_) return false;
+    if (finishing_ || desync_ || joining_ || cfg_.my_slot != host_slot() || dropin_busy()) return false;
     return peers_support_dropin();
 }
 
 int Engine::free_port() const {
-    for (int p = 0; p < kPorts; p++) if (!present(p)) return p;
+    for (int p = 0; p < kPorts; p++) if (!present(p) || port_reusable(p)) return p;   // lowest first: a freed port is taken before an unused higher one
     return -1;
 }
 
@@ -805,15 +819,18 @@ uint32_t Engine::admit_frame() const {
 }
 
 bool Engine::host_admit(int slot, int port, const std::string& name) {
-    if (!dropin_capable() || slot <= 0 || slot >= 8 || port < 0 || port >= kPorts || present(port) || is_player(slot)) return false;
-    for (int p = 0; p < kPorts; p++) if (present(p) && cfg_.owner[p] == slot) return false;
+    if (!dropin_capable() || slot <= 0 || slot >= 8 || port < 0 || port >= kPorts) return false;
+    if (present(port) && !port_reusable(port)) return false;
+    for (int p = 0; p < kPorts; p++) if (p != port && present(p) && cfg_.owner[p] == slot && !port_reusable(p)) return false;
+    if (is_player(slot) && !(done_mask_ >> slot & 1u)) return false;
     const uint32_t from = admit_frame();
     int8_t owners[kPorts];
     for (int p = 0; p < kPorts; p++) owners[p] = (int8_t)(p == port ? slot : cfg_.owner[p]);
-    apply_admit(slot, port, from, (uint8_t)epoch_, owners, (uint8_t)left_mask_, (uint8_t)done_mask_, name);
+    const uint8_t id = ++admit_seq_;
+    apply_admit(slot, port, from, (uint8_t)epoch_, owners, (uint8_t)left_mask_, (uint8_t)done_mask_, id, (uint8_t)(kJoinWindowMs / 1000), name);
     uint32_t now = net_.now_ms() ? net_.now_ms() : 1;
     AdmitRec r;
-    r.port = port; r.from = from; r.started = now; r.last_send = 0; r.name = name.substr(0, 24);
+    r.port = port; r.from = from; r.started = now; r.last_send = 0; r.name = name.substr(0, 24); r.id = id;
     r.ack_mask = 1u << cfg_.my_slot;
     admits_[slot] = r;
     join_pending_mask_ |= 1u << slot;
@@ -825,27 +842,44 @@ void Engine::note_join_active(int slot) {
     if (slot < 0 || slot >= 8) return;
     const bool was = join_pending_mask_ >> slot & 1u;
     join_pending_mask_ &= ~(1u << slot);
+    /* the admit stays until every peer acked it (a peer that never does is dead for the drop logic); it can no longer be cancelled */
     if (was && net_.log && cfg_.my_slot == host_slot()) net_.log("dropin: slot " + std::to_string(slot) + " plays now");
 }
 
 void Engine::admit_service(uint32_t now) {
     if (!now) now = 1;
     for (int s = 0; s < 8; s++)   // a joiner that never reported in: forget the pending state (the drop logic frees its port)
-        if ((join_pending_mask_ >> s & 1u) && now - join_pending_at_[s] > 30000) join_pending_mask_ &= ~(1u << s);
+        if ((join_pending_mask_ >> s & 1u) && now - join_pending_at_[s] > kJoinWindowMs) join_pending_mask_ &= ~(1u << s);
     for (auto it = admits_.begin(); it != admits_.end();) {
         AdmitRec& r = it->second;
+        const int joiner = it->first;
+        if (r.aborting) {   // tell everybody a few more times, then forget it
+            if (now - r.last_send >= 100) { r.last_send = now; uint8_t b[4] = {kPktAdmitAbort, (uint8_t)cfg_.my_slot, (uint8_t)joiner, r.id}; net_.send(-1, b, 4); r.abort_sends++; }
+            if (r.abort_sends >= 8) { it = admits_.erase(it); continue; }
+            ++it;
+            continue;
+        }
+        if (!active_peer(joiner)) { join_pending_mask_ &= ~(1u << joiner); it = admits_.erase(it); continue; }   // the joiner was dropped: purge its admit (peers drop it through the same logic)
         uint32_t need = 0;
         for (int s = 0; s < 8; s++) if (active_peer(s)) need |= 1u << s;
         need |= 1u << cfg_.my_slot;
-        /* repeated until every active peer acked: giving up early would leave a peer that never learns the port (neutral vs real input from then on). A peer that is really gone stops being active (the drop logic), which ends the wait. */
         if ((r.ack_mask & need) == need) { it = admits_.erase(it); continue; }
+        if (now - r.started > kAdmitAckLimitMs && (join_pending_mask_ >> joiner & 1u)) {
+            /* somebody never acknowledged and the joiner has not started to play: cancel it for everybody (the joiner is told, its runner exits) */
+            if (net_.log) net_.log("dropin: admit of slot " + std::to_string(joiner) + " not acknowledged by everybody in time: aborted");
+            revert_admit(joiner, r.id);
+            r.aborting = true; r.last_send = 0; r.abort_sends = 0;
+            ++it;
+            continue;
+        }
         if (now - r.last_send >= 100) {
             r.last_send = now;
             std::vector<uint8_t> b;
-            b.push_back(kPktAdmit); b.push_back((uint8_t)cfg_.my_slot); b.push_back((uint8_t)it->first); b.push_back((uint8_t)r.port); b.push_back((uint8_t)epoch_);
+            b.push_back(kPktAdmit); b.push_back((uint8_t)cfg_.my_slot); b.push_back((uint8_t)joiner); b.push_back((uint8_t)r.port); b.push_back((uint8_t)epoch_);
             w32(b, r.from);
             for (int p = 0; p < kPorts; p++) b.push_back((uint8_t)(int8_t)cfg_.owner[p]);
             b.push_back((uint8_t)left_mask_); b.push_back((uint8_t)done_mask_);
+            b.push_back(r.id); b.push_back((uint8_t)(kJoinWindowMs / 1000));
             b.push_back((uint8_t)r.name.size());
             b.insert(b.end(), r.name.begin(), r.name.end());
             net_.send(-1, b.data(), (int)b.size());
@@ -859,32 +893,45 @@ void Engine::admit_on_msg(int from, const uint8_t* d, size_t n) {
     if (d[0] == kPktAdmitAck) {
         if (n >= 3 && cfg_.my_slot == host_slot() && d[1] == from) {
             auto it = admits_.find(d[2]);
-            if (it != admits_.end()) it->second.ack_mask |= 1u << from;
+            if (it != admits_.end() && (n < 4 || d[3] == it->second.id)) it->second.ack_mask |= 1u << from;
         }
         return;
     }
-    // kPktAdmit: only the host may admit
-    if (from != host_slot() || cfg_.my_slot == host_slot() || n < (size_t)(12 + kPorts)) return;
+    if (from != host_slot() || cfg_.my_slot == host_slot() || !(cfg_.slot_mask >> from & 1u || joining_)) return;
+    if (d[0] == kPktAdmitAbort) {
+        if (n >= 4 && d[1] == from) {
+            if (d[2] == cfg_.my_slot && joining_ && id_newer(d[3], 0) && d[3] == join_id_) { join_aborted_ = true; if (net_.log) net_.log("dropin: the host cancelled our admit"); }
+            else if (d[2] != cfg_.my_slot) revert_admit(d[2], d[3]);
+        }
+        return;
+    }
+    // kPktAdmit
+    if (n < (size_t)(14 + kPorts)) return;
     const int joiner = d[2], port = d[3];
     if (joiner < 0 || joiner >= 8 || port >= kPorts) return;
     const uint8_t epoch = d[4];
     const uint32_t frm = r32(d + 5);
     int8_t owners[kPorts];
     for (int p = 0; p < kPorts; p++) owners[p] = (int8_t)d[9 + p];
-    const uint8_t left = d[9 + kPorts], done = d[10 + kPorts];
-    const size_t nl = d[11 + kPorts];
+    const uint8_t left = d[9 + kPorts], done = d[10 + kPorts], id = d[11 + kPorts], window = d[12 + kPorts];
+    const size_t nl = d[13 + kPorts];
     std::string name;
-    if (n >= 12 + kPorts + nl) name.assign((const char*)d + 12 + kPorts, nl);
-    apply_admit(joiner, port, frm, epoch, owners, left, done, name);
-    uint8_t a[3] = {kPktAdmitAck, (uint8_t)cfg_.my_slot, (uint8_t)joiner};
-    net_.send(host_slot(), a, 3);
+    if (n >= 14 + kPorts + nl) name.assign((const char*)d + 14 + kPorts, nl);
+    const bool applied = apply_admit(joiner, port, frm, epoch, owners, left, done, id, window, name);
+    if (applied || (joiner < 8 && admit_seen_[joiner] == id)) {   // acknowledge repeats too (our ack may have been lost)
+        uint8_t a[4] = {kPktAdmitAck, (uint8_t)cfg_.my_slot, (uint8_t)joiner, id};
+        net_.send(host_slot(), a, 4);
+    }
 }
 
-void Engine::apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, const int8_t owners[kPorts], uint8_t left, uint8_t done, const std::string& name) {
+bool Engine::apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, const int8_t owners[kPorts], uint8_t left, uint8_t done, uint8_t id, uint8_t window_s, const std::string& name) {
     uint32_t now = net_.now_ms() ? net_.now_ms() : 1;
+    if (joiner < 0 || joiner >= 8) return false;
+    if (admit_seen_[joiner] == id && admit_seen_valid_ >> joiner & 1u) return false;   // a repeat
+    if (admit_seen_valid_ >> joiner & 1u && !id_newer(id, admit_seen_[joiner])) return false;   // older than what we already settled (e.g. a retransmit after the joiner was dropped)
     if (joiner == cfg_.my_slot) {   // we are the one joining
-        if (!joining_ || join_port_ >= 0) return;   // a repeat
-        if (port < 0 || port >= kPorts || owners[port] != cfg_.my_slot) return;
+        if (!joining_ || join_port_ >= 0 || join_aborted_) return false;
+        if (port < 0 || port >= kPorts || owners[port] != cfg_.my_slot) return false;
         for (int p = 0; p < kPorts; p++) {
             cfg_.owner[p] = owners[p];
             if (owners[p] >= 0 && owners[p] < 8) cfg_.slot_mask |= 1u << owners[p];
@@ -892,17 +939,24 @@ void Engine::apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, con
         cfg_.slot_mask |= 1u << cfg_.my_slot;
         join_port_ = port;
         join_from_[port] = from;
+        join_id_ = id;
+        join_window_ms_ = (uint32_t)window_s * 1000u;
+        join_admit_at_ = now;
         epoch_ = epoch;
         left_mask_ |= (uint32_t)left & ~(1u << cfg_.my_slot);
         for (int s = 0; s < 8; s++) if ((done >> s & 1u) && s != cfg_.my_slot) { done_mask_ |= 1u << s; drop_cut_[s] = 0; }
         for (int s = 0; s < 8; s++) last_rx_[s] = now;
-        if (net_.log) net_.log("dropin: admitted as slot " + std::to_string(cfg_.my_slot) + " on port " + std::to_string(port) + " from frame " + std::to_string(from) + " (epoch " + std::to_string(epoch) + ")");
+        admit_seen_[joiner] = id; admit_seen_valid_ |= 1u << joiner;
+        if (net_.log) net_.log("dropin: admitted as slot " + std::to_string(cfg_.my_slot) + " on port " + std::to_string(port) + " from frame " + std::to_string(from) + " (epoch " + std::to_string(epoch) + ", id " + std::to_string(id) + ")");
         if (net_.admitted) net_.admitted(joiner, port, from, name);
-        return;
+        return true;
     }
-    if (port < 0 || port >= kPorts) return;
-    if (present(port)) return;   // a repeat, or a conflict (never reassigned)
-    if (is_player(joiner)) return;
+    if (port < 0 || port >= kPorts) return false;
+    if (present(port) && !port_reusable(port)) return false;   // a conflict (never reassigned)
+    if (is_player(joiner) && !(done_mask_ >> joiner & 1u)) return false;
+    // remember what the port was, so an abort can give it back
+    prev_[port] = {cfg_.owner[port], join_from_[port], conf_upto_[port], last_val_[port], cfg_.slot_mask, done_mask_, true};
+    admit_port_[joiner] = port;
     cfg_.owner[port] = joiner;
     cfg_.slot_mask |= 1u << joiner;
     join_from_[port] = from;
@@ -914,11 +968,31 @@ void Engine::apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, con
     last_rx_[joiner] = now;
     join_pending_mask_ |= 1u << joiner;
     join_pending_at_[joiner] = now;
+    admit_seen_[joiner] = id; admit_seen_valid_ |= 1u << joiner;
+    if (net_.log) net_.log("dropin: slot " + std::to_string(joiner) + " joins on port " + std::to_string(port) + " from frame " + std::to_string(from) + " (we are at " + std::to_string(cur_) + ", id " + std::to_string(id) + ")");
     /* A late Admit (from <= cur_) needs no rollback: every frame of the port before the joiner's first real input is neutral, which is exactly what those frames were
-     * simulated with while the port was absent, and the joiner claims neutral input from `from` on. We only wait for its claims if we are far past `from`. */
-    if (net_.log) net_.log("dropin: slot " + std::to_string(joiner) + " joins on port " + std::to_string(port) + " from frame " + std::to_string(from) + " (we are at " + std::to_string(cur_) + ")");
+     * simulated with while the port was absent (or its dropped owner's neutral tail), and the joiner claims neutral input from `from` on. */
     if (net_.notice) net_.notice((name.empty() ? std::string("A player") : name) + " joined");
     if (net_.admitted) net_.admitted(joiner, port, from, name);
+    return true;
+}
+
+/* The host cancelled an admit (a peer never acknowledged it): give the port back as it was. Ignored if the id is not the one we applied. */
+void Engine::revert_admit(int joiner, uint8_t id) {
+    if (joiner < 0 || joiner >= 8 || joiner == cfg_.my_slot) return;
+    if (!(admit_seen_valid_ >> joiner & 1u)) { admit_seen_[joiner] = id; admit_seen_valid_ |= 1u << joiner; return; }   // never saw the Admit: just never apply it
+    if (admit_seen_[joiner] != id) { if (id_newer(id, admit_seen_[joiner])) { admit_seen_[joiner] = id; } return; }
+    const int port = admit_port_[joiner];
+    if (port < 0 || port >= kPorts || !prev_[port].valid || cfg_.owner[port] != joiner) return;
+    const PortPrev& pv = prev_[port];
+    cfg_.owner[port] = pv.owner; join_from_[port] = pv.from; conf_upto_[port] = pv.conf; last_val_[port] = pv.val;
+    cfg_.slot_mask = (cfg_.slot_mask & ~(1u << joiner)) | (pv.slots & (1u << joiner));
+    done_mask_ = (done_mask_ & ~(1u << joiner)) | (pv.done & (1u << joiner));
+    prev_[port].valid = false;
+    admit_port_[joiner] = -1;
+    join_pending_mask_ &= ~(1u << joiner);
+    if (net_.log) net_.log("dropin: admit of slot " + std::to_string(joiner) + " cancelled, port " + std::to_string(port) + " is as before");
+    if (net_.admit_reverted) net_.admit_reverted(joiner, port);
 }
 
 uint32_t Engine::live_estimate() const {
@@ -926,7 +1000,8 @@ uint32_t Engine::live_estimate() const {
     uint32_t best = 0;
     const double fm = std::max(1.0, cfg_.frame_ms);
     for (int s = 0; s < 8; s++) {
-        if (s == cfg_.my_slot || !peer_seen_[s] || !(cfg_.slot_mask >> s & 1u) || (left_mask_ >> s & 1u)) continue;
+        if (s == cfg_.my_slot || !peer_seen_[s] || !(cfg_.slot_mask >> s & 1u) || ((left_mask_ | done_mask_ | ignore_mask_) >> s & 1u)) continue;
+        if (!last_rx_[s] || now - last_rx_[s] > 1000) continue;   // a peer that went quiet (dropped, crashed) says nothing about the live frame
         uint32_t est = peer_cur_[s] + (uint32_t)((double)(now - peer_ts_at_[s]) / fm);
         best = std::max(best, est);
     }
@@ -939,7 +1014,16 @@ void Engine::join_service(uint32_t now) {
     if (join_port_ < 0) return;
     const uint32_t live = live_estimate();
     ghost_cur_ = live ? live : join_from_[join_port_];
-    const int64_t target = std::max<int64_t>((int64_t)ghost_cur_, (int64_t)join_from_[join_port_]) + kGhostLeadFrames;
+    int64_t target = std::max<int64_t>((int64_t)ghost_cur_, (int64_t)join_from_[join_port_]) + kGhostLeadFrames;
+    /* never claim further than one packet window (100 frames) beyond what the peers acknowledged: older claims would fall out of the window and stall them */
+    int64_t acked = (int64_t)join_from_[join_port_] - 1;
+    bool any = false;
+    for (int s = 0; s < 8; s++) {
+        if (!active_peer(s)) continue;
+        acked = any ? std::min(acked, std::max<int64_t>(peer_ack_[s][join_port_], (int64_t)join_from_[join_port_] - 1)) : std::max<int64_t>(peer_ack_[s][join_port_], (int64_t)join_from_[join_port_] - 1);
+        any = true;
+    }
+    target = std::min(target, acked + 90);
     for (int64_t g = std::max<int64_t>(local_newest_ + 1, (int64_t)join_from_[join_port_]); g <= target; g++) put_local(join_port_, g, 0);
     send_packet(false);
 }
