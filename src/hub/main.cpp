@@ -4,6 +4,8 @@
 #include "tv_logic.h"
 #include "homefun.h"
 #include "popup_guard.h"
+#include "qm_pad.h"
+#include "dolphin_speed.h"
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
@@ -30,6 +32,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     bool told_need_name = false;
     if (has_play && !shot_path) A.pending_play = U(cmd_play);
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
+    if (qm_e2e_active()) qm_e2e_boot();   // HUB_QM_E2E (needs HUB_SCREENSHOT): only the test's virtual joystick exists
     SDL_SetMainReady();
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
@@ -147,6 +150,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     fr_start();
 
     refresh_pads();
+    if (qm_e2e_active()) qm_e2e_start();
     start_scan();
     cloud_boot();  // cloud saves v2: automatic for every account (startup delta + retry queue run in the background)
     auto_sync();
@@ -158,6 +162,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            qm_pad_event(e);   // the quick menu's own controls: button-down taps, whatever has the focus
             if (e.type == SDL_MOUSEWHEEL && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
                 float wx = e.wheel.preciseX, wy = e.wheel.preciseY;
                 if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { wx = -wx; wy = -wy; }
@@ -326,6 +331,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 pend.dir = 0;
             }
         }
+        qm_pre_newframe();
         ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, 1);   // Y is a context-action button here: ImGui's own "Y activates the focused item" must not fire it
         ImGui::NewFrame();
         {   // a held X/Menu would open ImGui's window switcher; this app has no use for it (X is a real button here)
@@ -360,13 +366,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 size_t dot = sp_.rfind('.');
                 save_screenshot(ren, (sp_.substr(0, dot == std::string::npos ? sp_.size() : dot) + "-" + uf + ".bmp").c_str());
             }
-            if (SH.ready()) { save_screenshot(ren, shot_path); running = false; }
+            if (qm_e2e_active()) { if (!qm_e2e_frame()) running = false; }
+            else if (SH.ready()) { save_screenshot(ren, shot_path); running = false; }
             SDL_Delay(8);
         }
         SDL_RenderPresent(ren);
     }
 
     // clean shutdown
+    dolphin_speed_stop();   // the Dolphin speed DSU server (if a GameCube game ran)
     find_games_shutdown();
     add_games_shutdown();
     gamepack_shutdown();
@@ -389,5 +397,5 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_DestroyWindow(A.win);
     SDL_Quit();
     CoUninitialize();
-    return 0;
+    return qm_e2e_active() ? qm_e2e_exit_code() : 0;
 }

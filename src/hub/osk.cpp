@@ -354,14 +354,19 @@ void open_text(ImGuiID owner, Kind kind, const char* hint, const char* text, siz
 
 } // namespace
 
+static bool g_open_req = false;
+void request_open() { g_open_req = true; }
+
 bool input(const char* id, const char* hint, char* buf, size_t size, ImGuiInputTextFlags flags, Kind kind) {
     bool r = hint ? ImGui::InputTextWithHint(id, hint, buf, size, flags) : ImGui::InputText(id, buf, size, flags);
     const ImGuiID wid = ImGui::GetItemID();
     /* ImGui activates a nav-focused InputText on Enter only (A is a "tap"), so A on the focused field opens the keyboard itself. */
     const bool pad_a = !hub_input_blocked() && A.pad_mode && ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_NavEnableGamepad;
-    if (!S.open && !S.fb_open && (ImGui::IsItemActivated() || pad_a)) {
+    const bool forced = g_open_req;
+    g_open_req = false;
+    if (!S.open && !S.fb_open && (ImGui::IsItemActivated() || pad_a || forced)) {
         bool mouse = ImGui::IsItemHovered() && ImGui::IsMouseClicked(0);
-        if (pad_a || should_open(A.pad_mode, S.kb_seen, mouse)) {
+        if (pad_a || forced || should_open(A.pad_mode, S.kb_seen, mouse)) {
             ImGui::ClearActiveID();
             open_text(wid, kind, hint, buf, size, flags);
             r = false;

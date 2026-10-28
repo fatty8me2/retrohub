@@ -55,6 +55,7 @@
 #include "runstate.h"
 #include "runner_ctl.h"
 #include "osd.h"
+#include "clip.h"
 #include <GL/gl.h>
 #include <set>
 #include <ctime>
@@ -241,6 +242,21 @@ static std::unique_ptr<MatchDriver> g_match;
 static std::vector<n64run::GsLine> g_gs;
 static long long g_vi = 0;
 static bool g_headless_mode = false;
+static clip::Recorder g_clips;            // instant replay (clip.h)
+static bool g_clip_prev = false;
+static std::atomic<bool> g_clip_want{false};   // set by the pad poll (any thread), served on the frame callback
+static unsigned long long g_clip_cool = 0;
+static void clip_request_save() {
+    std::string m;
+    if (g_clips.request_save(std::time(nullptr), &m)) osd::push("Saving clip...");
+    else osd::push(m, osd::Kind::Warn);
+}
+static void clip_poll_done() {
+    bool ok = false; std::string m;
+    if (!g_clips.poll(&ok, &m)) return;
+    logf_("control", "clip: %s %s", ok ? "saved" : "FAILED", m.c_str());
+    osd::push(ok ? "Clip saved" : "Clip failed: " + m, ok ? osd::Kind::Good : osd::Kind::Error);
+}
 
 // ---------------------------------------------------------------- emulator
 struct Core {
@@ -481,10 +497,11 @@ static void n64_apply_start_volume() {   // once, from the first frame callback 
     done = true;
     if (g_start_volume != 100) { int v = g_start_volume; g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_VOLUME, &v); }
 }
+static bool g_boost_active = false;
+static double g_menu_speed = 1.0;   // the speed the hub menu chose (0 = max); the boost only rides on 1x and gives it back on release
 static void n64_boost_tick(bool held) {
-    static bool active = false;
-    if (held && !active) { active = true; set_speed(g_fast_speed); }
-    else if (!held && active) { active = false; set_speed(1.0); }
+    if (held && !g_boost_active) { if (g_menu_speed == 1.0) { g_boost_active = true; set_speed(g_fast_speed); } }
+    else if (!held && g_boost_active) { g_boost_active = false; set_speed(g_menu_speed); }
 }
 
 static void ctl_tick() {
@@ -571,10 +588,18 @@ static void ctl_tick() {
             if (!g_auto_dir.empty() && !g_ctl_online) { auto_save_now(); g_stop_at_vi = vi + 12; }   // let the core write auto.state first
             else g_core.DoCommand(M64CMD_STOP, 0, nullptr);
             break;
+        case runctl::Cmd::Clip: {
+            std::string m;
+            bool ok = g_clips.request_save(std::time(nullptr), &m);
+            if (ok) { osd::push("Saving clip..."); m = "saving"; }
+            else osd::push(m, osd::Kind::Warn);
+            g_ctl.ack(ok, m);
+            break;
+        }
         case runctl::Cmd::OsdMsg: osd::push(c.text); g_ctl.ack(true, "shown"); break;
         case runctl::Cmd::Input: g_in_gate.set(c.value != 0, GetTickCount64()); g_ctl.ack(true, c.value ? "input on" : "input off"); break;
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
-        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Clip:
+        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay:
             if (g_ctl_online && runctl::offline_only(c.cmd)) { g_ctl.ack(false, "Not available in online sessions"); break; }
             if (c.cmd == runctl::Cmd::Volume) {
                 int v = c.value;
@@ -588,6 +613,7 @@ static void ctl_tick() {
                 g_ctl.ack(true, m ? "muted" : "unmuted");
             } else if (c.cmd == runctl::Cmd::Ff || c.cmd == runctl::Cmd::Speed) {
                 double sp = c.cmd == runctl::Cmd::Speed ? c.speed : (c.value ? g_fast_speed : 1.0);
+                g_menu_speed = sp; g_boost_active = false;   // a menu choice made while View+RT is held wins over the boost
                 set_speed(sp);
                 g_ctl.ack(true, runctl::speed_label(sp));
             } else {
@@ -666,6 +692,26 @@ static void headless_frame_cb(unsigned int) {
     cheats_tick();
     auto_tick();
     ctl_tick();
+    clip_poll_done();
+    if (g_clip_want.exchange(false)) clip_request_save();
+    if (!g_headless_mode && g_clips.enabled() && (g_vi % 3) == 0) {   // windowed: read the game window back at ~20 fps (best effort; see docs/RUNNER_CTL.md)
+        GLint vp[4] = {0, 0, 0, 0};
+        if (wglGetCurrentContext()) {
+            glGetIntegerv(GL_VIEWPORT, vp);
+            int w = vp[2], h = vp[3];
+            if (w >= 64 && h >= 64 && w <= 4096 && h <= 4096) {
+                static std::vector<uint8_t> buf;
+                buf.resize((size_t)w * h * 4);
+                GLint prev_align = 4;
+                glGetIntegerv(GL_PACK_ALIGNMENT, &prev_align);
+                glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                glReadBuffer(GL_BACK);
+                glReadPixels(vp[0], vp[1], w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+                glPixelStorei(GL_PACK_ALIGNMENT, prev_align);
+                g_clips.offer(buf.data(), w, h, w * 4, 20.0, false, true);
+            }
+        }
+    }
     osd_gl_draw();
     if (g_match && g_core.MemPtr && !g_match->done()) {
         std::string l = g_match->step(static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)), g_vi);
@@ -1152,7 +1198,7 @@ int main(int argc, char** argv) {
             hk.update_local = [&] { test_input.update(); };
             hk.read_local = [&](int idx) { return test_input.read(idx); };
         } else {
-            hk.update_local = [&] { input.update(); g_in_gate.note_view_y(input.view_y_held(), GetTickCount64()); n64_apply_start_volume(); n64_boost_tick(input.boost_held() && !online); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
+            hk.update_local = [&] { input.update(); { bool cc = input.clip_held(); unsigned long long tn = GetTickCount64(); if (cc && !g_clip_prev && tn >= g_clip_cool) { g_clip_cool = tn + 3000; g_clip_want = true; } g_clip_prev = cc; } g_in_gate.note_view_y(input.view_y_held(), GetTickCount64()); n64_apply_start_volume(); n64_boost_tick(input.boost_held() && !online); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
             hk.read_local = [&](int idx) -> uint32_t { return g_in_gate.suppressed(GetTickCount64()) ? 0u : input.read(idx); };   // hub menu open: neutral, lockstep still sends the frame
         }
         hk.idle = [] { SDL_PumpEvents(); };
@@ -1188,6 +1234,10 @@ int main(int argc, char** argv) {
             title_thread = std::thread(title_watch, wtitle);
         }
         g_headless_mode = args.headless;
+        if (!args.shot_dir.empty()) g_clips.set_dir(args.shot_dir);
+        if (const char* e = std::getenv("N64RUN_CLIPS"); e && e[0] == '0') g_clips.set_enabled(false);
+        else if (args.headless && !args.shot_dir.empty())
+            headless_set_frame_sink([](const uint8_t* px, int w, int h) { g_clips.offer(px, w, h, w * 4, 20.0, false, false); }, 3);
         g_ctl_online = online;
         g_key_for_auto = args.game_key;
         if (!online && !args.state_dir.empty() && !g_match) { g_auto_dir = args.state_dir; g_next_autosave = GetTickCount64() + 30000; }

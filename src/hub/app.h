@@ -691,7 +691,18 @@ void qm_prepare(RunInfo& ri, const hub::GameEntry& e);                          
 std::string qm_args(const RunInfo& ri, const hub::GameEntry& e, bool n64_state_dir);    // " --control ... --game-key ... --shot-dir ..." or ""
 bool qm_is_open();                                                                      // quick menu requested or showing (exempt from the pad focus gate)
 void qm_chat_incoming(bool dm, const std::string& uid, const std::string& who, const std::string& text);   // room / friend message -> running game's OSD (setting game_chat)
-void qm_open_live();                                                                   // View+Y while a game runs
+void qm_open_live();
+bool qm_game_live();                                                                    // a game runs (or the e2e stand-in)
+void qm_pre_newframe();                                                                 // main.cpp, before ImGui::NewFrame: ImGui nav off while the menu owns the input
+void hub_menu_topmost(bool on);                                                         // launch.cpp: keep the hub over the game while the quick menu is open
+bool qm_e2e_active();                                                                   // qm_e2e.cpp: HUB_QM_E2E headless end-to-end run
+void qm_e2e_boot();                                                                     // before SDL_Init
+void qm_e2e_start();                                                                    // after the pads are opened
+bool qm_e2e_frame();                                                                    // every frame; false = finished (exit code set)
+int qm_e2e_exit_code();
+void qm_e2e_enable();
+struct QmE2EState { bool open = false; int page = 0; std::string sel; int speed_idx = 0, vol = 0; bool mute = false; std::string close_why; std::vector<std::string> cmds; bool imgui_nav = false; };
+QmE2EState qm_e2e_state();                                                                   // View+Y while a game runs
 void draw_quick_menu();
 int shots_count(const hub::GameEntry& e);
 void shots_gallery(const hub::GameEntry& e);                                            // details modal: screenshots strip
