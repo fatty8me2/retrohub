@@ -17,7 +17,7 @@ struct LobbyClient::Impl {
     std::deque<LobbyEvent> events;   // msgs and host changes in arrival order
     uint32_t last_keepalive = 0;
     std::string server, code, name, url;   // kept so a dropped connection can be re-established with the same code
-    bool role_host = false, was_welcomed = false;
+    bool role_host = false, was_welcomed = false, watch = false;
     int attempts = 0;
     uint32_t retry_at = 0;
     bool waiting_retry = false;
@@ -30,6 +30,16 @@ LobbyClient::~LobbyClient() { stop(); }
 
 bool LobbyClient::start(const std::string& server, const std::string& code, bool role_host, const std::string& name)
 {
+    return start_impl(server, code, role_host, name, false);
+}
+
+bool LobbyClient::start_watch(const std::string& server, const std::string& code, const std::string& name)
+{
+    return start_impl(server, code, false, name, true);
+}
+
+bool LobbyClient::start_impl(const std::string& server, const std::string& code, bool role_host, const std::string& name, bool watch)
+{
     stop();
     Impl& d = *impl_;
     d.started = true;
@@ -39,10 +49,10 @@ bool LobbyClient::start(const std::string& server, const std::string& code, bool
     d.events.clear();
     d.status = "connecting";
     d.last_keepalive = now_ms();
-    d.server = server; d.code = code; d.name = name; d.role_host = role_host;
+    d.server = server; d.code = code; d.name = name; d.role_host = role_host; d.watch = watch;
     d.was_welcomed = false; d.attempts = 0; d.waiting_retry = false;
-    std::string url = hub_url(server.empty() ? default_server() : server, code, role_host, name, 0);
-    url += "&caps=hostmig,reasons";   // we understand host_changed (keep the room alive when the host leaves) and the distinct error reasons
+    std::string url = hub_url(server.empty() ? default_server() : server, code, role_host, name, 0, watch);
+    url += watch ? "&caps=reasons" : "&caps=hostmig,reasons";   // we understand host_changed (keep the room alive when the host leaves) and the distinct error reasons
     d.url = url;
     net_log("Lobby: connecting %s", url.c_str());
     return d.ws.connect(url);
@@ -93,6 +103,8 @@ static std::string friendly(const std::string& reason)
     if (reason == "host-left-game") return "The host left - game over";
     if (reason == "bad-slot") return "That seat is already taken";
     if (reason == "host-reconnecting") return "The host is reconnecting";
+    if (reason == "spectators-full") return "This room already has the maximum number of spectators";
+    if (reason == "spectate-busy") return "Spectating is paused: the server is busy, try again later";
     return reason;
 }
 

@@ -109,7 +109,7 @@ inline bool qa_mode() { const char* e = std::getenv("RETROHUB_QA"); return e && 
 inline bool loopback_mode() { return qa_mode() && std::getenv("HUBNET_LOOPBACK") != nullptr; }
 
 /* Join "server" + "/hub?..." */
-std::string hub_url(const std::string& server, const std::string& room, bool host, const std::string& name, int slot);
+std::string hub_url(const std::string& server, const std::string& room, bool host, const std::string& name, int slot, bool watch = false);
 
 } // namespace detail
 } // namespace hubnet

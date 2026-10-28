@@ -399,6 +399,10 @@ int invite_seconds_left(long long expires_at_ms, long long now_ms);
 inline bool lobby_joinable(int players, int max_players, bool launched) { return !launched && players > 0 && players < max_players; }
 /* A friend row offers "Join": in a lobby, or in a game launched from a room, with a free slot (and a known code). */
 inline bool friend_can_join(const FriendRow& r) { return !r.in_my_room && (r.state == FS_InLobby || r.state == FS_InGame) && r.joinable; }
+/* A friend row offers "Watch": they are in a lobby or a launched game (we know the room code and the game) and not in our room. The
+ * caller adds "this PC owns the game and its system can be spectated". Spectators take a free slot, so a full 4-player game has none:
+ * the server answers that with a notice. */
+inline bool friend_can_watch(const FriendRow& r, bool has_code_and_game) { return has_code_and_game && !r.in_my_room && (r.state == FS_InLobby || r.state == FS_InGame); }
 /* Rich presence for rows and the Home shelf: "Smash Classic \xC2\xB7 2/4 \xC2\xB7 12 min" (game, players when known, time in this state from
  * the presence update). Online without a game = "Online"; offline = friend_status_line. */
 std::string friend_presence_line(const FriendRow& r, long long now_ms);
