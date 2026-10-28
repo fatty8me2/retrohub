@@ -95,17 +95,78 @@ constexpr int kDolphinScanCtrl = 0x1D, kDolphinScanShift = 0x2A;
 // Hotkeys.ini keys are "<group>/<control>" (ControlGroup::LoadConfig: base + name + "/" + c->name; group "Emulation Speed").
 inline const char* dolphin_hotkey_name(DolphinKey k) { return k == DolphinKey::Increase ? "Emulation Speed/Increase Emulation Speed" : "Emulation Speed/Decrease Emulation Speed"; }
 inline const char* dolphin_hotkey_expr(DolphinKey k) { return k == DolphinKey::Increase ? "@(Ctrl+Shift+F13)" : "@(Ctrl+Shift+F14)"; }
-/* Dolphin's current speed step. `cur` is updated to `to`; returns the key presses (in order) that get there. */
-struct DolphinSpeed { int cur = kSpeedNormal; };
+/* Dolphin's current speed. `tenths` is the real speed in tenths of 1x as far as we know; `known` goes false when a key burst was cut
+ * short (a press may or may not have registered), after which a plan starts from Dolphin's 0.1 floor instead of guessing.
+ * `cur` is the step index shown in the menu. */
+struct DolphinSpeed { int cur = kSpeedNormal; int tenths = 10; bool known = true; };
 inline int dolphin_idx(const DolphinSpeed& s) { return s.cur; }
-inline std::vector<DolphinKey> dolphin_plan(DolphinSpeed& s, int to) {
+constexpr int kDolphinFloorPresses = 90;   // decreases that surely reach Dolphin's 0.1x floor from anything we can set (<= 8x)
+/* Non-mutating plan to step `to`. Known state: the difference in tenths. Unknown: floor first, then up. */
+inline std::vector<DolphinKey> dolphin_plan_for(const DolphinSpeed& s, int to) {
     std::vector<DolphinKey> v;
     to = std::max(0, std::min(kDolphinSteps - 1, to));
-    int d = dolphin_tenths(to) - dolphin_tenths(s.cur);
+    int from = s.tenths;
+    if (!s.known) { v.assign(kDolphinFloorPresses, DolphinKey::Decrease); from = 1; }
+    int d = dolphin_tenths(to) - from;
     for (int i = 0; i < (d < 0 ? -d : d); ++i) v.push_back(d < 0 ? DolphinKey::Decrease : DolphinKey::Increase);
-    s.cur = to;
     return v;
 }
+/* Does the menu's chosen step differ from what Dolphin runs (or do we not know)? */
+inline bool dolphin_needs_apply(const DolphinSpeed& s, int to) { return !s.known || s.tenths != dolphin_tenths(to); }
+/* After a burst that completed `done` of `plan`'s presses. A full run lands exactly on `to`; a partial one leaves the state unknown. */
+inline void dolphin_commit(DolphinSpeed& s, int to, const std::vector<DolphinKey>& plan, int done) {
+    to = std::max(0, std::min(kDolphinSteps - 1, to));
+    if (done >= (int)plan.size()) { s.cur = to; s.tenths = dolphin_tenths(to); s.known = true; }
+    else { s.known = false; }
+}
+/* Legacy single-step helper (tests): plans and assumes success. */
+inline std::vector<DolphinKey> dolphin_plan(DolphinSpeed& s, int to) {
+    auto v = dolphin_plan_for(s, to);
+    dolphin_commit(s, to, v, (int)v.size());
+    return v;
+}
+
+/* ---- quick menu open / close gating ---- */
+/* View+Y opens the menu once: one open per press (rising edge), never while it is open, never within `cooldown` ms of the menu
+ * opening or closing (a held / bouncing combo or the closing B cannot reopen or re-close it). The combo must be released before it re-arms. */
+struct OpenGate {
+    bool prev = false, was_open = false;
+    long long changed_ms = -100000;
+    static constexpr long long kCooldownMs = 700;
+    bool update(bool combo_down, bool menu_open, long long now_ms) {
+        if (menu_open != was_open) { was_open = menu_open; changed_ms = now_ms; }
+        const bool edge = combo_down && !prev;
+        prev = combo_down;
+        return edge && !menu_open && now_ms - changed_ms >= kCooldownMs;
+    }
+};
+/* B closes the menu, but not in the first moments after it opened (a B held in the game as the menu appears is not a "close"). */
+inline bool back_allowed(long long opened_ms, long long now_ms) { return now_ms - opened_ms >= 400; }
+/* A button combo that must be held `hold_ms` (View+LB: reset Dolphin to 1x). Fires once per hold. */
+struct HoldGate {
+    long long since = -1;
+    bool fired = false;
+    bool update(bool down, long long now_ms, long long hold_ms = 1000) {
+        if (!down) { since = -1; fired = false; return false; }
+        if (since < 0) since = now_ms;
+        if (!fired && now_ms - since >= hold_ms) { fired = true; return true; }
+        return false;
+    }
+};
+/* Hub focus while the menu is open: ask for the foreground again (bounded, spaced) if something else took it. */
+struct FocusRetry {
+    int tries = 0;
+    long long last_ms = -100000;
+    void reset() { tries = 0; last_ms = -100000; }
+    bool should_retry(bool hub_fg, long long now_ms, int max_tries = 6, long long gap_ms = 500) {
+        if (hub_fg || tries >= max_tries || now_ms - last_ms < gap_ms) return false;
+        ++tries; last_ms = now_ms;
+        return true;
+    }
+};
+/* Retry schedule for a Dolphin speed change that did not go through. */
+inline long long dolphin_retry_delay_ms(int attempt) { return attempt <= 0 ? 1500 : attempt == 1 ? 3000 : 6000; }
+constexpr int kDolphinMaxRetries = 4;
 
 /* The Speed row in the Game menu. Built-in runners and Dolphin have it (offline only); other emulators show it disabled. */
 enum class SpeedRow { Hidden, Enabled, Online, Unsupported };

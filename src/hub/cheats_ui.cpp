@@ -1,4 +1,5 @@
 #include "app.h"
+#include "qm_logic.h"
 
 #include <xinput.h>
 
@@ -340,19 +341,29 @@ void cheats_open_live() {
     focus_hub();
 }
 
-/* Console + game-pad watch: hold View (Back) and press Y while a supported game runs. */
+/* Console + game-pad watch: hold View (Back) and press Y while a supported game runs. One open per press (OpenGate: rising edge,
+ * not while the menu is open, 700 ms cooldown after it opened / closed). View + LB held for 1 s is the Dolphin speed emergency reset. */
 void cheats_pad_watch() {
-    static bool prev = false;
-    bool down = false;
+    static hubqm::OpenGate gate;
+    static hubqm::HoldGate reset_hold;
+    bool down = false, reset = false;
     if (A.proc && !g_headless && !A.run.key.empty()) {
-        for (DWORD i = 0; i < 4 && !down; ++i) {
+        for (DWORD i = 0; i < 4; ++i) {
             XINPUT_STATE xs{};
-            if (XInputGetState(i, &xs) == ERROR_SUCCESS && (xs.Gamepad.wButtons & XINPUT_GAMEPAD_BACK) && (xs.Gamepad.wButtons & XINPUT_GAMEPAD_Y)) down = true;
+            if (XInputGetState(i, &xs) != ERROR_SUCCESS) continue;
+            const WORD b = xs.Gamepad.wButtons;
+            if ((b & XINPUT_GAMEPAD_BACK) && (b & XINPUT_GAMEPAD_Y)) down = true;
+            if ((b & XINPUT_GAMEPAD_BACK) && (b & XINPUT_GAMEPAD_LEFT_SHOULDER) && !(b & XINPUT_GAMEPAD_Y)) reset = true;
         }
-        for (auto* c : A.pads) if (!down && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK) && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_Y)) down = true;
+        for (auto* c : A.pads) {
+            if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK) && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_Y)) down = true;
+            if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK) && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_LEFTSHOULDER) && !SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_Y)) reset = true;
+        }
     }
-    if (down && !prev) qm_open_live();
-    prev = down;
+    const long long now = (long long)GetTickCount64();
+    if (gate.update(down, qm_is_open(), now)) { qm_log("pad combo View+Y: open"); qm_open_live(); }
+    else if (down && !qm_is_open()) { /* held or inside the cooldown: ignored on purpose */ }
+    if (reset_hold.update(reset, now)) { qm_log("pad combo View+LB held 1 s: Dolphin speed reset"); qm_dolphin_reset(); }
 }
 
 /* GameCube: write the enabled cheats into Dolphin's User\\GameSettings\\<GAMEID>.ini (and EnableCheats) right before Dolphin starts.
