@@ -13,6 +13,8 @@
 #include "runner_ctl.h"
 #include "cloud_engine.h"
 #include "qm_logic.h"
+#include "qm_nav.h"
+#include "qm_pad.h"
 #include "ext_media.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
@@ -115,55 +117,59 @@ QPage g_page = QPage::Main;
 long long g_pending = 0;                       // seq waiting for an ack (0 = none)
 std::string g_pending_what;                    // "Saved slot 3" ...
 static ULONGLONG g_open_ms = 0, g_activity_ms = 0;
-static bool g_wait_release = false;   // menu just opened: ignore every input until all pad buttons and keys are up
-
-/* True while any controller button or keyboard key is held. The press that opened the menu (View+Y, or a button still held from
- * the game) used to land on the focused Resume button and close the menu ~20 ms after it opened (quickmenu.log, v1.28.6). */
-static bool any_input_held() {
-    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
-        SDL_GameController* gc = SDL_IsGameController(i) ? SDL_GameControllerFromInstanceID(SDL_JoystickGetDeviceInstanceID(i)) : nullptr;
-        if (!gc) continue;
-        for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b)
-            if (SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b)) return true;
-        if (SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000 || SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000) return true;
-    }
-    int n = 0;
-    const Uint8* ks = SDL_GetKeyboardState(&n);
-    for (int k = 0; k < n; ++k)
-        if (ks[k]) return true;
-    return false;
-}
+/* The menu's own controls (qm_nav.h): read straight from the pads every frame, independent of the OS focus and of ImGui's nav.
+ * g_in gates buttons held at open (View+Y itself, A/B held in the game) until released; g_nav keeps the selected row by id. */
+hubqm::MenuInput g_in;
+hubqm::MenuNav g_nav;
+int g_row_y = 0;               // next row's y while drawing
+bool g_sub_open = false;       // a popup over the menu (Invite friends picker) owns the input: ImGui nav drives it
+bool g_e2e = false;            // headless end-to-end test (qm_e2e.cpp): stand-in running game with a control file
+std::vector<std::string> g_e2e_cmds;
 static const char* g_close_why = "other";
 bool g_pending_close = true;                   // close the menu and return to the game when the ack arrives
 int g_pending_slot = -2;
 double g_pending_at = 0;
 std::string g_sys, g_key, g_title;
 
-bool ctl_ready() { return A.proc && !A.run.ctl_path.empty(); }
+bool ctl_ready() { return g_e2e || (A.proc && !A.run.ctl_path.empty()); }
 
 void send(runctl::Cmd c, int slot, const std::string& done_text, bool close) {
+    if (g_e2e) { g_e2e_cmds.push_back(std::string(runctl::cmd_name(c)) + " " + std::to_string(slot)); push_toast(done_text, COL_GOOD, 3.0); if (close) { g_page = QPage::Main; g_close_why = "slot action"; ImGui::CloseCurrentPopup(); } return; }
     long long seq = runctl::send_command(A.run.ctl_path, c, slot);
     if (!seq) { push_toast("Could not talk to the game.", COL_WARN, 4.0); return; }
     g_pending = seq; g_pending_what = done_text; g_pending_close = close; g_pending_slot = slot; g_pending_at = ImGui::GetTime();
 }
 
-bool menu_button(const char* label, bool enabled, ui::Icon ic, bool primary = false) {
-    float w = ImGui::GetContentRegionAvail().x;
-    bool pressed = ui::button(label, ImVec2(w, sp(6.5f)), primary, enabled && g_pending == 0, ic);
-    return pressed && !g_wait_release;   // a press held over from opening never triggers a button
+void nav_ring(ImVec2 p0, ImVec2 p1) {
+    ImGui::GetWindowDrawList()->AddRect(p0 - ImVec2(2, 2) * S, p1 + ImVec2(2, 2) * S, ui::ACCENT, sp(1.6f), 0, 2.5f * S);
 }
 
-void draw_slot_card(const std::string& dir, int slot, bool saving, bool* chosen) {
+/* A full-width menu button. A (pad / Enter) on the selected row or a mouse click presses it. */
+bool menu_button(const char* label, bool enabled, ui::Icon ic, bool primary = false) {
+    const bool en = enabled && g_pending == 0;
+    const hubqm::NavAction a = g_nav.add(label, false, en, 0, g_row_y++);
+    float w = ImGui::GetContentRegionAvail().x, h = sp(6.5f);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    bool pressed = ui::button(label, ImVec2(w, h), primary, en, ic);
+    if (g_nav.selected(label)) nav_ring(p, p + ImVec2(w, h));
+    if (a.activate && en) qm_log(std::string("menu: activate \"") + label + "\"");
+    return en && (pressed || a.activate);
+}
+
+void draw_slot_card(const std::string& dir, int slot, bool saving, bool* chosen, int nx, int ny) {
     SlotInfo si = read_slot(dir, slot);
+    const std::string nid = "slot" + std::to_string(slot);
     float cw = ImGui::GetContentRegionAvail().x;
     ImVec2 p = ImGui::GetCursorScreenPos();
     float th = cw * 0.625f, h = th + sp(5.5f);
     ImGui::PushID(slot + 5);
     bool enabled = saving || si.exists;
+    const hubqm::NavAction na = g_nav.add(nid, false, enabled && g_pending == 0, nx, ny);
     ImGui::BeginDisabled(!enabled || g_pending != 0);
     bool clicked = ImGui::InvisibleButton("slot", ImVec2(cw, h));
     ImGui::EndDisabled();
-    bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+    if (na.activate) { clicked = true; qm_log("menu: activate " + nid); }
+    bool hot = ImGui::IsItemHovered() || g_nav.selected(nid);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 q1(p.x + cw, p.y + h);
     dl->AddRectFilled(p, q1, hot ? ui::PANEL2 : ui::PANEL, sp(1.25f));
@@ -205,8 +211,7 @@ void slot_page(bool saving) {
         ImGui::PushID(i);
         ImGui::BeginChild("##c", ImVec2(cw, cw * 0.625f + sp(5.5f) + sp(0.5f)), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
         bool chosen = false;
-        draw_slot_card(dir, slot, saving, &chosen);
-        if (i == 0 && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
+        draw_slot_card(dir, slot, saving, &chosen, i % cols, i / cols);
         ImGui::EndChild();
         ImGui::PopID();
         ImGui::PopItemWidth();
@@ -218,7 +223,13 @@ void slot_page(bool saving) {
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (g_pending) ImGui::TextDisabled("%s", saving ? "Saving..." : "Loading...");
-    else if (ui::button("Back", ImVec2(sp(14.f), sp(5.5f)), false, true, ui::Icon::ChevronL)) g_page = QPage::Main;
+    else {
+        const hubqm::NavAction a = g_nav.add("back", false, true, 0, (total + cols - 1) / cols);
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        bool b = ui::button("Back", ImVec2(sp(14.f), sp(5.5f)), false, true, ui::Icon::ChevronL);
+        if (g_nav.selected("back")) nav_ring(p, p + ImVec2(sp(14.f), sp(5.5f)));
+        if (b || a.activate) { g_nav.sel = saving ? "Save state" : "Load state"; g_page = QPage::Main; }
+    }
 }
 
 /* ---- speed / volume / mute / external screenshot state (one game session) ---- */
@@ -234,6 +245,7 @@ std::string g_ext_shot_path;
 
 /* Fire and forget: the menu stays open and responsive; the runner acts at its next poll. */
 void send_quiet(runctl::Command c) {
+    if (g_e2e) { g_e2e_cmds.push_back(std::string(runctl::cmd_name(c.cmd)) + " " + (c.cmd == runctl::Cmd::Speed ? [&] { char b[24]; std::snprintf(b, sizeof b, "%g", c.speed); return std::string(b); }() : std::to_string(c.value))); return; }
     if (g_shot_fake || !ctl_ready()) return;
     if (!runctl::send_command_ex(A.run.ctl_path, c)) push_toast("Could not talk to the game.", COL_WARN, 4.0);
 }
@@ -266,7 +278,7 @@ std::atomic<bool> g_close_req{false};   // emergency reset: close the menu so th
 
 /* Menu closed (or a retry is due): press the Dolphin hotkeys that take it to the chosen step (offline GameCube only). */
 void dolphin_apply_pending(const hub::GameEntry* e) {
-    if (!is_dolphin(e) || A.run.online || g_shot_fake || g_burst_state.load() != 0 || qm_is_open()) return;
+    if (!is_dolphin(e) || A.run.online || g_shot_fake || g_burst_state.load() != 0 || (qm_is_open() && !dolphin_speed_running())) return;   // the DSU pad needs no focus: applies live, menu open or not
     if (!hubqm::dolphin_needs_apply(g_dolphin, g_speed_idx)) { g_retry_n = 0; return; }
     if (GetTickCount64() < g_retry_at) return;
     g_burst_plan = hubqm::dolphin_plan_for(g_dolphin, g_speed_idx);
@@ -310,20 +322,17 @@ void ext_apply(const hub::GameEntry* e) {
 int stepper_row(const char* id, const char* label, const std::string& value, float fill, bool enabled, float width) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = sp(5.2f);
+    const hubqm::NavAction na = g_nav.add(id, true, enabled, 0, g_row_y++);
     ImGui::PushID(id);
     ImGui::BeginDisabled(!enabled);
-    bool clicked = ImGui::InvisibleButton("##step", ImVec2(width, h), ImGuiButtonFlags_EnableNav);
+    bool clicked = ImGui::InvisibleButton("##step", ImVec2(width, h));
     ImGui::EndDisabled();
-    bool hovered = ImGui::IsItemHovered(), focused = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
+    bool hovered = ImGui::IsItemHovered(), focused = g_nav.selected(id);
     bool hot = enabled && (hovered || focused);
     int dir = 0;
-    if (enabled && !g_wait_release) {
-        if (clicked) dir = hovered && ImGui::GetIO().MousePos.x < p.x + width * 0.5f ? -1 : 1;
-        if (focused) {
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) dir = -1;
-            else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) dir = 1;
-            if (dir && !clicked) ImGui::NavMoveRequestCancel();   // left/right belongs to this row, not to ImGui's focus movement
-        }
+    if (enabled) {
+        if (clicked) dir = ImGui::GetIO().MousePos.x < p.x + width * 0.5f ? -1 : 1;
+        if (na.step) { dir = na.step; qm_log(std::string("menu: step ") + id + (dir < 0 ? " -1" : " +1")); }
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 q(p.x + width, p.y + h);
@@ -348,6 +357,7 @@ int stepper_row(const char* id, const char* label, const std::string& value, flo
         ui::icon(dl, ui::Icon::ChevronR, ImVec2(q.x - sp(1.9f), vy + vs.y * 0.5f), sp(1.7f), hot ? ui::TEXT : ui::TEXT2);
     }
     if (hot) dl->AddRect(p, q, ui::ACCENT, sp(1.25f), 0, 2.f);
+    if (focused) nav_ring(p, q);
     ImGui::PopID();
     return dir;
 }
@@ -439,12 +449,12 @@ bool qm_is_open() { return g_qm_showing.load(); }   // thread-safe; set at the r
 
 
 void qm_open_live() {
-    if (!A.proc || A.run.key.empty()) return;
+    if (!qm_game_live() || A.run.key.empty()) return;
     if (g_qm_showing.load()) { qm_log("open request ignored: menu already open"); return; }   // View+Y never re-opens / toggles an open menu
     g_retry_n = 0; g_retry_at = 0;   // a Dolphin speed change that gave up is tried again once the menu closes
     g_activity_ms = GetTickCount64();
     qm_log("open request (hub fg=" + std::string(hub_is_foreground() ? "yes" : "no") + " fg=" + qm_describe_window(GetForegroundWindow()) + ")");
-    const hub::GameEntry* e = find_entry(A.run.key);
+    const hub::GameEntry* e = g_e2e ? nullptr : find_entry(A.run.key);
     g_sys = e ? sys_short(*e) : A.run.system_short;
     g_key = A.run.key;
     g_title = e ? e->title : A.run.title;
@@ -484,10 +494,10 @@ void qm_tick() {
     {   // runner input gate: "input off" while the menu is open (refreshed every 10 s: the runner re-enables itself after 30 s), "input on" on close
         static bool sent_off = false;
         static double next_refresh = 0;
-        const bool want_off = g_qm_showing.load() && !g_shot_fake && A.proc && ctl_ready();
+        const bool want_off = g_qm_showing.load() && !g_shot_fake && qm_game_live() && ctl_ready();
         const double now = ImGui::GetTime();
         if (want_off && (!sent_off || now >= next_refresh)) { runctl::Command c; c.cmd = runctl::Cmd::Input; c.value = 0; send_quiet(c); sent_off = true; next_refresh = now + 10.0; }
-        else if (!want_off && sent_off) { sent_off = false; if (A.proc && ctl_ready()) { runctl::Command c; c.cmd = runctl::Cmd::Input; c.value = 1; send_quiet(c); } }
+        else if (!want_off && sent_off) { sent_off = false; if (qm_game_live() && ctl_ready()) { runctl::Command c; c.cmd = runctl::Cmd::Input; c.value = 1; send_quiet(c); } }
     }
     hub::saves::set_backup_screenshots(A.st.backup_shots);
     if (A.proc && !g_shot_fake) {   // evidence: every foreground change near a menu event
@@ -545,6 +555,25 @@ void qm_tick() {
     }
 }
 
+/* While the menu itself owns the input, ImGui's keyboard / gamepad navigation is off (main.cpp calls this before NewFrame), so
+ * nothing in ImGui can activate a button from a pad press: the menu's own controls (qm_nav.h) are the only path. */
+void qm_pre_newframe() {
+    static bool saved = false;
+    static ImGuiConfigFlags saved_flags = 0;
+    constexpr ImGuiConfigFlags kNav = ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+    ImGuiIO& io = ImGui::GetIO();
+    const bool want_off = g_qm_showing.load() && !g_sub_open && !g_shot_fake;
+    if (want_off && !saved) { saved_flags = io.ConfigFlags & kNav; io.ConfigFlags &= ~kNav; saved = true; }
+    else if (!want_off && saved && (g_sub_open || qm_nav_bits(qm_pad_raw()) == 0)) {   // closed: wait until the closing press is up
+        io.ConfigFlags |= saved_flags; saved = false;
+    }
+}
+
+bool qm_game_live() { return A.proc != nullptr || g_e2e; }
+static hubqm::FocusRetry g_focus_retry;
+
+static void qm_body();
+
 void draw_quick_menu() {
     qm_tick();
     if (g_open_req) { g_open_req = false; ImGui::OpenPopup("##quickmenu"); }
@@ -554,35 +583,68 @@ void draw_quick_menu() {
     ImGui::SetNextWindowSize(ImVec2(w, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.5f)));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-    bool open = ImGui::BeginPopupModal("##quickmenu", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
+    bool open = ImGui::BeginPopupModal("##quickmenu", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNav);
     ImGui::PopStyleVar(2);
     static bool was_open = false;
-    static hubqm::FocusRetry focus_retry;
-    if (open && !was_open && !g_shot_fake) { g_open_ms = GetTickCount64(); g_close_why = "other"; focus_retry.reset(); g_wait_release = true; qm_log("menu opened"); }
-    if (open && g_wait_release && !g_shot_fake) {   // swallow all input until everything held at open is released
-        if (any_input_held()) ImGui::GetIO().ClearInputKeys();
-        else { g_wait_release = false; qm_log("inputs released; menu accepts input"); }
+    const uint32_t raw = qm_pad_raw(), taps = qm_pad_take_taps();
+    const uint32_t bits = qm_nav_bits(raw) | qm_keyboard_nav_bits(), tap_bits = qm_nav_bits(taps);
+    if (open && !was_open) {
+        g_open_ms = GetTickCount64(); g_close_why = "other"; g_focus_retry.reset();
+        g_in.open(bits);        // everything held right now (View+Y, A/B from the game) is ignored until released
+        g_nav.reset();
+        g_sub_open = false;
+        if (!g_shot_fake) qm_log("menu opened (held at open: 0x" + [](uint32_t v) { char b[16]; std::snprintf(b, sizeof b, "%x", v); return std::string(b); }(raw) + ")");
     }
-    if (was_open && !open && !g_shot_fake) {
-        qm_log(std::string("menu closed (") + g_close_why + ")");
+    if (was_open && !open) {
+        if (!g_shot_fake) qm_log(std::string("menu closed (") + g_close_why + ")");
         g_activity_ms = GetTickCount64();
         g_qm_showing = false;
-        if (A.proc) dolphin_apply_pending(find_entry(g_key));   // closed this frame (Resume / B / pad combo)
+        g_sub_open = false;
+        hub_menu_topmost(false);
+        if (qm_game_live() && !g_e2e) dolphin_apply_pending(find_entry(g_key));   // closed this frame (Resume / B / pad combo)
     }
     was_open = open;
     g_qm_showing = open && !g_shot_fake;
     if (!open) return;
-    if (!g_shot_fake && !A.proc) { g_close_why = "game ended"; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    if (!g_shot_fake && focus_retry.should_retry(hub_is_foreground(), (long long)GetTickCount64())) {   // bounded: something else (fullscreen Dolphin) took the foreground
-        qm_log("hub is not foreground while the menu is open; re-focusing (try " + std::to_string(focus_retry.tries) + ")");
+    {   // the menu's own controls
+        static bool sub_was = false;
+        hubqm::NavEvents ev;
+        if (g_sub_open) { sub_was = true; qm_pad_take_taps(); }
+        else {
+            if (sub_was) { sub_was = false; g_in.open(bits); }   // the picker just closed: its closing B must not also close the menu
+            ev = g_in.update(bits, (long long)GetTickCount64(), tap_bits);
+        }
+        if (ev.back) qm_log("menu: back");
+        g_nav.begin(ev);
+        g_row_y = 0;
+    }
+    const QPage page_before = g_page;
+    qm_body();
+    {   // something opened over the menu (Invite friends picker): find the menu in the open-popup stack, look above it
+        ImGuiContext& gc = *ImGui::GetCurrentContext();
+        ImGuiWindow* me = ImGui::GetCurrentWindow();
+        int at = -1;
+        for (int i = 0; i < gc.OpenPopupStack.Size; ++i) if (gc.OpenPopupStack[i].Window == me) at = i;
+        const bool sub = at >= 0 && at < gc.OpenPopupStack.Size - 1;
+        if (sub != g_sub_open && !g_shot_fake) qm_log(sub ? "menu: a popup opened over the menu (ImGui nav drives it)" : "menu: popup over the menu closed");
+        g_sub_open = sub;
+    }
+    if (g_page != page_before) { g_nav.rows.clear(); g_nav.building.clear(); g_nav.act = hubqm::NavAction(); }   // new page: its rows come next frame; keep the chosen sel
+    else g_nav.end();
+    ImGui::EndPopup();
+}
+
+static void qm_body() {
+    if (!g_shot_fake && !qm_game_live()) { g_close_why = "game ended"; ImGui::CloseCurrentPopup(); return; }
+    if (!g_shot_fake && !g_e2e && g_focus_retry.should_retry(hub_is_foreground(), (long long)GetTickCount64())) {   // bounded: something else (fullscreen Dolphin) took the foreground
+        qm_log("hub is not foreground while the menu is open; re-focusing");
         focus_hub();
     }
-    bool back = ui::modal_back() && !g_wait_release;
-    if (back && !g_shot_fake && !hubqm::back_allowed((long long)g_open_ms, (long long)GetTickCount64())) { qm_log("B ignored: pressed within 400 ms of opening"); back = false; }
-    if (g_close_req.exchange(false)) { g_close_why = "reset requested"; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); focus_game(); return; }
+    const bool back = g_nav.back;
+    if (g_close_req.exchange(false)) { g_close_why = "reset requested"; ImGui::CloseCurrentPopup(); focus_game(); return; }
     if (back) {
-        if (g_page != QPage::Main) g_page = QPage::Main;
-        else { g_close_why = "B"; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); focus_game(); return; }
+        if (g_page != QPage::Main) { g_nav.sel = g_page == QPage::Save ? "Save state" : "Load state"; g_page = QPage::Main; }
+        else { g_close_why = "B"; ImGui::CloseCurrentPopup(); focus_game(); return; }
     }
     check_ack();
 
@@ -593,7 +655,6 @@ void draw_quick_menu() {
 
     if (g_page != QPage::Main) {
         slot_page(g_page == QPage::Save);
-        ImGui::EndPopup();
         return;
     }
     ImGui::PushFont(ui::F.title);
@@ -609,7 +670,6 @@ void draw_quick_menu() {
         ImGui::PopStyleColor();
     }
     if (menu_button("Resume", true, ui::Icon::Play, true)) { g_close_why = "Resume"; ImGui::CloseCurrentPopup(); focus_game(); }
-    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
     if (ctl || ext) {   // Speed (built-in runners, offline), Volume + Mute (everything; local only, so online too)
         const float fw = ImGui::GetContentRegionAvail().x;
         const bool can_speed = hubqm::speed_available(ctl, online);
@@ -629,8 +689,8 @@ void draw_quick_menu() {
             const auto row = hubqm::speed_row(false, dol, online, true);
             if (row == hubqm::SpeedRow::Enabled) {
                 int d = stepper_row("speed", "Speed", hubqm::dolphin_speed_text(g_speed_idx), -1.f, true, fw);
-                if (d) g_speed_idx = hubqm::dolphin_speed_step(g_speed_idx, d);   // applied when the menu closes (keys need Dolphin in front)
-                if (g_speed_idx != hubqm::dolphin_idx(g_dolphin)) text_wrapped_disabled("Applies when you resume.");
+                if (d) g_speed_idx = hubqm::dolphin_speed_step(g_speed_idx, d);   // DSU pad: applied at once (qm_tick); keyboard fallback: when the menu closes
+                if (g_speed_idx != hubqm::dolphin_idx(g_dolphin)) text_wrapped_disabled(dolphin_speed_running() ? "Changing Dolphin's speed..." : "Applies when you resume.");
             } else {
                 stepper_row("speed", "Speed", "1x", -1.f, false, fw);
                 if (row == hubqm::SpeedRow::Online) text_wrapped_disabled("Not available online: everyone has to stay in step.");
@@ -654,8 +714,8 @@ void draw_quick_menu() {
         if (ext && g_ext_sessions == 0 && !g_shot_fake) text_wrapped_disabled("The game has not started its sound yet.");
     }
     if (ctl) {
-        if (menu_button("Save state", !online, ui::Icon::Check)) g_page = QPage::Save;
-        if (menu_button("Load state", !online, ui::Icon::Refresh)) g_page = QPage::Load;
+        if (menu_button("Save state", !online, ui::Icon::Check)) { g_page = QPage::Save; g_nav.sel.clear(); }
+        if (menu_button("Load state", !online, ui::Icon::Refresh)) { g_page = QPage::Load; g_nav.sel.clear(); }
         if (online) text_wrapped_disabled("Save states are off in online games: everyone has to stay in step.");
         if (menu_button("Take a screenshot", true, ui::Icon::Search)) send(runctl::Cmd::Screenshot, 0, "Screenshot saved", true);
     } else if (ext) {   // Dolphin, Cemu, Azahar, PCSX2: capture the emulator's window into the vault's shots folder
@@ -677,17 +737,25 @@ void draw_quick_menu() {
     if (!g_shot_fake && e && e->system == hub::System::PS1 && ps1_swap_available(e->key)) {
         if (menu_button("Swap disc", true, ui::Icon::Refresh)) { ps1_swap_disc(e->key); push_toast("Swapping to the next disc", COL_GOOD, 3.0); ImGui::CloseCurrentPopup(); focus_game(); }
     }
-    if (g_shot_fake || fr_in_my_room()) fr_invite_button_and_picker(ImGui::GetContentRegionAvail().x, sp(6.5f));
+    if (g_shot_fake || fr_in_my_room()) {   // the picker is a popup over the menu; while it is open ImGui's nav drives it (g_sub_open)
+        const bool can = fr_in_my_room();
+        const hubqm::NavAction a = g_nav.add("Invite friends", false, can, 0, g_row_y++);
+        if (a.activate) { FR.open_picker = true; qm_log("menu: activate \"Invite friends\""); }
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        const float iw = ImGui::GetContentRegionAvail().x;
+        fr_invite_button_and_picker(iw, sp(6.5f));
+        if (g_nav.selected("Invite friends")) nav_ring(p, p + ImVec2(iw, sp(6.5f)));
+    }
     if (menu_button("Quit to RetroHub", true, ui::Icon::Close)) {
         g_speed_idx = hubqm::dolphin_idx(g_dolphin);   // Dolphin: quitting never sends speed keys (a pending change is dropped); the next game starts at 1x anyway
         g_close_why = "Quit";
-        if (!g_shot_fake) { if (ctl_ready()) runctl::send_command(A.run.ctl_path, runctl::Cmd::Quit, 0); else request_game_close(); }
+        if (g_e2e) g_e2e_cmds.push_back("quit");
+        else if (!g_shot_fake) { if (ctl_ready()) runctl::send_command(A.run.ctl_path, runctl::Cmd::Quit, 0); else request_game_close(); }
         ImGui::CloseCurrentPopup();
     }
     ImGui::PopStyleVar();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     ImGui::TextDisabled("Press B to go back to the game.");
-    ImGui::EndPopup();
 }
 
 /* ---------------- screenshots gallery (game details modal) ---------------- */
@@ -789,4 +857,22 @@ void qm_seed_gallery(const hub::GameEntry& e) {
         SDL_SaveBMP(s, (dir + nm).c_str());
         SDL_FreeSurface(s);
     }
+}
+
+/* ---------------- headless end-to-end test hooks (qm_e2e.cpp) ---------------- */
+void qm_e2e_enable() {
+    g_e2e = true;
+    A.run.key = "n64:e2e"; A.run.title = "E2E stand-in"; A.run.system_short = "n64"; A.run.online = false;
+}
+QmE2EState qm_e2e_state() {
+    QmE2EState st;
+    st.open = g_qm_showing.load();
+    st.page = g_page == QPage::Main ? 0 : g_page == QPage::Save ? 1 : 2;
+    st.sel = g_nav.sel;
+    st.speed_idx = g_speed_idx;
+    st.vol = g_vol;
+    st.mute = g_mute;
+    st.close_why = g_close_why;
+    st.cmds = g_e2e_cmds;
+    return st;
 }

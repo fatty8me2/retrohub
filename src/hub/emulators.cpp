@@ -879,8 +879,40 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
 
 /* Hotkeys.ini: the two emulation-speed hotkeys on Ctrl+Shift+F13 / F14 (keys nobody presses), which the Game menu's Speed row
  * sends after focusing Dolphin. Other lines (the user's own hotkeys) are kept. */
+/* Dolphin.ini sets HotkeysRequireFocus = False (the speed pad must work without focus). In Dolphin 2509 that one switch opens the focus
+ * gate for EVERY hotkey (DolphinQt/HotkeyScheduler.cpp: Core::UpdateInputGate(MAIN_FOCUSED_HOTKEYS) before all of them), and its
+ * keyboard backend reads keys globally: a default binding such as Stop = Escape or Toggle Pause = F10 would fire while the user types in
+ * another app. So every other hotkey in RetroHub's own Dolphin is unbound; the quick menu covers stop / pause / states. */
+static std::string blank_other_hotkeys(const std::string& in) {
+    std::string out, line;
+    bool in_hk = false;
+    size_t i = 0;
+    while (i <= in.size()) {
+        size_t nl = in.find('\n', i);
+        line = in.substr(i, nl == std::string::npos ? std::string::npos : nl - i);
+        std::string tl = line;
+        while (!tl.empty() && (tl.back() == '\r' || tl.back() == ' ')) tl.pop_back();
+        size_t a = tl.find_first_not_of(" \t");
+        if (a != std::string::npos && tl[a] == '[') in_hk = tl.substr(a) == "[Hotkeys]";
+        else if (in_hk && a != std::string::npos && tl[a] != ';' && tl[a] != '#') {
+            size_t eq = tl.find('=');
+            if (eq != std::string::npos) {
+                std::string key = tl.substr(a, eq - a), val = tl.substr(eq + 1);
+                while (!key.empty() && key.back() == ' ') key.pop_back();
+                const bool ours = key == "Device" || key == hubqm::dolphin_hotkey_name(hubqm::DolphinKey::Increase) || key == hubqm::dolphin_hotkey_name(hubqm::DolphinKey::Decrease);
+                if (!ours && val.find_first_not_of(" ") != std::string::npos) line = key + " = ";
+            }
+        }
+        out += line;
+        if (nl == std::string::npos) break;
+        out += '\n';
+        i = nl + 1;
+    }
+    return out;
+}
+
 std::string dolphin_hotkeys_ini(const std::string& in) {
-    std::string t = in;
+    std::string t = blank_other_hotkeys(in);
     if (hubui::ini_get(t, "Hotkeys", "Device").empty()) t = hubui::ini_set(t, "Hotkeys", "Device", "DInput/0/Keyboard Mouse");
     for (auto k : {hubqm::DolphinKey::Increase, hubqm::DolphinKey::Decrease})
         t = hubui::ini_set(t, "Hotkeys", hubqm::dolphin_hotkey_name(k), hubds::hotkey_expr(k));   // DSU pad button | Ctrl+Shift+F13/F14

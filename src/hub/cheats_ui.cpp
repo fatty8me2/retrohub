@@ -1,4 +1,5 @@
 #include "app.h"
+#include "qm_pad.h"
 #include "qm_logic.h"
 
 #include <xinput.h>
@@ -347,18 +348,11 @@ void cheats_pad_watch() {
     static hubqm::OpenGate gate;
     static hubqm::HoldGate reset_hold;
     bool down = false, reset = false;
-    if (A.proc && !g_headless && !A.run.key.empty()) {
-        for (DWORD i = 0; i < 4; ++i) {
-            XINPUT_STATE xs{};
-            if (XInputGetState(i, &xs) != ERROR_SUCCESS) continue;
-            const WORD b = xs.Gamepad.wButtons;
-            if ((b & XINPUT_GAMEPAD_BACK) && (b & XINPUT_GAMEPAD_Y)) down = true;
-            if ((b & XINPUT_GAMEPAD_BACK) && (b & XINPUT_GAMEPAD_LEFT_SHOULDER) && !(b & XINPUT_GAMEPAD_Y)) reset = true;
-        }
-        for (auto* c : A.pads) {
-            if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK) && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_Y)) down = true;
-            if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK) && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_LEFTSHOULDER) && !SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_Y)) reset = true;
-        }
+    if (qm_game_live() && (!g_headless || qm_e2e_active()) && !A.run.key.empty()) {   // pads read directly (qm_pad.cpp): works with any window in front
+        const uint32_t m = qm_pad_raw();
+        auto has = [&](int b) { return ((m >> b) & 1u) != 0; };
+        down = has(SDL_CONTROLLER_BUTTON_BACK) && has(SDL_CONTROLLER_BUTTON_Y);
+        reset = has(SDL_CONTROLLER_BUTTON_BACK) && has(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) && !has(SDL_CONTROLLER_BUTTON_Y);
     }
     const long long now = (long long)GetTickCount64();
     if (gate.update(down, qm_is_open(), now)) { qm_log("pad combo View+Y: open"); qm_open_live(); }
