@@ -120,7 +120,13 @@ struct ShelfState {
     int frame = -100;                           // frame this row was last drawn
 };
 
-struct ChatLine { std::string who, text; };
+struct RoomProf { std::string avatar, game, status; };   // a room member's tiny profile (kind "prof")
+struct ChatLine {
+    std::string who, text;
+    int slot = -1;                          // sender slot (-1 = system line)
+    int seq = 0;                            // sender-side line number (0 = old client: cannot be reacted to)
+    std::map<std::string, std::string> rx;  // reactor name -> reaction code (common/profile.h)
+};
 
 /* The game currently running as a child process. */
 struct RunInfo {
@@ -280,6 +286,8 @@ struct App {
     std::string pending_room_game;   // preselect when hosting from the library
     int launch_counter = 0;
     std::vector<ChatLine> chat;
+    int chat_seq = 0;                                       // my own chat line counter (reaction target)
+    std::map<int, RoomProf> room_prof;                      // slot -> that member's tiny profile
     char chat_buf[256] = {0};
     bool chat_scroll = false;
 

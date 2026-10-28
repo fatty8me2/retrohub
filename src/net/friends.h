@@ -47,6 +47,7 @@ struct Status {
     bool joinable = false;
     int players = 0, max_players = 0;
     int64_t updated = 0;
+    std::string prof_avatar, prof_game, prof_status;   // tiny public profile (see common/profile.h); empty = unset
 };
 
 struct Friend {
@@ -74,6 +75,8 @@ struct Message {
     Invite inv;
     int64_t at = 0;
     bool mine = false;        // from == my uid
+    bool react = false;       // kind == "react": a reaction to message `target` (never stored as a line)
+    std::string target, emoji; bool on = true;
 };
 
 struct Event {
@@ -86,6 +89,7 @@ struct Event {
                 UsernameChanged,
                 AskReceived,      // a friend asks to join our game: uid, name, invite = the game they are in
                 WatchedOnline,    // a friend you opted in to ("Notify me when they come online") went offline -> online: uid, name
+                ReactionReceived, // a friend reacted to a DM line: uid, msg.target / msg.emoji / msg.on
                 AskResult };      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
@@ -192,6 +196,7 @@ class FriendsClient {
     void block(const std::string& uid);
     void unblock(const std::string& uid);
     void send_message(const std::string& uid, const std::string& text);
+    void send_reaction(const std::string& uid, const std::string& target_id, const std::string& emoji, bool on);
     void send_invite(const std::vector<std::string>& uids, const Invite& inv);
     void ack(const std::vector<std::string>& ids);
     /* "Ask to join": tells friend `uid` we would like an invite to the game they are in. The Worker rate limits it (1 per target per minute). */

@@ -109,3 +109,6 @@ target_link_libraries(osd_test PRIVATE hubbase)
 # Synced account prefs: JSON, field-wise merge with per-field timestamps, library favorites mirror (scratch dirs).
 add_executable(prefs_test test_prefs.cpp)
 target_link_libraries(prefs_test PRIVATE hubcommon)
+
+add_executable(profile_test test_profile.cpp)
+target_link_libraries(profile_test PRIVATE hubcommon)
