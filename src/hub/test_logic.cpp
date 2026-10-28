@@ -495,6 +495,13 @@ int main() {
         CHECK(normalize_friend_code("").empty() && normalize_friend_code("RH-7KQ2-M9X").empty() && normalize_friend_code("RH-7KQ!-M9XD").empty());
         CHECK(!invite_expired(5000, 4999) && invite_expired(5000, 5000) && !invite_expired(0, 99999));
         CHECK(invite_seconds_left(5000, 4000) == 1 && invite_seconds_left(5000, 5000) == 0 && invite_seconds_left(31000, 1000) == 30);
+        {   // Watch: a friend in a lobby/launched game with a known code+game, not in our room
+            FriendRow w; w.state = FS_InGame;
+            CHECK(friend_can_watch(w, true) && !friend_can_watch(w, false));
+            w.state = FS_InLobby; CHECK(friend_can_watch(w, true));
+            w.state = FS_Online; CHECK(!friend_can_watch(w, true));
+            w.state = FS_InGame; w.in_my_room = true; CHECK(!friend_can_watch(w, true));
+        }
         CHECK(lobby_joinable(2, 4, false) && !lobby_joinable(4, 4, false) && !lobby_joinable(2, 4, true) && !lobby_joinable(0, 4, false));
         {   // join while the friend's game runs (room kept in presence)
             FriendRow ig = row("h", "Hal", FS_InGame, true, 5, "Smash", 2, 4), full = row("i", "Ivy", FS_InGame, false, 5, "Smash", 4, 4);

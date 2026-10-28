@@ -1,7 +1,7 @@
 # n64run: mupen64plus frontend + in-exe input plugin + lockstep netplay.
 
 # Emulator-independent, network-independent lockstep scheduling (unit tested).
-add_library(n64run_lockstep_core STATIC lockstep_core.cpp)
+add_library(n64run_lockstep_core STATIC lockstep_core.cpp spectate.cpp)
 target_include_directories(n64run_lockstep_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(n64run_lockstep_core PUBLIC cxx_std_17)
 
@@ -66,3 +66,7 @@ target_compile_features(n64run_gs_cheat_test PRIVATE cxx_std_17)
 # Mid-match guest drop: cutoff agreement + LockstepCore neutralisation.
 add_executable(n64run_dropagree_test test_dropagree.cpp)
 target_link_libraries(n64run_dropagree_test PRIVATE n64run_lockstep_core)
+
+# Spectating: confirmed-input stream host -> port-less spectator (pure logic, lossy-link test).
+add_executable(n64run_spectate_test test_spectate.cpp)
+target_link_libraries(n64run_spectate_test PRIVATE n64run_lockstep_core)

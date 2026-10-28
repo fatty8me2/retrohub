@@ -344,11 +344,13 @@ void Engine::advance_confirmed() {
         int64_t f = roll_next_++;
         if (trace_ && net_.log) { char b[120]; snprintf(b, sizeof b, "T %lld %016llx %04x %04x", (long long)f, (unsigned long long)fsum_[f % kFrRing], (unsigned)used_[f % kFrRing][0], (unsigned)used_[f % kFrRing][1]); net_.log(b); }
         roll_out_ = (roll_out_ ^ fsum_[f % kFrRing]) * kFnvPrime;
+        if (confirmed_sink_) confirmed_sink_((uint32_t)f, used_[f % kFrRing]);
         for (int p = 0; p < kPorts; p++) roll_in_ = (roll_in_ ^ used_[f % kFrRing][p]) * kFnvPrime;
         if (cfg_.hash_interval > 0 && (f + 1) % cfg_.hash_interval == 0) {
             if (cfg_.use_state_hash) pending_h_.push_back((uint32_t)(f + 1));
             else {
                 my_h_.push_back({(uint32_t)(f + 1), roll_out_});
+                if (hash_sink_) hash_sink_((uint32_t)(f + 1), roll_out_);
                 if (my_h_.size() > 16) my_h_.pop_front();
                 for (int s = 0; s < 8; s++)
                     for (auto& e : peer_h_[s]) if (e.frame == f + 1) { HEnt copy = e; compare_hash(s, copy.frame, copy.h); }

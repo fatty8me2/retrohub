@@ -192,6 +192,7 @@ add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
 add_test(NAME stream_core_test COMMAND stream_core_test)            # remote play: packetizer, FEC, NACK, jitter buffer, codecs, bitrate
 add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
+add_test(NAME n64run_spectate_test COMMAND n64run_spectate_test)
 add_test(NAME n64run_dropagree_test COMMAND n64run_dropagree_test)
 add_test(NAME n64run_match_test COMMAND n64run_match_test)
 add_test(NAME n64run_gs_cheat_test COMMAND n64run_gs_cheat_test)

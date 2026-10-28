@@ -741,6 +741,14 @@ void send_rules();
 void leave_room();
 void enter_room(bool host, const std::string& code);
 void rejoin_room();   // reconnect to the room we were in (same code and role) after the connection was lost
+/* Spectate (spectate_ui.cpp): watch a friend's room as a port-less spectator. Start from the friends list; the game process is n64run /
+ * retrorun with --spectate. g_spectate_launch / g_spectate_code are set only while launch_online() builds the spectator's command line. */
+extern bool g_spectate_launch;
+extern std::string g_spectate_code;
+bool spectate_supported(const hub::GameEntry& e);   // N64 (not native Smash), GB/GBC/GBA (no link cable), NES, SNES
+void spectate_start(const std::string& code, const std::string& game_id, const std::string& title, const std::string& friend_name);
+void spectate_tick();
+bool spectate_pending();
 void launch_fail(const std::string& why, double secs = 8.0);   // guest couldn't start the host's launch: notice + np_fail to the host
 std::string ready_block_reason_now();   // "" or why the guest's "I'm ready" must stay disabled (version mismatch)
 bool is_host();

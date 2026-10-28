@@ -45,6 +45,9 @@ class LobbyClient {
     ~LobbyClient();
     /* role_host: create room `code`; otherwise join it. */
     bool start(const std::string& server, const std::string& code, bool role_host, const std::string& name);
+    /* Spectator seat in a lobby room (role=watch): not a member (never in members()), receives the room's `msg` events and, on
+     * joining, the host's last launch message with "watch":true. Refused with spectators-full / spectate-busy / no-such-room. */
+    bool start_watch(const std::string& server, const std::string& code, const std::string& name);
     void stop();
     void update();
     /* Optional "ident" frame (account uid + secret) sent right after every welcome so the room can auto-friend
@@ -67,6 +70,7 @@ class LobbyClient {
     void inject_server_text(const std::string& text);
 
   private:
+    bool start_impl(const std::string& server, const std::string& code, bool role_host, const std::string& name, bool watch);
     bool handle_text(const std::string& text);
     void update_tail();
     struct Impl;
@@ -79,6 +83,7 @@ struct SessionConfig {
     int slot = 0;         // my slot (0 = host)
     int expected = 2;     // number of PCs in the session (slots may be sparse, e.g. {0,2})
     uint32_t ready_timeout_ms = 0;   // 0 = default (15 s): how long to wait for everyone before failing
+    bool spectate = false;           // join as a port-less spectator (role=watch): the server picks the slot, we only talk to the host
     uint32_t silence_fail_ms = 0;    // 0 = default (10 s): guest gives up when the host is silent this long after ready
 };
 
@@ -102,6 +107,10 @@ class Session {
     bool is_relayed(int slot) const;
     int ping_ms(int slot) const; // -1 unknown
     int my_slot() const;
+    /* Slots currently held by spectators (the server marks them in `members`). They never count as players: not in ready(),
+     * not reached by send(-1), and their bye / departure does not end the session. */
+    uint32_t spectator_mask() const;
+    bool is_spectator() const;
 
     /* RTT samples since the last clear (last 32), for the auto input delay. */
     bool ping_stats(int slot, PingStats* out) const;

@@ -101,6 +101,8 @@ struct Session::Impl {
     std::string status = "idle";
     uint32_t start_ms = 0;
     int slot = 0;
+    uint32_t spec_mask = 0;    // slots the server flagged as spectators
+    bool spectator = false;    // this end is a spectator
 
     UdpSocket udp;
     Stun stun;
@@ -191,7 +193,7 @@ struct Session::Impl {
 
     void connect_ws()
     {
-        std::string url = hub_url(cfg.server, cfg.room, is_host(), "n64run", slot) + "&caps=reasons";
+        std::string url = hub_url(cfg.server, cfg.room, is_host(), "n64run", slot, spectator) + "&caps=reasons";
         net_log("Session: connecting %s", url.c_str());
         ws.connect(url);
         welcomed = false;
@@ -304,7 +306,7 @@ struct Session::Impl {
         case 'B':
             bye_from[path] = true;
             if (departing && path == 0) end_clean(0);
-            else if (is_host()) end_clean(path);   // a guest signed off: the room session is over
+            else if (is_host() && !(spec_mask >> path & 1u)) end_clean(path);   // a guest signed off: the room session is over
             break;
         case 'H':
             if (via_relay) send_relay(path, reply('A'), 2);
@@ -342,7 +344,7 @@ struct Session::Impl {
         case 'R':
             if (n >= 3 && !is_host() && path == 0) {
                 roster_mask = d[2];
-                if ((roster_mask & (1u << slot)) && popcount(roster_mask) >= cfg.expected && !ready_ever) {
+                if ((roster_mask & (1u << slot)) && popcount(roster_mask) >= (spectator ? 2 : cfg.expected) && !ready_ever) {
                     ready_ever = true;
                     net_log("Session %d: ready (roster %02x)", slot, roster_mask);
                 }
@@ -358,6 +360,7 @@ struct Session::Impl {
                     // forward to the other client(s)
                     for (int s = 1; s < kMaxSlots; s++) {
                         if (s == from || !peers[s].present) continue;
+                        if (to == 0xFF && (spec_mask >> s & 1u)) continue;
                         if (to == 0xFF || to == s) send_raw(s, d, n, now);
                     }
                 }
@@ -393,11 +396,17 @@ struct Session::Impl {
             net_log("Session %d: welcome room %s", slot, j.str("room").c_str());
         } else if (type == "members") {
             bool seen[kMaxSlots] = {};
+            uint32_t sm = 0;
             if (const Json* a = j.get("members"))
                 for (const Json& m : a->a) {
                     int s = (int)m.i64("slot", -1);
-                    if (s >= 0 && s < kMaxSlots) seen[s] = true;
+                    if (s >= 0 && s < kMaxSlots) {
+                        seen[s] = true;
+                        const Json* sp = m.get("spec");
+                        if (sp && sp->type == Json::Bool && sp->b) sm |= 1u << s;
+                    }
                 }
+            spec_mask = sm & ~(1u << slot);
             for (int s = 0; s < kMaxSlots; s++) {
                 if (s == slot) continue;
                 if (seen[s] && !peers[s].present) {
@@ -437,6 +446,8 @@ struct Session::Impl {
             if (reason == "room-in-use") fail("Room code already in use");
             else if (reason == "room-full") fail("Room is full or slot taken");
             else if (reason == "bad-slot") fail("That player slot is already taken");
+            else if (reason == "spectators-full") fail("This room already has the maximum number of spectators");
+            else if (reason == "spectate-busy") fail("Spectating is paused: the server is busy, try again later");
             else if (reason == "host-left-game") fail("The host left - game over");
             else fail(reason);
         }
@@ -560,9 +571,9 @@ struct Session::Impl {
         for (int s = 0; s < kMaxSlots; s++) tick_peer(s, now);
 
         if (is_host()) {
-            unsigned mask = 1;
+            unsigned mask = 1, smask = 0;
             for (int s = 1; s < kMaxSlots; s++)
-                if (peers[s].present && reachable(s, now)) mask |= 1u << s;
+                if (peers[s].present && reachable(s, now)) { if (spec_mask >> s & 1u) smask |= 1u << s; else mask |= 1u << s; }
             roster_mask = mask;
             if (!ready_ever && popcount(mask) >= cfg.expected) {
                 ready_ever = true;
@@ -570,9 +581,9 @@ struct Session::Impl {
             }
             for (int s = 1; s < kMaxSlots; s++) {
                 Peer& p = peers[s];
-                if (!(mask & (1u << s)) || now - p.last_roster < kRosterMs) continue;
+                if (!((mask | smask) & (1u << s)) || now - p.last_roster < kRosterMs) continue;
                 p.last_roster = now;
-                uint8_t r = (uint8_t)mask;
+                uint8_t r = (uint8_t)(mask | (s == 0 ? 0 : (smask & (1u << s))));   // a spectator's roster shows the players plus itself
                 send_ctl(s, 'R', now, &r, 1);
             }
         }
@@ -609,8 +620,11 @@ bool Session::start(const SessionConfig& cfg)
     Impl& d = *impl_;
     d.cfg = cfg;
     if (d.cfg.server.empty()) d.cfg.server = default_server();
+    if (cfg.spectate && cfg.slot == 0) return false;
     if (cfg.slot < 0 || cfg.slot >= kMaxSlots || cfg.expected < 1 || cfg.expected > kMaxSlots) return false;
     d.slot = cfg.slot;
+    d.spectator = cfg.spectate && cfg.slot != 0;
+    d.spec_mask = 0;
     d.failed = d.ready_ever = d.welcomed = d.endpoint_sent = d.ws_retrying = false;
     d.inbox.clear();
     for (Peer& p : d.peers) p = Peer();
@@ -672,6 +686,8 @@ void Session::say_bye()
 }
 std::string Session::status() const { return impl_->status; }
 int Session::my_slot() const { return impl_->slot; }
+uint32_t Session::spectator_mask() const { return impl_->spec_mask; }
+bool Session::is_spectator() const { return impl_->spectator; }
 
 bool Session::is_relayed(int slot) const
 {
@@ -725,12 +741,12 @@ void Session::send(int to_slot, const void* data, int len)
     pkt[1] = (uint8_t)d.slot;
     if (len) memcpy(pkt + 3, data, len);
     if (d.is_host()) {
-        if (to_slot < 0) {
+        if (to_slot < 0) {   // broadcast reaches the players only; spectators get dedicated packets (to_slot >= 0)
             /* Broadcast with every present client reachable only through the relay: ONE relay frame to slot 0xFF (the lobby fans it out) instead of a copy per client. */
             int n = 0;
             bool all_relay = true;
             for (int s = 1; s < kMaxSlots; s++) {
-                if (!d.peers[s].present) continue;
+                if (!d.peers[s].present || (d.spec_mask >> s & 1u)) continue;
                 n++;
                 if (d.direct_fresh(d.peers[s], now) || !d.peers[s].relay_active) all_relay = false;
             }
@@ -742,9 +758,13 @@ void Session::send(int to_slot, const void* data, int len)
         }
         for (int s = 1; s < kMaxSlots; s++) {
             if (!d.peers[s].present || (to_slot >= 0 && to_slot != s)) continue;
+            if (to_slot < 0 && (d.spec_mask >> s & 1u)) continue;
             pkt[2] = (to_slot < 0) ? 0xFF : (uint8_t)s;
             d.send_raw(s, pkt, 3 + len, now);
         }
+    } else if (d.spectator) {
+        pkt[2] = 0;   // a spectator talks to the host only (the server drops anything else)
+        d.send_raw(0, pkt, 3 + len, now);
     } else {
         if (to_slot < 0 && popcount(d.roster_mask) >= 3 && !d.direct_fresh(d.peers[0], now) && d.peers[0].relay_active) {
             /* Broadcast over the relay with 3+ PCs: ONE frame to everybody (the lobby fans it out) instead of one to the host that the host forwards twice. */
