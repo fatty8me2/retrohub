@@ -73,6 +73,7 @@ struct Args {
     bool share_host_save = false; // --share-host-save: lockstep session boots from the host's save (+ clock) on every PC
     bool link = false;            // two linked Game Boys in one SameBoy instance (see docs/RETRORUN.md)
     std::string link_roms;        // optional "romP0,romP1" (default: --rom for both)
+    bool realtime = false;      // --realtime (with --headless): pace like a real game (timer, honours runner_ctl speed) instead of running uncapped; QA
     bool list_opts = false, headless = false, fullscreen = false, resume = false, fuzz = false, selftest = false;
     double stylus_u = -1, stylus_v = -1;   // headless DS test: hold the stylus down at this fraction of the frame
     int frames = -1, scale = 3, slot = 0, players = 1, delay = -1;   // delay -1 = auto
@@ -186,6 +187,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--rewind-selftest") { if (!val(&v) || sscanf(v.c_str(), "%d,%d", &o->selftest_rewind_frames, &o->selftest_rewind_back) != 2) return false; }
         else if (k == "--runahead-selftest") { if (!val(&v)) return false; o->selftest_runahead_frames = atoi(v.c_str()); }
         else if (k == "--headless") o->headless = true;
+        else if (k == "--realtime") o->realtime = true;
         else if (k == "--fullscreen") o->fullscreen = true;
         else if (k == "--resume") o->resume = true;
         else if (k == "--load-state") { if (!val(&o->load_state_path)) return false; }
@@ -1456,9 +1458,11 @@ void Frontend::ctl_poll() {
                 osd::push(c.value ? "Muted" : "Sound on");
                 ctl_.ack(true, c.value ? "muted" : "unmuted");
             } else if (c.cmd == runctl::Cmd::Ff) {
+                boost_active_ = false;   // a menu choice made while View+RT is held wins: releasing the boost must not drop it back to 1x
                 apply_speed(c.value ? fast_speed_ : 1.0);
                 ctl_.ack(true, c.value ? "fast-forward on" : "fast-forward off");
             } else if (c.cmd == runctl::Cmd::Speed) {
+                boost_active_ = false;
                 apply_speed(c.speed);
                 ctl_.ack(true, runctl::speed_label(c.speed));
             } else if (c.cmd == runctl::Cmd::Shader) {
@@ -2059,8 +2063,8 @@ bool Frontend::setup_link() {
 /* ------------------------------------------------------------------ main loop */
 
 void Frontend::do_pacing() {
-    if (ff || (a.headless && !a.ds_link && !rbe)) return;
-    switch (speed != 1.0 ? Pace::Timer : pace) {   // a changed speed paces by timer (vsync/audio pacing are tied to 1x)
+    if (ff || (a.headless && !a.realtime && !a.ds_link && !rbe)) return;
+    switch ((speed != 1.0 || a.headless) ? Pace::Timer : pace) {   // a changed speed paces by timer (vsync/audio pacing are tied to 1x)
         case Pace::Audio:
             while (audio.fill() > audio.target() && !quit) {
                 SDL_Delay(1);
@@ -2616,7 +2620,7 @@ int Frontend::run(const Args& args) {
         if (!online && a.net.empty() && !a.ds_link && !link && !is_ps2) feat_ = make_feat(!a.headless);
         else if (a.rewind_mode == 1 || a.runahead != 0) rlog("rewind / run-ahead are offline only: ignored here");
         {
-            uint64_t t_start = SDL_GetTicks64();
+            uint64_t t_start = SDL_GetTicks64(), last_fstat = 0;
             for (;;) {
                 if (quit) break;
                 if (a.frames >= 0 && frame_no >= (uint64_t)a.frames) break;
@@ -2667,6 +2671,10 @@ int Frontend::run(const Args& args) {
                 }
                 fold_frame();
                 frame_no++;
+                if (a.headless && a.realtime) {   // QA (qa\speed_headless.ps1): frame counter against wall time, ~every 250 ms
+                    uint64_t tk = SDL_GetTicks64();
+                    if (tk - last_fstat >= 250) { last_fstat = tk; rlog("fstat: frames %llu ms %llu speed %g%s", (unsigned long long)frame_no, (unsigned long long)tk, speed, speed_max ? " max" : ""); }
+                }
                 if (hashlog_n && frame_no % hashlog_n == 0) rlog("HASHLOG frame %llu state %016llx out %016llx video %016llx", (unsigned long long)frame_no, (unsigned long long)state_hash(), (unsigned long long)out_hash, (unsigned long long)(core.frame().px.empty() ? 0 : n64run::hash_block(core.frame().px.data(), core.frame().px.size() * 4)));
 
                 if (!a.headless && (!ff || (frame_no & 7) == 0) && (speed <= 1.0 || frame_no % (uint64_t)std::ceil(speed) == 0)) present();

@@ -481,10 +481,11 @@ static void n64_apply_start_volume() {   // once, from the first frame callback 
     done = true;
     if (g_start_volume != 100) { int v = g_start_volume; g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_VOLUME, &v); }
 }
+static bool g_boost_active = false;
+static double g_menu_speed = 1.0;   // the speed the hub menu chose (0 = max); the boost only rides on 1x and gives it back on release
 static void n64_boost_tick(bool held) {
-    static bool active = false;
-    if (held && !active) { active = true; set_speed(g_fast_speed); }
-    else if (!held && active) { active = false; set_speed(1.0); }
+    if (held && !g_boost_active) { if (g_menu_speed == 1.0) { g_boost_active = true; set_speed(g_fast_speed); } }
+    else if (!held && g_boost_active) { g_boost_active = false; set_speed(g_menu_speed); }
 }
 
 static void ctl_tick() {
@@ -588,6 +589,7 @@ static void ctl_tick() {
                 g_ctl.ack(true, m ? "muted" : "unmuted");
             } else if (c.cmd == runctl::Cmd::Ff || c.cmd == runctl::Cmd::Speed) {
                 double sp = c.cmd == runctl::Cmd::Speed ? c.speed : (c.value ? g_fast_speed : 1.0);
+                g_menu_speed = sp; g_boost_active = false;   // a menu choice made while View+RT is held wins over the boost
                 set_speed(sp);
                 g_ctl.ack(true, runctl::speed_label(sp));
             } else {

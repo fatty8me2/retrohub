@@ -251,7 +251,7 @@ bool Poller::poll(uint64_t now_ms, Command* out, uint64_t interval_ms) {
     stamp_ = s;
     std::string t;
     Command c;
-    if (!read_text(path_, &t) || !parse_control(t, &c)) return false;
+    if (!read_text(path_, &t) || !parse_control(t, &c)) { stamp_.clear(); return false; }   // mid-write / locked: look again next poll, don't drop the command
     if (c.seq <= last_) return false;
     last_ = pending_ = c.seq;
     if (out) *out = c;
