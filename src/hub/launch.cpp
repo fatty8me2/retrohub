@@ -183,6 +183,8 @@ static BOOL CALLBACK close_cb(HWND h, LPARAM lp) {
 /* Reliable foreground for a USER-requested raise (View+Y open / close). The foreground lock is bypassed by attaching to the current
  * foreground thread's input queue plus the Alt-key trick; verified with GetForegroundWindow and retried briefly (<= ~200 ms). */
 static bool force_foreground(HWND target) {
+    const HWND before = GetForegroundWindow();
+    struct Log { HWND t, b; ~Log() { qm_log(std::string("force_foreground target=") + (t == A.hwnd ? "hub" : "game") + " before=" + qm_describe_window(b) + " after=" + qm_describe_window(GetForegroundWindow())); } } log_guard{target, before};
     for (int attempt = 0; attempt < 5; ++attempt) {
         if (GetForegroundWindow() == target) return true;
         HWND fg = GetForegroundWindow();
@@ -198,6 +200,20 @@ static bool force_foreground(HWND target) {
     }
     return GetForegroundWindow() == target;
 }
+
+std::string qm_describe_window(void* hw) {
+    HWND h = (HWND)hw;
+    if (!h) return "none";
+    char cls[64] = "?", title[80] = "";
+    GetClassNameA(h, cls, sizeof cls);
+    GetWindowTextA(h, title, sizeof title);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    char buf[256];
+    std::snprintf(buf, sizeof buf, "%p[pid %lu %s \"%s\"%s]", (void*)h, (unsigned long)pid, cls, title, h == A.hwnd ? " HUB" : "");
+    return buf;
+}
+bool hub_is_foreground() { return A.hwnd && GetForegroundWindow() == A.hwnd; }
 
 void focus_hub() {
     if (!A.hwnd || g_headless) return;
@@ -271,11 +287,11 @@ void wiiu_toggle_gamepad_screen() {
  * After the menu closes and focus_game() ran, wait (up to 3 s) until a game window is the foreground window, then press each key.
  * Keys are only ever sent while the game is foreground, so they cannot reach another app. Runs off the UI thread (70 presses at
  * 8x take a few seconds). Nothing is raised or shown here. */
-void dolphin_send_speed_keys(const std::vector<int>& vks) {
-    if (g_headless || !A.proc || vks.empty()) return;
-    if (autotest_active()) { autotest_log("dolphin: speed hotkeys (" + std::to_string(vks.size()) + ") not injected: QA runs on a hidden desktop"); return; }
+void dolphin_send_speed_keys(const std::vector<int>& vks, std::function<void(int)> done_cb) {
+    if (g_headless || !A.proc || vks.empty()) { if (done_cb) done_cb(-1); return; }
+    if (autotest_active()) { autotest_log("dolphin: speed hotkeys (" + std::to_string(vks.size()) + ") not injected: QA runs on a hidden desktop"); if (done_cb) done_cb(-1); return; }
     std::vector<DWORD> pids = game_pids();
-    std::thread([pids, vks]() {
+    std::thread([pids, vks, done_cb]() {
         auto game_fg = [&]() {
             DWORD pid = 0;
             GetWindowThreadProcessId(GetForegroundWindow(), &pid);
@@ -283,7 +299,7 @@ void dolphin_send_speed_keys(const std::vector<int>& vks) {
             return false;
         };
         for (int i = 0; i < 60 && !game_fg(); ++i) Sleep(50);
-        if (!game_fg()) return;
+        if (!game_fg()) { qm_log("speed burst: game never became foreground, not sent"); if (done_cb) done_cb(-1); return; }
         Sleep(150);
         auto key = [](int vk, bool up) {
             INPUT i{};
@@ -293,8 +309,10 @@ void dolphin_send_speed_keys(const std::vector<int>& vks) {
             SendInput(1, &i, sizeof(INPUT));
         };
         /* re-checked before every key event: game still foreground and the hub menu not open; modifiers always released */
-        hubqm::run_key_burst(vks, hubqm::kDolphinScanCtrl, hubqm::kDolphinScanShift, [&] { return game_fg() && !qm_is_open(); },
+        const int done = hubqm::run_key_burst(vks, hubqm::kDolphinScanCtrl, hubqm::kDolphinScanShift, [&] { return game_fg() && !qm_is_open(); },
                              [&](int sc, bool up) { key(sc, up); Sleep(up ? 35 : 20); });   // edge-triggered in Dolphin: hold, then release
+        qm_log("speed burst: " + std::to_string(done) + "/" + std::to_string(vks.size()) + " presses");
+        if (done_cb) done_cb(done);
     }).detach();
 }
 

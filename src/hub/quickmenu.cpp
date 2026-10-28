@@ -7,6 +7,7 @@
 #include <ctime>
 #include <fstream>
 #include <map>
+#include <mutex>
 
 #include "runner_ctl.h"
 #include "cloud_engine.h"
@@ -112,6 +113,8 @@ bool g_open_req = false, g_shot_fake = false;
 QPage g_page = QPage::Main;
 long long g_pending = 0;                       // seq waiting for an ack (0 = none)
 std::string g_pending_what;                    // "Saved slot 3" ...
+static ULONGLONG g_open_ms = 0, g_activity_ms = 0;
+static const char* g_close_why = "other";
 bool g_pending_close = true;                   // close the menu and return to the game when the ack arrives
 int g_pending_slot = -2;
 double g_pending_at = 0;
@@ -230,12 +233,49 @@ std::string ext_emu_name(const hub::GameEntry* e) {
         default: return "this emulator";
     }
 }
-/* Menu closed: press the Dolphin hotkeys that take it to the chosen step (offline GameCube only). */
+/* ---- Dolphin speed: robust application ----
+ * A burst reports how many presses completed. The state (g_dolphin) is committed from THAT, never assumed: a burst that never started
+ * leaves it unchanged and is retried (1.5 s, 3 s, 6 s ... up to kDolphinMaxRetries); one cut short makes it "unknown", and the next
+ * plan then goes down to Dolphin's 0.1x floor and up again. View + LB held 1 s forces that path to 1x (qm_dolphin_reset). */
+std::atomic<int> g_burst_state{0};   // 0 idle, 1 running, 2 finished (result in g_burst_done)
+std::atomic<int> g_burst_done{-1};
+std::vector<hubqm::DolphinKey> g_burst_plan;
+int g_burst_target = hubqm::kSpeedNormal, g_retry_n = 0;
+ULONGLONG g_retry_at = 0;
+std::atomic<bool> g_close_req{false};   // emergency reset: close the menu so the game is in front for the key burst
+
+/* Menu closed (or a retry is due): press the Dolphin hotkeys that take it to the chosen step (offline GameCube only). */
 void dolphin_apply_pending(const hub::GameEntry* e) {
-    if (!is_dolphin(e) || A.run.online || hubqm::dolphin_idx(g_dolphin) == g_speed_idx) return;
+    if (!is_dolphin(e) || A.run.online || g_shot_fake || g_burst_state.load() != 0 || qm_is_open()) return;
+    if (!hubqm::dolphin_needs_apply(g_dolphin, g_speed_idx)) { g_retry_n = 0; return; }
+    if (GetTickCount64() < g_retry_at) return;
+    g_burst_plan = hubqm::dolphin_plan_for(g_dolphin, g_speed_idx);
+    g_burst_target = g_speed_idx;
     std::vector<int> vks;
-    for (auto k : hubqm::dolphin_plan(g_dolphin, g_speed_idx)) vks.push_back(hubqm::dolphin_scan(hubqm::dolphin_vk(k)));
-    dolphin_send_speed_keys(vks);
+    for (auto k : g_burst_plan) vks.push_back(hubqm::dolphin_scan(hubqm::dolphin_vk(k)));
+    if (vks.empty()) { hubqm::dolphin_commit(g_dolphin, g_burst_target, g_burst_plan, 0); return; }
+    qm_log("dolphin speed: sending " + std::to_string(vks.size()) + " presses toward step " + std::to_string(g_burst_target) + (g_dolphin.known ? "" : " (state unknown: via the 0.1x floor)") + " attempt " + std::to_string(g_retry_n));
+    g_burst_state = 1;
+    dolphin_send_speed_keys(vks, [](int done) { g_burst_done = done; g_burst_state = 2; });
+}
+
+/* UI thread, every frame: fold a finished burst into the state and schedule a retry if it did not go through. */
+void dolphin_burst_poll() {
+    if (g_burst_state.load() != 2) return;
+    const int done = g_burst_done.load();
+    g_burst_state = 0;
+    if (done < 0 || (done == 0 && !g_burst_plan.empty())) {   // nothing was pressed: state unchanged
+        qm_log("dolphin speed: burst did not run (game not in front); will retry");
+    } else {
+        hubqm::dolphin_commit(g_dolphin, g_burst_target, g_burst_plan, done);
+        if (done >= (int)g_burst_plan.size()) { qm_log("dolphin speed: now step " + std::to_string(g_dolphin.cur)); g_retry_n = 0; return; }
+        qm_log("dolphin speed: burst cut short at " + std::to_string(done) + "/" + std::to_string(g_burst_plan.size()) + "; state now unknown, will redo");
+    }
+    if (g_retry_n >= hubqm::kDolphinMaxRetries) {
+        g_retry_at = ~0ull;
+        push_toast("Could not change Dolphin's speed. Hold View + LB for 1 s to reset it to 1x.", COL_WARN, 8.0);
+        qm_log("dolphin speed: giving up after " + std::to_string(g_retry_n) + " retries");
+    } else g_retry_at = GetTickCount64() + (ULONGLONG)hubqm::dolphin_retry_delay_ms(g_retry_n++);
 }
 
 void ext_apply(const hub::GameEntry* e) {
@@ -299,7 +339,7 @@ void check_ack() {
         g_pending = 0;
         if (a.ok) {
             push_toast(g_pending_what, COL_GOOD, 3.0);
-            if (g_pending_close) { g_page = QPage::Main; ImGui::CloseCurrentPopup(); focus_game(); }
+            if (g_pending_close) { g_page = QPage::Main; g_close_why = "slot action"; ImGui::CloseCurrentPopup(); focus_game(); }
         } else push_toast(a.msg.empty() ? std::string("That did not work.") : a.msg, COL_WARN, 5.0);
     } else if (ImGui::GetTime() - g_pending_at > 20.0) {
         g_pending = 0;
@@ -347,10 +387,42 @@ std::string qm_args(const RunInfo& ri, const hub::GameEntry& e, bool n64_state_d
 }
 
 static std::atomic<bool> g_qm_showing{false};
+
+void qm_log(const std::string& line) {
+    static std::mutex mu;
+    std::lock_guard<std::mutex> lk(mu);
+    static std::string dir = hub::data_dir() + "logs\\";
+    static std::string path = dir + "quickmenu.log";
+    CreateDirectoryA(dir.c_str(), nullptr);
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad) && fad.nFileSizeHigh == 0 && fad.nFileSizeLow > 500000)
+        MoveFileExA(path.c_str(), (path + ".1").c_str(), MOVEFILE_REPLACE_EXISTING);
+    SYSTEMTIME st; GetLocalTime(&st);
+    char ts[48];
+    std::snprintf(ts, sizeof ts, "%04d-%02d-%02d %02d:%02d:%02d.%03d ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    std::ofstream f(path, std::ios::app | std::ios::binary);
+    f << ts << line << "\n";
+}
+
+void qm_dolphin_reset() {
+    const hub::GameEntry* e = A.proc ? find_entry(A.run.key) : nullptr;
+    if (!is_dolphin(e) || A.run.online) return;
+    g_speed_idx = hubqm::kSpeedNormal;
+    g_dolphin.known = false;   // do not trust what we think Dolphin runs at: go down to its floor, then up to 1x
+    g_retry_n = 0; g_retry_at = 0;
+    g_close_req = g_qm_showing.load();
+    push_toast("Resetting Dolphin to 1x...", COL_GOOD, 4.0);
+    qm_log("emergency reset to 1x requested");
+}
 bool qm_is_open() { return g_qm_showing.load(); }   // thread-safe; set at the request, refreshed every draw
+
 
 void qm_open_live() {
     if (!A.proc || A.run.key.empty()) return;
+    if (g_qm_showing.load()) { qm_log("open request ignored: menu already open"); return; }   // View+Y never re-opens / toggles an open menu
+    g_retry_n = 0; g_retry_at = 0;   // a Dolphin speed change that gave up is tried again once the menu closes
+    g_activity_ms = GetTickCount64();
+    qm_log("open request (hub fg=" + std::string(hub_is_foreground() ? "yes" : "no") + " fg=" + qm_describe_window(GetForegroundWindow()) + ")");
     const hub::GameEntry* e = find_entry(A.run.key);
     g_sys = e ? sys_short(*e) : A.run.system_short;
     g_key = A.run.key;
@@ -371,7 +443,9 @@ static void qm_session_tick(const hub::GameEntry* e) {
     if (g_sess_key != A.run.key || g_sess_tick != A.run.start_tick) {
         g_sess_key = A.run.key; g_sess_tick = A.run.start_tick;
         g_speed_idx = hubqm::kSpeedNormal;
-        g_dolphin = hubqm::DolphinSpeed();   // Dolphin.ini was written with EmulationSpeed = 1.0 at launch
+        g_dolphin = hubqm::DolphinSpeed();
+        g_retry_n = 0; g_retry_at = 0; g_burst_state = 0;
+        qm_log("session start " + A.run.key);   // Dolphin.ini was written with EmulationSpeed = 1.0 at launch
         g_mute = false;
         g_vol = e ? hub::gs::volume_of(gs_values_for(*e)) : 100;
         g_launch_vol = g_vol;
@@ -395,6 +469,18 @@ void qm_tick() {
         else if (!want_off && sent_off) { sent_off = false; if (A.proc && ctl_ready()) { runctl::Command c; c.cmd = runctl::Cmd::Input; c.value = 1; send_quiet(c); } }
     }
     hub::saves::set_backup_screenshots(A.st.backup_shots);
+    if (A.proc && !g_shot_fake) {   // evidence: every foreground change near a menu event
+        static HWND last_fg = nullptr;
+        HWND fg = GetForegroundWindow();
+        const ULONGLONG tn = GetTickCount64();
+        if (fg != last_fg) {
+            if (g_qm_showing.load() || tn - g_activity_ms < 30000) qm_log("foreground -> " + qm_describe_window(fg) + (g_qm_showing.load() ? " (menu open)" : ""));
+            last_fg = fg;
+        }
+        if (!g_qm_showing.load()) g_close_req = false;
+        dolphin_burst_poll();
+        dolphin_apply_pending(find_entry(A.run.key));
+    }
     if (A.proc) qm_session_tick(find_entry(A.run.key));
     {   // finished external-emulator window capture
         std::string m;
@@ -450,14 +536,28 @@ void draw_quick_menu() {
     bool open = ImGui::BeginPopupModal("##quickmenu", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::PopStyleVar(2);
     static bool was_open = false;
-    if (was_open && !open && !g_shot_fake && A.proc) dolphin_apply_pending(find_entry(g_key));   // closed this frame (Resume / B / pad combo)
+    static hubqm::FocusRetry focus_retry;
+    if (open && !was_open && !g_shot_fake) { g_open_ms = GetTickCount64(); g_close_why = "other"; focus_retry.reset(); qm_log("menu opened"); }
+    if (was_open && !open && !g_shot_fake) {
+        qm_log(std::string("menu closed (") + g_close_why + ")");
+        g_activity_ms = GetTickCount64();
+        g_qm_showing = false;
+        if (A.proc) dolphin_apply_pending(find_entry(g_key));   // closed this frame (Resume / B / pad combo)
+    }
     was_open = open;
     g_qm_showing = open && !g_shot_fake;
     if (!open) return;
-    if (!g_shot_fake && !A.proc) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    if (ui::modal_back()) {
+    if (!g_shot_fake && !A.proc) { g_close_why = "game ended"; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    if (!g_shot_fake && focus_retry.should_retry(hub_is_foreground(), (long long)GetTickCount64())) {   // bounded: something else (fullscreen Dolphin) took the foreground
+        qm_log("hub is not foreground while the menu is open; re-focusing (try " + std::to_string(focus_retry.tries) + ")");
+        focus_hub();
+    }
+    bool back = ui::modal_back();
+    if (back && !g_shot_fake && !hubqm::back_allowed((long long)g_open_ms, (long long)GetTickCount64())) { qm_log("B ignored: pressed within 400 ms of opening"); back = false; }
+    if (g_close_req.exchange(false)) { g_close_why = "reset requested"; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); focus_game(); return; }
+    if (back) {
         if (g_page != QPage::Main) g_page = QPage::Main;
-        else { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); focus_game(); return; }
+        else { g_close_why = "B"; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); focus_game(); return; }
     }
     check_ack();
 
@@ -483,7 +583,7 @@ void draw_quick_menu() {
         ImGui::TextUnformatted(rplay_status_line().c_str());
         ImGui::PopStyleColor();
     }
-    if (menu_button("Resume", true, ui::Icon::Play, true)) { ImGui::CloseCurrentPopup(); focus_game(); }
+    if (menu_button("Resume", true, ui::Icon::Play, true)) { g_close_why = "Resume"; ImGui::CloseCurrentPopup(); focus_game(); }
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
     if (ctl || ext) {   // Speed (built-in runners, offline), Volume + Mute (everything; local only, so online too)
         const float fw = ImGui::GetContentRegionAvail().x;
@@ -554,7 +654,8 @@ void draw_quick_menu() {
     }
     if (g_shot_fake || fr_in_my_room()) fr_invite_button_and_picker(ImGui::GetContentRegionAvail().x, sp(6.5f));
     if (menu_button("Quit to RetroHub", true, ui::Icon::Close)) {
-        g_speed_idx = hubqm::dolphin_idx(g_dolphin);   // Dolphin: quitting never sends speed keys (a pending change is dropped)
+        g_speed_idx = hubqm::dolphin_idx(g_dolphin);   // Dolphin: quitting never sends speed keys (a pending change is dropped); the next game starts at 1x anyway
+        g_close_why = "Quit";
         if (!g_shot_fake) { if (ctl_ready()) runctl::send_command(A.run.ctl_path, runctl::Cmd::Quit, 0); else request_game_close(); }
         ImGui::CloseCurrentPopup();
     }

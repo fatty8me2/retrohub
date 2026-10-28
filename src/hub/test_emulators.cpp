@@ -494,6 +494,8 @@ static void test_config() {
     hubemu::DolphinPads none, two;
     two.xinput[1] = true;
     std::string di = hubemu::dolphin_dolphin_ini_patch("", none);
+    CHECK(di.find("[Input]") != std::string::npos && di.find("BackgroundInput = False") != std::string::npos);   // Dolphin ignores the pad while the hub menu has focus
+    CHECK(hubemu::dolphin_dolphin_ini_patch("[Input]\nBackgroundInput = True\n", none).find("BackgroundInput = False") != std::string::npos);   // an old True is turned off
     CHECK(di.find("ConfirmStop = False") != std::string::npos && di.find("PermissionAsked = True") != std::string::npos);
     CHECK(di.find("SIDevice0 = 6") != std::string::npos && di.find("SIDevice1 = 0") != std::string::npos);
     CHECK(hubemu::dolphin_dolphin_ini_patch("", two).find("SIDevice1 = 6") != std::string::npos);

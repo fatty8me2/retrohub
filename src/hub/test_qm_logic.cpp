@@ -82,6 +82,58 @@ int main() {
     CHECK(speed_row(false, true, false, true) == SpeedRow::Enabled && speed_row(false, true, true, true) == SpeedRow::Online);
     CHECK(speed_row(false, false, false, true) == SpeedRow::Unsupported && speed_row(false, false, true, true) == SpeedRow::Unsupported);
     CHECK(speed_row(false, false, false, false) == SpeedRow::Hidden);
+    {   // OpenGate: one open per press, never while open, cooldown after open/close
+        OpenGate g;
+        CHECK(!g.update(false, false, 1000));
+        CHECK(g.update(true, false, 2000));                 // rising edge opens
+        CHECK(!g.update(true, false, 2016));                // held: no second open
+        CHECK(!g.update(true, true, 2050));                 // menu is now open
+        CHECK(!g.update(false, true, 2100) && !g.update(true, true, 2200));   // pressing again while open does not toggle
+        CHECK(!g.update(false, true, 3000));
+        CHECK(!g.update(false, false, 3100));               // menu closed at 3100
+        CHECK(!g.update(true, false, 3300));                // bounce inside the 700 ms cooldown: ignored
+        CHECK(!g.update(false, false, 3400));
+        CHECK(g.update(true, false, 3900));                 // released, cooled down: opens again
+        // a combo still held through a close must be released first
+        OpenGate h;
+        CHECK(h.update(true, false, 5000));
+        CHECK(!h.update(true, true, 5010));
+        CHECK(!h.update(true, false, 9000));                // closed with the combo still down: no re-open without a new edge
+    }
+    CHECK(!back_allowed(1000, 1200) && back_allowed(1000, 1400));
+    {   // HoldGate: View+LB for 1 s fires once per hold
+        HoldGate h;
+        CHECK(!h.update(true, 0) && !h.update(true, 999) && h.update(true, 1000));
+        CHECK(!h.update(true, 2500));                       // still held: not again
+        CHECK(!h.update(false, 2600) && !h.update(true, 2700) && h.update(true, 3700));
+    }
+    {   // FocusRetry: bounded and spaced
+        FocusRetry f;
+        CHECK(!f.should_retry(true, 0));
+        CHECK(f.should_retry(false, 1000) && !f.should_retry(false, 1200) && f.should_retry(false, 1600));
+        int n = 2;
+        for (long long t = 3000; t < 20000; t += 600) n += f.should_retry(false, t);
+        CHECK(n == 6);                                      // never more than 6 tries per open
+        f.reset();
+        CHECK(f.should_retry(false, 30000));
+    }
+    {   // Dolphin speed: committed from presses actually done, never assumed
+        DolphinSpeed s;
+        CHECK(dolphin_needs_apply(s, 4) && !dolphin_needs_apply(s, 2));
+        auto p = dolphin_plan_for(s, 4);                    // 1x -> 2x: 10 increases, nothing mutated
+        CHECK(p.size() == 10 && s.cur == 2 && s.tenths == 10 && s.known);
+        dolphin_commit(s, 4, p, 10);
+        CHECK(s.cur == 4 && s.tenths == 20 && s.known && !dolphin_needs_apply(s, 4));
+        p = dolphin_plan_for(s, 2);                         // back to 1x: 10 decreases
+        CHECK(p.size() == 10 && p[0] == DolphinKey::Decrease);
+        dolphin_commit(s, 2, p, 4);                         // cut short: state unknown
+        CHECK(!s.known && s.cur == 4 && dolphin_needs_apply(s, 2) && dolphin_needs_apply(s, 4));
+        p = dolphin_plan_for(s, 2);                         // unknown: floor (90 decreases) then up to 1x (9 increases)
+        CHECK((int)p.size() == kDolphinFloorPresses + 9 && p.front() == DolphinKey::Decrease && p.back() == DolphinKey::Increase);
+        dolphin_commit(s, 2, p, (int)p.size());
+        CHECK(s.known && s.tenths == 10 && s.cur == 2);
+        CHECK(dolphin_retry_delay_ms(0) < dolphin_retry_delay_ms(1) && dolphin_retry_delay_ms(1) < dolphin_retry_delay_ms(2));
+    }
     std::printf(g_fail ? "FAILED\n" : "ok\n");
     return g_fail ? 1 : 0;
 }

@@ -669,7 +669,11 @@ int cheats_enabled_count(const hub::GameEntry& e);
 void cheats_open(const hub::GameEntry& e);                      // the Cheats panel
 void cheats_open_live();                                        // in-game overlay: panel for the running game
 void cheats_pad_watch();                                        // View + Y while a game runs
-void dolphin_send_speed_keys(const std::vector<int>& vks);       // Dolphin: press the speed hotkeys (Ctrl+Shift+<scancode> each) once Dolphin is foreground; background thread
+void dolphin_send_speed_keys(const std::vector<int>& vks, std::function<void(int)> done_cb);   // done_cb(presses completed; -1 = nothing sent), on the worker thread
+void qm_log(const std::string& line);                          // userdata\logs\quickmenu.log (focus + menu open/close + speed evidence)
+std::string qm_describe_window(void* hwnd);
+bool hub_is_foreground();
+void qm_dolphin_reset();                                       // emergency: View+LB held 1 s -> Dolphin back to 1x       // Dolphin: press the speed hotkeys (Ctrl+Shift+<scancode> each) once Dolphin is foreground; background thread
 void wiiu_toggle_gamepad_screen();                              // Wii U: send Cemu's "toggle pad screen" hotkey (Ctrl+Tab); pad combo View + RB and the quick menu
 void wiiu_pad_watch();
 int cheats_apply_dolphin(const hub::GameEntry& e, const std::string& dolphin_user_dir, bool online, bool is_host, const std::string* launch_body);   // GameCube: enabled cheats -> User\\GameSettings\\<GAMEID>.ini before Dolphin starts

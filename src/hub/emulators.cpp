@@ -853,6 +853,7 @@ std::string dolphin_ini_defaults(const std::string& in) {
     t = hubui::ini_set(t, "Interface", "ShowActiveTitle", "False");
     t = hubui::ini_set(t, "Display", "RenderToMain", "False");
     t = hubui::ini_set(t, "Display", "KeepWindowOnTop", "False");
+    t = hubui::ini_set(t, "Input", "BackgroundInput", "False");              // Dolphin must ignore the pad while the hub menu has focus
     t = hubui::ini_set(t, "Core", "SkipIPL", "True");
     t = hubui::ini_set(t, "Interface", "SkipNKitWarning", "True");          // NKit images (.nkit.iso) otherwise stop at a dialog
     if (hubui::ini_get(t, "Core", "GFXBackend").empty()) t = hubui::ini_set(t, "Core", "GFXBackend", "D3D");   // Direct3D 11
