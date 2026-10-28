@@ -39,7 +39,7 @@ int main() {
         CHECK(parse_speed_arg("2x", &sp) && sp == 2 && parse_speed_arg("max", &sp) && sp == 0 && parse_speed_arg("0.25", &sp) && sp == 0.25);
         CHECK(!parse_speed_arg("4", &sp) && !parse_speed_arg("fast", &sp) && !parse_speed_arg("", &sp));
         CHECK(speed_label(2) == "Speed 2x" && speed_label(0.5) == "Speed 0.5x" && speed_label(0) == "Speed max");
-        CHECK(!offline_only(Cmd::Volume) && !offline_only(Cmd::Mute) && offline_only(Cmd::Speed) && offline_only(Cmd::Ff) && offline_only(Cmd::SaveState) && !offline_only(Cmd::OsdMsg) && !offline_only(Cmd::Quit));
+        CHECK(!offline_only(Cmd::Volume) && !offline_only(Cmd::Mute) && offline_only(Cmd::Speed) && !offline_only(Cmd::Overlay) && offline_only(Cmd::Ff) && offline_only(Cmd::SaveState) && !offline_only(Cmd::OsdMsg) && !offline_only(Cmd::Quit));
         Command w; w.cmd = Cmd::OsdMsg; w.text = "a \"q\""; w.seq = 9;
         CHECK(parse_control(make_control(w), &q) && q.text == w.text && q.seq == 9);
         w = Command(); w.cmd = Cmd::Speed; w.speed = 0.25; w.seq = 2;

@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.29.0",
+      "date": "2026-10-28",
+      "title": "Chat and help in the game menu",
+      "new": [
+        "Chat while you play: room messages (and, if you choose, friend messages) show as small text in the corner of the game, never as a popup. Turn it on in Settings, or in the game menu under Chat",
+        "Game menu (View + Y) has a Chat page with quick phrases (GG, One more?, BRB, Lag?) and the on-screen keyboard, to the room or to the friend who last wrote to you",
+        "Game menu has a Stats overlay switch: FPS, and online also ping, input delay and rollback frames, in the corner of the game (GB, GBA, DS, PlayStation, NES, SNES games)",
+        "Game menu has How do I play: your controller drawn with what each button does in this game, from your own Controllers profile"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.28.8",
       "date": "2026-10-27",
       "title": "Install a greyed-out game",

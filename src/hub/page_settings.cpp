@@ -184,6 +184,15 @@ void tab_general() {
     if (ImGui::Checkbox("Show friends panel", &A.st.show_friends)) mark_dirty();
     if (ImGui::Checkbox("Notify me about invites while I'm playing", &A.st.notify_in_game)) mark_dirty();
     text_wrapped_disabled("Shows a Windows notification that never takes focus from your game. Click Join to enter the room when your game ends.");
+    {
+        ImGui::TextUnformatted("Chat on screen while playing");
+        if (ImGui::RadioButton("Off##gchat", A.st.game_chat == 0)) { A.st.game_chat = 0; mark_dirty(); }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Room only##gchat", A.st.game_chat == 1)) { A.st.game_chat = 1; mark_dirty(); }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Room and friends##gchat", A.st.game_chat == 2)) { A.st.game_chat = 2; mark_dirty(); }
+        text_wrapped_disabled("Shows messages as small text in the corner of the game, nothing pops up. Reply from the game menu (View + Y).");
+    }
     if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
     if (ImGui::Checkbox("Menu sounds", &A.st.menu_sounds)) mark_dirty();
     if (A.st.menu_sounds) {

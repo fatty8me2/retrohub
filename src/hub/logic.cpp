@@ -83,6 +83,8 @@ std::string settings_to_json(const Settings& s) {
       << "  \"tv_start\": " << (s.tv_start ? "true" : "false") << ",\n"
       << "  \"tv_windows\": " << (s.tv_windows ? "true" : "false") << ",\n"
       << "  \"notify_in_game\": " << (s.notify_in_game ? "true" : "false") << ",\n"
+      << "  \"game_chat\": " << s.game_chat << ",\n"
+      << "  \"perf_overlay\": " << (s.perf_overlay ? "true" : "false") << ",\n"
       << "  \"notify_migrated\": true,\n"
       << "  \"notif_sound\": " << (s.notif_sound ? "true" : "false") << ",\n"
       << "  \"watch_online\": \"" << json::escape(s.watch_online) << "\",\n"
@@ -169,6 +171,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->tv_windows = json_bool(j, "tv_windows", out->tv_windows);
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
     if (!json_bool(j, "notify_migrated", false)) out->notify_in_game = false;   // one-time: older installs had it on by default
+    out->game_chat = std::max(0, std::min(2, (int)j.num("game_chat", out->game_chat)));
+    out->perf_overlay = json_bool(j, "perf_overlay", out->perf_overlay);
     out->notify_migrated = true;
     out->notif_sound = json_bool(j, "notif_sound", out->notif_sound);
     out->watch_online = j.str("watch_online", out->watch_online);
