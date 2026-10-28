@@ -958,6 +958,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
     bool hov = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseHoveringRect(p0, p1);
     bool can_join = hubui::friend_can_join(fr);
     bool can_ask = hubui::friend_can_ask(fr);
+    bool can_watch = hubui::friend_can_watch(fr, !f.status.lobby_code.empty() && !f.status.game_id.empty()) && !spectate_pending();
     const char* join_lbl = fr.state == hubui::FS_InGame ? "Join lobby" : "Join";
     bool can_invite = fr_in_my_room() && f.online() && f.status.lobby_code != A.code;
     if (can_invite) {   // room already full for this game: no Invite button (the picker/menu explain why)
@@ -1014,6 +1015,12 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
             if (fr_pill_button("ask", al, ImVec2(x - pw, by), btn_h, false, true)) fr_ask_to_join(f.uid);
             x -= pw + sp(0.5f);
         }
+        if (can_watch && fr.state == hubui::FS_InGame) {
+            const char* wl = "Watch";
+            pw = fr_tw(ui::F.bold, wl) + sp(2.5f);
+            if (fr_pill_button("watch", wl, ImVec2(x - pw, by), btn_h, false, true)) spectate_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
+            x -= pw + sp(0.5f);
+        }
         if (can_join) {
             if (fr_pill_button("join", join_lbl, ImVec2(x - fr_tw(ui::F.bold, join_lbl) - sp(2.5f), by), btn_h, true, true, &pw)) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
             x -= pw + sp(0.5f);
@@ -1049,6 +1056,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         if (ImGui::MenuItem("Message")) fr_open_chat(f.uid);
         if (can_join && ImGui::MenuItem("Join lobby")) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
         if (can_ask && ImGui::MenuItem("Ask to join")) fr_ask_to_join(f.uid);
+        if (can_watch && ImGui::MenuItem("Watch")) spectate_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
         if (can_invite && ImGui::MenuItem("Invite to my room")) fr_invite_uids({f.uid});
         if (ImGui::MenuItem("Copy friend code")) { SDL_SetClipboardText(f.code.c_str()); fr_trace("copy", f.uid); set_toast("Friend code copied.", true, 3.0); }
         if (ImGui::MenuItem("Notify me when they come online", nullptr, hubui::group::watch_has(A.st.watch_online, f.uid))) fr_toggle_watch(f);
