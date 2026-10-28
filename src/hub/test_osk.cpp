@@ -28,6 +28,16 @@ int main() {
         CHECK(g.blocked(false, 11.0));
         CHECK(g.blocked(true, 12.0) && !g.blocked(true, 12.3));
     }
+    // quick menu open => pad allowed even when the hub is unfocused / in the regain grace; closed => still blocked
+    CHECK(!pad_blocked(true, true) && pad_blocked(true, false) && !pad_blocked(false, false) && !pad_blocked(false, true));
+    {
+        FocusGate g;
+        const bool b = g.blocked(false, 0.0);
+        CHECK(b && !pad_blocked(b, true));       // unfocused, menu open: pad flows
+        CHECK(pad_blocked(b, false));            // unfocused, no menu: dropped
+        const bool grace = g.blocked(true, 5.0);
+        CHECK(grace && !pad_blocked(grace, true));
+    }
     for (unsigned m : {1u, 0xFFFu, 1u << 4, 1u << 8}) CHECK(gate_pad_mask(m, true) == 0 && gate_pad_mask(m, false) == m);
     CHECK(!chat_may_send("", false) && !chat_may_send("   	", false) && !chat_may_send("hi", true) && chat_may_send("hi", false));
     {   // injected pad presses while blocked never type into a keyboard session

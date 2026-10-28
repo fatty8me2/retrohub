@@ -4,6 +4,20 @@
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
 int main() {
+    {   // key burst: abort on foreground change, modifiers always released
+        std::vector<int> ev, keys{1, 2, 3, 4};
+        int calls = 0;
+        auto send = [&](int s, bool up) { ev.push_back(up ? -s : s); };
+        int n = hubqm::run_key_burst(keys, 100, 101, [&] { return ++calls <= 4; }, send);   // fg lost mid-burst
+        CHECK(n < 4);
+        int dn = 0, upc = 0;
+        for (int v : ev) { if (v > 0) ++dn; else ++upc; }
+        CHECK(dn == upc && ev.size() >= 2 && ev[ev.size() - 1] == -100 && ev[ev.size() - 2] == -101);
+        ev.clear();
+        CHECK(hubqm::run_key_burst(keys, 100, 101, [] { return false; }, send) == 0 && ev.empty());   // never sends when not foreground
+        ev.clear();
+        CHECK(hubqm::run_key_burst(keys, 100, 101, [] { return true; }, send) == 4 && ev.size() == 12);
+    }
     using namespace hubqm;
     CHECK(speed_text(0) == "0.25x" && speed_text(1) == "0.5x" && speed_text(2) == "1x" && speed_text(3) == "1.5x");
     CHECK(speed_text(4) == "2x" && speed_text(5) == "3x" && speed_text(6) == "5x" && speed_text(7) == "8x" && speed_text(8) == "Max");

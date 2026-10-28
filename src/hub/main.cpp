@@ -164,9 +164,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 if (route_wheel(io.MousePos.x, io.MousePos.y, wx, wy)) continue;   // over a shelf: scroll that row, not the page
             }
             if (osk::hub_input_blocked()) {   // game running / hub unfocused: no key, text or pad event may reach the UI (quit, window, drop, device events still pass)
-                if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_TEXTINPUT || e.type == SDL_TEXTEDITING ||
-                    e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONUP || e.type == SDL_CONTROLLERAXISMOTION ||
-                    e.type == SDL_JOYBUTTONDOWN || e.type == SDL_JOYBUTTONUP || e.type == SDL_JOYAXISMOTION || e.type == SDL_JOYHATMOTION) continue;
+                if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_TEXTINPUT || e.type == SDL_TEXTEDITING) continue;
+                if (osk::hub_pad_blocked() && (e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONUP || e.type == SDL_CONTROLLERAXISMOTION ||
+                    e.type == SDL_JOYBUTTONDOWN || e.type == SDL_JOYBUTTONUP || e.type == SDL_JOYAXISMOTION || e.type == SDL_JOYHATMOTION)) continue;   // the open quick menu keeps its pad events even unfocused
             }
             if (attract_swallow_event(e)) continue;   // attract mode: this event only wakes the hub
             ImGui_ImplSDL2_ProcessEvent(&e);
@@ -241,10 +241,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         ImGui_ImplSDL2_NewFrame();
         SH.pre_frame(io);
         if (osk::hub_input_blocked()) {   // also stop ImGui's own pad/keyboard nav so nothing is activated or typed
-            io.ClearInputKeys();
+            if (osk::hub_pad_blocked()) io.ClearInputKeys();
+            else for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_GamepadStart; ++k) io.AddKeyEvent((ImGuiKey)k, false);   // quick menu open: pad stays, keyboard is dropped
             io.InputQueueCharacters.resize(0);
         }
-        if (!g_headless && !(SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS)) {
+        if (!g_headless && !(SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) && !qm_is_open()) {
             /* A game is running (or another window has focus): pad buttons belong to that, never to the hub behind it. */
             for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadRStickRight; ++k) io.AddKeyAnalogEvent((ImGuiKey)k, false, 0.f);
         }

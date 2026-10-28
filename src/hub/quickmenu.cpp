@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <shellapi.h>
 
+#include <atomic>
 #include <ctime>
 #include <fstream>
 #include <map>
@@ -345,6 +346,9 @@ std::string qm_args(const RunInfo& ri, const hub::GameEntry& e, bool n64_state_d
     return a;
 }
 
+static std::atomic<bool> g_qm_showing{false};
+bool qm_is_open() { return g_qm_showing.load(); }   // thread-safe; set at the request, refreshed every draw
+
 void qm_open_live() {
     if (!A.proc || A.run.key.empty()) return;
     const hub::GameEntry* e = find_entry(A.run.key);
@@ -354,6 +358,7 @@ void qm_open_live() {
     g_page = QPage::Main;
     g_pending = 0;
     g_open_req = true;
+    g_qm_showing = true;   // pad is exempt from the focus gate from this moment
     focus_hub();
 }
 
@@ -439,6 +444,7 @@ void draw_quick_menu() {
     static bool was_open = false;
     if (was_open && !open && !g_shot_fake && A.proc) dolphin_apply_pending(find_entry(g_key));   // closed this frame (Resume / B / pad combo)
     was_open = open;
+    g_qm_showing = open && !g_shot_fake;
     if (!open) return;
     if (!g_shot_fake && !A.proc) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     if (ui::modal_back()) {
