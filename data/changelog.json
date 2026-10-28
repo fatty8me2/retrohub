@@ -1,6 +1,21 @@
 {
   "versions": [
     {
+      "version": "1.28.5",
+      "date": "2026-10-27",
+      "title": "The game menu always takes the controller",
+      "new": [],
+      "improved": [
+        "While the View + Y menu is open, the game behind it no longer gets your button presses (built-in emulators)"
+      ],
+      "fixed": [
+        "View + Y now reliably brings the game menu to the front and your controller always works in it",
+        "Your controller no longer ends up driving Windows (mouse clicks, keys) when you open or close the game menu",
+        "Closing the game menu reliably puts the game back in front",
+        "GameCube speed and Wii U screen-swap keys are only ever sent to the game, and Ctrl/Shift can no longer get stuck"
+      ]
+    },
+    {
       "version": "1.28.4",
       "date": "2026-10-27",
       "title": "GameCube speed works",
