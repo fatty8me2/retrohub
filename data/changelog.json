@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.29.1",
+      "date": "2026-10-28",
+      "title": "Extra shared game packs",
+      "new": [
+        "Greyed-out games can be installed from extra shared packs: paste public Google Drive folder links in Settings > Online (one subfolder per console, each game in its own folder) and their games become installable too",
+        "The Install button is greyed out when a game is in no shared pack, with a hint for the owner to add it and share their link"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.29.0",
       "date": "2026-10-28",
       "title": "Watch friends, resync instead of game over, profiles, game nights, turbo and instant replay",
