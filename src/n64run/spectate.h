@@ -5,9 +5,9 @@
  * start, and eats one of the four slots' redundancy windows. Instead the spectator is not part of the slot mask at all:
  *  - the host (slot 0) records the input of every sample/frame the emulation has consumed (lockstep: sample n once complete;
  *    rollback: frame f once all inputs for f are confirmed, i.e. it can never be rolled back);
- *  - it streams that history to each spectator over the Session (host -> spectator only, spectator -> host only), starting at
- *    sample 0, so a spectator may join at any time: it boots the same ROM, replays the history unthrottled until it has caught up
- *    and then follows live. The emulators are deterministic, so replaying the confirmed inputs reproduces the players' game;
+ *  - it streams that history to each spectator over the Session (host -> spectator only, spectator -> host only), from a live
+ *    snapshot's sample (kPktJoin below) or, for an old peer / young match, from sample 0: the spectator boots the same ROM, replays what
+ *    it is behind unthrottled until it has caught up and then follows live. The emulators are deterministic, so replaying the confirmed inputs reproduces the players' game;
  *  - delivery is a tiny reliable stream over unreliable datagrams: cumulative acks, a bounded window above the spectator's
  *    consumed position, resend from the acked position when acks stall;
  *  - desync check: the host sends its periodic state hashes, the spectator compares with its own and reports them back, so
@@ -30,13 +30,15 @@ namespace spectate {
 
 constexpr uint8_t kPktData = 0x70;   // host -> spectator
 constexpr uint8_t kPktAck = 0x71;    // spectator -> host
-/* Live join (rollback hosts, retrorun): the spectator asks for a snapshot instead of the history from frame 0.
+/* Live join (retrorun rollback and lockstep, and n64run lockstep from v1.29.2): the spectator asks for a snapshot instead of the history from frame 0.
  *   Join   (spectator -> host)  [0x72, slot, version]   repeated every kKnockMs until the host answers
  *   NoLive (host -> spectator)  [0x73, 0, reason]       no snapshot: the stream starts at frame 0 as before (reason: JoinRefuse)
- * The snapshot itself travels as an rb::xfer transfer (retrorun/state_xfer.h, host slot 0 -> that spectator only) of the confirmed
+ * The snapshot itself travels as an rb::xfer transfer (state_xfer.h, host slot 0 -> that spectator only) of the confirmed
  * state before frame F; the host streams the confirmed inputs from F (Host::start_peer_at) and the spectator buffers them from F
  * (Client::start_at) while the state downloads, loads it, then runs the buffered frames unpaced (no video/audio) until it is
- * kLiveLagSamples behind, and follows in real time from there. */
+ * kLiveLagSamples behind, and follows in real time from there. n64run (frontend.cpp, namespace live): the host asks mupen for a savestate
+ * during the lead-port poll of sample n (lockstep_snapshot_sample: it is the state before n + 1), sends the core's gzipped file as is, and
+ * the spectator loads it before its first counted poll (Lockstep::spectate_expect_live / spectate_live_loaded). */
 constexpr uint8_t kPktJoin = 0x72;
 constexpr uint8_t kPktNoLive = 0x73;
 enum JoinRefuse : uint8_t { kRefuseEarly = 1, kRefuseUnsupported = 2, kRefuseTooBig = 3 };
@@ -155,6 +157,11 @@ class Client {
     std::deque<Mis> mis_;
     uint32_t hash_ok_ = 0, hash_bad_ = 0;
 };
+
+/* Lockstep host whose emulator saves through a deferred job (n64run: mupen takes a requested savestate at its next interrupt, after the
+ * controller poll that asked for it and before the next one): a state requested during the lead-port poll of sample `polled` is the state
+ * before sample polled + 1, which is where the spectator resumes (Host::start_peer_at / Client::start_at). */
+constexpr uint32_t lockstep_snapshot_sample(uint32_t polled) { return polled + 1; }
 
 /* Host side: what to answer a Join. */
 enum class JoinDecision { Snapshot, NoLiveEarly, NoLiveUnsupported, Busy, Ignore };

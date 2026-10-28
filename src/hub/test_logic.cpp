@@ -501,9 +501,8 @@ int main() {
             w.state = FS_InLobby; CHECK(friend_can_watch(w, true));
             w.state = FS_Online; CHECK(!friend_can_watch(w, true));
             w.state = FS_InGame; w.in_my_room = true; CHECK(!friend_can_watch(w, true));
-            CHECK(watch_joins_live(false) && !watch_joins_live(true));
-            CHECK(std::string(watch_join_note(false, true)).empty() && std::string(watch_join_note(true, false)).empty());
-            CHECK(std::string(watch_join_note(true, true)).find("from the start") != std::string::npos);
+            CHECK(watch_joins_live(false) && watch_joins_live(true));   // N64 joins live too (v1.29.2)
+            CHECK(std::string(watch_join_note(false, true)).empty() && std::string(watch_join_note(true, true)).empty());
         }
         CHECK(lobby_joinable(2, 4, false) && !lobby_joinable(4, 4, false) && !lobby_joinable(2, 4, true) && !lobby_joinable(0, 4, false));
         {   // join while the friend's game runs (room kept in presence)

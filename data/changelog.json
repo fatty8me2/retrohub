@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.2",
+      "date": "2026-10-28",
+      "title": "Watch N64 games live",
+      "new": [],
+      "improved": [
+        "Watching a friend's N64 game now joins live instead of replaying the match from the start."
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.29.1",
       "date": "2026-10-28",
       "title": "Watch live and extra shared game packs",

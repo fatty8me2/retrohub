@@ -273,6 +273,59 @@ int main() {
         CHECK(!cu.update(spectate::kLiveLagSamples, 20) && cu.live_once() && cu.live_at() == 20, "live");
         CHECK(cu.update(100, 30) && cu.live_at() == 20, "falls behind again: unpaced, first live time kept");
     }
+    {   // n64run lockstep live join: snapshot requested during poll n = state before n + 1; spectator resumes at S; hashes agree
+        using spectate::JoinDecision;
+        CHECK(spectate::lockstep_snapshot_sample(858) == 859 && spectate::lockstep_snapshot_sample(0) == 1, "snapshot sample is the next poll");
+        CHECK(spectate::decide_join(true, 2000, 1, false, true) == JoinDecision::Busy, "n64: one core save job at a time");
+        spectate::Host h(0x3, 4);
+        spectate::Client c;
+        Link dn, up;
+        dn.loss_pct = 10; dn.jitter = 30; up.loss_pct = 10;
+        h.set_hold_ms(spectate::kHoldMs);
+        auto step = [](uint64_t st, uint32_t n) { return (st ^ val(n, 0) ^ (val(n, 1) << 1)) * 0x9E3779B97F4A7C15ull; };   // the "emulator"
+        uint64_t hstate = 0, snap = 0;
+        uint32_t S = 0, now = 5000;
+        const uint32_t join_at = 1500, total = 4000;
+        // the spectator buffers from S while the state downloads (start_at at Begin)
+        c.start_at(spectate::lockstep_snapshot_sample(join_at));
+        uint64_t sst = 0;
+        uint32_t n = 0;
+        bool loaded = false;
+        auto pump = [&]() {
+            std::vector<uint8_t> m;
+            while (dn.pop(now, &m)) c.on_data(m.data(), m.size(), now);
+            while (up.pop(now, &m)) h.on_ack(2, m.data(), m.size(), now);
+            h.service(now, 1u << 2, [&](int, const uint8_t* d, int k) { dn.send(now, d, k); });
+            c.service(now, 2, [&](int, const uint8_t* d, int k) { up.send(now, d, k); });
+        };
+        auto spec_run = [&](uint32_t limit) {
+            while (loaded && n < limit && c.ready(n)) {
+                if (n % 100 == 0) c.add_local_hash(n, sst);
+                CHECK(c.get(n, 0) == (uint32_t)val(n, 0) && c.get(n, 1) == (uint32_t)val(n, 1), "input at the right sample (4-byte values)");
+                sst = step(sst, n);
+                n++;
+                c.consumed(n);
+            }
+        };
+        for (uint32_t p = 0; p < total; p++) {   // host polls at 60 Hz; the spectator runs whatever it has (unthrottled)
+            if (p % 100 == 0 && p) h.add_hash(p, hstate);   // the lockstep's hash point: before sample p is delivered
+            if (p == join_at) S = spectate::lockstep_snapshot_sample(p);
+            uint64_t v[4] = {val(p, 0), val(p, 1), 0, 0};
+            hstate = step(hstate, p);   // poll p consumed
+            if (p == join_at) snap = hstate;   // the core's save job runs after the poll: the state before S
+            h.push(v);
+            if (p == join_at + 3) CHECK(h.start_peer_at(2, S, now), "stream from S once recorded");
+            if (p == join_at + 120) { sst = snap; n = S; loaded = true; }   // the state arrived and the core loaded it
+            for (int i = 0; i < 8; i++, now += 2) { pump(); spec_run(total); }
+        }
+        for (int i = 0; i < 3000 && n < total; i++, now += 2) { pump(); spec_run(total); }
+        CHECK(n == total, "spectator reached the end");
+        CHECK(sst == hstate, "same final state as the host");
+        for (int i = 0; i < 400; i++, now += 5) pump();   // let the last hashes travel
+        CHECK(c.hashes_ok() >= 5 && c.hashes_bad() == 0, "hashes agree after the live join");
+        CHECK(h.hashes_bad() == 0 && h.hashes_ok() > 0, "host sees the same game");
+        std::printf("n64 live join: S=%u, spectator hashes ok %u, host %u\n", S, c.hashes_ok(), h.hashes_ok());
+    }
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("spectate test: all ok\n");
     return 0;
