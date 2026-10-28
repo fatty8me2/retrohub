@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dolphin_speed.h"
 
 #include <SDL.h>
 #include <shellapi.h>
@@ -275,7 +276,8 @@ void dolphin_apply_pending(const hub::GameEntry* e) {
     if (vks.empty()) { hubqm::dolphin_commit(g_dolphin, g_burst_target, g_burst_plan, 0); return; }
     qm_log("dolphin speed: sending " + std::to_string(vks.size()) + " presses toward step " + std::to_string(g_burst_target) + (g_dolphin.known ? "" : " (state unknown: via the 0.1x floor)") + " attempt " + std::to_string(g_retry_n));
     g_burst_state = 1;
-    dolphin_send_speed_keys(vks, [](int done) { g_burst_done = done; g_burst_state = 2; });
+    auto burst_done = [](int done) { g_burst_done = done; g_burst_state = 2; };
+    if (dolphin_speed_running()) dolphin_speed_send(vks, burst_done); else dolphin_send_speed_keys(vks, burst_done);   // DSU pad: no focus / SendInput; keys only if its port was busy
 }
 
 /* UI thread, every frame: fold a finished burst into the state and schedule a retry if it did not go through. */

@@ -25,6 +25,7 @@
 #include "pcsx2.h"
 #include "wiiu_meta.h"
 #include "invite.h"
+#include "dolphin_speed.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
@@ -528,6 +529,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     } else if (kind == hubemu::Kind::Dolphin) {
         hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
         { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
+        dolphin_speed_start();   // virtual DSU pad on 127.0.0.1:26761 that Dolphin's speed hotkeys are bound to (idempotent; false = port busy -> quickmenu keeps the keyboard path)
         real_boot_dolphin_apply(inst.dir, real_boot_plan(e));   // GameCube IPL startup (this launch only)
         cheats_apply_dolphin(e, inst.dir +"\\User", false, true, nullptr);   // enabled cheats -> GameSettings\<GAMEID>.ini (stale RetroHub entries removed)
         if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_GCPAD_INI")) {   // QA only: scripted pad (constant/timer expressions) instead of the user's mapping
