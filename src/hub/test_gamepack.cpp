@@ -46,6 +46,29 @@ int main()
     CHECK(safe_name("  ..name..  ") == "name");
     CHECK(safe_name("<>") == "game");
 
+    /* parse_links: Drive URLs (folders/, old folder/, embeddedfolderview), bare ids, dedupe */
+    CHECK(parse_links("").empty());
+    {
+        auto v = parse_links("https://drive.google.com/drive/folders/1abcDEF_-xyz098765432?usp=sharing");
+        CHECK(v.size() == 1 && v[0] == "1abcDEF_-xyz098765432");
+    }
+    {
+        auto v = parse_links("https://drive.google.com/drive/folder/1OldStyleFolderId123456\nhttps://drive.google.com/embeddedfolderview?id=1EmbeddedFolderId12345");
+        CHECK(v.size() == 2 && v[0] == "1OldStyleFolderId123456" && v[1] == "1EmbeddedFolderId12345");
+    }
+    {   // bare ids (comma / space separated); short tokens and URL words are ignored
+        auto v = parse_links("1BareFolderIdOne123456, 1BareFolderIdTwo123456 and short");
+        CHECK(v.size() == 2 && v[0] == "1BareFolderIdOne123456" && v[1] == "1BareFolderIdTwo123456");
+    }
+    {   // the same id via URL and bare collapses to one; "embeddedfolderview" (a URL word) is not an id
+        auto v = parse_links("https://drive.google.com/embeddedfolderview?id=1SameFolderIdHere123456 and 1SameFolderIdHere123456");
+        CHECK(v.size() == 1 && v[0] == "1SameFolderIdHere123456");
+    }
+
+    /* console_code: the pack subfolder names */
+    CHECK(console_code("n64") && console_code("GBC") && console_code("3ds"));
+    CHECK(!console_code("gbx") && !console_code("") && !console_code("nintendo 64"));
+
     /* sys_folder: the consoles in the shared pack */
     CHECK(std::string(sys_folder("n64")) == "19_2xjH7Ps7epabxUrr9sfxz69kuJGp3W");
     CHECK(std::string(sys_folder("gc")) == "17AvjquyVOjSs0ua1LnLZGRN3B2bUYQar");
