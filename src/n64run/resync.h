@@ -22,6 +22,7 @@ namespace n64run {
 namespace resync {
 
 constexpr uint8_t kCapResync = 1;
+constexpr uint8_t kCapMaskedHash = 2;   // hash version 2: RDRAM hash without the framebuffers (fbmask.h)
 constexpr int kMaxResyncs = 3;
 constexpr uint32_t kDefaultMargin = 90;   // samples between the proposal and S (the lead of a peer is at most the input delay; this covers the transit)
 

@@ -42,6 +42,7 @@ Lockstep::Lockstep(const LockstepOptions& opt, hubnet::Session* session, const L
     for (int p = 0; p < kPorts; p++)
         if (core_.port_local(p)) local_ports_[n_local_++] = p;
     logged_delay_ = core_.delay();
+    masked_ = opt.spectator && !opt.full_hash && hooks.vi_poll && !std::getenv("N64RUN_NO_MASKED_HASH");
     if (opt.online && opt.serve_spectators && !opt.spectator && opt.my_slot == 0 && session) {
         uint8_t pm = 0;
         for (int p = 0; p < kPorts; p++) if (core_.port_present(p)) pm |= (uint8_t)(1u << p);
@@ -125,7 +126,8 @@ bool Lockstep::start_barrier(uint32_t timeout_ms) {
     if (!net_ || opt_.spectator) return true;   // a spectator is not part of the start barrier: it boots whenever it likes
     uint32_t all = core_.slot_mask();
     ready_mask_ |= 1u << opt_.my_slot;
-    const uint8_t my_cap = (hooks_.resync_fetch && hooks_.resync_load && hooks_.resync_save && !std::getenv("N64RUN_NO_RESYNC")) ? resync::kCapResync : 0;
+    const uint8_t my_cap = (uint8_t)(((hooks_.resync_fetch && hooks_.resync_load && hooks_.resync_save && !std::getenv("N64RUN_NO_RESYNC")) ? resync::kCapResync : 0) |
+                                     ((hooks_.vi_poll && !std::getenv("N64RUN_NO_MASKED_HASH")) ? resync::kCapMaskedHash : 0));
     caps_[opt_.my_slot] = my_cap;
     uint32_t t0 = hubnet::now_ms(), last = 0, seen_all_at = 0;
     for (;;) {
@@ -144,6 +146,9 @@ bool Lockstep::start_barrier(uint32_t timeout_ms) {
                 uint32_t margin = resync::kDefaultMargin;
                 if (const char* e = std::getenv("N64RUN_RESYNC_MARGIN")) margin = (uint32_t)std::atoi(e);
                 rs_.configure(opt_.my_slot, all, caps_, margin);
+                masked_ = true;
+                for (int s = 0; s < 8; s++) if ((all >> s & 1u) && !(caps_[s] & resync::kCapMaskedHash)) masked_ = false;
+                if (hooks_.log) hooks_.log(masked_ ? "sync hash: version 2 (framebuffers masked)" : "sync hash: version 1 (a peer lacks the masked hash)");
                 if (hooks_.log) hooks_.log(rs_.enabled() ? "resync: desync recovery on (every peer supports it)" : "resync: desync recovery off (a peer lacks it)");
                 return true;
             }
@@ -340,6 +345,7 @@ void Lockstep::rs_finish(uint32_t S) {
     const uint32_t now = hubnet::now_ms();
     const uint32_t stall = now - rs_t0_;
     rs_.complete();
+    if (hooks_.vi_reset) hooks_.vi_reset();
     for (int q = 0; q < kPorts; q++) last_rx_[q] = now ? now : 1;   // nobody was heard during the stall: not a silent guest
     last_poll_ = 0; debt_ms_ = 0;
     if (stall > longest_stall_) longest_stall_ = stall;
@@ -541,6 +547,7 @@ uint32_t Lockstep::spec_get_keys(int port) {
     if (!t_first_) t_first_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
     if (hooks_.update_local) hooks_.update_local();
     pump();
+    if (hooks_.vi_poll) hooks_.vi_poll();
     // Same deterministic point as the players: before the inputs of sample n are delivered.
     if (opt_.hash_interval > 0 && n > 0 && n % (uint32_t)opt_.hash_interval == 0) {
         uint64_t h;
@@ -624,6 +631,7 @@ uint32_t Lockstep::get_keys(int port) {
         rs_service(hubnet::now_ms());
         if (rs_.barrier_at(n) && !rs_barrier(n)) return 0;
     }
+    if (hooks_.vi_poll) hooks_.vi_poll();
 
     // Desync hash, taken at a deterministic point (before inputs of sample n are delivered).
     if (net_ && opt_.hash_interval > 0 && n > 0 && n % (uint32_t)opt_.hash_interval == 0) {

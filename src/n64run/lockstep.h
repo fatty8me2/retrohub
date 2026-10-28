@@ -36,6 +36,7 @@ struct LockstepOptions {
     int hash_interval = 600;       // samples between RDRAM hashes
     uint32_t drop_silence_ms = 3000;   // a guest silent this long while we are blocked on it is dropped (3+ PCs): its port goes neutral, the rest play on
     uint32_t timeout_ms = 10000;   // no progress -> "Connection lost"
+    bool full_hash = false;        // spectator of a host that predates the framebuffer-masked hash (--full-hash): plain RDRAM hash
     bool spectator = false;        // port-less spectator: replays the host's confirmed-input stream (spectate.h); never part of the slot mask
     bool serve_spectators = true;  // host (slot 0, online): record the input history so spectators can join at any time
     std::string hash_label = "state";   // desync log text: "<label> hashes"
@@ -69,6 +70,10 @@ struct LockstepHooks {
     std::function<bool(const std::vector<uint8_t>& data, uint64_t hash)> resync_load;
     std::function<void(uint32_t S, uint32_t stall_ms)> resync_done;
     std::function<void(uint32_t n)> qa_poll;
+    /* Framebuffer-masked sync hash (fbmask.h): vi_poll at every lead poll (all roles, before the hash), vi_reset when a recovery state was applied
+     * (host and guests alike, so every peer's tracked set restarts at the same poll). Announcing the capability needs vi_poll. */
+    std::function<void()> vi_poll;
+    std::function<void()> vi_reset;
 };
 
 class Lockstep {
@@ -122,11 +127,14 @@ class Lockstep {
     bool resync_waiting() const { return rs_wait_; }
     void resync_loaded(bool ok);
     int resyncs() const { return rs_.count(); }
+    /* the sync hash (hash_rdram) should skip the framebuffers: every player announced hash version 2 (a spectator: unless --full-hash) */
+    bool masked_hash() const { return masked_; }
 
   private:
     void pump();
     /* recovery */
     resync::Ctl rs_;
+    bool masked_ = false;
     uint8_t caps_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     std::atomic<bool> rs_wait_{false};
     rb::xfer::Sender rs_snd_;
