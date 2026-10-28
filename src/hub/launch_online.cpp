@@ -790,7 +790,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
               (e.system == hub::System::N64 && !(launch_msg && launch_msg->num("n64live", 0) == 1) ? " --legacy-host" : "");   // older host: dithers, no live join
     if (g_dropin_launch)   // drop-in joiner: the friend's room code, the free port's slot written into the plan, input delay measured by the runner
         net = " --net " + quote(server_url()) + " --room " + g_dropin_code + "-" + std::to_string(launch_no) + " --slot " + std::to_string(g_dropin_slot) +
-              " --dropin --players " + std::to_string(g_dropin_players) + " --ports " + g_dropin_ports + " --delay auto";
+              " --dropin --players " + std::to_string(g_dropin_players) + " --ports " + g_dropin_ports + " --delay auto --name " + quote(A.st.name);
     if (e.system == hub::System::N64) {
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
         args += hubui::n64_extra_args(gsv);

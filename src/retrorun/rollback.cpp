@@ -823,8 +823,9 @@ bool Engine::host_admit(int slot, int port, const std::string& name) {
 
 void Engine::note_join_active(int slot) {
     if (slot < 0 || slot >= 8) return;
+    const bool was = join_pending_mask_ >> slot & 1u;
     join_pending_mask_ &= ~(1u << slot);
-    if (net_.log && cfg_.my_slot == host_slot()) net_.log("dropin: slot " + std::to_string(slot) + " plays now");
+    if (was && net_.log && cfg_.my_slot == host_slot()) net_.log("dropin: slot " + std::to_string(slot) + " plays now");
 }
 
 void Engine::admit_service(uint32_t now) {
