@@ -3,9 +3,11 @@
     {
       "version": "1.29.0",
       "date": "2026-10-28",
-      "title": "Instant replay",
+      "title": "Instant replay, profiles and reactions",
       "new": [
-        "Save the last 30 seconds of your game as a video clip: tap View + LB on your controller. Clips go into the game's screenshots, show a play button in the gallery, and open in your default video player. Works in GBA, GB, GBC, NES, SNES, DS, PlayStation and N64 games, online too"
+        "Save the last 30 seconds of your game as a video clip: tap View + LB on your controller. Clips go into the game's screenshots, show a play button in the gallery, and open in your default video player. Works in GBA, GB, GBC, NES, SNES, DS, PlayStation and N64 games, online too",
+        "Profiles: click your avatar in the Friends panel to pick a pixel console icon (or your favourite game's cover as a frame), a favourite game and a short status line. Friends see them on your row and in rooms",
+        "Reactions: click a room chat line or a friend message to react with <3, +1, LOL, FIRE, GG or :( , and see everyone's reactions as small chips"
       ],
       "improved": [],
       "fixed": []

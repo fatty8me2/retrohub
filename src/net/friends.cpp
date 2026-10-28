@@ -464,6 +464,13 @@ struct FriendsClient::Impl {
         if (!s.lobby_code.empty()) o += ",\"lobby_code\":" + q(s.lobby_code);
         o += std::string(",\"joinable\":") + (s.joinable ? "true" : "false");
         o += ",\"players\":" + std::to_string(s.players) + ",\"max_players\":" + std::to_string(s.max_players);
+        if (!s.prof_avatar.empty() || !s.prof_game.empty() || !s.prof_status.empty()) {
+            o += ",\"prof\":{";
+            bool first = true;
+            auto add = [&](const char* k, const std::string& v) { if (v.empty()) return; o += std::string(first ? "" : ",") + "\"" + k + "\":" + q(v); first = false; };
+            add("a", s.prof_avatar); add("g", s.prof_game); add("s", s.prof_status);
+            o += "}";
+        }
         return o + "}";
     }
     static std::string invite_json(const Invite& v)
@@ -492,6 +499,7 @@ struct FriendsClient::Impl {
         s.players = (int)jnum(*j, "players");
         s.max_players = (int)jnum(*j, "max_players");
         s.updated = jnum(*j, "updated");
+        if (const Json* pj = j->get("prof")) if (pj->type == Json::Object) { s.prof_avatar = pj->str("a"); s.prof_game = pj->str("g"); s.prof_status = pj->str("s"); }
         return s;
     }
     static Friend parse_friend(const Json& j)
@@ -527,6 +535,7 @@ struct FriendsClient::Impl {
         m.text = j.str("text");
         if (!m.ask) m.inv = parse_invite(j.get("invite"));
         m.at = jnum(j, "at");
+        if (j.str("kind") == "react") { m.react = true; m.target = j.str("target"); m.emoji = j.str("emoji"); { const Json* oj = j.get("on"); m.on = !oj || jbool(j, "on"); } }
         m.mine = (m.from == id.user_id);
         return m;
     }
@@ -840,6 +849,12 @@ struct FriendsClient::Impl {
     void emit_message(const Message& m)
     {
         const std::string& peer = m.mine ? m.to : m.from;
+        if (m.react) {   // a reaction: event only, never a conversation line
+            if (m.mine) return;
+            Event e; e.kind = Event::ReactionReceived; e.uid = m.from; e.name = m.from_name; e.msg = m;
+            push_event(std::move(e));
+            return;
+        }
         if (m.ask) {   // a request, not a conversation line: event only, and nothing older than 5 minutes (it may have waited in the inbox)
             if (m.mine || (m.at > 0 && unix_ms() - m.at > 5 * 60 * 1000)) return;
             Event e; e.kind = Event::AskReceived; e.uid = m.from; e.name = m.from_name; e.msg = m; e.invite = m.inv;
@@ -1269,6 +1284,13 @@ void FriendsClient::unblock(const std::string& uid)
     Impl& d = *impl_;
     d.blocked.erase(std::remove(d.blocked.begin(), d.blocked.end(), uid), d.blocked.end());
     d.send_uid("unblock", uid);
+}
+
+void FriendsClient::send_reaction(const std::string& uid, const std::string& target_id, const std::string& emoji, bool on)
+{
+    Impl& d = *impl_;
+    if (!d.welcomed || uid.empty() || target_id.empty() || emoji.empty()) return;
+    d.send("{\"type\":\"react\",\"to\":" + q(uid) + ",\"target\":" + q(target_id) + ",\"emoji\":" + q(emoji) + ",\"on\":" + (on ? "true" : "false") + "}");
 }
 
 void FriendsClient::send_message(const std::string& uid, const std::string& text)
