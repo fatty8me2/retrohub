@@ -25,6 +25,7 @@
 #include "pcsx2.h"
 #include "wiiu_meta.h"
 #include "invite.h"
+#include "dolphin_speed.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
@@ -219,8 +220,17 @@ void focus_hub() {
     if (!A.hwnd || g_headless) return;
     /* Only for the user's own View+Y / cheats pad combo during a game (qm_open_live, cheats_open_live). Never automatic. */
     if (IsIconic(A.hwnd)) ShowWindow(A.hwnd, SW_RESTORE);   // popup-guard: ok (user hotkey)
+    if (qm_is_open()) hub_menu_topmost(true);   // the menu stays visible even if the game takes the foreground back (Dolphin did)
     if (!force_foreground(A.hwnd))
         std::fprintf(stderr, "focus_hub: could not take the foreground (foreground=%p hub=%p); the quick menu still reads the pad directly\n", (void*)GetForegroundWindow(), (void*)A.hwnd);
+}
+
+/* Only while the user's quick menu is open (set by focus_hub from qm_open_live, always cleared when the menu closes). */
+void hub_menu_topmost(bool on) {
+    static bool is_on = false;
+    if (!A.hwnd || g_headless || on == is_on) return;
+    is_on = on;
+    SetWindowPos(A.hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);   // popup-guard: ok (user's View+Y menu only; cleared on close)
 }
 
 void pad_exit_watch() {
@@ -245,6 +255,7 @@ std::vector<unsigned long> running_game_pids() { std::vector<unsigned long> v; f
 
 void focus_game() {
     if (g_headless) return;
+    hub_menu_topmost(false);   // first: clearing it after the game is raised would put the hub back above the game
     CloseCtx c;
     c.pids = game_pids();
     struct Pick { std::vector<DWORD> pids; HWND hwnd = nullptr; } pk;
@@ -527,6 +538,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         if (inst.managed) { hubctl::Profile p3 = controls_profile("3ds", e.key); hubemu::prepare_azahar(inst.dir, p3, azahar_pad_for(p3)); }
     } else if (kind == hubemu::Kind::Dolphin) {
         hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
+        dolphin_speed_start();   // first: virtual DSU pad on 127.0.0.1:26761.. (first free port; DSUClient.ini gets that port); false = all busy -> quickmenu uses the keyboard path
         { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
         real_boot_dolphin_apply(inst.dir, real_boot_plan(e));   // GameCube IPL startup (this launch only)
         cheats_apply_dolphin(e, inst.dir +"\\User", false, true, nullptr);   // enabled cheats -> GameSettings\<GAMEID>.ini (stale RetroHub entries removed)
