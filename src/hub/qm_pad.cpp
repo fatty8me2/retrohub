@@ -46,10 +46,11 @@ uint32_t from_xinput(WORD b, BYTE lt, BYTE rt, SHORT lx, SHORT ly) {
 
 void qm_pad_restrict(int only_instance, bool no_xinput) { g_only = only_instance; g_no_xinput = no_xinput; }
 
-uint32_t qm_pad_raw() {
-    uint32_t m = 0;
+std::vector<uint32_t> qm_pad_each() {
+    std::vector<uint32_t> v;
     for (auto* c : A.pads) {
         if (!wanted(c)) continue;
+        uint32_t m = 0;
         for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX && b < 24; ++b)
             if (SDL_GameControllerGetButton(c, (SDL_GameControllerButton)b)) m |= 1u << b;
         if (SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000) m |= 1u << qmpad::kLT;
@@ -59,19 +60,40 @@ uint32_t qm_pad_raw() {
         if (ly > 16000) m |= 1u << qmpad::kStickDown;
         if (lx < -16000) m |= 1u << qmpad::kStickLeft;
         if (lx > 16000) m |= 1u << qmpad::kStickRight;
+        v.push_back(m);
     }
     if (!g_no_xinput && !g_headless) {
         for (DWORD i = 0; i < 4; ++i) {
             XINPUT_STATE xs{};
             if (XInputGetState(i, &xs) != ERROR_SUCCESS) continue;
-            m |= from_xinput(xs.Gamepad.wButtons, xs.Gamepad.bLeftTrigger, xs.Gamepad.bRightTrigger, xs.Gamepad.sThumbLX, xs.Gamepad.sThumbLY);
+            v.push_back(from_xinput(xs.Gamepad.wButtons, xs.Gamepad.bLeftTrigger, xs.Gamepad.bRightTrigger, xs.Gamepad.sThumbLX, xs.Gamepad.sThumbLY));
         }
     }
+    return v;
+}
+
+uint32_t qm_pad_raw() {
+    uint32_t m = 0;
+    for (uint32_t x : qm_pad_each()) m |= x;
+    return m;
+}
+
+uint32_t qm_keyboard_held_async() {
+    if (g_headless) return 0;
+    auto k = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    uint32_t m = 0;
+    if (k(VK_UP)) m |= hubqm::NB_UP;
+    if (k(VK_DOWN)) m |= hubqm::NB_DOWN;
+    if (k(VK_LEFT)) m |= hubqm::NB_LEFT;
+    if (k(VK_RIGHT)) m |= hubqm::NB_RIGHT;
+    if (k(VK_RETURN) || k(VK_SPACE)) m |= hubqm::NB_A;
+    if (k(VK_ESCAPE) || k(VK_BACK)) m |= hubqm::NB_B;
     return m;
 }
 
 void qm_pad_event(const SDL_Event& e) {
     if (e.type != SDL_CONTROLLERBUTTONDOWN || e.cbutton.button >= 24) return;
+    if (!qm_is_open()) { g_taps = 0; return; }   // presses made in the game (hub minimised, not drawn) must never reach the menu later
     if (g_only >= 0 && e.cbutton.which != g_only) return;
     g_taps |= 1u << e.cbutton.button;
 }

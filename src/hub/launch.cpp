@@ -255,6 +255,7 @@ std::vector<unsigned long> running_game_pids() { std::vector<unsigned long> v; f
 
 void focus_game() {
     if (g_headless) return;
+    hub_menu_topmost(false);   // first: clearing it after the game is raised would put the hub back above the game
     CloseCtx c;
     c.pids = game_pids();
     struct Pick { std::vector<DWORD> pids; HWND hwnd = nullptr; } pk;

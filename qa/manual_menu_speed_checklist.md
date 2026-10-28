@@ -12,6 +12,9 @@ If anything fails, send `userdata\logs\quickmenu.log` (every open, close, press 
 4. Press **B**: the menu closes, the game is in front and takes your pad again.
 5. Hold **View+RT** in the game: fast-forward while held; release: normal speed. Repeat with the menu speed set to 0.5x: release returns to 0.5x.
 6. Press View+Y, then **click another window** (or Alt+Tab) while the menu is open. Press D-pad / B: the menu still reacts to the pad.
+7. After B, the game is **in front of** RetroHub (RetroHub must not stay on top).
+8. Only if you host an online room: View+Y, go to **Invite friends**, press A. The picker opens and the d-pad moves inside it; B closes
+   just the picker (the Game menu stays open); a second B closes the menu.
 
 ## B. GameCube (Dolphin), full screen
 1. Start a game. View+Y: menu on top. Speed row: **right** to **2x**. The game speeds up **while the menu is still open**

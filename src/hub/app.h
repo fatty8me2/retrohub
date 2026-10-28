@@ -700,7 +700,7 @@ void qm_e2e_start();                                                            
 bool qm_e2e_frame();                                                                    // every frame; false = finished (exit code set)
 int qm_e2e_exit_code();
 void qm_e2e_enable();
-struct QmE2EState { bool open = false; int page = 0; std::string sel; int speed_idx = 0, vol = 0; bool mute = false; std::string close_why; std::vector<std::string> cmds; };
+struct QmE2EState { bool open = false; int page = 0; std::string sel; int speed_idx = 0, vol = 0; bool mute = false; std::string close_why; std::vector<std::string> cmds; bool imgui_nav = false; };
 QmE2EState qm_e2e_state();                                                                   // View+Y while a game runs
 void draw_quick_menu();
 int shots_count(const hub::GameEntry& e);

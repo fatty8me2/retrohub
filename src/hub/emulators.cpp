@@ -871,6 +871,7 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
     t = hubui::ini_set(t, "Core", "SlotA", "8");
     t = hubui::ini_set(t, "Core", "SlotB", "255");
     t = hubui::ini_set(t, "Core", "EmulationSpeed", "1.0");   // the Game menu's Speed row starts every session at 1x
+    t = hubui::ini_set(t, "General", "HotkeysRequireFocus", "False");   // every launch (upgraded installs too): the speed pad needs no focus; other hotkeys are unbound (dolphin_hotkeys_ini)
     t = hubui::ini_set(t, "Core", "SkipIPL", "True");   // every launch; the offline "real console startup" turns it off for that launch only (real_boot_ui.cpp)
     for (int i = 0; i < 4; ++i)
         t = hubui::ini_set(t, "Core", "SIDevice" + std::to_string(i), pads.adapter ? "12" : (i == 0 || pads.xinput[i] || !pads.dev[i].empty()) ? "6" : "0");
@@ -900,7 +901,7 @@ static std::string blank_other_hotkeys(const std::string& in) {
                 std::string key = tl.substr(a, eq - a), val = tl.substr(eq + 1);
                 while (!key.empty() && key.back() == ' ') key.pop_back();
                 const bool ours = key == "Device" || key == hubqm::dolphin_hotkey_name(hubqm::DolphinKey::Increase) || key == hubqm::dolphin_hotkey_name(hubqm::DolphinKey::Decrease);
-                if (!ours && val.find_first_not_of(" ") != std::string::npos) line = key + " = ";
+                if (!ours && val.find_first_not_of(" ") != std::string::npos) line = key + " = " + (!line.empty() && line.back() == '\r' ? "\r" : "");
             }
         }
         out += line;
@@ -924,7 +925,7 @@ std::string dolphin_dsu_ini(const std::string& in) {
     std::string t = hubui::ini_set(in, "Server", "Enabled", "True");
     std::string e = hubui::ini_get(t, "Server", "Entries");
     const std::string mine = hubds::server_entries();
-    if (e.find(mine) == std::string::npos) t = hubui::ini_set(t, "Server", "Entries", e + mine);
+    if (e.find(mine) == std::string::npos) t = hubui::ini_set(t, "Server", "Entries", e + (!e.empty() && e.back() != ';' ? ";" : "") + mine);
     return t;
 }
 

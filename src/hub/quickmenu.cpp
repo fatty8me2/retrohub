@@ -274,11 +274,14 @@ std::atomic<int> g_burst_done{-1};
 std::vector<hubqm::DolphinKey> g_burst_plan;
 int g_burst_target = hubqm::kSpeedNormal, g_retry_n = 0;
 ULONGLONG g_retry_at = 0;
-std::atomic<bool> g_close_req{false};   // emergency reset: close the menu so the game is in front for the key burst
+std::atomic<bool> g_close_req{false};
+bool g_burst_dsu = false;    // the running burst went through the DSU pad
+bool g_dsu_dead = false;     // this session: Dolphin's DSU client never connected -> keyboard path (needs the menu closed)
+bool use_dsu() { return dolphin_speed_running() && !g_dsu_dead; }   // emergency reset: close the menu so the game is in front for the key burst
 
 /* Menu closed (or a retry is due): press the Dolphin hotkeys that take it to the chosen step (offline GameCube only). */
 void dolphin_apply_pending(const hub::GameEntry* e) {
-    if (!is_dolphin(e) || A.run.online || g_shot_fake || g_burst_state.load() != 0 || (qm_is_open() && !dolphin_speed_running())) return;   // the DSU pad needs no focus: applies live, menu open or not
+    if (!is_dolphin(e) || A.run.online || g_shot_fake || g_burst_state.load() != 0 || (qm_is_open() && !use_dsu())) return;   // the DSU pad needs no focus: applies live, menu open or not
     if (!hubqm::dolphin_needs_apply(g_dolphin, g_speed_idx)) { g_retry_n = 0; return; }
     if (GetTickCount64() < g_retry_at) return;
     g_burst_plan = hubqm::dolphin_plan_for(g_dolphin, g_speed_idx);
@@ -289,7 +292,8 @@ void dolphin_apply_pending(const hub::GameEntry* e) {
     qm_log("dolphin speed: sending " + std::to_string(vks.size()) + " presses toward step " + std::to_string(g_burst_target) + (g_dolphin.known ? "" : " (state unknown: via the 0.1x floor)") + " attempt " + std::to_string(g_retry_n));
     g_burst_state = 1;
     auto burst_done = [](int done) { g_burst_done = done; g_burst_state = 2; };
-    if (dolphin_speed_running()) dolphin_speed_send(vks, burst_done); else dolphin_send_speed_keys(vks, burst_done);   // DSU pad: no focus / SendInput; keys only if its port was busy
+    g_burst_dsu = use_dsu();
+    if (g_burst_dsu) dolphin_speed_send(vks, burst_done); else dolphin_send_speed_keys(vks, burst_done);   // DSU pad: no focus / SendInput; keys only if its port was busy
 }
 
 /* UI thread, every frame: fold a finished burst into the state and schedule a retry if it did not go through. */
@@ -298,6 +302,7 @@ void dolphin_burst_poll() {
     const int done = g_burst_done.load();
     g_burst_state = 0;
     if (done < 0 || (done == 0 && !g_burst_plan.empty())) {   // nothing was pressed: state unchanged
+        if (g_burst_dsu && !g_dsu_dead) { g_dsu_dead = true; g_retry_at = 0; qm_log("dolphin speed: Dolphin's DSU client is not connected; using the keyboard hotkeys for this session"); return; }
         qm_log("dolphin speed: burst did not run (game not in front); will retry");
     } else {
         hubqm::dolphin_commit(g_dolphin, g_burst_target, g_burst_plan, done);
@@ -475,7 +480,7 @@ static void qm_session_tick(const hub::GameEntry* e) {
         g_sess_key = A.run.key; g_sess_tick = A.run.start_tick;
         g_speed_idx = hubqm::kSpeedNormal;
         g_dolphin = hubqm::DolphinSpeed();
-        g_retry_n = 0; g_retry_at = 0; g_burst_state = 0;
+        g_retry_n = 0; g_retry_at = 0; g_burst_state = 0; g_dsu_dead = false;
         qm_log("session start " + A.run.key);   // Dolphin.ini was written with EmulationSpeed = 1.0 at launch
         g_mute = false;
         g_vol = e ? hub::gs::volume_of(gs_values_for(*e)) : 100;
@@ -588,9 +593,10 @@ void draw_quick_menu() {
     static bool was_open = false;
     const uint32_t raw = qm_pad_raw(), taps = qm_pad_take_taps();
     const uint32_t bits = qm_nav_bits(raw) | qm_keyboard_nav_bits(), tap_bits = qm_nav_bits(taps);
+    const bool open_frame = open && !was_open;
     if (open && !was_open) {
         g_open_ms = GetTickCount64(); g_close_why = "other"; g_focus_retry.reset();
-        g_in.open(bits);        // everything held right now (View+Y, A/B from the game) is ignored until released
+        g_in.open(bits | qm_keyboard_held_async());   // everything held right now (View+Y, A/B from the game, Enter...) is ignored until released
         g_nav.reset();
         g_sub_open = false;
         if (!g_shot_fake) qm_log("menu opened (held at open: 0x" + [](uint32_t v) { char b[16]; std::snprintf(b, sizeof b, "%x", v); return std::string(b); }(raw) + ")");
@@ -612,7 +618,7 @@ void draw_quick_menu() {
         if (g_sub_open) { sub_was = true; qm_pad_take_taps(); }
         else {
             if (sub_was) { sub_was = false; g_in.open(bits); }   // the picker just closed: its closing B must not also close the menu
-            ev = g_in.update(bits, (long long)GetTickCount64(), tap_bits);
+            ev = g_in.update(bits, (long long)GetTickCount64(), open_frame ? 0u : tap_bits);
         }
         if (ev.back) qm_log("menu: back");
         g_nav.begin(ev);
@@ -690,7 +696,7 @@ static void qm_body() {
             if (row == hubqm::SpeedRow::Enabled) {
                 int d = stepper_row("speed", "Speed", hubqm::dolphin_speed_text(g_speed_idx), -1.f, true, fw);
                 if (d) g_speed_idx = hubqm::dolphin_speed_step(g_speed_idx, d);   // DSU pad: applied at once (qm_tick); keyboard fallback: when the menu closes
-                if (g_speed_idx != hubqm::dolphin_idx(g_dolphin)) text_wrapped_disabled(dolphin_speed_running() ? "Changing Dolphin's speed..." : "Applies when you resume.");
+                if (g_speed_idx != hubqm::dolphin_idx(g_dolphin)) text_wrapped_disabled(use_dsu() ? "Changing Dolphin's speed..." : "Applies when you resume.");
             } else {
                 stepper_row("speed", "Speed", "1x", -1.f, false, fw);
                 if (row == hubqm::SpeedRow::Online) text_wrapped_disabled("Not available online: everyone has to stay in step.");
@@ -874,5 +880,6 @@ QmE2EState qm_e2e_state() {
     st.mute = g_mute;
     st.close_why = g_close_why;
     st.cmds = g_e2e_cmds;
+    st.imgui_nav = (ImGui::GetIO().ConfigFlags & (ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad)) == (ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
     return st;
 }
