@@ -127,6 +127,7 @@ class Lockstep {
     bool resync_waiting() const { return rs_wait_; }
     void resync_loaded(bool ok);
     int resyncs() const { return rs_.count(); }
+    bool resync_active() const { return rs_.active(); }   // host: no spectator snapshot may start (the core's save job is wanted at S - 1)
     /* the sync hash (hash_rdram) should skip the framebuffers: every player announced hash version 2 (a spectator: unless --full-hash) */
     bool masked_hash() const { return masked_; }
 
@@ -152,6 +153,7 @@ class Lockstep {
     bool rs_host_barrier(uint32_t n);
     bool rs_guest_barrier(uint32_t n);
     void rs_fail(const char* why);
+    bool rs_silent(uint32_t now) const;
     void rs_finish(uint32_t S);
     void send_packet();
     void report_mismatches();

@@ -631,7 +631,7 @@ static void host_poll(uint32_t n) {
         }
         g_last_poll = t;
     }
-    if (g_joinq.empty()) return;
+    if (g_joinq.empty() || g_run.lockstep->resync_active()) return;   // a desync recovery wants the core's save job: spectators' knocks wait
     std::vector<int> q;
     q.swap(g_joinq);
     const uint32_t now = hubnet::now_ms();

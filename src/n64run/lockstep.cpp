@@ -275,10 +275,14 @@ void Lockstep::rs_send(int to, const resync::Msg& m) {
 void Lockstep::rs_on_ctl(int from, const std::vector<uint8_t>& msg) {
     resync::Msg m, reply;
     if (opt_.spectator || !resync::decode(kPktResync, msg.data(), msg.size(), &m) || m.from != from) return;
+    if (m.sub == resync::Abort && opt_.my_slot != 0 && std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_LOSE_ABORTS")) {   // QA: the first N Aborts are "lost"
+        static int lost = 0;
+        if (lost < std::atoi(std::getenv("N64RUN_QA_LOSE_ABORTS"))) { lost++; if (hooks_.log) hooks_.log("resync: QA dropped an Abort"); return; }
+    }
     resync::Act a = rs_.on_msg(m, sample_ < 0 ? 0u : (uint32_t)sample_, &reply);
     if (a == resync::Act::Reply) {
-        rs_send(0, reply);
-        if (reply.sub == resync::Abort) { desync_ = true; if (hooks_.log) hooks_.log("resync: we already passed the proposed sample; recovery off"); if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop(); }
+        rs_send(from, reply);
+        if (reply.sub == resync::Abort && opt_.my_slot != 0) { desync_ = true; if (hooks_.log) hooks_.log("resync: we already passed the proposed sample; recovery off"); if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop(); }
     } else if (a == resync::Act::Fallback) {
         if (opt_.my_slot == 0) { resync::Msg ab; ab.sub = resync::Abort; ab.from = 0; ab.seq = rs_.seq(); for (int i = 0; i < 3; i++) rs_send(-1, ab); }
         rs_snd_.stop();
@@ -366,6 +370,15 @@ void Lockstep::resync_loaded(bool ok) {
     rs_wait_ = false;
 }
 
+bool Lockstep::rs_silent(uint32_t now) const {   // a peer we depend on has sent nothing for timeout_ms (2 players: nobody else could drop it)
+    for (int s = 0; s < kPorts; s++) {
+        if (s == opt_.my_slot || !(core_.slot_mask() >> s & 1u) || (dropped_mask_ >> s & 1u) || core_.drop_begun(s) || (bye_mask_ >> s & 1u)) continue;
+        if (opt_.my_slot != 0 && s != 0) continue;   // a guest only needs the host
+        if (last_rx_[s] && now - last_rx_[s] > opt_.timeout_ms) return true;
+    }
+    return false;
+}
+
 bool Lockstep::rs_barrier(uint32_t n) {
     rs_t0_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
     if (hooks_.log) { char b[100]; std::snprintf(b, sizeof b, "resync: stalled at sample %u (%s)", n, opt_.my_slot == 0 ? "host" : "guest"); hooks_.log(b); }
@@ -373,6 +386,7 @@ bool Lockstep::rs_barrier(uint32_t n) {
 }
 
 bool Lockstep::rs_host_barrier(uint32_t n) {
+    if (std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_HOST_ABORT")) { rs_fail("QA forced abort"); return true; }   // QA: exercise the Abort path
     std::vector<uint8_t> data;
     uint64_t hash = 0;
     bool have = false;
@@ -386,6 +400,10 @@ bool Lockstep::rs_host_barrier(uint32_t n) {
         if (net_->failed()) { abort_with("Connection lost during a desync recovery"); return false; }
         if (spec_host_) spec_service();
         rs_service(now);
+        drop_check(now, n);
+        drop_service(now);
+        for (int s = 1; s < kPorts; s++) if (dropped_mask_ >> s & 1u) { rs_.drop(s); rs_snd_.remove(s); }
+        if (rs_silent(now)) { abort_with("Connection lost (no input from peers for 10 s)"); return false; }
         if (!have && !rs_snd_.active()) {
             int r = hooks_.resync_fetch(rs_job_, &data, &hash);
             if (r < 0 || (r == 1 && (data.empty() || data.size() > rb::xfer::kMaxChunks * rb::xfer::kChunk))) { rs_fail("the core did not save the state"); return true; }
@@ -420,7 +438,7 @@ bool Lockstep::rs_host_barrier(uint32_t n) {
 }
 
 bool Lockstep::rs_guest_barrier(uint32_t n) {
-    uint32_t last_send = 0;
+    uint32_t last_send = 0, last_status = 0;
     for (;;) {
         if (hooks_.idle) hooks_.idle();
         pump();
@@ -428,9 +446,13 @@ bool Lockstep::rs_guest_barrier(uint32_t n) {
         if (!rs_.active()) return !lost_;   // the host aborted: play on
         if (net_->failed()) { abort_with("Connection lost during a desync recovery"); return false; }
         rs_service(now);
+        drop_check(now, n);
+        drop_service(now);
+        if (rs_silent(now)) { abort_with("Connection lost (no input from the host for 10 s)"); return false; }
         if (rs_rcv_.complete()) break;
+        if (now - last_status >= 250) { rs_send(0, rs_.ack_msg()); last_status = now; }   // status poll: the host answers Abort if it gave up (a lost Abort cannot strand us)
         if (now - last_send >= 50) { send_packet(); last_send = now; }
-        if (now - rs_t0_ > 60000) { rs_fail("timeout"); abort_with("resync: the state never arrived"); return false; }
+        if (now - rs_t0_ > 45000) { rs_fail("timeout"); abort_with("resync: the state never arrived"); return false; }
         Sleep(1);
     }
     const rb::xfer::Meta mt = rs_rcv_.meta();
@@ -650,7 +672,14 @@ uint32_t Lockstep::get_keys(int port) {
     if (net_ && hooks_.qa_poll) hooks_.qa_poll(n);
     if (net_ && rs_.save_due(n)) {   // host: the state taken at the next interrupt is the one before sample n + 1 = S
         rs_.mark_saved();
-        if (!hooks_.resync_save || !hooks_.resync_save(&rs_job_)) rs_fail("the core refused to save");
+        bool ok = hooks_.resync_save && hooks_.resync_save(&rs_job_);
+        for (uint32_t t0 = hubnet::now_ms(); !ok && hooks_.resync_save && hubnet::now_ms() - t0 < 3000 && !lost_;) {   // a spectator snapshot is still being written: its worker finishes on its own
+            if (hooks_.idle) hooks_.idle();
+            pump();
+            Sleep(5);
+            ok = hooks_.resync_save(&rs_job_);
+        }
+        if (!ok) rs_fail("the core refused to save");
     }
 
     if (net_ && opt_.my_slot == 1 && n > 0) {   // QA: periodic hiccup on slot 1 ("period_samples,ms"), RETROHUB_QA=1 only

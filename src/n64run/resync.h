@@ -9,7 +9,8 @@
  * Messages (kPktResync): [type, sub, from_slot, seq, u32 S]
  *   Req     guest -> host   "my checks saw a desync": repeated until a Propose arrives
  *   Propose host -> all     seq, S: repeated until every guest acknowledged
- *   PropAck guest -> host   got it (S not yet reached)
+ *   PropAck guest -> host   got it (S not yet reached); also repeated by a guest stalled at S as a status poll: if the host has no such attempt
+ *                           running (it aborted and the Abort was lost) it answers Abort
  *   Abort   either way      this attempt is off (a guest already passed S, the save or the transfer failed); the match goes on as before
  * Capability: a 3rd byte in the start-barrier "ready" packet (kCapResync). Everybody in the slot mask must have it, otherwise the feature is
  * off and a desync behaves exactly as before (logged; --strict-sync ends the match). At most kMaxResyncs recoveries per match. */
@@ -102,11 +103,14 @@ class Ctl {
 
     /* A control message from `from`; cur = my last polled sample. If it needs an answer, *reply is filled. */
     Act on_msg(const Msg& m, uint32_t cur, Msg* reply) {
-        if (!enabled_ || failed_) return Act::None;
+        if (!enabled_ || (failed_ && !(host() && m.sub == PropAck))) return Act::None;
         if (host()) {
             if (!(guests() >> m.from & 1u)) return Act::None;
             if (m.sub == Req) { if (!active_ && !stale(m.s) && count_ < max_) start(cur); else if (!active_ && !stale(m.s) && count_ >= max_) failed_ = true; }
-            else if (m.sub == PropAck && active_ && m.seq == seq_) acked_ |= 1u << m.from;
+            else if (m.sub == PropAck) {
+                if (active_ && m.seq == seq_) acked_ |= 1u << m.from;
+                else if (!active_ || m.seq != seq_) { Msg a; a.sub = Abort; a.from = (uint8_t)my_; a.seq = m.seq; a.s = m.s; *reply = a; return Act::Reply; }   // status poll of a dead attempt
+            }
             else if (m.sub == Abort && active_ && m.seq == seq_) { abort(); return Act::Fallback; }
             return Act::None;
         }
@@ -127,6 +131,9 @@ class Ctl {
     /* Give the attempt up (timeout, save/transfer failure, a guest passed S): the match continues as before and recovery stays off. */
     void abort() { active_ = false; failed_ = true; want_req_ = false; }
     bool failed() const { return failed_; }
+    Msg ack_msg() const { return ack(); }
+    /* a guest was dropped mid-match: nothing more to wait for from it */
+    void drop(int slot) { mask_ &= ~(1u << slot); }
     /* host: poll n is the one before S: ask the core for the savestate now. */
     bool save_due(uint32_t n) const { return host() && active_ && !saved_ && n + 1 == s_; }
     void mark_saved() { saved_ = true; }
