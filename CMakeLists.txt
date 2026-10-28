@@ -195,6 +195,7 @@ add_test(NAME stream_core_test COMMAND stream_core_test)            # remote pla
 add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
 add_test(NAME n64run_spectate_test COMMAND n64run_spectate_test)
 add_test(NAME n64run_dropagree_test COMMAND n64run_dropagree_test)
+add_test(NAME n64run_resync_test COMMAND n64run_resync_test)
 add_test(NAME n64run_match_test COMMAND n64run_match_test)
 add_test(NAME n64run_gs_cheat_test COMMAND n64run_gs_cheat_test)
 add_test(NAME n64run_testinput_test COMMAND n64run_testinput_test)

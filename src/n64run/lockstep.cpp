@@ -100,6 +100,10 @@ void Lockstep::pump() {
                 bye_last_[msg[1]] = last;
                 core_.peer_left(msg[1]);
             }
+        } else if (msg[0] == kPktResync) {
+            rs_on_ctl(from, msg);
+        } else if (msg[0] == rb::xfer::kPkt && !opt_.spectator && from > 0 && from < 8 && (core_.slot_mask() >> from & 1u)) {
+            rs_on_xfer(from, msg);   // a player's transfer is a desync recovery (spectators' are handled below)
         } else if (msg[0] == spectate::kPktJoin || msg[0] == spectate::kPktNoLive || msg[0] == 0x55 /* rb::xfer::kPkt */) {
             const bool ok = opt_.spectator ? from == 0 : (from > 0 && (net_->spectator_mask() >> from & 1u));
             if (ok && hooks_.on_spectate_msg) hooks_.on_spectate_msg(from, msg);
@@ -110,7 +114,7 @@ void Lockstep::pump() {
         } else if (msg[0] == kPktCheats) {
             // handshake leftovers: ignore
         } else if (msg[0] == kPktReady) {
-            if (msg.size() >= 2 && msg[1] < 8) ready_mask_ |= 1u << msg[1];
+            if (msg.size() >= 2 && msg[1] < 8) { ready_mask_ |= 1u << msg[1]; if (msg.size() >= 3) caps_[msg[1]] = msg[2]; }
         } else {
             core_.on_packet(from, msg.data(), msg.size());
         }
@@ -121,20 +125,28 @@ bool Lockstep::start_barrier(uint32_t timeout_ms) {
     if (!net_ || opt_.spectator) return true;   // a spectator is not part of the start barrier: it boots whenever it likes
     uint32_t all = core_.slot_mask();
     ready_mask_ |= 1u << opt_.my_slot;
+    const uint8_t my_cap = (hooks_.resync_fetch && hooks_.resync_load && hooks_.resync_save && !std::getenv("N64RUN_NO_RESYNC")) ? resync::kCapResync : 0;
+    caps_[opt_.my_slot] = my_cap;
     uint32_t t0 = hubnet::now_ms(), last = 0, seen_all_at = 0;
     for (;;) {
         pump();
         uint32_t now = hubnet::now_ms();
         if (net_->failed()) return false;
         if (now - last >= 100 || last == 0) {
-            uint8_t pkt[2] = {kPktReady, (uint8_t)opt_.my_slot};
-            net_->send(-1, pkt, 2);
+            uint8_t pkt[3] = {kPktReady, (uint8_t)opt_.my_slot, my_cap};   // an old peer reads the first two bytes only
+            net_->send(-1, pkt, 3);
             last = now ? now : 1;
         }
         if ((ready_mask_ & all) == all) {
             // Keep announcing for a short grace period so slower peers also see us.
             if (!seen_all_at) seen_all_at = now ? now : 1;
-            if (now - seen_all_at > 400) return true;
+            if (now - seen_all_at > 400) {
+                uint32_t margin = resync::kDefaultMargin;
+                if (const char* e = std::getenv("N64RUN_RESYNC_MARGIN")) margin = (uint32_t)std::atoi(e);
+                rs_.configure(opt_.my_slot, all, caps_, margin);
+                if (hooks_.log) hooks_.log(rs_.enabled() ? "resync: desync recovery on (every peer supports it)" : "resync: desync recovery off (a peer lacks it)");
+                return true;
+            }
         }
         if (now - t0 > timeout_ms) return false;
         if (hooks_.idle) hooks_.idle();
@@ -232,14 +244,206 @@ void Lockstep::abort_with(const std::string& why) {
 void Lockstep::report_mismatches() {
     LockstepCore::Mismatch m;
     while (core_.poll_mismatch(&m)) {
-        desync_ = true;
         char buf[256];
         std::snprintf(buf, sizeof buf, "DESYNC at sample %u: %s hashes %016llx %016llx %016llx %016llx",
                       m.sample, opt_.hash_label.c_str(), (unsigned long long)m.hash[0], (unsigned long long)m.hash[1],
                       (unsigned long long)m.hash[2], (unsigned long long)m.hash[3]);
         if (hooks_.log) hooks_.log(buf);
+        if (rs_.stale(m.sample)) { if (hooks_.log) hooks_.log("resync: that check predates the last recovery; ignored"); continue; }
+        resync::Act a = rs_.on_mismatch(m.sample, sample_ < 0 ? 0u : (uint32_t)sample_);
+        if (a == resync::Act::Fallback) {
+            desync_ = true;
+            if (hooks_.log && rs_.count() >= resync::kMaxResyncs) hooks_.log("resync: giving up after " + std::to_string(rs_.count()) + " recoveries");
+            if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
+        } else {
+            rs_hash_sample_ = m.sample;
+            if (hooks_.log) hooks_.log("resync: recovery requested");
+        }
+    }
+}
+
+void Lockstep::rs_send(int to, const resync::Msg& m) {
+    auto v = resync::encode(kPktResync, m);
+    net_->send(to, v.data(), (int)v.size());
+}
+
+void Lockstep::rs_on_ctl(int from, const std::vector<uint8_t>& msg) {
+    resync::Msg m, reply;
+    if (opt_.spectator || !resync::decode(kPktResync, msg.data(), msg.size(), &m) || m.from != from) return;
+    resync::Act a = rs_.on_msg(m, sample_ < 0 ? 0u : (uint32_t)sample_, &reply);
+    if (a == resync::Act::Reply) {
+        rs_send(0, reply);
+        if (reply.sub == resync::Abort) { desync_ = true; if (hooks_.log) hooks_.log("resync: we already passed the proposed sample; recovery off"); if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop(); }
+    } else if (a == resync::Act::Fallback) {
+        if (opt_.my_slot == 0) { resync::Msg ab; ab.sub = resync::Abort; ab.from = 0; ab.seq = rs_.seq(); for (int i = 0; i < 3; i++) rs_send(-1, ab); }
+        rs_snd_.stop();
+        rs_rcv_.reset();
+        desync_ = true;
+        if (hooks_.log) hooks_.log("resync: a peer aborted the recovery; the desync stays");
         if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
     }
+}
+
+void Lockstep::rs_fail(const char* why) {
+    if (hooks_.log) hooks_.log(std::string("resync: failed (") + why + "): the desync stays");
+    if (opt_.my_slot == 0 && rs_.active()) { resync::Msg ab; ab.sub = resync::Abort; ab.from = 0; ab.seq = rs_.seq(); for (int i = 0; i < 3; i++) rs_send(-1, ab); }
+    rs_.abort();
+    rs_snd_.stop();
+    rs_rcv_.reset();
+    desync_ = true;
+    if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
+}
+
+void Lockstep::rs_on_xfer(int from, const std::vector<uint8_t>& m) {
+    if (m.size() < 4 || m[2] != from) return;
+    const uint32_t now = hubnet::now_ms();
+    if (opt_.my_slot == 0) {
+        if (!rs_snd_.active() || m[3] != rs_snd_.epoch()) return;
+        if (m[1] == rb::xfer::Ack && m.size() >= 4 + 2 + 8) rs_snd_.on_ack(from, rb::xfer::g16(m.data() + 4), rb::xfer::g64(m.data() + 6));
+        else if (m[1] == rb::xfer::Done && m.size() >= 5 && m[4] == 1) rs_snd_.on_done(from);
+        return;
+    }
+    if (from != 0) return;
+    if ((m[1] == rb::xfer::Begin || m[1] == rb::xfer::Chunk) && m[3] == rs_done_ep_) {   // we loaded it already: our Done was lost
+        if (now - rs_last_done_ > 100) {
+            auto v = rb::xfer::header(rb::xfer::Done, opt_.my_slot, (uint8_t)rs_done_ep_);
+            v.push_back(1);
+            net_->send(0, v.data(), (int)v.size());
+            rs_last_done_ = now;
+        }
+        return;
+    }
+    if (!rs_.active() || m[3] != (uint8_t)(0xC0 | (rs_.seq() & 0x3F))) return;
+    if (m[1] == rb::xfer::Begin) {
+        rb::xfer::Meta mt;
+        if (rb::xfer::dec_begin(m.data(), m.size(), &mt) && mt.frame == rs_.target() && rs_rcv_.on_begin(m[3], mt) && hooks_.log) {
+            char b[120]; std::snprintf(b, sizeof b, "resync: receiving the state of sample %u (%u bytes, %u chunks)", mt.frame, mt.comp, (unsigned)mt.chunks);
+            hooks_.log(b);
+        }
+    } else if (m[1] == rb::xfer::Chunk && m.size() >= 6) {
+        rs_rcv_.on_chunk(m[3], rb::xfer::g16(m.data() + 4), m.data() + 6, m.size() - 6);
+    }
+}
+
+void Lockstep::rs_service(uint32_t now) {
+    if (!net_ || !rs_.enabled()) return;
+    if (opt_.my_slot == 0) {
+        if (rs_.propose_due(now)) rs_send(-1, rs_.propose_msg());
+    } else {
+        if (rs_.req_due(now)) rs_send(0, rs_.req_msg(rs_hash_sample_));
+        uint16_t nx; uint64_t bits;
+        if (rs_rcv_.active() && rs_rcv_.ack_due(now, &nx, &bits)) { auto v = rb::xfer::enc_ack(opt_.my_slot, rs_rcv_.epoch(), nx, bits); net_->send(0, v.data(), (int)v.size()); }
+    }
+}
+
+void Lockstep::rs_finish(uint32_t S) {
+    const uint32_t now = hubnet::now_ms();
+    const uint32_t stall = now - rs_t0_;
+    rs_.complete();
+    for (int q = 0; q < kPorts; q++) last_rx_[q] = now ? now : 1;   // nobody was heard during the stall: not a silent guest
+    last_poll_ = 0; debt_ms_ = 0;
+    if (stall > longest_stall_) longest_stall_ = stall;
+    if (hooks_.log) {
+        char b[200];
+        std::snprintf(b, sizeof b, "resync %d/%d complete: playing on from sample %u, stalled %u ms, state %u bytes", rs_.count(), resync::kMaxResyncs, S, stall, rs_bytes_);
+        hooks_.log(b);
+    }
+    if (hooks_.resync_done) hooks_.resync_done(S, stall);
+}
+
+void Lockstep::resync_loaded(bool ok) {
+    if (!rs_wait_) return;
+    if (!ok) { rs_wait_ = false; abort_with("resync: the core could not load the recovery state"); return; }
+    const uint32_t S = rs_.target();
+    sample_ = (int64_t)S - 1;
+    rs_finish(S);
+    rs_wait_ = false;
+}
+
+bool Lockstep::rs_barrier(uint32_t n) {
+    rs_t0_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
+    if (hooks_.log) { char b[100]; std::snprintf(b, sizeof b, "resync: stalled at sample %u (%s)", n, opt_.my_slot == 0 ? "host" : "guest"); hooks_.log(b); }
+    return opt_.my_slot == 0 ? rs_host_barrier(n) : rs_guest_barrier(n);
+}
+
+bool Lockstep::rs_host_barrier(uint32_t n) {
+    std::vector<uint8_t> data;
+    uint64_t hash = 0;
+    bool have = false;
+    uint32_t last_send = 0;
+    uint32_t xfer_t0 = 0;
+    for (;;) {
+        if (hooks_.idle) hooks_.idle();
+        pump();
+        const uint32_t now = hubnet::now_ms();
+        if (!rs_.active()) return !lost_;   // a guest aborted it (rs_on_ctl did the bookkeeping)
+        if (net_->failed()) { abort_with("Connection lost during a desync recovery"); return false; }
+        if (spec_host_) spec_service();
+        rs_service(now);
+        if (!have && !rs_snd_.active()) {
+            int r = hooks_.resync_fetch(rs_job_, &data, &hash);
+            if (r < 0 || (r == 1 && (data.empty() || data.size() > rb::xfer::kMaxChunks * rb::xfer::kChunk))) { rs_fail("the core did not save the state"); return true; }
+            have = r == 1;
+        }
+        if (have && !rs_snd_.active() && rs_.all_acked()) {
+            rb::xfer::Meta m;
+            m.frame = n; m.raw = m.comp = (uint32_t)data.size(); m.flags = 0; m.hash = hash;
+            m.chunks = (uint16_t)((data.size() + rb::xfer::kChunk - 1) / rb::xfer::kChunk);
+            bool rel = false;
+            for (int s = 1; s < kPorts; s++) if ((rs_.guests() >> s & 1u) && net_->is_relayed(s)) rel = true;
+            rs_bytes_ = (uint32_t)data.size();
+            rs_snd_.start((uint8_t)(0xC0 | (rs_.seq() & 0x3F)), m, std::move(data), rs_.guests() & core_.slot_mask() & ~dropped_mask_, now ? now : 1, rel ? 150.0 : 1500.0);
+            xfer_t0 = now;
+            if (hooks_.log) { char b[140]; std::snprintf(b, sizeof b, "resync: state saved %u ms after the stall began; sending %u bytes in %u chunks (%s)", now - rs_t0_, m.comp, (unsigned)m.chunks, rel ? "relay" : "direct"); hooks_.log(b); }
+        }
+        if (rs_snd_.active()) {
+            rs_snd_.service(now ? now : 1, 0, [&](const uint8_t* d, size_t len) {
+                for (int s = 1; s < kPorts; s++) if (rs_.guests() >> s & 1u) net_->send(s, d, (int)len);
+            });
+            if (rs_snd_.all_done()) {
+                if (hooks_.log) { char b[120]; std::snprintf(b, sizeof b, "resync: every guest has the state (transfer %u ms, %zu chunks sent for %u)", now - xfer_t0, rs_snd_.chunks_sent(), (unsigned)rs_snd_.meta().chunks); hooks_.log(b); }
+                rs_snd_.stop();
+                rs_finish(n);
+                return true;
+            }
+        }
+        if (now - last_send >= 50) { send_packet(); last_send = now; }
+        if (now - rs_t0_ > 60000 || (!rs_snd_.active() && now - rs_t0_ > 12000)) { rs_fail("timeout"); return true; }
+        Sleep(1);
+    }
+}
+
+bool Lockstep::rs_guest_barrier(uint32_t n) {
+    uint32_t last_send = 0;
+    for (;;) {
+        if (hooks_.idle) hooks_.idle();
+        pump();
+        const uint32_t now = hubnet::now_ms();
+        if (!rs_.active()) return !lost_;   // the host aborted: play on
+        if (net_->failed()) { abort_with("Connection lost during a desync recovery"); return false; }
+        rs_service(now);
+        if (rs_rcv_.complete()) break;
+        if (now - last_send >= 50) { send_packet(); last_send = now; }
+        if (now - rs_t0_ > 60000) { rs_fail("timeout"); abort_with("resync: the state never arrived"); return false; }
+        Sleep(1);
+    }
+    const rb::xfer::Meta mt = rs_rcv_.meta();
+    const std::vector<uint8_t>& st = rs_rcv_.payload();
+    rs_bytes_ = (uint32_t)st.size();
+    rs_wait_ = true;
+    if (st.size() != mt.raw || !hooks_.resync_load(st, mt.hash)) {
+        rs_wait_ = false;
+        abort_with("resync: the recovery state did not arrive intact");
+        return false;
+    }
+    rs_done_ep_ = rs_rcv_.epoch();
+    auto v = rb::xfer::header(rb::xfer::Done, opt_.my_slot, (uint8_t)rs_done_ep_);
+    v.push_back(1);
+    net_->send(0, v.data(), (int)v.size());
+    rs_last_done_ = hubnet::now_ms();
+    rs_rcv_.reset();
+    sample_ = (int64_t)n - 1;   // sample n is delivered once the core has loaded the state (resync_loaded)
+    return false;
 }
 
 bool Lockstep::left_blocks(uint32_t n) const {
@@ -393,6 +597,15 @@ uint32_t Lockstep::spec_get_keys(int port) {
 uint32_t Lockstep::get_keys(int port) {
     if (opt_.spectator) return spec_get_keys(port);
     if (lost_ || peer_left_ || !core_.port_present(port)) return 0;
+    if (rs_wait_) {   // recovery state requested: polls before the core has loaded it are thrown away with the state they ran in
+        if (port == core_.lead_port()) {
+            pump();
+            const uint32_t now = hubnet::now_ms();
+            if (now - rs_last_pkt_ >= 50) { send_packet(); rs_last_pkt_ = now; }
+            if (now - rs_t0_ > 20000) { rs_wait_ = false; abort_with("resync: the core never finished loading the state"); }
+        }
+        return 0;
+    }
     if (port != core_.lead_port()) {
         // Same poll round as the lead port: return the current sample's value.
         return sample_ < 0 ? 0u : core_.get((uint32_t)sample_, port);
@@ -407,6 +620,10 @@ uint32_t Lockstep::get_keys(int port) {
 
     if (hooks_.update_local) hooks_.update_local();
     pump();
+    if (net_) {
+        rs_service(hubnet::now_ms());
+        if (rs_.barrier_at(n) && !rs_barrier(n)) return 0;
+    }
 
     // Desync hash, taken at a deterministic point (before inputs of sample n are delivered).
     if (net_ && opt_.hash_interval > 0 && n > 0 && n % (uint32_t)opt_.hash_interval == 0) {
@@ -422,6 +639,11 @@ uint32_t Lockstep::get_keys(int port) {
         } else if (!hash_warned_) { hash_warned_ = true; if (hooks_.log) hooks_.log("state hashing unavailable; desync detection disabled"); }
     }
     if (net_ && hooks_.on_lead_poll) hooks_.on_lead_poll(n);
+    if (net_ && hooks_.qa_poll) hooks_.qa_poll(n);
+    if (net_ && rs_.save_due(n)) {   // host: the state taken at the next interrupt is the one before sample n + 1 = S
+        rs_.mark_saved();
+        if (!hooks_.resync_save || !hooks_.resync_save(&rs_job_)) rs_fail("the core refused to save");
+    }
 
     if (net_ && opt_.my_slot == 1 && n > 0) {   // QA: periodic hiccup on slot 1 ("period_samples,ms"), RETROHUB_QA=1 only
         static int per = -1, ms = 0;
