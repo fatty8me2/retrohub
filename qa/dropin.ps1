@@ -106,7 +106,7 @@ if ($ViaLobby) {
     Start-Sleep -Seconds 2
     $second = Get-Content $planFile | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.step -eq 'second' } | Select-Object -First 1
     Write-Output ("lobby: second drop-in seat after the runner joined: refused=" + $second.refused)
-    if (-not $second -or $second.refused -ne 'no-free-port') { $fail++; Write-Output 'FAIL: the port was not committed server-side (second seat should be refused no-free-port)' }
+    if (-not $second -or $second.refused) { $fail++; Write-Output 'FAIL: the server must not count ports: a second lobby seat is served (the host runner refuses when there is no port)' }
 }
 if ($lobbyProc -and -not $lobbyProc.HasExited) { Stop-Process -Id $lobbyProc.Id -Force }
 $jl = Get-Content $j.Log

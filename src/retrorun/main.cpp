@@ -2034,6 +2034,11 @@ rb::Transport Frontend::rb_transport() {
             local_ports[0] = port; n_local = 1;
         } else owner[port] = slot;
     };
+    t.admit_reverted = [this](int, int port) {   // the host cancelled an admit: the port is as it was
+        if (!rbe || port < 0 || port > 3) return;
+        owner[port] = rbe->owner_of(port);
+        slot_mask = rbe->slot_mask();
+    };
     return t;
 }
 
@@ -2123,6 +2128,8 @@ int Frontend::dj_attempt(int slot_try, bool first) {
     rb::xfer::Receiver rcv;
     enum { Knock, Download, Replay } ph = Knock;
     const uint32_t t_join = hubnet::now_ms();
+    int busy_n = 0;
+    uint32_t last_busy = 0;
     uint32_t last_knock = 0, host_ack = 0, dl_progress = 0, loaded_at = 0, t_done_sent = 0;
     size_t dl_got = 0;
     uint32_t f = 0, f_start = 0;
@@ -2142,6 +2149,7 @@ int Frontend::dj_attempt(int slot_try, bool first) {
         rbe->service();
         if (session.failed() || (!session.ended() && rbe->connection_lost())) { fail_rc = lost_code(); rlog("net: connection lost while joining"); break; }
         if (session.ended()) { fail_rc = 8; rlog("dropin: the host ended the game"); break; }
+        if (rbe->join_aborted()) { rlog("dropin: the host cancelled the join (a player never acknowledged it)"); fail_rc = 11; break; }
         const uint32_t now = hubnet::now_ms();
         while (!dj_in_.empty()) {
             auto pk = std::move(dj_in_.front()); dj_in_.pop_front();
@@ -2153,8 +2161,12 @@ int Frontend::dj_attempt(int slot_try, bool first) {
             } else if (m[0] == spectate::kPktNoLive && m.size() >= 3) {
                 rlog("dropin: the host refused (reason %u)", (unsigned)m[2]);
                 if (m[2] == kRefuseSlot) refused_slot = true;
+                else if (m[2] == kRefuseBusy && ph == Knock) {   // an admit / resync is in flight at the host: ask again in a second, a few times
+                    if (now - last_busy > 700) { last_busy = now ? now : 1; busy_n++; }
+                    last_knock = now + 800;
+                    if (busy_n > 6) { rlog("dropin: the host stayed busy"); fail_rc = 11; }
+                }
                 else fail_rc = m[2] == kRefuseNoPort ? 9 : m[2] == kRefuseOldPeer ? 10 : 11;
-                if (!fail_rc && !refused_slot) fail_rc = 11;
             } else if (m[0] == rb::xfer::kPkt && m.size() >= 4 && m[2] == 0) {
                 if (m[1] == rb::xfer::Begin) {
                     rb::xfer::Meta mt;
@@ -2172,7 +2184,7 @@ int Frontend::dj_attempt(int slot_try, bool first) {
         }
         if (fail_rc || refused_slot) break;
         if (ph == Knock) {
-            if (now - last_knock >= 200 || !last_knock) {
+            if ((int32_t)(now - last_knock) >= 200 || !last_knock) {
                 last_knock = now ? now : 1;
                 std::vector<uint8_t> k = {spectate::kPktJoin, (uint8_t)a.slot, 2, rb::kCapDropIn};
                 std::string nm = a.name.substr(0, 24);
@@ -2222,7 +2234,8 @@ int Frontend::dj_attempt(int slot_try, bool first) {
                 return 0;
             }
             if (!rbe->join_admitted() && now - loaded_at > 20000) { rlog("dropin: the host never admitted us"); fail_rc = 11; break; }
-            if (now - loaded_at > 25000) { rlog("dropin: could not catch up"); fail_rc = 11; break; }   // shorter than the players' 30 s pending-joiner window (rollback.cpp)
+            /* the host's window (carried in the Admit) minus 5 s of margin, counted from when the Admit arrived */
+            if (rbe->join_admitted() && now - rbe->join_admit_at() > rbe->join_window_ms() - 5000) { rlog("dropin: could not catch up within the host's window"); fail_rc = 11; break; }
         }
         Sleep(1);
     }
@@ -2853,10 +2866,11 @@ void Frontend::dj_refuse(int slot, uint8_t reason) {
 
 void Frontend::dj_on_knock(int slot, const std::vector<uint8_t>& m) {
     if (!rbe || a.slot != 0 || slot <= 0 || slot > 3) return;
-    if (rbe->is_player(slot) || (rbe->admit_pending() && !(dropin_mask_ >> slot & 1u))) return;
-    for (int p = 0; p < 4; p++) if (rbe->owner_of(p) == slot) { uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseSlot}; session.send(slot, r, 3); return; }   // a left player's slot: the joiner picks another
+    if (rbe->is_player(slot) && !rbe->slot_dropped(slot)) return;   // already playing (a repeated knock)
     uint8_t ack[3] = {spectate::kPktJoin, 0, 3};
-    session.send(slot, ack, 3);
+    session.send(slot, ack, 3);   // every knock gets an answer: this one now, then a snapshot or an explicit refusal
+    if (rbe->dropin_busy() && !(dropin_mask_ >> slot & 1u)) { uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseBusy}; session.send(slot, r, 3); return; }   // an admit / resync is in flight: retry in a moment
+    for (int p = 0; p < 4; p++) if (rbe->owner_of(p) == slot && !rbe->port_reusable(p)) { uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseSlot}; session.send(slot, r, 3); return; }   // a left player's slot: the joiner picks another
     if (dropin_mask_ >> slot & 1u) { spec_on_join(slot); return; }   // a repeat knock: try again (Busy / ignored last time)
     const uint8_t caps = m.size() >= 4 ? m[3] : 0;
     std::string name;
