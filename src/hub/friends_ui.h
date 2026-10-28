@@ -15,6 +15,7 @@ struct Notif {
     bool toast = true;             // toast still showing
     bool done = false;
     bool ask_host = false;         // the ask is "can you host this?" (they do not own the game)
+    std::string night_id;          // non-empty: a game night start card (gamenight_ui.cpp); Host / Join + Dismiss
     bool ask = false;              // "<name> wants to join your game": Accept sends them an invite (inv.game_* = the game they asked about)
 };
 
@@ -127,6 +128,18 @@ int fr_invite_card(const Notif& n, float w, float frac, bool shadow);
 float fr_request_card_h();
 int fr_request_card(const std::string& name, const std::string& code, float w, float frac, bool shadow, const char* decline,
                     const std::string& title = std::string(), const char* accept = "Accept");
+void fr_send_text(const std::string& uid, const std::string& text);   // a plain DM
+void fr_notify_night(const std::string& night_id, const std::string& who);   // start card for a game night
+/* gamenight_ui.cpp */
+std::string gn_display_text(const std::string& text);                       // DM text without the machine tag
+bool gn_on_message(const std::string& uid, const std::string& name, const std::string& text);   // true = it was a game night plan
+void gn_tick();
+bool gn_card_info(const std::string& id, std::string* title, std::string* sub, const char** action);
+void gn_card_action(const std::string& id);
+void gn_card_dismiss(const std::string& id);
+void gn_plan_button(const std::string& uid, ImVec2 pos, float h);
+void gn_plan_popup();
+void gn_fake_seed();
 void fr_ask_to_join(const std::string& uid);                       // "Ask to join": rate limited, over the invite channel
 void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet::Invite& game, bool host = false);
 /* game libraries (friend_games_ui.cpp): who owns what, metadata only */

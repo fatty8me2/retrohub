@@ -68,7 +68,7 @@ add_custom_command(OUTPUT ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_GEN}/
 add_library(hubversion STATIC ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_GEN}/hub_version_rc.h)
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp
-    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_games_ui.cpp gamepack.cpp group_ui.cpp
+    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp gamenight_ui.cpp friend_games_ui.cpp gamepack.cpp group_ui.cpp
     page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp
     attract.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
@@ -115,6 +115,9 @@ target_link_libraries(hub_cloud_ui_test PRIVATE hublogic)
 add_executable(hub_wizard_test test_wizard.cpp)
 target_link_libraries(hub_wizard_test PRIVATE hublogic)
 target_include_directories(hub_wizard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+
+add_executable(hub_gamenight_test test_gamenight.cpp)
+target_link_libraries(hub_gamenight_test PRIVATE hublogic)
 
 add_executable(hub_group_test test_group.cpp)
 target_link_libraries(hub_group_test PRIVATE hublogic)

@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.29.0",
+      "date": "2026-10-28",
+      "title": "Turbo buttons and game nights",
+      "new": [
+        "Turbo buttons: on the Controllers page, switch Turbo on for any button and it fires over and over while you hold it (N64, GBA, GB, GBC, DS, NES, SNES, PlayStation). Dolphin, PCSX2 and Cemu games say it is not supported",
+        "Turbo is off in online games unless the room host ticks Allow turbo buttons for everyone",
+        "Game nights: press Plan a session in a friend's chat, pick a game, a time and friends, and they get an invite. You get a reminder 10 minutes before and a one-click Host or Join when it is time. While a game is running the reminder waits in the bell instead of popping up"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.28.8",
       "date": "2026-10-27",
       "title": "Install a greyed-out game",
