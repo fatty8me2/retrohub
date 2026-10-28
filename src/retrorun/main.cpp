@@ -22,6 +22,7 @@
 
 #include "controls_sdl.h"
 #include "exit_combo.h"
+#include "clip.h"
 #include "features.h"
 #include "start_hint.h"
 #include "runner_ctl.h"
@@ -54,6 +55,7 @@ struct Args {
     int volume = 100;   // --volume N (0-100): starting volume, applied once audio opens
     std::string control, game_key, shot_dir, load_state_path;   // --load-state FILE: restore this state right after boot (offline)
     //   // --control FILE (runner_ctl.h), --game-key KEY, --shot-dir DIR
+    std::string clip_out;   // --clip-out FILE.mp4: QA, headless run saves its last seconds as a clip at the end and verifies it decodes
     std::string osd_msg;   // --osd-msg TEXT: QA, a toast that stays up (use with RETRORUN_OSD_SHOT=1 and --screenshot)
     std::string core, rom, save_dir, state_dir, system_dir, system, screenshot, log, ini;
     std::string scale_filter;   // --filter nearest|linear (default: nearest, DS linear)
@@ -130,6 +132,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--volume") { if (!val(&v)) return false; o->volume = std::max(0, std::min(100, atoi(v.c_str()))); }
         else if (k == "--control") { if (!val(&o->control)) return false; }
         else if (k == "--game-key") { if (!val(&o->game_key)) return false; }
+        else if (k == "--clip-out") { if (!val(&o->clip_out)) return false; }
         else if (k == "--shot-dir") { if (!val(&o->shot_dir)) return false; }
         else if (k == "--state-dir") { if (!val(&o->state_dir)) return false; }
         else if (k == "--system-dir") { if (!val(&o->system_dir)) return false; }
@@ -453,6 +456,13 @@ class Frontend {
         if (feat_) { feat_->frame(); if (feat_->rewinding()) ra_rewound_ = true; }
         else { core.run(); ra_.frame(); }
     }
+    /* Instant replay (clip.h): ring of downscaled frames; View+LB or runner_ctl "clip" saves the last 30 s as an MP4 in the shots folder. */
+    clip::Recorder clips_;
+    bool clip_combo_prev_ = false;
+    uint64_t clip_cool_until_ = 0;
+    void clip_frame() { const FrameBuf& f = core.frame(); if (!f.px.empty() && !spec_) clips_.offer((const uint8_t*)f.px.data(), f.w, f.h, f.w * 4, fps); }
+    void clip_request();
+    void clip_poll();
     hubctl::ExitCombo exit_combo;     // Back+Start held 1 s on any pad: leave (saves flush in finish())
     dsview::StylusLatch stylus;      // a press only counts if it began over the frame
     Pace pace = Pace::None;
@@ -849,6 +859,7 @@ void Frontend::layout_for(int ow, int oh, SDL_Rect* dst) {
 void Frontend::present() {
     const FrameBuf& f = core.frame();
     if (!ren || f.px.empty()) return;
+    clip_frame();
     if (!tex || tex_w != f.w || tex_h != f.h) {
         if (tex) SDL_DestroyTexture(tex);
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, (scale_filter_.empty() ? (is_ds || is_ps1) : scale_filter_ == "linear") ? "linear" : "nearest");
@@ -1168,6 +1179,16 @@ void Frontend::poll_all_local() {
         } else boost_active_ = false;
         if (swap_combo && !swap_combo_prev_) disc_request();
         swap_combo_prev_ = swap_combo;
+        {   // View+LB tap: save the last 30 s (rising edge, 3 s cooldown)
+            bool cc = false;
+            for (size_t i = 0; i < pads.size(); i++) {
+                hubctl::PadState st;
+                hubctl::read_state(pads[i], &st);
+                if (hubctl::clip_combo_down(st)) cc = true;
+            }
+            if (cc && !clip_combo_prev_ && SDL_GetTicks64() >= clip_cool_until_) { clip_cool_until_ = SDL_GetTicks64() + 3000; clip_request(); }
+            clip_combo_prev_ = cc;
+        }
         if (feat_) {   // hold LT + View (not with Start / Y: those are the exit and quick-menu combos) to rewind
             bool rw = false;
             for (size_t i = 0; i < pads.size(); i++) {
@@ -1417,7 +1438,21 @@ bool Frontend::take_screenshot(std::string* where) {
     return true;
 }
 
+void Frontend::clip_request() {
+    std::string m;
+    if (clips_.request_save(std::time(nullptr), &m)) osd::push("Saving clip...");
+    else osd::push(m, osd::Kind::Warn);
+}
+
+void Frontend::clip_poll() {
+    bool ok = false; std::string m;
+    if (!clips_.poll(&ok, &m)) return;
+    rlog("clip: %s %s", ok ? "saved" : "FAILED", m.c_str());
+    osd::push(ok ? "Clip saved" : "Clip failed: " + m, ok ? osd::Kind::Good : osd::Kind::Error);
+}
+
 void Frontend::ctl_poll() {
+    clip_poll();
     runctl::Command c;
     if (!ctl_.poll(SDL_GetTicks64(), &c)) return;
     rlog("control: seq %lld %s slot %d", c.seq, runctl::cmd_name(c.cmd), c.slot);
@@ -1440,12 +1475,20 @@ void Frontend::ctl_poll() {
             ctl_.ack(ok, ok ? w : status_msg);
             break;
         }
+        case runctl::Cmd::Clip: {
+            std::string m;
+            bool ok = clips_.request_save(std::time(nullptr), &m);
+            if (ok) { osd::push("Saving clip..."); m = "saving"; }
+            else osd::push(m, osd::Kind::Warn);
+            ctl_.ack(ok, m);
+            break;
+        }
         case runctl::Cmd::SwapDisc: disc_request(); ctl_.ack(true, "requested"); break;
         case runctl::Cmd::Quit: quit = true; ctl_.ack(true, "quitting"); break;
         case runctl::Cmd::OsdMsg: osd::push(c.text); ctl_.ack(true, "shown"); break;
         case runctl::Cmd::Input: in_gate_.set(c.value != 0, SDL_GetTicks64()); ctl_.ack(true, c.value ? "input on" : "input off"); break;
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
-        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Clip:
+        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay:
             if ((online || a.ds_link) && runctl::offline_only(c.cmd)) { ctl_.ack(false, "Not available in online sessions"); break; }
             if (c.cmd == runctl::Cmd::Volume) {
                 audio.set_volume(c.value);
@@ -2544,6 +2587,8 @@ int Frontend::run(const Args& args) {
     cheats_init();
     if (!a.disc_ctl.empty()) disc_watch = cheats::FileWatch(a.disc_ctl);
     if (!a.control.empty()) ctl_ = runctl::Poller(a.control);
+    if (!a.shot_dir.empty()) clips_.set_dir(a.shot_dir);
+    if (const char* e = std::getenv("RETRORUN_CLIPS"); e && e[0] == '0') clips_.set_enabled(false);   // opt out of the replay buffer
     if (!a.osd_msg.empty()) osd::push(a.osd_msg, osd::Kind::Info, 3600);
     int rc = 0;
     const uint64_t hashlog_n = std::getenv("RETRORUN_HASHLOG") ? (uint64_t)atoll(std::getenv("RETRORUN_HASHLOG")) : 0;   // QA/determinism spike: log state+output hash every N frames
@@ -2666,6 +2711,7 @@ int Frontend::run(const Args& args) {
                     }
                 }
                 fold_frame();
+                if (a.headless) clip_frame();
                 frame_no++;
                 if (hashlog_n && frame_no % hashlog_n == 0) rlog("HASHLOG frame %llu state %016llx out %016llx video %016llx", (unsigned long long)frame_no, (unsigned long long)state_hash(), (unsigned long long)out_hash, (unsigned long long)(core.frame().px.empty() ? 0 : n64run::hash_block(core.frame().px.data(), core.frame().px.size() * 4)));
 
@@ -2679,6 +2725,15 @@ int Frontend::run(const Args& args) {
             double secs = (SDL_GetTicks64() - t_start) / 1000.0;
             if (online && lockstep) lockstep->log_stall_summary();
             rlog("done: %llu frames in %.2f s (%.1f fps)", (unsigned long long)frame_no, secs, secs > 0 ? frame_no / secs : 0.0);
+            if (!a.clip_out.empty()) {   // QA: encode the ring to the named file and decode it again
+                clip::Snapshot sn = clips_.ring().snapshot();
+                std::string err; clip::Info ci;
+                bool wok = clip::write_mp4(sn, a.clip_out, &err);
+                bool pok = wok && clip::probe_mp4(a.clip_out, &ci, &err);
+                rlog("clip: %s %s (%dx%d, %zu frames in, %d decoded, %.2f s, luma %.1f, %llu bytes) %s", pok ? "OK" : "FAILED", a.clip_out.c_str(), sn.w, sn.h,
+                     sn.frames.size(), ci.frames, ci.seconds, ci.mean_luma, (unsigned long long)ci.bytes, pok ? "" : err.c_str());
+                if (!pok) rc = 6;
+            }
         }
         if (a.ds_link) {
             if (link_probe) rlog("link: PROBE tx %llu rx %llu corrupt %llu", (unsigned long long)probe_tx, (unsigned long long)probe_rx, (unsigned long long)probe_bad);

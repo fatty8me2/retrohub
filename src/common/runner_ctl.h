@@ -24,7 +24,7 @@ enum class Cmd { None, SaveState, LoadState, Screenshot, SwapDisc, Quit,
                  Rewind,    // value 1/0   (runners reply "unsupported" for now)
                  Shader,    // text = shader name (unsupported for now)
                  Overlay,   // value 1/0   (unsupported for now)
-                 Clip,      // (unsupported for now)
+                 Clip,      // save the last 30 s as an MP4 into the shots folder (retrorun, n64run; allowed online: cosmetic)
                  OsdMsg,    // text = toast shown on the runner's OSD
                  Input };   // value 0 = "input off" (neutral input to the core while the hub's quick menu is open), 1 = on. Allowed online.
 
@@ -41,7 +41,7 @@ constexpr double kSpeeds[] = {0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0};
 bool speed_valid(double s);                                   // in kSpeeds, or 0 (= max)
 bool parse_speed_arg(const std::string& s, double* out);      // "2", "2x", "1.5", "max" -> out (0 = max); false if not allowed
 std::string speed_label(double s);                            // "Speed 2x", "Speed 0.5x", "Speed max"
-bool offline_only(Cmd c);                                     // true for everything except Quit/Screenshot/OsdMsg/Volume/Mute (volume and mute are local, allowed online)
+bool offline_only(Cmd c);                                     // true for everything except Quit/Screenshot/OsdMsg/Volume/Mute/Input/Clip (volume and mute are local, allowed online)
 
 /* "input off" gate (runner side). While off, the local player's input is neutral (frames/packets still flow, so netplay timing is
  * unchanged). Failsafes: re-enabled after kInputOffTimeoutMs without a refresh (the hub re-sends "input off" while its menu is

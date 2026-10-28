@@ -43,6 +43,7 @@ std::string file_stamp(const std::string& p) {
 /* PNG (or BMP, used by the headless screenshot aid) file -> texture, cached by path + stamp. */
 Tex* tex_for(const std::string& path) {
     if (!g_ren) return nullptr;
+    if (path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0) return tex_for(path + ".jpg");   // instant-replay clip: its thumbnail
     std::string st = file_stamp(path);
     if (st.empty()) return nullptr;
     auto it = g_tex.find(path);
@@ -695,7 +696,7 @@ static bool is_image(const std::string& n) {
     if (dot == std::string::npos) return false;
     std::string x = n.substr(dot);
     for (auto& c : x) c = (char)tolower((unsigned char)c);
-    return x == ".png" || x == ".bmp";
+    return x == ".png" || x == ".bmp" || x == ".mp4";   // .mp4 = instant-replay clip (clip.h), shown by its .mp4.jpg thumbnail
 }
 
 int shots_count(const hub::GameEntry& e) {
@@ -744,10 +745,16 @@ void shots_gallery(const hub::GameEntry& e) {
         if (t) ui::draw_art(dl, t->t, t->w, t->h, p, ImVec2(p.x + tw, p.y + th), sp(1.f));
         else dl->AddRectFilled(p, ImVec2(p.x + tw, p.y + th), ui::PANEL2, sp(1.f));
         if (hot) dl->AddRect(p, ImVec2(p.x + tw, p.y + th), ui::ACCENT, sp(1.f), 0, 2.f);
+        if (s_files[i].size() > 4 && _stricmp(s_files[i].c_str() + s_files[i].size() - 4, ".mp4") == 0) {   // clip: dark disc with a play triangle
+            ImVec2 c(p.x + tw * 0.5f, p.y + th * 0.5f);
+            dl->AddCircleFilled(c, sp(3.f), IM_COL32(0, 0, 0, 170), 24);
+            ui::icon(dl, ui::Icon::Play, c, sp(3.f), IM_COL32(255, 255, 255, 235));
+        }
         if (s_confirm == s_files[i]) {
             if (ImGui::SmallButton("Delete for good?")) {
                 std::error_code ec;
                 std::filesystem::remove(std::filesystem::u8path(path), ec);
+                if (path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0) { std::error_code e2; std::filesystem::remove(std::filesystem::u8path(path + ".jpg"), e2); }
                 s_confirm.clear(); s_at = -10;
             }
         } else {

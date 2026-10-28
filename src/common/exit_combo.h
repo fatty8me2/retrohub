@@ -21,6 +21,14 @@ constexpr int kAxisRT = 5;      // righttrigger
 constexpr int kTriggerOn = 16000;
 inline bool boost_combo_down(const PadState& s) { return s.b[kBtnBack] && s.a[kAxisRT] > kTriggerOn && !s.b[kBtnStart] && !s.b[kBtnYButton]; }
 
+/* Instant replay: tap View/Back + LB ("save the last 30 s"). Start, Y, and either trigger (rewind = LT, boost = RT) must NOT be held.
+ * RetroHub's own View+LB hold (1 s) only acts on Dolphin games, so the runners never conflict with it: a tap is long gone by 1 s. */
+constexpr int kBtnLB = 9;             // SDL_CONTROLLER_BUTTON_LEFTSHOULDER
+constexpr int kAxisLT = 4;
+inline bool clip_combo_down(const PadState& s) {
+    return s.b[kBtnBack] && s.b[kBtnLB] && !s.b[kBtnStart] && !s.b[kBtnYButton] && s.a[kAxisLT] < kTriggerOn && s.a[kAxisRT] < kTriggerOn;
+}
+
 class ExitCombo {
   public:
     explicit ExitCombo(int hold_ms = kExitHoldMs) : hold_(hold_ms) {}
