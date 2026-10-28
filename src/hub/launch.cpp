@@ -396,6 +396,7 @@ void poll_process() {
     room_session_ended();
     if (A.run.remote_play) set_notice(hubrp::exit_text(code, false), 20.0);   // streamrun guest: its own exit codes
     else if (!A.run.left_name.empty() && (code == 0 || code == 4 || code == 8)) set_notice(hubui::exit_text_for(code, A.run.left_name), 20.0);
+    else if (A.run.dropin && !hubui::dropin_exit_text(code).empty()) set_notice(hubui::dropin_exit_text(code), 20.0);
     else set_notice(A.proc_title + ": " + (code == 0 ? std::string("closed.") : hubui::exit_code_text(code)), 20.0);
     auto_sync();
 }

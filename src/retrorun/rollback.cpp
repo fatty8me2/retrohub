@@ -61,6 +61,8 @@ Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(c
     uint32_t now = net_.now_ms();
     last_progress_ = now;
     st_.delay_min = st_.delay_max = cfg_.delay;
+    joining_ = cfg_.joiner;
+    peer_caps_[cfg_.my_slot & 7] = cfg_.caps;
 }
 
 void Engine::put_local(int p, int64_t f, uint64_t v) {
@@ -70,7 +72,7 @@ void Engine::put_local(int p, int64_t f, uint64_t v) {
 }
 
 void Engine::put_remote(int p, int64_t f, uint64_t v) {
-    if (f < 0 || has(p, f)) return;
+    if (f < 0 || has(p, f) || (uint32_t)f < join_from_[p]) return;   // a drop-in port has no input before its admit frame
     if (f <= conf_eff_ && f < (int64_t)cur_ - kFrRing + 1) return;   // ancient
     in_[p][f % kInRing].tag = f;
     in_[p][f % kInRing].val = v;
@@ -85,7 +87,8 @@ void Engine::build_pads(int64_t f, uint64_t pads[kPorts]) {
     for (int p = 0; p < kPorts; p++) {
         if (!present(p)) { pads[p] = 0; continue; }
         int o = cfg_.owner[p];
-        if (o != cfg_.my_slot && (done_mask_ >> o & 1u) && f >= (int64_t)drop_cut_[o]) pads[p] = 0;   // dropped guest: neutral from the agreed cutoff
+        if (f < (int64_t)join_from_[p]) pads[p] = 0;   // drop-in: the port joined at join_from_; the frames before it were neutral for everybody
+        else if (o != cfg_.my_slot && (done_mask_ >> o & 1u) && f >= (int64_t)drop_cut_[o]) pads[p] = 0;   // dropped guest: neutral from the agreed cutoff
         else pads[p] = has(p, f) ? get(p, f) : (last_val_[p] & ~cfg_.event_mask);
         used_[f % kFrRing][p] = pads[p];
     }
@@ -160,10 +163,11 @@ void Engine::send_packet(bool force) {
     std::vector<uint8_t> b;
     b.push_back(kPktInput);
     b.push_back((uint8_t)cfg_.my_slot);
-    w32(b, cur_);
+    const uint32_t cur_pub = joining_ ? ghost_cur_ : cur_;   // a joiner still fast-forwarding reports the players' frame, so nobody "waits" for it to catch up
+    w32(b, cur_pub);
     int adv = -1000;
     for (int s = 0; s < 8; s++)
-        if (active_peer(s) && peer_seen_[s]) adv = std::max(adv, (int)cur_ - (int)peer_cur_[s]);
+        if (active_peer(s) && peer_seen_[s]) adv = std::max(adv, (int)cur_pub - (int)peer_cur_[s]);
     w16(b, (uint16_t)(int16_t)(adv == -1000 ? 0 : adv));
     for (int p = 0; p < kPorts; p++) w32(b, (uint32_t)(int32_t)(present(p) && !local(p) ? conf_upto_[p] : -1));
     int nloc = 0;
@@ -211,14 +215,17 @@ void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
     const uint8_t* d = m.data();
     size_t n = m.size();
     if (from >= 0 && from < 8) last_rx_[from] = net_.now_ms() ? net_.now_ms() : 1;
+    if (d[0] == kPktAdmit || d[0] == kPktAdmitAck) { admit_on_msg(from, d, n); return; }
+    if (joining_ && (d[0] == kPktDrop || d[0] == xfer::kPkt)) return;   // a joiner has no state to agree on or to replace yet
     if (d[0] == kPktDrop) { drop_on_msg(from, d, n); return; }
     if (d[0] == xfer::kPkt) { resync_on_msg(from, d, n); return; }
     if (d[0] == kPktInput && from >= 0 && from < 8 && (ignore_mask_ >> from & 1u)) return;   // dropped: only relayed windows count
     if (d[0] == kPktReady) {
         if (n >= 2 && d[1] < 8) {
             ready_mask_ |= 1u << d[1];
-            uint8_t r[2] = {kPktReady, (uint8_t)cfg_.my_slot};   // late joiner still waiting: answer
-            net_.send(d[1], r, 2);
+            peer_caps_[d[1]] = n >= 3 ? d[2] : 0;
+            uint8_t r[3] = {kPktReady, (uint8_t)cfg_.my_slot, cfg_.caps};   // late joiner still waiting: answer
+            net_.send(d[1], r, 3);
         }
         return;
     }
@@ -382,8 +389,8 @@ bool Engine::start_barrier(uint32_t timeout_ms) {
         if (now - t0 > timeout_ms) return false;
         if (now - last >= 50 || last == 0) {
             last = now;
-            uint8_t r[2] = {kPktReady, (uint8_t)cfg_.my_slot};
-            net_.send(-1, r, 2);
+            uint8_t r[3] = {kPktReady, (uint8_t)cfg_.my_slot, cfg_.caps};
+            net_.send(-1, r, 3);
         }
         if (net_.pump) net_.pump();
         int from;
@@ -393,8 +400,8 @@ bool Engine::start_barrier(uint32_t timeout_ms) {
         Sleep(2);
     }
     // Make sure the others see our ready too.
-    uint8_t r[2] = {kPktReady, (uint8_t)cfg_.my_slot};
-    net_.send(-1, r, 2);
+    uint8_t r[3] = {kPktReady, (uint8_t)cfg_.my_slot, cfg_.caps};
+    net_.send(-1, r, 3);
     last_progress_ = net_.now_ms();
     for (int q = 0; q < 8; q++) last_rx_[q] = last_progress_ ? last_progress_ : 1;
     return true;
@@ -450,7 +457,7 @@ void Engine::resync_begin_host() {
     rs_frame_ = (uint32_t)F;
     rs_extra_ms_ = (uint32_t)m.chunks * 20;   // a big state over the relay (100 chunks/s) legitimately takes a while
     uint32_t mask = 0;
-    for (int s = 0; s < 8; s++) if (active_peer(s)) mask |= 1u << s;
+    for (int s = 0; s < 8; s++) if (active_peer(s) && !(join_pending_mask_ >> s & 1u)) mask |= 1u << s;   // a joiner still catching up has no state to replace
     uint32_t now = net_.now_ms() ? net_.now_ms() : 1;
     bool rel = net_.relayed && net_.relayed();
     snd_.start((uint8_t)(epoch_ + 1), m, std::move(z), mask, now, rel ? 100.0 : 400.0);
@@ -529,7 +536,7 @@ void Engine::resync_service(uint32_t now) {
             net_.send(host_slot(), r.data(), (int)r.size());
         }
     } else if (rs_ == Rs::Send) {
-        for (int s = 0; s < 8; s++) if (!active_peer(s)) snd_.remove(s);
+        for (int s = 0; s < 8; s++) if (!active_peer(s) || (join_pending_mask_ >> s & 1u)) snd_.remove(s);
         snd_.set_rate(net_.relayed && net_.relayed() ? 100.0 : 400.0);
         snd_.service(now, cfg_.my_slot, [this](const uint8_t* p, size_t n) { xfer_send(p, n); });
         if (snd_.all_done()) {
@@ -576,7 +583,7 @@ void Engine::drop_begin(int slot) {
     for (int p = 0; p < kPorts; p++)
         if (present(p) && cfg_.owner[p] == slot) { int64_t k = conf_upto_[p] + 1; prop = first ? k : std::min(prop, k); first = false; }
     ignore_mask_ |= 1u << slot;
-    uint32_t surv = cfg_.slot_mask & ~(1u << slot) & ~left_mask_ & ~ignore_mask_;
+    uint32_t surv = cfg_.slot_mask & ~(1u << slot) & ~left_mask_ & ~ignore_mask_ & ~join_pending_mask_;
     for (auto& kv : drops_) kv.second.remove_survivor(slot);
     drops_[slot] = netdrop::Agreement(slot, surv | (1u << cfg_.my_slot), cfg_.my_slot, (uint32_t)prop);
     if (net_.log) net_.log("drop: slot " + std::to_string(slot) + " silent, proposing cutoff frame " + std::to_string((uint32_t)prop));
@@ -656,7 +663,9 @@ void Engine::drop_check(uint32_t now) {
     for (int s = 0; s < 8; s++) if (active_peer(s) && last_rx_[s] && now - last_rx_[s] < cfg_.drop_silence_ms / 2) heard_any = true;
     if (!heard_any) return;
     for (int s = 1; s < 8; s++) {
-        if (!active_peer(s) || !last_rx_[s] || now - last_rx_[s] < cfg_.drop_silence_ms) continue;
+        if (!active_peer(s) || !last_rx_[s]) continue;
+        const uint32_t lim = (join_pending_mask_ >> s & 1u) ? std::min<uint32_t>(cfg_.drop_silence_ms, 4000) : cfg_.drop_silence_ms;   // an admitted joiner that never shows up must not freeze the game for long
+        if (now - last_rx_[s] < lim) continue;
         int others = 0;
         for (int q = 0; q < 8; q++) if (q != s && q != cfg_.my_slot && active_peer(q)) others++;
         if (others) drop_begin(s);
@@ -665,7 +674,8 @@ void Engine::drop_check(uint32_t now) {
 
 void Engine::service() {
     pump_net();
-    { uint32_t now = net_.now_ms(); drop_check(now); drop_service(now); }
+    if (joining_) { join_service(net_.now_ms()); return; }
+    { uint32_t now = net_.now_ms(); drop_check(now); drop_service(now); admit_service(now); }
     if (rb_to_ >= 0 && !desync_) do_rollback();
     advance_confirmed();
     resync_service(net_.now_ms());
@@ -767,6 +777,185 @@ bool Engine::finish(uint32_t timeout_ms) {
     uint8_t bye[2] = {kPktBye, (uint8_t)cfg_.my_slot};
     for (int i = 0; i < 3; i++) { net_.send(-1, bye, 2); if (net_.pump) net_.pump(); Sleep(10); }
     return ok;
+}
+
+/* ---- drop-in: a friend takes an empty port of the running game ---- */
+bool Engine::peers_support_dropin() const {
+    for (int s = 0; s < 8; s++)
+        if (s != cfg_.my_slot && active_peer(s) && !(peer_caps_[s] & kCapDropIn)) return false;
+    return true;
+}
+
+bool Engine::dropin_capable() const {
+    if (rs_ != Rs::None || rs_want_ || finishing_ || desync_ || joining_ || cfg_.my_slot != host_slot()) return false;
+    if (!admits_.empty() || join_pending_mask_) return false;
+    return peers_support_dropin();
+}
+
+int Engine::free_port() const {
+    for (int p = 0; p < kPorts; p++) if (!present(p)) return p;
+    return -1;
+}
+
+uint32_t Engine::admit_frame() const {
+    /* far enough ahead that every peer gets the Admit before it simulates that frame (no rollback, no wait): the lead plus the worst round trip */
+    const double fm = std::max(1.0, cfg_.frame_ms);
+    const int lead = kAdmitLeadFrames + (int)std::ceil(st_.rtt_ms / fm);
+    return cur_ + (uint32_t)lead;
+}
+
+bool Engine::host_admit(int slot, int port, const std::string& name) {
+    if (!dropin_capable() || slot <= 0 || slot >= 8 || port < 0 || port >= kPorts || present(port) || is_player(slot)) return false;
+    for (int p = 0; p < kPorts; p++) if (present(p) && cfg_.owner[p] == slot) return false;
+    const uint32_t from = admit_frame();
+    int8_t owners[kPorts];
+    for (int p = 0; p < kPorts; p++) owners[p] = (int8_t)(p == port ? slot : cfg_.owner[p]);
+    apply_admit(slot, port, from, (uint8_t)epoch_, owners, (uint8_t)left_mask_, (uint8_t)done_mask_, name);
+    uint32_t now = net_.now_ms() ? net_.now_ms() : 1;
+    AdmitRec r;
+    r.port = port; r.from = from; r.started = now; r.last_send = 0; r.name = name.substr(0, 24);
+    r.ack_mask = 1u << cfg_.my_slot;
+    admits_[slot] = r;
+    join_pending_mask_ |= 1u << slot;
+    join_pending_at_[slot] = now;
+    return true;
+}
+
+void Engine::note_join_active(int slot) {
+    if (slot < 0 || slot >= 8) return;
+    join_pending_mask_ &= ~(1u << slot);
+    if (net_.log && cfg_.my_slot == host_slot()) net_.log("dropin: slot " + std::to_string(slot) + " plays now");
+}
+
+void Engine::admit_service(uint32_t now) {
+    if (!now) now = 1;
+    for (int s = 0; s < 8; s++)   // a joiner that never reported in: forget the pending state (the drop logic frees its port)
+        if ((join_pending_mask_ >> s & 1u) && now - join_pending_at_[s] > 30000) join_pending_mask_ &= ~(1u << s);
+    for (auto it = admits_.begin(); it != admits_.end();) {
+        AdmitRec& r = it->second;
+        uint32_t need = 0;
+        for (int s = 0; s < 8; s++) if (active_peer(s)) need |= 1u << s;
+        need |= 1u << cfg_.my_slot;
+        if ((r.ack_mask & need) == need || now - r.started > 5000) { it = admits_.erase(it); continue; }
+        if (now - r.last_send >= 100) {
+            r.last_send = now;
+            std::vector<uint8_t> b;
+            b.push_back(kPktAdmit); b.push_back((uint8_t)cfg_.my_slot); b.push_back((uint8_t)it->first); b.push_back((uint8_t)r.port); b.push_back((uint8_t)epoch_);
+            w32(b, r.from);
+            for (int p = 0; p < kPorts; p++) b.push_back((uint8_t)(int8_t)cfg_.owner[p]);
+            b.push_back((uint8_t)left_mask_); b.push_back((uint8_t)done_mask_);
+            b.push_back((uint8_t)r.name.size());
+            b.insert(b.end(), r.name.begin(), r.name.end());
+            net_.send(-1, b.data(), (int)b.size());
+        }
+        ++it;
+    }
+}
+
+void Engine::admit_on_msg(int from, const uint8_t* d, size_t n) {
+    if (from < 0 || from >= 8) return;
+    if (d[0] == kPktAdmitAck) {
+        if (n >= 3 && cfg_.my_slot == host_slot() && d[1] == from) {
+            auto it = admits_.find(d[2]);
+            if (it != admits_.end()) it->second.ack_mask |= 1u << from;
+        }
+        return;
+    }
+    // kPktAdmit: only the host may admit
+    if (from != host_slot() || cfg_.my_slot == host_slot() || n < (size_t)(12 + kPorts)) return;
+    const int joiner = d[2], port = d[3];
+    if (joiner < 0 || joiner >= 8 || port >= kPorts) return;
+    const uint8_t epoch = d[4];
+    const uint32_t frm = r32(d + 5);
+    int8_t owners[kPorts];
+    for (int p = 0; p < kPorts; p++) owners[p] = (int8_t)d[9 + p];
+    const uint8_t left = d[9 + kPorts], done = d[10 + kPorts];
+    const size_t nl = d[11 + kPorts];
+    std::string name;
+    if (n >= 12 + kPorts + nl) name.assign((const char*)d + 12 + kPorts, nl);
+    apply_admit(joiner, port, frm, epoch, owners, left, done, name);
+    uint8_t a[3] = {kPktAdmitAck, (uint8_t)cfg_.my_slot, (uint8_t)joiner};
+    net_.send(host_slot(), a, 3);
+}
+
+void Engine::apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, const int8_t owners[kPorts], uint8_t left, uint8_t done, const std::string& name) {
+    uint32_t now = net_.now_ms() ? net_.now_ms() : 1;
+    if (joiner == cfg_.my_slot) {   // we are the one joining
+        if (!joining_ || join_port_ >= 0) return;   // a repeat
+        if (port < 0 || port >= kPorts || owners[port] != cfg_.my_slot) return;
+        for (int p = 0; p < kPorts; p++) {
+            cfg_.owner[p] = owners[p];
+            if (owners[p] >= 0 && owners[p] < 8) cfg_.slot_mask |= 1u << owners[p];
+        }
+        cfg_.slot_mask |= 1u << cfg_.my_slot;
+        join_port_ = port;
+        join_from_[port] = from;
+        epoch_ = epoch;
+        left_mask_ |= (uint32_t)left & ~(1u << cfg_.my_slot);
+        for (int s = 0; s < 8; s++) if ((done >> s & 1u) && s != cfg_.my_slot) { done_mask_ |= 1u << s; drop_cut_[s] = 0; }
+        for (int s = 0; s < 8; s++) last_rx_[s] = now;
+        if (net_.log) net_.log("dropin: admitted as slot " + std::to_string(cfg_.my_slot) + " on port " + std::to_string(port) + " from frame " + std::to_string(from) + " (epoch " + std::to_string(epoch) + ")");
+        if (net_.admitted) net_.admitted(joiner, port, from, name);
+        return;
+    }
+    if (port < 0 || port >= kPorts) return;
+    if (present(port)) return;   // a repeat, or a conflict (never reassigned)
+    if (is_player(joiner)) return;
+    cfg_.owner[port] = joiner;
+    cfg_.slot_mask |= 1u << joiner;
+    join_from_[port] = from;
+    conf_upto_[port] = (int64_t)from - 1;
+    last_val_[port] = 0;
+    for (int q = 0; q < kPorts; q++) peer_ack_[joiner][q] = -1;
+    peer_seen_[joiner] = false; peer_cur_[joiner] = 0; peer_adv_[joiner] = 0;
+    left_mask_ &= ~(1u << joiner); ignore_mask_ &= ~(1u << joiner); done_mask_ &= ~(1u << joiner);
+    last_rx_[joiner] = now;
+    join_pending_mask_ |= 1u << joiner;
+    join_pending_at_[joiner] = now;
+    if (net_.log) net_.log("dropin: slot " + std::to_string(joiner) + " joins on port " + std::to_string(port) + " from frame " + std::to_string(from) + " (we are at " + std::to_string(cur_) + ")");
+    if (net_.notice) net_.notice((name.empty() ? std::string("A player") : name) + " joined");
+    if (net_.admitted) net_.admitted(joiner, port, from, name);
+}
+
+uint32_t Engine::live_estimate() const {
+    const uint32_t now = net_.now_ms();
+    uint32_t best = 0;
+    const double fm = std::max(1.0, cfg_.frame_ms);
+    for (int s = 0; s < 8; s++) {
+        if (s == cfg_.my_slot || !peer_seen_[s] || !(cfg_.slot_mask >> s & 1u) || (left_mask_ >> s & 1u)) continue;
+        uint32_t est = peer_cur_[s] + (uint32_t)((double)(now - peer_ts_at_[s]) / fm);
+        best = std::max(best, est);
+    }
+    return best;
+}
+
+/* Joiner, while it downloads and replays the snapshot: claim neutral input for its port ahead of the players and tell them the frame they are at. */
+void Engine::join_service(uint32_t now) {
+    (void)now;
+    if (join_port_ < 0) return;
+    const uint32_t live = live_estimate();
+    ghost_cur_ = live ? live : join_from_[join_port_];
+    const int64_t target = std::max<int64_t>((int64_t)ghost_cur_, (int64_t)join_from_[join_port_]) + kGhostLeadFrames;
+    for (int64_t g = std::max<int64_t>(local_newest_ + 1, (int64_t)join_from_[join_port_]); g <= target; g++) put_local(join_port_, g, 0);
+    send_packet(false);
+}
+
+void Engine::join_finish(uint32_t frame, uint64_t out_hash, uint64_t in_hash, const uint64_t last_pads[kPorts]) {
+    joining_ = false;
+    cur_ = frame; rb_to_ = -1; conf_eff_ = (int64_t)frame - 1; roll_next_ = frame; floor_ = frame;
+    roll_out_ = out_hash; roll_in_ = in_hash;
+    pending_h_.clear(); my_h_.clear();
+    for (int s = 0; s < 8; s++) peer_h_[s].clear();
+    stall_since_ = 0; skew_ema_ = 0; skew_cur_ = 0xFFFFFFFFu; last_wait_ = frame;
+    last_progress_ = net_.now_ms();
+    for (int p = 0; p < kPorts; p++) {
+        if (!present(p) || local(p)) continue;
+        last_val_[p] = last_pads[p] & ~cfg_.event_mask;
+        conf_upto_[p] = (int64_t)frame - 1;
+        while (has(p, conf_upto_[p] + 1)) { conf_upto_[p]++; last_val_[p] = get(p, conf_upto_[p]); }
+    }
+    for (int s = 0; s < 8; s++) if (s != cfg_.my_slot) last_rx_[s] = last_progress_ ? last_progress_ : 1;
+    if (net_.log) net_.log("dropin: playing from frame " + std::to_string(frame) + ", " + std::to_string(local_newest_ >= (int64_t)frame ? local_newest_ - (int64_t)frame + 1 : 0) + " neutral frames already claimed ahead");
 }
 
 /* ------------------------------------------------------------------ synctest */

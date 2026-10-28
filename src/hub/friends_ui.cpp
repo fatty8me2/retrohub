@@ -727,6 +727,10 @@ void fr_fake_init() {
     mk("devuid", "Dev", PS::InLobby, "mp2", "Mario Party 2", "n64", "ABC234", false, 4, 4, now - 70 * 60000);
     mk("samuid", "Sam", PS::Offline, "", "", "", "", false, 0, 0, now - 3 * 3600 * 1000LL);
     mk("priuid", "Priya", PS::Offline, "", "", "", "", false, 0, 0, now - 2 * 86400 * 1000LL);
+    if (std::getenv("HUB_SHOT_DROPIN")) {   // screenshot aid: a friend in a running 3/4 NES party game (first online catalog NES game) -> "Join game" next to "Watch"
+        for (const auto& c : hub::catalog())
+            if (c.system == "nes" && c.online) { mk("rilyuid", "Riley", PS::InGame, c.id.c_str(), c.title.c_str(), "nes", "R1LY22", false, 3, 4, now - 6 * 60000); break; }
+    }
     if (std::getenv("HUB_SHOT_PROFILES")) {   // screenshot aid: profiles on the fake friends + room members, reactions on the fake chat
         auto prof = [&](const char* uid, const char* av, const char* st) { for (auto& f : FR.f_friends) if (f.uid == uid) { f.status.prof_avatar = av; f.status.prof_status = st; } };
         prof("miauid", "c:n64", "grinding Melee"); prof("jakuid", "g:mk64", "one more race"); prof("lunuid", "c:gba", "Metroid time");
@@ -1091,6 +1095,11 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
     bool can_join = hubui::friend_can_join(fr);
     bool can_ask = hubui::friend_can_ask(fr);
     bool can_watch = hubui::friend_can_watch(fr, !f.status.lobby_code.empty() && !f.status.game_id.empty()) && !spectate_pending();
+    bool can_dropin = false;   // 3-4 port NES/SNES party game with a free port, and this PC owns the game
+    if (hubui::friend_can_dropin(fr, !f.status.lobby_code.empty() && !f.status.game_id.empty()) && !dropin_pending() && !spectate_pending()) {
+        const hub::GameEntry* dg = find_room_entry(f.status.game_id);
+        can_dropin = dg && !is_remote_stand_in(*dg) && dropin_supported(*dg);
+    }
     const char* join_lbl = fr.state == hubui::FS_InGame ? "Join lobby" : "Join";
     bool can_invite = fr_in_my_room() && f.online() && f.status.lobby_code != A.code;
     if (can_invite) {   // room already full for this game: no Invite button (the picker/menu explain why)
@@ -1141,13 +1150,19 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
             if (fr_pill_button("invite", il, ImVec2(x - pw, by), btn_h, false, !invited_recent)) fr_invite_uids({f.uid});
             x -= pw + sp(0.5f);
         }
-        if (can_ask) {
+        if (can_ask && !can_dropin) {   // "Join game" supersedes "Ask to join" (still in the menu)
             const char* al = "Ask to join";
             pw = fr_tw(ui::F.bold, al) + sp(2.5f);
             if (fr_pill_button("ask", al, ImVec2(x - pw, by), btn_h, false, true)) fr_ask_to_join(f.uid);
             x -= pw + sp(0.5f);
         }
-        if (can_watch && fr.state == hubui::FS_InGame) {
+        if (can_dropin) {
+            const char* dl_ = "Join game";
+            pw = fr_tw(ui::F.bold, dl_) + sp(2.5f);
+            if (fr_pill_button("dropin", dl_, ImVec2(x - pw, by), btn_h, false, true)) dropin_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
+            x -= pw + sp(0.5f);
+        }
+        if (can_watch && fr.state == hubui::FS_InGame && (!can_dropin || x - (fr_tw(ui::F.bold, "Watch") + sp(2.5f)) >= p0.x + sp(6.5f) + sp(8.f))) {   // beside "Join game" only when the name keeps room (else Watch stays in the menu)
             const char* wl = "Watch";
             pw = fr_tw(ui::F.bold, wl) + sp(2.5f);
             if (fr_pill_button("watch", wl, ImVec2(x - pw, by), btn_h, false, true)) spectate_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
@@ -1189,6 +1204,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         if (ImGui::MenuItem("Message")) fr_open_chat(f.uid);
         if (can_join && ImGui::MenuItem("Join lobby")) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
         if (can_ask && ImGui::MenuItem("Ask to join")) fr_ask_to_join(f.uid);
+        if (can_dropin && ImGui::MenuItem("Join game")) dropin_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
         if (can_watch && ImGui::MenuItem("Watch")) spectate_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
         if (can_invite && ImGui::MenuItem("Invite to my room")) fr_invite_uids({f.uid});
         if (ImGui::MenuItem("Copy friend code")) { SDL_SetClipboardText(f.code.c_str()); fr_trace("copy", f.uid); set_toast("Friend code copied.", true, 3.0); }
