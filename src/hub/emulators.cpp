@@ -872,6 +872,8 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
     t = hubui::ini_set(t, "Core", "SlotB", "255");
     t = hubui::ini_set(t, "Core", "EmulationSpeed", "1.0");   // the Game menu's Speed row starts every session at 1x
     t = hubui::ini_set(t, "General", "HotkeysRequireFocus", "False");   // every launch (upgraded installs too): the speed pad needs no focus; other hotkeys are unbound (dolphin_hotkeys_ini)
+    t = hubui::ini_set(t, "Interface", "ConfirmStop", "False");         // every launch: Back+Start closes Dolphin; a "stop?" dialog would pop up over the game
+    t = hubui::ini_set(t, "Input", "BackgroundInput", "False");         // every launch, not only first setup: Dolphin ignores the pad while the menu has focus
     t = hubui::ini_set(t, "Core", "SkipIPL", "True");   // every launch; the offline "real console startup" turns it off for that launch only (real_boot_ui.cpp)
     for (int i = 0; i < 4; ++i)
         t = hubui::ini_set(t, "Core", "SIDevice" + std::to_string(i), pads.adapter ? "12" : (i == 0 || pads.xinput[i] || !pads.dev[i].empty()) ? "6" : "0");
