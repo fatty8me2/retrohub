@@ -80,6 +80,13 @@ std::string decode_entities(const std::string& s) {
     return o;
 }
 
+/* Drive ids are [A-Za-z0-9_-]; anything else from the scraped HTML must not reach a URL path. */
+static bool valid_id(const std::string& id) {
+    if (id.empty() || id.size() > 128) return false;
+    for (char c : id) if (!(isalnum((unsigned char)c) || c == '_' || c == '-')) return false;
+    return true;
+}
+
 std::vector<Entry> parse_folder_html(const std::string& html) {
     std::vector<Entry> out;
     size_t pos = 0;
@@ -152,6 +159,7 @@ static bool http_get(const std::wstring& host, const std::wstring& path, std::st
 bool list_folder(const std::string& folder_id, std::vector<Entry>* out) {
     if (out) out->clear();
     if (folder_id.empty()) return false;
+    if (!valid_id(folder_id)) return false;
     std::string body, err;
     if (!http_get(L"drive.google.com", (L"/embeddedfolderview?id=" + W(folder_id)).c_str(), &body, &err)) return false;
     if (out) *out = parse_folder_html(body);
@@ -182,9 +190,11 @@ bool list_files(const std::string& game_folder_id, std::vector<Entry>* out) {
 bool download_file(const std::string& file_id, const std::string& out_path,
                    std::atomic<uint64_t>* got, std::atomic<uint64_t>* total,
                    std::atomic<bool>* stop, std::string* err) {
+    if (!valid_id(file_id)) { *err = "bad file id"; return false; }
     HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
     if (!ses) { *err = "network unavailable"; return false; }
     bool ok = false;
+    std::wstring part = W(out_path + ".part");   // written here, renamed over out_path only once complete
     HINTERNET con = WinHttpConnect(ses, L"drive.usercontent.google.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
     std::wstring path = L"/download?id=" + W(file_id) + L"&export=download&confirm=t";
     HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
@@ -195,9 +205,15 @@ bool download_file(const std::string& file_id, const std::string& out_path,
         wchar_t lenb[32] = {0};
         sz = sizeof lenb;
         if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH, nullptr, lenb, &sz, nullptr) && total) *total = (uint64_t)_wtoi64(lenb);
+        uint64_t want = total ? total->load() : 0;
+        wchar_t ctype[128] = {0};
+        sz = sizeof ctype;
+        bool html = WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_TYPE, nullptr, ctype, &sz, nullptr) && wcsstr(ctype, L"text/html");
         if (status != 200) *err = "server answered " + std::to_string(status);
+        else if (html) *err = "Google Drive refused the download (quota or permission page)";
         else {
-            HANDLE f = CreateFileW(W(out_path).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            uint64_t mine = 0;
+            HANDLE f = CreateFileW(part.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (f == INVALID_HANDLE_VALUE) *err = "cannot write " + out_path;
             else {
                 std::vector<char> buf(64 * 1024);
@@ -209,9 +225,13 @@ bool download_file(const std::string& file_id, const std::string& out_path,
                     if (n == 0) break;
                     DWORD w = 0;
                     if (!WriteFile(f, buf.data(), n, &w, nullptr) || w != n) { ok = false; *err = "disk write failed"; break; }
+                    mine += n;
                     if (got) *got += n;
                 }
                 CloseHandle(f);
+                if (ok && want && mine != want) { ok = false; *err = "download incomplete"; }
+                if (ok && !MoveFileExW(part.c_str(), W(out_path).c_str(), MOVEFILE_REPLACE_EXISTING)) { ok = false; *err = "cannot write " + out_path; }
+                if (!ok) DeleteFileW(part.c_str());
             }
         }
     } else *err = "could not reach Google Drive";
@@ -277,7 +297,8 @@ void Installer::start(const std::string& sys, const std::string& title) {
                         file_count = (int)files.size();
                         r = true;
                         for (size_t i = 0; i < files.size() && r; ++i) {
-                            if (cancel.load()) { e = "cancelled"; break; }
+                            if (cancel.load()) { r = false; e = "cancelled"; break; }
+                            if (safe_name(files[i].name) == "gamepack.done") continue;   // never let a remote file fake the marker
                             file_idx = (int)i + 1;
                             got = 0;
                             total = 0;
@@ -287,7 +308,7 @@ void Installer::start(const std::string& sys, const std::string& title) {
                             if (!r) e = fe;
                         }
                         if (r) { std::ofstream m(S(dir / "gamepack.done"), std::ios::binary); m << "ok"; }
-                        if (fresh && !r && e != "cancelled") { std::error_code ec2; fs::remove_all(dir, ec2); }
+                        if (fresh && !r) { std::error_code ec2; fs::remove_all(dir, ec2); }
                     }
                 }
             }
