@@ -5,6 +5,7 @@
 #include "homefun.h"
 #include "popup_guard.h"
 #include "qm_pad.h"
+#include "dolphin_speed.h"
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
@@ -372,6 +373,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
 
     // clean shutdown
+    dolphin_speed_stop();   // the Dolphin speed DSU server (if a GameCube game ran)
     find_games_shutdown();
     add_games_shutdown();
     if (A.dirty) hubui::save_settings(A.settings_path, A.st);

@@ -17,7 +17,7 @@ using hubqm::DolphinKey;
 
 int main() {
     /* hotkey / ini text */
-    CHECK(hubds::server_entries() == "RHSpeed:127.0.0.1:26761;");
+    CHECK(hubds::server_entries(26761) == "RHSpeed:127.0.0.1:26761;");
     CHECK(hubds::hotkey_expr(DolphinKey::Increase) == "`DSUClient/0/RHSpeed:Options` | @(Ctrl+Shift+F13)");
     CHECK(hubds::hotkey_expr(DolphinKey::Decrease) == "`DSUClient/0/RHSpeed:Share` | @(Ctrl+Shift+F14)");
     CHECK(hubds::kPort != dsu::kDefaultPort);
