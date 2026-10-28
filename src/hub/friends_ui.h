@@ -2,6 +2,7 @@
 /* friends_ui.h - friends list panel, chat, lobby invites, notifications (friends_ui.cpp). Included at the end of app.h. */
 
 #include "friends.h"
+#include "profile.h"
 
 #include <chrono>
 #include <set>
@@ -35,6 +36,10 @@ struct FriendsUi {
     int d_frame = -1;
 
     std::string chat_uid;
+    std::map<std::string, hub::profile::Tally> reacts;   // "<peer uid>|<line key>" -> who reacted with what (this session)
+    bool open_prof = false;                              // open the "Your profile" editor
+    char prof_status_buf[48] = {0};
+    bool prof_buf_init = false;
     int chat_unread = 0;           // unread count when the chat was opened ("New messages" marker)
     size_t chat_seen = 0;
     char chat_buf[512] = {0};
@@ -91,6 +96,11 @@ const hubnet::Friend* fr_find(const std::string& uid);
 hubui::FriendRow fr_row(const hubnet::Friend& f);
 ImU32 fr_state_col(int st);
 ImU32 fr_avatar_col(const std::string& name);
+hub::profile::Profile fr_my_profile();                       // saved in the synced prefs (profile.avatar / fav_game / status)
+hub::profile::Profile fr_profile_of(const std::string& name); // a friend (from presence) or me; empty when unknown/offline
+void fr_profile_avatar_disc(ImDrawList* dl, ImVec2 c, float r, const std::string& avatar, ImU32 bg);   // pixel console icon / cover frame; false-y avatar draws nothing
+std::string fr_line_key(const std::string& sender_uid, const std::string& text);   // same on both PCs, so a reaction can name a line
+void fr_react_dm(const std::string& peer, const std::string& key, const std::string& code);
 void fr_avatar(ImDrawList* dl, ImVec2 c, float r, const std::string& name, int state, ImU32 ring);
 void fr_text_c(ImDrawList* dl, ImFont* f, ImVec2 c, ImU32 col, const char* s);
 float fr_tw(ImFont* f, const std::string& s);

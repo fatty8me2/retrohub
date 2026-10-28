@@ -1,4 +1,6 @@
 #include "app.h"
+#include "friends_ui.h"
+#include "profile.h"
 
 /* ---------- Online ---------- */
 
@@ -184,6 +186,17 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     char init[2] = {(char)std::toupper((unsigned char)(p->name.empty() ? '?' : p->name[0])), 0};
     ImVec2 its = ImGui::CalcTextSize(init);
     dl->AddText(ui::F.h2, ui::F.h2->FontSize, cc - ImVec2(its.x * 0.6f, its.y * 0.62f), IM_COL32(20, 20, 25, 255), init);
+    {   // profile avatar + status line (S1)
+        hub::profile::Profile rp;
+        if (slot == room_my_slot()) rp = fr_my_profile();
+        else { auto it = A.room_prof.find(slot); if (it != A.room_prof.end()) { rp.avatar = it->second.avatar; rp.status = it->second.status; } }
+        if (hub::profile::valid_avatar(rp.avatar)) fr_profile_avatar_disc(dl, cc, 24 * S, rp.avatar, slotc[slot & 3]);
+        if (!rp.status.empty()) {
+            float nx = p0.x + 74 * S + ui::F.h2->CalcTextSizeA(ui::F.h2->FontSize, FLT_MAX, 0.f, p->name.c_str()).x + 12 * S;
+            float room = p1.x - 14 * S - nx;
+            if (room > 40 * S) dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(nx, p0.y + 14 * S + (ui::F.h2->FontSize - ui::F.cap->FontSize) * 0.6f), ui::TEXT2, ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, rp.status, room).c_str());
+        }
+    }
     dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(p0.x + 74 * S, p0.y + 14 * S), IM_COL32_WHITE, p->name.c_str());
     ImGui::SetCursorScreenPos(p0 + ImVec2(74 * S, 46 * S));
     bool host = slot == 0;

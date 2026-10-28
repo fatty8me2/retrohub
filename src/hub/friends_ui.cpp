@@ -1,4 +1,6 @@
 #include "app.h"
+#include "prefs.h"
+#include "profile.h"
 #include "runner_ctl.h"
 #include "toast.h"
 #include "ui_sound.h"
@@ -101,8 +103,82 @@ ImU32 fr_avatar_col(const std::string& name) {
     for (unsigned char c : name) h = h * 31 + c;
     return pal[h % 6];
 }
+/* ---- social profile (S1): avatar / favourite game / status line, saved in the synced prefs and sent on presence ---- */
+static void fr_cover_frame(ImDrawList* dl, ImVec2 c, float r, const std::string& game_key, ImU32 bg, bool* drawn);
+static hub::profile::Profile g_my_prof;
+static bool g_my_prof_loaded = false;
+hub::profile::Profile fr_my_profile() {
+    if (!g_my_prof_loaded) {
+        hub::prefs::Prefs p;
+        if (hub::prefs::load(hub::saves::vault_dir(), &p)) {
+            g_my_prof.avatar = hub::profile::valid_avatar(p.profile.avatar) ? p.profile.avatar : std::string();
+            g_my_prof.fav_game = p.profile.fav_game;
+            g_my_prof.status = hub::profile::clean_status(p.profile.status);
+        }
+        if (std::getenv("HUB_SHOT_PROFILES") && g_my_prof.empty()) { g_my_prof.avatar = "c:gc"; g_my_prof.status = "Smash night!"; }   // screenshot aid
+        g_my_prof_loaded = true;
+    }
+    return g_my_prof;
+}
+static void fr_my_profile_save(const hub::profile::Profile& np) {
+    g_my_prof = np;
+    g_my_prof_loaded = true;
+    hub::prefs::Prefs p;
+    const std::string root = hub::saves::vault_dir();
+    hub::prefs::load(root, &p);
+    bool ch = hub::prefs::set_profile_avatar(&p, np.avatar);
+    ch |= hub::prefs::set_profile_fav_game(&p, np.fav_game);
+    ch |= hub::prefs::set_profile_status(&p, np.status);
+    if (ch && hub::prefs::save(root, p) && !g_headless) hub::saves::cloud_account_prefs_changed();
+}
+hub::profile::Profile fr_profile_of(const std::string& name) {
+    if (name == A.st.name) return fr_my_profile();
+    hub::profile::Profile pr;
+    for (const auto& f : fr_friends()) {
+        if (f.name != name) continue;
+        if (f.online() && hub::profile::valid_avatar(f.status.prof_avatar)) pr.avatar = f.status.prof_avatar;
+        if (f.online()) { pr.fav_game = f.status.prof_game; pr.status = f.status.prof_status; }
+        break;
+    }
+    return pr;
+}
+/* Pixel console icon (a tiny pad / handheld bitmap in the console's colours) or a cover frame (the game's cover when this PC has it). */
+void fr_profile_avatar_disc(ImDrawList* dl, ImVec2 c, float r, const std::string& avatar, ImU32 bg) {
+    if (avatar.size() < 3) return;
+    if (avatar[0] == 'g') { bool d = false; fr_cover_frame(dl, c, r, avatar.substr(2), bg, &d); if (d) return; dl->AddCircleFilled(c, r, bg, 28); fr_text_c(dl, ui::F.bold, c, ui::TEXT2, "?"); return; }
+    struct Sty { const char* id; ImU32 body, det; bool hand; };
+    static const Sty sty[] = {
+        {"nes", IM_COL32(200, 200, 200, 255), IM_COL32(210, 50, 50, 255), false},   {"snes", IM_COL32(190, 190, 205, 255), IM_COL32(120, 80, 190, 255), false},
+        {"n64", IM_COL32(130, 135, 145, 255), IM_COL32(240, 200, 40, 255), false},  {"gc", IM_COL32(110, 90, 210, 255), IM_COL32(240, 240, 240, 255), false},
+        {"wiiu", IM_COL32(235, 235, 235, 255), IM_COL32(40, 160, 230, 255), false}, {"gb", IM_COL32(185, 185, 165, 255), IM_COL32(170, 40, 110, 255), true},
+        {"gbc", IM_COL32(140, 90, 210, 255), IM_COL32(240, 240, 240, 255), true},   {"gba", IM_COL32(80, 80, 215, 255), IM_COL32(240, 240, 240, 255), true},
+        {"ds", IM_COL32(200, 200, 205, 255), IM_COL32(60, 60, 70, 255), true},      {"3ds", IM_COL32(215, 60, 60, 255), IM_COL32(245, 245, 245, 255), true},
+        {"ps1", IM_COL32(170, 170, 175, 255), IM_COL32(60, 190, 90, 255), false},   {"ps2", IM_COL32(40, 40, 50, 255), IM_COL32(60, 120, 230, 255), false}};
+    const Sty* s = &sty[0];
+    for (const auto& k : sty) if (avatar.compare(2, std::string::npos, k.id) == 0) { s = &k; break; }
+    static const char* const pad[] = {".#########.", "###########", "#d#######d#", "ddd#####d#d", "#d#######d#", "###########", ".##.....##."};
+    static const char* const hand[] = {"#######", "#.....#", "#.....#", "#.....#", "#######", "#d###d#", "ddd##d#", "#d####d"};
+    dl->AddCircleFilled(c, r, ui::mix(bg, IM_COL32(0, 0, 0, 255), 0.35f), 28);
+    const char* const* rows = s->hand ? hand : pad;
+    int nr = s->hand ? 8 : 7, nc = s->hand ? 7 : 11;
+    float cell = r * (s->hand ? 0.19f : 0.15f);
+    ImVec2 o(c.x - nc * cell * 0.5f, c.y - nr * cell * 0.5f);
+    for (int y = 0; y < nr; y++) for (int x = 0; x < nc; x++) {
+        char ch = rows[y][x];
+        if (ch == '.') { if (s->hand && y >= 1 && y <= 3 && x >= 1 && x <= 5) dl->AddRectFilled(o + ImVec2(x * cell, y * cell), o + ImVec2((x + 1) * cell, (y + 1) * cell), IM_COL32(25, 30, 28, 255)); continue; }
+        dl->AddRectFilled(o + ImVec2(x * cell, y * cell), o + ImVec2((x + 1) * cell, (y + 1) * cell), ch == 'd' ? s->det : s->body);
+    }
+}
 void fr_avatar(ImDrawList* dl, ImVec2 c, float r, const std::string& name, int state, ImU32 ring) {
     ImU32 col = state == hubui::FS_Offline ? ui::mix(fr_avatar_col(name), ui::PANEL2, 0.6f) : fr_avatar_col(name);
+    hub::profile::Profile prof = fr_profile_of(name);
+    if (hub::profile::valid_avatar(prof.avatar)) {
+        fr_profile_avatar_disc(dl, c, r, prof.avatar, col);
+        ImVec2 dc = c + ImVec2(r * 0.72f, r * 0.72f);
+        dl->AddCircleFilled(dc, r * 0.34f, ring, 16);
+        dl->AddCircleFilled(dc, r * 0.24f, fr_state_col(state), 16);
+        return;
+    }
     dl->AddCircleFilled(c, r, col, 28);
     std::string in = name.empty() ? "?" : name.substr(0, 1);
     in[0] = (char)std::toupper((unsigned char)in[0]);
@@ -251,6 +327,15 @@ void fr_game_thumb(ImDrawList* dl, const std::string& game_id, const std::string
     std::string in = initials(title);
     if (in.empty()) in = "?";
     fr_text_c(dl, ui::F.bold, (p0 + p1) * 0.5f, IM_COL32_WHITE, in.c_str());
+}
+
+static void fr_cover_frame(ImDrawList* dl, ImVec2 c, float r, const std::string& game_key, ImU32 bg, bool* drawn) {
+    ArtRef a = fr_game_art(game_key);
+    *drawn = false;
+    if (!a.tex) return;
+    dl->AddRectFilled(c - ImVec2(r, r), c + ImVec2(r, r), bg, r * 0.3f);
+    ui::draw_art(dl, a.tex, a.w, a.h, c - ImVec2(r * 0.88f, r * 0.88f), c + ImVec2(r * 0.88f, r * 0.88f), r * 0.2f);
+    *drawn = true;
 }
 
 std::string fr_time(long long ms) {
@@ -420,8 +505,10 @@ hubnet::Status fr_desired_status() {
 }
 void fr_update_presence() {
     hubnet::Status s = fr_desired_status();
+    {   const hub::profile::Profile mp = fr_my_profile();   // tiny public profile rides on the presence status
+        s.prof_avatar = mp.avatar; s.prof_game = mp.fav_game; s.prof_status = mp.status; }
     const hubnet::Status& o = FR.last_status;
-    bool same = FR.status_sent && s.state == o.state && s.game_id == o.game_id && s.game_title == o.game_title && s.system == o.system &&
+    bool same = FR.status_sent && s.prof_avatar == o.prof_avatar && s.prof_game == o.prof_game && s.prof_status == o.prof_status && s.state == o.state && s.game_id == o.game_id && s.game_title == o.game_title && s.system == o.system &&
                 s.lobby_code == o.lobby_code && s.joinable == o.joinable && s.players == o.players && s.max_players == o.max_players;
     if (same) return;
     FR.last_status = s;
@@ -563,6 +650,10 @@ void fr_tick() {
                 if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
                 else { ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0); }
                 break;
+            case hubnet::Event::ReactionReceived:
+                if (hub::profile::valid_reaction(e.msg.emoji) && !e.msg.target.empty() && e.msg.target.size() <= 64 && fr_find(e.uid))
+                    FR.reacts[e.uid + "|" + e.msg.target].set(e.uid, e.msg.emoji, e.msg.on);
+                break;
             case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite, e.msg.ask_host); break;
             case hubnet::Event::WatchedOnline: fr_friend_online(e.uid, e.name); break;
             case hubnet::Event::AskResult:
@@ -616,6 +707,18 @@ void fr_fake_init() {
     mk("devuid", "Dev", PS::InLobby, "mp2", "Mario Party 2", "n64", "ABC234", false, 4, 4, now - 70 * 60000);
     mk("samuid", "Sam", PS::Offline, "", "", "", "", false, 0, 0, now - 3 * 3600 * 1000LL);
     mk("priuid", "Priya", PS::Offline, "", "", "", "", false, 0, 0, now - 2 * 86400 * 1000LL);
+    if (std::getenv("HUB_SHOT_PROFILES")) {   // screenshot aid: profiles on the fake friends + room members, reactions on the fake chat
+        auto prof = [&](const char* uid, const char* av, const char* st) { for (auto& f : FR.f_friends) if (f.uid == uid) { f.status.prof_avatar = av; f.status.prof_status = st; } };
+        prof("miauid", "c:n64", "grinding Melee"); prof("jakuid", "g:mk64", "one more race"); prof("lunuid", "c:gba", "Metroid time");
+        prof("kaiuid", "c:ps2", "afk"); prof("devuid", "c:snes", "party host");
+        A.room_prof[1] = {"c:n64", "", "grinding Melee"}; A.room_prof[2] = {"c:snes", "", "one more race"};
+        FR.reacts["miauid|" + fr_line_key("miauid", "yo! wanna race tonight?")].set("miauid", "fire", true);
+        FR.reacts["miauid|" + fr_line_key("miauid", "yo! wanna race tonight?")].set("me", "heart", true);
+        FR.reacts["miauid|" + fr_line_key("me", "sure, give me 10 min")].set("miauid", "gg", true);
+        A.chat.push_back({"Mia", "gg, ready when you are", 1, 1, {{"You", "heart"}, {"Jake", "lol"}}});
+        A.chat.push_back({"Jake", "one more race?", 2, 1, {}});
+        if (std::getenv("HUB_SHOT_PROF_EDIT")) FR.open_prof = true;
+    }
     fg_fake_libs();
     FR.f_pt["miauid"] = {{"fake:0", "Smash Classic", 14 * 60 + 20}, {"n64:mk64", "Mario Kart 64", 9 * 60}, {"gba:mf", "Metroid Fusion", 95}};
     FR.f_pt["jakuid"] = {{"fake:0", "Smash Classic", 3 * 60}, {"n64:mp2", "Mario Party 2", 40}};
@@ -1029,7 +1132,8 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
                 ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, f.name, tw).c_str());
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.5f) + ui::F.bold->FontSize * 1.25f),
                 fr.state == hubui::FS_Offline ? ui::TEXT3 : ui::TEXT2,
-                ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, hubui::friend_presence_line(fr, now), tw).c_str());
+                ui::ellipsize(ui::F.cap, ui::F.cap->FontSize,
+                              hubui::friend_presence_line(fr, now) + (f.online() && !f.status.prof_status.empty() ? "  -  " + f.status.prof_status : std::string()), tw).c_str());
     if (focus) ui::focus_ring(dl, p0, p1, sp(1.5f));
 
     if (clicked) ImGui::OpenPopup("ctx");   // left-click on the row opens the actions menu (Message is its first entry); right-click does the same
@@ -1080,6 +1184,84 @@ void fr_section(const std::string& title) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::GetWindowDrawList()->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + sp(0.5f), p.y + sp(0.5f)), ui::TEXT3, title.c_str());
     ImGui::Dummy(ImVec2(1, ui::F.cap->FontSize + sp(1.25f)));
+}
+
+/* ---- profile editor (S1) ---- */
+static void fr_profile_modal() {
+    if (FR.open_prof) { ImGui::OpenPopup("Your profile##frprof"); FR.open_prof = false; FR.prof_buf_init = false; }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
+    if (ImGui::BeginPopupModal("Your profile##frprof", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        if (ui::modal_back()) ImGui::CloseCurrentPopup();
+        hub::profile::Profile pr = fr_my_profile();
+        if (!FR.prof_buf_init) { std::snprintf(FR.prof_status_buf, sizeof FR.prof_status_buf, "%s", pr.status.c_str()); FR.prof_buf_init = true; }
+        bool changed = false;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImGui::TextUnformatted("Avatar");
+        const float cell = sp(6.f);
+        std::vector<std::string> opts{""};
+        for (auto k : hub::profile::kConsoles) opts.push_back(std::string("c:") + k);
+        if (!pr.fav_game.empty()) opts.push_back("g:" + pr.fav_game);
+        int per_row = 7;
+        for (size_t i = 0; i < opts.size(); i++) {
+            if (i % per_row) ImGui::SameLine(0, sp(0.75f));
+            ImGui::PushID((int)i);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::InvisibleButton("av", ImVec2(cell, cell))) { pr.avatar = opts[i]; changed = true; }
+            bool sel = pr.avatar == opts[i];
+            ImVec2 c = p + ImVec2(cell, cell) * 0.5f;
+            if (ImGui::IsItemHovered() || sel) dl->AddCircle(c, cell * 0.5f + 1.f, sel ? ui::ACCENT : ui::HILITE, 24, sel ? 2.f : 1.f);
+            if (opts[i].empty()) { fr_avatar_col(A.st.name); dl->AddCircleFilled(c, cell * 0.42f, fr_avatar_col(A.st.name), 24); fr_text_c(dl, ui::F.bold, c, IM_COL32_WHITE, A.st.name.empty() ? "?" : std::string(1, (char)std::toupper((unsigned char)A.st.name[0])).c_str()); }
+            else fr_profile_avatar_disc(dl, c, cell * 0.42f, opts[i], ui::PANEL2);
+            ImGui::PopID();
+        }
+        ImGui::Dummy(ImVec2(1, sp(1.f)));
+        ImGui::TextUnformatted("Favourite game");
+        std::string cur = "None";
+        for (const auto& e : A.lib) if (e.key == pr.fav_game) cur = e.title;
+        ImGui::SetNextItemWidth(sp(40.f));
+        if (ImGui::BeginCombo("##favgame", cur.c_str())) {
+            if (ImGui::Selectable("None", pr.fav_game.empty())) { pr.fav_game.clear(); if (pr.avatar.rfind("g:", 0) == 0) pr.avatar.clear(); changed = true; }
+            for (const auto& e : A.lib) {
+                if (e.key.size() > 36 || e.key.size() < 3) continue;
+                if (ImGui::Selectable(e.title.c_str(), e.key == pr.fav_game)) { if (pr.avatar.rfind("g:", 0) == 0) pr.avatar = "g:" + e.key; pr.fav_game = e.key; changed = true; }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::Dummy(ImVec2(1, sp(0.75f)));
+        ImGui::TextUnformatted("Status line");
+        ImGui::SetNextItemWidth(sp(40.f));
+        if (osk::input("##profstatus", "what are you playing?", FR.prof_status_buf, (int)hub::profile::kStatusMax + 1, ImGuiInputTextFlags_EnterReturnsTrue)) changed = true;
+        if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+        if (changed) { pr.status = hub::profile::clean_status(FR.prof_status_buf); fr_my_profile_save(pr); }
+        ImGui::Dummy(ImVec2(1, sp(0.75f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+        ImGui::TextUnformatted("Friends see this on your row and in rooms.");
+        ImGui::PopStyleColor();
+        if (ui::button("Done", ImVec2(sp(10.f), sp(3.5f)), true, true)) {
+            pr.status = hub::profile::clean_status(FR.prof_status_buf);
+            fr_my_profile_save(pr);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
+}
+
+/* ---- reactions (S4) ---- */
+std::string fr_line_key(const std::string& sender_uid, const std::string& text) {
+    unsigned long long h = 1469598103934665603ULL;
+    for (unsigned char ch : sender_uid + "|" + text) { h ^= ch; h *= 1099511628211ULL; }
+    char b[24];
+    std::snprintf(b, sizeof b, "%016llx", h);
+    return b;
+}
+void fr_react_dm(const std::string& peer, const std::string& key, const std::string& code) {
+    if (!hub::profile::valid_reaction(code)) return;
+    hub::profile::Tally& t = FR.reacts[peer + "|" + key];
+    bool on = !t.mine("me", code);
+    t.set("me", code, on);
+    if (!FR.fake) FR.cli.send_reaction(peer, key, code, on);
 }
 
 /* ---- chat ---- */
@@ -1175,7 +1357,42 @@ void fr_chat_view(float cw) {
         float y = q0.y + pad;
         for (auto& l : lines) { cdl->AddText(bf, fs, ImVec2(q0.x + pad, y), m.mine ? IM_COL32_WHITE : ui::TEXT, l.c_str()); y += fs * 1.2f; }
         cdl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(q1.x - pad - fr_tw(ui::F.cap, tm), y + sp(0.125f)), m.mine ? IM_COL32(255, 255, 255, 170) : ui::TEXT3, tm.c_str());
-        ImGui::Dummy(ImVec2(aw, bh + sp(0.75f)));
+        // reactions: click the bubble to pick one; the tally shows as little chips under it
+        std::string lk = fr_line_key(m.from, m.text);
+        hub::profile::Tally& tl = FR.reacts[FR.chat_uid + "|" + lk];
+        ImGui::PushID((int)i + 100000);
+        ImGui::SetCursorScreenPos(q0);
+        ImGui::InvisibleButton("bub", ImVec2(bw, bh));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to react");
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("react");
+        if (ImGui::BeginPopup("react")) {
+            for (size_t ri = 0; ri < 6; ri++) {
+                if (ri) ImGui::SameLine();
+                bool mine = tl.mine("me", hub::profile::kReactions[ri]);
+                if (ui::button(hub::profile::kReactionLabels[ri], ImVec2(sp(5.5f), sp(3.f)), mine, true)) { fr_react_dm(FR.chat_uid, lk, hub::profile::kReactions[ri]); ImGui::CloseCurrentPopup(); }
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
+        float chip_h = 0;
+        {
+            float cx = x0;
+            for (size_t ri = 0; ri < 6; ri++) {
+                int n = tl.count(hub::profile::kReactions[ri]);
+                if (n <= 0) continue;
+                std::string lab = std::string(hub::profile::kReactionLabels[ri]) + (n > 1 ? " " + std::to_string(n) : std::string());
+                float w = fr_tw(ui::F.cap, lab) + sp(1.5f);
+                chip_h = ui::F.cap->FontSize + sp(0.75f);
+                ImVec2 a0(cx, q1.y + sp(0.25f)), a1(cx + w, q1.y + sp(0.25f) + chip_h);
+                bool mine = tl.mine("me", hub::profile::kReactions[ri]);
+                cdl->AddRectFilled(a0, a1, mine ? ui::mix(ui::ACCENT, ui::BG, 0.45f) : ui::PANEL3, chip_h * 0.5f);
+                fr_text_c(cdl, ui::F.cap, (a0 + a1) * 0.5f, ui::TEXT, lab.c_str());
+                cx += w + sp(0.4f);
+            }
+            if (chip_h > 0) chip_h += sp(0.5f);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(c.x, q1.y));
+        ImGui::Dummy(ImVec2(aw, chip_h + sp(0.75f)));
     }
     if (msgs.size() != FR.chat_seen) { ImGui::SetScrollHereY(1.f); FR.chat_seen = msgs.size(); }
     if (fr_panel_shown() && fr_unread(FR.chat_uid) > 0) fr_mark_read(FR.chat_uid);
@@ -1244,14 +1461,18 @@ void fr_draw_panel(float disp_w, float disp_h) {
             dl->AddRectFilled(c0, c0 + ImVec2(cw, ch), ui::PANEL2, sp(1.75f));
             dl->AddRect(c0, c0 + ImVec2(cw, ch), ui::HAIRLINE, sp(1.75f), 0, 1.f);
             fr_avatar(dl, c0 + ImVec2(sp(3.f), ch * 0.5f), sp(2.25f), A.st.name, fr_connected() ? hubui::FS_Online : hubui::FS_Offline, ui::PANEL2);
+            ImGui::SetCursorScreenPos(c0 + ImVec2(sp(0.5f), ch * 0.5f - sp(2.5f)));
+            if (ImGui::InvisibleButton("myprof", ImVec2(sp(5.f), sp(5.f)))) FR.open_prof = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit your profile");
             float tx = c0.x + sp(6.5f), tw = cw - sp(6.5f) - sp(9.f);
             dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, c0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, A.st.name, tw).c_str());
             std::string code = fr_my_code().empty() ? "..." : fr_my_code();
             dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, c0.y + sp(1.25f) + ui::F.bold->FontSize * 1.25f), ui::mix(ui::ACCENT, ui::HILITE, 0.55f), code.c_str());
             ImU32 dc = fr_connected() ? ui::GOOD : ui::WARN;
             dl->AddCircleFilled(ImVec2(tx + sp(0.5f), c0.y + ch - sp(1.75f)), sp(0.45f), dc, 10);
-            dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + sp(1.5f), c0.y + ch - sp(1.75f) - ui::F.cap->FontSize * 0.5f), ui::TEXT2,
-                        ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, fr_status_text(), tw).c_str());
+            {   const std::string mps = fr_my_profile().status;
+                dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + sp(1.5f), c0.y + ch - sp(1.75f) - ui::F.cap->FontSize * 0.5f), ui::TEXT2,
+                            ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, fr_status_text() + (mps.empty() ? std::string() : "  -  " + mps), tw).c_str()); }
             ImGui::SetCursorScreenPos(ImVec2(c0.x + cw - sp(8.5f), c0.y + (ch - sp(3.5f)) * 0.5f));
             if (ui::button("Copy", ImVec2(sp(7.25f), sp(3.5f)), false, !fr_my_code().empty())) {
                 SDL_SetClipboardText(fr_my_code().c_str());
@@ -1401,6 +1622,8 @@ void fr_draw_panel(float disp_w, float disp_h) {
         }
         ImGui::EndChild();
     }
+
+    fr_profile_modal();
 
     // remove / block confirmation
     if (FR.confirm_open) { ImGui::OpenPopup("Are you sure?##frconf"); FR.confirm_open = false; }

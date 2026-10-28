@@ -1,4 +1,6 @@
 #include "app.h"
+#include "friends_ui.h"
+#include "profile.h"
 #include "online_caps.h"
 #include "remote_play.h"
 
@@ -406,6 +408,40 @@ void page_online_room() {
         ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::TextWrapped("%s", l.text.c_str());
+        if (l.seq > 0) {   // reactions (S4): click the line to react, chips show the tally
+            ImVec2 a0 = ImGui::GetItemRectMin(), a1 = ImGui::GetItemRectMax();
+            ImGui::PushID((int)(&l - &A.chat[0]) + 7000);
+            ImVec2 save = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(a0);
+            if (ImGui::InvisibleButton("rx", ImVec2(std::max(1.f, ImGui::GetContentRegionAvail().x), std::max(1.f, a1.y - a0.y)))) ImGui::OpenPopup("rxp");
+            ImGui::SetCursorScreenPos(save);
+            if (ImGui::BeginPopup("rxp")) {
+                for (size_t ri = 0; ri < 6; ri++) {
+                    if (ri) ImGui::SameLine();
+                    if (ImGui::Button(hub::profile::kReactionLabels[ri])) {
+                        auto it = l.rx.find(A.st.name);
+                        bool on = !(it != l.rx.end() && it->second == hub::profile::kReactions[ri]);
+                        if (on) l.rx[A.st.name] = hub::profile::kReactions[ri]; else l.rx.erase(A.st.name);
+                        A.lobby.send_msg(std::string("{\"kind\":\"react\",\"to\":") + std::to_string(l.slot) + ",\"n\":" + std::to_string(l.seq) +
+                                         ",\"e\":\"" + hub::profile::kReactions[ri] + "\",\"on\":" + (on ? "1" : "0") + "}");
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+            if (!l.rx.empty()) {
+                std::string chips;
+                for (size_t ri = 0; ri < 6; ri++) {
+                    int n = 0;
+                    for (auto& kv : l.rx) if (kv.second == hub::profile::kReactions[ri]) n++;
+                    if (n) chips += std::string(chips.empty() ? "" : "  ") + hub::profile::kReactionLabels[ri] + (n > 1 ? " x" + std::to_string(n) : std::string());
+                }
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+                ImGui::TextUnformatted(("    " + chips).c_str());
+                ImGui::PopStyleColor();
+            }
+        }
     }
     if (A.chat_scroll) { ImGui::SetScrollHereY(1.f); A.chat_scroll = false; }
     ImGui::EndChild();
@@ -422,8 +458,9 @@ void page_online_room() {
         std::string t = A.chat_buf;
         A.chat_buf[0] = 0;
         if (osk::chat_may_send(t, osk::hub_input_blocked())) {
-            A.lobby.send_msg("{\"kind\":\"chat\",\"text\":\"" + json::escape(t) + "\"}");
-            A.chat.push_back({A.st.name, t});
+            int seq = ++A.chat_seq;
+            A.lobby.send_msg("{\"kind\":\"chat\",\"n\":" + std::to_string(seq) + ",\"text\":\"" + json::escape(t) + "\"}");
+            A.chat.push_back({A.st.name, t, room_my_slot(), seq, {}});
             A.chat_scroll = true;
         }
         if (!osk::hub_input_blocked()) ImGui::SetKeyboardFocusHere(-1);

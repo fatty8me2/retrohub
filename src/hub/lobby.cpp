@@ -1,4 +1,6 @@
 #include "app.h"
+#include "friends_ui.h"
+#include "profile.h"
 
 bool g_fake_room = false;
 bool g_shot_rejoin = false;
@@ -112,6 +114,8 @@ void leave_room() {
     A.prev_proc = false;
     A.last_slots.clear();
     A.chat.clear();
+    A.room_prof.clear();
+    A.chat_seq = 0;
     A.selected_game.clear();
     A.my_ready = false;
     A.locals.clear();
@@ -346,8 +350,23 @@ void lobby_tick() {
                 if (rtt < 0) rtt += 4294967296LL;
                 if (rtt >= 0 && rtt < 10000) { A.pings.add(from, (int)rtt); A.ping_at[from] = wall_ms(); }
             }
+        } else if (kind == "prof") {   // a member's tiny profile (avatar id / favourite game / status line), validated here
+            RoomProf rp;
+            rp.avatar = j.str("a"); rp.game = j.str("g"); rp.status = hub::profile::clean_status(j.str("s"));
+            if (!hub::profile::valid_avatar(rp.avatar)) rp.avatar.clear();
+            if (rp.game.size() > 64) rp.game.clear();
+            A.room_prof[from] = rp;
+        } else if (kind == "react") {   // a reaction to a room chat line: {to: sender slot, n: line seq, e: code, on}
+            const std::string code = j.str("e");
+            const int tn = (int)j.num("n", 0), ts = (int)j.num("to", -1);
+            if (hub::profile::valid_reaction(code) && tn > 0)
+                for (auto& cl : A.chat)
+                    if (cl.slot == ts && cl.seq == tn) {
+                        if (j.num("on", 1) != 0) cl.rx[member_name(from)] = code; else cl.rx.erase(member_name(from));
+                        break;
+                    }
         } else if (kind == "chat") {
-            A.chat.push_back({member_name(from), j.str("text")});
+            A.chat.push_back({member_name(from), j.str("text"), from, (int)j.num("n", 0), {}});
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
             A.chat_scroll = true;
         } else if (kind == "rplay_probe") {   // the host checks that it can reach us directly before launching a remote-play game
@@ -381,6 +400,7 @@ void lobby_tick() {
             for (int s : A.last_slots)
                 if (!alive.count(s)) { auto pit = A.peers.find(s); A.run.left_name = pit != A.peers.end() && !pit->second.name.empty() ? pit->second.name : std::string("A player"); if (s != 0) push_toast(A.run.left_name + " disconnected (the game plays on if it can)", ui::WARN, 6.0); break; }
         for (auto it = A.peers.begin(); it != A.peers.end();) it = alive.count(it->first) ? std::next(it) : A.peers.erase(it);
+        for (auto it = A.room_prof.begin(); it != A.room_prof.end();) it = alive.count(it->first) ? std::next(it) : A.room_prof.erase(it);
         for (auto it = A.ready.begin(); it != A.ready.end();) it = alive.count(it->first) ? std::next(it) : A.ready.erase(it);
         for (auto it = A.ingame.begin(); it != A.ingame.end();) it = alive.count(it->first) ? std::next(it) : A.ingame.erase(it);
         for (auto it = A.locals.begin(); it != A.locals.end();) it = alive.count(it->first) ? std::next(it) : A.locals.erase(it);
@@ -397,6 +417,11 @@ void lobby_tick() {
             std::vector<std::string> keys;
             my_games(&games, &keys);
             for (auto& m : hubui::hello_messages("2", games, keys, 3000, HUB_VERSION_STR)) A.lobby.send_msg(m);
+        }
+        {   // tiny profile for the member cards (a few bytes; resent only when the room membership changes)
+            const hub::profile::Profile mp = fr_my_profile();
+            if (!mp.empty())
+                A.lobby.send_msg("{\"kind\":\"prof\",\"a\":\"" + json::escape(mp.avatar) + "\",\"g\":\"" + json::escape(mp.fav_game) + "\",\"s\":\"" + json::escape(mp.status) + "\"}");
         }
         A.lobby.send_msg(std::string("{\"kind\":\"ready\",\"ready\":") + (A.my_ready ? "true" : "false") + "}");
         A.lobby.send_msg("{\"kind\":\"locals\",\"n\":" + std::to_string(A.my_locals) + "}");
