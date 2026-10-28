@@ -37,6 +37,7 @@ class LocalInput {
     uint32_t read(int owned_index) const;
     /* True once when Back+Start was held 1 s on any pad (the universal leave-game combo). */
     bool boost_held() const { return boost_; }   // View + RT
+    bool view_y_held() const { return view_y_; }   // View + Y (the hub's quick menu combo)
     bool exit_requested() { bool r = exit_fired_; exit_fired_ = false; return r; }
     /* Rumble Pak motor on the pad of the owned port (no-op without rumble support). */
     void rumble(int owned_index, bool on);
@@ -46,6 +47,7 @@ class LocalInput {
     hubctl::Profile profile_ = hubctl::default_profile("n64");
     std::unique_ptr<PadMap> map_;
     std::unique_ptr<hubctl::KeyMapper> keys_;   // keyboard pad, from the profile
+    bool view_y_ = false;
     std::vector<void*> pads_;   // SDL_GameController*
     std::vector<uint32_t> pad_state_;
     uint32_t kbd_state_ = 0;

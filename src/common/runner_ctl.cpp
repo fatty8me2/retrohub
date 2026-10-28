@@ -37,13 +37,14 @@ const char* cmd_name(Cmd c) {
         case Cmd::Overlay: return "overlay";
         case Cmd::Clip: return "clip";
         case Cmd::OsdMsg: return "osd_msg";
+        case Cmd::Input: return "input";
         default: return "none";
     }
 }
 
 Cmd cmd_from_name(const std::string& s) {
     for (Cmd c : {Cmd::SaveState, Cmd::LoadState, Cmd::Screenshot, Cmd::SwapDisc, Cmd::Quit, Cmd::Volume, Cmd::Mute, Cmd::Ff, Cmd::Speed,
-                  Cmd::Rewind, Cmd::Shader, Cmd::Overlay, Cmd::Clip, Cmd::OsdMsg})
+                  Cmd::Rewind, Cmd::Shader, Cmd::Overlay, Cmd::Clip, Cmd::OsdMsg, Cmd::Input})
         if (s == cmd_name(c)) return c;
     return Cmd::None;
 }
@@ -77,7 +78,7 @@ std::string speed_label(double s) {
 }
 
 bool offline_only(Cmd c) {
-    return c != Cmd::None && c != Cmd::Quit && c != Cmd::Screenshot && c != Cmd::OsdMsg && c != Cmd::Volume && c != Cmd::Mute;
+    return c != Cmd::None && c != Cmd::Quit && c != Cmd::Screenshot && c != Cmd::OsdMsg && c != Cmd::Volume && c != Cmd::Mute && c != Cmd::Input;
 }
 
 bool parse_control(const std::string& text, Command* out) {
@@ -100,7 +101,7 @@ bool parse_control(const std::string& text, Command* out) {
     }
     switch (c.cmd) {
         case Cmd::Volume: if (c.value < 0 || c.value > 100) return false; break;
-        case Cmd::Mute: case Cmd::Ff: case Cmd::Rewind: case Cmd::Overlay: if (c.value != 0 && c.value != 1) return false; break;
+        case Cmd::Mute: case Cmd::Input: case Cmd::Ff: case Cmd::Rewind: case Cmd::Overlay: if (c.value != 0 && c.value != 1) return false; break;
         case Cmd::Speed: if (!speed_valid(c.speed)) return false; break;
         case Cmd::Shader: case Cmd::OsdMsg: if (c.text.empty()) return false; break;
         default: break;

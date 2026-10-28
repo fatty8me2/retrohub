@@ -380,6 +380,7 @@ struct CtlJob {
     std::string dest, thumb;
 };
 static runctl::Poller g_ctl;
+static runctl::InputGate g_in_gate;   // hub quick menu open => neutral local input
 static CtlJob g_job;
 static std::string g_ctl_state_dir, g_ctl_shot_dir, g_ctl_key, g_ctl_shot_tmp;
 static bool g_ctl_online = false;
@@ -571,6 +572,7 @@ static void ctl_tick() {
             else g_core.DoCommand(M64CMD_STOP, 0, nullptr);
             break;
         case runctl::Cmd::OsdMsg: osd::push(c.text); g_ctl.ack(true, "shown"); break;
+        case runctl::Cmd::Input: g_in_gate.set(c.value != 0, GetTickCount64()); g_ctl.ack(true, c.value ? "input on" : "input off"); break;
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
         case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Clip:
             if (g_ctl_online && runctl::offline_only(c.cmd)) { g_ctl.ack(false, "Not available in online sessions"); break; }
@@ -1150,8 +1152,8 @@ int main(int argc, char** argv) {
             hk.update_local = [&] { test_input.update(); };
             hk.read_local = [&](int idx) { return test_input.read(idx); };
         } else {
-            hk.update_local = [&] { input.update(); n64_apply_start_volume(); n64_boost_tick(input.boost_held() && !online); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
-            hk.read_local = [&](int idx) { return input.read(idx); };
+            hk.update_local = [&] { input.update(); g_in_gate.note_view_y(input.view_y_held(), GetTickCount64()); n64_apply_start_volume(); n64_boost_tick(input.boost_held() && !online); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
+            hk.read_local = [&](int idx) -> uint32_t { return g_in_gate.suppressed(GetTickCount64()) ? 0u : input.read(idx); };   // hub menu open: neutral, lockstep still sends the frame
         }
         hk.idle = [] { SDL_PumpEvents(); };
         if (online && !qa_nofix())

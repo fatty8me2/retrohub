@@ -61,9 +61,11 @@ void LocalInput::update() {
     SDL_GameControllerUpdate();
     bool combo = false;
     boost_ = false;
+    view_y_ = false;
     for (size_t i = 0; i < pads_.size(); i++) {
         hubctl::PadState st;
         hubctl::read_state((SDL_GameController*)pads_[i], &st);
+        if (st.b[hubctl::kBtnBack] && st.b[hubctl::kBtnYButton]) view_y_ = true;
         pad_state_[i] = map_->word(st);
         if (hubctl::exit_combo_down(st)) combo = true;
         if (hubctl::boost_combo_down(st)) boost_ = true;
