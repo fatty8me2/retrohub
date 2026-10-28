@@ -2222,7 +2222,7 @@ int Frontend::dj_attempt(int slot_try, bool first) {
                 return 0;
             }
             if (!rbe->join_admitted() && now - loaded_at > 20000) { rlog("dropin: the host never admitted us"); fail_rc = 11; break; }
-            if (now - loaded_at > 120000) { rlog("dropin: could not catch up"); fail_rc = 11; break; }
+            if (now - loaded_at > 25000) { rlog("dropin: could not catch up"); fail_rc = 11; break; }   // shorter than the players' 30 s pending-joiner window (rollback.cpp)
         }
         Sleep(1);
     }

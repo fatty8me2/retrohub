@@ -11,7 +11,10 @@
 #include <memory>
 #include <vector>
 
+#include <climits>
+
 #include "rollback.h"
+#include "spectate.h"
 
 static int g_fail = 0;
 #define CHECK(c, ...) do { if (!(c)) { g_fail++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -89,6 +92,7 @@ struct Run {
     bool old_peer = false;      // slot 1 does not advertise drop-in
     int join_at[2] = {300, -1}; // host frame at which the next joiner (slot 2, then slot 3) is admitted; -1 none
     bool joiner_crashes = false;
+    int admit_lead = INT_MIN;   // INT_MIN: the engine default; otherwise Engine::set_admit_lead_for_test
     // results
     bool desync[4] = {}; uint32_t frame[4] = {}; uint64_t h[4] = {}, chain_out[4] = {}, chain_in[4] = {}; uint64_t stalled_ms[4] = {}, stalls[4] = {};
     bool admitted[2] = {}; int notices[4] = {}; bool refused_old = false; uint32_t dropped_mask[4] = {};
@@ -151,6 +155,7 @@ static void run(Run& r) {
             js[k].f = F; js[k].ro = ro; js[k].ri = ri; js[k].loaded = true;
             const int port = eng[0]->free_port();
             CHECK(port == slot, "free port %d, expected %d", port, slot);
+            if (r.admit_lead != INT_MIN) eng[0]->set_admit_lead_for_test(r.admit_lead);
             r.admitted[k] = eng[0]->host_admit(slot, port, "Kai");
             CHECK(r.admitted[k], "host_admit refused");
             r.admit_from[k] = eng[slot]->join_port() >= 0 ? eng[slot]->join_from() : 0;
@@ -248,6 +253,29 @@ int main() {
         Run r; r.old_peer = true; r.frames = 900; run(r);
         CHECK(r.refused_old, "host should refuse with an old peer");
         CHECK(!r.desync[0] && !r.desync[1] && r.h[0] == r.h[1] && r.frame[0] == 900, "match disturbed by the refused join");
+    }
+    // 4b) a LATE admit (the admit frame is already behind every peer when the message arrives) and a very lossy link: still one game
+    for (int lead : {0, -20}) {
+        Run r; r.admit_lead = lead; r.frames = 1500; r.loss = lead ? 30 : 3; run(r);
+        printf("late admit lead %d loss %d%%: frames %u/%u/%u desync %d%d%d\n", lead, r.loss, r.frame[0], r.frame[1], r.frame[2], r.desync[0], r.desync[1], r.desync[2]);
+        bool ok = r.admitted[0];
+        for (int i = 0; i < 3; i++) ok = ok && !r.desync[i] && r.frame[i] == 1500 && r.h[i] == r.h[0] && r.chain_out[i] == r.chain_out[0] && r.chain_in[i] == r.chain_in[0];
+        CHECK(ok, "late admit (lead %d) did not converge", lead);
+    }
+    // 4c) a spectator joining after a drop-in reads port 2 from the stream; an old host's stream (port mask 0x03) reads 0 for it
+    {
+        spectate::Host old_host(0x03, 8), new_host(0x0F, 8);
+        uint64_t v[4] = {5, 6, 7, 8};
+        old_host.push(v); new_host.push(v);
+        std::vector<uint8_t> got;
+        spectate::Client co, cn;
+        auto grab = [&](spectate::Host& h, spectate::Client& c) {
+            h.service(1000, 1u << 1, [&](int, const uint8_t* d, int n) { c.on_data(d, (size_t)n, 1000); });
+            h.service(1300, 1u << 1, [&](int, const uint8_t* d, int n) { c.on_data(d, (size_t)n, 1300); });
+        };
+        grab(old_host, co); grab(new_host, cn);
+        CHECK(co.ready(0) && co.get(0, 0) == 5 && co.get(0, 1) == 6 && co.get(0, 2) == 0 && co.get(0, 3) == 0, "old host stream: absent ports read 0 (%llu %llu)", (unsigned long long)co.get(0, 2), (unsigned long long)co.get(0, 3));
+        CHECK(cn.ready(0) && cn.get(0, 2) == 7 && cn.get(0, 3) == 8, "new host stream carries all four ports");
     }
     // 6) the joiner crashes right after the admit: the others stall only briefly, then play on without it
     {

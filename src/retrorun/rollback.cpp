@@ -800,8 +800,8 @@ int Engine::free_port() const {
 uint32_t Engine::admit_frame() const {
     /* far enough ahead that every peer gets the Admit before it simulates that frame (no rollback, no wait): the lead plus the worst round trip */
     const double fm = std::max(1.0, cfg_.frame_ms);
-    const int lead = kAdmitLeadFrames + (int)std::ceil(st_.rtt_ms / fm);
-    return cur_ + (uint32_t)lead;
+    const int lead = (admit_lead_ != INT32_MIN ? admit_lead_ : kAdmitLeadFrames) + (admit_lead_ != INT32_MIN ? 0 : (int)std::ceil(st_.rtt_ms / fm));
+    return (uint32_t)std::max<int64_t>(0, (int64_t)cur_ + lead);
 }
 
 bool Engine::host_admit(int slot, int port, const std::string& name) {
@@ -837,7 +837,8 @@ void Engine::admit_service(uint32_t now) {
         uint32_t need = 0;
         for (int s = 0; s < 8; s++) if (active_peer(s)) need |= 1u << s;
         need |= 1u << cfg_.my_slot;
-        if ((r.ack_mask & need) == need || now - r.started > 5000) { it = admits_.erase(it); continue; }
+        /* repeated until every active peer acked: giving up early would leave a peer that never learns the port (neutral vs real input from then on). A peer that is really gone stops being active (the drop logic), which ends the wait. */
+        if ((r.ack_mask & need) == need) { it = admits_.erase(it); continue; }
         if (now - r.last_send >= 100) {
             r.last_send = now;
             std::vector<uint8_t> b;
@@ -913,6 +914,8 @@ void Engine::apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, con
     last_rx_[joiner] = now;
     join_pending_mask_ |= 1u << joiner;
     join_pending_at_[joiner] = now;
+    /* A late Admit (from <= cur_) needs no rollback: every frame of the port before the joiner's first real input is neutral, which is exactly what those frames were
+     * simulated with while the port was absent, and the joiner claims neutral input from `from` on. We only wait for its claims if we are far past `from`. */
     if (net_.log) net_.log("dropin: slot " + std::to_string(joiner) + " joins on port " + std::to_string(port) + " from frame " + std::to_string(from) + " (we are at " + std::to_string(cur_) + ")");
     if (net_.notice) net_.notice((name.empty() ? std::string("A player") : name) + " joined");
     if (net_.admitted) net_.admitted(joiner, port, from, name);

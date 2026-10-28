@@ -183,6 +183,7 @@ class Engine {
     int free_port() const;                       // lowest port nobody owns (-1: none)
     uint32_t admit_frame() const;                // the frame a drop-in started now would begin at
     bool host_admit(int slot, int port, const std::string& name);
+    void set_admit_lead_for_test(int frames) { admit_lead_ = frames; }   // tests: a tiny or negative lead makes a late Admit
     void note_join_active(int slot);             // host: the joiner finished fast-forwarding and plays
     bool admit_pending() const { return !admits_.empty() || join_pending_mask_ != 0; }
     bool is_player(int slot) const { return slot >= 0 && slot < 8 && (cfg_.slot_mask >> slot & 1u); }
@@ -239,6 +240,7 @@ class Engine {
     uint32_t join_pending_mask_ = 0, join_pending_at_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     uint8_t peer_caps_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     bool joining_ = false;
+    int admit_lead_ = INT32_MIN;
     int join_port_ = -1;
     uint32_t join_from_[kPorts] = {0, 0, 0, 0};
     uint32_t ghost_cur_ = 0;
