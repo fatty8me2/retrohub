@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.29.0",
+      "date": "2026-10-28",
+      "title": "Profiles and reactions",
+      "new": [
+        "Profiles: click your avatar in the Friends panel to pick a pixel console icon (or your favourite game's cover as a frame), a favourite game and a short status line. Friends see them on your row and in rooms",
+        "Reactions: click a room chat line or a friend message to react with <3, +1, LOL, FIRE, GG or :( , and see everyone's reactions as small chips"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.28.8",
       "date": "2026-10-27",
       "title": "Install a greyed-out game",
