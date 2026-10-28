@@ -1,4 +1,5 @@
 #include "app.h"
+#include "hang_watchdog.h"
 #include "addgames.h"
 
 #include <shlobj.h>
@@ -48,6 +49,7 @@ std::vector<std::string> pick_game_files() {
     for (const std::string& e : ag::supported_exts()) spec += (spec.empty() ? L"*" : L";*") + W(e);
     COMDLG_FILTERSPEC f[2] = {{L"Game files", spec.c_str()}, {L"All files", L"*.*"}};
     dlg->SetFileTypes(2, f);
+    HangWatchdogPause wd_pause;   // modal file dialog: not a hang
     if (SUCCEEDED(dlg->Show(A.hwnd))) {
         IShellItemArray* arr = nullptr;
         if (SUCCEEDED(dlg->GetResults(&arr))) {

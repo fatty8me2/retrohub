@@ -63,12 +63,16 @@ bool WsClient::connect(const std::string& url)
 void WsClient::close()
 {
     stop_ = true;
-    {   /* Send our close frame but never wait for the server's answer: WinHttpWebSocketClose blocks (10 s+, on the UI thread) when the
-         * server is silent or already closed and the receive thread consumed its frame (the v1.29.2 hub hangs). Closing the handles
-         * then aborts the pending receive so the join below is immediate. */
+    /* Send our close frame but never wait for the server's answer: WinHttpWebSocketClose blocks (10 s+, on the UI thread) when the
+     * server is silent or already closed and the receive thread consumed its frame (the v1.29.2 hub hangs). Shutdown runs outside mu_
+     * (it is a network send); only close() ever closes the handles and it runs on the owner thread, so the handle stays valid here.
+     * Closing the handles then aborts the pending receive, so the join below is immediate. */
+    HINTERNET sock = nullptr;
+    {
         std::lock_guard<std::mutex> l(mu_);
-        if (h_->socket && state_ == WsState::Open) WinHttpWebSocketShutdown(h_->socket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
+        sock = h_->socket;
     }
+    if (sock && state_ == WsState::Open) WinHttpWebSocketShutdown(sock, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
     close_handles();
     if (thread_.joinable()) thread_.join();
     state_ = WsState::Closed;
@@ -130,6 +134,14 @@ void WsClient::run(std::string url)
     std::vector<uint8_t> message;
     unsigned char buffer[4096];
     while (!stop_) {
+        /* re-read the handle each time: close() nulls it (under mu_) before closing it, and sets stop_ first, so a receive either
+         * sees null / stop_ and leaves, or is pending on a live handle and gets aborted by the close. A new handle can only be
+         * created by connect(), which joins this thread first. */
+        {
+            std::lock_guard<std::mutex> l(mu_);
+            socket = h_->socket;
+        }
+        if (!socket || stop_) break;
         DWORD read = 0;
         WINHTTP_WEB_SOCKET_BUFFER_TYPE type;
         DWORD err = WinHttpWebSocketReceive(socket, buffer, sizeof(buffer), &read, &type);

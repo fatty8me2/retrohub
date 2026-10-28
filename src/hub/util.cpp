@@ -1,4 +1,5 @@
 #include "winutil.h"
+#include "hang_watchdog.h"
 #include "app.h"
 
 /* ============================ helpers ============================ */
@@ -33,6 +34,7 @@ std::string pick_path(HWND owner, bool folder, const wchar_t* filter_name, const
         COMDLG_FILTERSPEC f[1] = {{filter_name, filter_spec}};
         dlg->SetFileTypes(1, f);
     }
+    HangWatchdogPause wd_pause;   // modal file dialog: not a hang
     if (SUCCEEDED(dlg->Show(owner))) {
         IShellItem* it = nullptr;
         if (SUCCEEDED(dlg->GetResult(&it))) {
@@ -61,6 +63,7 @@ std::string pick_save_path(HWND owner, const wchar_t* default_name, const wchar_
     dlg->SetFileTypes(1, f);
     dlg->SetDefaultExtension(default_ext);
     dlg->SetFileName(default_name);
+    HangWatchdogPause wd_pause;   // modal file dialog: not a hang
     if (SUCCEEDED(dlg->Show(owner))) {
         IShellItem* it = nullptr;
         if (SUCCEEDED(dlg->GetResult(&it))) {
