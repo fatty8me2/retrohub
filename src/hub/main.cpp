@@ -198,6 +198,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         cloud_gate_tick();
         run_pending_sync();
         poll_emulators();
+        poll_gamepack();
         lobby_tick();
         autotest_tick();
         fr_tick();
@@ -368,6 +369,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     // clean shutdown
     find_games_shutdown();
     add_games_shutdown();
+    gamepack_shutdown();
     if (A.dirty) hubui::save_settings(A.settings_path, A.st);
     invite_srv.stop();
     A.lobby.stop();
