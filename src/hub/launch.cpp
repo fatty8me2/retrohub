@@ -220,8 +220,17 @@ void focus_hub() {
     if (!A.hwnd || g_headless) return;
     /* Only for the user's own View+Y / cheats pad combo during a game (qm_open_live, cheats_open_live). Never automatic. */
     if (IsIconic(A.hwnd)) ShowWindow(A.hwnd, SW_RESTORE);   // popup-guard: ok (user hotkey)
+    if (qm_is_open()) hub_menu_topmost(true);   // the menu stays visible even if the game takes the foreground back (Dolphin did)
     if (!force_foreground(A.hwnd))
         std::fprintf(stderr, "focus_hub: could not take the foreground (foreground=%p hub=%p); the quick menu still reads the pad directly\n", (void*)GetForegroundWindow(), (void*)A.hwnd);
+}
+
+/* Only while the user's quick menu is open (set by focus_hub from qm_open_live, always cleared when the menu closes). */
+void hub_menu_topmost(bool on) {
+    static bool is_on = false;
+    if (!A.hwnd || g_headless || on == is_on) return;
+    is_on = on;
+    SetWindowPos(A.hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);   // popup-guard: ok (user's View+Y menu only; cleared on close)
 }
 
 void pad_exit_watch() {

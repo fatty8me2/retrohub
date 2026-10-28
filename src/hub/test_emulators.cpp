@@ -592,7 +592,9 @@ static void test_prepare_and_find(const fs::path& dir) {
         CHECK(hk.find("Disable Emulation Speed Limit") == std::string::npos);   // hold-only in Dolphin: not bound
         CHECK(hubui::ini_get(hk, "Hotkeys", "Device") == "DInput/0/Keyboard Mouse");
         std::string mine = hubemu::dolphin_hotkeys_ini("[Hotkeys]\nDevice = XInput/0/Gamepad\nStop = Escape\nIncrease Emulation Speed = F5\n");
-        CHECK(hubui::ini_get(mine, "Hotkeys", "Stop") == "Escape" && hubui::ini_get(mine, "Hotkeys", "Device") == "XInput/0/Gamepad");
+        CHECK(hubui::ini_get(mine, "Hotkeys", "Stop") == "" && hubui::ini_get(mine, "Hotkeys", "Device") == "XInput/0/Gamepad");   // focus-free hotkeys: other bindings unbound
+        CHECK(hubui::ini_get(hubemu::dolphin_hotkeys_ini("[Hotkeys]\nGeneral/Toggle Pause = F10\n[Other]\nX = Y\n"), "Other", "X") == "Y");   // other sections untouched
+        CHECK(hubui::ini_get(hubemu::dolphin_hotkeys_ini("[Hotkeys]\r\nGeneral/Toggle Pause = F10\r\n"), "Hotkeys", "General/Toggle Pause") == "");
         CHECK(hubui::ini_get(mine, "Hotkeys", "Emulation Speed/Increase Emulation Speed") == "`DSUClient/0/RHSpeed:Options` | @(Ctrl+Shift+F13)");
         CHECK(hubemu::dolphin_hotkeys_ini(mine) == mine);   // idempotent
     }
