@@ -106,6 +106,8 @@ add_test(NAME hublibrary_test COMMAND hublibrary_test)
 add_test(NAME hubkanto_test COMMAND hubkanto_test)                       # Kanto Together: package, install, rom pick, output parsing
 add_test(NAME hubkantopad_test COMMAND hubkantopad_test)               # Kanto Together mGBA gamepad config writer
 add_test(NAME nes_snes_test COMMAND nes_snes_test)                 # NES/SNES headers, scan, cheats, profiles, settings
+add_test(NAME runner_speed_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/speed_headless.ps1)   # retrorun --headless --realtime: quick-menu speed steps 0.25x..Max, 1x restore, rapid changes, input off (skips without retrorun)
+set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 900)
 add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/nes_snes_synctest.ps1)   # Nestopia + Snes9x headless run, .srm write, rollback SyncTest (skips without the cores)
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
 add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-out friend games: identity, ghosts, badge text, publish hash/debounce
@@ -148,7 +150,17 @@ add_test(NAME hub_customize_test COMMAND hub_customize_test)   # custom shelves 
 add_test(NAME hub_osk_test COMMAND hub_osk_test)                        # OSK key layout / edit logic / folder browser (scratch dirs)
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
 add_test(NAME hub_qm_test COMMAND hub_qm_test)
+add_test(NAME hub_qm_nav_test COMMAND hub_qm_nav_test)                # quick menu controls: release gate, repeat, row nav (qm_nav.h)
+# Headless end-to-end quick menu run: RetroHub.exe on SDL's dummy video driver, input only from an SDL virtual game controller (real pads are
+# never opened), 13 scenarios incl. the phantom press from quickmenu.log (src/hub/qm_e2e.cpp). No window, no audio.
+add_test(NAME hub_qm_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/qm_e2e.ps1 -Exe $<TARGET_FILE:RetroHub>)
+set_tests_properties(hub_qm_e2e PROPERTIES TIMEOUT 600)
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
+add_test(NAME hub_dolphin_speed_test COMMAND hub_dolphin_speed_test)   # DSU speed pad: ini text, press sequencing, title parsing, loopback (offline)
+# Live: boots Dolphin 2509 (deps\dolphin) on a hidden desktop with a generated homebrew .dol, muted, throwaway user dir; drives speed via the DSU pad
+# and measures the achieved speed from the guest's PowerPC timebase (read from Dolphin's memory; Dolphin 2509 shows no speed in its title). Offline (loopback only) but slow (~1 min) and needs deps\dolphin: label `dolphin`; exclude with -LE dolphin. Skips (77) if absent.
+add_test(NAME hub_dolphin_speed_live COMMAND hub_dolphin_speed_live --dolphin ${CMAKE_SOURCE_DIR}/deps/dolphin --work ${CMAKE_BINARY_DIR}/dolphin_speed_work)
+set_tests_properties(hub_dolphin_speed_live PROPERTIES LABELS dolphin SKIP_RETURN_CODE 77 TIMEOUT 300)
 add_test(NAME hub_boot_anim_test COMMAND hub_boot_anim_test)           # start animation: media map, timeline, launch rules, state machine, settings
 add_test(NAME real_boot_test COMMAND real_boot_test)                       # real console startup: own IPL/BIOS detection, config edits, custom sound decode
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
