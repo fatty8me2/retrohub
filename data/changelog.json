@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.28.6",
+      "date": "2026-10-27",
+      "title": "Game menu over GameCube games",
+      "new": [
+        "Hold View + LB for a second to put a GameCube game back to normal speed"
+      ],
+      "improved": [
+        "RetroHub keeps a small log of the game menu (userdata\\logs\\quickmenu.log) so menu problems can be tracked down"
+      ],
+      "fixed": [
+        "The View + Y menu no longer flickers open and closed, and a held B no longer closes it straight away",
+        "The menu keeps the controller over Dolphin, and Dolphin no longer reacts to your buttons while the menu is open",
+        "GameCube speed changes are retried until they really happen, so the menu never shows the wrong speed"
+      ]
+    },
+    {
       "version": "1.28.5",
       "date": "2026-10-27",
       "title": "The game menu always takes the controller",
