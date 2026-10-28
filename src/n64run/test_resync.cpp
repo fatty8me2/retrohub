@@ -240,8 +240,39 @@ static void test_fbmask() {
     CHECK(c.count() == 0 && c.ranges(kRam).empty());
 }
 
+static void test_status_poll_and_drop() {
+    uint8_t c[8]; caps(c, 1, 1, 1);
+    resync::Ctl h, g;
+    h.configure(0, 0b111, c); g.configure(1, 0b111, c);
+    h.on_mismatch(600, 700);
+    resync::Msg rep;
+    g.on_msg(h.propose_msg(), 701, &rep);
+    // the host aborted (guest 2 refused) and every Abort to guest 1 was lost: the guest's status poll (a repeated PropAck) gets an Abort
+    resync::Msg ab; ab.sub = resync::Abort; ab.from = 2; ab.seq = h.seq();
+    CHECK(h.on_msg(ab, 705, &rep) == resync::Act::Fallback && !h.active());
+    resync::Msg poll = g.ack_msg(), ans;
+    CHECK(h.on_msg(poll, 706, &ans) == resync::Act::Reply && ans.sub == resync::Abort && ans.seq == poll.seq);
+    CHECK(g.on_msg(ans, 707, &rep) == resync::Act::Fallback && !g.active());
+    // a late duplicate status poll after a completed recovery must not hurt the guest that already moved on
+    resync::Ctl h2, g2;
+    h2.configure(0, 0b11, c); g2.configure(1, 0b11, c);
+    h2.on_mismatch(600, 700); g2.on_msg(h2.propose_msg(), 701, &rep);
+    resync::Msg stale = g2.ack_msg();
+    h2.complete(); g2.complete();
+    CHECK(h2.on_msg(stale, 800, &ans) == resync::Act::Reply && ans.sub == resync::Abort);
+    CHECK(g2.on_msg(ans, 801, &rep) == resync::Act::None && g2.enabled());
+    // a dropped guest is no longer waited for
+    resync::Ctl h3; h3.configure(0, 0b111, c); h3.on_mismatch(600, 650);
+    resync::Msg a1; a1.sub = resync::PropAck; a1.from = 1; a1.seq = h3.seq();
+    h3.on_msg(a1, 651, &rep);
+    CHECK(!h3.all_acked());
+    h3.drop(2);
+    CHECK(h3.all_acked());
+}
+
 int main() {
     test_fbmask();
+    test_status_poll_and_drop();
     test_codec();
     test_capability();
     test_handshake();

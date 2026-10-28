@@ -17,7 +17,9 @@ param(
     [switch]$Relay,
     [switch]$Strict,
     [switch]$NoResync,
-    [switch]$AllowTransient
+    [switch]$AllowTransient,
+    [switch]$HostAbort,
+    [string]$BuildDir = 'build'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -44,11 +46,13 @@ if ($Relay) { $env:HUBNET_FORCE_RELAY = '1' }
 $env:RETROHUB_QA = '1'
 $env:N64RUN_QA_POKE = $Pokes
 $env:N64RUN_QA_POKE_SLOT = '1'
-$n64 = Join-Path $root 'build\bin\Release\n64run.exe'
+$n64 = Join-Path $root "$BuildDir\bin\Release\n64run.exe"
 $room = ('{0}-1' -f ([guid]::NewGuid().ToString('N').Substring(0, 6).ToUpper() -replace '[01OIL]', 'X'))
 $items = @()
 $strictArg = if ($Strict) { ' --strict-sync' } else { '' }
 foreach ($slot in 0, 1) {
+    if ($HostAbort -and $slot -eq 0) { $env:N64RUN_QA_HOST_ABORT = '1' } else { Remove-Item Env:\N64RUN_QA_HOST_ABORT -ErrorAction SilentlyContinue }
+    if ($HostAbort -and $slot -eq 1) { $env:N64RUN_QA_LOSE_ABORTS = '3' } else { Remove-Item Env:\N64RUN_QA_LOSE_ABORTS -ErrorAction SilentlyContinue }
     if ($slot -eq 1 -and $NoResync) { $env:N64RUN_NO_RESYNC = '1' } else { Remove-Item Env:\N64RUN_NO_RESYNC -ErrorAction SilentlyContinue }
     $a = "--rom `"$Rom`" --emu-dir `"$EmuDir`" --game mk64 --save-dir `"$tmp\save$slot`" --net $Server --room $room --players 2 --ports 0,1,-1,-1 --slot $slot --headless --realtime --frames $Frames --test-input random:42$strictArg"
     $items += @{ P = (Start-HeadlessRun $n64 $a "$tmp\peer$slot"); Base = "$tmp\peer$slot" }
@@ -59,7 +63,7 @@ if ($wr) { try { Stop-Process -Id $wr.Id -Force } catch {} }
 
 function Hashes($lines) { $h = @{}; $lines | Where-Object { $_ -match 'sync check sample (\d+) RDRAM ([0-9a-f]+)' } | ForEach-Object { $h[[int]$Matches[1]] = $Matches[2] }; return $h }
 $npoke = @($Pokes -split ',' | Where-Object { $_ }).Count
-$expect = if ($NoResync) { 0 } else { [math]::Min($npoke, 3) }
+$expect = if ($NoResync -or $HostAbort) { 0 } else { [math]::Min($npoke, 3) }
 $fail = 0
 foreach ($i in 0, 1) { Write-Output ("  proc{0}: exit={1} visible={2} {3}s" -f $i, $res[$i].Exit, $res[$i].MaxVisible, $res[$i].Seconds) }
 $done = @()
@@ -80,7 +84,12 @@ $after = @($common | Where-Object { $_ -ge $lastS })
 $badAfter = @($after | Where-Object { $hh[$_] -ne $gh[$_] })
 $span = if ($after.Count) { [int]$after[-1] - $lastS } else { 0 }
 Write-Output ("  hash checks after the last resync (sample {0}): {1}, mismatches {2}, span {3} samples (~{4} s)" -f $lastS, $after.Count, $badAfter.Count, $span, [math]::Round($span / 60))
-if ($npoke -le 3 -and -not $NoResync) {
+if ($HostAbort) {
+    # the host aborts the first recovery and the guest loses all 3 Abort datagrams: its status poll must still get it out of the barrier
+    if (-not ($res[1].Err -match 'QA dropped an Abort')) { Write-Output 'FAIL the QA did not drop any Abort'; $fail++ }
+    if ($res[1].Err -match 'Connection lost|never arrived') { Write-Output 'FAIL the guest was stranded in the barrier'; $fail++ }
+    foreach ($i in 0, 1) { if ($res[$i].Exit -ne 0) { Write-Output "FAIL player $i exit $($res[$i].Exit)"; $fail++ } }
+} elseif ($npoke -le 3 -and -not $NoResync) {
     # Strict: every common sync check from the last recovery on must match (-AllowTransient: only the last 3 must, earlier healed ones are warnings).
     if ($badAfter.Count -ne 0) {
         if ($AllowTransient) { Write-Output ("  WARN transient mismatches after the last resync at samples: " + ($badAfter -join ',')) }
