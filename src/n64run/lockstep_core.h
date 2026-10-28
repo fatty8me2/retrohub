@@ -32,6 +32,7 @@ constexpr uint8_t kPktDelayAck = 8;   // client -> host {type, slot, D}
 constexpr uint8_t kPktBye = 9;        // {type, slot, u32 newest}: sender's emulation ended cleanly; newest = last sample it ever scheduled
 constexpr uint8_t kPktCheats = 10;    // {type, slot, u8 heard_mask, u64 hash}: cheat-list handshake (lockstep.h exchange_cheat_hash)
 constexpr uint8_t kPktDrop = 11;      // netdrop::Msg: a slot went silent, survivors agree on the cutoff (drop_agree.h)
+constexpr uint8_t kPktResync = 12;     // desync recovery control (resync.h)
 constexpr int kMaxDelay = 20;         // hard cap of the (adaptive) input delay, in samples
 
 /* Slot set of a session: bit s = slot s is a PC in the session. Slots may be sparse ({0,2}).

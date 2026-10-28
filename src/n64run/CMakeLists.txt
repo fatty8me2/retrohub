@@ -70,3 +70,7 @@ target_link_libraries(n64run_dropagree_test PRIVATE n64run_lockstep_core)
 # Spectating: confirmed-input stream host -> port-less spectator (pure logic, lossy-link test).
 add_executable(n64run_spectate_test test_spectate.cpp)
 target_link_libraries(n64run_spectate_test PRIVATE n64run_lockstep_core)
+
+# Desync recovery agreement + state transfer (pure logic).
+add_executable(n64run_resync_test test_resync.cpp)
+target_link_libraries(n64run_resync_test PRIVATE n64run_lockstep_core)
