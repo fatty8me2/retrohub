@@ -328,6 +328,10 @@ uint32_t Lockstep::aux(int port) const {
 
 uint32_t Lockstep::spec_get_keys(int port) {
     if (lost_ || peer_left_ || !core_.port_present(port)) return 0;
+    if (live_wait_) {   // live join: the snapshot is not loaded yet; these boot polls are thrown away with the state they ran in
+        if (port == core_.lead_port()) { pump(); spec_service(); }
+        return 0;
+    }
     if (port != core_.lead_port()) return sample_ < 0 ? 0u : (uint32_t)spec_cur_.v[port];
     uint32_t n = (uint32_t)(++sample_);
     if (!t_first_) t_first_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
@@ -345,6 +349,7 @@ uint32_t Lockstep::spec_get_keys(int port) {
             }
         }
     }
+    if (hooks_.on_lead_poll) hooks_.on_lead_poll(n);
     if (n > 0) spec_cli_.consumed(n);
     spec_service();
     if (!spec_cli_.ready(n)) {
@@ -416,6 +421,7 @@ uint32_t Lockstep::get_keys(int port) {
             }
         } else if (!hash_warned_) { hash_warned_ = true; if (hooks_.log) hooks_.log("state hashing unavailable; desync detection disabled"); }
     }
+    if (net_ && hooks_.on_lead_poll) hooks_.on_lead_poll(n);
 
     if (net_ && opt_.my_slot == 1 && n > 0) {   // QA: periodic hiccup on slot 1 ("period_samples,ms"), RETROHUB_QA=1 only
         static int per = -1, ms = 0;
@@ -478,6 +484,7 @@ uint32_t Lockstep::get_keys(int port) {
         for (int p = 0; p < kPorts; p++)
             if (core_.port_present(p)) v[p] = (uint64_t)core_.get(n, p) | (opt_.wide ? (uint64_t)core_.get_aux(n, p) << 32 : 0ull);
         spec_host_->push(v);
+        if (hooks_.after_sample) hooks_.after_sample(n);
         spec_service();
     }
     return core_.get(n, port);

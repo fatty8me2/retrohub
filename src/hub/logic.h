@@ -403,13 +403,11 @@ inline bool friend_can_join(const FriendRow& r) { return !r.in_my_room && (r.sta
 /* A friend row offers "Watch": they are in a lobby or a launched game (we know the room code and the game) and not in our room. The
  * caller adds "this PC owns the game and its system can be spectated". Spectators take a free slot, so a full 4-player game has none:
  * the server answers that with a notice. */
-/* Watch joins a running match live (a snapshot of the host's state, then real time) on the retrorun systems. N64 (n64run lockstep) has no
- * state transfer: its spectator replays the match from the start at full speed until it reaches the live game, and the Watch notice says so. */
-inline bool watch_joins_live(bool is_n64) { return !is_n64; }
-inline const char* watch_join_note(bool is_n64, bool match_started) {
-    if (!is_n64) return "";
-    return match_started ? " N64 games can't join live yet: it replays from the start at full speed to catch up." : "";
-}
+/* Watch joins a running match live (a snapshot of the host's state, then real time) on every spectatable system, N64 included (n64run sends
+ * a mupen savestate, v1.29.2). Only an older host without live join (or a match younger than a few seconds) replays from the start; the runner
+ * reports that itself, so the Watch notice adds nothing. */
+inline bool watch_joins_live(bool) { return true; }
+inline const char* watch_join_note(bool, bool) { return ""; }
 inline bool friend_can_watch(const FriendRow& r, bool has_code_and_game) { return has_code_and_game && !r.in_my_room && (r.state == FS_InLobby || r.state == FS_InGame); }
 /* Rich presence for rows and the Home shelf: "Smash Classic \xC2\xB7 2/4 \xC2\xB7 12 min" (game, players when known, time in this state from
  * the presence update). Online without a game = "Online"; offline = friend_status_line. */

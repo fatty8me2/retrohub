@@ -50,8 +50,13 @@ struct LockstepHooks {
     std::function<void()> request_stop;                       // M64CMD_STOP
     std::function<void(const std::string&)> log;
     /* Live spectator join (retrorun): spectate::kPktJoin / kPktNoLive and state-transfer datagrams (first byte 0x55, state_xfer.h) between
-     * the host and a spectator are handed here instead of to the lockstep core. Empty: they are dropped (N64: no live join). */
+     * the host and a spectator are handed here instead of to the lockstep core. Empty: they are dropped (no live join). */
     std::function<void(int from, const std::vector<uint8_t>& msg)> on_spectate_msg;
+    /* Online only, emulation thread. on_lead_poll(n): the lead-port poll of sample n, at the same deterministic point as the desync hash
+     * (before sample n's inputs are delivered; a savestate requested now is taken after them, i.e. it is the state before n + 1).
+     * after_sample(n): the host recorded sample n for its spectators. Both may be empty. Used by n64run's live spectator join. */
+    std::function<void(uint32_t n)> on_lead_poll;
+    std::function<void(uint32_t n)> after_sample;
 };
 
 class Lockstep {
@@ -94,7 +99,12 @@ class Lockstep {
     const spectate::Client& spectate_client() const { return spec_cli_; }
     spectate::Client& spectate_client_mut() { return spec_cli_; }
     /* Spectator live join: the state before sample n has been loaded; continue from there (the inputs from n are in the client). */
-    void spectate_start_at(uint32_t n) { sample_ = (int64_t)n - 1; spec_cli_.start_at(n); }
+    void spectate_start_at(uint32_t n) { sample_ = (int64_t)n - 1; if (spec_cli_.base() != n) spec_cli_.start_at(n); }   // keep what was buffered from n while the state downloaded
+    /* n64run live join: the state before sample n arrives asynchronously (the core loads it at its next interrupt). Until
+     * spectate_live_loaded() every poll returns neutral and does not count as a sample (the boot frames before the load are discarded). */
+    void spectate_expect_live(uint32_t n) { live_wait_ = true; live_n_ = n; }
+    void spectate_live_loaded() { if (live_wait_) { sample_ = (int64_t)live_n_ - 1; live_wait_ = false; } }
+    bool spectate_live_waiting() const { return live_wait_; }
 
   private:
     void pump();
@@ -135,6 +145,8 @@ class Lockstep {
     spectate::Client spec_cli_;                    // spectator: the stream
     spectate::Frame spec_cur_;
     bool spec_live_ = true, spec_finished_ = false;
+    std::atomic<bool> live_wait_{false};
+    uint32_t live_n_ = 0;
     uint32_t spec_ended_at_ = 0;
     bool left_blocks(uint32_t n) const;
     void drop_check(uint32_t now, uint32_t n);
