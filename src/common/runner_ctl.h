@@ -56,9 +56,10 @@ struct InputGate {
         if (off && now_ms - refreshed_ms > kInputOffTimeoutMs) off = false;
         return off;
     }
-    void note_view_y(bool down, uint64_t now_ms) {   // rising edge of View+Y while off: the user is asking for the menu again
+    /* View+Y no longer re-enables input: pressing it again while the menu is open (or the press that opened it, when "input off"
+     * arrives before the runner sees the combo) let the pad drive the game behind the menu. A dead hub is covered by the timeout. */
+    void note_view_y(bool down, uint64_t now_ms) {
         (void)now_ms;
-        if (down && !combo_prev) off = false;
         combo_prev = down;
     }
 };

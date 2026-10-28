@@ -20,12 +20,10 @@ int main() {
         g.set(false, 25000);                                  // refresh
         CHECK(g.suppressed(40000));
         CHECK(!g.suppressed(25000 + runctl::kInputOffTimeoutMs + 1) && !g.off);   // hub died: failsafe
-        g.set(false, 100000); g.note_view_y(true, 100001);    // held through the opening press: stays off? (edge consumed below)
-        CHECK(!g.off);                                        // fresh View+Y edge re-enables
-        g.set(false, 100002); g.note_view_y(true, 100003);    // still held, no new edge
+        g.set(false, 100000); g.note_view_y(true, 100001);    // the opening press seen after "input off": stays off
         CHECK(g.off);
-        g.note_view_y(false, 100004); g.note_view_y(true, 100005);
-        CHECK(!g.off);
+        g.note_view_y(false, 100004); g.note_view_y(true, 100005);   // View+Y again while the menu is open: still off
+        CHECK(g.off);
         g.set(true, 1); CHECK(!g.suppressed(2));
         runctl::Command c; CHECK(runctl::parse_control(runctl::make_control([] { runctl::Command x; x.seq = 3; x.cmd = runctl::Cmd::Input; x.value = 0; return x; }()), &c) && c.cmd == runctl::Cmd::Input && c.value == 0);
         CHECK(!runctl::offline_only(runctl::Cmd::Input));
