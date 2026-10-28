@@ -3,11 +3,14 @@
     {
       "version": "1.29.0",
       "date": "2026-10-28",
-      "title": "Instant replay, profiles and reactions",
+      "title": "Instant replay, profiles, turbo and game nights",
       "new": [
         "Save the last 30 seconds of your game as a video clip: tap View + LB on your controller. Clips go into the game's screenshots, show a play button in the gallery, and open in your default video player. Works in GBA, GB, GBC, NES, SNES, DS, PlayStation and N64 games, online too",
         "Profiles: click your avatar in the Friends panel to pick a pixel console icon (or your favourite game's cover as a frame), a favourite game and a short status line. Friends see them on your row and in rooms",
-        "Reactions: click a room chat line or a friend message to react with <3, +1, LOL, FIRE, GG or :( , and see everyone's reactions as small chips"
+        "Reactions: click a room chat line or a friend message to react with <3, +1, LOL, FIRE, GG or :( , and see everyone's reactions as small chips",
+        "Turbo buttons: on the Controllers page, switch Turbo on for any button and it fires over and over while you hold it (N64, GBA, GB, GBC, DS, NES, SNES, PlayStation). Dolphin, PCSX2 and Cemu games say it is not supported",
+        "Turbo is off in online games unless the room host ticks Allow turbo buttons for everyone",
+        "Game nights: press Plan a session in a friend's chat, pick a game, a time and friends, and they get an invite. You get a reminder 10 minutes before and a one-click Host or Join when it is time. While a game is running the reminder waits in the bell instead of popping up"
       ],
       "improved": [],
       "fixed": []

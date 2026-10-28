@@ -60,6 +60,7 @@ void LocalInput::update() {
     if (SDL_NumJoysticks() != last_joysticks_) rescan();
     SDL_GameControllerUpdate();
     bool combo = false;
+    ++tick_;
     boost_ = false;
     clip_ = false;
     view_y_ = false;
@@ -67,7 +68,7 @@ void LocalInput::update() {
         hubctl::PadState st;
         hubctl::read_state((SDL_GameController*)pads_[i], &st);
         if (st.b[hubctl::kBtnBack] && st.b[hubctl::kBtnYButton]) view_y_ = true;
-        pad_state_[i] = map_->word(st);
+        pad_state_[i] = map_->word(st, tick_, turbo_on_);
         if (hubctl::exit_combo_down(st)) combo = true;
         if (hubctl::boost_combo_down(st)) boost_ = true;
         if (hubctl::clip_combo_down(st)) clip_ = true;
@@ -82,6 +83,7 @@ void LocalInput::update() {
             {"c_up", BTN_C_UP}, {"c_left", BTN_C_LEFT}, {"c_down", BTN_C_DOWN}, {"c_right", BTN_C_RIGHT},
             {"dpad_up", BTN_U_DPAD}, {"dpad_left", BTN_L_DPAD}, {"dpad_down", BTN_D_DPAD}, {"dpad_right", BTN_R_DPAD}};
         for (auto& e : kb) if (keys_->down(keys_->id(e.n), k)) v |= e.bit;
+        v = map_->turbo(v, tick_, turbo_on_);
         auto dn = [&](const char* n) { return keys_->down(keys_->id(n), k); };
         int sx = (dn("stick_right") ? 80 : 0) - (dn("stick_left") ? 80 : 0);
         int sy = (dn("stick_up") ? 80 : 0) - (dn("stick_down") ? 80 : 0);

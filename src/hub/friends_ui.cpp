@@ -441,6 +441,17 @@ void fr_toggle_panel() {
     mark_dirty();
 }
 
+void fr_send_text(const std::string& uid, const std::string& text) {
+    if (FR.fake) return;
+    FR.cli.send_message(uid, text);
+}
+void fr_notify_night(const std::string& night_id, const std::string& who) {
+    ui_sound::play(ui_sound::Sfx::Notify);
+    Notif n;
+    n.id = FR.next_id++; n.invite = false; n.night_id = night_id; n.name = who; n.t0 = ImGui::GetTime();
+    FR.notifs.push_back(n);
+}
+
 void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv) {
     ui_sound::play(ui_sound::Sfx::Notify);
     for (auto& o : FR.notifs)
@@ -629,7 +640,8 @@ void fr_adopt_identity_after_vault_change() {
 
 void fr_tick() {
     fr_run_pending_join();
-    if (!FR.started || FR.fake) return;
+    if (FR.fake) { gn_tick(); return; }
+    if (!FR.started) return;
     FR.cli.update();
     hubnet::Event e;
     while (FR.cli.poll_event(&e)) {
@@ -647,6 +659,7 @@ void fr_tick() {
                 set_toast(e.automatic ? hubui::auto_friend_text(e.name) : e.name + " is now your friend.");
                 break;
             case hubnet::Event::MessageReceived:
+                if (gn_on_message(e.uid, e.name, e.text)) { if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid); break; }
                 if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
                 else { ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0); }
                 break;
@@ -684,6 +697,7 @@ void fr_tick() {
     }
     fr_update_presence();
     un_tick();
+    gn_tick();
 }
 
 /* ---------- fake data for screenshots ---------- */
@@ -730,6 +744,7 @@ void fr_fake_init() {
     hubnet::Request o;
     o.uid = "rinuid"; o.name = "Rin"; o.code = "RH-ZX5C-VB6N"; o.at = now;
     FR.f_out.push_back(o);
+    if (std::getenv("HUB_SHOT_FAKE_NIGHT")) gn_fake_seed();
     if (std::getenv("HUB_SHOT_FAKE_DUPES")) {   // screenshot aid: the same people repeated in every way; the panel must still show each once
         mk("oldkai", "Kai", PS::Offline, "", "", "", "", false, 0, 0, now - 20 * 86400 * 1000LL);   // Kai's old identity (never retired), same name
         mk("miauid", "Mia", PS::Offline, "", "", "", "", false, 0, 0, now - 86400 * 1000LL);   // second row, same uid
@@ -931,7 +946,7 @@ void fr_draw_toasts(float right_x, float bottom_y) {
     for (auto& n : FR.notifs) {
         if (n.done || !n.toast) continue;
         if (FR.fake && g_headless) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
-        double life = (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;
+        double life = !n.night_id.empty() ? 120.0 : (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;
         if (age > life) { n.toast = false; continue; }
         float in = (float)std::min(1.0, age / 0.3);
         in = 1.f - (1.f - in) * (1.f - in);
@@ -944,7 +959,15 @@ void fr_draw_toasts(float right_x, float bottom_y) {
         std::string wid = "##toast" + std::to_string(n.id);
         if (ImGui::Begin(wid.c_str(), nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoFocusOnAppearing)) {
             float frac = (float)(1.0 - age / life);
-            if (n.invite) {
+            if (!n.night_id.empty()) {
+                std::string tt, ss; const char* act = "Host";
+                if (!gn_card_info(n.night_id, &tt, &ss, &act)) { n.done = true; }
+                else {
+                    int a = fr_request_card(n.name, ss, w, frac, true, "Dismiss", tt, act);
+                    if (a == 1) { gn_card_action(n.night_id); n.done = true; }
+                    if (a == 2) { gn_card_dismiss(n.night_id); n.done = true; }
+                }
+            } else if (n.invite) {
                 int a = fr_invite_card(n, w, frac, true);
                 if (a == 1) fr_join_notif(n);
                 if (a == 2) n.toast = false;
@@ -1276,13 +1299,15 @@ void fr_chat_view(float cw) {
         float hh = sp(6.f);
         if (ui::icon_button("chat_back", ui::Icon::ChevronL, sp(4.f), false, "Back to friends")) FR.chat_uid.clear();
         fr_avatar(dl, ImVec2(p.x + sp(7.f), p.y + hh * 0.5f), sp(2.f), f->name, fr.state, ui::PANEL);
-        float tx = p.x + sp(10.f), tw = cw - sp(10.f);
+        float tx = p.x + sp(10.f), tw = cw - sp(10.f) - sp(21.f);   // room for "Plan a session" on the right
         dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, p.y + sp(0.75f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, f->name, tw).c_str());
         dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p.y + sp(0.75f) + ui::F.bold->FontSize * 1.25f), ui::TEXT2,
                     ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, hubui::friend_status_line(fr, now), tw).c_str());
+        gn_plan_button(f->uid, ImVec2(p.x + cw - sp(21.f), p.y + sp(1.25f)), sp(3.5f));
         ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + hh));
         ImGui::Dummy(ImVec2(1, sp(0.5f)));
     }
+    gn_plan_popup();
     float input_h = ImGui::GetFrameHeight() + sp(1.f);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::BG);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, sp(1.5f));
@@ -1347,7 +1372,7 @@ void fr_chat_view(float cw) {
             ImGui::Dummy(ImVec2(aw, ch + sp(1.f)));
             continue;
         }
-        auto lines = ui::wrap_lines(bf, fs, m.text, aw * 0.78f - pad * 2, 60);
+        auto lines = ui::wrap_lines(bf, fs, gn_display_text(m.text), aw * 0.78f - pad * 2, 60);
         float tw = fr_tw(ui::F.cap, tm);
         for (auto& l : lines) tw = std::max(tw, fr_tw(bf, l));
         float bw = tw + pad * 2, bh = pad * 2 + lines.size() * fs * 1.2f + ui::F.cap->FontSize + sp(0.25f);

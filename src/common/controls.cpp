@@ -177,7 +177,7 @@ Profile default_profile(const std::string& sys) {
 
 bool Profile::same_mapping(const Profile& o) const {
     return system == o.system && buttons == o.buttons && analogs == o.analogs && axis_threshold == o.axis_threshold &&
-           keys == o.keys && rumble == o.rumble;
+           keys == o.keys && rumble == o.rumble && turbo == o.turbo;
 }
 
 static std::string fmt_num(double v) {
@@ -481,6 +481,20 @@ bool set_rumble(Store& s, const std::string& sys, const std::string& game, bool 
     return true;
 }
 
+bool turbo_supported(const std::string& sys) {
+    return sys == "n64" || sys == "retro" || sys == "ps1" || sys == "nes" || sys == "snes";
+}
+bool is_turbo(const Profile& p, const std::string& control) { return p.turbo.count(control) != 0; }
+bool set_turbo(Store& s, const std::string& sys, const std::string& game, const std::string& control, bool on, std::string* err) {
+    if (!turbo_supported(sys)) { if (err) *err = "turbo is not supported for this system"; return false; }
+    bool known = false;
+    for (auto& c : controls_for(sys)) if (c.name == control && !c.analog) known = true;
+    if (!known) { if (err) *err = "unknown button"; return false; }
+    Profile& p = edit_profile(s, sys, game);
+    if (on) p.turbo.insert(control); else p.turbo.erase(control);
+    return true;
+}
+
 void reset(Store& s, const std::string& sys, const std::string& game) {
     if (game.empty()) {
         auto d = s.system_default.find(sys);
@@ -570,7 +584,14 @@ void write_profile(std::ostringstream& o, const Profile& p, const char* ind) {
     o << "},\n" << ind << " \"keys\":{";
     first = true;
     for (auto& kv : p.keys) { o << (first ? "" : ",") << json::quote(kv.first) << ":" << json::quote(kv.second); first = false; }
-    o << "}" << (p.rumble ? ",\"rumble\":true" : "") << "}";
+    o << "}" << (p.rumble ? ",\"rumble\":true" : "");
+    if (!p.turbo.empty()) {
+        o << ",\"turbo\":[";
+        first = true;
+        for (auto& t : p.turbo) { o << (first ? "" : ",") << json::quote(t); first = false; }
+        o << "]";
+    }
+    o << "}";
 }
 
 bool read_profile(const J& j, const std::string& name, Profile* p) {
@@ -585,6 +606,8 @@ bool read_profile(const J& j, const std::string& name, Profile* p) {
     if (const J* k = j.get("keys")) if (k->type == J::Object)
         for (auto& kv : k->o) if (kv.second.type == J::String && valid_keys(kv.second.s)) for (auto& c : key_controls_for(p->system)) if (c.name == kv.first) p->keys[kv.first] = kv.second.s;
     if (const J* r = j.get("rumble")) if (r->type == J::Bool && p->system == "n64") p->rumble = r->b;
+    if (const J* t = j.get("turbo")) if (t->type == J::Array && turbo_supported(p->system))
+        for (auto& e : t->a) if (e.type == J::String) for (auto& c : controls_for(p->system)) if (c.name == e.s && !c.analog) p->turbo.insert(e.s);
     if (const J* a = j.get("analogs")) if (a->type == J::Object)
         for (auto& kv : a->o) {
             if (kv.second.type != J::Object) continue;

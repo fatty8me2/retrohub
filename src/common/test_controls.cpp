@@ -441,7 +441,61 @@ static void test_ps2_pressure() {
     CHECK(p[0] >= 240 && p[0] <= 255 && p[1] >= 150 && p[1] <= 160);
 }
 
+/* Turbo (auto-fire): timing, profile model, JSON round trip, hash neutrality, and both runner input paths. */
+static void test_turbo() {
+    using namespace hubctl;
+    CHECK(kTurboPeriod == 4);
+    int on = 0;
+    for (uint64_t f = 0; f < 60; ++f) on += turbo_phase_on(f);
+    CHECK(on == 30);                                                  // half the frames: 15 presses a second at 60 fps
+    CHECK(turbo_phase_on(0) && turbo_phase_on(1) && !turbo_phase_on(2) && !turbo_phase_on(3) && turbo_phase_on(4));
+    CHECK(turbo_allowed(false, false) && turbo_allowed(false, true) && !turbo_allowed(true, false) && turbo_allowed(true, true));
+    CHECK(turbo_supported("n64") && turbo_supported("retro") && turbo_supported("ps1") && turbo_supported("nes") && turbo_supported("snes"));
+    CHECK(!turbo_supported("gc") && !turbo_supported("wiiu") && !turbo_supported("3ds"));
+
+    Store s;
+    uint64_t h0 = mapping_hash(resolve(s, "n64"));
+    CHECK(set_turbo(s, "n64", "", "a", true) && is_turbo(resolve(s, "n64"), "a") && !is_turbo(resolve(s, "n64"), "b"));
+    CHECK(mapping_hash(resolve(s, "n64")) == h0);                     // generated emulator configs are not rewritten
+    CHECK(!set_turbo(s, "n64", "", "stick", true));                   // analog: no
+    CHECK(!set_turbo(s, "n64", "", "bogus", true));
+    CHECK(!set_turbo(s, "gc", "", "a", true));
+    CHECK(set_turbo(s, "retro", "gx", "b", true) && is_turbo(resolve(s, "retro", "gx"), "b") && !is_turbo(resolve(s, "retro"), "b"));
+    Store r;
+    CHECK(from_json(to_json(s), &r) && is_turbo(resolve(r, "n64"), "a") && is_turbo(resolve(r, "retro", "gx"), "b"));
+    Profile pr;
+    CHECK(profile_from_json(profile_to_json(resolve(s, "n64")), &pr) && pr.turbo.count("a") == 1 && !pr.same_mapping(default_profile("n64")));
+    CHECK(set_turbo(s, "n64", "", "a", false) && resolve(s, "n64").turbo.empty());
+    reset(s, "retro", "gx");
+    CHECK(resolve(s, "retro", "gx").turbo.empty());
+
+    /* n64run path: A is turbo, B is not; both held. */
+    Profile p = default_profile("n64");
+    p.turbo.insert("a");
+    n64run::PadMap pm(p);
+    PadState st;
+    st.b[button_index("a")] = true; st.b[button_index("b")] = true;
+    uint32_t on_w = pm.word(st, 0, true), off_w = pm.word(st, 2, true);
+    CHECK((on_w & n64run::BTN_A) && (on_w & n64run::BTN_B));
+    CHECK(!(off_w & n64run::BTN_A) && (off_w & n64run::BTN_B));
+    CHECK(pm.word(st, 2, false) == pm.word(st, 0, false));          // turbo off (online, not allowed): untouched
+    PadState idle;
+    CHECK((pm.word(idle, 2, true) & 0xFFFFu) == 0);                 // never presses by itself
+    /* retrorun path */
+    Profile rp = default_profile("retro");
+    rp.turbo.insert("a");
+    retrorun::RetroPad pad(rp);
+    PadState rs;
+    rs.b[button_index(rp.buttons["a"])] = true;   // whichever pad button drives the console's "a"
+    uint32_t base = pad.mask(rs);
+    CHECK(base != 0 && pad.has_turbo());
+    CHECK(pad.mask(rs, 1, true) == base && pad.mask(rs, 2, true) != base && (pad.mask(rs, 2, true) & ~base) == 0 && pad.mask(rs, 2, false) == base);
+    retrorun::RetroPad plain(default_profile("retro"));
+    CHECK(!plain.has_turbo() && plain.mask(rs, 2, true) == plain.mask(rs));
+}
+
 int main() {
+    test_turbo();
     test_ps2_pressure();
     test_canonical_name();
     test_exit_combo_and_cursor();

@@ -68,6 +68,7 @@ struct Args {
     std::string cheats;           // --cheats FILE: cheat list JSON (src/common/cheats.h); polled for live toggles offline
     struct MemDump { unsigned id; size_t off, len; std::string file; };
     std::vector<MemDump> mem_dumps;   // --dump-mem ID,OFFSET,LEN,FILE: raw libretro memory block dumped at exit (QA)
+    bool turbo_online = false;    // --turbo-online: the room host allowed turbo buttons for everyone
     std::string controls;         // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (src/common/controls.h)
     std::string setup_tag;        // --setup-tag TEXT: extra text mixed into the PS2 setup fingerprint (the hub passes the disc serial)
     std::string net, room, title, save_stem;   // save_stem: file stem for <stem>.srm (zipped ROMs); "" = rom file stem
@@ -115,6 +116,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         if (k == "--core") { if (!val(&o->core)) return false; }
         else if (k == "--rom") { if (!val(&o->rom)) return false; }
         else if (k == "--controls") { if (!val(&o->controls)) return false; }
+        else if (k == "--turbo-online") o->turbo_online = true;
         else if (k == "--cheats") { if (!val(&o->cheats)) return false; }
         else if (k == "--ra-cfg") { if (!val(&o->ra_cfg)) return false; }
         else if (k == "--ra-cache") { if (!val(&o->ra_cache)) return false; }
@@ -1139,11 +1141,11 @@ uint32_t Frontend::poll_local(int i) {
     }
     if (a.headless) return 0;
     uint32_t m = 0;
-    if (i == 0 && retro_pad) m |= retro_pad->key_mask(SDL_GetKeyboardState(nullptr));
+    if (i == 0 && retro_pad) m |= retro_pad->key_mask(SDL_GetKeyboardState(nullptr), frame_no, hubctl::turbo_allowed(online, a.turbo_online));
     if ((size_t)i < pads.size()) {
         hubctl::PadState st;
         hubctl::read_state(pads[i], &st);
-        m |= retro_pad->mask(st);
+        m |= retro_pad->mask(st, frame_no, hubctl::turbo_allowed(online, a.turbo_online));
     }
     return m;
 }
