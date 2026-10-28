@@ -12,6 +12,7 @@ param(
     [int]$JoinAfterSec = 20,
     [switch]$Relay,                  # HUBNET_FORCE_RELAY=1 (every packet through the server relay)
     [switch]$Refusals,
+    [switch]$ViaLobby,               # the joiner gets its slot/ports from the lobby: a scripted host seat sends the launch, a role=watch&dropin=1 seat receives it (qa\dropin_lobby.mjs)
     [string]$Tag = ''
 )
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
@@ -66,10 +67,20 @@ if ($Refusals) {
 }
 Write-Output "room=$room relay=$([bool]$Relay) frames=$Frames join after ${JoinAfterSec}s"
 $t0 = Get-Date
+$lobbyProc = $null; $planFile = Join-Path $outDir 'lobby.jsonl'
+if ($ViaLobby) { $lobbyProc = Start-Process node -ArgumentList @((Join-Path $PSScriptRoot 'dropin_lobby.mjs'), $Server, $room.Substring(0, 6), $JoinAfterSec, $planFile, 40) -PassThru -WindowStyle Hidden }
 $h = Start-Peer 0 @('--players', '2', '--ports', '0,1,-1,-1', '--multiport')
 $g = Start-Peer 1 @('--players', '2', '--ports', '0,1,-1,-1', '--multiport')
 Start-Sleep -Seconds $JoinAfterSec
-$j = Start-Peer 2 @('--dropin', '--players', '2', '--ports', '0,1,2,-1', '--name', 'Kai')
+if ($ViaLobby) {
+    $plan = $null
+    for ($i = 0; $i -lt 100 -and -not $plan; $i++) { Start-Sleep -Milliseconds 300; if (Test-Path $planFile) { $plan = Get-Content $planFile | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.step -eq 'plan' -or $_.error } | Select-Object -First 1 } }
+    if (-not $plan -or $plan.error) { Write-Output 'FAIL: the lobby seat never got the launch'; foreach ($p in @($h, $g)) { Stop-Process -Id $p.Proc.Id -Force }; if ($lobbyProc) { Stop-Process -Id $lobbyProc.Id -Force -ErrorAction SilentlyContinue }; exit 1 }
+    Write-Output ("lobby: seat welcome dropin=" + $plan.welcome.dropin + " spec=" + $plan.welcome.spec + " slot=" + $plan.welcome.slot + "; replayed launch dropin_join=" + $plan.replayed.dropin_join + " free ports=" + $plan.replayed.dropin + "; joiner runs --slot " + $plan.slot + " --ports " + $plan.ports)
+    $j = Start-Peer ([int]$plan.slot) @('--dropin', '--players', [string]$plan.players, '--ports', [string]$plan.ports, '--name', 'Kai')
+} else {
+    $j = Start-Peer 2 @('--dropin', '--players', '2', '--ports', '0,1,2,-1', '--name', 'Kai')
+}
 $all = @($h, $g, $j)
 while (@($all | Where-Object { -not $_.Proc.HasExited }).Count -gt 0) {
     if (((Get-Date) - $t0).TotalSeconds -gt ($Frames / 60 + 240)) { foreach ($p in $all) { if (-not $p.Proc.HasExited) { Stop-Process -Id $p.Proc.Id -Force; Write-Output "HARD TIMEOUT slot $($p.Slot)" } }; $fail++; break }
@@ -91,6 +102,13 @@ foreach ($p in $all) {
 $hs = @($all | ForEach-Object { if (Test-Path $_.Log) { $f = Get-Content $_.Log | Where-Object { $_ -match 'final:' } | Select-Object -Last 1; if ($f) { ($f -replace '.*final: ', '') -replace 'state-hash \w+ ', '' } } })
 Write-Output ('final (frame, output, input) per peer: ' + (($hs | Select-Object -Unique) -join ' || '))
 if (@($hs | Select-Object -Unique).Count -ne 1 -or $hs.Count -ne 3) { $fail++; Write-Output 'FAIL: final hash chains differ (or a peer has none)' }
+if ($ViaLobby) {
+    Start-Sleep -Seconds 2
+    $second = Get-Content $planFile | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.step -eq 'second' } | Select-Object -First 1
+    Write-Output ("lobby: second drop-in seat after the runner joined: refused=" + $second.refused)
+    if (-not $second -or $second.refused -ne 'no-free-port') { $fail++; Write-Output 'FAIL: the port was not committed server-side (second seat should be refused no-free-port)' }
+}
+if ($lobbyProc -and -not $lobbyProc.HasExited) { Stop-Process -Id $lobbyProc.Id -Force }
 $jl = Get-Content $j.Log
 $played = $jl | Where-Object { $_ -match 'dropin: playing from frame' } | Select-Object -First 1
 if (-not $played) { $fail++; Write-Output 'FAIL: the joiner never started playing' } else { Write-Output ($played.Substring($played.IndexOf('dropin:'))) }
