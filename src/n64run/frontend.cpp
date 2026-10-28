@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -108,6 +109,7 @@ struct Args {
     int owner[kPorts] = {0, -1, -1, -1};
     bool ports_given = false;
     bool strict_sync = false, no_hash = false, share_host_save = false;
+    bool legacy_host = false;     // --legacy-host (with --spectate): the host predates N64 live join (keeps RDRAM dithering; no knock)
     bool spectate = false;        // --spectate: watch a running online match as a port-less spectator (server picks the slot; needs --net --room --ports)
     bool no_spectators = false;   // --no-spectators: as the host, do not record/serve the input history to spectators
     bool fullscreen = false;
@@ -191,6 +193,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--host-save-dir") ok = val(&a.host_save_dir);
         else if (k == "--share-host-save") a.share_host_save = true;
         else if (k == "--spectate") a.spectate = true;
+        else if (k == "--legacy-host") a.legacy_host = true;
         else if (k == "--no-spectators") a.no_spectators = true;
         else if (k == "--ports") { std::string s; ok = val(&s) && parse_ports(s, a.owner); a.ports_given = ok; }
         else if (k == "--strict-sync") a.strict_sync = true;
@@ -509,16 +512,35 @@ static std::vector<int> g_joinq;
 static std::map<int, uint32_t> g_done;       // slot -> when its snapshot was delivered (knocks still in flight are ignored)
 struct Snap {
     int slot = -1;
-    uint32_t S = 0, t_join = 0, t_send = 0;
+    uint32_t S = 0, t_join = 0, t_send = 0, job = 0;
     bool sending = false;
-    std::string path;
     rb::xfer::Sender snd;
 };
-static std::unique_ptr<Snap> g_snap;
-static std::atomic<int> g_saved{0};          // core save job: 0 pending, 1 written, 2 failed
+static std::unique_ptr<Snap> g_snap;        // emulation thread only
 static uint8_t g_epoch = 0;
+/* Core save jobs. The emulation thread starts at most one at a time (busy) and never starts another until the core has reported the one in
+ * flight, even when it gave up on it (timeout, spectator gone): a late SAVECOMPLETE can then only belong to that job. The core's worker
+ * thread (the one that wrote the file) reads it, hashes it, deletes it and publishes the result tagged with the job id, so none of that
+ * file work runs on the emulation thread. Everything in g_save is under g_save_mx. */
+struct SaveJob {
+    uint32_t id = 0;            // job in flight / last one started
+    bool busy = false;
+    std::string path;
+    uint32_t done_id = 0;       // the result below belongs to this job
+    std::vector<uint8_t> data;  // empty: the save failed
+    uint64_t hash = 0;
+    double work_ms = 0;         // reading + hashing on the worker thread
+};
+static std::mutex g_save_mx;
+static SaveJob g_save;
+static uint32_t g_job_seq = 0;
+/* join stall measurement (emulation thread): lead-poll gaps while a snapshot is being prepared vs the usual gap */
+static LARGE_INTEGER g_qpf{}, g_last_poll{};
+static double g_gap_base_ms = 0, g_gap_join_ms = 0;
+static int g_gap_n = 0;
 /* spectator */
 static uint32_t g_S = 0, g_t_join = 0, g_done_ep = 0x100, g_done_at = 0;
+static std::string g_in_path;                // the downloaded state file (removed once the core has loaded it)
 static bool g_snapshot = false, g_verified = false, g_live_logged = false;
 static spectate::CatchUp g_cu;
 
@@ -537,8 +559,34 @@ static void nolive(int slot, uint8_t reason) {
 
 /* core state callback (emulation thread for loads, the core's worker thread for finished saves) */
 static void state_cb(void*, m64p_core_param p, int v) {
-    if (p == M64CORE_STATE_SAVECOMPLETE) { if (g_snap) g_saved = v ? 1 : 2; }
+    if (p == M64CORE_STATE_SAVECOMPLETE) {   // the core's worker thread, right after it wrote the file
+        std::string path;
+        uint32_t id;
+        { std::lock_guard<std::mutex> lk(g_save_mx); if (!g_save.busy) return; path = g_save.path; id = g_save.id; }
+        LARGE_INTEGER t0, t1, f;
+        QueryPerformanceCounter(&t0);
+        std::vector<uint8_t> data;
+        if (v) {
+            if (FILE* fp = std::fopen(path.c_str(), "rb")) {
+                std::fseek(fp, 0, SEEK_END);
+                long sz = std::ftell(fp);
+                std::fseek(fp, 0, SEEK_SET);
+                if (sz > 0) { data.resize((size_t)sz); if (std::fread(data.data(), 1, data.size(), fp) != data.size()) data.clear(); }
+                std::fclose(fp);
+            }
+        }
+        uint64_t h = data.empty() ? 0 : fnv64(data.data(), data.size());
+        std::error_code ec;
+        fs::remove(fs::path(path), ec);
+        QueryPerformanceCounter(&t1);
+        QueryPerformanceFrequency(&f);
+        std::lock_guard<std::mutex> lk(g_save_mx);
+        g_save.done_id = id; g_save.data = std::move(data); g_save.hash = h;
+        g_save.work_ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)f.QuadPart;
+        g_save.busy = false;
+    }
     else if (p == M64CORE_STATE_LOADCOMPLETE && g_run.lockstep && g_run.lockstep->spectate_live_waiting()) {
+        if (!g_in_path.empty()) { std::error_code ec; fs::remove(fs::path(g_in_path), ec); }
         if (v) {
             g_run.lockstep->spectate_live_loaded();
             logf_("spectate", "live join: the core loaded the state of sample %u %u ms after joining", g_S, hubnet::now_ms() - g_t_join);
@@ -563,6 +611,17 @@ static void host_msg(int from, const std::vector<uint8_t>& m) {
 static void host_poll(uint32_t n) {
     spectate::Host* H = g_run.lockstep->spectate_host();
     if (!H) return;
+    {   // poll-to-poll time = the players' pace. While a snapshot is being saved its worst gap is the join stall.
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        if (!g_qpf.QuadPart) QueryPerformanceFrequency(&g_qpf);
+        if (g_last_poll.QuadPart) {
+            double ms = (double)(t.QuadPart - g_last_poll.QuadPart) * 1000.0 / (double)g_qpf.QuadPart;
+            if (g_snap && !g_snap->sending) g_gap_join_ms = std::max(g_gap_join_ms, ms);
+            else if (!g_snap && ms < 1000) { g_gap_base_ms = (g_gap_base_ms * g_gap_n + ms) / (g_gap_n + 1); if (g_gap_n < 600) g_gap_n++; }
+        }
+        g_last_poll = t;
+    }
     if (g_joinq.empty()) return;
     std::vector<int> q;
     q.swap(g_joinq);
@@ -577,22 +636,28 @@ static void host_poll(uint32_t n) {
             g_sess->send(slot, m, 3);
             continue;
         }
-        auto d = spectate::decide_join(g_ok, H->total(), g_snap ? 1 : 0, mine, g_snap != nullptr);   // one core save job at a time
+        bool busy;
+        { std::lock_guard<std::mutex> lk(g_save_mx); busy = g_save.busy; }
+        auto d = spectate::decide_join(g_ok, H->total(), g_snap ? 1 : 0, mine, g_snap != nullptr || busy);   // one core save job at a time
         if (d == spectate::JoinDecision::Ignore || d == spectate::JoinDecision::Busy) continue;
         if (d == spectate::JoinDecision::NoLiveEarly) { nolive(slot, spectate::kRefuseEarly); continue; }
         if (d == spectate::JoinDecision::NoLiveUnsupported) { nolive(slot, spectate::kRefuseUnsupported); continue; }
         auto x = std::make_unique<Snap>();
         x->slot = slot; x->t_join = now; x->S = spectate::lockstep_snapshot_sample(n);
-        x->path = g_dir + "\\live_" + std::to_string(slot) + ".st";
-        std::error_code ec;
-        fs::remove(fs::path(x->path), ec);
-        g_saved = 0;
-        g_snap = std::move(x);
-        if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(g_snap->path.c_str())) != M64ERR_SUCCESS) {
-            g_snap.reset();
+        std::string path;
+        {
+            std::lock_guard<std::mutex> lk(g_save_mx);
+            g_save.id = x->job = ++g_job_seq;
+            g_save.path = path = g_dir + "\\live_" + std::to_string(g_job_seq) + ".st";
+            g_save.busy = true;
+        }
+        if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(path.c_str())) != M64ERR_SUCCESS) {
+            { std::lock_guard<std::mutex> lk(g_save_mx); g_save.busy = false; }
             nolive(slot, spectate::kRefuseUnsupported);
             continue;
         }
+        g_gap_join_ms = 0;
+        g_snap = std::move(x);
         logf_("spectate", "live join for slot %d: saving the state before sample %u (asked at poll %u)", slot, g_snap->S, n);
     }
 }
@@ -608,25 +673,24 @@ static void host_tick(uint32_t) {
     const bool gone = !(sm >> x.slot & 1u);
     if (!x.sending) {
         if (!gone) H->extend_hold(x.slot, now);   // the core is still writing: the hold must not expire into a stream from 0
-        const int sv = g_saved.load();
-        if (sv == 2 || (sv == 0 && now - x.t_join > 10000)) {
-            logf_("spectate", "live join for slot %d: the core did not save the state", x.slot);
+        bool busy, have;
+        std::vector<uint8_t> data;
+        uint64_t hash = 0;
+        double work_ms = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_save_mx);
+            busy = g_save.busy && g_save.id == x.job;
+            have = !busy && g_save.done_id == x.job;
+            if (have && !gone && H->total() >= x.S) { data = std::move(g_save.data); hash = g_save.hash; work_ms = g_save.work_ms; g_save.data.clear(); g_save.done_id = 0; }
+        }
+        if (busy && now - x.t_join > 10000) {   // give up on it; the job stays busy until the core reports it (its file is removed then)
+            logf_("spectate", "live join for slot %d: the core did not save the state in 10 s", x.slot);
             if (!gone) nolive(x.slot, spectate::kRefuseUnsupported);
             g_snap.reset();
             return;
         }
-        if (gone) { if (sv) g_snap.reset(); return; }   // (a pending core save would write into a freed path: wait for it)
-        if (sv != 1 || H->total() < x.S) return;
-        std::vector<uint8_t> data;
-        if (FILE* f = std::fopen(x.path.c_str(), "rb")) {
-            std::fseek(f, 0, SEEK_END);
-            long sz = std::ftell(f);
-            std::fseek(f, 0, SEEK_SET);
-            if (sz > 0) { data.resize((size_t)sz); if (std::fread(data.data(), 1, data.size(), f) != data.size()) data.clear(); }
-            std::fclose(f);
-        }
-        std::error_code ec;
-        fs::remove(fs::path(x.path), ec);
+        if (gone) { g_snap.reset(); return; }   // a save still in flight stays busy; the worker removes its file when it lands
+        if (busy || !have || H->total() < x.S) return;
         const bool rel = g_sess->is_relayed(x.slot);
         const size_t cap = std::min<size_t>(rel ? 1500000 : 3000000, rb::xfer::kMaxChunks * rb::xfer::kChunk);   // relay: keep the room's budget
         if (data.empty() || data.size() > cap) {
@@ -635,10 +699,12 @@ static void host_tick(uint32_t) {
             g_snap.reset();
             return;
         }
+        logf_("spectate", "live join stall: worst player poll gap %.1f ms while the state was saved (typical %.1f ms); file read + hash %.1f ms on the core's worker thread",
+              g_gap_join_ms, g_gap_base_ms, work_ms);
         rb::xfer::Meta m;
         m.frame = x.S; m.raw = (uint32_t)data.size(); m.comp = (uint32_t)data.size(); m.flags = 0;   // already gzipped by the core
         m.chunks = (uint16_t)((data.size() + rb::xfer::kChunk - 1) / rb::xfer::kChunk);
-        m.hash = fnv64(data.data(), data.size());
+        m.hash = hash;
         H->start_peer_at(x.slot, x.S, now);   // inputs from S stream right away; the spectator buffers them while the state downloads
         g_epoch = (uint8_t)((g_epoch + 1) & 0x7F);
         x.snd.start((uint8_t)(0x80 | g_epoch), m, std::move(data), 1u << x.slot, now ? now : 1, rel ? 100.0 : 1200.0);
@@ -687,14 +753,15 @@ static void spec_poll(uint32_t n) {
 }
 
 /* spectator, before the emulation starts: ask for a live snapshot. false = connection lost. */
-static bool spectator_join(n64run::Lockstep& ls, int my_slot) {
-    spectate::JoinClient jc(!std::getenv("N64RUN_NO_LIVE_SPECTATE"));
+static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host) {
+    spectate::JoinClient jc(!legacy_host && !std::getenv("N64RUN_NO_LIVE_SPECTATE"));
     g_t_join = hubnet::now_ms();
     if (jc.playing()) return true;
     spectate::Client& cli = ls.spectate_client_mut();
     rb::xfer::Receiver rcv;
     uint32_t last_rx = hubnet::now_ms(), dl_progress = 0;
     size_t dl_got = 0;
+    std::vector<std::vector<uint8_t>> early;   // inputs from S that overtook our Begin: kept for after it
     for (;;) {
         SDL_PumpEvents();
         g_sess->update();
@@ -705,7 +772,8 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot) {
             last_rx = now0;
             if (m[0] == spectate::kPktData) {
                 if (jc.mode() == spectate::JoinClient::Mode::Knock) {
-                    if (m.size() < 6 || rb::xfer::g32(m.data() + 2) != 0) continue;   // inputs from S that overtook our Begin: resent later
+                    if (m.size() < 6) continue;
+                    if (rb::xfer::g32(m.data() + 2) != 0) { if (early.size() < 64) early.push_back(m); continue; }   // inputs from S that overtook our Begin
                     jc.on_legacy_data();
                     logf_("spectate", "the host streams from sample 0 (no live join): replaying the match, fast-forwarding to the live game");
                 }
@@ -721,6 +789,8 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot) {
                     if (rb::xfer::dec_begin(m.data(), m.size(), &mt) && jc.mode() == spectate::JoinClient::Mode::Knock && rcv.on_begin(m[3], mt)) {
                         jc.on_begin(mt.frame, now0);
                         cli.start_at(mt.frame);
+                        for (auto& e : early) cli.on_data(e.data(), e.size(), now0);
+                        early.clear();
                         dl_progress = now0;
                         logf_("spectate", "live join: downloading the state of sample %u (%u bytes, %u chunks) %u ms after joining", mt.frame, mt.comp, (unsigned)mt.chunks, now0 - g_t_join);
                     }
@@ -750,6 +820,7 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot) {
                 if (!ok) { logf_("spectate", "the live state did not arrive intact"); return false; }
                 g_S = mt.frame; g_snapshot = true;
                 ls.spectate_expect_live(mt.frame);
+                g_in_path = path;
                 g_load_state_path = path;   // auto_tick: the core loads it on VI 3; state_cb starts the samples at S
                 jc.on_loaded();
                 g_done_ep = rcv.epoch();
@@ -1450,11 +1521,13 @@ int main(int argc, char** argv) {
             }
         }
     }
-    if (online) {
+    if (online && !(args.spectate && args.legacy_host)) {
         /* GLideN64 dithers the image it copies back into RDRAM with a noise pattern that advances with every frame it has drawn. Peers that
          * booted together agree, but a spectator that joined from a savestate has drawn a different number of frames, so its framebuffers in
          * RDRAM (and the RDRAM sync hash) would differ forever. No dither keeps that copy a pure function of the game's own state. Every
-         * player of a room runs the same RetroHub version (lobby version gate), so all of them use the same setting. */
+         * player of a room runs the same RetroHub version (lobby version gate), so all of them use the same setting. Spectators are not
+         * version gated: the hub passes --legacy-host when the host's launch message lacks "n64live" (an older host that still dithers),
+         * and that spectator keeps dithering and replays from sample 0 as before. */
         m64p_handle gh = nullptr;
         if (g_core.OpenSection("Video-GLideN64", &gh) == M64ERR_SUCCESS) cfg_int(gh, "RDRAMImageDitheringMode", 0);
     }
@@ -1545,7 +1618,7 @@ int main(int argc, char** argv) {
             g_run.lockstep.reset();
             goto fail_net;
         }
-        if (online && args.spectate && !live::spectator_join(*g_run.lockstep, my_slot)) {
+        if (online && args.spectate && !live::spectator_join(*g_run.lockstep, my_slot, args.legacy_host)) {
             logf_("n64run", "netplay: could not join the match as a spectator (%s)", session.status().c_str());
             g_run.lockstep.reset();
             goto fail_net;
