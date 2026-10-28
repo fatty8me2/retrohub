@@ -36,6 +36,7 @@
 #include "ps1_input.h"
 #include "rollback.h"
 #include "lockstep.h"
+#include "spectate.h"
 #include "log.h"
 #include "session.h"
 #include "save_sync.h"
@@ -79,6 +80,8 @@ struct Args {
     int ports[4] = {0, -1, -1, -1};
     bool ports_given = false;
     bool rollback = false;        // --rollback: GGPO-style rollback netplay instead of lockstep (see rollback.h)
+    bool spectate = false;        // --spectate: watch a running online match as a port-less spectator (confirmed inputs only; needs --net --room --ports)
+    bool no_spectators = false;   // --no-spectators: as the host, do not record/serve the input history to spectators
     int synctest = 0;             // --synctest N: offline, every frame roll back N frames and re-simulate, compare
     int rb_pred = 14;             // --rb-pred N: max predicted frames (1..16)
     bool rb_adaptive = true;      // --rb-delay-adapt / --no-rb-delay-adapt: pick the input delay from the measured RTT when --delay is auto
@@ -173,6 +176,8 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
             if (sscanf(v.c_str(), "%lf,%lf", &o->stylus_u, &o->stylus_v) != 2) { fprintf(stderr, "bad --stylus (want U,V)\n"); return false; }
         }
         else if (k == "--rollback") o->rollback = true;
+        else if (k == "--spectate") o->spectate = true;
+        else if (k == "--no-spectators") o->no_spectators = true;
         else if (k == "--no-rollback") o->rollback = false;
         else if (k == "--no-rb-delay-adapt") o->rb_adaptive = false;
         else if (k == "--synctest") { if (!val(&v)) return false; o->synctest = std::max(1, atoi(v.c_str())); }
@@ -488,6 +493,12 @@ class Frontend {
     bool resim = false;                // re-simulating: drop audio
     uint64_t fr_audio = 0xCBF29CE484222325ull;   // hash of the audio of the frame being stepped
     rb::Sim make_rb_sim();
+    /* spectating (spectate.h) */
+    std::unique_ptr<spectate::Host> spec_host_;   // rollback host: confirmed frames for spectators
+    bool rb_spectator_ = false;
+    int run_rb_spectator();
+    void spec_host_service();
+    void spec_host_finish();
     int run_synctest();
     void rb_warmup();
     void rb_log_stats();
@@ -1843,7 +1854,15 @@ bool Frontend::setup_net() {
     cfg.room = a.room;
     cfg.slot = a.slot;
     cfg.expected = std::max(1, a.players);
-    {
+    if (a.spectate) {
+        if (a.ds_link || link || a.share_host_save) { rlog("net: --spectate does not work with link/DS/--share-host-save games"); return false; }
+        slot_mask = 1u;   // the players: the host plus every owner named in --ports
+        for (int i = 0; i < 4; i++) if (owner[i] >= 0 && owner[i] < 4) slot_mask |= 1u << owner[i];
+        a.slot = 1;       // placeholder; the server assigns the real slot
+        cfg.slot = 1;
+        cfg.expected = 2;
+        cfg.spectate = true;
+    } else {
         std::string err;
         slot_mask = n64run::derive_slot_mask(owner, a.slot, std::max(1, a.players), &err);
         if (!slot_mask) { rlog("net: bad --slot/--players/--ports: %s", err.c_str()); return false; }
@@ -1863,13 +1882,22 @@ bool Frontend::setup_net() {
         Sleep(5);
     }
     rlog("net: session ready");
-    {   // every PC must hold the same cheat list (an empty one included) or the emulations diverge
+    if (a.spectate) {
+        a.slot = session.my_slot();
+        rlog("net: spectating as slot %d (no port, confirmed inputs only)", a.slot);
+        if (a.rollback) {
+            rb_warmup();
+            rb_spectator_ = true;
+            return true;
+        }
+    }
+    if (!a.spectate) {   // every PC must hold the same cheat list (an empty one included) or the emulations diverge
         uint64_t ch = cheats_on ? cheats::set_hash(cheat_boot, cheat_target) : cheats::kEmptyHash;
         n64run::CheatSync cs = n64run::exchange_cheat_hash(session, a.slot, slot_mask, ch, 8000, [this] { pump_events(false); }, [](const std::string& m) { rlog("%s", m.c_str()); });
         if (cs == n64run::CheatSync::Mismatch) { rlog("net: cheat lists differ between players; leaving"); net_rc = 5; return false; }
         if (cs == n64run::CheatSync::Failed) { rlog("net: connection lost during the cheat check"); net_rc = lost_code(); return false; }
     }
-    if (a.share_host_save && !link && !is_ds && !is_ps2 && !share_host_save_run()) { net_rc = 6; return false; }   // PS2: the card was exchanged before the core booted (ps2_card_presync)
+    if (!a.spectate && a.share_host_save && !link && !is_ds && !is_ps2 && !share_host_save_run()) { net_rc = 6; return false; }   // PS2: the card was exchanged before the core booted (ps2_card_presync)
     if (link) {
         std::vector<std::vector<uint8_t>> blobs;
         std::string lerr;
@@ -1885,8 +1913,8 @@ bool Frontend::setup_net() {
         link_loaded = true;
         rlog("link: saves exchanged and loaded for %d consoles", link_n);
     }
-    if (is_ps1 && !ps1_config_check()) { net_rc = 7; return false; }
-    if (is_ps2 && !ps2_config_check()) { if (net_rc == 3 || net_rc == 4) net_rc = lost_code(); return false; }
+    if (!a.spectate && is_ps1 && !ps1_config_check()) { net_rc = 7; return false; }
+    if (!a.spectate && is_ps2 && !ps2_config_check()) { if (net_rc == 3 || net_rc == 4) net_rc = lost_code(); return false; }
     if (a.rollback) {
         const bool auto_delay = a.delay < 0;
         a.delay = a.delay >= 0 ? std::min(a.delay, 4) : 1;
@@ -1910,18 +1938,35 @@ bool Frontend::setup_net() {
         rb::Transport t;
         t.pump = [this] { session.update(); };
         t.send = [this](int to, const void* d, int n) { session.send(to, d, n); };
-        t.recv = [this](int* from, std::vector<uint8_t>* o) { return session.recv(from, o); };
+        t.recv = [this](int* from, std::vector<uint8_t>* o) {
+            while (session.recv(from, o)) {
+                if (!o->empty() && (*o)[0] == spectate::kPktAck) {   // a spectator's ack never reaches the engine
+                    if (spec_host_ && *from > 0 && (session.spectator_mask() >> *from & 1u)) spec_host_->on_ack(*from, o->data(), o->size(), hubnet::now_ms());
+                    continue;
+                }
+                return true;
+            }
+            return false;
+        };
         t.now_ms = [] { return hubnet::now_ms(); };
         t.log = [](const std::string& s) { rlog("%s", s.c_str()); };
         t.relayed = [this] { for (int sl = 0; sl < 8; sl++) if (sl != a.slot && (slot_mask >> sl & 1u) && session.is_relayed(sl)) return true; return false; };
         rbe = std::make_unique<rb::Engine>(rc, make_rb_sim(), t);
+        if (a.slot == 0 && !a.no_spectators) {   // keep the confirmed-input history so spectators can join at any time
+            uint8_t pm = 0;
+            for (int i = 0; i < 4; i++) if (owner[i] >= 0) pm |= (uint8_t)(1u << i);
+            spec_host_.reset(new spectate::Host(pm, 8));
+            spec_host_->set_log([](const std::string& m) { rlog("%s", m.c_str()); });
+            rbe->set_confirmed_sink([this](uint32_t, const uint64_t pads[4]) { spec_host_->push(pads); });
+            rbe->set_hash_sink([this](uint32_t fr, uint64_t h) { spec_host_->add_hash(fr, h); });
+        }
         rlog("net: ROLLBACK netplay, input delay %d, max prediction %d, state %zu bytes, sync hash %s", a.delay, rc.max_pred,
              core.serialize_size(), "output");
         if (!rbe->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = lost_code(); return false; }
         rlog("net: all %d players ready, starting", a.players);
         return true;
     }
-    {
+    if (!a.spectate) {
         n64run::DelayNegotiation dn;
         dn.fixed_delay = a.delay;
         dn.my_slot = a.slot;
@@ -1946,6 +1991,8 @@ bool Frontend::setup_net() {
     o.wide = is_ps1 || is_ps2;   // sticks travel as a second word per port
     o.delay = a.delay;
     o.online = true;
+    o.spectator = a.spectate;
+    o.serve_spectators = !a.no_spectators;
     o.hash_interval = 600;
     n64run::LockstepHooks h;
     h.read_local = [this](int i) { return local_pad_cache_[i]; };
@@ -2218,6 +2265,78 @@ rb::Sim Frontend::make_rb_sim() {
     };
     s.idle = [this] { pump_events(true); };
     return s;
+}
+
+void Frontend::spec_host_service() {
+    if (!spec_host_) return;
+    uint32_t sm = session.spectator_mask();
+    if (sm) spec_host_->service(hubnet::now_ms(), sm, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
+}
+
+void Frontend::spec_host_finish() {
+    if (!spec_host_ || !session.spectator_mask()) return;
+    spec_host_->finish();
+    uint32_t t0 = hubnet::now_ms();
+    while (hubnet::now_ms() - t0 < 4000 && !session.failed()) {
+        session.update();
+        int from; std::vector<uint8_t> m;
+        while (session.recv(&from, &m)) if (!m.empty() && m[0] == spectate::kPktAck) spec_host_->on_ack(from, m.data(), m.size(), hubnet::now_ms());
+        spec_host_service();
+        if (spec_host_->all_acked(session.spectator_mask()) && hubnet::now_ms() - t0 > 300) break;
+        Sleep(5);
+    }
+    rlog("spectate: served %u frames; spectator hashes ok %u, different %u", spec_host_->total(), spec_host_->hashes_ok(), spec_host_->hashes_bad());
+}
+
+/* Rollback spectator: no engine, no prediction. After the same warm-up as the players it plays the host's confirmed frames in order
+ * (far behind the live game it runs without pacing until it has caught up) and checks its rolling output hash against the host's. */
+int Frontend::run_rb_spectator() {
+    rb::Sim sim = make_rb_sim();
+    spectate::Client cli;
+    uint64_t roll = rb::kRollBasis;
+    uint32_t f = 0, interval = 120, last_rx_chk = hubnet::now_ms();
+    if (const char* hi = std::getenv("RB_HASH_INTERVAL")) interval = (uint32_t)std::max(1, atoi(hi));
+    uint64_t t_start = SDL_GetTicks64();
+    int rc = 0;
+    bool catching = false;
+    for (;;) {
+        if (quit) break;
+        if (a.frames >= 0 && f >= (uint32_t)a.frames) break;
+        pump_events(false);
+        if (quit) break;
+        session.update();
+        int from; std::vector<uint8_t> m;
+        while (session.recv(&from, &m)) if (from == 0 && !m.empty() && m[0] == spectate::kPktData && cli.on_data(m.data(), m.size(), hubnet::now_ms())) last_rx_chk = hubnet::now_ms();
+        cli.service(hubnet::now_ms(), a.slot, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
+        if (!cli.ready(f)) {
+            if (cli.finished(f)) { rlog("spectate: the match ended"); if (a.frames < 0) rc = 8; break; }
+            if (session.ended() && hubnet::now_ms() - last_rx_chk > 1500) { rlog("spectate: the host ended the session"); if (a.frames < 0) rc = 8; break; }
+            if (!session.ended() && (session.failed() || hubnet::now_ms() - last_rx_chk > 10000)) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
+            Sleep(1);
+            continue;
+        }
+        last_rx_chk = hubnet::now_ms();
+        uint64_t pads[4];
+        for (int p = 0; p < 4; p++) pads[p] = owner[p] >= 0 ? cli.get(f, p) : 0;
+        bool behind = cli.lag() > spectate::kLiveLagSamples;
+        if (behind != catching) { catching = behind; if (behind) rlog("spectate: catching up, %u frames behind", cli.lag()); next_deadline = 0; }
+        if (!catching) do_pacing();
+        sim.step(pads, true);
+        roll = rb::roll_step(roll, sim.frame_sum());
+        f++;
+        frame_no = f;
+        cli.consumed(f);
+        if (f % interval == 0) {
+            cli.add_local_hash(f, roll);
+            rlog("sync check frame %u output %016llx", f, (unsigned long long)roll);
+        }
+        uint32_t ms; uint64_t mine, host;
+        while (cli.poll_mismatch(&ms, &mine, &host)) { rlog("DESYNC (spectator) at frame %u: mine %016llx host %016llx", ms, (unsigned long long)mine, (unsigned long long)host); rc = rc ? rc : 5; }
+        if (!a.headless && !catching) present();
+    }
+    out_hash = roll;
+    rlog("spectate: done, %u frames in %.2f s, hashes ok %u different %u", f, (SDL_GetTicks64() - t_start) / 1000.0, cli.hashes_ok(), cli.hashes_bad());
+    return rc;
 }
 
 /* Cores do not restore their very first frames faithfully (BIOS / boot state), so rollback never starts from power-on:
@@ -2556,7 +2675,9 @@ int Frontend::run(const Args& args) {
     } else if (rbe || (a.rollback && !a.net.empty())) {
         if (!rbe && !setup_net()) { rc = net_rc; goto done; }
         if (a.headless) pace = Pace::Timer;
-        {
+        if (rb_spectator_) {
+            rc = run_rb_spectator();
+        } else {
             uint64_t t_start = SDL_GetTicks64(), last_stat = t_start;
             uint64_t last_rb = 0;
             for (;;) {
@@ -2577,6 +2698,7 @@ int Frontend::run(const Args& args) {
                 do_pacing();
                 rbe->run_frame();
                 frame_no = rbe->cur();
+                spec_host_service();
                 if (uint32_t dm = rbe->dropped_mask(); dm != rb_dropped_seen_) {
                     for (int sl = 0; sl < 8; sl++) if ((dm & ~rb_dropped_seen_) >> sl & 1u) set_status("Player in slot " + std::to_string(sl) + " disconnected - playing on");
                     rb_dropped_seen_ = dm;
@@ -2601,6 +2723,7 @@ int Frontend::run(const Args& args) {
                 if (!ok) rlog("net: finish: inputs not fully confirmed before timeout");
                 if (rbe->desync()) { rlog("RESULT: DESYNC detected"); rc = 5; }
             }
+            spec_host_finish();
             out_hash = rbe->confirmed_out_hash();
             in_hash = rbe->confirmed_in_hash();
             rb_log_stats();
@@ -2678,6 +2801,7 @@ int Frontend::run(const Args& args) {
             }
             double secs = (SDL_GetTicks64() - t_start) / 1000.0;
             if (online && lockstep) lockstep->log_stall_summary();
+            if (online && lockstep) lockstep->finish_spectators();
             rlog("done: %llu frames in %.2f s (%.1f fps)", (unsigned long long)frame_no, secs, secs > 0 ? frame_no / secs : 0.0);
         }
         if (a.ds_link) {

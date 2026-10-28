@@ -42,6 +42,33 @@ Lockstep::Lockstep(const LockstepOptions& opt, hubnet::Session* session, const L
     for (int p = 0; p < kPorts; p++)
         if (core_.port_local(p)) local_ports_[n_local_++] = p;
     logged_delay_ = core_.delay();
+    if (opt.online && opt.serve_spectators && !opt.spectator && opt.my_slot == 0 && session) {
+        uint8_t pm = 0;
+        for (int p = 0; p < kPorts; p++) if (core_.port_present(p)) pm |= (uint8_t)(1u << p);
+        spec_host_.reset(new spectate::Host(pm, opt.wide ? 8 : 4));
+        spec_host_->set_log(hooks_.log);
+    }
+}
+
+void Lockstep::spec_service() {
+    if (!net_) return;
+    uint32_t now = hubnet::now_ms();
+    if (spec_host_) {
+        uint32_t sm = net_->spectator_mask();
+        if (sm) spec_host_->service(now, sm, [&](int slot, const uint8_t* d, int n) { net_->send(slot, d, n); });
+    } else if (opt_.spectator) {
+        spec_cli_.service(now, opt_.my_slot, [&](int slot, const uint8_t* d, int n) { net_->send(slot, d, n); });
+    }
+}
+
+void Lockstep::spec_report() {
+    uint32_t s; uint64_t mine, host;
+    while (spec_cli_.poll_mismatch(&s, &mine, &host)) {
+        desync_ = true;
+        char b[200];
+        std::snprintf(b, sizeof b, "DESYNC (spectator) at sample %u: %s hashes mine %016llx host %016llx", s, opt_.hash_label.c_str(), (unsigned long long)mine, (unsigned long long)host);
+        if (hooks_.log) hooks_.log(b);
+    }
 }
 
 void Lockstep::send_packet() {
@@ -65,6 +92,7 @@ void Lockstep::pump() {
             uint8_t ack[3] = {kPktDelayAck, (uint8_t)opt_.my_slot, msg[2]};   // late repeats of the host's D
             net_->send(0, ack, 3);
         } else if (msg[0] == kPktBye) {
+            if (opt_.spectator || (net_->spectator_mask() >> (msg[1] & 3) & 1u)) continue;   // spectators come and go; a spectator's goodbye is not the match ending
             if (msg.size() >= 6 && msg[1] < kPorts && (int)msg[1] == from && msg[1] != opt_.my_slot) {
                 uint32_t last; std::memcpy(&last, &msg[2], 4);
                 if (!(bye_mask_ >> msg[1] & 1u) && hooks_.log) hooks_.log("partner in slot " + std::to_string((int)msg[1]) + " ended the session");
@@ -72,6 +100,10 @@ void Lockstep::pump() {
                 bye_last_[msg[1]] = last;
                 core_.peer_left(msg[1]);
             }
+        } else if (msg[0] == spectate::kPktAck) {
+            if (spec_host_ && from > 0 && (net_->spectator_mask() >> from & 1u)) spec_host_->on_ack(from, msg.data(), msg.size(), hubnet::now_ms());
+        } else if (msg[0] == spectate::kPktData) {
+            if (opt_.spectator && from == 0) spec_cli_.on_data(msg.data(), msg.size(), hubnet::now_ms());
         } else if (msg[0] == kPktCheats) {
             // handshake leftovers: ignore
         } else if (msg[0] == kPktReady) {
@@ -83,7 +115,7 @@ void Lockstep::pump() {
 }
 
 bool Lockstep::start_barrier(uint32_t timeout_ms) {
-    if (!net_) return true;
+    if (!net_ || opt_.spectator) return true;   // a spectator is not part of the start barrier: it boots whenever it likes
     uint32_t all = core_.slot_mask();
     ready_mask_ |= 1u << opt_.my_slot;
     uint32_t t0 = hubnet::now_ms(), last = 0, seen_all_at = 0;
@@ -254,8 +286,25 @@ void Lockstep::catch_up(uint32_t now) {
     }
 }
 
+void Lockstep::finish_spectators() {
+    if (!net_ || lost_) return;
+    if (spec_host_ && net_->spectator_mask() && !spec_finished_) {
+        spec_finished_ = true;   // let spectators receive the tail of the history and the end marker
+        spec_host_->finish();
+        uint32_t t0 = hubnet::now_ms();
+        while (hubnet::now_ms() - t0 < 4000 && !net_->failed()) {
+            pump();
+            spec_service();
+            if (spec_host_->all_acked(net_->spectator_mask()) && hubnet::now_ms() - t0 > 300) break;
+            Sleep(5);
+        }
+        if (hooks_.log) { char b[120]; std::snprintf(b, sizeof b, "spectate: served %u samples; spectator hashes ok %u, different %u", spec_host_->total(), spec_host_->hashes_ok(), spec_host_->hashes_bad()); hooks_.log(b); }
+    }
+}
+
 void Lockstep::finish() {
     if (!net_ || lost_) return;
+    if (opt_.spectator) return;   // just leave: the host keeps the match going without us
     uint8_t bye[6] = {kPktBye, (uint8_t)opt_.my_slot, 0, 0, 0, 0};
     uint32_t newest = core_.newest_local();
     std::memcpy(bye + 2, &newest, 4);
@@ -265,14 +314,76 @@ void Lockstep::finish() {
         uint32_t t0 = hubnet::now_ms();
         while (hubnet::now_ms() - t0 < 25) { pump(); Sleep(2); }
     }
+    finish_spectators();
 }
 
 uint32_t Lockstep::aux(int port) const {
+    if (opt_.spectator) return (lost_ || peer_left_ || sample_ < 0 || port < 0 || port >= kPorts) ? 0u : (uint32_t)(spec_cur_.v[port] >> 32);
     if (lost_ || peer_left_ || !core_.port_present(port) || sample_ < 0) return 0;
     return core_.get_aux((uint32_t)sample_, port);
 }
 
+uint32_t Lockstep::spec_get_keys(int port) {
+    if (lost_ || peer_left_ || !core_.port_present(port)) return 0;
+    if (port != core_.lead_port()) return sample_ < 0 ? 0u : (uint32_t)spec_cur_.v[port];
+    uint32_t n = (uint32_t)(++sample_);
+    if (!t_first_) t_first_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
+    if (hooks_.update_local) hooks_.update_local();
+    pump();
+    // Same deterministic point as the players: before the inputs of sample n are delivered.
+    if (opt_.hash_interval > 0 && n > 0 && n % (uint32_t)opt_.hash_interval == 0) {
+        uint64_t h;
+        if (hooks_.hash_rdram && hooks_.hash_rdram(&h)) {
+            spec_cli_.add_local_hash(n, h);
+            if (hooks_.log) {
+                char buf[96];
+                std::snprintf(buf, sizeof buf, "sync check sample %u %s %016llx", n, opt_.hash_label.c_str(), (unsigned long long)h);
+                hooks_.log(buf);
+            }
+        }
+    }
+    if (n > 0) spec_cli_.consumed(n);
+    spec_service();
+    if (!spec_cli_.ready(n)) {
+        uint32_t t0 = hubnet::now_ms();
+        while (!spec_cli_.ready(n)) {
+            if (hooks_.idle) hooks_.idle();
+            pump();
+            spec_service();
+            uint32_t now = hubnet::now_ms();
+            if (spec_cli_.finished(n)) {
+                peer_left_ = true;
+                if (hooks_.log) hooks_.log("spectate: the match ended");
+                if (hooks_.request_stop) hooks_.request_stop();
+                return 0;
+            }
+            if (net_->ended()) {   // the host said goodbye: give straggling datagrams a moment, then end cleanly
+                if (!spec_ended_at_) spec_ended_at_ = now ? now : 1;
+                if (now - spec_ended_at_ > 1500) {
+                    peer_left_ = true;
+                    if (hooks_.log) hooks_.log("spectate: the host ended the session");
+                    if (hooks_.request_stop) hooks_.request_stop();
+                    return 0;
+                }
+            } else if (net_->failed() || now - std::max(t0, spec_cli_.last_rx()) > opt_.timeout_ms) {
+                abort_with("Connection lost (spectating: no data from the host for 10 s)");
+                return 0;
+            }
+            Sleep(1);
+        }
+    }
+    for (int p = 0; p < kPorts; p++) spec_cur_.v[p] = core_.port_present(p) ? spec_cli_.get(n, p) : 0;
+    if (hooks_.set_limiter) {   // far behind the live game (late join / hiccup): run unthrottled until we are close
+        bool behind = spec_cli_.lag() > spectate::kLiveLagSamples;
+        if (behind == spec_live_) { spec_live_ = !behind; hooks_.set_limiter(!behind); if (hooks_.log && behind) { char b[96]; std::snprintf(b, sizeof b, "spectate: catching up, %u samples behind", spec_cli_.lag()); hooks_.log(b); } }
+    }
+    if (n > 0 && n % 600 == 0 && hooks_.log) { char b[96]; std::snprintf(b, sizeof b, "spectate: sample %u of %u (lag %u)", n, spec_cli_.total(), spec_cli_.lag()); hooks_.log(b); }
+    spec_report();
+    return (uint32_t)spec_cur_.v[port];
+}
+
 uint32_t Lockstep::get_keys(int port) {
+    if (opt_.spectator) return spec_get_keys(port);
     if (lost_ || peer_left_ || !core_.port_present(port)) return 0;
     if (port != core_.lead_port()) {
         // Same poll round as the lead port: return the current sample's value.
@@ -294,6 +405,7 @@ uint32_t Lockstep::get_keys(int port) {
         uint64_t h;
         if (hooks_.hash_rdram && hooks_.hash_rdram(&h)) {
             core_.add_local_hash(n, h);
+            if (spec_host_) spec_host_->add_hash(n, h);
             if (hooks_.log) {
                 char buf[96];
                 std::snprintf(buf, sizeof buf, "sync check sample %u %s %016llx", n, opt_.hash_label.c_str(), (unsigned long long)h);
@@ -358,6 +470,13 @@ uint32_t Lockstep::get_keys(int port) {
         hooks_.log(b);
     }
     if (net_) report_mismatches();
+    if (spec_host_) {   // sample n is final (every port known): record it for spectators
+        uint64_t v[kPorts] = {0, 0, 0, 0};
+        for (int p = 0; p < kPorts; p++)
+            if (core_.port_present(p)) v[p] = (uint64_t)core_.get(n, p) | (opt_.wide ? (uint64_t)core_.get_aux(n, p) << 32 : 0ull);
+        spec_host_->push(v);
+        spec_service();
+    }
     return core_.get(n, port);
 }
 

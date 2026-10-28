@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.29.0",
+      "date": "2026-10-28",
+      "title": "Watch your friends play",
+      "new": [
+        "Watch: a friend who is in a lobby or a running game now has a Watch button (and a Watch entry in their menu). You join as a spectator without a controller and see the same game, from the start of the match even if you join late. Up to 2 spectators per room, for N64 games, Game Boy, Game Boy Color, Game Boy Advance, NES and SNES"
+      ],
+      "improved": [
+        "Spectating costs the players nothing: a watcher can never slow the match down, and it is refused while the free server is busy (over half of its daily budget)"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.28.8",
       "date": "2026-10-27",
       "title": "Install a greyed-out game",

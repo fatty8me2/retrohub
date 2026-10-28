@@ -40,6 +40,9 @@ constexpr uint8_t kPktBye = 0x53;
 constexpr uint8_t kPktDrop = 0x54;   // netdrop::Msg (drop_agree.h)
 
 uint64_t hash_bytes(const void* data, size_t bytes);
+/* The rolling hash of the per-frame output checksums (Engine::confirmed_out_hash): start with kRollBasis, fold each frame with roll_step. */
+constexpr uint64_t kRollBasis = 0xCBF29CE484222325ull;
+inline uint64_t roll_step(uint64_t h, uint64_t frame_sum) { return (h ^ frame_sum) * 0x100000001B3ull; }
 
 struct Sim {
     std::function<size_t()> state_size;
@@ -135,6 +138,11 @@ class Engine {
     bool all_remote_left() const { for (int p = 0; p < kPorts; p++) if (present(p) && !local(p) && !(left_mask_ >> cfg_.owner[p] & 1u)) return false; return left_mask_ != 0; }
     /* Highest frame whose inputs are all confirmed and which has been simulated (-1 none). */
     int64_t confirmed_frame() const { return conf_eff_; }
+    /* Spectating: called once per frame, in order from 0, when the frame becomes confirmed (all inputs known, never rolled back):
+     * the pads it was simulated with. hash_sink gets each periodic output hash (frames < `frame`) as it is produced. */
+    void set_confirmed_sink(std::function<void(uint32_t frame, const uint64_t pads[kPorts])> f) { confirmed_sink_ = std::move(f); }
+    void set_hash_sink(std::function<void(uint32_t frame, uint64_t hash)> f) { hash_sink_ = std::move(f); }
+    int hash_interval() const { return cfg_.hash_interval; }
 
   private:
     static constexpr int kInRing = 512;
@@ -175,6 +183,8 @@ class Engine {
     void drop_send(const netdrop::Agreement& ag);
     void drop_on_msg(int from, const uint8_t* d, size_t n);
     std::map<int, netdrop::Agreement> drops_;
+    std::function<void(uint32_t, const uint64_t*)> confirmed_sink_;
+    std::function<void(uint32_t, uint64_t)> hash_sink_;
     uint32_t ignore_mask_ = 0, done_mask_ = 0, drop_cut_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     uint32_t last_rx_[8] = {0, 0, 0, 0, 0, 0, 0, 0}, last_drop_send_ = 0, drop_done_at_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 

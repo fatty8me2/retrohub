@@ -73,13 +73,13 @@ std::string url_encode(const std::string& s)
     return o;
 }
 
-std::string hub_url(const std::string& server, const std::string& room, bool host, const std::string& name, int slot)
+std::string hub_url(const std::string& server, const std::string& room, bool host, const std::string& name, int slot, bool watch)
 {
     std::string base = server;
     while (!base.empty() && base.back() == '/') base.pop_back();
-    std::string u = base + "/hub?room=" + url_encode(room) + "&role=" + (host ? "host" : "join") +
+    std::string u = base + "/hub?room=" + url_encode(room) + "&role=" + (watch ? "watch" : host ? "host" : "join") +
                     "&name=" + url_encode(name);
-    if (!host && slot > 0) u += "&slot=" + std::to_string(slot);
+    if (!host && !watch && slot > 0) u += "&slot=" + std::to_string(slot);
     return u;
 }
 

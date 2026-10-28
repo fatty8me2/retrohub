@@ -15,6 +15,7 @@
 #include <string>
 
 #include "lockstep_core.h"
+#include "spectate.h"
 
 namespace hubnet { class Session; }
 
@@ -33,6 +34,8 @@ struct LockstepOptions {
     int hash_interval = 600;       // samples between RDRAM hashes
     uint32_t drop_silence_ms = 3000;   // a guest silent this long while we are blocked on it is dropped (3+ PCs): its port goes neutral, the rest play on
     uint32_t timeout_ms = 10000;   // no progress -> "Connection lost"
+    bool spectator = false;        // port-less spectator: replays the host's confirmed-input stream (spectate.h); never part of the slot mask
+    bool serve_spectators = true;  // host (slot 0, online): record the input history so spectators can join at any time
     std::string hash_label = "state";   // desync log text: "<label> hashes"
 };
 
@@ -71,6 +74,9 @@ class Lockstep {
 
     /* Call once after emulation ended (online): tells the others "bye" so they end cleanly instead of timing out. */
     void finish();
+    /* Host with spectators: send them the tail of the history and the end marker (waits up to ~4 s for their acks). finish() calls it; runners that
+     * end without finish() call it directly. Safe to call twice. */
+    void finish_spectators();
     bool peer_left() const { return peer_left_; }          // a partner ended the session (clean)
     int current_delay() const { return core_.delay(); }
     uint32_t delay_changes() const { return core_.delay_changes(); }
@@ -80,6 +86,9 @@ class Lockstep {
     bool connection_lost() const { return lost_; }
     bool desync_detected() const { return desync_; }
     uint32_t sample() const { return (uint32_t)(sample_ + 1); }
+    bool spectating() const { return opt_.spectator; }
+    spectate::Host* spectate_host() { return spec_host_.get(); }
+    const spectate::Client& spectate_client() const { return spec_cli_; }
 
   private:
     void pump();
@@ -112,6 +121,15 @@ class Lockstep {
     uint32_t bye_mask_ = 0, bye_last_[kPorts] = {0, 0, 0, 0};
     bool peer_left_ = false;
     void adapt(uint32_t now, uint32_t stall_ms);
+    /* spectating */
+    uint32_t spec_get_keys(int port);
+    void spec_service();
+    void spec_report();
+    std::unique_ptr<spectate::Host> spec_host_;   // host: confirmed-input history + stream to spectators
+    spectate::Client spec_cli_;                    // spectator: the stream
+    spectate::Frame spec_cur_;
+    bool spec_live_ = true, spec_finished_ = false;
+    uint32_t spec_ended_at_ = 0;
     bool left_blocks(uint32_t n) const;
     void drop_check(uint32_t now, uint32_t n);
     void drop_begin(int slot, uint32_t now);

@@ -106,6 +106,8 @@ struct Args {
     int owner[kPorts] = {0, -1, -1, -1};
     bool ports_given = false;
     bool strict_sync = false, no_hash = false, share_host_save = false;
+    bool spectate = false;        // --spectate: watch a running online match as a port-less spectator (server picks the slot; needs --net --room --ports)
+    bool no_spectators = false;   // --no-spectators: as the host, do not record/serve the input history to spectators
     bool fullscreen = false;
     std::vector<std::string> gfx;   // --gfx Key=t:value (GLideN64 settings from game_settings.h)
     std::string title;   // window caption (UTF-8), from --title; empty = leave the plugin's title
@@ -185,6 +187,8 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--emu-dir") ok = val(&a.emu_dir);
         else if (k == "--host-save-dir") ok = val(&a.host_save_dir);
         else if (k == "--share-host-save") a.share_host_save = true;
+        else if (k == "--spectate") a.spectate = true;
+        else if (k == "--no-spectators") a.no_spectators = true;
         else if (k == "--ports") { std::string s; ok = val(&s) && parse_ports(s, a.owner); a.ports_given = ok; }
         else if (k == "--strict-sync") a.strict_sync = true;
         else if (k == "--no-hash") a.no_hash = true;
@@ -219,9 +223,17 @@ static bool parse_args(int argc, char** argv, Args& a) {
         if (a.room.empty()) { std::fprintf(stderr, "--net requires --room\n"); return false; }
         if (!a.ports_given) { std::fprintf(stderr, "--net requires --ports\n"); return false; }
         std::string err;
+        if (a.spectate) {   // players = the owners named in --ports plus the host; the spectator's own slot comes from the server
+            if (a.share_host_save) { std::fprintf(stderr, "--spectate cannot be combined with --share-host-save\n"); return false; }
+            a.slot_mask = 1u;
+            for (int p = 0; p < kPorts; p++) if (a.owner[p] >= 0 && a.owner[p] < kPorts) a.slot_mask |= 1u << a.owner[p];
+            a.players = popcount32(a.slot_mask);
+            a.slot = 1;   // placeholder; Session adopts the slot the server assigns
+        } else {
         a.slot_mask = derive_slot_mask(a.owner, a.slot, a.players, &err);
         if (!a.slot_mask) { std::fprintf(stderr, "bad --players/--slot/--ports: %s\n", err.c_str()); return false; }
-    }
+        }
+    } else if (a.spectate) { std::fprintf(stderr, "--spectate needs --net\n"); return false; }
     bool any = false;
     for (int p = 0; p < kPorts; p++) {
         if (a.owner[p] < -1 || a.owner[p] > 3) { std::fprintf(stderr, "bad --ports value\n"); return false; }
@@ -992,7 +1004,8 @@ int main(int argc, char** argv) {
         sc.server = args.net;
         sc.room = args.room;
         sc.slot = args.slot;
-        sc.expected = args.players;
+        sc.expected = args.spectate ? 2 : args.players;
+        sc.spectate = args.spectate;
         if (!session.start(sc)) {
             logf_("n64run", "netplay: cannot start session (%s)", session.status().c_str());
             g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 4;
@@ -1010,8 +1023,9 @@ int main(int argc, char** argv) {
             Sleep(10);
         }
         logf_("n64run", "netplay: all %d players reachable", args.players);
+        if (args.spectate) { my_slot = session.my_slot(); logf_("n64run", "spectating as slot %d (no port, confirmed inputs only)", my_slot); }
 
-        {
+        if (!args.spectate) {
             DelayNegotiation dn;
             dn.fixed_delay = args.delay;
             dn.my_slot = my_slot;
@@ -1026,7 +1040,7 @@ int main(int argc, char** argv) {
         }
         logf_("n64run", "input delay: %d (%s)", args.delay, "in effect");
 
-        {   // every PC must run the same cheat list (an empty list included)
+        if (!args.spectate) {   // every PC must run the same cheat list (an empty list included)
             uint64_t ch = cheats::set_hash(g_cheats_boot, cheats::Target::N64);
             n64run::CheatSync cs = n64run::exchange_cheat_hash(session, my_slot, args.slot_mask, ch, 8000, [] {}, [](const std::string& m) { logline("n64run", m.c_str()); });
             if (cs == n64run::CheatSync::Mismatch) {
@@ -1145,8 +1159,10 @@ int main(int argc, char** argv) {
         if (args.delay < 0) args.delay = 2;   // offline: unused
         lo.delay = args.delay;
         lo.online = online;
+        lo.spectator = args.spectate;
+        lo.serve_spectators = !args.no_spectators;
         lo.strict_sync = args.strict_sync;
-        lo.adaptive_delay = delay_auto && !std::getenv("N64RUN_FIXED_DELAY");
+        lo.adaptive_delay = delay_auto && !args.spectate && !std::getenv("N64RUN_FIXED_DELAY");
         LockstepHooks hk;
         if (test_input.active()) {
             hk.update_local = [&] { test_input.update(); };

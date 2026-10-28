@@ -753,7 +753,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
             if (i == plan.ports.size() || plan.ports[i] == ',') { if (tok == std::to_string(room_my_slot())) mine = true; tok.clear(); }
             else tok += plan.ports[i];
         }
-        if (!mine) { launch_note(is_host, "The host's port plan doesn't include this PC."); return; }
+        if (!mine && !g_spectate_launch) { launch_note(is_host, "The host's port plan doesn't include this PC."); return; }   // a spectator owns no port
     }
     /* Smash match picker: the host's resolved spec rides in the launch message; every PC passes the identical --match. */
     std::string match_args;
@@ -783,6 +783,9 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
     std::string net = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
                       std::to_string(room_my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
                       plan.ports + hubui::delay_arg(delay);
+    if (g_spectate_launch)   // spectator: the friend's room code, no own slot (the server assigns one), the host's input delay is irrelevant
+        net = " --net " + quote(server_url()) + " --room " + g_spectate_code + "-" + std::to_string(launch_no) + " --spectate --players " +
+              std::to_string(plan.players) + " --ports " + plan.ports;
     if (e.system == hub::System::N64) {
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
         args += hubui::n64_extra_args(gsv);
