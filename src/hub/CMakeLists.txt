@@ -185,6 +185,15 @@ target_link_libraries(hub_invite_test PRIVATE hubinvite)
 add_executable(hub_qm_test test_qm_logic.cpp)
 target_link_libraries(hub_qm_test PRIVATE hubcommon)
 
+# Dolphin speed over a virtual DSU pad (no keyboard injection / focus): server wrapper + title readback; pure logic test; hidden-desktop live test.
+target_sources(RetroHub PRIVATE dolphin_speed.cpp)
+target_link_libraries(RetroHub PRIVATE dsuserver)
+add_executable(hub_dolphin_speed_test test_dolphin_speed.cpp dolphin_speed.cpp)
+target_link_libraries(hub_dolphin_speed_test PRIVATE dsuserver hubcommon ws2_32)
+add_executable(hub_dolphin_speed_live dolphin_speed_live.cpp dolphin_speed.cpp emulators.cpp)
+target_include_directories(hub_dolphin_speed_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_dolphin_speed_live PRIVATE dsuserver hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi user32 ws2_32)
+
 add_executable(hub_launchset_test test_launch_settings.cpp)
 target_link_libraries(hub_launchset_test PRIVATE hublogic hubcommon)
 

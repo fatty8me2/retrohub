@@ -32,6 +32,7 @@
 #include "games.h"
 #include "logic.h"
 #include "qm_logic.h"
+#include "dolphin_speed_logic.h"
 
 namespace hubemu {
 
@@ -854,6 +855,7 @@ std::string dolphin_ini_defaults(const std::string& in) {
     t = hubui::ini_set(t, "Display", "RenderToMain", "False");
     t = hubui::ini_set(t, "Display", "KeepWindowOnTop", "False");
     t = hubui::ini_set(t, "Input", "BackgroundInput", "False");              // Dolphin must ignore the pad while the hub menu has focus
+    t = hubui::ini_set(t, "General", "HotkeysRequireFocus", "False");        // the speed hotkeys come from the hub's DSU pad (dolphin_speed.cpp): no focus needed
     t = hubui::ini_set(t, "Core", "SkipIPL", "True");
     t = hubui::ini_set(t, "Interface", "SkipNKitWarning", "True");          // NKit images (.nkit.iso) otherwise stop at a dialog
     if (hubui::ini_get(t, "Core", "GFXBackend").empty()) t = hubui::ini_set(t, "Core", "GFXBackend", "D3D");   // Direct3D 11
@@ -881,7 +883,16 @@ std::string dolphin_hotkeys_ini(const std::string& in) {
     std::string t = in;
     if (hubui::ini_get(t, "Hotkeys", "Device").empty()) t = hubui::ini_set(t, "Hotkeys", "Device", "DInput/0/Keyboard Mouse");
     for (auto k : {hubqm::DolphinKey::Increase, hubqm::DolphinKey::Decrease})
-        t = hubui::ini_set(t, "Hotkeys", hubqm::dolphin_hotkey_name(k), hubqm::dolphin_hotkey_expr(k));
+        t = hubui::ini_set(t, "Hotkeys", hubqm::dolphin_hotkey_name(k), hubds::hotkey_expr(k));   // DSU pad button | Ctrl+Shift+F13/F14
+    return t;
+}
+
+/* DSUClient.ini (Dolphin's DSU client): one server, the hub's speed pad (dolphin_speed.cpp). Other entries are kept. */
+std::string dolphin_dsu_ini(const std::string& in) {
+    std::string t = hubui::ini_set(in, "Server", "Enabled", "True");
+    std::string e = hubui::ini_get(t, "Server", "Entries");
+    const std::string mine = hubds::server_entries();
+    if (e.find(mine) == std::string::npos) t = hubui::ini_set(t, "Server", "Entries", e + mine);
     return t;
 }
 
@@ -1032,6 +1043,7 @@ void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, co
     /* Every launch: only the memory card slots and which ports have a pad plugged in. */
     write_text(ini, dolphin_ini_ports(read_text(ini), pads));
     write_text(join(cfg, "Hotkeys.ini"), dolphin_hotkeys_ini(read_text(join(cfg, "Hotkeys.ini"))));
+    write_text(join(cfg, "DSUClient.ini"), dolphin_dsu_ini(read_text(join(cfg, "DSUClient.ini"))));
 }
 void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads) { prepare_dolphin(install_dir, pads, stored_profile("gc")); }
 

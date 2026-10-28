@@ -150,6 +150,11 @@ add_test(NAME hub_osk_test COMMAND hub_osk_test)                        # OSK ke
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
 add_test(NAME hub_qm_test COMMAND hub_qm_test)
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
+add_test(NAME hub_dolphin_speed_test COMMAND hub_dolphin_speed_test)   # DSU speed pad: ini text, press sequencing, title parsing, loopback (offline)
+# Live: boots Dolphin 2509 (deps\dolphin) on a hidden desktop with a generated homebrew .dol, muted, throwaway user dir; drives speed via the DSU pad
+# and checks Dolphin's own title speed. Offline (loopback only) but slow (~1 min) and needs deps\dolphin: label `dolphin`; exclude with -LE dolphin. Skips (77) if absent.
+add_test(NAME hub_dolphin_speed_live COMMAND hub_dolphin_speed_live --dolphin ${CMAKE_SOURCE_DIR}/deps/dolphin --work ${CMAKE_BINARY_DIR}/dolphin_speed_work)
+set_tests_properties(hub_dolphin_speed_live PROPERTIES LABELS dolphin SKIP_RETURN_CODE 77 TIMEOUT 300)
 add_test(NAME hub_boot_anim_test COMMAND hub_boot_anim_test)           # start animation: media map, timeline, launch rules, state machine, settings
 add_test(NAME real_boot_test COMMAND real_boot_test)                       # real console startup: own IPL/BIOS detection, config edits, custom sound decode
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
