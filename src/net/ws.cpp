@@ -63,9 +63,11 @@ bool WsClient::connect(const std::string& url)
 void WsClient::close()
 {
     stop_ = true;
-    {
+    {   /* Send our close frame but never wait for the server's answer: WinHttpWebSocketClose blocks (10 s+, on the UI thread) when the
+         * server is silent or already closed and the receive thread consumed its frame (the v1.29.2 hub hangs). Closing the handles
+         * then aborts the pending receive so the join below is immediate. */
         std::lock_guard<std::mutex> l(mu_);
-        if (h_->socket) WinHttpWebSocketClose(h_->socket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
+        if (h_->socket && state_ == WsState::Open) WinHttpWebSocketShutdown(h_->socket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
     }
     close_handles();
     if (thread_.joinable()) thread_.join();
