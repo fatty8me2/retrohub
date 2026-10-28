@@ -3,7 +3,7 @@
     {
       "version": "1.29.0",
       "date": "2026-10-28",
-      "title": "Watch friends, profiles, game nights, turbo, instant replay and chat in the game menu",
+      "title": "Watch friends, resync instead of game over, profiles, game nights, turbo and instant replay",
       "new": [
         "Save the last 30 seconds of your game as a video clip: tap View + LB on your controller. Clips go into the game's screenshots, show a play button in the gallery, and open in your default video player. Works in GBA, GB, GBC, NES, SNES, DS, PlayStation and N64 games, online too",
         "Profiles: click your avatar in the Friends panel to pick a pixel console icon (or your favourite game's cover as a frame), a favourite game and a short status line. Friends see them on your row and in rooms",
@@ -15,7 +15,8 @@
         "Game menu (View + Y) has a Chat page with quick phrases (GG, One more?, BRB, Lag?) and the on-screen keyboard, to the room or to the friend who last wrote to you",
         "Game menu has a Stats overlay switch: FPS, and online also ping, input delay and rollback frames, in the corner of the game (GB, GBA, DS, PlayStation, NES, SNES games)",
         "Game menu has How do I play: your controller drawn with what each button does in this game, from your own Controllers profile",
-        "Watch: a friend who is in a lobby or a running game now has a Watch button (and a Watch entry in their menu). You join as a spectator without a controller and see the same game, from the start of the match even if you join late. Up to 2 spectators per room, for N64 games, Game Boy, Game Boy Color, Game Boy Advance, NES and SNES"
+        "Watch: a friend who is in a lobby or a running game now has a Watch button (and a Watch entry in their menu). You join as a spectator without a controller and see the same game, from the start of the match even if you join late. Up to 2 spectators per room, for N64 games, Game Boy, Game Boy Color, Game Boy Advance, NES and SNES",
+        "If a Game Boy, GBA, NES or SNES online game drifts out of sync, the host's game state is sent to everyone and play carries on after a short pause with a \"Resynced\" note, instead of the game ending (up to 3 times per game)"
       ],
       "improved": [
         "GameCube speed changes instantly, even while the game menu is open",

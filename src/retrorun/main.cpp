@@ -2005,6 +2005,7 @@ bool Frontend::setup_net() {
         rc.max_pred = a.rb_pred;
         if (const char* hi = std::getenv("RB_HASH_INTERVAL")) rc.hash_interval = std::max(1, atoi(hi));
         rc.use_state_hash = false;   // confirmed video hash: serialized bytes differ benignly after a load (audio state)
+        if (!env_is("RETRORUN_NO_RESYNC") && !is_ps1 && !is_ps2) rc.max_resyncs = 3;   // desync recovery: the host's state replaces everybody's (rollback.h); a 4th desync ends the game
         rc.val_bytes = is_ps1 ? 8 : 2;   // PlayStation: buttons + 4 stick bytes + 16 event bits (disc swap) per port
         if (is_ps1) rc.event_mask = retrorun::kEventMask;
         const bool big_room = a.players >= 3;   // any 3+ PC rollback room   // 3-4 PCs through the relay hit its 400 frames/s room cap
@@ -2027,6 +2028,7 @@ bool Frontend::setup_net() {
         };
         t.now_ms = [] { return hubnet::now_ms(); };
         t.log = [](const std::string& s) { rlog("%s", s.c_str()); };
+        t.notice = [this](const std::string& s) { set_status(s); };
         t.relayed = [this] { for (int sl = 0; sl < 8; sl++) if (sl != a.slot && (slot_mask >> sl & 1u) && session.is_relayed(sl)) return true; return false; };
         rbe = std::make_unique<rb::Engine>(rc, make_rb_sim(), t);
         if (a.slot == 0 && !a.no_spectators) {   // keep the confirmed-input history so spectators can join at any time
@@ -2295,7 +2297,47 @@ rb::Sim Frontend::make_rb_sim() {
     s.state_size = [this] { return core.serialize_size(); };
     s.save = [this](uint8_t* b, size_t n) { return core.serialize(b, n); };
     s.load = [this](const uint8_t* b, size_t n) { return core.unserialize(b, n); };
-    s.step = [this](const uint64_t pads[4], bool visible) {
+    s.pack_state = [](const uint8_t* in, size_t n, std::vector<uint8_t>* out) {
+        mz_ulong zn = mz_compressBound((mz_ulong)n);
+        out->assign(zn, 0);
+        if (mz_compress2(out->data(), &zn, in, (mz_ulong)n, 6) != MZ_OK) return false;
+        out->resize(zn);
+        return true;
+    };
+    s.unpack_state = [](const uint8_t* in, size_t n, uint8_t* out, size_t raw) {
+        mz_ulong on = (mz_ulong)raw;
+        return mz_uncompress(out, &on, in, (mz_ulong)n) == MZ_OK && on == raw;
+    };
+    s.step = [this](const uint64_t pads_in[4], bool visible) {
+        uint64_t pads[4] = {pads_in[0], pads_in[1], pads_in[2], pads_in[3]};
+        /* QA only: RETRORUN_TEST_DESYNC="<slot>:<frame>,..." makes this PC run 24 core steps (replays included, so a rollback cannot heal it) with wrong pads and one extra emulated frame each, from that frame on */
+        static int poison_left = 0;
+        if (visible) {
+            static const std::vector<std::pair<int, uint64_t>> inj = [] {
+                std::vector<std::pair<int, uint64_t>> v;
+                if (const char* e = std::getenv("RETRORUN_TEST_DESYNC")) {
+                    std::string str = e;
+                    size_t i = 0;
+                    while (i < str.size()) {
+                        size_t j = str.find(',', i); if (j == std::string::npos) j = str.size();
+                        size_t c = str.find(':', i);
+                        if (c != std::string::npos && c < j) v.push_back({atoi(str.substr(i, c - i).c_str()), (uint64_t)atoll(str.substr(c + 1, j - c - 1).c_str())});
+                        i = j + 1;
+                    }
+                }
+                return v;
+            }();
+            static uint64_t seen_max = 0;
+            if (!inj.empty()) {
+                uint64_t cur = rbe ? rbe->cur() : 0;
+                if (cur >= seen_max) {   // a frame replayed after a resync is not poisoned again
+                    for (auto& e : inj) if (e.first == a.slot && e.second == cur) { poison_left = 24; rlog("TEST: injected desync at frame %llu", (unsigned long long)cur); }
+                    seen_max = cur + 1;
+                }
+            }
+        }
+        const bool poisoned = poison_left > 0;
+        if (poisoned) { poison_left--; for (int q = 0; q < 4; q++) pads[q] ^= 0x1F3u; }
         resim = !visible;
         fr_audio = 0xCBF29CE484222325ull;
         for (int p = 0; p < 4; p++) {
@@ -2305,6 +2347,7 @@ rb::Sim Frontend::make_rb_sim() {
             if (is_ps1 && retrorun::disc_event_of(pads[p], &dt)) disc_apply(dt, visible);   // before the frame runs, on every PC at the same frame
         }
         core.run();
+        if (poisoned) core.run();   // QA desync injection: one extra emulated frame, visible whatever the game does with the pads
         resim = false;
         if (const char* dd = std::getenv("RB_SAVEFRAMES")) {   // QA: dump every stepped frame as dd\NNNN.bmp
             static int n = 0;

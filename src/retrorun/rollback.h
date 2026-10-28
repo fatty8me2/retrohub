@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "drop_agree.h"
+#include "state_xfer.h"
 
 namespace rb {
 
@@ -55,6 +56,9 @@ struct Sim {
     std::function<void()> poll_local;              // poll devices once per run_frame (before read_local)
     std::function<void()> idle;                    // while blocked (pump window events)
     std::function<uint64_t()> mem_hash;            // optional: hash of live emulator memory (synctest extra check)
+    /* optional, desync recovery: deflate / inflate a savestate (without them the raw state is sent) */
+    std::function<bool(const uint8_t*, size_t, std::vector<uint8_t>*)> pack_state;
+    std::function<bool(const uint8_t*, size_t, uint8_t* out, size_t raw)> unpack_state;
 };
 
 struct Transport {
@@ -63,6 +67,7 @@ struct Transport {
     std::function<bool(int* from, std::vector<uint8_t>* out)> recv;
     std::function<uint32_t()> now_ms;
     std::function<void(const std::string&)> log;
+    std::function<void(const std::string&)> notice;   // optional: short user-facing note ("Resynced")
     std::function<bool()> relayed;   // optional: some peer is reached through the server relay (which caps a room at 400 frames/s): send every other frame only
 };
 
@@ -83,6 +88,9 @@ struct Config {
     bool relay_half_rate = false;  // with Transport::relayed(): send the per-frame packet every other frame only (PlayStation: 4-PC rooms)
     uint32_t send_gap_ms = 8;      // min ms between the non-forced packets (the per-frame input packet is always sent); PlayStation 30: a relayed 4-PC room is capped at 400 frames/s
     uint64_t event_mask = 0;       // one-shot event bits of the input value (PlayStation disc swap): never copied into predicted or held frames
+    int max_resyncs = 0;           // desync recovery: the host's state replaces everybody's, up to this many times per session (0 = a desync ends the game)
+    uint32_t resync_max_bytes = 3000000;   // compressed state bigger than this is not sent (the desync ends the game as before)
+    uint32_t resync_timeout_ms = 20000;
     int val_bytes = 2;             // bytes of one port's input on the wire: 2 (16 buttons: GB/GBA) 6 (PlayStation: buttons + 4 stick bytes) or 8 (+ 16 event bits)
 };
 
@@ -100,6 +108,7 @@ struct Stats {
     double rtt_ms = 0;                   // smoothed RTT of the worst peer (0 = unmeasured)
     uint64_t hashes_compared = 0;
     double max_skew = 0;
+    uint64_t resyncs = 0;
     uint64_t save_n = 0, load_n = 0;
     double save_us = 0, load_us = 0, step_us = 0;
     uint64_t step_n = 0;
@@ -126,6 +135,10 @@ class Engine {
 
     uint32_t cur() const { return cur_; }
     bool desync() const { return desync_; }
+    int resyncs() const { return epoch_; }               // completed desync recoveries
+    bool resyncing() const { return rs_ != Rs::None; }   // game paused while a state is transferred
+    /* Reusable state transfer (desync recovery now, drop-in later): the host snapshots the confirmed state, streams it, and everybody
+     * loads it at the same frame. Hooks for a joiner: see resync_begin_host(). */
     bool connection_lost() const { return lost_; }
     uint64_t confirmed_out_hash() const { return roll_out_; }
     uint64_t confirmed_in_hash() const { return roll_in_; }
@@ -177,6 +190,26 @@ class Engine {
         if (done_mask_ >> o & 1u) return conf_upto_[p] < (int64_t)drop_cut_[o] - 1;
         return true;
     }
+    enum class Rs { None, Wait, Recv, Loaded, Send };
+    void request_resync(const char* why);
+    int host_slot() const { for (int s = 0; s < 8; s++) if (cfg_.slot_mask >> s & 1u) return s; return 0; }
+    void resync_begin_host();
+    void resync_on_msg(int from, const uint8_t* d, size_t n);
+    void resync_service(uint32_t now);
+    void resync_fail(const char* why);
+    void resync_apply(uint32_t frame, const std::vector<uint8_t>& raw, uint64_t ro, uint64_t ri);
+    void xfer_send(const void* d, size_t n);
+    bool hash_epoch_ok(uint32_t tagged) const { return (tagged >> 30) == (uint32_t)(epoch_ & 3); }
+    Rs rs_ = Rs::None;
+    bool rs_want_ = false, finishing_ = false;
+    int epoch_ = 0;
+    int64_t floor_ = 0;                  // inputs below this frame are baked into the last resync state: never roll back past it
+    uint32_t rs_started_ = 0, rs_last_ = 0, rs_extra_ms_ = 0;
+    uint64_t rs_ro_ = 0, rs_ri_ = 0;
+    uint32_t rs_frame_ = 0;
+    std::vector<uint8_t> rs_raw_;
+    xfer::Sender snd_;
+    xfer::Receiver rcv_;
     void drop_check(uint32_t now);
     void drop_begin(int slot);
     void drop_service(uint32_t now);
