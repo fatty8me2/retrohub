@@ -219,6 +219,22 @@ int main() {
         host.service(50 + spectate::kHoldMs, 1u << 3, [&](int, const uint8_t*, int) {});
         host.release(3);
         CHECK(!host.held(3), "release ends the hold");
+        {   // extend_hold keeps a spectator held past kHoldMs while its snapshot is prepared
+            spectate::Host hh(0x1, 4);
+            hh.set_hold_ms(spectate::kHoldMs);
+            for (int i = 0; i < 400; i++) hh.push(v);
+            int n2 = 0;
+            hh.service(100, 1u << 1, [&](int, const uint8_t*, int) { n2++; });
+            hh.extend_hold(1, 100 + spectate::kHoldMs - 10);
+            hh.service(100 + spectate::kHoldMs + 5, 1u << 1, [&](int, const uint8_t*, int) { n2++; });
+            CHECK(n2 == 0 && hh.held(1), "extended hold");
+            // the spectator leaves (mask 0) and a new one takes the slot: it starts held again, not at the old position
+            hh.start_peer_at(1, 350, 200);
+            hh.service(300, 0, [&](int, const uint8_t*, int) {});
+            n2 = 0;
+            hh.service(400, 1u << 1, [&](int, const uint8_t*, int) { n2++; });
+            CHECK(n2 == 0 && hh.held(1), "a departed spectator is forgotten");
+        }
         spectate::Host legacy(0x1, 4);   // hold 0 (N64 lockstep): streams at once
         for (int i = 0; i < 10; i++) legacy.push(v);
         sent = 0;

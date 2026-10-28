@@ -169,6 +169,11 @@ void Host::release(int slot) {
     if (it != peers_.end() && it->second.hold) it->second.hold = false;
 }
 
+void Host::extend_hold(int slot, uint32_t now) {
+    auto it = peers_.find(slot);
+    if (it != peers_.end() && it->second.hold && !it->second.fresh) it->second.hold_since = now ? now : 1;
+}
+
 bool Host::held(int slot) const {
     auto it = peers_.find(slot);
     return it == peers_.end() ? hold_ms_ > 0 : it->second.hold;

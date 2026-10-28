@@ -93,6 +93,8 @@ class Host {
     bool start_peer_at(int slot, uint32_t frame, uint32_t now_ms);
     void release(int slot);
     bool held(int slot) const;
+    /* Keep a held spectator held (its snapshot is still being prepared): restart its hold timer. */
+    void extend_hold(int slot, uint32_t now_ms);
 
   private:
     struct Peer { uint32_t acked = 0, consumed = 0, sent = 0, last_send = 0, last_progress = 0, last_hb = 0, hold_since = 0; bool fresh = true, hold = true; };
