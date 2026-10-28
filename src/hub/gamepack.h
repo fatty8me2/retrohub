@@ -30,11 +30,19 @@ std::vector<Entry> parse_folder_html(const std::string& html);
 /* Pure: a title made safe for use as a folder name (Windows-illegal characters become spaces, runs collapsed). */
 std::string safe_name(const std::string& t);
 
+/* Pure: Drive folder ids from pasted text - drive.google.com/drive/folders/<id>, /folder/<id> (old form),
+ * embeddedfolderview?id=<id>, or bare ids. Order preserved, duplicates dropped. */
+std::vector<std::string> parse_links(const std::string& text);
+
+/* Pure: true when `name` is a console short code usable as a pack subfolder (n64, gc, wiiu, 3ds, nds, gba, gbc, gb, ps1). */
+bool console_code(const std::string& name);
+
 /* List a Drive folder. Returns false on network error (out is left empty). */
 bool list_folder(const std::string& folder_id, std::vector<Entry>* out);
 
-/* The game subfolder of `sys_short` whose name matches `title` (norm_title on both sides). "" when absent. */
-std::string match_game(const std::string& sys_short, const std::string& title);
+/* The game subfolder of `sys_short` whose name matches `title` (norm_title on both sides), in the built-in pack or
+ * in one of `roots` (extra shared folders with the same layout: a subfolder per console). "" when absent. */
+std::string match_game(const std::string& sys_short, const std::string& title, const std::vector<std::string>& roots = {});
 
 /* The files inside a game folder (subfolders skipped). */
 bool list_files(const std::string& game_folder_id, std::vector<Entry>* out);
@@ -51,6 +59,17 @@ std::string pack_root();
  * written only when every file finished: a cancelled / partial install can be retried). */
 bool installed(const std::string& sys_short, const std::string& title);
 
+/* Background index of what is installable: the built-in pack plus every extra root (same layout). One job at a
+ * time; index_refresh() is a no-op while one runs. Lets the UI grey out Install for games that are not in any pack
+ * without a network round-trip per click. */
+enum class IndexState { Unknown = 0, Checking = 1, Ready = 2 };
+void index_refresh(const std::vector<std::string>& roots);   // no-op while a job runs
+void index_shutdown();                                       // app exit: stop the job and join it
+long long index_last_attempt_ms();                           // 0 = never attempted (steady clock, ms)
+IndexState index_state(const std::string& sys_short);        // per console; Ready = membership known for it
+bool index_has(const std::string& sys_short, const std::string& title);   // false unless Ready
+bool index_source(const std::string& sys_short);             // a pack source exists for this console (built-in, or an extra root once known)
+
 /* Background install job (one at a time). */
 struct Installer {
     enum State { Idle, Working, Failed } state = Idle;
@@ -64,7 +83,7 @@ struct Installer {
     std::mutex mu;
     std::thread th;
     ~Installer();
-    void start(const std::string& sys, const std::string& title);   // state -> Working
+    void start(const std::string& sys, const std::string& title, const std::vector<std::string>& roots = {});   // state -> Working
     void request_cancel();                                          // stops between files / mid-transfer
     /* UI thread, each frame: when the job ended, join it and return true exactly once; success tells the result. */
     bool poll(bool* success);

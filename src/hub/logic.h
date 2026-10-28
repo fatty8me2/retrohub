@@ -63,6 +63,7 @@ struct Settings {
     bool attract_mode = true;          // Home hero turns into a slideshow of your own screenshots / save-state pictures after ~60 s idle (attract.cpp)
     bool share_games = true;           // "Show my games to friends": publish the list of game titles (never files) so friends see them greyed out
     bool show_friend_games = true;     // library chip "Show friends' games"
+    std::string pack_links;            // extra shared game packs: public Google Drive folder links (same layout as GamePack1), separated by commas or spaces
     bool share_playtime = true;        // "Share my play time with friends": per-game totals (whole minutes) go to the friends server when a session ends
     bool auto_friend = true;           // "Automatically add people I play with as friends" (sent to the server in the hello)
     bool username_claimed = false;     // this PC has a username the server confirmed (name below IS that username); false = still the provisional Windows name
