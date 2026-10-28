@@ -420,7 +420,7 @@ void Engine::resync_fail(const char* why) {
 }
 
 bool Engine::snapshot_confirmed(std::vector<uint8_t>* raw, uint32_t* frame, uint64_t* ro, uint64_t* ri) {
-    if (rs_ != Rs::None || rs_want_ || state_n_ == 0) return false;
+    if (rs_ != Rs::None || rs_want_ || state_n_ == 0 || rb_to_ >= 0) return false;
     int64_t F = roll_next_;
     if (F < (int64_t)cur_ - (ring_n_ - 1) || F > (int64_t)cur_) return false;
     raw->assign(state_n_, 0);

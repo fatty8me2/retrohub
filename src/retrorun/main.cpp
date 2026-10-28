@@ -2173,7 +2173,10 @@ bool Frontend::ls_spectator_live_join() {
             if (from != 0 || m.empty()) continue;
             last_rx = now0;
             if (m[0] == spectate::kPktData) {
-                jc.on_legacy_data();
+                if (jc.mode() == spectate::JoinClient::Mode::Knock) {
+                    if (m.size() < 6 || rb::xfer::g32(m.data() + 2) != 0) continue;   // inputs from F that overtook our Begin: resent later
+                    jc.on_legacy_data();
+                }
                 cli.on_data(m.data(), m.size(), now0);
             } else if (m[0] == spectate::kPktNoLive && m.size() >= 3) {
                 if (jc.mode() == spectate::JoinClient::Mode::Knock) {
@@ -2559,7 +2562,9 @@ void Frontend::spec_host_service() {
     uint32_t sm = session.spectator_mask();
     if (!spec_join_q_.empty()) spec_process_joins();
     if (!spec_snap_.empty()) spec_snap_service(sm);
-    if (spec_host_ && sm) spec_host_->service(hubnet::now_ms(), sm, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
+    for (auto it = spec_snap_done_.begin(); it != spec_snap_done_.end();) { if (!(sm >> it->first & 1u)) it = spec_snap_done_.erase(it); else ++it; }
+    // also with sm == 0: service() forgets departed spectators, so a new one in the same slot starts held, not at a stale position
+    if (spec_host_) spec_host_->service(hubnet::now_ms(), sm, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
 }
 
 void Frontend::spec_nolive(int slot, uint8_t reason) {
@@ -2635,6 +2640,7 @@ void Frontend::spec_snap_service(uint32_t sm) {
         const int s = it->first;
         SpecSnap& x = *it->second;
         const bool gone = !(sm >> s & 1u);
+        if (!x.sending && !gone) spec_h()->extend_hold(s, now);   // compressing: the hold must not expire into a stream from 0
         if (!x.sending && x.ready) {
             if (x.th.joinable()) x.th.join();   // finished: no wait
             const bool rel = session.is_relayed(s);
@@ -2650,7 +2656,7 @@ void Frontend::spec_snap_service(uint32_t sm) {
             m.hash = x.raw_hash; m.a = x.ro; m.b = x.ri;
             spec_h()->start_peer_at(s, x.frame, now);   // inputs from F stream right away; the spectator buffers them while the state downloads
             spec_snap_epoch_ = (uint8_t)((spec_snap_epoch_ + 1) & 0x7F);
-            x.snd.start((uint8_t)(0x80 | spec_snap_epoch_), m, std::move(x.z), 1u << s, now ? now : 1, rel ? 100.0 : 400.0);
+            x.snd.start((uint8_t)(0x80 | spec_snap_epoch_), m, std::move(x.z), 1u << s, now ? now : 1, rel ? 100.0 : 1200.0);   // direct: ~840 KB/s; relay: the room's frame cap
             x.raw.clear(); x.raw.shrink_to_fit();
             x.sending = true; x.t_send = now;
             rlog("spectate: sending the live state to slot %d: frame %u, %u bytes, %u on the wire in %u chunks (%s), ready %u ms after the join", s, m.frame, m.raw,
@@ -2722,7 +2728,11 @@ int Frontend::run_rb_spectator() {
         while (session.recv(&from, &m)) {
             if (from != 0 || m.empty()) continue;
             if (m[0] == spectate::kPktData) {
-                if (jc.mode() == spectate::JoinClient::Mode::Knock) jc.on_legacy_data();   // an old host streams from 0 at once
+                if (jc.mode() == spectate::JoinClient::Mode::Knock) {
+                    // an old host streams from sample 0 at once; inputs from F > 0 that overtook our Begin are dropped (the host resends them)
+                    if (m.size() < 6 || rb::xfer::g32(m.data() + 2) != 0) continue;
+                    jc.on_legacy_data();
+                }
                 if (cli.on_data(m.data(), m.size(), now0)) last_rx_chk = now0;
             } else if (m[0] == spectate::kPktNoLive && m.size() >= 3) {
                 if (jc.mode() == spectate::JoinClient::Mode::Knock) {

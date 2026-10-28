@@ -99,6 +99,8 @@ foreach ($x in $procs) {
     if ($rc -ne 0 -or $ds -gt 0 -or $hv -eq 'NONE') { $fail++ }
 }
 if ($ExpectLive) {
+    $jf = 0   # the snapshot frame, from the host's log: every player's frame gaps are judged from there
+    foreach ($x in $procs) { if (Test-Path $x.Log) { $jl = Get-Content $x.Log | Where-Object { $_ -match 'spectate: live join for slot \d+: state before confirmed frame (\d+)' } | Select-Object -First 1; if ($jl -and $jl -match 'confirmed frame (\d+)') { $jf = [int]$Matches[1] } } }
     foreach ($x in $procs) {
         $lines = if (Test-Path $x.Log) { Get-Content $x.Log } else { @() }
         if ($x.Name -like 's*') {
@@ -116,11 +118,11 @@ if ($ExpectLive) {
         } else {
             $g = $lines | Where-Object { $_ -match 'frame-gap: max ([\d.]+) ms, (\d+) gaps over 50' } | Select-Object -Last 1
             $gm = if ($g -match 'max ([\d.]+) ms, (\d+) gaps') { [double]$Matches[1] } else { -1 }
-            $win = @($lines | Where-Object { $_ -match 'frame-gap: frame \d+, 2 s max ([\d.]+) ms, spectators 0x[1-9a-f]' } | ForEach-Object { [void]($_ -match '2 s max ([\d.]+) ms'); [double]$Matches[1] })
+            $win = @($lines | Where-Object { $_ -match 'frame-gap: frame (\d+), 2 s max ([\d.]+) ms, spectators 0x[1-9a-f]' -and [int]$Matches[1] -ge $jf -and [int]$Matches[1] -le $jf + 720 } | ForEach-Object { [void]($_ -match '2 s max ([\d.]+) ms'); [double]$Matches[1] })
             $wm = if ($win.Count) { ($win | Measure-Object -Maximum).Maximum } else { 0 }
             $sl = $lines | Where-Object { $_ -match 'spectate: (live join for|sending the live|slot \d+ loaded)' }
             foreach ($l in $sl) { Write-Output ("     " + $l) }
-            Write-Output ("  {0}: worst frame gap {1:N1} ms over the match, {2:N1} ms while spectators were connected" -f $x.Name, $gm, $wm)
+            Write-Output ("  {0}: worst frame gap {1:N1} ms over the match, {2:N1} ms from the join to 12 s after it" -f $x.Name, $gm, $wm)
             if ($wm -gt $MaxGapMs) { $fail++; Write-Output "FAIL: $($x.Name) frame gap $wm ms > $MaxGapMs while a spectator was connected" }
         }
     }

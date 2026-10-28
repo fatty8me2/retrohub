@@ -55,7 +55,7 @@ void Lockstep::spec_service() {
     uint32_t now = hubnet::now_ms();
     if (spec_host_) {
         uint32_t sm = net_->spectator_mask();
-        if (sm) spec_host_->service(now, sm, [&](int slot, const uint8_t* d, int n) { net_->send(slot, d, n); });
+        spec_host_->service(now, sm, [&](int slot, const uint8_t* d, int n) { net_->send(slot, d, n); });   // sm == 0 too: forgets departed spectators
     } else if (opt_.spectator) {
         spec_cli_.service(now, opt_.my_slot, [&](int slot, const uint8_t* d, int n) { net_->send(slot, d, n); });
     }
