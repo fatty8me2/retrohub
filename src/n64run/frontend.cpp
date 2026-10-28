@@ -1644,6 +1644,7 @@ int main(int argc, char** argv) {
                 void* p = g_core.MemPtr(M64P_DBG_PTR_RDRAM);
                 if (!p) return false;
                 *out = hash_block(p, 8u * 1024u * 1024u);
+                if (std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_BLOCKS")) { std::string l = "QA-BLOCKS"; char b[24]; for (int i = 0; i < 128; i++) { std::snprintf(b, sizeof b, " %04x", (unsigned)(hash_block(static_cast<uint8_t*>(p) + i * 65536, 65536) & 0xFFFF)); l += b; } logf_("qa", "%s", l.c_str()); }
                 return true;
             };
         } else logf_("n64run", "RDRAM desync hashing disabled");
