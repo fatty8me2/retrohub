@@ -94,12 +94,14 @@ void open_menu(std::vector<Step>& v) {
     v.push_back(hold(VIEW | Y, 120, "View+Y"));
     v.push_back(wait(250));
     v.push_back(expect_open(true, "menu is open"));
+    v.push_back(expect("ImGui nav is off while the menu is open", [](const QmE2EState& st, std::string* w) { *w = "imgui_nav=" + std::to_string(st.imgui_nav); return !st.imgui_nav; }));
 }
 /* Close with B and wait out the 700 ms cooldown before the next View+Y. */
 void close_b(std::vector<Step>& v) {
     v.push_back(closing(press(B_, "B")));
     v.push_back(closing(wait(800)));
     v.push_back(expect("closed by B", [](const QmE2EState& st, std::string* why) { *why = "open=" + std::to_string(st.open) + " why=" + st.close_why; return !st.open && st.close_why == "B"; }));
+    v.push_back(expect("ImGui nav restored after close", [](const QmE2EState& st, std::string* w) { *w = "imgui_nav=" + std::to_string(st.imgui_nav); return st.imgui_nav; }));
 }
 void down_to(std::vector<Step>& v, const std::string& id, int presses) {
     for (int i = 0; i < presses; ++i) { v.push_back(press(DOWN, "down")); v.push_back(wait(60)); }
@@ -118,6 +120,21 @@ void build() {
         s.steps.push_back(wait(400, "everything released"));
         s.steps.push_back(expect_open(true, "still open after release"));
         s.steps.push_back(expect_sel("Resume"));
+        close_b(s.steps);
+        g_sc.push_back(s);
+    }
+    {   // 1b. presses made in the game (A, B, d-pad taps and holds) before View+Y never reach the menu
+        Scenario s{"game presses before the open"};
+        s.steps.push_back(tap(B_, "B tap in the game", 60));
+        s.steps.push_back(tap(A_, "A tap in the game", 60));
+        s.steps.push_back(press(DOWN, "down in the game"));
+        s.steps.push_back(press(B_, "B in the game", 40));
+        s.steps.push_back(wait(100));
+        s.steps.push_back(hold(VIEW | Y, 120, "View+Y"));
+        s.steps.push_back(wait(600));
+        s.steps.push_back(expect_open(true, "open, not closed by an old B"));
+        s.steps.push_back(expect_sel("Resume"));
+        s.steps.push_back(expect_cmds({}, "nothing activated by an old A"));
         close_b(s.steps);
         g_sc.push_back(s);
     }
