@@ -85,7 +85,12 @@ void Host::service(uint32_t now, uint32_t spec_mask, const SendFn& send) {
     for (int s = 0; s < 4; s++) {
         if (!(spec_mask >> s & 1u)) continue;
         Peer& p = peers_[s];
-        if (p.fresh) { p.fresh = false; p.last_progress = now; }
+        if (p.fresh) { p.fresh = false; p.last_progress = now; p.hold_since = now ? now : 1; if (!hold_ms_) p.hold = false; }
+        if (p.hold) {
+            if (now - p.hold_since < hold_ms_) continue;
+            p.hold = false;
+            p.last_progress = now;
+        }
         // acks stalled while data is outstanding: go back to the acked position
         if (p.sent > p.acked && now - p.last_progress > kResendAfterMs) { p.sent = p.acked; p.last_progress = now; }
         for (int i = 0; i < 16; i++) {
@@ -112,6 +117,7 @@ bool Host::on_ack(int from, const uint8_t* d, size_t n, uint32_t now) {
     auto it = peers_.find(from);
     if (it == peers_.end()) return true;   // not (yet) a known spectator
     Peer& pe = it->second;
+    if (pe.hold) { pe.hold = false; pe.last_progress = now; }   // a spectator without live join: from 0
     if (next < pe.acked) { pe.acked = next; pe.sent = next; pe.consumed = consumed; pe.last_progress = now; }   // restarted spectator
     if (next > pe.acked) { pe.acked = next; pe.last_progress = now; }
     if (pe.sent < pe.acked) pe.sent = pe.acked;
@@ -148,7 +154,51 @@ int64_t Host::acked_of(int slot) const {
     return it == peers_.end() ? -1 : (int64_t)it->second.acked;
 }
 
+bool Host::start_peer_at(int slot, uint32_t frame, uint32_t now) {
+    if (slot < 0 || slot >= 8 || frame > total()) return false;
+    Peer p;
+    p.acked = p.consumed = p.sent = frame;
+    p.fresh = false; p.hold = false;
+    p.last_progress = now; p.hold_since = now;
+    peers_[slot] = p;
+    return true;
+}
+
+void Host::release(int slot) {
+    auto it = peers_.find(slot);
+    if (it != peers_.end() && it->second.hold) it->second.hold = false;
+}
+
+bool Host::held(int slot) const {
+    auto it = peers_.find(slot);
+    return it == peers_.end() ? hold_ms_ > 0 : it->second.hold;
+}
+
+JoinDecision decide_join(bool live_capable, uint32_t total, int in_flight, bool slot_in_flight, bool engine_busy) {
+    if (slot_in_flight) return JoinDecision::Ignore;   // a repeated knock while its snapshot is being prepared or sent
+    if (!live_capable) return JoinDecision::NoLiveUnsupported;
+    if (total < kMinLiveFrames) return JoinDecision::NoLiveEarly;
+    if (engine_busy || in_flight >= kMaxSnapshotsInFlight) return JoinDecision::Busy;   // no answer: the spectator knocks again
+    return JoinDecision::Snapshot;
+}
+
+bool JoinClient::want_knock(uint32_t now) {
+    if (mode_ != Mode::Knock) return false;
+    if (last_knock_ && now - last_knock_ < kKnockMs) return false;
+    last_knock_ = now ? now : 1;
+    if (!first_knock_) first_knock_ = last_knock_;
+    return true;
+}
+
 /* ---------------------------------------------------------------- Client */
+
+void Client::start_at(uint32_t frame) {
+    store_.clear();
+    base_ = consumed_ = frame;
+    if (total_ < frame) total_ = frame;
+    host_h_.clear(); my_h_.clear(); recent_mine_.clear();
+    dirty_ = true;
+}
 
 bool Client::on_data(const uint8_t* d, size_t n, uint32_t now) {
     const uint8_t* p = d;

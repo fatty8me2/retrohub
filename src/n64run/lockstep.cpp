@@ -100,6 +100,9 @@ void Lockstep::pump() {
                 bye_last_[msg[1]] = last;
                 core_.peer_left(msg[1]);
             }
+        } else if (msg[0] == spectate::kPktJoin || msg[0] == spectate::kPktNoLive || msg[0] == 0x55 /* rb::xfer::kPkt */) {
+            const bool ok = opt_.spectator ? from == 0 : (from > 0 && (net_->spectator_mask() >> from & 1u));
+            if (ok && hooks_.on_spectate_msg) hooks_.on_spectate_msg(from, msg);
         } else if (msg[0] == spectate::kPktAck) {
             if (spec_host_ && from > 0 && (net_->spectator_mask() >> from & 1u)) spec_host_->on_ack(from, msg.data(), msg.size(), hubnet::now_ms());
         } else if (msg[0] == spectate::kPktData) {

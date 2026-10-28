@@ -49,6 +49,9 @@ struct LockstepHooks {
     std::function<void(int slot, uint32_t cutoff)> on_drop;   // a guest dropped mid-match; its port is neutral from sample `cutoff` on (may be empty)
     std::function<void()> request_stop;                       // M64CMD_STOP
     std::function<void(const std::string&)> log;
+    /* Live spectator join (retrorun): spectate::kPktJoin / kPktNoLive and state-transfer datagrams (first byte 0x55, state_xfer.h) between
+     * the host and a spectator are handed here instead of to the lockstep core. Empty: they are dropped (N64: no live join). */
+    std::function<void(int from, const std::vector<uint8_t>& msg)> on_spectate_msg;
 };
 
 class Lockstep {
@@ -89,6 +92,9 @@ class Lockstep {
     bool spectating() const { return opt_.spectator; }
     spectate::Host* spectate_host() { return spec_host_.get(); }
     const spectate::Client& spectate_client() const { return spec_cli_; }
+    spectate::Client& spectate_client_mut() { return spec_cli_; }
+    /* Spectator live join: the state before sample n has been loaded; continue from there (the inputs from n are in the client). */
+    void spectate_start_at(uint32_t n) { sample_ = (int64_t)n - 1; spec_cli_.start_at(n); }
 
   private:
     void pump();
