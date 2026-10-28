@@ -419,6 +419,17 @@ void Engine::resync_fail(const char* why) {
     desync_ = true;
 }
 
+bool Engine::snapshot_confirmed(std::vector<uint8_t>* raw, uint32_t* frame, uint64_t* ro, uint64_t* ri) {
+    if (rs_ != Rs::None || rs_want_ || state_n_ == 0) return false;
+    int64_t F = roll_next_;
+    if (F < (int64_t)cur_ - (ring_n_ - 1) || F > (int64_t)cur_) return false;
+    raw->assign(state_n_, 0);
+    if (F == (int64_t)cur_) { if (!sim_.save(raw->data(), state_n_)) return false; }
+    else std::memcpy(raw->data(), ring_state(F), state_n_);
+    *frame = (uint32_t)F; *ro = roll_out_; *ri = roll_in_;
+    return true;
+}
+
 /* Host: snapshot the state before frame F = the first frame whose inputs are not all confirmed yet (so it depends on confirmed inputs only), compress it, stream it. */
 void Engine::resync_begin_host() {
     rs_want_ = false;

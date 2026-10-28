@@ -1,7 +1,8 @@
 /* Spectate: "Watch" on a friend's room. This PC joins the friend's lobby room as a spectator seat (role=watch; it is not a member and
  * costs the room nothing), gets the host's launch message (stored by the server, or live if the host launches while we wait), and starts
- * n64run / retrorun with --spectate. The runner replays the host's confirmed inputs (src/n64run/spectate.h), so the watcher sees the same
- * game, any time it joins. Limits: 2 spectators per room, refused when the server is over 50% of its daily budget, and games that
+ * n64run / retrorun with --spectate. retrorun joins live: the host sends a snapshot of its confirmed state and the confirmed inputs from
+ * there (src/n64run/spectate.h, kPktJoin), the watcher fast-forwards the few buffered frames and follows in real time. n64run has no state
+ * transfer: it replays the host's confirmed inputs from the start at full speed until it reaches the live game (the notice says so). Limits: 2 spectators per room, refused when the server is over 50% of its daily budget, and games that
  * share a host save or use cheats can't be followed (the watcher would start from a different state; the runner would report a desync).
  * Supported: N64 (not native Smash 64), GB/GBC/GBA (no link cable), NES, SNES. */
 #include "app.h"
@@ -75,6 +76,7 @@ void spectate_tick() {
         if (A.proc) { spec_stop(); set_notice("A game is already running on this PC.", 6.0); return; }
         if (ss && ss->type == hubui::Json::Bool && ss->b) { spec_stop(); set_notice("This game shares the host's save, so it can't be watched.", 8.0); return; }
         if (!hubui::parse_launch_plan(j, &ports, &players)) { spec_stop(); set_notice(SP.friend_name + "'s RetroHub is too old to be watched - ask them to update.", 8.0); return; }
+        if (!hubui::watch_joins_live(g->system == hub::System::N64)) set_notice("Watching " + SP.friend_name + "." + std::string(hubui::watch_join_note(true, true)), 10.0);
         g_spectate_launch = true;
         g_spectate_code = SP.code;
         launch_online(*g, (int)j.num("launch", 1), 0, false, j.str("core"), false, nullptr, &j, nullptr, &e.body);

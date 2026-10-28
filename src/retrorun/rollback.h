@@ -155,6 +155,10 @@ class Engine {
      * the pads it was simulated with. hash_sink gets each periodic output hash (frames < `frame`) as it is produced. */
     void set_confirmed_sink(std::function<void(uint32_t frame, const uint64_t pads[kPorts])> f) { confirmed_sink_ = std::move(f); }
     void set_hash_sink(std::function<void(uint32_t frame, uint64_t hash)> f) { hash_sink_ = std::move(f); }
+    /* Spectator live join: copy the confirmed state before frame F = the first frame not confirmed by everybody (a memcpy from the state
+     * ring, a core save only when F is the current frame), plus the confirmed hash chains at F. Every confirmed_sink frame < F has been
+     * delivered. False while a resync is running or F fell out of the ring. Cheap enough to run between two frames. */
+    bool snapshot_confirmed(std::vector<uint8_t>* raw, uint32_t* frame, uint64_t* out_hash, uint64_t* in_hash);
     int hash_interval() const { return cfg_.hash_interval; }
 
   private:

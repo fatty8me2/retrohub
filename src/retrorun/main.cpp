@@ -17,6 +17,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -514,6 +515,40 @@ class Frontend {
     int run_rb_spectator();
     void spec_host_service();
     void spec_host_finish();
+    /* Live join (spectate.h kPktJoin): a snapshot of the confirmed state, compressed off the main thread, sent with rb::xfer to that
+     * spectator only, while spec_host_ streams the confirmed inputs from its frame. */
+    struct SpecSnap {
+        std::thread th;
+        std::atomic<bool> ready{false};
+        bool ok = false, sending = false, packed = true;
+        std::vector<uint8_t> raw, z;
+        uint32_t frame = 0, t_join = 0, t_send = 0;
+        uint64_t ro = 0, ri = 0, raw_hash = 0;
+        rb::xfer::Sender snd;
+        ~SpecSnap() { if (th.joinable()) th.join(); }
+    };
+    std::map<int, std::unique_ptr<SpecSnap>> spec_snap_;
+    std::map<int, uint32_t> spec_snap_done_;   // slot -> when its snapshot was delivered (knocks still in flight are ignored)
+    uint8_t spec_snap_epoch_ = 0;
+    bool spec_live_ok_ = false;
+    void spec_on_join(int slot);
+    void spec_on_xfer(int slot, const uint8_t* d, size_t n);
+    void spec_nolive(int slot, uint8_t reason);
+    void spec_snap_service(uint32_t spec_mask);
+    void spec_process_joins();
+    std::vector<int> spec_join_q_;   // Joins wait for a frame boundary (lockstep hands them over from inside an input poll)
+    /* the confirmed-input history server: rollback (spec_host_) or lockstep (inside n64run::Lockstep) */
+    spectate::Host* spec_h() { return spec_host_ ? spec_host_.get() : (lockstep ? lockstep->spectate_host() : nullptr); }
+    /* lockstep spectator: live join before the first frame, then real time once close to the host */
+    bool ls_spectator_live_join();
+    void ls_spectator_frame();
+    spectate::CatchUp ls_cu_;
+    bool ls_live_reported_ = false, ls_live_snapshot_ = false;
+    uint32_t ls_t_join_ = 0, ls_f_start_ = 0, ls_done_ep_ = 0x100, ls_done_at_ = 0;
+    void note_frame_gap();
+    /* player frame pacing: the longest gap between two simulated frames (stall check while a spectator joins) */
+    double gap_max_ms_ = 0, gap_win_ms_ = 0;
+    uint64_t gap_last_ = 0, gap_over_ = 0;
     int run_synctest();
     void rb_warmup();
     void rb_log_stats();
@@ -2018,10 +2053,14 @@ bool Frontend::setup_net() {
         t.send = [this](int to, const void* d, int n) { session.send(to, d, n); };
         t.recv = [this](int* from, std::vector<uint8_t>* o) {
             while (session.recv(from, o)) {
-                if (!o->empty() && (*o)[0] == spectate::kPktAck) {   // a spectator's ack never reaches the engine
-                    if (spec_host_ && *from > 0 && (session.spectator_mask() >> *from & 1u)) spec_host_->on_ack(*from, o->data(), o->size(), hubnet::now_ms());
+                if (!o->empty() && *from > 0 && (session.spectator_mask() >> *from & 1u)) {   // nothing from a spectator reaches the engine
+                    const uint8_t t0 = (*o)[0];
+                    if (t0 == spectate::kPktAck) { if (spec_host_) spec_host_->on_ack(*from, o->data(), o->size(), hubnet::now_ms()); }
+                    else if (t0 == spectate::kPktJoin) spec_on_join(*from);
+                    else if (t0 == rb::xfer::kPkt) spec_on_xfer(*from, o->data(), o->size());
                     continue;
                 }
+                if (!o->empty() && (*o)[0] == spectate::kPktAck) continue;
                 return true;
             }
             return false;
@@ -2036,6 +2075,8 @@ bool Frontend::setup_net() {
             for (int i = 0; i < 4; i++) if (owner[i] >= 0) pm |= (uint8_t)(1u << i);
             spec_host_.reset(new spectate::Host(pm, 8));
             spec_host_->set_log([](const std::string& m) { rlog("%s", m.c_str()); });
+            spec_host_->set_hold_ms(spectate::kHoldMs);   // a new spectator first says whether it wants a live snapshot (kPktJoin)
+            spec_live_ok_ = !is_ps1 && !is_ps2 && !env_is("RETRORUN_NO_LIVE_SPECTATE");   // the cores whose states pass desync recovery
             rbe->set_confirmed_sink([this](uint32_t, const uint64_t pads[4]) { spec_host_->push(pads); });
             rbe->set_hash_sink([this](uint32_t fr, uint64_t h) { spec_host_->add_hash(fr, h); });
         }
@@ -2087,10 +2128,119 @@ bool Frontend::setup_net() {
     h.request_stop = [this]() { quit = true; };
     h.on_drop = [this](int slot, uint32_t) { set_status("Player in slot " + std::to_string(slot) + " disconnected - playing on"); };
     h.log = [](const std::string& s) { rlog("%s", s.c_str()); };
+    h.on_spectate_msg = [this](int from, const std::vector<uint8_t>& m) {
+        if (a.spectate) {   // late repeats of the live state after we loaded it: our Done was lost
+            if (m.size() >= 4 && m[0] == rb::xfer::kPkt && (m[1] == rb::xfer::Begin || m[1] == rb::xfer::Chunk) && m[3] == ls_done_ep_ && hubnet::now_ms() - ls_done_at_ > 100) {
+                auto v = rb::xfer::header(rb::xfer::Done, a.slot, (uint8_t)ls_done_ep_);
+                v.push_back(1);
+                session.send(0, v.data(), (int)v.size());
+                ls_done_at_ = hubnet::now_ms();
+            }
+            return;
+        }
+        if (m[0] == spectate::kPktJoin) spec_on_join(from);
+        else if (m[0] == rb::xfer::kPkt) spec_on_xfer(from, m.data(), m.size());
+    };
+    if (a.spectate) h.set_limiter = [this](bool on) { ff = !on; next_deadline = 0; };   // far behind: fast-forward (no pacing, no audio, no video)
     lockstep = std::make_unique<n64run::Lockstep>(o, &session, h);
+    if (lockstep->spectate_host()) {
+        lockstep->spectate_host()->set_hold_ms(spectate::kHoldMs);
+        spec_live_ok_ = !is_ps1 && !is_ps2 && !env_is("RETRORUN_NO_LIVE_SPECTATE");
+    }
     if (!lockstep->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = lost_code(); return false; }
+    if (a.spectate && !ls_spectator_live_join()) { net_rc = lost_code(); return false; }
     rlog("net: all %d players ready, starting", a.players);
     return true;
+}
+
+/* Lockstep spectator, before the first frame: ask the host for a live snapshot (spectate.h). The inputs from its frame are buffered in the
+ * lockstep's spectate client while the state downloads; an old host / young match / refused core streams from sample 0 instead. */
+bool Frontend::ls_spectator_live_join() {
+    spectate::JoinClient jc(!env_is("RETRORUN_NO_LIVE_SPECTATE"));
+    ls_t_join_ = hubnet::now_ms();
+    if (jc.playing()) return true;
+    spectate::Client& cli = lockstep->spectate_client_mut();
+    rb::xfer::Receiver rcv;
+    uint32_t last_rx = hubnet::now_ms(), dl_progress = 0;
+    size_t dl_got = 0;
+    for (;;) {
+        if (quit) return false;
+        pump_events(false);
+        session.update();
+        int from; std::vector<uint8_t> m;
+        const uint32_t now0 = hubnet::now_ms();
+        while (session.recv(&from, &m)) {
+            if (from != 0 || m.empty()) continue;
+            last_rx = now0;
+            if (m[0] == spectate::kPktData) {
+                jc.on_legacy_data();
+                cli.on_data(m.data(), m.size(), now0);
+            } else if (m[0] == spectate::kPktNoLive && m.size() >= 3) {
+                if (jc.mode() == spectate::JoinClient::Mode::Knock) {
+                    jc.on_nolive(m[2]);
+                    rlog("spectate: the host has no live snapshot for us (reason %u): watching from the start, fast-forwarding to the live game", (unsigned)m[2]);
+                    if (m[2] != spectate::kRefuseEarly) set_status("Can't join live: replaying from the start");
+                }
+            } else if (m[0] == rb::xfer::kPkt && m.size() >= 4 && m[2] == 0) {
+                if (m[1] == rb::xfer::Begin) {
+                    rb::xfer::Meta mt;
+                    if (rb::xfer::dec_begin(m.data(), m.size(), &mt) && jc.mode() == spectate::JoinClient::Mode::Knock && rcv.on_begin(m[3], mt)) {
+                        jc.on_begin(mt.frame, now0);
+                        cli.start_at(mt.frame);
+                        dl_progress = now0;
+                        rlog("spectate: live join: downloading the state of frame %u (%u bytes, %u chunks) %u ms after joining", mt.frame, mt.comp, (unsigned)mt.chunks, now0 - ls_t_join_);
+                    }
+                } else if (m[1] == rb::xfer::Chunk && m.size() >= 6 && jc.mode() == spectate::JoinClient::Mode::Download) {
+                    rcv.on_chunk(m[3], rb::xfer::g16(m.data() + 4), m.data() + 6, m.size() - 6);
+                }
+            }
+        }
+        const uint32_t now = hubnet::now_ms();
+        if (jc.playing()) return true;   // refused / old host: lockstep plays from sample 0 (and fast-forwards)
+        if (jc.want_knock(now)) { uint8_t k[3] = {spectate::kPktJoin, (uint8_t)a.slot, 1}; session.send(0, k, 3); }
+        if (jc.mode() == spectate::JoinClient::Mode::Download) {
+            if (rcv.received() != dl_got) { dl_got = rcv.received(); dl_progress = now; }
+            uint16_t nx; uint64_t bits;
+            if (rcv.ack_due(now, &nx, &bits)) { auto v = rb::xfer::enc_ack(a.slot, rcv.epoch(), nx, bits); session.send(0, v.data(), (int)v.size()); }
+            cli.service(now, a.slot, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
+            if (rcv.complete()) {
+                const rb::xfer::Meta& mt = rcv.meta();
+                std::vector<uint8_t> raw(mt.raw);
+                bool ok;
+                if (mt.flags & 1) { mz_ulong on = (mz_ulong)raw.size(); ok = mz_uncompress(raw.data(), &on, rcv.payload().data(), (mz_ulong)rcv.payload().size()) == MZ_OK && on == raw.size(); }
+                else { raw = rcv.payload(); ok = raw.size() == mt.raw; }
+                if (ok && rb::hash_bytes(raw.data(), raw.size()) != mt.hash) ok = false;
+                if (ok) ok = core.unserialize(raw.data(), raw.size());
+                if (!ok) { rlog("spectate: the live state did not load"); return false; }
+                lockstep->spectate_start_at(mt.frame);
+                frame_no = mt.frame;
+                ls_f_start_ = mt.frame;
+                ls_live_snapshot_ = true;
+                jc.on_loaded();
+                ls_done_ep_ = rcv.epoch();
+                auto v = rb::xfer::header(rb::xfer::Done, a.slot, rcv.epoch());
+                v.push_back(1);
+                session.send(0, v.data(), (int)v.size());
+                ls_done_at_ = now;
+                rlog("spectate: live join: state of frame %u loaded %u ms after joining; %u behind the host", mt.frame, now - ls_t_join_, cli.lag());
+                return true;
+            }
+            if (jc.download_stuck(now, dl_progress)) { rlog("spectate: the live state stopped arriving"); return false; }
+        }
+        if (session.failed() || now - last_rx > 15000) { rlog("net: connection lost while joining as a spectator"); return false; }
+        Sleep(1);
+    }
+}
+
+/* Lockstep spectator, after each frame's input poll: note when it first got within the live lag of the host. */
+void Frontend::ls_spectator_frame() {
+    const spectate::Client& c = lockstep->spectate_client();
+    ls_cu_.update(c.lag(), hubnet::now_ms());
+    if (ls_cu_.live_once() && !ls_live_reported_) {
+        ls_live_reported_ = true;
+        rlog("spectate: LIVE at frame %llu, %u frames behind the host, %u ms after joining (%s, %llu frames fast-forwarded)", (unsigned long long)frame_no, c.lag(),
+             ls_cu_.live_at() - ls_t_join_, ls_live_snapshot_ ? "live snapshot" : "replay from frame 0", (unsigned long long)(frame_no - ls_f_start_));
+    }
 }
 
 /* ------------------------------------------------------------ DS local wireless */
@@ -2387,13 +2537,142 @@ rb::Sim Frontend::make_rb_sim() {
     return s;
 }
 
+/* frame pacing seen by a player (logged: a spectator joining must not stall the match) */
+void Frontend::note_frame_gap() {
+    uint64_t pc = SDL_GetPerformanceCounter();
+    if (gap_last_) {
+        double g = (double)(pc - gap_last_) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+        gap_max_ms_ = std::max(gap_max_ms_, g);
+        gap_win_ms_ = std::max(gap_win_ms_, g);
+        if (g > 50.0) gap_over_++;
+    }
+    gap_last_ = pc;
+    if (frame_no % 120 == 0) {
+        if (session.spectator_mask() || gap_win_ms_ > 50.0) rlog("frame-gap: frame %llu, 2 s max %.1f ms, spectators 0x%x", (unsigned long long)frame_no, gap_win_ms_, session.spectator_mask());
+        gap_win_ms_ = 0;
+    }
+}
+
+/* Called at a frame boundary (rollback: after run_frame; lockstep: before the frame's input poll). */
 void Frontend::spec_host_service() {
-    if (!spec_host_) return;
+    if (!spec_h()) return;
     uint32_t sm = session.spectator_mask();
-    if (sm) spec_host_->service(hubnet::now_ms(), sm, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
+    if (!spec_join_q_.empty()) spec_process_joins();
+    if (!spec_snap_.empty()) spec_snap_service(sm);
+    if (spec_host_ && sm) spec_host_->service(hubnet::now_ms(), sm, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
+}
+
+void Frontend::spec_nolive(int slot, uint8_t reason) {
+    uint8_t m[3] = {spectate::kPktNoLive, 0, reason};
+    session.send(slot, m, 3);
+    if (spec_h()) spec_h()->release(slot);
+    rlog("spectate: slot %d joins from frame 0 (no live snapshot, reason %u)", slot, (unsigned)reason);
+}
+
+void Frontend::spec_on_join(int slot) {
+    if (std::find(spec_join_q_.begin(), spec_join_q_.end(), slot) == spec_join_q_.end()) spec_join_q_.push_back(slot);
+}
+
+void Frontend::spec_process_joins() {
+    std::vector<int> q;
+    q.swap(spec_join_q_);
+    for (int slot : q) {
+    spectate::Host* H = spec_h();
+    if (!H || !(session.spectator_mask() >> slot & 1u)) continue;
+    uint32_t now = hubnet::now_ms();
+    auto dn = spec_snap_done_.find(slot);
+    if (dn != spec_snap_done_.end() && now - dn->second < 5000) continue;   // knocks sent before our Begin reached it
+    if (!H->held(slot) && dn == spec_snap_done_.end() && !spec_snap_.count(slot)) {   // already streaming to it from 0 (its hold timed out): keep going
+        uint8_t m[3] = {spectate::kPktNoLive, 0, spectate::kRefuseEarly};
+        session.send(slot, m, 3);
+        continue;
+    }
+    auto d = spectate::decide_join(spec_live_ok_, H->total(), (int)spec_snap_.size(), spec_snap_.count(slot) > 0, rbe ? rbe->resyncing() : false);
+    if (d == spectate::JoinDecision::Ignore || d == spectate::JoinDecision::Busy) continue;
+    if (d == spectate::JoinDecision::NoLiveEarly) { spec_nolive(slot, spectate::kRefuseEarly); continue; }
+    if (d == spectate::JoinDecision::NoLiveUnsupported) { spec_nolive(slot, spectate::kRefuseUnsupported); continue; }
+    auto x = std::make_unique<SpecSnap>();
+    uint64_t t0 = SDL_GetPerformanceCounter();
+    if (rbe) {
+        if (!rbe->snapshot_confirmed(&x->raw, &x->frame, &x->ro, &x->ri) || x->frame > H->total()) continue;   // later: it knocks again
+    } else {   // lockstep, between two frames: the state before sample total() (one input poll per frame)
+        x->raw.assign(core.serialize_size(), 0);
+        if (x->raw.empty() || !core.serialize(x->raw.data(), x->raw.size())) { spec_nolive(slot, spectate::kRefuseUnsupported); continue; }
+        x->frame = H->total();
+    }
+    double copy_ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+    x->t_join = now;
+    SpecSnap* px = x.get();
+    x->packed = !std::getenv("RETRORUN_TEST_SPECTATE_RAW");   // QA: send the raw state (a worst-case, incompressible-sized transfer)
+    x->th = std::thread([px] {   // compression and hashing off the main thread: the players never wait for it
+        if (px->packed) {
+            mz_ulong zn = mz_compressBound((mz_ulong)px->raw.size());
+            px->z.assign(zn, 0);
+            px->ok = mz_compress2(px->z.data(), &zn, px->raw.data(), (mz_ulong)px->raw.size(), 6) == MZ_OK;
+            px->z.resize(px->ok ? zn : 0);
+        } else { px->z = px->raw; px->ok = true; }
+        px->raw_hash = rb::hash_bytes(px->raw.data(), px->raw.size());
+        px->ready = true;
+    });
+    rlog("spectate: live join for slot %d: state before confirmed frame %u (%zu bytes, copied in %.2f ms), compressing in the background", slot,
+         x->frame, x->raw.size(), copy_ms);
+    spec_snap_[slot] = std::move(x);
+    }
+}
+
+void Frontend::spec_on_xfer(int slot, const uint8_t* d, size_t n) {
+    auto it = spec_snap_.find(slot);
+    if (it == spec_snap_.end() || !it->second->sending || n < 4 || d[2] != slot) return;
+    SpecSnap& x = *it->second;
+    if (d[3] != x.snd.epoch()) return;
+    if (d[1] == rb::xfer::Ack && n >= 4 + 2 + 8) x.snd.on_ack(slot, rb::xfer::g16(d + 4), rb::xfer::g64(d + 6));
+    else if (d[1] == rb::xfer::Done && n >= 5 && d[4] == 1) x.snd.on_done(slot);
+}
+
+void Frontend::spec_snap_service(uint32_t sm) {
+    uint32_t now = hubnet::now_ms();
+    for (auto it = spec_snap_.begin(); it != spec_snap_.end();) {
+        const int s = it->first;
+        SpecSnap& x = *it->second;
+        const bool gone = !(sm >> s & 1u);
+        if (!x.sending && x.ready) {
+            if (x.th.joinable()) x.th.join();   // finished: no wait
+            const bool rel = session.is_relayed(s);
+            const size_t cap = std::min<size_t>(rel ? 1500000 : 3000000, rb::xfer::kMaxChunks * rb::xfer::kChunk);   // relay: keep the room's budget
+            if (gone || !x.ok || x.z.empty() || x.z.size() > cap) {
+                if (!gone) { rlog("spectate: live state for slot %d is %zu bytes compressed (cap %zu): from frame 0 instead", s, x.z.size(), cap); spec_nolive(s, spectate::kRefuseTooBig); }
+                it = spec_snap_.erase(it);
+                continue;
+            }
+            rb::xfer::Meta m;
+            m.frame = x.frame; m.raw = (uint32_t)x.raw.size(); m.comp = (uint32_t)x.z.size(); m.flags = x.packed ? 1 : 0;
+            m.chunks = (uint16_t)((x.z.size() + rb::xfer::kChunk - 1) / rb::xfer::kChunk);
+            m.hash = x.raw_hash; m.a = x.ro; m.b = x.ri;
+            spec_h()->start_peer_at(s, x.frame, now);   // inputs from F stream right away; the spectator buffers them while the state downloads
+            spec_snap_epoch_ = (uint8_t)((spec_snap_epoch_ + 1) & 0x7F);
+            x.snd.start((uint8_t)(0x80 | spec_snap_epoch_), m, std::move(x.z), 1u << s, now ? now : 1, rel ? 100.0 : 400.0);
+            x.raw.clear(); x.raw.shrink_to_fit();
+            x.sending = true; x.t_send = now;
+            rlog("spectate: sending the live state to slot %d: frame %u, %u bytes, %u on the wire in %u chunks (%s), ready %u ms after the join", s, m.frame, m.raw,
+                 m.comp, (unsigned)m.chunks, rel ? "relay" : "direct", now - x.t_join);
+        }
+        if (x.sending) {
+            if (gone) { it = spec_snap_.erase(it); continue; }
+            x.snd.service(now ? now : 1, a.slot, [&](const uint8_t* d, size_t n) { session.send(s, d, (int)n); });
+            if (x.snd.all_done()) {
+                rlog("spectate: slot %d loaded the live state %u ms after its join (%zu chunks sent for %u)", s, now - x.t_join, x.snd.chunks_sent(), (unsigned)x.snd.meta().chunks);
+                spec_snap_done_[s] = now;
+                it = spec_snap_.erase(it);
+                continue;
+            }
+            if (now - x.t_send > 30000) { rlog("spectate: live state transfer to slot %d timed out", s); it = spec_snap_.erase(it); continue; }
+        }
+        ++it;   // still compressing (a gone spectator's entry waits for its thread instead of joining it here)
+    }
 }
 
 void Frontend::spec_host_finish() {
+    spec_snap_.clear();   // joins a compressing thread, if any (the match is over: nothing waits on us)
     if (!spec_host_ || !session.spectator_mask()) return;
     spec_host_->finish();
     uint32_t t0 = hubnet::now_ms();
@@ -2413,12 +2692,25 @@ void Frontend::spec_host_finish() {
 int Frontend::run_rb_spectator() {
     rb::Sim sim = make_rb_sim();
     spectate::Client cli;
+    /* live join: ask the host for a snapshot of the running match (spectate.h kPktJoin); an old host, a young match or a core whose
+     * state can't be sent answers by streaming from frame 0 (the old replay) */
+    spectate::JoinClient jc(!env_is("RETRORUN_NO_LIVE_SPECTATE"));
+    spectate::CatchUp cu;
+    rb::xfer::Receiver rcv;
+    uint32_t dl_progress = 0, done_sent = 0;
+    size_t dl_got = 0;
     uint64_t roll = rb::kRollBasis;
-    uint32_t f = 0, interval = 120, last_rx_chk = hubnet::now_ms();
+    uint32_t f = 0, interval = 120, last_rx_chk = hubnet::now_ms(), t_join = hubnet::now_ms(), f_start = 0;
     if (const char* hi = std::getenv("RB_HASH_INTERVAL")) interval = (uint32_t)std::max(1, atoi(hi));
     uint64_t t_start = SDL_GetTicks64();
     int rc = 0;
-    bool catching = false;
+    bool catching = false, reported_live = false;
+    auto send_done = [&] {
+        auto v = rb::xfer::header(rb::xfer::Done, a.slot, rcv.epoch());
+        v.push_back(1);
+        session.send(0, v.data(), (int)v.size());
+        done_sent = hubnet::now_ms() ? hubnet::now_ms() : 1;
+    };
     for (;;) {
         if (quit) break;
         if (a.frames >= 0 && f >= (uint32_t)a.frames) break;
@@ -2426,8 +2718,64 @@ int Frontend::run_rb_spectator() {
         if (quit) break;
         session.update();
         int from; std::vector<uint8_t> m;
-        while (session.recv(&from, &m)) if (from == 0 && !m.empty() && m[0] == spectate::kPktData && cli.on_data(m.data(), m.size(), hubnet::now_ms())) last_rx_chk = hubnet::now_ms();
-        cli.service(hubnet::now_ms(), a.slot, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
+        const uint32_t now0 = hubnet::now_ms();
+        while (session.recv(&from, &m)) {
+            if (from != 0 || m.empty()) continue;
+            if (m[0] == spectate::kPktData) {
+                if (jc.mode() == spectate::JoinClient::Mode::Knock) jc.on_legacy_data();   // an old host streams from 0 at once
+                if (cli.on_data(m.data(), m.size(), now0)) last_rx_chk = now0;
+            } else if (m[0] == spectate::kPktNoLive && m.size() >= 3) {
+                if (jc.mode() == spectate::JoinClient::Mode::Knock) {
+                    jc.on_nolive(m[2]);
+                    rlog("spectate: the host has no live snapshot for us (reason %u): watching from the start, fast-forwarding to the live game", (unsigned)m[2]);
+                    if (m[2] != spectate::kRefuseEarly) set_status("Can't join live: replaying from the start");
+                }
+                last_rx_chk = now0;
+            } else if (m[0] == rb::xfer::kPkt && m.size() >= 4 && m[2] == 0) {
+                last_rx_chk = now0;
+                if (m[1] == rb::xfer::Begin) {
+                    rb::xfer::Meta mt;
+                    if (rb::xfer::dec_begin(m.data(), m.size(), &mt) && jc.mode() == spectate::JoinClient::Mode::Knock && rcv.on_begin(m[3], mt)) {
+                        jc.on_begin(mt.frame, now0);
+                        cli.start_at(mt.frame);   // buffer the confirmed inputs from F while the state downloads
+                        dl_progress = now0;
+                        rlog("spectate: live join: downloading the state of frame %u (%u bytes, %u chunks) %u ms after joining", mt.frame, mt.comp, (unsigned)mt.chunks, now0 - t_join);
+                    } else if (jc.live() && m[3] == rcv.epoch() && now0 - done_sent > 100) send_done();   // our Done was lost
+                } else if (m[1] == rb::xfer::Chunk && m.size() >= 6) {
+                    if (jc.mode() == spectate::JoinClient::Mode::Download) rcv.on_chunk(m[3], rb::xfer::g16(m.data() + 4), m.data() + 6, m.size() - 6);
+                    else if (jc.live() && m[3] == rcv.epoch() && now0 - done_sent > 100) send_done();
+                }
+            }
+        }
+        const uint32_t now = hubnet::now_ms();
+        if (jc.want_knock(now)) { uint8_t k[3] = {spectate::kPktJoin, (uint8_t)a.slot, 1}; session.send(0, k, 3); }
+        if (jc.mode() == spectate::JoinClient::Mode::Download) {
+            if (rcv.received() != dl_got) { dl_got = rcv.received(); dl_progress = now; }
+            uint16_t nx; uint64_t bits;
+            if (rcv.ack_due(now, &nx, &bits)) { auto v = rb::xfer::enc_ack(a.slot, rcv.epoch(), nx, bits); session.send(0, v.data(), (int)v.size()); }
+            if (rcv.complete()) {
+                const rb::xfer::Meta& mt = rcv.meta();
+                std::vector<uint8_t> raw(mt.raw);
+                bool ok = (mt.flags & 1) ? sim.unpack_state && sim.unpack_state(rcv.payload().data(), rcv.payload().size(), raw.data(), raw.size())
+                                         : (raw = rcv.payload(), true);
+                if (ok && rb::hash_bytes(raw.data(), raw.size()) != mt.hash) ok = false;
+                if (ok) ok = sim.load(raw.data(), raw.size());
+                if (!ok) { rlog("spectate: the live state did not load"); rc = 5; break; }
+                f = f_start = mt.frame;
+                frame_no = f;
+                roll = mt.a;   // the confirmed output-hash chain at F, so our periodic hashes compare with the host's
+                jc.on_loaded();
+                send_done();
+                rlog("spectate: live join: state of frame %u loaded %u ms after joining; %u frames buffered, %u behind the host", f, now - t_join,
+                     cli.ready(f) ? cli.total() - f : 0, cli.lag());
+            } else if (jc.download_stuck(now, dl_progress)) { rlog("spectate: the live state stopped arriving"); rc = lost_code(); break; }
+        }
+        if (jc.acks_allowed()) cli.service(now, a.slot, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
+        if (!jc.playing()) {
+            if (session.failed() || (!session.ended() && now - last_rx_chk > 15000)) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
+            Sleep(1);
+            continue;
+        }
         if (!cli.ready(f)) {
             if (cli.finished(f)) { rlog("spectate: the match ended"); if (a.frames < 0) rc = 8; break; }
             if (session.ended() && hubnet::now_ms() - last_rx_chk > 1500) { rlog("spectate: the host ended the session"); if (a.frames < 0) rc = 8; break; }
@@ -2438,10 +2786,15 @@ int Frontend::run_rb_spectator() {
         last_rx_chk = hubnet::now_ms();
         uint64_t pads[4];
         for (int p = 0; p < 4; p++) pads[p] = owner[p] >= 0 ? cli.get(f, p) : 0;
-        bool behind = cli.lag() > spectate::kLiveLagSamples;
+        bool behind = cu.update(cli.lag(), hubnet::now_ms());
         if (behind != catching) { catching = behind; if (behind) rlog("spectate: catching up, %u frames behind", cli.lag()); next_deadline = 0; }
+        if (cu.live_once() && !reported_live) {
+            reported_live = true;
+            rlog("spectate: LIVE at frame %u, %u frames behind the host, %u ms after joining (%s, %u frames fast-forwarded)", f, cli.lag(), cu.live_at() - t_join,
+                 jc.live() ? "live snapshot" : "replay from frame 0", f - f_start);
+        }
         if (!catching) do_pacing();
-        sim.step(pads, true);
+        sim.step(pads, !catching);   // fast-forward: no video, no audio
         roll = rb::roll_step(roll, sim.frame_sum());
         f++;
         frame_no = f;
@@ -2820,6 +3173,7 @@ int Frontend::run(const Args& args) {
                 do_pacing();
                 rbe->run_frame();
                 frame_no = rbe->cur();
+                note_frame_gap();
                 spec_host_service();
                 if (uint32_t dm = rbe->dropped_mask(); dm != rb_dropped_seen_) {
                     for (int sl = 0; sl < 8; sl++) if ((dm & ~rb_dropped_seen_) >> sl & 1u) set_status("Player in slot " + std::to_string(sl) + " disconnected - playing on");
@@ -2845,6 +3199,7 @@ int Frontend::run(const Args& args) {
                 if (!ok) rlog("net: finish: inputs not fully confirmed before timeout");
                 if (rbe->desync()) { rlog("RESULT: DESYNC detected"); rc = 5; }
             }
+            rlog("frame-gap: max %.1f ms, %llu gaps over 50 ms", gap_max_ms_, (unsigned long long)gap_over_);
             spec_host_finish();
             out_hash = rbe->confirmed_out_hash();
             in_hash = rbe->confirmed_in_hash();
@@ -2878,8 +3233,10 @@ int Frontend::run(const Args& args) {
                 if (want_save) { want_save = false; save_state("slot" + std::to_string(slot_sel)); }
                 if (want_load) { want_load = false; if (!online && !a.ds_link) load_state("slot" + std::to_string(slot_sel)); }
 
+                if (online && !a.spectate) { note_frame_gap(); spec_host_service(); }   // frame boundary: a spectator's live snapshot is taken here
                 if (online) {
                     for (int p = 0; p < 4; p++) frame_pad[p] = lockstep->get_keys(p);   // lead port poll advances the sample
+                    if (a.spectate) ls_spectator_frame();
                     if (is_ps1 || is_ps2) for (int p = 0; p < 4; p++) retrorun::unpack_sticks(lockstep->aux(p), frame_stick[p]);
                     if (lockstep->connection_lost()) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
                 } else {
@@ -2928,6 +3285,10 @@ int Frontend::run(const Args& args) {
             }
             double secs = (SDL_GetTicks64() - t_start) / 1000.0;
             if (online && lockstep) lockstep->log_stall_summary();
+            if (online && lockstep && a.spectate)
+                rlog("spectate: done, %llu frames (from %u), hashes ok %u different %u", (unsigned long long)frame_no, ls_f_start_, lockstep->spectate_client().hashes_ok(),
+                     lockstep->spectate_client().hashes_bad());
+            if (online && lockstep && !a.spectate) { rlog("frame-gap: max %.1f ms, %llu gaps over 50 ms", gap_max_ms_, (unsigned long long)gap_over_); spec_snap_.clear(); }
             if (online && lockstep) lockstep->finish_spectators();
             rlog("done: %llu frames in %.2f s (%.1f fps)", (unsigned long long)frame_no, secs, secs > 0 ? frame_no / secs : 0.0);
             if (!a.clip_out.empty()) {   // QA: encode the ring to the named file and decode it again

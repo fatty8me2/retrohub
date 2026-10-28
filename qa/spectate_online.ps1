@@ -2,6 +2,9 @@
 # Spectators must end on the SAME final hashes as the players (they replay the host's confirmed inputs).
 #   powershell -File qa\spectate_online.ps1 -Mode lockstep -Frames 3000
 #   powershell -File qa\spectate_online.ps1 -Mode rollback -Frames 3000 -LateSec 6        (spectator joins 6 s after the players started)
+#   powershell -File qa\spectate_online.ps1 -Mode rollback -Frames 3600 -LateSec 20 -ExpectLive   (live join: snapshot + catch-up)
+# -ExpectLive (rollback): the spectator must join from a live snapshot (not frame 0), be live within -MaxCatchupMs of asking, compare
+# agreeing hashes with the host, and no player frame may take longer than -MaxGapMs while it joins (players log frame-gap lines).
 # The local worker is started here from -WorkerDir (a BattleShip worktree that has the role=watch seats) on -Port with its own registry
 # and persist dir; only that PID is stopped afterwards. Use -Server to reuse an already running local worker instead.
 param(
@@ -17,7 +20,10 @@ param(
     [int]$Port = 8793,
     [string]$Tag = 'spec',
     [int]$TimeoutSec = 600,
-    [switch]$Relay
+    [switch]$Relay,
+    [switch]$ExpectLive,
+    [int]$MaxCatchupMs = 3000,
+    [double]$MaxGapMs = 50
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -62,6 +68,7 @@ function Launch([string]$name, [string[]]$extra) {
     $a = @('--core', $corePath, '--rom', $romPath, '--system', $System, '--save-dir', $sv, '--state-dir', $st, '--headless', '--frames', $Frames,
         '--net', $Server, '--room', $Room, '--ports', '0,1,-1,-1', '--log', $log) + $extra
     if ($Mode -eq 'rollback') { $a += '--rollback' }
+    if ($ExpectLive) { $a += '--realtime' }   # lockstep headless runs uncapped otherwise; a live join needs a real-time match
     $p = Start-Process -FilePath $exe -ArgumentList $a -PassThru -WindowStyle Hidden
     return [pscustomobject]@{ Name = $name; Proc = $p; Log = $log }
 }
@@ -91,8 +98,36 @@ foreach ($x in $procs) {
     foreach ($l in $sp) { Write-Output ("     " + $l) }
     if ($rc -ne 0 -or $ds -gt 0 -or $hv -eq 'NONE') { $fail++ }
 }
+if ($ExpectLive) {
+    foreach ($x in $procs) {
+        $lines = if (Test-Path $x.Log) { Get-Content $x.Log } else { @() }
+        if ($x.Name -like 's*') {
+            $live = $lines | Where-Object { $_ -match 'spectate: LIVE at frame (\d+), (\d+) frames behind the host, (\d+) ms after joining \(([^,]+),' } | Select-Object -First 1
+            if (-not $live) { $fail++; Write-Output "FAIL: $($x.Name) never got live"; continue }
+            [void]($live -match 'LIVE at frame (\d+), (\d+) frames behind the host, (\d+) ms after joining \(([^,]+),')
+            $ms = [int]$Matches[3]; $how = $Matches[4]; $liveFrame = $Matches[1]
+            $done = $lines | Where-Object { $_ -match 'spectate: done' } | Select-Object -Last 1
+            $ok = 0; $bad = 0
+            if ($done -match 'hashes ok (\d+) different (\d+)') { $ok = [int]$Matches[1]; $bad = [int]$Matches[2] }
+            Write-Output ("  {0}: live at frame {1} after {2} ms via {3}; hashes ok {4} different {5}" -f $x.Name, $liveFrame, $ms, $how, $ok, $bad)
+            if ($how -ne 'live snapshot') { $fail++; Write-Output "FAIL: $($x.Name) did not use a live snapshot" }
+            if ($ms -gt $MaxCatchupMs) { $fail++; Write-Output "FAIL: $($x.Name) catch-up $ms ms > $MaxCatchupMs" }
+            if ($ok -lt 1 -or $bad -gt 0) { $fail++; Write-Output "FAIL: $($x.Name) hash comparisons ok=$ok bad=$bad" }
+        } else {
+            $g = $lines | Where-Object { $_ -match 'frame-gap: max ([\d.]+) ms, (\d+) gaps over 50' } | Select-Object -Last 1
+            $gm = if ($g -match 'max ([\d.]+) ms, (\d+) gaps') { [double]$Matches[1] } else { -1 }
+            $win = @($lines | Where-Object { $_ -match 'frame-gap: frame \d+, 2 s max ([\d.]+) ms, spectators 0x[1-9a-f]' } | ForEach-Object { [void]($_ -match '2 s max ([\d.]+) ms'); [double]$Matches[1] })
+            $wm = if ($win.Count) { ($win | Measure-Object -Maximum).Maximum } else { 0 }
+            $sl = $lines | Where-Object { $_ -match 'spectate: (live join for|sending the live|slot \d+ loaded)' }
+            foreach ($l in $sl) { Write-Output ("     " + $l) }
+            Write-Output ("  {0}: worst frame gap {1:N1} ms over the match, {2:N1} ms while spectators were connected" -f $x.Name, $gm, $wm)
+            if ($wm -gt $MaxGapMs) { $fail++; Write-Output "FAIL: $($x.Name) frame gap $wm ms > $MaxGapMs while a spectator was connected" }
+        }
+    }
+}
 # lockstep: state-hash and output-hash must be identical everywhere. rollback: players and spectator compare the output hash.
-$cmp = @($finals.Values | ForEach-Object { if ($Mode -eq 'rollback') { ($_ -replace 'state-hash \w+ ', '') -replace ' input-hash \w+', '' } else { $_ -replace ' input-hash \w+', '' } } | Select-Object -Unique)
+# a lockstep live join skipped the frames before its snapshot, so its rolling output hash differs by design: compare the state there.
+$cmp = @($finals.Values | ForEach-Object { if ($Mode -eq 'lockstep' -and $ExpectLive) { $_ -replace ' output-hash \w+', '' -replace ' input-hash \w+', '' } elseif ($Mode -eq 'rollback') { ($_ -replace 'state-hash \w+ ', '') -replace ' input-hash \w+', '' } else { $_ -replace ' input-hash \w+', '' } } | Select-Object -Unique)
 if ($cmp.Count -ne 1) { $fail++; Write-Output "FAIL: final hashes differ: $($cmp -join ' || ')" }
 if ($fail) { Write-Output "RESULT: FAIL"; exit 1 }
 Write-Output "RESULT: PASS (spectators ended on the players' hashes)"
