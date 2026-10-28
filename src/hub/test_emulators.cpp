@@ -573,7 +573,7 @@ static void test_prepare_and_find(const fs::path& dir) {
     hubemu::prepare_dolphin(dd.string(), two);
     CHECK(read_text(dd / "User" / "Config" / "GCPadNew.ini").find("custom") != std::string::npos);
     std::string di2 = read_text(dd / "User" / "Config" / "Dolphin.ini");
-    CHECK(di2.find("ConfirmStop = True") != std::string::npos && di2.find("SIDevice1 = 6") != std::string::npos);
+    CHECK(di2.find("ConfirmStop = False") != std::string::npos && di2.find("SIDevice1 = 6") != std::string::npos);   // forced every launch: a "stop?" dialog would pop up over the game on Back+Start
     /* real console startup: SkipIPL is True after every prepare (also online), real boot flips it for one launch only */
     CHECK(hubui::ini_get(di2, "Core", "SkipIPL") == "True");
     write_text(dd / "User" / "Config" / "Dolphin.ini", hub::realboot::dolphin_skip_ipl(di2, false));

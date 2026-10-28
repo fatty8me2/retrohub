@@ -114,6 +114,7 @@ int fr_day(long long ms);
 std::string fr_day_label(long long ms);
 hubnet::Invite fr_make_invite();
 bool fr_in_my_room();
+bool fr_send_dm(const std::string& uid, const std::string& text);   // quick menu chat: message a friend
 void fr_invite_uids(const std::vector<std::string>& uids);
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who = "");
 void fr_open_chat(const std::string& uid);

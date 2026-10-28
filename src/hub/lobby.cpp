@@ -370,6 +370,7 @@ void lobby_tick() {
                     }
         } else if (kind == "chat") {
             A.chat.push_back({member_name(from), j.str("text"), from, (int)j.num("n", 0), {}});
+            qm_chat_incoming(false, "", member_name(from), j.str("text"));
             if (A.chat.size() > 200) A.chat.erase(A.chat.begin());
             A.chat_scroll = true;
         } else if (kind == "rplay_probe") {   // the host checks that it can reach us directly before launching a remote-play game

@@ -16,6 +16,7 @@
 #include "qm_nav.h"
 #include "qm_pad.h"
 #include "ext_media.h"
+#include "qm_card.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
@@ -26,6 +27,8 @@
  * Contract with the built-in runners: src/common/runner_ctl.h and docs/RUNNER_CTL.md. The hub writes <run_dir>/control.json,
  * the runner acts once per seq and writes control_ack.json. Save states: <states>/slot<N>.state + .png thumbnail + .json sidecar.
  * Screenshots: <vault>/<system>/<game key>/shots/<yyyyMMdd-HHmmss>.png. */
+
+static bool runner_has_ctl(const hub::GameEntry& e);   // defined below
 
 namespace {
 
@@ -112,7 +115,7 @@ SlotInfo read_slot(const std::string& dir, int slot) {
 }
 
 /* ---------------- the menu ---------------- */
-enum class QPage { Main, Save, Load };
+enum class QPage { Main, Save, Load, Pad, Chat };
 bool g_open_req = false, g_shot_fake = false;
 QPage g_page = QPage::Main;
 long long g_pending = 0;                       // seq waiting for an ack (0 = none)
@@ -368,6 +371,166 @@ int stepper_row(const char* id, const char* label, const std::string& value, flo
     return dir;
 }
 
+/* ---- chat (room + friend messages on the runner OSD, quick phrases, OSK) and "How do I play" ---- */
+std::string g_dm_uid, g_dm_name;   // last friend who messaged us this session: the "Send to" target besides the room
+char g_chat_buf[256] = {0};
+bool g_chat_to_dm = false;
+double g_chat_sent_at = -100;
+hubqm::ChatOsdLimiter g_chat_lim;
+hubctl::Profile g_pad_prof;
+bool g_pad_loaded = false;
+std::string g_pad_note;
+bool g_perf_shot = false;            // HUB_SHOT_QM stand-in value of the stats overlay row
+int g_perf_sent = 2;                 // automatic "overlay on" sends left at session start (0, 1 pending; 2 = done)
+ULONGLONG g_perf_t0 = 0;
+
+bool runner_supports_overlay(const hub::GameEntry* e) { return e && runner_has_ctl(*e) && e->system != hub::System::N64; }
+
+void send_osd(const std::string& text) {
+    if (!A.proc || !ctl_ready() || text.empty()) return;
+    runctl::Command c;
+    c.cmd = runctl::Cmd::OsdMsg;
+    c.text = text;
+    runctl::send_command_ex(A.run.ctl_path, c);
+}
+
+void pad_load(const hub::GameEntry* e) {
+    g_pad_loaded = true;
+    g_pad_note.clear();
+    std::string sys = g_shot_fake ? std::string("n64") : (e ? hubctl::system_key(e->system) : std::string());
+    hubctl::Store st;
+    hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
+    g_pad_prof = hubctl::resolve(st, sys, g_shot_fake ? std::string() : g_key);
+    if (!g_shot_fake && e && is_native(*e) && g_pad_prof.name.compare(0, 8, "default-") == 0)
+        g_pad_note = "Smash 64 has its own default layout. Change it on the Controllers page.";
+}
+
+struct PadSlot { const char* key; const char* tag; float u, v; };
+const PadSlot kPadL[8] = {{"lt", "LT", -0.6f, -1.f}, {"lb", "LB", -0.6f, -0.8f}, {"back", "View", -0.15f, -0.3f}, {"ls", "Left stick", -0.6f, -0.2f},
+                          {"dpup", "D-pad up", -0.2f, 0.25f}, {"dpleft", "D-pad left", -0.35f, 0.45f}, {"dpright", "D-pad right", -0.05f, 0.45f}, {"dpdown", "D-pad down", -0.2f, 0.65f}};
+const PadSlot kPadR[8] = {{"rt", "RT", 0.6f, -1.f}, {"rb", "RB", 0.6f, -0.8f}, {"start", "Menu", 0.15f, -0.3f}, {"y", "Y", 0.6f, -0.4f},
+                          {"x", "X", 0.45f, -0.2f}, {"b", "B", 0.75f, -0.2f}, {"a", "A", 0.6f, 0.f}, {"rs", "Right stick", 0.2f, 0.45f}};
+
+/* A button of the menu's own nav grid (x = column, y = row): A on it or a click presses it. */
+bool nav_btn(const std::string& id, const char* label, ImVec2 sz, bool primary, bool en, int nx, int ny, bool back_icon = false) {
+    const hubqm::NavAction a = g_nav.add(id, false, en, nx, ny);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::PushID(id.c_str());
+    const bool pressed = back_icon ? ui::button(label, sz, primary, en, ui::Icon::ChevronL) : ui::button(label, sz, primary, en);
+    ImGui::PopID();
+    if (g_nav.selected(id)) nav_ring(p, p + sz);
+    return en && (pressed || a.activate);
+}
+
+void pad_page() {
+    const hub::GameEntry* e = g_shot_fake ? nullptr : find_entry(g_key);
+    if (!g_pad_loaded) pad_load(e);
+    ImGui::PushFont(ui::F.h2);
+    ImGui::TextUnformatted("How do I play");
+    ImGui::PopFont();
+    ImGui::TextDisabled("%s - controller layout from your profile", g_title.c_str());
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    auto co = hubqm::pad_callouts(g_pad_prof);
+    const float W = ImGui::GetContentRegionAvail().x, rowH = sp(5.f), H = rowH * 8.f, pw = sp(40.f), colW = (W - pw - sp(4.f)) * 0.5f;
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(W, H));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 c(o.x + W * 0.5f, o.y + H * 0.5f);
+    const float ph = H * 0.8f;
+    dl->AddRectFilled(ImVec2(c.x - pw * 0.5f, c.y - ph * 0.5f), ImVec2(c.x + pw * 0.5f, c.y + ph * 0.5f), ui::PANEL, sp(6.f));
+    dl->AddRect(ImVec2(c.x - pw * 0.5f, c.y - ph * 0.5f), ImVec2(c.x + pw * 0.5f, c.y + ph * 0.5f), IM_COL32(255, 255, 255, 40), sp(6.f));
+    for (int side = 0; side < 2; ++side) {
+        const PadSlot* sl = side == 0 ? kPadL : kPadR;
+        for (int i = 0; i < 8; ++i) {
+            auto it = co.find(sl[i].key);
+            const bool used = it != co.end();
+            const float y = o.y + (i + 0.5f) * rowH;
+            const float x0 = side == 0 ? o.x : o.x + W - colW;
+            const ImVec2 bp(c.x + sl[i].u * pw * 0.5f, c.y + sl[i].v * ph * 0.5f);
+            const ImVec2 from(side == 0 ? x0 + colW + sp(0.5f) : x0 - sp(0.5f), y);
+            dl->AddLine(from, bp, used ? IM_COL32(120, 170, 255, 150) : IM_COL32(255, 255, 255, 22), used ? 1.6f : 1.f);
+            dl->AddCircleFilled(bp, sp(1.4f), used ? ui::ACCENT : ui::PANEL2);
+            if (!used) dl->AddCircle(bp, sp(1.4f), IM_COL32(255, 255, 255, 40));
+            ImVec4 clip(x0, y - rowH * 0.5f, x0 + colW, y + rowH * 0.5f);
+            dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(x0, y - rowH * 0.45f), ui::TEXT3, sl[i].tag, nullptr, 0.f, &clip);
+            std::string lab = used ? hubqm::join_labels(it->second, 2) : std::string("-");
+            dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(x0, y - rowH * 0.45f + ui::F.cap->FontSize * 1.2f), used ? ui::TEXT : ui::TEXT3, lab.c_str(), nullptr, 0.f, &clip);
+        }
+    }
+    if (!g_pad_note.empty()) text_wrapped_disabled(g_pad_note);
+    const std::string sys = g_pad_prof.system;
+    if (hubctl::has_keyboard(sys)) {
+        std::string k;
+        for (const auto& ci : hubctl::key_controls_for(sys)) {
+            auto it = g_pad_prof.keys.find(ci.name);
+            if (it == g_pad_prof.keys.end()) continue;
+            k += (k.empty() ? "" : "   ") + ci.label + " = " + hubctl::describe_keys(it->second);
+        }
+        if (!k.empty()) text_wrapped_disabled("Keyboard: " + k);
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (nav_btn("pad_back", "Back", ImVec2(sp(14.f), sp(5.5f)), false, true, 0, g_row_y++, true)) { g_nav.sel = "How do I play"; g_page = QPage::Main; }
+}
+
+void chat_send(const std::string& t, bool dm) {
+    if (!osk::chat_may_send(t, false)) return;
+    if (g_shot_fake) { g_chat_sent_at = ImGui::GetTime(); return; }
+    if (dm) { if (!fr_send_dm(g_dm_uid, t)) return; }
+    else {
+        A.lobby.send_msg("{\"kind\":\"chat\",\"text\":\"" + json::escape(t) + "\"}");
+        A.chat.push_back({A.st.name, t});
+        A.chat_scroll = true;
+    }
+    send_osd(hubqm::chat_osd_text("You", t));
+    g_chat_sent_at = ImGui::GetTime();
+}
+
+void chat_page() {
+    const bool room = g_shot_fake || fr_in_my_room(), dm = !g_dm_uid.empty();
+    if (!room && dm) g_chat_to_dm = true;
+    if (room && !dm) g_chat_to_dm = false;
+    const bool to_dm = g_chat_to_dm && dm;
+    ImGui::PushFont(ui::F.h2);
+    ImGui::TextUnformatted("Chat");
+    ImGui::PopFont();
+    ImGui::TextDisabled(room || dm ? "Pick a quick phrase or type a message." : "Join a room to chat from here.");
+    ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    const float fw = ImGui::GetContentRegionAvail().x;
+    static const char* kModes[] = {"Off", "Room only", "Room + friends"};
+    if (int d = stepper_row("gchat", "Chat on screen", kModes[std::max(0, std::min(2, A.st.game_chat))], -1.f, true, fw)) {
+        A.st.game_chat = (A.st.game_chat + (d > 0 ? 1 : 2)) % 3;
+        mark_dirty();
+    }
+    if (room && dm) {
+        if (stepper_row("gchat_to", "Send to", g_chat_to_dm ? g_dm_name : std::string("Room"), -1.f, true, fw)) g_chat_to_dm = !g_chat_to_dm;
+    } else if (to_dm) ImGui::TextDisabled("Sending to %s", g_dm_name.c_str());
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    const auto& ph = hubqm::quick_phrases();
+    const float gap = sp(0.75f), bw = (fw - gap * (ph.size() - 1)) / ph.size();
+    for (size_t i = 0; i < ph.size(); ++i) {
+        if (i) ImGui::SameLine(0, gap);
+        if (nav_btn("phrase" + std::to_string(i), ph[i].c_str(), ImVec2(bw, sp(6.f)), false, room || dm, (int)i, g_row_y)) chat_send(ph[i], to_dm);
+    }
+    ++g_row_y;
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    const hubqm::NavAction ta = g_nav.add("chat_type", false, room || dm, 0, g_row_y);   // A on it opens the on-screen keyboard (ImGui nav drives it while it is open)
+    if (ta.activate) osk::request_open();
+    ImVec2 tp = ImGui::GetCursorScreenPos();
+    ImGui::SetNextItemWidth(fw - sp(10.f));
+    bool enter = osk::input("##qmchat", "Type a message", g_chat_buf, sizeof g_chat_buf, ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine(0, gap);
+    if (g_nav.selected("chat_type")) nav_ring(tp, tp + ImVec2(fw - sp(10.f), ImGui::GetFrameHeight()));
+    bool send_btn = nav_btn("chat_send", "Send", ImVec2(sp(9.f), ImGui::GetFrameHeight()), true, g_chat_buf[0] != 0 && (room || dm), 1, g_row_y++);
+    if ((enter || send_btn) && g_chat_buf[0] && (room || dm)) {
+        std::string t = g_chat_buf;
+        g_chat_buf[0] = 0;
+        chat_send(t, to_dm);
+    }
+    if (ImGui::GetTime() - g_chat_sent_at < 2.0) ImGui::TextDisabled("Sent.");
+    else ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeight()));
+    if (nav_btn("chat_back", "Back", ImVec2(sp(14.f), sp(5.5f)), false, true, 0, g_row_y++, true)) { g_nav.sel = "Chat"; g_page = QPage::Main; }
+}
+
 void check_ack() {
     if (!g_pending) return;
     std::string txt;
@@ -451,6 +614,14 @@ void qm_dolphin_reset() {
     push_toast("Resetting Dolphin to 1x...", COL_GOOD, 4.0);
     qm_log("emergency reset to 1x requested");
 }
+/* A room or friend message arrived: show it on the running game's OSD (runner OSD only, nothing over the game) when the setting allows. */
+void qm_chat_incoming(bool dm, const std::string& uid, const std::string& who, const std::string& text) {
+    if (dm) { g_dm_uid = uid; g_dm_name = who; }
+    if (!A.proc || !ctl_ready() || !hubqm::chat_osd_wanted(A.st.game_chat, dm)) return;
+    std::string t = hubqm::chat_osd_text(dm ? who + " (DM)" : who, text);
+    if (t.empty() || !g_chat_lim.allow((long long)GetTickCount64())) return;
+    send_osd(t);
+}
 bool qm_is_open() { return g_qm_showing.load(); }   // thread-safe; set at the request, refreshed every draw
 
 
@@ -488,6 +659,12 @@ static void qm_session_tick(const hub::GameEntry* e) {
         g_launch_vol = g_vol;
         g_ext_sessions = -1;
         g_ext_dirty = true;
+        g_dm_uid.clear(); g_dm_name.clear(); g_chat_buf[0] = 0; g_chat_to_dm = false;
+        g_perf_sent = 0; g_perf_t0 = GetTickCount64();
+    }
+    if (g_perf_sent < 2 && e && A.st.perf_overlay && ctl_ready() && runner_supports_overlay(e)) {   // the runner ignores commands written before it started polling: send at +4 s and again at +12 s
+        const ULONGLONG dt = GetTickCount64() - g_perf_t0;
+        if (dt >= (g_perf_sent == 0 ? 4000u : 12000u)) { runctl::Command c; c.cmd = runctl::Cmd::Overlay; c.value = 1; send_quiet(c); ++g_perf_sent; }
     }
     if (e && !is_native(*e) && !runner_has_ctl(*e)) {
         double now = ImGui::GetTime();
@@ -537,7 +714,8 @@ void qm_tick() {
         g_speed_idx = std::getenv("HUB_SHOT_QM_SPEED") ? std::atoi(std::getenv("HUB_SHOT_QM_SPEED")) : hubqm::kSpeedNormal;
         g_mute = std::getenv("HUB_SHOT_QM_MUTE") != nullptr;
         g_sys = "n64"; g_key = "n64:shot"; g_title = "Super Smash Bros.";
-        g_page = std::string(shot) == "save" ? QPage::Save : std::string(shot) == "load" ? QPage::Load : QPage::Main;
+        g_page = std::string(shot) == "save" ? QPage::Save : std::string(shot) == "load" ? QPage::Load : std::string(shot) == "pad" ? QPage::Pad : std::string(shot) == "chat" ? QPage::Chat : QPage::Main;
+        g_perf_shot = std::getenv("HUB_SHOT_QM_PERF") != nullptr;
         g_open_req = true;
         std::string dir = states_dir_of(g_key, g_sys);
         std::error_code ec;
@@ -650,7 +828,7 @@ static void qm_body() {
     const bool back = g_nav.back;
     if (g_close_req.exchange(false)) { g_close_why = "reset requested"; ImGui::CloseCurrentPopup(); focus_game(); return; }
     if (back) {
-        if (g_page != QPage::Main) { g_nav.sel = g_page == QPage::Save ? "Save state" : "Load state"; g_page = QPage::Main; }
+        if (g_page != QPage::Main) { g_nav.sel = g_page == QPage::Save ? "Save state" : g_page == QPage::Load ? "Load state" : g_page == QPage::Chat ? "Chat" : "How do I play"; g_page = QPage::Main; }
         else { g_close_why = "B"; ImGui::CloseCurrentPopup(); focus_game(); return; }
     }
     check_ack();
@@ -661,7 +839,9 @@ static void qm_body() {
     const bool ext = g_shot_fake ? g_shot_ext : (e && !is_native(*e) && !runner_has_ctl(*e));
 
     if (g_page != QPage::Main) {
-        slot_page(g_page == QPage::Save);
+        if (g_page == QPage::Pad) pad_page();
+        else if (g_page == QPage::Chat) chat_page();
+        else slot_page(g_page == QPage::Save);
         return;
     }
     ImGui::PushFont(ui::F.title);
@@ -718,6 +898,14 @@ static void qm_body() {
             if (ctl) { runctl::Command c; c.cmd = runctl::Cmd::Mute; c.value = g_mute ? 1 : 0; send_quiet(c); }
             else { g_ext_dirty = true; g_ext_next = 0; }
         }
+        if (ctl && (g_shot_fake || runner_supports_overlay(e))) {   // FPS / ping / input delay / rollback on the game's OSD (display only, fine online)
+            const bool on = g_shot_fake ? g_perf_shot : A.st.perf_overlay;
+            if (stepper_row("perf", "Stats overlay", on ? "On" : "Off", -1.f, g_pending == 0, fw)) {
+                if (g_shot_fake) g_perf_shot = !g_perf_shot;
+                else { A.st.perf_overlay = !A.st.perf_overlay; mark_dirty(); g_perf_sent = 2; }
+                runctl::Command c; c.cmd = runctl::Cmd::Overlay; c.value = (g_shot_fake ? g_perf_shot : A.st.perf_overlay) ? 1 : 0; send_quiet(c);
+            }
+        }
         if (ext && g_ext_sessions == 0 && !g_shot_fake) text_wrapped_disabled("The game has not started its sound yet.");
     }
     if (ctl) {
@@ -752,6 +940,12 @@ static void qm_body() {
         const float iw = ImGui::GetContentRegionAvail().x;
         fr_invite_button_and_picker(iw, sp(6.5f));
         if (g_nav.selected("Invite friends")) nav_ring(p, p + ImVec2(iw, sp(6.5f)));
+    }
+    if (g_shot_fake || fr_in_my_room() || !g_dm_uid.empty()) {
+        if (menu_button("Chat", true, ui::Icon::Search)) { g_page = QPage::Chat; g_nav.sel.clear(); }
+    }
+    if (g_shot_fake || (e && !hubctl::system_key(e->system).empty())) {
+        if (menu_button("How do I play", true, ui::Icon::Play)) { g_pad_loaded = false; g_page = QPage::Pad; g_nav.sel.clear(); }
     }
     if (menu_button("Quit to RetroHub", true, ui::Icon::Close)) {
         g_speed_idx = hubqm::dolphin_idx(g_dolphin);   // Dolphin: quitting never sends speed keys (a pending change is dropped); the next game starts at 1x anyway
