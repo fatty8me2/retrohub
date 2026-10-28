@@ -8,10 +8,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <set>
 
 #include "friend_games.h"   // hubui::fg::norm_title
 #include "games.h"          // hub::data_dir
@@ -127,6 +130,55 @@ std::string safe_name(const std::string& t) {
     return r;
 }
 
+static std::string lower_name(const std::string& s) {
+    std::string o = s;
+    for (char& c : o) c = (char)std::tolower((unsigned char)c);
+    return o;
+}
+
+bool console_code(const std::string& name) {
+    static const char* codes[] = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb", "ps1"};
+    std::string l = lower_name(name);
+    for (const char* c : codes) if (l == c) return true;
+    return false;
+}
+
+std::vector<std::string> parse_links(const std::string& text) {
+    std::vector<std::string> out;
+    auto push = [&](const char* p, size_t len) {
+        if (len < 10 || len > 80) return;
+        for (size_t i = 0; i < len; ++i) { char c = p[i]; if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-')) return; }
+        std::string id(p, len);
+        for (const std::string& s : out) if (s == id) return;
+        out.push_back(std::move(id));
+    };
+    auto take = [&](size_t start) {   // read one id token starting at `start`
+        size_t i = start;
+        while (i < text.size()) { char c = text[i]; if (std::isalnum((unsigned char)c) || c == '_' || c == '-') ++i; else break; }
+        push(text.data() + start, i - start);
+    };
+    size_t pos = 0;
+    while (pos < text.size()) {   // ids inside Drive URLs, earliest marker first
+        size_t a = text.find("folders/", pos);
+        size_t b = text.find("folder/", pos);
+        size_t c = text.find("embeddedfolderview?id=", pos);
+        if (a == std::string::npos && b == std::string::npos && c == std::string::npos) break;
+        if (a != std::string::npos && (b == std::string::npos || a < b) && (c == std::string::npos || a < c)) { take(a + 8); pos = a + 9; }
+        else if (b != std::string::npos && (c == std::string::npos || b < c)) { take(b + 7); pos = b + 8; }
+        else { take(c + 22); pos = c + 23; }   // strlen("embeddedfolderview?id=") == 22
+    }
+    size_t i = 0;
+    while (i < text.size()) {   // bare ids: long tokens of id characters, not part of a URL (preceded by / or :)
+        char c = text[i];
+        if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-')) { ++i; continue; }
+        size_t j = i;
+        while (j < text.size()) { char d = text[j]; if (std::isalnum((unsigned char)d) || d == '_' || d == '-') ++j; else break; }
+        if (j - i >= 15 && (i == 0 || (text[i - 1] != '/' && text[i - 1] != ':'))) push(text.data() + i, j - i);
+        i = j;
+    }
+    return out;
+}
+
 /* Plain GET that returns the whole body (folder listings are small). */
 static bool http_get(const std::wstring& host, const std::wstring& path, std::string* body, std::string* err) {
     HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
@@ -166,15 +218,32 @@ bool list_folder(const std::string& folder_id, std::vector<Entry>* out) {
     return true;
 }
 
-std::string match_game(const std::string& sys_short, const std::string& title) {
-    const char* sf = sys_folder(sys_short);
-    if (!sf[0]) return "";
+/* The id of `sys`'s subfolder inside pack root `root_id` ("" when absent or on error). */
+static std::string sys_subfolder(const std::string& root_id, const std::string& sys) {
+    if (root_id.empty()) return "";
+    std::vector<Entry> entries;
+    if (!list_folder(root_id, &entries)) return "";
+    for (const Entry& e : entries)
+        if (e.is_folder && console_code(e.name) && lower_name(e.name) == sys) return e.id;
+    return "";
+}
+
+std::string match_game(const std::string& sys_short, const std::string& title, const std::vector<std::string>& roots) {
     std::string want = hubui::fg::norm_title(title);
     if (want.empty()) return "";
-    std::vector<Entry> entries;
-    if (!list_folder(sf, &entries)) return "";
-    for (const Entry& e : entries)
-        if (e.is_folder && hubui::fg::norm_title(e.name) == want) return e.id;
+    std::vector<std::string> sources;
+    const char* sf = sys_folder(sys_short);
+    if (sf[0]) sources.push_back(sf);
+    for (const std::string& r : roots) {
+        std::string sub = sys_subfolder(r, lower_name(sys_short));
+        if (!sub.empty()) sources.push_back(sub);
+    }
+    for (const std::string& s : sources) {
+        std::vector<Entry> entries;
+        if (!list_folder(s, &entries)) continue;
+        for (const Entry& e : entries)
+            if (e.is_folder && hubui::fg::norm_title(e.name) == want) return e.id;
+    }
     return "";
 }
 
@@ -251,6 +320,108 @@ bool installed(const std::string& sys_short, const std::string& title) {
 }
 
 /* ------------------------------------------------------------------ */
+/* pack index: which games are installable (built-in pack + extra roots) */
+/* ------------------------------------------------------------------ */
+
+static long long now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static struct {
+    std::mutex mu;
+    std::map<std::string, int> state;   // sys -> 0 pending, 1 ok (membership known), 2 failed
+    std::map<std::string, std::set<std::string>> titles;   // sys -> normalized game folder names
+    std::map<std::string, bool> extra;   // sys -> an extra root has this console
+    long long last_ms = 0;
+    bool finished = true;               // the job in `th` has ended (mu)
+    std::atomic<bool> stop{false};      // index_shutdown(): the job stops between listings
+    std::thread th;
+} IX;
+
+void index_refresh(const std::vector<std::string>& roots) {
+    bool run = false;
+    {
+        std::lock_guard<std::mutex> lk(IX.mu);
+        if (IX.th.joinable() && !IX.finished) return;   // one job at a time
+        if (IX.th.joinable()) IX.th.join();             // the previous job ended: reclaim its thread
+        IX.finished = false;
+        IX.last_ms = now_ms();
+        run = true;
+    }
+    if (!run) return;
+    IX.th = std::thread([roots] {
+        auto list_into = [&](const char* folder_id, const std::string& sys) {
+            if (!folder_id || !folder_id[0] || IX.stop.load()) return false;
+            std::vector<Entry> entries;
+            if (!list_folder(folder_id, &entries)) return false;
+            std::lock_guard<std::mutex> lk(IX.mu);
+            for (const Entry& e : entries) if (e.is_folder) IX.titles[sys].insert(hubui::fg::norm_title(e.name));
+            return true;
+        };
+        static const char* builtin[] = {"n64", "gc", "gba", "gbc", "nds", "ps1"};
+        for (const char* s : builtin) {   // the built-in pack first: its consoles are known even before any listing
+            { std::lock_guard<std::mutex> lk(IX.mu); IX.state[s] = 0; }
+            bool ok = list_into(sys_folder(s), s);
+            { std::lock_guard<std::mutex> lk(IX.mu); IX.state[s] = ok ? 1 : 2; }
+        }
+        for (const std::string& root : roots) {   // extra roots: same layout as the built-in pack (a subfolder per console)
+            if (IX.stop.load()) break;
+            std::vector<Entry> entries;
+            if (!list_folder(root, &entries)) continue;
+            for (const Entry& e : entries) {
+                if (!e.is_folder || !console_code(e.name)) continue;
+                std::string sys = lower_name(e.name);
+                { std::lock_guard<std::mutex> lk(IX.mu); IX.extra[sys] = true; }
+                if (list_into(e.id.c_str(), sys)) {
+                    std::lock_guard<std::mutex> lk(IX.mu); if (IX.state[sys] != 2) IX.state[sys] = 1;
+                } else {
+                    std::lock_guard<std::mutex> lk(IX.mu); IX.state[sys] = 2;
+                }
+            }
+        }
+        std::lock_guard<std::mutex> lk(IX.mu); IX.finished = true;
+    });
+}
+
+void index_shutdown() {   // app exit: stop the job and join it (it ends between listings)
+    IX.stop = true;
+    std::thread th;
+    { std::lock_guard<std::mutex> lk(IX.mu); if (IX.th.joinable()) th = std::move(IX.th); }
+    if (th.joinable()) th.join();
+}
+
+long long index_last_attempt_ms() {
+    std::lock_guard<std::mutex> lk(IX.mu);
+    return IX.last_ms;
+}
+
+IndexState index_state(const std::string& sys_short) {
+    std::lock_guard<std::mutex> lk(IX.mu);
+    auto it = IX.state.find(sys_short);
+    if (it == IX.state.end()) return IndexState::Unknown;   // no source known for this console
+    if (it->second == 1) return IndexState::Ready;
+    if (IX.th.joinable() && !IX.finished) return IndexState::Checking;
+    return IndexState::Unknown;   // failed (or pending with no job running): membership unknown
+}
+
+bool index_has(const std::string& sys_short, const std::string& title) {
+    std::string want = hubui::fg::norm_title(title);
+    if (want.empty()) return false;
+    std::lock_guard<std::mutex> lk(IX.mu);
+    auto it = IX.state.find(sys_short);
+    if (it == IX.state.end() || it->second != 1) return false;
+    auto t = IX.titles.find(sys_short);
+    return t != IX.titles.end() && t->second.count(want) > 0;
+}
+
+bool index_source(const std::string& sys_short) {
+    if (sys_folder(sys_short)[0]) return true;
+    std::lock_guard<std::mutex> lk(IX.mu);
+    auto it = IX.extra.find(sys_short);
+    return it != IX.extra.end() && it->second;
+}
+
+/* ------------------------------------------------------------------ */
 /* background install job                                              */
 /* ------------------------------------------------------------------ */
 
@@ -258,7 +429,7 @@ Installer::~Installer() { if (th.joinable()) th.join(); }
 
 void Installer::request_cancel() { cancel = true; }
 
-void Installer::start(const std::string& sys, const std::string& title) {
+void Installer::start(const std::string& sys, const std::string& title, const std::vector<std::string>& roots) {
     if (state == Working || th.joinable()) return;   // one job at a time
     this->sys = sys;
     this->title = title;
@@ -271,20 +442,31 @@ void Installer::start(const std::string& sys, const std::string& title) {
     file_count = 0;
     { std::lock_guard<std::mutex> lk(mu); current.clear(); error.clear(); }
     state = Working;
-    th = std::thread([this] {
+    th = std::thread([this, roots] {
         bool r = false;
         std::string e;
         const char* sf = sys_folder(this->sys);
-        if (!sf[0]) e = "this console is not in the shared pack";
+        if (!sf[0] && roots.empty()) e = "this console is not in the shared pack";
         else {
             std::string want = hubui::fg::norm_title(this->title);
-            std::vector<Entry> games;
-            if (!list_folder(sf, &games)) e = "could not list the shared pack";
+            std::vector<std::string> sources;   // the built-in pack first, then every extra root that has this console
+            if (sf[0]) sources.push_back(sf);
+            for (const std::string& root : roots) {
+                std::string sub = sys_subfolder(root, lower_name(this->sys));
+                if (!sub.empty()) sources.push_back(sub);
+            }
+            if (sources.empty()) e = "this console is not in the shared pack";
             else {
-                std::string game_id;
-                for (const Entry& g : games)
-                    if (g.is_folder && hubui::fg::norm_title(g.name) == want) { game_id = g.id; break; }
-                if (game_id.empty()) e = "not in the shared pack";
+                std::string game_id; bool any_listed = false;
+                for (const std::string& s : sources) {
+                    if (!game_id.empty()) break;
+                    std::vector<Entry> games;
+                    if (!list_folder(s, &games)) continue;
+                    any_listed = true;
+                    for (const Entry& g : games)
+                        if (g.is_folder && hubui::fg::norm_title(g.name) == want) { game_id = g.id; break; }
+                }
+                if (game_id.empty()) e = any_listed ? "not in the shared pack" : "could not list the shared pack";
                 else {
                     std::vector<Entry> files;
                     if (!list_files(game_id, &files)) e = "could not list the game's files";

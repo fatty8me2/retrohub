@@ -58,6 +58,7 @@ void gamepack_shutdown() {
     GP.request_cancel();
     if (GP.th.joinable()) GP.th.join();
     if (GP.state == hubgp::Installer::Working) gamepack_finished(GP.ok);   // finished on the last frame: register a successful install
+    hubgp::index_shutdown();
 }
 
 void draw_gamepack_dialogs() {
@@ -138,6 +139,18 @@ void ghost_tick() {
     double now = ImGui::GetTime();
     if (now < next) return;
     next = now + 1.0;
+
+    /* shared pack index: which greyed-out games are installable (built-in pack + extra roots from Settings > Online).
+     * Re-runs when the links change or 10 min pass (the pack gains games); a failed run retries on that same cadence. */
+    static std::string seen_pack_links;
+    {
+        const std::string& links = A.st.pack_links;
+        long long now_ms = (long long)(now * 1000.0);
+        if (!A.ghosts.empty() && (links != seen_pack_links || now_ms - hubgp::index_last_attempt_ms() > 600000)) {
+            seen_pack_links = links;
+            hubgp::index_refresh(hubgp::parse_links(links));
+        }
+    }
 
     /* a friend's list changed (or the friends list / chip did): recompose the library */
     uint32_t ep = fr_library_epoch();
@@ -379,14 +392,22 @@ void draw_ghost_modal() {
     ImGui::SameLine(0, sp(1.5f));
     button("Play Online", ImVec2(sp(18.f), bh), false, false, ui::Icon::Globe);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
-    if (hubgp::sys_folder(g.sys)[0]) {   // this console is in the shared pack: offer to install it
-        ImGui::SameLine(0, sp(1.5f));
-        bool have = hubgp::installed(g.sys, g.title);
-        if (button("Install", ImVec2(sp(14.f), bh), true, !have && GP.state == hubgp::Installer::Idle, ui::Icon::Cloud)) {
-            ImGui::CloseCurrentPopup();
-            GP.start(g.sys, g.title);
+    {   // install from the shared pack (built-in folder + extra roots from Settings > Online)
+        const bool builtin = hubgp::sys_folder(g.sys)[0] != '\0';
+        const hubgp::IndexState ist = hubgp::index_state(g.sys);
+        if (builtin || (ist == hubgp::IndexState::Ready && hubgp::index_source(g.sys))) {
+            ImGui::SameLine(0, sp(1.5f));
+            bool have = hubgp::installed(g.sys, g.title);
+            bool in_pack = ist == hubgp::IndexState::Ready ? hubgp::index_has(g.sys, g.title) : true;   // unknown yet: checked live on click
+            if (button("Install", ImVec2(sp(14.f), bh), true, !have && in_pack && GP.state == hubgp::Installer::Idle, ui::Icon::Cloud)) {
+                ImGui::CloseCurrentPopup();
+                GP.start(g.sys, g.title, hubgp::parse_links(A.st.pack_links));
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (have) ImGui::SetTooltip("Already installed");
+                else if (!in_pack) ImGui::SetTooltip("Not in the shared pack yet. The owner can add it to their Google Drive and share the link (Settings > Online) so everyone can install it.");
+            }
         }
-        if (have && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Already installed");
     }
     ImGui::SameLine(0, sp(1.5f));
     if (button("Add your own copy", ImVec2(sp(22.f), bh), true, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
