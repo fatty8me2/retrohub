@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.0",
+      "date": "2026-10-28",
+      "title": "Online games recover from a desync",
+      "new": [
+        "If a Game Boy, GBA, NES or SNES online game drifts out of sync, the host's game state is sent to everyone and play carries on after a short pause with a \"Resynced\" note, instead of the game ending (up to 3 times per game)"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.28.8",
       "date": "2026-10-27",
       "title": "Install a greyed-out game",
