@@ -1,5 +1,6 @@
 #include "app.h"
 #include "gameinfo.h"
+#include "gamepack.h"
 
 bool gameinfo_ui_section_query(const gameinfo::Query& q, const std::string& id, int part = 0);   // gameinfo_ui.cpp: description, ratings, facts
 
@@ -32,6 +33,64 @@ void rebuild_ghosts() {
     fr_library_collect(&libs);
     if (libs.empty()) return;
     A.ghosts = hubui::fg::build_ghosts(owned_snapshot(), libs);
+}
+
+/* ---------- GamePack: install a greyed-out game from the shared Drive folder (gamepack.cpp) ---------- */
+
+static hubgp::Installer GP;   // one install at a time
+
+static void gamepack_finished(bool success) {
+    if (success) {   // the games folder joins the library, then a rescan picks the game up (and drops it from the ghosts)
+        if (hubui::merge_installer_games_dir(&A.st, hubgp::pack_root())) mark_dirty();
+        start_scan();
+        set_toast(GP.title + " installed.");
+    } else if (GP.error == "cancelled") {
+        GP.state = hubgp::Installer::Idle;   // the user stopped it: no error dialog
+    }
+}
+
+void poll_gamepack() {
+    bool success = false;
+    if (GP.poll(&success)) gamepack_finished(success);
+}
+
+void gamepack_shutdown() {
+    GP.request_cancel();
+    if (GP.th.joinable()) GP.th.join();
+    if (GP.state == hubgp::Installer::Working) gamepack_finished(GP.ok);   // finished on the last frame: register a successful install
+}
+
+void draw_gamepack_dialogs() {
+    if (GP.state == hubgp::Installer::Idle) return;
+    bool open = false;
+    emu_modal_begin("Install game", &open);
+    if (open) {
+        const bool back = ui::modal_back();
+        if (GP.state == hubgp::Installer::Working) {
+            ImGui::TextUnformatted(("Installing " + GP.title).c_str());
+            int fi = GP.file_idx, fc = GP.file_count;
+            if (fc > 1) { char t[32]; std::snprintf(t, sizeof t, "file %d of %d", fi, fc); ImGui::TextDisabled("%s", t); }
+            std::string cur;
+            { std::lock_guard<std::mutex> lk(GP.mu); cur = GP.current; }
+            if (!cur.empty()) ImGui::TextWrapped("%s", cur.c_str());
+            uint64_t got = GP.got, tot = GP.total;
+            char ov[48];
+            std::snprintf(ov, sizeof ov, "%.1f / %.1f MB", got / 1048576.0, tot / 1048576.0);
+            ImGui::ProgressBar(tot ? (float)got / (float)tot : 0.f, ImVec2(-1, sp(3.f)), ov);
+            ImGui::Dummy(ImVec2(0, sp(1.f)));
+            if (button("Cancel", ImVec2(sp(20.f), sp(5.5f)))) GP.request_cancel();
+        } else {   // Failed (a cancel never gets here: poll_gamepack() closes it silently)
+            if (back) GP.state = hubgp::Installer::Idle;
+            std::string err;
+            { std::lock_guard<std::mutex> lk(GP.mu); err = GP.error; }
+            ImGui::TextWrapped("Could not install %s: %s", GP.title.c_str(), err.c_str());
+            ImGui::Dummy(ImVec2(0, sp(1.f)));
+            if (button("Close", ImVec2(sp(20.f), sp(5.5f)), true)) GP.state = hubgp::Installer::Idle;
+            ImGui::SetItemDefaultFocus();
+        }
+        if (GP.state == hubgp::Installer::Idle) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 }
 
 /* Screenshots (HUB_SHOT_FAKE_FRIENDS + HUB_SHOT_FAKE_FRIEND_LIBS=<n extra made-up games for one friend>): fake friends' libraries. */
@@ -320,6 +379,15 @@ void draw_ghost_modal() {
     ImGui::SameLine(0, sp(1.5f));
     button("Play Online", ImVec2(sp(18.f), bh), false, false, ui::Icon::Globe);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
+    if (hubgp::sys_folder(g.sys)[0]) {   // this console is in the shared pack: offer to install it
+        ImGui::SameLine(0, sp(1.5f));
+        bool have = hubgp::installed(g.sys, g.title);
+        if (button("Install", ImVec2(sp(14.f), bh), true, !have && GP.state == hubgp::Installer::Idle, ui::Icon::Cloud)) {
+            ImGui::CloseCurrentPopup();
+            GP.start(g.sys, g.title);
+        }
+        if (have && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Already installed");
+    }
     ImGui::SameLine(0, sp(1.5f));
     if (button("Add your own copy", ImVec2(sp(22.f), bh), true, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
     ImGui::SameLine(0, sp(1.5f));

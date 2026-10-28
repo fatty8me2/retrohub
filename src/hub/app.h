@@ -941,6 +941,11 @@ void emu_modal_begin(const char* name, bool* open_flag);
 void emu_modal_begin(const char* name, bool* open_flag);
 void draw_emulator_dialogs();
 
+/* ---- gamepack (friend_games_ui.cpp): install a greyed-out friend game from the shared Drive folder ---- */
+void poll_gamepack();
+void draw_gamepack_dialogs();
+void gamepack_shutdown();   // app exit: cancel + join the install job
+
 
 /* ---- page_about.cpp ---- */
 void draw_overlays();
