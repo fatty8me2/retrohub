@@ -17,6 +17,7 @@ namespace n64run {
 namespace fbmask {
 
 constexpr int kKeep = 4;
+constexpr uint32_t kWindow = 120;   // an origin not set for this many lead polls (2 s) is forgotten: a peer that joined later (live spectate) has the same set
 constexpr uint32_t kMargin = 0x800;   // bytes skipped around each framebuffer
 
 struct Range { uint32_t lo, hi; };   // [lo, hi) in bytes, multiples of 8
@@ -25,17 +26,20 @@ class Tracker {
   public:
     void reset() { n_ = 0; }
     int count() const { return n_; }
-    /* VI_STATUS, VI_ORIGIN, VI_WIDTH as the game set them */
-    void sample(uint32_t status, uint32_t origin, uint32_t width) {
+    /* lead poll n; VI_STATUS, VI_ORIGIN, VI_WIDTH as the game set them */
+    void sample(uint32_t n, uint32_t status, uint32_t origin, uint32_t width) {
+        for (int i = 0; i < n_;) {   // forget origins unused for kWindow polls (same sample numbers on every peer)
+            if (n - e_[i].seen > kWindow) { for (int j = i + 1; j < n_; j++) e_[j - 1] = e_[j]; n_--; } else i++;
+        }
         const uint32_t type = status & 3u;   // 0/1 blank/reserved, 2 = 16 bit, 3 = 32 bit
         origin &= 0x00FFFFFFu;
         if (type < 2 || !origin || !width || width > 1024) return;
         const uint32_t h = width > 400 ? 480u : 240u;
         const uint32_t bytes = width * h * (type == 3 ? 4u : 2u);
         for (int i = 0; i < n_; i++)
-            if (e_[i].origin == origin) { e_[i].bytes = bytes; return; }   // seen: the set is unchanged
+            if (e_[i].origin == origin) { e_[i].bytes = bytes; e_[i].seen = n; return; }
         if (n_ == kKeep) { for (int i = 1; i < kKeep; i++) e_[i - 1] = e_[i]; n_--; }
-        e_[n_].origin = origin; e_[n_].bytes = bytes; n_++;
+        e_[n_].origin = origin; e_[n_].bytes = bytes; e_[n_].seen = n; n_++;
     }
     /* sorted, merged, clipped to [0, ram_bytes) */
     std::vector<Range> ranges(uint32_t ram_bytes) const {
@@ -52,7 +56,7 @@ class Tracker {
         return m;
     }
   private:
-    struct E { uint32_t origin = 0, bytes = 0; } e_[kKeep];
+    struct E { uint32_t origin = 0, bytes = 0, seen = 0; } e_[kKeep];
     int n_ = 0;
 };
 

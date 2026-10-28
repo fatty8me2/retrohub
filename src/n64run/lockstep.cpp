@@ -547,7 +547,7 @@ uint32_t Lockstep::spec_get_keys(int port) {
     if (!t_first_) t_first_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
     if (hooks_.update_local) hooks_.update_local();
     pump();
-    if (hooks_.vi_poll) hooks_.vi_poll();
+    if (hooks_.vi_poll) hooks_.vi_poll(n);
     // Same deterministic point as the players: before the inputs of sample n are delivered.
     if (opt_.hash_interval > 0 && n > 0 && n % (uint32_t)opt_.hash_interval == 0) {
         uint64_t h;
@@ -631,7 +631,7 @@ uint32_t Lockstep::get_keys(int port) {
         rs_service(hubnet::now_ms());
         if (rs_.barrier_at(n) && !rs_barrier(n)) return 0;
     }
-    if (hooks_.vi_poll) hooks_.vi_poll();
+    if (hooks_.vi_poll) hooks_.vi_poll(n);
 
     // Desync hash, taken at a deterministic point (before inputs of sample n are delivered).
     if (net_ && opt_.hash_interval > 0 && n > 0 && n % (uint32_t)opt_.hash_interval == 0) {

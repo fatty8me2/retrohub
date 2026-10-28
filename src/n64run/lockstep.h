@@ -72,7 +72,7 @@ struct LockstepHooks {
     std::function<void(uint32_t n)> qa_poll;
     /* Framebuffer-masked sync hash (fbmask.h): vi_poll at every lead poll (all roles, before the hash), vi_reset when a recovery state was applied
      * (host and guests alike, so every peer's tracked set restarts at the same poll). Announcing the capability needs vi_poll. */
-    std::function<void()> vi_poll;
+    std::function<void(uint32_t n)> vi_poll;
     std::function<void()> vi_reset;
 };
 
