@@ -16,6 +16,8 @@
 
 #include "lockstep_core.h"
 #include "spectate.h"
+#include "resync.h"
+#include "state_xfer.h"
 
 namespace hubnet { class Session; }
 
@@ -57,6 +59,16 @@ struct LockstepHooks {
      * after_sample(n): the host recorded sample n for its spectators. Both may be empty. Used by n64run's live spectator join. */
     std::function<void(uint32_t n)> on_lead_poll;
     std::function<void(uint32_t n)> after_sample;
+    /* Desync recovery (resync.h), all optional; without resync_fetch the capability is not announced. Emulation thread.
+     * resync_save: host, at poll S-1: ask the core for a savestate (async; the state before sample S). false = refused.
+     * resync_fetch: host, polled while stalled at S: 0 pending, 1 done (data = gzipped state, hash over it), -1 failed.
+     * resync_load: guest: verify (raw size, hash) and have the core load the state; false = bad. The frontend calls Lockstep::resync_loaded()
+     * from the core's load-complete callback.  resync_done: a recovery finished (OSD note). qa_poll: QA fault injection. */
+    std::function<bool(uint32_t* job)> resync_save;
+    std::function<int(uint32_t job, std::vector<uint8_t>* data, uint64_t* hash)> resync_fetch;
+    std::function<bool(const std::vector<uint8_t>& data, uint64_t hash)> resync_load;
+    std::function<void(uint32_t S, uint32_t stall_ms)> resync_done;
+    std::function<void(uint32_t n)> qa_poll;
 };
 
 class Lockstep {
@@ -106,8 +118,33 @@ class Lockstep {
     void spectate_live_loaded() { if (live_wait_) { sample_ = (int64_t)live_n_ - 1; live_wait_ = false; } }
     bool spectate_live_waiting() const { return live_wait_; }
 
+    /* Desync recovery. resync_loaded: the core finished loading the recovery state (guest; load-complete callback, emulation thread). */
+    bool resync_waiting() const { return rs_wait_; }
+    void resync_loaded(bool ok);
+    int resyncs() const { return rs_.count(); }
+
   private:
     void pump();
+    /* recovery */
+    resync::Ctl rs_;
+    uint8_t caps_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    std::atomic<bool> rs_wait_{false};
+    rb::xfer::Sender rs_snd_;
+    rb::xfer::Receiver rs_rcv_;
+    uint32_t rs_job_ = 0, rs_t0_ = 0, rs_last_done_ = 0, rs_done_ep_ = 0x100, rs_last_pkt_ = 0, rs_last_hs_ = 0;
+    uint32_t rs_bytes_ = 0;
+    bool rs_dirty_ = false;
+    uint32_t rs_hash_sample_ = 0;
+    void rs_mismatch(uint32_t hash_sample);
+    void rs_service(uint32_t now);
+    void rs_on_ctl(int from, const std::vector<uint8_t>& msg);
+    void rs_on_xfer(int from, const std::vector<uint8_t>& msg);
+    void rs_send(int to, const resync::Msg& m);
+    bool rs_barrier(uint32_t n);   // true: carry on with sample n; false: return neutral (guest loading)
+    bool rs_host_barrier(uint32_t n);
+    bool rs_guest_barrier(uint32_t n);
+    void rs_fail(const char* why);
+    void rs_finish(uint32_t S);
     void send_packet();
     void report_mismatches();
     void abort_with(const std::string& why);

@@ -543,6 +543,7 @@ static uint32_t g_S = 0, g_t_join = 0, g_done_ep = 0x100, g_done_at = 0;
 static std::string g_in_path;                // the downloaded state file (removed once the core has loaded it)
 static bool g_snapshot = false, g_verified = false, g_live_logged = false;
 static spectate::CatchUp g_cu;
+static std::string g_rs_in_path;             // desync recovery: the state file the guest asked the core to load
 
 static uint64_t fnv64(const uint8_t* d, size_t n) {
     uint64_t h = 0xCBF29CE484222325ull;
@@ -584,6 +585,10 @@ static void state_cb(void*, m64p_core_param p, int v) {
         g_save.done_id = id; g_save.data = std::move(data); g_save.hash = h;
         g_save.work_ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)f.QuadPart;
         g_save.busy = false;
+    }
+    else if (p == M64CORE_STATE_LOADCOMPLETE && g_run.lockstep && g_run.lockstep->resync_waiting()) {   // desync recovery (guest)
+        if (!g_rs_in_path.empty()) { std::error_code ec; fs::remove(fs::path(g_rs_in_path), ec); g_rs_in_path.clear(); }
+        g_run.lockstep->resync_loaded(v != 0);
     }
     else if (p == M64CORE_STATE_LOADCOMPLETE && g_run.lockstep && g_run.lockstep->spectate_live_waiting()) {
         if (!g_in_path.empty()) { std::error_code ec; fs::remove(fs::path(g_in_path), ec); }
@@ -749,6 +754,51 @@ static void spec_poll(uint32_t n) {
         g_live_logged = true;
         logf_("spectate", "LIVE at sample %u, %u behind the host, %u ms after joining (%s, %u samples fast-forwarded)", n, c.lag(), g_cu.live_at() - g_t_join,
               g_snapshot ? "live snapshot" : "replay from sample 0", n - (g_snapshot ? g_S : 0));
+    }
+}
+
+/* ---- desync recovery (lockstep.h resync hooks; shares the save job above) ---- */
+/* host, at poll S-1: the state taken at the next interrupt is the one before sample S */
+static bool resync_save(uint32_t* job) {
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lk(g_save_mx);
+        if (g_save.busy) return false;
+        g_save.id = *job = ++g_job_seq;
+        g_save.path = path = g_dir + "\\resync_" + std::to_string(g_job_seq) + ".st";
+        g_save.busy = true;
+    }
+    if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(path.c_str())) != M64ERR_SUCCESS) {
+        std::lock_guard<std::mutex> lk(g_save_mx);
+        g_save.busy = false;
+        return false;
+    }
+    return true;
+}
+static int resync_fetch(uint32_t job, std::vector<uint8_t>* data, uint64_t* hash) {
+    std::lock_guard<std::mutex> lk(g_save_mx);
+    if (g_save.busy && g_save.id == job) return 0;
+    if (g_save.done_id != job) return -1;
+    *data = std::move(g_save.data); *hash = g_save.hash;
+    g_save.data.clear(); g_save.done_id = 0;
+    return data->empty() ? -1 : 1;
+}
+static bool resync_load(const std::vector<uint8_t>& st, uint64_t hash) {
+    if (fnv64(st.data(), st.size()) != hash) return false;
+    std::string path = g_dir + "\\resync_in.st";
+    FILE* f = std::fopen(path.c_str(), "wb");
+    bool ok = f && std::fwrite(st.data(), 1, st.size(), f) == st.size();
+    if (f) std::fclose(f);
+    if (!ok) return false;
+    g_rs_in_path = path;
+    return g_core.DoCommand(M64CMD_STATE_LOAD, 1, const_cast<char*>(path.c_str())) == M64ERR_SUCCESS;
+}
+/* QA fault injection (RETROHUB_QA=1): N64RUN_QA_POKE=n1,n2,... flips RDRAM words at lead poll n on the slot N64RUN_QA_POKE_SLOT (default 1) */
+static std::vector<uint32_t> g_poke;
+static void qa_poll(uint32_t n) {
+    for (uint32_t& t : g_poke) if (t == n) {
+        t = 0xFFFFFFFFu;
+        if (uint8_t* ram = static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM))) { for (int i = 0; i < 64; i++) ram[0x7F0000 + i] ^= 0xA5; logf_("qa", "poked RDRAM at sample %u", n); }
     }
 }
 
@@ -1597,6 +1647,21 @@ int main(int argc, char** argv) {
                 return true;
             };
         } else logf_("n64run", "RDRAM desync hashing disabled");
+        if (online && !args.spectate) {   // desync recovery (lockstep.h)
+            live::g_sess = &session;
+            live::g_dir = cfg_dir;
+            hk.resync_save = live::resync_save;
+            hk.resync_fetch = live::resync_fetch;
+            hk.resync_load = live::resync_load;
+            hk.resync_done = [](uint32_t S, uint32_t ms) { logf_("n64run", "resynced at sample %u (%u ms)", S, ms); osd::push("Resynced", osd::Kind::Good); };
+            if (const char* pk = std::getenv("RETROHUB_QA") ? std::getenv("N64RUN_QA_POKE") : nullptr) {
+                const char* ps = std::getenv("N64RUN_QA_POKE_SLOT");
+                if (my_slot == (ps ? std::atoi(ps) : 1)) {
+                    for (const char* c = pk; *c;) { live::g_poke.push_back((uint32_t)std::strtoul(c, const_cast<char**>(&c), 10)); if (*c == ',') c++; else break; }
+                    hk.qa_poll = live::qa_poll;
+                }
+            }
+        }
         if (online) {   // live spectator join (namespace live above)
             live::g_sess = &session;
             live::g_dir = cfg_dir;
