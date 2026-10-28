@@ -38,7 +38,7 @@ int main() {
     }
     CHECK(dolphin_vk(DolphinKey::Increase) == 0x7C && dolphin_vk(DolphinKey::Decrease) == 0x7D);
     CHECK(dolphin_scan(0x7C) == 0x64 && dolphin_scan(0x7D) == 0x65);   // DIK_F13 / DIK_F14
-    CHECK(std::string(dolphin_hotkey_name(DolphinKey::Increase)) == "Increase Emulation Speed" && std::string(dolphin_hotkey_name(DolphinKey::Decrease)) == "Decrease Emulation Speed");
+    CHECK(std::string(dolphin_hotkey_name(DolphinKey::Increase)) == "Emulation Speed/Increase Emulation Speed" && std::string(dolphin_hotkey_name(DolphinKey::Decrease)) == "Emulation Speed/Decrease Emulation Speed");
     CHECK(std::string(dolphin_hotkey_expr(DolphinKey::Increase)) == "@(Ctrl+Shift+F13)" && std::string(dolphin_hotkey_expr(DolphinKey::Decrease)) == "@(Ctrl+Shift+F14)");
     CHECK(speed_row(true, false, false, false) == SpeedRow::Enabled && speed_row(true, false, true, false) == SpeedRow::Online);
     CHECK(speed_row(false, true, false, true) == SpeedRow::Enabled && speed_row(false, true, true, true) == SpeedRow::Online);

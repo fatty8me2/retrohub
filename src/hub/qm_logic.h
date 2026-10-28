@@ -60,7 +60,8 @@ enum class DolphinKey { Increase, Decrease };
 inline int dolphin_vk(DolphinKey k) { return k == DolphinKey::Increase ? 0x7C : 0x7D; }              // VK_F13 / VK_F14
 inline int dolphin_scan(int vk) { return vk == 0x7C ? 0x64 : vk == 0x7D ? 0x65 : 0; }               // DIK_F13 / DIK_F14 (DirectInput reads scancodes)
 constexpr int kDolphinScanCtrl = 0x1D, kDolphinScanShift = 0x2A;
-inline const char* dolphin_hotkey_name(DolphinKey k) { return k == DolphinKey::Increase ? "Increase Emulation Speed" : "Decrease Emulation Speed"; }
+// Hotkeys.ini keys are "<group>/<control>" (ControlGroup::LoadConfig: base + name + "/" + c->name; group "Emulation Speed").
+inline const char* dolphin_hotkey_name(DolphinKey k) { return k == DolphinKey::Increase ? "Emulation Speed/Increase Emulation Speed" : "Emulation Speed/Decrease Emulation Speed"; }
 inline const char* dolphin_hotkey_expr(DolphinKey k) { return k == DolphinKey::Increase ? "@(Ctrl+Shift+F13)" : "@(Ctrl+Shift+F14)"; }
 /* Dolphin's current speed step. `cur` is updated to `to`; returns the key presses (in order) that get there. */
 struct DolphinSpeed { int cur = kSpeedNormal; };
