@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.28.8",
+      "date": "2026-10-27",
+      "title": "Install a greyed-out game",
+      "new": [
+        "A game that is greyed out because a friend has it can be installed from the shared RetroHub library: open its details and press Install, and it downloads into your own library"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.28.7",
       "date": "2026-10-27",
       "title": "Game menu stays open",
