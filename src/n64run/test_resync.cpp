@@ -208,10 +208,10 @@ static void test_fbmask() {
     CHECK(fbmask::hash(ram.data(), ram.size(), t.ranges(kRam)) == plain_hash(ram.data(), ram.size()));   // nothing seen: the plain hash
     // MK64: 320x240 16 bit, three buffers
     const uint32_t o[3] = {0x31f780, 0x345f80, 0x36b780};
-    for (int i = 0; i < 9; i++) t.sample(0x3002, o[i % 3], 320);
+    for (int i = 0; i < 9; i++) t.sample(100 + i, 0x3002, o[i % 3], 320);
     CHECK(t.count() == 3);
-    t.sample(0, 0x100000, 320);          // blank screen: ignored
-    t.sample(0x3002, 0x200000, 0);       // no width: ignored
+    t.sample(110, 0, 0x100000, 320);          // blank screen: ignored
+    t.sample(110, 0x3002, 0x200000, 0);       // no width: ignored
     CHECK(t.count() == 3);
     auto r = t.ranges(kRam);
     CHECK(r.size() == 1 && r[0].lo <= 0x31f780 && r[0].hi >= 0x36b780 + 320 * 240 * 2);   // adjacent buffers merge into one range
@@ -225,12 +225,17 @@ static void test_fbmask() {
     CHECK(fbmask::hash(ram.data(), ram.size(), r) != base);
     // order independent set, 4 kept, the oldest dropped
     fbmask::Tracker a, b;
-    for (int i : {0, 1, 2, 0, 1, 2}) a.sample(0x3002, o[i], 320);
-    for (int i : {2, 1, 0, 2, 1, 0}) b.sample(0x3002, o[i], 320);
+    for (int i : {0, 1, 2, 0, 1, 2}) a.sample(200, 0x3002, o[i], 320);
+    for (int i : {2, 1, 0, 2, 1, 0}) b.sample(200, 0x3002, o[i], 320);
     CHECK(a.ranges(kRam).size() == b.ranges(kRam).size() && a.ranges(kRam)[0].lo == b.ranges(kRam)[0].lo && a.ranges(kRam)[0].hi == b.ranges(kRam)[0].hi);
     fbmask::Tracker c;
-    for (uint32_t i = 0; i < 6; i++) c.sample(0x3002, 0x100000 + i * 0x100000, 320);
+    for (uint32_t i = 0; i < 6; i++) c.sample(300 + i, 0x3002, 0x100000 + i * 0x100000, 320);
     CHECK(c.count() == fbmask::kKeep);
+    // a late joiner (saw only the last 20 polls) and the host (saw everything) agree once the stale origin expired
+    fbmask::Tracker host, joiner;
+    for (uint32_t n = 0; n < 400; n++) host.sample(n, 0x3002, n < 50 ? 0x500000u : o[n % 3], 320);
+    for (uint32_t n = 380; n < 400; n++) joiner.sample(n, 0x3002, o[n % 3], 320);
+    CHECK(host.count() == 3 && joiner.count() == 3 && host.ranges(kRam)[0].lo == joiner.ranges(kRam)[0].lo);
     c.reset();
     CHECK(c.count() == 0 && c.ranges(kRam).empty());
 }

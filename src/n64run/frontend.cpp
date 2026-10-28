@@ -1643,9 +1643,9 @@ int main(int argc, char** argv) {
                 g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &v);
             };
         if (online && g_core.MemPtr) {
-            hk.vi_poll = [] {
+            hk.vi_poll = [](uint32_t n) {
                 static const uint32_t* vi = static_cast<const uint32_t*>(g_core.MemPtr(M64P_DBG_PTR_VI_REG));
-                if (vi) g_fb.sample(vi[0], vi[1], vi[2]);
+                if (vi) g_fb.sample(n, vi[0], vi[1], vi[2]);
             };
             hk.vi_reset = [] { g_fb.reset(); };
         }
