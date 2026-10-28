@@ -1,6 +1,6 @@
 // Console test for the quick menu's pure speed / volume logic (qm_logic.h).
 #include "qm_logic.h"
-#include "qm_pad.h"
+#include "qm_card.h"
 #include <cstdio>
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
