@@ -102,7 +102,7 @@ void Lockstep::pump() {
             }
         } else if (msg[0] == kPktResync) {
             rs_on_ctl(from, msg);
-        } else if (msg[0] == rb::xfer::kPkt && !opt_.spectator && from > 0 && from < 8 && (core_.slot_mask() >> from & 1u)) {
+        } else if (msg[0] == rb::xfer::kPkt && !opt_.spectator && from >= 0 && from < 8 && from != opt_.my_slot && (core_.slot_mask() >> from & 1u)) {
             rs_on_xfer(from, msg);   // a player's transfer is a desync recovery (spectators' are handled below)
         } else if (msg[0] == spectate::kPktJoin || msg[0] == spectate::kPktNoLive || msg[0] == 0x55 /* rb::xfer::kPkt */) {
             const bool ok = opt_.spectator ? from == 0 : (from > 0 && (net_->spectator_mask() >> from & 1u));
