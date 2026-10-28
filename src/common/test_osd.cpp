@@ -1,6 +1,7 @@
 #include <cstdio>
 
 #include "osd.h"
+#include "perf_overlay.h"
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
@@ -49,6 +50,27 @@ int main() {
     CHECK(osd::text_width("ab", 2) == 22 && osd::scale_for_height(1080) == 4 && osd::scale_for_height(100) == 1);
     osd::push(std::string("bad\x01\xff", 5));        // non-ASCII must not crash
     osd::render(&L, 64, 48, &ch);
+    {   // stats slot (top-left) + perf overlay text
+        osd::clear();
+        osd::set_stats("60 FPS");
+        CHECK(osd::render(&L, 320, 240, &ch));
+        bool tl = false;
+        for (int y = 0; y < 30; y++) for (int x = 0; x < 100; x++) if (L.px[(size_t)y * 320 + x] >> 24) tl = true;
+        CHECK(tl);
+        osd::set_stats("");
+        CHECK(!osd::render(&L, 320, 240, &ch));
+        perfov::Sample s; s.fps = 59.6;
+        CHECK(perfov::format(s) == "60 FPS");
+        s.rtt_ms = 31.6; s.delay = 3; s.resim_per_s = 12.2;
+        CHECK(perfov::format(s) == "60 FPS | PING 32 ms | DELAY 3 | ROLLBACK 12/s");
+        perfov::FpsMeter m;
+        bool upd = false;
+        for (uint64_t t = 0; t <= 1000; t += 16) upd |= m.frame(t);
+        CHECK(upd && m.fps() > 60 && m.fps() < 64);
+        perfov::RateMeter r;
+        r.update(0, 0);
+        CHECK(r.update(500, 10) == 20.0);
+    }
     std::printf(fails ? "osd_test FAILED\n" : "osd_test OK\n");
     return fails ? 1 : 0;
 }

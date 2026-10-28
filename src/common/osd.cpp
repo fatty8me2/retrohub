@@ -42,6 +42,7 @@ std::mutex g_mu;
 std::deque<Toast> g_toasts;
 std::string g_corner;
 Kind g_corner_kind = Kind::Info;
+std::string g_stats;   // performance / online overlay, top-left (Cmd::Overlay)
 uint64_t (*g_clock)() = nullptr;
 uint64_t g_gen = 0;          // bumped by every push / clear
 uint64_t g_last_sig = ~0ull; // signature of the last successful render
@@ -121,10 +122,18 @@ void set_corner(const std::string& text, Kind kind) {
     g_gen++;
 }
 
+void set_stats(const std::string& text) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (g_stats == text) return;
+    g_stats = text.substr(0, 90);
+    g_gen++;
+}
+
 void clear() {
     std::lock_guard<std::mutex> lk(g_mu);
     g_toasts.clear();
     g_corner.clear();
+    g_stats.clear();
     g_gen++;
 }
 
@@ -142,7 +151,7 @@ bool render(Layer* out, int w, int h, bool* changed) {
     uint64_t t = now();
     while (!g_toasts.empty() && g_toasts.front().until <= t) { g_toasts.pop_front(); g_gen++; }
     for (auto it = g_toasts.begin(); it != g_toasts.end();) { if (it->until <= t) it = g_toasts.erase(it); else ++it; }
-    if (g_toasts.empty() && g_corner.empty()) { g_last_sig = ~0ull; return false; }
+    if (g_toasts.empty() && g_corner.empty() && g_stats.empty()) { g_last_sig = ~0ull; return false; }
 
     const int scale = scale_for_height(h);
     const int margin = 3 * scale, step = text_height(scale) + 4 * scale + 2 * scale;
@@ -175,6 +184,7 @@ bool render(Layer* out, int w, int h, bool* changed) {
         int bw = text_width(g_corner, scale) + 4 * scale + scale;
         draw_item(*out, std::max(0, w - margin - bw), margin, g_corner, g_corner_kind, scale, 255);
     }
+    if (!g_stats.empty()) draw_item(*out, margin, margin, g_stats, Kind::Info, scale, 255);
     g_last_sig = sig; g_last_w = w; g_last_h = h;
     if (changed) *changed = true;
     return true;

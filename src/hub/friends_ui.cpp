@@ -375,6 +375,11 @@ hubnet::Invite fr_make_invite() {
     return inv;
 }
 bool fr_in_my_room() { return A.in_room && room_connected(); }
+bool fr_send_dm(const std::string& uid, const std::string& text) {
+    if (FR.fake || !FR.started || uid.empty() || text.empty()) return false;
+    FR.cli.send_message(uid, text);
+    return true;
+}
 /* Test aid: HUB_SHOT_TRACE=<file> appends one line per friends-panel action, so the click harness can assert what a click did. */
 static void fr_trace(const char* what, const std::string& arg = std::string()) {
     static const char* path = std::getenv("HUB_SHOT_TRACE");
@@ -660,6 +665,7 @@ void fr_tick() {
                 break;
             case hubnet::Event::MessageReceived:
                 if (gn_on_message(e.uid, e.name, e.text)) { if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid); break; }
+                qm_chat_incoming(true, e.uid, e.name, e.text);
                 if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
                 else { ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0); }
                 break;

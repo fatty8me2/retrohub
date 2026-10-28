@@ -37,6 +37,7 @@
 #include "ps1_input.h"
 #include "rollback.h"
 #include "lockstep.h"
+#include "perf_overlay.h"
 #include "log.h"
 #include "session.h"
 #include "save_sync.h"
@@ -529,6 +530,10 @@ class Frontend {
     bool setup_paths();
     bool setup_video();
     void present();
+    void perf_tick();
+    bool perf_on_ = false;
+    perfov::FpsMeter perf_fps_;
+    perfov::RateMeter perf_rb_;
     void layout(SDL_Rect* dst);
     void pump_events(bool idle);
     void handle_key(const SDL_KeyboardEvent& k);
@@ -860,7 +865,25 @@ void Frontend::layout_for(int ow, int oh, SDL_Rect* dst) {
     dst->x = r.x; dst->y = r.y; dst->w = r.w; dst->h = r.h;
 }
 
+/* Cmd::Overlay: FPS (+ ping / input delay / rollback re-sim rate when online) in the OSD's top-left slot. Display only. */
+void Frontend::perf_tick() {
+    if (!perf_on_) return;
+    uint64_t now = SDL_GetTicks64();
+    if (!perf_fps_.frame(now)) return;
+    perfov::Sample s;
+    s.fps = perf_fps_.fps();
+    if (rbe) {
+        s.rtt_ms = rbe->rtt_ms();
+        s.delay = rbe->delay();
+        s.resim_per_s = perf_rb_.update(now, rbe->stats().resim_frames);
+    } else if (lockstep) {
+        s.delay = lockstep->current_delay();
+    }
+    osd::set_stats(perfov::format(s));
+}
+
 void Frontend::present() {
+    perf_tick();
     const FrameBuf& f = core.frame();
     if (!ren || f.px.empty()) return;
     clip_frame();
@@ -1519,6 +1542,11 @@ void Frontend::ctl_poll() {
                 if (c.value && !ra_.allow(cheevos::Feature::Rewind)) { ctl_.ack(false, "Hardcore: rewind is off"); break; }
                 bool ok = feat_ && feat_->set_latched(c.value != 0);
                 ctl_.ack(ok, ok ? (c.value ? "rewinding" : "rewind off") : "Rewind is not available for this game");
+            } else if (c.cmd == runctl::Cmd::Overlay) {
+                perf_on_ = c.value != 0;
+                perf_fps_.reset();
+                if (!perf_on_) osd::set_stats("");
+                ctl_.ack(true, perf_on_ ? "stats overlay on" : "stats overlay off");
             } else {
                 ctl_.ack(false, "unsupported");
             }

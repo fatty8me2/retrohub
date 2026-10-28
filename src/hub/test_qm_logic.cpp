@@ -1,5 +1,6 @@
 // Console test for the quick menu's pure speed / volume logic (qm_logic.h).
 #include "qm_logic.h"
+#include "qm_card.h"
 #include <cstdio>
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
@@ -133,6 +134,34 @@ int main() {
         dolphin_commit(s, 2, p, (int)p.size());
         CHECK(s.known && s.tenths == 10 && s.cur == 2);
         CHECK(dolphin_retry_delay_ms(0) < dolphin_retry_delay_ms(1) && dolphin_retry_delay_ms(1) < dolphin_retry_delay_ms(2));
+    }
+    {   // How do I play: callouts from the live profile
+        auto c = hubqm::pad_callouts(hubctl::default_profile("n64"));
+        CHECK(!c.empty() && c.count("ls") && c["ls"][0] == "Analog stick");
+        CHECK(c.count("a") || c.count("b"));
+        hubctl::Profile p = hubctl::default_profile("snes");
+        p.buttons["start"] = "rightshoulder|lefttrigger";
+        auto d = hubqm::pad_callouts(p);
+        CHECK(d.count("rb") && d["rb"].back() == "Start" && d.count("lt") && d["lt"].back() == "Start");
+        CHECK(hubqm::join_labels({"A", "B", "C", "D"}) == "A / B / C +1");
+        hubctl::Profile q = hubctl::default_profile("n64");
+        q.buttons["a"] = "bogus";
+        CHECK(!hubqm::pad_callouts(q).count("bogus"));
+    }
+    {   // in-game chat OSD
+        using namespace hubqm;
+        CHECK(!chat_osd_wanted(kChatOff, false) && !chat_osd_wanted(kChatOff, true));
+        CHECK(chat_osd_wanted(kChatRoom, false) && !chat_osd_wanted(kChatRoom, true));
+        CHECK(chat_osd_wanted(kChatAll, true) && chat_osd_wanted(kChatAll, false));
+        CHECK(chat_osd_text("Mia", "gg  wp") == "Mia: gg wp");
+        CHECK(chat_osd_text("", "caf\xc3\xa9") == "caf?");
+        CHECK(chat_osd_text("A", std::string(300, 'x')).size() == 118);
+        CHECK(chat_osd_text("", "\xf0\x9f\x98\x80").empty() && chat_osd_text("", "   ").empty());
+        ChatOsdLimiter l;
+        int ok = 0;
+        for (int i = 0; i < 10; ++i) ok += l.allow(1000 + i);
+        CHECK(ok == 5 && !l.allow(2000) && l.allow(8000));
+        CHECK(quick_phrases().size() == 4 && quick_phrases()[0] == "GG");
     }
     std::printf(g_fail ? "FAILED\n" : "ok\n");
     return g_fail ? 1 : 0;
