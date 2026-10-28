@@ -78,7 +78,7 @@ std::string speed_label(double s) {
 }
 
 bool offline_only(Cmd c) {
-    return c != Cmd::None && c != Cmd::Quit && c != Cmd::Screenshot && c != Cmd::OsdMsg && c != Cmd::Volume && c != Cmd::Mute && c != Cmd::Input && c != Cmd::Overlay;
+    return c != Cmd::None && c != Cmd::Quit && c != Cmd::Screenshot && c != Cmd::OsdMsg && c != Cmd::Volume && c != Cmd::Mute && c != Cmd::Input && c != Cmd::Clip && c != Cmd::Overlay;   // clips and the stats overlay only read / display: allowed online
 }
 
 bool parse_control(const std::string& text, Command* out) {
@@ -251,7 +251,7 @@ bool Poller::poll(uint64_t now_ms, Command* out, uint64_t interval_ms) {
     stamp_ = s;
     std::string t;
     Command c;
-    if (!read_text(path_, &t) || !parse_control(t, &c)) return false;
+    if (!read_text(path_, &t) || !parse_control(t, &c)) { stamp_.clear(); return false; }   // mid-write / locked: look again next poll, don't drop the command
     if (c.seq <= last_) return false;
     last_ = pending_ = c.seq;
     if (out) *out = c;

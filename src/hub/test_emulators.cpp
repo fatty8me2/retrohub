@@ -23,6 +23,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "dolphin_speed_logic.h"
 
 using namespace hub;
 namespace fs = std::filesystem;
@@ -582,13 +583,40 @@ static void test_prepare_and_find(const fs::path& dir) {
     {   /* Speed row: Core EmulationSpeed back to 1.0 each launch, speed hotkeys in Hotkeys.ini, user's other hotkeys kept */
         CHECK(hubui::ini_get(read_text(dd / "User" / "Config" / "Dolphin.ini"), "Core", "EmulationSpeed") == "1.0");
         std::string hk = read_text(dd / "User" / "Config" / "Hotkeys.ini");
-        CHECK(hk.find("Emulation Speed/Increase Emulation Speed = @(Ctrl+Shift+F13)") != std::string::npos);
-        CHECK(hk.find("Emulation Speed/Decrease Emulation Speed = @(Ctrl+Shift+F14)") != std::string::npos);
+        CHECK(hk.find("Emulation Speed/Increase Emulation Speed = `DSUClient/0/RHSpeed:Options` | @(Ctrl+Shift+F13)") != std::string::npos);
+        CHECK(hk.find("Emulation Speed/Decrease Emulation Speed = `DSUClient/0/RHSpeed:Share` | @(Ctrl+Shift+F14)") != std::string::npos);
+        CHECK(hubui::ini_get(read_text(dd / "User" / "Config" / "Dolphin.ini"), "General", "HotkeysRequireFocus") == "False");
+        /* Leave-game combo (Back + Start held 1 s) does NOT use a Dolphin hotkey: the hub watches the pads (pad_exit_watch, launch.cpp) and
+         * posts WM_CLOSE to Dolphin, so unbinding the keyboard hotkeys cannot affect it: */
+        CHECK(hubui::ini_get(hk, "Hotkeys", "General/Stop").empty());   // nothing the combo needs lives in Hotkeys.ini
+        std::string dsu = read_text(dd / "User" / "Config" / "DSUClient.ini");
+        CHECK(hubui::ini_get(dsu, "Server", "Enabled") == "True" && hubui::ini_get(dsu, "Server", "Entries") == "RHSpeed:127.0.0.1:26761;");
+        CHECK(hubemu::dolphin_dsu_ini(dsu) == dsu);   // idempotent
+        CHECK(hubui::ini_get(hubemu::dolphin_dsu_ini("[Server]\nEntries = Other:1.2.3.4:5;\n"), "Server", "Entries") == "Other:1.2.3.4:5;RHSpeed:127.0.0.1:26761;");
         CHECK(hk.find("Disable Emulation Speed Limit") == std::string::npos);   // hold-only in Dolphin: not bound
         CHECK(hubui::ini_get(hk, "Hotkeys", "Device") == "DInput/0/Keyboard Mouse");
         std::string mine = hubemu::dolphin_hotkeys_ini("[Hotkeys]\nDevice = XInput/0/Gamepad\nStop = Escape\nIncrease Emulation Speed = F5\n");
-        CHECK(hubui::ini_get(mine, "Hotkeys", "Stop") == "Escape" && hubui::ini_get(mine, "Hotkeys", "Device") == "XInput/0/Gamepad");
-        CHECK(hubui::ini_get(mine, "Hotkeys", "Emulation Speed/Increase Emulation Speed") == "@(Ctrl+Shift+F13)");
+        CHECK(hubui::ini_get(mine, "Hotkeys", "Stop") == "Escape" && hubui::ini_get(mine, "Hotkeys", "Device") == "XInput/0/Gamepad");   // pad Device: bare names are pad controls, kept
+        CHECK(hubui::ini_get(hubemu::dolphin_hotkeys_ini("[Hotkeys]\nGeneral/Toggle Pause = F10\n[Other]\nX = Y\n"), "Other", "X") == "Y");   // other sections untouched
+        CHECK(hubui::ini_get(hubemu::dolphin_hotkeys_ini("[Hotkeys]\r\nGeneral/Toggle Pause = F10\r\n"), "Hotkeys", "General/Toggle Pause") == "");
+        {   // only keyboard bindings go; pad-only bindings (the user's own pad hotkeys) stay, with any default Device
+            const std::string in = "[Hotkeys]\nDevice = DInput/0/Keyboard Mouse\nGeneral/Stop = Escape\nSave State/Save State Slot 1 = `XInput/0/Gamepad:Back` & `XInput/0/Gamepad:Button A`\n"
+                                   "Load State/Load State Slot 1 = `SDL/0/Pro Controller:Button S` | `DInput/0/Keyboard Mouse:F1`\nGeneral/Toggle Pause = @(Ctrl+P)\nGeneral/Screenshot = toggle(`DSUClient/1/X:Cross`)\n";
+            const std::string o = hubemu::dolphin_hotkeys_ini(in);
+            CHECK(hubui::ini_get(o, "Hotkeys", "General/Stop") == "");
+            CHECK(hubui::ini_get(o, "Hotkeys", "Save State/Save State Slot 1") == "`XInput/0/Gamepad:Back` & `XInput/0/Gamepad:Button A`");
+            CHECK(hubui::ini_get(o, "Hotkeys", "Load State/Load State Slot 1") == "");   // mixed pad | keyboard: reads the keyboard -> dropped
+            CHECK(hubui::ini_get(o, "Hotkeys", "General/Toggle Pause") == "");
+            CHECK(hubui::ini_get(o, "Hotkeys", "General/Screenshot") == "toggle(`DSUClient/1/X:Cross`)");
+            const std::string pad_dev = hubemu::dolphin_hotkeys_ini("[Hotkeys]\nDevice = XInput/0/Gamepad\nGeneral/Stop = Back & Start\n");
+            CHECK(hubui::ini_get(pad_dev, "Hotkeys", "General/Stop") == "Back & Start");   // bare names on a pad Device are pad buttons: kept
+        }
+        {   // DSU entries follow the server's real port and replace an old RHSpeed entry
+            CHECK(hubds::merge_entries("Other:1.2.3.4:5;RHSpeed:127.0.0.1:26761;", 26763) == "Other:1.2.3.4:5;RHSpeed:127.0.0.1:26763;");
+            CHECK(hubds::merge_entries("Other:1.2.3.4:5", 26761) == "Other:1.2.3.4:5;RHSpeed:127.0.0.1:26761;");
+            CHECK(hubds::kPort != 26760 && hubds::kPort + hubds::kPortTries - 1 < 26800);   // never the Wii U remote-play DSU port
+        }
+        CHECK(hubui::ini_get(mine, "Hotkeys", "Emulation Speed/Increase Emulation Speed") == "`DSUClient/0/RHSpeed:Options` | @(Ctrl+Shift+F13)");
         CHECK(hubemu::dolphin_hotkeys_ini(mine) == mine);   // idempotent
     }
     {   /* PCSX2: fast boot on by default, off for real startup */

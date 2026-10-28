@@ -30,6 +30,8 @@ ShotMode g_mode = ShotMode::Off;
 unsigned g_swaps = 0;
 int g_shot_w = 0, g_shot_h = 0;
 unsigned g_grabs = 0;
+std::function<void(const uint8_t*, int, int)> g_sink;
+int g_sink_every = 3;
 std::vector<uint8_t> g_shot;   // RGBA, top-down
 
 typedef void(__stdcall* PFN_ReadPixels)(int, int, int, int, unsigned, unsigned, void*);
@@ -163,6 +165,7 @@ m64p_error vx_gl_swap() {
     g_swaps++;
     if (g_mode == ShotMode::Armed) { grab_frame(); g_mode = ShotMode::Off; }
     else if (g_mode == ShotMode::Periodic && g_swaps % 30 == 0) grab_frame();
+    if (g_sink && g_swaps % (unsigned)g_sink_every == 0) { grab_frame(); g_sink(g_shot.data(), g_shot_w, g_shot_h); }
     SDL_GL_SwapWindow(g_win);
     return M64ERR_SUCCESS;
 }
@@ -202,6 +205,8 @@ bool headless_install_vidext(ptr_CoreOverrideVidExt override_fn) {
 }
 
 void headless_set_shot_mode(ShotMode m) { g_mode = m; }
+
+void headless_set_frame_sink(std::function<void(const uint8_t*, int, int)> sink, int every) { g_sink = std::move(sink); g_sink_every = every > 0 ? every : 3; }
 
 unsigned headless_shot_serial() { return g_grabs; }
 
