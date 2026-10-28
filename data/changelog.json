@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.28.7",
+      "date": "2026-10-27",
+      "title": "Game menu stays open",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "The View + Y menu no longer closes itself the instant it opens: buttons you were still holding from the game are ignored until you let go"
+      ]
+    },
+    {
       "version": "1.28.6",
       "date": "2026-10-27",
       "title": "Game menu over GameCube games",

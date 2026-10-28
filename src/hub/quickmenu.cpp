@@ -114,6 +114,24 @@ QPage g_page = QPage::Main;
 long long g_pending = 0;                       // seq waiting for an ack (0 = none)
 std::string g_pending_what;                    // "Saved slot 3" ...
 static ULONGLONG g_open_ms = 0, g_activity_ms = 0;
+static bool g_wait_release = false;   // menu just opened: ignore every input until all pad buttons and keys are up
+
+/* True while any controller button or keyboard key is held. The press that opened the menu (View+Y, or a button still held from
+ * the game) used to land on the focused Resume button and close the menu ~20 ms after it opened (quickmenu.log, v1.28.6). */
+static bool any_input_held() {
+    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+        SDL_GameController* gc = SDL_IsGameController(i) ? SDL_GameControllerFromInstanceID(SDL_JoystickGetDeviceInstanceID(i)) : nullptr;
+        if (!gc) continue;
+        for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b)
+            if (SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b)) return true;
+        if (SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000 || SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000) return true;
+    }
+    int n = 0;
+    const Uint8* ks = SDL_GetKeyboardState(&n);
+    for (int k = 0; k < n; ++k)
+        if (ks[k]) return true;
+    return false;
+}
 static const char* g_close_why = "other";
 bool g_pending_close = true;                   // close the menu and return to the game when the ack arrives
 int g_pending_slot = -2;
@@ -130,7 +148,8 @@ void send(runctl::Cmd c, int slot, const std::string& done_text, bool close) {
 
 bool menu_button(const char* label, bool enabled, ui::Icon ic, bool primary = false) {
     float w = ImGui::GetContentRegionAvail().x;
-    return ui::button(label, ImVec2(w, sp(6.5f)), primary, enabled && g_pending == 0, ic);
+    bool pressed = ui::button(label, ImVec2(w, sp(6.5f)), primary, enabled && g_pending == 0, ic);
+    return pressed && !g_wait_release;   // a press held over from opening never triggers a button
 }
 
 void draw_slot_card(const std::string& dir, int slot, bool saving, bool* chosen) {
@@ -296,7 +315,7 @@ int stepper_row(const char* id, const char* label, const std::string& value, flo
     bool hovered = ImGui::IsItemHovered(), focused = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
     bool hot = enabled && (hovered || focused);
     int dir = 0;
-    if (enabled) {
+    if (enabled && !g_wait_release) {
         if (clicked) dir = hovered && ImGui::GetIO().MousePos.x < p.x + width * 0.5f ? -1 : 1;
         if (focused) {
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) dir = -1;
@@ -537,7 +556,11 @@ void draw_quick_menu() {
     ImGui::PopStyleVar(2);
     static bool was_open = false;
     static hubqm::FocusRetry focus_retry;
-    if (open && !was_open && !g_shot_fake) { g_open_ms = GetTickCount64(); g_close_why = "other"; focus_retry.reset(); qm_log("menu opened"); }
+    if (open && !was_open && !g_shot_fake) { g_open_ms = GetTickCount64(); g_close_why = "other"; focus_retry.reset(); g_wait_release = true; qm_log("menu opened"); }
+    if (open && g_wait_release && !g_shot_fake) {   // swallow all input until everything held at open is released
+        if (any_input_held()) ImGui::GetIO().ClearInputKeys();
+        else { g_wait_release = false; qm_log("inputs released; menu accepts input"); }
+    }
     if (was_open && !open && !g_shot_fake) {
         qm_log(std::string("menu closed (") + g_close_why + ")");
         g_activity_ms = GetTickCount64();
@@ -552,7 +575,7 @@ void draw_quick_menu() {
         qm_log("hub is not foreground while the menu is open; re-focusing (try " + std::to_string(focus_retry.tries) + ")");
         focus_hub();
     }
-    bool back = ui::modal_back();
+    bool back = ui::modal_back() && !g_wait_release;
     if (back && !g_shot_fake && !hubqm::back_allowed((long long)g_open_ms, (long long)GetTickCount64())) { qm_log("B ignored: pressed within 400 ms of opening"); back = false; }
     if (g_close_req.exchange(false)) { g_close_why = "reset requested"; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); focus_game(); return; }
     if (back) {
