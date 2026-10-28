@@ -48,6 +48,9 @@ class LobbyClient {
     /* Spectator seat in a lobby room (role=watch): not a member (never in members()), receives the room's `msg` events and, on
      * joining, the host's last launch message with "watch":true. Refused with spectators-full / spectate-busy / no-such-room. */
     bool start_watch(const std::string& server, const std::string& code, const std::string& name);
+    /* Drop-in seat (role=watch&dropin=1): like start_watch, but the server also checks that the host's launch announced a free controller port
+     * ("dropin" field) and refuses with no-free-port / host-too-old / no-such-game. The game itself is then joined as a real member (SessionConfig::dropin). */
+    bool start_dropin(const std::string& server, const std::string& code, const std::string& name);
     void stop();
     void update();
     /* Optional "ident" frame (account uid + secret) sent right after every welcome so the room can auto-friend
@@ -70,7 +73,7 @@ class LobbyClient {
     void inject_server_text(const std::string& text);
 
   private:
-    bool start_impl(const std::string& server, const std::string& code, bool role_host, const std::string& name, bool watch);
+    bool start_impl(const std::string& server, const std::string& code, bool role_host, const std::string& name, bool watch, bool dropin = false);
     bool handle_text(const std::string& text);
     void update_tail();
     struct Impl;
@@ -83,6 +86,7 @@ struct SessionConfig {
     int slot = 0;         // my slot (0 = host)
     int expected = 2;     // number of PCs in the session (slots may be sparse, e.g. {0,2})
     uint32_t ready_timeout_ms = 0;   // 0 = default (15 s): how long to wait for everyone before failing
+    bool dropin = false;             // join a running game as a real member into a free port (server: same budget gate as spectating)
     bool spectate = false;           // join as a port-less spectator (role=watch): the server picks the slot, we only talk to the host
     uint32_t silence_fail_ms = 0;    // 0 = default (10 s): guest gives up when the host is silent this long after ready
 };

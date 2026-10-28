@@ -8,6 +8,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <bitset>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -88,6 +89,9 @@ struct Args {
     bool rollback = false;        // --rollback: GGPO-style rollback netplay instead of lockstep (see rollback.h)
     bool spectate = false;        // --spectate: watch a running online match as a port-less spectator (confirmed inputs only; needs --net --room --ports)
     bool no_spectators = false;   // --no-spectators: as the host, do not record/serve the input history to spectators
+    bool dropin = false;          // --dropin: join a running rollback game into a free port (needs --net --room --slot --ports; host: spectate.h kPktJoin version 2)
+    bool multiport = false;       // --multiport: boot with the 4-pad adapter (NES Four Score / SNES multitap) even if fewer ports are used, so a friend can drop in later
+    std::string name;             // --name TEXT: shown to the other players when this PC drops in ("<name> joined")
     int synctest = 0;             // --synctest N: offline, every frame roll back N frames and re-simulate, compare
     int rb_pred = 14;             // --rb-pred N: max predicted frames (1..16)
     bool rb_adaptive = true;      // --rb-delay-adapt / --no-rb-delay-adapt: pick the input delay from the measured RTT when --delay is auto
@@ -186,6 +190,9 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--rollback") o->rollback = true;
         else if (k == "--spectate") o->spectate = true;
         else if (k == "--no-spectators") o->no_spectators = true;
+        else if (k == "--dropin") o->dropin = true;
+        else if (k == "--multiport") o->multiport = true;
+        else if (k == "--name") { if (!val(&o->name)) return false; }
         else if (k == "--no-rollback") o->rollback = false;
         else if (k == "--no-rb-delay-adapt") o->rb_adaptive = false;
         else if (k == "--synctest") { if (!val(&v)) return false; o->synctest = std::max(1, atoi(v.c_str())); }
@@ -513,6 +520,26 @@ class Frontend {
     std::unique_ptr<spectate::Host> spec_host_;   // rollback host: confirmed frames for spectators
     bool rb_spectator_ = false;
     int run_rb_spectator();
+    /* Drop-in (rollback.h kPktAdmit). Host: a friend asks with spectate::kPktJoin version 2 [slot, 2, caps, name_len, name]; the host answers [kPktJoin,0,3], sends the
+     * confirmed snapshot like a live spectator, admits the slot on a free port once the snapshot is loaded, and the joiner reports [kPktJoin, slot, 9] when it plays. */
+    static constexpr uint8_t kRefuseNoPort = 4, kRefuseOldPeer = 5, kRefuseSlot = 6, kRefuseBusy = 7;   // spectate::JoinRefuse extensions (drop-in only)
+    bool multiport_ = false, dropin_ok_ = false;
+    uint32_t dropin_mask_ = 0;
+    std::map<int, std::string> dropin_name_;
+    std::map<int, uint32_t> dropin_since_;
+    uint32_t spec_mask_eff() { return session.spectator_mask() | dropin_mask_; }
+    void dj_on_knock(int slot, const std::vector<uint8_t>& m);
+    void dj_on_done(int slot);
+    void dj_refuse(int slot, uint8_t reason);
+    void dj_admit(int slot);
+    rb::Transport rb_transport();
+    /* joiner */
+    bool setup_dropin();
+    int dj_attempt(int slot_try, bool first);
+    std::deque<std::pair<int, std::vector<uint8_t>>> dj_in_;   // packets from the host for the joining runner (spectate data, snapshot transfer, answers)
+    int dj_state_ = 0;                                          // 0 not a joiner, 1 joining, 2 playing
+    uint32_t dj_done_ep_ = 0x100, dj_done_at_ = 0;
+    bool dj_catchup_ = false;
     void spec_host_service();
     void spec_host_finish();
     /* Live join (spectate.h kPktJoin): a snapshot of the confirmed state, compressed off the main thread, sent with rb::xfer to that
@@ -811,7 +838,7 @@ bool Frontend::setup_paths() {
         core.overrides["sameboy_screen_layout"] = "left-right";
         core.overrides["sameboy_audio_output"] = "Game Boy #" + std::to_string(std::min(1, mine) + 1);
     }
-    if (lower(a.system) == "nes" && (a.ports[2] >= 0 || a.ports[3] >= 0 || (a.net.empty() && a.players >= 3)))
+    if (lower(a.system) == "nes" && (a.multiport || a.ports[2] >= 0 || a.ports[3] >= 0 || (a.net.empty() && a.players >= 3)))
         core.overrides["nestopia_select_adapter"] = "ntsc";   // 3-4 players: the Four Score adapter (every PC derives it from the same port plan)
     if (lower(a.system) == "nes" && (!a.net.empty() || a.synctest)) core.overrides["nestopia_ram_power_state"] = "0x00";   // random power-on RAM would differ per PC
     if ((!a.net.empty() || a.synctest) && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
@@ -1956,11 +1983,263 @@ bool Frontend::ps1_config_check() {
     }
 }
 
+
+rb::Transport Frontend::rb_transport() {
+    rb::Transport t;
+    t.pump = [this] { session.update(); };
+    t.send = [this](int to, const void* d, int n) { session.send(to, d, n); };
+    t.recv = [this](int* from, std::vector<uint8_t>* o) {
+        while (session.recv(from, o)) {
+            if (o->empty()) continue;
+            const uint8_t t0 = (*o)[0];
+            const bool spec = *from > 0 && (session.spectator_mask() >> *from & 1u);   // nothing from a spectator reaches the engine
+            if (dj_state_ == 1 && *from == 0 && (t0 == spectate::kPktData || t0 == spectate::kPktNoLive || t0 == spectate::kPktJoin || (t0 == rb::xfer::kPkt && o->size() >= 4 && ((*o)[3] & 0x80)))) {
+                if (dj_in_.size() < 4000) dj_in_.emplace_back(*from, *o);   // for the joining runner (dj_attempt)
+                continue;
+            }
+            if (dj_state_ == 2 && *from == 0 && (t0 == spectate::kPktData || t0 == spectate::kPktNoLive || t0 == spectate::kPktJoin)) continue;
+            if (dj_state_ == 2 && *from == 0 && t0 == rb::xfer::kPkt && o->size() >= 4 && ((*o)[3] & 0x80)) {   // late repeats of the snapshot: our Done was lost
+                if ((*o)[3] == dj_done_ep_ && hubnet::now_ms() - dj_done_at_ > 100) {
+                    auto v = rb::xfer::header(rb::xfer::Done, a.slot, (uint8_t)dj_done_ep_);
+                    v.push_back(1);
+                    session.send(0, v.data(), (int)v.size());
+                    dj_done_at_ = hubnet::now_ms();
+                }
+                continue;
+            }
+            if (t0 == spectate::kPktAck) { if (spec_host_) spec_host_->on_ack(*from, o->data(), o->size(), hubnet::now_ms()); continue; }
+            if (t0 == spectate::kPktJoin) {
+                if (o->size() >= 3 && (*o)[2] == 2) dj_on_knock(*from, *o);
+                else if (o->size() >= 3 && (*o)[2] == 9) dj_on_done(*from);
+                else if (spec) spec_on_join(*from);
+                continue;
+            }
+            if (t0 == rb::xfer::kPkt && o->size() >= 4 && ((*o)[3] & 0x80)) { if (spec || (dropin_mask_ >> *from & 1u)) spec_on_xfer(*from, o->data(), o->size()); continue; }
+            if (spec) continue;
+            return true;
+        }
+        return false;
+    };
+    t.now_ms = [] { return hubnet::now_ms(); };
+    t.log = [](const std::string& s) { rlog("%s", s.c_str()); };
+    t.notice = [this](const std::string& s) { set_status(s); };
+    t.relayed = [this] { for (int sl = 0; sl < 8; sl++) if (sl != a.slot && (slot_mask >> sl & 1u) && session.is_relayed(sl)) return true; return false; };
+    t.admitted = [this](int slot, int port, uint32_t from, const std::string&) {
+        (void)from;
+        if (port < 0 || port > 3) return;
+        slot_mask |= 1u << slot;
+        if (slot == a.slot) {   // we are the joiner: the host may have given us another port than the hub planned
+            for (int i = 0; i < 4; i++) if (owner[i] == a.slot && i != port) owner[i] = -1;
+            owner[port] = a.slot;
+            local_ports[0] = port; n_local = 1;
+        } else owner[port] = slot;
+    };
+    return t;
+}
+
+/* ---- drop-in joiner: this PC joins a running rollback game into a free port (host side: dj_on_knock / dj_admit) ----
+ * Session as a real member -> knock (kPktJoin version 2) -> the host's confirmed snapshot (rb::xfer) -> Admit (the Engine learns its port and start frame) ->
+ * replay the host's confirmed pads from the snapshot up to the live game while the engine, already listening, claims neutral input for our port ->
+ * Engine::join_finish and play. Exit codes: 9 no free port, 10 a player's RetroHub is too old, 11 anything else. */
+bool Frontend::setup_dropin() {
+    if (!a.rollback || a.ds_link || link || a.share_host_save || is_ps1 || is_ps2 || a.spectate) { rlog("dropin: this game cannot be joined while it runs"); net_rc = 11; return false; }
+    if (a.slot < 1 || a.slot > 3) { rlog("dropin: bad --slot"); net_rc = 11; return false; }
+    dj_state_ = 1;
+    std::vector<int> cands{a.slot};
+    for (int s = 1; s <= 3; s++) {
+        bool used = false;
+        for (int i = 0; i < 4; i++) if (owner[i] == s && s != a.slot) used = true;
+        if (!used && s != a.slot) cands.push_back(s);
+    }
+    // the plan's port for us (the hub wrote our slot into the first free one); the host decides in the end
+    for (size_t k = 0; k < cands.size(); k++) {
+        int r = dj_attempt(cands[k], k == 0);
+        if (r == 0) return true;
+        if (r == 2) return false;
+        if (quit) return false;
+    }
+    rlog("dropin: no usable slot in the game room");
+    net_rc = 9;
+    return false;
+}
+
+/* 0 = playing, 1 = try another slot, 2 = failed (net_rc set) */
+int Frontend::dj_attempt(int slot_try, bool first) {
+    dj_in_.clear();
+    const int plan_slot = a.slot;
+    int my_port = -1;
+    for (int i = 0; i < 4; i++) if (owner[i] == plan_slot) { my_port = i; break; }
+    if (my_port < 0) for (int i = 0; i < 4; i++) if (owner[i] < 0) { my_port = i; break; }
+    if (my_port < 0) { rlog("dropin: the launch plan has no free port"); net_rc = 9; return 2; }
+    for (int i = 0; i < 4; i++) if (owner[i] == plan_slot) owner[i] = -1;
+    owner[my_port] = slot_try;
+    local_ports[0] = my_port; n_local = 1;
+    a.slot = slot_try;
+    slot_mask = 1u;   // the players already in the game; ours is added by the Admit
+    for (int i = 0; i < 4; i++) if (owner[i] > 0 && owner[i] < 8 && owner[i] != slot_try) slot_mask |= 1u << owner[i];
+    hubnet::SessionConfig cfg;
+    cfg.server = a.net; cfg.room = a.room; cfg.slot = slot_try; cfg.expected = 2; cfg.dropin = true;
+    if (!session.start(cfg)) { rlog("net: cannot start session"); net_rc = 4; return 2; }
+    rlog("dropin: joining %s as slot %d (port %d), %u PCs play (slot mask %x)", a.room.c_str(), slot_try, my_port, (unsigned)std::bitset<8>(slot_mask).count(), slot_mask);
+    uint32_t t0 = hubnet::now_ms(), last = 0;
+    while (!session.ready()) {
+        session.update();
+        pump_events(false);
+        if (quit) { net_rc = 4; return 2; }
+        if (session.failed()) {
+            const std::string st = session.status();
+            rlog("net: session failed: %s", st.c_str());
+            session.stop();
+            if (st.find("taken") != std::string::npos || st.find("full") != std::string::npos) { owner[my_port] = plan_slot; return 1; }
+            net_rc = st.find("free controller port") != std::string::npos ? 9 : st.find("busy") != std::string::npos ? 11 : lost_code();
+            return 2;
+        }
+        uint32_t now = hubnet::now_ms();
+        if (now - t0 > 60000) { rlog("net: timed out waiting for the host (%s)", session.status().c_str()); net_rc = 11; return 2; }
+        if (now - last > 2000) { last = now; rlog("net: %s", session.status().c_str()); }
+        Sleep(5);
+    }
+    rlog("net: session ready as slot %d", session.my_slot());
+    if (first) rb_warmup();
+    /* engine: only listens (and claims neutral input) until join_finish */
+    const bool auto_delay = a.delay < 0;
+    a.delay = a.delay >= 0 ? std::min(a.delay, 4) : 1;
+    rb::Config rc;
+    rc.adaptive_delay = auto_delay && a.rb_adaptive;
+    rc.frame_ms = 1000.0 / (fps > 1 ? fps : 60.0);
+    for (int i = 0; i < 4; i++) rc.owner[i] = owner[i] == slot_try ? -1 : owner[i];
+    rc.my_slot = slot_try; rc.slot_mask = slot_mask; rc.delay = a.delay; rc.max_pred = a.rb_pred;
+    if (const char* hi = std::getenv("RB_HASH_INTERVAL")) rc.hash_interval = std::max(1, atoi(hi));
+    rc.use_state_hash = false;
+    if (!env_is("RETRORUN_NO_RESYNC")) rc.max_resyncs = 3;
+    rc.val_bytes = 2;
+    rc.relay_half_rate = true; rc.send_gap_ms = 30;   // a room that can reach 4 PCs
+    rc.joiner = true;
+    rbe = std::make_unique<rb::Engine>(rc, make_rb_sim(), rb_transport());
+    rlog("net: DROP-IN, input delay %d, max prediction %d, state %zu bytes", a.delay, rc.max_pred, core.serialize_size());
+
+    rb::Sim sim = make_rb_sim();
+    spectate::Client cli;
+    rb::xfer::Receiver rcv;
+    enum { Knock, Download, Replay } ph = Knock;
+    const uint32_t t_join = hubnet::now_ms();
+    uint32_t last_knock = 0, host_ack = 0, dl_progress = 0, loaded_at = 0, t_done_sent = 0;
+    size_t dl_got = 0;
+    uint32_t f = 0, f_start = 0;
+    uint64_t ro = 0, ri = 0, lastp[4] = {0, 0, 0, 0};
+    bool refused_slot = false;
+    int fail_rc = 0;
+    auto send_done = [&] {
+        auto v = rb::xfer::header(rb::xfer::Done, a.slot, rcv.epoch());
+        v.push_back(1);
+        session.send(0, v.data(), (int)v.size());
+        dj_done_ep_ = rcv.epoch(); dj_done_at_ = hubnet::now_ms();
+        t_done_sent = dj_done_at_;
+    };
+    for (;;) {
+        pump_events(false);
+        if (quit) { fail_rc = 4; break; }
+        rbe->service();
+        if (session.failed() || (!session.ended() && rbe->connection_lost())) { fail_rc = lost_code(); rlog("net: connection lost while joining"); break; }
+        if (session.ended()) { fail_rc = 8; rlog("dropin: the host ended the game"); break; }
+        const uint32_t now = hubnet::now_ms();
+        while (!dj_in_.empty()) {
+            auto pk = std::move(dj_in_.front()); dj_in_.pop_front();
+            const std::vector<uint8_t>& m = pk.second;
+            if (m[0] == spectate::kPktData) {
+                if (ph != Knock) cli.on_data(m.data(), m.size(), now);
+            } else if (m[0] == spectate::kPktJoin && m.size() >= 3 && m[2] == 3) {
+                host_ack = now ? now : 1;
+            } else if (m[0] == spectate::kPktNoLive && m.size() >= 3) {
+                rlog("dropin: the host refused (reason %u)", (unsigned)m[2]);
+                if (m[2] == kRefuseSlot) refused_slot = true;
+                else fail_rc = m[2] == kRefuseNoPort ? 9 : m[2] == kRefuseOldPeer ? 10 : 11;
+                if (!fail_rc && !refused_slot) fail_rc = 11;
+            } else if (m[0] == rb::xfer::kPkt && m.size() >= 4 && m[2] == 0) {
+                if (m[1] == rb::xfer::Begin) {
+                    rb::xfer::Meta mt;
+                    if (ph == Knock && rb::xfer::dec_begin(m.data(), m.size(), &mt) && rcv.on_begin(m[3], mt)) {
+                        ph = Download;
+                        cli.start_at(mt.frame);   // buffer the confirmed pads from F while the state downloads
+                        dl_progress = now;
+                        rlog("dropin: downloading the state of frame %u (%u bytes, %u chunks) %u ms after joining", mt.frame, mt.comp, (unsigned)mt.chunks, now - t_join);
+                    } else if (ph == Replay && m[3] == rcv.epoch() && now - t_done_sent > 100) send_done();
+                } else if (m[1] == rb::xfer::Chunk && m.size() >= 6) {
+                    if (ph == Download) rcv.on_chunk(m[3], rb::xfer::g16(m.data() + 4), m.data() + 6, m.size() - 6);
+                    else if (ph == Replay && m[3] == rcv.epoch() && now - t_done_sent > 100) send_done();
+                }
+            }
+        }
+        if (fail_rc || refused_slot) break;
+        if (ph == Knock) {
+            if (now - last_knock >= 200 || !last_knock) {
+                last_knock = now ? now : 1;
+                std::vector<uint8_t> k = {spectate::kPktJoin, (uint8_t)a.slot, 2, rb::kCapDropIn};
+                std::string nm = a.name.substr(0, 24);
+                k.push_back((uint8_t)nm.size());
+                k.insert(k.end(), nm.begin(), nm.end());
+                session.send(0, k.data(), (int)k.size());
+            }
+            if (!host_ack && now - t_join > 6000) { rlog("dropin: the host does not answer: its RetroHub is too old for drop-in"); fail_rc = 10; break; }
+            if (now - t_join > 45000) { rlog("dropin: the host never sent the state"); fail_rc = 11; break; }
+        } else if (ph == Download) {
+            if (rcv.received() != dl_got) { dl_got = rcv.received(); dl_progress = now; }
+            uint16_t nx; uint64_t bits;
+            if (rcv.ack_due(now, &nx, &bits)) { auto v = rb::xfer::enc_ack(a.slot, rcv.epoch(), nx, bits); session.send(0, v.data(), (int)v.size()); }
+            if (rcv.complete()) {
+                const rb::xfer::Meta& mt = rcv.meta();
+                std::vector<uint8_t> raw(mt.raw);
+                bool ok = (mt.flags & 1) ? sim.unpack_state && sim.unpack_state(rcv.payload().data(), rcv.payload().size(), raw.data(), raw.size()) : (raw = rcv.payload(), true);
+                if (ok && rb::hash_bytes(raw.data(), raw.size()) != mt.hash) ok = false;
+                if (ok) ok = sim.load(raw.data(), raw.size());
+                if (!ok) { rlog("dropin: the state did not load"); fail_rc = 11; break; }
+                f = f_start = mt.frame; ro = mt.a; ri = mt.b; frame_no = f;
+                ph = Replay; loaded_at = now;
+                send_done();
+                rlog("dropin: state of frame %u loaded %u ms after joining; %u frames buffered", f, now - t_join, cli.total() > f ? cli.total() - f : 0);
+            } else if (now - std::max(dl_progress, t_join) > 15000) { rlog("dropin: the state stopped arriving"); fail_rc = 11; break; }
+        }
+        if (ph == Replay) {
+            cli.service(now, a.slot, [this](int sl, const uint8_t* d, int n) { session.send(sl, d, n); });
+            int steps = 0;
+            while (cli.ready(f) && steps < 4) {   // a few frames, then back to the engine: the neutral claims must keep flowing
+                uint64_t pads[4];
+                for (int p = 0; p < 4; p++) pads[p] = cli.get(f, p);
+                sim.step(pads, false);
+                ro = rb::roll_step(ro, sim.frame_sum());
+                for (int p = 0; p < 4; p++) { ri = (ri ^ pads[p]) * 0x100000001B3ull; lastp[p] = pads[p]; }
+                f++; steps++; frame_no = f;
+                cli.consumed(f);
+            }
+            if (rbe->join_admitted() && f > f_start && cli.lag() <= 12 && !cli.ready(f)) {   // replayed everything the host has confirmed: hand over to the engine
+                rbe->join_finish(f, ro, ri, lastp);
+                rlog("dropin: playing from frame %u, %u ms after joining (%u frames replayed, snapshot at %u)", f, now - t_join, f - f_start, f_start);
+                dj_state_ = 2;
+                dj_catchup_ = true;
+                std::vector<uint8_t> dn = {spectate::kPktJoin, (uint8_t)a.slot, 9};
+                for (int i = 0; i < 6; i++) { session.send(0, dn.data(), (int)dn.size()); session.update(); Sleep(5); }
+                set_status("You joined the game");
+                return 0;
+            }
+            if (!rbe->join_admitted() && now - loaded_at > 20000) { rlog("dropin: the host never admitted us"); fail_rc = 11; break; }
+            if (now - loaded_at > 120000) { rlog("dropin: could not catch up"); fail_rc = 11; break; }
+        }
+        Sleep(1);
+    }
+    session.stop();
+    rbe.reset();
+    owner[my_port] = plan_slot;
+    if (refused_slot && !fail_rc) return 1;
+    net_rc = fail_rc ? fail_rc : 11;
+    return 2;
+}
+
 bool Frontend::setup_net() {
     if (a.net.empty()) return true;
     if (a.room.empty()) { rlog("net: --room required with --net"); return false; }
     online = true;
     if (!a.log.empty()) net_set_log_file((a.log + ".net").c_str());
+    if (a.dropin) return setup_dropin();
     hubnet::SessionConfig cfg;
     cfg.server = a.net;
     cfg.room = a.room;
@@ -2030,6 +2309,7 @@ bool Frontend::setup_net() {
     if (a.rollback) {
         const bool auto_delay = a.delay < 0;
         a.delay = a.delay >= 0 ? std::min(a.delay, 4) : 1;
+        multiport_ = owner[2] >= 0 || owner[3] >= 0 || a.multiport;
         rb::Config rc;
         rc.adaptive_delay = auto_delay && a.rb_adaptive;
         rc.frame_ms = 1000.0 / (fps > 1 ? fps : 60.0);
@@ -2043,36 +2323,19 @@ bool Frontend::setup_net() {
         if (!env_is("RETRORUN_NO_RESYNC") && !is_ps1 && !is_ps2) rc.max_resyncs = 3;   // desync recovery: the host's state replaces everybody's (rollback.h); a 4th desync ends the game
         rc.val_bytes = is_ps1 ? 8 : 2;   // PlayStation: buttons + 4 stick bytes + 16 event bits (disc swap) per port
         if (is_ps1) rc.event_mask = retrorun::kEventMask;
-        const bool big_room = a.players >= 3;   // any 3+ PC rollback room   // 3-4 PCs through the relay hit its 400 frames/s room cap
+        const bool big_room = a.players >= 3 || multiport_;   // any 3+ PC rollback room   // 3-4 PCs through the relay hit its 400 frames/s room cap
         if (is_ps1 || big_room) rc.relay_half_rate = true;
         if (is_ps1 || big_room) rc.send_gap_ms = 30;   // ~60 packets/s per PC: 4 PCs through the relay stay under its 400 frames/s room cap
         if (is_ps1) rc.pred_budget = 3;   // a PlayStation frame costs 3-8 ms: re-simulating 6 frames per late input would drop frames, so the input delay takes over sooner
         rb_warmup();
-        rb::Transport t;
-        t.pump = [this] { session.update(); };
-        t.send = [this](int to, const void* d, int n) { session.send(to, d, n); };
-        t.recv = [this](int* from, std::vector<uint8_t>* o) {
-            while (session.recv(from, o)) {
-                if (!o->empty() && *from > 0 && (session.spectator_mask() >> *from & 1u)) {   // nothing from a spectator reaches the engine
-                    const uint8_t t0 = (*o)[0];
-                    if (t0 == spectate::kPktAck) { if (spec_host_) spec_host_->on_ack(*from, o->data(), o->size(), hubnet::now_ms()); }
-                    else if (t0 == spectate::kPktJoin) spec_on_join(*from);
-                    else if (t0 == rb::xfer::kPkt) spec_on_xfer(*from, o->data(), o->size());
-                    continue;
-                }
-                if (!o->empty() && (*o)[0] == spectate::kPktAck) continue;
-                return true;
-            }
-            return false;
-        };
-        t.now_ms = [] { return hubnet::now_ms(); };
-        t.log = [](const std::string& s) { rlog("%s", s.c_str()); };
-        t.notice = [this](const std::string& s) { set_status(s); };
-        t.relayed = [this] { for (int sl = 0; sl < 8; sl++) if (sl != a.slot && (slot_mask >> sl & 1u) && session.is_relayed(sl)) return true; return false; };
+        rb::Transport t = rb_transport();
         rbe = std::make_unique<rb::Engine>(rc, make_rb_sim(), t);
+        multiport_ = owner[2] >= 0 || owner[3] >= 0 || a.multiport;
+        dropin_ok_ = a.slot == 0 && !a.no_spectators && multiport_ && !is_ps1 && !is_ps2 && !link && !a.share_host_save && !env_is("RETRORUN_NO_DROPIN") && !env_is("RETRORUN_NO_LIVE_SPECTATE");
         if (a.slot == 0 && !a.no_spectators) {   // keep the confirmed-input history so spectators can join at any time
             uint8_t pm = 0;
             for (int i = 0; i < 4; i++) if (owner[i] >= 0) pm |= (uint8_t)(1u << i);
+            if (dropin_ok_) pm = 0x0F;   // a joiner's port is neutral before its admit frame: the stream carries all four ports
             spec_host_.reset(new spectate::Host(pm, 8));
             spec_host_->set_log([](const std::string& m) { rlog("%s", m.c_str()); });
             spec_host_->set_hold_ms(spectate::kHoldMs);   // a new spectator first says whether it wants a live snapshot (kPktJoin)
@@ -2559,7 +2822,10 @@ void Frontend::note_frame_gap() {
 /* Called at a frame boundary (rollback: after run_frame; lockstep: before the frame's input poll). */
 void Frontend::spec_host_service() {
     if (!spec_h()) return;
-    uint32_t sm = session.spectator_mask();
+    for (auto it = dropin_since_.begin(); it != dropin_since_.end();) {   // a drop-in that never finished (left, or too slow): stop streaming to it
+        if (hubnet::now_ms() - it->second > 90000) { dropin_mask_ &= ~(1u << it->first); it = dropin_since_.erase(it); } else ++it;
+    }
+    uint32_t sm = spec_mask_eff();
     if (!spec_join_q_.empty()) spec_process_joins();
     if (!spec_snap_.empty()) spec_snap_service(sm);
     for (auto it = spec_snap_done_.begin(); it != spec_snap_done_.end();) { if (!(sm >> it->first & 1u)) it = spec_snap_done_.erase(it); else ++it; }
@@ -2572,6 +2838,52 @@ void Frontend::spec_nolive(int slot, uint8_t reason) {
     session.send(slot, m, 3);
     if (spec_h()) spec_h()->release(slot);
     rlog("spectate: slot %d joins from frame 0 (no live snapshot, reason %u)", slot, (unsigned)reason);
+    dropin_mask_ &= ~(1u << slot);   // a drop-in cannot play from frame 0: it leaves
+}
+
+
+void Frontend::dj_refuse(int slot, uint8_t reason) {
+    uint8_t m[3] = {spectate::kPktNoLive, 0, reason};
+    session.send(slot, m, 3);
+    if (spec_h()) spec_h()->release(slot);
+    dropin_mask_ &= ~(1u << slot);
+    dropin_since_.erase(slot);
+    rlog("dropin: slot %d refused (reason %u)", slot, (unsigned)reason);
+}
+
+void Frontend::dj_on_knock(int slot, const std::vector<uint8_t>& m) {
+    if (!rbe || a.slot != 0 || slot <= 0 || slot > 3) return;
+    if (rbe->is_player(slot) || (rbe->admit_pending() && !(dropin_mask_ >> slot & 1u))) return;
+    for (int p = 0; p < 4; p++) if (rbe->owner_of(p) == slot) { uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseSlot}; session.send(slot, r, 3); return; }   // a left player's slot: the joiner picks another
+    uint8_t ack[3] = {spectate::kPktJoin, 0, 3};
+    session.send(slot, ack, 3);
+    if (dropin_mask_ >> slot & 1u) { spec_on_join(slot); return; }   // a repeat knock: try again (Busy / ignored last time)
+    const uint8_t caps = m.size() >= 4 ? m[3] : 0;
+    std::string name;
+    if (m.size() >= 5 && m.size() >= 5u + m[4]) name.assign((const char*)m.data() + 5, m[4]);
+    if (!dropin_ok_ || !spec_host_) { rlog("dropin: slot %d asked, but this game has no drop-in port plan", slot); uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseNoPort}; session.send(slot, r, 3); return; }
+    if (!(caps & rb::kCapDropIn) || !rbe->peers_support_dropin()) { rlog("dropin: slot %d refused: a player's RetroHub is too old", slot); uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseOldPeer}; session.send(slot, r, 3); return; }
+    if (rbe->free_port() < 0) { uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseNoPort}; session.send(slot, r, 3); return; }
+    dropin_mask_ |= 1u << slot;
+    dropin_name_[slot] = name;
+    dropin_since_[slot] = hubnet::now_ms();
+    rlog("dropin: slot %d (%s) asks to join", slot, name.c_str());
+    spec_host_->service(hubnet::now_ms(), spec_mask_eff(), [this](int sl, const uint8_t* d, int n) { session.send(sl, d, n); });   // creates its (held) stream peer before the snapshot decision
+    spec_on_join(slot);
+}
+
+void Frontend::dj_on_done(int slot) {
+    if (!rbe || a.slot != 0) return;
+    rbe->note_join_active(slot);
+    dropin_mask_ &= ~(1u << slot);
+    dropin_since_.erase(slot);
+}
+
+void Frontend::dj_admit(int slot) {
+    const int port = rbe ? rbe->free_port() : -1;
+    if (port < 0) { dj_refuse(slot, kRefuseNoPort); return; }
+    if (!rbe->host_admit(slot, port, dropin_name_[slot])) { dj_refuse(slot, kRefuseBusy); return; }
+    rlog("dropin: slot %d admitted on port %d", slot, port);
 }
 
 void Frontend::spec_on_join(int slot) {
@@ -2583,7 +2895,7 @@ void Frontend::spec_process_joins() {
     q.swap(spec_join_q_);
     for (int slot : q) {
     spectate::Host* H = spec_h();
-    if (!H || !(session.spectator_mask() >> slot & 1u)) continue;
+    if (!H || !(spec_mask_eff() >> slot & 1u)) continue;
     uint32_t now = hubnet::now_ms();
     auto dn = spec_snap_done_.find(slot);
     if (dn != spec_snap_done_.end() && now - dn->second < 5000) continue;   // knocks sent before our Begin reached it
@@ -2592,7 +2904,8 @@ void Frontend::spec_process_joins() {
         session.send(slot, m, 3);
         continue;
     }
-    auto d = spectate::decide_join(spec_live_ok_, H->total(), (int)spec_snap_.size(), spec_snap_.count(slot) > 0, rbe ? rbe->resyncing() : false);
+    const bool dj = dropin_mask_ >> slot & 1u;
+    auto d = spectate::decide_join(spec_live_ok_, dj ? std::max(H->total(), spectate::kMinLiveFrames) : H->total(), (int)spec_snap_.size(), spec_snap_.count(slot) > 0, rbe ? rbe->resyncing() : false);
     if (d == spectate::JoinDecision::Ignore || d == spectate::JoinDecision::Busy) continue;
     if (d == spectate::JoinDecision::NoLiveEarly) { spec_nolive(slot, spectate::kRefuseEarly); continue; }
     if (d == spectate::JoinDecision::NoLiveUnsupported) { spec_nolive(slot, spectate::kRefuseUnsupported); continue; }
@@ -2669,6 +2982,7 @@ void Frontend::spec_snap_service(uint32_t sm) {
                 rlog("spectate: slot %d loaded the live state %u ms after its join (%zu chunks sent for %u)", s, now - x.t_join, x.snd.chunks_sent(), (unsigned)x.snd.meta().chunks);
                 spec_snap_done_[s] = now;
                 it = spec_snap_.erase(it);
+                if (dropin_mask_ >> s & 1u) dj_admit(s);
                 continue;
             }
             if (now - x.t_send > 30000) { rlog("spectate: live state transfer to slot %d timed out", s); it = spec_snap_.erase(it); continue; }
@@ -2795,7 +3109,7 @@ int Frontend::run_rb_spectator() {
         }
         last_rx_chk = hubnet::now_ms();
         uint64_t pads[4];
-        for (int p = 0; p < 4; p++) pads[p] = owner[p] >= 0 ? cli.get(f, p) : 0;
+        for (int p = 0; p < 4; p++) pads[p] = cli.get(f, p);   // all ports: a friend may have dropped in after the launch plan
         bool behind = cu.update(cli.lag(), hubnet::now_ms());
         if (behind != catching) { catching = behind; if (behind) rlog("spectate: catching up, %u frames behind", cli.lag()); next_deadline = 0; }
         if (cu.live_once() && !reported_live) {
@@ -3055,7 +3369,7 @@ int Frontend::run(const Args& args) {
     if (is_ps1) {   // every port is a DualShock (digital pads work too; games switch the analog mode themselves)
         for (unsigned p = 0; p < 4; p++) core.set_port_device(p, 0x205);   // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
     }
-    if (lower(a.system) == "snes" && !a.no_multitap && (a.multitap || owner[2] >= 0 || owner[3] >= 0 || (!a.headless && SDL_NumJoysticks() >= 3))) {
+    if (lower(a.system) == "snes" && !a.no_multitap && (a.multitap || a.multiport || owner[2] >= 0 || owner[3] >= 0 || (!a.headless && SDL_NumJoysticks() >= 3))) {
         core.set_port_device(1, 0x101);   // snes9x RETRO_DEVICE_JOYPAD_MULTITAP ((1 << 8) | RETRO_DEVICE_JOYPAD): players 3-4 (libretro ports 2-3)
         rlog("snes: multitap on port 2 (players 3-4)");
     }
@@ -3180,7 +3494,8 @@ int Frontend::run(const Args& args) {
                 cheats_poll();
                 disc_poll();
                 ctl_poll();
-                do_pacing();
+                if (dj_catchup_ && rbe->cur() + 2 < rbe->live_estimate()) next_deadline = 0;   // a drop-in a few frames behind the players catches up unpaced
+                else { dj_catchup_ = false; do_pacing(); }
                 rbe->run_frame();
                 frame_no = rbe->cur();
                 note_frame_gap();

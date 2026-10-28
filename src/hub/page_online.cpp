@@ -104,7 +104,7 @@ void host_launch_selected() {
             np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
             np_extra += cheats_launch_fragment(*rg);
             if (gc_ok) {
-                std::string lmsg = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra);
+                std::string lmsg = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra, rg->system == hub::System::NES || rg->system == hub::System::SNES);
                 shot_trace("host-msg", lmsg);
                 A.lobby.send_msg(lmsg);
                 launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);

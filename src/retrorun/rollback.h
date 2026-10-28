@@ -39,6 +39,16 @@ constexpr uint8_t kPktInput = 0x51;
 constexpr uint8_t kPktReady = 0x52;
 constexpr uint8_t kPktBye = 0x53;
 constexpr uint8_t kPktDrop = 0x54;   // netdrop::Msg (drop_agree.h)
+/* Drop-in (a friend joins the running game into an empty port, see Engine::host_admit):
+ *   Admit    host -> everybody  [0x56, 0, joiner, port, epoch, from u32, owners[4] i8 (after the admit), left_mask, done_mask, name_len, name...]
+ *            from port `port` is played by slot `joiner` from frame `from` on; before it the port reads neutral. Repeated until acked.
+ *   AdmitAck peer -> host       [0x57, my_slot, joiner]
+ * Peers that do not advertise kCapDropIn (the caps byte after the slot in kPktReady) make the host refuse the join. */
+constexpr uint8_t kPktAdmit = 0x56;
+constexpr uint8_t kPktAdmitAck = 0x57;
+constexpr uint8_t kCapDropIn = 1;
+constexpr int kAdmitLeadFrames = 30;      // the admit frame is this many frames (plus the RTT) ahead of the host
+constexpr int kGhostLeadFrames = 30;      // a joiner that is still catching up claims neutral input this far ahead of the players
 
 uint64_t hash_bytes(const void* data, size_t bytes);
 /* The rolling hash of the per-frame output checksums (Engine::confirmed_out_hash): start with kRollBasis, fold each frame with roll_step. */
@@ -68,6 +78,7 @@ struct Transport {
     std::function<uint32_t()> now_ms;
     std::function<void(const std::string&)> log;
     std::function<void(const std::string&)> notice;   // optional: short user-facing note ("Resynced")
+    std::function<void(int slot, int port, uint32_t from, const std::string& name)> admitted;   // optional: a drop-in was applied (the runner updates its port map)
     std::function<bool()> relayed;   // optional: some peer is reached through the server relay (which caps a room at 400 frames/s): send every other frame only
 };
 
@@ -91,6 +102,8 @@ struct Config {
     int max_resyncs = 0;           // desync recovery: the host's state replaces everybody's, up to this many times per session (0 = a desync ends the game)
     uint32_t resync_max_bytes = 3000000;   // compressed state bigger than this is not sent (the desync ends the game as before)
     uint32_t resync_timeout_ms = 20000;
+    uint8_t caps = kCapDropIn;     // advertised in kPktReady
+    bool joiner = false;           // drop-in joiner: the engine only listens and claims neutral input until join_finish()
     int val_bytes = 2;             // bytes of one port's input on the wire: 2 (16 buttons: GB/GBA) 6 (PlayStation: buttons + 4 stick bytes) or 8 (+ 16 event bits)
 };
 
@@ -161,6 +174,29 @@ class Engine {
     bool snapshot_confirmed(std::vector<uint8_t>* raw, uint32_t* frame, uint64_t* out_hash, uint64_t* in_hash);
     int hash_interval() const { return cfg_.hash_interval; }
 
+    /* ---- drop-in (party games). Host: after the joiner has the snapshot (spectate live-join path), host_admit() makes `port` belong to `slot`
+     * from frame admit_frame() on, for every peer (kPktAdmit, repeated until acked). Frames before it read neutral, so the joiner needs no
+     * history; it fast-forwards the snapshot to the live game with the confirmed-input stream and then calls join_finish(). While it does,
+     * its engine (cfg.joiner) keeps claiming neutral input for its port ahead of the players, so nobody waits for it. ---- */
+    bool peers_support_dropin() const;           // every other active player advertised kCapDropIn
+    bool dropin_capable() const;                 // host: every other player advertised kCapDropIn and no drop-in / resync is in progress
+    int free_port() const;                       // lowest port nobody owns (-1: none)
+    uint32_t admit_frame() const;                // the frame a drop-in started now would begin at
+    bool host_admit(int slot, int port, const std::string& name);
+    void note_join_active(int slot);             // host: the joiner finished fast-forwarding and plays
+    bool admit_pending() const { return !admits_.empty() || join_pending_mask_ != 0; }
+    bool is_player(int slot) const { return slot >= 0 && slot < 8 && (cfg_.slot_mask >> slot & 1u); }
+    uint32_t slot_mask() const { return cfg_.slot_mask; }
+    int owner_of(int port) const { return port >= 0 && port < kPorts ? cfg_.owner[port] : -1; }
+    /* Joiner side. */
+    bool joining() const { return joining_; }
+    bool join_admitted() const { return join_port_ >= 0; }   // the Admit arrived: port and start frame are known
+    int join_port() const { return join_port_; }
+    uint32_t join_from() const { return join_port_ >= 0 ? join_from_[join_port_] : 0; }
+    uint32_t live_estimate() const;              // the players' current frame, as far as their packets tell
+    /* The joiner has loaded the snapshot and replayed it up to `frame` (out/in = the confirmed hash chains there, pads = the confirmed pads of frame-1). */
+    void join_finish(uint32_t frame, uint64_t out_hash, uint64_t in_hash, const uint64_t last_pads[kPorts]);
+
   private:
     static constexpr int kInRing = 512;
     static constexpr int kFrRing = 64;
@@ -194,6 +230,18 @@ class Engine {
         if (done_mask_ >> o & 1u) return conf_upto_[p] < (int64_t)drop_cut_[o] - 1;
         return true;
     }
+    void apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, const int8_t owners[kPorts], uint8_t left, uint8_t done, const std::string& name);
+    void admit_on_msg(int from, const uint8_t* d, size_t n);
+    void admit_service(uint32_t now);
+    void join_service(uint32_t now);
+    struct AdmitRec { int port = 0; uint32_t from = 0, last_send = 0, started = 0, ack_mask = 0; std::string name; };
+    std::map<int, AdmitRec> admits_;
+    uint32_t join_pending_mask_ = 0, join_pending_at_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    uint8_t peer_caps_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    bool joining_ = false;
+    int join_port_ = -1;
+    uint32_t join_from_[kPorts] = {0, 0, 0, 0};
+    uint32_t ghost_cur_ = 0;
     enum class Rs { None, Wait, Recv, Loaded, Send };
     void request_resync(const char* why);
     int host_slot() const { for (int s = 0; s < 8; s++) if (cfg_.slot_mask >> s & 1u) return s; return 0; }

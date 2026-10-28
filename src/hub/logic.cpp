@@ -462,7 +462,7 @@ GuestVersionAction guest_version_action(const std::string& my_app, const std::st
 }
 
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save,
-                        const PortPlan* plan, const MatchSpec* match, const std::string& extra_json) {
+                        const PortPlan* plan, const MatchSpec* match, const std::string& extra_json, bool dropin_system) {
     std::string o = "{\"kind\":\"launch\",\"game\":\"" + json::escape(game) + "\",\"launch\":" + std::to_string(launch) +
                     ",\"delay\":" + std::to_string(delay) + ",\"seed\":" + std::to_string(seed);
     if (!core.empty()) o += ",\"core\":\"" + json::escape(core) + "\"";
@@ -470,6 +470,17 @@ std::string launch_json(const std::string& game, int launch, int delay, unsigned
     o += ",\"n64live\":1";   // v1.29.2: this host's n64run serves live spectator snapshots and has GLideN64 RDRAM dithering off
     if (plan) o += ",\"ports\":[" + plan->ports + "],\"players\":" + std::to_string(plan->players);
     if (match) o += ",\"match\":" + match_json(*match);
+    {   // drop-in: free controller ports of a running 3+ port rollback game
+        int used = 0, freep = 0;
+        if (plan && dropin_system) {
+            std::string tok;
+            for (size_t i = 0; i <= plan->ports.size(); ++i) {
+                if (i == plan->ports.size() || plan->ports[i] == ',') { if (tok == "-1") ++freep; else if (!tok.empty()) ++used; tok.clear(); }
+                else tok += plan->ports[i];
+            }
+        }
+        o += ",\"dropin\":" + std::to_string(used >= 3 && freep > 0 ? freep : 0);
+    }
     o += extra_json;
     return o + "}";
 }
@@ -763,6 +774,71 @@ std::string player_left_text(const std::string& left_name) {
 std::string exit_text_for(unsigned long code, const std::string& left_name) {
     if (!left_name.empty() && (code == 0 || code == 4 || code == 8)) return player_left_text(left_name);
     return exit_code_text(code);
+}
+
+bool dropin_port_plan(const std::string& ports, int* my_slot_out, std::string* new_ports_out, int* players_out) {
+    std::vector<std::string> t;
+    std::string tok;
+    for (size_t i = 0; i <= ports.size(); ++i) {
+        if (i == ports.size() || ports[i] == ',') { t.push_back(tok); tok.clear(); }
+        else if (ports[i] != ' ') tok += ports[i];
+    }
+    if (t.size() != 4) return false;
+    bool used[4] = {false, false, false, false};
+    size_t first_free = t.size();
+    int distinct = 0;
+    for (size_t i = 0; i < t.size(); ++i) {
+        if (t[i] == "-1") { if (first_free == t.size()) first_free = i; continue; }
+        if (t[i].size() != 1 || t[i][0] < '0' || t[i][0] > '3') return false;
+        int v = t[i][0] - '0';
+        if (!used[v]) { used[v] = true; ++distinct; }
+    }
+    if (first_free == t.size()) return false;
+    int k = 0;
+    for (int s = 1; s <= 3 && !k; ++s) if (!used[s]) k = s;
+    if (!k) return false;
+    t[first_free] = std::to_string(k);
+    std::string o;
+    for (size_t i = 0; i < t.size(); ++i) o += (i ? "," : "") + t[i];
+    if (my_slot_out) *my_slot_out = k;
+    if (new_ports_out) *new_ports_out = o;
+    if (players_out) *players_out = distinct;
+    return true;
+}
+
+std::string dropin_reason_text(const std::string& r) {
+    if (r == "no-free-port") return "That game has no free controller port";
+    if (r == "host-too-old") return "Your friend needs to update RetroHub";
+    if (r == "no-such-game") return "That game has ended";
+    return "";
+}
+
+bool parse_dropin_launch(const Json& m, std::string* why, int* my_slot_out, std::string* new_ports_out, int* players_out) {
+    auto no = [&](const char* t) { if (why) *why = t; return false; };
+    const Json* d = m.get("dropin");
+    if (!d || d->type != Json::Number) return no("Your friend needs to update RetroHub to let you join mid-game.");
+    if (d->n < 1) return no("That game has no free controller port.");
+    const Json* ss = m.get("share_save");
+    if (ss && ss->type == Json::Bool && ss->b) return no("This game shares the host's save, so you can't join it in progress.");
+    if (m.get("cheats")) return no("This game uses cheats, so you can't join it in progress.");
+    std::string ports; int pl = 0;
+    if (!parse_launch_plan(m, &ports, &pl)) return no("Your friend needs to update RetroHub to let you join mid-game.");
+    int slot = 0, players = 0;
+    std::string np;
+    if (!dropin_port_plan(ports, &slot, &np, &players)) return no("That game is full.");
+    if (my_slot_out) *my_slot_out = slot;
+    if (new_ports_out) *new_ports_out = np;
+    if (players_out) *players_out = players;
+    return true;
+}
+
+std::string dropin_exit_text(unsigned long code) {
+    switch (code) {
+        case 9: return "The game is full - no free controller port.";
+        case 10: return "Your friend needs to update RetroHub to let you join mid-game.";
+        case 11: return "Couldn't join the game in progress.";
+        default: return "";
+    }
 }
 
 std::string exit_code_text(unsigned long code) {
