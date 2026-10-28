@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "1.29.1",
+      "date": "2026-10-28",
+      "title": "Watch live",
+      "new": [],
+      "improved": [
+        "Watch joins a friend's match live: you see what's happening right now, within a second, instead of the game starting from the beginning (GB, GBC, GBA, NES, SNES). N64 matches still replay from the start at full speed to catch up"
+      ],
+      "fixed": []
+    },{
       "version": "1.29.0",
       "date": "2026-10-28",
       "title": "Watch friends, resync instead of game over, profiles, game nights, turbo and instant replay",
