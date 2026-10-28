@@ -171,6 +171,7 @@ int main() {
         CHECK(guest_version_action("1.10.0", "1.9.1", false) == GuestVersionAction::Waiting);
     }
     CHECK(json::parse(launch_json("mp1", 3, 2, 77u), &j));
+    CHECK(j.num("n64live", 0) == 1);   // spectators of this host may join N64 live (else the hub passes --legacy-host)
     CHECK(j.str("game") == "mp1" && (int)j.num("launch") == 3 && (int)j.num("seed") == 77 && j.str("core").empty());
     CHECK(json::parse(launch_json("gb:x-1", 1, 2, 5u, "gambatte"), &j) && j.str("core") == "gambatte");
     CHECK(json::parse(launch_json("pokered", 1, 0, 5u, "", false, nullptr, nullptr, ",\"np_link\":{\"core\":\"sameboy\",\"consoles\":2}"), &j) && j.get("np_link") &&

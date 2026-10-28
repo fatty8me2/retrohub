@@ -467,6 +467,7 @@ std::string launch_json(const std::string& game, int launch, int delay, unsigned
                     ",\"delay\":" + std::to_string(delay) + ",\"seed\":" + std::to_string(seed);
     if (!core.empty()) o += ",\"core\":\"" + json::escape(core) + "\"";
     o += std::string(",\"share_save\":") + (share_host_save ? "true" : "false");
+    o += ",\"n64live\":1";   // v1.29.2: this host's n64run serves live spectator snapshots and has GLideN64 RDRAM dithering off
     if (plan) o += ",\"ports\":[" + plan->ports + "],\"players\":" + std::to_string(plan->players);
     if (match) o += ",\"match\":" + match_json(*match);
     o += extra_json;

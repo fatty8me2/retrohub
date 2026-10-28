@@ -785,7 +785,8 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
                       plan.ports + hubui::delay_arg(delay);
     if (g_spectate_launch)   // spectator: the friend's room code, no own slot (the server assigns one), the host's input delay is irrelevant
         net = " --net " + quote(server_url()) + " --room " + g_spectate_code + "-" + std::to_string(launch_no) + " --spectate --players " +
-              std::to_string(plan.players) + " --ports " + plan.ports;
+              std::to_string(plan.players) + " --ports " + plan.ports +
+              (e.system == hub::System::N64 && !(launch_msg && launch_msg->num("n64live", 0) == 1) ? " --legacy-host" : "");   // older host: dithers, no live join
     if (e.system == hub::System::N64) {
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
         args += hubui::n64_extra_args(gsv);
