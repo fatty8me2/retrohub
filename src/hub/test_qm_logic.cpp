@@ -4,6 +4,32 @@
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
 int main() {
+    {   // chord: abort between keys still releases what was pressed
+        std::vector<int> ev; int calls = 0;
+        int n = hubqm::run_key_chord({10, 20}, [&] { return ++calls <= 1; }, [&](int k, bool up) { ev.push_back(up ? -k : k); });
+        CHECK(n == 1 && ev.size() == 2 && ev[0] == 10 && ev[1] == -10);
+        ev.clear();
+        CHECK(hubqm::run_key_chord({10, 20}, [] { return false; }, [&](int k, bool up) { ev.push_back(up ? -k : k); }) == 0 && ev.empty());
+        CHECK(hubqm::run_key_chord({10, 20}, [] { return true; }, [&](int k, bool up) { ev.push_back(up ? -k : k); }) == 2 && ev.size() == 4 && ev[2] == -20 && ev[3] == -10);
+    }
+    {   // input gate
+        runctl::InputGate g;
+        CHECK(!g.suppressed(0));
+        g.set(false, 1000);
+        CHECK(g.suppressed(2000));
+        g.set(false, 25000);                                  // refresh
+        CHECK(g.suppressed(40000));
+        CHECK(!g.suppressed(25000 + runctl::kInputOffTimeoutMs + 1) && !g.off);   // hub died: failsafe
+        g.set(false, 100000); g.note_view_y(true, 100001);    // held through the opening press: stays off? (edge consumed below)
+        CHECK(!g.off);                                        // fresh View+Y edge re-enables
+        g.set(false, 100002); g.note_view_y(true, 100003);    // still held, no new edge
+        CHECK(g.off);
+        g.note_view_y(false, 100004); g.note_view_y(true, 100005);
+        CHECK(!g.off);
+        g.set(true, 1); CHECK(!g.suppressed(2));
+        runctl::Command c; CHECK(runctl::parse_control(runctl::make_control([] { runctl::Command x; x.seq = 3; x.cmd = runctl::Cmd::Input; x.value = 0; return x; }()), &c) && c.cmd == runctl::Cmd::Input && c.value == 0);
+        CHECK(!runctl::offline_only(runctl::Cmd::Input));
+    }
     {   // key burst: abort on foreground change, modifiers always released
         std::vector<int> ev, keys{1, 2, 3, 4};
         int calls = 0;

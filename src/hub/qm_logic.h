@@ -31,6 +31,19 @@ int run_key_burst(const std::vector<int>& vks, int mod_a, int mod_b, FgOk fg_ok,
     return done;
 }
 
+/* A chord (e.g. Ctrl+Tab): foreground re-checked before every key-down; whatever was pressed is always released in reverse. */
+template <class FgOk, class Send>
+int run_key_chord(const std::vector<int>& keys, FgOk fg_ok, Send send /* (key, up) */) {
+    size_t pressed = 0;
+    for (int k : keys) {
+        if (!fg_ok()) break;
+        send(k, false);
+        ++pressed;
+    }
+    for (size_t i = pressed; i > 0; --i) send(keys[i - 1], true);
+    return (int)pressed;
+}
+
 /* index -> runner_ctl speed value (0 = max) */
 inline double speed_value(int idx) {
     idx = std::max(0, std::min(kSpeedSteps - 1, idx));

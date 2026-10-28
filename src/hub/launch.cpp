@@ -253,11 +253,18 @@ void wiiu_toggle_gamepad_screen() {
     if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
     focus_game();
     std::vector<int> keys = hubemu::cemu_toggle_gamepad_keys();
-    std::vector<INPUT> in;
-    for (int k : keys) { INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)k; in.push_back(i); }
-    for (auto it = keys.rbegin(); it != keys.rend(); ++it) { INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)*it; i.ki.dwFlags = KEYEVENTF_KEYUP; in.push_back(i); }
-    SendInput((UINT)in.size(), in.data(), sizeof(INPUT));
-    autotest_log("wiiu: toggle pad screen hotkey sent");
+    std::vector<DWORD> pids = game_pids();
+    auto game_fg = [&]() {   // re-checked before every key-down; releases always go out
+        DWORD pid = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+        for (DWORD p : pids) if (p == pid) return !qm_is_open();
+        return false;
+    };
+    int n = hubqm::run_key_chord(keys, game_fg, [](int k, bool up) {
+        INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)k; i.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+        SendInput(1, &i, sizeof(INPUT));
+    });
+    autotest_log(n == (int)keys.size() ? "wiiu: toggle pad screen hotkey sent" : "wiiu: toggle pad screen hotkey aborted (game not foreground)");
 }
 
 /* Dolphin Speed row: Dolphin's emulation-speed hotkeys are bound to Ctrl+Shift+F13/F14 (emulators.cpp, dolphin_hotkeys_ini).

@@ -386,6 +386,14 @@ static void qm_session_tick(const hub::GameEntry* e) {
 }
 
 void qm_tick() {
+    {   // runner input gate: "input off" while the menu is open (refreshed every 10 s: the runner re-enables itself after 30 s), "input on" on close
+        static bool sent_off = false;
+        static double next_refresh = 0;
+        const bool want_off = g_qm_showing.load() && !g_shot_fake && A.proc && ctl_ready();
+        const double now = ImGui::GetTime();
+        if (want_off && (!sent_off || now >= next_refresh)) { runctl::Command c; c.cmd = runctl::Cmd::Input; c.value = 0; send_quiet(c); sent_off = true; next_refresh = now + 10.0; }
+        else if (!want_off && sent_off) { sent_off = false; if (A.proc && ctl_ready()) { runctl::Command c; c.cmd = runctl::Cmd::Input; c.value = 1; send_quiet(c); } }
+    }
     hub::saves::set_backup_screenshots(A.st.backup_shots);
     if (A.proc) qm_session_tick(find_entry(A.run.key));
     {   // finished external-emulator window capture

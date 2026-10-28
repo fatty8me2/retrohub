@@ -25,7 +25,8 @@ enum class Cmd { None, SaveState, LoadState, Screenshot, SwapDisc, Quit,
                  Shader,    // text = shader name (unsupported for now)
                  Overlay,   // value 1/0   (unsupported for now)
                  Clip,      // (unsupported for now)
-                 OsdMsg };  // text = toast shown on the runner's OSD
+                 OsdMsg,    // text = toast shown on the runner's OSD
+                 Input };   // value 0 = "input off" (neutral input to the core while the hub's quick menu is open), 1 = on. Allowed online.
 
 struct Command {
     long long seq = 0;
@@ -41,6 +42,26 @@ bool speed_valid(double s);                                   // in kSpeeds, or 
 bool parse_speed_arg(const std::string& s, double* out);      // "2", "2x", "1.5", "max" -> out (0 = max); false if not allowed
 std::string speed_label(double s);                            // "Speed 2x", "Speed 0.5x", "Speed max"
 bool offline_only(Cmd c);                                     // true for everything except Quit/Screenshot/OsdMsg/Volume/Mute (volume and mute are local, allowed online)
+
+/* "input off" gate (runner side). While off, the local player's input is neutral (frames/packets still flow, so netplay timing is
+ * unchanged). Failsafes: re-enabled after kInputOffTimeoutMs without a refresh (the hub re-sends "input off" while its menu is
+ * open, so a dead hub cannot leave the game dead), and on a fresh View+Y press. */
+constexpr uint64_t kInputOffTimeoutMs = 30000;
+struct InputGate {
+    bool off = false;
+    uint64_t refreshed_ms = 0;
+    bool combo_prev = false;
+    void set(bool on, uint64_t now_ms) { off = !on; refreshed_ms = now_ms; }
+    bool suppressed(uint64_t now_ms) {
+        if (off && now_ms - refreshed_ms > kInputOffTimeoutMs) off = false;
+        return off;
+    }
+    void note_view_y(bool down, uint64_t now_ms) {   // rising edge of View+Y while off: the user is asking for the menu again
+        (void)now_ms;
+        if (down && !combo_prev) off = false;
+        combo_prev = down;
+    }
+};
 
 constexpr int kSlots = 10;
 constexpr int kAutoSlot = -1;

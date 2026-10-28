@@ -467,6 +467,7 @@ class Frontend {
 
     int owner[4] = {0, -1, -1, -1};
     int local_ports[4] = {-1, -1, -1, -1};
+    runctl::InputGate in_gate_;   // hub quick menu open => neutral local input (docs/RUNNER_CTL.md "input")
     int n_local = 0;
     uint32_t frame_pad[4] = {0, 0, 0, 0};   // RetroPad bitmask per port for the frame about to run
 
@@ -1210,6 +1211,17 @@ void Frontend::poll_all_local() {
             local_pad_cache_[i] = m | (uint32_t)(uint8_t)local_press_[i][0] << 16 | (uint32_t)(uint8_t)local_press_[i][1] << 24;
         }
     }
+    if (!a.headless) {   // View+Y again re-enables; otherwise neutral local input while the hub menu is open (frames still flow online)
+        bool vy = false;
+        for (size_t i = 0; i < pads.size(); i++) { hubctl::PadState st; hubctl::read_state(pads[i], &st); if (st.b[hubctl::kBtnBack] && st.b[hubctl::kBtnYButton]) vy = true; }
+        in_gate_.note_view_y(vy, SDL_GetTicks64());
+        if (in_gate_.suppressed(SDL_GetTicks64()))
+            for (int i = 0; i < n_local; i++) {
+                local_pad_cache_[i] = 0;
+                std::memset(local_stick_[i], 0, sizeof local_stick_[i]);
+                local_press_[i][0] = local_press_[i][1] = 0;
+            }
+    }
     if (!online)
         for (int i = 0; i < n_local; i++) {
             frame_pad[local_ports[i]] = local_pad_cache_[i];
@@ -1431,6 +1443,7 @@ void Frontend::ctl_poll() {
         case runctl::Cmd::SwapDisc: disc_request(); ctl_.ack(true, "requested"); break;
         case runctl::Cmd::Quit: quit = true; ctl_.ack(true, "quitting"); break;
         case runctl::Cmd::OsdMsg: osd::push(c.text); ctl_.ack(true, "shown"); break;
+        case runctl::Cmd::Input: in_gate_.set(c.value != 0, SDL_GetTicks64()); ctl_.ack(true, c.value ? "input on" : "input off"); break;
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
         case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Clip:
             if ((online || a.ds_link) && runctl::offline_only(c.cmd)) { ctl_.ack(false, "Not available in online sessions"); break; }
