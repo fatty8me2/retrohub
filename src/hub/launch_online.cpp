@@ -722,6 +722,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
     }
     RunInfo ri = run_info_for(e, true);
     ri.room = true;
+    ri.dropin = g_dropin_launch;
     hub::gs::Values gsv = hubui::online_values(e.system, gs_values_for(e), is_host, launch_body ? *launch_body : std::string());
     if (e.system == hub::System::N3DS) { launch_online_3ds(e, launch_no, is_host, launch_msg, nullptr); return; }
     if (is_native(e)) {
@@ -753,7 +754,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
             if (i == plan.ports.size() || plan.ports[i] == ',') { if (tok == std::to_string(room_my_slot())) mine = true; tok.clear(); }
             else tok += plan.ports[i];
         }
-        if (!mine && !g_spectate_launch) { launch_note(is_host, "The host's port plan doesn't include this PC."); return; }   // a spectator owns no port
+        if (!mine && !g_spectate_launch && !g_dropin_launch) { launch_note(is_host, "The host's port plan doesn't include this PC."); return; }   // a spectator owns no port
     }
     /* Smash match picker: the host's resolved spec rides in the launch message; every PC passes the identical --match. */
     std::string match_args;
@@ -788,6 +789,9 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
               std::to_string(plan.players) + " --ports " + plan.ports +
               (e.system == hub::System::N64 && !(launch_msg && launch_msg->num("n64live", 0) >= 1) ? " --legacy-host" : "") +   // older host: dithers, no live join
               (e.system == hub::System::N64 && launch_msg && launch_msg->num("n64live", 0) == 1 ? " --full-hash" : "");   // v1.29.2 host: plain RDRAM sync hash
+    if (g_dropin_launch)   // drop-in joiner: the friend's room code, the free port's slot written into the plan, input delay measured by the runner
+        net = " --net " + quote(server_url()) + " --room " + g_dropin_code + "-" + std::to_string(launch_no) + " --slot " + std::to_string(g_dropin_slot) +
+              " --dropin --players " + std::to_string(g_dropin_players) + " --ports " + g_dropin_ports + " --delay auto --name " + quote(A.st.name);
     if (e.system == hub::System::N64) {
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
         args += hubui::n64_extra_args(gsv);

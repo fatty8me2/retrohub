@@ -64,3 +64,5 @@ target_include_directories(retrorun_rewind_test PRIVATE ${CMAKE_CURRENT_SOURCE_D
 # Desync recovery (rollback.h resync + state_xfer.h): host state transfer over a lossy virtual link, give-up after 3.
 add_executable(retrorun_resync_test test_resync.cpp rollback.cpp)
 target_include_directories(retrorun_resync_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
+add_executable(retrorun_dropin_test test_dropin.cpp rollback.cpp ../n64run/spectate.cpp)
+target_include_directories(retrorun_dropin_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)

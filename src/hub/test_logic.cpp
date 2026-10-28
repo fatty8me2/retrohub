@@ -407,6 +407,48 @@ int main() {
     CHECK(exit_code_text(7).find("BIOS") != std::string::npos);
     CHECK(exit_code_text(2).find("couldn't start") != std::string::npos);
 
+    /* drop-in */
+    {
+        CHECK(dropin_exit_text(9).find("full") != std::string::npos && dropin_exit_text(10).find("update RetroHub") != std::string::npos &&
+              dropin_exit_text(11).find("Couldn't join") != std::string::npos && dropin_exit_text(4).empty() && dropin_exit_text(0).empty());
+        CHECK(dropin_reason_text("no-free-port") == "That game has no free controller port" && dropin_reason_text("host-too-old") == "Your friend needs to update RetroHub" &&
+              dropin_reason_text("no-such-game") == "That game has ended" && dropin_reason_text("x").empty());
+        PortPlan p3 = build_ports({{0, 1}, {1, 1}, {2, 1}});   /* 0,1,2,-1 */
+        PortPlan p2 = build_ports({{0, 1}, {1, 1}});
+        PortPlan p4 = build_ports({{0, 1}, {1, 1}, {2, 1}, {3, 1}});
+        Json j;
+        CHECK(json::parse(launch_json("g", 1, 0, 5, "", false, &p3, nullptr, "", true), &j) && (int)j.num("dropin", -1) == 1);
+        CHECK(json::parse(launch_json("g", 1, 0, 5, "", false, &p3), &j) && (int)j.num("dropin", -1) == 0);            /* not a rollback system */
+        CHECK(json::parse(launch_json("g", 1, 0, 5, "", false, &p2, nullptr, "", true), &j) && (int)j.num("dropin", -1) == 0);   /* only 2 ports used */
+        CHECK(json::parse(launch_json("g", 1, 0, 5, "", false, &p4, nullptr, "", true), &j) && (int)j.num("dropin", -1) == 0);   /* full */
+        CHECK(json::parse(launch_json("g", 1, 0, 5, "", false, nullptr, nullptr, "", true), &j) && (int)j.num("dropin", -1) == 0);
+        FriendRow d; d.state = FS_InGame; d.players = 3; d.max_players = 4;
+        CHECK(friend_can_dropin(d, true) && !friend_can_dropin(d, false));
+        d.players = 2; CHECK(!friend_can_dropin(d, true));
+        d.players = 4; CHECK(!friend_can_dropin(d, true));
+        d.players = 3; d.state = FS_InLobby; CHECK(!friend_can_dropin(d, true));
+        d.state = FS_InGame; d.in_my_room = true; CHECK(!friend_can_dropin(d, true));
+        int k = 0, n = 0; std::string np;
+        CHECK(dropin_port_plan("0,1,2,-1", &k, &np, &n) && k == 3 && np == "0,1,2,3" && n == 3);
+        CHECK(dropin_port_plan("0,2,3,-1", &k, &np, &n) && k == 1 && np == "0,2,3,1" && n == 3);
+        CHECK(dropin_port_plan("0,0,1,-1", &k, &np, &n) && k == 2 && np == "0,0,1,2" && n == 2);
+        CHECK(dropin_port_plan("0,1,2,-1", nullptr, nullptr, nullptr));
+        CHECK(!dropin_port_plan("0,1,2,3", &k, &np, &n));       /* no free port */
+        CHECK(dropin_port_plan("0,1,3,-1", &k, &np, &n) && k == 2);
+        CHECK(!dropin_port_plan("0,1,2", &k, &np, &n) && !dropin_port_plan("", &k, &np, &n));
+        CHECK(!dropin_port_plan("0,1,2,9", &k, &np, &n));
+        CHECK(!dropin_port_plan("1,2,3,-1", &k, &np, &n));   /* slots 1..3 all own a port: no free slot */
+        std::string why;
+        auto L = [&](const std::string& ex) { Json m; CHECK(json::parse("{\"kind\":\"launch\",\"game\":\"g\",\"launch\":2,\"share_save\":false," + ex + "}", &m)); return m; };
+        { Json m = L("\"ports\":[0,1,2,-1],\"players\":3,\"dropin\":1"); CHECK(parse_dropin_launch(m, &why, &k, &np, &n) && k == 3 && np == "0,1,2,3" && n == 3); }
+        { Json m = L("\"ports\":[0,1,2,-1],\"players\":3"); CHECK(!parse_dropin_launch(m, &why) && why.find("update RetroHub") != std::string::npos); }
+        { Json m = L("\"ports\":[0,1,2,-1],\"players\":3,\"dropin\":0"); CHECK(!parse_dropin_launch(m, &why) && why.find("no free controller port") != std::string::npos); }
+        { Json m = L("\"ports\":[0,1,2,-1],\"players\":3,\"dropin\":1,\"cheats\":{}"); CHECK(!parse_dropin_launch(m, &why) && why.find("cheats") != std::string::npos); }
+        { Json m; CHECK(json::parse("{\"kind\":\"launch\",\"share_save\":true,\"ports\":[0,1,2,-1],\"players\":3,\"dropin\":1}", &m) && !parse_dropin_launch(m, &why) && why.find("save") != std::string::npos); }
+        { Json m = L("\"dropin\":1"); CHECK(!parse_dropin_launch(m, &why) && why.find("update RetroHub") != std::string::npos); }   /* no plan */
+        { Json m = L("\"ports\":[0,1,2,3],\"players\":4,\"dropin\":1"); CHECK(!parse_dropin_launch(m, &why) && why.find("full") != std::string::npos); }
+    }
+
     /* ports with sparse slots and local players */
     {
         PortPlan a = build_ports({{2, 1}, {0, 1}});

@@ -136,6 +136,7 @@ struct RunInfo {
     bool track = true;      // record play time / touch the save vault (false for the native Smash port)
     bool online = false;
     bool room = false;                  // started by the room's launch message (host-synced session): ends when the host leaves
+    bool dropin = false;                // retrorun --dropin joiner: exit codes 9/10/11 mean "full / friend must update / transfer failed"
     std::string left_name;              // set when the host left mid-game: the exit notice names them
     bool pad_exit = false;              // RetroHub watches the pads for Back+Start (1 s) and closes this game gracefully
     std::function<void()> pad_exit_fn;  // custom graceful close (Kanto Together); default: WM_CLOSE to the game's windows
@@ -743,6 +744,16 @@ void enter_room(bool host, const std::string& code);
 void rejoin_room();   // reconnect to the room we were in (same code and role) after the connection was lost
 /* Spectate (spectate_ui.cpp): watch a friend's room as a port-less spectator. Start from the friends list; the game process is n64run /
  * retrorun with --spectate. g_spectate_launch / g_spectate_code are set only while launch_online() builds the spectator's command line. */
+/* Drop-in (dropin_ui.cpp): join a friend's running 3-4 port NES/SNES rollback game into a free controller port. g_dropin_launch /
+ * g_dropin_code / g_dropin_slot / g_dropin_ports / g_dropin_players are set only while launch_online() builds the joiner's command line. */
+extern bool g_dropin_launch;
+extern std::string g_dropin_code;
+extern int g_dropin_slot, g_dropin_players;
+extern std::string g_dropin_ports;
+bool dropin_supported(const hub::GameEntry& e);   // NES / SNES (rollback netplay), not native
+void dropin_start(const std::string& code, const std::string& game_id, const std::string& title, const std::string& friend_name);
+void dropin_tick();
+bool dropin_pending();
 extern bool g_spectate_launch;
 extern std::string g_spectate_code;
 bool spectate_supported(const hub::GameEntry& e);   // N64 (not native Smash), GB/GBC/GBA (no link cable), NES, SNES
