@@ -74,7 +74,7 @@ void Engine::put_remote(int p, int64_t f, uint64_t v) {
     if (f <= conf_eff_ && f < (int64_t)cur_ - kFrRing + 1) return;   // ancient
     in_[p][f % kInRing].tag = f;
     in_[p][f % kInRing].val = v;
-    if (f < (int64_t)cur_ && used_[f % kFrRing][p] != v) rb_to_ = rb_to_ < 0 ? f : std::min(rb_to_, f);
+    if (f < (int64_t)cur_ && f >= floor_ && used_[f % kFrRing][p] != v) rb_to_ = rb_to_ < 0 ? f : std::min(rb_to_, f);
     while (has(p, conf_upto_[p] + 1)) {
         conf_upto_[p]++;
         last_val_[p] = get(p, conf_upto_[p]);
@@ -196,7 +196,7 @@ void Engine::send_packet(bool force) {
     }
     int nh = (int)std::min<size_t>(4, my_h_.size());
     b.push_back((uint8_t)nh);
-    for (int i = 0; i < nh; i++) { const HEnt& e = my_h_[my_h_.size() - nh + i]; w32(b, e.frame); w64(b, e.h); }
+    for (int i = 0; i < nh; i++) { const HEnt& e = my_h_[my_h_.size() - nh + i]; w32(b, e.frame | (uint32_t)(epoch_ & 3) << 30); w64(b, e.h); }
     // RTT probe: our send time, plus the newest timestamp heard from the first active peer and how long we held it (2-player echo; extra peers share it).
     w32(b, now);
     uint32_t echo = 0xFFFFFFFFu, hold = 0;
@@ -212,6 +212,7 @@ void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
     size_t n = m.size();
     if (from >= 0 && from < 8) last_rx_[from] = net_.now_ms() ? net_.now_ms() : 1;
     if (d[0] == kPktDrop) { drop_on_msg(from, d, n); return; }
+    if (d[0] == xfer::kPkt) { resync_on_msg(from, d, n); return; }
     if (d[0] == kPktInput && from >= 0 && from < 8 && (ignore_mask_ >> from & 1u)) return;   // dropped: only relayed windows count
     if (d[0] == kPktReady) {
         if (n >= 2 && d[1] < 8) {
@@ -266,7 +267,7 @@ void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
     if (o < n) {
         int nh = d[o++];
         for (int i = 0; i < nh && o + 12 <= n; i++) {
-            compare_hash(slot, r32(d + o), r64(d + o + 4));
+            { uint32_t tf = r32(d + o); if (hash_epoch_ok(tf)) compare_hash(slot, tf & 0x3FFFFFFFu, r64(d + o + 4)); }
             o += 12;
         }
         if (o + 10 <= n) {
@@ -326,11 +327,11 @@ void Engine::compare_hash(int slot, uint32_t frame, uint64_t h) {
         if (e.frame != frame) continue;
         st_.hashes_compared++;
         if (e.h != h) {
-            desync_ = true;
             char buf[160];
             snprintf(buf, sizeof buf, "DESYNC at confirmed frame %u: %s hashes differ (mine %016llx, slot %d %016llx)", frame,
                      cfg_.use_state_hash ? "state" : "output", (unsigned long long)e.h, slot, (unsigned long long)h);
             if (net_.log) net_.log(buf);
+            request_resync("hash mismatch");
         }
     }
 }
@@ -397,6 +398,163 @@ bool Engine::start_barrier(uint32_t timeout_ms) {
     last_progress_ = net_.now_ms();
     for (int q = 0; q < 8; q++) last_rx_[q] = last_progress_ ? last_progress_ : 1;
     return true;
+}
+
+/* ---- desync recovery: the host's confirmed state replaces everybody's at an agreed frame ---- */
+void Engine::request_resync(const char* why) {
+    if (desync_) return;
+    if (cfg_.max_resyncs <= 0 || epoch_ >= cfg_.max_resyncs || finishing_) { desync_ = true; return; }
+    if (rs_ != Rs::None || rs_want_) return;
+    if (net_.log) net_.log(std::string("resync: ") + why + ", asking the host for a state (resync " + std::to_string(epoch_ + 1) + " of " + std::to_string(cfg_.max_resyncs) + ")");
+    rs_started_ = net_.now_ms() ? net_.now_ms() : 1;
+    if (cfg_.my_slot == host_slot()) rs_want_ = true;
+    else { rs_ = Rs::Wait; rs_last_ = 0; }
+}
+
+void Engine::xfer_send(const void* d, size_t n) { net_.send(-1, d, (int)n); }
+
+void Engine::resync_fail(const char* why) {
+    if (net_.log) net_.log(std::string("resync: failed (") + why + ")");
+    rs_ = Rs::None; rs_want_ = false; snd_.stop(); rcv_.reset();
+    desync_ = true;
+}
+
+/* Host: snapshot the state before frame F = the first frame whose inputs are not all confirmed yet (so it depends on confirmed inputs only), compress it, stream it. */
+void Engine::resync_begin_host() {
+    rs_want_ = false;
+    int64_t F = roll_next_;
+    if (F < (int64_t)cur_ - (ring_n_ - 1) || F > (int64_t)cur_) { resync_fail("confirmed frame outside the state ring"); return; }
+    rs_raw_.assign(state_n_, 0);
+    if (F == (int64_t)cur_) { if (!sim_.save(rs_raw_.data(), state_n_)) { resync_fail("save"); return; } }
+    else std::memcpy(rs_raw_.data(), ring_state(F), state_n_);
+    std::vector<uint8_t> z;
+    xfer::Meta m;
+    if (!std::getenv("RETRORUN_TEST_RESYNC_RAW") && sim_.pack_state && sim_.pack_state(rs_raw_.data(), state_n_, &z)) m.flags = 1;
+    else z = rs_raw_;
+    if (z.size() > cfg_.resync_max_bytes || z.size() > xfer::kMaxChunks * xfer::kChunk) { resync_fail("state too big to send"); return; }
+    m.frame = (uint32_t)F; m.raw = (uint32_t)state_n_; m.comp = (uint32_t)z.size();
+    m.chunks = (uint16_t)((z.size() + xfer::kChunk - 1) / xfer::kChunk);
+    m.hash = hash_bytes(rs_raw_.data(), state_n_);
+    m.a = rs_ro_ = roll_out_; m.b = rs_ri_ = roll_in_;
+    rs_frame_ = (uint32_t)F;
+    rs_extra_ms_ = (uint32_t)m.chunks * 20;   // a big state over the relay (100 chunks/s) legitimately takes a while
+    uint32_t mask = 0;
+    for (int s = 0; s < 8; s++) if (active_peer(s)) mask |= 1u << s;
+    uint32_t now = net_.now_ms() ? net_.now_ms() : 1;
+    bool rel = net_.relayed && net_.relayed();
+    snd_.start((uint8_t)(epoch_ + 1), m, std::move(z), mask, now, rel ? 100.0 : 400.0);
+    rs_ = Rs::Send;
+    if (net_.log) net_.log("resync: sending the state of frame " + std::to_string(F) + " (" + std::to_string(m.raw) + " bytes, " + std::to_string(m.comp) + " on the wire, " + std::to_string(m.chunks) + " chunks)");
+}
+
+void Engine::resync_apply(uint32_t frame, const std::vector<uint8_t>& raw, uint64_t ro, uint64_t ri) {
+    if (!sim_.load(raw.data(), raw.size())) { resync_fail("load"); return; }
+    cur_ = frame; rb_to_ = -1; conf_eff_ = (int64_t)frame - 1; roll_next_ = frame; floor_ = frame;
+    roll_out_ = ro; roll_in_ = ri;
+    pending_h_.clear(); my_h_.clear();
+    for (int s = 0; s < 8; s++) peer_h_[s].clear();
+    epoch_++;
+    st_.resyncs++;
+    stall_since_ = 0; skew_ema_ = 0; skew_cur_ = 0xFFFFFFFFu; last_wait_ = frame;
+    last_progress_ = net_.now_ms();
+    rs_ = Rs::None; rs_want_ = false; rcv_.reset();
+    if (net_.log) net_.log("resync: " + std::to_string(epoch_) + " done, everybody continues from frame " + std::to_string(frame));
+    if (net_.notice) net_.notice("Resynced");
+}
+
+void Engine::resync_on_msg(int from, const uint8_t* d, size_t n) {
+    if (n < 4 || from < 0 || from >= 8 || d[2] != from || !(cfg_.slot_mask >> from & 1u)) return;
+    uint8_t sub = d[1], ep = d[3];
+    const bool host = cfg_.my_slot == host_slot();
+    uint32_t now = net_.now_ms() ? net_.now_ms() : 1;
+    if (host) {
+        if (sub == xfer::Req) {
+            if (ep == (uint8_t)(epoch_ + 1) && rs_ == Rs::None && !rs_want_) {
+                if (epoch_ >= cfg_.max_resyncs || finishing_ || cfg_.max_resyncs <= 0) { desync_ = true; return; }
+                rs_started_ = now; rs_want_ = true;
+            }
+        } else if (sub == xfer::Ack && rs_ == Rs::Send && ep == snd_.epoch() && n >= 4 + 10) {
+            snd_.on_ack(from, xfer::g16(d + 4), xfer::g64(d + 6));
+        } else if (sub == xfer::Done) {
+            if (rs_ == Rs::Send && ep == snd_.epoch()) {
+                if (n >= 5 && d[4] == 0) { resync_fail("a player could not load the state"); return; }
+                snd_.on_done(from);
+            } else if (ep == (uint8_t)epoch_ && epoch_ > 0) {   // already applied here: the Go got lost
+                auto g = xfer::header(xfer::Go, cfg_.my_slot, ep);
+                net_.send(from, g.data(), (int)g.size());
+            }
+        }
+        return;
+    }
+    if (from != host_slot()) return;
+    if (sub == xfer::Begin) {
+        xfer::Meta m;
+        if (ep != (uint8_t)(epoch_ + 1) || !xfer::dec_begin(d, n, &m) || m.raw != state_n_) return;
+        if (epoch_ >= cfg_.max_resyncs || finishing_) { desync_ = true; return; }
+        if (rs_ == Rs::Loaded) return;
+        if (rcv_.on_begin(ep, m)) {
+            if (rs_ == Rs::None) rs_started_ = now;
+            rs_extra_ms_ = (uint32_t)m.chunks * 20;
+            rs_ = Rs::Recv;
+            if (net_.log) net_.log("resync: receiving the host's state of frame " + std::to_string(m.frame));
+        }
+    } else if (sub == xfer::Chunk && rs_ == Rs::Recv && n >= 6) {
+        rcv_.on_chunk(ep, xfer::g16(d + 4), d + 6, n - 6);
+        last_progress_ = now;
+    } else if (sub == xfer::Go && rs_ == Rs::Loaded && ep == rcv_.epoch()) {
+        resync_apply(rcv_.meta().frame, rs_raw_, rcv_.meta().a, rcv_.meta().b);
+    }
+}
+
+void Engine::resync_service(uint32_t now) {
+    if (rs_ == Rs::None && !rs_want_) return;
+    if (!now) now = 1;
+    if (rs_started_ && now - rs_started_ > cfg_.resync_timeout_ms + rs_extra_ms_) { resync_fail("timed out"); return; }
+    if (rs_want_ && rs_ == Rs::None) { if (rb_to_ < 0) resync_begin_host(); return; }
+    if (rs_ == Rs::Wait) {
+        if (now - rs_last_ >= 200) {
+            rs_last_ = now;
+            auto r = xfer::header(xfer::Req, cfg_.my_slot, (uint8_t)(epoch_ + 1));
+            net_.send(host_slot(), r.data(), (int)r.size());
+        }
+    } else if (rs_ == Rs::Send) {
+        for (int s = 0; s < 8; s++) if (!active_peer(s)) snd_.remove(s);
+        snd_.set_rate(net_.relayed && net_.relayed() ? 100.0 : 400.0);
+        snd_.service(now, cfg_.my_slot, [this](const uint8_t* p, size_t n) { xfer_send(p, n); });
+        if (snd_.all_done()) {
+            uint8_t ep = snd_.epoch();
+            snd_.stop();
+            resync_apply(rs_frame_, rs_raw_, rs_ro_, rs_ri_);
+            if (!desync_) {
+                auto g = xfer::header(xfer::Go, cfg_.my_slot, ep);
+                for (int i = 0; i < 3; i++) net_.send(-1, g.data(), (int)g.size());
+            }
+        }
+    } else if (rs_ == Rs::Recv) {
+        uint16_t next; uint64_t bits;
+        if (rcv_.ack_due(now, &next, &bits)) { auto a = xfer::enc_ack(cfg_.my_slot, rcv_.epoch(), next, bits); net_.send(host_slot(), a.data(), (int)a.size()); }
+        if (rcv_.complete()) {
+            const xfer::Meta& m = rcv_.meta();
+            rs_raw_.assign(m.raw, 0);
+            bool ok = true;
+            if (m.flags & 1) ok = sim_.unpack_state && sim_.unpack_state(rcv_.payload().data(), rcv_.payload().size(), rs_raw_.data(), m.raw);
+            else if (rcv_.payload().size() == m.raw) std::memcpy(rs_raw_.data(), rcv_.payload().data(), m.raw);
+            else ok = false;
+            if (ok && hash_bytes(rs_raw_.data(), m.raw) != m.hash) ok = false;
+            if (!ok) {
+                auto dn = xfer::header(xfer::Done, cfg_.my_slot, rcv_.epoch()); dn.push_back(0);
+                net_.send(host_slot(), dn.data(), (int)dn.size());
+                resync_fail("state did not verify");
+                return;
+            }
+            rs_ = Rs::Loaded; rs_last_ = 0;
+        }
+    }
+    if (rs_ == Rs::Loaded && now - rs_last_ >= 100) {
+        rs_last_ = now;
+        auto dn = xfer::header(xfer::Done, cfg_.my_slot, rcv_.epoch()); dn.push_back(1);
+        net_.send(host_slot(), dn.data(), (int)dn.size());
+    }
 }
 
 /* ---- mid-match drop of a silent guest (drop_agree.h): frames >= cutoff read 0 for its ports ---- */
@@ -499,12 +657,14 @@ void Engine::service() {
     { uint32_t now = net_.now_ms(); drop_check(now); drop_service(now); }
     if (rb_to_ >= 0 && !desync_) do_rollback();
     advance_confirmed();
+    resync_service(net_.now_ms());
     send_packet(false);
 }
 
 Engine::Status Engine::prepare() {
     service();
     uint32_t now = net_.now_ms();
+    if (rs_ != Rs::None || rs_want_) { last_progress_ = now; return Status::Stalled; }   // paused while the state moves
     if ((int64_t)cur_ - 1 - conf_eff_ >= cfg_.max_pred) {
         // At the prediction limit: wait for the missing peer inputs.
         bool any_remote = false;
@@ -575,6 +735,7 @@ void Engine::run_frame() {
 bool Engine::finish(uint32_t timeout_ms) {
     uint32_t t0 = net_.now_ms();
     bool ok = false;
+    finishing_ = true;   // no new recovery while leaving
     for (;;) {
         service();
         send_packet(false);
