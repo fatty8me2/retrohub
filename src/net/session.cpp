@@ -193,7 +193,7 @@ struct Session::Impl {
 
     void connect_ws()
     {
-        std::string url = hub_url(cfg.server, cfg.room, is_host(), "n64run", slot, spectator) + "&caps=reasons";
+        std::string url = hub_url(cfg.server, cfg.room, is_host(), "n64run", slot, spectator, cfg.dropin) + "&caps=reasons";
         net_log("Session: connecting %s", url.c_str());
         ws.connect(url);
         welcomed = false;
@@ -448,6 +448,7 @@ struct Session::Impl {
             else if (reason == "bad-slot") fail("That player slot is already taken");
             else if (reason == "spectators-full") fail("This room already has the maximum number of spectators");
             else if (reason == "spectate-busy") fail("Spectating is paused: the server is busy, try again later");
+            else if (reason == "no-free-port") fail("That game has no free controller port");
             else if (reason == "host-left-game") fail("The host left - game over");
             else fail(reason);
         }

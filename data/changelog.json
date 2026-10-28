@@ -3,8 +3,10 @@
     {
       "version": "1.29.4",
       "date": "2026-10-28",
-      "title": "N64 desync recovery",
-      "new": [],
+      "title": "N64 desync recovery and drop-in party games",
+      "new": [
+        "Party games: friends can now drop into an empty controller port of a game already in progress."
+      ],
       "improved": [
         "N64 online matches now recover from a desync instead of ending."
       ],

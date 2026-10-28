@@ -213,6 +213,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_gamepack();
         lobby_tick();
         spectate_tick();
+        dropin_tick();
         autotest_tick();
         fr_tick();
         ghost_tick();
