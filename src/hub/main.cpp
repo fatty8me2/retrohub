@@ -6,6 +6,7 @@
 #include "popup_guard.h"
 #include "qm_pad.h"
 #include "dolphin_speed.h"
+#include "hang_watchdog.h"
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
@@ -158,8 +159,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hubupdate::set_game_probe(&game_active);
     if (!autotest && (!shot_path || SH.update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
 
+    {   // UI hang watchdog: a stalled UI thread leaves userdata\logs\hang-<time>.txt (+ .dmp). HUB_HANG_SECS overrides the 5 s.
+        const char* hs = std::getenv("HUB_HANG_SECS");
+        hang_watchdog_start(hub::data_dir() + "logs\\", hs ? std::max(1.0, std::atof(hs)) : 5.0);
+    }
     bool running = true;
     while (running) {
+        hang_watchdog_tick();
+        if (g_headless && std::getenv("HUB_HANG_TEST") && ImGui::GetFrameCount() == 30) Sleep((DWORD)(std::atof(std::getenv("HUB_HANG_TEST")) * 1000));   // QA: simulate a hang
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             qm_pad_event(e);   // the quick menu's own controls: button-down taps, whatever has the focus
@@ -391,6 +398,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (A.proc) CloseHandle(A.proc);
     for (auto* p : A.pads) SDL_GameControllerClose(p);
     hubart::shutdown();
+    hang_watchdog_stop();
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

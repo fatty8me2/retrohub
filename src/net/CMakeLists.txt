@@ -19,6 +19,9 @@ target_link_libraries(hubnet_test PRIVATE hubnet)
 add_executable(hubfriends_dedupe_test test_friends_dedupe.cpp)
 target_link_libraries(hubfriends_dedupe_test PRIVATE hubnet)
 
+add_executable(hubws_close_test test_ws_close.cpp)
+target_link_libraries(hubws_close_test PRIVATE hubnet)
+
 add_executable(hubfriends_test test_friends.cpp)
 target_link_libraries(hubfriends_test PRIVATE hubnet)
 
