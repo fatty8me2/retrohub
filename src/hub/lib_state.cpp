@@ -72,6 +72,8 @@ void apply_scan() {
         static const hub::System sy[] = {hub::System::N64, hub::System::GBA, hub::System::GC, hub::System::N64, hub::System::GB};
         A.lib.clear();
         int n = std::max(1, std::atoi(fl));
+        const bool only_native = std::string(fl) == "native";   // QA: just the bundled Smash 64 entry (a fresh install with no ROM folders)
+        if (only_native) { hub::GameEntry g; g.system = hub::System::N64; g.key = kNativeKey; g.title = "Super Smash Bros. 64"; g.catalog_id = "smash64"; g.path = "C:/fake/BattleShip.exe"; A.lib.push_back(g); n = 0; }
         if (std::string(fl) == "all") {   // qa/reach_matrix.ps1: every system, an online catalog game + an uncatalogued one, plus Smash Classic, Remix and Kanto Together
             static const hub::System all[] = {hub::System::N64, hub::System::GB, hub::System::GBC, hub::System::GBA, hub::System::NDS,
                                               hub::System::N3DS, hub::System::GC, hub::System::WiiU, hub::System::PS1, hub::System::PS2, hub::System::NES, hub::System::SNES};
@@ -119,7 +121,7 @@ void apply_scan() {
             g.path = "C:/fake/game" + std::to_string(i) + ".z64";
             A.lib.push_back(g);
         }
-        {   // a catalog PlayStation game too, so the room picker / PS1 online path can be screenshotted (HUB_SHOT_ROOM_GAME=crashbash)
+        if (!only_native) {   // a catalog PlayStation game too, so the room picker / PS1 online path can be screenshotted (HUB_SHOT_ROOM_GAME=crashbash)
             hub::GameEntry g;
             g.system = hub::System::PS1;
             g.key = "ps1:scus-94570";
@@ -129,7 +131,7 @@ void apply_scan() {
             g.path = "C:/fake/crashbash.cue";
             A.lib.push_back(g);
         }
-        if (!std::getenv("HUB_SHOT_NO_WIIU")) {   // a catalog Wii U remote-play game (HUB_SHOT_ROOM_GAME=sm3dw); HUB_SHOT_NO_WIIU = this PC has no copy (guest view)
+        if (!only_native && !std::getenv("HUB_SHOT_NO_WIIU")) {   // a catalog Wii U remote-play game (HUB_SHOT_ROOM_GAME=sm3dw); HUB_SHOT_NO_WIIU = this PC has no copy (guest view)
             hub::GameEntry g;
             g.system = hub::System::WiiU;
             g.key = "wiiu:0005000010145d00";
