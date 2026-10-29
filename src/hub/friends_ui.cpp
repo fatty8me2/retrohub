@@ -948,6 +948,29 @@ void fr_ask_accept(Notif& n) {
     n.done = true;
 }
 
+/* Invite toast, shrunk form: after kInvitePillAfter s the card collapses to a one-line pill; clicking it opens the full card again. */
+static const double kInvitePillAfter = 10.0;
+static float fr_invite_pill_h() { return sp(4.f); }
+static std::string fr_invite_pill_text(const Notif& n) { return n.name + " invited you  -  Join"; }
+/* Returns true when clicked. */
+static bool fr_invite_pill(const Notif& n, float w, float frac) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + fr_invite_pill_h());
+    bool clicked = ImGui::InvisibleButton("##pill", ImVec2(w, fr_invite_pill_h()), ImGuiButtonFlags_EnableNav);
+    bool hov = ImGui::IsItemHovered();
+    ui::shadow(dl, p0, p1, fr_invite_pill_h() * 0.5f, 1.f, sp(0.5f));
+    dl->AddRectFilled(p0, p1, hov ? ui::PANEL3 : ui::PANEL2, fr_invite_pill_h() * 0.5f);
+    dl->AddRect(p0, p1, with_alpha(ui::ACCENT, hov ? 0.8f : 0.45f), fr_invite_pill_h() * 0.5f, 0, 1.f);
+    float pad = sp(1.75f);
+    std::string t = ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, fr_invite_pill_text(n), w - pad * 2);
+    dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(p0.x + pad, p0.y + (fr_invite_pill_h() - ui::F.bold->FontSize) * 0.5f), ui::TEXT, t.c_str());
+    if (frac >= 0.f) {
+        float bw2 = (w - fr_invite_pill_h()) * std::max(0.f, std::min(1.f, frac));
+        dl->AddRectFilled(ImVec2(p0.x + fr_invite_pill_h() * 0.5f, p1.y - sp(0.4f)), ImVec2(p0.x + fr_invite_pill_h() * 0.5f + bw2, p1.y), with_alpha(ui::ACCENT, 0.9f), sp(0.2f));
+    }
+    return clicked;
+}
+
 /* Toast cards (top right, below the top bar). */
 /* Friend request / invite cards stack upward from `bottom_y` (bottom right, clear of the page header buttons such as "Invite friends"). */
 void fr_draw_toasts(float right_x, float bottom_y) {
@@ -956,13 +979,16 @@ void fr_draw_toasts(float right_x, float bottom_y) {
     for (auto& n : FR.notifs) {
         if (n.done || !n.toast) continue;
         if (FR.fake && g_headless) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
+        if (FR.fake && g_headless && std::getenv("HUB_SHOT_INVITE_AGE")) n.t0 = now - std::atof(std::getenv("HUB_SHOT_INVITE_AGE"));   // screenshot aid: age the invite toast (>10 = shrunk pill)
         double life = !n.night_id.empty() ? 120.0 : (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;
         if (age > life) { n.toast = false; continue; }
         float in = (float)std::min(1.0, age / 0.3);
         in = 1.f - (1.f - in) * (1.f - in);
-        float h = n.invite ? fr_invite_card_h() : fr_request_card_h();
-        ImGui::SetNextWindowPos(ImVec2(right_x - w + (1.f - in) * sp(8.f), y - h));
-        ImGui::SetNextWindowSize(ImVec2(w, h));
+        const bool pill = n.invite && n.night_id.empty() && !n.expanded && age > kInvitePillAfter;
+        float h = pill ? fr_invite_pill_h() : n.invite ? fr_invite_card_h() : fr_request_card_h();
+        float cw = pill ? std::min(w, fr_tw(ui::F.bold, fr_invite_pill_text(n)) + sp(3.5f)) : w;
+        ImGui::SetNextWindowPos(ImVec2(right_x - cw + (1.f - in) * sp(8.f), y - h));
+        ImGui::SetNextWindowSize(ImVec2(cw, h));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
         ImGui::PushStyleColor(ImGuiCol_WindowBg, 0);
@@ -977,6 +1003,8 @@ void fr_draw_toasts(float right_x, float bottom_y) {
                     if (a == 1) { gn_card_action(n.night_id); n.done = true; }
                     if (a == 2) { gn_card_dismiss(n.night_id); n.done = true; }
                 }
+            } else if (pill) {
+                if (fr_invite_pill(n, cw, frac)) n.expanded = true;
             } else if (n.invite) {
                 int a = fr_invite_card(n, w, frac, true);
                 if (a == 1) fr_join_notif(n);
