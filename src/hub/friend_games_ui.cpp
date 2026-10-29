@@ -1,6 +1,7 @@
 #include "app.h"
 #include "gameinfo.h"
 #include "gamepack.h"
+#include <chrono>
 
 bool gameinfo_ui_section_query(const gameinfo::Query& q, const std::string& id, int part = 0);   // gameinfo_ui.cpp: description, ratings, facts
 
@@ -145,8 +146,9 @@ void ghost_tick() {
     static std::string seen_pack_links;
     {
         const std::string& links = A.st.pack_links;
-        long long now_ms = (long long)(now * 1000.0);
-        if (!A.ghosts.empty() && (links != seen_pack_links || now_ms - hubgp::index_last_attempt_ms() > 600000)) {
+        long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();   // same clock as index_last_attempt_ms()
+        long long last_ms = hubgp::index_last_attempt_ms();
+        if (!A.ghosts.empty() && (links != seen_pack_links || last_ms == 0 || now_ms - last_ms > 600000)) {
             seen_pack_links = links;
             hubgp::index_refresh(hubgp::parse_links(links));
         }
