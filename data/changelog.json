@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.9",
+      "date": "2026-10-29",
+      "title": "Pack matching fix",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Install from shared packs said a game wasn't in any pack when the folder name differed slightly, like \"Pokemon Platinum\" vs \"Pokemon - Platinum Version (USA)\""
+      ]
+    },
+    {
       "version": "1.29.8",
       "date": "2026-10-29",
       "title": "Pack links list",
