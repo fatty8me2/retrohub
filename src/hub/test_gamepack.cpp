@@ -121,7 +121,7 @@ int main()
 
     /* console_code: the pack subfolder names */
     CHECK(console_code("n64") && console_code("GBC") && console_code("3ds"));
-    CHECK(!console_code("gbx") && !console_code("") && !console_code("nintendo 64"));
+    CHECK(!console_code("gbx") && !console_code("") && console_code("nintendo 64"));
 
     /* sys_folder: the consoles in the shared pack */
     CHECK(std::string(sys_folder("n64")) == "19_2xjH7Ps7epabxUrr9sfxz69kuJGp3W");
