@@ -192,6 +192,54 @@ static std::string entry_key(const Entry& e) {
     return pack_key(e.name.substr(0, dot));
 }
 
+static std::vector<std::string> words(const std::string& k) {
+    std::vector<std::string> w; std::string c;
+    for (char ch : k) { if (ch == ' ') { if (!c.empty()) w.push_back(c); c.clear(); } else c += ch; }
+    if (!c.empty()) w.push_back(c);
+    std::sort(w.begin(), w.end()); w.erase(std::unique(w.begin(), w.end()), w.end());
+    return w;
+}
+
+/* Loose match of two pack keys: the same words in any order ("goldeneye 007" / "007 goldeneye"), or one side's words all in
+ * the other's with only harmless extras ("mario golf" / "mario golf 64", "zelda wind waker" / "legend of zelda wind waker",
+ * "pokemon yellow" / "pokemon yellow special pikachu"). An extra number never matches ("pokemon black" is not "... black 2"),
+ * except 64, the console's own suffix. */
+static bool loose_match(const std::string& a, const std::string& b) {
+    std::vector<std::string> wa = words(a), wb = words(b);
+    if (wa.empty() || wb.empty()) return false;
+    if (wa == wb) return true;
+    const std::vector<std::string>& sm = wa.size() <= wb.size() ? wa : wb;
+    const std::vector<std::string>& lg = wa.size() <= wb.size() ? wb : wa;
+    if (sm.size() < 2) return false;   // one word ("tetris") is too little to guess from
+    if (!std::includes(lg.begin(), lg.end(), sm.begin(), sm.end())) return false;
+    for (const std::string& w : lg) {
+        if (std::binary_search(sm.begin(), sm.end(), w)) continue;
+        bool digit = false;
+        for (char c : w) if (std::isdigit((unsigned char)c)) digit = true;
+        if (digit && w != "64") return false;
+    }
+    return true;
+}
+
+int pack_pick(const std::vector<std::string>& keys, const std::string& want) {
+    if (want.empty()) return -1;
+    for (size_t i = 0; i < keys.size(); ++i) if (keys[i] == want) return (int)i;
+    int hit = -1;
+    for (size_t i = 0; i < keys.size(); ++i) {
+        if (keys[i].empty() || !loose_match(keys[i], want)) continue;
+        if (hit >= 0 && keys[(size_t)hit] != keys[i]) return -1;   // two different candidates: do not guess
+        if (hit < 0) hit = (int)i;
+    }
+    return hit;
+}
+
+/* Game Boy and Game Boy Color packs hold each other's games (Pokemon Red often sits in a GBC folder). */
+static std::vector<std::string> pack_consoles(const std::string& sys) {
+    if (sys == "gb") return {"gb", "gbc"};
+    if (sys == "gbc") return {"gbc", "gb"};
+    return {sys};
+}
+
 std::vector<std::string> parse_links(const std::string& text) {
     std::vector<std::string> out;
     auto push = [&](const char* p, size_t len) {
@@ -384,19 +432,22 @@ std::string match_game(const std::string& sys_short, const std::string& title, c
     std::string want = pack_key(title);
     if (want.empty()) return "";
     std::vector<std::string> sources;
-    const char* sf = sys_folder(sys_short);
-    if (sf[0]) sources.push_back(sf);
-    for (const std::string& r : roots) {
-        std::string sub = sys_subfolder(r, console_alias(sys_short));
-        if (!sub.empty()) sources.push_back(sub);
+    for (const std::string& c : pack_consoles(console_alias(sys_short))) {
+        const char* sf = sys_folder(c);
+        if (sf[0]) sources.push_back(sf);
+        for (const std::string& r : roots) {
+            std::string sub = sys_subfolder(r, c);
+            if (!sub.empty()) sources.push_back(sub);
+        }
     }
+    std::vector<Entry> all; std::vector<std::string> keys;
     for (const std::string& s : sources) {
         std::vector<Entry> entries;
         if (!list_folder(s, &entries)) continue;
-        for (const Entry& e : entries)
-            if (entry_key(e) == want) return e.id;
+        for (const Entry& e : entries) { all.push_back(e); keys.push_back(entry_key(e)); }
     }
-    return "";
+    int i = pack_pick(keys, want);
+    return i < 0 ? "" : all[(size_t)i].id;
 }
 
 bool list_files(const std::string& game_folder_id, std::vector<Entry>* out) {
@@ -554,7 +605,11 @@ long long index_last_attempt_ms() {
 
 IndexState index_state(const std::string& sys_short) {
     std::lock_guard<std::mutex> lk(IX.mu);
-    auto it = IX.state.find(sys_short);
+    auto it = IX.state.end();
+    for (const std::string& c : pack_consoles(sys_short)) {   // a Game Boy game can be known through the GBC pack
+        auto f = IX.state.find(c);
+        if (f != IX.state.end() && (it == IX.state.end() || f->second == 1)) it = f;
+    }
     if (it == IX.state.end()) return IndexState::Unknown;   // no source known for this console
     if (it->second == 1) return IndexState::Ready;
     if (IX.th.joinable() && !IX.finished) return IndexState::Checking;
@@ -565,17 +620,24 @@ bool index_has(const std::string& sys_short, const std::string& title) {
     std::string want = pack_key(title);
     if (want.empty()) return false;
     std::lock_guard<std::mutex> lk(IX.mu);
-    auto it = IX.state.find(sys_short);
-    if (it == IX.state.end() || it->second != 1) return false;
-    auto t = IX.titles.find(sys_short);
-    return t != IX.titles.end() && t->second.count(want) > 0;
+    std::vector<std::string> keys;
+    for (const std::string& c : pack_consoles(sys_short)) {
+        auto it = IX.state.find(c);
+        if (it == IX.state.end() || it->second != 1) continue;
+        auto t = IX.titles.find(c);
+        if (t != IX.titles.end()) keys.insert(keys.end(), t->second.begin(), t->second.end());
+    }
+    return pack_pick(keys, want) >= 0;
 }
 
 bool index_source(const std::string& sys_short) {
-    if (sys_folder(sys_short)[0]) return true;
-    std::lock_guard<std::mutex> lk(IX.mu);
-    auto it = IX.extra.find(sys_short);
-    return it != IX.extra.end() && it->second;
+    for (const std::string& c : pack_consoles(sys_short)) {
+        if (sys_folder(c)[0]) return true;
+        std::lock_guard<std::mutex> lk(IX.mu);
+        auto it = IX.extra.find(c);
+        if (it != IX.extra.end() && it->second) return true;
+    }
+    return false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -606,24 +668,28 @@ void Installer::start(const std::string& sys, const std::string& title, const st
         {
             std::string want = pack_key(this->title);
             std::vector<std::string> sources;   // the built-in pack first, then every extra root that has this console
-            if (sf[0]) sources.push_back(sf);
             std::vector<std::string> all;   // community packs (fetched if not known yet) + the user's extra roots
             all_roots(roots, &all);
-            for (const std::string& root : all) {
-                std::string sub = sys_subfolder(root, console_alias(this->sys));
-                if (!sub.empty()) sources.push_back(sub);
+            for (const std::string& c : pack_consoles(console_alias(this->sys))) {
+                const char* cf = sys_folder(c);
+                if (cf[0]) sources.push_back(cf);
+                for (const std::string& root : all) {
+                    std::string sub = sys_subfolder(root, c);
+                    if (!sub.empty()) sources.push_back(sub);
+                }
             }
             if (sources.empty()) e = "this console is not in the shared pack";
             else {
                 std::string game_id; bool any_listed = false; Entry loose; bool is_file = false;
+                std::vector<Entry> cands; std::vector<std::string> keys;
                 for (const std::string& s : sources) {
-                    if (!game_id.empty()) break;
                     std::vector<Entry> games;
                     if (!list_folder(s, &games)) continue;
                     any_listed = true;
-                    for (const Entry& g : games)
-                        if (entry_key(g) == want) { game_id = g.id; is_file = !g.is_folder; if (is_file) loose = g; break; }
+                    for (const Entry& g : games) { cands.push_back(g); keys.push_back(entry_key(g)); }
                 }
+                int pick = pack_pick(keys, want);
+                if (pick >= 0) { const Entry& g = cands[(size_t)pick]; game_id = g.id; is_file = !g.is_folder; if (is_file) loose = g; }
                 if (game_id.empty()) e = any_listed ? "not in the shared pack" : "could not list the shared pack";
                 else {
                     std::vector<Entry> files;

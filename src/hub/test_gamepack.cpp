@@ -11,6 +11,23 @@ using namespace hubgp;
 int main()
 {
     /* decode_entities */
+    {   // pack_pick: exact first, then a single loose match; numbers must agree
+        auto K = [](std::initializer_list<const char*> l) { std::vector<std::string> v; for (const char* x : l) v.push_back(pack_key(x)); return v; };
+        std::vector<std::string> n64 = K({"007 - GoldenEye", "Mario Golf 64 (English)", "Smash_Remix_2.0.0", "The Legend of Zelda Ocarina of Time Master Quest", "Mario Party 2 (U) [!]", "Mario Party 3 (U) [!]"});
+        CHECK(pack_pick(n64, pack_key("GoldenEye 007")) == 0);
+        CHECK(pack_pick(n64, pack_key("Mario Golf")) == 1);
+        CHECK(pack_pick(n64, pack_key("Smash Remix 2.0")) == 2);
+        CHECK(pack_pick(n64, pack_key("Zelda: Ocarina of Time Master Quest")) == 3);
+        CHECK(pack_pick(n64, pack_key("Mario Party")) == -1);      // 2 and 3 differ by a number: no guess
+        CHECK(pack_pick(n64, pack_key("Mario Party 3")) == 5);
+        std::vector<std::string> nds = K({"Pokemon - Black Version (USA, Europe)", "Pokemon - Black Version 2 (USA, Europe)"});
+        CHECK(pack_pick(nds, pack_key("Pokemon Black")) == 0 && pack_pick(nds, pack_key("Pokemon Black 2")) == 1);
+        std::vector<std::string> gc = K({"Legend of Zelda, The - The Wind Waker (USA, Canada)", "Legend of Zelda, The - Twilight Princess (USA)"});
+        CHECK(pack_pick(gc, pack_key("Zelda: The Wind Waker")) == 0);
+        std::vector<std::string> gbc = K({"Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe)", "Pokemon - Red Version (USA, Europe)"});
+        CHECK(pack_pick(gbc, pack_key("Pokemon Yellow")) == 0 && pack_pick(gbc, pack_key("Pokemon Red")) == 1);
+        CHECK(pack_pick(gbc, pack_key("Tetris")) == -1);
+    }
     CHECK(console_alias("Wii u") == "wiiu");
     CHECK(console_alias("GameCube") == "gc");
     CHECK(console_alias("SNES") == "snes");
