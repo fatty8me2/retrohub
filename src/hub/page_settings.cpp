@@ -236,8 +236,9 @@ void tab_online() {
     if (ImGui::Checkbox("Show friends' games in my library", &A.st.show_friend_games)) { mark_dirty(); A.vis_dirty = true; }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     settings_label("Shared game packs");
-    text_wrapped_disabled("Greyed-out games can be installed from the shared GamePack folder. Have a game nobody else has? Put it in your own public Google Drive "
-                          "folder - one subfolder per console (n64, gc, gba...), each game in its own folder - and add the link below so everyone can install it too.");
+    text_wrapped_disabled("Greyed-out games can be installed from the shared packs - everyone gets the community packs automatically. Have a game nobody else has? "
+                          "Put it in your own public Google Drive folder - one subfolder per console (n64, gc, gba...), each game in its own folder - and send the "
+                          "link so it can be added to the shared list. Links below apply to this PC only.");
     char pl[1024];
     std::snprintf(pl, sizeof pl, "%s", A.st.pack_links.c_str());
     ImGui::SetNextItemWidth(-1);

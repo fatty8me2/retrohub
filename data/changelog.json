@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.6",
+      "date": "2026-10-28",
+      "title": "Shared packs for everyone",
+      "new": [],
+      "improved": [
+        "Shared game packs now work for every player: pack links are shared with everyone automatically, so there is no need to paste them on each PC. Have a game nobody else has? Put it in your own public Google Drive folder (one subfolder per console, each game in its own folder) and send the link so it can be added to the shared list"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.29.5",
       "date": "2026-10-28",
       "title": "No more freezes, creative usernames",
@@ -41,7 +51,7 @@
       "title": "Watch N64 games live",
       "new": [],
       "improved": [
-        "Watching a friend's N64 game now joins live instead of replaying the match from the start."
+         "Watching a friend's N64 game now joins live instead of replaying the match from the start."
       ],
       "fixed": []
     },
