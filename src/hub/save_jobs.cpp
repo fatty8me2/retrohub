@@ -155,7 +155,9 @@ void cloud_host_pull(const hub::GameEntry& e) {
     if (!g_cloud_on || g_headless) return;
     hub::saves::GameId id = cloud_id_for(e);
     if (id.system.empty() || id.key.empty()) return;
-    hub::saves::cloud_prelaunch_ex(id, hub::saves::SyncMode::ReadOnly, 2500, 6000);
+    hub::saves::CloudAccountInfo ai = hub::saves::cloud_account();
+    if (ai.known && !ai.online) return;   // the engine already knows the server is unreachable: do not stall the frame thread
+    hub::saves::cloud_prelaunch_ex(id, hub::saves::SyncMode::ReadOnly, 1500, 2500);   // runs on the frame thread: keep the worst case short
 }
 
 /* spawn(): the session is tracked so the exit pushes the game (read-only sessions use a throwaway save dir: nothing is pushed). */

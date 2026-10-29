@@ -111,6 +111,7 @@ void WsClient::run(std::string url)
         h_->request = request;
     }
     if (!connect || !request) { fail("couldn't reach " + host); return; }
+    if (stop_) return;   // close() ran before the handles were published, so it could not abort the connect below (it would block its join for the full timeouts)
 
     if (!WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0) ||
         !WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) ||

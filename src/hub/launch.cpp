@@ -384,7 +384,12 @@ void poll_process() {
         if (secs >= 1) { hub::record_play(A.run.key, A.run.start_unix, secs); if (!A.run.system_short.empty()) hub::saves::playlog_append(A.run.system_short, A.run.key, (int64_t)A.run.start_unix, (int64_t)secs); }
         if (hubui::exit_should_touch_game(!A.run.key.empty(), A.run.track, A.run.online, A.run.system_short))
             { hub::saves::touch_game(A.run.system_short, A.run.key, A.run.title); hub::saves::history_snapshot_game(A.run.system_short, A.run.key); }
-        if (A.run.cloud_started) { A.run.cloud_started = false; hub::saves::cloud_game_exited(hub::saves::GameId{A.run.system_short, A.run.key}); }   // after touch_game: pushes this game in the background
+        if (A.run.cloud_started) {
+            A.run.cloud_started = false;
+            /* The lease release is an HTTP call (up to 5 s): never on the frame thread. Detached so exit never waits on the network. */
+            hub::saves::GameId cid{A.run.system_short, A.run.key};
+            std::thread([cid]() { hub::saves::cloud_game_exited(cid); }).detach();
+        }   // after touch_game: pushes this game in the background
         hub::flush_library_state();
         if (secs >= 1) fr_playtime_session_ended();
         refresh_state(A.run.key);

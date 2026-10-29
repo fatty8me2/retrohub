@@ -383,6 +383,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
 
     // clean shutdown
+    SDL_HideWindow(A.win);   // the joins below can wait on a slow network: never leave a frozen-looking window up meanwhile
     dolphin_speed_stop();   // the Dolphin speed DSU server (if a GameCube game ran)
     find_games_shutdown();
     add_games_shutdown();
