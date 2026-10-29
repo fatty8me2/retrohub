@@ -447,6 +447,15 @@ void cloud_ui_overlays() {
             ImVec2 us = s->CalcTextSizeA(s->FontSize, FLT_MAX, 0.f, CK.title.c_str());
             dl->AddText(s, s->FontSize, ImVec2((p0.x + p1.x - us.x) * 0.5f, p1.y + sp(0.5f)), ui::TEXT2, CK.title.c_str());
         }
+        if (A.cloud_gate.waiting) {   // waiting for the previous session's cloud work: offer a way out
+            ImFont* s = ui::F.cap;
+            const char* ct = "Cancel (Esc)";
+            ImVec2 cs = s->CalcTextSizeA(s->FontSize, FLT_MAX, 0.f, ct);
+            ImVec2 q0((p0.x + p1.x - cs.x) * 0.5f, p1.y + sp(2.6f)), q1(q0.x + cs.x, q0.y + cs.y);
+            const bool hov = ImGui::IsMouseHoveringRect(ImVec2(q0.x - sp(1.f), q0.y - sp(0.5f)), ImVec2(q1.x + sp(1.f), q1.y + sp(0.5f)), false);
+            dl->AddText(s, s->FontSize, q0, hov ? ui::TEXT : ui::ACCENT, ct);
+            if ((hov && ImGui::IsMouseClicked(0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) cloud_gate_cancel();
+        }
     }
     /* conflict dialog */
     if (CD.want_open) { CD.want_open = false; ImGui::OpenPopup("Saves differ##cloud_conflict"); }

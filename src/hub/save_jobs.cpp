@@ -72,9 +72,17 @@ void cloud_bg_join_all() {
     for (auto& j : all) if (j->th.joinable()) j->th.join();
 }
 /* Gate / worker threads only: waits (bounded) until no background job touches this game. */
-static void bg_wait_idle(const std::string& gkey) {
-    for (int i = 0; i < 600 && cloud_bg_busy(gkey); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+static bool bg_wait_idle(const std::string& gkey) {   // true = idle; false = cancelled (abort_why 1) or timed out (abort_why 2)
+    A.cloud_gate.waiting = cloud_bg_busy(gkey);
+    for (int i = 0; cloud_bg_busy(gkey); ++i) {
+        if (A.cloud_gate.cancel) { A.cloud_gate.waiting = false; A.cloud_gate.abort_why = 1; return false; }
+        if (i >= 600) { A.cloud_gate.waiting = false; A.cloud_gate.abort_why = 2; return false; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    A.cloud_gate.waiting = false;
+    return true;
 }
+void cloud_gate_cancel() { A.cloud_gate.cancel = true; }
 
 void cloud_boot() {
     /* Screenshot/QA runs normally never touch the network. HUB_SHOT_CLOUD_REAL=1 lets a headless run start the REAL engine, but only
@@ -140,7 +148,12 @@ bool cloud_gate_begin(const hub::GameEntry& e, std::function<void()> proceed) {
     cloud_ui_checking(e.title, true);   // "Getting your save from the cloud..." strip (Lane U)
     /* A Resolve / Keep / Remove or the previous run's exit processing may still be working on this game: the gate thread waits for it
      * (the strip shows "Getting your save from the cloud...") so the lease and the save files are never touched by two sessions. */
-    gate_task([id]() { bg_wait_idle(id.gkey()); A.cloud_gate.res = hub::saves::cloud_prelaunch(id, hub::saves::SyncMode::ReadWrite); });
+    A.cloud_gate.cancel = false;
+    A.cloud_gate.abort_why = 0;
+    gate_task([id]() {
+        if (!bg_wait_idle(id.gkey())) { A.cloud_gate.res = hub::saves::PrelaunchResult(); return; }   // never start while a job holds the lease
+        A.cloud_gate.res = hub::saves::cloud_prelaunch(id, hub::saves::SyncMode::ReadWrite);
+    });
     return true;
 }
 
@@ -149,6 +162,13 @@ static void gate_handle_result() {
     using hub::saves::PrelaunchResult;
     const PrelaunchResult& r = A.cloud_gate.res;
     cloud_ui_checking("", false);
+    if (const int why = A.cloud_gate.abort_why.exchange(0)) {   // cancelled / timed out while waiting: no launch, back to Idle
+        A.cloud_gate.phase = CloudGate::Idle;
+        A.cloud_gate.proceed = nullptr;
+        A.cloud_gate.res = PrelaunchResult();
+        if (why == 2) push_toast("Still saving your last session, try again in a moment.", ui::WARN, 6.0);
+        return;
+    }
     cloud_ui_prelaunch_notice(r);   // offline / "pulled N files" notices
     if (r.action == PrelaunchResult::NeedConflictDecision) {
         A.cloud_gate.phase = CloudGate::AskConflict;
