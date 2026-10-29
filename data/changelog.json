@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.15",
+      "date": "2026-10-29",
+      "title": "Wii U stream freeze fix",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Wii U online: the guest's picture froze while the host had the game fullscreen and in focus, and only moved again when the host tabbed out"
+      ]
+    },
+    {
       "version": "1.29.14",
       "date": "2026-10-29",
       "title": "Wii U player 2-4 controls fix",
