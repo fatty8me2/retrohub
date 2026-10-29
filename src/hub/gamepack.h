@@ -31,6 +31,11 @@ std::vector<Entry> parse_folder_html(const std::string& html);
  * dropped and e-acute folded, so "Pokemon Platinum" matches the folder "Pokemon - Platinum Version (USA)". */
 std::string pack_key(const std::string& title);
 
+/* Pure: index of the pack entry key in `keys` that a friend's game key `want` names: an exact key first, else the one loose
+ * match (same words in any order, or one side's words inside the other's with no extra number but 64). -1 when none, or when
+ * two different entries match loosely (never guess between them). */
+int pack_pick(const std::vector<std::string>& keys, const std::string& want);
+
 /* Pure: a title made safe for use as a folder name (Windows-illegal characters become spaces, runs collapsed). */
 std::string safe_name(const std::string& t);
 
