@@ -67,14 +67,19 @@ static int run_case(int mode) {
 
 /* mode 2: close() while the connect is still pending toward a black-holed address must not wait out the connect timeouts. */
 static int run_connecting_case() {
-    WsClient ws;
-    ws.connect("ws://10.255.255.1:81/friends");
-    Sleep(150);
-    auto c0 = std::chrono::steady_clock::now();
-    ws.close();
-    double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - c0).count();
-    std::printf("connecting: close() took %.2f s\n", secs);
-    return secs < 3.0 ? 0 : 1;
+    int bad = 0;
+    for (int delay : {0, 1, 5, 20, 150}) {   // close() racing every stage of the connect
+        WsClient ws;
+        ws.connect("ws://10.255.255.1:81/friends");
+        if (delay) Sleep(delay);
+        auto c0 = std::chrono::steady_clock::now();
+        ws.close();
+        double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - c0).count();
+        std::printf("connecting: close() after %d ms took %.2f s
+", delay, secs);
+        if (secs >= 3.0) ++bad;
+    }
+    return bad ? 1 : 0;
 }
 
 int main() {

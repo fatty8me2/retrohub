@@ -546,6 +546,12 @@ void cloud_shutdown();                                  // stop the engine (hub 
 bool cloud_active();                                    // engine running
 hub::saves::GameId cloud_id_for(const hub::GameEntry& e);
 bool cloud_gate_begin(const hub::GameEntry& e, std::function<void()> proceed);   // true = the gate took over, caller must return
+/* Tracked background cloud work (HTTP never runs on the frame thread). gkey = GameId::gkey() of the game it touches. */
+bool cloud_bg_run(const std::string& gkey, std::function<void()> fn);   // false (not run) while shutting down
+bool cloud_bg_busy(const std::string& gkey);            // gkey "" = any job
+int  cloud_bg_generation();                             // bumps whenever a job finished (UI refreshes engine state)
+void cloud_bg_poll();                                   // every frame (UI thread): reclaims finished threads
+void cloud_bg_join_all();                               // before the engine stops
 void cloud_gate_tick();                                 // every frame (UI thread)
 void cloud_gate_choose_conflict(hub::saves::ConflictChoice c);
 void cloud_gate_choose_lease(hub::saves::LeaseChoice c);

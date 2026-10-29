@@ -105,13 +105,20 @@ void WsClient::run(std::string url)
                                                      WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0)
                                 : nullptr;
     {
+        /* stop_ is checked under mu_: close() sets it before close_handles() takes mu_, so either we see it here and never start the
+         * (blocking) connect, or the handles are published first and close_handles() aborts the connect below. */
         std::lock_guard<std::mutex> l(mu_);
+        if (stop_) {
+            if (request) WinHttpCloseHandle(request);
+            if (connect) WinHttpCloseHandle(connect);
+            WinHttpCloseHandle(session);
+            return;
+        }
         h_->session = session;
         h_->connect = connect;
         h_->request = request;
     }
     if (!connect || !request) { fail("couldn't reach " + host); return; }
-    if (stop_) return;   // close() ran before the handles were published, so it could not abort the connect below (it would block its join for the full timeouts)
 
     if (!WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0) ||
         !WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) ||

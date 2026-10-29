@@ -1,4 +1,8 @@
 #include "app.h"
+#include <atomic>
+#include <chrono>
+#include <list>
+#include <mutex>
 #include "cloud_internal.h"   // cloud_prelaunch_ex and the engine hooks (not part of the UI contract)
 
 /* ---------- save jobs (sync / export / import) ---------- */
@@ -28,6 +32,50 @@ static std::string cloud_base_url() {
 
 static bool g_cloud_on = false;
 
+/* ---------- tracked background cloud jobs ---------- */
+namespace {
+struct BgJob { std::thread th; std::string gkey; std::atomic<bool> done{false}; };
+std::mutex g_bg_mu;
+std::list<std::shared_ptr<BgJob>> g_bg;
+std::atomic<int> g_bg_gen{0};
+bool g_bg_closed = false;
+}
+bool cloud_bg_run(const std::string& gkey, std::function<void()> fn) {
+    std::lock_guard<std::mutex> lk(g_bg_mu);
+    if (g_bg_closed) return false;
+    auto j = std::make_shared<BgJob>();
+    j->gkey = gkey;
+    j->th = std::thread([j, fn]() { fn(); j->done = true; });
+    g_bg.push_back(j);
+    return true;
+}
+bool cloud_bg_busy(const std::string& gkey) {
+    std::lock_guard<std::mutex> lk(g_bg_mu);
+    for (auto& j : g_bg) if (!j->done && (gkey.empty() || j->gkey == gkey)) return true;
+    return false;
+}
+int cloud_bg_generation() { return g_bg_gen; }
+void cloud_bg_poll() {
+    std::vector<std::shared_ptr<BgJob>> fin;
+    {
+        std::lock_guard<std::mutex> lk(g_bg_mu);
+        for (auto it = g_bg.begin(); it != g_bg.end();) {
+            if ((*it)->done) { fin.push_back(*it); it = g_bg.erase(it); } else ++it;
+        }
+    }
+    for (auto& j : fin) if (j->th.joinable()) j->th.join();
+    if (!fin.empty()) ++g_bg_gen;
+}
+void cloud_bg_join_all() {
+    std::list<std::shared_ptr<BgJob>> all;
+    { std::lock_guard<std::mutex> lk(g_bg_mu); g_bg_closed = true; all.swap(g_bg); }
+    for (auto& j : all) if (j->th.joinable()) j->th.join();
+}
+/* Gate / worker threads only: waits (bounded) until no background job touches this game. */
+static void bg_wait_idle(const std::string& gkey) {
+    for (int i = 0; i < 600 && cloud_bg_busy(gkey); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+}
+
 void cloud_boot() {
     /* Screenshot/QA runs normally never touch the network. HUB_SHOT_CLOUD_REAL=1 lets a headless run start the REAL engine, but only
      * against a loopback server (qa\cloud_ui_shots_real.ps1 uses a local Worker). */
@@ -37,6 +85,7 @@ void cloud_boot() {
     g_cloud_on = true;
 }
 void cloud_shutdown() {
+    cloud_bg_join_all();   // Resolve / Keep / Remove / exit processing finish before the engine state is reset
     if (!g_cloud_on) return;
     g_cloud_on = false;
     hub::saves::cloud_engine_stop();
@@ -89,7 +138,9 @@ bool cloud_gate_begin(const hub::GameEntry& e, std::function<void()> proceed) {
     A.cloud_gate.mode = hub::saves::SyncMode::ReadWrite;   // offline play from the library always uses the vault save
     A.cloud_gate.proceed = std::move(proceed);
     cloud_ui_checking(e.title, true);   // "Getting your save from the cloud..." strip (Lane U)
-    gate_task([id]() { A.cloud_gate.res = hub::saves::cloud_prelaunch(id, hub::saves::SyncMode::ReadWrite); });
+    /* A Resolve / Keep / Remove or the previous run's exit processing may still be working on this game: the gate thread waits for it
+     * (the strip shows "Getting your save from the cloud...") so the lease and the save files are never touched by two sessions. */
+    gate_task([id]() { bg_wait_idle(id.gkey()); A.cloud_gate.res = hub::saves::cloud_prelaunch(id, hub::saves::SyncMode::ReadWrite); });
     return true;
 }
 
@@ -156,6 +207,7 @@ void cloud_host_pull(const hub::GameEntry& e) {
     hub::saves::GameId id = cloud_id_for(e);
     if (id.system.empty() || id.key.empty()) return;
     hub::saves::CloudAccountInfo ai = hub::saves::cloud_account();
+    if (cloud_bg_busy(id.gkey())) return;   // never wait on the per-game lock a background job holds
     if (ai.known && !ai.online) return;   // the engine already knows the server is unreachable: do not stall the frame thread
     hub::saves::cloud_prelaunch_ex(id, hub::saves::SyncMode::ReadOnly, 1500, 2500);   // runs on the frame thread: keep the worst case short
 }

@@ -1869,7 +1869,7 @@ void cloud_account_prefs_changed() {   // favorites etc. changed locally: push _
 
 void cloud_set_pin(const GameId& g, bool pinned) {
     str gkey = wire_key(g);
-    { std::lock_guard<std::mutex> lk(E.mu); bgame(gkey).pinned = pinned; info_of_locked(g).pinned = pinned; base_save_locked(); }
+    { std::lock_guard<std::mutex> lk(E.mu); if (!E.started) return; bgame(gkey).pinned = pinned; info_of_locked(g).pinned = pinned; base_save_locked(); }
     if (!enabled_now()) return;
     Api api(3000, 8000);
     api.req("POST", "/saves/v2/game", "{\"game\":" + json::quote(gkey) + ",\"pin\":" + (pinned ? "true" : "false") + "}");
@@ -1890,12 +1890,14 @@ void cloud_set_local_only(const GameId& g, bool local_only) {
 
 void cloud_remove_game(const GameId& g) {
     str gkey = wire_key(g);
+    { std::lock_guard<std::mutex> lk(E.mu); if (!E.started) return; }   // engine stopped: do not write the reset store
     if (enabled_now()) {
         Api api(3000, 10000);
         HttpReply r = api.req("POST", "/saves/v2/game", "{\"game\":" + json::quote(gkey) + ",\"remove\":true}");
         (void)r;
     }
     std::lock_guard<std::mutex> lk(E.mu);
+    if (!E.started) return;
     BGame& bg = bgame(gkey);
     bg.files.clear();
     bg.lo_user = true;                 // stays on this PC only, otherwise the next play would upload it again

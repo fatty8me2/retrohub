@@ -386,9 +386,9 @@ void poll_process() {
             { hub::saves::touch_game(A.run.system_short, A.run.key, A.run.title); hub::saves::history_snapshot_game(A.run.system_short, A.run.key); }
         if (A.run.cloud_started) {
             A.run.cloud_started = false;
-            /* The lease release is an HTTP call (up to 5 s): never on the frame thread. Detached so exit never waits on the network. */
+            /* The lease release is an HTTP call (up to 5 s): never on the frame thread. Tracked: relaunch of this game waits for it, shutdown joins it. */
             hub::saves::GameId cid{A.run.system_short, A.run.key};
-            std::thread([cid]() { hub::saves::cloud_game_exited(cid); }).detach();
+            cloud_bg_run(cid.gkey(), [cid]() { hub::saves::cloud_game_exited(cid); });
         }   // after touch_game: pushes this game in the background
         hub::flush_library_state();
         if (secs >= 1) fr_playtime_session_ended();

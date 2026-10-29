@@ -208,6 +208,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         kt_tick();
         poll_job();
         cloud_gate_tick();
+        cloud_bg_poll();
         run_pending_sync();
         poll_emulators();
         poll_gamepack();
