@@ -36,7 +36,7 @@ std::string pack_key(const std::string& title) {
         else t += title[i];
     }
     std::string n = hubui::fg::norm_title(t), o, w;
-    auto flush = [&] { if (!w.empty() && w != "version" && w != "edition") { if (!o.empty()) o += ' '; o += w; } w.clear(); };
+    auto flush = [&] { if (!w.empty() && w != "version" && w != "edition" && w != "the") { if (!o.empty()) o += ' '; o += w; } w.clear(); };
     for (char c : n) { if (c == ' ') flush(); else w += c; }
     flush();
     return o;
@@ -157,11 +157,39 @@ static std::string lower_name(const std::string& s) {
     return o;
 }
 
-bool console_code(const std::string& name) {
-    static const char* codes[] = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb", "ps1"};
-    std::string l = lower_name(name);
-    for (const char* c : codes) if (l == c) return true;
-    return false;
+std::string console_alias(const std::string& name) {
+    std::string l;   // lower case, spaces / dashes / underscores / dots dropped: "Wii u", "Game Boy Advance", "PS-2"
+    for (char c : name) { unsigned char u = (unsigned char)c; if (std::isalnum(u)) l += (char)std::tolower(u); }
+    static const char* map[][2] = {
+        {"n64", "n64"}, {"nintendo64", "n64"},
+        {"gc", "gc"}, {"ngc", "gc"}, {"gamecube", "gc"}, {"nintendogamecube", "gc"},
+        {"wiiu", "wiiu"}, {"nintendowiiu", "wiiu"},
+        {"3ds", "3ds"}, {"n3ds", "3ds"}, {"nintendo3ds", "3ds"},
+        {"nds", "nds"}, {"ds", "nds"}, {"nintendods", "nds"},
+        {"gba", "gba"}, {"gameboyadvance", "gba"},
+        {"gbc", "gbc"}, {"gameboycolor", "gbc"}, {"gameboycolour", "gbc"},
+        {"gb", "gb"}, {"gameboy", "gb"},
+        {"ps1", "ps1"}, {"psx", "ps1"}, {"psone", "ps1"}, {"playstation", "ps1"}, {"playstation1", "ps1"},
+        {"ps2", "ps2"}, {"playstation2", "ps2"},
+        {"nes", "nes"}, {"famicom", "nes"}, {"nintendoentertainmentsystem", "nes"},
+        {"snes", "snes"}, {"superfamicom", "snes"}, {"supernintendo", "snes"}, {"supernintendoentertainmentsystem", "snes"},
+    };
+    for (auto& m : map) if (l == m[0]) return m[1];
+    return "";
+}
+
+bool console_code(const std::string& name) { return !console_alias(name).empty(); }
+
+/* A pack entry's game key: a game folder's name, or a loose game file's name without its extension. Notes, readmes
+ * and other non-game files give "". */
+static std::string entry_key(const Entry& e) {
+    if (e.is_folder) return pack_key(e.name);
+    size_t dot = e.name.find_last_of('.');
+    if (dot == std::string::npos || dot == 0) return "";
+    std::string ext = lower_name(e.name.substr(dot + 1));
+    static const char* skip[] = {"txt", "nfo", "md", "pdf", "jpg", "jpeg", "png", "url", "html", "htm", "exe", "sfv", "md5", "sha1", "dat", "xml", "json", "ini"};
+    for (const char* x : skip) if (ext == x) return "";
+    return pack_key(e.name.substr(0, dot));
 }
 
 std::vector<std::string> parse_links(const std::string& text) {
@@ -348,7 +376,7 @@ static std::string sys_subfolder(const std::string& root_id, const std::string& 
     std::vector<Entry> entries;
     if (!list_folder(root_id, &entries)) return "";
     for (const Entry& e : entries)
-        if (e.is_folder && console_code(e.name) && lower_name(e.name) == sys) return e.id;
+        if (e.is_folder && console_alias(e.name) == sys) return e.id;
     return "";
 }
 
@@ -359,14 +387,14 @@ std::string match_game(const std::string& sys_short, const std::string& title, c
     const char* sf = sys_folder(sys_short);
     if (sf[0]) sources.push_back(sf);
     for (const std::string& r : roots) {
-        std::string sub = sys_subfolder(r, lower_name(sys_short));
+        std::string sub = sys_subfolder(r, console_alias(sys_short));
         if (!sub.empty()) sources.push_back(sub);
     }
     for (const std::string& s : sources) {
         std::vector<Entry> entries;
         if (!list_folder(s, &entries)) continue;
         for (const Entry& e : entries)
-            if (e.is_folder && pack_key(e.name) == want) return e.id;
+            if (entry_key(e) == want) return e.id;
     }
     return "";
 }
@@ -483,7 +511,7 @@ void index_refresh(const std::vector<std::string>& roots) {
             std::vector<Entry> entries;
             if (!list_folder(folder_id, &entries)) return false;
             std::lock_guard<std::mutex> lk(IX.mu);
-            for (const Entry& e : entries) if (e.is_folder) IX.titles[sys].insert(pack_key(e.name));
+            for (const Entry& e : entries) { std::string k = entry_key(e); if (!k.empty()) IX.titles[sys].insert(k); }
             return true;
         };
         static const char* builtin[] = {"n64", "gc", "gba", "gbc", "nds", "ps1"};
@@ -497,8 +525,9 @@ void index_refresh(const std::vector<std::string>& roots) {
             std::vector<Entry> entries;
             if (!list_folder(root, &entries)) continue;
             for (const Entry& e : entries) {
-                if (!e.is_folder || !console_code(e.name)) continue;
-                std::string sys = lower_name(e.name);
+                if (!e.is_folder) continue;
+                std::string sys = console_alias(e.name);
+                if (sys.empty()) continue;
                 { std::lock_guard<std::mutex> lk(IX.mu); IX.extra[sys] = true; }
                 if (list_into(e.id.c_str(), sys)) {
                     std::lock_guard<std::mutex> lk(IX.mu); IX.state[sys] = 1;   // a listed extra root makes the console known even if the built-in listing failed
@@ -581,24 +610,25 @@ void Installer::start(const std::string& sys, const std::string& title, const st
             std::vector<std::string> all;   // community packs (fetched if not known yet) + the user's extra roots
             all_roots(roots, &all);
             for (const std::string& root : all) {
-                std::string sub = sys_subfolder(root, lower_name(this->sys));
+                std::string sub = sys_subfolder(root, console_alias(this->sys));
                 if (!sub.empty()) sources.push_back(sub);
             }
             if (sources.empty()) e = "this console is not in the shared pack";
             else {
-                std::string game_id; bool any_listed = false;
+                std::string game_id; bool any_listed = false; Entry loose; bool is_file = false;
                 for (const std::string& s : sources) {
                     if (!game_id.empty()) break;
                     std::vector<Entry> games;
                     if (!list_folder(s, &games)) continue;
                     any_listed = true;
                     for (const Entry& g : games)
-                        if (g.is_folder && pack_key(g.name) == want) { game_id = g.id; break; }
+                        if (entry_key(g) == want) { game_id = g.id; is_file = !g.is_folder; if (is_file) loose = g; break; }
                 }
                 if (game_id.empty()) e = any_listed ? "not in the shared pack" : "could not list the shared pack";
                 else {
                     std::vector<Entry> files;
-                    if (!list_files(game_id, &files)) e = "could not list the game's files";
+                    if (is_file) files.push_back(loose);   // a loose game file: the file is the whole game
+                    else if (!list_files(game_id, &files)) e = "could not list the game's files";
                     else if (files.empty()) e = "the shared copy has no files";
                     else {
                         std::error_code ec;

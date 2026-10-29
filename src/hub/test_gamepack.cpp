@@ -11,6 +11,16 @@ using namespace hubgp;
 int main()
 {
     /* decode_entities */
+    CHECK(console_alias("Wii u") == "wiiu");
+    CHECK(console_alias("GameCube") == "gc");
+    CHECK(console_alias("SNES") == "snes");
+    CHECK(console_alias("NES") == "nes");
+    CHECK(console_alias("PS2") == "ps2");
+    CHECK(console_alias("3ds") == "3ds");
+    CHECK(console_alias("NDS") == "nds");
+    CHECK(console_alias("Tools") == "");
+    CHECK(pack_key("The Legend of Zelda: A Link to the Past") == pack_key("Legend of Zelda, The - A Link to the Past (USA)"));
+    CHECK(pack_key("Pokemon X") == pack_key("Pokemon X (USA) (En,Ja,Fr,De,Es,It,Ko)"));
     CHECK(pack_key("Pokemon Platinum") == pack_key("Pokemon - Platinum Version (USA)"));
     CHECK(pack_key("Pokemon Black 2") == pack_key("Pokemon - Black Version 2 (USA, Europe) (NDSi Enhanced)"));
     CHECK(pack_key("Pokemon Black") != pack_key("Pokemon - Black Version 2 (USA, Europe)"));
