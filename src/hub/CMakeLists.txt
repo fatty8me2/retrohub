@@ -143,10 +143,7 @@ add_custom_command(TARGET hub_shell_test POST_BUILD
 
 # ---- 3DS (Azahar) / Wii U (Cemu): external emulators, downloaded on demand (docs/EMULATORS.md) ----
 target_sources(RetroHub PRIVATE emulators.cpp netplay_3ds_run.cpp netplay_3ds_join.cpp)
-target_link_libraries(RetroHub PRIVATE ws2_32 dbghelp)
-# Release ships RetroHub.pdb next to the exe so hang reports (hang_watchdog.cpp) resolve function names and lines.
-target_compile_options(RetroHub PRIVATE $<$<CONFIG:Release>:/Zi> $<$<CONFIG:Release>:/FS>)
-target_link_options(RetroHub PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
+target_link_libraries(RetroHub PRIVATE ws2_32)
 target_link_libraries(RetroHub PRIVATE xinput setupapi)
 target_link_libraries(RetroHub PRIVATE hubminiz)
 add_executable(hub_emu_test test_emulators.cpp emulators.cpp)
