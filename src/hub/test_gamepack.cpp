@@ -68,6 +68,23 @@ int main()
         CHECK(v.size() == 1 && v[0] == "1SameFolderIdHere123456");
     }
 
+    /* stored pack_links helpers */
+    {
+        std::string s = "1OldCommaIdOne123456,1OldCommaIdTwo123456  1OldCommaIdOne123456";
+        auto v = links_split(s);
+        CHECK(v.size() == 2 && links_join(v) == "1OldCommaIdOne123456 1OldCommaIdTwo123456");
+        int found = -1;
+        CHECK(links_add(&s, "nothing here", &found) == 0 && found == 0);
+        CHECK(links_add(&s, "https://drive.google.com/drive/folders/1OldCommaIdTwo123456?usp=sharing", &found) == 0 && found == 1);
+        CHECK(links_add(&s, "https://drive.google.com/drive/folders/1NewFolderIdAAA123456 https://drive.google.com/drive/folders/1NewFolderIdBBB123456", &found) == 2 && found == 2);
+        CHECK(links_split(s).size() == 4 && s == "1OldCommaIdOne123456 1OldCommaIdTwo123456 1NewFolderIdAAA123456 1NewFolderIdBBB123456");
+        CHECK(links_remove(&s, "1OldCommaIdTwo123456") && links_split(s).size() == 3);
+        CHECK(!links_remove(&s, "1NotThereAtAll123456"));
+        std::string e; CHECK(links_split(e).empty() && links_join({}).empty());
+        CHECK(link_label("short_id_12345") == "short_id_12345");
+        CHECK(link_label("1NewFolderIdAAA1234567890") == "1NewFolder...567890");
+    }
+
     /* parse_packs_json: the shared community list (data/packs.json) */
     {   // object form; names ignored, duplicates dropped
         std::vector<std::string> v;
