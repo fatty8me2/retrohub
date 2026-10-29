@@ -27,6 +27,10 @@ std::string decode_entities(const std::string& s);
 /* Pure: parse the embeddedfolderview HTML of a Drive folder into entries (order preserved). */
 std::vector<Entry> parse_folder_html(const std::string& html);
 
+/* Pure: the key a friend's game title and a pack folder name are matched on: norm_title plus "version"/"edition"
+ * dropped and e-acute folded, so "Pokemon Platinum" matches the folder "Pokemon - Platinum Version (USA)". */
+std::string pack_key(const std::string& title);
+
 /* Pure: a title made safe for use as a folder name (Windows-illegal characters become spaces, runs collapsed). */
 std::string safe_name(const std::string& t);
 
