@@ -1,6 +1,7 @@
 /* TV mode (L5): borderless fullscreen + larger UI scale + hero/sidebar preset. Not a second UI: it only changes ui::S, the window
  * and a few layout numbers; pad navigation and the OSK are untouched. */
 #include "app.h"
+#include "../net/username.h"
 #include "tv_mode.h"
 #include "tv_logic.h"
 #include "friends_ui.h"
@@ -144,7 +145,7 @@ void draw_corner(float right_x, float top_y, float h) {
         size_t hsh = std::hash<std::string>()(fr.uid);
         float hr, hg, hb;
         ImGui::ColorConvertHSVtoRGB((float)(hsh % 360) / 360.f, 0.55f, 0.75f, hr, hg, hb);
-        char init[8] = {(char)std::toupper((unsigned char)(fr.name.empty() ? '?' : fr.name[0])), 0};
+        char init[8] = {hubnet::username_initial(fr.name), 0};
         bubble(ax, IM_COL32((int)(hr * 255), (int)(hg * 255), (int)(hb * 255), 255), init);
         ax -= step;
     }

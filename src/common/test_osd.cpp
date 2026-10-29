@@ -2,6 +2,7 @@
 
 #include "osd.h"
 #include "perf_overlay.h"
+#include "../net/username.h"
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
@@ -12,6 +13,7 @@ static uint64_t clk() { return g_t; }
 static int count_lit(const osd::Layer& L) { int n = 0; for (uint32_t p : L.px) if (p >> 24) n++; return n; }
 
 int main() {
+    CHECK(hubnet::username_ascii("Zo\xC3\xAB \xC3\x91" "and\xC3\xBA \xC3\x86\xC3\x9F" "\xE4\xB8\xAD") == "Zoe Nandu Aess");
     osd::set_clock_for_test(clk);
     osd::Layer L;
     bool ch = false;

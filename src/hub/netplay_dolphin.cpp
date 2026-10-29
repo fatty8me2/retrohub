@@ -223,7 +223,10 @@ static std::string ini_set_all(const std::string& ini, const std::vector<std::pa
 std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p) {
     typedef std::vector<std::pair<std::string, std::string>> KV;
     KV np;
-    np.push_back({"Nickname", p.nickname.empty() ? "Player" : p.nickname});
+    /* A name may hold spaces and symbols; keep it to one printable line (control characters would break the INI). */
+    std::string nick;
+    for (unsigned char c : p.nickname) if (c >= 0x20 && c != 0x7F) nick += (char)c;
+    np.push_back({"Nickname", nick.empty() ? "Player" : nick});
     np.push_back({"TraversalChoice", s.mode == "direct" ? "direct" : "traversal"});
     if (s.mode == "direct") {
         np.push_back({"Address", s.addr});

@@ -1,4 +1,5 @@
 #include "osd.h"
+#include "../net/username.h"   // username_ascii: the 5x7 font is ASCII only, so names with accents are drawn without them
 
 #include <algorithm>
 #include <chrono>
@@ -102,7 +103,8 @@ int scale_for_height(int h) { return std::max(1, h / 240); }
 
 void set_clock_for_test(uint64_t (*fn)()) { std::lock_guard<std::mutex> lk(g_mu); g_clock = fn; }
 
-void push(const std::string& text, Kind kind, double seconds) {
+void push(const std::string& text_in, Kind kind, double seconds) {
+    const std::string text = hubnet::username_ascii(text_in);
     if (text.empty()) return;
     std::lock_guard<std::mutex> lk(g_mu);
     uint64_t t = now();
@@ -114,7 +116,8 @@ void push(const std::string& text, Kind kind, double seconds) {
     g_gen++;
 }
 
-void set_corner(const std::string& text, Kind kind) {
+void set_corner(const std::string& text_in, Kind kind) {
+    const std::string text = hubnet::username_ascii(text_in);
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_corner == text && g_corner_kind == kind) return;
     g_corner = text.substr(0, 60);
@@ -122,7 +125,8 @@ void set_corner(const std::string& text, Kind kind) {
     g_gen++;
 }
 
-void set_stats(const std::string& text) {
+void set_stats(const std::string& text_in) {
+    const std::string text = hubnet::username_ascii(text_in);
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_stats == text) return;
     g_stats = text.substr(0, 90);

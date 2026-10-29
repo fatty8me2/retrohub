@@ -17,7 +17,7 @@ namespace {
 
 struct UnState {
     Checker chk;
-    char buf[24] = {0};
+    char buf[96] = {0};
     bool claiming = false;
     int claim_ref = 0;
     std::string err;                 // last claim failure
@@ -177,7 +177,7 @@ bool un_picker(const char* id, float width) {
     enter = osk::input("##uname", "your username", UN.buf, sizeof UN.buf, ImGuiInputTextFlags_EnterReturnsTrue);
     if (std::string(UN.buf) != UN.chk.text) UN.chk.set_input(UN.buf, ImGui::GetTime());
     ImGui::SameLine(0, sp(1.f));
-    ImGui::TextDisabled("%zu/%d", hubnet::username_trim(UN.buf).size(), hubnet::kUsernameMax);
+    ImGui::TextDisabled("%zu/%d", hubnet::username_length(hubnet::username_trim(UN.buf)), hubnet::kUsernameMax);
 
     // status line
     const Avail a = UN.chk.state;
