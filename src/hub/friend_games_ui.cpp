@@ -389,10 +389,10 @@ void draw_ghost_modal() {
 
     /* actions: Play / Play Online are shown but disabled (you cannot play what you do not have) */
     float bh = sp(5.5f);
-    button("Play", ImVec2(sp(16.f), bh), false, false, ui::Icon::Play);
+    button("Play", ImVec2(sp(12.f), bh), false, false, ui::Icon::Play);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
     ImGui::SameLine(0, sp(1.5f));
-    button("Play Online", ImVec2(sp(18.f), bh), false, false, ui::Icon::Globe);
+    button("Play Online", ImVec2(sp(16.f), bh), false, false, ui::Icon::Globe);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
     bool installable = false;
     {   // install from the shared packs (built-in folder + community list + extra roots from Settings > Online)
@@ -404,7 +404,7 @@ void draw_ghost_modal() {
             bool in_pack = ist == hubgp::IndexState::Ready ? hubgp::index_has(g.sys, g.title) : true;   // unknown yet: checked live on click
             if (g_headless && std::getenv("HUB_SHOT_GHOST_INSTALLABLE")) in_pack = true;   // screenshots: pretend the shared pack has this game
             installable = !have && in_pack && GP.state == hubgp::Installer::Idle;
-            if (button("Install", ImVec2(sp(14.f), bh), true, installable, ui::Icon::Cloud)) {
+            if (button("Install", ImVec2(sp(12.f), bh), true, installable, ui::Icon::Cloud)) {
                 ImGui::CloseCurrentPopup();
                 GP.start(g.sys, g.title, hubgp::parse_links(A.st.pack_links));
             }
@@ -416,8 +416,8 @@ void draw_ghost_modal() {
         }
     }
     ImGui::SameLine(0, sp(1.5f));
-    if (button("Add your own copy", ImVec2(sp(22.f), bh), !installable, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
+    if (button("Add your own copy", ImVec2(sp(21.f), bh), !installable, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
     ImGui::SameLine(0, sp(1.5f));
-    if (button("Close", ImVec2(sp(12.f), bh))) ImGui::CloseCurrentPopup();
+    if (button("Close", ImVec2(sp(9.f), bh))) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
