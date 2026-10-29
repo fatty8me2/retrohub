@@ -714,7 +714,10 @@ static std::string cemu_pad_xml(const hubctl::Profile& prof, int xinput_idx, int
         if (it == prof.buttons.end() || !hubctl::parse_expr(it->second, prof.axis_threshold, &t) || t.empty()) continue;
         int id = dsu ? cemu_dsu_id(t[0]) : sdl ? cemu_sdl_id(t[0]) : cemu_xinput_id(t[0]);   // one source per Wii U button
         if (id < 0) continue;
-        x += "\t\t\t<entry>\n\t\t\t\t<mapping>" + std::to_string(i + 1) + "</mapping>\n\t\t\t\t<button>" + std::to_string(id) +
+        /* Cemu's ButtonId enums differ after Minus: the Pro Controller has Home at 11 (ProController.h), the GamePad has it last
+         * (VPADController.h), so VPAD ids 11.. (d-pad, stick clicks, stick directions) sit one higher on a Pro Controller. */
+        int mapping = (pro && i >= 10) ? i + 2 : i + 1;
+        x += "\t\t\t<entry>\n\t\t\t\t<mapping>" + std::to_string(mapping) + "</mapping>\n\t\t\t\t<button>" + std::to_string(id) +
              "</button>\n\t\t\t</entry>\n";
     }
     x += "\t\t</mappings>\n\t</controller>\n</emulated_controller>\n";

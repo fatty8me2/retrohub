@@ -856,6 +856,12 @@ static void test_controls2_emulators(const fs::path& dir) {
     hubctl::Profile wup = hubctl::default_profile("wiiu");
     CHECK(hubemu::cemu_gamepad_profile_xml(wup, 0) == hubemu::cemu_gamepad_profile_xml(wup));
     std::string pro = hubemu::cemu_pro_profile_xml(wup, 1, 1);
+    {   // Pro Controller ids: d-pad up is 12 (Home is 11), right stick right is 25; the GamePad keeps 11 and 24
+        std::string pc = hubemu::cemu_pro_profile_xml(hubctl::default_profile("wiiu"), 1, 1), gp = hubemu::cemu_gamepad_profile_xml();
+        CHECK(pc.find("<mapping>12</mapping>\n\t\t\t\t<button>0</button>") != std::string::npos);   // Pro d-pad up = XInput dpad up (0)
+        CHECK(pc.find("<mapping>25</mapping>") != std::string::npos && pc.find("<mapping>11</mapping>") == std::string::npos);
+        CHECK(gp.find("<mapping>11</mapping>\n\t\t\t\t<button>0</button>") != std::string::npos && gp.find("<mapping>25</mapping>") == std::string::npos);
+    }
     CHECK(pro.find("<type>Wii U Pro Controller</type>") != std::string::npos && pro.find("<uuid>1</uuid>") != std::string::npos &&
           pro.find("<display_name>Controller 2</display_name>") != std::string::npos);
     fs::path ced = dir / "pad_cemu";
