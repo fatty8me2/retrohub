@@ -513,6 +513,7 @@ void apply_scan();
 const GameInfo* catalog_for(const hub::GameEntry& e);
 std::string genre_of_entry(const hub::GameEntry& e);   // first genre from the bundled game info ("Other" when unknown); cached per game key
 void rebuild_vis();
+bool added_stamps_changed();   // true once when background "recently added" stats landed (rebuild the list)
 bool supports_online(const hub::GameEntry& e);
 bool online_untested(const hub::GameEntry& e);
 /* picker_ui.cpp: room game picker (host) and the selected-game hero card (everyone) */
@@ -782,6 +783,8 @@ void locate_smash(bool clicked);   // call every frame with the button result
 void toggle_favorite(const std::string& key);
 void section_title(const std::string& t);
 void refresh_save_info(const hub::GameEntry& e);
+void refresh_save_info_bg(const hub::GameEntry& e);   // same, but the disk walk runs on a worker
+void poll_save_info();                                // UI thread: apply a finished background scan
 void resume_entry(const hub::GameEntry& e, int slot);   // slot -1 = auto; loads that state on launch (plain Play when it is missing)
 bool has_resume(const hub::GameEntry& e);               // this game can resume from its auto state right now
 void cycle_sort(int dir);                               // library sort chip / RT

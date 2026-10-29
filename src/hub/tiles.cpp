@@ -1,5 +1,9 @@
 #include "app.h"
 
+#include <memory>
+#include <mutex>
+#include <thread>
+
 bool g_suppress_click = false;   // set by shelf_strip while a drag-pan is in progress / just ended
 
 /* ---------- Library: Home (hero + shelves) and All Games ---------- */
@@ -37,6 +41,76 @@ void refresh_save_info(const hub::GameEntry& e) {
         A.info_states = hubui::list_states(sd);
         A.info_state_files = hubui::count_states(A.info_states, false);   // slots only: thumbnails and sidecars are not states
     }
+}
+
+/* Periodic / first-open refresh of the details modal's save info: the directory walks run on a worker,
+   the UI thread only swaps the result in (poll_save_info, every frame the modal is open). User actions
+   that need the fresh numbers immediately (states_ui) still call refresh_save_info. */
+namespace {
+struct SaveInfoBg {
+    std::mutex mu;
+    bool running = false, have = false;
+    std::string key, want_key;   // key of the finished result / key of the latest request
+    int battery_files = 0, state_files = 0;
+    uint64_t battery_bytes = 0;
+    bool auto_state = false;
+    std::vector<hubui::StateSlot> states;
+};
+SaveInfoBg& sib() { static SaveInfoBg* v = new SaveInfoBg(); return *v; }
+
+void save_info_scan(std::string key, std::string sys, bool native) {
+    SaveInfoBg r;
+    if (!native) {
+        uint64_t sb = 0;
+        count_files(hub::saves::battery_dir(sys, key), &r.battery_files, &r.battery_bytes);
+        std::string sd = hub::saves::states_dir(sys, key);
+        count_files(sd, &r.state_files, &sb);
+        r.auto_state = file_exists(with_slash(sd) + "auto.state");
+        if (r.auto_state && r.state_files > 0) --r.state_files;
+        if (hubui::system_has_states(sys, false)) {
+            r.states = hubui::list_states(sd);
+            r.state_files = hubui::count_states(r.states, false);
+        }
+    }
+    SaveInfoBg& v = sib();
+    std::lock_guard<std::mutex> l(v.mu);
+    v.key = key;
+    v.battery_files = r.battery_files; v.state_files = r.state_files; v.battery_bytes = r.battery_bytes;
+    v.auto_state = r.auto_state; v.states = std::move(r.states);
+    v.have = true;
+    v.running = false;
+}
+}
+
+void refresh_save_info_bg(const hub::GameEntry& e) {
+    if (g_headless) { refresh_save_info(e); return; }   // screenshots stay deterministic
+    A.info_at = ImGui::GetTime();   // throttle: next request in 4 s
+    if (A.info_key != e.key) {      // different game: drop the old numbers now, fill in when the scan lands
+        A.info_key = e.key;
+        A.info_battery_files = A.info_state_files = 0;
+        A.info_battery_bytes = 0;
+        A.info_auto_state = false;
+        A.info_states.clear();
+        if (A.info_states_key != e.key) { A.info_states_key = e.key; A.state_sel = -3; A.state_confirm = -2; }
+    }
+    SaveInfoBg& v = sib();
+    {
+        std::lock_guard<std::mutex> l(v.mu);
+        if (v.running) { A.info_at = -100; return; }   // retry next frame
+        v.running = true;
+    }
+    std::thread(save_info_scan, e.key, sys_short(e), is_native(e)).detach();
+}
+
+void poll_save_info() {
+    SaveInfoBg& v = sib();
+    std::lock_guard<std::mutex> l(v.mu);
+    if (!v.have) return;
+    v.have = false;
+    if (v.key != A.info_key) return;   // stale: the modal moved on to another game
+    A.info_battery_files = v.battery_files; A.info_state_files = v.state_files;
+    A.info_battery_bytes = v.battery_bytes; A.info_auto_state = v.auto_state;
+    A.info_states = std::move(v.states);
 }
 
 std::string size_text(uint64_t b) {

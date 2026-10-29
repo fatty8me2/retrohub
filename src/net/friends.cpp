@@ -9,10 +9,13 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <condition_variable>
 #include <map>
+#include <mutex>
 #include <random>
 #include <set>
 #include <sstream>
+#include <thread>
 
 namespace hubnet {
 
@@ -88,6 +91,52 @@ static bool write_file(const std::string& path, const std::string& data)
         return (bool)f;
     }
     return true;
+}
+
+/* Background writer for the UI-thread-driven caches (conversations, friend libraries): the UI thread
+   only queues the bytes; one thread does the disk I/O. Latest data per path wins; writes never overlap. */
+namespace {
+struct AsyncWriter {
+    std::mutex mu;
+    std::condition_variable cv, idle_cv;
+    std::map<std::string, std::string> pending;
+    bool busy = false, started = false;
+    void run()
+    {
+        std::unique_lock<std::mutex> l(mu);
+        for (;;) {
+            cv.wait(l, [&] { return !pending.empty(); });
+            auto batch = std::move(pending);
+            pending.clear();
+            busy = true;
+            l.unlock();
+            for (auto& kv : batch) write_file(kv.first, kv.second);
+            l.lock();
+            busy = false;
+            idle_cv.notify_all();
+        }
+    }
+};
+AsyncWriter& aw()
+{
+    static AsyncWriter* w = new AsyncWriter();   // intentionally leaked: the thread outlives static destruction
+    return *w;
+}
+void async_write(const std::string& path, std::string data)
+{
+    AsyncWriter& w = aw();
+    std::lock_guard<std::mutex> l(w.mu);
+    if (!w.started) { w.started = true; std::thread([&w] { w.run(); }).detach(); }
+    w.pending[path] = std::move(data);
+    w.cv.notify_one();
+}
+/* Blocks until everything queued so far is on disk (stop / shutdown only). */
+void async_drain()
+{
+    AsyncWriter& w = aw();
+    std::unique_lock<std::mutex> l(w.mu);
+    w.idle_cv.wait(l, [&] { return w.pending.empty() && !w.busy; });
+}
 }
 
 static std::string q(const std::string& s) { return "\"" + json::escape(s) + "\""; }
@@ -616,7 +665,8 @@ struct FriendsClient::Impl {
                      ",\"invite\":" + invite_json(m.inv) + ",\"at\":" + std::to_string(m.at) + "}";
             }
             o += "]}\n";
-            if (write_file(conv_path(kv.first), o)) c.dirty = false;
+            async_write(conv_path(kv.first), std::move(o));
+            c.dirty = false;
         }
         (void)force;
     }
@@ -713,7 +763,7 @@ struct FriendsClient::Impl {
         }
         o += "}}";
         std::error_code ec; fs::create_directories(upath(data_dir), ec);
-        write_file(flibs_path(), o);
+        async_write(flibs_path(), std::move(o));
     }
     void send_library()
     {
@@ -1085,6 +1135,7 @@ void FriendsClient::stop()
     Impl& d = *impl_;
     d.flush(true);
     d.save_flibs(true);
+    async_drain();
     d.ws.close();
     d.started = d.welcomed = d.hello_sent = false;
     d.status_text = "Offline";

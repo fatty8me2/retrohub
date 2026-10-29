@@ -89,6 +89,7 @@ bool g_names_dirty = false, g_misses_dirty = false;
 std::thread g_worker;
 bool g_quit = false;
 
+std::mutex g_flush_mu;               // serialises names/misses writers (never taken under g_mu)
 std::mutex g_dat_mu;
 std::map<std::string, std::vector<hm::DatRec>> g_dats;
 std::map<std::string, bool> g_dat_failed;        // session-level
@@ -139,9 +140,24 @@ void load_maps() {
     if (read_file(P(g_cache + "names.json"), &t) && hm::map_from_json(t, &m)) g_names = m;
     if (read_file(P(g_cache + "misses.json"), &t) && hm::map_from_json(t, &m)) g_misses = m;
 }
-void flush_maps_locked() {
-    if (g_names_dirty && write_file_atomic(P(g_cache + "names.json"), hm::map_to_json(g_names))) g_names_dirty = false;
-    if (g_misses_dirty && write_file_atomic(P(g_cache + "misses.json"), hm::map_to_json(g_misses))) g_misses_dirty = false;
+/* Snapshot under g_mu, write with no lock held (the UI thread takes g_mu every frame).
+   Callers must NOT hold g_mu. g_flush_mu serialises writers. */
+void flush_maps() {
+    std::lock_guard<std::mutex> fl(g_flush_mu);
+    std::string names, misses;
+    bool wn = false, wm = false;
+    {
+        std::lock_guard<std::mutex> l(g_mu);
+        if (g_names_dirty) { names = hm::map_to_json(g_names); g_names_dirty = false; wn = true; }
+        if (g_misses_dirty) { misses = hm::map_to_json(g_misses); g_misses_dirty = false; wm = true; }
+    }
+    bool okn = !wn || write_file_atomic(P(g_cache + "names.json"), names);
+    bool okm = !wm || write_file_atomic(P(g_cache + "misses.json"), misses);
+    if (!okn || !okm) {
+        std::lock_guard<std::mutex> l(g_mu);
+        if (!okn) g_names_dirty = true;
+        if (!okm) g_misses_dirty = true;
+    }
 }
 bool is_missed(const std::string& id) {
     std::lock_guard<std::mutex> l(g_mu);
@@ -156,10 +172,12 @@ bool is_missed(const std::string& id) {
     return true;
 }
 void record_miss(const std::string& id) {
-    std::lock_guard<std::mutex> l(g_mu);
-    g_misses[id] = std::to_string(now_s());
-    g_misses_dirty = true;
-    flush_maps_locked();
+    {
+        std::lock_guard<std::mutex> l(g_mu);
+        g_misses[id] = std::to_string(now_s());
+        g_misses_dirty = true;
+    }
+    flush_maps();
 }
 
 /* ---------- WinHTTP ---------- */
@@ -176,10 +194,14 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
     uc.lpszUrlPath = path;   uc.dwUrlPathLength = 2048;
     if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) return false;
 
-    HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
-                                WINHTTP_NO_PROXY_BYPASS, 0);
+    /* One shared session for the process (WinHTTP sessions are thread-safe). */
+    static HINTERNET ses = [] {
+        HINTERNET h = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+                                  WINHTTP_NO_PROXY_BYPASS, 0);
+        if (h) WinHttpSetTimeouts(h, 5000, 5000, 10000, 20000);
+        return h;
+    }();
     if (!ses) return false;
-    WinHttpSetTimeouts(ses, 5000, 5000, 10000, 20000);
     bool ok = false;
     HINTERNET con = WinHttpConnect(ses, host, uc.nPort, 0);
     HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path, nullptr, WINHTTP_NO_REFERER,
@@ -207,7 +229,6 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
     }
     if (req) WinHttpCloseHandle(req);
     if (con) WinHttpCloseHandle(con);
-    WinHttpCloseHandle(ses);
     if (!ok) *status = 0;
     return ok;
 }
@@ -332,8 +353,8 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
         std::lock_guard<std::mutex> l(g_mu);
         g_names[g.key] = found;
         g_names_dirty = true;
-        flush_maps_locked();
     }
+    flush_maps();
     *name = found;
     if (how) *how = h;
     return true;
@@ -513,8 +534,8 @@ void shutdown() {
         std::lock_guard<std::mutex> l(g_mu);
         g_jobs.clear();
         g_done.clear();
-        flush_maps_locked();
     }
+    flush_maps();
     g_renderer = nullptr;
 }
 
