@@ -188,8 +188,8 @@ function Scenario-OldPeer {
 function Scenario-Rejoin([bool]$kill) {
     $room = New-Room
     $items = @()
-    $items += Start-Player 'p0' 0 $room $Frames
-    $items += Start-Player 'p1' 1 $room $Frames
+    $items += Start-Player 'p0' 0 $room ($Frames + 6000)
+    $items += Start-Player 'p1' 1 $room ($Frames + 6000)
     Start-Sleep -Seconds $JoinSec
     $first = Start-Joiner 'j2' 2 $room $(if ($kill) { 100000 } else { 3000 }) 'Kai'     # 3000 VIs ~ 50 s of play, then a clean goodbye
     $items += $first
