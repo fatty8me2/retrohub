@@ -32,6 +32,25 @@ int main() {
     CHECK(username_validate("Zo\xC3\xAB \xC3\x91" "and\xC3\xBA") == NameCheck::Ok && username_validate("\xC3\x86r\xC3\xB8 \xC3\x9E\xC3\xB3r \xC3\x9F" "eta") == NameCheck::Ok);
     CHECK(username_validate("\xC3\x84" "dmin") == NameCheck::Reserved && username_validate("Adm1n!") == NameCheck::Reserved && username_validate("ad min") == NameCheck::Reserved);
     CHECK(username_validate("RH 7KQ2 M3XD") == NameCheck::Reserved);
+    // mirrors of the server's policy lists: qa prefix, profanity, the full reserved list
+    CHECK(username_validate("qa-bob") == NameCheck::Reserved && username_validate("QA bob") == NameCheck::Reserved && username_validate("qatar") == NameCheck::Ok);
+    CHECK(username_validate("Sh1tlord") == NameCheck::Reserved && username_validate("F\xC3\x9C" "CK") == NameCheck::Reserved && username_validate("Smash") == NameCheck::Reserved);
+    // username_append covers the full range (username_cut must never corrupt text)
+    { std::string e; username_append(e, 0xE9); username_append(e, 0x4E2D); username_append(e, 0x1F600);
+      std::vector<uint32_t> d; CHECK(e == "\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80" && username_decode(e, d) && d.size() == 3 && d[2] == 0x1F600); }
+    // PARITY with the server (BattleShip/server/cloudflare/test_usernames.mjs): the same corpus, the same verdicts and keys
+    {   struct Case { const char* in; const char* verdict; const char* key; };
+        static const Case kCorpus[] = {
+#include "username_parity_corpus.inc"
+        };
+        int bad = 0;
+        for (const Case& c : kCorpus) {
+            const NameCheck r = username_validate(c.in);
+            const char* got = r == NameCheck::Ok ? "ok" : r == NameCheck::BadChars ? "invalid-chars" : (r == NameCheck::Empty || r == NameCheck::TooShort) ? "too-short"
+                            : r == NameCheck::TooLong ? "too-long" : r == NameCheck::BadEdge ? "bad-shape" : "blocked";
+            if (std::strcmp(got, c.verdict) != 0 || (r == NameCheck::Ok && username_fold_key(c.in) != c.key)) { std::printf("parity mismatch: [%s] want %s/%s got %s/%s\n", c.in, c.verdict, c.key, got, username_fold_key(c.in).c_str()); bad++; }
+        }
+        CHECK(bad == 0 && sizeof kCorpus / sizeof kCorpus[0] >= 80); }
     // normalization
     CHECK(username_key("  Kai_64 ") == "kai_64" && username_key("KAI") == username_key("kai") && username_key("\xC3\x89" "a") == "\xC3\xA9" "a");
     CHECK(username_trim("\t x   y ") == "x y");
