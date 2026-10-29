@@ -14,6 +14,7 @@
 #include <mutex>
 #include <random>
 #include <set>
+#include <vector>
 #include <sstream>
 #include <thread>
 
@@ -101,6 +102,7 @@ struct AsyncWriter {
     std::condition_variable cv, idle_cv;
     std::map<std::string, std::string> pending;
     bool busy = false, started = false;
+    std::set<std::string> failed;   // paths whose last write failed; the UI thread re-marks them dirty
     void run()
     {
         std::unique_lock<std::mutex> l(mu);
@@ -110,8 +112,10 @@ struct AsyncWriter {
             pending.clear();
             busy = true;
             l.unlock();
-            for (auto& kv : batch) write_file(kv.first, kv.second);
+            std::vector<std::string> bad;
+            for (auto& kv : batch) if (!write_file(kv.first, kv.second)) bad.push_back(kv.first);
             l.lock();
+            for (auto& p : bad) failed.insert(p);
             busy = false;
             idle_cv.notify_all();
         }
@@ -128,14 +132,24 @@ void async_write(const std::string& path, std::string data)
     std::lock_guard<std::mutex> l(w.mu);
     if (!w.started) { w.started = true; std::thread([&w] { w.run(); }).detach(); }
     w.pending[path] = std::move(data);
+    w.failed.erase(path);
     w.cv.notify_one();
 }
-/* Blocks until everything queued so far is on disk (stop / shutdown only). */
+/* Paths whose write failed since the last call (cleared on return). */
+std::set<std::string> async_take_failed()
+{
+    AsyncWriter& w = aw();
+    std::lock_guard<std::mutex> l(w.mu);
+    std::set<std::string> f;
+    f.swap(w.failed);
+    return f;
+}
+/* Waits (at most ~3 s, then gives up) until everything queued so far is on disk (stop / shutdown only). */
 void async_drain()
 {
     AsyncWriter& w = aw();
     std::unique_lock<std::mutex> l(w.mu);
-    w.idle_cv.wait(l, [&] { return w.pending.empty() && !w.busy; });
+    w.idle_cv.wait_for(l, std::chrono::seconds(3), [&] { return w.pending.empty() && !w.busy; });
 }
 }
 
@@ -653,6 +667,10 @@ struct FriendsClient::Impl {
     }
     void flush(bool force)
     {
+        for (const std::string& p : async_take_failed()) {   // a background write failed: queue it again
+            if (p == flibs_path()) flibs_dirty = true;
+            for (auto& kv : convs) if (p == conv_path(kv.first)) kv.second.dirty = true;
+        }
         for (auto& kv : convs) {
             Conv& c = kv.second;
             if (!c.dirty || !is_b32(kv.first, 26)) continue;

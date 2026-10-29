@@ -145,12 +145,15 @@ void load_maps() {
 void flush_maps() {
     std::lock_guard<std::mutex> fl(g_flush_mu);
     std::string names, misses;
+    std::map<std::string, std::string> nm, ms;
     bool wn = false, wm = false;
     {
-        std::lock_guard<std::mutex> l(g_mu);
-        if (g_names_dirty) { names = hm::map_to_json(g_names); g_names_dirty = false; wn = true; }
-        if (g_misses_dirty) { misses = hm::map_to_json(g_misses); g_misses_dirty = false; wm = true; }
+        std::lock_guard<std::mutex> l(g_mu);   // copy only; serialise after releasing
+        if (g_names_dirty) { nm = g_names; g_names_dirty = false; wn = true; }
+        if (g_misses_dirty) { ms = g_misses; g_misses_dirty = false; wm = true; }
     }
+    if (wn) names = hm::map_to_json(nm);
+    if (wm) misses = hm::map_to_json(ms);
     bool okn = !wn || write_file_atomic(P(g_cache + "names.json"), names);
     bool okm = !wm || write_file_atomic(P(g_cache + "misses.json"), misses);
     if (!okn || !okm) {
@@ -195,12 +198,18 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
     if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) return false;
 
     /* One shared session for the process (WinHTTP sessions are thread-safe). */
-    static HINTERNET ses = [] {
-        HINTERNET h = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
-                                  WINHTTP_NO_PROXY_BYPASS, 0);
-        if (h) WinHttpSetTimeouts(h, 5000, 5000, 10000, 20000);
-        return h;
-    }();
+    static std::mutex ses_mu;
+    static HINTERNET ses_h = nullptr;
+    HINTERNET ses;
+    {
+        std::lock_guard<std::mutex> l(ses_mu);
+        if (!ses_h) {   // retried on the next request if opening failed
+            ses_h = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+                                WINHTTP_NO_PROXY_BYPASS, 0);
+            if (ses_h) WinHttpSetTimeouts(ses_h, 5000, 5000, 10000, 20000);
+        }
+        ses = ses_h;
+    }
     if (!ses) return false;
     bool ok = false;
     HINTERNET con = WinHttpConnect(ses, host, uc.nPort, 0);

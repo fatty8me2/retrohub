@@ -1,5 +1,6 @@
 #include "app.h"
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -21,7 +22,13 @@ void section_title(const std::string& t) {
     ImGui::PopFont();
 }
 
+std::atomic<bool> g_io_shutdown{false};   // set at app teardown: background disk workers stop touching shared state
+
+/* Bumped by every synchronous refresh and every game switch: a background scan started earlier is stale. */
+static std::atomic<unsigned> g_info_gen{0};
+
 void refresh_save_info(const hub::GameEntry& e) {
+    ++g_info_gen;
     A.info_key = e.key;
     A.info_at = ImGui::GetTime();
     A.info_battery_files = A.info_state_files = 0;
@@ -50,7 +57,8 @@ namespace {
 struct SaveInfoBg {
     std::mutex mu;
     bool running = false, have = false;
-    std::string key, want_key;   // key of the finished result / key of the latest request
+    std::string key;             // key of the finished result
+    unsigned gen = 0;            // generation the finished result was started under
     int battery_files = 0, state_files = 0;
     uint64_t battery_bytes = 0;
     bool auto_state = false;
@@ -58,9 +66,9 @@ struct SaveInfoBg {
 };
 SaveInfoBg& sib() { static SaveInfoBg* v = new SaveInfoBg(); return *v; }
 
-void save_info_scan(std::string key, std::string sys, bool native) {
+void save_info_scan(std::string key, std::string sys, bool native, unsigned gen) {
     SaveInfoBg r;
-    if (!native) {
+    if (!g_io_shutdown && !native) {
         uint64_t sb = 0;
         count_files(hub::saves::battery_dir(sys, key), &r.battery_files, &r.battery_bytes);
         std::string sd = hub::saves::states_dir(sys, key);
@@ -72,9 +80,11 @@ void save_info_scan(std::string key, std::string sys, bool native) {
             r.state_files = hubui::count_states(r.states, false);
         }
     }
+    if (g_io_shutdown) return;
     SaveInfoBg& v = sib();
     std::lock_guard<std::mutex> l(v.mu);
     v.key = key;
+    v.gen = gen;
     v.battery_files = r.battery_files; v.state_files = r.state_files; v.battery_bytes = r.battery_bytes;
     v.auto_state = r.auto_state; v.states = std::move(r.states);
     v.have = true;
@@ -86,6 +96,7 @@ void refresh_save_info_bg(const hub::GameEntry& e) {
     if (g_headless) { refresh_save_info(e); return; }   // screenshots stay deterministic
     A.info_at = ImGui::GetTime();   // throttle: next request in 4 s
     if (A.info_key != e.key) {      // different game: drop the old numbers now, fill in when the scan lands
+        ++g_info_gen;
         A.info_key = e.key;
         A.info_battery_files = A.info_state_files = 0;
         A.info_battery_bytes = 0;
@@ -99,7 +110,7 @@ void refresh_save_info_bg(const hub::GameEntry& e) {
         if (v.running) { A.info_at = -100; return; }   // retry next frame
         v.running = true;
     }
-    std::thread(save_info_scan, e.key, sys_short(e), is_native(e)).detach();
+    std::thread(save_info_scan, e.key, sys_short(e), is_native(e), g_info_gen.load()).detach();
 }
 
 void poll_save_info() {
@@ -107,7 +118,7 @@ void poll_save_info() {
     std::lock_guard<std::mutex> l(v.mu);
     if (!v.have) return;
     v.have = false;
-    if (v.key != A.info_key) return;   // stale: the modal moved on to another game
+    if (v.key != A.info_key || v.gen != g_info_gen.load()) return;   // stale: another game, or a newer refresh / delete since
     A.info_battery_files = v.battery_files; A.info_state_files = v.state_files;
     A.info_battery_bytes = v.battery_bytes; A.info_auto_state = v.auto_state;
     A.info_states = std::move(v.states);

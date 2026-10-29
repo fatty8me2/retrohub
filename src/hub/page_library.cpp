@@ -631,16 +631,18 @@ static std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
     static std::vector<std::string> s_lines;
     {
         std::lock_guard<std::mutex> l(bg->mu);
-        if (bg->key == e.key) s_lines = bg->lines;
-        else if (s_key != e.key) s_lines.clear();
-        if (s_key == e.key && ImGui::GetTime() - s_at < 4.0) return s_lines;
-        if (bg->running) return s_lines;
+        if (bg->key == e.key) s_lines = bg->lines;   // only ever show a result computed for THIS game
+        else s_lines.clear();
+        if (s_key == e.key && bg->key == e.key && ImGui::GetTime() - s_at < 4.0) return s_lines;
+        if (bg->running) return s_lines;   // A's scan still running: B's starts on the first frame after it lands
         bg->running = true;
     }
     s_key = e.key;
     s_at = ImGui::GetTime();
     std::thread([e, cemu = A.st.cemu_exe] {
+        if (g_io_shutdown) return;
         std::vector<std::string> r = wiiu_info_compute(e, cemu);
+        if (g_io_shutdown) return;
         std::lock_guard<std::mutex> l(bg->mu);
         bg->key = e.key;
         bg->lines = std::move(r);

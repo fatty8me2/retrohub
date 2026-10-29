@@ -441,6 +441,7 @@ void theme_init();                     // after ImGui setup: load the saved choi
 void theme_tick();                     // once per frame: applies preview / accent animation
 void theme_hero_art(SDL_Texture* tex); // the Home hero's cover, feeds "Accent from cover"
 void theme_settings_row();             // the picker with live preview
+extern std::atomic<bool> g_io_shutdown;   // set in main() teardown: detached disk workers (vault scan, save info, Wii U details, added dates) bail out
 extern bool g_headless;   // HUB_SCREENSHOT run: never launch games or touch the lobby
 
 /* launch.cpp */

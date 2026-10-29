@@ -21,6 +21,7 @@ static std::vector<VaultRow> scan_vault(const std::string& vault_dir) {
             HANDLE hg = FindFirstFileW(W(root + sys + "\\*").c_str(), &gf);
             if (hg == INVALID_HANDLE_VALUE) continue;
             do {
+                if (g_io_shutdown) break;
                 std::string g = U(gf.cFileName);
                 if (!(gf.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || g == "." || g == "..") continue;
                 VaultRow r;
@@ -62,7 +63,9 @@ void refresh_vault() {
     A.vault_dirty = false;
     std::string dir = hub::saves::vault_dir();
     std::thread([dir] {
+        if (g_io_shutdown) return;   // app is tearing down: touch nothing
         std::vector<VaultRow> rows = scan_vault(dir);
+        if (g_io_shutdown) return;
         VaultScan& v = vscan();
         std::lock_guard<std::mutex> l(v.mu);
         v.result = std::move(rows);
