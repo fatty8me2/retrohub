@@ -1,1 +1,4 @@
-{ "packs": [] }
+{ "packs": [
+  { "id": "1jp71Fx_VB1-fa1pZke-7eABC1pJzpu2z", "name": "GamePack1" },
+  { "id": "1spAhOs4mANqIeY8LVdurQ0-o0uyNpilD", "name": "GamePack2" }
+] }
