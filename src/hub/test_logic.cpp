@@ -837,6 +837,14 @@ int main() {
         st.share_games = false; st.show_friend_games = false;
         Settings back;
         CHECK(settings_from_json(settings_to_json(st), &back) && !back.share_games && !back.show_friend_games);
+        {   // friend_games_v migration: an old file with false is switched on once; a marked file keeps false
+            Settings m;
+            CHECK(settings_from_json("{\"show_friend_games\": false}", &m) && m.show_friend_games);
+            CHECK(settings_from_json("{\"show_friend_games\": false, \"friend_games_v\": 1}", &m) && !m.show_friend_games);
+            Settings off; off.show_friend_games = false;
+            Settings rt;
+            CHECK(settings_from_json(settings_to_json(off), &rt) && !rt.show_friend_games);   // saving writes the marker
+        }
         CHECK(ask_host_toast_title("Mia", "Mario Kart 64") == "Mia wants to play Mario Kart 64 - host a room?");
         /* in-game toasts: off by default; an old settings file (no migration flag) that had it on is forced off exactly once */
         CHECK(!Settings().notify_in_game);

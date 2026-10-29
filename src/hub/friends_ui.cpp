@@ -917,6 +917,11 @@ void fr_library_collect(std::vector<std::pair<std::string, const std::vector<hub
         if (l && !l->empty()) out->push_back({f.uid, l});
     }
 }
+size_t fr_library_lists_held() {
+    std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>> v;
+    fr_library_collect(&v);
+    return v.size();
+}
 uint32_t fr_library_epoch() { return FR.fake ? (uint32_t)FR.f_libs.size() : (FR.started ? FR.cli.library_epoch() : 0u); }
 void fr_publish_library(bool share, std::vector<hubnet::LibGame> games) {
     if (FR.fake || !FR.started) return;

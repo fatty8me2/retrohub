@@ -72,8 +72,10 @@ void apply_scan() {
         static const hub::System sy[] = {hub::System::N64, hub::System::GBA, hub::System::GC, hub::System::N64, hub::System::GB};
         A.lib.clear();
         int n = std::max(1, std::atoi(fl));
-        const bool only_native = std::string(fl) == "native";   // QA: just the bundled Smash 64 entry (a fresh install with no ROM folders)
-        if (only_native) { hub::GameEntry g; g.system = hub::System::N64; g.key = kNativeKey; g.title = "Super Smash Bros. 64"; g.catalog_id = "smash64"; g.path = "C:/fake/BattleShip.exe"; A.lib.push_back(g); n = 0; }
+        const bool only_empty = std::string(fl) == "empty";   // QA: a truly empty own library (no bundled game either)
+        const bool only_native = std::string(fl) == "native" || only_empty;   // QA: just the bundled Smash 64 entry (a fresh install with no ROM folders)
+        if (only_empty) n = 0;
+        else if (only_native) { hub::GameEntry g; g.system = hub::System::N64; g.key = kNativeKey; g.title = "Super Smash Bros. 64"; g.catalog_id = "smash64"; g.path = "C:/fake/BattleShip.exe"; A.lib.push_back(g); n = 0; }
         if (std::string(fl) == "all") {   // qa/reach_matrix.ps1: every system, an online catalog game + an uncatalogued one, plus Smash Classic, Remix and Kanto Together
             static const hub::System all[] = {hub::System::N64, hub::System::GB, hub::System::GBC, hub::System::GBA, hub::System::NDS,
                                               hub::System::N3DS, hub::System::GC, hub::System::WiiU, hub::System::PS1, hub::System::PS2, hub::System::NES, hub::System::SNES};

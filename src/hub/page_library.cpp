@@ -386,8 +386,8 @@ void library_top_bar() {
     }
     {   // "Show friends' games": friends' titles you do not own, greyed out (metadata only)
         ImGui::SameLine(0, sp(1.f));
-        if (chip("Friends' games", A.st.show_friend_games, ui::ACCENT)) { A.st.show_friend_games = !A.st.show_friend_games; mark_dirty(); A.vis_dirty = true; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Games your friends have that you don't, shown greyed out (%d now)", (int)A.ghosts.size());
+        if (chip("Friends' games", A.friends_chip, ui::ACCENT)) { A.friends_chip = !A.friends_chip; A.vis_dirty = true; }   // session-only: never saved
+        if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) ImGui::SetTooltip("Show or hide friends' games for now");
     }
     ImGui::SameLine(0, 0);
     float ax = ImGui::GetContentRegionAvail().x;
@@ -1004,7 +1004,7 @@ void page_library() {
     library_top_bar();
     A.page_scrollable = false;
 
-    if (A.lib.empty()) {
+    if (A.lib.empty() && A.ghosts.empty()) {   // nothing of your own and no friends' games either
         if (A.scanning && !A.scanned_once) skeleton_home();
         else if (A.scanning) {}   // rescan of an empty library: top bar shows the progress line
         else empty_library_state();

@@ -156,6 +156,7 @@ void fr_ask_to_join(const std::string& uid);                       // "Ask to jo
 void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet::Invite& game, bool host = false);
 /* game libraries (friend_games_ui.cpp): who owns what, metadata only */
 void fr_library_collect(std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>>* out);   // friends (not blocked) with a shared list
+size_t fr_library_lists_held();   // friends whose shared list this PC holds (ver>0, non-empty)
 uint32_t fr_library_epoch();                                                                              // changes when any friend list changed
 void fr_publish_library(bool share, std::vector<hubnet::LibGame> games);
 void fr_ask_host(const std::string& uid, const std::string& game_id, const std::string& title, const std::string& system);
