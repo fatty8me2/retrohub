@@ -90,6 +90,18 @@ struct History {
 } H;
 std::string g_open;   // expanded game (gkey)
 
+/* One background cloud action at a time (pin / remove / resolve): each does HTTP, so it never runs on the frame thread. */
+std::shared_ptr<Task<int>> g_job;
+bool job_busy() {
+    if (g_job && g_job->done) { g_job.reset(); C.t = -10; }   // finished: pick up the engine's new state next frame
+    return (bool)g_job;
+}
+void run_job(std::function<void()> fn) {
+    auto t = std::make_shared<Task<int>>();
+    g_job = t;
+    std::thread([t, fn]() { fn(); t->done = true; }).detach();
+}
+
 void open_history(const hs::GameId& id) {
     H = History();
     H.gkey = id.gkey();
@@ -254,9 +266,10 @@ void history_block(const hs::GameCloudInfo& g) {
         H.restore.reset();
     }
     result_line(H.result, H.result_ok);
+    if (job_busy()) { ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Working on it..."); }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     const bool pinned = g.pinned;
-    if (button(pinned ? "Stop keeping in cloud" : "Keep in cloud", ImVec2(0, 0), false, true)) { hs::cloud_set_pin(g.id, !pinned); refresh_cache(true); }
+    if (button(pinned ? "Stop keeping in cloud" : "Keep in cloud", ImVec2(0, 0), false, !job_busy())) { hs::GameId id = g.id; run_job([id, pinned]() { hs::cloud_set_pin(id, !pinned); }); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Kept games are the last to be moved off the cloud when space runs out");
     ImGui::SameLine();
     const bool lo = g.state == hs::CloudState::LocalOnly && g.local_only == hs::LocalOnlyReason::User;
@@ -268,7 +281,7 @@ void history_block(const hs::GameCloudInfo& g) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("Delete the cloud copy? Saves on this PC stay.");
         ImGui::SameLine();
-        if (button("Remove", ImVec2(0, 0), true, true)) { hs::cloud_remove_game(g.id); H.confirm_remove = false; g_open.clear(); refresh_cache(true); }
+        if (button("Remove", ImVec2(0, 0), true, !job_busy())) { hs::GameId id = g.id; run_job([id]() { hs::cloud_remove_game(id); }); H.confirm_remove = false; g_open.clear(); }
         ImGui::SameLine();
         if (button("Keep it", ImVec2(0, 0), false, true)) H.confirm_remove = false;
     }
@@ -319,9 +332,9 @@ void games_panel() {
         }
         ImGui::Dummy(ImVec2(0, sp(0.25f)));
         if (g.state == hs::CloudState::Conflict) {
-            if (button("Resolve...", ImVec2(0, 0), true, !A.proc)) {
+            if (button("Resolve...", ImVec2(0, 0), true, !A.proc && !job_busy())) {
                 hs::GameId id = g.id;
-                cloud_ui_ask_conflict(id, title_of(id), g.conflicts, [id](hs::ConflictChoice c) { hs::cloud_resolve_conflict(id, c); C.t = -10; });
+                cloud_ui_ask_conflict(id, title_of(id), g.conflicts, [id](hs::ConflictChoice c) { run_job([id, c]() { hs::cloud_resolve_conflict(id, c); }); });
             }
             ImGui::SameLine();
         }

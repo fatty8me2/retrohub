@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.5",
+      "date": "2026-10-28",
+      "title": "More freeze fixes",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "RetroHub could still freeze for several seconds when cloud-save actions (Resolve, Keep in cloud, Remove), ending a game, or hosting an online game waited on a slow connection; these now run in the background"
+      ]
+    },
+    {
       "version": "1.29.4",
       "date": "2026-10-28",
       "title": "N64 desync recovery and drop-in party games",

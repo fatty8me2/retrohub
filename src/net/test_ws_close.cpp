@@ -65,6 +65,18 @@ static int run_case(int mode) {
     return secs < 3.0 ? 0 : 1;
 }
 
+/* mode 2: close() while the connect is still pending toward a black-holed address must not wait out the connect timeouts. */
+static int run_connecting_case() {
+    WsClient ws;
+    ws.connect("ws://10.255.255.1:81/friends");
+    Sleep(150);
+    auto c0 = std::chrono::steady_clock::now();
+    ws.close();
+    double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - c0).count();
+    std::printf("connecting: close() took %.2f s\n", secs);
+    return secs < 3.0 ? 0 : 1;
+}
+
 int main() {
     WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
     int fails = 0;
@@ -75,6 +87,14 @@ int main() {
         if (r < 0) { std::printf("FAIL: mode %d close() hung (> 15 s)\n", m); std::fflush(stdout); TerminateProcess(GetCurrentProcess(), 1); }
         t.join();
         if (r) { std::printf("FAIL: mode %d close() too slow\n", m); ++fails; }
+    }
+    {
+        std::atomic<int> r{-1};
+        std::thread t([&] { r = run_connecting_case(); });
+        for (int i = 0; i < 150 && r < 0; ++i) Sleep(100);
+        if (r < 0) { std::printf("FAIL: close() during connect hung (> 15 s)\n"); std::fflush(stdout); TerminateProcess(GetCurrentProcess(), 1); }
+        t.join();
+        if (r) { std::printf("FAIL: close() during connect too slow\n"); ++fails; }
     }
     if (!fails) std::printf("PASS\n");
     return fails;
