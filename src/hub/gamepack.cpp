@@ -187,6 +187,41 @@ std::vector<std::string> parse_links(const std::string& text) {
     return out;
 }
 
+std::vector<std::string> links_split(const std::string& stored) { return parse_links(stored); }
+
+std::string links_join(const std::vector<std::string>& ids) {
+    std::string s;
+    for (const std::string& id : ids) { if (!s.empty()) s += ' '; s += id; }
+    return s;
+}
+
+int links_add(std::string* stored, const std::string& pasted, int* found) {
+    std::vector<std::string> cur = links_split(*stored);
+    std::vector<std::string> in = parse_links(pasted);
+    if (found) *found = (int)in.size();
+    int added = 0;
+    for (const std::string& id : in) {
+        bool dup = false;
+        for (const std::string& c : cur) if (c == id) { dup = true; break; }
+        if (!dup) { cur.push_back(id); ++added; }
+    }
+    *stored = links_join(cur);
+    return added;
+}
+
+bool links_remove(std::string* stored, const std::string& id) {
+    std::vector<std::string> cur = links_split(*stored), out;
+    for (const std::string& c : cur) if (c != id) out.push_back(c);
+    bool had = out.size() != cur.size();
+    *stored = links_join(out);
+    return had;
+}
+
+std::string link_label(const std::string& id) {
+    if (id.size() <= 20) return id;
+    return id.substr(0, 10) + "..." + id.substr(id.size() - 6);
+}
+
 bool parse_packs_json(const std::string& text, std::vector<std::string>* out) {
     if (out) out->clear();
     json::Value v;
