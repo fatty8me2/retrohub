@@ -1,5 +1,6 @@
 #include "app.h"
 #include "username_logic.h"
+#include "winutil.h"
 
 /* ---------- Usernames: picker widget, claim flow, banner + one-time prompt, Settings > Account block ----------
  * Pure rules: net/username.h and username_logic.h (unit tested). The picker is shared by the setup wizard (Name step),
@@ -37,20 +38,30 @@ void set_text(const std::string& t) {
     UN.chk.set_input(UN.buf, ImGui::GetTime());
 }
 
+/* getenv() returns the ANSI code page; names with accents need the UTF-8 form. */
+bool env_utf8(const wchar_t* name, std::string* out) {
+    const wchar_t* w = _wgetenv(name);
+    if (!w) return false;
+    *out = winutil::to_utf8(w);
+    return true;
+}
+
 void seed_shot() {
     if (UN.seeded) return;
     UN.seeded = true;
     UN.t_start = ImGui::GetTime();
     if (!g_headless) return;
-    if (const char* c = std::getenv("HUB_SHOT_USERNAME_CLAIMED")) { A.st.name = c; A.st.username_claimed = true; UN.chk.mine_key = hubnet::username_fold_key(c); }
+    std::string claimed;
+    if (env_utf8(L"HUB_SHOT_USERNAME_CLAIMED", &claimed)) { A.st.name = claimed; A.st.username_claimed = true; UN.chk.mine_key = hubnet::username_fold_key(claimed); }
     const char* s = std::getenv("HUB_SHOT_USERNAME");
     UN.prompt_open = std::getenv("HUB_SHOT_USERNAME_PROMPT") != nullptr;
     UN.change_open = std::getenv("HUB_SHOT_USERNAME_CHANGE") != nullptr;
     if (!s) return;
     UN.shot = true;
     std::string m = s;
-    const char* tx = std::getenv("HUB_SHOT_USERNAME_TEXT");
-    std::string text = tx ? tx : (m == "taken" ? "kai" : m == "notallowed" ? "admin" : m == "invalid" ? "k a!" : m == "empty" ? "" : "kai_64");
+    std::string tx;
+    const bool have_tx = env_utf8(L"HUB_SHOT_USERNAME_TEXT", &tx);
+    std::string text = have_tx ? tx : (m == "taken" ? "kai" : m == "notallowed" ? "admin" : m == "invalid" ? "k a!" : m == "empty" ? "" : "kai_64");
     set_text(text);
     Checker& c = UN.chk;
     if (m == "available") c.state = Avail::Available;
