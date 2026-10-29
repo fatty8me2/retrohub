@@ -33,6 +33,7 @@ constexpr uint8_t kPktBye = 9;        // {type, slot, u32 newest}: sender's emul
 constexpr uint8_t kPktCheats = 10;    // {type, slot, u8 heard_mask, u64 hash}: cheat-list handshake (lockstep.h exchange_cheat_hash)
 constexpr uint8_t kPktDrop = 11;      // netdrop::Msg: a slot went silent, survivors agree on the cutoff (drop_agree.h)
 constexpr uint8_t kPktResync = 12;     // desync recovery control (resync.h)
+constexpr uint8_t kPktDropIn = 13;     // drop-in control (dropin.h)
 constexpr int kMaxDelay = 20;         // hard cap of the (adaptive) input delay, in samples
 
 /* Slot set of a session: bit s = slot s is a PC in the session. Slots may be sparse ({0,2}).
@@ -92,6 +93,7 @@ class LockstepCore {
         int delay = 2;         // D
         int redundancy = 8;    // minimum number of samples per port per packet (raised to cover kMaxDelay)
         bool wide = false;     // every sample carries a second u32 ("aux", e.g. PlayStation analog sticks); all PCs must agree
+        uint8_t reserved = 0;  // drop-in room: ports (bit = port) the game sees as plugged in but nobody owns yet; they read neutral until join_port()
     };
 
     struct Mismatch {
@@ -102,7 +104,9 @@ class LockstepCore {
 
     explicit LockstepCore(const Config& cfg);
 
-    bool port_present(int p) const { return p >= 0 && p < kPorts && cfg_.owner[p] >= 0; }
+    bool port_present(int p) const { return p >= 0 && p < kPorts && (cfg_.owner[p] >= 0 || (cfg_.reserved >> p & 1u)); }
+    int port_owner(int p) const { return p >= 0 && p < kPorts ? cfg_.owner[p] : -1; }
+    uint8_t reserved_mask() const { return cfg_.reserved; }
     bool port_local(int p) const { return port_present(p) && cfg_.owner[p] == cfg_.my_slot; }
     int lead_port() const { return lead_; }          // lowest present port, -1 if none
     int delay() const { return delay_; }
@@ -141,6 +145,18 @@ class LockstepCore {
     void finish_drop(int slot, uint32_t cutoff);
     bool drop_begun(int slot) const { return slot >= 0 && slot < kPorts && (ignore_mask_ >> slot & 1u); }
     bool drop_done(int slot) const { return slot >= 0 && slot < kPorts && (done_mask_ >> slot & 1u); }
+    /* Drop-in (dropin.h): a friend takes the reserved `port` as slot `slot`. From sample `first` on the port reads the slot's real input (before it:
+     * neutral) and the slot gates and hashes like any player; the others' mask grows now, harmlessly, because nothing is required of the slot before
+     * `first`. join_self: this PC is that slot (the promoted spectator): its first scheduled sample is `first`, delay becomes `d`.
+     * leave_port: the slot is gone for good (a finished drop): the port is reserved again and the slot's bookkeeping is cleared for a later joiner. */
+    bool join_port(int port, int slot, uint32_t first);
+    void join_self(int port, uint32_t first, int d);
+    void cancel_join(int port, int slot);
+    void adopt_layout(const int8_t owners[kPorts], uint8_t slots);   // joiner: the players' ports and slots as the host sees them now
+    void leave_port(int port, int slot);
+    uint32_t free_reserved() const { uint32_t m = 0; for (int p = 0; p < kPorts; p++) if ((cfg_.reserved >> p & 1u) && cfg_.owner[p] < 0) m |= 1u << p; return m; }
+    uint32_t port_first(int port) const { return port >= 0 && port < kPorts ? port_from_[port] : 0; }
+    uint32_t drop_cutoff(int slot) const { return slot >= 0 && slot < kPorts ? drop_cut_[slot] : 0; }
     /* How many samples a peer is ahead of sample n by its reported progress (0 if not ahead): inbox backlog indicator. */
     uint32_t peer_lead(int slot, uint32_t n) const { return slot >= 0 && slot < kPorts && peer_progress_[slot] > n ? peer_progress_[slot] - n : 0; }
     uint32_t delay_changes() const { return delay_changes_; }   // how many times D changed after start
@@ -176,7 +192,14 @@ class LockstepCore {
     uint32_t ignore_mask_ = 0, done_mask_ = 0;
     uint32_t drop_cut_[kPorts] = {0, 0, 0, 0};
     uint32_t peer_newest_[kPorts] = {0, 0, 0, 0};
-    bool neutral(int port, uint32_t n) const { int o = cfg_.owner[port]; return o >= 0 && o < kPorts && (done_mask_ >> o & 1u) && n >= drop_cut_[o]; }
+    bool neutral(int port, uint32_t n) const {
+        int o = cfg_.owner[port];
+        if (o < 0) return true;   // reserved (drop-in) port nobody owns
+        if (n < port_from_[port]) return true;   // before the joiner's first sample
+        return o < kPorts && (done_mask_ >> o & 1u) && n >= drop_cut_[o];
+    }
+    uint32_t port_from_[kPorts] = {0, 0, 0, 0};   // drop-in: first sample the port's owner supplies
+    uint32_t join_F_[kPorts] = {0, 0, 0, 0};      // drop-in: per slot, the first sample it gates from (0 = a founding player)
     uint32_t mask_ = 1;
     uint32_t gate_mask_ = 1;   // slots whose progress gates ready()
     int lead_ = -1;

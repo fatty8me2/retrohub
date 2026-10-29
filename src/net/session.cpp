@@ -306,7 +306,7 @@ struct Session::Impl {
         case 'B':
             bye_from[path] = true;
             if (departing && path == 0) end_clean(0);
-            else if (is_host() && !(spec_mask >> path & 1u)) end_clean(path);   // a guest signed off: the room session is over
+            else if (is_host() && !(spec_mask >> path & 1u) && !cfg.keep_on_guest_bye) end_clean(path);   // a guest signed off: the room session is over
             break;
         case 'H':
             if (via_relay) send_relay(path, reply('A'), 2);

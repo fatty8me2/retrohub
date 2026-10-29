@@ -113,6 +113,11 @@ struct Args {
     bool full_hash = false;       // --full-hash (with --spectate): the host predates the framebuffer-masked sync hash
     bool legacy_host = false;     // --legacy-host (with --spectate): the host predates N64 live join (keeps RDRAM dithering; no knock)
     bool spectate = false;        // --spectate: watch a running online match as a port-less spectator (server picks the slot; needs --net --room --ports)
+    bool dropin = false;          // --dropin: join a running online match into a free port as a friend (hub: Join game; needs --net --room --slot --ports)
+    bool dropin_room = false;     // --dropin-room: the room allows drop-in: unowned ports are plugged in from boot (neutral until a friend takes one)
+    uint8_t reserved = 0;         // the ports that are (derived from --ports when dropin_room / dropin)
+    uint32_t founder_mask = 0;    // dropin: the slots that already play
+    std::string name;             // --name (the joiner's name, shown as "<name> joined")
     bool no_spectators = false;   // --no-spectators: as the host, do not record/serve the input history to spectators
     bool fullscreen = false;
     std::vector<std::string> gfx;   // --gfx Key=t:value (GLideN64 settings from game_settings.h)
@@ -195,6 +200,9 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--host-save-dir") ok = val(&a.host_save_dir);
         else if (k == "--share-host-save") a.share_host_save = true;
         else if (k == "--spectate") a.spectate = true;
+        else if (k == "--dropin") a.dropin = true;
+        else if (k == "--dropin-room") a.dropin_room = true;
+        else if (k == "--name") ok = val(&a.name);
         else if (k == "--legacy-host") a.legacy_host = true;
         else if (k == "--full-hash") a.full_hash = true;
         else if (k == "--no-spectators") a.no_spectators = true;
@@ -233,7 +241,16 @@ static bool parse_args(int argc, char** argv, Args& a) {
         if (a.room.empty()) { std::fprintf(stderr, "--net requires --room\n"); return false; }
         if (!a.ports_given) { std::fprintf(stderr, "--net requires --ports\n"); return false; }
         std::string err;
-        if (a.spectate) {   // players = the owners named in --ports plus the host; the spectator's own slot comes from the server
+        if (a.dropin) {   // a friend dropping in: the plan has our slot in the first free port; we play after the host admits us. Until then we are a spectator that owns nothing.
+            if (a.spectate || a.share_host_save || a.slot < 1 || a.slot > 3) { std::fprintf(stderr, "--dropin needs --slot 1..3 and no --spectate/--share-host-save\n"); return false; }
+            a.dropin_room = true;
+            for (int p = 0; p < kPorts; p++) if (a.owner[p] == a.slot) a.owner[p] = -1;
+            a.slot_mask = 1u;
+            for (int p = 0; p < kPorts; p++) if (a.owner[p] >= 0 && a.owner[p] < kPorts) a.slot_mask |= 1u << a.owner[p];
+            a.founder_mask = a.slot_mask;
+            a.players = popcount32(a.slot_mask);
+            a.spectate = true;   // internally the joiner runs the spectator path (live state join, replay) until it is admitted
+        } else if (a.spectate) {   // players = the owners named in --ports plus the host; the spectator's own slot comes from the server
             if (a.share_host_save) { std::fprintf(stderr, "--spectate cannot be combined with --share-host-save\n"); return false; }
             a.slot_mask = 1u;
             for (int p = 0; p < kPorts; p++) if (a.owner[p] >= 0 && a.owner[p] < kPorts) a.slot_mask |= 1u << a.owner[p];
@@ -243,13 +260,14 @@ static bool parse_args(int argc, char** argv, Args& a) {
         a.slot_mask = derive_slot_mask(a.owner, a.slot, a.players, &err);
         if (!a.slot_mask) { std::fprintf(stderr, "bad --players/--slot/--ports: %s\n", err.c_str()); return false; }
         }
-    } else if (a.spectate) { std::fprintf(stderr, "--spectate needs --net\n"); return false; }
+    } else if (a.spectate || a.dropin_room) { std::fprintf(stderr, "--spectate/--dropin-room need --net\n"); return false; }
     bool any = false;
     for (int p = 0; p < kPorts; p++) {
         if (a.owner[p] < -1 || a.owner[p] > 3) { std::fprintf(stderr, "bad --ports value\n"); return false; }
         any |= a.owner[p] >= 0;
     }
     if (a.ports_given && !any) { std::fprintf(stderr, "--ports has no controllers\n"); return false; }
+    if (a.dropin_room) for (int p = 0; p < kPorts; p++) if (a.owner[p] < 0) a.reserved |= (uint8_t)(1u << p);
     return true;
 }
 
@@ -548,6 +566,9 @@ static std::string g_in_path;                // the downloaded state file (remov
 static bool g_snapshot = false, g_verified = false, g_live_logged = false;
 static spectate::CatchUp g_cu;
 static std::string g_rs_in_path;             // desync recovery: the state file the guest asked the core to load
+}  // namespace live
+static int g_dj_rc = 0;                      // drop-in joiner: why it could not join (hub exit code 9/10/11)
+namespace live {
 
 static uint64_t fnv64(const uint8_t* d, size_t n) {
     uint64_t h = 0xCBF29CE484222325ull;
@@ -560,6 +581,7 @@ static void nolive(int slot, uint8_t reason) {
     g_sess->send(slot, m, 3);
     if (auto* H = g_run.lockstep->spectate_host()) H->release(slot);
     logf_("spectate", "slot %d joins from sample 0 (no live snapshot, reason %u)", slot, (unsigned)reason);
+    g_run.lockstep->dropin_forget(slot, "no live snapshot");   // a drop-in cannot play from sample 0: it retries or leaves
 }
 
 /* core state callback (emulation thread for loads, the core's worker thread for finished saves) */
@@ -636,7 +658,7 @@ static void host_poll(uint32_t n) {
     q.swap(g_joinq);
     const uint32_t now = hubnet::now_ms();
     for (int slot : q) {
-        if (!(g_sess->spectator_mask() >> slot & 1u)) continue;
+        if (!(g_run.lockstep->spec_mask() >> slot & 1u)) continue;
         auto dn = g_done.find(slot);
         if (dn != g_done.end() && now - dn->second < 5000) continue;   // knocks sent before our Begin reached it
         const bool mine = g_snap && g_snap->slot == slot;
@@ -675,7 +697,7 @@ static void host_poll(uint32_t n) {
 static void host_tick(uint32_t) {
     spectate::Host* H = g_run.lockstep->spectate_host();
     if (!H) return;
-    const uint32_t now = hubnet::now_ms(), sm = g_sess->spectator_mask();
+    const uint32_t now = hubnet::now_ms(), sm = g_run.lockstep->spec_mask();
     for (auto it = g_done.begin(); it != g_done.end();) { if (!(sm >> it->first & 1u)) it = g_done.erase(it); else ++it; }
     if (!g_snap) return;
     Snap& x = *g_snap;
@@ -747,6 +769,7 @@ static void spec_msg(int, const std::vector<uint8_t>& m) {
 
 /* spectator: lead-port poll n (only once the live state is in, or from sample 0 without one) */
 static void spec_poll(uint32_t n) {
+    if (!g_run.lockstep->spectating()) return;   // a drop-in joiner that became a player
     const spectate::Client& c = g_run.lockstep->spectate_client();
     if (g_snapshot && !g_verified && (c.hashes_ok() || c.hashes_bad())) {   // the first RDRAM sync check after the snapshot: the proof
         g_verified = true;
@@ -807,7 +830,8 @@ static void qa_poll(uint32_t n) {
 }
 
 /* spectator, before the emulation starts: ask for a live snapshot. false = connection lost. */
-static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host) {
+static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host, const std::string* dropin_name, int* dj_rc) {
+    const bool dropin = dropin_name != nullptr;
     spectate::JoinClient jc(!legacy_host && !std::getenv("N64RUN_NO_LIVE_SPECTATE"));
     g_t_join = hubnet::now_ms();
     if (jc.playing()) return true;
@@ -816,6 +840,10 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host) 
     uint32_t last_rx = hubnet::now_ms(), dl_progress = 0;
     size_t dl_got = 0;
     std::vector<std::vector<uint8_t>> early;   // inputs from S that overtook our Begin: kept for after it
+    const uint32_t t_knock0 = hubnet::now_ms();
+    uint32_t no_knock_until = 0, last_busy = 0;
+    int busy_n = 0;
+    bool heard_host = false;
     for (;;) {
         SDL_PumpEvents();
         g_sess->update();
@@ -824,7 +852,22 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host) 
         while (g_sess->recv(&from, &m)) {
             if (from != 0 || m.empty()) continue;
             last_rx = now0;
+            if (m[0] == spectate::kPktNoLive && dropin && m.size() >= 3) {
+                heard_host = true;
+                const uint8_t why = m[2];
+                logf_("dropin", "the host answered: reason %u", (unsigned)why);
+                if (why == n64run::dropin::kRefuseBusy || why == spectate::kRefuseEarly) {   // an admit / recovery is in flight, or the match is too young for a snapshot: ask again in a moment
+                    if (now0 - last_busy > 700) { last_busy = now0 ? now0 : 1; busy_n++; }
+                    no_knock_until = now0 + 900;
+                    if (busy_n > (why == spectate::kRefuseEarly ? 40 : 8)) { *dj_rc = 11; return false; }
+                    continue;
+                }
+                *dj_rc = n64run::dropin::exit_code_for(why == n64run::dropin::kRefuseNoPort || why == n64run::dropin::kRefuseOldPeer ? why : (uint8_t)0);
+                return false;
+            }
             if (m[0] == spectate::kPktData) {
+                heard_host = true;
+                if (dropin && jc.mode() == spectate::JoinClient::Mode::Knock) { logf_("dropin", "the host streams from sample 0 without a snapshot: cannot drop in"); *dj_rc = 11; return false; }
                 if (jc.mode() == spectate::JoinClient::Mode::Knock) {
                     if (m.size() < 6) continue;
                     if (rb::xfer::g32(m.data() + 2) != 0) { if (early.size() < 64) early.push_back(m); continue; }   // inputs from S that overtook our Begin
@@ -841,6 +884,7 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host) 
                 if (m[1] == rb::xfer::Begin) {
                     rb::xfer::Meta mt;
                     if (rb::xfer::dec_begin(m.data(), m.size(), &mt) && jc.mode() == spectate::JoinClient::Mode::Knock && rcv.on_begin(m[3], mt)) {
+                        heard_host = true;
                         jc.on_begin(mt.frame, now0);
                         cli.start_at(mt.frame);
                         for (auto& e : early) cli.on_data(e.data(), e.size(), now0);
@@ -855,7 +899,11 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host) 
         }
         const uint32_t now = hubnet::now_ms();
         if (jc.playing()) return true;   // refused / old host: the lockstep plays from sample 0 (and fast-forwards)
-        if (jc.want_knock(now)) { uint8_t k[3] = {spectate::kPktJoin, (uint8_t)my_slot, 1}; g_sess->send(0, k, 3); }
+        if (dropin && !heard_host && now - t_knock0 > 8000) { logf_("dropin", "the host does not answer: its RetroHub is too old for drop-in"); *dj_rc = 10; return false; }
+        if (jc.want_knock(now) && (int32_t)(now - no_knock_until) >= 0) {
+            if (dropin) { auto k = n64run::dropin::encode_knock(spectate::kPktJoin, my_slot, n64run::dropin::kCapDropIn, *dropin_name); g_sess->send(0, k.data(), (int)k.size()); }
+            else { uint8_t k[3] = {spectate::kPktJoin, (uint8_t)my_slot, 1}; g_sess->send(0, k, 3); }
+        }
         if (jc.mode() == spectate::JoinClient::Mode::Download) {
             if (rcv.received() != dl_got) { dl_got = rcv.received(); dl_progress = now; }
             uint16_t nx; uint64_t bits;
@@ -1338,6 +1386,8 @@ int main(int argc, char** argv) {
     }
     if (!online) for (int p = 0; p < kPorts; p++) if (args.owner[p] >= 0) args.owner[p] = 0;
     for (int p = 0; p < kPorts; p++) g_run.owner[p] = args.owner[p];
+    g_run.reserved = args.reserved;
+    if (args.reserved) logf_("n64run", "drop-in room: ports %s%s%s%s are plugged in from boot for friends who join later", (args.reserved & 1) ? "1 " : "", (args.reserved & 2) ? "2 " : "", (args.reserved & 4) ? "3 " : "", (args.reserved & 8) ? "4 " : "");
     g_run.mempak = mempak_enabled(online, args.share_host_save);
     g_run.rumble = !args.headless && rumble_enabled(online, want_rumble);
     if (g_run.rumble) {
@@ -1458,25 +1508,39 @@ int main(int argc, char** argv) {
         sc.room = args.room;
         sc.slot = args.slot;
         sc.expected = args.spectate ? 2 : args.players;
-        sc.spectate = args.spectate;
-        if (!session.start(sc)) {
-            logf_("n64run", "netplay: cannot start session (%s)", session.status().c_str());
-            g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 4;
-        }
-        uint32_t t0 = hubnet::now_ms();
-        std::string last;
-        while (!session.ready()) {
-            session.update();
-            if (session.failed() || hubnet::now_ms() - t0 > 15000) {
-                logf_("n64run", "netplay connection failed: %s", session.status().c_str());
-                session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 4;
+        sc.spectate = args.spectate && !args.dropin;
+        sc.dropin = args.dropin;
+        sc.keep_on_guest_bye = args.dropin_room && !args.dropin;   // players of a drop-in room: a friend leaving must not end the host's session
+        std::vector<int> slot_tries{args.slot};
+        if (args.dropin) for (int sl = 1; sl <= 3; sl++) if (sl != args.slot && !(args.founder_mask >> sl & 1u)) slot_tries.push_back(sl);   // the plan's slot may be held by another friend who dropped in
+        bool connected = false;
+        for (size_t ti = 0; ti < slot_tries.size() && !connected; ti++) {
+            sc.slot = slot_tries[ti];
+            if (!session.start(sc)) {
+                logf_("n64run", "netplay: cannot start session (%s)", session.status().c_str());
+                g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 4;
             }
-            std::string st = session.status();
-            if (st != last) { logf_("n64run", "netplay: %s", st.c_str()); last = st; }
-            Sleep(10);
+            uint32_t t0 = hubnet::now_ms();
+            std::string last;
+            while (!session.ready()) {
+                session.update();
+                if (session.failed() || hubnet::now_ms() - t0 > 15000) break;
+                std::string st = session.status();
+                if (st != last) { logf_("n64run", "netplay: %s", st.c_str()); last = st; }
+                Sleep(10);
+            }
+            if (session.ready()) { connected = true; args.slot = sc.slot; if (args.dropin) my_slot = sc.slot; break; }
+            const std::string st = session.status();
+            logf_("n64run", "netplay connection failed: %s", st.c_str());
+            session.stop();
+            if (args.dropin && (st.find("taken") != std::string::npos || st.find("full") != std::string::npos) && ti + 1 < slot_tries.size()) continue;
+            g_core.Shutdown(); fs::remove_all(cfg_dir, ec);
+            if (args.dropin) return (st.find("free controller port") != std::string::npos || st.find("taken") != std::string::npos || st.find("full") != std::string::npos) ? 9 : st.find("busy") != std::string::npos ? 11 : 4;   // every slot taken = the game is full
+            return 4;
         }
         logf_("n64run", "netplay: all %d players reachable", args.players);
-        if (args.spectate) { my_slot = session.my_slot(); logf_("n64run", "spectating as slot %d (no port, confirmed inputs only)", my_slot); }
+        if (args.dropin) logf_("n64run", "dropin: joined the game room as slot %d", my_slot);
+        else if (args.spectate) { my_slot = session.my_slot(); logf_("n64run", "spectating as slot %d (no port, confirmed inputs only)", my_slot); }
 
         if (!args.spectate) {
             DelayNegotiation dn;
@@ -1623,6 +1687,9 @@ int main(int argc, char** argv) {
         lo.delay = args.delay;
         lo.online = online;
         lo.spectator = args.spectate;
+        lo.reserved_ports = args.reserved;
+        lo.dropin_join = args.dropin;
+        lo.my_name = args.name;
         lo.full_hash = args.full_hash;
         lo.serve_spectators = !args.no_spectators;
         lo.strict_sync = args.strict_sync;
@@ -1661,7 +1728,7 @@ int main(int argc, char** argv) {
                 return true;
             };
         } else logf_("n64run", "RDRAM desync hashing disabled");
-        if (online && !args.spectate) {   // desync recovery (lockstep.h)
+        if (online && (!args.spectate || args.dropin)) {   // desync recovery (lockstep.h); a drop-in joiner uses it once it plays
             live::g_sess = &session;
             live::g_dir = cfg_dir;
             hk.resync_save = live::resync_save;
@@ -1676,6 +1743,7 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (online) hk.on_dropin = [](const std::string& nm, int, int, bool joined) { osd::push((nm.empty() ? std::string("A friend") : nm) + (joined ? " joined" : " left"), joined ? osd::Kind::Good : osd::Kind::Info); };
         if (online) {   // live spectator join (namespace live above)
             live::g_sess = &session;
             live::g_dir = cfg_dir;
@@ -1697,7 +1765,7 @@ int main(int argc, char** argv) {
             g_run.lockstep.reset();
             goto fail_net;
         }
-        if (online && args.spectate && !live::spectator_join(*g_run.lockstep, my_slot, args.legacy_host)) {
+        if (online && args.spectate && !live::spectator_join(*g_run.lockstep, my_slot, args.legacy_host, args.dropin ? &args.name : nullptr, &g_dj_rc)) {
             logf_("n64run", "netplay: could not join the match as a spectator (%s)", session.status().c_str());
             g_run.lockstep.reset();
             goto fail_net;
@@ -1766,7 +1834,11 @@ int main(int argc, char** argv) {
 
     {
         int code = 0;
-        if (g_run.lockstep && g_run.lockstep->connection_lost()) {
+        if (g_run.lockstep && g_run.lockstep->dropin_fail_rc()) {
+            code = g_run.lockstep->dropin_fail_rc();   // 9 full, 10 friend must update, 11 other (the hub's drop-in texts)
+            logf_("n64run", "dropin: could not join (exit %d)", code);
+        }
+        else if (g_run.lockstep && g_run.lockstep->connection_lost()) {
             std::string why = session.status();   // 8: the host/partner left (exit_code_text), 4: plain connection loss
             code = (why.find("host left") != std::string::npos || why.find("partner ended") != std::string::npos) ? 8 : 4;
             logf_("n64run", code == 8 ? "A player left, game ended" : "Connection lost");
@@ -1793,6 +1865,7 @@ int main(int argc, char** argv) {
     }
 
 fail_net:
+    if (g_dj_rc) { logf_("n64run", "dropin: could not join (exit %d)", g_dj_rc); }
     g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
     g_core.Detach(M64PLUGIN_GFX);
     g_core.Detach(M64PLUGIN_AUDIO);
@@ -1801,5 +1874,5 @@ fail_net:
     g_core.Shutdown();
     session.stop();
     fs::remove_all(cfg_dir, ec);
-    return 4;
+    return g_dj_rc ? g_dj_rc : 4;
 }

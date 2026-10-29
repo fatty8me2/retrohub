@@ -87,6 +87,7 @@ struct SessionConfig {
     int expected = 2;     // number of PCs in the session (slots may be sparse, e.g. {0,2})
     uint32_t ready_timeout_ms = 0;   // 0 = default (15 s): how long to wait for everyone before failing
     bool dropin = false;             // join a running game as a real member into a free port (server: same budget gate as spectating)
+    bool keep_on_guest_bye = false;  // host: a guest's clean bye does not end the session (drop-in rooms: a friend may leave and another drop in)
     bool spectate = false;           // join as a port-less spectator (role=watch): the server picks the slot, we only talk to the host
     uint32_t silence_fail_ms = 0;    // 0 = default (10 s): guest gives up when the host is silent this long after ready
 };

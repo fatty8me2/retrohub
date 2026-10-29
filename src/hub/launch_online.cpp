@@ -793,7 +793,10 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         net = " --net " + quote(server_url()) + " --room " + g_dropin_code + "-" + std::to_string(launch_no) + " --slot " + std::to_string(g_dropin_slot) +
               " --dropin --players " + std::to_string(g_dropin_players) + " --ports " + g_dropin_ports + " --delay auto --name " + quote(A.st.name);
     if (e.system == hub::System::N64) {
+        /* Drop-in room: every player (host, guests, spectators, the joiner) gets --dropin-room. Host: g_room_dropin; others: launch "dropin" >= 1. */
+        const bool room_dropin = g_dropin_launch || (is_host ? g_room_dropin : (launch_msg && launch_msg->num("dropin", 0) >= 1));
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
+        if (room_dropin) args += " --dropin-room";
         args += hubui::n64_extra_args(gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
         args += qm_args(ri, e, false);

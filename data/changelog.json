@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.7",
+      "date": "2026-10-29",
+      "title": "Drop into N64 party games",
+      "new": [
+        "N64 party games: friends can now drop into an empty controller port of a match already in progress."
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.29.6",
       "date": "2026-10-28",
       "title": "Shared packs for everyone",
