@@ -6,6 +6,7 @@
 #include "app.h"
 
 bool g_dropin_launch = false;
+bool g_room_dropin = false;
 std::string g_dropin_code, g_dropin_ports;
 int g_dropin_slot = 0, g_dropin_players = 0;
 
@@ -26,7 +27,8 @@ void drop_stop() {
 bool dropin_pending() { return DP.active; }
 
 bool dropin_supported(const hub::GameEntry& e) {
-    return !is_native(e) && (e.system == hub::System::NES || e.system == hub::System::SNES);
+    return !is_native(e) && (e.system == hub::System::NES || e.system == hub::System::SNES ||
+                             (e.system == hub::System::N64 && hubui::n64_dropin_game(e.catalog_id)));
 }
 
 void dropin_start(const std::string& code, const std::string& game_id, const std::string& title, const std::string& friend_name) {
@@ -68,7 +70,7 @@ void dropin_tick() {
         if (A.proc) { drop_stop(); set_notice("A game is already running on this PC.", 6.0); return; }
         std::string why, ports;
         int slot = 0, players = 0;
-        if (!hubui::parse_dropin_launch(j, &why, &slot, &ports, &players)) { drop_stop(); set_notice(why, 10.0); return; }
+        if (!hubui::parse_dropin_launch(j, &why, &slot, &ports, &players, g->system == hub::System::N64)) { drop_stop(); set_notice(why, 10.0); return; }
         set_notice("Joining " + DP.friend_name + "'s game in progress...", 10.0);
         g_dropin_launch = true;
         g_dropin_code = DP.code;

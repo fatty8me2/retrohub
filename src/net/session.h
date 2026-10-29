@@ -87,6 +87,7 @@ struct SessionConfig {
     int expected = 2;     // number of PCs in the session (slots may be sparse, e.g. {0,2})
     uint32_t ready_timeout_ms = 0;   // 0 = default (15 s): how long to wait for everyone before failing
     bool dropin = false;             // join a running game as a real member into a free port (server: same budget gate as spectating)
+    bool keep_on_guest_bye = false;  // host: a guest's clean bye does not end the session (drop-in rooms: a friend may leave and another drop in)
     bool spectate = false;           // join as a port-less spectator (role=watch): the server picks the slot, we only talk to the host
     uint32_t silence_fail_ms = 0;    // 0 = default (10 s): guest gives up when the host is silent this long after ready
 };
@@ -114,6 +115,8 @@ class Session {
     /* Slots currently held by spectators (the server marks them in `members`). They never count as players: not in ready(),
      * not reached by send(-1), and their bye / departure does not end the session. */
     uint32_t spectator_mask() const;
+    /* Host: slots that a broadcast (send(-1)) skips although they are members (a drop-in candidate that is still downloading the state has no use for the players' input stream). */
+    void set_broadcast_exclude(uint32_t mask);
     bool is_spectator() const;
 
     /* RTT samples since the last clear (last 32), for the auto input delay. */

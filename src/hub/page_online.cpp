@@ -138,10 +138,15 @@ void host_launch_selected() {
             np_extra += hubui::host_launch_fragment(gs_values_for(*rg));
             np_extra += cheats_launch_fragment(*rg);
             if (gc_ok) {
-                std::string lmsg = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra, (rg->system == hub::System::NES || rg->system == hub::System::SNES) && !share && cheats_launch_fragment(*rg).empty());   /* the joiner would be refused with a shared host save or cheats: do not advertise a free port then */
+                bool same_app = true;   // N64 drop-in changes what the game sees from boot (all four pads plugged in): every PC must run this exact build
+                for (auto& pi : peers) if (pi.slot != 0 && hubui::guest_version_action(HUB_VERSION_STR, pi.app, true) != hubui::GuestVersionAction::None) same_app = false;
+                const bool dropin_adv = (rg->system == hub::System::NES || rg->system == hub::System::SNES || (rg->system == hub::System::N64 && same_app && hubui::n64_dropin_game(rg->catalog_id))) && !share && cheats_launch_fragment(*rg).empty();
+                std::string lmsg = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra, dropin_adv, dropin_adv && rg->system == hub::System::N64 ? 2 : 3);   /* the joiner would be refused with a shared host save or cheats: do not advertise a free port then */
+                { hubui::Json lj; g_room_dropin = json::parse(lmsg, &lj) && lj.num("dropin", 0) >= 1; }   // host launch_online() gets no launch_msg
                 shot_trace("host-msg", lmsg);
                 A.lobby.send_msg(lmsg);
                 launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
+                g_room_dropin = false;   // set per launch, never left over for another
             } else --A.launch_counter;        }
 
 /* Why the chosen game cannot start right now ("" = fine). Shared by the READY and LAUNCH buttons. */

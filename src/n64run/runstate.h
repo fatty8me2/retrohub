@@ -7,7 +7,8 @@
 namespace n64run {
 
 struct RunState {
-    int owner[kPorts] = {0, -1, -1, -1};   // port -> owning slot, -1 = not present
+    int owner[kPorts] = {0, -1, -1, -1};   // port -> owning slot, -1 = not owned
+    uint8_t reserved = 0;                  // drop-in room: ports (bit = port) plugged in from boot that nobody owns yet (lockstep reads them neutral)
     bool rumble = false;                   // attach a Rumble Pak instead (offline, per-game option); wins over mempak
     void (*rumble_cb)(int port, bool on) = nullptr;   // set by the frontend: drive the pad
     bool mempak = false;                   // attach a Controller Pak to present ports (mempak_enabled)

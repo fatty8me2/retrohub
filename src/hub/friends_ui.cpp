@@ -1129,9 +1129,10 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
     bool can_ask = hubui::friend_can_ask(fr);
     bool can_watch = hubui::friend_can_watch(fr, !f.status.lobby_code.empty() && !f.status.game_id.empty()) && !spectate_pending();
     bool can_dropin = false;   // 3-4 port NES/SNES party game with a free port, and this PC owns the game
-    if (hubui::friend_can_dropin(fr, !f.status.lobby_code.empty() && !f.status.game_id.empty()) && !dropin_pending() && !spectate_pending()) {
+    if (hubui::friend_can_dropin(fr, !f.status.lobby_code.empty() && !f.status.game_id.empty(), 2) && !dropin_pending() && !spectate_pending()) {
         const hub::GameEntry* dg = find_room_entry(f.status.game_id);
-        can_dropin = dg && !is_remote_stand_in(*dg) && dropin_supported(*dg);
+        can_dropin = dg && !is_remote_stand_in(*dg) && dropin_supported(*dg) &&
+                     (dg->system == hub::System::N64 || hubui::friend_can_dropin(fr, true));   // N64: 2-3 humans; NES/SNES: 3
     }
     const char* join_lbl = fr.state == hubui::FS_InGame ? "Join lobby" : "Join";
     bool can_invite = fr_in_my_room() && f.online() && f.status.lobby_code != A.code;
