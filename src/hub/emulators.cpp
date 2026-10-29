@@ -744,13 +744,20 @@ static void write_cemu_profiles(const std::string& cdir, const hubctl::Profile& 
     std::string marker = join(cdir, "retrohub-pad.txt");
     std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof)) + pad_suffix(cemu_sel(pads));
     /* No marker = written by an older RetroHub (the built-in default) or never written. */
-    if (file_exists(pad) && (!need_marker || file_exists(marker)) && marker_hash(file_exists(marker) ? read_text(marker) : "", "wiiu") == want) return;
     auto xml = [&](int i) {
         bool sdl = i < (int)pads.sdl.size() && !pads.sdl[i].empty();
         int xi = i < (int)pads.xinput.size() && pads.xinput[i] >= 0 ? pads.xinput[i] : 0;
         int ds = i < (int)pads.dsu.size() ? pads.dsu[i] : -1;
         return cemu_pad_xml(prof, xi, i, i > 0, sdl ? pads.sdl[i] : std::string(), ds);
     };
+    /* Up to date only when the marker matches AND every player file still holds what we would write: a player edited by hand in
+     * Cemu (say player 2 set to the host's own pad) would otherwise survive and steal a remote guest's DSU slot. */
+    bool same = file_exists(pad) && (!need_marker || file_exists(marker)) && marker_hash(file_exists(marker) ? read_text(marker) : "", "wiiu") == want;
+    for (int i = 0; same && i < 4 && i < (int)pads.xinput.size(); ++i) {
+        std::string f = join(cdir, "controller" + std::to_string(i) + ".xml");
+        same = file_exists(f) && read_text(f) == xml(i);
+    }
+    if (same) return;
     write_text(pad, xml(0));   // player 1 = the Wii U GamePad
     for (int i = 1; i < 4; ++i) {   // players 2-4 = Pro Controllers on the next pads; stale ones from an earlier setup go
         std::string f = join(cdir, "controller" + std::to_string(i) + ".xml");
