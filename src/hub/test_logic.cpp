@@ -428,6 +428,15 @@ int main() {
         d.players = 4; CHECK(!friend_can_dropin(d, true));
         d.players = 3; d.state = FS_InLobby; CHECK(!friend_can_dropin(d, true));
         d.state = FS_InGame; d.in_my_room = true; CHECK(!friend_can_dropin(d, true));
+        d.in_my_room = false; d.players = 2; CHECK(friend_can_dropin(d, true, 2) && !friend_can_dropin(d, true));   /* N64 passes 2 */
+        d.players = 3; d.state = FS_InGame; d.in_my_room = false;
+        CHECK(n64_dropin_game("mk64") && n64_dropin_game("mp1") && n64_dropin_game("mp2") && n64_dropin_game("mp3") && n64_dropin_game("ssb64rom") &&
+              n64_dropin_game("remix") && !n64_dropin_game("") && !n64_dropin_game("sm64") && !n64_dropin_game("smash"));
+        CHECK(json::parse(launch_json("mk64", 1, 0, 5, "", false, &p2, nullptr, "", true, 2), &j) && (int)j.num("dropin", -1) == 2);   /* 2 humans + 2 free */
+        CHECK(json::parse(launch_json("mk64", 1, 0, 5, "", false, &p3, nullptr, "", true, 2), &j) && (int)j.num("dropin", -1) == 1);
+        CHECK(json::parse(launch_json("mk64", 1, 0, 5, "", false, &p4, nullptr, "", true, 2), &j) && (int)j.num("dropin", -1) == 0);
+        { PortPlan p1 = build_ports({{0, 1}}); CHECK(json::parse(launch_json("mk64", 1, 0, 5, "", false, &p1, nullptr, "", true, 2), &j) && (int)j.num("dropin", -1) == 0); }
+        CHECK(json::parse(launch_json("g", 1, 0, 5, "", false, &p2, nullptr, "", true), &j) && (int)j.num("dropin", -1) == 0);   /* NES default unchanged */
         int k = 0, n = 0; std::string np;
         CHECK(dropin_port_plan("0,1,2,-1", &k, &np, &n) && k == 3 && np == "0,1,2,3" && n == 3);
         CHECK(dropin_port_plan("0,2,3,-1", &k, &np, &n) && k == 1 && np == "0,2,3,1" && n == 3);
@@ -445,6 +454,9 @@ int main() {
         { Json m = L("\"ports\":[0,1,2,-1],\"players\":3,\"dropin\":0"); CHECK(!parse_dropin_launch(m, &why) && why.find("no free controller port") != std::string::npos); }
         { Json m = L("\"ports\":[0,1,2,-1],\"players\":3,\"dropin\":1,\"cheats\":{}"); CHECK(!parse_dropin_launch(m, &why) && why.find("cheats") != std::string::npos); }
         { Json m; CHECK(json::parse("{\"kind\":\"launch\",\"share_save\":true,\"ports\":[0,1,2,-1],\"players\":3,\"dropin\":1}", &m) && !parse_dropin_launch(m, &why) && why.find("save") != std::string::npos); }
+        { Json m = L("\"ports\":[0,1,-1,-1],\"players\":2,\"dropin\":2,\"n64live\":2"); CHECK(parse_dropin_launch(m, &why, &k, &np, &n, true) && k == 2 && np == "0,1,2,-1" && n == 2); }
+        { Json m = L("\"ports\":[0,1,-1,-1],\"players\":2,\"dropin\":2,\"n64live\":1"); CHECK(!parse_dropin_launch(m, &why, &k, &np, &n, true) && why.find("update RetroHub") != std::string::npos); }
+        { Json m = L("\"ports\":[0,1,-1,-1],\"players\":2,\"dropin\":2"); CHECK(!parse_dropin_launch(m, &why, &k, &np, &n, true) && parse_dropin_launch(m, &why, &k, &np, &n)); }
         { Json m = L("\"dropin\":1"); CHECK(!parse_dropin_launch(m, &why) && why.find("update RetroHub") != std::string::npos); }   /* no plan */
         { Json m = L("\"ports\":[0,1,2,3],\"players\":4,\"dropin\":1"); CHECK(!parse_dropin_launch(m, &why) && why.find("full") != std::string::npos); }
     }

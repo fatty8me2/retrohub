@@ -17,6 +17,7 @@
 #include "lockstep_core.h"
 #include "spectate.h"
 #include "resync.h"
+#include "dropin.h"
 #include "state_xfer.h"
 
 namespace hubnet { class Session; }
@@ -39,6 +40,9 @@ struct LockstepOptions {
     bool full_hash = false;        // spectator of a host that predates the framebuffer-masked hash (--full-hash): plain RDRAM hash
     bool spectator = false;        // port-less spectator: replays the host's confirmed-input stream (spectate.h); never part of the slot mask
     bool serve_spectators = true;  // host (slot 0, online): record the input history so spectators can join at any time
+    uint8_t reserved_ports = 0;    // drop-in room (--dropin-room): ports the game sees as plugged in that nobody owns yet (neutral until a friend drops in; dropin.h)
+    bool dropin_join = false;      // a drop-in joiner: a spectator until the host admits it, then a player from the agreed sample (dropin.h)
+    std::string my_name;           // the joiner's name (sent with its knock)
     std::string hash_label = "state";   // desync log text: "<label> hashes"
 };
 
@@ -74,6 +78,8 @@ struct LockstepHooks {
      * (host and guests alike, so every peer's tracked set restarts at the same poll). Announcing the capability needs vi_poll. */
     std::function<void(uint32_t n)> vi_poll;
     std::function<void()> vi_reset;
+    /* Drop-in (dropin.h), emulation thread: a friend took (joined) or left (!joined) a port: OSD "<name> joined". */
+    std::function<void(const std::string& name, int slot, int port, bool joined)> on_dropin;
 };
 
 class Lockstep {
@@ -128,6 +134,18 @@ class Lockstep {
     void resync_loaded(bool ok);
     int resyncs() const { return rs_.count(); }
     bool resync_active() const { return rs_.active(); }   // host: no spectator snapshot may start (the core's save job is wanted at S - 1)
+    /* ---- drop-in (dropin.h) ---- */
+    /* Slots that get the spectator stream: the server's spectators plus drop-in candidates (not yet players). */
+    uint32_t spec_mask() const;
+    /* Host: a knock (kPktJoin version 2) from `slot`. 0 = accepted (the caller queues the snapshot), else a dropin::Refuse reason. */
+    int dropin_knock(int slot, uint8_t caps, const std::string& name);
+    void dropin_forget(int slot, const char* why);   // the snapshot could not be delivered / the joiner is gone
+    bool setup_mismatch() const { return setup_mismatch_; }   // start barrier: a peer's drop-in port setup differs from ours
+    bool dropin_enabled() const { return opt_.reserved_ports != 0; }
+    /* Joiner: failed (exit code for the hub: 9 full, 10 friend must update, 11 other) / promoted to a player. */
+    int dropin_fail_rc() const { return dj_fail_rc_; }
+    bool dropin_playing() const { return opt_.dropin_join && !opt_.spectator; }
+    uint32_t dropin_slots() const { return dj_slots_; }
     /* the sync hash (hash_rdram) should skip the framebuffers: every player announced hash version 2 (a spectator: unless --full-hash) */
     bool masked_hash() const { return masked_; }
 
@@ -156,6 +174,43 @@ class Lockstep {
     bool rs_silent(uint32_t now) const;
     void rs_finish(uint32_t S);
     void send_packet();
+    /* drop-in */
+    void di_on_msg(int from, const std::vector<uint8_t>& msg);
+    void di_service(uint32_t now);
+    void di_begin_admit(int slot, uint32_t joiner_pos);
+    void di_apply(const dropin::Msg& m);
+    void di_abort(const char* why);
+    void di_barrier(uint32_t n);
+    void di_candidate_left(int slot, const char* why);
+    void di_release(uint32_t n);
+    void di_send(int to, const dropin::Msg& m);
+    void di_sync_excl();
+    void dj_promote();
+    void dj_fail(int rc, const char* why);
+    uint32_t dj_mask_ = 0, dj_slots_ = 0, dj_since_[kPorts] = {0, 0, 0, 0};
+    std::string dj_name_[kPorts];
+    int dj_port_[kPorts] = {-1, -1, -1, -1};
+    uint8_t dj_applied_id_[kPorts] = {0, 0, 0, 0}, dj_dead_id_[kPorts] = {0, 0, 0, 0};
+    uint32_t dj_live_until_ = 0, dj_live_last_ = 0, dj_reset_at_ = 0;   // dj_reset_at_: the join sample, where every PC restarts its framebuffer tracker
+    bool dj_ok_ = false, setup_mismatch_ = false;
+    uint8_t rsv_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    dropin::Ctl dj_ctl_;
+    uint32_t dj_abort_sends_ = 0, dj_last_abort_ = 0;
+    dropin::Msg dj_abort_msg_;
+    // joiner
+    dropin::ReadyGate dj_gate_;
+    bool dj_have_admit_ = false;
+    dropin::Msg dj_adm_;
+    uint32_t dj_ready_sent_ = 0, dj_t_ready_ = 0, dj_t_start_ = 0;
+    int dj_fail_rc_ = 0;
+    // stall measurement around a join (all players)
+    uint32_t dj_seen_[kPorts] = {0, 0, 0, 0}, dj_real_[kPorts] = {0, 0, 0, 0};   // per drop-in port: samples since its first sample / of those with input
+    bool dj_win_ = false;
+    uint32_t dj_win_end_ = 0, dj_osd_f_ = 0, dj_osd_slot_ = 0, dj_barrier_ms_ = 0;
+    uint64_t dj_win_stall0_ = 0;
+    uint32_t dj_win_longest_ = 0, dj_win_f_ = 0;
+    uint64_t dj_pre_ms_ = 0, dj_post_ms_ = 0;   // stall time inside the join window before / after the joiner's first sample
+    std::string dj_osd_name_;
     void report_mismatches();
     void abort_with(const std::string& why);
 

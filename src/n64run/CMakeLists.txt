@@ -74,3 +74,7 @@ target_link_libraries(n64run_spectate_test PRIVATE n64run_lockstep_core)
 # Desync recovery agreement + state transfer (pure logic).
 add_executable(n64run_resync_test test_resync.cpp)
 target_link_libraries(n64run_resync_test PRIVATE n64run_lockstep_core)
+
+# N64 drop-in: wire format, admit controller, reserved ports / join / leave on LockstepCore
+add_executable(n64run_dropin_test test_dropin.cpp)
+target_link_libraries(n64run_dropin_test PRIVATE n64run_lockstep_core)

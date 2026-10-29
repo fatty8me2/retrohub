@@ -163,7 +163,8 @@ struct MatchSpec;
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed,
                         const std::string& core = "", bool share_host_save = false, const PortPlan* plan = nullptr,
                         const MatchSpec* match = nullptr, const std::string& extra_json = "",   // extra_json: ",\"np_x\":{...}" fragment
-                        bool dropin_system = false);   // NES/SNES rollback netplay: adds "dropin":N (free controller ports) when >= 3 ports are in use
+                        bool dropin_system = false,   // NES/SNES/N64 (see dropin_min_used)
+                        int dropin_min_used = 3);   // "dropin":N (free ports) is advertised when this many ports are in use (NES/SNES 3, N64 2); NES/SNES rollback netplay: adds "dropin":N (free controller ports) when >= 3 ports are in use
 /* The `np_ds` launch-spec value for Nintendo DS games ({"v":1,"mode":"wireless"}): every PC runs its own emulator and
  * only the DS local-wireless frames travel through the room (retrorun --ds-link). Pass ",\"np_ds\":" + np_ds_json() as extra_json. */
 std::string np_ds_json();
@@ -414,14 +415,17 @@ inline bool friend_can_watch(const FriendRow& r, bool has_code_and_game) { retur
 /* Drop-in: a friend's running 3-4 port NES/SNES party game with a free controller port. In game, code+game known, not our room, 3+ players
  * and fewer than the maximum (a free port is likely; the host/server give the final answer). The caller adds "this PC owns the game and its
  * system is NES/SNES" and "not already spectating/dropping in". */
-inline bool friend_can_dropin(const FriendRow& r, bool has_code_and_game) {
-    return has_code_and_game && !r.in_my_room && r.state == FS_InGame && r.players >= 3 && r.players < r.max_players;
+inline bool friend_can_dropin(const FriendRow& r, bool has_code_and_game, int min_players = 3) {   // N64 passes 2
+    return has_code_and_game && !r.in_my_room && r.state == FS_InGame && r.players >= min_players && r.players < r.max_players;
 }
 /* ports "0,1,2,-1": K = lowest slot in 1..3 that owns no port; K goes into the first -1. *players_out = distinct owners in the original plan.
  * False when there is no free slot (-> "That game is full") or no -1 entry. */
 bool dropin_port_plan(const std::string& ports, int* my_slot_out, std::string* new_ports_out, int* players_out);
 /* Checks a replayed launch message for a drop-in join. Returns true when joinable (and fills the plan); else *why = user-facing refusal. */
-bool parse_dropin_launch(const Json& launch_msg, std::string* why, int* my_slot_out = nullptr, std::string* new_ports_out = nullptr, int* players_out = nullptr);
+bool parse_dropin_launch(const Json& launch_msg, std::string* why, int* my_slot_out = nullptr, std::string* new_ports_out = nullptr, int* players_out = nullptr,
+                         bool n64 = false);   // n64: also requires "n64live" >= 2 in the launch
+/* N64 party games whose n64run lockstep netplay supports drop-in. */
+bool n64_dropin_game(const std::string& catalog_id);
 /* Runner exit codes 9/10/11 of a drop-in joiner (retrorun --dropin); they mean something else for other launches (PS2 setup mismatch). */
 std::string dropin_exit_text(unsigned long code);   // "" for other codes
 /* Server refusal reason -> text (also used for LobbyClient::status() fall-back). */

@@ -470,7 +470,7 @@ GuestVersionAction guest_version_action(const std::string& my_app, const std::st
 }
 
 std::string launch_json(const std::string& game, int launch, int delay, unsigned seed, const std::string& core, bool share_host_save,
-                        const PortPlan* plan, const MatchSpec* match, const std::string& extra_json, bool dropin_system) {
+                        const PortPlan* plan, const MatchSpec* match, const std::string& extra_json, bool dropin_system, int dropin_min_used) {
     std::string o = "{\"kind\":\"launch\",\"game\":\"" + json::escape(game) + "\",\"launch\":" + std::to_string(launch) +
                     ",\"delay\":" + std::to_string(delay) + ",\"seed\":" + std::to_string(seed);
     if (!core.empty()) o += ",\"core\":\"" + json::escape(core) + "\"";
@@ -487,7 +487,7 @@ std::string launch_json(const std::string& game, int launch, int delay, unsigned
                 else tok += plan->ports[i];
             }
         }
-        o += ",\"dropin\":" + std::to_string(used >= 3 && freep > 0 ? freep : 0);
+        o += ",\"dropin\":" + std::to_string(used >= dropin_min_used && freep > 0 ? freep : 0);
     }
     o += extra_json;
     return o + "}";
@@ -821,11 +821,16 @@ std::string dropin_reason_text(const std::string& r) {
     return "";
 }
 
-bool parse_dropin_launch(const Json& m, std::string* why, int* my_slot_out, std::string* new_ports_out, int* players_out) {
+bool n64_dropin_game(const std::string& id) {
+    return id == "mk64" || id == "mp1" || id == "mp2" || id == "mp3" || id == "ssb64rom" || id == "remix";
+}
+
+bool parse_dropin_launch(const Json& m, std::string* why, int* my_slot_out, std::string* new_ports_out, int* players_out, bool n64) {
     auto no = [&](const char* t) { if (why) *why = t; return false; };
     const Json* d = m.get("dropin");
     if (!d || d->type != Json::Number) return no("Your friend needs to update RetroHub to let you join mid-game.");
     if (d->n < 1) return no("That game has no free controller port.");
+    if (n64 && m.num("n64live", 0) < 2) return no("Your friend needs to update RetroHub to let you join mid-game.");
     const Json* ss = m.get("share_save");
     if (ss && ss->type == Json::Bool && ss->b) return no("This game shares the host's save, so you can't join it in progress.");
     if (m.get("cheats")) return no("This game uses cheats, so you can't join it in progress.");

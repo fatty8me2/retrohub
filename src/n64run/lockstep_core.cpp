@@ -34,7 +34,7 @@ LockstepCore::LockstepCore(const Config& cfg) : cfg_(cfg) {
     want_ = (uint8_t)cfg_.delay;
     for (int p = 0; p < kPorts; p++) {
         ring_[p].assign(kRing, Entry());
-        if (cfg_.owner[p] >= 0) {
+        if (cfg_.owner[p] >= 0 || (cfg_.reserved >> p & 1u)) {
             if (lead_ < 0) lead_ = p;
             for (int s = 0; s < cfg_.delay; s++) put(p, (uint32_t)s, 0);   // neutral prefill
         }
@@ -74,8 +74,11 @@ void LockstepCore::order_delay(int d) {
 bool LockstepCore::ready(uint32_t n) const {
     for (int p = 0; p < kPorts; p++)
         if (port_present(p) && !has(p, n) && !neutral(p, n)) return false;
-    for (int s = 0; s < kPorts; s++)
-        if ((gate_mask_ >> s & 1u) && s != cfg_.my_slot && (uint64_t)peer_progress_[s] + (uint64_t)max_lead() < n) return false;
+    for (int s = 0; s < kPorts; s++) {
+        if (s == cfg_.my_slot) continue;
+        const bool gated = (gate_mask_ >> s & 1u) ? (join_F_[s] == 0 || n >= join_F_[s]) : false;   // a joiner gates from its first sample on
+        if (gated && (uint64_t)peer_progress_[s] + (uint64_t)max_lead() < n) return false;
+    }
     return true;
 }
 
@@ -155,7 +158,7 @@ bool LockstepCore::on_packet(int from_slot, const uint8_t* data, size_t len) {
             if (!rd(p, end, &v)) return false;
             if (cfg_.wide && !rd(p, end, &ax)) return false;
             uint32_t s = newest - (count - 1) + k;
-            if (s < (uint32_t)initial_delay_) continue;   // prefilled neutral
+            if (s < (uint32_t)initial_delay_ || s < port_from_[port]) continue;   // prefilled neutral / before the joiner's first sample
             // Never overwrite an existing value for the same sample: inputs are immutable once known.
             if (!has(port, s)) put(port, s, v, ax);
         }
@@ -224,7 +227,60 @@ void LockstepCore::finish_drop(int slot, uint32_t cutoff) {
     done_mask_ |= 1u << slot;
     drop_cut_[slot] = cutoff;
     gate_mask_ &= ~(1u << slot);
+    join_F_[slot] = 0;
     mask_ &= ~(1u << slot);   // no hash from it any more
+}
+
+bool LockstepCore::join_port(int port, int slot, uint32_t first) {
+    if (port < 0 || port >= kPorts || slot < 0 || slot >= kPorts || cfg_.owner[port] >= 0 || !(cfg_.reserved >> port & 1u) || slot == cfg_.my_slot) return false;
+    if ((mask_ >> slot & 1u) && join_F_[slot] == 0) return false;   // a founding player
+    cfg_.owner[port] = slot;
+    port_from_[port] = first;
+    join_F_[slot] = first;
+    mask_ |= 1u << slot;
+    gate_mask_ |= 1u << slot;
+    ignore_mask_ &= ~(1u << slot); done_mask_ &= ~(1u << slot);
+    return true;
+}
+
+void LockstepCore::join_self(int port, uint32_t first, int d) {
+    cfg_.owner[port] = cfg_.my_slot;
+    port_from_[port] = first;
+    delay_ = initial_delay_ = std::max(0, std::min(kMaxDelay, d));
+    want_ = (uint8_t)delay_;
+    newest_ = (int64_t)first - 1;   // nothing is scheduled until poll first - delay: the port is neutral before `first` for everybody
+    any_local_ = true;
+    mask_ |= 1u << cfg_.my_slot;
+}
+
+void LockstepCore::adopt_layout(const int8_t owners[kPorts], uint8_t slots) {
+    for (int p = 0; p < kPorts; p++)
+        if (owners[p] >= 0 && owners[p] < kPorts && owners[p] != cfg_.my_slot && cfg_.owner[p] < 0 && (cfg_.reserved >> p & 1u)) cfg_.owner[p] = owners[p];
+    mask_ |= slots & 0xFu;
+    mask_ |= 1u << cfg_.my_slot;
+    gate_mask_ = mask_;
+}
+
+void LockstepCore::cancel_join(int port, int slot) {
+    if (port < 0 || port >= kPorts || cfg_.owner[port] != slot || !port_from_[port]) return;
+    cfg_.owner[port] = -1;
+    port_from_[port] = 0;
+    join_F_[slot] = 0;
+    mask_ &= ~(1u << slot); gate_mask_ &= ~(1u << slot);
+    peer_progress_[slot] = 0; peer_newest_[slot] = 0;
+}
+
+void LockstepCore::leave_port(int port, int slot) {
+    if (port >= 0 && port < kPorts && cfg_.owner[port] == slot) {
+        cfg_.owner[port] = -1;
+        port_from_[port] = 0;
+        for (uint32_t s = 0; s < kRing; s++) ring_[port][s] = Entry();
+    }
+    if (slot < 0 || slot >= kPorts || slot == cfg_.my_slot) return;
+    ignore_mask_ &= ~(1u << slot); done_mask_ &= ~(1u << slot);
+    drop_cut_[slot] = 0; join_F_[slot] = 0;
+    gate_mask_ &= ~(1u << slot); mask_ &= ~(1u << slot);
+    peer_progress_[slot] = 0; peer_newest_[slot] = 0; peer_want_[slot] = 0;
 }
 
 void LockstepCore::put_hash(int slot, uint32_t sample, uint64_t h) {
