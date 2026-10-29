@@ -34,6 +34,18 @@ std::string safe_name(const std::string& t);
  * embeddedfolderview?id=<id>, or bare ids. Order preserved, duplicates dropped. */
 std::vector<std::string> parse_links(const std::string& text);
 
+/* Pure: the stored pack_links string <-> a list of canonical folder ids. Reading accepts the old comma / space /
+ * newline separated text (ids or full URLs); writing is space-separated ids. */
+std::vector<std::string> links_split(const std::string& stored);
+std::string links_join(const std::vector<std::string>& ids);
+/* Add every folder id found in `pasted` to `stored` (links_add). Returns how many were new; *found (optional) = how many
+ * valid ids the text held (0 = nothing usable). Result is re-canonicalised. */
+int links_add(std::string* stored, const std::string& pasted, int* found = nullptr);
+/* Remove one id; false when it was not there. */
+bool links_remove(std::string* stored, const std::string& id);
+/* Pure: a short readable label for a folder id ("1abcDEFg...wxyz" for long ids). */
+std::string link_label(const std::string& id);
+
 /* Pure: the shared community pack list (data/packs.json on GitHub, fetched by every client so a link added there
  * is installable for everyone without per-user setup). Accepts {"packs":[{"id":"...","name":"..."}]} or a bare
  * array of ids / objects. Returns the valid, de-duplicated folder ids (bad ids dropped); false when not that JSON. */
