@@ -3,9 +3,11 @@
     {
       "version": "1.29.5",
       "date": "2026-10-28",
-      "title": "No more freezes",
+      "title": "No more freezes, creative usernames",
       "new": [],
-      "improved": [],
+      "improved": [
+        "Usernames can now be up to 20 characters and use spaces, accented letters and most symbols (for example \"Kai Smith!\"); existing usernames are unchanged."
+      ],
       "fixed": [
         "RetroHub could still freeze for several seconds when cloud-save actions (Resolve, Keep in cloud, Remove), ending a game, or hosting an online game waited on a slow connection; these now run in the background",
         "Menus no longer stall while RetroHub reads or writes the cover-art cache, friend lists, the save vault, game details or file dates; that disk work now happens in the background"

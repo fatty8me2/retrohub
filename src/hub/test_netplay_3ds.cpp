@@ -51,7 +51,8 @@ int main() {
     /* nicknames: Azahar accepts 4..20 of [A-Za-z0-9 ._-]; unique per slot */
     CHECK(nickname("Player", 0) == "Player_1" && nickname("Player", 2) == "Player_3");
     CHECK(nickname("a", 1) == "ax_2" || nickname("a", 1).size() >= 4);
-    CHECK(nickname("Ma\xC3\xA9 @:x y", 0) == "Ma_x_y_1");
+    CHECK(nickname("Ma\xC3\xA9 @:x y", 0) == "Mae_x_y_1");
+    CHECK(nickname("\xC3\x89lan Vital!", 1) == "Elan_Vital_2" && nickname("\xC3\x91\xC3\xA9\xC3\xA9", 0) == "Nee_1" && nickname("(a) [b] <c>", 0) == "a_b_c_1");
     CHECK(nickname("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 0).size() <= 20);
     for (int s = 0; s < 4; ++s) { auto n = nickname("", s); CHECK(n.size() >= 4 && n.size() <= 20); }
 

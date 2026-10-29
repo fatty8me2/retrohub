@@ -35,7 +35,7 @@ struct Checker {
     int ref = 0;                           // the in-flight request
     std::string answered_for;              // key the current answer belongs to
     std::vector<std::string> suggestions;  // from the server, or local when taken
-    std::string mine_key;                  // my current username's key ("" = none yet): typing it again is "yours"
+    std::string mine_key;                  // my current username's fold key (hubnet::username_fold_key, "" = none yet): typing it again is "yours"
 
     void set_input(const std::string& t, double now)
     {
@@ -48,7 +48,7 @@ struct Checker {
         if (local == hubnet::NameCheck::Empty) state = Avail::Empty;
         else if (local == hubnet::NameCheck::Reserved) { state = Avail::NotAllowed; suggestions = hubnet::username_suggestions(t); }
         else if (local != hubnet::NameCheck::Ok) state = Avail::Invalid;
-        else if (!mine_key.empty() && hubnet::username_key(t) == mine_key) state = Avail::Yours;
+        else if (!mine_key.empty() && hubnet::username_fold_key(t) == mine_key) state = Avail::Yours;   // mine_key is the FOLD key: "Kai Smith" is "kai.smith"
         else state = Avail::Typing;
     }
     /* True when a check should be sent now (and moves to Checking). `connected` false => Offline, nothing sent. */

@@ -33,7 +33,7 @@ inline std::string pad_hint(int n, bool pad_mode) {
 /* Player slot label for the Nth connected pad (0-based). */
 inline std::string player_label(int i) { return "Player " + std::to_string(i + 1); }
 
-/* The name step takes a valid username (3-16 letters, digits, _; see net/username.h). */
+/* The name step takes a valid username (3-20 characters: letters, digits, spaces and most symbols; see net/username.h). */
 inline bool name_ok(const std::string& n) { return hubnet::username_ok(n); }
 
 inline std::string step_title(Step s) {
