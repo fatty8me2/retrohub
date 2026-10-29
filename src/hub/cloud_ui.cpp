@@ -293,6 +293,8 @@ void games_panel() {
         if (C.acct.known)
             ImGui::TextDisabled(!C.acct.online ? "Offline: your cloud games show up here once you are back online."
                                                : "Nothing yet. Play a game and its saves are backed up here automatically.");
+        else
+            ImGui::TextDisabled("Your games show up here in a moment.");
     } else if (!A.st.cloud_enabled) {
         ImGui::TextDisabled("%s. Turn it back on above to see your games here.", paused_text(C.acct.queued_games).c_str());
     }
