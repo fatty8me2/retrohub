@@ -129,6 +129,12 @@ std::string safe_name(const std::string& t) {
     while (!r.empty() && (r.front() == ' ' || r.front() == '.')) r.erase(r.begin());
     while (!r.empty() && (r.back() == ' ' || r.back() == '.')) r.pop_back();
     if (r.empty()) r = "game";
+    static const char* dev[] = {"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+                                "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"};
+    std::string stem = r.substr(0, r.find('.'));
+    while (!stem.empty() && stem.back() == ' ') stem.pop_back();
+    for (char& c : stem) c = (char)std::tolower((unsigned char)c);
+    for (const char* d : dev) if (stem == d) { r = "_" + r; break; }   // Windows device names (NUL.gba) cannot be files
     return r;
 }
 
@@ -231,6 +237,7 @@ static bool http_get(const std::wstring& host, const std::wstring& path, std::st
                 DWORD n = 0;
                 if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &n)) { ok = false; *err = "download interrupted"; break; }
                 if (n == 0) break;
+                if (body->size() + n > (16u << 20)) { ok = false; *err = "listing too large"; break; }   // listings are small; never buffer a huge reply
                 body->append(buf.data(), n);
             }
         }
@@ -246,20 +253,25 @@ static bool http_get(const std::wstring& host, const std::wstring& path, std::st
  * failed fetch (offline) keeps using it. Worker threads only (may do one HTTP fetch). */
 static const wchar_t* kCommunityHost = L"raw.githubusercontent.com";
 static const wchar_t* kCommunityPath = L"/fatty8me2/retrohub/main/data/packs.json";
-static struct { std::mutex mu; std::vector<std::string> ids; bool have = false; } CM;
+static struct { std::mutex mu; std::vector<std::string> ids; std::chrono::steady_clock::time_point tried{}; bool tried_once = false; } CM;
 
 static void community_fetch() {
     std::string body, err;
     if (!http_get(kCommunityHost, kCommunityPath, &body, &err)) return;
     std::vector<std::string> ids;
     if (!parse_packs_json(body, &ids)) return;
-    std::lock_guard<std::mutex> lk(CM.mu); CM.ids = ids; CM.have = true;
+    std::lock_guard<std::mutex> lk(CM.mu); CM.ids = ids;
 }
 
 /* Every extra root: the community list first, then `user` links (de-duplicated). */
 static void all_roots(const std::vector<std::string>& user, std::vector<std::string>* out) {
     bool need = false;
-    { std::lock_guard<std::mutex> lk(CM.mu); need = !CM.have; }
+    {   // refetch at most every 10 minutes, so packs added to the list show up without a restart
+        std::lock_guard<std::mutex> lk(CM.mu);
+        auto t = std::chrono::steady_clock::now();
+        need = !CM.tried_once || t - CM.tried >= std::chrono::minutes(10);
+        if (need) { CM.tried = t; CM.tried_once = true; }
+    }
     if (need) community_fetch();   // best effort: a failure keeps the previous list
     std::vector<std::string> merged;
     { std::lock_guard<std::mutex> lk(CM.mu); merged = CM.ids; }
@@ -441,7 +453,7 @@ void index_refresh(const std::vector<std::string>& roots) {
                 std::string sys = lower_name(e.name);
                 { std::lock_guard<std::mutex> lk(IX.mu); IX.extra[sys] = true; }
                 if (list_into(e.id.c_str(), sys)) {
-                    std::lock_guard<std::mutex> lk(IX.mu); if (IX.state[sys] != 2) IX.state[sys] = 1;
+                    std::lock_guard<std::mutex> lk(IX.mu); IX.state[sys] = 1;   // a listed extra root makes the console known even if the built-in listing failed
                 } else {
                     std::lock_guard<std::mutex> lk(IX.mu); IX.state[sys] = 2;
                 }
