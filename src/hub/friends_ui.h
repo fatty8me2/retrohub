@@ -15,6 +15,7 @@ struct Notif {
     double t0 = 0;                 // ImGui time of arrival
     bool toast = true;             // toast still showing
     bool done = false;
+    bool expanded = false;         // invite toast: user opened the shrunk pill back into the full card
     bool ask_host = false;         // the ask is "can you host this?" (they do not own the game)
     std::string night_id;          // non-empty: a game night start card (gamenight_ui.cpp); Host / Join + Dismiss
     bool ask = false;              // "<name> wants to join your game": Accept sends them an invite (inv.game_* = the game they asked about)

@@ -51,6 +51,7 @@ struct Settings {
     bool show_friends = true;          // friends panel open
     bool tv_start = false;             // start RetroHub in TV mode (fullscreen 10-foot layout)
     bool tv_windows = false;           // mirrors the HKCU Run entry that starts with Windows into TV mode
+    bool played_online = false;        // set on the first online launch: Play Online collapses its "How it works" help
     bool notify_in_game = false;       // Windows toast for invites while a game is running (OFF by default: nothing may pop up over a game)
     int game_chat = 0;                 // chat on the game's OSD while playing: 0 off, 1 room chat only, 2 room chat and friend messages
     bool perf_overlay = false;         // quick menu: FPS / ping / delay / rollback overlay on the runner OSD
