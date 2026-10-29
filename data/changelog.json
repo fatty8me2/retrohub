@@ -1,7 +1,7 @@
 {
   "versions": [
     {
-      "version": "1.29.7",
+      "version": "1.29.12",
       "date": "2026-10-29",
       "title": "Drop into N64 party games",
       "new": [
@@ -11,6 +11,63 @@
       "fixed": []
     },
     {
+      "version": "1.29.11",
+      "date": "2026-10-29",
+      "title": "Pack install fix",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Installing a game from a shared pack failed with a blank error for games stored as a single file"
+      ]
+    },
+    {
+      "version": "1.29.10",
+      "date": "2026-10-29",
+      "title": "Shared packs for every console",
+      "new": [
+        "Shared packs now work for Wii U, 3DS, NES, SNES and PS2 too"
+      ],
+      "improved": [
+        "Pack console folders can use everyday names like \"Wii U\", \"GameCube\" or \"SNES\", and games can be single files instead of folders"
+      ],
+      "fixed": [
+        "Install could miss games whose names differ only by \"The\" or region tags"
+      ]
+    },
+    {
+      "version": "1.29.9",
+      "date": "2026-10-29",
+      "title": "Pack matching fix",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Install from shared packs said a game wasn't in any pack when the folder name differed slightly, like \"Pokemon Platinum\" vs \"Pokemon - Platinum Version (USA)\""
+      ]
+    },
+    {
+      "version": "1.29.8",
+      "date": "2026-10-29",
+      "title": "Pack links list",
+      "new": [],
+      "improved": [
+        "Shared game pack links in Settings are now a list with Add and Remove buttons"
+      ],
+      "fixed": []
+    },
+    {
+      "version": "1.29.7",
+      "date": "2026-10-29",
+      "title": "Shared pack fixes",
+      "new": [],
+      "improved": [
+        "New shared game packs now show up within about 10 minutes without restarting RetroHub"
+      ],
+      "fixed": [
+        "Greyed-out games could stay uninstallable because the shared pack list never loaded on a normal launch",
+        "Games from shared packs could stay unavailable when the built-in pack for that console couldn't be reached"
+      ]
+    },
+    {
       "version": "1.29.6",
       "date": "2026-10-28",
       "title": "Shared packs for everyone",
@@ -18,7 +75,9 @@
       "improved": [
         "Shared game packs now work for every player: pack links are shared with everyone automatically, so there is no need to paste them on each PC. Have a game nobody else has? Put it in your own public Google Drive folder (one subfolder per console, each game in its own folder) and send the link so it can be added to the shared list"
       ],
-      "fixed": []
+      "fixed": [
+        "Fixed: Windows Defender could wrongly flag RetroHub after updating (removing it and its Start menu shortcut)."
+      ]
     },
     {
       "version": "1.29.5",

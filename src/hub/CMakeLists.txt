@@ -25,6 +25,9 @@ target_include_directories(hub_friend_games_test PRIVATE ${CMAKE_CURRENT_SOURCE_
 add_executable(hub_gamepack_test test_gamepack.cpp gamepack.cpp)
 target_include_directories(hub_gamepack_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gamepack_test PRIVATE hubcommon winhttp)
+add_executable(qa_gamepack qa_gamepack.cpp gamepack.cpp)   # QA driver against a local fake (qa/gamepack_qa.py); not a ctest
+target_include_directories(qa_gamepack PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+target_link_libraries(qa_gamepack PRIVATE hubcommon winhttp)
 add_executable(hub_theme_test test_theme.cpp)
 target_include_directories(hub_theme_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hub_theme_test PRIVATE cxx_std_17)
@@ -143,10 +146,7 @@ add_custom_command(TARGET hub_shell_test POST_BUILD
 
 # ---- 3DS (Azahar) / Wii U (Cemu): external emulators, downloaded on demand (docs/EMULATORS.md) ----
 target_sources(RetroHub PRIVATE emulators.cpp netplay_3ds_run.cpp netplay_3ds_join.cpp)
-target_link_libraries(RetroHub PRIVATE ws2_32 dbghelp)
-# Release ships RetroHub.pdb next to the exe so hang reports (hang_watchdog.cpp) resolve function names and lines.
-target_compile_options(RetroHub PRIVATE $<$<CONFIG:Release>:/Zi> $<$<CONFIG:Release>:/FS>)
-target_link_options(RetroHub PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
+target_link_libraries(RetroHub PRIVATE ws2_32)
 target_link_libraries(RetroHub PRIVATE xinput setupapi)
 target_link_libraries(RetroHub PRIVATE hubminiz)
 add_executable(hub_emu_test test_emulators.cpp emulators.cpp)

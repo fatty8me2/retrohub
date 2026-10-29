@@ -1,5 +1,6 @@
 #include "app.h"
 #include "pcsx2.h"
+#include "gamepack.h"
 namespace hs = hub::saves;
 
 /* ---------- Settings ---------- */
@@ -237,12 +238,35 @@ void tab_online() {
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     settings_label("Shared game packs");
     text_wrapped_disabled("Greyed-out games can be installed from the shared packs - everyone gets the community packs automatically. Have a game nobody else has? "
-                          "Put it in your own public Google Drive folder - one subfolder per console (n64, gc, gba...), each game in its own folder - and send the "
-                          "link so it can be added to the shared list. Links below apply to this PC only.");
-    char pl[1024];
-    std::snprintf(pl, sizeof pl, "%s", A.st.pack_links.c_str());
-    ImGui::SetNextItemWidth(-1);
-    if (osk::input("##pack_links", "Google Drive folder links, separated by commas or spaces", pl, sizeof pl)) { A.st.pack_links = pl; mark_dirty(); }
+                          "Put it in your own public Google Drive folder and link the folder that directly contains the console subfolders "
+                          "(n64, gc, wiiu, 3ds, nds, gba, gbc, gb, ps1), each game in its own folder. Send the link so it can be added to the shared list. "
+                          "Links below apply to this PC only.");
+    {
+        const std::vector<std::string> ids = hubgp::links_split(A.st.pack_links);
+        if (ids.empty()) text_wrapped_disabled("No links yet.");
+        std::string to_remove;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            ImGui::PushID((int)i);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(hubgp::link_label(ids[i]).c_str());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("https://drive.google.com/drive/folders/%s", ids[i].c_str());
+            ImGui::SameLine();
+            if (button("Remove", ImVec2(0, 0), false, true, ui::Icon::Close)) to_remove = ids[i];
+            ImGui::PopID();
+        }
+        if (!to_remove.empty() && hubgp::links_remove(&A.st.pack_links, to_remove)) { mark_dirty(); set_toast("Link removed.", true, 3.0); }
+    }
+    static char pl_new[1024] = "";
+    ImGui::SetNextItemWidth(-sp(14.f));
+    osk::input("##pack_link_new", "Paste a Google Drive folder link", pl_new, sizeof pl_new);
+    ImGui::SameLine();
+    if (button("Add", ImVec2(0, 0), false, pl_new[0] != 0, ui::Icon::Plus)) {
+        int found = 0;
+        int added = hubgp::links_add(&A.st.pack_links, pl_new, &found);
+        if (found == 0) set_toast("That doesn't look like a Google Drive folder link.", false, 4.0);
+        else if (added == 0) set_toast("Already added.", false, 3.0);
+        else { mark_dirty(); set_toast(added == 1 ? "Link added." : std::to_string(added) + " links added.", true, 3.0); pl_new[0] = 0; }
+    }
     std::string mycode = fr_my_code();
     if (!mycode.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));

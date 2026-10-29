@@ -27,6 +27,10 @@ std::string decode_entities(const std::string& s);
 /* Pure: parse the embeddedfolderview HTML of a Drive folder into entries (order preserved). */
 std::vector<Entry> parse_folder_html(const std::string& html);
 
+/* Pure: the key a friend's game title and a pack folder name are matched on: norm_title plus "version"/"edition"
+ * dropped and e-acute folded, so "Pokemon Platinum" matches the folder "Pokemon - Platinum Version (USA)". */
+std::string pack_key(const std::string& title);
+
 /* Pure: a title made safe for use as a folder name (Windows-illegal characters become spaces, runs collapsed). */
 std::string safe_name(const std::string& t);
 
@@ -34,10 +38,26 @@ std::string safe_name(const std::string& t);
  * embeddedfolderview?id=<id>, or bare ids. Order preserved, duplicates dropped. */
 std::vector<std::string> parse_links(const std::string& text);
 
+/* Pure: the stored pack_links string <-> a list of canonical folder ids. Reading accepts the old comma / space /
+ * newline separated text (ids or full URLs); writing is space-separated ids. */
+std::vector<std::string> links_split(const std::string& stored);
+std::string links_join(const std::vector<std::string>& ids);
+/* Add every folder id found in `pasted` to `stored` (links_add). Returns how many were new; *found (optional) = how many
+ * valid ids the text held (0 = nothing usable). Result is re-canonicalised. */
+int links_add(std::string* stored, const std::string& pasted, int* found = nullptr);
+/* Remove one id; false when it was not there. */
+bool links_remove(std::string* stored, const std::string& id);
+/* Pure: a short readable label for a folder id ("1abcDEFg...wxyz" for long ids). */
+std::string link_label(const std::string& id);
+
 /* Pure: the shared community pack list (data/packs.json on GitHub, fetched by every client so a link added there
  * is installable for everyone without per-user setup). Accepts {"packs":[{"id":"...","name":"..."}]} or a bare
  * array of ids / objects. Returns the valid, de-duplicated folder ids (bad ids dropped); false when not that JSON. */
 bool parse_packs_json(const std::string& text, std::vector<std::string>* out);
+
+/* Pure: the console short code a pack subfolder name means ("Wii u" -> wiiu, "GameCube" -> gc, "SNES" -> snes,
+ * "PS2" -> ps2 ...), or "" when it names no console. */
+std::string console_alias(const std::string& name);
 
 /* Pure: true when `name` is a console short code usable as a pack subfolder (n64, gc, wiiu, 3ds, nds, gba, gbc, gb, ps1). */
 bool console_code(const std::string& name);

@@ -11,6 +11,21 @@ using namespace hubgp;
 int main()
 {
     /* decode_entities */
+    CHECK(console_alias("Wii u") == "wiiu");
+    CHECK(console_alias("GameCube") == "gc");
+    CHECK(console_alias("SNES") == "snes");
+    CHECK(console_alias("NES") == "nes");
+    CHECK(console_alias("PS2") == "ps2");
+    CHECK(console_alias("3ds") == "3ds");
+    CHECK(console_alias("NDS") == "nds");
+    CHECK(console_alias("Tools") == "");
+    CHECK(pack_key("The Legend of Zelda: A Link to the Past") == pack_key("Legend of Zelda, The - A Link to the Past (USA)"));
+    CHECK(pack_key("Pokemon X") == pack_key("Pokemon X (USA) (En,Ja,Fr,De,Es,It,Ko)"));
+    CHECK(pack_key("Pokemon Platinum") == pack_key("Pokemon - Platinum Version (USA)"));
+    CHECK(pack_key("Pokemon Black 2") == pack_key("Pokemon - Black Version 2 (USA, Europe) (NDSi Enhanced)"));
+    CHECK(pack_key("Pokemon Black") != pack_key("Pokemon - Black Version 2 (USA, Europe)"));
+    CHECK(pack_key("Pok\xc3\xa9" "mon Pearl") == pack_key("Pokemon - Pearl Version (USA) (Rev 5)"));
+    CHECK(pack_key("Super Mario 3D World") == pack_key("Super Mario 3D World (USA) (En,Fr,Es) (Rev 2)"));
     CHECK(decode_entities("plain") == "plain");
     CHECK(decode_entities("") == "");
     CHECK(decode_entities("Yoshi&#39;s Story (U) [!]") == "Yoshi's Story (U) [!]");
@@ -45,6 +60,9 @@ int main()
     CHECK(safe_name("a<b>c:d\"e/f\\g|h?i*j") == "a b c d e f g h i j");
     CHECK(safe_name("  ..name..  ") == "name");
     CHECK(safe_name("<>") == "game");
+    CHECK(safe_name("NUL.gba") == "_NUL.gba");
+    CHECK(safe_name("com1") == "_com1");
+    CHECK(safe_name("Console.gba") == "Console.gba");
 
     /* parse_links: Drive URLs (folders/, old folder/, embeddedfolderview), bare ids, dedupe */
     CHECK(parse_links("").empty());
@@ -63,6 +81,23 @@ int main()
     {   // the same id via URL and bare collapses to one; "embeddedfolderview" (a URL word) is not an id
         auto v = parse_links("https://drive.google.com/embeddedfolderview?id=1SameFolderIdHere123456 and 1SameFolderIdHere123456");
         CHECK(v.size() == 1 && v[0] == "1SameFolderIdHere123456");
+    }
+
+    /* stored pack_links helpers */
+    {
+        std::string s = "1OldCommaIdOne123456,1OldCommaIdTwo123456  1OldCommaIdOne123456";
+        auto v = links_split(s);
+        CHECK(v.size() == 2 && links_join(v) == "1OldCommaIdOne123456 1OldCommaIdTwo123456");
+        int found = -1;
+        CHECK(links_add(&s, "nothing here", &found) == 0 && found == 0);
+        CHECK(links_add(&s, "https://drive.google.com/drive/folders/1OldCommaIdTwo123456?usp=sharing", &found) == 0 && found == 1);
+        CHECK(links_add(&s, "https://drive.google.com/drive/folders/1NewFolderIdAAA123456 https://drive.google.com/drive/folders/1NewFolderIdBBB123456", &found) == 2 && found == 2);
+        CHECK(links_split(s).size() == 4 && s == "1OldCommaIdOne123456 1OldCommaIdTwo123456 1NewFolderIdAAA123456 1NewFolderIdBBB123456");
+        CHECK(links_remove(&s, "1OldCommaIdTwo123456") && links_split(s).size() == 3);
+        CHECK(!links_remove(&s, "1NotThereAtAll123456"));
+        std::string e; CHECK(links_split(e).empty() && links_join({}).empty());
+        CHECK(link_label("short_id_12345") == "short_id_12345");
+        CHECK(link_label("1NewFolderIdAAA1234567890") == "1NewFolder...567890");
     }
 
     /* parse_packs_json: the shared community list (data/packs.json) */
@@ -86,7 +121,7 @@ int main()
 
     /* console_code: the pack subfolder names */
     CHECK(console_code("n64") && console_code("GBC") && console_code("3ds"));
-    CHECK(!console_code("gbx") && !console_code("") && !console_code("nintendo 64"));
+    CHECK(!console_code("gbx") && !console_code("") && console_code("nintendo 64"));
 
     /* sys_folder: the consoles in the shared pack */
     CHECK(std::string(sys_folder("n64")) == "19_2xjH7Ps7epabxUrr9sfxz69kuJGp3W");
