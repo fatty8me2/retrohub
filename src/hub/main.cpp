@@ -393,6 +393,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     invite_srv.stop();
     A.lobby.stop();
     FR.cli.stop();
+    cloud_gate_cancel();   // the gate thread may be waiting on a background cloud job: stop it before the joins
     if (A.scan_th.joinable()) A.scan_th.join();
     if (A.job.th.joinable()) A.job.th.join();
     if (A.cloud_gate.th.joinable()) A.cloud_gate.th.join();

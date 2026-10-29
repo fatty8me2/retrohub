@@ -178,6 +178,9 @@ struct CloudGate {
     std::function<void()> proceed;                      // continues the launch (UI thread)
     std::string pass_key;                               // the gate for this game already ran: the re-entered play_entry skips it
     std::function<void()> on_ask;                       // UI lane: called once when a decision is needed (optional)
+    std::atomic<bool> cancel{false};                    // user Cancel / app exit: the gate thread stops waiting for a busy game
+    std::atomic<bool> waiting{false};                   // the gate thread is waiting for a background cloud job (Cancel is offered)
+    std::atomic<int> abort_why{0};                      // 1 = cancelled, 2 = the wait timed out (set by the gate thread)
 };
 
 struct VaultRow { hubui::VaultMeta m; };
@@ -552,6 +555,7 @@ bool cloud_bg_busy(const std::string& gkey);            // gkey "" = any job
 int  cloud_bg_generation();                             // bumps whenever a job finished (UI refreshes engine state)
 void cloud_bg_poll();                                   // every frame (UI thread): reclaims finished threads
 void cloud_bg_join_all();                               // before the engine stops
+void cloud_gate_cancel();                               // stop waiting for a busy game (user Cancel / app exit)
 void cloud_gate_tick();                                 // every frame (UI thread)
 void cloud_gate_choose_conflict(hub::saves::ConflictChoice c);
 void cloud_gate_choose_lease(hub::saves::LeaseChoice c);

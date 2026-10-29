@@ -75,8 +75,7 @@ static int run_connecting_case() {
         auto c0 = std::chrono::steady_clock::now();
         ws.close();
         double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - c0).count();
-        std::printf("connecting: close() after %d ms took %.2f s
-", delay, secs);
+        std::printf("connecting: close() after %d ms took %.2f s\n", delay, secs);
         if (secs >= 3.0) ++bad;
     }
     return bad ? 1 : 0;

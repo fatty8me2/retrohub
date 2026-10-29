@@ -388,7 +388,8 @@ void poll_process() {
             A.run.cloud_started = false;
             /* The lease release is an HTTP call (up to 5 s): never on the frame thread. Tracked: relaunch of this game waits for it, shutdown joins it. */
             hub::saves::GameId cid{A.run.system_short, A.run.key};
-            cloud_bg_run(cid.gkey(), [cid]() { hub::saves::cloud_game_exited(cid); });
+            if (!cloud_bg_run(cid.gkey(), [cid]() { hub::saves::cloud_game_exited(cid); }))
+                hub::saves::cloud_game_exited(cid);   // shutting down (window hidden): do it here so the lease release is never dropped
         }   // after touch_game: pushes this game in the background
         hub::flush_library_state();
         if (secs >= 1) fr_playtime_session_ended();
