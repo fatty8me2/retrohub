@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.29.10",
+      "date": "2026-10-29",
+      "title": "Shared packs for every console",
+      "new": [
+        "Shared packs now work for Wii U, 3DS, NES, SNES and PS2 too"
+      ],
+      "improved": [
+        "Pack console folders can use everyday names like \"Wii U\", \"GameCube\" or \"SNES\", and games can be single files instead of folders"
+      ],
+      "fixed": [
+        "Install could miss games whose names differ only by \"The\" or region tags"
+      ]
+    },
+    {
       "version": "1.29.9",
       "date": "2026-10-29",
       "title": "Pack matching fix",
