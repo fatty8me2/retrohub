@@ -30,7 +30,7 @@ static std::string S(const fs::path& p) { auto u = p.u8string(); return std::str
 namespace hubgp {
 
 std::string pack_key(const std::string& title) {
-    std::string t;   // fold UTF-8 e-acute ("PokÃ©mon") to plain e before normalising
+    std::string t;   // fold UTF-8 e-acute ("Pokémon") to plain e before normalising
     for (size_t i = 0; i < title.size(); ++i) {
         if ((unsigned char)title[i] == 0xC3 && i + 1 < title.size() && ((unsigned char)title[i + 1] == 0xA9 || (unsigned char)title[i + 1] == 0x89)) { t += 'e'; ++i; }
         else t += title[i];
