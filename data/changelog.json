@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.13",
+      "date": "2026-10-29",
+      "title": "Wii U online controls fix",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Wii U online: a player changed by hand in Cemu's controller settings could take over a friend's controller, so the host controlled both characters"
+      ]
+    },
+    {
       "version": "1.29.12",
       "date": "2026-10-29",
       "title": "3D World freeze fix",
