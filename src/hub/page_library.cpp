@@ -10,7 +10,14 @@ void go_add_rom(const GameInfo& g) {
     push_toast("Put your " + g.title + " ROM in a ROM folder, then press Rescan.", ui::ACCENT, 7.0);
 }
 
+/* The user's own library is empty: nothing scanned yet except (maybe) the bundled Smash 64 game. */
+static bool own_library_empty() {
+    for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey) return false;
+    return true;
+}
+
 void home_shelves() {
+    const bool add_lead = own_library_empty();   // the "Add your own games" tile only while there are no games of your own
     float avail = ImGui::GetContentRegionAvail().x;
     float gap = sp(2.f), bleed = sp(1.5f);
     float max_w = std::max(sp(25.f), std::min(sp(37.5f), avail * 0.2f));
@@ -24,7 +31,7 @@ void home_shelves() {
         const hubui::Shelf& sh = A.shelves[si];
         bool is_console = sh.id.compare(0, 8, "console:") == 0 && sh.id != "console:other";   // unknown systems have no filter chip
         bool see_all = false;
-        bool overflow = hubui::shelf_max_scroll((int)sh.items.size() + (si == 0 ? 1 : 0), tw, gap, bleed, avail) > 0;
+        bool overflow = hubui::shelf_max_scroll((int)sh.items.size() + (si == 0 && add_lead ? 1 : 0), tw, gap, bleed, avail) > 0;
         shelf_header(sh.title.c_str(), is_console ? "See all" : "", bleed, (int)sh.items.size(), is_console ? &see_all : nullptr, overflow);
         if (see_all) {   // jump to All Games filtered to this console
             A.view = LibView::All;
@@ -35,7 +42,7 @@ void home_shelves() {
             A.vis_dirty = true;
         }
         bool recent = sh.id == "recent";
-        const int lead = si == 0 ? 1 : 0;   // the first shelf starts with the "Add your own games" tile
+        const int lead = si == 0 && add_lead ? 1 : 0;   // the first shelf starts with the "Add your own games" tile
         shelf_strip("shelf_" + sh.id, (int)sh.items.size() + lead, tw, th, [&](int i, ImVec2 sz) {
             if (lead && i == 0) return add_games_tile(sz);
             i -= lead;
@@ -387,7 +394,9 @@ void library_top_bar() {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax - total));
     if (dice) { surprise_ui_button(bh); ImGui::SameLine(0, sp(1.f)); }
     ImGui::BeginDisabled(A.scanning);
-    if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, A.scanning ? "Scanning..." : "Rescan ROM folders")) start_scan();
+    if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, nullptr)) start_scan();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible))
+        ImGui::SetTooltip("%s", A.scanning ? "Scanning..." : "Rescan library");
     ImGui::EndDisabled();
     ImGui::SameLine(0, sp(1.f));
     add_games_header_button(bh);
@@ -1005,7 +1014,7 @@ void page_library() {
         all_games_view();
         return;
     }
-    if (A.st.rom_folders.empty() && !A.scanning) {   // only the bundled game: ask for game folders
+    if (own_library_empty() && !A.scanning) {   // only the bundled game: ask for game folders
         begin_panel("add_folders_card");
         ImGui::PushFont(ui::F.bold);
         ImGui::TextUnformatted("Add your game folders");

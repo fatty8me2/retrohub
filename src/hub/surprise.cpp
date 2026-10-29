@@ -200,9 +200,9 @@ void surprise_ui_button(float size) {
         static bool done = false;
         if (!done && SH.el > 1.5 && !A.lib.empty() && !A.scanning) { done = true; start_spin(); }
     }
-    const bool clicked = ui::icon_button("surprise", ui::Icon::None, size, SU.ph != Spin::Idle,
-                                        "Surprise me: pick a game you haven't played lately");
+    const bool clicked = ui::icon_button("surprise", ui::Icon::None, size, SU.ph != Spin::Idle, nullptr);
     const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+    if (ImGui::IsItemHovered() || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible)) ImGui::SetTooltip("Surprise me");
     const ImVec2 c = (ImGui::GetItemRectMin() + ImGui::GetItemRectMax()) * 0.5f;
     draw_die(ImGui::GetWindowDrawList(), c, size * 0.42f, SU.ph != Spin::Idle ? IM_COL32_WHITE : (hot ? IM_COL32_WHITE : ui::TEXT2));
     if (clicked && SU.ph == Spin::Idle) start_spin();
