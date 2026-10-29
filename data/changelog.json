@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.16",
+      "date": "2026-10-29",
+      "title": "Shared packs find every game",
+      "new": [],
+      "improved": [
+        "Install from shared packs matches more folder names: \"007 - GoldenEye\" finds GoldenEye 007, \"Legend of Zelda, The - The Wind Waker\" finds Zelda: The Wind Waker, and Game Boy games are found in Game Boy Color folders"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.29.15",
       "date": "2026-10-29",
       "title": "Wii U stream freeze fix",
