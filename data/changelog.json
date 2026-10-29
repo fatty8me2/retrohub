@@ -3,11 +3,12 @@
     {
       "version": "1.29.5",
       "date": "2026-10-28",
-      "title": "More freeze fixes",
+      "title": "No more freezes",
       "new": [],
       "improved": [],
       "fixed": [
-        "RetroHub could still freeze for several seconds when cloud-save actions (Resolve, Keep in cloud, Remove), ending a game, or hosting an online game waited on a slow connection; these now run in the background"
+        "RetroHub could still freeze for several seconds when cloud-save actions (Resolve, Keep in cloud, Remove), ending a game, or hosting an online game waited on a slow connection; these now run in the background",
+        "Menus no longer stall while RetroHub reads or writes the cover-art cache, friend lists, the save vault, game details or file dates; that disk work now happens in the background"
       ]
     },
     {
