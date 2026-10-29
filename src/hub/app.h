@@ -206,6 +206,7 @@ struct App {
     std::map<std::string, int> lib_index;         // key -> index in lib
     std::map<std::string, hub::GameState> lib_state;   // cached game_state per key
     std::string sys_filter;                       // "" = all, else system short
+    bool friends_chip = true;                     // Library top-bar "Friends' games" chip: session-only view filter (never saved); ghosts show when this AND Settings show_friend_games
     bool online_only = false;                     // All Games: only games that are fun online
     std::vector<hubui::ConsoleSection> secs;     // All Games sections (cached by rebuild_vis)
     std::map<std::string, int> chip_counts;      // per-console counts under the current search + Online toggle

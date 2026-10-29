@@ -29,11 +29,16 @@ const hubui::fg::Ghost* find_ghost(const std::string& id) {
 
 void rebuild_ghosts() {
     A.ghosts.clear();
-    if (!A.st.show_friend_games || A.lib.empty()) return;   // nothing owned yet: the first-run "find your games" screen stays clean
     std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>> libs;
-    fr_library_collect(&libs);
-    if (libs.empty()) return;
-    A.ghosts = hubui::fg::build_ghosts(owned_snapshot(), libs);
+    if (A.st.show_friend_games && A.friends_chip) fr_library_collect(&libs);   // an empty own library still gets ghosts: new users install from shared packs
+    if (!libs.empty()) A.ghosts = hubui::fg::build_ghosts(owned_snapshot(), libs);
+    static std::string last;
+    const size_t nf = fr_friends().size();
+    std::string line = "ghosts: friends=" + std::to_string(nf) + " lists_held=" + std::to_string(libs.size()) +
+                       " built=" + std::to_string(A.ghosts.size()) + " own=" + std::to_string(A.lib.size());
+    std::string why = hubui::fg::empty_reason(A.st.show_friend_games && A.friends_chip, nf, libs.size(), A.ghosts.size());
+    if (!why.empty()) line += " (empty: " + why + ")";
+    if (line != last) { last = line; online_log(line); }
 }
 
 /* ---------- GamePack: install a greyed-out game from the shared Drive folder (gamepack.cpp) ---------- */
@@ -157,8 +162,8 @@ void ghost_tick() {
     /* a friend's list changed (or the friends list / chip did): recompose the library */
     uint32_t ep = fr_library_epoch();
     size_t nf = fr_friends().size();
-    if (ep != seen_epoch || nf != seen_friends || seen_chip != A.st.show_friend_games) {
-        seen_epoch = ep; seen_friends = nf; seen_chip = A.st.show_friend_games;
+    if (ep != seen_epoch || nf != seen_friends || seen_chip != (A.st.show_friend_games && A.friends_chip)) {
+        seen_epoch = ep; seen_friends = nf; seen_chip = A.st.show_friend_games && A.friends_chip;
         A.vis_dirty = true;
     }
 

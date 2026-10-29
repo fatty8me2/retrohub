@@ -266,6 +266,7 @@ void tab_online() {
     if (ImGui::Checkbox("Show my games to friends", &A.st.share_games)) mark_dirty();
     text_wrapped_disabled("Friends see the names of your games greyed out in their library, so they can ask you to host. Only titles are shared, never game files. Turn off to hide your list.");
     if (ImGui::Checkbox("Show friends' games in my library", &A.st.show_friend_games)) { mark_dirty(); A.vis_dirty = true; }
+    ImGui::TextDisabled("%s", hubui::fg::lists_held_text(fr_library_lists_held(), fr_friends().size()).c_str());
     std::string mycode = fr_my_code();
     if (!mycode.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));

@@ -82,6 +82,13 @@ int main()
     CHECK(!gate.poll("c", 14000));
     CHECK(gate.poll("c", 15100));
 
+    CHECK(lists_held_text(2, 5) == "Game lists from friends: 2 of 5");
+    CHECK(empty_reason(true, 3, 2, 4).empty());
+    CHECK(empty_reason(false, 3, 2, 0) == "setting off");
+    CHECK(empty_reason(true, 0, 0, 0) == "no friends");
+    CHECK(empty_reason(true, 3, 0, 0) == "no lists held");
+    CHECK(empty_reason(true, 3, 2, 0) == "friends own nothing you do not have");
+
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("friend_games: ok\n");
     return 0;

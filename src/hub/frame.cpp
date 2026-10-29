@@ -142,7 +142,7 @@ void draw_footer(float h) {
         hints = {{"A", "Enter", "Select"}, {"B", "Esc", "Close"}};
     } else if (A.st.show_friends && FR.panel_focused) {
         hints = {{"A", "Enter", "Actions"}, {"X", "", "Join / invite"}, {"Y", "", "Menu"}, {"B", "Esc", "Close"}};
-    } else if (A.page == Page::Library && !A.lib.empty()) {
+    } else if (A.page == Page::Library && (!A.lib.empty() || !A.ghosts.empty())) {
         hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}, {"R3", "S", "Add to shelf"}};
         if (A.view == LibView::All) hints.push_back({"B", "Esc", "Back"});
     } else if (A.page == Page::Library) {
@@ -215,8 +215,8 @@ void global_input() {
             A.page = Page::Library;
         }
     }
-    if (A.page == Page::Library && !A.lib.empty() && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false)) cycle_sort(1);
-    if (A.page == Page::Library && !A.lib.empty() && A.sel_game.empty() && find_ghost(A.sel_ghost) &&
+    if (A.page == Page::Library && (!A.lib.empty() || !A.ghosts.empty()) && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false)) cycle_sort(1);
+    if (A.page == Page::Library && A.sel_game.empty() && find_ghost(A.sel_ghost) &&
         (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl))) A.show_ghost = true;
     if (A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl)) A.show_details = true;

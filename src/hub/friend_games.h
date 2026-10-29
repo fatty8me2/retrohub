@@ -117,6 +117,22 @@ inline std::string badge_text(const std::vector<std::string>& names, size_t max_
     return o + " have this";
 }
 
+/* Diagnostics line for Settings > Online > Friends: how many friends' shared game lists this PC holds. */
+inline std::string lists_held_text(size_t held, size_t friends)
+{
+    return "Game lists from friends: " + std::to_string(held) + " of " + std::to_string(friends);
+}
+
+/* Why the ghost list is empty ("" when it is not). Written to the hub log when the ghosts are rebuilt. */
+inline std::string empty_reason(bool setting_on, size_t friends, size_t held, size_t ghosts)
+{
+    if (ghosts > 0) return "";
+    if (!setting_on) return "setting off";
+    if (friends == 0) return "no friends";
+    if (held == 0) return "no lists held";
+    return "friends own nothing you do not have";
+}
+
 /* The library snapshot to publish: everything except `skip_key` (the native Smash entry). */
 inline std::vector<hubnet::LibGame> publish_list(const std::vector<Owned>& mine, const std::string& skip_key = "")
 {
