@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.14",
+      "date": "2026-10-29",
+      "title": "Wii U player 2-4 controls fix",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Wii U players 2-4 had the d-pad and sticks mixed up (stick up pressed a stick click, d-pad up pressed Home), online and on the same PC"
+      ]
+    },
+    {
       "version": "1.29.13",
       "date": "2026-10-29",
       "title": "Wii U online controls fix",
