@@ -104,7 +104,11 @@ void page_saves() {
 
     begin_panel("vault");
     section_title("Save vault");
-    text_wrapped_disabled(hub::saves::vault_dir());
+    {   // shortened path ("...\folder\name"), the full path in a hover tooltip
+        const std::string full = hub::saves::vault_dir();
+        ImGui::TextDisabled("%s", hubui::short_path(full).c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", full.c_str());
+    }
     text_wrapped_disabled("Every game's in-game saves and save states live here. Copy this folder to move everything by hand.");
     if (button("Open vault folder", ImVec2(0, 0))) open_in_explorer(hub::saves::vault_dir());
     end_panel();

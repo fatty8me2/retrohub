@@ -289,8 +289,10 @@ void games_panel() {
     section_title("Games in the cloud (" + std::to_string(C.games.size()) + ")");
     begin_panel("cloud_games");
     if (A.st.cloud_enabled && C.games.empty()) {
-        ImGui::TextDisabled(!C.acct.known ? "Checking your cloud saves..." : !C.acct.online ? "Offline: your cloud games show up here once you are back online."
-                                                                                        : "Nothing yet. Play a game and its saves are backed up here automatically.");
+        /* while the account is still being read the "Cloud saves" box above already says "Checking your cloud saves...": say it once */
+        if (C.acct.known)
+            ImGui::TextDisabled(!C.acct.online ? "Offline: your cloud games show up here once you are back online."
+                                               : "Nothing yet. Play a game and its saves are backed up here automatically.");
     } else if (!A.st.cloud_enabled) {
         ImGui::TextDisabled("%s. Turn it back on above to see your games here.", paused_text(C.acct.queued_games).c_str());
     }

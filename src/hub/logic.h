@@ -76,7 +76,7 @@ struct Settings {
     bool ps1_openbios = false;         // play PlayStation games with the bundled OpenBIOS when no real BIOS is found
     std::string cemu_exe;              // user-chosen Cemu.exe ("" = find an existing install, else download one)
     bool cemu_manage_controls = true;  // "Let RetroHub manage Wii U controls" for the user's own Cemu (backup made first)
-    int settings_tab = 0;             // last Settings tab (0 General .. 5 Account), remembered
+    int settings_tab = 0;             // last Settings tab (0 General, 1 Online, 2 Video & Games, 3 Account), remembered
     std::string ps2_bios_dir;         // user-chosen folder with the PS2 BIOS ("" = look next to the games / Desktop\Everything\BIOS)
 };
 std::string settings_to_json(const Settings& s);
@@ -579,4 +579,21 @@ inline std::string lobby_ident_json(const std::string& uid, const std::string& s
 template <class... M> void host_left_remap(int from_slot, M&... maps) { (remap_slot_key(maps, from_slot, 0), ...); }
 inline std::string host_changed_text(const std::string& name, bool me) { return me ? "You are now the host" : name + " is now the host"; }
 
+
+/* Shortens a folder path to its last keep folders behind three dots (RetroHub saves folder under AppData). Short paths come back unchanged. */
+inline std::string short_path(const std::string& p, int keep = 2) {
+    std::string t = p;
+    while (t.size() > 1 && (t.back() == '\\' || t.back() == '/')) t.pop_back();
+    int seen = 0;
+    for (size_t i = t.size(); i-- > 0;) {
+        if (t[i] != '\\' &&t[i] != '/') continue;
+        if (++seen == keep) {
+            /* only shorten when something real is dropped (more than a drive/root before the kept part) */
+            std::string head = t.substr(0, i);
+            if (head.find_first_of("\\/") == std::string::npos) return t;
+            return "..." + t.substr(i);
+        }
+    }
+    return t;
+}
 } // namespace hubui

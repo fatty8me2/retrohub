@@ -97,7 +97,7 @@ static const ImU32 COL_REMIX = IM_COL32(250, 150, 40, 255);
 
 /* ============================ types ============================ */
 
-enum class Page { Library, Online, Saves, Controllers, Settings, About, Changelog };
+enum class Page { Library, Online, Saves, Controllers, Settings, About /* the "Updates" page: version, update button, patch notes */ };
 
 enum class LibView { Home, All };
 
@@ -1004,7 +1004,7 @@ void gamepack_shutdown();   // app exit: cancel + join the install job
 /* ---- page_about.cpp ---- */
 void draw_overlays();
 void page_about();
-void page_changelog();          // page_changelog.cpp: What's new (patch notes)
+void draw_changelog_list();    // page_changelog.cpp: the patch notes list (drawn inside the Updates page)
 void draw_changelog_popup();    // call every frame: the one-time "What's new in vX" popup
 
 

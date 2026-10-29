@@ -43,11 +43,11 @@ foreach ($sz in "1280x800", "1600x1000") {
   $w = $sz.Split("x")[0]
   Shot "details_$w" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SELECT_GAME = "fake:1"; HUB_SHOT_KEYS = "i"; HUB_SHOT_SIZE = $sz; HUB_SHOT_TAB = "0" }
   Shot "home_$w" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_SIZE = $sz }
-  Shot "account_in_$w" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_PAGE = "settings:5"; HUB_SHOT_SIZE = $sz }
-  Shot "account_out_$w" @{ HUB_CHEEVOS_CFG = "$mock\off.json"; HUB_SHOT_PAGE = "settings:5"; HUB_SHOT_SIZE = $sz }
+  Shot "account_in_$w" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_PAGE = "settings:3"; HUB_SHOT_SIZE = $sz }
+  Shot "account_out_$w" @{ HUB_CHEEVOS_CFG = "$mock\off.json"; HUB_SHOT_PAGE = "settings:3"; HUB_SHOT_SIZE = $sz }
 }
 # Tall window (everything below the fold) and the masked password keyboard.
 Shot "home_tall" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_SIZE = "1280x2600" }
-Shot "account_out_tall" @{ HUB_CHEEVOS_CFG = "$mock\off.json"; HUB_SHOT_PAGE = "settings:5"; HUB_SHOT_SIZE = "1280x2600" }
-Shot "account_in_tall" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_PAGE = "settings:5"; HUB_SHOT_SIZE = "1280x2600" }
+Shot "account_out_tall" @{ HUB_CHEEVOS_CFG = "$mock\off.json"; HUB_SHOT_PAGE = "settings:3"; HUB_SHOT_SIZE = "1280x2600" }
+Shot "account_in_tall" @{ HUB_CHEEVOS_CFG = "$mock\on.json"; HUB_SHOT_PAGE = "settings:3"; HUB_SHOT_SIZE = "1280x2600" }
 Shot "osk_password" @{ HUB_SHOT_OSK = "password:hunter2secret" }

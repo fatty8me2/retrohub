@@ -295,7 +295,7 @@ void draw_capture_modal() {
 void draw_pads_panel() {
     begin_panel("padlist");
     section_title("Connected controllers");
-    ImGui::TextDisabled("Port 1 is Player 1. Reorder them here; the order is remembered for every system.");
+    ImGui::TextDisabled("Port 1 is Player 1. Use Assign players, or Make Player 1 on a row; the order is remembered for every system.");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (button("Assign players", ImVec2(0, sp(4.5f)), false, true, ui::Icon::Gamepad)) start_assign();
     ImGui::SameLine(0, sp(1.f));
@@ -320,14 +320,8 @@ void draw_pads_panel() {
         if (ImGui::InvisibleButton("row", ImVec2(std::max(1.f, rw * 0.35f), rh), ImGuiButtonFlags_EnableNav)) A.pad_sel = (int)i;
         if (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible) ui::focus_ring(dl, o, o + ImVec2(rw, rh), sp(1.5f));
         // buttons from the right edge
-        float bw = sp(11.f), gap = sp(0.75f), bh = rh - sp(1.f);
+        float gap = sp(0.75f), bh = rh - sp(1.f);
         float x = o.x + rw - sp(0.5f);
-        ImGui::SetCursorScreenPos(ImVec2(x - bw, o.y + sp(0.5f)));
-        if (button("Move down", ImVec2(bw, bh), false, i + 1 < CTL.pads.size())) { move_from = (int)i; move_to = (int)i + 1; }
-        x -= bw + gap;
-        ImGui::SetCursorScreenPos(ImVec2(x - bw, o.y + sp(0.5f)));
-        if (button("Move up", ImVec2(bw, bh), false, i > 0)) { move_from = (int)i; move_to = (int)i - 1; }
-        x -= bw + gap;
         if (i > 0) {
             float aw = sp(15.f);
             ImGui::SetCursorScreenPos(ImVec2(x - aw, o.y + sp(0.5f)));
@@ -506,6 +500,35 @@ void draw_mapping_panel() {
             ctl_save();
         }
         if (!custom) { ImGui::SameLine(0, sp(1.5f)); ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Already using the defaults."); }
+    }
+    end_panel();
+}
+
+/* Wii U (Cemu) controls for a Cemu the user already has (moved here from the old Settings > Controllers tab). */
+void draw_cemu_panel() {
+    static hubemu::Install cm;
+    static double looked_at = -100;
+    static std::string looked_cemu;
+    if (ImGui::GetTime() - looked_at > 2.0 || looked_cemu != A.st.cemu_exe) {
+        std::string wiiu_game;
+        for (auto& g : A.lib) if (g.system == hub::System::WiiU) { wiiu_game = g.path; break; }
+        cm = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, wiiu_game);
+        looked_at = ImGui::GetTime();
+        looked_cemu = A.st.cemu_exe;
+    }
+    begin_panel("cemu_ctl");
+    section_title("Wii U (Cemu) controls");
+    if (cm.exe.empty() || cm.managed) text_wrapped_disabled("These options apply to a Cemu you already have installed; RetroHub's own Cemu always uses this page.");
+    if (!cm.exe.empty() && !cm.managed) {
+        if (ImGui::Checkbox("Let RetroHub manage Wii U controls", &A.st.cemu_manage_controls)) mark_dirty();
+        text_wrapped_disabled("On: before each game RetroHub writes controller profiles from this page into your Cemu (Xbox and other "
+                              "SDL pads). Your original controllerProfiles folder is first copied once to controllerProfiles.retrohub-backup. "
+                              "Off: your Cemu controls are never touched.");
+        if (button("Restore my Cemu controls", ImVec2(0, 0))) {
+            const char* ad = std::getenv("APPDATA");
+            bool ok = hubemu::cemu_restore_controls(hubemu::cemu_user_data_dir(cm.dir, ad ? ad : ""));
+            set_toast(ok ? "Your Cemu controls were restored from the backup." : "No RetroHub backup of your Cemu controls exists yet.", ok, 4.0);
+        }
     }
     end_panel();
 }
@@ -702,6 +725,7 @@ void page_controllers() {
     }
     draw_mapping_panel();
     if (!game_mode) draw_test_panel();
+    if (!game_mode) draw_cemu_panel();
     draw_capture_modal();
 }
 

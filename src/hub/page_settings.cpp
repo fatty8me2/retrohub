@@ -1,7 +1,6 @@
 #include "app.h"
 #include "pcsx2.h"
 #include "gamepack.h"
-namespace hs = hub::saves;
 
 /* ---------- Settings ---------- */
 
@@ -14,7 +13,7 @@ void settings_label(const char* title, const char* hint) {
 
 namespace {
 
-/* Emulator lookups touch the disk: refresh every 2 s, not every frame (shared by the Video & Games and Controllers tabs). */
+/* Emulator lookups touch the disk: refresh every 2 s, not every frame (Video & Games tab). */
 struct EmuLook { hubemu::Install az, cm, dl, ps; hubemu::Bios bi; };
 const EmuLook& emu_look() {
     static EmuLook e;
@@ -148,6 +147,38 @@ void tab_general() {
     if (button("Rescan", ImVec2(0, 0), false, !A.scanning, ui::Icon::Refresh)) start_scan();
     { ImGui::SameLine(); hidden_games_row(); }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    settings_label("Shared game packs");
+    text_wrapped_disabled("Greyed-out games can be installed from the shared packs - everyone gets the community packs automatically. Have a game nobody else has? "
+                          "Put it in your own public Google Drive folder and link the folder that directly contains the console subfolders "
+                          "(n64, gc, wiiu, 3ds, nds, gba, gbc, gb, ps1), each game in its own folder. Send the link so it can be added to the shared list. "
+                          "Links below apply to this PC only.");
+    {
+        const std::vector<std::string> ids = hubgp::links_split(A.st.pack_links);
+        if (ids.empty()) text_wrapped_disabled("No links yet.");
+        std::string to_remove;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            ImGui::PushID((int)i);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(hubgp::link_label(ids[i]).c_str());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("https://drive.google.com/drive/folders/%s", ids[i].c_str());
+            ImGui::SameLine();
+            if (button("Remove", ImVec2(0, 0), false, true, ui::Icon::Close)) to_remove = ids[i];
+            ImGui::PopID();
+        }
+        if (!to_remove.empty() && hubgp::links_remove(&A.st.pack_links, to_remove)) { mark_dirty(); set_toast("Link removed.", true, 3.0); }
+    }
+    static char pl_new[1024] = "";
+    ImGui::SetNextItemWidth(-sp(14.f));
+    osk::input("##pack_link_new", "Paste a Google Drive folder link", pl_new, sizeof pl_new);
+    ImGui::SameLine();
+    if (button("Add", ImVec2(0, 0), false, pl_new[0] != 0, ui::Icon::Plus)) {
+        int found = 0;
+        int added = hubgp::links_add(&A.st.pack_links, pl_new, &found);
+        if (found == 0) set_toast("That doesn't look like a Google Drive folder link.", false, 4.0);
+        else if (added == 0) set_toast("Already added.", false, 3.0);
+        else { mark_dirty(); set_toast(added == 1 ? "Link added." : std::to_string(added) + " links added.", true, 3.0); pl_new[0] = 0; }
+    }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (ImGui::Checkbox("Download cover art", &A.st.download_art)) {
@@ -235,38 +266,6 @@ void tab_online() {
     if (ImGui::Checkbox("Show my games to friends", &A.st.share_games)) mark_dirty();
     text_wrapped_disabled("Friends see the names of your games greyed out in their library, so they can ask you to host. Only titles are shared, never game files. Turn off to hide your list.");
     if (ImGui::Checkbox("Show friends' games in my library", &A.st.show_friend_games)) { mark_dirty(); A.vis_dirty = true; }
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    settings_label("Shared game packs");
-    text_wrapped_disabled("Greyed-out games can be installed from the shared packs - everyone gets the community packs automatically. Have a game nobody else has? "
-                          "Put it in your own public Google Drive folder and link the folder that directly contains the console subfolders "
-                          "(n64, gc, wiiu, 3ds, nds, gba, gbc, gb, ps1), each game in its own folder. Send the link so it can be added to the shared list. "
-                          "Links below apply to this PC only.");
-    {
-        const std::vector<std::string> ids = hubgp::links_split(A.st.pack_links);
-        if (ids.empty()) text_wrapped_disabled("No links yet.");
-        std::string to_remove;
-        for (size_t i = 0; i < ids.size(); ++i) {
-            ImGui::PushID((int)i);
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(hubgp::link_label(ids[i]).c_str());
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("https://drive.google.com/drive/folders/%s", ids[i].c_str());
-            ImGui::SameLine();
-            if (button("Remove", ImVec2(0, 0), false, true, ui::Icon::Close)) to_remove = ids[i];
-            ImGui::PopID();
-        }
-        if (!to_remove.empty() && hubgp::links_remove(&A.st.pack_links, to_remove)) { mark_dirty(); set_toast("Link removed.", true, 3.0); }
-    }
-    static char pl_new[1024] = "";
-    ImGui::SetNextItemWidth(-sp(14.f));
-    osk::input("##pack_link_new", "Paste a Google Drive folder link", pl_new, sizeof pl_new);
-    ImGui::SameLine();
-    if (button("Add", ImVec2(0, 0), false, pl_new[0] != 0, ui::Icon::Plus)) {
-        int found = 0;
-        int added = hubgp::links_add(&A.st.pack_links, pl_new, &found);
-        if (found == 0) set_toast("That doesn't look like a Google Drive folder link.", false, 4.0);
-        else if (added == 0) set_toast("Already added.", false, 3.0);
-        else { mark_dirty(); set_toast(added == 1 ? "Link added." : std::to_string(added) + " links added.", true, 3.0); pl_new[0] = 0; }
-    }
     std::string mycode = fr_my_code();
     if (!mycode.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -285,69 +284,6 @@ void tab_online() {
         ImGui::SetNextItemWidth(-1);
         if (osk::input("##srv", hubnet::default_server(), sb, sizeof sb)) { A.st.server = sb; mark_dirty(); }
         ImGui::TextDisabled("Leave empty for the default server.");
-    }
-    end_panel();
-}
-
-void tab_saves() {
-    begin_panel("set_cloud");
-    section_title("Saves and cloud");
-    gap();
-    {
-        const bool on = A.st.cloud_enabled;
-        ImGui::PushFont(ui::F.h2);
-        ImGui::TextUnformatted(on ? "Cloud saves are on" : "Cloud saves are paused");
-        ImGui::PopFont();
-        text_wrapped_disabled("Space used, per-game history and Sync now live on the Saves page.");
-        if (button("Open the Saves page", ImVec2(0, 0), false, true, ui::Icon::Refresh)) A.page = Page::Saves;
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
-        bool paused = !on;
-        if (ImGui::Checkbox("Pause cloud sync", &paused)) { A.st.cloud_enabled = !paused; hs::cloud_set_paused(paused); mark_dirty(); }
-        text_wrapped_disabled("Saves stay on this PC only while paused.");
-        if (ImGui::Checkbox("Back up screenshots", &A.st.backup_shots)) { hs::set_backup_screenshots(A.st.backup_shots); mark_dirty(); }
-        text_wrapped_disabled("They share the space used by save states.");
-        bool st = A.st.cloud_states;
-        if (ImGui::Checkbox("Back up save states to the cloud", &st)) { A.st.cloud_states = st; hs::cloud_set_sync_states(st); mark_dirty(); }
-        text_wrapped_disabled("Resume points follow you between PCs. Uses the shared 50 MB space; turn off to keep states on this PC.");
-    }
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-    if (ImGui::CollapsingHeader("Advanced: also keep a copy in a folder")) {
-        text_wrapped_disabled("You don't need this: cloud saves already follow your account to every PC. Only use it if you also want a plain copy in a folder of your own (a USB stick, a NAS...).");
-        text_wrapped_disabled(A.st.sync_folder.empty() ? std::string("Sync folder: (not set)") : "Sync folder: " + A.st.sync_folder);
-        std::string p = osk::folder("set_sync", button("Browse...", ImVec2(0, 0), A.st.sync_folder.empty()));
-        if (!p.empty()) { A.st.sync_folder = p; mark_dirty(); }
-        if (!A.st.sync_folder.empty()) {
-            ImGui::SameLine();
-            if (button("Stop syncing", ImVec2(0, 0))) { A.st.sync_folder.clear(); mark_dirty(); A.sync_result.clear(); }
-        }
-        if (ImGui::Checkbox("Sync automatically after playing", &A.st.sync_auto)) mark_dirty();
-        if (button("Copy to folder now", ImVec2(0, 0), false, !A.st.sync_folder.empty() && !A.job.running && !A.proc)) start_sync(true);
-    }
-    end_panel();
-}
-
-void tab_controllers() {
-    begin_panel("set_ctl");
-    section_title("Controllers");
-    gap();
-    text_wrapped_disabled("Pick a pad per player, remap buttons and set per-system layouts on the Controllers page.");
-    if (button("Open the Controllers page", ImVec2(0, 0), false, true, ui::Icon::Gamepad)) A.page = Page::Controllers;
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-    {
-        const hubemu::Install& cm = emu_look().cm;
-        settings_label("Wii U (Cemu) controls");
-        if (cm.exe.empty() || cm.managed) text_wrapped_disabled("These options apply to a Cemu you already have installed; RetroHub's own Cemu always uses the Controllers page.");
-        if (!cm.exe.empty() && !cm.managed) {
-            if (ImGui::Checkbox("Let RetroHub manage Wii U controls", &A.st.cemu_manage_controls)) mark_dirty();
-            text_wrapped_disabled("On: before each game RetroHub writes controller profiles from its Controllers page into your Cemu (Xbox and other "
-                                  "SDL pads). Your original controllerProfiles folder is first copied once to controllerProfiles.retrohub-backup. "
-                                  "Off: your Cemu controls are never touched.");
-            if (button("Restore my Cemu controls", ImVec2(0, 0))) {
-                const char* ad = std::getenv("APPDATA");
-                bool ok = hubemu::cemu_restore_controls(hubemu::cemu_user_data_dir(cm.dir, ad ? ad : ""));
-                set_toast(ok ? "Your Cemu controls were restored from the backup." : "No RetroHub backup of your Cemu controls exists yet.", ok, 4.0);
-            }
-        }
     }
     end_panel();
 }
@@ -420,7 +356,7 @@ void settings_open(int tab) {
 void page_settings() {
     page_header("Settings", "Make RetroHub yours.");
     A.st.settings_tab = hubui::settings_tab_clamp(A.st.settings_tab);
-    static const char* labels[hubui::ST_Count] = {"General", "Online", "Saves & Cloud", "Controllers", "Video & Games", "Account"};
+    static const char* labels[hubui::ST_Count] = {"General", "Online", "Video & Games", "Account"};
     int nt = ui::segmented("settabs", labels, hubui::ST_Count, A.st.settings_tab);
     if (nt != A.st.settings_tab) { A.st.settings_tab = nt; mark_dirty(); }
     ImGui::SameLine(0, sp(2.f));
@@ -429,8 +365,6 @@ void page_settings() {
     switch (A.st.settings_tab) {
         case hubui::ST_General: tab_general(); break;
         case hubui::ST_Online: tab_online(); break;
-        case hubui::ST_Saves: tab_saves(); break;
-        case hubui::ST_Controllers: tab_controllers(); break;
         case hubui::ST_Video: tab_video(); break;
         default: draw_account_section(); break;
     }
