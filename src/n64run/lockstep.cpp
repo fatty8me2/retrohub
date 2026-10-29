@@ -101,7 +101,7 @@ void Lockstep::pump() {
         } else if (msg[0] == kPktBye) {
             if (!opt_.spectator && msg.size() >= 2 && msg[1] < kPorts && (int)msg[1] == from && (dj_mask_ >> from & 1u)) { di_candidate_left(from, "said bye"); continue; }
             if (opt_.spectator || (spec_mask() >> (msg[1] & 3) & 1u)) continue;   // spectators come and go; a spectator's goodbye is not the match ending
-            if (msg.size() >= 6 && msg[1] < kPorts && (int)msg[1] == from && msg[1] != opt_.my_slot) {
+            if (msg.size() >= 6 && msg[1] < kPorts && (int)msg[1] == from && msg[1] != opt_.my_slot && (core_.slot_mask() >> msg[1] & 1u)) {   // a bye from a slot that is not in the match any more (a dropped drop-in player's late goodbye) ends nothing
                 uint32_t last; std::memcpy(&last, &msg[2], 4);
                 if (!(bye_mask_ >> msg[1] & 1u) && hooks_.log) hooks_.log("partner in slot " + std::to_string((int)msg[1]) + " ended the session");
                 bye_mask_ |= 1u << msg[1];
