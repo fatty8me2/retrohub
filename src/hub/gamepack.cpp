@@ -10,6 +10,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -197,14 +198,28 @@ bool parse_packs_json(const std::string& text, std::vector<std::string>* out) {
     return true;
 }
 
+/* QA only: RETROHUB_QA=1 + RETROHUB_GP_BASE=127.0.0.1:<port> sends every GamePack request (community list, Drive listings,
+ * downloads) to a local plain-HTTP fake instead of GitHub / Google Drive. Loopback only; ignored otherwise. */
+static bool qa_base(INTERNET_PORT* port) {
+    const char* q = std::getenv("RETROHUB_QA");
+    const char* b = std::getenv("RETROHUB_GP_BASE");
+    if (!q || std::strcmp(q, "1") != 0 || !b || std::strncmp(b, "127.0.0.1:", 10) != 0) return false;
+    int p = std::atoi(b + 10);
+    if (p <= 0 || p > 65535) return false;
+    *port = (INTERNET_PORT)p;
+    return true;
+}
+
 /* Plain GET that returns the whole body (folder listings are small). */
 static bool http_get(const std::wstring& host, const std::wstring& path, std::string* body, std::string* err) {
     HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
     if (!ses) { *err = "network unavailable"; return false; }
     bool ok = false;
-    HINTERNET con = WinHttpConnect(ses, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+    INTERNET_PORT qp = 0;
+    bool qa = qa_base(&qp);
+    HINTERNET con = WinHttpConnect(ses, qa ? L"127.0.0.1" : host.c_str(), qa ? qp : INTERNET_DEFAULT_HTTPS_PORT, 0);
     HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                             WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+                                             WINHTTP_DEFAULT_ACCEPT_TYPES, qa ? 0 : WINHTTP_FLAG_SECURE) : nullptr;
     if (req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) && WinHttpReceiveResponse(req, nullptr)) {
         DWORD status = 0, sz = sizeof status;
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &sz, nullptr);
@@ -313,10 +328,12 @@ bool download_file(const std::string& file_id, const std::string& out_path,
     if (!ses) { *err = "network unavailable"; return false; }
     bool ok = false;
     std::wstring part = W(out_path + ".part");   // written here, renamed over out_path only once complete
-    HINTERNET con = WinHttpConnect(ses, L"drive.usercontent.google.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+    INTERNET_PORT qp = 0;
+    bool qa = qa_base(&qp);
+    HINTERNET con = WinHttpConnect(ses, qa ? L"127.0.0.1" : L"drive.usercontent.google.com", qa ? qp : INTERNET_DEFAULT_HTTPS_PORT, 0);
     std::wstring path = L"/download?id=" + W(file_id) + L"&export=download&confirm=t";
     HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                             WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+                                             WINHTTP_DEFAULT_ACCEPT_TYPES, qa ? 0 : WINHTTP_FLAG_SECURE) : nullptr;
     if (req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) && WinHttpReceiveResponse(req, nullptr)) {
         DWORD status = 0, sz = sizeof status;
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &sz, nullptr);

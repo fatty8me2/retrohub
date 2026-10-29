@@ -25,6 +25,9 @@ target_include_directories(hub_friend_games_test PRIVATE ${CMAKE_CURRENT_SOURCE_
 add_executable(hub_gamepack_test test_gamepack.cpp gamepack.cpp)
 target_include_directories(hub_gamepack_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gamepack_test PRIVATE hubcommon winhttp)
+add_executable(qa_gamepack qa_gamepack.cpp gamepack.cpp)   # QA driver against a local fake (qa/gamepack_qa.py); not a ctest
+target_include_directories(qa_gamepack PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+target_link_libraries(qa_gamepack PRIVATE hubcommon winhttp)
 add_executable(hub_theme_test test_theme.cpp)
 target_include_directories(hub_theme_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hub_theme_test PRIVATE cxx_std_17)
