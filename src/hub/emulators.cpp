@@ -1379,12 +1379,23 @@ std::string cemu_profile_apply(const std::string& in, const hub::gs::Values& v) 
     return t;
 }
 
+/* Games whose Vulkan path makes the GPU driver reset (Windows nvlddmkm event 153, Cemu "vkWaitForFences ... -4")
+ * often enough to freeze at boot: Super Mario 3D World (US, EU, JP) on the intro. They run on OpenGL instead. */
+bool cemu_needs_opengl(uint64_t tid) {
+    switch (tid) {
+    case 0x0005000010145c00ull: case 0x0005000010145d00ull: case 0x0005000010106100ull: return true;
+    default: return false;
+    }
+}
+
 bool apply_cemu_game_profile(const std::string& user_data, uint64_t tid, const hub::gs::Values& v) {
     if (!tid) return false;
     std::string dir = join(user_data, "gameProfiles"), f = join(dir, hub::wiiu_profile_file_name(tid));
     revert_cemu_game_profile(user_data, tid);
     std::string cur = file_exists(f) ? read_text(f) : std::string();
     std::string out = cemu_profile_apply(cur, v);
+    if (cemu_needs_opengl(tid) && hub::ini_get(cur, "Graphics", "graphics_api").empty())   // a user's own choice wins
+        out = hub::ini_put(out, "Graphics", "graphics_api", "0");   // Cemu GraphicAPI: 0 OpenGL, 1 Vulkan
     if (out == cur) return false;   // nothing to set: leave the user's profile alone
     make_dirs(dir);
     if (file_exists(f)) { if (!write_text(f + ".retrohub-orig", cur)) return false; }

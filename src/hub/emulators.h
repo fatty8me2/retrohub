@@ -171,6 +171,8 @@ bool revert_cemu_own_settings(const std::string& user_data);                    
  * Only keys the game's RetroHub settings set are written (wiiu.cpu_mode); the previous file is kept as <file>.retrohub-orig
  * (or a ".retrohub-new" marker when there was none) and restored after the session. */
 std::string cemu_profile_apply(const std::string& ini, const hub::gs::Values& v);
+/* True for Wii U titles that RetroHub runs on Cemu's OpenGL backend (Vulkan resets the GPU driver on them). */
+bool cemu_needs_opengl(uint64_t tid);
 bool apply_cemu_game_profile(const std::string& user_data, uint64_t title_id, const hub::gs::Values& v);
 bool revert_cemu_game_profile(const std::string& user_data, uint64_t title_id);
 /* What the profile files say today: "CPU mode: Singlecore-Recompiler (Cemu default profile) ..." for the game's details page. */

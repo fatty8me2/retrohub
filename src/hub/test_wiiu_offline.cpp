@@ -271,6 +271,20 @@ static void test_own_settings(const fs::path& dir) {
 
 static void test_profiles(const fs::path& dir) {
     CHECK(wiiu_profile_file_name(0x000500001019e500ull) == "000500001019e500.ini");
+    {   // Super Mario 3D World runs on OpenGL: added to a fresh profile, a user's own graphics_api left alone, removed on revert
+        CHECK(hubemu::cemu_needs_opengl(0x0005000010145c00ull) && !hubemu::cemu_needs_opengl(0x000500001019e500ull));
+        fs::path ud = fs::temp_directory_path() / "rh_sm3dw_gl";
+        std::error_code ec; fs::remove_all(ud, ec);
+        uint64_t tid = 0x0005000010145c00ull;
+        std::string f = (ud / "gameProfiles" / wiiu_profile_file_name(tid)).string();
+        hub::gs::Values none;
+        CHECK(hubemu::apply_cemu_game_profile(ud.string(), tid, none) && ini_get(read_text(f), "Graphics", "graphics_api") == "0");
+        CHECK(hubemu::revert_cemu_game_profile(ud.string(), tid) && !fs::exists(f));
+        fs::create_directories(ud / "gameProfiles");
+        { std::ofstream o(f, std::ios::binary); o << "[Graphics]\ngraphics_api = 1\n"; }
+        CHECK(!hubemu::apply_cemu_game_profile(ud.string(), tid, none) && ini_get(read_text(f), "Graphics", "graphics_api") == "1");
+        fs::remove_all(ud, ec);
+    }
     const std::string def = "# Super Mario 3D World (JPN)\n\n[Graphics]\naccurateShaderMul = false\n\n[CPU]\ncpuMode = Singlecore-Recompiler\n";
     CHECK(ini_get(def, "CPU", "cpuMode") == "Singlecore-Recompiler" && ini_get(def, "cpu", "CPUMODE") == "Singlecore-Recompiler");
     CHECK(ini_get(def, "Graphics", "accurateShaderMul") == "false" && ini_get(def, "Graphics", "nothing").empty());
