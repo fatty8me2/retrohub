@@ -32,10 +32,10 @@ namespace dropin {
 constexpr uint8_t kCapDropIn = 4;          // resync.h uses 1 and 2
 constexpr uint8_t kKnockVersion = 2;       // kPktJoin [0x72, slot, 2, caps, name_len, name...]  (version 1 = plain spectator)
 constexpr uint32_t kAdmitMargin = 75;      // samples between "joiner is ready" and J (the Admit has to reach everybody, the joiner has to reach J)
-constexpr uint32_t kSlack = 4;             // F = J + D + kSlack + ceil(rtt / frame)
+constexpr uint32_t kSlack = 12;            // F = J + D + kSlack + ceil(rtt / frame)
 constexpr uint32_t kAckLimitMs = 2500;     // the host's barrier at J waits this long for the acks before it cancels the admit
-constexpr uint32_t kReadyLag = 4;          // the joiner says Ready when it is at most this many samples behind the host (sustained)
-constexpr uint32_t kReadySustain = 30;     // ... for this many samples in a row
+constexpr uint32_t kReadyLag = 20;         // the joiner says Ready when it is at most this many samples behind the host (sustained; the host adds the lag to F)
+constexpr uint32_t kReadySustain = 20;     // ... for this many samples in a row
 constexpr uint32_t kReadyEveryMs = 200;
 constexpr uint32_t kResendMs = 100;
 constexpr uint32_t kNoAdmitMs = 25000;     // the joiner gives up when the host has not admitted it this long after Ready
@@ -93,9 +93,9 @@ inline std::string knock_name(const std::vector<uint8_t>& m) {
 }
 
 /* First sample the joiner's port is supplied from. */
-inline uint32_t first_sample(uint32_t j, int d, double rtt_ms, double frame_ms = 1000.0 / 60.0) {
+inline uint32_t first_sample(uint32_t j, int d, double rtt_ms, uint32_t joiner_lag = 0, double frame_ms = 1000.0 / 60.0) {
     uint32_t rtt_frames = rtt_ms <= 0 ? 0u : (uint32_t)((rtt_ms + frame_ms - 1.0) / frame_ms);
-    return j + (uint32_t)(d < 0 ? 0 : d) + kSlack + rtt_frames;
+    return j + (uint32_t)(d < 0 ? 0 : d) + kSlack + rtt_frames + joiner_lag;   // the joiner reaches J as many samples after the host as it lags behind it
 }
 
 /* Host: one admit at a time. */

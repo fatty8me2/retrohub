@@ -115,6 +115,8 @@ class Session {
     /* Slots currently held by spectators (the server marks them in `members`). They never count as players: not in ready(),
      * not reached by send(-1), and their bye / departure does not end the session. */
     uint32_t spectator_mask() const;
+    /* Host: slots that a broadcast (send(-1)) skips although they are members (a drop-in candidate that is still downloading the state has no use for the players' input stream). */
+    void set_broadcast_exclude(uint32_t mask);
     bool is_spectator() const;
 
     /* RTT samples since the last clear (last 32), for the auto input delay. */

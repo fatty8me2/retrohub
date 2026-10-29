@@ -46,7 +46,7 @@ static void test_wire() {
     std::vector<uint8_t> plain = {0x72, 2, 1};
     CHECK(!dropin::is_knock(plain), "a plain spectator knock is not a drop-in knock");
     CHECK(dropin::exit_code_for(dropin::kRefuseNoPort) == 9 && dropin::exit_code_for(dropin::kRefuseOldPeer) == 10 && dropin::exit_code_for(dropin::kRefuseBusy) == 11 && dropin::exit_code_for(0) == 11, "exit codes");
-    CHECK(dropin::first_sample(100, 3, 0) == 107 && dropin::first_sample(100, 3, 100) == 100 + 3 + 4 + 6, "first sample %u", dropin::first_sample(100, 3, 100));
+    CHECK(dropin::first_sample(100, 3, 0) == 115 && dropin::first_sample(100, 3, 100) == 100 + 3 + 12 + 6 && dropin::first_sample(100, 3, 0, 14) == 129, "first sample %u", dropin::first_sample(100, 3, 100));
 }
 
 static void test_ctl() {

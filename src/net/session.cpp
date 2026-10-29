@@ -102,6 +102,7 @@ struct Session::Impl {
     uint32_t start_ms = 0;
     int slot = 0;
     uint32_t spec_mask = 0;    // slots the server flagged as spectators
+    uint32_t bcast_excl = 0;   // members a host broadcast skips (set_broadcast_exclude)
     bool spectator = false;    // this end is a spectator
 
     UdpSocket udp;
@@ -360,7 +361,7 @@ struct Session::Impl {
                     // forward to the other client(s)
                     for (int s = 1; s < kMaxSlots; s++) {
                         if (s == from || !peers[s].present) continue;
-                        if (to == 0xFF && (spec_mask >> s & 1u)) continue;
+                        if (to == 0xFF && ((spec_mask | bcast_excl) >> s & 1u)) continue;
                         if (to == 0xFF || to == s) send_raw(s, d, n, now);
                     }
                 }
@@ -688,6 +689,7 @@ void Session::say_bye()
 std::string Session::status() const { return impl_->status; }
 int Session::my_slot() const { return impl_->slot; }
 uint32_t Session::spectator_mask() const { return impl_->spec_mask; }
+void Session::set_broadcast_exclude(uint32_t mask) { impl_->bcast_excl = mask; }
 bool Session::is_spectator() const { return impl_->spectator; }
 
 bool Session::is_relayed(int slot) const
@@ -747,7 +749,7 @@ void Session::send(int to_slot, const void* data, int len)
             int n = 0;
             bool all_relay = true;
             for (int s = 1; s < kMaxSlots; s++) {
-                if (!d.peers[s].present || (d.spec_mask >> s & 1u)) continue;
+                if (!d.peers[s].present || ((d.spec_mask | d.bcast_excl) >> s & 1u)) continue;
                 n++;
                 if (d.direct_fresh(d.peers[s], now) || !d.peers[s].relay_active) all_relay = false;
             }
@@ -759,7 +761,7 @@ void Session::send(int to_slot, const void* data, int len)
         }
         for (int s = 1; s < kMaxSlots; s++) {
             if (!d.peers[s].present || (to_slot >= 0 && to_slot != s)) continue;
-            if (to_slot < 0 && (d.spec_mask >> s & 1u)) continue;
+            if (to_slot < 0 && ((d.spec_mask | d.bcast_excl) >> s & 1u)) continue;
             pkt[2] = (to_slot < 0) ? 0xFF : (uint8_t)s;
             d.send_raw(s, pkt, 3 + len, now);
         }
