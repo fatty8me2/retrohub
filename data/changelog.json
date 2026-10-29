@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.5",
+      "date": "2026-10-28",
+      "title": "Creative usernames",
+      "new": [],
+      "improved": [
+        "Usernames can now be up to 20 characters and use spaces, accented letters and most symbols (for example \"Kai Smith!\"); existing usernames are unchanged."
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.29.4",
       "date": "2026-10-28",
       "title": "N64 desync recovery and drop-in party games",

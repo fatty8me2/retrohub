@@ -1,4 +1,5 @@
 #include "netplay_3ds.h"
+#include "../net/username.h"
 #include <fstream>
 #include <iterator>
 
@@ -36,7 +37,9 @@ std::string random_password(unsigned seed) {
     return s;
 }
 
-std::string nickname(const std::string& name, int slot) {
+std::string nickname(const std::string& player_name, int slot) {
+    /* Names may hold spaces, symbols and Latin-1 letters: accents fold to base letters, spaces become _, everything else is dropped. */
+    const std::string name = hubnet::username_ascii(player_name);
     std::string s;
     for (unsigned char c : name) {
         if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '_' || c == '-') s += (char)c;
@@ -139,7 +142,8 @@ namespace hubnp3ds {
 
 /* The 3DS username lives in the config savegame (NAND sysdata 00010017), block 0x000A0000: char16_t[10] + 8 bytes.
  * Layout: u16 entry count, u16 data start, then {u32 id, u32 offset-or-data, u16 size, u16 flags} entries. */
-std::string console_username(const std::string& player, int slot) {
+std::string console_username(const std::string& player_name, int slot) {
+    const std::string player = hubnet::username_ascii(player_name);   // the 3DS username field is 10 ASCII-safe chars here
     std::string s;
     for (unsigned char c : player)
         if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '_' || c == '-') s += (char)c;

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../net/username.h"
 #include "homefun.h"
 #include "ui_sound.h"
 
@@ -332,7 +333,7 @@ void draw_frame() {
         ImVec2 ac(left + sp(3.f), p.y + card_h * 0.5f);
         sdl->AddCircleFilled(ac, sp(2.25f), ui::ACCENT, 24);
         std::string nm = A.st.name.empty() ? "?" : A.st.name;
-        char init[8] = {(char)std::toupper((unsigned char)nm[0]), 0};
+        char init[8] = {hubnet::username_initial(nm), 0};
         ImVec2 its = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, init);
         sdl->AddText(ui::F.bold, ui::F.bold->FontSize, ac - its * 0.5f, IM_COL32_WHITE, init);
         const char* stt = A.proc ? "In game" : (A.in_room ? (A.lobby.connected() ? "In a room" : "Connecting") : "Offline");

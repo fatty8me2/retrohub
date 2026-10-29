@@ -9,6 +9,7 @@
 #define STBI_WRITE_NO_STDIO   /* implementation lives in ext_media.cpp (one definition per link) */
 #include "../retrorun/third_party/stb_image_write.h"
 #include "app.h"
+#include "../net/username.h"
 #include "homefun.h"
 #include "wrapped_logic.h"
 
@@ -263,7 +264,7 @@ void paint_card(const Paint& p, int idx, const wr::Data& d, const std::string& p
                 const ImVec2 c = p.P(CW * 0.5f, 150);
                 p.dl->AddCircleFilled(c, 46.f * p.k, IM_COL32(0, 0, 0, 80), 40);
                 p.dl->AddCircleFilled(c, 40.f * p.k, IM_COL32(255, 255, 255, 235), 40);
-                char init[8] = {(char)std::toupper((unsigned char)nm[0]), 0};
+                char init[8] = {hubnet::username_initial(nm), 0};
                 const ImVec2 ts = ui::F.hero->CalcTextSizeA(44.f * p.k, FLT_MAX, 0.f, init);
                 p.dl->AddText(ui::F.hero, 44.f * p.k, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(40, 70, 70, 255), init);
                 p.ctext(ui::F.cap, 12.f, 216, dim, "YOUR MOST PLAYED-WITH FRIEND");

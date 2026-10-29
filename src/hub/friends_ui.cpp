@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../net/username.h"
 #include "prefs.h"
 #include "profile.h"
 #include "runner_ctl.h"
@@ -180,8 +181,7 @@ void fr_avatar(ImDrawList* dl, ImVec2 c, float r, const std::string& name, int s
         return;
     }
     dl->AddCircleFilled(c, r, col, 28);
-    std::string in = name.empty() ? "?" : name.substr(0, 1);
-    in[0] = (char)std::toupper((unsigned char)in[0]);
+    std::string in(1, hubnet::username_initial(name));   // first letter/digit, accents folded (names may start with a symbol or an accented letter)
     ImFont* f = ui::F.bold;
     float fs = std::max(f->FontSize, r * 0.95f);
     ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.f, in.c_str());
@@ -1264,7 +1264,7 @@ static void fr_profile_modal() {
             bool sel = pr.avatar == opts[i];
             ImVec2 c = p + ImVec2(cell, cell) * 0.5f;
             if (ImGui::IsItemHovered() || sel) dl->AddCircle(c, cell * 0.5f + 1.f, sel ? ui::ACCENT : ui::HILITE, 24, sel ? 2.f : 1.f);
-            if (opts[i].empty()) { fr_avatar_col(A.st.name); dl->AddCircleFilled(c, cell * 0.42f, fr_avatar_col(A.st.name), 24); fr_text_c(dl, ui::F.bold, c, IM_COL32_WHITE, A.st.name.empty() ? "?" : std::string(1, (char)std::toupper((unsigned char)A.st.name[0])).c_str()); }
+            if (opts[i].empty()) { fr_avatar_col(A.st.name); dl->AddCircleFilled(c, cell * 0.42f, fr_avatar_col(A.st.name), 24); fr_text_c(dl, ui::F.bold, c, IM_COL32_WHITE, std::string(1, hubnet::username_initial(A.st.name)).c_str()); }
             else fr_profile_avatar_disc(dl, c, cell * 0.42f, opts[i], ui::PANEL2);
             ImGui::PopID();
         }
@@ -1548,8 +1548,8 @@ void fr_draw_panel(float disp_w, float disp_h) {
                 const bool is_code = hubnet::username_looks_like_code(typed);
                 std::string code = is_code ? hubui::normalize_friend_code(typed) : std::string();
                 if (is_code && code.empty()) { FR.add_msg = "That doesn't look like a friend code (RH-XXXX-XXXX)."; FR.add_msg_until = ImGui::GetTime() + 6; }
-                else if (!is_code && !hubnet::username_ok(typed)) { FR.add_msg = "That doesn't look like a username (3-16 letters, numbers, _ . -) or a friend code."; FR.add_msg_until = ImGui::GetTime() + 6; }
-                else if (is_code ? code == fr_my_code() : hubnet::username_key(typed) == hubnet::username_key(A.st.name)) { FR.add_msg = is_code ? "That is your own code." : "That is your own username."; FR.add_msg_until = ImGui::GetTime() + 6; }
+                else if (!is_code && !hubnet::username_ok(typed)) { FR.add_msg = "That doesn't look like a username (3-20 characters; letters, numbers, spaces and most symbols) or a friend code."; FR.add_msg_until = ImGui::GetTime() + 6; }
+                else if (is_code ? code == fr_my_code() : hubnet::username_fold_key(typed) == hubnet::username_fold_key(A.st.name)) { FR.add_msg = is_code ? "That is your own code." : "That is your own username."; FR.add_msg_until = ImGui::GetTime() + 6; }
                 else {
                     if (!FR.fake) { if (is_code) FR.cli.add_friend(code); else FR.cli.add_friend_username(typed); }
                     FR.add_msg = "Friend request sent to " + (is_code ? code : typed) + ".";
