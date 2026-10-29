@@ -174,7 +174,7 @@ class DxgiCapture : public CaptureSource {
         DXGI_OUTDUPL_FRAME_INFO fi; ComPtr<IDXGIResource> res;
         HRESULT hr = dup_->AcquireNextFrame(timeout_ms, &fi, &res);
         if (hr == DXGI_ERROR_WAIT_TIMEOUT) return false;
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) { lost_ = true; return false; }
         uint64_t t = steady_us();
         ComPtr<ID3D11Texture2D> tex; res.As(&tex);
         D3D11_TEXTURE2D_DESC d; tex->GetDesc(&d);
@@ -195,9 +195,49 @@ class DxgiCapture : public CaptureSource {
         return true;
     }
     std::string name() const override { return "DXGI desktop duplication"; }
+    bool lost() const { return lost_; }
   private:
-    HWND hwnd_ = nullptr; RECT org_ = {};
+    HWND hwnd_ = nullptr; RECT org_ = {}; bool lost_ = false;
     ComPtr<ID3D11Device> dev_; ComPtr<IDXGIOutputDuplication> dup_; ComPtr<ID3D11Texture2D> stage_;
+};
+
+/* ---------------- WGC with a DXGI fallback while the window owns the screen ----------------
+ * A focused fullscreen game (Cemu on OpenGL above all) is presented straight to the display (independent flip), and WGC's
+ * window capture then delivers no frames until the window loses focus: the guest's picture froze while the host played.
+ * While the captured window is the foreground window and WGC has been silent for kStallUs, frames come from desktop
+ * duplication cropped to the window (it covers the screen there, so nothing else of the desktop is sent). As soon as WGC
+ * delivers again, or the window is no longer in front, WGC is used again. */
+class HybridCapture : public CaptureSource {
+  public:
+    HybridCapture(std::unique_ptr<WgcCapture> w, HWND h) : wgc_(std::move(w)), hwnd_(h) { last_wgc_ = steady_us(); }
+    bool grab(BgraFrame* out, int timeout_ms) override
+    {
+        const bool front = GetForegroundWindow() == hwnd_ && !IsIconic(hwnd_);
+        if (dxgi_ && (!front)) dxgi_.reset();   // back to WGC: the window is behind something again
+        if (!dxgi_) {
+            if (wgc_->grab(out, timeout_ms)) { last_wgc_ = steady_us(); return true; }
+            if (front && steady_us() - last_wgc_ > kStallUs && steady_us() >= retry_at_) {
+                auto d = std::make_unique<DxgiCapture>();
+                std::string e;
+                if (d->init(hwnd_, &e)) { dxgi_ = std::move(d); ++switches_; }
+                else retry_at_ = steady_us() + 2000000;   // duplication unavailable right now: try again in 2 s
+            }
+            return false;
+        }
+        BgraFrame w;
+        if (wgc_->grab(&w, 0)) { dxgi_.reset(); last_wgc_ = steady_us(); *out = std::move(w); return true; }   // WGC is back
+        if (dxgi_->grab(out, timeout_ms)) return true;
+        if (dxgi_->lost()) dxgi_.reset();   // mode change / access lost: re-created on the next stall
+        return false;
+    }
+    std::string name() const override { return dxgi_ ? "Windows.Graphics.Capture (DXGI while focused fullscreen)" : "Windows.Graphics.Capture"; }
+  private:
+    static constexpr uint64_t kStallUs = 400000;
+    std::unique_ptr<WgcCapture> wgc_;
+    std::unique_ptr<DxgiCapture> dxgi_;
+    HWND hwnd_;
+    uint64_t last_wgc_ = 0, retry_at_ = 0;
+    int switches_ = 0;
 };
 
 /* ---------------- PrintWindow polling (works on a non-input desktop) ---------------- */
@@ -260,7 +300,7 @@ void* resolve_window(const std::string& arg, uint32_t* pid_out)
 std::unique_ptr<CaptureSource> make_window_capture(void* hwnd, int fps, std::string* err)
 {
     std::string e1, e2;
-    { auto w = std::make_unique<WgcCapture>(); if (w->init((HWND)hwnd, &e1)) return w; }
+    { auto w = std::make_unique<WgcCapture>(); if (w->init((HWND)hwnd, &e1)) return std::make_unique<HybridCapture>(std::move(w), (HWND)hwnd); }
     { auto d = std::make_unique<DxgiCapture>(); if (d->init((HWND)hwnd, &e2)) return d; }
     // PrintWindow works everywhere but is slow and may miss GPU-composed content
     auto p = std::make_unique<PrintWindowCapture>((HWND)hwnd, fps);
