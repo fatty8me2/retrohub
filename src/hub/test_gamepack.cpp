@@ -11,6 +11,11 @@ using namespace hubgp;
 int main()
 {
     /* decode_entities */
+    CHECK(pack_key("Pokemon Platinum") == pack_key("Pokemon - Platinum Version (USA)"));
+    CHECK(pack_key("Pokemon Black 2") == pack_key("Pokemon - Black Version 2 (USA, Europe) (NDSi Enhanced)"));
+    CHECK(pack_key("Pokemon Black") != pack_key("Pokemon - Black Version 2 (USA, Europe)"));
+    CHECK(pack_key("PokÃ©mon Pearl") == pack_key("Pokemon - Pearl Version (USA) (Rev 5)"));
+    CHECK(pack_key("Super Mario 3D World") == pack_key("Super Mario 3D World (USA) (En,Fr,Es) (Rev 2)"));
     CHECK(decode_entities("plain") == "plain");
     CHECK(decode_entities("") == "");
     CHECK(decode_entities("Yoshi&#39;s Story (U) [!]") == "Yoshi's Story (U) [!]");

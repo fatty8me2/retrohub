@@ -17,7 +17,7 @@
 #include <map>
 #include <set>
 
-#include "friend_games.h"   // hubui::fg::norm_title
+#include "friend_games.h"   // hubui::fg::norm_title (via pack_key)
 #include "games.h"          // hub::data_dir
 #include "json.h"           // community pack list (data/packs.json)
 
@@ -28,6 +28,19 @@ static std::wstring W(const std::string& s) { return P(s).wstring(); }
 static std::string S(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
 
 namespace hubgp {
+
+std::string pack_key(const std::string& title) {
+    std::string t;   // fold UTF-8 e-acute ("PokÃ©mon") to plain e before normalising
+    for (size_t i = 0; i < title.size(); ++i) {
+        if ((unsigned char)title[i] == 0xC3 && i + 1 < title.size() && ((unsigned char)title[i + 1] == 0xA9 || (unsigned char)title[i + 1] == 0x89)) { t += 'e'; ++i; }
+        else t += title[i];
+    }
+    std::string n = hubui::fg::norm_title(t), o, w;
+    auto flush = [&] { if (!w.empty() && w != "version" && w != "edition") { if (!o.empty()) o += ' '; o += w; } w.clear(); };
+    for (char c : n) { if (c == ' ') flush(); else w += c; }
+    flush();
+    return o;
+}
 
 const char* root_folder() { return "1jp71Fx_VB1-fa1pZke-7eABC1pJzpu2z"; }
 
@@ -340,7 +353,7 @@ static std::string sys_subfolder(const std::string& root_id, const std::string& 
 }
 
 std::string match_game(const std::string& sys_short, const std::string& title, const std::vector<std::string>& roots) {
-    std::string want = hubui::fg::norm_title(title);
+    std::string want = pack_key(title);
     if (want.empty()) return "";
     std::vector<std::string> sources;
     const char* sf = sys_folder(sys_short);
@@ -353,7 +366,7 @@ std::string match_game(const std::string& sys_short, const std::string& title, c
         std::vector<Entry> entries;
         if (!list_folder(s, &entries)) continue;
         for (const Entry& e : entries)
-            if (e.is_folder && hubui::fg::norm_title(e.name) == want) return e.id;
+            if (e.is_folder && pack_key(e.name) == want) return e.id;
     }
     return "";
 }
@@ -470,7 +483,7 @@ void index_refresh(const std::vector<std::string>& roots) {
             std::vector<Entry> entries;
             if (!list_folder(folder_id, &entries)) return false;
             std::lock_guard<std::mutex> lk(IX.mu);
-            for (const Entry& e : entries) if (e.is_folder) IX.titles[sys].insert(hubui::fg::norm_title(e.name));
+            for (const Entry& e : entries) if (e.is_folder) IX.titles[sys].insert(pack_key(e.name));
             return true;
         };
         static const char* builtin[] = {"n64", "gc", "gba", "gbc", "nds", "ps1"};
@@ -520,7 +533,7 @@ IndexState index_state(const std::string& sys_short) {
 }
 
 bool index_has(const std::string& sys_short, const std::string& title) {
-    std::string want = hubui::fg::norm_title(title);
+    std::string want = pack_key(title);
     if (want.empty()) return false;
     std::lock_guard<std::mutex> lk(IX.mu);
     auto it = IX.state.find(sys_short);
@@ -562,7 +575,7 @@ void Installer::start(const std::string& sys, const std::string& title, const st
         std::string e;
         const char* sf = sys_folder(this->sys);
         {
-            std::string want = hubui::fg::norm_title(this->title);
+            std::string want = pack_key(this->title);
             std::vector<std::string> sources;   // the built-in pack first, then every extra root that has this console
             if (sf[0]) sources.push_back(sf);
             std::vector<std::string> all;   // community packs (fetched if not known yet) + the user's extra roots
@@ -580,7 +593,7 @@ void Installer::start(const std::string& sys, const std::string& title, const st
                     if (!list_folder(s, &games)) continue;
                     any_listed = true;
                     for (const Entry& g : games)
-                        if (g.is_folder && hubui::fg::norm_title(g.name) == want) { game_id = g.id; break; }
+                        if (g.is_folder && pack_key(g.name) == want) { game_id = g.id; break; }
                 }
                 if (game_id.empty()) e = any_listed ? "not in the shared pack" : "could not list the shared pack";
                 else {
