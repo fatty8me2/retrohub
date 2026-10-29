@@ -65,6 +65,25 @@ int main()
         CHECK(v.size() == 1 && v[0] == "1SameFolderIdHere123456");
     }
 
+    /* parse_packs_json: the shared community list (data/packs.json) */
+    {   // object form; names ignored, duplicates dropped
+        std::vector<std::string> v;
+        CHECK(parse_packs_json("{\"packs\":[{\"id\":\"1CommunityPackOne123456\",\"name\":\"Brendan\"},{\"id\":\"1CommunityPackOne123456\",\"name\":\"again\"},{\"id\":\"1CommunityPackTwo123456\"}]}", &v));
+        CHECK(v.size() == 2 && v[0] == "1CommunityPackOne123456" && v[1] == "1CommunityPackTwo123456");
+    }
+    {   // bare array of ids; bad ids dropped, the good ones kept
+        std::vector<std::string> v;
+        CHECK(parse_packs_json("[\"1GoodPackIdHere123456\", \"bad id with spaces\", \"\", 7, {\"id\":\"1AnotherPackId123456\"}]", &v));
+        CHECK(v.size() == 2 && v[0] == "1GoodPackIdHere123456" && v[1] == "1AnotherPackId123456");
+    }
+    {   // empty list parses to nothing; wrong shapes and bad JSON fail
+        std::vector<std::string> v;
+        CHECK(parse_packs_json("{\"packs\":[]}", &v) && v.empty());
+        CHECK(!parse_packs_json("{\"other\":[1]}", &v));
+        CHECK(!parse_packs_json("42", &v));
+        CHECK(!parse_packs_json("{nope}", &v));
+    }
+
     /* console_code: the pack subfolder names */
     CHECK(console_code("n64") && console_code("GBC") && console_code("3ds"));
     CHECK(!console_code("gbx") && !console_code("") && !console_code("nintendo 64"));

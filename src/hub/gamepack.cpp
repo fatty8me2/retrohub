@@ -18,6 +18,7 @@
 
 #include "friend_games.h"   // hubui::fg::norm_title
 #include "games.h"          // hub::data_dir
+#include "json.h"           // community pack list (data/packs.json)
 
 namespace fs = std::filesystem;
 
@@ -179,6 +180,23 @@ std::vector<std::string> parse_links(const std::string& text) {
     return out;
 }
 
+bool parse_packs_json(const std::string& text, std::vector<std::string>* out) {
+    if (out) out->clear();
+    json::Value v;
+    if (!json::parse(text, &v)) return false;
+    const json::Value* arr = nullptr;
+    if (v.is_array()) arr = &v;
+    else if (v.is_object()) { const json::Value* p = v.get("packs"); if (p && p->is_array()) arr = p; }
+    if (!arr) return false;
+    std::set<std::string> seen;
+    for (const json::Value& it : arr->a) {
+        std::string id = it.is_object() ? it.str("id") : (it.is_string() ? it.s : std::string());
+        if (!valid_id(id) || !seen.insert(id).second) continue;
+        if (out) out->push_back(id);
+    }
+    return true;
+}
+
 /* Plain GET that returns the whole body (folder listings are small). */
 static bool http_get(const std::wstring& host, const std::wstring& path, std::string* body, std::string* err) {
     HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
@@ -206,6 +224,37 @@ static bool http_get(const std::wstring& host, const std::wstring& path, std::st
     if (con) WinHttpCloseHandle(con);
     WinHttpCloseHandle(ses);
     return ok;
+}
+
+/* The shared community pack list: data/packs.json on GitHub (main branch, live). Every client fetches it, so a
+ * link added there is installable for everyone without per-user setup. The last good list stays in memory; a
+ * failed fetch (offline) keeps using it. Worker threads only (may do one HTTP fetch). */
+static const wchar_t* kCommunityHost = L"raw.githubusercontent.com";
+static const wchar_t* kCommunityPath = L"/fatty8me2/retrohub/main/data/packs.json";
+static struct { std::mutex mu; std::vector<std::string> ids; bool have = false; } CM;
+
+static void community_fetch() {
+    std::string body, err;
+    if (!http_get(kCommunityHost, kCommunityPath, &body, &err)) return;
+    std::vector<std::string> ids;
+    if (!parse_packs_json(body, &ids)) return;
+    std::lock_guard<std::mutex> lk(CM.mu); CM.ids = ids; CM.have = true;
+}
+
+/* Every extra root: the community list first, then `user` links (de-duplicated). */
+static void all_roots(const std::vector<std::string>& user, std::vector<std::string>* out) {
+    bool need = false;
+    { std::lock_guard<std::mutex> lk(CM.mu); need = !CM.have; }
+    if (need) community_fetch();   // best effort: a failure keeps the previous list
+    std::vector<std::string> merged;
+    { std::lock_guard<std::mutex> lk(CM.mu); merged = CM.ids; }
+    for (const std::string& id : user) {
+        if (!valid_id(id)) continue;
+        bool dup = false;
+        for (const std::string& m : merged) if (m == id) { dup = true; break; }
+        if (!dup) merged.push_back(id);
+    }
+    *out = std::move(merged);
 }
 
 bool list_folder(const std::string& folder_id, std::vector<Entry>* out) {
@@ -350,6 +399,8 @@ void index_refresh(const std::vector<std::string>& roots) {
     }
     if (!run) return;
     IX.th = std::thread([roots] {
+        std::vector<std::string> all;   // community packs (fetched if not known yet) + the user's extra roots
+        all_roots(roots, &all);
         auto list_into = [&](const char* folder_id, const std::string& sys) {
             if (!folder_id || !folder_id[0] || IX.stop.load()) return false;
             std::vector<Entry> entries;
@@ -364,7 +415,7 @@ void index_refresh(const std::vector<std::string>& roots) {
             bool ok = list_into(sys_folder(s), s);
             { std::lock_guard<std::mutex> lk(IX.mu); IX.state[s] = ok ? 1 : 2; }
         }
-        for (const std::string& root : roots) {   // extra roots: same layout as the built-in pack (a subfolder per console)
+        for (const std::string& root : all) {   // extra roots: same layout as the built-in pack (a subfolder per console)
             if (IX.stop.load()) break;
             std::vector<Entry> entries;
             if (!list_folder(root, &entries)) continue;
@@ -446,12 +497,13 @@ void Installer::start(const std::string& sys, const std::string& title, const st
         bool r = false;
         std::string e;
         const char* sf = sys_folder(this->sys);
-        if (!sf[0] && roots.empty()) e = "this console is not in the shared pack";
-        else {
+        {
             std::string want = hubui::fg::norm_title(this->title);
             std::vector<std::string> sources;   // the built-in pack first, then every extra root that has this console
             if (sf[0]) sources.push_back(sf);
-            for (const std::string& root : roots) {
+            std::vector<std::string> all;   // community packs (fetched if not known yet) + the user's extra roots
+            all_roots(roots, &all);
+            for (const std::string& root : all) {
                 std::string sub = sys_subfolder(root, lower_name(this->sys));
                 if (!sub.empty()) sources.push_back(sub);
             }
