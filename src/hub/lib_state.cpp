@@ -201,6 +201,7 @@ bool g_added_running = false, g_added_changed = false;
 void added_worker() {
     for (;;) {
         std::string p;
+        if (g_io_shutdown) return;
         {
             std::lock_guard<std::mutex> l(g_added_mu);
             if (g_added_queue.empty()) { g_added_running = false; return; }
@@ -208,6 +209,7 @@ void added_worker() {
             g_added_queue.pop_front();
         }
         unsigned long long v = stat_added(p);
+        if (g_io_shutdown) return;   // app is tearing down: leave the (soon destroyed) statics alone
         std::lock_guard<std::mutex> l(g_added_mu);
         g_added_cache[p] = v;
         g_added_queued.erase(p);

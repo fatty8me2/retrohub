@@ -398,6 +398,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hub::flush_library_state();
     if (A.proc) CloseHandle(A.proc);
     for (auto* p : A.pads) SDL_GameControllerClose(p);
+    g_io_shutdown = true;
     hubart::shutdown();
     hang_watchdog_stop();
     ImGui_ImplSDLRenderer2_Shutdown();
