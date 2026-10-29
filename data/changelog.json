@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.29.18",
+      "date": "2026-10-29",
+      "title": "Friends' games for everyone",
+      "new": [
+        "Settings > Online shows how many friends' game lists this PC has, to spot sharing problems"
+      ],
+      "improved": [
+        "Friends' games show even before you add any games of your own, so you can install from shared packs right away",
+        "Friends' games are switched back on for everyone; the Library \"Friends' games\" button now only hides them until you restart"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.29.17",
       "date": "2026-10-29",
       "title": "Tidier menus",
