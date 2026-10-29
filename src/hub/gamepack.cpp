@@ -10,13 +10,14 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <set>
 
-#include "friend_games.h"   // hubui::fg::norm_title
+#include "friend_games.h"   // hubui::fg::norm_title (via pack_key)
 #include "games.h"          // hub::data_dir
 #include "json.h"           // community pack list (data/packs.json)
 
@@ -27,6 +28,19 @@ static std::wstring W(const std::string& s) { return P(s).wstring(); }
 static std::string S(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
 
 namespace hubgp {
+
+std::string pack_key(const std::string& title) {
+    std::string t;   // fold UTF-8 e-acute ("Pokémon") to plain e before normalising
+    for (size_t i = 0; i < title.size(); ++i) {
+        if ((unsigned char)title[i] == 0xC3 && i + 1 < title.size() && ((unsigned char)title[i + 1] == 0xA9 || (unsigned char)title[i + 1] == 0x89)) { t += 'e'; ++i; }
+        else t += title[i];
+    }
+    std::string n = hubui::fg::norm_title(t), o, w;
+    auto flush = [&] { if (!w.empty() && w != "version" && w != "edition" && w != "the") { if (!o.empty()) o += ' '; o += w; } w.clear(); };
+    for (char c : n) { if (c == ' ') flush(); else w += c; }
+    flush();
+    return o;
+}
 
 const char* root_folder() { return "1jp71Fx_VB1-fa1pZke-7eABC1pJzpu2z"; }
 
@@ -128,6 +142,12 @@ std::string safe_name(const std::string& t) {
     while (!r.empty() && (r.front() == ' ' || r.front() == '.')) r.erase(r.begin());
     while (!r.empty() && (r.back() == ' ' || r.back() == '.')) r.pop_back();
     if (r.empty()) r = "game";
+    static const char* dev[] = {"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+                                "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"};
+    std::string stem = r.substr(0, r.find('.'));
+    while (!stem.empty() && stem.back() == ' ') stem.pop_back();
+    for (char& c : stem) c = (char)std::tolower((unsigned char)c);
+    for (const char* d : dev) if (stem == d) { r = "_" + r; break; }   // Windows device names (NUL.gba) cannot be files
     return r;
 }
 
@@ -137,11 +157,39 @@ static std::string lower_name(const std::string& s) {
     return o;
 }
 
-bool console_code(const std::string& name) {
-    static const char* codes[] = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb", "ps1"};
-    std::string l = lower_name(name);
-    for (const char* c : codes) if (l == c) return true;
-    return false;
+std::string console_alias(const std::string& name) {
+    std::string l;   // lower case, spaces / dashes / underscores / dots dropped: "Wii u", "Game Boy Advance", "PS-2"
+    for (char c : name) { unsigned char u = (unsigned char)c; if (std::isalnum(u)) l += (char)std::tolower(u); }
+    static const char* map[][2] = {
+        {"n64", "n64"}, {"nintendo64", "n64"},
+        {"gc", "gc"}, {"ngc", "gc"}, {"gamecube", "gc"}, {"nintendogamecube", "gc"},
+        {"wiiu", "wiiu"}, {"nintendowiiu", "wiiu"},
+        {"3ds", "3ds"}, {"n3ds", "3ds"}, {"nintendo3ds", "3ds"},
+        {"nds", "nds"}, {"ds", "nds"}, {"nintendods", "nds"},
+        {"gba", "gba"}, {"gameboyadvance", "gba"},
+        {"gbc", "gbc"}, {"gameboycolor", "gbc"}, {"gameboycolour", "gbc"},
+        {"gb", "gb"}, {"gameboy", "gb"},
+        {"ps1", "ps1"}, {"psx", "ps1"}, {"psone", "ps1"}, {"playstation", "ps1"}, {"playstation1", "ps1"},
+        {"ps2", "ps2"}, {"playstation2", "ps2"},
+        {"nes", "nes"}, {"famicom", "nes"}, {"nintendoentertainmentsystem", "nes"},
+        {"snes", "snes"}, {"superfamicom", "snes"}, {"supernintendo", "snes"}, {"supernintendoentertainmentsystem", "snes"},
+    };
+    for (auto& m : map) if (l == m[0]) return m[1];
+    return "";
+}
+
+bool console_code(const std::string& name) { return !console_alias(name).empty(); }
+
+/* A pack entry's game key: a game folder's name, or a loose game file's name without its extension. Notes, readmes
+ * and other non-game files give "". */
+static std::string entry_key(const Entry& e) {
+    if (e.is_folder) return pack_key(e.name);
+    size_t dot = e.name.find_last_of('.');
+    if (dot == std::string::npos || dot == 0) return "";
+    std::string ext = lower_name(e.name.substr(dot + 1));
+    static const char* skip[] = {"txt", "nfo", "md", "pdf", "jpg", "jpeg", "png", "url", "html", "htm", "exe", "sfv", "md5", "sha1", "dat", "xml", "json", "ini"};
+    for (const char* x : skip) if (ext == x) return "";
+    return pack_key(e.name.substr(0, dot));
 }
 
 std::vector<std::string> parse_links(const std::string& text) {
@@ -180,6 +228,41 @@ std::vector<std::string> parse_links(const std::string& text) {
     return out;
 }
 
+std::vector<std::string> links_split(const std::string& stored) { return parse_links(stored); }
+
+std::string links_join(const std::vector<std::string>& ids) {
+    std::string s;
+    for (const std::string& id : ids) { if (!s.empty()) s += ' '; s += id; }
+    return s;
+}
+
+int links_add(std::string* stored, const std::string& pasted, int* found) {
+    std::vector<std::string> cur = links_split(*stored);
+    std::vector<std::string> in = parse_links(pasted);
+    if (found) *found = (int)in.size();
+    int added = 0;
+    for (const std::string& id : in) {
+        bool dup = false;
+        for (const std::string& c : cur) if (c == id) { dup = true; break; }
+        if (!dup) { cur.push_back(id); ++added; }
+    }
+    *stored = links_join(cur);
+    return added;
+}
+
+bool links_remove(std::string* stored, const std::string& id) {
+    std::vector<std::string> cur = links_split(*stored), out;
+    for (const std::string& c : cur) if (c != id) out.push_back(c);
+    bool had = out.size() != cur.size();
+    *stored = links_join(out);
+    return had;
+}
+
+std::string link_label(const std::string& id) {
+    if (id.size() <= 20) return id;
+    return id.substr(0, 10) + "..." + id.substr(id.size() - 6);
+}
+
 bool parse_packs_json(const std::string& text, std::vector<std::string>* out) {
     if (out) out->clear();
     json::Value v;
@@ -197,14 +280,28 @@ bool parse_packs_json(const std::string& text, std::vector<std::string>* out) {
     return true;
 }
 
+/* QA only: RETROHUB_QA=1 + RETROHUB_GP_BASE=127.0.0.1:<port> sends every GamePack request (community list, Drive listings,
+ * downloads) to a local plain-HTTP fake instead of GitHub / Google Drive. Loopback only; ignored otherwise. */
+static bool qa_base(INTERNET_PORT* port) {
+    const char* q = std::getenv("RETROHUB_QA");
+    const char* b = std::getenv("RETROHUB_GP_BASE");
+    if (!q || std::strcmp(q, "1") != 0 || !b || std::strncmp(b, "127.0.0.1:", 10) != 0) return false;
+    int p = std::atoi(b + 10);
+    if (p <= 0 || p > 65535) return false;
+    *port = (INTERNET_PORT)p;
+    return true;
+}
+
 /* Plain GET that returns the whole body (folder listings are small). */
 static bool http_get(const std::wstring& host, const std::wstring& path, std::string* body, std::string* err) {
     HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
     if (!ses) { *err = "network unavailable"; return false; }
     bool ok = false;
-    HINTERNET con = WinHttpConnect(ses, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+    INTERNET_PORT qp = 0;
+    bool qa = qa_base(&qp);
+    HINTERNET con = WinHttpConnect(ses, qa ? L"127.0.0.1" : host.c_str(), qa ? qp : INTERNET_DEFAULT_HTTPS_PORT, 0);
     HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                             WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+                                             WINHTTP_DEFAULT_ACCEPT_TYPES, qa ? 0 : WINHTTP_FLAG_SECURE) : nullptr;
     if (req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) && WinHttpReceiveResponse(req, nullptr)) {
         DWORD status = 0, sz = sizeof status;
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &sz, nullptr);
@@ -216,6 +313,7 @@ static bool http_get(const std::wstring& host, const std::wstring& path, std::st
                 DWORD n = 0;
                 if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &n)) { ok = false; *err = "download interrupted"; break; }
                 if (n == 0) break;
+                if (body->size() + n > (16u << 20)) { ok = false; *err = "listing too large"; break; }   // listings are small; never buffer a huge reply
                 body->append(buf.data(), n);
             }
         }
@@ -231,20 +329,25 @@ static bool http_get(const std::wstring& host, const std::wstring& path, std::st
  * failed fetch (offline) keeps using it. Worker threads only (may do one HTTP fetch). */
 static const wchar_t* kCommunityHost = L"raw.githubusercontent.com";
 static const wchar_t* kCommunityPath = L"/fatty8me2/retrohub/main/data/packs.json";
-static struct { std::mutex mu; std::vector<std::string> ids; bool have = false; } CM;
+static struct { std::mutex mu; std::vector<std::string> ids; std::chrono::steady_clock::time_point tried{}; bool tried_once = false; } CM;
 
 static void community_fetch() {
     std::string body, err;
     if (!http_get(kCommunityHost, kCommunityPath, &body, &err)) return;
     std::vector<std::string> ids;
     if (!parse_packs_json(body, &ids)) return;
-    std::lock_guard<std::mutex> lk(CM.mu); CM.ids = ids; CM.have = true;
+    std::lock_guard<std::mutex> lk(CM.mu); CM.ids = ids;
 }
 
 /* Every extra root: the community list first, then `user` links (de-duplicated). */
 static void all_roots(const std::vector<std::string>& user, std::vector<std::string>* out) {
     bool need = false;
-    { std::lock_guard<std::mutex> lk(CM.mu); need = !CM.have; }
+    {   // refetch at most every 10 minutes, so packs added to the list show up without a restart
+        std::lock_guard<std::mutex> lk(CM.mu);
+        auto t = std::chrono::steady_clock::now();
+        need = !CM.tried_once || t - CM.tried >= std::chrono::minutes(10);
+        if (need) { CM.tried = t; CM.tried_once = true; }
+    }
     if (need) community_fetch();   // best effort: a failure keeps the previous list
     std::vector<std::string> merged;
     { std::lock_guard<std::mutex> lk(CM.mu); merged = CM.ids; }
@@ -273,25 +376,25 @@ static std::string sys_subfolder(const std::string& root_id, const std::string& 
     std::vector<Entry> entries;
     if (!list_folder(root_id, &entries)) return "";
     for (const Entry& e : entries)
-        if (e.is_folder && console_code(e.name) && lower_name(e.name) == sys) return e.id;
+        if (e.is_folder && console_alias(e.name) == sys) return e.id;
     return "";
 }
 
 std::string match_game(const std::string& sys_short, const std::string& title, const std::vector<std::string>& roots) {
-    std::string want = hubui::fg::norm_title(title);
+    std::string want = pack_key(title);
     if (want.empty()) return "";
     std::vector<std::string> sources;
     const char* sf = sys_folder(sys_short);
     if (sf[0]) sources.push_back(sf);
     for (const std::string& r : roots) {
-        std::string sub = sys_subfolder(r, lower_name(sys_short));
+        std::string sub = sys_subfolder(r, console_alias(sys_short));
         if (!sub.empty()) sources.push_back(sub);
     }
     for (const std::string& s : sources) {
         std::vector<Entry> entries;
         if (!list_folder(s, &entries)) continue;
         for (const Entry& e : entries)
-            if (e.is_folder && hubui::fg::norm_title(e.name) == want) return e.id;
+            if (entry_key(e) == want) return e.id;
     }
     return "";
 }
@@ -313,10 +416,12 @@ bool download_file(const std::string& file_id, const std::string& out_path,
     if (!ses) { *err = "network unavailable"; return false; }
     bool ok = false;
     std::wstring part = W(out_path + ".part");   // written here, renamed over out_path only once complete
-    HINTERNET con = WinHttpConnect(ses, L"drive.usercontent.google.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+    INTERNET_PORT qp = 0;
+    bool qa = qa_base(&qp);
+    HINTERNET con = WinHttpConnect(ses, qa ? L"127.0.0.1" : L"drive.usercontent.google.com", qa ? qp : INTERNET_DEFAULT_HTTPS_PORT, 0);
     std::wstring path = L"/download?id=" + W(file_id) + L"&export=download&confirm=t";
     HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                             WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+                                             WINHTTP_DEFAULT_ACCEPT_TYPES, qa ? 0 : WINHTTP_FLAG_SECURE) : nullptr;
     if (req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) && WinHttpReceiveResponse(req, nullptr)) {
         DWORD status = 0, sz = sizeof status;
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &sz, nullptr);
@@ -406,7 +511,7 @@ void index_refresh(const std::vector<std::string>& roots) {
             std::vector<Entry> entries;
             if (!list_folder(folder_id, &entries)) return false;
             std::lock_guard<std::mutex> lk(IX.mu);
-            for (const Entry& e : entries) if (e.is_folder) IX.titles[sys].insert(hubui::fg::norm_title(e.name));
+            for (const Entry& e : entries) { std::string k = entry_key(e); if (!k.empty()) IX.titles[sys].insert(k); }
             return true;
         };
         static const char* builtin[] = {"n64", "gc", "gba", "gbc", "nds", "ps1"};
@@ -420,11 +525,12 @@ void index_refresh(const std::vector<std::string>& roots) {
             std::vector<Entry> entries;
             if (!list_folder(root, &entries)) continue;
             for (const Entry& e : entries) {
-                if (!e.is_folder || !console_code(e.name)) continue;
-                std::string sys = lower_name(e.name);
+                if (!e.is_folder) continue;
+                std::string sys = console_alias(e.name);
+                if (sys.empty()) continue;
                 { std::lock_guard<std::mutex> lk(IX.mu); IX.extra[sys] = true; }
                 if (list_into(e.id.c_str(), sys)) {
-                    std::lock_guard<std::mutex> lk(IX.mu); if (IX.state[sys] != 2) IX.state[sys] = 1;
+                    std::lock_guard<std::mutex> lk(IX.mu); IX.state[sys] = 1;   // a listed extra root makes the console known even if the built-in listing failed
                 } else {
                     std::lock_guard<std::mutex> lk(IX.mu); IX.state[sys] = 2;
                 }
@@ -456,7 +562,7 @@ IndexState index_state(const std::string& sys_short) {
 }
 
 bool index_has(const std::string& sys_short, const std::string& title) {
-    std::string want = hubui::fg::norm_title(title);
+    std::string want = pack_key(title);
     if (want.empty()) return false;
     std::lock_guard<std::mutex> lk(IX.mu);
     auto it = IX.state.find(sys_short);
@@ -498,30 +604,33 @@ void Installer::start(const std::string& sys, const std::string& title, const st
         std::string e;
         const char* sf = sys_folder(this->sys);
         {
-            std::string want = hubui::fg::norm_title(this->title);
+            std::string want = pack_key(this->title);
             std::vector<std::string> sources;   // the built-in pack first, then every extra root that has this console
             if (sf[0]) sources.push_back(sf);
             std::vector<std::string> all;   // community packs (fetched if not known yet) + the user's extra roots
             all_roots(roots, &all);
             for (const std::string& root : all) {
-                std::string sub = sys_subfolder(root, lower_name(this->sys));
+                std::string sub = sys_subfolder(root, console_alias(this->sys));
                 if (!sub.empty()) sources.push_back(sub);
             }
             if (sources.empty()) e = "this console is not in the shared pack";
             else {
-                std::string game_id; bool any_listed = false;
+                std::string game_id; bool any_listed = false; Entry loose; bool is_file = false;
                 for (const std::string& s : sources) {
                     if (!game_id.empty()) break;
                     std::vector<Entry> games;
                     if (!list_folder(s, &games)) continue;
                     any_listed = true;
                     for (const Entry& g : games)
-                        if (g.is_folder && hubui::fg::norm_title(g.name) == want) { game_id = g.id; break; }
+                        if (entry_key(g) == want) { game_id = g.id; is_file = !g.is_folder; if (is_file) loose = g; break; }
                 }
                 if (game_id.empty()) e = any_listed ? "not in the shared pack" : "could not list the shared pack";
                 else {
                     std::vector<Entry> files;
-                    if (!list_files(game_id, &files)) e = "could not list the game's files";
+                    bool listed = true;
+                    if (is_file) files.push_back(loose);   // a loose game file: the file is the whole game
+                    else listed = list_files(game_id, &files);
+                    if (!listed) e = "could not list the game's files";
                     else if (files.empty()) e = "the shared copy has no files";
                     else {
                         std::error_code ec;
@@ -547,6 +656,7 @@ void Installer::start(const std::string& sys, const std::string& title, const st
                 }
             }
         }
+        if (!r && e.empty()) e = "unknown error";
         if (!r) { std::lock_guard<std::mutex> lk(mu); error = e; }
         ok = r;
         done = true;
