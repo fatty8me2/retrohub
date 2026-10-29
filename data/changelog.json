@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.20",
+      "date": "2026-10-29",
+      "title": "Rescan checks the packs",
+      "new": [],
+      "improved": [
+        "Rescan now also checks the shared Google Drive packs for new games right away, instead of within 10 minutes"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.29.19",
       "date": "2026-10-29",
       "title": "Drop into N64 party games",
