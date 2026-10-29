@@ -84,6 +84,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
       << "  \"tv_start\": " << (s.tv_start ? "true" : "false") << ",\n"
       << "  \"tv_windows\": " << (s.tv_windows ? "true" : "false") << ",\n"
+      << "  \"played_online\": " << (s.played_online ? "true" : "false") << ",\n"
       << "  \"notify_in_game\": " << (s.notify_in_game ? "true" : "false") << ",\n"
       << "  \"game_chat\": " << s.game_chat << ",\n"
       << "  \"perf_overlay\": " << (s.perf_overlay ? "true" : "false") << ",\n"
@@ -174,6 +175,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->show_friends = json_bool(j, "show_friends", out->show_friends);
     out->tv_start = json_bool(j, "tv_start", out->tv_start);
     out->tv_windows = json_bool(j, "tv_windows", out->tv_windows);
+    out->played_online = json_bool(j, "played_online", out->played_online);
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
     if (!json_bool(j, "notify_migrated", false)) out->notify_in_game = false;   // one-time: older installs had it on by default
     out->game_chat = std::max(0, std::min(2, (int)j.num("game_chat", out->game_chat)));

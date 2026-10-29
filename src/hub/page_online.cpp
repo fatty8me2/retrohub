@@ -4,6 +4,35 @@
 #include "online_caps.h"
 #include "remote_play.h"
 
+/* Play Online: friends who are in a joinable room right now (same presence data and join path as the friends panel; no extra traffic). */
+static void online_friend_rooms_panel(float w) {
+    std::vector<const hubnet::Friend*> rooms;
+    for (const hubnet::Friend& f : fr_friends())
+        if (hubui::friend_can_join(fr_row(f)) && hubnet::valid_room_code(f.status.lobby_code)) rooms.push_back(&f);
+    begin_panel("frooms", ImVec2(w, 0));
+    section_title("Friends' rooms");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (rooms.empty()) text_wrapped_disabled("None of your friends are in an open room right now. When one hosts, it shows up here.");
+    int shown = 0;
+    for (const hubnet::Friend* f : rooms) {
+        if (++shown > 6) break;
+        ImGui::PushID(f->uid.c_str());
+        std::string game = f->status.game_title.empty() ? std::string("a game") : f->status.game_title;
+        std::string line = f->name + "  -  " + game;
+        if (f->status.max_players > 0) line += "  (" + std::to_string(f->status.players) + "/" + std::to_string(f->status.max_players) + ")";
+        float bw = sp(10.f), bh = sp(3.5f);
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float tw = ImGui::GetContentRegionAvail().x - bw - sp(1.f);
+        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + (bh - ImGui::GetTextLineHeight()) * 0.5f));
+        ImGui::TextUnformatted(ui::ellipsize(ImGui::GetFont(), ImGui::GetFontSize(), line, tw).c_str());
+        ImGui::SetCursorScreenPos(ImVec2(p.x + tw + sp(1.f), p.y));
+        if (button("Join", ImVec2(bw, bh), true, A.proc == nullptr)) fr_join_lobby(f->status.lobby_code, f->status.game_id, f->status.game_title, f->name);
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        ImGui::PopID();
+    }
+    end_panel();
+}
+
 void page_online_home() {
     page_header("Play Online", "Host a room and share the code, or join a friend's room.");
     float avail = ImGui::GetContentRegionAvail().x;
@@ -47,8 +76,12 @@ void page_online_home() {
     end_panel();
 
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    online_friend_rooms_panel(avail);
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
     begin_panel("howto");
-    section_title("How it works");
+    ImGui::SetNextItemOpen(!A.st.played_online, ImGuiCond_Once);   // veterans get it collapsed; the header still opens it
+    bool howto_open = ImGui::CollapsingHeader("How it works");
+    if (howto_open) {
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     int online_games = 0;
     for (auto& e : A.lib) if (supports_online(e)) ++online_games;
@@ -73,6 +106,7 @@ void page_online_home() {
     ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
     ImGui::Text("You have %d game%s that can be played online.", online_games, online_games == 1 ? "" : "s");
     ImGui::PopStyleColor();
+    }
     end_panel();
 }
 

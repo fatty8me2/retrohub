@@ -697,6 +697,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
                           const hubui::PortPlan* host_plan, const hubui::Json* launch_msg,
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
     A.st.last_game = room_id(e);
+    A.st.played_online = true;
     mark_dirty();
     hub::rom_cache_touch(e);
     shot_trace("launch_online", std::string(is_host ? "host " : "guest ") + sys_short(e) + " " + room_id(e));
