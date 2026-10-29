@@ -1,10 +1,16 @@
 #include "app.h"
 
+#include <atomic>
+#include <memory>
+#include <mutex>
+#include <thread>
+
 /* ---------- Saves ---------- */
 
-void refresh_vault() {
-    A.vault_rows.clear();
-    std::string root = with_slash(hub::saves::vault_dir());
+/* Scans the vault (one meta.json read per game): disk I/O, so it runs on a worker, never the UI thread. */
+static std::vector<VaultRow> scan_vault(const std::string& vault_dir) {
+    std::vector<VaultRow> rows;
+    std::string root = with_slash(vault_dir);
     WIN32_FIND_DATAW sf;
     HANDLE hs = FindFirstFileW(W(root + "*").c_str(), &sf);
     if (hs != INVALID_HANDLE_VALUE) {
@@ -20,15 +26,56 @@ void refresh_vault() {
                 VaultRow r;
                 if (hubui::parse_vault_meta(read_text_file(root + sys + "\\" + g + "\\meta.json"), &r.m)) {
                     if (r.m.system.empty()) r.m.system = sys;
-                    A.vault_rows.push_back(r);
+                    rows.push_back(r);
                 }
             } while (FindNextFileW(hg, &gf));
             FindClose(hg);
         } while (FindNextFileW(hs, &sf));
         FindClose(hs);
     }
-    std::sort(A.vault_rows.begin(), A.vault_rows.end(), [](const VaultRow& a, const VaultRow& b) { return a.m.updated > b.m.updated; });
+    std::sort(rows.begin(), rows.end(), [](const VaultRow& a, const VaultRow& b) { return a.m.updated > b.m.updated; });
+    return rows;
+}
+
+namespace {
+struct VaultScan {
+    std::mutex mu;
+    bool running = false, have = false;
+    std::vector<VaultRow> result;
+};
+VaultScan& vscan() { static VaultScan* v = new VaultScan(); return *v; }
+}
+
+/* Starts a background rescan (no-op while one is running; vault_dirty stays set so it reruns). */
+void refresh_vault() {
+    if (g_headless) {   // HUB_SCREENSHOT: deterministic, synchronous
+        A.vault_rows = scan_vault(hub::saves::vault_dir());
+        A.vault_dirty = false;
+        return;
+    }
+    VaultScan& v = vscan();
+    {
+        std::lock_guard<std::mutex> l(v.mu);
+        if (v.running) return;
+        v.running = true;
+    }
     A.vault_dirty = false;
+    std::string dir = hub::saves::vault_dir();
+    std::thread([dir] {
+        std::vector<VaultRow> rows = scan_vault(dir);
+        VaultScan& v = vscan();
+        std::lock_guard<std::mutex> l(v.mu);
+        v.result = std::move(rows);
+        v.have = true;
+        v.running = false;
+    }).detach();
+}
+
+/* UI thread: swap in a finished scan. */
+static void poll_vault() {
+    VaultScan& v = vscan();
+    std::lock_guard<std::mutex> l(v.mu);
+    if (v.have) { A.vault_rows = std::move(v.result); v.have = false; }
 }
 
 void result_line(const std::string& s, bool ok) {
@@ -45,6 +92,7 @@ void page_saves() {
             : "Your saves follow you: cloud backup follows your RetroHub account on every PC you sign in on. You can also keep a copy in a folder or a file.";
         page_header("Saves", hdr.c_str());
     }
+    poll_vault();
     if (A.vault_dirty) refresh_vault();
     bool busy = A.job.running;
 

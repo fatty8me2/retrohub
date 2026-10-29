@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.5",
+      "date": "2026-10-28",
+      "title": "Smoother menus",
+      "new": [],
+      "improved": [
+        "Menus no longer stall while RetroHub reads or writes the cover-art cache, friend lists, the save vault, game details or file dates; that disk work now happens in the background"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.29.4",
       "date": "2026-10-28",
       "title": "N64 desync recovery and drop-in party games",
