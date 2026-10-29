@@ -8,7 +8,9 @@
       "improved": [
         "Shared game packs now work for every player: pack links are shared with everyone automatically, so there is no need to paste them on each PC. Have a game nobody else has? Put it in your own public Google Drive folder (one subfolder per console, each game in its own folder) and send the link so it can be added to the shared list"
       ],
-      "fixed": []
+      "fixed": [
+        "Fixed: Windows Defender could wrongly flag RetroHub after updating (removing it and its Start menu shortcut)."
+      ]
     },
     {
       "version": "1.29.5",

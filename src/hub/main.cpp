@@ -159,14 +159,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hubupdate::set_game_probe(&game_active);
     if (!autotest && (!shot_path || SH.update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
 
-    {   // UI hang watchdog: a stalled UI thread leaves userdata\logs\hang-<time>.txt (+ .dmp). HUB_HANG_SECS overrides the 5 s.
+    {   // UI hang watchdog: a stalled UI thread leaves userdata\logs\hang-<time>.txt (breadcrumb phases). HUB_HANG_SECS overrides the 5 s.
         const char* hs = std::getenv("HUB_HANG_SECS");
         hang_watchdog_start(hub::data_dir() + "logs\\", hs ? std::max(1.0, std::atof(hs)) : 5.0);
     }
     bool running = true;
+    int hang_test_frame = 0;   // HUB_HANG_TEST: main-loop iterations (ImGui frames may already be past 30 after the boot screen)
     while (running) {
         hang_watchdog_tick();
-        if (g_headless && std::getenv("HUB_HANG_TEST") && ImGui::GetFrameCount() == 30) Sleep((DWORD)(std::atof(std::getenv("HUB_HANG_TEST")) * 1000));   // QA: simulate a hang
+        if (g_headless && std::getenv("HUB_HANG_TEST") && ++hang_test_frame == 30) hang_watchdog_phase("hang_test"), Sleep((DWORD)(std::atof(std::getenv("HUB_HANG_TEST")) * 1000));   // QA: simulate a hang
+        hang_watchdog_phase("events");
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             qm_pad_event(e);   // the quick menu's own controls: button-down taps, whatever has the focus
@@ -195,28 +197,47 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             if (e.type == SDL_KEYDOWN || e.type == SDL_TEXTINPUT) osk::note_keyboard();
             if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEMOTION) A.pad_mode = false;
         }
+        hang_watchdog_phase("hubart::pump");
         hubart::pump();
         if (!(shot_path && std::getenv("HUB_SHOT_SKELETON")) && A.scan_ready.exchange(false)) {
             if (A.scan_th.joinable()) A.scan_th.join();
             A.scanning = false;
+            hang_watchdog_phase("apply_scan");
             apply_scan();
         }
+        hang_watchdog_phase("poll_process");
         poll_process();
+        hang_watchdog_phase("tvmode::tick");
         tvmode::tick(A.win, A.proc != nullptr);
+        hang_watchdog_phase("poll_np3ds");
         poll_np3ds();
+        hang_watchdog_phase("poll_rplay");
         poll_rplay();
+        hang_watchdog_phase("kt_tick");
         kt_tick();
+        hang_watchdog_phase("poll_job");
         poll_job();
+        hang_watchdog_phase("cloud_gate_tick");
         cloud_gate_tick();
+        hang_watchdog_phase("cloud_bg_poll");
         cloud_bg_poll();
+        hang_watchdog_phase("run_pending_sync");
         run_pending_sync();
+        hang_watchdog_phase("poll_emulators");
         poll_emulators();
+        hang_watchdog_phase("poll_gamepack");
         poll_gamepack();
+        hang_watchdog_phase("lobby_tick");
         lobby_tick();
+        hang_watchdog_phase("spectate_tick");
         spectate_tick();
+        hang_watchdog_phase("dropin_tick");
         dropin_tick();
+        hang_watchdog_phase("autotest_tick");
         autotest_tick();
+        hang_watchdog_phase("fr_tick");
         fr_tick();
+        hang_watchdog_phase("ghost_tick");
         ghost_tick();
         group_tick();
         userflow_tick();
@@ -343,6 +364,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         qm_pre_newframe();
         ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, 1);   // Y is a context-action button here: ImGui's own "Y activates the focused item" must not fire it
+        hang_watchdog_phase("imgui_newframe");
         ImGui::NewFrame();
         {   // a held X/Menu would open ImGui's window switcher; this app has no use for it (X is a real button here)
             ImGuiContext& g = *ImGui::GetCurrentContext();
@@ -355,11 +377,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             }
         }
         ImGui::PushFont(ui::F.body);
+        hang_watchdog_phase("draw_frame");
+        hang_watchdog_detail((int)A.page);
         draw_frame();
+        hang_watchdog_phase("draw_popups");
         if (shot_path) bootart_shot_draw(ren);   // HUB_SHOT_BOOTART gallery
         if (!shot_path || SH.update) draw_update_popup();   // opens itself only when prompt_allowed()
         osk::draw_root();
         ImGui::PopFont();
+        hang_watchdog_phase("render");
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 16, 17, 22, 255);
         SDL_RenderClear(ren);
@@ -380,6 +406,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             else if (SH.ready()) { save_screenshot(ren, shot_path); running = false; }
             SDL_Delay(8);
         }
+        hang_watchdog_phase("present");
         SDL_RenderPresent(ren);
     }
 
