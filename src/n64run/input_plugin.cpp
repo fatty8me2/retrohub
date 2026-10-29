@@ -57,14 +57,14 @@ PLUGIN_EXPORT m64p_error PluginGetVersion(m64p_plugin_type* type, int* version, 
 
 PLUGIN_EXPORT void InitiateControllers(CONTROL_INFO info) {
     for (int i = 0; i < 4; i++) {
-        info.Controls[i].Present = g_run.owner[i] >= 0 ? 1 : 0;
+        info.Controls[i].Present = (g_run.owner[i] >= 0 || (g_run.reserved >> i & 1u)) ? 1 : 0;
         info.Controls[i].RawData = 0;
-        info.Controls[i].Plugin = !info.Controls[i].Present ? PLUGIN_NONE : g_run.rumble ? PLUGIN_RUMBLE_PAK : g_run.mempak ? PLUGIN_MEMPAK : PLUGIN_NONE;
+        info.Controls[i].Plugin = g_run.owner[i] < 0 ? PLUGIN_NONE : g_run.rumble ? PLUGIN_RUMBLE_PAK : g_run.mempak ? PLUGIN_MEMPAK : PLUGIN_NONE;
         info.Controls[i].Type = CONT_TYPE_STANDARD;
     }
     char msg[128];
-    std::snprintf(msg, sizeof msg, "n64run input: ports present = %d %d %d %d",
-                  g_run.owner[0] >= 0, g_run.owner[1] >= 0, g_run.owner[2] >= 0, g_run.owner[3] >= 0);
+    std::snprintf(msg, sizeof msg, "n64run input: ports present = %d %d %d %d (drop-in reserved mask %x)",
+                  info.Controls[0].Present, info.Controls[1].Present, info.Controls[2].Present, info.Controls[3].Present, (unsigned)g_run.reserved);
     plog(M64MSG_INFO, msg);
 }
 

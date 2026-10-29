@@ -33,6 +33,7 @@ static LockstepCore::Config make_core_config(const LockstepOptions& o) {
     c.num_slots = o.num_slots;
     c.slot_mask = o.slot_mask;
     c.wide = o.wide;
+    c.reserved = o.reserved_ports;
     c.delay = o.online ? o.delay : 0;   // offline: no input delay needed
     return c;
 }
@@ -43,6 +44,7 @@ Lockstep::Lockstep(const LockstepOptions& opt, hubnet::Session* session, const L
         if (core_.port_local(p)) local_ports_[n_local_++] = p;
     logged_delay_ = core_.delay();
     masked_ = opt.spectator && !opt.full_hash && hooks.vi_poll && !std::getenv("N64RUN_NO_MASKED_HASH");
+    dj_t_start_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
     if (opt.online && opt.serve_spectators && !opt.spectator && opt.my_slot == 0 && session) {
         uint8_t pm = 0;
         for (int p = 0; p < kPorts; p++) if (core_.port_present(p)) pm |= (uint8_t)(1u << p);
@@ -55,7 +57,7 @@ void Lockstep::spec_service() {
     if (!net_) return;
     uint32_t now = hubnet::now_ms();
     if (spec_host_) {
-        uint32_t sm = net_->spectator_mask();
+        uint32_t sm = spec_mask();
         spec_host_->service(now, sm, [&](int slot, const uint8_t* d, int n) { net_->send(slot, d, n); });   // sm == 0 too: forgets departed spectators
     } else if (opt_.spectator) {
         spec_cli_.service(now, opt_.my_slot, [&](int slot, const uint8_t* d, int n) { net_->send(slot, d, n); });
@@ -92,8 +94,13 @@ void Lockstep::pump() {
         if (msg[0] == kPktDelay && msg.size() >= 3 && opt_.my_slot != 0) {
             uint8_t ack[3] = {kPktDelayAck, (uint8_t)opt_.my_slot, msg[2]};   // late repeats of the host's D
             net_->send(0, ack, 3);
+        } else if (msg[0] == kPktDropIn) {
+            di_on_msg(from, msg);
+        } else if (msg[0] == kPktBye && !opt_.spectator && msg.size() >= 2 && msg[1] < kPorts && (int)msg[1] == from && (dj_slots_ >> from & 1u)) {
+            drop_begin(from, hubnet::now_ms());   // a drop-in player left: it drops like a silent guest (its port is reserved again once the cutoff has passed)
         } else if (msg[0] == kPktBye) {
-            if (opt_.spectator || (net_->spectator_mask() >> (msg[1] & 3) & 1u)) continue;   // spectators come and go; a spectator's goodbye is not the match ending
+            if (!opt_.spectator && msg.size() >= 2 && msg[1] < kPorts && (int)msg[1] == from && (dj_mask_ >> from & 1u)) { di_candidate_left(from, "said bye"); continue; }
+            if (opt_.spectator || (spec_mask() >> (msg[1] & 3) & 1u)) continue;   // spectators come and go; a spectator's goodbye is not the match ending
             if (msg.size() >= 6 && msg[1] < kPorts && (int)msg[1] == from && msg[1] != opt_.my_slot) {
                 uint32_t last; std::memcpy(&last, &msg[2], 4);
                 if (!(bye_mask_ >> msg[1] & 1u) && hooks_.log) hooks_.log("partner in slot " + std::to_string((int)msg[1]) + " ended the session");
@@ -106,10 +113,19 @@ void Lockstep::pump() {
         } else if (msg[0] == rb::xfer::kPkt && !opt_.spectator && from >= 0 && from < 8 && from != opt_.my_slot && (core_.slot_mask() >> from & 1u)) {
             rs_on_xfer(from, msg);   // a player's transfer is a desync recovery (spectators' are handled below)
         } else if (msg[0] == spectate::kPktJoin || msg[0] == spectate::kPktNoLive || msg[0] == 0x55 /* rb::xfer::kPkt */) {
-            const bool ok = opt_.spectator ? from == 0 : (from > 0 && (net_->spectator_mask() >> from & 1u));
+            bool ok = opt_.spectator ? from == 0 : (from > 0 && (spec_mask() >> from & 1u));
+            if (!ok && !opt_.spectator && opt_.my_slot == 0 && msg[0] == spectate::kPktJoin && from > 0 && from < kPorts && dropin::is_knock(msg) &&
+                !(core_.slot_mask() >> from & 1u) && !(dj_slots_ >> from & 1u)) {   // a friend asks to drop in
+                int r = dropin_knock(from, dropin::knock_caps(msg), dropin::knock_name(msg));
+                if (r == 0) ok = true;
+                else {
+                    uint8_t nl[3] = {spectate::kPktNoLive, 0, (uint8_t)r};
+                    net_->send(from, nl, 3);
+                }
+            }
             if (ok && hooks_.on_spectate_msg) hooks_.on_spectate_msg(from, msg);
         } else if (msg[0] == spectate::kPktAck) {
-            if (spec_host_ && from > 0 && (net_->spectator_mask() >> from & 1u)) spec_host_->on_ack(from, msg.data(), msg.size(), hubnet::now_ms());
+            if (spec_host_ && from > 0 && (spec_mask() >> from & 1u)) spec_host_->on_ack(from, msg.data(), msg.size(), hubnet::now_ms());
         } else if (msg[0] == spectate::kPktData) {
             if (opt_.spectator && from == 0) spec_cli_.on_data(msg.data(), msg.size(), hubnet::now_ms());
         } else if (msg[0] == kPktCheats) {
@@ -120,6 +136,7 @@ void Lockstep::pump() {
             core_.on_packet(from, msg.data(), msg.size());
         }
     }
+    di_service(hubnet::now_ms());
 }
 
 bool Lockstep::start_barrier(uint32_t timeout_ms) {
@@ -127,7 +144,8 @@ bool Lockstep::start_barrier(uint32_t timeout_ms) {
     uint32_t all = core_.slot_mask();
     ready_mask_ |= 1u << opt_.my_slot;
     const uint8_t my_cap = (uint8_t)(((hooks_.resync_fetch && hooks_.resync_load && hooks_.resync_save && !std::getenv("N64RUN_NO_RESYNC")) ? resync::kCapResync : 0) |
-                                     ((hooks_.vi_poll && !std::getenv("N64RUN_NO_MASKED_HASH")) ? resync::kCapMaskedHash : 0));
+                                     ((hooks_.vi_poll && !std::getenv("N64RUN_NO_MASKED_HASH")) ? resync::kCapMaskedHash : 0) |
+                                     ((opt_.reserved_ports && !std::getenv("N64RUN_NO_DROPIN_CAP")) ? dropin::kCapDropIn : 0));
     caps_[opt_.my_slot] = my_cap;
     uint32_t t0 = hubnet::now_ms(), last = 0, seen_all_at = 0;
     for (;;) {
@@ -148,6 +166,9 @@ bool Lockstep::start_barrier(uint32_t timeout_ms) {
                 rs_.configure(opt_.my_slot, all, caps_, margin);
                 masked_ = true;
                 for (int s = 0; s < 8; s++) if ((all >> s & 1u) && !(caps_[s] & resync::kCapMaskedHash)) masked_ = false;
+                dj_ok_ = opt_.reserved_ports != 0;
+                for (int s = 0; s < 8; s++) if ((all >> s & 1u) && !(caps_[s] & dropin::kCapDropIn)) dj_ok_ = false;
+                if (hooks_.log && opt_.reserved_ports) hooks_.log(dj_ok_ ? "dropin: open ports are reserved; a friend can drop in (every peer supports it)" : "dropin: open ports are reserved, but a peer lacks drop-in: joins are refused");
                 if (hooks_.log) hooks_.log(masked_ ? "sync hash: version 2 (framebuffers masked)" : "sync hash: version 1 (a peer lacks the masked hash)");
                 if (hooks_.log) hooks_.log(rs_.enabled() ? "resync: desync recovery on (every peer supports it)" : "resync: desync recovery off (a peer lacks it)");
                 return true;
@@ -523,14 +544,14 @@ void Lockstep::catch_up(uint32_t now) {
 
 void Lockstep::finish_spectators() {
     if (!net_ || lost_) return;
-    if (spec_host_ && net_->spectator_mask() && !spec_finished_) {
+    if (spec_host_ && spec_mask() && !spec_finished_) {
         spec_finished_ = true;   // let spectators receive the tail of the history and the end marker
         spec_host_->finish();
         uint32_t t0 = hubnet::now_ms();
         while (hubnet::now_ms() - t0 < 4000 && !net_->failed()) {
             pump();
             spec_service();
-            if (spec_host_->all_acked(net_->spectator_mask()) && hubnet::now_ms() - t0 > 300) break;
+            if (spec_host_->all_acked(spec_mask()) && hubnet::now_ms() - t0 > 300) break;
             Sleep(5);
         }
         if (hooks_.log) { char b[120]; std::snprintf(b, sizeof b, "spectate: served %u samples; spectator hashes ok %u, different %u", spec_host_->total(), spec_host_->hashes_ok(), spec_host_->hashes_bad()); hooks_.log(b); }
@@ -539,7 +560,7 @@ void Lockstep::finish_spectators() {
 
 void Lockstep::finish() {
     if (!net_ || lost_) return;
-    if (opt_.spectator) return;   // just leave: the host keeps the match going without us
+    if (opt_.spectator && !opt_.dropin_join) return;   // just leave: the host keeps the match going without us (a drop-in joiner says bye so the host frees the port at once)
     uint8_t bye[6] = {kPktBye, (uint8_t)opt_.my_slot, 0, 0, 0, 0};
     uint32_t newest = core_.newest_local();
     std::memcpy(bye + 2, &newest, 4);
@@ -614,6 +635,18 @@ uint32_t Lockstep::spec_get_keys(int port) {
         }
     }
     for (int p = 0; p < kPorts; p++) spec_cur_.v[p] = core_.port_present(p) ? spec_cli_.get(n, p) : 0;
+    if (opt_.dropin_join) {
+        dj_gate_.on_sample(spec_cli_.lag());
+        const uint32_t now = hubnet::now_ms();
+        if (dj_have_admit_ && n >= dj_adm_.j) dj_fail(11, "missed the join sample");
+        else if (!dj_have_admit_ && dj_gate_.ready() && now - dj_ready_sent_ >= dropin::kReadyEveryMs) {
+            if (!dj_t_ready_) { dj_t_ready_ = now ? now : 1; if (hooks_.log) hooks_.log("dropin: caught up with the match; asking the host to admit us"); }
+            dropin::Msg r; r.sub = dropin::Ready; r.from = (uint8_t)opt_.my_slot; r.slot = (uint8_t)opt_.my_slot; r.pos = n;
+            di_send(0, r);
+            dj_ready_sent_ = now ? now : 1;
+        }
+        if (dj_t_ready_ && !dj_have_admit_ && now - dj_t_ready_ > dropin::kNoAdmitMs) dj_fail(11, "the host never admitted us");
+    }
     if (hooks_.set_limiter) {   // far behind the live game (late join / hiccup): run unthrottled until we are close
         bool behind = spec_cli_.lag() > spectate::kLiveLagSamples;
         if (behind == spec_live_) { spec_live_ = !behind; hooks_.set_limiter(!behind); if (hooks_.log && behind) { char b[96]; std::snprintf(b, sizeof b, "spectate: catching up, %u samples behind", spec_cli_.lag()); hooks_.log(b); } }
@@ -624,7 +657,10 @@ uint32_t Lockstep::spec_get_keys(int port) {
 }
 
 uint32_t Lockstep::get_keys(int port) {
-    if (opt_.spectator) return spec_get_keys(port);
+    if (opt_.spectator) {
+        if (opt_.dropin_join && !lost_ && port == core_.lead_port() && dj_have_admit_ && !live_wait_ && (uint32_t)(sample_ + 1) == dj_adm_.j) dj_promote();
+        if (opt_.spectator) return spec_get_keys(port);
+    }
     if (lost_ || peer_left_ || !core_.port_present(port)) return 0;
     if (rs_wait_) {   // recovery state requested: polls before the core has loaded it are thrown away with the state they ran in
         if (port == core_.lead_port()) {
@@ -652,6 +688,21 @@ uint32_t Lockstep::get_keys(int port) {
     if (net_) {
         rs_service(hubnet::now_ms());
         if (rs_.barrier_at(n) && !rs_barrier(n)) return 0;
+    }
+    if (net_ && dj_ctl_.active() && opt_.my_slot == 0 && n == dj_ctl_.cur().j && !dj_ctl_.aborting()) di_barrier(n);
+    if (net_ && dj_slots_) di_release(n);
+    if (dj_osd_f_ && n >= dj_osd_f_) {
+        if (hooks_.on_dropin && dj_osd_slot_ < kPorts) hooks_.on_dropin(dj_osd_name_, (int)dj_osd_slot_, dj_port_[dj_osd_slot_], true);
+        dj_osd_f_ = 0;
+    }
+    if (dj_win_ && n >= dj_win_end_) {
+        dj_win_ = false;
+        if (hooks_.log) {
+            char b[200];
+            std::snprintf(b, sizeof b, "dropin: join window (Admit .. sample %u): stalled %llu ms in total, longest single stall %u ms, host barrier wait %u ms",
+                          n, (unsigned long long)(stall_ms_ - dj_win_stall0_), dj_win_longest_, dj_barrier_ms_);
+            hooks_.log(b);
+        }
     }
     if (hooks_.vi_poll) hooks_.vi_poll(n);
 
@@ -721,6 +772,7 @@ uint32_t Lockstep::get_keys(int port) {
         }
         stall_this = hubnet::now_ms() - t0;
         if (stall_this > longest_stall_) longest_stall_ = stall_this;
+        if (dj_win_ && stall_this > dj_win_longest_) dj_win_longest_ = stall_this;
     }
     if (net_) adapt(hubnet::now_ms(), stall_this);
     if (net_) catch_up(hubnet::now_ms());
@@ -738,6 +790,14 @@ uint32_t Lockstep::get_keys(int port) {
         hooks_.log(b);
     }
     if (net_) report_mismatches();
+    for (int p = 0; p < kPorts; p++) {   // drop-in ports: how much real input has flowed since the port's first sample
+        const uint32_t f = core_.port_first(p);
+        if (f && n >= f) { dj_seen_[p]++; if (core_.get(n, p)) dj_real_[p]++; }
+    }
+    if (net_ && n > 0 && n % 600 == 0 && hooks_.log) {
+        for (int p = 0; p < kPorts; p++)
+            if (dj_seen_[p]) { char b[140]; std::snprintf(b, sizeof b, "dropin: input check port %d (slot %d): %u of %u samples since sample %u carry input", p, core_.port_owner(p), dj_real_[p], dj_seen_[p], core_.port_first(p)); hooks_.log(b); }
+    }
     if (spec_host_) {   // sample n is final (every port known): record it for spectators
         uint64_t v[kPorts] = {0, 0, 0, 0};
         for (int p = 0; p < kPorts; p++)
@@ -897,6 +957,264 @@ CheatSync exchange_cheat_hash(hubnet::Session& s, int my_slot, uint32_t slot_mas
         if (now - t0 > timeout_ms) { if (log) log("cheats: not every peer answered the cheat-list check in time"); return CheatSync::Timeout; }
         if (idle) idle();
         Sleep(5);
+    }
+}
+
+}  // namespace n64run
+
+/* ---------------------------------------------------------------- N64 drop-in (dropin.h) */
+namespace n64run {
+
+uint32_t Lockstep::spec_mask() const { return (net_ ? net_->spectator_mask() : 0u) | dj_mask_; }
+
+void Lockstep::di_send(int to, const dropin::Msg& m) {
+    if (!net_) return;
+    auto v = dropin::encode(kPktDropIn, m);
+    net_->send(to, v.data(), (int)v.size());
+}
+
+int Lockstep::dropin_knock(int slot, uint8_t caps, const std::string& name) {
+    if (!net_ || opt_.spectator || opt_.my_slot != 0 || !opt_.reserved_ports || !spec_host_) return dropin::kRefuseNoPort;
+    if (slot < 1 || slot >= kPorts || (core_.slot_mask() >> slot & 1u)) return dropin::kRefuseSlot;
+    if (dj_mask_ >> slot & 1u) return 0;   // a repeated knock
+    if (!dj_ok_ || !(caps & dropin::kCapDropIn)) { if (hooks_.log) hooks_.log("dropin: slot " + std::to_string(slot) + " refused: a player's RetroHub is too old for drop-in"); return dropin::kRefuseOldPeer; }
+    if (!core_.free_reserved()) { if (hooks_.log) hooks_.log("dropin: slot " + std::to_string(slot) + " refused: no free controller port"); return dropin::kRefuseNoPort; }
+    if (rs_.active() || dj_ctl_.active() || dj_mask_) return dropin::kRefuseBusy;
+    dj_mask_ |= 1u << slot;
+    dj_name_[slot] = name;
+    dj_since_[slot] = hubnet::now_ms() ? hubnet::now_ms() : 1;
+    if (hooks_.log) hooks_.log("dropin: slot " + std::to_string(slot) + " (" + name + ") asks to join");
+    return 0;
+}
+
+void Lockstep::dropin_forget(int slot, const char* why) {
+    if (slot < 0 || slot >= kPorts || !(dj_mask_ >> slot & 1u)) return;
+    di_candidate_left(slot, why);
+}
+
+void Lockstep::di_candidate_left(int slot, const char* why) {
+    if (hooks_.log) hooks_.log("dropin: slot " + std::to_string(slot) + " is out of the join (" + why + ")");
+    dj_mask_ &= ~(1u << slot);
+    if (dj_ctl_.active() && !dj_ctl_.aborting() && dj_ctl_.cur().slot == slot) di_abort(why);
+}
+
+void Lockstep::di_begin_admit(int slot) {
+    if (dj_ctl_.active() || rs_.active() || !(dj_mask_ >> slot & 1u)) return;
+    const uint32_t fm = core_.free_reserved();
+    int port = -1;
+    for (int p = 0; p < kPorts; p++) if (fm >> p & 1u) { port = p; break; }
+    if (port < 0) { uint8_t nl[3] = {spectate::kPktNoLive, 0, dropin::kRefuseNoPort}; net_->send(slot, nl, 3); di_candidate_left(slot, "no free port"); return; }
+    const uint32_t now = hubnet::now_ms();
+    dropin::Msg m;
+    m.from = 0; m.slot = (uint8_t)slot; m.port = (uint8_t)port; m.d = (uint8_t)core_.delay();
+    m.j = (uint32_t)(sample_ + 1) + dropin::kAdmitMargin;
+    double rtt = 0;
+    hubnet::PingStats st;
+    if (net_->ping_stats(slot, &st) && st.n > 0) rtt = st.avg_ms + (st.max_ms - st.avg_ms) * 0.5;
+    m.f = dropin::first_sample(m.j, m.d, rtt);
+    m.flags = (uint8_t)((rs_.enabled() ? dropin::kFlagResync : 0) | (masked_ ? dropin::kFlagMasked : 0));
+    m.mask = (uint8_t)core_.slot_mask();
+    for (int p = 0; p < kPorts; p++) m.owners[p] = (int8_t)core_.port_owner(p);
+    m.name = dj_name_[slot];
+    uint32_t need = (core_.slot_mask() & ~1u & ~dropped_mask_) | (1u << slot);
+    dj_ctl_.begin(m, need, now);
+    if (hooks_.log) {
+        char b[200];
+        std::snprintf(b, sizeof b, "dropin: admitting slot %d on port %d: joins at sample %u (now %u), supplies input from sample %u, delay %d, rtt %.0f ms", slot, port, m.j, (unsigned)(sample_ + 1), m.f, m.d, rtt);
+        hooks_.log(b);
+    }
+    di_apply(dj_ctl_.cur());
+    di_send(-1, dj_ctl_.cur());
+}
+
+void Lockstep::di_apply(const dropin::Msg& m) {
+    const int slot = m.slot, port = m.port;
+    if (slot < 1 || slot >= kPorts || !core_.join_port(port, slot, m.f)) { if (hooks_.log) hooks_.log("dropin: cannot bind port " + std::to_string(port) + " to slot " + std::to_string(slot)); return; }
+    dj_slots_ |= 1u << slot;
+    dj_port_[slot] = port;
+    dj_applied_id_[slot] = m.id;
+    if (!m.name.empty()) dj_name_[slot] = m.name;
+    caps_[slot] = (uint8_t)(((m.flags & dropin::kFlagResync) ? resync::kCapResync : 0) | ((m.flags & dropin::kFlagMasked) ? resync::kCapMaskedHash : 0) | dropin::kCapDropIn);
+    const uint32_t now = hubnet::now_ms();
+    last_rx_[slot] = now ? now : 1;
+    bye_mask_ &= ~(1u << slot);
+    dropped_mask_ &= ~(1u << slot);
+    if (!rs_.active()) rs_.configure(opt_.my_slot, core_.slot_mask(), caps_);
+    dj_osd_f_ = m.f; dj_osd_slot_ = (uint32_t)slot; dj_osd_name_ = dj_name_[slot];
+    dj_win_ = true; dj_win_end_ = m.f + 240; dj_win_stall0_ = stall_ms_; dj_win_longest_ = 0; dj_barrier_ms_ = 0;
+    if (hooks_.log) {
+        char b[160];
+        std::snprintf(b, sizeof b, "dropin: port %d belongs to slot %d (%s) from sample %u (join sample %u, id %u)", port, slot, dj_name_[slot].c_str(), m.f, m.j, (unsigned)m.id);
+        hooks_.log(b);
+    }
+}
+
+void Lockstep::di_abort(const char* why) {
+    if (!dj_ctl_.active() || dj_ctl_.aborting()) return;
+    const dropin::Msg c = dj_ctl_.cur();
+    if (hooks_.log) hooks_.log(std::string("dropin: admit cancelled (") + why + ")");
+    dj_ctl_.abort();
+    core_.cancel_join(c.port, c.slot);
+    dj_slots_ &= ~(1u << c.slot);
+    dj_port_[c.slot] = -1;
+    dj_dead_id_[c.slot] = c.id;
+    dj_applied_id_[c.slot] = 0;
+    dj_mask_ &= ~(1u << c.slot);
+    dj_osd_f_ = 0; dj_win_ = false;
+    dj_abort_msg_ = c; dj_abort_msg_.sub = dropin::Abort;
+    dj_abort_sends_ = 0; dj_last_abort_ = 0;
+    if (!rs_.active()) rs_.configure(opt_.my_slot, core_.slot_mask(), caps_);
+}
+
+void Lockstep::di_barrier(uint32_t n) {
+    (void)n;
+    const uint32_t t0 = hubnet::now_ms();
+    uint32_t last_send = 0;
+    while (dj_ctl_.active() && !dj_ctl_.aborting() && !dj_ctl_.all_acked() && !lost_) {
+        if (hooks_.idle) hooks_.idle();
+        pump();
+        const uint32_t now = hubnet::now_ms();
+        if (net_->failed()) { abort_with("Connection lost during a drop-in"); return; }
+        if (dj_ctl_.timed_out(now)) { di_abort("not every player acknowledged the Admit in time"); break; }
+        if (now - last_send >= 50) { send_packet(); last_send = now; }
+        Sleep(1);
+    }
+    dj_barrier_ms_ += hubnet::now_ms() - t0;
+    if (dj_barrier_ms_ > 20 && hooks_.log) hooks_.log("dropin: the join sample waited " + std::to_string(dj_barrier_ms_) + " ms for the acks");
+}
+
+void Lockstep::di_service(uint32_t now) {
+    if (!net_) return;
+    if (opt_.spectator || opt_.my_slot != 0) {
+        if (!opt_.spectator && opt_.dropin_join && dj_live_until_ && (int32_t)(now - dj_live_until_) < 0 && now - dj_live_last_ >= 100) {   // joiner: keep saying Live for a while
+            dropin::Msg l; l.sub = dropin::Live; l.from = (uint8_t)opt_.my_slot; l.slot = (uint8_t)opt_.my_slot; l.id = dj_adm_.id;
+            di_send(0, l);
+            dj_live_last_ = now ? now : 1;
+        }
+        return;
+    }
+    for (int s = 1; s < kPorts; s++) {   // candidates that vanished
+        if (!(dj_mask_ >> s & 1u)) continue;
+        const uint32_t last = std::max(last_rx_[s], dj_since_[s]);
+        if (now - last > 4000) di_candidate_left(s, "went silent");
+        else if (now - dj_since_[s] > 90000 && !dj_ctl_.active()) di_candidate_left(s, "took too long");
+    }
+    if (!dj_ctl_.active()) return;
+    if (dj_ctl_.aborting()) {
+        if (now - dj_last_abort_ >= 100) {
+            di_send(-1, dj_abort_msg_);
+            dj_last_abort_ = now ? now : 1;
+            if (++dj_abort_sends_ >= 8) dj_ctl_.finish();
+        }
+    } else if (dj_ctl_.send_due(now)) di_send(-1, dj_ctl_.cur());
+    else if (dj_ctl_.all_acked() && sample_ >= 0 && (uint32_t)sample_ > dj_ctl_.cur().f + 90) {   // the joiner's Live was lost; it plays
+        dj_mask_ &= ~(1u << dj_ctl_.cur().slot);
+        dj_ctl_.finish();
+    }
+}
+
+void Lockstep::di_on_msg(int from, const std::vector<uint8_t>& msg) {
+    dropin::Msg m;
+    if (!dropin::decode(kPktDropIn, msg.data(), msg.size(), &m) || m.from != from) return;
+    if (opt_.spectator) {   // the joiner
+        if (!opt_.dropin_join || from != 0) return;
+        if (m.sub == dropin::Admit && m.slot == opt_.my_slot) {
+            if (!dj_have_admit_) {
+                if (!live_wait_ && (uint32_t)(sample_ + 1) >= m.j) {
+                    dropin::Msg n; n.sub = dropin::Nack; n.from = (uint8_t)opt_.my_slot; n.id = m.id; di_send(0, n);
+                    dj_fail(11, "the Admit arrived after its join sample");
+                    return;
+                }
+                dj_adm_ = m; dj_have_admit_ = true;
+                if (hooks_.log) { char b[160]; std::snprintf(b, sizeof b, "dropin: admitted on port %d: we play from sample %u (supplying input from %u), delay %d", m.port, m.j, m.f, m.d); hooks_.log(b); }
+            }
+            if (dj_adm_.id == m.id) { dropin::Msg a; a.sub = dropin::Ack; a.from = (uint8_t)opt_.my_slot; a.id = m.id; di_send(0, a); }
+        } else if (m.sub == dropin::Abort && dj_have_admit_ && dj_adm_.id == m.id) dj_fail(11, "the host cancelled the join");
+        return;
+    }
+    if (opt_.my_slot == 0) {
+        if (m.sub == dropin::Ready) { if ((dj_mask_ >> from & 1u) && !dj_ctl_.active() && !(dj_slots_ >> from & 1u)) di_begin_admit(from); }
+        else if (m.sub == dropin::Ack) dj_ctl_.on_ack(m);
+        else if (m.sub == dropin::Nack) { if (dj_ctl_.active() && m.id == dj_ctl_.id() && !dj_ctl_.aborting()) di_abort("a player got the Admit too late"); }
+        else if (m.sub == dropin::Live) {
+            if (dj_ctl_.active() && !dj_ctl_.aborting() && m.id == dj_ctl_.id() && dj_ctl_.cur().slot == from) {
+                if (hooks_.log) hooks_.log("dropin: slot " + std::to_string(from) + " is playing");
+                dj_mask_ &= ~(1u << from);
+                dj_ctl_.finish();
+            }
+        }
+        return;
+    }
+    if (from != 0) return;   // another player
+    if (m.sub == dropin::Admit) {
+        if (m.slot < 1 || m.slot >= kPorts || m.slot == opt_.my_slot) return;
+        if (dj_dead_id_[m.slot] == m.id) return;
+        dropin::Msg a; a.sub = dropin::Ack; a.from = (uint8_t)opt_.my_slot; a.id = m.id;
+        if ((dj_slots_ >> m.slot & 1u) && dj_applied_id_[m.slot] == m.id) { di_send(0, a); return; }   // a repeat: our Ack was lost
+        if ((dj_slots_ >> m.slot & 1u) || rs_.active()) return;   // busy (a recovery is running): the host repeats
+        if (sample_ >= 0 && (uint32_t)(sample_ + 1) + 1 >= m.f) { a.sub = dropin::Nack; di_send(0, a); return; }
+        di_apply(m);
+        di_send(0, a);
+    } else if (m.sub == dropin::Abort) {
+        if (m.slot < kPorts) dj_dead_id_[m.slot] = m.id;
+        if (m.slot < kPorts && (dj_slots_ >> m.slot & 1u) && dj_applied_id_[m.slot] == m.id) {
+            core_.cancel_join(dj_port_[m.slot], m.slot);
+            dj_slots_ &= ~(1u << m.slot); dj_port_[m.slot] = -1; dj_applied_id_[m.slot] = 0; dj_osd_f_ = 0; dj_win_ = false;
+            if (!rs_.active()) rs_.configure(opt_.my_slot, core_.slot_mask(), caps_);
+            if (hooks_.log) hooks_.log("dropin: the host cancelled the admit of slot " + std::to_string((int)m.slot));
+        }
+    }
+}
+
+void Lockstep::dj_fail(int rc, const char* why) {
+    if (dj_fail_rc_) return;
+    dj_fail_rc_ = rc;
+    if (hooks_.log) hooks_.log(std::string("dropin: failed: ") + why);
+    lost_ = true;
+    if (hooks_.request_stop) hooks_.request_stop();
+}
+
+void Lockstep::dj_promote() {
+    const dropin::Msg a = dj_adm_;
+    core_.adopt_layout(a.owners, a.mask);
+    core_.join_self(a.port, a.f, a.d);
+    opt_.spectator = false;
+    opt_.delay = a.d;
+    opt_.online = true;
+    for (int i = 0; i < kPorts; i++) local_ports_[i] = -1;
+    local_ports_[0] = a.port;
+    n_local_ = 1;
+    adapter_ = DelayAdapter(a.d < 1 ? 1 : a.d, DelayAdapter::cap_for_floor(a.d < 1 ? 1 : a.d));
+    opt_.adaptive_delay = !std::getenv("N64RUN_FIXED_DELAY");
+    logged_delay_ = a.d;
+    masked_ = (a.flags & dropin::kFlagMasked) != 0;
+    const uint8_t cap = (uint8_t)(((a.flags & dropin::kFlagResync) ? resync::kCapResync : 0) | ((a.flags & dropin::kFlagMasked) ? resync::kCapMaskedHash : 0) | dropin::kCapDropIn);
+    for (int s = 0; s < 8; s++) if (core_.slot_mask() >> s & 1u) caps_[s] = cap;
+    rs_.configure(opt_.my_slot, core_.slot_mask(), caps_);
+    const uint32_t now = hubnet::now_ms() ? hubnet::now_ms() : 1;
+    for (int q = 0; q < kPorts; q++) last_rx_[q] = now;
+    t_first_ = now;
+    last_poll_ = 0; debt_ms_ = 0;
+    dj_live_until_ = now + 1500; dj_live_last_ = 0;
+    if (hooks_.log) {
+        char b[200];
+        std::snprintf(b, sizeof b, "dropin: playing as slot %d on port %d from sample %u, %u ms after asking (delay %d, slots %x)", opt_.my_slot, a.port, a.j, now - dj_t_ready_, a.d, core_.slot_mask());
+        hooks_.log(b);
+    }
+    if (hooks_.on_dropin) hooks_.on_dropin(opt_.my_name, opt_.my_slot, a.port, true);
+}
+
+void Lockstep::di_release(uint32_t n) {
+    for (int s = 1; s < kPorts; s++) {
+        if (!(dj_slots_ >> s & 1u) || !core_.drop_done(s) || drops_.count(s)) continue;
+        if (n <= core_.drop_cutoff(s) + 4) continue;
+        const int port = dj_port_[s];
+        core_.leave_port(port, s);
+        dj_slots_ &= ~(1u << s); dj_port_[s] = -1; dj_applied_id_[s] = 0; dj_dead_id_[s] = 0;
+        dropped_mask_ &= ~(1u << s); bye_mask_ &= ~(1u << s); last_rx_[s] = 0; drop_done_at_.erase(s);
+        rs_.drop(s);
+        if (hooks_.log) hooks_.log("dropin: slot " + std::to_string(s) + " left; port " + std::to_string(port) + " is free again");
+        if (hooks_.on_dropin) hooks_.on_dropin(dj_name_[s], s, port, false);
     }
 }
 

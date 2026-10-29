@@ -762,7 +762,8 @@ extern bool g_dropin_launch;
 extern std::string g_dropin_code;
 extern int g_dropin_slot, g_dropin_players;
 extern std::string g_dropin_ports;
-bool dropin_supported(const hub::GameEntry& e);   // NES / SNES (rollback netplay), not native
+extern bool g_room_dropin;   // HOST side: set by page_online right before launch_online() when the launch advertises drop-in (guests read launch_msg "dropin")
+bool dropin_supported(const hub::GameEntry& e);   // NES / SNES (rollback) and N64 party games (n64_dropin_game), not native
 void dropin_start(const std::string& code, const std::string& game_id, const std::string& title, const std::string& friend_name);
 void dropin_tick();
 bool dropin_pending();
