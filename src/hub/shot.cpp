@@ -49,6 +49,7 @@ void shot_init_ui() {
             else if (tok.rfind("genre=", 0) == 0) A.st.lib_genre = tok.substr(6);
         }
     }
+    if (const char* pl = std::getenv("HUB_SHOT_PACKLINKS")) A.st.pack_links = pl;   // screenshot aid: seed Settings > Online shared pack links
     A.st.show_friends = std::getenv("HUB_SHOT_FRIENDS") != nullptr;
     if (const char* hh = std::getenv("HUB_SHOT_HISTORY")) {   // screenshot aid: open the save history of "<system>/<key>" on the Saves page
         std::string h = hh;
