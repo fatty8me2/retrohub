@@ -1,7 +1,11 @@
 #include "app.h"
 #include "online_caps.h"
 #include "gameinfo.h"
+#include <deque>
+#include <map>
 #include <mutex>
+#include <set>
+#include <thread>
 
 /* ---------- library / ROM scanning ---------- */
 
@@ -172,10 +176,7 @@ const GameInfo* catalog_for(const hub::GameEntry& e) {
 }
 
 /* "Recently added": when the game file appeared on disk (creation time, else last write); cached per path. */
-static unsigned long long added_unix(const std::string& path) {
-    static std::map<std::string, unsigned long long> cache;
-    auto it = cache.find(path);
-    if (it != cache.end()) return it->second;
+static unsigned long long stat_added(const std::string& path) {
     unsigned long long v = 0;
     WIN32_FILE_ATTRIBUTE_DATA d{};
     if (GetFileAttributesExW(W(path).c_str(), GetFileExInfoStandard, &d)) {
@@ -185,8 +186,55 @@ static unsigned long long added_unix(const std::string& path) {
         ULONGLONG t = c.QuadPart && c.QuadPart < w.QuadPart ? c.QuadPart : w.QuadPart;
         if (t > 116444736000000000ull) v = (t - 116444736000000000ull) / 10000000ull;
     }
-    cache[path] = v;
     return v;
+}
+
+/* The stat can be slow (network drives), so it never runs on the UI thread: an unknown path reports 0 and is
+   queued for one worker; when the batch lands added_stamps_changed() turns true once so the list is rebuilt. */
+namespace {
+std::mutex g_added_mu;
+std::map<std::string, unsigned long long> g_added_cache;
+std::deque<std::string> g_added_queue;
+std::set<std::string> g_added_queued;
+bool g_added_running = false, g_added_changed = false;
+
+void added_worker() {
+    for (;;) {
+        std::string p;
+        if (g_io_shutdown) return;
+        {
+            std::lock_guard<std::mutex> l(g_added_mu);
+            if (g_added_queue.empty()) { g_added_running = false; return; }
+            p = std::move(g_added_queue.front());
+            g_added_queue.pop_front();
+        }
+        unsigned long long v = stat_added(p);
+        if (g_io_shutdown) return;   // app is tearing down: leave the (soon destroyed) statics alone
+        std::lock_guard<std::mutex> l(g_added_mu);
+        g_added_cache[p] = v;
+        g_added_queued.erase(p);
+        if (g_added_queue.empty()) g_added_changed = true;   // whole batch done: one rebuild
+    }
+}
+}
+
+bool added_stamps_changed() {
+    std::lock_guard<std::mutex> l(g_added_mu);
+    bool c = g_added_changed;
+    g_added_changed = false;
+    return c;
+}
+
+static unsigned long long added_unix(const std::string& path) {
+    std::lock_guard<std::mutex> l(g_added_mu);
+    auto it = g_added_cache.find(path);
+    if (it != g_added_cache.end()) return it->second;
+    if (g_headless) { unsigned long long v = stat_added(path); g_added_cache[path] = v; return v; }   // screenshots stay deterministic
+    if (g_added_queued.insert(path).second) {
+        g_added_queue.push_back(path);
+        if (!g_added_running) { g_added_running = true; std::thread(added_worker).detach(); }
+    }
+    return 0;
 }
 
 static std::string genre_lookup(const gameinfo::Query& q) {

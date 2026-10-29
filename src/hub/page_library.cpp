@@ -2,6 +2,9 @@
 #include "wiiu_meta.h"
 #include "homefun.h"
 
+#include <mutex>
+#include <thread>
+
 void go_add_rom(const GameInfo& g) {
     settings_open(hubui::ST_General);
     push_toast("Put your " + g.title + " ROM in a ROM folder, then press Rescan.", ui::ACCENT, 7.0);
@@ -448,7 +451,7 @@ void all_games_view() {
     struct Chip { const char* label; const char* sys; };
     static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"PlayStation", "ps1"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
                                 {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
-    if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
+    if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     std::map<std::string, int>& counts = A.chip_counts;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
@@ -512,7 +515,7 @@ void all_games_view() {
     ImGui::PopItemFlag();
     ImGui::PopStyleVar();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
+    if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
     const hub::GameEntry* sel = find_entry(A.sel_game);
     const hubui::fg::Ghost* selg = sel ? nullptr : find_ghost(A.sel_ghost);
@@ -575,15 +578,10 @@ void all_games_view() {
 
 /* ---------- Wii U details: updates / DLC, Cemu game profile, save accounts, key help ---------- */
 
-static std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
-    static std::string s_key;
-    static double s_at = -100;
-    static std::vector<std::string> s_lines;
-    if (s_key == e.key && ImGui::GetTime() - s_at < 4.0) return s_lines;
-    s_key = e.key;
-    s_at = ImGui::GetTime();
-    s_lines.clear();
-    hubemu::Install inst = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, e.path);
+/* Disk-heavy (Cemu install probe, WUA directory, mlc01 save accounts): runs on a worker thread. */
+static std::vector<std::string> wiiu_info_compute(const hub::GameEntry& e, const std::string& cemu_exe) {
+    std::vector<std::string> s_lines;
+    hubemu::Install inst = hubemu::find(hubemu::Kind::Cemu, cemu_exe, e.path);
     std::string game = launch_path_for(e);
     if (e.issue == "extract" && game == e.path) game.clear();   // still packed: nothing to read yet
     uint64_t tid = hubemu::title_id_from_key(e.key);
@@ -622,6 +620,37 @@ static std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
     return s_lines;
 }
 
+/* UI thread: returns the last finished result for this game (empty until the first scan lands) and
+   re-scans in the background at most every 4 s. */
+static std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
+    if (g_headless) return wiiu_info_compute(e, A.st.cemu_exe);   // screenshots stay deterministic
+    struct Bg { std::mutex mu; bool running = false; std::string key; std::vector<std::string> lines; };
+    static Bg* bg = new Bg();
+    static std::string s_key;
+    static double s_at = -100;
+    static std::vector<std::string> s_lines;
+    {
+        std::lock_guard<std::mutex> l(bg->mu);
+        if (bg->key == e.key) s_lines = bg->lines;   // only ever show a result computed for THIS game
+        else s_lines.clear();
+        if (s_key == e.key && bg->key == e.key && ImGui::GetTime() - s_at < 4.0) return s_lines;
+        if (bg->running) return s_lines;   // A's scan still running: B's starts on the first frame after it lands
+        bg->running = true;
+    }
+    s_key = e.key;
+    s_at = ImGui::GetTime();
+    std::thread([e, cemu = A.st.cemu_exe] {
+        if (g_io_shutdown) return;
+        std::vector<std::string> r = wiiu_info_compute(e, cemu);
+        if (g_io_shutdown) return;
+        std::lock_guard<std::mutex> l(bg->mu);
+        bg->key = e.key;
+        bg->lines = std::move(r);
+        bg->running = false;
+    }).detach();
+    return s_lines;
+}
+
 /* ---------- details modal (Y / right-click / "...") ---------- */
 
 void draw_details_modal() {
@@ -644,7 +673,8 @@ void draw_details_modal() {
     const hub::GameEntry& e = *ep;
     const hub::GameState& gs = gstate(e.key);
     const GameInfo* cat = catalog_for(e);
-    if (A.info_key != e.key || ImGui::GetTime() - A.info_at > 4.0) refresh_save_info(e);
+    poll_save_info();
+    if (A.info_key != e.key || ImGui::GetTime() - A.info_at > 4.0) refresh_save_info_bg(e);
     bool idle = A.proc == nullptr, native = is_native(e);
     ImU32 c0, c1;
     entry_colors(e, &c0, &c1);
@@ -960,7 +990,7 @@ void sync_card() {
 }
 
 void page_library() {
-    if (A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
+    if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     ensure_selection();
     library_top_bar();
     A.page_scrollable = false;
