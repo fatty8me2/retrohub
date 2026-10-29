@@ -176,13 +176,14 @@ class Lockstep {
     /* drop-in */
     void di_on_msg(int from, const std::vector<uint8_t>& msg);
     void di_service(uint32_t now);
-    void di_begin_admit(int slot);
+    void di_begin_admit(int slot, uint32_t joiner_pos);
     void di_apply(const dropin::Msg& m);
     void di_abort(const char* why);
     void di_barrier(uint32_t n);
     void di_candidate_left(int slot, const char* why);
     void di_release(uint32_t n);
     void di_send(int to, const dropin::Msg& m);
+    void di_sync_excl();
     void dj_promote();
     void dj_fail(int rc, const char* why);
     uint32_t dj_mask_ = 0, dj_slots_ = 0, dj_since_[kPorts] = {0, 0, 0, 0};
@@ -205,7 +206,8 @@ class Lockstep {
     bool dj_win_ = false;
     uint32_t dj_win_end_ = 0, dj_osd_f_ = 0, dj_osd_slot_ = 0, dj_barrier_ms_ = 0;
     uint64_t dj_win_stall0_ = 0;
-    uint32_t dj_win_longest_ = 0;
+    uint32_t dj_win_longest_ = 0, dj_win_f_ = 0;
+    uint64_t dj_pre_ms_ = 0, dj_post_ms_ = 0;   // stall time inside the join window before / after the joiner's first sample
     std::string dj_osd_name_;
     void report_mismatches();
     void abort_with(const std::string& why);

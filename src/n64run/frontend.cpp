@@ -41,6 +41,7 @@
 
 #include "games.h"
 #include "game_settings.h"
+#include "log.h"
 #include "session.h"
 #include "cheats.h"
 
@@ -867,7 +868,7 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host, 
             }
             if (m[0] == spectate::kPktData) {
                 heard_host = true;
-                if (dropin && jc.mode() == spectate::JoinClient::Mode::Knock) { logf_("dropin", "the host streams from sample 0 without a snapshot: cannot drop in"); *dj_rc = 11; return false; }
+                if (dropin && jc.mode() == spectate::JoinClient::Mode::Knock && m.size() >= 6 && rb::xfer::g32(m.data() + 2) == 0) { logf_("dropin", "the host streams from sample 0 without a snapshot: cannot drop in"); *dj_rc = 11; return false; }
                 if (jc.mode() == spectate::JoinClient::Mode::Knock) {
                     if (m.size() < 6) continue;
                     if (rb::xfer::g32(m.data() + 2) != 0) { if (early.size() < 64) early.push_back(m); continue; }   // inputs from S that overtook our Begin
@@ -1502,6 +1503,7 @@ int main(int argc, char** argv) {
     // ---- netplay session. This runs before ROM_OPEN: the core reads battery saves when the ROM opens,
     // so the host's saves (--share-host-save) must already be in the save dir by then.
     hubnet::Session session;
+    if (online && std::getenv("RETROHUB_QA") && std::getenv("N64RUN_NET_LOG")) net_set_log_file(std::getenv("N64RUN_NET_LOG"));   // QA: the Session's own log (paths, relay, roster)
     if (online) {
         hubnet::SessionConfig sc;
         sc.server = args.net;

@@ -699,8 +699,8 @@ uint32_t Lockstep::get_keys(int port) {
         dj_win_ = false;
         if (hooks_.log) {
             char b[200];
-            std::snprintf(b, sizeof b, "dropin: join window (Admit .. sample %u): stalled %llu ms in total, longest single stall %u ms, host barrier wait %u ms",
-                          n, (unsigned long long)(stall_ms_ - dj_win_stall0_), dj_win_longest_, dj_barrier_ms_);
+            std::snprintf(b, sizeof b, "dropin: join window (Admit .. sample %u): stalled %llu ms in total (%llu ms before the joiner's first sample, %llu ms after), longest single stall %u ms, host barrier wait %u ms",
+                          n, (unsigned long long)(stall_ms_ - dj_win_stall0_), (unsigned long long)dj_pre_ms_, (unsigned long long)dj_post_ms_, dj_win_longest_, dj_barrier_ms_);
             hooks_.log(b);
         }
     }
@@ -772,7 +772,11 @@ uint32_t Lockstep::get_keys(int port) {
         }
         stall_this = hubnet::now_ms() - t0;
         if (stall_this > longest_stall_) longest_stall_ = stall_this;
-        if (dj_win_ && stall_this > dj_win_longest_) dj_win_longest_ = stall_this;
+        if (dj_win_) {
+            if (stall_this > dj_win_longest_) dj_win_longest_ = stall_this;
+            (n < dj_win_f_ ? dj_pre_ms_ : dj_post_ms_) += stall_this;
+            if (stall_this >= 60 && hooks_.log) { char b[120]; std::snprintf(b, sizeof b, "dropin: stall of %u ms at sample %u (%s the joiner's first sample %u)", stall_this, n, n < dj_win_f_ ? "before" : "after", dj_win_f_); hooks_.log(b); }
+        }
     }
     if (net_) adapt(hubnet::now_ms(), stall_this);
     if (net_) catch_up(hubnet::now_ms());
@@ -967,6 +971,8 @@ namespace n64run {
 
 uint32_t Lockstep::spec_mask() const { return (net_ ? net_->spectator_mask() : 0u) | dj_mask_; }
 
+void Lockstep::di_sync_excl() { if (net_) net_->set_broadcast_exclude(dj_mask_ & ~core_.slot_mask()); }
+
 void Lockstep::di_send(int to, const dropin::Msg& m) {
     if (!net_) return;
     auto v = dropin::encode(kPktDropIn, m);
@@ -981,6 +987,7 @@ int Lockstep::dropin_knock(int slot, uint8_t caps, const std::string& name) {
     if (!core_.free_reserved()) { if (hooks_.log) hooks_.log("dropin: slot " + std::to_string(slot) + " refused: no free controller port"); return dropin::kRefuseNoPort; }
     if (rs_.active() || dj_ctl_.active() || dj_mask_) return dropin::kRefuseBusy;
     dj_mask_ |= 1u << slot;
+    di_sync_excl();
     dj_name_[slot] = name;
     dj_since_[slot] = hubnet::now_ms() ? hubnet::now_ms() : 1;
     if (hooks_.log) hooks_.log("dropin: slot " + std::to_string(slot) + " (" + name + ") asks to join");
@@ -995,10 +1002,11 @@ void Lockstep::dropin_forget(int slot, const char* why) {
 void Lockstep::di_candidate_left(int slot, const char* why) {
     if (hooks_.log) hooks_.log("dropin: slot " + std::to_string(slot) + " is out of the join (" + why + ")");
     dj_mask_ &= ~(1u << slot);
+    di_sync_excl();
     if (dj_ctl_.active() && !dj_ctl_.aborting() && dj_ctl_.cur().slot == slot) di_abort(why);
 }
 
-void Lockstep::di_begin_admit(int slot) {
+void Lockstep::di_begin_admit(int slot, uint32_t joiner_pos) {
     if (dj_ctl_.active() || rs_.active() || !(dj_mask_ >> slot & 1u)) return;
     const uint32_t fm = core_.free_reserved();
     int port = -1;
@@ -1010,8 +1018,10 @@ void Lockstep::di_begin_admit(int slot) {
     m.j = (uint32_t)(sample_ + 1) + dropin::kAdmitMargin;
     double rtt = 0;
     hubnet::PingStats st;
-    if (net_->ping_stats(slot, &st) && st.n > 0) rtt = st.avg_ms + (st.max_ms - st.avg_ms) * 0.5;
-    m.f = dropin::first_sample(m.j, m.d, rtt);
+    if (net_->ping_stats(slot, &st) && st.n > 0) rtt = std::min(250.0, (double)st.min_ms + 20.0);   // the best round trip: the joiner's main thread was busy loading the state, so its average is inflated
+    const uint32_t cur = (uint32_t)(sample_ + 1);
+    const uint32_t lag = joiner_pos < cur ? std::min<uint32_t>(cur - joiner_pos, 200u) : 0u;
+    m.f = dropin::first_sample(m.j, m.d, rtt, lag);
     m.flags = (uint8_t)((rs_.enabled() ? dropin::kFlagResync : 0) | (masked_ ? dropin::kFlagMasked : 0));
     m.mask = (uint8_t)core_.slot_mask();
     for (int p = 0; p < kPorts; p++) m.owners[p] = (int8_t)core_.port_owner(p);
@@ -1020,10 +1030,11 @@ void Lockstep::di_begin_admit(int slot) {
     dj_ctl_.begin(m, need, now);
     if (hooks_.log) {
         char b[200];
-        std::snprintf(b, sizeof b, "dropin: admitting slot %d on port %d: joins at sample %u (now %u), supplies input from sample %u, delay %d, rtt %.0f ms", slot, port, m.j, (unsigned)(sample_ + 1), m.f, m.d, rtt);
+        std::snprintf(b, sizeof b, "dropin: admitting slot %d on port %d: joins at sample %u (now %u), supplies input from sample %u, delay %d, rtt %.0f ms, joiner lag %u", slot, port, m.j, (unsigned)(sample_ + 1), m.f, m.d, rtt, lag);
         hooks_.log(b);
     }
     di_apply(dj_ctl_.cur());
+    di_sync_excl();   // the joiner is a player now (in the mask): it gets the input stream so it can start without waiting
     di_send(-1, dj_ctl_.cur());
 }
 
@@ -1032,6 +1043,7 @@ void Lockstep::di_apply(const dropin::Msg& m) {
     if (slot < 1 || slot >= kPorts || !core_.join_port(port, slot, m.f)) { if (hooks_.log) hooks_.log("dropin: cannot bind port " + std::to_string(port) + " to slot " + std::to_string(slot)); return; }
     dj_slots_ |= 1u << slot;
     dj_port_[slot] = port;
+    dj_seen_[port] = dj_real_[port] = 0;
     dj_applied_id_[slot] = m.id;
     if (!m.name.empty()) dj_name_[slot] = m.name;
     caps_[slot] = (uint8_t)(((m.flags & dropin::kFlagResync) ? resync::kCapResync : 0) | ((m.flags & dropin::kFlagMasked) ? resync::kCapMaskedHash : 0) | dropin::kCapDropIn);
@@ -1041,7 +1053,7 @@ void Lockstep::di_apply(const dropin::Msg& m) {
     dropped_mask_ &= ~(1u << slot);
     if (!rs_.active()) rs_.configure(opt_.my_slot, core_.slot_mask(), caps_);
     dj_osd_f_ = m.f; dj_osd_slot_ = (uint32_t)slot; dj_osd_name_ = dj_name_[slot];
-    dj_win_ = true; dj_win_end_ = m.f + 240; dj_win_stall0_ = stall_ms_; dj_win_longest_ = 0; dj_barrier_ms_ = 0;
+    dj_win_ = true; dj_win_end_ = m.f + 240; dj_win_stall0_ = stall_ms_; dj_win_longest_ = 0; dj_barrier_ms_ = 0; dj_win_f_ = m.f; dj_pre_ms_ = dj_post_ms_ = 0;
     if (hooks_.log) {
         char b[160];
         std::snprintf(b, sizeof b, "dropin: port %d belongs to slot %d (%s) from sample %u (join sample %u, id %u)", port, slot, dj_name_[slot].c_str(), m.f, m.j, (unsigned)m.id);
@@ -1133,7 +1145,7 @@ void Lockstep::di_on_msg(int from, const std::vector<uint8_t>& msg) {
         return;
     }
     if (opt_.my_slot == 0) {
-        if (m.sub == dropin::Ready) { if ((dj_mask_ >> from & 1u) && !dj_ctl_.active() && !(dj_slots_ >> from & 1u)) di_begin_admit(from); }
+        if (m.sub == dropin::Ready) { if ((dj_mask_ >> from & 1u) && !dj_ctl_.active() && !(dj_slots_ >> from & 1u)) di_begin_admit(from, m.pos); }
         else if (m.sub == dropin::Ack) dj_ctl_.on_ack(m);
         else if (m.sub == dropin::Nack) { if (dj_ctl_.active() && m.id == dj_ctl_.id() && !dj_ctl_.aborting()) di_abort("a player got the Admit too late"); }
         else if (m.sub == dropin::Live) {
@@ -1210,6 +1222,7 @@ void Lockstep::di_release(uint32_t n) {
         if (n <= core_.drop_cutoff(s) + 4) continue;
         const int port = dj_port_[s];
         core_.leave_port(port, s);
+        if (port >= 0 && port < kPorts) dj_seen_[port] = dj_real_[port] = 0;
         dj_slots_ &= ~(1u << s); dj_port_[s] = -1; dj_applied_id_[s] = 0; dj_dead_id_[s] = 0;
         dropped_mask_ &= ~(1u << s); bye_mask_ &= ~(1u << s); last_rx_[s] = 0; drop_done_at_.erase(s);
         rs_.drop(s);

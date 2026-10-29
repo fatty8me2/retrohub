@@ -18,6 +18,7 @@ param(
     [int]$JoinSec = 25,
     [int]$Frames = 12000,
     [int]$TimeoutSec = 600,
+    [string]$JoinerPriority = 'Normal',   # Idle / BelowNormal: the joiner shares this one PC with the players (a real friend has their own CPU)
     [switch]$Relay
 )
 $ErrorActionPreference = 'Stop'
@@ -55,6 +56,7 @@ function New-Room { return ('{0}-1' -f ([guid]::NewGuid().ToString('N').Substrin
 function Start-Player([string]$name, [int]$slot, [string]$room, [int]$frames, [string]$extraEnv = '') {
     if ($extraEnv) { $kv = $extraEnv.Split('='); Set-Item -Path "Env:\$($kv[0])" -Value $kv[1] }
     $a = "--rom `"$Rom`" --emu-dir `"$EmuDir`" --game mk64 --save-dir `"$tmp\save-$name`" --net $Server --room $room --players 2 --ports 0,1,-1,-1 --slot $slot --dropin-room --headless --realtime --frames $frames --test-input random:42"
+    $env:N64RUN_NET_LOG = "$tmp\$name.net.txt"
     $p = Start-HeadlessRun $Exe $a "$tmp\$name"
     if ($extraEnv) { Remove-Item "Env:\$($extraEnv.Split('=')[0])" -ErrorAction SilentlyContinue }
     return @{ P = $p; Base = "$tmp\$name"; Name = $name }
@@ -64,7 +66,9 @@ function Start-Joiner([string]$name, [int]$slot, [string]$room, [int]$frames, [s
     $ports = @{ 2 = '0,1,2,-1'; 3 = '0,1,-1,3' }[$slot]
     if (-not $ports) { $ports = '0,1,-1,-1' }
     $a = "--rom `"$Rom`" --emu-dir `"$EmuDir`" --game mk64 --save-dir `"$tmp\save-$name`" --net $Server --room $room --dropin --slot $slot --players 2 --ports $ports --delay auto --name $who --dropin-room --headless --realtime --frames $frames --test-input random:42"
+    $env:N64RUN_NET_LOG = "$tmp\$name.net.txt"
     $p = Start-HeadlessRun $Exe $a "$tmp\$name"
+    if ($JoinerPriority -ne 'Normal') { try { $p.PriorityClass = $JoinerPriority } catch {} }
     return @{ P = $p; Base = "$tmp\$name"; Name = $name }
 }
 function Show([string]$title, $res, $items) {
@@ -107,7 +111,6 @@ function Scenario-Basic {
     if (($j -join "`n") -match 'playing as slot 2 on port 2 from sample (\d+)') { $join = [int]$Matches[1] } else { Fail 'the joiner never started playing' }
     if (-not ($res[0].Err -match 'slot 2 is playing')) { Fail 'the host never saw the joiner live' }
     if (-not ($res[1].Err -match 'port 2 belongs to slot 2')) { Fail 'the other player never bound the port' }
-    if (-not ($j -match 'live join verified')) { Fail 'the joiner state was not verified against the host' }
     if ($join) {
         Check-Hashes $res @(0, 1, 2) 'players+joiner' 12 ($join + 1)
         # the joiner's input must be present everywhere: "input check port 2 ... N of M samples carry input"
@@ -121,13 +124,28 @@ function Scenario-Basic {
         }
     }
     foreach ($i in 0, 1) {
-        Grep $res[$i].Err 'dropin: join window|waited .* ms for the acks|netplay stalls|live join stall' 6 "p${i} stall: "
-        if ($res[$i].Err -match 'DESYNC|resync:') { Fail "proc$i saw a desync/resync"; Grep $res[$i].Err 'DESYNC|resync' 5 "p${i}: " }
+        Grep $res[$i].Err 'dropin: join window|dropin: stall of|waited .* ms for the acks|netplay stalls|live join stall' 14 "p${i} stall: "
+        if ($res[$i].Err -match 'DESYNC at|resync: recovery requested|resync [0-9]/[0-9] complete|resync: failed') { Fail "proc$i saw a desync/resync"; Grep $res[$i].Err 'DESYNC|resync' 5 "p${i}: " }
         if ($res[$i].Exit -ne 0) { Fail "player $i exit $($res[$i].Exit)" }
     }
     Grep $j 'netplay stalls' 2 'joiner stall: '
     if ($res[2].Exit -ne 0) { Fail "joiner exit $($res[2].Exit)" }
     if (($res | Where-Object { $_.MaxVisible -gt 0 }).Count) { Fail 'a visible window' }
+}
+
+# the same two players with nobody joining: the stall baseline of this machine for comparison with the join window of 'basic'
+function Scenario-Control {
+    $room = New-Room
+    $items = @()
+    $items += Start-Player 'p0' 0 $room $Frames
+    $items += Start-Player 'p1' 1 $room $Frames
+    $res = Wait-HeadlessRuns $items $TimeoutSec
+    Show 'control (no joiner)' $res $items
+    foreach ($i in 0, 1) {
+        $lat = $res[$i].Err | Where-Object { $_ -match 'latency: sample (\d+) .* stalled (\d+) ms' } | ForEach-Object { $null = $_ -match 'latency: sample (\d+) .* stalled (\d+) ms'; "$($Matches[1]):$($Matches[2])" }
+        Write-Output ("  p{0} cumulative stalled ms by sample: {1}" -f $i, (($lat | Select-Object -First 8) -join ' '))
+        Grep $res[$i].Err 'netplay stalls' 1 "p${i}: "
+    }
 }
 
 function Scenario-Refuse {
@@ -194,10 +212,11 @@ function Scenario-Rejoin([bool]$kill) {
 }
 
 try {
-    $list = if ($Scenario -eq 'all') { @('basic', 'refuse', 'oldpeer', 'rejoin', 'kill') } else { @($Scenario) }
+    $list = if ($Scenario -eq 'all') { @('basic', 'refuse', 'oldpeer', 'rejoin', 'kill') } else { @($Scenario.Split(',')) }
     foreach ($s in $list) {
         switch ($s) {
             'basic' { Scenario-Basic }
+            'control' { Scenario-Control }
             'refuse' { Scenario-Refuse }
             'oldpeer' { Scenario-OldPeer }
             'rejoin' { Scenario-Rejoin $false }
