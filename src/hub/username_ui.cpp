@@ -17,7 +17,7 @@ namespace {
 
 struct UnState {
     Checker chk;
-    char buf[24] = {0};
+    char buf[96] = {0};
     bool claiming = false;
     int claim_ref = 0;
     std::string err;                 // last claim failure
@@ -42,7 +42,7 @@ void seed_shot() {
     UN.seeded = true;
     UN.t_start = ImGui::GetTime();
     if (!g_headless) return;
-    if (const char* c = std::getenv("HUB_SHOT_USERNAME_CLAIMED")) { A.st.name = c; A.st.username_claimed = true; UN.chk.mine_key = hubnet::username_key(c); }
+    if (const char* c = std::getenv("HUB_SHOT_USERNAME_CLAIMED")) { A.st.name = c; A.st.username_claimed = true; UN.chk.mine_key = hubnet::username_fold_key(c); }
     const char* s = std::getenv("HUB_SHOT_USERNAME");
     UN.prompt_open = std::getenv("HUB_SHOT_USERNAME_PROMPT") != nullptr;
     UN.change_open = std::getenv("HUB_SHOT_USERNAME_CHANGE") != nullptr;
@@ -138,7 +138,7 @@ void un_on_event(const hubnet::Event& e) {
             const bool changed = A.st.username_claimed && A.st.name != e.name;
             A.st.name = e.name;
             A.st.username_claimed = true;
-            UN.chk.mine_key = hubnet::username_key(e.name);
+            UN.chk.mine_key = hubnet::username_fold_key(e.name);
             UN.needs_new = false;
             UN.claimed_event = true;
             UN.prompt_open = false;
@@ -154,7 +154,7 @@ void un_on_event(const hubnet::Event& e) {
     } else if (e.kind == K::UsernameChanged) {
         if (e.ok && !e.name.empty()) {
             if (A.st.name != e.name || !A.st.username_claimed) { A.st.name = e.name; A.st.username_claimed = true; mark_dirty(); }
-            UN.chk.mine_key = hubnet::username_key(e.name);
+            UN.chk.mine_key = hubnet::username_fold_key(e.name);
             UN.needs_new = false;
         } else {
             UN.needs_new = FR.cli.needs_new_name();
@@ -177,7 +177,7 @@ bool un_picker(const char* id, float width) {
     enter = osk::input("##uname", "your username", UN.buf, sizeof UN.buf, ImGuiInputTextFlags_EnterReturnsTrue);
     if (std::string(UN.buf) != UN.chk.text) UN.chk.set_input(UN.buf, ImGui::GetTime());
     ImGui::SameLine(0, sp(1.f));
-    ImGui::TextDisabled("%zu/%d", hubnet::username_trim(UN.buf).size(), hubnet::kUsernameMax);
+    ImGui::TextDisabled("%zu/%d", hubnet::username_length(hubnet::username_trim(UN.buf)), hubnet::kUsernameMax);
 
     // status line
     const Avail a = UN.chk.state;
@@ -235,7 +235,7 @@ void un_account_block() {
         }
     } else {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        if (UN.chk.mine_key.empty() && A.st.username_claimed) UN.chk.mine_key = hubnet::username_key(A.st.name);
+        if (UN.chk.mine_key.empty() && A.st.username_claimed) UN.chk.mine_key = hubnet::username_fold_key(A.st.name);
         const bool enter = un_picker("acct", sp(34.f));
         const NameAction act = name_action(UN.chk.state, false, UN.claiming);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../net/username.h"
 #include "friends_ui.h"
 #include "profile.h"
 
@@ -183,7 +184,7 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     dl->AddRectFilled(p0, p1, COL_PANEL, 14 * S);
     ImVec2 cc = p0 + ImVec2(38 * S, 40 * S);
     dl->AddCircleFilled(cc, 24 * S, slotc[slot & 3], 32);
-    char init[2] = {(char)std::toupper((unsigned char)(p->name.empty() ? '?' : p->name[0])), 0};
+    char init[2] = {hubnet::username_initial(p->name), 0};
     ImVec2 its = ImGui::CalcTextSize(init);
     dl->AddText(ui::F.h2, ui::F.h2->FontSize, cc - ImVec2(its.x * 0.6f, its.y * 0.62f), IM_COL32(20, 20, 25, 255), init);
     {   // profile avatar + status line (S1)

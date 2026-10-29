@@ -44,7 +44,7 @@ struct FriendsUi {
     int chat_unread = 0;           // unread count when the chat was opened ("New messages" marker)
     size_t chat_seen = 0;
     char chat_buf[512] = {0};
-    char add_buf[48] = {0};
+    char add_buf[96] = {0};
     std::string add_msg;
     double add_msg_until = 0;
 
