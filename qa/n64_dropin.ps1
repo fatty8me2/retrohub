@@ -46,6 +46,7 @@ if ($Server -eq '') {
 if ($Relay) { $env:HUBNET_FORCE_RELAY = '1' }
 $env:RETROHUB_QA = '1'
 $global:allFail = 0
+$global:ctlHash = @{}
 
 function Hashes($lines) { $h = @{}; $lines | Where-Object { $_ -match 'sync check sample (\d+) RDRAM ([0-9a-f]+)' } | ForEach-Object { $h[[int]$Matches[1]] = $Matches[2] }; return $h }
 function Common($a, $b) { return @($a.Keys | Where-Object { $b.ContainsKey($_) } | Sort-Object) }
@@ -53,9 +54,9 @@ function Mism($a, $b, $keys) { return @($keys | Where-Object { $a[$_] -ne $b[$_]
 
 # one scenario run: returns the per-process results
 function New-Room { return ('{0}-1' -f ([guid]::NewGuid().ToString('N').Substring(0, 6).ToUpper() -replace '[01OIL]', 'X')) }
-function Start-Player([string]$name, [int]$slot, [string]$room, [int]$frames, [string]$extraEnv = '') {
+function Start-Player([string]$name, [int]$slot, [string]$room, [int]$frames, [string]$extraEnv = '', [bool]$dropRoom = $true) {
     if ($extraEnv) { $kv = $extraEnv.Split('='); Set-Item -Path "Env:\$($kv[0])" -Value $kv[1] }
-    $a = "--rom `"$Rom`" --emu-dir `"$EmuDir`" --game mk64 --save-dir `"$tmp\save-$name`" --net $Server --room $room --players 2 --ports 0,1,-1,-1 --slot $slot --dropin-room --headless --realtime --frames $frames --test-input random:42"
+    $a = "--rom `"$Rom`" --emu-dir `"$EmuDir`" --game mk64 --save-dir `"$tmp\save-$name`" --net $Server --room $room --players 2 --ports 0,1,-1,-1 --slot $slot$(if ($dropRoom) { ' --dropin-room' }) --headless --realtime --frames $frames --test-input random:42"
     $env:N64RUN_NET_LOG = "$tmp\$name.net.txt"
     $p = Start-HeadlessRun $Exe $a "$tmp\$name"
     if ($extraEnv) { Remove-Item "Env:\$($extraEnv.Split('=')[0])" -ErrorAction SilentlyContinue }
@@ -112,7 +113,7 @@ function Scenario-Basic {
     if (-not ($res[0].Err -match 'slot 2 is playing')) { Fail 'the host never saw the joiner live' }
     if (-not ($res[1].Err -match 'port 2 belongs to slot 2')) { Fail 'the other player never bound the port' }
     if ($join) {
-        Check-Hashes $res @(0, 1, 2) 'players+joiner' 12 ($join + 1)
+        Check-Hashes $res @(0, 1, 2) 'players+joiner' ([math]::Max(4, [int]($Frames / 600) - 4)) ($join + 1)
         # the joiner's input must be present everywhere: "input check port 2 ... N of M samples carry input"
         foreach ($i in 0, 1, 2) {
             $last = $res[$i].Err | Where-Object { $_ -match 'input check port 2 .*: (\d+) of (\d+) samples' } | Select-Object -Last 1
@@ -120,7 +121,7 @@ function Scenario-Basic {
             $null = $last -match 'input check port 2 .*: (\d+) of (\d+) samples'
             $real = [int]$Matches[1]; $seen = [int]$Matches[2]
             Write-Output ("  input port 2 on proc{0}: {1} of {2} samples carry input" -f $i, $real, $seen)
-            if ($seen -lt 1500 -or $real -lt 0.8 * $seen) { Fail "joiner input missing on proc$i" }
+            if ($seen -lt ($Frames - 3500) -or $real -lt 0.8 * $seen) { Fail "joiner input missing on proc$i" }
         }
     }
     foreach ($i in 0, 1) {
@@ -134,18 +135,35 @@ function Scenario-Basic {
 }
 
 # the same two players with nobody joining: the stall baseline of this machine for comparison with the join window of 'basic'
-function Scenario-Control {
+function Scenario-Control([bool]$dropRoom = $false, [string]$tag = '') {
     $room = New-Room
     $items = @()
-    $items += Start-Player 'p0' 0 $room $Frames
-    $items += Start-Player 'p1' 1 $room $Frames
+    $items += Start-Player 'p0' 0 $room $Frames '' $dropRoom
+    $items += Start-Player 'p1' 1 $room $Frames '' $dropRoom
     $res = Wait-HeadlessRuns $items $TimeoutSec
-    Show 'control (no joiner)' $res $items
+    Show "control (no joiner, --dropin-room $dropRoom)" $res $items
+    $global:ctlHash[[string]$dropRoom + $tag] = Hashes $res[0].Err
+    if ($dropRoom) {
+        Check-Hashes $res @(0, 1) 'plain room with --dropin-room' ([math]::Max(3, [int]($Frames / 600) - 3)) 0
+        foreach ($i in 0, 1) { if ($res[$i].Exit -ne 0) { Fail "player $i exit $($res[$i].Exit)" } }
+    }
     foreach ($i in 0, 1) {
         $lat = $res[$i].Err | Where-Object { $_ -match 'latency: sample (\d+) .* stalled (\d+) ms' } | ForEach-Object { $null = $_ -match 'latency: sample (\d+) .* stalled (\d+) ms'; "$($Matches[1]):$($Matches[2])" }
         Write-Output ("  p{0} cumulative stalled ms by sample: {1}" -f $i, (($lat | Select-Object -First 8) -join ' '))
         Grep $res[$i].Err 'netplay stalls' 1 "p${i}: "
     }
+}
+
+# a player that plugs different controllers (no --dropin-room) must be refused cleanly at the start, not desync later
+function Scenario-Setup {
+    $room = New-Room
+    $items = @()
+    $items += Start-Player 'p0' 0 $room 3000 '' $true
+    $items += Start-Player 'p1' 1 $room 3000 '' $false
+    $res = Wait-HeadlessRuns $items 120
+    Show 'setup (one player lacks --dropin-room)' $res $items
+    Grep $res[0].Err 'disagree' 2 'p0: '
+    foreach ($i in 0, 1) { if ($res[$i].Exit -ne 2) { Fail "player $i should exit 2 (setup rejected), got $($res[$i].Exit)" } }
 }
 
 function Scenario-Refuse {
@@ -216,7 +234,14 @@ try {
     foreach ($s in $list) {
         switch ($s) {
             'basic' { Scenario-Basic }
-            'control' { Scenario-Control }
+            'control' { Scenario-Control $false }
+            'plain' {
+                Scenario-Control $false; Scenario-Control $false '2'; Scenario-Control $true
+                $a = $global:ctlHash['False']; $a2 = $global:ctlHash['False2']; $b = $global:ctlHash['True']
+                $c = @(Common $a $a2); Write-Output ('  baseline vs baseline (run-to-run repeatability): {0} common checks, {1} identical' -f $c.Count, (@($c | Where-Object { $a[$_] -eq $a2[$_] }).Count))
+                $c = @(Common $a $b); Write-Output ('  baseline vs --dropin-room run: {0} common checks, {1} identical' -f $c.Count, (@($c | Where-Object { $a[$_] -eq $b[$_] }).Count))
+            }
+            'setup' { Scenario-Setup }
             'refuse' { Scenario-Refuse }
             'oldpeer' { Scenario-OldPeer }
             'rejoin' { Scenario-Rejoin $false }

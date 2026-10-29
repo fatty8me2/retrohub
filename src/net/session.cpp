@@ -629,6 +629,8 @@ bool Session::start(const SessionConfig& cfg)
     d.spec_mask = 0;
     d.failed = d.ready_ever = d.welcomed = d.endpoint_sent = d.ws_retrying = false;
     d.inbox.clear();
+    d.ended = d.departing = false;   // a restarted session (the drop-in joiner tries the next slot) starts clean
+    for (bool& b : d.bye_from) b = false;
     for (Peer& p : d.peers) p = Peer();
     d.roster_mask = 0;
     d.ping_every = kPingMs;

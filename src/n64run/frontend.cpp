@@ -901,7 +901,7 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host, 
         const uint32_t now = hubnet::now_ms();
         if (jc.playing()) return true;   // refused / old host: the lockstep plays from sample 0 (and fast-forwards)
         if (dropin && !heard_host && now - t_knock0 > 8000) { logf_("dropin", "the host does not answer: its RetroHub is too old for drop-in"); *dj_rc = 10; return false; }
-        if (jc.want_knock(now) && (int32_t)(now - no_knock_until) >= 0) {
+        if (jc.want_knock(now) && (!dropin || (int32_t)(now - no_knock_until) >= 0)) {
             if (dropin) { auto k = n64run::dropin::encode_knock(spectate::kPktJoin, my_slot, n64run::dropin::kCapDropIn, *dropin_name); g_sess->send(0, k.data(), (int)k.size()); }
             else { uint8_t k[3] = {spectate::kPktJoin, (uint8_t)my_slot, 1}; g_sess->send(0, k, 3); }
         }
@@ -1520,7 +1520,7 @@ int main(int argc, char** argv) {
             sc.slot = slot_tries[ti];
             if (!session.start(sc)) {
                 logf_("n64run", "netplay: cannot start session (%s)", session.status().c_str());
-                g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 4;
+                g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return args.dropin ? 11 : 4;   // the hub reads 11 as "couldn't join the game in progress"
             }
             uint32_t t0 = hubnet::now_ms();
             std::string last;
@@ -1716,7 +1716,7 @@ int main(int argc, char** argv) {
                 static const uint32_t* vi = static_cast<const uint32_t*>(g_core.MemPtr(M64P_DBG_PTR_VI_REG));
                 if (vi) g_fb.sample(n, vi[0], vi[1], vi[2]);
             };
-            hk.vi_reset = [] { g_fb.reset(); };
+            hk.vi_reset = [] { logf_("fbmask", "restart: %d tracked framebuffer(s) forgotten", g_fb.count()); g_fb.reset(); };
         }
         hk.request_stop = [] { g_core.DoCommand(M64CMD_STOP, 0, nullptr); };
         hk.log = [](const std::string& s) { logline("lockstep", s.c_str()); };
@@ -1763,6 +1763,7 @@ int main(int argc, char** argv) {
         if (online && g_run.lockstep->spectate_host()) g_run.lockstep->spectate_host()->set_hold_ms(spectate::kHoldMs);   // a new spectator first says whether it wants a live snapshot
 
         if (online && !g_run.lockstep->start_barrier(15000)) {
+            if (g_run.lockstep->setup_mismatch()) g_dj_rc = 2;   // exit 2: the hub says the room's player/port setup was rejected
             logf_("n64run", "netplay: start barrier failed (%s)", session.status().c_str());
             g_run.lockstep.reset();
             goto fail_net;

@@ -131,7 +131,7 @@ void Lockstep::pump() {
         } else if (msg[0] == kPktCheats) {
             // handshake leftovers: ignore
         } else if (msg[0] == kPktReady) {
-            if (msg.size() >= 2 && msg[1] < 8) { ready_mask_ |= 1u << msg[1]; if (msg.size() >= 3) caps_[msg[1]] = msg[2]; }
+            if (msg.size() >= 2 && msg[1] < 8) { ready_mask_ |= 1u << msg[1]; if (msg.size() >= 3) caps_[msg[1]] = msg[2]; rsv_[msg[1]] = msg.size() >= 4 ? msg[3] : 0; }   // 4th byte: the ports it plugs in for drop-in
         } else {
             core_.on_packet(from, msg.data(), msg.size());
         }
@@ -153,14 +153,16 @@ bool Lockstep::start_barrier(uint32_t timeout_ms) {
         uint32_t now = hubnet::now_ms();
         if (net_->failed()) return false;
         if (now - last >= 100 || last == 0) {
-            uint8_t pkt[3] = {kPktReady, (uint8_t)opt_.my_slot, my_cap};   // an old peer reads the first two bytes only
-            net_->send(-1, pkt, 3);
+            uint8_t pkt[4] = {kPktReady, (uint8_t)opt_.my_slot, my_cap, opt_.reserved_ports};   // an old peer reads the first two bytes only
+            net_->send(-1, pkt, 4);
             last = now ? now : 1;
         }
         if ((ready_mask_ & all) == all) {
             // Keep announcing for a short grace period so slower peers also see us.
             if (!seen_all_at) seen_all_at = now ? now : 1;
             if (now - seen_all_at > 400) {
+                for (int s = 0; s < 8; s++) if ((all >> s & 1u) && s != opt_.my_slot && rsv_[s] != opt_.reserved_ports) setup_mismatch_ = true;
+                if (setup_mismatch_) { if (hooks_.log) hooks_.log("the players disagree on the drop-in controller ports (a peer is not running the same drop-in setup); not starting"); return false; }
                 uint32_t margin = resync::kDefaultMargin;
                 if (const char* e = std::getenv("N64RUN_RESYNC_MARGIN")) margin = (uint32_t)std::atoi(e);
                 rs_.configure(opt_.my_slot, all, caps_, margin);
@@ -704,6 +706,11 @@ uint32_t Lockstep::get_keys(int port) {
             hooks_.log(b);
         }
     }
+    if (dj_reset_at_ && n == dj_reset_at_) {   // the join sample: the joiner's framebuffer tracker starts here, so everybody's does (same polls on every PC)
+        dj_reset_at_ = 0;
+        if (hooks_.vi_reset) hooks_.vi_reset();
+        if (hooks_.log) hooks_.log("dropin: framebuffer tracker restarted at the join sample " + std::to_string(n));
+    }
     if (hooks_.vi_poll) hooks_.vi_poll(n);
 
     // Desync hash, taken at a deterministic point (before inputs of sample n are delivered).
@@ -1052,6 +1059,7 @@ void Lockstep::di_apply(const dropin::Msg& m) {
     bye_mask_ &= ~(1u << slot);
     dropped_mask_ &= ~(1u << slot);
     if (!rs_.active()) rs_.configure(opt_.my_slot, core_.slot_mask(), caps_);
+    dj_reset_at_ = m.j;
     dj_osd_f_ = m.f; dj_osd_slot_ = (uint32_t)slot; dj_osd_name_ = dj_name_[slot];
     dj_win_ = true; dj_win_end_ = m.f + 240; dj_win_stall0_ = stall_ms_; dj_win_longest_ = 0; dj_barrier_ms_ = 0; dj_win_f_ = m.f; dj_pre_ms_ = dj_post_ms_ = 0;
     if (hooks_.log) {
@@ -1072,7 +1080,7 @@ void Lockstep::di_abort(const char* why) {
     dj_dead_id_[c.slot] = c.id;
     dj_applied_id_[c.slot] = 0;
     dj_mask_ &= ~(1u << c.slot);
-    dj_osd_f_ = 0; dj_win_ = false;
+    dj_osd_f_ = 0; dj_win_ = false; dj_reset_at_ = 0;
     dj_abort_msg_ = c; dj_abort_msg_.sub = dropin::Abort;
     dj_abort_sends_ = 0; dj_last_abort_ = 0;
     if (!rs_.active()) rs_.configure(opt_.my_slot, core_.slot_mask(), caps_);
@@ -1171,7 +1179,7 @@ void Lockstep::di_on_msg(int from, const std::vector<uint8_t>& msg) {
         if (m.slot < kPorts) dj_dead_id_[m.slot] = m.id;
         if (m.slot < kPorts && (dj_slots_ >> m.slot & 1u) && dj_applied_id_[m.slot] == m.id) {
             core_.cancel_join(dj_port_[m.slot], m.slot);
-            dj_slots_ &= ~(1u << m.slot); dj_port_[m.slot] = -1; dj_applied_id_[m.slot] = 0; dj_osd_f_ = 0; dj_win_ = false;
+            dj_slots_ &= ~(1u << m.slot); dj_port_[m.slot] = -1; dj_applied_id_[m.slot] = 0; dj_osd_f_ = 0; dj_win_ = false; dj_reset_at_ = 0;
             if (!rs_.active()) rs_.configure(opt_.my_slot, core_.slot_mask(), caps_);
             if (hooks_.log) hooks_.log("dropin: the host cancelled the admit of slot " + std::to_string((int)m.slot));
         }
@@ -1188,6 +1196,8 @@ void Lockstep::dj_fail(int rc, const char* why) {
 
 void Lockstep::dj_promote() {
     const dropin::Msg a = dj_adm_;
+    if (hooks_.vi_reset) hooks_.vi_reset();   // same poll (J) as the players' reset; vi_poll(J) follows
+    if (hooks_.log) hooks_.log("dropin: framebuffer tracker restarted at the join sample " + std::to_string(a.j));
     core_.adopt_layout(a.owners, a.mask);
     core_.join_self(a.port, a.f, a.d);
     opt_.spectator = false;
