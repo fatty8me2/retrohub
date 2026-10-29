@@ -140,6 +140,7 @@ class Lockstep {
     /* Host: a knock (kPktJoin version 2) from `slot`. 0 = accepted (the caller queues the snapshot), else a dropin::Refuse reason. */
     int dropin_knock(int slot, uint8_t caps, const std::string& name);
     void dropin_forget(int slot, const char* why);   // the snapshot could not be delivered / the joiner is gone
+    bool setup_mismatch() const { return setup_mismatch_; }   // start barrier: a peer's drop-in port setup differs from ours
     bool dropin_enabled() const { return opt_.reserved_ports != 0; }
     /* Joiner: failed (exit code for the hub: 9 full, 10 friend must update, 11 other) / promoted to a player. */
     int dropin_fail_rc() const { return dj_fail_rc_; }
@@ -190,8 +191,9 @@ class Lockstep {
     std::string dj_name_[kPorts];
     int dj_port_[kPorts] = {-1, -1, -1, -1};
     uint8_t dj_applied_id_[kPorts] = {0, 0, 0, 0}, dj_dead_id_[kPorts] = {0, 0, 0, 0};
-    uint32_t dj_live_until_ = 0, dj_live_last_ = 0;
-    bool dj_ok_ = false;
+    uint32_t dj_live_until_ = 0, dj_live_last_ = 0, dj_reset_at_ = 0;   // dj_reset_at_: the join sample, where every PC restarts its framebuffer tracker
+    bool dj_ok_ = false, setup_mismatch_ = false;
+    uint8_t rsv_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     dropin::Ctl dj_ctl_;
     uint32_t dj_abort_sends_ = 0, dj_last_abort_ = 0;
     dropin::Msg dj_abort_msg_;
