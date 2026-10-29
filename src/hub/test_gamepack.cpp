@@ -45,6 +45,9 @@ int main()
     CHECK(safe_name("a<b>c:d\"e/f\\g|h?i*j") == "a b c d e f g h i j");
     CHECK(safe_name("  ..name..  ") == "name");
     CHECK(safe_name("<>") == "game");
+    CHECK(safe_name("NUL.gba") == "_NUL.gba");
+    CHECK(safe_name("com1") == "_com1");
+    CHECK(safe_name("Console.gba") == "Console.gba");
 
     /* parse_links: Drive URLs (folders/, old folder/, embeddedfolderview), bare ids, dedupe */
     CHECK(parse_links("").empty());

@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.29.7",
+      "date": "2026-10-29",
+      "title": "Shared pack fixes",
+      "new": [],
+      "improved": [
+        "New shared game packs now show up within about 10 minutes without restarting RetroHub"
+      ],
+      "fixed": [
+        "Greyed-out games could stay uninstallable because the shared pack list never loaded on a normal launch",
+        "Games from shared packs could stay unavailable when the built-in pack for that console couldn't be reached"
+      ]
+    },
+    {
       "version": "1.29.6",
       "date": "2026-10-28",
       "title": "Shared packs for everyone",
