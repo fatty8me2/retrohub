@@ -1,15 +1,15 @@
 # Headless screenshots for the Home/ghost-popup tweaks (ui-b): Home with only the bundled game vs a full library, ghost details installable or not.
 # Usage: qa\ui_b_shots.ps1 [outdir]   Never shows a window, muted, no network.
-param([string]$Out = "$PSScriptRoot\shots\ui-b")
+param([string]$Out = "$PSScriptRoot\shots\ui-b", [string]$Size = "1600x1000", [string]$Tag = "")
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 $root = Split-Path $PSScriptRoot -Parent
 $exe = Join-Path $root "build\bin\Release\RetroHub.exe"
 New-Item -ItemType Directory -Force $Out | Out-Null
 function Shot([string]$name, [hashtable]$extra) {
-  $bmp = Join-Path $Out "$name.bmp"
+  $bmp = Join-Path $Out "$name$Tag.bmp"
   Remove-Item $bmp -ErrorAction SilentlyContinue
-  $set = @{ RETROHUB_NO_SHELL = "1"; SSB64_MUTE = "1"; RETRORUN_MUTE = "1"; N64RUN_MUTE = "1"; HUB_SCREENSHOT = $bmp; HUB_SHOT_SIZE = "1600x1000";
+  $set = @{ RETROHUB_NO_SHELL = "1"; SSB64_MUTE = "1"; RETRORUN_MUTE = "1"; N64RUN_MUTE = "1"; HUB_SCREENSHOT = $bmp; HUB_SHOT_SIZE = $Size;
             HUB_SHOT_SECS = "6"; HUB_SHOT_FAKE_FRIENDS = "1"; HUB_SHOT_FAKE_FRIEND_LIBS = "40" }
   foreach ($k in $extra.Keys) { $set[$k] = $extra[$k] }
   $psi = New-Object System.Diagnostics.ProcessStartInfo $exe
