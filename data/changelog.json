@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.8",
+      "date": "2026-10-29",
+      "title": "Pack links list",
+      "new": [],
+      "improved": [
+        "Shared game pack links in Settings are now a list with Add and Remove buttons"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.29.7",
       "date": "2026-10-29",
       "title": "Shared pack fixes",
