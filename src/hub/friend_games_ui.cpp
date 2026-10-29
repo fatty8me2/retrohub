@@ -153,7 +153,8 @@ void ghost_tick() {
         const std::string& links = A.st.pack_links;
         long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();   // same clock as index_last_attempt_ms()
         long long last_ms = hubgp::index_last_attempt_ms();
-        if (!A.ghosts.empty() && (links != seen_pack_links || last_ms == 0 || now_ms - last_ms > 600000)) {
+        const bool recheck = !A.ghosts.empty() && hubgp::take_recheck();   // Rescan: check the Drive packs again right away
+        if (!A.ghosts.empty() && (recheck || links != seen_pack_links || last_ms == 0 || now_ms - last_ms > 600000)) {
             seen_pack_links = links;
             hubgp::index_refresh(hubgp::parse_links(links));
         }

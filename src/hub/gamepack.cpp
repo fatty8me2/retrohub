@@ -379,6 +379,13 @@ static const wchar_t* kCommunityHost = L"raw.githubusercontent.com";
 static const wchar_t* kCommunityPath = L"/fatty8me2/retrohub/main/data/packs.json";
 static struct { std::mutex mu; std::vector<std::string> ids; std::chrono::steady_clock::time_point tried{}; bool tried_once = false; } CM;
 
+static std::atomic<bool> g_recheck{false};
+void request_recheck() {
+    { std::lock_guard<std::mutex> lk(CM.mu); CM.tried_once = false; }   // the next index run refetches data/packs.json
+    g_recheck = true;
+}
+bool take_recheck() { return g_recheck.exchange(false); }
+
 static void community_fetch() {
     std::string body, err;
     if (!http_get(kCommunityHost, kCommunityPath, &body, &err)) return;

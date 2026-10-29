@@ -1,6 +1,7 @@
 #include "app.h"
 #include "online_caps.h"
 #include "gameinfo.h"
+#include "gamepack.h"
 #include <deque>
 #include <map>
 #include <mutex>
@@ -19,6 +20,7 @@ std::string no_slash(std::string p) {
 
 void start_scan() {
     if (A.scanning) return;
+    hubgp::request_recheck();   // a rescan also looks for new games in the shared Drive packs
     if (A.scan_th.joinable()) A.scan_th.join();
     A.scanning = true;
     A.scan_done = 0;
