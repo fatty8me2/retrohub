@@ -627,8 +627,10 @@ void Installer::start(const std::string& sys, const std::string& title, const st
                 if (game_id.empty()) e = any_listed ? "not in the shared pack" : "could not list the shared pack";
                 else {
                     std::vector<Entry> files;
+                    bool listed = true;
                     if (is_file) files.push_back(loose);   // a loose game file: the file is the whole game
-                    else if (!list_files(game_id, &files)) e = "could not list the game's files";
+                    else listed = list_files(game_id, &files);
+                    if (!listed) e = "could not list the game's files";
                     else if (files.empty()) e = "the shared copy has no files";
                     else {
                         std::error_code ec;
@@ -654,6 +656,7 @@ void Installer::start(const std::string& sys, const std::string& title, const st
                 }
             }
         }
+        if (!r && e.empty()) e = "unknown error";
         if (!r) { std::lock_guard<std::mutex> lk(mu); error = e; }
         ok = r;
         done = true;
