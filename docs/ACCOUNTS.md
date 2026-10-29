@@ -5,7 +5,7 @@ A username is the account (see FRIENDS.md "Usernames" for the protocol and UX). 
 - server: `BattleShip/server/cloudflare/src/usernames.js` (`normalizeUsername`, `foldKey`, `lookupKey`; tests: `test_usernames.mjs`)
 
 ## Rules (since 1.29.5)
-- **Length:** 3-20 characters (Unicode code points; the server counts after NFKC, the client counts UTF-8 code points).
+- **Length:** 3-20 characters (Unicode code points). Neither side normalizes: fullwidth letters, ligatures (ﬁ), ª º ² ™, NBSP/ideographic space, decomposed accents (e + U+0301) and U+FEFF are simply rejected, identically on both. Only plain spaces and tabs are trimmed at the ends. `username_parity_corpus.json` (server repo) is checked by both test suites; the client copy is the generated `src/hub/username_parity_corpus.inc`.
 - **Allowed:** printable ASCII (letters, digits, space, symbols such as `! ? ' & + * ~ # @ ( ) [ ] : , = ^ $ % _ . - { } | ;`) and the Latin-1 letters U+00C0-U+00FF except `x` (U+00D7) and `/` (U+00F7). The hub font only has Basic Latin + Latin-1, so nothing else is accepted: no emoji, no other scripts (this also blocks Cyrillic/Greek look-alikes), no control, zero-width or bidi characters, no tabs/newlines.
 - **Excluded ASCII:** `"` and `\` (break JSON and command lines), `<` `>` and `` ` `` (markup/shell), `/` (paths).
 - **Spaces:** leading/trailing whitespace is trimmed and runs of spaces collapse to one. Only the plain space is allowed inside.
@@ -23,8 +23,8 @@ A username is the account (see FRIENDS.md "Usernames" for the protocol and UX). 
 ## Where names go (consumers)
 - JSON: always escaped (`json::escape`); `"` and `\` are excluded anyway.
 - Command lines: quoted with `winutil::quote_arg` (`retrorun --name`).
-- Dolphin NetPlay nickname: written to `Dolphin.ini` as-is minus control characters.
-- Azahar (3DS): `hubnp3ds::nickname` / `console_username` fold to ASCII (`username_ascii`), spaces become `_`, other symbols are dropped, limits 20 / 8 characters.
+- Dolphin NetPlay nickname: written to `Dolphin.ini` minus control characters and the INI-syntax characters `; # [ ] =`.
+- Azahar (3DS): `hubnp3ds::nickname` / `console_username` fold to ASCII (`username_ascii`), spaces become `_`, other symbols are dropped. The room nickname keeps 15 characters plus a `_<slot>` suffix (at most 17, Azahar accepts 4..20); the 3DS console username keeps 8 plus `_<slot>`.
 - OSD toasts use an ASCII-only 5x7 font: `osd::push` folds accents with `username_ascii`.
 - Invite link `?h=`: filtered to letters/digits/space/`._-` and percent-encoded.
 - Avatars: `username_initial` (first letter or digit, accent folded).

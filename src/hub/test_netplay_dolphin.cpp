@@ -61,6 +61,7 @@ int main() {
     IniParams p; p.host = false; p.nickname = "Ann"; p.iso_dir = "C:\\games"; p.mute = true;
     std::string o = ini_patch(ini, s, p);
     CHECK(o.find("Nickname = Ann") != std::string::npos);
+    { IniParams q = p; q.nickname = "A;n#n [x]=y!"; std::string oq = ini_patch(ini, s, q); CHECK(oq.find("Nickname = Ann xy!") != std::string::npos); }   // INI-syntax characters stripped, space and ! kept
     CHECK(o.find("HostCode = 1a2B3c4D") != std::string::npos && o.find("00000000") == std::string::npos);
     CHECK(o.find("TraversalChoice = traversal") != std::string::npos);
     CHECK(o.find("ISOPath0 = C:\\games") != std::string::npos && o.find("Foo = 1") != std::string::npos);

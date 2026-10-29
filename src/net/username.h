@@ -51,7 +51,9 @@ inline bool username_decode(const std::string& s, std::vector<uint32_t>& out)
 inline void username_append(std::string& s, uint32_t cp)
 {
     if (cp < 0x80) s += (char)cp;
-    else { s += (char)(0xC0 | (cp >> 6)); s += (char)(0x80 | (cp & 0x3F)); }   // only ever called for U+0080-U+00FF
+    else if (cp < 0x800) { s += (char)(0xC0 | (cp >> 6)); s += (char)(0x80 | (cp & 0x3F)); }
+    else if (cp < 0x10000) { s += (char)(0xE0 | (cp >> 12)); s += (char)(0x80 | ((cp >> 6) & 0x3F)); s += (char)(0x80 | (cp & 0x3F)); }
+    else { s += (char)(0xF0 | (cp >> 18)); s += (char)(0x80 | ((cp >> 12) & 0x3F)); s += (char)(0x80 | ((cp >> 6) & 0x3F)); s += (char)(0x80 | (cp & 0x3F)); }
 }
 /* Code points in the allowed set (see the header comment). */
 inline bool username_cp_allowed(uint32_t cp)
@@ -168,23 +170,50 @@ inline std::string username_strong_key(const std::string& in)
     return k;
 }
 
+/* Mirrors RESERVED_WORDS / BAD_WORDS in the server's usernames.js (keep identical; test_username.cpp runs the shared parity corpus). */
 inline bool username_reserved(const std::string& name)
 {
-    static const char* kWords[] = {"admin", "administrator", "moderator", "mod", "system", "retrohub", "support", "staff", "owner",
-                                   "root", "server", "null", "undefined", "player", "guest", "official", "everyone", "anonymous", "retro", "hub", "smashclassic", "help", "bot", "dev", "team"};   // the server holds the full list and is authoritative
+    static const char* kWords[] = {"admin", "administrator", "retrohub", "retro", "hub", "mod", "moderator", "system", "staff", "support", "official",
+                                   "smashclassic", "smash", "root", "owner", "server", "everyone", "here", "help", "anonymous", "guest", "player",
+                                   "null", "undefined", "nintendo", "sony", "microsoft", "cloudflare", "anthropic", "claude", "bot", "dev", "developer",
+                                   "operator", "sysop", "team", "announcement", "news", "me", "you", "unknown", "deleted", "removed"};
     const std::string k = username_strong_key(name);
     for (const char* w : kWords) if (k == username_strong_key(w)) return true;
     return false;
 }
+/* Substring match on the strong fold ("Sh1tlord", "FUCK"). */
+inline bool username_profane(const std::string& name)
+{
+    static const char* kBad[] = {"fuck", "shit", "cunt", "nigger", "nigga", "faggot", "bitch", "whore", "rapist", "nazi", "hitler", "kike", "retard"};
+    const std::string k = username_strong_key(name);
+    for (const char* w : kBad) if (k.find(username_strong_key(w)) != std::string::npos) return true;
+    return false;
+}
+/* "qa-", "qa_", "qa." or "qa " prefix: reserved for the QA/test accounts (the server refuses it for real accounts). */
+inline bool username_qa_prefix(const std::string& s)
+{
+    return s.size() >= 3 && (s[0] == 'q' || s[0] == 'Q') && (s[1] == 'a' || s[1] == 'A') && (s[2] == '-' || s[2] == '_' || s[2] == '.' || s[2] == ' ');
+}
 
-/* RH-XXXX-XXXX / RH XXXX XXXX / RHXXXXXXXX: would be mistaken for a friend code, so it can't be a username. */
+/* RH-XXXX-XXXX / RH XXXX XXXX / RHXXXXXXXX: would be mistaken for a friend code, so it can't be a username. Same shape as the
+ * server's CODE_LIKE: RH, optional - or space, 4 of [A-Z2-7], optional - or space, 4 of [A-Z2-7], case-insensitive. */
 inline bool username_looks_like_code_shape(const std::string& s)
 {
-    std::string t;
-    for (char c : s) if (c != '-' && c != ' ') t += (char)((c >= 'a' && c <= 'z') ? c - 32 : c);
-    if (t.size() != 10 || t.compare(0, 2, "RH") != 0) return false;
-    for (size_t i = 2; i < t.size(); i++) if (!((t[i] >= 'A' && t[i] <= 'Z') || (t[i] >= '2' && t[i] <= '7'))) return false;
-    return true;
+    size_t i = 0;
+    auto up = [&](size_t k) { char c = s[k]; return (char)((c >= 'a' && c <= 'z') ? c - 32 : c); };
+    auto sep = [&] { if (i < s.size() && (s[i] == '-' || s[i] == ' ')) i++; };
+    auto grp = [&] {
+        if (i + 4 > s.size()) return false;
+        for (size_t k = 0; k < 4; k++) { char c = up(i + k); if (!((c >= 'A' && c <= 'Z') || (c >= '2' && c <= '7'))) return false; }
+        i += 4;
+        return true;
+    };
+    if (s.size() < 10 || up(0) != 'R' || up(1) != 'H') return false;
+    i = 2;
+    sep();
+    if (!grp()) return false;
+    sep();
+    return grp() && i == s.size();
 }
 
 inline NameCheck username_validate(const std::string& in)
@@ -196,9 +225,11 @@ inline NameCheck username_validate(const std::string& in)
     for (uint32_t cp : v) if (!username_cp_allowed(cp)) return NameCheck::BadChars;
     if (v.size() < (size_t)kUsernameMin) return NameCheck::TooShort;
     if (v.size() > (size_t)kUsernameMax) return NameCheck::TooLong;
-    if (username_fold_key(s).size() < (size_t)kUsernameMin) return NameCheck::BadEdge;
+    /* Same order as the server's normalizeUsername: qa prefix, code shape, key length, reserved, profanity. */
+    if (username_qa_prefix(s)) return NameCheck::Reserved;
     if (username_looks_like_code_shape(s)) return NameCheck::Reserved;
-    if (username_reserved(s)) return NameCheck::Reserved;
+    if (username_fold_key(s).size() < (size_t)kUsernameMin) return NameCheck::BadEdge;
+    if (username_reserved(s) || username_profane(s)) return NameCheck::Reserved;
     return NameCheck::Ok;
 }
 
