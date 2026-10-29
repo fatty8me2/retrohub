@@ -1,6 +1,27 @@
 {
   "versions": [
     {
+      "version": "1.29.17",
+      "date": "2026-10-29",
+      "title": "Tidier menus",
+      "new": [
+        "Play Online lists your friends' open rooms with a Join button",
+        "One Updates page: version, update button and what's new in one place"
+      ],
+      "improved": [
+        "Settings has 4 tabs: saves and controller options live on the Saves and Controllers pages",
+        "Shared game pack links moved to Settings > General, next to ROM folders",
+        "Invites shrink to a small pill after 10 seconds instead of covering the page",
+        "Install is the main button for friends' games that are in a shared pack",
+        "The add-games banner on Home only shows while your library is empty",
+        "How it works on Play Online folds away once you have played online",
+        "Tooltips on the Surprise me and Rescan buttons; tidier Saves page; simpler controller order"
+      ],
+      "fixed": [
+        "The Close button in a friend's game popup was cut off"
+      ]
+    },
+    {
       "version": "1.29.16",
       "date": "2026-10-29",
       "title": "Shared packs find every game",
