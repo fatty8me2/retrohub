@@ -1,5 +1,5 @@
-/* What's new: the patch-notes page (sidebar + About) and the one-time "What's new in vX" popup after an update.
- * Data: <exe dir>\data\changelog.json (parsed by changelog.cpp). Shot aids: HUB_START_PAGE=6 (page), HUB_SHOT_CHANGELOG=popup
+/* What's new: the patch notes list (shown on the Updates page, page_about.cpp) and the one-time "What's new in vX" popup after an update.
+ * Data: <exe dir>\data\changelog.json (parsed by changelog.cpp). Shot aids: HUB_START_PAGE=5 (Updates page), HUB_SHOT_CHANGELOG=popup
  * (popup over the current page; the popup never opens by itself in screenshot/headless runs), HUB_SHOT_CHANGELOG_VER=<x.y.z>. */
 #include "app.h"
 #include "changelog.h"
@@ -52,16 +52,17 @@ void dismiss_popup(bool see_all) {
     CL.popup_open = false;
     A.st.changelog_seen = CL.popup_ver;
     mark_dirty();
-    if (see_all) A.page = Page::Changelog;
+    if (see_all) A.page = Page::About;
 }
 }  // namespace
 
-void page_changelog() {
+void draw_changelog_list() {
     load();
-    page_header("What's new", "Patch notes for every RetroHub update");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    section_title("What's new");
     if (CL.entries.empty()) {
         begin_panel("cl_empty");
-        text_wrapped_disabled("The patch notes file (data\\changelog.json) was not found next to RetroHub.");
+        text_wrapped_disabled("The patch notes file (data\changelog.json) was not found next to RetroHub.");
         end_panel();
         return;
     }

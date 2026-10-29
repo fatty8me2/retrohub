@@ -857,15 +857,29 @@ int main() {
         for (const char* id : before) CHECK(hubui::settings_control_tab(id) >= 0);
         int n; const hubui::SettingsCtl* c = hubui::settings_controls(&n);
         for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) CHECK(std::strcmp(c[i].id, c[j].id) != 0);
-        for (int i = 0; i < n; ++i) CHECK(c[i].tab >= 0 && c[i].tab < hubui::ST_Count);
+        for (int i = 0; i < n; ++i) CHECK((c[i].tab >= 0 && c[i].tab < hubui::ST_Count) || c[i].tab == hubui::kPageSaves || c[i].tab == hubui::kPageControllers);
         CHECK(hubui::settings_control_tab("server_url") == hubui::ST_Online && hubui::settings_control_tab("change_username") == hubui::ST_Account);
         int nx = -1;
         CHECK(hubui::settings_tab_step(0, 1, &nx) == 0 && nx == 1);
         CHECK(hubui::settings_tab_step(0, -1, &nx) == -1 && nx == 0);
         CHECK(hubui::settings_tab_step(hubui::ST_Count - 1, 1, &nx) == 1);
-        CHECK(hubui::settings_tab_clamp(99) == 0 && hubui::settings_tab_clamp(-3) == 0 && hubui::settings_tab_clamp(5) == 5);
-        Settings a; a.settings_tab = 4; Settings b;
-        CHECK(settings_from_json(settings_to_json(a), &b) && b.settings_tab == 4);
+        CHECK(hubui::settings_tab_clamp(99) == 0 && hubui::settings_tab_clamp(-3) == 0 && hubui::settings_tab_clamp(3) == 3 && hubui::settings_tab_clamp(4) == 0);
+        CHECK(hubui::ST_Count == 4);
+        /* moved controls: pack links on General, cloud toggles on the Saves page, Cemu controls on the Controllers page */
+        CHECK(hubui::settings_control_tab("pack_links") == hubui::ST_General && hubui::settings_control_tab("rom_folders_list") == hubui::ST_General);
+        CHECK(hubui::settings_control_tab("pause_cloud") == hubui::kPageSaves && hubui::settings_control_tab("cemu_manage_controls") == hubui::kPageControllers);
+        /* old 6-tab index -> new tab */
+        CHECK(hubui::settings_tab_from_legacy(0) == hubui::ST_General && hubui::settings_tab_from_legacy(1) == hubui::ST_Online);
+        CHECK(hubui::settings_tab_from_legacy(2) == hubui::ST_General && hubui::settings_tab_from_legacy(3) == hubui::ST_General);
+        CHECK(hubui::settings_tab_from_legacy(4) == hubui::ST_Video && hubui::settings_tab_from_legacy(5) == hubui::ST_Account);
+        CHECK(hubui::settings_tab_from_legacy(9) == hubui::ST_General && hubui::settings_tab_from_legacy(-1) == hubui::ST_General);
+        { Settings o, q; CHECK(settings_from_json("{\"settings_tab\": 5}", &o) && o.settings_tab == hubui::ST_Account);   // legacy file
+          CHECK(settings_from_json("{\"settings_tab\": 2}", &q) && q.settings_tab == hubui::ST_General); }
+        { Settings nw; nw.settings_tab = hubui::ST_Video; Settings r; CHECK(settings_from_json(settings_to_json(nw), &r) && r.settings_tab == hubui::ST_Video); }
+        CHECK(hubui::short_path("C:\\Users\\me\\AppData\\Roaming\\RetroHub\\saves") == "...\\RetroHub\\saves");
+        CHECK(hubui::short_path("C:\\RetroHub\\saves") == "C:\\RetroHub\\saves" && hubui::short_path("D:\\x\\y\\z\\") == "...\\y\\z");
+        Settings a; a.settings_tab = 3; Settings b;
+        CHECK(settings_from_json(settings_to_json(a), &b) && b.settings_tab == 3);
     }
 
     fails += dupes_fail;

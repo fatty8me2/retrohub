@@ -19,26 +19,13 @@ void draw_overlays() {
 }
 
 void page_about() {
-    page_header("About", "");
+    page_header("Updates", "Your version, new releases and patch notes");
     begin_panel("about");
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("RetroHub");
     ImGui::PopFont();
     ImGui::TextDisabled("Version %s", HUB_VERSION_STR);
     ImGui::Dummy(ImVec2(0, 6 * S));
-    ImGui::TextWrapped("One library for N64, GameCube, Wii U, Nintendo 3DS, Game Boy Advance, Game Boy and Game Boy Color: one-click resume, "
-                       "room codes, online play, and saves that follow you between PCs.");
-    ImGui::Dummy(ImVec2(0, 6 * S));
-    text_wrapped_disabled("Smash Classic runs as a native port with rollback netplay. N64 games run in the built-in "
-                          "mupen64plus runner and Game Boy games in the built-in libretro runner, both with lockstep input netplay. "
-                          "GameCube games use Dolphin, Nintendo 3DS games use Azahar and Wii U games use Cemu; those emulators are downloaded "
-                          "the first time you need them (or an existing Cemu is used). You supply your own game files; none are included.");
-    ImGui::Dummy(ImVec2(0, 6 * S));
-    if (button("What's new", ImVec2(0, 0), false, true, ui::Icon::Star)) A.page = Page::Changelog;
-    ImGui::Dummy(ImVec2(0, 10 * S));
-    ImGui::PushFont(ui::F.h2);
-    ImGui::TextUnformatted("Updates");
-    ImGui::PopFont();
     if (hubupdate::downloading()) {
         float p = hubupdate::download_progress();
         ImGui::ProgressBar(p < 0 ? 0.f : p, ImVec2(sp(40.f), 0), p < 0 ? "Downloading..." : nullptr);
@@ -63,6 +50,14 @@ void page_about() {
     }
     text_wrapped_disabled("RetroHub checks for updates each time it starts. Updating downloads the new version, "
                           "installs it over this folder (your saves and settings are kept) and reopens RetroHub.");
+    ImGui::Dummy(ImVec2(0, 6 * S));
+    ImGui::TextWrapped("One library for N64, GameCube, Wii U, Nintendo 3DS, Game Boy Advance, Game Boy and Game Boy Color: one-click resume, "
+                       "room codes, online play, and saves that follow you between PCs.");
+    ImGui::Dummy(ImVec2(0, 6 * S));
+    text_wrapped_disabled("Smash Classic runs as a native port with rollback netplay. N64 games run in the built-in "
+                          "mupen64plus runner and Game Boy games in the built-in libretro runner, both with lockstep input netplay. "
+                          "GameCube games use Dolphin, Nintendo 3DS games use Azahar and Wii U games use Cemu; those emulators are downloaded "
+                          "the first time you need them (or an existing Cemu is used). You supply your own game files; none are included.");
     end_panel();
+    draw_changelog_list();
 }
-

@@ -1,4 +1,5 @@
 #include "logic.h"
+#include "settings_tabs.h"
 
 #include "remix_data.h"
 #include "ps2_online.h"
@@ -48,6 +49,7 @@ std::string settings_to_json(const Settings& s) {
     o << "],\n"
       << "  \"server\": \"" << json::escape(s.server) << "\",\n"
       << "  \"settings_tab\": " << s.settings_tab << ",\n"
+      << "  \"settings_tab_v\": 2,\n"
       << "  \"input_delay\": " << s.input_delay << ",\n"
       << "  \"delay_auto\": " << (s.delay_auto ? "true" : "false") << ",\n"
       << "  \"last_game\": \"" << json::escape(s.last_game) << "\",\n"
@@ -134,7 +136,9 @@ bool settings_from_json(const std::string& text, Settings* out) {
     }
     out->server = j.str("server", out->server);
     out->settings_tab = (int)j.num("settings_tab", out->settings_tab);
-    if (out->settings_tab < 0 || out->settings_tab > 5) out->settings_tab = 0;
+    /* files without settings_tab_v hold the old 6-tab index: map it (Saves & Cloud / Controllers tabs no longer exist) */
+    if ((int)j.num("settings_tab_v", 1) < 2) out->settings_tab = settings_tab_from_legacy(out->settings_tab);
+    out->settings_tab = settings_tab_clamp(out->settings_tab);
     out->input_delay = (int)j.num("input_delay", out->input_delay);
     out->input_delay = std::max(1, std::min(8, out->input_delay));
     if (const Json* da = j.get("delay_auto")) if (da->type == Json::Bool) out->delay_auto = da->b;

@@ -81,7 +81,7 @@ $r = Run "viewer" "wait,right,left,down,b" @{ HUB_SHOT_GALLERY = "1"; HUB_SHOT_V
 Walk "screenshot viewer" $r 2
 
 # 5. Achievements sign-in (Settings > Account, signed out): fields and the Sign in button, no dead end
-$r = Run "signin" "wait,down,down,down,down,down,down,up,up,b" @{ HUB_SHOT_PAGE = "settings:5" }
+$r = Run "signin" "wait,down,down,down,down,down,down,up,up,b" @{ HUB_SHOT_PAGE = "settings:3" }
 $ss = @($r | Where-Object { $_.tok -notin @("wait") })
 Check "sign-in: focus lands on a control" (@($ss | Where-Object { $_.tok -eq "down" -and $_.nav -ne "00000000" }).Count -ge 1) "no focus in Account"
 $tg = @($ss | Where-Object { $_.tok -in @("up", "down") -and $_.nav -ne "00000000" } | Select-Object -ExpandProperty nav -Unique).Count

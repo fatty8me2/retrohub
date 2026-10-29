@@ -308,8 +308,7 @@ void draw_frame() {
     }
     if (nav_item(Page::Controllers, "Controllers", ui::Icon::Gamepad, iw, expand, 0)) A.page = Page::Controllers;
     if (nav_item(Page::Settings, "Settings", ui::Icon::Gear, iw, expand, 0)) A.page = Page::Settings;
-    if (nav_item(Page::Changelog, "What's new", ui::Icon::Star, iw, expand, 0)) A.page = Page::Changelog;
-    if (nav_item(Page::About, "About / Updates", ui::Icon::Info, iw, expand, 0)) A.page = Page::About;
+    if (nav_item(Page::About, "Updates", ui::Icon::Info, iw, expand, hubupdate::update_available() ? ui::ACCENT : 0)) A.page = Page::About;
     ImGui::PopStyleVar();
 
     // bottom: collapse toggle + player card
@@ -404,7 +403,6 @@ void draw_frame() {
         case Page::Controllers: page_controllers(); break;
         case Page::Settings: page_settings(); break;
         case Page::About: page_about(); break;
-        case Page::Changelog: page_changelog(); break;
     }
     ImGui::EndChild();
     draw_footer(footer_h);
