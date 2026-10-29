@@ -14,7 +14,7 @@ int main()
     CHECK(pack_key("Pokemon Platinum") == pack_key("Pokemon - Platinum Version (USA)"));
     CHECK(pack_key("Pokemon Black 2") == pack_key("Pokemon - Black Version 2 (USA, Europe) (NDSi Enhanced)"));
     CHECK(pack_key("Pokemon Black") != pack_key("Pokemon - Black Version 2 (USA, Europe)"));
-    CHECK(pack_key("Poké" "mon Pearl") == pack_key("Pokemon - Pearl Version (USA) (Rev 5)"));
+    CHECK(pack_key("Pok\xc3\xa9" "mon Pearl") == pack_key("Pokemon - Pearl Version (USA) (Rev 5)"));
     CHECK(pack_key("Super Mario 3D World") == pack_key("Super Mario 3D World (USA) (En,Fr,Es) (Rev 2)"));
     CHECK(decode_entities("plain") == "plain");
     CHECK(decode_entities("") == "");
