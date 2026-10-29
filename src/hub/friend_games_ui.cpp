@@ -392,7 +392,7 @@ void draw_ghost_modal() {
     ImGui::SameLine(0, sp(1.5f));
     button("Play Online", ImVec2(sp(18.f), bh), false, false, ui::Icon::Globe);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
-    {   // install from the shared pack (built-in folder + extra roots from Settings > Online)
+    {   // install from the shared packs (built-in folder + community list + extra roots from Settings > Online)
         const bool builtin = hubgp::sys_folder(g.sys)[0] != '\0';
         const hubgp::IndexState ist = hubgp::index_state(g.sys);
         if (builtin || (ist == hubgp::IndexState::Ready && hubgp::index_source(g.sys))) {
@@ -405,7 +405,7 @@ void draw_ghost_modal() {
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 if (have) ImGui::SetTooltip("Already installed");
-                else if (!in_pack) ImGui::SetTooltip("Not in the shared pack yet. The owner can add it to their Google Drive and share the link (Settings > Online) so everyone can install it.");
+                else if (!in_pack) ImGui::SetTooltip("Not in any shared pack yet. The owner can add it to their Google Drive and send the link so everyone can install it.");
             }
         }
     }

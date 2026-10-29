@@ -34,6 +34,11 @@ std::string safe_name(const std::string& t);
  * embeddedfolderview?id=<id>, or bare ids. Order preserved, duplicates dropped. */
 std::vector<std::string> parse_links(const std::string& text);
 
+/* Pure: the shared community pack list (data/packs.json on GitHub, fetched by every client so a link added there
+ * is installable for everyone without per-user setup). Accepts {"packs":[{"id":"...","name":"..."}]} or a bare
+ * array of ids / objects. Returns the valid, de-duplicated folder ids (bad ids dropped); false when not that JSON. */
+bool parse_packs_json(const std::string& text, std::vector<std::string>* out);
+
 /* Pure: true when `name` is a console short code usable as a pack subfolder (n64, gc, wiiu, 3ds, nds, gba, gbc, gb, ps1). */
 bool console_code(const std::string& name);
 
@@ -59,9 +64,9 @@ std::string pack_root();
  * written only when every file finished: a cancelled / partial install can be retried). */
 bool installed(const std::string& sys_short, const std::string& title);
 
-/* Background index of what is installable: the built-in pack plus every extra root (same layout). One job at a
- * time; index_refresh() is a no-op while one runs. Lets the UI grey out Install for games that are not in any pack
- * without a network round-trip per click. */
+/* Background index of what is installable: the built-in pack, the shared community packs (fetched from GitHub)
+ * and every extra root (same layout). One job at a time; index_refresh() is a no-op while one runs. Lets the UI
+ * grey out Install for games that are not in any pack without a network round-trip per click. */
 enum class IndexState { Unknown = 0, Checking = 1, Ready = 2 };
 void index_refresh(const std::vector<std::string>& roots);   // no-op while a job runs
 void index_shutdown();                                       // app exit: stop the job and join it
