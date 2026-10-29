@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.12",
+      "date": "2026-10-29",
+      "title": "3D World freeze fix",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Super Mario 3D World could freeze on the intro: it now runs on Cemu's OpenGL mode, which avoids a graphics driver reset (your own Cemu game profile setting still wins)"
+      ]
+    },
+    {
       "version": "1.29.11",
       "date": "2026-10-29",
       "title": "Pack install fix",
