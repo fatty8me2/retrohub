@@ -244,14 +244,17 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
 
 /* ---------- DAT cache ---------- */
 
-const std::vector<hm::DatRec>* get_dat(const std::string& system) {
+/* tree = the libretro-thumbnails repo's real file names (GitHub tree JSON) instead of the No-Intro / Redump DAT. */
+const std::vector<hm::DatRec>* get_dat(const std::string& system, bool tree = false) {
+    if (system == "wiiu") tree = false;   // its DAT already is the tree
+    const std::string slot = tree ? system + "#tree" : system;
     std::lock_guard<std::mutex> l(g_dat_mu);
-    auto it = g_dats.find(system);
+    auto it = g_dats.find(slot);
     if (it != g_dats.end()) return &it->second;
-    if (g_dat_failed[system]) return nullptr;
-    std::string url = hm::dat_url(system);
+    if (g_dat_failed[slot]) return nullptr;
+    std::string url = tree ? hm::tree_url(system) : hm::dat_url(system);
     if (url.empty()) return nullptr;
-    fs::path p = P(g_cache + "dat/" + system + ".dat");
+    fs::path p = P(g_cache + "dat/" + system + (tree ? ".tree" : ".dat"));
     std::string text;
     bool have = read_file(p, &text);
     bool stale = false;
@@ -271,13 +274,13 @@ const std::vector<hm::DatRec>* get_dat(const std::string& system) {
             text = body;
             have = true;
         } else if (!have) {
-            g_dat_failed[system] = true;
+            g_dat_failed[slot] = true;
             return nullptr;
         }
     }
-    auto recs = system == "wiiu" ? hm::parse_wiiu_tree(text) : hm::parse_dat(text);
-    if (recs.empty()) { g_dat_failed[system] = true; return nullptr; }
-    return &(g_dats[system] = std::move(recs));
+    auto recs = (tree || system == "wiiu") ? hm::parse_wiiu_tree(text) : hm::parse_dat(text);
+    if (recs.empty()) { g_dat_failed[slot] = true; return nullptr; }
+    return &(g_dats[slot] = std::move(recs));
 }
 
 /* ---------- name resolution ---------- */
@@ -287,8 +290,29 @@ std::string tail_after_last(const std::string& s, char c) {
     return p == std::string::npos ? "" : s.substr(p + 1);
 }
 
+/* A friend / pack ghost has path "ghost" or "ghost|<pack entry name>"; the entry name (No-Intro / Redump style, region tag kept) is a lookup hint. */
+bool is_ghost_path(const std::string& p) { return p.compare(0, 5, "ghost") == 0 && (p.size() == 5 || p[5] == '|'); }
+std::string ghost_hint(const std::string& p) { return is_ghost_path(p) && p.size() > 6 ? p.substr(6) : ""; }
+
+/* Fan hacks without a retail release of their own borrow the base game's box: catalog id -> (system, No-Intro name). */
+const char* hack_base_name(const std::string& catalog_id) {
+    if (catalog_id == "remix") return "Super Smash Bros. (USA)";
+    return nullptr;
+}
+
+/* Catalog entry for a ghost: same console, same title once articles / accents / punctuation are folded. */
+const hub::GameInfo* catalog_by_title(const std::string& sys, const std::string& title) {
+    std::string k = hm::title_key(title);
+    if (k.size() < 3) return nullptr;
+    if (sys == "n64" && k.compare(0, 10, "smashremix") == 0) return hub::find_game("remix");   // any Smash Remix version
+    for (const hub::GameInfo& gi : hub::catalog())
+        if (gi.system == sys && hm::title_key(gi.title) == k) return &gi;
+    return nullptr;
+}
+
 bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* how) {
     std::string sys = hub::system_short(g.system);
+    const bool ghost = is_ghost_path(g.path);
     {
         std::lock_guard<std::mutex> l(g_mu);
         auto it = g_names.find(g.key);
@@ -298,13 +322,18 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
             return true;
         }
     }
-    const std::string miss_id = "name:" + g.key;
+    const std::string miss_id = (ghost ? "name2:" : "name:") + g.key;   // ghosts: new id, so misses recorded by older versions do not hide the improved lookup
 
     std::string found, h;
     bool skip_dat = false;
-    if (!g.catalog_id.empty()) {
-        if (const hub::GameInfo* gi = hub::find_game(g.catalog_id)) {
+    std::string cat_id = g.catalog_id;
+    if (cat_id.empty() && ghost) {   // a pack / friend ghost has no scan: match the catalog by loose title
+        if (const hub::GameInfo* gi = catalog_by_title(sys, g.title)) cat_id = gi->id;
+    }
+    if (!cat_id.empty()) {
+        if (const hub::GameInfo* gi = hub::find_game(cat_id)) {
             if (!gi->nointro.empty()) { found = gi->nointro; h = "catalog"; }
+            else if (const char* base = hack_base_name(cat_id)) { found = base; h = "base"; }
             else skip_dat = true;   // curated entry with no retail release (ROM hack, native port): no art
         }
     }
@@ -321,7 +350,8 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
             q.system = sys;
             q.serial = g.serial;
             q.title = g.title;
-            q.fuzzy = g.path == "ghost";   // friend-game ghost entry (see get_ghost)
+            q.fuzzy = ghost;   // friend / pack ghost entry (see get_ghost)
+            q.hint = ghost_hint(g.path);
             if (g.system == hub::System::WiiU) {   // region from the file / archive name; the USA release is the fallback
                 std::string pl = g.path;
                 for (auto& c : pl) c = (char)std::tolower((unsigned char)c);
@@ -336,6 +366,13 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
                 q.crc = tail_after_last(g.key, ':');   // headerless CRC32 = the No-Intro DAT's rom crc
             }
             found = hm::match_name(*dat, q, &h);
+            if (found.empty() && sys == "gbc") {   // dual-mode carts (Pokemon Red / Yellow ...) are in the Game Boy DAT
+                if (const std::vector<hm::DatRec>* gb = get_dat("gb")) { q.system = "gb"; found = hm::match_name(*gb, q, &h); }
+            }
+            if (found.empty() && ghost) {   // known title differences ("007 - GoldenEye")
+                std::string al = hm::title_alias(sys, g.title);
+                if (!al.empty()) { q.title = al; q.hint = al; found = hm::match_name(*dat, q, &h); }
+            }
         } else {
             /* DAT unavailable (offline): don't remember a miss, try again next session */
             return false;
@@ -418,7 +455,7 @@ bool decode_png(const std::string& bytes, Pixels* out) {
 bool load_image(const std::string& system, const std::string& name, Kind kind, Pixels* px, std::string* err,
                 std::string* png_path) {
     if (name.empty()) { *err = "no name"; return false; }
-    std::string miss_id = "art:" + system + ":" + kind_name(kind) + ":" + name;
+    std::string miss_id = "art2:" + system + ":" + kind_name(kind) + ":" + name;
     fs::path file = P(g_cache + system + "/" + kind_name(kind) + "/" + safe_file_name(name) + ".png");
     if (png_path) *png_path = file.u8string();
     std::string bytes;
@@ -430,6 +467,25 @@ bool load_image(const std::string& system, const std::string& name, Kind kind, P
     for (const std::string& url : urls) {   /* 404 on one repo: try the next (gbc -> gb) */
         if (!http_get(url, &bytes, &st)) { *err = "network error"; return false; }
         if (st != 404) break;
+    }
+    if (st == 404 && name.compare(0, 8, "gametdb:") != 0) {   /* the DAT name has no thumbnail: look for the same game in the repo's real file list */
+        std::vector<std::string> trees = {system};
+        if (system == "gbc") trees.push_back("gb");
+        for (const std::string& ts : trees) {
+            const std::vector<hm::DatRec>* tree = get_dat(ts, true);
+            if (!tree) continue;
+            hm::Query q;
+            q.system = ts;
+            q.title = name;
+            q.region = hm::region_of(name);
+            q.fuzzy = false;
+            std::string alt = hm::match_name(*tree, q);
+            if (alt.empty() || alt == name) continue;
+            std::string u = hm::thumb_url(ts, (int)kind, alt);
+            if (u.empty()) continue;
+            if (!http_get(u, &bytes, &st)) { *err = "network error"; return false; }
+            if (st != 404) { urls.assign(1, u); break; }
+        }
     }
     if (st == 404) { record_miss(miss_id); *err = "404 (no art for this name)"; return false; }
     /* libretro-thumbnails stores some entries (e.g. the "(Rev 2)" 3DS boxarts) as git symlinks: raw.githubusercontent
@@ -614,7 +670,7 @@ SDL_Texture* get_by_name(const std::string& system_short, const std::string& noi
 }
 
 SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
-                       const std::string& title, Kind kind, int* w, int* h) {
+                       const std::string& title, Kind kind, int* w, int* h, const std::string& hint) {
     if (!g_enabled.load()) return nullptr;
     Job j;
     j.id = slot_id("ghost:" + system_short + ":" + key + ":" + title, kind);
@@ -627,7 +683,7 @@ SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, 
         j.game.title = title;
         j.game.catalog_id = catalog_id;
         j.game.serial = hm::serial_from_key(system_short, key);
-        j.game.path = "ghost";
+        j.game.path = hint.empty() ? "ghost" : "ghost|" + hint;
     }
     return lookup_or_queue(std::move(j), w, h);
 }
@@ -643,6 +699,18 @@ void init_headless(const std::string& cache_dir) { setup_cache(cache_dir); }
 
 bool resolve_name(const hub::GameEntry& game, std::string* name, std::string* how) {
     return resolve_name_impl(game, name, how);
+}
+
+bool resolve_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
+                   const std::string& title, const std::string& hint, std::string* name, std::string* how) {
+    hub::GameEntry g;
+    g.system = hub::system_from_short(system_short);
+    g.key = key.empty() ? "ghost:" + system_short + ":" + title : key;
+    g.title = title;
+    g.catalog_id = catalog_id;
+    g.serial = hm::serial_from_key(system_short, key);
+    g.path = hint.empty() ? "ghost" : "ghost|" + hint;
+    return resolve_name_impl(g, name, how);
 }
 
 bool fetch_decode(const std::string& system_short, const std::string& nointro_name, Kind kind, int* w, int* h,

@@ -220,6 +220,39 @@ game (
     CHECK(hm::release_score("A (USA) (Proto)") > hm::release_score("A (Japan)"));
     CHECK_EQ(hm::normalize_title("Pokemon - Red Version (USA) [!]"), "pokemonredversion");
 
+    /* ---- pack ghosts: hint, article placement, accents, region, aliases ---- */
+    {
+        std::vector<hm::DatRec> d = {{"Legend of Zelda, The - A Link to the Past (USA)", "", "", ""},
+                                     {"Legend of Zelda, The - A Link to the Past (Europe)", "", "", ""},
+                                     {"Pok" "é" "mon - Platinum Version (USA)", "", "", ""},
+                                     {"Mario & Luigi - Superstar Saga (USA)", "", "", ""},
+                                     {"GoldenEye 007 (USA)", "", "", ""}};
+        hm::Query q; q.system = "snes"; q.title = "The Legend of Zelda - A Link to the Past";
+        std::string how;
+        CHECK_EQ(hm::match_name(d, q, &how), "Legend of Zelda, The - A Link to the Past (USA)");
+        q.hint = "Legend of Zelda, The - A Link to the Past (Europe)";   // the exact name from the pack wins, USA preference does not
+        CHECK_EQ(hm::match_name(d, q, &how), "Legend of Zelda, The - A Link to the Past (Europe)");
+        CHECK_EQ(how, "hint");
+        q.hint = "legend of zelda, the - a link to the past (europe)";    // case-insensitive
+        CHECK_EQ(hm::match_name(d, q), "Legend of Zelda, The - A Link to the Past (Europe)");
+        q.hint = "Legend of Zelda, The - A Link to the Past (Europe).sfc"; // not an exact name: falls back to the title, its region tag asks for Europe
+        CHECK_EQ(hm::match_name(d, q), "Legend of Zelda, The - A Link to the Past (Europe)");
+        q = {}; q.system = "gba"; q.title = "Pokemon - Platinum Version";   // accent folded
+        CHECK_EQ(hm::match_name(d, q), "Pok" "é" "mon - Platinum Version (USA)");
+        q = {}; q.system = "gba"; q.title = "Mario and Luigi - Superstar Saga";   // & = and
+        CHECK_EQ(hm::match_name(d, q), "Mario & Luigi - Superstar Saga (USA)");
+        CHECK_EQ(hm::title_key("Legend of Zelda, The - X (USA)"), hm::title_key("The Legend of Zelda - X"));
+        CHECK_EQ(hm::region_of("A (Europe) (En,Fr)"), "Europe");
+        CHECK_EQ(hm::region_of("A (Japan, USA)"), "Japan");
+        CHECK_EQ(hm::region_of("Pikmin"), "");
+        CHECK_EQ(hm::match_hint(d, "goldeneye 007 (usa)"), "GoldenEye 007 (USA)");
+        CHECK_EQ(hm::match_hint(d, "GoldenEye 007"), "");
+        CHECK_EQ(hm::title_alias("n64", "007 - GoldenEye"), "GoldenEye 007 (USA)");
+        CHECK_EQ(hm::title_alias("gba", "007 - GoldenEye"), "");
+        CHECK(hm::tree_url("gc").find("libretro-thumbnails/Nintendo_-_GameCube/git/trees/master") != std::string::npos);
+        CHECK(hm::tree_url("bogus").empty());
+    }
+
     /* ---- json map ---- */
     std::map<std::string, std::string> m{{"n64:abc", "Mario \"Kart\" 64 (USA)"}, {"k\\2", "line\nbreak\t\xC3\xA9"}}, m2;
     CHECK(hm::map_from_json(hm::map_to_json(m), &m2));

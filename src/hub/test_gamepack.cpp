@@ -147,6 +147,19 @@ int main()
     CHECK(display_title("  Mario   Golf 64 (English).z64") == "Mario Golf 64");
     CHECK(display_title("Hunter, Theodore") == "Hunter, Theodore");
     CHECK(display_title("(USA)") == "");
+    /* pack_hint: only the game-file extension goes; region tags stay (they are part of the No-Intro / Redump name) */
+    CHECK(pack_hint("Legend of Zelda, The - A Link to the Past (USA).zip") == "Legend of Zelda, The - A Link to the Past (USA)");
+    CHECK(pack_hint("Pikmin.zip") == "Pikmin");
+    CHECK(pack_hint("Smash_Remix_2.0.0") == "Smash_Remix_2.0.0");
+    CHECK(pack_hint("Super Mario Sunshine (USA, Canada).7z") == "Super Mario Sunshine (USA, Canada)");
+    {   // the hint rides along from the index to the ghost
+        PackGame pg{"gc", "Pikmin", pack_key("Pikmin"), "Pikmin (USA)"};
+        auto g = pack_only_ghosts({}, {}, {pg}, 10);
+        CHECK(g.size() == 1 && g[0].hint == "Pikmin (USA)");
+        index_test_set({pg});
+        auto ig = index_games();
+        CHECK(ig.size() == 1 && ig[0].hint == "Pikmin (USA)");
+    }
 
     /* pack_only_ghosts: owned / friend ghost / twin / pack duplicates are not shown again */
     {

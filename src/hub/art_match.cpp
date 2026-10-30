@@ -82,6 +82,20 @@ std::string dat_url(const std::string& s) {
     return "";
 }
 
+std::string tree_url(const std::string& s) {
+    std::string repo = thumb_repo(s);
+    if (repo.empty()) return "";
+    if (s == "wiiu") return kWiiuTreeUrl;
+    return "https://api.github.com/repos/libretro-thumbnails/" + repo + "/git/trees/master?recursive=1";
+}
+
+std::string title_alias(const std::string& s, const std::string& title) {
+    std::string k = normalize_title(title);
+    if (s == "n64" && (k == "007goldeneye" || k == "goldeneye007")) return "GoldenEye 007 (USA)";
+    if (s == "n64" && k == "perfectdark") return "Perfect Dark (USA)";
+    return "";
+}
+
 const char* kind_dir(int kind) {
     switch (kind) {
     case 0: return "Named_Boxarts";
@@ -221,16 +235,50 @@ std::string unshift_article(const std::string& s) {
     return s;
 }
 
+static char fold_latin1(unsigned char c2) {   // second byte of a UTF-8 U+00C0..U+00FF letter -> its ASCII base
+    static const char* map = "AAAAAAACEEEEIIIIDNOOOOO*OUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";   // U+00C0 + i
+    if (c2 < 0x80 || c2 > 0xBF) return 0;
+    char m = map[c2 - 0x80];
+    return (m == '*' || m == '/') ? 0 : m;
+}
+
 std::string normalize_title(const std::string& s) {
     std::string r;
     int depth = 0;
-    for (unsigned char c : s) {
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
         if (c == '(' || c == '[') { ++depth; continue; }
         if (c == ')' || c == ']') { if (depth > 0) --depth; continue; }
         if (depth) continue;
+        if (c == 0xC3 && i + 1 < s.size()) {   // Pokémon -> pokemon
+            char f = fold_latin1((unsigned char)s[i + 1]);
+            if (f) { r += (char)std::tolower((unsigned char)f); ++i; continue; }
+        }
+        if (c == '&') { r += "and"; continue; }
         if (std::isalnum(c)) r += (char)std::tolower(c);
     }
     return r;
+}
+
+std::string title_key(const std::string& s) { return normalize_title(unshift_article(s)); }
+
+std::string region_of(const std::string& name) {
+    std::string l = lower(name);
+    size_t best_pos = std::string::npos;
+    const char* res = "";
+    struct R { const char* tag; const char* out; };
+    for (R r : {R{"(usa", "USA"}, R{"(europe", "Europe"}, R{"(japan", "Japan"}, R{"(world", "USA"}}) {
+        size_t p = l.find(r.tag);
+        if (p != std::string::npos && p < best_pos) { best_pos = p; res = r.out; }
+    }
+    return res;
+}
+
+std::string match_hint(const std::vector<DatRec>& dat, const std::string& hint) {
+    if (hint.size() < 3) return "";
+    std::string h = lower(hint);
+    for (const auto& r : dat) if (lower(r.name) == h) return r.name;
+    return "";
 }
 
 static bool has(const std::string& low, const char* needle) { return low.find(needle) != std::string::npos; }
@@ -318,22 +366,22 @@ std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::stri
         if (auto r = best(dat, [&](const DatRec& d) { return serial_equal(q.system, d.serial, q.serial); }))
             return done(r, "serial");
     }
-    std::string nt = normalize_title(q.system == "wiiu" ? unshift_article(q.title) : q.title);
-    if (nt.size() >= 3 && q.system == "wiiu") {   // title without article placement; the USA release wins, then the region asked for
+    if (!q.hint.empty()) {   // the pack's own file name is usually the No-Intro / Redump name itself
+        std::string h = match_hint(dat, q.hint);
+        if (!h.empty()) { if (how) *how = "hint"; return h; }
+    }
+    std::string nt = title_key(q.title);
+    const std::string want_region = q.region.empty() ? region_of(q.hint) : q.region;
+    if (nt.size() >= 3) {   // same title, any article placement; the region asked for wins, then USA / Europe / World
         const DatRec* b = nullptr;
         int bs = 1 << 30;
         for (const auto& r : dat) {
-            if (normalize_title(unshift_article(r.name)) != nt) continue;
+            if (title_key(r.name) != nt) continue;
             int s = release_score(r.name);
-            std::string l = lower(r.name);
-            if (!q.region.empty() && l.find("(" + lower(q.region)) != std::string::npos) s -= 5;
+            if (!want_region.empty() && lower(r.name).find("(" + lower(want_region)) != std::string::npos) s -= 5;
             if (s < bs) { bs = s; b = &r; }
         }
         if (b) return done(b, "title");
-    }
-    if (nt.size() >= 3) {
-        if (auto r = best(dat, [&](const DatRec& d) { return normalize_title(d.name) == nt; }))
-            return done(r, "title");
         /* Game Boy headers truncate the title: allow a prefix match there only. */
         if ((q.system == "gb" || q.system == "gbc") && nt.size() >= 6) {
             if (auto r = best(dat, [&](const DatRec& d) {
@@ -344,7 +392,7 @@ std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::stri
         }
         if (q.fuzzy && nt.size() >= 6) {
             if (auto r = best(dat, [&](const DatRec& d) {
-                    std::string dn = normalize_title(d.name);
+                    std::string dn = title_key(d.name);
                     return dn.size() >= 6 && (dn.compare(0, nt.size(), nt) == 0 || nt.compare(0, dn.size(), dn) == 0);
                 }))
                 return done(r, "fuzzy");

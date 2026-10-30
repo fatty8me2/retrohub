@@ -47,6 +47,7 @@ struct Owned { std::string sys, key, cid, title; };
 struct Ghost {
     std::string id;                    // identity()
     std::string sys, cid, key, title;  // as published by the first friend that owns it
+    std::string hint;                  // pack-only ghosts: the Drive entry name (region tags kept), an exact-name hint for cover art
     std::vector<std::string> uids;     // friends that own it (in friend order)
 };
 

@@ -115,12 +115,14 @@ bool index_source(const std::string& sys_short);             // a pack source ex
 /* Pure: a readable game title from a pack folder / file name: game-file extension, (...) and [...] tags dropped,
  * underscores to spaces, "Name, The - Rest" -> "The Name - Rest", spaces collapsed. */
 std::string display_title(const std::string& name);
+/* Pure: the entry name with only its game-file extension removed ("Pokemon - Platinum Version (USA).zip" -> "Pokemon - Platinum Version (USA)"). */
+std::string pack_hint(const std::string& name);
 
 /* The consoles whose packs can hold a game of `sys` (a Game Boy game may sit in the GBC pack and vice versa). */
 std::vector<std::string> pack_consoles(const std::string& sys);
 
 /* Every game the pack index has found, per console: display title + pack key. Thread-safe snapshot. */
-struct PackGame { std::string sys, title, key; };
+struct PackGame { std::string sys, title, key, hint; };   // hint = the Drive entry name minus its extension (region tags kept): the art lookup tries it as an exact No-Intro / Redump name first
 std::vector<PackGame> index_games();
 unsigned index_epoch();   // bumps whenever the set of known pack games changed (watch it to rebuild the library)
 void index_test_set(const std::vector<PackGame>& games);   // screenshots / tests: replace the known games (bumps the epoch)
