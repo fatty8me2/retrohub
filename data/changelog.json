@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.21",
+      "date": "2026-10-29",
+      "title": "Every shared pack game in your library",
+      "new": [
+        "Every game in the shared Google Drive packs now shows greyed out in your library, ready to install, even when no friend has it"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.29.20",
       "date": "2026-10-29",
       "title": "Rescan checks the packs",
