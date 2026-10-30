@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.23",
+      "date": "2026-10-29",
+      "title": "Box art for every game",
+      "new": [],
+      "improved": [
+        "Box art for every shared pack game, including Zelda titles, Animal Crossing, Super Mario Sunshine, GoldenEye and Smash Remix"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.29.22",
       "date": "2026-10-29",
       "title": "Installed pack games are playable",
