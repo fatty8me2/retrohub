@@ -3,6 +3,8 @@
  * link). The game's files are downloaded into RetroHub's managed games folder (<data dir>\gamepack\<console>\<title>)
  * and that folder joins the library. UI-free: friend_games_ui.cpp draws the button + progress dialog. */
 
+#include "friend_games.h"
+
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -104,6 +106,26 @@ long long index_last_attempt_ms();                           // 0 = never attemp
 IndexState index_state(const std::string& sys_short);        // per console; Ready = membership known for it
 bool index_has(const std::string& sys_short, const std::string& title);   // false unless Ready
 bool index_source(const std::string& sys_short);             // a pack source exists for this console (built-in, or an extra root once known)
+
+/* Pure: a readable game title from a pack folder / file name: game-file extension, (...) and [...] tags dropped,
+ * underscores to spaces, "Name, The - Rest" -> "The Name - Rest", spaces collapsed. */
+std::string display_title(const std::string& name);
+
+/* The consoles whose packs can hold a game of `sys` (a Game Boy game may sit in the GBC pack and vice versa). */
+std::vector<std::string> pack_consoles(const std::string& sys);
+
+/* Every game the pack index has found, per console: display title + pack key. Thread-safe snapshot. */
+struct PackGame { std::string sys, title, key; };
+std::vector<PackGame> index_games();
+unsigned index_epoch();   // bumps whenever the set of known pack games changed (watch it to rebuild the library)
+void index_test_set(const std::vector<PackGame>& games);   // screenshots / tests: replace the known games (bumps the epoch)
+
+/* Pure: greyed-out ghosts for pack games the user does not own and no friend ghost covers. `friend_ghosts` are the
+ * ghosts already built from friends' lists; result entries have no owners (uids empty), sorted by title, at most
+ * `room` of them. Matching is the loose pack rule (pack_pick) per console, GB/GBC twins included. */
+std::vector<hubui::fg::Ghost> pack_only_ghosts(const std::vector<hubui::fg::Owned>& mine,
+                                               const std::vector<hubui::fg::Ghost>& friend_ghosts,
+                                               const std::vector<PackGame>& pack, size_t room);
 
 /* Background install job (one at a time). */
 struct Installer {
