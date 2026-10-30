@@ -96,6 +96,11 @@ std::string pack_root();
  * written only when every file finished: a cancelled / partial install can be retried). */
 bool installed(const std::string& sys_short, const std::string& title);
 
+/* Pure: when `path` is a file inside an installed game's folder (<root>\<console>\<game folder>\...), the game folder's name
+ * (= the pack title the player installed), else "". Case / slash insensitive. The game's identity in the library comes from the
+ * file's header or its inner file name ("game.iso"), which can differ from the pack title; this is the title the ghost was. */
+std::string installed_folder_title(const std::string& path, const std::string& root);
+
 /* Background index of what is installable: the built-in pack, the shared community packs (fetched from GitHub)
  * and every extra root (same layout). One job at a time; index_refresh() is a no-op while one runs. Lets the UI
  * grey out Install for games that are not in any pack without a network round-trip per click. */

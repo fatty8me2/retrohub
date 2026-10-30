@@ -4,7 +4,7 @@ Usage: python qa/gamepack_fake_server.py <port>
             GET /__log  (requests seen, one per line)
 Drive layout mimics embeddedfolderview HTML + /download?id=...
 """
-import sys, time, json, threading
+import sys, os, time, json, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -39,6 +39,24 @@ TREE = {
 }
 BUILTIN = {"19_2xjH7Ps7epabxUrr9sfxz69kuJGp3W", "17AvjquyVOjSs0ua1LnLZGRN3B2bUYQar", "10zAwtXq1STlpfdIpCDppwXwpKhK3gyRP", "1idefowNapO3KpwE4nRv8zqrpCeEZFgpc", "1FVsjeQMBAcxw-_gRU4MSSRLQpIOD3ygu", "19H5x-ZY6-8HHUl0g3XI0NEsW2e6ROWzr"}
 BIG_SIZE = 300 * 1024 * 1024
+FILES = {}   # file id -> local path, for --packdir
+
+def load_packdir(root):
+    """--packdir <dir>: <dir>/<Console>/<Game folder or loose file>... becomes the community pack root (replaces the built-in fake tree)."""
+    n = [0]
+    def nid(k): n[0] += 1; return "PD%s%014d" % (k, n[0])
+    def walk(path, fid):
+        ents = []
+        for name in sorted(os.listdir(path)):
+            full = os.path.join(path, name)
+            if os.path.isdir(full):
+                i = nid("D"); ents.append(folder(i, name)); walk(full, i)
+            else:
+                i = nid("F"); ents.append(file(i, name)); FILES[i] = full
+        TREE[fid] = ents
+    TREE.clear()
+    TREE[COMM] = []
+    walk(root, COMM)
 
 def listing(fid):
     ents = TREE.get(fid)
@@ -97,8 +115,10 @@ class H(BaseHTTPRequestHandler):
                         self.wfile.write(b"\0" * 65536); time.sleep(0.01)
                 except Exception: pass
                 return
+            if fid in FILES: return self.send(200, open(FILES[fid], "rb").read())
             return self.send(200, ("DUMMY-" + fid).encode() * 10)
         self.send(404, b"nf", "text/plain")
 
 if __name__ == "__main__":
+    if len(sys.argv) > 3 and sys.argv[2] == "--packdir": load_packdir(sys.argv[3])
     ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()

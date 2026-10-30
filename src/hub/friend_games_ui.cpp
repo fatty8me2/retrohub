@@ -17,7 +17,12 @@ bool gameinfo_ui_section_query(const gameinfo::Query& q, const std::string& id, 
 static std::vector<hubui::fg::Owned> owned_snapshot() {
     std::vector<hubui::fg::Owned> v;
     v.reserve(A.lib.size());
-    for (const hub::GameEntry& e : A.lib) v.push_back({sys_short(e), e.key, e.catalog_id, e.title});
+    const std::string root = hubgp::pack_root();
+    for (const hub::GameEntry& e : A.lib) {
+        v.push_back({sys_short(e), e.key, e.catalog_id, e.title});
+        std::string t = hubgp::installed_folder_title(e.path, root);   // installed from a shared pack: also owned under the pack's title (a catalog title may differ from it)
+        if (!t.empty()) v.push_back({sys_short(e), e.key, e.catalog_id, t});
+    }
     return v;
 }
 
