@@ -38,7 +38,7 @@ SDL_Texture* get_by_name(const std::string& system_short, const std::string& noi
 /* Cover for a friend's game you do not own: same name resolution as an owned copy (catalog, serial/crc from the key,
  * DAT title, fuzzy title) so it gets the same art; loads that system's DAT on demand even if you own nothing there. */
 SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
-                       const std::string& title, Kind kind, int* w, int* h);
+                       const std::string& title, Kind kind, int* w, int* h, const std::string& hint = "");
 
 /* Average saturated colour of a texture returned by get() (packed r|g<<8|b<<16|255<<24), 0 if unknown / greyscale. */
 uint32_t average_color(SDL_Texture* tex);
@@ -51,6 +51,9 @@ namespace detail {
 void init_headless(const std::string& cache_dir);
 /* Name resolution as the worker does it (names.json -> catalog nointro -> DAT). how: cache/catalog/md5/crc/serial/title. */
 bool resolve_name(const hub::GameEntry& game, std::string* name, std::string* how);
+/* Same for a ghost (friend / pack-only game): hint = the pack entry name without extension, "" if none. */
+bool resolve_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
+                   const std::string& title, const std::string& hint, std::string* name, std::string* how);
 /* Download (or read cache) + decode + downscale; returns dimensions. On failure *err says why
  * (a 404 is recorded in misses.json). png_path gets the cache file path. */
 bool fetch_decode(const std::string& system_short, const std::string& nointro_name, Kind kind,

@@ -90,6 +90,11 @@ add_custom_command(TARGET RetroHub POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/cheats_db.bin ${CMAKE_SOURCE_DIR}/data/cheats_featured.json ${CMAKE_SOURCE_DIR}/data/changelog.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv $<TARGET_FILE_DIR:RetroHub>/data)
 
 # Cover art: pure matching logic + console test (live network check with --live <cache> [rom]).
+add_executable(qa_pack_art qa_pack_art.cpp gamepack.cpp art.cpp art_match.cpp)   # cover-art coverage check over the real pack index + library (qa/pack_art_check.ps1); not a ctest
+target_include_directories(qa_pack_art PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+target_link_libraries(qa_pack_art PRIVATE hubcommon SDL2::SDL2 winhttp)
+add_custom_command(TARGET qa_pack_art POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:qa_pack_art>)
 add_executable(hub_art_test test_art.cpp art.cpp art_match.cpp)
 target_include_directories(hub_art_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_art_test PRIVATE hubcommon SDL2::SDL2 winhttp)

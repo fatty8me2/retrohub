@@ -17,6 +17,10 @@ std::string url_encode(const std::string& s);
 /* Per-system data. system_short: n64 gba gb gbc gc. Empty string when unsupported. */
 std::string thumb_repo(const std::string& system_short);       // "Nintendo_-_Nintendo_64"
 std::string dat_url(const std::string& system_short);          // full raw.githubusercontent URL
+/* GitHub tree-listing URL of the system's libretro-thumbnails repo (the real file names; used when a DAT name has no thumbnail). */
+std::string tree_url(const std::string& system_short);
+/* Known title differences between a pack / header title and the No-Intro name ("007 - GoldenEye" -> "GoldenEye 007 (USA)"); "" if none. */
+std::string title_alias(const std::string& system_short, const std::string& title);
 const char* kind_dir(int kind);                                // 0 Named_Boxarts, 1 Named_Titles, 2 Named_Snaps
 std::string thumb_url(const std::string& system_short, int kind, const std::string& nointro_name);
 /* URLs to try in order. gbc adds the Game Boy repo second: dual-mode carts (e.g. Pokemon Yellow) are filed there. */
@@ -50,8 +54,15 @@ struct Query {
     std::string crc;      // hex, optional
     std::string title;    // header / display title, optional
     bool fuzzy = false;   // last resort: prefix match on the normalized title (friend-game "ghost" entries with no hash)
-    std::string region;   // Wii U: "USA" / "Europe" / "Japan" preferred among same-title records, optional
+    std::string region;   // "USA" / "Europe" / "Japan" preferred among same-title records, optional (Wii U always, others when set)
+    std::string hint;     // original pack entry name without extension ("Legend of Zelda, The - X (USA)"); an exact DAT name wins first
 };
+/* Region word of a name's tags: "USA" / "Europe" / "Japan" / "" (first tag that names one). */
+std::string region_of(const std::string& name);
+/* Exact (case-insensitive) DAT name equal to `hint`, "" if none. */
+std::string match_hint(const std::vector<DatRec>& dat, const std::string& hint);
+/* Pure: the comparison key for loose title matching: article moved back to the front, tags dropped, accents folded, & = and. */
+std::string title_key(const std::string& s);
 /* Serial for a ghost entry derived from its identity key ("ps1:slus-01188" -> "slus-01188", "gc:gm4e01-0" -> "gm4e01"). */
 std::string serial_from_key(const std::string& system, const std::string& key);
 /* Best DAT name for the query; "" if none. *how (optional) is one of md5 crc serial title. */

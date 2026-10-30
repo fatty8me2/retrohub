@@ -225,7 +225,7 @@ static std::vector<std::string> ghost_names(const hubui::fg::Ghost& g) {
 
 ArtRef art_for_ghost(const hubui::fg::Ghost& g) {
     int w = 0, h = 0;
-    SDL_Texture* t = hubart::get_ghost(g.sys, g.key, g.cid, g.title, hubart::Kind::Boxart, &w, &h);
+    SDL_Texture* t = hubart::get_ghost(g.sys, g.key, g.cid, g.title, hubart::Kind::Boxart, &w, &h, g.hint);
     return art_lookup("ghost:" + g.id, true, t, w, h);
 }
 

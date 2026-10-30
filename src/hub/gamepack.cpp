@@ -522,7 +522,7 @@ bool download_file(const std::string& file_id, const std::string& out_path,
     return ok;
 }
 
-std::string display_title(const std::string& name) {
+std::string pack_hint(const std::string& name) {
     std::string n = name;
     size_t dot = n.find_last_of('.');
     if (dot != std::string::npos && dot > 0) {
@@ -531,6 +531,12 @@ std::string display_title(const std::string& name) {
         std::string ext = lower_name(n.substr(dot + 1));
         for (const char* x : exts) if (ext == x) { n.erase(dot); break; }
     }
+    while (!n.empty() && n.back() == ' ') n.pop_back();
+    return n;
+}
+
+std::string display_title(const std::string& name) {
+    std::string n = pack_hint(name);
     std::string o; int depth = 0;
     for (char ch : n) {
         if (ch == '(' || ch == '[') { ++depth; continue; }
@@ -575,7 +581,7 @@ std::vector<hubui::fg::Ghost> pack_only_ghosts(const std::vector<hubui::fg::Owne
         hubui::fg::Ghost g;
         g.id = hubui::fg::identity(p.sys, "", p.title);
         if (!ids.insert(g.id).second) continue;
-        g.sys = p.sys; g.title = p.title;
+        g.sys = p.sys; g.title = p.title; g.hint = p.hint;
         add_keys[p.sys].push_back(p.key);
         out.push_back(std::move(g));
     }
@@ -626,6 +632,7 @@ static struct {
     std::map<std::string, std::set<std::string>> titles;   // sys -> normalized game folder names
     std::map<std::string, bool> extra;   // sys -> an extra root has this console
     std::map<std::string, std::map<std::string, std::string>> games;   // sys -> pack key -> display title
+    std::map<std::string, std::map<std::string, std::string>> hints;   // sys -> pack key -> entry name without extension
     unsigned epoch = 0;                 // bumps when `games` grew
     long long last_ms = 0;
     bool finished = true;               // the job in `th` has ended (mu)
@@ -660,7 +667,7 @@ void index_refresh(const std::vector<std::string>& roots) {
                 std::string t = display_title(e.name);
                 if (t.empty()) continue;
                 auto& m = IX.games[sys];
-                if (m.find(k) == m.end()) { m[k] = t; ++IX.epoch; }
+                if (m.find(k) == m.end()) { m[k] = t; IX.hints[sys][k] = pack_hint(e.name); ++IX.epoch; }
             }
             return true;
         };
@@ -732,7 +739,14 @@ bool index_has(const std::string& sys_short, const std::string& title) {
 std::vector<PackGame> index_games() {
     std::vector<PackGame> v;
     std::lock_guard<std::mutex> lk(IX.mu);
-    for (const auto& s : IX.games) for (const auto& g : s.second) v.push_back({s.first, g.second, g.first});
+    for (const auto& s : IX.games) {
+        const auto h = IX.hints.find(s.first);
+        for (const auto& g : s.second) {
+            std::string hint;
+            if (h != IX.hints.end()) { auto f = h->second.find(g.first); if (f != h->second.end()) hint = f->second; }
+            v.push_back({s.first, g.second, g.first, hint});
+        }
+    }
     return v;
 }
 
@@ -741,7 +755,8 @@ unsigned index_epoch() { std::lock_guard<std::mutex> lk(IX.mu); return IX.epoch;
 void index_test_set(const std::vector<PackGame>& games) {
     std::lock_guard<std::mutex> lk(IX.mu);
     IX.games.clear();
-    for (const PackGame& g : games) { IX.games[g.sys][g.key] = g.title; IX.titles[g.sys].insert(g.key); IX.state[g.sys] = 1; }
+    IX.hints.clear();
+    for (const PackGame& g : games) { IX.games[g.sys][g.key] = g.title; if (!g.hint.empty()) IX.hints[g.sys][g.key] = g.hint; IX.titles[g.sys].insert(g.key); IX.state[g.sys] = 1; }
     ++IX.epoch;
 }
 
