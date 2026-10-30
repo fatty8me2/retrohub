@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.29.22",
+      "date": "2026-10-29",
+      "title": "Installed pack games are playable",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "A game installed from a shared pack could stay greyed out and unplayable, mostly GameCube games packed as .7z or .zip"
+      ]
+    },
+    {
       "version": "1.29.21",
       "date": "2026-10-29",
       "title": "Every shared pack game in your library",
