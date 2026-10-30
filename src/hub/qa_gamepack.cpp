@@ -11,6 +11,18 @@ using namespace hubgp;
 namespace fs = std::filesystem;
 static long long ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::string(argv[1]) == "index-list") {   // read-only: index with no extra links (+ optional links in argv[2]), print every console / display title
+        auto roots = parse_links(argc > 2 ? argv[2] : "");
+        index_refresh(roots);
+        for (int i = 0; i < 1200; ++i) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); if (i > 5 && index_last_attempt_ms() && index_state("n64") != IndexState::Checking && index_state("ps1") != IndexState::Checking && index_state("gc") != IndexState::Checking && index_state("gba") != IndexState::Checking && index_state("gbc") != IndexState::Checking && index_state("nds") != IndexState::Checking) break; }
+        for (int i = 0; i < 50; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        auto games = index_games();
+        std::string cur;
+        for (const auto& g : games) { if (g.sys != cur) { cur = g.sys; std::printf("== %s\n", cur.c_str()); } std::printf("  %s   [%s]\n", g.title.c_str(), g.key.c_str()); }
+        std::printf("total=%zu epoch=%u\n", games.size(), index_epoch());
+        index_shutdown();
+        return 0;
+    }
     if (argc < 5) return 2;
     std::string mode = argv[1], links = argv[2], sys = argv[3];
     auto roots = parse_links(links);

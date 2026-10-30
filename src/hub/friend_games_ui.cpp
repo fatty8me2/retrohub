@@ -31,11 +31,17 @@ void rebuild_ghosts() {
     A.ghosts.clear();
     std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>> libs;
     if (A.st.show_friend_games && A.friends_chip) fr_library_collect(&libs);   // an empty own library still gets ghosts: new users install from shared packs
-    if (!libs.empty()) A.ghosts = hubui::fg::build_ghosts(owned_snapshot(), libs);
+    const std::vector<hubui::fg::Owned> mine = owned_snapshot();
+    if (!libs.empty()) A.ghosts = hubui::fg::build_ghosts(mine, libs);
+    const size_t friend_ghosts = A.ghosts.size();
+    if (A.st.show_friend_games && A.friends_chip && A.ghosts.size() < hubui::fg::kMaxGhosts) {   // games in the shared Drive packs, owned by no friend
+        std::vector<hubui::fg::Ghost> pk = hubgp::pack_only_ghosts(mine, A.ghosts, hubgp::index_games(), hubui::fg::kMaxGhosts - A.ghosts.size());
+        A.ghosts.insert(A.ghosts.end(), pk.begin(), pk.end());
+    }
     static std::string last;
     const size_t nf = fr_friends().size();
     std::string line = "ghosts: friends=" + std::to_string(nf) + " lists_held=" + std::to_string(libs.size()) +
-                       " built=" + std::to_string(A.ghosts.size()) + " own=" + std::to_string(A.lib.size());
+                       " built=" + std::to_string(friend_ghosts) + " pack=" + std::to_string(A.ghosts.size() - friend_ghosts) + " own=" + std::to_string(A.lib.size());
     std::string why = hubui::fg::empty_reason(A.st.show_friend_games && A.friends_chip, nf, libs.size(), A.ghosts.size());
     if (!why.empty()) line += " (empty: " + why + ")";
     if (line != last) { last = line; online_log(line); }
@@ -149,16 +155,19 @@ void ghost_tick() {
     /* shared pack index: which greyed-out games are installable (built-in pack + extra roots from Settings > Online).
      * Re-runs when the links change or 10 min pass (the pack gains games); a failed run retries on that same cadence. */
     static std::string seen_pack_links;
+    static unsigned seen_ix = 0xffffffffu;
     {
         const std::string& links = A.st.pack_links;
         long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();   // same clock as index_last_attempt_ms()
         long long last_ms = hubgp::index_last_attempt_ms();
-        const bool recheck = !A.ghosts.empty() && hubgp::take_recheck();   // Rescan: check the Drive packs again right away
-        if (!A.ghosts.empty() && (recheck || links != seen_pack_links || last_ms == 0 || now_ms - last_ms > 600000)) {
+        const bool recheck = hubgp::take_recheck();   // Rescan: check the Drive packs again right away
+        if ((recheck || links != seen_pack_links || last_ms == 0 || now_ms - last_ms > 600000)) {
             seen_pack_links = links;
             hubgp::index_refresh(hubgp::parse_links(links));
         }
     }
+
+    if (unsigned ix = hubgp::index_epoch(); ix != seen_ix) { seen_ix = ix; A.vis_dirty = true; }   // the pack index found games: rebuild the pack ghosts
 
     /* a friend's list changed (or the friends list / chip did): recompose the library */
     uint32_t ep = fr_library_epoch();
@@ -174,6 +183,16 @@ void ghost_tick() {
             done = true;
             size_t ix = std::min<size_t>((size_t)std::max(0, std::atoi(std::getenv("HUB_SHOT_GHOST_OPEN"))), A.ghosts.size() - 1);
             A.sel_ghost = A.ghosts[ix].id; A.sel_game.clear(); A.show_ghost = true;
+        }
+    }
+
+    if (g_headless && std::getenv("HUB_SHOT_GHOST_PACK") && now > 14.0) {   // screenshots: open the first pack-only ghost whose title contains HUB_SHOT_GHOST_PACK (after the index had time to load)
+        static bool done = false;
+        if (!done) {
+            done = true;
+            const std::string want = std::getenv("HUB_SHOT_GHOST_PACK");
+            for (const auto& g : A.ghosts)
+                if (g.uids.empty() && g.title.find(want) != std::string::npos) { A.sel_ghost = g.id; A.sel_game.clear(); A.show_ghost = true; break; }
         }
     }
 
@@ -362,9 +381,10 @@ void draw_ghost_modal() {
     }
 
     /* who has it */
-    section_title("Friends who have it");
+    const bool pack_only = g.uids.empty();
+    if (!pack_only) section_title("Friends who have it");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    const size_t kRows = 6;
+    const size_t kRows = pack_only ? 0 : 6;
     float rh = sp(5.f), bw = sp(22.f);
     for (size_t i = 0; i < g.uids.size() && i < kRows; ++i) {
         const hubnet::Friend* f = fr_find(g.uids[i]);
@@ -390,7 +410,8 @@ void draw_ghost_modal() {
         ImGui::PopID();
     }
     if (g.uids.size() > kRows) text_wrapped_disabled("and " + std::to_string(g.uids.size() - kRows) + " more");
-    text_wrapped_disabled("They get a request to open a room with this game. Only the game's name is shared, never game files.");
+    if (pack_only) text_wrapped_disabled("In a shared pack. Install it to play.");
+    else text_wrapped_disabled("They get a request to open a room with this game. Only the game's name is shared, never game files.");
     ImGui::Dummy(ImVec2(0, sp(1.5f)));
 
     /* actions: Play / Play Online are shown but disabled (you cannot play what you do not have) */

@@ -140,6 +140,32 @@ int main()
     CHECK(console_code("n64") && console_code("GBC") && console_code("3ds"));
     CHECK(!console_code("gbx") && !console_code("") && console_code("nintendo 64"));
 
+    /* display_title */
+    CHECK(display_title("Legend of Zelda, The - A Link to the Past (USA).zip") == "The Legend of Zelda - A Link to the Past");
+    CHECK(display_title("Smash_Remix_2.0.0") == "Smash Remix 2.0.0");
+    CHECK(display_title("Pokemon - Platinum Version (USA) [!]") == "Pokemon - Platinum Version");
+    CHECK(display_title("  Mario   Golf 64 (English).z64") == "Mario Golf 64");
+    CHECK(display_title("Hunter, Theodore") == "Hunter, Theodore");
+    CHECK(display_title("(USA)") == "");
+
+    /* pack_only_ghosts: owned / friend ghost / twin / pack duplicates are not shown again */
+    {
+        using hubui::fg::Owned; using hubui::fg::Ghost;
+        auto P = [](const char* sys, const char* t) { return PackGame{sys, t, pack_key(t)}; };
+        std::vector<Owned> mine = {{"n64", "n64:a", "", "GoldenEye 007"}, {"gb", "gb:1", "", "Pokemon Red"}};
+        Ghost fg; fg.id = "n64|t:mario kart 64"; fg.sys = "n64"; fg.title = "Mario Kart 64"; fg.uids = {"u1"};
+        std::vector<PackGame> pack = {P("n64", "007 - GoldenEye"), P("n64", "Mario Kart 64"), P("n64", "Mario Golf 64"),
+                                      P("gbc", "Pokemon - Red Version"), P("gbc", "Pokemon Gold"), P("gb", "Pokemon Gold"), P("gba", "Metroid Fusion")};
+        auto g = pack_only_ghosts(mine, {fg}, pack, 100);
+        CHECK(g.size() == 3);
+        if (g.size() == 3) {
+            CHECK(g[0].title == "Mario Golf 64" && g[0].uids.empty() && g[0].sys == "n64");
+            CHECK(g[1].title == "Metroid Fusion" && g[2].title == "Pokemon Gold");
+        }
+        CHECK(pack_only_ghosts(mine, {fg}, pack, 2).size() == 2);   // room cap
+        CHECK(pack_only_ghosts({}, {}, {}, 10).empty());
+    }
+
     /* sys_folder: the consoles in the shared pack */
     CHECK(std::string(sys_folder("n64")) == "19_2xjH7Ps7epabxUrr9sfxz69kuJGp3W");
     CHECK(std::string(sys_folder("gc")) == "17AvjquyVOjSs0ua1LnLZGRN3B2bUYQar");

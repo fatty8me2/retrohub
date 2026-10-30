@@ -105,7 +105,7 @@ inline std::vector<Ghost> build_ghosts(const std::vector<Owned>& mine,
 /* "Mickey has this", "Mickey, camer have this", "Mickey, camer and 2 others have this". `max_names` names are listed. */
 inline std::string badge_text(const std::vector<std::string>& names, size_t max_names = 2)
 {
-    if (names.empty()) return "";
+    if (names.empty()) return "In a shared pack";   // a pack-only ghost has no owners
     if (names.size() == 1) return names[0] + " has this";
     std::string o;
     size_t shown = std::min(names.size(), max_names);

@@ -47,7 +47,7 @@ int main()
     for (int i = 0; i < 6000; ++i) big.push_back({"n64", "k" + std::to_string(i), "", "T" + std::to_string(i)});
     CHECK(build_ghosts({}, {{"u1", &big}}).size() == kMaxGhosts);
 
-    CHECK(badge_text({}) == "");
+    CHECK(badge_text({}) == "In a shared pack");
     CHECK(badge_text({"Mickey"}) == "Mickey has this");
     CHECK(badge_text({"Mickey", "camer"}) == "Mickey, camer have this");
     CHECK(badge_text({"A", "B", "C"}) == "A, B and 1 other have this");

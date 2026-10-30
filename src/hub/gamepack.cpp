@@ -234,7 +234,7 @@ int pack_pick(const std::vector<std::string>& keys, const std::string& want) {
 }
 
 /* Game Boy and Game Boy Color packs hold each other's games (Pokemon Red often sits in a GBC folder). */
-static std::vector<std::string> pack_consoles(const std::string& sys) {
+std::vector<std::string> pack_consoles(const std::string& sys) {
     if (sys == "gb") return {"gb", "gbc"};
     if (sys == "gbc") return {"gbc", "gb"};
     return {sys};
@@ -522,6 +522,71 @@ bool download_file(const std::string& file_id, const std::string& out_path,
     return ok;
 }
 
+std::string display_title(const std::string& name) {
+    std::string n = name;
+    size_t dot = n.find_last_of('.');
+    if (dot != std::string::npos && dot > 0) {
+        static const char* exts[] = {"zip", "7z", "rar", "z64", "n64", "v64", "gba", "gb", "gbc", "nds", "iso", "rvz", "cue", "bin", "chd", "gcm", "ciso",
+                                     "wbfs", "3ds", "cia", "wua", "wud", "wux", "nes", "sfc", "smc", "pbp", "gcz", "ndd"};
+        std::string ext = lower_name(n.substr(dot + 1));
+        for (const char* x : exts) if (ext == x) { n.erase(dot); break; }
+    }
+    std::string o; int depth = 0;
+    for (char ch : n) {
+        if (ch == '(' || ch == '[') { ++depth; continue; }
+        if (ch == ')' || ch == ']') { if (depth > 0) --depth; continue; }
+        if (depth) continue;
+        o += ch == '_' ? ' ' : ch;
+    }
+    auto tidy = [](const std::string& s) {
+        std::string r;
+        for (char c : s) { if (c == ' ' || c == '\t') { if (!r.empty() && r.back() != ' ') r += ' '; } else r += c; }
+        while (!r.empty() && (r.back() == ' ' || r.back() == '-')) r.pop_back();
+        size_t b = 0; while (b < r.size() && r[b] == ' ') ++b;
+        return r.substr(b);
+    };
+    o = tidy(o);
+    size_t c = o.find(", The");
+    while (c != std::string::npos) {
+        size_t e = c + 5;
+        if (e == o.size() || o[e] == ' ') { o = "The " + o.substr(0, c) + o.substr(e); break; }
+        c = o.find(", The", c + 1);
+    }
+    return tidy(o);
+}
+
+std::vector<hubui::fg::Ghost> pack_only_ghosts(const std::vector<hubui::fg::Owned>& mine,
+                                               const std::vector<hubui::fg::Ghost>& friend_ghosts,
+                                               const std::vector<PackGame>& pack, size_t room) {
+    std::map<std::string, std::vector<std::string>> own_keys, fr_keys, add_keys;   // sys -> pack keys
+    for (const auto& o : mine) own_keys[o.sys].push_back(pack_key(o.title));
+    for (const auto& g : friend_ghosts) fr_keys[g.sys].push_back(pack_key(g.title));
+    auto covered = [&](std::map<std::string, std::vector<std::string>>& m, const PackGame& p) {
+        std::vector<std::string> keys;
+        for (const std::string& c : pack_consoles(p.sys)) { auto it = m.find(c); if (it != m.end()) keys.insert(keys.end(), it->second.begin(), it->second.end()); }
+        return pack_pick(keys, p.key) >= 0;
+    };
+    std::vector<hubui::fg::Ghost> out;
+    std::set<std::string> ids;
+    for (const PackGame& p : pack) {
+        if (out.size() >= room) break;
+        if (p.sys.empty() || p.title.empty() || p.key.empty()) continue;
+        if (covered(own_keys, p) || covered(fr_keys, p) || covered(add_keys, p)) continue;
+        hubui::fg::Ghost g;
+        g.id = hubui::fg::identity(p.sys, "", p.title);
+        if (!ids.insert(g.id).second) continue;
+        g.sys = p.sys; g.title = p.title;
+        add_keys[p.sys].push_back(p.key);
+        out.push_back(std::move(g));
+    }
+    auto low = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+    std::sort(out.begin(), out.end(), [&](const hubui::fg::Ghost& a, const hubui::fg::Ghost& b) {
+        std::string x = low(a.title), y = low(b.title);
+        return x != y ? x < y : a.id < b.id;
+    });
+    return out;
+}
+
 std::string pack_root() { return hub::data_dir() + "gamepack\\"; }
 
 bool installed(const std::string& sys_short, const std::string& title) {
@@ -544,6 +609,8 @@ static struct {
     std::map<std::string, int> state;   // sys -> 0 pending, 1 ok (membership known), 2 failed
     std::map<std::string, std::set<std::string>> titles;   // sys -> normalized game folder names
     std::map<std::string, bool> extra;   // sys -> an extra root has this console
+    std::map<std::string, std::map<std::string, std::string>> games;   // sys -> pack key -> display title
+    unsigned epoch = 0;                 // bumps when `games` grew
     long long last_ms = 0;
     bool finished = true;               // the job in `th` has ended (mu)
     std::atomic<bool> stop{false};      // index_shutdown(): the job stops between listings
@@ -569,7 +636,16 @@ void index_refresh(const std::vector<std::string>& roots) {
             std::vector<Entry> entries;
             if (!list_folder(folder_id, &entries)) return false;
             std::lock_guard<std::mutex> lk(IX.mu);
-            for (const Entry& e : entries) { std::string k = entry_key(e); if (!k.empty()) IX.titles[sys].insert(k); }
+            for (const Entry& e : entries) {
+                std::string k = entry_key(e);
+                if (k.empty()) continue;
+                IX.titles[sys].insert(k);
+                if (lower_name(e.name).find("bios") != std::string::npos) continue;   // a BIOS folder is not a game
+                std::string t = display_title(e.name);
+                if (t.empty()) continue;
+                auto& m = IX.games[sys];
+                if (m.find(k) == m.end()) { m[k] = t; ++IX.epoch; }
+            }
             return true;
         };
         static const char* builtin[] = {"n64", "gc", "gba", "gbc", "nds", "ps1"};
@@ -594,7 +670,7 @@ void index_refresh(const std::vector<std::string>& roots) {
                 }
             }
         }
-        std::lock_guard<std::mutex> lk(IX.mu); IX.finished = true;
+        std::lock_guard<std::mutex> lk(IX.mu); IX.finished = true; ++IX.epoch;
     });
 }
 
@@ -635,6 +711,22 @@ bool index_has(const std::string& sys_short, const std::string& title) {
         if (t != IX.titles.end()) keys.insert(keys.end(), t->second.begin(), t->second.end());
     }
     return pack_pick(keys, want) >= 0;
+}
+
+std::vector<PackGame> index_games() {
+    std::vector<PackGame> v;
+    std::lock_guard<std::mutex> lk(IX.mu);
+    for (const auto& s : IX.games) for (const auto& g : s.second) v.push_back({s.first, g.second, g.first});
+    return v;
+}
+
+unsigned index_epoch() { std::lock_guard<std::mutex> lk(IX.mu); return IX.epoch; }
+
+void index_test_set(const std::vector<PackGame>& games) {
+    std::lock_guard<std::mutex> lk(IX.mu);
+    IX.games.clear();
+    for (const PackGame& g : games) { IX.games[g.sys][g.key] = g.title; IX.titles[g.sys].insert(g.key); IX.state[g.sys] = 1; }
+    ++IX.epoch;
 }
 
 bool index_source(const std::string& sys_short) {
