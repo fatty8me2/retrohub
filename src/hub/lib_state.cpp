@@ -18,9 +18,11 @@ std::string no_slash(std::string p) {
     return p;
 }
 
+static bool g_scan_again = false;   // a scan was asked for while one ran: run it when that one lands
+
 void start_scan() {
-    if (A.scanning) return;
     hubgp::request_recheck();   // a rescan also looks for new games in the shared Drive packs
+    if (A.scanning) { g_scan_again = true; return; }   // never dropped: the running scan may have started before the new game's folder existed
     if (A.scan_th.joinable()) A.scan_th.join();
     A.scanning = true;
     A.scan_done = 0;
@@ -61,7 +63,17 @@ void apply_scan() {
             A.lib.push_back(n);
         }
     }
-    for (auto& e : A.scan_result) A.lib.push_back(e);
+    {   /* a game installed from a shared pack keeps the pack's title: a disc archive's inner file name ("game.iso") or a header title
+         * ("CONTROLGBA") would otherwise differ from the greyed-out entry it replaces, and the ghost would never go away */
+        const std::string root = hubgp::pack_root();
+        for (auto& e : A.scan_result) {
+            if (e.catalog_id.empty()) {
+                std::string t = hubgp::installed_folder_title(e.path, root);
+                if (!t.empty() && hubgp::pack_key(t) != hubgp::pack_key(e.title)) e.title = t;
+            }
+            A.lib.push_back(e);
+        }
+    }
     {   // prefs: hidden games drop out; duplicates collapse to one copy (the preferred path if it was found, else the first scanned)
         std::map<std::string, std::string> pref = preferred_copies();
         std::set<std::string> hid = hidden_game_keys();
@@ -169,6 +181,7 @@ void apply_scan() {
     A.hello_dirty = true;
     A.info_at = -100;
     A.scanned_once = true;
+    if (g_scan_again) { g_scan_again = false; start_scan(); }
 }
 
 /* Curated catalog entry for a scanned game (id/MD5 first, then serial + system). */

@@ -596,6 +596,22 @@ bool installed(const std::string& sys_short, const std::string& title) {
     return fs::is_regular_file(d / "gamepack.done", ec);
 }
 
+std::string installed_folder_title(const std::string& path, const std::string& root) {
+    auto norm = [](std::string s) { for (char& c : s) { if (c == '/') c = '\\'; } return s; };
+    auto low = [](unsigned char c) { return (char)std::tolower(c); };
+    std::string p = norm(path), r = norm(root);
+    if (r.empty()) return "";
+    if (r.back() != '\\') r += '\\';
+    if (p.size() <= r.size()) return "";
+    for (size_t i = 0; i < r.size(); ++i) if (low((unsigned char)p[i]) != low((unsigned char)r[i])) return "";
+    std::string rest = p.substr(r.size());   // <console>\<game folder>\...
+    size_t a = rest.find('\\');
+    if (a == std::string::npos || a == 0) return "";
+    size_t b = rest.find('\\', a + 1);
+    if (b == std::string::npos || b == a + 1) return "";   // a file straight in the console folder is not an installed game
+    return rest.substr(a + 1, b - a - 1);
+}
+
 /* ------------------------------------------------------------------ */
 /* pack index: which games are installable (built-in pack + extra roots) */
 /* ------------------------------------------------------------------ */

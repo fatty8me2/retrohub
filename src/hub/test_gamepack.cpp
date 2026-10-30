@@ -166,6 +166,21 @@ int main()
         CHECK(pack_only_ghosts({}, {}, {}, 10).empty());
     }
 
+    /* installed_folder_title: the pack title an installed file belongs to (the library title of "game.iso" can differ from it) */
+    {
+        const std::string r = "C:\\Users\\a\\RetroHub\\userdata\\gamepack\\";
+        CHECK(installed_folder_title(r + "gc\\Gauntlet - Dark Legacy\\Gauntlet - Dark Legacy (USA).7z", r) == "Gauntlet - Dark Legacy");
+        CHECK(installed_folder_title("c:/users/A/retrohub/USERDATA/gamepack/ps2/Foo/sub/x.iso", r) == "Foo");   // case + slash insensitive, nested file
+        CHECK(installed_folder_title(r + "gc\\a.7z", r).empty());          // loose file in a console folder: not an installed game
+        CHECK(installed_folder_title(r + "gc", r).empty() && installed_folder_title(r, r).empty());
+        CHECK(installed_folder_title("D:\\Games\\gc\\Foo\\a.7z", r).empty());   // outside the pack folder
+        CHECK(installed_folder_title(r + "gc\\Foo\\a.7z", "").empty());
+        CHECK(installed_folder_title(r + "gc\\Foo\\a.7z", r.substr(0, r.size() - 1)) == "Foo");   // root without the trailing slash
+        /* the title mismatch it repairs: pack title vs the inner file name / header title */
+        CHECK(pack_key("Gauntlet - Dark Legacy") != pack_key("game"));
+        CHECK(pack_key("Animal Crossing (USA, Canada)") == pack_key("Animal Crossing (USA, Canada)"));
+    }
+
     /* sys_folder: the consoles in the shared pack */
     CHECK(std::string(sys_folder("n64")) == "19_2xjH7Ps7epabxUrr9sfxz69kuJGp3W");
     CHECK(std::string(sys_folder("gc")) == "17AvjquyVOjSs0ua1LnLZGRN3B2bUYQar");

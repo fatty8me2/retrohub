@@ -2,6 +2,8 @@
 //   qa_gamepack index  <links> <sys> <title>...      -> prints refresh latency, state, index_has per title
 //   qa_gamepack install <links> <sys> <title> [cancel_after_bytes]
 #include "gamepack.h"
+#include "library.h"
+#include "games.h"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +22,40 @@ int main(int argc, char** argv) {
         std::string cur;
         for (const auto& g : games) { if (g.sys != cur) { cur = g.sys; std::printf("== %s\n", cur.c_str()); } std::printf("  %s   [%s]\n", g.title.c_str(), g.key.c_str()); }
         std::printf("total=%zu epoch=%u\n", games.size(), index_epoch());
+        index_shutdown();
+        return 0;
+    }
+    if (argc >= 5 && std::string(argv[1]) == "e2e") {   // install -> scan pack_root -> same retitle/owned rules as the hub -> is the ghost gone?  e2e <links> <sys> <title>
+        auto roots = parse_links(argv[2]);
+        std::string sys = argv[3], title = argv[4];
+        hub::library_set_data_dir(hub::data_dir());
+        index_refresh(roots);
+        for (int i = 0; i < 400 && index_state(sys) != IndexState::Ready; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        auto has_ghost = [&](const std::vector<hubui::fg::Owned>& mine) {
+            for (const auto& g : pack_only_ghosts(mine, {}, index_games(), 1000)) if (g.sys == sys && pack_key(g.title) == pack_key(title)) return true;
+            return false;
+        };
+        std::printf("ghost_before=%d\n", (int)has_ghost({}));
+        Installer in; in.start(sys, title, roots);
+        bool fin = false, ok = false;
+        while (!fin) { fin = in.poll(&ok); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+        std::printf("install ok=%d err=[%s]\n", (int)ok, in.error.c_str());
+        auto games = hub::scan_library({pack_root()}, nullptr);
+        std::vector<hubui::fg::Owned> mine;
+        bool found = false;
+        for (auto& e : games) {
+            std::string t = installed_folder_title(e.path, pack_root());
+            std::printf("entry sys=%s key=%s title=[%s] folder=[%s] issue=%s\n", hub::system_short(e.system), e.key.c_str(), e.title.c_str(), t.c_str(), e.issue.c_str());
+            if (e.catalog_id.empty() && !t.empty() && pack_key(t) != pack_key(e.title)) e.title = t;
+            mine.push_back({hub::system_short(e.system), e.key, e.catalog_id, e.title});
+            if (std::string(hub::system_short(e.system)) == sys) found = true;
+            if (e.issue == "extract") {
+                std::string path, err;
+                bool x = !hub::extracted_3ds_path(e).empty() || hub::extract_3ds_zip(e, nullptr, &path, &err);
+                std::printf("unpack ok=%d %s\n", (int)x, err.c_str());
+            }
+        }
+        std::printf("scan_found=%d ghost_after=%d\n", (int)found, (int)has_ghost(mine));
         index_shutdown();
         return 0;
     }
