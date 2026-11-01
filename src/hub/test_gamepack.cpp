@@ -204,6 +204,48 @@ int main()
     CHECK(sys_folder("gb")[0] == '\0');
     CHECK(sys_folder("wiiu")[0] == '\0');
 
+    {   /* install UX helpers: Drive's big-file page, ranges, plain messages, sizes / speed / time */
+        const char* page = "<html><body><form id=\"download-form\" action=\"https://drive.usercontent.google.com/download\" method=\"get\">"
+                           "<input type=\"hidden\" name=\"id\" value=\"1AbC-d_e\"><input type=\"hidden\" name=\"export\" value=\"download\">"
+                           "<input type=\"hidden\" name=\"confirm\" value=\"t\"><input type=\"hidden\" name=\"uuid\" value=\"a1b2&amp;c3\">"
+                           "<input type=\"submit\" value=\"Download anyway\"></form><p>Google Drive can't scan this file for viruses.</p></body></html>";
+        std::string pq;
+        CHECK(parse_confirm_form(page, &pq));
+        CHECK(pq == "/download?id=1AbC-d_e&export=download&confirm=t&uuid=a1b2%26c3");
+        CHECK(drive_html_kind(page) == "confirm");
+        CHECK(!parse_confirm_form("<html>no form</html>", &pq));
+        CHECK(!parse_confirm_form("<form action=\"/x\"><input name=a value=b></form>", &pq));
+        CHECK(drive_html_kind("<html><title>Quota exceeded</title>Sorry, you can't view or download this file at this time. Too many users have viewed or downloaded this file recently.</html>") == "quota");
+        CHECK(drive_html_kind("<a href=\"https://accounts.google.com/ServiceLogin?x\">Sign in</a>") == "signin");
+        CHECK(drive_html_kind("<html>hello</html>").empty());
+        uint64_t a = 0, b = 0, t = 0;
+        CHECK(parse_content_range("bytes 100-199/1000", &a, &b, &t) && a == 100 && b == 199 && t == 1000);
+        CHECK(parse_content_range("bytes 0-9/*", &a, &b, &t) && t == 0 && b == 9);
+        CHECK(!parse_content_range("garbage", &a, &b, &t));
+        CHECK(!parse_content_range("bytes 9-1/5", &a, &b, &t));
+        CHECK(friendly_error("download interrupted").find("connection") != std::string::npos);
+        CHECK(friendly_error("server answered 404").find("removed") != std::string::npos);
+        CHECK(friendly_error("server answered 503").find("trouble") != std::string::npos);
+        CHECK(friendly_error("quota").find("limiting") != std::string::npos);
+        CHECK(friendly_error("cancelled") == "Cancelled.");
+        CHECK(friendly_error("Not enough free disk space: this game needs about 2.0 GB and the drive has 1.0 GB free.").rfind("Not enough", 0) == 0);
+        CHECK(friendly_error("weird thing").find("weird thing") != std::string::npos);
+        CHECK(friendly_error("").size() > 5);
+        CHECK(fmt_size(0) == "0 KB" && fmt_size(2048) == "2 KB" && fmt_size(5u << 20) == "5.0 MB" && fmt_size(300ull << 20) == "300 MB" && fmt_size(3ull << 29) == "1.5 GB");
+        CHECK(fmt_rate(0).empty() && fmt_rate(2048) == "2 KB/s" && fmt_rate(5.5 * 1048576) == "5.5 MB/s");
+        CHECK(fmt_eta(0).empty() && fmt_eta(2) == "almost done" && fmt_eta(40) == "about 40 sec left" && fmt_eta(600) == "about 10 min left" && fmt_eta(3900) == "1 h 5 min left");
+        SpeedMeter m;
+        CHECK(m.rate() == 0);
+        m.add(0.0, 0); m.add(1.0, 1000000); m.add(2.0, 2000000);
+        CHECK(m.rate() > 900000 && m.rate() < 1100000);
+        m.add(2.1, 2100000);   // too soon: ignored
+        CHECK(m.rate() > 900000 && m.rate() < 1100000);
+        m.add(3.0, 0);         // counter went back (new file): restarts
+        CHECK(m.rate() == 0);
+        CHECK(install_dir("gc", "Foo: Bar").find("gamepack") != std::string::npos);
+        CHECK(staging_root().find("gamepack-tmp") != std::string::npos && staging_root().find("gamepack\\") == std::string::npos);
+    }
+
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("gamepack: ok\n");
     return 0;

@@ -80,7 +80,8 @@ void draw_toasts(float bottom, float right, float top) {
         std::vector<std::string> lines = ui::wrap_lines(f, fs, t.text, maxw - sp(6.f), 4);
         float tw = 0;
         for (auto& l : lines) tw = std::max(tw, f->CalcTextSizeA(fs, FLT_MAX, 0.f, l.c_str()).x);
-        float w = tw + sp(6.f), h = lines.size() * fs * 1.25f + sp(2.5f);
+        const bool has_act = !t.action_label.empty();
+        float w = tw + sp(6.f) + (has_act ? f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.action_label.c_str()).x + sp(4.f) : 0.f), h = lines.size() * fs * 1.25f + sp(2.5f) + (has_act ? 0.f : 0.f);
         float x1 = right + (1.f - in) * sp(5.f);
         float y0 = t.top ? y_top : y_bot - h;   // top toasts grow downward from the top edge, the rest upward from the bottom
         ImVec2 p1(x1, y0 + h), p0(x1 - w, y0);
@@ -90,6 +91,15 @@ void draw_toasts(float bottom, float right, float top) {
         dl->AddRectFilled(ImVec2(p0.x + sp(1.f), p0.y + sp(1.f)), ImVec2(p0.x + sp(1.f) + sp(0.5f), p1.y - sp(1.f)), ui::scale_alpha(t.col, a), sp(0.25f));
         for (size_t k = 0; k < lines.size(); ++k)
             dl->AddText(f, fs, ImVec2(p0.x + sp(3.f), p0.y + sp(1.25f) + k * fs * 1.25f), ui::scale_alpha(ui::TEXT, a), lines[k].c_str());
+        if (!t.action_label.empty() && a > 0.9f) {   // clickable action, right-aligned on the last line
+            ImVec2 ls = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.action_label.c_str());
+            ImVec2 b0(p1.x - ls.x - sp(3.f), p1.y - ls.y - sp(1.75f)), b1(p1.x - sp(1.f), p1.y - sp(0.75f));
+            ImVec2 mp = ImGui::GetIO().MousePos;
+            bool hov = mp.x >= b0.x && mp.x <= b1.x && mp.y >= b0.y && mp.y <= b1.y;
+            dl->AddRectFilled(b0, b1, hov ? ui::scale_alpha(t.col, 0.55f) : ui::scale_alpha(t.col, 0.3f), sp(0.75f));
+            dl->AddText(f, fs, ImVec2(b0.x + sp(1.f), b0.y + (b1.y - b0.y - ls.y) * 0.5f), ui::TEXT, t.action_label.c_str());
+            if (hov && ImGui::IsMouseClicked(0)) { auto fn = t.action; A.toasts[i].until = 0; if (fn) fn(); return; }
+        }
         if (t.top) y_top += h + sp(1.f);
         else y_bot -= h + sp(1.f);
     }

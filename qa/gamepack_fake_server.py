@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 COMM, USER = "COMMROOT0000000001", "USERROOT0000000001"
-MODE = {"packs": "ok"}
+MODE = {"packs": "ok", "dl": "ok"}   # dl: ok | confirm (Drive virus-scan form, needs uuid) | quota | slow (throttled) | drop (cut the first attempt half way, then ok)
 LOG = []
 
 def folder(i, name): return (i, name, True)
@@ -115,8 +115,37 @@ class H(BaseHTTPRequestHandler):
                         self.wfile.write(b"\0" * 65536); time.sleep(0.01)
                 except Exception: pass
                 return
-            if fid in FILES: return self.send(200, open(FILES[fid], "rb").read())
-            return self.send(200, ("DUMMY-" + fid).encode() * 10)
+            dl = MODE.get("dl", "ok")
+            if dl == "quota":
+                return self.send(200, b"<html><title>Google Drive - Quota exceeded</title>Sorry, you can't view or download this file at this time. Too many users have viewed or downloaded this file recently.</html>", "text/html; charset=utf-8")
+            if dl == "confirm" and "uuid" not in q:
+                form = ('<html><body><form id="download-form" action="https://drive.usercontent.google.com/download" method="get">'
+                        '<input type="hidden" name="id" value="%s"><input type="hidden" name="export" value="download">'
+                        '<input type="hidden" name="confirm" value="t"><input type="hidden" name="uuid" value="u-%s">'
+                        '<input type="submit" value="Download anyway"></form>Google Drive cannot scan this file for viruses.</body></html>') % (fid, fid)
+                return self.send(200, form.encode(), "text/html; charset=utf-8")
+            data = open(FILES[fid], "rb").read() if fid in FILES else (b"DUMMY-" + fid.encode()) * 10
+            if dl == "slow" and fid not in FILES: data = (b"DUMMY-" + fid.encode()) * 200000   # ~5 MB so the progress bar moves
+            total = len(data); start = 0; code = 200
+            rng = self.headers.get("Range")
+            if rng and rng.startswith("bytes=") and rng.endswith("-") and rng[6:-1].isdigit():
+                start = int(rng[6:-1]); code = 206
+                if start >= total: return self.send(416, b"", "text/plain")
+            self.send_response(code); self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(total - start))
+            if code == 206: self.send_header("Content-Range", "bytes %d-%d/%d" % (start, total - 1, total))
+            self.end_headers()
+            cut = (total - start) // 2 if dl == "drop" else None
+            sent = 0
+            try:
+                while start + sent < total:
+                    n = min(65536, total - start - sent)
+                    self.wfile.write(data[start + sent:start + sent + n]); sent += n
+                    if dl == "slow": time.sleep(0.05)
+                    if cut is not None and sent >= cut:
+                        MODE["dl"] = "ok"; self.close_connection = True; return
+            except Exception: pass
+            return
         self.send(404, b"nf", "text/plain")
 
 if __name__ == "__main__":

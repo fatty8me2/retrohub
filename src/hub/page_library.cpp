@@ -1,4 +1,5 @@
 #include "app.h"
+#include "gamepack.h"
 #include "wiiu_meta.h"
 #include "homefun.h"
 
@@ -875,6 +876,11 @@ void draw_details_modal() {
         ImGui::TextWrapped("%s", e.path.c_str());
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
+        if (gamepack_owns(e)) {   // installed from a shared pack: where it lives + Uninstall
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            text_wrapped_disabled("Installed from a shared pack into RetroHub's games folder (" + hubgp::pack_root() + ").");
+            if (gamepack_uninstall_ui(e, sp(5.f))) ImGui::CloseCurrentPopup();
+        }
     } else if (tab == TabSaves) {
         std::string sv;
         if (A.info_battery_files > 0) sv = "Save data: " + std::to_string(A.info_battery_files) + " file(s), " + size_text(A.info_battery_bytes);

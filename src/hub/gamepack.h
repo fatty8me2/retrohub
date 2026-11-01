@@ -4,6 +4,7 @@
  * and that folder joins the library. UI-free: friend_games_ui.cpp draws the button + progress dialog. */
 
 #include "friend_games.h"
+#include "library.h"
 
 #include <atomic>
 #include <cstdint>
@@ -84,13 +85,56 @@ std::string match_game(const std::string& sys_short, const std::string& title, c
 /* The files inside a game folder (subfolders skipped). */
 bool list_files(const std::string& game_folder_id, std::vector<Entry>* out);
 
-/* Download one Drive file to `out_path` (overwriting). got/total track the current transfer; stop may abort it. */
+/* Download one Drive file to `out_path` (overwriting). got/total track the current transfer; stop may abort it.
+ * Written to out_path + ".part" and renamed when complete. A ".part" left by an interrupted transfer is RESUMED (HTTP Range) when
+ * the server allows it, else restarted. Drive's "can't scan for viruses" page for big files is followed (confirm form), and its
+ * quota / sign-in pages come back as a plain error. A cancel (stop) deletes the .part; any other failure keeps it for a retry. */
 bool download_file(const std::string& file_id, const std::string& out_path,
                    std::atomic<uint64_t>* got, std::atomic<uint64_t>* total,
                    std::atomic<bool>* stop, std::string* err);
 
+/* The size in bytes Drive reports for a file (headers only, nothing is downloaded). 0 = unknown. Cached per file id. */
+uint64_t file_size(const std::string& file_id);
+
+/* Pure: Drive's big-file interstitial ("Google Drive can't scan this file for viruses") holds a form of hidden inputs
+ * (id, export, confirm, uuid ...). Returns the request path + query that form submits ("/download?id=..&uuid=.."), false when none. */
+bool parse_confirm_form(const std::string& html, std::string* path_query);
+/* Pure: what a Drive HTML answer is: "quota" (too many downloads), "signin" (not public), "confirm" (virus-scan form), "" (unknown). */
+std::string drive_html_kind(const std::string& html);
+/* Pure: "Content-Range: bytes 100-199/1000" -> start/end/total (total 0 when "*"). */
+bool parse_content_range(const std::string& v, uint64_t* start, uint64_t* end, uint64_t* total);
+/* Pure: a raw install error ("download interrupted", "server answered 404", ...) as a plain-English sentence for the player. */
+std::string friendly_error(const std::string& raw);
+/* Total download size of a game in the shared packs (lists the pack, asks Drive for each file size; worker threads only). 0 = unknown, *err = raw reason. */
+uint64_t game_download_size(const std::string& sys, const std::string& title, const std::vector<std::string>& roots, std::string* err = nullptr);
+
+/* Pure: "1.4 GB", "812 MB", "3.2 MB", "0 KB" (1024-based). */
+std::string fmt_size(uint64_t bytes);
+/* Pure: "about 2 min left", "about 40 sec left", "1 h 5 min left", "" when unknown (<=0). */
+std::string fmt_eta(double seconds);
+/* Pure: "5.2 MB/s", "840 KB/s", "" when 0. */
+std::string fmt_rate(double bytes_per_sec);
+/* Transfer speed estimate: feed (seconds, total bytes so far); rate() is a smoothed bytes/s (0 until enough samples). */
+class SpeedMeter {
+public:
+    void add(double t, uint64_t bytes);
+    double rate() const { return rate_; }
+    void reset() { have_ = false; rate_ = 0; }
+private:
+    bool have_ = false;
+    double t_ = 0, rate_ = 0;
+    uint64_t b_ = 0;
+};
+
 /* RetroHub-managed games folder: <data dir>\gamepack\ */
 std::string pack_root();
+/* Downloads land in <data dir>\gamepack-tmp\<console>\<title>\ (outside the library folders, so a half-done game is never listed)
+ * and move to pack_root() in one rename when every file is in. */
+std::string staging_root();
+/* The folder an installed game lives in: <pack_root>\<console>\<title>. */
+std::string install_dir(const std::string& sys_short, const std::string& title);
+/* Delete an installed game's files (and any leftover staging). Saves in the vault are NOT touched. false when nothing was there. */
+bool uninstall(const std::string& sys_short, const std::string& title);
 
 /* True when the game is already installed under pack_root() (its folder holds the gamepack.done marker,
  * written only when every file finished: a cancelled / partial install can be retried). */
@@ -134,23 +178,38 @@ std::vector<hubui::fg::Ghost> pack_only_ghosts(const std::vector<hubui::fg::Owne
                                                const std::vector<hubui::fg::Ghost>& friend_ghosts,
                                                const std::vector<PackGame>& pack, size_t room);
 
-/* Background install job (one at a time). */
+/* Background install job (one at a time; the UI keeps a queue). Phases: Looking (find the game in the packs, ask Drive the
+ * sizes) -> Downloading -> Finishing (move into the library folder, scan it) -> Preparing (archived disc games unpack once so
+ * Play starts instantly; skipped when the unpacked image would not fit the rom-cache limit). */
 struct Installer {
     enum State { Idle, Working, Failed } state = Idle;
+    enum Phase { Looking = 0, Downloading = 1, Finishing = 2, Preparing = 3 };
     std::string sys, title;                 // what is being installed (valid until the next start)
     std::atomic<bool> done{false}, ok{false};
     std::atomic<bool> cancel{false};        // request_cancel(): stops between files / mid-transfer
+    std::atomic<bool> keep{false};          // a cancel keeps the partial download (app exit) instead of deleting it
+    std::atomic<int> phase{0};
     std::atomic<uint64_t> got{0}, total{0}; // bytes of the current file
+    std::atomic<uint64_t> done_bytes{0};    // bytes of the files already finished
+    std::atomic<uint64_t> all_total{0};     // all files together (0 = Drive did not say)
     std::atomic<int> file_idx{0}, file_count{0};
+    std::atomic<uint64_t> prep_got{0}, prep_total{0};   // Preparing: unpacked bytes
+    std::atomic<bool> resumed{false};       // a partial download from an earlier try was continued
     std::string current;                    // name of the file being downloaded (mu)
-    std::string error;                      // mu ("cancelled" when the user stopped it)
+    std::string error;                      // raw reason (mu; "cancelled" when the user stopped it); friendly_error() for the player
+    std::string note;                       // success with a caveat (mu), e.g. the unpack was skipped
+    std::vector<hub::GameEntry> entries;    // the games found in the installed folder (valid after ok, mu)
     std::mutex mu;
     std::thread th;
+    SpeedMeter speed;                       // UI thread only: fed by progress()
     ~Installer();
-    void start(const std::string& sys, const std::string& title, const std::vector<std::string>& roots = {});   // state -> Working
+    void start(const std::string& sys, const std::string& title, const std::vector<std::string>& roots = {}, bool prepare = true);   // state -> Working
     void request_cancel();                                          // stops between files / mid-transfer
     /* UI thread, each frame: when the job ended, join it and return true exactly once; success tells the result. */
     bool poll(bool* success);
+    /* UI thread: overall fraction 0..1 (-1 when nothing is known yet) and the speed / time-left text. */
+    float fraction();
+    uint64_t bytes_so_far() const { return done_bytes.load() + got.load(); }
 };
 
 } // namespace hubgp

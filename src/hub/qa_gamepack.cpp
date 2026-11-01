@@ -38,24 +38,29 @@ int main(int argc, char** argv) {
         std::printf("ghost_before=%d\n", (int)has_ghost({}));
         Installer in; in.start(sys, title, roots);
         bool fin = false, ok = false;
-        while (!fin) { fin = in.poll(&ok); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
-        std::printf("install ok=%d err=[%s]\n", (int)ok, in.error.c_str());
-        auto games = hub::scan_library({pack_root()}, nullptr);
+        int max_phase = 0; bool saw_total = false;
+        while (!fin) { fin = in.poll(&ok); max_phase = std::max(max_phase, in.phase.load()); if (in.all_total.load()) saw_total = true; std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+        std::printf("install ok=%d err=[%s] friendly=[%s] total_known=%d max_phase=%d resumed=%d\n", (int)ok, in.error.c_str(), friendly_error(in.error).c_str(), (int)saw_total, max_phase, (int)in.resumed.load());
+        if (!ok) { std::printf("scan_found=0 ghost_after=1\n"); index_shutdown(); return 0; }
+        std::printf("staging_left=%d note=[%s]\n", (int)fs::exists(fs::u8path(staging_root()) / sys / safe_name(title)), in.note.c_str());
         std::vector<hubui::fg::Owned> mine;
         bool found = false;
-        for (auto& e : games) {
+        for (auto& e : in.entries) {   // the entries the installer scanned from the new folder alone (what the hub adds in place)
             std::string t = installed_folder_title(e.path, pack_root());
             std::printf("entry sys=%s key=%s title=[%s] folder=[%s] issue=%s\n", hub::system_short(e.system), e.key.c_str(), e.title.c_str(), t.c_str(), e.issue.c_str());
             if (e.catalog_id.empty() && !t.empty() && pack_key(t) != pack_key(e.title)) e.title = t;
             mine.push_back({hub::system_short(e.system), e.key, e.catalog_id, e.title});
             if (std::string(hub::system_short(e.system)) == sys) found = true;
-            if (e.issue == "extract") {
-                std::string path, err;
-                bool x = !hub::extracted_3ds_path(e).empty() || hub::extract_3ds_zip(e, nullptr, &path, &err);
-                std::printf("unpack ok=%d %s\n", (int)x, err.c_str());
-            }
+            if (e.issue == "extract") std::printf("prepared=%d\n", (int)!hub::extracted_3ds_path(e).empty());
         }
         std::printf("scan_found=%d ghost_after=%d\n", (int)found, (int)has_ghost(mine));
+        // a full library scan of the pack folder must agree with the single-folder scan (same keys)
+        auto full = hub::scan_library({pack_root()}, nullptr);
+        bool same = full.size() == in.entries.size();
+        for (size_t i = 0; same && i < full.size(); ++i) same = full[i].key == in.entries[i].key;
+        std::printf("full_scan_same_keys=%d\n", (int)same);
+        bool un = uninstall(sys, title);
+        std::printf("uninstalled=%d dir_gone=%d installed_flag=%d ghost_back=%d\n", (int)un, (int)!fs::exists(fs::u8path(install_dir(sys, title))), (int)installed(sys, title), (int)has_ghost({}));
         index_shutdown();
         return 0;
     }

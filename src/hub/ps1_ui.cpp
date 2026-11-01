@@ -118,7 +118,8 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
     }
     if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived set: ask once, unpack, then start
         UNZ.key = e.key;
-        UNZ.state = UnzipJob::Asking;
+        if (gamepack_owns(e)) start_unzip(e);   // installed from a shared pack: no question
+        else UNZ.state = UnzipJob::Asking;
         return;
     }
     if (!bios.empty()) hub::ps1::stage_bios(bios, sysdir);

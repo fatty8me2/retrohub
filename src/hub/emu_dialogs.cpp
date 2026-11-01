@@ -99,7 +99,8 @@ void draw_emulator_dialogs() {
                 ImGui::SameLine();
                 if (button("Cancel", ImVec2(160 * S, 44 * S))) UNZ.state = UnzipJob::Idle;
             } else if (UNZ.state == UnzipJob::Working) {
-                ImGui::TextUnformatted("Unpacking...");
+                ImGui::TextWrapped("Preparing %s (one time)...", g ? g->title.c_str() : "the game");
+                text_wrapped_disabled("Big discs take a few minutes to unpack. The next time you press Play it starts at once. Nothing is wrong if this looks slow.");
                 uint64_t got = UNZ.got, tot = UNZ.total;
                 char ov[48];
                 std::snprintf(ov, sizeof ov, "%.2f / %.2f GB", got / 1073741824.0, tot / 1073741824.0);

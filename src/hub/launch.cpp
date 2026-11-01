@@ -515,7 +515,8 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     }
     if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::WiiU) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
         UNZ.key = e.key;
-        UNZ.state = UnzipJob::Asking;
+        if (gamepack_owns(e)) start_unzip(e);   // installed from a shared pack: the player already chose this game, no question
+        else UNZ.state = UnzipJob::Asking;
         return;
     }
     hubemu::Install inst = hubemu::find(kind, A.st.cemu_exe, e.path);
