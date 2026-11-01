@@ -1432,6 +1432,8 @@ std::string friends_error_text(const std::string& r, const std::string& d) {
         if (d == "undeliverable") return "That message could not be delivered.";
         if (d == "no-such-request") return "That request is no longer there.";
         if (d == "too-many-blocked") return "Your block list is full.";
+        if (d == "attach-gone") return "That file is no longer available - attachments are kept for 7 days.";
+        if (d == "attach-not-yours") return "That file can't be sent to this friend.";
         if (d == "retired-elsewhere") return "That account was already moved to another identity.";
         return "";   // internal / retire-failed / bad-secret / text / too-large / none: retried or not user-actionable
     }
