@@ -50,6 +50,25 @@ constexpr uint8_t kPktAdmitAbort = 0x58;   // host -> everybody [0x58, 0, joiner
 constexpr uint32_t kJoinWindowMs = 30000;     // a joiner has this long after the Admit to start playing (carried in the Admit, in seconds); the runner keeps 5 s of it as margin
 constexpr uint32_t kAdmitAckLimitMs = 5000;   // the host cancels an admit nobody started to play on after this long without every ack
 constexpr uint8_t kCapDropIn = 1;
+/* Controller hand-off (Plan 4 P4, behind kCapHandoff / retrorun --handoff): a live player passes a controller port to another player of the running game.
+ * The host decides (it is the authority on ports, like for a drop-in); the message reuses the Admit's id / ack / abort scheme:
+ *   Handoff      host -> everybody   [0x59, host, port, from, to, first u32, id]   port `port` belongs to slot `to` from frame `first` on, to `from` before. Repeated until acked.
+ *   HandoffAck   peer -> host        [0x5A, my_slot, port, id]
+ *   HandoffAbort host -> everybody   [0x5B, host, port, id]                        cancelled (a peer never acknowledged it): the port is `from`'s again
+ *   HandoffReq   peer -> host        [0x5C, my_slot, port, to]                     the owner of `port` asks the host to pass it to slot `to`
+ *   HandoffNo    host -> requester   [0x5D, host, port, reason]                    refused (HandoffNoReason)
+ * Ownership is a per-port TIMELINE (Engine::owner_at): from which frame on which slot supplies the port. The input ring, the owner check of incoming packets, the
+ * windows a PC sends and the confirmed frontier all follow it frame by frame, so nothing depends on when a PC learns of the hand-off: a PC that hears of it late
+ * drops the old owner's frames from `first` on and rolls back, exactly like for a late input. `first` = dropin::first_sample of the decree frame + kHandoffLeadFrames. */
+constexpr uint8_t kPktHandoff = 0x59;
+constexpr uint8_t kPktHandoffAck = 0x5A;
+constexpr uint8_t kPktHandoffAbort = 0x5B;
+constexpr uint8_t kPktHandoffReq = 0x5C;
+constexpr uint8_t kPktHandoffNo = 0x5D;
+constexpr uint8_t kCapHandoff = 2;             // a bit of the caps byte of kPktReady; the host refuses a hand-off unless every player has it
+enum HandoffNoReason : uint8_t { kHoDisabled = 1, kHoBusy = 2, kHoBadPort = 3, kHoBadTarget = 4, kHoNotOwner = 5, kHoOldPeer = 6, kHoNoAnswer = 7 };
+constexpr int kHandoffLeadFrames = 24;         // frames added to the decree frame before dropin::first_sample adds the input delay, slack and round trip
+constexpr uint32_t kHandoffAckLimitMs = 3000;  // the host cancels a hand-off somebody has not acknowledged after this long
 constexpr int kAdmitLeadFrames = 30;      // the admit frame is this many frames (plus the RTT) ahead of the host
 constexpr int kGhostLeadFrames = 30;      // a joiner that is still catching up claims neutral input this far ahead of the players
 
@@ -84,6 +103,9 @@ struct Transport {
     std::function<void(int slot, int port)> admit_reverted;   // optional: an admit was cancelled, the port is as before
     std::function<void(int slot, int port, uint32_t from, const std::string& name)> admitted;   // optional: a drop-in was applied (the runner updates its port map)
     std::function<bool()> relayed;   // optional: some peer is reached through the server relay (which caps a room at 400 frames/s): send every other frame only
+    std::function<void(int port, int from, int to, uint32_t first)> handoff;   // optional: a hand-off was applied here (the runner adds the port to its local pads when to == my slot)
+    std::function<void(int port)> handoff_reverted;                            // optional: an applied hand-off was cancelled, the port is as before
+    std::function<void(int port, int reason)> handoff_refused;                 // optional: the host refused our request (HandoffNoReason), or never answered (kHoNoAnswer)
 };
 
 struct Config {
@@ -126,6 +148,7 @@ struct Stats {
     uint64_t hashes_compared = 0;
     double max_skew = 0;
     uint64_t resyncs = 0;
+    uint64_t handoffs = 0;        // controller hand-offs applied on this PC
     uint64_t save_n = 0, load_n = 0;
     double save_us = 0, load_us = 0, step_us = 0;
     uint64_t step_n = 0;
@@ -210,6 +233,16 @@ class Engine {
     /* The joiner has loaded the snapshot and replayed it up to `frame` (out/in = the confirmed hash chains there, pads = the confirmed pads of frame-1). */
     void join_finish(uint32_t frame, uint64_t out_hash, uint64_t in_hash, const uint64_t last_pads[kPorts]);
 
+    /* ---- controller hand-off (kPktHandoff): a live player passes a port to another player. Any player may ask (request_handoff); the host decides (host_handoff)
+     * and every PC applies the same decree: `port` is played by slot `to` from handoff_frame() on. Needs kCapHandoff on every PC (retrorun --handoff). ---- */
+    bool handoff_capable() const;                                   // host: nothing else is in flight and every other player advertised kCapHandoff
+    bool host_handoff(int port, int to, int* reason = nullptr);     // host: decide it (false: refused, *reason = HandoffNoReason)
+    bool request_handoff(int port, int to, int* reason = nullptr);  // the owner of `port` asks the host (the host: = host_handoff); false: not even sent
+    uint32_t handoff_frame() const;                                 // the frame a hand-off decided now would begin at
+    bool handoff_busy() const;                                      // a hand-off is not settled (not acknowledged by everybody, or its first frame not confirmed yet): drop-ins wait
+    int owner_at(int port, int64_t frame) const;                    // who supplies `port` at `frame` (the timeline); -1 for an absent port
+    void set_handoff_lead_for_test(int frames) { ho_lead_ = frames; }   // tests: a tiny or negative lead makes a late decree
+
   private:
     static constexpr int kInRing = 512;
     static constexpr int kFrRing = 64;
@@ -237,19 +270,54 @@ class Engine {
     bool active_peer(int slot) const { return slot != cfg_.my_slot && (cfg_.slot_mask >> slot & 1u) && !(left_mask_ >> slot & 1u) && !(ignore_mask_ >> slot & 1u); }
     /* Does port p still hold back the confirmed frontier? (not for a left/dropped owner once every frame below the cutoff is known) */
     bool gating(int p) const {
-        if (!present(p) || local(p)) return false;
+        if (!present(p)) return false;
+        if (!tl_[p].empty()) {   // a hand-off port: the owner of the first frame we do not know yet decides
+            const int o = owner_at(p, conf_upto_[p] + 1);
+            if (o < 0 || o == cfg_.my_slot || (left_mask_ >> o & 1u)) return false;
+            if (done_mask_ >> o & 1u) return conf_upto_[p] < (int64_t)drop_cut_[o] - 1;
+            return true;
+        }
+        if (local(p)) return false;
         int o = cfg_.owner[p];
         if (left_mask_ >> o & 1u) return false;
         if (done_mask_ >> o & 1u) return conf_upto_[p] < (int64_t)drop_cut_[o] - 1;
         return true;
     }
+    /* hand-off: the per-port ownership timeline (tl_[p] empty = cfg_.owner[p] at every frame; otherwise sorted segments, cfg_.owner[p] = the last one's owner) */
+    struct OwnSeg { uint32_t from; int8_t owner; };
+    std::vector<OwnSeg> tl_[kPorts];
+    int64_t lnew_[kPorts];                         // newest frame this PC scheduled for each port (-1 none)
+    int64_t seg_from(int p, int64_t f) const;      // first frame of the segment that contains f (0 without a timeline)
+    bool owns_any(int p, int slot) const;          // does `slot` supply any frame of port p
+    int64_t last_mine(int p) const;                // newest frame <= lnew_[p] that this PC supplies (-1 none)
+    int64_t ack_for(int p) const;                  // what we tell the peers we hold of port p (-1: nothing worth acknowledging)
+    bool missing_from(int p, int slot, int64_t* at) const;   // first frame of `slot` on port p we do not hold (true), or where its last segment ends when we hold all (false)
+    int64_t dead_frames_from(int slot, uint32_t cut) const;  // earliest frame < cur_ that turns neutral when `slot` is cut off at `cut` (-1: none)
+    void extend_conf(int p);                       // advance conf_upto_[p] over the contiguous frames we know (own frames and a dropped owner's neutral tail included)
+    void invalidate_from(int p, int64_t first);    // forget every input of port p from `first` on; re-simulate from there if we already ran past it
+    void claim_due(int p, int64_t first, uint64_t pad);   // claim the frames of port p from `first` on that are already due (up to cur_ + delay - 1) and ours, with this pad
+    void prune_timeline();
+    bool apply_handoff(int port, int from, int to, uint32_t first, uint8_t id);
+    void revert_handoff(int port, uint8_t id);
+    void handoff_on_msg(int from, const uint8_t* d, size_t n);
+    void handoff_service(uint32_t now);
+    void handoff_refuse(int slot, int port, int reason);
+    struct HoRec { bool active = false, aborting = false; int port = 0, from = 0, to = 0, abort_sends = 0; uint32_t first = 0, last_send = 0, started = 0, ack_mask = 0; uint8_t id = 0; };
+    HoRec ho_;                                     // host: the decree in flight (one at a time)
+    struct HoPrev { bool valid = false; uint8_t id = 0; int port = 0, owner = -1; uint32_t first = 0; std::vector<OwnSeg> tl; int64_t conf = -1, lnew = -1; uint64_t val = 0; };
+    HoPrev hp_;                                    // what the newest applied hand-off replaced (an abort puts it back)
+    uint8_t ho_seq_ = 0, ho_seen_ = 0;
+    bool ho_seen_valid_ = false;
+    struct HoReq { bool active = false; int port = 0, to = 0; uint32_t started = 0, last = 0; } hq_;   // a guest's request, repeated until the decree (or a refusal) arrives
+    int ho_lead_ = INT32_MIN;
+
     bool apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, const int8_t owners[kPorts], uint8_t left, uint8_t done, uint8_t id, uint8_t window_s, const std::string& name);
     void revert_admit(int joiner, uint8_t id);
     void admit_on_msg(int from, const uint8_t* d, size_t n);
     void admit_service(uint32_t now);
     void join_service(uint32_t now);
     struct AdmitRec { int port = 0; uint32_t from = 0, last_send = 0, started = 0, ack_mask = 0; uint8_t id = 0; bool aborting = false; int abort_sends = 0; std::string name; };
-    struct PortPrev { int owner = -1; uint32_t from = 0; int64_t conf = -1; uint64_t val = 0; uint32_t slots = 0, done = 0; bool valid = false; };
+    struct PortPrev { int owner = -1; uint32_t from = 0; int64_t conf = -1; uint64_t val = 0; uint32_t slots = 0, done = 0; bool valid = false; size_t tl_n = 0; };   // tl_n: segments of the hand-off timeline before the admit
     PortPrev prev_[kPorts];
     int admit_port_[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
     uint8_t admit_seq_ = 0, admit_seen_[8] = {0, 0, 0, 0, 0, 0, 0, 0}, join_id_ = 0;
