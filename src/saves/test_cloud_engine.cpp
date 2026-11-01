@@ -1112,21 +1112,30 @@ static void test_legacy_refused_base_cannot_overwrite() {
     put(pc1.game() / "battery" / "l2.sra", rnd(2000, 72), now_unix() - 3000);
     cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
     CHECK(!g_srv->cur_sha(g_uid, GK, "battery/l1.sra").empty() && !g_srv->cur_sha(g_uid, GK, "battery/l2.sra").empty());
+    /* l3: another PC pushed twice (cloud version 2) after this PC's upload was refused at version 1 */
+    g_srv->seed_file(g_uid, GK, "battery/l3.sra", rnd(2000, 75), now_unix() - 2000, "PC-ELSE", now_unix() - 2000);
+    g_srv->seed_file(g_uid, GK, "battery/l3.sra", rnd(2000, 76), now_unix() - 1500, "PC-ELSE", now_unix() - 1500);
     /* PC2 played on and the cloud refused the upload; its base file says what the old code wrote */
-    const str n1 = rnd(2000, 73), n2 = rnd(2000, 74);
+    const str n1 = rnd(2000, 73), n2 = rnd(2000, 74), n3 = rnd(2000, 77);
     put(pc2.game() / "battery" / "l1.sra", n1, now_unix() - 100);
     put(pc2.game() / "battery" / "l2.sra", n2, now_unix() - 100);
+    put(pc2.game() / "battery" / "l3.sra", n3, now_unix() - 100);
     str base = "{\"rev\":0,\"device\":\"d-legacy0000\",\"restore\":false,\"migrated\":true,\"cap_toast_day\":0,\"games\":{\"" + GK + "\":{\"lo_user\":false,\"dl\":false,\"pin\":false,"
                "\"played\":0,\"synced\":0,\"files\":{"
                "\"battery/l1.sra\":{\"ver\":1,\"sha\":\"" + sha_of(n1) + "\",\"size\":2000,\"mtime\":1,\"lo\":\"cap\"},"      // plan "skip": local sha, the cloud's version, marked
-               "\"battery/l2.sra\":{\"ver\":0,\"sha\":\"" + sha_of(n2) + "\",\"size\":2000,\"mtime\":1}}}}}";                 // commit "skipped": local sha as version 0
+               "\"battery/l2.sra\":{\"ver\":0,\"sha\":\"" + sha_of(n2) + "\",\"size\":2000,\"mtime\":1},"                      // commit "skipped": local sha as version 0
+               "\"battery/l3.sra\":{\"ver\":1,\"sha\":\"" + sha_of(n3) + "\",\"size\":2000,\"mtime\":1,\"lo\":\"cap\"}}}}}";  // like l1, but the cloud has moved on since
     put(pc2.vault / ".sync" / ("cloud-" + g_uid.substr(0, 8) + ".json"), base);
     use(pc2);
     PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
-    CHECK(r.files_pulled == 0);
     CHECK(get(pc2.game() / "battery" / "l1.sra") == n1 && get(pc2.game() / "battery" / "l2.sra") == n2);        // neither was overwritten
     /* l1: the cloud has not moved since the refusal - it just stays local only; l2: nothing is known, so the player is asked */
     CHECK(r.action == PrelaunchResult::NeedConflictDecision && r.conflicts.size() == 1 && r.conflicts[0].path == "battery/l2.sra");
+    /* l3: nothing can tell a true agreement from a refusal once the cloud moved, so the cloud copy comes down - but the local one is backed up first */
+    CHECK(r.files_pulled == 1 && get(pc2.game() / "battery" / "l3.sra") == rnd(2000, 76));
+    int kept = 0;
+    if (fs::exists(pc2.vault / "_conflicts")) for (auto& e : fs::recursive_directory_iterator(pc2.vault / "_conflicts")) if (e.is_regular_file() && get(e.path()) == n3) kept++;
+    CHECK(kept == 1);
     cloud_sync_all_now(); pump();
     CHECK(get(pc2.game() / "battery" / "l1.sra") == n1 && get(pc2.game() / "battery" / "l2.sra") == n2);
     CHECK(g_srv->cur_sha(g_uid, GK, "battery/l1.sra") == sha_of(rnd(2000, 71)));
