@@ -214,6 +214,7 @@ add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulate
 add_test(NAME n64run_mempak_test COMMAND n64run_mempak_test)          # controller pak policy (no network)
 
 # Online: need the live server.
+add_test(NAME hubreconnect_test COMMAND hubreconnect_test)   # Session WS reconnect state machine (offline)
 add_test(NAME hubnet_test COMMAND hubnet_test)                           # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubws_close_test COMMAND hubws_close_test)   # WebSocket close never blocks (local loopback server only)
