@@ -274,6 +274,7 @@ bool gamepack_uninstall_ui(const hub::GameEntry& e, float bh) {
  * toasts) with a mouse-only Cancel; it takes no pad focus, so controller navigation is untouched. Pad users cancel from the game's details. */
 void draw_gamepack_pill() {
     if (GP.state != hubgp::Installer::Working) return;
+    if (A.popup_last_frame) return;   // a popup is open: it would sit under the pill (the ghost details show their own progress)
     ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     ImFont* fb = ui::F.bold;
