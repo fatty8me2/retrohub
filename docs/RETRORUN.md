@@ -216,6 +216,10 @@ Safety: retrorun only rolls back on cores whose savestates passed SyncTest, othe
 - Cores start rollback after 12 neutral warmup frames (first boot frames cannot be restored faithfully).
 - Test: `qa/retrorun_online.ps1 -Rollback -Core mgba_link_libretro.dll -Extra --link ...` against a local `wrangler dev`.
 
+## Controller hand-off (`--handoff`, experimental, off by default)
+
+A live player passes a controller port to another player of a rollback game (NES/SNES/GB/GBC/GBA; not PlayStation, link or DS). runner_ctl `handoff` (port, receiving slot) on the owner's runner; a guest asks the host (`kPktHandoffReq`), the host decides and broadcasts the decree `Handoff{port, from, to, first, id}` (`first` = `dropin::first_sample` of the decree frame + 24), repeated until every PC acks, cancelled for everybody after 3 s without all acks (id / ack / abort like the drop-in Admit). Every PC keeps a per-port ownership timeline (`Engine::owner_at`): the owner check of incoming packets, the windows a PC sends, the input ring and the confirmed frontier follow it per frame, so a PC hearing the decree late just forgets the old owner's frames from `first` and rolls back (deeper than the state ring: resync). The receiver drives the port with its next free controller. Needs `kCapHandoff` on every PC (announced in the ready packet, and by a drop-in joiner when it starts playing); the host refuses with a reason (busy, bad port/target, not the owner, old peer). Spectators and drop-in joiners read confirmed pads, so they are unaffected; drop-ins wait while a decree is unsettled. Limit: refused once somebody has dropped or left. Tests: `retrorun_dropin_test` (hand-off matrix), `qa\handoff.ps1`.
+
 ## PlayStation netplay (Beetle PSX)
 
 `--system ps1` with `beetle_psx_libretro.dll` (docs/CORES.md, PS1 determinism). Same `--net/--room/--slot/--players/--ports` as the other systems, up to 4 ports (`--opt beetle_psx_enable_multitap_port1=enabled` for ports 2-3: the hub adds it when a third port is taken).

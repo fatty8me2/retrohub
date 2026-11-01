@@ -1,5 +1,7 @@
 #include "rollback.h"
 
+#include "dropin.h"   // first_sample(): where a hand-off begins (shared with the N64 lockstep drop-in)
+
 #include <windows.h>
 
 #include <algorithm>
@@ -46,7 +48,7 @@ Engine::Engine(const Config& cfg, const Sim& sim, const Transport& net) : cfg_(c
     state_n_ = sim_.state_size();
     ring_.assign((size_t)ring_n_ * state_n_, 0);
     tmp_.assign(state_n_, 0);
-    for (int p = 0; p < kPorts; p++) { conf_upto_[p] = -1; last_val_[p] = 0; }
+    for (int p = 0; p < kPorts; p++) { conf_upto_[p] = -1; last_val_[p] = 0; lnew_[p] = -1; }
     memset(used_, 0, sizeof used_);
     memset(fsum_, 0, sizeof fsum_);
     for (int s = 0; s < 8; s++) {
@@ -69,6 +71,10 @@ void Engine::put_local(int p, int64_t f, uint64_t v) {
     in_[p][f % kInRing].tag = f;
     in_[p][f % kInRing].val = v;
     local_newest_ = std::max(local_newest_, f);
+    lnew_[p] = std::max(lnew_[p], f);
+    /* A pad for a frame the sim already ran: a port that starts being ours (a hand-off heard late) or comes back to us (a cancelled one) claims its frames from the
+     * first one on, and the sim predicted them meanwhile: redo them with the claim, like for any input that arrives late. Never happens for the frame cur_ + delay. */
+    if (f < (int64_t)cur_ && f >= floor_ && f > (int64_t)cur_ - kFrRing && used_[f % kFrRing][p] != v) rb_to_ = rb_to_ < 0 ? f : std::min(rb_to_, f);
 }
 
 void Engine::put_remote(int p, int64_t f, uint64_t v) {
@@ -77,6 +83,7 @@ void Engine::put_remote(int p, int64_t f, uint64_t v) {
     in_[p][f % kInRing].tag = f;
     in_[p][f % kInRing].val = v;
     if (f < (int64_t)cur_ && f >= floor_ && used_[f % kFrRing][p] != v) rb_to_ = rb_to_ < 0 ? f : std::min(rb_to_, f);
+    if (!tl_[p].empty()) { extend_conf(p); return; }
     while (has(p, conf_upto_[p] + 1)) {
         conf_upto_[p]++;
         last_val_[p] = get(p, conf_upto_[p]);
@@ -86,7 +93,7 @@ void Engine::put_remote(int p, int64_t f, uint64_t v) {
 void Engine::build_pads(int64_t f, uint64_t pads[kPorts]) {
     for (int p = 0; p < kPorts; p++) {
         if (!present(p)) { pads[p] = 0; continue; }
-        int o = cfg_.owner[p];
+        const int o = owner_at(p, f);   // the timeline's owner of this frame (a hand-off port changes hands at an agreed frame)
         if (f < (int64_t)join_from_[p]) pads[p] = 0;   // drop-in: the port joined at join_from_; the frames before it were neutral for everybody
         else if (o != cfg_.my_slot && (done_mask_ >> o & 1u) && f >= (int64_t)drop_cut_[o]) pads[p] = 0;   // dropped guest: neutral from the agreed cutoff
         else pads[p] = has(p, f) ? get(p, f) : (last_val_[p] & ~cfg_.event_mask);
@@ -109,6 +116,7 @@ void Engine::do_rollback() {
     rb_to_ = -1;
     if (g < 0 || g >= (int64_t)cur_) return;
     if ((int64_t)cur_ - g >= ring_n_) {
+        if (rs_ != Rs::None || rs_want_) return;   // a state transfer is under way: it replaces everything from its frame on (resync_apply drops the target)
         if (net_.log) net_.log("rollback: DESYNC target frame " + std::to_string(g) + " is older than the state ring");
         desync_ = true;
         return;
@@ -169,30 +177,40 @@ void Engine::send_packet(bool force) {
     for (int s = 0; s < 8; s++)
         if (active_peer(s) && peer_seen_[s]) adv = std::max(adv, (int)cur_pub - (int)peer_cur_[s]);
     w16(b, (uint16_t)(int16_t)(adv == -1000 ? 0 : adv));
-    for (int p = 0; p < kPorts; p++) w32(b, (uint32_t)(int32_t)(present(p) && !local(p) ? conf_upto_[p] : -1));
-    int nloc = 0;
-    for (int p = 0; p < kPorts; p++) if (local(p) && local_newest_ >= 0) nloc++;
-    /* one datagram: ~110 bytes of header/hashes/RTT, the rest split between the local ports (<= 100 frames each) */
+    for (int p = 0; p < kPorts; p++) w32(b, (uint32_t)(int32_t)ack_for(p));
+    /* The windows of input we send: per port, the frames this PC supplies that some peer may still miss. A port without a hand-off timeline is one window ending at
+     * the newest frame we scheduled (always at least its last 3 frames, so a lost packet heals by itself); a hand-off port has one window per segment we own, and a
+     * finished segment is repeated only until every peer has acknowledged it. */
+    struct Win { int p; int64_t lo, hi; bool live; };
+    std::vector<Win> wins;
+    int64_t ackmin[kPorts];
+    for (int p = 0; p < kPorts; p++) {
+        ackmin[p] = INT64_MAX;
+        for (int s = 0; s < 8; s++) if (active_peer(s)) ackmin[p] = std::min(ackmin[p], peer_ack_[s][p] + 1);
+        if (lnew_[p] < 0) continue;
+        if (tl_[p].empty()) { if (local(p)) wins.push_back({p, 0, lnew_[p], true}); continue; }
+        for (size_t i = 0; i < tl_[p].size(); i++) {
+            if (tl_[p][i].owner != cfg_.my_slot) continue;
+            const int64_t a = tl_[p][i].from, hi = std::min(i + 1 < tl_[p].size() ? (int64_t)tl_[p][i + 1].from - 1 : lnew_[p], lnew_[p]);
+            const bool live = i + 1 == tl_[p].size();
+            if (hi < a || (!live && ackmin[p] > hi)) continue;
+            wins.push_back({p, a, hi, live});
+        }
+    }
+    const int nloc = (int)wins.size();
+    /* one datagram: ~110 bytes of header/hashes/RTT, the rest split between the windows (<= 100 frames each) */
     const int maxcnt = std::max(8, std::min(100, (900 - 24 * nloc) / std::max(1, nloc * cfg_.val_bytes)));
     b.push_back((uint8_t)nloc);
-    for (int p = 0; p < kPorts; p++) {
-        if (!local(p) || local_newest_ < 0) continue;
-        int64_t start = local_newest_;
-        bool any = false;
-        for (int s = 0; s < 8; s++) {
-            if (!active_peer(s)) continue;
-            start = std::min(start, peer_ack_[s][p] + 1);
-            any = true;
-        }
-        if (!any) start = local_newest_;
-        start = std::max<int64_t>(start, local_newest_ - maxcnt + 1);
-        start = std::min<int64_t>(start, local_newest_ - 2);
-        start = std::max<int64_t>(start, 0);
-        b.push_back((uint8_t)p);
+    for (const Win& w : wins) {
+        int64_t start = std::min(w.hi, ackmin[w.p]);
+        start = std::max<int64_t>(start, w.hi - maxcnt + 1);
+        if (w.live) start = std::min<int64_t>(start, w.hi - 2);
+        start = std::max<int64_t>(std::max<int64_t>(start, w.lo), 0);
+        b.push_back((uint8_t)w.p);
         w32(b, (uint32_t)start);
-        b.push_back((uint8_t)(local_newest_ - start + 1));
-        for (int64_t f = start; f <= local_newest_; f++) {
-            uint64_t v = has(p, f) ? get(p, f) : 0;
+        b.push_back((uint8_t)(w.hi - start + 1));
+        for (int64_t f = start; f <= w.hi; f++) {
+            uint64_t v = has(w.p, f) ? get(w.p, f) : 0;
             w16(b, (uint16_t)v);
             if (cfg_.val_bytes > 2) { w16(b, (uint16_t)(v >> 16)); w16(b, (uint16_t)(v >> 32)); }
             if (cfg_.val_bytes > 6) w16(b, (uint16_t)(v >> 48));
@@ -216,6 +234,7 @@ void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
     size_t n = m.size();
     if (from >= 0 && from < 8) last_rx_[from] = net_.now_ms() ? net_.now_ms() : 1;
     if (d[0] == kPktAdmit || d[0] == kPktAdmitAck || d[0] == kPktAdmitAbort) { admit_on_msg(from, d, n); return; }
+    if (d[0] >= kPktHandoff && d[0] <= kPktHandoffNo) { handoff_on_msg(from, d, n); return; }
     if (joining_ && (d[0] == kPktDrop || d[0] == xfer::kPkt)) return;   // a joiner has no state to agree on or to replace yet
     if (d[0] == kPktDrop) { drop_on_msg(from, d, n); return; }
     if (d[0] == xfer::kPkt) { resync_on_msg(from, d, n); return; }
@@ -257,12 +276,12 @@ void Engine::on_packet(int from, const std::vector<uint8_t>& m) {
         int cnt = d[o++];
         const size_t vb = (size_t)cfg_.val_bytes;
         if (o + (size_t)cnt * vb > n) return;
-        bool ok = p < kPorts && cfg_.owner[p] == slot;
+        const bool port_ok = p < kPorts;
         for (int k = 0; k < cnt; k++) {
             uint64_t v = r16(d + o + k * vb);
             if (vb > 2) v |= (uint64_t)r16(d + o + k * vb + 2) << 16 | (uint64_t)r16(d + o + k * vb + 4) << 32;
             if (vb > 6) v |= (uint64_t)r16(d + o + k * vb + 6) << 48;
-            if (ok) {
+            if (port_ok && owner_at(p, (int64_t)start + k) == slot) {   // only the slot that supplies a frame (per the port's timeline) may fill it
                 int64_t before = conf_upto_[p];
                 put_remote(p, (int64_t)start + k, v);
                 if (conf_upto_[p] != before) progress = true;
@@ -344,6 +363,7 @@ void Engine::compare_hash(int slot, uint32_t frame, uint64_t h) {
 }
 
 void Engine::advance_confirmed() {
+    for (int p = 0; p < kPorts; p++) if (!tl_[p].empty()) extend_conf(p);   // hand-off ports: the frames we supply ourselves count as known
     int64_t c = (int64_t)cur_ - 1;
     for (int p = 0; p < kPorts; p++)
         if (gating(p)) c = std::min(c, conf_upto_[p]);
@@ -365,6 +385,7 @@ void Engine::advance_confirmed() {
             }
         }
     }
+    prune_timeline();
 }
 
 void Engine::resolve_hashes() {
@@ -578,10 +599,15 @@ void Engine::resync_service(uint32_t now) {
 /* ---- mid-match drop of a silent guest (drop_agree.h): frames >= cutoff read 0 for its ports ---- */
 void Engine::drop_begin(int slot) {
     if (drops_.count(slot) || (done_mask_ >> slot & 1u) || slot <= 0 || slot >= 8 || slot == cfg_.my_slot) return;
-    int64_t prop = 0;
+    int64_t prop = 0, lastend = 0;
     bool first = true;
-    for (int p = 0; p < kPorts; p++)
-        if (present(p) && cfg_.owner[p] == slot) { int64_t k = conf_upto_[p] + 1; prop = first ? k : std::min(prop, k); first = false; }
+    for (int p = 0; p < kPorts; p++) {   // the first frame of the slot's input we miss, over its ports (a hand-off port it passed on, or has not been handed yet, may miss none)
+        int64_t at;
+        if (!owns_any(p, slot)) continue;
+        if (missing_from(p, slot, &at)) { prop = first ? at : std::min(prop, at); first = false; }
+        else lastend = std::max(lastend, at);
+    }
+    if (first) prop = lastend;   // nothing missing: any cutoff behind everything it supplied changes no frame
     ignore_mask_ |= 1u << slot;
     uint32_t surv = cfg_.slot_mask & ~(1u << slot) & ~left_mask_ & ~ignore_mask_ & ~join_pending_mask_;
     for (auto& kv : drops_) kv.second.remove_survivor(slot);
@@ -598,7 +624,7 @@ void Engine::drop_send(const netdrop::Agreement& ag) {
     uint32_t lo = hi > (uint32_t)netdrop::kWindow ? hi - netdrop::kWindow : 0;
     m.first = lo;
     for (int p = 0; p < kPorts; p++) {
-        if (!present(p) || cfg_.owner[p] != ag.dead()) continue;
+        if (!present(p) || !owns_any(p, ag.dead())) continue;
         netdrop::PortWin w;
         w.port = (uint8_t)p;
         for (uint32_t f = lo; f < hi; f++) w.vals.push_back(has(p, f) ? get(p, f) : 0);
@@ -623,9 +649,10 @@ void Engine::drop_on_msg(int from, const uint8_t* d, size_t n) {
     auto it = drops_.find(m.dead);
     if (it == drops_.end()) return;
     for (auto& w : m.ports) {
-        if (w.port >= kPorts || cfg_.owner[w.port] != m.dead) continue;
+        if (w.port >= kPorts || !owns_any(w.port, m.dead)) continue;
         for (size_t i = 0; i < w.vals.size(); i++) {
             int64_t f = (int64_t)m.first + (int64_t)i;
+            if (owner_at(w.port, f) != m.dead) continue;   // a hand-off port: only the frames the dead slot supplied
             if ((done_mask_ >> m.dead & 1u) && f >= (int64_t)drop_cut_[m.dead]) continue;
             put_remote(w.port, f, w.vals[i] & vmask());
         }
@@ -645,7 +672,7 @@ void Engine::drop_service(uint32_t now) {
             drop_cut_[dead] = cut;
             done_mask_ |= 1u << dead;
             drop_done_at_[dead] = now ? now : 1;
-            if (cut < cur_ && !desync_) rb_to_ = rb_to_ < 0 ? (int64_t)cut : std::min(rb_to_, (int64_t)cut);   // re-simulate frames already predicted past the cutoff
+            { const int64_t g = dead_frames_from(dead, cut); if (g >= 0 && g < (int64_t)cur_ && !desync_) rb_to_ = rb_to_ < 0 ? g : std::min(rb_to_, g); }   // re-simulate frames already predicted past the cutoff
             if (net_.log) net_.log("drop: slot " + std::to_string(dead) + " disconnected, neutral from frame " + std::to_string(cut) + " - playing on");
         }
         bool done = ag.settled() || ((done_mask_ >> dead & 1u) && now - drop_done_at_[dead] > 8000);
@@ -675,7 +702,7 @@ void Engine::drop_check(uint32_t now) {
 void Engine::service() {
     pump_net();
     if (joining_) { join_service(net_.now_ms()); return; }
-    { uint32_t now = net_.now_ms(); drop_check(now); drop_service(now); admit_service(now); }
+    { uint32_t now = net_.now_ms(); drop_check(now); drop_service(now); admit_service(now); handoff_service(now); }
     if (rb_to_ >= 0 && !desync_) do_rollback();
     advance_confirmed();
     resync_service(net_.now_ms());
@@ -730,15 +757,29 @@ Engine::Status Engine::prepare() {
 void Engine::run_frame() {
     if (sim_.poll_local) sim_.poll_local();
     if (cfg_.adaptive_delay && cur_ >= 20 && cur_ % 30 == 0) adapt_delay();
-    const int64_t base = local_newest_;
     for (int p = 0; p < kPorts; p++) {
-        if (!local(p)) continue;
-        int64_t tf = (int64_t)cur_ + cfg_.delay;
-        uint64_t v = sim_.read_local(p) & vmask();
+        if (!present(p)) continue;
+        const int64_t tf = (int64_t)cur_ + cfg_.delay;
+        const int64_t base = lnew_[p];
         if (tf <= base) continue;   // delay shrank: that frame already has its pad
-        uint64_t prev = has(p, base) ? get(p, base) : 0;
-        for (int64_t g = base + 1; g < tf; g++) put_local(p, g, prev & ~cfg_.event_mask);   // delay grew: hold the last pad over the gap
-        put_local(p, tf, v);
+        if (tl_[p].empty()) {
+            if (!local(p)) continue;
+            uint64_t v = sim_.read_local(p) & vmask();
+            uint64_t prev = has(p, base) ? get(p, base) : 0;
+            for (int64_t g = base + 1; g < tf; g++) put_local(p, g, prev & ~cfg_.event_mask);   // delay grew: hold the last pad over the gap
+            put_local(p, tf, v);
+            continue;
+        }
+        /* A hand-off port: the frames base+1 .. tf that this PC supplies per the timeline get a pad: the polled one for tf, the held one before it (neutral when the
+         * port has not been ours before in this segment). A PC that stopped supplying the port at an agreed frame never puts a pad past it; one that starts at it
+         * begins exactly there. */
+        const uint64_t v = owner_at(p, tf) == cfg_.my_slot ? (sim_.read_local(p) & vmask()) : 0;
+        for (int64_t g = base + 1; g <= tf; g++) {
+            if (owner_at(p, g) != cfg_.my_slot) continue;
+            uint64_t val = v;
+            if (g != tf) val = (base >= seg_from(p, g) && has(p, base)) ? (get(p, base) & ~cfg_.event_mask) : 0;   // hold the last pad of this segment
+            put_local(p, g, val);
+        }
     }
     /* Over the relay a 4-PC room costs 12 server frames per input packet (the host forwards every client packet to the other clients): halve the rate there. */
     send_packet(!(cfg_.relay_half_rate && net_.relayed && net_.relayed() && (cur_ & 1u)));
@@ -765,8 +806,10 @@ bool Engine::finish(uint32_t timeout_ms) {
             if (gating(p) && conf_upto_[p] < (int64_t)cur_ - 1) conf = false;
         for (int s = 0; s < 8; s++) {
             if (!active_peer(s)) continue;
-            for (int p = 0; p < kPorts; p++)
-                if (local(p) && peer_ack_[s][p] < local_newest_ - cfg_.delay) acked = false;
+            for (int p = 0; p < kPorts; p++) {
+                if (tl_[p].empty()) { if (local(p) && peer_ack_[s][p] < local_newest_ - cfg_.delay) acked = false; }
+                else { const int64_t m = std::min<int64_t>(last_mine(p), (int64_t)cur_ - 1); if (m >= 0 && peer_ack_[s][p] < m) acked = false; }   // hand-off port: the frames we supplied
+            }
         }
         if (conf && acked && rb_to_ < 0) { ok = true; break; }
         if (net_.now_ms() - t0 > timeout_ms || desync_) break;
@@ -802,7 +845,7 @@ bool Engine::port_reusable(int p) const {
 }
 
 bool Engine::dropin_busy() const {
-    return rs_ != Rs::None || rs_want_ || !admits_.empty() || join_pending_mask_ != 0;
+    return rs_ != Rs::None || rs_want_ || !admits_.empty() || join_pending_mask_ != 0 || handoff_busy();
 }
 
 bool Engine::dropin_capable() const {
@@ -960,8 +1003,10 @@ bool Engine::apply_admit(int joiner, int port, uint32_t from, uint8_t epoch, con
     if (is_player(joiner) && !(done_mask_ >> joiner & 1u)) return false;
     // remember what the port was, so an abort can give it back
     prev_[port] = {cfg_.owner[port], join_from_[port], conf_upto_[port], last_val_[port], cfg_.slot_mask, done_mask_, true};
+    prev_[port].tl_n = tl_[port].size();
     admit_port_[joiner] = port;
     cfg_.owner[port] = joiner;
+    if (!tl_[port].empty()) tl_[port].push_back({from, (int8_t)joiner});   // a port that changed hands before: the joiner is its newest segment
     cfg_.slot_mask |= 1u << joiner;
     join_from_[port] = from;
     conf_upto_[port] = (int64_t)from - 1;
@@ -990,6 +1035,7 @@ void Engine::revert_admit(int joiner, uint8_t id) {
     if (port < 0 || port >= kPorts || !prev_[port].valid || cfg_.owner[port] != joiner) return;
     const PortPrev& pv = prev_[port];
     cfg_.owner[port] = pv.owner; join_from_[port] = pv.from; conf_upto_[port] = pv.conf; last_val_[port] = pv.val;
+    if (tl_[port].size() > pv.tl_n) tl_[port].resize(pv.tl_n);
     cfg_.slot_mask = (cfg_.slot_mask & ~(1u << joiner)) | (pv.slots & (1u << joiner));
     done_mask_ = (done_mask_ & ~(1u << joiner)) | (pv.done & (1u << joiner));
     prev_[port].valid = false;
@@ -1048,6 +1094,318 @@ void Engine::join_finish(uint32_t frame, uint64_t out_hash, uint64_t in_hash, co
     }
     for (int s = 0; s < 8; s++) if (s != cfg_.my_slot) last_rx_[s] = last_progress_ ? last_progress_ : 1;
     if (net_.log) net_.log("dropin: playing from frame " + std::to_string(frame) + ", " + std::to_string(local_newest_ >= (int64_t)frame ? local_newest_ - (int64_t)frame + 1 : 0) + " neutral frames already claimed ahead");
+    { uint8_t r[3] = {kPktReady, (uint8_t)cfg_.my_slot, cfg_.caps}; net_.send(-1, r, 3); }   // a joiner missed the start barrier: say what this PC can do (hand-off, further drop-ins)
+}
+
+/* ------------------------------------------------------------------ controller hand-off
+ * A live player passes a port to another player. The decree is {port, from, to, first, id}: from frame `first` on the port is supplied by `to`, before it by
+ * `from`. Every PC keeps a per-port TIMELINE of that (tl_), so who may fill which frame of the input ring, which frames a PC sends, and which port still holds back
+ * the confirmed frontier are all decided per frame: nothing depends on the moment a PC hears of the decree. A PC that hears of it late forgets what it took from the
+ * old owner for the frames from `first` on and re-simulates them like for any late input. The host is the only authority (like for a drop-in); the decree is repeated
+ * until acknowledged and cancelled for everybody when somebody never does. */
+
+int Engine::owner_at(int p, int64_t f) const {
+    if (p < 0 || p >= kPorts) return -1;
+    const std::vector<OwnSeg>& tl = tl_[p];
+    if (tl.empty()) return cfg_.owner[p];
+    int o = tl.front().owner;
+    for (const OwnSeg& g : tl) { if ((int64_t)g.from <= f) o = g.owner; else break; }
+    return o;
+}
+
+int64_t Engine::seg_from(int p, int64_t f) const {
+    int64_t from = 0;
+    for (const OwnSeg& g : tl_[p]) { if ((int64_t)g.from <= f) from = g.from; else break; }
+    return from;
+}
+
+bool Engine::owns_any(int p, int slot) const {
+    if (p < 0 || p >= kPorts || !present(p)) return false;
+    if (tl_[p].empty()) return cfg_.owner[p] == slot;
+    for (const OwnSeg& g : tl_[p]) if (g.owner == slot) return true;
+    return false;
+}
+
+/* The drop-out proposal of one port (drop_agree.h): the first frame of `slot`'s on port p that we do not hold yet. With nothing missing (everything it supplied is
+ * known) it is false and *at is where its last segment ends. */
+bool Engine::missing_from(int p, int slot, int64_t* at) const {
+    if (tl_[p].empty()) { *at = conf_upto_[p] + 1; return cfg_.owner[p] == slot; }
+    int64_t lastend = 0;
+    for (size_t i = 0; i < tl_[p].size(); i++) {
+        if (tl_[p][i].owner != slot) continue;
+        const int64_t a = tl_[p][i].from, e = i + 1 < tl_[p].size() ? (int64_t)tl_[p][i + 1].from - 1 : INT64_MAX;
+        const int64_t lo = std::max<int64_t>(a, conf_upto_[p] + 1);
+        if (lo <= e) { *at = lo; return true; }
+        lastend = e + 1;
+    }
+    *at = lastend;
+    return false;
+}
+
+/* The frames below cur_ whose pad changes when `slot` is cut off at `cut` (its segments from `cut` on become neutral); -1 when none. */
+int64_t Engine::dead_frames_from(int slot, uint32_t cut) const {
+    int64_t best = -1;
+    for (int p = 0; p < kPorts; p++) {
+        if (!owns_any(p, slot)) continue;
+        if (tl_[p].empty()) { best = best < 0 ? (int64_t)cut : std::min<int64_t>(best, cut); continue; }
+        for (size_t i = 0; i < tl_[p].size(); i++) {
+            if (tl_[p][i].owner != slot) continue;
+            const int64_t a = tl_[p][i].from, e = i + 1 < tl_[p].size() ? (int64_t)tl_[p][i + 1].from - 1 : INT64_MAX;
+            const int64_t lo = std::max<int64_t>(a, cut);
+            if (lo <= e) { best = best < 0 ? lo : std::min(best, lo); break; }
+        }
+    }
+    return best;
+}
+
+/* Newest frame this PC scheduled for the port and supplies itself (-1: none). */
+int64_t Engine::last_mine(int p) const {
+    if (lnew_[p] < 0) return -1;
+    if (tl_[p].empty()) return local(p) ? lnew_[p] : -1;
+    for (size_t i = tl_[p].size(); i-- > 0;) {
+        if (tl_[p][i].owner != cfg_.my_slot || (int64_t)tl_[p][i].from > lnew_[p]) continue;
+        const int64_t e = i + 1 < tl_[p].size() ? (int64_t)tl_[p][i + 1].from - 1 : lnew_[p];
+        return std::min(e, lnew_[p]);
+    }
+    return -1;
+}
+
+int64_t Engine::ack_for(int p) const {
+    if (!present(p)) return -1;
+    if (!tl_[p].empty()) return conf_upto_[p];   // the contiguous prefix we hold, the frames we supplied included
+    return local(p) ? -1 : conf_upto_[p];
+}
+
+void Engine::extend_conf(int p) {
+    for (;;) {
+        const int64_t f = conf_upto_[p] + 1;
+        if (has(p, f)) { conf_upto_[p] = f; last_val_[p] = get(p, f); continue; }
+        /* an owner that is gone supplies nothing more: its CLOSED segment counts as known up to where the next owner starts (the open one is gating()'s business) */
+        const int o = owner_at(p, f);
+        if (o < 0 || o == cfg_.my_slot) break;
+        const bool gone = ((done_mask_ >> o & 1u) && f >= (int64_t)drop_cut_[o]) || (left_mask_ >> o & 1u);
+        if (!gone) break;
+        int64_t next = -1;
+        for (const OwnSeg& g : tl_[p]) if ((int64_t)g.from > f) { next = g.from; break; }
+        if (next < 0) break;
+        conf_upto_[p] = next - 1;
+    }
+}
+
+/* Forget every input of port p from `first` on (whoever supplied it) and make the sim redo the frames it already ran from there. */
+void Engine::invalidate_from(int p, int64_t first) {
+    for (int i = 0; i < kInRing; i++) if (in_[p][i].tag >= first) in_[p][i].tag = -1;
+    conf_upto_[p] = std::min<int64_t>(conf_upto_[p], first - 1);
+    lnew_[p] = std::min<int64_t>(lnew_[p], first - 1);
+    if (first < (int64_t)cur_) {
+        const int64_t g = std::max<int64_t>(first, floor_);
+        if (g >= (int64_t)cur_) return;
+        /* heard so late that the sim cannot redo the frames (they are older than the state ring): the host's state is the way back, which the hash check would ask for
+         * anyway; with recovery off it ends the game like any other desync */
+        if ((int64_t)cur_ - g >= ring_n_) request_resync("a hand-off was heard too late to redo its frames");
+        else rb_to_ = rb_to_ < 0 ? g : std::min(rb_to_, g);
+    }
+}
+
+/* A PC that starts supplying a port (a hand-off, or its cancellation) must not leave the frames that are already due to the next run_frame(): until it
+ * claims them, the sim would settle them (and the confirmed hash chain would fold them) with a prediction. */
+void Engine::claim_due(int p, int64_t first, uint64_t pad) {
+    const int64_t upto = (int64_t)cur_ + cfg_.delay - 1;
+    for (int64_t g = std::max<int64_t>(first, lnew_[p] + 1); g <= upto; g++)
+        if (owner_at(p, g) == cfg_.my_slot) put_local(p, g, pad & vmask() & ~cfg_.event_mask);
+}
+
+void Engine::prune_timeline() {
+    for (int p = 0; p < kPorts; p++) {
+        std::vector<OwnSeg>& tl = tl_[p];
+        if (tl.size() < 8) continue;
+        const int64_t keep_from = roll_next_ - 600;   // the input ring (512) and the rollback window are far younger than that
+        while (tl.size() > 2 && (int64_t)tl[1].from <= keep_from) tl.erase(tl.begin());
+        tl.front().from = 0;
+    }
+}
+
+uint32_t Engine::handoff_frame() const {
+    if (ho_lead_ != INT32_MIN) return (uint32_t)std::max<int64_t>(0, (int64_t)cur_ + ho_lead_);
+    /* the rule of an N64 drop-in's first sample (dropin.h): the frame the decree is made at + the input delay + a slack + the worst round trip, here after a rollback lead */
+    return n64run::dropin::first_sample(cur_ + (uint32_t)kHandoffLeadFrames, cfg_.delay, st_.rtt_ms, 0, std::max(1.0, cfg_.frame_ms));
+}
+
+bool Engine::handoff_busy() const { return ho_.active; }
+
+bool Engine::handoff_capable() const {
+    if (!(cfg_.caps & kCapHandoff) || finishing_ || desync_ || joining_ || cfg_.my_slot != host_slot() || dropin_busy()) return false;
+    if (!drops_.empty() || done_mask_ || left_mask_ || ignore_mask_) return false;   // limit of the spike: nobody has dropped or left
+    for (int s = 0; s < 8; s++) if (s != cfg_.my_slot && active_peer(s) && !(peer_caps_[s] & kCapHandoff)) return false;
+    return true;
+}
+
+bool Engine::host_handoff(int port, int to, int* reason) {
+    auto no = [&](int r) { if (reason) *reason = r; return false; };
+    if (!(cfg_.caps & kCapHandoff) || joining_ || cfg_.my_slot != host_slot()) return no(kHoDisabled);
+    if (finishing_ || desync_ || !drops_.empty() || done_mask_ || left_mask_ || ignore_mask_ || dropin_busy()) return no(kHoBusy);
+    if (port < 0 || port >= kPorts || !present(port)) return no(kHoBadPort);
+    const int from = cfg_.owner[port];
+    if (to < 0 || to >= 8 || to == from || !is_player(to) || (join_pending_mask_ >> to & 1u)) return no(kHoBadTarget);
+    for (int s = 0; s < 8; s++) if (s != cfg_.my_slot && active_peer(s) && !(peer_caps_[s] & kCapHandoff)) return no(kHoOldPeer);
+    const uint32_t first = handoff_frame();
+    const uint8_t id = (uint8_t)(ho_seq_ + 1 ? ho_seq_ + 1 : 1);
+    if (!apply_handoff(port, from, to, first, id)) return no(kHoBusy);
+    ho_seq_ = id;
+    const uint32_t now = net_.now_ms() ? net_.now_ms() : 1;
+    ho_ = HoRec();
+    ho_.active = true; ho_.port = port; ho_.from = from; ho_.to = to; ho_.first = first; ho_.id = id; ho_.started = now; ho_.last_send = 0; ho_.ack_mask = 1u << cfg_.my_slot;
+    return true;
+}
+
+bool Engine::request_handoff(int port, int to, int* reason) {
+    if (cfg_.my_slot == host_slot()) return host_handoff(port, to, reason);
+    auto no = [&](int r) { if (reason) *reason = r; return false; };
+    if (!(cfg_.caps & kCapHandoff) || joining_ || finishing_) return no(kHoDisabled);
+    if (port < 0 || port >= kPorts || !present(port)) return no(kHoBadPort);
+    if (cfg_.owner[port] != cfg_.my_slot) return no(kHoNotOwner);
+    if (to < 0 || to >= 8 || to == cfg_.my_slot || !is_player(to)) return no(kHoBadTarget);
+    const uint32_t now = net_.now_ms() ? net_.now_ms() : 1;
+    hq_.active = true; hq_.port = port; hq_.to = to; hq_.started = now; hq_.last = now;
+    uint8_t r[4] = {kPktHandoffReq, (uint8_t)cfg_.my_slot, (uint8_t)port, (uint8_t)to};
+    net_.send(host_slot(), r, 4);
+    return true;
+}
+
+void Engine::handoff_refuse(int slot, int port, int reason) {
+    uint8_t r[4] = {kPktHandoffNo, (uint8_t)cfg_.my_slot, (uint8_t)port, (uint8_t)reason};
+    net_.send(slot, r, 4);
+}
+
+/* Every PC (the host included) applies the decree through here. False: not applied (a repeat, an older decree, or a port that is not as the host believes). */
+bool Engine::apply_handoff(int port, int from, int to, uint32_t first, uint8_t id) {
+    if (port < 0 || port >= kPorts || !present(port) || from < 0 || from >= 8 || to < 0 || to >= 8 || from == to) return false;
+    if (ho_seen_valid_ && !id_newer(id, ho_seen_)) return false;           // a repeat, or older than what we already settled
+    if (cfg_.owner[port] != from || !is_player(from) || !is_player(to)) return false;
+    if (!tl_[port].empty() && first <= tl_[port].back().from) return false;
+    hp_.valid = true; hp_.id = id; hp_.port = port; hp_.owner = from; hp_.first = first; hp_.tl = tl_[port];
+    hp_.conf = conf_upto_[port]; hp_.lnew = lnew_[port]; hp_.val = last_val_[port];
+    ho_seen_ = id; ho_seen_valid_ = true;
+    if (tl_[port].empty()) {
+        /* a port that was ours alone so far has no remote prefix: every frame we supplied is known, and our last pad is what the others predict the next owner with */
+        if (from == cfg_.my_slot) { conf_upto_[port] = lnew_[port]; last_val_[port] = (lnew_[port] >= 0 && has(port, lnew_[port])) ? get(port, lnew_[port]) : 0; }
+        tl_[port].push_back({0, (int8_t)from});
+    }
+    tl_[port].push_back({first, (int8_t)to});
+    cfg_.owner[port] = to;
+    invalidate_from(port, first);
+    if (to == cfg_.my_slot) claim_due(port, first, 0);   // a decree that is heard late: the frames from `first` on that are due already are claimed neutral at once
+    st_.handoffs++;
+    if (hq_.active && hq_.port == port) hq_.active = false;
+    if (net_.log) net_.log("handoff: port " + std::to_string(port) + " slot " + std::to_string(from) + " -> " + std::to_string(to) + " from frame " + std::to_string(first) + " (we are at " + std::to_string(cur_) + ", id " + std::to_string((int)id) + ")");
+    if (net_.handoff) net_.handoff(port, from, to, first);
+    return true;
+}
+
+/* The host cancelled a decree: the port is as before. Ignored if the id is not the newest one we applied. */
+void Engine::revert_handoff(int port, uint8_t id) {
+    if (!ho_seen_valid_) { ho_seen_ = id; ho_seen_valid_ = true; return; }   // never saw it: just never apply it
+    if (ho_seen_ != id) { if (id_newer(id, ho_seen_)) ho_seen_ = id; return; }
+    if (!hp_.valid || hp_.id != id || hp_.port != port || port < 0 || port >= kPorts || tl_[port].empty()) return;
+    const int64_t first = hp_.first;
+    tl_[port] = hp_.tl;
+    cfg_.owner[port] = hp_.owner;
+    conf_upto_[port] = std::min<int64_t>(hp_.conf, first - 1);
+    last_val_[port] = hp_.val;
+    invalidate_from(port, first);
+    lnew_[port] = std::min<int64_t>(hp_.lnew, first - 1);
+    if (tl_[port].empty() && !local(port)) while (has(port, conf_upto_[port] + 1)) { conf_upto_[port]++; last_val_[port] = get(port, conf_upto_[port]); }
+    if (owner_at(port, first) == cfg_.my_slot) {   // the port is ours again: hold the pad we had at the last frame before `first`, which is what everybody predicted for us meanwhile
+        const uint64_t hold = (first >= 1 && has(port, first - 1)) ? get(port, first - 1) : 0;
+        last_val_[port] = hold;
+        claim_due(port, first, hold);
+    }
+    hp_.valid = false;
+    if (net_.log) net_.log("handoff: cancelled, port " + std::to_string(port) + " is slot " + std::to_string(cfg_.owner[port]) + "'s again");
+    if (net_.handoff_reverted) net_.handoff_reverted(port);
+}
+
+void Engine::handoff_on_msg(int from, const uint8_t* d, size_t n) {
+    if (from < 0 || from >= 8 || joining_ || !(cfg_.caps & kCapHandoff)) return;
+    const bool host = cfg_.my_slot == host_slot();
+    switch (d[0]) {
+        case kPktHandoffReq: {   // [0x5C, slot, port, to]: the owner of a port asks us (the host) to pass it on
+            if (!host || n < 4 || d[1] != from) return;
+            const int port = d[2], to = d[3];
+            if (port >= kPorts || !present(port)) { handoff_refuse(from, port, kHoBadPort); return; }
+            if (ho_.active && ho_.port == port && ho_.to == to && ho_.from == from) return;     // a repeat of the request being served
+            if (cfg_.owner[port] != from) { if (cfg_.owner[port] != to) handoff_refuse(from, port, kHoNotOwner); return; }   // already done: a late repeat; otherwise it is not theirs
+            int reason = kHoBusy;
+            if (!host_handoff(port, to, &reason)) handoff_refuse(from, port, reason);
+            return;
+        }
+        case kPktHandoffNo: {    // [0x5D, host, port, reason]
+            if (host || n < 4 || from != host_slot()) return;
+            if (hq_.active && hq_.port == d[2]) { hq_.active = false; if (net_.handoff_refused) net_.handoff_refused(d[2], d[3]); }
+            return;
+        }
+        case kPktHandoffAck: {   // [0x5A, slot, port, id]
+            if (!host || n < 4 || d[1] != from) return;
+            if (ho_.active && !ho_.aborting && ho_.id == d[3] && ho_.port == d[2]) ho_.ack_mask |= 1u << from;
+            return;
+        }
+        case kPktHandoff: {      // [0x59, host, port, from, to, first u32, id]
+            if (host || n < 10 || d[1] != from || from != host_slot()) return;
+            const int port = d[2];
+            const uint8_t id = d[9];
+            const bool applied = apply_handoff(port, d[3], d[4], r32(d + 5), id);
+            if (applied || (ho_seen_valid_ && ho_seen_ == id && hp_.valid)) {   // acknowledge repeats too (our ack may have been lost)
+                uint8_t a[4] = {kPktHandoffAck, (uint8_t)cfg_.my_slot, (uint8_t)port, id};
+                net_.send(host_slot(), a, 4);
+            }
+            return;
+        }
+        case kPktHandoffAbort: { // [0x5B, host, port, id]
+            if (host || n < 4 || d[1] != from || from != host_slot()) return;
+            revert_handoff(d[2], d[3]);
+            return;
+        }
+        default: return;
+    }
+}
+
+void Engine::handoff_service(uint32_t now) {
+    if (!now) now = 1;
+    if (hq_.active) {   // a guest's request is repeated until the decree (or a refusal) comes
+        if (now - hq_.started > 2500) { hq_.active = false; if (net_.handoff_refused) net_.handoff_refused(hq_.port, kHoNoAnswer); }
+        else if (now - hq_.last >= 150) { hq_.last = now; uint8_t r[4] = {kPktHandoffReq, (uint8_t)cfg_.my_slot, (uint8_t)hq_.port, (uint8_t)hq_.to}; net_.send(host_slot(), r, 4); }
+    }
+    if (!ho_.active) return;
+    HoRec& r = ho_;
+    if (r.aborting) {   // tell everybody a while longer, then forget it
+        if (now - r.last_send >= 100) {
+            r.last_send = now;
+            uint8_t b[4] = {kPktHandoffAbort, (uint8_t)cfg_.my_slot, (uint8_t)r.port, r.id};
+            net_.send(-1, b, 4);
+            if (++r.abort_sends >= 30) r.active = false;
+        }
+        return;
+    }
+    uint32_t need = 1u << cfg_.my_slot;
+    for (int s = 0; s < 8; s++) if (active_peer(s)) need |= 1u << s;
+    if ((r.ack_mask & need) == need) {
+        if (conf_eff_ >= (int64_t)r.first) r.active = false;   // settled: everybody has it and its first frame is confirmed (a drop-in may start now)
+        return;
+    }
+    if (now - r.started > kHandoffAckLimitMs) {
+        if (net_.log) net_.log("handoff: not acknowledged by everybody in time: cancelled");
+        revert_handoff(r.port, r.id);
+        r.aborting = true; r.last_send = 0; r.abort_sends = 0;
+        return;
+    }
+    if (now - r.last_send >= 100) {
+        r.last_send = now;
+        std::vector<uint8_t> b;
+        b.push_back(kPktHandoff); b.push_back((uint8_t)cfg_.my_slot); b.push_back((uint8_t)r.port); b.push_back((uint8_t)r.from); b.push_back((uint8_t)r.to);
+        w32(b, r.first);
+        b.push_back(r.id);
+        net_.send(-1, b.data(), (int)b.size());
+    }
 }
 
 /* ------------------------------------------------------------------ synctest */

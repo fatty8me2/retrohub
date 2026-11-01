@@ -90,6 +90,7 @@ struct Args {
     bool spectate = false;        // --spectate: watch a running online match as a port-less spectator (confirmed inputs only; needs --net --room --ports)
     bool no_spectators = false;   // --no-spectators: as the host, do not record/serve the input history to spectators
     bool dropin = false;          // --dropin: join a running rollback game into a free port (needs --net --room --slot --ports; host: spectate.h kPktJoin version 2)
+    bool handoff = false;         // --handoff / RETRORUN_HANDOFF=1: experimental controller hand-off in rollback games (rollback.h kPktHandoff, runner_ctl "handoff"); off by default
     bool multiport = false;       // --multiport: boot with the 4-pad adapter (NES Four Score / SNES multitap) even if fewer ports are used, so a friend can drop in later
     std::string name;             // --name TEXT: shown to the other players when this PC drops in ("<name> joined")
     int synctest = 0;             // --synctest N: offline, every frame roll back N frames and re-simulate, compare
@@ -108,7 +109,7 @@ static void usage() {
     fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
           "  [--system gba|gb|gbc|nds|ps1|nes|snes] [--multitap|--no-multitap] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fx off|crt|lcd|dmg|sharp] [--bezel 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
-          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rewind auto|on|off] [--runahead off|1|2|auto] [--rollback] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
+          "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rewind auto|on|off] [--runahead off|1|2|auto] [--rollback] [--handoff] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
           "  [--net SERVER --room CODE-N --slot K --players N --ports P0,P1,P2,P3 --delay auto|D]\n",
           stderr);
 }
@@ -191,6 +192,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--spectate") o->spectate = true;
         else if (k == "--no-spectators") o->no_spectators = true;
         else if (k == "--dropin") o->dropin = true;
+        else if (k == "--handoff") o->handoff = true;
         else if (k == "--multiport") o->multiport = true;
         else if (k == "--name") { if (!val(&o->name)) return false; }
         else if (k == "--no-rollback") o->rollback = false;
@@ -525,6 +527,11 @@ class Frontend {
      * confirmed snapshot like a live spectator, admits the slot on a free port once the snapshot is loaded, and the joiner reports [kPktJoin, slot, 9] when it plays. */
     static constexpr uint8_t kRefuseNoPort = 4, kRefuseOldPeer = 5, kRefuseSlot = 6, kRefuseBusy = 7;   // spectate::JoinRefuse extensions (drop-in only)
     bool multiport_ = false, dropin_ok_ = false;
+    /* Controller hand-off (--handoff, rollback netplay only): the engine owns the per-port timeline; this side keeps the pad plan. A port this PC passed on stays in
+     * local_ports until its first frame under the new owner is behind us (the engine still asks for our pad until then), then it leaves and the pads shift up. */
+    bool handoff_ok_ = false;
+    uint32_t handoff_drop_at_[4] = {0, 0, 0, 0};
+    void handoff_retire_ports();
     uint32_t dropin_mask_ = 0;
     std::map<int, std::string> dropin_name_;
     std::map<int, uint32_t> dropin_since_;
@@ -694,6 +701,7 @@ class Frontend {
 };
 
 static Frontend* g_fe = nullptr;
+static const char* handoff_reason_text(int reason);   // rb::HandoffNoReason -> OSD / ack text
 
 void Frontend::ra_start() {
     if (a.ra_cfg.empty() || !a.net.empty() || a.ds_link || link || a.synctest || a.selftest || a.rollback) return;   // offline play only
@@ -1237,7 +1245,8 @@ uint32_t Frontend::poll_local(int i) {
         if (act) return sm;
     }
     if (a.fuzz) {
-        uint32_t x = (uint32_t)(frame_no / 3) * 2654435761u ^ (uint32_t)(port + 1) * 40503u ^ 0x9E3779B9u;
+        static const bool by_slot = env_is("RETRORUN_FUZZ_SLOT");   // QA (qa\handoff.ps1): the pad depends on who presses it, so a hand-off changes the game
+        uint32_t x = (uint32_t)(frame_no / 3) * 2654435761u ^ (uint32_t)(port + 1) * 40503u ^ 0x9E3779B9u ^ (by_slot ? (uint32_t)(a.slot + 1) * 0x85EBCA6Bu : 0u);
         x ^= x >> 15; x *= 2246822519u; x ^= x >> 13;
         return x & 0xFF3u & ~0xCu;   // never Start/Select
     }
@@ -1673,9 +1682,14 @@ void Frontend::pause_tick() {
     if (pace != Pace::Vsync) SDL_Delay(16);   // vsync already paces the loop
 }
 
+/* runner_ctl "handoff" (slot = the controller port, value = the receiving lobby slot): the owner of the port asks the host, the host decides and every PC applies the
+ * same decree at an agreed frame (rollback.h). Experimental: needs --handoff (or RETRORUN_HANDOFF=1) on every PC of the room, rollback netplay, no PlayStation / link. */
 void Frontend::handoff_cmd(const runctl::Command& c) {
-    (void)c;
-    ctl_.ack(false, "unsupported");
+    if (!handoff_ok_ && !(a.handoff || env_is("RETRORUN_HANDOFF"))) { ctl_.ack(false, "unsupported"); return; }
+    if (!rbe || rb_spectator_ || !handoff_ok_) { ctl_.ack(false, "Passing the controller needs a rollback game with the other players"); return; }
+    int reason = 0;
+    const bool ok = rbe->request_handoff(c.slot, c.value, &reason);
+    ctl_.ack(ok, ok ? "passing" : handoff_reason_text(reason));
 }
 
 bool Frontend::load_state(const std::string& name) {
@@ -2034,6 +2048,31 @@ bool Frontend::ps1_config_check() {
 }
 
 
+static const char* handoff_reason_text(int reason) {
+    switch (reason) {
+        case rb::kHoDisabled: return "Passing the controller is not available in this game";
+        case rb::kHoBusy: return "Busy, try again in a moment";
+        case rb::kHoBadPort: return "That controller is not in use";
+        case rb::kHoBadTarget: return "That player cannot take it";
+        case rb::kHoNotOwner: return "That is not your controller";
+        case rb::kHoOldPeer: return "A player's RetroHub is too old for this";
+        case rb::kHoNoAnswer: return "The host did not answer";
+        default: return "Could not pass the controller";
+    }
+}
+
+/* A port this PC passed on leaves the local pads once its first frame under the new owner is behind us; the pads of the ports after it shift up. */
+void Frontend::handoff_retire_ports() {
+    for (int p = 0; p < 4; p++) {
+        if (!handoff_drop_at_[p] || !rbe || frame_no < handoff_drop_at_[p] + 4) continue;
+        handoff_drop_at_[p] = 0;
+        if (rbe->owner_of(p) == a.slot) continue;   // it came back to us meanwhile
+        int j = 0;
+        for (int i = 0; i < n_local; i++) if (local_ports[i] != p) local_ports[j++] = local_ports[i];
+        if (j != n_local) { for (int i = j; i < 4; i++) local_ports[i] = -1; n_local = j; rlog("handoff: port %d left this PC's pads (%d local)", p, n_local); }
+    }
+}
+
 rb::Transport Frontend::rb_transport() {
     rb::Transport t;
     t.pump = [this] { session.update(); };
@@ -2084,6 +2123,31 @@ rb::Transport Frontend::rb_transport() {
             local_ports[0] = port; n_local = 1;
         } else owner[port] = slot;
     };
+    t.handoff = [this](int port, int from, int to, uint32_t first) {   // a controller changes hands from frame `first` on
+        if (port < 0 || port > 3) return;
+        owner[port] = to;
+        if (to == a.slot) {   // ours from `first` on: its pad joins the local ones (the next free controller; the keyboard drives the first)
+            handoff_drop_at_[port] = 0;
+            bool have = false;
+            for (int i = 0; i < n_local; i++) if (local_ports[i] == port) have = true;
+            if (!have && n_local < 4) local_ports[n_local++] = port;
+            set_status("You have controller " + std::to_string(port + 1));
+        } else if (from == a.slot) {
+            handoff_drop_at_[port] = first + 1;
+            set_status("Controller " + std::to_string(port + 1) + " passed to Player " + std::to_string(to + 1));
+        } else {
+            set_status("Player " + std::to_string(to + 1) + " has controller " + std::to_string(port + 1));
+        }
+    };
+    t.handoff_reverted = [this](int port) {   // the host cancelled it: the port is as it was
+        if (!rbe || port < 0 || port > 3) return;
+        const int o = rbe->owner_of(port);
+        owner[port] = o;
+        handoff_drop_at_[port] = 0;
+        if (o == a.slot) { bool have = false; for (int i = 0; i < n_local; i++) if (local_ports[i] == port) have = true; if (!have && n_local < 4) local_ports[n_local++] = port; }
+        set_status("Passing the controller was cancelled");
+    };
+    t.handoff_refused = [this](int, int reason) { set_status(handoff_reason_text(reason)); };
     t.admit_reverted = [this](int, int port) {   // the host cancelled an admit: the port is as it was
         if (!rbe || port < 0 || port > 3) return;
         owner[port] = rbe->owner_of(port);
@@ -2170,6 +2234,8 @@ int Frontend::dj_attempt(int slot_try, bool first) {
     rc.val_bytes = 2;
     rc.relay_half_rate = true; rc.send_gap_ms = 30;   // a room that can reach 4 PCs
     rc.joiner = true;
+    handoff_ok_ = (a.handoff || env_is("RETRORUN_HANDOFF")) && !is_ps1 && !is_ps2 && !link && !a.share_host_save;
+    if (handoff_ok_) rc.caps |= rb::kCapHandoff;
     rbe = std::make_unique<rb::Engine>(rc, make_rb_sim(), rb_transport());
     rlog("net: DROP-IN, input delay %d, max prediction %d, state %zu bytes", a.delay, rc.max_pred, core.serialize_size());
 
@@ -2377,6 +2443,8 @@ bool Frontend::setup_net() {
         rc.adaptive_delay = auto_delay && a.rb_adaptive;
         rc.frame_ms = 1000.0 / (fps > 1 ? fps : 60.0);
         for (int i = 0; i < 4; i++) rc.owner[i] = owner[i];
+        handoff_ok_ = (a.handoff || env_is("RETRORUN_HANDOFF")) && !is_ps1 && !is_ps2 && !link && !a.share_host_save && !a.ds_link;
+        if (handoff_ok_) rc.caps |= rb::kCapHandoff;   // experimental: every PC of the room must opt in or the host refuses a hand-off
         rc.my_slot = a.slot;
         rc.slot_mask = slot_mask;
         rc.delay = a.delay;
@@ -3214,6 +3282,7 @@ void Frontend::rb_log_stats() {
          rbe->delay(), s.delay_min, s.delay_max, (unsigned long long)s.delay_changes, s.rtt_ms, (unsigned long long)s.frames, (unsigned long long)s.rollbacks, s.rollbacks / secs_f, (unsigned long long)s.resim_frames, s.max_depth,
          s.rollbacks ? (double)s.depth_sum / (double)s.rollbacks : 0.0, (unsigned long long)s.stalls, (unsigned long long)s.stalled_ms,
          (unsigned long long)s.sync_waits, s.max_skew, (unsigned long long)s.hashes_compared);
+    if (s.handoffs) rlog("rollback-handoff: %llu hand-off(s) applied on this PC", (unsigned long long)s.handoffs);
     rlog("rollback-timing: serialize %.1f us avg, unserialize %.1f us avg, retro_run %.1f us avg", s.save_n ? s.save_us / s.save_n : 0.0,
          s.load_n ? s.load_us / s.load_n : 0.0, s.step_n ? s.step_us / s.step_n : 0.0);
 }
@@ -3564,6 +3633,7 @@ int Frontend::run(const Args& args) {
                 else { dj_catchup_ = false; do_pacing(); }
                 rbe->run_frame();
                 frame_no = rbe->cur();
+                if (handoff_ok_) handoff_retire_ports();
                 note_frame_gap();
                 spec_host_service();
                 if (uint32_t dm = rbe->dropped_mask(); dm != rb_dropped_seen_) {
