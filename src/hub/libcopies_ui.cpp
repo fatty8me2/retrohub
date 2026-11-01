@@ -1,6 +1,8 @@
 #include "app.h"
 
 #include "prefs.h"
+#include "library_scan_info.h"
+
 
 /* Library file problems: a ROM that vanished (popup at Play) and duplicate copies of one game (details > About).
  * The choices live in the synced prefs (preferred_copy, hidden); nothing here touches library.json. */
@@ -47,20 +49,34 @@ struct UndoRemove {
 
 std::map<std::string, std::string> g_hidden_titles;   // key -> title, remembered this session for the Hidden games list
 
+void drop_from_lib(const std::string& key) {
+    A.lib.erase(std::remove_if(A.lib.begin(), A.lib.end(), [&](const hub::GameEntry& g) { return g.key == key; }), A.lib.end());
+    A.lib_index.clear();
+    for (size_t i = 0; i < A.lib.size(); ++i) A.lib_index.emplace(A.lib[i].key, (int)i);
+    A.vis_dirty = true;
+}
+
+void remove_here(const std::string& key, const std::string& title) {
+    hub::local_removed_set(key, true);
+    g_hidden_titles[key] = title;
+    drop_from_lib(key);
+    UNDO.key = key;
+    UNDO.title = title;
+    UNDO.until = ImGui::GetTime() + 10.0;
+    push_toast("Removed " + title + " from this PC's library. Your other PCs still show it.", ui::WARN, 10.0);
+}
+
 void hide_game(const std::string& key, const std::string& title) {
     hub::prefs::Prefs p = load_prefs();
     std::vector<std::string> h = p.hidden;
     h.push_back(key);
     if (hub::prefs::set_hidden(&p, h)) store_prefs(p);
     g_hidden_titles[key] = title;
-    A.lib.erase(std::remove_if(A.lib.begin(), A.lib.end(), [&](const hub::GameEntry& g) { return g.key == key; }), A.lib.end());
-    A.lib_index.clear();
-    for (size_t i = 0; i < A.lib.size(); ++i) A.lib_index.emplace(A.lib[i].key, (int)i);
-    A.vis_dirty = true;
+    drop_from_lib(key);
     UNDO.key = key;
     UNDO.title = title;
     UNDO.until = ImGui::GetTime() + 10.0;
-    push_toast("Removed " + title + " from the library.", ui::WARN, 10.0);
+    push_toast("Hid " + title + " on all your PCs.", ui::WARN, 10.0);
 }
 
 void unhide_game(const std::string& key) {
@@ -68,6 +84,7 @@ void unhide_game(const std::string& key) {
     std::vector<std::string> h;
     for (auto& k : p.hidden) if (k != key) h.push_back(k);
     if (hub::prefs::set_hidden(&p, h)) store_prefs(p);
+    hub::local_removed_set(key, false);
     start_scan();   // the game comes back with the rescan
 }
 
@@ -82,6 +99,7 @@ void refresh_hidden() {
     HL.loaded = ImGui::GetTime();
     if (g_headless && std::getenv("HUB_SHOT_HIDDEN")) { HL.keys = {"n64:0123456789abcdef0123456789abcdef", "gba:agbj-1a2b3c4d", "gc:gm4e01-0"}; return; }
     HL.keys = load_prefs().hidden;
+    for (const std::string& k : hub::local_removed()) if (std::find(HL.keys.begin(), HL.keys.end(), k) == HL.keys.end()) HL.keys.push_back(k);
 }
 
 std::string hidden_label(const std::string& key) {
@@ -121,7 +139,9 @@ std::map<std::string, std::string> preferred_copies() { return load_prefs().pref
 
 std::set<std::string> hidden_game_keys() {
     hub::prefs::Prefs p = load_prefs();
-    return std::set<std::string>(p.hidden.begin(), p.hidden.end());
+    std::set<std::string> s(p.hidden.begin(), p.hidden.end());
+    for (const std::string& k : hub::local_removed()) s.insert(k);   // removed on this PC only
+    return s;
 }
 
 /* Scan time: a located file replaces a path that no longer exists. */
@@ -235,14 +255,32 @@ void draw_missing_rom_dialog() {
     }
     ImGui::SameLine();
     if (button("Rescan", bs, false, !A.scanning, ui::Icon::Refresh)) { start_scan(); MA.open = false; set_notice("Scanning your games...", 4.0); }
-    if (button("Remove from library", bs, false, true)) {
+    if (button("Remove from this PC", bs, false, true)) {   // local only: your other PCs keep the game
+        remove_here(MA.key, MA.title);
+        MA.open = false;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hides it here only. Hidden games (Settings) can bring it back.");
+    ImGui::SameLine();
+    if (button("Hide on all my PCs", bs, false, true)) {
         hide_game(MA.key, MA.title);
         MA.open = false;
     }
-    ImGui::SameLine();
     if (button("Cancel", bs)) MA.open = false;
     if (!MA.open) { ImGui::CloseCurrentPopup(); MA.seen = false; }
     ImGui::EndPopup();
+}
+
+/* Settings > General folder list (library-3): "" when the folder was read in full by the last scan, else a short plain status such as
+ * "Drive not connected - showing 42 games from the last scan". page_settings.cpp prints it under the folder's path. */
+std::string library_folder_status_line(const std::string& folder) {
+    auto norm = [](std::string s) { for (char& c : s) { if (c == '/') c = '\\'; c = (char)std::tolower((unsigned char)c); } while (!s.empty() && s.back() == '\\') s.pop_back(); return s; };
+    const std::string want = norm(folder);
+    for (const hub::FolderScanStatus& st : hub::scan_folder_status()) {
+        if (norm(st.folder) != want || st.complete) continue;
+        std::string kept = st.kept ? " Showing " + std::to_string(st.kept) + (st.kept == 1 ? " game" : " games") + " from the last scan." : std::string();
+        return st.reachable ? "Could not read all of this folder." + kept : "Drive not connected." + kept;
+    }
+    return std::string();
 }
 
 /* Details > About: "N copies found" with their paths and a "Use this one" choice. */

@@ -22,6 +22,7 @@ static std::vector<hubui::fg::Owned> owned_snapshot() {
     v.reserve(A.lib.size());
     const std::string root = hubgp::pack_root();
     for (const hub::GameEntry& e : A.lib) {
+        if (is_hack(e)) continue;   // ROM hacks / translations are the player's own: never in the published friends' library (Plan 4 H2)
         v.push_back({sys_short(e), e.key, e.catalog_id, e.title});
         std::string t = hubgp::installed_folder_title(e.path, root);   // installed from a shared pack: also owned under the pack's title (a catalog title may differ from it)
         if (!t.empty()) v.push_back({sys_short(e), e.key, e.catalog_id, t});
@@ -466,6 +467,7 @@ void ghost_tick() {
     if (!A.scanned_once || A.scanning) return;
     uint64_t h = 1469598103934665603ull;
     for (const hub::GameEntry& e : A.lib) {
+        if (is_hack(e)) continue;
         for (unsigned char c : e.key) { h ^= c; h *= 1099511628211ull; }
         for (unsigned char c : e.title) { h ^= c; h *= 1099511628211ull; }
         h ^= 0x1f; h *= 1099511628211ull;

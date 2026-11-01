@@ -80,3 +80,17 @@ LZMA SDK (public domain) and a DJW decoder derived from xdelta3 v3.2.2 (Apache-2
 ## Not done
 
 PPF; IPS32 and APS; applying UPS in reverse; custom VCDIFF code tables; checking the BLAKE3 whole-file hashes that xdelta3 3.2's "armor" mode writes into the application header (the header text is shown in `Info::metadata`, but not verified).
+
+## ROM hacks and translations in the library (Plan 4 H2-H4)
+
+A patch file becomes its own library entry: **drop a `.ips .ups .bps .xdelta` file on the RetroHub window**, or open a game's page and press **Add hack or translation**. Code: `src/hub/hack_ui.cpp` (dialogs, hooks), `hack_core.cpp` (files, base finder), `hack_logic.cpp` (identity, `hack.json`); tests in `test_hack.cpp` (`hub_hack_test`) and `qa\hacks_headless.ps1`.
+
+**Finding the base game.** UPS and BPS name it: the source CRC32 (and size) is compared with every library game of that size. Three views of each file are tried: as it is, N64 normalised to z64 byte order (patches assume z64; v64/n64 files are converted into a temp image before patching) and SNES with the 512-byte copier header removed (`prep` in hack.json says which one matched, so Play repeats it). A patch for another version says "This patch is for a different version of <game>." IPS and VCDIFF do not name their game: the player picks from the games the patch could fit (IPS: big enough for the highest record; VCDIFF: the source size when stored), best title match to the patch's file name first. From a game's page the choice is already made.
+
+**Identity.** `key = <base key>+h<crc32 of the patched image>`, `catalog_id = ""`, `path` = the base game's file. The patched image is built once when the hack is added (progress, cancellable), moved to `rom-cache\hacks\<key folder>\hack.<ext>`, and rebuilt at Play if missing (a worker thread with a corner progress card; the game starts by itself when ready if the player is still waiting and no game or room is active, otherwise a toast says it is ready). The output CRC is checked against the key every time it is rebuilt; a mismatch deletes the image and says the original game may be another version. `rom-cache\hacks\*` folders are separate LRU items, and the running game's folder is pinned.
+
+**Vault layout (syncs like a save).** `<vault>/<system>/<hack key folder>/patch/hack.json` plus the patch file; saves, states and screenshots of the hack live next to it like any game's. `hack.json` is read strictly (key suffix must equal `out_crc`, `patch_file` must be a bare file name, `format`/`prep`/`kind` from fixed lists), so a synced file from another PC cannot point anywhere else. A hack whose base game is missing from the scan is not shown.
+
+**Removing.** Game page > About > *Remove hack...* deletes the vault `patch` folder and the cached image. Saves are kept unless the player picks *Remove and delete its saves*; adding the same patch again brings kept saves back.
+
+**Limits.** Cheats, RetroAchievements and cover lookup key off the catalog, so a hack starts without cheats or achievements; the cover is the base game's (found by the base key's CRC / MD5, so GB and GBC hacks usually get the placeholder). Hacks are never part of the published friends' library. A friend needs the same patch to play a hack online: the room hello compares the exact content key. Consoles: N64, GB, GBC, GBA, DS, NES, SNES and uncompressed GameCube `.iso`/`.gcm`.

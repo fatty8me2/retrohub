@@ -1,4 +1,5 @@
 #include "app.h"
+#include "library_scan_info.h"
 #include "online_caps.h"
 #include "gameinfo.h"
 #include "gamepack.h"
@@ -32,6 +33,10 @@ void start_scan() {
         A.scan_result = hub::scan_library(folders, [](int d, int t) { A.scan_done = d; A.scan_total = t; });
         kt_scan_append(&A.scan_result, folders);   // Kanto Together package (zip / folder), if the user has it
         hack_scan_append(&A.scan_result, folders); // ROM hacks / translations whose base game is in the scan (Plan 4 H2)
+        {   // library-1: the other copies of each game come last, so the listed (preferred) copy stays first and hubdupes::collapse sees every path
+            std::vector<hub::GameEntry> extra = hub::scan_extra_copies();
+            A.scan_result.insert(A.scan_result.end(), extra.begin(), extra.end());
+        }
         A.scan_ready = true;
     });
 }
@@ -162,6 +167,18 @@ void apply_scan() {
         if (std::getenv("HUB_SHOT_FAKE_DUPES") && A.lib.size() > 2) {   // details > About shows "3 copies found"
             A.dupes.clear();
             A.dupes[A.lib[2].key] = {A.lib[2].path, "D:/Roms/N64 backup/" + A.lib[2].title + ".z64", "E:/Old PC/Games/" + A.lib[2].title + " (copy).z64"};
+        }
+        if (std::getenv("HUB_SHOT_HACKS") && A.lib.size() >= 2) {   // screenshot aid: two hacks under the first fake game (keys ending 0 = hack, 1 = translation)
+            const hub::GameEntry base = A.lib[0];
+            for (int i = 1; i >= 0; --i) {
+                hub::GameEntry h = base;
+                h.key = base.key + "+h0000000" + std::to_string(i);
+                h.title = i ? base.title + " (English)" : base.title + " Kaizo";
+                h.catalog_id.clear();
+                h.hack_patch = "C:/fake/patch.bps";
+                h.hack_base = base.key;
+                A.lib.insert(A.lib.begin() + 1, h);
+            }
         }
         gameinfo_ui_shot_lib();
         A.st.find_games_done = true;
