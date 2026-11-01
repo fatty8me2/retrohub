@@ -1,5 +1,7 @@
-/* Runs on a private (hidden) desktop: the tips popup must be no-activate / click-through / topmost, must not change the
- * foreground window, and must disappear after its timeline. Never touches the user's desktop. */
+/* Runs on a private (hidden) desktop: the runner's tips card must be no-activate / click-through, OWNED by the game window and NOT
+ * topmost (it can never sit above another app), must not change the foreground window, must disappear after its timeline, and a
+ * caller that is not the game's own runner (the hub, over somebody else's emulator) must never get a window at all.
+ * Never touches the user's desktop. */
 #include <cstdio>
 
 #include "hint_popup.h"
@@ -22,17 +24,27 @@ int main() {
     ShowWindow(game, SW_SHOW);
     SetForegroundWindow(game);
     HWND fg = GetForegroundWindow();
+
+    {   // a caller that does not own the game (the hub over an emulator): finishes at once, never creates a window
+        starthint::Popup hub;
+        for (int i = 0; i < 5; i++) { hub.tick(game, false, false); CHECK(find_popup() == nullptr); }
+        CHECK(hub.done());
+        CHECK(GetForegroundWindow() == fg);
+    }
+
     starthint::Popup p;
     ULONGLONG t0 = GetTickCount64();
     bool shown = false, fg_changed = false;
     while (!p.done() && GetTickCount64() - t0 < 9000) {
-        p.tick(game, false, false);
+        p.tick(game, false, true);
         HWND h = find_popup();
         if (h && IsWindowVisible(h)) {
             if (!shown) {
                 shown = true;
                 LONG ex = GetWindowLongW(h, GWL_EXSTYLE);
-                CHECK(ex & WS_EX_NOACTIVATE); CHECK(ex & WS_EX_TRANSPARENT); CHECK(ex & WS_EX_TOOLWINDOW); CHECK(ex & WS_EX_LAYERED); CHECK(ex & WS_EX_TOPMOST);
+                CHECK(ex & WS_EX_NOACTIVATE); CHECK(ex & WS_EX_TRANSPARENT); CHECK(ex & WS_EX_TOOLWINDOW); CHECK(ex & WS_EX_LAYERED);
+                CHECK(!(ex & WS_EX_TOPMOST));                       // never topmost: it cannot sit above another app
+                CHECK(GetWindow(h, GW_OWNER) == game);               // owned by the game window: follows its z-order, dies with it
                 RECT r, gr;
                 GetWindowRect(h, &r);
                 POINT c{(r.left + r.right) / 2, (r.top + r.bottom) / 2};
@@ -42,6 +54,7 @@ int main() {
                 ClientToScreen(game, &tl);
                 CHECK(r.left >= tl.x && r.left < tl.x + 100 && r.bottom <= tl.y + gr.bottom);   // bottom-left corner of the game
             }
+            CHECK(!(GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOPMOST));
             if (GetForegroundWindow() != fg) fg_changed = true;
         }
         Sleep(50);
@@ -51,6 +64,6 @@ int main() {
     CHECK(GetForegroundWindow() == fg);
     CHECK(p.done() && find_popup() == nullptr);
     DestroyWindow(game);
-    std::printf(fails ? "hint_popup_test: %d FAILED\n" : "hint_popup_test: ok (popup shown, foreground unchanged)\n", fails);
+    std::printf(fails ? "hint_popup_test: %d FAILED\n" : "hint_popup_test: ok (owned, not topmost, foreground unchanged; hub callers get no window)\n", fails);
     return fails ? 1 : 0;
 }
