@@ -1253,6 +1253,11 @@ static void qm_body() {
         if (menu_button("Load state", !online, ui::Icon::Refresh)) { g_page = QPage::Load; g_nav.sel.clear(); }
         if (online) text_wrapped_disabled("Save states are off in online games: everyone has to stay in step.");
         if (menu_button("Take a screenshot", true, ui::Icon::Search)) send(runctl::Cmd::Screenshot, 0, "Screenshot saved", true);
+        if (hubqm::pause_available(true, online)) {   // Plan 4: the game stands still while the menu is open (offline only)
+            const float pw = ImGui::GetContentRegionAvail().x;
+            if (stepper_row("pause", "Pause game", g_pause_manual ? "Paused" : "Running", -1.f, g_pending == 0, pw)) g_pause_manual = !g_pause_manual;   // qm_tick sends pause 1 / 0
+            if (stepper_row("pause_auto", "Pause when menu opens", g_pause_auto ? "On" : "Off", -1.f, g_pending == 0, pw)) { g_pause_auto = !g_pause_auto; prefs_save(); }
+        }
         {   // Plan 4 p4-social: friend challenges (built-in runners, offline)
             const std::string csys = e ? sys_short(*e) : g_sys;
             const auto cr = hub::challenge::menu_rows(csys, true, online, hubui::challenge_running(), hub::challenge::send_busy(hubui::challenge_send_view().phase));
@@ -1268,11 +1273,6 @@ static void qm_body() {
                 else { hubui::challenge_run_finish(true, ""); g_close_why = "challenge done"; ImGui::CloseCurrentPopup(); focus_game(); }
             }
             if (cr.give_up && menu_button("Give up", true, ui::Icon::Close)) { hubui::challenge_run_finish(false, ""); g_close_why = "challenge gave up"; ImGui::CloseCurrentPopup(); focus_game(); }
-        }
-        if (hubqm::pause_available(true, online)) {   // Plan 4: the game stands still while the menu is open (offline only)
-            const float pw = ImGui::GetContentRegionAvail().x;
-            if (stepper_row("pause", "Pause game", g_pause_manual ? "Paused" : "Running", -1.f, g_pending == 0, pw)) g_pause_manual = !g_pause_manual;   // qm_tick sends pause 1 / 0
-            if (stepper_row("pause_auto", "Pause when menu opens", g_pause_auto ? "On" : "Off", -1.f, g_pending == 0, pw)) { g_pause_auto = !g_pause_auto; prefs_save(); }
         }
     } else if (ext) {   // Dolphin, Cemu, Azahar, PCSX2: capture the emulator's window into the vault's shots folder
         if (menu_button("Screenshot", true, ui::Icon::Search)) {
