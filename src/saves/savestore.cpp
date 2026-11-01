@@ -271,15 +271,18 @@ ws comp_at(const ws& rel, int idx) {
 }
 bool is_states_path(const ws& rel) { return comp_count(rel) >= 3 && lower(comp_at(rel, 2)) == L"states"; }
 
-/* The account secret (<vault>/_identity/*, or any identity*.json) stays on the PC that holds it. It is never written into an export zip or
- * a sync folder and never read back from either, so importing someone's zip (or syncing a folder they share) cannot switch the player to
- * another account, and a zip handed to a friend does not hand over the account (F6). The cloud engine and the Worker already refuse it. */
+/* The account secret (a folder named _identity anywhere in the vault, or any identity*.json[.suffix] file) stays on the PC that holds it. It
+ * is never written into an export zip or a sync folder and never read back from either, so importing someone's zip (or syncing a folder they
+ * share) cannot switch the player to another account, and a zip handed to a friend does not hand over the account (F6). Older builds also
+ * kept the losing identity of a sync conflict as _conflicts/_identity/identity.json.<PC>.<time>: covered by the same two rules.
+ * The cloud engine and the Worker already refuse it. */
 bool is_identity_name(const ws& name) {
     ws n = lower(name);
-    return n.size() >= 13 && n.compare(0, 8, L"identity") == 0 && n.compare(n.size() - 5, 5, L".json") == 0;
+    return n.size() >= 13 && n.compare(0, 8, L"identity") == 0 && n.find(L".json", 8) != ws::npos;
 }
 bool is_identity_rel(const ws& rel) {   // rel uses '/' separators
-    if (lower(comp_at(rel, 0)) == L"_identity") return true;
+    for (int i = 0, n = comp_count(rel); i < n; i++)
+        if (lower(comp_at(rel, i)) == L"_identity") return true;
     size_t s = rel.find_last_of(L'/');
     return is_identity_name(s == ws::npos ? rel : rel.substr(s + 1));
 }
@@ -302,7 +305,7 @@ void walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str
         }
         if (isdir) {
             if (rel.empty() && lower(name) == L".sync") continue;
-            if (rel.empty() && lower(name) == L"_identity") continue;   // the account secret never travels (F6)
+            if (lower(name) == L"_identity") continue;   // the account secret never travels (F6), wherever the folder sits
             if (!states && is_states_path(crel)) continue;
             walk(root, crel, states, out, log);
         } else {
