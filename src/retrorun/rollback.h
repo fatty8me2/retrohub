@@ -149,6 +149,8 @@ class Engine {
 
     /* End of session: wait until every input < cur() is confirmed (and the peers have ours), tell the peers bye. */
     bool finish(uint32_t timeout_ms);
+    /* Just the goodbye (3 packets, ~30 ms): leaving at once, e.g. the hub's Quit while the game is stalled and nothing can be confirmed. */
+    void say_bye();
 
     uint32_t cur() const { return cur_; }
     bool desync() const { return desync_; }
