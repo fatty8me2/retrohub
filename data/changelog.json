@@ -1,6 +1,37 @@
 {
   "versions": [
     {
+      "version": "1.30.0",
+      "date": "2026-11-01",
+      "title": "Party night and ROM hacks",
+      "new": [
+        "Party mode: in a room, the host builds a playlist of games everyone owns (or shuffles), sets the rounds and plays them back to back, with standings between rounds and a podium at the end",
+        "Vote for the next game in any room, and play a party on one PC with friends on the couch",
+        "Tournament brackets for 4, 8 or 16 players, single or double elimination; Smash Classic results fill them in by themselves",
+        "Friends ladder: a rating from your Smash matches, shown on friend rows and used to seed brackets",
+        "ROM hacks and translations: drop a patch file (IPS, UPS, BPS or xdelta) on RetroHub and it finds the game it belongs to and adds it as its own game, with its own saves",
+        "Game menu: emotes your friends see in their game (GG, NICE!, LOL...), Pause, and Pass controller to hand your controller to a friend in NES and SNES online games",
+        "N64 games show on-screen messages and chat in fullscreen too"
+      ],
+      "improved": [
+        "Smash Remix matches count for party mode, brackets and rivalries",
+        "RetroHub uses far less of your PC while a game runs",
+        "A fresh install starts with the setup wizard",
+        "Remove from library now only removes the game on this PC; hiding it on all your PCs is a separate button",
+        "Games on a drive that isn't connected stay in your library instead of vanishing"
+      ],
+      "fixed": [
+        "An update could close a game you were playing: it now waits until you finish",
+        "Resuming a game could load an older resume point over a newer save from your other PC",
+        "Some cloud saves could be replaced by an older copy, never sync, or keep retrying; PlayStation 2 memory cards are now protected like saves",
+        "Exports and sync folders no longer contain your account sign-in",
+        "Quit from the game menu now works even while an online game is waiting for a friend",
+        "Add to desktop works again",
+        "Windows notifications and tip cards no longer appear over your game",
+        "Rivalries no longer credit a stranger who has the same name as your friend"
+      ]
+    },
+    {
       "version": "1.29.24",
       "date": "2026-10-31",
       "title": "Smoother installs",
