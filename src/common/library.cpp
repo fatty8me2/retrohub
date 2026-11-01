@@ -2,6 +2,7 @@
 #include "json.h"
 #include "miniz.h"
 #include "library.h"
+#include "library_scan_info.h"
 #include "prefs.h"
 #include "emu_formats.h"
 #include "wiiu_meta.h"
@@ -2305,6 +2306,8 @@ fs::path lib_dir() {
 
 std::mutex g_skip_mu;
 std::vector<SkippedArchive> g_skipped;
+std::vector<GameEntry> g_extra_copies;     // library-1: every copy of a game the last scan found besides the one it lists
+std::vector<FolderScanStatus> g_folder_status;   // library-3: per scanned folder, reachable / complete
 std::mutex g_state_mu;
 bool g_state_loaded = false;
 bool g_state_dirty = false;
@@ -2463,17 +2466,17 @@ struct Candidate {
 };
 
 /* Directory walk that skips unreadable dirs and never follows symlinks/junctions. */
-void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::string>& seen) {
+void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::string>& seen, bool* incomplete = nullptr) {
     std::vector<fs::path> stack{root};
     while (!stack.empty()) {
         fs::path dir = std::move(stack.back());
         stack.pop_back();
         std::error_code ec;
         fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
-        if (ec) continue;
+        if (ec) { if (incomplete) *incomplete = true; continue; }   // a folder that cannot be listed is "unknown", not "empty"
         std::vector<fs::path> subdirs;
         for (; it != fs::directory_iterator(); it.increment(ec)) {
-            if (ec) break;
+            if (ec) { if (incomplete) *incomplete = true; break; }
             const fs::directory_entry& de = *it;
             std::error_code e1;
             if (de.is_symlink(e1)) continue;
@@ -2515,14 +2518,21 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
     std::vector<Candidate> cands;
     std::set<std::string> seen;
     std::vector<std::string> prefixes;
+    std::vector<std::string> unknown_prefixes;   // folders that are offline or only partly readable: their cached games stay listed (library-3)
+    std::vector<FolderScanStatus> fstat;
     for (const std::string& f : folders) {
         std::error_code ec;
         fs::path root = fs::absolute(utf8_path(f), ec);
-        if (ec || !fs::is_directory(root, ec)) continue;
         std::string pre = ascii_lower(path_utf8(root));
         if (pre.empty() || (pre.back() != '\\' && pre.back() != '/')) pre.push_back('\\');
-        prefixes.push_back(pre);
-        walk(root, cands, seen);
+        FolderScanStatus st;
+        st.folder = f;
+        if (ec || !fs::is_directory(root, ec)) { st.reachable = false; st.complete = false; unknown_prefixes.push_back(pre); fstat.push_back(st); continue; }
+        bool incomplete = false;
+        walk(root, cands, seen, &incomplete);
+        if (incomplete) { st.complete = false; unknown_prefixes.push_back(pre); }
+        else prefixes.push_back(pre);   // only a fully read folder may drop cache rows of vanished files
+        fstat.push_back(st);
     }
 
     std::unordered_map<std::string, CacheRec> cache = cache_load();
@@ -2543,6 +2553,28 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
             c.done = true;
         } else {
             work.push_back(i);
+        }
+    }
+
+    std::vector<GameEntry> offline_games;   // cached games of offline / half-readable folders that this scan did not see
+    if (!unknown_prefixes.empty()) {
+        std::set<std::string> have;
+        for (const Candidate& c : cands) have.insert(ascii_lower(c.path_utf8));
+        for (const auto& kv : cache) {
+            if (!kv.second.ok || have.count(kv.first)) continue;
+            for (size_t u = 0; u < unknown_prefixes.size(); ++u) {
+                const std::string& pre = unknown_prefixes[u];
+                if (kv.first.compare(0, pre.size(), pre) != 0) continue;
+                GameEntry g = kv.second.e;
+                if (g.path.empty()) g.path = kv.first;
+                offline_games.push_back(std::move(g));
+                for (auto& fs_ : fstat) {
+                    std::string fp = ascii_lower(path_utf8(fs::absolute(utf8_path(fs_.folder))));
+                    if (!fp.empty() && fp.back() != '\\' && fp.back() != '/') fp.push_back('\\');
+                    if (fp == pre) ++fs_.kept;
+                }
+                break;
+            }
         }
     }
 
@@ -2625,6 +2657,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
     std::vector<GameEntry> out;
     std::map<std::string, size_t> by_key;   // key -> index in out
     std::vector<std::string> out_src;       // original file path of each out entry
+    std::vector<GameEntry> extras;          // the other copies (library-1)
     for (const Candidate& c : cands) {
         if (!c.rec.ok) continue;
         if ((c.rec.e.system == System::PS1 || c.rec.e.system == System::PS2) && !hidden.empty() && hidden.count(ascii_lower(path_utf8(c.path.lexically_normal())))) continue;
@@ -2634,9 +2667,19 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
             out.push_back(c.rec.e);
             out_src.push_back(c.path_utf8);
         } else if (dedupe_prefers(c.path_utf8, out_src[it->second])) {
+            extras.push_back(out[it->second]);
             out[it->second] = c.rec.e;
             out_src[it->second] = c.path_utf8;
-        }
+        } else extras.push_back(c.rec.e);
+    }
+    for (GameEntry& g : offline_games) {   // games of a drive that is not connected: listed from the last good scan (Play says the drive is missing)
+        auto it = by_key.find(g.key);
+        if (it == by_key.end()) { by_key.emplace(g.key, out.size()); out.push_back(std::move(g)); }
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_skip_mu);
+        g_extra_copies = std::move(extras);
+        g_folder_status = std::move(fstat);
     }
     std::stable_sort(out.begin(), out.end(), [](const GameEntry& a, const GameEntry& b) {
         if (a.system != b.system) return (int)a.system < (int)b.system;
@@ -2645,6 +2688,15 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         return a.path < b.path;
     });
     return out;
+}
+
+std::vector<GameEntry> scan_extra_copies() {
+    std::lock_guard<std::mutex> lk(g_skip_mu);
+    return g_extra_copies;
+}
+std::vector<FolderScanStatus> scan_folder_status() {
+    std::lock_guard<std::mutex> lk(g_skip_mu);
+    return g_folder_status;
 }
 
 std::vector<SkippedArchive> scan_skipped_archives() {
@@ -2678,7 +2730,7 @@ std::vector<CacheItem> cache_items() {
         std::wstring n = it->path().filename().wstring();
         if (n == L"_probe") continue;
         std::vector<fs::path> dirs;
-        if (n == L"3ds" || n == L"gc" || n == L"ps1" || n == L"ps2" || n == L"wiiu") {
+        if (n == L"3ds" || n == L"gc" || n == L"ps1" || n == L"ps2" || n == L"wiiu" || n == L"hacks") {   // hacks: one item per patched image (Plan 4 H3)
             std::error_code e2;
             for (fs::directory_iterator j(it->path(), e2), je; !e2 && j != je; j.increment(e2)) if (j->is_directory(e2)) dirs.push_back(j->path());
         } else dirs.push_back(it->path());
@@ -2841,6 +2893,34 @@ void library_set_data_dir(const std::string& dir) {
     }
     std::lock_guard<std::mutex> lk(g_dir_mu);
     g_dir_override = dir;
+}
+
+std::set<std::string> local_removed() {
+    std::set<std::string> s;
+    std::ifstream f(lib_dir() / L"removed_here.txt", std::ios::binary);
+    std::string ln;
+    while (std::getline(f, ln)) {
+        while (!ln.empty() && (ln.back() == '\r' || ln.back() == ' ')) ln.pop_back();
+        if (!ln.empty()) s.insert(ln);
+    }
+    return s;
+}
+
+bool local_removed_set(const std::string& key, bool removed) {
+    if (key.empty() || key.find_first_of("\r\n") != std::string::npos) return false;
+    std::set<std::string> s = local_removed();
+    if (removed ? !s.insert(key).second : !s.erase(key)) return true;   // nothing to change
+    fs::path dst = lib_dir() / L"removed_here.txt", tmp = lib_dir() / L"removed_here.txt.tmp";
+    std::error_code ec;
+    fs::create_directories(dst.parent_path(), ec);
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        for (const auto& k : s) f << k << "\n";
+        if (!f) return false;
+    }
+    fs::remove(dst, ec);
+    fs::rename(tmp, dst, ec);
+    return !ec;
 }
 
 } // namespace hub

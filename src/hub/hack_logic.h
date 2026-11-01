@@ -36,6 +36,7 @@ struct HackDef {
     std::string lang;            // translation language tag ("en", "es", "pt-br"...); "" for hacks
     std::string patch_file;      // file name inside the patch folder
     std::string format;          // "ips" | "ups" | "bps" | "vcdiff"
+    std::string prep;            // how the base image is prepared before patching: "" as is | "z64" N64 byte order normalised | "nohdr" SNES copier header removed
     uint32_t patch_crc = 0;      // CRC32 of the patch file
     uint32_t out_crc = 0;        // CRC32 of the patched image (the key's suffix)
     uint64_t out_size = 0;
@@ -68,9 +69,12 @@ inline bool parse_key(const std::string& key, std::string* base_key, uint32_t* o
     return true;
 }
 
-/* hack.json text <-> HackDef: implemented by the hacks lane (L7) next to its tests. */
+/* hack.json text <-> HackDef. decode() is strict about what a synced (foreign) file may say: the key must be a hack key whose base part
+ * matches base_key and whose suffix matches out_crc, patch_file must be a bare file name, format / prep / kind must be known values.
+ * Anything else returns false (the hack is then simply not listed). */
 std::string encode(const HackDef& d);
 bool decode(const std::string& text, HackDef* out);
+bool valid_patch_file_name(const std::string& n);
 
 }  // namespace hacks
 }  // namespace hubui
