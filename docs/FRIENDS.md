@@ -5,8 +5,8 @@ This is the friends list, presence, direct messages and lobby invites across eve
 ## Identity (no passwords)
 
 - **First run:** the client generates a 16-byte random `user_id` and a 32-byte random `secret`. It stores them in `data_dir()/identity.json` as `{user_id, secret, created}`, both base32 lowercase.
-  - The identity is also mirrored into the save vault at `<vault>/_identity/identity.json`. Folder sync then carries it to the player's other PCs.
-  - On startup, if `data_dir` has no identity but the vault does, the client adopts the vault's copy.
+  - The identity is also mirrored into this PC's save vault at `<vault>/_identity/identity.json` (for recovery on this PC). Since the saves fix, exports and sync folders never contain `_identity`, so folder sync does NOT carry the account identity to other PCs; another PC signs in with the account code instead.
+  - On startup, if `data_dir` has no identity but the vault does, the client adopts the vault copy (same PC, e.g. after a wiped data folder; the vault copy never reaches another PC).
 - **Friend code:** `RH-` followed by the first 8 base32 characters of `user_id`, uppercase, grouped 4-4 (for example `RH-7KQ2-M9XD`). The server resolves a code to a user with a `Directory` lookup: a single DO named `"directory"` maps the 8-character prefix to the full `user_id`. On a prefix collision at registration, the client generates a new identity.
 - **Auth:** the first connection registers the user. The UserHub DO stores `SHA-256(secret)`. Every later connection must present the same secret. A mismatch closes the socket with code 4003 `bad-secret`.
 

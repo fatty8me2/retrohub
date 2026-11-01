@@ -99,26 +99,28 @@ struct RecentGroups {
 };
 
 /* Who in the room is one of our friends, by ACCOUNT uid (names are only display text).
- * A friend whose presence says they are in this room (`lobby_code` == `room_code`) is a member. Presence can lag at the
- * end of a session, so a room member that no friend's presence explains is matched by name, but only when exactly one
- * friend has that name (usernames are unique per account, old display names may not be) and that friend is not
- * already matched. */
+ * A friend is a room member ONLY when their presence says they are in this room (`lobby_code` == `room_code`). A room member
+ * is never credited to a friend by display name alone: a stranger called "Mickey" must not become your friend Mickey (SO-F10).
+ * `other_member_names` is kept for callers' convenience and is not used to add members. */
 struct FriendRef { std::string uid, name, lobby_code; };
 inline std::vector<Member> match_friends(const std::vector<std::string>& other_member_names, const std::vector<FriendRef>& friends, const std::string& room_code) {
-    auto low = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+    (void)other_member_names;
     std::vector<Member> out;
     auto have = [&](const std::string& uid) { for (auto& m : out) if (m.uid == uid) return true; return false; };
     if (!room_code.empty())
         for (auto& f : friends) if (!f.uid.empty() && f.lobby_code == room_code && !have(f.uid)) out.push_back({f.uid, f.name});
-    for (auto& n : other_member_names) {
-        bool explained = false;
-        for (auto& m : out) if (low(m.name) == low(n)) { explained = true; break; }
-        if (explained) continue;
-        const FriendRef* hit = nullptr; int cnt = 0;
-        for (auto& f : friends) if (!f.uid.empty() && low(f.name) == low(n)) { hit = &f; ++cnt; }
-        if (cnt == 1 && !have(hit->uid)) out.push_back({hit->uid, hit->name});
-    }
     return out;
+}
+/* The friend sitting in a room seat called `member_name`: only a friend whose presence puts them in THIS room, with exactly
+ * that name (case-insensitive), and only when exactly one such friend exists. Anyone else (a stranger with the same name as a
+ * friend who is elsewhere, an ambiguous pair, a renamed friend) is not credited: returns nullptr. */
+inline const FriendRef* friend_for_member(const std::string& member_name, const std::vector<FriendRef>& friends, const std::string& room_code) {
+    if (room_code.empty() || member_name.empty()) return nullptr;
+    auto low = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+    const FriendRef* hit = nullptr; int cnt = 0;
+    for (auto& f : friends)
+        if (!f.uid.empty() && f.lobby_code == room_code && low(f.name) == low(member_name)) { hit = &f; ++cnt; }
+    return cnt == 1 ? hit : nullptr;
 }
 
 /* "Last played together: Mario Kart 64, 2 days ago" ("" when the friend never shared a session with us). */

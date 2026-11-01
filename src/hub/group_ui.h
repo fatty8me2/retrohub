@@ -2,6 +2,7 @@
 /* group_ui.h - play again / recent groups / notification history (group_ui.cpp). Included at the end of app.h.
  * Pure rules live in group_logic.h (unit tested). */
 #include "group_logic.h"
+#include "elo_logic.h"
 #include "rivals_logic.h"
 
 struct GroupUi {
@@ -36,6 +37,10 @@ std::string rivals_record_text(const std::string& uid, const std::string& name);
 std::string rivals_mains_text(const std::string& uid);              // "Mario vs Fox"
 std::string rivals_last5(const std::string& uid);                   // "WLWWL" oldest to newest
 std::string rivals_sessions_text(const std::string& uid);           // other games: "3 sessions together"
+const std::vector<hubui::elo::Entry>& ladder_entries();            // friends ladder (Elo, per viewer; cached)
+std::string ladder_row_text(const std::string& uid);                // friend row: "1180 #2" ("" = no rated games)
+std::string ladder_card_text();                                     // Your stats card: "Your rating: 1180 · #2 among friends" ("" = no rated games)
+int ladder_rating_of(const std::string& uid);                       // seeding input (1000 for unknown)
 void rivals_draw_card();                                            // Your stats card: top rivals (draws nothing when empty)
 void rivals_fake_seed();                                            // screenshots
 int group_unread();                             // bell badge
