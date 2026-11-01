@@ -1,5 +1,6 @@
 #include "app.h"
 #include "friends_ui.h"
+#include "party_ui.h"
 #include "profile.h"
 
 bool g_fake_room = false;
@@ -107,6 +108,7 @@ void leave_room() {
     if (A.proc && A.run.online && !A.run.after_exit) { if (A.run.remote_play) rplay_quit_current_guest(); else TerminateProcess(A.proc, 0); }
     kt_leave_room();
     group_left_room();
+    party_on_leave_room();   // the room's party (or vote) ends with the room
     A.lobby.stop();
     A.in_room = false;
     A.peers.clear();
@@ -276,6 +278,7 @@ void lobby_tick() {
             std::string gone;   // the departed host's name, before the maps are renumbered
             { auto pit = A.peers.find(0); if (pit != A.peers.end()) gone = pit->second.name; }
             hubui::host_left_remap(ev.from_slot, A.peers, A.ready, A.ingame, A.locals, A.picks);
+            party_on_host_change(ev.from_slot);                           // party points / votes follow the renumbering; the new host re-broadcasts the State
             A.pings.clear(); A.ping_at.clear(); A.ping_relay.clear();     // slots were renumbered: re-measure
             A.ready.clear();                                              // every ready flag belonged to the old host's game: all re-announce
             online_host_left(gone);
@@ -303,7 +306,17 @@ void lobby_tick() {
             hubui::PeerInfo& p = A.peers[from];
             hubui::parse_hello(j, &p);
         } else if (kind == "select") {
-            if (from == 0) A.selected_game = j.str("game");
+            if (from == 0) {
+                const std::string g = j.str("game");
+                if (g != A.selected_game) {   // OF-M7: READY belongs to the game that was shown. The host picked another one: nobody stays ready for a game they never saw
+                    A.selected_game = g;
+                    A.ready.clear();
+                    if (A.my_ready && !is_host()) {
+                        A.my_ready = false;
+                        A.lobby.send_msg("{\"kind\":\"ready\",\"ready\":false}");   // re-announce just that; the full hello is not needed
+                    }
+                }
+            }
         } else if (kind == "ready") {
             const hubui::Json* r = j.get("ready");
             A.ready[from] = r && r->type == hubui::Json::Bool && r->b;
@@ -332,7 +345,17 @@ void lobby_tick() {
         } else if (kind == "np_abort") {   // the host could not start the game it announced: stop waiting for it
             if (from == 0 && !is_host()) {
                 online_cancel_pending();
-                set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + j.str("reason")), 10.0);
+                /* OF-M8: a runner this launch already started would wait for the host's session for a minute; close it (only a young one:
+                 * a game that has been running for a while is not this launch). */
+                const ULONGLONG now = GetTickCount64();
+                if (A.proc && A.run.room && A.run.online && !A.run.remote_play && now - A.run.start_tick < 90000) request_game_close();
+                /* The host's launch_online may already have said why (host_abort) and host_launch_selected then adds a generic one: show one notice. */
+                static ULONGLONG last_abort = 0;
+                static bool last_had_reason = false;
+                const bool again = last_abort && now - last_abort < 3000 && (last_had_reason || j.str("reason").empty());
+                if (!again) set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + j.str("reason")), 10.0);
+                last_abort = now;
+                last_had_reason = !j.str("reason").empty();
             }
         } else if (kind == "np_fail") {
             if (is_host()) { set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0); gc_host_guest_failed(member_name(from) + " can't start: " + j.str("reason")); }
