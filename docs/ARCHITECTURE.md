@@ -299,3 +299,8 @@ They run as external emulators started by `launch_external` in `src/hub/launch.c
 parsers in `src/common/emu_formats.cpp` and the save mapping in `src/common/emu_saves.cpp`. See `docs/EMULATORS.md`.
 
 ROM files can be `.z64` (big-endian), `.v64` (byteswapped) or `.n64` (little-endian). Normalize to `.z64` byte order before hashing. Identification uses the MD5 of the normalized image, with a fallback to the header CRC1/CRC2 at offsets 0x10/0x14.
+
+### PSP (system `psp`, PPSSPP)
+External emulator like PCSX2: `System::PSP`, `hubemu::Kind::Ppsspp` (pinned 1.20.4 zip from ppsspp.org, portable `memstick` under `<data>\emulators\ppsspp`), identification in `src/common/psp.{h,cpp}`
+(PARAM.SFO of ISO / CSO / CHD / PBP, run BEFORE the PS1 / PS2 / GC claims; a PS1 eboot `.pbp` stays PS1), config writers in `src/hub/ppsspp.{h,cpp}`, SAVEDATA <-> vault mapping in `emulators.cpp`
+(`SaveSession::psp_disc_id`). Offline only. Full description: `docs/EMULATORS.md` ("PlayStation Portable"). Tests: `hub_psp_test`, `qa/psp_play.ps1` (hidden desktop), `qa/psp_shots.ps1`.

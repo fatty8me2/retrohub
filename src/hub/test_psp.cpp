@@ -441,6 +441,9 @@ static int test_download(const std::string& root) {
 }
 
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "--fixture") {   // QA: a synthetic PSP image (valid PARAM.SFO, no game data) for qa/psp_play.ps1
+        return write_file(argv[2], make_psp_iso(umd_sfo("ULUS10041", "RetroHub Synthetic PSP Game"))) ? 0 : 1;
+    }
     fs::path d = fs::temp_directory_path() / ("hub_psp_test_" + std::to_string((unsigned long long)GetCurrentProcessId()));
     fs::create_directories(d);
     setvbuf(stdout, nullptr, _IONBF, 0);
