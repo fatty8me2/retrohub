@@ -75,7 +75,8 @@ Messages from the server (JSON text):
 | `{type:"msg", from, body}` | A member's broadcast. `body` is any JSON object; the hub defines its meaning (see below) |
 | `{type:"peers", peers:[{slot,public,local}]}` | Whenever a member reports its endpoint, to everyone |
 | `{type:"host_changed", from_slot, slot:0, name}` | Host left and `from_slot` (named `name`) is now slot 0. Sent to every remaining opted-in member, just before the new `members`. The promoted member's own `my_slot` becomes 0 |
-| `{type:"error", reason}` then close 4000 | `reason` is one of `room-in-use`, `no-such-room`, `room-full` |
+| `{type:"error", reason}` then close 4000 | `reason` is one of `room-in-use`, `no-such-room`, `room-full` (older RetroHub: also `bad-slot`, `host-reconnecting`, `spectators-full`, `spectate-busy`, `no-such-game`, `host-too-old`, `no-free-port`), or `server-busy` (the free daily budget is used up: no new rooms) or `rate-limited` (too many rooms or sockets from one network in a minute). `LobbyClient`/`Session` show every one of them in plain words |
+| `{type:"relay_denied", reason, detail}` | A binary frame of the receiver was NOT relayed, at most once per 10 s per socket. `reason` is `server-busy` (daily budget: from 50% a room's first relayed frame, from 90% every frame) or `rate-limited` (the room sent more than 400 frames/s or the socket more than 1 MiB/s). Additive: older clients ignore it |
 
 Messages from a client:
 
@@ -85,7 +86,7 @@ Messages from a client:
 | `{type:"endpoint", public, local}` | Stored and broadcast as `peers` |
 | `{type:"keepalive"}` | Auto-response `keepalive_ack` |
 
-**Binary relay (always available):** byte 0 is the destination slot, or `0xFF` for all other members. The rest is the payload. The server rewrites byte 0 to the sender's slot and forwards. The maximum frame size is 1200 bytes.
+**Binary relay (subject to the daily cost guard below):** byte 0 is the destination slot, or `0xFF` for all other members. The rest is the payload. The server rewrites byte 0 to the sender's slot and forwards. The maximum frame size is 1200 bytes. A frame that is not forwarded is answered with `relay_denied`; the hubnet `Session` then says "The free server is busy, so the relay is off right now. Direct connections still work." instead of "Connection lost".
 
 **Validation and details as implemented** (`BattleShip/server/cloudflare/src/hub.js`):
 
@@ -106,15 +107,24 @@ First byte is the type: `H` hello `[H,from]`, `A` helloack `[A,from]`, `D` data 
 
 ### Daily request cost guard (Worker, `reqbudget.js`, `reqbudget_core.js`)
 
-Every Worker request counts 1 unit and each relayed WebSocket frame 1/20 unit (Durable Objects bill incoming WS messages 20:1). Units are counted per isolate and flushed to one ReqBudget DO at most every 30 s. The cap is `DAILY_REQ_CAP` (default 100,000 units per UTC day), and the thresholds are fractions of it:
+Every Worker request counts 1 unit, every Durable Object request and alarm 1 unit, and each incoming WebSocket message 1/20 unit (Durable Objects bill incoming WS messages 20:1). Units are counted per isolate and flushed to one ReqBudget DO at most every 30 s. The cap is `DAILY_REQ_CAP` (default 100,000 units per UTC day), and the thresholds are fractions of it. Two more limits of the Workers Free plan are folded into the same percentages: the estimated Durable Object duration (13,000 GB-s a day) and **Durable Object rows written** (100,000 a day for the whole account; the guard's cap `DAILY_ROWS_CAP` is 60,000, 60% of it). Rows are the real `rowsWritten` of every UserHub and Directory SQL statement plus 1 per KV put/delete and `setAlarm` elsewhere; a failed write is an outage (hello, presence, hosting and relay start all write), so this axis trips the same gates before the wall. Limits as of 2026-11-01: https://developers.cloudflare.com/durable-objects/platform/pricing/.
 
 | Usage | Effect |
 |-------|--------|
-| >= 50% | No NEW relay sessions. Clients get `relay_denied` with `reason:"server-busy"`; direct UDP still works. |
-| >= 70% | No NEW rooms. `/ws role=host` is refused with `error` `server-busy`. |
-| >= 90% | Relayed frames are dropped. Relay sessions in progress stop; direct play is unaffected. |
+| >= 50% | No NEW relay sessions: on `/ws` the `relay` request, on `/hub` a room's first relayed frame. The sender gets `relay_denied` with `reason:"server-busy"`; direct UDP still works. No spectating. |
+| >= 70% | No NEW rooms. `/ws` and `/hub` `role=host` are refused with `error` `server-busy` (RetroHub says "The free server is busy right now, so it can't open new rooms"). |
+| >= 90% | Relayed frames are dropped (the sender is told with `relay_denied`). Relay sessions in progress stop; direct play is unaffected. New `/friends` sockets are refused, presence alarms pause until just after 00:00 UTC, and optional storage writes (the hub launch replay, the `/ws` relay flag) are skipped. |
 
-Each room's relay is also capped at 400 frames/s sustained (burst 2x). If the DO cannot be reached, the isolate's own count still applies (fails closed on the local number). The guard lives in BattleShip's Worker, so it covers RetroHub and native Smash alike. Tests: `server/cloudflare/test_reqbudget.mjs`.
+Caps that apply whatever the budget:
+
+- **Relay (`/hub`, like `/ws`):** each room 400 frames/s sustained (burst 2x), each socket 1 MiB/s (burst 4 MiB); over-budget frames are dropped and the sender told (`relay_denied` `rate-limited`, at most every 10 s); a socket over budget for 10 s without a pause is closed with 1008.
+- **Text frames in a room socket:** 50/s per socket (burst 600: a joining RetroHub announces its game library in 3000-byte parts, again on every membership change); a flood is dropped and the socket closed with 1008 after 5 s.
+- **Per address (`/hub`):** 30 new rooms and 120 sockets per minute (IPv6 counted per /64); refused with `error` `rate-limited`. Loopback and private LAN addresses (a local `wrangler dev`) are never limited.
+- **Presence fan-out:** one presence event reaches at most 40 online friends (the Free plan allows 50 subrequests per invocation), always the least recently served first; the others re-sync on their own next hello, whose fan-out pulls our current status from the reply. The rest of the `/friends` hello is unchanged.
+- **New accounts:** 6 per address (IPv6: per /64) and 100 service-wide per UTC day (test clients, `"test":true` or a `qa-` name: 30 and 100, counted apart). Refusal: `{type:"error", reason:"registration-limited", detail:"ip"|"global", retry_after:<seconds to 00:00 UTC>}`; the socket is left open on purpose (every shipped client reconnects after any close). Existing accounts are never affected. Local tests are not limited (loopback and private LAN addresses).
+- **Sockets that have not said hello:** hello must arrive within 30 s and within 3 frames, otherwise 4002; at most 8 parked sockets per account (the oldest are closed); they never touch the account's own 300 messages/minute budget.
+
+If the DO cannot be reached, the isolate's own count still applies (fails closed on the local number). The guard lives in BattleShip's Worker, so it covers RetroHub and native Smash alike. Tests: `server/cloudflare/test_reqbudget.mjs` (the maths), `test_rows_gate.mjs`, `test_hub_relay_caps.mjs`, `test_presence_cap.mjs`, `test_register_rl.mjs`, `test_friends_preauth.mjs`.
 
 ## Hub lobby messages (`msg.body`, defined by the hub)
 
