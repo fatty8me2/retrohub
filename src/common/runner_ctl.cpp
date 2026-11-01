@@ -227,7 +227,8 @@ static bool quit_pending(const std::string& ctl, const json::Value& cur) {
     std::error_code ec;
     auto t = fs::last_write_time(fs::u8path(ctl), ec);
     if (ec) return false;
-    return fs::file_time_type::clock::now() - t < std::chrono::seconds(kQuitHoldSec);
+    auto age = fs::file_time_type::clock::now() - t;
+    return age >= fs::file_time_type::duration::zero() && age < std::chrono::seconds(kQuitHoldSec);   // a future stamp (clock moved back) is not held
 }
 
 long long send_command_ex(const std::string& ctl, Command c) {
