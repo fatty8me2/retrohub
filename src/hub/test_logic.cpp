@@ -883,8 +883,8 @@ int main() {
         CHECK(hubui::settings_tab_step(0, 1, &nx) == 0 && nx == 1);
         CHECK(hubui::settings_tab_step(0, -1, &nx) == -1 && nx == 0);
         CHECK(hubui::settings_tab_step(hubui::ST_Count - 1, 1, &nx) == 1);
-        CHECK(hubui::settings_tab_clamp(99) == 0 && hubui::settings_tab_clamp(-3) == 0 && hubui::settings_tab_clamp(3) == 3 && hubui::settings_tab_clamp(4) == 0);
-        CHECK(hubui::ST_Count == 4);
+        CHECK(hubui::settings_tab_clamp(99) == 0 && hubui::settings_tab_clamp(-3) == 0 && hubui::settings_tab_clamp(3) == 3 && hubui::settings_tab_clamp(4) == hubui::ST_Help && hubui::settings_tab_clamp(5) == 0);
+        CHECK(hubui::ST_Count == 5);
         /* moved controls: pack links on General, cloud toggles on the Saves page, Cemu controls on the Controllers page */
         CHECK(hubui::settings_control_tab("pack_links") == hubui::ST_General && hubui::settings_control_tab("rom_folders_list") == hubui::ST_General);
         CHECK(hubui::settings_control_tab("pause_cloud") == hubui::kPageSaves && hubui::settings_control_tab("cemu_manage_controls") == hubui::kPageControllers);
