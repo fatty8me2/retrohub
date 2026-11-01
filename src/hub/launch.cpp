@@ -744,7 +744,11 @@ void play_entry(const hub::GameEntry& e_in) {
         if (d == hubui::SmashPlay::NeedRom) { push_toast(hubui::smash_need_rom_text(), ui::WARN, 9.0); return; }
         if (d == hubui::SmashPlay::WarnMd5) push_toast(hubui::smash_md5_warn_text(md5), ui::WARN, 12.0);
         ri.o2r_prep = o2r;
-        spawn(exe, "--from-hub --no-update-check", dir_of(exe), smash_env(exe), ri);   // RetroHub's updater is the only one
+        auto env = smash_env(exe);
+        ri.result_file = hub::data_dir() + "smash_result.json";   // each finished VS match (Plan 4: local matches too, for party mode and brackets)
+        { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(ri.result_file), ec); }
+        env.push_back({"SSB64_RESULT_FILE", ri.result_file});
+        spawn(exe, "--from-hub --no-update-check", dir_of(exe), env, ri);   // RetroHub's updater is the only one
         return;
     }
     std::string battery = no_slash(hub::saves::battery_dir(sys, e.key));
