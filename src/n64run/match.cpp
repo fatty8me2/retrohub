@@ -40,6 +40,7 @@ bool parse_match_spec(const std::string& s, MatchSpec* out, std::string* err) {
         if (k == "stage") { if (!parse_int(v, &m.stage)) return fail("bad stage '" + v + "'"); }
         else if (k == "stocks") { if (!parse_int(v, &m.stocks) || m.stocks < 1 || m.stocks > 99) return fail("bad stocks '" + v + "'"); }
         else if (k == "time") { if (!parse_int(v, &m.time) || m.time < 1) return fail("bad time '" + v + "'"); }
+        else if (k == "rules") { if (!parse_int(v, &m.rules) || m.rules < 1 || m.rules > 3) return fail("bad rules '" + v + "' (1 time, 2 stock, 3 both)"); }
         else if (k.size() == 2 && k[0] == 'p' && k[1] >= '0' && k[1] <= '3') {
             int p = k[1] - '0';
             size_t c = v.find(':');
@@ -63,7 +64,7 @@ void MatchDriver::write_vs(uint8_t* ram) {
     ram_w8(ram, base + R::vs::kGameType, 1);
     ram_w8(ram, base + R::vs::kStage, (uint8_t)spec_.stage);
     ram_w8(ram, base + R::vs::kTeams, 0);
-    ram_w8(ram, base + R::vs::kGameRules, 2);          // stock
+    ram_w8(ram, base + R::vs::kGameRules, (uint8_t)spec_.rules);   // default 2 = stock
     ram_w8(ram, base + R::vs::kPlCount, (uint8_t)humans);
     ram_w8(ram, base + R::vs::kCpCount, 0);
     ram_w8(ram, base + R::vs::kTime, (uint8_t)spec_.time);
