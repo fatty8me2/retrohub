@@ -41,7 +41,8 @@ passes `battery_dir()` / `states_dir()` to runners, and calls `touch_game()` aft
 
 Vault layout: `<vault>\<system>\<game key>\{battery\, states\, meta.json}`; path components are sanitized.
 Other top-level entries: `.sync\` (manifests, never synced), `_conflicts\` (synced like any other file), `_identity\`
-(this PC's account secret: never synced, exported or imported; neither is any `identity*.json`).
+(this PC's account secret: never synced, exported or imported; neither is any `identity*.json`, nor an `_identity` folder
+anywhere else, such as the old copies older versions kept in `_conflicts\_identity\`).
 
 **`sync_folder(root, include_states)`**
 - The sync folder mirrors the vault layout. Both trees are scanned; each file is identified by relative
