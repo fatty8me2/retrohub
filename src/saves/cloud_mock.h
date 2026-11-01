@@ -52,6 +52,7 @@ public:
     void expire_leases();
     /* Server-side refusals, like the real Worker under its caps. A path containing `path_part` is answered `skip` in the plan (reason), or
      * in the commit with result `cloud` = "skipped" / "missing" (the blob is uploaded but nothing is applied). "" clears the rule. */
+    void evict_file(const std::string& uid, const std::string& gkey, const std::string& path);   // as if the Worker pushed it out for space
     void refuse_in_plan(const std::string& path_part, const std::string& reason = "over-cap");
     void refuse_in_commit(const std::string& path_part, const std::string& cloud = "skipped", const std::string& reason = "over-cap");
 

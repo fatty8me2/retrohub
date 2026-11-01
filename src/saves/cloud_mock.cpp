@@ -296,7 +296,7 @@ struct MockServer::Impl {
             str gkey = body.str("game");
             const JV* fl = body.get("files");
             if (gkey.empty() || !fl || fl->type != JV::Array || fl->a.size() > 200) return jerr(400, "bad-plan");
-            for (auto& f : fl->a) if (!worker_key_ok(f.str("path"))) { bad_plans++; return jerr(400, "bad-plan"); }   // the whole plan, like the real Worker
+            for (auto& f : fl->a) if (!worker_key_ok(f.str("path")) || f.i64("mtime") < 0) { bad_plans++; return jerr(400, "bad-plan"); }   // the whole plan, like the real Worker
             Game& G = A.games[gkey];
             Ticket t;
             t.gkey = gkey;
@@ -363,7 +363,7 @@ struct MockServer::Impl {
             for (auto& pf : t.files) {
                 FileRec& fr = G.files[pf.path];
                 int cur = fr.evicted ? 0 : fr.cur;
-                if (cur != pf.base && !(fr.evicted && pf.base == 0)) {
+                if (cur != pf.base && !(fr.evicted && (pf.base == 0 || pf.base == fr.cur))) {   // the real Worker wants base == the tombstone's cur
                     str cj = fr.vers.empty() ? str() : ",\"current\":" + ver_json(fr.vers[0]);
                     results += (results.empty() ? "" : ",") + str("{\"path\":") + json::quote(pf.path) + ",\"cloud\":\"synced\",\"conflict\":true" + cj + "}";
                     continue;
@@ -675,6 +675,17 @@ void MockServer::set_played(const std::string& uid, const std::string& gkey, int
 void MockServer::expire_leases() {
     std::lock_guard<std::mutex> lk(p_->mu);
     for (auto& a : p_->accts) for (auto& g : a.second.games) g.second.lease_until = 0;
+}
+void MockServer::evict_file(const std::string& uid, const std::string& gkey, const std::string& path) {
+    std::lock_guard<std::mutex> lk(p_->mu);
+    Acct& A = p_->accts[uid];
+    auto g = A.games.find(gkey);
+    if (g == A.games.end() || !g->second.files.count(path)) return;
+    FileRec& fr = g->second.files[path];
+    fr.vers.clear();
+    fr.evicted = true;                    // a tombstone: cur stays, the bytes are gone
+    g->second.rev = ++A.rev;
+    p_->drop_unreferenced(A);
 }
 void MockServer::refuse_in_plan(const std::string& path_part, const std::string& reason) {
     std::lock_guard<std::mutex> lk(p_->mu);

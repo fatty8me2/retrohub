@@ -42,7 +42,10 @@ bool write_atomic(const str& path, const str& data) {
 
 /* ------------------------------------------------------------------ three-way */
 Act three_way(const Side& local, const Side& base, const Side& cloud, bool cloud_evicted, FileClass cls) {
-    if (cloud_evicted) return local.present ? Act::LocalOnlyCap : Act::Nothing;
+    if (cloud_evicted) {
+        if (!local.present) return Act::Nothing;
+        return is_protected(cls, local.size) ? Act::Push : Act::LocalOnlyCap;   // a save (battery, memory card) is uploaded again; only large items stay local
+    }
     if (!local.present && !cloud.present) return Act::Nothing;
     if (!local.present) return Act::Pull;                       // new game on this PC, or an accidental local loss: heal
     if (!cloud.present) return Act::Push;
@@ -77,6 +80,11 @@ BaseRead read_base(const BFile& bf, bool have_cloud, int cloud_ver, const std::s
     if (!bf.lo.empty() && bf.ver > 0 && have_cloud && cloud_ver == bf.ver && cloud_sha != bf.sha) {
         r.refused_sha = bf.sha;
         r.base.sha = cloud_sha;
+        r.legacy = true;
+    } else if (!bf.lo.empty() && bf.ver > 0 && have_cloud && cloud_ver != bf.ver && cloud_sha != bf.sha) {
+        /* the cloud moved on and the stored sha may be refused local content: no agreement is known, so differing sides are a conflict (never a silent pull) */
+        r.refused_sha = bf.sha;
+        r.base = Side();
         r.legacy = true;
     }
     return r;

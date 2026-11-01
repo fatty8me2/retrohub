@@ -134,6 +134,11 @@ static void test_three_way() {
     CHECK(three_way(S("a"), S(""), S("b"), false, B) == Act::Conflict);             // first run, different bytes
     CHECK(three_way(S("a"), S("a"), S(""), true, FileClass::State) == Act::LocalOnlyCap);
     CHECK(three_way(S(""), S("a"), S(""), true, FileClass::State) == Act::Nothing);
+    /* an evicted SAVE (battery, memory card) is uploaded again; only large items stay local */
+    CHECK(three_way(S("a"), S("a"), S(""), true, FileClass::Card) == Act::Push);
+    CHECK(three_way(S("b"), S("a"), S(""), true, FileClass::Battery) == Act::Push);
+    CHECK(three_way(S(""), S("a"), S(""), true, FileClass::Card) == Act::Nothing);
+    CHECK(three_way(S("a"), S("a"), S(""), true, FileClass::Shot) == Act::LocalOnlyCap);
     CHECK(three_way(S(""), S("a"), S(""), false, B) == Act::Nothing);               // never delete anything
     /* states / shots / settings never prompt: newest mtime wins */
     CHECK(three_way(S("b", 200), S("a"), S("c", 100), false, FileClass::State) == Act::Push);
@@ -289,7 +294,9 @@ static void test_read_base() {
     BaseRead r5 = read_base(old2, true, 4, "C4");
     CHECK(r5.legacy && r5.refused_sha == "L5" && r5.base.present && r5.base.sha == "C4" && r5.ver == 4);   // the cloud has not moved: its version IS the agreement
     BaseRead r5b = read_base(old2, true, 6, "C6");                               // the cloud moved on since: cannot tell, left as stored (the pull then backs the local copy up)
-    CHECK(!r5b.legacy && r5b.base.sha == "L5" && r5b.refused_sha.empty());
+    CHECK(r5b.legacy && !r5b.base.present && r5b.refused_sha == "L5");   // item 4: no agreement is known -> two differing sides are a conflict, never a pull
+    BaseRead r5c = read_base(old2, true, 6, "L5");                               // ... unless the cloud holds exactly that content
+    CHECK(!r5c.legacy && r5c.base.sha == "L5");
     BFile marked{4, 7, 8, "S4", "cap"};                                          // evicted elsewhere: lo on a true agreement
     BaseRead r6 = read_base(marked, true, 4, "S4");
     CHECK(!r6.legacy && r6.base.sha == "S4" && r6.refused_sha.empty());
@@ -684,7 +691,7 @@ static void test_quota() {
     GameCloudInfo gi;
     CHECK(cloud_game(a, &gi) && gi.files_local_only == 1);
     CloudEvent ev;
-    CHECK(pop_event(CloudEvent::WentLocalOnly, &ev) && ev.text.find("Cloud space is full") == 0 && ev.text.find("game-a") != str::npos && !ev.good);
+    CHECK(pop_event(CloudEvent::WentLocalOnly, &ev) && ev.text.find("Cloud space is full") == 0 && ev.text.find("game-a") != str::npos && ev.text.find("older saves and save states") != str::npos && !ev.good);
     /* the evicted item is not retried while unchanged */
     int puts = g_srv->n_put;
     cloud_prelaunch(a, SyncMode::ReadWrite); play(a); exit_game(a);
@@ -1064,17 +1071,28 @@ static void test_refused_upload_is_not_pushed() {
         CHECK(!pop_event(CloudEvent::Pushed));                                            // no "Saves backed up to the cloud." for a refused file
         GameCloudInfo gi;
         CHECK(cloud_game(G, &gi) && gi.state == CloudState::LocalOnly && gi.files_local_only == 1);
-        g_srv->refuse_in_plan(""); g_srv->refuse_in_commit("");
         /* every later pass: the pre-launch pull, the background pull job, "Sync now" - none may bring the older cloud copy back */
         PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
         CHECK(r.action == PrelaunchResult::Proceed && r.files_pulled == 0 && r.conflicts.empty());
         CHECK(get(sav) == newer);
+        /* "Sync now" gives a refused file ONE more try (the cap may have changed); refused again it stays local and is not pulled back */
+        int plans = g_srv->n_plan;
         cloud_sync_all_now(); pump();
-        CHECK(get(sav) == newer);
+        CHECK(g_srv->n_plan == plans + 1 && get(sav) == newer);
         CHECK(g_srv->cur_sha(g_uid, GK, "battery/s.sra") == cloud_sha);
-        int plans = g_srv->n_plan;                                                       // unchanged since the refusal: not offered to the server again either
-        cloud_sync_all_now(); pump();
+        plans = g_srv->n_plan;                                                           // nothing retries by itself: no plan without a trigger
+        cloud_engine_pump(50); cloud_prelaunch(G, SyncMode::ReadWrite); cloud_engine_pump(50);
         CHECK(g_srv->n_plan == plans && get(sav) == newer);
+        /* a change of the account's caps is such a trigger too (seen in the next manifest) */
+        g_srv->account_cap = 40ll << 20; cloud_prelaunch(G, SyncMode::ReadWrite); pump();
+        CHECK(g_srv->n_plan > plans && get(sav) == newer && g_srv->cur_sha(g_uid, GK, "battery/s.sra") == cloud_sha);
+        g_srv->account_cap = 50ll << 20; cloud_prelaunch(G, SyncMode::ReadWrite); pump();
+        /* the server accepts now: the next "Sync now" uploads it */
+        g_srv->refuse_in_plan(""); g_srv->refuse_in_commit("");
+        cloud_sync_all_now(); pump();
+        cloud_sha = g_srv->cur_sha(g_uid, GK, "battery/s.sra");
+        CHECK(cloud_sha == sha_of(newer) && get(sav) == newer);
+        CHECK(pop_event(CloudEvent::Pushed));
         int bak = 0;
         if (fs::exists(pc1.vault / "_conflicts")) for (auto& e : fs::recursive_directory_iterator(pc1.vault / "_conflicts")) if (e.is_regular_file()) bak++;
         CHECK(bak == 0);                                                                 // nothing was replaced, so nothing needed a backup
@@ -1130,15 +1148,13 @@ static void test_legacy_refused_base_cannot_overwrite() {
     PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
     CHECK(get(pc2.game() / "battery" / "l1.sra") == n1 && get(pc2.game() / "battery" / "l2.sra") == n2);        // neither was overwritten
     /* l1: the cloud has not moved since the refusal - it just stays local only; l2: nothing is known, so the player is asked */
-    CHECK(r.action == PrelaunchResult::NeedConflictDecision && r.conflicts.size() == 1 && r.conflicts[0].path == "battery/l2.sra");
-    /* l3: nothing can tell a true agreement from a refusal once the cloud moved, so the cloud copy comes down - but the local one is backed up first */
-    CHECK(r.files_pulled == 1 && get(pc2.game() / "battery" / "l3.sra") == rnd(2000, 76));
-    int kept = 0;
-    if (fs::exists(pc2.vault / "_conflicts")) for (auto& e : fs::recursive_directory_iterator(pc2.vault / "_conflicts")) if (e.is_regular_file() && get(e.path()) == n3) kept++;
-    CHECK(kept == 1);
+    CHECK(r.action == PrelaunchResult::NeedConflictDecision && r.conflicts.size() == 2);
+    /* l3: nothing can tell a true agreement from a refusal once the cloud moved: two differing sides are a conflict, never a silent pull (l2 and l3 are asked) */
+    CHECK(r.files_pulled == 0 && get(pc2.game() / "battery" / "l3.sra") == n3);          // not pulled: asked
     cloud_sync_all_now(); pump();
     CHECK(get(pc2.game() / "battery" / "l1.sra") == n1 && get(pc2.game() / "battery" / "l2.sra") == n2);
     CHECK(g_srv->cur_sha(g_uid, GK, "battery/l1.sra") == sha_of(rnd(2000, 71)));
+    CHECK(get(pc2.game() / "battery" / "l3.sra") == n3);
 }
 
 /* F7: a failed startup pass used to retry every 60 s forever and ignored the server's retryAfter - polling the free tier. */
@@ -1273,6 +1289,103 @@ static void test_ps2_card_follows_the_player() {
     r = cloud_prelaunch(ps2, SyncMode::ReadWrite);
     CHECK(r.action == PrelaunchResult::Proceed && r.conflicts.empty() && r.files_pulled == 1);
     CHECK(get(cardfile(pc1)) == card(2));
+    /* the Worker pushes the card out of the cloud for space: it is a save, so it is uploaded again (a state would stay local only) */
+    g_srv->evict_file(g_uid, "ps2/slus-20946", rel);
+    CHECK(g_srv->evicted(g_uid, "ps2/slus-20946", rel));
+    cloud_sync_all_now(); pump();
+    CHECK(!g_srv->evicted(g_uid, "ps2/slus-20946", rel) && g_srv->cur_sha(g_uid, "ps2/slus-20946", rel) == sha_of(card(2)));
+}
+
+/* Restore mode: one game that cannot be written (here a folder sits where its save file belongs) must not keep the PC in restore mode,
+ * which defers every push of every game. */
+static void test_restore_skips_a_failing_game() {
+    printf(" restore: a game that cannot be restored does not hold the others back\n");
+    Pc pc("pc1");
+    const GameId good{"n64", "good"};
+    g_srv->seed_file(g_uid, "n64/bad", "battery/b.sra", rnd(500, 91), now_unix() - 500, "PC-OLD", now_unix() - 500);
+    g_srv->seed_file(g_uid, "n64/good", "battery/g.sra", rnd(500, 92), now_unix() - 400, "PC-OLD", now_unix() - 400);
+    put(pc.vault / "n64" / "bad" / "battery" / "b.sra" / "blocker", "x");           // the pull of b.sra cannot write
+    use(pc);                                                                          // a new account on this PC: restore mode
+    cloud_engine_pump(1);                                                             // the startup pass
+    GameCloudInfo gi;
+    CHECK(cloud_game(GameId{"n64", "bad"}, &gi) && gi.state == CloudState::NeedsAttention);
+    int t = 0; long long at = 0;
+    CHECK(queue_item("n64/bad", "pull", &t, &at));                                    // tried again later, with backoff
+    CHECK(!queue_item("*", "startup", &t, &at));                                      // the startup pass is finished: restore mode is over
+    pump();
+    CHECK(get(pc.game("n64", "good") / "battery" / "g.sra") == rnd(500, 92));
+    play(good);
+    put(pc.game("n64", "good") / "battery" / "mine.sra", rnd(500, 93), now_unix() - 50);
+    exit_game(good);
+    CHECK(g_srv->cur_sha(g_uid, "n64/good", "battery/mine.sra") == sha_of(rnd(500, 93)));   // pushes run
+}
+
+/* While restore mode defers a push, the queue file is not rewritten every 15-20 s. */
+static void test_deferral_does_not_rewrite_the_queue() {
+    printf(" a deferred job does not rewrite the queue file\n");
+    Pc pc("pc1");
+    g_srv->fail_status = 503; g_srv->fail_retry_after = 0; g_srv->fail_count = 1;
+    use(pc);
+    cloud_engine_pump(1);                                                             // startup fails: still in restore mode
+    g_srv->fail_status = 0; g_srv->fail_count = 0; g_srv->fail_retry_after = 1;
+    put(pc.game() / "battery" / "d.sra", rnd(300, 94), now_unix() - 10);
+    cloud_game_exited(G);                                                             // queues the push (saved)
+    const fs::path qf = pc.data / "cloud-queue.json";
+    const str q1 = get(qf);
+    cloud_engine_pump(10);                                                            // the job is deferred by restore mode
+    int t = 0; long long at = 0;
+    CHECK(queue_item(GK, "push", &t, &at) && !q1.empty() && get(qf) == q1);
+    CHECK(g_srv->cur_sha(g_uid, GK, "battery/d.sra").empty());
+}
+
+/* A parked startup pass wakes on cheap local events (a launch, an exit, the friends socket coming back) - and only a PARKED one. */
+static void test_parked_startup_wakes_on_local_events() {
+    printf(" parked startup pass: woken by a launch, an exit or the network coming back\n");
+    Pc pc("pc1");
+    int t = 0; long long at = 0;
+    auto park = [&]() {
+        g_srv->fail_status = 401; g_srv->fail_count = 1;
+        use(pc); cloud_engine_pump(50);
+        g_srv->fail_status = 0; g_srv->fail_count = 0;
+        CHECK(queue_item("*", "startup", &t, &at) && at == -1);
+    };
+    park();
+    cloud_network_back();                                                             // e.g. the friends socket reconnected
+    CHECK(queue_item("*", "startup", &t, &at) && at >= 0 && at <= now_unix() + 1);
+    cloud_engine_pump(50);
+    CHECK(!queue_item("*", "startup", &t, &at));
+    park();
+    cloud_game_exited(G);                                                             // a game exit
+    CHECK(queue_item("*", "startup", &t, &at) && at >= 0);
+    cloud_engine_pump(50);
+    park();
+    cloud_prelaunch(G, SyncMode::ReadWrite);                                          // a game launch whose manifest call worked
+    CHECK(!queue_item("*", "startup", &t, &at) || at >= 0);
+    cloud_engine_pump(50);
+    CHECK(!queue_item("*", "startup", &t, &at));
+    /* an item that is only backing off (the server asked for an hour) is not hurried */
+    g_srv->fail_status = 503; g_srv->fail_retry_after = 3600; g_srv->fail_count = 1;
+    use(pc); cloud_engine_pump(50);
+    g_srv->fail_status = 0; g_srv->fail_count = 0; g_srv->fail_retry_after = 1;
+    cloud_network_back(); cloud_game_exited(G);
+    CHECK(queue_item("*", "startup", &t, &at) && at >= now_unix() + 3500);
+}
+
+/* A file dated before 1970 made the Worker refuse the whole plan (mtime must be >= 0): it is clamped. */
+static void test_negative_mtime_does_not_fail_the_plan() {
+    printf(" a negative file time does not fail the plan\n");
+    Pc pc("pc1");
+    use(pc);
+    put(pc.game() / "battery" / "real.sra", rnd(400, 95), now_unix() - 100);
+    put(pc.game() / "battery" / "old.sra", rnd(400, 96), -86400);
+    const bool neg = file_mtime_unix((pc.game() / "battery" / "old.sra").u8string()) < 0;
+    printf("  (file time before 1970 settable here: %d)\n", (int)neg);
+    const int bad0 = g_srv->n_bad_plans();
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    CHECK(g_srv->n_bad_plans() == bad0);
+    CHECK(g_srv->cur_sha(g_uid, GK, "battery/real.sra") == sha_of(rnd(400, 95)) && g_srv->cur_sha(g_uid, GK, "battery/old.sra") == sha_of(rnd(400, 96)));
+    GameCloudInfo gi;
+    CHECK(cloud_game(G, &gi) && gi.state == CloudState::Synced && cloud_account().queued_games == 0);
 }
 
 int main(int argc, char** argv) {
@@ -1319,6 +1432,10 @@ int main(int argc, char** argv) {
     RUN_SCENARIO(test_startup_retry_honours_retry_after);
     RUN_SCENARIO(test_deep_paths_do_not_block_the_game);
     RUN_SCENARIO(test_ps2_card_follows_the_player);
+    RUN_SCENARIO(test_restore_skips_a_failing_game);
+    RUN_SCENARIO(test_deferral_does_not_rewrite_the_queue);
+    RUN_SCENARIO(test_parked_startup_wakes_on_local_events);
+    RUN_SCENARIO(test_negative_mtime_does_not_fail_the_plan);
 #undef RUN_SCENARIO
     cloud_engine_stop();
     srv.stop();

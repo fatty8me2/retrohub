@@ -300,19 +300,20 @@ int main() {
         write_file(V1 / "n64/zelda/battery/zelda.eep", "zelda-save", 100);
         write_file(V1 / rel, idj("me"), 50);
         write_file(V1 / "_identity/old-pc.json", idj("old"), 50);
-        write_file(V1 / "n64/zelda/battery/Identity-Backup-1.JSON", idj("stray"), 50);   // a stray copy inside a game folder, any case
+        write_file(V1 / "n64/zelda/battery/Identity-Backup-1.JSON", "lookalike-save", 50);   // a game save that merely has such a name: it is a save, it travels
         write_file(V1 / "_conflicts/_identity/identity.json.OLDPC.20261101-120000", idj("loser"), 50);   // what older builds kept as the losing identity of a sync conflict
         set_vault_dir(V1.u8string());
         r = sync_folder(sf.u8string(), false);
         dump(r);
-        CHECK(r.ok && r.pushed == 1 && r.conflicts == 0);                    // only the save
+        CHECK(r.ok && r.pushed == 2 && r.conflicts == 0);                    // the save and the look-alike, never the identity files
+        { bool note = false; for (auto& l : r.log) if (l.find("Settings > Account > Add this account to another PC") != std::string::npos) note = true; CHECK(note); }   // F6: the player is told
         CHECK(read_file(sf / "n64/zelda/battery/zelda.eep") == "zelda-save");
-        CHECK(!fs::exists(sf / "_identity") && !fs::exists(sf / "n64/zelda/battery/Identity-Backup-1.JSON") && !fs::exists(sf / "_conflicts"));
+        CHECK(!fs::exists(sf / "_identity") && fs::exists(sf / "n64/zelda/battery/Identity-Backup-1.JSON") && !fs::exists(sf / "_conflicts"));
         /* a sync folder written by an older build still holds an identity: ignored, never pulled, and left in place (we never delete in the user's folder) */
         write_file(sf / rel, idj("foreign"), 5);
         set_vault_dir(V2.u8string());
         r = sync_folder(sf.u8string(), false);
-        CHECK(r.ok && r.pulled == 1 && r.conflicts == 0);
+        CHECK(r.ok && r.pulled == 2 && r.conflicts == 0);
         CHECK(!fs::exists(V2 / "_identity") && read_file(V2 / "n64/zelda/battery/zelda.eep") == "zelda-save");
         CHECK(read_file(sf / rel) == idj("foreign"));
         /* a vault that has its own identity keeps it untouched, even when the folder's is older or newer */
@@ -327,7 +328,7 @@ int main() {
         {
             ZipView z(ez);
             CHECK(z.ok && z.has("n64/zelda/battery/zelda.eep"));
-            CHECK(!z.name_contains("identity") && !z.name_contains("Identity") && !z.name_contains("_identity"));
+            CHECK(!z.name_contains("_identity") && z.has("n64/zelda/battery/Identity-Backup-1.JSON"));
             CHECK(!z.body_contains("TOPSECRET"));
         }
         /* a hostile zip carries identity entries in several spellings: all skipped (and logged), the real save comes in, the identity stays */
@@ -340,14 +341,14 @@ int main() {
         dump(r);
         int skipped_logged = 0;
         for (auto& l : r.log) if (l.find("never imported") != std::string::npos) skipped_logged++;
-        CHECK(r.ok && r.pulled == 1 && r.conflicts == 0 && skipped_logged == 4);
+        CHECK(r.ok && r.pulled == 2 && r.conflicts == 0 && skipped_logged == 3);
         CHECK(read_file(V2 / rel) == idj("mine"));                           // the account did not change
-        CHECK(!fs::exists(V2 / "_identity/other.json") && !fs::exists(V2 / "n64/pkmn/battery/identity.json"));   // (NTFS: _Identity is the same folder as _identity)
+        CHECK(!fs::exists(V2 / "_identity/other.json") && fs::exists(V2 / "n64/pkmn/battery/identity.json"));   // (NTFS: _Identity is the same folder as _identity)
         CHECK(read_file(V2 / "n64/pkmn/battery/pkmn.sav") == "pokemon-save");
         /* the "new PC imports a friend's zip" case: an empty vault gets the save and no account at all */
         set_vault_dir(V3.u8string());
         r = import_zip(hz);
-        CHECK(r.ok && r.pulled == 1 && !fs::exists(V3 / "_identity") && !fs::exists(V3 / "_conflicts"));
+        CHECK(r.ok && r.pulled == 2 && !fs::exists(V3 / "_identity") && !fs::exists(V3 / "_conflicts"));
         CHECK(read_file(V3 / "n64/pkmn/battery/pkmn.sav") == "pokemon-save");
     }
 

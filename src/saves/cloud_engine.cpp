@@ -195,12 +195,14 @@ struct Engine {
     std::set<str> registered;                  // uid8 values this device registered for
     str revoked_uid;                           // uid8 this PC was signed out of from another PC ("" = not revoked); persisted
     bool busy = false;                         // worker is running a job
+    bool refused_retry = false;                // the account's caps changed: refused files get one more try
     std::set<str> deep_logged;                 // games whose over-deep files were already written to the log this session (log once)
     int64_t cap_warn_day = 0;
     str migrate_mirror;                        // old v1 mirror folder to delete after the first full pass
 } E;
 
 str uid8() { return E.uid.substr(0, 8); }
+void retry_refused();
 
 std::shared_ptr<std::timed_mutex> game_lock(const str& gkey) {
     std::lock_guard<std::mutex> lk(E.mu);
@@ -404,6 +406,7 @@ void apply_account(const WAccount& a) {
     std::lock_guard<std::mutex> lk(E.mu);
     E.acct.known = true;
     E.acct.online = true;
+    if ((E.acct.cap && a.cap != E.acct.cap) || (E.acct.prot_cap && a.prot_cap != E.acct.prot_cap)) E.refused_retry = true;
     E.acct.used = a.used; E.acct.cap = a.cap; E.acct.prot_used = a.prot_used; E.acct.prot_cap = a.prot_cap;
     E.acct.pool = a.pool; E.acct.devices = a.devices;
     E.acct.paused_by_server = a.paused;
@@ -482,7 +485,7 @@ std::map<str, LFile> scan_game(const GameId& g, std::vector<str>* unsyncable = n
         LFile lf;
         lf.abs = cur.u8string();
         lf.size = (int64_t)fs::file_size(cur, ec);
-        lf.mtime = file_mtime_unix(lf.abs);
+        lf.mtime = std::max<int64_t>(0, file_mtime_unix(lf.abs));   // the Worker refuses a plan with a negative mtime
         if (lf.size > kMaxPlain) { out[rel] = lf; continue; }   // sha left empty: too large, never hashed
         {
             std::lock_guard<std::mutex> lk(E.cache_mu);
@@ -780,7 +783,7 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                 if (!read_all(fs::u8path(cur.abs), &plain)) continue;
                 cur.size = (int64_t)plain.size();
                 cur.sha = sha256_hex_of(plain);
-                cur.mtime = file_mtime_unix(cur.abs);
+                cur.mtime = std::max<int64_t>(0, file_mtime_unix(cur.abs));
                 p.lf = cur;
                 p.stored = plain;
                 if (plain.size() > 4096) {
@@ -943,10 +946,11 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                             list += (i ? ", " : "") + (sl == str::npos ? n : n.substr(sl + 1));
                         }
                         if (names.size() > 3) list += " and " + std::to_string(names.size() - 3) + " more";
-                        push_event(CloudEvent::WentLocalOnly, g, "Cloud space is full: older save states of " + list + " stay on this PC only.", false);
+                        push_event(CloudEvent::WentLocalOnly, g, "Cloud space is full: older saves and save states of " + list + " stay on this PC only.", false);
                     }
                 }
             }
+            if (!com.evicted.empty()) retry_refused();   // room was made: refused files elsewhere get one more try
             if (incomplete) { out.oc.k = Outcome::Throttled; out.oc.code = "commit-incomplete"; return; }   // backoff, then a fresh plan uploads it again
         }
         todo = next;
@@ -1128,6 +1132,9 @@ MFetch fetch_manifest(Api& api, const str& gkey, int64_t since = -1) {
     str err;
     if (!parse_manifest(r.body, &f.m, &err)) { f.oc.k = Outcome::Other; f.oc.code = "bad-manifest"; return f; }
     apply_account(f.m.account);
+    bool retry;
+    { std::lock_guard<std::mutex> lk(E.mu); retry = E.refused_retry; E.refused_retry = false; }
+    if (retry) retry_refused();
     return f;
 }
 
@@ -1179,6 +1186,34 @@ void enqueue(const str& gkey, const str& reason, int64_t when = 0, bool reset = 
     E.cv.notify_all();
 }
 
+/* Refused files (over the cap) stay local only while unchanged. They get one more try when something that could make room happened:
+ * "Sync now", an eviction that freed space, or a change of the account's caps. Returns the games that had marks. */
+std::vector<str> clear_refused_marks() {
+    std::vector<str> games;
+    std::lock_guard<std::mutex> lk(E.mu);
+    for (auto& g : E.base.games) {
+        bool any = false;
+        for (auto& f : g.second.files) if (!f.second.lsha.empty()) { f.second.lsha.clear(); any = true; }
+        if (any) games.push_back(g.first);
+    }
+    return games;
+}
+void retry_refused() {
+    for (auto& gk : clear_refused_marks()) enqueue(gk, "retry-refused");
+}
+/* A parked startup pass has no timer. A cheap local event proves the network or server is back (a game launch or exit, the friends
+ * connection coming back): wake only a PARKED item, so a backing-off one is never hurried (no polling). */
+void wake_startup_if_parked() {
+    bool woke = false;
+    {
+        std::lock_guard<std::mutex> lk(E.mu);
+        if (E.startup_done) return;
+        for (auto& q : E.queue.items()) if (q.gkey == "*" && q.reason == "startup" && q.next_at < 0) woke = true;
+        if (woke) { E.queue.put("*", "startup", now_s(), true); E.queue.save(); }
+    }
+    if (woke) E.cv.notify_all();
+}
+
 /* ------------------------------------------------------------------ lease */
 LeaseReply lease_call(Api& api, const str& gkey, const str& mode, bool take, Outcome* oc_out) {
     LeaseReply lr;
@@ -1218,6 +1253,7 @@ PrelaunchResult prelaunch_core(const GameId& g, SyncMode mode, int timeout_ms, i
         if (mf.oc.k == Outcome::Offline || mf.oc.k == Outcome::Throttled) enqueue(gkey, "push");
         return res;
     }
+    wake_startup_if_parked();   // the server answered: a parked startup pass may run
     const WGame* cg = nullptr;
     for (auto& w : mf.m.games) if (w.gkey == gkey) cg = &w;
     /* lease (only accounts with 2+ devices; read-only sessions never take one) */
@@ -1440,11 +1476,13 @@ StartupFail startup_pass() {
     std::sort(order.begin(), order.end(), [](const WGame* a, const WGame* b) { return a->played_at > b->played_at; });
     bool all_ok = true;
     Outcome first_bad;   // the first failure of the restore pass (carries the server's retryAfter)
+    std::set<str> skipped_games;   // restore: games that could not be written; later phases leave them (and their "needs attention" state) alone
     if (restore) {
         /* restore mode: pull everything protected first (all games), then large items newest-played first; no push meanwhile */
         for (int phase = 0; phase < 2; phase++) {
             for (const WGame* w : order) {
                 { std::lock_guard<std::mutex> lk(E.mu); if (E.stop) return StartupFail(); }
+                if (skipped_games.count(w->gkey)) continue;
                 GameId g = id_of_wire(w->gkey);
                 auto gl = game_lock(w->gkey);
                 std::unique_lock<std::timed_mutex> lk(*gl, std::defer_lock);
@@ -1458,7 +1496,12 @@ StartupFail startup_pass() {
                 update_info(g, w, out, false);
                 if (!out.conflicts.empty()) push_event(CloudEvent::ConflictFound, g, "Saves for " + g.key + " differ between this PC and the cloud.", false);
                 if (out.pulled > 0) push_event(CloudEvent::Pulled, g, "Cloud saves for " + g.key + " were restored.", true);
-                if (!out.oc.ok()) { all_ok = false; if (first_bad.ok()) first_bad = out.oc; if (out.oc.k != Outcome::Other) break; }
+                if (out.oc.k == Outcome::Other) {   // this game cannot be restored right now (cannot write, corrupt blob): skip it so the others can push
+                    skipped_games.insert(w->gkey);
+                    log_line("restore: skipped " + w->gkey + " (" + out.oc.code + ")");
+                    set_state(g, CloudState::NeedsAttention, LocalOnlyReason::None, "Could not restore this game's saves from the cloud. It will be tried again; the rest of your games are syncing.");
+                    { std::lock_guard<std::mutex> lk2(E.mu); E.queue.put(w->gkey, "pull", now_s() + 30, false); }
+                } else if (!out.oc.ok()) { all_ok = false; if (first_bad.ok()) first_bad = out.oc; break; }
             }
         }
         if (all_ok) {
@@ -1566,7 +1609,7 @@ bool work_once() {
         } else {
             E.queue.fail(q.gkey, q.reason, now_s(), retry);
         }
-        E.queue.save();
+        if (!defer) E.queue.save();   // a deferral changes nothing worth writing (it repeats every 15-20 s)
         E.acct.queued_games = queued_count_locked();
     }
     bool init_left = false;
@@ -1741,6 +1784,8 @@ void cloud_account_changed() {
     E.cv.notify_all();
 }
 
+void cloud_network_back() { wake_startup_if_parked(); }
+
 void cloud_wake_queue() {
     {
         std::lock_guard<std::mutex> lk(E.mu);
@@ -1756,6 +1801,7 @@ void cloud_sync_all_now() {
         if (!E.started) return;
         E.queue.wake_parked(now_s());
         E.startup_wanted = true;
+        for (auto& g : E.base.games) for (auto& f : g.second.files) f.second.lsha.clear();   // refused files get one more try
         for (auto& kv : E.info) if (kv.second.state != CloudState::LocalOnly || kv.second.local_only != LocalOnlyReason::User) E.queue.put(kv.first, "sync-all", now_s(), true);
         E.queue.save();
     }
@@ -1882,6 +1928,7 @@ void cloud_game_exited(const GameId& g) {
         Api api(2000, 5000);
         api.req("POST", "/saves/v2/lease/release", "{\"game\":" + json::quote(gkey) + "}");
     }
+    wake_startup_if_parked();
     if (mode == SyncMode::ReadOnly || lo_user) return;
     base_save();
     if (dl) { set_state(g, CloudState::Conflict, LocalOnlyReason::DecideLater, "Not uploading until you decide."); return; }
