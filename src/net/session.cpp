@@ -791,6 +791,7 @@ int Session::ping_ms(int slot) const
 }
 
 uint16_t Session::local_port() const { return impl_->udp.local_port(); }
+void Session::qa_drop_ws() { impl_->ws.drop_abruptly(); }
 void Session::set_no_relay(bool v) { impl_->no_relay = v; }
 void Session::set_ping_interval(uint32_t ms) { impl_->ping_every = ms < 20 ? 20 : ms; }
 

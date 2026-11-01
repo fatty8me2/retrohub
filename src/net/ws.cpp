@@ -78,6 +78,11 @@ void WsClient::close()
     state_ = WsState::Closed;
 }
 
+void WsClient::drop_abruptly()
+{
+    close_handles();   // no WebSocket close frame: the receive thread sees an error and the state becomes Failed
+}
+
 void WsClient::run(std::string url)
 {
     bool secure = false;
