@@ -24,6 +24,7 @@ function WaitAck($dir, $seq, $secs) {
 }
 function Drive($name, $p, $run, $states, $shots, $slotsOk) {
     $ctl = "$run\control.json"
+    $null = $p.Handle   # keep the handle so ExitCode is readable after exit
     Start-Sleep -Seconds 4
     $seq = 0
     foreach ($step in @(@('save_state', 3), @('load_state', 3), @('screenshot', 0), @('load_state', 7), @('quit', 0))) {
@@ -34,6 +35,11 @@ function Drive($name, $p, $run, $states, $shots, $slotsOk) {
         $want = -not ($step[0] -eq 'load_state' -and $step[1] -eq 7)   # empty slot must fail
         if ([bool]$a.ok -ne $want) { Write-Host "FAIL[$name]: $($step[0]) ok=$($a.ok) msg=$($a.msg)"; $script:fail++ } else { Write-Host "ok[$name]: $($step[0]) slot $($step[1]) -> $($a.msg)" }
     }
+    # a command written right after the acked Quit (the hub's menu sends "input on" there) must neither hang nor crash the runner
+    $seq++
+    Send $ctl $seq 'osd_msg' 0
+    if (-not $p.WaitForExit(30000)) { Write-Host "FAIL[$name]: runner did not exit after a command that followed Quit"; Stop-Process -Id $p.Id; $script:fail++ }
+    elseif ($p.ExitCode -ne 0) { Write-Host "FAIL[$name]: exit code $($p.ExitCode) after Quit + a following command"; $script:fail++ } else { Write-Host "ok[$name]: command after Quit, clean exit" }
     foreach ($f in @('slot3.state', 'slot3.png', 'slot3.json')) {
         if (-not (Test-Path "$states\$f")) { Write-Host "FAIL[$name]: missing $f"; $script:fail++ }
     }
