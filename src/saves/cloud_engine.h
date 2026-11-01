@@ -12,7 +12,7 @@ enum class SyncMode { ReadWrite, ReadOnly };            // ReadOnly = online ses
 
 FileClass classify_path(const std::string& rel_in_game, int64_t size);   // pure; unit tested
 void set_backup_screenshots(bool on);                                   // default off: files under shots/ stay local
-bool is_protected(FileClass c, int64_t size);                            // settings, battery, card <= 512 KB
+bool is_protected(FileClass c, int64_t size);                            // settings, battery, and memory cards up to 16 MB (PS2 8 MB included); states and shots are large
 
 struct GameId { std::string system, key; std::string gkey() const { return system + "/" + key; } };
 

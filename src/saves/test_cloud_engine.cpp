@@ -18,6 +18,7 @@
 #include <exception>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -71,23 +72,45 @@ static void test_classify() {
     CHECK(classify_path("states/slot0.state.png", 1000) == FileClass::Shot);
     CHECK(classify_path("cheat_backups/20250101/save.sra", 100) == FileClass::Battery);
     CHECK(is_protected(FileClass::Settings, 10) && is_protected(FileClass::Battery, 10 << 20));
-    CHECK(is_protected(FileClass::Card, 512 * 1024) && !is_protected(FileClass::Card, 512 * 1024 + 1));
     CHECK(!is_protected(FileClass::State, 10) && !is_protected(FileClass::Shot, 10));
+    CHECK(!is_protected(FileClass::State, 100) && !is_protected(FileClass::State, 16 << 20));
     CHECK(str(class_name(FileClass::Card)) == "card" && class_from_name("shot") == FileClass::Shot);
+    /* F2: a memory card is a save, not a save state, at any size up to the 16 MB blob limit. The PS2 card (Mcd001.ps2, 8 MB) used to be
+     * "large" like a state: not pulled before launch, evictable, one version. classify_path keeps saying `card` (the Worker's mirror and the
+     * golden table agree), only the protected verdict is wider. */
+    const str ps2_card = "battery/memcards/RetroHub/ps2_SLUS-20946/Mcd001.ps2";
+    CHECK(classify_path(ps2_card, 8 << 20) == FileClass::Card);
+    CHECK(is_protected(classify_path(ps2_card, 8 << 20), 8 << 20));
+    CHECK(is_protected(FileClass::Card, 512 * 1024) && is_protected(FileClass::Card, 512 * 1024 + 1) && is_protected(FileClass::Card, 8 << 20));
+    CHECK(is_protected(FileClass::Card, 16 << 20) && !is_protected(FileClass::Card, (16 << 20) + 1));   // beyond the blob limit nothing is uploaded anyway
+    CHECK(is_protected(classify_path("battery/GCI/01-GALE-Data.gci", 8192), 8192));
+    CHECK(!is_protected(classify_path("states/auto.state", 8 << 20), 8 << 20) && !is_protected(classify_path("states/auto.png", 50000), 50000));
 #ifdef CLOUD_CLASSIFY_CASES
-    std::ifstream f(CLOUD_CLASSIFY_CASES);   // golden table shared with the Worker lane (optional until it lands): "path size class"
+    std::ifstream f(CLOUD_CLASSIFY_CASES);   // golden table shared with the Worker lane: path <TAB> size <TAB> class (paths may contain spaces)
     str line;
     int n = 0;
     while (std::getline(f, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
         if (line.empty() || line[0] == '#') continue;
-        std::istringstream ls(line);
-        str path, cls; long long size = 0;
-        if (!(ls >> path >> size >> cls)) continue;
+        std::vector<str> col;
+        for (size_t p = 0;;) {
+            size_t t = line.find('\t', p);
+            col.push_back(line.substr(p, t == str::npos ? str::npos : t - p));
+            if (t == str::npos) break;
+            p = t + 1;
+        }
+        if (col.size() < 3) continue;
+        const str& path = col[0]; const str& cls = col[2];
+        long long size = atoll(col[1].c_str());
         if (str(class_name(classify_path(path, size))) != cls) printf("  golden mismatch: '%s' %lld want %s\n", path.c_str(), size, cls.c_str());
         CHECK(str(class_name(classify_path(path, size))) == cls);
+        /* the protected verdict follows docs/CLOUD_SAVES_V2.md section 2: everything except states, shots and cards beyond 16 MB */
+        const bool big = size > (16ll << 20);
+        CHECK(is_protected(classify_path(path, size), size) == (cls != "state" && cls != "shot" && !(cls == "card" && big)));
         n++;
     }
     printf("  golden classify cases: %d\n", n);
+    CHECK(n >= 20);
 #endif
 }
 
@@ -154,6 +177,32 @@ static void test_wire() {
     CHECK(parse_commit("{\"ok\":true,\"rev\":9,\"results\":[{\"path\":\"a\",\"ver\":2,\"cloud\":\"synced\"},{\"path\":\"b\",\"conflict\":true}],"
                        "\"evicted\":[{\"game\":\"n64/y\",\"path\":\"states/s\"}]}", &cr, &err));
     CHECK(cr.rev == 9 && cr.results.size() == 2 && cr.results[0].ver == 2 && cr.results[1].conflict && cr.evicted.size() == 1 && cr.evicted[0].first == "n64/y");
+    /* F3: the result kind and reason survive parsing - only "synced" is an upload, "skipped" / "missing" / "evicted" are not */
+    CHECK(parse_commit("{\"ok\":true,\"rev\":9,\"results\":[{\"path\":\"a\",\"ver\":2,\"cloud\":\"synced\"},{\"path\":\"b\",\"cloud\":\"skipped\",\"reason\":\"over-cap\"},"
+                       "{\"path\":\"c\",\"cloud\":\"missing\",\"reason\":\"blob-missing\"},{\"path\":\"d\",\"ver\":3}]}", &cr, &err));
+    CHECK(cr.results.size() == 4 && cr.results[0].cloud == "synced" && cr.results[1].cloud == "skipped" && cr.results[1].reason == "over-cap" && !cr.results[1].conflict &&
+          cr.results[1].ver == 0 && cr.results[2].cloud == "missing" && cr.results[2].reason == "blob-missing" && cr.results[3].cloud == "synced");
+    /* F5: the Worker refuses a whole plan for one bad path; the client keeps such files out of the plan (rules of saves_pool.js cleanKey) */
+    const char* why = "";
+    const str s8 = "battery/usr/save/00050000/10143500/user/80000001/slot.bin";            // 8 segments: fine
+    const str s9 = "battery/usr/save/00050000/10143500/user/80000001/slot1/data.bin";      // 9 segments: refused
+    CHECK(plan_path_ok("meta.json") && plan_path_ok("battery/a.sra") && plan_path_ok(s8) && plan_path_ok("_account/rivals/AAAA-1.json"));
+    CHECK(!plan_path_ok(s9, &why) && str(why) == "too-deep");
+    CHECK(!plan_path_ok("a/b/c/d/e/f/g/h/i", &why) && str(why) == "too-deep" && plan_path_ok("a/b/c/d/e/f/g/h"));
+    const str k240 = str(100, 'a') + "/" + str(100, 'b') + "/" + str(38, 'c');                      // 240 characters in all
+    CHECK(plan_path_ok(k240) && !plan_path_ok(k240 + "c", &why) && str(why) == "too-long");
+    CHECK(plan_path_ok("battery/" + str(120, 'x')) && !plan_path_ok("battery/" + str(121, 'x'), &why) && str(why) == "too-long");     // 120 per segment
+    auto repeat = [](const char* unit, int n) { str s; for (int i = 0; i < n; i++) s += unit; return s; };
+    CHECK(plan_path_ok("battery/" + repeat("\xE3\x83\x9E", 120)));                                   // 120 kana = 360 bytes but only 120 UTF-16 units: the Worker accepts it
+    CHECK(!plan_path_ok("battery/" + repeat("\xF0\x9F\x8E\xAE", 61), &why) && str(why) == "too-long");   // 61 emoji = 122 UTF-16 units
+    CHECK(!plan_path_ok("battery/a.sra.hubtmp") && !plan_path_ok("_identity/identity.json") && !plan_path_ok("_Identity/x"));
+    CHECK(!plan_path_ok("battery/a:b") && !plan_path_ok("battery/a?b") && !plan_path_ok("battery/a\\b") && !plan_path_ok("battery/end.") && !plan_path_ok("battery/end "));
+    CHECK(!plan_path_ok("") && !plan_path_ok("a//b") && !plan_path_ok("a/../b") && !plan_path_ok("./a"));
+    /* a manifest from the server can never name the account secret's folder either */
+    WManifest wm;
+    CHECK(parse_manifest("{\"ok\":true,\"rev\":1,\"games\":{\"_account/_\":{\"files\":{\"_identity/identity.json\":{\"cur\":1,\"vers\":[{\"ver\":1,\"sha\":\"" + str(64, 'a') +
+                         "\",\"size\":5}]},\"_account/prefs.json\":{\"cur\":1,\"vers\":[{\"ver\":1,\"sha\":\"" + str(64, 'b') + "\",\"size\":5}]}}}}}", &wm, &err));
+    CHECK(wm.games.size() == 1 && wm.games[0].files.size() == 1 && wm.games[0].files[0].path == "_account/prefs.json");
     LeaseReply lr;
     CHECK(parse_lease("{\"ok\":false,\"held\":{\"dev\":\"d-1\",\"name\":\"PC\",\"since\":5,\"until\":9}}", &lr) && lr.held && lr.name == "PC" && lr.until == 9);
     ServerError se = parse_error("{\"ok\":false,\"error\":\"account-daily-limit\",\"retryAfter\":3600}");
@@ -196,17 +245,56 @@ static void test_queue_and_base() {
     CHECK(q2.next_due(10000, &x) && q2.items()[0].next_at == 10000 && q2.items()[0].tries == 0);
     q2.remove("n64/a", "push");
     CHECK(q2.size() == 1);
+    q2.park("n64/b", "pull");                                     // F7: parked = waits for a trigger, never due by itself
+    CHECK(!q2.next_due(99999999, &x) && q2.items()[0].next_at == -1);
+    q2.wake_parked(20000);
+    CHECK(q2.next_due(20000, &x) && q2.items()[0].next_at == 20000 && q2.items()[0].tries == 0);
 
     BaseStore b;
     b.rev = 77; b.device = "d-1"; b.restore = true; b.cap_toast_day = 5;
     b.games["n64/a"].files["battery/x.sra"] = BFile{3, 100, 55, "sha1", ""};
     b.games["n64/a"].files["states/s.state"] = BFile{1, 9, 66, "sha2", "cap"};
+    b.games["n64/a"].files["states/s.state"].lsha = "refused-sha";
     b.games["n64/a"].lo_user = true; b.games["n64/a"].played = 123;
     CHECK(b.save(dir + "\\base.json"));
     BaseStore c;
     CHECK(c.load(dir + "\\base.json") && c.rev == 77 && c.restore && c.games["n64/a"].files["battery/x.sra"].ver == 3 &&
           c.games["n64/a"].files["states/s.state"].lo == "cap" && c.games["n64/a"].lo_user && c.games["n64/a"].played == 123);
+    CHECK(c.games["n64/a"].files["states/s.state"].lsha == "refused-sha" && c.games["n64/a"].files["battery/x.sra"].lsha.empty());   // the refused content survives a restart
     fs::remove_all(dir);
+}
+
+/* F3: how a base entry is read. The refused local content is remembered next to the last agreement, never written into it; the shapes older
+ * builds wrote (refused sha stored as the agreement) are recognised so the first pass after an update cannot pull over a newer local save. */
+static void test_read_base() {
+    BFile agreed{3, 100, 55, "S1", ""};                                          // a normal agreement at cloud version 3
+    BaseRead r1 = read_base(agreed, true, 3, "S1");
+    CHECK(r1.base.present && r1.base.sha == "S1" && r1.ver == 3 && r1.refused_sha.empty() && !r1.legacy);
+    BFile refused{3, 100, 55, "S1", "cap"};                                      // this build: the agreement stays, the refused local content is remembered
+    refused.lsha = "L2";
+    BaseRead r2 = read_base(refused, true, 3, "S1");
+    CHECK(r2.base.sha == "S1" && r2.ver == 3 && r2.refused_sha == "L2" && !r2.legacy);
+    BFile never{0, 0, 0, "", "cap"};                                             // a new file the cloud refused: no agreement at all
+    never.lsha = "L3";
+    BaseRead r3 = read_base(never, false, 0, "");
+    CHECK(!r3.base.present && r3.refused_sha == "L3" && !r3.legacy);
+    BFile old1{0, 7, 8, "L4", ""};                                               // older builds, commit "skipped": the refused sha as a ver-0 "agreement"
+    BaseRead r4 = read_base(old1, true, 5, "C5");
+    CHECK(r4.legacy && !r4.base.present && r4.refused_sha == "L4" && r4.ver == 0);
+    BaseRead r4b = read_base(old1, true, 5, "L4");                               // ... unless the cloud holds exactly that content (stale ver after a lost reply)
+    CHECK(!r4b.legacy && r4b.base.present && r4b.base.sha == "L4" && r4b.refused_sha.empty());
+    BaseRead r4c = read_base(old1, false, 0, "");                                // ... or the cloud has nothing at all: still the refused local content
+    CHECK(r4c.legacy && !r4c.base.present && r4c.refused_sha == "L4");
+    BFile old2{4, 7, 8, "L5", "cap"};                                            // older builds, plan "skip" of an existing file: lo + the local sha at the cloud's version
+    BaseRead r5 = read_base(old2, true, 4, "C4");
+    CHECK(r5.legacy && r5.refused_sha == "L5" && r5.base.present && r5.base.sha == "C4" && r5.ver == 4);   // the cloud has not moved: its version IS the agreement
+    BaseRead r5b = read_base(old2, true, 6, "C6");                               // the cloud moved on since: cannot tell, left as stored (the pull then backs the local copy up)
+    CHECK(!r5b.legacy && r5b.base.sha == "L5" && r5b.refused_sha.empty());
+    BFile marked{4, 7, 8, "S4", "cap"};                                          // evicted elsewhere: lo on a true agreement
+    BaseRead r6 = read_base(marked, true, 4, "S4");
+    CHECK(!r6.legacy && r6.base.sha == "S4" && r6.refused_sha.empty());
+    BaseRead r7 = read_base(marked, false, 0, "");                               // tombstone: no cloud copy at all
+    CHECK(!r7.legacy && r7.base.sha == "S4");
 }
 
 /* ---------------------------------------------------------------- engine scenarios */
@@ -932,7 +1020,253 @@ static void test_linked_pcs() {
     CHECK(cloud_list_pcs(&pcs, &err) && pcs.size() == 2);
 }
 
-int main() {
+/* ---------------------------------------------------------------- Plan 4 save fixes (F2 F3 F5 F7) */
+static void drain_events() { CloudEvent e; while (cloud_pop_event(&e)) {} }
+static str sha_of(const str& plain) { return sha256_hex_of(plain); }
+
+/* "gkey:reason:tries:next_at" of one persistent queue item (cloud_queue_dump). false when it is not queued. */
+static bool queue_item(const str& gkey, const str& reason, int* tries, long long* next_at) {
+    const str d = cloud_queue_dump();
+    const str want = gkey + ":" + reason + ":";
+    size_t p = d.find(want);
+    while (p != str::npos && p != 0 && d[p - 1] != ';') p = d.find(want, p + 1);
+    if (p == str::npos) return false;
+    size_t e = d.find(';', p);
+    str rest = d.substr(p + want.size(), e == str::npos ? str::npos : e - p - want.size());
+    size_t c = rest.find(':');
+    if (c == str::npos) return false;
+    if (tries) *tries = atoi(rest.c_str());
+    if (next_at) *next_at = atoll(rest.c_str() + c + 1);
+    return true;
+}
+
+/* F3: the cloud refuses an upload (over its cap, protected ceiling, blob missing). That is NOT a push: the cloud keeps the older save, the
+ * newer local save stays on this PC and is never replaced by the older cloud copy on the next pass, and nobody is told "backed up". */
+static void test_refused_upload_is_not_pushed() {
+    printf(" F3: a refused upload is not a push, and the older cloud copy never replaces the newer local save\n");
+    Pc pc1("pc1");
+    use(pc1);
+    const fs::path sav = pc1.game() / "battery" / "s.sra";
+    put(sav, rnd(3000, 61), now_unix() - 1000);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    str cloud_sha = g_srv->cur_sha(g_uid, GK, "battery/s.sra");
+    CHECK(cloud_sha == sha_of(rnd(3000, 61)));
+    drain_events();
+
+    for (int at_commit = 0; at_commit < 2; at_commit++) {          // 0: the plan answers "skip"; 1: the plan says "upload" and the COMMIT refuses
+        const str newer = rnd(3000, 62 + at_commit);
+        if (at_commit) g_srv->refuse_in_commit("s.sra", "skipped", "too-big-protected"); else g_srv->refuse_in_plan("s.sra", "over-cap");
+        cloud_prelaunch(G, SyncMode::ReadWrite);
+        play();
+        put(sav, newer, now_unix() - 100 + at_commit);
+        exit_game();
+        CHECK(g_srv->cur_sha(g_uid, GK, "battery/s.sra") == cloud_sha);                   // the cloud still holds the older save
+        CHECK(!pop_event(CloudEvent::Pushed));                                            // no "Saves backed up to the cloud." for a refused file
+        GameCloudInfo gi;
+        CHECK(cloud_game(G, &gi) && gi.state == CloudState::LocalOnly && gi.files_local_only == 1);
+        g_srv->refuse_in_plan(""); g_srv->refuse_in_commit("");
+        /* every later pass: the pre-launch pull, the background pull job, "Sync now" - none may bring the older cloud copy back */
+        PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
+        CHECK(r.action == PrelaunchResult::Proceed && r.files_pulled == 0 && r.conflicts.empty());
+        CHECK(get(sav) == newer);
+        cloud_sync_all_now(); pump();
+        CHECK(get(sav) == newer);
+        CHECK(g_srv->cur_sha(g_uid, GK, "battery/s.sra") == cloud_sha);
+        int plans = g_srv->n_plan;                                                       // unchanged since the refusal: not offered to the server again either
+        cloud_sync_all_now(); pump();
+        CHECK(g_srv->n_plan == plans && get(sav) == newer);
+        int bak = 0;
+        if (fs::exists(pc1.vault / "_conflicts")) for (auto& e : fs::recursive_directory_iterator(pc1.vault / "_conflicts")) if (e.is_regular_file()) bak++;
+        CHECK(bak == 0);                                                                 // nothing was replaced, so nothing needed a backup
+        /* once the save changes again it goes up normally and the local-only mark is gone */
+        const str newest = newer + "!";
+        play();
+        put(sav, newest, now_unix() - 50 + at_commit);
+        exit_game();
+        cloud_sha = g_srv->cur_sha(g_uid, GK, "battery/s.sra");
+        CHECK(cloud_sha == sha_of(newest));
+        CHECK(pop_event(CloudEvent::Pushed));
+        CHECK(cloud_game(G, &gi) && gi.state == CloudState::Synced && gi.files_local_only == 0);
+    }
+
+    /* "missing" (the blob never landed): nothing is agreed, the push is retried later instead of being forgotten or counted */
+    const str vm = rnd(3000, 70);
+    g_srv->refuse_in_commit("s.sra", "missing", "blob-missing");
+    play();
+    put(sav, vm, now_unix() - 20);
+    exit_game();
+    CHECK(g_srv->cur_sha(g_uid, GK, "battery/s.sra") == cloud_sha && !pop_event(CloudEvent::Pushed));
+    CHECK(cloud_account().queued_games == 1 && get(sav) == vm);
+    g_srv->refuse_in_commit("");
+    cloud_wake_queue(); pump();
+    CHECK(g_srv->cur_sha(g_uid, GK, "battery/s.sra") == sha_of(vm) && cloud_account().queued_games == 0 && pop_event(CloudEvent::Pushed));
+}
+
+/* F3, upgrade path: base files written by the builds before the fix hold the refused LOCAL sha as if it were the agreement. The first pass
+ * after an update must not pull the older cloud copy over the newer local save. */
+static void test_legacy_refused_base_cannot_overwrite() {
+    printf(" F3: base files from before the fix cannot overwrite a newer local save either\n");
+    Pc pc1("pc1"), pc2("pc2");
+    use(pc1);
+    put(pc1.game() / "battery" / "l1.sra", rnd(2000, 71), now_unix() - 3000);
+    put(pc1.game() / "battery" / "l2.sra", rnd(2000, 72), now_unix() - 3000);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    CHECK(!g_srv->cur_sha(g_uid, GK, "battery/l1.sra").empty() && !g_srv->cur_sha(g_uid, GK, "battery/l2.sra").empty());
+    /* PC2 played on and the cloud refused the upload; its base file says what the old code wrote */
+    const str n1 = rnd(2000, 73), n2 = rnd(2000, 74);
+    put(pc2.game() / "battery" / "l1.sra", n1, now_unix() - 100);
+    put(pc2.game() / "battery" / "l2.sra", n2, now_unix() - 100);
+    str base = "{\"rev\":0,\"device\":\"d-legacy0000\",\"restore\":false,\"migrated\":true,\"cap_toast_day\":0,\"games\":{\"" + GK + "\":{\"lo_user\":false,\"dl\":false,\"pin\":false,"
+               "\"played\":0,\"synced\":0,\"files\":{"
+               "\"battery/l1.sra\":{\"ver\":1,\"sha\":\"" + sha_of(n1) + "\",\"size\":2000,\"mtime\":1,\"lo\":\"cap\"},"      // plan "skip": local sha, the cloud's version, marked
+               "\"battery/l2.sra\":{\"ver\":0,\"sha\":\"" + sha_of(n2) + "\",\"size\":2000,\"mtime\":1}}}}}";                 // commit "skipped": local sha as version 0
+    put(pc2.vault / ".sync" / ("cloud-" + g_uid.substr(0, 8) + ".json"), base);
+    use(pc2);
+    PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
+    CHECK(r.files_pulled == 0);
+    CHECK(get(pc2.game() / "battery" / "l1.sra") == n1 && get(pc2.game() / "battery" / "l2.sra") == n2);        // neither was overwritten
+    /* l1: the cloud has not moved since the refusal - it just stays local only; l2: nothing is known, so the player is asked */
+    CHECK(r.action == PrelaunchResult::NeedConflictDecision && r.conflicts.size() == 1 && r.conflicts[0].path == "battery/l2.sra");
+    cloud_sync_all_now(); pump();
+    CHECK(get(pc2.game() / "battery" / "l1.sra") == n1 && get(pc2.game() / "battery" / "l2.sra") == n2);
+    CHECK(g_srv->cur_sha(g_uid, GK, "battery/l1.sra") == sha_of(rnd(2000, 71)));
+}
+
+/* F7: a failed startup pass used to retry every 60 s forever and ignored the server's retryAfter - polling the free tier. */
+static void test_startup_retry_honours_retry_after() {
+    printf(" F7: a failed startup pass waits for the server's retryAfter, then 30 s / 2 min / 10 min / 1 h, then parks\n");
+    Pc pc1("pc1");
+    int tries = 0; long long at = 0;
+    /* 401: retrying cannot help until the account is fixed - parked at once */
+    g_srv->fail_status = 401; g_srv->fail_count = 1;
+    use(pc1);
+    cloud_engine_pump(50);
+    CHECK(queue_item("*", "startup", &tries, &at) && at == -1);
+    g_srv->fail_status = 0; g_srv->fail_count = 0;
+    cloud_sync_all_now(); cloud_engine_pump(50);                                        // "Sync now" is a trigger
+    CHECK(!queue_item("*", "startup", &tries, &at) && cloud_account().known && cloud_account().online);
+
+    /* the server is busy today and says when to come back: honoured, nothing is sent meanwhile */
+    long long t0 = now_unix();
+    g_srv->fail_status = 429; g_srv->fail_retry_after = 3600; g_srv->fail_count = 1;
+    use(pc1);                                                                           // a hub start is a trigger: the pass runs at once
+    cloud_engine_pump(50);
+    CHECK(queue_item("*", "startup", &tries, &at) && tries == 1);
+    CHECK(at >= t0 + 3600 && at <= now_unix() + 3601);                                  // (the old code: now + 60)
+    CHECK(cloud_engine_idle());
+    int n = g_srv->n_requests;
+    cloud_engine_pump(50); cloud_engine_pump(50);
+    CHECK(g_srv->n_requests == n);                                                      // no polling while it waits
+
+    /* a server that says "come back in 5 s" is not allowed to make us poll: never sooner than 30 s; absurd values stop at a day */
+    g_srv->fail_status = 503; g_srv->fail_retry_after = 5; g_srv->fail_count = 1;
+    use(pc1); cloud_engine_pump(50);
+    CHECK(queue_item("*", "startup", &tries, &at) && tries == 2 && at >= now_unix() + 28 && at <= now_unix() + 32);
+    g_srv->fail_retry_after = 99999999; g_srv->fail_count = 1;
+    use(pc1); cloud_engine_pump(50);
+    CHECK(queue_item("*", "startup", &tries, &at) && tries == 3 && at >= now_unix() + 86390 && at <= now_unix() + 86401);
+
+    /* no retryAfter at all (offline, plain 5xx): the queue's own growing steps */
+    g_srv->fail_retry_after = 0;
+    g_srv->fail_count = 1; use(pc1); cloud_engine_pump(50);
+    CHECK(queue_item("*", "startup", &tries, &at) && tries == 4 && at >= now_unix() + 3590 && at <= now_unix() + 3601);
+    g_srv->fail_count = 1; use(pc1); cloud_engine_pump(50);
+    CHECK(queue_item("*", "startup", &tries, &at) && tries == 5 && at == -1);          // parked: waits for a trigger, no more attempts of its own
+    CHECK(cloud_engine_idle());
+    n = g_srv->n_requests;
+    cloud_engine_pump(50);
+    CHECK(g_srv->n_requests == n);
+
+    /* the trigger runs it, and a finished pass leaves nothing behind */
+    g_srv->fail_status = 0; g_srv->fail_count = 0;
+    cloud_sync_all_now(); cloud_engine_pump(50);
+    CHECK(!queue_item("*", "startup", &tries, &at) && cloud_account().online);
+    use(pc1); cloud_engine_pump(50);                                                    // and a normal start finds no stale retry state
+    CHECK(!queue_item("*", "startup", &tries, &at));
+
+    /* the first step is 30 s when the very first failure carries no hint */
+    t0 = now_unix();
+    g_srv->fail_status = 503; g_srv->fail_retry_after = 0; g_srv->fail_count = 1;
+    use(pc1); cloud_engine_pump(50);
+    CHECK(queue_item("*", "startup", &tries, &at) && tries == 1 && at >= t0 + 29 && at <= now_unix() + 31);
+    g_srv->fail_status = 0; g_srv->fail_count = 0; g_srv->fail_retry_after = 1;
+}
+
+/* F5: one file with a path the Worker refuses (more than 8 segments) made it answer 400 bad-plan for the WHOLE plan, so the game's real
+ * save never uploaded. The mock now refuses plans like the Worker does. */
+static void test_deep_paths_do_not_block_the_game() {
+    printf(" F5: an over-deep path is skipped on its own, the rest of the game syncs\n");
+    Pc pc1("pc1"), pc2("pc2");
+    use(pc1);
+    const str ok8 = "battery/usr/save/00050000/10143500/user/80000001/slot.bin";            // 8 segments
+    const str deep = "battery/usr/save/00050000/10143500/user/80000001/slot1/data.bin";     // 9 segments
+    put(pc1.game() / "battery" / "real.sra", rnd(3000, 81), now_unix() - 500);
+    put(pc1.game() / "meta.json", "{\"title\":\"BOTW\"}", now_unix() - 500);
+    put(pc1.game() / fs::u8path(ok8), rnd(2000, 82), now_unix() - 500);
+    put(pc1.game() / fs::u8path(deep), rnd(2000, 83), now_unix() - 500);
+    const int bad0 = g_srv->n_bad_plans();
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    CHECK(g_srv->n_bad_plans() == bad0);                                                // the bad path never reached the plan
+    CHECK(g_srv->cur_sha(g_uid, GK, "battery/real.sra") == sha_of(rnd(3000, 81)));
+    CHECK(!g_srv->cur_sha(g_uid, GK, "meta.json").empty() && g_srv->cur_sha(g_uid, GK, ok8) == sha_of(rnd(2000, 82)));
+    CHECK(g_srv->cur_sha(g_uid, GK, deep).empty());
+    CHECK(cloud_account().queued_games == 0);                                           // not retried forever
+    GameCloudInfo gi;
+    CHECK(cloud_game(G, &gi) && gi.state == CloudState::NeedsAttention);                // shown in the existing "needs attention" state
+    CHECK(gi.message.find("1 file(s)") == 0 && gi.message.find("too deeply") != str::npos);
+    CHECK(get(pc1.game() / fs::u8path(deep)) == rnd(2000, 83));                         // the file itself is untouched
+    /* logged once, however many passes follow */
+    cloud_sync_all_now(); pump(); cloud_prelaunch(G, SyncMode::ReadWrite); cloud_sync_all_now(); pump();
+    const str marker = "skipped, their path is not allowed";
+    str log = get(pc1.data / "cloud_saves.log");
+    size_t first = log.find(marker);
+    CHECK(first != str::npos && log.find(marker, first + 1) == str::npos && log.find("too-deep") != str::npos);
+    CHECK(g_srv->n_bad_plans() == bad0);
+    /* the other PC gets the real save; its own over-deep file stays its own */
+    use(pc2);
+    put(pc2.game() / fs::u8path(deep), rnd(2000, 84), now_unix() - 400);
+    PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
+    CHECK(r.action == PrelaunchResult::Proceed && r.files_pulled >= 2);
+    CHECK(get(pc2.game() / "battery" / "real.sra") == rnd(3000, 81) && get(pc2.game() / fs::u8path(deep)) == rnd(2000, 84));
+    CHECK(g_srv->n_bad_plans() == bad0);
+    /* nothing over-deep left: back to Synced */
+    use(pc1);
+    fs::remove(pc1.game() / fs::u8path(deep));
+    cloud_prelaunch(G, SyncMode::ReadWrite);
+    CHECK(cloud_game(G, &gi) && gi.state == CloudState::Synced);
+}
+
+/* F2: the PS2 memory card (Mcd001.ps2, 8 MB) is a save. It used to count as "large" like a save state: not refreshed before launch, so
+ * every A -> B -> A hop ended in a conflict dialog. */
+static void test_ps2_card_follows_the_player() {
+    printf(" F2: the PS2 memory card is pulled before launch like a battery save\n");
+    Pc pc1("pc1"), pc2("pc2");
+    const GameId ps2{"ps2", "slus-20946"};
+    const str rel = "battery/memcards/RetroHub/slus-20946/Mcd001.ps2";
+    auto card = [](unsigned seed) { str s((size_t)8 << 20, '\0'); for (size_t i = 0; i < 4096; i++) s[i] = (char)((seed * 31 + i * 7) & 0xFF); return s; };   // mostly empty, like a real card
+    auto cardfile = [&](const Pc& pc) { return pc.game("ps2", "slus-20946") / fs::u8path(rel); };
+    use(pc1);
+    put(cardfile(pc1), card(1), now_unix() - 900);
+    cloud_prelaunch(ps2, SyncMode::ReadWrite); play(ps2); exit_game(ps2);
+    CHECK(g_srv->cur_sha(g_uid, "ps2/slus-20946", rel) == sha_of(card(1)));
+    /* PC2 starts the game: the card is on disk BEFORE the emulator would start, not left to a background job */
+    use(pc2);
+    PrelaunchResult r = cloud_prelaunch(ps2, SyncMode::ReadWrite);
+    CHECK(r.action == PrelaunchResult::Proceed && !r.offline && r.files_pulled == 1);
+    CHECK(get(cardfile(pc2)) == card(1));
+    CHECK(cloud_queue_dump().find("pull-large") == str::npos);
+    play(ps2);
+    put(cardfile(pc2), card(2), now_unix() - 100);
+    exit_game(ps2);
+    CHECK(g_srv->cur_sha(g_uid, "ps2/slus-20946", rel) == sha_of(card(2)));
+    /* back on PC1 (A -> B -> A): PC2's card comes down, no conflict dialog */
+    use(pc1);
+    r = cloud_prelaunch(ps2, SyncMode::ReadWrite);
+    CHECK(r.action == PrelaunchResult::Proceed && r.conflicts.empty() && r.files_pulled == 1);
+    CHECK(get(cardfile(pc1)) == card(2));
+}
+
+int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::set_terminate([]() {
         try { if (auto e = std::current_exception()) std::rethrow_exception(e); } catch (const std::exception& x) { printf("terminate: %s\n", x.what()); } catch (...) { printf("terminate: unknown\n"); }
@@ -940,34 +1274,43 @@ int main() {
         abort();
     });
     _putenv_s("RETROHUB_QA", "1");
+    const char* only = argc > 1 ? argv[1] : nullptr;   // dev aid: `hubsaves_engine_test refused` runs only the engine scenarios whose function name contains that text
     printf("pure rules\n");
     test_classify();
     test_three_way();
     test_wire();
     test_queue_and_base();
+    test_read_base();
 
-    printf("engine against the mock Worker\n");
+    printf("engine against the mock Worker%s%s\n", only ? " (only: " : "", only ? only : "");
     MockServer srv;
     if (!srv.start(0)) { printf("cannot start the mock server\n"); return 1; }
     g_srv = &srv;
     g_uid = b32(26, 11);
     g_secret = b32(52, 12);
     srv.add_account(g_uid, g_secret);
-    test_http_timeout();
-    { int f0 = g_fail; fresh_account(); test_basic_two_pcs(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_offline_retry_resume(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_account_prefs_two_pcs(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_account_rivals_two_pcs(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_conflict(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_plain_conflict_surfaces(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_states_switch(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_states_never_prompt(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_quota(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_lease_and_readonly(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_local_flags(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_daily_limit_and_auth(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_migration_and_restore(); if (g_fail != f0) dump_log(); }
-    { int f0 = g_fail; fresh_account(); test_linked_pcs(); if (g_fail != f0) dump_log(); }
+#define RUN_SCENARIO(fn) do { if (!only || strstr(#fn, only)) { int f0 = g_fail; fresh_account(); fn(); if (g_fail != f0) dump_log(); } } while (0)
+    if (!only) test_http_timeout();
+    RUN_SCENARIO(test_basic_two_pcs);
+    RUN_SCENARIO(test_offline_retry_resume);
+    RUN_SCENARIO(test_account_prefs_two_pcs);
+    RUN_SCENARIO(test_account_rivals_two_pcs);
+    RUN_SCENARIO(test_conflict);
+    RUN_SCENARIO(test_plain_conflict_surfaces);
+    RUN_SCENARIO(test_states_switch);
+    RUN_SCENARIO(test_states_never_prompt);
+    RUN_SCENARIO(test_quota);
+    RUN_SCENARIO(test_lease_and_readonly);
+    RUN_SCENARIO(test_local_flags);
+    RUN_SCENARIO(test_daily_limit_and_auth);
+    RUN_SCENARIO(test_migration_and_restore);
+    RUN_SCENARIO(test_linked_pcs);
+    RUN_SCENARIO(test_refused_upload_is_not_pushed);
+    RUN_SCENARIO(test_legacy_refused_base_cannot_overwrite);
+    RUN_SCENARIO(test_startup_retry_honours_retry_after);
+    RUN_SCENARIO(test_deep_paths_do_not_block_the_game);
+    RUN_SCENARIO(test_ps2_card_follows_the_player);
+#undef RUN_SCENARIO
     cloud_engine_stop();
     srv.stop();
     { std::error_code ec; fs::remove_all(scratch_root(), ec); }
