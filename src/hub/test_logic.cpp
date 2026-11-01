@@ -773,7 +773,7 @@ int main() {
         CHECK(host_gone_decide(true, 20000, false, false) == HostGoneAct::Notify);
         CHECK(host_gone_decide(true, 30000, true, false) == HostGoneAct::Wait);    // alive netplay: the player decides
         CHECK(host_gone_decide(true, 30000, true, true) == HostGoneAct::Close);
-        CHECK(exit_text_for(4, "Mia") == player_left_text("Mia") && exit_text_for(4, "").find("Connection lost") == 0 && exit_text_for(5, "Mia").find("desync") != std::string::npos);
+        CHECK(exit_text_for(4, "Mia") == player_left_text("Mia") && exit_text_for(4, "").find("Connection lost") == 0 && exit_text_for(5, "Mia").find("out of sync") != std::string::npos);
         CHECK(host_changed_text("Mia", false) == "Mia is now the host" && host_changed_text("Mia", true) == "You are now the host");
     }
 
