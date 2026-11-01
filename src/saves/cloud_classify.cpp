@@ -37,11 +37,14 @@ FileClass classify_path(const std::string& rel_in_game, int64_t size) {
     return size > kProtectedCardMax ? FileClass::Card : FileClass::Battery;
 }
 
+/* A memory card is a save, not a save state: it is pulled before launch, uploaded first and kept with history, at any size up to the
+ * blob limit (the PS2 card Mcd001.ps2 is 8 MB). classify_path still reports `card` for them (the Worker's classifyPath mirror and the
+ * golden table agree on that); only the "protected" verdict is wider than the old 512 KB rule. */
 bool is_protected(FileClass c, int64_t size) {
     switch (c) {
         case FileClass::Settings:
         case FileClass::Battery: return true;
-        case FileClass::Card: return size <= kProtectedCardMax;
+        case FileClass::Card: return size <= kProtectedBigCardMax;
         default: return false;
     }
 }
