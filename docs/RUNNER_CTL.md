@@ -64,6 +64,12 @@ Same file and `seq` rules as above. Extra fields in `control.json`: `"value"` (i
 - **n64run:** the plugin owns the GL window, so the OSD text is mirrored into the window caption (toast text appended for its lifetime). A real GL overlay exists behind `N64RUN_OSD_GL=1` (fixed-function quad drawn in the VI callback). It is experimental: it needs a compatibility context and the callback must run before the plugin's buffer swap, which is unverified, so it is off by default.
 - **QA:** `retrorun --headless --osd-msg "text" --screenshot out.png` with `RETRORUN_OSD_SHOT=1` composites the OSD into the screenshot (frame upscaled to ~480 px high).
 
+## Pause, corner text, hand-off (Plan 4; retrorun)
+- **`pause`** (`value` 1/0, offline only): emulation, audio and the clip ring stand still; the last frame and the OSD keep presenting; the pad exit combo and the hub's commands stay alive (a Quit while paused works). Online: `ok:false` "Not available in online sessions". Toast "Paused" (none on resume).
+- **`osd_corner`** (`slot` = corner 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right; `text`, "" clears; `value` = seconds to keep, 0 = until replaced; allowed online): `osd::set_corner_at(corner, text, kind, seconds)`. Corner 0 sits under the stats line, 2 above the toast stack, 1 is the `set_corner()` slot; `\n` = up to 4 lines of 60 characters.
+- **`handoff`** (`slot` = controller port, `value` = receiving lobby slot; allowed online): experimental, retrorun rollback games only, needs `--handoff` (or `RETRORUN_HANDOFF=1`) on every PC; otherwise `ok:false` "unsupported". See RETRORUN.md "Controller hand-off".
+- **Quit is heard everywhere**: the poller exists from process start and is polled by every wait that pumps events (rollback / lockstep stalls, start barrier, joins), headless included. A Quit in a stall says bye, saves and leaves at once. QA: `qa\quit_in_stall.ps1`, `qa\ctl_headless.ps1` (the QA sender `retrorun_ctl_send` is the hub's own `send_command_ex`).
+
 ## Quick menu (hub)
 View + Y while a game runs opens the menu (`src/hub/quickmenu.cpp`): Resume, Speed, Volume + Mute, Save state (slot picker with thumbnails), Load state, Take a screenshot, Cheats, Swap disc (PS1), Invite a friend (when in a room), Quit to RetroHub.
 - **Speed** (built-in runners): 0.25x, 0.5x, 1x, 1.5x, 2x, 3x, 5x, 8x, Max. Left/right on the pad changes it live and the OSD shows `Speed 2x`. Offline only; online the row is disabled with "Not available online". It resets to 1x every session.
