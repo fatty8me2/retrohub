@@ -1,6 +1,7 @@
 #include "app.h"
 #include "hang_watchdog.h"
 #include "addgames.h"
+#include "hack_ui.h"
 
 #include <shlobj.h>
 
@@ -117,6 +118,7 @@ void add_games_paths(const std::vector<std::string>& paths) {
     const bool was_closed = AG.st == AddGames::Closed;
     const size_t queued_before = AG.queue.size();
     for (const std::string& p : paths) {
+        if (hack_is_patch_file(p) && !is_dir(p)) { hack_add_patch(p); continue; }   // .ips / .ups / .bps / .xdelta: a ROM hack or translation (hack_ui.cpp)
         if (is_dir(p)) { ++folders_seen; folders_added += add_folder_in_place(p); }
         else AG.queue.push_back(p);
     }
