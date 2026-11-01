@@ -10,6 +10,7 @@
  * --slot may be any of 0..3 (lobby slots can have gaps); --players is the number of PCs.
  */
 #include "winutil.h"
+#include "net_probe.h"
 #include <windows.h>
 #include <shellapi.h>
 
@@ -1472,6 +1473,7 @@ static bool start_plugin(PluginDll& p, const std::string& emu_dir, const char* f
 }
 
 int main(int argc, char** argv) {
+    for (int i = 1; i < argc; i++) if (hubprobe::is_flag(argv[i])) return hubprobe::run();   // firewall prompt probe (setup wizard); before anything else
     Args args;
     if (!parse_args(argc, argv, args)) { std::fputs(kUsage, stderr); return 2; }
 

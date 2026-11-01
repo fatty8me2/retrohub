@@ -159,7 +159,7 @@ int main() {
     CHECK(countdown_text(545) == "9:05" && countdown_text(-3) == "0:00" && countdown_text(0.2) == "0:01");
     CHECK(link_code_complete("k7m2-qx9p") && link_code_complete("K7M2QX9P") && !link_code_complete("K7M2-QX9") && link_code_complete("K7M2-QX9P-4HTW"));
     // wizard flow: 6 steps (cloud after username) and names the username step
-    CHECK(hubui::wiz::kStepCount == 6 && hubui::wiz::step_title(hubui::wiz::Step::Name) == "Pick your username");
+    CHECK(hubui::wiz::kStepCount == 7 && hubui::wiz::step_title(hubui::wiz::Step::Name) == "Pick your username");
     CHECK(hubui::wiz::name_ok("kai") && !hubui::wiz::name_ok("ab") && !hubui::wiz::name_ok("a b") && hubui::wiz::name_ok("a b c"));
     CHECK(hubui::wiz::returning_blurb().find("another PC") != std::string::npos);
     std::printf(fails ? "FAILED\n" : "username tests passed\n");

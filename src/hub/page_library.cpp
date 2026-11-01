@@ -1,4 +1,5 @@
 #include "app.h"
+#include "convenience.h"
 #include "gamepack.h"
 #include "wiiu_meta.h"
 #include "homefun.h"
@@ -364,17 +365,27 @@ void library_top_bar() {
 
     float bh = sp(5.f);
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) A.focus_search = true;
+    if (type_to_search_pending()) A.focus_search = true;   // just start typing: the characters land in the box this same frame
     if (A.focus_search) { ImGui::SetKeyboardFocusHere(); A.focus_search = false; }
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(5.f), (bh - ImGui::GetFontSize()) * 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
+    float search_w = sp(10.f);
+    const char* search_hint = "Search";
     const bool dice = A.view == LibView::Home && !A.lib.empty();   // L7: Surprise me
     float total = bh + sp(1.f) + add_games_header_width(bh) + (dice ? bh + sp(1.f) : 0.f);
     {   // the search box gives way so the pinned right-hand buttons (Add games...) are never pushed past the edge (narrow window / Friends panel open)
         const float chips = ImGui::CalcTextSize("Sort: Recently added").x + ImGui::CalcTextSize("Friends' games").x + sp(14.f) + sp(4.f);
         const float room = ImGui::GetContentRegionAvail().x - total - chips;
-        ImGui::SetNextItemWidth(std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room)));
+        search_w = std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room));
+        ImGui::SetNextItemWidth(search_w);
     }
-    osk::input("##search", "Search games   (Ctrl+F)", A.search_buf, sizeof A.search_buf);
+    {   // the hint gives way to a shorter one instead of being clipped (1280x800): the text starts after the search icon and ends before the rounded edge
+        const float room_txt = search_w - sp(5.f) - sp(2.5f);
+        static const char* hints[] = {"Search games   (Ctrl+F)", "Search games (Ctrl+F)", "Search games", "Search"};
+        search_hint = hints[3];
+        for (const char* h : hints) if (ImGui::CalcTextSize(h).x <= room_txt) { search_hint = h; break; }
+    }
+    osk::input("##search", search_hint, A.search_buf, sizeof A.search_buf);
     ImVec2 s0 = ImGui::GetItemRectMin(), s1 = ImGui::GetItemRectMax();
     ImGui::GetWindowDrawList()->AddRect(s0, s1, ImGui::IsItemActive() ? ui::ACCENT : ui::HAIRLINE, bh * 0.5f, 0, 1.f);
     ui::icon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(s0.x + sp(2.5f), (s0.y + s1.y) * 0.5f), sp(2.f), ui::TEXT2);
@@ -1055,6 +1066,8 @@ void page_library() {
     }
     // The old "sync through a folder" Home card is gone: cloud saves are automatic (v1.25). Folder sync stays
     // an optional extra on the Saves page.
+
+    finish_setup_card();   // Plan 4 W2 C: while first-run steps are open
 
     const hub::GameEntry* sel = find_entry(A.sel_game);
     if (sel) {
