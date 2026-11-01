@@ -103,6 +103,7 @@ add_test(NAME starthint_test COMMAND starthint_test)
 add_test(NAME hint_popup_test COMMAND hint_popup_test)
 add_test(NAME cheats_test COMMAND cheats_test)                         # cheat file model + code parsing per format
 add_test(NAME hubcommon_test COMMAND hubcommon_test)
+add_test(NAME patcher_test COMMAND patcher_test)   # ROM patch engine: IPS/UPS/BPS/VCDIFF round trips, real xdelta3 fixtures, fuzzing, apply_file (scratch dirs only)
 add_test(NAME hublibrary_test COMMAND hublibrary_test)
 add_test(NAME hubkanto_test COMMAND hubkanto_test)                       # Kanto Together: package, install, rom pick, output parsing
 add_test(NAME hubkantopad_test COMMAND hubkantopad_test)               # Kanto Together mGBA gamepad config writer

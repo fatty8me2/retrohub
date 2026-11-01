@@ -16,6 +16,20 @@ target_compile_features(hubcommon PUBLIC cxx_std_17)
 target_link_libraries(hubcommon PUBLIC hubbase ws2_32 PRIVATE bcrypt hubminiz chdr-static zstd)   # hubminiz: defined in src/saves (zipped ROMs)
 target_include_directories(hubcommon PRIVATE ${libchdr_SOURCE_DIR}/deps/zstd-1.5.7)   # wiiu_meta.cpp: .wua (ZArchive) blocks are zstd
 
+# ROM patch engine: IPS / UPS / BPS / VCDIFF (docs/PATCHES.md). VCDIFF secondary compression uses the LZMA SDK subset in
+# third_party/lzma (public domain) and the DJW / FGK decoders derived from xdelta3 in third_party/xdelta3 (Apache-2.0).
+target_sources(hubcommon PRIVATE patcher.cpp patcher_vcdiff.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/xdelta3/djw_decode.cpp ${CMAKE_SOURCE_DIR}/third_party/xdelta3/fgk_decode.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/lzma/LzmaDec.c ${CMAKE_SOURCE_DIR}/third_party/lzma/Lzma2Dec.c)
+target_include_directories(hubcommon PRIVATE ${CMAKE_SOURCE_DIR}/third_party/xdelta3 ${CMAKE_SOURCE_DIR}/third_party/lzma)
+if(MSVC)
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/third_party/lzma/LzmaDec.c ${CMAKE_SOURCE_DIR}/third_party/lzma/Lzma2Dec.c PROPERTIES COMPILE_OPTIONS /W0)
+endif()
+# Patcher test: round trips with in-test encoders, hand-built VCDIFF windows, real xdelta3 fixtures (testdata/patcher), fuzzing, apply_file.
+add_executable(patcher_test test_patcher.cpp)
+target_link_libraries(patcher_test PRIVATE hubcommon)
+target_compile_definitions(patcher_test PRIVATE PATCHER_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/testdata/patcher")
+
 # Console-only unit test (no WIN32 flag, so it stays a console app).
 add_executable(hubcommon_test test_games.cpp)
 target_link_libraries(hubcommon_test PRIVATE hubcommon)
