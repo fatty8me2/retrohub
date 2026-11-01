@@ -1018,7 +1018,11 @@ static void corner_refresh() {
     std::lock_guard<std::mutex> lk(g_corner_mx);
     g_corners.expire(GetTickCount64());
     const std::string t = corner_text_locked();
-    osd::set_corner(t, osd::Kind::Info);
+    for (int c = 0; c < n64run::CornerBoard::kCorners; c++) {   // one OSD slot per corner; the pause label rides in the top-right one
+        std::string ct = g_corners.text(c);
+        if (c == 1 && g_pause_label) ct = ct.empty() ? std::string("PAUSED") : "PAUSED  |  " + ct;
+        osd::set_corner_at(c, ct, osd::Kind::Info, 0);
+    }
     g_corner_live = !t.empty();
 }
 static void corner_tick() { if (g_corner_live.load()) corner_refresh(); }

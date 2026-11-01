@@ -147,3 +147,5 @@ uint64_t library_identify_count();
 void library_set_data_dir(const std::string& dir);
 
 } // namespace hub
+
+#include "library_scan_info.h"   // scan results beyond the game list (library-1/2/3); at the end because it includes this header

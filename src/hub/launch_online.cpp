@@ -812,6 +812,11 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         const bool room_dropin = g_dropin_launch || (is_host ? g_room_dropin : (launch_msg && launch_msg->num("dropin", 0) >= 1));
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
         if (room_dropin) args += " --dropin-room";
+        if (e.catalog_id == "remix" || e.catalog_id == "smash64") {   // Smash Remix / Smash 64 ROM: VS results for rivals, party mode and brackets
+            ri.result_file = hub::data_dir() + "n64_result.json";
+            { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(ri.result_file), ec); }
+            args += " --result-file " + quote(ri.result_file);
+        }
         args += hubui::n64_extra_args(gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
         args += qm_args(ri, e, false);
@@ -947,7 +952,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
                            " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
         if (share_save) args += " --share-host-save";
-        args += " --rollback";
+        args += " --rollback --handoff";   // NES/SNES rollback: every PC builds the same flags
         args += hubui::retro_extra_args(e.system, gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
         args += qm_args(ri, e, false);

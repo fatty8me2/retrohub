@@ -648,6 +648,7 @@ void fr_tick() {
     if (FR.fake) { gn_tick(); return; }
     if (!FR.started) return;
     FR.cli.update();
+    { static bool was_conn = false; const bool now_conn = FR.cli.connected(); if (now_conn && !was_conn) hub::saves::cloud_network_back(); was_conn = now_conn; }   // wake a parked cloud pass
     hubnet::Event e;
     while (FR.cli.poll_event(&e)) {
         switch (e.kind) {

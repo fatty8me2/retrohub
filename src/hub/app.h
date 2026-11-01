@@ -1017,6 +1017,7 @@ void draw_missing_rom_dialog();
 void hidden_games_row();         // Settings > General: "Hidden games (N)" -> Unhide list
 void hidden_games_open_shot();
 void dupes_details_section(const hub::GameEntry& e);
+std::string library_folder_status_line(const std::string& folder);   // Settings > General: "" or a short note under a ROM folder
 std::map<std::string, std::string> preferred_copies();
 std::set<std::string> hidden_game_keys();
 void apply_located_paths(std::vector<hub::GameEntry>* lib, const std::map<std::string, std::string>& preferred);

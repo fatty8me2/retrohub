@@ -206,6 +206,8 @@ add_test(NAME n64run_dropagree_test COMMAND n64run_dropagree_test)
 add_test(NAME n64run_resync_test COMMAND n64run_resync_test)
 add_test(NAME n64run_dropin_test COMMAND n64run_dropin_test)
 add_test(NAME n64run_match_test COMMAND n64run_match_test)
+add_test(NAME n64run_match_result_test COMMAND n64run_match_result_test)
+add_test(NAME n64run_corner_test COMMAND n64run_corner_test)
 add_test(NAME n64run_gs_cheat_test COMMAND n64run_gs_cheat_test)
 add_test(NAME n64run_testinput_test COMMAND n64run_testinput_test)
 add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulated network only

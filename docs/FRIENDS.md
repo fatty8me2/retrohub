@@ -65,7 +65,7 @@ Invite  = {lobby_code, game_id, game_title, system, expires_at}
 ## Invites and joining (the main feature)
 
 - **Sending:** the host is in a RetroHub lobby room (`/hub` endpoint, code `ABC234`) with a game selected. They click Invite on one or more friends, which sends `invite` with `lobby_code` set to the room code and `game_id`/`game_title`/`system` set to the selected game. `expires_at` is 30 minutes from sending.
-- **Receiving:** the recipient's RetroHub shows a toast and a notification card: "<name> invited you to play <game> — Join / Dismiss". Clicking Join:
+- **Receiving:** the recipient's RetroHub shows a toast and a notification card (while a game is running nothing pops up: the invite waits in the bell): "<name> invited you to play <game> — Join / Dismiss". Clicking Join:
   - leaves any current room;
   - checks that the game is owned (catalog id or game key). If it isn't, it still joins the room but warns "You don't have <game> yet";
   - joins the lobby with the code, using the existing LobbyClient join flow.
@@ -150,4 +150,4 @@ Metadata only: a list of what each player owns (never files or ROMs), so friends
 - `{type:"watch_online", uids:[...]}` (client -> server; about 4 changes per 10 minutes per socket, in memory; refused at >= 90% of the daily budget; an unchanged list writes nothing) replaces the list: friends only, unique, at most 50. The server answers `{type:"watch_online", uids}` with what it kept. The client sends it when the list changes and after every welcome (when non-empty).
 - The server checks in the WATCHER's own UserHub when a friend's `presence` arrives (so there is no extra fan-out and no extra subrequest): offline -> online for a watched friend pushes `{type:"friend_online", uid, name, at}` to the watcher's sockets only. Non-watchers get nothing new.
 - Cost rules: the one new inbound message counts like any other in REQ_BUDGET (`meter(..., "ws")`, 1/20 unit); the push is outbound and free. Pings are skipped at >= 90% of the daily budget (same gate as the presence alarms) and limited to one per friend per 10 minutes (flapping offline/online).
-- Client: `Event::WatchedOnline` -> a bell entry (`Kind::FriendOnline`, "NAME came online"), an in-hub toast, and, while a game runs and "Notify me about invites while I'm playing" is on, a Windows toast (`hubtoast::notify_online`).
+- Client: `Event::WatchedOnline` -> a bell entry (`Kind::FriendOnline`, "NAME came online"), and an in-hub toast. With "Show a Windows notification for invites when no game is running" on, a Windows toast (`hubtoast::notify_online`) appears when no game is running; during a game it waits in the bell.
