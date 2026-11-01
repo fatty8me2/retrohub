@@ -126,6 +126,12 @@ Each room's relay is also capped at 400 frames/s sustained (burst 2x). If the DO
 | `{kind:"launch", game, launch, delay, seed}` | Host | Everyone starts the game. Native Smash uses its own lobby (the hub passes the code); emulator games use `n64run` with game room `<CODE>-<launch>` |
 | `{kind:"chat", text}` | Anyone | Chat line |
 | `{kind:"np_fail", reason}` | Guest | The guest could not start the host's launch (the reason is shown to the host). Sent by `launch_fail` in `lobby.cpp`. |
+| `{kind:"pt_state", v, rev, ph, ...}` | Host | Party mode (Plan 4): the whole party State (`party_logic.h`, < 4 KB), sent on every change and when membership changes, never on a timer. Only slot 0 is believed; a guest applies only a newer `rev` (or a new night `seed`). Host migration: the new host re-broadcasts its last State with `rev + 16`. |
+| `{kind:"pt_vote", round, what:"next"\|"winner", pick}` | Anyone | A vote for the next game (`pick` = game id) or for who won (`pick` = slot). The host folds it into the State; a vote for another round or kind of poll is ignored. |
+
+### Party mode (Plan 4 P1-P3)
+
+Host turns it on in a room (room page panel): playlist (games everyone owns, or Shuffle), rounds 3/5/7/10, points (auto / vote / none), timer (off / 5 / 10 / 15 min), auto-ready. Rounds end on the first Smash result, the timer, or when the host's game closes (then a "Who won?" vote; a tie is the host's call). Every PC closes its own game (OsdMsg, OsdCorner standings, Quit, window close as a last resort, `party_closer.h`); the native Smash port has no control channel, so it only gets the window close. Standings and the podium show in the hub only under the after-game rule (`prompt_allowed()`). Anyone can vote for the next game in any room (tie: Surprise-me style reel). Couch party: same reducer, no room. Finished nights are stored as `party/<id>.json` (user data and `_account/party` in the vault; `party_history.h`). Older RetroHubs ignore `pt_*`; the host sees "<name> needs to update for Party mode".
 
 ### Lobby room UI (v1.21.0)
 
