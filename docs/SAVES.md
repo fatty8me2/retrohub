@@ -21,7 +21,7 @@ On a fresh PC, importing into an empty vault restores everything exactly.
 cloud saves) stays on the PC that holds it: exports and sync folders never contain it, and importing a zip can
 never switch you to another account. To use your account on another PC, link it there with a link code or your
 account code (Settings > Account). Zips and sync folders made by older versions may still hold the file; it is
-ignored, so you can delete the `_identity` folder from them.
+ignored, so you can delete the `_identity` folder from them. The sync log says it: "Your account isn't included. Use Settings > Account > Add this account to another PC to sign in elsewhere."
 
 **What is synced**: battery saves (in-game saves, memory cards) and each game's `meta.json`.
 Save states (`states\`) are **left out** unless you tick "include save states" (they are big).
@@ -41,8 +41,8 @@ passes `battery_dir()` / `states_dir()` to runners, and calls `touch_game()` aft
 
 Vault layout: `<vault>\<system>\<game key>\{battery\, states\, meta.json}`; path components are sanitized.
 Other top-level entries: `.sync\` (manifests, never synced), `_conflicts\` (synced like any other file), `_identity\`
-(this PC's account secret: never synced, exported or imported; neither is any `identity*.json`, nor an `_identity` folder
-anywhere else, such as the old copies older versions kept in `_conflicts\_identity\`).
+(this PC's account secret: never synced, exported or imported; the same goes for the old copies older versions kept in
+`_conflicts\_identity\`). A game save that merely has a name like `identity.json` is a save and travels.
 
 **`sync_folder(root, include_states)`**
 - The sync folder mirrors the vault layout. Both trees are scanned; each file is identified by relative
@@ -62,7 +62,7 @@ anywhere else, such as the old copies older versions kept in `_conflicts\_identi
 
 **`export_zip` / `import_zip`**: miniz (MIT, fetched with FetchContent, 3.0.2). Entries use `/` separators and
 the UTF-8 name flag. Import rejects unsafe entry names (`..`, absolute, drive letters), skips `.sync/` and the
-account files (`_identity/`, `identity*.json`; logged as "never imported"), and
+account files (`_identity/`, `_conflicts/_identity/`; logged as "never imported"), and
 merges: new file -> restored; identical -> nothing; different -> newer mtime wins and the loser goes to
 `_conflicts/` (zip timestamps have 2 s resolution, so the local file wins within 2 s).
 

@@ -78,6 +78,7 @@ void cloud_game_exited(const GameId& g);                   // touch_game must al
 /* ---- engine lifecycle (called from app startup/shutdown and the job loop) ---- */
 void cloud_engine_start(const std::string& base_url);      // loads queue, schedules the one startup delta
 void cloud_engine_stop();                                  // joins the worker; queue is already persisted
+void cloud_network_back();                                 // a cheap local sign the network is back (friends socket reconnected): wakes a parked startup pass, no request
 void cloud_sync_all_now();                                 // "Sync now"
 void cloud_set_sync_states(bool on);                      // Saves > "Back up save states to the cloud" (default on): off = states/thumbnails stay on this PC
 void cloud_set_paused(bool paused);                        // Advanced > Pause cloud sync

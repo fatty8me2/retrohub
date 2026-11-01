@@ -271,20 +271,14 @@ ws comp_at(const ws& rel, int idx) {
 }
 bool is_states_path(const ws& rel) { return comp_count(rel) >= 3 && lower(comp_at(rel, 2)) == L"states"; }
 
-/* The account secret (a folder named _identity anywhere in the vault, or any identity*.json[.suffix] file) stays on the PC that holds it. It
+/* The account secret (<vault>/_identity/, and _conflicts/_identity/ where older builds kept the losing identity of a sync conflict) stays on the PC that holds it. It
  * is never written into an export zip or a sync folder and never read back from either, so importing someone's zip (or syncing a folder they
  * share) cannot switch the player to another account, and a zip handed to a friend does not hand over the account (F6). Older builds also
  * kept the losing identity of a sync conflict as _conflicts/_identity/identity.json.<PC>.<time>: covered by the same two rules.
  * The cloud engine and the Worker already refuse it. */
-bool is_identity_name(const ws& name) {
-    ws n = lower(name);
-    return n.size() >= 13 && n.compare(0, 8, L"identity") == 0 && n.find(L".json", 8) != ws::npos;
-}
-bool is_identity_rel(const ws& rel) {   // rel uses '/' separators
-    for (int i = 0, n = comp_count(rel); i < n; i++)
-        if (lower(comp_at(rel, i)) == L"_identity") return true;
-    size_t s = rel.find_last_of(L'/');
-    return is_identity_name(s == ws::npos ? rel : rel.substr(s + 1));
+bool is_identity_rel(const ws& rel) {   // rel uses '/' separators: the cloud's rule (top-level _identity) plus the loser copies of old builds
+    if (lower(comp_at(rel, 0)) == L"_identity") return true;
+    return comp_count(rel) >= 2 && lower(comp_at(rel, 0)) == L"_conflicts" && lower(comp_at(rel, 1)) == L"_identity";
 }
 
 void walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str>& log) {
@@ -305,12 +299,11 @@ void walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str
         }
         if (isdir) {
             if (rel.empty() && lower(name) == L".sync") continue;
-            if (lower(name) == L"_identity") continue;   // the account secret never travels (F6), wherever the folder sits
+            if ((rel.empty() && lower(name) == L"_identity") || (lower(rel) == L"_conflicts" && lower(name) == L"_identity")) continue;   // the account secret never travels (F6)
             if (!states && is_states_path(crel)) continue;
             walk(root, crel, states, out, log);
         } else {
             if (name.size() > 7 && name.compare(name.size() - 7, 7, L".hubtmp") == 0) continue;
-            if (is_identity_name(name)) continue;
             if (!states && is_states_path(crel)) continue;
             FE e;
             e.rel = crel;
@@ -415,6 +408,10 @@ bool same_or_nested(const ws& a, const ws& b) {
 
 /* ------------------------------------------------------------- public API */
 
+const char* account_notice() {
+    return "Your account isn't included. Use Settings > Account > Add this account to another PC to sign in elsewhere.";
+}
+
 std::string vault_dir() {
     {
         std::lock_guard<std::mutex> lk(g_mu);
@@ -460,6 +457,7 @@ void touch_game(const std::string& system_short, const std::string& game_key, co
 SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
     SyncReport rep;
     auto fail = [&](const str& e) { rep.ok = false; rep.error = e; return rep; };
+    rep.log.push_back(std::string("note: ") + account_notice());
     if (sync_root_utf8.empty()) return fail("no sync folder given");
 
     ws vault = vault_w(), root = norm_dir(sync_root_utf8);
