@@ -44,6 +44,21 @@ try {
         Write-Output ("{0} drive mode {1}" -f $(if ($okc) { 'PASS' } else { 'FAIL' }), $m)
         if (-not $okc) { $fail++; Write-Output $out }
     }
+    # PS2 CDs (cue + bin in a 7z) filed under the GameCube folder: kept, listed as PlayStation 2, the GameCube ghost is cleared, unpacked for Play
+    foreach ($t in @('Gauntlet - Seven Sorrows', 'Fakeland CD')) {
+        Mode 'ok'
+        $out = RunCase @('gc', $t)
+        $okc = ($out -match 'ghost_before=1') -and ($out -match 'install ok=1') -and ($out -match 'entry sys=ps2 ') -and ($out -match 'prepared=1') -and ($out -match 'ghost_after=0') `
+               -and ($out -match 'PlayStation 2 game \(the pack had it under GameCube\)') -and ($out -match 'full_scan_same_keys=1') -and ($out -match 'uninstalled=1 dir_gone=1 installed_flag=0 ghost_back=1')
+        Write-Output ("{0} misfiled PS2 cue/bin in gc folder: {1}" -f $(if ($okc) { 'PASS' } else { 'FAIL' }), $t)
+        if (-not $okc) { $fail++; Write-Output $out }
+    }
+    # a file that is no game at all: the install fails with a plain message, nothing stays on disk, no finished marker, the ghost stays
+    Mode 'ok'
+    $out = RunCase @('gc', 'Unplayable Thing')
+    $okc = ($out -match 'install ok=0') -and ($out -match 'is not a game RetroHub can play') -and ($out -match 'dir_exists=0 done_marker=0 staging_left=0') -and ($out -match 'ghost_after=1')
+    Write-Output ("{0} unidentifiable file fails cleanly" -f $(if ($okc) { 'PASS' } else { 'FAIL' }))
+    if (-not $okc) { $fail++; Write-Output $out }
     # quota page: plain-English failure, ghost stays
     Mode 'quota'
     $out = RunCase @('gc', 'Fakeland Zip')

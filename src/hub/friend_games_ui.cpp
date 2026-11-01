@@ -25,6 +25,7 @@ static std::vector<hubui::fg::Owned> owned_snapshot() {
         v.push_back({sys_short(e), e.key, e.catalog_id, e.title});
         std::string t = hubgp::installed_folder_title(e.path, root);   // installed from a shared pack: also owned under the pack's title (a catalog title may differ from it)
         if (!t.empty()) v.push_back({sys_short(e), e.key, e.catalog_id, t});
+        for (const auto& o : hubgp::pack_owned_aliases(e, root)) v.push_back(o);   // ... and under the pack console folder (a PS2 disc filed under GameCube still clears its GameCube ghost)
     }
     return v;
 }
@@ -156,13 +157,9 @@ void gamepack_merge_added(std::vector<hub::GameEntry>* lib) {
     }
 }
 
-/* A game landed: scan only its folder (done by the install thread), put it in the library, replace the greyed tile in place. */
-static void gamepack_landed() {
-    std::vector<hub::GameEntry> got;
-    std::string note;
-    { std::lock_guard<std::mutex> lk(GP.mu); got = GP.entries; note = GP.note; }
+/* Games found by scanning a pack folder on its own go into the library without a full rescan. Returns the first game's key. */
+static std::string gamepack_adopt(std::vector<hub::GameEntry> got) {
     if (hubui::merge_installer_games_dir(&A.st, hubgp::pack_root())) mark_dirty();
-    const std::string dir = hubgp::install_dir(GA.sys, GA.title);
     std::string newkey;
     for (hub::GameEntry& e : got) {
         if (e.catalog_id.empty()) { std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root()); if (!t.empty() && hubgp::pack_key(t) != hubgp::pack_key(e.title)) e.title = t; }
@@ -170,15 +167,24 @@ static void gamepack_landed() {
         g_pack_added.erase(std::remove_if(g_pack_added.begin(), g_pack_added.end(), [&](const hub::GameEntry& o) { return lower_path(o.path) == lower_path(e.path); }), g_pack_added.end());
         g_pack_added.push_back(e);
     }
-    (void)dir;
+    if (got.empty()) return newkey;
     if (A.scanning) start_scan();   // a scan is running right now (it owns the result list): queue another, the entries above are kept meanwhile
     else apply_scan();
+    A.vis_dirty = true;
+    return newkey;
+}
+
+/* A game landed: scan only its folder (done by the install thread), put it in the library, replace the greyed tile in place. */
+static void gamepack_landed() {
+    std::vector<hub::GameEntry> got;
+    std::string note;
+    { std::lock_guard<std::mutex> lk(GP.mu); got = GP.entries; note = GP.note; }
+    const std::string newkey = gamepack_adopt(got);
     if (!newkey.empty() && A.sel_ghost == GA.ghost_id) {   // the greyed tile was the selection: the real game takes its place (same title, same spot)
         A.sel_ghost.clear();
         A.sel_game = newkey;
         if (g_ghost_popup_open) A.show_details = true;   // its friend-game popup turns into the owned game's details
     }
-    A.vis_dirty = true;
     const std::string title = GA.title;
     if (!newkey.empty()) {
         push_toast_action(title + " installed. Ready to play.", COL_GOOD, "Play", [newkey]() {
@@ -187,7 +193,46 @@ static void gamepack_landed() {
     } else {
         set_toast(title + " installed, but RetroHub did not recognise a game in it. Use Rescan.", false, 10.0);
     }
-    if (!note.empty()) set_toast(note, true, 10.0);
+    if (!note.empty()) set_toast(note, true, 12.0);
+}
+
+/* Self-heal: a pack folder with its finished marker but no library entry (an install an older version could not list, or a library cache that lost it)
+ * is scanned once per session on its own. The Reinstall button in the game's details is the manual way out. */
+static struct HealJob { std::thread th; std::mutex mu; std::vector<hub::GameEntry> found; std::atomic<bool> done{false}; bool started = false, collected = false; } HEAL;
+
+static void gamepack_self_heal_tick() {
+    if (!A.scanned_once || A.scanning || HEAL.collected) return;
+    if (!HEAL.started) {
+        HEAL.started = true;
+        std::vector<std::string> dirs;
+        std::error_code ec;
+        const std::filesystem::path root = std::filesystem::u8path(hubgp::pack_root());
+        for (std::filesystem::directory_iterator c(root, ec), ce; !ec && c != ce; c.increment(ec)) {
+            if (!c->is_directory(ec)) continue;
+            std::error_code e2;
+            for (std::filesystem::directory_iterator g(c->path(), e2), ge; !e2 && g != ge; g.increment(e2)) {
+                if (!g->is_directory(e2) || !std::filesystem::is_regular_file(g->path() / "gamepack.done", e2)) continue;
+                std::string dir = g->path().string();
+                bool have = false;
+                for (const hub::GameEntry& e : A.lib) if (path_under(e.path, dir)) { have = true; break; }
+                if (!have) dirs.push_back(dir);
+            }
+        }
+        if (dirs.empty()) { HEAL.collected = true; return; }
+        HEAL.th = std::thread([dirs] {
+            std::vector<hub::GameEntry> all;
+            for (const std::string& d : dirs) { auto f = hub::scan_library({d}, nullptr); all.insert(all.end(), f.begin(), f.end()); }
+            { std::lock_guard<std::mutex> lk(HEAL.mu); HEAL.found = std::move(all); }
+            HEAL.done = true;
+        });
+        return;
+    }
+    if (!HEAL.done) return;
+    if (HEAL.th.joinable()) HEAL.th.join();
+    HEAL.collected = true;
+    std::vector<hub::GameEntry> got;
+    { std::lock_guard<std::mutex> lk(HEAL.mu); got = std::move(HEAL.found); }
+    if (!got.empty()) { gamepack_adopt(got); online_log("gamepack: self-heal added " + std::to_string(got.size()) + " installed game(s) the library had missed"); }
 }
 
 static void gamepack_finished(bool success) {
@@ -208,6 +253,7 @@ static void gamepack_finished(bool success) {
 }
 
 void poll_gamepack() {
+    gamepack_self_heal_tick();
     if (g_has_pending_uninstall) { g_has_pending_uninstall = false; hub::GameEntry e = g_pending_uninstall; gamepack_uninstall(e); }
     if (GP.state == hubgp::Installer::Working) GP.speed.add(ImGui::GetTime(), GP.bytes_so_far());
     bool success = false;
@@ -222,6 +268,7 @@ void gamepack_shutdown() {
     if (GP.th.joinable()) GP.th.join();
     if (GP.state == hubgp::Installer::Working && GP.ok) { GP.state = hubgp::Installer::Idle; }
     if (SP.th.joinable()) SP.th.join();
+    if (HEAL.th.joinable()) HEAL.th.join();
     hubgp::index_shutdown();
 }
 
@@ -229,7 +276,8 @@ void gamepack_shutdown() {
 void gamepack_uninstall(const hub::GameEntry& e) {
     std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root());
     if (t.empty()) return;
-    const std::string sys = sys_short(e);
+    std::string sys = hubgp::installed_folder_console(e.path, hubgp::pack_root());   // the folder it sits in, which can differ from its console
+    if (sys.empty()) sys = sys_short(e);
     const std::string dir = hubgp::install_dir(sys, t);
     std::error_code ec;
     std::filesystem::remove_all(std::filesystem::u8path(hub::extract_3ds_dir(e)), ec);   // the unpacked copy of an archived disc
@@ -681,6 +729,7 @@ void draw_ghost_modal() {
     bool in_pack = ist == hubgp::IndexState::Ready ? hubgp::index_has(g.sys, g.title) : true;   // unknown yet: checked live on click
     if (g_headless && std::getenv("HUB_SHOT_GHOST_INSTALLABLE")) in_pack = true;   // screenshots: pretend the shared pack has this game
     const bool installable = can_show && !have && in_pack && !ist_run;
+    const bool reinstallable = can_show && have && !ist_run;   // files marked installed but no library entry exists (that is why this greyed tile is still here): wipe and install again
     const std::string size_txt = ghost_size_text(g, installable || ist_run);
     if (ist_run) {   // background job: this popup can be closed, the install goes on
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ui::ACCENT);
@@ -712,12 +761,13 @@ void draw_ghost_modal() {
         if (ist_run) {
             if (button("Cancel", ImVec2(sp(12.f), bh), false, true, ui::Icon::Close)) gamepack_cancel(g.id);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel this install");
-        } else if (button(GFAIL.count(g.id) ? "Retry" : "Install", ImVec2(sp(12.f), bh), true, installable, ui::Icon::Cloud)) {
+        } else if (button(reinstallable ? "Reinstall" : GFAIL.count(g.id) ? "Retry" : "Install", ImVec2(sp(reinstallable ? 14.f : 12.f), bh), true, installable || reinstallable, ui::Icon::Cloud)) {
+            if (reinstallable) hubgp::uninstall(g.sys, g.title);   // the old files never showed up as a game: start clean
             gamepack_enqueue(g.sys, g.title, g.id);   // the popup stays: it shows the progress and turns into the game's details when done
         }
-        if (installable) ImGui::SetItemDefaultFocus();
+        if (installable || reinstallable) ImGui::SetItemDefaultFocus();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            if (have) ImGui::SetTooltip("Already installed");
+            if (reinstallable) ImGui::SetTooltip("The files are in RetroHub's games folder but RetroHub does not list them as a game. Reinstall downloads them again.");
             else if (!in_pack) ImGui::SetTooltip("Not in any shared pack yet. The owner can add it to their Google Drive and send the link so everyone can install it.");
         }
     }

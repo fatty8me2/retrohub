@@ -244,6 +244,25 @@ int main()
         m.add(3.0, 0);         // counter went back (new file): restarts
         CHECK(m.rate() == 0);
         CHECK(install_dir("gc", "Foo: Bar").find("gamepack") != std::string::npos);
+        {   // a game filed under another console than its pack folder keeps its folder identity
+            const std::string root = "C:/data/gamepack";
+            CHECK(installed_folder_console("C:/data/gamepack/gc/Gauntlet/disc.7z", root) == "gc");
+            CHECK(installed_folder_console("c:\\DATA\\gamepack\\ps2\\Foo\\a.iso", root) == "ps2");
+            CHECK(installed_folder_console("C:/elsewhere/x.iso", root).empty());
+            CHECK(installed_folder_console("C:/data/gamepack/gc/loose.iso", root).empty());
+            hub::GameEntry e;
+            e.system = hub::System::PS2; e.key = "ps2:slus-20047"; e.title = "Gauntlet - Dark Legacy"; e.path = "C:/data/gamepack/gc/Gauntlet - Dark Legacy/x.7z";
+            auto al = pack_owned_aliases(e, root);
+            CHECK(al.size() == 1 && al[0].sys == "gc" && al[0].title == "Gauntlet - Dark Legacy" && al[0].key == e.key);
+            e.path = "C:/games/x.7z";
+            CHECK(pack_owned_aliases(e, root).empty());
+            // that alias is what clears the greyed gc entry when the game was identified as PS2
+            std::vector<hubui::fg::Owned> mine = {{"ps2", e.key, "", "Gauntlet - Dark Legacy"}};
+            std::vector<PackGame> pk = {{"gc", "Gauntlet - Dark Legacy", pack_key("Gauntlet - Dark Legacy"), ""}};
+            CHECK(pack_only_ghosts(mine, {}, pk, 10).size() == 1);   // without the alias the gc ghost would stay
+            mine.push_back(al.empty() ? hubui::fg::Owned{"gc", e.key, "", "Gauntlet - Dark Legacy"} : al[0]);
+            CHECK(pack_only_ghosts(mine, {}, pk, 10).empty());
+        }
         CHECK(staging_root().find("gamepack-tmp") != std::string::npos && staging_root().find("gamepack\\") == std::string::npos);
     }
 
