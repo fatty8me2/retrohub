@@ -66,8 +66,18 @@ struct Invite {
     int64_t expires_at = 0;   // same time base as server "at" (ms since epoch)
 };
 
+/* A file that rides a DM (Plan 4): the bytes live in R2 (Worker /saves/v2/attach, 8 MB, 7 days), the DM carries only this reference.
+ * kind: "shot" | "state" | "patch". expires = ms since epoch (same base as Message::at). Metadata is stamped by the server. */
+struct Attach {
+    std::string id, name, sha, kind;
+    int64_t size = 0, expires = 0;
+};
+constexpr size_t kCardMax = 1536;   // server limit for Message::card
+
 struct Message {
     std::string id, from, from_name, to;
+    bool has_attach = false; Attach attach;   // kind "text" with an attached file (text may just be the file name)
+    std::string card;         // opaque card payload (<= kCardMax), e.g. "RHC1:..." challenge cards (src/hub/challenge_logic.h); empty = none
     bool invite = false;      // kind == "invite"
     bool ask_host = false;    // kind == "ask" with host:true: "will you host this game?" (they do not have it)
     bool ask = false;         // kind == "ask": "may I join your game?" (game in inv.game_id/game_title/system; never stored in the conversation)
