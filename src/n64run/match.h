@@ -15,7 +15,8 @@ namespace n64run {
 struct MatchSpec {
     int stage = 0;
     int stocks = 3;
-    int time = 100;               // minutes, 100 = infinite
+    int time = 100;               // minutes, 100 = infinite (only used when the rules include time)
+    int rules = 2;                // game rules bits: 1 = time, 2 = stock (default), 3 = both. Optional `rules=` key (QA: a 1 minute timed match ends by itself)
     bool present[4] = {false, false, false, false};
     int fighter[4] = {0, 0, 0, 0};
     int costume[4] = {0, 0, 0, 0};
