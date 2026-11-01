@@ -279,7 +279,7 @@ void draw_gamepack_pill() {
     ImFont* fb = ui::F.bold;
     ImFont* fc = ui::F.cap;
     const float w = std::min(sp(92.f), io.DisplaySize.x * 0.9f), h = sp(8.5f);
-    const ImVec2 p0((io.DisplaySize.x - w) * 0.5f, io.DisplaySize.y - sp(13.f) - h), p1(p0.x + w, p0.y + h);
+    const ImVec2 p0((io.DisplaySize.x - w) * 0.5f, io.DisplaySize.y - sp(13.f) - (A.page == Page::Library ? sp(9.f) : 0.f) - h), p1(p0.x + w, p0.y + h);
     ui::shadow(dl, p0, p1, sp(2.f), 1.f);
     dl->AddRectFilled(p0, p1, ui::PANEL2, sp(2.f));
     dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.f), 0, 1.f);
@@ -709,7 +709,8 @@ void draw_ghost_modal() {
     if (can_show) {
         ImGui::SameLine(0, sp(1.5f));
         if (ist_run) {
-            if (button("Cancel install", ImVec2(sp(17.f), bh), false, true, ui::Icon::Close)) gamepack_cancel(g.id);
+            if (button("Cancel", ImVec2(sp(12.f), bh), false, true, ui::Icon::Close)) gamepack_cancel(g.id);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel this install");
         } else if (button(GFAIL.count(g.id) ? "Retry" : "Install", ImVec2(sp(12.f), bh), true, installable, ui::Icon::Cloud)) {
             gamepack_enqueue(g.sys, g.title, g.id);   // the popup stays: it shows the progress and turns into the game's details when done
         }
@@ -720,8 +721,8 @@ void draw_ghost_modal() {
         }
     }
     ImGui::SameLine(0, sp(1.5f));
-    if (button("Add your own copy", ImVec2(sp(21.f), bh), !installable && !ist_run, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
+    if (button("Add your own copy", ImVec2(sp(20.f), bh), !installable && !ist_run, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
     ImGui::SameLine(0, sp(1.5f));
-    if (button("Close", ImVec2(sp(9.f), bh))) ImGui::CloseCurrentPopup();
+    if (button("Close", ImVec2(sp(8.f), bh))) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }

@@ -64,7 +64,7 @@ void draw_update_popup() {
 
 /* ---------- toasts ---------- */
 
-void draw_toasts(float bottom, float right, float top) {
+float draw_toasts(float bottom, float right, float top) {
     double now = ImGui::GetTime();
     A.toasts.erase(std::remove_if(A.toasts.begin(), A.toasts.end(), [&](const Toast& t) { return t.until < now; }), A.toasts.end());
     ImDrawList* dl = ImGui::GetForegroundDrawList();
@@ -98,11 +98,12 @@ void draw_toasts(float bottom, float right, float top) {
             bool hov = mp.x >= b0.x && mp.x <= b1.x && mp.y >= b0.y && mp.y <= b1.y;
             dl->AddRectFilled(b0, b1, hov ? ui::scale_alpha(t.col, 0.55f) : ui::scale_alpha(t.col, 0.3f), sp(0.75f));
             dl->AddText(f, fs, ImVec2(b0.x + sp(1.f), b0.y + (b1.y - b0.y - ls.y) * 0.5f), ui::TEXT, t.action_label.c_str());
-            if (hov && ImGui::IsMouseClicked(0)) { auto fn = t.action; A.toasts[i].until = 0; if (fn) fn(); return; }
+            if (hov && ImGui::IsMouseClicked(0)) { auto fn = t.action; A.toasts[i].until = 0; if (fn) fn(); return bottom - y_bot; }
         }
         if (t.top) y_top += h + sp(1.f);
         else y_bot -= h + sp(1.f);
     }
+    return bottom - y_bot;
 }
 
 /* ---------- sidebar ---------- */
@@ -432,11 +433,13 @@ void draw_frame() {
     draw_overlays();
     global_input();
     A.popup_last_frame = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f), view_w - sp(3.f), sp(7.5f));
+    /* the library page has a now-playing / selected-game bar above the footer: toasts stack above it, never over its buttons */
+    const float bar_clear = A.page == Page::Library ? sp(10.5f) : 0.f;
+    const float toast_used = draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f) - bar_clear, view_w - sp(3.f), sp(7.5f));
     ImGui::End();
     draw_gamepack_pill();
     fr_draw_panel(io.DisplaySize.x, io.DisplaySize.y);
     fr_draw_toasts(io.DisplaySize.x - (fr_docked ? fr_pw * FR.panel_t : (A.st.show_friends ? fr_pw * FR.panel_t : 0.f)) - sp(2.f),
-                   io.DisplaySize.y - footer_h - sp(1.5f) - (A.toasts.empty() ? 0.f : sp(9.f)));
+                   io.DisplaySize.y - footer_h - sp(1.5f) - bar_clear - toast_used);   // the invite card sits above the toast stack
 }
 

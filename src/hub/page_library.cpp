@@ -873,15 +873,21 @@ void draw_details_modal() {
         }
         dupes_details_section(e);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-        ImGui::PushTextWrapPos(0.f);
-        ImGui::TextWrapped("%s", e.path.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::PopStyleColor();
-        if (gamepack_owns(e)) {   // installed from a shared pack: where it lives + Uninstall
+        if (gamepack_owns(e)) {   // installed from a shared pack: its folder (full path on hover) + Uninstall; the archive file name inside is not interesting
+            const std::string ft = hubgp::installed_folder_title(e.path, hubgp::pack_root());
+            const std::string full = hubgp::install_dir(sys_short(e), ft);
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+            ImGui::TextUnformatted(ui::ellipsize(ui::F.cap, ImGui::GetFontSize(), "Installed in " + sys_short(e) + "\\" + ft + "  (RetroHub games folder)", ImGui::GetContentRegionAvail().x).c_str());
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", full.c_str());
             ImGui::Dummy(ImVec2(0, sp(0.5f)));
-            text_wrapped_disabled("Installed from a shared pack into RetroHub's games folder (" + hubgp::pack_root() + ").");
             if (gamepack_uninstall_ui(e, sp(5.f))) ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+            ImGui::PushTextWrapPos(0.f);
+            ImGui::TextWrapped("%s", e.path.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
         }
     } else if (tab == TabSaves) {
         std::string sv;
