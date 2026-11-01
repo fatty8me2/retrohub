@@ -16,6 +16,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <mutex>
 
 #include "friend_games.h"   // hubui::fg::norm_title (via pack_key)
 #include "games.h"          // hub::data_dir
@@ -466,60 +467,308 @@ bool list_files(const std::string& game_folder_id, std::vector<Entry>* out) {
     return true;
 }
 
-bool download_file(const std::string& file_id, const std::string& out_path,
-                   std::atomic<uint64_t>* got, std::atomic<uint64_t>* total,
-                   std::atomic<bool>* stop, std::string* err) {
+/* ---- pure helpers: Drive's big-file pages, ranges, messages ---- */
+
+static std::string lower_str(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
+
+static std::string url_enc(const std::string& v) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string o;
+    for (unsigned char c : v) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
+        else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
+    }
+    return o;
+}
+
+/* the value of attribute `attr` inside one tag's text ("" when absent) */
+static std::string tag_attr(const std::string& tag, const std::string& attr) {
+    std::string lt = lower_str(tag);
+    size_t p = 0;
+    for (;;) {
+        p = lt.find(attr, p);
+        if (p == std::string::npos) return "";
+        bool left_ok = p > 0 && (lt[p - 1] == ' ' || lt[p - 1] == '\t' || lt[p - 1] == '\n' || lt[p - 1] == '\r');
+        size_t q = p + attr.size();
+        while (q < lt.size() && lt[q] == ' ') ++q;
+        if (left_ok && q < lt.size() && lt[q] == '=') {
+            ++q;
+            while (q < lt.size() && lt[q] == ' ') ++q;
+            if (q >= tag.size()) return "";
+            char quote = tag[q];
+            if (quote == '"' || quote == '\'') {
+                size_t e = tag.find(quote, q + 1);
+                return e == std::string::npos ? "" : decode_entities(tag.substr(q + 1, e - q - 1));
+            }
+            size_t e = q;
+            while (e < tag.size() && tag[e] != ' ' && tag[e] != '>' && tag[e] != '/') ++e;
+            return decode_entities(tag.substr(q, e - q));
+        }
+        p += attr.size();
+    }
+}
+
+bool parse_confirm_form(const std::string& html, std::string* path_query) {
+    std::string lh = lower_str(html);
+    size_t f = lh.find("<form");
+    while (f != std::string::npos) {
+        size_t fe = lh.find('>', f);
+        if (fe == std::string::npos) return false;
+        std::string ftag = html.substr(f, fe - f + 1);
+        size_t end = lh.find("</form>", fe);
+        if (end == std::string::npos) end = html.size();
+        std::string action = tag_attr(ftag, "action");
+        if (action.find("download") != std::string::npos || lower_str(tag_attr(ftag, "id")).find("download") != std::string::npos) {
+            std::string q;
+            bool has_id = false;
+            size_t i = lh.find("<input", fe);
+            while (i != std::string::npos && i < end) {
+                size_t ie = lh.find('>', i);
+                if (ie == std::string::npos) break;
+                std::string itag = html.substr(i, ie - i + 1);
+                std::string ty = lower_str(tag_attr(itag, "type"));
+                std::string name = tag_attr(itag, "name");
+                if ((ty == "hidden" || ty.empty()) && !name.empty()) {
+                    if (name == "id") has_id = true;
+                    if (!q.empty()) q += '&';
+                    q += url_enc(name) + "=" + url_enc(tag_attr(itag, "value"));
+                }
+                i = lh.find("<input", ie);
+            }
+            if (!has_id) return false;
+            if (path_query) *path_query = "/download?" + q;   // always our own host: the action's host is ignored
+            return true;
+        }
+        f = lh.find("<form", fe);
+    }
+    return false;
+}
+
+std::string drive_html_kind(const std::string& html) {
+    std::string l = lower_str(html.substr(0, 400000));
+    if (l.find("quota exceeded") != std::string::npos || l.find("too many users have viewed or downloaded") != std::string::npos ||
+        l.find("download quota") != std::string::npos || l.find("downloaded this file too many") != std::string::npos) return "quota";
+    if (l.find("download-form") != std::string::npos || l.find("scan this file for viruses") != std::string::npos ||
+        l.find("can't scan this file") != std::string::npos || l.find("can&#39;t scan this file") != std::string::npos) return "confirm";
+    if (l.find("servicelogin") != std::string::npos || l.find("accounts.google.com") != std::string::npos || l.find("you need access") != std::string::npos ||
+        l.find("request access") != std::string::npos) return "signin";
+    return "";
+}
+
+bool parse_content_range(const std::string& v, uint64_t* start, uint64_t* end, uint64_t* total) {
+    unsigned long long a = 0, b = 0, t = 0;
+    char star = 0;
+    if (std::sscanf(v.c_str(), " bytes %llu-%llu/%llu", &a, &b, &t) == 3) {}
+    else if (std::sscanf(v.c_str(), " bytes %llu-%llu/%c", &a, &b, &star) == 3 && star == '*') t = 0;
+    else return false;
+    if (b < a) return false;
+    if (start) *start = a;
+    if (end) *end = b;
+    if (total) *total = t;
+    return true;
+}
+
+std::string friendly_error(const std::string& raw) {
+    if (raw.empty()) return "Something went wrong. Please try again.";
+    if (raw == "cancelled") return "Cancelled.";
+    if (raw.back() == '.' && raw.size() > 24 && raw.find(' ') != std::string::npos && std::isupper((unsigned char)raw[0])) return raw;   // already a plain sentence
+    const char* quota = "Google Drive is limiting downloads of this game right now (too many people have downloaded it today). Try again later, usually within a day.";
+    if (raw == "quota") return quota;
+    if (raw == "signin") return "The owner of this game's shared folder no longer shares it publicly, so Google Drive wants a sign-in. Ask them to share it again.";
+    if (raw == "network unavailable" || raw == "could not reach Google Drive")
+        return "RetroHub could not reach Google Drive. Check your internet connection and try again.";
+    if (raw == "download interrupted" || raw == "download incomplete")
+        return "The connection dropped while downloading. Try again: it continues where it stopped.";
+    if (raw == "disk write failed" || raw.rfind("cannot write", 0) == 0)
+        return "RetroHub could not save the game files. Check that the disk is not full and the games folder is writable.";
+    if (raw.rfind("server answered ", 0) == 0) {
+        int code = std::atoi(raw.c_str() + 16);
+        if (code == 404 || code == 410) return "This game's file was removed from the shared folder. Ask the owner to add it again.";
+        if (code == 403 || code == 429) return quota;
+        if (code >= 500) return "Google Drive is having trouble right now. Try again in a few minutes.";
+        return "Google Drive refused the download (error " + std::to_string(code) + "). Try again later.";
+    }
+    if (raw.find("quota or permission") != std::string::npos) return quota;
+    if (raw == "this console is not in the shared pack") return "The shared packs have no games for this console.";
+    if (raw == "not in the shared pack") return "This game is no longer in the shared pack.";
+    if (raw == "could not list the shared pack" || raw == "could not list the game's files")
+        return "RetroHub could not read the shared pack from Google Drive. Check your internet connection and try again.";
+    if (raw == "the shared copy has no files") return "The shared copy of this game has no files in it. Ask the owner to check the folder.";
+    if (raw == "bad file id") return "The shared file's link looks damaged. Ask the owner to share it again.";
+    return "Something went wrong (" + raw + "). Please try again.";
+}
+
+std::string fmt_size(uint64_t b) {
+    char t[32];
+    if (b >= (1ull << 30)) std::snprintf(t, sizeof t, "%.1f GB", b / 1073741824.0);
+    else if (b >= (1ull << 20) * 10) std::snprintf(t, sizeof t, "%.0f MB", b / 1048576.0);
+    else if (b >= (1ull << 20)) std::snprintf(t, sizeof t, "%.1f MB", b / 1048576.0);
+    else std::snprintf(t, sizeof t, "%.0f KB", b / 1024.0);
+    return t;
+}
+
+std::string fmt_eta(double s) {
+    if (!(s > 0) || s > 99.0 * 3600) return "";
+    char t[48];
+    if (s < 5) return "almost done";
+    if (s < 90) { std::snprintf(t, sizeof t, "about %d sec left", (int)(s / 5 + 0.5) * 5); return t; }
+    if (s < 3600) { std::snprintf(t, sizeof t, "about %d min left", (int)(s / 60.0 + 0.5)); return t; }
+    int m = (int)(s / 60.0 + 0.5);
+    std::snprintf(t, sizeof t, "%d h %d min left", m / 60, m % 60);
+    return t;
+}
+
+std::string fmt_rate(double r) {
+    if (!(r > 0)) return "";
+    char t[32];
+    if (r >= 1048576.0) std::snprintf(t, sizeof t, "%.1f MB/s", r / 1048576.0);
+    else std::snprintf(t, sizeof t, "%.0f KB/s", r / 1024.0);
+    return t;
+}
+
+void SpeedMeter::add(double t, uint64_t bytes) {
+    if (!have_ || bytes < b_) { have_ = true; t_ = t; b_ = bytes; rate_ = 0; return; }
+    double dt = t - t_;
+    if (dt < 0.5) return;   // sample at most twice a second
+    double inst = (double)(bytes - b_) / dt;
+    rate_ = rate_ > 0 ? rate_ * 0.8 + inst * 0.2 : inst;
+    t_ = t;
+    b_ = bytes;
+}
+
+/* ---- the transfer ---- */
+
+static std::map<std::string, uint64_t> g_sizes;   // file id -> bytes (probed once)
+static std::mutex g_sizes_mu;
+
+/* One Drive download request, following the big-file confirm page. probe_only: stop after the headers and report the size. */
+static bool fetch_file(const std::string& file_id, const std::string& out_path, std::atomic<uint64_t>* got, std::atomic<uint64_t>* total,
+                       std::atomic<bool>* stop, std::string* err, bool probe_only, uint64_t* size_out) {
     if (!valid_id(file_id)) { *err = "bad file id"; return false; }
     HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
     if (!ses) { *err = "network unavailable"; return false; }
     bool ok = false;
     std::wstring part = W(out_path + ".part");   // written here, renamed over out_path only once complete
     INTERNET_PORT qp = 0;
-    bool qa = qa_base(&qp);
+    const bool qa = qa_base(&qp);
     HINTERNET con = WinHttpConnect(ses, qa ? L"127.0.0.1" : L"drive.usercontent.google.com", qa ? qp : INTERNET_DEFAULT_HTTPS_PORT, 0);
-    std::wstring path = L"/download?id=" + W(file_id) + L"&export=download&confirm=t";
-    HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                             WINHTTP_DEFAULT_ACCEPT_TYPES, qa ? 0 : WINHTTP_FLAG_SECURE) : nullptr;
-    if (req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) && WinHttpReceiveResponse(req, nullptr)) {
+    if (!con) { WinHttpCloseHandle(ses); *err = "network unavailable"; return false; }
+    std::string pq = "/download?id=" + file_id + "&export=download&confirm=t";
+    bool dropped_part = false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        uint64_t offset = 0;
+        if (!probe_only) {
+            WIN32_FILE_ATTRIBUTE_DATA d{};
+            if (GetFileAttributesExW(part.c_str(), GetFileExInfoStandard, &d)) offset = ((uint64_t)d.nFileSizeHigh << 32) | d.nFileSizeLow;
+        }
+        HINTERNET req = WinHttpOpenRequest(con, L"GET", W(pq).c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, qa ? 0 : WINHTTP_FLAG_SECURE);
+        if (!req) { *err = "network unavailable"; break; }
+        std::wstring hdr = offset ? L"Range: bytes=" + std::to_wstring(offset) + L"-" : L"";
+        bool sent = WinHttpSendRequest(req, hdr.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : hdr.c_str(), hdr.empty() ? 0 : (DWORD)-1L, nullptr, 0, 0, 0) &&
+                    WinHttpReceiveResponse(req, nullptr);
+        if (!sent) { *err = "could not reach Google Drive"; WinHttpCloseHandle(req); break; }
         DWORD status = 0, sz = sizeof status;
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &sz, nullptr);
         wchar_t lenb[32] = {0};
         sz = sizeof lenb;
-        if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH, nullptr, lenb, &sz, nullptr) && total) *total = (uint64_t)_wtoi64(lenb);
-        uint64_t want = total ? total->load() : 0;
+        uint64_t clen = 0;
+        if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH, nullptr, lenb, &sz, nullptr)) clen = (uint64_t)_wtoi64(lenb);
         wchar_t ctype[128] = {0};
         sz = sizeof ctype;
-        bool html = WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_TYPE, nullptr, ctype, &sz, nullptr) && wcsstr(ctype, L"text/html");
-        if (status != 200) *err = "server answered " + std::to_string(status);
-        else if (html) *err = "Google Drive refused the download (quota or permission page)";
-        else {
-            uint64_t mine = 0;
-            HANDLE f = CreateFileW(part.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (f == INVALID_HANDLE_VALUE) *err = "cannot write " + out_path;
-            else {
-                std::vector<char> buf(64 * 1024);
-                ok = true;
-                for (;;) {
-                    if (stop && stop->load()) { ok = false; *err = "cancelled"; break; }
-                    DWORD n = 0;
-                    if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &n)) { ok = false; *err = "download interrupted"; break; }
-                    if (n == 0) break;
-                    DWORD w = 0;
-                    if (!WriteFile(f, buf.data(), n, &w, nullptr) || w != n) { ok = false; *err = "disk write failed"; break; }
-                    mine += n;
-                    if (got) *got += n;
-                }
-                CloseHandle(f);
-                if (ok && want && mine != want) { ok = false; *err = "download incomplete"; }
-                if (ok && !MoveFileExW(part.c_str(), W(out_path).c_str(), MOVEFILE_REPLACE_EXISTING)) { ok = false; *err = "cannot write " + out_path; }
-                if (!ok) DeleteFileW(part.c_str());
-            }
+        const bool html = WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_TYPE, nullptr, ctype, &sz, nullptr) && wcsstr(ctype, L"text/html");
+        wchar_t crange[96] = {0};
+        sz = sizeof crange;
+        uint64_t r0 = 0, r1 = 0, rt = 0;
+        const bool have_range = status == 206 && WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_RANGE, nullptr, crange, &sz, nullptr) &&
+                                parse_content_range(std::string(crange, crange + wcslen(crange)), &r0, &r1, &rt);
+        auto read_page = [&]() {   // the (small) HTML answer
+            std::string page;
+            std::vector<char> b(16 * 1024);
+            DWORD n = 0;
+            while (page.size() < (512u << 10) && WinHttpReadData(req, b.data(), (DWORD)b.size(), &n) && n) page.append(b.data(), n);
+            return page;
+        };
+        if (status == 416 && offset && !dropped_part) {   // the partial file does not fit the server's copy: start over
+            DeleteFileW(part.c_str());
+            dropped_part = true;
+            WinHttpCloseHandle(req);
+            continue;
         }
-    } else *err = "could not reach Google Drive";
-    if (req) WinHttpCloseHandle(req);
-    if (con) WinHttpCloseHandle(con);
+        if (html || status == 403 || status == 429) {
+            std::string page = read_page();
+            WinHttpCloseHandle(req);
+            std::string kind = drive_html_kind(page);
+            std::string next;
+            if ((kind == "confirm" || kind.empty()) && attempt < 3 && parse_confirm_form(page, &next) && next != pq) { pq = next; continue; }
+            if (kind == "quota" || status == 429 || status == 403) *err = kind == "signin" ? "signin" : "quota";
+            else if (kind == "signin") *err = "signin";
+            else if (status != 200 && status != 206) *err = "server answered " + std::to_string(status);
+            else *err = "quota";
+            break;
+        }
+        if (status != 200 && status != 206) { *err = "server answered " + std::to_string(status); WinHttpCloseHandle(req); break; }
+        const bool resume = status == 206 && have_range && r0 == offset;
+        const uint64_t full = resume ? (rt ? rt : offset + clen) : clen;   // the whole file's size
+        if (probe_only) {
+            if (size_out) *size_out = full;
+            ok = true;
+            WinHttpCloseHandle(req);   // headers are enough: the body is never read
+            break;
+        }
+        if (total) *total = full;
+        uint64_t mine = resume ? offset : 0;
+        if (got) *got = mine;
+        HANDLE f = CreateFileW(part.c_str(), GENERIC_WRITE, 0, nullptr, resume ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f == INVALID_HANDLE_VALUE) { *err = "cannot write " + out_path; WinHttpCloseHandle(req); break; }
+        if (resume) SetFilePointer(f, 0, nullptr, FILE_END);
+        std::vector<char> buf(64 * 1024);
+        ok = true;
+        bool cancelled = false;
+        for (;;) {
+            if (stop && stop->load()) { ok = false; cancelled = true; *err = "cancelled"; break; }
+            DWORD n = 0;
+            if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &n)) { ok = false; *err = "download interrupted"; break; }
+            if (n == 0) break;
+            DWORD w = 0;
+            if (!WriteFile(f, buf.data(), n, &w, nullptr) || w != n) { ok = false; *err = "disk write failed"; break; }
+            mine += n;
+            if (got) *got += n;
+        }
+        CloseHandle(f);
+        WinHttpCloseHandle(req);
+        if (ok && full && mine != full) { ok = false; *err = "download incomplete"; }
+        if (ok && !MoveFileExW(part.c_str(), W(out_path).c_str(), MOVEFILE_REPLACE_EXISTING)) { ok = false; *err = "cannot write " + out_path; }
+        if (!ok && (cancelled || *err == "disk write failed")) DeleteFileW(part.c_str());   // an interrupted network keeps the .part for a resume
+        break;
+    }
+    WinHttpCloseHandle(con);
     WinHttpCloseHandle(ses);
     return ok;
+}
+
+bool download_file(const std::string& file_id, const std::string& out_path,
+                   std::atomic<uint64_t>* got, std::atomic<uint64_t>* total,
+                   std::atomic<bool>* stop, std::string* err) {
+    std::string e;
+    for (int tries = 0; tries < 3; ++tries) {   // a dropped connection continues from the .part a couple of times before giving up
+        e.clear();
+        if (fetch_file(file_id, out_path, got, total, stop, &e, false, nullptr)) return true;
+        if (e != "download interrupted" && e != "could not reach Google Drive") break;
+        if (stop && stop->load()) { e = "cancelled"; break; }
+        for (int i = 0; i < 10 && !(stop && stop->load()); ++i) Sleep(100 * (tries + 1));
+    }
+    *err = e;
+    return false;
+}
+
+uint64_t file_size(const std::string& file_id) {
+    { std::lock_guard<std::mutex> lk(g_sizes_mu); auto it = g_sizes.find(file_id); if (it != g_sizes.end()) return it->second; }
+    uint64_t sz = 0;
+    std::string e;
+    if (!fetch_file(file_id, "", nullptr, nullptr, nullptr, &e, true, &sz)) return 0;
+    std::lock_guard<std::mutex> lk(g_sizes_mu);
+    g_sizes[file_id] = sz;
+    return sz;
 }
 
 std::string pack_hint(const std::string& name) {
@@ -774,80 +1023,174 @@ bool index_source(const std::string& sys_short) {
 /* background install job                                              */
 /* ------------------------------------------------------------------ */
 
+std::string staging_root() { return hub::data_dir() + "gamepack-tmp\\"; }
+std::string install_dir(const std::string& sys_short, const std::string& title) { return S(P(pack_root()) / sys_short / safe_name(title)); }
+
+bool uninstall(const std::string& sys_short, const std::string& title) {
+    if (sys_short.empty() || safe_name(title).empty()) return false;
+    std::error_code ec;
+    bool any = false;
+    for (const fs::path& d : {P(pack_root()) / sys_short / safe_name(title), P(staging_root()) / sys_short / safe_name(title)}) {
+        if (fs::exists(d, ec)) { fs::remove_all(d, ec); any = true; }
+    }
+    return any;
+}
+
+/* The files of the shared copy of a game (built-in pack, community packs, extra roots). false + *err (raw reason) when absent. */
+static bool resolve_game(const std::string& sys, const std::string& title, const std::vector<std::string>& roots, std::vector<Entry>* files, std::string* err) {
+    std::string want = pack_key(title);
+    std::vector<std::string> sources;   // the built-in pack first, then every extra root that has this console
+    std::vector<std::string> all;       // community packs (fetched if not known yet) + the user's extra roots
+    all_roots(roots, &all);
+    for (const std::string& c : pack_consoles(console_alias(sys))) {
+        const char* cf = sys_folder(c);
+        if (cf[0]) sources.push_back(cf);
+        for (const std::string& root : all) {
+            std::string sub = sys_subfolder(root, c);
+            if (!sub.empty()) sources.push_back(sub);
+        }
+    }
+    if (sources.empty()) { *err = "this console is not in the shared pack"; return false; }
+    bool any_listed = false;
+    std::vector<Entry> cands;
+    std::vector<std::string> keys;
+    for (const std::string& s : sources) {
+        std::vector<Entry> games;
+        if (!list_folder(s, &games)) continue;
+        any_listed = true;
+        for (const Entry& g : games) { cands.push_back(g); keys.push_back(entry_key(g)); }
+    }
+    int pick = pack_pick(keys, want);
+    if (pick < 0) { *err = any_listed ? "not in the shared pack" : "could not list the shared pack"; return false; }
+    const Entry& g = cands[(size_t)pick];
+    files->clear();
+    if (!g.is_folder) files->push_back(g);   // a loose game file: the file is the whole game
+    else if (!list_files(g.id, files)) { *err = "could not list the game's files"; return false; }
+    files->erase(std::remove_if(files->begin(), files->end(), [](const Entry& f) { return safe_name(f.name) == "gamepack.done"; }), files->end());   // never let a remote file fake the marker
+    if (files->empty()) { *err = "the shared copy has no files"; return false; }
+    return true;
+}
+
+uint64_t game_download_size(const std::string& sys, const std::string& title, const std::vector<std::string>& roots, std::string* err) {
+    std::vector<Entry> files;
+    std::string e;
+    if (!resolve_game(sys, title, roots, &files, &e)) { if (err) *err = e; return 0; }
+    uint64_t sum = 0;
+    for (const Entry& f : files) { uint64_t z = file_size(f.id); if (!z) return 0; sum += z; }
+    return sum;
+}
+
 Installer::~Installer() { if (th.joinable()) th.join(); }
 
 void Installer::request_cancel() { cancel = true; }
 
-void Installer::start(const std::string& sys, const std::string& title, const std::vector<std::string>& roots) {
+float Installer::fraction() {
+    uint64_t t = all_total.load();
+    int ph = phase.load();
+    if (ph >= Finishing) return 1.f;
+    if (!t) return -1.f;
+    return (float)std::min(1.0, (double)bytes_so_far() / (double)t);
+}
+
+void Installer::start(const std::string& sys, const std::string& title, const std::vector<std::string>& roots, bool prepare) {
     if (state == Working || th.joinable()) return;   // one job at a time
     this->sys = sys;
     this->title = title;
     done = false;
     ok = false;
     cancel = false;
+    phase = Looking;
     got = 0;
     total = 0;
+    done_bytes = 0;
+    all_total = 0;
+    prep_got = 0;
+    prep_total = 0;
+    resumed = false;
     file_idx = 0;
     file_count = 0;
-    { std::lock_guard<std::mutex> lk(mu); current.clear(); error.clear(); }
+    speed.reset();
+    { std::lock_guard<std::mutex> lk(mu); current.clear(); error.clear(); note.clear(); entries.clear(); }
     state = Working;
-    th = std::thread([this, roots] {
+    th = std::thread([this, roots, prepare] {
         bool r = false;
         std::string e;
-        const char* sf = sys_folder(this->sys);
         {
-            std::string want = pack_key(this->title);
-            std::vector<std::string> sources;   // the built-in pack first, then every extra root that has this console
-            std::vector<std::string> all;   // community packs (fetched if not known yet) + the user's extra roots
-            all_roots(roots, &all);
-            for (const std::string& c : pack_consoles(console_alias(this->sys))) {
-                const char* cf = sys_folder(c);
-                if (cf[0]) sources.push_back(cf);
-                for (const std::string& root : all) {
-                    std::string sub = sys_subfolder(root, c);
-                    if (!sub.empty()) sources.push_back(sub);
-                }
-            }
-            if (sources.empty()) e = "this console is not in the shared pack";
-            else {
-                std::string game_id; bool any_listed = false; Entry loose; bool is_file = false;
-                std::vector<Entry> cands; std::vector<std::string> keys;
-                for (const std::string& s : sources) {
-                    std::vector<Entry> games;
-                    if (!list_folder(s, &games)) continue;
-                    any_listed = true;
-                    for (const Entry& g : games) { cands.push_back(g); keys.push_back(entry_key(g)); }
-                }
-                int pick = pack_pick(keys, want);
-                if (pick >= 0) { const Entry& g = cands[(size_t)pick]; game_id = g.id; is_file = !g.is_folder; if (is_file) loose = g; }
-                if (game_id.empty()) e = any_listed ? "not in the shared pack" : "could not list the shared pack";
-                else {
-                    std::vector<Entry> files;
-                    bool listed = true;
-                    if (is_file) files.push_back(loose);   // a loose game file: the file is the whole game
-                    else listed = list_files(game_id, &files);
-                    if (!listed) e = "could not list the game's files";
-                    else if (files.empty()) e = "the shared copy has no files";
-                    else {
+            std::vector<Entry> files;
+            if (resolve_game(this->sys, this->title, roots, &files, &e)) {
+                {
+                    {
                         std::error_code ec;
-                        fs::path dir = P(pack_root()) / this->sys / safe_name(this->title);
-                        bool fresh = !fs::is_directory(dir, ec);
-                        fs::create_directories(dir, ec);
+                        const fs::path stage = P(staging_root()) / this->sys / safe_name(this->title);
+                        const fs::path final_dir = P(pack_root()) / this->sys / safe_name(this->title);
+                        fs::create_directories(stage, ec);
                         file_count = (int)files.size();
-                        r = true;
-                        for (size_t i = 0; i < files.size() && r; ++i) {
-                            if (cancel.load()) { r = false; e = "cancelled"; break; }
-                            if (safe_name(files[i].name) == "gamepack.done") continue;   // never let a remote file fake the marker
-                            file_idx = (int)i + 1;
-                            got = 0;
-                            total = 0;
-                            { std::lock_guard<std::mutex> lk(mu); current = files[i].name; }
-                            std::string fe;
-                            r = download_file(files[i].id, S(dir / safe_name(files[i].name)), &got, &total, &cancel, &fe);
-                            if (!r) e = fe;
+                        uint64_t sum = 0; bool all_known = true;
+                        for (const Entry& f : files) {   // sizes up front (headers only), so the total and the disk check are known before a byte moves
+                            if (cancel.load()) break;
+                            uint64_t sz = file_size(f.id);
+                            if (!sz) all_known = false;
+                            sum += sz;
+                            all_total = sum;
                         }
-                        if (r) { std::ofstream m(S(dir / "gamepack.done"), std::ios::binary); m << "ok"; }
-                        if (fresh && !r) { std::error_code ec2; fs::remove_all(dir, ec2); }
+                        if (!all_known) all_total = 0;
+                        if (cancel.load()) e = "cancelled";
+                        else {
+                            uint64_t have_part = 0;
+                            for (const Entry& f : files) { std::error_code e3; auto sz = fs::file_size(stage / (safe_name(f.name) + ".part"), e3); if (!e3) have_part += sz; }
+                            resumed = have_part > 0;
+                            fs::space_info sp = fs::space(P(hub::data_dir()), ec);
+                            uint64_t need = sum > have_part ? sum - have_part : 0;
+                            if (!ec && sum && sp.available < need + (64ull << 20))
+                                e = "Not enough free disk space: this game needs about " + fmt_size(need) + " and the drive has " + fmt_size(sp.available) + " free.";
+                        }
+                        if (e.empty()) {
+                            phase = Downloading;
+                            r = true;
+                            for (size_t i = 0; i < files.size() && r; ++i) {
+                                if (cancel.load()) { r = false; e = "cancelled"; break; }
+                                file_idx = (int)i + 1;
+                                got = 0;
+                                total = 0;
+                                { std::lock_guard<std::mutex> lk(mu); current = files[i].name; }
+                                std::string fe;
+                                r = download_file(files[i].id, S(stage / safe_name(files[i].name)), &got, &total, &cancel, &fe);
+                                if (!r) e = fe;
+                                else done_bytes += total.load() ? total.load() : got.load();
+                            }
+                        }
+                        if (r) {   // every file is in: one rename into the library folder
+                            phase = Finishing;
+                            std::error_code e4;
+                            fs::remove_all(final_dir, e4);
+                            fs::create_directories(final_dir.parent_path(), e4);
+                            fs::rename(stage, final_dir, e4);
+                            if (e4) { r = false; e = "cannot write " + S(final_dir); }
+                            else { std::ofstream m(S(final_dir / "gamepack.done"), std::ios::binary); m << "ok"; }
+                        }
+                        if (!r && e == "cancelled" && !keep.load()) { std::error_code e5; fs::remove_all(stage, e5); }   // a failure keeps the .part files for a resume; a cancel is a clean slate
+                        if (r) {   // find what is in the folder; unpack archived disc games now so the first Play starts at once
+                            std::vector<hub::GameEntry> found = hub::scan_library({S(final_dir)}, nullptr);
+                            if (prepare && !cancel.load()) {
+                                phase = Preparing;
+                                for (hub::GameEntry& g : found) {
+                                    if (g.issue != "extract" || !hub::extracted_3ds_path(g).empty()) continue;
+                                    uint64_t need = g.unpacked ? g.unpacked : hub::zip_3ds_unpacked_size(g);
+                                    uint64_t lim = hub::rom_cache_limit();
+                                    if (lim && need > lim) { std::lock_guard<std::mutex> lk(mu); note = g.title + " will unpack the first time you press Play (it is bigger than the unpacked-games limit)."; continue; }
+                                    prep_got = 0; prep_total = need;
+                                    std::string out, perr;
+                                    bool x = hub::extract_3ds_zip(g, [this](uint64_t d, uint64_t t) { prep_got = d; prep_total = t; return !cancel.load(); }, &out, &perr);
+                                    if (!x) {
+                                        std::lock_guard<std::mutex> lk(mu);
+                                        note = perr == "cancelled" ? g.title + " is installed. It unpacks the first time you press Play."
+                                                                   : g.title + " is installed, but unpacking failed (" + perr + "). It will try again when you press Play.";
+                                    }
+                                }
+                            }
+                            std::lock_guard<std::mutex> lk(mu);
+                            entries = std::move(found);
+                        }
                     }
                 }
             }

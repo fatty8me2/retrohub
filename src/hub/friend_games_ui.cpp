@@ -2,6 +2,8 @@
 #include "gameinfo.h"
 #include "gamepack.h"
 #include <chrono>
+#include <map>
+#include <thread>
 
 bool gameinfo_ui_section_query(const gameinfo::Query& q, const std::string& id, int part = 0);   // gameinfo_ui.cpp: description, ratings, facts
 
@@ -52,63 +54,250 @@ void rebuild_ghosts() {
     if (line != last) { last = line; online_log(line); }
 }
 
-/* ---------- GamePack: install a greyed-out game from the shared Drive folder (gamepack.cpp) ---------- */
+/* ---------- GamePack: install a greyed-out game from the shared Drive folder (gamepack.cpp) ----------
+ * Installs run in the background, one at a time, with a queue. The UI stays usable: the ghost tile shows its own progress bar,
+ * a small pill at the bottom shows the overall state (with Cancel), and a toast with a Play action announces the result.
+ * When a game lands it is scanned on its own and swapped in place of the greyed tile (no full-library rescan). */
 
-static hubgp::Installer GP;   // one install at a time
+static struct SizeProbe { std::string key; std::atomic<int> state{0}; std::atomic<uint64_t> bytes{0}; std::thread th; } SP;   // state 0 idle, 1 running, 2 done
+
+static hub::GameEntry g_pending_uninstall;
+static bool g_has_pending_uninstall = false;
+
+static hubgp::Installer GP;   // the running job
+struct GpItem { std::string sys, title, ghost_id; };
+static GpItem GA;                          // what GP is installing
+static std::vector<GpItem> GQ;             // waiting, in order
+static std::map<std::string, std::string> GFAIL;   // ghost id -> plain-English reason of the last failure (cleared by Retry)
+static std::vector<hub::GameEntry> g_pack_added;   // entries installed this session: apply_scan() keeps them even if an older scan lands
+bool g_ghost_popup_open = false;           // the friend-game details popup was drawn this frame
+
+static std::string lower_path(std::string s) { for (char& c : s) { if (c == '/') c = '\\'; c = (char)std::tolower((unsigned char)c); } return s; }
+
+static bool path_under(const std::string& path, const std::string& dir) {
+    auto norm = [](std::string s) { for (char& c : s) { if (c == '/') c = '\\'; c = (char)std::tolower((unsigned char)c); } return s; };
+    std::string p = norm(path), d = norm(dir);
+    if (!d.empty() && d.back() != '\\') d += '\\';
+    return p.compare(0, d.size(), d) == 0;
+}
+
+bool gamepack_busy() { return GP.state == hubgp::Installer::Working || !GQ.empty(); }
+
+void gamepack_enqueue(const std::string& sys, const std::string& title, const std::string& ghost_id) {
+    if (sys.empty() || title.empty()) return;
+    GFAIL.erase(ghost_id);
+    if (GP.state == hubgp::Installer::Working && GA.ghost_id == ghost_id) return;
+    for (const GpItem& q : GQ) if (q.ghost_id == ghost_id) return;
+    GQ.push_back({sys, title, ghost_id});
+    if (gamepack_busy() && GP.state == hubgp::Installer::Working) set_toast(title + " is queued.", true, 4.0);
+}
+
+void gamepack_cancel(const std::string& ghost_id) {
+    if (GP.state == hubgp::Installer::Working && GA.ghost_id == ghost_id) { GP.request_cancel(); return; }
+    GQ.erase(std::remove_if(GQ.begin(), GQ.end(), [&](const GpItem& q) { return q.ghost_id == ghost_id; }), GQ.end());
+}
+
+/* 0 = not installing, 1 = waiting in the queue, 2 = running. *frac = 0..1 (-1 unknown), *label = short text for the tile. */
+int gamepack_state_for(const std::string& ghost_id, float* frac, std::string* label) {
+    if (GP.state == hubgp::Installer::Working && GA.ghost_id == ghost_id) {
+        int ph = GP.phase;
+        float f = GP.fraction();
+        if (frac) *frac = ph == hubgp::Installer::Preparing ? (GP.prep_total ? (float)((double)GP.prep_got / (double)GP.prep_total) : -1.f) : f;
+        if (label) {
+            char t[48];
+            if (ph == hubgp::Installer::Looking) *label = "Starting...";
+            else if (ph == hubgp::Installer::Downloading) { if (f >= 0) { std::snprintf(t, sizeof t, "Installing %d%%", (int)(f * 100)); *label = t; } else *label = "Installing..."; }
+            else if (ph == hubgp::Installer::Finishing) *label = "Finishing...";
+            else *label = "Preparing...";
+        }
+        return 2;
+    }
+    for (const GpItem& q : GQ) if (q.ghost_id == ghost_id) { if (frac) *frac = -1.f; if (label) *label = "Queued"; return 1; }
+    return 0;
+}
+
+/* The one-line status of the running install: "Downloading 1.2 GB of 2.8 GB - 5.2 MB/s - about 3 min left". */
+static std::string gamepack_status_line() {
+    int ph = GP.phase;
+    if (ph == hubgp::Installer::Looking) return "Looking up the game and its size...";
+    if (ph == hubgp::Installer::Finishing) return "Adding it to your library...";
+    if (ph == hubgp::Installer::Preparing) {
+        char t[96];
+        std::snprintf(t, sizeof t, "Preparing %s for its first Play (one time): %s of %s", GA.title.c_str(), hubgp::fmt_size(GP.prep_got).c_str(), hubgp::fmt_size(GP.prep_total).c_str());
+        return t;
+    }
+    uint64_t all = GP.all_total, so = GP.bytes_so_far();
+    std::string s = all ? hubgp::fmt_size(so) + " of " + hubgp::fmt_size(all) : hubgp::fmt_size(so) + " downloaded";
+    double rate = GP.speed.rate();
+    std::string r = hubgp::fmt_rate(rate);
+    if (!r.empty()) s += "  -  " + r;
+    if (all && rate > 0 && all > so) { std::string e = hubgp::fmt_eta((double)(all - so) / rate); if (!e.empty()) s += "  -  " + e; }
+    if (GP.resumed) s += "  (continuing an earlier download)";
+    return s;
+}
+
+static void gamepack_start_next() {
+    if (GP.state == hubgp::Installer::Working || GP.th.joinable() || GQ.empty()) return;
+    GA = GQ.front();
+    GQ.erase(GQ.begin());
+    GP.start(GA.sys, GA.title, hubgp::parse_links(A.st.pack_links), true);
+}
+
+bool gamepack_owns(const hub::GameEntry& e) { return !hubgp::installed_folder_title(e.path, hubgp::pack_root()).empty(); }
+
+void gamepack_merge_added(std::vector<hub::GameEntry>* lib) {
+    for (auto it = g_pack_added.begin(); it != g_pack_added.end();) {
+        if (!file_exists(it->path)) { it = g_pack_added.erase(it); continue; }
+        bool have = false;
+        for (const hub::GameEntry& e : *lib) if (lower_path(e.path) == lower_path(it->path)) { have = true; break; }
+        if (!have) lib->push_back(*it);
+        ++it;
+    }
+}
+
+/* A game landed: scan only its folder (done by the install thread), put it in the library, replace the greyed tile in place. */
+static void gamepack_landed() {
+    std::vector<hub::GameEntry> got;
+    std::string note;
+    { std::lock_guard<std::mutex> lk(GP.mu); got = GP.entries; note = GP.note; }
+    if (hubui::merge_installer_games_dir(&A.st, hubgp::pack_root())) mark_dirty();
+    const std::string dir = hubgp::install_dir(GA.sys, GA.title);
+    std::string newkey;
+    for (hub::GameEntry& e : got) {
+        if (e.catalog_id.empty()) { std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root()); if (!t.empty() && hubgp::pack_key(t) != hubgp::pack_key(e.title)) e.title = t; }
+        if (newkey.empty()) newkey = e.key;
+        g_pack_added.erase(std::remove_if(g_pack_added.begin(), g_pack_added.end(), [&](const hub::GameEntry& o) { return lower_path(o.path) == lower_path(e.path); }), g_pack_added.end());
+        g_pack_added.push_back(e);
+    }
+    (void)dir;
+    if (A.scanning) start_scan();   // a scan is running right now (it owns the result list): queue another, the entries above are kept meanwhile
+    else apply_scan();
+    if (!newkey.empty()) {
+        if (A.sel_ghost == GA.ghost_id || A.sel_ghost.empty()) A.sel_ghost.clear();
+        if (A.sel_game.empty() || A.sel_ghost.empty()) A.sel_game = newkey;
+        if (g_ghost_popup_open) A.show_details = true;   // the friend-game popup was open: it turns into the owned game's details
+    }
+    A.vis_dirty = true;
+    const std::string title = GA.title;
+    if (!newkey.empty()) {
+        push_toast_action(title + " installed. Ready to play.", COL_GOOD, "Play", [newkey]() {
+            if (const hub::GameEntry* g = find_entry(newkey)) { A.sel_game = newkey; hub::GameEntry copy = *g; play_entry(copy); }
+        }, 14.0);
+    } else {
+        set_toast(title + " installed, but RetroHub did not recognise a game in it. Use Rescan.", false, 10.0);
+    }
+    if (!note.empty()) set_toast(note, true, 10.0);
+}
 
 static void gamepack_finished(bool success) {
-    if (success) {   // the games folder joins the library, then a rescan picks the game up (and drops it from the ghosts)
-        if (hubui::merge_installer_games_dir(&A.st, hubgp::pack_root())) mark_dirty();
-        start_scan();
-        set_toast(GP.title + " installed.");
+    if (success) {
+        gamepack_landed();
     } else if (GP.error == "cancelled") {
-        GP.state = hubgp::Installer::Idle;   // the user stopped it: no error dialog
+        // the user stopped it: nothing to show
+    } else {
+        std::string raw;
+        { std::lock_guard<std::mutex> lk(GP.mu); raw = GP.error; }
+        std::string msg = hubgp::friendly_error(raw);
+        GFAIL[GA.ghost_id] = msg;
+        const GpItem failed = GA;
+        push_toast_action("Could not install " + failed.title + ". " + msg, COL_BAD, "Retry", [failed]() { gamepack_enqueue(failed.sys, failed.title, failed.ghost_id); }, 14.0);
+        online_log("gamepack: install failed: " + failed.title + " (" + raw + ")");
     }
+    GP.state = hubgp::Installer::Idle;
 }
 
 void poll_gamepack() {
+    if (g_has_pending_uninstall) { g_has_pending_uninstall = false; hub::GameEntry e = g_pending_uninstall; gamepack_uninstall(e); }
+    if (GP.state == hubgp::Installer::Working) GP.speed.add(ImGui::GetTime(), GP.bytes_so_far());
     bool success = false;
     if (GP.poll(&success)) gamepack_finished(success);
+    gamepack_start_next();
 }
 
 void gamepack_shutdown() {
+    GQ.clear();
+    GP.keep = true;   // closing the app mid-download keeps the partial file: the next try continues
     GP.request_cancel();
     if (GP.th.joinable()) GP.th.join();
-    if (GP.state == hubgp::Installer::Working) gamepack_finished(GP.ok);   // finished on the last frame: register a successful install
+    if (GP.state == hubgp::Installer::Working && GP.ok) { GP.state = hubgp::Installer::Idle; }
+    if (SP.th.joinable()) SP.th.join();
     hubgp::index_shutdown();
 }
 
-void draw_gamepack_dialogs() {
-    if (GP.state == hubgp::Installer::Idle) return;
-    bool open = false;
-    emu_modal_begin("Install game", &open);
+/* Remove an installed game: files, the unpacked copy, the library entry. The greyed entry comes back. Saves stay in the vault. */
+void gamepack_uninstall(const hub::GameEntry& e) {
+    std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root());
+    if (t.empty()) return;
+    const std::string sys = sys_short(e);
+    const std::string dir = hubgp::install_dir(sys, t);
+    std::error_code ec;
+    std::filesystem::remove_all(std::filesystem::u8path(hub::extract_3ds_dir(e)), ec);   // the unpacked copy of an archived disc
+    hubgp::uninstall(sys, t);
+    g_pack_added.erase(std::remove_if(g_pack_added.begin(), g_pack_added.end(), [&](const hub::GameEntry& o) { return path_under(o.path, dir); }), g_pack_added.end());
+    if (A.scanning) start_scan();
+    else {
+        A.scan_result.erase(std::remove_if(A.scan_result.begin(), A.scan_result.end(), [&](const hub::GameEntry& o) { return path_under(o.path, dir); }), A.scan_result.end());
+        apply_scan();
+    }
+    if (A.sel_game == e.key) A.sel_game.clear();
+    A.vis_dirty = true;
+    set_toast(e.title + " uninstalled. It is back in the shared packs; your saves are kept.", true, 8.0);
+}
+
+/* "Uninstall" button + its confirm popup (details of a pack-installed game). Returns true when the game was removed. */
+bool gamepack_uninstall_ui(const hub::GameEntry& e, float bh) {
+    bool removed = false;
+    if (button("Uninstall", ImVec2(0, bh), false, !A.proc, ui::Icon::Close)) ImGui::OpenPopup("##gp_uninstall");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Delete this game's files from RetroHub's games folder. It goes back to the shared packs; saves are kept.");
+    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(sp(66.f), ImGui::GetIO().DisplaySize.x * 0.92f), 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
+    bool open = ImGui::BeginPopupModal("##gp_uninstall", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+    ImGui::PopStyleVar();
     if (open) {
-        const bool back = ui::modal_back();
-        if (GP.state == hubgp::Installer::Working) {
-            ImGui::TextUnformatted(("Installing " + GP.title).c_str());
-            int fi = GP.file_idx, fc = GP.file_count;
-            if (fc > 1) { char t[32]; std::snprintf(t, sizeof t, "file %d of %d", fi, fc); ImGui::TextDisabled("%s", t); }
-            std::string cur;
-            { std::lock_guard<std::mutex> lk(GP.mu); cur = GP.current; }
-            if (!cur.empty()) ImGui::TextWrapped("%s", cur.c_str());
-            uint64_t got = GP.got, tot = GP.total;
-            char ov[48];
-            std::snprintf(ov, sizeof ov, "%.1f / %.1f MB", got / 1048576.0, tot / 1048576.0);
-            ImGui::ProgressBar(tot ? (float)got / (float)tot : 0.f, ImVec2(-1, sp(3.f)), ov);
-            ImGui::Dummy(ImVec2(0, sp(1.f)));
-            if (button("Cancel", ImVec2(sp(20.f), sp(5.5f)))) GP.request_cancel();
-        } else {   // Failed (a cancel never gets here: poll_gamepack() closes it silently)
-            if (back) GP.state = hubgp::Installer::Idle;
-            std::string err;
-            { std::lock_guard<std::mutex> lk(GP.mu); err = GP.error; }
-            ImGui::TextWrapped("Could not install %s: %s", GP.title.c_str(), err.c_str());
-            ImGui::Dummy(ImVec2(0, sp(1.f)));
-            if (button("Close", ImVec2(sp(20.f), sp(5.5f)), true)) GP.state = hubgp::Installer::Idle;
-            ImGui::SetItemDefaultFocus();
-        }
-        if (GP.state == hubgp::Installer::Idle) ImGui::CloseCurrentPopup();
+        if (ui::modal_back()) ImGui::CloseCurrentPopup();
+        ImGui::TextWrapped("Uninstall %s?", e.title.c_str());
+        text_wrapped_disabled("This deletes the game's files from RetroHub's games folder. Your saves stay in the vault. You can install it again from the shared packs at any time.");
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        if (button("Uninstall", ImVec2(sp(18.f), sp(5.5f)), true)) { removed = true; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine(0, sp(1.5f));
+        if (button("Keep it", ImVec2(sp(14.f), sp(5.5f)))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+    if (removed) { g_pending_uninstall = e; g_has_pending_uninstall = true; }   // done next frame: the library list is rebuilt, `e` would dangle
+    return removed;
+}
+
+/* The pill at the bottom while something installs: title, percentage, speed, time left, Cancel. Mouse only (it takes no pad focus). */
+void draw_gamepack_dialogs() {
+    if (GP.state != hubgp::Installer::Working) return;
+    ImGuiIO& io = ImGui::GetIO();
+    const float w = std::min(sp(92.f), io.DisplaySize.x * 0.9f);
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - sp(13.f)), ImGuiCond_Always, ImVec2(0.5f, 1.f));
+    ImGui::SetNextWindowSize(ImVec2(w, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.f), sp(1.5f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::PANEL2);
+    ImGui::PushStyleColor(ImGuiCol_Border, ui::HAIRLINE);
+    ImGui::Begin("##gp_pill", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                                           ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    int ph = GP.phase;
+    float f = ph == hubgp::Installer::Preparing ? (GP.prep_total ? (float)((double)GP.prep_got / (double)GP.prep_total) : -1.f) : GP.fraction();
+    std::string head = (ph == hubgp::Installer::Preparing ? "Preparing " : "Installing ") + GA.title;
+    if (!GQ.empty()) head += "  (+" + std::to_string(GQ.size()) + " waiting)";
+    if (GP.file_count > 1 && ph == hubgp::Installer::Downloading) head += "  -  file " + std::to_string(GP.file_idx.load()) + " of " + std::to_string(GP.file_count.load());
+    ImGui::TextUnformatted(ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, head, w - sp(4.f) - sp(14.f)).c_str());
+    ImGui::SameLine(w - sp(2.f) - sp(11.f));
+    if (ImGui::SmallButton("Cancel")) GP.request_cancel();
+    if (f >= 0) ImGui::ProgressBar(f, ImVec2(-1, sp(1.5f)), "");
+    else ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(-1, sp(1.5f)), "");
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+    ImGui::TextUnformatted(ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, gamepack_status_line(), w - sp(4.f)).c_str());
+    ImGui::PopStyleColor();
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
 }
 
 /* Screenshots (HUB_SHOT_FAKE_FRIENDS + HUB_SHOT_FAKE_FRIEND_LIBS=<n extra made-up games for one friend>): fake friends' libraries. */
@@ -259,6 +448,19 @@ void ghost_tile_decor(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVe
     dl->AddRectFilled(p0, p1, IM_COL32(96, 99, 108, (int)(150.f - 70.f * e)), sp(1.75f));
     std::vector<std::string> names = ghost_names(g);
     *subtitle = hubui::fg::badge_text(names);
+    {   // installing / queued: a progress bar along the cover's bottom edge and the state as the subtitle
+        float frac = -1.f;
+        std::string lab;
+        if (int st = gamepack_state_for(g.id, &frac, &lab)) {
+            float bh = sp(1.1f);
+            ImVec2 b0(p0.x + sp(1.f), p1.y - sp(1.f) - bh), b1(p1.x - sp(1.f), p1.y - sp(1.f));
+            dl->AddRectFilled(ImVec2(p0.x, b0.y - sp(0.8f)), p1, IM_COL32(0, 0, 0, 120), sp(1.75f), ImDrawFlags_RoundCornersBottom);
+            dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 60), bh * 0.5f);
+            float fill = frac >= 0 ? frac : (st == 2 ? (float)(0.5 + 0.5 * std::sin(ImGui::GetTime() * 3.0)) * 0.3f + 0.1f : 0.f);
+            if (fill > 0) dl->AddRectFilled(b0, ImVec2(b0.x + (b1.x - b0.x) * fill, b1.y), ui::ACCENT, bh * 0.5f);
+            *subtitle = lab;
+        }
+    }
     float r = sp(1.45f);
     size_t shown = std::min<size_t>(3, g.uids.size());
     for (size_t i = 0; i < shown; ++i) {
@@ -306,7 +508,26 @@ void selected_bar_ghost(const hubui::fg::Ghost& g) {
 
 /* ---------- details view ---------- */
 
+/* "1.4 GB download" for an installable game: asked of Drive once, in the background, when its details open. */
+static std::string ghost_size_text(const hubui::fg::Ghost& g, bool want) {
+    const std::string key = g.sys + "|" + g.title;
+    if (SP.state == 2 && SP.th.joinable()) SP.th.join();
+    if (!want) return "";
+    if (SP.key == key && SP.state == 2) return SP.bytes ? hubgp::fmt_size(SP.bytes) + " download" : "";
+    if (SP.state == 0 && SP.key != key) {
+        SP.key = key;
+        SP.state = 1;
+        SP.bytes = 0;
+        const std::string sys = g.sys, title = g.title;
+        const std::vector<std::string> roots = hubgp::parse_links(A.st.pack_links);
+        if (SP.th.joinable()) SP.th.join();
+        SP.th = std::thread([sys, title, roots] { SP.bytes = hubgp::game_download_size(sys, title, roots); SP.state = 2; });
+    } else if (SP.state == 2 && SP.key != key) { SP.state = 0; }
+    return SP.key == key && SP.state == 1 ? "checking size..." : "";
+}
+
 void draw_ghost_modal() {
+    g_ghost_popup_open = false;
     if (A.show_ghost) {
         A.show_ghost = false;
         if (find_ghost(A.sel_ghost)) ImGui::OpenPopup("##ghost");
@@ -322,6 +543,7 @@ void draw_ghost_modal() {
     ImGui::PopStyleVar(2);
     if (!open) return;
     if (!gp || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    g_ghost_popup_open = true;
     const hubui::fg::Ghost& g = *gp;
     const GameInfo* cat = g.cid.empty() ? nullptr : hub::find_game(g.cid);
     hub::System sy = hub::system_from_short(g.sys);
@@ -419,6 +641,22 @@ void draw_ghost_modal() {
     else text_wrapped_disabled("They get a request to open a room with this game. Only the game's name is shared, never game files.");
     ImGui::Dummy(ImVec2(0, sp(1.5f)));
 
+    /* install progress (background job: the popup can be closed, the install goes on) */
+    float ifrac = -1.f;
+    std::string ilab;
+    const int ist_run = gamepack_state_for(g.id, &ifrac, &ilab);
+    if (ist_run) {
+        ImGui::ProgressBar(ifrac >= 0 ? ifrac : -1.0f * (float)ImGui::GetTime(), ImVec2(-1, sp(1.75f)), "");
+        text_wrapped_disabled(ist_run == 1 ? std::string("Waiting for the other installs to finish.") : gamepack_status_line());
+        text_wrapped_disabled("You can close this and keep browsing. The install continues in the background.");
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    } else if (GFAIL.count(g.id)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::BAD);
+        ImGui::TextWrapped("Could not install: %s", GFAIL[g.id].c_str());
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    }
+
     /* actions: Play / Play Online are shown but disabled (you cannot play what you do not have) */
     float bh = sp(5.5f);
     button("Play", ImVec2(sp(12.f), bh), false, false, ui::Icon::Play);
@@ -435,16 +673,20 @@ void draw_ghost_modal() {
             bool have = hubgp::installed(g.sys, g.title);
             bool in_pack = ist == hubgp::IndexState::Ready ? hubgp::index_has(g.sys, g.title) : true;   // unknown yet: checked live on click
             if (g_headless && std::getenv("HUB_SHOT_GHOST_INSTALLABLE")) in_pack = true;   // screenshots: pretend the shared pack has this game
-            installable = !have && in_pack && GP.state == hubgp::Installer::Idle;
-            if (button("Install", ImVec2(sp(12.f), bh), true, installable, ui::Icon::Cloud)) {
-                ImGui::CloseCurrentPopup();
-                GP.start(g.sys, g.title, hubgp::parse_links(A.st.pack_links));
+            installable = !have && in_pack && !ist_run;
+            std::string size_txt = ghost_size_text(g, installable);
+            std::string lbl = ist_run ? "Cancel install" : GFAIL.count(g.id) ? "Retry" : "Install";
+            if (ist_run) {
+                if (button("Cancel install", ImVec2(sp(18.f), bh), false, true, ui::Icon::Close)) gamepack_cancel(g.id);
+            } else if (button(lbl.c_str(), ImVec2(sp(12.f), bh), true, installable, ui::Icon::Cloud)) {
+                gamepack_enqueue(g.sys, g.title, g.id);   // the popup stays: it shows the progress and turns into the game's details when done
             }
             if (installable) ImGui::SetItemDefaultFocus();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 if (have) ImGui::SetTooltip("Already installed");
                 else if (!in_pack) ImGui::SetTooltip("Not in any shared pack yet. The owner can add it to their Google Drive and send the link so everyone can install it.");
             }
+            if (!size_txt.empty()) { ImGui::SameLine(0, sp(1.f)); ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("%s", size_txt.c_str()); }
         }
     }
     ImGui::SameLine(0, sp(1.5f));

@@ -107,6 +107,8 @@ struct Toast {
     ImU32 col = 0;
     double t0 = 0, until = 0;
     bool top = false;   // stacks from the top edge instead of the bottom (keeps the chat input clear)
+    std::string action_label;      // optional clickable action ("Play"); runs on a click on the toast
+    std::function<void()> action;
 };
 
 /* Smooth horizontal scroll state of one shelf. */
@@ -499,6 +501,7 @@ void entry_colors(const hub::GameEntry& e, ImU32* a, ImU32* b);
 
 /* ---- app.cpp ---- */
 void push_toast(const std::string& s, ImU32 col, double secs = 6.0, bool top = false);
+void push_toast_action(const std::string& s, ImU32 col, const std::string& label, std::function<void()> action, double secs = 12.0);   // a toast with a clickable action
 void set_notice(const std::string& s, double secs = 8.0);
 void mark_dirty();
 std::string server_url();
@@ -1000,7 +1003,16 @@ void draw_emulator_dialogs();
 /* ---- gamepack (friend_games_ui.cpp): install a greyed-out friend game from the shared Drive folder ---- */
 void poll_gamepack();
 void draw_gamepack_dialogs();
-void gamepack_shutdown();   // app exit: cancel + join the install job
+void gamepack_shutdown();
+void gamepack_enqueue(const std::string& sys, const std::string& title, const std::string& ghost_id);   // install queue (friend_games_ui.cpp)
+void gamepack_cancel(const std::string& ghost_id);
+int gamepack_state_for(const std::string& ghost_id, float* frac, std::string* label);   // 0 idle, 1 queued, 2 installing
+bool gamepack_busy();
+bool gamepack_owns(const hub::GameEntry& e);          // lives in RetroHub's managed gamepack folder
+void gamepack_uninstall(const hub::GameEntry& e);
+bool gamepack_uninstall_ui(const hub::GameEntry& e, float bh);   // button + confirm popup
+void gamepack_merge_added(std::vector<hub::GameEntry>* lib);     // apply_scan(): games installed this session
+extern bool g_ghost_popup_open;   // app exit: cancel + join the install job
 
 
 /* ---- page_about.cpp ---- */

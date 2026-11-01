@@ -73,6 +73,7 @@ void apply_scan() {
             }
             A.lib.push_back(e);
         }
+        gamepack_merge_added(&A.lib);   // games installed this session that an older scan result does not hold yet
     }
     {   // prefs: hidden games drop out; duplicates collapse to one copy (the preferred path if it was found, else the first scanned)
         std::map<std::string, std::string> pref = preferred_copies();

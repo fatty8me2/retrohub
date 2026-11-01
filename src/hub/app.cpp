@@ -24,6 +24,10 @@ void push_toast(const std::string& s, ImU32 col, double secs, bool top) {
     A.toasts.push_back({s, col, now, now + std::min(secs, 14.0), top});
     if (A.toasts.size() > 4) A.toasts.erase(A.toasts.begin());
 }
+void push_toast_action(const std::string& s, ImU32 col, const std::string& label, std::function<void()> action, double secs) {
+    push_toast(s, col, secs, false);
+    if (!A.toasts.empty()) { A.toasts.back().action_label = label; A.toasts.back().action = std::move(action); }
+}
 void set_notice(const std::string& s, double secs) { autotest_log("notice: " + s); push_toast(s, ui::WARN, secs); ui_sound::play(ui_sound::Sfx::Error); }
 void mark_dirty() { A.dirty = true; }
 
