@@ -1,9 +1,10 @@
 #pragma once
-/* On-screen display shared by the runners (retrorun, n64run): toast queue + one persistent corner slot, drawn with a tiny
+/* On-screen display shared by the runners (retrorun, n64run): toast queue + persistent corner texts, drawn with a tiny
  * built-in 5x7 bitmap font into an ARGB layer that each runner blends / uploads in its own renderer. No SDL, no GL, no deps.
  *
  *   osd::push("Saved state slot0", osd::Kind::Good);      // toast, default 2.5 s; newest 4 are shown, bottom-left
  *   osd::set_corner("REC 00:12", osd::Kind::Error);        // persistent, top-right; set_corner("") removes it
+ *   osd::set_corner_at(3, "1:30", osd::Kind::Info, 90);    // any corner, optionally expiring (a round timer, party standings)
  *   osd::Layer L; bool changed;
  *   if (osd::render(&L, out_w, out_h, &changed)) { if (changed) upload(L); draw(L); }   // false: nothing visible
  *
@@ -17,10 +18,15 @@ namespace osd {
 enum class Kind { Info, Good, Warn, Error };
 
 void push(const std::string& text, Kind kind = Kind::Info, double seconds = 2.5);
-void set_corner(const std::string& text, Kind kind = Kind::Info);
+void set_corner(const std::string& text, Kind kind = Kind::Info);   // = set_corner_at(1, text, kind): the top-right slot
+/* Persistent text in one of the four screen corners (party standings, a challenge timer ...), the runner_ctl "osd_corner" command:
+ *   corner 0 top-left (drawn under the stats line), 1 top-right (the set_corner() slot), 2 bottom-left (above the toast stack, so toasts
+ *   never cover it), 3 bottom-right. text "" clears it; seconds > 0 removes it that long after the last call (0 = until replaced or
+ *   cleared). '\n' starts another line (at most 4 lines of 60 characters). A corner outside 0..3 is ignored. */
+void set_corner_at(int corner, const std::string& text, Kind kind = Kind::Info, double seconds = 0);
 /* Performance / online overlay (FPS, ping ...): one persistent line, top-left; set_stats("") removes it. Independent of the corner slot. */
 void set_stats(const std::string& text);
-void clear();                     // drop every toast and the corner text
+void clear();                     // drop every toast, every corner text and the stats line
 
 /* The newest toast text still alive ("" if none): for runners that also mirror status into a window title. */
 std::string latest_text();
