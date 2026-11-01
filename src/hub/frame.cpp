@@ -434,6 +434,7 @@ void draw_frame() {
     A.popup_last_frame = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f), view_w - sp(3.f), sp(7.5f));
     ImGui::End();
+    draw_gamepack_pill();
     fr_draw_panel(io.DisplaySize.x, io.DisplaySize.y);
     fr_draw_toasts(io.DisplaySize.x - (fr_docked ? fr_pw * FR.panel_t : (A.st.show_friends ? fr_pw * FR.panel_t : 0.f)) - sp(2.f),
                    io.DisplaySize.y - footer_h - sp(1.5f) - (A.toasts.empty() ? 0.f : sp(9.f)));

@@ -859,6 +859,7 @@ TileSpec spec_for_ghost(const hubui::fg::Ghost& g, const char* shelf, bool show_
 ArtRef art_for_ghost(const hubui::fg::Ghost& g);
 void handle_ghost_result(const hubui::fg::Ghost& g, const TileResult& r);
 const hubui::fg::Ghost* find_ghost(const std::string& id);
+void ghost_tile_progress(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVec2 p1);
 void ghost_tile_decor(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVec2 p1, float hover, std::string* subtitle);
 void selected_bar_ghost(const hubui::fg::Ghost& g);
 void draw_ghost_modal();
@@ -1002,7 +1003,7 @@ void draw_emulator_dialogs();
 
 /* ---- gamepack (friend_games_ui.cpp): install a greyed-out friend game from the shared Drive folder ---- */
 void poll_gamepack();
-void draw_gamepack_dialogs();
+void draw_gamepack_pill();   // after the root window (frame.cpp): the install progress pill
 void gamepack_shutdown();
 void gamepack_enqueue(const std::string& sys, const std::string& title, const std::string& ghost_id);   // install queue (friend_games_ui.cpp)
 void gamepack_cancel(const std::string& ghost_id);

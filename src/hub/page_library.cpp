@@ -745,7 +745,9 @@ void draw_details_modal() {
             ImGui::PopTextWrapPos();
         }
     }
-    if (e.issue == "extract") {
+    if (e.issue == "extract" && !hub::extracted_3ds_path(e).empty()) {
+        text_wrapped_disabled("Unpacked and ready: Play starts at once.");
+    } else if (e.issue == "extract") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextWrapped("Archived: %s cannot open %s files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your archive stays untouched.",
                            e.system == hub::System::PS2 ? "PCSX2" : e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC || e.system == hub::System::PS2 ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);

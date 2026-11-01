@@ -139,9 +139,9 @@ class H(BaseHTTPRequestHandler):
             sent = 0
             try:
                 while start + sent < total:
-                    n = min(65536, total - start - sent)
+                    n = min(32768 if dl == "slow" else 65536, total - start - sent)
                     self.wfile.write(data[start + sent:start + sent + n]); sent += n
-                    if dl == "slow": time.sleep(0.05)
+                    if dl == "slow": time.sleep(0.08)
                     if cut is not None and sent >= cut:
                         MODE["dl"] = "ok"; self.close_connection = True; return
             except Exception: pass

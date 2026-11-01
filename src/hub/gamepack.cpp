@@ -603,6 +603,7 @@ std::string fmt_size(uint64_t b) {
     if (b >= (1ull << 30)) std::snprintf(t, sizeof t, "%.1f GB", b / 1073741824.0);
     else if (b >= (1ull << 20) * 10) std::snprintf(t, sizeof t, "%.0f MB", b / 1048576.0);
     else if (b >= (1ull << 20)) std::snprintf(t, sizeof t, "%.1f MB", b / 1048576.0);
+    else if (b > 0 && b < 1024) return "under 1 KB";
     else std::snprintf(t, sizeof t, "%.0f KB", b / 1024.0);
     return t;
 }
