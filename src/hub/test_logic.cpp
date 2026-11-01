@@ -1,3 +1,5 @@
+#include <filesystem>
+#include <fstream>
 #include "logic.h"
 #include "dupes_logic.h"
 #include "settings_tabs.h"
@@ -405,6 +407,16 @@ int main() {
     CHECK(exit_code_text(5).find("sync") != std::string::npos);
     CHECK(exit_code_text(6).find("share the host's save") != std::string::npos);
     CHECK(exit_code_text(7).find("BIOS") != std::string::npos);
+    CHECK(exit_code_text(3).find("Emulator files") != std::string::npos);
+    {   // retrorun exit 12: the real reason, never "Emulator files are missing"
+        CHECK(exit_code_text(12).find("Couldn't connect") != std::string::npos && exit_code_text(12).find("Emulator") == std::string::npos);
+        std::string f = (std::filesystem::temp_directory_path() / "rh_net_reason_test.txt").string();
+        { std::ofstream o(f, std::ios::binary); o << "Room is full or slot taken" << char(13) << char(10); }
+        set_net_reason_file(f);
+        CHECK(exit_code_text(12) == "Couldn't connect: Room is full or slot taken");
+        set_net_reason_file("");
+        std::filesystem::remove(f);
+    }
     CHECK(exit_code_text(2).find("couldn't start") != std::string::npos);
 
     /* drop-in */

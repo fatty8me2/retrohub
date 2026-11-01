@@ -246,6 +246,14 @@ void lobby_tick() {
         if (A.lobby.connected()) { A.entering_room = false; A.prev_code.clear(); }
         else if (A.lobby.failed()) {
             A.entering_room = false;
+            if (A.room_role_host && !A.code.empty() && A.lobby.status().find("already in use") != std::string::npos) {
+                /* We were the host, blipped for longer than the Worker's grace, and the room migrated to somebody else (host_changed went to
+                 * the others, not to us): the code is alive but slot 0 is taken. Come back as a guest instead of failing forever. */
+                std::string c = A.code;
+                set_notice("The room moved to another host while you were offline - rejoining as a guest.");
+                enter_room(false, c);
+                return;
+            }
             if (!A.prev_code.empty()) {   // the new room did not work out: go back to the one the player left
                 std::string c = A.prev_code, why = A.lobby.status();
                 bool h = A.prev_host;

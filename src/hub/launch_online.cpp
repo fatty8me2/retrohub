@@ -796,6 +796,13 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
             if (my >= 0 && my < (int)ms.players.size()) A.run_fighter = hubui::fighter_name(ms.players[(size_t)my].fighter);
         }
     }
+    {   // retrorun exit 12 (could not connect) leaves its reason here; logic.cpp's exit_code_text shows it
+        std::string rf = no_slash(hub::data_dir()) + "\\netplay\\net_reason.txt";
+        make_dirs(no_slash(hub::data_dir()) + "\\netplay");
+        DeleteFileW(W(rf).c_str());
+        hubui::set_net_reason_file(rf);
+        SetEnvironmentVariableW(L"RETRORUN_REASON_FILE", W(rf).c_str());
+    }
     std::string net = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
                       std::to_string(room_my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
                       plan.ports + hubui::delay_arg(delay);
