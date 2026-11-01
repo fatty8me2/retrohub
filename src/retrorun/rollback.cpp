@@ -774,9 +774,13 @@ bool Engine::finish(uint32_t timeout_ms) {
         Sleep(1);
     }
     advance_confirmed();
+    say_bye();
+    return ok;
+}
+
+void Engine::say_bye() {
     uint8_t bye[2] = {kPktBye, (uint8_t)cfg_.my_slot};
     for (int i = 0; i < 3; i++) { net_.send(-1, bye, 2); if (net_.pump) net_.pump(); Sleep(10); }
-    return ok;
 }
 
 /* ---- drop-in: a friend takes an empty port of the running game ----

@@ -322,6 +322,7 @@ class AudioOut {
     }
     void close() { if (dev_) { SDL_CloseAudioDevice(dev_); dev_ = 0; } }
     bool active() const { return dev_ != 0; }
+    void pause(bool p) { if (dev_) SDL_PauseAudioDevice(dev_, p ? 1 : 0); }   // runner_ctl "pause": the device stands still, the buffered ~70 ms play on at resume
     size_t fill() const { return (size_t)(wr_.load(std::memory_order_acquire) - rd_.load(std::memory_order_acquire)); }
     size_t target() const { return target_; }
     void set_volume(int v) { vol_.store(std::max(0, std::min(100, v)), std::memory_order_relaxed); }   // 0-100 (squared curve), runner_ctl "volume"
@@ -681,6 +682,11 @@ class Frontend {
     void ctl_poll();
     bool take_screenshot(std::string* where);
     runctl::Poller ctl_;
+    /* runner_ctl "pause" (offline only): the emulation and the audio stand still, the last frame stays up and the OSD keeps running. */
+    bool paused_ = false;
+    void set_paused(bool p);
+    void pause_tick();
+    void handoff_cmd(const runctl::Command& c);   // runner_ctl "handoff": pass a controller port to another player (rollback netplay, --handoff)
     void do_pacing();
     int selftest();
 
@@ -956,10 +962,10 @@ void Frontend::perf_tick() {
 }
 
 void Frontend::present() {
-    perf_tick();
+    if (!paused_) perf_tick();   // while paused the same frame is shown again: no FPS sample, no repeated frames in the clip ring
     const FrameBuf& f = core.frame();
     if (!ren || f.px.empty()) return;
-    clip_frame();
+    if (!paused_) clip_frame();
     if (!tex || tex_w != f.w || tex_h != f.h) {
         if (tex) SDL_DestroyTexture(tex);
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, (scale_filter_.empty() ? (is_ds || is_ps1) : scale_filter_ == "linear") ? "linear" : "nearest");
@@ -1381,26 +1387,32 @@ void Frontend::handle_key(const SDL_KeyboardEvent& k) {
 }
 
 void Frontend::pump_events(bool idle) {
-    if (a.headless) return;
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-        switch (e.type) {
-            case SDL_QUIT: quit = true; break;
-            case SDL_KEYDOWN: handle_key(e.key); break;
-            case SDL_CONTROLLERDEVICEADDED:
-            case SDL_CONTROLLERDEVICEREMOVED: open_pads(); break;
-            default: break;
+    /* The hub's commands are heard in every wait that pumps events -- a rollback / lockstep stall, the start barrier, a drop-in or spectator join, the
+     * net setup -- not only in the frame loop. Before, a stalled game never saw "Quit to RetroHub" for as long as the stall lasted (runners-M1). */
+    ctl_poll();
+    if (!a.headless) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            switch (e.type) {
+                case SDL_QUIT: quit = true; break;
+                case SDL_KEYDOWN: handle_key(e.key); break;
+                case SDL_CONTROLLERDEVICEADDED:
+                case SDL_CONTROLLERDEVICEREMOVED: open_pads(); break;
+                default: break;
+            }
+        }
+        const Uint8* k = SDL_GetKeyboardState(nullptr);
+        ff = !online && !a.ds_link && ((k[SDL_SCANCODE_TAB] && ra_.allow(cheevos::Feature::FastForward)) || speed_max);
+        core.set_fast_forwarding(ff);
+        if (win && status_until && SDL_GetTicks64() > status_until) {
+            status_until = 0;
+            SDL_SetWindowTitle(win, window_base().c_str());
         }
     }
-    const Uint8* k = SDL_GetKeyboardState(nullptr);
-    ff = !online && !a.ds_link && ((k[SDL_SCANCODE_TAB] && ra_.allow(cheevos::Feature::FastForward)) || speed_max);
-    core.set_fast_forwarding(ff);
-    if (win && status_until && SDL_GetTicks64() > status_until) {
-        status_until = 0;
-        SDL_SetWindowTitle(win, window_base().c_str());
-    }
     if (idle && quit) {
-        // Blocked inside lockstep and the user asked to leave: save and go.
+        // Blocked inside lockstep / rollback and the user (or the hub) asked to leave: tell the others, save and go.
+        if (rbe) rbe->say_bye();
+        else if (lockstep) lockstep->finish();
         finish();
         ExitProcess(0);
     }
@@ -1556,6 +1568,7 @@ void Frontend::ctl_poll() {
     runctl::Command c;
     if (!ctl_.poll(SDL_GetTicks64(), &c)) return;
     rlog("control: seq %lld %s slot %d", c.seq, runctl::cmd_name(c.cmd), c.slot);
+    if (!core.game_loaded() && c.cmd != runctl::Cmd::Quit) { ctl_.ack(false, "The game is still loading"); return; }   // the poller is live from the start (see run())
     switch (c.cmd) {
         case runctl::Cmd::SaveState: {
             if (online || a.ds_link) { ctl_.ack(false, "Save states are disabled in online sessions"); break; }
@@ -1587,8 +1600,13 @@ void Frontend::ctl_poll() {
         case runctl::Cmd::Quit: quit = true; ctl_.ack(true, "quitting"); break;
         case runctl::Cmd::OsdMsg: osd::push(c.text); ctl_.ack(true, "shown"); break;
         case runctl::Cmd::Input: in_gate_.set(c.value != 0, SDL_GetTicks64()); ctl_.ack(true, c.value ? "input on" : "input off"); break;
+        case runctl::Cmd::OsdCorner:   // persistent corner text (party standings, a challenge timer); allowed online: display only
+            osd::set_corner_at(c.slot, c.text, osd::Kind::Info, (double)c.value);
+            ctl_.ack(true, c.text.empty() ? "cleared" : "shown");
+            break;
+        case runctl::Cmd::Handoff: handoff_cmd(c); break;
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
-        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay:
+        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Pause:
             if ((online || a.ds_link) && runctl::offline_only(c.cmd)) { ctl_.ack(false, "Not available in online sessions"); break; }
             if (c.cmd == runctl::Cmd::Volume) {
                 audio.set_volume(c.value);
@@ -1620,12 +1638,44 @@ void Frontend::ctl_poll() {
                 perf_fps_.reset();
                 if (!perf_on_) osd::set_stats("");
                 ctl_.ack(true, perf_on_ ? "stats overlay on" : "stats overlay off");
+            } else if (c.cmd == runctl::Cmd::Pause) {
+                set_paused(c.value != 0);
+                ctl_.ack(true, paused_ ? "paused" : "resumed");
             } else {
                 ctl_.ack(false, "unsupported");
             }
             break;
         default: ctl_.ack(false, "unknown command"); break;
     }
+}
+
+void Frontend::set_paused(bool p) {
+    if (p == paused_) return;
+    paused_ = p;
+    audio.pause(p);
+    next_deadline = 0;   // pacing starts afresh: the time spent paused is not owed as frames
+    rlog("pause: %s (frame %llu)", p ? "on" : "off", (unsigned long long)frame_no);
+    if (p) osd::push("Paused");
+}
+
+/* One pass of the main loop while paused: no emulation, no audio; the pad combos (exit above all) and the hub's commands stay alive and the last
+ * frame is presented again so the OSD keeps fading and counting. */
+void Frontend::pause_tick() {
+    poll_all_local();
+    if (a.headless) {
+        static uint64_t last_stat = 0;
+        const uint64_t tk = SDL_GetTicks64();
+        if (a.realtime && tk - last_stat >= 250) { last_stat = tk; rlog("fstat: frames %llu ms %llu speed %g paused", (unsigned long long)frame_no, (unsigned long long)tk, speed); }
+        SDL_Delay(5);
+        return;
+    }
+    present();
+    if (pace != Pace::Vsync) SDL_Delay(16);   // vsync already paces the loop
+}
+
+void Frontend::handoff_cmd(const runctl::Command& c) {
+    (void)c;
+    ctl_.ack(false, "unsupported");
 }
 
 bool Frontend::load_state(const std::string& name) {
@@ -3271,6 +3321,9 @@ int Frontend::run(const Args& args) {
     if (a.state_dir.empty()) a.state_dir = a.save_dir + "\\states";
     if (a.headless && a.frames < 0) a.frames = 600;
     if (!a.net.empty() && a.players < 1) a.players = 1;
+    /* Listen to the hub from the very start: whatever control.json holds when the poller is made counts as handled, so a "Quit to RetroHub" sent while a big
+     * core / game is still loading used to be lost (runners-M1). Made here, it is seen at the first event pump after the load. */
+    if (!a.control.empty()) ctl_ = runctl::Poller(a.control);
 
     // Port ownership: --ports, else (offline) the first --players ports are all local.
     for (int i = 0; i < 4; i++) owner[i] = a.ports[i];
@@ -3473,7 +3526,6 @@ int Frontend::run(const Args& args) {
 
     cheats_init();
     if (!a.disc_ctl.empty()) disc_watch = cheats::FileWatch(a.disc_ctl);
-    if (!a.control.empty()) ctl_ = runctl::Poller(a.control);
     if (!a.shot_dir.empty()) clips_.set_dir(a.shot_dir);
     if (const char* e = std::getenv("RETRORUN_CLIPS"); e && e[0] == '0') clips_.set_enabled(false);   // opt out of the replay buffer
     if (!a.osd_msg.empty()) osd::push(a.osd_msg, osd::Kind::Info, 3600);
@@ -3571,6 +3623,7 @@ int Frontend::run(const Args& args) {
 
                 if (want_save) { want_save = false; save_state("slot" + std::to_string(slot_sel)); }
                 if (want_load) { want_load = false; if (!online && !a.ds_link) load_state("slot" + std::to_string(slot_sel)); }
+                if (paused_) { pause_tick(); continue; }   // runner_ctl "pause" (offline only): nothing runs, nothing is heard
 
                 if (online && !a.spectate) { note_frame_gap(); spec_host_service(); }   // frame boundary: a spectator's live snapshot is taken here
                 if (online) {
