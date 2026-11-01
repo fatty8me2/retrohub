@@ -75,7 +75,7 @@ set(RETROHUB_UI_SOURCES
     ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp gamenight_ui.cpp friend_games_ui.cpp group_ui.cpp
     page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp
     attract.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp
-    party_ui.cpp bracket_ui.cpp hack_ui.cpp qm_party.cpp)   # Plan 4 Wave 1 (stubs until each lane lands)
+    party_ui.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp)   # Plan 4 Wave 1 (stubs until each lane lands)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
@@ -142,7 +142,7 @@ add_executable(hub_party_test test_party.cpp)
 target_link_libraries(hub_party_test PRIVATE hublogic)
 add_executable(hub_bracket_test test_bracket.cpp)
 target_link_libraries(hub_bracket_test PRIVATE hublogic)
-add_executable(hub_hack_test test_hack.cpp)
+add_executable(hub_hack_test test_hack.cpp hack_core.cpp)
 target_link_libraries(hub_hack_test PRIVATE hublogic hubcommon)
 
 add_executable(hub_toast_test test_toast.cpp)

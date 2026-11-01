@@ -2,6 +2,7 @@
 #include "gamepack.h"
 #include "wiiu_meta.h"
 #include "homefun.h"
+#include "hack_ui.h"
 
 #include <mutex>
 #include <thread>
@@ -218,6 +219,7 @@ void draw_hero(const hub::GameEntry& e, float h) {
             x += pw + sp(0.75f);
         };
         put(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.3f));
+        if (is_hack(e)) put(hack_ribbon(e), ui::ACCENT);
         if (is_native(e)) put("Native port", IM_COL32(255, 255, 255, 30));
         if (cat && cat->year) put(std::to_string(cat->year), IM_COL32(255, 255, 255, 30));
         if (supports_online(e)) put("1-" + std::to_string(local_players_for(e)) + " players", IM_COL32(255, 255, 255, 30));
@@ -872,6 +874,7 @@ void draw_details_modal() {
             if (draw_players_strip(local_players_for(e))) { ImGui::CloseCurrentPopup(); open_port_assign(); }
         }
         dupes_details_section(e);
+        hack_details_section(e);   // Versions row (Original + hacks) and Remove hack
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         if (gamepack_owns(e)) {   // installed from a shared pack: its folder (full path on hover) + Uninstall; the archive file name inside is not interesting
             const std::string ft = hubgp::installed_folder_title(e.path, hubgp::pack_root());
@@ -959,6 +962,10 @@ void draw_details_modal() {
     if (button("Customize", ImVec2(0, bh2), false, true, ui::Icon::Gear)) custom_open_customize(e.key);
     place(label_w("Add to shelf...", true));
     if (button("Add to shelf...", ImVec2(0, bh2), false, true, ui::Icon::Plus)) custom_open_picker(e.key, true);
+    if (hack_can_add(e)) {   // ROM hacks and translations (hack_ui.cpp): pick a patch file, RetroHub finds the base game and adds a new entry
+        place(label_w("Add hack or translation", true));
+        if (button("Add hack or translation", ImVec2(0, bh2), false, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); hack_add_open(e); }
+    }
     custom_draw(1);   // Customize / Add to shelf modals nest inside this one
     ImGui::EndPopup();
 }
