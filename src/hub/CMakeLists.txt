@@ -137,7 +137,11 @@ add_executable(hub_toast_test test_toast.cpp)
 target_link_libraries(hub_toast_test PRIVATE hublogic)
 
 add_executable(hub_popup_guard_test test_popup_guard.cpp)
-target_compile_definitions(hub_popup_guard_test PRIVATE HUB_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(hub_popup_guard_test PRIVATE HUB_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")   # the lint also scans ${HUB_SRC_DIR}/../common
+
+add_executable(hub_idle_test test_idle.cpp)
+target_include_directories(hub_idle_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_idle_test PRIVATE cxx_std_17)
 
 add_executable(hub_toast_win_test test_toast_win.cpp toast_win.cpp shell_integration.cpp)
 target_link_libraries(hub_toast_win_test PRIVATE hublogic hubbase SDL2::SDL2 ole32 shell32 uuid propsys user32 windowsapp)

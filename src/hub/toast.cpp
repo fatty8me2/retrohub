@@ -1,4 +1,5 @@
 #include "toast.h"
+#include "popup_guard.h"
 
 namespace hubtoast {
 
@@ -66,7 +67,9 @@ bool parse_activation_code(const std::string& args, std::string* code) {
 }
 
 bool should_toast(bool setting_on, bool game_running, bool notifier_available) {
-    return setting_on && game_running && notifier_available;
+    /* A toast only ever meant "tell the player who is in a game", and the house rule forbids exactly that: the guard says no whenever a
+     * game runs, so this is false for every input today. The bell and the runner OSD carry the message instead. */
+    return setting_on && notifier_available && game_running && hubguard::may_windows_toast(game_running);
 }
 
 bool notify_invite(INotifier& n, bool setting_on, bool game_running, const std::string& friend_name,
