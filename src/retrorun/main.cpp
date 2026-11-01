@@ -652,6 +652,16 @@ class Frontend {
     void link_pump_pub() { link_pump(); }
   private:
     int net_rc = 3;
+    /* Online connect failure: exit 12 and the plain-words reason in $RETRORUN_REASON_FILE (the hub shows it; before this every
+     * failure exited 3 = "Emulator files are missing"). */
+    bool net_fail(const std::string& why)
+    {
+        net_rc = 12;
+        if (const wchar_t* f = _wgetenv(L"RETRORUN_REASON_FILE")) {   // wide: the data dir may hold non-ASCII characters
+            if (f[0]) if (FILE* fp = _wfopen(f, L"wb")) { fwrite(why.data(), 1, why.size(), fp); fclose(fp); }
+        }
+        return false;
+    }
     /* Exit code when the session dies: 8 when a partner (usually the host) left on purpose or the host is gone, 4 for a plain connection loss. */
     int lost_code() { std::string s = session.status(); return (s.find("host left") != std::string::npos || s.find("partner ended") != std::string::npos) ? 8 : 4; }
     bool link_active = false;
@@ -2375,7 +2385,7 @@ bool Frontend::setup_net() {
     cfg.slot = a.slot;
     cfg.expected = std::max(1, a.players);
     if (a.spectate) {
-        if (a.ds_link || link || a.share_host_save) { rlog("net: --spectate does not work with link/DS/--share-host-save games"); return false; }
+        if (a.ds_link || link || a.share_host_save) { rlog("net: --spectate does not work with link/DS/--share-host-save games"); return net_fail("Watching does not work for this kind of game."); }
         slot_mask = 1u;   // the players: the host plus every owner named in --ports
         for (int i = 0; i < 4; i++) if (owner[i] >= 0 && owner[i] < 4) slot_mask |= 1u << owner[i];
         a.slot = 1;       // placeholder; the server assigns the real slot
@@ -2385,9 +2395,9 @@ bool Frontend::setup_net() {
     } else {
         std::string err;
         slot_mask = n64run::derive_slot_mask(owner, a.slot, std::max(1, a.players), &err);
-        if (!slot_mask) { rlog("net: bad --slot/--players/--ports: %s", err.c_str()); return false; }
+        if (!slot_mask) { rlog("net: bad --slot/--players/--ports: %s", err.c_str()); net_rc = 2; return false; }
     }
-    if (!session.start(cfg)) { rlog("net: cannot start session"); return false; }
+    if (!session.start(cfg)) { rlog("net: cannot start session"); return net_fail("Couldn't open the network connection (UDP socket)."); }
     rlog("net: joining %s as slot %d of %d PCs (slot mask %x, delay %s)", a.room.c_str(), a.slot, a.players, slot_mask,
          a.delay < 0 ? "auto" : std::to_string(a.delay).c_str());
     uint32_t t0 = hubnet::now_ms(), last = 0;
@@ -2395,9 +2405,9 @@ bool Frontend::setup_net() {
         session.update();
         pump_events(false);
         if (quit) return false;
-        if (session.failed()) { rlog("net: session failed: %s", session.status().c_str()); return false; }
+        if (session.failed()) { rlog("net: session failed: %s", session.status().c_str()); return net_fail(session.status()); }
         uint32_t now = hubnet::now_ms();
-        if (now - t0 > 60000) { rlog("net: timed out waiting for peers (%s)", session.status().c_str()); return false; }
+        if (now - t0 > 60000) { rlog("net: timed out waiting for peers (%s)", session.status().c_str()); return net_fail("Timed out waiting for the other players (" + session.status() + ")."); }
         if (now - last > 2000) { last = now; rlog("net: %s", session.status().c_str()); }
         Sleep(5);
     }
