@@ -18,6 +18,7 @@
 #include "m64p_common.h"
 
 #include "mempak.h"
+#include "osd_gl.h"
 #include "runstate.h"
 
 namespace n64run { RunState g_run; }
@@ -84,4 +85,6 @@ PLUGIN_EXPORT int RomOpen(void) { return 1; }
 PLUGIN_EXPORT void RomClosed(void) {}
 PLUGIN_EXPORT void SDL_KeyDown(int, int) {}
 PLUGIN_EXPORT void SDL_KeyUp(int, int) {}
-PLUGIN_EXPORT void RenderCallback(void) {}
+/* The core calls this from the video plugin's rendering callback: at the plugin's swap, after the finished frame is on the window's default
+ * framebuffer and right before the buffers are swapped. The runner draws its on-screen display here (osd_gl.h). */
+PLUGIN_EXPORT void RenderCallback(void) { n64run::osd_gl_render(); }
