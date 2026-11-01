@@ -53,10 +53,16 @@ void set_buttons(uint32_t m) {
     for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) SDL_JoystickSetVirtualButton(g_joy, b, (m >> b) & 1u);
 }
 
-/* Commands this scenario sent, without the runner input gate ("input 0" on open / "input 1" on close: checked separately). */
+/* Commands this scenario sent, without the runner input gate ("input 0" on open / "input 1" on close: checked separately) and without
+ * the pause the menu sends itself ("pause 1" on open, "pause 0" on close; pause_cmds() has those). */
 std::vector<std::string> new_cmds(const QmE2EState& st) {
     std::vector<std::string> v;
-    for (size_t i = std::min(g_cmd_base, st.cmds.size()); i < st.cmds.size(); ++i) if (st.cmds[i].rfind("input ", 0) != 0) v.push_back(st.cmds[i]);
+    for (size_t i = std::min(g_cmd_base, st.cmds.size()); i < st.cmds.size(); ++i) if (st.cmds[i].rfind("input ", 0) != 0 && st.cmds[i].rfind("pause ", 0) != 0) v.push_back(st.cmds[i]);
+    return v;
+}
+std::vector<std::string> pause_cmds(const QmE2EState& st) {
+    std::vector<std::string> v;
+    for (size_t i = std::min(g_cmd_base, st.cmds.size()); i < st.cmds.size(); ++i) if (st.cmds[i].rfind("pause ", 0) == 0) v.push_back(st.cmds[i]);
     return v;
 }
 /* The input gate must alternate off / on, one "input 0" per open and one "input 1" per close. */
@@ -86,6 +92,9 @@ Step expect_sel(std::string id) {
 }
 Step expect_cmds(std::vector<std::string> want, std::string n) {
     return expect(n, [want](const QmE2EState& st, std::string* why) { auto c = new_cmds(st); *why = "commands: " + join(c); return c == want; });
+}
+Step expect_pause(std::vector<std::string> want, std::string n) {
+    return expect(n, [want](const QmE2EState& st, std::string* why) { auto c = pause_cmds(st); *why = "pause commands: " + join(c); return c == want; });
 }
 Step closing(Step s) { s.allow_close = true; return s; }
 
@@ -297,11 +306,60 @@ void build() {
         open_menu(s.steps);
         s.steps.push_back(hold(UP, 70, "up (wraps? no: clamps at Resume)")); s.steps.push_back(wait(60));
         s.steps.push_back(expect_sel("Resume"));
-        s.steps.push_back(hold(DOWN, 1400, "down held to the bottom")); s.steps.push_back(wait(100));
+        s.steps.push_back(hold(DOWN, 2400, "down held to the bottom")); s.steps.push_back(wait(100));
         s.steps.push_back(expect_sel("Quit to RetroHub"));
         s.steps.push_back(closing(press(A_, "A on Quit")));
         s.steps.push_back(closing(wait(300)));
         s.steps.push_back(expect("quit", [](const QmE2EState& st, std::string* w) { *w = "open=" + std::to_string(st.open) + " why=" + st.close_why + " " + join(new_cmds(st)); return !st.open && st.close_why == "Quit" && new_cmds(st) == std::vector<std::string>{"quit"}; }));
+        g_sc.push_back(s);
+    }
+    {   // 14. Plan 4 pause: on by default, "pause 1" on open and "pause 0" on close (offline)
+        Scenario s{"pause while the menu is open"};
+        open_menu(s.steps);
+        s.steps.push_back(wait(200));
+        s.steps.push_back(expect_pause({"pause 1"}, "pause 1 on open"));
+        close_b(s.steps);
+        s.steps.push_back(expect_pause({"pause 1", "pause 0"}, "pause 0 on close"));
+        g_sc.push_back(s);
+    }
+    {   // 15. the Pause row resumes and pauses by hand; the setting turns the automatic pause off; closing always resumes
+        Scenario s{"Pause row and the Pause-when-menu-opens setting"};
+        open_menu(s.steps);
+        down_to(s.steps, "Take a screenshot", 6);   // Speed Volume Sound Save Load Screenshot
+        down_to(s.steps, "pause", 1);
+        s.steps.push_back(press(A_, "A resumes")); s.steps.push_back(wait(100));
+        s.steps.push_back(press(A_, "A pauses again")); s.steps.push_back(wait(100));
+        s.steps.push_back(press(A_, "A resumes")); s.steps.push_back(wait(100));
+        down_to(s.steps, "pause_auto", 1);
+        s.steps.push_back(press(A_, "A turns the setting off")); s.steps.push_back(wait(100));
+        s.steps.push_back(expect_pause({"pause 1", "pause 0", "pause 1", "pause 0"}, "row toggles sent as pause commands"));
+        close_b(s.steps);
+        s.steps.push_back(expect_pause({"pause 1", "pause 0", "pause 1", "pause 0"}, "already running: nothing more on close"));
+        open_menu(s.steps);
+        s.steps.push_back(wait(200));
+        s.steps.push_back(expect_pause({"pause 1", "pause 0", "pause 1", "pause 0"}, "setting off: no pause on open"));
+        down_to(s.steps, "pause", 7);
+        s.steps.push_back(press(A_, "A pauses by hand")); s.steps.push_back(wait(100));
+        s.steps.push_back(expect_pause({"pause 1", "pause 0", "pause 1", "pause 0", "pause 1"}, "manual pause"));
+        down_to(s.steps, "pause_auto", 1);
+        s.steps.push_back(press(A_, "A turns the setting back on")); s.steps.push_back(wait(100));
+        close_b(s.steps);
+        s.steps.push_back(expect_pause({"pause 1", "pause 0", "pause 1", "pause 0", "pause 1", "pause 0"}, "close resumes a manual pause"));
+        g_sc.push_back(s);
+    }
+    {   // 16. a state save from a paused menu resumes first (n64run refuses the command while paused)
+        Scenario s{"save state resumes a paused game first"};
+        open_menu(s.steps);
+        down_to(s.steps, "Save state", 4);
+        s.steps.push_back(press(A_, "A")); s.steps.push_back(wait(150));
+        s.steps.push_back(closing(press(A_, "A on slot 1")));
+        s.steps.push_back(closing(wait(800)));
+        s.steps.push_back(expect("pause 0 sent, then the save", [](const QmE2EState& st, std::string* w) {
+            size_t p0 = std::string::npos, sv = std::string::npos;
+            for (size_t i = std::min(g_cmd_base, st.cmds.size()); i < st.cmds.size(); ++i) { if (st.cmds[i] == "pause 0" && p0 == std::string::npos) p0 = i; if (st.cmds[i] == "save_state 0") sv = i; }
+            *w = join(st.cmds);
+            return p0 != std::string::npos && sv != std::string::npos && p0 < sv && new_cmds(st) == std::vector<std::string>{"save_state 0"};
+        }));
         g_sc.push_back(s);
     }
 }
