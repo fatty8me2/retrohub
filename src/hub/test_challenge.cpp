@@ -1,6 +1,7 @@
 /* hubchallenge_test: pure challenge logic (cards, leaderboard, rules) + attach helpers. No network. */
 #include "attach_xfer.h"
 #include "challenge_logic.h"
+#include "challenge_flow.h"
 
 #include <cstdio>
 #include <random>
@@ -165,6 +166,45 @@ int main() {
         hubnet::Attach old = att("3", "shot", 10); old.expires = 1000;
         int j4 = download(old, "C:\\nope\\x.png");
         CHECK(poll(j4, &rr) && rr.done && !rr.ok && rr.error.find("expired") != std::string::npos, "%s", rr.error.c_str());
+    }
+    printf("[flow]\n");
+    {
+        using namespace hub::challenge;
+        SendPhase p = SendPhase::Idle;
+        p = send_next(p, SendEvent::StateSaved); CHECK(p == SendPhase::Idle, "ignored when idle");
+        p = send_next(p, SendEvent::Begin); CHECK(p == SendPhase::Saving && send_busy(p));
+        p = send_next(p, SendEvent::StateSaved); CHECK(p == SendPhase::PickGoal);
+        p = send_next(p, SendEvent::GoalScore); CHECK(p == SendPhase::TypeScore);
+        p = send_next(p, SendEvent::Back); CHECK(p == SendPhase::PickGoal);
+        p = send_next(p, SendEvent::GoalFastest); CHECK(p == SendPhase::PickFriends);
+        p = send_next(p, SendEvent::FriendsOk); CHECK(p == SendPhase::Uploading);
+        CHECK(send_next(p, SendEvent::Cancel) == SendPhase::Uploading, "an upload in flight is not cancelled");
+        p = send_next(p, SendEvent::UploadsDone); p = send_next(p, SendEvent::Delivered); CHECK(p == SendPhase::Sent);
+        CHECK(send_next(p, SendEvent::Fail) == SendPhase::Sent && send_next(SendPhase::Saving, SendEvent::Fail) == SendPhase::Failed);
+        CHECK(send_next(SendPhase::PickGoal, SendEvent::Cancel) == SendPhase::Idle && send_next(SendPhase::Failed, SendEvent::Begin) == SendPhase::Saving);
+        RunPhase r = RunPhase::Idle;
+        r = run_next(r, RunEvent::Accept); r = run_next(r, RunEvent::Downloaded); r = run_next(r, RunEvent::Started);
+        CHECK(r == RunPhase::Running);
+        CHECK(run_next(r, RunEvent::Done) == RunPhase::Finished && run_next(r, RunEvent::GaveUp) == RunPhase::Finished && run_next(r, RunEvent::GameEnded) == RunPhase::Finished);
+        CHECK(run_next(RunPhase::Downloading, RunEvent::Fail) == RunPhase::Failed && run_next(RunPhase::Failed, RunEvent::Accept) == RunPhase::Downloading);
+        std::vector<std::string> sel;
+        for (int i = 0; i < 8; i++) CHECK(friend_toggle(&sel, "u" + std::to_string(i)));
+        CHECK(!friend_toggle(&sel, "u9") && sel.size() == 8, "max 8 friends");
+        CHECK(friend_toggle(&sel, "u3") && sel.size() == 7 && friend_toggle(&sel, "u9") && sel.size() == 8, "toggle off then another on");
+        int64_t v = 0;
+        CHECK(parse_score("12,000", &v) && v == 12000 && parse_score(" 4 500 ", &v) && v == 4500 && !parse_score("", &v) && !parse_score("12a", &v) && !parse_score("1234567890123", &v));
+        RunClock c;
+        CHECK(c.elapsed(5000) == 0, "not started");
+        c.start(1000);
+        CHECK(c.elapsed(4000) == 3000);
+        c.set_menu_open(true, 5000); CHECK(c.elapsed(9000) == 4000 - 0 || c.elapsed(9000) == 4000, "menu time is not counted (while open)");
+        c.set_menu_open(false, 9000); CHECK(c.elapsed(10000) == 5000, "clock %lld", (long long)c.elapsed(10000));
+        auto rows = menu_rows("n64", true, false, false, false); CHECK(rows.challenge && rows.challenge_enabled && !rows.did_it);
+        rows = menu_rows("n64", true, true, false, false); CHECK(rows.challenge && !rows.challenge_enabled && !rows.why.empty(), "online: disabled with a reason");
+        rows = menu_rows("gc", true, false, false, false); CHECK(!rows.challenge, "external emulators: not offered");
+        rows = menu_rows("n64", false, false, false, false); CHECK(!rows.challenge, "no control channel: not offered");
+        rows = menu_rows("n64", true, false, true, false); CHECK(rows.did_it && rows.give_up && !rows.challenge);
+        rows = menu_rows("n64", true, false, false, true); CHECK(rows.challenge && !rows.challenge_enabled);
     }
     printf("%s (%d failures)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
