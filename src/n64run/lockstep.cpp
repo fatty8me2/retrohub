@@ -82,9 +82,22 @@ void Lockstep::send_packet() {
     if (n) net_->send(-1, buf, (int)n);
 }
 
+void Lockstep::desync_unrecovered(const std::string& why) {
+    desync_ = true;
+    if (opt_.spectator || fatal_) return;
+    fatal_ = true;
+    fatal_at_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
+    if (hooks_.log) hooks_.log("resync: UNRECOVERED (" + why + "); the match ends in " + std::to_string(kStopAfterMs / 1000) + " s");
+    if (hooks_.on_unrecovered) hooks_.on_unrecovered(why);
+}
+
 void Lockstep::pump() {
     if (!net_) return;
     net_->update();
+    if (fatal_ && !fatal_stopped_ && (int32_t)(hubnet::now_ms() - fatal_at_) >= (int32_t)kStopAfterMs) {
+        fatal_stopped_ = true;
+        if (hooks_.request_stop) hooks_.request_stop();
+    }
     int from;
     std::vector<uint8_t> msg;
     while (net_->recv(&from, &msg)) {
@@ -281,8 +294,8 @@ void Lockstep::report_mismatches() {
         if (rs_.stale(m.sample)) { if (hooks_.log) hooks_.log("resync: that check predates the last recovery; ignored"); continue; }
         resync::Act a = rs_.on_mismatch(m.sample, sample_ < 0 ? 0u : (uint32_t)sample_);
         if (a == resync::Act::Fallback) {
-            desync_ = true;
             if (hooks_.log && rs_.count() >= resync::kMaxResyncs) hooks_.log("resync: giving up after " + std::to_string(rs_.count()) + " recoveries");
+            desync_unrecovered(rs_.count() >= resync::kMaxResyncs ? "too many recoveries" : "recovery is off");
             if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
         } else {
             rs_hash_sample_ = m.sample;
@@ -306,13 +319,13 @@ void Lockstep::rs_on_ctl(int from, const std::vector<uint8_t>& msg) {
     resync::Act a = rs_.on_msg(m, sample_ < 0 ? 0u : (uint32_t)sample_, &reply);
     if (a == resync::Act::Reply) {
         rs_send(from, reply);
-        if (reply.sub == resync::Abort && opt_.my_slot != 0) { desync_ = true; if (hooks_.log) hooks_.log("resync: we already passed the proposed sample; recovery off"); if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop(); }
+        if (reply.sub == resync::Abort && opt_.my_slot != 0) { if (hooks_.log) hooks_.log("resync: we already passed the proposed sample; recovery off"); desync_unrecovered("this PC was already past the repair point"); if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop(); }
     } else if (a == resync::Act::Fallback) {
         if (opt_.my_slot == 0) { resync::Msg ab; ab.sub = resync::Abort; ab.from = 0; ab.seq = rs_.seq(); for (int i = 0; i < 3; i++) rs_send(-1, ab); }
         rs_snd_.stop();
         rs_rcv_.reset();
-        desync_ = true;
         if (hooks_.log) hooks_.log("resync: a peer aborted the recovery; the desync stays");
+        desync_unrecovered("a player aborted the repair");
         if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
     }
 }
@@ -323,7 +336,7 @@ void Lockstep::rs_fail(const char* why) {
     rs_.abort();
     rs_snd_.stop();
     rs_rcv_.reset();
-    desync_ = true;
+    desync_unrecovered(why);
     if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
 }
 

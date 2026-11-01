@@ -874,7 +874,7 @@ std::string exit_code_text(unsigned long code) {
         case 3: return "Emulator files are missing (emu/ folder). Reinstall or run scripts/fetch-emu.ps1.";
         case 4: return "Connection lost during the match.";
         case 12: { std::string r = net_reason_text(); return r.empty() ? std::string("Couldn't connect to the other players.") : "Couldn't connect: " + r; }
-        case 5: return "The game went out of sync (desync) and was stopped.";
+        case 5: return "The game went out of sync and could not be repaired, so it was stopped. Start it again to keep playing together.";
         case 6: return "Couldn't share the host's save - check your connection and try again.";
         case 8: return player_left_text("");
         case 9: case 10: case 11: return hubps2::setup_mismatch_text(code);
