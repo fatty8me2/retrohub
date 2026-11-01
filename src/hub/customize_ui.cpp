@@ -27,7 +27,8 @@ using hubui::cust::Shelves;
 
 enum Loc { LocRoot = 0, LocDetails = 1, LocCustomize = 2, LocPicker = 3 };
 
-struct Tex { SDL_Texture* t = nullptr; int w = 0, h = 0; std::string stamp; };
+struct Tex { SDL_Texture* t = nullptr; int w = 0, h = 0; std::string stamp; unsigned long long used = 0; };   // used: LRU tick of the last tex_for() hit
+static unsigned long long g_tex_tick = 0;
 
 struct Popup { bool want = false; int parent = LocRoot; };
 
@@ -68,11 +69,18 @@ Tex* tex_for(const std::string& path) {
     std::string st = file_stamp(path);
     if (st.empty()) return nullptr;
     auto it = CU.tex.find(path);
-    if (it != CU.tex.end() && it->second.stamp == st) return it->second.t ? &it->second : nullptr;
+    if (it != CU.tex.end() && it->second.stamp == st) { it->second.used = ++g_tex_tick; return it->second.t ? &it->second : nullptr; }
     if (it != CU.tex.end() && it->second.t) SDL_DestroyTexture(it->second.t);
-    if (CU.tex.size() > 64) { for (auto& kv : CU.tex) if (kv.second.t) SDL_DestroyTexture(kv.second.t); CU.tex.clear(); }
+    while (CU.tex.size() > 64) {   // LRU: free only the oldest unused texture, never the whole cache
+        auto old = CU.tex.end();
+        for (auto i = CU.tex.begin(); i != CU.tex.end(); ++i) if (old == CU.tex.end() || i->second.used < old->second.used) old = i;
+        if (old == CU.tex.end()) break;
+        if (old->second.t) SDL_DestroyTexture(old->second.t);
+        CU.tex.erase(old);
+    }
     Tex nt;
     nt.stamp = st;
+    nt.used = ++g_tex_tick;
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     if (!data.empty() && data.size() < (48u << 20)) {

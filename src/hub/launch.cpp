@@ -758,6 +758,11 @@ void play_entry(const hub::GameEntry& e_in) {
             std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) +
                                " --save-dir " + quote(battery) + title_arg(e.title) + controls_arg("n64", e.key);
             args += hubui::n64_extra_args(gs_values_for(e));
+            if (e.catalog_id == "remix" || e.catalog_id == "smash64") {   // Smash Remix / Smash 64 ROM: VS results for rivals, party mode and brackets
+                ri.result_file = hub::data_dir() + "n64_result.json";
+                { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(ri.result_file), ec); }
+                args += " --result-file " + quote(ri.result_file);
+            }
             args += cheats_launch_args(e, false, true, nullptr);
             args += qm_args(ri, e, true);
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {

@@ -122,6 +122,7 @@ void page_saves() {
                           "in a folder of your own (a USB stick, a NAS...). RetroHub keeps it in step with the vault and never deletes a save.");
     ImGui::TextUnformatted("Sync folder");
     text_wrapped_disabled(A.st.sync_folder.empty() ? "(not set)" : A.st.sync_folder);
+    { const char* an = hub::saves::account_notice(); if (an && *an) text_wrapped_disabled(an); }
     {
         std::string p = osk::folder("sv_sync", button("Browse...", ImVec2(0, 0), A.st.sync_folder.empty()));
         if (!p.empty()) { A.st.sync_folder = p; mark_dirty(); }
@@ -157,6 +158,7 @@ after_sync:
     }
     if (busy && A.job.kind != SaveJob::Sync) { ImGui::SameLine(); ImGui::TextDisabled("Working..."); }
     result_line(A.export_result, A.export_ok);
+    { const char* an = hub::saves::account_notice(); if (an && *an && (!A.export_result.empty() || !A.st.sync_folder.empty())) text_wrapped_disabled(an); }
     result_line(A.import_result, A.import_ok);
     end_panel();
     ImGui::Dummy(ImVec2(0, 4 * S));

@@ -131,6 +131,7 @@ void tab_general() {
         ImGui::PushTextWrapPos(0.f);
         ImGui::TextDisabled("%s", A.st.rom_folders[i].c_str());
         ImGui::PopTextWrapPos();
+        { const std::string st = library_folder_status_line(A.st.rom_folders[i]); if (!st.empty()) text_wrapped_disabled(st); }
         ImGui::PopID();
     }
     if (remove_at >= 0) {
@@ -214,7 +215,7 @@ void tab_general() {
     text_wrapped_disabled("Automatic shrinks the sidebar to icons when the window is narrow.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ImGui::Checkbox("Show friends panel", &A.st.show_friends)) mark_dirty();
-    if (ImGui::Checkbox("Notify me about invites while I'm playing", &A.st.notify_in_game)) mark_dirty();
+    if (ImGui::Checkbox("Show a Windows notification for invites when no game is running", &A.st.notify_in_game)) mark_dirty();
     text_wrapped_disabled("Shows a Windows notification that never takes focus from your game. Click Join to enter the room when your game ends.");
     {
         ImGui::TextUnformatted("Chat on screen while playing");
