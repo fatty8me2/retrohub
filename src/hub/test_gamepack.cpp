@@ -226,7 +226,8 @@ int main()
         CHECK(friendly_error("download interrupted").find("connection") != std::string::npos);
         CHECK(friendly_error("server answered 404").find("removed") != std::string::npos);
         CHECK(friendly_error("server answered 503").find("trouble") != std::string::npos);
-        CHECK(friendly_error("quota").find("limiting") != std::string::npos);
+        CHECK(friendly_error("quota").find("busy") != std::string::npos);
+        CHECK(friendly_error("download interrupted").find("Google") == std::string::npos && friendly_error("could not reach Google Drive").find("Google") == std::string::npos);
         CHECK(friendly_error("cancelled") == "Cancelled.");
         CHECK(friendly_error("Not enough free disk space: this game needs about 2.0 GB and the drive has 1.0 GB free.").rfind("Not enough", 0) == 0);
         CHECK(friendly_error("weird thing").find("weird thing") != std::string::npos);

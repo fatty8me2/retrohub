@@ -47,7 +47,7 @@ try {
     # quota page: plain-English failure, ghost stays
     Mode 'quota'
     $out = RunCase @('gc', 'Fakeland Zip')
-    $okc = ($out -match 'install ok=0') -and ($out -match 'friendly=\[Google Drive is limiting') -and ($out -match 'ghost_after=1')
+    $okc = ($out -match 'install ok=0') -and ($out -match 'friendly=\[The shared pack is busy') -and ($out -match 'ghost_after=1')
     Write-Output ("{0} drive mode quota (plain message)" -f $(if ($okc) { 'PASS' } else { 'FAIL' }))
     if (-not $okc) { $fail++; Write-Output $out }
     Mode 'ok'

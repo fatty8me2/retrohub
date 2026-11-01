@@ -572,11 +572,11 @@ std::string friendly_error(const std::string& raw) {
     if (raw.empty()) return "Something went wrong. Please try again.";
     if (raw == "cancelled") return "Cancelled.";
     if (raw.back() == '.' && raw.size() > 24 && raw.find(' ') != std::string::npos && std::isupper((unsigned char)raw[0])) return raw;   // already a plain sentence
-    const char* quota = "Google Drive is limiting downloads of this game right now (too many people have downloaded it today). Try again later, usually within a day.";
+    const char* quota = "The shared pack is busy (its download limit was reached). Try again later, usually within a day.";
     if (raw == "quota") return quota;
-    if (raw == "signin") return "The owner of this game's shared folder no longer shares it publicly, so Google Drive wants a sign-in. Ask them to share it again.";
+    if (raw == "signin") return "The shared pack is no longer public. Ask whoever shares it to share it again.";
     if (raw == "network unavailable" || raw == "could not reach Google Drive")
-        return "RetroHub could not reach Google Drive. Check your internet connection and try again.";
+        return "RetroHub could not reach the shared pack. Check your internet connection and try again.";
     if (raw == "download interrupted" || raw == "download incomplete")
         return "The connection dropped while downloading. Try again: it continues where it stopped.";
     if (raw == "disk write failed" || raw.rfind("cannot write", 0) == 0)
@@ -585,14 +585,14 @@ std::string friendly_error(const std::string& raw) {
         int code = std::atoi(raw.c_str() + 16);
         if (code == 404 || code == 410) return "This game's file was removed from the shared folder. Ask the owner to add it again.";
         if (code == 403 || code == 429) return quota;
-        if (code >= 500) return "Google Drive is having trouble right now. Try again in a few minutes.";
-        return "Google Drive refused the download (error " + std::to_string(code) + "). Try again later.";
+        if (code >= 500) return "The shared pack's server is having trouble right now. Try again in a few minutes.";
+        return "The shared pack refused the download (error " + std::to_string(code) + "). Try again later.";
     }
     if (raw.find("quota or permission") != std::string::npos) return quota;
     if (raw == "this console is not in the shared pack") return "The shared packs have no games for this console.";
     if (raw == "not in the shared pack") return "This game is no longer in the shared pack.";
     if (raw == "could not list the shared pack" || raw == "could not list the game's files")
-        return "RetroHub could not read the shared pack from Google Drive. Check your internet connection and try again.";
+        return "RetroHub could not read the shared pack. Check your internet connection and try again.";
     if (raw == "the shared copy has no files") return "The shared copy of this game has no files in it. Ask the owner to check the folder.";
     if (raw == "bad file id") return "The shared file's link looks damaged. Ask the owner to share it again.";
     return "Something went wrong (" + raw + "). Please try again.";

@@ -1025,7 +1025,7 @@ void draw_changelog_popup();    // call every frame: the one-time "What's new in
 
 /* ---- frame.cpp ---- */
 void draw_update_popup();
-void draw_toasts(float bottom, float right, float top);
+float draw_toasts(float bottom, float right, float top);   // returns the height the bottom stack used
 bool nav_item(Page pg, const char* label, ui::Icon ic, float w, float expand, ImU32 badge);
 void draw_footer(float h);
 void global_input();

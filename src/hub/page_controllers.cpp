@@ -737,11 +737,11 @@ bool draw_players_strip(int players) {
     std::vector<hubctl::PadInfo> pads = hubctl::list_pads(st.port_order);
     bool clicked = false;
     ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("Players:");
+    ImGui::TextDisabled("Controllers:");
     for (int i = 0; i < players && i < hubctl::PortAssign::kPorts; ++i) {
         ImGui::SameLine(0, sp(1.f));
         bool has = i < (int)pads.size();
-        std::string t = std::to_string(i + 1) + "  " + (has ? pads[i].name : std::string("none"));
+        std::string t = std::to_string(i + 1) + "  " + (has ? pads[i].name : std::string("no controller"));
         pill(t.c_str(), has ? COL_ACCENT : COL_PANEL2);
     }
     ImGui::SameLine(0, sp(1.5f));
