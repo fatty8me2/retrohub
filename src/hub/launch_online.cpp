@@ -270,6 +270,7 @@ void gc_tick() {
         autotest_log(std::string("dolphin closed; session over") + (GCO.left_name.empty() ? "" : " (" + GCO.left_name + " left)"));
         if (!GCO.left_name.empty()) { set_notice(hubui::player_left_text(GCO.left_name), 20.0); GCO.left_name.clear(); }
         gc_stop_all();
+        hub::rom_cache_pin(nullptr);   // GameCube NetPlay never passes through the A.proc exit: release the disc's cache pin here
         group_session_ended(60);
         room_session_ended();
         if (was_host) { A.vault_dirty = true; auto_sync(); }
@@ -701,6 +702,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         std::string patched;
         if (!hack_ensure_rom(e_in, &patched)) {
             if (!is_host) launch_fail("still preparing the ROM hack - try again in a moment");
+            else A.lobby.send_msg("{\"kind\":\"np_abort\",\"reason\":\"the host is still preparing the ROM hack\"}");   // the launch already went out
             return;
         }
         hacked = e_in;

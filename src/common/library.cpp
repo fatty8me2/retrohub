@@ -2731,7 +2731,7 @@ uint64_t rom_cache_bytes() {
 bool rom_cache_clear() {
     bool ok = true;
     for (const CacheItem& c : cache_items()) {
-        if (cache_item_pinned(c.dir)) continue;   // the running game's files stay (library-14)
+        if (cache_item_pinned(c.dir)) { ok = false; continue; }   // the running game's files stay (library-14)
         std::error_code ec;
         fs::remove_all(c.dir, ec);
         if (ec) ok = false;

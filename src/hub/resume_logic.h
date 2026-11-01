@@ -6,13 +6,14 @@
  * rolls the progress back and the next in-game save writes over the newer one. So the newer save wins: no --resume, and the
  * old resume point stays available from the game page (state strip, "Resume").
  *
- * The runner writes the battery file and auto.state around the same exit, in either order, so differences up to
- * kResumeSlackSec count as the same session. */
+ * At exit retrorun writes the battery file BEFORE auto.state (save_srm, then the state), so a same-session battery file is never
+ * newer than the state; kResumeSlackSec only absorbs whole-second mtimes (the cloud stores unix seconds) and file-system rounding.
+ * Clock skew between PCs can still hide an older-looking newer save: the state-sidecar check of Plan 4 R1 closes that. */
 #include <cstdint>
 
 namespace hubui {
 
-constexpr int64_t kResumeSlackSec = 120;
+constexpr int64_t kResumeSlackSec = 15;
 
 /* state_time: auto.state mtime. newest_battery_time: newest file in the game's battery folder. */
 inline bool resume_allowed(int64_t state_time, int64_t newest_battery_time) {

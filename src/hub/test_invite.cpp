@@ -132,6 +132,10 @@ static void play_tests() {
     check(!invite_parse_play(L"RetroHub.exe --play", &k), "--play without key rejected");
     check(!invite_parse_play(L"RetroHub.exe --play ..\\evil", &k), "--play with path chars rejected");
     check(!invite_parse_play(L"RetroHub.exe --play UPPER", &k), "--play uppercase key rejected");
+    check(invite_parse_play(L"RetroHub.exe --play n64:8bc2712139fbf0c56c8ea835802c52dc", &k) && k == L"n64:8bc2712139fbf0c56c8ea835802c52dc",
+          "--play takes a real library key (system:id)");
+    check(invite_parse_play(L"RetroHub.exe --play gba:bpre-1a2b3c4d+h9f8e7d6c", &k) && k == L"gba:bpre-1a2b3c4d+h9f8e7d6c", "--play takes a ROM hack key");
+    check(!invite_parse_play(L"RetroHub.exe --play c:\\evil", &k), "--play still rejects path characters");
     check(!invite_parse_play(L"RetroHub.exe --join ABCDEF", &k), "join is not play");
     check(invite_play_arguments(L"abc") == L"--play abc", "shortcut arguments");
 }

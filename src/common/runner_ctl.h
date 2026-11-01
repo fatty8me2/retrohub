@@ -114,7 +114,7 @@ bool read_text(const std::string& path, std::string* out);
 /* Hub side: write the next command for a run (seq = previous seq in the file + 1). Returns the seq, 0 on failure.
  * The file holds ONE command: a Quit the runner has not acked yet is never replaced by another command (0 is returned), so a
  * menu's "input on" right after Quit cannot swallow it. A Quit older than kQuitHoldSec counts as lost and may be replaced. */
-constexpr int kQuitHoldSec = 15;
+constexpr int kQuitHoldSec = 30;
 long long send_command(const std::string& ctl_path, Cmd cmd, int slot = 0);
 /* Same with the full argument set (c.seq is ignored and replaced). e.g. {Cmd::Volume, value=40}, {Cmd::Speed, speed=2}, {Cmd::OsdMsg, text="Hi"}. */
 long long send_command_ex(const std::string& ctl_path, Command c);
