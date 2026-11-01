@@ -174,6 +174,17 @@ void launch_fail(const std::string& why, double secs) {
         A.lobby.send_msg("{\"kind\":\"np_fail\",\"reason\":\"" + json::escape(why) + "\"}");
 }
 
+std::string emulator_online_block() {
+    if (A.selected_game.empty()) return "";
+    const hub::GameEntry* g = find_room_entry(A.selected_game);
+    if (!g || is_remote_stand_in(*g)) return "";
+    if (g->system == hub::System::GC && hubemu::find(hubemu::Kind::Dolphin, "", "").exe.empty())
+        return "Dolphin isn't installed on this PC yet - download it (about " + std::to_string((int)(hubemu::release(hubemu::Kind::Dolphin).size / 1048576)) + " MB) before you ready up.";
+    if (g->system == hub::System::N3DS && hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, g->path).exe.empty())
+        return "Azahar (the 3DS emulator) isn't installed on this PC yet - download it before you ready up.";
+    return "";
+}
+
 std::string ready_block_reason_now() {
     if (is_host()) return "";
     std::string host_app;
@@ -267,6 +278,23 @@ void lobby_tick() {
     if (!A.lobby.connected()) { A.was_connected = false; return; }   // dropped: re-announce ourselves when the link comes back
     /* A guest on a different RetroHub version must not stay readied up. */
     if (A.my_ready && !ready_block_reason_now().empty()) { A.my_ready = false; A.hello_dirty = true; }
+    /* A guest without Dolphin / Azahar used to find out only after the host launched (then the host's Dolphin was killed). Offer the download
+     * now, once per game, and keep READY off until it is installed. Never over a running game. */
+    if (!is_host() && !A.proc && !game_active()) {
+        static std::string offered;
+        std::string eb = emulator_online_block();
+        if (!eb.empty()) {
+            if (A.my_ready) { A.my_ready = false; A.hello_dirty = true; }
+            if (offered != A.selected_game && EMU.state == hubemu::Installer::Idle) {
+                offered = A.selected_game;
+                const hub::GameEntry* g = find_room_entry(A.selected_game);
+                EMU.kind = g && g->system == hub::System::N3DS ? hubemu::Kind::Azahar : hubemu::Kind::Dolphin;
+                EMU.game_key.clear();
+                EMU.state = hubemu::Installer::Asking;
+                set_notice(eb, 10.0);
+            }
+        } else offered.clear();
+    }
 
     /* Lobby events are handled strictly in arrival order. A HostChange moves per-slot state from the promoted
      * member's old slot to 0 and drops the departed host's, so every message queued before it (old numbering)
