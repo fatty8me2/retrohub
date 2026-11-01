@@ -96,6 +96,7 @@ class Lockstep {
 
     bool present(int port) const { return core_.port_present(port); }
     bool local(int port) const { return core_.port_local(port); }
+    int port_owner(int port) const { return core_.port_owner(port); }   // the slot that plays `port` now (-1: nobody / a reserved drop-in port)
 
     /* Stall statistics (time spent blocked waiting for peers' inputs). */
     uint64_t stall_ms() const { return stall_ms_; }
@@ -109,6 +110,10 @@ class Lockstep {
      * end without finish() call it directly. Safe to call twice. */
     void finish_spectators();
     bool peer_left() const { return peer_left_; }          // a partner ended the session (clean)
+    /* The local side wants out (the hub's Quit arrived while this PC was blocked waiting for peers): every wait loop returns at once and
+     * get_keys hands out neutral input until the emulation has stopped. Not a connection loss: the exit code stays 0. Any thread. */
+    void stop_waiting() { stop_ = true; }
+    bool stopping() const { return stop_; }
     int current_delay() const { return core_.delay(); }
     uint32_t delay_changes() const { return core_.delay_changes(); }
     uint32_t longest_stall_ms() const { return longest_stall_; }
@@ -224,6 +229,7 @@ class Lockstep {
     int n_local_ = 0;
     uint32_t ready_mask_ = 0;
     std::atomic<bool> lost_{false};
+    std::atomic<bool> stop_{false};   // stop_waiting(): leave every wait loop
     bool desync_ = false;
     bool hash_warned_ = false;
     uint64_t stall_ms_ = 0, stalled_ = 0;
