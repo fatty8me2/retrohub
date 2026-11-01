@@ -29,6 +29,9 @@ for ($i = 0; $i -lt $Players; $i++) {
   $d = Join-Path $Work "inst$i"; if (Test-Path $d) { Remove-Item -Recurse -Force $d }
   New-Item -ItemType Directory -Force "$d\userdata" | Out-Null
   Copy-Item "$Build\*" $d -Recurse -Include *.exe, *.dll, cores, data, emu -Exclude hub_*.exe
+  # the nestopia/snes cores live in deps\cores (not in the build tree); launch.cpp looks for <exe>\cores\<dll>
+  New-Item -ItemType Directory -Force "$d\cores" | Out-Null
+  Copy-Item (Join-Path $PSScriptRoot "..\deps\cores\*") "$d\cores" -Recurse -Force
   $v = ($d -replace '\\', '/'); $rom = if ($RomDir) { ($RomDir -replace '\\', '/') } else { "$v/roms" }
   Set-Content "$d\userdata\hub.json" ('{"name":"qa-Party' + $i + '","rom_folders":["' + $rom + '"],"server":"' + $Server + '","vault_dir":"' + $v + '/vault","sync_auto":false,"cloud_saves":false}') -Encoding ascii
   $env:RETROHUB_AUTOTEST = if ($i -eq 0) { "host" } else { "join" }; $env:RETROHUB_AUTOTEST_CODE = $Code; $env:RETROHUB_AUTOTEST_NAME = "qa-Party$i"
@@ -48,7 +51,12 @@ for ($i = 0; $i -lt $Players; $i++) {
   $views[$i] = @($log | Where-Object { $_ -match "party-view" } | ForEach-Object { ($_ -replace '^\[\s*[\d.]+s\]\s*', '') -replace 'rev=\d+ ', '' })
   Write-Host "inst$i : $($views[$i].Count) standings lines, auto-ready=$(@($log | Where-Object { $_ -match 'auto-ready' }).Count), closing=$(@($log | Where-Object { $_ -match 'closing the game' }).Count)"
 }
-for ($i = 1; $i -lt $Players; $i++) { if (($views[0] -join "`n") -ne ($views[$i] -join "`n")) { Write-Host "FAIL standings differ between inst0 and inst$i"; $fail++ } }
+# Compare the final standings and the ordered points sequence. Guests may coalesce transient host-only views (launch states), so the full line list is not compared.
+function Get-PointSeq($lines) { @($lines | ForEach-Object { if ($_ -match 'points=([^ ]*)') { $Matches[1] } } | Select-Object -Unique) }
+for ($i = 1; $i -lt $Players; $i++) {
+  if ($views[0].Count -and $views[$i].Count -and ($views[0][-1] -ne $views[$i][-1])) { Write-Host "FAIL final standings differ between inst0 and inst$i"; $fail++ }
+  if (((Get-PointSeq $views[0]) -join '|') -ne ((Get-PointSeq $views[$i]) -join '|')) { Write-Host "FAIL points sequence differs between inst0 and inst$i"; $fail++ }
+}
 if ($views[0].Count -lt $Rounds + 1) { Write-Host "FAIL expected $($Rounds + 1) standings views (rounds + the podium), got $($views[0].Count)"; $fail++ }
 foreach ($p in $pids) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }   # our own pids only
 if ($fail) { Write-Host "PARTY ONLINE QA: FAIL ($fail)"; exit 1 }
