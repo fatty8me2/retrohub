@@ -412,7 +412,7 @@ void poll_np3ds() {
         autotest_log("3ds: forwarders ready, starting Azahar");
         RunInfo r3 = run_info_for(NP3_game, true);
         r3.room = true;
-        launch_external(NP3_game, r3, "", NP3_mp);
+        launch_external(NP3_game, r3, no_slash(hub::saves::battery_dir(sys_short(NP3_game), NP3_game.key)), NP3_mp);   // the vault path, like offline play: an empty one made the save bridge work relative to the CWD (saves-F4)
         /* Azahar's Qt frontend ignores -m: join the room through its Direct Connect dialog (UI Automation helper). */
         if (!A.proc) {   // Azahar did not start: nothing to drive, and the room link would sit idle
             launch_fail("Azahar did not start - 3DS online cancelled.", 12.0);
@@ -599,7 +599,7 @@ void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
         if (!start_hidden(sr, args, &RP.proc)) { launch_note(true, "Could not start remote play (streamrun error " + std::to_string(GetLastError()) + ")."); return; }
         autotest_log("rplay: streamrun started before Cemu, args " + args);
         Sleep(400);   // let the DSU server bind before Cemu reads its controller profiles
-        launch_external(e, r, "");   // the host's Cemu + save sync work exactly like offline play
+        launch_external(e, r, no_slash(hub::saves::battery_dir(sys_short(e), e.key)));   // the host's Cemu + save sync work exactly like offline play: same vault path (saves-F4)
         if (!A.proc) { rplay_stop(); host_abort("the host's Cemu did not start"); return; }
         RP.pending = true;
         RP.t0 = GetTickCount64();
