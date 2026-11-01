@@ -93,6 +93,7 @@ void send_rules() { A.lobby.send_msg(hubui::rules_json(A.rules)); }
 /* A game from this room ended (or never started): nobody stays "ready" for the next one, so the host cannot relaunch a rematch
  * before the others are back, and the old ready flags are not mistaken for fresh ones. Everyone re-announces their own state. */
 void room_session_ended() {
+    party_on_session_end();   // party mode (rooms and couch): the round's game ended
     if (!A.in_room) return;
     A.my_ready = false;
     A.ready.clear();
@@ -235,6 +236,8 @@ void guest_apply_launch(const std::string& body) {
 }
 
 void lobby_tick() {
+    party_tick();     // Plan 4: party mode + the finished-match watcher (also outside a room: couch party)
+    bracket_tick();
     if (!A.in_room) return;
     A.lobby.update();
     if (A.entering_room) {
@@ -378,6 +381,12 @@ void lobby_tick() {
         } else if (kind == "launch") {
             if (from != 0 || is_host()) continue;
             guest_apply_launch(body);
+        } else if (kind.compare(0, 3, "pt_") == 0) {   // party mode (party_logic.h)
+            party_on_msg(from, j);
+        } else if (kind.compare(0, 3, "bk_") == 0) {   // brackets (bracket_ui.cpp)
+            bracket_on_msg(from, j);
+        } else if (kind == "emote") {                  // in-game emote wheel: {kind:"emote", e:<code>} shown on the running game's OSD
+            qm_emote_incoming(from, j.str("e"));
         }
 
     }

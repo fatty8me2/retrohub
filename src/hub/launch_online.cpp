@@ -693,13 +693,25 @@ void poll_rplay() {
         autotest_log("rplay: streamrun attached to Cemu pid " + std::to_string(pid));
 }
 
-void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
+void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan, const hubui::Json* launch_msg,
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
+    hub::GameEntry hacked;   // ROM hack (Plan 4 H4): every PC plays its own patched copy; the content key makes them identical
+    if (is_hack(e_in)) {
+        std::string patched;
+        if (!hack_ensure_rom(e_in, &patched)) {
+            if (!is_host) launch_fail("still preparing the ROM hack - try again in a moment");
+            return;
+        }
+        hacked = e_in;
+        hacked.path = patched;
+    }
+    const hub::GameEntry& e = is_hack(e_in) ? hacked : e_in;
     A.st.last_game = room_id(e);
     A.st.played_online = true;
     mark_dirty();
     hub::rom_cache_touch(e);
+    hub::rom_cache_pin(&e);   // never trimmed while it runs (library-14)
     shot_trace("launch_online", std::string(is_host ? "host " : "guest ") + sys_short(e) + " " + room_id(e));
     if (g_headless && g_fake_room && (is_kanto(e) || e.system == hub::System::GC || e.system == hub::System::N3DS)) {   // peer-hosted routes need sockets: stop at the route
         shot_trace("online-route", std::string(is_kanto(e) ? "kanto" : e.system == hub::System::GC ? "dolphin-netplay" : "azahar-np3ds"));

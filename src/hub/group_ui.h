@@ -31,6 +31,7 @@ std::string group_last_label();                 // "Invite last group (Mia, Jake
 std::string group_together_text(const std::string& uid);   // "Last played together: ..." or ""
 /* rivalries (Wave 4 S2; rivals_logic.h) */
 void rivals_ingest(const std::string& result_file);                 // the game exited: read + store its match result (file is deleted)
+void rivals_ingest_text(const std::string& text);                   // one match result's JSON (read while the game runs; same match id = stored once)
 std::string rivals_record_text(const std::string& uid, const std::string& name);   // "You 12 - 9 Mickey" ("" = no games yet)
 std::string rivals_mains_text(const std::string& uid);              // "Mario vs Fox"
 std::string rivals_last5(const std::string& uid);                   // "WLWWL" oldest to newest

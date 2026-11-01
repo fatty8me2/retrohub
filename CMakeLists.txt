@@ -177,6 +177,10 @@ add_test(NAME hub_changelog_test COMMAND hub_changelog_test ${CMAKE_SOURCE_DIR}/
 add_test(NAME hub_gamenight_test COMMAND hub_gamenight_test)     # game night plans: DM tag, reminder timing, persistence
 add_test(NAME hub_group_test COMMAND hub_group_test)             # recent groups + notification history persistence/expiry
 add_test(NAME hub_rivals_test COMMAND hub_rivals_test)         # rivalry result parsing, ranking, storage union, head-to-head
+add_test(NAME hub_results_test COMMAND hub_results_test)       # Plan 4: match results (ranks, mid-run watcher) + auto-resume guard (saves-F1)
+add_test(NAME hub_party_test COMMAND hub_party_test)           # Plan 4: party mode reducer, points, shuffle, votes
+add_test(NAME hub_bracket_test COMMAND hub_bracket_test)       # Plan 4: brackets (single/double elimination) + Elo
+add_test(NAME hub_hack_test COMMAND hub_hack_test)             # Plan 4: ROM hack keys, base finder, hack.json
 add_test(NAME hub_popup_guard_test COMMAND hub_popup_guard_test)   # never pop up over a game: guard logic + lint of every raise/show/MessageBox site in src/hub
 add_test(NAME hub_toast_test COMMAND hub_toast_test)                  # toast XML/activation/policy with a mock notifier (no real toasts)
 add_test(NAME hub_wizard_test COMMAND hub_wizard_test)

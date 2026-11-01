@@ -2695,6 +2695,31 @@ std::vector<CacheItem> cache_items() {
     }
     return v;
 }
+
+std::mutex g_pin_mu;
+std::string g_pin_dir;   // lowercase UTF-8 path of the running game's unpacked folder ("" = none)
+
+/* The cache folder of an entry (same rule as rom_cache_touch); "" when the game is not unpacked into the cache. */
+std::string cache_dir_of(const GameEntry& e) {
+    if (e.issue.empty() && e.path.empty()) return {};
+    fs::path d = utf8_path(e.path).parent_path();
+    fs::path root = lib_dir() / L"rom-cache";
+    if (ascii_lower(path_utf8(d)).rfind(ascii_lower(path_utf8(root)), 0) != 0) d = utf8_path(extract_3ds_dir(e));
+    return d.empty() ? std::string() : ascii_lower(path_utf8(d));
+}
+
+/* True when the item holds the pinned folder (or is inside it): it must not be removed while the game runs. */
+bool cache_item_pinned(const fs::path& item) {
+    std::lock_guard<std::mutex> lk(g_pin_mu);
+    if (g_pin_dir.empty()) return false;
+    std::string d = ascii_lower(path_utf8(item));
+    while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
+    const std::string& p = g_pin_dir;
+    auto under = [](const std::string& a, const std::string& b) {   // a is b or inside b
+        return a.size() >= b.size() && a.compare(0, b.size(), b) == 0 && (a.size() == b.size() || a[b.size()] == '\\' || a[b.size()] == '/');
+    };
+    return under(p, d) || under(d, p);
+}
 } // namespace
 
 uint64_t rom_cache_bytes() {
@@ -2706,6 +2731,7 @@ uint64_t rom_cache_bytes() {
 bool rom_cache_clear() {
     bool ok = true;
     for (const CacheItem& c : cache_items()) {
+        if (cache_item_pinned(c.dir)) continue;   // the running game's files stay (library-14)
         std::error_code ec;
         fs::remove_all(c.dir, ec);
         if (ec) ok = false;
@@ -2713,6 +2739,13 @@ bool rom_cache_clear() {
     std::error_code ec;
     fs::remove(lib_dir() / L"library_cache.json", ec);   // cartridge entries point into the cache: identify them again
     return ok;
+}
+
+void rom_cache_pin(const GameEntry* e) {
+    std::string d = e ? cache_dir_of(*e) : std::string();
+    while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
+    std::lock_guard<std::mutex> lk(g_pin_mu);
+    g_pin_dir = d;
 }
 
 void rom_cache_set_limit(uint64_t bytes) { g_cache_limit = bytes; }
@@ -2727,7 +2760,7 @@ uint64_t rom_cache_trim(uint64_t max_bytes) {
     const auto recent = fs::file_time_type::clock::now() - std::chrono::hours(1);
     for (const CacheItem& c : items) {
         if (total <= max_bytes) break;
-        if (c.used > recent) continue;   // just unpacked or in use
+        if (c.used > recent || cache_item_pinned(c.dir)) continue;   // just unpacked, or the running game's (library-14)
         std::error_code ec;
         fs::remove_all(c.dir, ec);
         if (ec) continue;

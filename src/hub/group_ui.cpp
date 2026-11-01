@@ -226,6 +226,9 @@ void rivals_ingest(const std::string& result_file) {
     if (!std::filesystem::exists(p, ec)) return;   // no match finished (menu quit, offline, crash)
     std::string text = hubui::group::slurp(p);
     std::filesystem::remove(p, ec);
+    rivals_ingest_text(text);
+}
+void rivals_ingest_text(const std::string& text) {
     hubui::rivals::RawResult raw;
     if (!hubui::rivals::parse_result(text, &raw)) return;
     int me = room_my_slot();

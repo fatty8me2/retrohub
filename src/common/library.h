@@ -60,6 +60,10 @@ struct GameEntry {
     int gc_rev = -1;          // GC disc version byte (header 0x07); -1 = not read. Filled on demand (cheats), not cached.
     std::string issue;        // "" ok | "extract" zipped 3DS image Azahar cannot open | "encrypted" 3DS image needing AES keys |
                               // "keys" Wii U .wud/.wux needing keys.txt
+    /* ROM hack / translation entry (Plan 4 H2, src/hub/hack_logic.h). Empty for every ordinary game. For a hack, `key` is
+     * hacks::make_key(hack_base, crc), `catalog_id` is "", and `path` is the BASE game's file (the patched copy is prepared at Play). */
+    std::string hack_patch;   // absolute path of the patch file
+    std::string hack_base;    // the base game's key
 };
 
 /* Identify one file by extension + header. false if not a recognized game. Cheap:
@@ -115,6 +119,9 @@ void rom_cache_set_limit(uint64_t bytes);            // 0 = unlimited (default 4
 uint64_t rom_cache_limit();
 uint64_t rom_cache_trim(uint64_t max_bytes);         // evict LRU entries (not used in the last hour) until under max_bytes; returns bytes freed
 void rom_cache_touch(const GameEntry& e);            // mark the unpacked copy of e as just used (call at launch)
+/* The running game's unpacked copy is never trimmed or cleared, however long the session (library-14: trim spared only an hour).
+ * One pin (one game runs at a time): set at launch, nullptr at exit. Thread-safe. */
+void rom_cache_pin(const GameEntry* e);
 
 /* Per-user library state, persisted to data_dir()/library.json. */
 struct GameState {
