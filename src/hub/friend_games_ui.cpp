@@ -2,6 +2,7 @@
 #include "gameinfo.h"
 #include "gamepack.h"
 #include <chrono>
+
 #include <map>
 #include <thread>
 
@@ -172,10 +173,10 @@ static void gamepack_landed() {
     (void)dir;
     if (A.scanning) start_scan();   // a scan is running right now (it owns the result list): queue another, the entries above are kept meanwhile
     else apply_scan();
-    if (!newkey.empty()) {
-        if (A.sel_ghost == GA.ghost_id || A.sel_ghost.empty()) A.sel_ghost.clear();
-        if (A.sel_game.empty() || A.sel_ghost.empty()) A.sel_game = newkey;
-        if (g_ghost_popup_open) A.show_details = true;   // the friend-game popup was open: it turns into the owned game's details
+    if (!newkey.empty() && A.sel_ghost == GA.ghost_id) {   // the greyed tile was the selection: the real game takes its place (same title, same spot)
+        A.sel_ghost.clear();
+        A.sel_game = newkey;
+        if (g_ghost_popup_open) A.show_details = true;   // its friend-game popup turns into the owned game's details
     }
     A.vis_dirty = true;
     const std::string title = GA.title;
@@ -269,35 +270,41 @@ bool gamepack_uninstall_ui(const hub::GameEntry& e, float bh) {
     return removed;
 }
 
-/* The pill at the bottom while something installs: title, percentage, speed, time left, Cancel. Mouse only (it takes no pad focus). */
-void draw_gamepack_dialogs() {
+/* The pill at the bottom while something installs: title, percentage, speed, time left, Cancel. Drawn on the foreground list (like the
+ * toasts) with a mouse-only Cancel; it takes no pad focus, so controller navigation is untouched. Pad users cancel from the game's details. */
+void draw_gamepack_pill() {
     if (GP.state != hubgp::Installer::Working) return;
     ImGuiIO& io = ImGui::GetIO();
-    const float w = std::min(sp(92.f), io.DisplaySize.x * 0.9f);
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - sp(13.f)), ImGuiCond_Always, ImVec2(0.5f, 1.f));
-    ImGui::SetNextWindowSize(ImVec2(w, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.f), sp(1.5f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::PANEL2);
-    ImGui::PushStyleColor(ImGuiCol_Border, ui::HAIRLINE);
-    ImGui::Begin("##gp_pill", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                                           ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus);
-    int ph = GP.phase;
-    float f = ph == hubgp::Installer::Preparing ? (GP.prep_total ? (float)((double)GP.prep_got / (double)GP.prep_total) : -1.f) : GP.fraction();
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImFont* fb = ui::F.bold;
+    ImFont* fc = ui::F.cap;
+    const float w = std::min(sp(92.f), io.DisplaySize.x * 0.9f), h = sp(8.5f);
+    const ImVec2 p0((io.DisplaySize.x - w) * 0.5f, io.DisplaySize.y - sp(13.f) - h), p1(p0.x + w, p0.y + h);
+    ui::shadow(dl, p0, p1, sp(2.f), 1.f);
+    dl->AddRectFilled(p0, p1, ui::PANEL2, sp(2.f));
+    dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.f), 0, 1.f);
+    const int ph = GP.phase;
+    const float f = ph == hubgp::Installer::Preparing ? (GP.prep_total ? (float)((double)GP.prep_got / (double)GP.prep_total) : -1.f) : GP.fraction();
     std::string head = (ph == hubgp::Installer::Preparing ? "Preparing " : "Installing ") + GA.title;
     if (!GQ.empty()) head += "  (+" + std::to_string(GQ.size()) + " waiting)";
     if (GP.file_count > 1 && ph == hubgp::Installer::Downloading) head += "  -  file " + std::to_string(GP.file_idx.load()) + " of " + std::to_string(GP.file_count.load());
-    ImGui::TextUnformatted(ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, head, w - sp(4.f) - sp(14.f)).c_str());
-    ImGui::SameLine(w - sp(2.f) - sp(11.f));
-    if (ImGui::SmallButton("Cancel")) GP.request_cancel();
-    if (f >= 0) ImGui::ProgressBar(f, ImVec2(-1, sp(1.5f)), "");
-    else ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(-1, sp(1.5f)), "");
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-    ImGui::TextUnformatted(ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, gamepack_status_line(), w - sp(4.f)).c_str());
-    ImGui::PopStyleColor();
-    ImGui::End();
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(2);
+    const float cw = sp(11.f), ch = sp(3.75f);
+    const ImVec2 c0(p1.x - sp(2.f) - cw, p0.y + sp(1.25f)), c1(c0.x + cw, c0.y + ch);
+    dl->AddText(fb, fb->FontSize, ImVec2(p0.x + sp(2.f), p0.y + sp(1.5f)), ui::TEXT, ui::ellipsize(fb, fb->FontSize, head, c0.x - p0.x - sp(4.f)).c_str());
+    const bool hov = io.MousePos.x >= c0.x && io.MousePos.x <= c1.x && io.MousePos.y >= c0.y && io.MousePos.y <= c1.y;
+    dl->AddRectFilled(c0, c1, hov ? ui::scale_alpha(ui::BAD, 0.5f) : ui::PANEL, sp(1.f));
+    dl->AddRect(c0, c1, ui::HAIRLINE, sp(1.f), 0, 1.f);
+    ImVec2 ts = fc->CalcTextSizeA(fc->FontSize, FLT_MAX, 0.f, "Cancel");
+    dl->AddText(fc, fc->FontSize, ImVec2(c0.x + (cw - ts.x) * 0.5f, c0.y + (ch - ts.y) * 0.5f), ui::TEXT, "Cancel");
+    if (hov && ImGui::IsMouseClicked(0)) GP.request_cancel();
+    const ImVec2 b0(p0.x + sp(2.f), p0.y + sp(4.5f)), b1(p1.x - sp(2.f), b0.y + sp(1.25f));
+    dl->AddRectFilled(b0, b1, ui::PANEL, sp(0.6f));
+    float fill = f;
+    if (f < 0) fill = 0.15f;
+    float x0 = b0.x, x1 = b0.x + (b1.x - b0.x) * std::min(1.f, fill);
+    if (f < 0) { float t = (float)std::fmod(ImGui::GetTime() * 0.7, 1.0); x0 = b0.x + (b1.x - b0.x) * (t * 0.85f); x1 = x0 + (b1.x - b0.x) * 0.15f; }
+    dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x1, b1.y), ui::ACCENT, sp(0.6f));
+    dl->AddText(fc, fc->FontSize, ImVec2(p0.x + sp(2.f), b1.y + sp(0.75f)), ui::TEXT2, ui::ellipsize(fc, fc->FontSize, gamepack_status_line(), w - sp(4.f)).c_str());
 }
 
 /* Screenshots (HUB_SHOT_FAKE_FRIENDS + HUB_SHOT_FAKE_FRIEND_LIBS=<n extra made-up games for one friend>): fake friends' libraries. */
@@ -390,6 +397,22 @@ void ghost_tick() {
         }
     }
 
+    if (g_headless && std::getenv("HUB_SHOT_GP_ENQUEUE") && now > 14.0) {   // screenshots: queue installs of the pack-only ghosts whose titles contain these (';'-separated), once the index is in
+        static bool done = false;
+        if (!done && !A.ghosts.empty()) {
+            done = true;
+            std::string list = std::getenv("HUB_SHOT_GP_ENQUEUE");
+            size_t b = 0;
+            while (b <= list.size()) {
+                size_t e = list.find(';', b);
+                std::string want = list.substr(b, e == std::string::npos ? std::string::npos : e - b);
+                for (const auto& g : A.ghosts) if (g.uids.empty() && !want.empty() && g.title.find(want) != std::string::npos) { gamepack_enqueue(g.sys, g.title, g.id); break; }
+                if (e == std::string::npos) break;
+                b = e + 1;
+            }
+        }
+    }
+
     /* my list -> the server. Signature = share flag + every game key; unchanged = nothing is ever sent. */
     if (!A.scanned_once || A.scanning) return;
     uint64_t h = 1469598103934665603ull;
@@ -443,23 +466,28 @@ void handle_ghost_result(const hubui::fg::Ghost& g, const TileResult& r) {
     }
 }
 
+/* Installing / queued ghost: a progress bar along the cover's bottom edge (drawn after the title scrim so it stays visible). */
+void ghost_tile_progress(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVec2 p1) {
+    float frac = -1.f;
+    std::string lab;
+    int st = gamepack_state_for(g.id, &frac, &lab);
+    if (!st) return;
+    float bh = sp(0.9f);
+    ImVec2 b0(p0.x + sp(1.5f), p1.y - sp(0.75f) - bh), b1(p1.x - sp(1.5f), p1.y - sp(0.75f));
+    dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 70), bh * 0.5f);
+    if (frac >= 0) { if (frac > 0) dl->AddRectFilled(b0, ImVec2(b0.x + (b1.x - b0.x) * std::min(1.f, frac), b1.y), ui::ACCENT, bh * 0.5f); }
+    else if (st == 2) { float t = (float)std::fmod(ImGui::GetTime() * 0.8, 1.0); float x0 = b0.x + (b1.x - b0.x) * t * 0.8f; dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x0 + (b1.x - b0.x) * 0.2f, b1.y), ui::ACCENT, bh * 0.5f); }
+}
+
 void ghost_tile_decor(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVec2 p1, float e, std::string* subtitle) {
     /* desaturate: a neutral grey wash over the cover (lighter on hover so it is clear it can be opened) */
     dl->AddRectFilled(p0, p1, IM_COL32(96, 99, 108, (int)(150.f - 70.f * e)), sp(1.75f));
     std::vector<std::string> names = ghost_names(g);
     *subtitle = hubui::fg::badge_text(names);
-    {   // installing / queued: a progress bar along the cover's bottom edge and the state as the subtitle
+    {   // installing / queued: the state as the subtitle (the bar itself is drawn on top of the title scrim: ghost_tile_progress)
         float frac = -1.f;
         std::string lab;
-        if (int st = gamepack_state_for(g.id, &frac, &lab)) {
-            float bh = sp(1.1f);
-            ImVec2 b0(p0.x + sp(1.f), p1.y - sp(1.f) - bh), b1(p1.x - sp(1.f), p1.y - sp(1.f));
-            dl->AddRectFilled(ImVec2(p0.x, b0.y - sp(0.8f)), p1, IM_COL32(0, 0, 0, 120), sp(1.75f), ImDrawFlags_RoundCornersBottom);
-            dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 60), bh * 0.5f);
-            float fill = frac >= 0 ? frac : (st == 2 ? (float)(0.5 + 0.5 * std::sin(ImGui::GetTime() * 3.0)) * 0.3f + 0.1f : 0.f);
-            if (fill > 0) dl->AddRectFilled(b0, ImVec2(b0.x + (b1.x - b0.x) * fill, b1.y), ui::ACCENT, bh * 0.5f);
-            *subtitle = lab;
-        }
+        if (gamepack_state_for(g.id, &frac, &lab)) *subtitle = lab;
     }
     float r = sp(1.45f);
     size_t shown = std::min<size_t>(3, g.uids.size());
@@ -641,19 +669,33 @@ void draw_ghost_modal() {
     else text_wrapped_disabled("They get a request to open a room with this game. Only the game's name is shared, never game files.");
     ImGui::Dummy(ImVec2(0, sp(1.5f)));
 
-    /* install progress (background job: the popup can be closed, the install goes on) */
+    /* install state of this game: can it be installed, is it queued / running, did the last try fail */
     float ifrac = -1.f;
     std::string ilab;
     const int ist_run = gamepack_state_for(g.id, &ifrac, &ilab);
-    if (ist_run) {
+    const bool builtin = hubgp::sys_folder(g.sys)[0] != '\0';
+    const hubgp::IndexState ist = hubgp::index_state(g.sys);
+    const bool can_show = builtin || (ist == hubgp::IndexState::Ready && hubgp::index_source(g.sys));
+    const bool have = can_show && hubgp::installed(g.sys, g.title);
+    bool in_pack = ist == hubgp::IndexState::Ready ? hubgp::index_has(g.sys, g.title) : true;   // unknown yet: checked live on click
+    if (g_headless && std::getenv("HUB_SHOT_GHOST_INSTALLABLE")) in_pack = true;   // screenshots: pretend the shared pack has this game
+    const bool installable = can_show && !have && in_pack && !ist_run;
+    const std::string size_txt = ghost_size_text(g, installable || ist_run);
+    if (ist_run) {   // background job: this popup can be closed, the install goes on
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ui::ACCENT);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ui::PANEL);
         ImGui::ProgressBar(ifrac >= 0 ? ifrac : -1.0f * (float)ImGui::GetTime(), ImVec2(-1, sp(1.75f)), "");
+        ImGui::PopStyleColor(2);
         text_wrapped_disabled(ist_run == 1 ? std::string("Waiting for the other installs to finish.") : gamepack_status_line());
         text_wrapped_disabled("You can close this and keep browsing. The install continues in the background.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    } else if (GFAIL.count(g.id)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::BAD);
-        ImGui::TextWrapped("Could not install: %s", GFAIL[g.id].c_str());
-        ImGui::PopStyleColor();
+    } else {
+        if (GFAIL.count(g.id)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::BAD);
+            ImGui::TextWrapped("Could not install: %s", GFAIL[g.id].c_str());
+            ImGui::PopStyleColor();
+        }
+        if (installable && !size_txt.empty()) text_wrapped_disabled("Download size: " + size_txt + ". It is kept in RetroHub's games folder and shows up in your library right away.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
     }
 
@@ -664,33 +706,21 @@ void draw_ghost_modal() {
     ImGui::SameLine(0, sp(1.5f));
     button("Play Online", ImVec2(sp(16.f), bh), false, false, ui::Icon::Globe);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
-    bool installable = false;
-    {   // install from the shared packs (built-in folder + community list + extra roots from Settings > Online)
-        const bool builtin = hubgp::sys_folder(g.sys)[0] != '\0';
-        const hubgp::IndexState ist = hubgp::index_state(g.sys);
-        if (builtin || (ist == hubgp::IndexState::Ready && hubgp::index_source(g.sys))) {
-            ImGui::SameLine(0, sp(1.5f));
-            bool have = hubgp::installed(g.sys, g.title);
-            bool in_pack = ist == hubgp::IndexState::Ready ? hubgp::index_has(g.sys, g.title) : true;   // unknown yet: checked live on click
-            if (g_headless && std::getenv("HUB_SHOT_GHOST_INSTALLABLE")) in_pack = true;   // screenshots: pretend the shared pack has this game
-            installable = !have && in_pack && !ist_run;
-            std::string size_txt = ghost_size_text(g, installable);
-            std::string lbl = ist_run ? "Cancel install" : GFAIL.count(g.id) ? "Retry" : "Install";
-            if (ist_run) {
-                if (button("Cancel install", ImVec2(sp(18.f), bh), false, true, ui::Icon::Close)) gamepack_cancel(g.id);
-            } else if (button(lbl.c_str(), ImVec2(sp(12.f), bh), true, installable, ui::Icon::Cloud)) {
-                gamepack_enqueue(g.sys, g.title, g.id);   // the popup stays: it shows the progress and turns into the game's details when done
-            }
-            if (installable) ImGui::SetItemDefaultFocus();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                if (have) ImGui::SetTooltip("Already installed");
-                else if (!in_pack) ImGui::SetTooltip("Not in any shared pack yet. The owner can add it to their Google Drive and send the link so everyone can install it.");
-            }
-            if (!size_txt.empty()) { ImGui::SameLine(0, sp(1.f)); ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("%s", size_txt.c_str()); }
+    if (can_show) {
+        ImGui::SameLine(0, sp(1.5f));
+        if (ist_run) {
+            if (button("Cancel install", ImVec2(sp(17.f), bh), false, true, ui::Icon::Close)) gamepack_cancel(g.id);
+        } else if (button(GFAIL.count(g.id) ? "Retry" : "Install", ImVec2(sp(12.f), bh), true, installable, ui::Icon::Cloud)) {
+            gamepack_enqueue(g.sys, g.title, g.id);   // the popup stays: it shows the progress and turns into the game's details when done
+        }
+        if (installable) ImGui::SetItemDefaultFocus();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (have) ImGui::SetTooltip("Already installed");
+            else if (!in_pack) ImGui::SetTooltip("Not in any shared pack yet. The owner can add it to their Google Drive and send the link so everyone can install it.");
         }
     }
     ImGui::SameLine(0, sp(1.5f));
-    if (button("Add your own copy", ImVec2(sp(21.f), bh), !installable, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
+    if (button("Add your own copy", ImVec2(sp(21.f), bh), !installable && !ist_run, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
     ImGui::SameLine(0, sp(1.5f));
     if (button("Close", ImVec2(sp(9.f), bh))) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();

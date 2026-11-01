@@ -3,8 +3,12 @@
 import os, sys, struct, subprocess, shutil, tempfile
 TAR = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "tar.exe")
 
+NOISE_MB = float(os.environ.get("PACK_FIXTURE_NOISE_MB", "0"))   # >0: incompressible payload so the archives are really that big (progress-bar screenshots)
+
 def gc_iso(gid, title, size=600 * 1024):
-    b = bytearray(size)
+    b = bytearray(os.urandom(int(NOISE_MB * 1048576)) if NOISE_MB else size)
+    if len(b) < size: b.extend(bytes(size - len(b)))
+    b[0:0x440] = bytes(0x440)
     b[0:6] = gid.encode()
     struct.pack_into(">I", b, 0x1C, 0xC2339F3D)
     b[0x20:0x20 + len(title)] = title.encode()

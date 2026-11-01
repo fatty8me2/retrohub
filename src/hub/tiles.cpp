@@ -291,6 +291,7 @@ TileResult draw_tile(const TileSpec& t, ImVec2 size) {
         !(io.MousePos.y < p0.y + sp(4.f))) ImGui::SetTooltip("%s", t.title.c_str());
     std::string sub = ui::ellipsize(ui::F.cap, cap, t.ghost ? ghost_sub : t.subtitle, maxw);
     dl->AddText(ui::F.cap, cap, ImVec2(p0.x + pad, sub_y), IM_COL32(255, 255, 255, 190), sub.c_str());
+    if (t.ghost) ghost_tile_progress(dl, *t.ghost, p0, p1);   // install progress bar of a greyed-out game
     if (t.online && t.owned) ui::icon(dl, ui::Icon::Globe, ImVec2(p1.x - pad - sp(1), sub_y + cap * 0.5f), sp(2), ui::GOOD);
     if (!t.owned && t.cta && e > 0.02f) {
         const char* c = t.cta;
