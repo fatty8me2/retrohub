@@ -22,6 +22,7 @@ function WaitAck($dir, $seq, $secs) {
 }
 function Drive($name, $p, $run, $states, $shots, $slotsOk) {
     $ctl = "$run\control.json"
+    $null = $p.Handle   # keep the handle so ExitCode is readable after exit
     Start-Sleep -Seconds 4
     $seq = 0
     foreach ($step in @(@('save_state', 3), @('load_state', 3), @('screenshot', 0), @('load_state', 7), @('quit', 0))) {
