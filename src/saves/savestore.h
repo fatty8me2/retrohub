@@ -39,10 +39,15 @@ struct SyncReport {
  * there). Tracks a per-file manifest (size, mtime, SHA-256) from the last sync
  * in <vault>/.sync/<sanitized sync_root>.json to tell "changed here" from
  * "changed there". Never deletes the only copy of anything; deletions are not
- * propagated (v1). Skips states/ unless include_states. */
+ * propagated (v1). Skips states/ unless include_states.
+ * The account secret never travels: <vault>/_identity/ and any identity*.json are neither copied
+ * to the sync folder nor taken from it (a folder written by an older build may still hold one;
+ * it is left alone and ignored). */
 SyncReport sync_folder(const std::string& sync_root, bool include_states);
 
-/* Whole-vault backup/restore. Import merges: newer file wins, older kept in _conflicts/. */
+/* Whole-vault backup/restore. Import merges: newer file wins, older kept in _conflicts/.
+ * Neither direction carries the account secret: the zip has no _identity/ or identity*.json, and an
+ * import skips such entries (logged), so a zip from someone else can never switch the account. */
 bool export_zip(const std::string& zip_path, bool include_states, std::string* error);
 SyncReport import_zip(const std::string& zip_path);
 
