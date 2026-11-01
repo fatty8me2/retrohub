@@ -77,6 +77,17 @@ Beetle PSX (libretro/beetle-psx-libretro, commit ea14d6a; Mednafen PSX by the Me
 ## Kanto Together (not shipped)
 RetroHub can run a friend's Kanto Together co-op hack from the user's own package zip. Nothing from it is distributed with RetroHub. The package bundles mGBA (MPL 2.0), Node.js (MIT) and ws (MIT); see docs/KANTO_TOGETHER.md. The hack and its co-op layer (coop.lua, bridge, launcher, relay) are the friend's work; the separately published "CoopLayer" developer package is MIT (Copyright (c) 2026 Kanto Together contributors; its pret-derived ROM patch is not MIT). RetroHub only runs the user's own copy of the package and includes none of it.
 
+## ROM patch engine (`src/common/patcher*`, `docs/PATCHES.md`)
+
+Two small pieces are vendored for the xdelta / VCDIFF reader. Nothing is downloaded at build or run time, and the patch tools themselves (xdelta3, Flips, ...) are not used or shipped.
+
+| Component | Version | License | Where | Use |
+|---|---|---|---|---|
+| LZMA SDK (`LzmaDec`, `Lzma2Dec`) | 19.00 (Igor Pavlov), the files unmodified | public domain | `third_party/lzma/` (7 files + `LICENSE` + `VENDORED.txt`) | Decodes the xz / LZMA2 streams that `xdelta3 -S lzma` writes (the default when xdelta3 is built with liblzma). libchdr's own `LzmaDec` has no LZMA2 and its symbols are renamed, so the two copies do not clash. |
+| xdelta3 (DJW and FGK decoders) | tag v3.2.2, `xdelta3-djw.h`; rewritten as a bounds-checked C++17 decoder | Apache-2.0, Copyright 2016 Joshua MacDonald | `third_party/xdelta3/` (`djw_decode.*`, `fgk_decode.*`, `LICENSE`, `VENDORED.txt`) | Decodes `xdelta3 -S djw` and `-S fgk` sections. Only this decoder derives from xdelta3; the VCDIFF reader is written from RFC 3284. |
+
+Licence check for xdelta3, done on the exact tags: **v3.1.0 is GPL-2.0-or-later** (its `COPYING` is the GPL v2 and its file headers say "version 2 ... or any later version"); **Apache-2.0 starts at v3.2.0**, and v3.2.2 has the Apache LICENSE file and headers. The v3.2.2 tag was used. Apache-2.0 is compatible with RetroHub's GPL-3.0-or-later (the combined work is GPL-3.0-or-later). The test fixtures in `src/common/testdata/patcher/` were written by xdelta3 v3.2.2 built from that tag, on synthetic data.
+
 ## Vendored data
 
 | Component | Version | License | Use |
