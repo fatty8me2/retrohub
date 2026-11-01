@@ -2,6 +2,7 @@
 /* Pure step logic for the first-run setup wizard (no UI, no SDL). See onboarding.cpp for the screens. */
 #include "username.h"
 
+#include <cstddef>
 #include <string>
 
 namespace hubui {
@@ -15,9 +16,32 @@ inline Step back(Step s) { return s == Step::Welcome ? s : static_cast<Step>(sta
 inline int index(Step s) { return static_cast<int>(s); }
 inline Step from_index(int i) { return i < 0 ? Step::Welcome : i >= kStepCount ? Step::Done : static_cast<Step>(i); }
 
-/* Existing installs that already went through "Find my games" or have games never see the wizard on their own. */
+/* Existing installs that already went through "Find my games" or have games of their own never see the wizard on their own. */
+inline bool needs_setup(bool setup_done, bool find_games_done, bool have_user_folders) {
+    return !setup_done && !find_games_done && !have_user_folders;
+}
+
+/* The installer pre-fills a games folder on a FRESH install (userdata\installer_games_dir.txt; never written by an upgrade), and
+ * main() merges it into rom_folders. That must not make a brand-new install look "already set up": a fresh install ALWAYS runs the
+ * setup wizard (owner decision, Plan 4 H4), with that folder as a pre-filled answer in its Games step.
+ *
+ * main() decides BEFORE the merge, from the folders the player chose themselves, and raises this flag for the whole run. It stays
+ * raised across restarts through the hand-off file, which main() keeps until the wizard is finished or skipped (setup_done). */
+inline bool& installer_prefill() { static bool pending = false; return pending; }
+inline void set_installer_prefill(bool on) { installer_prefill() = on; }
+
+/* main()'s first-run decision, taken right after the installer's folder was merged into rom_folders: `folders` = rom_folders.size()
+ * AFTER the merge, `installer_folder_listed` = that folder is one of them (just added, or already there). Only the player's OWN
+ * folders count as "already set up". */
+inline bool fresh_install(bool setup_done, bool find_games_done, size_t folders, bool installer_folder_listed) {
+    const size_t own = folders - (installer_folder_listed && folders > 0 ? 1 : 0);
+    return needs_setup(setup_done, find_games_done, own > 0);
+}
+
+/* Folders the installer pre-filled do not count as "the player already has games": everything that decides about the first-run
+ * screens (the wizard, the "What's new" popup that waits for a fresh install) asks this one function. */
 inline bool should_autorun(bool setup_done, bool find_games_done, bool have_rom_folders) {
-    return !setup_done && !find_games_done && !have_rom_folders;
+    return needs_setup(setup_done, find_games_done, have_rom_folders && !installer_prefill());
 }
 
 /* Controller step headline / hint for n connected pads. */
