@@ -1503,8 +1503,19 @@ static void fr_attach_card(const hubnet::Message& m, int idx, float aw, ImDrawLi
     if (recv && shot && !d.started && !expired) att_start(a, d);
     const bool busy = d.job != 0;
     const bool has_btn = recv && !expired && (patch || (shot && (d.ok || !d.err.empty())) || !d.err.empty());
-    float cwid = aw * 0.94f, thumb_w = sp(14.f), thumb_h = sp(8.f);
-    float ch = pad * 2 + thumb_h + (has_btn ? sp(1.f) + sp(3.f) : 0.f);
+    float cwid = aw * 0.94f, thumb_w = std::min(sp(14.f), cwid * 0.36f), thumb_h = thumb_w * 0.58f;
+    /* the text column decides the height: name, size, then up to 3 wrapped status lines */
+    std::string st; ImU32 sc = ui::TEXT3;
+    if (expired) { st = "Expired (files last 7 days)"; sc = ui::BAD; }
+    else if (!d.err.empty()) { st = d.err; sc = ui::BAD; }
+    else if (a.kind == "state") st = "Challenge file";
+    else if (patch) st = busy ? "Downloading..." : "ROM hack patch";
+    else if (m.mine) st = "Sent";
+    const float tcol = cwid - pad * 2 - thumb_w - sp(1.25f);
+    std::vector<std::string> slines;
+    if (!st.empty()) slines = ui::wrap_lines(ui::F.cap, ui::F.cap->FontSize, st, tcol, 4);
+    const float text_h = ui::F.bold->FontSize * 1.2f + fs * 1.3f + slines.size() * ui::F.cap->FontSize * 1.25f;
+    float ch = pad * 2 + std::max(thumb_h, text_h) + (has_btn ? sp(1.f) + sp(3.f) : 0.f);
     float x0 = m.mine ? c.x + aw - cwid : c.x;
     ImVec2 q0(x0, c.y), q1(x0 + cwid, c.y + ch);
     cdl->AddRectFilled(q0, q1, ui::PANEL2, sp(1.75f));
@@ -1520,19 +1531,10 @@ static void fr_attach_card(const hubnet::Message& m, int idx, float aw, ImDrawLi
     }
     float tx = t1.x + sp(1.25f), tw2 = q1.x - pad - tx;
     cdl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, t0.y - sp(0.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, a.name.empty() ? "file" : a.name, tw2).c_str());
-    std::string sub = hub::attach::size_text(a.size) + "  -  " + fr_time(m.at);
+    std::string sub = hub::attach::size_text(a.size) + " - " + fr_time(m.at);
     cdl->AddText(bf, fs, ImVec2(tx, t0.y + ui::F.bold->FontSize * 1.2f), ui::TEXT2, ui::ellipsize(bf, fs, sub, tw2).c_str());
     float ly = t0.y + ui::F.bold->FontSize * 1.2f + fs * 1.3f;
-    std::string st; ImU32 sc = ui::TEXT3;
-    if (expired) { st = "Expired (files last 7 days)"; sc = ui::BAD; }
-    else if (!d.err.empty()) { st = d.err; sc = ui::BAD; }
-    else if (a.kind == "state") st = "Challenge file";
-    else if (patch) st = busy ? "Downloading..." : "ROM hack patch";
-    else if (m.mine) st = "Sent";
-    if (!st.empty()) {
-        auto lines = ui::wrap_lines(ui::F.cap, ui::F.cap->FontSize, st, tw2, 3);
-        for (auto& l : lines) { cdl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, ly), sc, l.c_str()); ly += ui::F.cap->FontSize * 1.25f; }
-    }
+    for (auto& l : slines) { cdl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, ly), sc, l.c_str()); ly += ui::F.cap->FontSize * 1.25f; }
     if (has_btn) {
         ImGui::PushID(idx + 200000);
         ImGui::SetCursorScreenPos(ImVec2(q0.x + pad, q1.y - pad - sp(3.f)));
