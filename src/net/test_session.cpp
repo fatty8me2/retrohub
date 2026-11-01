@@ -113,6 +113,42 @@ static bool event_order_check()
     return ok;
 }
 
+/* Every reason code the /hub server can send reads as plain words (never the raw code), a sentence we do not know is shown as it
+ * is, and a relay_denied is not a failure of the room (it is about the game session's relay, which says so itself). */
+static bool reason_text_check()
+{
+    bool ok = true;
+    const char* codes[] = {"room-in-use", "no-such-room", "room-full", "host-left", "host-left-game", "bad-slot", "host-reconnecting",
+                           "spectators-full", "spectate-busy", "no-free-port", "host-too-old", "no-such-game", "server-busy", "rate-limited"};
+    for (const char* code : codes) {
+        LobbyClient c;
+        c.inject_server_text(std::string("{\"type\":\"error\",\"reason\":\"") + code + "\"}");
+        const std::string st = c.status();
+        const bool good = c.failed() && st.size() >= 10 && st.find(code) == std::string::npos && st.find(' ') != std::string::npos;
+        if (!good) printf("  reason %s -> \"%s\" (failed=%d)\n", code, st.c_str(), (int)c.failed());
+        ok = ok && good;
+    }
+    {
+        LobbyClient c;
+        c.inject_server_text(R"({"type":"error","reason":"server-busy"})");
+        ok = ok && c.status().find("busy") != std::string::npos && c.status().find("new rooms") != std::string::npos;
+    }
+    {
+        LobbyClient c;
+        c.inject_server_text(R"({"type":"error","reason":"This room was hosted with an older version."})");
+        ok = ok && c.failed() && c.status() == "This room was hosted with an older version.";
+    }
+    {
+        LobbyClient c;
+        c.inject_server_text(R"({"type":"welcome","room":"ABC234","slot":1})");
+        c.inject_server_text(R"({"type":"relay_denied","reason":"server-busy","detail":"Server busy, relay unavailable."})");
+        c.inject_server_text(R"({"type":"relay_denied","reason":"rate-limited"})");
+        ok = ok && c.connected() && !c.failed() && c.status() == "connected" && c.my_slot() == 1;
+    }
+    printf("reason text check: %s\n", ok ? "ok" : "FAILED");
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     std::string server = hubnet::test_server_or_exit(argc, argv);
@@ -124,6 +160,7 @@ int main(int argc, char** argv)
     net_set_log_file("hubnet_test.log");
 
     if (!event_order_check()) return 1;
+    if (!reason_text_check()) return 1;
     if (!lobby_check(server)) return 1;
     if (!migration_check(server)) return 1;
     std::string room = new_room_code() + "-1";

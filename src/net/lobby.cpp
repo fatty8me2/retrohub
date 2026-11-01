@@ -99,7 +99,11 @@ bool LobbyClient::poll_event(LobbyEvent* out)
     return true;
 }
 
-static std::string friendly(const std::string& reason)
+/* Plain-language text for a reason code the /hub server sends (an `error` frame, or a close). "" = not a code we know: a newer
+ * server may send a readable sentence of its own, which the callers then show as it is. Shared with session.cpp (same library).
+ * Every code the Worker can send is listed: the room codes, and the free-tier guards (the daily budget and the per-address
+ * limits, see BattleShip/server/cloudflare/src/{hub,index,limits}.js). */
+std::string server_reason_text(const std::string& reason)
 {
     if (reason == "room-in-use") return "That room code is already in use";
     if (reason == "no-such-room") return "No such room";
@@ -113,7 +117,17 @@ static std::string friendly(const std::string& reason)
     if (reason == "no-free-port") return "That game has no free controller port";
     if (reason == "host-too-old") return "Your friend needs to update RetroHub";
     if (reason == "no-such-game") return "That game has ended";
-    return reason;
+    /* The free Cloudflare plan's daily budget is used up (new rooms stop at 70%): nothing is wrong on this PC. */
+    if (reason == "server-busy") return "The free server is busy right now, so it can't open new rooms. Try again in a little while.";
+    /* Per-address limits: too many rooms or connections from this network within a minute. */
+    if (reason == "rate-limited") return "Too many connections from your network just now. Wait a minute and try again.";
+    return "";
+}
+
+static std::string friendly(const std::string& reason)
+{
+    std::string t = server_reason_text(reason);
+    return t.empty() ? reason : t;
 }
 
 void LobbyClient::update()
@@ -169,6 +183,11 @@ bool LobbyClient::handle_text(const std::string& text)
                 e.body = json::stringify(*b);
                 d.events.push_back(std::move(e));
             }
+        } else if (type == "relay_denied") {
+            /* The server did not relay a binary frame (daily budget, or this PC sent too much). The lobby never relays game
+             * traffic - the game session's own socket does, and says so itself (session.cpp) - so this is no failure of the room:
+             * just keep the room and leave a line in the log. Not "Connection lost". */
+            net_log("Lobby: relay denied by the server (%s)", j.str("reason", "server-busy").c_str());
         } else if (type == "error") {
             std::string why = j.str("reason", "error");
             if (d.attempts > 0 && d.attempts < kMaxReconnects && (why == "room-in-use" || why == "bad-slot")) {
