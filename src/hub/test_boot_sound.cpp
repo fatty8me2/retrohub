@@ -11,7 +11,7 @@ static int fails = 0;
 int main() {
     using hub::System;
     const System all[] = {System::N64, System::GB, System::GBC, System::GBA, System::NDS, System::N3DS,
-                          System::GC, System::PS1, System::PS2, System::WiiU, System::NES, System::SNES};
+                          System::GC, System::PS1, System::PS2, System::PSP, System::WiiU, System::NES, System::SNES};
     std::filesystem::path dir = std::filesystem::path(BOOT_SOUND_OUT_DIR);
     std::filesystem::create_directories(dir);
     for (System s : all) {
@@ -25,7 +25,7 @@ int main() {
         struct R { System s; double lo, hi; };
         static const R rg[] = {{System::N64, 5.5, 6.5}, {System::GB, 4.5, 5.5}, {System::GBC, 5.0, 6.2}, {System::GBA, 5.5, 6.5},
             {System::NDS, 5.5, 6.5}, {System::N3DS, 6.0, 7.0}, {System::GC, 7.5, 8.5}, {System::PS1, 9.0, 10.0},
-            {System::PS2, 9.0, 10.0}, {System::WiiU, 6.5, 7.5}, {System::NES, 4.5, 5.5}, {System::SNES, 6.5, 7.5}};
+            {System::PS2, 9.0, 10.0}, {System::PSP, 7.0, 8.0}, {System::WiiU, 6.5, 7.5}, {System::NES, 4.5, 5.5}, {System::SNES, 6.5, 7.5}};
         for (auto& e : rg) if (e.s == s) CHECK(sec >= e.lo && sec <= e.hi, "%s length %.2fs outside %.1f-%.1f", name.c_str(), sec, e.lo, e.hi);
         CHECK(peak <= 0.95f, "%s clips (peak %.3f)", name.c_str(), peak);
         CHECK(peak >= 0.3f && rms > 0.05 && rms < 0.2, "%s too quiet (peak %.3f rms %.4f)", name.c_str(), peak, rms);

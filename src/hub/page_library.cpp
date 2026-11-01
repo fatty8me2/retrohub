@@ -309,7 +309,7 @@ void empty_library_state() {
         struct Sy { const char* label; hub::System s; };
         static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB},
                                 {"Nintendo DS", hub::System::NDS},
-                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}, {"PS2", hub::System::PS2},
+                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}, {"PS2", hub::System::PS2}, {"PSP", hub::System::PSP},
                                 {"NES", hub::System::NES}, {"SNES", hub::System::SNES}};
         float tot = 0;
         for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
@@ -462,7 +462,7 @@ void all_games_view() {
     // system chips
     struct Chip { const char* label; const char* sys; };
     static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"PlayStation", "ps1"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
-                                {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
+                                {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"PSP", "psp"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     std::map<std::string, int>& counts = A.chip_counts;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
@@ -752,7 +752,7 @@ void draw_details_modal() {
     } else if (e.issue == "extract") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextWrapped("Archived: %s cannot open %s files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your archive stays untouched.",
-                           e.system == hub::System::PS2 ? "PCSX2" : e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC || e.system == hub::System::PS2 ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);
+                           e.system == hub::System::PS2 ? "PCSX2" : e.system == hub::System::PSP ? "PPSSPP" : e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::PSP ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);
         ImGui::PopStyleColor();
     } else if (e.issue == "encrypted") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
@@ -812,7 +812,7 @@ void draw_details_modal() {
         place(label_w("Offline only", true));
         button("Offline only", ImVec2(0, bh), false, false, ui::Icon::Globe);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Online play isn't available for this game");
+            ImGui::SetTooltip(e.system == hub::System::PSP ? "PSP games play offline only: PPSSPP has no online rooms in RetroHub" : "Online play isn't available for this game");
         tr("online", "explained:offline-only");
     } else {
         place(label_w("Play Online", true));
