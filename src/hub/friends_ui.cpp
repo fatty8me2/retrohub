@@ -1218,7 +1218,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.5f) + ui::F.bold->FontSize * 1.25f),
                 fr.state == hubui::FS_Offline ? ui::TEXT3 : ui::TEXT2,
                 ui::ellipsize(ui::F.cap, ui::F.cap->FontSize,
-                              hubui::friend_presence_line(fr, now) + (f.online() && !f.status.prof_status.empty() ? "  -  " + f.status.prof_status : std::string()), tw).c_str());
+                              hubui::friend_presence_line(fr, now) + (f.online() && !f.status.prof_status.empty() ? "  -  " + f.status.prof_status : std::string()) + (ladder_row_text(f.uid).empty() ? std::string() : "  -  " + ladder_row_text(f.uid)), tw).c_str());
     if (focus) ui::focus_ring(dl, p0, p1, sp(1.5f));
 
     if (clicked) ImGui::OpenPopup("ctx");   // left-click on the row opens the actions menu (Message is its first entry); right-click does the same
@@ -1258,7 +1258,10 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(l5[i] == 'W' ? ui::GOOD : l5[i] == 'L' ? ui::BAD : ui::TEXT3), "%c", l5[i]);
             }
         } else { std::string st = rivals_sessions_text(f.uid); if (!st.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", st.c_str()); } } }
+        { std::string lr = ladder_row_text(f.uid); if (!lr.empty()) { ImGui::Separator(); ImGui::TextDisabled("Rating %s among friends", lr.c_str()); } }
         { std::string lt = group_together_text(f.uid); if (!lt.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", lt.c_str()); } }   // last entry: keeps the other items' click positions
+        ImGui::Separator();
+        if (ImGui::MenuItem("Tournament bracket...")) bracket_open();   // last entry: keeps the other items' click positions
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar();
