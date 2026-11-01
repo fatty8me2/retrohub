@@ -1,6 +1,25 @@
 {
   "versions": [
     {
+      "version": "1.29.24",
+      "date": "2026-10-31",
+      "title": "Smoother installs",
+      "new": [
+        "Games from shared packs install in the background: queue several, keep browsing, progress shows on each tile",
+        "Uninstall for games installed from a shared pack (your saves are kept)"
+      ],
+      "improved": [
+        "Download size, speed and time left are shown; there is a disk space check before downloading",
+        "Big downloads get past Google's virus-scan page, and a dropped download picks up where it stopped",
+        "An installed game appears in place right away with its cover, and big disc games are prepared during the install so Play starts at once",
+        "Every install error says what happened in plain words, with a Retry button"
+      ],
+      "fixed": [
+        "A game filed under the wrong console in a pack (like a PS2 disc in the GameCube folder) now installs as the right console instead of disappearing",
+        "\"Already installed\" with no game in the library is now a Reinstall button"
+      ]
+    },
+    {
       "version": "1.29.23",
       "date": "2026-10-29",
       "title": "Box art for every game",
