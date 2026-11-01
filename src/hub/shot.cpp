@@ -85,6 +85,9 @@ void shot_init_ui() {
     states_shot_seed();
     cloud_ui_shot_init();
     kt_shot_init();
+    party_shot_init();     // Plan 4 aids (HUB_SHOT_PARTY / _BRACKET / _HACKS); no-ops until each lane lands
+    bracket_shot_init();
+    hack_shot_init();
     osk::shot_init();
     if (const char* rj = std::getenv("HUB_SHOT_REJOIN")) {   // screenshot aid: the disconnected Rejoin strip (no network)
         g_shot_rejoin = true;

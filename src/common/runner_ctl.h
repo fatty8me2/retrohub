@@ -26,7 +26,13 @@ enum class Cmd { None, SaveState, LoadState, Screenshot, SwapDisc, Quit,
                  Overlay,   // value 1/0   (unsupported for now)
                  Clip,      // save the last 30 s as an MP4 into the shots folder (retrorun, n64run; allowed online: cosmetic)
                  OsdMsg,    // text = toast shown on the runner's OSD
-                 Input };   // value 0 = "input off" (neutral input to the core while the hub's quick menu is open), 1 = on. Allowed online.
+                 Input,     // value 0 = "input off" (neutral input to the core while the hub's quick menu is open), 1 = on. Allowed online.
+                 /* Plan 4 (docs/RUNNER_CTL.md): */
+                 Pause,     // value 1 = pause the emulation, 0 = resume. Offline only (a paused peer would stall everyone).
+                 OsdCorner, // text = persistent corner text (party standings, a challenge timer), "" clears it; slot = corner 0 top-left,
+                            // 1 top-right, 2 bottom-left, 3 bottom-right; value = seconds to keep it (0 = until replaced). Allowed online.
+                 Handoff }; // pass a controller port to another player of the session: slot = port 0-3, value = the receiving lobby
+                            // slot. Allowed online. Runners ack ok:false "unsupported" until the hand-off netcode lands (Plan 4 P4).
 
 struct Command {
     long long seq = 0;
@@ -41,7 +47,7 @@ constexpr double kSpeeds[] = {0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0};
 bool speed_valid(double s);                                   // in kSpeeds, or 0 (= max)
 bool parse_speed_arg(const std::string& s, double* out);      // "2", "2x", "1.5", "max" -> out (0 = max); false if not allowed
 std::string speed_label(double s);                            // "Speed 2x", "Speed 0.5x", "Speed max"
-bool offline_only(Cmd c);                                     // true for everything except Quit/Screenshot/OsdMsg/Volume/Mute/Input/Clip (volume and mute are local, allowed online)
+bool offline_only(Cmd c);                                     // true for everything except Quit/Screenshot/OsdMsg/Volume/Mute/Input/Clip/Overlay/OsdCorner/Handoff (volume and mute are local, allowed online)
 
 /* "input off" gate (runner side). While off, the local player's input is neutral (frames/packets still flow, so netplay timing is
  * unchanged). Failsafes: re-enabled after kInputOffTimeoutMs without a refresh (the hub re-sends "input off" while its menu is
@@ -105,7 +111,10 @@ bool parse_sidecar(const std::string& text, Sidecar* out);
 bool write_text_atomic(const std::string& path, const std::string& text);
 bool read_text(const std::string& path, std::string* out);
 
-/* Hub side: write the next command for a run (seq = previous seq in the file + 1). Returns the seq, 0 on failure. */
+/* Hub side: write the next command for a run (seq = previous seq in the file + 1). Returns the seq, 0 on failure.
+ * The file holds ONE command: a Quit the runner has not acked yet is never replaced by another command (0 is returned), so a
+ * menu's "input on" right after Quit cannot swallow it. A Quit older than kQuitHoldSec counts as lost and may be replaced. */
+constexpr int kQuitHoldSec = 15;
 long long send_command(const std::string& ctl_path, Cmd cmd, int slot = 0);
 /* Same with the full argument set (c.seq is ignored and replaced). e.g. {Cmd::Volume, value=40}, {Cmd::Speed, speed=2}, {Cmd::OsdMsg, text="Hi"}. */
 long long send_command_ex(const std::string& ctl_path, Command c);

@@ -31,6 +31,7 @@ void start_scan() {
     A.scan_th = std::thread([folders]() {
         A.scan_result = hub::scan_library(folders, [](int d, int t) { A.scan_done = d; A.scan_total = t; });
         kt_scan_append(&A.scan_result, folders);   // Kanto Together package (zip / folder), if the user has it
+        hack_scan_append(&A.scan_result, folders); // ROM hacks / translations whose base game is in the scan (Plan 4 H2)
         A.scan_ready = true;
     });
 }

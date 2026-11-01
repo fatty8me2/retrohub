@@ -37,6 +37,7 @@
 #include "hint_popup.h"
 #include "controls_sdl.h"
 #include "qm_logic.h"
+#include "resume_logic.h"
 #include <thread>
 #include <xinput.h>
 
@@ -376,6 +377,7 @@ void poll_process() {
     GetExitCodeProcess(A.proc, &code);
     CloseHandle(A.proc);
     A.proc = nullptr;
+    hub::rom_cache_pin(nullptr);   // its unpacked copy may be trimmed again
     /* no focus_hub() here: the game just closed, the hub must not jump in front of whatever the user does next */
     sync_smash_prep();
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
@@ -674,8 +676,46 @@ void add_game_shortcut(const hub::GameEntry& e) {
     else set_notice("Could not create the shortcut.");
 }
 
-void play_entry(const hub::GameEntry& e) {
+/* saves-F1 (resume_logic.h): " --resume" only when auto.state is not older than the newest battery save. */
+static long long file_unix_time(const std::string& path) {
+    WIN32_FILE_ATTRIBUTE_DATA fa{};
+    if (!GetFileAttributesExW(W(path).c_str(), GetFileExInfoStandard, &fa)) return 0;
+    ULARGE_INTEGER u;
+    u.LowPart = fa.ftLastWriteTime.dwLowDateTime;
+    u.HighPart = fa.ftLastWriteTime.dwHighDateTime;
+    return (long long)(u.QuadPart / 10000000ULL) - 11644473600LL;
+}
+static long long newest_battery_time(const std::string& dir) {
+    long long best = 0;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(std::filesystem::u8path(dir), ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (!it->is_regular_file(e2)) continue;
+        std::string n = it->path().u8string(), ext = it->path().extension().u8string();
+        for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+        if (ext == ".bak" || ext == ".tmp") continue;   // kept copies, half writes: not the live save
+        best = std::max(best, file_unix_time(n));
+    }
+    return best;
+}
+static std::string resume_arg(const std::string& battery, const std::string& states) {
+    long long st = file_unix_time(runctl::state_file(states, runctl::kAutoSlot));
+    if (hubui::resume_allowed(st, newest_battery_time(battery))) return " --resume";
+    set_toast("Your save is newer than your resume point (it came from another PC or a later session), so the game starts from your save. "
+              "The resume point is still on the game's page.");
+    return std::string();
+}
+
+void play_entry(const hub::GameEntry& e_in) {
     if (A.proc) { set_notice("A game is already running."); return; }
+    hub::GameEntry hacked;   // ROM hack / translation (Plan 4 H3): launch the patched copy prepared in rom-cache\hacks
+    if (is_hack(e_in)) {
+        std::string patched;
+        if (!hack_ensure_rom(e_in, &patched)) return;   // still preparing (shown, Play resumes) or failed (notice shown)
+        hacked = e_in;
+        hacked.path = patched;
+    }
+    const hub::GameEntry& e = is_hack(e_in) ? hacked : e_in;
     if (A.cloud_gate.phase != CloudGate::Idle) { set_notice("Checking cloud saves...", 4.0); return; }
     if (cloud_gate_begin(e, [key = e.key]() {
             if (const hub::GameEntry* g = find_entry(key)) { A.sel_game = key; hub::GameEntry copy = *g; A.cloud_gate.pass_key = key; play_entry(copy); }
@@ -689,6 +729,7 @@ void play_entry(const hub::GameEntry& e) {
     A.st.last_game = room_id(e);
     mark_dirty();
     hub::rom_cache_touch(e);   // LRU stamp for the unpacked copy (no-op for plain files)
+    hub::rom_cache_pin(&e);    // and never trimmed while it runs (library-14)
     if (rom_missing(e)) { missing_rom_ask(e.key); return; }   // the file is gone: Locate / Rescan / Remove popup
     RunInfo ri = run_info_for(e, false);
     std::string sys = sys_short(e);
@@ -728,7 +769,7 @@ void play_entry(const hub::GameEntry& e) {
             std::string core = find_core(e.system == hub::System::GBA ? "mgba" : A.st.gb_core);
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+                               " --state-dir " + quote(states) + resume_arg(battery, states) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             {   // the console's own startup (boot ROM / BIOS of the player); a resumed state would skip it
                 bool dr = false;
@@ -747,7 +788,7 @@ void play_entry(const hub::GameEntry& e) {
             std::string core = find_core(nes ? "nestopia" : "snes9x");
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
+                               " --state-dir " + quote(states) + resume_arg(battery, states) + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += cheats_launch_args(e, false, true, nullptr);
             args += qm_args(ri, e, false);

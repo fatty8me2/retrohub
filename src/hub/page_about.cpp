@@ -14,6 +14,9 @@ void draw_overlays() {
     draw_cheats_modal();
     draw_quick_menu();
     kt_draw_modals();
+    party_draw();     // Plan 4 hooks (stubs until each lane lands)
+    bracket_draw();
+    hack_draw();
     boot_draw_overlay();
 }
 
