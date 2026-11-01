@@ -57,6 +57,17 @@ target_include_directories(hub_username_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(hub_homefun_test test_homefun.cpp)
 target_link_libraries(hub_homefun_test PRIVATE hublogic)
 
+# Plan 4 p4-social: DM attachments (async upload/download through the Worker) + friend challenge logic (cards, leaderboard, rules)
+add_library(hubattach STATIC attach_xfer.cpp challenge_logic.cpp)
+target_include_directories(hubattach PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
+target_compile_features(hubattach PUBLIC cxx_std_17)
+target_link_libraries(hubattach PUBLIC hubsaves hubnet hubbase)
+add_executable(hubchallenge_test test_challenge.cpp)
+target_link_libraries(hubchallenge_test PRIVATE hubattach)
+add_executable(hubattach_test test_attach.cpp)
+target_include_directories(hubattach_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+target_link_libraries(hubattach_test PRIVATE hubattach)
+
 add_executable(hub_session_test test_session.cpp)
 target_link_libraries(hub_session_test PRIVATE hublogic)
 
@@ -79,7 +90,7 @@ set(RETROHUB_UI_SOURCES
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(RetroHub PRIVATE hubcheevos hubversion hubgameinfo_net hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
+target_link_libraries(RetroHub PRIVATE hubattach hubcheevos hubversion hubgameinfo_net hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
     ole32 shell32 uuid winhttp)
 # main.cpp defines SDL_MAIN_HANDLED and provides WinMain itself, so SDL2main is not needed.
 
