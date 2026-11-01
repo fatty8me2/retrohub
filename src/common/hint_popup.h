@@ -1,8 +1,12 @@
 #pragma once
-/* Click-through "controller tips" popup for games RetroHub cannot draw into (see start_hint.h). A layered, topmost,
- * no-activate, transparent tool window placed in the bottom-left corner of the game window. It never takes focus and never
- * receives input. Exclusive-fullscreen games simply do not show it (nothing is forced). Call tick() every ~100 ms from the
- * thread that owns the popup; the object creates and destroys its window on that thread. */
+/* Click-through "controller tips" card for a RUNNER's own game window (n64run draws it over the plugin window it owns; retrorun
+ * draws into its own frame instead, see start_hint.h). A layered, no-activate, transparent tool window in the bottom-left corner,
+ * OWNED by the game window: NOT topmost, never raised, never focused, no input, hidden and destroyed with the game window. It sits
+ * exactly as high as the game does, so it can never appear above another app. Exclusive-fullscreen games simply do not show it.
+ *
+ * Nothing is ever drawn over a game RetroHub does not own: with runner=false (the hub, for Dolphin / PCSX2 / Azahar / Cemu /
+ * mGBA / BattleShip) tick() finishes at once and the hub shows the tips in its own window before the game's window exists.
+ * Call tick() every ~100 ms from the thread that owns the popup; the object creates and destroys its window on that thread. */
 #include <windows.h>
 
 #include "start_hint.h"
@@ -22,7 +26,7 @@ class Popup {
     HWND hwnd_ = nullptr;
     Bitmap bmp_;
     float scale_ = 0.f;
-    bool create(int w, int h);
+    bool create(HWND owner);
 };
 
 }  // namespace starthint

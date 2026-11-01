@@ -2,14 +2,22 @@
 // integration dry-run of `RetroHub.exe --apply-update` against scratch dirs (non-ASCII path,
 // locked-file rollback, wait-for-pid). Never shows a window and never relaunches anything
 // (--no-relaunch). Usage: hub_apply_test <path to RetroHub.exe>
+//
+// Plan 4 cases: the applier NEVER terminates a game or emulator (a fake game process under the install folder is waited for, and
+// survives); a failed restore keeps the backup; startup recovery repairs from it (and refuses to downgrade); a failed update leaves a
+// status note and keeps its staged files. The "fake game" is a copy of this test exe started with `--sleep <ms>`; only processes
+// this test started are ever ended.
 #include "update_apply.h"
+#include "winutil.h"
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -34,6 +42,13 @@ static std::string get(const fs::path& p) {
 }
 static bool has(const fs::path& p) { std::error_code ec; return fs::exists(p, ec); }
 
+/* Installed files are older than the staged ones, as in real life (a rollback or a recovery must not mistake one for the other). */
+static void age_files(const fs::path& dir) {
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec)) fs::last_write_time(it->path(), fs::file_time_type::clock::now() - std::chrono::hours(48), ec);
+}
+
 /* staged: new version of everything; install: old version + user data that must survive. */
 static void make_scene(const fs::path& root, fs::path* staged, fs::path* install) {
     std::error_code ec; fs::remove_all(root, ec);
@@ -57,6 +72,7 @@ static void make_scene(const fs::path& root, fs::path* staged, fs::path* install
     put(*install / L"userdata\\hub.json", "user-settings");
     put(*install / L"userdata\\saves\\mario.sav", "user-save");
     put(*install / L"extra-user-file.txt", "keep me");        // never deleted
+    age_files(*install);
 }
 
 static void check_untouched(const fs::path& install) {
@@ -97,7 +113,54 @@ static int run_hidden(std::wstring cmd, DWORD* pidOut = nullptr, bool wait = tru
     return wait ? (int)code : 0;
 }
 
+/* ---- fake games: a copy of this exe that just sleeps. Only processes started here are ever ended. ---- */
+struct Proc { HANDLE h = nullptr; DWORD pid = 0; };
+static std::vector<Proc> g_spawned;
+static std::wstring self_exe() { wchar_t b[2048]; DWORD n = GetModuleFileNameW(nullptr, b, 2048); return std::wstring(b, n); }
+static Proc spawn_sleeper(const fs::path& exe, unsigned ms) {
+    std::error_code ec;
+    fs::create_directories(exe.parent_path(), ec);
+    fs::copy_file(self_exe(), exe, fs::copy_options::overwrite_existing, ec);
+    std::wstring cmd = L"\"" + exe.wstring() + L"\" --sleep " + std::to_wstring(ms);
+    STARTUPINFOW si{}; si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    Proc p;
+    if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        p.h = pi.hProcess; p.pid = pi.dwProcessId;
+        CloseHandle(pi.hThread);
+        g_spawned.push_back(p);
+    }
+    return p;
+}
+static bool proc_alive(const Proc& p) { return p.h && WaitForSingleObject(p.h, 0) == WAIT_TIMEOUT; }
+static void proc_kill(Proc& p) {
+    if (!p.h) return;
+    if (proc_alive(p)) TerminateProcess(p.h, 0);
+    WaitForSingleObject(p.h, 5000);
+}
+static void kill_spawned() { for (auto& p : g_spawned) { proc_kill(p); if (p.h) { CloseHandle(p.h); p.h = nullptr; } } g_spawned.clear(); }
+static double secs_since(std::chrono::steady_clock::time_point t0) { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); }
+
+/* A recovery manifest as the applier writes it (hand-built so the test needs no private API). */
+static void put_manifest(const fs::path& dir, const fs::path& install, const char* from, const char* to, DWORD pid) {
+    std::string inst = winutil::to_utf8(install.wstring()), esc;
+    for (char c : inst) { if (c == '\\' || c == '"') esc += '\\'; esc += c; }
+    put(dir / L"manifest.json", "{\"v\":1,\"install\":\"" + esc + "\",\"from\":\"" + from + "\",\"to\":\"" + to + "\",\"pid\":" + std::to_string(pid) +
+                                ",\"started\":1,\"reported\":false}");
+}
+
+static HANDLE g_lock = INVALID_HANDLE_VALUE;
+static bool lock_a_then_fail_b(const std::wstring& from, const std::wstring& to) {
+    if (to.size() >= 5 && to.compare(to.size() - 5, 5, L"b.dat") == 0) {
+        /* a.txt is already replaced: hold it open (read-share only) so its restore fails, then fail b.dat itself */
+        g_lock = CreateFileW((fs::path(to).parent_path() / L"a.txt").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        return false;
+    }
+    return CopyFileW(from.c_str(), to.c_str(), FALSE) != FALSE;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::strcmp(argv[1], "--sleep") == 0) { Sleep((DWORD)std::atoi(argv[2])); return 0; }   // fake game mode
     // ---- pure helpers ----
     CHECK(is_excluded(L"userdata\\hub.json"));
     CHECK(is_excluded(L"UserData/saves/x.sav"));
@@ -182,6 +245,133 @@ int main(int argc, char** argv) {
     r = apply_files(o);
     CHECK(!r.ok); CHECK(get(install / L"RetroHub.exe") == "old-hub");
 
+    // ---- plain-language reasons and the status note (shown once in the bell on the next start) ----
+    CHECK(plain_reason(32) == "a file was in use by another program" && plain_reason(33) == plain_reason(32));
+    CHECK(plain_reason(112).find("disk is full") != std::string::npos && plain_reason(5).find("denied") != std::string::npos);
+    CHECK(plain_reason(0).find("incomplete") != std::string::npos && !plain_reason(99999).empty());
+    {
+        const fs::path sp = root / L"status" / L"userdata" / L"update_status.json";
+        Status st; st.result = "failed"; st.version = "v1.30.0"; st.reason = plain_reason(32); st.detail = "could not replace b.dat (error 32)"; st.at = 1234;
+        CHECK(write_status(sp.wstring(), st));
+        Status back;
+        CHECK(read_status(sp.wstring(), &back) && back.result == "failed" && back.version == "v1.30.0" && back.reason == st.reason && back.detail == st.detail && back.at == 1234);
+        CHECK(status_line(back) == "Update failed: a file was in use");
+        Status po; po.result = "postponed"; po.version = "v1.30.0";
+        CHECK(status_line(po) == "Update postponed: a game was running");
+        Status rf; rf.result = "rollback_failed"; rf.version = "v1.30.0";
+        CHECK(status_line(rf) == "Update failed; some files not restored");
+        Status ip; ip.result = "interrupted";
+        CHECK(status_line(ip).find("interrupted") != std::string::npos);
+        Status nov; nov.result = "failed"; nov.reason = "the disk is full";
+        CHECK(status_line(nov) == "Update failed: the disk is full");
+        for (const Status* s : {&back, &po, &rf, &ip, &nov}) CHECK(status_line(*s).size() <= 40);   // the bell cuts a headline off at about 42 characters
+        CHECK(take_status(sp.wstring(), &back) && !has(sp));      // read once, then gone
+        CHECK(!take_status(sp.wstring(), &back));
+        put(sp, "not json"); CHECK(!read_status(sp.wstring(), &back));
+        put(sp, "{\"v\":1}"); CHECK(!read_status(sp.wstring(), &back));   // no result: not a status note
+        CHECK(!read_status((root / L"status" / L"none.json").wstring(), &back));
+    }
+
+    // ---- H1: the applier NEVER terminates a game or emulator running from the install folder ----
+    {
+        make_scene(root / L"game", &staged, &install);
+        Proc game = spawn_sleeper(install / L"n64run.exe", 120000);   // a fake game under the install folder
+        CHECK(game.h != nullptr);
+        Sleep(400);
+        bool listed = false, listed_when_excepted = false;
+        for (auto& p : processes_under(install.wstring())) if (p.pid == game.pid) listed = true;
+        for (auto& p : processes_under(install.wstring(), {game.pid})) if (p.pid == game.pid) listed_when_excepted = true;
+        CHECK(listed && !listed_when_excepted);
+        Options w; w.install = install.wstring(); w.wait_games_secs = 2; w.hub_wait_secs = 1;
+        std::wstring blocker;
+        auto t0 = std::chrono::steady_clock::now();
+        CHECK(wait_for_old_processes(w, &blocker) == WaitOutcome::TimedOut);      // gives up instead of closing the game
+        CHECK(secs_since(t0) >= 1.5);
+        CHECK(blocker.find(L"n64run.exe") != std::wstring::npos);
+        CHECK(proc_alive(game));                                                   // the game is still running
+        proc_kill(game);
+        CHECK(wait_for_old_processes(w, &blocker) == WaitOutcome::Clear);          // nothing left: the apply may go ahead
+        // the old RetroHub itself is the one process that is ended, and only after its grace period (it asked for this update)
+        Proc oldhub = spawn_sleeper(root / L"oldhub" / L"RetroHub.exe", 120000);
+        Options w2 = w; w2.pid = oldhub.pid; w2.hub_wait_secs = 1;
+        t0 = std::chrono::steady_clock::now();
+        CHECK(wait_for_old_processes(w2, &blocker) == WaitOutcome::TimedOut);   // even the old hub is never ended (it may own a game)
+        CHECK(secs_since(t0) >= 0.8 && proc_alive(oldhub));
+        kill_spawned();
+    }
+
+    // ---- H3: a rollback whose restore fails KEEPS the backup; startup recovery puts the files back ----
+    {
+        make_scene(root / L"h3", &staged, &install);
+        const fs::path tmp = root / L"h3" / L"tmp";
+        const fs::path bkdir = tmp / L"RetroHub-update-777";
+        Options h; h.staged = staged.wstring(); h.install = install.wstring(); h.backup = (bkdir / L"backup").wstring();
+        h.retries = 1; h.retry_ms = 0; h.restore_retries = 1; h.restore_retry_ms = 0; h.copy_hook = lock_a_then_fail_b;
+        Result hr = apply_files(h);
+        if (g_lock != INVALID_HANDLE_VALUE) { CloseHandle(g_lock); g_lock = INVALID_HANDLE_VALUE; }
+        CHECK(!hr.ok && !hr.rolled_back && hr.backup_kept);
+        CHECK(hr.unrestored.size() == 1 && hr.unrestored[0] == L"a.txt");
+        CHECK(!hr.backup_dir.empty() && has(hr.backup_dir));
+        CHECK(get(bkdir / L"backup" / L"a.txt") == "a-old");                      // the only good copy is still there
+        CHECK(get(install / L"a.txt") == "a-new");                                  // ... and the install still has the replacement
+        CHECK(get(install / L"b.dat") == "b-old" && get(install / L"RetroHub.exe") == "old-hub");   // everything else was put back
+        put_manifest(bkdir, install, "v1.0.0", "v2.0.0", 0);
+        RecoverReport rep = recover_interrupted(install.wstring(), "v1.0.0", tmp.wstring());
+        CHECK(rep.found == 1 && rep.repaired == 1 && rep.restored_files >= 1 && rep.partial == 0);
+        CHECK(!rep.notes.empty() && rep.notes[0].find("Repaired an interrupted update") == 0);
+        CHECK(get(install / L"a.txt") == "a-old");                                  // repaired
+        CHECK(!has(bkdir));                                                         // and cleaned up
+        CHECK(recover_interrupted(install.wstring(), "v1.0.0", tmp.wstring()).found == 0);   // nothing left to find
+
+        // a leftover for another version is never restored (it would downgrade), only removed; a report only when the new exe is already in place
+        make_scene(root / L"h3b", &staged, &install);
+        const fs::path tmp2 = root / L"h3b" / L"tmp";
+        put(tmp2 / L"RetroHub-update-1" / L"backup" / L"a.txt", "a-ancient");
+        put_manifest(tmp2 / L"RetroHub-update-1", install, "v0.9.0", "v1.0.0", 0);
+        rep = recover_interrupted(install.wstring(), "v1.2.0", tmp2.wstring());
+        CHECK(rep.stale == 1 && rep.repaired == 0 && rep.notes.empty());
+        CHECK(get(install / L"a.txt") == "a-old" && !has(tmp2 / L"RetroHub-update-1"));
+        put(tmp2 / L"RetroHub-update-2" / L"backup" / L"a.txt", "a-ancient");
+        put_manifest(tmp2 / L"RetroHub-update-2", install, "v0.9.0", "v1.0.0", 0);   // the apply stopped after the new RetroHub.exe was in place
+        rep = recover_interrupted(install.wstring(), "v1.0.0", tmp2.wstring());
+        CHECK(rep.stale == 1 && rep.notes.size() == 1 && rep.notes[0].find("interrupted") != std::string::npos);
+        CHECK(get(install / L"a.txt") == "a-old");
+
+        // someone else's, unreadable, or still being applied by a live applier: left exactly as found
+        const fs::path tmp3 = root / L"h3c" / L"tmp";
+        make_scene(root / L"h3c", &staged, &install);
+        put(tmp3 / L"RetroHub-update-3" / L"backup" / L"a.txt", "a-other");
+        put_manifest(tmp3 / L"RetroHub-update-3", root / L"h3c" / L"SomeOtherInstall", "v1.0.0", "v2.0.0", 0);
+        put(tmp3 / L"RetroHub-update-4" / L"backup" / L"a.txt", "a-nomanifest");
+        put(tmp3 / L"RetroHub-update-5" / L"manifest.json", "garbage");
+        Proc applier = spawn_sleeper(root / L"h3c" / L"RetroHub-apply-9" / L"RetroHub.exe", 60000);   // image path of a live applier
+        Sleep(300);
+        put(tmp3 / L"RetroHub-update-6" / L"backup" / L"a.txt", "a-live");
+        put_manifest(tmp3 / L"RetroHub-update-6", install, "v1.0.0", "v2.0.0", applier.pid);
+        rep = recover_interrupted(install.wstring(), "v1.0.0", tmp3.wstring());
+        CHECK(rep.found == 4 && rep.other == 3 && rep.active == 1 && rep.repaired == 0 && rep.notes.empty());
+        CHECK(has(tmp3 / L"RetroHub-update-3") && has(tmp3 / L"RetroHub-update-4") && has(tmp3 / L"RetroHub-update-5") && has(tmp3 / L"RetroHub-update-6"));
+        CHECK(get(install / L"a.txt") == "a-old");
+        kill_spawned();
+
+        // a restore that still fails keeps the backup and is reported ONCE
+        make_scene(root / L"h3d", &staged, &install);
+        const fs::path tmp4 = root / L"h3d" / L"tmp";
+        put(tmp4 / L"RetroHub-update-8" / L"backup" / L"z.txt", "z-original");
+        put_manifest(tmp4 / L"RetroHub-update-8", install, "v1.0.0", "v2.0.0", 0);
+        put(install / L"z.txt", "z-damaged");
+        HANDLE zl = CreateFileW((install / L"z.txt").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(zl != INVALID_HANDLE_VALUE);
+        rep = recover_interrupted(install.wstring(), "v1.0.0", tmp4.wstring());
+        CHECK(rep.partial == 1 && rep.repaired == 0 && rep.notes.size() == 1 && rep.notes[0].find("Update repair incomplete") == 0);
+        CHECK(has(tmp4 / L"RetroHub-update-8" / L"backup" / L"z.txt"));
+        rep = recover_interrupted(install.wstring(), "v1.0.0", tmp4.wstring());
+        CHECK(rep.partial == 1 && rep.notes.empty());                              // not reported again
+        CloseHandle(zl);
+        rep = recover_interrupted(install.wstring(), "v1.0.0", tmp4.wstring());     // the lock is gone: now it is repaired
+        CHECK(rep.repaired == 1 && get(install / L"z.txt") == "z-original" && !has(tmp4 / L"RetroHub-update-8"));
+    }
+
     // ---- integration: RetroHub.exe --apply-update (needs the exe) ----
     if (argc >= 2) {
         std::wstring exe = fs::path(argv[1]).wstring();
@@ -205,6 +395,12 @@ int main(int argc, char** argv) {
         CloseHandle(lk);
         CHECK(rc == 1);
         check_old(install); check_untouched(install);
+        {   // M1: the failure is not silent: a status note for the next start's bell, and the staged files are kept for a retry
+            Status fst;
+            CHECK(read_status((install / L"userdata\\update_status.json").wstring(), &fst) && fst.result == "failed" && fst.reason == plain_reason(32));
+            CHECK(status_line(fst).find("a file was in use") != std::string::npos);
+            CHECK(has(staged / L"RetroHub.exe") && has(staged / L"sub\\deep\\c.txt"));
+        }
         // waits for the given pid to exit (ping runs ~2s), then applies
         make_scene(root / L"i_wait", &staged, &install);
         DWORD pid = 0;
@@ -215,12 +411,50 @@ int main(int argc, char** argv) {
         double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         CHECK(rc == 0); CHECK(secs >= 0.8);
         check_new(install);
+        // H1: a game still running from the install folder is waited for, never closed: the applier gives up (exit 3) and changes nothing
+        {
+            make_scene(root / L"i_game", &staged, &install);
+            const fs::path tmpr = root / L"i_game" / L"tmp";
+            Proc game = spawn_sleeper(install / L"retrorun.exe", 120000);
+            CHECK(game.h != nullptr);
+            Sleep(400);
+            auto t1 = std::chrono::steady_clock::now();
+            rc = run_hidden(cmdFor(staged, install, 0, L"--version v9.9.9 --from v1.0.0 --wait-secs 3 --tmp-root \"" + tmpr.wstring() + L"\""));
+            CHECK(rc == 3);
+            CHECK(secs_since(t1) >= 2.5);
+            CHECK(proc_alive(game));                                  // the game was never closed
+            check_old(install); check_untouched(install);            // nothing was replaced
+            CHECK(has(staged / L"RetroHub.exe"));                      // staged files kept: a retry needs no download
+            CHECK(!has(tmpr / L"RetroHub-update-0"));                  // (no backup was ever made)
+            Status pst;
+            CHECK(read_status((install / L"userdata\\update_status.json").wstring(), &pst) && pst.result == "postponed" && pst.version == "v9.9.9" &&
+                  pst.detail.find("retrorun.exe") != std::string::npos);
+            CHECK(status_line(pst) == "Update postponed: a game was running");
+            proc_kill(game);
+        }
+        // ... and once the game closes by itself, the same apply goes through
+        {
+            make_scene(root / L"i_gameend", &staged, &install);
+            Proc game = spawn_sleeper(install / L"n64run.exe", 3000);
+            CHECK(game.h != nullptr);
+            Sleep(400);
+            put(install / L"userdata\\update_status.json", "{\"v\":1,\"result\":\"failed\",\"version\":\"v0.0.1\"}");   // an older failure note
+            auto t1 = std::chrono::steady_clock::now();
+            rc = run_hidden(cmdFor(staged, install, 0, L"--version v9.9.9 --from v1.0.0 --wait-secs 30 --tmp-root \"" + (root / L"i_gameend" / L"tmp").wstring() + L"\""));
+            CHECK(rc == 0);
+            CHECK(secs_since(t1) >= 1.5);                             // it really waited for the game
+            check_new(install); check_untouched(install);
+            CHECK(!has(install / L"userdata\\update_status.json"));    // a success clears the old failure note
+            CHECK(!has(staged));
+            kill_spawned();
+        }
         // usage error
         CHECK(run_hidden(L"\"" + exe + L"\" --apply-update onlyone") == 2);
     } else {
         std::printf("note: no RetroHub.exe path given, integration cases skipped\n");
     }
 
+    kill_spawned();
     std::error_code ec; fs::remove_all(scratch, ec);
     std::printf(g_fail ? "hub_apply_test: %d FAILED\n" : "hub_apply_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;
