@@ -452,6 +452,7 @@ int max_players_for(const hub::GameEntry& e) {
 /* Local player count shown on cards (not the online cap). */
 int local_players_for(const hub::GameEntry& e) {
     if (const GameInfo* g = hub::find_game(e.catalog_id)) return g->max_players;
+    if (e.system == hub::System::PSP) return 1;   // a handheld, offline: one pad
     return max_players_for(e);
 }
 /* How a game is named in lobby messages: the N64 catalog id (back-compat) or the library key. */

@@ -277,11 +277,10 @@ void focus_game() {
 
 /* Wii U: Cemu's default global hotkey "toggle pad screen" is Ctrl+Tab (shown in its first-run assistant). Cemu reads it from the
  * keyboard state of its window, so the game window is brought forward and the keys are injected. */
-void wiiu_toggle_gamepad_screen() {
-    if (g_headless || !A.proc) return;
-    if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
+/* Raises the running game and presses one key chord, but only while a game window is the foreground window (re-checked before every key-down;
+ * releases always go out). Returns how many keys were pressed. Shared by the Wii U pad-screen toggle and the PSP state keys. */
+static int send_game_chord(const std::vector<int>& keys) {
     focus_game();
-    std::vector<int> keys = hubemu::cemu_toggle_gamepad_keys();
     std::vector<DWORD> pids = game_pids();
     auto game_fg = [&]() {   // re-checked before every key-down; releases always go out
         DWORD pid = 0;
@@ -289,10 +288,17 @@ void wiiu_toggle_gamepad_screen() {
         for (DWORD p : pids) if (p == pid) return !qm_is_open();
         return false;
     };
-    int n = hubqm::run_key_chord(keys, game_fg, [](int k, bool up) {
+    return hubqm::run_key_chord(keys, game_fg, [](int k, bool up) {
         INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)k; i.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
         SendInput(1, &i, sizeof(INPUT));
     });
+}
+
+void wiiu_toggle_gamepad_screen() {
+    if (g_headless || !A.proc) return;
+    if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
+    std::vector<int> keys = hubemu::cemu_toggle_gamepad_keys();
+    int n = send_game_chord(keys);
     autotest_log(n == (int)keys.size() ? "wiiu: toggle pad screen hotkey sent" : "wiiu: toggle pad screen hotkey aborted (game not foreground)");
 }
 
@@ -301,19 +307,8 @@ void wiiu_toggle_gamepad_screen() {
 void ppsspp_send_state(bool save) {
     if (g_headless || !A.proc || A.run.system_short != "psp") return;
     if (autotest_active()) { autotest_log(std::string("psp: ") + (save ? "save" : "load") + " state key (not injected: QA runs on a hidden desktop)"); return; }
-    focus_game();
     std::vector<int> keys = hubemu::ppsspp_state_keys(save);
-    std::vector<DWORD> pids = game_pids();
-    auto game_fg = [&]() {
-        DWORD pid = 0;
-        GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-        for (DWORD p : pids) if (p == pid) return !qm_is_open();
-        return false;
-    };
-    int n = hubqm::run_key_chord(keys, game_fg, [](int k, bool up) {
-        INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)k; i.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
-        SendInput(1, &i, sizeof(INPUT));
-    });
+    int n = send_game_chord(keys);
     autotest_log(n == (int)keys.size() ? "psp: state key sent" : "psp: state key aborted (game not foreground)");
 }
 
