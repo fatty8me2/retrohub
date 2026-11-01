@@ -140,6 +140,13 @@ bool uninstall(const std::string& sys_short, const std::string& title);
  * written only when every file finished: a cancelled / partial install can be retried). */
 bool installed(const std::string& sys_short, const std::string& title);
 
+/* Pure: the console folder (<root>\<console>\...) an installed file sits in ("gc"), "" when not under the pack root. A game can be listed under a
+ * different console than the pack folder it came from (a PS2 disc filed under GameCube): its files stay where they were put. */
+std::string installed_folder_console(const std::string& path, const std::string& root);
+/* Owned entries to hand the ghost matcher for a library entry that lives in the pack folder: the entry as the pack knew it (console folder + folder
+ * title), so the greyed pack entry goes away even when the game was identified as another console. Empty when `e` is not a pack install. */
+std::vector<hubui::fg::Owned> pack_owned_aliases(const hub::GameEntry& e, const std::string& root);
+
 /* Pure: when `path` is a file inside an installed game's folder (<root>\<console>\<game folder>\...), the game folder's name
  * (= the pack title the player installed), else "". Case / slash insensitive. The game's identity in the library comes from the
  * file's header or its inner file name ("game.iso"), which can differ from the pack title; this is the title the ghost was. */

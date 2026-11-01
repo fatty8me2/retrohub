@@ -1464,12 +1464,50 @@ static bool id_ps2_file(const fs::path& p, GameEntry* e) {
 }
 
 /* A PS2 image inside a .zip/.7z: the first 4 MB are streamed to find SYSTEM.CNF (plain .iso); .chd/.cso use the serial in the name. */
+namespace { bool find_ps1_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, uint64_t* total); }
+
+/* A PlayStation 2 CD kept as cue + bin(s) in an archive (a Redump / Vimm style set). Named like a PS2 game, or SYSTEM.CNF in the first data
+ * track says BOOT2 (2352-byte sectors). Listed under PlayStation 2; unpacked with the PlayStation 1 routines (whole set into rom-cache\ps1\<key>). */
+static bool id_ps2_cue_archive(const fs::path& arch, const std::vector<ArchiveEntry>& l, GameEntry* e) {
+    ArchiveEntry ent;
+    uint64_t total = 0;
+    if (!find_ps1_entry(l, &ent, &total)) return false;
+    std::string serial;
+    NameId n = id_disc_by_name(path_utf8(arch), ent.name);
+    if (n.found) {
+        if (n.sys != System::PS2) return false;
+        serial = n.serial;
+    } else {
+        for (const auto& a : l) {
+            std::string xe = ascii_lower(path_utf8(utf8_path(a.name).extension()));
+            if (!archive_entry_safe(a.name) || a.size < 0x8000 || (xe != ".bin" && xe != ".img" && xe != ".iso")) continue;
+            std::string head;
+            if (!tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(a.name), 8u << 20, 90000, &head) || head.size() < 0x8000) break;
+            disc::Info info;
+            if (disc::probe_buffer(std::make_shared<std::string>(std::move(head)), &info) && info.kind == disc::Cnf::Ps2 && !info.serial.empty()) serial = info.serial;
+            break;
+        }
+        if (serial.empty()) return false;
+    }
+    hub::ps2::Ident id;
+    id.serial = serial;
+    id.title = hub::ps2::title_for(serial);
+    GameEntry g;
+    fill_ps2(id, utf8_path(ent.name), &g);
+    g.path = path_utf8(arch);
+    g.issue = "extract";
+    g.unpacked = total;
+    *e = std::move(g);
+    return true;
+}
+
 static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
     std::string ext = ascii_lower(path_utf8(arch.extension()));
     if (!archive_sig_ok(path_utf8(arch))) return false;
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
-    if (!list_archive(path_utf8(arch), &l) || !find_gc_entry(l, &ent, true)) return false;
+    if (!list_archive(path_utf8(arch), &l)) return false;
+    if (!find_gc_entry(l, &ent, true)) return id_ps2_cue_archive(arch, l, e);   // no .iso / .chd: a CD kept as cue + bin
     const std::string inner_ext = ascii_lower(path_utf8(utf8_path(ent.name).extension()));
     hub::ps2::Ident id;
     bool ok = false;
@@ -1914,6 +1952,22 @@ std::string ps1_stamp(const GameEntry& e, const std::string& entry) {
 
 } // namespace
 
+/* A PS2 CD archived as cue + bin (no .iso / .chd inside) is unpacked and located like a PlayStation 1 set. Decided once per archive from its listing. */
+static bool uses_ps1_unpack(const GameEntry& e) {
+    if (e.system == System::PS1) return true;
+    if (e.system != System::PS2 || e.issue != "extract") return false;
+    static std::mutex mu;
+    static std::map<std::string, bool> cache;
+    { std::lock_guard<std::mutex> lk(mu); auto it = cache.find(e.path); if (it != cache.end()) return it->second; }
+    std::vector<ArchiveEntry> l;
+    ArchiveEntry a;
+    uint64_t t = 0;
+    bool r = list_archive(e.path, &l) && !find_gc_entry(l, &a, 1) && find_ps1_entry(l, &a, &t);
+    std::lock_guard<std::mutex> lk(mu);
+    cache[e.path] = r;
+    return r;
+}
+
 static bool id_ps1_archive(const fs::path& arch, GameEntry* e) {
     std::string ext = ascii_lower(path_utf8(arch.extension()));
     if (!archive_sig_ok(path_utf8(arch))) return false;
@@ -1985,7 +2039,7 @@ static bool confirm_extracted_disc(const GameEntry& e, const std::string& path, 
     bool want_ps2 = e.system == System::PS2;
     if ((info.kind == disc::Cnf::Ps2) == want_ps2) return true;
     std::error_code ec;
-    fs::remove_all((e.system == System::PS1 ? ps1_unpack_dir(e) : gc_unpack_dir(e)), ec);
+    fs::remove_all((uses_ps1_unpack(e) ? ps1_unpack_dir(e) : gc_unpack_dir(e)), ec);
     *err = std::string("the disc inside is a PlayStation ") + (want_ps2 ? "1" : "2") + " game (" + info.serial + "), not PlayStation " + (want_ps2 ? "2" : "1") + ". Rescan after renaming the archive";
     return false;
 }
@@ -2074,13 +2128,13 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
 }
 
 std::string extract_3ds_dir(const GameEntry& e) {
-    if (e.system == System::PS1) return path_utf8(ps1_unpack_dir(e));
+    if (uses_ps1_unpack(e)) return path_utf8(ps1_unpack_dir(e));
     if (e.system == System::GC || e.system == System::PS2 || e.system == System::WiiU) return path_utf8(gc_unpack_dir(e));
     return path_utf8(lib_dir() / L"rom-cache" / L"3ds" / utf8_path(sanitize_key(e.key)));
 }
 
 uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
-    if (e.system == System::PS1) return ps1_unpacked_size(e);
+    if (uses_ps1_unpack(e)) return ps1_unpacked_size(e);
     if (is_disc_like(e)) return gc_unpacked_size(e);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
@@ -2100,7 +2154,7 @@ uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
 }
 
 std::string extracted_3ds_path(const GameEntry& e) {
-    if (e.system == System::PS1) return ps1_extracted_path(e);
+    if (uses_ps1_unpack(e)) return ps1_extracted_path(e);
     if (is_disc_like(e)) return gc_extracted_path(e);
     std::error_code ec;
     fs::path dir = utf8_path(extract_3ds_dir(e));
@@ -2122,7 +2176,7 @@ static bool extract_3ds_zip_impl(const GameEntry& e, const std::function<bool(ui
     if (!err) err = &dummy;
     if (e.system == System::PS1 || e.system == System::PS2) {
         std::string got;
-        if (!(e.system == System::PS1 ? ps1_extract(e, progress, &got, err) : gc_extract(e, progress, &got, err))) return false;
+        if (!(uses_ps1_unpack(e) ? ps1_extract(e, progress, &got, err) : gc_extract(e, progress, &got, err))) return false;
         if (!confirm_extracted_disc(e, got, err)) return false;
         if (out_path) *out_path = got;
         return true;

@@ -868,6 +868,24 @@ std::string installed_folder_title(const std::string& path, const std::string& r
     return rest.substr(a + 1, b - a - 1);
 }
 
+std::string installed_folder_console(const std::string& path, const std::string& root) {
+    std::string t = installed_folder_title(path, root);
+    if (t.empty()) return "";
+    auto norm = [](std::string s) { for (char& c : s) { if (c == '/') c = '\\'; } return s; };
+    std::string p = norm(path), r = norm(root);
+    if (!r.empty() && r.back() != '\\') r += '\\';
+    std::string rest = p.substr(r.size());
+    return rest.substr(0, rest.find('\\'));
+}
+
+std::vector<hubui::fg::Owned> pack_owned_aliases(const hub::GameEntry& e, const std::string& root) {
+    std::vector<hubui::fg::Owned> v;
+    std::string t = installed_folder_title(e.path, root), c = installed_folder_console(e.path, root);
+    if (t.empty() || c.empty()) return v;
+    v.push_back({c, e.key, e.catalog_id, t});
+    return v;
+}
+
 /* ------------------------------------------------------------------ */
 /* pack index: which games are installable (built-in pack + extra roots) */
 /* ------------------------------------------------------------------ */
@@ -1167,11 +1185,34 @@ void Installer::start(const std::string& sys, const std::string& title, const st
                             fs::create_directories(final_dir.parent_path(), e4);
                             fs::rename(stage, final_dir, e4);
                             if (e4) { r = false; e = "cannot write " + S(final_dir); }
-                            else { std::ofstream m(S(final_dir / "gamepack.done"), std::ios::binary); m << "ok"; }
                         }
                         if (!r && e == "cancelled" && !keep.load()) { std::error_code e5; fs::remove_all(stage, e5); }   // a failure keeps the .part files for a resume; a cancel is a clean slate
+                        std::vector<hub::GameEntry> found;
                         if (r) {   // find what is in the folder; unpack archived disc games now so the first Play starts at once
-                            std::vector<hub::GameEntry> found = hub::scan_library({S(final_dir)}, nullptr);
+                            found = hub::scan_library({S(final_dir)}, nullptr);
+                            if (found.empty()) {   // the files are not a game RetroHub can identify: say so, keep nothing, no marker
+                                bool disc = false;
+                                std::error_code e6;
+                                for (fs::recursive_directory_iterator it(final_dir, e6), end; !e6 && it != end; it.increment(e6)) {
+                                    std::string x = lower_name(S(it->path().extension()));
+                                    if (x == ".bin" || x == ".cue" || x == ".img" || x == ".7z" || x == ".zip" || x == ".rar") disc = true;
+                                }
+                                fs::remove_all(final_dir, e6);
+                                r = false;
+                                e = "The shared pack's copy of " + this->title + " is not a game RetroHub can play" + (disc ? " (it may be a .bin/.cue disc or another format RetroHub cannot identify)." : ".") + " Tell whoever shares the pack.";
+                            } else {
+                                std::ofstream m(S(final_dir / "gamepack.done"), std::ios::binary);   // written only once the files proved to be a game
+                                m << "ok";
+                                const hub::System want_sys = hub::system_from_short(this->sys);
+                                bool any_same = false;
+                                for (const hub::GameEntry& g : found) if (g.system == want_sys) any_same = true;
+                                if (!any_same) {   // filed under the wrong console in the pack: it is kept and listed under its real one
+                                    std::lock_guard<std::mutex> lk(mu);
+                                    note = this->title + " is a " + hub::system_name(found[0].system) + " game (the pack had it under " + hub::system_name(want_sys) + "). It is in your library as " + hub::system_name(found[0].system) + ".";
+                                }
+                            }
+                        }
+                        if (r) {
                             if (prepare && !cancel.load()) {
                                 phase = Preparing;
                                 for (hub::GameEntry& g : found) {

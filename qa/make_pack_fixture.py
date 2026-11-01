@@ -23,6 +23,37 @@ def pack(dest, name, data, fmt):
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
+def ps2_cd_raw(serial):
+    """A tiny CD-ROM XA image (MODE2/2352, form 1 user data at +24) holding an ISO9660 volume whose SYSTEM.CNF says BOOT2 = cdrom0:\\<serial>;1."""
+    sync = b"\x00" + b"\xff" * 10 + b"\x00"
+    def sector(lba, data):
+        m = lba + 150
+        hdr = bytes([m // 4500 // 1, (m // 75) % 60, m % 75, 2])
+        hdr = bytes([(m // 75 // 60) % 100, (m // 75) % 60, m % 75, 2])
+        bcd = bytes(((v // 10) << 4) | (v % 10) for v in hdr[:3]) + bytes([2])
+        sub = b"\x00\x00\x08\x00" * 2
+        body = (data + bytes(2048))[:2048]
+        return sync + bcd + sub + body + bytes(280)
+    cnf = ("BOOT2 = cdrom0:\\%s;1\nVER = 1.00\nVMODE = NTSC\n" % serial).encode()
+    def rec(name, extent, size, flags):
+        n = name
+        r = bytearray(33 + len(n)); r[0] = len(r) + (len(r) & 1); r = r + bytes(r[0] - len(r))
+        r[2:6] = extent.to_bytes(4, "little"); r[6:10] = extent.to_bytes(4, "big")
+        r[10:14] = size.to_bytes(4, "little"); r[14:18] = size.to_bytes(4, "big")
+        r[25] = flags; r[28:30] = (1).to_bytes(2, "little"); r[30:32] = (1).to_bytes(2, "big"); r[32] = len(n); r[33:33 + len(n)] = n
+        return bytes(r)
+    root = rec(b"\x00", 18, 2048, 2) + rec(b"\x01", 18, 2048, 2) + rec(b"SYSTEM.CNF;1", 19, len(cnf), 0)
+    pvd = bytearray(2048); pvd[0] = 1; pvd[1:6] = b"CD001"; pvd[6] = 1
+    pvd[80:84] = (20).to_bytes(4, "little"); pvd[84:88] = (20).to_bytes(4, "big")
+    pvd[128:130] = (2048).to_bytes(2, "little"); pvd[130:132] = (2048).to_bytes(2, "big")
+    pvd[156:156 + 34] = rec(b"\x00", 18, 2048, 2)[:34]
+    term = bytearray(2048); term[0] = 255; term[1:6] = b"CD001"; term[6] = 1
+    out = bytearray()
+    for lba in range(0, 16): out += sector(lba, b"")
+    out += sector(16, bytes(pvd)); out += sector(17, bytes(term)); out += sector(18, root); out += sector(19, cnf)
+    for lba in range(20, 40): out += sector(lba, b"")
+    return bytes(out)
+
 def main(out):
     shutil.rmtree(out, ignore_errors=True)
     for c in ("GameCube", "PS2", "PS1", "Wii U", "GBA"): os.makedirs(os.path.join(out, c))
@@ -47,6 +78,26 @@ def main(out):
     rom = bytearray(131072); rom[0xA0:0xAC] = b"CONTROLGBA\0\0"
     rom[0xAC:0xB0] = b"CTRL"; rom[0xB2] = 0x96; rom[0xBD] = (-(sum(rom[0xA0:0xBD]) + 0x19)) & 0xFF
     open(os.path.join(g, "control.gba"), "wb").write(bytes(rom))
+    # PS2 CDs filed under GameCube in the pack (the real Gauntlet - Dark Legacy 7z is one): cue + bin + a readme, like Vimm's Lair
+    def cdset(arc, stem, bin_data, readme=True):
+        d = tempfile.mkdtemp(prefix="pf_")
+        try:
+            open(os.path.join(d, stem + ".bin"), "wb").write(bin_data)
+            open(os.path.join(d, stem + ".cue"), "w").write('FILE "%s.bin" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n' % stem)
+            names = [stem + ".bin", stem + ".cue"]
+            if readme:
+                open(os.path.join(d, "Vimm's Lair.txt"), "w").write("downloaded from the vault\n"); names.append("Vimm's Lair.txt")
+            r = subprocess.run([TAR, "-a", "-cf", arc, "-C", d] + names, capture_output=True)
+            if r.returncode: raise SystemExit("tar failed: %s" % r.stderr)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    raw = lambda n: os.urandom(n)
+    # 1) named like a PS2 game (name database)
+    cdset(os.path.join(gc, "Gauntlet - Seven Sorrows (USA).7z"), "Gauntlet - Seven Sorrows (USA)", raw(900 * 1024))
+    # 2) not a known name: SYSTEM.CNF (BOOT2) inside a raw 2352-byte-sector ISO9660 track decides
+    cdset(os.path.join(gc, "Fakeland CD.7z"), "Fakeland CD", ps2_cd_raw("SLUS_999.99"))
+    # 3) nothing identifiable at all (must fail cleanly)
+    cdset(os.path.join(gc, "Unplayable Thing.7z"), "Unplayable Thing", raw(300 * 1024))
     print("fixture ready:", out)
 
 if __name__ == "__main__": main(sys.argv[1])
