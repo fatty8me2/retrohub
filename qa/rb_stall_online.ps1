@@ -1,9 +1,15 @@
 # Rollback netplay under 4-5 s network stalls (HUBNET_SIM_SPIKE_*), headless + muted, LOCAL server only.
 # Usage: powershell -File qa\rb_stall_online.ps1 [-Server ws://127.0.0.1:11700] [-Iter 2]
 # SNES 4-player multitap (relay and direct), NES/SNES 2-player, plus an every-peer spike: nobody may desync, be dropped, or exit non-zero.
-param([string]$Server = 'ws://127.0.0.1:8761', [int]$Iter = 1, [switch]$Relay4P)     # 4P relay scenarios are slow (opt in)
+# -QuitInStall also runs qa\quit_in_stall.ps1 (the hub's Quit reaches a PC that is blocked waiting for another one).
+param([string]$Server = 'ws://127.0.0.1:8761', [int]$Iter = 1, [switch]$Relay4P, [switch]$QuitInStall)     # 4P relay scenarios are slow (opt in); -QuitInStall adds the hub-Quit-while-stalled check (runners-M1)
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $fail = 0
+if ($QuitInStall) {   # a Quit sent to a PC that is stalled waiting for another one must be heard at once (rollback + lockstep); runs before the network simulation below is switched on
+    Write-Output '== Quit during a stall'
+    & powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\quit_in_stall.ps1" -Server $Server 2>&1 | ForEach-Object { Write-Output $_ }
+    if ($LASTEXITCODE -ne 0) { $fail++ }
+}
 $env:HUBNET_SIM_ENABLE = '1'; $env:HUBNET_SIM_LATENCY_MS = '40'; $env:HUBNET_SIM_JITTER_MS = '30'; $env:HUBNET_SIM_LOSS_PCT = '2'
 $env:HUBNET_SIM_SPIKE_MS = '4600'; $env:HUBNET_SIM_SPIKE_AT_MS = '12000'; $env:HUBNET_SIM_SPIKE_EVERY_MS = '16000'
 function Run($label, $args2) {
