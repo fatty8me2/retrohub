@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.31.2",
+      "date": "2026-11-02",
+      "title": "Everything is back, and 4-player online is fixed",
+      "new": [
+        "All of 1.30 and 1.31 is back: party mode, brackets, ROM hacks, PSP, friend challenges, Discord, Ctrl+K search and the rest"
+      ],
+      "improved": [],
+      "fixed": [
+        "3-4 player online games (N64 and GameCube) froze or drifted out of sync because the online server limited each room's traffic too tightly; the limit is raised",
+        "Mario Golf, Mario Tennis and Pokemon Stadium no longer drift out of sync online with several players",
+        "Includes the earlier fixes again: PS2 cue/bin games, playing right after an install, doubled friends' games and Mario Superstar Baseball online speed"
+      ]
+    },
+    {
       "version": "1.31.1",
       "date": "2026-11-01",
       "title": "Back to the steady version while online gets fixed",
