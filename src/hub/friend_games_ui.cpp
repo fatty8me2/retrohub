@@ -152,25 +152,50 @@ void gamepack_merge_added(std::vector<hub::GameEntry>* lib) {
     for (auto it = g_pack_added.begin(); it != g_pack_added.end();) {
         if (!file_exists(it->path)) { it = g_pack_added.erase(it); continue; }
         bool have = false;
-        for (const hub::GameEntry& e : *lib) if (lower_path(e.path) == lower_path(it->path)) { have = true; break; }
+        for (hub::GameEntry& e : *lib) if (lower_path(e.path) == lower_path(it->path)) {
+            have = true;
+            if (e.catalog_id.empty() && !it->title.empty()) e.title = it->title;   // a zipped cartridge keeps the pack's title (its path is in rom-cache, so no folder name can say it)
+            break;
+        }
         if (!have) lib->push_back(*it);
         ++it;
     }
 }
 
 /* Games found by scanning a pack folder on its own go into the library without a full rescan. Returns the first game's key. */
-static std::string gamepack_adopt(std::vector<hub::GameEntry> got) {
+static std::string gamepack_adopt(std::vector<hub::GameEntry> got, const std::string& pack_title = std::string()) {
     if (hubui::merge_installer_games_dir(&A.st, hubgp::pack_root())) mark_dirty();
     std::string newkey;
     for (hub::GameEntry& e : got) {
-        if (e.catalog_id.empty()) { std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root()); if (!t.empty() && hubgp::pack_key(t) != hubgp::pack_key(e.title)) e.title = t; }
+        if (e.catalog_id.empty()) {
+            std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root());
+            /* a zipped cartridge (.zip N64 / GBA / DS) is listed from rom-cache\, outside the pack folder: no folder name to take the title from,
+             * so the greyed tile it replaces would stay (and stay selected, with Play disabled). It takes the title of the install instead. */
+            if (t.empty() && got.size() == 1) t = pack_title;
+            if (!t.empty() && hubgp::pack_key(t) != hubgp::pack_key(e.title)) e.title = t;
+        }
         if (newkey.empty()) newkey = e.key;
         g_pack_added.erase(std::remove_if(g_pack_added.begin(), g_pack_added.end(), [&](const hub::GameEntry& o) { return lower_path(o.path) == lower_path(e.path); }), g_pack_added.end());
         g_pack_added.push_back(e);
     }
     if (got.empty()) return newkey;
-    if (A.scanning) start_scan();   // a scan is running right now (it owns the result list): queue another, the entries above are kept meanwhile
-    else apply_scan();
+    if (A.scanning) {
+        /* A scan is running right now and owns A.scan_result (never read it from here). Queue another, and put the new games into the
+         * live library right away: before this they only showed up when that scan landed, so Play right after an install found no
+         * entry (find_entry() was null) and did nothing until the scan ended - or, if the scan never ran again, until a restart. */
+        start_scan();
+        bool added = false;
+        for (const hub::GameEntry& e : got) {
+            bool have = false;
+            for (const hub::GameEntry& o : A.lib) if (lower_path(o.path) == lower_path(e.path)) { have = true; break; }
+            if (!have) { A.lib.push_back(e); added = true; }
+        }
+        if (added) {
+            A.lib_index.clear();
+            for (size_t i = 0; i < A.lib.size(); ++i) A.lib_index.emplace(A.lib[i].key, (int)i);
+            for (const hub::GameEntry& e : got) A.lib_state.erase(e.key);   // re-read lazily (a stale state row from a former install)
+        }
+    } else apply_scan();
     A.vis_dirty = true;
     return newkey;
 }
@@ -180,7 +205,7 @@ static void gamepack_landed() {
     std::vector<hub::GameEntry> got;
     std::string note;
     { std::lock_guard<std::mutex> lk(GP.mu); got = GP.entries; note = GP.note; }
-    const std::string newkey = gamepack_adopt(got);
+    const std::string newkey = gamepack_adopt(got, GA.title);
     if (!newkey.empty() && A.sel_ghost == GA.ghost_id) {   // the greyed tile was the selection: the real game takes its place (same title, same spot)
         A.sel_ghost.clear();
         A.sel_game = newkey;
@@ -188,8 +213,10 @@ static void gamepack_landed() {
     }
     const std::string title = GA.title;
     if (!newkey.empty()) {
-        push_toast_action(title + " installed. Ready to play.", COL_GOOD, "Play", [newkey]() {
+        const hub::GameEntry first = got.front();   // fallback if the library list has not caught up (a scan landing, a duplicate collapse)
+        push_toast_action(title + " installed. Ready to play.", COL_GOOD, "Play", [newkey, first]() {
             if (const hub::GameEntry* g = find_entry(newkey)) { A.sel_game = newkey; hub::GameEntry copy = *g; play_entry(copy); }
+            else { hub::GameEntry copy = first; play_entry(copy); }
         }, 14.0);
     } else {
         set_toast(title + " installed, but RetroHub did not recognise a game in it. Use Rescan.", false, 10.0);
