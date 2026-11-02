@@ -70,9 +70,29 @@ Not finished: post F80 with single core (did the CPU mode matter?).
 
 The CPU mode is not the cause: MSB was already dual core and was still 41 % before the fix.
 
+## Resumed after the PC restart
+- **Strikers post F80 on single core: 99.9 %.** The CPU mode is not the cause on this PC.
+- **Strikers post E repeats: 100 % and 100 %.** The earlier 1.4 s relay outage did not reproduce.
+- **Found and fixed: the forwarder thread's 1 ms select/Sleep ran at about 16 ms** once Windows stopped granting 1 ms timers after the restart. Loopback RTT went from 3 ms to 30 ms.
+  - The forwarder now wakes on data: WSAEventSelect on the Session UDP socket and Dolphin's local sockets, plus an event set when a relay frame is queued (`Session::set_wake_event`, `WsClient::set_wake`).
+  - `hub_gcfw_latency` now gives **0.3 ms direct and 4.9 ms relay** (UI-tick pump: 62.9 ms).
+  - The test's echo loss came from SO_RCVTIMEO and is fixed by using select waits.
+- **Final build, simulated RTT about 170 ms, auto buffer 13-14:**
+
+  | Row | MSB | Strikers |
+  |---|---|---|
+  | F80 | 99.9 % | 100 % |
+  | E80 (relay + latency) | 99.5 % | 99.8 % |
+
+- `ctest -LE online`: 120/120 passed. `hub_gcfw_latency` (online) passes for direct and relay.
+
+## Architecture recommendation
+- **Keep the hub transport:** direct UDP hole punch first, with the Worker relay only as a fallback.
+  - With the threaded, event-driven forwarder it adds 0.3 ms (direct) to about 5 ms (relay, local) of round trip.
+  - The matrix shows no speed difference between Dolphin-direct (B/C) and the forwarder (D/E) once the buffer is right.
+- **Dolphin traversal (H) is not a better path:** it could not even connect two instances on one PC (hairpin NAT). It would add a second NAT-traversal system that has no relay fallback.
+- **The open real-world cost is Internet RTT itself**, which sets the buffer and therefore the input lag (about 1 frame per 15 ms of RTT).
+
 ## Next
-- Rerun Strikers `postF80sc` (single core with the fix) to isolate the CPU mode.
-- Repeat the postE relay stall row.
-- Run `ctest -LE online`, plus `hub_gcfw_latency` against a fresh local wrangler.
-- Docs: add an "Online speed" section to `docs/DOLPHIN.md`.
-- Final commit, then the report with an architecture recommendation. Proposed: keep the hub transport (direct UDP first, relay only as fallback), since its threaded cost is about 3-4 ms. Traversal can't be tested on one PC.
+- Not done: the old-tag rebuild (row G). The GC data path is unchanged since v1.27.6: same UI-tick forwarder, Dolphin default buffer 5. The 140-game stress run only checked liveness on title screens.
+- Owner test: a real 2-PC online session. Check `online.log` for the `gc host: pad buffer N (ping X ms)` line, and `gc_host_status.txt` for `buffer:N` / `padbuffer:N`.
