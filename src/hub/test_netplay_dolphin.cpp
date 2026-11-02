@@ -68,6 +68,7 @@ int main() {
     CHECK(o.find("SIDevice0 = 6") != std::string::npos);
     CHECK(o.find("[DSP]") != std::string::npos && o.find("Backend = No Audio Output") != std::string::npos);
     CHECK(o.find("ConfirmStop = False") != std::string::npos && ini_patch(std::string("[Interface]\nConfirmStop = True\n"), s, p).find("ConfirmStop = False") != std::string::npos);   // never Dolphin's stop dialog online
+    CHECK(o.find("CPUThread = True") != std::string::npos && o.find("SyncGPU = False") != std::string::npos && o.find("OverclockEnable = False") != std::string::npos);   // dual core like offline, other determinism pins kept
     CHECK(ini_patch(o, s, p) == o);                    // idempotent
 
     /* host never gets a HostCode written; direct mode sets address/ports */

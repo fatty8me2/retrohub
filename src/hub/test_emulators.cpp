@@ -503,6 +503,8 @@ static void test_config() {
     hubemu::DolphinPads ad;
     ad.adapter = true;
     CHECK(hubemu::dolphin_dolphin_ini_patch("", ad).find("SIDevice3 = 12") != std::string::npos);
+    CHECK(di.find("CPUThread = True") != std::string::npos);   // dual core offline
+    CHECK(hubemu::dolphin_dolphin_ini_patch("[Core]\nCPUThread = False\n", none).find("CPUThread = True") != std::string::npos);   // a netplay-era False is restored
     CHECK(hubemu::dolphin_dolphin_ini_patch(di, none) == di);   // idempotent
     std::string pi = hubemu::dolphin_pad_ini("", none);
     CHECK(pi.find("[GCPad1]") != std::string::npos && pi.find("[GCPad4]") != std::string::npos);

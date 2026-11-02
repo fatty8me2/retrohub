@@ -253,8 +253,9 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
     KV core;
     core.push_back({"GPUDeterminismMode", "auto"});   // the one emulation setting NetPlay does not copy from the host
     /* Deterministic emulation on every PC (the host's values are copied to the guests, the guests' are ignored but kept equal):
-     * single CPU thread (dual core is the classic NetPlay desync), JIT64 on all, no overclock, no sync-GPU/MMU/fast disc speed surprises. */
-    core.push_back({"CPUThread", "False"});
+     * the same CPU thread mode on all (dual core, Dolphin's own default, as offline: single core halves the speed of CPU-heavy games such as
+     * Mario Superstar Baseball and the slowest PC then throttles the whole room), JIT64 on all, no overclock, no sync-GPU/MMU/fast disc speed surprises. */
+    core.push_back({"CPUThread", "True"});
     core.push_back({"CPUCore", "1"});
     core.push_back({"OverclockEnable", "False"});
     core.push_back({"VIOverclockEnable", "False"});
