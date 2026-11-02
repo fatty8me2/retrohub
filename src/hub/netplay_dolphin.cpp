@@ -291,7 +291,7 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
 /* ---------- UIA driver ---------- */
 const char* driver_script() {
     return R"PS(
-param([string]$Role, [int]$DolphinPid, [string]$Status, [string]$Suffix, [int]$Players = 2, [int]$DelayS = 0, [int]$TimeoutS = 150, [string]$Code = "", [int]$NoCode = 0, [string]$GoFile = "")
+param([string]$Role, [int]$DolphinPid, [string]$Status, [string]$Suffix, [int]$Players = 2, [int]$DelayS = 0, [int]$TimeoutS = 150, [string]$Code = "", [int]$NoCode = 0, [string]$GoFile = "", [string]$BufFile = "")
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $UA = [System.Windows.Automation.AutomationElement]; $TS = [System.Windows.Automation.TreeScope]
 $CT = [System.Windows.Automation.ControlType]
@@ -395,6 +395,17 @@ try {
     } catch { Say "table:unreadable" }
     if ($rows -lt $Players) { Say "error:only $rows of $Players players joined the NetPlay lobby, not starting"; exit 1 }
     Start-Sleep -Milliseconds 800   # let the last client finish its join handshake (Start before that excludes it)
+    if ($BufFile -and (Test-Path -LiteralPath $BufFile)) {   # pad buffer from the session's measured ping (the host's value is the room's)
+      try {
+        $b = [int]([System.IO.File]::ReadAllText($BufFile).Trim())
+        $sp = $np.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::Spinner)))
+        if (-not $sp) { $sp = $np.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::Edit))) }
+        $done = $false
+        try { $sp.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue([double]$b); $done = $true } catch {}
+        if (-not $done) { $sp.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue("$b"); $done = $true }
+        Say "buffer:$b"
+      } catch { Say "buffer:unset" }
+    }
     Click (Need (El $np "Start" $CT::Button) "Start button")
     Say "stage:started"
   } else {
@@ -451,6 +462,8 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
     { std::ofstream f(P8(script), std::ios::binary); f << driver_script(); }
     out->go_path = work_dir + "\\gc_guest_go.txt";
     DeleteFileW(W(out->go_path).c_str());
+    out->buf_path = work_dir + "\\gc_host_buffer.txt";
+    DeleteFileW(W(out->buf_path).c_str());
     out->status_path = work_dir + std::string(host ? "\\gc_host_status.txt" : "\\gc_guest_status.txt");
     DeleteFileW(W(out->status_path).c_str());
     std::wstring wd;
@@ -463,9 +476,15 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
     if (!spawn(cmd, W(exe_dir), wd, desktop.empty(), &out->dolphin_pid)) { out->error = "could not start Dolphin"; return false; }
     std::string args = std::string("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"") + script + "\" -Role " + (host ? "host" : "guest") +
                        " -DolphinPid " + std::to_string(out->dolphin_pid) + " -Status \"" + out->status_path + "\" -Suffix \"" +
-                       list_item_suffix(s) + "\" -Players " + std::to_string(s.players) + " -DelayS " + std::to_string(host ? 0 : guest_connect_delay_s(my_slot)) + (s.mode == "direct" ? " -NoCode 1" : "") + (!host && out->wait_go ? " -GoFile \"" + out->go_path + "\"" : "");
+                       list_item_suffix(s) + "\" -Players " + std::to_string(s.players) + " -DelayS " + std::to_string(host ? 0 : guest_connect_delay_s(my_slot)) + (s.mode == "direct" ? " -NoCode 1" : "") + (!host && out->wait_go ? " -GoFile \"" + out->go_path + "\"" : "") + (host ? " -BufFile \"" + out->buf_path + "\"" : "");
     if (!spawn(L"powershell.exe " + W(args), W(work_dir), wd, false, &out->driver_pid)) { out->error = "could not start the NetPlay driver"; return false; }
     return true;
+}
+
+void set_host_buffer(const Run& r, int frames) {
+    if (r.buf_path.empty() || frames < 1) return;
+    std::ofstream f(P8(r.buf_path), std::ios::binary | std::ios::trunc);
+    f << frames;
 }
 
 void signal_go(const Run& r) {

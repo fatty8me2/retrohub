@@ -328,6 +328,17 @@ void gc_tick() {
             return;
         }
     }
+    if (GCO.host && GCO.fw.active()) {   // the room's pad buffer, from the ping measured once everyone connected (the driver applies it before Start)
+        static unsigned long long last_t = 0; static int last_b = -1; static unsigned long last_pid = 0;
+        if (GCO.run.dolphin_pid != last_pid) { last_pid = GCO.run.dolphin_pid; last_b = -1; last_t = 0; }   // a new session writes its own file
+        const unsigned long long now = GetTickCount64();
+        if (now - last_t >= 1000) {
+            last_t = now;
+            const int ping = GCO.fw.worst_ping_ms();
+            const int b = gcnp::pad_buffer_for_ping(ping, GCO.fw.any_relayed());
+            if (ping >= 0 && b != last_b) { last_b = b; gcnp::set_host_buffer(GCO.run, b); online_log("gc host: pad buffer " + std::to_string(b) + " (ping " + std::to_string(ping) + " ms" + (GCO.fw.any_relayed() ? ", relayed)" : ")")); }
+        }
+    }
     if (!GCO.host && !GCO.go_sent && GCO.host_ready) { GCO.go_sent = true; gcnp::signal_go(GCO.run); autotest_log("guest: go"); }
     if (GCO.host && !GCO.ready_sent && gcnp::read_status(GCO.run).find("stage:netplay-open") != std::string::npos) {
         GCO.ready_sent = true;
