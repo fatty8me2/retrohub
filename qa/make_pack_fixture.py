@@ -56,7 +56,7 @@ def ps2_cd_raw(serial):
 
 def main(out):
     shutil.rmtree(out, ignore_errors=True)
-    for c in ("GameCube", "PS2", "PS1", "Wii U", "GBA"): os.makedirs(os.path.join(out, c))
+    for c in ("GameCube", "PS2", "PS1", "Wii U", "GBA", "N64", "NDS"): os.makedirs(os.path.join(out, c))
     gc = os.path.join(out, "GameCube")
     # loose archives, the real-world case (title carried by the file name, header title differs)
     pack(os.path.join(gc, "Gauntlet - Dark Legacy (USA).7z"), "Gauntlet - Dark Legacy (USA).iso", gc_iso("GUNE5D", "Gauntlet Dark Legacy"), "7z")
@@ -98,6 +98,23 @@ def main(out):
     cdset(os.path.join(gc, "Fakeland CD.7z"), "Fakeland CD", ps2_cd_raw("SLUS_999.99"))
     # 3) nothing identifiable at all (must fail cleanly)
     cdset(os.path.join(gc, "Unplayable Thing.7z"), "Unplayable Thing", raw(300 * 1024))
+    # N64: a loose big-endian image in a game folder, and a zipped one (the zip is unpacked into rom-cache by the scan)
+    def n64(tag):
+        b = bytearray(1024 * 1024 + 4096); b[0:4] = bytes([0x80, 0x37, 0x12, 0x40]); b[0x20:0x34] = tag.ljust(20).encode()[:20]; b[0x3B:0x3F] = b"NFK0"; b[0x1000:0x1010] = tag.encode()[:16].ljust(16)
+        return bytes(b)
+    g = os.path.join(out, "N64", "Fakeland 64"); os.makedirs(g)
+    open(os.path.join(g, "fakeland64.z64"), "wb").write(n64("FAKELAND 64"))
+    pack(os.path.join(out, "N64", "Zipland Cart.zip"), "Zipland Cart.z64", n64("FAKELAND ZIP"), "zip")
+    # DS: loose .nds with a valid header (logo crc 0xCF56, header crc16)
+    def nds(tag, code):
+        h = bytearray(0x4000); h[0:12] = tag.ljust(12).encode()[:12]; h[0x0C:0x10] = code.encode(); h[0x15C:0x15E] = (0xCF56).to_bytes(2, "little")
+        crc = 0xFFFF
+        for x in h[:0x15E]:
+            crc ^= x
+            for _ in range(8): crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+        h[0x15E:0x160] = crc.to_bytes(2, "little"); return bytes(h)
+    g = os.path.join(out, "NDS", "Fakeland DS"); os.makedirs(g)
+    open(os.path.join(g, "fakeland.nds"), "wb").write(nds("FAKELANDDS", "AFKE"))
     print("fixture ready:", out)
 
 if __name__ == "__main__": main(sys.argv[1])
