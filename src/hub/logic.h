@@ -364,6 +364,13 @@ bool sync_take_pending(SyncGate& g, bool game_running, bool job_running, bool* m
 
 /* Human text for an n64run exit code. */
 std::string exit_code_text(unsigned long code);
+/* retrorun exit 12 = could not connect online; its plain-words reason is in this file (hub sets $RETRORUN_REASON_FILE to it). */
+/* Dolphin/Azahar UI-Automation driver watchdog (PowerShell script). Pure: the caller feeds liveness, the status file text and the time. */
+enum class DriverVerdict { Ok, DiedSilently, DiedEarly, NoStage, NeverOpened };
+DriverVerdict driver_verdict(bool driver_alive, const std::string& status_text, unsigned long long since_start_ms, bool host);
+std::string driver_verdict_text(DriverVerdict v);
+void set_net_reason_file(const std::string& utf8_path);
+std::string net_reason_text();   // the file's text, "" when there is none
 /* Message for a game that ended while a player was missing. `left_name` = who left ("" unknown); only the outcomes a leaver causes
  * (clean 0, connection lost 4, "a player left" 8) are reworded, crashes/desyncs keep their own text. */
 std::string player_left_text(const std::string& left_name);

@@ -804,6 +804,7 @@ void spectate_start(const std::string& code, const std::string& game_id, const s
 void spectate_tick();
 bool spectate_pending();
 void launch_fail(const std::string& why, double secs = 8.0);   // guest couldn't start the host's launch: notice + np_fail to the host
+std::string emulator_online_block();   // "" or why this PC cannot take part in the room game yet (Dolphin / Azahar not installed); lobby_tick un-readies on it
 std::string ready_block_reason_now();   // "" or why the guest's "I'm ready" must stay disabled (version mismatch)
 bool is_host();
 bool allow_version_mismatch();

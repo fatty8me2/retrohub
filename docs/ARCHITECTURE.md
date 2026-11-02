@@ -239,9 +239,10 @@ n64run --rom PATH --game ID [--net SERVER --room CODE-N --slot K --players N --p
 |------|---------|
 | 0 | Clean exit |
 | 2 | Bad arguments (including `--slot/--players/--ports` inconsistencies) or invalid ROM |
-| 3 | Emulator / core / plugin load failure (retrorun: only "could not reach the lobby/peers"; negotiation and start-barrier loss are 4) |
+| 3 | Emulator / core / plugin load failure (retrorun: only a real load failure now; "could not reach the lobby/peers" is 12) |
 | 4 | Netplay connection failure, input-delay negotiation failure, or connection lost mid-game |
-| 5 | Desync detected (`n64run`: only with `--strict-sync`; `retrorun`: always) |
+| 5 | Desync detected (`n64run`: with `--strict-sync`, or when a resync could not repair it: OSD message, match ends 4 s later; `retrorun`: always) |
+| 12 | `retrorun --net` could not connect (room full, host never opened it, server busy, timeout); the plain-words reason is written to `$RETRORUN_REASON_FILE` and the hub shows it |
 | 6 | Host-save sync failed (`--share-host-save`) |
 
 **Saves in online sessions:** each session starts from a fresh, empty save directory on every PC. With `--share-host-save` (opt-in, every PC must pass it) the host (slot 0) reads `--host-save-dir` and sends its battery saves (`.eep .sra .fla .mpk`, at most 8 files, 128 KiB each, 256 KiB total) to the other PCs before the ROM opens (exit code 6 if the sync fails). Transfer uses `src/n64run/save_sync.{h,cpp}`: chunked, per-chunk check, whole-file FNV-1a, client ACK bitmaps, host resends. Without the flag the sessions start empty, as before.
@@ -299,3 +300,6 @@ They run as external emulators started by `launch_external` in `src/hub/launch.c
 parsers in `src/common/emu_formats.cpp` and the save mapping in `src/common/emu_saves.cpp`. See `docs/EMULATORS.md`.
 
 ROM files can be `.z64` (big-endian), `.v64` (byteswapped) or `.n64` (little-endian). Normalize to `.z64` byte order before hashing. Identification uses the MD5 of the normalized image, with a fallback to the header CRC1/CRC2 at offsets 0x10/0x14.
+
+
+**Socket blips (Plan 4 W2-D):** a game-room WebSocket loss after `ready` does not end the match. `Session` reconnects (`net/reconnect.h`, 25 s window) while UDP keeps playing, and keeps a peer that vanished from the roster as long as its direct UDP is fresh. The `/hub` Worker holds slot 0 for `HOST_GRACE_MS` (10 s) after an ABNORMAL close (1006/1011) of the host (game room: nobody is closed; lobby: no host migration) so the same host (same name) reclaims it; a clean close still migrates/closes at once.

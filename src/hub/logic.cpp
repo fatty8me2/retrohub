@@ -9,7 +9,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <sstream>
 
@@ -854,13 +856,50 @@ std::string dropin_exit_text(unsigned long code) {
     }
 }
 
+DriverVerdict driver_verdict(bool driver_alive, const std::string& st, unsigned long long ms, bool host) {
+    if (st.find("error:") != std::string::npos) return DriverVerdict::Ok;   // the error lines are handled (and shown) by the caller
+    bool any_stage = st.find("stage:") != std::string::npos;
+    bool playing = st.find("stage:in-game") != std::string::npos || st.find("stage:started") != std::string::npos || st.find("stage:joined") != std::string::npos;
+    bool ended = st.find("stage:ended") != std::string::npos;
+    if (!driver_alive && !ended) {
+        if (!any_stage) return DriverVerdict::DiedSilently;   // never wrote a line: the script could not run at all
+        if (!playing) return DriverVerdict::DiedEarly;
+        return DriverVerdict::Ok;                               // the game runs by itself once started
+    }
+    if (!any_stage && ms > 45000) return DriverVerdict::NoStage;
+    if (host && !playing && st.find("stage:netplay-open") == std::string::npos && any_stage && ms > 120000) return DriverVerdict::NeverOpened;
+    return DriverVerdict::Ok;
+}
+
+std::string driver_verdict_text(DriverVerdict v) {
+    switch (v) {
+        case DriverVerdict::DiedSilently: return "RetroHub's helper script for Dolphin could not run. PowerShell or Windows UI Automation may be blocked (antivirus, AppLocker, or a policy).";
+        case DriverVerdict::NoStage: return "RetroHub's helper script for Dolphin never reported in. PowerShell or Windows UI Automation may be blocked or too slow.";
+        case DriverVerdict::DiedEarly: return "RetroHub's helper script for Dolphin stopped before the game started.";
+        case DriverVerdict::NeverOpened: return "Dolphin's NetPlay window never opened.";
+        default: return "";
+    }
+}
+
+static std::string g_net_reason_file;
+void set_net_reason_file(const std::string& p) { g_net_reason_file = p; }
+std::string net_reason_text() {
+    if (g_net_reason_file.empty()) return "";
+    std::ifstream f(std::filesystem::u8path(g_net_reason_file), std::ios::binary);
+    std::string t((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    while (!t.empty() && (t.back() == 0x0A || t.back() == 0x0D || t.back() == ' ')) t.pop_back();
+    if (t.size() > 300) t.resize(300);
+    return t;
+}
+
 std::string exit_code_text(unsigned long code) {
     switch (code) {
         case 0: return "Game closed normally.";
         case 2: return "The game couldn't start: the room's player/port setup or the ROM was rejected. Leave the room, rejoin and try again.";
         case 3: return "Emulator files are missing (emu/ folder). Reinstall or run scripts/fetch-emu.ps1.";
         case 4: return "Connection lost during the match.";
-        case 5: return "The game went out of sync (desync) and was stopped.";
+        case 12: { std::string r = net_reason_text(); return r.empty() ? std::string("Couldn't connect to the other players.") : "Couldn't connect: " + r; }
+        case 5: return "The game went out of sync and could not be repaired, so it was stopped. Start it again to keep playing together.";
         case 6: return "Couldn't share the host's save - check your connection and try again.";
         case 8: return player_left_text("");
         case 9: case 10: case 11: return hubps2::setup_mismatch_text(code);

@@ -214,6 +214,9 @@ add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulate
 add_test(NAME n64run_mempak_test COMMAND n64run_mempak_test)          # controller pak policy (no network)
 
 # Online: need the live server.
+add_test(NAME hubreconnect_test COMMAND hubreconnect_test)   # Session WS reconnect state machine (offline)
+add_test(NAME hubnet_blip_test COMMAND hubnet_test)   # WS blip mid-session: sessions survive (needs the local server; online)
+set_tests_properties(hubnet_blip_test PROPERTIES ENVIRONMENT "HUBNET_BLIP_TEST=1;RETROHUB_QA=1")
 add_test(NAME hubnet_test COMMAND hubnet_test)                           # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubws_close_test COMMAND hubws_close_test)   # WebSocket close never blocks (local loopback server only)
@@ -222,4 +225,4 @@ add_test(NAME hublink_test COMMAND hublink_test)                         # link-
 set_tests_properties(hubnet_test hublink_test n64run_save_sync_test n64run_lockstep_test n64run_testinput_test retrorun_link_test
                      retrorun_rollback_test retrorun_rollback_stall_test retrorun_resync_test retrorun_dropin_test retrorun_dslink_test hub_bootsound_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
 add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
-set_tests_properties(hubnet_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)
+set_tests_properties(hubnet_test hubnet_blip_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)
