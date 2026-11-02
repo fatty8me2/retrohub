@@ -23,6 +23,7 @@
  */
 #include "winutil.h"
 #include "pcsx2.h"
+#include "ps2.h"
 #include "wiiu_meta.h"
 #include "invite.h"
 #include "dolphin_speed.h"
@@ -574,6 +575,11 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     hub::gs::Values gsv = gs_values_for(e);
     bool fs = hub::gs::is_fullscreen(gsv);
     std::string game = launch_path_for(e);
+    if (kind == hubemu::Kind::Pcsx2) {   // PCSX2 cannot open a .cue: hand it the bin (or an iso built once in the rom-cache)
+        std::string img, ierr;
+        if (!hub::ps2::launch_image(game, hub::extract_3ds_dir(e), &img, &ierr)) { set_notice("Could not start " + e.title + ": " + ierr + ".", 12.0); return; }
+        game = img;
+    }
     uint64_t wiiu_tid = 0;
     std::string cemu_user;   // Cemu's user data folder (portable\ / beside settings.xml / %APPDATA%\Cemu)
     if (kind == hubemu::Kind::Cemu) {
