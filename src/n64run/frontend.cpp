@@ -62,6 +62,7 @@
 #include "fbmask.h"
 #include "clip.h"
 #include "corner.h"
+#include "det_gfx.h"
 #include "match_result.h"
 #include "osd_gl.h"
 #include "remix_data.h"
@@ -1790,7 +1791,7 @@ int main(int argc, char** argv) {
         g_frame_limit = args.frames;
     }
     std::string hdr_up; for (char c : rom_header_name) hdr_up += (char)std::toupper((unsigned char)c);
-    const bool det_gfx = online && (hdr_up.find("MARIOPARTY") != std::string::npos || args.game == "mp1" || args.game == "mp2" || args.game == "mp3");
+    const bool det_gfx = online && n64run::det_gfx_game(args.game, rom_header_name);
     if (!args.gfx.empty() || det_gfx) {
         /* Per-game GLideN64 settings, set before the plugin starts (it keeps existing values). Online, the options that
          * change emulation results (framebuffer emulation) are ignored whatever the caller passed. */
