@@ -2,6 +2,7 @@
 
 #include "ps1.h"
 #include "ps2_online.h"
+#include "ps2.h"
 #include "pcsx2.h"
 
 #include <fstream>
@@ -368,6 +369,7 @@ bool ps2_online_args(const hub::GameEntry& e, const std::string& net, const std:
     const hub::GameInfo* cat = hub::find_game(e.catalog_id);
     std::string serial = !e.serial.empty() ? e.serial : (cat && !cat->serials.empty() ? cat->serials[0] : "");
     std::string game = e.issue == "extract" ? hub::extracted_3ds_path(e) : e.path;
+    { std::string img, ierr; if (!hub::ps2::launch_image(game, hub::extract_3ds_dir(e), &img, &ierr)) { *err = "Could not start " + e.title + ": " + ierr + "."; return false; } game = img; }   // no .cue for the core either
     *args = "--core " + quote(core) + " --rom " + quote(game) + " --save-dir " + quote(tmp_dir) + " --state-dir " + quote(tmp_dir) + " --system-dir " + quote(sysdir) +
             net + title_arg(e.title) + save_stem_arg(e) + controls_arg("ps1", e.key);
     *args += hubps2::retrorun_setup_args(bios.file, serial, share_save);

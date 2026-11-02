@@ -11,6 +11,7 @@
 #include "controls.h"
 #include "library.h"
 #include "ps1.h"
+#include "ps2.h"
 
 namespace fs = std::filesystem;
 using namespace hub;
@@ -196,6 +197,41 @@ int main() {
     bool cross = false;
     for (auto& c : hubctl::controls_for("ps1")) if (c.name == "b" && c.label == "Cross") cross = true;
     CHECK(cross);
+
+    /* ---- PS2 cue/bin -> an image PCSX2 can open (hub::ps2::launch_image) ---- */
+    {
+        fs::path d = fs::temp_directory_path() / L"ps2cue_scratch";
+        std::error_code e2;
+        fs::remove_all(d, e2);
+        std::vector<uint8_t> iso = make_iso(cnf_for("SLUS-20946", "BOOT2"));
+        iso.resize(40 * 2048, 0);
+        std::vector<uint8_t> raw = to_raw2352(iso);
+        write(d / "g" / "Game (USA).bin", raw);
+        write_text(d / "g" / "Game (USA).cue", "FILE \"Game (USA).bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n    INDEX 01 00:00:00\r\n");
+        std::string img, err;
+        CHECK(ps2::launch_image((d / "g" / "Game (USA).cue").string(), (d / "out").string(), &img, &err));
+        CHECK(fs::path(img).filename() == "Game (USA).bin");   // single data track: the bin itself
+        CHECK(ps2::launch_image("x.iso", "", &img, &err) && img == "x.iso");
+        /* data track + audio track in separate files */
+        write_text(d / "g" / "Mixed.cue", "FILE \"Game (USA).bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n    INDEX 01 00:00:00\r\nFILE \"a.bin\" BINARY\r\n  TRACK 02 AUDIO\r\n    INDEX 01 00:00:00\r\n");
+        CHECK(ps2::launch_image((d / "g" / "Mixed.cue").string(), (d / "out").string(), &img, &err) && fs::path(img).filename() == "Game (USA).bin");
+        /* 2336-byte sectors cannot be read as they are: an iso is built once */
+        std::vector<uint8_t> r36(iso.size() / 2048 * 2336, 0);
+        for (size_t i = 0; i < iso.size() / 2048; i++) std::memcpy(&r36[i * 2336 + 8], &iso[i * 2048], 2048);
+        write(d / "g" / "Odd.bin", r36);
+        write_text(d / "g" / "Odd.cue", "FILE \"Odd.bin\" BINARY\r\n  TRACK 01 MODE2/2336\r\n    INDEX 01 00:00:00\r\n");
+        CHECK(ps2::launch_image((d / "g" / "Odd.cue").string(), (d / "out").string(), &img, &err));
+        CHECK(fs::path(img).extension() == ".iso" && fs::file_size(img) == iso.size());
+        /* missing bin, PS1 disc, audio only */
+        write_text(d / "g" / "Gone.cue", "FILE \"nope.bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n");
+        CHECK(!ps2::launch_image((d / "g" / "Gone.cue").string(), (d / "out").string(), &img, &err) && err.find("missing") != std::string::npos);
+        write(d / "g" / "P1.bin", to_raw2352(make_iso(cnf_for("SCUS-94570"))));
+        write_text(d / "g" / "P1.cue", "FILE \"P1.bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n");
+        CHECK(!ps2::launch_image((d / "g" / "P1.cue").string(), (d / "out").string(), &img, &err) && err.find("PlayStation 1") != std::string::npos);
+        write_text(d / "g" / "Aud.cue", "FILE \"a.bin\" BINARY\r\n  TRACK 01 AUDIO\r\n");
+        CHECK(!ps2::launch_image((d / "g" / "Aud.cue").string(), (d / "out").string(), &img, &err));
+        fs::remove_all(d, e2);
+    }
 
     library_set_data_dir("");
     fs::remove_all(root, ec);
