@@ -95,3 +95,8 @@ target_include_directories(n64run_match_result_test PRIVATE ${CMAKE_SOURCE_DIR}/
 add_executable(n64run_corner_test test_corner.cpp)
 target_include_directories(n64run_corner_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(n64run_corner_test PRIVATE cxx_std_17)
+
+# Online deterministic-graphics game list (pure logic).
+add_executable(n64run_det_gfx_test test_det_gfx.cpp)
+target_include_directories(n64run_det_gfx_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(n64run_det_gfx_test PRIVATE cxx_std_17)
