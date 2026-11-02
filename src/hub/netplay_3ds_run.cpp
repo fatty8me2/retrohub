@@ -5,7 +5,14 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 
+#include <atomic>
+#include <cstdlib>
 #include <map>
+#include <mutex>
+#include <thread>
+
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
 
 #include "session.h"
 
@@ -39,6 +46,12 @@ struct Runner::Impl {
     unsigned long long out = 0, in = 0;
     uint32_t t0 = 0;
     std::string tag = "3ds";
+    /* GameCube: Dolphin's NetPlay traffic is forwarded on its own thread (forward_loop), not on the ~60 Hz UI tick, so a packet waits
+     * ~1 ms instead of up to a frame on each PC. mu guards everything above while the thread runs. */
+    std::recursive_mutex mu;
+    std::thread th;
+    std::atomic<bool> quit{false};
+    bool threaded = false;
     std::string room_id(const std::string& code, int launch_no) const { return tag == "3ds" ? session_room(code, launch_no) : code + "-" + std::to_string(launch_no); }   // other tags: the Worker only accepts CODE-N game rooms
 
     static SOCKET udp(int port, int* bound) {
@@ -66,6 +79,26 @@ struct Runner::Impl {
     void send_out(int to_slot, const char* d, int n) {
         for (auto& f : fragment(next_id++, (const uint8_t*)d, (size_t)n)) sess.send(to_slot, f.data(), (int)f.size());
         ++out;
+    }
+    /* Every local socket Dolphin writes to (select() wakes on them). */
+    int fill_fds(fd_set* fs) {
+        FD_ZERO(fs);
+        int n = 0;
+        if (host) { for (auto& kv : host_sock) { FD_SET(kv.second, fs); ++n; } }
+        else if (guest_sock != INVALID_SOCKET) { FD_SET(guest_sock, fs); ++n; }
+        return n;
+    }
+    void step();
+    void forward_loop() {
+        timeBeginPeriod(1);   // 1 ms waits while a GameCube session runs
+        while (!quit.load()) {
+            fd_set fs;
+            int n;
+            { std::lock_guard<std::recursive_mutex> g(mu); step(); n = fill_fds(&fs); }
+            if (n > 0) { timeval tv{0, 1000}; select(0, &fs, nullptr, nullptr, &tv); }   // wake at once on a Dolphin packet, else poll the session in 1 ms
+            else Sleep(1);
+        }
+        timeEndPeriod(1);
     }
     void pump() {
         char buf[2048];
@@ -193,6 +226,7 @@ bool Runner::start_host_forward(const std::string& server, const std::string& co
     m.active = true;
     m.t0 = hubnet::now_ms();
     m.status = "Waiting for everyone to connect...";
+    if (m.tag == "gc" && !std::getenv("RETROHUB_GCFW_NOTHREAD")) { m.threaded = true; m.th = std::thread([&m] { m.forward_loop(); }); }
     return true;
 }
 
@@ -216,11 +250,18 @@ bool Runner::start_guest(const std::string& server, const std::string& code, int
     m.active = true;
     m.t0 = hubnet::now_ms();
     m.status = "Connecting to the host...";
+    if (m.tag == "gc" && !std::getenv("RETROHUB_GCFW_NOTHREAD")) { m.threaded = true; m.th = std::thread([&m] { m.forward_loop(); }); }
     return true;
 }
 
 void Runner::update() {
     Impl& m = *impl_;
+    if (!m.active || m.threaded) return;   // GameCube: the forwarder thread steps the session
+    m.step();
+}
+
+void Runner::Impl::step() {
+    Impl& m = *this;
     if (!m.active) return;
     m.sess.update();
     m.pump();
@@ -235,6 +276,9 @@ void Runner::update() {
 
 void Runner::stop() {
     Impl& m = *impl_;
+    if (m.th.joinable()) { m.quit = true; m.th.join(); }   // the loop waits at most ~1 ms
+    m.threaded = false;
+    m.quit = false;
     m.sess.stop();
     for (auto& kv : m.host_sock) closesocket(kv.second);
     m.host_sock.clear();
@@ -249,22 +293,24 @@ void Runner::stop() {
 }
 
 bool Runner::active() const { return impl_->active; }
-bool Runner::ready() const { return impl_->active && !impl_->failed && impl_->sess.ready(); }
+bool Runner::ready() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->active && !impl_->failed && impl_->sess.ready(); }
 int Runner::worst_ping_ms() const {
+    std::lock_guard<std::recursive_mutex> g(impl_->mu);
     int w = -1;
     if (!impl_->active) return w;
     for (int i = 0; i < hubnet::kMaxSlots; ++i) { int p = impl_->sess.ping_ms(i); if (p > w) w = p; }
     return w;
 }
 bool Runner::any_relayed() const {
+    std::lock_guard<std::recursive_mutex> g(impl_->mu);
     if (!impl_->active) return false;
     for (int i = 0; i < hubnet::kMaxSlots; ++i) if (impl_->sess.is_relayed(i)) return true;
     return false;
 }
-bool Runner::failed() const { return impl_->failed; }
-std::string Runner::status() const { return impl_->status; }
+bool Runner::failed() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->failed; }
+std::string Runner::status() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->status; }
 int Runner::connect_port() const { return impl_->host ? impl_->plan.port : impl_->local_port; }
-unsigned long long Runner::datagrams_out() const { return impl_->out; }
-unsigned long long Runner::datagrams_in() const { return impl_->in; }
+unsigned long long Runner::datagrams_out() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->out; }
+unsigned long long Runner::datagrams_in() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->in; }
 
 }  // namespace hubnp3ds

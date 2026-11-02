@@ -83,6 +83,7 @@ struct Run {
     std::string error;
     bool wait_go = false;         // guest: the driver stops at the open Setup dialog and presses Connect only once signal_go() ran (Dolphin boots while the host is still starting)
     std::string go_path;
+    std::string buf_path;         // host: pad buffer the driver types into the NetPlay dialog right before Start (set_host_buffer)
 };
 /* Starts Dolphin (-b not used: the main window must exist) minimized without activation plus the driver.
  * desktop = "" runs on the user's desktop; a name (tests) runs both on a private invisible desktop. */
@@ -91,6 +92,7 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
 /* Last "code:" value written by the host driver ("" if none yet). */
 std::string read_code(const Run& r);
 std::string read_status(const Run& r);   // whole status file
+void set_host_buffer(const Run& r, int frames);   // host: the session's ping is known only once everyone connected
 void signal_go(const Run& r);            // guest: the host's NetPlay server is listening, connect now
 #endif
 

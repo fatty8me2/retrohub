@@ -71,6 +71,7 @@ int main() {
     CHECK(o.find("CPUThread = False") != std::string::npos && o.find("SyncGPU = False") != std::string::npos && o.find("OverclockEnable = False") != std::string::npos);   // default single core, other determinism pins kept
     { Spec b = s; b.game_id = "GYQE01"; std::string ob = ini_patch(o, b, p); CHECK(ob.find("CPUThread = True") != std::string::npos && ob.find("SyncGPU = False") != std::string::npos);   // allowlisted: dual core
       b.game_id = "GYQP01"; CHECK(dual_core_allowed("GYQJ01") && ini_patch("", b, p).find("CPUThread = True") != std::string::npos); CHECK(!dual_core_allowed("GM4E01") && !dual_core_allowed("")); CHECK(dual_core_allowed("G4QE01") && dual_core_allowed("G4QP01")); }
+    CHECK(std::string(driver_script()).find("$BufFile") != std::string::npos && std::string(driver_script()).find("RangeValuePattern") != std::string::npos);   // host types the measured buffer before Start
     CHECK(pad_buffer_for_ping(-1, false) == 6 && pad_buffer_for_ping(-1, true) == 8);
     CHECK(pad_buffer_for_ping(0, false) == 4 && pad_buffer_for_ping(20, true) == 6 && pad_buffer_for_ping(100, false) == 7 && pad_buffer_for_ping(5000, true) == 20);
     CHECK(ini_patch("", s, p).find("BufferSize = 6") != std::string::npos);
