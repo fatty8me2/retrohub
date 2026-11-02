@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.30.3",
+      "date": "2026-11-01",
+      "title": "No more doubled friends' games",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "A friend's game could show twice in your library (for example Zelda: Phantom Hourglass) when the friend's copy and the shared pack used different names for it; it now shows once with everyone who has it"
+      ]
+    },
+    {
       "version": "1.30.2",
       "date": "2026-11-01",
       "title": "Play right after installing",
