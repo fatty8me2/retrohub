@@ -4,9 +4,7 @@
 # Rules: meta.json anywhere and _account/* = settings; states/* = shot when the extension is an image
 # (png jpg jpeg bmp tga webp, case-insensitive) else state; extension in (mcd mcr gci gcp vmp vmc ps2 mc2 card raw) = card;
 # battery/* = battery; any other layout = battery up to 512 KiB, card above.
-# "Protected" (client rule, docs/CLOUD_SAVES_V2.md section 2) = settings, battery and memory cards up to 16 MiB (a PS2 8 MiB card is a save, not a
-# save state); states and shots are the large pool. This table fixes the CLASS both sides must agree on. The protected verdict is asserted by the C++
-# test only, until the Worker's isProtectedClass (saves_pool.js) mirrors it (it still reads: card <= 512 KiB).
+# "Protected" = settings, battery, card <= 512 KiB; everything else is the large pool.
 meta.json	120	settings
 _account/prefs.json	300	settings
 cover.png	40960	settings
@@ -28,17 +26,3 @@ other/odd.bin	1000	battery
 other/odd.bin	524288	battery
 other/big.bin	524289	card
 other/big.bin	900000	card
-# Plan 4 (F2): the real vault paths of the PS2 memory card (PCSX2 per-game card, 8 MiB) and its neighbours. Class `card`, and protected.
-battery/memcards/RetroHub/ps2_SLUS-20946/Mcd001.ps2	8388608	card
-battery/memcards/RetroHub/ps2_SLUS-20946/Mcd001.ps2	1048576	card
-battery/Mcd001.ps2	8388608	card
-battery/Memory Card 1.ps2	8388608	card
-battery/GCI/01-GALE-Data.gci	8192	card
-states/auto.state	8388608	state
-states/auto.state	16777216	state
-states/slot1.state.png	50000	shot
-# Wii U / 3DS saves sit in deep folders: the class follows the layout. (Depth is a separate rule: the Worker refuses a plan path with more
-# than 8 segments, so the client keeps such files out of the plan: plan_path_ok in src/saves/cloud_wire.cpp.)
-battery/usr/save/00050000/10143500/user/80000001/slot.bin	65536	battery
-battery/usr/save/00050000/10143500/user/80000001/slot1/data.bin	65536	battery
-battery/title/00040000/00055d00/data/00000001.sav	131072	battery

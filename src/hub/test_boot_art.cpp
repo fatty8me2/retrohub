@@ -15,7 +15,7 @@ int main() {
     ImGui::NewFrame();
     ImDrawList* d = ImGui::GetForegroundDrawList();
 
-    const System all[] = {System::Unknown, System::N64, System::GBA, System::GB, System::GBC, System::GC, System::N3DS, System::WiiU, System::NDS, System::PS2, System::PSP, System::PS1, System::NES, System::SNES};
+    const System all[] = {System::Unknown, System::N64, System::GBA, System::GB, System::GBC, System::GC, System::N3DS, System::WiiU, System::NDS, System::PS2, System::PS1, System::NES, System::SNES};
     for (System s : all) {
         const char* nm = bootanim::art_name(s);
         CHECK(nm && *nm);
@@ -35,8 +35,6 @@ int main() {
     bootanim::draw_gallery(d, ImVec2(0, 0), ImVec2(1280, 800), "all", (ImTextureID)0);
     for (int i = 0; i < d->VtxBuffer.Size; i++) { CHECK(std::isfinite(d->VtxBuffer[i].pos.x) && std::isfinite(d->VtxBuffer[i].pos.y)); }
     CHECK(bootanim::art_system_from_name("PS2") == System::PS2);
-    CHECK(bootanim::art_system_from_name("PSP") == System::PSP);
-    CHECK(std::string(bootanim::art_name(System::PSP)) == "psp" && bootanim::media_for(System::PSP) == bootanim::Media::Umd);
     CHECK(bootanim::art_system_from_name("nope") == System::Unknown);
     ImGui::EndFrame();
     ImGui::DestroyContext();

@@ -39,26 +39,12 @@ int main() {
         CHECK(parse_speed_arg("2x", &sp) && sp == 2 && parse_speed_arg("max", &sp) && sp == 0 && parse_speed_arg("0.25", &sp) && sp == 0.25);
         CHECK(!parse_speed_arg("4", &sp) && !parse_speed_arg("fast", &sp) && !parse_speed_arg("", &sp));
         CHECK(speed_label(2) == "Speed 2x" && speed_label(0.5) == "Speed 0.5x" && speed_label(0) == "Speed max");
-        CHECK(!offline_only(Cmd::Volume) && !offline_only(Cmd::Mute) && offline_only(Cmd::Speed) && !offline_only(Cmd::Overlay) && offline_only(Cmd::Ff) && offline_only(Cmd::SaveState) && !offline_only(Cmd::OsdMsg) && !offline_only(Cmd::Quit));
-        CHECK(!offline_only(Cmd::Clip));   // clips are cosmetic: allowed online
+        CHECK(!offline_only(Cmd::Volume) && !offline_only(Cmd::Mute) && offline_only(Cmd::Speed) && !offline_only(Cmd::Overlay) && offline_only(Cmd::Ff) && offline_only(Cmd::SaveState) && !offline_only(Cmd::OsdMsg) && !offline_only(Cmd::Quit));
+        CHECK(!offline_only(Cmd::Clip));   // clips are cosmetic: allowed online
         Command w; w.cmd = Cmd::OsdMsg; w.text = "a \"q\""; w.seq = 9;
         CHECK(parse_control(make_control(w), &q) && q.text == w.text && q.seq == 9);
         w = Command(); w.cmd = Cmd::Speed; w.speed = 0.25; w.seq = 2;
         CHECK(parse_control(make_control(w), &q) && q.speed == 0.25);
-    }
-    {   // Plan 4: pause, corner text, controller hand-off
-        Command q;
-        CHECK(parse_control("{\"seq\":1,\"cmd\":\"pause\",\"value\":1}", &q) && q.cmd == Cmd::Pause && q.value == 1);
-        CHECK(!parse_control("{\"seq\":1,\"cmd\":\"pause\",\"value\":2}", &q));
-        CHECK(parse_control("{\"seq\":1,\"cmd\":\"osd_corner\",\"slot\":1,\"text\":\"1 Mia 6\"}", &q) && q.cmd == Cmd::OsdCorner && q.slot == 1 && q.text == "1 Mia 6");
-        CHECK(parse_control("{\"seq\":1,\"cmd\":\"osd_corner\",\"slot\":0,\"text\":\"\"}", &q) && q.text.empty());   // empty text clears the corner
-        CHECK(!parse_control("{\"seq\":1,\"cmd\":\"osd_corner\",\"slot\":4,\"text\":\"x\"}", &q));
-        CHECK(!parse_control("{\"seq\":1,\"cmd\":\"osd_corner\",\"slot\":0,\"value\":5000,\"text\":\"x\"}", &q));
-        CHECK(parse_control("{\"seq\":1,\"cmd\":\"handoff\",\"slot\":0,\"value\":2}", &q) && q.cmd == Cmd::Handoff && q.slot == 0 && q.value == 2);
-        CHECK(!parse_control("{\"seq\":1,\"cmd\":\"handoff\",\"slot\":0,\"value\":5}", &q));
-        CHECK(offline_only(Cmd::Pause) && !offline_only(Cmd::OsdCorner) && !offline_only(Cmd::Handoff));
-        Command w; w.cmd = Cmd::OsdCorner; w.slot = 3; w.value = 10; w.text = "02:13"; w.seq = 4;
-        CHECK(parse_control(make_control(w), &q) && q.cmd == Cmd::OsdCorner && q.slot == 3 && q.value == 10 && q.text == "02:13");
     }
     Ack a;
     CHECK(parse_ack(make_ack({5, true, "x \"y\""}), &a) && a.seq == 5 && a.ok && a.msg == "x \"y\"");
@@ -92,21 +78,6 @@ int main() {
     CHECK(send_command(ctl, Cmd::Screenshot) > 2);   // corrupt file: clock-based seq
     CHECK(p.poll(5000, &c) && c.cmd == Cmd::Screenshot);
     fs::remove_all(d);
-
-    {   // runners-H1: the one-command file never loses an un-acked Quit
-        fs::path d2 = fs::temp_directory_path() / "runctl_test_quit";
-        fs::remove_all(d2);
-        std::string c2 = (d2 / "control.json").u8string();
-        CHECK(send_command(c2, Cmd::Quit) == 1);
-        Command in; in.cmd = Cmd::Input; in.value = 1;
-        CHECK(send_command_ex(c2, in) == 0);          // the menu's "input on" right after Quit is dropped
-        std::string t2; Command now;
-        CHECK(read_text(c2, &t2) && parse_control(t2, &now) && now.cmd == Cmd::Quit && now.seq == 1);
-        CHECK(send_command(c2, Cmd::Quit) == 2);      // a Quit may replace a Quit
-        write_text_atomic(ack_path_for(c2), make_ack({2, true, "quitting"}));
-        CHECK(send_command_ex(c2, in) == 3);          // acked: commands flow again
-        fs::remove_all(d2);
-    }
     if (!fails) std::printf("runner_ctl_test: all passed\n");
     return fails ? 1 : 0;
 }

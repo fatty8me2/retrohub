@@ -7,12 +7,12 @@
 namespace hubui {
 
 /* Four tabs. "Saves & Cloud" and "Controllers" were removed: their controls live on the sidebar Saves / Controllers pages (see kPageSaves / kPageControllers). */
-enum SettingsTab { ST_General = 0, ST_Online, ST_Video, ST_Account, ST_Help, ST_Count };
+enum SettingsTab { ST_General = 0, ST_Online, ST_Video, ST_Account, ST_Count };
 /* Pseudo-tabs for controls that now live on a sidebar page instead of a Settings tab. */
 enum { kPageSaves = 100, kPageControllers = 101 };
 
 inline const char* settings_tab_name(int t) {
-    static const char* n[] = {"General", "Online", "Video & Games", "Account", "Help"};
+    static const char* n[] = {"General", "Online", "Video & Games", "Account"};
     return t >= 0 && t < ST_Count ? n[t] : n[0];
 }
 inline int settings_tab_clamp(int t) { return t < 0 || t >= ST_Count ? ST_General : t; }
@@ -48,8 +48,6 @@ inline const SettingsCtl* settings_controls(int* n) {
         {"boot_anim", ST_Video}, {"boot_sounds", ST_Video}, {"boot_volume", ST_Video}, {"boot_short", ST_Video}, {"boot_skip_online", ST_Video}, {"dolphin_status", ST_Video}, {"pcsx2_status", ST_Video},
         {"ps2_bios_dir", ST_Video}, {"ps2_bios_auto", ST_Video}, {"ps1_bios", ST_Video}, {"ps1_openbios", ST_Video},
         {"azahar_status", ST_Video}, {"cemu_exe", ST_Video}, {"cemu_exe_auto", ST_Video}, {"game_defaults", ST_Video},
-        {"discord_presence", ST_Online}, {"discord_join", ST_Online}, {"connection_test", ST_Online}, {"net_allow", ST_Online},
-        {"copy_diagnostics", ST_Help}, {"help_faq", ST_Help},
         {"username", ST_Account}, {"change_username", ST_Account}, {"friend_code", ST_Account}, {"account_code", ST_Account},
         {"redeem_code", ST_Account}, {"export_account", ST_Account}, {"import_account", ST_Account},
     };

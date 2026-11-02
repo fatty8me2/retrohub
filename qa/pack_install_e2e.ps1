@@ -16,7 +16,7 @@ $srv = Start-Process python -ArgumentList @((Join-Path $root 'qa\gamepack_fake_s
 Start-Sleep -Seconds 2
 $env:RETROHUB_QA = '1'; $env:RETROHUB_GP_BASE = "127.0.0.1:$port"; $env:SSB64_MUTE = '1'; $env:RETROHUB_NO_SHELL = '1'
 $cases = @(@('gc', 'Gauntlet - Dark Legacy'), @('gc', 'Fakeland Zip'), @('gc', 'Pikmin'), @('gc', 'Generic Inner Game'), @('gc', 'Folder Style Game'),
-           @('ps2', 'Gauntlet - Dark Legacy'), @('ps1', 'Crash Bandicoot'), @('wiiu', 'Fakeland WiiU'), @('gba', 'Control GBA Game'), @('n64', 'Fakeland 64'), @('n64', 'Zipland Cart'), @('nds', 'Fakeland DS'))
+           @('ps2', 'Gauntlet - Dark Legacy'), @('ps1', 'Crash Bandicoot'), @('wiiu', 'Fakeland WiiU'), @('gba', 'Control GBA Game'))
 $fail = 0
 function Mode($m) { Invoke-WebRequest "http://127.0.0.1:$port/__mode?dl=$m" -UseBasicParsing | Out-Null }
 function RunCase($c) {
@@ -30,8 +30,7 @@ try {
         $isArchive = $out -match 'issue=extract'
         $okc = ($out -match 'ghost_before=1') -and ($out -match 'install ok=1') -and ($out -match 'total_known=1') -and ($out -match 'staging_left=0') `
                -and ($out -match 'scan_found=1') -and ($out -match 'ghost_after=0') -and ($out -match 'full_scan_same_keys=1') `
-               -and ($out -match 'uninstalled=1 dir_gone=1 installed_flag=0 ghost_back=1') -and (-not $isArchive -or ($out -match 'prepared=1')) -and -not ($out -match 'prepared=0') `
-               -and ($out -match 'play_ok=1') -and -not ($out -match 'real_image=0|full_scan_same_path=0')   # Play right after the install, same process: a real image path
+               -and ($out -match 'uninstalled=1 dir_gone=1 installed_flag=0 ghost_back=1') -and (-not $isArchive -or ($out -match 'prepared=1')) -and -not ($out -match 'prepared=0')
         $tag = ''
         if ($isArchive) { $tag = ' (archive unpacked at install)' }
         Write-Output ("{0} {1} / {2}{3}" -f $(if ($okc) { 'PASS' } else { 'FAIL' }), $c[0], $c[1], $tag)
@@ -50,7 +49,7 @@ try {
         Mode 'ok'
         $out = RunCase @('gc', $t)
         $okc = ($out -match 'ghost_before=1') -and ($out -match 'install ok=1') -and ($out -match 'entry sys=ps2 ') -and ($out -match 'prepared=1') -and ($out -match 'ghost_after=0') `
-               -and ($out -match 'PlayStation 2 game \(the pack had it under GameCube\)') -and ($out -match 'full_scan_same_keys=1') -and ($out -match 'play_ok=1') -and ($out -match 'uninstalled=1 dir_gone=1 installed_flag=0 ghost_back=1')
+               -and ($out -match 'PlayStation 2 game \(the pack had it under GameCube\)') -and ($out -match 'full_scan_same_keys=1') -and ($out -match 'uninstalled=1 dir_gone=1 installed_flag=0 ghost_back=1')
         Write-Output ("{0} misfiled PS2 cue/bin in gc folder: {1}" -f $(if ($okc) { 'PASS' } else { 'FAIL' }), $t)
         if (-not $okc) { $fail++; Write-Output $out }
     }

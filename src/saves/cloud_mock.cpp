@@ -96,24 +96,6 @@ Res jok(const str& inner) {
     r.body = "{\"ok\":true" + (inner.empty() ? str() : "," + inner) + "}";
     return r;
 }
-/* The Worker's cleanKey (saves_pool.js) as it applies to plan paths: ONE bad path makes it answer 400 bad-plan for the WHOLE plan.
- * Written out separately from the client's plan_path_ok so a bug in that function cannot hide here. */
-bool worker_key_ok(const str& k) {
-    if (k.empty() || k.size() > 240) return false;
-    int segs = 1;
-    for (char c : k) if (c == '/') segs++;
-    if (segs > 8) return false;
-    size_t i = 0;
-    while (i <= k.size()) {
-        size_t j = k.find('/', i);
-        if (j == str::npos) j = k.size();
-        str s = k.substr(i, j - i);
-        if (s.empty() || s == "." || s == ".." || s.size() > 120 || s.back() == '.' || s.back() == ' ') return false;
-        for (unsigned char c : s) if (c < 0x20 || c == 0x7f || strchr("\\:*?\"<>|", c)) return false;
-        i = j + 1;
-    }
-    return lower(k.substr(0, k.find('/'))) != "_identity";
-}
 }  // namespace
 
 struct MockServer::Impl {
@@ -125,9 +107,6 @@ struct MockServer::Impl {
     std::atomic<bool> stop{false};
     std::mutex tmu;
     std::vector<std::thread> conns;
-    str plan_refuse, plan_reason = "over-cap";                                   // refuse_in_plan
-    str commit_refuse, commit_cloud = "skipped", commit_reason = "over-cap";     // refuse_in_commit
-    int bad_plans = 0;
 
     int64_t used_of(const Acct& a, int64_t* prot = nullptr) {
         int64_t u = 0, p = 0;
@@ -192,12 +171,10 @@ struct MockServer::Impl {
             }
             return jok("");
         }
-        self->n_requests++;
         if (self->fail_count > 0) {
             int left = --self->fail_count;
             (void)left;
-            if (self->fail_status > 0)
-                return jerr(self->fail_status, self->fail_status == 429 ? "rate-limited" : "cloud-saves-error", ",\"retryAfter\":" + std::to_string(self->fail_retry_after.load()));
+            if (self->fail_status > 0) return jerr(self->fail_status, self->fail_status == 429 ? "rate-limited" : "cloud-saves-error", ",\"retryAfter\":1");
         }
         /* auth */
         auto ah = rq.h.find("authorization");
@@ -296,7 +273,6 @@ struct MockServer::Impl {
             str gkey = body.str("game");
             const JV* fl = body.get("files");
             if (gkey.empty() || !fl || fl->type != JV::Array || fl->a.size() > 200) return jerr(400, "bad-plan");
-            for (auto& f : fl->a) if (!worker_key_ok(f.str("path")) || f.i64("mtime") < 0) { bad_plans++; return jerr(400, "bad-plan"); }   // the whole plan, like the real Worker
             Game& G = A.games[gkey];
             Ticket t;
             t.gkey = gkey;
@@ -317,7 +293,6 @@ struct MockServer::Impl {
                 if (pf.stored > 16 * 1024 * 1024) { add(pf.path, "skip", ",\"reason\":\"too-large\""); continue; }
                 if (cv && cv->sha == pf.sha && !fr->evicted) { add(pf.path, "same", ",\"current\":" + ver_json(*cv)); continue; }
                 if (cur != pf.base && !(fr && fr->evicted)) { add(pf.path, "conflict", cv ? ",\"current\":" + ver_json(*cv) : str()); continue; }
-                if (!plan_refuse.empty() && pf.path.find(plan_refuse) != str::npos) { add(pf.path, "skip", ",\"reason\":" + json::quote(plan_reason)); continue; }
                 bool prot = is_prot(pf.cls, pf.size);
                 if (A.blobs.count(pf.sha)) { t.files.push_back(pf); add(pf.path, "have"); continue; }
                 int64_t ap = 0;
@@ -363,17 +338,12 @@ struct MockServer::Impl {
             for (auto& pf : t.files) {
                 FileRec& fr = G.files[pf.path];
                 int cur = fr.evicted ? 0 : fr.cur;
-                if (cur != pf.base && !(fr.evicted && (pf.base == 0 || pf.base == fr.cur))) {   // the real Worker wants base == the tombstone's cur
+                if (cur != pf.base && !(fr.evicted && pf.base == 0)) {
                     str cj = fr.vers.empty() ? str() : ",\"current\":" + ver_json(fr.vers[0]);
                     results += (results.empty() ? "" : ",") + str("{\"path\":") + json::quote(pf.path) + ",\"cloud\":\"synced\",\"conflict\":true" + cj + "}";
                     continue;
                 }
                 if (!A.blobs.count(pf.sha)) { return jerr(409, "missing-blob"); }
-                if (!commit_refuse.empty() && pf.path.find(commit_refuse) != str::npos) {   // accepted by the plan, refused at commit: nothing is applied
-                    results += (results.empty() ? "" : ",") + str("{\"path\":") + json::quote(pf.path) + ",\"cloud\":" + json::quote(commit_cloud) +
-                               ",\"reason\":" + json::quote(commit_reason) + "}";
-                    continue;
-                }
                 if (!is_prot(pf.cls, pf.size)) evict_for(A, t.gkey, pf.stored, &ev, false);
                 Ver v;
                 v.ver = std::max(fr.cur, fr.vers.empty() ? 0 : fr.vers[0].ver) + 1;
@@ -675,32 +645,6 @@ void MockServer::set_played(const std::string& uid, const std::string& gkey, int
 void MockServer::expire_leases() {
     std::lock_guard<std::mutex> lk(p_->mu);
     for (auto& a : p_->accts) for (auto& g : a.second.games) g.second.lease_until = 0;
-}
-void MockServer::evict_file(const std::string& uid, const std::string& gkey, const std::string& path) {
-    std::lock_guard<std::mutex> lk(p_->mu);
-    Acct& A = p_->accts[uid];
-    auto g = A.games.find(gkey);
-    if (g == A.games.end() || !g->second.files.count(path)) return;
-    FileRec& fr = g->second.files[path];
-    fr.vers.clear();
-    fr.evicted = true;                    // a tombstone: cur stays, the bytes are gone
-    g->second.rev = ++A.rev;
-    p_->drop_unreferenced(A);
-}
-void MockServer::refuse_in_plan(const std::string& path_part, const std::string& reason) {
-    std::lock_guard<std::mutex> lk(p_->mu);
-    p_->plan_refuse = path_part;
-    p_->plan_reason = reason;
-}
-void MockServer::refuse_in_commit(const std::string& path_part, const std::string& cloud, const std::string& reason) {
-    std::lock_guard<std::mutex> lk(p_->mu);
-    p_->commit_refuse = path_part;
-    p_->commit_cloud = cloud;
-    p_->commit_reason = reason;
-}
-int MockServer::n_bad_plans() const {
-    std::lock_guard<std::mutex> lk(p_->mu);
-    return p_->bad_plans;
 }
 
 } // namespace hub::saves

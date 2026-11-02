@@ -363,25 +363,6 @@ std::vector<float> ps2() {          // 9.5 s: airy evolving pad over three chord
     reverb(S, 0.5f, 0.89f, 0.3f);
     return finish(S, 2.6f);
 }
-std::vector<float> psp() {          // 7.5 s: UMD clack and motor spin-up, a glassy bell wave rising over a pad that swells to a bright chord
-    Song S(7.5f); Rng r;
-    click(S, r, 0.0f, 0.4f);
-    thunk(S, r, 0.12f, 0.3f, 130);
-    whoosh(S, r, 0.2f, 1.7f, 0.2f, 500, 5200);
-    pad(S, 0.8f, 2.4f, {50, 57, 62, 66}, 0.09f, Sine, 0, 1.0f, 0.9f, 10);
-    pad(S, 3.0f, 2.2f, {52, 59, 64, 68, 71}, 0.10f, Sine, 0, 0.8f, 1.2f, 10);
-    pad(S, 5.0f, 1.9f, {54, 61, 66, 70, 73, 78}, 0.10f, Tri, 2400, 0.5f, 1.6f, 8);
-    note(S, {0.6f, 4.8f, midi(30), 0, Sine, 0.18f, 0, 1.4f, 0.4f, 0.8f, 1.8f});
-    const int sc[7] = {0, 2, 4, 7, 9, 11, 14};
-    for (int i = 0; i < 14; i++) {
-        float t = 1.3f + i * 0.34f;
-        float amp = 0.06f * (i < 10 ? 1.f : 1.f - (i - 10) * 0.15f);
-        bell(S, t, 74 + sc[(i * 3) % 7] + (i / 7) * 12, amp, std::sin(i * 1.9f) * 0.8f, 1.2f, 6);
-    }
-    bell(S, 5.0f, 90, 0.16f, -0.2f, 2.0f); bell(S, 5.05f, 85, 0.1f, 0.3f, 2.0f); bell(S, 5.1f, 97, 0.07f, 0.1f, 1.8f);
-    reverb(S, 0.42f, 0.86f, 0.3f);
-    return finish(S, 1.9f);
-}
 std::vector<float> wiiu() {         // 7 s: click and breath, bell motif, harmonised marimba reply over a soft pad, ringing bell chord
     Song S(7.0f); Rng r;
     click(S, r, 0.0f, 0.3f);
@@ -524,7 +505,6 @@ std::vector<float> render(hub::System s) {
     case hub::System::GC:   return gc();
     case hub::System::PS1:  return ps1();
     case hub::System::PS2:  return ps2();
-    case hub::System::PSP:  return psp();
     case hub::System::WiiU: return wiiu();
     case hub::System::NES:  return nes();
     case hub::System::SNES: return snes();

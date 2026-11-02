@@ -10,7 +10,6 @@
  * --slot may be any of 0..3 (lobby slots can have gaps); --players is the number of PCs.
  */
 #include "winutil.h"
-#include "net_probe.h"
 #include <windows.h>
 #include <shellapi.h>
 
@@ -61,12 +60,7 @@
 #include "osd.h"
 #include "fbmask.h"
 #include "clip.h"
-#include "corner.h"
-#include "match_result.h"
-#include "osd_gl.h"
-#include "remix_data.h"
 #include <GL/gl.h>
-#include <deque>
 #include <set>
 #include <ctime>
 #include "save_sync.h"
@@ -82,7 +76,7 @@ static const char* kUsage =
     "usage: n64run --rom PATH [--game ID] [--net SERVER --room CODE-N --slot K --players N\n"
     "              --ports P0,P1,P2,P3 --delay auto|D [--share-host-save --host-save-dir DIR]]\n"
     "              [--match SPEC] [--save-dir DIR] [--emu-dir DIR] [--width W --height H] [--strict-sync] [--no-hash]\n"
-    "              [--cheats FILE] [--title TEXT] [--fullscreen] [--gfx Key=i|b|s:value]... [--result-file FILE]\n"
+    "              [--cheats FILE] [--title TEXT] [--fullscreen] [--gfx Key=i|b|s:value]...\n"
     "              [--gs-code CODES] [--headless [--realtime] [--frames N] [--screenshot OUT.png] [--dump-ram OFFSET,LEN,FILE]...]\n";
 
 // ---------------------------------------------------------------- logging
@@ -144,7 +138,6 @@ struct Args {
     std::string controls;   // --controls FILE / RETROHUB_CONTROLS: resolved controller profile JSON (controls.h)
     std::string test_input;   // --test-input / N64RUN_TEST_INPUT: scripted local input (QA)
     std::string match;   // --match spec (VS battle jump)
-    std::string result_file;   // --result-file FILE: Smash Remix / Smash 64 ROM VS results as rivals JSON v1 (match_result.h); written once per match
     std::string gs_code;   // --gs-code "80ADDR 00VV+..." (headless QA: GameShark RAM writes every VI)
     struct RamDump { uint32_t offset, len; std::string file; };
     std::vector<RamDump> dumps;
@@ -185,7 +178,6 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--frames") { int f = 0; ok = ival(&f) && f >= 0; a.frames = f; }
         else if (k == "--screenshot") ok = val(&a.screenshot);
         else if (k == "--match") ok = val(&a.match);
-        else if (k == "--result-file") ok = val(&a.result_file);
         else if (k == "--gs-code") ok = val(&a.gs_code);
         else if (k == "--dump-ram") {
             std::string s;
@@ -434,44 +426,21 @@ static bool qa_nofix() { return std::getenv("RETROHUB_QA") && std::getenv("N64RU
 
 
 /* ---- hub control channel (--control FILE; contract in src/common/runner_ctl.h) ----
- * Polled from the VI callback (emulation thread) AND from every blocking wait: the lockstep calls hooks.idle (ctl_idle) while it waits
- * for peers (a netplay stall, the start barrier, a desync recovery) and the pause loop calls it too, so Quit, volume, mute and the OSD
- * commands are served even while the emulation produces no frames (runners-M1: Quit used to be ignored for up to the 10 s stall
- * timeout). Everything runs on the emulating thread (main before the emulation starts), never on two threads at once.
- * Save/load go through the core's own state commands (done on the next VI), so every command is a small state machine that acks once
- * its file exists; one job at a time. A state / screenshot / clip command that arrives while the emulation is blocked, or while a job
- * runs, waits in g_ctl_defer for the VI loop. The ack carries the command's own seq: the ack file holds one record and only moves forward. */
+ * Polled from the VI callback (emulation thread). Save/load go through the core's own state commands (done on the next VI), so
+ * every command is a small state machine that acks once its file exists. One command at a time. */
 struct CtlJob {
     enum Kind { None, SaveWait, SaveShot, LoadWait, Shot } kind = None;
     long long start_vi = 0;
-    long long seq = 0;      // the command this job answers
     int slot = 0;
     unsigned serial0 = 0;
     std::string dest, thumb;
 };
 static runctl::Poller g_ctl;
-static std::string g_ctl_path;                     // --control (the ack is its sibling)
-static long long g_ctl_acked = 0;                  // highest seq acked so far
 static runctl::InputGate g_in_gate;   // hub quick menu open => neutral local input
 static CtlJob g_job;
 static std::string g_ctl_state_dir, g_ctl_shot_dir, g_ctl_key, g_ctl_shot_tmp;
 static bool g_ctl_online = false;
 static std::set<std::string> g_ctl_shot_seen;
-static std::deque<runctl::Command> g_ctl_defer;    // polled while the emulation was blocked, but they need the VI loop
-static std::atomic<bool> g_quit_requested{false};  // the hub's Quit was acked: the emulation is on its way out
-static bool g_core_running = false;                // M64CMD_EXECUTE is running (before it only Quit and the OSD commands make sense)
-static bool g_paused = false;                      // inside pause_loop()
-static long long g_pause_at_vi = 0;                // Pause was acked: the loop starts at this VI, after a few frames that show "PAUSED"
-static std::function<void()> g_pause_poll;         // pad polling inside the pause loop (the exit combo keeps working)
-
-static void ctl_ack(long long seq, bool ok, const std::string& msg) {
-    if (g_ctl_path.empty() || seq <= 0 || seq < g_ctl_acked) return;
-    g_ctl_acked = seq;
-    runctl::Ack a;
-    a.seq = seq; a.ok = ok; a.msg = msg;
-    runctl::write_text_atomic(runctl::ack_path_for(g_ctl_path), runctl::make_ack(a));
-    logf_("control", "seq %lld %s: %s", seq, ok ? "ok" : "FAILED", msg.c_str());
-}
 
 static std::set<std::string> list_dir(const std::string& d) {
     std::set<std::string> r;
@@ -511,7 +480,8 @@ static void ctl_finish(bool ok, const std::string& msg) {
         case CtlJob::Shot: osd::push(ok ? "Screenshot saved" : "Screenshot failed", ok ? osd::Kind::Good : osd::Kind::Error); break;
         default: if (!ok) osd::push(msg, osd::Kind::Warn); break;
     }
-    ctl_ack(g_job.seq, ok, msg);
+    g_ctl.ack(ok, msg);
+    logf_("control", "%s: %s", ok ? "ok" : "FAILED", msg.c_str());
     g_job = CtlJob();
 }
 
@@ -1001,218 +971,7 @@ static void n64_boost_tick(bool held) {
     else if (!held && g_boost_active) { g_boost_active = false; set_speed(g_menu_speed); }
 }
 
-/* ---- OsdCorner: persistent corner text for party standings and challenge timers (docs/RUNNER_CTL.md) ----
- * The hub sets up to four corners; osd.h has ONE corner slot (top-right) today, so the non-empty corners are joined into it, and the
- * same text is mirrored into the window caption (title_watch). The pause label rides in front of it. Switch corner_refresh() to
- * osd::set_corner_at(corner, ...) once that exists. Timed corners (value seconds) expire here, checked every VI / idle round. */
-static std::mutex g_corner_mx;
-static n64run::CornerBoard g_corners;
-static bool g_pause_label = false;       // "PAUSED" in front of the corner text while the pause is on or about to start
-static std::atomic<bool> g_corner_live{false};
-
-static std::string corner_text_locked() {
-    std::string t = g_corners.combined();
-    if (g_pause_label) t = t.empty() ? std::string("PAUSED") : "PAUSED  |  " + t;
-    return t;
-}
-static void corner_refresh() {
-    std::lock_guard<std::mutex> lk(g_corner_mx);
-    g_corners.expire(GetTickCount64());
-    const std::string t = corner_text_locked();
-    for (int c = 0; c < n64run::CornerBoard::kCorners; c++) {   // one OSD slot per corner; the pause label rides in the top-right one
-        std::string ct = g_corners.text(c);
-        if (c == 1 && g_pause_label) ct = ct.empty() ? std::string("PAUSED") : "PAUSED  |  " + ct;
-        osd::set_corner_at(c, ct, osd::Kind::Info, 0);
-    }
-    g_corner_live = !t.empty();
-}
-static void corner_tick() { if (g_corner_live.load()) corner_refresh(); }
-static std::string corner_caption() {   // title thread
-    corner_tick();
-    std::lock_guard<std::mutex> lk(g_corner_mx);
-    return corner_text_locked();
-}
-
-/* ---- --result-file: the VS results screen -> rivals JSON v1 (match_result.h) ----
- * Read the player blocks ONCE per match, the first VI the scene is the results screen after a battle; replace the file atomically. The
- * match id is the same on every peer (room + match counter + a signature of the final blocks), so the hub counts one match once. */
-static std::string g_result_file, g_result_game, g_result_room, g_result_code;   // path, catalog id, --room ("ABC234-1", empty offline), room code ("ABC234")
-static n64match::Trigger g_result_trigger;
-static void result_tick() {
-    if (g_result_file.empty() || !g_core.MemPtr) return;
-    const uint8_t* ram = static_cast<const uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM));
-    if (!ram) return;
-    const uint8_t scene = ram[(remix::kCurrentScreen & 0x7FFFFFu) ^ 3u];   // host-endian words: byte index ^ 3
-    static int last_scene = -1;
-    if (scene != last_scene) {
-        last_scene = scene;
-        if (std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_SCENES")) logf_("result", "QA: scene 0x%02X at VI %lld", scene, g_vi);
-    }
-    if (!g_result_trigger.step(scene)) return;
-    const unsigned counter = g_result_trigger.matches();
-    if (const char* dump = std::getenv("RETROHUB_QA") ? std::getenv("N64RUN_QA_RESULT_DUMP") : nullptr) {   // QA: capture the blocks the reader sees (fixtures for test_match_result.cpp)
-        const uint32_t base = n64match::kSceneBase & 0x7FFFFFu, len = 0x640u;   // scene block .. the sudden-death state's last player block
-        std::vector<uint8_t> raw(len);
-        for (uint32_t i = 0; i < len; i++) raw[i] = ram[(base + i) ^ 3u];     // big-endian N64 order, like --dump-ram
-        const std::string f = std::string(dump) + "." + std::to_string(counter) + ".bin";
-        if (FILE* fp = std::fopen(f.c_str(), "wb")) { std::fwrite(raw.data(), 1, raw.size(), fp); std::fclose(fp); logf_("result", "QA: dumped RDRAM 0x%X..+0x%X to %s", base, len, f.c_str()); }
-    }
-    std::vector<n64match::PlayerResult> pl;
-    n64match::MatchInfo mi;
-    if (!n64match::read_results_host(ram, 8u * 1024u * 1024u, &pl, &mi)) { logf_("result", "match %u: the player blocks look invalid; not reported", counter); return; }
-    if (mi.no_contest) { logf_("result", "match %u: no contest (A+B+R+Z); not reported", counter); return; }
-    const bool online = !g_result_room.empty();
-    std::vector<int> port_to_slot(n64match::kPlayers, -1);
-    for (int p = 0; p < n64match::kPlayers; p++) port_to_slot[(size_t)p] = online ? (g_run.lockstep ? g_run.lockstep->port_owner(p) : g_run.owner[p]) : p;
-    const std::string id = n64match::match_id(g_result_room, counter, mi.signature, (long long)std::time(nullptr));
-    const std::string json = n64match::result_json(g_result_game, id, g_result_code, !online, pl, port_to_slot);
-    if (json.empty()) { logf_("result", "match %u: fewer than two human players on a controller; not reported", counter); return; }
-    if (!runctl::write_text_atomic(g_result_file, json)) { logf_("result", "match %u: cannot write %s", counter, g_result_file.c_str()); return; }
-    if (std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_STOP_AFTER_RESULT") && !g_stop_at_vi) g_stop_at_vi = g_vi + 30;   // QA: stop on the results screen
-    std::string who;
-    for (const auto& p : pl) if (p.present) who += " P" + std::to_string(p.port + 1) + (p.cpu ? "(cpu)" : "") + ":ch" + std::to_string(p.ch) + "/place" + std::to_string(p.place) + "/stocks" + std::to_string(p.stocks) + "/kos" + std::to_string(p.kos) + "/falls" + std::to_string(p.falls);
-    logf_("result", "match %u written to %s as %s (rules %d%s%s, stage %d):%s", counter, g_result_file.c_str(), id.c_str(), mi.game_rules, mi.team ? ", teams" : "", mi.sudden_death ? ", sudden death" : "", mi.stage, who.c_str());
-}
-
-/* ---- Pause (offline only): the emulation thread parks in this loop, inside the frame callback. The window keeps its last frame and the
- * audio runs dry. The loop keeps serving the control file (Resume, Quit, volume, OSD) and the pad (the exit combo keeps working).
- * Frames are what makes the OSD visible, so "PAUSED" is switched on a few frames BEFORE the loop starts (g_pause_at_vi). ---- */
-static void ctl_idle();
-static void pause_loop() {
-    g_paused = true;
-    logf_("control", "paused at VI %lld", g_vi);
-    while (g_paused && !g_quit_requested.load()) {
-        ctl_idle();
-        if (g_pause_poll) g_pause_poll();
-        Sleep(10);
-    }
-    g_paused = false;
-    logf_("control", "resumed at VI %lld", g_vi);
-}
-
-/* ---- Handoff (Plan 4 P4): pass a controller port to another player at an agreed sample. The online netcode is a spike behind
- * N64RUN_HANDOFF=1 (QA only, RETROHUB_QA=1); until it ships every runner answers "unsupported" and the hub keeps the local pad swap. ---- */
-static void ctl_handoff(const runctl::Command& c) { ctl_ack(c.seq, false, "unsupported"); }
-
-static bool ctl_needs_vi(runctl::Cmd c) { return c == runctl::Cmd::SaveState || c == runctl::Cmd::LoadState || c == runctl::Cmd::Screenshot || c == runctl::Cmd::Clip; }
-static void ctl_warn(long long seq, const std::string& msg) { osd::push(msg, osd::Kind::Warn); ctl_ack(seq, false, msg); }
-
-/* One command. vi_ctx: called from the VI callback; false = the emulation is blocked in a wait (ctl_idle) and only commands that need no
- * frames can run now (state / screenshot / clip jobs are queued for the VI loop). */
-static void ctl_dispatch(const runctl::Command& c, bool vi_ctx) {
-    const long long vi = g_vi;
-    logf_("control", "seq %lld %s slot %d%s", c.seq, runctl::cmd_name(c.cmd), c.slot, vi_ctx ? "" : " (emulation blocked)");
-    if (c.cmd == runctl::Cmd::Quit) {   // always served, whatever else is going on
-        ctl_ack(c.seq, true, "quitting");
-        g_quit_requested = true;
-        g_paused = false;
-        g_pause_at_vi = 0;
-        g_ctl_defer.clear();
-        if (g_run.lockstep) g_run.lockstep->stop_waiting();   // a lockstep wait returns at once instead of running into its 10 s timeout
-        if (!g_core_running) return;   // before the emulation starts: main() sees g_quit_requested
-        if (!g_auto_dir.empty() && !g_ctl_online) { auto_save_now(); g_stop_at_vi = vi + 12; }   // let the core write auto.state first
-        else g_core.DoCommand(M64CMD_STOP, 0, nullptr);
-        return;
-    }
-    if (!g_core_running) {   // the netplay start barrier: no core yet
-        if (c.cmd != runctl::Cmd::OsdMsg && c.cmd != runctl::Cmd::OsdCorner && c.cmd != runctl::Cmd::Input) { ctl_ack(c.seq, false, "Starting up"); return; }
-    }
-    if ((c.cmd == runctl::Cmd::SaveState || c.cmd == runctl::Cmd::LoadState) && g_ctl_online) { ctl_warn(c.seq, "Save states are disabled in online sessions"); return; }
-    if (g_ctl_online && runctl::offline_only(c.cmd)) { ctl_ack(c.seq, false, "Not available in online sessions"); return; }
-    if (g_paused && (ctl_needs_vi(c.cmd) || c.cmd == runctl::Cmd::Ff || c.cmd == runctl::Cmd::Speed)) { ctl_ack(c.seq, false, "Resume the game first"); return; }
-    if (ctl_needs_vi(c.cmd) && (!vi_ctx || g_job.kind != CtlJob::None)) {   // a job needs frames: the VI loop takes it when the current job is done
-        if (g_ctl_defer.size() >= 4) { ctl_ack(c.seq, false, "Busy"); return; }
-        g_ctl_defer.push_back(c);
-        return;
-    }
-    switch (c.cmd) {
-        case runctl::Cmd::SaveState:
-        case runctl::Cmd::LoadState: {
-            if (g_ctl_state_dir.empty()) { ctl_warn(c.seq, "no state folder"); break; }
-            std::error_code ec;
-            fs::create_directories(fs::path(g_ctl_state_dir), ec);
-            std::string f = runctl::state_file(g_ctl_state_dir, c.slot);
-            g_job = CtlJob();
-            g_job.slot = c.slot; g_job.start_vi = vi; g_job.seq = c.seq;
-            if (c.cmd == runctl::Cmd::SaveState) {
-                fs::remove(fs::path(f), ec);
-                g_job.thumb = runctl::thumb_file(g_ctl_state_dir, c.slot);
-                if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) { ctl_finish(false, "the core refused to save"); break; }
-                g_job.kind = CtlJob::SaveWait;
-            } else {
-                if (!fs::exists(fs::path(f), ec)) { ctl_finish(false, "no state in that slot"); break; }
-                if (g_core.DoCommand(M64CMD_STATE_LOAD, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) { ctl_finish(false, "the core refused to load"); break; }
-                g_job.kind = CtlJob::LoadWait;
-            }
-            break;
-        }
-        case runctl::Cmd::Screenshot:
-            if (g_ctl_shot_dir.empty()) { ctl_warn(c.seq, "no screenshot folder"); break; }
-            g_job = CtlJob();
-            g_job.kind = CtlJob::Shot; g_job.start_vi = vi; g_job.seq = c.seq;
-            g_job.dest = g_ctl_shot_dir + "/" + runctl::shot_name(std::time(nullptr));
-            ctl_grab_begin();
-            break;
-        case runctl::Cmd::Clip: {
-            std::string m;
-            bool ok = g_clips.request_save(std::time(nullptr), &m);
-            if (ok) { osd::push("Saving clip..."); m = "saving"; }
-            else osd::push(m, osd::Kind::Warn);
-            ctl_ack(c.seq, ok, m);
-            break;
-        }
-        case runctl::Cmd::OsdMsg: osd::push(c.text); ctl_ack(c.seq, true, "shown"); break;
-        case runctl::Cmd::OsdCorner: {
-            { std::lock_guard<std::mutex> lk(g_corner_mx); g_corners.set(c.slot, c.text, c.value, GetTickCount64()); g_corner_live = true; }
-            corner_refresh();
-            ctl_ack(c.seq, true, c.text.empty() ? "cleared" : "shown");
-            break;
-        }
-        case runctl::Cmd::Input: g_in_gate.set(c.value != 0, GetTickCount64()); ctl_ack(c.seq, true, c.value ? "input on" : "input off"); break;
-        case runctl::Cmd::Pause:
-            if (c.value) {
-                if (g_paused || g_pause_at_vi) { ctl_ack(c.seq, true, "paused"); break; }
-                if (g_job.kind != CtlJob::None) { ctl_ack(c.seq, false, "Busy: a state or screenshot is still being written"); break; }
-                g_pause_at_vi = vi + 3;   // three frames to present "PAUSED", then the loop
-                { std::lock_guard<std::mutex> lk(g_corner_mx); g_pause_label = true; g_corner_live = true; }
-                corner_refresh();
-                ctl_ack(c.seq, true, "paused");
-            } else {
-                g_pause_at_vi = 0;
-                g_paused = false;   // ends the loop when it is running
-                { std::lock_guard<std::mutex> lk(g_corner_mx); g_pause_label = false; }
-                corner_refresh();
-                ctl_ack(c.seq, true, "resumed");
-            }
-            break;
-        case runctl::Cmd::Handoff: ctl_handoff(c); break;
-        case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
-        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay:
-            if (c.cmd == runctl::Cmd::Volume) {
-                int v = c.value;
-                g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_VOLUME, &v);
-                osd::push("Volume " + std::to_string(v) + "%");
-                ctl_ack(c.seq, true, "volume " + std::to_string(v));
-            } else if (c.cmd == runctl::Cmd::Mute) {
-                int m = c.value ? 1 : 0;
-                g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_MUTE, &m);
-                osd::push(m ? "Muted" : "Sound on");
-                ctl_ack(c.seq, true, m ? "muted" : "unmuted");
-            } else if (c.cmd == runctl::Cmd::Ff || c.cmd == runctl::Cmd::Speed) {
-                double sp = c.cmd == runctl::Cmd::Speed ? c.speed : (c.value ? g_fast_speed : 1.0);
-                g_menu_speed = sp; g_boost_active = false;   // a menu choice made while View+RT is held wins over the boost
-                set_speed(sp);
-                ctl_ack(c.seq, true, runctl::speed_label(sp));
-            } else {
-                ctl_ack(c.seq, false, "unsupported");
-            }
-            break;
-        default: ctl_warn(c.seq, "not supported for this system"); break;
-    }
-}
-
 static void ctl_tick() {
-    corner_tick();
     if (!g_ctl.enabled()) return;
     const long long vi = g_vi;
     if (g_job.kind != CtlJob::None) {
@@ -1244,7 +1003,9 @@ static void ctl_tick() {
                 break;
             default: break;
         }
-    } else {   // the core's own F12 hotkey drops screenshots into the scratch folder: file them into the vault
+        return;
+    }
+    {   // the core's own F12 hotkey drops screenshots into the scratch folder: file them into the vault
         static unsigned long long next_sweep = 0;
         unsigned long long now = GetTickCount64();
         if (!g_headless_mode && !g_ctl_shot_tmp.empty() && !g_ctl_shot_dir.empty() && now >= next_sweep) {
@@ -1259,24 +1020,130 @@ static void ctl_tick() {
             }
         }
     }
-    if (g_job.kind == CtlJob::None && g_pause_at_vi && vi >= g_pause_at_vi) { g_pause_at_vi = 0; pause_loop(); return; }
-    if (g_job.kind == CtlJob::None && !g_ctl_defer.empty()) {   // commands that arrived while the emulation was blocked
-        runctl::Command d = g_ctl_defer.front();
-        g_ctl_defer.pop_front();
-        ctl_dispatch(d, true);
-        return;
-    }
     runctl::Command c;
-    if (g_ctl.poll(GetTickCount64(), &c)) ctl_dispatch(c, true);   // polled even while a job runs: a Quit must not wait for a screenshot
+    if (!g_ctl.poll(GetTickCount64(), &c)) return;
+    logf_("control", "seq %lld %s slot %d", c.seq, runctl::cmd_name(c.cmd), c.slot);
+    switch (c.cmd) {
+        case runctl::Cmd::SaveState:
+        case runctl::Cmd::LoadState: {
+            if (g_ctl_online) { ctl_finish(false, "Save states are disabled in online sessions"); break; }
+            if (g_ctl_state_dir.empty()) { ctl_finish(false, "no state folder"); break; }
+            std::error_code ec;
+            fs::create_directories(fs::path(g_ctl_state_dir), ec);
+            std::string f = runctl::state_file(g_ctl_state_dir, c.slot);
+            g_job.slot = c.slot; g_job.start_vi = vi;
+            if (c.cmd == runctl::Cmd::SaveState) {
+                fs::remove(fs::path(f), ec);
+                g_job.thumb = runctl::thumb_file(g_ctl_state_dir, c.slot);
+                if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) { ctl_finish(false, "the core refused to save"); break; }
+                g_job.kind = CtlJob::SaveWait;
+            } else {
+                if (!fs::exists(fs::path(f), ec)) { ctl_finish(false, "no state in that slot"); break; }
+                if (g_core.DoCommand(M64CMD_STATE_LOAD, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) { ctl_finish(false, "the core refused to load"); break; }
+                g_job.kind = CtlJob::LoadWait;
+            }
+            break;
+        }
+        case runctl::Cmd::Screenshot:
+            if (g_ctl_shot_dir.empty()) { ctl_finish(false, "no screenshot folder"); break; }
+            g_job.kind = CtlJob::Shot; g_job.start_vi = vi;
+            g_job.dest = g_ctl_shot_dir + "/" + runctl::shot_name(std::time(nullptr));
+            ctl_grab_begin();
+            break;
+        case runctl::Cmd::Quit:
+            g_ctl.ack(true, "quitting");
+            if (!g_auto_dir.empty() && !g_ctl_online) { auto_save_now(); g_stop_at_vi = vi + 12; }   // let the core write auto.state first
+            else g_core.DoCommand(M64CMD_STOP, 0, nullptr);
+            break;
+        case runctl::Cmd::Clip: {
+            std::string m;
+            bool ok = g_clips.request_save(std::time(nullptr), &m);
+            if (ok) { osd::push("Saving clip..."); m = "saving"; }
+            else osd::push(m, osd::Kind::Warn);
+            g_ctl.ack(ok, m);
+            break;
+        }
+        case runctl::Cmd::OsdMsg: osd::push(c.text); g_ctl.ack(true, "shown"); break;
+        case runctl::Cmd::Input: g_in_gate.set(c.value != 0, GetTickCount64()); g_ctl.ack(true, c.value ? "input on" : "input off"); break;
+        case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
+        case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay:
+            if (g_ctl_online && runctl::offline_only(c.cmd)) { g_ctl.ack(false, "Not available in online sessions"); break; }
+            if (c.cmd == runctl::Cmd::Volume) {
+                int v = c.value;
+                g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_VOLUME, &v);
+                osd::push("Volume " + std::to_string(v) + "%");
+                g_ctl.ack(true, "volume " + std::to_string(v));
+            } else if (c.cmd == runctl::Cmd::Mute) {
+                int m = c.value ? 1 : 0;
+                g_core.DoCommand(M64CMD_CORE_STATE_SET, M64CORE_AUDIO_MUTE, &m);
+                osd::push(m ? "Muted" : "Sound on");
+                g_ctl.ack(true, m ? "muted" : "unmuted");
+            } else if (c.cmd == runctl::Cmd::Ff || c.cmd == runctl::Cmd::Speed) {
+                double sp = c.cmd == runctl::Cmd::Speed ? c.speed : (c.value ? g_fast_speed : 1.0);
+                g_menu_speed = sp; g_boost_active = false;   // a menu choice made while View+RT is held wins over the boost
+                set_speed(sp);
+                g_ctl.ack(true, runctl::speed_label(sp));
+            } else {
+                g_ctl.ack(false, "unsupported");
+            }
+            break;
+        default: ctl_finish(false, "not supported for this system"); break;
+    }
 }
 
-/* hooks.idle: every blocking wait of the lockstep (and the pause loop) comes through here. */
-static void ctl_idle() {
-    SDL_PumpEvents();
-    corner_tick();
-    if (!g_ctl.enabled()) return;
-    runctl::Command c;
-    if (g_ctl.poll(GetTickCount64(), &c)) ctl_dispatch(c, false);
+/* ---- OSD as a GL overlay (EXPERIMENTAL, off unless N64RUN_OSD_GL=1) ----
+ * Draws the osd layer as a textured quad with fixed-function GL on the context current in the VI callback, then restores the
+ * state it touched. Limits: needs a compatibility context (GLideN64 on wgl normally is one); whether the quad is visible depends
+ * on the callback running between the plugin's draw and its buffer swap, which differs per core build, so this is not enabled by
+ * default. Without it n64run shows OSD text in the window caption (title_watch) so nothing is lost. */
+static void osd_gl_draw() {
+    static const bool on = [] { const char* e = std::getenv("N64RUN_OSD_GL"); return e && e[0] == '1'; }();
+    if (!on || g_headless_mode || !wglGetCurrentContext()) return;
+    GLint vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    static osd::Layer layer;
+    static GLuint tex = 0;
+    static int tw = 0, th = 0;
+    bool changed = false;
+    // The layer covers the whole framebuffer area (vp[0]+vp[2] x vp[1]+vp[3] is not needed: the quad is mapped onto the viewport).
+    if (vp[2] <= 0 || vp[3] <= 0 || !osd::render(&layer, vp[2], vp[3], &changed)) return;
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glPushClientAttrib(GL_CLIENT_ALL_ATTRIB_BITS);
+    GLint prog = 0;
+    glGetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &prog);
+    typedef void(WINAPI * UseProgramFn)(GLuint);
+    static UseProgramFn use_program = reinterpret_cast<UseProgramFn>(wglGetProcAddress("glUseProgram"));
+    if (use_program) use_program(0);   // fixed function needs no shader bound
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_LIGHTING);
+    if (!tex) glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    if (changed || tw != vp[2] || th != vp[3]) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, vp[2], vp[3], 0, 0x80E1 /* GL_BGRA */, GL_UNSIGNED_BYTE, layer.px.data());
+        tw = vp[2]; th = vp[3];
+    }
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); glOrtho(0, 1, 1, 0, -1, 1);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(0, 0);
+    glTexCoord2f(1, 0); glVertex2f(1, 0);
+    glTexCoord2f(1, 1); glVertex2f(1, 1);
+    glTexCoord2f(0, 1); glVertex2f(0, 1);
+    glEnd();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glPopClientAttrib();
+    glPopAttrib();
+    if (use_program) use_program((GLuint)prog);
 }
 
 static void headless_frame_cb(unsigned int) {
@@ -1292,16 +1159,6 @@ static void headless_frame_cb(unsigned int) {
     cheats_tick();
     auto_tick();
     ctl_tick();
-    if (g_vi == 2) {   // QA: a fixed toast + corner text from the second frame on, so screenshots of two runs differ by the overlay only (qa/n64run_osd_gl.ps1)
-        const char* q = std::getenv("RETROHUB_QA") ? std::getenv("N64RUN_QA_OSD") : nullptr;   // "toast text|corner text"
-        if (q && *q) {
-            std::string s = q;
-            const size_t bar = s.find('|');
-            osd::push(s.substr(0, bar), osd::Kind::Good, 3600.0);
-            if (bar != std::string::npos) { std::lock_guard<std::mutex> lk(g_corner_mx); g_corners.set(1, s.substr(bar + 1), 0, GetTickCount64()); g_corner_live = true; }
-            corner_refresh();
-        }
-    }
     clip_poll_done();
     if (g_clip_want.exchange(false)) clip_request_save();
     if (!g_headless_mode && g_clips.enabled() && (g_vi % 3) == 0) {   // windowed: read the game window back at ~20 fps (best effort; see docs/RUNNER_CTL.md)
@@ -1322,11 +1179,11 @@ static void headless_frame_cb(unsigned int) {
             }
         }
     }
+    osd_gl_draw();
     if (g_match && g_core.MemPtr && !g_match->done()) {
         std::string l = g_match->step(static_cast<uint8_t*>(g_core.MemPtr(M64P_DBG_PTR_RDRAM)), g_vi);
         if (!l.empty()) { std::stringstream ls(l); std::string one; while (std::getline(ls, one)) logline("n64run", one.c_str()); }
     }
-    result_tick();
     if (!g_headless_mode) return;
     if (!g_limiter_off && !g_realtime) {
         int off = 0;
@@ -1421,17 +1278,11 @@ static void title_watch(std::wstring base_title) {
     using namespace std::chrono;
     const auto start = steady_clock::now();
     std::string shown_osd;
-    /* The caption mirrors the OSD: the hub's corner text (OsdCorner) and the newest toast. It stays the fallback when the GL overlay
-     * (osd_gl.h) is off or cannot start, and a harmless duplicate when it works. */
-    auto osd_now = [] { return corner_caption() + "\x01" + osd::latest_text(); };
     while (!g_title_stop.load()) {
         HWND hwnd = nullptr;
         EnumWindows(find_game_window, reinterpret_cast<LPARAM>(&hwnd));
-        shown_osd = osd_now();
-        const std::string corner_part = shown_osd.substr(0, shown_osd.find('\x01')), toast_part = shown_osd.substr(shown_osd.find('\x01') + 1);
-        std::wstring title = base_title;
-        if (!corner_part.empty()) title += L"  |  " + widen_ascii(corner_part);
-        if (!toast_part.empty()) title += L"  |  " + widen_ascii(toast_part);
+        shown_osd = osd::latest_text();   // OSD toasts also go to the caption (the GL overlay is experimental)
+        std::wstring title = shown_osd.empty() ? base_title : base_title + L"  |  " + widen_ascii(shown_osd);
         if (hwnd) {
             wchar_t cur[512] = {0};
             GetWindowTextW(hwnd, cur, 512);
@@ -1441,7 +1292,7 @@ static void title_watch(std::wstring base_title) {
         bool early = steady_clock::now() - start < seconds(10);
         for (int i = 0; i < (early ? 1 : 8) && !g_title_stop.load(); i++) {
             std::this_thread::sleep_for(milliseconds(250));
-            if (osd_now() != shown_osd) break;   // a toast came or went, or the corner text changed: update the caption now
+            if (osd::latest_text() != shown_osd) break;   // a toast came or went: update the caption now
         }
     }
 }
@@ -1473,7 +1324,6 @@ static bool start_plugin(PluginDll& p, const std::string& emu_dir, const char* f
 }
 
 int main(int argc, char** argv) {
-    for (int i = 1; i < argc; i++) if (hubprobe::is_flag(argv[i])) return hubprobe::run();   // firewall prompt probe (setup wizard); before anything else
     Args args;
     if (!parse_args(argc, argv, args)) { std::fputs(kUsage, stderr); return 2; }
 
@@ -1484,8 +1334,6 @@ int main(int argc, char** argv) {
         g_logf = std::fopen((hub::data_dir() + "logs\\n64run.log").c_str(), "w");
     }
     logf_("n64run", "starting; rom=%s game=%s net=%s", args.rom.c_str(), args.game.c_str(), args.net.empty() ? "(offline)" : args.net.c_str());
-    osd_gl_set_logger([](const char* l) { logline("osd-gl", l); });
-    osd_gl_configure(!args.headless);   // the OSD on the game window itself (osd_gl.h); N64RUN_OSD_GL=0 / =1 overrides
 
     // ---- ROM
     std::vector<uint8_t> rom;
@@ -1503,22 +1351,6 @@ int main(int argc, char** argv) {
 
     const bool online = !args.net.empty();
     g_start_volume = args.volume;
-    g_ctl_online = online;
-    if (!args.control.empty()) {   // from here on the hub's Quit is served while we wait for the other players (Lockstep::start_barrier -> ctl_idle)
-        g_ctl = runctl::Poller(args.control);
-        g_ctl_path = args.control;
-        g_ctl_state_dir = args.state_dir; g_ctl_shot_dir = args.shot_dir; g_ctl_key = args.game_key;
-    }
-    if (!args.result_file.empty()) {
-        g_result_file = args.result_file;
-        g_result_game = args.game;
-        if (online) {   // every peer derives the same id from the --room value ("ABC234-1") and its own copy of the finished match
-            g_result_room = args.room;
-            const size_t dash = args.room.rfind('-');
-            g_result_code = dash == std::string::npos ? args.room : args.room.substr(0, dash);
-        }
-        logf_("n64run", "result file: %s (%s)", g_result_file.c_str(), online ? "online" : "local");
-    }
     /* QA only (RETROHUB_QA=1 N64RUN_QA_AUDIO=1): headless peers with the real audio plugin on SDL's silent "dummy" driver,
      * so the plugin's buffer / sync behaviour is exercised without any sound. */
     const bool qa_audio = args.headless && args.realtime && std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_AUDIO");
@@ -1697,13 +1529,7 @@ int main(int argc, char** argv) {
                 if (session.failed() || hubnet::now_ms() - t0 > 15000) break;
                 std::string st = session.status();
                 if (st != last) { logf_("n64run", "netplay: %s", st.c_str()); last = st; }
-                ctl_idle();   // the hub's Quit is served while we wait for the other players too
-                if (g_quit_requested.load()) break;
                 Sleep(10);
-            }
-            if (g_quit_requested.load()) {
-                logf_("n64run", "the hub asked to quit while we connected");
-                session.stop(); g_core.Shutdown(); fs::remove_all(cfg_dir, ec); return 0;
             }
             if (session.ready()) { connected = true; args.slot = sc.slot; if (args.dropin) my_slot = sc.slot; break; }
             const std::string st = session.status();
@@ -1878,9 +1704,7 @@ int main(int argc, char** argv) {
             hk.update_local = [&] { input.update(); { bool cc = input.clip_held(); unsigned long long tn = GetTickCount64(); if (cc && !g_clip_prev && tn >= g_clip_cool) { g_clip_cool = tn + 3000; g_clip_want = true; } g_clip_prev = cc; } g_in_gate.note_view_y(input.view_y_held(), GetTickCount64()); n64_apply_start_volume(); n64_boost_tick(input.boost_held() && !online); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
             hk.read_local = [&](int idx) -> uint32_t { return g_in_gate.suppressed(GetTickCount64()) ? 0u : input.read(idx); };   // hub menu open: neutral, lockstep still sends the frame
         }
-        hk.idle = [] { ctl_idle(); };   // every blocking wait of the lockstep serves the hub's control file too (Quit during a stall)
-        if (!test_input.active())
-            g_pause_poll = [&] { input.update(); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held) while paused: leaving"); g_paused = false; g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
+        hk.idle = [] { SDL_PumpEvents(); };
         if (online && !qa_nofix())
             hk.set_limiter = [](bool on) {
                 if (g_headless_mode && !g_realtime) return;   // unthrottled test runs keep the limiter off
@@ -1895,7 +1719,6 @@ int main(int argc, char** argv) {
             hk.vi_reset = [] { logf_("fbmask", "restart: %d tracked framebuffer(s) forgotten", g_fb.count()); g_fb.reset(); };
         }
         hk.request_stop = [] { g_core.DoCommand(M64CMD_STOP, 0, nullptr); };
-        hk.on_unrecovered = [](const std::string& why) { osd::push("Out of sync - could not be repaired (" + why + "). Ending the match.", osd::Kind::Error); };
         hk.log = [](const std::string& s) { logline("lockstep", s.c_str()); };
         if (!args.no_hash && g_core.MemPtr) {
             hk.hash_rdram = [](uint64_t* out) {
@@ -1963,12 +1786,17 @@ int main(int argc, char** argv) {
         if (const char* e = std::getenv("N64RUN_CLIPS"); e && e[0] == '0') g_clips.set_enabled(false);
         else if (args.headless && !args.shot_dir.empty())
             headless_set_frame_sink([](const uint8_t* px, int w, int h) { g_clips.offer(px, w, h, w * 4, 20.0, false, false); }, 3);
+        g_ctl_online = online;
         g_key_for_auto = args.game_key;
         if (!online && !args.state_dir.empty() && !g_match) { g_auto_dir = args.state_dir; g_next_autosave = GetTickCount64() + 30000; }
         if (!online && !args.load_state.empty()) g_load_state_path = args.load_state;
-        if (!args.control.empty() && !args.headless) g_ctl_shot_tmp = save_dir + "\\screenshots_tmp";
+        if (!args.control.empty()) {
+            g_ctl = runctl::Poller(args.control);
+            g_ctl_state_dir = args.state_dir; g_ctl_shot_dir = args.shot_dir; g_ctl_key = args.game_key;
+            if (!args.headless) g_ctl_shot_tmp = save_dir + "\\screenshots_tmp";
+        }
         g_realtime = args.realtime;
-        if (args.headless || g_match || online || !g_gs.empty() || !g_cheats_path.empty() || !args.control.empty() || !g_auto_dir.empty() || !g_load_state_path.empty() || !g_result_file.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
+        if (args.headless || g_match || online || !g_gs.empty() || !g_cheats_path.empty() || !args.control.empty() || !g_auto_dir.empty() || !g_load_state_path.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         /* Boot watchdog: a game that never reads a controller within 90 s is stuck in its own boot code (seen with a
          * bad Pokemon Stadium dump: it spins in a `bal .` loop at 0x80000198). Say so instead of hanging silently. */
         std::thread([] {
@@ -1977,12 +1805,7 @@ int main(int argc, char** argv) {
             std::fflush(nullptr);
             ExitProcess(4);
         }).detach();
-        if (g_quit_requested.load()) { logf_("n64run", "the hub asked to quit before the game started"); e = M64ERR_SUCCESS; }
-        else {
-            g_core_running = true;
-            e = g_core.DoCommand(M64CMD_EXECUTE, 0, nullptr);   // blocks until the emulation stops
-            g_core_running = false;
-        }
+        e = g_core.DoCommand(M64CMD_EXECUTE, 0, nullptr);   // blocks until the emulation stops
         g_stop_watchdog = true;
         g_title_stop = true;
         if (title_thread.joinable()) title_thread.join();
@@ -2029,7 +1852,7 @@ int main(int argc, char** argv) {
         }
         else if (g_run.lockstep && g_run.lockstep->desync_detected()) {
             logf_("n64run", "desync was detected during the session");
-            if (args.strict_sync || g_run.lockstep->desync_fatal()) code = 5;
+            if (args.strict_sync) code = 5;
         } else if (e != M64ERR_SUCCESS) code = 3;
 
         g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
@@ -2054,6 +1877,5 @@ fail_net:
     g_core.Shutdown();
     session.stop();
     fs::remove_all(cfg_dir, ec);
-    if (g_quit_requested.load()) { logf_("n64run", "the hub asked to quit while we waited for the other players"); return 0; }
     return g_dj_rc ? g_dj_rc : 4;
 }

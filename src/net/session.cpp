@@ -15,7 +15,6 @@
 #include "net_internal.h"
 #include "log.h"
 #include "session.h"
-#include "reconnect.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -27,19 +26,8 @@ namespace hubnet {
 
 using namespace detail;
 
-/* Plain text for a server reason code (defined in lobby.cpp, same library). "" = a code we do not know: shown as it is. */
-std::string server_reason_text(const std::string& reason);
-
 namespace {
 
-/* The relay is the free Cloudflare plan's, and its daily budget can run out (the Worker then answers a relayed frame with
- * relay_denied "server-busy"). Say that, instead of the "Connection lost" the players would see after the timeouts. */
-const char* const kRelayBusyInfo = "The free server is busy, so the relay is off right now. Direct connections still work.";
-const char* const kRelayBusyFail = "The free server is busy, so the relay is off right now, and a direct connection to the other players could not be made. Try again in a little while.";
-const char* const kRelayBusyLost = "The free server is busy, so the relay stopped carrying the game. Direct connections still work. Try again in a little while.";
-const char* const kRelayCut = "The free server cut the relay off because this PC was sending too much through it.";
-
-constexpr uint32_t kRelayBusyGraceMs = 4000;   // after relay_denied "server-busy", wait this long for a direct path before giving up
 constexpr uint32_t kRelayAfterMs = 3000;
 constexpr uint32_t kNotReadyFailMs = 15000;
 constexpr uint32_t kSilenceFailMs = 10000;
@@ -58,7 +46,6 @@ struct Peer {
     Addr direct;              // verified direct address
     bool has_direct = false, has_relay = false;
     uint32_t last_direct = 0, last_relay = 0;
-    uint32_t ws_gone_at = 0;  // vanished from the server roster (socket blip?) while the direct UDP path may still be alive
     uint32_t since = 0;       // when the peer first showed up in the room
     uint32_t last_rx = 0;
     uint32_t last_hello = 0, last_relay_hello = 0, last_ping = 0, last_roster = 0;
@@ -125,9 +112,6 @@ struct Session::Impl {
     uint32_t last_ws_keepalive = 0;
     uint32_t ws_retry_at = 0;      // join: retry while the host's room doesn't exist yet
     bool ws_retrying = false;
-    WsReconnect rc;                // post-ready socket blip: reconnect while the UDP path keeps playing
-    bool relay_busy = false;       // the server answered a relayed frame with relay_denied "server-busy": its free daily budget is used up
-    uint32_t relay_busy_at = 0;    // ... and when it first said so
 
     Peer peers[kMaxSlots];
     std::deque<std::pair<int, std::vector<uint8_t>>> inbox;
@@ -219,13 +203,6 @@ struct Session::Impl {
 
     bool direct_fresh(const Peer& p, uint32_t now) const { return p.has_direct && now - p.last_direct < kDirectFreshMs; }
     bool relay_fresh(const Peer& p, uint32_t now) const { return p.has_relay && now - p.last_relay < kRelayFreshMs; }
-    /* Some partner can only be reached through the relay (no direct path right now). */
-    bool depends_on_relay(uint32_t now) const
-    {
-        for (int s = 0; s < kMaxSlots; s++)
-            if (s != slot && talks_to(s) && peers[s].present && peers[s].relay_active && !direct_fresh(peers[s], now)) return true;
-        return false;
-    }
     bool reachable(int s, uint32_t now) const
     {
         const Peer& p = peers[s];
@@ -414,8 +391,6 @@ struct Session::Impl {
         if (type == "welcome") {
             welcomed = true;
             ws_retrying = false;
-            if (rc.active()) net_log("Session %d: lobby socket back after %u ms", slot, now - rc.blip_ms());
-            rc.welcomed();
             int s = (int)j.i64("slot", slot);
             if (s != slot) net_log("Session: server gave slot %d (wanted %d)", s, slot);
             slot = s;
@@ -435,16 +410,15 @@ struct Session::Impl {
             spec_mask = sm & ~(1u << slot);
             for (int s = 0; s < kMaxSlots; s++) {
                 if (s == slot) continue;
-                if (seen[s]) peers[s].ws_gone_at = 0;
                 if (seen[s] && !peers[s].present) {
                     peers[s].present = true;
                     peers[s].since = now;
                     net_log("Session %d: slot %d joined", slot, s);
                 } else if (!seen[s] && peers[s].present) {
-                    /* Gone from the roster. A socket blip looks the same: keep the peer while its direct UDP path is alive. */
-                    if (ready_ever && direct_fresh(peers[s], now)) {
-                        if (!peers[s].ws_gone_at) { peers[s].ws_gone_at = now ? now : 1; net_log("Session %d: slot %d left the room but its UDP is alive; keeping it", slot, s); }
-                    } else peer_left(s);
+                    net_log("Session %d: slot %d left", slot, s);
+                    peers[s].reset();
+                    peers[s].present = false;
+                    if (!is_host() && s == 0) departed(0, "The host left");
                 }
             }
         } else if (type == "peers") {
@@ -462,24 +436,8 @@ struct Session::Impl {
                                 m.str("local").c_str());
                     p.has_cand = hp || hl;
                 }
-        } else if (type == "relay_denied") {
-            /* The server did not forward a relayed frame of ours. "server-busy": its free daily budget is used up (a room's first
-             * relayed frame from 50%, every frame from 90%): the relay is off for everybody until it resets, so tell the players
-             * that instead of letting the timeouts say "Connection lost". Anything else (rate-limited): this room or this PC sent
-             * too much for a moment - transient, and the server tells again at most every 10 s. */
-            std::string reason = j.str("reason", "server-busy");
-            net_log("Session %d: relay denied by the server (%s): %s", slot, reason.c_str(), j.str("detail").c_str());
-            if (reason == "server-busy") {
-                if (!relay_busy) relay_busy_at = now;
-                relay_busy = true;   // update() ends a session that still depends on the relay kRelayBusyGraceMs later (a direct path may yet come up)
-                if (!failed) status = kRelayBusyInfo;
-            }
         } else if (type == "error") {
             std::string reason = j.str("reason", "error");
-            if (ready_ever && rc.active() && WsReconnect::retryable_reason(reason)) {   // the server still holds our old seat: the close that follows triggers the next try
-                net_log("Session %d: reconnect refused (%s), will retry", slot, reason.c_str());
-                return;
-            }
             if ((reason == "no-such-room" || reason == "host-reconnecting") && !is_host()) {
                 ws_retrying = true;
                 ws_retry_at = now + 700;
@@ -493,26 +451,8 @@ struct Session::Impl {
             else if (reason == "spectate-busy") fail("Spectating is paused: the server is busy, try again later");
             else if (reason == "no-free-port") fail("That game has no free controller port");
             else if (reason == "host-left-game") fail("The host left - game over");
-            else {   // server-busy, rate-limited, no-such-game, host-too-old ...: plain words (lobby.cpp); a sentence we don't know is shown as it is
-                std::string t = server_reason_text(reason);
-                fail(t.empty() ? reason : t);
-            }
+            else fail(reason);
         }
-    }
-
-    void peer_left(int s)
-    {
-        net_log("Session %d: slot %d left", slot, s);
-        peers[s].reset();
-        peers[s].present = false;
-        peers[s].ws_gone_at = 0;
-        if (!is_host() && s == 0) departed(0, "The host left");
-    }
-    /* A peer that left the roster only counts as gone once its UDP went quiet too. */
-    void check_gone_peers(uint32_t now)
-    {
-        for (int s = 0; s < kMaxSlots; s++)
-            if (s != slot && peers[s].present && peers[s].ws_gone_at && member_departed(true, direct_fresh(peers[s], now))) peer_left(s);
     }
 
     void pump_ws(uint32_t now)
@@ -532,26 +472,12 @@ struct Session::Impl {
             std::string err = ws.error();
             if (ws_retrying) {
                 if (now >= ws_retry_at) { ws.close(); connect_ws(); ws_retrying = true; ws_retry_at = now + 700; }
-            } else if (code == 4001 && !(ready_ever && direct_fresh(peers[0], now))) {
+            } else if (code == 4001) {
                 departed(0, "The host left");
-            } else if (code == 1008) {   // the server cut this socket off for sending far more than a game ever does (relay or text flood)
-                if (!ready_ever) fail(kRelayCut);
-                else { net_log("Session %d: %s", slot, kRelayCut); welcomed = false; }
             } else if (!ready_ever) {
                 fail(err.empty() ? "Lost connection to the lobby server" : err);
-            } else if (WsReconnect::reconnectable_close(code)) {
-                if (!rc.active()) {
-                    net_log("Session %d: lobby socket lost after ready (code %d, %s); reconnecting, UDP play continues", slot, code, err.c_str());
-                    welcomed = false;
-                }
-                rc.blip(now);
-                if (rc.should_retry(now)) { ws.close(); connect_ws(); rc.attempted(now); }
-                else if (rc.gave_up() && welcomed == false && ws.state() == WsState::Failed) {
-                    static thread_local int logged = 0;
-                    if (logged++ < 3) net_log("Session %d: lobby socket not recovered; relay unavailable", slot);
-                    welcomed = false;
-                }
             } else if (welcomed) {
+                net_log("Session %d: lobby socket lost after ready (%s); relay unavailable", slot, err.c_str());
                 welcomed = false;
             }
         }
@@ -640,7 +566,6 @@ struct Session::Impl {
         if (sim_on) sim_flush(now);
         pump_ws(now);
         resolve_departure(now);
-        check_gone_peers(now);
         if (failed || ended) return;
         pump_udp(now);
         stun.update(&udp, now);
@@ -666,28 +591,23 @@ struct Session::Impl {
         }
 
         if (ready_ever) {
-            const bool no_relay_now = relay_busy && depends_on_relay(now);   // someone is only reachable through the relay, and the server says it is off
-            if (!is_host() && now - peers[0].last_rx > (cfg.silence_fail_ms ? cfg.silence_fail_ms : kSilenceFailMs))
-                fail(no_relay_now ? kRelayBusyLost : "Lost connection to the host");
-            status = no_relay_now ? kRelayBusyInfo : "connected";
+            if (!is_host() && now - peers[0].last_rx > (cfg.silence_fail_ms ? cfg.silence_fail_ms : kSilenceFailMs)) fail("Lost connection to the host");
+            status = "connected";
         } else {
-            /* The server said the relay is off and somebody can only be reached through it: no point waiting out the 15 s. */
-            if (relay_busy && now - relay_busy_at >= kRelayBusyGraceMs && depends_on_relay(now)) fail(kRelayBusyFail);
-            else if (now - start_ms > (cfg.ready_timeout_ms ? cfg.ready_timeout_ms : kNotReadyFailMs)) {
+            if (now - start_ms > (cfg.ready_timeout_ms ? cfg.ready_timeout_ms : kNotReadyFailMs)) {
                 int absent = 0, present_n = 0;
                 if (is_host()) {
                     for (int s = 1; s < kMaxSlots; s++) if (peers[s].present) present_n++;
                     absent = cfg.expected - 1 - present_n;
                 }
-                if (relay_busy) fail(kRelayBusyFail);
-                else if (!is_host() && !peers[0].present) fail("The host never opened this game session (their RetroHub did not start it)");
+                if (!is_host() && !peers[0].present) fail("The host never opened this game session (their RetroHub did not start it)");
                 else if (is_host() && absent > 0)
                     fail(std::to_string(absent) + " player(s) never joined the game session (their RetroHub did not start it or lost the room connection)");
                 else fail("Couldn't connect to the other players (the game room is reachable, but neither direct UDP nor the relay got through)");
             } else if (!welcomed) {
                 if (!ws_retrying) status = "contacting server";
             } else {
-                status = relay_busy ? kRelayBusyInfo : "connecting to players";
+                status = "connecting to players";
             }
         }
     }
@@ -707,8 +627,7 @@ bool Session::start(const SessionConfig& cfg)
     d.slot = cfg.slot;
     d.spectator = cfg.spectate && cfg.slot != 0;
     d.spec_mask = 0;
-    d.rc.reset();
-    d.failed = d.ready_ever = d.welcomed = d.endpoint_sent = d.ws_retrying = d.relay_busy = false;
+    d.failed = d.ready_ever = d.welcomed = d.endpoint_sent = d.ws_retrying = false;
     d.inbox.clear();
     d.ended = d.departing = false;   // a restarted session (the drop-in joiner tries the next slot) starts clean
     for (bool& b : d.bye_from) b = false;
@@ -791,7 +710,6 @@ int Session::ping_ms(int slot) const
 }
 
 uint16_t Session::local_port() const { return impl_->udp.local_port(); }
-void Session::qa_drop_ws() { impl_->ws.drop_abruptly(); }
 void Session::set_no_relay(bool v) { impl_->no_relay = v; }
 void Session::set_ping_interval(uint32_t ms) { impl_->ping_every = ms < 20 ? 20 : ms; }
 

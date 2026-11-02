@@ -7,15 +7,11 @@
 #include <windows.h>
 
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
 #include <string>
-#include <vector>
-
-#include "miniz.h"
 
 namespace fs = std::filesystem;
 using namespace hub::saves;
@@ -68,40 +64,6 @@ static std::string conflict_content(const fs::path& root) {
 static void dump(const SyncReport& r) {
     printf("    push=%d pull=%d conflicts=%d ok=%d\n", r.pushed, r.pulled, r.conflicts, (int)r.ok);
     for (auto& l : r.log) printf("      %s\n", l.c_str());
-}
-
-/* An exported zip, opened with miniz: entry names and (inflated) contents. */
-struct ZipView {
-    std::vector<std::string> names, bodies;
-    bool ok = false;
-    explicit ZipView(const std::string& path) {
-        mz_zip_archive z; memset(&z, 0, sizeof z);
-        if (!mz_zip_reader_init_file(&z, path.c_str(), 0)) return;
-        ok = true;
-        for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&z); i++) {
-            mz_zip_archive_file_stat st;
-            if (!mz_zip_reader_file_stat(&z, i, &st)) continue;
-            size_t sz = 0;
-            void* p = mz_zip_reader_extract_to_heap(&z, i, &sz, 0);
-            names.push_back(st.m_filename);
-            bodies.push_back(p ? std::string((const char*)p, sz) : std::string());
-            if (p) mz_free(p);
-        }
-        mz_zip_reader_end(&z);
-    }
-    bool has(const std::string& n) const { for (auto& x : names) if (x == n) return true; return false; }
-    bool name_contains(const std::string& s) const { for (auto& x : names) if (x.find(s) != std::string::npos) return true; return false; }
-    bool body_contains(const std::string& s) const { for (auto& x : bodies) if (x.find(s) != std::string::npos) return true; return false; }
-};
-/* A zip with exactly these entries (name, content): the way a hostile or foreign zip could look. */
-static bool make_zip(const std::string& path, const std::vector<std::pair<std::string, std::string>>& entries) {
-    mz_zip_archive z; memset(&z, 0, sizeof z);
-    if (!mz_zip_writer_init_file(&z, path.c_str(), 0)) return false;
-    bool ok = true;
-    for (auto& e : entries) ok = ok && mz_zip_writer_add_mem(&z, e.first.c_str(), e.second.data(), e.second.size(), MZ_DEFAULT_LEVEL);
-    ok = ok && mz_zip_writer_finalize_archive(&z);
-    mz_zip_writer_end(&z);
-    return ok;
 }
 
 int main() {
@@ -288,68 +250,63 @@ int main() {
     r = sync_folder(A.u8string(), false);
     CHECK(!r.ok);
 
-    printf("[11] the account secret never travels: sync folder, export and import (F6)\n");
+    printf("[11] identity: oldest 'created' wins on sync and import\n");
     {
-        const std::string secret = "TOPSECRET-DO-NOT-LEAK";
-        auto idj = [&](const char* tag) {
-            return std::string("{\"user_id\":\"") + tag + "\",\"secret\":\"" + secret + "-" + tag + "\",\"created\":1000}\n";
+        auto idj = [](const char* tag, long long created) {
+            return std::string("{\"user_id\":\"") + tag + "\",\"secret\":\"s\",\"created\":" + std::to_string(created) + "}\n";
         };
+        fs::path I1 = base / "idA", I2 = base / "idB", icloud = base / "idcloud";
         const char* rel = "_identity/identity.json";
-        fs::path V1 = base / "idV1", V2 = base / "idV2", V3 = base / "idV3", sf = base / "idsync";
-        /* a vault with a real save plus every shape of identity file */
-        write_file(V1 / "n64/zelda/battery/zelda.eep", "zelda-save", 100);
-        write_file(V1 / rel, idj("me"), 50);
-        write_file(V1 / "_identity/old-pc.json", idj("old"), 50);
-        write_file(V1 / "n64/zelda/battery/Identity-Backup-1.JSON", "lookalike-save", 50);   // a game save that merely has such a name: it is a save, it travels
-        write_file(V1 / "_conflicts/_identity/identity.json.OLDPC.20261101-120000", idj("loser"), 50);   // what older builds kept as the losing identity of a sync conflict
-        set_vault_dir(V1.u8string());
-        r = sync_folder(sf.u8string(), false);
+        std::string orig = idj("orig", 1000), fresh = idj("fresh", 2000);
+        // PC1 = original (OLD file mtime), PC2 = created later (NEW file mtime)
+        write_file(I1 / rel, orig, 500);
+        write_file(I2 / rel, fresh, 5);
+        set_vault_dir(I1.u8string());
+        r = sync_folder(icloud.u8string(), false);
+        CHECK(r.ok && read_file(icloud / rel) == orig);
+        set_vault_dir(I2.u8string());
+        r = sync_folder(icloud.u8string(), false);
         dump(r);
-        CHECK(r.ok && r.pushed == 2 && r.conflicts == 0);                    // the save and the look-alike, never the identity files
-        { bool note = false; for (auto& l : r.log) if (l.find("Settings > Account > Add this account to another PC") != std::string::npos) note = true; CHECK(note); }   // F6: the player is told
-        CHECK(read_file(sf / "n64/zelda/battery/zelda.eep") == "zelda-save");
-        CHECK(!fs::exists(sf / "_identity") && fs::exists(sf / "n64/zelda/battery/Identity-Backup-1.JSON") && !fs::exists(sf / "_conflicts"));
-        /* a sync folder written by an older build still holds an identity: ignored, never pulled, and left in place (we never delete in the user's folder) */
-        write_file(sf / rel, idj("foreign"), 5);
-        set_vault_dir(V2.u8string());
-        r = sync_folder(sf.u8string(), false);
-        CHECK(r.ok && r.pulled == 2 && r.conflicts == 0);
-        CHECK(!fs::exists(V2 / "_identity") && read_file(V2 / "n64/zelda/battery/zelda.eep") == "zelda-save");
-        CHECK(read_file(sf / rel) == idj("foreign"));
-        /* a vault that has its own identity keeps it untouched, even when the folder's is older or newer */
-        write_file(V2 / rel, idj("mine"), 500);
-        r = sync_folder(sf.u8string(), false);
-        CHECK(r.ok && r.pulled == 0 && r.pushed == 0 && r.conflicts == 0 && read_file(V2 / rel) == idj("mine"));
-        CHECK(count_conflicts(V2) == 0);
-        /* export: no identity entry, and the secret is in no entry at all */
-        set_vault_dir(V1.u8string());
-        std::string ez = (base / "id-export.zip").u8string();
-        CHECK(export_zip(ez, true, &err));
-        {
-            ZipView z(ez);
-            CHECK(z.ok && z.has("n64/zelda/battery/zelda.eep"));
-            CHECK(!z.name_contains("_identity") && z.has("n64/zelda/battery/Identity-Backup-1.JSON"));
-            CHECK(!z.body_contains("TOPSECRET"));
-        }
-        /* a hostile zip carries identity entries in several spellings: all skipped (and logged), the real save comes in, the identity stays */
-        std::string hz = (base / "id-hostile.zip").u8string();
-        CHECK(make_zip(hz, {{"_identity/identity.json", idj("attacker")}, {"_Identity/other.json", idj("attacker2")},
-                            {"n64/pkmn/battery/identity.json", idj("attacker3")}, {"_conflicts/_identity/identity.json.PC.20260101-000000", idj("attacker4")},
-                            {"n64/pkmn/battery/pkmn.sav", "pokemon-save"}}));
-        set_vault_dir(V2.u8string());
-        r = import_zip(hz);
-        dump(r);
-        int skipped_logged = 0;
-        for (auto& l : r.log) if (l.find("never imported") != std::string::npos) skipped_logged++;
-        CHECK(r.ok && r.pulled == 2 && r.conflicts == 0 && skipped_logged == 3);
-        CHECK(read_file(V2 / rel) == idj("mine"));                           // the account did not change
-        CHECK(!fs::exists(V2 / "_identity/other.json") && fs::exists(V2 / "n64/pkmn/battery/identity.json"));   // (NTFS: _Identity is the same folder as _identity)
-        CHECK(read_file(V2 / "n64/pkmn/battery/pkmn.sav") == "pokemon-save");
-        /* the "new PC imports a friend's zip" case: an empty vault gets the save and no account at all */
-        set_vault_dir(V3.u8string());
-        r = import_zip(hz);
-        CHECK(r.ok && r.pulled == 2 && !fs::exists(V3 / "_identity") && !fs::exists(V3 / "_conflicts"));
-        CHECK(read_file(V3 / "n64/pkmn/battery/pkmn.sav") == "pokemon-save");
+        CHECK(r.ok && r.conflicts == 1);
+        CHECK(read_file(I2 / rel) == orig);
+        CHECK(read_file(icloud / rel) == orig);
+        CHECK(count_conflicts(I2) == 1 && conflict_content(I2) == fresh);
+        set_vault_dir(I1.u8string());
+        r = sync_folder(icloud.u8string(), false);
+        CHECK(r.ok && read_file(I1 / rel) == orig);   // never replaced by the newer identity
+        // reverse order: the NEW PC syncs first, the original arrives second and still wins
+        fs::path J1 = base / "idC", J2 = base / "idD", jcloud = base / "idcloud2";
+        write_file(J1 / rel, orig, 500);
+        write_file(J2 / rel, fresh, 5);
+        set_vault_dir(J2.u8string());
+        r = sync_folder(jcloud.u8string(), false);
+        CHECK(r.ok && read_file(jcloud / rel) == fresh);
+        set_vault_dir(J1.u8string());
+        r = sync_folder(jcloud.u8string(), false);
+        CHECK(r.ok && read_file(jcloud / rel) == orig && read_file(J1 / rel) == orig);
+        set_vault_dir(J2.u8string());
+        r = sync_folder(jcloud.u8string(), false);
+        CHECK(r.ok && read_file(J2 / rel) == orig);
+        // import_zip: zip holds the original, vault has the newer-mtime fresh one -> original wins
+        fs::path Z1 = base / "idZ1", Z2 = base / "idZ2";
+        write_file(Z1 / rel, orig, 500);
+        set_vault_dir(Z1.u8string());
+        CHECK(export_zip((base / "id.zip").u8string(), false, &err));
+        write_file(Z2 / rel, fresh, 0);
+        set_vault_dir(Z2.u8string());
+        r = import_zip((base / "id.zip").u8string());
+        CHECK(r.ok && read_file(Z2 / rel) == orig && count_conflicts(Z2) == 1 && conflict_content(Z2) == fresh);
+        // import_zip the other way: zip holds the newer identity, vault keeps the original
+        write_file(Z1 / rel, orig, 0);
+        set_vault_dir(Z2.u8string());
+        write_file(Z2 / rel, orig, 500);
+        fs::remove_all(Z2 / "_conflicts");
+        write_file(Z1 / "_identity/identity.json", fresh, 0);
+        set_vault_dir(Z1.u8string());
+        CHECK(export_zip((base / "id2.zip").u8string(), false, &err));
+        set_vault_dir(Z2.u8string());
+        r = import_zip((base / "id2.zip").u8string());
+        CHECK(r.ok && read_file(Z2 / rel) == orig && conflict_content(Z2) == fresh);
     }
 
     printf("[nds] DS saves: vault key/path wiring and cross-PC sync (retrorun writes <rom stem>.srm into battery_dir)\n");

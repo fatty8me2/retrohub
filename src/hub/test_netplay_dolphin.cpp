@@ -68,9 +68,6 @@ int main() {
     CHECK(o.find("SIDevice0 = 6") != std::string::npos);
     CHECK(o.find("[DSP]") != std::string::npos && o.find("Backend = No Audio Output") != std::string::npos);
     CHECK(o.find("ConfirmStop = False") != std::string::npos && ini_patch(std::string("[Interface]\nConfirmStop = True\n"), s, p).find("ConfirmStop = False") != std::string::npos);   // never Dolphin's stop dialog online
-    CHECK(o.find("CPUThread = False") != std::string::npos && o.find("SyncGPU = False") != std::string::npos && o.find("OverclockEnable = False") != std::string::npos);   // default single core, other determinism pins kept
-    { Spec b = s; b.game_id = "GYQE01"; std::string ob = ini_patch(o, b, p); CHECK(ob.find("CPUThread = True") != std::string::npos && ob.find("SyncGPU = False") != std::string::npos);   // allowlisted: dual core
-      b.game_id = "GYQP01"; CHECK(dual_core_allowed("GYQJ01") && ini_patch("", b, p).find("CPUThread = True") != std::string::npos); CHECK(!dual_core_allowed("GM4E01") && !dual_core_allowed("")); }
     CHECK(ini_patch(o, s, p) == o);                    // idempotent
 
     /* host never gets a HostCode written; direct mode sets address/ports */

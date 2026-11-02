@@ -4,7 +4,6 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
-#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -221,15 +220,6 @@ static std::string ini_set_all(const std::string& ini, const std::vector<std::pa
     return o;
 }
 
-bool dual_core_allowed(const std::string& game_id) {
-    /* Online play is single core (deterministic, stress-tested) unless the game is listed here:
-     *  - GYQE01 / GYQP01 / GYQJ01 Mario Superstar Baseball: CPU-bound; on one core it runs far below full speed online while it is fine
-     *    offline (dual core), and the slowest PC throttles the whole room. */
-    static const char* const ok[] = {"GYQE01", "GYQP01", "GYQJ01"};
-    for (const char* id : ok) if (game_id == id) return true;
-    return false;
-}
-
 std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p) {
     typedef std::vector<std::pair<std::string, std::string>> KV;
     KV np;
@@ -263,9 +253,8 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
     KV core;
     core.push_back({"GPUDeterminismMode", "auto"});   // the one emulation setting NetPlay does not copy from the host
     /* Deterministic emulation on every PC (the host's values are copied to the guests, the guests' are ignored but kept equal):
-     * single CPU thread by default (dual core is the classic NetPlay desync; the 140/140 GameCube stress run passed this way), except
-     * games on dual_core_allowed(), JIT64 on all, no overclock, no sync-GPU/MMU/fast disc speed surprises. */
-    core.push_back({"CPUThread", dual_core_allowed(s.game_id) ? "True" : "False"});
+     * single CPU thread (dual core is the classic NetPlay desync), JIT64 on all, no overclock, no sync-GPU/MMU/fast disc speed surprises. */
+    core.push_back({"CPUThread", "False"});
     core.push_back({"CPUCore", "1"});
     core.push_back({"OverclockEnable", "False"});
     core.push_back({"VIOverclockEnable", "False"});
@@ -431,18 +420,15 @@ static bool spawn(const std::wstring& cmd, const std::wstring& cwd, const std::w
     return true;
 }
 
-/* Paths are UTF-8 (hub::data_dir()): an accented Windows user name breaks every ANSI call, so file work here is wide. */
-static std::filesystem::path P8(const std::string& s) { return std::filesystem::path(W(s)); }
-
 bool start(bool host, const std::string& dolphin_exe, const std::string& user_dir, const Spec& s,
            int my_slot, const std::string& work_dir, const std::string& desktop, const std::string& extra_args, Run* out) {
-    CreateDirectoryW(W(work_dir).c_str(), nullptr);
+    CreateDirectoryA(work_dir.c_str(), nullptr);
     std::string script = work_dir + "\\gc_netplay_driver.ps1";
-    { std::ofstream f(P8(script), std::ios::binary); f << driver_script(); }
+    { std::ofstream f(script, std::ios::binary); f << driver_script(); }
     out->go_path = work_dir + "\\gc_guest_go.txt";
-    DeleteFileW(W(out->go_path).c_str());
+    DeleteFileA(out->go_path.c_str());
     out->status_path = work_dir + std::string(host ? "\\gc_host_status.txt" : "\\gc_guest_status.txt");
-    DeleteFileW(W(out->status_path).c_str());
+    DeleteFileA(out->status_path.c_str());
     std::wstring wd;
     if (!desktop.empty()) {
         wd = W(desktop);
@@ -460,12 +446,12 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
 
 void signal_go(const Run& r) {
     if (r.go_path.empty()) return;
-    HANDLE h = CreateFileW(W(r.go_path).c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE h = CreateFileA(r.go_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
 }
 
 std::string read_status(const Run& r) {
-    std::ifstream f(P8(r.status_path), std::ios::binary);
+    std::ifstream f(r.status_path, std::ios::binary);
     std::stringstream ss; ss << f.rdbuf();
     return ss.str();
 }

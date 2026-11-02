@@ -1,7 +1,6 @@
 #include "app.h"
 #include "gameinfo.h"
 #include "gamepack.h"
-#include "art.h"
 #include <chrono>
 
 #include <map>
@@ -23,12 +22,7 @@ static std::vector<hubui::fg::Owned> owned_snapshot() {
     v.reserve(A.lib.size());
     const std::string root = hubgp::pack_root();
     for (const hub::GameEntry& e : A.lib) {
-        if (is_hack(e)) continue;   // ROM hacks / translations are the player's own: never in the published friends' library (Plan 4 H2)
         v.push_back({sys_short(e), e.key, e.catalog_id, e.title});
-        {   /* also owned under its clean No-Intro name: an owned copy titled by its ROM header must not leave the pack's ghost of the same game */
-            std::string nm = hubui::fg::clean_dat_name(hubart::cached_name(e.key));
-            if (!nm.empty()) v.push_back({sys_short(e), e.key, e.catalog_id, nm});
-        }
         std::string t = hubgp::installed_folder_title(e.path, root);   // installed from a shared pack: also owned under the pack's title (a catalog title may differ from it)
         if (!t.empty()) v.push_back({sys_short(e), e.key, e.catalog_id, t});
         for (const auto& o : hubgp::pack_owned_aliases(e, root)) v.push_back(o);   // ... and under the pack console folder (a PS2 disc filed under GameCube still clears its GameCube ghost)
@@ -47,7 +41,7 @@ void rebuild_ghosts() {
     std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>> libs;
     if (A.st.show_friend_games && A.friends_chip) fr_library_collect(&libs);   // an empty own library still gets ghosts: new users install from shared packs
     const std::vector<hubui::fg::Owned> mine = owned_snapshot();
-    if (!libs.empty()) A.ghosts = hubui::fg::build_ghosts(mine, libs, [](const std::string&, const std::string& key) { return hubart::cached_name(key); });
+    if (!libs.empty()) A.ghosts = hubui::fg::build_ghosts(mine, libs);
     const size_t friend_ghosts = A.ghosts.size();
     if (A.st.show_friend_games && A.friends_chip && A.ghosts.size() < hubui::fg::kMaxGhosts) {   // games in the shared Drive packs, owned by no friend
         std::vector<hubui::fg::Ghost> pk = hubgp::pack_only_ghosts(mine, A.ghosts, hubgp::index_games(), hubui::fg::kMaxGhosts - A.ghosts.size());
@@ -157,50 +151,25 @@ void gamepack_merge_added(std::vector<hub::GameEntry>* lib) {
     for (auto it = g_pack_added.begin(); it != g_pack_added.end();) {
         if (!file_exists(it->path)) { it = g_pack_added.erase(it); continue; }
         bool have = false;
-        for (hub::GameEntry& e : *lib) if (lower_path(e.path) == lower_path(it->path)) {
-            have = true;
-            if (e.catalog_id.empty() && !it->title.empty()) e.title = it->title;   // a zipped cartridge keeps the pack's title (its path is in rom-cache, so no folder name can say it)
-            break;
-        }
+        for (const hub::GameEntry& e : *lib) if (lower_path(e.path) == lower_path(it->path)) { have = true; break; }
         if (!have) lib->push_back(*it);
         ++it;
     }
 }
 
 /* Games found by scanning a pack folder on its own go into the library without a full rescan. Returns the first game's key. */
-static std::string gamepack_adopt(std::vector<hub::GameEntry> got, const std::string& pack_title = std::string()) {
+static std::string gamepack_adopt(std::vector<hub::GameEntry> got) {
     if (hubui::merge_installer_games_dir(&A.st, hubgp::pack_root())) mark_dirty();
     std::string newkey;
     for (hub::GameEntry& e : got) {
-        if (e.catalog_id.empty()) {
-            std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root());
-            /* a zipped cartridge (.zip N64 / GBA / DS) is listed from rom-cache\, outside the pack folder: no folder name to take the title from,
-             * so the greyed tile it replaces would stay (and stay selected, with Play disabled). It takes the title of the install instead. */
-            if (t.empty() && got.size() == 1) t = pack_title;
-            if (!t.empty() && hubgp::pack_key(t) != hubgp::pack_key(e.title)) e.title = t;
-        }
+        if (e.catalog_id.empty()) { std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root()); if (!t.empty() && hubgp::pack_key(t) != hubgp::pack_key(e.title)) e.title = t; }
         if (newkey.empty()) newkey = e.key;
         g_pack_added.erase(std::remove_if(g_pack_added.begin(), g_pack_added.end(), [&](const hub::GameEntry& o) { return lower_path(o.path) == lower_path(e.path); }), g_pack_added.end());
         g_pack_added.push_back(e);
     }
     if (got.empty()) return newkey;
-    if (A.scanning) {
-        /* A scan is running right now and owns A.scan_result (never read it from here). Queue another, and put the new games into the
-         * live library right away: before this they only showed up when that scan landed, so Play right after an install found no
-         * entry (find_entry() was null) and did nothing until the scan ended - or, if the scan never ran again, until a restart. */
-        start_scan();
-        bool added = false;
-        for (const hub::GameEntry& e : got) {
-            bool have = false;
-            for (const hub::GameEntry& o : A.lib) if (lower_path(o.path) == lower_path(e.path)) { have = true; break; }
-            if (!have) { A.lib.push_back(e); added = true; }
-        }
-        if (added) {
-            A.lib_index.clear();
-            for (size_t i = 0; i < A.lib.size(); ++i) A.lib_index.emplace(A.lib[i].key, (int)i);
-            for (const hub::GameEntry& e : got) A.lib_state.erase(e.key);   // re-read lazily (a stale state row from a former install)
-        }
-    } else apply_scan();
+    if (A.scanning) start_scan();   // a scan is running right now (it owns the result list): queue another, the entries above are kept meanwhile
+    else apply_scan();
     A.vis_dirty = true;
     return newkey;
 }
@@ -210,7 +179,7 @@ static void gamepack_landed() {
     std::vector<hub::GameEntry> got;
     std::string note;
     { std::lock_guard<std::mutex> lk(GP.mu); got = GP.entries; note = GP.note; }
-    const std::string newkey = gamepack_adopt(got, GA.title);
+    const std::string newkey = gamepack_adopt(got);
     if (!newkey.empty() && A.sel_ghost == GA.ghost_id) {   // the greyed tile was the selection: the real game takes its place (same title, same spot)
         A.sel_ghost.clear();
         A.sel_game = newkey;
@@ -218,10 +187,8 @@ static void gamepack_landed() {
     }
     const std::string title = GA.title;
     if (!newkey.empty()) {
-        const hub::GameEntry first = got.front();   // fallback if the library list has not caught up (a scan landing, a duplicate collapse)
-        push_toast_action(title + " installed. Ready to play.", COL_GOOD, "Play", [newkey, first]() {
+        push_toast_action(title + " installed. Ready to play.", COL_GOOD, "Play", [newkey]() {
             if (const hub::GameEntry* g = find_entry(newkey)) { A.sel_game = newkey; hub::GameEntry copy = *g; play_entry(copy); }
-            else { hub::GameEntry copy = first; play_entry(copy); }
         }, 14.0);
     } else {
         set_toast(title + " installed, but RetroHub did not recognise a game in it. Use Rescan.", false, 10.0);
@@ -414,10 +381,6 @@ void fg_fake_libs() {
         r.push_back({"snes", "snes:fake", "", "Super Mario World"});
         r.push_back({"nes", "nes:fake", "", "Super Mario Bros."});
     }
-    if (std::getenv("HUB_SHOT_FAKE_DUPE_DS")) {   // hotfix shot: one friend lists Phantom Hourglass by its ROM header title, another by its proper title
-        FR.f_libs["miauid"].push_back({"nds", "nds:azee-004d56", "", "Zelda_DS:PH"});
-        FR.f_libs["jakuid"].push_back({"nds", "nds:fake-ph", "", "The Legend of Zelda: Phantom Hourglass"});
-    }
     if (rg && *rg == '2') return;
     static const char* sys[] = {"n64", "gc", "gba", "gb", "gbc", "nds", "3ds", "ps1"};
     std::vector<hubnet::LibGame>& big = FR.f_libs["kaiuid"];
@@ -503,7 +466,6 @@ void ghost_tick() {
     if (!A.scanned_once || A.scanning) return;
     uint64_t h = 1469598103934665603ull;
     for (const hub::GameEntry& e : A.lib) {
-        if (is_hack(e)) continue;
         for (unsigned char c : e.key) { h ^= c; h *= 1099511628211ull; }
         for (unsigned char c : e.title) { h ^= c; h *= 1099511628211ull; }
         h ^= 0x1f; h *= 1099511628211ull;

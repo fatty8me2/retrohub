@@ -40,7 +40,6 @@ ImGuiKey shot_key(const std::string& n) {
 
 /* Screenshot aids that seed UI state before the first frame (friends / room / emulator dialogs). Never any network. */
 void shot_init_ui() {
-    if (const char* sq = std::getenv("HUB_SHOT_SEARCH")) { std::snprintf(A.search_buf, sizeof A.search_buf, "%s", sq); A.vis_dirty = true; }   // screenshot aid: preset the library search text
     if (const char* lf = std::getenv("HUB_SHOT_LIBFILTER")) {   // screenshot aid: "fav", "group" and "genre=Action" (';'-separated) seed the All Games filters
         std::stringstream fs(lf);
         std::string tok;
@@ -86,9 +85,6 @@ void shot_init_ui() {
     states_shot_seed();
     cloud_ui_shot_init();
     kt_shot_init();
-    party_shot_init();     // Plan 4 aids (HUB_SHOT_PARTY / _BRACKET / _HACKS); no-ops until each lane lands
-    bracket_shot_init();
-    hack_shot_init();
     osk::shot_init();
     if (const char* rj = std::getenv("HUB_SHOT_REJOIN")) {   // screenshot aid: the disconnected Rejoin strip (no network)
         g_shot_rejoin = true;

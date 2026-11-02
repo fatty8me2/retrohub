@@ -42,10 +42,7 @@ bool write_atomic(const str& path, const str& data) {
 
 /* ------------------------------------------------------------------ three-way */
 Act three_way(const Side& local, const Side& base, const Side& cloud, bool cloud_evicted, FileClass cls) {
-    if (cloud_evicted) {
-        if (!local.present) return Act::Nothing;
-        return is_protected(cls, local.size) ? Act::Push : Act::LocalOnlyCap;   // a save (battery, memory card) is uploaded again; only large items stay local
-    }
+    if (cloud_evicted) return local.present ? Act::LocalOnlyCap : Act::Nothing;
     if (!local.present && !cloud.present) return Act::Nothing;
     if (!local.present) return Act::Pull;                       // new game on this PC, or an accidental local loss: heal
     if (!cloud.present) return Act::Push;
@@ -58,36 +55,6 @@ Act three_way(const Side& local, const Side& base, const Side& cloud, bool cloud
     if (cls == FileClass::State || cls == FileClass::Shot || cls == FileClass::Settings)   // newest wins, never prompts
         return local.mtime >= cloud.mtime ? Act::Push : Act::Pull;
     return Act::Conflict;
-}
-
-BaseRead read_base(const BFile& bf, bool have_cloud, int cloud_ver, const std::string& cloud_sha) {
-    BaseRead r;
-    r.ver = bf.ver;
-    r.refused_sha = bf.lsha;
-    r.base.present = bf.ver > 0 || !bf.sha.empty();
-    r.base.sha = bf.sha; r.base.size = bf.size; r.base.mtime = bf.mtime;
-    if (!bf.lsha.empty()) return r;                                   // written by this build: ver/sha are still the real agreement
-    /* legacy shape 1: ver 0 with a sha. A real agreement always carries the cloud's version (>= 1), so this is local content the server
-     * refused. (Unless the cloud holds exactly that sha: a stale ver after a lost commit reply, which is still an agreement.) */
-    if (bf.ver == 0 && !bf.sha.empty() && !(have_cloud && cloud_sha == bf.sha)) {
-        r.refused_sha = bf.sha;
-        r.base = Side();                                              // no agreement is known
-        r.legacy = true;
-        return r;
-    }
-    /* legacy shape 2: marked local only, at the cloud's CURRENT version, but with a different sha than that version has. The cloud has not
-     * moved since the refusal, so its version is the agreement and the stored sha is the refused local content. */
-    if (!bf.lo.empty() && bf.ver > 0 && have_cloud && cloud_ver == bf.ver && cloud_sha != bf.sha) {
-        r.refused_sha = bf.sha;
-        r.base.sha = cloud_sha;
-        r.legacy = true;
-    } else if (!bf.lo.empty() && bf.ver > 0 && have_cloud && cloud_ver != bf.ver && cloud_sha != bf.sha) {
-        /* the cloud moved on and the stored sha may be refused local content: no agreement is known, so differing sides are a conflict (never a silent pull) */
-        r.refused_sha = bf.sha;
-        r.base = Side();
-        r.legacy = true;
-    }
-    return r;
 }
 
 /* ------------------------------------------------------------------ queue */
@@ -154,11 +121,6 @@ void CloudQueue::fail(const std::string& gkey, const std::string& reason, int64_
         }
 }
 
-void CloudQueue::park(const std::string& gkey, const std::string& reason) {
-    for (auto& q : items_)
-        if (q.gkey == gkey && q.reason == reason) q.next_at = -1;
-}
-
 bool CloudQueue::next_due(int64_t now, QItem* out) const {
     const QItem* best = nullptr;
     for (auto& q : items_)
@@ -218,7 +180,6 @@ bool BaseStore::load(const std::string& path) {
                     bf.size = fk.second.i64("size", 0);
                     bf.mtime = fk.second.i64("mtime", 0);
                     bf.lo = fk.second.str("lo");
-                    bf.lsha = fk.second.str("lsha");
                     bg.files[fk.first] = bf;
                 }
             games[kv.first] = std::move(bg);
@@ -244,7 +205,6 @@ bool BaseStore::save(const std::string& path) const {
             o += json::quote(f.first) + ":{\"ver\":" + std::to_string(f.second.ver) + ",\"sha\":" + json::quote(f.second.sha) + ",\"size\":" +
                  std::to_string(f.second.size) + ",\"mtime\":" + std::to_string(f.second.mtime);
             if (!f.second.lo.empty()) o += ",\"lo\":" + json::quote(f.second.lo);
-            if (!f.second.lsha.empty()) o += ",\"lsha\":" + json::quote(f.second.lsha);
             o += "}";
         }
         o += "}}";

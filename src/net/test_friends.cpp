@@ -280,43 +280,6 @@ int main(int argc, char** argv)
     A->c.request_history(B->c.my_uid());
     settle(500);
 
-    printf("[card + attachment fields + offline outbox]\n");
-    A->clear(); B->clear();
-    {
-        const std::string card = "RHC1:eyJ0IjoiYSJ9\"quote\\";
-        A->c.send_message(B->c.my_uid(), "challenge!", nullptr, card);
-        CHECK(wait_for([&] { return B->find(Event::MessageReceived); }));
-        const Event* ce = B->find(Event::MessageReceived);
-        CHECK(ce && ce->msg.card == card && ce->msg.text == "challenge!" && !ce->msg.has_attach);
-        A->c.send_message(B->c.my_uid(), "", nullptr, std::string(kCardMax + 1, 'x'));
-        CHECK(wait_for([&] { return A->find(Event::SendFailed); }), "oversize card refused locally");
-        A->clear(); B->clear();
-        Attach bogus; bogus.id = "0123456789abcdef0123456789abcdef"; bogus.name = "x.png"; bogus.kind = "shot"; bogus.size = 5;
-        A->c.send_message(B->c.my_uid(), "", &bogus, "");
-        CHECK(wait_for([&] { return A->find(Event::Error); }), "unknown attachment id is refused by the server");
-        CHECK(A->find(Event::Error) && A->find(Event::Error)->detail == "attach-gone", "detail %s", A->find(Event::Error) ? A->find(Event::Error)->detail.c_str() : "");
-        CHECK(!B->find(Event::MessageReceived), "nothing delivered for a refused attachment");
-    }
-    {   /* the offline outbox: queued while the server is unreachable, persisted, flushed after the next welcome */
-        A->c.stop(); settle(200); A->clear(); B->clear();
-        A->c.start("ws://127.0.0.1:1", "qa-alice");
-        A->c.send_message(B->c.my_uid(), "sent while offline");
-        A->c.send_message(B->c.my_uid(), "second one");
-        CHECK(A->c.outbox_size() == 2, "outbox %d", A->c.outbox_size());
-        A->pump();
-        CHECK(A->find(Event::Queued) != nullptr, "UI is told the message is queued");
-        const auto& cv = A->c.conversation(B->c.my_uid());
-        CHECK(!cv.empty() && A->c.queued(cv.back().id), "the line is marked pending");
-        A->c.block(C->c.my_uid()); A->c.unblock(C->c.my_uid());
-        CHECK(A->c.outbox_size() == 2, "block+unblock cancel out");
-        A->c.stop(); settle(200);
-        A->c.start(server, "qa-alice");   /* the queue was persisted to outbox.json */
-        CHECK(wait_for([&] { return B->find(Event::MessageReceived) != nullptr; }), "queued message delivered after reconnect");
-        CHECK(wait_for([&] { int n = 0; for (const Event& e : B->log) if (e.kind == Event::MessageReceived) n++; return n >= 2; }));
-        CHECK(B->log.size() >= 2 && B->find(Event::MessageReceived)->msg.text == "sent while offline", "in order");
-        CHECK(wait_for([&] { return A->c.outbox_size() == 0; }) && !A->c.queued(A->c.conversation(B->c.my_uid()).back().id));
-    }
-
     printf("[ask to join]\n");
     A->clear(); B->clear();
     A->c.ask_to_join(B->c.my_uid(), "smash64", "Super Smash Bros.", "n64");

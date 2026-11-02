@@ -4,11 +4,6 @@
 
 #include "prefs.h"
 #include "savestore.h"
-#include "attach_xfer.h"
-#include "friend_pick_ui.h"
-
-#include <filesystem>
-#include <map>
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
@@ -101,55 +96,12 @@ bool shot_set_cover(const std::string& game_key, const std::string& path) {
     return custom_set_cover(game_key, path);   // customize_ui.cpp: copies it into the vault (synced) and stores that path
 }
 
-/* "Send to a friend": opens the friend picker (friend_pick_ui.cpp); once friends are ticked the picture is uploaded
- * (hub::attach, <= 8 MB) and each friend gets a DM with the attachment. Returns false when the file cannot be sent at all. */
-namespace {
-hubui::FriendPicker g_pick;
-std::string g_pick_path;
-}  // namespace
-bool shot_send_to_friend(const std::string& path) {
-    if (path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0) {
-        push_toast("Only pictures can be sent to friends, not clips.", COL_BAD, 5.0);
-        return false;
-    }
-    std::error_code ec;
-    auto sz = std::filesystem::file_size(std::filesystem::u8path(path), ec);
-    if (!ec) {
-        std::string why = hub::attach::attach_size_problem((int64_t)sz, "shot");
-        if (!why.empty()) { push_toast(why, COL_BAD, 7.0); return false; }
-    }
-    g_pick_path = path;
-    g_pick.open("Send this picture", "Pick who should get it. They see it in your chat and can open it for 7 days (max 8 MB).");
-    return true;
-}
-
-/* A small cached texture for a picture (chat thumbnails). */
-namespace hubui {
-SDL_Texture* shot_thumb_tex(const std::string& path, int* w, int* h) {
-    struct T { SDL_Texture* t = nullptr; int w = 0, h = 0; unsigned long long used = 0; };
-    static std::map<std::string, T> cache;
-    static unsigned long long tick = 0;
-    auto it = cache.find(path);
-    if (it != cache.end()) { it->second.used = ++tick; *w = it->second.w; *h = it->second.h; return it->second.t; }
-    SDL_Renderer* ren = A.win ? SDL_GetRenderer(A.win) : nullptr;
-    if (!ren) return nullptr;
-    while (cache.size() >= 24) {
-        auto old = cache.begin();
-        for (auto i = cache.begin(); i != cache.end(); ++i) if (i->second.used < old->second.used) old = i;
-        if (old->second.t) SDL_DestroyTexture(old->second.t);
-        cache.erase(old);
-    }
-    T nt; nt.used = ++tick;
-    std::vector<unsigned char> px; int pw = 0, ph = 0;
-    if (load_rgba(path, &px, &pw, &ph) && pw > 0 && ph > 0) {
-        nt.t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, pw, ph);
-        if (nt.t) { SDL_UpdateTexture(nt.t, nullptr, px.data(), pw * 4); SDL_SetTextureBlendMode(nt.t, SDL_BLENDMODE_BLEND); nt.w = pw; nt.h = ph; }
-    }
-    cache[path] = nt;
-    *w = nt.w; *h = nt.h;
-    return nt.t;
-}
-}  // namespace hubui
+/* STUB: sending a screenshot to a friend as a DM attachment.
+ * Checked: there is no DM client API yet (src/net has no direct-message send) and screenshots are not uploaded to the cloud
+ * (cloud_engine: files under shots/ stay local unless set_backup_screenshots is on), so there is no blob to reuse.
+ * Needs server work: a DM message type carrying a blob reference in the 50 MB large-item pool, plus a client upload of the PNG.
+ * Not built here. */
+bool shot_send_to_friend(const std::string& /*path*/) { return false; }
 
 void shot_viewer_open(const hub::GameEntry& e, const std::vector<std::string>& paths, int idx, ShotTexFn tex) {
     if (paths.empty()) return;
@@ -197,10 +149,6 @@ bool shot_viewer_draw() {
         else { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return false; }
     }
 
-    if (g_headless && std::getenv("HUB_SHOT_FRIEND_PICK")) {   // screenshot aid: open the friend picker over the viewer once
-        static bool once = false;
-        if (!once && !V.files.empty()) { once = true; shot_send_to_friend(V.files[(size_t)V.idx]); }
-    }
     const float side = sp(30.f);
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     ImGui::BeginChild("##shotimg", ImVec2(avail.x - side - sp(2.f), avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar);
@@ -239,13 +187,9 @@ bool shot_viewer_draw() {
             if (shot_set_cover(V.game_key, is_clip ? path + ".jpg" : path)) push_toast("Saved as this game's cover", COL_GOOD, 3.0);
             else push_toast("Couldn't save the cover", COL_BAD, 4.0);
         }
-        if (ui::button("Send to a friend", bsz)) shot_send_to_friend(path);
-        if (g_pick.draw("Send to friends##shotpick") && !g_pick_path.empty()) {
-            std::string fname = std::filesystem::u8path(g_pick_path).filename().u8string();
-            hubui::attach_send_start(g_pick_path, "shot", fname, g_pick.chosen(),
-                                     V.game_name.empty() ? std::string("Sent a screenshot") : "Sent a screenshot of " + V.game_name);
+        if (ui::button("Send to a friend", bsz)) {
+            if (!shot_send_to_friend(path)) push_toast("Sending pictures to friends isn't available yet", COL_BAD, 4.0);
         }
-        { std::string st = hubui::attach_send_status(); if (!st.empty()) ImGui::TextDisabled("%s", st.c_str()); }
         if (ui::button(is_clip ? "Play clip" : "Open in viewer", bsz, is_clip, true, is_clip ? ui::Icon::Play : ui::Icon::None))
             ShellExecuteW(nullptr, L"open", std::filesystem::u8path(path).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         if (ui::button("Delete", bsz)) { V.confirm_delete = true; V.focus_first = true; }

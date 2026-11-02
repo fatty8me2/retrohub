@@ -40,9 +40,6 @@ SDL_Texture* get_by_name(const std::string& system_short, const std::string& noi
 SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
                        const std::string& title, Kind kind, int* w, int* h, const std::string& hint = "");
 
-/* The No-Intro name already cached for a game key (names.json), "" if none. Cheap: never loads a DAT or touches the network. */
-std::string cached_name(const std::string& key);
-
 /* Average saturated colour of a texture returned by get() (packed r|g<<8|b<<16|255<<24), 0 if unknown / greyscale. */
 uint32_t average_color(SDL_Texture* tex);
 

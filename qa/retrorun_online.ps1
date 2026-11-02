@@ -96,7 +96,7 @@ foreach ($x in $procs) {
     $final = ($lines | Where-Object { $_ -match 'final:' } | Select-Object -Last 1)
     $done = ($lines | Where-Object { $_ -match 'done:' } | Select-Object -Last 1)
     $syncmode = ($lines | Where-Object { $_ -match 'sync hash:' } | Select-Object -First 1)
-    $desync = @($lines | Where-Object { $_ -cmatch 'DESYNC (at|\(spectator\))' }).Count   # not 'mismatch': the save-size warning contains it
+    $desync = @($lines | Where-Object { $_ -match 'DESYNC' }).Count   # not 'mismatch': the save-size warning contains it
     $timeouts = @($lines | Where-Object { $_ -match 'timed out|connection lost|start barrier failed|session failed' })
     $fin = if ($final) { $final.Substring($final.IndexOf('final:')) } else { 'NONE' }
     Write-Output ("slot " + $x.Slot + " rc=" + $rc + " | " + $fin)

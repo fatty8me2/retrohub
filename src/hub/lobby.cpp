@@ -1,6 +1,5 @@
 #include "app.h"
 #include "friends_ui.h"
-#include "party_ui.h"
 #include "profile.h"
 
 bool g_fake_room = false;
@@ -94,7 +93,6 @@ void send_rules() { A.lobby.send_msg(hubui::rules_json(A.rules)); }
 /* A game from this room ended (or never started): nobody stays "ready" for the next one, so the host cannot relaunch a rematch
  * before the others are back, and the old ready flags are not mistaken for fresh ones. Everyone re-announces their own state. */
 void room_session_ended() {
-    party_on_session_end();   // party mode (rooms and couch): the round's game ended
     if (!A.in_room) return;
     A.my_ready = false;
     A.ready.clear();
@@ -108,7 +106,6 @@ void leave_room() {
     if (A.proc && A.run.online && !A.run.after_exit) { if (A.run.remote_play) rplay_quit_current_guest(); else TerminateProcess(A.proc, 0); }
     kt_leave_room();
     group_left_room();
-    party_on_leave_room();   // the room's party (or vote) ends with the room
     A.lobby.stop();
     A.in_room = false;
     A.peers.clear();
@@ -172,17 +169,6 @@ void launch_fail(const std::string& why, double secs) {
     set_notice(why, secs);
     if (room_connected() && !is_host())
         A.lobby.send_msg("{\"kind\":\"np_fail\",\"reason\":\"" + json::escape(why) + "\"}");
-}
-
-std::string emulator_online_block() {
-    if (A.selected_game.empty()) return "";
-    const hub::GameEntry* g = find_room_entry(A.selected_game);
-    if (!g || is_remote_stand_in(*g)) return "";
-    if (g->system == hub::System::GC && hubemu::find(hubemu::Kind::Dolphin, "", "").exe.empty())
-        return "Dolphin isn't installed on this PC yet - download it (about " + std::to_string((int)(hubemu::release(hubemu::Kind::Dolphin).size / 1048576)) + " MB) before you ready up.";
-    if (g->system == hub::System::N3DS && hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, g->path).exe.empty())
-        return "Azahar (the 3DS emulator) isn't installed on this PC yet - download it before you ready up.";
-    return "";
 }
 
 std::string ready_block_reason_now() {
@@ -249,22 +235,12 @@ void guest_apply_launch(const std::string& body) {
 }
 
 void lobby_tick() {
-    party_tick();     // Plan 4: party mode + the finished-match watcher (also outside a room: couch party)
-    bracket_tick();
     if (!A.in_room) return;
     A.lobby.update();
     if (A.entering_room) {
         if (A.lobby.connected()) { A.entering_room = false; A.prev_code.clear(); }
         else if (A.lobby.failed()) {
             A.entering_room = false;
-            if (A.room_role_host && !A.code.empty() && A.lobby.status().find("already in use") != std::string::npos) {
-                /* We were the host, blipped for longer than the Worker's grace, and the room migrated to somebody else (host_changed went to
-                 * the others, not to us): the code is alive but slot 0 is taken. Come back as a guest instead of failing forever. */
-                std::string c = A.code;
-                set_notice("The room moved to another host while you were offline - rejoining as a guest.");
-                enter_room(false, c);
-                return;
-            }
             if (!A.prev_code.empty()) {   // the new room did not work out: go back to the one the player left
                 std::string c = A.prev_code, why = A.lobby.status();
                 bool h = A.prev_host;
@@ -278,23 +254,6 @@ void lobby_tick() {
     if (!A.lobby.connected()) { A.was_connected = false; return; }   // dropped: re-announce ourselves when the link comes back
     /* A guest on a different RetroHub version must not stay readied up. */
     if (A.my_ready && !ready_block_reason_now().empty()) { A.my_ready = false; A.hello_dirty = true; }
-    /* A guest without Dolphin / Azahar used to find out only after the host launched (then the host's Dolphin was killed). Offer the download
-     * now, once per game, and keep READY off until it is installed. Never over a running game. */
-    if (!is_host() && !A.proc && !game_active()) {
-        static std::string offered;
-        std::string eb = emulator_online_block();
-        if (!eb.empty()) {
-            if (A.my_ready) { A.my_ready = false; A.hello_dirty = true; }
-            if (offered != A.selected_game && EMU.state == hubemu::Installer::Idle) {
-                offered = A.selected_game;
-                const hub::GameEntry* g = find_room_entry(A.selected_game);
-                EMU.kind = g && g->system == hub::System::N3DS ? hubemu::Kind::Azahar : hubemu::Kind::Dolphin;
-                EMU.game_key.clear();
-                EMU.state = hubemu::Installer::Asking;
-                set_notice(eb, 10.0);
-            }
-        } else offered.clear();
-    }
 
     /* Lobby events are handled strictly in arrival order. A HostChange moves per-slot state from the promoted
      * member's old slot to 0 and drops the departed host's, so every message queued before it (old numbering)
@@ -314,7 +273,6 @@ void lobby_tick() {
             std::string gone;   // the departed host's name, before the maps are renumbered
             { auto pit = A.peers.find(0); if (pit != A.peers.end()) gone = pit->second.name; }
             hubui::host_left_remap(ev.from_slot, A.peers, A.ready, A.ingame, A.locals, A.picks);
-            party_on_host_change(ev.from_slot);                           // party points / votes follow the renumbering; the new host re-broadcasts the State
             A.pings.clear(); A.ping_at.clear(); A.ping_relay.clear();     // slots were renumbered: re-measure
             A.ready.clear();                                              // every ready flag belonged to the old host's game: all re-announce
             online_host_left(gone);
@@ -342,17 +300,7 @@ void lobby_tick() {
             hubui::PeerInfo& p = A.peers[from];
             hubui::parse_hello(j, &p);
         } else if (kind == "select") {
-            if (from == 0) {
-                const std::string g = j.str("game");
-                if (g != A.selected_game) {   // OF-M7: READY belongs to the game that was shown. The host picked another one: nobody stays ready for a game they never saw
-                    A.selected_game = g;
-                    A.ready.clear();
-                    if (A.my_ready && !is_host()) {
-                        A.my_ready = false;
-                        A.lobby.send_msg("{\"kind\":\"ready\",\"ready\":false}");   // re-announce just that; the full hello is not needed
-                    }
-                }
-            }
+            if (from == 0) A.selected_game = j.str("game");
         } else if (kind == "ready") {
             const hubui::Json* r = j.get("ready");
             A.ready[from] = r && r->type == hubui::Json::Bool && r->b;
@@ -381,17 +329,7 @@ void lobby_tick() {
         } else if (kind == "np_abort") {   // the host could not start the game it announced: stop waiting for it
             if (from == 0 && !is_host()) {
                 online_cancel_pending();
-                /* OF-M8: a runner this launch already started would wait for the host's session for a minute; close it (only a young one:
-                 * a game that has been running for a while is not this launch). */
-                const ULONGLONG now = GetTickCount64();
-                if (A.proc && A.run.room && A.run.online && !A.run.remote_play && now - A.run.start_tick < 90000) request_game_close();
-                /* The host's launch_online may already have said why (host_abort) and host_launch_selected then adds a generic one: show one notice. */
-                static ULONGLONG last_abort = 0;
-                static bool last_had_reason = false;
-                const bool again = last_abort && now - last_abort < 3000 && (last_had_reason || j.str("reason").empty());
-                if (!again) set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + j.str("reason")), 10.0);
-                last_abort = now;
-                last_had_reason = !j.str("reason").empty();
+                set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + j.str("reason")), 10.0);
             }
         } else if (kind == "np_fail") {
             if (is_host()) { set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0); gc_host_guest_failed(member_name(from) + " can't start: " + j.str("reason")); }
@@ -440,12 +378,6 @@ void lobby_tick() {
         } else if (kind == "launch") {
             if (from != 0 || is_host()) continue;
             guest_apply_launch(body);
-        } else if (kind.compare(0, 3, "pt_") == 0) {   // party mode (party_logic.h)
-            party_on_msg(from, j);
-        } else if (kind.compare(0, 3, "bk_") == 0) {   // brackets (bracket_ui.cpp)
-            bracket_on_msg(from, j);
-        } else if (kind == "emote") {                  // in-game emote wheel: {kind:"emote", e:<code>} shown on the running game's OSD
-            qm_emote_incoming(from, j.str("e"));
         }
 
     }

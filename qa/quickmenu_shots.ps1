@@ -25,10 +25,3 @@ Shot "qm_speednav_1280" @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB
 # Dolphin: Speed row enabled offline (6 = 3x, applies on resume), disabled online, other external emulator: "not supported"
 Shot "qm_dolphin_1280"  @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_EXT = "1"; HUB_SHOT_QM_DOLPHIN = "1"; HUB_SHOT_QM_SPEED = "5" }
 Shot "qm_dolphin_online_1280" @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_EXT = "1"; HUB_SHOT_QM_DOLPHIN = "1"; HUB_SHOT_QM_ONLINE = "1" }
-# Plan 4: Pause rows (offline: "Paused" by default), Emotes + Pass controller rows (online), the emote page and the pass page
-Shot "qm_pause_1280"       @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800" }
-Shot "qm_party_main_1280"  @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_ONLINE = "1" }
-Shot "qm_emote_1280"       @{ HUB_SHOT_QM = "emote"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_ONLINE = "1" }
-Shot "qm_pass_1280"        @{ HUB_SHOT_QM = "pass"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_ONLINE = "1" }
-# the long online menu scrolls to follow the pad selection (down x11 lands on Pass controller)
-Shot "qm_party_nav_1280"   @{ HUB_SHOT_QM = "main"; HUB_SHOT_SIZE = "1280x800"; HUB_SHOT_QM_ONLINE = "1"; HUB_SHOT_PAD = "wait,down,down,down,down,down,down,down,down,down,down,down"; HUB_SHOT_SECS = "10" }

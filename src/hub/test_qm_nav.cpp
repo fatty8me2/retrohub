@@ -110,36 +110,6 @@ int main() {
         for (int i = 0; i < 8; ++i) { n.begin(rt); draw(); }
         CHECK(n.sel == "slot9");
     }
-    {   // Plan 4 rows: the Pause steppers, the Pass / Emotes buttons and the emote grid are reachable by d-pad; a held A never triggers them
-        MenuNav n; n.reset();
-        auto main_rows = [&]() {
-            n.add("Resume", false, true, 0, 0); n.add("speed", true, true, 0, 1); n.add("Take a screenshot", false, true, 0, 2);
-            n.add("pause", true, true, 0, 3); n.add("pause_auto", true, true, 0, 4);
-            n.add("Emotes", false, true, 0, 5); n.add("Pass controller", false, true, 0, 6); n.add("Quit to RetroHub", false, true, 0, 7); n.end(); };
-        NavEvents dn, rt, act; dn.dy = 1; rt.dx = 1; act.activate = true;
-        n.begin(NavEvents()); main_rows();
-        for (int i = 0; i < 3; ++i) { n.begin(dn); main_rows(); }
-        CHECK(n.sel == "pause");
-        n.begin(rt); CHECK(n.act.id == "pause" && n.act.step == 1); main_rows();   // right on the stepper toggles it
-        n.begin(dn); main_rows(); CHECK(n.sel == "pause_auto");
-        n.begin(act); CHECK(n.act.id == "pause_auto" && n.act.step == 1); main_rows();
-        n.begin(dn); main_rows(); n.begin(dn); main_rows(); CHECK(n.sel == "Pass controller");
-        n.begin(act); CHECK(n.act.id == "Pass controller" && n.act.activate); main_rows();
-        // emote page: five buttons in one line, Back below
-        n.reset();
-        auto emote_rows = [&]() { for (int i = 0; i < 5; ++i) n.add("emote_" + std::to_string(i), false, true, i, 0); n.add("emote_back", false, true, 0, 1); n.end(); };
-        n.begin(NavEvents()); emote_rows(); CHECK(n.sel == "emote_0");
-        for (int i = 0; i < 6; ++i) { n.begin(rt); emote_rows(); }
-        CHECK(n.sel == "emote_4");   // clamps at the last emote
-        n.begin(dn); emote_rows(); CHECK(n.sel == "emote_back");
-        NavEvents up; up.dy = -1;
-        n.begin(up); emote_rows(); CHECK(n.sel == "emote_0");
-        // release gate: an A held from the game (and the opening View+Y) does nothing until released
-        MenuInput in;
-        in.open(NB_A);
-        CHECK(!in.update(NB_A, 100).activate && !in.update(NB_A, 600).activate);
-        CHECK(!in.update(0, 700).activate && in.update(NB_A, 800).activate);
-    }
     std::printf("qm_nav: %d checks passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

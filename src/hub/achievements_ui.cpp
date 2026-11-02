@@ -1,5 +1,4 @@
 #include "app.h"
-#include "challenge_ui.h"
 #include "cheevos_data.h"
 #include "cheevos_login.h"
 
@@ -122,7 +121,6 @@ void text_col(ImU32 c, const std::string& s) {
 
 /* " --ra-cfg X --ra-cache Y" for offline retrorun launches when the player enabled RetroAchievements and is signed in. */
 std::string achievements_launch_args() {
-    if (hubui::challenge_pending_no_ra()) return "";   // a friend challenge loads a save state: RetroAchievements stay off for that run (challenge_ui.cpp)
     load_cfg();
     if (!RA.cfg.enabled || !RA.cfg.signed_in()) return "";
     return " --ra-cfg " + quote(cfg_path()) + " --ra-cache " + quote(cache_dir());

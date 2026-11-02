@@ -7,7 +7,6 @@
 
 #include "library.h"
 #include "games.h"
-#include "hack_logic.h"
 
 #include <SDL.h>
 
@@ -312,16 +311,6 @@ const hub::GameInfo* catalog_by_title(const std::string& sys, const std::string&
 }
 
 bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* how) {
-    {   /* a ROM hack / translation borrows its base game's box: look the cover up under the base key (N64 md5, GBA / NES / SNES crc come from it) */
-        std::string base_key;
-        if (!g.hack_patch.empty() && hubui::hacks::parse_key(g.key, &base_key, nullptr)) {
-            hub::GameEntry b = g;
-            b.key = base_key;
-            b.hack_patch.clear();
-            b.hack_base.clear();
-            return resolve_name_impl(b, name, how);
-        }
-    }
     std::string sys = hub::system_short(g.system);
     const bool ghost = is_ghost_path(g.path);
     {
@@ -697,12 +686,6 @@ SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, 
         j.game.path = hint.empty() ? "ghost" : "ghost|" + hint;
     }
     return lookup_or_queue(std::move(j), w, h);
-}
-
-std::string cached_name(const std::string& key) {
-    std::lock_guard<std::mutex> l(g_mu);
-    auto it = g_names.find(key);
-    return it == g_names.end() ? std::string() : it->second;
 }
 
 bool enabled() { return g_enabled.load(); }

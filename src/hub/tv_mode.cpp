@@ -11,7 +11,6 @@ namespace tvmode {
 
 static bool g_active = false;
 static int g_pending = -1;           // -1 none, 0 leave, 1 enter
-static bool g_pending_key = false;   // the request came from F11 in the focused hub (the only route allowed to fullscreen over a running game)
 static float g_base_s = 1.f;
 static hubtv::WinRect g_saved;
 static bool g_headless_mode = false;
@@ -60,15 +59,10 @@ float init(SDL_Window* win, bool headless, float base_scale, bool cmd_flag, bool
     return hubtv::tv_scale(base_scale, display_h(win));
 }
 
-/* The Settings checkbox and any other non-key route: applied at the next frame, but turning TV mode ON is refused while a game runs
- * (frame_begin): fullscreening the hub would cover a windowed game. */
-void toggle() { g_pending = g_active ? 0 : 1; g_pending_key = false; }
+void toggle() { g_pending = g_active ? 0 : 1; }
 
 void handle_event(const SDL_Event& e, bool want_text) {
-    if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F11 && !e.key.repeat && !want_text) {
-        g_pending = g_active ? 0 : 1;
-        g_pending_key = true;   // F11 in the focused hub is a window command the player just typed: it keeps working
-    }
+    if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F11 && !e.key.repeat && !want_text) toggle();
 }
 
 static void rebuild_fonts(float s) {
@@ -82,24 +76,17 @@ static void rebuild_fonts(float s) {
 
 void frame_begin(SDL_Window* win, SDL_Renderer*) {
     if (g_pending < 0) return;
-    const bool on = g_pending == 1, from_key = g_pending_key;
+    const bool on = g_pending == 1;
     g_pending = -1;
-    g_pending_key = false;
     if (on == g_active) return;
-    if (on && !g_headless_mode && !hubguard::may_enter_tv_mode(from_key, game_active())) {
-        /* M5: the Settings checkbox (or any non-key route) would fullscreen the hub over a running windowed game. Refused, with a note in
-         * the hub's own window; F11 in the focused hub still works, and so does the checkbox once the game is closed. */
-        set_notice("TV mode can't start from here while a game is running. Press F11 in this window, or close the game first.", 8.0);
-        return;
-    }
     g_active = on;
     if (on) {
         save_rect(win);
-        if (!g_headless_mode) SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);   // popup-guard: ok (F11 in the focused hub, or the Settings checkbox with no game running: may_enter_tv_mode)
+        if (!g_headless_mode) SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);   // popup-guard: ok (F11 pressed in the focused hub)
         rebuild_fonts(hubtv::tv_scale(g_base_s, display_h(win)));
     } else {
         if (!g_headless_mode) {
-            SDL_SetWindowFullscreen(win, 0);   // popup-guard: ok (leaving TV mode from the focused hub: the window shrinks, nothing is covered)
+            SDL_SetWindowFullscreen(win, 0);   // popup-guard: ok (F11 pressed in the focused hub)
             if (g_saved.valid) {
                 SDL_SetWindowSize(win, g_saved.w, g_saved.h);
                 SDL_SetWindowPosition(win, g_saved.x, g_saved.y);

@@ -7,111 +7,6 @@
 #include "qm_pad.h"
 #include "dolphin_speed.h"
 #include "hang_watchdog.h"
-#include "idle_logic.h"
-#include "boot_anim.h"
-#include "toast.h"
-#include "start_hint.h"
-#include "wizard_logic.h"
-
-#include <cstring>
-
-/* ---- Plan 4 shell helpers (bell notes for the updater, the launch tips card, the idle throttle) ---- */
-namespace {
-
-/* One-time bell entries about updates: "Update ready: installs when you finish playing" while an update waits for a game to close, and
- * what the startup pass found (an interrupted update repaired, the last installer's failure). Bell only: never a popup, never a toast
- * over a game. The bell history loads on the first group_tick(), so nothing is added before GRP.loaded. */
-void update_bell_tick() {
-    static std::vector<std::string> pending;
-    static bool deferred_was = false, shot_done = false;
-    std::vector<std::string> got;
-    if (hubupdate::take_startup_notes(&got)) for (auto& n : got) pending.push_back(n);
-    if (g_headless && !shot_done) {   // screenshot aid: HUB_SHOT_UPDATE_NOTES=ready,failed,postponed,rollback,interrupted
-        if (const char* sn = std::getenv("HUB_SHOT_UPDATE_NOTES")) {
-            shot_done = true;
-            std::string all = sn, tok;
-            for (size_t i = 0; i <= all.size(); ++i) {
-                if (i < all.size() && all[i] != ',') { tok += all[i]; continue; }
-                hubupdate::apply::Status st;
-                st.version = "v1.30.0";
-                if (tok == "ready") pending.push_back(hubupdate::kReadyBellText);
-                else if (tok == "failed") { st.result = "failed"; st.reason = hubupdate::apply::plain_reason(32); pending.push_back(hubupdate::apply::status_line(st)); }
-                else if (tok == "postponed") { st.result = "postponed"; pending.push_back(hubupdate::apply::status_line(st)); }
-                else if (tok == "rollback") { st.result = "rollback_failed"; pending.push_back(hubupdate::apply::status_line(st)); }
-                else if (tok == "interrupted") { st.result = "interrupted"; pending.push_back(hubupdate::apply::status_line(st)); }
-                tok.clear();
-            }
-        }
-    }
-    if (!GRP.loaded) return;
-    for (const std::string& n : pending) group_note(hubui::group::Kind::Info, "", "", "", "", "", n, 0);
-    pending.clear();
-    const bool d = hubupdate::update_deferred();
-    if (d && !deferred_was) group_note(hubui::group::Kind::Info, "", "", "", "", "", hubupdate::kReadyBellText, 0);
-    deferred_was = d;
-}
-
-/* The controller tips card for games RetroHub cannot draw into (Dolphin, PCSX2, Azahar, Cemu, mGBA, BattleShip), shown in the HUB'S OWN
- * window while the game is still starting and before the game's window exists. It used to be a topmost click-through window laid over
- * the running game (src/common/hint_popup.cpp); nothing is drawn over a game any more. The runners keep their own: retrorun draws it into
- * its frame, n64run into its own window. Hub-launched external games only (A.run.pad_exit), and only with the setting on. */
-void draw_launch_tips(bool shot_force) {
-    if (!A.st.start_hint && !shot_force) return;
-    double el_ms = 0.0;
-    if (shot_force) el_ms = 1500.0;   // HUB_SHOT_LAUNCH_TIPS: a frozen frame of the card for screenshots
-    else {
-        if (g_headless || !A.proc || !A.run.pad_exit) return;
-        el_ms = (double)(GetTickCount64() - A.run.start_tick);
-        if (el_ms > 20000.0) return;                         // an emulator that never shows a window: give up quietly
-        static ULONGLONG checked_tick = 0; static bool game_window_up = false;
-        const ULONGLONG now = GetTickCount64();
-        if (now - checked_tick > 250) { checked_tick = now; game_window_up = running_game_hwnd() != nullptr; }
-        if (game_window_up) return;                          // its window is up: the hub is behind it, nothing to show here
-    }
-    const float a = std::min(1.f, (float)(el_ms / (double)starthint::kFadeInMs)) * starthint::kMaxAlpha;   // fades in, then holds until the game's window covers the hub
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-    const std::vector<starthint::Row> rows = starthint::rows(starthint::Mode::Pad);
-    ImFont* f = ui::F.body;
-    const float fs = f->FontSize, pad = ui::sp(1.6f), lh = fs * 1.5f;
-    float w = 0.f;
-    std::vector<std::string> lines;
-    for (const auto& r : rows) { lines.push_back(starthint::plain(r)); w = std::max(w, f->CalcTextSizeA(fs, FLT_MAX, 0.f, lines.back().c_str()).x); }
-    const float title_h = ui::F.bold->FontSize * 1.4f;
-    const float h = pad * 2 + title_h + lh * (float)lines.size();
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const float cw = w + pad * 2;   // bottom centre, above the footer hints (the sidebar's profile chip stays uncovered)
-    const ImVec2 p0(vp->Pos.x + (vp->Size.x - cw) * 0.5f, vp->Pos.y + vp->Size.y - ui::sp(8.f) - h), p1(p0.x + cw, p0.y + h);
-    dl->AddRectFilled(p0, p1, ui::scale_alpha(ui::PANEL2, a), ui::sp(1.5f));
-    dl->AddRect(p0, p1, ui::scale_alpha(ui::HAIRLINE, a), ui::sp(1.5f), 0, 1.f);
-    dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(p0.x + pad, p0.y + pad), ui::scale_alpha(ui::TEXT, a), "Controller tips");
-    for (size_t i = 0; i < lines.size(); ++i)
-        dl->AddText(f, fs, ImVec2(p0.x + pad, p0.y + pad + title_h + lh * (float)i), ui::scale_alpha(ui::TEXT2, a), lines[i].c_str());
-}
-
-/* An update may not be handed to the installer while a game runs OR is starting (the start animation plays before the game's process
- * exists, and quitting then would drop the launch). */
-bool update_hold() { return session_active() || bootanim::active(); }
-
-/* FNV-1a over the whole draw data: equal hashes on two consecutive frames = nothing on screen changed (idle throttle). */
-unsigned long long hash_draw_data(const ImDrawData* dd) {
-    unsigned long long h = 1469598103934665603ull;
-    auto mix = [&](const void* p, size_t n) {
-        const unsigned char* b = (const unsigned char*)p;
-        size_t i = 0;
-        for (; i + 8 <= n; i += 8) { unsigned long long v; std::memcpy(&v, b + i, 8); h = (h ^ v) * 1099511628211ull; }
-        for (; i < n; ++i) h = (h ^ b[i]) * 1099511628211ull;
-    };
-    if (!dd) return h;
-    for (int n = 0; n < dd->CmdListsCount; ++n) {
-        const ImDrawList* l = dd->CmdLists[n];
-        mix(l->VtxBuffer.Data, (size_t)l->VtxBuffer.Size * sizeof(ImDrawVert));
-        mix(l->IdxBuffer.Data, (size_t)l->IdxBuffer.Size * sizeof(ImDrawIdx));
-        mix(l->CmdBuffer.Data, (size_t)l->CmdBuffer.Size * sizeof(ImDrawCmd));
-    }
-    return h;
-}
-
-}  // namespace
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
@@ -158,23 +53,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     A.settings_path = hub::data_dir() + "hub.json";
     A.st.server = hubnet::default_server();
     hubui::load_settings(A.settings_path, &A.st);
-    const std::string installer_hand = hub::data_dir() + "installer_games_dir.txt";
-    bool installer_prefill_kept = false;   // the hand-off file stays until the first-run wizard is finished or skipped (see below)
-    {   // the installer's chosen games folder (written by a FRESH install only, never by an upgrade): merged into rom_folders
-        std::ifstream in(std::filesystem::path(W(installer_hand)), std::ios::binary);
+    {   // the installer's chosen games folder: merged into rom_folders once, then the hand-off file is removed
+        std::string hand = hub::data_dir() + "installer_games_dir.txt";
+        std::ifstream in(std::filesystem::path(W(hand)), std::ios::binary);
         if (in) {
             std::stringstream ss; ss << in.rdbuf(); in.close();
-            const std::string text = ss.str();
-            hubui::Settings probe;
-            const bool usable = hubui::merge_installer_games_dir(&probe, text);   // does the file name a real folder at all?
-            const bool changed = hubui::merge_installer_games_dir(&A.st, text);
-            /* H4: the pre-filled folder must not make a brand-new install look "already set up". Decide BEFORE it counts: a fresh
-             * install (nothing finished, no folders of the player's own) always runs the setup wizard, with the folder as a pre-filled
-             * answer in its Games step. The file is the marker that survives a restart mid-wizard. */
-            const bool fresh = hubui::wiz::fresh_install(A.st.setup_done, A.st.find_games_done, A.st.rom_folders.size(), usable);
-            const bool saved = !changed || hubui::save_settings(A.settings_path, A.st);   // keep the file if saving failed: retry next start
-            if (usable && fresh) { hubui::wiz::set_installer_prefill(true); installer_prefill_kept = true; }
-            else if (saved) { std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec); }
+            bool changed = hubui::merge_installer_games_dir(&A.st, ss.str());
+            if (!changed || hubui::save_settings(A.settings_path, A.st)) {   // keep the hand-off file if saving failed: retry next start
+                std::error_code ec; std::filesystem::remove(std::filesystem::path(W(hand)), ec);
+            }
         }
     }
     if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0 Library, 1 Online, 2 Saves, 3 Controllers, 4 Settings, 5 Updates (6 = Updates too: the old What's new page)
@@ -270,10 +157,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     auto_sync();
     SH.init(shot_path);
     hubupdate::set_game_probe(&game_active);
-    hubupdate::set_session_probe(&update_hold);      // an update downloads during a game but installs only once no session is running or starting
-    hubtoast::set_game_probe(&game_active);          // the one gate for Windows toasts: never while a game runs
     if (!autotest && (!shot_path || SH.update) && !hubupdate::launch_check_disabled()) hubupdate::check_async(false);
-    if (!autotest && !shot_path) hubupdate::startup_pass_async();   // repairs an interrupted update; the one-time bell notes come back via take_startup_notes()
 
     {   // UI hang watchdog: a stalled UI thread leaves userdata\logs\hang-<time>.txt (breadcrumb phases). HUB_HANG_SECS overrides the 5 s.
         const char* hs = std::getenv("HUB_HANG_SECS");
@@ -281,48 +165,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
     bool running = true;
     int hang_test_frame = 0;   // HUB_HANG_TEST: main-loop iterations (ImGui frames may already be past 30 after the boot screen)
-
-    /* Idle throttle (idle_logic.h): while the hub is in the background the loop keeps pumping every poller at its old cadence but draws a
-     * frame only when something needs one. On by default for a normal run; off for the QA drivers (headless shots, RETROHUB_AUTOTEST, the
-     * quick-menu e2e). QA switches: HUB_IDLE_THROTTLE=0 (off everywhere: the "before" of a measurement) / =1 (on even for a QA driver),
-     * HUB_IDLE_SIM=bg (a headless run pretends to be behind a game). HUB_FPS_REPORT=<file> writes frames presented / loop iterations per
-     * second and the CPU used at exit; with it, HUB_EXIT_AFTER=<seconds> ends the run (so a stray variable can never close a real session). */
-    const char* idle_env = std::getenv("HUB_IDLE_THROTTLE");
-    const char* idle_sim = std::getenv("HUB_IDLE_SIM");
-    const std::string idle_sim_s = idle_sim ? idle_sim : "";
-    const bool idle_sim_bg = idle_sim_s.find("bg") != std::string::npos;           // HUB_IDLE_SIM=bg: a headless run pretends to be behind a game
-    const bool idle_sim_noraster = idle_sim_s.find("noraster") != std::string::npos; // HUB_IDLE_SIM=...,noraster: skip the SOFTWARE rasteriser (it costs ~110 ms a frame in the dummy-driver harness) so the numbers show the hub's own per-frame work and the loop pacing, as a GPU build would
-    const bool idle_off = idle_env && idle_env[0] == '0', idle_force = idle_env && idle_env[0] == '1';
-    const bool idle_on = !idle_off && !qm_e2e_active() && (idle_force || idle_sim_bg || (!autotest && !g_headless));
-    const char* fps_report = std::getenv("HUB_FPS_REPORT");
-    const double exit_after_s = (fps_report && *fps_report && std::getenv("HUB_EXIT_AFTER")) ? std::atof(std::getenv("HUB_EXIT_AFTER")) : 0.0;
-    unsigned long long last_render_ms = 0, last_activity_ms = 0, prev_frame_hash = 0;
-    unsigned long long n_loops = 0, n_presented = 0, n_waits = 0;
-    LARGE_INTEGER qpc_f{}; QueryPerformanceFrequency(&qpc_f);
-    auto qpc_ms = [&]() { LARGE_INTEGER i; QueryPerformanceCounter(&i); return (double)i.QuadPart * 1000.0 / (double)qpc_f.QuadPart; };
-    double ms_pump = 0, ms_ui = 0, ms_raster = 0, ms_present = 0, q_iter = 0, q_ui = 0, q_raster = 0, q_present = 0;   // HUB_FPS_REPORT: where a frame's time goes
-    std::vector<double> frame_ms;   // HUB_FPS_REPORT: whole-iteration time of every drawn frame (median / worst in the report)
-    const ULONGLONG run_t0 = GetTickCount64();
-    auto cpu_seconds = []() {   // CPU the process really used (kernel + user): independent of how busy the rest of the PC is
-        FILETIME ct, et, kt, ut;
-        if (!GetProcessTimes(GetCurrentProcess(), &ct, &et, &kt, &ut)) return 0.0;
-        auto to_s = [](const FILETIME& f) { return (double)(((unsigned long long)f.dwHighDateTime << 32) | f.dwLowDateTime) / 1e7; };
-        return to_s(kt) + to_s(ut);
-    };
-    bool warm_taken = false;   // HUB_FPS_REPORT: the first 3 s (fonts, library, textures) are start-up, not steady state
-    double warm_cpu = 0, warm_secs = 0;
-    unsigned long long warm_presented = 0, warm_loops = 0;
-    bool prefill_cleanup_pending = installer_prefill_kept;
-
     while (running) {
-        const ULONGLONG iter_t0 = GetTickCount64();
-        bool input_this_iter = false, dirty_this_iter = false;
-        ++n_loops;
-        if (fps_report) {
-            q_iter = qpc_ms();
-            if (!warm_taken && iter_t0 - run_t0 >= 3000) { warm_taken = true; warm_cpu = cpu_seconds(); warm_secs = (double)(iter_t0 - run_t0) / 1000.0; warm_presented = n_presented; warm_loops = n_loops - 1; }
-        }
-        if (exit_after_s > 0.0 && (double)(iter_t0 - run_t0) / 1000.0 >= exit_after_s) running = false;   // QA measurement runs only (see above)
         hang_watchdog_tick();
         if (g_headless && std::getenv("HUB_HANG_TEST") && ++hang_test_frame == 30) hang_watchdog_phase("hang_test"), Sleep((DWORD)(std::atof(std::getenv("HUB_HANG_TEST")) * 1000));   // QA: simulate a hang
         hang_watchdog_phase("events");
@@ -340,7 +183,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                     e.type == SDL_JOYBUTTONDOWN || e.type == SDL_JOYBUTTONUP || e.type == SDL_JOYAXISMOTION || e.type == SDL_JOYHATMOTION)) continue;   // the open quick menu keeps its pad events even unfocused
             }
             if (attract_swallow_event(e)) continue;   // attract mode: this event only wakes the hub
-            input_this_iter = true;                   // only events that reach the UI count (a pad's axis noise behind a game is dropped above)
             ImGui_ImplSDL2_ProcessEvent(&e);
             tvmode::handle_event(e, io.WantTextInput);
             if (e.type == SDL_DROPFILE && e.drop.file) { add_games_drop(e.drop.file); SDL_free(e.drop.file); }
@@ -362,7 +204,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             A.scanning = false;
             hang_watchdog_phase("apply_scan");
             apply_scan();
-            dirty_this_iter = true;   // the library changed: draw it
         }
         hang_watchdog_phase("poll_process");
         poll_process();
@@ -399,8 +240,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         hang_watchdog_phase("ghost_tick");
         ghost_tick();
         group_tick();
-        update_bell_tick();   // after group_tick(): the bell history is loaded by then
-        hubupdate::tick();    // hands a downloaded update to the installer once no game is running
         userflow_tick();
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;
@@ -425,47 +264,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 else set_notice("That game is not in your library any more.");
             }
         }
-        /* The installer replaces our files and relaunches us. It was started only when no session was running (hubupdate::tick); if one
-         * started in the second since, stay: quitting now would leave the installer waiting on a game. */
-        if (hubupdate::installer_started() && !update_hold()) running = false;
+        if (hubupdate::installer_started()) running = false;   // the installer replaces our files and relaunches us
         if (A.dirty && !g_headless && !ImGui::IsAnyItemActive()) {
             hubui::save_settings(A.settings_path, A.st);
             A.dirty = false;
         }
-        if (prefill_cleanup_pending && A.st.setup_done) {   // the first-run wizard was finished or skipped: the installer's hand-off file has done its job
-            prefill_cleanup_pending = false;
-            hubui::wiz::set_installer_prefill(false);
-            std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec);
-        }
 
         if (SDL_GetWindowFlags(A.win) & SDL_WINDOW_MINIMIZED) { SDL_Delay(50); continue; }
 
-        bool bg_this_iter = false;
-        if (idle_on) {   // idle throttle: pump everything every iteration, draw only when something needs a frame (idle_logic.h)
-            const Uint32 wf = SDL_GetWindowFlags(A.win);
-            hubidle::Inputs in;
-            in.background = idle_sim_bg ? true : hubidle::is_background((wf & SDL_WINDOW_INPUT_FOCUS) != 0, (wf & SDL_WINDOW_SHOWN) != 0 && !(wf & SDL_WINDOW_HIDDEN), session_active());
-            in.busy = qm_is_open() || bootanim::active() || !A.toasts.empty() ||            // the View+Y menu, the start animation, toasts
-                      GCO.active || gc_process_alive() || NP3.active() || NP3_pending ||    // Dolphin NetPlay / 3DS room drivers
-                      rplay_session_alive() || kt_session_active();                          // remote play, Kanto Together
-            in.input = input_this_iter;
-            in.dirty = dirty_this_iter;
-            in.now_ms = iter_t0;
-            in.last_render_ms = last_render_ms;
-            if (input_this_iter) last_activity_ms = iter_t0;
-            in.last_activity_ms = last_activity_ms;
-            bg_this_iter = in.background;
-            const hubidle::Decision d = hubidle::decide(in);
-            if (!d.render) {
-                hang_watchdog_phase("idle_wait");
-                SDL_WaitEventTimeout(nullptr, d.wait_ms);   // input wakes it at once; nothing is consumed
-                if (const int pad = hubidle::pad_ms(GetTickCount64() - iter_t0)) SDL_Delay((Uint32)pad);   // noise events must not make the pumps spin
-                ++n_waits;
-                continue;
-            }
-        }
-
-        if (fps_report) { q_ui = qpc_ms(); ms_pump += q_ui - q_iter; }
         osk::pre_frame(io);
         tvmode::frame_begin(A.win, ren);
         ImGui_ImplSDLRenderer2_NewFrame();
@@ -577,23 +383,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         hang_watchdog_phase("draw_popups");
         if (shot_path) bootart_shot_draw(ren);   // HUB_SHOT_BOOTART gallery
         if (!shot_path || SH.update) draw_update_popup();   // opens itself only when prompt_allowed()
-        draw_launch_tips(shot_path && std::getenv("HUB_SHOT_LAUNCH_TIPS"));   // controller tips for a game that is still starting (never over a game window)
         osk::draw_root();
         ImGui::PopFont();
         hang_watchdog_phase("render");
-        if (fps_report) { q_raster = qpc_ms(); ms_ui += q_raster - q_ui; }
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 16, 17, 22, 255);
         SDL_RenderClear(ren);
-        if (!idle_sim_noraster) ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), ren);
-        if (idle_on) {   // idle throttle: did anything on screen change since the previous frame? (keeps the capped fast cadence while it does)
-            if (bg_this_iter) {
-                const unsigned long long h = hash_draw_data(ImGui::GetDrawData());
-                if (h != prev_frame_hash) last_activity_ms = GetTickCount64();
-                prev_frame_hash = h;
-            } else prev_frame_hash = 0;
-            last_render_ms = GetTickCount64();
-        }
+        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), ren);
         if (shot_path) {
             if (!SH.pending_shot.empty()) {   // shot:<name> from HUB_SHOT_PAD -> <stem>-<name>.bmp
                 std::string sp_ = shot_path;
@@ -611,32 +407,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             SDL_Delay(8);
         }
         hang_watchdog_phase("present");
-        if (fps_report) { q_present = qpc_ms(); ms_raster += q_present - q_raster; }
         SDL_RenderPresent(ren);
-        ++n_presented;
-        if (fps_report) { const double q_end = qpc_ms(); ms_present += q_end - q_present; frame_ms.push_back(q_end - q_iter); }
-    }
-
-    if (fps_report && *fps_report) {   // QA: how many frames were really presented, and how often the pumps ran (docs/ARCHITECTURE.md, "Idle throttle")
-        const double secs = std::max(0.001, (double)(GetTickCount64() - run_t0) / 1000.0);
-        const double cpu = cpu_seconds();
-        const double ssecs = warm_taken ? std::max(0.001, secs - warm_secs) : secs;   // steady state = after the first 3 s
-        const double scpu = warm_taken ? cpu - warm_cpu : cpu;
-        const unsigned long long spres = warm_taken ? n_presented - warm_presented : n_presented, sloops = warm_taken ? n_loops - warm_loops : n_loops;
-        if (FILE* rf = std::fopen(fps_report, "wb")) {
-            const double np = n_presented ? (double)n_presented : 1.0;
-            std::sort(frame_ms.begin(), frame_ms.end());
-            const double med = frame_ms.empty() ? 0.0 : frame_ms[frame_ms.size() / 2], worst = frame_ms.empty() ? 0.0 : frame_ms.back();
-            std::fprintf(rf, "idle_throttle=%d total: secs=%.2f presented=%llu loops=%llu waits=%llu cpu_s=%.2f | steady (after 3 s): secs=%.2f presented_per_s=%.1f loops_per_s=%.1f cpu_pct=%.1f | "
-                             "ms_per_frame: pump=%.1f ui=%.1f raster+delay=%.1f present=%.1f median_iteration=%.1f worst_iteration=%.1f\n",
-                         idle_on ? 1 : 0, secs, n_presented, n_loops, n_waits, cpu, ssecs, (double)spres / ssecs, (double)sloops / ssecs, 100.0 * scpu / ssecs,
-                         ms_pump / np, ms_ui / np, ms_raster / np, ms_present / np, med, worst);
-            std::fclose(rf);
-        }
     }
 
     // clean shutdown
-    hubupdate::shutdown();   // stop waiting for a game to close, drop the unused installer copy, join the startup pass
     SDL_HideWindow(A.win);   // the joins below can wait on a slow network: never leave a frozen-looking window up meanwhile
     dolphin_speed_stop();   // the Dolphin speed DSU server (if a GameCube game ran)
     find_games_shutdown();

@@ -23,8 +23,6 @@
  */
 #include "winutil.h"
 #include "pcsx2.h"
-#include "ps2.h"
-#include "ppsspp.h"
 #include "wiiu_meta.h"
 #include "invite.h"
 #include "dolphin_speed.h"
@@ -39,7 +37,6 @@
 #include "hint_popup.h"
 #include "controls_sdl.h"
 #include "qm_logic.h"
-#include "resume_logic.h"
 #include <thread>
 #include <xinput.h>
 
@@ -278,10 +275,11 @@ void focus_game() {
 
 /* Wii U: Cemu's default global hotkey "toggle pad screen" is Ctrl+Tab (shown in its first-run assistant). Cemu reads it from the
  * keyboard state of its window, so the game window is brought forward and the keys are injected. */
-/* Raises the running game and presses one key chord, but only while a game window is the foreground window (re-checked before every key-down;
- * releases always go out). Returns how many keys were pressed. Shared by the Wii U pad-screen toggle and the PSP state keys. */
-static int send_game_chord(const std::vector<int>& keys) {
+void wiiu_toggle_gamepad_screen() {
+    if (g_headless || !A.proc) return;
+    if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
     focus_game();
+    std::vector<int> keys = hubemu::cemu_toggle_gamepad_keys();
     std::vector<DWORD> pids = game_pids();
     auto game_fg = [&]() {   // re-checked before every key-down; releases always go out
         DWORD pid = 0;
@@ -289,28 +287,11 @@ static int send_game_chord(const std::vector<int>& keys) {
         for (DWORD p : pids) if (p == pid) return !qm_is_open();
         return false;
     };
-    return hubqm::run_key_chord(keys, game_fg, [](int k, bool up) {
+    int n = hubqm::run_key_chord(keys, game_fg, [](int k, bool up) {
         INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)k; i.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
         SendInput(1, &i, sizeof(INPUT));
     });
-}
-
-void wiiu_toggle_gamepad_screen() {
-    if (g_headless || !A.proc) return;
-    if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
-    std::vector<int> keys = hubemu::cemu_toggle_gamepad_keys();
-    int n = send_game_chord(keys);
     autotest_log(n == (int)keys.size() ? "wiiu: toggle pad screen hotkey sent" : "wiiu: toggle pad screen hotkey aborted (game not foreground)");
-}
-
-/* PSP: PPSSPP keeps F2 (quick save state) and F4 (quick load state) as built-in accelerators while RetroHub's controls.ini leaves them unmapped
- * (ppsspp.h). Same pattern as the Wii U pad-screen chord: the game window is raised by the user's own request, keys go out only while the game is foreground. */
-void ppsspp_send_state(bool save) {
-    if (g_headless || !A.proc || A.run.system_short != "psp") return;
-    if (autotest_active()) { autotest_log(std::string("psp: ") + (save ? "save" : "load") + " state key (not injected: QA runs on a hidden desktop)"); return; }
-    std::vector<int> keys = hubemu::ppsspp_state_keys(save);
-    int n = send_game_chord(keys);
-    autotest_log(n == (int)keys.size() ? "psp: state key sent" : "psp: state key aborted (game not foreground)");
 }
 
 /* Dolphin Speed row: Dolphin's emulation-speed hotkeys are bound to Ctrl+Shift+F13/F14 (emulators.cpp, dolphin_hotkeys_ini).
@@ -395,7 +376,6 @@ void poll_process() {
     GetExitCodeProcess(A.proc, &code);
     CloseHandle(A.proc);
     A.proc = nullptr;
-    hub::rom_cache_pin(nullptr);   // its unpacked copy may be trimmed again
     /* no focus_hub() here: the game just closed, the hub must not jump in front of whatever the user does next */
     sync_smash_prep();
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
@@ -514,7 +494,7 @@ RunInfo run_info_for(const hub::GameEntry& e, bool online) {
 
 /* Size of the image inside a zipped 3DS game (read once from the zip's directory). */
 uint64_t unpacked_size(const hub::GameEntry& e) {
-    if (e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::PSP || (e.system == hub::System::WiiU && e.issue == "extract")) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
+    if (e.system == hub::System::GC || e.system == hub::System::PS2 || (e.system == hub::System::WiiU && e.issue == "extract")) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
     static std::map<std::string, uint64_t> cache;
     auto it = cache.find(e.path);
     if (it == cache.end()) it = cache.emplace(e.path, hub::zip_3ds_unpacked_size(e)).first;
@@ -533,7 +513,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
         if (ps2_bios.file.empty()) { ps2_bios_ask(e.key); return; }
     }
-    if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::PSP || e.system == hub::System::WiiU) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
+    if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::WiiU) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
         UNZ.key = e.key;
         if (gamepack_owns(e)) start_unzip(e);   // installed from a shared pack: the player already chose this game, no question
         else UNZ.state = UnzipJob::Asking;
@@ -553,8 +533,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         std::string g0 = launch_path_for(e);
         std::string a0 = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(g0, fs0, mp_arg)
                          : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(g0, fs0, "<card>")
-                         : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(g0, fs0)
-                         : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
+                         : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
         shot_trace("external", std::string(hubemu::name(kind)) + " installed | " + a0);
         set_notice("Headless test run: launch skipped.");
         return;
@@ -581,11 +560,6 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         std::string perr = hubemu::prepare_pcsx2(inst.dir, ps2_pads_for(pp), pp, ps2_bios, e.key, gs_values_for(e), hubemu::pcsx2_is_buzz_game(e.catalog_id));
         if (!perr.empty()) { set_notice("Could not set up PCSX2: " + perr, 12.0); return; }
         real_boot_pcsx2_apply(inst.dir, real_boot_plan(e));   // fast boot off = the PS2 BIOS intro plays
-    } else if (kind == hubemu::Kind::Ppsspp) {   // portable memstick under the managed dir; controls from the "psp" profile on the first XInput pad
-        hubctl::Profile pq = controls_profile("psp", e.key);
-        hubemu::CemuPads cp = cemu_pads_for(pq);
-        std::string perr = hubemu::prepare_ppsspp(inst.dir, pq, cp.xinput.empty() ? 0 : cp.xinput[0], gs_values_for(e));
-        if (!perr.empty()) { set_notice("Could not set up PPSSPP: " + perr, 12.0); return; }
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for(pw), ri.dsu_players) : cemu_pads_for(pw)); }
     } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
@@ -598,11 +572,6 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     hub::gs::Values gsv = gs_values_for(e);
     bool fs = hub::gs::is_fullscreen(gsv);
     std::string game = launch_path_for(e);
-    if (kind == hubemu::Kind::Pcsx2) {   // PCSX2 cannot open a .cue: hand it the bin (or an iso built once in the rom-cache)
-        std::string img, ierr;
-        if (!hub::ps2::launch_image(game, hub::extract_3ds_dir(e), &img, &ierr)) { set_notice("Could not start " + e.title + ": " + ierr + ".", 12.0); return; }
-        game = img;
-    }
     uint64_t wiiu_tid = 0;
     std::string cemu_user;   // Cemu's user data folder (portable\ / beside settings.xml / %APPDATA%\Cemu)
     if (kind == hubemu::Kind::Cemu) {
@@ -623,7 +592,6 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI", hub::gs::volume_of(gsv))
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
-                       : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(game, fs)
                                                        : hubemu::cemu_args(game, fs);
     if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS") && kind == hubemu::Kind::Dolphin)   // QA only: extra Dolphin flags (e.g. -m movie.dtm)
         args = std::string(std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS")) + " " + args;
@@ -706,46 +674,8 @@ void add_game_shortcut(const hub::GameEntry& e) {
     else set_notice("Could not create the shortcut.");
 }
 
-/* saves-F1 (resume_logic.h): " --resume" only when auto.state is not older than the newest battery save. */
-static long long file_unix_time(const std::string& path) {
-    WIN32_FILE_ATTRIBUTE_DATA fa{};
-    if (!GetFileAttributesExW(W(path).c_str(), GetFileExInfoStandard, &fa)) return 0;
-    ULARGE_INTEGER u;
-    u.LowPart = fa.ftLastWriteTime.dwLowDateTime;
-    u.HighPart = fa.ftLastWriteTime.dwHighDateTime;
-    return (long long)(u.QuadPart / 10000000ULL) - 11644473600LL;
-}
-static long long newest_battery_time(const std::string& dir) {
-    long long best = 0;
-    std::error_code ec;
-    for (std::filesystem::directory_iterator it(std::filesystem::u8path(dir), ec), end; !ec && it != end; it.increment(ec)) {
-        std::error_code e2;
-        if (!it->is_regular_file(e2)) continue;
-        std::string n = it->path().u8string(), ext = it->path().extension().u8string();
-        for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-        if (ext == ".bak" || ext == ".tmp") continue;   // kept copies, half writes: not the live save
-        best = std::max(best, file_unix_time(n));
-    }
-    return best;
-}
-static std::string resume_arg(const std::string& battery, const std::string& states) {
-    long long st = file_unix_time(runctl::state_file(states, runctl::kAutoSlot));
-    if (hubui::resume_allowed(st, newest_battery_time(battery))) return " --resume";
-    set_toast("Your save is newer than your resume point (it came from another PC or a later session), so the game starts from your save. "
-              "The resume point is still on the game's page.");
-    return std::string();
-}
-
-void play_entry(const hub::GameEntry& e_in) {
+void play_entry(const hub::GameEntry& e) {
     if (A.proc) { set_notice("A game is already running."); return; }
-    hub::GameEntry hacked;   // ROM hack / translation (Plan 4 H3): launch the patched copy prepared in rom-cache\hacks
-    if (is_hack(e_in)) {
-        std::string patched;
-        if (!hack_ensure_rom(e_in, &patched)) return;   // still preparing (shown, Play resumes) or failed (notice shown)
-        hacked = e_in;
-        hacked.path = patched;
-    }
-    const hub::GameEntry& e = is_hack(e_in) ? hacked : e_in;
     if (A.cloud_gate.phase != CloudGate::Idle) { set_notice("Checking cloud saves...", 4.0); return; }
     if (cloud_gate_begin(e, [key = e.key]() {
             if (const hub::GameEntry* g = find_entry(key)) { A.sel_game = key; hub::GameEntry copy = *g; A.cloud_gate.pass_key = key; play_entry(copy); }
@@ -759,7 +689,6 @@ void play_entry(const hub::GameEntry& e_in) {
     A.st.last_game = room_id(e);
     mark_dirty();
     hub::rom_cache_touch(e);   // LRU stamp for the unpacked copy (no-op for plain files)
-    hub::rom_cache_pin(&e);    // and never trimmed while it runs (library-14)
     if (rom_missing(e)) { missing_rom_ask(e.key); return; }   // the file is gone: Locate / Rescan / Remove popup
     RunInfo ri = run_info_for(e, false);
     std::string sys = sys_short(e);
@@ -774,11 +703,7 @@ void play_entry(const hub::GameEntry& e_in) {
         if (d == hubui::SmashPlay::NeedRom) { push_toast(hubui::smash_need_rom_text(), ui::WARN, 9.0); return; }
         if (d == hubui::SmashPlay::WarnMd5) push_toast(hubui::smash_md5_warn_text(md5), ui::WARN, 12.0);
         ri.o2r_prep = o2r;
-        auto env = smash_env(exe);
-        ri.result_file = hub::data_dir() + "smash_result.json";   // each finished VS match (Plan 4: local matches too, for party mode and brackets)
-        { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(ri.result_file), ec); }
-        env.push_back({"SSB64_RESULT_FILE", ri.result_file});
-        spawn(exe, "--from-hub --no-update-check", dir_of(exe), env, ri);   // RetroHub's updater is the only one
+        spawn(exe, "--from-hub --no-update-check", dir_of(exe), smash_env(exe), ri);   // RetroHub's updater is the only one
         return;
     }
     std::string battery = no_slash(hub::saves::battery_dir(sys, e.key));
@@ -788,11 +713,6 @@ void play_entry(const hub::GameEntry& e_in) {
             std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) +
                                " --save-dir " + quote(battery) + title_arg(e.title) + controls_arg("n64", e.key);
             args += hubui::n64_extra_args(gs_values_for(e));
-            if (e.catalog_id == "remix" || e.catalog_id == "smash64") {   // Smash Remix / Smash 64 ROM: VS results for rivals, party mode and brackets
-                ri.result_file = hub::data_dir() + "n64_result.json";
-                { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(ri.result_file), ec); }
-                args += " --result-file " + quote(ri.result_file);
-            }
             args += cheats_launch_args(e, false, true, nullptr);
             args += qm_args(ri, e, true);
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
@@ -808,7 +728,7 @@ void play_entry(const hub::GameEntry& e_in) {
             std::string core = find_core(e.system == hub::System::GBA ? "mgba" : A.st.gb_core);
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + resume_arg(battery, states) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             {   // the console's own startup (boot ROM / BIOS of the player); a resumed state would skip it
                 bool dr = false;
@@ -827,7 +747,7 @@ void play_entry(const hub::GameEntry& e_in) {
             std::string core = find_core(nes ? "nestopia" : "snes9x");
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + resume_arg(battery, states) + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
+                               " --state-dir " + quote(states) + " --resume" + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += cheats_launch_args(e, false, true, nullptr);
             args += qm_args(ri, e, false);
@@ -851,7 +771,6 @@ void play_entry(const hub::GameEntry& e_in) {
             break;
         case hub::System::GC:
         case hub::System::PS2:
-        case hub::System::PSP:
         case hub::System::N3DS:
         case hub::System::WiiU:
             launch_external(e, ri, battery);

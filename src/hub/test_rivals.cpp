@@ -108,19 +108,6 @@ int main() {
     CHECK(sessions_together(g, "u1") == 2 && sessions_together(g, "u2") == 1 && sessions_together(g, "u9") == 0);
     CHECK(sessions_text(0).empty() && sessions_text(1) == "1 session together" && sessions_text(2) == "2 sessions together");
 
-    // SO-F10: a stranger who happens to be called like a friend is never counted for that friend (uid only)
-    { Match st = mk("stranger", 400, 1, 2, 0, 5, ""); st.players[1].name = "Mickey";   // same display name as our friend u1, but no uid
-      std::vector<Match> v2 = {st};
-      CHECK(head_to_head(v2, "u1").games() == 0 && top_rivals(v2).empty());
-      v2.push_back(mk("friend", 300, 2, 1, 0, 5, "u1"));
-      CHECK(head_to_head(v2, "u1").games() == 1 && head_to_head(v2, "u1").losses == 1);
-      RawResult rr; CHECK(parse_result(kRaw, &rr));
-      std::vector<SlotInfo> slots = {{0, "", "Me", true}, {1, "", "Mickey", false}};   // slot 1 was not matched to a friend
-      Match bm = build_match(rr, slots, 500);
-      CHECK(bm.players.size() == 2 && bm.players[0].uid.empty() && bm.players[1].uid.empty());
-      CHECK(head_to_head({bm}, "u1").games() == 0);
-    }
-
     fs::remove_all(root);
     std::printf(fails ? "rivals_test: %d FAILED\n" : "rivals_test: ok\n", fails);
     return fails ? 1 : 0;
