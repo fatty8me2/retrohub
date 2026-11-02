@@ -1,6 +1,35 @@
 {
   "versions": [
     {
+      "version": "1.31.0",
+      "date": "2026-11-01",
+      "title": "PSP, friend challenges and a lot of convenience",
+      "new": [
+        "PlayStation Portable: add your PSP games (ISO, CSO, CHD, PBP) and play them; PPSSPP downloads itself the first time, saves follow you to your other PCs",
+        "Send a screenshot to a friend from the screenshot viewer",
+        "Friend challenges: from the game menu, challenge a friend to beat the exact moment you're at, with a timer and a little leaderboard",
+        "Send a ROM hack to a friend so you can play it together online",
+        "Discord: show what you're playing on your Discord profile (off until you turn it on)",
+        "Find anything: just start typing, or press Ctrl+K for a search box that finds games, friends, settings and actions",
+        "Connection test in Settings > Online, and Copy diagnostics in the new Help tab",
+        "Button hints match your controller (Xbox, PlayStation or Switch), and your controller's battery shows in RetroHub"
+      ],
+      "improved": [
+        "A short connection drop no longer ends an online game: it reconnects while you keep playing, and a host who drops gets their seat back",
+        "When an online game can't connect, it says why instead of \"Emulator files are missing\"",
+        "Setup now asks Windows for network access up front, so the firewall prompt never covers your first online game",
+        "Friend requests, messages and invites you send while offline are sent when you're back online",
+        "Friends whose PC went to sleep no longer stay shown as online",
+        "Guests who need Dolphin or Azahar are offered the download before they can Ready up"
+      ],
+      "fixed": [
+        "GameCube and 3DS online didn't work for Windows user names with accents",
+        "A GameCube online game could hang when its helper stopped working; it now says so",
+        "N64 online games that drift out of sync and can't recover now end cleanly with a message instead of playing on out of sync",
+        "The search box text on Home was cut off"
+      ]
+    },
+    {
       "version": "1.30.4",
       "date": "2026-11-01",
       "title": "Mario Superstar Baseball online at full speed",
