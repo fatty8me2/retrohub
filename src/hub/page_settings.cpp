@@ -15,7 +15,7 @@ void settings_label(const char* title, const char* hint) {
 namespace {
 
 /* Emulator lookups touch the disk: refresh every 2 s, not every frame (Video & Games tab). */
-struct EmuLook { hubemu::Install az, cm, dl, ps; hubemu::Bios bi; };
+struct EmuLook { hubemu::Install az, cm, dl, ps, pp; hubemu::Bios bi; };
 const EmuLook& emu_look() {
     static EmuLook e;
     static double looked_at = -100;
@@ -26,6 +26,7 @@ const EmuLook& emu_look() {
         e.az = hubemu::find(hubemu::Kind::Azahar, "", "");
         e.dl = hubemu::find(hubemu::Kind::Dolphin, "", "");
         e.ps = hubemu::find(hubemu::Kind::Pcsx2, "", "");
+        e.pp = hubemu::find(hubemu::Kind::Ppsspp, "", "");
         e.bi = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
         e.cm = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, wiiu_game);
         looked_at = ImGui::GetTime();
@@ -321,7 +322,7 @@ void tab_video() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     {
         const EmuLook& el = emu_look();
-        const hubemu::Install &az = el.az, &cm = el.cm, &dl = el.dl, &ps = el.ps;
+        const hubemu::Install &az = el.az, &cm = el.cm, &dl = el.dl, &ps = el.ps, &pp = el.pp;
         const hubemu::Bios& bi = el.bi;
         text_wrapped_disabled("Dolphin (GameCube): " + (dl.exe.empty() ? std::string("not installed - downloads the first time you play a GameCube game (about 18 MB)") : dl.exe));
         text_wrapped_disabled("PCSX2 (PlayStation 2): " + (ps.exe.empty() ? std::string("not installed - downloads the first time you play a PS2 game (about 25 MB)") : ps.exe));
@@ -337,6 +338,7 @@ void tab_video() {
                 if (button("Use automatic##ps2bios", ImVec2(0, 0))) { A.st.ps2_bios_dir.clear(); mark_dirty(); }
             }
         }
+        text_wrapped_disabled("PPSSPP (PlayStation Portable): " + (pp.exe.empty() ? std::string("not installed - downloads the first time you play a PSP game (about " + std::to_string((int)(hubemu::release(hubemu::Kind::Ppsspp).size / 1048576)) + " MB)") : pp.exe));
         ps1_settings_ui();
         text_wrapped_disabled("Azahar (3DS): " + (az.exe.empty() ? std::string("not installed - downloads the first time you play a 3DS game (about 42 MB)") : az.exe));
         text_wrapped_disabled("Cemu (Wii U): " + (cm.exe.empty() ? std::string("not found - downloads the first time you play a Wii U game (about 25 MB)") : cm.exe + "  (" + cm.how + ")"));

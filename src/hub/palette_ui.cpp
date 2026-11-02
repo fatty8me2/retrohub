@@ -21,7 +21,6 @@ struct Palette {
     std::vector<int> shown;
     std::string last_q = "\x01";
     // View+Y: the View (Back) press already toggled the friends panel; remember the state from before it
-    bool panel_before = false;
     double back_at = -10;
     size_t built_lib = 0;
 } P;
@@ -117,12 +116,11 @@ void palette_draw() {
     }
     const bool free_to_open = (A.focused || g_headless) && !A.proc && !game_active() && wizard_state() == -1 && !P.open &&
                               !ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    // View + Y (Back held, Y pressed): the View press already toggled the friends panel, so put it back
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false)) { P.back_at = ImGui::GetTime(); P.panel_before = FR.panel_focused; }
+    // View + Y (Back held, Y pressed): global_input toggles the friends panel on View RELEASE and skips it after a combo, so nothing to undo
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false)) P.back_at = ImGui::GetTime();
     const bool view_y = ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) && ImGui::GetTime() - P.back_at < 3.0;
     if (free_to_open && ((io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL3, false) || view_y)) {
         P.want_open = true;
-        if (view_y && FR.panel_focused != P.panel_before) fr_toggle_panel();
     }
     if (P.want_open && !P.open) {
         P.want_open = false;
