@@ -5,6 +5,7 @@
 #include "emu_formats.h"
 #include "emu_saves.h"
 #include "emulators.h"
+#include "ppsspp.h"
 #include "games.h"
 #include "library.h"
 #include "logic.h"
@@ -952,6 +953,22 @@ static void test_controls2_emulators(const fs::path& dir) {
     CHECK(read_text(gcp).find("Buttons/A = user") != std::string::npos);
 }
 
+/* PPSSPP (PSP): the pinned release, the portable layout and the config writer (details: test_psp.cpp). */
+static void test_ppsspp_pin_and_config(const fs::path& d) {
+    using namespace hubemu;
+    const Release& r = release(Kind::Ppsspp);
+    CHECK(std::string(r.version) == "1.20.4" && r.size == 27658759ull && std::string(r.sha256).size() == 64);
+    CHECK(std::string(r.sha256) == "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163");
+    CHECK(std::wstring(r.host) == L"www.ppsspp.org" && std::wstring(r.exe) == L"PPSSPPWindows64.exe");
+    CHECK(kind_for(hub::System::PSP) == Kind::Ppsspp && std::string(name(Kind::Ppsspp)) == "PPSSPP");
+    CHECK(fs::path(managed_dir(Kind::Ppsspp, (d / "root").string())).filename() == "ppsspp");
+    hub::gs::Values v = hub::gs::defaults_for(hub::System::PSP);
+    std::string ini = ppsspp_ini_launch(ppsspp_ini_defaults(""), v);
+    CHECK(ini.find("FullScreen = True") != std::string::npos && ini.find("CheckForNewVersion = False") != std::string::npos);
+    std::string ctl = ppsspp_controls_ini(hubctl::default_profile("psp"), 0);
+    CHECK(ctl.find("Cross = 20-96") != std::string::npos && ctl.find("Save State") == std::string::npos);
+}
+
 int main(int argc, char** argv) {
     test_3ds_header();
     test_wiiu_formats();
@@ -969,6 +986,7 @@ int main(int argc, char** argv) {
     test_prepare_and_find(dir / "prep");
     test_controls_emulators(dir / "ctl");
     test_controls2_emulators(dir / "ctl2");
+    test_ppsspp_pin_and_config(dir / "psp");
     fs::remove_all(dir, ec);
 
     int dl_bad = 0;

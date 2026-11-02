@@ -1025,13 +1025,14 @@ std::string system_shelf_title(const std::string& s) {
     if (s == "nds") return "Nintendo DS";
     if (s == "ps1") return "PlayStation";
     if (s == "ps2") return "PlayStation 2";
+    if (s == "psp") return "PlayStation Portable";
     if (s == "nes") return "Nintendo Entertainment System";
     if (s == "snes") return "Super Nintendo";
     return s;
 }
 
 const std::vector<std::string>& console_order() {
-    static const std::vector<std::string> v = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "nes", "snes", "gba", "gbc", "gb"};
+    static const std::vector<std::string> v = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "psp", "nes", "snes", "gba", "gbc", "gb"};
     return v;
 }
 
