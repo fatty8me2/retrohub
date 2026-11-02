@@ -220,6 +220,15 @@ static std::string ini_set_all(const std::string& ini, const std::vector<std::pa
     return o;
 }
 
+bool dual_core_allowed(const std::string& game_id) {
+    /* Online play is single core (deterministic, stress-tested) unless the game is listed here:
+     *  - GYQE01 / GYQP01 / GYQJ01 Mario Superstar Baseball: CPU-bound; on one core it runs far below full speed online while it is fine
+     *    offline (dual core), and the slowest PC throttles the whole room. */
+    static const char* const ok[] = {"GYQE01", "GYQP01", "GYQJ01"};
+    for (const char* id : ok) if (game_id == id) return true;
+    return false;
+}
+
 std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p) {
     typedef std::vector<std::pair<std::string, std::string>> KV;
     KV np;
@@ -253,9 +262,9 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
     KV core;
     core.push_back({"GPUDeterminismMode", "auto"});   // the one emulation setting NetPlay does not copy from the host
     /* Deterministic emulation on every PC (the host's values are copied to the guests, the guests' are ignored but kept equal):
-     * the same CPU thread mode on all (dual core, Dolphin's own default, as offline: single core halves the speed of CPU-heavy games such as
-     * Mario Superstar Baseball and the slowest PC then throttles the whole room), JIT64 on all, no overclock, no sync-GPU/MMU/fast disc speed surprises. */
-    core.push_back({"CPUThread", "True"});
+     * single CPU thread by default (dual core is the classic NetPlay desync; the 140/140 GameCube stress run passed this way), except
+     * games on dual_core_allowed(), JIT64 on all, no overclock, no sync-GPU/MMU/fast disc speed surprises. */
+    core.push_back({"CPUThread", dual_core_allowed(s.game_id) ? "True" : "False"});
     core.push_back({"CPUCore", "1"});
     core.push_back({"OverclockEnable", "False"});
     core.push_back({"VIOverclockEnable", "False"});
