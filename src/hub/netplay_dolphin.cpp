@@ -224,10 +224,19 @@ static std::string ini_set_all(const std::string& ini, const std::vector<std::pa
 bool dual_core_allowed(const std::string& game_id) {
     /* Online play is single core (deterministic, stress-tested) unless the game is listed here:
      *  - GYQE01 / GYQP01 / GYQJ01 Mario Superstar Baseball: CPU-bound; on one core it runs far below full speed online while it is fine
-     *    offline (dual core), and the slowest PC throttles the whole room. */
-    static const char* const ok[] = {"GYQE01", "GYQP01", "GYQJ01"};
+     *    offline (dual core), and the slowest PC throttles the whole room.
+     *  - G4QE01 / G4QP01 / G4QJ01 Super Mario Strikers: same story (full speed offline, crawls single core online). */
+    static const char* const ok[] = {"GYQE01", "GYQP01", "GYQJ01", "G4QE01", "G4QP01", "G4QJ01"};
     for (const char* id : ok) if (game_id == id) return true;
     return false;
+}
+
+int pad_buffer_for_ping(int ping_ms, bool relayed) {
+    if (ping_ms < 0) return relayed ? 8 : 6;            // unknown: safe for a typical relayed room
+    const int one_way_frames = (ping_ms / 2 + 33 + 16) / 17;   // + both forwarders' pump (~2 x 16 ms), rounded up to frames
+    int b = one_way_frames + 2;                          // + jitter margin
+    if (relayed && b < 6) b = 6;
+    return b < 4 ? 4 : (b > 20 ? 20 : b);
 }
 
 std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p) {
@@ -254,6 +263,7 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
      * player in RetroHub), so force it on; Gecko codes come from the host (SyncCodes). */
     np.push_back({"StrictSettingsSync", "True"});
     np.push_back({"SyncCodes", "True"});
+    np.push_back({"BufferSize", std::to_string(pad_buffer_for_ping(p.ping_ms, p.relayed))});   // host's pad buffer (Dolphin default 5 stalls relayed rooms)
     KV gen, iface, an;
     if (!p.iso_dir.empty()) { gen.push_back({"ISOPath0", p.iso_dir}); gen.push_back({"ISOPaths", "1"}); }
     iface.push_back({"ConfirmStop", "False"});

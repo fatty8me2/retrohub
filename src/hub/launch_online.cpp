@@ -162,6 +162,9 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     ip.iso_dir = dir_of(game);
     ip.write_save = host && A.gc_write_save;
     ip.mute = autotest_active();
+    ip.ping_ms = GCO.fw.worst_ping_ms();
+    ip.relayed = GCO.fw.any_relayed();
+    online_log("gc launch: ping " + std::to_string(ip.ping_ms) + " ms, " + (ip.relayed ? "relayed" : "direct") + ", pad buffer " + std::to_string(gcnp::pad_buffer_for_ping(ip.ping_ms, ip.relayed)) + ", " + (gcnp::dual_core_allowed(sp.game_id) ? "dual" : "single") + " core");
     std::string cur;
     { std::ifstream f(std::filesystem::path(W(ini)), std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
     std::string next = gcnp::ini_patch(cur, sp, ip);

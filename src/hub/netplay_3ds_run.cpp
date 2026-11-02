@@ -250,6 +250,17 @@ void Runner::stop() {
 
 bool Runner::active() const { return impl_->active; }
 bool Runner::ready() const { return impl_->active && !impl_->failed && impl_->sess.ready(); }
+int Runner::worst_ping_ms() const {
+    int w = -1;
+    if (!impl_->active) return w;
+    for (int i = 0; i < hubnet::kMaxSlots; ++i) { int p = impl_->sess.ping_ms(i); if (p > w) w = p; }
+    return w;
+}
+bool Runner::any_relayed() const {
+    if (!impl_->active) return false;
+    for (int i = 0; i < hubnet::kMaxSlots; ++i) if (impl_->sess.is_relayed(i)) return true;
+    return false;
+}
 bool Runner::failed() const { return impl_->failed; }
 std::string Runner::status() const { return impl_->status; }
 int Runner::connect_port() const { return impl_->host ? impl_->plan.port : impl_->local_port; }

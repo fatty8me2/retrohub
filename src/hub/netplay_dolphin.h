@@ -56,9 +56,14 @@ struct IniParams {
     std::string nickname;
     std::string iso_dir;
     bool mute = false;
+    int ping_ms = -1;             // worst round trip to another PC (-1 unknown): sizes the pad buffer
+    bool relayed = false;         // a link goes through the server relay
     bool write_save = false;      // host only: keep this session's memory-card changes (Dolphin 'Write save data'); off = discarded
 };
-bool dual_core_allowed(const std::string& game_id);   // allowlist of games that run NetPlay on two CPU threads (default: single core)
+bool dual_core_allowed(const std::string& game_id);
+/* NetPlay pad buffer (frames) for a round trip: too small and Dolphin stalls every frame waiting for input (the whole room runs
+ * slow), too big only adds input lag. Includes the hub forwarders' ~60 Hz pump on both PCs. */
+int pad_buffer_for_ping(int ping_ms, bool relayed);   // allowlist of games that run NetPlay on two CPU threads (default: single core)
 std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p);
 
 /* "Game (GM4E01)" row finder helper: Dolphin lists NetPlay games as "<title> (<id>)". */
