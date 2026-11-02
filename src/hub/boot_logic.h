@@ -8,7 +8,7 @@
 
 namespace bootanim {
 
-enum class Media { Cartridge, SmallCart /*GB/GBC/GBA*/, Card /*DS/3DS*/, MiniDisc /*GC*/, Disc /*PS1/PS2/WiiU*/, None };
+enum class Media { Cartridge, SmallCart /*GB/GBC/GBA*/, Card /*DS/3DS*/, MiniDisc /*GC*/, Disc /*PS1/PS2/WiiU*/, Umd /*PSP: a disc in a square shell*/, None };
 
 inline Media media_for(hub::System s) {
     switch (s) {
@@ -17,6 +17,7 @@ inline Media media_for(hub::System s) {
         case hub::System::NDS: case hub::System::N3DS: return Media::Card;
         case hub::System::GC: return Media::MiniDisc;
         case hub::System::PS1: case hub::System::PS2: case hub::System::WiiU: return Media::Disc;
+        case hub::System::PSP: return Media::Umd;
         default: return Media::None;
     }
 }
@@ -52,6 +53,7 @@ inline Geo geo_for(hub::System s) {
         case S::GC:    return {Insert::Lid, 0.70f, 0, -35, 150, 0, 0.46f, 0, 1.0f, 0.66f};   // 8 cm mini disc: about half the console width
         case S::PS1:   return {Insert::Lid, 0.62f, 0, -34, 150, 0, 0.47f, 0, 1.0f, 0.66f};
         case S::PS2:   return {Insert::Tray, 0.50f, -7, 93, 150, 0, 0.52f, 0, 1.0f, 0.66f};
+        case S::PSP:   return {Insert::Behind, 0.60f, 0, -80, 110, 0, 1.f, 0, 0.92f, 0.66f};   // UMD drops into the rear door housing (like the GBA cart)
         case S::WiiU:  return {Insert::Front, 0.55f, 54, 46, 120, 37, 0.14f, 0, 1.0f, 0.66f};
         case S::N64: default: return {Insert::Slot, 0.56f, 0, -32, 120, -8, 1.f, 0, 1.0f, 0.68f};   // cart is ~28% of the console width
     }

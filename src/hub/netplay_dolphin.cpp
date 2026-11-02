@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -430,15 +431,18 @@ static bool spawn(const std::wstring& cmd, const std::wstring& cwd, const std::w
     return true;
 }
 
+/* Paths are UTF-8 (hub::data_dir()): an accented Windows user name breaks every ANSI call, so file work here is wide. */
+static std::filesystem::path P8(const std::string& s) { return std::filesystem::path(W(s)); }
+
 bool start(bool host, const std::string& dolphin_exe, const std::string& user_dir, const Spec& s,
            int my_slot, const std::string& work_dir, const std::string& desktop, const std::string& extra_args, Run* out) {
-    CreateDirectoryA(work_dir.c_str(), nullptr);
+    CreateDirectoryW(W(work_dir).c_str(), nullptr);
     std::string script = work_dir + "\\gc_netplay_driver.ps1";
-    { std::ofstream f(script, std::ios::binary); f << driver_script(); }
+    { std::ofstream f(P8(script), std::ios::binary); f << driver_script(); }
     out->go_path = work_dir + "\\gc_guest_go.txt";
-    DeleteFileA(out->go_path.c_str());
+    DeleteFileW(W(out->go_path).c_str());
     out->status_path = work_dir + std::string(host ? "\\gc_host_status.txt" : "\\gc_guest_status.txt");
-    DeleteFileA(out->status_path.c_str());
+    DeleteFileW(W(out->status_path).c_str());
     std::wstring wd;
     if (!desktop.empty()) {
         wd = W(desktop);
@@ -456,12 +460,12 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
 
 void signal_go(const Run& r) {
     if (r.go_path.empty()) return;
-    HANDLE h = CreateFileA(r.go_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE h = CreateFileW(W(r.go_path).c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
 }
 
 std::string read_status(const Run& r) {
-    std::ifstream f(r.status_path, std::ios::binary);
+    std::ifstream f(P8(r.status_path), std::ios::binary);
     std::stringstream ss; ss << f.rdbuf();
     return ss.str();
 }

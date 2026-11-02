@@ -193,6 +193,7 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
     std::string host_app;
     bool host_hello = false;
     for (auto& p : peers) if (p.slot == 0) { host_app = p.app; host_hello = p.hello; }
+    if (!host) { std::string b = emulator_online_block(); if (!b.empty()) return b; }   // Dolphin / Azahar missing on this PC: READY stays off with that reason
     if (rg->system == hub::System::PS1) { std::string b = ps1_online_block(); if (!b.empty()) return b; }   // host and guest alike
     if (rg->system == hub::System::PS2) { std::string b = ps2_online_block(*rg); if (!b.empty()) return b; }   // core download / BIOS / unpack, host and guest alike
     if (host) {

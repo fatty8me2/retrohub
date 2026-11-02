@@ -154,6 +154,19 @@ void apply_scan() {
             g.path = "C:/fake/crashbash.cue";
             A.lib.push_back(g);
         }
+        if (!only_native && std::getenv("HUB_SHOT_PSP")) {   // PSP shelf / details screenshots (qa: HUB_SHOT_PSP=1)
+            static const char* ids[] = {"ulus10041", "ucus98632", "npuz00001"};
+            static const char* names[] = {"Crisis Core: Final Fantasy VII", "God of War: Chains of Olympus", "Echochrome"};
+            for (int i = 0; i < 3; ++i) {
+                hub::GameEntry g;
+                g.system = hub::System::PSP;
+                g.key = std::string("psp:") + ids[i];
+                g.serial = ids[i];
+                g.title = names[i];
+                g.path = std::string("C:/fake/") + ids[i] + ".iso";
+                A.lib.push_back(g);
+            }
+        }
         if (!only_native && !std::getenv("HUB_SHOT_NO_WIIU")) {   // a catalog Wii U remote-play game (HUB_SHOT_ROOM_GAME=sm3dw); HUB_SHOT_NO_WIIU = this PC has no copy (guest view)
             hub::GameEntry g;
             g.system = hub::System::WiiU;
@@ -439,6 +452,7 @@ int max_players_for(const hub::GameEntry& e) {
 /* Local player count shown on cards (not the online cap). */
 int local_players_for(const hub::GameEntry& e) {
     if (const GameInfo* g = hub::find_game(e.catalog_id)) return g->max_players;
+    if (e.system == hub::System::PSP) return 1;   // a handheld, offline: one pad
     return max_players_for(e);
 }
 /* How a game is named in lobby messages: the N64 catalog id (back-compat) or the library key. */

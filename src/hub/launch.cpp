@@ -24,6 +24,7 @@
 #include "winutil.h"
 #include "pcsx2.h"
 #include "ps2.h"
+#include "ppsspp.h"
 #include "wiiu_meta.h"
 #include "invite.h"
 #include "dolphin_speed.h"
@@ -277,11 +278,10 @@ void focus_game() {
 
 /* Wii U: Cemu's default global hotkey "toggle pad screen" is Ctrl+Tab (shown in its first-run assistant). Cemu reads it from the
  * keyboard state of its window, so the game window is brought forward and the keys are injected. */
-void wiiu_toggle_gamepad_screen() {
-    if (g_headless || !A.proc) return;
-    if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
+/* Raises the running game and presses one key chord, but only while a game window is the foreground window (re-checked before every key-down;
+ * releases always go out). Returns how many keys were pressed. Shared by the Wii U pad-screen toggle and the PSP state keys. */
+static int send_game_chord(const std::vector<int>& keys) {
     focus_game();
-    std::vector<int> keys = hubemu::cemu_toggle_gamepad_keys();
     std::vector<DWORD> pids = game_pids();
     auto game_fg = [&]() {   // re-checked before every key-down; releases always go out
         DWORD pid = 0;
@@ -289,11 +289,28 @@ void wiiu_toggle_gamepad_screen() {
         for (DWORD p : pids) if (p == pid) return !qm_is_open();
         return false;
     };
-    int n = hubqm::run_key_chord(keys, game_fg, [](int k, bool up) {
+    return hubqm::run_key_chord(keys, game_fg, [](int k, bool up) {
         INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = (WORD)k; i.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
         SendInput(1, &i, sizeof(INPUT));
     });
+}
+
+void wiiu_toggle_gamepad_screen() {
+    if (g_headless || !A.proc) return;
+    if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
+    std::vector<int> keys = hubemu::cemu_toggle_gamepad_keys();
+    int n = send_game_chord(keys);
     autotest_log(n == (int)keys.size() ? "wiiu: toggle pad screen hotkey sent" : "wiiu: toggle pad screen hotkey aborted (game not foreground)");
+}
+
+/* PSP: PPSSPP keeps F2 (quick save state) and F4 (quick load state) as built-in accelerators while RetroHub's controls.ini leaves them unmapped
+ * (ppsspp.h). Same pattern as the Wii U pad-screen chord: the game window is raised by the user's own request, keys go out only while the game is foreground. */
+void ppsspp_send_state(bool save) {
+    if (g_headless || !A.proc || A.run.system_short != "psp") return;
+    if (autotest_active()) { autotest_log(std::string("psp: ") + (save ? "save" : "load") + " state key (not injected: QA runs on a hidden desktop)"); return; }
+    std::vector<int> keys = hubemu::ppsspp_state_keys(save);
+    int n = send_game_chord(keys);
+    autotest_log(n == (int)keys.size() ? "psp: state key sent" : "psp: state key aborted (game not foreground)");
 }
 
 /* Dolphin Speed row: Dolphin's emulation-speed hotkeys are bound to Ctrl+Shift+F13/F14 (emulators.cpp, dolphin_hotkeys_ini).
@@ -497,7 +514,7 @@ RunInfo run_info_for(const hub::GameEntry& e, bool online) {
 
 /* Size of the image inside a zipped 3DS game (read once from the zip's directory). */
 uint64_t unpacked_size(const hub::GameEntry& e) {
-    if (e.system == hub::System::GC || e.system == hub::System::PS2 || (e.system == hub::System::WiiU && e.issue == "extract")) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
+    if (e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::PSP || (e.system == hub::System::WiiU && e.issue == "extract")) return e.unpacked ? e.unpacked : e.size;   // from the scan cache; never runs tar on the UI thread
     static std::map<std::string, uint64_t> cache;
     auto it = cache.find(e.path);
     if (it == cache.end()) it = cache.emplace(e.path, hub::zip_3ds_unpacked_size(e)).first;
@@ -516,7 +533,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
         if (ps2_bios.file.empty()) { ps2_bios_ask(e.key); return; }
     }
-    if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::WiiU) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
+    if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::PSP || e.system == hub::System::WiiU) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
         UNZ.key = e.key;
         if (gamepack_owns(e)) start_unzip(e);   // installed from a shared pack: the player already chose this game, no question
         else UNZ.state = UnzipJob::Asking;
@@ -536,7 +553,8 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         std::string g0 = launch_path_for(e);
         std::string a0 = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(g0, fs0, mp_arg)
                          : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(g0, fs0, "<card>")
-                         : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
+                         : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(g0, fs0)
+                         : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
         shot_trace("external", std::string(hubemu::name(kind)) + " installed | " + a0);
         set_notice("Headless test run: launch skipped.");
         return;
@@ -563,6 +581,11 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         std::string perr = hubemu::prepare_pcsx2(inst.dir, ps2_pads_for(pp), pp, ps2_bios, e.key, gs_values_for(e), hubemu::pcsx2_is_buzz_game(e.catalog_id));
         if (!perr.empty()) { set_notice("Could not set up PCSX2: " + perr, 12.0); return; }
         real_boot_pcsx2_apply(inst.dir, real_boot_plan(e));   // fast boot off = the PS2 BIOS intro plays
+    } else if (kind == hubemu::Kind::Ppsspp) {   // portable memstick under the managed dir; controls from the "psp" profile on the first XInput pad
+        hubctl::Profile pq = controls_profile("psp", e.key);
+        hubemu::CemuPads cp = cemu_pads_for(pq);
+        std::string perr = hubemu::prepare_ppsspp(inst.dir, pq, cp.xinput.empty() ? 0 : cp.xinput[0], gs_values_for(e));
+        if (!perr.empty()) { set_notice("Could not set up PPSSPP: " + perr, 12.0); return; }
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for(pw), ri.dsu_players) : cemu_pads_for(pw)); }
     } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
@@ -600,6 +623,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI", hub::gs::volume_of(gsv))
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
+                       : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(game, fs)
                                                        : hubemu::cemu_args(game, fs);
     if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS") && kind == hubemu::Kind::Dolphin)   // QA only: extra Dolphin flags (e.g. -m movie.dtm)
         args = std::string(std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS")) + " " + args;
@@ -827,6 +851,7 @@ void play_entry(const hub::GameEntry& e_in) {
             break;
         case hub::System::GC:
         case hub::System::PS2:
+        case hub::System::PSP:
         case hub::System::N3DS:
         case hub::System::WiiU:
             launch_external(e, ri, battery);

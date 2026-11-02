@@ -17,7 +17,8 @@ enum class System { Unknown = 0, N64, GBA, GB, GBC, GC,
     PS2,     // PlayStation 2 (PCSX2, downloaded on demand)
     PS1,     // PlayStation (Beetle PSX via retrorun)
     NES,     // Nintendo Entertainment System (libretro via retrorun)
-    SNES };  // Super Nintendo (libretro via retrorun)
+    SNES,    // Super Nintendo (libretro via retrorun)
+    PSP };   // PlayStation Portable (PPSSPP, downloaded on demand)
 /* GB/GBC/GBA run as one lockstepped console online (retrorun --net); the room can share the host's save with everyone. */
 inline bool is_lockstep_gb_system(System s) { return s == System::GB || s == System::GBC || s == System::GBA; }
 

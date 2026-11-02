@@ -5,8 +5,15 @@
 #include "runner_ctl.h"
 #include "toast.h"
 #include "ui_sound.h"
+#include "attach_xfer.h"
+#include "challenge_ui.h"
+#include "friend_pick_ui.h"
+#include "hack_ui.h"
+
+#include <shellapi.h>
 
 FriendsUi FR;
+static std::set<std::string> g_fake_queued;   // screenshot aid: fake lines that show the "Waiting to send" tag
 
 /* friends_ui.inc - friends list panel, chat, lobby invites, notifications. Included by main.cpp (after the art helpers),
  * so it can use App A and its helpers. Data comes from hubnet::FriendsClient, or from fake data (HUB_SHOT_FAKE_FRIENDS). */
@@ -380,6 +387,19 @@ bool fr_send_dm(const std::string& uid, const std::string& text) {
     FR.cli.send_message(uid, text);
     return true;
 }
+bool fr_send_attach_dm(const std::string& uid, const std::string& text, const hubnet::Attach& a) {
+    if (uid.empty()) return false;
+    if (FR.fake) {
+        hubnet::Message m;
+        m.id = "fk" + std::to_string(wall_ms()) + uid; m.from = "me"; m.to = uid; m.mine = true; m.text = text; m.at = wall_ms();
+        m.has_attach = true; m.attach = a;
+        FR.f_conv[uid].push_back(m);
+        return true;
+    }
+    if (!FR.started) { set_toast("Offline - will send when connected.", false, 4.0); return false; }
+    FR.cli.send_message(uid, text, &a, std::string());
+    return true;
+}
 /* Test aid: HUB_SHOT_TRACE=<file> appends one line per friends-panel action, so the click harness can assert what a click did. */
 static void fr_trace(const char* what, const std::string& arg = std::string()) {
     static const char* path = std::getenv("HUB_SHOT_TRACE");
@@ -606,6 +626,14 @@ std::string fr_lobby_ident_msg() {
 }
 
 void fr_start() {
+    hub::attach::set_account_provider([]() {   // where DM attachments go: the same Worker and account as the friends socket
+        hub::attach::Account a;
+        if (FR.fake || !FR.started) return a;
+        a.base_url = hub::attach::http_base_from_server(g_headless ? server_url() : std::string(hubnet::default_server()));
+        a.user_id = FR.cli.my_uid();
+        a.secret = FR.cli.my_secret();
+        return a;
+    });
     if ((g_headless && !shot_net()) || FR.fake) return;
     FR.cli.set_paths(hub::data_dir(), hub::saves::vault_dir());
     FR.cli.set_auto_friend(A.st.auto_friend);
@@ -645,6 +673,7 @@ void fr_adopt_identity_after_vault_change() {
 
 void fr_tick() {
     fr_run_pending_join();
+    hubui::attach_send_tick();
     if (FR.fake) { gn_tick(); return; }
     if (!FR.started) return;
     FR.cli.update();
@@ -665,15 +694,23 @@ void fr_tick() {
                 set_toast(e.automatic ? hubui::auto_friend_text(e.name) : e.name + " is now your friend.");
                 break;
             case hubnet::Event::MessageReceived:
-                if (gn_on_message(e.uid, e.name, e.text)) { if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid); break; }
-                qm_chat_incoming(true, e.uid, e.name, e.text);
-                if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
-                else { ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (e.text.size() > 80 ? e.text.substr(0, 77) + "..." : e.text), ui::ACCENT, 5.0); }
+                if (!e.msg.card.empty()) hubui::challenge_on_message(e.msg);
+                if (e.msg.card.empty() && !e.msg.has_attach && gn_on_message(e.uid, e.name, e.text)) { if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid); break; }
+                {
+                    std::string shown = e.text;
+                    if (e.msg.has_attach) shown = e.msg.attach.kind == "shot" ? "sent you a picture" : e.msg.attach.kind == "patch" ? "sent you a ROM hack" : "sent you a file";
+                    else if (!e.msg.card.empty() && e.text.empty()) shown = "sent you a challenge";
+                    qm_chat_incoming(true, e.uid, e.name, shown);
+                    if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
+                    else { ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (shown.size() > 80 ? shown.substr(0, 77) + "..." : shown), ui::ACCENT, 5.0); }
+                }
                 break;
             case hubnet::Event::ReactionReceived:
                 if (hub::profile::valid_reaction(e.msg.emoji) && !e.msg.target.empty() && e.msg.target.size() <= 64 && fr_find(e.uid))
                     FR.reacts[e.uid + "|" + e.msg.target].set(e.uid, e.msg.emoji, e.msg.on);
                 break;
+            case hubnet::Event::Queued: set_toast("Saved - will send when you're back online.", true, 4.0); break;
+            case hubnet::Event::SendFailed: set_toast(e.text.empty() ? std::string("That could not be sent.") : e.text, false, 7.0); break;
             case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite, e.msg.ask_host); break;
             case hubnet::Event::WatchedOnline: fr_friend_online(e.uid, e.name); break;
             case hubnet::Event::AskResult:
@@ -781,6 +818,32 @@ void fr_fake_init() {
     im.inv.lobby_code = "K7M2QX"; im.inv.game_id = "mk64"; im.inv.game_title = "Mario Kart 64"; im.inv.system = "n64"; im.inv.expires_at = now + 27 * 60000;
     FR.f_conv["miauid"].push_back(im);
     msg("miauid", false, "bring the good controller", now - 60000);
+    if (std::getenv("HUB_SHOT_FAKE_ATTACH")) {   // screenshot aid: attachment lines in Mia's chat (picture, hack, expired, error, queued)
+        namespace fsx = std::filesystem;
+        std::error_code fec;
+        fsx::create_directories(fsx::temp_directory_path() / "rh_fake_attach", fec);
+        if (SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormat(0, 320, 180, 32, SDL_PIXELFORMAT_ARGB8888)) {
+            for (int y = 0; y < 180; ++y) for (int x = 0; x < 320; ++x)
+                ((Uint32*)((Uint8*)sf->pixels + y * sf->pitch))[x] = 0xFF000000u | ((Uint32)(40 + y / 2) << 16) | ((Uint32)(70 + x / 4) << 8) | (Uint32)(180 - y / 3);
+            SDL_SaveBMP(sf, (fsx::temp_directory_path() / "rh_fake_attach" / "fakeshot.bmp").u8string().c_str());
+            SDL_FreeSurface(sf);
+        }
+        auto am = [&](const char* id, const char* name, const char* kind, long long size, long long exp, bool mine, const char* text, long long at) {
+            hubnet::Message m;
+            m.id = std::string("a-") + id; m.from = mine ? "me" : "miauid"; m.to = mine ? "miauid" : "me"; m.mine = mine; m.text = text; m.at = at;
+            m.has_attach = true; m.attach.id = id; m.attach.name = name; m.attach.kind = kind; m.attach.size = size; m.attach.expires = exp;
+            FR.f_conv["miauid"].push_back(m);
+        };
+        am("fakeshot", "Mario Kart 64 2026-10-30.png", "shot", 412000, now + 6 * 86400 * 1000LL, false, "look at this", now - 50000);
+        am("fakepatch", "Super Mario 64 Star Road.bps", "patch", 3200000, now + 6 * 86400 * 1000LL, false, "try this hack", now - 45000);
+        am("fakeold", "old picture.png", "shot", 380000, now - 3600 * 1000LL, false, "", now - 40000);
+        am("fakeerr", "big hack.ips", "patch", 5100000, now + 86400 * 1000LL, false, "", now - 35000);
+        am("fakemine", "Kart finish.png", "shot", 295000, now + 7 * 86400 * 1000LL, true, "Sent a screenshot", now - 20000);
+        hubnet::Message q;
+        q.id = "q-1"; q.from = "me"; q.to = "miauid"; q.mine = true; q.text = "see you there!"; q.at = now - 10000;
+        FR.f_conv["miauid"].push_back(q);
+        g_fake_queued.insert(q.id);
+    }
     FR.f_unread["miauid"] = 2;
     FR.f_unread["jakuid"] = 0;
     hubnet::Invite inv = im.inv;
@@ -882,6 +945,7 @@ void fr_accept(const std::string& uid, const std::string& name) {
         for (size_t i = 0; i < FR.f_in.size(); ++i) if (FR.f_in[i].uid == uid) { FR.f_in.erase(FR.f_in.begin() + i); break; }
     } else FR.cli.accept(uid);
     group_resolve(hubui::group::Kind::FriendRequest, uid);
+    if (!FR.fake && !fr_connected()) return;   // offline: the outbox keeps it and says so (Event::Queued); no false "now friends"
     set_toast("You and " + name + " are now friends.");
 }
 void fr_join_notif(Notif& n) {
@@ -1355,6 +1419,142 @@ void fr_react_dm(const std::string& peer, const std::string& key, const std::str
     if (!FR.fake) FR.cli.send_reaction(peer, key, code, on);
 }
 
+/* ---- DM attachments (Plan 4): a file a friend sent us, or one we sent ---- */
+struct AttDl { int job = 0; bool started = false, done = false, ok = false, then_add = false; int pct = 0; std::string path, err; };
+static std::map<std::string, AttDl> g_att;
+
+static std::string att_path(const hubnet::Attach& a) {
+    std::string id;
+    for (char ch : a.id) if (std::isalnum((unsigned char)ch)) id += ch;
+    namespace fsx = std::filesystem;
+    if (id.rfind("fake", 0) == 0) return (fsx::temp_directory_path() / "rh_fake_attach" / (id + ".bmp")).u8string();
+    std::string ext = a.kind == "shot" ? ".png" : a.kind == "state" ? ".state" : fsx::u8path(a.name).extension().u8string();
+    if (ext.empty() || ext.size() > 8) ext = ".bin";
+    return (fsx::u8path(hub::data_dir()) / "attach_cache" / (id + ext)).u8string();
+}
+static AttDl& att_get(const hubnet::Attach& a) {
+    AttDl& d = g_att[a.id];
+    if (d.path.empty()) {
+        d.path = att_path(a);
+        std::error_code ec;
+        if (std::filesystem::exists(std::filesystem::u8path(d.path), ec)) d.started = d.done = d.ok = true;
+        if (a.id == "fakeerr") { d.started = d.done = true; d.ok = false; d.err = "Cloud space is full right now. Try again later."; }
+    }
+    return d;
+}
+static void att_start(const hubnet::Attach& a, AttDl& d) {
+    if (d.job || FR.fake) return;
+    d.started = true; d.done = false; d.ok = false; d.err.clear();
+    d.job = hub::attach::download(a, d.path);
+}
+static void att_poll(AttDl& d) {
+    if (!d.job) return;
+    hub::attach::Result r;
+    if (!hub::attach::poll(d.job, &r)) { d.job = 0; return; }
+    d.pct = r.percent;
+    if (!r.done) return;
+    d.done = true; d.ok = r.ok;
+    d.err = r.ok ? std::string() : (r.error.empty() ? std::string("Couldn't download that file.") : r.error);
+    hub::attach::forget(d.job);
+    d.job = 0;
+    if (r.ok && d.then_add) { d.then_add = false; hack_add_patch(d.path); }
+}
+static bool fr_is_queued(const hubnet::Message& m) {
+    if (!m.mine) return false;
+    return FR.fake ? g_fake_queued.count(m.id) > 0 : (FR.started && FR.cli.queued(m.id));
+}
+/* "Waiting to send" under one of my lines that sits in the outbox, with a Cancel link. */
+static void fr_queued_tag(const hubnet::Message& m, float aw) {
+    if (FR.cancelled_msgs.count(m.id)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + aw - ImGui::CalcTextSize("Not sent").x);
+        ImGui::TextUnformatted("Not sent");
+        ImGui::PopStyleColor();
+        return;
+    }
+    if (!fr_is_queued(m)) return;
+    ImGui::PushID(m.id.c_str());
+    const char* lab = "Waiting to send";
+    float w = ImGui::CalcTextSize(lab).x + ImGui::CalcTextSize("Cancel").x + sp(3.f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, aw - w));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+    ImGui::TextUnformatted(lab);
+    ImGui::PopStyleColor();
+    ImGui::SameLine(0, sp(1.f));
+    if (ImGui::SmallButton("Cancel")) {
+        if (FR.fake) g_fake_queued.erase(m.id); else FR.cli.cancel_queued(m.id);
+        FR.cancelled_msgs.insert(m.id);
+    }
+    ImGui::PopID();
+}
+static void fr_open_file(const std::string& path) {
+    ShellExecuteW(nullptr, L"open", std::filesystem::u8path(path).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+/* One attachment line as a card. Pictures download themselves the first time they are drawn; a hack downloads when "Add this hack" is pressed. */
+static void fr_attach_card(const hubnet::Message& m, int idx, float aw, ImDrawList* cdl) {
+    const hubnet::Attach& a = m.attach;
+    ImFont* bf = ui::F.body;
+    float fs = bf->FontSize, pad = sp(1.25f);
+    ImVec2 c = ImGui::GetCursorScreenPos();
+    AttDl& d = att_get(a);
+    att_poll(d);
+    const bool recv = !m.mine, shot = a.kind == "shot", patch = a.kind == "patch";
+    const bool expired = a.expires > 0 && a.expires < wall_ms() && !(d.done && d.ok);
+    if (recv && shot && !d.started && !expired) att_start(a, d);
+    const bool busy = d.job != 0;
+    const bool has_btn = recv && !expired && (patch || (shot && (d.ok || !d.err.empty())) || !d.err.empty());
+    float cwid = aw * 0.94f, thumb_w = std::min(sp(14.f), cwid * 0.36f), thumb_h = thumb_w * 0.58f;
+    /* the text column decides the height: name, size, then up to 3 wrapped status lines */
+    std::string st; ImU32 sc = ui::TEXT3;
+    if (expired) { st = "Expired (files last 7 days)"; sc = ui::BAD; }
+    else if (!d.err.empty()) { st = d.err; sc = ui::BAD; }
+    else if (a.kind == "state") st = "Challenge file";
+    else if (patch) st = busy ? "Downloading..." : "ROM hack patch";
+    else if (m.mine) st = "Sent";
+    const float tcol = cwid - pad * 2 - thumb_w - sp(1.25f);
+    std::vector<std::string> slines;
+    if (!st.empty()) slines = ui::wrap_lines(ui::F.cap, ui::F.cap->FontSize, st, tcol, 4);
+    const float text_h = ui::F.bold->FontSize * 1.2f + fs * 1.3f + slines.size() * ui::F.cap->FontSize * 1.25f;
+    float ch = pad * 2 + std::max(thumb_h, text_h) + (has_btn ? sp(1.f) + sp(3.f) : 0.f);
+    float x0 = m.mine ? c.x + aw - cwid : c.x;
+    ImVec2 q0(x0, c.y), q1(x0 + cwid, c.y + ch);
+    cdl->AddRectFilled(q0, q1, ui::PANEL2, sp(1.75f));
+    cdl->AddRect(q0, q1, with_alpha(ui::ACCENT, 0.4f), sp(1.75f), 0, 1.f);
+    ImVec2 t0 = q0 + ImVec2(pad, pad), t1 = t0 + ImVec2(thumb_w, thumb_h);
+    int tw = 0, th = 0;
+    SDL_Texture* tex = (shot && d.ok) ? hubui::shot_thumb_tex(d.path, &tw, &th) : nullptr;
+    if (tex) ui::draw_art(cdl, tex, tw, th, t0, t1, sp(0.75f));
+    else {
+        cdl->AddRectFilled(t0, t1, ui::BG, sp(0.75f));
+        std::string lab = shot ? (recv ? (busy ? std::to_string(d.pct) + "%" : (d.err.empty() ? "Loading..." : "")) : "Picture") : patch ? "ROM HACK" : "FILE";
+        if (!lab.empty()) fr_text_c(cdl, ui::F.cap, (t0 + t1) * 0.5f, ui::TEXT3, lab.c_str());
+    }
+    float tx = t1.x + sp(1.25f), tw2 = q1.x - pad - tx;
+    cdl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, t0.y - sp(0.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, a.name.empty() ? "file" : a.name, tw2).c_str());
+    std::string sub = hub::attach::size_text(a.size) + " - " + fr_time(m.at);
+    cdl->AddText(bf, fs, ImVec2(tx, t0.y + ui::F.bold->FontSize * 1.2f), ui::TEXT2, ui::ellipsize(bf, fs, sub, tw2).c_str());
+    float ly = t0.y + ui::F.bold->FontSize * 1.2f + fs * 1.3f;
+    for (auto& l : slines) { cdl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, ly), sc, l.c_str()); ly += ui::F.cap->FontSize * 1.25f; }
+    if (has_btn) {
+        ImGui::PushID(idx + 200000);
+        ImGui::SetCursorScreenPos(ImVec2(q0.x + pad, q1.y - pad - sp(3.f)));
+        float bw = cwid - pad * 2;
+        if (!d.err.empty()) {
+            if (ui::button("Retry", ImVec2(bw, sp(3.f)), true, !busy)) att_start(a, d);
+        } else if (patch) {
+            if (ui::button(busy ? "Downloading..." : "Add this hack", ImVec2(bw, sp(3.f)), true, !busy)) {
+                if (d.ok) hack_add_patch(d.path);
+                else { d.then_add = true; att_start(a, d); }
+            }
+        } else if (shot) {
+            if (ui::button("Open", ImVec2(bw, sp(3.f)), true, d.ok)) fr_open_file(d.path);
+        }
+        ImGui::PopID();
+    }
+    ImGui::SetCursorScreenPos(c);
+    ImGui::Dummy(ImVec2(aw, ch + sp(1.f)));
+}
+
 /* ---- chat ---- */
 void fr_chat_view(float cw) {
     const hubnet::Friend* f = fr_find(FR.chat_uid);
@@ -1414,6 +1614,15 @@ void fr_chat_view(float cw) {
             c = ImGui::GetCursorScreenPos();
         }
         std::string tm = fr_time(m.at);
+        if (m.has_attach) {
+            fr_attach_card(m, (int)i, aw, cdl);
+            fr_queued_tag(m, aw);
+            continue;
+        }
+        if (!m.card.empty()) {
+            hubui::challenge_on_message(m);
+            if (hubui::challenge_draw_card(m, aw * 0.94f)) { fr_queued_tag(m, aw); continue; }
+        }
         if (m.invite) {
             float cwid = aw * 0.94f, ch = pad * 2 + sp(7.f) + (m.mine ? 0.f : sp(1.f) + sp(3.f));
             float x0 = m.mine ? c.x + aw - cwid : c.x;
@@ -1486,6 +1695,7 @@ void fr_chat_view(float cw) {
         }
         ImGui::SetCursorScreenPos(ImVec2(c.x, q1.y));
         ImGui::Dummy(ImVec2(aw, chip_h + sp(0.75f)));
+        fr_queued_tag(m, aw);
     }
     if (msgs.size() != FR.chat_seen) { ImGui::SetScrollHereY(1.f); FR.chat_seen = msgs.size(); }
     if (fr_panel_shown() && fr_unread(FR.chat_uid) > 0) fr_mark_read(FR.chat_uid);
@@ -1590,7 +1800,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
                 else if (is_code ? code == fr_my_code() : hubnet::username_fold_key(typed) == hubnet::username_fold_key(A.st.name)) { FR.add_msg = is_code ? "That is your own code." : "That is your own username."; FR.add_msg_until = ImGui::GetTime() + 6; }
                 else {
                     if (!FR.fake) { if (is_code) FR.cli.add_friend(code); else FR.cli.add_friend_username(typed); }
-                    FR.add_msg = "Friend request sent to " + (is_code ? code : typed) + ".";
+                    FR.add_msg = (!FR.fake && !fr_connected()) ? std::string("Offline - will send when connected.") : "Friend request sent to " + (is_code ? code : typed) + ".";
                     FR.add_msg_until = ImGui::GetTime() + 5;
                     FR.add_buf[0] = 0;
                 }
