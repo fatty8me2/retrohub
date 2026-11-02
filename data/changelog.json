@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.30.4",
+      "date": "2026-11-01",
+      "title": "Mario Superstar Baseball online at full speed",
+      "new": [],
+      "improved": [
+        "Mario Superstar Baseball online now uses both CPU cores, so it runs at full speed in a room instead of crawling"
+      ],
+      "fixed": [
+        "After an online GameCube game, single-player GameCube games could stay slower than normal; they now always use both CPU cores"
+      ]
+    },
+    {
       "version": "1.30.3",
       "date": "2026-11-01",
       "title": "No more doubled friends' games",
