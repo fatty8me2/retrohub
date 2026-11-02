@@ -335,7 +335,7 @@ void gc_tick() {
         if (now - last_t >= 1000) {
             last_t = now;
             const int ping = GCO.fw.worst_ping_ms();
-            const int b = gcnp::pad_buffer_for_ping(ping, GCO.fw.any_relayed());
+            const int b = gcnp::next_pad_buffer(last_b, gcnp::pad_buffer_for_ping(ping, GCO.fw.any_relayed()));   // the driver applies changes mid-game too
             if (ping >= 0 && b != last_b) { last_b = b; gcnp::set_host_buffer(GCO.run, b); online_log("gc host: pad buffer " + std::to_string(b) + " (ping " + std::to_string(ping) + " ms" + (GCO.fw.any_relayed() ? ", relayed)" : ")")); }
         }
     }

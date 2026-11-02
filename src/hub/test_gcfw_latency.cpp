@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
     });
     hubnp3ds::Plan plan; plan.port = port; plan.expected = 2;
     hubnp3ds::Runner host, guest;
-    std::string err, code = "GCLAT" + std::to_string(GetTickCount() % 10);
+    std::string err, code = hubnet::new_room_code();
     bool ok = host.start_host_forward(server, code, 1, plan, "gc", &err) && guest.start_guest(server, code, 1, plan, 1, &err, "gc");
     if (!ok) { printf("FAIL start: %s\n", err.c_str()); quit = true; echo_th.join(); return 1; }
     for (int i = 0; i < 1500 && !(host.ready() && guest.ready()); ++i) {
