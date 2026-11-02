@@ -5,7 +5,14 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 
+#include <atomic>
+#include <cstdlib>
 #include <map>
+#include <mutex>
+#include <thread>
+
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
 
 #include "session.h"
 
@@ -39,6 +46,12 @@ struct Runner::Impl {
     unsigned long long out = 0, in = 0;
     uint32_t t0 = 0;
     std::string tag = "3ds";
+    /* GameCube: Dolphin's NetPlay traffic is forwarded on its own thread (forward_loop), not on the ~60 Hz UI tick, so a packet waits
+     * ~1 ms instead of up to a frame on each PC. mu guards everything above while the thread runs. */
+    std::recursive_mutex mu;
+    std::thread th;
+    std::atomic<bool> quit{false};
+    bool threaded = false;
     std::string room_id(const std::string& code, int launch_no) const { return tag == "3ds" ? session_room(code, launch_no) : code + "-" + std::to_string(launch_no); }   // other tags: the Worker only accepts CODE-N game rooms
 
     static SOCKET udp(int port, int* bound) {
@@ -66,6 +79,30 @@ struct Runner::Impl {
     void send_out(int to_slot, const char* d, int n) {
         for (auto& f : fragment(next_id++, (const uint8_t*)d, (size_t)n)) sess.send(to_slot, f.data(), (int)f.size());
         ++out;
+    }
+    /* One event wakes the thread for anything to forward: Dolphin's local sockets and the Session's UDP socket (WSAEventSelect FD_READ)
+     * and queued relay frames (Session::set_wake_event). Waking on data does not depend on the timer resolution (a 1 ms select/Sleep
+     * timeout becomes ~16 ms when Windows does not grant 1 ms timers, measured: 30 ms loopback round trip). */
+    WSAEVENT wake = WSA_INVALID_EVENT;
+    void watch(SOCKET s) { if (wake != WSA_INVALID_EVENT && s != INVALID_SOCKET) WSAEventSelect(s, wake, FD_READ); }
+    void step();
+    void forward_loop() {
+        timeBeginPeriod(1);
+        while (!quit.load()) {
+            WSAResetEvent(wake);   // before draining: anything arriving after this sets it again
+            { std::lock_guard<std::recursive_mutex> g(mu); step(); }
+            WaitForSingleObject(wake, 5);   // data wakes it at once; the timeout only paces keepalives / timeouts
+        }
+        timeEndPeriod(1);
+    }
+    void start_thread() {
+        wake = WSACreateEvent();
+        if (wake == WSA_INVALID_EVENT) return;   // no event: stay on the UI-loop pump rather than spin
+        threaded = true;
+        watch(guest_sock);
+        for (auto& kv : host_sock) watch(kv.second);
+        sess.set_wake_event(wake);
+        th = std::thread([this] { forward_loop(); });
     }
     void pump() {
         char buf[2048];
@@ -99,6 +136,7 @@ struct Runner::Impl {
                 if (it == host_sock.end()) {
                     SOCKET s = udp(0, nullptr);
                     if (s == INVALID_SOCKET) continue;
+                    watch(s);
                     it = host_sock.emplace(from_slot, s).first;
                 }
                 sockaddr_in ra = room_addr();
@@ -193,6 +231,7 @@ bool Runner::start_host_forward(const std::string& server, const std::string& co
     m.active = true;
     m.t0 = hubnet::now_ms();
     m.status = "Waiting for everyone to connect...";
+    if (m.tag == "gc" && !std::getenv("RETROHUB_GCFW_NOTHREAD")) m.start_thread();
     return true;
 }
 
@@ -216,11 +255,18 @@ bool Runner::start_guest(const std::string& server, const std::string& code, int
     m.active = true;
     m.t0 = hubnet::now_ms();
     m.status = "Connecting to the host...";
+    if (m.tag == "gc" && !std::getenv("RETROHUB_GCFW_NOTHREAD")) m.start_thread();
     return true;
 }
 
 void Runner::update() {
     Impl& m = *impl_;
+    if (!m.active || m.threaded) return;   // GameCube: the forwarder thread steps the session
+    m.step();
+}
+
+void Runner::Impl::step() {
+    Impl& m = *this;
     if (!m.active) return;
     m.sess.update();
     m.pump();
@@ -235,7 +281,11 @@ void Runner::update() {
 
 void Runner::stop() {
     Impl& m = *impl_;
-    m.sess.stop();
+    if (m.th.joinable()) { m.quit = true; SetEvent(m.wake); m.th.join(); }   // wakes the loop at once
+    m.threaded = false;
+    m.quit = false;
+    m.sess.stop();   // joins the WS thread first: it may still SetEvent the wake handle
+    if (m.wake != WSA_INVALID_EVENT) { m.sess.set_wake_event(nullptr); WSACloseEvent(m.wake); m.wake = WSA_INVALID_EVENT; }
     for (auto& kv : m.host_sock) closesocket(kv.second);
     m.host_sock.clear();
     if (m.guest_sock != INVALID_SOCKET) closesocket(m.guest_sock);
@@ -249,22 +299,24 @@ void Runner::stop() {
 }
 
 bool Runner::active() const { return impl_->active; }
-bool Runner::ready() const { return impl_->active && !impl_->failed && impl_->sess.ready(); }
+bool Runner::ready() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->active && !impl_->failed && impl_->sess.ready(); }
 int Runner::worst_ping_ms() const {
+    std::lock_guard<std::recursive_mutex> g(impl_->mu);
     int w = -1;
     if (!impl_->active) return w;
     for (int i = 0; i < hubnet::kMaxSlots; ++i) { int p = impl_->sess.ping_ms(i); if (p > w) w = p; }
     return w;
 }
 bool Runner::any_relayed() const {
+    std::lock_guard<std::recursive_mutex> g(impl_->mu);
     if (!impl_->active) return false;
     for (int i = 0; i < hubnet::kMaxSlots; ++i) if (impl_->sess.is_relayed(i)) return true;
     return false;
 }
-bool Runner::failed() const { return impl_->failed; }
-std::string Runner::status() const { return impl_->status; }
+bool Runner::failed() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->failed; }
+std::string Runner::status() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->status; }
 int Runner::connect_port() const { return impl_->host ? impl_->plan.port : impl_->local_port; }
-unsigned long long Runner::datagrams_out() const { return impl_->out; }
-unsigned long long Runner::datagrams_in() const { return impl_->in; }
+unsigned long long Runner::datagrams_out() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->out; }
+unsigned long long Runner::datagrams_in() const { std::lock_guard<std::recursive_mutex> g(impl_->mu); return impl_->in; }
 
 }  // namespace hubnp3ds

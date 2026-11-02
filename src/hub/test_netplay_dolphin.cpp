@@ -70,11 +70,17 @@ int main() {
     CHECK(o.find("ConfirmStop = False") != std::string::npos && ini_patch(std::string("[Interface]\nConfirmStop = True\n"), s, p).find("ConfirmStop = False") != std::string::npos);   // never Dolphin's stop dialog online
     CHECK(o.find("CPUThread = False") != std::string::npos && o.find("SyncGPU = False") != std::string::npos && o.find("OverclockEnable = False") != std::string::npos);   // default single core, other determinism pins kept
     { Spec b = s; b.game_id = "GYQE01"; std::string ob = ini_patch(o, b, p); CHECK(ob.find("CPUThread = True") != std::string::npos && ob.find("SyncGPU = False") != std::string::npos);   // allowlisted: dual core
-      b.game_id = "GYQP01"; CHECK(dual_core_allowed("GYQJ01") && ini_patch("", b, p).find("CPUThread = True") != std::string::npos); CHECK(!dual_core_allowed("GM4E01") && !dual_core_allowed("")); CHECK(dual_core_allowed("G4QE01") && dual_core_allowed("G4QP01")); }
-    CHECK(pad_buffer_for_ping(-1, false) == 6 && pad_buffer_for_ping(-1, true) == 8);
-    CHECK(pad_buffer_for_ping(0, false) == 4 && pad_buffer_for_ping(20, true) == 6 && pad_buffer_for_ping(100, false) == 7 && pad_buffer_for_ping(5000, true) == 20);
-    CHECK(ini_patch("", s, p).find("BufferSize = 6") != std::string::npos);
-    { IniParams q = p; q.ping_ms = 100; q.relayed = true; CHECK(ini_patch("", s, q).find("BufferSize = 7") != std::string::npos); }
+      b.game_id = "GYQP01"; CHECK(dual_core_allowed("GYQJ01") && ini_patch("", b, p).find("CPUThread = True") != std::string::npos); CHECK(!dual_core_allowed("GM4E01") && !dual_core_allowed("")); CHECK(!dual_core_allowed("G4QE01") && !dual_core_allowed("G4QP01")); }
+    CHECK(std::string(driver_script()).find("$BufFile") != std::string::npos && std::string(driver_script()).find("RangeValuePattern") != std::string::npos);   // host types the measured buffer before Start
+    CHECK(pad_buffer_for_ping(-1, false) == 8 && pad_buffer_for_ping(-1, true) == 10);
+    /* measured: session RTT ~170 ms needs 12 (8 -> 75 %, 10 -> 92 %, 12 -> 100 %) */
+    CHECK(pad_buffer_for_ping(170, false) >= 12 && pad_buffer_for_ping(170, true) <= 14);
+    CHECK(pad_buffer_for_ping(0, false) == 4 && pad_buffer_for_ping(20, true) == 6 && pad_buffer_for_ping(100, false) == 8 && pad_buffer_for_ping(5000, true) == 30);
+    for (int r = 0; r < 400; r += 7) CHECK(pad_buffer_for_ping(r + 7, false) >= pad_buffer_for_ping(r, false));   // monotonic
+    CHECK(next_pad_buffer(-1, 9) == 9 && next_pad_buffer(9, 12) == 12 && next_pad_buffer(12, 10) == 12 && next_pad_buffer(12, 9) == 9);
+    CHECK(ini_patch("", s, p).find("BufferSize = 8") != std::string::npos);
+    { IniParams q = p; q.ping_ms = 100; q.relayed = true; CHECK(ini_patch("", s, q).find("BufferSize = 8") != std::string::npos); }
+    { const std::string d = driver_script(); CHECK(d.find("function Set-Buf") != std::string::npos && d.find("if ($Role -eq \"host\") { Set-Buf }") != std::string::npos); }   // applied before Start and live
     CHECK(ini_patch(o, s, p) == o);                    // idempotent
 
     /* host never gets a HostCode written; direct mode sets address/ports */
