@@ -880,6 +880,7 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
     std::string t = in;
     t = hubui::ini_set(t, "Core", "SlotA", "8");
     t = hubui::ini_set(t, "Core", "SlotB", "255");
+    t = hubui::ini_set(t, "Core", "CPUThread", "True");       // dual core (Dolphin's default); NetPlay used to leave it off in this shared ini, which made later play slow
     t = hubui::ini_set(t, "Core", "EmulationSpeed", "1.0");   // the Game menu's Speed row starts every session at 1x
     t = hubui::ini_set(t, "General", "HotkeysRequireFocus", "False");   // every launch (upgraded installs too): the speed pad needs no focus; other hotkeys are unbound (dolphin_hotkeys_ini)
     t = hubui::ini_set(t, "Interface", "ConfirmStop", "False");         // every launch: Back+Start closes Dolphin; a "stop?" dialog would pop up over the game
