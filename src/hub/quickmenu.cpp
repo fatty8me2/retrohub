@@ -19,6 +19,7 @@
 #include "qm_party.h"
 #include "ext_media.h"
 #include "qm_card.h"
+#include "challenge_ui.h"
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
@@ -118,9 +119,13 @@ SlotInfo read_slot(const std::string& dir, int slot) {
 }
 
 /* ---------------- the menu ---------------- */
-enum class QPage { Main, Save, Load, Pad, Chat, Emote, Pass };
+enum class QPage { Main, Save, Load, Pad, Chat, Emote, Pass, Challenge };
 bool g_open_req = false, g_shot_fake = false;
 QPage g_page = QPage::Main;
+bool g_ch_fake = false;                         // HUB_SHOT_QM=challenge: stand-in flow (no runner)
+hub::challenge::SendPhase g_ch_fake_phase = hub::challenge::SendPhase::PickFriends;
+std::vector<std::string> g_ch_fake_sel;
+char g_ch_buf[48] = {0};
 long long g_pending = 0;                       // seq waiting for an ack (0 = none)
 std::string g_pending_what;                    // "Saved slot 3" ...
 static ULONGLONG g_open_ms = 0, g_activity_ms = 0;
@@ -294,7 +299,7 @@ void enqueue_cmd(runctl::Command c, int tag) {
     if (g_e2e) return;
     if (g_shot_fake || !ctl_ready()) { if (tag == 2) g_pending = 0; return; }
     const bool coalesce = c.cmd == runctl::Cmd::Speed || c.cmd == runctl::Cmd::Volume || c.cmd == runctl::Cmd::Mute || c.cmd == runctl::Cmd::Overlay ||
-                          c.cmd == runctl::Cmd::Pause || c.cmd == runctl::Cmd::Input;
+                          c.cmd == runctl::Cmd::Pause || c.cmd == runctl::Cmd::Input || c.cmd == runctl::Cmd::OsdCorner;
     if (coalesce) for (auto& q : g_cmdq) if (q.c.cmd == c.cmd) { q.c = c; return; }
     if (c.cmd == runctl::Cmd::OsdMsg) {   // a flood of toasts must not bury a hand-off or a state save
         int n = 0;
@@ -871,6 +876,18 @@ static void qm_session_tick(const hub::GameEntry* e) {
 }
 
 void qm_tick() {
+    {   // Plan 4 p4-social: friend challenges (challenge_ui.cpp): host callbacks into the command queue, then the per-frame tick
+        static bool host_set = false;
+        if (!host_set) {
+            host_set = true;
+            hubui::ChallengeHost h;
+            h.save_state = [](int slot) { runctl::Command c; c.cmd = runctl::Cmd::SaveState; c.slot = slot; enqueue_cmd(c); };
+            h.corner = [](int corner, const std::string& t) { runctl::Command c; c.cmd = runctl::Cmd::OsdCorner; c.slot = corner; c.text = t; enqueue_cmd(c); };
+            h.osd = [](const std::string& t) { runctl::Command c; c.cmd = runctl::Cmd::OsdMsg; c.text = t; enqueue_cmd(c); };
+            hubui::challenge_set_host(std::move(h));
+        }
+        hubui::challenge_tick(g_qm_showing.load());
+    }
     {   // Plan 4: pause while the menu is open (offline only), resume on close; the queue writes one command at a time
         const bool menu = g_qm_showing.load() && !g_shot_fake;
         const bool online_now = g_e2e ? false : A.run.online;
@@ -920,7 +937,8 @@ void qm_tick() {
         g_speed_idx = std::getenv("HUB_SHOT_QM_SPEED") ? std::atoi(std::getenv("HUB_SHOT_QM_SPEED")) : hubqm::kSpeedNormal;
         g_mute = std::getenv("HUB_SHOT_QM_MUTE") != nullptr;
         g_sys = "n64"; g_key = "n64:shot"; g_title = "Super Smash Bros.";
-        g_page = std::string(shot) == "save" ? QPage::Save : std::string(shot) == "load" ? QPage::Load : std::string(shot) == "pad" ? QPage::Pad : std::string(shot) == "chat" ? QPage::Chat : std::string(shot) == "emote" ? QPage::Emote : std::string(shot) == "pass" ? QPage::Pass : QPage::Main;
+        g_page = std::string(shot) == "save" ? QPage::Save : std::string(shot) == "load" ? QPage::Load : std::string(shot) == "pad" ? QPage::Pad : std::string(shot) == "chat" ? QPage::Chat : std::string(shot) == "emote" ? QPage::Emote : std::string(shot) == "pass" ? QPage::Pass : std::string(shot) == "challenge" ? QPage::Challenge : QPage::Main;
+        if (std::string(shot) == "challenge") { g_ch_fake = true; g_ch_fake_sel = {"u1"}; }
         g_perf_shot = std::getenv("HUB_SHOT_QM_PERF") != nullptr;
         g_open_req = true;
         std::string dir = states_dir_of(g_key, g_sys);
@@ -966,6 +984,7 @@ static void qm_body();
 
 void draw_quick_menu() {
     qm_tick();
+    hubui::challenge_shot_draw();
     if (g_open_req) { g_open_req = false; ImGui::OpenPopup("##quickmenu"); }
     ImGuiIO& io = ImGui::GetIO();
     float w = std::min(g_page == QPage::Main ? sp(52.f) : sp(104.f), io.DisplaySize.x * 0.94f);
@@ -1027,6 +1046,115 @@ void draw_quick_menu() {
     ImGui::EndPopup();
 }
 
+
+/* ---- Plan 4 p4-social: "Challenge a friend from here" (state machine: challenge_flow.h, engine: challenge_ui.cpp) ---- */
+
+void challenge_page() {
+    using namespace hub::challenge;
+    const bool finishing = !g_ch_fake && hubui::challenge_running();   // "I did it" on a score challenge: type the score
+    ImGui::PushFont(ui::F.h2);
+    ImGui::TextUnformatted(finishing ? "Your score" : "Challenge a friend");
+    ImGui::PopFont();
+    const float fw = ImGui::GetContentRegionAvail().x;
+    if (finishing) {
+        ImGui::TextDisabled("Type the score you got.");
+        const hubqm::NavAction ta = g_nav.add("ch_type", false, true, 0, g_row_y);
+        if (ta.activate) osk::request_open();
+        ImVec2 tp = ImGui::GetCursorScreenPos();
+        ImGui::SetNextItemWidth(fw - sp(12.f));
+        osk::input("##chscore", "Score", g_ch_buf, sizeof g_ch_buf);
+        if (g_nav.selected("ch_type")) nav_ring(tp, tp + ImVec2(fw - sp(12.f), ImGui::GetFrameHeight()));
+        ImGui::SameLine();
+        if (nav_btn("ch_post", "Send result", ImVec2(sp(11.f), ImGui::GetFrameHeight()), true, g_ch_buf[0] != 0, 1, g_row_y++)) {
+            int64_t v = 0;
+            if (parse_score(g_ch_buf, &v)) { hubui::challenge_run_finish(true, g_ch_buf); g_page = QPage::Main; g_close_why = "challenge done"; ImGui::CloseCurrentPopup(); focus_game(); }
+            else push_toast("Type your score as a number.", COL_WARN, 4.0);
+        }
+        if (nav_btn("ch_back", "Back", ImVec2(sp(14.f), sp(5.5f)), false, true, 0, g_row_y++, true)) { g_nav.sel = "I did it"; g_page = QPage::Main; }
+        return;
+    }
+    const hubui::ChallengeSendView& v0 = hubui::challenge_send_view();
+    const SendPhase ph = g_ch_fake ? g_ch_fake_phase : v0.phase;
+    const std::string title = g_ch_fake ? g_title : v0.title;
+    ImGui::TextDisabled("%s", title.c_str());
+    ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    auto back_to_main = [&]() { if (!g_ch_fake) hubui::challenge_send_cancel(); g_nav.sel = "Challenge a friend from here"; g_page = QPage::Main; };
+    switch (ph) {
+    case SendPhase::Saving:
+        ImGui::TextUnformatted("Saving the game...");
+        break;
+    case SendPhase::PickGoal: {
+        ImGui::TextUnformatted("What's the goal?");
+        const float bw = fw;
+        if (nav_btn("ch_g_time", "Fastest time", ImVec2(bw, sp(6.5f)), false, true, 0, g_row_y++)) hubui::challenge_send_goal(GoalKind::FastestTime);
+        if (nav_btn("ch_g_just", "Just beat it", ImVec2(bw, sp(6.5f)), false, true, 0, g_row_y++)) hubui::challenge_send_goal(GoalKind::JustBeatIt);
+        if (nav_btn("ch_g_score", "Score", ImVec2(bw, sp(6.5f)), false, true, 0, g_row_y++)) hubui::challenge_send_goal(GoalKind::Score);
+        break;
+    }
+    case SendPhase::TypeScore: {
+        ImGui::TextUnformatted("Type the score to beat.");
+        const hubqm::NavAction ta = g_nav.add("ch_type", false, true, 0, g_row_y);
+        if (ta.activate) osk::request_open();
+        ImVec2 tp = ImGui::GetCursorScreenPos();
+        ImGui::SetNextItemWidth(fw - sp(10.f));
+        osk::input("##chscore", "Score", g_ch_buf, sizeof g_ch_buf);
+        if (g_nav.selected("ch_type")) nav_ring(tp, tp + ImVec2(fw - sp(10.f), ImGui::GetFrameHeight()));
+        ImGui::SameLine();
+        int64_t tmp = 0;
+        if (nav_btn("ch_next", "Next", ImVec2(sp(9.f), ImGui::GetFrameHeight()), true, parse_score(g_ch_buf, &tmp), 1, g_row_y++)) hubui::challenge_send_score(g_ch_buf);
+        break;
+    }
+    case SendPhase::PickFriends: {
+        std::vector<std::pair<std::string, std::string>> fl;   // uid, name (online first)
+        if (g_ch_fake) fl = {{"u1", "Mickey"}, {"u2", "Mia"}, {"u3", "Jules"}};
+        else {
+            for (int pass = 0; pass < 2; pass++)
+                for (const auto& f : FR.cli.friends()) if ((f.online() ? 0 : 1) == pass) fl.push_back({f.uid, f.name});
+        }
+        const auto& sel = g_ch_fake ? g_ch_fake_sel : v0.selected;
+        ImGui::TextUnformatted(fl.empty() ? "You have no friends to challenge yet." : "Who do you want to challenge? (up to 8)");
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        int shown = 0;
+        for (const auto& f : fl) {
+            if (++shown > 8 + 4) break;   // the list scrolls the menu; keep it short
+            const bool on = std::find(sel.begin(), sel.end(), f.first) != sel.end();
+            const hub::GameEntry* unused = nullptr; (void)unused;
+            if (nav_btn("ch_f_" + f.first, ((on ? "[x]  " : "[ ]  ") + f.second).c_str(), ImVec2(fw, sp(5.5f)), on, true, 0, g_row_y++)) {
+                if (g_ch_fake) hub::challenge::friend_toggle(&g_ch_fake_sel, f.first);
+                else if (!hubui::challenge_send_toggle_friend(f.first)) push_toast("You can challenge up to 8 friends at once.", COL_WARN, 4.0);
+            }
+        }
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        if (nav_btn("ch_go", sel.empty() ? "Send challenge" : ("Send challenge to " + std::to_string(sel.size())).c_str(), ImVec2(fw, sp(6.5f)), true, !sel.empty() && g_pending == 0, 0, g_row_y++)) {
+            if (g_ch_fake) push_toast("Challenge sent", COL_GOOD, 3.0); else hubui::challenge_send_go();
+        }
+        break;
+    }
+    case SendPhase::Uploading: case SendPhase::Sending:
+        ImGui::TextUnformatted(v0.status.empty() ? "Sending..." : v0.status.c_str());
+        ImGui::TextDisabled("You can keep this menu open; it only takes a moment.");
+        break;
+    case SendPhase::Sent:
+        text_wrapped_disabled(v0.status.c_str());
+        text_wrapped_disabled("Their results will show up under the challenge in your chat.");
+        if (nav_btn("ch_done", "Done", ImVec2(fw, sp(6.5f)), true, true, 0, g_row_y++)) { hubui::challenge_send_reset(); g_nav.sel = "Challenge a friend from here"; g_page = QPage::Main; }
+        return;
+    case SendPhase::Failed:
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::BAD);
+        ImGui::TextWrapped("%s", v0.error.c_str());
+        ImGui::PopStyleColor();
+        if (nav_btn("ch_close", "Close", ImVec2(fw, sp(6.5f)), true, true, 0, g_row_y++)) { hubui::challenge_send_reset(); g_nav.sel = "Challenge a friend from here"; g_page = QPage::Main; }
+        return;
+    default: break;
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    const bool can_back = ph != SendPhase::Uploading && ph != SendPhase::Sending;
+    if (can_back && nav_btn("ch_back", "Back", ImVec2(sp(14.f), sp(5.5f)), false, true, 0, g_row_y++, true)) {
+        if (ph == SendPhase::TypeScore || ph == SendPhase::PickFriends) { if (g_ch_fake) g_ch_fake_phase = SendPhase::PickGoal; else hubui::challenge_send_back(); }
+        else back_to_main();
+    }
+}
+
 static void qm_body() {
     if (!g_shot_fake && !qm_game_live()) { g_close_why = "game ended"; ImGui::CloseCurrentPopup(); return; }
     if (!g_shot_fake && !g_e2e && g_focus_retry.should_retry(hub_is_foreground(), (long long)GetTickCount64())) {   // bounded: something else (fullscreen Dolphin) took the foreground
@@ -1036,7 +1164,7 @@ static void qm_body() {
     const bool back = g_nav.back;
     if (g_close_req.exchange(false)) { g_close_why = g_close_req_why; ImGui::CloseCurrentPopup(); focus_game(); return; }
     if (back) {
-        if (g_page != QPage::Main) { g_nav.sel = g_page == QPage::Save ? "Save state" : g_page == QPage::Load ? "Load state" : g_page == QPage::Chat ? "Chat" : g_page == QPage::Emote ? "Emotes" : g_page == QPage::Pass ? "Pass controller" : "How do I play"; g_page = QPage::Main; }
+        if (g_page != QPage::Main) { g_nav.sel = g_page == QPage::Save ? "Save state" : g_page == QPage::Load ? "Load state" : g_page == QPage::Chat ? "Chat" : g_page == QPage::Emote ? "Emotes" : g_page == QPage::Pass ? "Pass controller" : g_page == QPage::Challenge ? "Challenge a friend from here" : "How do I play"; g_page = QPage::Main; }
         else { g_close_why = "B"; ImGui::CloseCurrentPopup(); focus_game(); return; }
     }
     check_ack();
@@ -1051,6 +1179,7 @@ static void qm_body() {
         else if (g_page == QPage::Chat) chat_page();
         else if (g_page == QPage::Emote) emote_page();
         else if (g_page == QPage::Pass) pass_page();
+        else if (g_page == QPage::Challenge) challenge_page();
         else slot_page(g_page == QPage::Save);
         return;
     }
@@ -1128,6 +1257,22 @@ static void qm_body() {
             const float pw = ImGui::GetContentRegionAvail().x;
             if (stepper_row("pause", "Pause game", g_pause_manual ? "Paused" : "Running", -1.f, g_pending == 0, pw)) g_pause_manual = !g_pause_manual;   // qm_tick sends pause 1 / 0
             if (stepper_row("pause_auto", "Pause when menu opens", g_pause_auto ? "On" : "Off", -1.f, g_pending == 0, pw)) { g_pause_auto = !g_pause_auto; prefs_save(); }
+        }
+        {   // Plan 4 p4-social: friend challenges (built-in runners, offline)
+            const std::string csys = e ? sys_short(*e) : g_sys;
+            const auto cr = hub::challenge::menu_rows(csys, true, online, hubui::challenge_running(), hub::challenge::send_busy(hubui::challenge_send_view().phase));
+            if (cr.challenge) {
+                if (menu_button("Challenge a friend from here", cr.challenge_enabled, ui::Icon::Bolt)) {
+                    g_ch_fake = g_shot_fake;
+                    if (g_shot_fake || (resume_for_action(), hubui::challenge_send_begin(g_key, g_title, csys, states_dir_of(g_key, csys)))) { g_page = QPage::Challenge; g_nav.sel.clear(); g_ch_buf[0] = 0; }
+                }
+                if (!cr.challenge_enabled && !cr.why.empty()) text_wrapped_disabled(cr.why.c_str());
+            }
+            if (cr.did_it && menu_button("I did it", true, ui::Icon::Check, true)) {
+                if (hubui::challenge_goal_is_score()) { g_page = QPage::Challenge; g_nav.sel.clear(); g_ch_buf[0] = 0; }
+                else { hubui::challenge_run_finish(true, ""); g_close_why = "challenge done"; ImGui::CloseCurrentPopup(); focus_game(); }
+            }
+            if (cr.give_up && menu_button("Give up", true, ui::Icon::Close)) { hubui::challenge_run_finish(false, ""); g_close_why = "challenge gave up"; ImGui::CloseCurrentPopup(); focus_game(); }
         }
     } else if (ext) {   // Dolphin, Cemu, Azahar, PCSX2: capture the emulator's window into the vault's shots folder
         if (menu_button("Screenshot", true, ui::Icon::Search)) {
