@@ -372,6 +372,7 @@ std::string ext_emu_name(const hub::GameEntry* e) {
         case hub::System::WiiU: return "Cemu";
         case hub::System::N3DS: return "Azahar";
         case hub::System::PS2: return "PCSX2";
+        case hub::System::PSP: return "PPSSPP";
         default: return "this emulator";
     }
 }
@@ -558,7 +559,7 @@ void pad_page() {
             dl->AddCircleFilled(bp, sp(1.4f), used ? ui::ACCENT : ui::PANEL2);
             if (!used) dl->AddCircle(bp, sp(1.4f), IM_COL32(255, 255, 255, 40));
             ImVec4 clip(x0, y - rowH * 0.5f, x0 + colW, y + rowH * 0.5f);
-            dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(x0, y - rowH * 0.45f), ui::TEXT3, sl[i].tag, nullptr, 0.f, &clip);
+            dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(x0, y - rowH * 0.45f), ui::TEXT3, hubglyph::label(ui::pad_kind, sl[i].tag), nullptr, 0.f, &clip);
             std::string lab = used ? hubqm::join_labels(it->second, 2) : std::string("-");
             dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(x0, y - rowH * 0.45f + ui::F.cap->FontSize * 1.2f), used ? ui::TEXT : ui::TEXT3, lab.c_str(), nullptr, 0.f, &clip);
         }
@@ -1247,6 +1248,10 @@ static void qm_body() {
             }
         }
         if (ext && g_ext_sessions == 0 && !g_shot_fake) text_wrapped_disabled("The game has not started its sound yet.");
+    }
+    if (!ctl && !g_shot_fake && e && e->system == hub::System::PSP) {   // PPSSPP: its own quick save / load (F2 / F4), sent to the game window
+        if (menu_button("Save state", !online, ui::Icon::Check)) { ImGui::CloseCurrentPopup(); focus_game(); ppsspp_send_state(true); }
+        if (menu_button("Load state", !online, ui::Icon::Refresh)) { ImGui::CloseCurrentPopup(); focus_game(); ppsspp_send_state(false); }
     }
     if (ctl) {
         if (menu_button("Save state", !online, ui::Icon::Check)) { g_page = QPage::Save; g_nav.sel.clear(); }
