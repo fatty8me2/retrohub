@@ -576,6 +576,7 @@ hub::saves::CloudStatus cloud_status_now();             // legacy status struct 
 bool spawn(const std::string& exe, const std::string& args, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri);
 void poll_process();
+void ppsspp_send_state(bool save);   // launch.cpp: PPSSPP quick save (F2) / load (F4) state key for the quick menu; no-op unless a PSP game runs
 void pad_exit_watch();   // launch.cpp: Back+Start combo while an external game runs
 void focus_hub();
 void* running_game_hwnd();                 // launch.cpp: main window of the running game (HWND), nullptr if none

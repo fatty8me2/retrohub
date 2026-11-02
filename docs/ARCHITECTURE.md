@@ -303,3 +303,8 @@ ROM files can be `.z64` (big-endian), `.v64` (byteswapped) or `.n64` (little-end
 
 
 **Socket blips (Plan 4 W2-D):** a game-room WebSocket loss after `ready` does not end the match. `Session` reconnects (`net/reconnect.h`, 25 s window) while UDP keeps playing, and keeps a peer that vanished from the roster as long as its direct UDP is fresh. The `/hub` Worker holds slot 0 for `HOST_GRACE_MS` (10 s) after an ABNORMAL close (1006/1011) of the host (game room: nobody is closed; lobby: no host migration) so the same host (same name) reclaims it; a clean close still migrates/closes at once.
+
+### PSP (system `psp`, PPSSPP)
+External emulator like PCSX2: `System::PSP`, `hubemu::Kind::Ppsspp` (pinned 1.20.4 zip from ppsspp.org, portable `memstick` under `<data>\emulators\ppsspp`), identification in `src/common/psp.{h,cpp}`
+(PARAM.SFO of ISO / CSO / CHD / PBP, run BEFORE the PS1 / PS2 / GC claims; a PS1 eboot `.pbp` stays PS1), config writers in `src/hub/ppsspp.{h,cpp}`, SAVEDATA <-> vault mapping in `emulators.cpp`
+(`SaveSession::psp_disc_id`). Offline only. Full description: `docs/EMULATORS.md` ("PlayStation Portable"). Tests: `hub_psp_test`, `qa/psp_play.ps1` (hidden desktop), `qa/psp_shots.ps1`.

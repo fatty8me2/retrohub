@@ -179,7 +179,7 @@ target_sources(RetroHub PRIVATE emulators.cpp netplay_3ds_run.cpp netplay_3ds_jo
 target_link_libraries(RetroHub PRIVATE ws2_32)
 target_link_libraries(RetroHub PRIVATE xinput setupapi)
 target_link_libraries(RetroHub PRIVATE hubminiz)
-add_executable(hub_emu_test test_emulators.cpp emulators.cpp)
+add_executable(hub_emu_test test_emulators.cpp emulators.cpp ppsspp.cpp)
 target_include_directories(hub_emu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 add_executable(hub_wiiu_test test_wiiu_offline.cpp emulators.cpp art_match.cpp)   # offline Wii U: .wua/meta.xml, own-Cemu settings, profiles, saves, art names
@@ -244,10 +244,15 @@ add_executable(kanto_live kanto_live.cpp)
 target_link_libraries(kanto_live PRIVATE hubcommon hubminiz)
 
 # PlayStation 2 via PCSX2 (docs/PS2.md): BIOS discovery, PCSX2.ini writers, pad bindings, card session; library scan of PS2 images
-target_sources(RetroHub PRIVATE pcsx2.cpp)
+target_sources(RetroHub PRIVATE pcsx2.cpp ppsspp.cpp)
 add_executable(hub_ps2_test test_pcsx2.cpp pcsx2.cpp emulators.cpp)
 target_include_directories(hub_ps2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
+# PlayStation Portable via PPSSPP (docs/EMULATORS.md): PARAM.SFO / ISO / CSO / CHD / PBP identification (synthetic images), PS1-vs-PSP routing, scan, SAVEDATA mapping, ppsspp.ini + controls.ini
+add_executable(hub_psp_test test_psp.cpp ppsspp.cpp emulators.cpp)
+target_include_directories(hub_psp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_psp_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # PS2 online (docs/PS2_ONLINE.md): readiness reasons, retrorun arguments, exit-code texts, the pinned LRPS2 download
 add_executable(hub_ps2_online_test test_ps2_online.cpp emulators.cpp)
