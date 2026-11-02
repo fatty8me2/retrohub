@@ -334,3 +334,27 @@ Verified in dolphin-emu/dolphin tag 2509 [src]: hotkey names `Core/HotkeyManager
 - 0.25x runs as 0.3x (nearest reachable). There is no Max: "Disable Emulation Speed Limit" (default TAB) is hold-to-disable, not a toggle.
 - DirectInput opens the keyboard `DISCL_BACKGROUND | DISCL_NONEXCLUSIVE` (`DInputKeyboardMouse.cpp` 82) and reads `GetDeviceState`, i.e. system keyboard state, so SendInput scancodes reach it (virtual-key-only events and PostMessage WM_KEYDOWN do not, so PostMessage is not a usable fallback). Hotkeys only fire while Dolphin is focused (`Core::UpdateInputGate(MAIN_FOCUSED_HOTKEYS)`, default true), hence the foreground guard.
 - Not run against a live Dolphin; hidden-desktop SendInput does not reach it.
+
+## Online speed (NetPlay pad buffer and the forwarder)
+How Dolphin 2509 NetPlay paces a room (verified in source: `Core/NetPlayClient.cpp` `GetNetPads`, `NetPlayServer.cpp`, `DolphinQt/NetPlay/NetPlayDialog.cpp`):
+- Every SI pad poll pops one entry per in-game pad; when the other player's entry has not arrived, the CPU thread **blocks** in `GetNetPads` (no rollback). With too small a buffer the whole room runs slow and stutters on every poll.
+- The **host's** buffer is the room's (sent as `PadBuffer`); guests ignore their own `[NetPlay] BufferSize` (non host-input-authority). The host dialog starts from `[NetPlay] BufferSize` (default 5); changes during the game apply at once ("Buffer size changed to N" in the chat).
+- Dolphin's guide: about 1 buffer per 15 ms of latency.
+
+What RetroHub does:
+- The GameCube forwarder (`hubnp3ds::Runner`, tag "gc") runs on its own thread with a 1 ms wake (it used to be pumped by the hub's ~60 Hz UI loop: +45 ms round trip and bursty delivery). `RETROHUB_GCFW_NOTHREAD=1` restores the old pump for comparisons.
+- Host: `gc_tick` turns the session's worst ping into `gcnp::pad_buffer_for_ping` (= ceil(rtt/15)+1, at least 4, at least 6 relayed; unknown ping: 8, relayed 10) with `next_pad_buffer` hysteresis (raise at once, lower by 3+), and writes it to `gc_host_buffer.txt`; the UIA driver types it into the NetPlay window's Buffer box before Start and again whenever it changes. The driver logs `buffer:N` (typed) and `padbuffer:N` (Dolphin's chat: the room's real value).
+
+Measured with `qa\gc_online_speed.ps1` / `hub_gc_speed` (two Dolphins on a hidden desktop, muted, scripted DSU pad, speed = the game's VI-rate counter and Dolphin's `vblank_times.txt`), 90 s each, Mario Superstar Baseball / Super Mario Strikers:
+
+| row | path | MSB | Strikers |
+|---|---|---|---|
+| A | offline | 100 % | 100 % |
+| B / C | Dolphin direct 127.0.0.1, RetroHub / stock config | 100 % | |
+| F40 before | forwarder, sim RTT ~115 ms, UI pump, buffer 5 | 66 % | 66 % |
+| F40 after | threaded, auto buffer 7 | 100 % | 100 % |
+| F80 before | sim RTT ~200 ms (owner's real Dolphin ping: 177 ms), UI pump, buffer 5 | 41 % | 41 % |
+| F80 after | threaded, auto buffer 13-14 | 100 % | 100 % |
+| buffer sweep | threaded, RTT ~170 ms: 8 / 10 / 12 / 16 | 75 / 92 / 100 / 100 % | |
+
+Notes: two instances on one PC cannot test Dolphin's traversal server (hairpin NAT: the guest never joins). Real Internet relay latency is not reproduced by the local wrangler.

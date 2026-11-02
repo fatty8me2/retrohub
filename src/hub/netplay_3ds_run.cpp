@@ -80,25 +80,28 @@ struct Runner::Impl {
         for (auto& f : fragment(next_id++, (const uint8_t*)d, (size_t)n)) sess.send(to_slot, f.data(), (int)f.size());
         ++out;
     }
-    /* Every local socket Dolphin writes to (select() wakes on them). */
-    int fill_fds(fd_set* fs) {
-        FD_ZERO(fs);
-        int n = 0;
-        if (host) { for (auto& kv : host_sock) { FD_SET(kv.second, fs); ++n; } }
-        else if (guest_sock != INVALID_SOCKET) { FD_SET(guest_sock, fs); ++n; }
-        return n;
-    }
+    /* One event wakes the thread for anything to forward: Dolphin's local sockets and the Session's UDP socket (WSAEventSelect FD_READ)
+     * and queued relay frames (Session::set_wake_event). Waking on data does not depend on the timer resolution (a 1 ms select/Sleep
+     * timeout becomes ~16 ms when Windows does not grant 1 ms timers, measured: 30 ms loopback round trip). */
+    WSAEVENT wake = WSA_INVALID_EVENT;
+    void watch(SOCKET s) { if (wake != WSA_INVALID_EVENT && s != INVALID_SOCKET) WSAEventSelect(s, wake, FD_READ); }
     void step();
     void forward_loop() {
-        timeBeginPeriod(1);   // 1 ms waits while a GameCube session runs
+        timeBeginPeriod(1);
         while (!quit.load()) {
-            fd_set fs;
-            int n;
-            { std::lock_guard<std::recursive_mutex> g(mu); step(); n = fill_fds(&fs); }
-            if (n > 0) { timeval tv{0, 1000}; select(0, &fs, nullptr, nullptr, &tv); }   // wake at once on a Dolphin packet, else poll the session in 1 ms
-            else Sleep(1);
+            WSAResetEvent(wake);   // before draining: anything arriving after this sets it again
+            { std::lock_guard<std::recursive_mutex> g(mu); step(); }
+            WaitForSingleObject(wake, 5);   // data wakes it at once; the timeout only paces keepalives / timeouts
         }
         timeEndPeriod(1);
+    }
+    void start_thread() {
+        wake = WSACreateEvent();
+        threaded = true;
+        watch(guest_sock);
+        for (auto& kv : host_sock) watch(kv.second);
+        sess.set_wake_event(wake);
+        th = std::thread([this] { forward_loop(); });
     }
     void pump() {
         char buf[2048];
@@ -132,6 +135,7 @@ struct Runner::Impl {
                 if (it == host_sock.end()) {
                     SOCKET s = udp(0, nullptr);
                     if (s == INVALID_SOCKET) continue;
+                    watch(s);
                     it = host_sock.emplace(from_slot, s).first;
                 }
                 sockaddr_in ra = room_addr();
@@ -226,7 +230,7 @@ bool Runner::start_host_forward(const std::string& server, const std::string& co
     m.active = true;
     m.t0 = hubnet::now_ms();
     m.status = "Waiting for everyone to connect...";
-    if (m.tag == "gc" && !std::getenv("RETROHUB_GCFW_NOTHREAD")) { m.threaded = true; m.th = std::thread([&m] { m.forward_loop(); }); }
+    if (m.tag == "gc" && !std::getenv("RETROHUB_GCFW_NOTHREAD")) m.start_thread();
     return true;
 }
 
@@ -250,7 +254,7 @@ bool Runner::start_guest(const std::string& server, const std::string& code, int
     m.active = true;
     m.t0 = hubnet::now_ms();
     m.status = "Connecting to the host...";
-    if (m.tag == "gc" && !std::getenv("RETROHUB_GCFW_NOTHREAD")) { m.threaded = true; m.th = std::thread([&m] { m.forward_loop(); }); }
+    if (m.tag == "gc" && !std::getenv("RETROHUB_GCFW_NOTHREAD")) m.start_thread();
     return true;
 }
 
@@ -276,7 +280,8 @@ void Runner::Impl::step() {
 
 void Runner::stop() {
     Impl& m = *impl_;
-    if (m.th.joinable()) { m.quit = true; m.th.join(); }   // the loop waits at most ~1 ms
+    if (m.th.joinable()) { m.quit = true; SetEvent(m.wake); m.th.join(); }   // wakes the loop at once
+    if (m.wake != WSA_INVALID_EVENT) { m.sess.set_wake_event(nullptr); WSACloseEvent(m.wake); m.wake = WSA_INVALID_EVENT; }
     m.threaded = false;
     m.quit = false;
     m.sess.stop();

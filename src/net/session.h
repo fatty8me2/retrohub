@@ -126,6 +126,10 @@ class Session {
      * (and HUBNET_FORCE_RELAY is ignored), so a failed hole punch ends in failed() instead of a costly fallback. */
     void set_no_relay(bool v);
     uint16_t local_port() const;   // the Session's UDP port (for UPnP mapping)
+    /* Event-driven forwarding (GameCube forwarder thread): `event` (a WSAEVENT / Win32 event) is set when a datagram reaches the
+     * Session's UDP socket (WSAEventSelect FD_READ) or a relay frame is queued, so the owner can sleep until data instead of polling.
+     * Call after start(); nullptr detaches. Windows only. */
+    void set_wake_event(void* event);
     void set_ping_interval(uint32_t ms);   // default 500; min 20
     void qa_drop_ws();   // QA: cut the lobby socket without a close frame; the Session reconnects it (reconnect.h) while UDP play continues
 
