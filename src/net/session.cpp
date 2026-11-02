@@ -15,6 +15,7 @@
 #include "net_internal.h"
 #include "log.h"
 #include "session.h"
+#include "reconnect.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -57,6 +58,7 @@ struct Peer {
     Addr direct;              // verified direct address
     bool has_direct = false, has_relay = false;
     uint32_t last_direct = 0, last_relay = 0;
+    uint32_t ws_gone_at = 0;  // vanished from the server roster (socket blip?) while the direct UDP path may still be alive
     uint32_t since = 0;       // when the peer first showed up in the room
     uint32_t last_rx = 0;
     uint32_t last_hello = 0, last_relay_hello = 0, last_ping = 0, last_roster = 0;
@@ -123,6 +125,7 @@ struct Session::Impl {
     uint32_t last_ws_keepalive = 0;
     uint32_t ws_retry_at = 0;      // join: retry while the host's room doesn't exist yet
     bool ws_retrying = false;
+    WsReconnect rc;                // post-ready socket blip: reconnect while the UDP path keeps playing
     bool relay_busy = false;       // the server answered a relayed frame with relay_denied "server-busy": its free daily budget is used up
     uint32_t relay_busy_at = 0;    // ... and when it first said so
 
@@ -411,6 +414,8 @@ struct Session::Impl {
         if (type == "welcome") {
             welcomed = true;
             ws_retrying = false;
+            if (rc.active()) net_log("Session %d: lobby socket back after %u ms", slot, now - rc.blip_ms());
+            rc.welcomed();
             int s = (int)j.i64("slot", slot);
             if (s != slot) net_log("Session: server gave slot %d (wanted %d)", s, slot);
             slot = s;
@@ -430,15 +435,16 @@ struct Session::Impl {
             spec_mask = sm & ~(1u << slot);
             for (int s = 0; s < kMaxSlots; s++) {
                 if (s == slot) continue;
+                if (seen[s]) peers[s].ws_gone_at = 0;
                 if (seen[s] && !peers[s].present) {
                     peers[s].present = true;
                     peers[s].since = now;
                     net_log("Session %d: slot %d joined", slot, s);
                 } else if (!seen[s] && peers[s].present) {
-                    net_log("Session %d: slot %d left", slot, s);
-                    peers[s].reset();
-                    peers[s].present = false;
-                    if (!is_host() && s == 0) departed(0, "The host left");
+                    /* Gone from the roster. A socket blip looks the same: keep the peer while its direct UDP path is alive. */
+                    if (ready_ever && direct_fresh(peers[s], now)) {
+                        if (!peers[s].ws_gone_at) { peers[s].ws_gone_at = now ? now : 1; net_log("Session %d: slot %d left the room but its UDP is alive; keeping it", slot, s); }
+                    } else peer_left(s);
                 }
             }
         } else if (type == "peers") {
@@ -470,6 +476,10 @@ struct Session::Impl {
             }
         } else if (type == "error") {
             std::string reason = j.str("reason", "error");
+            if (ready_ever && rc.active() && WsReconnect::retryable_reason(reason)) {   // the server still holds our old seat: the close that follows triggers the next try
+                net_log("Session %d: reconnect refused (%s), will retry", slot, reason.c_str());
+                return;
+            }
             if ((reason == "no-such-room" || reason == "host-reconnecting") && !is_host()) {
                 ws_retrying = true;
                 ws_retry_at = now + 700;
@@ -490,6 +500,21 @@ struct Session::Impl {
         }
     }
 
+    void peer_left(int s)
+    {
+        net_log("Session %d: slot %d left", slot, s);
+        peers[s].reset();
+        peers[s].present = false;
+        peers[s].ws_gone_at = 0;
+        if (!is_host() && s == 0) departed(0, "The host left");
+    }
+    /* A peer that left the roster only counts as gone once its UDP went quiet too. */
+    void check_gone_peers(uint32_t now)
+    {
+        for (int s = 0; s < kMaxSlots; s++)
+            if (s != slot && peers[s].present && peers[s].ws_gone_at && member_departed(true, direct_fresh(peers[s], now))) peer_left(s);
+    }
+
     void pump_ws(uint32_t now)
     {
         std::string text;
@@ -507,15 +532,26 @@ struct Session::Impl {
             std::string err = ws.error();
             if (ws_retrying) {
                 if (now >= ws_retry_at) { ws.close(); connect_ws(); ws_retrying = true; ws_retry_at = now + 700; }
-            } else if (code == 4001) {
+            } else if (code == 4001 && !(ready_ever && direct_fresh(peers[0], now))) {
                 departed(0, "The host left");
             } else if (code == 1008) {   // the server cut this socket off for sending far more than a game ever does (relay or text flood)
                 if (!ready_ever) fail(kRelayCut);
                 else { net_log("Session %d: %s", slot, kRelayCut); welcomed = false; }
             } else if (!ready_ever) {
                 fail(err.empty() ? "Lost connection to the lobby server" : err);
+            } else if (WsReconnect::reconnectable_close(code)) {
+                if (!rc.active()) {
+                    net_log("Session %d: lobby socket lost after ready (code %d, %s); reconnecting, UDP play continues", slot, code, err.c_str());
+                    welcomed = false;
+                }
+                rc.blip(now);
+                if (rc.should_retry(now)) { ws.close(); connect_ws(); rc.attempted(now); }
+                else if (rc.gave_up() && welcomed == false && ws.state() == WsState::Failed) {
+                    static thread_local int logged = 0;
+                    if (logged++ < 3) net_log("Session %d: lobby socket not recovered; relay unavailable", slot);
+                    welcomed = false;
+                }
             } else if (welcomed) {
-                net_log("Session %d: lobby socket lost after ready (%s); relay unavailable", slot, err.c_str());
                 welcomed = false;
             }
         }
@@ -604,6 +640,7 @@ struct Session::Impl {
         if (sim_on) sim_flush(now);
         pump_ws(now);
         resolve_departure(now);
+        check_gone_peers(now);
         if (failed || ended) return;
         pump_udp(now);
         stun.update(&udp, now);
@@ -670,6 +707,7 @@ bool Session::start(const SessionConfig& cfg)
     d.slot = cfg.slot;
     d.spectator = cfg.spectate && cfg.slot != 0;
     d.spec_mask = 0;
+    d.rc.reset();
     d.failed = d.ready_ever = d.welcomed = d.endpoint_sent = d.ws_retrying = d.relay_busy = false;
     d.inbox.clear();
     d.ended = d.departing = false;   // a restarted session (the drop-in joiner tries the next slot) starts clean
@@ -753,6 +791,7 @@ int Session::ping_ms(int slot) const
 }
 
 uint16_t Session::local_port() const { return impl_->udp.local_port(); }
+void Session::qa_drop_ws() { impl_->ws.drop_abruptly(); }
 void Session::set_no_relay(bool v) { impl_->no_relay = v; }
 void Session::set_ping_interval(uint32_t ms) { impl_->ping_every = ms < 20 ? 20 : ms; }
 

@@ -1893,6 +1893,7 @@ int main(int argc, char** argv) {
             hk.vi_reset = [] { logf_("fbmask", "restart: %d tracked framebuffer(s) forgotten", g_fb.count()); g_fb.reset(); };
         }
         hk.request_stop = [] { g_core.DoCommand(M64CMD_STOP, 0, nullptr); };
+        hk.on_unrecovered = [](const std::string& why) { osd::push("Out of sync - could not be repaired (" + why + "). Ending the match.", osd::Kind::Error); };
         hk.log = [](const std::string& s) { logline("lockstep", s.c_str()); };
         if (!args.no_hash && g_core.MemPtr) {
             hk.hash_rdram = [](uint64_t* out) {
@@ -2026,7 +2027,7 @@ int main(int argc, char** argv) {
         }
         else if (g_run.lockstep && g_run.lockstep->desync_detected()) {
             logf_("n64run", "desync was detected during the session");
-            if (args.strict_sync) code = 5;
+            if (args.strict_sync || g_run.lockstep->desync_fatal()) code = 5;
         } else if (e != M64ERR_SUCCESS) code = 3;
 
         g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr);

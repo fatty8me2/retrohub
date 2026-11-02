@@ -1,3 +1,5 @@
+#include <filesystem>
+#include <fstream>
 #include "logic.h"
 #include "dupes_logic.h"
 #include "settings_tabs.h"
@@ -405,6 +407,28 @@ int main() {
     CHECK(exit_code_text(5).find("sync") != std::string::npos);
     CHECK(exit_code_text(6).find("share the host's save") != std::string::npos);
     CHECK(exit_code_text(7).find("BIOS") != std::string::npos);
+    CHECK(exit_code_text(3).find("Emulator files") != std::string::npos);
+    {   // Dolphin UIA driver watchdog
+        using V = DriverVerdict;
+        CHECK(driver_verdict(true, "", 1000, true) == V::Ok);
+        CHECK(driver_verdict(false, "", 1000, true) == V::DiedSilently);
+        CHECK(driver_verdict(true, "", 50000, true) == V::NoStage);
+        CHECK(driver_verdict(false, "stage:driver-start ", 9000, false) == V::DiedEarly);
+        CHECK(driver_verdict(false, "stage:driver-start stage:in-game ", 90000, true) == V::Ok);
+        CHECK(driver_verdict(false, "stage:driver-start error:x ", 9000, true) == V::Ok);
+        CHECK(driver_verdict(true, "stage:driver-start ", 130000, true) == V::NeverOpened);
+        CHECK(driver_verdict(true, "stage:driver-start ", 130000, false) == V::Ok);
+        CHECK(driver_verdict_text(V::DiedSilently).find("PowerShell") != std::string::npos);
+    }
+    {   // retrorun exit 12: the real reason, never "Emulator files are missing"
+        CHECK(exit_code_text(12).find("Couldn't connect") != std::string::npos && exit_code_text(12).find("Emulator") == std::string::npos);
+        std::string f = (std::filesystem::temp_directory_path() / "rh_net_reason_test.txt").string();
+        { std::ofstream o(f, std::ios::binary); o << "Room is full or slot taken" << char(13) << char(10); }
+        set_net_reason_file(f);
+        CHECK(exit_code_text(12) == "Couldn't connect: Room is full or slot taken");
+        set_net_reason_file("");
+        std::filesystem::remove(f);
+    }
     CHECK(exit_code_text(2).find("couldn't start") != std::string::npos);
 
     /* drop-in */
@@ -761,7 +785,7 @@ int main() {
         CHECK(host_gone_decide(true, 20000, false, false) == HostGoneAct::Notify);
         CHECK(host_gone_decide(true, 30000, true, false) == HostGoneAct::Wait);    // alive netplay: the player decides
         CHECK(host_gone_decide(true, 30000, true, true) == HostGoneAct::Close);
-        CHECK(exit_text_for(4, "Mia") == player_left_text("Mia") && exit_text_for(4, "").find("Connection lost") == 0 && exit_text_for(5, "Mia").find("desync") != std::string::npos);
+        CHECK(exit_text_for(4, "Mia") == player_left_text("Mia") && exit_text_for(4, "").find("Connection lost") == 0 && exit_text_for(5, "Mia").find("out of sync") != std::string::npos);
         CHECK(host_changed_text("Mia", false) == "Mia is now the host" && host_changed_text("Mia", true) == "You are now the host");
     }
 
