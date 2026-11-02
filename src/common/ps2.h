@@ -41,6 +41,13 @@ char region_from_name(const std::string& name);
  * serial still fits (the lowest serial is returned). */
 std::string serial_for_name(const std::string& name, bool* ambiguous = nullptr);
 
+/* PCSX2 and LRPS2 cannot open a .cue ("Unable to identify the ISO image type"). Gives the file to launch instead:
+ *  - not a .cue: the path itself;
+ *  - the cue's first data track when that is a bin PCSX2's iso reader takes as it is (2048-byte sectors, or raw 2352 with sync);
+ *  - otherwise (2336-byte sectors, ...) a plain 2048-byte .iso built once into out_dir (stamped, reused while the bin is unchanged).
+ * false with a plain-English *err when the cue, its bin or the disc inside is unusable (a PS1 disc, a missing bin, no space). */
+bool launch_image(const std::string& path_utf8, const std::string& out_dir_utf8, std::string* image, std::string* err);
+
 /* Library key: "ps2:<serial lower>" or "ps2:file-<stem>". */
 std::string key_for(const std::string& serial, const std::string& file_stem_key);
 

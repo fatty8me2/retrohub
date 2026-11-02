@@ -66,8 +66,18 @@ struct Invite {
     int64_t expires_at = 0;   // same time base as server "at" (ms since epoch)
 };
 
+/* A file that rides a DM (Plan 4): the bytes live in R2 (Worker /saves/v2/attach, 8 MB, 7 days), the DM carries only this reference.
+ * kind: "shot" | "state" | "patch". expires = ms since epoch (same base as Message::at). Metadata is stamped by the server. */
+struct Attach {
+    std::string id, name, sha, kind;
+    int64_t size = 0, expires = 0;
+};
+constexpr size_t kCardMax = 1536;   // server limit for Message::card
+
 struct Message {
     std::string id, from, from_name, to;
+    bool has_attach = false; Attach attach;   // kind "text" with an attached file (text may just be the file name)
+    std::string card;         // opaque card payload (<= kCardMax), e.g. "RHC1:..." challenge cards (src/hub/challenge_logic.h); empty = none
     bool invite = false;      // kind == "invite"
     bool ask_host = false;    // kind == "ask" with host:true: "will you host this game?" (they do not have it)
     bool ask = false;         // kind == "ask": "may I join your game?" (game in inv.game_id/game_title/system; never stored in the conversation)
@@ -90,7 +100,9 @@ struct Event {
                 AskReceived,      // a friend asks to join our game: uid, name, invite = the game they are in
                 WatchedOnline,    // a friend you opted in to ("Notify me when they come online") went offline -> online: uid, name
                 ReactionReceived, // a friend reacted to a DM line: uid, msg.target / msg.emoji / msg.on
-                AskResult };      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
+                AskResult,
+                Queued,           // an action made while offline was saved in the outbox: uid, name = kind (message|invite|block|...), text = plain sentence, msg.id = the pending conversation line id (messages)
+                SendFailed };     // a queued or refused action will not happen: same fields, text = plain sentence ("Your message could not be sent (...)")      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
     std::string name;
@@ -196,6 +208,13 @@ class FriendsClient {
     void block(const std::string& uid);
     void unblock(const std::string& uid);
     void send_message(const std::string& uid, const std::string& text);
+    /* With an attached file (already uploaded; only att->id goes on the wire, the rest is shown in your own chat line) and/or a card
+     * (<= kCardMax chars, e.g. a challenge). text may be empty when att/card is given. Offline: queued in the outbox (Event::Queued). */
+    void send_message(const std::string& uid, const std::string& text, const Attach* att, const std::string& card);
+    /* Outbox (actions made while disconnected are kept in <data_dir>/outbox.json and sent in order after the next welcome). */
+    int outbox_size() const;
+    bool queued(const std::string& msg_id) const;      // this conversation line (Message::id of a mine line) is still waiting to be sent
+    bool cancel_queued(const std::string& msg_id);     // drop a waiting message (the line stays; the UI may delete it)
     void send_reaction(const std::string& uid, const std::string& target_id, const std::string& emoji, bool on);
     void send_invite(const std::vector<std::string>& uids, const Invite& inv);
     void ack(const std::vector<std::string>& ids);

@@ -1,7 +1,9 @@
 #include "app.h"
+#include "convenience.h"
 #include "gamepack.h"
 #include "wiiu_meta.h"
 #include "homefun.h"
+#include "hack_ui.h"
 
 #include <mutex>
 #include <thread>
@@ -218,6 +220,7 @@ void draw_hero(const hub::GameEntry& e, float h) {
             x += pw + sp(0.75f);
         };
         put(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.3f));
+        if (is_hack(e)) put(hack_ribbon(e), ui::ACCENT);
         if (is_native(e)) put("Native port", IM_COL32(255, 255, 255, 30));
         if (cat && cat->year) put(std::to_string(cat->year), IM_COL32(255, 255, 255, 30));
         if (supports_online(e)) put("1-" + std::to_string(local_players_for(e)) + " players", IM_COL32(255, 255, 255, 30));
@@ -307,7 +310,7 @@ void empty_library_state() {
         struct Sy { const char* label; hub::System s; };
         static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB},
                                 {"Nintendo DS", hub::System::NDS},
-                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}, {"PS2", hub::System::PS2},
+                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}, {"PS2", hub::System::PS2}, {"PSP", hub::System::PSP},
                                 {"NES", hub::System::NES}, {"SNES", hub::System::SNES}};
         float tot = 0;
         for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
@@ -362,17 +365,27 @@ void library_top_bar() {
 
     float bh = sp(5.f);
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) A.focus_search = true;
+    if (type_to_search_pending()) A.focus_search = true;   // just start typing: the characters land in the box this same frame
     if (A.focus_search) { ImGui::SetKeyboardFocusHere(); A.focus_search = false; }
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(5.f), (bh - ImGui::GetFontSize()) * 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
+    float search_w = sp(10.f);
+    const char* search_hint = "Search";
     const bool dice = A.view == LibView::Home && !A.lib.empty();   // L7: Surprise me
     float total = bh + sp(1.f) + add_games_header_width(bh) + (dice ? bh + sp(1.f) : 0.f);
     {   // the search box gives way so the pinned right-hand buttons (Add games...) are never pushed past the edge (narrow window / Friends panel open)
         const float chips = ImGui::CalcTextSize("Sort: Recently added").x + ImGui::CalcTextSize("Friends' games").x + sp(14.f) + sp(4.f);
         const float room = ImGui::GetContentRegionAvail().x - total - chips;
-        ImGui::SetNextItemWidth(std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room)));
+        search_w = std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room));
+        ImGui::SetNextItemWidth(search_w);
     }
-    osk::input("##search", "Search games   (Ctrl+F)", A.search_buf, sizeof A.search_buf);
+    {   // the hint gives way to a shorter one instead of being clipped (1280x800): the text starts after the search icon and ends before the rounded edge
+        const float room_txt = search_w - sp(5.f) - sp(2.5f);
+        static const char* hints[] = {"Search games   (Ctrl+F)", "Search games (Ctrl+F)", "Search games", "Search"};
+        search_hint = hints[3];
+        for (const char* h : hints) if (ImGui::CalcTextSize(h).x <= room_txt) { search_hint = h; break; }
+    }
+    osk::input("##search", search_hint, A.search_buf, sizeof A.search_buf);
     ImVec2 s0 = ImGui::GetItemRectMin(), s1 = ImGui::GetItemRectMax();
     ImGui::GetWindowDrawList()->AddRect(s0, s1, ImGui::IsItemActive() ? ui::ACCENT : ui::HAIRLINE, bh * 0.5f, 0, 1.f);
     ui::icon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(s0.x + sp(2.5f), (s0.y + s1.y) * 0.5f), sp(2.f), ui::TEXT2);
@@ -460,7 +473,7 @@ void all_games_view() {
     // system chips
     struct Chip { const char* label; const char* sys; };
     static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"PlayStation", "ps1"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
-                                {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
+                                {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"PSP", "psp"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     std::map<std::string, int>& counts = A.chip_counts;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
@@ -750,7 +763,7 @@ void draw_details_modal() {
     } else if (e.issue == "extract") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextWrapped("Archived: %s cannot open %s files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your archive stays untouched.",
-                           e.system == hub::System::PS2 ? "PCSX2" : e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC || e.system == hub::System::PS2 ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);
+                           e.system == hub::System::PS2 ? "PCSX2" : e.system == hub::System::PSP ? "PPSSPP" : e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::PSP ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);
         ImGui::PopStyleColor();
     } else if (e.issue == "encrypted") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
@@ -810,7 +823,7 @@ void draw_details_modal() {
         place(label_w("Offline only", true));
         button("Offline only", ImVec2(0, bh), false, false, ui::Icon::Globe);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Online play isn't available for this game");
+            ImGui::SetTooltip(e.system == hub::System::PSP ? "PSP games play offline only: PPSSPP has no online rooms in RetroHub" : "Online play isn't available for this game");
         tr("online", "explained:offline-only");
     } else {
         place(label_w("Play Online", true));
@@ -872,6 +885,7 @@ void draw_details_modal() {
             if (draw_players_strip(local_players_for(e))) { ImGui::CloseCurrentPopup(); open_port_assign(); }
         }
         dupes_details_section(e);
+        hack_details_section(e);   // Versions row (Original + hacks) and Remove hack
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         if (gamepack_owns(e)) {   // installed from a shared pack: its folder (full path on hover) + Uninstall; the archive file name inside is not interesting
             const std::string ft = hubgp::installed_folder_title(e.path, hubgp::pack_root());
@@ -959,6 +973,10 @@ void draw_details_modal() {
     if (button("Customize", ImVec2(0, bh2), false, true, ui::Icon::Gear)) custom_open_customize(e.key);
     place(label_w("Add to shelf...", true));
     if (button("Add to shelf...", ImVec2(0, bh2), false, true, ui::Icon::Plus)) custom_open_picker(e.key, true);
+    if (hack_can_add(e)) {   // ROM hacks and translations (hack_ui.cpp): pick a patch file, RetroHub finds the base game and adds a new entry
+        place(label_w("Add hack or translation", true));
+        if (button("Add hack or translation", ImVec2(0, bh2), false, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); hack_add_open(e); }
+    }
     custom_draw(1);   // Customize / Add to shelf modals nest inside this one
     ImGui::EndPopup();
 }
@@ -1048,6 +1066,8 @@ void page_library() {
     }
     // The old "sync through a folder" Home card is gone: cloud saves are automatic (v1.25). Folder sync stays
     // an optional extra on the Saves page.
+
+    finish_setup_card();   // Plan 4 W2 C: while first-run steps are open
 
     const hub::GameEntry* sel = find_entry(A.sel_game);
     if (sel) {

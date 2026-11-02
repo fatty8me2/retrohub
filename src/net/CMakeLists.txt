@@ -19,6 +19,9 @@ target_link_libraries(hubnet_test PRIVATE hubnet)
 add_executable(hubfriends_dedupe_test test_friends_dedupe.cpp)
 target_link_libraries(hubfriends_dedupe_test PRIVATE hubnet)
 
+add_executable(hubreconnect_test test_reconnect.cpp)
+target_link_libraries(hubreconnect_test PRIVATE hubnet)
+
 add_executable(hubws_close_test test_ws_close.cpp)
 target_link_libraries(hubws_close_test PRIVATE hubnet)
 
@@ -35,3 +38,9 @@ target_link_libraries(hubsavesync PUBLIC hubnet)
 # real Sessions through the live server (registered with CTest in the top-level CMakeLists.txt).
 add_executable(n64run_save_sync_test test_save_sync.cpp)
 target_link_libraries(n64run_save_sync_test PRIVATE hubsavesync)
+
+# Offline outbox + socket liveness rules (pure logic, no network).
+add_executable(hubfriends_outbox_test test_outbox.cpp)
+target_include_directories(hubfriends_outbox_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(hubfriends_live_test test_liveness.cpp)
+target_include_directories(hubfriends_live_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

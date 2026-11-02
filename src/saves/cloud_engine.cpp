@@ -195,11 +195,14 @@ struct Engine {
     std::set<str> registered;                  // uid8 values this device registered for
     str revoked_uid;                           // uid8 this PC was signed out of from another PC ("" = not revoked); persisted
     bool busy = false;                         // worker is running a job
+    bool refused_retry = false;                // the account's caps changed: refused files get one more try
+    std::set<str> deep_logged;                 // games whose over-deep files were already written to the log this session (log once)
     int64_t cap_warn_day = 0;
     str migrate_mirror;                        // old v1 mirror folder to delete after the first full pass
 } E;
 
 str uid8() { return E.uid.substr(0, 8); }
+void retry_refused();
 
 std::shared_ptr<std::timed_mutex> game_lock(const str& gkey) {
     std::lock_guard<std::mutex> lk(E.mu);
@@ -403,6 +406,7 @@ void apply_account(const WAccount& a) {
     std::lock_guard<std::mutex> lk(E.mu);
     E.acct.known = true;
     E.acct.online = true;
+    if ((E.acct.cap && a.cap != E.acct.cap) || (E.acct.prot_cap && a.prot_cap != E.acct.prot_cap)) E.refused_retry = true;
     E.acct.used = a.used; E.acct.cap = a.cap; E.acct.prot_used = a.prot_used; E.acct.prot_cap = a.prot_cap;
     E.acct.pool = a.pool; E.acct.devices = a.devices;
     E.acct.paused_by_server = a.paused;
@@ -443,7 +447,9 @@ void apply_outcome_account(const Outcome& o) {
 }
 
 /* ------------------------------------------------------------------ local scan */
-std::map<str, LFile> scan_game(const GameId& g) {
+/* `unsyncable` (optional) receives the files the cloud cannot take (a path the Worker's cleanKey refuses, e.g. more than 8 folders deep):
+ * they are left out of the scan so the one bad path cannot make the Worker reject the whole plan and block the game (F5). */
+std::map<str, LFile> scan_game(const GameId& g, std::vector<str>* unsyncable = nullptr) {
     std::map<str, LFile> out;
     fs::path root = game_root(g);
     std::error_code ec;
@@ -475,10 +481,11 @@ std::map<str, LFile> scan_game(const GameId& g) {
         if (name.size() > 7 && name.compare(name.size() - 7, 7, ".hubtmp") == 0) continue;
         str rel = norm_rel(fs::relative(cur, root, ec).u8string());
         if (rel.empty() || rel[0] == '.' || rel.rfind("_conflicts/", 0) == 0 || rel.rfind("_identity", 0) == 0) continue;
+        if (!plan_path_ok(rel)) { if (unsyncable) unsyncable->push_back(rel); continue; }
         LFile lf;
         lf.abs = cur.u8string();
         lf.size = (int64_t)fs::file_size(cur, ec);
-        lf.mtime = file_mtime_unix(lf.abs);
+        lf.mtime = std::max<int64_t>(0, file_mtime_unix(lf.abs));   // the Worker refuses a plan with a negative mtime
         if (lf.size > kMaxPlain) { out[rel] = lf; continue; }   // sha left empty: too large, never hashed
         {
             std::lock_guard<std::mutex> lk(E.cache_mu);
@@ -507,6 +514,7 @@ struct Item {
     bool has_cv = false, evicted = false, lo_marked = false;
     str cloud_dev_name;
     int base_ver = 0;
+    str refused_sha;    // sha of the local content the server refused (cap / too large); the file stays local only while it is unchanged
 };
 
 bool sync_states_on() { std::lock_guard<std::mutex> lk(E.mu); return E.sync_states; }
@@ -532,13 +540,6 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
             it.local.present = !lf->second.sha.empty() || lf->second.size > kMaxPlain;
             it.local.sha = lf->second.sha; it.local.size = lf->second.size; it.local.mtime = lf->second.mtime;
         }
-        auto bf = bg.files.find(p);
-        if (bf != bg.files.end()) {
-            it.base.present = bf->second.ver > 0 || !bf->second.sha.empty();
-            it.base.sha = bf->second.sha; it.base.size = bf->second.size; it.base.mtime = bf->second.mtime;
-            it.base_ver = bf->second.ver;
-            it.lo_marked = !bf->second.lo.empty();
-        }
         const WFile* wf = cg ? cg->find(p) : nullptr;
         if (wf) {
             const WVer* cur = wf->current();
@@ -549,6 +550,15 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
                 it.cloud_dev_name = cur->dev_name;
             }
         }
+        auto bf = bg.files.find(p);
+        if (bf != bg.files.end()) {
+            /* the base is the last AGREEMENT; what the server refused is only remembered (refused_sha), see read_base */
+            BaseRead br = read_base(bf->second, it.has_cv, it.cv.ver, it.cv.sha);
+            it.base = br.base;
+            it.base_ver = br.ver;
+            it.refused_sha = br.refused_sha;
+            it.lo_marked = !bf->second.lo.empty();
+        }
         int64_t sz = it.local.present ? it.local.size : (it.has_cv ? it.cv.size : 0);
         if (is_shot) it.cls = FileClass::Shot; else
         if (p == "cover.png") it.cls = FileClass::Settings; else   // the user's custom cover (<game>/cover.png, <= 800 px): tiny, newest wins, never prompts
@@ -556,8 +566,9 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
         if (it.local.present && it.local.size > kMaxPlain) { it.act = Act::Nothing; items.push_back(it); continue; }
         if ((it.cls == FileClass::State || it.cls == FileClass::Shot) && !sync_states_on()) { it.act = Act::Nothing; items.push_back(it); continue; }
         it.act = three_way(it.local, it.base, it.cloud, it.evicted, it.cls);
-        /* a file the server refused earlier (cap / too large) stays local only while unchanged */
-        if (it.act == Act::Push && it.lo_marked && it.base.present && it.local.sha == it.base.sha) it.act = Act::Nothing;
+        /* a file the server refused earlier (cap / too large) stays local only while unchanged: no new plan for the same bytes, and it is
+         * never "pulled" back (the base still holds the older agreement, so the newer local content reads as a local change) */
+        if (it.act == Act::Push && it.local.present && !it.refused_sha.empty() && it.local.sha == it.refused_sha) it.act = Act::Nothing;
         items.push_back(it);
     }
     return items;
@@ -643,10 +654,24 @@ void backup_local(const GameId& g, const str& path, const str& tag) {
     fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
 }
 
+/* Records an AGREEMENT: both sides hold this content at this cloud version. Never call it for content the cloud did not take. */
 void base_set(const str& gkey, const str& path, int ver, const str& sha, int64_t size, int64_t mtime, const str& lo = str()) {
     std::lock_guard<std::mutex> lk(E.mu);
     BFile& f = bgame(gkey).files[path];
     f.ver = ver; f.sha = sha; f.size = size; f.mtime = mtime; f.lo = lo;
+    f.lsha.clear();
+}
+
+/* The cloud did NOT take this content (over the cap, too large, evicted in the same commit). That is not an agreement: the last agreement
+ * (ver / sha) stays as it was and the refused local sha is remembered, so the file stays local only while it is unchanged and is never
+ * mistaken for a file the cloud changed (the old code wrote the refused sha into the agreement, and the next pass pulled the older
+ * cloud copy over the newer local save). `reason` = "cap" | "too-large". */
+void mark_refused(const str& gkey, const str& path, const str& local_sha, const str& reason) {
+    std::lock_guard<std::mutex> lk(E.mu);
+    BFile& f = bgame(gkey).files[path];
+    if (f.ver == 0) { f.sha.clear(); f.size = 0; f.mtime = 0; }   // a ver-0 sha is never an agreement (older builds stored refused content there)
+    f.lo = reason;
+    f.lsha = local_sha;
 }
 
 ConflictItem conflict_item(const Item& it) {
@@ -675,6 +700,7 @@ struct SyncOut {
     int64_t pending_bytes = 0;
     bool large_pending = false;
     bool local_only_added = false;
+    std::vector<str> unsyncable;            // local files the cloud cannot take (path rules, e.g. more than 8 folders deep): left out, the rest syncs
 };
 
 bool class_ok(const SyncOpts& o, FileClass c, int64_t size) {
@@ -749,9 +775,7 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                 LFile cur;
                 cur.abs = abs_of(g, it.path).u8string();
                 if (it.local.size > kMaxBlob * 4) {
-                    std::lock_guard<std::mutex> lk(E.mu);
-                    BFile& bf = bgame(gkey).files[it.path];
-                    bf.sha = it.local.sha; bf.size = it.local.size; bf.mtime = it.local.mtime; bf.lo = "too-large";
+                    mark_refused(gkey, it.path, it.local.sha, "too-large");
                     out.local_only_added = true;
                     continue;
                 }
@@ -759,7 +783,7 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                 if (!read_all(fs::u8path(cur.abs), &plain)) continue;
                 cur.size = (int64_t)plain.size();
                 cur.sha = sha256_hex_of(plain);
-                cur.mtime = file_mtime_unix(cur.abs);
+                cur.mtime = std::max<int64_t>(0, file_mtime_unix(cur.abs));
                 p.lf = cur;
                 p.stored = plain;
                 if (plain.size() > 4096) {
@@ -767,9 +791,7 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                     if (deflate_raw(plain, &z) && (double)z.size() <= (double)plain.size() * 0.8) { p.stored = std::move(z); p.enc = "deflate"; }
                 }
                 if ((int64_t)p.stored.size() > kMaxBlob) {
-                    std::lock_guard<std::mutex> lk(E.mu);
-                    BFile& bf = bgame(gkey).files[it.path];
-                    bf.sha = cur.sha; bf.size = cur.size; bf.mtime = cur.mtime; bf.lo = "too-large";
+                    mark_refused(gkey, it.path, cur.sha, "too-large");
                     out.local_only_added = true;
                     continue;
                 }
@@ -800,11 +822,8 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                 auto ai = ans.find(p.path);
                 if (ai == ans.end()) continue;
                 const PlanAnswer& a = ai->second;
-                if (a.action == "skip") {
-                    str lo = a.reason == "too-large" ? "too-large" : "cap";
-                    std::lock_guard<std::mutex> lk(E.mu);
-                    BFile& bf = bgame(gkey).files[p.path];
-                    bf.sha = p.lf.sha; bf.size = p.lf.size; bf.mtime = p.lf.mtime; bf.lo = lo;
+                if (a.action == "skip") {   // refused: stays on this PC, nothing is agreed (F3)
+                    mark_refused(gkey, p.path, p.lf.sha, a.reason == "too-large" ? "too-large" : "cap");
                     out.local_only_added = true;
                     if (new_cap_loss) *new_cap_loss = true;
                 } else if (a.action == "same") {
@@ -852,6 +871,7 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
             CommitReply com;
             str cerr;
             if (!parse_commit(cr.body, &com, &cerr)) { out.oc.k = Outcome::Other; out.oc.code = "bad-commit"; return; }
+            bool incomplete = false;   // a result that is neither an upload nor a refusal: nothing is agreed for it, the job runs again later
             for (auto& r : com.results) {
                 const Prep* pp = nullptr;
                 for (auto& p : preps) if (p.path == r.path) pp = &p;
@@ -879,16 +899,19 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                     }
                     continue;
                 }
-                if (r.cloud == "evicted") {
-                    std::lock_guard<std::mutex> lk(E.mu);
-                    BFile& bf = bgame(gkey).files[r.path];
-                    bf.sha = pp->lf.sha; bf.size = pp->lf.size; bf.mtime = pp->lf.mtime; bf.lo = "cap";
+                if (r.cloud == "synced") {   // the only result that means the cloud now holds this content
+                    base_set(gkey, r.path, r.ver, pp->lf.sha, pp->lf.size, pp->lf.mtime);
+                    out.pushed++;
+                    continue;
+                }
+                if (r.cloud == "skipped" || r.cloud == "evicted") {   // the server did not take it (over the cap / protected ceiling): local only, nothing agreed
+                    mark_refused(gkey, r.path, pp->lf.sha, r.reason == "too-large" ? "too-large" : "cap");
                     out.local_only_added = true;
                     if (new_cap_loss) *new_cap_loss = true;
                     continue;
                 }
-                base_set(gkey, r.path, r.ver, pp->lf.sha, pp->lf.size, pp->lf.mtime);
-                out.pushed++;
+                incomplete = true;   // "missing" (the blob never landed) or a result this client does not know
+                log_line("commit " + gkey + "/" + r.path + ": result '" + r.cloud + "' " + r.reason + " (not uploaded, will retry)");
             }
             if (!com.evicted.empty()) {
                 std::vector<str> names;
@@ -923,10 +946,12 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                             list += (i ? ", " : "") + (sl == str::npos ? n : n.substr(sl + 1));
                         }
                         if (names.size() > 3) list += " and " + std::to_string(names.size() - 3) + " more";
-                        push_event(CloudEvent::WentLocalOnly, g, "Cloud space is full: older save states of " + list + " stay on this PC only.", false);
+                        push_event(CloudEvent::WentLocalOnly, g, "Cloud space is full: older saves and save states of " + list + " stay on this PC only.", false);
                     }
                 }
             }
+            if (!com.evicted.empty()) retry_refused();   // room was made: refused files elsewhere get one more try
+            if (incomplete) { out.oc.k = Outcome::Throttled; out.oc.code = "commit-incomplete"; return; }   // backoff, then a fresh plan uploads it again
         }
         todo = next;
         if (!out.oc.ok()) return;
@@ -937,7 +962,17 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
 SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpts& opts) {
     SyncOut out;
     str gkey = wire_key(g);
-    std::map<str, LFile> locals = scan_game(g);
+    std::map<str, LFile> locals = scan_game(g, &out.unsyncable);
+    if (!out.unsyncable.empty()) {   // F5: these stay out of the plan (one bad path makes the Worker refuse the whole plan); logged once per game
+        bool first;
+        { std::lock_guard<std::mutex> lk(E.mu); first = E.deep_logged.insert(gkey).second; }
+        if (first) {
+            const char* why = "";
+            plan_path_ok(out.unsyncable[0], &why);
+            log_line(gkey + ": " + std::to_string(out.unsyncable.size()) + " file(s) skipped, their path is not allowed in the cloud (" + why +
+                     "), e.g. " + out.unsyncable[0] + "; the rest of the game syncs");
+        }
+    }
     std::vector<Item> items = evaluate(g, locals, cg);
     bool restore;
     bool dl;
@@ -964,7 +999,8 @@ SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpt
     });
     for (Item* it : pulls) {
         if (opts.deadline_ms && mono_ms() > opts.deadline_ms) { out.pending_bytes += it->cloud.size; out.oc.k = Outcome::Offline; out.oc.code = "deadline"; continue; }
-        if (it->local.present && it->local.sha != it->base.sha) backup_local(g, it->path, "pc");   // newest-wins replaced a changed local copy
+        /* newest-wins replaced a changed local copy; also a copy the cloud once refused (its sha is not an agreement) - never overwritten unseen */
+        if (it->local.present && (it->local.sha != it->base.sha || it->lo_marked || !it->refused_sha.empty())) backup_local(g, it->path, "pc");
         PullResult r = pull_file(api, g, gkey, it->path, it->cv, opts.deadline_ms);
         if (r.ok) {
             base_set(gkey, it->path, it->cv.ver, it->cv.sha, it->cv.size, it->cv.mtime);
@@ -983,13 +1019,10 @@ SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpt
             case Act::Adopt:
                 base_set(gkey, it.path, it.cv.ver, it.cloud.sha, it.cloud.size, it.local.mtime);
                 break;
-            case Act::LocalOnlyCap: {
-                std::lock_guard<std::mutex> lk(E.mu);
-                BFile& bf = bgame(gkey).files[it.path];
-                bf.sha = it.local.sha; bf.size = it.local.size; bf.mtime = it.local.mtime; bf.lo = "cap";
+            case Act::LocalOnlyCap:   // evicted in the cloud: this PC's copy is all there is; nothing is agreed
+                mark_refused(gkey, it.path, it.local.sha, "cap");
                 out.local_only_added = true;
                 break;
-            }
             case Act::Conflict: {
                 if (it.has_cv && is_prefs_conflict(g, it.path) && !opts.auto_newest) {
                     Item re;
@@ -1077,6 +1110,11 @@ void update_info(const GameId& g, const WGame* cg, const SyncOut& out, bool pend
         gi.local_only = lo_kind == "too-large" ? LocalOnlyReason::TooLarge : LocalOnlyReason::OverCap;
         gi.message = std::to_string(lo) + " file(s) stay on this PC only (cloud full).";
     }
+    if (!out.unsyncable.empty()) {   // F5: the rest of the game is backed up; these files cannot be (path rules of the cloud), so the player is told
+        gi.state = CloudState::NeedsAttention;
+        gi.message = std::to_string(out.unsyncable.size()) + " file(s) sit in folders nested too deeply (or have names too long) for the cloud. They stay on this PC only; the rest of this game is backed up." +
+                     (lo > 0 ? " " + gi.message : str());
+    }
 }
 
 /* ------------------------------------------------------------------ manifest + device */
@@ -1094,6 +1132,9 @@ MFetch fetch_manifest(Api& api, const str& gkey, int64_t since = -1) {
     str err;
     if (!parse_manifest(r.body, &f.m, &err)) { f.oc.k = Outcome::Other; f.oc.code = "bad-manifest"; return f; }
     apply_account(f.m.account);
+    bool retry;
+    { std::lock_guard<std::mutex> lk(E.mu); retry = E.refused_retry; E.refused_retry = false; }
+    if (retry) retry_refused();
     return f;
 }
 
@@ -1145,6 +1186,34 @@ void enqueue(const str& gkey, const str& reason, int64_t when = 0, bool reset = 
     E.cv.notify_all();
 }
 
+/* Refused files (over the cap) stay local only while unchanged. They get one more try when something that could make room happened:
+ * "Sync now", an eviction that freed space, or a change of the account's caps. Returns the games that had marks. */
+std::vector<str> clear_refused_marks() {
+    std::vector<str> games;
+    std::lock_guard<std::mutex> lk(E.mu);
+    for (auto& g : E.base.games) {
+        bool any = false;
+        for (auto& f : g.second.files) if (!f.second.lsha.empty()) { f.second.lsha.clear(); any = true; }
+        if (any) games.push_back(g.first);
+    }
+    return games;
+}
+void retry_refused() {
+    for (auto& gk : clear_refused_marks()) enqueue(gk, "retry-refused");
+}
+/* A parked startup pass has no timer. A cheap local event proves the network or server is back (a game launch or exit, the friends
+ * connection coming back): wake only a PARKED item, so a backing-off one is never hurried (no polling). */
+void wake_startup_if_parked() {
+    bool woke = false;
+    {
+        std::lock_guard<std::mutex> lk(E.mu);
+        if (E.startup_done) return;
+        for (auto& q : E.queue.items()) if (q.gkey == "*" && q.reason == "startup" && q.next_at < 0) woke = true;
+        if (woke) { E.queue.put("*", "startup", now_s(), true); E.queue.save(); }
+    }
+    if (woke) E.cv.notify_all();
+}
+
 /* ------------------------------------------------------------------ lease */
 LeaseReply lease_call(Api& api, const str& gkey, const str& mode, bool take, Outcome* oc_out) {
     LeaseReply lr;
@@ -1184,6 +1253,7 @@ PrelaunchResult prelaunch_core(const GameId& g, SyncMode mode, int timeout_ms, i
         if (mf.oc.k == Outcome::Offline || mf.oc.k == Outcome::Throttled) enqueue(gkey, "push");
         return res;
     }
+    wake_startup_if_parked();   // the server answered: a parked startup pass may run
     const WGame* cg = nullptr;
     for (auto& w : mf.m.games) if (w.gkey == gkey) cg = &w;
     /* lease (only accounts with 2+ devices; read-only sessions never take one) */
@@ -1303,8 +1373,6 @@ bool run_job(const QItem& q, int64_t* retry_after, bool* park, bool* defer) {
     return done;
 }
 
-void startup_pass();
-
 void queue_initial_backup_locked_free() {
     /* every local game: protected files first */
     std::vector<GameId> games;
@@ -1360,12 +1428,25 @@ void queue_large_after_initial() {
     E.queue.save();
 }
 
-/* first pass after start (and after "Sync now"): manifest delta, restore mode pull, initial backup */
-void startup_pass() {
-    if (!enabled_now() || !refresh_identity()) return;
+/* Why a startup pass did not finish; work_once() turns it into the next attempt. The server's retryAfter wins over our own steps, a 401
+ * parks the retry (nothing can change until the account is fixed or the player triggers a sync), anything else follows the queue's
+ * 30 s, 2 min, 10 min, 1 h backoff and then waits for a trigger. It used to retry every 60 s forever, even while the server said
+ * "busy today" (F7): that is polling the free tier. */
+struct StartupFail { int64_t retry_after = 0; bool park = false; };
+StartupFail startup_fail(const Outcome& o) {
+    StartupFail f;
+    f.retry_after = o.retry_after;
+    f.park = o.k == Outcome::Auth;
+    return f;
+}
+
+/* first pass after start (and after "Sync now"): manifest delta, restore mode pull, initial backup. Sets E.startup_done when it finished;
+ * otherwise the result says how long to wait. */
+StartupFail startup_pass() {
+    if (!enabled_now() || !refresh_identity()) return StartupFail();
     Api api(3000, 15000);
     Outcome dev = ensure_device(api);
-    if (!dev.ok()) { return; }
+    if (!dev.ok()) return startup_fail(dev);
     bool restore;
     int64_t since;
     {
@@ -1376,7 +1457,7 @@ void startup_pass() {
     MFetch mf = fetch_manifest(api, str(), restore ? -1 : since);
     if (!mf.oc.ok()) {
         if (mf.oc.k == Outcome::Auth) push_event(CloudEvent::NeedsAttention, GameId(), "Cloud saves need attention: your account could not be verified.", false);
-        return;
+        return startup_fail(mf.oc);
     }
     {   // cloud game list for the UI
         std::lock_guard<std::mutex> lk(E.mu);
@@ -1394,11 +1475,14 @@ void startup_pass() {
     for (auto& w : mf.m.games) order.push_back(&w);
     std::sort(order.begin(), order.end(), [](const WGame* a, const WGame* b) { return a->played_at > b->played_at; });
     bool all_ok = true;
+    Outcome first_bad;   // the first failure of the restore pass (carries the server's retryAfter)
+    std::set<str> skipped_games;   // restore: games that could not be written; later phases leave them (and their "needs attention" state) alone
     if (restore) {
         /* restore mode: pull everything protected first (all games), then large items newest-played first; no push meanwhile */
         for (int phase = 0; phase < 2; phase++) {
             for (const WGame* w : order) {
-                { std::lock_guard<std::mutex> lk(E.mu); if (E.stop) return; }
+                { std::lock_guard<std::mutex> lk(E.mu); if (E.stop) return StartupFail(); }
+                if (skipped_games.count(w->gkey)) continue;
                 GameId g = id_of_wire(w->gkey);
                 auto gl = game_lock(w->gkey);
                 std::unique_lock<std::timed_mutex> lk(*gl, std::defer_lock);
@@ -1412,7 +1496,12 @@ void startup_pass() {
                 update_info(g, w, out, false);
                 if (!out.conflicts.empty()) push_event(CloudEvent::ConflictFound, g, "Saves for " + g.key + " differ between this PC and the cloud.", false);
                 if (out.pulled > 0) push_event(CloudEvent::Pulled, g, "Cloud saves for " + g.key + " were restored.", true);
-                if (!out.oc.ok()) { all_ok = false; if (out.oc.k != Outcome::Other) break; }
+                if (out.oc.k == Outcome::Other) {   // this game cannot be restored right now (cannot write, corrupt blob): skip it so the others can push
+                    skipped_games.insert(w->gkey);
+                    log_line("restore: skipped " + w->gkey + " (" + out.oc.code + ")");
+                    set_state(g, CloudState::NeedsAttention, LocalOnlyReason::None, "Could not restore this game's saves from the cloud. It will be tried again; the rest of your games are syncing.");
+                    { std::lock_guard<std::mutex> lk2(E.mu); E.queue.put(w->gkey, "pull", now_s() + 30, false); }
+                } else if (!out.oc.ok()) { all_ok = false; if (first_bad.ok()) first_bad = out.oc; break; }
             }
         }
         if (all_ok) {
@@ -1453,6 +1542,7 @@ void startup_pass() {
             E.migrate_mirror.clear();
         }
     }
+    return all_ok ? StartupFail() : startup_fail(first_bad);
 }
 
 /* process at most one due job (or the startup pass). Returns true when something ran. */
@@ -1467,11 +1557,20 @@ bool work_once() {
     }
     if (do_start) {
         { std::lock_guard<std::mutex> lk(E.mu); E.busy = true; }
-        startup_pass();
+        StartupFail sf = startup_pass();
         {
             std::lock_guard<std::mutex> lk(E.mu);
             E.busy = false;
-            if (!E.startup_done) E.queue.put("*", "startup", now_s() + 60, false);
+            if (E.startup_done) E.queue.remove("*", "startup");
+            else {
+                /* Not finished (offline, 429/5xx, auth): the queue item carries the failure count, so the wait grows 30 s, 2 min, 10 min,
+                 * 1 h and then parks until a trigger (hub start, "Sync now", a new account). The server's retryAfter replaces the step -
+                 * never shorter than 30 s, at most a day. This was a fixed 60 s forever (F7). */
+                E.queue.put("*", "startup", now_s(), false);
+                if (sf.park) E.queue.park("*", "startup");
+                else E.queue.fail("*", "startup", now_s(), sf.retry_after > 0 ? std::min<int64_t>(std::max<int64_t>(sf.retry_after, 30), 24 * 3600) : 0);
+            }
+            E.queue.save();
         }
         return true;
     }
@@ -1490,8 +1589,8 @@ bool work_once() {
         if (!found) return false;
         E.busy = true;
     }
-    if (q.gkey == "*") {
-        { std::lock_guard<std::mutex> lk(E.mu); E.queue.remove("*", "startup"); E.startup_wanted = true; E.busy = false; }
+    if (q.gkey == "*") {   // the startup retry is due; the item stays until a pass finishes (it carries the failure count)
+        { std::lock_guard<std::mutex> lk(E.mu); E.startup_wanted = true; E.busy = false; }
         return true;
     }
     int64_t retry = 0;
@@ -1504,13 +1603,13 @@ bool work_once() {
             E.queue.remove(q.gkey, q.reason);
             if (q.reason == "init-prot") E.init_done++;
         } else if (park) {
-            for (auto& it : const_cast<std::vector<QItem>&>(E.queue.items())) if (it.gkey == q.gkey && it.reason == q.reason) it.next_at = -1;
+            E.queue.park(q.gkey, q.reason);
         } else if (defer) {
             E.queue.put(q.gkey, q.reason, now_s() + retry, false);   // waiting for a running game / restore: no failure counted
         } else {
             E.queue.fail(q.gkey, q.reason, now_s(), retry);
         }
-        E.queue.save();
+        if (!defer) E.queue.save();   // a deferral changes nothing worth writing (it repeats every 15-20 s)
         E.acct.queued_games = queued_count_locked();
     }
     bool init_left = false;
@@ -1651,6 +1750,7 @@ void cloud_engine_stop() {
     E.init_total = E.init_done = 0;
     E.init_large_queued = false;
     E.pull_cool_until = 0;
+    E.deep_logged.clear();
 }
 
 void cloud_engine_pump(int max_jobs) {
@@ -1678,9 +1778,13 @@ void cloud_account_changed() {
         E.id_stamp = 0;                // refresh_identity() re-reads identity.json on its next run
         E.startup_wanted = true;
         E.startup_done = false;
+        E.queue.remove("*", "startup");   // a new account starts its retry steps from the beginning
+        E.queue.save();
     }
     E.cv.notify_all();
 }
+
+void cloud_network_back() { wake_startup_if_parked(); }
 
 void cloud_wake_queue() {
     {
@@ -1697,6 +1801,7 @@ void cloud_sync_all_now() {
         if (!E.started) return;
         E.queue.wake_parked(now_s());
         E.startup_wanted = true;
+        for (auto& g : E.base.games) for (auto& f : g.second.files) f.second.lsha.clear();   // refused files get one more try
         for (auto& kv : E.info) if (kv.second.state != CloudState::LocalOnly || kv.second.local_only != LocalOnlyReason::User) E.queue.put(kv.first, "sync-all", now_s(), true);
         E.queue.save();
     }
@@ -1823,6 +1928,7 @@ void cloud_game_exited(const GameId& g) {
         Api api(2000, 5000);
         api.req("POST", "/saves/v2/lease/release", "{\"game\":" + json::quote(gkey) + "}");
     }
+    wake_startup_if_parked();
     if (mode == SyncMode::ReadOnly || lo_user) return;
     base_save();
     if (dl) { set_state(g, CloudState::Conflict, LocalOnlyReason::DecideLater, "Not uploading until you decide."); return; }

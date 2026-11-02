@@ -1,4 +1,5 @@
 #include "app.h"
+#include "convenience.h"
 #include "osk.h"
 #include "wizard_logic.h"
 
@@ -110,7 +111,7 @@ std::string pressed_text(const PadState& s) {
         {SDL_CONTROLLER_BUTTON_RIGHTSTICK, "Right stick click"}, {SDL_CONTROLLER_BUTTON_DPAD_UP, "D-pad up"},
         {SDL_CONTROLLER_BUTTON_DPAD_DOWN, "D-pad down"}, {SDL_CONTROLLER_BUTTON_DPAD_LEFT, "D-pad left"}, {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, "D-pad right"}};
     std::string out;
-    auto add = [&](const char* n) { out += (out.empty() ? "" : ", ") + std::string(n); };
+    auto add = [&](const char* n) { std::string l = hubglyph::label(ui::pad_kind, n); if (l == "Cross" || l == "Circle" || l == "Square" || l == "Triangle") l = std::string(l) + " (" + n + ")"; out += (out.empty() ? "" : ", ") + l; };
     for (auto& e : names) if (s.b[e.k]) add(e.n);
     if (s.lt > 0.3f) add("LT");
     if (s.rt > 0.3f) add("RT");
@@ -335,6 +336,7 @@ void wizard_window() {
         case Step::Games: ImGui::TextUnformatted("Find your games"); break;
         case Step::Name: ImGui::TextUnformatted(hubui::wiz::step_title(Step::Name).c_str()); break;
         case Step::Cloud: ImGui::TextUnformatted("Your saves"); break;
+        case Step::Online: ImGui::TextUnformatted("Online play"); break;
         case Step::Done: ImGui::TextUnformatted("You're all set"); break;
     }
     ImGui::PopFont();
@@ -379,6 +381,22 @@ void wizard_window() {
         }
         case Step::Name: name_body(bw); break;
         case Step::Cloud: cloud_ui_wizard_body(bw); break;
+        case Step::Online: {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw);
+            ImGui::TextWrapped("Windows asks once whether RetroHub's game programs may use the network. Doing it now, here, means that question never appears over a game.");
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+            if (netprobe_running()) text_wrapped_disabled("Waiting for Windows... choose Allow if a window appears.");
+            else if (A.st.net_probe_done) {
+                ImGui::PushFont(ui::F.bold);
+                ImGui::TextColored(ImColor(ui::GOOD), "Online play is ready");
+                ImGui::PopFont();
+            } else if (button("Allow online play", ImVec2(ui::sp(24.f), ui::sp(5.5f)), true, true, ui::Icon::Globe)) netprobe_start();
+            ImGui::Dummy(ImVec2(0, ui::sp(1.5f)));
+            if (ImGui::Checkbox("Show what I'm playing on Discord", &A.st.discord_presence)) mark_dirty();
+            text_wrapped_disabled("Optional and off by default. Only used when Discord is running; you can add a Join button later in Settings > Online.");
+            break;
+        }
         case Step::Done: {
             ImGui::PushFont(ui::F.bold);
             ImGui::TextColored(ImColor(ui::GOOD), "Everything is ready");
@@ -502,6 +520,7 @@ void draw_wizard() {
             else if (s == "name") WZ.step = Step::Name;
             else if (s == "cloud") WZ.step = Step::Cloud;
             else if (s == "returning") { WZ.step = Step::Name; WZ.returning = true; }
+            else if (s == "online") WZ.step = Step::Online;
             else if (s == "done") WZ.step = Step::Done;
         } else if (!shot && !g_headless && A.scanned_once) {
             WZ.auto_tried = true;

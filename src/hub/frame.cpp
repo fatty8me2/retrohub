@@ -207,7 +207,13 @@ void global_input() {
     if (wizard_state() >= 0) return;   // the setup wizard owns the pad (its own B / Back / Next); Menu must not toggle the friends panel behind it
     if (A.popup_last_frame && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) return;   // that B just closed a menu/modal: not also "back"
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) && fr_invite_toast_visible()) fr_join_invite_toast();   // Start joins a pending invite
-    else if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
+    else if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
+    {   // View toggles the friends panel on RELEASE, and not when another pad button joined it (View + Y opens the palette / quick menu)
+        static bool view_combo = false;
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false)) view_combo = false;
+        if (ImGui::IsKeyDown(ImGuiKey_GamepadBack) && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false))) view_combo = true;
+        if (ImGui::IsKeyReleased(ImGuiKey_GamepadBack) && !view_combo) fr_toggle_panel();
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
         if (fr_handle_back()) return;
     int dir = 0;

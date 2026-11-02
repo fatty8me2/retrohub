@@ -40,6 +40,8 @@ bool gc_fingerprint_ready(const std::string& path) {
     return false;
 }
 
+static unsigned long long g_gc_driver_t0 = 0;   // when the Dolphin UIA driver was spawned (watchdog in gc_tick)
+
 bool gc_process_alive() {
     if (!GCO.run.dolphin_pid) return false;
     HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, GCO.run.dolphin_pid);
@@ -161,9 +163,9 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     ip.write_save = host && A.gc_write_save;
     ip.mute = autotest_active();
     std::string cur;
-    { std::ifstream f(ini, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
+    { std::ifstream f(std::filesystem::path(W(ini)), std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
     std::string next = gcnp::ini_patch(cur, sp, ip);
-    { std::ofstream f(ini, std::ios::binary | std::ios::trunc); f << next; }
+    { std::ofstream f(std::filesystem::path(W(ini)), std::ios::binary | std::ios::trunc); f << next; }
     GCO.run = gcnp::Run();
     GCO.run.wait_go = !host;   // a guest's Dolphin boots right away and connects when the host's NetPlay server is up
     GCO.go_sent = false;
@@ -186,6 +188,7 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
         return false;
     }
     GCO.active = true;
+    g_gc_driver_t0 = GetTickCount64();
     GCO.host = host;
     autotest_log(std::string("gc_begin ") + (host ? "host" : "guest") + " card=" + card);
     GCO.ready_sent = false;
@@ -212,6 +215,16 @@ void gc_stop_all(const char* why) {
     GCO.fw.stop();
     GCO.active = false;
     GCO.guest_wait = false;
+}
+
+
+static bool gc_driver_alive() {
+    if (!GCO.run.driver_pid) return false;
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, GCO.run.driver_pid);
+    if (!h) return false;
+    bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    CloseHandle(h);
+    return alive;
 }
 
 /* Each frame: keep the forwarder alive, tell guests when the host's Dolphin is listening, check the guest's disc. */
@@ -270,6 +283,7 @@ void gc_tick() {
         autotest_log(std::string("dolphin closed; session over") + (GCO.left_name.empty() ? "" : " (" + GCO.left_name + " left)"));
         if (!GCO.left_name.empty()) { set_notice(hubui::player_left_text(GCO.left_name), 20.0); GCO.left_name.clear(); }
         gc_stop_all();
+        hub::rom_cache_pin(nullptr);   // GameCube NetPlay never passes through the A.proc exit: release the disc's cache pin here
         group_session_ended(60);
         room_session_ended();
         if (was_host) { A.vault_dirty = true; auto_sync(); }
@@ -297,6 +311,18 @@ void gc_tick() {
                     push_toast("Dolphin reported the game may be out of sync. If it keeps happening, make sure everyone has the same game file and restart the game.", ui::WARN, 15.0, true);
                 }
             }
+        }
+    }
+    if (GCO.run.driver_pid) {   // watchdog: a driver that died or never reported used to leave the host (and the guests) waiting for minutes
+        hubui::DriverVerdict v = hubui::driver_verdict(gc_driver_alive(), gcnp::read_status(GCO.run), GetTickCount64() - g_gc_driver_t0, GCO.host);
+        if (v != hubui::DriverVerdict::Ok) {
+            std::string why = "GameCube online: " + hubui::driver_verdict_text(v);
+            online_log("driver watchdog: " + why);
+            autotest_log("driver watchdog " + why);
+            if (GCO.host) { set_notice(why, 15.0); host_abort(why); } else launch_fail(why, 15.0);
+            gc_kill("driver watchdog");
+            gc_stop_all("driver watchdog");
+            return;
         }
     }
     if (!GCO.host && !GCO.go_sent && GCO.host_ready) { GCO.go_sent = true; gcnp::signal_go(GCO.run); autotest_log("guest: go"); }
@@ -412,7 +438,7 @@ void poll_np3ds() {
         autotest_log("3ds: forwarders ready, starting Azahar");
         RunInfo r3 = run_info_for(NP3_game, true);
         r3.room = true;
-        launch_external(NP3_game, r3, "", NP3_mp);
+        launch_external(NP3_game, r3, no_slash(hub::saves::battery_dir(sys_short(NP3_game), NP3_game.key)), NP3_mp);   // the vault path, like offline play: an empty one made the save bridge work relative to the CWD (saves-F4)
         /* Azahar's Qt frontend ignores -m: join the room through its Direct Connect dialog (UI Automation helper). */
         if (!A.proc) {   // Azahar did not start: nothing to drive, and the room link would sit idle
             launch_fail("Azahar did not start - 3DS online cancelled.", 12.0);
@@ -599,7 +625,7 @@ void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
         if (!start_hidden(sr, args, &RP.proc)) { launch_note(true, "Could not start remote play (streamrun error " + std::to_string(GetLastError()) + ")."); return; }
         autotest_log("rplay: streamrun started before Cemu, args " + args);
         Sleep(400);   // let the DSU server bind before Cemu reads its controller profiles
-        launch_external(e, r, "");   // the host's Cemu + save sync work exactly like offline play
+        launch_external(e, r, no_slash(hub::saves::battery_dir(sys_short(e), e.key)));   // the host's Cemu + save sync work exactly like offline play: same vault path (saves-F4)
         if (!A.proc) { rplay_stop(); host_abort("the host's Cemu did not start"); return; }
         RP.pending = true;
         RP.t0 = GetTickCount64();
@@ -693,13 +719,26 @@ void poll_rplay() {
         autotest_log("rplay: streamrun attached to Cemu pid " + std::to_string(pid));
 }
 
-void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
+void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan, const hubui::Json* launch_msg,
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
+    hub::GameEntry hacked;   // ROM hack (Plan 4 H4): every PC plays its own patched copy; the content key makes them identical
+    if (is_hack(e_in)) {
+        std::string patched;
+        if (!hack_ensure_rom(e_in, &patched)) {
+            if (!is_host) launch_fail("still preparing the ROM hack - try again in a moment");
+            else A.lobby.send_msg("{\"kind\":\"np_abort\",\"reason\":\"the host is still preparing the ROM hack\"}");   // the launch already went out
+            return;
+        }
+        hacked = e_in;
+        hacked.path = patched;
+    }
+    const hub::GameEntry& e = is_hack(e_in) ? hacked : e_in;
     A.st.last_game = room_id(e);
     A.st.played_online = true;
     mark_dirty();
     hub::rom_cache_touch(e);
+    hub::rom_cache_pin(&e);   // never trimmed while it runs (library-14)
     shot_trace("launch_online", std::string(is_host ? "host " : "guest ") + sys_short(e) + " " + room_id(e));
     if (g_headless && g_fake_room && (is_kanto(e) || e.system == hub::System::GC || e.system == hub::System::N3DS)) {   // peer-hosted routes need sockets: stop at the route
         shot_trace("online-route", std::string(is_kanto(e) ? "kanto" : e.system == hub::System::GC ? "dolphin-netplay" : "azahar-np3ds"));
@@ -782,6 +821,13 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
             if (my >= 0 && my < (int)ms.players.size()) A.run_fighter = hubui::fighter_name(ms.players[(size_t)my].fighter);
         }
     }
+    {   // retrorun exit 12 (could not connect) leaves its reason here; logic.cpp's exit_code_text shows it
+        std::string rf = no_slash(hub::data_dir()) + "\\netplay\\net_reason.txt";
+        make_dirs(no_slash(hub::data_dir()) + "\\netplay");
+        DeleteFileW(W(rf).c_str());
+        hubui::set_net_reason_file(rf);
+        SetEnvironmentVariableW(L"RETRORUN_REASON_FILE", W(rf).c_str());
+    }
     std::string net = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
                       std::to_string(room_my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
                       plan.ports + hubui::delay_arg(delay);
@@ -798,6 +844,11 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         const bool room_dropin = g_dropin_launch || (is_host ? g_room_dropin : (launch_msg && launch_msg->num("dropin", 0) >= 1));
         std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) + net + title_arg(e.title) + controls_arg("n64", e.key);
         if (room_dropin) args += " --dropin-room";
+        if (e.catalog_id == "remix" || e.catalog_id == "smash64") {   // Smash Remix / Smash 64 ROM: VS results for rivals, party mode and brackets
+            ri.result_file = hub::data_dir() + "n64_result.json";
+            { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(ri.result_file), ec); }
+            args += " --result-file " + quote(ri.result_file);
+        }
         args += hubui::n64_extra_args(gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
         args += qm_args(ri, e, false);
@@ -933,7 +984,7 @@ void launch_online(const hub::GameEntry& e, int launch_no, int delay, bool is_ho
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
                            " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
         if (share_save) args += " --share-host-save";
-        args += " --rollback";
+        args += " --rollback --handoff";   // NES/SNES rollback: every PC builds the same flags
         args += hubui::retro_extra_args(e.system, gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
         args += qm_args(ri, e, false);

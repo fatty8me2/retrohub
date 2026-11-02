@@ -1,6 +1,7 @@
 #include "winutil.h"
 #include <cctype>
 #include "emulators.h"
+#include "psp.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -89,8 +90,8 @@ static std::string join(const std::string& a, const std::string& b) {
     return (c == '\\' || c == '/') ? a + b : a + "\\" + b;
 }
 
-const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : "Dolphin"; }
-Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : s == hub::System::PS2 ? Kind::Pcsx2 : Kind::Azahar; }
+const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : k == Kind::Ppsspp ? "PPSSPP" : "Dolphin"; }
+Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : s == hub::System::PS2 ? Kind::Pcsx2 : s == hub::System::PSP ? Kind::Ppsspp : Kind::Azahar; }
 
 /* Pinned official releases. Azahar: github.com/azahar-emu/azahar (GPL-3.0), asset digest as published by GitHub.
  * Cemu: github.com/cemu-project/Cemu (MPL-2.0); GitHub lists no digest for the Windows zip, so the SHA-256 was
@@ -116,11 +117,17 @@ const Release& release(Kind k) {
     static const Release lr = {
         "2.0.0-38d3a83", L"buildbot.libretro.com", L"/nightly/windows/x86_64/latest/pcsx2_libretro.dll.zip",
         3760634ull, "730112622345f0ca12e7650c6d4052f443603aa630e9b6ab8a68874a4d66bae6", L"pcsx2_libretro.dll", "GPL-3.0"};
-    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : dol;
+    /* PPSSPP v1.20.4 (GPL-2.0+), the official Windows zip from ppsspp.org (the "latest" link of ppsspp.org/download on 2026-11-01). ppsspp.org publishes no
+     * digest, so the SHA-256 was computed from that exact file when this was written (trust on first use, like Cemu). The zip holds PPSSPPWindows64.exe at
+     * its root; with no installed.txt beside the exe PPSSPP is portable: all data lives in <dir>\memstick. */
+    static const Release pp = {
+        "1.20.4", L"www.ppsspp.org", L"/files/1_20_4/ppsspp_win.zip",
+        27658759ull, "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163", L"PPSSPPWindows64.exe", "GPL-2.0+"};
+    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : dol;
 }
 
 std::string managed_root() { return join(hub::data_dir(), "emulators"); }
-std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : k == Kind::Lrps2 ? "lrps2" : "dolphin"); }
+std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : k == Kind::Lrps2 ? "lrps2" : k == Kind::Ppsspp ? "ppsspp" : "dolphin"); }
 
 /* ------------------------------------------------------------------ */
 /* locating                                                            */
@@ -443,6 +450,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     }
     remove_tree(stage);
     if (ok && k == Kind::Pcsx2) ok = write_text(join(dir, "portable.ini"), "");   // portable mode: all data beside the exe, a user's own PCSX2 is never touched
+    if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
     if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");   // Dolphin keeps its User folder beside the exe
     if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");
     if (!ok) remove_tree(dir);   // never leave a half install behind
@@ -880,6 +888,7 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
     std::string t = in;
     t = hubui::ini_set(t, "Core", "SlotA", "8");
     t = hubui::ini_set(t, "Core", "SlotB", "255");
+    t = hubui::ini_set(t, "Core", "CPUThread", "True");       // dual core (Dolphin's default); NetPlay used to leave it off in this shared ini, which made later play slow
     t = hubui::ini_set(t, "Core", "EmulationSpeed", "1.0");   // the Game menu's Speed row starts every session at 1x
     t = hubui::ini_set(t, "General", "HotkeysRequireFocus", "False");   // every launch (upgraded installs too): the speed pad needs no focus; other hotkeys are unbound (dolphin_hotkeys_ini)
     t = hubui::ini_set(t, "Interface", "ConfirmStop", "False");         // every launch: Back+Start closes Dolphin; a "stop?" dialog would pop up over the game
@@ -1233,8 +1242,8 @@ void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::
         make_dirs(d);
         std::string f = join(d, "qt-config.ini");
         write_text(f, azahar_config_apply(read_text(f), v));
-    } else if (k == Kind::Pcsx2) {
-        return;   // written by prepare_pcsx2 (pcsx2.h)
+    } else if (k == Kind::Pcsx2 || k == Kind::Ppsspp) {
+        return;   // written by prepare_pcsx2 / prepare_ppsspp (pcsx2.h, ppsspp.h)
     } else {   // RetroHub's own portable Cemu (a user's own install goes through prepare_cemu_own_settings)
         std::string f = join(install_dir, "portable\\settings.xml");
         if (file_exists(f)) write_text(f, cemu_fullscreen_apply(cemu_settings_apply(read_text(f), v), hub::gs::is_fullscreen(v)));
@@ -1588,6 +1597,17 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         s.emu_root = inst.dir;   // <install>/memcards/RetroHub/<game> <-> <vault>/ps2/<game>/battery/memcards/RetroHub/<game>
         s.rels = {pcsx2_card_dir_rel(e.key)};
         make_dirs(join(s.emu_root, s.rels[0]));
+    } else if (e.system == hub::System::PSP) {
+        if (inst.dir.empty()) return s;
+        s.psp_disc_id = hub::psp::disc_id_from_key(e.key);
+        if (s.psp_disc_id.empty()) return s;   // homebrew without a DISC_ID: its save folders cannot be told apart
+        s.emu_root = join(inst.dir, "memstick\\PSP");   // <install>/memstick/PSP/SAVEDATA/<ID>... <-> <vault>/psp/<key>/battery/SAVEDATA/<ID>...
+        std::vector<std::string> seen;
+        for (const std::string& base : {join(s.emu_root, "SAVEDATA"), join(battery, "SAVEDATA")})
+            for (const auto& f : hub::subdirs_modified_since(base, 0))
+                if (hub::psp::savedata_folder_matches(f, s.psp_disc_id) && std::find(seen.begin(), seen.end(), f) == seen.end()) seen.push_back(f);
+        for (const auto& f : seen) s.rels.push_back("SAVEDATA/" + f);
+        make_dirs(join(s.emu_root, "SAVEDATA"));
     } else if (e.system == hub::System::GC) {
         if (inst.dir.empty()) return s;
         s.emu_root = dolphin_card_root(inst.dir, e.key);   // <install>\User\GC\RetroHub\<game>\GCI  <->  <vault>\gc\<game>\battery\GCI
@@ -1623,6 +1643,12 @@ void end_session(SaveSession& s) {
                 std::string rel = std::string("usr/save/") + hi + "/" + c;
                 if (std::find(s.rels.begin(), s.rels.end(), rel) == s.rels.end()) s.rels.push_back(rel);
             }
+        }
+    }
+    if (!s.psp_disc_id.empty()) {   // PSP: a save folder the game created during the session
+        for (const auto& c : hub::subdirs_modified_since(join(s.emu_root, "SAVEDATA"), 0)) {
+            std::string rel = "SAVEDATA/" + c;
+            if (hub::psp::savedata_folder_matches(c, s.psp_disc_id) && std::find(s.rels.begin(), s.rels.end(), rel) == s.rels.end()) s.rels.push_back(rel);
         }
     }
     std::string tag = stamp_tag();

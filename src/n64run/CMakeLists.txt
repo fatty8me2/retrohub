@@ -17,14 +17,20 @@ target_include_directories(n64run_match PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(n64run_match PUBLIC cxx_std_17)
 target_link_libraries(n64run_match PUBLIC hubcommon)
 
+# VS results for --result-file (RDRAM -> match JSON, pure logic, unit tested with RDRAM fixtures).
+add_library(n64run_match_result STATIC match_result.cpp)
+target_include_directories(n64run_match_result PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(n64run_match_result PUBLIC cxx_std_17)
+
 add_executable(n64run
     frontend.cpp
     input_plugin.cpp
     local_input.cpp
     test_input.cpp
     lockstep.cpp
+    osd_gl.cpp
     headless.cpp)
-target_link_libraries(n64run PRIVATE n64run_match n64run_lockstep_core n64run_save_sync hubnet hubcommon hubcontrols_sdl hubclip m64p_api SDL2::SDL2 opengl32)
+target_link_libraries(n64run PRIVATE n64run_match n64run_match_result n64run_lockstep_core n64run_save_sync hubnet hubcommon hubcontrols_sdl hubclip m64p_api SDL2::SDL2 opengl32)
 # Console subsystem on purpose (logs to the console too); the hub launches it hidden/with a console as needed.
 set_target_properties(n64run PROPERTIES WIN32_EXECUTABLE OFF)
 # The input plugin entry points are __declspec(dllexport) from the exe; keep them even with /OPT:REF.
@@ -78,3 +84,14 @@ target_link_libraries(n64run_resync_test PRIVATE n64run_lockstep_core)
 # N64 drop-in: wire format, admit controller, reserved ports / join / leave on LockstepCore
 add_executable(n64run_dropin_test test_dropin.cpp)
 target_link_libraries(n64run_dropin_test PRIVATE n64run_lockstep_core)
+
+# Plan 4 lane p4-n64 -------------------------------------------------------------------------------------------------------------
+# VS results reader: scene trigger, player blocks, ranking, match id, rivals JSON (fixtures from real Smash Remix / Smash 64 matches).
+add_executable(n64run_match_result_test test_match_result.cpp)
+target_link_libraries(n64run_match_result_test PRIVATE n64run_match_result hubcommon)
+target_include_directories(n64run_match_result_test PRIVATE ${CMAKE_SOURCE_DIR}/src/hub)
+
+# OsdCorner board (pure logic).
+add_executable(n64run_corner_test test_corner.cpp)
+target_include_directories(n64run_corner_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(n64run_corner_test PRIVATE cxx_std_17)

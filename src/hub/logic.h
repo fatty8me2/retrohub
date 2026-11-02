@@ -62,6 +62,9 @@ struct Settings {
     int menu_volume = 30;              // menu sound volume 0..100 (low by default)
     bool menu_music = false;           // quiet ambient menu loop (OFF by default)
     bool attract_mode = true;          // Home hero turns into a slideshow of your own screenshots / save-state pictures after ~60 s idle (attract.cpp)
+    bool discord_presence = false;     // Discord Rich Presence: show what I am playing (OFF by default; discord_ui.cpp)
+    bool discord_join = false;         // ... plus a Join button carrying the RetroHub invite link (OFF by default: it shares the room code with Discord friends)
+    bool net_probe_done = false;       // the setup wizard ran `n64run --net-probe` / `retrorun --net-probe` (Windows Firewall prompt happened in front of RetroHub)
     bool share_games = true;           // "Show my games to friends": publish the list of game titles (never files) so friends see them greyed out
     bool show_friend_games = true;     // library chip "Show friends' games"
     std::string pack_links;            // extra shared game packs: public Google Drive folder links (same layout as GamePack1), separated by commas or spaces
@@ -364,6 +367,13 @@ bool sync_take_pending(SyncGate& g, bool game_running, bool job_running, bool* m
 
 /* Human text for an n64run exit code. */
 std::string exit_code_text(unsigned long code);
+/* retrorun exit 12 = could not connect online; its plain-words reason is in this file (hub sets $RETRORUN_REASON_FILE to it). */
+/* Dolphin/Azahar UI-Automation driver watchdog (PowerShell script). Pure: the caller feeds liveness, the status file text and the time. */
+enum class DriverVerdict { Ok, DiedSilently, DiedEarly, NoStage, NeverOpened };
+DriverVerdict driver_verdict(bool driver_alive, const std::string& status_text, unsigned long long since_start_ms, bool host);
+std::string driver_verdict_text(DriverVerdict v);
+void set_net_reason_file(const std::string& utf8_path);
+std::string net_reason_text();   // the file's text, "" when there is none
 /* Message for a game that ended while a player was missing. `left_name` = who left ("" unknown); only the outcomes a leaver causes
  * (clean 0, connection lost 4, "a player left" 8) are reworded, crashes/desyncs keep their own text. */
 std::string player_left_text(const std::string& left_name);
