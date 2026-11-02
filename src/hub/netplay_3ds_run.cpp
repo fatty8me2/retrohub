@@ -97,6 +97,7 @@ struct Runner::Impl {
     }
     void start_thread() {
         wake = WSACreateEvent();
+        if (wake == WSA_INVALID_EVENT) return;   // no event: stay on the UI-loop pump rather than spin
         threaded = true;
         watch(guest_sock);
         for (auto& kv : host_sock) watch(kv.second);
@@ -281,10 +282,10 @@ void Runner::Impl::step() {
 void Runner::stop() {
     Impl& m = *impl_;
     if (m.th.joinable()) { m.quit = true; SetEvent(m.wake); m.th.join(); }   // wakes the loop at once
-    if (m.wake != WSA_INVALID_EVENT) { m.sess.set_wake_event(nullptr); WSACloseEvent(m.wake); m.wake = WSA_INVALID_EVENT; }
     m.threaded = false;
     m.quit = false;
-    m.sess.stop();
+    m.sess.stop();   // joins the WS thread first: it may still SetEvent the wake handle
+    if (m.wake != WSA_INVALID_EVENT) { m.sess.set_wake_event(nullptr); WSACloseEvent(m.wake); m.wake = WSA_INVALID_EVENT; }
     for (auto& kv : m.host_sock) closesocket(kv.second);
     m.host_sock.clear();
     if (m.guest_sock != INVALID_SOCKET) closesocket(m.guest_sock);
