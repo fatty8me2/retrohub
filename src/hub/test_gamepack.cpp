@@ -179,6 +179,23 @@ int main()
         CHECK(pack_only_ghosts({}, {}, {}, 10).empty());
     }
 
+    /* Hotfix: a friend's DS copy titled by its ROM header ("Zelda_DS:PH") and the pack's "The Legend of Zelda - Phantom Hourglass"
+     * are one game; the known No-Intro name for the key joins them, so the tile shows once (friend ghost, no pack twin). Same for an owned copy. */
+    {
+        using hubui::fg::Owned; using hubnet::LibGame;
+        std::vector<LibGame> fl = {{"nds", "nds:azee-004d56", "", "Zelda_DS:PH"}};
+        auto nm = [](const std::string&, const std::string& k) { return k == "nds:azee-004d56" ? std::string("Legend of Zelda, The - Phantom Hourglass (USA) (En,Fr,Es)") : std::string(); };
+        std::vector<PackGame> pk = {PackGame{"nds", "The Legend of Zelda - Phantom Hourglass", pack_key("The Legend of Zelda - Phantom Hourglass")}};
+        auto before = hubui::fg::build_ghosts({}, {{"u1", &fl}});                // without the name: the bogus header title
+        CHECK(before.size() == 1 && pack_only_ghosts({}, before, pk, 10).size() == 1);   // the bug: two tiles
+        auto gh = hubui::fg::build_ghosts({}, {{"u1", &fl}}, nm);
+        CHECK(gh.size() == 1 && gh[0].title == "The Legend of Zelda - Phantom Hourglass");
+        CHECK(pack_only_ghosts({}, gh, pk, 10).empty());                         // one tile
+        std::vector<Owned> mine = {{"nds", "nds:azee-004d56", "", "Zelda_DS:PH"}, {"nds", "nds:azee-004d56", "", hubui::fg::clean_dat_name(nm("", "nds:azee-004d56"))}};
+        CHECK(pack_only_ghosts(mine, {}, pk, 10).empty());                       // owned: no pack ghost
+        CHECK(hubui::fg::build_ghosts(mine, {{"u1", &fl}}, nm).empty());         // owned: no friend ghost
+    }
+
     /* installed_folder_title: the pack title an installed file belongs to (the library title of "game.iso" can differ from it) */
     {
         const std::string r = "C:\\Users\\a\\RetroHub\\userdata\\gamepack\\";

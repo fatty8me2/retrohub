@@ -1,6 +1,7 @@
 #include "app.h"
 #include "gameinfo.h"
 #include "gamepack.h"
+#include "art.h"
 #include <chrono>
 
 #include <map>
@@ -24,6 +25,10 @@ static std::vector<hubui::fg::Owned> owned_snapshot() {
     for (const hub::GameEntry& e : A.lib) {
         if (is_hack(e)) continue;   // ROM hacks / translations are the player's own: never in the published friends' library (Plan 4 H2)
         v.push_back({sys_short(e), e.key, e.catalog_id, e.title});
+        {   /* also owned under its clean No-Intro name: an owned copy titled by its ROM header must not leave the pack's ghost of the same game */
+            std::string nm = hubui::fg::clean_dat_name(hubart::cached_name(e.key));
+            if (!nm.empty()) v.push_back({sys_short(e), e.key, e.catalog_id, nm});
+        }
         std::string t = hubgp::installed_folder_title(e.path, root);   // installed from a shared pack: also owned under the pack's title (a catalog title may differ from it)
         if (!t.empty()) v.push_back({sys_short(e), e.key, e.catalog_id, t});
         for (const auto& o : hubgp::pack_owned_aliases(e, root)) v.push_back(o);   // ... and under the pack console folder (a PS2 disc filed under GameCube still clears its GameCube ghost)
@@ -42,7 +47,7 @@ void rebuild_ghosts() {
     std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>> libs;
     if (A.st.show_friend_games && A.friends_chip) fr_library_collect(&libs);   // an empty own library still gets ghosts: new users install from shared packs
     const std::vector<hubui::fg::Owned> mine = owned_snapshot();
-    if (!libs.empty()) A.ghosts = hubui::fg::build_ghosts(mine, libs);
+    if (!libs.empty()) A.ghosts = hubui::fg::build_ghosts(mine, libs, [](const std::string&, const std::string& key) { return hubart::cached_name(key); });
     const size_t friend_ghosts = A.ghosts.size();
     if (A.st.show_friend_games && A.friends_chip && A.ghosts.size() < hubui::fg::kMaxGhosts) {   // games in the shared Drive packs, owned by no friend
         std::vector<hubui::fg::Ghost> pk = hubgp::pack_only_ghosts(mine, A.ghosts, hubgp::index_games(), hubui::fg::kMaxGhosts - A.ghosts.size());
@@ -408,6 +413,10 @@ void fg_fake_libs() {
         r.push_back({"ps2", "ps2:slus-20398", "", "Road Trip"});
         r.push_back({"snes", "snes:fake", "", "Super Mario World"});
         r.push_back({"nes", "nes:fake", "", "Super Mario Bros."});
+    }
+    if (std::getenv("HUB_SHOT_FAKE_DUPE_DS")) {   // hotfix shot: one friend lists Phantom Hourglass by its ROM header title, another by its proper title
+        FR.f_libs["miauid"].push_back({"nds", "nds:azee-004d56", "", "Zelda_DS:PH"});
+        FR.f_libs["jakuid"].push_back({"nds", "nds:fake-ph", "", "The Legend of Zelda: Phantom Hourglass"});
     }
     if (rg && *rg == '2') return;
     static const char* sys[] = {"n64", "gc", "gba", "gb", "gbc", "nds", "3ds", "ps1"};
