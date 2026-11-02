@@ -10,6 +10,7 @@
  *   'R' roster   [R, 0, mask]     host -> clients, bit s set = slot s reachable from the host
  *   'B' bye      [B, from]        clean end: the sender is leaving on purpose (not a failure)
  */
+#include <winsock2.h>   // WSAEventSelect (Session::set_wake_event)
 #include <chrono>
 #include <algorithm>
 #include "net_internal.h"
@@ -791,6 +792,10 @@ int Session::ping_ms(int slot) const
 }
 
 uint16_t Session::local_port() const { return impl_->udp.local_port(); }
+void Session::set_wake_event(void* event) {
+    impl_->ws.set_wake(event);
+    if (impl_->udp.is_open()) WSAEventSelect((SOCKET)impl_->udp.handle(), (WSAEVENT)event, event ? FD_READ : 0);
+}
 void Session::qa_drop_ws() { impl_->ws.drop_abruptly(); }
 void Session::set_no_relay(bool v) { impl_->no_relay = v; }
 void Session::set_ping_interval(uint32_t ms) { impl_->ping_every = ms < 20 ? 20 : ms; }

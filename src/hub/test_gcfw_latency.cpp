@@ -22,8 +22,15 @@ static SOCKET udp_bind(int port) {
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); a.sin_port = htons((u_short)port);
     if (bind(s, (sockaddr*)&a, sizeof a) != 0) { closesocket(s); return INVALID_SOCKET; }
-    DWORD to = 20; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof to);
     return s;
+}
+/* Wait up to ms for a datagram (select, not SO_RCVTIMEO: a timed-out recv leaves a Winsock socket in an indeterminate state). */
+static int recv_wait(SOCKET s, char* b, int cap, int ms, sockaddr_in* from = nullptr) {
+    fd_set fs; FD_ZERO(&fs); FD_SET(s, &fs);
+    timeval tv{0, ms * 1000};
+    if (select(0, &fs, nullptr, nullptr, &tv) <= 0) return 0;
+    int fl = sizeof(sockaddr_in);
+    return recvfrom(s, b, cap, 0, (sockaddr*)from, from ? &fl : nullptr);
 }
 
 int main(int argc, char** argv) {
@@ -34,9 +41,10 @@ int main(int argc, char** argv) {
     SOCKET echo = udp_bind(port);
     if (echo == INVALID_SOCKET) { printf("FAIL echo bind\n"); return 1; }
     std::atomic<bool> quit{false};
+    std::atomic<int> echoed{0}, echo_err{0};
     std::thread echo_th([&] {
         char b[2048];
-        while (!quit) { sockaddr_in f{}; int fl = sizeof f; int n = recvfrom(echo, b, sizeof b, 0, (sockaddr*)&f, &fl); if (n > 0) sendto(echo, b, n, 0, (sockaddr*)&f, fl); }
+        while (!quit) { sockaddr_in f{}; int n = recv_wait(echo, b, sizeof b, 20, &f); if (n > 0) { sendto(echo, b, n, 0, (sockaddr*)&f, sizeof f); ++echoed; } else if (n < 0) ++echo_err; }
     });
     hubnp3ds::Plan plan; plan.port = port; plan.expected = 2;
     hubnp3ds::Runner host, guest;
@@ -63,7 +71,7 @@ int main(int argc, char** argv) {
         sendto(dol, msg, n, 0, (sockaddr*)&fw, sizeof fw);
         char b[64];
         for (;;) {
-            int r = recvfrom(dol, b, sizeof b, 0, nullptr, nullptr);
+            int r = recv_wait(dol, b, sizeof b, 20);
             LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
             double ms = (t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
             if (r == n && memcmp(b, msg, n) == 0) { rtt.push_back(ms); break; }
@@ -74,6 +82,7 @@ int main(int argc, char** argv) {
     ui_quit = true; ui.join();
     quit = true; echo_th.join();
     const bool relayed = guest.any_relayed();
+    printf("datagrams: guest out %llu in %llu, host out %llu in %llu; echo replied %d (recv errors %d)\n", guest.datagrams_out(), guest.datagrams_in(), host.datagrams_out(), host.datagrams_in(), echoed.load(), echo_err.load());
     host.stop(); guest.stop();
     closesocket(dol); closesocket(echo);
     timeEndPeriod(1);

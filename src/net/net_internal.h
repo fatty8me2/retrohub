@@ -38,6 +38,7 @@ class UdpSocket {
     bool send_to(const Addr& to, const void* data, int len);
     int recv_from(Addr* from, void* buf, int cap);   // >0 bytes, 0 nothing
     uint16_t local_port() const { return port_; }
+    uintptr_t handle() const { return sock_; }       // the SOCKET (event-driven waits, see Session::set_wake_event)
     std::string local_endpoint() const;              // "lan-ip:port" or "-"
   private:
     uintptr_t sock_;
@@ -78,7 +79,9 @@ class WsClient {
     bool send_binary(const void* data, int size);
     bool poll_text(std::string* out);
     bool poll_binary(std::vector<uint8_t>* out);
+    void set_wake(void* event) { wake_ = event; }   // Win32 event set whenever a frame is queued (nullptr = none)
   private:
+    std::atomic<void*> wake_{nullptr};
     struct Handles;
     void run(std::string url);
     void fail(const std::string& why);
