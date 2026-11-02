@@ -595,8 +595,6 @@ void pill(const char* text, ImU32 bg, ImU32 fg) {
 }
 
 /* ---- controller / keyboard hints ---- */
-hubglyph::Kind pad_kind = hubglyph::Kind::Xbox;
-
 static ImU32 pad_color(const char* b) {
     if (!b) return PANEL3;
     if (b[0] == 'A' && !b[1]) return IM_COL32(76, 185, 102, 255);
@@ -605,46 +603,26 @@ static ImU32 pad_color(const char* b) {
     if (b[0] == 'Y' && !b[1]) return IM_COL32(238, 190, 60, 255);
     return IM_COL32(86, 90, 108, 255);
 }
-static ImU32 ps_color(const char* shape) {
-    if (!std::strcmp(shape, "Cross")) return IM_COL32(120, 160, 230, 255);
-    if (!std::strcmp(shape, "Circle")) return IM_COL32(232, 100, 100, 255);
-    if (!std::strcmp(shape, "Square")) return IM_COL32(220, 130, 190, 255);
-    return IM_COL32(90, 200, 150, 255);   // Triangle
-}
-/* The text on the button for a pad hint: what this player's pad prints (Xbox names stay as written). */
-static const char* pad_text(const char* pad_btn) { return hubglyph::label(pad_kind, pad_btn); }
 static float glyph_w(bool pad, const char* pad_btn, const char* key) {
     ImFont* f = F.cap;
     float fs = f->FontSize;
-    const char* t = pad ? pad_text(pad_btn) : key;
+    const char* t = pad ? pad_btn : key;
     float tw = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t).x;
     float h = fs + sp(0.75f);
-    if (pad && (hubglyph::is_ps_shape(t) || (!pad_btn[1] && std::strlen(pad_btn) == 1))) return h;   // round face button
+    if (pad && !pad_btn[1] && std::strlen(pad_btn) == 1) return h;   // round face button
     return std::max(h, tw + sp(1.5f));
 }
 float key_hint_width(bool pad, const char* pad_btn, const char* key, const char* label) {
     ImFont* f = F.cap;
     return glyph_w(pad, pad_btn, key) + sp(0.75f) + f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, label).x;
 }
-/* PlayStation face symbol inside a button disc of radius r. */
-static void ps_shape(ImDrawList* dl, const char* s, ImVec2 c, float r, ImU32 col) {
-    const float k = r * 0.5f, t = std::max(1.2f, r * 0.17f);
-    if (!std::strcmp(s, "Cross")) { dl->AddLine(ImVec2(c.x - k, c.y - k), ImVec2(c.x + k, c.y + k), col, t); dl->AddLine(ImVec2(c.x + k, c.y - k), ImVec2(c.x - k, c.y + k), col, t); }
-    else if (!std::strcmp(s, "Circle")) dl->AddCircle(c, k * 1.05f, col, 20, t);
-    else if (!std::strcmp(s, "Square")) dl->AddRect(ImVec2(c.x - k, c.y - k), ImVec2(c.x + k, c.y + k), col, 0.f, 0, t);
-    else dl->AddTriangle(ImVec2(c.x, c.y - k * 1.1f), ImVec2(c.x + k * 1.1f, c.y + k * 0.8f), ImVec2(c.x - k * 1.1f, c.y + k * 0.8f), col, t);
-}
 float key_hint(ImDrawList* dl, ImVec2 p, bool pad, const char* pad_btn, const char* key, const char* label) {
     ImFont* f = F.cap;
     float fs = f->FontSize, h = fs + sp(0.75f);
     float gw = glyph_w(pad, pad_btn, key);
-    const char* t = pad ? pad_text(pad_btn) : key;
+    const char* t = pad ? pad_btn : key;
     ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t);
-    if (pad && hubglyph::is_ps_shape(t)) {
-        ImVec2 c(p.x + gw * 0.5f, p.y + h * 0.5f);
-        dl->AddCircleFilled(c, h * 0.5f, IM_COL32(40, 44, 60, 255), 24);
-        ps_shape(dl, t, c, h * 0.5f, ps_color(t));
-    } else if (pad && std::strlen(pad_btn) == 1) {
+    if (pad && std::strlen(pad_btn) == 1) {
         ImVec2 c(p.x + gw * 0.5f, p.y + h * 0.5f);
         dl->AddCircleFilled(c, h * 0.5f, pad_color(pad_btn), 24);
         dl->AddText(f, fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(18, 18, 24, 255), t);

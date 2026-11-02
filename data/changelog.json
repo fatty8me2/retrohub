@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.31.1",
+      "date": "2026-11-01",
+      "title": "Back to the steady version while online gets fixed",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Online games with 3-4 players (N64 and GameCube) could freeze or drift out of sync after the last updates. This update brings RetroHub back to version 1.29.24, which played them well, while the problem is fixed. The newer features return in the next update"
+      ]
+    },
+    {
       "version": "1.31.0",
       "date": "2026-11-01",
       "title": "PSP, friend challenges and a lot of convenience",

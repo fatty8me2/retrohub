@@ -38,7 +38,6 @@ struct FriendsUi {
     int d_frame = -1;
 
     std::string chat_uid;
-    std::set<std::string> cancelled_msgs;   // queued lines the player cancelled ("Not sent")
     std::map<std::string, hub::profile::Tally> reacts;   // "<peer uid>|<line key>" -> who reacted with what (this session)
     bool open_prof = false;                              // open the "Your profile" editor
     char prof_status_buf[48] = {0};
@@ -117,7 +116,6 @@ std::string fr_day_label(long long ms);
 hubnet::Invite fr_make_invite();
 bool fr_in_my_room();
 bool fr_send_dm(const std::string& uid, const std::string& text);   // quick menu chat: message a friend
-bool fr_send_attach_dm(const std::string& uid, const std::string& text, const hubnet::Attach& a);   // DM carrying an uploaded file (friend_pick_ui.cpp)
 void fr_invite_uids(const std::vector<std::string>& uids);
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who = "");
 void fr_open_chat(const std::string& uid);

@@ -2,9 +2,6 @@
 #include "cloud_internal.h"
 #include "json.h"
 
-#include <cctype>
-#include <cstring>
-
 namespace hub::saves {
 
 typedef json::Value JV;
@@ -57,53 +54,9 @@ bool path_ok(const str& p) {   // never trust a server-supplied path
         i = j + 1;
     }
     for (unsigned char c : p) if (c < 0x20 || c == 0x7f || c == ':' || c == '\\') return false;
-    if (p.size() >= 9) {   // the account secret lives in <vault>/_identity: a manifest can never write there (the Worker refuses the same name)
-        str head = p.substr(0, 9);
-        for (auto& c : head) c = (char)tolower((unsigned char)c);
-        if (head == "_identity" && (p.size() == 9 || p[9] == '/')) return false;
-    }
     return true;
-}
-/* UTF-16 length of a UTF-8 string: what JavaScript's .length counts in the Worker's cleanKey. */
-size_t utf16_len(const str& s) {
-    size_t n = 0;
-    for (unsigned char c : s) {
-        if ((c & 0xC0) == 0x80) continue;      // continuation byte
-        n += c >= 0xF0 ? 2 : 1;                // a 4-byte sequence is a surrogate pair
-    }
-    return n;
 }
 }  // namespace
-
-bool plan_path_ok(const std::string& rel, const char** why) {
-    auto no = [&](const char* w) { if (why) *why = w; return false; };
-    if (rel.empty() || utf16_len(rel) > 240) return no("too-long");
-    int segs = 1;
-    for (char c : rel) if (c == '/') segs++;
-    if (segs > kMaxPlanSegments) return no("too-deep");
-    size_t i = 0;
-    for (int k = 0; k < segs; k++) {
-        size_t j = rel.find('/', i);
-        if (j == str::npos) j = rel.size();
-        str seg = rel.substr(i, j - i);
-        if (seg.empty() || seg == "." || seg == "..") return no("bad-name");
-        if (utf16_len(seg) > 120) return no("too-long");
-        for (unsigned char c : seg) if (c < 0x20 || c == 0x7f || strchr("\\:*?\"<>|", c)) return no("bad-name");
-        if (seg.back() == '.' || seg.back() == ' ') return no("bad-name");
-        if (k == 0) {
-            str low = seg;
-            for (auto& c : low) c = (char)tolower((unsigned char)c);
-            if (low == "_identity") return no("bad-name");
-        }
-        i = j + 1;
-    }
-    if (rel.size() >= 7) {
-        str tail = rel.substr(rel.size() - 7);
-        for (auto& c : tail) c = (char)tolower((unsigned char)c);
-        if (tail == ".hubtmp") return no("bad-name");
-    }
-    return true;
-}
 
 bool parse_manifest(const std::string& json_text, WManifest* out, std::string* err) {
     JV root;
@@ -210,7 +163,6 @@ bool parse_commit(const std::string& json_text, CommitReply* out, std::string* e
             c.path = sval(j, "path");
             c.ver = (int)j.i64("ver", 0);
             c.cloud = j.str("cloud", "synced");
-            c.reason = sval(j, "reason");
             str res = sval(j, "result");
             if (res.empty()) res = sval(j, "action");
             c.conflict = j.boolean("conflict", false) || res == "conflict" || c.cloud == "conflict";

@@ -2,14 +2,12 @@
 #include "json.h"
 #include "miniz.h"
 #include "library.h"
-#include "library_scan_info.h"
 #include "prefs.h"
 #include "emu_formats.h"
 #include "wiiu_meta.h"
 #include "games.h"
 #include "ps1.h"
 #include "ps2.h"
-#include "psp.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -925,7 +923,6 @@ const char* system_name(System s) {
     case System::PS2: return "PlayStation 2";
     case System::NES: return "Nintendo Entertainment System";
     case System::SNES: return "Super Nintendo";
-    case System::PSP: return "PlayStation Portable";
     default:          return "Unknown";
     }
 }
@@ -944,7 +941,6 @@ const char* system_short(System s) {
     case System::PS2: return "ps2";
     case System::NES: return "nes";
     case System::SNES: return "snes";
-    case System::PSP: return "psp";
     default:          return "";
     }
 }
@@ -963,7 +959,6 @@ System system_from_short(const std::string& s) {
     if (l == "ps2") return System::PS2;
     if (l == "nes") return System::NES;
     if (l == "snes") return System::SNES;
-    if (l == "psp") return System::PSP;
     return System::Unknown;
 }
 
@@ -1303,13 +1298,12 @@ std::string member_skeleton(const std::string& name) {
 
 /* The member must be unambiguous: exactly one entry in the archive matches the pattern we hand to tar. */
 bool is_ps2_image_ext(const std::string& ext) { return ext == ".iso" || ext == ".chd" || ext == ".cso"; }
-bool is_psp_image_ext(const std::string& ext) { return ext == ".iso" || ext == ".chd" || ext == ".cso" || ext == ".pbp"; }
 
 /* mode 0 GameCube image, 1 PS2 image, 2 Wii U .wua (a "Vimm's Lair.txt" next to it is ignored) */
 bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, int mode = 0) {
     for (const auto& a : l) {
         if (!archive_entry_safe(a.name) || a.size < 0x1000) continue;
-        { std::string xe = ascii_lower(path_utf8(utf8_path(a.name).extension())); if (!(mode == 4 ? is_psp_image_ext(xe) : mode == 3 ? is_3ds_zip_entry(xe) : mode == 2 ? xe == ".wua" : mode == 1 ? is_ps2_image_ext(xe) : is_gc_image_ext(xe))) continue; }
+        { std::string xe = ascii_lower(path_utf8(utf8_path(a.name).extension())); if (!(mode == 3 ? is_3ds_zip_entry(xe) : mode == 2 ? xe == ".wua" : mode == 1 ? is_ps2_image_ext(xe) : is_gc_image_ext(xe))) continue; }
         const std::string pat = member_skeleton(a.name);
         int matches = 0;
         for (const auto& b : l) if (glob_star(pat, 0, b.name, 0)) ++matches;
@@ -1322,8 +1316,8 @@ bool find_gc_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, int mo
 
 const char* const kTruncatedMsg = "this archive is incomplete (its end is missing, so a copy or download did not finish). Copy or download it again";
 
-int entry_mode(System s) { return s == System::PSP ? 4 : s == System::N3DS ? 3 : s == System::WiiU ? 2 :s == System::PS2 ? 1 : 0; }
-fs::path gc_unpack_dir(const GameEntry& e) { return lib_dir() / L"rom-cache" / (e.system == System::N3DS ? L"3ds" : e.system == System::WiiU ? L"wiiu" : e.system == System::PS2 ? L"ps2" : e.system == System::PSP ? L"psp" : L"gc") / utf8_path(sanitize_key(e.key)); }
+int entry_mode(System s) { return s == System::N3DS ? 3 : s == System::WiiU ? 2 :s == System::PS2 ? 1 : 0; }
+fs::path gc_unpack_dir(const GameEntry& e) { return lib_dir() / L"rom-cache" / (e.system == System::N3DS ? L"3ds" : e.system == System::WiiU ? L"wiiu" : e.system == System::PS2 ? L"ps2" : L"gc") / utf8_path(sanitize_key(e.key)); }
 
 } // namespace
 
@@ -1561,47 +1555,6 @@ static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
     return true;
 }
 
-/* ---- PlayStation Portable (PPSSPP): PARAM.SFO of an ISO / CSO / CHD image or an EBOOT.PBP. Probed BEFORE the PS1 / PS2 / GC claims: a PSP image has
- * PSP_GAME/PARAM.SFO and nothing the other consoles look for; a PS1 eboot .pbp is refused here and stays PlayStation 1. ---- */
-static void fill_psp(const hub::psp::Ident& id, const fs::path& name_src, GameEntry* e) {
-    e->system = System::PSP;
-    e->serial = id.disc_id;
-    e->key = hub::psp::key_for(id.disc_id, sanitize_key(title_from_filename(name_src)));
-    std::string t = id.title;
-    for (char& c : t) if (c == '\r' || c == '\n' || c == '\t') c = ' ';
-    while (!t.empty() && t.back() == ' ') t.pop_back();
-    e->title = !t.empty() ? t : title_from_filename(name_src);
-}
-
-static bool id_psp_file(const fs::path& p, GameEntry* e) {
-    hub::psp::Ident id;
-    if (!hub::psp::identify_file(path_utf8(p), &id)) return false;
-    fill_psp(id, p, e);
-    return true;
-}
-
-/* A PSP image inside a .zip/.7z/.rar: the start of the member is streamed (an ISO / CSO / PBP prefix) and PARAM.SFO read from it. */
-static bool id_psp_archive(const fs::path& arch, GameEntry* e) {
-    if (!archive_sig_ok(path_utf8(arch))) return false;
-    std::vector<ArchiveEntry> l;
-    ArchiveEntry ent;
-    if (!list_archive(path_utf8(arch), &l)) return false;
-    if (!find_gc_entry(l, &ent, 4)) return false;
-    const std::string xe = ascii_lower(path_utf8(utf8_path(ent.name).extension()));
-    if (xe == ".chd") return false;   // content not readable without unpacking: left to the PS1 / PS2 claims
-    auto head = std::make_shared<std::string>();
-    if (!tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(ent.name), 8u << 20, 60000, head.get()) || head->size() < 0x100) return false;
-    hub::psp::Ident id;
-    if (!hub::psp::identify_buffer(head, &id)) return false;
-    GameEntry g;
-    fill_psp(id, utf8_path(ent.name), &g);
-    g.path = path_utf8(arch);
-    g.issue = "extract";
-    g.unpacked = ent.size;
-    *e = std::move(g);
-    return true;
-}
-
 /* Stamp written next to the unpacked image: archive size + mtime + image size + entry name. A changed or replaced archive
  * (or a truncated image) no longer matches, so it is unpacked again. */
 static std::string gc_stamp(const GameEntry& e, uint64_t image_size, const std::string& entry) {
@@ -1620,7 +1573,7 @@ static std::string archive_stamp_prefix(const GameEntry& e) {
 static bool is_zip_ext(const std::string& path) { return ascii_lower(path_utf8(utf8_path(path).extension())) == ".zip"; }
 /* games whose archive is unpacked by gc_extract (tar.exe): discs, Wii U, and 3DS images in .7z/.rar */
 static bool is_disc_like(const GameEntry& e) {
-    return e.system == System::GC || e.system == System::PS2 || e.system == System::PSP || e.system == System::WiiU || (e.system == System::N3DS && !is_zip_ext(e.path));
+    return e.system == System::GC || e.system == System::PS2 || e.system == System::WiiU || (e.system == System::N3DS && !is_zip_ext(e.path));
 }
 
 static std::string gc_extracted_path(const GameEntry& e) {
@@ -1658,7 +1611,7 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
     ArchiveEntry ent;
     if (!fs::exists(tar_exe())) { *err = "Windows' tar.exe was not found (needs Windows 10 version 1803 or newer)"; return false; }
     if (!list_archive(e.path, &l)) { *err = archive_truncated(e.path) ? kTruncatedMsg : "cannot read the archive"; return false; }
-    if (!find_gc_entry(l, &ent, entry_mode(e.system))) { *err = e.system == System::WiiU ? "no .wua inside the archive" : e.system == System::PSP ? "no PSP game image inside the archive" : "no disc image inside the archive"; return false; }
+    if (!find_gc_entry(l, &ent, entry_mode(e.system))) { *err = e.system == System::WiiU ? "no .wua inside the archive" : "no disc image inside the archive"; return false; }
     fs::path dir = gc_unpack_dir(e);
     std::error_code ec;
     fs::remove_all(dir, ec);   // a stale or half-done extraction of the same key
@@ -1870,7 +1823,7 @@ bool identify_game(const std::string& path, GameEntry* out) {
         }
         {   /* a zip holding a GameCube disc image: listed, unpacked on Play */
             GameEntry g;
-            if (id_psp_archive(p, &g) || id_gc_archive(p, &g) || id_ps2_archive(p, &g) || id_wiiu_archive(p, &g)) { g.size = size; g_identify_calls.fetch_add(1); *out = std::move(g); return true; }
+            if (id_gc_archive(p, &g) || id_ps2_archive(p, &g) || id_wiiu_archive(p, &g)) { g.size = size; g_identify_calls.fetch_add(1); *out = std::move(g); return true; }
         }
         {   /* a zip holding a PlayStation disc (cue + bins / chd), named like its Redump title: listed, unpacked on Play */
             GameEntry g;
@@ -1884,7 +1837,7 @@ bool identify_game(const std::string& path, GameEntry* out) {
     }
     if (ext == ".7z" || ext == ".rar") {
         GameEntry g;
-        if (!id_psp_archive(p, &g) && !id_gc_archive(p, &g) && !id_wiiu_archive(p, &g) && !id_ps1_archive(p, &g) && !id_ps2_archive(p, &g)) {
+        if (!id_gc_archive(p, &g) && !id_wiiu_archive(p, &g) && !id_ps1_archive(p, &g) && !id_ps2_archive(p, &g)) {
             GameEntry z;
             if (id_3ds_archive(p, &z)) { z.size = size; g_identify_calls.fetch_add(1); *out = std::move(z); return true; }
             fs::path rom, inner;
@@ -1920,7 +1873,6 @@ static bool identify_rom(const fs::path& p, const fs::path& name_src, GameEntry*
     else if (ext == ".nds") ok = id_nds(p, name_src, size, &e);
     else if (ext == ".nes") ok = id_nes(p, name_src, size, &e);
     else if (ext == ".sfc" || ext == ".smc") ok = id_snes(p, name_src, size, &e);
-    else if ((ext == ".iso" || ext == ".cso" || ext == ".chd" || ext == ".pbp") && id_psp_file(p, &e)) ok = true;   // before the PS1 / PS2 / GC claims
     else if (ext == ".cue" || ext == ".chd" || ext == ".m3u" || ext == ".pbp" || ext == ".bin" || ext == ".img" || ext == ".cso") {
         // PlayStation 1 or 2: the disc says (SYSTEM.CNF BOOT = PS1, BOOT2 = PS2). PS1 is probed first; a miss falls through to PS2.
         ok = id_ps1(p, ext, &e);
@@ -2177,7 +2129,7 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
 
 std::string extract_3ds_dir(const GameEntry& e) {
     if (uses_ps1_unpack(e)) return path_utf8(ps1_unpack_dir(e));
-    if (e.system == System::GC || e.system == System::PS2 || e.system == System::PSP || e.system == System::WiiU) return path_utf8(gc_unpack_dir(e));
+    if (e.system == System::GC || e.system == System::PS2 || e.system == System::WiiU) return path_utf8(gc_unpack_dir(e));
     return path_utf8(lib_dir() / L"rom-cache" / L"3ds" / utf8_path(sanitize_key(e.key)));
 }
 
@@ -2353,8 +2305,6 @@ fs::path lib_dir() {
 
 std::mutex g_skip_mu;
 std::vector<SkippedArchive> g_skipped;
-std::vector<GameEntry> g_extra_copies;     // library-1: every copy of a game the last scan found besides the one it lists
-std::vector<FolderScanStatus> g_folder_status;   // library-3: per scanned folder, reachable / complete
 std::mutex g_state_mu;
 bool g_state_loaded = false;
 bool g_state_dirty = false;
@@ -2513,17 +2463,17 @@ struct Candidate {
 };
 
 /* Directory walk that skips unreadable dirs and never follows symlinks/junctions. */
-void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::string>& seen, bool* incomplete = nullptr) {
+void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::string>& seen) {
     std::vector<fs::path> stack{root};
     while (!stack.empty()) {
         fs::path dir = std::move(stack.back());
         stack.pop_back();
         std::error_code ec;
         fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
-        if (ec) { if (incomplete) *incomplete = true; continue; }   // a folder that cannot be listed is "unknown", not "empty"
+        if (ec) continue;
         std::vector<fs::path> subdirs;
         for (; it != fs::directory_iterator(); it.increment(ec)) {
-            if (ec) { if (incomplete) *incomplete = true; break; }
+            if (ec) break;
             const fs::directory_entry& de = *it;
             std::error_code e1;
             if (de.is_symlink(e1)) continue;
@@ -2565,21 +2515,14 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
     std::vector<Candidate> cands;
     std::set<std::string> seen;
     std::vector<std::string> prefixes;
-    std::vector<std::string> unknown_prefixes;   // folders that are offline or only partly readable: their cached games stay listed (library-3)
-    std::vector<FolderScanStatus> fstat;
     for (const std::string& f : folders) {
         std::error_code ec;
         fs::path root = fs::absolute(utf8_path(f), ec);
+        if (ec || !fs::is_directory(root, ec)) continue;
         std::string pre = ascii_lower(path_utf8(root));
         if (pre.empty() || (pre.back() != '\\' && pre.back() != '/')) pre.push_back('\\');
-        FolderScanStatus st;
-        st.folder = f;
-        if (ec || !fs::is_directory(root, ec)) { st.reachable = false; st.complete = false; unknown_prefixes.push_back(pre); fstat.push_back(st); continue; }
-        bool incomplete = false;
-        walk(root, cands, seen, &incomplete);
-        if (incomplete) { st.complete = false; unknown_prefixes.push_back(pre); }
-        else prefixes.push_back(pre);   // only a fully read folder may drop cache rows of vanished files
-        fstat.push_back(st);
+        prefixes.push_back(pre);
+        walk(root, cands, seen);
     }
 
     std::unordered_map<std::string, CacheRec> cache = cache_load();
@@ -2600,28 +2543,6 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
             c.done = true;
         } else {
             work.push_back(i);
-        }
-    }
-
-    std::vector<GameEntry> offline_games;   // cached games of offline / half-readable folders that this scan did not see
-    if (!unknown_prefixes.empty()) {
-        std::set<std::string> have;
-        for (const Candidate& c : cands) have.insert(ascii_lower(c.path_utf8));
-        for (const auto& kv : cache) {
-            if (!kv.second.ok || have.count(kv.first)) continue;
-            for (size_t u = 0; u < unknown_prefixes.size(); ++u) {
-                const std::string& pre = unknown_prefixes[u];
-                if (kv.first.compare(0, pre.size(), pre) != 0) continue;
-                GameEntry g = kv.second.e;
-                if (g.path.empty()) g.path = kv.first;
-                offline_games.push_back(std::move(g));
-                for (auto& fs_ : fstat) {
-                    std::string fp = ascii_lower(path_utf8(fs::absolute(utf8_path(fs_.folder))));
-                    if (!fp.empty() && fp.back() != '\\' && fp.back() != '/') fp.push_back('\\');
-                    if (fp == pre) ++fs_.kept;
-                }
-                break;
-            }
         }
     }
 
@@ -2704,7 +2625,6 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
     std::vector<GameEntry> out;
     std::map<std::string, size_t> by_key;   // key -> index in out
     std::vector<std::string> out_src;       // original file path of each out entry
-    std::vector<GameEntry> extras;          // the other copies (library-1)
     for (const Candidate& c : cands) {
         if (!c.rec.ok) continue;
         if ((c.rec.e.system == System::PS1 || c.rec.e.system == System::PS2) && !hidden.empty() && hidden.count(ascii_lower(path_utf8(c.path.lexically_normal())))) continue;
@@ -2714,19 +2634,9 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
             out.push_back(c.rec.e);
             out_src.push_back(c.path_utf8);
         } else if (dedupe_prefers(c.path_utf8, out_src[it->second])) {
-            extras.push_back(out[it->second]);
             out[it->second] = c.rec.e;
             out_src[it->second] = c.path_utf8;
-        } else extras.push_back(c.rec.e);
-    }
-    for (GameEntry& g : offline_games) {   // games of a drive that is not connected: listed from the last good scan (Play says the drive is missing)
-        auto it = by_key.find(g.key);
-        if (it == by_key.end()) { by_key.emplace(g.key, out.size()); out.push_back(std::move(g)); }
-    }
-    {
-        std::lock_guard<std::mutex> lk(g_skip_mu);
-        g_extra_copies = std::move(extras);
-        g_folder_status = std::move(fstat);
+        }
     }
     std::stable_sort(out.begin(), out.end(), [](const GameEntry& a, const GameEntry& b) {
         if (a.system != b.system) return (int)a.system < (int)b.system;
@@ -2735,15 +2645,6 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         return a.path < b.path;
     });
     return out;
-}
-
-std::vector<GameEntry> scan_extra_copies() {
-    std::lock_guard<std::mutex> lk(g_skip_mu);
-    return g_extra_copies;
-}
-std::vector<FolderScanStatus> scan_folder_status() {
-    std::lock_guard<std::mutex> lk(g_skip_mu);
-    return g_folder_status;
 }
 
 std::vector<SkippedArchive> scan_skipped_archives() {
@@ -2777,7 +2678,7 @@ std::vector<CacheItem> cache_items() {
         std::wstring n = it->path().filename().wstring();
         if (n == L"_probe") continue;
         std::vector<fs::path> dirs;
-        if (n == L"3ds" || n == L"gc" || n == L"ps1" || n == L"ps2" || n == L"psp" || n == L"wiiu" || n == L"hacks") {   // hacks: one item per patched image (Plan 4 H3)
+        if (n == L"3ds" || n == L"gc" || n == L"ps1" || n == L"ps2" || n == L"wiiu") {
             std::error_code e2;
             for (fs::directory_iterator j(it->path(), e2), je; !e2 && j != je; j.increment(e2)) if (j->is_directory(e2)) dirs.push_back(j->path());
         } else dirs.push_back(it->path());
@@ -2794,31 +2695,6 @@ std::vector<CacheItem> cache_items() {
     }
     return v;
 }
-
-std::mutex g_pin_mu;
-std::string g_pin_dir;   // lowercase UTF-8 path of the running game's unpacked folder ("" = none)
-
-/* The cache folder of an entry (same rule as rom_cache_touch); "" when the game is not unpacked into the cache. */
-std::string cache_dir_of(const GameEntry& e) {
-    if (e.issue.empty() && e.path.empty()) return {};
-    fs::path d = utf8_path(e.path).parent_path();
-    fs::path root = lib_dir() / L"rom-cache";
-    if (ascii_lower(path_utf8(d)).rfind(ascii_lower(path_utf8(root)), 0) != 0) d = utf8_path(extract_3ds_dir(e));
-    return d.empty() ? std::string() : ascii_lower(path_utf8(d));
-}
-
-/* True when the item holds the pinned folder (or is inside it): it must not be removed while the game runs. */
-bool cache_item_pinned(const fs::path& item) {
-    std::lock_guard<std::mutex> lk(g_pin_mu);
-    if (g_pin_dir.empty()) return false;
-    std::string d = ascii_lower(path_utf8(item));
-    while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
-    const std::string& p = g_pin_dir;
-    auto under = [](const std::string& a, const std::string& b) {   // a is b or inside b
-        return a.size() >= b.size() && a.compare(0, b.size(), b) == 0 && (a.size() == b.size() || a[b.size()] == '\\' || a[b.size()] == '/');
-    };
-    return under(p, d) || under(d, p);
-}
 } // namespace
 
 uint64_t rom_cache_bytes() {
@@ -2830,7 +2706,6 @@ uint64_t rom_cache_bytes() {
 bool rom_cache_clear() {
     bool ok = true;
     for (const CacheItem& c : cache_items()) {
-        if (cache_item_pinned(c.dir)) { ok = false; continue; }   // the running game's files stay (library-14)
         std::error_code ec;
         fs::remove_all(c.dir, ec);
         if (ec) ok = false;
@@ -2838,13 +2713,6 @@ bool rom_cache_clear() {
     std::error_code ec;
     fs::remove(lib_dir() / L"library_cache.json", ec);   // cartridge entries point into the cache: identify them again
     return ok;
-}
-
-void rom_cache_pin(const GameEntry* e) {
-    std::string d = e ? cache_dir_of(*e) : std::string();
-    while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
-    std::lock_guard<std::mutex> lk(g_pin_mu);
-    g_pin_dir = d;
 }
 
 void rom_cache_set_limit(uint64_t bytes) { g_cache_limit = bytes; }
@@ -2859,7 +2727,7 @@ uint64_t rom_cache_trim(uint64_t max_bytes) {
     const auto recent = fs::file_time_type::clock::now() - std::chrono::hours(1);
     for (const CacheItem& c : items) {
         if (total <= max_bytes) break;
-        if (c.used > recent || cache_item_pinned(c.dir)) continue;   // just unpacked, or the running game's (library-14)
+        if (c.used > recent) continue;   // just unpacked or in use
         std::error_code ec;
         fs::remove_all(c.dir, ec);
         if (ec) continue;
@@ -2940,34 +2808,6 @@ void library_set_data_dir(const std::string& dir) {
     }
     std::lock_guard<std::mutex> lk(g_dir_mu);
     g_dir_override = dir;
-}
-
-std::set<std::string> local_removed() {
-    std::set<std::string> s;
-    std::ifstream f(lib_dir() / L"removed_here.txt", std::ios::binary);
-    std::string ln;
-    while (std::getline(f, ln)) {
-        while (!ln.empty() && (ln.back() == '\r' || ln.back() == ' ')) ln.pop_back();
-        if (!ln.empty()) s.insert(ln);
-    }
-    return s;
-}
-
-bool local_removed_set(const std::string& key, bool removed) {
-    if (key.empty() || key.find_first_of("\r\n") != std::string::npos) return false;
-    std::set<std::string> s = local_removed();
-    if (removed ? !s.insert(key).second : !s.erase(key)) return true;   // nothing to change
-    fs::path dst = lib_dir() / L"removed_here.txt", tmp = lib_dir() / L"removed_here.txt.tmp";
-    std::error_code ec;
-    fs::create_directories(dst.parent_path(), ec);
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        for (const auto& k : s) f << k << "\n";
-        if (!f) return false;
-    }
-    fs::remove(dst, ec);
-    fs::rename(tmp, dst, ec);
-    return !ec;
 }
 
 } // namespace hub

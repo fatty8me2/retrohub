@@ -63,7 +63,7 @@ bool sound_available(hub::System s) {
     if (!hub::realboot::custom_sound_path(custom_dir(), s).empty()) return true;
     switch (s) {
     case hub::System::N64: case hub::System::GB: case hub::System::GBC: case hub::System::GBA: case hub::System::NDS:
-    case hub::System::N3DS: case hub::System::GC: case hub::System::PS1: case hub::System::PS2: case hub::System::PSP: case hub::System::WiiU:
+    case hub::System::N3DS: case hub::System::GC: case hub::System::PS1: case hub::System::PS2: case hub::System::WiiU:
     case hub::System::NES: case hub::System::SNES:
         return true;
     default: return false;

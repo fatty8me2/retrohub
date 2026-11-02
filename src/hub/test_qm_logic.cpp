@@ -163,37 +163,6 @@ int main() {
         CHECK(ok == 5 && !l.allow(2000) && l.allow(8000));
         CHECK(quick_phrases().size() == 4 && quick_phrases()[0] == "GG");
     }
-    {   // Plan 4: pause row, pass controller, emotes, command pacing
-        using namespace hubqm;
-        CHECK(auto_pause_wanted(true, true, true, false));
-        CHECK(!auto_pause_wanted(false, true, true, false));    // setting off
-        CHECK(!auto_pause_wanted(true, true, true, true));      // never online
-        CHECK(!auto_pause_wanted(true, false, true, false));    // menu closed
-        CHECK(!auto_pause_wanted(true, true, false, false));    // no control channel
-        CHECK(!pause_available(true, true) && pause_available(true, false) && !pause_available(false, false));
-        CHECK(port_of_slot("0,1,2", 1) == 1 && port_of_slot("0,0,1,-1", 1) == 2 && port_of_slot("3,-1", 0) == -1 && port_of_slot("", 0) == -1);
-        CHECK(port_of_slot("2,0,1", 0) == 1 && port_of_slot("0,1", 11) == -1 && port_of_slot("1,10", 1) == 0);
-        CHECK(countdown_text("Mickey", 1) == "Passing to Mickey in 3");
-        CHECK(countdown_text("Mickey", 2) == "Passing to Mickey in 3..2");
-        CHECK(countdown_text("Mickey", 3) == "Passing to Mickey in 3..2..1" && countdown_text("M", 9) == "Passing to M in 3..2..1");
-        CHECK(handoff_fail_text("unsupported") == kHandoffUnsupportedText && handoff_fail_text("") == kHandoffUnsupportedText);
-        CHECK(std::string(kHandoffUnsupportedText) == "Passing the controller works in NES and SNES online games for now");
-        CHECK(handoff_fail_text("busy") == "busy");
-        CHECK(emotes().size() == 5 && std::string(emotes()[0].label) == "GG" && std::string(emotes()[4].label) == "ONE MORE?");
-        CHECK(find_emote("gg") && find_emote("more") && !find_emote("GG") && !find_emote("") && !find_emote("gg\"}"));
-        CHECK(emote_json("nice") == "{\"kind\":\"emote\",\"e\":\"nice\"}");
-        EmoteLimiter el;   // one per 2 s
-        CHECK(el.allow(100000) && !el.allow(100001) && !el.allow(101999) && el.allow(102000) && !el.allow(103000));
-        EmoteInLimiter il;
-        CHECK(il.allow(1, 5000) && !il.allow(1, 5500) && il.allow(2, 5500) && il.allow(1, 6000) && !il.allow(-1, 0) && !il.allow(8, 0));
-        CmdPacer p;   // one command at a time
-        CHECK(p.may_send(0));
-        p.sent(5, 1000);
-        CHECK(!p.may_send(1100));
-        p.ack(4); CHECK(!p.may_send(1100));
-        p.ack(5); CHECK(p.may_send(1100));
-        p.sent(6, 2000); CHECK(!p.may_send(2500) && p.may_send(2700));   // a runner that never acks: go on after kMaxWaitMs
-    }
     std::printf(g_fail ? "FAILED\n" : "ok\n");
     return g_fail ? 1 : 0;
 }

@@ -70,7 +70,6 @@ class WsClient {
     ~WsClient();
     bool connect(const std::string& url);
     void close();
-    void drop_abruptly();   // QA: kill the connection without a close frame (what a Wi-Fi blip looks like to the server)
     WsState state() const { return state_; }
     std::string error() const;
     int close_code() const { return close_code_; }   // server close code (0 = none)

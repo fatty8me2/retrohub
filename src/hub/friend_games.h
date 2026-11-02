@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -45,28 +44,6 @@ inline std::string identity(const std::string& sys, const std::string& cid, cons
 
 struct Owned { std::string sys, key, cid, title; };
 
-/* Optional: the clean (No-Intro) name already known for a game key ("nds:azee-004d56" -> "Legend of Zelda, The - Phantom
- * Hourglass (USA) (En,Fr,Es)"), "" if none. A friend whose copy is titled by its ROM header ("Zelda_DS:PH") is the same
- * game as the pack's "The Legend of Zelda - Phantom Hourglass" only through this name. */
-using NameOf = std::function<std::string(const std::string& sys, const std::string& key)>;
-
-/* "Legend of Zelda, The - Phantom Hourglass (USA)" -> "The Legend of Zelda - Phantom Hourglass" (tags dropped, trailing article moved up). */
-inline std::string clean_dat_name(const std::string& n)
-{
-    std::string o;
-    int depth = 0;
-    for (char ch : n) {
-        if (ch == '(' || ch == '[') { ++depth; continue; }
-        if (ch == ')' || ch == ']') { if (depth > 0) --depth; continue; }
-        if (!depth) o += ch;
-    }
-    while (!o.empty() && o.back() == ' ') o.pop_back();
-    size_t c = o.find(", The");
-    if (c != std::string::npos && (c + 5 == o.size() || o[c + 5] == ' ' || o[c + 5] == '-' || o[c + 5] == ':'))
-        o = "The " + o.substr(0, c) + o.substr(c + 5);
-    return o;
-}
-
 struct Ghost {
     std::string id;                    // identity()
     std::string sys, cid, key, title;  // as published by the first friend that owns it
@@ -80,8 +57,7 @@ constexpr size_t kMaxGhosts = 5000;
  * people). A game is yours when its identity or its key matches one of yours. Result sorted by title (case-insensitive),
  * then identity. Entries with an empty identity title are skipped. */
 inline std::vector<Ghost> build_ghosts(const std::vector<Owned>& mine,
-                                       const std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>>& libs,
-                                       const NameOf& name_of = nullptr)
+                                       const std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>>& libs)
 {
     std::set<std::string> have_id, have_key;
     for (const Owned& o : mine) { have_id.insert(identity(o.sys, o.cid, o.title)); have_id.insert(identity(o.sys, "", o.title)); have_key.insert(o.sys + "|" + o.key); }
@@ -90,14 +66,12 @@ inline std::vector<Ghost> build_ghosts(const std::vector<Owned>& mine,
         if (!fl.second) continue;
         for (const hubnet::LibGame& g : *fl.second) {
             if (g.sys.empty() || g.title.empty()) continue;
-            std::string title = g.title;
-            if (g.cid.empty() && name_of) { std::string nm = name_of(g.sys, g.key); if (!nm.empty()) { std::string c = clean_dat_name(nm); if (!c.empty()) title = c; } }
-            std::string id = identity(g.sys, g.cid, title);
-            if (have_id.count(id) || have_id.count(identity(g.sys, "", title)) || have_id.count(identity(g.sys, "", g.title)) || have_key.count(g.sys + "|" + g.key)) continue;
+            std::string id = identity(g.sys, g.cid, g.title);
+            if (have_id.count(id) || have_id.count(identity(g.sys, "", g.title)) || have_key.count(g.sys + "|" + g.key)) continue;
             auto it = by_id.find(id);
             if (it == by_id.end()) {
                 if (by_id.size() >= kMaxGhosts) continue;
-                Ghost n; n.id = id; n.sys = g.sys; n.cid = g.cid; n.key = g.key; n.title = title;
+                Ghost n; n.id = id; n.sys = g.sys; n.cid = g.cid; n.key = g.key; n.title = g.title;
                 it = by_id.emplace(id, std::move(n)).first;
             }
             auto& u = it->second.uids;

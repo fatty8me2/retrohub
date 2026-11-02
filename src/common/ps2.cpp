@@ -7,7 +7,6 @@
 #include <filesystem>
 #include <fstream>
 
-#include "ps1.h"
 #include "winutil.h"
 
 namespace hub { namespace ps2 {
@@ -136,100 +135,6 @@ bool identify_file(const std::string& path, Ident* out) {
     if (disc::probe_file(path, &in)) return from_info(in, out);
     if (ext == ".chd") return by_name(u8(p.filename()), out);
     return false;
-}
-
-/* ------------------------------------------------------------------ .cue for PCSX2 */
-
-namespace {
-struct Layout { uint32_t stride = 0, off = 0; bool plain = false; };   // plain: PCSX2 reads the file as it is
-
-bool layout_of(const fs::path& bin, const std::string& mode, Layout* L) {
-    std::ifstream f(bin, std::ios::binary);
-    uint8_t h[16] = {};
-    if (!f) return false;
-    f.read((char*)h, sizeof h);
-    if (f.gcount() != (std::streamsize)sizeof h) return false;
-    static const uint8_t sync[12] = {0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0};
-    if (std::memcmp(h, sync, 12) == 0) { L->stride = 2352; L->off = h[15] == 2 ? 24 : 16; L->plain = true; return true; }
-    if (mode.find("2336") != std::string::npos) { L->stride = 2336; L->off = 8; L->plain = false; return true; }
-    L->stride = 2048; L->off = 0; L->plain = true;
-    return true;
-}
-
-bool build_iso(const fs::path& bin, const Layout& L, const fs::path& iso, std::string* err) {
-    std::error_code ec;
-    uintmax_t size = fs::file_size(bin, ec);
-    if (ec || size < L.stride * 17u) { *err = "the disc image is too small to be a game"; return false; }
-    fs::create_directories(iso.parent_path(), ec);
-    fs::space_info sp = fs::space(iso.parent_path(), ec);
-    uint64_t need = size / L.stride * 2048ull;
-    if (!ec && sp.available < need + (64ull << 20)) { *err = "not enough free disk space (" + std::to_string((need >> 20) + 64) + " MB needed)"; return false; }
-    fs::path part = iso;
-    part += L".part";
-    std::ifstream in(bin, std::ios::binary);
-    std::ofstream out(part, std::ios::binary | std::ios::trunc);
-    if (!in || !out) { *err = "cannot write " + u8(part); return false; }
-    std::vector<char> sec(L.stride);
-    for (uintmax_t n = size / L.stride; n > 0; --n) {
-        in.read(sec.data(), (std::streamsize)sec.size());
-        if (in.gcount() != (std::streamsize)sec.size()) break;
-        out.write(sec.data() + L.off, 2048);
-    }
-    out.close();
-    if (!out) { fs::remove(part, ec); *err = "cannot write " + u8(part); return false; }
-    fs::remove(iso, ec);
-    fs::rename(part, iso, ec);
-    if (ec) { *err = "cannot write " + u8(iso); return false; }
-    return true;
-}
-} // namespace
-
-bool launch_image(const std::string& path, const std::string& out_dir, std::string* image, std::string* err) {
-    std::string dummy;
-    if (!err) err = &dummy;
-    fs::path p = fs::u8path(path);
-    if (lower(u8(p.extension())) != ".cue") { *image = path; return true; }
-    std::string who = u8(p.filename());
-    std::error_code ec;
-    std::ifstream f(p, std::ios::binary);
-    if (!f) { *err = "cannot read " + who; return false; }
-    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    std::vector<ps1::CueFile> files = ps1::parse_cue(text);
-    const ps1::CueFile* pick = nullptr;   // first data track
-    for (const ps1::CueFile& c : files) if (c.mode.compare(0, 5, "AUDIO") != 0) { pick = &c; break; }
-    if (!pick) { *err = who + " lists no data track"; return false; }
-    fs::path bin = fs::u8path(pick->file);
-    if (bin.is_relative()) bin = p.parent_path() / bin;
-    if (!fs::is_regular_file(bin, ec)) {   // the cue may name the bin with another case / path separators
-        fs::path alt = p.parent_path() / bin.filename();
-        if (fs::is_regular_file(alt, ec)) bin = alt;
-        else { *err = who + " points at " + u8(bin.filename()) + ", which is missing"; return false; }
-    }
-    Layout L;
-    if (!layout_of(bin, pick->mode, &L)) { *err = "cannot read " + u8(bin.filename()); return false; }
-    std::string iso = u8(fs::u8path(out_dir) / (p.stem().wstring() + L".iso"));
-    std::string stamp = std::to_string(fs::file_size(bin, ec)) + "|" + std::to_string((long long)fs::last_write_time(bin, ec).time_since_epoch().count());
-    if (L.plain) {
-        *image = u8(bin);
-    } else {
-        fs::path sf = fs::u8path(out_dir) / L"stamp.txt";
-        std::string have;
-        { std::ifstream sin(sf, std::ios::binary); std::getline(sin, have); }
-        if (have != stamp || !fs::is_regular_file(fs::u8path(iso), ec)) {
-            if (!build_iso(bin, L, fs::u8path(iso), err)) return false;
-            std::ofstream sout(sf, std::ios::binary | std::ios::trunc);
-            sout << stamp << '\n';
-        }
-        *image = iso;
-    }
-    disc::Info info;
-    if (!disc::probe_file(*image, &info) || info.kind == disc::Cnf::None) {
-        if (!L.plain) { fs::remove(fs::u8path(iso), ec); }
-        *err = "the disc inside " + who + " is not a readable PlayStation 2 disc";
-        return false;
-    }
-    if (info.kind == disc::Cnf::Ps1) { *err = who + " is a PlayStation 1 disc, not PlayStation 2"; return false; }
-    return true;
 }
 
 std::string key_for(const std::string& serial, const std::string& stem_key) {

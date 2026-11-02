@@ -1,5 +1,4 @@
 #include "app.h"
-#include "convenience.h"
 #include "pcsx2.h"
 #include "gamepack.h"
 
@@ -15,7 +14,7 @@ void settings_label(const char* title, const char* hint) {
 namespace {
 
 /* Emulator lookups touch the disk: refresh every 2 s, not every frame (Video & Games tab). */
-struct EmuLook { hubemu::Install az, cm, dl, ps, pp; hubemu::Bios bi; };
+struct EmuLook { hubemu::Install az, cm, dl, ps; hubemu::Bios bi; };
 const EmuLook& emu_look() {
     static EmuLook e;
     static double looked_at = -100;
@@ -26,7 +25,6 @@ const EmuLook& emu_look() {
         e.az = hubemu::find(hubemu::Kind::Azahar, "", "");
         e.dl = hubemu::find(hubemu::Kind::Dolphin, "", "");
         e.ps = hubemu::find(hubemu::Kind::Pcsx2, "", "");
-        e.pp = hubemu::find(hubemu::Kind::Ppsspp, "", "");
         e.bi = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
         e.cm = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, wiiu_game);
         looked_at = ImGui::GetTime();
@@ -133,7 +131,6 @@ void tab_general() {
         ImGui::PushTextWrapPos(0.f);
         ImGui::TextDisabled("%s", A.st.rom_folders[i].c_str());
         ImGui::PopTextWrapPos();
-        { const std::string st = library_folder_status_line(A.st.rom_folders[i]); if (!st.empty()) text_wrapped_disabled(st); }
         ImGui::PopID();
     }
     if (remove_at >= 0) {
@@ -217,7 +214,7 @@ void tab_general() {
     text_wrapped_disabled("Automatic shrinks the sidebar to icons when the window is narrow.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ImGui::Checkbox("Show friends panel", &A.st.show_friends)) mark_dirty();
-    if (ImGui::Checkbox("Show a Windows notification for invites when no game is running", &A.st.notify_in_game)) mark_dirty();
+    if (ImGui::Checkbox("Notify me about invites while I'm playing", &A.st.notify_in_game)) mark_dirty();
     text_wrapped_disabled("Shows a Windows notification that never takes focus from your game. Click Join to enter the room when your game ends.");
     {
         ImGui::TextUnformatted("Chat on screen while playing");
@@ -280,14 +277,6 @@ void tab_online() {
     }
     end_panel();
     gap();
-    begin_panel("set_conn");
-    section_title("Connection and Discord");
-    nettest_settings_ui();
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    ImGui::Separator();
-    discord_settings_ui();
-    end_panel();
-    gap();
     begin_panel("set_adv");
     if (ImGui::CollapsingHeader("Advanced")) {
         char sb[256];
@@ -322,7 +311,7 @@ void tab_video() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     {
         const EmuLook& el = emu_look();
-        const hubemu::Install &az = el.az, &cm = el.cm, &dl = el.dl, &ps = el.ps, &pp = el.pp;
+        const hubemu::Install &az = el.az, &cm = el.cm, &dl = el.dl, &ps = el.ps;
         const hubemu::Bios& bi = el.bi;
         text_wrapped_disabled("Dolphin (GameCube): " + (dl.exe.empty() ? std::string("not installed - downloads the first time you play a GameCube game (about 18 MB)") : dl.exe));
         text_wrapped_disabled("PCSX2 (PlayStation 2): " + (ps.exe.empty() ? std::string("not installed - downloads the first time you play a PS2 game (about 25 MB)") : ps.exe));
@@ -338,7 +327,6 @@ void tab_video() {
                 if (button("Use automatic##ps2bios", ImVec2(0, 0))) { A.st.ps2_bios_dir.clear(); mark_dirty(); }
             }
         }
-        text_wrapped_disabled("PPSSPP (PlayStation Portable): " + (pp.exe.empty() ? std::string("not installed - downloads the first time you play a PSP game (about " + std::to_string((int)(hubemu::release(hubemu::Kind::Ppsspp).size / 1048576)) + " MB)") : pp.exe));
         ps1_settings_ui();
         text_wrapped_disabled("Azahar (3DS): " + (az.exe.empty() ? std::string("not installed - downloads the first time you play a 3DS game (about 42 MB)") : az.exe));
         text_wrapped_disabled("Cemu (Wii U): " + (cm.exe.empty() ? std::string("not found - downloads the first time you play a Wii U game (about 25 MB)") : cm.exe + "  (" + cm.how + ")"));
@@ -369,7 +357,7 @@ void settings_open(int tab) {
 void page_settings() {
     page_header("Settings", "Make RetroHub yours.");
     A.st.settings_tab = hubui::settings_tab_clamp(A.st.settings_tab);
-    static const char* labels[hubui::ST_Count] = {"General", "Online", "Video & Games", "Account", "Help"};
+    static const char* labels[hubui::ST_Count] = {"General", "Online", "Video & Games", "Account"};
     int nt = ui::segmented("settabs", labels, hubui::ST_Count, A.st.settings_tab);
     if (nt != A.st.settings_tab) { A.st.settings_tab = nt; mark_dirty(); }
     ImGui::SameLine(0, sp(2.f));
@@ -379,7 +367,6 @@ void page_settings() {
         case hubui::ST_General: tab_general(); break;
         case hubui::ST_Online: tab_online(); break;
         case hubui::ST_Video: tab_video(); break;
-        case hubui::ST_Help: help_tab_ui(); break;
         default: draw_account_section(); break;
     }
     ImGui::Dummy(ImVec2(0, sp(2.f)));

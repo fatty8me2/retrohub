@@ -1,6 +1,5 @@
 #include "app.h"
 #include "friends_ui.h"
-#include "party_ui.h"
 #include "profile.h"
 #include "online_caps.h"
 #include "remote_play.h"
@@ -77,16 +76,6 @@ void page_online_home() {
     end_panel();
 
     ImGui::Dummy(ImVec2(0, sp(1.f)));
-    {   // Plan 4 P3: a party night for the people on this PC's couch - no room, no network
-        begin_panel("couchparty", ImVec2(avail, 0));
-        section_title("Couch party");
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        text_wrapped_disabled("Everyone on this PC: pick a few games, play a round of each, keep the score and crown the winner. No room needed.");
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        if (button(party_couch_active() ? "Continue the couch party" : "Start a couch party", ImVec2(sp(26.f), sp(5.5f)), !party_couch_active(), A.proc == nullptr, ui::Icon::Gamepad)) party_couch_open();
-        end_panel();
-    }
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
     online_friend_rooms_panel(avail);
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     begin_panel("howto");
@@ -124,10 +113,6 @@ void page_online_home() {
 void host_launch_selected() {
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
     if (!rg) return;
-    if (is_hack(*rg)) {   // ROM hack: every PC plays its own patched copy. Until the host's is ready (still preparing, or failed with a notice) nothing is announced
-        std::string patched;
-        if (!hack_ensure_rom(*rg, &patched)) return;
-    }
     if (remote_play_entry(*rg) && !rplay_precheck()) return;   // Wii U remote play: probe the direct paths first; poll_rplay re-enters here when they all work
     GRP.again = false;
     std::vector<hubui::PeerInfo> peers = peer_list();
@@ -162,10 +147,6 @@ void host_launch_selected() {
                 A.lobby.send_msg(lmsg);
                 launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
                 g_room_dropin = false;   // set per launch, never left over for another
-                /* OF-M8: the launch message is out before launch_online() validates anything. If nothing started - and nothing is starting - the
-                 * guests' runners would wait for a game that never comes: tell them (they show the reason and close a runner that is already up). */
-                if (!g_fake_room && room_connected() && !session_active())
-                    A.lobby.send_msg("{\"kind\":\"np_abort\",\"reason\":\"the game did not start on the host's PC\"}");
             } else --A.launch_counter;        }
 
 /* Why the chosen game cannot start right now ("" = fine). Shared by the READY and LAUNCH buttons. */
@@ -193,7 +174,6 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
     std::string host_app;
     bool host_hello = false;
     for (auto& p : peers) if (p.slot == 0) { host_app = p.app; host_hello = p.hello; }
-    if (!host) { std::string b = emulator_online_block(); if (!b.empty()) return b; }   // Dolphin / Azahar missing on this PC: READY stays off with that reason
     if (rg->system == hub::System::PS1) { std::string b = ps1_online_block(); if (!b.empty()) return b; }   // host and guest alike
     if (rg->system == hub::System::PS2) { std::string b = ps2_online_block(*rg); if (!b.empty()) return b; }   // core download / BIOS / unpack, host and guest alike
     if (host) {
@@ -210,38 +190,6 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
         return "";
     }
     return "";
-}
-
-/* Party mode (Plan 4): the room banner's rules, for code that is not the banner. */
-
-/* Why the host's Launch button is disabled right now ("" and *can_launch = true when it is enabled): the same rule as the room banner. */
-std::string room_host_launch_block(bool* can_launch) {
-    if (can_launch) *can_launch = false;
-    if (!is_host()) return "Only the host can launch.";
-    const std::vector<hubui::PeerInfo> peers = peer_list();
-    const hub::GameEntry* rg = find_room_entry(A.selected_game);
-    hubui::GuestVersionAction gact;
-    const std::string block = room_block_reason(true, rg, peers, &gact);
-    std::vector<hubui::RoomMember> mem;
-    const int me = room_my_slot();
-    for (auto& p : peers) {
-        auto it = A.ready.find(p.slot);
-        const bool rd = p.slot == 0 || (p.slot == me ? A.my_ready : (it != A.ready.end() && it->second));
-        mem.push_back({p.name, rd, p.slot == 0, p.slot == me});
-    }
-    const hubui::RoomActionState st = hubui::room_action_state(true, rg != nullptr, rg ? rg->title : "", block, A.my_ready, mem);
-    const bool ok = st.button_enabled && st.is_launch;
-    if (can_launch) *can_launch = ok;
-    return ok ? std::string() : (!st.detail.empty() ? st.detail : st.headline);
-}
-
-/* "" or why this PC cannot press READY for the room's game right now (missing game / BIOS, version, ...). */
-std::string room_guest_ready_block() {
-    if (is_host()) return "";
-    const std::vector<hubui::PeerInfo> peers = peer_list();
-    const hub::GameEntry* rg = find_room_entry(A.selected_game);
-    hubui::GuestVersionAction gact;
-    return room_block_reason(false, rg, peers, &gact);
 }
 
 /* The unmissable top-of-room action: big READY toggle (guest) / LAUNCH (host), the state in words, and who is ready. */
@@ -452,7 +400,6 @@ void page_online_room() {
     ImGui::BeginChild("roomleft", ImVec2(left_w, h), ImGuiChildFlags_NavFlattened);
 
     room_game_hero(rg, host);   // the selected game, big, with its cover (guests: the host's pick)
-    party_room_panel(left_w - ImGui::GetStyle().ScrollbarSize);   // Plan 4 Party mode / vote for the next game (nothing drawn for a guest while it is off)
     cheats_room_strip(rg, host);   // under the game it applies to (the column beside the chat), so the game card stays high on the page
     kt_room_panel(left_w - ImGui::GetStyle().ScrollbarSize, true);   // Kanto Together: live status + trade panel first
     // member cards (4 slots)

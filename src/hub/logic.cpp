@@ -9,9 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <set>
 #include <sstream>
 
@@ -97,9 +95,6 @@ std::string settings_to_json(const Settings& s) {
       << "  \"menu_volume\": " << s.menu_volume << ",\n"
       << "  \"menu_music\": " << (s.menu_music ? "true" : "false") << ",\n"
       << "  \"attract_mode\": " << (s.attract_mode ? "true" : "false") << ",\n"
-      << "  \"discord_presence\": " << (s.discord_presence ? "true" : "false") << ",\n"
-      << "  \"discord_join\": " << (s.discord_join ? "true" : "false") << ",\n"
-      << "  \"net_probe_done\": " << (s.net_probe_done ? "true" : "false") << ",\n"
       << "  \"share_games\": " << (s.share_games ? "true" : "false") << ",\n"
       << "  \"show_friend_games\": " << (s.show_friend_games ? "true" : "false") << ",\n"
       << "  \"friend_games_v\": 1,\n"
@@ -194,9 +189,6 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->menu_volume = std::max(0, std::min(100, (int)j.num("menu_volume", out->menu_volume)));
     out->attract_mode = json_bool(j, "attract_mode", out->attract_mode);
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
-    out->discord_presence = json_bool(j, "discord_presence", out->discord_presence);
-    out->discord_join = json_bool(j, "discord_join", out->discord_join);
-    out->net_probe_done = json_bool(j, "net_probe_done", out->net_probe_done);
     out->share_games = json_bool(j, "share_games", out->share_games);
     out->show_friend_games = json_bool(j, "show_friend_games", out->show_friend_games);
     if (j.num("friend_games_v", 0) < 1) out->show_friend_games = true;   // one-time migration: older builds let the library chip switch it off by accident
@@ -862,50 +854,13 @@ std::string dropin_exit_text(unsigned long code) {
     }
 }
 
-DriverVerdict driver_verdict(bool driver_alive, const std::string& st, unsigned long long ms, bool host) {
-    if (st.find("error:") != std::string::npos) return DriverVerdict::Ok;   // the error lines are handled (and shown) by the caller
-    bool any_stage = st.find("stage:") != std::string::npos;
-    bool playing = st.find("stage:in-game") != std::string::npos || st.find("stage:started") != std::string::npos || st.find("stage:joined") != std::string::npos;
-    bool ended = st.find("stage:ended") != std::string::npos;
-    if (!driver_alive && !ended) {
-        if (!any_stage) return DriverVerdict::DiedSilently;   // never wrote a line: the script could not run at all
-        if (!playing) return DriverVerdict::DiedEarly;
-        return DriverVerdict::Ok;                               // the game runs by itself once started
-    }
-    if (!any_stage && ms > 45000) return DriverVerdict::NoStage;
-    if (host && !playing && st.find("stage:netplay-open") == std::string::npos && any_stage && ms > 120000) return DriverVerdict::NeverOpened;
-    return DriverVerdict::Ok;
-}
-
-std::string driver_verdict_text(DriverVerdict v) {
-    switch (v) {
-        case DriverVerdict::DiedSilently: return "RetroHub's helper script for Dolphin could not run. PowerShell or Windows UI Automation may be blocked (antivirus, AppLocker, or a policy).";
-        case DriverVerdict::NoStage: return "RetroHub's helper script for Dolphin never reported in. PowerShell or Windows UI Automation may be blocked or too slow.";
-        case DriverVerdict::DiedEarly: return "RetroHub's helper script for Dolphin stopped before the game started.";
-        case DriverVerdict::NeverOpened: return "Dolphin's NetPlay window never opened.";
-        default: return "";
-    }
-}
-
-static std::string g_net_reason_file;
-void set_net_reason_file(const std::string& p) { g_net_reason_file = p; }
-std::string net_reason_text() {
-    if (g_net_reason_file.empty()) return "";
-    std::ifstream f(std::filesystem::u8path(g_net_reason_file), std::ios::binary);
-    std::string t((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    while (!t.empty() && (t.back() == 0x0A || t.back() == 0x0D || t.back() == ' ')) t.pop_back();
-    if (t.size() > 300) t.resize(300);
-    return t;
-}
-
 std::string exit_code_text(unsigned long code) {
     switch (code) {
         case 0: return "Game closed normally.";
         case 2: return "The game couldn't start: the room's player/port setup or the ROM was rejected. Leave the room, rejoin and try again.";
         case 3: return "Emulator files are missing (emu/ folder). Reinstall or run scripts/fetch-emu.ps1.";
         case 4: return "Connection lost during the match.";
-        case 12: { std::string r = net_reason_text(); return r.empty() ? std::string("Couldn't connect to the other players.") : "Couldn't connect: " + r; }
-        case 5: return "The game went out of sync and could not be repaired, so it was stopped. Start it again to keep playing together.";
+        case 5: return "The game went out of sync (desync) and was stopped.";
         case 6: return "Couldn't share the host's save - check your connection and try again.";
         case 8: return player_left_text("");
         case 9: case 10: case 11: return hubps2::setup_mismatch_text(code);
@@ -1025,14 +980,13 @@ std::string system_shelf_title(const std::string& s) {
     if (s == "nds") return "Nintendo DS";
     if (s == "ps1") return "PlayStation";
     if (s == "ps2") return "PlayStation 2";
-    if (s == "psp") return "PlayStation Portable";
     if (s == "nes") return "Nintendo Entertainment System";
     if (s == "snes") return "Super Nintendo";
     return s;
 }
 
 const std::vector<std::string>& console_order() {
-    static const std::vector<std::string> v = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "psp", "nes", "snes", "gba", "gbc", "gb"};
+    static const std::vector<std::string> v = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "nes", "snes", "gba", "gbc", "gb"};
     return v;
 }
 
@@ -1478,8 +1432,6 @@ std::string friends_error_text(const std::string& r, const std::string& d) {
         if (d == "undeliverable") return "That message could not be delivered.";
         if (d == "no-such-request") return "That request is no longer there.";
         if (d == "too-many-blocked") return "Your block list is full.";
-        if (d == "attach-gone") return "That file is no longer available - attachments are kept for 7 days.";
-        if (d == "attach-not-yours") return "That file can't be sent to this friend.";
         if (d == "retired-elsewhere") return "That account was already moved to another identity.";
         return "";   // internal / retire-failed / bad-secret / text / too-large / none: retried or not user-actionable
     }

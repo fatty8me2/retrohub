@@ -1,6 +1,5 @@
 // Console test: toast XML builder, activation parsing and the show/skip policy with a mock notifier (no real toasts).
 #include "toast.h"
-#include "popup_guard.h"
 
 #include <cstdio>
 
@@ -39,35 +38,31 @@ int main() {
     CHECK(!parse_activation_code("https://evil/ABC234", &c));
     CHECK(!parse_activation_code("", &c));
 
-    /* Plan 4 (SO-F14, owner decision): NO Windows toast while a game runs, even when the player opted in. These toasts only ever existed
-     * for the in-game case, so the one gate (should_toast) is false for every input; the bell and the runner OSD carry the message. */
-    for (int s = 0; s < 2; ++s)
-        for (int g = 0; g < 2; ++g)
-            for (int a = 0; a < 2; ++a)
-                CHECK(!should_toast(s != 0, g != 0, a != 0));
-    CHECK(!should_toast(true, true, true));          // opted in, game running, notifier available: still no
-    CHECK(!hubguard::may_windows_toast(true) && hubguard::may_windows_toast(false));   // the policy the gate asks
+    CHECK(should_toast(true, true, true));
+    CHECK(!should_toast(false, true, true));
+    CHECK(!should_toast(true, false, true));
+    CHECK(!should_toast(true, true, false));
 
     Mock m;
-    CHECK(!notify_invite(m, true, true, "Bob", "Smash 64", "ZXCV23") && m.shown == 0);    // opted in, game running: nothing reaches the notifier
-    CHECK(!notify_invite(m, false, true, "Bob", "Smash 64", "ZXCV23") && m.shown == 0);   // setting off
-    CHECK(!notify_invite(m, true, false, "Bob", "Smash 64", "ZXCV23") && m.shown == 0);   // no game running: the hub shows its own toast
+    CHECK(notify_invite(m, true, true, "Bob", "Smash 64", "ZXCV23") && m.shown == 1 && m.last_tag == "ZXCV23");
+    CHECK(!notify_invite(m, false, true, "Bob", "Smash 64", "ZXCV23") && m.shown == 1);   // setting off
+    CHECK(!notify_invite(m, true, false, "Bob", "Smash 64", "ZXCV23") && m.shown == 1);   // no game running
     m.avail = false;
-    CHECK(!notify_invite(m, true, true, "Bob", "Smash 64", "ZXCV23") && m.shown == 0);    // dev build
+    CHECK(!notify_invite(m, true, true, "Bob", "Smash 64", "ZXCV23") && m.shown == 1);    // dev build
     m.avail = true;
-    CHECK(!notify_invite(m, true, true, "Bob", "Smash 64", "bad") && m.shown == 0);       // invalid code
+    CHECK(!notify_invite(m, true, true, "Bob", "Smash 64", "bad") && m.shown == 1);       // invalid code
 
-    /* "came online" toast: same gate as the invite toast */
+    /* "came online" toast: same policy as the invite toast */
     {
         std::string ox = build_online_xml("Mia <3>");
         CHECK(ox.find("Mia &lt;3&gt; came online") != std::string::npos && ox.find("<action") == std::string::npos);
         CHECK(build_online_xml("").find("A friend came online") != std::string::npos);
         Mock o;
-        CHECK(!notify_online(o, true, true, "Mia") && o.shown == 0);    // opted in, game running: no Windows toast (bell entry + in-hub toast only)
-        CHECK(!notify_online(o, false, true, "Mia") && o.shown == 0);   // in-game notifications off
-        CHECK(!notify_online(o, true, false, "Mia") && o.shown == 0);   // no game running: the hub shows its own toast
+        CHECK(notify_online(o, true, true, "Mia") && o.shown == 1 && o.last_xml.find("Mia came online") != std::string::npos);
+        CHECK(!notify_online(o, false, true, "Mia") && o.shown == 1);   // in-game notifications off
+        CHECK(!notify_online(o, true, false, "Mia") && o.shown == 1);   // no game running: the hub shows its own toast
         o.avail = false;
-        CHECK(!notify_online(o, true, true, "Mia") && o.shown == 0);    // dev build
+        CHECK(!notify_online(o, true, true, "Mia") && o.shown == 1);    // dev build
     }
 
     std::printf(fails ? "hub_toast_test FAILED\n" : "hub_toast_test OK\n");

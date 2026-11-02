@@ -82,22 +82,9 @@ void Lockstep::send_packet() {
     if (n) net_->send(-1, buf, (int)n);
 }
 
-void Lockstep::desync_unrecovered(const std::string& why) {
-    desync_ = true;
-    if (opt_.spectator || fatal_) return;
-    fatal_ = true;
-    fatal_at_ = hubnet::now_ms() ? hubnet::now_ms() : 1;
-    if (hooks_.log) hooks_.log("resync: UNRECOVERED (" + why + "); the match ends in " + std::to_string(kStopAfterMs / 1000) + " s");
-    if (hooks_.on_unrecovered) hooks_.on_unrecovered(why);
-}
-
 void Lockstep::pump() {
     if (!net_) return;
     net_->update();
-    if (fatal_ && !fatal_stopped_ && (int32_t)(hubnet::now_ms() - fatal_at_) >= (int32_t)kStopAfterMs) {
-        fatal_stopped_ = true;
-        if (hooks_.request_stop) hooks_.request_stop();
-    }
     int from;
     std::vector<uint8_t> msg;
     while (net_->recv(&from, &msg)) {
@@ -191,7 +178,6 @@ bool Lockstep::start_barrier(uint32_t timeout_ms) {
         }
         if (now - t0 > timeout_ms) return false;
         if (hooks_.idle) hooks_.idle();
-        if (stop_) return false;   // the hub's Quit arrived while we waited for the other players
         Sleep(5);
     }
 }
@@ -294,8 +280,8 @@ void Lockstep::report_mismatches() {
         if (rs_.stale(m.sample)) { if (hooks_.log) hooks_.log("resync: that check predates the last recovery; ignored"); continue; }
         resync::Act a = rs_.on_mismatch(m.sample, sample_ < 0 ? 0u : (uint32_t)sample_);
         if (a == resync::Act::Fallback) {
+            desync_ = true;
             if (hooks_.log && rs_.count() >= resync::kMaxResyncs) hooks_.log("resync: giving up after " + std::to_string(rs_.count()) + " recoveries");
-            desync_unrecovered(rs_.count() >= resync::kMaxResyncs ? "too many recoveries" : "recovery is off");
             if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
         } else {
             rs_hash_sample_ = m.sample;
@@ -319,13 +305,13 @@ void Lockstep::rs_on_ctl(int from, const std::vector<uint8_t>& msg) {
     resync::Act a = rs_.on_msg(m, sample_ < 0 ? 0u : (uint32_t)sample_, &reply);
     if (a == resync::Act::Reply) {
         rs_send(from, reply);
-        if (reply.sub == resync::Abort && opt_.my_slot != 0) { if (hooks_.log) hooks_.log("resync: we already passed the proposed sample; recovery off"); desync_unrecovered("this PC was already past the repair point"); if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop(); }
+        if (reply.sub == resync::Abort && opt_.my_slot != 0) { desync_ = true; if (hooks_.log) hooks_.log("resync: we already passed the proposed sample; recovery off"); if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop(); }
     } else if (a == resync::Act::Fallback) {
         if (opt_.my_slot == 0) { resync::Msg ab; ab.sub = resync::Abort; ab.from = 0; ab.seq = rs_.seq(); for (int i = 0; i < 3; i++) rs_send(-1, ab); }
         rs_snd_.stop();
         rs_rcv_.reset();
+        desync_ = true;
         if (hooks_.log) hooks_.log("resync: a peer aborted the recovery; the desync stays");
-        desync_unrecovered("a player aborted the repair");
         if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
     }
 }
@@ -336,7 +322,7 @@ void Lockstep::rs_fail(const char* why) {
     rs_.abort();
     rs_snd_.stop();
     rs_rcv_.reset();
-    desync_unrecovered(why);
+    desync_ = true;
     if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop();
 }
 
@@ -431,7 +417,6 @@ bool Lockstep::rs_host_barrier(uint32_t n) {
     uint32_t xfer_t0 = 0;
     for (;;) {
         if (hooks_.idle) hooks_.idle();
-        if (stop_) return false;   // the hub's Quit: leave the recovery wait (get_keys returns neutral input)
         pump();
         const uint32_t now = hubnet::now_ms();
         if (!rs_.active()) return !lost_;   // a guest aborted it (rs_on_ctl did the bookkeeping)
@@ -479,7 +464,6 @@ bool Lockstep::rs_guest_barrier(uint32_t n) {
     uint32_t last_send = 0, last_status = 0;
     for (;;) {
         if (hooks_.idle) hooks_.idle();
-        if (stop_) return false;   // the hub's Quit: leave the recovery wait (get_keys returns neutral input)
         pump();
         const uint32_t now = hubnet::now_ms();
         if (!rs_.active()) return !lost_;   // the host aborted: play on
@@ -598,7 +582,7 @@ uint32_t Lockstep::aux(int port) const {
 }
 
 uint32_t Lockstep::spec_get_keys(int port) {
-    if (lost_ || peer_left_ || stop_ || !core_.port_present(port)) return 0;
+    if (lost_ || peer_left_ || !core_.port_present(port)) return 0;
     if (live_wait_) {   // live join: the snapshot is not loaded yet; these boot polls are thrown away with the state they ran in
         if (port == core_.lead_port()) { pump(); spec_service(); }
         return 0;
@@ -628,7 +612,6 @@ uint32_t Lockstep::spec_get_keys(int port) {
         uint32_t t0 = hubnet::now_ms();
         while (!spec_cli_.ready(n)) {
             if (hooks_.idle) hooks_.idle();
-            if (stop_) return 0;   // the hub's Quit
             pump();
             spec_service();
             uint32_t now = hubnet::now_ms();
@@ -680,7 +663,7 @@ uint32_t Lockstep::get_keys(int port) {
         if (opt_.dropin_join && !lost_ && port == core_.lead_port() && dj_have_admit_ && !live_wait_ && (uint32_t)(sample_ + 1) == dj_adm_.j) dj_promote();
         if (opt_.spectator) return spec_get_keys(port);
     }
-    if (lost_ || peer_left_ || stop_ || !core_.port_present(port)) return 0;
+    if (lost_ || peer_left_ || !core_.port_present(port)) return 0;
     if (rs_wait_) {   // recovery state requested: polls before the core has loaded it are thrown away with the state they ran in
         if (port == core_.lead_port()) {
             pump();
@@ -748,7 +731,7 @@ uint32_t Lockstep::get_keys(int port) {
     if (net_ && rs_.save_due(n)) {   // host: the state taken at the next interrupt is the one before sample n + 1 = S
         rs_.mark_saved();
         bool ok = hooks_.resync_save && hooks_.resync_save(&rs_job_);
-        for (uint32_t t0 = hubnet::now_ms(); !ok && hooks_.resync_save && hubnet::now_ms() - t0 < 3000 && !lost_ && !stop_;) {   // a spectator snapshot is still being written: its worker finishes on its own
+        for (uint32_t t0 = hubnet::now_ms(); !ok && hooks_.resync_save && hubnet::now_ms() - t0 < 3000 && !lost_;) {   // a spectator snapshot is still being written: its worker finishes on its own
             if (hooks_.idle) hooks_.idle();
             pump();
             Sleep(5);
@@ -777,7 +760,6 @@ uint32_t Lockstep::get_keys(int port) {
         struct Acc { uint64_t& v; uint32_t t; ~Acc() { v += hubnet::now_ms() - t; } } acc{stall_ms_, t0};
         while (!core_.ready(n)) {
             if (hooks_.idle) hooks_.idle();
-            if (stop_) return 0;   // the hub's Quit while blocked on a peer (runners-M1): do not wait out the 10 s timeout
             pump();
             uint32_t now = hubnet::now_ms();
             if (bye_mask_ && left_blocks(n) && !core_.ready(n)) {   // a partner finished and will send nothing more
@@ -1108,7 +1090,7 @@ void Lockstep::di_barrier(uint32_t n) {
     (void)n;
     const uint32_t t0 = hubnet::now_ms();
     uint32_t last_send = 0;
-    while (dj_ctl_.active() && !dj_ctl_.aborting() && !dj_ctl_.all_acked() && !lost_ && !stop_) {
+    while (dj_ctl_.active() && !dj_ctl_.aborting() && !dj_ctl_.all_acked() && !lost_) {
         if (hooks_.idle) hooks_.idle();
         pump();
         const uint32_t now = hubnet::now_ms();

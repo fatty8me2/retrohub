@@ -296,10 +296,8 @@ bool InviteServer::take_show() { return pop(2, nullptr); }
 
 bool invite_is_valid_game_key(const std::wstring& key) {
     if (key.empty() || key.size() > 120) return false;
-    /* Library keys are "<system>:<id>" (library.h), and ROM hacks add "+h<crc>" (hack_logic.h); without ':' every real game
-     * was refused ("Add to desktop", --play). The key is only ever looked up in the library, never used as a path. */
     for (wchar_t c : key)
-        if (!((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == L'.' || c == L'_' || c == L'-' || c == L':' || c == L'+')) return false;
+        if (!((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == L'.' || c == L'_' || c == L'-')) return false;
     return true;
 }
 

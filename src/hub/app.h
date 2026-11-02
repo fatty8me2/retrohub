@@ -66,7 +66,6 @@
 #include "game_settings.h"
 #include "launch_settings.h"
 #include "kanto.h"
-#include "results.h"
 
 #include "hub_version.h"
 
@@ -576,7 +575,6 @@ hub::saves::CloudStatus cloud_status_now();             // legacy status struct 
 bool spawn(const std::string& exe, const std::string& args, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri);
 void poll_process();
-void ppsspp_send_state(bool save);   // launch.cpp: PPSSPP quick save (F2) / load (F4) state key for the quick menu; no-op unless a PSP game runs
 void pad_exit_watch();   // launch.cpp: Back+Start combo while an external game runs
 void focus_hub();
 void* running_game_hwnd();                 // launch.cpp: main window of the running game (HWND), nullptr if none
@@ -682,31 +680,6 @@ void kt_open_howto();
 void kt_leave_room();
 void kt_shot_init();                                    // HUB_SHOT_KT screenshot aid
 
-/* ---- Plan 4 Wave 1 hooks. Stubs from the seams commit; each lane replaces its file. ---- */
-/* party_ui.cpp: Party mode (party_logic.h). lobby.cpp routes every "pt_*" kind here. The finished-match watcher (results.h) lives in
- * party_tick: it feeds rivals_ingest_text, the party state and bracket_on_result. */
-void party_on_msg(int from_slot, const hubui::Json& j);
-void party_tick();                                      // every frame, at the top of lobby_tick (also outside a room: couch party)
-void party_on_session_end();                            // room_session_ended(): a game ended (rooms and couch)
-void party_room_panel(float width);                     // room page section (the party lane places the call in page_online.cpp)
-void party_draw();                                      // draw_overlays()
-void party_shot_init();                                 // HUB_SHOT_PARTY aid
-/* bracket_ui.cpp: Brackets + friends ladder (Plan 4 P7-P8). lobby.cpp routes every "bk_*" kind here. */
-void bracket_open();                                    // the tournament page (room page / couch party entry points)
-void bracket_on_msg(int from_slot, const hubui::Json& j);
-void bracket_on_result(const hubui::results::RoundResult& r);   // from the match watcher (party_tick)
-void bracket_tick();                                    // every frame, at the top of lobby_tick
-void bracket_draw();                                    // draw_overlays()
-void bracket_shot_init();                               // HUB_SHOT_BRACKET aid
-/* hack_ui.cpp: ROM hacks and translations (hack_logic.h, common/patcher.h). */
-inline bool is_hack(const hub::GameEntry& e) { return !e.hack_patch.empty(); }
-void hack_scan_append(std::vector<hub::GameEntry>* out, const std::vector<std::string>& folders);   // scan thread, after the folder scan
-bool hack_ensure_rom(const hub::GameEntry& e, std::string* patched_path);   // true = ready (*patched_path); false = preparing (shown, Play resumes) or failed (notice)
-void hack_draw();                                       // draw_overlays(): add-a-hack dialogs, prepare progress
-void hack_shot_init();                                  // HUB_SHOT_HACKS aid
-/* qm_party.cpp: emote wheel messages from the room, shown on the running game's OSD (Plan 4 P5). lobby.cpp routes kind "emote". */
-void qm_emote_incoming(int from_slot, const std::string& code);
-
 /* settings_games_ui.cpp: per-game settings (vault: _settings\game_settings.json) */
 extern hub::gs::Store GSTORE;
 void gs_load();   // after the vault dir is known
@@ -805,7 +778,6 @@ void spectate_start(const std::string& code, const std::string& game_id, const s
 void spectate_tick();
 bool spectate_pending();
 void launch_fail(const std::string& why, double secs = 8.0);   // guest couldn't start the host's launch: notice + np_fail to the host
-std::string emulator_online_block();   // "" or why this PC cannot take part in the room game yet (Dolphin / Azahar not installed); lobby_tick un-readies on it
 std::string ready_block_reason_now();   // "" or why the guest's "I'm ready" must stay disabled (version mismatch)
 bool is_host();
 bool allow_version_mismatch();
@@ -1019,7 +991,6 @@ void draw_missing_rom_dialog();
 void hidden_games_row();         // Settings > General: "Hidden games (N)" -> Unhide list
 void hidden_games_open_shot();
 void dupes_details_section(const hub::GameEntry& e);
-std::string library_folder_status_line(const std::string& folder);   // Settings > General: "" or a short note under a ROM folder
 std::map<std::string, std::string> preferred_copies();
 std::set<std::string> hidden_game_keys();
 void apply_located_paths(std::vector<hub::GameEntry>* lib, const std::map<std::string, std::string>& preferred);

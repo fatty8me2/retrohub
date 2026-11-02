@@ -57,7 +57,6 @@ std::string thumb_repo(const std::string& s) {
     if (s == "nds") return "Nintendo_-_Nintendo_DS";
     if (s == "ps2") return "Sony_-_PlayStation_2";
     if (s == "ps1") return "Sony_-_PlayStation";
-    if (s == "psp") return "Sony_-_PlayStation_Portable";
     if (s == "nes") return "Nintendo_-_Nintendo_Entertainment_System";
     if (s == "snes") return "Nintendo_-_Super_Nintendo_Entertainment_System";
     return "";
@@ -78,7 +77,6 @@ std::string dat_url(const std::string& s) {
     if (s == "nds") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%20DS.dat";
     if (s == "ps2") return std::string(base) + "redump/Sony%20-%20PlayStation%202.dat";
     if (s == "ps1") return std::string(base) + "redump/Sony%20-%20PlayStation.dat";
-    if (s == "psp") return std::string(base) + "redump/Sony%20-%20PlayStation%20Portable.dat";
     if (s == "nes") return std::string(base) + "no-intro/Nintendo%20-%20Nintendo%20Entertainment%20System.dat";
     if (s == "snes") return std::string(base) + "no-intro/Nintendo%20-%20Super%20Nintendo%20Entertainment%20System.dat";
     return "";
@@ -325,10 +323,6 @@ static bool serial_equal(const std::string& system, const std::string& a, const 
         std::string ua = upper(a), ub = upper(b);
         return ua.size() >= ub.size() && (ua.compare(ua.size() - ub.size(), ub.size(), ub) == 0 || ua.find("-" + ub + "-") != std::string::npos);
     }
-    if (system == "psp") {   // redump "ULUS-10041" vs the key's "ulus10041"
-        auto strip = [](std::string x) { x.erase(std::remove(x.begin(), x.end(), '-'), x.end()); return x; };
-        return upper(strip(a)) == upper(strip(b));
-    }
     return upper(a) == upper(b);
 }
 
@@ -348,7 +342,7 @@ static const DatRec* best(const std::vector<DatRec>& dat, Pred pred) {
 std::string serial_from_key(const std::string& system, const std::string& key) {
     size_t c = key.find(':');
     std::string r = c == std::string::npos ? key : key.substr(c + 1);
-    if (system == "ps1" || system == "ps2" || system == "psp") return r.compare(0, 5, "file-") == 0 ? "" : r;
+    if (system == "ps1" || system == "ps2") return r.compare(0, 5, "file-") == 0 ? "" : r;
     if (system == "gc" || system == "gba" || system == "nds") { size_t d = r.find('-'); if (d != std::string::npos) r.resize(d); return r; }
     return "";
 }

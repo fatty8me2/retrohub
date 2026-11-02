@@ -34,22 +34,10 @@ int main() {
     RecentGroup big = grp({{"a", "Ann"}, {"b", "Bob"}, {"c", "Cy"}, {"d", "Di"}, {"e", "Ed"}}, "g", "G", 1);
     CHECK(group_names(big) == "Ann, Bob, Cy +2");
     CHECK((invitable(big, {"a", "b", "c", "e"}, {"b"}) == std::vector<std::string>{"a", "c", "e"}));
-    { /* uid matching (SO-F10): presence in THIS room only, never the display name */
+    { /* uid matching: presence in the room wins; unique-name fallback only */
       std::vector<FriendRef> fr = {{"u1", "Mia", "ROOM01"}, {"u2", "Jake", ""}, {"u3", "Sam", ""}, {"u4", "Sam", ""}, {"u5", "Zed", "OTHER1"}};
       auto m = match_friends({"mia2", "jake", "sam", "Zed"}, fr, "ROOM01");
-      CHECK(m.size() == 1 && m[0].uid == "u1");   /* mia2 renamed: credited by presence; same-named strangers jake/Zed/sam: nobody */
-      CHECK(match_friends({"Jake"}, fr, "").empty());
-      /* a stranger called Mickey sits in the room; friend Mickey is online elsewhere or offline: not credited */
-      std::vector<FriendRef> mk = {{"umk", "Mickey", "OTHER9"}, {"ucam", "camer", "ROOM01"}};
-      CHECK(friend_for_member("Mickey", mk, "ROOM01") == nullptr);
-      CHECK(friend_for_member("mickey", {{"umk", "Mickey", ""}}, "ROOM01") == nullptr);
-      CHECK(match_friends({"Mickey", "camer"}, mk, "ROOM01").size() == 1);
-      /* the friend really is in the room: credited by uid (case-insensitive name picks the seat) */
-      const FriendRef* c = friend_for_member("CAMER", mk, "ROOM01");
-      CHECK(c && c->uid == "ucam");
-      /* two friends with the same name in the room: ambiguous, nobody */
-      CHECK(friend_for_member("Sam", {{"a", "Sam", "ROOM01"}, {"b", "Sam", "ROOM01"}}, "ROOM01") == nullptr);
-      CHECK(friend_for_member("", mk, "ROOM01") == nullptr);
+      CHECK(m.size() == 3 && m[0].uid == "u1" && m[1].uid == "u2" && m[2].uid == "u5");   /* mia2 renamed: matched by presence; sam is ambiguous: dropped; Zed: unique name */
     }
 
     // persistence: two copies (PC + vault) union

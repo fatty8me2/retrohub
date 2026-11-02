@@ -193,10 +193,10 @@ $null = & $Q sync $VE $SyncId 2>&1
 $null = & $Q sync $VD $SyncId 2>&1
 $idD = (Get-Content -Raw (Join-Path $VD "_identity\identity.json")).Trim()
 $idE = (Get-Content -Raw (Join-Path $VE "_identity\identity.json")).Trim()
-# Folder sync never carries _identity (docs/SAVES.md, docs/FRIENDS.md): each PC keeps its own identity, the sync folder has none.
-$syncHasId = Test-Path (Join-Path $SyncId "_identity")
-Add-Result "10a folder sync never copies _identity to the sync folder" (-not $syncHasId) "sync_has_identity=$syncHasId"
-Add-Result "10b each PC keeps its own identity after syncing" ($idD -eq $origJson -and $idE -eq $freshJson) "D=$idD E=$idE"
+$idS = (Get-Content -Raw (Join-Path $SyncId "_identity\identity.json")).Trim()
+Add-Result "10a first sync of a new PC keeps the oldest identity everywhere" ($idD -eq $origJson -and $idE -eq $origJson -and $idS -eq $origJson) "D=$idD E=$idE sync=$idS"
+$kept = @(Get-ChildItem -Recurse -File (Join-Path $VE "_conflicts\_identity") -ErrorAction SilentlyContinue)
+Add-Result "10b the newer identity is kept under _conflicts" ($kept.Count -ge 1 -and ((Get-Content -Raw $kept[0].FullName).Trim() -eq $freshJson)) "files=$($kept.Count)"
 # ---------------------------------------------------------------- report
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 250 | Write-Output
 $fail = @($results | Where-Object { $_.Result -eq "FAIL" }).Count

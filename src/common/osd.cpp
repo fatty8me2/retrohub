@@ -38,12 +38,11 @@ const uint8_t kFont[95][5] = {
     {0x00,0x00,0x7F,0x00,0x00},{0x00,0x41,0x36,0x08,0x00},{0x08,0x08,0x2A,0x1C,0x08}};
 
 struct Toast { std::string text; Kind kind; uint64_t born, until; };
-/* One persistent corner text (set_corner_at): up to kMaxCornerLines lines, optionally expiring (until = 0: never). */
-struct Corner { std::vector<std::string> lines; Kind kind = Kind::Info; uint64_t until = 0; };
 
 std::mutex g_mu;
 std::deque<Toast> g_toasts;
-Corner g_corners[4];   // 0 top-left (under the stats line), 1 top-right (set_corner), 2 bottom-left (above the toast stack), 3 bottom-right
+std::string g_corner;
+Kind g_corner_kind = Kind::Info;
 std::string g_stats;   // performance / online overlay, top-left (Cmd::Overlay)
 uint64_t (*g_clock)() = nullptr;
 uint64_t g_gen = 0;          // bumped by every push / clear
@@ -58,21 +57,6 @@ uint64_t now() {
 
 constexpr int kMaxToasts = 4;
 constexpr uint64_t kFadeMs = 300, kInMs = 120;
-constexpr int kMaxCornerLines = 4, kMaxCornerChars = 60;
-
-/* '\n' separates the lines of a corner text; each goes through username_ascii (the font is ASCII only). Blank lines are dropped. */
-std::vector<std::string> corner_lines(const std::string& raw) {
-    std::vector<std::string> v;
-    size_t i = 0;
-    while (i <= raw.size() && (int)v.size() < kMaxCornerLines) {
-        size_t j = raw.find('\n', i);
-        if (j == std::string::npos) j = raw.size();
-        std::string ln = hubnet::username_ascii(raw.substr(i, j - i)).substr(0, kMaxCornerChars);
-        if (ln.find_first_not_of(' ') != std::string::npos) v.push_back(ln);
-        i = j + 1;
-    }
-    return v;
-}
 
 uint32_t kind_color(Kind k) {
     switch (k) {
@@ -132,18 +116,12 @@ void push(const std::string& text_in, Kind kind, double seconds) {
     g_gen++;
 }
 
-void set_corner(const std::string& text, Kind kind) { set_corner_at(1, text, kind, 0); }
-
-void set_corner_at(int corner, const std::string& text_in, Kind kind, double seconds) {
-    if (corner < 0 || corner > 3) return;
-    std::vector<std::string> lines = corner_lines(text_in);
+void set_corner(const std::string& text_in, Kind kind) {
+    const std::string text = hubnet::username_ascii(text_in);
     std::lock_guard<std::mutex> lk(g_mu);
-    Corner& c = g_corners[corner];
-    const uint64_t until = (lines.empty() || seconds <= 0) ? 0 : now() + (uint64_t)(std::max(0.2, seconds) * 1000.0);
-    if (c.lines == lines && c.kind == kind) { if (!lines.empty()) c.until = until; return; }   // same pixels; a repeated call only refreshes the timer
-    c.lines = std::move(lines);
-    c.kind = kind;
-    c.until = until;
+    if (g_corner == text && g_corner_kind == kind) return;
+    g_corner = text.substr(0, 60);
+    g_corner_kind = kind;
     g_gen++;
 }
 
@@ -158,7 +136,7 @@ void set_stats(const std::string& text_in) {
 void clear() {
     std::lock_guard<std::mutex> lk(g_mu);
     g_toasts.clear();
-    for (Corner& c : g_corners) c = Corner();
+    g_corner.clear();
     g_stats.clear();
     g_gen++;
 }
@@ -177,12 +155,7 @@ bool render(Layer* out, int w, int h, bool* changed) {
     uint64_t t = now();
     while (!g_toasts.empty() && g_toasts.front().until <= t) { g_toasts.pop_front(); g_gen++; }
     for (auto it = g_toasts.begin(); it != g_toasts.end();) { if (it->until <= t) it = g_toasts.erase(it); else ++it; }
-    bool any_corner = false;
-    for (Corner& c : g_corners) {
-        if (c.until && c.until <= t) { c = Corner(); g_gen++; }   // an expiring corner text ran out
-        if (!c.lines.empty()) any_corner = true;
-    }
-    if (g_toasts.empty() && !any_corner && g_stats.empty()) { g_last_sig = ~0ull; return false; }
+    if (g_toasts.empty() && g_corner.empty() && g_stats.empty()) { g_last_sig = ~0ull; return false; }
 
     const int scale = scale_for_height(h);
     const int margin = 3 * scale, step = text_height(scale) + 4 * scale + 2 * scale;
@@ -211,32 +184,11 @@ bool render(Layer* out, int w, int h, bool* changed) {
         y -= step;
         draw_item(*out, margin, y, vis[i].first->text, vis[i].first->kind, scale, vis[i].second);
     }
-    /* Corner texts. Toasts own the bottom-left stack and the stats line the first top-left row, so corner 0 starts under the stats line (or at
-     * the top when there is none) and corner 2 sits above the room the four toasts can take; corners 1 and 3 have the right edge to themselves. */
-    const int max_box = std::max(0, w - 2 * margin - 5 * scale);
-    auto fit = [&](const std::string& s) -> std::string {   // never wider than the layer: cut and end with "..."
-        if (text_width(s, scale) <= max_box) return s;
-        const int n = (max_box + scale) / (6 * scale);
-        if (n <= 0) return std::string();
-        std::string o = s.substr(0, (size_t)n);
-        if (n > 3) { o.resize((size_t)n - 3); o += "..."; }
-        return o;
-    };
-    auto put_corner = [&](const Corner& c, bool right, int y0) {
-        for (size_t i = 0; i < c.lines.size(); i++) {
-            const std::string s = fit(c.lines[i]);
-            if (s.empty()) continue;
-            const int bw = text_width(s, scale) + 4 * scale + scale;
-            draw_item(*out, right ? std::max(0, w - margin - bw) : margin, y0 + (int)i * step, s, c.kind, scale, 255);
-        }
-    };
-    auto rows = [&](const Corner& c) { return (int)c.lines.size(); };
-    int y_top = margin;
-    if (!g_stats.empty()) { draw_item(*out, margin, y_top, g_stats, Kind::Info, scale, 255); y_top += step; }
-    put_corner(g_corners[0], false, y_top);
-    put_corner(g_corners[1], true, margin);
-    put_corner(g_corners[2], false, h - margin - kMaxToasts * step - rows(g_corners[2]) * step);
-    put_corner(g_corners[3], true, h - margin - rows(g_corners[3]) * step);
+    if (!g_corner.empty()) {
+        int bw = text_width(g_corner, scale) + 4 * scale + scale;
+        draw_item(*out, std::max(0, w - margin - bw), margin, g_corner, g_corner_kind, scale, 255);
+    }
+    if (!g_stats.empty()) draw_item(*out, margin, margin, g_stats, Kind::Info, scale, 255);
     g_last_sig = sig; g_last_w = w; g_last_h = h;
     if (changed) *changed = true;
     return true;

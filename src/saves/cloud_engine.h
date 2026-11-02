@@ -12,7 +12,7 @@ enum class SyncMode { ReadWrite, ReadOnly };            // ReadOnly = online ses
 
 FileClass classify_path(const std::string& rel_in_game, int64_t size);   // pure; unit tested
 void set_backup_screenshots(bool on);                                   // default off: files under shots/ stay local
-bool is_protected(FileClass c, int64_t size);                            // settings, battery, and memory cards up to 16 MB (PS2 8 MB included); states and shots are large
+bool is_protected(FileClass c, int64_t size);                            // settings, battery, card <= 512 KB
 
 struct GameId { std::string system, key; std::string gkey() const { return system + "/" + key; } };
 
@@ -78,7 +78,6 @@ void cloud_game_exited(const GameId& g);                   // touch_game must al
 /* ---- engine lifecycle (called from app startup/shutdown and the job loop) ---- */
 void cloud_engine_start(const std::string& base_url);      // loads queue, schedules the one startup delta
 void cloud_engine_stop();                                  // joins the worker; queue is already persisted
-void cloud_network_back();                                 // a cheap local sign the network is back (friends socket reconnected): wakes a parked startup pass, no request
 void cloud_sync_all_now();                                 // "Sync now"
 void cloud_set_sync_states(bool on);                      // Saves > "Back up save states to the cloud" (default on): off = states/thumbnails stay on this PC
 void cloud_set_paused(bool paused);                        // Advanced > Pause cloud sync

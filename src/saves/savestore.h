@@ -16,8 +16,6 @@
 
 namespace hub::saves {
 
-/* Shown wherever an export or sync folder is made (the account secret is never part of them). sync_folder also logs it as a "note:" line. */
-const char* account_notice();
 std::string vault_dir();
 void set_vault_dir(const std::string& dir);  // advanced setting; default is data_dir()/saves
 
@@ -41,15 +39,10 @@ struct SyncReport {
  * there). Tracks a per-file manifest (size, mtime, SHA-256) from the last sync
  * in <vault>/.sync/<sanitized sync_root>.json to tell "changed here" from
  * "changed there". Never deletes the only copy of anything; deletions are not
- * propagated (v1). Skips states/ unless include_states.
- * The account secret never travels: <vault>/_identity/ (and _conflicts/_identity/) is neither copied
- * to the sync folder nor taken from it (a folder written by an older build may still hold one;
- * it is left alone and ignored). */
+ * propagated (v1). Skips states/ unless include_states. */
 SyncReport sync_folder(const std::string& sync_root, bool include_states);
 
-/* Whole-vault backup/restore. Import merges: newer file wins, older kept in _conflicts/.
- * Neither direction carries the account secret: the zip has no _identity/, and an
- * import skips such entries (logged), so a zip from someone else can never switch the account. */
+/* Whole-vault backup/restore. Import merges: newer file wins, older kept in _conflicts/. */
 bool export_zip(const std::string& zip_path, bool include_states, std::string* error);
 SyncReport import_zip(const std::string& zip_path);
 

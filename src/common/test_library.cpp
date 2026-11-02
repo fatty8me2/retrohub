@@ -24,8 +24,6 @@
 #include <windows.h>
 #endif
 
-#include <set>
-#include "library_scan_info.h"
 using namespace hub;
 namespace fs = std::filesystem;
 
@@ -568,63 +566,6 @@ static void test_parallel_zip_scan(const fs::path& dir) {
     fs::remove_all(root, ec);
 }
 
-/* Plan 4 library fixes: library-1 (every copy reaches the UI), library-2 (local-only removal), library-3 (an offline folder keeps its games). */
-static void p4_library_tests(const fs::path& dir) {
-    fs::path base = dir / "p4lib";
-    library_set_data_dir((base / "userdata").string());
-    Bytes gba = make_gba("POKEMON EMER", "BPEE", 41);
-    Bytes other = make_gba("OTHER GAME", "BOTH", 42);
-    CHECK(write_file(base / "a" / "emerald.gba", gba));
-    CHECK(write_file(base / "b" / "emerald copy.gba", gba));     // same game, second folder
-    CHECK(write_file(base / "b" / "other.gba", other));
-    std::vector<std::string> folders = {(base / "a").string(), (base / "b").string()};
-    auto gs = scan_library(folders, nullptr);
-    CHECK(gs.size() == 2);   // still one entry per key
-    auto extra = scan_extra_copies();
-    CHECK(extra.size() == 1);
-    int same = 0;
-    std::set<std::string> paths;
-    for (const auto& g : gs) if (g.title.find("EMER") != std::string::npos || g.serial == "BPEE") { ++same; paths.insert(g.path); }
-    for (const auto& g : extra) { CHECK(g.serial == "BPEE"); paths.insert(g.path); }
-    CHECK(same == 1 && paths.size() == 2);   // library-1: both file paths are available to the duplicates panel
-    for (const auto& st : scan_folder_status()) CHECK(st.reachable && st.complete && st.kept == 0);
-
-    // library-3: the folder goes away (drive unplugged); its games stay, from the cache, and the status says so
-    fs::path gone = base / "b";
-    fs::path parked = base / "b_parked";
-    std::error_code ec;
-    fs::rename(gone, parked, ec);
-    CHECK(!ec);
-    auto off = scan_library(folders, nullptr);
-    bool has_other = false, has_emerald = false;
-    for (const auto& g : off) { if (g.serial == "BOTH") has_other = true; if (g.serial == "BPEE") has_emerald = true; }
-    CHECK(has_other && has_emerald && off.size() == 2);   // "other.gba" lived only on the missing drive and is still listed
-    int unreachable = 0;
-    for (const auto& st : scan_folder_status()) if (!st.reachable) { ++unreachable; CHECK(!st.complete && st.kept == 2); }
-    CHECK(unreachable == 1);
-    CHECK(scan_extra_copies().empty());
-    // the drive returns: nothing is lost and the status is clean again
-    fs::rename(parked, gone, ec);
-    CHECK(!ec);
-    auto back = scan_library(folders, nullptr);
-    CHECK(back.size() == 2);
-    for (const auto& st : scan_folder_status()) CHECK(st.reachable && st.complete);
-    // a folder removed from the list is really gone from the results (only unreachable folders keep their games)
-    auto only_a = scan_library({(base / "a").string()}, nullptr);
-    CHECK(only_a.size() == 1);
-
-    // library-2: "Remove from this PC" is a local list, separate from the synced hidden prefs
-    CHECK(local_removed().empty());
-    CHECK(local_removed_set("gba:bpee-11111111", true) && local_removed_set("n64:abc", true));
-    CHECK(local_removed().size() == 2 && local_removed().count("n64:abc") == 1);
-    CHECK(local_removed_set("n64:abc", false) && local_removed().size() == 1 && local_removed().count("gba:bpee-11111111") == 1);
-    CHECK(local_removed_set("gba:bpee-11111111", true) && local_removed().size() == 1);   // adding twice is harmless
-    CHECK(!local_removed_set("", true) && !local_removed_set("a\nb", true));
-    library_set_data_dir((base / "userdata2").string());
-    CHECK(local_removed().empty());   // per data dir, never shared
-    library_set_data_dir("");
-}
-
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     if (argc == 4 && std::string(argv[1]) == "--unpack") {   // manual check: hublibrary_test --unpack <archive> <scratch data dir>
@@ -652,7 +593,6 @@ int main(int argc, char** argv) {
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
 
-    p4_library_tests(dir);
     CHECK(system_from_short("gbc") == System::GBC && std::string(system_short(System::GC)) == "gc");
     CHECK(std::string(system_name(System::GBA)) == "Game Boy Advance");
 

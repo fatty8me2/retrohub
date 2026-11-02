@@ -17,12 +17,6 @@ All games keep their save data in one portable folder, the **save vault**
 **Backup / restore**: *Export* writes one `.zip` (opens in Explorer). *Import* merges a zip back in.
 On a fresh PC, importing into an empty vault restores everything exactly.
 
-**Your account is not in the zip or the sync folder.** The account secret (what signs you in to friends and
-cloud saves) stays on the PC that holds it: exports and sync folders never contain it, and importing a zip can
-never switch you to another account. To use your account on another PC, link it there with a link code or your
-account code (Settings > Account). Zips and sync folders made by older versions may still hold the file; it is
-ignored, so you can delete the `_identity` folder from them. The sync log says it: "Your account isn't included. Use Settings > Account > Add this account to another PC to sign in elsewhere."
-
 **What is synced**: battery saves (in-game saves, memory cards) and each game's `meta.json`.
 Save states (`states\`) are **left out** unless you tick "include save states" (they are big).
 
@@ -40,9 +34,7 @@ API: `src/saves/savestore.h`. The hub calls `set_vault_dir()` at startup (settin
 passes `battery_dir()` / `states_dir()` to runners, and calls `touch_game()` after a session.
 
 Vault layout: `<vault>\<system>\<game key>\{battery\, states\, meta.json}`; path components are sanitized.
-Other top-level entries: `.sync\` (manifests, never synced), `_conflicts\` (synced like any other file), `_identity\`
-(this PC's account secret: never synced, exported or imported; the same goes for the old copies older versions kept in
-`_conflicts\_identity\`). A game save that merely has a name like `identity.json` is a save and travels.
+Other top-level entries: `.sync\` (manifests, never synced), `_conflicts\` (synced like any other file).
 
 **`sync_folder(root, include_states)`**
 - The sync folder mirrors the vault layout. Both trees are scanned; each file is identified by relative
@@ -61,8 +53,7 @@ Other top-level entries: `.sync\` (manifests, never synced), `_conflicts\` (sync
 - Rejects a sync folder equal to, inside, or containing the vault.
 
 **`export_zip` / `import_zip`**: miniz (MIT, fetched with FetchContent, 3.0.2). Entries use `/` separators and
-the UTF-8 name flag. Import rejects unsafe entry names (`..`, absolute, drive letters), skips `.sync/` and the
-account files (`_identity/`, `_conflicts/_identity/`; logged as "never imported"), and
+the UTF-8 name flag. Import rejects unsafe entry names (`..`, absolute, drive letters), skips `.sync/`, and
 merges: new file -> restored; identical -> nothing; different -> newer mtime wins and the loser goes to
 `_conflicts/` (zip timestamps have 2 s resolution, so the local file wins within 2 s).
 
@@ -71,9 +62,7 @@ the same time; clock skew between PCs affects which side "wins" a conflict (the 
 files are read into memory for zip export/import.
 
 **Tests**: `hubsaves_test` (console) simulates two PCs sharing one sync folder: push/pull, edit propagation,
-conflicts (both directions), states excluded/included, unicode and long paths, zip round trip, idempotency, and
-that the account secret never travels (sync folder, export, hostile import zip). The cloud engine has its own
-test, `hubsaves_engine_test`, against an in-process mock Worker (see `CLOUD_SAVES_V2.md`).
+conflicts (both directions), states excluded/included, unicode and long paths, zip round trip, idempotency.
 
 ## Account prefs (`_account/prefs.json`)
 `src/common/prefs.h` defines a typed file in the vault's `_account/` folder (class `settings` in the cloud, so it is always synced): `favorites`, `user_shelves`, `hidden`, `renames`, `covers` (game key -> image path), `theme`, `profile.avatar|fav_game|status`. Each field carries its own modified time (unix ms) in `ts`; `merge()` keeps the newer side per field, so two PCs editing different fields never overwrite each other. `favorites` and `hidden` go further: each key has its own stamp, and a removal leaves a tombstone (cleaned up after 90 days), so two PCs adding different favorites offline keep both. The cloud engine syncs the file as the hidden pseudo-game `_account/_`; on a both-sides conflict it calls `merge_text()` through `merge_into_file()` instead of keeping both copies, then applies favorites back into `library.json` (tested by `prefs_test` and `hubsaves_engine_test`). The hub arms `set_vault_root()` at startup, so `hub::set_favorite` mirrors into prefs, and the screenshot viewer's "Set as cover" writes `covers[key]`. Nothing displays covers yet.
@@ -94,7 +83,7 @@ progress made online is discarded (the host's vault stays exactly as it was). Wi
 | PlayStation rollback (retrorun, Beetle PSX) | host memory card 1 (128 KB save RAM) shared (`--share-host-save`, slot 0 = host) | no (temp dir) |
 | GB / GBC / GBA link cable (Pokemon trade/battle) | each player's OWN vault save, exchanged via the room | own console only |
 | DS wireless (`--ds-link`) | each player's own vault save | yes, own |
-| 3DS, GameCube | each player's own emulator/vault save (3DS room sessions and the Wii U remote-play host use the same vault path as offline play) | yes, own |
+| 3DS, GameCube | each player's own emulator/vault save | yes, own |
 | Kanto Together, Smash Classic | each player's own save | yes, own |
 
 Guests therefore never touch their vault in shared-save modes; vault sync (Sync button) is unaffected.

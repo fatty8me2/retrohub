@@ -48,7 +48,6 @@ int main(int argc, char** argv) {
         for (auto& e : in.entries) {   // the entries the installer scanned from the new folder alone (what the hub adds in place)
             std::string t = installed_folder_title(e.path, pack_root());
             std::printf("entry sys=%s key=%s title=[%s] folder=[%s] issue=%s\n", hub::system_short(e.system), e.key.c_str(), e.title.c_str(), t.c_str(), e.issue.c_str());
-            if (e.catalog_id.empty() && t.empty() && in.entries.size() == 1) t = title;   // a zipped cartridge lives in rom-cache: the install's title (hub: gamepack_adopt)
             if (e.catalog_id.empty() && !t.empty() && pack_key(t) != pack_key(e.title)) e.title = t;
             mine.push_back({hub::system_short(e.system), e.key, e.catalog_id, e.title});
             for (const auto& o : pack_owned_aliases(e, pack_root())) mine.push_back(o);   // what the hub does: the pack console folder + folder title also count as owned
@@ -61,23 +60,6 @@ int main(int argc, char** argv) {
         bool same = full.size() == in.entries.size();
         for (size_t i = 0; same && i < full.size(); ++i) same = full[i].key == in.entries[i].key;
         std::printf("full_scan_same_keys=%d\n", (int)same);
-        {   // Play right after the install, same process, no restart: the path the launcher hands the emulator must be a real image (never the archive)
-            bool all_ok = !in.entries.empty();
-            for (const auto& e : in.entries) {
-                std::string lp = e.issue == "extract" ? hub::extracted_3ds_path(e) : e.path;
-                std::error_code pe;
-                std::string ext = fs::u8path(lp).extension().u8string();
-                for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-                bool archive = ext == ".zip" || ext == ".7z" || ext == ".rar";
-                bool good = !lp.empty() && fs::is_regular_file(fs::u8path(lp), pe) && fs::file_size(fs::u8path(lp), pe) > 0 && !archive;
-                // the same game from a FULL library scan (what the hub holds after the next rescan) must resolve to the same launch path
-                bool same = false;
-                for (const auto& f : full) if (f.key == e.key) { std::string fp = f.issue == "extract" ? hub::extracted_3ds_path(f) : f.path; same = fp == lp; }
-                std::printf("play sys=%s path=[%s] real_image=%d full_scan_same_path=%d\n", hub::system_short(e.system), lp.c_str(), (int)good, (int)same);
-                all_ok = all_ok && good && same;
-            }
-            std::printf("play_ok=%d\n", (int)all_ok);
-        }
         bool un = uninstall(sys, title);
         std::printf("uninstalled=%d dir_gone=%d installed_flag=%d ghost_back=%d\n", (int)un, (int)!fs::exists(fs::u8path(install_dir(sys, title))), (int)installed(sys, title), (int)has_ghost({}));
         index_shutdown();

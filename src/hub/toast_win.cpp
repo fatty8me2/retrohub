@@ -13,7 +13,6 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Notifications.h>
 
-#include "popup_guard.h"
 #include "shell_integration.h"
 
 namespace hubtoast {
@@ -62,8 +61,6 @@ bool show_impl(const std::string& xml, const std::string& tag, std::string* err)
     return true;
 }
 
-bool (*g_game_probe)() = nullptr;
-
 struct SystemNotifier : INotifier {
     bool available() const override {
         static const bool ok = shell_registration_allowed();   // only installed copies have the Start-menu shortcut/AUMID
@@ -71,15 +68,10 @@ struct SystemNotifier : INotifier {
     }
     bool show(const std::string& xml, const std::string& tag) override {
         if (!available()) return false;
-        /* Second lock on the one rule (should_toast is the first): whatever a call site passes, a Windows toast (banner and notification
-         * sound) is never raised while a game runs. The caller's bell entry / the runner OSD carries the message. */
-        if (g_game_probe && !hubguard::may_windows_toast(g_game_probe())) return false;
         return run_on_mta_thread([&](std::string* err) { return show_impl(xml, tag, err); });
     }
 };
 }  // namespace
-
-void set_game_probe(bool (*fn)()) { g_game_probe = fn; }
 
 INotifier& system_notifier() { static SystemNotifier n; return n; }
 
