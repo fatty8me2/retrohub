@@ -8,8 +8,8 @@
 namespace hubui {
 namespace wiz {
 
-enum class Step { Welcome = 0, Controller, Games, Name, Cloud, Done };
-constexpr int kStepCount = 6;
+enum class Step { Welcome = 0, Controller, Games, Name, Cloud, Online, Done };   // Online: Windows Firewall probe + Discord (Plan 4 W2 C)
+constexpr int kStepCount = 7;
 
 inline Step next(Step s) { return s == Step::Done ? s : static_cast<Step>(static_cast<int>(s) + 1); }
 inline Step back(Step s) { return s == Step::Welcome ? s : static_cast<Step>(static_cast<int>(s) - 1); }
@@ -66,6 +66,7 @@ inline std::string step_title(Step s) {
         case Step::Controller: return "Your controller";
         case Step::Games: return "Find your games";
         case Step::Name: return "Pick your username";
+        case Step::Online: return "Online play";
         case Step::Done: return "You're all set";
     }
     return "";

@@ -9,7 +9,7 @@ static int fails = 0;
 int main() {
     using namespace hubui::wiz;
     CHECK(next(Step::Welcome) == Step::Controller);
-    CHECK(next(Step::Name) == Step::Cloud && next(Step::Cloud) == Step::Done && back(Step::Done) == Step::Cloud);
+    CHECK(next(Step::Name) == Step::Cloud && next(Step::Cloud) == Step::Online && next(Step::Online) == Step::Done && back(Step::Done) == Step::Online);
     CHECK(next(Step::Done) == Step::Done);
     CHECK(back(Step::Welcome) == Step::Welcome);
     CHECK(back(Step::Games) == Step::Controller);

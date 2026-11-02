@@ -190,7 +190,7 @@ bool LobbyClient::handle_text(const std::string& text)
             net_log("Lobby: relay denied by the server (%s)", j.str("reason", "server-busy").c_str());
         } else if (type == "error") {
             std::string why = j.str("reason", "error");
-            if (d.attempts > 0 && d.attempts < kMaxReconnects && (why == "room-in-use" || why == "bad-slot")) {
+            if (d.attempts > 0 && d.attempts < (why == "room-in-use" ? 2 * kMaxReconnects : kMaxReconnects) && (why == "room-in-use" || why == "bad-slot"))   /* the Worker holds a dropped host seat ~10 s (HOST_GRACE_MS): keep asking for as long */ {
                 /* Our old socket has not been reaped by the server yet: try again shortly. */
                 ++d.attempts;
                 d.welcomed = false;

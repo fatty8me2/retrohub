@@ -19,7 +19,8 @@
 
 namespace hubemu {
 
-enum class Kind { Azahar, Cemu, Dolphin, Pcsx2, Lrps2 };   // Pcsx2: PlayStation 2 (pcsx2.h); Lrps2: the libretro PS2 core for online rooms (a DLL for retrorun, not an exe)
+enum class Kind { Azahar, Cemu, Dolphin, Pcsx2, Lrps2, Ppsspp };   // Ppsspp: PlayStation Portable (ppsspp.h)
+//   // Pcsx2: PlayStation 2 (pcsx2.h); Lrps2: the libretro PS2 core for online rooms (a DLL for retrorun, not an exe)
 
 const char* name(Kind k);                 // "Azahar" / "Cemu" / "Dolphin"
 Kind kind_for(hub::System s);             // N3DS -> Azahar, WiiU -> Cemu, GC -> Dolphin, PS2 -> Pcsx2
@@ -199,6 +200,7 @@ struct SaveSession {
     std::string summary;                  // for a log/toast after end_session
     std::string error;                    // first failure of begin/end_session ("" = all fine)
     std::string manifest_path;            // <vault>\.sync\emu-<key>.json: what both sides agreed on last time
+    std::string psp_disc_id;              // PSP: SAVEDATA folders starting with this id ("ULUS10041") belong to the game; new ones made in the session are picked up at the end
 };
 /* Before launch: vault -> emulator (newest wins; see sync_tree_newest). */
 SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& vault_battery_dir,

@@ -154,6 +154,7 @@ add_test(NAME hub_homefun_test COMMAND hub_homefun_test)               # attract
 add_test(NAME hub_states_test COMMAND hub_states_test)               # save-state slot listing, resume wording, library sort
 add_test(NAME hub_customize_test COMMAND hub_customize_test)   # custom shelves ops, Home composition, renames, rename-aware search
 add_test(NAME hub_osk_test COMMAND hub_osk_test)                        # OSK key layout / edit logic / folder browser (scratch dirs)
+add_test(NAME hub_convenience_test COMMAND hub_convenience_test)   # Discord frames + opt-in gate, diagnostics exclusion, NAT verdict (loopback STUN), pad glyphs, palette ranking
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
 add_test(NAME hub_qm_test COMMAND hub_qm_test)
 add_test(NAME hub_qm_nav_test COMMAND hub_qm_nav_test)                # quick menu controls: release gate, repeat, row nav (qm_nav.h)
@@ -181,6 +182,7 @@ add_test(NAME hub_rivals_test COMMAND hub_rivals_test)         # rivalry result 
 add_test(NAME hub_results_test COMMAND hub_results_test)       # Plan 4: match results (ranks, mid-run watcher) + auto-resume guard (saves-F1)
 add_test(NAME hub_party_test COMMAND hub_party_test)           # Plan 4: party mode reducer, points, shuffle, votes
 add_test(NAME hub_bracket_test COMMAND hub_bracket_test)       # Plan 4: brackets (single/double elimination) + Elo
+add_test(NAME hubchallenge_test COMMAND hubchallenge_test)   # Plan 4 p4-social: challenge cards, leaderboard, rules, attach helpers (pure)
 add_test(NAME hub_hack_test COMMAND hub_hack_test)             # Plan 4: ROM hack keys, base finder, hack.json
 add_test(NAME hub_popup_guard_test COMMAND hub_popup_guard_test)   # never pop up over a game: guard logic + lint of every raise/show/MessageBox/synthetic-input site in src/hub and src/common
 add_test(NAME hub_idle_test COMMAND hub_idle_test)                  # idle throttle: when the hub may skip drawing a frame (pumps keep their cadence)
@@ -198,6 +200,7 @@ add_test(NAME dsu_test COMMAND dsu_test)   # DSU packets + loopback server round
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
 add_test(NAME hub_wiiu_test COMMAND hub_wiiu_test)               # offline Wii U: meta.xml/.wua, own-Cemu settings backup+revert, profiles, saves, archives, art names
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
+add_test(NAME hub_psp_test COMMAND hub_psp_test)                   # PSP: SFO/ISO/CSO/CHD/PBP ids (synthetic), PS1-vs-PSP, scan, SAVEDATA session, PPSSPP config (no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
 add_test(NAME stream_core_test COMMAND stream_core_test)            # remote play: packetizer, FEC, NACK, jitter buffer, codecs, bitrate
 add_test(NAME n64run_lockstep_test COMMAND n64run_lockstep_test)
@@ -214,12 +217,18 @@ add_test(NAME n64run_save_sync_test COMMAND n64run_save_sync_test)    # simulate
 add_test(NAME n64run_mempak_test COMMAND n64run_mempak_test)          # controller pak policy (no network)
 
 # Online: need the live server.
+add_test(NAME hubreconnect_test COMMAND hubreconnect_test)   # Session WS reconnect state machine (offline)
+add_test(NAME hubnet_blip_test COMMAND hubnet_test)   # WS blip mid-session: sessions survive (needs the local server; online)
+set_tests_properties(hubnet_blip_test PROPERTIES ENVIRONMENT "HUBNET_BLIP_TEST=1;RETROHUB_QA=1")
 add_test(NAME hubnet_test COMMAND hubnet_test)                           # server: $RETROHUB_TEST_SERVER at run time
+add_test(NAME hubattach_test COMMAND hubattach_test)                     # DM attachment round trip; server: $RETROHUB_TEST_SERVER at run time (local wrangler)
 add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubws_close_test COMMAND hubws_close_test)   # WebSocket close never blocks (local loopback server only)
 add_test(NAME hubfriends_dedupe_test COMMAND hubfriends_dedupe_test)   # friends list: one entry per uid (no network)
+add_test(NAME hubfriends_outbox_test COMMAND hubfriends_outbox_test)   # offline outbox rules (no network)
+add_test(NAME hubfriends_live_test COMMAND hubfriends_live_test)         # socket liveness rules (no network)
 add_test(NAME hublink_test COMMAND hublink_test)                         # link-a-new-PC crypto/adopt/export (no network)
 set_tests_properties(hubnet_test hublink_test n64run_save_sync_test n64run_lockstep_test n64run_testinput_test retrorun_link_test
                      retrorun_rollback_test retrorun_rollback_stall_test retrorun_resync_test retrorun_dropin_test retrorun_dslink_test hub_bootsound_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
 add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
-set_tests_properties(hubnet_test hubfriends_test hub_updater_live_test PROPERTIES LABELS online)
+set_tests_properties(hubnet_test hubnet_blip_test hubfriends_test hubattach_test hub_updater_live_test PROPERTIES LABELS online)

@@ -1,5 +1,7 @@
 #include "friends.h"
+#include "liveness_logic.h"
 #include "log.h"
+#include "outbox_logic.h"
 #include "net_internal.h"
 #include "session.h"
 
@@ -510,6 +512,9 @@ struct FriendsClient::Impl {
     std::map<std::string, Conv> convs;
     std::deque<Event> events;
     uint32_t local_seq = 0;
+    Outbox outbox;                       // actions made while disconnected (persisted to outbox.json, flushed after the next welcome)
+    Liveness live;                       // keepalive answer tracking: a silent socket is closed and re-opened
+    std::vector<OutItem> inflight; uint32_t inflight_at = 0;   // the batch the last welcome flushed (an error reply maps back to it)
     std::string username; bool needs_new_name = false, username_known = false; int ref_seq = 0, claim_ref = 0;
     std::map<std::string, int> check_refs;   // name we asked about (lower case) -> ref; the server echoes the name, not the ref
 
@@ -541,9 +546,80 @@ struct FriendsClient::Impl {
         return "{\"lobby_code\":" + q(v.lobby_code) + ",\"game_id\":" + q(v.game_id) + ",\"game_title\":" + q(v.game_title) +
                ",\"system\":" + q(v.system) + ",\"expires_at\":" + std::to_string(v.expires_at) + "}";
     }
+    static std::string attach_json(const Attach& a)
+    {
+        return "{\"id\":" + q(a.id) + ",\"name\":" + q(a.name) + ",\"size\":" + std::to_string(a.size) + ",\"sha\":" + q(a.sha) +
+               ",\"kind\":" + q(a.kind) + ",\"expires\":" + std::to_string(a.expires) + "}";
+    }
+    /* ---- outbox (SO-F4): connected = send now; otherwise queue, persist and tell the UI. Nothing is dropped silently. */
+    std::string outbox_path() const { return with_sep(data_dir) + "outbox.json"; }
+    void save_outbox()
+    {
+        std::string o = "{\"items\":[";
+        const auto& it = outbox.items();
+        for (size_t i = 0; i < it.size(); i++)
+            o += std::string(i ? "," : "") + "{\"kind\":" + q(it[i].kind) + ",\"uid\":" + q(it[i].uid) + ",\"frame\":" + q(it[i].frame) +
+                 ",\"id\":" + q(it[i].local_id) + ",\"text\":" + q(it[i].text) + ",\"at\":" + std::to_string(it[i].at) + "}";
+        o += "]}\n";
+        async_write(outbox_path(), std::move(o));
+    }
+    void load_outbox()
+    {
+        outbox.clear();
+        std::string text; Json j;
+        if (!read_file(outbox_path(), &text) || !json_parse(text, &j) || j.type != Json::Object) return;
+        std::vector<OutItem> v;
+        if (const Json* a = j.get("items"))
+            for (const Json& x : a->a) {
+                OutItem i; i.kind = x.str("kind"); i.uid = x.str("uid"); i.frame = x.str("frame"); i.local_id = x.str("id");
+                i.text = x.str("text"); i.at = jnum(x, "at");
+                if (!i.kind.empty() && !i.frame.empty() && v.size() < kOutboxMax) v.push_back(std::move(i));
+            }
+        outbox.set(std::move(v));
+    }
+    void event_out(Event::Kind k, const OutItem& it, const std::string& text)
+    {
+        Event e; e.kind = k; e.uid = it.uid; e.name = it.kind; e.text = text; e.msg.id = it.local_id; e.msg.text = it.text;
+        push_event(std::move(e));
+    }
+    /* Returns true when sent now. */
+    bool act(const char* kind, const std::string& uid, const std::string& frame, const std::string& text = "", const std::string& local_id = "")
+    {
+        if (welcomed && ws.state() == WsState::Open && ws.send_text(frame)) return true;
+        if (!started) return false;
+        OutItem it; it.kind = kind; it.uid = uid; it.frame = frame; it.text = text; it.local_id = local_id; it.at = unix_ms();
+        OutAdd r = outbox.add(it);
+        if (r == OutAdd::Full) { event_out(Event::SendFailed, it, "Too many things are waiting to be sent - wait until you're back online."); return false; }
+        save_outbox();
+        if (r != OutAdd::Cancelled) event_out(Event::Queued, it, Outbox::queued_text(it.kind));
+        return false;
+    }
     void send_uid(const char* type, const std::string& uid)
     {
-        send(std::string("{\"type\":\"") + type + "\",\"uid\":" + q(uid) + "}");
+        act(type, uid, std::string("{\"type\":\"") + type + "\",\"uid\":" + q(uid) + "}");
+    }
+    /* After a welcome: send what was queued, in order. Old items fail loudly. */
+    void flush_outbox()
+    {
+        for (const OutItem& g : outbox.expire(unix_ms())) event_out(Event::SendFailed, g, Outbox::failed_text(g, "it waited more than a day"));
+        std::vector<OutItem> items = outbox.take_all();
+        inflight.clear(); inflight_at = now_ms();
+        for (const OutItem& it : items) {
+            if (it.kind == "invite" && unix_ms() - it.at > 10 * 60 * 1000) { event_out(Event::SendFailed, it, Outbox::failed_text(it, "the room invite expired")); continue; }
+            if (ws.send_text(it.frame)) inflight.push_back(it);
+            else { outbox.add(it); }
+        }
+        save_outbox();
+    }
+    static std::string failure_reason(const std::string& reason, const std::string& detail)
+    {
+        if (detail == "attach-gone") return "the file expired";
+        if (detail == "attach-not-yours") return "the file can't be sent to them";
+        if (reason == "not-friends" || detail == "not-friends") return "you are not friends";
+        if (reason == "blocked") return "that player is blocked";
+        if (reason == "rate-limited" || detail == "rate-limited") return "too many requests";
+        if (detail == "friends-full" || detail == "target-full") return "a friends list is full";
+        return "the server refused it";
     }
 
     /* ---- parsing of data shapes */
@@ -598,6 +674,12 @@ struct FriendsClient::Impl {
         m.text = j.str("text");
         if (!m.ask) m.inv = parse_invite(j.get("invite"));
         m.at = jnum(j, "at");
+        if (const Json* aj = j.get("attach")) if (aj->type == Json::Object && !aj->str("id").empty()) {
+            m.has_attach = true;
+            m.attach.id = aj->str("id"); m.attach.name = aj->str("name"); m.attach.sha = aj->str("sha"); m.attach.kind = aj->str("kind");
+            m.attach.size = jnum(*aj, "size"); m.attach.expires = jnum(*aj, "expires");
+        }
+        if (const Json* cj = j.get("card")) if (cj->type == Json::String && cj->s.size() <= kCardMax) m.card = cj->s;
         if (j.str("kind") == "react") { m.react = true; m.target = j.str("target"); m.emoji = j.str("emoji"); { const Json* oj = j.get("on"); m.on = !oj || jbool(j, "on"); } }
         m.mine = (m.from == id.user_id);
         return m;
@@ -680,7 +762,9 @@ struct FriendsClient::Impl {
                 if (i) o += ",";
                 o += "{\"id\":" + q(m.id) + ",\"from\":" + q(m.from) + ",\"from_name\":" + q(m.from_name) + ",\"to\":" + q(m.to) +
                      ",\"kind\":" + (m.invite ? "\"invite\"" : "\"text\"") + ",\"text\":" + q(m.text) +
-                     ",\"invite\":" + invite_json(m.inv) + ",\"at\":" + std::to_string(m.at) + "}";
+                     ",\"invite\":" + invite_json(m.inv) + ",\"at\":" + std::to_string(m.at) +
+                     (m.has_attach ? ",\"attach\":" + attach_json(m.attach) : std::string()) +
+                     (m.card.empty() ? std::string() : ",\"card\":" + q(m.card)) + "}";
             }
             o += "]}\n";
             async_write(conv_path(kv.first), std::move(o));
@@ -872,6 +956,7 @@ struct FriendsClient::Impl {
         welcomed = true;
         backoff_ms = 1000;
         last_keepalive = now_ms();
+        live.reset(last_keepalive);
         status_text = "Online";
         if (!pt_pending.empty()) { send(pt_pending); pt_pending.clear(); }
         if (pt_want) send("{\"type\":\"playtime_get\"}");
@@ -912,6 +997,7 @@ struct FriendsClient::Impl {
             }
         }
         if (!ids.empty()) ack_ids(ids);
+        flush_outbox();
     }
 
     void emit_message(const Message& m)
@@ -1047,6 +1133,12 @@ struct FriendsClient::Impl {
             if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) retire_done(j.str("uid"));   // can never succeed: stop resending
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
             Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref"); e.detail = j.str("detail");
+            for (size_t i = 0; i < inflight.size(); i++)   // a queued action the server refused after the flush: say so
+                if (inflight[i].kind == e.name && (inflight[i].uid == e.detail || inflight[i].uid.empty() || e.detail.size() != 26) && now_ms() - inflight_at < 30000) {
+                    event_out(Event::SendFailed, inflight[i], Outbox::failed_text(inflight[i], failure_reason(reason, e.detail)));
+                    inflight.erase(inflight.begin() + i);
+                    break;
+                }
             push_event(std::move(e));
         } else if (type == "username_result") {   // op "check" (answer to username_check) or "set" (answer to set_username)
             const bool is_check = j.str("op") == "check";
@@ -1138,6 +1230,8 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
     }
     d.load_retire();
     d.load_flibs();
+    d.load_outbox();
+    d.inflight.clear();
     d.started = true;
     d.gave_up = false;
     d.backoff_ms = 1000;
@@ -1182,8 +1276,10 @@ void FriendsClient::update()
 
     std::string text;
     bool regen = false;
-    while (d.ws.poll_text(&text))
+    while (d.ws.poll_text(&text)) {
+        d.live.on_rx(now);
         if (d.on_server_message(text)) regen = true;
+    }
 
     if (regen) {
         net_log("Friends: friend-code collision, regenerating identity");
@@ -1222,6 +1318,7 @@ void FriendsClient::update()
         std::string why = d.welcomed || d.hello_sent ? "connection lost" : d.ws.error();
         if (why.empty()) why = "connection failed";
         bool had = d.welcomed;
+        d.live.disarm();
         d.schedule_reconnect(why);
         if (had)
             for (auto& f : d.friends)
@@ -1230,7 +1327,17 @@ void FriendsClient::update()
     }
 
     d.pump_fetch(now);
-    if (d.welcomed && now - d.last_keepalive >= 20000) {
+    if (d.welcomed && d.live.dead(now)) {   // no answer for ~60 s (PC slept / network gone without a close): reconnect
+        net_log("Friends: no answer from the server for %u ms, reconnecting", (unsigned)(now - d.live.last_rx));
+        d.live.disarm();
+        d.ws.close();
+        d.welcomed = false;
+        d.schedule_reconnect("connection lost");
+        for (auto& f : d.friends) if (f.online()) f.status.state = PresenceState::Offline;
+        return;
+    }
+    if (d.welcomed && d.live.ping_due(now)) {
+        d.live.pinged(now);
         d.last_keepalive = now;
         d.ws.send_text("{\"type\":\"keepalive\"}");
     }
@@ -1326,7 +1433,7 @@ void FriendsClient::add_friend(const std::string& code)
         c.erase(std::remove(c.begin(), c.end(), '-'), c.end());
         if (c.size() == 8) c = "RH-" + c.substr(0, 4) + "-" + c.substr(4);
     }
-    impl_->send("{\"type\":\"add_friend\",\"code\":" + q(c) + "}");
+    impl_->act("add_friend", "", "{\"type\":\"add_friend\",\"code\":" + q(c) + "}", c);
 }
 
 void FriendsClient::accept(const std::string& uid) { Impl::drop(impl_->incoming, uid); impl_->send_uid("accept", uid); }
@@ -1362,18 +1469,39 @@ void FriendsClient::send_reaction(const std::string& uid, const std::string& tar
     d.send("{\"type\":\"react\",\"to\":" + q(uid) + ",\"target\":" + q(target_id) + ",\"emoji\":" + q(emoji) + ",\"on\":" + (on ? "true" : "false") + "}");
 }
 
-void FriendsClient::send_message(const std::string& uid, const std::string& text)
+void FriendsClient::send_message(const std::string& uid, const std::string& text) { send_message(uid, text, nullptr, std::string()); }
+
+void FriendsClient::send_message(const std::string& uid, const std::string& text, const Attach* att, const std::string& card)
 {
     Impl& d = *impl_;
     size_t n = std::min<size_t>(text.size(), 500);
     while (n > 0 && n < text.size() && ((unsigned char)text[n] & 0xC0) == 0x80) n--;
     std::string t = text.substr(0, n);
-    if (t.empty() || !d.welcomed) return;
+    if (uid.empty() || (t.empty() && !att && card.empty())) return;
+    if (card.size() > kCardMax || (att && att->id.empty())) {
+        OutItem it; it.kind = "message"; it.uid = uid; it.text = t;
+        d.event_out(Event::SendFailed, it, card.size() > kCardMax ? "That card is too big to send." : "That file could not be attached.");
+        return;
+    }
     Message m;
     m.id = "local-" + std::to_string(unix_ms()) + "-" + std::to_string(d.local_seq++);
     m.from = d.id.user_id; m.from_name = d.name; m.to = uid; m.text = t; m.at = unix_ms(); m.mine = true;
+    if (att) { m.has_attach = true; m.attach = *att; if (m.text.empty()) m.text = att->name; }
+    m.card = card;
     d.add_msg(uid, m, false);
-    d.send("{\"type\":\"message\",\"to\":" + q(uid) + ",\"text\":" + q(t) + "}");
+    std::string f = "{\"type\":\"message\",\"to\":" + q(uid) + ",\"text\":" + q(t);
+    if (att) f += ",\"attach\":{\"id\":" + q(att->id) + "}";
+    if (!card.empty()) f += ",\"card\":" + q(card);
+    d.act("message", uid, f + "}", t, m.id);
+}
+int FriendsClient::outbox_size() const { return (int)impl_->outbox.size(); }
+bool FriendsClient::queued(const std::string& msg_id) const { return impl_->outbox.has_message(msg_id); }
+bool FriendsClient::cancel_queued(const std::string& msg_id)
+{
+    Impl& d = *impl_;
+    if (!d.outbox.remove_message(msg_id)) return false;
+    d.save_outbox();
+    return true;
 }
 
 void FriendsClient::send_invite(const std::vector<std::string>& uids, const Invite& inv)
@@ -1383,12 +1511,12 @@ void FriendsClient::send_invite(const std::vector<std::string>& uids, const Invi
     for (size_t i = 0; i < uids.size(); i++) o += (i ? "," : "") + q(uids[i]);
     Invite v = inv;
     if (v.expires_at == 0) v.expires_at = unix_ms() + 30 * 60 * 1000;
-    impl_->send(o + "],\"invite\":" + Impl::invite_json(v) + "}");
+    impl_->act("invite", "", o + "],\"invite\":" + Impl::invite_json(v) + "}", v.game_title);
 }
 
 void FriendsClient::ask_to_join(const std::string& uid, const std::string& game_id, const std::string& game_title, const std::string& system, bool host)
 {
-    if (uid.empty() || !impl_->welcomed) return;
+    if (uid.empty() || !impl_->welcomed) return;   // an "ask" is only useful right now: never queued
     impl_->send("{\"type\":\"ask\",\"to\":" + q(uid) + ",\"game_id\":" + q(game_id) + ",\"game_title\":" + q(game_title) + ",\"system\":" + q(system) + (host ? ",\"host\":true" : "") + "}");
 }
 

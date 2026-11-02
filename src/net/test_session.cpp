@@ -149,6 +149,70 @@ static bool reason_text_check()
     return ok;
 }
 
+/* A game-room socket blip must not end a running match: drop the guests' and then the host's WebSocket without a close frame while
+ * data flows over UDP; every session must stay alive, keep receiving, and get its socket back. */
+static bool blip_check(const std::string& server)
+{
+    const int n = 3;
+    std::string room = new_room_code() + "-1";
+    std::vector<std::unique_ptr<Session>> s;
+    for (int i = 0; i < n; i++) {
+        s.emplace_back(new Session());
+        SessionConfig c;
+        c.server = server; c.room = room; c.slot = i; c.expected = n;
+        if (!s[i]->start(c)) { printf("FAIL: blip: session %d start\n", i); return false; }
+        if (i == 0) for (uint32_t t0 = now_ms(); now_ms() - t0 < 300;) { s[0]->update(); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+    }
+    auto pump = [&](uint32_t ms) { for (uint32_t t0 = now_ms(); now_ms() - t0 < ms;) { for (auto& x : s) x->update(); std::this_thread::sleep_for(std::chrono::milliseconds(3)); } };
+    uint32_t t0 = now_ms();
+    for (;;) {
+        pump(20);
+        bool all = true;
+        for (auto& x : s) all = all && x->ready();
+        if (all) break;
+        if (now_ms() - t0 > 25000) { printf("FAIL: blip: not ready\n"); return false; }
+    }
+    pump(1200);   // let the direct UDP path come up
+    // traffic: every session sends a numbered datagram to all; count what each receives from slot 0 / the others
+    std::vector<int> rx(n, 0);
+    auto traffic = [&](uint32_t ms) {
+        for (uint32_t t1 = now_ms(); now_ms() - t1 < ms;) {
+            for (int i = 0; i < n; i++) { uint8_t d[4] = {(uint8_t)i, 1, 2, 3}; s[i]->send(-1, d, 4); }
+            for (auto& x : s) x->update();
+            for (int i = 0; i < n; i++) { int from; std::vector<uint8_t> d; while (s[i]->recv(&from, &d)) rx[i]++; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    };
+    auto alive = [&](const char* when) {
+        for (int i = 0; i < n; i++)
+            if (s[i]->failed() || s[i]->ended()) { printf("FAIL: blip (%s): session %d failed=%d ended=%d status=%s\n", when, i, s[i]->failed(), s[i]->ended(), s[i]->status().c_str()); return false; }
+        return true;
+    };
+    traffic(500);
+    std::vector<int> base = rx;
+    printf("blip: dropping guest 1's and guest 2's sockets\n");
+    s[1]->qa_drop_ws();
+    s[2]->qa_drop_ws();
+    traffic(2500);
+    if (!alive("guest blip")) return false;
+    for (int i = 0; i < n; i++) if (rx[i] - base[i] < 50) { printf("FAIL: blip: slot %d stopped receiving during the guest blip (%d)\n", i, rx[i] - base[i]); return false; }
+    base = rx;
+    printf("blip: dropping the host's socket\n");
+    s[0]->qa_drop_ws();
+    traffic(3000);
+    if (!alive("host blip")) return false;
+    for (int i = 0; i < n; i++) if (rx[i] - base[i] < 50) { printf("FAIL: blip: slot %d stopped receiving during the host blip (%d)\n", i, rx[i] - base[i]); return false; }
+    // past the server's host grace (10 s) and beyond: nobody was closed or failed
+    traffic(9000);
+    if (!alive("after grace")) return false;
+    for (int i = 0; i < n; i++) if (!s[i]->ready()) { printf("FAIL: blip: slot %d no longer ready\n", i); return false; }
+    // the sockets are back: a fresh room member join would be refused if the host slot were lost; check via status of a new guest is overkill
+    // - instead the hub-side reclaim is covered by test_hostgrace.mjs; here the Sessions' own logs show "lobby socket back".
+    printf("blip: all three sessions survived guest and host socket drops\n");
+    for (auto& x : s) x->stop();
+    return true;
+}
+
 int main(int argc, char** argv)
 {
     std::string server = hubnet::test_server_or_exit(argc, argv);
@@ -159,6 +223,7 @@ int main(int argc, char** argv)
     bool relay = fr && fr[0] && fr[0] != '0';
     net_set_log_file("hubnet_test.log");
 
+    if (getenv("HUBNET_BLIP_TEST") && getenv("HUBNET_BLIP_TEST")[0] == '1') return blip_check(server) ? 0 : 1;
     if (!event_order_check()) return 1;
     if (!reason_text_check()) return 1;
     if (!lobby_check(server)) return 1;

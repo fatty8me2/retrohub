@@ -576,6 +576,7 @@ hub::saves::CloudStatus cloud_status_now();             // legacy status struct 
 bool spawn(const std::string& exe, const std::string& args, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri);
 void poll_process();
+void ppsspp_send_state(bool save);   // launch.cpp: PPSSPP quick save (F2) / load (F4) state key for the quick menu; no-op unless a PSP game runs
 void pad_exit_watch();   // launch.cpp: Back+Start combo while an external game runs
 void focus_hub();
 void* running_game_hwnd();                 // launch.cpp: main window of the running game (HWND), nullptr if none
@@ -804,6 +805,7 @@ void spectate_start(const std::string& code, const std::string& game_id, const s
 void spectate_tick();
 bool spectate_pending();
 void launch_fail(const std::string& why, double secs = 8.0);   // guest couldn't start the host's launch: notice + np_fail to the host
+std::string emulator_online_block();   // "" or why this PC cannot take part in the room game yet (Dolphin / Azahar not installed); lobby_tick un-readies on it
 std::string ready_block_reason_now();   // "" or why the guest's "I'm ready" must stay disabled (version mismatch)
 bool is_host();
 bool allow_version_mismatch();

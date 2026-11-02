@@ -40,6 +40,8 @@ bool gc_fingerprint_ready(const std::string& path) {
     return false;
 }
 
+static unsigned long long g_gc_driver_t0 = 0;   // when the Dolphin UIA driver was spawned (watchdog in gc_tick)
+
 bool gc_process_alive() {
     if (!GCO.run.dolphin_pid) return false;
     HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, GCO.run.dolphin_pid);
@@ -161,9 +163,9 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     ip.write_save = host && A.gc_write_save;
     ip.mute = autotest_active();
     std::string cur;
-    { std::ifstream f(ini, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
+    { std::ifstream f(std::filesystem::path(W(ini)), std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
     std::string next = gcnp::ini_patch(cur, sp, ip);
-    { std::ofstream f(ini, std::ios::binary | std::ios::trunc); f << next; }
+    { std::ofstream f(std::filesystem::path(W(ini)), std::ios::binary | std::ios::trunc); f << next; }
     GCO.run = gcnp::Run();
     GCO.run.wait_go = !host;   // a guest's Dolphin boots right away and connects when the host's NetPlay server is up
     GCO.go_sent = false;
@@ -186,6 +188,7 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
         return false;
     }
     GCO.active = true;
+    g_gc_driver_t0 = GetTickCount64();
     GCO.host = host;
     autotest_log(std::string("gc_begin ") + (host ? "host" : "guest") + " card=" + card);
     GCO.ready_sent = false;
@@ -212,6 +215,16 @@ void gc_stop_all(const char* why) {
     GCO.fw.stop();
     GCO.active = false;
     GCO.guest_wait = false;
+}
+
+
+static bool gc_driver_alive() {
+    if (!GCO.run.driver_pid) return false;
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, GCO.run.driver_pid);
+    if (!h) return false;
+    bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    CloseHandle(h);
+    return alive;
 }
 
 /* Each frame: keep the forwarder alive, tell guests when the host's Dolphin is listening, check the guest's disc. */
@@ -298,6 +311,18 @@ void gc_tick() {
                     push_toast("Dolphin reported the game may be out of sync. If it keeps happening, make sure everyone has the same game file and restart the game.", ui::WARN, 15.0, true);
                 }
             }
+        }
+    }
+    if (GCO.run.driver_pid) {   // watchdog: a driver that died or never reported used to leave the host (and the guests) waiting for minutes
+        hubui::DriverVerdict v = hubui::driver_verdict(gc_driver_alive(), gcnp::read_status(GCO.run), GetTickCount64() - g_gc_driver_t0, GCO.host);
+        if (v != hubui::DriverVerdict::Ok) {
+            std::string why = "GameCube online: " + hubui::driver_verdict_text(v);
+            online_log("driver watchdog: " + why);
+            autotest_log("driver watchdog " + why);
+            if (GCO.host) { set_notice(why, 15.0); host_abort(why); } else launch_fail(why, 15.0);
+            gc_kill("driver watchdog");
+            gc_stop_all("driver watchdog");
+            return;
         }
     }
     if (!GCO.host && !GCO.go_sent && GCO.host_ready) { GCO.go_sent = true; gcnp::signal_go(GCO.run); autotest_log("guest: go"); }
@@ -795,6 +820,13 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
             }
             if (my >= 0 && my < (int)ms.players.size()) A.run_fighter = hubui::fighter_name(ms.players[(size_t)my].fighter);
         }
+    }
+    {   // retrorun exit 12 (could not connect) leaves its reason here; logic.cpp's exit_code_text shows it
+        std::string rf = no_slash(hub::data_dir()) + "\\netplay\\net_reason.txt";
+        make_dirs(no_slash(hub::data_dir()) + "\\netplay");
+        DeleteFileW(W(rf).c_str());
+        hubui::set_net_reason_file(rf);
+        SetEnvironmentVariableW(L"RETRORUN_REASON_FILE", W(rf).c_str());
     }
     std::string net = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
                       std::to_string(room_my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +

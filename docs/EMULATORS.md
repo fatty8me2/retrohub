@@ -198,3 +198,57 @@ Controllers page, tab **PlayStation** (profile system `ps1`). Same libretro pad 
 - Fullscreen (global default / per game) and the common scaling options work; PS1 uses smooth, non-integer scaling at the core's aspect ratio. Per-game settings: Internal resolution (1x-8x, software), Widescreen hack, Multitap.
 - **Online** (2-4 players; catalog `online = true` for the games with 2+ DualShock players): the host's room launch starts `retrorun --system ps1` on every PC with `--rollback --rb-pred 6` (lockstep when the core is not the RetroHub build). Inputs are buttons + both analog sticks per port; 3-4 players turn the emulated multitap on automatically (`hub::ps1::ports_need_multitap`, `beetle_psx_enable_multitap_port1`, port i = i-th member's pad). **Every PC needs the same BIOS** (the same scph file, or all on OpenBIOS): retrorun exchanges a setup fingerprint (core build, console options, BIOS files) before frame 0 and every PC refuses to start on a mismatch (exit 7). The host's memory card is the session save (`--share-host-save`, docs/SAVES.md); online play never writes a vault. Resolution, widescreen and PGXP are pinned for the room (docs/CORES.md, PS1 determinism).
 - Memory card 2 (`ps1.memcard2`, `<game>.1.mcr` in the vault battery folder) and disc swap (the `ps1_ui` disc-swap channel into `retrorun --disc-ctl`) are shipped. Card 2 is offline only: the setting is locked off for online rooms. Online disc swaps need rollback netplay and travel as input events. Not done here: card management UI, online for Buzz! quiz controllers.
+
+# PlayStation Portable (PPSSPP)
+
+PSP games run through PPSSPP, RetroHub's own portable download (`Kind::Ppsspp`), like PCSX2 for PS2. Code: `src/common/psp.{h,cpp}` (identification),
+`src/hub/ppsspp.{h,cpp}` (config, arguments, state keys), `src/hub/emulators.cpp` (pin, install, save session). Test: `hub_psp_test`
+(synthetic images only; `--download <dir>` also downloads and unpacks the pinned PPSSPP, never starts it). System short name `psp`, display "PSP",
+key `psp:<disc id lower case>` (for example `psp:ulus10041`), or `psp:file-<name>` when the image carries no disc id (homebrew).
+
+## Emulator pin
+
+| | |
+|---|---|
+| Source | ppsspp.org (official), GPL-2.0+ |
+| Pinned release | 1.20.4, `https://www.ppsspp.org/files/1_20_4/ppsspp_win.zip`, 27,658,759 bytes |
+| SHA-256 | `a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163` (ppsspp.org publishes no digest: computed from the official file on 2026-11-01, trust on first use, like Cemu) |
+| Install dir | `<data>\emulators\ppsspp\` (`PPSSPPWindows64.exe` at its root); a user's own PPSSPP is never used or touched |
+| Portable data | no `installed.txt` beside the exe = PPSSPP keeps everything in `<dir>\memstick` (`PSP\SYSTEM\ppsspp.ini`, `controls.ini`, `PSP\SAVEDATA`, `PSP\PPSSPP_STATE`) |
+| Launch | `PPSSPPWindows64.exe --fullscreen "<game>"` (`--windowed` when Fullscreen is off) |
+
+Download, size and SHA-256 check, unpack and the `retrohub-install.txt` marker are the same Installer as the other emulators. No BIOS is needed.
+
+## Library
+
+PARAM.SFO supplies the disc id (`DISC_ID`), title (`TITLE`) and `CATEGORY`. The PSP claim runs BEFORE the PS1 / PS2 / GC claims on `.pbp .iso .cso .chd`.
+
+| Format | Identification |
+|---|---|
+| `.iso` | ISO9660: `PSP_GAME\PARAM.SFO` (a PS1/PS2/GC/data disc has none and falls through to its own claim) |
+| `.cso` | CISO v1 read block by block, then as an ISO (CSO v2 / ZSO is not read) |
+| `.chd` | libchdr (DVD or CD units), then as an ISO |
+| `.pbp` | PARAM.SFO from the PBP header. **A PS1 "PSone Classic" eboot stays PlayStation 1**: category `ME`, or a DATA.PSAR starting `PSISOIMG` / `PSTITLEIMG` |
+| `.zip .7z .rar` | the one ISO / CSO / PBP member is streamed (first 8 MB) and read; listed with `issue = extract`, unpacked on Play into `rom-cache\psp\<key>` after asking, like the other discs. A CHD inside an archive is not read (left to the PS1/PS2 claims) |
+
+Covers: libretro-thumbnails `Sony_-_PlayStation_Portable` (redump DAT matched by the disc id). Game info: Wikidata platform Q170325.
+Homebrew PBP/ISO without a `DISC_ID` is listed under `psp:file-<name>`; it has no save mapping (its SAVEDATA folder cannot be told from other games').
+
+## Saves
+
+`<install>\memstick\PSP\SAVEDATA\<ID>*` folders (the folder name starts with the 9-character disc id: `ULUS10041DATA00`, `ULUS10041_SYSTEM`) are synced
+with `<vault>\psp\<key>\battery\SAVEDATA\<folder>` around each session by `begin_session` / `end_session` (`sync_tree_newest`, newest wins, conflicts kept in
+`_conflicts`). Folders the game creates during a session are picked up at the end. Save states (`PPSSPP_STATE`) stay local.
+
+## Controls and in-game
+
+- Profile system `psp` (Xbox A/B/X/Y = Cross/Circle/Square/Triangle, LB/RB = L/R, Back/Start = Select/Start, D-pad, left stick = analog stick). `controls.ini` is rewritten on every launch from the
+  profile for the first XInput pad (device `20 + slot`), keeps PPSSPP's own keyboard keys, and leaves every hotkey (pause, fast-forward, rewind, screenshot ...) EMPTY, because PPSSPP erases its defaults for
+  every name once the section exists. Save State / Load State stay unmapped on purpose so PPSSPP keeps its built-in F2 / F4 accelerators. Non-XInput pads are not mapped (PPSSPP reads them through DirectInput).
+- Back + Start held closes the game (`pad_exit_watch`, a normal window close). Screenshot and volume use the generic external-emulator paths (window capture, per-app audio session).
+- Quick save / load state: `ppsspp_send_state(save)` (launch.cpp) raises the game and sends F2 / F4 with `run_key_chord`, only while the game is foreground. Speed is not supported (the quick menu says so).
+- Settings: fullscreen (default on) and internal resolution (`psp.res`, ppsspp.ini `InternalResolution`).
+
+## Online
+
+None. PSP is offline only (`system_has_online_launch` is false for PSP, so the library shows "Offline only").

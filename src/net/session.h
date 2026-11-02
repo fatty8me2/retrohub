@@ -127,6 +127,7 @@ class Session {
     void set_no_relay(bool v);
     uint16_t local_port() const;   // the Session's UDP port (for UPnP mapping)
     void set_ping_interval(uint32_t ms);   // default 500; min 20
+    void qa_drop_ws();   // QA: cut the lobby socket without a close frame; the Session reconnects it (reconnect.h) while UDP play continues
 
     /* Unreliable datagram to one slot or -1 = all other slots. */
     void send(int to_slot, const void* data, int len);
