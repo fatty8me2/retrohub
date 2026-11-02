@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.31.4",
+      "date": "2026-11-02",
+      "title": "GameCube online at full speed",
+      "new": [],
+      "improved": [
+        "GameCube online now passes game traffic along the moment it arrives instead of once per screen refresh, cutting the delay it added from about 50 ms to under 5 ms",
+        "Super Mario Strikers online is back on one CPU core: the slowdown was never the core setting, and one core keeps players in sync"
+      ],
+      "fixed": [
+        "Mario Superstar Baseball, Super Mario Strikers and other GameCube games ran at about half speed online with friends far away. The input buffer is now set from your real ping before the game starts and follows it during play (tested at 100% speed with a 180 ms ping, directly and through the relay)"
+      ]
+    },
+    {
       "version": "1.31.3",
       "date": "2026-11-02",
       "title": "Smoother GameCube online",
