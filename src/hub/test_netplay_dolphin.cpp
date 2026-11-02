@@ -70,7 +70,7 @@ int main() {
     CHECK(o.find("ConfirmStop = False") != std::string::npos && ini_patch(std::string("[Interface]\nConfirmStop = True\n"), s, p).find("ConfirmStop = False") != std::string::npos);   // never Dolphin's stop dialog online
     CHECK(o.find("CPUThread = False") != std::string::npos && o.find("SyncGPU = False") != std::string::npos && o.find("OverclockEnable = False") != std::string::npos);   // default single core, other determinism pins kept
     { Spec b = s; b.game_id = "GYQE01"; std::string ob = ini_patch(o, b, p); CHECK(ob.find("CPUThread = True") != std::string::npos && ob.find("SyncGPU = False") != std::string::npos);   // allowlisted: dual core
-      b.game_id = "GYQP01"; CHECK(dual_core_allowed("GYQJ01") && ini_patch("", b, p).find("CPUThread = True") != std::string::npos); CHECK(!dual_core_allowed("GM4E01") && !dual_core_allowed("")); CHECK(dual_core_allowed("G4QE01") && dual_core_allowed("G4QP01")); }
+      b.game_id = "GYQP01"; CHECK(dual_core_allowed("GYQJ01") && ini_patch("", b, p).find("CPUThread = True") != std::string::npos); CHECK(!dual_core_allowed("GM4E01") && !dual_core_allowed("")); CHECK(!dual_core_allowed("G4QE01") && !dual_core_allowed("G4QP01")); }
     CHECK(std::string(driver_script()).find("$BufFile") != std::string::npos && std::string(driver_script()).find("RangeValuePattern") != std::string::npos);   // host types the measured buffer before Start
     CHECK(pad_buffer_for_ping(-1, false) == 8 && pad_buffer_for_ping(-1, true) == 10);
     /* measured: session RTT ~170 ms needs 12 (8 -> 75 %, 10 -> 92 %, 12 -> 100 %) */

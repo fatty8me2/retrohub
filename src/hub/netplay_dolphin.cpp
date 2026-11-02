@@ -225,8 +225,9 @@ bool dual_core_allowed(const std::string& game_id) {
     /* Online play is single core (deterministic, stress-tested) unless the game is listed here:
      *  - GYQE01 / GYQP01 / GYQJ01 Mario Superstar Baseball: CPU-bound; on one core it runs far below full speed online while it is fine
      *    offline (dual core), and the slowest PC throttles the whole room.
-     *  - G4QE01 / G4QP01 / G4QJ01 Super Mario Strikers: same story (full speed offline, crawls single core online). */
-    static const char* const ok[] = {"GYQE01", "GYQP01", "GYQJ01", "G4QE01", "G4QP01", "G4QJ01"};
+     * Super Mario Strikers was listed in v1.31.3 but the slowdown was the pad buffer and the forwarder (docs/DOLPHIN.md "Online
+     * speed"); it runs at full speed single core, so it is back on the deterministic default. */
+    static const char* const ok[] = {"GYQE01", "GYQP01", "GYQJ01"};
     for (const char* id : ok) if (game_id == id) return true;
     return false;
 }
