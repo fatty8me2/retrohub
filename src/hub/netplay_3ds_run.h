@@ -32,6 +32,9 @@ class Runner {
     int connect_port() const;   // host: plan.port; guest: the local forwarder port
     unsigned long long datagrams_out() const;
     unsigned long long datagrams_in() const;
+    /* Worst round trip to any other PC in ms (-1 unknown) and whether any link goes through the server relay. */
+    int worst_ping_ms() const;
+    bool any_relayed() const;
 
   private:
     struct Impl;
