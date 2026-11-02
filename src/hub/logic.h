@@ -62,6 +62,9 @@ struct Settings {
     int menu_volume = 30;              // menu sound volume 0..100 (low by default)
     bool menu_music = false;           // quiet ambient menu loop (OFF by default)
     bool attract_mode = true;          // Home hero turns into a slideshow of your own screenshots / save-state pictures after ~60 s idle (attract.cpp)
+    bool discord_presence = false;     // Discord Rich Presence: show what I am playing (OFF by default; discord_ui.cpp)
+    bool discord_join = false;         // ... plus a Join button carrying the RetroHub invite link (OFF by default: it shares the room code with Discord friends)
+    bool net_probe_done = false;       // the setup wizard ran `n64run --net-probe` / `retrorun --net-probe` (Windows Firewall prompt happened in front of RetroHub)
     bool share_games = true;           // "Show my games to friends": publish the list of game titles (never files) so friends see them greyed out
     bool show_friend_games = true;     // library chip "Show friends' games"
     std::string pack_links;            // extra shared game packs: public Google Drive folder links (same layout as GamePack1), separated by commas or spaces

@@ -2,6 +2,7 @@
  * See docs/RETRORUN.md. */
 
 #include "winutil.h"
+#include "net_probe.h"
 #include <windows.h>
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -3870,6 +3871,7 @@ int main() {
     int argc = 0;
     LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
     std::vector<std::string> v;
+    for (int i = 1; i < argc; i++) if (hubprobe::is_flag(wargv[i])) { LocalFree(wargv); return hubprobe::run(); }   // firewall prompt probe (setup wizard)
     for (int i = 1; i < argc; i++) v.push_back(narrow(wargv[i]));
     LocalFree(wargv);
     Args args;

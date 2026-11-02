@@ -1,4 +1,5 @@
 #include "app.h"
+#include "convenience.h"
 #include "pcsx2.h"
 #include "gamepack.h"
 
@@ -278,6 +279,14 @@ void tab_online() {
     }
     end_panel();
     gap();
+    begin_panel("set_conn");
+    section_title("Connection and Discord");
+    nettest_settings_ui();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    ImGui::Separator();
+    discord_settings_ui();
+    end_panel();
+    gap();
     begin_panel("set_adv");
     if (ImGui::CollapsingHeader("Advanced")) {
         char sb[256];
@@ -358,7 +367,7 @@ void settings_open(int tab) {
 void page_settings() {
     page_header("Settings", "Make RetroHub yours.");
     A.st.settings_tab = hubui::settings_tab_clamp(A.st.settings_tab);
-    static const char* labels[hubui::ST_Count] = {"General", "Online", "Video & Games", "Account"};
+    static const char* labels[hubui::ST_Count] = {"General", "Online", "Video & Games", "Account", "Help"};
     int nt = ui::segmented("settabs", labels, hubui::ST_Count, A.st.settings_tab);
     if (nt != A.st.settings_tab) { A.st.settings_tab = nt; mark_dirty(); }
     ImGui::SameLine(0, sp(2.f));
@@ -368,6 +377,7 @@ void page_settings() {
         case hubui::ST_General: tab_general(); break;
         case hubui::ST_Online: tab_online(); break;
         case hubui::ST_Video: tab_video(); break;
+        case hubui::ST_Help: help_tab_ui(); break;
         default: draw_account_section(); break;
     }
     ImGui::Dummy(ImVec2(0, sp(2.f)));
