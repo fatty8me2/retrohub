@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.31.3",
+      "date": "2026-11-02",
+      "title": "Smoother GameCube online",
+      "new": [],
+      "improved": [
+        "GameCube online picks its input buffer from your connection instead of a fixed small one, so games stop stuttering while they wait for the other player",
+        "Super Mario Strikers online uses both CPU cores, like Mario Superstar Baseball"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.31.2",
       "date": "2026-11-02",
       "title": "Everything is back, and 4-player online is fixed",
