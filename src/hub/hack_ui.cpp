@@ -3,6 +3,8 @@
 #include "hack_logic.h"
 #include "osk.h"
 #include "savestore.h"
+#include "attach_xfer.h"
+#include "friend_pick_ui.h"
 
 #include <atomic>
 #include <ctime>
@@ -554,5 +556,19 @@ void hack_details_section(const hub::GameEntry& e) {
         if (button("Remove hack...", ImVec2(0, sp(4.f)), false, true, ui::Icon::Close)) {
             RM.open = true; RM.focus = true; RM.key = e.key; RM.title = e.title; RM.system = sys_short(e);
         }
+        /* Send this hack to a friend: the stored patch file (<= 8 MB) rides a DM; they get "Add this hack". */
+        static hubui::FriendPicker send_pick;
+        static std::string send_path, send_title;
+        ImGui::SameLine(0, sp(1.f));
+        if (button("Send this hack to a friend", ImVec2(0, sp(4.f)))) {
+            std::error_code ec;
+            const std::string pp = e.hack_patch;
+            auto sz = fs::file_size(fs::u8path(pp), ec);
+            std::string why = ec ? std::string("The patch file for this hack can't be found.") : hub::attach::attach_size_problem((int64_t)sz, "patch");
+            if (!why.empty()) set_toast(why, false, 7.0);
+            else { send_path = pp; send_title = e.title; send_pick.open("Send this hack", "Pick who should get the patch file. They add it with one click (max 8 MB). Everyone needs the original game."); }
+        }
+        if (send_pick.draw("Send hack to friends##hackpick") && !send_path.empty())
+            hubui::attach_send_start(send_path, "patch", fs::u8path(send_path).filename().u8string(), send_pick.chosen(), "Sent the hack " + send_title);
     }
 }
