@@ -3,8 +3,9 @@
  * corner. This header is the shared part: timing (fade in / hold / fade out), the text of the rows, and a software
  * renderer that produces an ARGB bitmap (Xbox-style button glyphs, matching the hub's footer hints). The consumers are
  *   - retrorun: draws the bitmap into its own SDL frame (and into headless screenshots),
- *   - hint_popup.h: a click-through topmost popup window for games RetroHub does not draw into (Dolphin, PCSX2, Azahar,
- *     Cemu, mGBA, BattleShip, n64run's GL window).
+ *   - hint_popup.h: n64run's card over its OWN game window (a click-through, non-topmost popup owned by that window). For games
+ *     RetroHub does not draw into (Dolphin, PCSX2, Azahar, Cemu, mGBA, BattleShip) nothing is ever drawn over the game: the
+ *     hub shows the same rows in its own window while the game is still starting (src/hub/main.cpp, draw_launch_tips).
  * The shortcuts described here must match the implemented ones: Back(View)+Y opens the quick menu (hub: cheats_pad_watch),
  * Back(View)+Start held for kExitHoldMs leaves the game (src/common/exit_combo.h). */
 

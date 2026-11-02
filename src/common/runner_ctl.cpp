@@ -1,6 +1,7 @@
 #include "runner_ctl.h"
 
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -38,13 +39,16 @@ const char* cmd_name(Cmd c) {
         case Cmd::Clip: return "clip";
         case Cmd::OsdMsg: return "osd_msg";
         case Cmd::Input: return "input";
+        case Cmd::Pause: return "pause";
+        case Cmd::OsdCorner: return "osd_corner";
+        case Cmd::Handoff: return "handoff";
         default: return "none";
     }
 }
 
 Cmd cmd_from_name(const std::string& s) {
     for (Cmd c : {Cmd::SaveState, Cmd::LoadState, Cmd::Screenshot, Cmd::SwapDisc, Cmd::Quit, Cmd::Volume, Cmd::Mute, Cmd::Ff, Cmd::Speed,
-                  Cmd::Rewind, Cmd::Shader, Cmd::Overlay, Cmd::Clip, Cmd::OsdMsg, Cmd::Input})
+                  Cmd::Rewind, Cmd::Shader, Cmd::Overlay, Cmd::Clip, Cmd::OsdMsg, Cmd::Input, Cmd::Pause, Cmd::OsdCorner, Cmd::Handoff})
         if (s == cmd_name(c)) return c;
     return Cmd::None;
 }
@@ -78,7 +82,8 @@ std::string speed_label(double s) {
 }
 
 bool offline_only(Cmd c) {
-    return c != Cmd::None && c != Cmd::Quit && c != Cmd::Screenshot && c != Cmd::OsdMsg && c != Cmd::Volume && c != Cmd::Mute && c != Cmd::Input && c != Cmd::Clip && c != Cmd::Overlay;   // clips and the stats overlay only read / display: allowed online
+    return c != Cmd::None && c != Cmd::Quit && c != Cmd::Screenshot && c != Cmd::OsdMsg && c != Cmd::Volume && c != Cmd::Mute && c != Cmd::Input && c != Cmd::Clip && c != Cmd::Overlay &&
+           c != Cmd::OsdCorner && c != Cmd::Handoff;   // clips, the stats overlay and corner text only read / display; a hand-off is agreed by every peer: allowed online
 }
 
 bool parse_control(const std::string& text, Command* out) {
@@ -101,9 +106,11 @@ bool parse_control(const std::string& text, Command* out) {
     }
     switch (c.cmd) {
         case Cmd::Volume: if (c.value < 0 || c.value > 100) return false; break;
-        case Cmd::Mute: case Cmd::Input: case Cmd::Ff: case Cmd::Rewind: case Cmd::Overlay: if (c.value != 0 && c.value != 1) return false; break;
+        case Cmd::Mute: case Cmd::Input: case Cmd::Ff: case Cmd::Rewind: case Cmd::Overlay: case Cmd::Pause: if (c.value != 0 && c.value != 1) return false; break;
         case Cmd::Speed: if (!speed_valid(c.speed)) return false; break;
         case Cmd::Shader: case Cmd::OsdMsg: if (c.text.empty()) return false; break;
+        case Cmd::OsdCorner: if (c.slot < 0 || c.slot > 3 || c.value < 0 || c.value > 3600) return false; break;   // empty text = clear
+        case Cmd::Handoff: if (c.slot < 0 || c.slot > 3 || c.value < 0 || c.value > 3) return false; break;
         default: break;
     }
     if (out) *out = c;
@@ -211,16 +218,29 @@ long long send_command(const std::string& ctl, Cmd cmd, int slot) {
     return send_command_ex(ctl, c);
 }
 
+/* True while the control file holds a Quit the runner has not acked, written less than kQuitHoldSec ago. */
+static bool quit_pending(const std::string& ctl, const json::Value& cur) {
+    if (cur.str("cmd") != "quit") return false;
+    std::string at;
+    Ack a;
+    if (read_text(ack_path_for(ctl), &at) && parse_ack(at, &a) && a.seq >= cur.i64("seq", 0)) return false;   // already handled
+    std::error_code ec;
+    auto t = fs::last_write_time(fs::u8path(ctl), ec);
+    if (ec) return false;
+    auto age = fs::file_time_type::clock::now() - t;
+    return age >= fs::file_time_type::duration::zero() && age < std::chrono::seconds(kQuitHoldSec);   // a future stamp (clock moved back) is not held
+}
+
 long long send_command_ex(const std::string& ctl, Command c) {
     std::string cur;
-    Command prev;
     long long seq = 1;
     if (read_text(ctl, &cur)) {
         json::Value v;
-        if (json::parse(cur, &v) && v.is_object()) seq = v.i64("seq", 0) + 1;
-        else seq = (long long)std::time(nullptr);   // corrupt file: a clock-based seq stays above any earlier one
+        if (json::parse(cur, &v) && v.is_object()) {
+            if (c.cmd != Cmd::Quit && quit_pending(ctl, v)) return 0;   // runners-H1: never overwrite an un-acked Quit
+            seq = v.i64("seq", 0) + 1;
+        } else seq = (long long)std::time(nullptr);   // corrupt file: a clock-based seq stays above any earlier one
     }
-    (void)prev;
     if (seq < 1) seq = 1;
     c.seq = seq;
     return write_text_atomic(ctl, make_control(c)) ? seq : 0;

@@ -1,4 +1,5 @@
-add_library(hublogic STATIC changelog.cpp osk_logic.cpp logic.cpp toast.cpp netplay_3ds.cpp smash_save.cpp state_slots.cpp)
+add_library(hublogic STATIC changelog.cpp osk_logic.cpp logic.cpp toast.cpp netplay_3ds.cpp smash_save.cpp state_slots.cpp
+    party_logic.cpp bracket_logic.cpp hack_logic.cpp)   # Plan 4: party mode, brackets/ladder, ROM hack identity (pure)
 target_link_libraries(hublogic PUBLIC hubbase)
 target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
 target_compile_features(hublogic PUBLIC cxx_std_17)
@@ -56,6 +57,17 @@ target_include_directories(hub_username_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(hub_homefun_test test_homefun.cpp)
 target_link_libraries(hub_homefun_test PRIVATE hublogic)
 
+# Plan 4 p4-social: DM attachments (async upload/download through the Worker) + friend challenge logic (cards, leaderboard, rules)
+add_library(hubattach STATIC attach_xfer.cpp challenge_logic.cpp)
+target_include_directories(hubattach PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
+target_compile_features(hubattach PUBLIC cxx_std_17)
+target_link_libraries(hubattach PUBLIC hubsaves hubnet hubbase)
+add_executable(hubchallenge_test test_challenge.cpp)
+target_link_libraries(hubchallenge_test PRIVATE hubattach)
+add_executable(hubattach_test test_attach.cpp)
+target_include_directories(hubattach_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+target_link_libraries(hubattach_test PRIVATE hubattach)
+
 add_executable(hub_session_test test_session.cpp)
 target_link_libraries(hub_session_test PRIVATE hublogic)
 
@@ -68,16 +80,26 @@ add_custom_command(OUTPUT ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_GEN}/
             -P ${CMAKE_SOURCE_DIR}/cmake/gen_hub_version.cmake
     DEPENDS ${CMAKE_SOURCE_DIR}/VERSION ${CMAKE_SOURCE_DIR}/cmake/gen_hub_version.cmake
     COMMENT "Generating hub version files" VERBATIM)
+# Plan 4 Wave 2 C: diagnostics zip + connection test (no UI)
+add_library(hubconv STATIC diag_logic.cpp nettest.cpp)
+target_include_directories(hubconv PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hubconv PUBLIC hubminiz ws2_32 winhttp)
+target_compile_features(hubconv PUBLIC cxx_std_17)
+add_executable(hub_convenience_test test_convenience.cpp)
+target_link_libraries(hub_convenience_test PRIVATE hubconv)
+
 add_library(hubversion STATIC ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_GEN}/hub_version_rc.h)
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp spectate_ui.cpp dropin_ui.cpp
-    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp gamenight_ui.cpp friend_games_ui.cpp group_ui.cpp
+    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_pick_ui.cpp challenge_ui.cpp gamenight_ui.cpp friend_games_ui.cpp group_ui.cpp
     page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp
-    attract.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp)
+    attract.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp
+    party_ui.cpp party_view.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp   # Plan 4 Wave 1
+    discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp)   # Plan 4 Wave 2 C (convenience)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(RetroHub PRIVATE hubcheevos hubversion hubgameinfo_net hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
+target_link_libraries(RetroHub PRIVATE hubconv hubattach hubcheevos hubversion hubgameinfo_net hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
     ole32 shell32 uuid winhttp)
 # main.cpp defines SDL_MAIN_HANDLED and provides WinMain itself, so SDL2main is not needed.
 
@@ -133,11 +155,25 @@ target_link_libraries(hub_group_test PRIVATE hublogic)
 add_executable(hub_rivals_test test_rivals.cpp)
 target_link_libraries(hub_rivals_test PRIVATE hublogic)
 
+# Plan 4 Wave 1: shared match results + resume guard, party mode, brackets/ladder, ROM hack identity (pure logic, console tests)
+add_executable(hub_results_test test_results.cpp)
+target_link_libraries(hub_results_test PRIVATE hublogic)
+add_executable(hub_party_test test_party.cpp)
+target_link_libraries(hub_party_test PRIVATE hublogic)
+add_executable(hub_bracket_test test_bracket.cpp)
+target_link_libraries(hub_bracket_test PRIVATE hublogic)
+add_executable(hub_hack_test test_hack.cpp hack_core.cpp)
+target_link_libraries(hub_hack_test PRIVATE hublogic hubcommon)
+
 add_executable(hub_toast_test test_toast.cpp)
 target_link_libraries(hub_toast_test PRIVATE hublogic)
 
 add_executable(hub_popup_guard_test test_popup_guard.cpp)
-target_compile_definitions(hub_popup_guard_test PRIVATE HUB_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(hub_popup_guard_test PRIVATE HUB_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")   # the lint also scans ${HUB_SRC_DIR}/../common
+
+add_executable(hub_idle_test test_idle.cpp)
+target_include_directories(hub_idle_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_idle_test PRIVATE cxx_std_17)
 
 add_executable(hub_toast_win_test test_toast_win.cpp toast_win.cpp shell_integration.cpp)
 target_link_libraries(hub_toast_win_test PRIVATE hublogic hubbase SDL2::SDL2 ole32 shell32 uuid propsys user32 windowsapp)
@@ -154,7 +190,7 @@ target_sources(RetroHub PRIVATE emulators.cpp netplay_3ds_run.cpp netplay_3ds_jo
 target_link_libraries(RetroHub PRIVATE ws2_32)
 target_link_libraries(RetroHub PRIVATE xinput setupapi)
 target_link_libraries(RetroHub PRIVATE hubminiz)
-add_executable(hub_emu_test test_emulators.cpp emulators.cpp)
+add_executable(hub_emu_test test_emulators.cpp emulators.cpp ppsspp.cpp)
 target_include_directories(hub_emu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 add_executable(hub_wiiu_test test_wiiu_offline.cpp emulators.cpp art_match.cpp)   # offline Wii U: .wua/meta.xml, own-Cemu settings, profiles, saves, art names
@@ -219,10 +255,15 @@ add_executable(kanto_live kanto_live.cpp)
 target_link_libraries(kanto_live PRIVATE hubcommon hubminiz)
 
 # PlayStation 2 via PCSX2 (docs/PS2.md): BIOS discovery, PCSX2.ini writers, pad bindings, card session; library scan of PS2 images
-target_sources(RetroHub PRIVATE pcsx2.cpp)
+target_sources(RetroHub PRIVATE pcsx2.cpp ppsspp.cpp)
 add_executable(hub_ps2_test test_pcsx2.cpp pcsx2.cpp emulators.cpp)
 target_include_directories(hub_ps2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
+# PlayStation Portable via PPSSPP (docs/EMULATORS.md): PARAM.SFO / ISO / CSO / CHD / PBP identification (synthetic images), PS1-vs-PSP routing, scan, SAVEDATA mapping, ppsspp.ini + controls.ini
+add_executable(hub_psp_test test_psp.cpp ppsspp.cpp emulators.cpp)
+target_include_directories(hub_psp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_psp_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # PS2 online (docs/PS2_ONLINE.md): readiness reasons, retrorun arguments, exit-code texts, the pinned LRPS2 download
 add_executable(hub_ps2_online_test test_ps2_online.cpp emulators.cpp)

@@ -30,8 +30,12 @@
 #include <shellapi.h>
 
 #include "hub_version.h"
+#include "update_apply.h"
 
 namespace hubupdate {
+
+const char* const kReadyText = "Update ready: installs when you finish playing";
+const char* const kReadyBellText = "Update ready: installs after your game";
 
 namespace {
 
@@ -51,6 +55,27 @@ std::atomic<bool> s_failed{false};
 std::atomic<bool> s_downloading{false};
 std::atomic<bool> s_started{false};
 std::atomic<float> s_progress{-1.0f};
+
+/* The deferred hand-off. A downloaded update waits (s_ready) until tick() finds no game running; only then does a thread start the
+ * installer (s_handing) and wait for it to confirm (s_started). s_deferred = ready but held back by a game. */
+std::atomic<bool> s_ready{false};
+std::atomic<bool> s_handing{false};
+std::atomic<bool> s_deferred{false};
+std::atomic<bool> s_quit{false};
+
+struct Pending {
+    std::wstring apply_exe, apply_dir, staged, exe_dir, marker;
+    std::string version;
+};
+Pending s_pending;            // guarded by s_mu
+detail::Gate s_gate;          // UI thread only (tick)
+bool (*s_session_probe)() = nullptr;
+
+/* Startup pass (interrupted-update repair + the failure note of the last installer), run once on a background thread. */
+std::thread s_startup_th;
+std::atomic<bool> s_startup_started{false};
+std::atomic<bool> s_startup_done{false};
+std::vector<std::string> s_startup_notes;   // guarded by s_mu
 
 std::string s_latest, s_notes, s_url, s_digest, s_sums_url, s_status;
 long long s_size = 0;
@@ -360,6 +385,69 @@ bool download_verified(const FetchSpec& f, const std::string& zipPath, std::stri
     return true;
 }
 
+/* ---- the deferred hand-off: a downloaded update waits for the game(s) to close ---- */
+GateState gate_step(Gate& g, bool ready, bool session_busy, bool install_busy, unsigned long long now_ms, unsigned long long settle_ms) {
+    if (!ready) { g = Gate(); return GateState::NotReady; }   // also re-arms the gate after a failed hand-off
+    if (g.fired) return GateState::Done;
+    if (session_busy || install_busy) { g.idle = false; return GateState::Held; }
+    if (!g.idle) { g.idle = true; g.idle_since = now_ms; }
+    if (now_ms - g.idle_since >= settle_ms) { g.fired = true; return GateState::Go; }
+    return GateState::Settling;
+}
+
+/* ---- staged files kept for a retry ---- */
+StagedInfo scan_staged(const std::string& staged_dir) {
+    StagedInfo s;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(P(staged_dir), std::filesystem::directory_options::skip_permission_denied, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (!it->is_regular_file(e2)) continue;
+        s.files++;
+        s.bytes += (long long)it->file_size(e2);
+    }
+    return s;
+}
+
+std::string staged_manifest_json(const StagedInfo& s) {
+    JV o = json::make_object();
+    o.o.push_back({"v", json::make_int(1)});
+    o.o.push_back({"version", json::make_string(s.version)});
+    o.o.push_back({"files", json::make_int(s.files)});
+    o.o.push_back({"bytes", json::make_int(s.bytes)});
+    return json::stringify(o) + "\n";
+}
+
+bool parse_staged_manifest(const std::string& text, StagedInfo* out) {
+    JV v;
+    if (!json_parse(text, &v)) return false;
+    StagedInfo s;
+    s.version = v.str("version"); s.files = v.i64("files"); s.bytes = v.i64("bytes");
+    if (s.version.empty() || s.files <= 0 || s.bytes < 0) return false;
+    if (out) *out = s;
+    return true;
+}
+
+bool staged_reusable(const std::string& updates_dir, const std::string& version) {
+    std::ifstream in(P(updates_dir + "\\staged.json"), std::ios::binary);
+    if (!in || version.empty()) return false;
+    std::stringstream ss; ss << in.rdbuf();
+    StagedInfo m;
+    if (!parse_staged_manifest(ss.str(), &m) || m.version != version) return false;
+    const std::string staged = updates_dir + "\\staged";
+    for (const char* req : {"RetroHub.exe", "BattleShip.exe"})
+        if (GetFileAttributesW(W(staged + "\\" + req).c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+    StagedInfo now = scan_staged(staged);
+    return now.files == m.files && now.bytes == m.bytes;   // anything missing or changed since it was unpacked: download again
+}
+
+bool write_staged_manifest(const std::string& updates_dir, const std::string& version) {
+    StagedInfo s = scan_staged(updates_dir + "\\staged");
+    s.version = version;
+    if (s.files <= 0 || version.empty()) return false;
+    return winutil::write_file_atomic(updates_dir + "\\staged.json", staged_manifest_json(s));
+}
+
 } // namespace detail
 
 /* ---------------- public API ---------------- */
@@ -442,11 +530,18 @@ void check_async(bool force) {
 
 static bool (*s_game_probe)() = nullptr;
 void set_game_probe(bool (*fn)()) { s_game_probe = fn; }
+void set_session_probe(bool (*fn)()) { s_session_probe = fn; }
 
+/* Download, verify and unpack may run during a game (the player asked for the update); only the hand-off to the installer waits.
+ * Calling this again while an update is downloading or waiting for a game to close does nothing, so every caller (About page,
+ * startup popup, the bell, a room's "UPDATE NOW") is safe as it is. */
 void start_update() {
     bool expected = false;
     if (!s_downloading.compare_exchange_strong(expected, true)) return;
     s_progress.store(-1.0f);
+    s_ready.store(false);
+    s_handing.store(false);
+    s_deferred.store(false);
 
     std::string url, digest, sumsUrl, version; long long size;
     {
@@ -458,12 +553,16 @@ void start_update() {
         s_downloading.store(false);
         return;
     }
-    set_status("Starting download...");
+    const bool gaming = s_session_probe && s_session_probe();   // read here, on the UI thread
+    set_status(gaming ? "Starting download (it installs when you finish playing)..." : "Starting download...");
 
     std::thread([url, digest, sumsUrl, version, size]() {
         auto fail = [](const std::string& m) {
             ulog("update failed: %s", m.c_str());
             set_status("Error: " + m);
+            s_ready.store(false);
+            s_deferred.store(false);
+            s_handing.store(false);
             s_downloading.store(false);
         };
         std::string exePath = exe_path();
@@ -472,7 +571,8 @@ void start_update() {
         std::string updatesDir = exeDir + "\\updates";
         CreateDirectoryW(W(updatesDir).c_str(), nullptr);
         std::string zipPath = updatesDir + "\\update.zip";
-        rm_file(zipPath);
+        const std::string staged = updatesDir + "\\staged";
+        std::error_code fec;
 
         auto onLine = [](const std::string& line) {
             size_t p = line.rfind('%');
@@ -487,37 +587,46 @@ void start_update() {
                 set_status(t);
             }
         };
-        ulog("downloading %s", url.c_str());
-        detail::FetchSpec spec; spec.zip_url = url; spec.sums_url = sumsUrl; spec.tag = version; spec.digest = digest; spec.size = size;
-        std::string verr;
-        if (!detail::download_verified(spec, zipPath, &verr, onLine)) {
-            fail(verr + " Download manually: " + kManualUrl);
-            return;
-        }
-        set_status("Verified.");
-        /* Unpack the zip (Windows' own tar.exe, hidden), then hand over to a TEMP copy of
-         * RetroHub.exe running `--apply-update` (see update_apply.h). */
-        set_status("Preparing...");
-        std::wstring systemRoot = L"C:\\Windows";
-        if (DWORD need = GetEnvironmentVariableW(L"SystemRoot", nullptr, 0)) {
-            std::wstring b(need, L'\0');
-            DWORD got = GetEnvironmentVariableW(L"SystemRoot", &b[0], need);
-            if (got > 0 && got < need) { b.resize(got); systemRoot = b; }
-        }
-        std::string staged = updatesDir + "\\staged";
-        std::error_code fec;
-        std::filesystem::remove_all(P(staged), fec);
-        std::filesystem::create_directories(P(staged), fec);
-        std::string tarCmd = "\"" + U8(systemRoot) + "\\System32\\tar.exe\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
-        int tarCode = run_capture(tarCmd, [](const std::string&) {});
-        rm_file(zipPath);
-        if (tarCode != 0) { std::filesystem::remove_all(P(staged), fec); fail("could not unpack the update."); return; }
-        for (const char* req : {"RetroHub.exe", "BattleShip.exe"})
-            if (GetFileAttributesW(W(staged + "\\" + req).c_str()) == INVALID_FILE_ATTRIBUTES) {
-                std::filesystem::remove_all(P(staged), fec);
-                fail(std::string("the update is missing ") + req);
+        if (detail::staged_reusable(updatesDir, version)) {
+            /* An earlier try (a postponed or failed install, or RetroHub closed while the update waited for a game) already unpacked this
+             * exact release: nothing to download. */
+            ulog("reusing the unpacked update %s from updates\\staged (no download)", version.c_str());
+            set_status("Preparing...");
+            s_progress.store(1.0f);
+        } else {
+            rm_file(zipPath);
+            ulog("downloading %s", url.c_str());
+            detail::FetchSpec spec; spec.zip_url = url; spec.sums_url = sumsUrl; spec.tag = version; spec.digest = digest; spec.size = size;
+            std::string verr;
+            if (!detail::download_verified(spec, zipPath, &verr, onLine)) {
+                fail(verr + " Download manually: " + kManualUrl);
                 return;
             }
+            set_status("Verified.");
+            /* Unpack the zip (Windows' own tar.exe, hidden), then hand over to a TEMP copy of
+             * RetroHub.exe running `--apply-update` (see update_apply.h) once no game is running. */
+            set_status("Preparing...");
+            std::wstring systemRoot = L"C:\\Windows";
+            if (DWORD need = GetEnvironmentVariableW(L"SystemRoot", nullptr, 0)) {
+                std::wstring b(need, L'\0');
+                DWORD got = GetEnvironmentVariableW(L"SystemRoot", &b[0], need);
+                if (got > 0 && got < need) { b.resize(got); systemRoot = b; }
+            }
+            rm_file(updatesDir + "\\staged.json");
+            std::filesystem::remove_all(P(staged), fec);
+            std::filesystem::create_directories(P(staged), fec);
+            std::string tarCmd = "\"" + U8(systemRoot) + "\\System32\\tar.exe\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
+            int tarCode = run_capture(tarCmd, [](const std::string&) {});
+            rm_file(zipPath);
+            if (tarCode != 0) { std::filesystem::remove_all(P(staged), fec); fail("could not unpack the update."); return; }
+            for (const char* req : {"RetroHub.exe", "BattleShip.exe"})
+                if (GetFileAttributesW(W(staged + "\\" + req).c_str()) == INVALID_FILE_ATTRIBUTES) {
+                    std::filesystem::remove_all(P(staged), fec);
+                    fail(std::string("the update is missing ") + req);
+                    return;
+                }
+            detail::write_staged_manifest(updatesDir, version);   // the unpacked files are kept for a retry until an install succeeds
+        }
 
         /* TEMP copy of this exe (+ its DLLs) so the install's RetroHub.exe is not locked. */
         wchar_t tmpBuf[MAX_PATH + 1]; DWORD tn = GetTempPathW(MAX_PATH, tmpBuf);
@@ -538,19 +647,48 @@ void start_update() {
             if (ext == L".dll") std::filesystem::copy_file(e.path(), applyDir / e.path().filename(), std::filesystem::copy_options::overwrite_existing, e2);
         }
 
-        std::wstring marker = W(updatesDir + "\\apply.started");
+        /* Everything is downloaded, verified and unpacked. From here tick() (UI thread) decides WHEN the installer starts: never while a
+         * game runs. Nothing is shown or raised by waiting; the bell tells the player (update_deferred()). */
+        {
+            std::lock_guard<std::mutex> l(s_mu);
+            s_pending.apply_exe = applyExe.wstring(); s_pending.apply_dir = applyDir.wstring();
+            s_pending.staged = W(staged); s_pending.exe_dir = W(exeDir);
+            s_pending.marker = W(updatesDir + "\\apply.started");
+            s_pending.version = version;
+        }
+        s_progress.store(1.0f);
+        set_status("Update ready.");
+        ulog("update %s is unpacked; the installer starts once no game is running", version.c_str());
+        s_ready.store(true);
+    }).detach();
+}
+
+/* Launches the TEMP installer and waits for its "started" marker, then asks the app to quit (installer_started()). The installer waits
+ * for this process to exit before touching any file, and never terminates a game. */
+static void begin_handoff(const Pending& p, bool game_active) {
+    s_handing.store(true);
+    set_status("Installing " + p.version + " - RetroHub will restart...");
+    std::thread([p, game_active]() {
+        auto fail = [](const std::string& m) {
+            ulog("update failed: %s", m.c_str());
+            set_status("Error: " + m);
+            s_ready.store(false);
+            s_deferred.store(false);
+            s_handing.store(false);
+            s_downloading.store(false);
+        };
+        const std::wstring& marker = p.marker;
         DeleteFileW(marker.c_str());
-        std::wstring wcmd = L"\"" + applyExe.wstring() + L"\" --apply-update \"" + W(staged) + L"\" \"" + W(exeDir) + L"\" " +
-                            std::to_wstring(GetCurrentProcessId()) + L" --version \"" + W(version) + L"\" --started-marker \"" + marker + L"\"" +
-                            ((s_game_probe && s_game_probe()) ? L" --game-active" : L"");
+        std::wstring wcmd = L"\"" + p.apply_exe + L"\" --apply-update \"" + p.staged + L"\" \"" + p.exe_dir + L"\" " +
+                            std::to_wstring(GetCurrentProcessId()) + L" --version \"" + W(p.version) + L"\" --from \"" + W(current_version()) +
+                            L"\" --started-marker \"" + marker + L"\"" + (game_active ? L" --game-active" : L"");
         STARTUPINFOW si{}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
-        std::wstring wdir = applyDir.wstring();
         std::wstring cmdBreakaway = wcmd;
         if (!CreateProcessW(nullptr, cmdBreakaway.data(), nullptr, nullptr, FALSE,
-                            CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB, nullptr, wdir.c_str(), &si, &pi) &&
+                            CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB, nullptr, p.apply_dir.c_str(), &si, &pi) &&
             !CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-                            wdir.c_str(), &si, &pi)) {
+                            p.apply_dir.c_str(), &si, &pi)) {
             fail("could not start the installer.");
             return;
         }
@@ -560,17 +698,95 @@ void start_update() {
         /* Quit only once the installer is confirmed running; it waits for this
          * process to exit before touching any files. */
         bool started = false;
-        for (int i = 0; i < 300 && !started; i++) {   // the applier can take a moment to cold-start
+        for (int i = 0; i < 300 && !started && !s_quit.load(); i++) {   // the applier can take a moment to cold-start
             Sleep(100);
             started = GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES;
         }
         if (!started) { fail("the installer did not start."); return; }
-        set_status("Installing " + version + " - RetroHub will restart...");
-        ulog("installer started for %s, quitting", version.c_str());
+        ulog("installer started for %s, quitting", p.version.c_str());
         s_progress.store(1.0f);
         s_started.store(true);
         s_downloading.store(false);
     }).detach();
+}
+
+void tick() {
+    if (s_quit.load()) return;
+    const bool ready = s_ready.load() && !s_started.load();
+    const unsigned long long now = GetTickCount64();
+    bool session = false, leftover = false;
+    if (ready) {
+        session = s_session_probe && s_session_probe();
+        static unsigned long long last_scan = 0;
+        static bool scan_busy = false;
+        if (!last_scan || now - last_scan >= 1000) {   // a snapshot of every process: once a second is plenty
+            last_scan = now;
+            std::wstring dir;
+            { std::lock_guard<std::mutex> l(s_mu); dir = s_pending.exe_dir; }
+            scan_busy = !dir.empty() && !apply::processes_under(dir).empty();   // a game left over from an earlier RetroHub run
+        }
+        leftover = scan_busy;
+    }
+    switch (detail::gate_step(s_gate, ready, session, leftover, now)) {
+        case detail::GateState::Held:
+            if (!s_deferred.exchange(true)) {
+                set_status(kReadyText);
+                ulog("update is ready; waiting for the game to close (%s)", session ? "a RetroHub session is running" : "a game from an earlier run is still running");
+            }
+            break;
+        case detail::GateState::Go: {
+            s_deferred.store(false);
+            Pending p;
+            { std::lock_guard<std::mutex> l(s_mu); p = s_pending; }
+            begin_handoff(p, s_game_probe && s_game_probe());
+            break;
+        }
+        case detail::GateState::NotReady:
+            s_deferred.store(false);
+            break;
+        default: break;   // Settling / Done
+    }
+}
+
+bool update_deferred() { return s_deferred.load(); }
+
+void shutdown() {
+    s_quit.store(true);
+    if (s_ready.load() && !s_handing.load()) {   // downloaded but never handed over: the unpacked files stay for next time, the unused installer copy goes
+        std::wstring dir;
+        { std::lock_guard<std::mutex> l(s_mu); dir = s_pending.apply_dir; }
+        if (!dir.empty()) { std::error_code ec; std::filesystem::remove_all(std::filesystem::path(dir), ec); }
+    }
+    if (s_startup_th.joinable()) s_startup_th.join();
+}
+
+void startup_pass_async() {
+    if (s_startup_started.exchange(true)) return;
+    const std::string install = trim_slash(hub::exe_dir());
+    s_startup_th = std::thread([install]() {
+        std::vector<std::string> notes;
+        try {
+            const std::wstring wi = W(install);
+            apply::RecoverReport rep = apply::recover_interrupted(wi, current_version());
+            notes = rep.notes;
+            apply::Status st;
+            if (apply::take_status(apply::default_status_path(wi), &st)) {
+                ulog("the last update did not finish (%s): %s %s", st.result.c_str(), st.reason.c_str(), st.detail.c_str());
+                notes.push_back(apply::status_line(st));
+            }
+            if (rep.found) ulog("startup recovery: %d leftover dir(s), %d repaired, %d partial, %d stale, %d cleaned, %d active, %d other", rep.found, rep.repaired, rep.partial, rep.stale, rep.cleaned, rep.active, rep.other);
+        } catch (...) {}
+        { std::lock_guard<std::mutex> l(s_mu); s_startup_notes = notes; }
+        s_startup_done.store(true);
+    });
+}
+
+bool take_startup_notes(std::vector<std::string>* out) {
+    if (!s_startup_done.exchange(false)) return false;
+    std::lock_guard<std::mutex> l(s_mu);
+    if (out) *out = std::move(s_startup_notes);
+    s_startup_notes.clear();
+    return true;
 }
 
 void skip_latest() {

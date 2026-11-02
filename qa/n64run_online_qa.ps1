@@ -81,7 +81,8 @@ if (-not (Test-Path $n64) -or -not $Rom -or -not (Test-Path -LiteralPath $Rom)) 
         }
         $common = @($hashes[0].Keys | Where-Object { $hashes[1].ContainsKey($_) })
         $mismatch = @($common | Where-Object { $hashes[0][$_] -ne $hashes[1][$_] })
-        $desync = @($res | Where-Object { $_.Err -match 'DESYNC' }).Count
+        # case-sensitive: "resync: desync recovery on" is a normal log line, not a desync (lockstep.cpp prints "DESYNC at" / "DESYNC (spectator)")
+        $desync = @($res | Where-Object { $_.Err -cmatch 'DESYNC (at|\(spectator\))' }).Count
         $ok = ($res[0].Exit -eq 0) -and ($res[1].Exit -eq 0) -and ($res[0].MaxVisible + $res[1].MaxVisible -eq 0) -and ($common.Count -ge 2) -and ($mismatch.Count -eq 0) -and ($desync -eq 0)
         Write-Output ("  common sync checks={0} mismatches={1} desync lines={2}" -f $common.Count, $mismatch.Count, $desync)
         if ($ok) { Write-Output "PASS headless-online-2peer" }

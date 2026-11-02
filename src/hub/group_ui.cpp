@@ -226,8 +226,12 @@ void rivals_ingest(const std::string& result_file) {
     if (!std::filesystem::exists(p, ec)) return;   // no match finished (menu quit, offline, crash)
     std::string text = hubui::group::slurp(p);
     std::filesystem::remove(p, ec);
+    rivals_ingest_text(text);
+}
+void rivals_ingest_text(const std::string& text) {
     hubui::rivals::RawResult raw;
     if (!hubui::rivals::parse_result(text, &raw)) return;
+    { hubui::results::RoundResult rr; if (hubui::results::parse_round(text, &rr) && rr.local) return; }   // couch match: "slot" = controller port, not a lobby seat, so nobody can be credited
     int me = room_my_slot();
     std::vector<hubui::rivals::SlotInfo> slots;
     std::vector<FriendRef> frs;
@@ -235,7 +239,7 @@ void rivals_ingest(const std::string& result_file) {
     for (auto& m : room_members()) {
         hubui::rivals::SlotInfo s;
         s.slot = m.slot; s.name = m.name; s.me = (m.slot == me);
-        if (!s.me) { auto hit = match_friends({m.name}, frs, A.code); if (!hit.empty()) s.uid = hit[0].uid; }
+        if (!s.me) { if (const FriendRef* fr = friend_for_member(m.name, frs, A.code)) s.uid = fr->uid; }   // SO-F10: by presence in this room, never by name alone
         slots.push_back(s);
     }
     hubui::rivals::Match m = hubui::rivals::build_match(raw, slots, wall_ms());
@@ -245,6 +249,22 @@ void rivals_ingest(const std::string& result_file) {
     for (auto& x : v) if (x.id == m.id) return;
     v.insert(v.begin(), m);
 }
+/* ---- friends ladder (Plan 4 P8; elo_logic.h): per viewer, from the stored rivalry matches, cached until they change ---- */
+const std::vector<hubui::elo::Entry>& ladder_entries() {
+    static std::vector<hubui::elo::Entry> cache;
+    static size_t n = (size_t)-1;
+    static std::string newest;
+    auto& v = rv_matches();
+    if (v.size() != n || (!v.empty() && v[0].id != newest)) { cache = hubui::elo::ladder(v); n = v.size(); newest = v.empty() ? std::string() : v[0].id; }
+    return cache;
+}
+std::string ladder_row_text(const std::string& uid) { return hubui::elo::rating_short(ladder_entries(), uid); }
+std::string ladder_card_text() {
+    auto& l = ladder_entries();
+    if (l.size() < 2) return std::string();
+    return "Your rating: " + hubui::elo::rating_text(l, std::string());
+}
+int ladder_rating_of(const std::string& uid) { return hubui::elo::rating_of(ladder_entries(), uid); }
 std::string rivals_record_text(const std::string& uid, const std::string& name) {
     auto h = hubui::rivals::head_to_head(rv_matches(), uid);
     return h.games() ? hubui::rivals::record_text(h, name) : std::string();
@@ -254,8 +274,11 @@ std::string rivals_last5(const std::string& uid) { return hubui::rivals::head_to
 std::string rivals_sessions_text(const std::string& uid) { return hubui::rivals::sessions_text(hubui::rivals::sessions_together(GRP.groups, uid)); }
 void rivals_draw_card() {
     auto rv = hubui::rivals::top_rivals(rv_matches(), 3);
-    if (rv.empty()) return;
+    const std::string rt = ladder_card_text();
+    if (rv.empty() && rt.empty()) return;
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (!rt.empty()) { ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted(rt.c_str()); ImGui::PopFont(); }
+    if (rv.empty()) return;
     ImGui::PushFont(ui::F.bold);
     ImGui::TextUnformatted("Rivals");
     ImGui::PopFont();

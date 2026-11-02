@@ -55,6 +55,7 @@ struct LockstepHooks {
     std::function<void(bool)> set_limiter;                    // speed limiter on/off (catch-up after a stall); may be empty
     std::function<void(int slot, uint32_t cutoff)> on_drop;   // a guest dropped mid-match; its port is neutral from sample `cutoff` on (may be empty)
     std::function<void()> request_stop;                       // M64CMD_STOP
+    std::function<void(const std::string& why)> on_unrecovered;   // a desync could not be repaired: show it (OSD); the match is then stopped kStopAfterMs later
     std::function<void(const std::string&)> log;
     /* Live spectator join (retrorun): spectate::kPktJoin / kPktNoLive and state-transfer datagrams (first byte 0x55, state_xfer.h) between
      * the host and a spectator are handed here instead of to the lockstep core. Empty: they are dropped (no live join). */
@@ -96,6 +97,7 @@ class Lockstep {
 
     bool present(int port) const { return core_.port_present(port); }
     bool local(int port) const { return core_.port_local(port); }
+    int port_owner(int port) const { return core_.port_owner(port); }   // the slot that plays `port` now (-1: nobody / a reserved drop-in port)
 
     /* Stall statistics (time spent blocked waiting for peers' inputs). */
     uint64_t stall_ms() const { return stall_ms_; }
@@ -109,6 +111,10 @@ class Lockstep {
      * end without finish() call it directly. Safe to call twice. */
     void finish_spectators();
     bool peer_left() const { return peer_left_; }          // a partner ended the session (clean)
+    /* The local side wants out (the hub's Quit arrived while this PC was blocked waiting for peers): every wait loop returns at once and
+     * get_keys hands out neutral input until the emulation has stopped. Not a connection loss: the exit code stays 0. Any thread. */
+    void stop_waiting() { stop_ = true; }
+    bool stopping() const { return stop_; }
     int current_delay() const { return core_.delay(); }
     uint32_t delay_changes() const { return core_.delay_changes(); }
     uint32_t longest_stall_ms() const { return longest_stall_; }
@@ -116,6 +122,8 @@ class Lockstep {
     uint32_t dropped_mask() const { return dropped_mask_; }
     bool connection_lost() const { return lost_; }
     bool desync_detected() const { return desync_; }
+    bool desync_fatal() const { return fatal_; }   // recovery failed and the match is being ended (frontend: exit 5)
+    static constexpr uint32_t kStopAfterMs = 4000;
     uint32_t sample() const { return (uint32_t)(sample_ + 1); }
     bool spectating() const { return opt_.spectator; }
     spectate::Host* spectate_host() { return spec_host_.get(); }
@@ -162,6 +170,9 @@ class Lockstep {
     uint32_t rs_bytes_ = 0;
     bool rs_dirty_ = false;
     uint32_t rs_hash_sample_ = 0;
+    bool fatal_ = false, fatal_stopped_ = false;
+    uint32_t fatal_at_ = 0;
+    void desync_unrecovered(const std::string& why);
     void rs_mismatch(uint32_t hash_sample);
     void rs_service(uint32_t now);
     void rs_on_ctl(int from, const std::vector<uint8_t>& msg);
@@ -224,6 +235,7 @@ class Lockstep {
     int n_local_ = 0;
     uint32_t ready_mask_ = 0;
     std::atomic<bool> lost_{false};
+    std::atomic<bool> stop_{false};   // stop_waiting(): leave every wait loop
     bool desync_ = false;
     bool hash_warned_ = false;
     uint64_t stall_ms_ = 0, stalled_ = 0;

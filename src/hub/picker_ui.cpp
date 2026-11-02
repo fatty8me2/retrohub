@@ -1,5 +1,6 @@
 #include "app.h"
 #include "online_caps.h"
+#include "party_ui.h"
 #include "picker_logic.h"
 
 /* ---------- Room game picker: hero card, search, console chips, virtualised cover-art grid ---------- */
@@ -7,6 +8,8 @@
 namespace {
 
 struct PickerState {
+    PickMode mode = PickMode::Choose;   // Plan 4 party mode: Choose = the host picks the room's game (default); Playlist = tiles add games to the party playlist; Vote = a tile casts a vote (any member)
+    bool close_after_detail = false;    // a Playlist / Vote pick made in the details closes the whole picker once the details are gone
     char q[64] = "";
     std::string sys;                       // console chip
     std::vector<hubpick::Item> items;
@@ -78,10 +81,36 @@ void refresh_items(const std::vector<hubui::PeerInfo>& peers) {
 }
 
 void select_game(const hubpick::Item& it) {
+    const bool changed = A.selected_game != it.id;
     A.selected_game = it.id;
     A.st.last_game = it.id;
     mark_dirty();
+    if (changed) A.ready.clear();   // OF-M7: the guests clear theirs when the select reaches them; the host must not launch on the old flags meanwhile
     A.lobby.send_msg("{\"kind\":\"select\",\"game\":\"" + json::escape(it.id) + "\"}");
+    party_on_host_select(it.id);    // a party keeps its preselected next game in step with the host's hand pick
+}
+
+void end_pick() {   // the modal is closing: the next time it opens it is the plain "Choose a game" picker again
+    PK.open = false;
+    PK.mode = PickMode::Choose;
+}
+
+/* What choosing a tile does in the current mode. Returns true when the picker should close. */
+bool pick_tile(const hubpick::Item& it) {
+    switch (PK.mode) {
+        case PickMode::Playlist: {
+            partyui::add_game(it.id);
+            const size_t have = partyui::state().list.size();
+            return (int)have >= partyui::state().rounds;   // full: close; otherwise keep adding
+        }
+        case PickMode::Vote:
+            partyui::cast_vote(it.id);
+            return true;
+        case PickMode::Choose:
+        default:
+            select_game(it);
+            return true;
+    }
 }
 
 std::string status_text(const hubpick::Item& it) {
@@ -141,8 +170,14 @@ void detail_popup(bool host) {
     for (auto& l : ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), body, tw, 6)) { dl->AddText(ImVec2(tx, y), ui::TEXT2, l.c_str()); y += ImGui::GetFontSize() + 2 * S; }
     ImGui::Dummy(ImVec2(0, ch - sp(1.f)));
     float bh = sp(5.f);
-    if (host && it->usable()) {
-        if (ui::button("Choose this game", ImVec2(sp(20.f), bh), true, true, ui::Icon::Check)) { select_game(*it); PK.detail_open = false; ImGui::CloseCurrentPopup(); }
+    if ((host || PK.mode == PickMode::Vote) && it->usable()) {
+        const char* lab = PK.mode == PickMode::Playlist ? "Add to the playlist" : PK.mode == PickMode::Vote ? "Vote for this game" : "Choose this game";
+        if (ui::button(lab, ImVec2(sp(20.f), bh), true, true, ui::Icon::Check)) {
+            if (PK.mode == PickMode::Choose) select_game(*it);   // as before: the grid stays open behind the details
+            else if (pick_tile(*it)) PK.close_after_detail = true;
+            PK.detail_open = false;
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::SameLine(0, sp(1.f));
         ImGui::SetItemDefaultFocus();
     }
@@ -216,16 +251,21 @@ static void picker_modal(const std::vector<hubui::PeerInfo>& peers) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
     bool open = ImGui::BeginPopupModal("##pkpick", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar(2);
-    if (!open) { PK.open = false; return; }
-    if (!PK.detail_open && ui::modal_back()) { PK.open = false; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    if (!open) { end_pick(); return; }
+    if (!PK.detail_open && ui::modal_back()) { end_pick(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     const float width = ImGui::GetContentRegionAvail().x;
 
     // ---- title + close
     ImGui::PushFont(ui::F.title ? ui::F.title : ui::F.h2);
-    ImGui::TextUnformatted("Choose a game");
+    ImGui::TextUnformatted(PK.mode == PickMode::Playlist ? "Add games to the party" : PK.mode == PickMode::Vote ? "Vote for the next game" : "Choose a game");
     ImGui::PopFont();
+    if (PK.mode == PickMode::Playlist) {
+        ImGui::SameLine(0, 18 * S);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%d of %d in the playlist", (int)partyui::state().list.size(), partyui::state().rounds);
+    }
     ImGui::SameLine(width - sp(11.f));
-    if (ui::button("Close", ImVec2(sp(11.f), sp(4.5f)))) { PK.open = false; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    if (ui::button(PK.mode == PickMode::Playlist ? "Done" : "Close", ImVec2(sp(11.f), sp(4.5f)))) { end_pick(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     ImGui::Dummy(ImVec2(0, 2 * S));
 
     // ---- search + count
@@ -342,7 +382,10 @@ static void picker_modal(const std::vector<hubui::PeerInfo>& peers) {
                 bool y_pad = tr.focused && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
                 if (rc || y_pad || tr.details) { PK.detail_id = it.id; PK.detail_open = true; }
                 else if (tr.clicked || tr.activated) {
-                    if (it.usable()) { select_game(it); PK.open = false; ImGui::CloseCurrentPopup(); }
+                    if (it.usable()) {
+                        if (pick_tile(it)) { end_pick(); ImGui::CloseCurrentPopup(); }
+                        else push_toast("Added " + it.title + " (" + std::to_string(partyui::state().list.size()) + " of " + std::to_string(partyui::state().rounds) + ")", ui::GOOD, 2.5);   // playlist mode: keep adding
+                    }
                     else set_notice(it.title + ": " + it.reason, 5.0);
                 }
             }
@@ -352,9 +395,11 @@ static void picker_modal(const std::vector<hubui::PeerInfo>& peers) {
     }
     ImGui::EndChild();
     ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-    ImGui::TextUnformatted(A.pad_mode ? "A choose    Y details    B close    D-pad move" : "Click to choose    right-click for details    mouse wheel scrolls    Esc closes");
+    const char* verb = PK.mode == PickMode::Playlist ? "add" : PK.mode == PickMode::Vote ? "vote" : "choose";
+    ImGui::Text(A.pad_mode ? "A %s    Y details    B close    D-pad move" : "Click to %s    right-click for details    mouse wheel scrolls    Esc closes", verb);
     ImGui::PopStyleColor();
     detail_popup(true);
+    if (PK.close_after_detail && !PK.detail_open) { PK.close_after_detail = false; end_pick(); ImGui::CloseCurrentPopup(); }
     ImGui::EndPopup();
 }
 
@@ -370,8 +415,54 @@ void room_picker(bool host, float width, const std::vector<hubui::PeerInfo>& pee
     static bool shot_open_done = false;
     if (host && !shot_open_done && std::getenv("HUB_SHOT_PICKER_OPEN") && ImGui::GetFrameCount() > 8) { shot_open_done = true; PK.open = true; PK.focus_first = true; }
     if (const char* dq = std::getenv("HUB_SHOT_PICKER_DETAIL"); host && dq && !PK.detail_open && PK.open && ImGui::GetFrameCount() > 14) { static bool d = false; if (!d) { d = true; PK.detail_id = dq; PK.detail_open = true; } }
-    if (!host) { PK.open = false; PK.detail_open = false; return; }
+    if (!host && PK.mode != PickMode::Vote) { PK.open = false; PK.detail_open = false; return; }   // guests only see the host's pick - except to vote (Plan 4)
     // A fresh room with no game: open the big picker straight away (once per room), so the room page stays clean.
-    if (A.selected_game.empty() && A.proc == nullptr && !A.code.empty() && PK.auto_code != A.code && !PK.items.empty()) { PK.auto_code = A.code; PK.open = true; PK.focus_first = true; }
+    if (host && A.selected_game.empty() && A.proc == nullptr && !A.code.empty() && PK.auto_code != A.code && !PK.items.empty()) { PK.auto_code = A.code; PK.open = true; PK.focus_first = true; }
     if (PK.open) picker_modal(peers);
+}
+
+/* ---------- Plan 4 party mode: the picker as a playlist builder / vote ballot, and the game pools ---------- */
+
+void room_picker_open(PickMode m) {
+    PK.mode = m;
+    PK.open = true;
+    PK.focus_first = true;
+    PK.q[0] = 0;
+    PK.sys.clear();
+    PK.secs_dirty = true;
+    PK.scroll_top = true;
+}
+
+/* Games everyone in the room can play, sorted by id (a Shuffle pool). Remote-play games stream the host's screen: not for a party.
+ * Verified-online games are preferred; the untested ones join only when fewer than two verified games exist. */
+std::vector<std::string> room_picker_pool(bool prefer_verified) {
+    refresh_items(peer_list());
+    std::vector<std::string> all, verified;
+    for (const hubpick::Item& it : PK.items) {
+        if (!it.usable() || it.remote || it.id.empty() || it.id.size() > hubui::party::kMaxId) continue;
+        all.push_back(it.id);
+        if (!it.untested) verified.push_back(it.id);
+    }
+    std::vector<std::string>& pool = prefer_verified && verified.size() >= 2 ? verified : all;
+    std::sort(pool.begin(), pool.end());
+    pool.erase(std::unique(pool.begin(), pool.end()), pool.end());
+    return pool;
+}
+
+/* A vote shortlist: `first` (the game already lined up), then what the host played most recently and their favourites, all playable by everyone. */
+std::vector<std::string> room_picker_shortlist(const std::string& first, size_t n) {
+    refresh_items(peer_list());
+    std::vector<const hubpick::Item*> usable;
+    for (const hubpick::Item& it : PK.items) if (it.usable() && !it.remote && !it.id.empty() && it.id.size() <= hubui::party::kMaxId) usable.push_back(&it);
+    std::stable_sort(usable.begin(), usable.end(), [](const hubpick::Item* a, const hubpick::Item* b) {
+        if (a->last_played != b->last_played) return a->last_played > b->last_played;   // played most recently first
+        return a->favorite && !b->favorite;                                              // then favourites
+    });
+    std::vector<std::string> out;
+    for (const hubpick::Item* it : usable) if (it->id == first) { out.push_back(first); break; }
+    for (const hubpick::Item* it : usable) {
+        if (out.size() >= n) break;
+        if (std::find(out.begin(), out.end(), it->id) == out.end()) out.push_back(it->id);
+    }
+    return out;
 }

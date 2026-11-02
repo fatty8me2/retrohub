@@ -58,6 +58,7 @@ struct IniParams {
     bool mute = false;
     bool write_save = false;      // host only: keep this session's memory-card changes (Dolphin 'Write save data'); off = discarded
 };
+bool dual_core_allowed(const std::string& game_id);   // allowlist of games that run NetPlay on two CPU threads (default: single core)
 std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p);
 
 /* "Game (GM4E01)" row finder helper: Dolphin lists NetPlay games as "<title> (<id>)". */
