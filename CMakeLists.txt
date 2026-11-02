@@ -221,6 +221,8 @@ add_test(NAME n64run_mempak_test COMMAND n64run_mempak_test)          # controll
 add_test(NAME hubreconnect_test COMMAND hubreconnect_test)   # Session WS reconnect state machine (offline)
 add_test(NAME hubnet_blip_test COMMAND hubnet_test)   # WS blip mid-session: sessions survive (needs the local server; online)
 set_tests_properties(hubnet_blip_test PROPERTIES ENVIRONMENT "HUBNET_BLIP_TEST=1;RETROHUB_QA=1")
+add_test(NAME hub_gcfw_latency COMMAND hub_gcfw_latency)   # GC forwarder delay through the local server (online)
+set_tests_properties(hub_gcfw_latency PROPERTIES LABELS online)
 add_test(NAME hubnet_test COMMAND hubnet_test)                           # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubattach_test COMMAND hubattach_test)                     # DM attachment round trip; server: $RETROHUB_TEST_SERVER at run time (local wrangler)
 add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # server: $RETROHUB_TEST_SERVER at run time

@@ -183,6 +183,7 @@ void WsClient::run(std::string url)
             else if (bin_.size() < 8192)
                 bin_.push_back(message);
         }
+        if (void* e = wake_.load()) SetEvent((HANDLE)e);
         message.clear();
     }
 }

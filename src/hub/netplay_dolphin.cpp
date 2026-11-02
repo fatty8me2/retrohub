@@ -225,18 +225,25 @@ bool dual_core_allowed(const std::string& game_id) {
     /* Online play is single core (deterministic, stress-tested) unless the game is listed here:
      *  - GYQE01 / GYQP01 / GYQJ01 Mario Superstar Baseball: CPU-bound; on one core it runs far below full speed online while it is fine
      *    offline (dual core), and the slowest PC throttles the whole room.
-     *  - G4QE01 / G4QP01 / G4QJ01 Super Mario Strikers: same story (full speed offline, crawls single core online). */
-    static const char* const ok[] = {"GYQE01", "GYQP01", "GYQJ01", "G4QE01", "G4QP01", "G4QJ01"};
+     * Super Mario Strikers was listed in v1.31.3 but the slowdown was the pad buffer and the forwarder (docs/DOLPHIN.md "Online
+     * speed"); it runs at full speed single core, so it is back on the deterministic default. */
+    static const char* const ok[] = {"GYQE01", "GYQP01", "GYQJ01"};
     for (const char* id : ok) if (game_id == id) return true;
     return false;
 }
 
 int pad_buffer_for_ping(int ping_ms, bool relayed) {
-    if (ping_ms < 0) return relayed ? 8 : 6;            // unknown: safe for a typical relayed room
-    const int one_way_frames = (ping_ms / 2 + 33 + 16) / 17;   // + both forwarders' pump (~2 x 16 ms), rounded up to frames
-    int b = one_way_frames + 2;                          // + jitter margin
+    /* Measured (Mario Superstar Baseball, two Dolphins through the forwarders, session RTT ~170 ms): buffer 8 -> 75 % speed, 10 -> 92 %,
+     * 12 -> 100 %, 16 -> 100 %. So about one buffer per 15 ms of round trip (Dolphin's own rule), plus one for jitter. */
+    if (ping_ms < 0) return relayed ? 10 : 8;            // unknown (the hub refines it before Start and during the game)
+    int b = (ping_ms + 14) / 15 + 1;
     if (relayed && b < 6) b = 6;
-    return b < 4 ? 4 : (b > 20 ? 20 : b);
+    return b < 4 ? 4 : (b > 30 ? 30 : b);
+}
+
+int next_pad_buffer(int cur, int want) {
+    if (cur < 0 || want > cur) return want;
+    return cur - want >= 3 ? want : cur;
 }
 
 std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p) {
@@ -291,7 +298,7 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
 /* ---------- UIA driver ---------- */
 const char* driver_script() {
     return R"PS(
-param([string]$Role, [int]$DolphinPid, [string]$Status, [string]$Suffix, [int]$Players = 2, [int]$DelayS = 0, [int]$TimeoutS = 150, [string]$Code = "", [int]$NoCode = 0, [string]$GoFile = "")
+param([string]$Role, [int]$DolphinPid, [string]$Status, [string]$Suffix, [int]$Players = 2, [int]$DelayS = 0, [int]$TimeoutS = 150, [string]$Code = "", [int]$NoCode = 0, [string]$GoFile = "", [string]$BufFile = "")
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $UA = [System.Windows.Automation.AutomationElement]; $TS = [System.Windows.Automation.TreeScope]
 $CT = [System.Windows.Automation.ControlType]
@@ -313,6 +320,21 @@ function Mark($what) { Say ("t:" + $what + " " + [int]$SW.Elapsed.TotalMilliseco
 function Wait-For([scriptblock]$f, $secs) { $end = (Get-Date).AddSeconds($secs); $ms = 60; while ((Get-Date) -lt $end) { $r = $null; try { $r = & $f } catch {}; if ($r) { return $r }; Start-Sleep -Milliseconds $ms; if ($ms -lt 300) { $ms = [int]($ms * 1.6) } }; return $null }   # fast polls first, backing off to 300 ms
 function Find-Main { foreach ($w in (Top $DolphinPid)) { if ($w.Current.ClassName -eq "MainWindow" -or $w.Current.Name -match '^Dolphin \S+$') { return $w } } }
 function Click($el) { $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+$script:bufSet = ""
+function Set-Buf {   # host: type the hub's pad buffer (BufFile) into the NetPlay window's Buffer box when it changed; Dolphin tells every player
+  if (-not $BufFile -or -not $np -or -not (Test-Path -LiteralPath $BufFile)) { return }
+  try {
+    $b = [int]([System.IO.File]::ReadAllText($BufFile).Trim())
+    if ("$b" -eq $script:bufSet) { return }
+    $sp = $np.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::Spinner)))
+    if (-not $sp) { $sp = $np.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.PropertyCondition($UA::ControlTypeProperty, $CT::Edit))) }
+    $done = $false
+    try { $sp.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue([double]$b); $done = $true } catch {}
+    if (-not $done) { $sp.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue("$b") }
+    $script:bufSet = "$b"
+    Say "buffer:$b"
+  } catch { Say "buffer:unset" }
+}
 function Mini($w) { try { $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Minimized) } catch {} }
 try {
   Say "stage:driver-start"
@@ -395,6 +417,7 @@ try {
     } catch { Say "table:unreadable" }
     if ($rows -lt $Players) { Say "error:only $rows of $Players players joined the NetPlay lobby, not starting"; exit 1 }
     Start-Sleep -Milliseconds 800   # let the last client finish its join handshake (Start before that excludes it)
+    Set-Buf   # pad buffer from the session's measured ping (the host's value is the room's)
     Click (Need (El $np "Start" $CT::Button) "Start button")
     Say "stage:started"
   } else {
@@ -406,13 +429,16 @@ try {
   if ($g) { Say "stage:in-game"; Mark "in-game" } else { Say "error:the game did not start in Dolphin (disc mismatch or the host did not press Start)" }
   $t0 = Get-Date
   $beat = 0
+  $lastBuf = ""
   while (Get-Process -Id $DolphinPid -ErrorAction SilentlyContinue) {
     $beat += 5
     if ($beat % 15 -eq 0) { Say ("alive:" + [int]((Get-Date) - $t0).TotalSeconds) }   # heartbeat: seconds since the game started
+    if ($Role -eq "host") { Set-Buf }   # the ping changed during the game: Dolphin applies a new buffer at once
     try {
       $chat = El $np "Chat" $CT::Text
       $txt = $chat.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(-1)
       if ($txt -match '(?i)desync|out of sync') { Say ("desync:" + ($txt -replace '\s+', ' ')) }
+      $bm = [regex]::Matches($txt, 'Buffer size changed to (\d+)'); if ($bm.Count -gt 0) { $bv = $bm[$bm.Count - 1].Groups[1].Value; if ($bv -ne $lastBuf) { $lastBuf = $bv; Say ("padbuffer:" + $bv) } }   # the room's real pad buffer (Dolphin's chat)
     } catch {}
     Start-Sleep 5
   }
@@ -451,6 +477,8 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
     { std::ofstream f(P8(script), std::ios::binary); f << driver_script(); }
     out->go_path = work_dir + "\\gc_guest_go.txt";
     DeleteFileW(W(out->go_path).c_str());
+    out->buf_path = work_dir + "\\gc_host_buffer.txt";
+    DeleteFileW(W(out->buf_path).c_str());
     out->status_path = work_dir + std::string(host ? "\\gc_host_status.txt" : "\\gc_guest_status.txt");
     DeleteFileW(W(out->status_path).c_str());
     std::wstring wd;
@@ -463,9 +491,15 @@ bool start(bool host, const std::string& dolphin_exe, const std::string& user_di
     if (!spawn(cmd, W(exe_dir), wd, desktop.empty(), &out->dolphin_pid)) { out->error = "could not start Dolphin"; return false; }
     std::string args = std::string("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"") + script + "\" -Role " + (host ? "host" : "guest") +
                        " -DolphinPid " + std::to_string(out->dolphin_pid) + " -Status \"" + out->status_path + "\" -Suffix \"" +
-                       list_item_suffix(s) + "\" -Players " + std::to_string(s.players) + " -DelayS " + std::to_string(host ? 0 : guest_connect_delay_s(my_slot)) + (s.mode == "direct" ? " -NoCode 1" : "") + (!host && out->wait_go ? " -GoFile \"" + out->go_path + "\"" : "");
+                       list_item_suffix(s) + "\" -Players " + std::to_string(s.players) + " -DelayS " + std::to_string(host ? 0 : guest_connect_delay_s(my_slot)) + (s.mode == "direct" ? " -NoCode 1" : "") + (!host && out->wait_go ? " -GoFile \"" + out->go_path + "\"" : "") + (host ? " -BufFile \"" + out->buf_path + "\"" : "");
     if (!spawn(L"powershell.exe " + W(args), W(work_dir), wd, false, &out->driver_pid)) { out->error = "could not start the NetPlay driver"; return false; }
     return true;
+}
+
+void set_host_buffer(const Run& r, int frames) {
+    if (r.buf_path.empty() || frames < 1) return;
+    std::ofstream f(P8(r.buf_path), std::ios::binary | std::ios::trunc);
+    f << frames;
 }
 
 void signal_go(const Run& r) {
