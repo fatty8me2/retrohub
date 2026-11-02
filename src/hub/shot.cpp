@@ -40,6 +40,7 @@ ImGuiKey shot_key(const std::string& n) {
 
 /* Screenshot aids that seed UI state before the first frame (friends / room / emulator dialogs). Never any network. */
 void shot_init_ui() {
+    if (const char* sq = std::getenv("HUB_SHOT_SEARCH")) { std::snprintf(A.search_buf, sizeof A.search_buf, "%s", sq); A.vis_dirty = true; }   // screenshot aid: preset the library search text
     if (const char* lf = std::getenv("HUB_SHOT_LIBFILTER")) {   // screenshot aid: "fav", "group" and "genre=Action" (';'-separated) seed the All Games filters
         std::stringstream fs(lf);
         std::string tok;

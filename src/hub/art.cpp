@@ -699,6 +699,12 @@ SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, 
     return lookup_or_queue(std::move(j), w, h);
 }
 
+std::string cached_name(const std::string& key) {
+    std::lock_guard<std::mutex> l(g_mu);
+    auto it = g_names.find(key);
+    return it == g_names.end() ? std::string() : it->second;
+}
+
 bool enabled() { return g_enabled.load(); }
 void set_enabled(bool on) { g_enabled.store(on); }
 
