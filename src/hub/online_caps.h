@@ -48,7 +48,7 @@ inline const char* online_unsupported_reason(hub::System s) {
  * the rest to 4 (GameCube has four ports, N64/GBA/3DS rooms are up to four). The catalog's online_max wins when present. */
 inline int default_online_max(hub::System s) {
     switch (s) {
-        case hub::System::GB: case hub::System::GBC: case hub::System::NDS: case hub::System::PS1: case hub::System::PS2:
+        case hub::System::GB: case hub::System::GBC: case hub::System::NDS: case hub::System::PS1:
         case hub::System::NES: case hub::System::SNES: case hub::System::WiiU: return 2;   // NES/SNES: two pads unless the catalog says multitap / Four Score
         default: return 4;
     }

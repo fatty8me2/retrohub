@@ -455,6 +455,7 @@ class Frontend {
     bool fx_set(const std::string& what, std::string* msg);   // runner_ctl "shader"
     FrameBuf fx_compose(const FrameBuf& f, int ow, int oh);   // headless screenshot of the filtered/bezelled window
     void layout_for(int ow, int oh, SDL_Rect* dst);
+    inline static unsigned long long ps2_port_hits[4] = {};   // frames in which the core read a non-zero button mask from each frontend port (log only)
     bool is_ps2 = false;       // PS2 core (LRPS2 / ParaLLEl PS2): input-delay lockstep only (no rollback), see docs/PS2_ONLINE.md
     int16_t local_press_[4][2] = {};      // PS2: L2/R2 pressure 0..255 per local pad (rides in the upper 16 bits of the button word)
     bool is_ps1 = false;       // PlayStation (Beetle PSX): DualShock analog sticks, memory card 1 in the .srm
@@ -941,6 +942,9 @@ bool Frontend::setup_paths() {
             {"pcsx2_shared_memory_cards", "enabled"}, {"pcsx2_enable_cheats", "disabled"}, {"pcsx2_dev9_eth", "disabled"}, {"pcsx2_dev9_hdd", "disabled"},
             {"pcsx2_usb_camera", "disabled"}, {"pcsx2_ee_cpu", "Recompiler"}};
         for (auto& pin : pins2) core.overrides[pin[0]] = pin[1];
+        /* 3-4 players: a multitap in console port 1 (frontend ports 0-3 = its four slots; the core option needs LRPS2 builds from 2026-11, docs/PS2_ONLINE.md).
+         * 1-2 player rooms keep it off so they behave exactly as before. Part of the setup fingerprint (every peer must agree). */
+        core.overrides["pcsx2_multitap"] = a.players >= 3 ? "port 1" : "disabled";
     }
     return true;
 }
@@ -3484,7 +3488,7 @@ int Frontend::run(const Args& args) {
         }
         if ((dev & RETRO_DEVICE_MASK) != RETRO_DEVICE_JOYPAD || port >= 4 || idx != 0) return 0;
         uint32_t m = frame_pad[port];
-        if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return (int16_t)(m & 0xFFFF);
+        if (id == RETRO_DEVICE_ID_JOYPAD_MASK) { if (m & 0xFFFF) ps2_port_hits[port]++; return (int16_t)(m & 0xFFFF); }   // ps2_port_hits: QA proof that every pad reaches the core
         return id < 16 ? (int16_t)((m >> id) & 1) : 0;
     };
     bool drc = false;
@@ -3677,6 +3681,7 @@ int Frontend::run(const Args& args) {
             in_hash = rbe->confirmed_in_hash();
             rb_log_stats();
             rlog("done: %llu frames in %.2f s (%.1f fps)", (unsigned long long)frame_no, secs, secs > 0 ? frame_no / secs : 0.0);
+            if (is_ps2) rlog("ps2 pad reads with buttons down: port0 %llu port1 %llu port2 %llu port3 %llu", ps2_port_hits[0], ps2_port_hits[1], ps2_port_hits[2], ps2_port_hits[3]);
             uint32_t t0 = hubnet::now_ms();
             while (hubnet::now_ms() - t0 < 400) { session.update(); Sleep(5); }
         }
@@ -3764,6 +3769,7 @@ int Frontend::run(const Args& args) {
             if (online && lockstep && !a.spectate) { rlog("frame-gap: max %.1f ms, %llu gaps over 50 ms", gap_max_ms_, (unsigned long long)gap_over_); spec_snap_.clear(); }
             if (online && lockstep) lockstep->finish_spectators();
             rlog("done: %llu frames in %.2f s (%.1f fps)", (unsigned long long)frame_no, secs, secs > 0 ? frame_no / secs : 0.0);
+            if (is_ps2) rlog("ps2 pad reads with buttons down: port0 %llu port1 %llu port2 %llu port3 %llu", ps2_port_hits[0], ps2_port_hits[1], ps2_port_hits[2], ps2_port_hits[3]);
             if (!a.clip_out.empty()) {   // QA: encode the ring to the named file and decode it again
                 clip::Snapshot sn = clips_.ring().snapshot();
                 std::string err; clip::Info ci;

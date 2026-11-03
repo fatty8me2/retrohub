@@ -680,7 +680,7 @@ const std::vector<GameInfo>& catalog() {
 
         /* ---- PlayStation 2 (PCSX2 engine). Serials = Redump header IDs (SLUS-/SCUS-), region variants included.
          * Engine::Pcsx2 runs the PCSX2 core offline; online=true games are 2-player versus/race titles played in rooms through retrorun + LRPS2
-         * (input-delay lockstep, 2 ports: LRPS2 has no multitap, see online_max_for). ---- */
+         * (input-delay lockstep, up to 4 pads through the LRPS2 multitap, see online_max_for). ---- */
         {"ratchet", "Ratchet & Clank", Engine::Pcsx2, 1, {}, "", "ps2",
          {"SCUS-97199"}, false, 2002,
          "Ratchet and the robot Clank blast through planets in a 3D action platformer.",
@@ -1031,7 +1031,7 @@ bool link_cable_game(const std::string& id) {
 
 int online_max_for(const GameInfo& g) {
     int n = g.online_max > 0 ? g.online_max : g.max_players;
-    if (g.system == "ps2") n = std::min(n, 2);   // the LRPS2 core has two controller ports and no multitap option
+    if (g.system == "ps2") n = std::min(n, 4);   // LRPS2 (builds with pcsx2_multitap) drives 4 pads through a multitap in console port 1
     return n;
 }
 

@@ -111,12 +111,14 @@ const Release& release(Kind k) {
     static const Release ps = {
         "2.8.2", L"github.com", L"/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-windows-x64-Qt.7z",
         25670075ull, "7dfc829ca1994cc1045ac49f05e39b6cf968b72e6a374c40e05c2a2b4ac200b4", L"pcsx2-qt.exe", "GPL-3.0+"};
-    /* LRPS2 / "ParaLLEl PS2" v2.0.0-38d3a83 (GPL-3.0), the libretro buildbot nightly of pcsx2_libretro.dll; used by retrorun for PS2 ONLINE rooms only
-     * (docs/PS2_ONLINE.md). "latest" is a moving URL: if the nightly changes, the pinned size/SHA-256 reject it (the install fails with a clear message)
-     * and this pin must be refreshed after re-running the determinism and lockstep QA. The DLL is never shipped in the package. */
+    /* LRPS2 / "ParaLLEl PS2" v2.0.0-8f1d15f (GPL-3.0), pcsx2_libretro.dll from the libretro buildbot nightly of 2026-11-02, mirrored UNCHANGED as a release asset of
+     * fatty8me2/retrohub (tag core-lrps2-8f1d15f) so the bytes never move: lockstep needs every peer on the byte-identical core, and the buildbot's "latest" URL
+     * changes under us (that broke the old 38d3a83 pin). This build adds the pcsx2_multitap option (PS2 online with 3-4 players). Source (GPL-3.0):
+     * https://github.com/libretro/ps2 at commit 8f1d15f. To move to a newer core: re-run the determinism + lockstep QA (docs/PS2_ONLINE.md), upload the new zip under
+     * a new core-lrps2-<id> tag, and change this pin; there is deliberately no fallback URL (a different build would be refused anyway). Never shipped in the package. */
     static const Release lr = {
-        "2.0.0-38d3a83", L"buildbot.libretro.com", L"/nightly/windows/x86_64/latest/pcsx2_libretro.dll.zip",
-        3760634ull, "730112622345f0ca12e7650c6d4052f443603aa630e9b6ab8a68874a4d66bae6", L"pcsx2_libretro.dll", "GPL-3.0"};
+        "2.0.0-8f1d15f", L"github.com", L"/fatty8me2/retrohub/releases/download/core-lrps2-8f1d15f/pcsx2_libretro.dll.zip",
+        3432192ull, "ff97bd2690e7a53433e1deb3570a72f9a06a78253f1db3796c8df6742aca7fe7", L"pcsx2_libretro.dll", "GPL-3.0"};
     /* PPSSPP v1.20.4 (GPL-2.0+), the official Windows zip from ppsspp.org (the "latest" link of ppsspp.org/download on 2026-11-01). ppsspp.org publishes no
      * digest, so the SHA-256 was computed from that exact file when this was written (trust on first use, like Cemu). The zip holds PPSSPPWindows64.exe at
      * its root; with no installed.txt beside the exe PPSSPP is portable: all data lives in <dir>\memstick. */
