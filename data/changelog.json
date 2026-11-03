@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.31.5",
+      "date": "2026-11-02",
+      "title": "GameCube online stays in sync",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "GameCube online: friends who joined a room started with an empty memory card while the host played on their real save, so games like Super Mario Strikers, Mario Superstar Baseball and Mario Party 6 drifted apart a few seconds in. Everyone now starts on the host's save for that session (the host's save is the only one written)"
+      ]
+    },
+    {
       "version": "1.31.4",
       "date": "2026-11-02",
       "title": "GameCube online at full speed",
