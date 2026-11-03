@@ -103,6 +103,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"share_games\": " << (s.share_games ? "true" : "false") << ",\n"
       << "  \"show_friend_games\": " << (s.show_friend_games ? "true" : "false") << ",\n"
       << "  \"friend_games_v\": 1,\n"
+      << "  \"menu_sounds_v\": 1,\n"
       << "  \"pack_links\": \"" << json::escape(s.pack_links) << "\",\n"
       << "  \"share_playtime\": " << (s.share_playtime ? "true" : "false") << ",\n"
       << "  \"auto_friend\": " << (s.auto_friend ? "true" : "false") << ",\n"
@@ -199,7 +200,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->net_probe_done = json_bool(j, "net_probe_done", out->net_probe_done);
     out->share_games = json_bool(j, "share_games", out->share_games);
     out->show_friend_games = json_bool(j, "show_friend_games", out->show_friend_games);
-    if (j.num("friend_games_v", 0) < 1) out->show_friend_games = true;   // one-time migration: older builds let the library chip switch it off by accident
+    if (j.num("friend_games_v", 0) < 1) out->show_friend_games = true;
+    if (j.num("menu_sounds_v", 0) < 1) out->menu_sounds = false;   // one-time migration: menu sounds became off by default (older files saved true)   // one-time migration: older builds let the library chip switch it off by accident
     out->pack_links = j.str("pack_links", out->pack_links);
     out->share_playtime = json_bool(j, "share_playtime", out->share_playtime);
     out->username_claimed = json_bool(j, "username_claimed", out->username_claimed);

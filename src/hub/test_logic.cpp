@@ -873,6 +873,14 @@ int main() {
         st.share_games = false; st.show_friend_games = false;
         Settings back;
         CHECK(settings_from_json(settings_to_json(st), &back) && !back.share_games && !back.show_friend_games);
+        {   // menu_sounds_v migration: off by default; an old file with true is switched off once; a marked file keeps true
+            Settings d; CHECK(!d.menu_sounds);
+            Settings m;
+            CHECK(settings_from_json("{\"menu_sounds\": true}", &m) && !m.menu_sounds);
+            CHECK(settings_from_json("{\"menu_sounds\": true, \"menu_sounds_v\": 1}", &m) && m.menu_sounds);
+            Settings on; on.menu_sounds = true;
+            Settings rt; CHECK(settings_from_json(settings_to_json(on), &rt) && rt.menu_sounds);
+        }
         {   // friend_games_v migration: an old file with false is switched on once; a marked file keeps false
             Settings m;
             CHECK(settings_from_json("{\"show_friend_games\": false}", &m) && m.show_friend_games);
