@@ -3433,9 +3433,11 @@ int Frontend::run(const Args& args) {
 
     /* Offline without --players (the hub never passes it): one port per connected controller, so a second, third and fourth pad play players 2-4 on
      * NES / SNES / PS1 (adapter or multitap switched on from 3 pads). Before this, only port 0 was ever local and the extra pads did nothing. */
-    if (a.net.empty() && !a.ports_given && !a.players_given && !a.ds_link && !a.link && !a.headless && !a.synctest) {
-        hubctl::load_bundled_db();   // the same pad mappings open_pads() will use, so the same pads are counted
-        const int pads = (int)hubctl::list_pads().size();
+    const char* qa_pads = env_is("RETROHUB_QA") ? std::getenv("RETRORUN_QA_PADS") : nullptr;   // QA: pretend N controllers are connected (headless wiring test, qa\players_input_check.ps1)
+    if (a.net.empty() && !a.ports_given && !a.players_given && !a.ds_link && !a.link && (!a.headless || qa_pads) && !a.synctest) {
+        int pads = 0;
+        if (qa_pads) pads = std::atoi(qa_pads);
+        else { hubctl::load_bundled_db(); pads = (int)hubctl::list_pads().size(); }   // the same pad mappings open_pads() will use, so the same pads are counted
         a.players = retrorun::offline_players(retrorun::sys_of(lower(a.system)), pads, a.no_multitap);
         if (a.players > 1) rlog("players: %d connected controllers -> %d local players", pads, a.players);
     }

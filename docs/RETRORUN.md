@@ -268,7 +268,33 @@ Behavioural proof, `qa\players_input_check.ps1` (headless, muted, local worker o
 RDRAM for N64) must differ for every port, and two identical runs must agree (otherwise the row is reported NONDET). Online: N peers, peer s owns port s, run A = every peer sends input (twice, must be identical and equal on all peers), run B_k = peer k stays silent: B_k must differ from A on every PC.
 The test programs read every pad into RAM every frame (netplay ROMs for NES/SNES, the 4-pad SIO0 homebrew for PS1); the PS2 row runs Digimon Rumble Arena 2 (attract mode: the pad state is in EE RAM), the link rows Pokemon Red / Ruby, N64 uses the games' own OSContPad copy in RDRAM.
 Negative control: before the fix, NES ports 2-3 gave RAM identical to "no input" (and PS2 with `RETRORUN_PS2_NOPLUG=1` still does).
-`RETRORUN_SET_DEVICES=port:dev,...` plugs devices by hand for such experiments.
+`RETRORUN_SET_DEVICES=port:dev,...` plugs devices by hand for such experiments; `RETRORUN_QA_PADS=N` (with `RETROHUB_QA=1`) makes a run without `--players` believe N controllers are connected (the hub-style launch test).
+
+Results (2026-11-02, this PC, local worker; every row: stable baseline, every port changes the game):
+
+| Row | Offline (pads on one PC) | Online (each PC owns one port) | Online, 2 PCs x 2 pads (`--ports 0,0,1,1`) |
+|---|---|---|---|
+| NES (Four Score) | x4 pass; hub-style 4 pads pass | rollback x2 x3 x4, lockstep x2 pass | rollback pass |
+| SNES (multitap) | x4 pass; hub-style pass | rollback x2 x3 x4, lockstep x2 pass | rollback pass |
+| PS1 (Beetle, multitap) | x4 pass; hub-style pass | rollback x2 x3 x4, lockstep x2 pass | rollback pass |
+| PS2 (LRPS2, multitap) | x4 pass | lockstep x2 x3 x4 pass | lockstep pass |
+| GB/GBC link (SameBoy x2) | x2 pass | rollback pass; `qa\link_trade_gb.ps1` (real Red trade, parties swapped) pass | n/a |
+| GBA link (mGBA x2) | x2 pass | rollback pass | n/a |
+| GB / GBA / NDS single | port 0 pass (NDS: the core has one port) | n/a (NDS wireless: `qa\ds_link.ps1` 2 players pass) | n/a |
+| N64 Smash 64 | x2 x3 x4 pass | lockstep x2 x3 x4 pass | n/a |
+| N64 Mario Kart 64 | all ports change the game, but its offline RDRAM is not reproducible between identical runs (reported NONDET, not a port problem) | lockstep x2 x3 x4 pass | n/a |
+| N64 drop-in (`qa\n64_dropin.ps1`) | | basic: a joiner into port 2 plays on all 3 PCs; refuse: two joiners (ports 2 and 3), hashes agree, the 5th is refused | |
+
+Other QA run on the final build: `ctest -LE online` (121 tests, one flaky `pack_install_e2e` that passed on rerun), `qa\nes_snes_online.ps1` (all pass except the two "host leaves" runs: the guest exits 4 instead of 8 on a local worker; identical on the v1.31.7 build, so not part of this change),
+`qa\ps1_online.ps1 -Scenarios quick`, `qa\dropin.ps1` (SNES multitap join), `qa\ds_link.ps1`. `qa\retrorun_gbalink.ps1` desyncs in lockstep with `mgba_link` on v1.31.7 as well (the hub runs GBA link under `--rollback`; the players check covers that mode).
+
+N64 (`n64run`, mupen64plus), read and tested: the input plugin reports `Present` for every owned port and every drop-in reserved port (all four in drop-in rooms, so a game that polls controller status only at boot sees them), `Type` standard, a Controller Pak
+on every owned port when enabled (offline always; online only with the host's shared save, then identical on all PCs), a Rumble Pak instead offline when the profile asks. Offline the port count is the number of connected pads (1-4; the hub passes no `--ports`).
+Online the packet carries all four ports. One PC can own at most 2 ports through the hub (`build_ports` / `locals_of`), so 3-4 players online need 2-4 PCs. Known gaps: pads plugged in after launch get no port; `--test-input file:` gives every port the same word.
+QA hooks: `N64RUN_TEST_PORTS=<mask>` (with `RETROHUB_QA=1`) limits the scripted input to some ports, `N64RUN_QA_NODITHER=1` turns GLideN64's RDRAM dithering off for offline comparisons (online it is always off).
+
+Not verified (no hardware / no suitable game on this PC): a human playing a 3-4 player game with real pads; the Famicom 4-player adapter (`nestopia_select_adapter=famicom`); a 5th SNES player (the engines carry 4 ports); real NES games that read the Four Score (only the homebrew test ROM did);
+DS Download Play / Union Room inside a game (needs a save in a Pokemon Center; the wireless transport itself passes `qa\ds_link.ps1`); hot-plugging pads; a stock (non-RetroHub) Beetle build; 4 PCs over the internet.
 
 ## Screen filters and bezels (`present_fx.cpp`)
 

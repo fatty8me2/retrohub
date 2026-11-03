@@ -17,6 +17,8 @@ param(
     [string[]]$Only = @(),
     [switch]$Online,
     [switch]$NoOffline,
+    [string]$N64Games = 'mk64,smash64',   # which N64 games to run (n64 row)
+    [string]$N64Players = '2,3,4',
     [switch]$Only2x2,        # with -Online: only the two-PCs-with-two-pads rooms (ports 0,0,1,1)
     [string]$Server = 'ws://127.0.0.1:8761',
     [string]$Work = '',
@@ -110,13 +112,14 @@ function Row-Args($row, [string]$core, [string]$rom, [string]$dir) {
 }
 
 # ---------------------------------------------------------------- offline
-function Run-Offline($row, $core, $rom, [int]$mask, [string]$tag) {
+function Run-Offline($row, $core, $rom, [int]$mask, [string]$tag, [bool]$hubStyle = $false) {
     $dir = Join-Path $Work ("off_$($row.id)_$tag"); if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }; New-Item -ItemType Directory -Force "$dir\sv", "$dir\st" | Out-Null
     $ram = "$dir\ram.bin"; $log = "$dir\run.log"
     $env:RETRORUN_FUZZ_PORTS = "$mask"; $env:RETRORUN_DUMP_RAM = $ram
-    $a = (Row-Args $row $core $rom $dir) + @('--headless', '--frames', $(if ($Frames) { $Frames } else { $row.frames }), '--fuzz-input', '--players', $row.players, '--log', $log)
+    $a = (Row-Args $row $core $rom $dir) + @('--headless', '--frames', $(if ($Frames) { $Frames } else { $row.frames }), '--fuzz-input', '--log', $log)
+    if ($hubStyle) { $env:RETRORUN_QA_PADS = "$($row.players)" } else { $a += @('--players', $row.players) }   # hub style: no --players, N connected pads (the hub never passes --players)
     $p = Start-Process -FilePath $exe -ArgumentList (QArgs $a) -PassThru -WindowStyle Hidden -Wait
-    Remove-Item Env:RETRORUN_FUZZ_PORTS, Env:RETRORUN_DUMP_RAM -ErrorAction SilentlyContinue
+    Remove-Item Env:RETRORUN_FUZZ_PORTS, Env:RETRORUN_DUMP_RAM, Env:RETRORUN_QA_PADS -ErrorAction SilentlyContinue
     return (Sig-Of $log $ram $row.sig)
 }
 
@@ -136,6 +139,15 @@ function Test-Offline($row, $core, $rom) {
     return [pscustomobject]@{ Row = $row.id; Mode = "offline x$n"; Ok = $ok; Nondet = (-not $det); Text = $txt }
 }
 
+
+# Wiring of the hub launch (no --players, N connected controllers): must play exactly like --players N, for the last port too.
+function Test-HubStyle($row, $core, $rom) {
+    $last = $row.players - 1
+    $w = Run-Offline $row $core $rom (1 -shl $last) 'hub' $true
+    $x = Run-Offline $row $core $rom (1 -shl $last) 'plr' $false
+    $ok = ($w -eq $x) -and ($w -ne 'NOFINAL')
+    return [pscustomobject]@{ Row = $row.id; Mode = "offline hub-style ($($row.players) pads, no --players)"; Ok = $ok; Nondet = $false; Text = $(if ($ok) { "P$($row.players) (last pad) drives the game exactly like --players $($row.players)" } else { "DIFFERS from --players $($row.players): $w | $x" }) }
+}
 # ---------------------------------------------------------------- online (retrorun)
 function Run-Online($row, $core, $rom, [int]$n, [int[]]$masks, [string]$tag, [bool]$rollback, [string]$portsOverride = '') {
     $dir = Join-Path $Work ("on_$($row.id)_$tag"); if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }; New-Item -ItemType Directory -Force $dir | Out-Null
@@ -282,7 +294,7 @@ foreach ($row in $rows) {
     if (-not $rom) { Skip $row.id 'any' 'ROM not found'; continue }
     if ($row.ps2 -and (-not $Ps2Bios -or -not (Test-Path (Join-Path $Ps2Bios 'pcsx2\bios')))) { Skip $row.id 'any' 'no PS2 BIOS (-Ps2Bios <dir containing pcsx2\bios>)'; continue }
     Write-Output "== $($row.label)"
-    if (-not $NoOffline) { Add-Result (Test-Offline $row $core $rom) }
+    if (-not $NoOffline) { Add-Result (Test-Offline $row $core $rom); if (@('nes', 'snes', 'ps1') -contains $row.id) { Add-Result (Test-HubStyle $row $core $rom) } }
     if ($Online -and $row.players -ge 2) {
         foreach ($n in $(if ($Only2x2) { @() } else { 2..$row.players })) {
             if ($row.rb) { Add-Result (Test-Online $row $core $rom $true $n) }                                   # GGPO rollback (NES/SNES/PS1/link cores)
@@ -296,10 +308,12 @@ if ((Want 'n64') -and (Test-Path $n64exe)) {
     Write-Output '== N64 (n64run + mupen64plus, 4 controller ports)'
     $mk = Find-N64Rom 'Mario Kart 64*'
     $ss = Find-N64Rom 'Super Smash Bros*'
+    $np = @($N64Players -split ',' | ForEach-Object { [int]$_ })
     foreach ($g in @(@{ id = 'n64_mk64'; rom = $mk; game = 'mk64' }, @{ id = 'n64_smash64'; rom = $ss; game = 'smash64' })) {
+        if (($N64Games -split ',') -notcontains $g.game) { continue }
         if (-not $g.rom) { Skip $g.id 'any' 'ROM not found'; continue }
-        if (-not $NoOffline) { foreach ($n in 2, 3, 4) { Add-Result (Test-N64 'n64' $g.id $g.rom $g.game $n $false 900 '') } }
-        if ($Online) { foreach ($n in 2, 3, 4) { Add-Result (Test-N64 'n64' $g.id $g.rom $g.game $n $true 900 '') } }
+        if (-not $NoOffline) { foreach ($n in $np) { Add-Result (Test-N64 'n64' $g.id $g.rom $g.game $n $false 900 '') } }
+        if ($Online) { foreach ($n in $np) { Add-Result (Test-N64 'n64' $g.id $g.rom $g.game $n $true 900 '') } }
     }
 } elseif (Want 'n64') { Skip 'n64' 'any' 'n64run.exe not built' }
 
