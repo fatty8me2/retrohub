@@ -108,6 +108,14 @@ std::string group_last_label() {
 std::string group_together_text(const std::string& uid) {
     return together_text(GRP.groups.last_with(uid), wall_ms());
 }
+bool group_last_together(const std::string& uid, std::string* game_id, std::string* title, long long* at_ms) {
+    const RecentGroup* g = GRP.groups.last_with(uid);
+    if (!g) return false;
+    if (game_id) *game_id = g->game_id;
+    if (title) *title = g->game_title;
+    if (at_ms) *at_ms = (long long)g->at;
+    return true;
+}
 void group_invite_last() {
     const RecentGroup* g = group_last();
     if (!g || A.proc) return;

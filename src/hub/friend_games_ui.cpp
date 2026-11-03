@@ -42,6 +42,18 @@ const hubui::fg::Ghost* find_ghost(const std::string& id) {
     return nullptr;
 }
 
+std::vector<hubnet::LibGame> fg_shared_with(const std::string& uid) {
+    if (FR.fake && uid == "miauid" && std::getenv("HUB_SHOT_FAKE_SHARED")) {   // screenshot aid: pretend Mia owns the first few games this PC owns
+        std::vector<hubnet::LibGame> v;
+        for (const hub::GameEntry& e : A.lib) { if (v.size() >= 4) break; if (!is_hack(e)) v.push_back({sys_short(e), e.key, e.catalog_id, e.title}); }
+        return hubui::fg::shared_games(owned_snapshot(), v);
+    }
+    std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>> libs;
+    fr_library_collect(&libs);
+    for (const auto& l : libs) if (l.first == uid && l.second) return hubui::fg::shared_games(owned_snapshot(), *l.second);
+    return {};
+}
+
 void rebuild_ghosts() {
     A.ghosts.clear();
     std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>> libs;

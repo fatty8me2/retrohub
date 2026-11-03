@@ -1212,13 +1212,75 @@ std::string friends_playtime_line(const std::map<std::string, std::vector<Playti
     return o;
 }
 
-std::string friend_top_games_text(const std::vector<PlaytimeEntry>& games, size_t max_n) {
+static std::string trim_sp(std::string s) {
+    while (!s.empty() && (s.back() == ' ' || s.back() == '	')) s.pop_back();
+    size_t b = 0;
+    while (b < s.size() && (s[b] == ' ' || s[b] == '	')) ++b;
+    return s.substr(b);
+}
+std::string clean_game_title(const std::string& title) {
+    std::string t = trim_sp(title);
+    for (int guard = 0; guard < 4; ++guard) {   // a cut-off suffix, then a console suffix, in any order
+        const size_t lo = t.find_last_of("(["), lc = t.find_last_of(")]");
+        if (lo != std::string::npos && (lc == std::string::npos || lc < lo)) { t = trim_sp(t.substr(0, lo)); continue; }   // "(GameCube" never closed
+        if (!t.empty() && (t.back() == ')' || t.back() == ']') && lo != std::string::npos) {
+            std::string in = t.substr(lo + 1, t.size() - lo - 2);
+            std::string low;
+            for (char c : in) low += (char)std::tolower((unsigned char)c);
+            static const char* const consoles[] = {"nes", "snes", "n64", "gamecube", "gc", "wii", "wii u", "ds", "3ds", "gb", "gbc", "gba", "game boy", "game boy color",
+                                                   "game boy advance", "playstation", "playstation 2", "ps1", "ps2", "nintendo 64", "super nintendo"};
+            bool is_console = false;
+            for (const char* c : consoles) if (low == c) { is_console = true; break; }
+            if (is_console && lo > 0) { t = trim_sp(t.substr(0, lo)); continue; }
+        }
+        break;
+    }
+    return t.empty() ? trim_sp(title) : t;
+}
+
+std::vector<TopGame> friend_top_games(const std::vector<PlaytimeEntry>& games, size_t max_n) {
     std::vector<PlaytimeEntry> v;
     for (const auto& g : games) if (g.minutes >= 1) v.push_back(g);
     std::stable_sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.minutes > b.minutes; });
+    std::vector<TopGame> out;
+    for (const auto& g : v) {
+        std::string t = clean_game_title(g.title.empty() ? g.game_key : g.title);
+        bool merged = false;
+        for (auto& o : out) if (o.title == t) { o.minutes += g.minutes; merged = true; break; }
+        if (!merged) { TopGame x; x.key = g.game_key; x.title = t; x.minutes = g.minutes; out.push_back(x); }
+    }
+    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.minutes > b.minutes; });
+    if (out.size() > max_n) out.resize(max_n);
+    for (auto& o : out) o.hours = friend_hours_text(o.minutes);
+    return out;
+}
+
+std::string friend_top_games_text(const std::vector<PlaytimeEntry>& games, size_t max_n) {
     std::string o;
-    for (size_t i = 0; i < v.size() && i < max_n; ++i) { o += (i ? ", " : "Top games: ") + (v[i].title.empty() ? v[i].game_key : v[i].title) + " " + friend_hours_text(v[i].minutes); }
+    size_t i = 0;
+    for (const auto& g : friend_top_games(games, max_n)) { o += (i++ ? ", " : "Top games: ") + g.title + " " + g.hours; }
     return o;
+}
+
+std::vector<FriendMenuItem> friend_menu_items(const FriendMenuIn& in) {
+    std::vector<FriendMenuItem> v{FriendMenuItem::Message};
+    if (in.can_join) v.push_back(FriendMenuItem::JoinRoom);
+    if (in.can_invite) v.push_back(FriendMenuItem::Invite);
+    v.push_back(FriendMenuItem::Profile);
+    v.push_back(FriendMenuItem::CopyCode);
+    v.push_back(FriendMenuItem::More);
+    return v;
+}
+std::vector<FriendMoreItem> friend_more_items(const FriendMenuIn& in) {
+    std::vector<FriendMoreItem> v;
+    if (in.can_ask) v.push_back(FriendMoreItem::AskJoin);
+    if (in.can_dropin) v.push_back(FriendMoreItem::JoinGame);
+    if (in.can_watch) v.push_back(FriendMoreItem::Watch);
+    v.push_back(FriendMoreItem::Notify);
+    v.push_back(FriendMoreItem::Bracket);
+    v.push_back(FriendMoreItem::Remove);
+    v.push_back(FriendMoreItem::Block);
+    return v;
 }
 
 std::string sanitize_player_name(const std::string& s) {
