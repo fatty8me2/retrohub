@@ -550,7 +550,10 @@ bool start_hidden(const std::string& exe, const std::string& args, HANDLE* out) 
     STARTUPINFOW si{};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(dir_of(exe)).c_str(), &si, &pi)) return false;
+    fr_ident_env(true);   // streamrun (remote play) opens /hub itself: account proof through the inherited environment, only for this CreateProcess
+    const BOOL started = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(dir_of(exe)).c_str(), &si, &pi);
+    fr_ident_env(false);
+    if (!started) return false;
     CloseHandle(pi.hThread);
     *out = pi.hProcess;
     return true;

@@ -32,7 +32,7 @@ if ($Server -eq '') {
     $Server = "ws://127.0.0.1:$Port"
     $wl = Join-Path $tmp 'wrangler.log'
     $node = (Get-Command node).Source
-    $wr = Start-Process -FilePath $node -ArgumentList @('node_modules\wrangler\bin\wrangler.js', 'dev', '--ip', '127.0.0.1', '--port', $Port, '--persist-to', "$tmp\persist") `
+    $wr = Start-Process -FilePath $node -ArgumentList @('node_modules\wrangler\bin\wrangler.js', 'dev', '--ip', '127.0.0.1', '--port', $Port, '--persist-to', "$tmp\persist", '--var', 'REG_APPROVAL_DEFAULT:0', 'ALLOW_TEST_FLAG:1') `
         -WorkingDirectory $WorkerDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $wl -RedirectStandardError "$wl.err"
     $up = $false
     for ($i = 0; $i -lt 90 -and -not $up; $i++) {

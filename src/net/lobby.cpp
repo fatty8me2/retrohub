@@ -18,7 +18,7 @@ struct LobbyClient::Impl {
     uint32_t last_keepalive = 0;
     std::string server, code, name, url;   // kept so a dropped connection can be re-established with the same code
     bool role_host = false, was_welcomed = false, watch = false, dropin = false;
-    int attempts = 0;
+    int attempts = 0, busy_tries = 0;   // busy_tries: account-check "server-busy" retries (not reset by a welcome)
     uint32_t retry_at = 0;
     bool waiting_retry = false;
     std::string ident;   // see set_ident_msg
@@ -55,7 +55,7 @@ bool LobbyClient::start_impl(const std::string& server, const std::string& code,
     d.status = "connecting";
     d.last_keepalive = now_ms();
     d.server = server; d.code = code; d.name = name; d.role_host = role_host; d.watch = watch; d.dropin = dropin;
-    d.was_welcomed = false; d.attempts = 0; d.waiting_retry = false;
+    d.was_welcomed = false; d.attempts = 0; d.busy_tries = 0; d.waiting_retry = false;
     std::string url = hub_url(server.empty() ? default_server() : server, code, role_host, name, 0, watch, dropin);
     url += watch ? "&caps=reasons" : "&caps=hostmig,reasons";   // we understand host_changed (keep the room alive when the host leaves) and the distinct error reasons
     d.url = url;
@@ -204,6 +204,14 @@ bool LobbyClient::handle_text(const std::string& text)
                 d.waiting_retry = true;
                 return true;
             }
+            if (why == "server-busy" && d.was_welcomed && !d.ident.empty() && d.busy_tries < kMaxReconnects) {   // the account check was refused for now (4014): temporary, never a lock
+                ++d.busy_tries;
+                d.welcomed = false;
+                d.status = "Server busy, try again shortly";
+                d.retry_at = now_ms() + 3000u * (uint32_t)d.busy_tries;
+                d.waiting_retry = true;
+                return true;
+            }
             d.failed = true;
             d.status = friendly(j.str("reason", "error"));
             net_log("Lobby: error %s", d.status.c_str());
@@ -231,6 +239,10 @@ void LobbyClient::update_tail()
         int code = d.ws.close_code();
         net_log("Lobby: socket failed (code %d): %s", code, d.ws.error().c_str());
         if (code == 4001) { d.failed = true; d.status = friendly("host-left"); return; }
+        if (code == 4014 && !d.waiting_retry) {   // account check refused for now (the error frame was lost): back off and try again, a few times
+            if (d.busy_tries < kMaxReconnects) { ++d.busy_tries; d.welcomed = false; d.status = "Server busy, try again shortly"; d.retry_at = now + 3000u * (uint32_t)d.busy_tries; d.waiting_retry = true; return; }
+            d.failed = true; d.status = "Server busy, try again shortly"; return;
+        }
         if (code == 4013) { d.failed = true; d.status = friendly("ident-required"); return; }   // never retried
         if (code == 4010 || code == 4012) { d.failed = true; d.status = friendly(code == 4012 ? "pending-approval" : "account-unavailable"); return; }   // never retried
         /* Anything else (network blip, Worker restart, Wi-Fi roam): reconnect by itself with the same room code. */

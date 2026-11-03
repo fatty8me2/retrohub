@@ -7,6 +7,8 @@
 #include "toast.h"
 #include "ui_sound.h"
 #include "attach_xfer.h"
+#include "../net/ident_env.h"
+#include "winutil.h"
 #include "challenge_ui.h"
 #include "friend_pick_ui.h"
 #include "hack_ui.h"
@@ -645,6 +647,22 @@ std::string fr_lobby_ident_msg(bool nopair) {
     return hubui::lobby_ident_json(FR.cli.my_uid(), FR.cli.my_secret(), nopair);
 }
 
+/* Proof of the account for the game-room sockets (net/ident_env.h): the hub's own forwarders get it in-process, our runners through the inherited
+ * environment, set only around their CreateProcess. Never on a command line, never logged, bound to our server_url(). */
+void fr_ident_env(bool on) {
+    if (!on) { SetEnvironmentVariableW(L"RETROHUB_IDENT", nullptr); return; }
+    if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return;
+    SetEnvironmentVariableW(L"RETROHUB_IDENT", winutil::to_wide(hubnet::ident_env_value(server_url(), FR.cli.my_uid(), FR.cli.my_secret())).c_str());
+}
+static void fr_publish_process_ident() {
+    static std::string last_uid, last_secret;
+    const bool have = FR.started && !FR.fake;
+    const std::string uid = have ? FR.cli.my_uid() : std::string(), secret = have ? FR.cli.my_secret() : std::string();
+    if (uid == last_uid && secret == last_secret) return;
+    last_uid = uid; last_secret = secret;
+    hubnet::set_process_ident(server_url(), uid, secret);
+}
+
 void fr_start() {
     hub::attach::set_account_provider([]() {   // where DM attachments go: the same Worker and account as the friends socket
         hub::attach::Account a;
@@ -697,6 +715,7 @@ void fr_tick() {
     if (FR.fake) { gn_tick(); return; }
     if (!FR.started) return;
     FR.cli.update();
+    fr_publish_process_ident();
     { static bool was_conn = false; const bool now_conn = FR.cli.connected(); if (now_conn && !was_conn) hub::saves::cloud_network_back(); was_conn = now_conn; }   // wake a parked cloud pass
     hubnet::Event e;
     while (FR.cli.poll_event(&e)) {
