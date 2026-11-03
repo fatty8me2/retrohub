@@ -25,6 +25,9 @@ target_include_directories(hub_picker_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(hub_lockout_test test_lockout.cpp)   # whole-app lock verdict state machine (pure)
 target_include_directories(hub_lockout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 
+add_executable(hub_iconrefresh_test test_icon_refresh.cpp)   # once-per-version shortcut icon refresh policy (pure)
+target_include_directories(hub_iconrefresh_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(hub_friend_games_test test_friend_games.cpp)
 target_include_directories(hub_friend_games_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 
@@ -104,7 +107,7 @@ set(RETROHUB_UI_SOURCES
     page_controllers.cpp page_admin.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp
     attract.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp page_discover.cpp discover_logic.cpp
     party_ui.cpp party_view.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp   # Plan 4 Wave 1
-    lockout.cpp discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp)   # Plan 4 Wave 2 C (convenience)
+    lockout.cpp icon_refresh.cpp discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp)   # Plan 4 Wave 2 C (convenience)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)

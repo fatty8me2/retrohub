@@ -12,6 +12,7 @@ void shell_set_app_id();                       // SetCurrentProcessExplicitAppUs
 void shell_set_window_icon(SDL_Window* win);   // big + small WM_SETICON from the embedded IDI_APPICON
 void shell_ensure_start_menu_shortcut();       // %APPDATA%\...\Start Menu\Programs\RetroHub.lnk (only rewritten if missing/stale)
 void shell_ensure_desktop_shortcut(bool create);   // create=true: make Desktop\RetroHub.lnk if missing/stale; false: remove ours
+bool shell_refresh_icons();                    // once per version (icon_refresh.cpp): force re-save our Start Menu / Desktop shortcuts + SHChangeNotify so Explorer reloads the icon. No-op unless shell_registration_allowed()
 void shell_ensure_url_protocol();              // HKCU\Software\Classes\retrohub: "retrohub://join/<CODE>" -> RetroHub.exe "%1" (invite.h)
 
 /* Registration policy: only a real installed copy may touch the user's Start Menu / Desktop. A build tree, a git
@@ -36,5 +37,5 @@ struct ShellLinkInfo {
 };
 /* Creates/updates `lnk_path` for exe `exe_path`. Returns true if the file was (re)written, false if it was already
  * up to date or on failure (*ok tells which). */
-bool shell_write_shortcut(const std::wstring& lnk_path, const std::wstring& exe_path, bool* ok = nullptr);
+bool shell_write_shortcut(const std::wstring& lnk_path, const std::wstring& exe_path, bool* ok = nullptr, bool force = false);   // force: rewrite even if it looks current
 bool shell_read_shortcut(const std::wstring& lnk_path, ShellLinkInfo* out);

@@ -238,6 +238,7 @@ add_test(NAME hubws_close_test COMMAND hubws_close_test)   # WebSocket close nev
 add_test(NAME hubfriends_dedupe_test COMMAND hubfriends_dedupe_test)   # friends list: one entry per uid (no network)
 add_test(NAME hubfriends_outbox_test COMMAND hubfriends_outbox_test)   # offline outbox rules (no network)
 add_test(NAME hubfriends_live_test COMMAND hubfriends_live_test)         # socket liveness rules (no network)
+add_test(NAME hub_iconrefresh_test COMMAND hub_iconrefresh_test)           # shortcut icon refresh: once per version, idle only
 add_test(NAME hub_lockout_test COMMAND hub_lockout_test)               # whole-app lock verdict state machine (no network)
 add_test(NAME hubadmin_test COMMAND hubadmin_test)                       # owner dashboard + account access rules (no network)
 add_test(NAME hublink_test COMMAND hublink_test)                         # link-a-new-PC crypto/adopt/export (no network)
