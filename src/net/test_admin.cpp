@@ -16,6 +16,8 @@ int main()
     CHECK(access_from_reason("server-busy") == Access::Ok && access_from_reason("") == Access::Ok && access_from_reason("registration-limited") == Access::Ok);
     CHECK(access_message(Access::Pending).find("Waiting for the owner to approve this account") == 0);
     CHECK(access_message(Access::Unavailable).find("ban") == std::string::npos);   // the blocked message is deliberately vague
+    CHECK(access_message(Access::Pending).find("offline") == std::string::npos && access_message(Access::Unavailable).find("offline") == std::string::npos);   // the whole app locks: no "keep playing offline"
+    CHECK(admin_approval_help(true).find("not even offline") != std::string::npos && admin_ban_confirm("x").find("Offline play is not touched") == std::string::npos);
     CHECK(access_message(Access::Ok).empty() && access_title(Access::Ok).empty());
 
     // requests

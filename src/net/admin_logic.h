@@ -26,9 +26,9 @@ inline std::string access_title(Access a)
 inline std::string access_message(Access a)
 {
     if (a == Access::Pending)
-        return "Waiting for the owner to approve this account. You can keep playing offline; online play, friends and rooms switch on as soon as it is approved.";
+        return "Waiting for the owner to approve this account. RetroHub unlocks as soon as it is approved.";
     if (a == Access::Unavailable)
-        return "This account can't use online features right now. You can keep playing offline.";
+        return "This account can't use RetroHub.";
     return "";
 }
 
@@ -146,7 +146,7 @@ inline std::string admin_status_label(const AdminAccount& a)
 inline std::string admin_ban_confirm(const std::string& name)
 {
     return "Ban " + name + "? They are removed from your friends and everyone's friend requests, and can no longer use online play, friends, "
-           "rooms, invites, cloud saves or account links. Offline play is not touched. You can unban them later.";
+           "rooms, invites, cloud saves or account links. RetroHub locks for them on their next connection, offline play included. You can unban them later.";
 }
 inline std::string admin_deny_confirm(const std::string& name)
 {
@@ -155,7 +155,7 @@ inline std::string admin_deny_confirm(const std::string& name)
 inline std::string admin_approval_help(bool on)
 {
     return std::string("New accounts wait in a Pending list until you approve them. Your current friends are not affected: every account that already existed keeps working. ") +
-           (on ? "Waiting accounts can still play offline." : "Off: everyone can join, as before.");
+           (on ? "Waiting or banned accounts can't use RetroHub at all, not even offline." : "Off: everyone can join, as before.");
 }
 inline std::string admin_vouch_help()
 {
