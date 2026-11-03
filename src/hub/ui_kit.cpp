@@ -697,71 +697,145 @@ void draw_art_bg(ImDrawList* dl, SDL_Texture* tex, int tw, int th, ImVec2 p0, Im
 
 } // namespace ui
 
-/* ---- RetroHub brand logo (mirrors assets/brand/build_brand.py geometry in a 1024 box) ---- */
+/* ---- RetroHub brand logo: the "Candy D-pad" (mirrors assets/brand/build_brand.py geometry in a 256 box) ---- */
 void ui_draw_brand_logo(ImDrawList* dl, ImVec2 pos, float size) {
-    const float k = size / 1024.f;
-    auto P = [&](float x, float y) { return ImVec2(pos.x + x * k, pos.y + y * k); };
+    const float k = size / 256.f;
     const bool tiny = size < 26.f, mid = size < 50.f;
-    const float m = tiny || mid ? 16.f : 48.f;
-    ImVec2 t0 = P(m, m), t1 = P(1024.f - m, 1024.f - m);
-    float rd = (tiny ? 210.f : mid ? 232.f : 224.f) * k;
-    // tile: dark gradient (top lighter) + violet rim
-    dl->AddRectFilled(t0, t1, IM_COL32(18, 18, 44, 255), rd);
-    dl->PushClipRect(t0, ImVec2(t1.x, t0.y + (t1.y - t0.y) * 0.5f), true);
-    dl->AddRectFilled(t0, t1, IM_COL32(255, 255, 255, 34), rd);
-    dl->PopClipRect();
-    dl->AddRect(t0, t1, IM_COL32(156, 140, 255, 96), rd, 0, std::max(1.f, 8.f * k));
-    // gradient hexagon (pointy-top), vertex colours along the top-left -> bottom-right diagonal
-    const float R = tiny ? 330.f : 336.f;
-    const ImU32 c0 = IM_COL32(124, 139, 255, 255), c1 = IM_COL32(160, 100, 255, 255), c2 = IM_COL32(255, 95, 176, 255);
-    auto grad = [&](float x, float y) {
-        float t = ((x - 300.f) * 460.f + (y - 200.f) * 650.f) / (460.f * 460.f + 650.f * 650.f);
-        t = std::min(1.f, std::max(0.f, t));
-        return t < 0.5f ? ui::mix(c0, c1, t * 2.f) : ui::mix(c1, c2, (t - 0.5f) * 2.f);
+    auto P = [&](float x, float y) { return ImVec2(pos.x + x * k, pos.y + y * k); };
+    const ImU32 navy = IM_COL32(29, 20, 70, 255);
+    const float th = tiny ? 66.f : mid ? 60.f : 56.f;      // arm thickness
+    const float rr = tiny ? 30.f : mid ? 27.f : 26.f;      // arm rounding
+    const float br = tiny ? 32.f : mid ? 28.f : 27.f;      // button radius
+    const float olu = tiny ? 12.f : mid ? 12.f : 8.f;      // outline width (units, centred on the edge)
+    const float ol = std::max(olu * 0.5f * k, size < 64.f ? 0.9f : 0.f);   // px the outline grows outwards (never a hairline at 40 px)
+    const float span = 180.f, c = 128.f, bo = 66.f;
+    const float shx = tiny ? 0.f : (mid ? 5.f : 6.f) * k, shy = tiny ? 0.f : (mid ? 7.f : 9.f) * k;
+    const float lo = c - span * 0.5f, hi = c + span * 0.5f;
+
+    auto arms = [&](ImU32 col, float grow, float dx, float dy) {
+        ImVec2 h0 = P(lo, c - th * 0.5f), h1 = P(hi, c + th * 0.5f), v0 = P(c - th * 0.5f, lo), v1 = P(c + th * 0.5f, hi);
+        const float r = rr * k + grow;
+        dl->AddRectFilled(ImVec2(h0.x - grow + dx, h0.y - grow + dy), ImVec2(h1.x + grow + dx, h1.y + grow + dy), col, r);
+        dl->AddRectFilled(ImVec2(v0.x - grow + dx, v0.y - grow + dy), ImVec2(v1.x + grow + dx, v1.y + grow + dy), col, r);
     };
-    ImVec2 hv[6]; ImU32 hc[6];
-    float hx[6], hy[6];
-    for (int i = 0; i < 6; ++i) {
-        float a = (-90.f + 60.f * i) * 3.14159265f / 180.f;
-        hx[i] = 512.f + R * std::cos(a);
-        hy[i] = 512.f + R * std::sin(a);
-        hv[i] = P(hx[i], hy[i]);
-        hc[i] = grad(hx[i], hy[i]);
-    }
-    ImVec2 uv = dl->_Data->TexUvWhitePixel;
-    dl->PrimReserve(18, 7);
-    // centre + 6 outer vertices -> 6 triangles
-    ImDrawIdx base = (ImDrawIdx)dl->_VtxCurrentIdx;
-    dl->PrimWriteVtx(P(512.f, 512.f), uv, grad(512.f, 512.f));
-    for (int i = 0; i < 6; ++i) dl->PrimWriteVtx(hv[i], uv, hc[i]);
-    for (int i = 0; i < 6; ++i) {
-        dl->PrimWriteIdx(base);
-        dl->PrimWriteIdx((ImDrawIdx)(base + 1 + i));
-        dl->PrimWriteIdx((ImDrawIdx)(base + 1 + (i + 1) % 6));
-    }
-    // retro scanline gaps through the lower part (not at tiny sizes)
+    struct Btn { float x, y; ImU32 col; };
+    const Btn btns[4] = {{c - bo, c - bo, IM_COL32(47, 224, 255, 255)}, {c + bo, c - bo, IM_COL32(255, 210, 63, 255)},
+                         {c + bo, c + bo, IM_COL32(255, 111, 168, 255)}, {c - bo, c + bo, IM_COL32(139, 224, 78, 255)}};
+    // hard shadow, outline, body (lighter top half = the SVG's violet gradient)
+    if (!tiny) arms(navy, ol * 1.9f, shx, shy);
+    arms(navy, ol, 0.f, 0.f);
+    arms(IM_COL32(106, 69, 245, 255), 0.f, 0.f, 0.f);
+    dl->PushClipRect(P(0, 0), ImVec2(P(256, 0).x, P(0, 128 - 6).y), true);
+    arms(IM_COL32(150, 122, 255, 255), 0.f, 0.f, 0.f);
+    dl->PopClipRect();
+    // D-pad arrow notches
     if (!tiny) {
-        ImU32 gap = IM_COL32(21, 21, 52, 255);
-        if (mid) {
-            dl->AddRectFilled(P(150.f, 716.f), P(874.f, 760.f), gap);
-        } else {
-            dl->AddRectFilled(P(150.f, 690.f), P(874.f, 710.f), gap);
-            dl->AddRectFilled(P(150.f, 764.f), P(874.f, 798.f), gap);
+        const float t = mid ? 14.f : 12.f, e = 22.f, d = 12.f;
+        const ImU32 nc = IM_COL32(29, 20, 70, 72);
+        dl->AddTriangleFilled(P(c - t, lo + e), P(c, lo + d), P(c + t, lo + e), nc);
+        dl->AddTriangleFilled(P(c - t, hi - e), P(c, hi - d), P(c + t, hi - e), nc);
+        dl->AddTriangleFilled(P(lo + e, c - t), P(lo + d, c), P(lo + e, c + t), nc);
+        dl->AddTriangleFilled(P(hi - e, c - t), P(hi - d, c), P(hi - e, c + t), nc);
+    }
+    // play glyph (rounded by a stroke of the same colour)
+    {
+        ImVec2 tri[3] = {P(c - 10.f, c - 16.f), P(c + 18.f, c), P(c - 10.f, c + 16.f)};
+        dl->AddConvexPolyFilled(tri, 3, IM_COL32_WHITE);
+        dl->AddPolyline(tri, 3, IM_COL32_WHITE, ImDrawFlags_Closed | ImDrawFlags_RoundCornersAll, std::max(1.f, (tiny ? 12.f : 8.f) * k));
+    }
+    // candy buttons: shadow, outline, fill, glint
+    const int seg = size > 60.f ? 40 : 28;
+    for (const Btn& b : btns) {
+        if (!tiny) dl->AddCircleFilled(ImVec2(P(b.x, b.y).x + shx * 0.8f, P(b.x, b.y).y + shy * 0.8f), br * k + ol, navy, seg);
+        dl->AddCircleFilled(P(b.x, b.y), br * k + ol, navy, seg);
+        dl->AddCircleFilled(P(b.x, b.y), br * k, b.col, seg);
+        if (!tiny) dl->AddCircleFilled(P(b.x - 9.f, b.y - 9.f), 6.f * k, IM_COL32(255, 255, 255, 190), 16);
+    }
+}
+
+/* The "RetroHub" wordmark: stroked letters from build_brand.py (cap 0..98) drawn as round-capped polylines, violet with a pink hard
+ * shadow and a yellow "o". Built from shapes, so it is as sharp as the pixel grid allows at any DPI scale. `pos` is the top-left of the
+ * cap box and `cap_h` the cap height in pixels; returns the width drawn. */
+float ui_draw_brand_wordmark(ImDrawList* dl, ImVec2 pos, float cap_h, float alpha, bool light_bg) {
+    static const char* text = "RetroHub";
+    const float s = cap_h / 98.f;
+    const float sw = std::max(2.2f, 16.f * s);
+    const float gap = 22.f;
+    auto A = [&](ImU32 c) { return ui::scale_alpha(c, alpha); };
+    const ImU32 violet = A(light_bg ? IM_COL32(106, 69, 245, 255) : IM_COL32(154, 123, 255, 255));
+    const ImU32 yellow = A(light_bg ? IM_COL32(244, 176, 0, 255) : IM_COL32(255, 210, 63, 255));
+    const ImU32 pink = A(IM_COL32(255, 95, 168, 255));
+    const float off = std::max(1.f, std::floor(cap_h * 0.085f + 0.5f));
+    static const float W[8] = {56, 62, 44, 36, 62, 54, 56, 64};
+
+    // one letter -> list of polylines in glyph units
+    using Pts = std::vector<ImVec2>;
+    auto arc = [](Pts& p, float cx, float cy, float r, float a0, float a1) {
+        int n = std::max(8, (int)(std::fabs(a1 - a0) / 9.f));
+        for (int i = 0; i <= n; ++i) {
+            float a = (a0 + (a1 - a0) * i / n) * 3.14159265f / 180.f;
+            p.push_back(ImVec2(cx + r * std::cos(a), cy + r * std::sin(a)));
+        }
+    };
+    auto quad = [](Pts& p, ImVec2 a, ImVec2 c, ImVec2 b) {
+        for (int i = 1; i <= 10; ++i) {
+            float t = i / 10.f, u = 1.f - t;
+            p.push_back(ImVec2(u * u * a.x + 2 * u * t * c.x + t * t * b.x, u * u * a.y + 2 * u * t * c.y + t * t * b.y));
+        }
+    };
+    auto glyph = [&](char ch, std::vector<Pts>& out) {
+        out.clear();
+        Pts p;
+        switch (ch) {
+            case 'R':
+                p = {{0, 98}, {0, 0}, {28, 0}}; arc(p, 28, 25, 25, -90, 90); p.push_back({0, 50}); out.push_back(p);
+                out.push_back({{26, 50}, {52, 98}}); break;
+            case 'e':
+                out.push_back({{0, 67}, {62, 67}});
+                p.clear(); arc(p, 31, 67, 31, 0, -320); out.push_back(p); break;
+            case 't':
+                p = {{20, 10}, {20, 80}}; quad(p, {20, 80}, {20, 98}, {42, 98}); out.push_back(p);
+                out.push_back({{3, 36}, {41, 36}}); break;
+            case 'r':
+                out.push_back({{2, 36}, {2, 98}});
+                p = {{2, 66}}; quad(p, {2, 66}, {2, 36}, {36, 37}); out.push_back(p); break;
+            case 'o': arc(p, 31, 67, 31, 0, 360); out.push_back(p); break;
+            case 'H': out.push_back({{0, 0}, {0, 98}}); out.push_back({{54, 0}, {54, 98}}); out.push_back({{0, 49}, {54, 49}}); break;
+            case 'u':
+                p = {{2, 36}, {2, 71}}; arc(p, 29, 71, 27, 180, 0); out.push_back(p);
+                out.push_back({{56, 36}, {56, 98}}); break;
+            case 'b':
+                out.push_back({{2, 0}, {2, 98}}); arc(p, 33, 67, 31, 0, 360); out.push_back(p); break;
+        }
+    };
+    float x = 0.f;
+    std::vector<Pts> g;
+    // three passes (shadow, then letters) keep the shadow behind every letter
+    for (int pass = 0; pass < 2; ++pass) {
+        x = 0.f;
+        for (int i = 0; i < 8; ++i) {
+            glyph(text[i], g);
+            ImU32 col = pass == 0 ? pink : (i == 4 ? yellow : violet);
+            float ox = pos.x + (pass == 0 ? off : 0.f), oy = pos.y + (pass == 0 ? off : 0.f);
+            for (const Pts& pl : g) {
+                std::vector<ImVec2> q;
+                q.reserve(pl.size());
+                for (const ImVec2& v : pl) q.push_back(ImVec2(ox + (x + v.x) * s, oy + v.y * s));
+                const bool closed = q.size() > 8 && std::fabs(pl.front().x - pl.back().x) < 0.01f && std::fabs(pl.front().y - pl.back().y) < 0.01f;
+                if (closed) q.pop_back();
+                dl->AddPolyline(q.data(), (int)q.size(), col, closed ? ImDrawFlags_Closed | ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersAll, sw);
+                for (size_t vi = 1; vi + 1 < q.size(); ++vi) {   // round joins at the sharp corners (the polyline joins are mitred)
+                    ImVec2 d0(q[vi].x - q[vi - 1].x, q[vi].y - q[vi - 1].y), d1(q[vi + 1].x - q[vi].x, q[vi + 1].y - q[vi].y);
+                    float l0 = std::sqrt(d0.x * d0.x + d0.y * d0.y), l1 = std::sqrt(d1.x * d1.x + d1.y * d1.y);
+                    if (l0 > 0.f && l1 > 0.f && (d0.x * d1.x + d0.y * d1.y) / (l0 * l1) < 0.9f) dl->AddCircleFilled(q[vi], sw * 0.5f, col, 12);
+                }
+                if (!closed) {   // round caps
+                    dl->AddCircleFilled(q.front(), sw * 0.5f, col, 12);
+                    dl->AddCircleFilled(q.back(), sw * 0.5f, col, 12);
+                }
+            }
+            x += W[i] + gap;
         }
     }
-    // play glyph
-    const float pr = tiny ? 40.f : mid ? 20.f : 24.f;   // visual rounding allowance
-    ImVec2 tri[3] = {P(tiny ? 440.f : 452.f, tiny ? 350.f : 360.f), P(tiny ? 690.f : 664.f, tiny ? 512.f : 482.f),
-                     P(tiny ? 440.f : 452.f, tiny ? 674.f : 604.f)};
-    (void)pr;
-    dl->AddConvexPolyFilled(tri, 3, IM_COL32_WHITE);
-    dl->AddPolyline(tri, 3, IM_COL32_WHITE, ImDrawFlags_Closed, std::max(1.f, (tiny ? 44.f : 48.f) * k));
-    // friend nodes on three hexagon vertices (full size only)
-    if (!tiny && !mid) {
-        const int idx[3] = {0, 2, 4};
-        for (int n = 0; n < 3; ++n) {
-            dl->AddCircleFilled(hv[idx[n]], 53.f * k, IM_COL32(21, 21, 52, 255), 24);
-            dl->AddCircleFilled(hv[idx[n]], 46.f * k, IM_COL32(52, 222, 252, 255), 24);
-        }
-    }
+    return (x - gap) * s + sw;
 }

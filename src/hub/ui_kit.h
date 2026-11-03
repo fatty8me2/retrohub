@@ -100,6 +100,9 @@ void draw_art_bg(ImDrawList* dl, SDL_Texture* tex, int tw, int th, ImVec2 p0, Im
 
 } // namespace ui
 
-/* RetroHub brand mark (rounded app tile + gradient hexagon "hub" + play glyph + friend nodes), vector-drawn to
- * match assets/brand/retrohub-logo.svg. `pos` is the top-left, `size` the tile edge in pixels. No texture needed. */
+/* RetroHub brand mark: the "Candy D-pad" (violet D-pad cross with four candy buttons and a play glyph), vector-drawn to match
+ * assets/brand/retrohub-mark.svg (hinted per size, like the .ico). `pos` is the top-left, `size` the square's edge in pixels. No texture needed. */
 void ui_draw_brand_logo(ImDrawList* dl, ImVec2 pos, float size);
+/* The "RetroHub" wordmark (violet, yellow "o", pink hard shadow) built from round-capped strokes. `pos` = top-left of the cap box,
+ * `cap_h` = cap height in px, `alpha` 0..1, `light_bg` picks the darker violet for light themes. Returns the width drawn. */
+float ui_draw_brand_wordmark(ImDrawList* dl, ImVec2 pos, float cap_h, float alpha, bool light_bg);
