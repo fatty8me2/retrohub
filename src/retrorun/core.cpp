@@ -324,8 +324,18 @@ bool Core::environment(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
             if (data) { const auto* mm = (const retro_memory_map*)data; mmap_.assign(mm->descriptors, mm->descriptors + mm->num_descriptors); }   // RetroAchievements (cheevos.cpp)
             return true;
-        case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
         case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
+            /* Not needed to run, but it is the core's own statement of which device each port takes: log it (QA / docs/RETRORUN.md per-system findings). */
+            if (data) {
+                const retro_controller_info* ci = (const retro_controller_info*)data;
+                for (unsigned p = 0; ci[p].types && p < 16; p++) {
+                    std::string s;
+                    for (unsigned t = 0; t < ci[p].num_types; t++) s += (t ? ", " : "") + std::string(ci[p].types[t].desc ? ci[p].types[t].desc : "?") + "=0x" + [&] { char b[16]; snprintf(b, sizeof b, "%x", ci[p].types[t].id); return std::string(b); }();
+                    rlog("core ports: port %u takes [%s]", p, s.c_str());
+                }
+            }
+            return true;
+        case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
         case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
         case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
         case RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY:
