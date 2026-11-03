@@ -26,6 +26,8 @@ struct Identity {
  * Dirs are paths with or without trailing separator. */
 Identity identity_load_or_create(const std::string& data_dir, const std::string& vault_dir);
 Identity identity_generate();
+/* Does a valid identity already exist (data dir or vault mirror)? Pure file check, creates nothing: call BEFORE start() to tell an existing account from a brand-new install. */
+bool identity_exists(const std::string& data_dir, const std::string& vault_dir);
 /* After a vault sync/import: if <vault_dir>/_identity/identity.json is a valid, different identity with an
  * OLDER "created" than <data_dir>/identity.json, back the current one up to
  * <data_dir>/identity-backup-<timestamp>.json and switch identity.json to the vault's. Returns true (and
@@ -244,6 +246,8 @@ class FriendsClient {
     /* ---- account access + owner dashboard (docs/ADMIN.md). access(): why the server refused this account's hello (Ok once welcomed).
      * is_admin(): the welcome said this account is the owner. The server independently refuses admin_* from anyone else. */
     Access access() const;
+    /* "Check again": drop the wait (an access refusal slows reconnects to a minute) and connect right now. No-op while welcomed. */
+    void reconnect_now();
     bool is_admin() const;
     void admin_request_list(const AdminQuery& q);
     void admin_request_detail(const std::string& uid);

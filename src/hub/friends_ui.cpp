@@ -450,6 +450,7 @@ void fr_invite_uids(const std::vector<std::string>& uids) {
     if (FR.fake) set_toast("Invited " + names + " to room " + A.code + ".");   // live: the server's invite_result reports who was reached
 }
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who) {
+    if (launch_blocked("fr_join_lobby")) return;
     fr_trace("join", code);
     if (!hubnet::valid_room_code(code)) { set_notice("That lobby code is not valid any more."); return; }
     if (session_active()) {   // any session (A.proc, GC NetPlay, remote play, Kanto, 3DS room) or a full-screen app: NEVER auto-join or launch after it closes; keep the invite in the bell, joinable by hand

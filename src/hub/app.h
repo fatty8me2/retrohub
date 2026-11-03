@@ -52,6 +52,7 @@
 #include "friend_games.h"
 #include "logic.h"
 #include "settings_tabs.h"
+#include "lockout_logic.h"
 #include "tv_mode.h"
 #include "savestore.h"
 #include "history.h"
@@ -618,6 +619,14 @@ void add_game_shortcut(const hub::GameEntry& e);   // "Add to desktop": .lnk to 
 void flash_taskbar();                              // FlashWindowEx on the hub window; never takes focus; no-op while a game is active
 /* window_guard.cpp: the one place that may raise/restore/show the hub window (popup_guard.h has the policy). */
 bool game_active();          // ANY session (A.proc, GC NetPlay, remote play, Kanto, 3DS room...) or another full-screen / busy app owns the screen
+/* lockout.cpp: the whole-app lock (docs/ADMIN.md). A pending / banned account, or a new install the server has not yet confirmed, sees only a lock screen. */
+void lockout_init(bool had_account, const std::string& uid);   // once at startup, after fr_start(); had_account = an identity existed before this run
+void lockout_tick();                                           // every loop iteration, after fr_tick()
+void lockout_shot(const std::string& mode);                    // HUB_SHOT_ACCESS: pending | unavailable | setup | setup-offline
+hublock::Lock lockout_kind();
+bool app_locked();                                             // true = show the lock screen and refuse every launch
+bool launch_blocked(const char* what);                         // every launch entry point asks this first (true = refuse, silently)
+void draw_lock_screen();
 bool session_active();       // like game_active() but only sessions the hub knows about (no OS full-screen guess)
 bool rplay_session_alive();  // launch_online.cpp: remote-play host streamrun running or attach pending
 bool kt_session_active();    // kanto_ui.cpp: a Kanto Together session object is active

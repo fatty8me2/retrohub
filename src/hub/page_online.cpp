@@ -140,6 +140,7 @@ void page_online_home() {
 }
 
 void host_launch_selected() {
+    if (launch_blocked("host_launch_selected")) return;
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
     if (!rg) return;
     if (is_hack(*rg)) {   // ROM hack: every PC plays its own patched copy. Until the host's is ready (still preparing, or failed with a notice) nothing is announced
