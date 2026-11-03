@@ -516,6 +516,10 @@ struct FriendsClient::Impl {
     Liveness live;                       // keepalive answer tracking: a silent socket is closed and re-opened
     std::vector<OutItem> inflight; uint32_t inflight_at = 0;   // the batch the last welcome flushed (an error reply maps back to it)
     std::string username; bool needs_new_name = false, username_known = false; int ref_seq = 0, claim_ref = 0;
+    Access access = Access::Ok;                  // the server refused this account's hello (pending approval / blocked); Ok once welcomed
+    bool admin = false;                          // the welcome said so (the server enforces it on every admin_* message regardless)
+    AdminList alist; AdminDetail adetail; AdminSettings asettings; int admin_pend = 0, admin_ver = 0;
+    std::map<std::string, std::string> admin_names;   // uid -> name, for the result sentences
     std::map<std::string, int> check_refs;   // name we asked about (lower case) -> ref; the server echoes the name, not the ref
 
     /* ---- sending */
@@ -951,9 +955,78 @@ struct FriendsClient::Impl {
         }
     }
 
+    static AdminAccount parse_admin_account(const Json& j)
+    {
+        AdminAccount a;
+        a.uid = j.str("uid"); a.code = j.str("code"); a.name = j.str("name"); a.username = j.str("username");
+        a.status = j.str("status", "ok"); a.by = j.str("by");
+        a.created = jnum(j, "created"); a.first_seen = jnum(j, "first_seen"); a.last_seen = jnum(j, "last_seen");
+        a.pcs = (int)jnum(j, "pcs"); a.friend_of_you = jbool(j, "friend"); a.req = j.str("req");
+        a.test = jbool(j, "test"); a.unapplied = jbool(j, "unapplied");
+        return a;
+    }
+    static AdminSettings parse_admin_settings(const Json* j)
+    {
+        AdminSettings s;
+        if (!j || j->type != Json::Object) return s;
+        s.approval = jbool(*j, "approval"); s.vouch = jbool(*j, "vouch"); s.autofriend = jbool(*j, "autofriend", true); s.cutoff = jnum(*j, "cutoff");
+        return s;
+    }
+    static AdminCounts parse_admin_counts(const Json* j)
+    {
+        AdminCounts c;
+        if (!j || j->type != Json::Object) return c;
+        c.all = (int)jnum(*j, "all"); c.ok = (int)jnum(*j, "ok"); c.pending = (int)jnum(*j, "pending"); c.banned = (int)jnum(*j, "banned");
+        return c;
+    }
+    /* admin_* replies. Only honoured when the welcome said this account is the owner: a stray frame can never fill the dashboard. */
+    void on_admin_message(const std::string& type, const Json& j)
+    {
+        if (!admin) return;
+        if (type == "admin_list") {
+            AdminList l; l.valid = true;
+            if (const Json* a = j.get("rows")) for (const Json& x : a->a) { AdminAccount r = parse_admin_account(x); if (!r.uid.empty() && l.rows.size() < 50) { admin_names[r.uid] = r.shown_name(); l.rows.push_back(std::move(r)); } }
+            l.total = (int)jnum(j, "total"); l.offset = (int)jnum(j, "offset"); l.tracked = (int)jnum(j, "tracked");
+            l.counts = parse_admin_counts(j.get("counts")); l.settings = parse_admin_settings(j.get("settings"));
+            asettings = l.settings; admin_pend = l.counts.pending;
+            alist = std::move(l);
+        } else if (type == "admin_detail") {
+            AdminDetail d; d.valid = true;
+            d.uid = j.str("uid"); d.found = jbool(j, "found"); d.code = j.str("code"); d.rel = j.str("rel"); d.how = j.str("how");
+            d.how_at = jnum(j, "how_at"); d.friend_since = jnum(j, "friend_since");
+            if (const Json* r = j.get("row")) if (r->type == Json::Object) d.row = parse_admin_account(*r);
+            if (const Json* p = j.get("peek")) if (p->type == Json::Object) {
+                d.has_peek = true; d.nfriends = (int)jnum(*p, "nfriends");
+                if (const Json* a = p->get("friends")) for (const Json& x : a->a) if (x.type == Json::String && d.friends.size() < 30) d.friends.push_back(x.s);
+            }
+            adetail = std::move(d);
+        } else if (type == "admin_settings") {
+            asettings = parse_admin_settings(j.get("settings"));
+            AdminCounts c = parse_admin_counts(j.get("counts"));
+            admin_pend = c.pending; alist.settings = asettings; alist.counts = c;
+        } else if (type == "admin_pending") {
+            admin_pend = (int)jnum(j, "pending");
+            alist.counts.pending = admin_pend;
+        } else if (type == "admin_result") {
+            std::string uid = j.str("uid"), op = j.str("op");
+            auto it = admin_names.find(uid);
+            std::string nm = it == admin_names.end() ? std::string() : it->second;
+            bool ok = jbool(j, "ok");
+            const Json* ap = j.get("applied");
+            Event e; e.kind = Event::AdminResult; e.uid = uid; e.name = op; e.ok = ok; e.detail = j.str("reason");
+            e.text = admin_result_text(op, ok, nm, e.detail, ap && ap->type == Json::Bool, ap && ap->type == Json::Bool && ap->b);
+            push_event(std::move(e));
+        } else return;
+        ++admin_ver;
+    }
+
     void on_welcome(const Json& j)
     {
         welcomed = true;
+        access = Access::Ok;
+        admin = jbool(j, "admin");
+        if (admin) send(admin_settings_json());
+        else { alist = AdminList(); adetail = AdminDetail(); asettings = AdminSettings(); admin_pend = 0; }
         backoff_ms = 1000;
         last_keepalive = now_ms();
         live.reset(last_keepalive);
@@ -1055,6 +1128,7 @@ struct FriendsClient::Impl {
         if (type == "welcome") on_welcome(j);
         else if (type == "presence") on_presence(j);
         else if (type == "friend_library") on_friend_library(j);
+        else if (type.compare(0, 6, "admin_") == 0) on_admin_message(type, j);
         else if (type == "friend_online") {   // only ever for friends we asked about; anything else is ignored
             const std::string u = j.str("uid");
             if (find(u) && std::find(watch.begin(), watch.end(), u) != watch.end()) {
@@ -1130,6 +1204,12 @@ struct FriendsClient::Impl {
                 for (const Json& m : a->a) add_msg(with, parse_msg(m), false);
         } else if (type == "error") {
             std::string reason = j.str("reason", "error");
+            if (!welcomed && access_from_reason(reason) != Access::Ok) {   // the owner has not approved this account / it is blocked: no welcome will follow
+                access = access_from_reason(reason);
+                status_text = access_title(access);
+                net_log("Friends: access %s", reason.c_str());
+                return false;   // the server leaves this socket open and wakes it with a close when that changes (4011): no retry loop
+            }
             if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) retire_done(j.str("uid"));   // can never succeed: stop resending
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
             Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref"); e.detail = j.str("detail");
@@ -1308,6 +1388,12 @@ void FriendsClient::update()
             d.status_text = "This identity was replaced by a newer one";
             return;
         }
+        if (code == 4010 || code == 4012) {   // blocked / waiting while connected: say so, then try again slowly (a 4011 close means "approved")
+            d.access = code == 4012 ? Access::Pending : Access::Unavailable;
+            d.admin = false;
+            d.backoff_ms = 60000;
+        }
+        if (code == 4011) d.backoff_ms = 1000;
         if (code == 4003) {
             d.ws.close();
             d.welcomed = false;
@@ -1390,6 +1476,23 @@ bool FriendsClient::adopt_identity(const Identity& v)
 
 bool FriendsClient::connected() const { return impl_->welcomed; }
 std::string FriendsClient::status_text() const { return impl_->status_text; }
+Access FriendsClient::access() const { return impl_->access; }
+bool FriendsClient::is_admin() const { return impl_->admin; }
+void FriendsClient::admin_request_list(const AdminQuery& q) { if (impl_->admin) impl_->send(admin_list_json(q)); }
+void FriendsClient::admin_request_detail(const std::string& uid) { if (impl_->admin && is_b32(uid, 26)) impl_->send(admin_uid_json("detail", uid)); }
+void FriendsClient::admin_act(const std::string& op, const std::string& uid)
+{
+    if (!impl_->admin || !is_b32(uid, 26)) return;
+    if (op != "ban" && op != "unban" && op != "approve" && op != "deny") return;
+    impl_->send(admin_uid_json(op, uid));
+}
+void FriendsClient::admin_request_settings() { if (impl_->admin) impl_->send(admin_settings_json()); }
+void FriendsClient::admin_set_settings(int approval, int vouch, int autofriend) { if (impl_->admin) impl_->send(admin_settings_json(approval, vouch, autofriend)); }
+const AdminList& FriendsClient::admin_list() const { return impl_->alist; }
+const AdminDetail& FriendsClient::admin_detail() const { return impl_->adetail; }
+const AdminSettings& FriendsClient::admin_settings() const { return impl_->asettings; }
+int FriendsClient::admin_pending() const { return impl_->admin_pend; }
+int FriendsClient::admin_version() const { return impl_->admin_ver; }
 std::string FriendsClient::my_code() const { return friend_code(impl_->id.user_id); }
 std::string FriendsClient::my_uid() const { return impl_->id.user_id; }
 std::string FriendsClient::my_secret() const { return impl_->id.secret; }

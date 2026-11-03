@@ -2,6 +2,7 @@
 /* hubnet friends client (see docs/FRIENDS.md). Single UI thread: call update() every frame.
  * Non-blocking; reconnects automatically (backoff 1s..30s). */
 
+#include "admin_logic.h"
 #include "library_share.h"
 
 #include <cstdint>
@@ -102,7 +103,8 @@ struct Event {
                 ReactionReceived, // a friend reacted to a DM line: uid, msg.target / msg.emoji / msg.on
                 AskResult,
                 Queued,           // an action made while offline was saved in the outbox: uid, name = kind (message|invite|block|...), text = plain sentence, msg.id = the pending conversation line id (messages)
-                SendFailed };     // a queued or refused action will not happen: same fields, text = plain sentence ("Your message could not be sent (...)")      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
+                SendFailed,
+                AdminResult };      // owner dashboard: answer to a ban/unban/approve/deny: uid, name (op), ok, text = plain sentence, detail = reason     // a queued or refused action will not happen: same fields, text = plain sentence ("Your message could not be sent (...)")      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
     std::string name;
@@ -238,6 +240,21 @@ class FriendsClient {
     bool needs_new_name() const;                    // the server flagged this older account: pick a username
     bool username_known() const;                    // a welcome has told us (username() / needs_new_name() are meaningful)
     void request_history(const std::string& uid);
+
+    /* ---- account access + owner dashboard (docs/ADMIN.md). access(): why the server refused this account's hello (Ok once welcomed).
+     * is_admin(): the welcome said this account is the owner. The server independently refuses admin_* from anyone else. */
+    Access access() const;
+    bool is_admin() const;
+    void admin_request_list(const AdminQuery& q);
+    void admin_request_detail(const std::string& uid);
+    void admin_act(const std::string& op, const std::string& uid);   // ban | unban | approve | deny
+    void admin_request_settings();
+    void admin_set_settings(int approval, int vouch, int autofriend);   // -1 = unchanged
+    const AdminList& admin_list() const;
+    const AdminDetail& admin_detail() const;
+    const AdminSettings& admin_settings() const;
+    int admin_pending() const;     // accounts waiting for approval (0 until the server said)
+    int admin_version() const;     // bumps whenever any admin data changed
 
     /* state */
     const std::vector<Friend>& friends() const;

@@ -89,6 +89,12 @@ int fr_unread(const std::string& uid);
 int fr_total_unread();
 void fr_mark_read(const std::string& uid);
 bool fr_connected();
+bool fr_is_admin();                      // the welcome said this account is the owner (the Worker enforces it too)
+hubnet::Access fr_access();              // pending approval / blocked, as told by the server at hello (Ok when welcomed)
+void admin_ui_poke();                    // page_admin.cpp: refresh the dashboard soon
+void admin_ui_shot_init(const char* mode);   // HUB_SHOT_ADMIN: fake data, no network
+extern bool g_shot_admin;
+extern hubnet::Access g_shot_access;
 std::string fr_status_text();
 std::string fr_my_code();
 void fr_set_auto_friend(bool on);        // Settings toggle: tells the server (also sent in every hello)
