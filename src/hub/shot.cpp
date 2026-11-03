@@ -78,6 +78,8 @@ void shot_init_ui() {
         else if (m == "hidden") hidden_games_open_shot();
         else if (m == "ps1bios") ps1_bios_ask_shot();
     }
+    if (const char* ad = std::getenv("HUB_SHOT_ADMIN")) { g_shot_admin = true; admin_ui_shot_init(ad); }   // screenshot aid: the owner dashboard with fake data (1 | pending | banned | detail | confirm | settings)
+    if (const char* ac = std::getenv("HUB_SHOT_ACCESS")) { g_shot_access = std::string(ac) == "pending" ? hubnet::Access::Pending : hubnet::Access::Unavailable; A.page = Page::Online; }   // screenshot aid: the Play Online notice for a waiting / blocked account
     if (std::getenv("HUB_SHOT_FAKE_FRIENDS")) {
         fr_fake_init();
         if (std::getenv("HUB_SHOT_CHAT")) { fr_open_chat("miauid"); FR.chat_unread = 2; }

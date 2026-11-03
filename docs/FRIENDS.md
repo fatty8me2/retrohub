@@ -171,3 +171,6 @@ Code: `challenge_logic.h` (cards, leaderboard, rules), `challenge_flow.h` (pure 
 - **During the run.** The hub updates a top-right timer about once a second (runctl `osd_corner`); time the game menu is open does not count. The game menu shows **I did it** (Score goals ask for the number first) and **Give up**. Closing the game without answering counts as giving up. A result card DM goes back to the challenger; every card shows a leaderboard (`leaderboard()`), kept in `<data>\challenge_results.txt`.
 - **Old clients** see the card's fallback text ("Challenge: Fastest time in Super Mario 64") and the state as a plain attachment.
 - **Screenshot aids.** `HUB_SHOT_CHALLENGE=card|results|cant` (chat card previews), `HUB_SHOT_QM=main|challenge` (menu row / friend picker); `qa\shot_challenge.ps1` runs them.
+
+## Owner dashboard, blacklist, approval mode
+See `docs/ADMIN.md`: admin-only `admin_*` messages (owner secret checked server-side), account registry, ban / approve / deny, the approval and auto-friend switches, and the refusal reasons `pending-approval` / `account-unavailable` (close codes 4010 blocked, 4011 approved, 4012 waiting).

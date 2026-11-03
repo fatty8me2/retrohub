@@ -42,5 +42,7 @@ target_link_libraries(n64run_save_sync_test PRIVATE hubsavesync)
 # Offline outbox + socket liveness rules (pure logic, no network).
 add_executable(hubfriends_outbox_test test_outbox.cpp)
 target_include_directories(hubfriends_outbox_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(hubadmin_test test_admin.cpp)
+target_include_directories(hubadmin_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(hubfriends_live_test test_liveness.cpp)
 target_include_directories(hubfriends_live_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
