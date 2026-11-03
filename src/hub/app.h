@@ -906,6 +906,7 @@ bool match_tile(const char* id, const std::string& label, ImVec2 sz, bool sel, I
 void member_pick_row(int slot);
 void match_panel(bool host, float width);
 void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size);
+void member_roster(const std::map<int, const hubui::PeerInfo*>& by_slot, float width);   // the room's players as compact rows (no match picker)
 
 
 /* ---- page_online.cpp ---- */

@@ -293,7 +293,8 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     const std::string det = dl_busy ? hubupdate::status() : (extra.empty() ? st.detail : extra);
     const auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), det, tw, 2);
     // tall enough for the headline, every detail line AND the readiness row under them (a long detail used to run into it)
-    float H = std::max(108 * S, 10 * S + hf->FontSize + 6 * S + lines.size() * (ImGui::GetFontSize() + 2 * S) + 8 * S + ImGui::GetFontSize() + 14 * S);
+    float H = std::max(84 * S, 10 * S + hf->FontSize + 6 * S + lines.size() * (ImGui::GetFontSize() + 2 * S) + 14 * S);   // headline, reason and the button; who is ready lives on the member rows
+    bh = std::min(bh, H - 16 * S);
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1 = p0 + ImVec2(W, H);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p0, p1, mix(COL_PANEL, tone, 0.16f), 16 * S);
@@ -308,35 +309,6 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 10 * S), ui::TEXT, head.c_str());
     float ly = p0.y + 10 * S + hf->FontSize + 6 * S;
     for (auto& l : lines) { dl->AddText(ImVec2(tx, ly), ui::TEXT2, l.c_str()); ly += ImGui::GetFontSize() + 2 * S; }
-    // readiness summary: dot + name per member
-    {
-        float x = tx, y = p1.y - 26 * S;
-        for (size_t mi = 0; mi < mem.size(); ++mi) {
-            auto& m = mem[mi];
-            std::string nm = m.me ? "You" : m.name;
-            if (m.host) nm += " (host)";
-            if (mi < in_game.size() && in_game[mi]) nm += " (in game)";
-            int prtt = -1; bool prelay = false;
-            hubui::PingClass pcl = hubui::PingClass::Unknown;
-            if (!m.me && room_ping_of(peers[mi].slot, &prtt, &prelay)) {   // per-member connection: "Mia (42 ms)" tinted by quality
-                pcl = hubui::ping_class(prtt, prelay);
-                if (pcl != hubui::PingClass::Unknown) nm += " \xC2\xB7 " + hubui::ping_text(prtt, prelay);
-            }
-            ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
-            if (x + 22 * S + ts.x > tx + tw) break;
-            ImVec2 c(x + 7 * S, y + ts.y * 0.5f);
-            if (m.ready) { dl->AddCircleFilled(c, 7 * S, ui::GOOD, 16); ui::icon(dl, ui::Icon::Check, c, 11 * S, IM_COL32(15, 20, 18, 255)); }
-            else dl->AddCircle(c, 6.5f * S, ui::TEXT3, 16, 2 * S);
-            dl->AddText(ImVec2(x + 20 * S, y), m.ready ? ui::TEXT : ui::TEXT2, nm.c_str());
-            if (pcl != hubui::PingClass::Unknown) {   // quality pip under the name's right end
-                ImU32 q = pcl == hubui::PingClass::Great ? ui::GOOD : pcl == hubui::PingClass::Ok ? ui::WARN : pcl == hubui::PingClass::Poor ? ui::BAD : ui::TEXT3;
-                dl->AddCircleFilled(ImVec2(x + 20 * S + ts.x + 8 * S, c.y), 4 * S, q, 12);
-                ts.x += 14 * S;
-            }
-            x += 20 * S + ts.x + 18 * S;
-        }
-    }
-
     // the button
     shot_trace_once("room-button", std::string(host ? "host " : "guest ") + A.selected_game + " label=[" + st.button_label + "] enabled=" + (st.button_enabled ? "1" : "0") + " launch=" + (st.is_launch ? "1" : "0") + (block.empty() ? "" : " block=[" + block + "]"));
     ImGui::SetCursorScreenPos(bp);
@@ -491,18 +463,23 @@ void page_online_room() {
     ImGui::BeginChild("roomleft", ImVec2(left_w, h), ImGuiChildFlags_NavFlattened);
 
     kt_room_panel(left_w - ImGui::GetStyle().ScrollbarSize, true);   // Kanto Together: live status + trade panel first
-    // member cards (4 slots)
-    float gap = 14 * S;
-    int cols = left_w > 560 * S ? 2 : 1;
-    float card_w = left_w - (match_active() ? ImGui::GetStyle().ScrollbarSize + 2 * S : 0.f);   // the match picker makes this column scroll
-    float mw = (card_w - gap * (cols - 1)) / cols;
+    // the players
     std::map<int, const hubui::PeerInfo*> by_slot;
     for (auto& p : peers) by_slot[p.slot] = &p;
-    for (int s = 0; s < 4; ++s) {
-        if (s % cols) ImGui::SameLine(0, gap);
-        member_card(by_slot.count(s) ? by_slot[s] : nullptr, s, ImVec2(mw, 146 * S));   // room for two chip rows when the console chips wrap
-    }
+    if (!match_active()) member_roster(by_slot, left_w - ImGui::GetStyle().ScrollbarSize);   // compact rows, all four fit above the footer
+    else {   // the match picker needs the tall cards
+        // member cards (4 slots)
+        float gap = 14 * S;
+        int cols = left_w > 560 * S ? 2 : 1;
+        float card_w = left_w - (match_active() ? ImGui::GetStyle().ScrollbarSize + 2 * S : 0.f);   // the match picker makes this column scroll
+        float mw = (card_w - gap * (cols - 1)) / cols;
+        for (int s = 0; s < 4; ++s) {
+            if (s % cols) ImGui::SameLine(0, gap);
+            member_card(by_slot.count(s) ? by_slot[s] : nullptr, s, ImVec2(mw, 146 * S));   // room for two chip rows when the console chips wrap
+        }
 
+
+    }
     ImGui::Dummy(ImVec2(0, 4 * S));
     party_room_panel(left_w - ImGui::GetStyle().ScrollbarSize);   // Plan 4 Party mode / vote for the next game (nothing drawn for a guest while it is off)
     cheats_room_strip(rg, host);

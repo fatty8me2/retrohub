@@ -168,6 +168,144 @@ void match_panel(bool host, float width) {
     ImGui::Dummy(ImVec2(0, 4 * S));
 }
 
+/* A member as one compact row (no match picker): avatar, name, host/ready chip, then the connection / console chips (cut to "+N more"),
+ * and on the right the version and the local-player control. */
+static void member_row(const hubui::PeerInfo* p, int slot, ImVec2 size) {
+    ImGui::BeginChild(("m" + std::to_string(slot)).c_str(), size, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetWindowPos(), p1 = p0 + size;
+    static const ImU32 slotc[4] = {IM_COL32(250, 150, 40, 255), IM_COL32(70, 170, 245, 255), IM_COL32(205, 95, 225, 255), IM_COL32(125, 205, 80, 255)};
+    ImFont* cf = ui::F.cap ? ui::F.cap : ImGui::GetFont();
+    const float cy = p0.y + size.y * 0.5f;
+    dl->AddRectFilled(p0, p1, COL_PANEL, 12 * S);
+    const float r = size.y * 0.34f;
+    const ImVec2 cc(p0.x + 14 * S + r, cy);
+    dl->AddCircleFilled(cc, r, slotc[slot & 3], 28);
+    char init[2] = {hubnet::username_initial(p->name), 0};
+    const ImVec2 its = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, init);
+    dl->AddText(ui::F.bold, ui::F.bold->FontSize, cc - its * 0.5f, IM_COL32(20, 20, 25, 255), init);
+    {
+        hub::profile::Profile rp;
+        if (slot == room_my_slot()) rp = fr_my_profile();
+        else { auto it = A.room_prof.find(slot); if (it != A.room_prof.end()) rp.avatar = it->second.avatar; }
+        if (hub::profile::valid_avatar(rp.avatar)) fr_profile_avatar_disc(dl, cc, r, rp.avatar, slotc[slot & 3]);
+    }
+    const bool host = slot == 0;
+    bool rd = host || A.ready[slot];
+    if (slot == room_my_slot()) rd = host || A.my_ready;
+    // right cluster: version, then the local players
+    const bool mine = slot == room_my_slot();
+    const int nloc = locals_of(slot);
+    const float loc_w = mine ? 172 * S : cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, nloc == 2 ? "2 players" : "1 player").x + 2 * sp(1.25f);
+    std::string ver;
+    ImU32 ver_col = ui::TEXT2;
+    if (p->hello) {
+        ver = p->app.empty() ? "version unknown" : hubui::app_version_label(p->app);
+        if (p->app.empty() || hubui::compare_app_versions(p->app, HUB_VERSION_STR) != 0) ver_col = COL_BAD;
+    }
+    const float ver_w = ver.empty() ? 0.f : ImGui::CalcTextSize(ver.c_str()).x;
+    const float right0 = p1.x - 14 * S - loc_w - (ver_w > 0 ? ver_w + 14 * S : 0.f);   // everything on the right starts here
+    float x = cc.x + r + 12 * S;
+    const std::string nm = ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, p->name, std::max(60 * S, std::min(150 * S, (right0 - x) * 0.3f)));
+    dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(x, cy - ui::F.bold->FontSize * 0.5f), IM_COL32_WHITE, nm.c_str());
+    x += ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, nm.c_str()).x + 10 * S;
+    const float chip_h = cf->FontSize + sp(1.f);
+    auto chip_w = [&](const std::string& t) { return cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, t.c_str()).x + 2 * sp(1.25f); };
+    auto put = [&](const std::string& t, ImU32 bg) { x += ui::pill_at(dl, ImVec2(x, cy - chip_h * 0.5f), t.c_str(), bg) + 6 * S; };
+    if (host) put("HOST", COL_ACCENT);
+    else put(rd ? "Ready" : "Not ready", rd ? COL_GOOD : IM_COL32(70, 72, 86, 255));
+    std::vector<std::pair<std::string, ImU32>> chips;
+    const ImU32 grey = IM_COL32(70, 72, 86, 255);
+    if (!p->hello) chips.push_back({"checking games...", grey});
+    else {
+        int rtt = -1; bool relay = false;
+        if (room_ping_of(slot, &rtt, &relay)) {
+            hubui::PingClass pc = hubui::ping_class(rtt, relay);
+            if (pc != hubui::PingClass::Unknown) {
+                const ImU32 col = pc == hubui::PingClass::Great ? COL_GOOD : pc == hubui::PingClass::Ok ? ui::WARN : pc == hubui::PingClass::Poor ? COL_BAD : grey;
+                chips.push_back({std::string(hubui::ping_class_label(pc)) + " \xC2\xB7 " + hubui::ping_text(rtt, relay), col});
+            }
+        }
+        if (!A.selected_game.empty() && !p->keys.empty() && std::find(p->keys.begin(), p->keys.end(), A.selected_game) == p->keys.end()) {
+            const hub::GameEntry* sel = find_room_entry(A.selected_game);
+            if (sel && !remote_play_entry(*sel)) chips.push_back({"No copy of this game", COL_BAD});
+        }
+        if (!p->keys.empty()) {
+            std::map<int, int> per;
+            int other = 0;
+            for (auto& k : p->keys) {
+                size_t c = k.find(':');
+                hub::System sy = c == std::string::npos ? hub::System::Unknown : hub::system_from_short(k.substr(0, c));
+                if (sy == hub::System::Unknown) ++other; else ++per[(int)sy];
+            }
+            for (auto& kv : per) {
+                ImU32 a, b;
+                system_colors((hub::System)kv.first, &a, &b);
+                chips.push_back({std::string(sys_badge((hub::System)kv.first)) + " " + std::to_string(kv.second), mix(a, IM_COL32_BLACK, 0.15f)});
+            }
+            if (other) chips.push_back({"OTHER " + std::to_string(other), grey});
+        } else {
+            for (auto& g : hub::catalog()) {
+                if (!p->games.count(g.id)) continue;
+                ImU32 a, b;
+                game_colors(g.id, &a, &b);
+                chips.push_back({short_name(g.id), mix(a, IM_COL32_BLACK, 0.15f)});
+            }
+            if (chips.empty()) chips.push_back({"no supported games", grey});
+        }
+    }
+    for (size_t i = 0; i < chips.size(); ++i) {   // as many as fit, then "+N more"
+        const size_t left = chips.size() - i;
+        const bool last = left == 1;
+        const float need = chip_w(chips[i].first) + (last ? 0.f : chip_w("+" + std::to_string(left - 1) + " more") + 6 * S);
+        if (x + need > right0 - 8 * S) { put("+" + std::to_string(left) + " more", grey); break; }
+        put(chips[i].first, chips[i].second);
+    }
+    float rx = right0;
+    if (ver_w > 0) { dl->AddText(ImVec2(rx, cy - ImGui::GetFontSize() * 0.5f), ver_col, ver.c_str()); rx += ver_w + 14 * S; }
+    if (mine) {
+        ImGui::PushID(slot);
+        ImGui::SetCursorScreenPos(ImVec2(rx, cy - ImGui::GetFrameHeight() * 0.5f));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Local");
+        ImGui::SameLine(0, 6 * S);
+        if (ImGui::RadioButton("1", nloc == 1)) { A.my_locals = 1; A.hello_dirty = true; }
+        ImGui::SameLine(0, 6 * S);
+        if (ImGui::RadioButton("2", nloc == 2)) { A.my_locals = 2; A.hello_dirty = true; }
+        ImGui::PopID();
+    } else {
+        ui::pill_at(dl, ImVec2(rx, cy - chip_h * 0.5f), nloc == 2 ? "2 players" : "1 player", grey);
+    }
+    ImGui::EndChild();
+}
+
+/* Empty seats, as one slim line instead of cards. */
+static void open_slot_row(int n, ImVec2 size) {
+    ImGui::BeginChild("openslots", size, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetWindowPos();
+    dl->AddRect(p0, p0 + size, IM_COL32(255, 255, 255, 40), 10 * S, 0, 1.f * S);
+    char t[96];
+    if (n == 1) std::snprintf(t, sizeof t, "Open slot  -  invite a friend");
+    else std::snprintf(t, sizeof t, "%d open slots  -  invite friends", n);
+    dl->AddText(ImVec2(p0.x + 16 * S, p0.y + (size.y - ImGui::GetFontSize()) * 0.5f), IM_COL32(255, 255, 255, 110), t);
+    ImGui::EndChild();
+}
+
+/* The room's players: one compact row each (single column), then one line for the open seats. */
+void member_roster(const std::map<int, const hubui::PeerInfo*>& by_slot, float width) {
+    const float rh = 44 * S;
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 6 * S));
+    int open = 0;
+    for (int sl = 0; sl < 4; ++sl) {
+        auto it = by_slot.find(sl);
+        if (it == by_slot.end()) { ++open; continue; }
+        member_row(it->second, sl, ImVec2(width, rh));
+    }
+    if (open) open_slot_row(open, ImVec2(width, 34 * S));
+    ImGui::PopStyleVar();
+}
+
 void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     ImGui::BeginChild(("m" + std::to_string(slot)).c_str(), size, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* dl = ImGui::GetWindowDrawList();
