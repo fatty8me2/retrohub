@@ -1309,7 +1309,7 @@ uint32_t Frontend::poll_local(int i) {
                 while (q0 <= b.size()) {
                     size_t q = b.find('+', q0); if (q == std::string::npos) q = b.size();
                     std::string t = b.substr(q0, q - q0); q0 = q + 1;
-                    while (!t.empty() && (t.back() == '' || t.back() == ' ')) t.pop_back();
+                    while (!t.empty() && (t.back() == '\r' || t.back() == ' ')) t.pop_back();
                     int bi = hubctl::button_index(t);
                     if (bi >= 0) st.b[bi] = true;
                 }

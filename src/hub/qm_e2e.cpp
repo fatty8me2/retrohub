@@ -366,9 +366,12 @@ void build() {
         Scenario s{"controller save queues reload_controls"};
         s.steps.push_back(expect("profile saves while a runner is active enqueue reload_controls", [](const QmE2EState&, std::string* w) {
             namespace fs = std::filesystem;
-            const std::string dd = hub::data_dir(), vd = hub::saves::vault_dir();
-            hubctl::Store backup;
-            const bool had = hubctl::load_store(dd, vd, &backup);
+            /* A scratch store: the real controls.json (userdata / vault) is never read or written, so a crashed run cannot change real bindings. */
+            const std::string dd = (fs::temp_directory_path() / "rh_live_e2e_store").string() + "\\", vd;
+            std::error_code mk;
+            fs::remove_all(dd, mk);
+            fs::create_directories(dd, mk);
+            g_controls_test_dir = dd;
             const std::string tmp = (fs::temp_directory_path() / "rh_live_e2e_controls.json").string();
             auto count = [] { size_t n = 0; for (auto& c : qm_e2e_state().cmds) if (c.rfind("reload_controls", 0) == 0) ++n; return n; };
             auto save = [&](const std::function<void(hubctl::Store&)>& f) { hubctl::Store st; hubctl::load_store(dd, vd, &st); f(st); st.stamp = (int64_t)std::time(nullptr) + 1000; hubctl::save_store(st, dd, vd); controls_live_push(); };
@@ -404,8 +407,8 @@ void build() {
             A.run = RunInfo();
             std::error_code ec;
             fs::remove(tmp, ec);
-            if (had) { backup.stamp = (int64_t)std::time(nullptr) + 2000; hubctl::save_store(backup, dd, vd); }
-            else { fs::remove(dd + "controls.json", ec); fs::remove(vd + "/controls.json", ec); }
+            g_controls_test_dir.clear();
+            fs::remove_all(dd, ec);
             *w = why;
             return ok;
         }));

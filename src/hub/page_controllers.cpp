@@ -599,6 +599,7 @@ void open_controls_for(const hub::GameEntry& e) {
 }
 
 std::pair<std::string, std::string> g_launch_controls;
+std::string g_controls_test_dir;
 
 /* A Controllers-page save while a built-in runner (retrorun / n64run) plays: rewrite the profile file the runner was started with and queue
  * ReloadControls. Only when the mapping or the port order of THAT game's resolved profile changed (editing another system or game does
@@ -606,12 +607,18 @@ std::pair<std::string, std::string> g_launch_controls;
 void controls_live_push() {
     if (!A.proc || A.run.controls_path.empty() || A.run.ctl_path.empty()) return;
     hubctl::Store st;
-    hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
+    if (g_controls_test_dir.empty()) hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
+    else hubctl::load_store(g_controls_test_dir, "", &st);
     const hubctl::Profile next = hubctl::resolve(st, A.run.controls_sys, A.run.key);
     hubctl::Profile cur;
     const bool have = hubctl::read_profile_file(A.run.controls_path, &cur) && cur.system == next.system;
     if (!hubctlive::needs_reload(have, cur, next)) return;
-    if (!hubctl::write_profile_file(A.run.controls_path, next)) return;
+    bool wrote = false;
+    for (int i = 0; i < 5 && !(wrote = hubctl::write_profile_file(A.run.controls_path, next)); ++i) Sleep(40);   // the runner may be reading the file right now
+    if (!wrote) {   // never fail silently: the next launch regenerates the file from the saved store anyway
+        push_toast("Couldn't update the running game's controls â they'll apply next launch", COL_WARN, 6.0);
+        return;
+    }
     runctl::Command c;
     c.cmd = runctl::Cmd::ReloadControls;
     qm_send_command(c);

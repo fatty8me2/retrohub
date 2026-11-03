@@ -309,7 +309,10 @@ void add_modal() {
 struct Remove { bool open = false, focus = true; std::string key, title, system; } RM;
 
 void do_remove(bool with_saves) {
-    if (A.proc && (A.run.key == RM.key || (find_entry(RM.key) && A.run.key == find_entry(RM.key)->hack_base))) { set_notice("That game is running. Close it first."); return; }   // other games are safe to change
+    /* Only the running hack itself is blocked. A hack's key is "<base key>+h<crc>", so its game_dir (patch folder, saves / battery), its rom-cache
+     * folder and its states are all its own: the base game and other hacks never share a save, battery or cache dir with it, and the running
+     * base game plays the unpatched ROM, not the hack's cached copy. Removing one hack while another game runs touches none of the runner's files. */
+    if (A.proc && A.run.key == RM.key) { set_notice("That game is running. Close it first."); return; }
     std::string gd = hub::saves::game_dir(RM.system, RM.key);
     hk::remove_hack_files(gd);
     std::error_code ec;

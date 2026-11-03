@@ -927,6 +927,7 @@ void open_port_assign();                         // Controllers page in "Assign 
 bool draw_players_strip(int players);            // library details: "Players: 1 2 3 4" strip; true = Reassign clicked
 std::string controls_arg(const std::string& system_key, const std::string& game_key);
 extern std::pair<std::string, std::string> g_launch_controls;   // controls_arg(): the profile file + system of the launch being built
+extern std::string g_controls_test_dir;                      // QA hook (qm_e2e): when set, controls_live_push reads the controls store from this scratch dir instead of the real one
 void controls_live_push();                          // after a Controllers-page save: rewrite the running built-in runner's profile + queue runctl ReloadControls (no-op without a running game)
 std::string controls_live_note();                   // Controllers page: live / "applies next launch" note while a game runs ("" otherwise)
 void qm_send_command(const runctl::Command& c);     // quickmenu.cpp: queue a runner command through the menu's pacer (one command at a time, ack-paced)
