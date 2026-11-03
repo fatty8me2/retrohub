@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
     ULONGLONG t0 = GetTickCount64();
     auto stamp = [&]() { return (double)(GetTickCount64() - t0) / 1000.0; };
 
-    if (e.system == hub::System::N3DS && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {
+    if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // any archived image (3DS, GameCube, Wii U, PS2...): the same unpack the hub does on Play
         std::printf("[%.1fs] would ask to unpack into %s (%llu bytes)\n", stamp(), hub::extract_3ds_dir(e).c_str(),
                     (unsigned long long)hub::zip_3ds_unpacked_size(e));
         std::string out, err;

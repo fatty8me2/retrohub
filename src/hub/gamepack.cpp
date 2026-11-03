@@ -777,7 +777,7 @@ std::string pack_hint(const std::string& name) {
     size_t dot = n.find_last_of('.');
     if (dot != std::string::npos && dot > 0) {
         static const char* exts[] = {"zip", "7z", "rar", "z64", "n64", "v64", "gba", "gb", "gbc", "nds", "iso", "rvz", "cue", "bin", "chd", "gcm", "ciso",
-                                     "wbfs", "3ds", "cia", "wua", "wud", "wux", "nes", "sfc", "smc", "pbp", "gcz", "ndd"};
+                                     "wbfs", "3ds", "cia", "wua", "wud", "wux", "nes", "sfc", "smc", "pbp", "gcz", "ndd", "cso", "cci", "cxi", "3dsx", "img", "m3u"};   // every format the library opens: "Game.cso" is titled "Game"
         std::string ext = lower_name(n.substr(dot + 1));
         for (const char* x : exts) if (ext == x) { n.erase(dot); break; }
     }
