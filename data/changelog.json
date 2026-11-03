@@ -1,6 +1,23 @@
 {
   "versions": [
     {
+      "version": "1.31.11",
+      "date": "2026-11-03",
+      "title": "Only people you approve",
+      "new": [
+        "Banned accounts and accounts waiting for approval see only a lock screen: no library, no games, not even offline",
+        "New accounts now wait for the owner's approval. Everyone who already has RetroHub keeps working",
+        "Admin: \"Only approved accounts can join rooms\" switch for lobbies, game rooms and spectating"
+      ],
+      "improved": [
+        "The waiting screen shows your name and friend code so the owner knows it's you, with Check again",
+        "RetroHub refreshes its taskbar and Start Menu icon after an update, so the new logo shows up"
+      ],
+      "fixed": [
+        "Server busy in a room is now a short retry instead of an error"
+      ]
+    },
+    {
       "version": "1.31.10",
       "date": "2026-11-03",
       "title": "Owner tools and a tidier room",
