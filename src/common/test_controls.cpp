@@ -497,6 +497,7 @@ static void test_turbo() {
 
 /* Live controls: a profile file rewritten while a runner plays is picked up through the mailbox, and the new binding changes the mask. */
 static void test_live_reload() {
+    using namespace hubctl;
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path() / "rh_live_ctl_test";
     fs::create_directories(dir);
