@@ -62,6 +62,18 @@ int main() {
     CHECK(collect_cards(dup, true).size() == 2);   // identical items are not repeated
     CHECK(collect_cards({}, true).empty());
 
+    // owner-only items are skipped for non-owners and backfilled
+    {
+        auto nv = collect_cards(vs, false);
+        CHECK(nv.size() == 2 && nv[0].version == "1.31.12" && nv[1].body == "Second");   // the Admin/invite/ban items are gone
+        auto wide = versions_since(all, "1.31.8", "1.31.13");
+        auto no = collect_cards(wide, false);
+        CHECK(no.size() == 4 && no[0].version == "1.31.12" && no[1].title == "Discover tab" && no[2].body == "Second" && no[3].title == "Extra thing");
+        for (const Card& k : no) CHECK(!is_owner_only(k.title + " " + k.body));
+        CHECK(collect_cards(wide, true).size() == 5 && collect_cards(wide, true)[0].title == "Invite codes");   // owners see everything
+        CHECK(is_owner_only("Owner notifications: x") && is_owner_only("Banned accounts see a lock screen") && !is_owner_only("Cloud saves"));
+    }
+
     // keyword -> page
     Topic tp; Target tg;
     classify("Discover tab: highly rated games", false, &tp, &tg);
@@ -76,7 +88,7 @@ int main() {
     CHECK(tp == Topic::Look && tg == Target::None);
     classify("Faster startup", false, &tp, &tg);
     CHECK(tp == Topic::Generic && tg == Target::None);
-    CHECK(collect_cards(vs, false)[0].target == Target::None);
+    CHECK(collect_cards(vs, true)[0].target == Target::Admin && collect_cards(vs, false)[0].target != Target::Admin);
 
     // show / defer rules
     Context c;
