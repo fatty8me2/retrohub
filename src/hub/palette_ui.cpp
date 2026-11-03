@@ -43,6 +43,7 @@ void build_items() {
     add(Kind::Action, "Check for updates", "", "page:about");
     add(Kind::Setting, "Home", "", "page:home");
     add(Kind::Setting, "All Games", "", "page:all");
+    add(Kind::Setting, "Discover", "Recommended games for each console", "page:discover");
     add(Kind::Setting, "Play Online", "", "page:online");
     add(Kind::Setting, "Saves", "", "page:saves");
     add(Kind::Setting, "Controllers", "", "page:controllers");
@@ -74,6 +75,7 @@ void run(const std::string& id) {
     else if (id == "page:all") { A.page = Page::Library; A.view = LibView::All; }
     else if (id == "page:saves") A.page = Page::Saves;
     else if (id == "page:controllers") A.page = Page::Controllers;
+    else if (id == "page:discover") A.page = Page::Discover;
     else if (id == "page:about") A.page = Page::About;
     else if (starts("set:")) settings_open(std::atoi(id.c_str() + 4));
     else if (starts("game:")) {

@@ -18,7 +18,7 @@ bool gameinfo_ui_section_query(const gameinfo::Query& q, const std::string& id, 
 
 /* ---------- state ---------- */
 
-static std::vector<hubui::fg::Owned> owned_snapshot() {
+std::vector<hubui::fg::Owned> owned_snapshot() {
     std::vector<hubui::fg::Owned> v;
     v.reserve(A.lib.size());
     const std::string root = hubgp::pack_root();
