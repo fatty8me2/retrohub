@@ -2540,6 +2540,7 @@ bool Frontend::setup_net() {
     o.hash_label = is_ps2 ? "ee-ram" : use_state_hash ? "state" : "output";
     o.wide = is_ps1 || is_ps2;   // sticks travel as a second word per port
     o.delay = a.delay;
+    if (env_is("N64RUN_FIXED_DELAY") && env_is("RETROHUB_QA")) o.adaptive_delay = false;   // QA: identical inputs -> identical game (qa\players_input_check.ps1)
     o.online = true;
     o.spectator = a.spectate;
     o.serve_spectators = !a.no_spectators;
@@ -3433,6 +3434,7 @@ int Frontend::run(const Args& args) {
     /* Offline without --players (the hub never passes it): one port per connected controller, so a second, third and fourth pad play players 2-4 on
      * NES / SNES / PS1 (adapter or multitap switched on from 3 pads). Before this, only port 0 was ever local and the extra pads did nothing. */
     if (a.net.empty() && !a.ports_given && !a.players_given && !a.ds_link && !a.link && !a.headless && !a.synctest) {
+        hubctl::load_bundled_db();   // the same pad mappings open_pads() will use, so the same pads are counted
         const int pads = (int)hubctl::list_pads().size();
         a.players = retrorun::offline_players(retrorun::sys_of(lower(a.system)), pads, a.no_multitap);
         if (a.players > 1) rlog("players: %d connected controllers -> %d local players", pads, a.players);

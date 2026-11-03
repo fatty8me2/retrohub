@@ -22,7 +22,7 @@ The sections "How it works in the hub" below describe what ships; "Why PCSX2 can
 - **Input.** Per port the lockstep sample is 8 bytes: 16 RetroPad buttons, L2/R2 pressure (0..255, bits 16-31 of the button word), and both analog sticks quantised to 8 bits
   (`retrorun::pack_sticks`, the PS1 format). A DualShock 2 reports 0..255 per axis, so nothing is lost. Online PS2 uses the DualShock layout of the "ps1" controls profile (per-game PS2
   bindings made for PCSX2 are not applied online). Verified: with sticks and pressure fuzzed the output differs from a no-stick run and two identical runs match bit for bit.
-- **Players.** 2-4. 8f1d15f adds the core option `pcsx2_multitap` ("disabled", "port 1", "port 2", "ports 1 and 2"; read at load). For rooms of 3+ players retrorun pins
+- **Players.** 2-4. 8f1d15f adds the core option `pcsx2_multitap` ("disabled", "port 1", "port 2", "ports 1 and 2"; read at load). (v1.31.8: the multitap is also pinned on when a PC owns a pad on port 3 or 4, e.g. 2 PCs with 2 pads each, `--ports 0,0,1,1`; the rule is `retrorun::plan_ports` in `port_plan.h`.) For rooms of 3+ players retrorun pins
   `pcsx2_multitap=port 1` (a multitap in console port 1; frontend ports 0-3 are its four slots, slot k = lobby slot k); 1-2 player rooms pin it `disabled`, so they behave exactly as before.
   The option is part of the setup fingerprint (a peer with a different value fails with exit 11). `online_max_for` no longer caps PS2: the catalog's per-game `online_max`/`max_players`
   (e.g. Crash Nitro Kart, TimeSplitters 2 = 4) applies, non-catalog PS2 games default to 4 ("Untested online"). The hub refuses rooms above 4. Only games that support the multitap use the extra

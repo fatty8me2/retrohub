@@ -278,6 +278,12 @@ static void test_settings() {
     CHECK(has_pair(ra, "--opt", "snes9x_region=ntsc") && has_arg(ra, "--multitap"));
     s.set_game("snes:k", System::SNES, "snes.multitap", "off");
     CHECK(has_arg(retrorun_args(System::SNES, s.resolve(System::SNES, "snes:k")), "--no-multitap"));
+    /* PS1: "auto" adds nothing (retrorun switches the multitap on from the third port / controller), "on" forces the core option, "off" keeps two ports */
+    CHECK(!has_arg(retrorun_args(System::PS1, defaults_for(System::PS1)), "--no-multitap"));
+    s.set_game("ps1:k", System::PS1, "ps1.multitap", "on");
+    CHECK(has_pair(retrorun_args(System::PS1, s.resolve(System::PS1, "ps1:k")), "--opt", "beetle_psx_enable_multitap_port1=enabled"));
+    s.set_game("ps1:k", System::PS1, "ps1.multitap", "off");
+    CHECK(has_arg(retrorun_args(System::PS1, s.resolve(System::PS1, "ps1:k")), "--no-multitap"));
 }
 
 static void test_find_add() {
