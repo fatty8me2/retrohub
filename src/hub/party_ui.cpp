@@ -823,12 +823,21 @@ void partyui_qa_drive(unsigned long long now) {
 }
 
 /* ================================================================== screenshot aid (HUB_SHOT_PARTY) */
-/* HUB_SHOT_PARTY=panel|lobbyguest|playing|standings|winner|vote|tie|podium|update|couch|couchround  (+ HUB_SHOT_PARTY_GUEST=1 for the guest's view)
+/* HUB_SHOT_PARTY=panel|lobbyguest|playing|standings|winner|vote|tie|podium|update|couch|couchround|off|offmenu|setup|plan|stand|playingmenu  (+ HUB_SHOT_PARTY_GUEST=1 for the guest's view)
  * Fakes a room of four (Mia, Jake, Kai and "You"/"Ana") and a party State of that mode; no network, nothing written. */
 void party_shot_init() {
     const char* m = std::getenv("HUB_SHOT_PARTY");
     if (!m || !*m) return;
-    const std::string mode = m;
+    std::string mode = m;
+    /* strip views: a base mode plus one popup/modal of the room strip opened from the start */
+    std::string view;
+    bool strip_off = false;   // the host with Party mode off (the "Party v" control alone)
+    if (mode == "setup") { mode = "panel"; view = "setup"; }                    // the host's setup modal over the lobby
+    else if (mode == "plan") { mode = "lobbyguest"; view = "setup"; }           // a guest's read-only plan
+    else if (mode == "stand") { mode = "playing2"; view = "stand"; }             // the standings popup during a round
+    else if (mode == "playingmenu") { mode = "playing2"; view = "menu"; }        // the strip's menu (End the party)
+    else if (mode == "off") { mode = "panel"; strip_off = true; }
+    else if (mode == "offmenu") { mode = "panel"; strip_off = true; view = "menu"; }
     const bool guest = std::getenv("HUB_SHOT_PARTY_GUEST") != nullptr || mode == "lobbyguest";
     const bool couch = mode == "couch" || mode == "couchround";
     if (A.st.name.empty()) A.st.name = "Ana";
@@ -875,6 +884,9 @@ void party_shot_init() {
             play("r4", n == 3 ? std::vector<std::vector<int>>{{1}, {0, 2}} : std::vector<std::vector<int>>{{3}, {1}, {0}, {2}});
             play("r5", n == 3 ? std::vector<std::vector<int>>{{0}, {1}, {2}} : std::vector<std::vector<int>>{{1}, {0, 3}, {2}});
             s = pl::next_round(s);
+        } else if (mode == "playing2") {   // round 1 is scored, round 2 is being played
+            play("r1", n == 3 ? std::vector<std::vector<int>>{{1}, {0}, {2}} : std::vector<std::vector<int>>{{1}, {0}, {3}, {2}});
+            s = pl::next_round(s, all);
         } else if (mode != "playing" && mode != "couchround") {   // (couchround: the night has just started, round 1 is up next)
             play("r1", n == 3 ? std::vector<std::vector<int>>{{1}, {0}, {2}} : std::vector<std::vector<int>>{{1}, {0}, {3}, {2}});
             play("r2", n == 3 ? std::vector<std::vector<int>>{{0}, {1, 2}} : std::vector<std::vector<int>>{{3}, {1}, {0, 2}});
@@ -901,7 +913,7 @@ void party_shot_init() {
     }
     R.st = s;
     R.seen = s;
-    R.have = true;
+    R.have = !strip_off;
     R.round_t0 = GetTickCount64() - 95000;   // a minute and a half into the round
     if (mode == "standings" || mode == "winner" || mode == "vote" || mode == "podium" || mode == "tie" || mode == "couchround") R.ov = true;
     if (mode == "tie") {
@@ -924,5 +936,6 @@ void party_shot_init() {
         auto v = s.votes.find(guest ? 1 : 0);
         if (v != s.votes.end()) { R.my_vote = v->second; R.my_vote_what = s.poll; R.my_vote_round = s.round; }
     }
+    if (!view.empty()) party_view_shot(view);
     shot_trace("party-shot", mode + (guest ? " guest" : " host"));
 }

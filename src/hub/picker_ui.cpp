@@ -190,57 +190,109 @@ void detail_popup(bool host) {
 
 void room_picker_set_query(const char* q) { std::snprintf(PK.q, sizeof PK.q, "%s", q ? q : ""); }
 
-/* Big "selected game" card at the top of the room: cover, title, console, players and online status. Everyone sees it (guests: the host's pick). */
+/* Big "selected game" card at the top of the room: cover, title, console, players and online status. Everyone sees it (guests: the host's pick).
+ * Layout rule (nothing may overlap): the text column has an explicit width (card - cover - button column - padding); the title wraps onto
+ * two lines (a smaller heading font first) before it is cut; pills wrap onto a new line; the button has its own column, or goes under the
+ * text when the card is narrow. */
 void room_game_hero(const hub::GameEntry* rg, bool host) {
+    struct Pill { std::string t; ImU32 bg, fg; };
     const std::string limit_note = rg && supports_online(*rg) ? player_limit_note(*rg) : std::string();   // why the room is smaller than four ("" = nothing to say)
-    const float W = ImGui::GetContentRegionAvail().x, H = (132 + (!host && !limit_note.empty() ? 22 : 0)) * S;   // guests keep "The host picks the game." under a limit note
-    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1 = p0 + ImVec2(W, H);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float W = ImGui::GetContentRegionAvail().x;
     ImU32 c0 = ui::ACCENT, c1 = ui::ACCENT;
     if (rg) entry_colors(*rg, &c0, &c1);
+    ImFont* hf0 = ui::F.title ? ui::F.title : ui::F.h2;
+    ImFont* body = ImGui::GetFont();
+    ImFont* cf = ui::F.cap ? ui::F.cap : body;
+    const bool narrow = host && W < 560 * S;   // no room for a button column: the button sits under the text
+    const float bw = narrow ? std::min(260 * S, W - 40 * S) : std::min(240 * S, W * 0.26f), bh = 52 * S;
+    const float pad = 10 * S, ph0 = 88 * S;   // the cover is at least this tall
+    const float pw = ph0 * 0.72f;
+    const float tx_off = pad + pw + 18 * S;
+    const float tw = std::max(80 * S, W - tx_off - 16 * S - (host && !narrow ? bw + 16 * S : 0.f));
+
+    // ---- content, measured first so the card is as tall as it needs to be
+    std::string title = "No game chosen yet", sub = host ? "Pick a game below. It shows up here for everyone." : "Waiting for the host to pick a game.";
+    std::vector<Pill> pills;
+    if (rg) {
+        title = rg->title;
+        const bool unt = online_untested(*rg);
+        pills.push_back({hub::system_name(rg->system), mix(c0, IM_COL32_BLACK, 0.2f), IM_COL32_WHITE});
+        pills.push_back({hubpick::players_text(1, supports_online(*rg) ? max_players_for(*rg) : local_players_for(*rg)), IM_COL32(0, 0, 0, 120), IM_COL32_WHITE});
+        pills.push_back({unt ? "Untested online" : "Online ready", unt ? IM_COL32(0, 0, 0, 170) : ui::GOOD, unt ? ui::WARN : IM_COL32(8, 28, 16, 255)});
+        if (g_headless) {   // screenshot aids: a long title and every pill present
+            if (const char* t = std::getenv("HUB_SHOT_ROOM_TITLE")) title = t;
+        }
+        if (is_hack(*rg) || (g_headless && std::getenv("HUB_SHOT_ROOM_HACK"))) pills.push_back({"ROM hack", IM_COL32(150, 90, 30, 255), IM_COL32_WHITE});
+        if (remote_play_entry(*rg)) pills.push_back({"Remote play", IM_COL32(40, 90, 170, 255), IM_COL32_WHITE});
+    } else if (!A.selected_game.empty()) {
+        const GameInfo* g = hub::find_game(A.selected_game);
+        title = g ? g->title : A.selected_game;
+        sub = "You don't have this game, so you can't ready up for it.";
+    }
+    ImFont* hf = hf0;
+    std::vector<std::string> tl = ui::wrap_lines(hf, hf->FontSize, title, tw, 1);
+    if (hf->CalcTextSizeA(hf->FontSize, FLT_MAX, 0.f, title.c_str()).x > tw) {   // too long for one line: the smaller heading font, up to two lines
+        if (ui::F.h2) hf = ui::F.h2;
+        tl = ui::wrap_lines(hf, hf->FontSize, title, tw, 2);
+    }
+    // pills flow onto new rows
+    const float prow = cf->FontSize + sp(1.f) + 4 * S, pgap = 6 * S;
+    std::vector<ImVec2> ppos;   // relative to the pill block's top-left
+    float px = 0, py = 0;
+    for (const Pill& pl_ : pills) {
+        const float pwid = cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, pl_.t.c_str()).x + 2 * sp(1.25f);
+        if (px > 0 && px + pwid > tw) { px = 0; py += prow; }
+        ppos.push_back(ImVec2(px, py));
+        px += pwid + pgap;
+    }
+    const float pill_h = pills.empty() ? 0.f : py + prow;
+    std::vector<std::string> notes;
+    if (rg) {
+        if (!limit_note.empty()) notes = ui::wrap_lines(body, body->FontSize, limit_note, tw, 2);
+        if (!host) notes.push_back("The host picks the game.");
+    } else {
+        notes = ui::wrap_lines(body, body->FontSize, sub, tw, 2);
+    }
+    const float nline = body->FontSize + 2 * S;
+    const float content_h = 12 * S + ui::F.cap->FontSize + 4 * S + tl.size() * (hf->FontSize + 2 * S) + (pills.empty() ? 0.f : 8 * S + pill_h) + (notes.empty() ? 0.f : 6 * S + notes.size() * nline) + 10 * S;
+    const float card_h = std::max(104 * S, content_h);
+    const float H = card_h + (narrow ? bh + 12 * S : 0.f);
+
+    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1 = p0 + ImVec2(W, H);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p0, p1, mix(COL_PANEL, c1, 0.14f), 16 * S);
     dl->AddRect(p0, p1, with_alpha(c1, 0.5f), 16 * S, 0, 1.5f * S);
-    float ph = H - 20 * S, pw = ph * 0.72f;
-    ImVec2 a0 = p0 + ImVec2(10 * S, 10 * S), a1 = a0 + ImVec2(pw, ph);
-    float tx = a1.x + 18 * S, tw = p1.x - tx - 16 * S;
-    if (host) tw -= std::min(260 * S, W * 0.3f) + 16 * S;   // keep text clear of the Choose/Change game button
-    ImFont* hf = ui::F.title ? ui::F.title : ui::F.h2;
+    const float ph = std::min(card_h - 2 * pad, 130 * S), cw2 = ph * 0.72f;
+    ImVec2 a0 = p0 + ImVec2(pad, pad), a1 = a0 + ImVec2(cw2, ph);
+    const float tx = a1.x + 18 * S;
     const char* cap = host ? "YOUR PICK" : "HOST'S PICK";
-    if (rg) {
-        draw_cover(dl, *rg, a0, a1, 10 * S);
-        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + 12 * S), ui::TEXT3, cap);
-        dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 12 * S + ui::F.cap->FontSize + 4 * S), ui::TEXT, ui::ellipsize(hf, hf->FontSize, rg->title, tw).c_str());
-        float y = p0.y + 12 * S + ui::F.cap->FontSize + 4 * S + hf->FontSize + 10 * S, x = tx;
-        x += pill_at(dl, ImVec2(x, y), hub::system_name(rg->system), mix(c0, IM_COL32_BLACK, 0.2f)) + 6 * S;
-        x += pill_at(dl, ImVec2(x, y), hubpick::players_text(1, supports_online(*rg) ? max_players_for(*rg) : local_players_for(*rg)).c_str(), IM_COL32(0, 0, 0, 120)) + 6 * S;
-        bool unt = online_untested(*rg);
-        x += pill_at(dl, ImVec2(x, y), unt ? "Untested online" : "Online ready", unt ? IM_COL32(0, 0, 0, 170) : ui::GOOD, unt ? ui::WARN : IM_COL32(8, 28, 16, 255)) + 6 * S;
-        if (remote_play_entry(*rg)) pill_at(dl, ImVec2(x, y), "Remote play", IM_COL32(40, 90, 170, 255));
-        {   // why the room is smaller than four ("This game is single-player ...", "Unlisted NES games are limited to 2 players ..."), then the guest hint
-            float ny = y + 28 * S;
-            if (!limit_note.empty())
-                for (auto& l : ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), limit_note, tw, 2)) { dl->AddText(ImVec2(tx, ny), ui::WARN, l.c_str()); ny += ImGui::GetFontSize() + 2 * S; }
-            if (!host) dl->AddText(ImVec2(tx, limit_note.empty() ? p1.y - 14 * S - ImGui::GetFontSize() : ny + 2 * S), ui::TEXT2, "The host picks the game.");
-        }
-    } else {
+    float y = p0.y + 12 * S;
+    if (rg) draw_cover(dl, *rg, a0, a1, 10 * S);
+    else {
         dl->AddRectFilled(a0, a1, ui::PANEL2, 10 * S);
         dl->AddRect(a0, a1, ui::HAIRLINE, 10 * S, 0, 1.f);
-        const char* q = "?";
-        ImVec2 qs = hf->CalcTextSizeA(hf->FontSize, FLT_MAX, 0.f, q);
-        dl->AddText(hf, hf->FontSize, (a0 + a1 - qs) * 0.5f, ui::TEXT3, q);
-        std::string title = "No game chosen yet", sub = host ? "Pick a game below. It shows up here for everyone." : "Waiting for the host to pick a game.";
-        if (!A.selected_game.empty()) {
-            const GameInfo* g = hub::find_game(A.selected_game);
-            title = g ? g->title : A.selected_game;
-            sub = "You don't have this game, so you can't ready up for it.";
+        ImVec2 qs = hf0->CalcTextSizeA(hf0->FontSize, FLT_MAX, 0.f, "?");
+        dl->AddText(hf0, hf0->FontSize, (a0 + a1 - qs) * 0.5f, ui::TEXT3, "?");
+    }
+    dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, y), ui::TEXT3, cap);
+    y += ui::F.cap->FontSize + 4 * S;
+    for (const std::string& l : tl) { dl->AddText(hf, hf->FontSize, ImVec2(tx, y), ui::TEXT, l.c_str()); y += hf->FontSize + 2 * S; }
+    if (!pills.empty()) {
+        y += 8 * S;
+        for (size_t i = 0; i < pills.size(); ++i) ui::pill_at(dl, ImVec2(tx + ppos[i].x, y + ppos[i].y), pills[i].t.c_str(), pills[i].bg, pills[i].fg);
+        y += pill_h;
+    }
+    if (!notes.empty()) {
+        y += 6 * S;
+        for (size_t i = 0; i < notes.size(); ++i) {
+            const bool hint = rg && !host && i + 1 == notes.size();
+            dl->AddText(ImVec2(tx, y), rg && !hint ? ui::WARN : ui::TEXT2, notes[i].c_str());
+            y += nline;
         }
-        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + 12 * S), ui::TEXT3, cap);
-        dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 12 * S + ui::F.cap->FontSize + 4 * S), ui::TEXT, ui::ellipsize(hf, hf->FontSize, title, tw).c_str());
-        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, p0.y + 12 * S + ui::F.cap->FontSize + 4 * S + hf->FontSize + 10 * S), ui::TEXT2, sub.c_str(), nullptr, tw);
     }
     if (host) {   // the host changes the pick in the big picker
-        float bw = std::min(260 * S, W * 0.3f), bh = 52 * S;
-        ImGui::SetCursorScreenPos(ImVec2(p1.x - bw - 16 * S, p0.y + (H - bh) * 0.5f));
+        const ImVec2 bpos = narrow ? ImVec2(tx, p1.y - bh - 10 * S) : ImVec2(p1.x - bw - 16 * S, p0.y + (card_h - bh) * 0.5f);
+        ImGui::SetCursorScreenPos(bpos);
         if (ui::button(rg ? "Change game" : "Choose a game", ImVec2(bw, bh), rg == nullptr, A.proc == nullptr, ui::Icon::Search)) { PK.open = true; PK.focus_first = true; }
     }
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));

@@ -77,14 +77,15 @@ void page_online_home() {
     end_panel();
 
     ImGui::Dummy(ImVec2(0, sp(1.f)));
-    {   // Plan 4 P3: a party night for the people on this PC's couch - no room, no network
-        begin_panel("couchparty", ImVec2(avail, 0));
-        section_title("Couch party");
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        text_wrapped_disabled("Everyone on this PC: pick a few games, play a round of each, keep the score and crown the winner. No room needed.");
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        if (button(party_couch_active() ? "Continue the couch party" : "Start a couch party", ImVec2(sp(26.f), sp(5.5f)), !party_couch_active(), A.proc == nullptr, ui::Icon::Gamepad)) party_couch_open();
-        end_panel();
+    {   // Plan 4 P3: a party night for the people on this PC's couch - no room, no network. One compact row: a small button and a caption.
+        const float bh = sp(4.5f);
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        if (button(party_couch_active() ? "Continue the couch party" : "Couch party", ImVec2(0, bh), party_couch_active(), A.proc == nullptr, ui::Icon::Gamepad)) party_couch_open();
+        const float bx = ImGui::GetItemRectMax().x;
+        ImGui::GetWindowDrawList()->AddText(ImVec2(bx + sp(1.5f), p.y + (bh - ImGui::GetFontSize()) * 0.5f), ui::TEXT3,
+                                            ui::ellipsize(ImGui::GetFont(), ImGui::GetFontSize(), "Everyone on this PC takes turns: games, score, a winner. No room needed.", std::max(sp(10.f), p.x + avail - bx - sp(1.5f))).c_str());
+        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + bh));
+        ImGui::Dummy(ImVec2(0, 0));
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     online_friend_rooms_panel(avail);
@@ -286,23 +287,25 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     if (host && !rplay_status_line().empty()) extra = rplay_status_line();
     ImU32 tone = st.tone == hubui::RoomTone::Good ? ui::GOOD : st.tone == hubui::RoomTone::Bad ? ui::BAD : st.tone == hubui::RoomTone::Warn ? ui::WARN : ui::ACCENT;
     float W = ImGui::GetContentRegionAvail().x;
-    float H = 108 * S;
+    float bw = std::min(340 * S, W * 0.34f), bh = 80 * S;
+    const float tw = W - 24 * S - bw - 14 * S - 16 * S;   // the text column: left of the button column
+    ImFont* hf = ui::F.title ? ui::F.title : ui::F.h2;
+    const std::string det = dl_busy ? hubupdate::status() : (extra.empty() ? st.detail : extra);
+    const auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), det, tw, 2);
+    // tall enough for the headline, every detail line AND the readiness row under them (a long detail used to run into it)
+    float H = std::max(108 * S, 10 * S + hf->FontSize + 6 * S + lines.size() * (ImGui::GetFontSize() + 2 * S) + 8 * S + ImGui::GetFontSize() + 14 * S);
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1 = p0 + ImVec2(W, H);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p0, p1, mix(COL_PANEL, tone, 0.16f), 16 * S);
     dl->AddRect(p0, p1, with_alpha(tone, 0.75f), 16 * S, 0, 2 * S);
     dl->AddRectFilled(p0 + ImVec2(0, 14 * S), p0 + ImVec2(6 * S, H - 14 * S), tone, 3 * S);
 
-    float bw = std::min(340 * S, W * 0.34f), bh = 80 * S;
     ImVec2 bp = ImVec2(p1.x - bw - 14 * S, p0.y + (H - bh) * 0.5f);
-    float tx = p0.x + 24 * S, tw = bp.x - tx - 16 * S;
+    float tx = p0.x + 24 * S;
 
     // headline + detail
-    ImFont* hf = ui::F.title ? ui::F.title : ui::F.h2;
     std::string head = ui::ellipsize(hf, hf->FontSize, st.headline, tw);
     dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 10 * S), ui::TEXT, head.c_str());
-    std::string det = dl_busy ? hubupdate::status() : (extra.empty() ? st.detail : extra);
-    auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), det, tw, 2);
     float ly = p0.y + 10 * S + hf->FontSize + 6 * S;
     for (auto& l : lines) { dl->AddText(ImVec2(tx, ly), ui::TEXT2, l.c_str()); ly += ImGui::GetFontSize() + 2 * S; }
     // readiness summary: dot + name per member
@@ -382,30 +385,58 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     else { shot_trace("ready", A.my_ready ? "off" : "on"); A.my_ready = !A.my_ready; A.hello_dirty = true; }
 }
 
-void page_online_room() {
-    // Header: big code + actions
-    ImGui::PushFont(ui::F.big);
-    std::string spaced;
-    for (size_t i = 0; i < A.code.size(); ++i) { if (i) spaced += ' '; spaced += A.code[i]; }
+/* The lobby info, as a slim footer bar: the room code (small copy button), the invite buttons and a red Leave room. Returns true when the room was left. */
+static bool room_footer(float fw) {
+    const float H = 56 * S, bh = 36 * S;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, COL_PANEL);
+    ImGui::PushStyleColor(ImGuiCol_Border, ui::HAIRLINE);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12 * S);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * S, (H - bh) * 0.5f - 1.f));
+    ImGui::BeginChild("roomfoot", ImVec2(fw, H), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
+    bool left = false;
+    const float y0 = ImGui::GetCursorPosY();
+    ImGui::SetCursorPosY(y0 + (bh - ImGui::GetTextLineHeight()) * 0.5f);
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+    ImGui::TextUnformatted("ROOM");
+    ImGui::PopStyleColor();
+    ImGui::SameLine(0, 10 * S);
+    ImGui::SetCursorPosY(y0 + (bh - ui::F.h2->FontSize) * 0.5f);
+    ImGui::PushFont(ui::F.h2);
     ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
-    ImGui::TextUnformatted(spaced.c_str());
+    ImGui::TextUnformatted(A.code.c_str());
     ImGui::PopStyleColor();
     ImGui::PopFont();
-    ImGui::SameLine(0, 30 * S);
-    ImGui::BeginGroup();
-    ImGui::Dummy(ImVec2(0, 8 * S));
-    if (button("Copy code", ImVec2(150 * S, 44 * S), true)) { SDL_SetClipboardText(A.code.c_str()); set_notice("Room code copied.", 3); }
-    ImGui::SameLine();
-    if (button("Copy invite link", ImVec2(200 * S, 44 * S), true)) {
+    ImGui::SameLine(0, 10 * S);
+    ImGui::SetCursorPosY(y0);   // (after SameLine, which resets Y to the text's line)
+    if (button("Copy", ImVec2(0, bh))) { SDL_SetClipboardText(A.code.c_str()); set_notice("Room code copied.", 3); }
+    ImGui::SameLine(0, 8 * S);
+    ImGui::SetCursorPosY(y0);
+    if (button("Copy invite link", ImVec2(0, bh))) {
         std::wstring link = invite_web_link(W(A.code), W(A.st.name));
         if (!link.empty() && invite_copy_text(link)) set_toast("Invite link copied", true, 3.0);
         else set_notice("Could not copy the invite link.", 4);
     }
-    if (button("Leave room", ImVec2(150 * S, 44 * S))) { leave_room(); ImGui::EndGroup(); return; }
-    ImGui::SameLine();
-    fr_invite_button_and_picker(200 * S, 44 * S);
-    ImGui::EndGroup();
+    ImGui::SameLine(0, 8 * S);
+    ImGui::SetCursorPosY(y0);
+    fr_invite_button_and_picker(0, bh);
+    const float lw = 130 * S;
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - lw);
+    ImGui::SetCursorPosY(y0);
+    {   // red: the palette's danger colour stands in for ACCENT while the button draws
+        const ImU32 save = ui::ACCENT;
+        ui::ACCENT = ui::BAD;
+        if (button("Leave room", ImVec2(lw, bh), true)) left = true;
+        ui::ACCENT = save;
+    }
+    ImGui::EndChild();
+    if (left) leave_room();
+    return left;
+}
 
+void page_online_room() {
     if (g_fake_room && !std::getenv("HUB_SHOT_NOGAME")) {   // screenshot aid: a scratch library has no games; fake a native one
         bool any = false;
         for (auto& e : A.lib) if (supports_online(e)) any = true;
@@ -435,28 +466,30 @@ void page_online_room() {
         if (button("Rejoin room", ImVec2(bw, bh), true)) rejoin_room();   // same code and role
         ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y + 12 * S));
         ImGui::Dummy(ImVec2(0, 0));
+        room_footer(ImGui::GetContentRegionAvail().x);
         return;
     }
     if (!room_connected()) {
         ImGui::TextDisabled("Connecting...  %s", A.lobby.status().c_str());
+        ImGui::Dummy(ImVec2(0, 8 * S));
+        room_footer(ImGui::GetContentRegionAvail().x);
         return;
     }
 
     auto peers = peer_list();
     bool host = is_host();
     const hub::GameEntry* rg = find_room_entry(A.selected_game);
-    room_banner(host, rg, peers);
+    room_game_hero(rg, host);   // TOP: the selected game, big, with its cover (guests: the host's pick)
+    room_banner(host, rg, peers);   // and its call to action: Launch (host) / Ready (guest) with who is ready
     float total_w = ImGui::GetContentRegionAvail().x;
     float chat_w = std::max(280 * S, total_w * 0.34f);
     float left_w = total_w - chat_w - 20 * S;
-    float h = ImGui::GetContentRegionAvail().y;
-    if (h < 420 * S) h = 420 * S;
+    const float foot_h = 56 * S + 2 * S + ImGui::GetStyle().ItemSpacing.y * 2 + 4 * S;   // bar + the gaps the layout adds around it
+    float h = ImGui::GetContentRegionAvail().y - foot_h;   // the footer bar sits under the columns
+    if (h < 200 * S) h = 200 * S;
 
     ImGui::BeginChild("roomleft", ImVec2(left_w, h), ImGuiChildFlags_NavFlattened);
 
-    room_game_hero(rg, host);   // the selected game, big, with its cover (guests: the host's pick)
-    party_room_panel(left_w - ImGui::GetStyle().ScrollbarSize);   // Plan 4 Party mode / vote for the next game (nothing drawn for a guest while it is off)
-    cheats_room_strip(rg, host);   // under the game it applies to (the column beside the chat), so the game card stays high on the page
     kt_room_panel(left_w - ImGui::GetStyle().ScrollbarSize, true);   // Kanto Together: live status + trade panel first
     // member cards (4 slots)
     float gap = 14 * S;
@@ -470,6 +503,9 @@ void page_online_room() {
         member_card(by_slot.count(s) ? by_slot[s] : nullptr, s, ImVec2(mw, 146 * S));   // room for two chip rows when the console chips wrap
     }
 
+    ImGui::Dummy(ImVec2(0, 4 * S));
+    party_room_panel(left_w - ImGui::GetStyle().ScrollbarSize);   // Plan 4 Party mode / vote for the next game (nothing drawn for a guest while it is off)
+    cheats_room_strip(rg, host);
     room_picker(host, left_w - ImGui::GetStyle().ScrollbarSize - 2 * S, peers);
 
     ImGui::Dummy(ImVec2(0, 6 * S));
@@ -495,7 +531,9 @@ void page_online_room() {
 
     // chat
     ImGui::SameLine(0, 20 * S);
-    begin_panel("chat", ImVec2(chat_w, h));
+    static float chat_used = 0.f;   // the log's content height last frame: an empty chat stays a small box and grows with the messages
+    const float chat_h = std::max(190 * S, std::min(h, chat_used + 118 * S));
+    begin_panel("chat", ImVec2(chat_w, chat_h));
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Chat");
     ImGui::PopFont();
@@ -544,6 +582,7 @@ void page_online_room() {
         }
     }
     if (A.chat_scroll) { ImGui::SetScrollHereY(1.f); A.chat_scroll = false; }
+    chat_used = ImGui::GetCursorPosY();
     ImGui::EndChild();
     static bool had_game = false;
     const bool launched = A.proc && !had_game;
@@ -566,6 +605,8 @@ void page_online_room() {
         if (!osk::hub_input_blocked()) ImGui::SetKeyboardFocusHere(-1);
     }
     end_panel();
+    ImGui::Dummy(ImVec2(0, 2 * S));
+    room_footer(total_w);
 }
 
 void page_online() {

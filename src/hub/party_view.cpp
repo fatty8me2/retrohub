@@ -20,6 +20,17 @@ ImU32 silver() { return IM_COL32(190, 198, 212, 255); }
 ImU32 bronze() { return IM_COL32(205, 127, 80, 255); }
 ImU32 medal(int rank) { return rank == 1 ? gold() : rank == 2 ? silver() : rank == 3 ? bronze() : ui::PANEL3; }
 
+/* strip / popup requests (see the room page strip below) */
+bool g_setup_want = false;      // open the setup modal (host: "Set up..." / "Edit"; guest: "See plan") on the next party_draw()
+bool g_setup_close = false;     // a control inside the setup modal wants it gone (e.g. "Add a game": the picker is on the room page)
+bool g_stand_want = false;      // open the standings popup (Playing: the overlay only shows between rounds)
+bool g_menu_want = false;       // open the strip's menu
+bool g_setup_after_on = false;  // "Set up a party night...": open the setup modal as soon as the party is in the Lobby phase
+ULONGLONG g_setup_after_on_t0 = 0;
+ImVec2 g_menu_anchor(0, 0);
+float g_menu_pivot_x = 0.f;
+
+
 /* A control the pad can reach: remembers which one had the focus for the headless pad-navigation check (HUB_SHOT_TRACE). */
 bool pbutton(const char* label, ImVec2 size = ImVec2(0, 0), bool primary = false, bool enabled = true, ui::Icon ic = ui::Icon::None) {
     const bool pressed = ui::button(label, size, primary, enabled, ic);
@@ -443,6 +454,8 @@ void setup_view(const pl::State& s, float w) {
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float rh = sp(3.75f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.25f)));   // tight rows: five games must not push the form off the screen
+        struct SpacingPop { ~SpacingPop() { ImGui::PopStyleVar(); } } spacing_pop;
         for (size_t i = 0; i < s.list.size(); ++i) {
             const ImVec2 p0 = ImGui::GetCursorScreenPos();
             const bool removable = !s.shuffle;
@@ -476,7 +489,7 @@ void setup_view(const pl::State& s, float w) {
         if (pbutton("Shuffle again##reshuffle", ImVec2(0, sp(4.5f)), false, true, ui::Icon::Refresh)) partyui::reshuffle();
     } else {
         const bool room_left = (int)s.list.size() < s.rounds;
-        if (pbutton("Add a game##addgame", ImVec2(0, sp(4.5f)), s.list.empty(), room_left, ui::Icon::Plus)) room_picker_open(PickMode::Playlist);
+        if (pbutton("Add a game##addgame", ImVec2(0, sp(4.5f)), s.list.empty(), room_left, ui::Icon::Plus)) { room_picker_open(PickMode::Playlist); g_setup_close = true; }   // the picker is on the room page: step the modal aside
         ImGui::SameLine(0, sp(1.f));
         if (pbutton("Clear##cleargames", ImVec2(0, sp(4.5f)), false, !s.list.empty())) partyui::clear_games();
         if ((int)s.list.size() < s.rounds && !s.list.empty()) { ImGui::SameLine(0, sp(1.f)); ImGui::TextDisabled("%d games for %d rounds: they take turns", (int)s.list.size(), s.rounds); }
@@ -519,106 +532,272 @@ void setup_view(const pl::State& s, float w) {
 
 }  // namespace
 
-/* ================================================================== the room page panel */
+/* ================================================================== the room page strip */
+/* Party mode takes ONE slim line on the room page. Everything bigger (the setup form, the standings, a vote) lives in a modal or popup
+ * that the strip opens; a poll that needs everybody's action opens the overlay by itself (partyui sets R.ov) and the strip keeps a
+ * "Vote now" button for when it was closed. */
+
+namespace {
+
+constexpr float kStripH = 5.25f, kStripBtnH = 4.f;   // in sp() units
+
+struct StripBtn {
+    const char* label;
+    bool primary = false, enabled = true;
+    ui::Icon ic = ui::Icon::None;
+    float w = 0;   // 0 = fit the label
+    bool menu_anchor = false;   // remember this button's rect as the strip menu's anchor
+};
+
+struct Strip {
+    ImVec2 o;
+    float w = 0, h = 0, left_limit = 0;
+};
+
+float strip_btn_w(const StripBtn& b) {
+    if (b.w > 0) return b.w;
+    const char* end = ImGui::FindRenderedTextEnd(b.label);
+    const float tw = ImGui::CalcTextSize(b.label, end).x;
+    return tw + sp(5.f) + (b.ic != ui::Icon::None ? sp(2.25f) + (end > b.label ? sp(1.f) : 0.f) : 0.f);
+}
+
+/* Reserves one strip line (height kStripH) across `w` and paints its background; `accent` outlines it (something needs an answer). */
+Strip strip_begin(float w, bool bg = true, bool accent = false) {
+    Strip st;
+    st.o = ImGui::GetCursorScreenPos();
+    st.w = std::max(sp(20.f), std::min(w, ImGui::GetContentRegionAvail().x));
+    st.h = sp(kStripH);
+    st.left_limit = st.o.x + st.w - sp(1.f);
+    ImGui::Dummy(ImVec2(st.w, st.h + sp(0.75f)));   // the space first; the controls are placed over it
+    if (bg) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(st.o, st.o + ImVec2(st.w, st.h), ui::PANEL, sp(1.5f));
+        dl->AddRect(st.o, st.o + ImVec2(st.w, st.h), accent ? with_alpha(ui::ACCENT, 0.9f) : ui::HAIRLINE, sp(1.5f), 0, accent ? 2.f : 1.f);
+    }
+    return st;
+}
+
+/* The strip's buttons, right-aligned (the first one is the leftmost). Returns the index pressed, else -1. */
+int strip_buttons(Strip& st, StripBtn* b, int n) {
+    float total = 0;
+    for (int i = 0; i < n; ++i) total += strip_btn_w(b[i]) + (i ? sp(0.75f) : 0.f);
+    const float bh = sp(kStripBtnH), y = st.o.y + (st.h - bh) * 0.5f;
+    float x = st.o.x + st.w - sp(0.75f) - total;
+    int hit = -1;
+    for (int i = 0; i < n; ++i) {
+        const float bw = strip_btn_w(b[i]);
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
+        if (pbutton(b[i].label, ImVec2(bw, bh), b[i].primary, b[i].enabled, b[i].ic)) hit = i;
+        if (b[i].menu_anchor) { g_menu_anchor = ImVec2(ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y + sp(0.25f)); g_menu_pivot_x = 1.f; }   // hangs from the button's right edge
+        x += bw + sp(0.75f);
+    }
+    st.left_limit = st.o.x + st.w - sp(0.75f) - total - sp(1.f);
+    return hit;
+}
+
+/* The strip's one line of text, vertically centred, ellipsized to the room the buttons left. */
+void strip_text(const Strip& st, const std::string& t, ImU32 col = 0, float x_off = 1.5f) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont* f = ImGui::GetFont();
+    const float x = st.o.x + sp(x_off);
+    const std::string e = ui::ellipsize(f, f->FontSize, t, std::max(sp(4.f), st.left_limit - x));
+    dl->AddText(ImVec2(x, st.o.y + (st.h - ImGui::GetFontSize()) * 0.5f), col ? col : ui::TEXT, e.c_str());
+}
+
+std::string leader_text(const pl::State& s) {
+    const std::vector<pl::Standing> rows = pl::standings(s);
+    if (rows.empty() || rows[0].points <= 0) return std::string();
+    std::vector<std::string> top;
+    for (const pl::Standing& e : rows) if (e.rank == 1 && !e.ghost) top.push_back(e.name);
+    if (top.empty()) return std::string();
+    if (top.size() == 1) return top[0] + " leads";
+    return std::to_string(top.size()) + " tied for the lead";
+}
+
+std::string winner_text(const pl::State& s) {
+    std::string out;
+    int n = 0;
+    for (const pl::Standing& e : pl::podium(s)) if (e.rank == 1) { out += (n++ ? " & " : "") + e.name; }
+    if (out.empty()) return "Nobody scored";
+    return out + (n > 1 ? " win" : " wins");
+}
+
+/* The little menu a "..." / "Party v" button opens. `pivot_x` 0 = hangs from the button's left edge, 1 = its right edge. */
+bool menu_begin() {
+    if (g_menu_want) { ImGui::OpenPopup("##partymenu"); g_menu_want = false; }
+    ImGui::SetNextWindowPos(g_menu_anchor, ImGuiCond_Always, ImVec2(g_menu_pivot_x, 0.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.f), sp(1.f)));
+    const bool open = ImGui::BeginPopup("##partymenu");
+    ImGui::PopStyleVar();
+    return open;
+}
+
+}  // namespace
+
+void party_view_shot(const std::string& what) {   // HUB_SHOT_PARTY aid: open one of the strip's popups from the start
+    if (what == "setup") g_setup_want = true;
+    else if (what == "stand") g_stand_want = true;
+    else if (what == "menu") g_menu_want = true;
+}
 
 void party_room_panel(float width) {
-    (void)width;
     if (!partyui::active() && !partyui::is_host()) return;   // nothing for a guest while Party mode is off
+    const bool idle = A.proc == nullptr;
     if (partyui::couch()) {   // a couch party and a room do not mix
-        begin_panel("party");
-        section_title("Couch party");
-        text_wrapped_disabled("A couch party is still running on this PC. Finish or end it before using Party mode with this room.");
-        if (pbutton("End the couch party##endcouch", ImVec2(0, sp(4.5f)))) partyui::turn_off();
-        end_panel();
+        Strip st = strip_begin(width);
+        StripBtn b[] = {{"End it##endcouch"}};
+        const int hit = strip_buttons(st, b, 1);
+        strip_text(st, "A couch party is still running on this PC. End it to use Party mode with this room.", ui::TEXT2);
+        if (hit == 0) partyui::turn_off();
         return;
     }
     const pl::State& s = partyui::state();
     const bool host = partyui::is_host();
     const bool on = partyui::active();
-    const float w_in = ImGui::GetContentRegionAvail().x - sp(5.f);
-    begin_panel("party");
-    ImGui::PushFont(ui::F.h2);
-    ImGui::TextUnformatted(on && s.phase != pl::Phase::Off ? "Party mode" : (on ? "Vote for the next game" : "Party mode"));
-    ImGui::PopFont();
     const std::vector<std::string> old = partyui::need_update();
-    if (host && !old.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
-        ImGui::TextWrapped("%s", pl::needs_update_text(old).c_str());
-        ImGui::PopStyleColor();
+    char line[200], start_lab[48];
+
+    if (!on) {   // Off: the host sees one small control, a guest sees nothing (returned above)
+        Strip st = strip_begin(width, false);
+        const StripBtn pb = {"Party", false, true, ui::Icon::Star};
+        const float bw = strip_btn_w(pb) + sp(3.f), bh = sp(kStripBtnH);   // + room for the dropdown arrow
+        ImGui::SetCursorScreenPos(ImVec2(st.o.x, st.o.y + (st.h - bh) * 0.5f));
+        if (pbutton("Party##partymenubtn", ImVec2(bw, bh), false, true, ui::Icon::Star)) g_menu_want = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Party mode: turn the room into a game night with a playlist of games, points every round,\nstandings in between and a podium at the end. Or just let everyone vote on what to play next.");
+        g_menu_anchor = ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y + sp(0.25f));
+        g_menu_pivot_x = 0.f;
+        {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 p1 = ImGui::GetItemRectMax(), c(p1.x - sp(2.f), (ImGui::GetItemRectMin().y + p1.y) * 0.5f);
+            dl->AddTriangleFilled(ImVec2(c.x - sp(0.7f), c.y - sp(0.3f)), ImVec2(c.x + sp(0.7f), c.y - sp(0.3f)), ImVec2(c.x, c.y + sp(0.5f)), ui::GHOST);
+            dl->AddText(ImVec2(p1.x + sp(1.25f), st.o.y + (st.h - ImGui::GetFontSize()) * 0.5f), ui::TEXT3, "Game night, or a quick vote on what to play next");
+        }
+        if (menu_begin()) {
+            if (ImGui::MenuItem("Set up a party night...", nullptr, false, idle)) { partyui::turn_on(); g_setup_after_on = true; g_setup_after_on_t0 = GetTickCount64(); }
+            if (ImGui::MenuItem("Vote for the next game", nullptr, false, idle)) partyui::open_next_vote();
+            ImGui::EndPopup();
+        }
+        return;
     }
-    ImGui::Dummy(ImVec2(0, sp(0.25f)));
-    const bool idle = A.proc == nullptr;
+
+    // From here the party is on (or a vote is open). One line; the warning about old versions, when there is one, goes under it.
+    const pl::Tally tally = pl::tally(s);
+    const bool poll_open = !s.poll.empty();
+    Strip st = strip_begin(width, true, poll_open);
+    StripBtn b[4];
+    int n = 0, i_main = -1, i_second = -1, i_menu = -1;
+    std::string text;
+    ImU32 text_col = 0;
+    std::string right_text;
+    bool menu_has_items = false;
     switch (s.phase) {
-        case pl::Phase::Off:
-            if (!s.poll.empty()) {
-                if (s.poll == "next") next_poll(s, w_in, false);
-            } else if (host) {
-                text_wrapped_disabled("Turn the room into a game night: a playlist of games, points every round, standings in between and a podium at the end. Or just let everyone vote on what to play next.");
-                ImGui::Dummy(ImVec2(0, sp(0.5f)));
-                if (pbutton("Turn on Party mode##on", ImVec2(0, sp(5.5f)), true, idle, ui::Icon::Star)) partyui::turn_on();
-                ImGui::SameLine(0, sp(1.f));
-                if (pbutton("Vote for the next game##v", ImVec2(0, sp(5.5f)), false, idle)) partyui::open_next_vote();
-            }
+        case pl::Phase::Off:   // a vote for the next game, no party
+            std::snprintf(line, sizeof line, "Vote for the next game  -  %d of %d voted", tally.voters, (int)partyui::seats().size());
+            text = line;
+            b[n] = {"Vote now##votenow", true, true, ui::Icon::Check}; i_main = n++;
             break;
         case pl::Phase::Lobby: {
-            setup_view(s, w_in);
+            std::snprintf(line, sizeof line, "Party  -  %d round%s  -  %s  -  %d game%s", s.rounds, s.rounds == 1 ? "" : "s", s.shuffle ? "Shuffle" : "Picked", (int)s.list.size(), s.list.size() == 1 ? "" : "s");
+            text = line;
             if (host) {
-                ImGui::Dummy(ImVec2(0, sp(0.75f)));
-                if (pbutton("Start the party##start", ImVec2(sp(26.f), sp(6.f)), true, !s.list.empty() && idle, ui::Icon::Play)) partyui::start();
-                ImGui::Dummy(ImVec2(0, sp(0.5f)));   // its own row: the pad's Down reaches Start before Turn off
-                if (pbutton("Turn off##off", ImVec2(0, sp(6.f)))) partyui::turn_off();
+                b[n] = {"Edit##editparty"}; i_second = n++;
+                b[n] = {"Start##start", true, !s.list.empty() && idle, ui::Icon::Play}; i_main = n++;
+                b[n] = {"Turn off##off"}; i_menu = n++;
+            } else {
+                b[n] = {"See plan##plan"}; i_second = n++;
             }
             break;
         }
         case pl::Phase::Playing: {
-            char b[120];
-            std::snprintf(b, sizeof b, "Round %d of %d  -  %s", s.round, s.rounds, partyui::title_of(s.cur).c_str());
-            ImGui::PushFont(ui::F.bold);
-            ImGui::TextUnformatted(b);
-            ImGui::PopFont();
+            std::snprintf(line, sizeof line, "Round %d of %d  -  %s", s.round, s.rounds, partyui::title_of(s.cur).c_str());
+            text = line;
+            const std::string lead = leader_text(s);
+            if (!lead.empty()) text += "  -  " + lead;
             const int left = partyui::secs_left();
-            if (left >= 0) ImGui::TextDisabled("%s left in this round", pl::clock_text(left).c_str());
-            else ImGui::TextDisabled("The round ends with the game's result, or when the host quits the game.");
-            ImGui::Dummy(ImVec2(0, sp(0.5f)));
-            if (!s.played.empty()) standings_table(s, w_in, false);
-            if (host && pbutton("End the party##endparty", ImVec2(0, sp(4.5f)))) partyui::turn_off();
+            if (left >= 0) right_text = pl::clock_text(left) + " left";
+            if (!s.played.empty()) { b[n] = {"Standings##standings"}; i_second = n++; }
+            if (host) { b[n] = {"##partymenubtn", false, true, ui::Icon::Dots, sp(4.5f), true}; i_menu = n++; menu_has_items = true; }
             break;
         }
         case pl::Phase::Intermission: {
-            if (s.round > 0) {
-                ImGui::PushFont(ui::F.bold);
-                ImGui::Text("After round %d of %d", s.round, s.rounds);
-                ImGui::PopFont();
-                ImGui::Dummy(ImVec2(0, sp(0.25f)));
-                standings_table(s, w_in, false);
+            if (s.poll == "winner") {
+                std::snprintf(line, sizeof line, "Who won round %d?  -  %d of %d voted", s.round, tally.voters, (int)partyui::seats().size());
+                text = line;
+                b[n] = {"Vote now##votenow", true, true, ui::Icon::Check}; i_main = n++;
+            } else if (s.poll == "next") {
+                std::snprintf(line, sizeof line, "Vote for the next game  -  %d of %d voted", tally.voters, (int)partyui::seats().size());
+                text = line;
+                b[n] = {"Vote now##votenow", true, true, ui::Icon::Check}; i_main = n++;
+            } else if (s.round >= s.rounds) {
+                text = "That was the last round";
+                const std::string lead = leader_text(s);
+                if (!lead.empty()) text += "  -  " + lead;
+                if (host) { b[n] = {"Show podium##podium", true}; i_main = n++; }
             } else {
-                text_wrapped_disabled(s.auto_ready ? "Everyone is readied up automatically. Press Start round 1 when you are all here." : "Everyone presses Ready, then the host starts round 1.");
+                std::string why;
+                const bool can = host && partyui::host_can_start_round(&why);
+                if (s.round > 0) std::snprintf(line, sizeof line, "After round %d of %d  -  up next: %s", s.round, s.rounds, partyui::title_of(s.cur).c_str());
+                else std::snprintf(line, sizeof line, "Up next, round 1 of %d: %s", s.rounds, partyui::title_of(s.cur).c_str());
+                text = line;
+                const std::string lead = leader_text(s);
+                if (!lead.empty()) text += "  -  " + lead;
+                if (host && !can && !why.empty()) { text = why; text_col = ui::WARN; }
+                else if (!host) text += "  -  waiting for the host";
+                if (host) { std::snprintf(start_lab, sizeof start_lab, "Start round %d##start", s.round + 1); b[n] = {start_lab, true, can, ui::Icon::Play}; i_main = n++; }
             }
-            ImGui::Dummy(ImVec2(0, sp(0.5f)));
-            if (s.poll == "winner") winner_poll(s, w_in);
-            else if (s.poll == "next") next_poll(s, w_in, false);
-            else if (s.round >= s.rounds) {
-                text_wrapped_disabled("That was the last round.");
-                if (host && pbutton("Show the podium##podium", ImVec2(0, sp(5.f)), true)) partyui::finish_night();
-            } else next_up(s, w_in, true);
-            if (host && s.poll.empty()) {
-                ImGui::Dummy(ImVec2(0, sp(0.5f)));
-                if (pbutton("End the party##endparty", ImVec2(0, sp(4.5f)))) partyui::turn_off();
-            }
+            if (s.round > 0) { b[n] = {"Standings##standings"}; i_second = n++; }
+            if (host) { b[n] = {"##partymenubtn", false, true, ui::Icon::Dots, sp(4.5f), true}; i_menu = n++; menu_has_items = true; }
             break;
         }
         case pl::Phase::Done: {
-            podium_view(s, w_in);
-            ImGui::Dummy(ImVec2(0, sp(0.5f)));
-            if (pbutton("Show it again##again", ImVec2(0, sp(4.5f)))) partyui::overlay_open();
-            if (host) {
-                ImGui::SameLine(0, sp(1.f));
-                if (pbutton("Close the party##close", ImVec2(0, sp(4.5f)), true)) partyui::turn_off();
-            }
+            text = "Party over  -  " + winner_text(s);
+            b[n] = {"Show podium##again", !host}; i_second = n++;
+            if (host) { b[n] = {"Close##close", true}; i_menu = n++; }
             break;
         }
     }
-    end_panel();
+    const int hit = strip_buttons(st, b, n);
+    if (!right_text.empty()) {
+        const float rw = ImGui::CalcTextSize(right_text.c_str()).x;
+        ImGui::GetWindowDrawList()->AddText(ImVec2(st.left_limit - rw, st.o.y + (st.h - ImGui::GetFontSize()) * 0.5f), ui::TEXT2, right_text.c_str());
+        st.left_limit -= rw + sp(1.5f);
+    }
+    strip_text(st, text, text_col);
+    if (hit >= 0) {
+        if (hit == i_second) {
+            if (s.phase == pl::Phase::Lobby) g_setup_want = true;
+            else if (s.phase == pl::Phase::Playing) g_stand_want = true;
+            else partyui::overlay_open();   // Intermission / Done: the existing standings / podium card
+        } else if (hit == i_main) {
+            switch (s.phase) {
+                case pl::Phase::Off: partyui::overlay_open(); break;
+                case pl::Phase::Lobby: partyui::start(); break;
+                case pl::Phase::Intermission:
+                    if (!s.poll.empty()) partyui::overlay_open();
+                    else if (s.round >= s.rounds) partyui::finish_night();
+                    else partyui::launch_next_round();
+                    break;
+                default: break;
+            }
+        } else if (hit == i_menu) {
+            if (s.phase == pl::Phase::Lobby) partyui::turn_off();
+            else if (s.phase == pl::Phase::Done) partyui::turn_off();
+            else g_menu_want = true;
+        }
+    }
+    if (menu_has_items && menu_begin()) {
+        const bool last_done = s.round >= s.rounds;
+        if (s.phase == pl::Phase::Intermission && !last_done && !s.cur.empty() && !partyui::couch()) {
+            if (ImGui::MenuItem("Change game...", nullptr, false, s.poll.empty())) room_picker_open(PickMode::Choose);
+            if (ImGui::MenuItem("Vote for it", nullptr, false, s.poll.empty())) partyui::open_next_vote();
+            ImGui::Separator();
+        }
+        if (host && (s.phase == pl::Phase::Playing || s.poll.empty()) && ImGui::MenuItem("End the party")) partyui::turn_off();
+        ImGui::EndPopup();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+    if (host && !old.empty()) ImGui::TextWrapped("%s", pl::needs_update_text(old).c_str());
+    ImGui::PopStyleColor();
 }
 
 /* ================================================================== overlays */
@@ -731,6 +910,72 @@ void couch_setup_modal() {
     ImGui::EndPopup();
 }
 
+/* The setup form in a modal: the host edits the night, a guest reads the plan. Everything in it is the old inline form (setup_view). */
+void setup_modal() {
+    const pl::State& s = partyui::state();
+    if (g_setup_want) { g_setup_want = false; g_setup_close = false; if (s.phase == pl::Phase::Lobby && !ImGui::IsPopupOpen("##partysetup")) ImGui::OpenPopup("##partysetup"); }
+    if (g_setup_after_on) {   // "Set up a party night...": the Lobby State arrives a moment after turn_on() (a broadcast); give up after a few seconds
+        if (s.phase == pl::Phase::Lobby) { g_setup_after_on = false; if (!ImGui::IsPopupOpen("##partysetup")) ImGui::OpenPopup("##partysetup"); }
+        else if (GetTickCount64() - g_setup_after_on_t0 > 4000) g_setup_after_on = false;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    const float w = std::min(sp(80.f), io.DisplaySize.x * 0.94f);
+    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w, io.DisplaySize.y * 0.94f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.5f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
+    const bool open = ImGui::BeginPopupModal("##partysetup", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleVar(2);
+    if (!open) return;
+    const bool host = partyui::is_host();
+    if (s.phase != pl::Phase::Lobby || (!g_headless && game_active()) || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    ImGui::PushFont(ui::F.title ? ui::F.title : ui::F.h2);
+    ImGui::TextUnformatted(host ? "Party night" : "The plan");
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    {   // the form scrolls when the window is short; the Start / Done buttons below it stay put
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, std::max(sp(20.f), io.DisplaySize.y * 0.94f - sp(28.f))));
+        ImGui::BeginChild("##setupform", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened);
+        setup_view(s, ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize);
+        ImGui::EndChild();
+    }
+    if (g_setup_close) { g_setup_close = false; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (host) {
+        if (pbutton("Start the party##setupstart", ImVec2(sp(24.f), sp(5.5f)), true, !s.list.empty() && A.proc == nullptr, ui::Icon::Play)) { partyui::start(); ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine(0, sp(1.f));
+    }
+    if (pbutton(host ? "Done##setupdone" : "Close##setupdone", ImVec2(sp(14.f), sp(5.5f)))) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+/* The standings in a popup (the overlay only shows between rounds; this is for a round in progress). */
+void standings_modal() {
+    const pl::State& s = partyui::state();
+    if (g_stand_want) { g_stand_want = false; if (!ImGui::IsPopupOpen("##partystand")) ImGui::OpenPopup("##partystand"); }
+    const ImGuiIO& io = ImGui::GetIO();
+    const float w = std::min(sp(60.f), io.DisplaySize.x * 0.94f);
+    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w, io.DisplaySize.y * 0.94f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.5f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
+    const bool open = ImGui::BeginPopupModal("##partystand", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleVar(2);
+    if (!open) return;
+    if (s.phase == pl::Phase::Off || s.phase == pl::Phase::Lobby || (!g_headless && game_active()) || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    ImGui::PushFont(ui::F.title ? ui::F.title : ui::F.h2);
+    ImGui::TextUnformatted("Standings");
+    ImGui::PopFont();
+    const std::string lead = leader_text(s);
+    ImGui::TextDisabled("Round %d of %d%s%s", s.round, s.rounds, lead.empty() ? "" : "  -  ", lead.c_str());
+    ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    standings_table(s, ImGui::GetContentRegionAvail().x, false);
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (pbutton("Close##standclose", ImVec2(sp(14.f), sp(5.5f)))) ImGui::CloseCurrentPopup();
+    ImGui::SetItemDefaultFocus();
+    ImGui::EndPopup();
+}
+
 /* The standings / podium / vote card. Returns false when there is nothing to show (the caller closes it). */
 bool overlay_body(const pl::State& s, float w) {
     const bool host = partyui::is_host();
@@ -746,10 +991,10 @@ bool overlay_body(const pl::State& s, float w) {
         podium_view(s, w);
         return true;
     }
-    if (s.phase == pl::Phase::Intermission && (s.round > 0 || s.couch)) {
+    if (s.phase == pl::Phase::Intermission && (s.round > 0 || s.couch || !s.poll.empty())) {
         ImGui::PushFont(ui::F.title ? ui::F.title : ui::F.h2);
         if (s.round > 0) ImGui::Text("Round %d of %d is done", s.round, s.rounds);
-        else ImGui::TextUnformatted("Couch party");
+        else ImGui::TextUnformatted(s.couch ? "Couch party" : "Party mode");
         ImGui::PopFont();
         if (s.round > 0) {
             std::string line;
@@ -759,7 +1004,7 @@ bool overlay_body(const pl::State& s, float w) {
             ImGui::Dummy(ImVec2(0, sp(0.75f)));
             standings_table(s, w, s.poll.empty());   // a poll needs the room: compact rows while one is open
         } else {
-            ImGui::TextDisabled("%d players, %d rounds. Everybody ready?", (int)s.points.size(), s.rounds);
+            if (s.poll.empty()) ImGui::TextDisabled("%d players, %d rounds. Everybody ready?", (int)s.points.size(), s.rounds);
         }
         ImGui::Dummy(ImVec2(0, sp(0.75f)));
         if (s.poll == "winner") winner_poll(s, w);
@@ -780,7 +1025,7 @@ bool overlay_body(const pl::State& s, float w) {
 void overlay_modal() {
     if (!partyui::overlay_wanted()) return;
     const pl::State& s = partyui::state();
-    const bool shows = (s.phase == pl::Phase::Done) || (s.phase == pl::Phase::Intermission && (s.round > 0 || s.couch)) || (s.phase == pl::Phase::Off && s.poll == "next") || partyui::reel().on;
+    const bool shows = (s.phase == pl::Phase::Done) || (s.phase == pl::Phase::Intermission && (s.round > 0 || s.couch || !s.poll.empty())) || (s.phase == pl::Phase::Off && s.poll == "next") || partyui::reel().on;
     if (!shows) { if (!ImGui::IsPopupOpen("##partyov")) partyui::overlay_close(); }
     const bool already = ImGui::IsPopupOpen("##partyov");
     const bool other = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) && !already;
@@ -818,5 +1063,7 @@ void overlay_modal() {
 
 void party_draw() {
     couch_setup_modal();
+    setup_modal();
+    standings_modal();
     overlay_modal();
 }
