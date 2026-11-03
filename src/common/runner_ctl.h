@@ -31,8 +31,11 @@ enum class Cmd { None, SaveState, LoadState, Screenshot, SwapDisc, Quit,
                  Pause,     // value 1 = pause the emulation, 0 = resume. Offline only (a paused peer would stall everyone).
                  OsdCorner, // text = persistent corner text (party standings, a challenge timer), "" clears it; slot = corner 0 top-left,
                             // 1 top-right, 2 bottom-left, 3 bottom-right; value = seconds to keep it (0 = until replaced). Allowed online.
-                 Handoff }; // pass a controller port to another player of the session: slot = port 0-3, value = the receiving lobby
+                 Handoff,   // pass a controller port to another player of the session: slot = port 0-3, value = the receiving lobby
                             // slot. Allowed online. Runners ack ok:false "unsupported" until the hand-off netcode lands (Plan 4 P4).
+                 /* Live hub (docs/RUNNER_CTL.md "Live controls"): */
+                 ReloadControls }; // re-read the --controls profile file (the hub rewrote it) and apply it on the next frame: mapping, deadzones,
+                            // turbo and the pad port order. Local only (inputs travel as RetroPad masks), so it is allowed online.
 
 struct Command {
     long long seq = 0;
@@ -47,7 +50,7 @@ constexpr double kSpeeds[] = {0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0};
 bool speed_valid(double s);                                   // in kSpeeds, or 0 (= max)
 bool parse_speed_arg(const std::string& s, double* out);      // "2", "2x", "1.5", "max" -> out (0 = max); false if not allowed
 std::string speed_label(double s);                            // "Speed 2x", "Speed 0.5x", "Speed max"
-bool offline_only(Cmd c);                                     // true for everything except Quit/Screenshot/OsdMsg/Volume/Mute/Input/Clip/Overlay/OsdCorner/Handoff (volume and mute are local, allowed online)
+bool offline_only(Cmd c);                                     // true for everything except Quit/Screenshot/OsdMsg/Volume/Mute/Input/Clip/Overlay/OsdCorner/Handoff/ReloadControls (volume and mute are local, allowed online)
 
 /* "input off" gate (runner side). While off, the local player's input is neutral (frames/packets still flow, so netplay timing is
  * unchanged). Failsafes: re-enabled after kInputOffTimeoutMs without a refresh (the hub re-sends "input off" while its menu is

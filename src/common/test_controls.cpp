@@ -16,6 +16,7 @@
 #include "dsview.h"
 #include "pad_map.h"
 #include "retro_pad.h"
+#include "live_profile.h"
 
 static int g_fail = 0;
 #define CHECK(cond) do { if (!(cond)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); ++g_fail; } } while (0)
@@ -494,7 +495,54 @@ static void test_turbo() {
     CHECK(!plain.has_turbo() && plain.mask(rs, 2, true) == plain.mask(rs));
 }
 
+/* Live controls: a profile file rewritten while a runner plays is picked up through the mailbox, and the new binding changes the mask. */
+static void test_live_reload() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "rh_live_ctl_test";
+    fs::create_directories(dir);
+    const std::string file = (dir / "controls.json").string();
+    Store st;
+    Profile before = resolve(st, "retro");
+    CHECK(set_mapping(st, "retro", "", "b", "x"));                 // A pressed on the pad ("x" source) = RetroPad B
+    before = resolve(st, "retro");
+    CHECK(write_profile_file(file, before));
+    Profile p0;
+    std::string err;
+    CHECK(load_for_reload(file, "retro", &p0, &err));
+    retrorun::RetroPad pad(p0);
+    PadState held;
+    held.b[button_index("x")] = true;
+    const uint32_t m0 = pad.mask(held);
+    CHECK(m0 != 0);
+    // the user rebinds on the Controllers page: the hub rewrites the file and queues the reload
+    CHECK(set_mapping(st, "retro", "", "b", "y"));
+    CHECK(set_mapping(st, "retro", "", "a", "x"));
+    set_port_order(st, {"padB", "padA"});
+    const Profile after = resolve(st, "retro");
+    CHECK(write_profile_file(file, after));
+    LiveProfile box;
+    CHECK(!box.pending());
+    Profile got;
+    CHECK(load_for_reload(file, "retro", &got, &err));
+    box.post(got);
+    box.post(got);   // a second save before the runner looked replaces the first
+    Profile taken;
+    CHECK(box.pending() && box.take(&taken) && !box.pending() && !box.take(&taken));
+    CHECK(ports_changed(p0, taken) && !ports_changed(taken, taken));
+    retrorun::RetroPad pad2(taken);
+    const uint32_t m1 = pad2.mask(held);
+    CHECK(m1 != m0 && m1 != 0);                                     // same physical button, new RetroPad bit
+    PadState y; y.b[button_index("y")] = true;
+    CHECK(pad2.mask(y) == m0 && pad.mask(y) == 0);                  // the old B source is now "y"
+    // refusals
+    CHECK(!load_for_reload(file, "n64", &got, &err) && !err.empty());
+    CHECK(!load_for_reload("", "retro", &got, &err) && !load_for_reload((dir / "missing.json").string(), "retro", &got, &err));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
 int main() {
+    test_live_reload();
     test_turbo();
     test_ps2_pressure();
     test_canonical_name();

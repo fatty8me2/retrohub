@@ -362,6 +362,55 @@ void build() {
         }));
         g_sc.push_back(s);
     }
+    {   // 99. live controls: a Controllers-page save while a built-in runner plays rewrites its profile file and queues reload_controls (once per real change)
+        Scenario s{"controller save queues reload_controls"};
+        s.steps.push_back(expect("profile saves while a runner is active enqueue reload_controls", [](const QmE2EState&, std::string* w) {
+            namespace fs = std::filesystem;
+            const std::string dd = hub::data_dir(), vd = hub::saves::vault_dir();
+            hubctl::Store backup;
+            const bool had = hubctl::load_store(dd, vd, &backup);
+            const std::string tmp = (fs::temp_directory_path() / "rh_live_e2e_controls.json").string();
+            auto count = [] { size_t n = 0; for (auto& c : qm_e2e_state().cmds) if (c.rfind("reload_controls", 0) == 0) ++n; return n; };
+            auto save = [&](const std::function<void(hubctl::Store&)>& f) { hubctl::Store st; hubctl::load_store(dd, vd, &st); f(st); st.stamp = (int64_t)std::time(nullptr) + 1000; hubctl::save_store(st, dd, vd); controls_live_push(); };
+            const size_t n0 = count();
+            std::string why;
+            bool ok = true;
+            auto need = [&](bool c, const char* t) { if (!c) { ok = false; why += std::string(t) + "; "; } };
+            // no game: nothing happens
+            save([](hubctl::Store& st) { hubctl::set_mapping(st, "retro", "", "b", "x"); });
+            need(count() == n0, "queued without a game");
+            // a built-in runner plays a retro game
+            hubctl::write_profile_file(tmp, hubctl::resolve(hubctl::Store(), "retro"));
+            A.proc = GetCurrentProcess();
+            A.run = RunInfo();
+            A.run.key = "qa-live-game";
+            A.run.ctl_path = "qa-control.json";
+            A.run.controls_path = tmp;
+            A.run.controls_sys = "retro";
+            save([](hubctl::Store& st) { hubctl::set_mapping(st, "retro", "", "b", "y"); });
+            need(count() == n0 + 1, "no reload after a mapping change");
+            hubctl::Profile on_disk;
+            need(hubctl::read_profile_file(tmp, &on_disk) && on_disk.buttons["b"] == "y", "profile file not rewritten");
+            controls_live_push();
+            need(count() == n0 + 1, "reload repeated without a change");
+            save([](hubctl::Store& st) { hubctl::set_port_order(st, {"pad-z", "pad-a"}); });
+            need(count() == n0 + 2, "no reload after a port order change");
+            save([](hubctl::Store& st) { hubctl::set_mapping(st, "n64", "", "a", "x"); });
+            need(count() == n0 + 2, "reload for another system's edit");
+            A.run.ctl_path.clear();   // an external emulator (no control channel): nothing to send
+            save([](hubctl::Store& st) { hubctl::set_mapping(st, "retro", "", "b", "a"); });
+            need(count() == n0 + 2, "reload without a control channel");
+            A.proc = nullptr;
+            A.run = RunInfo();
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            if (had) { backup.stamp = (int64_t)std::time(nullptr) + 2000; hubctl::save_store(backup, dd, vd); }
+            else { fs::remove(dd + "controls.json", ec); fs::remove(vd + "/controls.json", ec); }
+            *w = why;
+            return ok;
+        }));
+        g_sc.push_back(s);
+    }
 }
 
 }  // namespace

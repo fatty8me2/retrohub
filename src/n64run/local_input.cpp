@@ -56,6 +56,14 @@ void LocalInput::rumble(int owned_index, bool on) {
 
 void LocalInput::update() {
     if (!inited_) return;
+    {
+        hubctl::Profile next;
+        if (live_.take(&next)) {
+            const bool reopen = hubctl::ports_changed(profile_, next);
+            set_profile(next);
+            if (reopen) rescan();
+        }
+    }
     SDL_PumpEvents();
     if (SDL_NumJoysticks() != last_joysticks_) rescan();
     SDL_GameControllerUpdate();

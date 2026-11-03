@@ -84,7 +84,8 @@ void history_ui_saves_page() {
                 cv.push_back({f.first, v.ver, v.ts ? v.ts : v.mtime, v.size, v.device_name, i == 0});
             }
     auto rows = hs::history_merge(P.local, cv);
-    const bool busy = A.proc != nullptr || (P.op && !P.op->done);
+    const bool running_this = A.proc && A.run.key == P.id.key;   // restoring another game's save cannot touch the running game's files
+    const bool busy = running_this || (P.op && !P.op->done);
 
     begin_panel("save_history");
     section_title("Save history: " + P.title);
@@ -138,7 +139,7 @@ void history_ui_saves_page() {
         }
         ImGui::EndTable();
     }
-    if (A.proc) text_wrapped_disabled("Close the running game before restoring a save.");
+    if (running_this) text_wrapped_disabled("This game is running. Close it before restoring one of its saves.");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (P.has_undo) {
         if (button("Undo restore", ImVec2(0, 0), true, !busy)) {

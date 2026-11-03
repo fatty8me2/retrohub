@@ -229,7 +229,7 @@ TileResult draw_tile(const TileSpec& t, ImVec2 size) {
     }
     if (ImGui::IsItemClicked(1)) { r.clicked = true; r.details = t.owned; }
     if (item_hov && !star_hov && ImGui::IsMouseDoubleClicked(0)) r.activated = true;
-    if (focused && A.focused && !io.WantTextInput && !A.proc) {
+    if (focused && A.focused && !io.WantTextInput) {   // Enter / A opens the details (never launches), so it is fine while a game runs
         if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))
             r.activated = true;

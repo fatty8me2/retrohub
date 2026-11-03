@@ -5,6 +5,7 @@
 #define SDL_MAIN_HANDLED
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <SDL.h>
+#include "runner_ctl.h"
 #include <SDL_syswm.h>
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
@@ -149,6 +150,7 @@ struct RunInfo {
     bool remote_play = false;           // Wii U remote play: this process is streamrun --guest (exit codes follow docs/REMOTE_PLAY.md)
     int dsu_players = 0;                // Wii U remote play HOST: guests' pads (Cemu players 2..1+n) are DSU slots 0..n-1 in the Cemu profiles; 0 = every normal launch
     std::string result_file;            // native Smash online: SSB64_RESULT_FILE the game writes the finished match to (rivalries)
+    std::string controls_path, controls_sys;   // built-in runner started with --controls <file>: the file the hub rewrites + the profile system ("n64","retro","ps1","nes","snes"); empty = nothing to reload
     bool cloud_started = false;         // cloud_game_started() was called for this session (set by spawn); exit pushes the game
 };
 
@@ -924,6 +926,10 @@ std::string CTL_game_for_trace();   // QA trace: the game key the Controllers pa
 void open_port_assign();                         // Controllers page in "Assign players"
 bool draw_players_strip(int players);            // library details: "Players: 1 2 3 4" strip; true = Reassign clicked
 std::string controls_arg(const std::string& system_key, const std::string& game_key);
+extern std::pair<std::string, std::string> g_launch_controls;   // controls_arg(): the profile file + system of the launch being built
+void controls_live_push();                          // after a Controllers-page save: rewrite the running built-in runner's profile + queue runctl ReloadControls (no-op without a running game)
+std::string controls_live_note();                   // Controllers page: live / "applies next launch" note while a game runs ("" otherwise)
+void qm_send_command(const runctl::Command& c);     // quickmenu.cpp: queue a runner command through the menu's pacer (one command at a time, ack-paced)
 hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key);
 hubemu::DolphinPads dolphin_pads_for(const hubctl::Profile& gc_profile);
 hubemu::Ps2Pads ps2_pads_for(const hubctl::Profile& ps2_profile, int max_players = 4);   // page_controllers.cpp; max_players: the game's local player count (no multitap for a 2-player game)

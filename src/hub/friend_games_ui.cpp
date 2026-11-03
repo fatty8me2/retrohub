@@ -329,8 +329,9 @@ void gamepack_uninstall(const hub::GameEntry& e) {
 /* "Uninstall" button + its confirm popup (details of a pack-installed game). Returns true when the game was removed. */
 bool gamepack_uninstall_ui(const hub::GameEntry& e, float bh) {
     bool removed = false;
-    if (button("Uninstall", ImVec2(0, bh), false, !A.proc, ui::Icon::Close)) ImGui::OpenPopup("##gp_uninstall");
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Delete this game's files from RetroHub's games folder. It goes back to the shared packs; saves are kept.");
+    const bool running_this = A.proc && A.run.key == e.key;   // its files are open; other games can be uninstalled
+    if (button("Uninstall", ImVec2(0, bh), false, !running_this, ui::Icon::Close)) ImGui::OpenPopup("##gp_uninstall");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(running_this ? "This game is running. Close it to uninstall it." : "Delete this game's files from RetroHub's games folder. It goes back to the shared packs; saves are kept.");
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(std::min(sp(66.f), ImGui::GetIO().DisplaySize.x * 0.92f), 0));

@@ -299,7 +299,7 @@ void enqueue_cmd(runctl::Command c, int tag) {
     if (g_e2e) return;
     if (g_shot_fake || !ctl_ready()) { if (tag == 2) g_pending = 0; return; }
     const bool coalesce = c.cmd == runctl::Cmd::Speed || c.cmd == runctl::Cmd::Volume || c.cmd == runctl::Cmd::Mute || c.cmd == runctl::Cmd::Overlay ||
-                          c.cmd == runctl::Cmd::Pause || c.cmd == runctl::Cmd::Input || c.cmd == runctl::Cmd::OsdCorner;
+                          c.cmd == runctl::Cmd::Pause || c.cmd == runctl::Cmd::Input || c.cmd == runctl::Cmd::OsdCorner || c.cmd == runctl::Cmd::ReloadControls;
     if (coalesce) for (auto& q : g_cmdq) if (q.c.cmd == c.cmd) { q.c = c; return; }
     if (c.cmd == runctl::Cmd::OsdMsg) {   // a flood of toasts must not bury a hand-off or a state save
         int n = 0;
@@ -1456,3 +1456,7 @@ QmE2EState qm_e2e_state() {
     st.imgui_nav = (ImGui::GetIO().ConfigFlags & (ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad)) == (ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
     return st;
 }
+
+/* Controllers page -> running game (controls_live_push): one queue for every hub-to-runner command, so a reload waits for the previous
+ * command's ack and repeated saves collapse into one reload. */
+void qm_send_command(const runctl::Command& c) { send_quiet(c); }

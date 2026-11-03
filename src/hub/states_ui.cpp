@@ -192,7 +192,7 @@ void draw_state_strip(const hub::GameEntry& e) {
             A.state_confirm = cur->slot;
         }
     }
-    if (!idle) ImGui::SameLine(0, sp(1.5f)), text_wrapped_disabled("A game is running.");
+    if (!idle) ImGui::SameLine(0, sp(1.5f)), text_wrapped_disabled("Resuming needs the running game closed first.");
 }
 
 /* ---- screenshot aid ---- */

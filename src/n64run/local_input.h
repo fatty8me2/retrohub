@@ -20,6 +20,7 @@
 
 #include "controls.h"
 #include "exit_combo.h"
+#include "live_profile.h"
 #include "pad_map.h"
 namespace n64run {
 
@@ -30,6 +31,9 @@ class LocalInput {
     bool init();
     /* Mapping to use (default: hubctl::default_profile("n64")). Call before init(); the profile also carries the port order. */
     void set_profile(const hubctl::Profile& p);
+    /* Live controls (runner_ctl "reload_controls"): callable from any thread; update() applies it at its next call (mapping, deadzones,
+     * turbo, key bindings, and the pad port order). Local only; what is sent to other players is the mapped button word. */
+    void queue_profile(const hubctl::Profile& p) { live_.post(p); }
     int pad_count() const { return (int)pads_.size(); }
     /* Poll everything once (call once per sample). */
     void update();
@@ -47,6 +51,7 @@ class LocalInput {
 
   private:
     void rescan();
+    hubctl::LiveProfile live_;
     hubctl::Profile profile_ = hubctl::default_profile("n64");
     std::unique_ptr<PadMap> map_;
     std::unique_ptr<hubctl::KeyMapper> keys_;   // keyboard pad, from the profile
