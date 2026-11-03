@@ -621,6 +621,7 @@ void flash_taskbar();                              // FlashWindowEx on the hub w
 bool game_active();          // ANY session (A.proc, GC NetPlay, remote play, Kanto, 3DS room...) or another full-screen / busy app owns the screen
 /* lockout.cpp: the whole-app lock (docs/ADMIN.md). A pending / banned account, or a new install the server has not yet confirmed, sees only a lock screen. */
 void lockout_init(bool had_account, const std::string& uid);   // once at startup, after fr_start(); had_account = an identity existed before this run
+void icon_refresh_tick();                                      // icon_refresh.cpp: once per version, background, idle only
 void lockout_tick();                                           // every loop iteration, after fr_tick()
 void lockout_shot(const std::string& mode);                    // HUB_SHOT_ACCESS: pending | unavailable | setup | setup-offline
 hublock::Lock lockout_kind();

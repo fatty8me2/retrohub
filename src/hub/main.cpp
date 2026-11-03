@@ -402,6 +402,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         hang_watchdog_phase("fr_tick");
         fr_tick();
         lockout_tick();
+        icon_refresh_tick();
         hang_watchdog_phase("ghost_tick");
         ghost_tick();
         group_tick();
