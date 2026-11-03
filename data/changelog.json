@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.31.14",
+      "date": "2026-11-03",
+      "title": "Shelves, Continue and a bigger Discover",
+      "new": [
+        "3D shelf view: your games as cartridges, discs and cases on wooden shelves; the one you pick slides out to show its cover",
+        "Continue where you left off: Home shows your last game's save picture with a big Continue button and a Jump back in row",
+        "Bigger Discover: about 1,100 picks (up to ~100 per console), Show more, and the full catalog of every known game for older consoles",
+        "Sort and filter Discover: by title, year or players; filter by genre, players, decade or what you own, and search",
+        "Welcome back: a quick look at what's new the first time you open RetroHub after an update"
+      ],
+      "improved": [
+        "Discover: an All consoles view mixes every console's best picks together"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.31.13",
       "date": "2026-11-03",
       "title": "Invite codes and quick approvals",
