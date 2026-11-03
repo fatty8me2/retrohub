@@ -134,6 +134,7 @@ void leave_room() {
 }
 
 void enter_room(bool host, const std::string& code_in) {
+    if (launch_blocked("enter_room")) return;
     const std::string code = code_in;   // may alias A.code, which leave_room() clears
     if (A.st.name.empty()) { set_notice("Pick a player name in Settings first."); return; }
     if (g_headless) { set_notice("Headless test run: online skipped."); return; }
@@ -164,6 +165,7 @@ void enter_room(bool host, const std::string& code_in) {
 }
 
 void rejoin_room() {
+    if (launch_blocked("rejoin_room")) return;
     if (A.code.empty()) return;
     enter_room(A.room_role_host, A.code);
 }
@@ -230,6 +232,7 @@ std::vector<hubui::PeerInfo> peer_list() {
 
 /* A guest handles the host's launch message (also driven headless by HUB_SHOT_GUEST_MSG). */
 void guest_apply_launch(const std::string& body) {
+    if (launch_blocked("guest_apply_launch")) return;
     hubui::Json j;
     if (!json::parse(body, &j) || j.type != hubui::Json::Object) return;
     const hub::GameEntry* g = find_room_entry(j.str("game"));   // remote play: a stand-in when this PC has no copy (streamed)

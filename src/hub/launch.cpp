@@ -57,6 +57,7 @@ static starthint::Popup g_hint;
 
 bool spawn(const std::string& exe, const std::string& args_in, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
+    if (launch_blocked("spawn")) return false;
     std::string args = args_in;
     if (!A.resume_key.empty()) {   // "Resume": one-shot --load-state for exactly this game on a retrorun launch (Lane 2 runners; docs/RUNNER_CTL)
         if (A.resume_key == ri.key && (file_name(exe) == "retrorun.exe" || file_name(exe) == "n64run.exe") && !A.resume_state.empty()) args += " --load-state " + quote(A.resume_state);
@@ -532,6 +533,7 @@ std::string launch_path_for(const hub::GameEntry& e) {
 }
 
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg) {
+    if (launch_blocked("launch_external")) return;
     hubemu::Kind kind = hubemu::kind_for(e.system);
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
@@ -744,6 +746,7 @@ static std::string resume_arg(const std::string& battery, const std::string& sta
 }
 
 void play_entry(const hub::GameEntry& e_in) {
+    if (launch_blocked("play_entry")) return;
     if (A.proc) { set_notice("A game is already running."); return; }
     hub::GameEntry hacked;   // ROM hack / translation (Plan 4 H3): launch the patched copy prepared in rom-cache\hacks
     if (is_hack(e_in)) {

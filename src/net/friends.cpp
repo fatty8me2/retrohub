@@ -236,6 +236,13 @@ Identity identity_load_or_create(const std::string& data_dir, const std::string&
     return id;
 }
 
+bool identity_exists(const std::string& data_dir, const std::string& vault_dir)
+{
+    Identity id;
+    if (identity_read(with_sep(data_dir) + "identity.json", &id)) return true;
+    return !vault_dir.empty() && identity_read(with_sep(vault_dir) + "_identity\\identity.json", &id);
+}
+
 static std::string backup_stamp()
 {
     time_t t = time(nullptr);
@@ -1477,6 +1484,15 @@ bool FriendsClient::adopt_identity(const Identity& v)
 bool FriendsClient::connected() const { return impl_->welcomed; }
 std::string FriendsClient::status_text() const { return impl_->status_text; }
 Access FriendsClient::access() const { return impl_->access; }
+void FriendsClient::reconnect_now()
+{
+    Impl& d = *impl_;
+    if (!d.started || d.welcomed || d.gave_up) return;
+    d.ws.close();
+    d.reconnect_at = 0;
+    d.backoff_ms = 1000;
+    d.connect();
+}
 bool FriendsClient::is_admin() const { return impl_->admin; }
 void FriendsClient::admin_request_list(const AdminQuery& q) { if (impl_->admin) impl_->send(admin_list_json(q)); }
 void FriendsClient::admin_request_detail(const std::string& uid) { if (impl_->admin && is_b32(uid, 26)) impl_->send(admin_uid_json("detail", uid)); }

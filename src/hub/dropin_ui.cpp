@@ -32,6 +32,7 @@ bool dropin_supported(const hub::GameEntry& e) {
 }
 
 void dropin_start(const std::string& code, const std::string& game_id, const std::string& title, const std::string& friend_name) {
+    if (launch_blocked("dropin_start")) return;
     if (DP.active) return;
     if (A.proc) { set_notice("A game is already running on this PC.", 6.0); return; }
     if (A.in_room) { set_notice("Leave your room first, then you can join a friend's game.", 8.0); return; }

@@ -226,6 +226,7 @@ void kt_leave_room() {
 }
 
 void kt_play(const hub::GameEntry& e) {
+    if (launch_blocked("kt_play")) return;
     if (KT.sess.active() && KT.sess.running()) { set_notice("Kanto Together is already running."); return; }
     if (KT.fake) { KT.show_install = true; return; }
     KT.play_wait = true;

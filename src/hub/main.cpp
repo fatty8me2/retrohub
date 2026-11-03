@@ -264,7 +264,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hub::rom_cache_set_limit((uint64_t)A.st.rom_cache_limit_gb << 30);
 
     if (shot_path) shot_init_ui();
+    const bool had_account = !g_headless && hubnet::identity_exists(hub::data_dir(), hub::saves::vault_dir());   // BEFORE fr_start() creates one: tells an upgrading friend from a new install
     fr_start();
+    lockout_init(had_account, FR.started && !FR.fake ? FR.cli.my_uid() : std::string());
 
     refresh_pads();
     if (qm_e2e_active()) qm_e2e_start();
@@ -399,6 +401,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         autotest_tick();
         hang_watchdog_phase("fr_tick");
         fr_tick();
+        lockout_tick();
         hang_watchdog_phase("ghost_tick");
         ghost_tick();
         group_tick();
@@ -407,7 +410,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         userflow_tick();
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;
-            while (invite_srv.take(&w)) { link_join.push(U(w)); told_need_name = false; }
+            while (invite_srv.take(&w)) { if (launch_blocked("invite link")) continue; link_join.push(U(w)); told_need_name = false; }
+            if (app_locked()) { link_join = hubui::LinkJoinQueue(); A.pending_play.clear(); }   // a locked account joins and plays nothing, however the request arrived
             const bool name_set = !A.st.name.empty();
             if (link_join.needs_name(name_set) && !told_need_name) {
                 told_need_name = true;
@@ -419,7 +423,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 fr_join_lobby(jc, "", "", "");
                 hub_surface();   // no-op while a game runs: the join is queued and starts after the game; nothing is shown or flashed
             }
-            while (invite_srv.take_play(&w)) A.pending_play = U(w);
+            while (invite_srv.take_play(&w)) { if (!launch_blocked("--play")) A.pending_play = U(w); }
             if (invite_srv.take_show()) hub_surface();   // a game is running: never pull RetroHub in front of it (refused inside)
             if (!A.pending_play.empty() && !A.scanning) {   // library is loaded: start the favorite (offline)
                 std::string key = A.pending_play;
