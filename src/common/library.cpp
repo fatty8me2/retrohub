@@ -225,7 +225,7 @@ bool generic_stem(const std::string& stem) {
     if (t.empty()) return true;
     size_t n = t.size();
     while (n > 0 && t[n - 1] >= '0' && t[n - 1] <= '9') --n;
-    if (n == 0) return true;   // digits only
+    if (n == 0) return false;   // digits only: "1942" is a game, not a disc number
     const std::string w = t.substr(0, n);
     static const char* const kGeneric[] = {"game", "games", "disc", "disk", "cd", "dvd", "rom", "roms", "data", "main", "image", "iso", "boot", "dump", "cart", "cartridge", "backup",
                                            "unknown", "untitled", "track", "title", "default", "new", "file", "output", "extracted", "unpacked", "content", "install", "setup", "bin", "eboot"};
@@ -241,8 +241,10 @@ bool generic_stem(const std::string& stem) {
 
 /* Folder names that only say what kind of folder it is. */
 bool noise_folder(const std::string& name) {
-    static const char* const k[] = {"roms", "rom", "games", "game", "downloads", "download", "desktop", "documents", "iso", "isos", "discs", "backup", "gamecube", "gc", "wii", "wiiu", "ps1", "ps2",
-                                    "psx", "psp", "n64", "nintendo64", "nes", "snes", "gba", "gb", "gbc", "nds", "3ds", "temp", "tmp", "new folder", "retrohub", "gamepack", "emulation"};
+    static const char* const k[] = {"roms", "rom", "games", "game", "downloads", "download", "desktop", "documents", "iso", "isos", "discs", "backup", "gamecube", "nintendo gamecube", "gc", "wii", "wiiu",
+                                    "wii u", "nintendo wii u", "ps1", "ps2", "ps3", "psx", "playstation", "playstation 1", "playstation 2", "sony playstation", "sony playstation 2", "psp", "playstation portable",
+                                    "n64", "nintendo64", "nintendo 64", "nes", "nintendo", "famicom", "snes", "super nintendo", "super nintendo entertainment system", "super famicom", "gba", "game boy advance", "gameboy advance",
+                                    "gb", "game boy", "gameboy", "gbc", "game boy color", "gameboy color", "nds", "nintendo ds", "ds", "3ds", "nintendo 3ds", "temp", "tmp", "new folder", "retrohub", "gamepack", "emulation"};
     std::string l = ascii_lower(name);
     for (const char* x : k) if (l == x) return true;
     return l.empty() || generic_stem(name);
@@ -262,6 +264,14 @@ std::string container_title(const fs::path& container, const std::string& inner_
     if (!f.empty() && !noise_folder(f)) return collapse_spaces(f);
     if (generic) *generic = true;
     return a;
+}
+
+/* A header-less cartridge ("Mario.nes") in an archive ("NES Collection.zip"): the file inside names the game; only a generic file name
+ * ("game.nes") falls back to the archive's name (then the folder). */
+std::string cart_title(const fs::path& container, const std::string& inner_name) {
+    std::string i = title_from_filename(utf8_path(path_utf8(utf8_path(inner_name).filename())));
+    if (!i.empty() && !generic_stem(i)) return i;
+    return container_title(container, inner_name);
 }
 
 /* The path whose stem is `title` (what the identify_* helpers take as their name source). */
@@ -738,12 +748,13 @@ bool gc_from_header(const uint8_t* h, size_t n, const fs::path& p, GameEntry* e)
     return true;
 }
 
-bool id_gc_filename_only(const fs::path& p, GameEntry* e) {
+/* key_p: the file itself (KEYS NEVER CHANGE: they hold saves, favourites, play time); title_p: where the display title comes from (may be the folder). */
+bool id_gc_filename_only(const fs::path& key_p, const fs::path& title_p, GameEntry* e) {
     e->system = System::GC;
     e->serial.clear();
-    std::string stem = sanitize_key(title_from_filename(p));
+    std::string stem = sanitize_key(title_from_filename(key_p));
     e->key = "gc:file-" + stem;
-    e->title = title_from_filename(p);
+    e->title = title_from_filename(title_p);
     return true;
 }
 
@@ -782,17 +793,17 @@ bool id_gc(const fs::path& p, const std::string& ext, uint64_t size, GameEntry* 
         uint64_t data_size = le64(h.data() + 16);
         uint32_t block_size = le32(h.data() + 24);
         uint32_t num_blocks = le32(h.data() + 28);
-        if (num_blocks == 0 || block_size == 0 || data_size < kGcHeader) return id_gc_filename_only(nm, e);
+        if (num_blocks == 0 || block_size == 0 || data_size < kGcHeader) return id_gc_filename_only(p, nm, e);
         std::vector<uint8_t> ptr;
-        if (!read_at(p, 32, num_blocks > 1 ? 16 : 8, &ptr)) return id_gc_filename_only(nm, e);
+        if (!read_at(p, 32, num_blocks > 1 ? 16 : 8, &ptr)) return id_gc_filename_only(p, nm, e);
         uint64_t p0 = le64(ptr.data());
         bool raw = (p0 >> 63) != 0;
         p0 &= ~(1ull << 63);
         uint64_t p1 = num_blocks > 1 ? (le64(ptr.data() + 8) & ~(1ull << 63)) : comp_size;
-        if (p1 <= p0 || p1 - p0 > (1u << 20)) return id_gc_filename_only(nm, e);
+        if (p1 <= p0 || p1 - p0 > (1u << 20)) return id_gc_filename_only(p, nm, e);
         uint64_t data_start = 32 + 12ull * num_blocks;
         std::vector<uint8_t> comp;
-        if (!read_at(p, data_start + p0, (size_t)(p1 - p0), &comp)) return id_gc_filename_only(nm, e);
+        if (!read_at(p, data_start + p0, (size_t)(p1 - p0), &comp)) return id_gc_filename_only(p, nm, e);
         std::vector<uint8_t> disc(kGcHeader, 0);
         size_t got = 0;
         if (raw) {
@@ -802,7 +813,7 @@ bool id_gc(const fs::path& p, const std::string& ext, uint64_t size, GameEntry* 
             got = inflate_prefix(comp.data() + 2, comp.size() - 2, disc.data(), disc.size());  // skip zlib header
         }
         if (got >= 0x80 && gc_from_header(disc.data(), got, nm, e)) return true;
-        return id_gc_filename_only(nm, e);
+        return id_gc_filename_only(p, nm, e);
     }
     return false;
 }
@@ -834,8 +845,8 @@ std::string ps1_display_title(const std::string& redump, bool keep_disc) {
 
 bool id_ps1(const fs::path& p, const std::string& ext, GameEntry* e, const fs::path& name = fs::path()) {
     ps1::DiscInfo di = ps1::probe_file(path_utf8(p));
-    const fs::path& nm = name.empty() ? p : name;   // titles and file- keys come from the name source (the folder when the file is called "disc")
-    std::string stem = path_utf8(nm.stem());
+    const fs::path& nm = name.empty() ? p : name;   // the TITLE comes from the name source (the folder when the file is called "disc"); the KEY never does
+    std::string stem = path_utf8(p.stem());
     std::string serial = di.serial;
     if (!di.ok) {   // header unreadable (odd CHD, damaged image): trust a file name that is exactly a Redump title
         serial = ps1::serial_for_name(stem);
@@ -847,7 +858,7 @@ bool id_ps1(const fs::path& p, const std::string& ext, GameEntry* e, const fs::p
     if (!redump.empty()) e->title = ps1_display_title(redump, ext != ".m3u");
     else e->title = title_from_filename(nm);
     if (!serial.empty()) e->key = "ps1:" + sanitize_key(serial);
-    else e->key = "ps1:file-" + sanitize_key(title_from_filename(nm));
+    else e->key = "ps1:file-" + sanitize_key(title_from_filename(p));
     return true;
 }
 
@@ -863,12 +874,13 @@ bool read_prefix(const fs::path& p, size_t n, std::vector<uint8_t>* out) {
     return !out->empty();
 }
 
-void fill_3ds(const N3dsInfo& i, const fs::path& name_src, GameEntry* e) {
+/* key_src: the file / archive the key is derived from when the image has no title id (never changes); title_src: where the title comes from. */
+void fill_3ds(const N3dsInfo& i, const fs::path& key_src, const fs::path& title_name, GameEntry* e) {
     e->system = System::N3DS;
     e->serial = i.serial;
     std::string k = n3ds_key(i);
-    e->title = title_from_filename(name_src);
-    e->key = k.empty() ? "3ds:file-" + sanitize_key(e->title) : k;
+    e->title = title_from_filename(title_name);
+    e->key = k.empty() ? "3ds:file-" + sanitize_key(title_from_filename(key_src)) : k;
     if (const GameInfo* g = find_game_for("3ds", e->serial, std::string())) { e->catalog_id = g->id; e->title = g->title; }
     if ((i.container == "ncsd" || i.container == "ncch") && !i.decrypted) e->issue = "encrypted";   // Azahar needs AES keys
 }
@@ -878,14 +890,14 @@ bool id_3ds(const fs::path& p, const std::string& ext, GameEntry* e, const fs::p
     const fs::path& nm = name.empty() ? p : name;
     if (ext == ".zcci" || ext == ".zcia" || ext == ".zcxi" || ext == ".z3dsx") {   // Azahar's own compressed formats: no cheap header
         if (!read_prefix(p, 4, &h) || h.size() < 4 || std::memcmp(h.data(), "Z3DS", 4) != 0) return false;
-        fill_3ds(N3dsInfo{}, nm, e);
+        fill_3ds(N3dsInfo{}, p, nm, e);
         return true;
     }
     if (!read_prefix(p, kN3dsHeaderBytes, &h)) return false;
     N3dsInfo i;
     if (!parse_3ds_header(h.data(), h.size(), &i)) return false;
     if (i.container != "3dsx" && !i.is_application) return false;   // updates / DLC / system titles are not games
-    fill_3ds(i, nm, e);
+    fill_3ds(i, p, nm, e);
     return true;
 }
 
@@ -918,7 +930,7 @@ bool id_3ds_zip(const fs::path& zip, GameEntry* e) {
         N3dsInfo info;
         if (!parse_3ds_header(sink.buf.data(), sink.buf.size(), &info)) continue;
         if (info.container != "3dsx" && !info.is_application) continue;
-        fill_3ds(info, title_src(container_title(zip, st.m_filename)), e);
+        fill_3ds(info, zip, title_src(container_title(zip, st.m_filename)), e);
         e->issue = "extract";
         ok = true;
     }
@@ -940,7 +952,8 @@ bool id_wiiu(const fs::path& p, const std::string& ext, uint64_t size, GameEntry
     bool ok = false;
     std::string name_stem;   // the game's display name when the header has none
     std::string meta_name;   // longname from meta.xml (.wua / loadiine), "" when unknown
-    fs::path name_src = name.empty() ? p : name;
+    fs::path name_src = p;                              // a file-name key (no title id) is derived from this: never changes
+    fs::path title_name = name.empty() ? p : name;      // the display title falls back to this (the folder when the file is called "game")
     if (ext == ".wua") {
         ok = parse_wua(reader, size, &w);
         if (!ok) { w = WiiuInfo{}; w.container = "wua"; ok = true; }   // unknown layout: still launchable, keyed by file name
@@ -966,7 +979,7 @@ bool id_wiiu(const fs::path& p, const std::string& ext, uint64_t size, GameEntry
         w.title_id = tid;
         w.serial = hex16(tid);
         for (char& c : w.serial) if (c >= 'a' && c <= 'f') c = char(c - 32);
-        name_src = fs::path(game_dir.filename().wstring() + L".rpx");   // the folder name is the game name
+        name_src = title_name = fs::path(game_dir.filename().wstring() + L".rpx");   // the folder name is the game name
         WiiuMeta wm;
         if (parse_wiiu_meta_xml(xml, &wm) && !wm.longname.empty()) meta_name = wm.longname;
         ok = true;
@@ -974,9 +987,9 @@ bool id_wiiu(const fs::path& p, const std::string& ext, uint64_t size, GameEntry
     if (!ok) return false;
     e->system = System::WiiU;
     e->serial = w.serial;
-    e->title = meta_name.empty() ? title_from_filename(name_src) : meta_name;
+    e->title = meta_name.empty() ? title_from_filename(title_name) : meta_name;
     std::string k = wiiu_key(w);
-    e->key = k.empty() ? "wiiu:file-" + sanitize_key(e->title) : k;
+    e->key = k.empty() ? "wiiu:file-" + sanitize_key(meta_name.empty() ? title_from_filename(name_src) : meta_name) : k;
     if (const GameInfo* g = find_game_for("wiiu", e->serial, std::string())) { e->catalog_id = g->id; e->title = g->title; }
     if (w.container == "wud" || w.container == "wux") e->issue = "keys";   // needs Cemu's keys.txt (disc key)
     return true;
@@ -1480,10 +1493,13 @@ static bool id_wiiu_archive(const fs::path& arch, GameEntry* e) {
     if (!list_archive(path_utf8(arch), &l) || !find_gc_entry(l, &ent, 2)) return false;
     GameEntry g;
     g.system = System::WiiU;
+    /* The KEY (and the catalog match that can turn it into a title-id key) is derived from the file inside, exactly as it always was: keys hold saves,
+     * favourites and play time and must never move. Only the DISPLAY title prefers the archive's name. */
+    const std::string file_title = title_from_filename(utf8_path(path_utf8(utf8_path(ent.name).filename())));
     g.title = container_title(arch, ent.name);
-    g.key = "wiiu:file-" + sanitize_key(g.title);
+    g.key = "wiiu:file-" + sanitize_key(file_title);
     for (const auto& c : catalog())   // no title id before unpacking: a catalog game of the same name still gets its catalog id (remote-play rooms name games by it, so guests can find the stand-in)
-        if (c.system == "wiiu" && ascii_lower(c.title) == ascii_lower(g.title)) {
+        if (c.system == "wiiu" && ascii_lower(c.title) == ascii_lower(file_title)) {
             g.catalog_id = c.id;
             if (!c.serials.empty()) { g.serial = c.serials[0]; g.key = "wiiu:" + ascii_lower(c.serials[0]); }   // same key as the unpacked .wua (title id), so saves/rooms match
             break;
@@ -1583,29 +1599,31 @@ static NameId id_disc_by_name(const std::string& archive_path, const std::string
     return r;
 }
 
-static void fill_ps2(const hub::ps2::Ident& id, const fs::path& name_src, GameEntry* e) {
+/* key_src: where a serial-less key ("ps2:file-<name>") comes from (never changes); title_name: where the title falls back to. */
+static void fill_ps2(const hub::ps2::Ident& id, const fs::path& key_src, const fs::path& title_name, GameEntry* e) {
     e->system = System::PS2;
     e->serial = id.serial;
-    e->key = hub::ps2::key_for(id.serial, sanitize_key(title_from_filename(name_src)));
-    e->title = !id.title.empty() ? id.title : title_from_filename(name_src);
+    e->key = hub::ps2::key_for(id.serial, sanitize_key(title_from_filename(key_src)));
+    e->title = !id.title.empty() ? id.title : title_from_filename(title_name);
 }
 
-static bool id_ps2_file(const fs::path& p, const fs::path& name_src, GameEntry* e) {
+static bool id_ps2_file(const fs::path& p, const fs::path& title_name, GameEntry* e) {
     hub::ps2::Ident id;
     if (!hub::ps2::identify_file(path_utf8(p), &id)) return false;
-    fill_ps2(id, name_src, e);
+    fill_ps2(id, p, title_name, e);
     return true;
 }
 
-/* A PS2 image inside a .zip/.7z: the first 4 MB are streamed to find SYSTEM.CNF (plain .iso); .chd/.cso use the serial in the name. */
-namespace { bool find_ps1_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, uint64_t* total); }
+/* A PS2 image inside a .zip/.7z: the first 4 MB are streamed to find SYSTEM.CNF (plain .iso); .chd/.cso use the serial in the name.
+ * find_ps1_entry(.., prefer_m3u = false) is the entry identification has always looked at (the .cue, not the .m3u playlist). */
+namespace { bool find_ps1_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, uint64_t* total, bool prefer_m3u = true); }
 
 /* A PlayStation 2 CD kept as cue + bin(s) in an archive (a Redump / Vimm style set). Named like a PS2 game, or SYSTEM.CNF in the first data
  * track says BOOT2 (2352-byte sectors). Listed under PlayStation 2; unpacked with the PlayStation 1 routines (whole set into rom-cache\ps1\<key>). */
 static bool id_ps2_cue_archive(const fs::path& arch, const std::vector<ArchiveEntry>& l, GameEntry* e) {
     ArchiveEntry ent;
     uint64_t total = 0;
-    if (!find_ps1_entry(l, &ent, &total)) return false;
+    if (!find_ps1_entry(l, &ent, &total, false)) return false;
     std::string serial;
     NameId n = id_disc_by_name(path_utf8(arch), ent.name);
     if (n.found) {
@@ -1627,7 +1645,7 @@ static bool id_ps2_cue_archive(const fs::path& arch, const std::vector<ArchiveEn
     id.serial = serial;
     id.title = hub::ps2::title_for(serial);
     GameEntry g;
-    fill_ps2(id, title_src(container_title(arch, ent.name)), &g);
+    fill_ps2(id, utf8_path(ent.name), title_src(container_title(arch, ent.name)), &g);
     g.path = path_utf8(arch);
     g.issue = "extract";
     g.unpacked = total;
@@ -1692,7 +1710,7 @@ static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
         id.title = hub::ps2::title_for(s);
     }
     GameEntry g;
-    fill_ps2(id, title_src(container_title(arch, ent.name)), &g);
+    fill_ps2(id, utf8_path(ent.name), title_src(container_title(arch, ent.name)), &g);
     g.path = path_utf8(arch);
     g.issue = "extract";
     g.unpacked = ent.size;
@@ -1702,20 +1720,20 @@ static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
 
 /* ---- PlayStation Portable (PPSSPP): PARAM.SFO of an ISO / CSO / CHD image or an EBOOT.PBP. Probed BEFORE the PS1 / PS2 / GC claims: a PSP image has
  * PSP_GAME/PARAM.SFO and nothing the other consoles look for; a PS1 eboot .pbp is refused here and stays PlayStation 1. ---- */
-static void fill_psp(const hub::psp::Ident& id, const fs::path& name_src, GameEntry* e) {
+static void fill_psp(const hub::psp::Ident& id, const fs::path& key_src, const fs::path& title_name, GameEntry* e) {   // key_src: never changes; title_name: the title fallback
     e->system = System::PSP;
     e->serial = id.disc_id;
-    e->key = hub::psp::key_for(id.disc_id, sanitize_key(title_from_filename(name_src)));
+    e->key = hub::psp::key_for(id.disc_id, sanitize_key(title_from_filename(key_src)));
     std::string t = id.title;
     for (char& c : t) if (c == '\r' || c == '\n' || c == '\t') c = ' ';
     while (!t.empty() && t.back() == ' ') t.pop_back();
-    e->title = !t.empty() ? t : title_from_filename(name_src);
+    e->title = !t.empty() ? t : title_from_filename(title_name);
 }
 
-static bool id_psp_file(const fs::path& p, const fs::path& name_src, GameEntry* e) {
+static bool id_psp_file(const fs::path& p, const fs::path& title_name, GameEntry* e) {
     hub::psp::Ident id;
     if (!hub::psp::identify_file(path_utf8(p), &id)) return false;
-    fill_psp(id, name_src, e);
+    fill_psp(id, p, title_name, e);
     return true;
 }
 
@@ -1733,7 +1751,7 @@ static bool id_psp_archive(const fs::path& arch, GameEntry* e) {
     hub::psp::Ident id;
     if (!hub::psp::identify_buffer(head, &id)) return false;
     GameEntry g;
-    fill_psp(id, title_src(container_title(arch, ent.name)), &g);
+    fill_psp(id, utf8_path(ent.name), title_src(container_title(arch, ent.name)), &g);
     g.path = path_utf8(arch);
     g.issue = "extract";
     g.unpacked = ent.size;
@@ -1850,7 +1868,7 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
     return true;
 }
 
-static bool identify_rom(const fs::path& p, const fs::path& name_src, GameEntry* out);
+static bool identify_rom(const fs::path& p, const fs::path& title_name, GameEntry* out);
 static bool id_ps1_archive(const fs::path& arch, GameEntry* e);
 
 /* An archive whose directory cannot be read (an unfinished download, an unsupported method) still shows up when its name is exactly a Redump /
@@ -1868,7 +1886,7 @@ static bool id_disc_archive_by_name_only(const fs::path& arch, GameEntry* e) {
         hub::ps2::Ident id;
         id.serial = n.serial;
         id.title = hub::ps2::title_for(n.serial);
-        fill_ps2(id, title_src(container_title(arch, std::string())), &g);
+        fill_ps2(id, arch, title_src(container_title(arch, std::string())), &g);
     }
     g.path = path_utf8(arch);
     g.issue = "extract";
@@ -1967,7 +1985,7 @@ static bool id_3ds_archive(const fs::path& arch, GameEntry* e) {
     if (!parse_3ds_header((const uint8_t*)head.data(), head.size(), &info)) return false;
     if (info.container != "3dsx" && !info.is_application) return false;
     GameEntry g;
-    fill_3ds(info, title_src(container_title(arch, ent.name)), &g);
+    fill_3ds(info, arch, title_src(container_title(arch, ent.name)), &g);
     g.path = ap;
     g.issue = "extract";
     g.unpacked = ent.size;
@@ -1983,12 +2001,25 @@ static std::string archive_extra_games_note(const std::string& path) {
     if (!list_archive(path, &l)) return std::string();
     int n = 0;
     std::string first;
+    std::set<std::string> groups;   // "Game (Disc 1)" and "Game (Disc 2)" are one game
     for (const auto& a : l) {
         if (!archive_entry_safe(a.name) || is_junk_entry(a.name)) continue;
         const std::string x = ascii_lower(path_utf8(utf8_path(a.name).extension()));
+        if (x == ".m3u") return std::string();   // a playlist: the discs are one multi-disc game
         const bool game = (is_cart_ext(x) && a.size >= 16 * 1024) || (is_3ds_zip_entry(x) && a.size >= 0x1000) || x == ".wua" || x == ".iso" || x == ".chd" || x == ".cso" || x == ".pbp" ||
                           x == ".gcm" || x == ".rvz" || x == ".wia" || x == ".ciso" || x == ".gcz";
         if (!game || a.size < 0x1000) continue;
+        std::string stem = ascii_lower(path_utf8(utf8_path(a.name).stem())), g;
+        for (size_t i = 0; i < stem.size();) {   // drop "(disc 2)", "(disc 2 of 3)", "[cd1]" groups
+            char open = stem[i];
+            size_t close = (open == '(' || open == '[') ? stem.find(open == '(' ? ')' : ']', i) : std::string::npos;
+            if (close != std::string::npos) {
+                std::string in = stem.substr(i + 1, close - i - 1);
+                if (in.rfind("disc", 0) == 0 || in.rfind("disk", 0) == 0 || in.rfind("cd", 0) == 0) { i = close + 1; continue; }
+            }
+            g.push_back(stem[i++]);
+        }
+        if (!groups.insert(collapse_spaces(g)).second) continue;
         if (n++ == 0) first = path_utf8(utf8_path(a.name).filename());
     }
     if (n < 2) return std::string();
@@ -2069,7 +2100,7 @@ bool identify_game(const std::string& path, GameEntry* out) {
         }
         fs::path rom, inner;
         if (!extract_zipped_rom(p, &rom, &inner) && !extract_archived_rom(p, &rom, &inner)) return false;   // miniz first; bsdtar for zip64 / odd methods
-        if (!identify_rom(rom, title_src(container_title(p, path_utf8(inner))), out)) return false;   // a title the header cannot give: the zip's name, else the file inside
+        if (!identify_rom(rom, title_src(cart_title(p, path_utf8(inner))), out)) return false;   // a title the header cannot give: the file inside, else the zip's name
         out->save_stem = path_utf8(inner.stem());   // per-game files (DS .srm) keep the inner name's stem
         return true;
     }
@@ -2080,7 +2111,7 @@ bool identify_game(const std::string& path, GameEntry* out) {
             if (id_3ds_archive(p, &z)) { z.size = size; g_identify_calls.fetch_add(1); *out = std::move(z); return true; }
             fs::path rom, inner;
             if (extract_archived_rom(p, &rom, &inner)) {   // N64 / GB / GBC / GBA / NES / SNES / DS cartridge
-                if (!identify_rom(rom, title_src(container_title(p, path_utf8(inner))), out)) return false;
+                if (!identify_rom(rom, title_src(cart_title(p, path_utf8(inner))), out)) return false;
                 out->save_stem = path_utf8(inner.stem());
                 return true;
             }
@@ -2095,7 +2126,8 @@ bool identify_game(const std::string& path, GameEntry* out) {
     return identify_rom(p, loose_name_src(p), out);   // a file called "game" / "disc" is titled from its folder
 }
 
-/* name_src: what a title falls back to (the zip's inner name for an extracted ROM, the file itself otherwise). */
+/* name_src: what a TITLE falls back to (the name chosen for an extracted ROM, the file or its folder otherwise). Keys are never derived from it: a
+ * name-based key (ps1:file-, gc:file-, 3ds:file-, wiiu:file-) always comes from the file `p` itself, as it always did. */
 static bool identify_rom(const fs::path& p, const fs::path& name_src, GameEntry* out) {
     std::error_code ec;
     uintmax_t size = fs::file_size(p, ec);
@@ -2169,13 +2201,15 @@ int ps1_entry_rank(const std::string& ext) {
     return -1;
 }
 
-bool find_ps1_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, uint64_t* total) {
+bool find_ps1_entry(const std::vector<ArchiveEntry>& l, ArchiveEntry* out, uint64_t* total, bool prefer_m3u) {
     int best = 99;
     uint64_t sum = 0;
     for (const auto& a : l) {
         if (!archive_entry_safe(a.name) || is_junk_entry(a.name)) continue;
         sum += a.size;
-        int r = ps1_entry_rank(ascii_lower(path_utf8(utf8_path(a.name).extension())));
+        const std::string x = ascii_lower(path_utf8(utf8_path(a.name).extension()));
+        if (x == ".m3u" && !prefer_m3u) continue;   // identification reads the same entry it always did (the .cue): a Redump name lookup depends on it
+        int r = ps1_entry_rank(x);
         if (r >= 0 && r < best) { best = r; *out = a; }
     }
     if (total) *total = sum;
@@ -2214,7 +2248,7 @@ static bool id_ps1_archive(const fs::path& arch, GameEntry* e) {
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
     uint64_t total = 0;
-    if (!list_archive(path_utf8(arch), &l) || !find_ps1_entry(l, &ent, &total)) return false;
+    if (!list_archive(path_utf8(arch), &l) || !find_ps1_entry(l, &ent, &total, false)) return false;
     NameId n = id_disc_by_name(path_utf8(arch), ent.name);
     std::string serial;
     if (n.found) {
@@ -2461,35 +2495,45 @@ static bool extract_3ds_zip_impl(const GameEntry& e, const std::function<bool(ui
         if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
         fs::path name = utf8_path(st.m_filename).filename();
         if (!is_3ds_zip_entry(ascii_lower(path_utf8(name.extension()))) || is_junk_entry(st.m_filename)) continue;
+        /* Unpacked beside the old copy and swapped in only when complete: a full disk, a cancel or a bad zip leaves the previous unpack alone, and an
+         * earlier unpack of another file (a changed archive, another copy of the game) never stays beside the new one. */
         fs::path dir = utf8_path(extract_3ds_dir(e));
+        fs::path work = dir.parent_path() / (dir.filename().wstring() + L".unpacking");
         std::error_code ec;
-        fs::remove_all(dir, ec);   // an earlier unpack of another file (a changed archive, another copy of the game) must not stay beside this one
-        fs::create_directories(dir, ec);
+        fs::remove_all(work, ec);
+        fs::create_directories(work, ec);
         ULARGE_INTEGER free_bytes{};
-        if (GetDiskFreeSpaceExW(dir.wstring().c_str(), &free_bytes, nullptr, nullptr) &&
+        if (GetDiskFreeSpaceExW(work.wstring().c_str(), &free_bytes, nullptr, nullptr) &&
             free_bytes.QuadPart < st.m_uncomp_size + (64ull << 20)) {
+            fs::remove_all(work, ec);
             *err = "not enough free disk space (" + std::to_string((st.m_uncomp_size >> 20) + 64) + " MB needed)";
             break;
         }
-        fs::path final_path = dir / name, part = dir / (name.wstring() + L".part");
+        fs::path final_path = dir / name, staged = work / name, part = work / (name.wstring() + L".part");
         ExtractCtx ctx;
         ctx.f = _wfopen(part.wstring().c_str(), L"wbN");
-        if (!ctx.f) { *err = "cannot write " + path_utf8(part); break; }
+        if (!ctx.f) { fs::remove_all(work, ec); *err = "cannot write " + path_utf8(part); break; }
         ctx.total = st.m_uncomp_size;
         ctx.cb = &progress;
         mz_bool r = mz_zip_reader_extract_to_callback(&za, i, extract_write_cb, &ctx, 0);
         bool wrote = std::fflush(ctx.f) == 0;
         std::fclose(ctx.f);
         if (!r || !wrote || ctx.done != st.m_uncomp_size) {
-            fs::remove(part, ec);
+            fs::remove_all(work, ec);
             *err = ctx.cancelled ? "cancelled" : "extraction failed (disk full or damaged zip)";
             break;
         }
-        fs::remove(final_path, ec);
-        fs::rename(part, final_path, ec);
-        if (ec) { *err = "cannot move the unpacked image into place"; break; }
+        fs::rename(part, staged, ec);
+        if (ec) { fs::remove_all(work, ec); *err = "cannot move the unpacked image into place"; break; }
+        {
+            std::ofstream sf(work / L"stamp.txt", std::ios::binary | std::ios::trunc);
+            sf << gc_stamp(e, st.m_uncomp_size, path_utf8(name)) << '\n';
+            if (!sf) { fs::remove_all(work, ec); *err = "cannot write the unpack record"; break; }
+        }
+        fs::remove_all(dir, ec);
+        fs::rename(work, dir, ec);
+        if (ec) { fs::remove_all(work, ec); *err = "cannot move the unpacked image into place"; break; }
         if (out_path) *out_path = path_utf8(final_path);
-        { std::ofstream sf(dir / L"stamp.txt", std::ios::binary | std::ios::trunc); sf << gc_stamp(e, st.m_uncomp_size, path_utf8(name)) << '\n'; }
         ok = true;
     }
     mz_zip_reader_end(&za);
@@ -2832,6 +2876,10 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
             rom_cache_trim(rom_cache_limit());   // honour the size limit once per run
             for (fs::recursive_directory_iterator it(rc, ec), end; !ec && it != end; it.increment(ec))
                 if (it->path().extension() == L".part") { std::error_code e2; fs::remove(it->path(), e2); }
+            std::vector<fs::path> half;   // "<key>.unpacking": a 3DS unpack that was cut off (nothing else is running yet)
+            for (fs::recursive_directory_iterator it(rc, ec), end; !ec && it != end; it.increment(ec))
+                if (it->is_directory(ec) && it->path().extension() == L".unpacking") half.push_back(it->path());
+            for (const fs::path& h : half) { std::error_code e2; fs::remove_all(h, e2); }
         });
     }
     std::vector<Candidate> cands;
