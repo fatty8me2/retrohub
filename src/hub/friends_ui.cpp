@@ -2299,16 +2299,17 @@ bool fr_handle_back() {
 }
 
 /* ---- invite picker (Play Online room page) ---- */
-void fr_invite_button_and_picker(float btn_w, float btn_h) {
+void fr_invite_button_and_picker(float btn_w, float btn_h, bool icon_only) {
     int online = 0;
     for (auto& f : fr_friends()) if (f.online()) ++online;
     bool can = fr_in_my_room();
-    if (ui::button("Invite friends", ImVec2(btn_w, btn_h), true, can, ui::Icon::Plus) || (FR.open_picker && can)) {
+    if (ui::button(icon_only ? "##invite_plus" : "Invite friends", ImVec2(icon_only ? btn_h : btn_w, btn_h), true, can, ui::Icon::Plus) || (FR.open_picker && can)) {
         FR.pick.clear();
         ImGui::OpenPopup("Invite friends##picker");
         FR.open_picker = false;
     }
-    if (ImGui::IsItemHovered() && !can) ImGui::SetTooltip("Waiting for the room to connect.");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !can) ImGui::SetTooltip("Waiting for the room to connect.");
+    else if (icon_only && ImGui::IsItemHovered()) ImGui::SetTooltip("Invite friends");
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(std::min(sp(60.f), ds.x * 0.92f), std::min(sp(72.f), ds.y * 0.86f)));

@@ -178,7 +178,7 @@ void fr_section(const std::string& title);
 void fr_chat_view(float cw);
 void fr_draw_panel(float disp_w, float disp_h);
 bool fr_handle_back();
-void fr_invite_button_and_picker(float btn_w, float btn_h);
+void fr_invite_button_and_picker(float btn_w, float btn_h, bool icon_only = false);   // icon_only: a + button with a tooltip (tight footers)
 
 /* ---- username_ui.cpp ---- */
 #include "username_logic.h"

@@ -378,11 +378,27 @@ static bool room_footer(float fw) {
     ImGui::PopStyleColor(2);
     bool left = false;
     const float y0 = ImGui::GetCursorPosY();
-    ImGui::SetCursorPosY(y0 + (bh - ImGui::GetTextLineHeight()) * 0.5f);
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-    ImGui::TextUnformatted("ROOM");
-    ImGui::PopStyleColor();
-    ImGui::SameLine(0, 10 * S);
+    // measure what each step needs and take the first that fits: full -> "Invite link" -> + icon for Invite friends -> no "ROOM" label (Leave room is never shortened)
+    const float lw = 130 * S;
+    auto bw = [&](const char* t, bool icon) { return ImGui::CalcTextSize(t).x + (icon ? sp(2.25f) + sp(1.f) : 0.f) + sp(5.f); };
+    const float code_w = ui::F.h2->CalcTextSizeA(ui::F.h2->FontSize, FLT_MAX, 0.f, A.code.c_str()).x;
+    const float room_w = ImGui::CalcTextSize("ROOM").x + 10 * S;
+    const float avail = ImGui::GetContentRegionAvail().x - 4 * S;
+    auto need = [&](bool short_link, bool icon_inv, bool room_lbl) {
+        return (room_lbl ? room_w : 0.f) + code_w + 10 * S + bw("Copy", false) + 8 * S + bw(short_link ? "Invite link" : "Copy invite link", false) + 8 * S +
+               (icon_inv ? bh : bw("Invite friends", true)) + 12 * S + lw;
+    };
+    bool short_link = false, icon_inv = false, room_lbl = true;
+    if (need(false, false, true) > avail) { short_link = true;
+        if (need(true, false, true) > avail) { icon_inv = true;
+            if (need(true, true, true) > avail) room_lbl = false; } }
+    if (room_lbl) {
+        ImGui::SetCursorPosY(y0 + (bh - ImGui::GetTextLineHeight()) * 0.5f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+        ImGui::TextUnformatted("ROOM");
+        ImGui::PopStyleColor();
+        ImGui::SameLine(0, 10 * S);
+    }
     ImGui::SetCursorPosY(y0 + (bh - ui::F.h2->FontSize) * 0.5f);
     ImGui::PushFont(ui::F.h2);
     ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
@@ -394,15 +410,14 @@ static bool room_footer(float fw) {
     if (button("Copy", ImVec2(0, bh))) { SDL_SetClipboardText(A.code.c_str()); set_notice("Room code copied.", 3); }
     ImGui::SameLine(0, 8 * S);
     ImGui::SetCursorPosY(y0);
-    if (button("Copy invite link", ImVec2(0, bh))) {
+    if (button(short_link ? "Invite link" : "Copy invite link", ImVec2(0, bh))) {
         std::wstring link = invite_web_link(W(A.code), W(A.st.name));
         if (!link.empty() && invite_copy_text(link)) set_toast("Invite link copied", true, 3.0);
         else set_notice("Could not copy the invite link.", 4);
     }
     ImGui::SameLine(0, 8 * S);
     ImGui::SetCursorPosY(y0);
-    fr_invite_button_and_picker(0, bh);
-    const float lw = 130 * S;
+    fr_invite_button_and_picker(0, bh, icon_inv);
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - lw);
     ImGui::SetCursorPosY(y0);
     {   // red: the palette's danger colour stands in for ACCENT while the button draws
