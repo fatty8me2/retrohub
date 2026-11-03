@@ -309,7 +309,7 @@ void build() {
         s.steps.push_back(hold(DOWN, 2400, "down held to the bottom")); s.steps.push_back(wait(100));
         s.steps.push_back(expect_sel("Quit to RetroHub"));
         s.steps.push_back(closing(press(A_, "A on Quit")));
-        s.steps.push_back(closing(wait(300)));
+        s.steps.push_back(closing(wait(800)));   // the 700 ms reopen cooldown, like close_b: the next scenario opens with View+Y at once
         s.steps.push_back(expect("quit", [](const QmE2EState& st, std::string* w) { *w = "open=" + std::to_string(st.open) + " why=" + st.close_why + " " + join(new_cmds(st)); return !st.open && st.close_why == "Quit" && new_cmds(st) == std::vector<std::string>{"quit"}; }));
         g_sc.push_back(s);
     }
