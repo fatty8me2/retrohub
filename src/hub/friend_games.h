@@ -186,5 +186,23 @@ struct PublishGate {
     }
 };
 
+/* Games both of you own: the friend's list entries whose identity or key matches one of yours. Sorted by title (case-insensitive), one row per identity. */
+inline std::vector<hubnet::LibGame> shared_games(const std::vector<Owned>& mine, const std::vector<hubnet::LibGame>& theirs)
+{
+    std::set<std::string> have_id, have_key, seen;
+    for (const Owned& o : mine) { have_id.insert(identity(o.sys, o.cid, o.title)); have_id.insert(identity(o.sys, "", o.title)); have_key.insert(o.sys + "|" + o.key); }
+    std::vector<hubnet::LibGame> out;
+    for (const hubnet::LibGame& g : theirs) {
+        if (g.sys.empty() || g.title.empty()) continue;
+        const std::string id = identity(g.sys, g.cid, g.title);
+        if (!(have_id.count(id) || have_id.count(identity(g.sys, "", g.title)) || have_key.count(g.sys + "|" + g.key))) continue;
+        if (!seen.insert(identity(g.sys, "", g.title)).second) continue;
+        out.push_back(g);
+    }
+    auto low = [](std::string t) { for (char& c : t) c = (char)std::tolower((unsigned char)c); return t; };
+    std::stable_sort(out.begin(), out.end(), [&](const hubnet::LibGame& a, const hubnet::LibGame& b) { return low(a.title) < low(b.title); });
+    return out;
+}
+
 } // namespace fg
 } // namespace hubui

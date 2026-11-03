@@ -41,6 +41,8 @@ struct FriendsUi {
     std::set<std::string> cancelled_msgs;   // queued lines the player cancelled ("Not sent")
     std::map<std::string, hub::profile::Tally> reacts;   // "<peer uid>|<line key>" -> who reacted with what (this session)
     bool open_prof = false;                              // open the "Your profile" editor
+    std::string view_uid; bool open_view = false, view_self = false;   // the profile view (friend, or me)
+    float view_scroll_reset = 0;
     char prof_status_buf[48] = {0};
     bool prof_buf_init = false;
     int chat_unread = 0;           // unread count when the chat was opened ("New messages" marker)
@@ -73,7 +75,7 @@ struct FriendsUi {
     std::map<std::string, long long> ask_seen; // host side: last ask per person (repeat within 30 s is ignored)
 };
 
-enum class FrIcon { Bell, People, Chat, UserPlus, Copy, More, Send };
+enum class FrIcon { Bell, People, Chat, UserPlus, Copy, More, Send, Cross, Ban, Bracket };
 
 extern FriendsUi FR;
 
@@ -121,6 +123,8 @@ bool fr_send_attach_dm(const std::string& uid, const std::string& text, const hu
 void fr_invite_uids(const std::vector<std::string>& uids);
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who = "");
 void fr_open_chat(const std::string& uid);
+void fr_view_profile(const std::string& uid);   // friend profile view (empty uid = my own)
+std::vector<hubnet::LibGame> fg_shared_with(const std::string& uid);   // games both of us own (friend_games_ui.cpp)
 void fr_toggle_panel();
 bool fr_invite_toast_visible();   // an invite toast is on screen (pad: Start joins it)
 bool fr_join_invite_toast();      // joins the newest visible invite toast

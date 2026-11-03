@@ -89,6 +89,15 @@ int main()
     CHECK(empty_reason(true, 3, 0, 0) == "no lists held");
     CHECK(empty_reason(true, 3, 2, 0) == "friends own nothing you do not have");
 
+    {   // shared games: what both of you own
+        std::vector<Owned> mine = {{"n64", "n64:mk64", "mk64", "Mario Kart 64"}, {"gba", "gba:mf", "", "Metroid Fusion (USA)"}};
+        std::vector<LibGame> theirs = {{"n64", "n64:x", "mk64", "Mario Kart 64"}, {"gba", "gba:zz", "", "Metroid Fusion (Europe)"}, {"nes", "nes:q", "", "Metroid"},
+                                       {"n64", "n64:mk64", "mk64", "Mario Kart 64"}};
+        auto sh = shared_games(mine, theirs);
+        CHECK(sh.size() == 2 && sh[0].title == "Mario Kart 64" && sh[1].title == "Metroid Fusion (Europe)");
+        CHECK(shared_games(mine, {}).empty() && shared_games({}, theirs).empty());
+    }
+
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("friend_games: ok\n");
     return 0;
