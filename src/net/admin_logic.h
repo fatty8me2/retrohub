@@ -40,6 +40,7 @@ struct AdminAccount {
     bool friend_of_you = false;
     bool test = false;          // a test-flagged account (hidden unless the "test accounts" filter is on)
     bool unapplied = false;     // the verdict has not reached the account yet (a failed push): the server keeps retrying
+    bool unreachable = false;   // the server gave up pushing (about 10 tries / 24 h); it is still enforced at the account's next hello
     std::string req;                                      // "in" | "out" | "" : a request between you and this account
     bool blocked() const { return status == "banned" || status == "denied"; }
     bool pending() const { return status == "pending"; }
