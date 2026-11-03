@@ -475,6 +475,16 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--download") dl = test_download(argv[2]);
     std::error_code ec;
     fs::remove_all(d, ec);
+    {   // a BIOS folder nested in a games folder: Games\PS2\ps2Bios\ps2-bios-usa\ps2 bios usa\SCPH-39001_..._(NTSC)\SCPH-39001_....BIN
+        fs::path root = fs::temp_directory_path() / "rh_ps2bios_nested";
+        std::error_code ec; fs::remove_all(root, ec);
+        fs::path leaf = root / "Games" / "PS2" / "ps2Bios" / "ps2-bios-usa" / "ps2 bios usa" / "SCPH-39001_BIOS_V7_USA_160_(NTSC)";
+        fs::create_directories(leaf);
+        { std::ofstream o(leaf / "SCPH-39001_BIOS_V7_USA_160.BIN", std::ios::binary); std::string z(4194304, '\0'); o.write(z.data(), (std::streamsize)z.size()); }
+        hubemu::Bios nb = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs("", {(root / "Games").string()}));
+        CHECK(nb.file == "SCPH-39001_BIOS_V7_USA_160.BIN");
+        fs::remove_all(root, ec);
+    }
     std::printf("hub_ps2_test: %d check(s) failed%s\n", g_fail, dl ? ", download failed" : "");
     return (g_fail || dl) ? 1 : 0;
 }
