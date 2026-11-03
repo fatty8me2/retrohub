@@ -1,6 +1,23 @@
 {
   "versions": [
     {
+      "version": "1.31.10",
+      "date": "2026-11-03",
+      "title": "Owner tools and a tidier room",
+      "new": [
+        "Owner-only Admin page: see accounts, ban people you don't recognise, and optionally require approval for new accounts. Existing friends are never affected"
+      ],
+      "improved": [
+        "Room page: the room code bar and Leave room stay visible in small windows; long reasons wrap instead of being cut off",
+        "Invite cards shrink while a menu or pop-up is open so they no longer cover buttons",
+        "Party votes always show their Close button; the podium and cheats strip look tidier",
+        "Checkboxes are easier to see in every theme; the Host and Join cards are the same height"
+      ],
+      "fixed": [
+        "The sidebar could say \"Connecting\" while you were already in a room"
+      ]
+    },
+    {
       "version": "1.31.9",
       "date": "2026-11-03",
       "title": "New look, Discover, and every player on the controller",
