@@ -680,6 +680,7 @@ int main() {
             CHECK(settings_from_json("{\"name\":\"x\"}", &c) && c.auto_friend);
             CHECK(auto_friend_text("Mia") == "You and Mia are now friends" && auto_friend_text("") == "You and a new player are now friends");
             CHECK(lobby_ident_json("u1", "s\"2") == "{\"type\":\"ident\",\"uid\":\"u1\",\"secret\":\"s\\\"2\"}");
+            CHECK(lobby_ident_json("u1", "s", true) == "{\"type\":\"ident\",\"uid\":\"u1\",\"secret\":\"s\",\"nopair\":true}");   // auto-friend off: proof only
         }
     }
 

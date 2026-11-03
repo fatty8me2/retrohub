@@ -29,6 +29,10 @@ void lockout_init(bool had_account, const std::string& uid) {
     std::string text;
     if (winutil::read_file(cache_path(), &text)) c = hublock::cache_parse(text);
     V.init(c, had_account, uid);
+    if (g_enabled && V.take_dirty(&c)) {   // a brand-new install: remember "not yet confirmed" right away, so a restart or going offline cannot unlock it
+        c.uid = uid;
+        winutil::write_file(cache_path(), hublock::cache_json(c));
+    }
 }
 
 void lockout_shot(const std::string& mode) {   // HUB_SHOT_ACCESS=pending|unavailable|setup|setup-offline
@@ -53,10 +57,11 @@ bool launch_blocked(const char* what) {
 
 void lockout_tick() {
     if (!g_enabled || g_forced) return;
+    if (const int gate = hub::saves::cloud_gate_take()) V.on_live(gate == 1 ? hublock::Access::Pending : hublock::Access::Unavailable, false, false);   // a /saves 403 reason
     if (FR.started && !FR.fake) {
         const std::string uid = FR.cli.my_uid();
         static std::string last_uid;
-        if (!last_uid.empty() && uid != last_uid) V.reset_account(uid, true);   // the account was replaced (identity adopted from another PC / regenerated): a verdict for the old one means nothing
+        if (!last_uid.empty() && uid != last_uid) V.reset_account(uid);   // the account was replaced (identity adopted from another PC / regenerated): a verdict for the old one means nothing; a new install stays one
         last_uid = uid;
         V.on_live(FR.cli.access(), FR.cli.connected(), FR.cli.is_admin());
         hublock::Cache c;
@@ -64,6 +69,12 @@ void lockout_tick() {
             c.uid = FR.cli.my_uid();
             winutil::write_file(cache_path(), hublock::cache_json(c));
         }
+    }
+    {   // the lock just came on: cancel what was armed before it (a guest's pending launch, a 3DS / GameCube room being prepared) unless a game is running
+        static bool was = false;
+        const bool now = app_locked();
+        if (now && !was && !A.proc && !session_active()) online_cancel_pending();
+        was = now;
     }
     /* Once the game is over and the lock is on: leave any room quietly. Never while a game runs (that would end it). */
     if (app_locked() && !A.proc && !session_active() && A.in_room) leave_room();
@@ -148,7 +159,7 @@ void draw_lock_screen() {
     y += sp(2.f);
 
     /* Buttons: real widgets so a pad can reach them. */
-    const bool can_retry = pending || (setup && !trying);
+    const bool can_retry = !(setup && trying);   // a banned account can ask again too: an unban unlocks without a restart
     const float bw = sp(22.f), gap = sp(3.f);
     const float nb = can_retry ? 2.f : 1.f;
     ImGui::SetCursorScreenPos(ImVec2((io.DisplaySize.x - (bw * nb + gap * (nb - 1.f))) * 0.5f, y));

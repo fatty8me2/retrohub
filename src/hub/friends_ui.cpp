@@ -640,9 +640,9 @@ static void fr_friend_online(const std::string& uid, const std::string& name) {
     push_toast((who.empty() ? std::string("A friend") : who) + " came online", ui::ACCENT, 5.0);
     if (game_active() && !g_headless) hubtoast::notify_online(hubtoast::system_notifier(), A.st.notify_in_game, true, who);
 }
-std::string fr_lobby_ident_msg() {
+std::string fr_lobby_ident_msg(bool nopair) {
     if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return "";
-    return hubui::lobby_ident_json(FR.cli.my_uid(), FR.cli.my_secret());
+    return hubui::lobby_ident_json(FR.cli.my_uid(), FR.cli.my_secret(), nopair);
 }
 
 void fr_start() {

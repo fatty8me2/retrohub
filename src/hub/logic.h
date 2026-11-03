@@ -607,8 +607,8 @@ template <class V> void remap_slot_key(std::map<int, V>& m, int from, int to) {
 /* Toast for a server-made friendship (joined a room / played together). */
 inline std::string auto_friend_text(const std::string& name) { return "You and " + (name.empty() ? std::string("a new player") : name) + " are now friends"; }
 /* First message a lobby client sends after the welcome so the room can tell who is sitting where. */
-inline std::string lobby_ident_json(const std::string& uid, const std::string& secret) {
-    return "{\"type\":\"ident\",\"uid\":\"" + json::escape(uid) + "\",\"secret\":\"" + json::escape(secret) + "\"}";
+inline std::string lobby_ident_json(const std::string& uid, const std::string& secret, bool nopair = false) {
+    return "{\"type\":\"ident\",\"uid\":\"" + json::escape(uid) + "\",\"secret\":\"" + json::escape(secret) + "\"" + (nopair ? ",\"nopair\":true" : "") + "}";
 }
 /* The host left: move every per-slot map to the promoted member's slot 0 in one go. `ready` is NOT carried over - the game it
  * belonged to is gone, everyone re-announces (pass the same map the caller then clears). */

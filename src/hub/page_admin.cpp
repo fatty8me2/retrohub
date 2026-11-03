@@ -171,6 +171,13 @@ void settings_panel(float w) {
         AU.refresh_at = ImGui::GetTime() + 0.5;
     }
     text_wrapped_disabled(hubnet::admin_autofriend_help());
+    ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    bool sr = s.strict_rooms;
+    if (ImGui::Checkbox("Only approved accounts can join rooms", &sr)) {
+        if (AU.fake) AU.fs.strict_rooms = sr; else FR.cli.admin_set_settings(-1, -1, -1, sr);
+        AU.refresh_at = ImGui::GetTime() + 0.5;
+    }
+    text_wrapped_disabled(hubnet::admin_strict_rooms_help());
     if (AU.fake) AU.fl.settings = AU.fs;
     end_panel();
 }

@@ -92,11 +92,45 @@ int main()
         CHECK(v.lock() == Lock::None);
         Verdict w; w.init(cache("unavailable", "u1"), true, "u1");
         CHECK(w.lock() == Lock::Unavailable);
-        w.reset_account("u9", true);                         // identity replaced
+        w.reset_account("u9");                               // identity replaced
         CHECK(w.lock() == Lock::None);
         Verdict n; n.init(cache("pending", "u1"), false, "u1");
-        n.reset_account("u9", false);                        // replaced by a brand-new one: needs a first Ok
+        n.reset_account("u9");                               // replaced (e.g. friend-code collision) before any Ok: still a new install
         CHECK(n.lock() == Lock::Setup);
+        Cache o; CHECK(n.take_dirty(&o) && o.verdict == "setup" && o.uid == "u9");   // and the marker follows the new id
+        Verdict k; k.init(Cache(), true, "u1");              // an upgrader whose identity is replaced stays trusted
+        k.reset_account("u9");
+        CHECK(k.lock() == Lock::None);
+        Verdict c; c.init(Cache(), false, "u1");             // new install confirmed Ok, then adopts another PC's identity: not a new install any more
+        c.on_live(Access::Ok, true, false);
+        c.reset_account("u9");
+        CHECK(c.lock() == Lock::None);
+    }
+    // the "setup" marker: a new install stays locked across restarts / offline until its first Ok; an upgrader is never marked
+    {
+        Verdict v; v.init(Cache(), false, "u2");             // first run: identity was just created
+        Cache m; CHECK(v.take_dirty(&m) && m.verdict == "setup" && m.uid == "u2");
+        CHECK(!v.take_dirty(&m));
+        // quit offline; next launch: the identity file now exists (had_account=true) but access.json says setup
+        Verdict v2; v2.init(m, /*had_account=*/true, "u2");
+        CHECK(v2.lock() == Lock::Setup);
+        Cache m2; CHECK(!v2.take_dirty(&m2));                // marker already on disk
+        v2.on_live(Access::Ok, false, false);
+        CHECK(v2.lock() == Lock::Setup);
+        v2.on_live(Access::Ok, true, false);                 // first Ok
+        CHECK(v2.lock() == Lock::None && v2.take_dirty(&m2) && m2.verdict == "ok");
+        Verdict v3; v3.init(m2, true, "u2");
+        CHECK(v3.lock() == Lock::None);
+        // a marker for another account id (stale) is ignored, and an upgrader with no file is unlocked
+        Verdict v4; v4.init(m, true, "other");
+        CHECK(v4.lock() == Lock::None);
+        Verdict up; up.init(Cache(), true, "u1");
+        Cache none; CHECK(up.lock() == Lock::None && !up.take_dirty(&none));
+        // a refusal over a marked install becomes Pending, then Ok
+        Verdict v5; v5.init(m, true, "u2");
+        v5.on_live(Access::Pending, false, false);
+        CHECK(v5.lock() == Lock::Pending);
+        Cache c5; CHECK(cache_parse(cache_json(m)).verdict == "setup");
     }
     // the cache file round trips and survives garbage
     {

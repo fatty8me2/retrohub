@@ -523,6 +523,7 @@ struct FriendsClient::Impl {
     Liveness live;                       // keepalive answer tracking: a silent socket is closed and re-opened
     std::vector<OutItem> inflight; uint32_t inflight_at = 0;   // the batch the last welcome flushed (an error reply maps back to it)
     std::string username; bool needs_new_name = false, username_known = false; int ref_seq = 0, claim_ref = 0;
+    uint32_t hello_at = 0, access_since = 0;     // when the hello went out / when the current refusal was first seen (0 = none): silent-socket watchdogs
     Access access = Access::Ok;                  // the server refused this account's hello (pending approval / blocked); Ok once welcomed
     bool admin = false;                          // the welcome said so (the server enforces it on every admin_* message regardless)
     AdminList alist; AdminDetail adetail; AdminSettings asettings; int admin_pend = 0, admin_ver = 0;
@@ -820,6 +821,7 @@ struct FriendsClient::Impl {
     void send_hello()
     {
         hello_sent = true;
+        hello_at = now_ms() | 1u;
         ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\",\"auto_friend\":" + (auto_friend ? "true" : "false") + (is_test_client() ? ",\"test\":true" : "") + (username_pending() ? ",\"no_auto_username\":true" : "") + "}");
     }
 
@@ -976,7 +978,7 @@ struct FriendsClient::Impl {
     {
         AdminSettings s;
         if (!j || j->type != Json::Object) return s;
-        s.approval = jbool(*j, "approval"); s.vouch = jbool(*j, "vouch"); s.autofriend = jbool(*j, "autofriend", true); s.cutoff = jnum(*j, "cutoff");
+        s.approval = jbool(*j, "approval"); s.vouch = jbool(*j, "vouch"); s.autofriend = jbool(*j, "autofriend", true); s.strict_rooms = jbool(*j, "strict_rooms"); s.cutoff = jnum(*j, "cutoff");
         return s;
     }
     static AdminCounts parse_admin_counts(const Json* j)
@@ -1419,6 +1421,22 @@ void FriendsClient::update()
         return;
     }
 
+    /* Silent-socket watchdogs for a socket that was never welcomed (the welcomed one has d.live below). A refused account's socket is left
+     * open and silent by the server on purpose, so it is simply re-checked every 3 minutes (one hello: no loop, no spam); a hello that gets
+     * no answer at all within 30 s means a dead socket. Both go through the normal, backed-off reconnect. */
+    if (d.access == Access::Ok) d.access_since = 0;
+    else if (!d.access_since) d.access_since = now | 1u;
+    if (!d.welcomed && st == WsState::Open && d.hello_sent) {
+        const bool refused = d.access != Access::Ok;
+        if ((refused && now - d.access_since > 180000u) || (!refused && d.hello_at && now - d.hello_at > 30000u)) {
+            net_log("Friends: %s", refused ? "re-checking access" : "no answer to hello, reconnecting");
+            d.access_since = refused ? (now | 1u) : 0;
+            d.hello_at = 0;
+            if (refused) d.backoff_ms = 60000;
+            d.schedule_reconnect(refused ? "re-checking access" : "no answer from the server");
+            return;
+        }
+    }
     d.pump_fetch(now);
     if (d.welcomed && d.live.dead(now)) {   // no answer for ~60 s (PC slept / network gone without a close): reconnect
         net_log("Friends: no answer from the server for %u ms, reconnecting", (unsigned)(now - d.live.last_rx));
@@ -1503,7 +1521,7 @@ void FriendsClient::admin_act(const std::string& op, const std::string& uid)
     impl_->send(admin_uid_json(op, uid));
 }
 void FriendsClient::admin_request_settings() { if (impl_->admin) impl_->send(admin_settings_json()); }
-void FriendsClient::admin_set_settings(int approval, int vouch, int autofriend) { if (impl_->admin) impl_->send(admin_settings_json(approval, vouch, autofriend)); }
+void FriendsClient::admin_set_settings(int approval, int vouch, int autofriend, int strict_rooms) { if (impl_->admin) impl_->send(admin_settings_json(approval, vouch, autofriend, strict_rooms)); }
 const AdminList& FriendsClient::admin_list() const { return impl_->alist; }
 const AdminDetail& FriendsClient::admin_detail() const { return impl_->adetail; }
 const AdminSettings& FriendsClient::admin_settings() const { return impl_->asettings; }
