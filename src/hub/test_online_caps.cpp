@@ -35,6 +35,20 @@ int main() {
     }
     CHECK(std::string(hubcaps::online_unsupported_reason(System::WiiU)).empty() && hubcaps::remote_play_system(System::WiiU) && !hubcaps::remote_play_system(System::GC));   // Wii U = remote play now
     CHECK(hubcaps::default_online_max(System::PS2) == 4);
+    /* local seats (retrorun --max-local): the catalog max_players, else 2 on the adapter systems, 1 elsewhere. A 1- or 2-seat game never gets an adapter. */
+    {
+        CHECK(hubcaps::default_local_max(System::NES) == 2 && hubcaps::default_local_max(System::SNES) == 2 && hubcaps::default_local_max(System::PS1) == 2);
+        CHECK(hubcaps::default_local_max(System::GBA) == 1 && hubcaps::default_local_max(System::NDS) == 1 && hubcaps::default_local_max(System::GB) == 1);
+        CHECK(hubcaps::local_max_for(System::SNES, nullptr) == 2 && hubcaps::local_max_for(System::GBA, nullptr) == 1);   // uncatalogued
+        const hub::GameInfo* smw = hub::find_game("snes_smw");        // 2 players
+        const hub::GameInfo* ct = hub::find_game("snes_ct");          // 1 player
+        const hub::GameInfo* sb = hub::find_game("snes_sbomber");     // 4 players (multitap)
+        const hub::GameInfo* g2 = hub::find_game("nes_gauntlet2");    // 4 players (Four Score)
+        CHECK(smw && smw->max_players == 2 && hubcaps::local_max_for(System::SNES, smw) == 2);
+        CHECK(ct && ct->max_players == 1 && hubcaps::local_max_for(System::SNES, ct) == 1);
+        CHECK(sb && hubcaps::local_max_for(System::SNES, sb) == 4 && g2 && hubcaps::local_max_for(System::NES, g2) == 4);
+        CHECK(hub::find_game("") == nullptr);   // a game without a catalog id is uncatalogued
+    }
     /* PS2: catalog games flagged online are capable and up to 4 players (LRPS2 multitap, catalog online_max wins); anything else is offered as "untested". */
     {
         const hub::GameInfo* t5 = hub::find_game("tekken5");

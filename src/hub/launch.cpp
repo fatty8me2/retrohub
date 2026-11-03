@@ -40,6 +40,7 @@
 #include "controls_sdl.h"
 #include "qm_logic.h"
 #include "resume_logic.h"
+#include "online_caps.h"
 #include <thread>
 #include <xinput.h>
 
@@ -829,6 +830,7 @@ void play_entry(const hub::GameEntry& e_in) {
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
                                " --state-dir " + quote(states) + resume_arg(battery, states) + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
+            args += " --max-local " + std::to_string(hubcaps::local_max_for(e.system, hub::find_game(e.catalog_id)));   // seats of this game: retrorun never boots an adapter for a 1-2 player game
             args += cheats_launch_args(e, false, true, nullptr);
             args += qm_args(ri, e, false);
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
