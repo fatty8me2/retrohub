@@ -17,6 +17,14 @@
  *   --ini S.K=V  extra Dolphin.ini value for every instance (after RetroHub's writers); --gfx S.K=V for GFX.ini
  *   --buffer N   host pad buffer typed into the NetPlay dialog (default: whatever the ini says)
  *   --pump-ms N  np-fw: call Runner::update() every N ms from a "UI" thread (16 = the hub's frame loop)
+ *   --card M     memory card: hub (default: RetroHub's override card + gcnp::host_card_sync_args), gci (override only, RetroHub
+ *                <= 1.31.4: guests got an empty card), gcisync (card folder named by region + GCIFolderAPath), raw, none; --gci <dir> = saves
+ *   --hash-addr A  frame-aligned MEM1 hashes per instance via Dolphin's GDB stub and qa/gc_state_hash.py (A = per-frame counter offset,
+ *                e.g. the first line of <game>.vi.txt); --hash-every N --hash-first F --hash-start S --gdb-port P --hash-dump. Slows Dolphin
+ *                to ~25 % (the stub polls its socket from a CoreTiming event). Results: <run>\host_hash.txt / guest_hash.txt.
+ *   --emu-clock  the pad script runs on emulated time (host's VI-rate counter), so menu timings survive a slow run
+ *   --pattern seq:<t>=<c>,...  c = a b x y z s u d l r (buttons; NOTE harness a = GC B and b = GC A, DSU face layout) or L R U D (stick)
+ * Dolphin logs NETPLAY/EXI/BOOT/CORE at info level to User\Logs\dolphin.log (save sync evidence: "Sending data of GCI memcard ...").
  * usage: hub_gc_speed --dolphin <dir> --disc <file> --game GYQE01 --work <dir> --mode offline [--secs 60] [--warm 45] [--calibrate]
  *                     [--server ws://127.0.0.1:8761] [--port 27400] [--dsu 26791] [--video D3D] [--tag name] */
 #include <winsock2.h>
@@ -51,9 +59,11 @@ static void wr(const fs::path& p, const std::string& t) { fs::create_directories
 static double now_s() { LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c); return (double)c.QuadPart / (double)f.QuadPart; }
 
 struct Opt {
+    std::string card = "hub", raw;   // hub | gci (pre-1.31.5: override only) | gcisync | raw | none
     std::string gci, dolphin, disc, game, work, mode = "offline", server, video = "D3D", tag = "run", pattern = "msb";
+    std::string hash_addr; int hash_every = 600, gdb_port = 0, hash_first = 0, hash_start = 0; bool hash_dump = false;
     int secs = 60, warm = 45, port = 27400, dsu = 26791, buffer = -1, pump_ms = 16;
-    bool calibrate = false, stock = false;
+    bool calibrate = false, stock = false, emu_clock = false;
     std::vector<std::string> ini, gfx;
 };
 
@@ -61,6 +71,11 @@ struct Opt {
 static std::atomic<bool> g_quit{false};
 static int g_shot_every = 20;
 static std::atomic<double> g_game_t0{0};   // set once every instance runs the game: the script clock starts there
+/* --emu-clock: the script clock is EMULATED time (host's VI-rate counter / 59.94), so menu timings hold when the emulation runs slow
+ * (GDB-stub hash runs go at ~25 %). */
+static HANDLE g_clock_proc = nullptr;
+static uintptr_t g_clock_addr = 0;
+static bool read_be32(HANDLE proc, uintptr_t a, uint32_t* v) { uint8_t b[4]; SIZE_T n = 0; if (!ReadProcessMemory(proc, (LPCVOID)a, b, 4, &n) || n != 4) return false; *v = (uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3]; return true; }
 /* Script: "msb" = Start on the title, then A every 0.6 s (menus default to Exhibition / CPU picks), B never;
  * "seq:<t>=<btn>,..." = custom one-shot presses (seconds since start; btn a|b|x|y|z|s|u|d|l|r). R3 = screenshot every g_shot_every s. */
 static uint16_t btn_of(char c) {
@@ -69,19 +84,25 @@ static uint16_t btn_of(char c) {
     return 0;
 }
 static void pad_thread(dsu::DsuServer* srv, std::string pattern) {
-    std::vector<std::pair<double, uint16_t>> seq;
+    std::vector<std::pair<double, char>> seq;   // upper-case L/R/U/D = main stick
     if (pattern.rfind("seq:", 0) == 0) {
         std::stringstream ss(pattern.substr(4)); std::string it;
-        while (std::getline(ss, it, ',')) { size_t eq = it.find('='); if (eq != std::string::npos && eq + 1 < it.size()) seq.push_back({std::atof(it.substr(0, eq).c_str()), btn_of(it[eq + 1])}); }
+        while (std::getline(ss, it, ',')) { size_t eq = it.find('='); if (eq != std::string::npos && eq + 1 < it.size()) seq.push_back({std::atof(it.substr(0, eq).c_str()), it[eq + 1]}); }
     }
     while (!g_quit && g_game_t0.load() == 0) Sleep(10);
     const double t0 = g_game_t0.load();
+    uint32_t v0 = 0;
+    if (g_clock_proc) read_be32(g_clock_proc, g_clock_addr, &v0);
     while (!g_quit) {
-        const double t = now_s() - t0;
+        uint32_t vc = 0;
+        const double t = g_clock_proc && read_be32(g_clock_proc, g_clock_addr, &vc) ? (double)(uint32_t)(vc - v0) / 59.94 : now_s() - t0;
         const int ms = (int)(t * 1000);
         dsu::Pad p;
         if (!seq.empty()) {
-            for (auto& e : seq) if (t >= e.first && t < e.first + 0.12) p.buttons |= e.second;
+            for (auto& e : seq) if (t >= e.first && t < e.first + 0.12) {
+                p.buttons |= btn_of(e.second);
+                if (e.second == 'L') p.lx = -32000; else if (e.second == 'R') p.lx = 32000; else if (e.second == 'U') p.ly = 32000; else if (e.second == 'D') p.ly = -32000;
+            }
         } else if (t > 3) {
             if (pattern == "msb") {
                 if (t < 40 && ms % 4000 < 100) p.buttons |= dsu::kStart;   // health screen / title
@@ -136,16 +157,58 @@ static void setup_user(const Opt& o, const fs::path& inst, bool netplay_stock) {
            "D-Pad/Up = `Pad N`\nD-Pad/Down = `Pad S`\nD-Pad/Left = `Pad W`\nD-Pad/Right = `Pad E`\nTriggers/L = L2\nTriggers/R = R2\n"
            "[GCPad2]\nDevice = DInput/0/Keyboard Mouse\n[GCPad3]\nDevice = DInput/0/Keyboard Mouse\n[GCPad4]\nDevice = DInput/0/Keyboard Mouse\n");
     wr(cfg / "Hotkeys.ini", std::string("[Hotkeys]\nDevice = ") + kDev + "\nGeneral/Take Screenshot = R3\n");
+    wr(cfg / "Logger.ini", "[Logs]\nNETPLAY = True\nEXI = True\nBOOT = True\nCORE = True\n[Options]\nVerbosity = 4\nWriteToFile = True\nWriteToConsole = False\nWriteToWindow = False\n");   // User\Logs\dolphin.log: save sync and memory card evidence
 }
-/* Memory card like the hub: SlotA = GCI folder, the folder passed with -C (a copy of the given saves, never the original). */
+/* Memory card like the hub: SlotA = GCI folder, the folder passed with -C (a copy of the given saves, never the original).
+ * --card raw: SlotA = raw card file (a copy of --raw <file>, or a card Dolphin formats itself); --card none: no card. */
 static std::wstring card_args(const Opt& o, const fs::path& inst) {
-    const fs::path card = inst / "GCI";
     std::error_code ec;
+    if (o.card == "none") return L" -C Dolphin.Core.SlotA=255";
+    if (o.card == "raw") {
+        const fs::path raw = inst / "card.raw";
+        if (!o.raw.empty()) fs::copy_file(o.raw, raw, fs::copy_options::overwrite_existing, ec);
+        return L" -C Dolphin.Core.SlotA=1 -C \"Dolphin.Core.MemcardAPath=" + raw.wstring() + L"\"";
+    }
+    /* --card gcisync: the folder is <root>\<REGION> and GCIFolderAPath = <root> as well, so Dolphin's NetPlay save sync (which reads
+     * GCIFolderAPath, not the override) sends the files the host plays with. */
+    const bool sync = o.card == "gcisync";
+    const char rc = o.game.size() > 3 ? o.game[3] : 'E';
+    const fs::path root = inst / "GCIROOT";
+    const fs::path card = sync ? root / (rc == 'J' ? "JAP" : (rc == 'E' ? "USA" : "EUR")) : inst / "GCI";
     fs::create_directories(card, ec);
     if (!o.gci.empty())
         for (auto& e : fs::directory_iterator(o.gci, ec))
             if (e.path().extension() == ".gci") fs::copy_file(e.path(), card / e.path().filename(), fs::copy_options::overwrite_existing, ec);
-    return L" -C Dolphin.Core.SlotA=8 -C \"Dolphin.Core.GCIFolderAPathOverride=" + card.wstring() + L"\"";
+    std::wstring a = L" -C Dolphin.Core.SlotA=8 -C \"Dolphin.Core.GCIFolderAPathOverride=" + card.wstring() + L"\"";
+    if (sync) a += L" -C \"Dolphin.Core.GCIFolderAPath=" + root.wstring() + L"\"";
+    /* default --card hub: what RetroHub does (launch_online.cpp gc_begin): card = override, plus gcnp::host_card_sync_args. Only the
+     * host's value matters (Dolphin points every guest at its NetPlayTemp copy). --card gci: the override alone (RetroHub <= 1.31.4). */
+    if (o.card == "hub") {
+        std::string err;
+        const std::string s = gcnp::host_card_sync_args(card.string(), (inst / "host-sync").string(), &err);
+        if (s.empty()) std::printf("WARN: host_card_sync_args: %s\n", err.c_str());
+        a += fs::path(s).wstring();
+    }
+    return a;
+}
+/* --hash-addr: Dolphin's GDB stub on gdb_port + k (it waits for a client at boot) and qa/gc_state_hash.py records frame-aligned MEM1
+ * hashes for this instance (see that script). */
+static std::wstring gdb_args(const Opt& o, int k) {
+    if (o.hash_addr.empty()) return L"";
+    return L" -C Dolphin.General.GDBPort=" + std::to_wstring(o.gdb_port + k);
+}
+static DWORD start_hasher(const Opt& o, int k, DWORD dolphin_pid, const fs::path& out, const fs::path& dump, double secs) {
+    if (o.hash_addr.empty() || !dolphin_pid) return 0;
+    char self[MAX_PATH]; GetModuleFileNameA(nullptr, self, MAX_PATH);
+    fs::path script = fs::path(self).parent_path() / "gc_state_hash.py";
+    if (!fs::exists(script)) script = fs::path(__FILE__).parent_path().parent_path().parent_path() / "qa" / "gc_state_hash.py";
+    std::string cmd = "python -I \"" + script.string() + "\" --port " + std::to_string(o.gdb_port + k) + " --pid " + std::to_string(dolphin_pid) + " --game " + o.game +
+                      " --addr " + o.hash_addr + " --every " + std::to_string(o.hash_every) + " --first " + std::to_string(o.hash_first) + " --start " + std::to_string(o.hash_start) + " --secs " + std::to_string((int)secs) + " --out \"" + out.string() + "\"";
+    if (o.hash_dump) cmd += " --dump \"" + dump.string() + "\"";
+    STARTUPINFOA si{}; si.cb = sizeof si; PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) { std::printf("FAIL: start hasher\n"); return 0; }
+    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+    return pi.dwProcessId;
 }
 static void apply_overrides(const Opt& o, const fs::path& inst) {
     const fs::path cfg = inst / "User" / "Config";
@@ -228,8 +291,12 @@ int main(int argc, char** argv) {
         else if (a == "--secs") o.secs = std::atoi(nx().c_str()); else if (a == "--warm") o.warm = std::atoi(nx().c_str());
         else if (a == "--port") o.port = std::atoi(nx().c_str()); else if (a == "--dsu") o.dsu = std::atoi(nx().c_str());
         else if (a == "--buffer") o.buffer = std::atoi(nx().c_str()); else if (a == "--pump-ms") o.pump_ms = std::atoi(nx().c_str());
-        else if (a == "--calibrate") o.calibrate = true; else if (a == "--stock") o.stock = true;
+        else if (a == "--calibrate") o.calibrate = true; else if (a == "--emu-clock") o.emu_clock = true; else if (a == "--stock") o.stock = true;
         else if (a == "--gci") o.gci = nx();
+        else if (a == "--hash-addr") o.hash_addr = nx(); else if (a == "--hash-every") o.hash_every = std::atoi(nx().c_str());
+        else if (a == "--gdb-port") o.gdb_port = std::atoi(nx().c_str()); else if (a == "--hash-dump") o.hash_dump = true;
+        else if (a == "--hash-first") o.hash_first = std::atoi(nx().c_str()); else if (a == "--hash-start") o.hash_start = std::atoi(nx().c_str());
+        else if (a == "--card") o.card = nx(); else if (a == "--raw") o.raw = nx();
         else if (a == "--shot-every") g_shot_every = std::max(2, std::atoi(nx().c_str()));
         else if (a == "--ini") o.ini.push_back(nx()); else if (a == "--gfx") o.gfx.push_back(nx());
     }
@@ -311,7 +378,7 @@ int main(int argc, char** argv) {
             }
             apply_overrides(o, x->dir);
         }
-        if (!gcnp::start(true, exe.string(), (h.dir / "User").string(), s, 0, (run / "workA").string(), desk8, fs::path(card_args(o, h.dir)).string(), &ra)) { std::printf("FAIL host start: %s\n", ra.error.c_str()); return 1; }
+        if (!gcnp::start(true, exe.string(), (h.dir / "User").string(), s, 0, (run / "workA").string(), desk8, fs::path(card_args(o, h.dir) + gdb_args(o, 0)).string(), &ra)) { std::printf("FAIL host start: %s\n", ra.error.c_str()); return 1; }
         own_pids.push_back(ra.dolphin_pid); own_pids.push_back(ra.driver_pid);
         if (o.buffer > 0) gcnp::set_host_buffer(ra, o.buffer);
         else if (o.mode == "np-fw" && !o.stock) gcnp::set_host_buffer(ra, gcnp::pad_buffer_for_ping(fh.worst_ping_ms(), fh.any_relayed()));   // what the hub does once the room is connected
@@ -329,9 +396,14 @@ int main(int argc, char** argv) {
             t = hubui::ini_set(t, "NetPlay", "HostCode", code);
             wr(gi, t);
         }
-        if (!fails && !gcnp::start(false, exe.string(), (g.dir / "User").string(), gs, 1, (run / "workB").string(), desk8, fs::path(card_args(o, g.dir)).string(), &rb)) { std::printf("FAIL guest start\n"); ++fails; }
+        if (!fails && !gcnp::start(false, exe.string(), (g.dir / "User").string(), gs, 1, (run / "workB").string(), desk8, fs::path(card_args(o, g.dir) + gdb_args(o, 1)).string(), &rb)) { std::printf("FAIL guest start\n"); ++fails; }
         own_pids.push_back(rb.dolphin_pid); own_pids.push_back(rb.driver_pid);
         h.pid = ra.dolphin_pid; g.pid = rb.dolphin_pid;
+        if (!o.hash_addr.empty()) {
+            const double hs = 300.0 + o.warm + o.secs;
+            own_pids.push_back(start_hasher(o, 0, h.pid, run / "host_hash.txt", run / "host_dump", hs));
+            own_pids.push_back(start_hasher(o, 1, g.pid, run / "guest_hash.txt", run / "guest_dump", hs));
+        }
         h.proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | SYNCHRONIZE, FALSE, h.pid);
         g.proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | SYNCHRONIZE, FALSE, g.pid);
         insts.push_back(h); insts.push_back(g);
@@ -349,6 +421,7 @@ int main(int argc, char** argv) {
         if (!x.ram && !fails) { std::printf("FAIL: %s game RAM not found\n%s\n%s\n", x.name.c_str(), gcnp::read_status(ra).c_str(), gcnp::read_status(rb).c_str()); ++fails; }
     }
     const double t_boot = now_s() - t_launch;
+    if (o.emu_clock && !insts.empty() && insts[0].ram) { const std::vector<uint32_t> vi = load_vi(o); if (!vi.empty()) { g_clock_addr = insts[0].ram + vi[0]; g_clock_proc = insts[0].proc; } }
     g_game_t0 = now_s();
     std::printf("[%s] mode=%s game=%s boot %.1fs dsu_clients=%d %s\n", o.tag.c_str(), o.mode.c_str(), o.game.c_str(), t_boot, srv.clients(), note.c_str());
 

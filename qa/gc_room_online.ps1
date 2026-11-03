@@ -3,12 +3,14 @@
 # RetroHub is driven by RETROHUB_AUTOTEST (src/hub/autotest.cpp), which presses the same code paths as the Join/Ready/Launch buttons;
 # launch_online -> gc_begin -> Dolphin NetPlay UIA driver -> forwarders through the room all run unmodified. Muted, no focus.
 # usage: gc_room_online.ps1 -Build <bin\Release> -DolphinDir <deps\dolphin> -Work <scratch> -Game mkdd -DiscDir <dir> [-GuestDiscDirs a,b,c]
-#        [-Players 2] [-Seconds 120] [-Server ws://127.0.0.1:8793] [-WriteSave] [-Relay]
+#        [-Players 2] [-Seconds 120] [-Server ws://127.0.0.1:8793] [-WriteSave] [-Relay] [-SeedGci <save.gci of this game>]
+# -SeedGci: the file goes into the HOST's real card folder only; the evidence block then shows that Dolphin's save sync gave every guest
+# that save (host: <data>\netplay\gc\host-sync\<REGION>, guests: User\GC\NetPlayTemp\Card A), i.e. host and guests boot the same card.
 param(
   [Parameter(Mandatory)][string]$Build, [Parameter(Mandatory)][string]$DolphinDir, [Parameter(Mandatory)][string]$Work,
   [Parameter(Mandatory)][string]$Game, [Parameter(Mandatory)][string]$DiscDir, [string[]]$GuestDiscDirs = @(),
   [int]$Players = 2, [int]$Seconds = 120, [string]$Server = "ws://127.0.0.1:8793", [switch]$WriteSave, [switch]$Relay, [switch]$SeedCards,
-  [string]$Code = "", [string]$Desktop = "rhgc_room", [int]$KillHostAfter = 0
+  [string]$Code = "", [string]$Desktop = "rhgc_room", [int]$KillHostAfter = 0, [string]$SeedGci = "", [string]$CardKey = "gc_gm4e01-0"
 )
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $ErrorActionPreference = "Stop"
@@ -68,6 +70,10 @@ for ($i = 0; $i -lt $Players; $i++) {
     New-Item -ItemType Directory -Force $cardDir | Out-Null
     Set-Content "$cardDir\sentinel_inst$i.bin" ("sentinel " + $i) -Encoding ascii
   }
+  if ($SeedGci -and $i -eq 0) {   # a real save of this game in the host's card folder (-CardKey: gc_<disc id>-<disc>, e.g. gc_g4qe01-0)
+    $cardDir = "$d\userdata\emulators\dolphin\User\GC\RetroHub\$CardKey\GCI"
+    New-Item -ItemType Directory -Force $cardDir | Out-Null; Copy-Item $SeedGci $cardDir
+  }
   $disc = if ($i -gt 0 -and $GuestDiscDirs.Count -ge $i) { $GuestDiscDirs[$i - 1] } else { $DiscDir }
   $v = ($d -replace '\\', '/')
   $json = '{"name":"qa-At' + $i + '","rom_folders":["' + ($disc -replace '\\', '/') + '"],"server":"' + $Server + '","vault_dir":"' + $v + '/vault","sync_auto":false,"cloud_saves":false}'
@@ -122,6 +128,10 @@ if ($SeedCards) {
     Write-Host "=== inst$i real card folder after session:"; Get-ChildItem $cardDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host ("  " + $_.Name + " " + $_.Length + " bytes") }
     Write-Host ("  WriteSaveData in Dolphin.ini: " + ((Select-String -Path "$Work\inst$i\userdata\emulators\dolphin\User\Config\Dolphin.ini" -Pattern "WriteSaveData" -ErrorAction SilentlyContinue | ForEach-Object { $_.Line.Trim() }) -join ","))
   }
+}
+if ($SeedGci) {
+  Write-Host "=== host-sync (what Dolphin's NetPlay server sends):"; Get-ChildItem "$Work\inst0\userdata\netplay\gc\host-sync" -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Host ("  " + $_.FullName.Substring($Work.Length) + " " + $_.Length) }
+  for ($i = 1; $i -lt $Players; $i++) { Write-Host "=== inst$i NetPlayTemp card:"; Get-ChildItem "$Work\inst$i\userdata\emulators\dolphin\User\GC\NetPlayTemp\Card A" -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Host ("  " + $_.Name + " " + $_.Length) } }
 }
 # kill only what we started: our RetroHub pids, and Dolphin/powershell processes whose image lives under $Work
 $procs = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*$Work*gc_netplay_driver*") }
