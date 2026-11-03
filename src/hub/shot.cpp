@@ -1,6 +1,7 @@
 #include <sstream>
 #include "app.h"
 #include "libview_ui.h"
+#include "continue_ui.h"
 #include <cstring>
 
 /* ============================ main ============================ */
@@ -93,6 +94,7 @@ void shot_init_ui() {
         if (std::getenv("HUB_SHOT_BELL")) FR.shot_bell = true;
     }
     states_shot_seed();
+    continue_shot_seed();   // HUB_SHOT_CONTINUE=1|playing: play history for the Home Continue hero + Jump back in row
     cloud_ui_shot_init();
     kt_shot_init();
     party_shot_init();     // Plan 4 aids (HUB_SHOT_PARTY / _BRACKET / _HACKS); no-ops until each lane lands

@@ -5,6 +5,8 @@
 #include "wiiu_meta.h"
 #include "homefun.h"
 #include "hack_ui.h"
+#include "continue_ui.h"
+#include "continue_logic.h"
 
 #include <mutex>
 #include <thread>
@@ -32,10 +34,17 @@ void home_shelves() {
     for (size_t si = 0; si < A.shelves.size(); ++si) if (A.shelves[si].id == "recent") { recent_si = (int)si; break; }
     if (recent_si < 0) fr_home_shelf(avail, tw, th, gap, bleed);
     for (size_t si = 0; si < A.shelves.size(); ++si) {
-        const hubui::Shelf& sh = A.shelves[si];
+        const hubui::Shelf& sh0 = A.shelves[si];
+        /* Continue Playing becomes "Jump back in" (<= 6 games from the last 30 days, continue_ui.cpp) while the Continue hero is showing */
+        std::vector<int> jump_items;
+        const bool jump = sh0.id == "recent" && continue_row_items(&jump_items);
+        hubui::Shelf sh_jump;
+        if (jump) { sh_jump = sh0; sh_jump.title = "Jump back in"; sh_jump.items = jump_items; }
+        const hubui::Shelf& sh = jump ? sh_jump : sh0;
         bool is_console = sh.id.compare(0, 8, "console:") == 0 && sh.id != "console:other";   // unknown systems have no filter chip
         bool see_all = false;
-        bool overflow = hubui::shelf_max_scroll((int)sh.items.size() + (si == 0 && add_lead ? 1 : 0), tw, gap, bleed, avail) > 0;
+        const float stw = jump ? tw * 0.8f : tw, sth = stw / kTileAspect;   // the Jump back in row is slimmer than the other shelves
+        bool overflow = hubui::shelf_max_scroll((int)sh.items.size() + (si == 0 && add_lead ? 1 : 0), stw, gap, bleed, avail) > 0;
         shelf_header(sh.title.c_str(), is_console ? "See all" : "", bleed, (int)sh.items.size(), is_console ? &see_all : nullptr, overflow);
         if (see_all) {   // jump to All Games filtered to this console
             A.view = LibView::All;
@@ -47,7 +56,7 @@ void home_shelves() {
         }
         bool recent = sh.id == "recent";
         const int lead = si == 0 && add_lead ? 1 : 0;   // the first shelf starts with the "Add your own games" tile
-        shelf_strip("shelf_" + sh.id, (int)sh.items.size() + lead, tw, th, [&](int i, ImVec2 sz) {
+        shelf_strip("shelf_" + sh.id, (int)sh.items.size() + lead, stw, sth, [&](int i, ImVec2 sz) {
             if (lead && i == 0) return add_games_tile(sz);
             i -= lead;
             if (sh.items[i] >= (int)A.lib.size()) {   // a friend's game you do not own
@@ -59,8 +68,11 @@ void home_shelves() {
             }
             const hub::GameEntry& e = A.lib[sh.items[i]];
             TileSpec spec = spec_for_entry(e, sh.id.c_str(), recent, !is_console);
+            if (jump) spec.subtitle = hubui::cont::relative_time(unix_now(), gstate(e.key).last_played);
             TileResult r = draw_tile(spec, sz);
-            handle_entry_result(e, spec, r);
+            if (jump) {
+                continue_row_result(e, spec, r);
+            } else handle_entry_result(e, spec, r);
             return r;
         });
         ImGui::Dummy(ImVec2(0, sp(1.f)));
@@ -1073,6 +1085,7 @@ void page_library() {
         float hero_h = std::min(sp(40.f), std::max(sp(21.f), std::min(avail_h * 0.36f, ImGui::GetIO().DisplaySize.y * 0.25f)));   // <= a quarter of the window
         hero_h = tvmode::hero_h(hero_h, avail_h);
         if (attract_update()) attract_draw_hero(hero_h);   // L6: idle slideshow in place of the hero
+        else if (continue_hero_ok(*sel)) draw_continue_hero(*sel, continue_hero_min_h(hero_h));   // played in the last 30 days: Continue hero
         else draw_hero(*sel, hero_h);
     }
     /* The shelf strips inset their covers by `bleed` (room for the hover grow); pull the child out by the same amount so
