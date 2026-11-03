@@ -755,6 +755,7 @@ static void test_unknown_and_damaged(const fs::path& root, const fs::path& stage
     us.push_back({"Corrupt.7z", noise(5000, 4), ""});
     us.push_back({"Corrupt.zip", noise(5000, 4), ""});
     us.push_back({"Corrupt.rar", noise(5000, 4), ""});
+    us.push_back({"Locked Game.zip", Bytes(), "password"});
     for (auto& u : us) write_file(d / u.name, u.data);
     /* truncated 7z: a good one cut in half */
     {
@@ -772,12 +773,19 @@ static void test_unknown_and_damaged(const fs::path& root, const fs::path& stage
         make_zip(d / "Loadiine Game.zip", {{"Game/code/x.rpx", filler(8192, 1)}, {"Game/meta/meta.xml", text("<menu/>")}});
         make_zip(d / "Only Docs.zip", {{"readme.txt", text("hello")}, {"cover.jpg", noise(3000, 1)}});
         make_zip(d / "PS1 Compressed.zip", {{"My Disc.chd", make_chd(make_cnf_iso("BOOT = cdrom:\\SLUS_999.55;1\r\n", 40, 5), true, true)}});
+        {   // a password protected zip: the "encrypted" bit set in every central directory record
+            make_zip(d / "Locked Game.zip", {{"Locked Game.gba", make_gba("LOCKED", "ALKD", 3)}});
+            Bytes z = read_file(d / "Locked Game.zip");
+            for (size_t i = 0; i + 46 < z.size(); ++i) if (z[i] == 'P' && z[i + 1] == 'K' && z[i + 2] == 1 && z[i + 3] == 2) z[i + 8] |= 1;
+            for (size_t i = 60; i < 160 && i < z.size(); ++i) z[i] ^= 0x5A;   // the data is "encrypted" for real: it no longer inflates to the file
+            write_file(d / "Locked Game.zip", z);
+        }
     }
     auto games = scan_library({S8(d)}, nullptr);
     auto sk = scan_skipped_archives();
     for (auto& g : games) std::printf("   unknown dir: unexpectedly listed %s (%s) %s\n", g.title.c_str(), g.key.c_str(), g.path.c_str());
     const char* const all[] = {"Broken Disc.iso", "Tiny.z64", "Odd Cart.gba", "Odd Cart.gb", "Odd Cart.nds", "Dangling.cue", "Wii Game.rvz", "Switch Game.nsp", "Wii Game.wbfs", "Pack.tar.gz", "Pack.7z.001", "Pack.part1.rar",
-                               "Empty.zip", "Corrupt.7z", "Corrupt.zip", "Corrupt.rar", "Cut Short.7z", "Nested.zip", "Loadiine Game.zip", "Only Docs.zip", "PS1 Compressed.zip"};
+                               "Empty.zip", "Corrupt.7z", "Corrupt.zip", "Corrupt.rar", "Cut Short.7z", "Nested.zip", "Loadiine Game.zip", "Only Docs.zip", "PS1 Compressed.zip", "Locked Game.zip"};
     for (const char* n : all) {
         const SkippedArchive* s = skipped_for(sk, d / n);
         std::string want;
@@ -871,6 +879,21 @@ static void test_misc(const fs::path& root, const fs::path& stage) {
         int images = 0;
         if (ok2) for (const auto& it : fs::directory_iterator(P8(out2).parent_path(), ec)) if (lower(S8(it.path().extension())) == ".3ds") ++images;
         simple("changed zip with another inner name: one image, the new one", ok1 && ok2 && images == 1 && P8(out2).filename() == "Second Name.3ds" && extracted_3ds_path(v2[0]) == out2, ok2 ? out2 : err);
+    }
+    /* an archive with several games lists the first and says that the rest are not listed */
+    {
+        const fs::path d = root / "twogames";
+        std::error_code ec;
+        fs::remove_all(d, ec);
+        make_zip(d / "Two Games.zip", {{"First Game.gba", make_gba("FIRSTGAME", "AFG1", 1)}, {"Second Game.gba", make_gba("SECONDGAME", "AFG2", 2)}, {"readme.txt", text("hi")}});
+        auto v = scan_library({S8(d)}, nullptr);
+        const auto sk1 = scan_skipped_archives();
+        const SkippedArchive* s = skipped_for(sk1, d / "Two Games.zip");
+        simple("archive with two games: one listed, the other reported", v.size() == 1 && s && s->reason.find("2 game files") != std::string::npos, s ? s->reason : "no note");
+        auto v2 = scan_library({S8(d)}, nullptr);   // from the scan cache: the note stays
+        const auto sk2 = scan_skipped_archives();
+        const SkippedArchive* s2 = skipped_for(sk2, d / "Two Games.zip");
+        simple("... and the note survives a cached rescan", v2.size() == 1 && s2 && s2->reason.find("2 game files") != std::string::npos);
     }
     /* a disc whose only file is a raw .bin (no .cue) is listed under its console: the hub writes a one-track cue sheet when you press Play */
     {
