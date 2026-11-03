@@ -40,6 +40,15 @@ void page_online_home() {
     float gap = 20 * S;
     bool two = avail > 760 * S;
     float w = two ? (avail - gap) / 2 : avail;
+    const bool access_ok = fr_access() == hubnet::Access::Ok;
+    if (!access_ok) {   // the owner has not approved this account yet / it is blocked: say so instead of reconnecting forever
+        begin_panel("access_note", ImVec2(avail, 0), ui::mix(ui::PANEL, fr_access() == hubnet::Access::Pending ? ui::WARN : ui::BAD, 0.16f));
+        section_title(hubnet::access_title(fr_access()));
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        ImGui::TextWrapped("%s", hubnet::access_message(fr_access()).c_str());
+        end_panel();
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    }
 
     // the two cards sit side by side: both are at least as tall as the taller one was last frame (measured below), so they match
     static float host_nat = 0.f, join_nat = 0.f;
@@ -52,7 +61,7 @@ void page_online_home() {
     ImGui::PopFont();
     text_wrapped_disabled("Create a room, pick a game everyone owns, and share the 6-letter code.");
     ImGui::Dummy(ImVec2(0, 8 * S));
-    if (button("Host Room", ImVec2(-1, sp(7.f)), true, A.proc == nullptr, ui::Icon::Globe)) enter_room(true, hubnet::new_room_code());
+    if (button("Host Room", ImVec2(-1, sp(7.f)), true, A.proc == nullptr && access_ok, ui::Icon::Globe)) enter_room(true, hubnet::new_room_code());
     if (!group_last_label().empty()) {
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         if (button(group_last_label().c_str(), ImVec2(-1, sp(5.f)), false, A.proc == nullptr, ui::Icon::Globe)) group_invite_last();
@@ -78,9 +87,9 @@ void page_online_home() {
     A.join_buf = hubui::normalize_code(buf);
     bool valid = hubnet::valid_room_code(A.join_buf);
     ImGui::SameLine();
-    bool go = button("Join", ImVec2(120 * S, 0), true, valid && A.proc == nullptr);
+    bool go = button("Join", ImVec2(120 * S, 0), true, valid && A.proc == nullptr && access_ok);
     if (!A.join_buf.empty() && !valid) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_WARN), "Codes are 6 letters/digits (no I, O, 0, 1).");
-    if (go || (enter && valid)) enter_room(false, A.join_buf);
+    if ((go || (enter && valid)) && access_ok) enter_room(false, A.join_buf);
     join_nat = natural_h();
     end_panel();
 

@@ -73,6 +73,10 @@ int fr_total_unread() {
     return n;
 }
 void fr_mark_read(const std::string& uid) { if (FR.fake) FR.f_unread[uid] = 0; else FR.cli.mark_read(uid); }
+bool g_shot_admin = false;                       // screenshot aids (HUB_SHOT_ADMIN / HUB_SHOT_ACCESS)
+hubnet::Access g_shot_access = hubnet::Access::Ok;
+bool fr_is_admin() { return g_shot_admin || (FR.started && !FR.fake && FR.cli.is_admin()); }
+hubnet::Access fr_access() { return g_shot_access != hubnet::Access::Ok ? g_shot_access : (FR.started && !FR.fake ? FR.cli.access() : hubnet::Access::Ok); }
 bool fr_connected() { return FR.fake || (FR.started && FR.cli.connected()); }
 std::string fr_status_text() { return FR.fake ? "Online" : (FR.started ? FR.cli.status_text() : "Offline"); }
 std::string fr_my_code() { return FR.fake ? "RH-7KQ2-M9XD" : (FR.started ? FR.cli.my_code() : ""); }
@@ -724,6 +728,7 @@ void fr_tick() {
                 if (hub::profile::valid_reaction(e.msg.emoji) && !e.msg.target.empty() && e.msg.target.size() <= 64 && fr_find(e.uid))
                     FR.reacts[e.uid + "|" + e.msg.target].set(e.uid, e.msg.emoji, e.msg.on);
                 break;
+            case hubnet::Event::AdminResult: set_toast(e.text, e.ok, 6.0); admin_ui_poke(); break;
             case hubnet::Event::Queued: set_toast("Saved - will send when you're back online.", true, 4.0); break;
             case hubnet::Event::SendFailed: set_toast(e.text.empty() ? std::string("That could not be sent.") : e.text, false, 7.0); break;
             case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite, e.msg.ask_host); break;

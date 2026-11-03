@@ -117,6 +117,9 @@ std::string server_reason_text(const std::string& reason)
     if (reason == "no-free-port") return "That game has no free controller port";
     if (reason == "host-too-old") return "Your friend needs to update RetroHub";
     if (reason == "no-such-game") return "That game has ended";
+    /* The owner's account controls: the room server closes a seat whose account is blocked (4010) or still waiting for approval (4012). */
+    if (reason == "pending-approval") return "Waiting for the owner to approve this account. Online play switches on as soon as it is approved.";
+    if (reason == "account-unavailable") return "This account can't use online rooms right now.";
     /* The free Cloudflare plan's daily budget is used up (new rooms stop at 70%): nothing is wrong on this PC. */
     if (reason == "server-busy") return "The free server is busy right now, so it can't open new rooms. Try again in a little while.";
     /* Per-address limits: too many rooms or connections from this network within a minute. */
@@ -226,6 +229,7 @@ void LobbyClient::update_tail()
         int code = d.ws.close_code();
         net_log("Lobby: socket failed (code %d): %s", code, d.ws.error().c_str());
         if (code == 4001) { d.failed = true; d.status = friendly("host-left"); return; }
+        if (code == 4010 || code == 4012) { d.failed = true; d.status = friendly(code == 4012 ? "pending-approval" : "account-unavailable"); return; }   // never retried
         /* Anything else (network blip, Worker restart, Wi-Fi roam): reconnect by itself with the same room code. */
         if (d.was_welcomed && d.attempts < kMaxReconnects) {
             ++d.attempts;

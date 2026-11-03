@@ -351,6 +351,11 @@ void draw_frame() {
     if (nav_item(Page::Controllers, "Controllers", ui::Icon::Gamepad, iw, expand, 0)) A.page = Page::Controllers;
     if (nav_item(Page::Settings, "Settings", ui::Icon::Gear, iw, expand, 0)) A.page = Page::Settings;
     if (nav_item(Page::About, "Updates", ui::Icon::Info, iw, expand, hubupdate::update_available() ? ui::ACCENT : 0)) A.page = Page::About;
+    if (fr_is_admin()) {   // the owner account only; a non-admin never reaches this code
+        const int waiting = g_shot_admin ? 2 : FR.cli.admin_pending();
+        std::string al = waiting ? "Admin  (" + std::to_string(waiting) + " waiting)" : std::string("Admin");
+        if (nav_item(Page::Admin, al.c_str(), ui::Icon::Bolt, iw, expand, waiting ? ui::WARN : 0)) A.page = Page::Admin;
+    } else if (A.page == Page::Admin) A.page = Page::Library;
     ImGui::PopStyleVar();
 
     // bottom: collapse toggle + player card
@@ -447,6 +452,7 @@ void draw_frame() {
         case Page::Controllers: page_controllers(); break;
         case Page::Settings: page_settings(); break;
         case Page::About: page_about(); break;
+        case Page::Admin: page_admin(); break;
     }
     ImGui::EndChild();
     draw_footer(footer_h);
