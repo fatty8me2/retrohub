@@ -352,6 +352,7 @@ void empty_library_state() {
 
 /* ---------- top bar ---------- */
 
+static std::string lib_sort_label = "Sort: Title", lib_friends_label = "Friends' games";   // shortened when the bar is tight (see library_top_bar)
 void library_top_bar() {
     ImGuiIO& io = ImGui::GetIO();
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);   // D-pad focus starts on the hero / tiles, not here
@@ -376,8 +377,17 @@ void library_top_bar() {
     float total = bh + sp(1.f) + add_games_header_width(bh) + (dice ? bh + sp(1.f) : 0.f);
     const float sw_w = lib_switcher_width() + (A.view == LibView::All ? sp(1.f) : 0.f);
     {   // the search box gives way so the pinned right-hand buttons (Add games...) are never pushed past the edge (narrow window / Friends panel open)
-        const float chips = ImGui::CalcTextSize("Sort: Recently added").x + ImGui::CalcTextSize("Friends' games").x + sp(14.f) + sp(4.f);
-        const float room = ImGui::GetContentRegionAvail().x - total - chips - sw_w;
+        /* Search keeps a usable width: when the chips would squeeze it, "Friends' games" shortens to "Friends" and then "Sort: X" to "X". */
+        const float min_search = sp(17.f);
+        const std::string sort_nm = hubui::sort_name(hubui::sort_from_key(A.st.library_sort));
+        auto chips_w = [&](const std::string& s, const std::string& f) { return ImGui::CalcTextSize(s.c_str()).x + ImGui::CalcTextSize(f.c_str()).x + sp(6.5f) + sp(4.5f); };
+        const float base = ImGui::GetContentRegionAvail().x - total - sw_w;
+        for (int lvl = 0; lvl < 3; ++lvl) {
+            lib_sort_label = lvl >= 2 ? sort_nm : "Sort: " + sort_nm;
+            lib_friends_label = lvl >= 1 ? "Friends" : "Friends' games";
+            if (base - chips_w(lib_sort_label, lib_friends_label) >= min_search) break;
+        }
+        const float room = base - chips_w(lib_sort_label, lib_friends_label);
         search_w = std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room));
         ImGui::SetNextItemWidth(search_w);
     }
@@ -396,7 +406,7 @@ void library_top_bar() {
 
     {   // sort chip: A cycles Title / Last played / Most played / Recently added (RT on the pad)
         ImGui::SameLine(0, sp(1.5f));
-        std::string sl = std::string("Sort: ") + hubui::sort_name(hubui::sort_from_key(A.st.library_sort));
+        std::string sl = lib_sort_label;
         if (chip(sl.c_str(), hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title, ui::ACCENT)) cycle_sort(1);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the order of your games  (RT on a controller)");
     }
@@ -406,7 +416,7 @@ void library_top_bar() {
     }
     {   // "Show friends' games": friends' titles you do not own, greyed out (metadata only)
         ImGui::SameLine(0, sp(1.f));
-        if (chip("Friends' games", A.friends_chip, ui::ACCENT)) { A.friends_chip = !A.friends_chip; A.vis_dirty = true; }   // session-only: never saved
+        if (chip(lib_friends_label.c_str(), A.friends_chip, ui::ACCENT)) { A.friends_chip = !A.friends_chip; A.vis_dirty = true; }   // session-only: never saved
         if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) ImGui::SetTooltip("Show or hide friends' games for now");
     }
     ImGui::SameLine(0, 0);
@@ -483,15 +493,21 @@ void all_games_view() {
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     std::map<std::string, int>& counts = A.chip_counts;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
+    /* The chip rows wrap onto a new line instead of running off the right edge (1280x800 / 1100x700). */
+    const float chips_right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    auto chip_same_line = [&](const char* label, float spacing) {
+        if (spacing < 0.f) spacing = ImGui::GetStyle().ItemSpacing.x;
+        if (ImGui::GetItemRectMax().x + spacing + ImGui::CalcTextSize(label).x + sp(3.25f) <= chips_right) ImGui::SameLine(0, spacing);
+    };
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
     bool first = true;
     for (auto& c : chips) {
         int n = c.sys[0] ? counts[c.sys] : A.chip_total;
         if (c.sys[0] && n == 0 && A.sys_filter != c.sys) continue;
-        if (!first) ImGui::SameLine();
-        first = false;
         char lab[48];
         std::snprintf(lab, sizeof lab, "%s  %d", c.label, n);
+        if (!first) chip_same_line(lab, -1.f);
+        first = false;
         ImU32 a = COL_ACCENT, b2;
         if (c.sys[0]) system_colors(hub::system_from_short(c.sys), &a, &b2);
         if (chip(lab, A.sys_filter == c.sys, a)) { A.sys_filter = c.sys; A.vis_dirty = true; A.grid_scroll_top = true; }
@@ -504,7 +520,7 @@ void all_games_view() {
         }
         char lab[48];
         std::snprintf(lab, sizeof lab, "Online  %d", n_online);
-        ImGui::SameLine(0, sp(2.f));
+        chip_same_line(lab, sp(2.f));
         if (chip(lab, A.online_only, ui::GOOD)) { A.online_only = !A.online_only; A.vis_dirty = true; }
     }
     {   // Favorites chip, Genre picker and Group by Genre (saved like library_sort)
@@ -512,14 +528,14 @@ void all_games_view() {
         for (auto& e : A.lib) if (gstate(e.key).favorite) ++n_fav;
         char lab[48];
         std::snprintf(lab, sizeof lab, "Favorites  %d", n_fav);
-        ImGui::SameLine(0, sp(2.f));
+        chip_same_line(lab, sp(2.f));
         if (chip(lab, A.st.lib_favs_only, COL_ACCENT)) { A.st.lib_favs_only = !A.st.lib_favs_only; mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only your favorite games");
-        ImGui::SameLine();
         std::string gl = A.st.lib_genre.empty() ? std::string("Genre: All") : "Genre: " + A.st.lib_genre;
+        chip_same_line(gl.c_str(), -1.f);
         if (chip(gl.c_str(), !A.st.lib_genre.empty(), COL_ACCENT)) ImGui::OpenPopup("##genre_pick");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show one genre only");
-        ImGui::SameLine();
+        chip_same_line(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", -1.f);
         if (chip(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", A.st.lib_group_genre, COL_ACCENT)) {
             A.st.lib_group_genre = !A.st.lib_group_genre; mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true;
         }
