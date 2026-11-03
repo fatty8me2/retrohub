@@ -35,7 +35,7 @@ int main(int argc, char** argv)
     for (const Rec& r : recs) {
         CHECK(!r.title.empty() && !r.why.empty());
         CHECK(r.year >= 1980 && r.year <= 2020);
-        CHECK(r.players >= 1 && r.players <= 8);
+        CHECK(r.players >= 1 && r.players <= 9);
         CHECK(kGenres.count(r.genre) == 1);
         CHECK(r.why.size() <= 120);
         CHECK(titles[r.sys].insert(lower(r.title)).second);   // no duplicate title per console

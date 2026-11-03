@@ -1,6 +1,6 @@
 # Headless screenshots of the Discover page with a fake library (every 5th recommendation owned) and a fake shared pack
 # (the 2nd and 4th of each five installable). No network, muted, no window. Usage: qa\discover_shots.ps1 [outdir]
-param([string]$Out = "$env:TEMP\discover_shots")
+param([string]$Out = "$env:TEMP\discover_shots", [switch]$Real)   # -Real: the shipped recommended.json instead of the big fake list
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $exe = Join-Path $root "build\bin\Release\RetroHub.exe"
@@ -18,7 +18,9 @@ function Shot($name, $console, $size, $extra) {
 }
 # Big fake list (HUB_SHOT_DISCOVER_BIG: ~100 made-up picks per console from the real database) + the real gameinfo.tsv catalog.
 $big = @{ HUB_SHOT_DISCOVER_BIG="1" }
-function V($v) { $h = @{ HUB_SHOT_DISCOVER_BIG="1"; HUB_SHOT_DISCOVER_VIEW=$v }; return $h }
+if ($Real) { $big = @{} }
+function V($v) { $h = @{ HUB_SHOT_DISCOVER_BIG="1"; HUB_SHOT_DISCOVER_VIEW=$v }
+  if ($Real) { $h.Remove("HUB_SHOT_DISCOVER_BIG") }; return $h }
 foreach ($sz in @(@("1280","1280x800"), @("1600","1600x1000"))) {
   $w = $sz[0]; $s = $sz[1]
   Shot "default_n64_$w" "n64" $s $big
