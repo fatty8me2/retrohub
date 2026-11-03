@@ -38,6 +38,8 @@ struct AdminAccount {
     int64_t created = 0, first_seen = 0, last_seen = 0;   // ms since the epoch (0 = unknown)
     int pcs = 0;
     bool friend_of_you = false;
+    bool test = false;          // a test-flagged account (hidden unless the "test accounts" filter is on)
+    bool unapplied = false;     // the verdict has not reached the account yet (a failed push): the server keeps retrying
     std::string req;                                      // "in" | "out" | "" : a request between you and this account
     bool blocked() const { return status == "banned" || status == "denied"; }
     bool pending() const { return status == "pending"; }
@@ -75,6 +77,7 @@ struct AdminQuery {
     bool asc = false;
     std::string status = "all";   // all | pending | banned | ok
     int offset = 0, limit = 25;
+    bool show_test = false;    // include test-flagged accounts
 };
 
 /* ---- requests (JSON text for the socket) ---- */
@@ -92,7 +95,7 @@ inline std::string admin_list_json(const AdminQuery& q)
 {
     return "{\"type\":\"admin_list\",\"q\":\"" + admin_esc(q.q.substr(0, 40)) + "\",\"sort\":\"" + (q.by_first ? "first" : "last") + "\",\"order\":\"" +
            (q.asc ? "asc" : "desc") + "\",\"status\":\"" + admin_esc(q.status) + "\",\"offset\":" + std::to_string(q.offset < 0 ? 0 : q.offset) +
-           ",\"limit\":" + std::to_string(q.limit < 1 ? 25 : q.limit > 50 ? 50 : q.limit) + "}";
+           ",\"limit\":" + std::to_string(q.limit < 1 ? 25 : q.limit > 50 ? 50 : q.limit) + ",\"tests\":" + (q.show_test ? "true" : "false") + "}";
 }
 /* op: ban | unban | approve | deny | detail */
 inline std::string admin_uid_json(const std::string& op, const std::string& uid)
@@ -169,7 +172,7 @@ inline std::string admin_result_text(const std::string& op, bool ok, const std::
     }
     std::string who = name.empty() ? std::string("that account") : name;
     std::string t = op == "ban" ? "Banned " + who + "." : op == "unban" ? "Unbanned " + who + "." : op == "approve" ? "Approved " + who + "." : "Denied " + who + ".";
-    if (applied_known && !applied) t += " It will take effect when their app next checks in.";
+    if (applied_known && !applied) t += " Not applied yet - retrying.";
     return t;
 }
 

@@ -54,6 +54,7 @@ std::vector<AdminAccount> g_fake_all;
 void fake_filter_apply() {
     AU.fl.rows.clear();
     for (const AdminAccount& a : g_fake_all) {
+        if (a.test && !AU.q.show_test) continue;
         if (AU.q.status == "pending" && !a.pending()) continue;
         if (AU.q.status == "banned" && !a.blocked()) continue;
         if (!AU.q.q.empty()) {
@@ -123,6 +124,8 @@ void badge_pills(const AdminAccount& a) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     float x = p.x;
     auto pill = [&](const char* t, ImU32 bg) { x += ui::pill_at(dl, ImVec2(x, p.y), t, bg, IM_COL32_WHITE, ui::F.cap) + sp(0.5f); };
+    if (a.test) pill("TEST", ui::PANEL3);
+    if (a.unapplied) pill("NOT APPLIED YET", ui::WARN);
     if (a.blocked()) pill(a.status == "denied" ? "DENIED" : "BANNED", ui::BAD);
     else if (a.pending()) pill("PENDING", ui::WARN);
     if (a.friend_of_you) pill("FRIEND", ui::ACCENT);
@@ -293,6 +296,9 @@ void admin_ui_shot_init(const char* mode) {
     mk("lunuid", "Luna", "ok", "grandfathered", true, now - 120 * D, now - 20 * D, 3);
     mk("spamuid", "spam4free", "banned", "admin", false, now - 5 * D, now - 4 * D, 1);
     mk("samuid", "Sam", "ok", "grandfathered", true, now - 150 * D, now - 3 * D, 1);
+    mk("qabot01", "qa-bot", "ok", "auto", false, now - 6 * D, now - 2 * H, 1);
+    g_fake_all.back().test = true;
+    for (AdminAccount& a : g_fake_all) if (a.uid == "spamuid") a.unapplied = true;   // shows the "not applied yet - retrying" badge
     AU.fs.approval = true; AU.fs.vouch = false; AU.fs.autofriend = true; AU.fs.cutoff = now - 4 * D;
     std::string m = mode ? mode : "";
     if (m == "pending") AU.q.status = "pending";
@@ -360,6 +366,8 @@ void page_admin() {
         }
         ImGui::SameLine();
         if (ui::chip(AU.q.asc ? "Oldest first" : "Newest first", false, ui::ACCENT)) { AU.q.asc = !AU.q.asc; AU.dirty = true; if (AU.fake) fake_filter_apply(); }
+        ImGui::SameLine();
+        if (ui::chip("Show test accounts", AU.q.show_test, ui::ACCENT)) { AU.q.show_test = !AU.q.show_test; AU.q.offset = 0; AU.dirty = true; if (AU.fake) fake_filter_apply(); }
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     float rw_in = ImGui::GetContentRegionAvail().x;
