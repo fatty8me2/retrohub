@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.31.5",
+      "date": "2026-11-02",
+      "title": "PS2 online for 4 players",
+      "new": [
+        "PlayStation 2 online rooms now take up to 4 players (multitap), for games that support it"
+      ],
+      "improved": [],
+      "fixed": [
+        "PS2 online could not start: \"The PlayStation 2 online core could not be downloaded: download has the wrong size\". The core now comes from RetroHub's own pinned copy, so upstream updates can't break it"
+      ]
+    },
+    {
       "version": "1.31.4",
       "date": "2026-11-02",
       "title": "GameCube online at full speed",
