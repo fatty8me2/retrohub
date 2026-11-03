@@ -79,8 +79,7 @@ Xbox B -> 3DS A, A -> B, Y -> X, X -> Y, d-pad, LB/RB -> L/R, triggers -> ZL/ZR,
 right stick -> C-stick. Audio is on (Azahar's default). Fullscreen comes from the launch flag.
 
 **Cemu** (`portable\settings.xml`, `portable\controllerProfiles\controller0.xml`, each written only if missing): `settings.xml`
-existing is what suppresses the Getting Started dialog; update checks off. Controller 0 = "Wii U GamePad" on XInput pad 0
-with Cemu's own default mapping ids. Audio uses Cemu's defaults.
+existing is what suppresses the Getting Started dialog; update checks off. Controller 0 = "Wii U GamePad" for port-order player 1 and controller1-3 = Pro Controllers for players 2-4 (Pro button ids differ from the GamePad's after Minus: Home sits at 11). An XInput pad is addressed by its real XInput slot (its SDL player index), any other pad as an `SDLController` (`<index>_<guid>`); with no stored port order every connected pad is used, in SDL order. Test: `hub_ext_pads_test`.
 
 ## Saves in the vault
 

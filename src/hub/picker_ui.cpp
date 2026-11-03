@@ -47,16 +47,17 @@ void build_items(const std::vector<hubui::PeerInfo>& peers) {
         it.sys_name = hub::system_name(e.system);
         it.pinned = is_native(e);
         it.min_players = 1;
-        it.max_players = local_players_for(e);
+        it.max_players = supports_online(e) ? max_players_for(e) : local_players_for(e);   // the room's cap, not the local pad count
         it.supported = supports_online(e);
         it.remote = remote_play_entry(e);
         if (!it.supported) {
             it.selectable = false;
-            it.reason = hubcaps::online_unsupported_reason(e.system);
+            it.reason = online_block_reason(e);
         } else {
             auto sel = hubui::game_selectable(rid, max_players_for(e), peers, 0, remote_play_entry(e));
             it.selectable = sel.ok;
             it.reason = sel.reason;
+            if (!sel.ok && sel.reason.compare(0, 11, "too many pl") == 0) { std::string why = player_limit_note(e); if (!why.empty()) it.reason += ". " + why; }
             it.untested = online_untested(e);
         }
         const hub::GameState& gs = gstate(e.key);
@@ -210,11 +211,17 @@ void room_game_hero(const hub::GameEntry* rg, bool host) {
         dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 12 * S + ui::F.cap->FontSize + 4 * S), ui::TEXT, ui::ellipsize(hf, hf->FontSize, rg->title, tw).c_str());
         float y = p0.y + 12 * S + ui::F.cap->FontSize + 4 * S + hf->FontSize + 10 * S, x = tx;
         x += pill_at(dl, ImVec2(x, y), hub::system_name(rg->system), mix(c0, IM_COL32_BLACK, 0.2f)) + 6 * S;
-        x += pill_at(dl, ImVec2(x, y), hubpick::players_text(1, local_players_for(*rg)).c_str(), IM_COL32(0, 0, 0, 120)) + 6 * S;
+        x += pill_at(dl, ImVec2(x, y), hubpick::players_text(1, supports_online(*rg) ? max_players_for(*rg) : local_players_for(*rg)).c_str(), IM_COL32(0, 0, 0, 120)) + 6 * S;
         bool unt = online_untested(*rg);
         x += pill_at(dl, ImVec2(x, y), unt ? "Untested online" : "Online ready", unt ? IM_COL32(0, 0, 0, 170) : ui::GOOD, unt ? ui::WARN : IM_COL32(8, 28, 16, 255)) + 6 * S;
         if (remote_play_entry(*rg)) pill_at(dl, ImVec2(x, y), "Remote play", IM_COL32(40, 90, 170, 255));
-        if (!host) dl->AddText(ImVec2(tx, p1.y - 14 * S - ImGui::GetFontSize()), ui::TEXT2, "The host picks the game.");
+        {   // why the room is smaller than four ("This game supports at most 2 players.", "Unlisted NES games are limited to 2 players ...")
+            const std::string why = supports_online(*rg) ? player_limit_note(*rg) : std::string();
+            float ny = y + 28 * S;
+            if (!why.empty()) {
+                for (auto& l : ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), why, tw, 2)) { dl->AddText(ImVec2(tx, ny), ui::WARN, l.c_str()); ny += ImGui::GetFontSize() + 2 * S; }
+            } else if (!host) dl->AddText(ImVec2(tx, p1.y - 14 * S - ImGui::GetFontSize()), ui::TEXT2, "The host picks the game.");
+        }
     } else {
         dl->AddRectFilled(a0, a1, ui::PANEL2, 10 * S);
         dl->AddRect(a0, a1, ui::HAIRLINE, 10 * S, 0, 1.f);

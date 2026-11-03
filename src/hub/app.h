@@ -525,6 +525,8 @@ void rebuild_vis();
 bool added_stamps_changed();   // true once when background "recently added" stats landed (rebuild the list)
 bool supports_online(const hub::GameEntry& e);
 bool online_untested(const hub::GameEntry& e);
+std::string online_block_reason(const hub::GameEntry& e);   // why a game cannot be played in a room ("" = it can)
+std::string player_limit_note(const hub::GameEntry& e);     // why the room cap is below 4 ("" = nothing to explain)
 /* picker_ui.cpp: room game picker (host) and the selected-game hero card (everyone) */
 void room_picker_set_query(const char* q);
 void room_game_hero(const hub::GameEntry* rg, bool host);
@@ -923,10 +925,10 @@ bool draw_players_strip(int players);            // library details: "Players: 1
 std::string controls_arg(const std::string& system_key, const std::string& game_key);
 hubctl::Profile controls_profile(const std::string& system_key, const std::string& game_key);
 hubemu::DolphinPads dolphin_pads_for(const hubctl::Profile& gc_profile);
-hubemu::Ps2Pads ps2_pads_for(const hubctl::Profile& ps2_profile);   // page_controllers.cpp
+hubemu::Ps2Pads ps2_pads_for(const hubctl::Profile& ps2_profile, int max_players = 4);   // page_controllers.cpp; max_players: the game's local player count (no multitap for a 2-player game)
 hubemu::AzPad azahar_pad_for(const hubctl::Profile& profile_3ds);
 hubemu::CemuPads cemu_pads_for(const hubctl::Profile& profile_wiiu);
-hubemu::CemuPads cemu_pads_for_own(const hubctl::Profile& profile_wiiu);   // like cemu_pads_for, non-XInput pads become SDL players
+hubemu::CemuPads cemu_pads_for_own(const hubctl::Profile& profile_wiiu);   // like cemu_pads_for, non-XInput pads become SDL players; used by the managed Cemu too
 
 
 /* ---- page_saves.cpp ---- */
