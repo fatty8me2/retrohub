@@ -51,6 +51,10 @@ add_executable(retrorun_rollback_test test_rollback.cpp rollback.cpp)
 target_include_directories(retrorun_rollback_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
 
 # Rollback under long network stalls (2 and 4 peers, virtual clock): never a desync, no false drops, a dropped peer learns it.
+# Which device each libretro port needs per system, 4-pad adapter rules, offline player count (port_plan.h): pure logic.
+add_executable(retrorun_port_plan_test test_port_plan.cpp)
+target_include_directories(retrorun_port_plan_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(retrorun_rollback_stall_test test_rollback_stall.cpp rollback.cpp)
 target_include_directories(retrorun_rollback_stall_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
 

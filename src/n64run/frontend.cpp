@@ -1816,7 +1816,7 @@ int main(int argc, char** argv) {
             }
         }
     }
-    if (online && !(args.spectate && args.legacy_host)) {
+    if ((online && !(args.spectate && args.legacy_host)) || (std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_NODITHER"))) {   // N64RUN_QA_NODITHER: offline RDRAM comparisons (qa\players_input_check.ps1)
         /* GLideN64 dithers the image it copies back into RDRAM with a noise pattern that advances with every frame it has drawn. Peers that
          * booted together agree, but a spectator that joined from a savestate has drawn a different number of frames, so its framebuffers in
          * RDRAM (and the RDRAM sync hash) would differ forever. No dither keeps that copy a pure function of the game's own state. Every
@@ -1874,7 +1874,15 @@ int main(int argc, char** argv) {
         LockstepHooks hk;
         if (test_input.active()) {
             hk.update_local = [&] { test_input.update(); };
-            hk.read_local = [&](int idx) { return test_input.read(idx); };
+            static unsigned qa_ports = 15;   // QA (needs RETROHUB_QA=1): N64RUN_TEST_PORTS=<mask>, bit k = port k gets scripted input, the others stay neutral (qa\players_input_check.ps1)
+            if (const char* q = std::getenv("RETROHUB_QA"); q && *q && std::string(q) != "0")
+                if (const char* m = std::getenv("N64RUN_TEST_PORTS")) qa_ports = (unsigned)std::strtoul(m, nullptr, 0);
+            hk.read_local = [&](int idx) {
+                int n = -1, port = -1;
+                for (int p = 0; p < kPorts && port < 0; p++) if (args.owner[p] == my_slot && ++n == idx) port = p;
+                if (port >= 0 && !((qa_ports >> port) & 1u)) return 0u;
+                return test_input.read(idx);
+            };
         } else {
             hk.update_local = [&] { input.update(); { bool cc = input.clip_held(); unsigned long long tn = GetTickCount64(); if (cc && !g_clip_prev && tn >= g_clip_cool) { g_clip_cool = tn + 3000; g_clip_want = true; } g_clip_prev = cc; } g_in_gate.note_view_y(input.view_y_held(), GetTickCount64()); n64_apply_start_volume(); n64_boost_tick(input.boost_held() && !online); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
             hk.read_local = [&](int idx) -> uint32_t { return g_in_gate.suppressed(GetTickCount64()) ? 0u : input.read(idx); };   // hub menu open: neutral, lockstep still sends the frame
