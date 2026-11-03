@@ -58,14 +58,14 @@ inline int default_online_max(hub::System s) {
     }
 }
 
-/* Players one PC can seat for a game that has no catalog entry (the "1-N players" label and the port strip before Play). Handhelds are one
- * console and one pad; PSP and 3DS likewise. Consoles with four pads (and the multitap/Four Score systems the hub switches on by itself for 3+ pads)
- * take four. NES/SNES stay at 2 until the catalog lists the game. */
+/* Players one PC can seat for a game that has no catalog entry (the "1-N players" label, the port strip before Play, the party couch pool). These are the
+ * old values (the room cap) except where the old value was too low for what the console takes: PS1 and Wii U take four pads (emulated multitap /
+ * Cemu players 1-4); PSP is one pad. NES/SNES stay at 2 until the catalog lists the game. */
 inline int default_local_max(hub::System s) {
     switch (s) {
-        case hub::System::GB: case hub::System::GBC: case hub::System::GBA: case hub::System::NDS: case hub::System::N3DS: case hub::System::PSP: return 1;
-        case hub::System::NES: case hub::System::SNES: return 2;
-        default: return 4;
+        case hub::System::PSP: return 1;
+        case hub::System::GB: case hub::System::GBC: case hub::System::NDS: case hub::System::NES: case hub::System::SNES: return 2;
+        default: return 4;   // N64, GC, GBA, 3DS (as before), PS1 and Wii U (raised from 2), PS2
     }
 }
 
@@ -83,15 +83,15 @@ inline std::string online_game_block(hub::System s, const hub::GameInfo* cat, co
 }
 
 /* One line saying why a room for this game holds at most `cap` players ("" = the console's four and nothing to explain). Shown on the
- * room's game card and after "too many players". */
-inline std::string online_limit_note(hub::System s, const hub::GameInfo* cat, int cap) {
+ * room's game card and after "too many players" (`only_new_info`: "" when the note would only repeat the number). */
+inline std::string online_limit_note(hub::System s, const hub::GameInfo* cat, int cap, bool only_new_info = false) {
     if (cat && hub::link_cable_game(cat->id)) return "Link-cable game: exactly 2 players, one per console.";
     if (cap >= 4) return "";
     if (cap <= 1) return cat ? "This game is single-player, so a room can't play it with others." : "";
     if (cat) {
         if (cat->online_max > 0 && cat->online_max < cat->max_players)
             return "Online is limited to " + std::to_string(cap) + " players here (the game itself supports " + std::to_string(cat->max_players) + ").";
-        return "This game supports at most " + std::to_string(cap) + " players.";
+        return only_new_info ? std::string() : "This game supports at most " + std::to_string(cap) + " players.";   // "too many players (max N)" says it already
     }
     switch (s) {
         case hub::System::NES: return "Unlisted NES games are limited to 2 players: 3-4 need the Four Score, which only the listed games are known to use.";

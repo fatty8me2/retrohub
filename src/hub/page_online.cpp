@@ -188,7 +188,7 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
     if (A.proc) return "You're in a game right now.";
     auto sel = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0, remote_play_entry(*rg));   // remote play: guests need no copy
     if (!sel.ok) {
-        std::string why = player_limit_note(*rg);
+        std::string why = player_limit_why(*rg);   // only what "(max N)" does not already say
         return (!why.empty() && sel.reason.compare(0, 11, "too many pl") == 0) ? sel.reason + ". " + why : sel.reason;
     }
     if (host && remote_play_entry(*rg) && is_remote_stand_in(*rg)) return "You need your own copy of " + rg->title + " to host remote play.";

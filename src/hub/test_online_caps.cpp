@@ -63,9 +63,10 @@ int main() {
     CHECK(sp && hubcaps::online_capable(System::PS1, sp) && hubcaps::online_untested(System::PS1, sp));   // single-player: offered, tagged untested
     CHECK(hubcaps::online_capable(System::PS1, nullptr) && hubcaps::online_untested(System::PS1, nullptr));   // unknown disc: offered, untested
 
-    /* Local seats for a game without a catalog entry: handhelds are one pad; the four-pad consoles take four. */
-    for (System s : {System::GB, System::GBC, System::GBA, System::NDS, System::N3DS, System::PSP}) CHECK(hubcaps::default_local_max(s) == 1);
-    for (System s : {System::N64, System::GC, System::WiiU, System::PS1, System::PS2}) CHECK(hubcaps::default_local_max(s) == 4);
+    /* Local seats for a game without a catalog entry: never below what they were (the old room caps), raised for PS1/Wii U; PSP is one pad. */
+    for (System s : {System::GB, System::GBC, System::NDS}) CHECK(hubcaps::default_local_max(s) == 2);
+    for (System s : {System::GBA, System::N3DS, System::N64, System::GC, System::WiiU, System::PS1, System::PS2}) CHECK(hubcaps::default_local_max(s) == 4);
+    CHECK(hubcaps::default_local_max(System::PSP) == 1);
     CHECK(hubcaps::default_local_max(System::NES) == 2 && hubcaps::default_local_max(System::SNES) == 2);
 
     /* Caps against what each path can deliver. */
@@ -95,6 +96,8 @@ int main() {
         CHECK(hubcaps::online_game_block(System::PS2, nullptr, "Gauntlet - Dark Legacy").empty() && hubcaps::online_game_block(System::GC, nullptr, "Buzz!").empty());
         const hub::GameInfo* t5 = hub::find_game("tekken5");
         CHECK(t5 && hubcaps::online_limit_note(System::PS2, t5, 2).find("at most 2") != std::string::npos);
+        CHECK(hubcaps::online_limit_note(System::PS2, t5, 2, true).empty());   // only repeats "(max 2)": not added to that reason
+        CHECK(!hubcaps::online_limit_note(System::NES, nullptr, 2, true).empty() && !hubcaps::online_limit_note(System::PS2, hub::find_game("kh"), 1, true).empty());
         CHECK(hubcaps::online_limit_note(System::PS2, hub::find_game("crashnitro"), 4).empty());
         CHECK(hubcaps::online_limit_note(System::PS1, nullptr, 4).empty());
         CHECK(hubcaps::online_limit_note(System::NES, nullptr, 2).find("Four Score") != std::string::npos);

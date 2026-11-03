@@ -28,9 +28,8 @@ struct Ps2Pads {
     int count = 0;                    // players with a pad (0 = keyboard on Pad1)
     bool multitap = false;            // 3+ pads: multitap on memory-card port 1 (Pad1, Pad3, Pad4, Pad5)
 };
-/* The SDL-<n> PCSX2 gives each pad of `by_sdl` (every pad in SDL's own order). PCSX2 opens the pads in that order and names each after its SDL
- * player index (an XInput pad = its user slot); a pad with no index, or one already taken, gets the lowest free number
- * (SDLInputSource::OpenDevice). So SDL-<n> is NOT the pad's position in the list when an XInput pad sits on another slot. */
+/* The SDL-<n> PCSX2 gives each pad of `by_sdl` (every pad in SDL's own order): its SDL player index (an XInput pad = its user slot), or the lowest free
+ * number for a pad with no index or one already taken. Source and caveat: the comment at the definition (pcsx2.cpp). Not the pad's position in the list. */
 std::vector<int> pcsx2_sdl_ids(const std::vector<PadDesc>& by_sdl);
 /* RetroHub port order -> players (at most `max_players`: a game that has two players never gets the multitap). Each player's pad is
  * addressed by the SDL-<n> of pcsx2_sdl_ids. */

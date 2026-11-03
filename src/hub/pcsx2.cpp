@@ -171,6 +171,13 @@ const char* pcsx2_bios_missing_text() {
 
 /* ------------------------------------------------------------------ pads */
 
+/* PCSX2 v2.8.2, pcsx2/Input/SDLInputSource.cpp (SDL3): every pad is opened from its SDL_EVENT_GAMEPAD_ADDED / JOYSTICK_ADDED event, in the order SDL reports
+ * the devices (Initialize enumerates nothing itself). SDLInputSource::OpenDevice takes
+ *     player_id = SDL_GetGamepadPlayerIndex(gamepad)  (SDL_GetJoystickPlayerIndex for a non-gamepad)
+ * and, if that is < 0 or GetControllerDataForPlayerId(player_id) already exists, replaces it with GetFreePlayerId() = the lowest number no open controller has.
+ * The binding device name is then "SDL-<player_id>" (neither the joystick instance id nor the enumeration index). pcsx2_sdl_ids mirrors exactly that loop over
+ * `by_sdl` (the hub's SDL 2.30.9 list: an XInput pad's player index is its user slot). Caveat: PCSX2 enumerates with SDL3, the hub with SDL2, so the order
+ * of pads that have no index could differ between the two. */
 std::vector<int> pcsx2_sdl_ids(const std::vector<PadDesc>& by_sdl) {
     std::vector<int> id(by_sdl.size(), -1);
     std::vector<bool> used;

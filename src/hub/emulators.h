@@ -84,6 +84,9 @@ struct PadDesc { std::string name, guid, key; bool xinput = false; int player = 
  * slot 0-3; pads without one get the lowest free slot in list order (so a list with no indices numbers the XInput pads 0, 1, 2 ...). Cemu's
  * XInput API, Dolphin's XInput/<n>/Gamepad and PPSSPP's device 20+n are all addressed by this slot, NOT by the pad's rank among the XInput pads. */
 std::vector<int> xinput_slots(const std::vector<PadDesc>& pads);
+/* Players when the user stored no port order: the XInput pads first in slot order (player 1 = XInput slot 0 for an Xbox + DualSense/8BitDo user,
+ * whichever SDL lists first), then the other pads in SDL order. */
+std::vector<PadDesc> default_player_order(const std::vector<PadDesc>& sdl_order);
 struct AzPad { std::string guid; int port = 0; };
 bool azahar_pad_select(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl, AzPad* out);
 std::string azahar_config_patch(const std::string& qt_config_ini, const hubctl::Profile& profile, const AzPad& pad);
