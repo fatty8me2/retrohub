@@ -1,8 +1,10 @@
 # Party mode (Plan 4 P1-P3) screenshots, HEADLESS (HUB_SCREENSHOT = SDL dummy driver, software renderer: no window is ever shown).
-# Output: qa\shots\party\<mode>_<size>.png   modes: panel lobbyguest update playing standings winner vote tie podium couch couchround
+# Output: qa\shots\party\<mode>_<size>.png   modes: panel lobbyguest update playing standings winner vote tie podium couch couchround off offmenu setup plan stand playingmenu
+#   (the room page shows Party mode as ONE slim strip; off/offmenu = the host's "Party v" control and its menu, setup = the setup modal over the lobby,
+#    plan = a guest's read-only plan, stand = the standings popup during a round, playingmenu = the strip's menu while playing)
 # Usage: powershell -NoProfile -File qa\party_shots.ps1 [-Out qa\shots\party] [-Sizes 1280x800,1600x1000] [-Modes panel,standings]
 # Also checks every shot rendered something (the file exists and is not a flat colour).
-param([string]$Out = "$PSScriptRoot\shots\party", [string[]]$Sizes = @("1280x800", "1600x1000"), [string[]]$Modes = @("panel", "lobbyguest", "update", "playing", "standings", "winner", "vote", "tie", "podium", "couch", "couchround"))
+param([string]$Out = "$PSScriptRoot\shots\party", [string[]]$Sizes = @("1280x800", "1600x1000"), [string[]]$Modes = @("panel", "lobbyguest", "update", "playing", "standings", "winner", "vote", "tie", "podium", "couch", "couchround", "off", "offmenu", "setup", "plan", "stand", "playingmenu"))
 Add-Type -AssemblyName System.Drawing
 $ErrorActionPreference = "Stop"
 $Sizes = @($Sizes | ForEach-Object { $_ -split ',' }); $Modes = @($Modes | ForEach-Object { $_ -split ',' })   # "-File" passes a comma list as one string

@@ -15,6 +15,7 @@ void party_on_host_change(int promoted_from_slot);             // lobby.cpp Host
 void party_on_host_select(const std::string& game_id);         // picker_ui.cpp: the host picked a game by hand
 void party_couch_open();                                       // page_online.cpp home: the "Couch party" button
 bool party_couch_active();                                     // a couch party is on (the Play Online home shows "Continue")
+void party_view_shot(const std::string& what);                 // HUB_SHOT_PARTY aid (party_view.cpp): open the setup modal / standings popup / strip menu
 std::string party_result_file_for_launch();                    // "" or the path a local Smash launch should write finished matches to (launch.cpp hook, see the lane report)
 
 /* ---- the room page (page_online.cpp) ---- */
