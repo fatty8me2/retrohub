@@ -609,7 +609,7 @@ std::string controls_arg(const std::string& system_key, const std::string& game_
 
 static std::vector<hubemu::PadDesc> pad_descs(const std::vector<hubctl::PadInfo>& v) {
     std::vector<hubemu::PadDesc> out;
-    for (auto& p : v) { hubemu::PadDesc d; d.name = p.name; d.guid = p.guid; d.key = p.key; d.xinput = p.xinput; out.push_back(d); }
+    for (auto& p : v) { hubemu::PadDesc d; d.name = p.name; d.guid = p.guid; d.key = p.key; d.xinput = p.xinput; d.player = p.player_index; out.push_back(d); }
     return out;
 }
 
@@ -620,10 +620,10 @@ hubemu::DolphinPads dolphin_pads_for(const hubctl::Profile& prof) {
     return hubemu::dolphin_pads_with(hubemu::detect_dolphin_pads(), pad_descs(hubctl::list_pads(prof.port_order)), pad_descs(hubctl::list_pads()));
 }
 
-/* PCSX2: players in the RetroHub port order, SDL indices as PCSX2 enumerates them. */
-hubemu::Ps2Pads ps2_pads_for(const hubctl::Profile& prof) {
+/* PCSX2: players in the RetroHub port order (at most the game's player count), SDL numbers as PCSX2 gives them (pcsx2_sdl_ids). */
+hubemu::Ps2Pads ps2_pads_for(const hubctl::Profile& prof, int max_players) {
     hubctl::load_bundled_db();
-    return hubemu::pcsx2_pads_with(pad_descs(hubctl::list_pads(prof.port_order)), pad_descs(hubctl::list_pads()));
+    return hubemu::pcsx2_pads_with(pad_descs(hubctl::list_pads(prof.port_order)), pad_descs(hubctl::list_pads()), max_players);
 }
 
 /* Azahar: player 1's pad when the player chose a port order, else "any pad" as before. */
@@ -635,17 +635,19 @@ hubemu::AzPad azahar_pad_for(const hubctl::Profile& prof) {
     return pad;
 }
 
-/* Cemu: Wii U player N = the N-th XInput pad of the port order (no stored order = the single pad on XInput slot 0 as before). */
+/* XInput pads only, at their real XInput slots, in the RetroHub port order (stored order or SDL order). No XInput pad = the single pad on
+ * slot 0 as before. PPSSPP takes player 1's slot from this (it reads other pads through DirectInput, which it does not map). */
 hubemu::CemuPads cemu_pads_for(const hubctl::Profile& prof) {
-    if (prof.port_order.empty()) return hubemu::CemuPads();
     hubctl::load_bundled_db();
     return hubemu::cemu_pads_with(pad_descs(hubctl::list_pads(prof.port_order)));
 }
 
+/* Cemu (RetroHub's managed download and a user's own install alike): Wii U player N = the N-th pad of the port order. XInput pads by
+ * their XInput slot, any other pad as an SDL player. No stored order = the XInput pads in slot order, then the other pads in SDL order (it used to be player 1 only). */
 hubemu::CemuPads cemu_pads_for_own(const hubctl::Profile& prof) {
     hubctl::load_bundled_db();
     auto all = pad_descs(hubctl::list_pads());
-    if (prof.port_order.empty()) return hubemu::cemu_pads_with_sdl(all, all);
+    if (prof.port_order.empty()) return hubemu::cemu_pads_with_sdl(hubemu::default_player_order(all), all);   // no stored order: XInput pads first (player 1 = slot 0), then the rest
     return hubemu::cemu_pads_with_sdl(pad_descs(hubctl::list_pads(prof.port_order)), all);
 }
 

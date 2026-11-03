@@ -28,8 +28,12 @@ struct Ps2Pads {
     int count = 0;                    // players with a pad (0 = keyboard on Pad1)
     bool multitap = false;            // 3+ pads: multitap on memory-card port 1 (Pad1, Pad3, Pad4, Pad5)
 };
-/* RetroHub port order -> players. by_sdl = every pad in SDL order; the index in it is PCSX2's SDL-<n>. */
-Ps2Pads pcsx2_pads_with(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl);
+/* The SDL-<n> PCSX2 gives each pad of `by_sdl` (every pad in SDL's own order): its SDL player index (an XInput pad = its user slot), or the lowest free
+ * number for a pad with no index or one already taken. Source and caveat: the comment at the definition (pcsx2.cpp). Not the pad's position in the list. */
+std::vector<int> pcsx2_sdl_ids(const std::vector<PadDesc>& by_sdl);
+/* RetroHub port order -> players (at most `max_players`: a game that has two players never gets the multitap). Each player's pad is
+ * addressed by the SDL-<n> of pcsx2_sdl_ids. */
+Ps2Pads pcsx2_pads_with(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl, int max_players = 4);
 /* One profile term -> PCSX2 binding text, e.g. "SDL-0/A", "SDL-1/-LeftY", "SDL-0/+RightTrigger". */
 std::string pcsx2_binding(const hubctl::Term& t, int sdl_index);
 std::string pcsx2_ini_defaults(const std::string& ini);                                                // once
