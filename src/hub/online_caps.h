@@ -54,4 +54,15 @@ inline int default_online_max(hub::System s) {
     }
 }
 
+/* Seats a game offers on ONE PC (offline, several pads): the catalog's max_players, else 2 for the systems that have an adapter (NES Four Score, SNES / PS1
+ * multitap: an uncatalogued game is assumed to be a one- or two-player game), 1 elsewhere. The hub passes it as `retrorun --max-local`; retrorun plays with
+ * min(real pads, seats) and only switches the 4-pad adapter on for 3 or more, so a 1- or 2-player game never boots with an adapter. */
+inline int default_local_max(hub::System s) {
+    switch (s) {
+        case hub::System::NES: case hub::System::SNES: case hub::System::PS1: return 2;
+        default: return 1;
+    }
+}
+inline int local_max_for(hub::System s, const hub::GameInfo* cat) { return cat && cat->max_players > 0 ? cat->max_players : default_local_max(s); }
+
 }  // namespace hubcaps

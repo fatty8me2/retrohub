@@ -4,6 +4,7 @@
 #include "ps2_online.h"
 #include "ps2.h"
 #include "pcsx2.h"
+#include "online_caps.h"
 
 #include <fstream>
 
@@ -50,9 +51,6 @@ void ps2_bios_ask(const std::string& key) {
     ASK2.key = key;
     ASK2.warning.clear();
 }
-
-/* Number of local pads (multitap "auto"). */
-static int local_pad_count() { return (int)A.pads.size(); }
 
 static std::string sanitize(std::string k) {
     for (char& c : k) if (!(isalnum((unsigned char)c) || c == '_' || c == '-')) c = '_';
@@ -131,8 +129,7 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
                        " --system-dir " + quote(sysdir) + title_arg(e.title) + save_stem_arg(e) + controls_arg("ps1", e.key) + disc_ctl_arg(e.key);
     args += hubui::retro_extra_args(e.system, gsv);
     args += real_boot_retro_args(e, real_boot_plan(e), nullptr);   // PlayStation logo + sound through the player's own BIOS (skip_bios off)
-    auto mt = gsv.find("ps1.multitap");
-    if ((mt == gsv.end() || mt->second == "auto") && local_pad_count() >= 3) args += " --opt beetle_psx_enable_multitap_port1=enabled";
+    args += " --max-local " + std::to_string(hubcaps::local_max_for(e.system, hub::find_game(e.catalog_id)));   // retrorun switches the multitap on itself from the third local player
     args += cheats_launch_args(e, false, true, nullptr);
     args += qm_args(ri, e, false);
     // No real BIOS: the core falls back to its bundled OpenBIOS (fewer games run).

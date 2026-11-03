@@ -137,7 +137,7 @@ void host_launch_selected() {
             ++A.launch_counter;
             hubui::PortPlan plan = hubui::build_ports(member_pads());   // built once; guests use it verbatim
             hubui::MatchSpec spec;   // Randoms are rolled here, once, from the launch seed
-            bool with_match = rg->system == hub::System::N64 && match_active();
+            bool with_match = rg->system == hub::System::N64 && match_active();   // the room picked fighters / stage / rules in the Smash match picker: n64run gets a --match spec
             gcnp::Spec gspec; bool gc_ok = true;
             if (with_match) spec = hubui::resolve_match(plan.ports, all_picks(), A.rules, seed, match_remix_roster());
             std::string np_extra;
@@ -155,7 +155,7 @@ void host_launch_selected() {
             if (gc_ok) {
                 bool same_app = true;   // N64 drop-in changes what the game sees from boot (all four pads plugged in): every PC must run this exact build
                 for (auto& pi : peers) if (pi.slot != 0 && hubui::guest_version_action(HUB_VERSION_STR, pi.app, true) != hubui::GuestVersionAction::None) same_app = false;
-                const bool dropin_adv = (rg->system == hub::System::NES || rg->system == hub::System::SNES || (rg->system == hub::System::N64 && same_app && hubui::n64_dropin_game(rg->catalog_id))) && !share && !with_match && cheats_launch_fragment(*rg).empty();   // !with_match: the match picker fixes the fighters per port (free ports are "none"), a joiner would have nothing to control
+                const bool dropin_adv = (rg->system == hub::System::NES || rg->system == hub::System::SNES || (rg->system == hub::System::N64 && same_app && hubui::n64_dropin_game(rg->catalog_id))) && !share && !with_match && cheats_launch_fragment(*rg).empty();   // !with_match: with a --match spec only the founders' ports are human (match.cpp write_vs); every other port is "none", so a drop-in joiner there would have no fighter
                 std::string lmsg = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra, dropin_adv, dropin_adv && rg->system == hub::System::N64 ? 2 : 3);   /* the joiner would be refused with a shared host save or cheats: do not advertise a free port then */
                 { hubui::Json lj; g_room_dropin = json::parse(lmsg, &lj) && lj.num("dropin", 0) >= 1; }   // host launch_online() gets no launch_msg
                 shot_trace("host-msg", lmsg);
