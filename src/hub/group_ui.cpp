@@ -154,9 +154,9 @@ static void draw_entry(Entry& e, int idx, float cw, const World& w) {
     dl->AddRectFilled(p0, p1, e.read ? ui::PANEL : ui::PANEL2, sp(1.5f));
     if (s == State::Active) dl->AddRect(p0, p1, with_alpha(ui::ACCENT, 0.4f), sp(1.5f), 0, 1.f);
     if (!e.read) dl->AddCircleFilled(ImVec2(p0.x + sp(1.f), p0.y + sp(1.f)), sp(0.55f), ui::BAD, 12);
-    float bw = sp(10.f), by = p0.y + (h - sp(3.5f)) * 0.5f;
+    float bw = e.kind == Kind::JoinWaiting ? sp(8.f) : sp(10.f), by = p0.y + (h - sp(3.5f)) * 0.5f;   // a waiting account's buttons are narrower so "<name> wants to join" fits
     float rx = p1.x - pad;
-    const float dw = e.kind == Kind::JoinWaiting ? sp(8.f) : sp(3.5f);   // dismiss ("Deny" for a waiting account)
+    const float dw = e.kind == Kind::JoinWaiting ? sp(6.5f) : sp(3.5f);   // dismiss ("Deny" for a waiting account)
     if (!act.empty()) rx -= bw + sp(0.75f) + dw;   // action + dismiss
     float tx = p0.x + pad + sp(1.f), tw = std::max(sp(8.f), rx - tx);
     ImU32 headc = s == State::Active || s == State::Info ? ui::TEXT : ui::TEXT2;

@@ -1101,6 +1101,7 @@ void fr_draw_toasts(float right_x, float bottom_y) {
     float y = bottom_y, w = std::min(sp(45.f), right_x - sp(2.f));
     for (auto& n : FR.notifs) {
         if (n.done || !n.toast) continue;
+        if (n.invite && n.night_id.empty() && A.popup_last_frame) continue;   // the bell / a menu / a modal is open: the floating invite card or pill is hidden (it is in the bell list), never over the panel
         if (FR.fake && g_headless) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
         if (FR.fake && g_headless && std::getenv("HUB_SHOT_INVITE_AGE")) n.t0 = now - std::atof(std::getenv("HUB_SHOT_INVITE_AGE"));   // screenshot aid: age the invite toast (>10 = shrunk pill)
         double life = !n.night_id.empty() ? 120.0 : (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;

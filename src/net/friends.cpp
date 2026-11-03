@@ -528,6 +528,7 @@ struct FriendsClient::Impl {
     bool admin = false;                          // the welcome said so (the server enforces it on every admin_* message regardless)
     AdminList alist; AdminDetail adetail; AdminSettings asettings; int admin_pend = 0, admin_ver = 0;
     AdminInvites ainv; AdminList apend; std::string last_latest_key;
+    std::string redeem_code; bool redeem_sent = false;   // an invite code waiting to go out on the waiting socket (sent as soon as the pending-approval answer is in, re-sent after a reconnect)
     std::map<std::string, std::string> admin_names;   // uid -> name, for the result sentences
     std::map<std::string, int> check_refs;   // name we asked about (lower case) -> ref; the server echoes the name, not the ref
 
@@ -1250,6 +1251,7 @@ struct FriendsClient::Impl {
                 access = access_from_reason(reason);
                 status_text = access_title(access);
                 net_log("Friends: access %s", reason.c_str());
+                if (access == Access::Pending && !redeem_code.empty() && !redeem_sent && hello_sent) redeem_sent = ws.send_text(redeem_invite_json(redeem_code));
                 return false;   // the server leaves this socket open and wakes it with a close when that changes (4011): no retry loop
             }
             if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) retire_done(j.str("uid"));   // can never succeed: stop resending
@@ -1292,6 +1294,7 @@ struct FriendsClient::Impl {
         } else if (type == "invite_result") {
             RedeemResult rr;
             if (!welcomed && parse_redeem_result(j, &rr)) {   // a waiting account's invite-code answer (room invite results carry results[] and need a welcome)
+                redeem_code.clear(); redeem_sent = false;
                 Event e; e.kind = Event::InviteRedeemed; e.ok = rr.ok; e.text = rr.reason;
                 push_event(std::move(e));
                 return false;
@@ -1440,6 +1443,7 @@ void FriendsClient::update()
             d.access = code == 4012 ? Access::Pending : Access::Unavailable;
             d.admin = false;
             d.backoff_ms = 60000;
+            if (code == 4012 && !d.redeem_code.empty()) { d.redeem_sent = false; d.backoff_ms = 400; }   // a code is waiting to be sent: come back at once, not in a minute
         }
         if (code == 4011) d.backoff_ms = 1000;
         if (code == 4003) {
@@ -1467,7 +1471,7 @@ void FriendsClient::update()
     else if (!d.access_since) d.access_since = now | 1u;
     if (!d.welcomed && st == WsState::Open && d.hello_sent) {
         const bool refused = d.access != Access::Ok;
-        if ((refused && now - d.access_since > 180000u) || (!refused && d.hello_at && now - d.hello_at > 30000u)) {
+        if ((refused && (int32_t)(now - d.access_since) > 180000) || (!refused && d.hello_at && (int32_t)(now - d.hello_at) > 30000)) {   // signed: access_since / hello_at are `now | 1`, which can be 1 ms AHEAD of `now` (an unsigned difference then wraps and the socket was dropped at once, with a 60 s wait)
             net_log("Friends: %s", refused ? "re-checking access" : "no answer to hello, reconnecting");
             d.access_since = refused ? (now | 1u) : 0;
             d.hello_at = 0;
@@ -1575,8 +1579,12 @@ void FriendsClient::admin_set_settings(int approval, int vouch, int autofriend, 
 bool FriendsClient::redeem_invite(const std::string& code)
 {
     Impl& d = *impl_;
-    if (d.welcomed || !d.hello_sent || d.access != Access::Pending || !invite_valid(code)) return false;
-    return d.ws.send_text(redeem_invite_json(code));
+    if (!d.started || d.welcomed || d.gave_up || d.access == Access::Unavailable || !invite_valid(code)) return false;
+    d.redeem_code = invite_format(code);
+    d.redeem_sent = false;
+    if (d.hello_sent && d.access == Access::Pending && d.ws.send_text(redeem_invite_json(d.redeem_code))) { d.redeem_sent = true; return true; }
+    reconnect_now();   // the waiting socket is gone (the server closes it now and then): reconnect at once; the code goes out when the pending answer arrives
+    return true;
 }
 void FriendsClient::admin_invite_create(int uses, int hours, const std::string& note) { if (impl_->admin) impl_->send(invite_create_json(uses, hours, note)); }
 void FriendsClient::admin_invite_list() { if (impl_->admin) impl_->send(invite_list_json()); }
