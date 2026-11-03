@@ -439,21 +439,35 @@ void rebuild_vis() {
 
 bool supports_online(const hub::GameEntry& e) {
     /* hubcaps::online_capable: every game of N64/GB/GBC/GBA/3DS/GC (Dolphin NetPlay, any disc)/NDS (ds-link)/PS1 (rollback, multitap for 3-4)/PS2 (lockstep, multitap for 3-4).
-     * Non-catalog GC/NDS/PS1 games are "untested" (online_untested). PS2 (retrorun + LRPS2, up to 4 players with the multitap) is in; Wii U stays out. Unit-tested against launch_online's branches. */
-    return hubcaps::online_capable(e.system, hub::find_game(e.catalog_id));
+     * Non-catalog GC/NDS/PS1 games are "untested" (online_untested). PS2 (retrorun + LRPS2, up to 4 players with the multitap) is in; Wii U = remote play.
+     * A few games cannot be played in a room whatever the system (Buzz! quizzes: USB buzzers). Unit-tested against launch_online's branches. */
+    const hub::GameInfo* cat = hub::find_game(e.catalog_id);
+    return hubcaps::online_capable(e.system, cat) && hubcaps::online_game_block(e.system, cat, e.title).empty();
+}
+/* Why a game is greyed out in the room picker ("" when it can be played online). */
+std::string online_block_reason(const hub::GameEntry& e) {
+    const hub::GameInfo* cat = hub::find_game(e.catalog_id);
+    if (!hubcaps::online_capable(e.system, cat)) return hubcaps::online_unsupported_reason(e.system);
+    return hubcaps::online_game_block(e.system, cat, e.title);
 }
 /* Capable but not vetted (GC/DS/PS1 outside the catalog's online list): the picker tags it "Untested online". */
 bool online_untested(const hub::GameEntry& e) { return hubcaps::online_untested(e.system, hub::find_game(e.catalog_id)); }
 /* Online player cap for a room (online_max_for; 0 online_max = max_players). Every online limit uses this. */
 int max_players_for(const hub::GameEntry& e) {
     if (const GameInfo* g = hub::find_game(e.catalog_id)) return hub::online_max_for(*g);
-    return hubcaps::default_online_max(e.system);   // not in the catalog: GB/GBC/DS/PS1 2, the rest 4
+    return hubcaps::default_online_max(e.system);   // not in the catalog: what the system's online path carries for an unvetted game (online_caps.h)
+}
+/* Why that cap ("" when it is simply the console's four): the room card and the "too many players" reason carry it. */
+std::string player_limit_note(const hub::GameEntry& e) {
+    return hubcaps::online_limit_note(e.system, hub::find_game(e.catalog_id), max_players_for(e));
+}
+std::string player_limit_why(const hub::GameEntry& e) {
+    return hubcaps::online_limit_note(e.system, hub::find_game(e.catalog_id), max_players_for(e), true);
 }
 /* Local player count shown on cards (not the online cap). */
 int local_players_for(const hub::GameEntry& e) {
     if (const GameInfo* g = hub::find_game(e.catalog_id)) return g->max_players;
-    if (e.system == hub::System::PSP) return 1;   // a handheld, offline: one pad
-    return max_players_for(e);
+    return hubcaps::default_local_max(e.system);   // not in the catalog: the old room-cap values (GB/GBC/DS 2, GBA/3DS 4), raised for PS1/Wii U (4); PSP 1
 }
 /* How a game is named in lobby messages: the N64 catalog id (back-compat) or the library key. */
 std::string room_id(const hub::GameEntry& e) { return e.catalog_id.empty() ? e.key : e.catalog_id; }

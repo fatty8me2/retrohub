@@ -642,17 +642,37 @@ static int cemu_xinput_id(const hubctl::Term& t) {
     return it == m.end() ? -1 : it->second;
 }
 
-/* Wii U player N = the N-th XInput pad of the RetroHub port order (Cemu's XInput API numbers pads by XInput slot). Pads that are
- * not XInput are skipped here (managed download only): Cemu's SDL API uses its own ids. A user's own Cemu gets those pads
- * as SDL players instead (cemu_pads_for_own, page_controllers.cpp). */
+std::vector<int> xinput_slots(const std::vector<PadDesc>& pads) {
+    std::vector<int> slot(pads.size(), -1);
+    bool used[4] = {false, false, false, false};
+    for (size_t i = 0; i < pads.size(); ++i)   // first pass: pads that know their slot
+        if (pads[i].xinput && pads[i].player >= 0 && pads[i].player < 4 && !used[pads[i].player]) { slot[i] = pads[i].player; used[pads[i].player] = true; }
+    for (size_t i = 0; i < pads.size(); ++i) {   // second pass: the rest take the lowest free slot
+        if (!pads[i].xinput || slot[i] >= 0) continue;
+        for (int s = 0; s < 4; ++s) if (!used[s]) { slot[i] = s; used[s] = true; break; }
+    }
+    return slot;
+}
+
+std::vector<PadDesc> default_player_order(const std::vector<PadDesc>& sdl) {
+    const std::vector<int> slot = xinput_slots(sdl);
+    std::vector<size_t> xs;
+    for (size_t i = 0; i < sdl.size(); ++i) if (slot[i] >= 0) xs.push_back(i);
+    std::stable_sort(xs.begin(), xs.end(), [&](size_t a, size_t b) { return slot[a] < slot[b]; });
+    std::vector<PadDesc> out;
+    for (size_t i : xs) out.push_back(sdl[i]);
+    for (size_t i = 0; i < sdl.size(); ++i) if (slot[i] < 0) out.push_back(sdl[i]);
+    return out;
+}
+
+/* Wii U player N = the N-th XInput pad of the RetroHub port order, addressed by its real XInput slot (Cemu's XInput API numbers pads by
+ * slot, so with the pads in another order than the slots, or a gap in the slots, "the N-th pad" is not slot N-1). Pads that are not XInput
+ * are skipped here: use cemu_pads_with_sdl to get them as SDL players. */
 CemuPads cemu_pads_with(const std::vector<PadDesc>& by_port) {
     CemuPads c;
-    int xrank = 0;
-    for (const PadDesc& p : by_port) {
-        if (!p.xinput) continue;
-        if (c.xinput.size() < 4) c.xinput.push_back(xrank);
-        ++xrank;
-    }
+    const std::vector<int> slot = xinput_slots(by_port);
+    for (size_t i = 0; i < by_port.size(); ++i)
+        if (slot[i] >= 0 && c.xinput.size() < 4) c.xinput.push_back(slot[i]);
     return c;
 }
 
@@ -679,15 +699,15 @@ std::string cemu_sdl_uuid(const std::string& guid, int same_guid_index) { return
 
 CemuPads cemu_pads_with_sdl(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& all_pads) {
     CemuPads c;
-    int xrank = 0;
-    for (const PadDesc& p : by_port) {
+    const std::vector<int> slot = xinput_slots(by_port);
+    for (size_t i = 0; i < by_port.size(); ++i) {
+        const PadDesc& p = by_port[i];
         int idx = 0;   // position among the pads that share this GUID, in SDL order
         for (const PadDesc& q : all_pads) { if (q.key == p.key) break; if (q.guid == p.guid) ++idx; }
         if (c.xinput.size() < 4) {
-            c.xinput.push_back(p.xinput ? xrank : -1);
+            c.xinput.push_back(p.xinput ? slot[i] : -1);
             c.sdl.push_back(p.xinput ? std::string() : cemu_sdl_uuid(p.guid, idx));
         }
-        if (p.xinput) ++xrank;
     }
     return c;
 }
@@ -1042,18 +1062,21 @@ std::string dolphin_key_name(const std::string& k) {
 }
 
 DolphinPads dolphin_pads_with(DolphinPads base, const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl) {
-    int xrank = 0;
+    const std::vector<int> slot = xinput_slots(by_port);
     for (size_t i = 0; i < by_port.size() && i < 4; ++i) {
         const PadDesc& p = by_port[i];
         if (p.xinput) {
-            if ((int)i != xrank) base.dev[i] = "XInput/" + std::to_string(xrank) + "/Gamepad";
-            ++xrank;
+            /* Dolphin addresses an XInput pad by its user slot. Only a pad that already sits on slot == port keeps Dolphin's own default device. */
+            if ((int)i != slot[i]) base.dev[i] = "XInput/" + std::to_string(slot[i]) + "/Gamepad";
         } else {
             int n = 0;   // Dolphin numbers same-named SDL devices in SDL's order
             for (const PadDesc& d : by_sdl) { if (d.key == p.key) break; if (d.name == p.name) ++n; }
             base.dev[i] = "SDL/" + std::to_string(n) + "/" + p.name;
         }
     }
+    /* Which ports have a pad = the ports the RetroHub port order filled, not "XInput slot n is connected": with pads on slots 0 and 2 the
+     * second player's pad is XInput/2, and port 3 must stay empty (it used to turn on too, so one pad drove two players). */
+    if (!by_port.empty()) for (int i = 0; i < 4; ++i) base.xinput[i] = (size_t)i < by_port.size();
     return base;
 }
 

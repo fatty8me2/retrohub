@@ -271,6 +271,11 @@ add_executable(hub_psp_test test_psp.cpp ppsspp.cpp emulators.cpp)
 target_include_directories(hub_psp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_psp_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
+# External emulators' pad configs for 1-4 fake pads (PCSX2, Dolphin, Cemu, Azahar, PPSSPP): distinct correct devices, full button sets, nothing bound twice
+add_executable(hub_ext_pads_test test_ext_pads.cpp pcsx2.cpp ppsspp.cpp emulators.cpp)
+target_include_directories(hub_ext_pads_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_ext_pads_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
 # PS2 online (docs/PS2_ONLINE.md): readiness reasons, retrorun arguments, exit-code texts, the pinned LRPS2 download
 add_executable(hub_ps2_online_test test_ps2_online.cpp emulators.cpp)
 target_include_directories(hub_ps2_online_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)

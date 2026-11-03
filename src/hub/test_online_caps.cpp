@@ -45,7 +45,8 @@ int main() {
         CHECK(kh && hubcaps::online_capable(System::PS2, kh) && hubcaps::online_untested(System::PS2, kh));
         CHECK(hubcaps::online_capable(System::PS2, nullptr) && hubcaps::online_untested(System::PS2, nullptr));
     }
-    CHECK(hubcaps::default_online_max(System::PS1) == 2 && hubcaps::default_online_max(System::GC) == 4 && hubcaps::default_online_max(System::GB) == 2);
+    CHECK(hubcaps::default_online_max(System::PS1) == 4 && hubcaps::default_online_max(System::GC) == 4 && hubcaps::default_online_max(System::GB) == 2);   // PS1: emulated multitap for 3-4 (tagged untested)
+    CHECK(hubcaps::default_online_max(System::NDS) == 2 && hubcaps::default_online_max(System::GBC) == 2 && hubcaps::default_online_max(System::N64) == 4);
     CHECK(hubcaps::default_online_max(System::NES) == 2 && hubcaps::default_online_max(System::SNES) == 2);
     /* Every online catalog game belongs to a system that can launch online, and a PS1 game's cap comes from the catalog. */
     int ps1_online = 0;
@@ -62,13 +63,56 @@ int main() {
     CHECK(sp && hubcaps::online_capable(System::PS1, sp) && hubcaps::online_untested(System::PS1, sp));   // single-player: offered, tagged untested
     CHECK(hubcaps::online_capable(System::PS1, nullptr) && hubcaps::online_untested(System::PS1, nullptr));   // unknown disc: offered, untested
 
+    /* Local seats for a game without a catalog entry: never below what they were (the old room caps), raised for PS1/Wii U; PSP is one pad. */
+    for (System s : {System::GB, System::GBC, System::NDS}) CHECK(hubcaps::default_local_max(s) == 2);
+    for (System s : {System::GBA, System::N3DS, System::N64, System::GC, System::WiiU, System::PS1, System::PS2}) CHECK(hubcaps::default_local_max(s) == 4);
+    CHECK(hubcaps::default_local_max(System::PSP) == 1);
+    CHECK(hubcaps::default_local_max(System::NES) == 2 && hubcaps::default_local_max(System::SNES) == 2);
+
+    /* Caps against what each path can deliver. */
+    for (const hub::GameInfo& g : hub::catalog()) {
+        if (g.engine == hub::Engine::Native) continue;
+        System s = hub::system_from_short(g.system.c_str());
+        int cap = hub::online_max_for(g);
+        CHECK(cap >= 1 && cap <= g.max_players && cap <= 4);
+        if (g.online) CHECK(cap >= 2);                                       // "fun with friends online" needs two seats
+        if (hub::link_cable_game(g.id)) CHECK(cap == 2);                     // one console per player
+        if (s == System::GB || s == System::GBC) CHECK(cap <= 2);
+        if (s == System::N3DS) CHECK(cap <= 2);                              // Azahar rooms are the 2-player trade/battle rooms here
+        if (s == System::NES || s == System::SNES) {
+            /* 3-4 seats need the Four Score / multitap: only these listed games are known to use them */
+            static const char* const multi[] = {"nes_gauntlet2", "nes_nwc", "snes_som", "snes_sbomber", "snes_sbomber2", "snes_sbomber3", "snes_sbomber4", "snes_sbomber5", "snes_nbajam", "snes_nbajamte"};
+            bool listed = false;
+            for (const char* m : multi) if (g.id == m) listed = true;
+            if (cap > 2) CHECK(listed);
+        }
+    }
+
+    /* Buzz! needs USB buzzers a room does not have; the limit note says why a room is small. */
+    {
+        const hub::GameInfo* bz = hub::find_game("buzz_hollywood");
+        CHECK(bz && !hubcaps::online_game_block(System::PS2, bz, bz->title).empty());
+        CHECK(!hubcaps::online_game_block(System::PS2, nullptr, "Buzz! The Music Quiz").empty());
+        CHECK(hubcaps::online_game_block(System::PS2, nullptr, "Gauntlet - Dark Legacy").empty() && hubcaps::online_game_block(System::GC, nullptr, "Buzz!").empty());
+        const hub::GameInfo* t5 = hub::find_game("tekken5");
+        CHECK(t5 && hubcaps::online_limit_note(System::PS2, t5, 2).find("at most 2") != std::string::npos);
+        CHECK(hubcaps::online_limit_note(System::PS2, t5, 2, true).empty());   // only repeats "(max 2)": not added to that reason
+        CHECK(!hubcaps::online_limit_note(System::NES, nullptr, 2, true).empty() && !hubcaps::online_limit_note(System::PS2, hub::find_game("kh"), 1, true).empty());
+        CHECK(hubcaps::online_limit_note(System::PS2, hub::find_game("crashnitro"), 4).empty());
+        CHECK(hubcaps::online_limit_note(System::PS1, nullptr, 4).empty());
+        CHECK(hubcaps::online_limit_note(System::NES, nullptr, 2).find("Four Score") != std::string::npos);
+        CHECK(hubcaps::online_limit_note(System::SNES, nullptr, 2).find("multitap") != std::string::npos);
+        CHECK(hubcaps::online_limit_note(System::GBA, hub::find_game("pokeemerald"), 2).find("Link-cable") != std::string::npos);
+        CHECK(hubcaps::online_limit_note(System::PS2, hub::find_game("kh"), 1).find("single-player") != std::string::npos);
+    }
+
     /* Wii U remote play: catalog couch co-op games are online, 1-4 pads, host-only ownership. */
     for (System s : {System::Unknown, System::N64, System::GC, System::PS2, System::WiiU, System::N3DS})
         CHECK(hubcaps::remote_play_system(s) == (s == System::WiiU));
     const hub::GameInfo* sm = hub::find_game("sm3dw");
     CHECK(sm && sm->online && sm->system == "wiiu" && hub::online_max_for(*sm) == 4);
     CHECK(sm && hubcaps::online_capable(System::WiiU, sm) && !hubcaps::online_untested(System::WiiU, sm) && hubcaps::remote_play_game(System::WiiU, sm));
-    CHECK(hubcaps::online_untested(System::WiiU, nullptr) && hubcaps::default_online_max(System::WiiU) == 2);
+    CHECK(hubcaps::online_untested(System::WiiU, nullptr) && hubcaps::default_online_max(System::WiiU) == 4);   // host GamePad + 3 guests on DSU slots (hubrp::guest_count)
     for (const char* id : {"mk8", "nsmbu", "captaintoad", "smash4wiiu", "nland", "pikmin3"}) {
         const hub::GameInfo* g = hub::find_game(id);
         CHECK(g && g->online && g->system == "wiiu" && hub::online_max_for(*g) >= 2);
