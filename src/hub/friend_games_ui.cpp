@@ -305,8 +305,24 @@ void gamepack_shutdown() {
     hubgp::index_shutdown();
 }
 
+/* The uninstall deletes the whole install folder and the unpacked copy, so it is blocked while the running game's ROM / image sits in either
+ * (the game itself, or a hack patched on top of a pack game), not just on an exact key match. An unknown running game blocks too. */
+static bool pack_uninstall_blocked(const hub::GameEntry& e) {
+    if (!A.proc) return false;
+    if (A.run.key == e.key) return true;
+    const hub::GameEntry* r = find_entry(A.run.key);
+    if (!r) return true;
+    if (r->hack_base == e.key) return true;
+    std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root());
+    if (t.empty()) return false;
+    std::string sys = hubgp::installed_folder_console(e.path, hubgp::pack_root());
+    if (sys.empty()) sys = sys_short(e);
+    return path_under(r->path, hubgp::install_dir(sys, t)) || path_under(r->path, hub::extract_3ds_dir(e));
+}
+
 /* Remove an installed game: files, the unpacked copy, the library entry. The greyed entry comes back. Saves stay in the vault. */
 void gamepack_uninstall(const hub::GameEntry& e) {
+    if (pack_uninstall_blocked(e)) { set_notice("A game that uses these files is running. Close it first."); return; }
     std::string t = hubgp::installed_folder_title(e.path, hubgp::pack_root());
     if (t.empty()) return;
     std::string sys = hubgp::installed_folder_console(e.path, hubgp::pack_root());   // the folder it sits in, which can differ from its console
@@ -329,7 +345,7 @@ void gamepack_uninstall(const hub::GameEntry& e) {
 /* "Uninstall" button + its confirm popup (details of a pack-installed game). Returns true when the game was removed. */
 bool gamepack_uninstall_ui(const hub::GameEntry& e, float bh) {
     bool removed = false;
-    const bool running_this = A.proc && A.run.key == e.key;   // its files are open; other games can be uninstalled
+    const bool running_this = pack_uninstall_blocked(e);   // the running game (or a hack on it) has these files open; other games can be uninstalled
     if (button("Uninstall", ImVec2(0, bh), false, !running_this, ui::Icon::Close)) ImGui::OpenPopup("##gp_uninstall");
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(running_this ? "This game is running. Close it to uninstall it." : "Delete this game's files from RetroHub's games folder. It goes back to the shared packs; saves are kept.");
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
