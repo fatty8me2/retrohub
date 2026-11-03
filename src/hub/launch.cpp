@@ -59,6 +59,10 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
     if (launch_blocked("spawn")) return false;
     std::string args = args_in;
+    if (!A.fresh_key.empty()) {   // Home hero "Start fresh": one launch without the auto resume
+        if (A.fresh_key == ri.key) { size_t k = args.find(" --resume"); if (k != std::string::npos) args.erase(k, 9); }
+        A.fresh_key.clear();
+    }
     if (!A.resume_key.empty()) {   // "Resume": one-shot --load-state for exactly this game on a retrorun launch (Lane 2 runners; docs/RUNNER_CTL)
         if (A.resume_key == ri.key && (file_name(exe) == "retrorun.exe" || file_name(exe) == "n64run.exe") && !A.resume_state.empty()) args += " --load-state " + quote(A.resume_state);
         A.resume_key.clear();

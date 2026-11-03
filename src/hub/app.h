@@ -243,6 +243,7 @@ struct App {
     int state_sel = -3;                          // slot highlighted in the strip (-1 = Auto)
     int state_confirm = -2;                      // slot awaiting a second Delete press
     std::string resume_key, resume_state;        // set by resume_entry(): the next launch of resume_key passes --load-state resume_state
+    std::string fresh_key;                       // set by the Home hero's "Start fresh": the next spawn of this game drops --resume (starts from the battery save)
     hubui::SortMode sort_mode = hubui::SortMode::Title;
 
     // saves
