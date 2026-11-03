@@ -454,7 +454,14 @@ void cheats_room_strip(const hub::GameEntry* rg, bool host) {
         }
     } else if (g_room_game == A.selected_game) names = g_room_names;
     if (!host && names.empty()) return;
-    begin_panel("room_cheats", ImVec2(0, 0), COL_PANEL);
+    // a compact one-row strip (like the party strip): slim padding, button height + a little
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, COL_PANEL);
+    ImGui::PushStyleColor(ImGuiCol_Border, ui::HAIRLINE);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, sp(2.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.f), sp(0.9f)));
+    ImGui::BeginChild("room_cheats", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AutoResizeY);
+    ImGui::AlignTextToFramePadding();
     ImGui::PushFont(ui::F.bold);
     std::string line = cheatstore::summary_line(names, 4);
     ImGui::TextUnformatted(line.empty() ? "Cheats: off" : line.c_str());
@@ -462,12 +469,20 @@ void cheats_room_strip(const hub::GameEntry* rg, bool host) {
     ImGui::SameLine(0, sp(2.f));
     if (host) {
         if (button("Choose cheats", ImVec2(0, 0), false, A.proc == nullptr, ui::Icon::Bolt)) { hub::GameEntry c = *rg; cheats_open(c); }
-        text_wrapped_disabled("Everyone plays with the same cheats. They are fixed when the game starts.");
+        {   // one line, like the party strip: the hint takes what is left of the row and is ellipsized, never wrapped
+            const float room = ImGui::GetContentRegionAvail().x - sp(2.f) - ImGui::GetStyle().ItemSpacing.x;
+            const std::string hint = ui::ellipsize(ImGui::GetFont(), ImGui::GetFontSize(), "Everyone plays with the same cheats, fixed when the game starts.", room);
+            ImGui::SameLine(0, sp(1.5f));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", hint.c_str());
+        }
     } else {
         ImGui::TextDisabled("Chosen by the host - applied for everyone");
     }
-    end_panel();
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::EndChild();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
 }
 
 /* ======================= the panel ======================= */

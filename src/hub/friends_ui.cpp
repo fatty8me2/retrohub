@@ -1079,7 +1079,7 @@ void fr_draw_toasts(float right_x, float bottom_y) {
         if (age > life) { n.toast = false; continue; }
         float in = (float)std::min(1.0, age / 0.3);
         in = 1.f - (1.f - in) * (1.f - in);
-        const bool pill = n.invite && n.night_id.empty() && !n.expanded && age > kInvitePillAfter;
+        const bool pill = n.invite && n.night_id.empty() && !n.expanded && (age > kInvitePillAfter || A.popup_last_frame);   // a modal or menu is open: the card shrinks to the one-line pill so it never sits over its buttons (a click expands it)
         float h = pill ? fr_invite_pill_h() : n.invite ? fr_invite_card_h() : fr_request_card_h();
         float cw = pill ? std::min(w, fr_tw(ui::F.bold, fr_invite_pill_text(n)) + sp(3.5f)) : w;
         ImGui::SetNextWindowPos(ImVec2(right_x - cw + (1.f - in) * sp(8.f), y - h));

@@ -128,9 +128,10 @@ static void apply_style_colors() {
     c[ImGuiCol_Button] = cv(PANEL2);
     c[ImGuiCol_ButtonHovered] = cv(PANEL3);
     c[ImGuiCol_ButtonActive] = cv(mix(PANEL3, ACCENT, 0.4f));
-    c[ImGuiCol_FrameBg] = cv(FRAME);
-    c[ImGuiCol_FrameBgHovered] = cv(FRAME_HOV);
-    c[ImGuiCol_FrameBgActive] = cv(FRAME_ACT);
+    // checkbox / input frames: a palette-relative lift toward TEXT so an unchecked box reads on every panel and in every theme (the raw FRAME tokens sit almost on PANEL)
+    c[ImGuiCol_FrameBg] = cv(mix(FRAME, TEXT, 0.16f));
+    c[ImGuiCol_FrameBgHovered] = cv(mix(FRAME_HOV, TEXT, 0.22f));
+    c[ImGuiCol_FrameBgActive] = cv(mix(FRAME_ACT, TEXT, 0.26f));
     c[ImGuiCol_SliderGrab] = cv(ACCENT);
     c[ImGuiCol_SliderGrabActive] = cv(mix(ACCENT, IM_COL32_WHITE, 0.25f));
     c[ImGuiCol_CheckMark] = cv(ACCENT);

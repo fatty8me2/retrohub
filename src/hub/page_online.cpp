@@ -41,6 +41,11 @@ void page_online_home() {
     bool two = avail > 760 * S;
     float w = two ? (avail - gap) / 2 : avail;
 
+    // the two cards sit side by side: both are at least as tall as the taller one was last frame (measured below), so they match
+    static float host_nat = 0.f, join_nat = 0.f;
+    auto natural_h = [] { return ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y + ImGui::GetStyle().WindowPadding.y + 2.f; };
+    const float same_h = two ? std::max(host_nat, join_nat) : 0.f;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, same_h), ImVec2(FLT_MAX, FLT_MAX));
     begin_panel("host", ImVec2(w, 0));
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Host a room");
@@ -52,10 +57,12 @@ void page_online_home() {
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         if (button(group_last_label().c_str(), ImVec2(-1, sp(5.f)), false, A.proc == nullptr, ui::Icon::Globe)) group_invite_last();
     }
+    host_nat = natural_h();
     end_panel();
 
     if (two) ImGui::SameLine();
 
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, same_h), ImVec2(FLT_MAX, FLT_MAX));
     begin_panel("join", ImVec2(w, 0));
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Join a room");
@@ -74,6 +81,7 @@ void page_online_home() {
     bool go = button("Join", ImVec2(120 * S, 0), true, valid && A.proc == nullptr);
     if (!A.join_buf.empty() && !valid) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_WARN), "Codes are 6 letters/digits (no I, O, 0, 1).");
     if (go || (enter && valid)) enter_room(false, A.join_buf);
+    join_nat = natural_h();
     end_panel();
 
     ImGui::Dummy(ImVec2(0, sp(1.f)));
@@ -291,7 +299,7 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     const float tw = W - 24 * S - bw - 14 * S - 16 * S;   // the text column: left of the button column
     ImFont* hf = ui::F.title ? ui::F.title : ui::F.h2;
     const std::string det = dl_busy ? hubupdate::status() : (extra.empty() ? st.detail : extra);
-    const auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), det, tw, 2);
+    const auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), det, tw, 4);   // wraps (up to 4 lines), never truncates a reason
     // tall enough for the headline, every detail line AND the readiness row under them (a long detail used to run into it)
     float H = std::max(84 * S, 10 * S + hf->FontSize + 6 * S + lines.size() * (ImGui::GetFontSize() + 2 * S) + 14 * S);   // headline, reason and the button; who is ready lives on the member rows
     bh = std::min(bh, H - 16 * S);
@@ -458,7 +466,7 @@ void page_online_room() {
     float left_w = total_w - chat_w - 20 * S;
     const float foot_h = 56 * S + 2 * S + ImGui::GetStyle().ItemSpacing.y * 2 + 4 * S;   // bar + the gaps the layout adds around it
     float h = ImGui::GetContentRegionAvail().y - foot_h;   // the footer bar sits under the columns
-    if (h < 200 * S) h = 200 * S;
+    if (h < 110 * S) h = 110 * S;   // short windows: the middle shrinks and scrolls, the footer bar stays on screen
 
     ImGui::BeginChild("roomleft", ImVec2(left_w, h), ImGuiChildFlags_NavFlattened);
 
@@ -504,12 +512,18 @@ void page_online_room() {
     }
     if (match_active()) match_panel(host, left_w);
     kt_room_panel(left_w - ImGui::GetStyle().ScrollbarSize, false);
+    if (ImGui::GetScrollY() < ImGui::GetScrollMaxY() - 1.f) {   // more below: a soft fade at the bottom edge is the scroll cue
+        ImDrawList* fdl = ImGui::GetWindowDrawList();
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        const float fh = 56 * S, fw = ws.x - ImGui::GetStyle().ScrollbarSize;
+        fdl->AddRectFilledMultiColor(ImVec2(wp.x, wp.y + ws.y - fh), ImVec2(wp.x + fw, wp.y + ws.y), with_alpha(ui::BG, 0.f), with_alpha(ui::BG, 0.f), ui::BG, ui::BG);
+    }
     ImGui::EndChild();
 
     // chat
     ImGui::SameLine(0, 20 * S);
     static float chat_used = 0.f;   // the log's content height last frame: an empty chat stays a small box and grows with the messages
-    const float chat_h = std::max(190 * S, std::min(h, chat_used + 118 * S));
+    const float chat_h = std::min(h, std::max(190 * S, std::min(h, chat_used + 118 * S)));
     begin_panel("chat", ImVec2(chat_w, chat_h));
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Chat");
