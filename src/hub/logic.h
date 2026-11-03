@@ -76,6 +76,7 @@ struct Settings {
     bool username_claimed = false;     // this PC has a username the server confirmed (name below IS that username); false = still the provisional Windows name
     bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
     bool setup_done = false;           // the first-run setup wizard was finished or skipped
+    bool show_whats_new = true;        // "Show what's new after updates": the Welcome back card (welcome_ui.cpp)
     std::string changelog_seen;        // version whose "What's new" popup was shown/skipped ("" = never)
     bool kt_intro_seen = false;        // Kanto Together: the "first session" guidance was shown once
     std::string games_dest;            // Add games: chosen destination folder ("" = the RetroHub Games folder)

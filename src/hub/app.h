@@ -5,6 +5,7 @@
 #define SDL_MAIN_HANDLED
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <SDL.h>
+#include "changelog.h"
 #include "runner_ctl.h"
 #include <SDL_syswm.h>
 #include "imgui.h"
@@ -1079,7 +1080,8 @@ void draw_overlays();
 void page_about();
 void page_admin();   // page_admin.cpp: only ever reachable when fr_is_admin()
 void draw_changelog_list();    // page_changelog.cpp: the patch notes list (drawn inside the Updates page)
-void draw_changelog_popup();    // call every frame: the one-time "What's new in vX" popup
+const std::vector<hubui::changelog::Entry>& changelog_entries();   // page_changelog.cpp: data/changelog.json, loaded once
+void draw_welcome();    // welcome_ui.cpp, every frame: the one-time "Welcome back" card after an update
 
 
 /* ---- frame.cpp ---- */
