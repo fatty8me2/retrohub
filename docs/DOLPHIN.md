@@ -358,3 +358,71 @@ Measured with `qa\gc_online_speed.ps1` / `hub_gc_speed` (two Dolphins on a hidde
 | buffer sweep | threaded, RTT ~170 ms: 8 / 10 / 12 / 16 | 75 / 92 / 100 / 100 % | |
 
 Notes: two instances on one PC cannot test Dolphin's traversal server (hairpin NAT: the guest never joins). Real Internet relay latency is not reproduced by the local wrangler.
+
+## NetPlay memory card sync (the Super Mario Strikers desync, fixed in 1.31.5)
+Symptom: Super Mario Strikers (G4QE01) logged "Possible desync detected: <host> might have desynced at frame 420" in every harness row
+(direct, relay, buffer 8 or 13) and at frame 480 in the owner's two-PC session. It is a real desync, not a detector artefact.
+
+Cause (verified in Dolphin 2509 source and logs):
+- RetroHub points the card at the vault folder with `-C Dolphin.Core.GCIFolderAPathOverride=<card>`. The host's own Dolphin plays on
+  that folder (`EXI_DeviceMemoryCard.cpp` `GetGCIFolderPath`: the override wins).
+- Dolphin's NetPlay save sync does NOT read the override: `NetPlayServer.cpp` `SyncSaveData` sends
+  `Config::GetGCIFolderPath(slot, region)` = `GCIFolderAPath` (empty: `User\GC\USA\Card A`) + the disc's region folder. That folder does
+  not exist, so the host log says `Sending empty marker for GCI memcard .../User/GC/USA/Card A`, the guest says
+  `Received GCI memcard data for slot A: .../NetPlayTemp/Card A, 0 files`, and the chat still says "All players' saves synchronized".
+- Strikers reads the card on boot ("Checking/Loading from the Memory Card", ~7 s = Dolphin's frame 420 check). Host: save found; guest:
+  blank card, it creates a new save. Different code paths, different timebase, then different menus: in the before run below the host
+  was in a match while the guest's game sat in the Spoils/trophy screen with the same inputs. Every game that reads a save
+  diverges the same way (Mario Superstar Baseball too, at frame 1140 in the hash run; the old 90 s speed rows did not reach it).
+- Dolphin's detector (`NetPlayServer.cpp` `TimeBase`): every 60th PE-finish each client sends the emulated timebase; the first
+  mismatch is reported once and checking stops (`m_desync_detected`). So one line, at the first divergence.
+
+Fix: `gcnp::host_card_sync_args` (netplay_dolphin.cpp), called by the host in `gc_begin` (launch_online.cpp): wipe
+`<data>\netplay\gc\host-sync`, copy the card folder's `.gci` files into `host-sync\USA`, `\EUR`, `\JPN` and add
+`-C "Dolphin.Core.GCIFolderAPath=<data>\netplay\gc\host-sync"` (this run only, never written to Dolphin.ini). The host still plays and
+saves on the vault card (the override); only the copy is sent. Guests are unchanged (Dolphin points them at NetPlayTemp).
+
+How it was proven (two Dolphins on one PC, hidden desktop, muted, owner's disc and a copy of the owner's save):
+- `qa\gc_state_hash.py` (started by `hub_gc_speed --hash-addr`): Dolphin's GDB stub + a write watchpoint on the game's VI-rate counter
+  stops both instances at the same instruction of the same frame; the script hashes all 24 MiB of MEM1 there. `qa\gc_desync_check.ps1`
+  runs the before/after pair and prints the detector frame and MATCH/DIFF per sample frame. The GDB stub costs ~75 % speed (it polls
+  its socket from a CoreTiming event every 100k cycles), so `--emu-clock` runs the pad script on emulated time.
+- Arming/disarming the watchpoint at different wall times does not perturb emulation: in the fixed runs the hashes match and
+  Dolphin's detector stays silent.
+
+| run (np-direct, single core, buffer 8) | card | Dolphin detector | MEM1 host vs guest |
+|---|---|---|---|
+| Strikers, before (`--card gci`) | override only, guest gets 0 files | frame 420 (every run: 3 here + all Strikers rows of the speed matrix) | 7200: DIFF, 3.9 M of 6.3 M words |
+| Strikers, after (`--card hub`) | + host_card_sync_args, guest gets 1 file | none | 300 / 3600 / 7200: MATCH |
+| Strikers, after, full match at 100 % (no GDB) | hub | none over 540 s | same screens: final score DK 0 - Daisy 5, identical match stats |
+| Strikers, after, full match with hashes (2400 s at ~23 %: a whole match, DK 0 - Daisy 3, and part of a second) | hub | none | 18 samples, frames 300-34200: all MATCH |
+| Strikers, after, guest boots 1.3 s later (1.2 s one-way forwarder latency), 5700 frames | hub | none | 300-3900 MATCH; 4200-5700 the same 9 words differ (below) |
+| Strikers, after, guest boots later, match with hashes (first try: up to 1:05 left, then the guest's hasher timed out and left the guest halted; fixed) | hub | none | 300 MATCH; 3600-19800 (10 samples): the same 9 words |
+| Strikers, after, guest boots later, full match with hashes (3300 s at ~22 %: "Daisy wins 3-0", then most of a second match) | hub | none | 300 MATCH; 3600-45000 (23 samples): the same 9 words, nothing else |
+| Mario Superstar Baseball, before | override only | frame 1140 | 600 MATCH, 1800 / 3600 DIFF |
+| Mario Superstar Baseball, after (dual core: its allowlist) | hub | none | 600 / 1800 / 3600 MATCH |
+| Mario Superstar Baseball, after, speed (F80, sim RTT ~170 ms, buffer 13) | hub | none | 100 % host and guest |
+| Mario Party 6, before | override only | frame 2940 | 600 MATCH, 1800 / 3600 DIFF |
+| Mario Party 6, after | hub | none | 600 / 1800 / 3600 MATCH |
+
+Rerun the A/B with `qa\gc_desync_check.ps1 -Build build\bin\Release -Dolphin <dolphin dir> -Disc <disc> -Game G4QE01 -Gci <saves>
+-Work <dir with G4QE01.vi.txt> -Secs 150 -Every 600 -Start 600` (~10 min): B `detector: frame 420, 600=MATCH 1200=DIFF 1800=DIFF`,
+A `detector: none, 600=MATCH 1200=MATCH 1800=MATCH`.
+
+Ruled out on the way: the two Dolphin.ini files differ only in the analytics ID and the nickname; RTC is the host's (`GetInitialNetPlayRTC`,
+sent to every client); SRAM is the host's; G4QE01's GameINI has no patches (AR codes only, off); pad buffer (8 vs 13) and forwarder
+(direct vs relay) did not move the frame. A blank raw card (`--card raw`) did not desync either, consistent with "the guest misses
+the host's save" rather than a card-format issue.
+
+Two PCs: Dolphin builds a GCI folder card's header (format time, serial) from each PC's local clock at boot (`EXI.cpp`
+`GetLocalTimeSinceJan1970`, not the NetPlay RTC), so host and guest headers differ on two PCs even with the fix (on one PC both
+usually boot in the same second). In the skew rows the guest boots 1.3 s later. Once Strikers mounts the card exactly 9 words differ
+and they stay the same 9: 0x804BDC00-13 (the header copy in the CARD work area: serial, format time 0x327B9F83 vs 0x327B9F84),
+0x804BDDFC (its checksum), 0x80373E20 and 0x804BD6B0 (the card serial number the game keeps). Dolphin's timebase check stays
+silent and nothing else diverges, so it is harmless for Strikers. A game that mixes the card serial into game state could still
+diverge; Dolphin has no setting for it (a raw card would carry the host's header, but RetroHub's vault is GCI folders).
+
+End to end through RetroHub's real room flow (`qa\gc_room_online.ps1 -Game gc:g4qe01-0 -SeedGci <save> -CardKey gc_g4qe01-0`,
+local wrangler): `host-sync\USA|EUR|JPN` held the host's save, the guest's `NetPlayTemp\Card A` received it (41024 bytes), and
+no desync line appeared.
+Also: the harness's DSU pad maps its `a` to GC B and `b` to GC A (DSU face layout), which is why older patterns never left the title.
