@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.31.6",
+      "date": "2026-11-02",
+      "title": "PS2 BIOS found in more places",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "A PS2 BIOS inside a folder in your games folder (like Games\\PS2\\ps2Bios\\...) was not found, so PS2 online said \"Your PC has no PlayStation 2 BIOS\""
+      ]
+    },
+    {
       "version": "1.31.5",
       "date": "2026-11-02",
       "title": "PS2 online for 4 players",
