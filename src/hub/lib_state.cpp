@@ -151,6 +151,19 @@ void apply_scan() {
                 g.system = mix2[(i * 7) % 10];
                 g.title = i % 40 == 39 ? std::to_string(1000 + i) + " Club" : std::string(w1[(i * 5 + i / 26) % 26]) + " " + w2[(i / 3) % 10] + (i >= 260 ? " " + std::to_string(i / 260 + 1) : "");
             }
+            if (std::getenv("HUB_SHOT_FAKE_SHELF")) {   // Shelf screenshots: every console, real-looking and a few very long titles (HUB_SHOT_FAKE_SHELF=<system short> keeps one console)
+                static const hub::System all13[] = {hub::System::NES, hub::System::SNES, hub::System::N64, hub::System::GB, hub::System::GBC, hub::System::GBA, hub::System::NDS,
+                                                    hub::System::N3DS, hub::System::PS1, hub::System::PS2, hub::System::GC, hub::System::WiiU, hub::System::PSP};
+                static const char* w1[] = {"Super", "Mega", "Turbo", "Legend of", "Mystic", "Dark", "Crystal", "Pocket", "Neon", "Royal", "Kirby's", "Star", "Metroid"};
+                static const char* w2[] = {"Kart", "Quest", "Arena", "Strike", "Tactics", "Racers", "Party", "Tennis", "Fighters", "Stadium", "Odyssey", "Warriors"};
+                static const char* w3[] = {"Remix", "Advance", "Deluxe", "World", "Rumble", "Legends", "Origins", "Zero", "Plus", "Blitz"};
+                const char* only = std::getenv("HUB_SHOT_FAKE_SHELF");
+                g.system = all13[(i * 5 + i / 13) % 13];
+                if (only && only[0] && only[0] != '1') g.system = hub::system_from_short(only);
+                g.title = std::string(w1[(i * 3) % 13]) + " " + w2[(i * 7 + i / 5) % 12] + " " + w3[(i / 3) % 10];
+                if (i % 11 == 4) g.title += ": The Adventures of the Forgotten Kingdom Collector's Edition";
+                if (i % 17 == 9) g.title = "Q" + g.title;
+            }
             g.path = "C:/fake/game" + std::to_string(i) + ".z64";
             A.lib.push_back(g);
         }

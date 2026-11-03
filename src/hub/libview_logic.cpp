@@ -11,6 +11,7 @@ const char* layout_key(LibLayout l) {
         case LibLayout::List: return "list";
         case LibLayout::Compact: return "compact";
         case LibLayout::Showcase: return "showcase";
+        case LibLayout::Shelf: return "shelf";
         default: return "grid";
     }
 }
@@ -19,6 +20,7 @@ const char* layout_name(LibLayout l) {
         case LibLayout::List: return "List";
         case LibLayout::Compact: return "Compact";
         case LibLayout::Showcase: return "Showcase";
+        case LibLayout::Shelf: return "Shelf";
         default: return "Grid";
     }
 }
