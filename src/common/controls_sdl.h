@@ -30,6 +30,7 @@ struct PadInfo {
     std::string guid;
     std::string serial;
     bool xinput = false;      // Xbox-style (XInput) pad
+    int player_index = -1;    // SDL's player index (SDL_JoystickGetDevicePlayerIndex): the XInput user slot 0-3 of an XInput pad; what PCSX2 calls SDL-<n>; -1 = none
     int port = 0;             // 0-based port after applying the stored order
 };
 /* Every connected pad SDL recognises as a game controller, sorted by `port_order` (empty = SDL order). */

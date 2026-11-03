@@ -61,6 +61,7 @@ std::vector<PadInfo> list_pads(const std::vector<std::string>& order) {
         p.guid = guid_str(i);
         SDL_GameControllerType t = SDL_GameControllerTypeForIndex(i);
         p.xinput = t == SDL_CONTROLLER_TYPE_XBOX360 || t == SDL_CONTROLLER_TYPE_XBOXONE;
+        p.player_index = SDL_JoystickGetDevicePlayerIndex(i);
         // The serial is only available on an open device; open briefly.
         if (SDL_GameController* c = SDL_GameControllerOpen(i)) { p.key = pad_key(c); SDL_GameControllerClose(c); }
         if (p.key.empty()) p.key = p.guid;

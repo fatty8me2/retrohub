@@ -171,12 +171,30 @@ const char* pcsx2_bios_missing_text() {
 
 /* ------------------------------------------------------------------ pads */
 
-Ps2Pads pcsx2_pads_with(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl) {
+std::vector<int> pcsx2_sdl_ids(const std::vector<PadDesc>& by_sdl) {
+    std::vector<int> id(by_sdl.size(), -1);
+    std::vector<bool> used;
+    auto taken = [&](int n) { return n >= 0 && (size_t)n < used.size() && used[n]; };
+    auto take = [&](int n) { if ((size_t)n >= used.size()) used.resize((size_t)n + 1, false); used[n] = true; };
+    for (size_t i = 0; i < by_sdl.size(); ++i) {   // PCSX2 opens the devices one by one in SDL order
+        int n = by_sdl[i].player;
+        if (n < 0 || taken(n)) { n = 0; while (taken(n)) ++n; }
+        take(n);
+        id[i] = n;
+    }
+    return id;
+}
+
+Ps2Pads pcsx2_pads_with(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl, int max_players) {
     Ps2Pads p;
-    for (size_t i = 0; i < by_port.size() && p.count < 4; ++i) {
+    const std::vector<int> ids = pcsx2_sdl_ids(by_sdl);
+    const int cap = max_players < 1 ? 1 : max_players > 4 ? 4 : max_players;
+    for (size_t i = 0; i < by_port.size() && p.count < cap; ++i) {
         int idx = -1;
-        for (size_t k = 0; k < by_sdl.size(); ++k) if (by_sdl[k].key == by_port[i].key) { idx = (int)k; break; }
-        if (idx < 0) idx = (int)i;
+        for (size_t k = 0; k < by_sdl.size(); ++k) if (by_sdl[k].key == by_port[i].key) { idx = ids[k]; break; }
+        bool dup = false;   // a pad is never bound to two players
+        for (int j = 0; j < p.count; ++j) if (p.sdl[j] == idx) dup = true;
+        if (idx < 0 || dup) continue;
         p.sdl[p.count++] = idx;
     }
     p.multitap = p.count > 2;

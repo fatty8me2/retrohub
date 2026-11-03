@@ -223,7 +223,7 @@ void draw_hero(const hub::GameEntry& e, float h) {
         if (is_hack(e)) put(hack_ribbon(e), ui::ACCENT);
         if (is_native(e)) put("Native port", IM_COL32(255, 255, 255, 30));
         if (cat && cat->year) put(std::to_string(cat->year), IM_COL32(255, 255, 255, 30));
-        if (supports_online(e)) put("1-" + std::to_string(local_players_for(e)) + " players", IM_COL32(255, 255, 255, 30));
+        if (supports_online(e)) put(local_players_for(e) >= 2 ? "1-" + std::to_string(local_players_for(e)) + " players" : std::string("1 player"), IM_COL32(255, 255, 255, 30));
         if (gs.play_seconds) put(hubui::format_play_time(gs.play_seconds) + " played", IM_COL32(255, 255, 255, 30));
         ty += ph + sp(1.f);
     }
