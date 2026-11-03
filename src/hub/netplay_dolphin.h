@@ -69,6 +69,16 @@ int pad_buffer_for_ping(int ping_ms, bool relayed);
 int next_pad_buffer(int cur, int want);
 std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p);
 
+/* Host memory card for NetPlay ("Sync Saves"). Dolphin 2509's NetPlay server sends the guests the .gci files of
+ * GCIFolderAPath\<REGION> (NetPlayServer.cpp SyncSaveData -> Config::GetGCIFolderPath, which ignores GCIFolderAPathOverride), while
+ * the host's own card is the override folder. RetroHub's card is that override, so guests used to get an EMPTY card while the host
+ * played on its real save: different boot paths, "Possible desync detected" at the boot card read (Super Mario Strikers frame 420),
+ * different menus/unlocks for every game with a save. This wipes <sync_root>, copies the .gci files of card_dir into
+ * <sync_root>\USA, \EUR and \JPN (the folder names Dolphin appends for each disc region) and returns the extra Dolphin argument
+ * ` -C "Dolphin.Core.GCIFolderAPath=<sync_root>"`. The host still plays and saves on card_dir (the override); only the copy is sent.
+ * Returns "" (and *err) when the copy fails. Paths are UTF-8. */
+std::string host_card_sync_args(const std::string& card_dir, const std::string& sync_root, std::string* err = nullptr);
+
 /* "Game (GM4E01)" row finder helper: Dolphin lists NetPlay games as "<title> (<id>)". */
 std::string list_item_suffix(const Spec& s);
 

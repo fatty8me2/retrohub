@@ -186,6 +186,14 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     make_dirs(card);
     std::string extra = std::string("-C Dolphin.Display.Fullscreen=") + (hub::gs::is_fullscreen(gs_values_for(e)) ? "True" : "False") +
                         " -C \"Dolphin.Core.GCIFolderAPathOverride=" + card + "\"";
+    /* Dolphin's NetPlay server sends the guests GCIFolderAPath\<REGION>, not the override the host plays on: give it a copy of the
+     * host's card there, or every guest boots with an empty card (desync; see gcnp::host_card_sync_args). */
+    if (host) {
+        std::string serr;
+        std::string sync = gcnp::host_card_sync_args(card, no_slash(hub::data_dir()) + "\\netplay\\gc\\host-sync", &serr);
+        if (sync.empty()) online_log("gc launch: host card copy for the guests failed (" + serr + "); guests start with an empty memory card");
+        extra += sync;
+    }
     if (!gcnp::start(host, inst.exe, user, sp, slot, hub::data_dir() + "\\gcnp", "", extra, &GCO.run)) {
         launch_note(host, "Could not start Dolphin NetPlay: " + GCO.run.error);
         return false;

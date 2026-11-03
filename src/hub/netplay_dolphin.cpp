@@ -2,6 +2,7 @@
 #include "netplay_dolphin.h"
 
 #include <cctype>
+#include <cwctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -293,6 +294,60 @@ std::string ini_patch(const std::string& ini, const Spec& s, const IniParams& p)
     std::vector<std::pair<std::string, KV>> want = {{"NetPlay", np}, {"Core", core}, {"General", gen}, {"Interface", iface}, {"Analytics", an}, {"AutoUpdate", KV{{"UpdateTrack", ""}}}};
     if (p.mute) { want.push_back({"DSP", KV{{"Backend", "No Audio Output"}}}); }
     return ini_set_all(ini, want);
+}
+
+static std::string host_card_sync_impl(const std::string& card_dir, const std::string& sync_root, std::string* err) {
+    namespace fs = std::filesystem;
+    auto fail = [&](const std::string& why) { if (err) *err = why; return std::string(); };
+    if (card_dir.empty() || sync_root.size() < 4) return fail("no card folder");
+#ifdef _WIN32
+    const fs::path src(winutil::to_wide(card_dir)), root(winutil::to_wide(sync_root));
+#else
+    const fs::path src(card_dir), root(sync_root);
+#endif
+    /* Only ever wipe our own scratch folder: absolute, named host-sync, not a link, not the card itself or above it. */
+    if (!root.is_absolute() || root.filename() != L"host-sync") return fail("unsafe sync folder " + sync_root);
+    const std::wstring rs = root.lexically_normal().wstring() + L"\\", cs = src.lexically_normal().wstring() + L"\\";
+    if (_wcsnicmp(cs.c_str(), rs.c_str(), rs.size()) == 0) return fail("sync folder contains the card");
+#ifdef _WIN32
+    const DWORD ra = GetFileAttributesW(root.c_str());
+    if (ra != INVALID_FILE_ATTRIBUTES && (ra & FILE_ATTRIBUTE_REPARSE_POINT)) return fail("sync folder is a link");
+#endif
+    std::error_code ec;
+    fs::remove_all(root, ec);   // stale copies must not reach the guests
+    if (ec) return fail("cannot clear " + sync_root + ": " + ec.message());
+    std::vector<fs::path> gci;
+    std::error_code de;
+    if (fs::is_directory(src, de))   // a missing card folder (first game) is fine: empty card for everyone
+        for (const auto& e : fs::directory_iterator(src, ec)) {
+            std::error_code fe;
+            if (!e.is_regular_file(fe)) continue;
+            std::wstring x = e.path().extension().wstring();
+            for (auto& c : x) c = (wchar_t)towlower(c);
+            if (x == L".gci") gci.push_back(e.path());
+        }
+    if (ec) return fail("cannot list " + card_dir + ": " + ec.message());
+    for (const char* region : {"USA", "EUR", "JPN"}) {
+        const fs::path dir = root / region;
+        fs::create_directories(dir, ec);
+        if (ec) return fail("cannot create " + winutil::to_utf8(dir.wstring()) + ": " + ec.message());
+        for (const fs::path& f : gci) {
+            fs::copy_file(f, dir / f.filename(), fs::copy_options::overwrite_existing, ec);
+            if (ec) return fail("cannot copy " + winutil::to_utf8(f.filename().wstring()) + ": " + ec.message());
+            fs::permissions(dir / f.filename(), fs::perms::owner_write, fs::perm_options::add, ec);   // a read-only save must not block the next wipe
+            ec.clear();
+        }
+    }
+    return " -C \"Dolphin.Core.GCIFolderAPath=" + sync_root + "\"";
+}
+
+std::string host_card_sync_args(const std::string& card_dir, const std::string& sync_root, std::string* err) {
+    try {
+        return host_card_sync_impl(card_dir, sync_root, err);
+    } catch (const std::exception& x) {   // directory_iterator increments can throw
+        if (err) *err = x.what();
+        return "";
+    }
 }
 
 /* ---------- UIA driver ---------- */
