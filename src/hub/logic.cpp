@@ -80,6 +80,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"cloud_enabled\": " << (s.cloud_enabled ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
+      << "  \"show_whats_new\": " << (s.show_whats_new ? "true" : "false") << ",\n"
       << "  \"changelog_seen\": \"" << json::escape(s.changelog_seen) << "\",\n"
       << "  \"kt_intro_seen\": " << (s.kt_intro_seen ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json::escape(s.vault_dir) << "\",\n"
@@ -214,6 +215,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->cemu_manage_controls = json_bool(j, "cemu_manage_controls", out->cemu_manage_controls);
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
     out->setup_done = json_bool(j, "setup_done", out->setup_done);
+    out->show_whats_new = json_bool(j, "show_whats_new", out->show_whats_new);
     out->changelog_seen = j.str("changelog_seen", out->changelog_seen);
     out->cemu_exe = j.str("cemu_exe", out->cemu_exe);
     out->ps1_bios = j.str("ps1_bios", out->ps1_bios);

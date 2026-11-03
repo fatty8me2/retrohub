@@ -183,6 +183,7 @@ add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit ch
 add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
 add_test(NAME hub_shell_test COMMAND hub_shell_test)
 add_test(NAME hub_changelog_test COMMAND hub_changelog_test ${CMAKE_SOURCE_DIR}/data/changelog.json)   # patch notes parser + show-once rule
+add_test(NAME hub_welcome_test COMMAND hub_welcome_test)   # Welcome back card: versions since, collapse/cap, labels, keyword->page, show/defer rules
 add_test(NAME hub_gamenight_test COMMAND hub_gamenight_test)     # game night plans: DM tag, reminder timing, persistence
 add_test(NAME hub_group_test COMMAND hub_group_test)             # recent groups + notification history persistence/expiry
 add_test(NAME hub_rivals_test COMMAND hub_rivals_test)         # rivalry result parsing, ranking, storage union, head-to-head
