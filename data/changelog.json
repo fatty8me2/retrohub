@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.31.12",
+      "date": "2026-11-03",
+      "title": "Smash online needs an account too",
+      "new": [
+        "Smash Classic online now checks your RetroHub account: banned or waiting accounts can't join Smash rooms"
+      ],
+      "improved": [
+        "With 'Only approved accounts can join rooms' on, Smash rooms are covered as well"
+      ],
+      "fixed": [
+        "Smash online shows the server's reason when a room refuses you instead of a generic connection error"
+      ]
+    },
+    {
       "version": "1.31.11",
       "date": "2026-11-03",
       "title": "Only people you approve",
