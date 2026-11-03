@@ -1,5 +1,5 @@
 # Rollback netplay matrix on mgba_link: stall seconds, rollback depth, desyncs under simulated networks. Headless, muted, kills only its own PIDs.
-# Server: start `npx wrangler dev --port 8793 --ip 127.0.0.1` in BattleShip\server\cloudflare first.
+# Server: start `npx wrangler dev --port 8793 --ip 127.0.0.1 --var REG_APPROVAL_DEFAULT:0 ALLOW_TEST_FLAG:1` in BattleShip\server\cloudflare first.
 # Usage: powershell -File qa\retrorun_rb_matrix.ps1 -BinDir build\bin\Release -Rom <rom.gba> -Case bad60 [-Frames 1800] [-Extra1 100]
 param(
     [string]$Server = 'ws://127.0.0.1:8793',

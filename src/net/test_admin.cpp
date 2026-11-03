@@ -1,5 +1,6 @@
 /* hubadmin_test: owner dashboard + account access rules (pure logic, no network). */
 #include "admin_logic.h"
+#include "ident_env.h"
 
 #include <cstdio>
 
@@ -19,6 +20,22 @@ int main()
     CHECK(access_message(Access::Pending).find("offline") == std::string::npos && access_message(Access::Unavailable).find("offline") == std::string::npos);   // the whole app locks: no "keep playing offline"
     CHECK(admin_approval_help(true).find("not even offline") != std::string::npos && admin_ban_confirm("x").find("Offline play is not touched") == std::string::npos);
     CHECK(access_message(Access::Ok).empty() && access_title(Access::Ok).empty());
+
+    // account proof for game-room sockets (strict rooms): env value bound to one server, proof only, malformed values refused
+    {
+        const std::string uid(26, 'a'), sec(52, 'b');
+        const std::string v = ident_env_value("wss://rh.example/", uid, sec);
+        const std::string f = ident_frame_from_env("WSS://rh.example", v.c_str());   // trailing slash / case do not matter
+        CHECK(f == "{\"type\":\"ident\",\"uid\":\"" + uid + "\",\"secret\":\"" + sec + "\",\"nopair\":true}");
+        CHECK(ident_frame_from_env("wss://evil.example", v.c_str()).empty());   // never to another server
+        CHECK(ident_frame_from_env("wss://rh.example", nullptr).empty() && ident_frame_from_env("wss://rh.example", "").empty());
+        CHECK(ident_frame_from_env("wss://rh.example", "wss://rh.example|short|short").empty());
+        CHECK(ident_frame_from_env("wss://rh.example", ("wss://rh.example|" + uid + "\"x|" + sec).c_str()).empty());
+        set_process_ident("wss://rh.example", uid, sec);
+        CHECK(process_ident_frame("wss://rh.example") == f && process_ident_frame("wss://other").empty());
+        set_process_ident("", "", "");
+        CHECK(process_ident_frame("wss://rh.example").empty());
+    }
 
     // requests
     AdminQuery q; q.q = "lu\"cas"; q.by_first = true; q.asc = true; q.status = "pending"; q.offset = 50; q.limit = 500;

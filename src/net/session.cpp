@@ -14,6 +14,7 @@
 #include <chrono>
 #include <algorithm>
 #include "net_internal.h"
+#include "ident_env.h"
 #include "log.h"
 #include "session.h"
 #include "reconnect.h"
@@ -21,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <random>
 #include <vector>
 
@@ -208,6 +210,9 @@ struct Session::Impl {
         if (s < 0 || s >= kMaxSlots || s == slot) return false;
         return is_host() ? s > 0 : s == 0;
     }
+
+    std::string ident;   // proof-of-account frame for this server (ident_env.h); empty = none. Never logged.
+    int ident_busy_tries = 0;
 
     void connect_ws()
     {
@@ -421,6 +426,7 @@ struct Session::Impl {
             if (s != slot) net_log("Session: server gave slot %d (wanted %d)", s, slot);
             slot = s;
             net_log("Session %d: welcome room %s", slot, j.str("room").c_str());
+            if (!ident.empty()) { ws.send_text(ident); net_log("Session %d: sent account proof", slot); }   // strict rooms: every seat proves its account (no pairing)
         } else if (type == "members") {
             bool seen[kMaxSlots] = {};
             uint32_t sm = 0;
@@ -485,6 +491,14 @@ struct Session::Impl {
                 ws_retrying = true;
                 ws_retry_at = now + 700;
                 status = "waiting for host";
+                return;
+            }
+            if (reason == "ident-required") { fail(server_reason_text(reason)); return; }   // the room needs a RetroHub account: never retried
+            if (reason == "server-busy" && !ident.empty() && !ready_ever && welcomed && ident_busy_tries < 6) {   // account check refused for now (4014): temporary, never a lock; back off and try again
+                ++ident_busy_tries;
+                ws_retrying = true;
+                ws_retry_at = now + 3000u * (uint32_t)ident_busy_tries;
+                status = "Server busy, try again shortly";
                 return;
             }
             if (reason == "room-in-use") fail("Room code already in use");
@@ -703,6 +717,9 @@ bool Session::start(const SessionConfig& cfg)
     Impl& d = *impl_;
     d.cfg = cfg;
     if (d.cfg.server.empty()) d.cfg.server = default_server();
+    d.ident = !cfg.ident.empty() ? cfg.ident : process_ident_frame(d.cfg.server);
+    if (d.ident.empty()) d.ident = ident_frame_from_env(d.cfg.server, getenv(kIdentEnv));
+    d.ident_busy_tries = 0;
     if (cfg.spectate && cfg.slot == 0) return false;
     if (cfg.slot < 0 || cfg.slot >= kMaxSlots || cfg.expected < 1 || cfg.expected > kMaxSlots) return false;
     d.slot = cfg.slot;

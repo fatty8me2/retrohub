@@ -36,7 +36,7 @@ if ($Server -eq '') {
     New-Item -ItemType Directory -Force -Path $env:WRANGLER_REGISTRY_PATH | Out-Null
     $wl = Join-Path $env:TEMP "spec-wrangler-$Port.log"
     $node = (Get-Command node).Source
-    $wr = Start-Process -FilePath $node -ArgumentList @('node_modules\wrangler\bin\wrangler.js', 'dev', '--ip', '127.0.0.1', '--port', $Port, '--persist-to', $persist) `
+    $wr = Start-Process -FilePath $node -ArgumentList @('node_modules\wrangler\bin\wrangler.js', 'dev', '--ip', '127.0.0.1', '--port', $Port, '--persist-to', $persist, '--var', 'REG_APPROVAL_DEFAULT:0', 'ALLOW_TEST_FLAG:1') `
         -WorkingDirectory $WorkerDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $wl -RedirectStandardError "$wl.err"
     $up = $false
     for ($i = 0; $i -lt 90 -and -not $up; $i++) {
