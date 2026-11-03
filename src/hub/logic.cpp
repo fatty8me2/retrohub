@@ -74,6 +74,9 @@ std::string settings_to_json(const Settings& s) {
       << "  \"lib_favs_only\": " << (s.lib_favs_only ? "true" : "false") << ",\n"
       << "  \"lib_genre\": \"" << json::escape(s.lib_genre) << "\",\n"
       << "  \"lib_group_genre\": " << (s.lib_group_genre ? "true" : "false") << ",\n"
+      << "  \"lib_layout\": \"" << json::escape(s.lib_layout) << "\",\n"
+      << "  \"lib_list_col\": \"" << json::escape(s.lib_list_col) << "\",\n"
+      << "  \"lib_list_desc\": " << (s.lib_list_desc ? "true" : "false") << ",\n"
       << "  \"cloud_enabled\": " << (s.cloud_enabled ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
@@ -171,6 +174,9 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->lib_favs_only = json_bool(j, "lib_favs_only", out->lib_favs_only);
     out->lib_genre = j.str("lib_genre", out->lib_genre);
     out->lib_group_genre = json_bool(j, "lib_group_genre", out->lib_group_genre);
+    out->lib_layout = j.str("lib_layout", out->lib_layout);
+    out->lib_list_col = j.str("lib_list_col", out->lib_list_col);
+    out->lib_list_desc = json_bool(j, "lib_list_desc", out->lib_list_desc);
     out->cloud_enabled = json_bool(j, "cloud_enabled", out->cloud_enabled);   // legacy sync_states / cloud_saves keys are ignored
     out->sync_card_dismissed = json_bool(j, "sync_card_dismissed", out->sync_card_dismissed);
     out->smash_save_notice_shown = json_bool(j, "smash_save_notice_shown", out->smash_save_notice_shown);

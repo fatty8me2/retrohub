@@ -7,6 +7,7 @@
 #define STBI_NO_HDR
 #include "third_party/stb_image.h"
 #include "app.h"
+#include "libview_ui.h"
 #include "../saves/savestore.h"
 #include "state_slots.h"
 
@@ -86,6 +87,7 @@ void resume_entry(const hub::GameEntry& e, int slot) {
 void cycle_sort(int dir) {
     hubui::SortMode m = hubui::next_sort(hubui::sort_from_key(A.st.library_sort), dir);
     A.st.library_sort = hubui::sort_key(m);
+    lib_sort_chip_changed();
     mark_dirty();
     A.vis_dirty = true;
     A.grid_scroll_top = true;

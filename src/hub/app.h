@@ -217,6 +217,8 @@ struct App {
     std::map<std::string, int> chip_counts;      // per-console counts under the current search + Online toggle
     int chip_total = 0;
     std::map<std::string, int> genre_counts;     // All Games Genre chip: genre -> games (after search / Online / Favorites; "Other" = no genre)
+    bool lib_pg = false;                         // the All Games body has the pad focus and pages itself (LT/RT): main.cpp does not send PageUp/PageDown
+    uint32_t vis_gen = 0;                        // bumped by every rebuild_vis (All Games layouts cache on it)
     bool grid_scroll_top = false;                // reset the All Games scroll on the next frame
     bool picks_open = false;                      // Home: "Top picks you don't have yet" expanded
     char search_buf[64] = {0};
