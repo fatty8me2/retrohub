@@ -63,6 +63,7 @@ std::vector<std::string> wrap_lines(ImFont* f, float size, const std::string& te
         std::string line(p, brk);
         while (!line.empty() && line.back() == ' ') line.pop_back();
         p = brk;
+        while (p < end && *p == ' ') ++p;
         if ((int)out.size() == max_lines - 1 && p < end) line = ui::ellipsize(f, size, line + " " + std::string(p, end), w);
         out.push_back(line);
     }
@@ -410,6 +411,29 @@ bool count_text(Flow& f, bool force)
     return true;
 }
 
+/* A menu row with a drawn checkbox: accent fill and a check mark when on, hairline outline when off. */
+bool menu_check(const std::string& label, bool on, bool keep_open = false)
+{
+    const float h = ImGui::GetFontSize() + sp(0.75f);
+    const float w = ImGui::CalcTextSize(label.c_str()).x + sp(4.5f);
+    ImGui::PushID(label.c_str());
+    const bool pressed = ImGui::Selectable("##row", false, keep_open ? ImGuiSelectableFlags_NoAutoClosePopups : 0, ImVec2(w, h));
+    ImGui::PopID();
+    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float bs = sp(1.75f), cy = (a.y + b.y) * 0.5f;
+    const ImVec2 b0(a.x + sp(0.5f), cy - bs * 0.5f), b1(b0.x + bs, cy + bs * 0.5f);
+    if (on) {
+        dl->AddRectFilled(b0, b1, ui::ACCENT, sp(0.4f));
+        dl->AddLine(ImVec2(b0.x + bs * 0.22f, cy + bs * 0.02f), ImVec2(b0.x + bs * 0.43f, cy + bs * 0.25f), IM_COL32_WHITE, 1.8f);
+        dl->AddLine(ImVec2(b0.x + bs * 0.43f, cy + bs * 0.25f), ImVec2(b0.x + bs * 0.80f, cy - bs * 0.24f), IM_COL32_WHITE, 1.8f);
+    } else {
+        dl->AddRect(b0, b1, ui::TEXT3, sp(0.4f), 0, 1.f);
+    }
+    dl->AddText(ImVec2(b1.x + sp(1.f), cy - ImGui::GetFontSize() * 0.5f), on ? ui::TEXT : ui::TEXT2, label.c_str());
+    return pressed;
+}
+
 void toolbar()
 {
     Flow fl;
@@ -479,9 +503,9 @@ void toolbar()
     {   // Genre (multi-select)
         std::string lab = "Genre";
         if (g_f.genres.size() == 1) lab += ": " + *g_f.genres.begin();
-        else if (g_f.genres.size() > 1) lab += ": " + std::to_string(g_f.genres.size()) + " picked";
+        else if (g_f.genres.size() > 1) lab = std::to_string(g_f.genres.size()) + " genres";
         if (menu_begin("genre", lab, !g_f.genres.empty(), ui::ACCENT, f2, 18.f)) {
-            if (menu_item("Any genre", g_f.genres.empty())) g_f.genres.clear();
+            if (menu_check("Any genre", g_f.genres.empty())) g_f.genres.clear();
             std::vector<std::pair<std::string, int>> gc = g_br.genre_counts(g_f);
             for (const std::string& s : g_f.genres) {   // a picked genre with no match under the other filters stays listed so it can be unpicked
                 bool have = false;
@@ -492,8 +516,8 @@ void toolbar()
             for (auto& kv : gc) {
                 const bool on = g_f.genres.count(kv.first) > 0;
                 char row[96];
-                std::snprintf(row, sizeof row, "%s%s  (%d)", on ? "[x] " : "[  ] ", kv.first.c_str(), kv.second);
-                if (menu_item(row, on, true)) { if (on) g_f.genres.erase(kv.first); else g_f.genres.insert(kv.first); }
+                std::snprintf(row, sizeof row, "%s  (%d)", kv.first.c_str(), kv.second);
+                if (menu_check(row, on, true)) { if (on) g_f.genres.erase(kv.first); else g_f.genres.insert(kv.first); }
             }
             menu_end();
         }
@@ -504,15 +528,15 @@ void toolbar()
         std::string lab = "Players";
         for (int i = 1; i < 4; ++i) if (g_f.min_players == vals[i]) lab = "Players: " + std::to_string(vals[i]) + "+";
         if (menu_begin("players", lab, g_f.min_players > 0, ui::ACCENT, f2, 14.f)) {
-            for (int i = 0; i < 4; ++i) if (menu_item(names[i], g_f.min_players == vals[i])) g_f.min_players = vals[i];
+            for (int i = 0; i < 4; ++i) if (menu_check(names[i], g_f.min_players == vals[i])) g_f.min_players = vals[i];
             menu_end();
         }
     }
     {   // Decade
-        std::string lab = g_f.decade ? "Decade: " + std::to_string(g_f.decade) + "s" : "Decade";
+        std::string lab = g_f.decade ? "Decade: " + std::to_string(g_f.decade % 100) + "s" : "Decade";
         if (menu_begin("decade", lab, g_f.decade > 0, ui::ACCENT, f2, 13.f)) {
-            if (menu_item("Any decade", g_f.decade == 0)) g_f.decade = 0;
-            for (int d = 1980; d <= 2010; d += 10) if (menu_item(std::to_string(d) + "s", g_f.decade == d)) g_f.decade = d;
+            if (menu_check("Any decade", g_f.decade == 0)) g_f.decade = 0;
+            for (int d = 1980; d <= 2010; d += 10) if (menu_check(std::to_string(d) + "s", g_f.decade == d)) g_f.decade = d;
             menu_end();
         }
     }
@@ -521,7 +545,7 @@ void toolbar()
         static const char* shorts[] = {"Status", "Status: Not mine", "Status: In a pack", "Status: Mine"};
         const int cur = (int)g_f.status;
         if (menu_begin("status", shorts[cur], cur != 0, ui::ACCENT, f2, 18.f)) {
-            for (int i = 0; i < 4; ++i) if (menu_item(names[i], cur == i)) g_f.status = (discover::StatusFilter)i;
+            for (int i = 0; i < 4; ++i) if (menu_check(names[i], cur == i)) g_f.status = (discover::StatusFilter)i;
             menu_end();
         }
     }
@@ -547,10 +571,11 @@ void toolbar()
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every other game in the offline database, not just the recommended ones");
     }
     if (discover::filters_active(g_f)) {
-        f2.place(chip_w("Clear filters"));
+        f2.place(chip_w("Clear"));
         ImGui::PushID("clear");
-        if (chip("Clear filters", false, ui::ACCENT)) { discover::clear_filters(&g_f); g_q[0] = 0; }
+        if (chip("Clear", false, ui::ACCENT)) { discover::clear_filters(&g_f); g_q[0] = 0; }
         f2.mark();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear all filters and the search");
         ImGui::PopID();
     }
     if (!counted) count_text(f2, true);
