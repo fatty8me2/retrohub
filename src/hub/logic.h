@@ -40,7 +40,8 @@ struct Settings {
     bool lib_favs_only = false;        // All Games: Favorites chip
     std::string lib_genre;             // All Games: Genre chip ("" = all genres; "Other" = games without a genre)
     bool lib_group_genre = false;      // All Games: Group by Genre instead of by console
-    std::string lib_layout = "grid";   // All Games layout: grid | list | compact | showcase
+    std::string lib_layout = "grid";   // All Games layout: grid | list | compact | showcase | shelf
+    bool lib_shelf_mixed = false;      // Shelf layout: false = one shelf per console, true = one flow following the Sort chip
     std::string lib_list_col;          // List layout: sorted column ("" = follow the Sort chip) title | console | players | last | time
     bool lib_list_desc = false;        // List layout: column sorted descending
     bool cloud_states = true;          // "Back up save states to the cloud" (within the smart cap)

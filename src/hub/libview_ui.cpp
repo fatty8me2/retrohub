@@ -9,11 +9,19 @@
 #include "app.h"
 #include "libview_ui.h"
 #include "online_caps.h"
+#include "shelf_draw.h"
+#include "shelf_logic.h"
 
 #include <SDL.h>
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 using hubui::LibLayout;
 using hubui::ListCol;
@@ -107,7 +115,8 @@ Disp& build_disp(LibLayout lay) {
     sig = mixh(sig, (uint64_t)col * 2 + (A.st.lib_list_desc ? 1 : 0));
     sig = mixh(sig, A.lib.size() * 31 + A.ghosts.size());
     sig = mixh(sig, A.vis.size());
-    sig = mixh(sig, (uint64_t)A.sort_mode + (A.st.lib_group_genre ? 8 : 0));
+    const bool shelf_mixed = lay == LibLayout::Shelf && A.st.lib_shelf_mixed;   // Shelf "Mixed": one flow in the Sort chip's order
+    sig = mixh(sig, (uint64_t)A.sort_mode + (A.st.lib_group_genre ? 8 : 0) + (shelf_mixed ? 16 : 0) + (lay == LibLayout::Shelf ? 32 : 0));
     if (sig == D.sig) return D;
     D = Disp();
     D.sig = sig;
@@ -122,6 +131,10 @@ Disp& build_disp(LibLayout lay) {
             rows.push_back(r);
         }
         for (int k : hubui::sort_list_rows(rows, nullptr, col, A.st.lib_list_desc)) D.flat.push_back(A.vis[k]);
+        D.sec_size = {(int)D.flat.size()};
+        D.sec_title = {""}; D.sec_sys = {"other"}; D.sec_head = {false};
+    } else if (shelf_mixed) {
+        for (int i : A.vis) D.flat.push_back(i);
         D.sec_size = {(int)D.flat.size()};
         D.sec_title = {""}; D.sec_sys = {"other"}; D.sec_head = {false};
     } else {
@@ -724,6 +737,195 @@ void draw_showcase(Disp& D) {
     ImGui::Dummy(sz);
 }
 
+/* ---------- Shelf: a wooden bookcase of cartridges, discs and cases (shelf_logic.h / shelf_draw.h) ---------- */
+
+struct ShelfAnim { hubui::shelf::Spring sp; int stamp = 0; };
+struct ShelfState {
+    hubui::shelf::Layout lay;
+    std::vector<hubui::shelf::Media> media;
+    std::vector<hubui::shelf::Dims> dims;
+    uint64_t lsig = ~0ull;
+    std::unordered_map<std::string, ShelfAnim> anim;
+    int frame = 0;
+    int shot_focus = -1;
+    float maxh = 1.f;
+    uint64_t maxh_sig = ~0ull;
+} SH;
+
+bool reduced_motion() {
+    static double next = 0;
+    static bool val = false;
+    static const bool forced = std::getenv("HUB_REDUCE_MOTION") != nullptr;
+    const double now = ImGui::GetTime();
+    if (now >= next) {
+        next = now + 2.0;
+#ifdef _WIN32
+        BOOL on = TRUE;
+        if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &on, 0)) val = !on;
+#endif
+    }
+    return val || forced;
+}
+
+void draw_shelf(Disp& D) {
+    using namespace hubui::shelf;
+    ImGuiIO& io = ImGui::GetIO();
+    ImGuiContext& gctx = *ImGui::GetCurrentContext();
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const int n = (int)D.flat.size();
+    if (n == 0) { ImGui::Indent(sp(1.5f)); add_games_banner(); ImGui::Unindent(sp(1.5f)); return; }
+    const bool mixed = A.st.lib_shelf_mixed;
+    const bool reduced = reduced_motion();
+    const float view_h = ImGui::GetWindowHeight();
+    const float cabinet_x0 = win->Pos.x;
+    const float cabinet_x1 = win->Pos.x + win->Size.x - (win->ScrollbarY ? ImGui::GetStyle().ScrollbarSize : 0.f);
+    const float width = cabinet_x1 - cabinet_x0;
+    float B = std::max(sp(11.f), std::min(sp(22.f), view_h * 0.19f));
+    {   // a library of only short things (DS cases ...) gets bigger items: the tallest item on the shelves is about B tall
+        if (SH.maxh_sig != D.sig) {
+            float mh = 0.4f;
+            for (int p = 0; p < n; ++p) mh = std::max(mh, item_dims(media_for(item_sys(D.flat[(size_t)p])), 0).h);
+            SH.maxh = std::max(0.68f, std::min(1.f, mh));
+            SH.maxh_sig = D.sig;
+        }
+        B /= SH.maxh;
+    }
+    const shelfdraw::RowGeo geo = shelfdraw::row_geo(B, ui::F.cap->FontSize);
+
+    const uint64_t lsig = mixh(mixh(mixh(mixh(D.sig, 77), (uint64_t)width), (uint64_t)(B * 4.f)), (uint64_t)(mixed ? 1 : 0));
+    if (lsig != SH.lsig || SH.media.size() != D.flat.size()) {
+        SH.media.resize((size_t)n);
+        SH.dims.resize((size_t)n);
+        std::vector<float> slot((size_t)n);
+        for (int p = 0; p < n; ++p) {
+            const int idx = D.flat[(size_t)p];
+            SH.media[(size_t)p] = media_for(item_sys(idx));
+            SH.dims[(size_t)p] = item_dims(SH.media[(size_t)p], hash32(item_key(idx)));
+            slot[(size_t)p] = (rest_width(SH.dims[(size_t)p]) + slot_gap(SH.media[(size_t)p])) * B;
+        }
+        SH.lay = pack_rows(slot, D.sec_size, width, geo.side + B * 0.22f, geo.pitch, sp(0.5f), sp(1.f));
+        SH.lsig = lsig;
+        G.L = SH.lay.L;
+        G.lsig = lsig;
+    }
+    const Layout& lay = SH.lay;
+    const hubui::VLayout& L = lay.L;
+
+    const float x0 = ImGui::GetCursorPosX();
+    const float base_y = ImGui::GetCursorPosY();
+    const float top_screen = ImGui::GetCursorScreenPos().y;
+    float scroll = ImGui::GetScrollY();
+    if (G.scroll_abs >= 0.f) { scroll = G.scroll_abs; G.scroll_abs = -1.f; ImGui::SetScrollY(scroll); }
+    else if (G.jump_pos >= 0 && G.jump_pos < n && G.jump_pos < (int)L.item_row.size()) {
+        const int r = L.item_row[(size_t)G.jump_pos];
+        if (G.jump_top) scroll = std::max(0.f, base_y + L.rows[(size_t)r].y - sp(0.5f));
+        else if (G.jump_center) scroll = std::max(0.f, base_y + L.rows[(size_t)r].y - view_h * 0.35f);
+        else scroll = std::max(0.f, hubui::scroll_to_row(L, r, scroll - base_y, view_h - base_y, geo.head * 0.5f, 1e9f) + base_y);
+        ImGui::SetScrollY(scroll);
+        G.jump_pos = -1;
+        G.jump_center = false;
+    }
+    {   // what is at the top of the viewport (the A-Z strip highlights its letter)
+        int tf = -1, tl = -1;
+        const float ty = std::max(0.f, scroll - base_y) + geo.pitch * 0.5f;
+        hubui::rows_in_range(L, ty, ty, &tf, &tl);
+        G.top_pos = (tf >= 0 && L.rows[(size_t)tf].first < n) ? L.rows[(size_t)tf].first : -1;
+        G.top_title.clear();
+    }
+    // Left / Right at the end of a shelf continue on the next / previous one (ImGui's own move finds nothing there)
+    const bool nav_mine = gctx.NavWindow == win;
+    if (nav_mine && A.focused && !A.proc && !io.WantTextInput) {
+        const int dk = (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, true)) ? -1
+                       : (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, true)) ? 1 : 0;
+        const int cur = selected_pos(D);
+        if (dk && cur >= 0 && cur < n) {
+            const hubui::VRow& cr = L.rows[(size_t)row_of(lay, cur)];
+            const bool edge = dk < 0 ? cur == cr.first : cur == cr.first + cr.count - 1;
+            const int t = move_focus(lay, cur, dk < 0 ? Dir::Left : Dir::Right);
+            if (edge && t != cur) jump(D, t, false);
+        }
+    }
+
+    int f = -1, l = -1;
+    hubui::rows_in_range(L, scroll - base_y - view_h, scroll - base_y + view_h * 2.f, &f, &l);
+    ++SH.frame;
+    struct Front { int pos; ImVec2 base; SlidePose pose; shelfdraw::Item item; bool ring, active; float s; };
+    std::vector<Front> fronts;
+    const std::string sel_key = selected_key();
+    const float dt = io.DeltaTime;
+    for (int r = f; r >= 0 && r <= l; ++r) {
+        const hubui::VRow& row = L.rows[(size_t)r];
+        const float ry = top_screen + row.y - 0.f;   // screen y of the row top (the cursor already moved with the scroll)
+        const float ry_local = base_y + row.y;
+        const bool vis = ry_local + row.h > scroll - sp(1.f) && ry_local < scroll + view_h + sp(1.f);
+        if (vis) {
+            std::string label, count;
+            ImU32 chip = ui::ACCENT;
+            const int sec = lay.row_sec[(size_t)r];
+            if (!mixed) {
+                label = D.sec_title[(size_t)sec];
+                if (lay.row_first[(size_t)r]) count = std::to_string(D.sec_size[(size_t)sec]);
+                ImU32 a, b;
+                system_colors(hub::system_from_short(D.sec_sys[(size_t)sec]), &a, &b);
+                chip = a;
+            } else if (r == 0) { label = "All games"; count = std::to_string(n); }
+            shelfdraw::bay(dl, geo, cabinet_x0, cabinet_x1, ry, label, count, chip, lay.row_first[(size_t)r] != 0);
+        }
+        for (int k = 0; k < row.count; ++k) {
+            const int pos = row.first + k;
+            const int idx = D.flat[(size_t)pos];
+            const Dims& dm = SH.dims[(size_t)pos];
+            const Media md = SH.media[(size_t)pos];
+            const float slot_w = lay.w[(size_t)pos];
+            const float item_w = slot_w - slot_gap(md) * B;
+            const ImVec2 base(cabinet_x0 + lay.x[(size_t)pos] + item_w * 0.5f, ry + geo.base_dy);
+            const float hit_h = dm.h * B + geo.depth * 0.5f + sp(0.25f);
+            ImGui::SetCursorScreenPos(ImVec2(cabinet_x0 + lay.x[(size_t)pos], base.y - hit_h + geo.depth * 0.5f));
+            const std::string key = item_key(idx);
+            const bool sel = key == sel_key;
+            TileResult res = interact("sh|" + key, ImVec2(slot_w, hit_h), sel);
+            auto it = SH.anim.find(key);
+            const bool active = A.pad_mode ? res.focused : (res.hovered || res.focused);
+            const float target = slide_target(active, sel);
+            if (!vis && !res.focused && !res.hovered) { if (it != SH.anim.end()) SH.anim.erase(it); deliver(idx, res); apply_pending_focus(idx); continue; }
+            if (it == SH.anim.end() && target > 0.f) it = SH.anim.emplace(key, ShelfAnim()).first;
+            ShelfAnim* an = it == SH.anim.end() ? nullptr : &it->second;
+            if (an) { an->stamp = SH.frame; spring_step(an->sp, target, dt, reduced); }
+            const float s = an ? an->sp.x : 0.f, v = an ? an->sp.v : 0.f;
+            const bool resting = !an || (an->sp.x == 0.f && target == 0.f && an->sp.v == 0.f);
+            if (an && resting) { SH.anim.erase(it); an = nullptr; }
+            shelfdraw::Item di;
+            di.media = md; di.dims = dm; di.seed = hash32(key);
+            di.title = item_title(idx);
+            di.sys_name = short_sys(item_sys(idx));
+            colors_of(idx, &di.c0, &di.c1);
+            di.ghost = is_ghost(idx);
+            di.fav = !di.ghost && gstate(A.lib[idx].key).favorite;
+            if (is_cart(md) || s > 0.02f) { ArtRef art = art_of(idx); di.art = art.tex; di.art_w = art.w; di.art_h = art.h; }
+            const SlidePose pose = slide_pose(md, dm, s, v, reduced);
+            if (resting) { if (vis) shelfdraw::item(dl, di, B, base, pose, false); }
+            else fronts.push_back({pos, base, pose, di, res.focused && io.NavVisible, active, s});
+            deliver(idx, res);
+            apply_pending_focus(idx);
+        }
+    }
+    // pulled-out games are drawn last (strongest on top) so they overlap their neighbours and the shelf above
+    std::stable_sort(fronts.begin(), fronts.end(), [](const Front& a, const Front& b) { return a.s < b.s; });
+    for (const Front& fr : fronts) {
+        shelfdraw::item(dl, fr.item, B, fr.base, fr.pose, fr.ring);
+        if (fr.active && fr.s > 0.5f) {
+            std::string sub = fr.item.sys_name;
+            const int idx = D.flat[(size_t)fr.pos];
+            if (!is_ghost(idx)) { const hub::GameState& gs = gstate(A.lib[idx].key); if (gs.last_played) sub += "  -  played " + fmt_ago(gs.last_played); }
+            shelfdraw::caption(dl, ImVec2(fr.base.x, fr.base.y + B * (0.07f + fr.pose.lift)), fr.item.title, sub, cabinet_x0 + geo.side, cabinet_x1 - geo.side, std::min(1.f, (fr.s - 0.5f) * 3.f));
+        }
+    }
+    for (auto it = SH.anim.begin(); it != SH.anim.end();) { if (it->second.stamp != SH.frame) it = SH.anim.erase(it); else ++it; }   // rows that left the page
+    ImGui::SetCursorPos(ImVec2(x0, base_y + L.total_h));
+    ImGui::Dummy(ImVec2(1.f, 1.f));
+}
+
 /* LT / RT: a page up / down that keeps the focused game at the same height (ImGui's own page move would land on the selected bar below). */
 void page_move(Disp& D, int dir, float view_h) {
     const int n = (int)D.flat.size();
@@ -827,15 +1029,20 @@ void lib_sort_chip_changed() {
 }
 
 static float switcher_cell() { return ImGui::GetFontSize() + sp(1.75f); }
-float lib_switcher_width() { return A.view == LibView::All ? switcher_cell() * 4.f * 1.2f + sp(0.5f) : 0.f; }
+static float shelf_toggle_w() { return ImGui::CalcTextSize("Mixed").x + sp(3.5f); }
+float lib_switcher_width() {
+    if (A.view != LibView::All) return 0.f;
+    return switcher_cell() * (float)hubui::kLibLayouts * 1.2f + sp(0.5f) + (lib_layout() == LibLayout::Shelf ? shelf_toggle_w() + sp(1.f) : 0.f);
+}
 
 void lib_switcher() {
     if (A.view != LibView::All) return;
     const float h = switcher_cell(), cw = h * 1.2f;
     ImVec2 o = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(o, o + ImVec2(cw * 4.f, h), ui::PANEL, h * 0.5f);
-    dl->AddRect(o, o + ImVec2(cw * 4.f, h), ui::HAIRLINE, h * 0.5f, 0, 1.f);
+    const float nc = (float)hubui::kLibLayouts;
+    dl->AddRectFilled(o, o + ImVec2(cw * nc, h), ui::PANEL, h * 0.5f);
+    dl->AddRect(o, o + ImVec2(cw * nc, h), ui::HAIRLINE, h * 0.5f, 0, 1.f);
     const LibLayout cur = lib_layout();
     ImGui::PushID("libswitch");
     for (int i = 0; i < hubui::kLibLayouts; ++i) {
@@ -865,6 +1072,16 @@ void lib_switcher() {
             case LibLayout::Compact:
                 for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) dl->AddRectFilled(ImVec2(c.x - u * 1.2f + a * u * 0.85f, c.y - u * 1.2f + b * u * 0.85f), ImVec2(c.x - u * 0.6f + a * u * 0.85f, c.y - u * 0.6f + b * u * 0.85f), col, 0.5f);
                 break;
+            case LibLayout::Shelf:   // two planks with a few standing games
+                for (int b = 0; b < 2; ++b) {
+                    const float y = c.y + (b ? 1.35f : -0.15f) * u;
+                    dl->AddRectFilled(ImVec2(c.x - u * 1.5f, y), ImVec2(c.x + u * 1.5f, y + u * 0.34f), col, 1.f);
+                    dl->AddRectFilled(ImVec2(c.x - u * 1.25f, y - u * 0.95f), ImVec2(c.x - u * 0.7f, y - 0.06f * u), col, 1.f);
+                    dl->AddRectFilled(ImVec2(c.x - u * 0.45f, y - u * 0.7f), ImVec2(c.x + u * 0.2f, y - 0.06f * u), col, 1.f);
+                    dl->AddRectFilled(ImVec2(c.x + u * 0.45f, y - u * 1.0f), ImVec2(c.x + u * 0.75f, y - 0.06f * u), col, 1.f);
+                    dl->AddRectFilled(ImVec2(c.x + u * 0.9f, y - u * 0.8f), ImVec2(c.x + u * 1.2f, y - 0.06f * u), col, 1.f);
+                }
+                break;
             default:   // showcase: a big cover between two small ones
                 dl->AddRectFilled(ImVec2(c.x - u * 0.55f, c.y - u * 1.1f), ImVec2(c.x + u * 0.55f, c.y + u * 1.1f), col, 1.5f);
                 dl->AddRectFilled(ImVec2(c.x - u * 1.45f, c.y - u * 0.65f), ImVec2(c.x - u * 0.8f, c.y + u * 0.65f), col, 1.f);
@@ -877,8 +1094,28 @@ void lib_switcher() {
         ImGui::PopID();
     }
     ImGui::PopID();
+    float total_w = cw * nc;
+    if (cur == LibLayout::Shelf) {   // Grouped (a shelf per console) / Mixed (one flow in the Sort chip's order)
+        const float tw = shelf_toggle_w();
+        ImGui::SetCursorScreenPos(o + ImVec2(total_w + sp(1.f), 0));
+        ImGui::PushID("shelfmix");
+        const bool mixed = A.st.lib_shelf_mixed;
+        const bool pressed = ImGui::InvisibleButton("m", ImVec2(tw, h), ImGuiButtonFlags_EnableNav);
+        const bool hov = ImGui::IsItemHovered(), foc = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
+        const ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
+        dl->AddRectFilled(p0, p1, mixed ? ui::ACCENT : (hov || foc) ? ui::FRAME_HOV : ui::PANEL, h * 0.5f);
+        dl->AddRect(p0, p1, mixed ? ui::ACCENT : ui::HAIRLINE, h * 0.5f, 0, 1.f);
+        const char* tx = mixed ? "Mixed" : "Mixed";
+        const ImVec2 ts = ImGui::CalcTextSize(tx);
+        dl->AddText(ImVec2((p0.x + p1.x - ts.x) * 0.5f, (p0.y + p1.y - ts.y) * 0.5f), mixed ? IM_COL32_WHITE : ui::TEXT2, tx);
+        if (foc) ui::focus_ring(dl, p0, p1, h * 0.5f);
+        if (hov) ImGui::SetTooltip(mixed ? "Mixed: every game on the shelves in the Sort order. Click for a shelf per console" : "A shelf per console. Click to mix them in the Sort order");
+        if (pressed) { A.st.lib_shelf_mixed = !mixed; mark_dirty(); G.lsig = ~0ull; const int p = selected_pos(G.D); if (p >= 0) { G.jump_pos = p; G.jump_center = true; } shot_trace("libview-shelf-mixed", A.st.lib_shelf_mixed ? "1" : "0"); }
+        ImGui::PopID();
+        total_w += tw + sp(1.f);
+    }
     ImGui::SetCursorScreenPos(o);
-    ImGui::Dummy(ImVec2(cw * 4.f, h));
+    ImGui::Dummy(ImVec2(total_w, h));
 }
 
 void lib_body(float bar_h) {
@@ -911,13 +1148,14 @@ void lib_body(float bar_h) {
         const float inner = full_w - strip_w - strip_gap - st.ScrollbarSize - pad;
         draw_list_header(ImGui::GetCursorScreenPos().x, inner);
     }
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, lay == LibLayout::Showcase ? ImVec2(0, 0) : ImVec2(pad, pad));
+    const bool flush = lay == LibLayout::Showcase || lay == LibLayout::Shelf;   // these two fill the whole child
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, flush ? ImVec2(0, 0) : ImVec2(pad, pad));
     if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; G.sc_init = false; G.jump_pos = -1; }
     ImGuiWindowFlags wf = 0;
     if (lay == LibLayout::List) wf |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
     if (lay == LibLayout::Showcase) wf |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
-    if (lay != LibLayout::Showcase) ImGui::SetCursorPosX(ImGui::GetCursorPosX() - pad);
-    ImGui::BeginChild("grid", ImVec2(lay == LibLayout::Showcase ? full_w - strip_w - strip_gap : child_w, -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding, wf);
+    if (!flush) ImGui::SetCursorPosX(ImGui::GetCursorPosX() - pad);
+    ImGui::BeginChild("grid", ImVec2(flush ? full_w - strip_w - strip_gap : child_w, -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding, wf);
     ImGui::PopStyleVar();
     A.page_scrollable = true;
     ImGuiContext& g = *ImGui::GetCurrentContext();
@@ -941,8 +1179,9 @@ void lib_body(float bar_h) {
         int pdir = ImGui::IsKeyPressed(ImGuiKey_GamepadR2, true) ? 1 : ImGui::IsKeyPressed(ImGuiKey_GamepadL2, true) ? -1 : 0;
         if (pdir) page_move(D, pdir, ImGui::GetWindowHeight());
     }
-    if (lay != LibLayout::Showcase) add_games_banner();
+    if (!flush) add_games_banner();
     if (lay == LibLayout::Showcase) draw_showcase(D);
+    else if (lay == LibLayout::Shelf) draw_shelf(D);
     else draw_virtual(D, lay);
     ImGui::EndChild();
     const ImVec2 csz = ImGui::GetItemRectSize();
@@ -965,6 +1204,7 @@ void lib_shot_seed() {
     if (!v || !*v) return;
     A.st.lib_layout = hubui::layout_key(hubui::layout_from_key(v));
     A.view = LibView::All;
+    if (const char* m = std::getenv("HUB_SHOT_SHELF_MIXED")) A.st.lib_shelf_mixed = std::string(m) != "0";   // Shelf: Mixed mode
     if (const char* c = std::getenv("HUB_SHOT_LIBCOL")) {   // "last:desc" / "title:asc"
         std::string s = c;
         auto cut = s.find(':');
