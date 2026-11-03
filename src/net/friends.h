@@ -260,7 +260,7 @@ class FriendsClient {
     const AdminSettings& admin_settings() const;
     int admin_pending() const;     // accounts waiting for approval (0 until the server said)
     int admin_version() const;     // bumps whenever any admin data changed
-    /* Invite codes (docs/ADMIN.md). redeem_invite(): a WAITING account (access()==Pending) sends the code it was given; the answer is Event::InviteRedeemed
+    /* Invite codes (docs/ADMIN.md). redeem_invite(): a WAITING account sends the code it was given on its waiting socket (queued and sent after a reconnect if the server has closed that socket); the answer is Event::InviteRedeemed
      * and, on success, the server approves it and wakes the socket (the usual unlock). False when there is no open socket to send on. */
     bool redeem_invite(const std::string& code);
     void admin_invite_create(int uses, int hours, const std::string& note);

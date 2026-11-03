@@ -47,3 +47,8 @@ target_include_directories(hubadmin_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hubadmin_test PRIVATE hubbase)
 add_executable(hubfriends_live_test test_liveness.cpp)
 target_include_directories(hubfriends_live_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# QA driver, not a ctest: invite codes end to end against a LOCAL worker (qa\invite_e2e.ps1).
+add_executable(qa_invite_e2e qa_invite_e2e.cpp)
+target_include_directories(qa_invite_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub)
+target_link_libraries(qa_invite_e2e PRIVATE hubnet)
