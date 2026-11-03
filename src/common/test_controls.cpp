@@ -534,7 +534,7 @@ static void test_live_reload() {
     const uint32_t m1 = pad2.mask(held);
     CHECK(m1 != m0 && m1 != 0);                                     // same physical button, new RetroPad bit
     PadState y; y.b[button_index("y")] = true;
-    CHECK(pad2.mask(y) == m0 && pad.mask(y) == 0);                  // the old B source is now "y"
+    CHECK(pad2.mask(y) == m0 && pad.mask(y) != m0);                 // the old B source is now "y" (before, "y" kept its default binding)
     // refusals
     CHECK(!load_for_reload(file, "n64", &got, &err) && !err.empty());
     CHECK(!load_for_reload("", "retro", &got, &err) && !load_for_reload((dir / "missing.json").string(), "retro", &got, &err));
