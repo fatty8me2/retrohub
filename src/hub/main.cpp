@@ -1,5 +1,6 @@
 /* RetroHub.exe entry point. */
 #include "app.h"
+#include "libview_ui.h"
 #include "prefs.h"
 #include "tv_logic.h"
 #include "homefun.h"
@@ -256,6 +257,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     ImGui_ImplSDLRenderer2_Init(ren);
     ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);   // any connected pad drives the UI, hot-plug included
     hubart::init(ren, hub::data_dir() + "art\\");
+    lib_fake_art_init(ren);
     qm_init(ren);
     hubart::set_enabled(A.st.download_art);
     hub::rom_cache_set_limit((uint64_t)A.st.rom_cache_limit_gb << 30);
@@ -506,14 +508,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             /* Library / friends panel: ImGui's own page move (it lands the focus on the item a page away). Every other page keeps
              * its items in nested panels, where that move jumps to the top bar: scroll by hand there and step the focus onto the screen. */
             const bool manual = A.page != Page::Library && !A.st.show_friends;
-            if (up && !manual) { io.AddKeyEvent(ImGuiKey_PageUp, true); pg_up = true; }
-            if (dn && !manual) { io.AddKeyEvent(ImGuiKey_PageDown, true); pg_dn = true; }
+            if (up && !manual && !A.lib_pg) { io.AddKeyEvent(ImGuiKey_PageUp, true); pg_up = true; }   // A.lib_pg: libview_ui.cpp pages All Games itself (ImGui's page move lands on the selected bar below)
+            if (dn && !manual && !A.lib_pg) { io.AddKeyEvent(ImGuiKey_PageDown, true); pg_dn = true; }
             auto scroller = [&](int dir) -> ImGuiWindow* {   // nearest scrollable window around the focus that still has room that way
                 for (ImGuiWindow* w = pg.NavWindow; w; w = w->ParentWindow)
                     if (w->ScrollMax.y > 0.f && (dir > 0 ? w->Scroll.y < w->ScrollMax.y - 1.f : w->Scroll.y > 1.f)) return w;
                 return nullptr;
             };
-            if (up || dn) {
+            if ((up || dn) && !A.lib_pg) {
                 ImGuiWindow* w = scroller(up ? -1 : 1);
                 pend = Pend{up ? -1 : 1, 3, 0, pg.NavId, w ? w->ID : 0, w ? w->Scroll.y : 0.f};
                 if (manual) {
