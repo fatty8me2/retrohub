@@ -398,12 +398,16 @@ How it was proven (two Dolphins on one PC, hidden desktop, muted, owner's disc a
 | Strikers, after, full match with hashes (2400 s at ~23 %: a whole match, DK 0 - Daisy 3, and part of a second) | hub | none | 18 samples, frames 300-34200: all MATCH |
 | Strikers, after, guest boots 1.3 s later (1.2 s one-way forwarder latency), 5700 frames | hub | none | 300-3900 MATCH; 4200-5700 the same 9 words differ (below) |
 | Strikers, after, guest boots later, match with hashes (first try: up to 1:05 left, then the guest's hasher timed out and left the guest halted; fixed) | hub | none | 300 MATCH; 3600-19800 (10 samples): the same 9 words |
-| Strikers, after, guest boots later, full match with hashes | hub | RESULT_FL | RESULT_FL_HASH |
+| Strikers, after, guest boots later, full match with hashes (3300 s at ~22 %: "Daisy wins 3-0", then most of a second match) | hub | none | 300 MATCH; 3600-45000 (23 samples): the same 9 words, nothing else |
 | Mario Superstar Baseball, before | override only | frame 1140 | 600 MATCH, 1800 / 3600 DIFF |
 | Mario Superstar Baseball, after (dual core: its allowlist) | hub | none | 600 / 1800 / 3600 MATCH |
 | Mario Superstar Baseball, after, speed (F80, sim RTT ~170 ms, buffer 13) | hub | none | 100 % host and guest |
 | Mario Party 6, before | override only | frame 2940 | 600 MATCH, 1800 / 3600 DIFF |
 | Mario Party 6, after | hub | none | 600 / 1800 / 3600 MATCH |
+
+Rerun the A/B with `qa\gc_desync_check.ps1 -Build build\bin\Release -Dolphin <dolphin dir> -Disc <disc> -Game G4QE01 -Gci <saves>
+-Work <dir with G4QE01.vi.txt> -Secs 150 -Every 600 -Start 600` (~10 min): B `detector: frame 420, 600=MATCH 1200=DIFF 1800=DIFF`,
+A `detector: none, 600=MATCH 1200=MATCH 1800=MATCH`.
 
 Ruled out on the way: the two Dolphin.ini files differ only in the analytics ID and the nickname; RTC is the host's (`GetInitialNetPlayRTC`,
 sent to every client); SRAM is the host's; G4QE01's GameINI has no patches (AR codes only, off); pad buffer (8 vs 13) and forwarder
