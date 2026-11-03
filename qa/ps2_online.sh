@@ -35,7 +35,7 @@ for s in $(seq 0 $((N-1))); do
   CC=$CORE; [ $s = 1 ] && CC=${CORE1:-$CORE}   # CORE1: a different core build for the guest (must exit 11 on both PCs)
   B=$BIOS; TAG=QA-DISC; if [ $s = 1 ]; then B=${PS2_BIOS1:-$BIOS}; TAG=${PS2_TAG1:-QA-DISC}; fi   # PS2_BIOS1 / PS2_TAG1: make the guest differ (mismatch test)
   ( build/bin/Release/retrorun.exe --core "$CC" --rom "$ROM" --save-dir $D/sv --state-dir $D/st --system-dir $D/sys --system ps2 --headless \
-   --opt pcsx2_bios=$B --setup-tag $TAG --share-host-save --frames $F --fuzz-input --net ws://127.0.0.1:$PORT --room $ROOM --slot $s --players $N --ports $PORTS --delay auto \
+   --opt pcsx2_bios=$B --setup-tag $TAG --share-host-save --frames $F --fuzz-input --net ws://127.0.0.1:$PORT --room $ROOM --slot $s --players $N --ports $PORTS --delay ${DELAY:-auto} \
    --log scratch/net_${T}_$s.log >/dev/null 2>&1; echo "rc$s=$?" >> scratch/net_${T}.rc ) &
 done
 wait

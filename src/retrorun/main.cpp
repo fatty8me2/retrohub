@@ -1260,6 +1260,8 @@ uint32_t Frontend::poll_local(int i) {
         if (act) return sm;
     }
     if (a.fuzz) {
+        static const unsigned fuzz_ports = (unsigned)std::strtoul(std::getenv("RETRORUN_FUZZ_PORTS") ? std::getenv("RETRORUN_FUZZ_PORTS") : "15", nullptr, 0);   // QA: bit k = port k gets fuzzed pad input (default all)
+        if (!((fuzz_ports >> port) & 1u)) return 0;
         static const bool by_slot = env_is("RETRORUN_FUZZ_SLOT");   // QA (qa\handoff.ps1): the pad depends on who presses it, so a hand-off changes the game
         uint32_t x = (uint32_t)(frame_no / 3) * 2654435761u ^ (uint32_t)(port + 1) * 40503u ^ 0x9E3779B9u ^ (by_slot ? (uint32_t)(a.slot + 1) * 0x85EBCA6Bu : 0u);
         x ^= x >> 15; x *= 2246822519u; x ^= x >> 13;
@@ -1335,7 +1337,10 @@ void Frontend::poll_all_local() {
         local_pad_cache_[i] = poll_local(i);
         std::memset(local_stick_[i], 0, sizeof local_stick_[i]);
         local_press_[i][0] = local_press_[i][1] = 0;
+        static const unsigned fz_ports = (unsigned)std::strtoul(std::getenv("RETRORUN_FUZZ_PORTS") ? std::getenv("RETRORUN_FUZZ_PORTS") : "15", nullptr, 0);   // QA: which ports get fuzzed sticks
         if ((is_ps1 || is_ps2) && a.fuzz) {   // QA: pseudo-random sticks, a new target every 5 frames
+            if (!((fz_ports >> local_ports[i]) & 1u)) { /* this port is not fuzzed: neutral */ }
+            else {
             for (int k = 0; k < 4 && !std::getenv("RETRORUN_NOSTICKS"); k++) {
                 uint32_t x = (uint32_t)(frame_no / 5) * 2246822519u ^ (uint32_t)(local_ports[i] * 4 + k + 1) * 3266489917u ^ 0x85EBCA6Bu;
                 x ^= x >> 15; x *= 2654435761u; x ^= x >> 13;
@@ -1346,6 +1351,7 @@ void Frontend::poll_all_local() {
                 y ^= y >> 13; y *= 3266489917u; y ^= y >> 16;
                 local_press_[i][0] = (int16_t)((y & 3) ? (y >> 3) & 0xFF : 0);
                 local_press_[i][1] = (int16_t)(((y >> 2) & 3) ? (y >> 11) & 0xFF : 0);
+            }
             }
         } else if ((is_ps1 || is_ps2) && !a.headless && (size_t)i < pads.size() && retro_pad) {
             hubctl::PadState st;
@@ -3519,6 +3525,14 @@ int Frontend::run(const Args& args) {
     fps = core.av().timing.fps > 1 ? core.av().timing.fps : 60.0;
     if (is_ps1) {   // every port is a DualShock (digital pads work too; games switch the analog mode themselves)
         for (unsigned p = 0; p < 4; p++) core.set_port_device(p, 0x205);   // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
+    }
+    if (is_ps2 && !env_is("RETRORUN_PS2_NOPLUG")) {   // NOPLUG: QA only, reproduces the pre-fix behaviour
+        /* LRPS2 plugs a pad only into console port 1 unless the frontend asks: every other port is "None" (PAD.cpp, retro_set_controller_port_device),
+         * so player 2 never existed for the game even though input_state was answered for it (the pad-read QA counter cannot see that). Plug a
+         * DualShock 2 (RETRO_DEVICE_JOYPAD) into both console ports, and into all four tap slots with 3-4 players (multitap = console port 1). */
+        const unsigned np = retrorun::ps2_pad_ports(a.players);
+        for (unsigned p = 0; p < np; p++) core.set_port_device(p, RETRO_DEVICE_JOYPAD);
+        rlog("ps2: DualShock 2 plugged into %u frontend ports (%s)", np, a.players >= 3 ? "multitap in console port 1" : "console ports 1-2");
     }
     if (lower(a.system) == "snes" && !a.no_multitap && (a.multitap || a.multiport || owner[2] >= 0 || owner[3] >= 0 || (!a.headless && SDL_NumJoysticks() >= 3))) {
         core.set_port_device(1, 0x101);   // snes9x RETRO_DEVICE_JOYPAD_MULTITAP ((1 << 8) | RETRO_DEVICE_JOYPAD): players 3-4 (libretro ports 2-3)

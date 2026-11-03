@@ -28,6 +28,10 @@ The sections "How it works in the hub" below describe what ships; "Why PCSX2 can
   (e.g. Crash Nitro Kart, TimeSplitters 2 = 4) applies, non-catalog PS2 games default to 4 ("Untested online"). The hub refuses rooms above 4. Only games that support the multitap use the extra
   pads. Alternatives considered and rejected: patching/building LRPS2 ourselves (a second binary to maintain, not needed now that upstream ships the option); standalone PCSX2 (no netplay hooks,
   not deterministic across PCs). Console port 2 then has no frontend pad (a 4-player multitap game uses one tap).
+- **Pads must be plugged in (v1.31.7).** LRPS2 reads `input_state` for every port but only plugs a DualShock 2 into frontend port 0; ports 1-7 default to "None" until the frontend calls
+  `retro_set_controller_port_device(port, RETRO_DEVICE_JOYPAD)` (libretro/ps2 `pcsx2/PAD/PAD.cpp`). Through v1.31.6 retrorun never did, so player 2 was a pad the game could not see (Gauntlet: Dark Legacy
+  character select) while the QA's "pad reads" counter still counted reads. retrorun now plugs ports 0-1 (console ports 1-2; 1-2 players, multitap off) or 0-3 (3-4 players, multitap in console port 1).
+  Proof: `qa/ps2_p2_input.sh` (EE RAM with pads on one port vs all ports must differ; with `RETRORUN_PS2_NOPLUG=1` they are identical). `RETRORUN_FUZZ_PORTS=<mask>` fuzzes only some ports.
 - **Catalog.** Tekken 5, Burnout 3, Crash Nitro Kart, Crash Tag Team Racing and TimeSplitters 2 are flagged `online`; every other PS2 game is offered with the "Untested online" tag
   (`online_needs_catalog_flag`). The room picker lists them, the library shows "Play Online".
 - **Memory card.** See docs/SAVES.md. Both PCSX2 (`Mcd001.ps2`) and LRPS2 (`pcsx2\memcards\Mcd001.ps2`) use the standard 8 MB card file with ECC, 8,650,752 bytes (LRPS2 creates exactly
