@@ -99,7 +99,7 @@ static const ImU32 COL_REMIX = IM_COL32(250, 150, 40, 255);
 
 /* ============================ types ============================ */
 
-enum class Page { Library, Online, Saves, Controllers, Settings, About /* the "Updates" page: version, update button, patch notes */ };
+enum class Page { Library, Discover /* recommended games per console */, Online, Saves, Controllers, Settings, About /* the "Updates" page: version, update button, patch notes */ };
 
 enum class LibView { Home, All };
 
@@ -1039,6 +1039,10 @@ void ps1_settings_ui();
 void emu_modal_begin(const char* name, bool* open_flag);
 void emu_modal_begin(const char* name, bool* open_flag);
 void draw_emulator_dialogs();
+
+std::vector<hubui::fg::Owned> owned_snapshot();   // friend_games_ui.cpp: what this library owns (sys, key, catalog id, title; clean-name and pack aliases too)
+void page_discover();   // page_discover.cpp
+void discover_shot_console(const std::string& sys);   // screenshots: preselect a console chip
 
 /* ---- gamepack (friend_games_ui.cpp): install a greyed-out friend game from the shared Drive folder ---- */
 void poll_gamepack();

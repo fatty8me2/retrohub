@@ -66,6 +66,7 @@ void shot_init_ui() {
             if (const char* c = std::strchr(pg, ':')) A.st.settings_tab = hubui::settings_tab_clamp(std::atoi(c + 1));
         }
         else if (std::string(pg) == "online") A.page = Page::Online;
+        else if (std::string(pg).rfind("discover", 0) == 0) { A.page = Page::Discover; if (const char* c = std::strchr(pg, ':')) discover_shot_console(c + 1); }   // "discover" or "discover:<console>"
     }
     if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n
     if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show a 3DS / Wii U dialog (azahar | cemu | unzip | failed)
@@ -207,7 +208,7 @@ void ShotDriver::pad_trace(const std::string& tok) {
     static const char* tp = std::getenv("HUB_SHOT_TRACE");
     if (!tp) return;
     ImGuiContext& g = *ImGui::GetCurrentContext();
-    static const char* pn[] = {"library", "online", "saves", "controllers", "settings", "about"};
+    static const char* pn[] = {"library", "discover", "online", "saves", "controllers", "settings", "about"};
     int pg = (int)A.page;
     bool modal = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     char sy[32] = "-";   // scroll of the nearest scrollable window around the focus: "<scroll>/<max>"
@@ -215,7 +216,7 @@ void ShotDriver::pad_trace(const std::string& tok) {
         if (w->ScrollMax.y > 0.f) { std::snprintf(sy, sizeof sy, "%d/%d", (int)w->Scroll.y, (int)w->ScrollMax.y); break; }
     ImVec2 r = g.NavWindow ? g.NavWindow->NavRectRel[g.NavLayer].GetCenter() + g.NavWindow->Pos : ImVec2(0, 0);
     if (FILE* f = std::fopen(tp, "a")) {
-        std::fprintf(f, "pad %s page=%s popup=%d friends=%d nav=%08x at=%d,%d osk=%d wiz=%d name=[%s] oskt=[%s] sy=%s win=%s\n", tok.c_str(), pg >= 0 && pg < 6 ? pn[pg] : "?", modal ? 1 : 0,
+        std::fprintf(f, "pad %s page=%s popup=%d friends=%d nav=%08x at=%d,%d osk=%d wiz=%d name=[%s] oskt=[%s] sy=%s win=%s\n", tok.c_str(), pg >= 0 && pg < 7 ? pn[pg] : "?", modal ? 1 : 0,
                      A.st.show_friends ? 1 : 0, (unsigned)g.NavId, g.NavId ? (int)r.x : -1, g.NavId ? (int)r.y : -1,
                      osk::is_open() ? 1 : 0, wizard_state(), A.st.name.c_str(), osk::shot_text().c_str(),
                      sy, g.NavWindow ? g.NavWindow->Name : "-");

@@ -26,6 +26,9 @@ target_include_directories(hub_friend_games_test PRIVATE ${CMAKE_CURRENT_SOURCE_
 add_executable(hub_gamepack_test test_gamepack.cpp gamepack.cpp)
 target_include_directories(hub_gamepack_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gamepack_test PRIVATE hubcommon winhttp)
+add_executable(hub_discover_test test_discover.cpp discover_logic.cpp gamepack.cpp)
+target_include_directories(hub_discover_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_discover_test PRIVATE hubcommon winhttp)
 add_executable(qa_gamepack qa_gamepack.cpp gamepack.cpp)   # QA driver against a local fake (qa/gamepack_qa.py); not a ctest
 target_include_directories(qa_gamepack PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(qa_gamepack PRIVATE hubcommon winhttp)
@@ -93,7 +96,7 @@ set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp spectate_ui.cpp dropin_ui.cpp
     ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_pick_ui.cpp challenge_ui.cpp gamenight_ui.cpp friend_games_ui.cpp group_ui.cpp
     page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp
-    attract.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp
+    attract.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp page_discover.cpp discover_logic.cpp
     party_ui.cpp party_view.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp   # Plan 4 Wave 1
     discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp)   # Plan 4 Wave 2 C (convenience)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
@@ -109,7 +112,7 @@ add_custom_command(TARGET RetroHub POST_BUILD
 # Cheat database (data/cheats_db.bin + data/cheats_featured.json) ships next to RetroHub.exe in data\ (hub::cheats_db_set_dir default).
 add_custom_command(TARGET RetroHub POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:RetroHub>/data
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/cheats_db.bin ${CMAKE_SOURCE_DIR}/data/cheats_featured.json ${CMAKE_SOURCE_DIR}/data/changelog.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv $<TARGET_FILE_DIR:RetroHub>/data)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/cheats_db.bin ${CMAKE_SOURCE_DIR}/data/cheats_featured.json ${CMAKE_SOURCE_DIR}/data/changelog.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv ${CMAKE_SOURCE_DIR}/data/recommended.json $<TARGET_FILE_DIR:RetroHub>/data)
 
 # Cover art: pure matching logic + console test (live network check with --live <cache> [rom]).
 add_executable(qa_pack_art qa_pack_art.cpp gamepack.cpp art.cpp art_match.cpp)   # cover-art coverage check over the real pack index + library (qa/pack_art_check.ps1); not a ctest
