@@ -123,12 +123,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     std::wstring cmd_join, cmd_play;
     const bool has_join = invite_parse_command_line(GetCommandLineW(), &cmd_join);
     const bool has_play = invite_parse_play(GetCommandLineW(), &cmd_play);
+    std::wstring cmd_acct;   // retrohub://invite/XXXX-XXXX or --invite XXXX-XXXX: an account invite code for the waiting screen
+    const bool has_acct = invite_parse_account_command_line(GetCommandLineW(), &cmd_acct);
     std::unique_ptr<InviteInstance> instance;
     InviteServer invite_srv;
     if (!shot_path && !autotest) {
         instance.reset(new InviteInstance(INVITE_MUTEX_NAME));
         if (!instance->is_primary()) {   // already running: hand the request over (or just ask it to show itself) and leave
-            bool sent = has_join ? invite_send(INVITE_PIPE_NAME, cmd_join) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play) : invite_send_show(INVITE_PIPE_NAME);
+            bool sent = has_acct ? invite_send_account(INVITE_PIPE_NAME, cmd_acct) : has_join ? invite_send(INVITE_PIPE_NAME, cmd_join) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play) : invite_send_show(INVITE_PIPE_NAME);
             if (sent) return 0;
         } else {
             invite_srv.start(INVITE_PIPE_NAME);
@@ -138,6 +140,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (has_join && !shot_path) link_join.push(U(cmd_join));
     bool told_need_name = false;
     if (has_play && !shot_path) A.pending_play = U(cmd_play);
+    if (has_acct && !shot_path) lockout_invite_link(U(cmd_acct));
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
     if (qm_e2e_active()) qm_e2e_boot();   // HUB_QM_E2E (needs HUB_SCREENSHOT): only the test's virtual joystick exists
     SDL_SetMainReady();
@@ -412,6 +415,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;
             while (invite_srv.take(&w)) { if (launch_blocked("invite link")) continue; link_join.push(U(w)); told_need_name = false; }
+            while (invite_srv.take_account(&w)) { lockout_invite_link(U(w)); hub_surface(); }   // an account invite link: fills the waiting screen's code field (no-op while a game runs: nothing is raised)
             if (app_locked()) { link_join = hubui::LinkJoinQueue(); A.pending_play.clear(); }   // a locked account joins and plays nothing, however the request arrived
             const bool name_set = !A.st.name.empty();
             if (link_join.needs_name(name_set) && !told_need_name) {

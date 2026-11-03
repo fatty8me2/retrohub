@@ -92,6 +92,9 @@ bool fr_connected();
 bool fr_is_admin();                      // the welcome said this account is the owner (the Worker enforces it too)
 hubnet::Access fr_access();              // pending approval / blocked, as told by the server at hello (Ok when welcomed)
 void admin_ui_poke();                    // page_admin.cpp: refresh the dashboard soon
+void admin_ui_act(const std::string& op, const std::string& uid);   // approve | deny from the bell (fake mode in screenshots)
+void admin_note_waiting(const std::string& uid, const std::string& name, const std::string& code, long long created);   // bell + toast (never over a game)
+void admin_note_invite_used(const std::string& uid, const std::string& name, const std::string& code);
 void admin_ui_shot_init(const char* mode);   // HUB_SHOT_ADMIN: fake data, no network
 extern bool g_shot_admin;
 extern hubnet::Access g_shot_access;

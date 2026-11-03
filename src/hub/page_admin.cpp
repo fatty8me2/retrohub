@@ -2,6 +2,10 @@
 #include "friends_ui.h"
 #include "admin_logic.h"
 #include "osk.h"
+#include "winutil.h"
+#include "invite.h"
+#include "invite_logic.h"
+#include "imgui_internal.h"
 
 /* Admin page (docs/ADMIN.md): accounts, bans, approvals and the two switches. It exists only for the owner account: the welcome says so
  * (FriendsClient::is_admin) and the sidebar entry, the page and every request are gated on it. That is a convenience only - the Worker
@@ -26,10 +30,24 @@ struct AdminUi {
     hubnet::AdminList fl;
     hubnet::AdminDetail fd;
     hubnet::AdminSettings fs;
+    hubnet::AdminList fp;                  // fake waiting list
+    hubnet::AdminInvites finv;             // fake invites
+    /* invites */
+    char note[64] = {0};
+    bool more = false;
+    int uses = 1, hours = 168;
+    hubnet::AdminInvite fresh;             // the code just made (kept on screen until dismissed)
+    bool have_fresh = false;
+    double create_at = -100, copied_at = -100;
+    std::string copied_what;
+    char appr_code[16] = {0};
+    bool shot_invite_scroll = false;
 } AU;
 
 const hubnet::AdminList& cur_list() { return AU.fake ? AU.fl : FR.cli.admin_list(); }
 const hubnet::AdminDetail& cur_detail() { return AU.fake ? AU.fd : FR.cli.admin_detail(); }
+const hubnet::AdminList& cur_pending() { return AU.fake ? AU.fp : FR.cli.admin_pending_list(); }
+const hubnet::AdminInvites& cur_invites() { return AU.fake ? AU.finv : FR.cli.admin_invites(); }
 const hubnet::AdminSettings& cur_settings() { return AU.fake ? AU.fs : FR.cli.admin_settings(); }
 
 std::string fmt_date(long long ms) {
@@ -72,6 +90,9 @@ void fake_filter_apply() {
     int total = (int)AU.fl.rows.size();
     hubnet::AdminCounts c;
     for (const AdminAccount& a : g_fake_all) { ++c.all; if (a.blocked()) ++c.banned; else if (a.pending()) ++c.pending; else ++c.ok; }
+    AU.fp = hubnet::AdminList();
+    for (const AdminAccount& a : g_fake_all) if (a.pending() && !a.test) AU.fp.rows.push_back(a);
+    AU.fp.total = (int)AU.fp.rows.size(); AU.fp.valid = true; AU.fp.counts.pending = c.pending;
     AU.fl.counts = c; AU.fl.total = total; AU.fl.tracked = c.all; AU.fl.settings = AU.fs; AU.fl.valid = true; AU.fl.offset = 0;
 }
 void fake_detail_for(const std::string& uid) {
@@ -102,6 +123,8 @@ void fake_act(const std::string& op, const std::string& uid) {
 
 void request_refresh() {
     if (AU.fake) { fake_filter_apply(); if (!AU.sel.empty()) fake_detail_for(AU.sel); return; }
+    if (FR.cli.admin_pending() > 0 && AU.q.status != "pending") FR.cli.admin_request_pending();   // first, so the main list's reply is the one the accounts panel keeps
+    FR.cli.admin_invite_list();
     FR.cli.admin_request_list(AU.q);
     if (!AU.sel.empty()) FR.cli.admin_request_detail(AU.sel);
 }
@@ -109,6 +132,54 @@ void do_act(const std::string& op, const std::string& uid) {
     if (AU.fake) { fake_act(op, uid); return; }
     FR.cli.admin_act(op, uid);
     AU.refresh_at = ImGui::GetTime() + 0.6;   // the answer (a toast) comes first; the list follows
+}
+void copy_text(const std::string& what, const std::string& text) {
+    if (!invite_copy_text(winutil::to_wide(text))) { push_toast("Could not copy. Try again.", ui::WARN, 4.0); return; }
+    AU.copied_at = ImGui::GetTime();
+    AU.copied_what = what;
+}
+void do_create() {
+    if (ImGui::GetTime() - AU.create_at < 1.5) return;
+    AU.create_at = ImGui::GetTime();
+    if (AU.fake) {
+        hubnet::AdminInvite a;
+        a.code = "K7QM-2XDT"; a.note = AU.note; a.uses = AU.uses; a.used = 0; a.created = wall_ms(); a.exp = a.created + (long long)AU.hours * 3600000LL;
+        AU.finv.list.insert(AU.finv.list.begin(), a);
+        AU.fresh = a; AU.have_fresh = true;
+        return;
+    }
+    FR.cli.admin_invite_create(AU.uses, AU.hours, AU.note);
+    AU.note[0] = 0;
+    AU.refresh_at = ImGui::GetTime() + 0.8;
+}
+void do_revoke(const std::string& code) {
+    if (AU.have_fresh && AU.fresh.code == code) AU.have_fresh = false;
+    if (AU.fake) {
+        auto& v = AU.finv.list;
+        v.erase(std::remove_if(v.begin(), v.end(), [&](const hubnet::AdminInvite& a) { return a.code == code; }), v.end());
+        return;
+    }
+    FR.cli.admin_invite_revoke(code);
+    AU.refresh_at = ImGui::GetTime() + 0.6;
+}
+void do_approve_code() {
+    std::string fc;
+    if (!hubnet::friend_code_normalize(AU.appr_code, &fc)) { push_toast("Friend codes look like RH-ABCD-EFGH.", ui::WARN, 5.0); return; }
+    if (AU.fake) {
+        for (const AdminAccount& a : g_fake_all) if (a.code == fc && a.pending()) { fake_act("approve", a.uid); AU.appr_code[0] = 0; return; }
+        set_toast(hubnet::admin_result_text("approve", false, "", "not-found", false, false), false, 5.0);
+        return;
+    }
+    FR.cli.admin_approve_code(fc);
+    AU.appr_code[0] = 0;
+    AU.refresh_at = ImGui::GetTime() + 0.8;
+}
+/* Keeps a code field in its shape while the player types or pastes. */
+void live_format(const char* id, char* buf, size_t n, std::string (*fmt)(const std::string&)) {
+    const std::string f = fmt(buf);
+    if (f == buf) return;
+    std::snprintf(buf, n, "%s", f.c_str());
+    if (ImGuiInputTextState* st = ImGui::GetInputTextState(ImGui::GetID(id))) st->ReloadUserBufAndMoveToEnd();
 }
 void select(const std::string& uid) {
     if (AU.sel == uid) return;
@@ -145,6 +216,172 @@ void action_buttons(const AdminAccount& a, float bh, float bw) {
     }
 }
 float action_width(const AdminAccount& a, float bw) { return a.pending() ? bw * 2 + sp(0.75f) : bw; }
+
+/* Pending queue: the first thing on the page. Big Approve / Deny per waiting account, plus "approve by friend code". */
+void pending_panel(float w, long long now) {
+    const hubnet::AdminList& P = cur_pending();
+    const int waiting = cur_list().counts.pending;
+    begin_panel("adm_queue", ImVec2(w, 0), waiting > 0 ? ui::mix(ui::PANEL, ui::WARN, 0.16f) : COL_PANEL);
+    section_title(waiting > 0 ? std::to_string(waiting) + (waiting == 1 ? " person is waiting for your approval" : " people are waiting for your approval") : std::string("Approve someone"));
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    int shown = 0;
+    for (const AdminAccount& a : P.rows) {
+        if (shown >= 10) break;
+        ++shown;
+        ImGui::PushID(a.uid.c_str());
+        const float rh = sp(8.f), bw = sp(15.f), bh = sp(5.f), inner = ImGui::GetContentRegionAvail().x;
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, p + ImVec2(inner, rh), ui::with_alpha(ui::BG, 0.35f), sp(1.f));
+        const std::string nm = a.shown_name();
+        ImVec2 c(p.x + sp(3.f), p.y + rh * 0.5f);
+        dl->AddCircleFilled(c, sp(2.2f), fr_avatar_col(nm), 24);
+        char init[8] = {hubnet::username_initial(nm), 0};
+        fr_text_c(dl, ui::F.bold, c, IM_COL32_WHITE, init);
+        const float tx = p.x + sp(6.5f), aw = bw * 2 + sp(1.f), tw = std::max(sp(10.f), inner - sp(6.5f) - aw - sp(2.f));
+        dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, p.y + sp(1.1f)), ui::TEXT, ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, nm, tw).c_str());
+        const long long since = a.created > 0 ? a.created : a.first_seen;
+        const std::string sub = "Friend code " + a.code + "   -   waiting since " + hubnet::admin_ago(now, since);
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p.y + sp(4.6f)), ui::TEXT2, ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, tw).c_str());
+        ImGui::SetCursorScreenPos(ImVec2(p.x + inner - aw - sp(1.5f), p.y + (rh - bh) * 0.5f));
+        if (ui::button("Approve", ImVec2(bw, bh), true)) do_act("approve", a.uid);
+        ImGui::SameLine(0, sp(1.f));
+        if (ui::button("Deny", ImVec2(bw, bh))) ask_confirm("deny", a);
+        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rh));
+        ImGui::Dummy(ImVec2(0, sp(0.75f)));
+        ImGui::PopID();
+    }
+    if (waiting > shown) text_wrapped_disabled("+" + std::to_string(waiting - shown) + " more: use the Pending filter in the accounts list below.");
+    if (waiting == 0) text_wrapped_disabled("Nobody is waiting right now. When someone is, you will see them here and in the bell.");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    {   // approve by friend code
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+        ImGui::TextUnformatted("Approve by friend code (the newcomer reads it off their screen)");
+        ImGui::PopStyleColor();
+        const float bw = sp(14.f), iw = std::min(sp(30.f), w - bw - sp(8.f));
+        ImGui::SetNextItemWidth(iw);
+        const bool sub = osk::input("##appr_code", "7KQ2-M9XD", AU.appr_code, sizeof AU.appr_code, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Code);
+        live_format("##appr_code", AU.appr_code, sizeof AU.appr_code, hubnet::friend_code_field_text);
+        ImGui::SameLine();
+        std::string tmp;
+        const bool ok = hubnet::friend_code_normalize(AU.appr_code, &tmp);
+        if (ui::button("Approve", ImVec2(bw, sp(4.f)), ok, ok) || (sub && ok)) do_approve_code();
+    }
+    end_panel();
+}
+
+/* Invite card: make a code, copy the message, see and revoke the active ones. */
+void invite_panel(float w, long long now) {
+    const double t = ImGui::GetTime();
+    const hubnet::AdminInvites& I = cur_invites();
+    if (!AU.fake && I.has_created && I.created.code != AU.fresh.code) { AU.fresh = I.created; AU.have_fresh = true; }
+    begin_panel("adm_invite", ImVec2(w, 0));
+    section_title("Invite someone");
+    text_wrapped_disabled("Make a code and send it to a friend. They type it on the waiting screen (or open the link) and get in at once, without waiting for you.");
+    ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    {
+        const float bw = sp(22.f), iw = std::min(sp(46.f), w - bw - sp(8.f));
+        ImGui::SetNextItemWidth(iw);
+        osk::input("##inv_note", "Who is it for? (optional)", AU.note, sizeof AU.note, 0, osk::Kind::Text);
+        ImGui::SameLine();
+        if (ui::button("Make invite code", ImVec2(bw, sp(4.f)), true)) do_create();
+    }
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (ui::chip(AU.more ? "Fewer options" : "More options", AU.more, ui::ACCENT)) AU.more = !AU.more;
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+    ImGui::TextUnformatted(("Works for " + hubnet::invite_options_text(AU.uses, AU.hours)).c_str());
+    ImGui::PopStyleColor();
+    if (AU.more) {
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("People who can use it");
+        ImGui::SameLine(sp(26.f));
+        if (ui::button("-", ImVec2(sp(4.f), sp(4.f)), false, AU.uses > 1)) AU.uses = hubnet::invite_clamp_uses(AU.uses - 1);
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("%d", AU.uses);
+        ImGui::SameLine();
+        if (ui::button("+", ImVec2(sp(4.f), sp(4.f)), false, AU.uses < 20)) AU.uses = hubnet::invite_clamp_uses(AU.uses + 1);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Lasts");
+        ImGui::SameLine(sp(26.f));
+        const std::pair<const char*, int> opts[] = {{"1 day", 24}, {"7 days", 168}, {"30 days", 720}};
+        for (int i = 0; i < 3; ++i) {
+            if (i) ImGui::SameLine();
+            if (ui::chip(opts[i].first, AU.hours == opts[i].second, ui::ACCENT)) AU.hours = opts[i].second;
+        }
+    }
+    if (AU.have_fresh) {   // the code just made
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        const float inner = ImGui::GetContentRegionAvail().x, bh = sp(20.f);
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, p + ImVec2(inner, bh), ui::mix(ui::PANEL2, ui::GOOD, 0.14f), sp(1.5f));
+        dl->AddRect(p, p + ImVec2(inner, bh), ui::with_alpha(ui::GOOD, 0.5f), sp(1.5f), 0, 1.f);
+        const std::string cap = AU.fresh.note.empty() ? std::string("Your new invite code") : "Your new invite code for " + AU.fresh.note;
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + sp(2.f), p.y + sp(1.2f)), ui::TEXT3, cap.c_str());
+        ImFont* bf = ui::F.title;
+        dl->AddText(bf, bf->FontSize * 1.25f, ImVec2(p.x + sp(2.f), p.y + sp(3.2f)), ui::TEXT, AU.fresh.code.c_str());
+        hubnet::AdminInvite live = AU.fresh;   // how many have used it so far (the list is the live source)
+        for (const hubnet::AdminInvite& a : I.list) if (a.code == AU.fresh.code) live = a;
+        const std::string meta = hubnet::invite_used_text(live) + "   -   " + hubnet::invite_left_text(live.exp, now);
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + sp(2.f), p.y + sp(3.2f) + bf->FontSize * 1.25f + sp(0.8f)), ui::TEXT2, meta.c_str());
+        ImGui::SetCursorScreenPos(ImVec2(p.x + sp(2.f), p.y + bh - sp(5.2f)));
+        if (ui::button("Copy invite message", ImVec2(sp(24.f), sp(4.f)), true)) copy_text("Invite message", hubnet::invite_share_text(AU.fresh.code));
+        ImGui::SameLine();
+        if (ui::button("Copy code", ImVec2(sp(14.f), sp(4.f)))) copy_text("Code", AU.fresh.code);
+        ImGui::SameLine();
+        if (ui::button("Copy link", ImVec2(sp(14.f), sp(4.f)))) copy_text("Link", hubnet::invite_link(AU.fresh.code));
+        ImGui::SameLine();
+        if (ui::button("Done", ImVec2(sp(10.f), sp(4.f)))) AU.have_fresh = false;
+        if (t - AU.copied_at < 2.5) {
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::GOOD);
+            ImGui::TextUnformatted((AU.copied_what + " copied").c_str());
+            ImGui::PopStyleColor();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + bh));
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    }
+    if (!I.list.empty()) {
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
+        ImGui::TextUnformatted("Active invites");
+        ImGui::PopStyleColor();
+        std::vector<hubnet::AdminInvite> v = I.list;
+        hubnet::invite_sort(&v, now);
+        int n = 0;
+        for (const hubnet::AdminInvite& a : v) {
+            if (n++ >= 8) break;
+            ImGui::PushID(a.code.c_str());
+            const bool dead = a.spent() || a.exp <= now;
+            const float rh = sp(6.f), inner = ImGui::GetContentRegionAvail().x, bw = sp(11.f);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float tw = inner - bw - sp(3.f);
+            dl->PushClipRect(p, ImVec2(p.x + tw, p.y + rh), true);
+            dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(p.x + sp(1.f), p.y + sp(0.6f)), dead ? ui::TEXT3 : ui::TEXT, a.code.c_str());
+            if (!a.note.empty()) {
+                const float cx = p.x + sp(1.f) + ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, a.code.c_str()).x + sp(1.5f);
+                dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(cx, p.y + sp(0.7f)), ui::TEXT2, ui::ellipsize(ui::F.body, ui::F.body->FontSize, a.note, std::max(sp(6.f), p.x + tw - cx)).c_str());
+            }
+            const std::string sub = hubnet::invite_used_text(a) + "   -   " + hubnet::invite_left_text(a.exp, now);
+            dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + sp(1.f), p.y + sp(3.4f)), dead ? ui::TEXT3 : ui::TEXT2, sub.c_str());
+            dl->PopClipRect();
+            ImGui::SetCursorScreenPos(ImVec2(p.x + inner - bw - sp(0.5f), p.y + (rh - sp(3.6f)) * 0.5f));
+            if (ui::button(dead ? "Remove" : "Revoke", ImVec2(bw, sp(3.6f)))) do_revoke(a.code);
+            ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rh));
+            dl->AddLine(ImVec2(p.x + sp(0.5f), p.y + rh), ImVec2(p.x + inner - sp(0.5f), p.y + rh), ui::HAIRLINE);
+            ImGui::Dummy(ImVec2(0, sp(0.25f)));
+            ImGui::PopID();
+        }
+        if ((int)v.size() > 8) text_wrapped_disabled("+" + std::to_string(v.size() - 8) + " older invites not shown.");
+    }
+    end_panel();
+}
 
 void settings_panel(float w) {
     const hubnet::AdminSettings& s = cur_settings();
@@ -283,6 +520,7 @@ void confirm_modal() {
 } // namespace
 
 /* ---- called from the friends event loop / shot aids ---- */
+void admin_ui_act(const std::string& op, const std::string& uid) { do_act(op, uid); }
 void admin_ui_poke() { AU.refresh_at = 0; AU.dirty = true; }
 
 void admin_ui_shot_init(const char* mode) {
@@ -315,10 +553,18 @@ void admin_ui_shot_init(const char* mode) {
     fake_filter_apply();
     if (!AU.sel.empty()) fake_detail_for(AU.sel);
     if (m == "confirm") { AU.confirm_op = "ban"; AU.confirm_uid = "lucasuid"; AU.confirm_name = "lucas"; AU.confirm_open = true; }
+    if (m == "invite") {
+        hubnet::AdminInvite a; a.code = "K7QM-2XDT"; a.note = "Mia's cousin"; a.uses = 1; a.used = 0; a.created = now - 60000; a.exp = now + 7 * D;
+        hubnet::AdminInvite b; b.code = "H4NP-9WRB"; b.note = "Discord group"; b.uses = 5; b.used = 2; b.created = now - 2 * D; b.exp = now + 5 * D; b.by_names = {"Jake", "Kai"};
+        hubnet::AdminInvite c; c.code = "ZC3V-8TMA"; c.uses = 1; c.used = 1; c.created = now - 4 * D; c.exp = now + 3 * D; c.by_names = {"Luna"};
+        hubnet::AdminInvite d; d.code = "R6EF-5GJX"; d.note = "old link"; d.uses = 1; d.used = 0; d.created = now - 12 * D; d.exp = now - 2 * D;
+        AU.finv.valid = true; AU.finv.list = {d, c, b, a};
+        AU.fresh = a; AU.have_fresh = true; AU.shot_invite_scroll = true;
+    }
     if (m == "settings") { AU.fs.vouch = true; AU.shot_scroll = true; }
     AU.dirty = false;
     AU.refresh_at = 1e18;
-    A.page = Page::Admin;
+    if (m != "bell") A.page = Page::Admin;   // HUB_SHOT_ADMIN=bell: fake owner data, stays on the page it opened on (for the bell popup)
 }
 
 void page_admin() {
@@ -338,15 +584,11 @@ void page_admin() {
     float gap = sp(2.f);
     bool two = avail > sp(100.f);
 
-    if (L.counts.pending > 0) {
-        begin_panel("adm_banner", ImVec2(avail, 0), ui::mix(ui::PANEL, ui::WARN, 0.18f));
-        std::string t1 = std::to_string(L.counts.pending) + (L.counts.pending == 1 ? " account is" : " accounts are") + " waiting for your approval.";
-        ImGui::TextUnformatted(t1.c_str());
-        ImGui::SameLine();
-        if (ui::button("Review", ImVec2(sp(10.f), sp(3.5f)), true)) { AU.q.status = "pending"; AU.q.offset = 0; AU.dirty = true; if (AU.fake) fake_filter_apply(); }
-        end_panel();
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
-    }
+    pending_panel(avail, now);
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    invite_panel(avail, now);
+    if (AU.shot_invite_scroll) ImGui::SetScrollHereY(0.3f);
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
     /* accounts */
     float lw = two ? avail * 0.6f - gap * 0.5f : avail;
     float rw = two ? avail - lw - gap : avail;

@@ -44,6 +44,17 @@ static void parsing_tests() {
     check(!invite_is_valid_code(L"ABC DE"), "space rejected");
     check(invite_normalize_code(L"  abcdef \t") == L"ABCDEF", "normalize trims and uppercases");
 
+    {   // account invite links (retrohub://invite/XXXX-XXXX) never parse as a room join, and vice versa
+        std::wstring ac;
+        check(invite_parse_account_url(L"retrohub://invite/K7QM-2XDT", &ac) && ac == L"K7QM-2XDT", "account invite url parses");
+        check(invite_parse_account_url(L"RETROHUB://INVITE/k7qm2xdt/", &ac) && ac == L"K7QM-2XDT", "account invite url: case, no dash, trailing slash");
+        check(!invite_parse_account_url(L"retrohub://join/ABCDEF", &ac) && !invite_parse_account_url(L"retrohub://invite/K7QM-2XD0", &ac), "room link / bad account code are not account invites");
+        check(!invite_parse_url(L"retrohub://invite/K7QM-2XDT", &c), "an account invite link is not a room join");
+        check(invite_parse_account_command_line(L"RetroHub.exe retrohub://invite/K7QM-2XDT", &ac) && ac == L"K7QM-2XDT", "command line url");
+        check(invite_parse_account_command_line(L"RetroHub.exe --invite k7qm-2xdt", &ac) && ac == L"K7QM-2XDT", "command line --invite");
+        check(!invite_parse_account_command_line(L"RetroHub.exe --invite nope", &ac) && !invite_parse_account_command_line(L"RetroHub.exe --join ABCDEF", &ac), "other command lines");
+        check(!invite_parse_command_line(L"RetroHub.exe retrohub://invite/K7QM-2XDT", &c), "an account invite is not a --join");
+    }
     check(invite_parse_url(L"retrohub://join/ABCDEF", &c) && c == L"ABCDEF", "protocol url parses");
     check(invite_parse_url(L"RETROHUB://JOIN/abcdef/", &c) && c == L"ABCDEF", "scheme case-insensitive, trailing slash ok");
     check(!invite_parse_url(L"retrohub://join/ABCDE", &c), "short code url rejected");

@@ -623,6 +623,8 @@ bool game_active();          // ANY session (A.proc, GC NetPlay, remote play, Ka
 void lockout_init(bool had_account, const std::string& uid);   // once at startup, after fr_start(); had_account = an identity existed before this run
 void icon_refresh_tick();                                      // icon_refresh.cpp: once per version, background, idle only
 void lockout_tick();                                           // every loop iteration, after fr_tick()
+void lockout_invite_link(const std::string& code);   // retrohub://invite/XXXX-XXXX: fill (and submit) the waiting screen's code field; ignored when not waiting
+void lockout_invite_result(bool ok, const std::string& reason);   // the server's answer to the code
 void lockout_shot(const std::string& mode);                    // HUB_SHOT_ACCESS: pending | unavailable | setup | setup-offline
 hublock::Lock lockout_kind();
 bool app_locked();                                             // true = show the lock screen and refuse every launch

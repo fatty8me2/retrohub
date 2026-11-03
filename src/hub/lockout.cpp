@@ -3,6 +3,9 @@
 #include "friends_ui.h"
 #include "ui_kit.h"
 #include "winutil.h"
+#include "invite_logic.h"
+#include "osk.h"
+#include "imgui_internal.h"
 
 /* Whole-app lock (docs/ADMIN.md "Locking the whole app"). The verdict state machine is lockout_logic.h; this file feeds it from the friends
  * client, remembers it in <data dir>\access.json, draws the lock screen and answers launch_blocked() for every way a game can start.
@@ -16,6 +19,27 @@ hublock::Lock g_forced_lock = hublock::Lock::None;
 bool g_forced_trying = false;
 double g_t0 = 0.0;                            // when the app started (a new install shows "Setting up" for a few seconds before asking for internet)
 bool g_first_draw = true;
+
+/* The waiting screen's "Have an invite code?" field (net/invite_logic.h). Only on the Pending lock; the server approves the account on a good code. */
+char g_inv_buf[24] = {0};
+std::string g_inv_msg;
+int g_inv_kind = 0;                           // 0 nothing, 1 working, 2 good, 3 problem
+bool g_inv_busy = false;
+double g_inv_sent = 0.0, g_inv_last = 0.0;
+std::string g_inv_link;                       // a retrohub://invite/ code waiting for the lock screen to be ready
+double g_inv_link_at = 0.0;
+double now_s() { return (double)GetTickCount64() / 1000.0; }
+void inv_set(int kind, const std::string& m) { g_inv_kind = kind; g_inv_msg = m; }
+void inv_submit() {
+    if (g_inv_busy) return;
+    const std::string c = hubnet::invite_clean(g_inv_buf);
+    if (!hubnet::invite_valid(c)) { inv_set(3, hubnet::redeem_local_problem()); return; }
+    if (now_s() - g_inv_last < 1.5) return;
+    g_inv_last = now_s();
+    if (g_forced) return;
+    if (FR.cli.redeem_invite(c)) { g_inv_busy = true; g_inv_sent = now_s(); inv_set(1, "Checking the code..."); }
+    else { inv_set(3, "Can't reach the server yet. Wait a moment and try again."); FR.cli.reconnect_now(); }
+}
 
 std::string cache_path() { return hub::data_dir() + "access.json"; }
 
@@ -35,10 +59,24 @@ void lockout_init(bool had_account, const std::string& uid) {
     }
 }
 
-void lockout_shot(const std::string& mode) {   // HUB_SHOT_ACCESS=pending|unavailable|setup|setup-offline
+void lockout_invite_link(const std::string& code) {
+    if (!hubnet::invite_valid(code)) return;
+    g_inv_link = hubnet::invite_format(code);
+    g_inv_link_at = now_s();
+}
+void lockout_invite_result(bool ok, const std::string& reason) {
+    g_inv_busy = false;
+    inv_set(ok ? 2 : 3, hubnet::redeem_result_text(ok, reason));
+}
+
+void lockout_shot(const std::string& mode) {   // HUB_SHOT_ACCESS=pending|pending-code|pending-bad|unavailable|setup|setup-offline
+    if (mode == "pending-code" || mode == "pending-bad") {
+        std::snprintf(g_inv_buf, sizeof g_inv_buf, "%s", "K7QM-2XDT");
+        if (mode == "pending-bad") inv_set(3, hubnet::redeem_result_text(false, "expired"));
+    }
     g_forced = true;
     g_forced_trying = mode == "setup";
-    g_forced_lock = mode == "pending" ? hublock::Lock::Pending : mode == "unavailable" ? hublock::Lock::Unavailable : hublock::Lock::Setup;
+    g_forced_lock = mode.rfind("pending", 0) == 0 ? hublock::Lock::Pending : mode == "unavailable" ? hublock::Lock::Unavailable : hublock::Lock::Setup;
 }
 
 hublock::Lock lockout_kind() {
@@ -59,6 +97,15 @@ bool launch_blocked(const char* what) {
 
 void lockout_tick() {
     if (!g_enabled || g_forced) return;
+    if (g_inv_busy && now_s() - g_inv_sent > 12.0) { g_inv_busy = false; inv_set(3, "No answer from the server. Try again."); }
+    if (!g_inv_link.empty()) {   // an invite link: wait until we know whether this account is waiting
+        const hublock::Lock l = lockout_kind();
+        if (l == hublock::Lock::Pending) {
+            std::snprintf(g_inv_buf, sizeof g_inv_buf, "%s", g_inv_link.c_str());
+            g_inv_link.clear();
+            inv_submit();
+        } else if ((l == hublock::Lock::None && FR.cli.connected()) || now_s() - g_inv_link_at > 60.0) g_inv_link.clear();   // already approved (or nothing to do): the link has no use
+    }
     if (const int gate = hub::saves::cloud_gate_take()) V.on_live(gate == 1 ? hublock::Access::Pending : hublock::Access::Unavailable, false, false);   // a /saves 403 reason
     if (FR.started && !FR.fake) {
         const std::string uid = FR.cli.my_uid();
@@ -118,8 +165,8 @@ void draw_lock_screen() {
     /* Content height, to centre it: logo, title, message, account card (pending only), buttons. */
     ImFont* hf = ui::F.title;
     const float title_h = hf->FontSize * 1.2f, msg_h = msg.empty() ? 0.f : ui::F.body->FontSize * (msg.size() > 90 && cw < sp(70.f) ? 4.f : 3.f);
-    const float card_h = pending ? sp(15.f) : 0.f, btn_h = sp(6.f);
-    const float total = logo + sp(3.f) + title_h + sp(2.f) + msg_h + (pending ? sp(2.f) + card_h : 0.f) + sp(4.f) + btn_h;
+    const float card_h = pending ? sp(15.f) : 0.f, btn_h = sp(6.f), inv_h = pending ? sp(17.f) : 0.f;
+    const float total = logo + sp(3.f) + title_h + sp(2.f) + msg_h + (pending ? sp(2.f) + card_h : 0.f) + inv_h + sp(4.f) + btn_h;
     const float x0 = (io.DisplaySize.x - cw) * 0.5f, y0 = std::max(sp(3.f), (io.DisplaySize.y - total) * 0.5f);
 
     ui_draw_brand_logo(dl, ImVec2((io.DisplaySize.x - logo) * 0.5f, y0), logo);
@@ -157,6 +204,39 @@ void draw_lock_screen() {
         dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(lx, ry + 2), ui::TEXT3, "Friend code");
         dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(vx, ry), ui::TEXT, code.empty() ? "..." : code.c_str());
         y = p1.y + sp(2.f);
+        {   // "Have an invite code?"
+            const char* hd = "Have an invite code?";
+            ImVec2 hs = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, hd);
+            dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2((io.DisplaySize.x - hs.x) * 0.5f, y + sp(1.f)), ui::TEXT, hd);
+            const float iw = std::min(sp(24.f), cw * 0.5f), ubw = sp(14.f), ig = sp(1.5f), rh = sp(5.5f);
+            const float rx = (io.DisplaySize.x - (iw + ig + ubw)) * 0.5f, ry = y + sp(4.5f);
+            ImGui::SetCursorScreenPos(ImVec2(rx, ry));
+            ImGui::SetNextItemWidth(iw);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(1.5f), (rh - ImGui::GetFontSize()) * 0.5f));
+            const bool sub = osk::input("##invcode", "ABCD-EFGH", g_inv_buf, sizeof g_inv_buf, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Code);
+            ImGui::PopStyleVar();
+            {   // keep the field as ABCD-EFGH while typing / pasting (a pasted link or message is cut down to its code)
+                const std::string f = hubnet::invite_field_text(g_inv_buf);
+                if (f != g_inv_buf) {
+                    std::snprintf(g_inv_buf, sizeof g_inv_buf, "%s", f.c_str());
+                    if (ImGuiInputTextState* st = ImGui::GetInputTextState(ImGui::GetID("##invcode"))) st->ReloadUserBufAndMoveToEnd();
+                }
+            }
+            ImGui::SetCursorScreenPos(ImVec2(rx + iw + ig, ry));
+            const bool have = hubnet::invite_clean(g_inv_buf).size() > 0;
+            if (button(g_inv_busy ? "Checking..." : "Use code", ImVec2(ubw, rh), have && !g_inv_busy, have && !g_inv_busy) || (sub && have)) inv_submit();
+            if (!g_inv_msg.empty()) {
+                const ImU32 mc = g_inv_kind == 2 ? ui::GOOD : g_inv_kind == 3 ? ui::BAD : ui::TEXT2;
+                std::vector<std::string> ml = ui::wrap_lines(ui::F.body, ui::F.body->FontSize, g_inv_msg, std::min(cw, sp(48.f)), 2);
+                float my = ry + rh + sp(1.f);
+                for (auto& l : ml) {
+                    ImVec2 ls = ui::F.body->CalcTextSizeA(ui::F.body->FontSize, FLT_MAX, 0.f, l.c_str());
+                    dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2((io.DisplaySize.x - ls.x) * 0.5f, my), mc, l.c_str());
+                    my += ui::F.body->FontSize * 1.3f;
+                }
+            }
+        }
+        y += inv_h;
     }
     y += sp(2.f);
 

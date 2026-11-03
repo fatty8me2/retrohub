@@ -233,16 +233,19 @@ inline bool watch_set(std::string* csv, const std::string& uid, bool on, const s
 }
 
 /* ------------------------------------------------------------------ notification history */
-enum class Kind { Invite, FriendRequest, AskJoin, FriendOnline, CloudConflict, Update, Info };
+enum class Kind { Invite, FriendRequest, AskJoin, FriendOnline, CloudConflict, Update, Info,
+                  JoinWaiting,   // owner only: a new account is waiting for approval (uid, name, code = its friend code, text = the line)
+                  InviteUsed };  // owner only: someone joined with an invite code (uid, name, code = the invite, text = the line)
 inline const char* kind_name(Kind k) {
     switch (k) {
         case Kind::Invite: return "invite"; case Kind::FriendRequest: return "request"; case Kind::AskJoin: return "ask_join";
         case Kind::FriendOnline: return "online"; case Kind::CloudConflict: return "conflict"; case Kind::Update: return "update";
+        case Kind::JoinWaiting: return "join_wait"; case Kind::InviteUsed: return "invite_used";
         default: return "info";
     }
 }
 inline Kind kind_from(const std::string& s) {
-    for (Kind k : {Kind::Invite, Kind::FriendRequest, Kind::AskJoin, Kind::FriendOnline, Kind::CloudConflict, Kind::Update})
+    for (Kind k : {Kind::Invite, Kind::FriendRequest, Kind::AskJoin, Kind::FriendOnline, Kind::CloudConflict, Kind::Update, Kind::JoinWaiting, Kind::InviteUsed})
         if (s == kind_name(k)) return k;
     return Kind::Info;
 }
@@ -265,6 +268,7 @@ struct World {
     std::vector<std::string> pending_request_uids;   // incoming friend requests still waiting
     bool update_available = false;
     int conflicts = 0;                               // cloud save conflicts still unresolved
+    int admin_waiting = 0;                           // owner: accounts still waiting for approval
 };
 
 inline State state_of(const Entry& e, const World& w) {
@@ -275,6 +279,7 @@ inline State state_of(const Entry& e, const World& w) {
         case Kind::FriendRequest:
             if (e.done) return State::Done;
             return std::find(w.pending_request_uids.begin(), w.pending_request_uids.end(), e.uid) != w.pending_request_uids.end() ? State::Active : State::Expired;
+        case Kind::JoinWaiting: return e.done ? State::Done : w.admin_waiting > 0 ? State::Active : State::Expired;
         case Kind::CloudConflict: return w.conflicts > 0 && !e.done ? State::Active : State::Expired;
         case Kind::Update: return w.update_available && !e.done ? State::Active : State::Expired;
         default: return State::Info;
@@ -290,6 +295,7 @@ inline std::string action_label(const Entry& e, State s) {
         case Kind::Invite: return "Join";
         case Kind::AskJoin: return "Let in";
         case Kind::FriendRequest: return "Accept";
+        case Kind::JoinWaiting: return "Approve";
         case Kind::CloudConflict: return "Open Saves";
         case Kind::Update: return "Update";
         default: return "";
@@ -303,6 +309,7 @@ inline std::string headline(const Entry& e) {
         case Kind::AskJoin: return who + " asked to join your game";
         case Kind::FriendRequest: return who + " wants to be friends";
         case Kind::FriendOnline: return who + " came online";
+        case Kind::JoinWaiting: return (e.name.empty() ? std::string("Someone") : e.name) + " wants to join";   // the friend code is on the second line
         default: return e.text;
     }
 }
@@ -319,6 +326,8 @@ struct NotifHistory {
                 case Kind::Invite: case Kind::AskJoin: return o.uid == e.uid && o.code == e.code;
                 case Kind::FriendRequest: case Kind::FriendOnline: return o.uid == e.uid && (e.kind == Kind::FriendRequest || o.at / 60000 == e.at / 60000);
                 case Kind::CloudConflict: case Kind::Update: return o.text == e.text;
+                case Kind::JoinWaiting: return o.uid == e.uid;
+                case Kind::InviteUsed: return o.uid == e.uid && o.code == e.code;
                 default: return o.text == e.text && o.at == e.at;
             }
         }), v.end());
