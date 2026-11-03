@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.31.13",
+      "date": "2026-11-03",
+      "title": "Invite codes and quick approvals",
+      "new": [
+        "Invite codes: the owner makes a code in Admin and sends it; a new friend types it on the waiting screen (or opens the invite link) and gets in at once",
+        "Admin: people waiting for approval are listed first with big Approve / Deny buttons, plus Approve by friend code",
+        "Owner notifications: \"<name> wants to join\" with Approve / Deny right in the bell, and a note when an invite is used"
+      ],
+      "improved": [
+        "Floating invite cards hide while the bell or a pop-up is open"
+      ],
+      "fixed": [
+        "A new account could drop its connection right after starting and wait a minute to reconnect"
+      ]
+    },
+    {
       "version": "1.31.12",
       "date": "2026-11-03",
       "title": "Smash online needs an account too",
