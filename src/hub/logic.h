@@ -207,6 +207,24 @@ std::string friends_playtime_line(const std::map<std::string, std::vector<Playti
                                   const std::string& game_key, size_t max_n = 3);
 /* Friend actions menu: "Top games: Smash 64 14h, Metroid 3h" for one friend ("" if none). */
 std::string friend_top_games_text(const std::vector<PlaytimeEntry>& games, size_t max_n = 3);
+
+/* A game title for display: the server keeps only the first 48 characters of a title, so "Zelda: Twilight Princess (GameCube)" arrives as
+ * "...Princess (GameCube". Drops a dangling "(..." / "[..." with no closing bracket, then a trailing "(GameCube)"-style console suffix. */
+std::string clean_game_title(const std::string& title);
+struct TopGame { std::string key, title, hours; int minutes = 0; };
+/* A friend's most-played games, longest first, at most max_n: cleaned titles (same cleaned title = one row, minutes added), hours via friend_hours_text. */
+std::vector<TopGame> friend_top_games(const std::vector<PlaytimeEntry>& games, size_t max_n = 5);
+
+/* Friend actions menu (left/right click): a short list. Everything else lives under "More" or on the profile. Pure, unit tested. */
+struct FriendMenuIn { bool can_join = false, can_invite = false, can_ask = false, can_dropin = false, can_watch = false; };
+enum class FriendMenuItem { Message, JoinRoom, Invite, Profile, CopyCode, More };
+enum class FriendMoreItem { AskJoin, JoinGame, Watch, Notify, Bracket, Remove, Block };   // Remove and Block come last (danger colour, confirmed)
+std::vector<FriendMenuItem> friend_menu_items(const FriendMenuIn& in);
+std::vector<FriendMoreItem> friend_more_items(const FriendMenuIn& in);
+/* "Invite to room": we are in a room, the friend is online and not already in it, and the room has a free slot. */
+inline bool friend_can_invite(bool in_my_room, bool friend_online, bool friend_in_this_room, int room_left) {
+    return in_my_room && friend_online && !friend_in_this_room && room_left > 0;
+}
 /* Windows user name -> usable player name (printable, max 16 chars, "Player" if empty). */
 std::string sanitize_player_name(const std::string& s);
 

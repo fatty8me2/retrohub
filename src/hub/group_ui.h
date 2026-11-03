@@ -30,6 +30,7 @@ void group_invite_last();                       // Play Online: open a room and 
 const hubui::group::RecentGroup* group_last();  // newest group (nullptr = none)
 std::string group_last_label();                 // "Invite last group (Mia, Jake)"
 std::string group_together_text(const std::string& uid);   // "Last played together: ..." or ""
+bool group_last_together(const std::string& uid, std::string* game_id, std::string* title, long long* at_ms);   // the newest session with this friend (profile)
 /* rivalries (Wave 4 S2; rivals_logic.h) */
 void rivals_ingest(const std::string& result_file);                 // the game exited: read + store its match result (file is deleted)
 void rivals_ingest_text(const std::string& text);                   // one match result's JSON (read while the game runs; same match id = stored once)

@@ -1,4 +1,5 @@
 #include "app.h"
+#include <cstring>
 #include "../net/username.h"
 #include "prefs.h"
 #include "profile.h"
@@ -258,6 +259,20 @@ void fr_icon(ImDrawList* dl, FrIcon k, ImVec2 c, float s, ImU32 col) {
         }
         case FrIcon::More:
             for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(c + ImVec2(i * s * 0.22f, 0), s * 0.065f, col, 10);
+            break;
+        case FrIcon::Cross:
+            dl->AddLine(c + ImVec2(-s * 0.2f, -s * 0.2f), c + ImVec2(s * 0.2f, s * 0.2f), col, t);
+            dl->AddLine(c + ImVec2(-s * 0.2f, s * 0.2f), c + ImVec2(s * 0.2f, -s * 0.2f), col, t);
+            break;
+        case FrIcon::Ban:
+            dl->AddCircle(c, s * 0.3f, col, 20, t);
+            dl->AddLine(c + ImVec2(-s * 0.21f, s * 0.21f), c + ImVec2(s * 0.21f, -s * 0.21f), col, t);
+            break;
+        case FrIcon::Bracket:
+            dl->AddLine(c + ImVec2(-s * 0.32f, -s * 0.22f), c + ImVec2(-s * 0.08f, -s * 0.22f), col, t);
+            dl->AddLine(c + ImVec2(-s * 0.32f, s * 0.22f), c + ImVec2(-s * 0.08f, s * 0.22f), col, t);
+            dl->AddLine(c + ImVec2(-s * 0.08f, -s * 0.22f), c + ImVec2(-s * 0.08f, s * 0.22f), col, t);
+            dl->AddLine(c + ImVec2(-s * 0.08f, 0), c + ImVec2(s * 0.32f, 0), col, t);
             break;
         case FrIcon::Send:
             dl->AddTriangleFilled(c + ImVec2(-s * 0.34f, -s * 0.30f), c + ImVec2(s * 0.38f, 0), c + ImVec2(-s * 0.34f, s * 0.30f), col);
@@ -782,7 +797,16 @@ void fr_fake_init() {
         if (std::getenv("HUB_SHOT_PROF_EDIT")) FR.open_prof = true;
     }
     fg_fake_libs();
-    FR.f_pt["miauid"] = {{"fake:0", "Smash Classic", 14 * 60 + 20}, {"n64:mk64", "Mario Kart 64", 9 * 60}, {"gba:mf", "Metroid Fusion", 95}};
+    if (std::getenv("HUB_SHOT_LONGNAMES")) {   // screenshot aid: names / status lines / unread counts at their longest
+        for (auto& f : FR.f_friends) {
+            if (f.uid == "miauid") { f.name = "Maximilianus Prime42"; f.status.prof_status = "grinding Melee ranked until sunrise today"; }
+            if (f.uid == "jakuid") f.name = "Jacqueline-Annabelle";
+            if (f.uid == "priuid") f.name = "Priyanka Venkataraman";
+        }
+        A.st.name = "Wolfgang Amadeus 99";
+    }
+    if (const char* hv = std::getenv("HUB_SHOT_VIEW")) fr_view_profile(std::strcmp(hv, "me") == 0 ? std::string() : std::string(hv));   // screenshot aid: open a friend's profile (uid) or mine ("me")
+    FR.f_pt["miauid"] = {{"fake:0", "Smash Classic", 14 * 60 + 20}, {"n64:mk64", "Mario Kart 64", 9 * 60}, {"gc_tp", "The Legend of Zelda: Twilight Princess (GameCube", 588}, {"gba:mf", "Metroid Fusion", 95}, {"gc_mg", "Mario Golf: Toadstool Tour (GameCube)", 200}};
     FR.f_pt["jakuid"] = {{"fake:0", "Smash Classic", 3 * 60}, {"n64:mp2", "Mario Party 2", 40}};
     FR.f_pt["kaiuid"] = {{"fake:0", "Smash Classic", 45}};
     FR.f_pt["devuid"] = {{"fake:0", "Smash Classic", 22 * 60}};
@@ -846,6 +870,7 @@ void fr_fake_init() {
     }
     FR.f_unread["miauid"] = 2;
     FR.f_unread["jakuid"] = 0;
+    if (std::getenv("HUB_SHOT_LONGNAMES")) { FR.f_unread["miauid"] = 14; FR.f_unread["jakuid"] = 3; FR.f_unread["lunuid"] = 120; }
     hubnet::Invite inv = im.inv;
     fr_notify(true, "miauid", "Mia", inv);
     if (std::getenv("HUB_SHOT_FAKE_ASK")) {   // screenshot aid: a friend asks to join our game
@@ -1181,6 +1206,39 @@ void fr_confirm(const char* kind, const hubnet::Friend& f) {
     fr_trace(kind, f.uid);
     FR.confirm_kind = kind; FR.confirm_uid = f.uid; FR.confirm_name = f.name; FR.confirm_open = true;
 }
+/* ---- the small friend menu: icon rows, tight width, danger rows in red ---- */
+static std::string fr_menu_pad() {
+    float sw = ImGui::CalcTextSize(" ").x;
+    return std::string((size_t)std::max(2.f, std::ceil(sp(3.f) / std::max(1.f, sw))), ' ');
+}
+static void fr_menu_icon(ImVec2 p, FrIcon ic, bool danger) {
+    float lh = ImGui::GetTextLineHeight();
+    fr_icon(ImGui::GetWindowDrawList(), ic, ImVec2(p.x + sp(1.5f), p.y + lh * 0.5f), lh * 1.15f, danger ? ui::BAD : ui::TEXT2);
+}
+static bool fr_menu_item(FrIcon ic, const char* label, bool danger = false, bool checked = false) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    if (danger) ImGui::PushStyleColor(ImGuiCol_Text, ui::BAD);
+    const bool hit = ImGui::MenuItem((fr_menu_pad() + label).c_str());
+    if (danger) ImGui::PopStyleColor();
+    ImVec2 q = ImGui::GetItemRectMax();
+    fr_menu_icon(p, ic, danger);
+    if (checked) {   // toggle rows: a check mark at the right edge
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        float lh = ImGui::GetTextLineHeight(), cx = q.x - sp(1.2f), cy = p.y + lh * 0.5f, u = lh * 0.28f;
+        dl->AddLine(ImVec2(cx - u, cy), ImVec2(cx - u * 0.25f, cy + u * 0.8f), ui::GOOD, 2.f);
+        dl->AddLine(ImVec2(cx - u * 0.25f, cy + u * 0.8f), ImVec2(cx + u * 1.1f, cy - u * 0.9f), ui::GOOD, 2.f);
+    }
+    return hit;
+}
+static bool fr_menu_begin(FrIcon ic, const char* label) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool open = ImGui::BeginMenu((fr_menu_pad() + label).c_str());
+    fr_menu_icon(p, ic, false);
+    { static const bool shot_more = std::getenv("HUB_SHOT_CTX_MORE") != nullptr;   // screenshot aid: hover "More" so the submenu opens
+      static int frames = 0;
+      if (shot_more && ++frames > 3 && !open) { ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax(); ImGui::GetIO().AddMousePosEvent((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f); } }
+    return open;
+}
 void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w, long long now) {
     float h = sp(7.f);
     ImGui::PushID(f.uid.c_str());
@@ -1200,10 +1258,10 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
                      (dg->system == hub::System::N64 || hubui::friend_can_dropin(fr, true));   // N64: 2-3 humans; NES/SNES: 3
     }
     const char* join_lbl = fr.state == hubui::FS_InGame ? "Join lobby" : "Join";
-    bool can_invite = fr_in_my_room() && f.online() && f.status.lobby_code != A.code;
-    if (can_invite) {   // room already full for this game: no Invite button (the picker/menu explain why)
+    bool can_invite = false;   // in a room, they are online and not in it, and it has a free slot (full room: the picker explains why)
+    if (fr_in_my_room() && f.online()) {
         const hub::GameEntry* rg = find_room_entry(A.selected_game);
-        if (hubui::invite_room_left((int)room_members().size(), rg ? max_players_for(*rg) : 4) <= 0) can_invite = false;
+        can_invite = hubui::friend_can_invite(true, true, f.status.lobby_code == A.code, hubui::invite_room_left((int)room_members().size(), rg ? max_players_for(*rg) : 4));
     }
     auto inv_it = FR.invited_at.find(f.uid);
     bool invited_recent = inv_it != FR.invited_at.end() && ImGui::GetTime() - inv_it->second < 20.0;
@@ -1215,9 +1273,10 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
     fr_avatar(dl, ac, sp(2.25f), f.name, fr.state, show ? ui::PANEL2 : ui::PANEL);
     if (unread > 0) {
         char b[8];
-        std::snprintf(b, sizeof b, "%d", std::min(unread, 99));
+        if (unread > 99) std::snprintf(b, sizeof b, "99+"); else std::snprintf(b, sizeof b, "%d", unread);
+        float bw = std::max(sp(2.f), fr_tw(ui::F.cap, b) + sp(1.f));   // a pill that grows with the digits, never wider than needed
         ImVec2 bc = ac + ImVec2(sp(1.9f), -sp(1.9f));
-        dl->AddCircleFilled(bc, sp(1.f), ui::BAD, 14);
+        dl->AddRectFilled(ImVec2(bc.x - bw * 0.5f, bc.y - sp(1.f)), ImVec2(bc.x + bw * 0.5f, bc.y + sp(1.f)), ui::BAD, sp(1.f));
         fr_text_c(dl, ui::F.cap, bc, IM_COL32_WHITE, b);
     }
     // right side: buttons while hovered/focused, game thumbnail otherwise
@@ -1296,37 +1355,44 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) ImGui::OpenPopup("ctx");
     }
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.f), sp(1.f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(0.75f), sp(0.75f)));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(sp(19.f), 0), ImVec2(sp(24.f), FLT_MAX));
     { static const char* shot_ctx = std::getenv("HUB_SHOT_CTX"); static bool ctx_done = false;   // screenshot aid: open this friend uid's actions menu once
-      if (shot_ctx && !ctx_done && f.uid == shot_ctx) { ctx_done = true; ImGui::OpenPopup("ctx"); } }
+      if (shot_ctx && !ctx_done && f.uid == shot_ctx) { ctx_done = true; ImGui::OpenPopup("ctx"); } if (shot_ctx && f.uid == shot_ctx) ImGui::SetNextWindowPos(ImVec2(p0.x + sp(5.f), std::min(p1.y - sp(1.f), ImGui::GetIO().DisplaySize.y - sp(24.f)))); }
     if (ImGui::BeginPopup("ctx")) {
-        if (ImGui::MenuItem("Message")) fr_open_chat(f.uid);
-        if (can_join && ImGui::MenuItem("Join lobby")) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
-        if (can_ask && ImGui::MenuItem("Ask to join")) fr_ask_to_join(f.uid);
-        if (can_dropin && ImGui::MenuItem("Join game")) dropin_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
-        if (can_watch && ImGui::MenuItem("Watch")) spectate_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name);
-        if (can_invite && ImGui::MenuItem("Invite to my room")) fr_invite_uids({f.uid});
-        if (ImGui::MenuItem("Copy friend code")) { SDL_SetClipboardText(f.code.c_str()); fr_trace("copy", f.uid); set_toast("Friend code copied.", true, 3.0); }
-        if (ImGui::MenuItem("Notify me when they come online", nullptr, hubui::group::watch_has(A.st.watch_online, f.uid))) fr_toggle_watch(f);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Remove friend")) fr_confirm("remove", f);
-        if (ImGui::MenuItem("Block")) fr_confirm("block", f);
-        { std::string tg = fr_top_games_text(f.uid); if (!tg.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", tg.c_str()); } }
-        { std::string rv = rivals_record_text(f.uid, f.name); if (!rv.empty()) {   // Smash rivalry: record, mains, last-5 strip
-            ImGui::Separator();
-            ImGui::TextUnformatted(rv.c_str());
-            std::string mt = rivals_mains_text(f.uid); if (!mt.empty()) ImGui::TextDisabled("%s", mt.c_str());
-            std::string l5 = rivals_last5(f.uid);
-            ImGui::TextDisabled("Last %d:", (int)l5.size());
-            for (size_t i = 0; i < l5.size(); ++i) {
-                ImGui::SameLine(0, sp(0.7f));
-                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(l5[i] == 'W' ? ui::GOOD : l5[i] == 'L' ? ui::BAD : ui::TEXT3), "%c", l5[i]);
+        hubui::FriendMenuIn mi;
+        mi.can_join = can_join; mi.can_invite = can_invite; mi.can_ask = can_ask; mi.can_dropin = can_dropin; mi.can_watch = can_watch;
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(0.6f)));
+        for (hubui::FriendMenuItem it : hubui::friend_menu_items(mi)) {
+            switch (it) {
+                case hubui::FriendMenuItem::Message: if (fr_menu_item(FrIcon::Chat, "Message")) fr_open_chat(f.uid); break;
+                case hubui::FriendMenuItem::JoinRoom: if (fr_menu_item(FrIcon::Send, fr.state == hubui::FS_InGame ? "Join lobby" : "Join room")) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name); break;
+                case hubui::FriendMenuItem::Invite: if (fr_menu_item(FrIcon::UserPlus, "Invite to room")) fr_invite_uids({f.uid}); break;
+                case hubui::FriendMenuItem::Profile: if (fr_menu_item(FrIcon::People, "View profile")) fr_view_profile(f.uid); break;
+                case hubui::FriendMenuItem::CopyCode:
+                    if (fr_menu_item(FrIcon::Copy, "Copy friend code")) { SDL_SetClipboardText(f.code.c_str()); fr_trace("copy", f.uid); set_toast("Friend code copied.", true, 3.0); }
+                    break;
+                case hubui::FriendMenuItem::More:
+                    if (fr_menu_begin(FrIcon::More, "More")) {
+                        for (hubui::FriendMoreItem mo : hubui::friend_more_items(mi)) {
+                            switch (mo) {
+                                case hubui::FriendMoreItem::AskJoin: if (fr_menu_item(FrIcon::Send, "Ask to join")) fr_ask_to_join(f.uid); break;
+                                case hubui::FriendMoreItem::JoinGame: if (fr_menu_item(FrIcon::Send, "Join game")) dropin_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name); break;
+                                case hubui::FriendMoreItem::Watch: if (fr_menu_item(FrIcon::People, "Watch")) spectate_start(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name); break;
+                                case hubui::FriendMoreItem::Notify:
+                                    if (fr_menu_item(FrIcon::Bell, "Notify when online", false, hubui::group::watch_has(A.st.watch_online, f.uid))) fr_toggle_watch(f);
+                                    break;
+                                case hubui::FriendMoreItem::Bracket: if (fr_menu_item(FrIcon::Bracket, "Tournament bracket...")) bracket_open(); break;
+                                case hubui::FriendMoreItem::Remove: ImGui::Separator(); if (fr_menu_item(FrIcon::Cross, "Remove friend", true)) fr_confirm("remove", f); break;
+                                case hubui::FriendMoreItem::Block: if (fr_menu_item(FrIcon::Ban, "Block", true)) fr_confirm("block", f); break;
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+                    break;
             }
-        } else { std::string st = rivals_sessions_text(f.uid); if (!st.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", st.c_str()); } } }
-        { std::string lr = ladder_row_text(f.uid); if (!lr.empty()) { ImGui::Separator(); ImGui::TextDisabled("Rating %s among friends", lr.c_str()); } }
-        { std::string lt = group_together_text(f.uid); if (!lt.empty()) { ImGui::Separator(); ImGui::TextDisabled("%s", lt.c_str()); } }   // last entry: keeps the other items' click positions
-        ImGui::Separator();
-        if (ImGui::MenuItem("Tournament bracket...")) bracket_open();   // last entry: keeps the other items' click positions
+        }
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar();
@@ -1339,6 +1405,272 @@ void fr_section(const std::string& title) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::GetWindowDrawList()->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + sp(0.5f), p.y + sp(0.5f)), ui::TEXT3, title.c_str());
     ImGui::Dummy(ImVec2(1, ui::F.cap->FontSize + sp(1.25f)));
+}
+
+/* ---- profile view (friend or me) ---- */
+void fr_view_profile(const std::string& uid) { FR.view_uid = uid; FR.view_self = uid.empty(); FR.open_view = true; }
+
+static void fr_view_heading(const char* t, ImU32 col = 0) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float cw = ImGui::GetContentRegionAvail().x;
+    dl->AddText(ui::F.cap, ui::F.cap->FontSize, p, col ? col : ui::TEXT3, t);
+    float ty = p.y + ui::F.cap->FontSize + sp(0.4f);
+    dl->AddLine(ImVec2(p.x, ty), ImVec2(p.x + cw, ty), ui::HAIRLINE, 1.f);
+    ImGui::Dummy(ImVec2(cw, ui::F.cap->FontSize + sp(1.f)));
+}
+static void fr_view_note(const char* t) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float cw = ImGui::GetContentRegionAvail().x;
+    dl->AddText(ui::F.body, ui::F.body->FontSize, p, ui::TEXT3, ui::ellipsize(ui::F.body, ui::F.body->FontSize, t, cw).c_str());
+    ImGui::Dummy(ImVec2(cw, ui::F.body->FontSize + sp(0.5f)));
+}
+/* A game row: cover, title, optional second line, optional text at the right. Title and subtitle are cut to the room that is left. */
+static void fr_view_game_row(const std::string& game_id, const std::string& title, const std::string& sub, const std::string& right, float h) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    float cw = ImGui::GetContentRegionAvail().x, th = h - sp(0.8f), tw = th * 1.2f;
+    fr_game_thumb(dl, game_id, title, ImVec2(p0.x, p0.y + sp(0.4f)), ImVec2(p0.x + tw, p0.y + sp(0.4f) + th), sp(0.6f));
+    float x = p0.x + tw + sp(1.25f), rw = right.empty() ? 0.f : fr_tw(ui::F.bold, right) + sp(1.f), avail = std::max(sp(6.f), p0.x + cw - rw - x);
+    ImFont* tf = ui::F.bold;
+    float ty = sub.empty() ? p0.y + (h - tf->FontSize) * 0.5f : p0.y + (h - tf->FontSize * 1.25f - ui::F.cap->FontSize) * 0.5f;
+    dl->AddText(tf, tf->FontSize, ImVec2(x, ty), ui::TEXT, ui::ellipsize(tf, tf->FontSize, title, avail).c_str());
+    if (!sub.empty()) dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(x, ty + tf->FontSize * 1.25f), ui::TEXT2, ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, avail).c_str());
+    if (!right.empty()) dl->AddText(tf, tf->FontSize, ImVec2(p0.x + cw - rw + sp(0.5f), p0.y + (h - tf->FontSize) * 0.5f), ui::TEXT2, right.c_str());
+    ImGui::Dummy(ImVec2(cw, h));
+}
+/* A text button for the view (custom drawn like fr_pill_button, but in layout flow). */
+static bool fr_view_button(const char* id, const char* label, float w, bool primary, bool danger = false) {
+    float h = sp(3.6f);
+    ImGui::PushID(id);
+    bool hit = ImGui::InvisibleButton("b", ImVec2(w, h), ImGuiButtonFlags_EnableNav);
+    bool hov = ImGui::IsItemHovered() || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    float rd = h * 0.5f;
+    if (primary) dl->AddRectFilled(a, b, ui::mix(ui::ACCENT, IM_COL32_WHITE, hov ? 0.2f : 0.f), rd);
+    else if (danger) { dl->AddRectFilled(a, b, with_alpha(ui::BAD, hov ? 0.30f : 0.14f), rd); dl->AddRect(a, b, with_alpha(ui::BAD, 0.55f), rd, 0, 1.f); }
+    else { dl->AddRectFilled(a, b, ui::mix(ui::PANEL3, ui::HILITE, hov ? 0.1f : 0.f), rd); dl->AddRect(a, b, ui::HAIRLINE, rd, 0, 1.f); }
+    fr_text_c(dl, ui::F.bold, (a + b) * 0.5f, primary ? IM_COL32_WHITE : danger ? ui::BAD : ui::TEXT, label);
+    if (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible) ui::focus_ring(dl, a, b, rd);
+    ImGui::PopID();
+    return hit;
+}
+static float fr_view_button_w(const char* label) { return fr_tw(ui::F.bold, label) + sp(4.f); }
+/* A settings row with an on/off switch at the right. */
+static bool fr_view_switch(const char* id, const char* label, bool on) {
+    float h = sp(4.4f);
+    ImGui::PushID(id);
+    float cw = ImGui::GetContentRegionAvail().x;
+    bool hit = ImGui::InvisibleButton("s", ImVec2(cw, h), ImGuiButtonFlags_EnableNav);
+    bool hov = ImGui::IsItemHovered() || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    if (hov) dl->AddRectFilled(a, b, ui::PANEL2, sp(1.25f));
+    float sw = sp(5.f), sh = sp(2.6f);
+    dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(a.x + sp(1.f), a.y + (h - ui::F.body->FontSize) * 0.5f), ui::TEXT, ui::ellipsize(ui::F.body, ui::F.body->FontSize, label, cw - sw - sp(3.5f)).c_str());
+    ImVec2 s0(b.x - sw - sp(1.f), a.y + (h - sh) * 0.5f), s1(s0.x + sw, s0.y + sh);
+    dl->AddRectFilled(s0, s1, on ? ui::ACCENT : ui::PANEL3, sh * 0.5f);
+    if (!on) dl->AddRect(s0, s1, ui::HAIRLINE, sh * 0.5f, 0, 1.f);
+    dl->AddCircleFilled(ImVec2(on ? s1.x - sh * 0.5f : s0.x + sh * 0.5f, (s0.y + s1.y) * 0.5f), sh * 0.38f, IM_COL32_WHITE, 16);
+    if (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible) ui::focus_ring(dl, a, b, sp(1.25f));
+    ImGui::PopID();
+    return hit;
+}
+
+static void fr_view_modal() {
+    if (FR.open_view) { ImGui::OpenPopup("Profile##frview"); FR.open_view = false; }
+    const ImVec2 disp = ImGui::GetIO().DisplaySize;
+    const float W = std::min(sp(54.f), disp.x * 0.94f), H = std::min(sp(92.f), disp.y * 0.92f);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(W, H));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.25f)));
+    if (!ImGui::BeginPopupModal("Profile##frview", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar)) {
+        ImGui::PopStyleVar();
+        return;
+    }
+    ImGui::PopStyleVar();
+    const bool self = FR.view_self;
+    const hubnet::Friend* fp = self ? nullptr : fr_find(FR.view_uid);
+    if (ui::modal_back() || (!self && !fp)) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    const long long now = wall_ms();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 win0 = ImGui::GetWindowPos();
+    const std::string uid = self ? std::string() : fp->uid;
+
+    hubui::FriendRow row;
+    std::string name = A.st.name, code = fr_my_code(), presence = fr_status_text();
+    int state = fr_connected() ? hubui::FS_Online : hubui::FS_Offline;
+    hub::profile::Profile prof = self ? fr_my_profile() : hub::profile::Profile();
+    if (!self) {
+        row = fr_row(*fp);
+        name = fp->name; code = fp->code; state = row.state;
+        presence = hubui::friend_presence_line(row, now);
+        prof = fr_profile_of(fp->name);
+    }
+    bool can_join = !self && hubui::friend_can_join(row);
+    bool can_invite = false;
+    if (!self && fr_in_my_room() && fp->online()) {
+        const hub::GameEntry* rg = find_room_entry(A.selected_game);
+        can_invite = hubui::friend_can_invite(true, true, fp->status.lobby_code == A.code, hubui::invite_room_left((int)room_members().size(), rg ? max_players_for(*rg) : 4));
+    }
+
+    ImGui::BeginChild("##viewbody", ImVec2(0, 0), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground);
+    const float cw = ImGui::GetContentRegionAvail().x;
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(0.5f)));
+
+    /* header */
+    {
+        ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const float r = sp(4.6f);
+        fr_avatar(dl, p0 + ImVec2(r + sp(0.3f), r + sp(0.3f)), r, name, state, ui::PANEL);
+        const float tx = p0.x + r * 2.f + sp(2.f), tw = cw - (tx - p0.x) - sp(5.f);
+        float y = p0.y;
+        dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, y), ui::TEXT, ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, name, tw).c_str());
+        y += ui::F.h2->FontSize * 1.25f;
+        const std::string cs = code.empty() ? "..." : code;
+        dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, y), ui::mix(ui::ACCENT, ui::HILITE, 0.55f), cs.c_str());
+        {
+            float cx = tx + fr_tw(ui::F.body, cs) + sp(0.75f), bs = sp(3.f);
+            ImGui::SetCursorScreenPos(ImVec2(cx, y + ui::F.body->FontSize * 0.5f - bs * 0.5f));
+            if (ImGui::InvisibleButton("copycode", ImVec2(bs, bs), ImGuiButtonFlags_EnableNav) && !code.empty()) { SDL_SetClipboardText(code.c_str()); set_toast("Friend code copied.", true, 3.0); }
+            bool ch = ImGui::IsItemHovered() || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible);
+            if (ch) dl->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ui::PANEL3, sp(0.8f));
+            fr_icon(dl, FrIcon::Copy, (ImGui::GetItemRectMin() + ImGui::GetItemRectMax()) * 0.5f, bs * 0.8f, ch ? ui::TEXT : ui::TEXT2);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy friend code");
+        }
+        y += ui::F.body->FontSize * 1.4f;
+        dl->AddCircleFilled(ImVec2(tx + sp(0.45f), y + ui::F.cap->FontSize * 0.55f), sp(0.45f), fr_state_col(state), 10);
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + sp(1.4f), y), state == hubui::FS_Offline ? ui::TEXT3 : ui::TEXT2,
+                    ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, presence, tw - sp(1.4f)).c_str());
+        y += ui::F.cap->FontSize * 1.4f;
+        if (!prof.status.empty() && (self || fp->online())) {
+            dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, y), ui::TEXT, ui::ellipsize(ui::F.body, ui::F.body->FontSize, prof.status, tw).c_str());
+            y += ui::F.body->FontSize * 1.4f;
+        }
+        if (!prof.fav_game.empty()) {
+            std::string ft = prof.fav_game;
+            for (const auto& e : A.lib) if (e.key == prof.fav_game) { ft = e.title; break; }
+            if (ft == prof.fav_game) if (const GameInfo* gi = hub::find_game(prof.fav_game)) ft = gi->title;
+            const float th = sp(2.8f);
+            fr_game_thumb(dl, prof.fav_game, ft, ImVec2(tx, y + sp(0.2f)), ImVec2(tx + th * 0.9f, y + sp(0.2f) + th), sp(0.5f));
+            std::string lab = "Favourite: " + hubui::clean_game_title(ft);
+            dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + th * 0.9f + sp(1.f), y + sp(0.2f) + (th - ui::F.cap->FontSize) * 0.5f), ui::TEXT2,
+                        ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, lab, tw - th - sp(1.f)).c_str());
+            y += th + sp(0.5f);
+        }
+        ImGui::SetCursorScreenPos(p0);
+        ImGui::Dummy(ImVec2(cw, std::max(r * 2.f + sp(0.6f), y - p0.y + sp(0.25f))));
+    }
+
+    /* actions */
+    {
+        ImGui::Dummy(ImVec2(0, sp(0.25f)));
+        ImVec2 row0 = ImGui::GetCursorScreenPos();
+        float x = 0.f;
+        auto place = [&](const char* id, const char* label, bool primary) {
+            float bw = fr_view_button_w(label);
+            if (x > 0.f && x + bw > cw) return false;   // never run past the edge
+            ImGui::SetCursorScreenPos(ImVec2(row0.x + x, row0.y));
+            bool hit = fr_view_button(id, label, bw, primary);
+            x += bw + sp(0.75f);
+            return hit;
+        };
+        if (self) {
+            if (place("edit", "Edit profile", true)) { ImGui::CloseCurrentPopup(); FR.open_prof = true; }
+        } else {
+            if (place("msg", "Message", !can_join)) { fr_open_chat(uid); ImGui::CloseCurrentPopup(); }
+            if (can_join && place("join", row.state == hubui::FS_InGame ? "Join their lobby" : "Join their room", true)) {
+                fr_join_lobby(fp->status.lobby_code, fp->status.game_id, fp->status.game_title, fp->name); ImGui::CloseCurrentPopup();
+            }
+            if (can_invite && place("inv", "Invite to room", false)) fr_invite_uids({uid});
+        }
+        ImGui::SetCursorScreenPos(row0);
+        ImGui::Dummy(ImVec2(cw, sp(3.6f)));
+    }
+
+    /* together (friends only) */
+    if (!self) {
+        fr_view_heading("TOGETHER");
+        const std::string rec = rivals_record_text(uid, fp->name), mains = rivals_mains_text(uid), l5 = rivals_last5(uid), sess = rivals_sessions_text(uid);
+        std::string lg_id, lg_title; long long lg_at = 0;
+        const bool has_last = group_last_together(uid, &lg_id, &lg_title, &lg_at);
+        if (rec.empty() && sess.empty() && !has_last) fr_view_note("Nothing played together yet.");
+        if (!rec.empty()) {
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            dl->AddText(ui::F.bold, ui::F.bold->FontSize, p, ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, rec, cw).c_str());
+            float y = p.y + ui::F.bold->FontSize * 1.3f;
+            if (!mains.empty()) { dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x, y), ui::TEXT2, ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, mains, cw).c_str()); y += ui::F.cap->FontSize * 1.4f; }
+            if (!l5.empty()) {
+                dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x, y + sp(0.45f)), ui::TEXT3, "Last games");
+                float cx = p.x + fr_tw(ui::F.cap, "Last games") + sp(1.f), cell = sp(2.3f);
+                for (size_t i = 0; i < l5.size(); ++i) {
+                    char c = l5[i];
+                    ImU32 col = c == 'W' ? ui::GOOD : c == 'L' ? ui::BAD : ui::TEXT3;
+                    ImVec2 a(cx + (float)i * (cell + sp(0.4f)), y), b(a.x + cell, y + cell);
+                    dl->AddRectFilled(a, b, with_alpha(col, 0.22f), sp(0.5f));
+                    char s[2] = {c, 0};
+                    fr_text_c(dl, ui::F.cap, (a + b) * 0.5f, col, s);
+                }
+                y += cell + sp(0.5f);
+            }
+            ImGui::Dummy(ImVec2(cw, y - p.y));
+        }
+        if (!sess.empty()) fr_view_note(sess.c_str());
+        if (has_last) {
+            std::string ago = hubui::group::ago_text(lg_at, now);
+            fr_view_game_row(lg_id, hubui::clean_game_title(lg_title.empty() ? "a game" : lg_title), "Last played together" + (ago.empty() ? std::string() : "  -  " + ago), "", sp(5.2f));
+        }
+    }
+
+    /* top games */
+    {
+        fr_view_heading(self ? "YOUR TOP GAMES" : "TOP GAMES");
+        std::vector<hubui::PlaytimeEntry> src;
+        if (self) { for (const auto& g : fr_my_playtime()) src.push_back({g.key, g.title, g.minutes}); }
+        else { auto it = fr_pt_entries().find(uid); if (it != fr_pt_entries().end()) src = it->second; }
+        auto top = hubui::friend_top_games(src, 5);
+        if (top.empty()) fr_view_note(self ? "Play something and it shows up here." : "No play time shared yet.");
+        for (const auto& g : top) fr_view_game_row(g.key, g.title, "", g.hours, sp(4.4f));
+    }
+
+    /* games you both have */
+    if (!self) {
+        fr_view_heading("GAMES YOU BOTH HAVE");
+        auto sh = fg_shared_with(uid);
+        if (sh.empty()) fr_view_note("Nothing to compare yet.");
+        const size_t kMax = 6;
+        for (size_t i = 0; i < sh.size() && i < kMax; ++i) fr_view_game_row(sh[i].cid.empty() ? sh[i].key : sh[i].cid, hubui::clean_game_title(sh[i].title), "", "", sp(3.8f));
+        if (sh.size() > kMax) fr_view_note(("+" + std::to_string(sh.size() - kMax) + " more").c_str());
+    }
+
+    /* yourself: rivals and rating */
+    if (self) {
+        fr_view_heading("YOUR STATS");
+        rivals_draw_card();
+    }
+
+    /* settings and danger zone */
+    if (!self) {
+        fr_view_heading("SETTINGS FOR THIS FRIEND");
+        if (fr_view_switch("watch", "Notify me when they come online", hubui::group::watch_has(A.st.watch_online, uid))) fr_toggle_watch(*fp);
+        fr_view_heading("DANGER ZONE", with_alpha(ui::BAD, 0.9f));
+        float bw = std::max(fr_view_button_w("Remove friend"), fr_view_button_w("Block"));
+        if (fr_view_button("rm", "Remove friend", bw, false, true)) { ImGui::CloseCurrentPopup(); fr_confirm("remove", *fp); }
+        ImGui::SameLine();
+        if (fr_view_button("blk", "Block", bw, false, true)) { ImGui::CloseCurrentPopup(); fr_confirm("block", *fp); }
+    }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    { static const bool shot_bottom = std::getenv("HUB_SHOT_VIEW_BOTTOM") != nullptr; if (shot_bottom) ImGui::SetScrollHereY(1.f); }   // screenshot aid: show the end of the view
+    ImGui::PopStyleVar();
+    ImGui::EndChild();
+
+    /* close button, top right of the dialog (drawn last so it sits above the header) */
+    ImGui::SetCursorScreenPos(ImVec2(win0.x + W - sp(2.f) - sp(4.f), win0.y + sp(1.25f)));
+    if (ui::icon_button("view_close", ui::Icon::Close, sp(4.f), false, "Close (B)")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 /* ---- profile editor (S1) ---- */
@@ -1765,19 +2097,20 @@ void fr_draw_panel(float disp_w, float disp_h) {
             dl->AddRect(c0, c0 + ImVec2(cw, ch), ui::HAIRLINE, sp(1.75f), 0, 1.f);
             fr_avatar(dl, c0 + ImVec2(sp(3.f), ch * 0.5f), sp(2.25f), A.st.name, fr_connected() ? hubui::FS_Online : hubui::FS_Offline, ui::PANEL2);
             ImGui::SetCursorScreenPos(c0 + ImVec2(sp(0.5f), ch * 0.5f - sp(2.5f)));
-            if (ImGui::InvisibleButton("myprof", ImVec2(sp(5.f), sp(5.f)))) FR.open_prof = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit your profile");
-            float tx = c0.x + sp(6.5f), tw = cw - sp(6.5f) - sp(9.f);
+            if (ImGui::InvisibleButton("myprof", ImVec2(sp(5.f), sp(5.f)))) fr_view_profile("");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Your profile");
+            const float cbw = std::max(sp(7.25f), fr_tw(ui::F.bold, "Copy") + sp(3.5f)), cbx = c0.x + cw - sp(1.25f) - cbw;   // the Copy button is reserved first; text gets what is left
+            float tx = c0.x + sp(6.5f), tw = std::max(sp(6.f), cbx - sp(1.f) - tx);
             dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, c0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, A.st.name, tw).c_str());
             std::string code = fr_my_code().empty() ? "..." : fr_my_code();
-            dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, c0.y + sp(1.25f) + ui::F.bold->FontSize * 1.25f), ui::mix(ui::ACCENT, ui::HILITE, 0.55f), code.c_str());
+            dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, c0.y + sp(1.25f) + ui::F.bold->FontSize * 1.25f), ui::mix(ui::ACCENT, ui::HILITE, 0.55f), ui::ellipsize(ui::F.body, ui::F.body->FontSize, code, tw).c_str());
             ImU32 dc = fr_connected() ? ui::GOOD : ui::WARN;
             dl->AddCircleFilled(ImVec2(tx + sp(0.5f), c0.y + ch - sp(1.75f)), sp(0.45f), dc, 10);
             {   const std::string mps = fr_my_profile().status;
                 dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + sp(1.5f), c0.y + ch - sp(1.75f) - ui::F.cap->FontSize * 0.5f), ui::TEXT2,
-                            ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, fr_status_text() + (mps.empty() ? std::string() : "  -  " + mps), tw).c_str()); }
-            ImGui::SetCursorScreenPos(ImVec2(c0.x + cw - sp(8.5f), c0.y + (ch - sp(3.5f)) * 0.5f));
-            if (ui::button("Copy", ImVec2(sp(7.25f), sp(3.5f)), false, !fr_my_code().empty())) {
+                            ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, fr_status_text() + (mps.empty() ? std::string() : "  -  " + mps), tw - sp(1.5f)).c_str()); }
+            ImGui::SetCursorScreenPos(ImVec2(cbx, c0.y + (ch - sp(3.5f)) * 0.5f));
+            if (ui::button("Copy", ImVec2(cbw, sp(3.5f)), false, !fr_my_code().empty())) {
                 SDL_SetClipboardText(fr_my_code().c_str());
                 set_toast("Friend code copied.", true, 3.0);
             }
@@ -1787,10 +2120,11 @@ void fr_draw_panel(float disp_w, float disp_h) {
 
         // add friend
         {
-            ImGui::SetNextItemWidth(cw - sp(8.75f));
+            const float abw = std::max(sp(8.f), fr_tw(ui::F.bold, "Add") + sp(4.f));   // the Add button is reserved first; the box gets the rest
+            ImGui::SetNextItemWidth(cw - abw - sp(1.f));
             bool enter = osk::input("##addf", "Username or RH-XXXX-XXXX", FR.add_buf, sizeof FR.add_buf, ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Text);
             ImGui::SameLine(0, sp(0.75f));
-            bool add = ui::button("Add", ImVec2(sp(8.f), ImGui::GetFrameHeight()), true, FR.add_buf[0] != 0);
+            bool add = ui::button("Add", ImVec2(abw, ImGui::GetFrameHeight()), true, FR.add_buf[0] != 0);
             if ((enter || add) && FR.add_buf[0]) {
                 const std::string typed = hubnet::username_trim(FR.add_buf);
                 const bool is_code = hubnet::username_looks_like_code(typed);
@@ -1927,6 +2261,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
     }
 
     fr_profile_modal();
+    fr_view_modal();
 
     // remove / block confirmation
     if (FR.confirm_open) { ImGui::OpenPopup("Are you sure?##frconf"); FR.confirm_open = false; }

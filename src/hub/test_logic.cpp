@@ -376,6 +376,33 @@ int main() {
         Settings a; CHECK(a.share_playtime); a.share_playtime = false; Settings b;
         CHECK(settings_from_json(settings_to_json(a), &b) && !b.share_playtime);
     }
+    {   // friend profile: top games list, title cleanup (the server cuts titles at 48 chars, leaving a dangling "(GameCube"), actions menu
+        CHECK(clean_game_title("The Legend of Zelda: Twilight Princess (GameCube") == "The Legend of Zelda: Twilight Princess");
+        CHECK(clean_game_title("The Legend of Zelda: Twilight Princess (GameCube)") == "The Legend of Zelda: Twilight Princess");
+        CHECK(clean_game_title("Mario Golf (USA) (Rev 1") == "Mario Golf (USA)");
+        CHECK(clean_game_title("Mario Golf [") == "Mario Golf" && clean_game_title("Metroid Fusion") == "Metroid Fusion");
+        CHECK(clean_game_title("Crash (Bandicoot) Remix") == "Crash (Bandicoot) Remix" && clean_game_title("(GameCube)") == "(GameCube)");
+        std::vector<PlaytimeEntry> g = {{"a", "Zelda: The Wind Waker", 840}, {"b", "The Legend of Zelda: Twilight Princess (GameCube", 588},
+                                        {"c", "Mario Golf", 200}, {"d", "", 0}, {"e", "Twilight", 0}, {"f", "The Legend of Zelda: Twilight Princess (GameCube)", 12}};
+        auto tg = friend_top_games(g, 5);
+        CHECK(tg.size() == 3 && tg[0].title == "Zelda: The Wind Waker" && tg[0].hours == "14h");
+        CHECK(tg[1].title == "The Legend of Zelda: Twilight Princess" && tg[1].minutes == 600 && tg[1].hours == "10h" && tg[2].title == "Mario Golf" && tg[2].hours == "3h 20m");
+        CHECK(friend_top_games(g, 2).size() == 2 && friend_top_games({}, 3).empty());
+        CHECK(friend_top_games_text(g, 3).find("(GameCube") == std::string::npos);
+        using I = FriendMenuItem; using M = FriendMoreItem;
+        FriendMenuIn off;   // offline friend, or online with no room of ours
+        CHECK((friend_menu_items(off) == std::vector<I>{I::Message, I::Profile, I::CopyCode, I::More}));
+        CHECK((friend_more_items(off) == std::vector<M>{M::Notify, M::Bracket, M::Remove, M::Block}));
+        FriendMenuIn room; room.can_invite = true;   // we are in a room, they are online
+        CHECK((friend_menu_items(room) == std::vector<I>{I::Message, I::Invite, I::Profile, I::CopyCode, I::More}));
+        FriendMenuIn join; join.can_join = true; join.can_ask = true; join.can_watch = true;
+        CHECK((friend_menu_items(join) == std::vector<I>{I::Message, I::JoinRoom, I::Profile, I::CopyCode, I::More}));
+        CHECK((friend_more_items(join) == std::vector<M>{M::AskJoin, M::Watch, M::Notify, M::Bracket, M::Remove, M::Block}));
+        CHECK(friend_menu_items(join).size() <= 6 && friend_menu_items(room).size() <= 6);
+        CHECK(friend_more_items(join).back() == M::Block && friend_more_items(off)[friend_more_items(off).size() - 2] == M::Remove);
+        CHECK(friend_can_invite(true, true, false, 2) && !friend_can_invite(false, true, false, 2) && !friend_can_invite(true, false, false, 2) &&
+              !friend_can_invite(true, true, true, 2) && !friend_can_invite(true, true, false, 0));
+    }
     CHECK(format_play_time(0) == "Never played");
     CHECK(format_play_time(30) == "Under a minute");
     CHECK(format_play_time(35 * 60) == "35 min");
