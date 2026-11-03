@@ -527,6 +527,7 @@ bool supports_online(const hub::GameEntry& e);
 bool online_untested(const hub::GameEntry& e);
 std::string online_block_reason(const hub::GameEntry& e);   // why a game cannot be played in a room ("" = it can)
 std::string player_limit_note(const hub::GameEntry& e);     // why the room cap is below 4 ("" = nothing to explain)
+std::string player_limit_why(const hub::GameEntry& e);      // the same, but "" when it would only repeat the "(max N)" number
 /* picker_ui.cpp: room game picker (host) and the selected-game hero card (everyone) */
 void room_picker_set_query(const char* q);
 void room_game_hero(const hub::GameEntry* rg, bool host);

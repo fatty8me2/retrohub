@@ -330,6 +330,20 @@ static void check_cemu(const char* what, const Pads& sdl, const std::vector<int>
 
 static void test_cemu() {
     using namespace hubemu;
+    {   // no stored port order: the XInput pads first in slot order, then the others; player 1 stays on XInput slot 0 for an Xbox + DualSense/8BitDo user
+        Pads sdl_first_ds = {ds(-1, "d0"), bd("b0"), xb(1), xb(0)};   // SDL lists the DualSense first
+        Pads ord = default_player_order(sdl_first_ds);
+        CHECK(ord.size() == 4 && ord[0].player == 0 && ord[1].player == 1 && ord[2].key == "d0" && ord[3].key == "b0");
+        CemuPads cp = cemu_pads_with_sdl(ord, sdl_first_ds);
+        CHECK(cp.xinput.size() == 4 && cp.xinput[0] == 0 && cp.xinput[1] == 1 && cp.xinput[2] == -1 && cp.xinput[3] == -1 && cp.sdl[2] == "0_030000d" && cp.sdl[3] == "0_030000b");
+        // only a DualSense + one Xbox pad: Xbox is the GamePad on slot 0
+        Pads two = {ds(0, "d0"), xb(0)};
+        CemuPads c2 = cemu_pads_with_sdl(default_player_order(two), two);
+        CHECK(c2.xinput.size() == 2 && c2.xinput[0] == 0 && c2.sdl[0].empty() && c2.xinput[1] == -1 && c2.sdl[1] == "0_030000d");
+        // no XInput pad at all: SDL order is kept
+        Pads sd = {bd("b0"), ds(-1, "d0")};
+        CHECK(default_player_order(sd)[0].key == "b0" && default_player_order({}).empty());
+    }
     Pads x4 = {xb(0), xb(1), xb(2), xb(3)};
     check_cemu("1", x4, {0}, {{"XInput", "0"}});
     check_cemu("2", x4, {0, 1}, {{"XInput", "0"}, {"XInput", "1"}});

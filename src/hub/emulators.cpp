@@ -654,6 +654,17 @@ std::vector<int> xinput_slots(const std::vector<PadDesc>& pads) {
     return slot;
 }
 
+std::vector<PadDesc> default_player_order(const std::vector<PadDesc>& sdl) {
+    const std::vector<int> slot = xinput_slots(sdl);
+    std::vector<size_t> xs;
+    for (size_t i = 0; i < sdl.size(); ++i) if (slot[i] >= 0) xs.push_back(i);
+    std::stable_sort(xs.begin(), xs.end(), [&](size_t a, size_t b) { return slot[a] < slot[b]; });
+    std::vector<PadDesc> out;
+    for (size_t i : xs) out.push_back(sdl[i]);
+    for (size_t i = 0; i < sdl.size(); ++i) if (slot[i] < 0) out.push_back(sdl[i]);
+    return out;
+}
+
 /* Wii U player N = the N-th XInput pad of the RetroHub port order, addressed by its real XInput slot (Cemu's XInput API numbers pads by
  * slot, so with the pads in another order than the slots, or a gap in the slots, "the N-th pad" is not slot N-1). Pads that are not XInput
  * are skipped here: use cemu_pads_with_sdl to get them as SDL players. */

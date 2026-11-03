@@ -461,10 +461,13 @@ int max_players_for(const hub::GameEntry& e) {
 std::string player_limit_note(const hub::GameEntry& e) {
     return hubcaps::online_limit_note(e.system, hub::find_game(e.catalog_id), max_players_for(e));
 }
+std::string player_limit_why(const hub::GameEntry& e) {
+    return hubcaps::online_limit_note(e.system, hub::find_game(e.catalog_id), max_players_for(e), true);
+}
 /* Local player count shown on cards (not the online cap). */
 int local_players_for(const hub::GameEntry& e) {
     if (const GameInfo* g = hub::find_game(e.catalog_id)) return g->max_players;
-    return hubcaps::default_local_max(e.system);   // not in the catalog: handhelds 1, NES/SNES 2, the four-pad consoles 4
+    return hubcaps::default_local_max(e.system);   // not in the catalog: the old room-cap values (GB/GBC/DS 2, GBA/3DS 4), raised for PS1/Wii U (4); PSP 1
 }
 /* How a game is named in lobby messages: the N64 catalog id (back-compat) or the library key. */
 std::string room_id(const hub::GameEntry& e) { return e.catalog_id.empty() ? e.key : e.catalog_id; }

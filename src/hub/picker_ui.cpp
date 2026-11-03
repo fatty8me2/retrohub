@@ -57,7 +57,7 @@ void build_items(const std::vector<hubui::PeerInfo>& peers) {
             auto sel = hubui::game_selectable(rid, max_players_for(e), peers, 0, remote_play_entry(e));
             it.selectable = sel.ok;
             it.reason = sel.reason;
-            if (!sel.ok && sel.reason.compare(0, 11, "too many pl") == 0) { std::string why = player_limit_note(e); if (!why.empty()) it.reason += ". " + why; }
+            if (!sel.ok && sel.reason.compare(0, 11, "too many pl") == 0) { std::string why = player_limit_why(e); if (!why.empty()) it.reason += ". " + why; }
             it.untested = online_untested(e);
         }
         const hub::GameState& gs = gstate(e.key);
@@ -192,7 +192,8 @@ void room_picker_set_query(const char* q) { std::snprintf(PK.q, sizeof PK.q, "%s
 
 /* Big "selected game" card at the top of the room: cover, title, console, players and online status. Everyone sees it (guests: the host's pick). */
 void room_game_hero(const hub::GameEntry* rg, bool host) {
-    const float W = ImGui::GetContentRegionAvail().x, H = 132 * S;
+    const std::string limit_note = rg && supports_online(*rg) ? player_limit_note(*rg) : std::string();   // why the room is smaller than four ("" = nothing to say)
+    const float W = ImGui::GetContentRegionAvail().x, H = (132 + (!host && !limit_note.empty() ? 22 : 0)) * S;   // guests keep "The host picks the game." under a limit note
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1 = p0 + ImVec2(W, H);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImU32 c0 = ui::ACCENT, c1 = ui::ACCENT;
@@ -215,12 +216,11 @@ void room_game_hero(const hub::GameEntry* rg, bool host) {
         bool unt = online_untested(*rg);
         x += pill_at(dl, ImVec2(x, y), unt ? "Untested online" : "Online ready", unt ? IM_COL32(0, 0, 0, 170) : ui::GOOD, unt ? ui::WARN : IM_COL32(8, 28, 16, 255)) + 6 * S;
         if (remote_play_entry(*rg)) pill_at(dl, ImVec2(x, y), "Remote play", IM_COL32(40, 90, 170, 255));
-        {   // why the room is smaller than four ("This game supports at most 2 players.", "Unlisted NES games are limited to 2 players ...")
-            const std::string why = supports_online(*rg) ? player_limit_note(*rg) : std::string();
+        {   // why the room is smaller than four ("This game is single-player ...", "Unlisted NES games are limited to 2 players ..."), then the guest hint
             float ny = y + 28 * S;
-            if (!why.empty()) {
-                for (auto& l : ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), why, tw, 2)) { dl->AddText(ImVec2(tx, ny), ui::WARN, l.c_str()); ny += ImGui::GetFontSize() + 2 * S; }
-            } else if (!host) dl->AddText(ImVec2(tx, p1.y - 14 * S - ImGui::GetFontSize()), ui::TEXT2, "The host picks the game.");
+            if (!limit_note.empty())
+                for (auto& l : ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), limit_note, tw, 2)) { dl->AddText(ImVec2(tx, ny), ui::WARN, l.c_str()); ny += ImGui::GetFontSize() + 2 * S; }
+            if (!host) dl->AddText(ImVec2(tx, limit_note.empty() ? p1.y - 14 * S - ImGui::GetFontSize() : ny + 2 * S), ui::TEXT2, "The host picks the game.");
         }
     } else {
         dl->AddRectFilled(a0, a1, ui::PANEL2, 10 * S);

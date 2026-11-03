@@ -643,11 +643,11 @@ hubemu::CemuPads cemu_pads_for(const hubctl::Profile& prof) {
 }
 
 /* Cemu (RetroHub's managed download and a user's own install alike): Wii U player N = the N-th pad of the port order. XInput pads by
- * their XInput slot, any other pad as an SDL player. No stored order = every pad in SDL order (it used to be player 1 only). */
+ * their XInput slot, any other pad as an SDL player. No stored order = the XInput pads in slot order, then the other pads in SDL order (it used to be player 1 only). */
 hubemu::CemuPads cemu_pads_for_own(const hubctl::Profile& prof) {
     hubctl::load_bundled_db();
     auto all = pad_descs(hubctl::list_pads());
-    if (prof.port_order.empty()) return hubemu::cemu_pads_with_sdl(all, all);
+    if (prof.port_order.empty()) return hubemu::cemu_pads_with_sdl(hubemu::default_player_order(all), all);   // no stored order: XInput pads first (player 1 = slot 0), then the rest
     return hubemu::cemu_pads_with_sdl(pad_descs(hubctl::list_pads(prof.port_order)), all);
 }
 
