@@ -996,7 +996,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
             } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
         }
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
-                           " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+                           " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg(nes ? "nes" : "snes", e.key);   // retrorun only accepts a profile of its own system ("nes"/"snes"; a "retro" one was refused and the built-in mapping used)
         if (share_save) args += " --share-host-save";
         args += " --rollback --handoff";   // NES/SNES rollback: every PC builds the same flags
         args += hubui::retro_extra_args(e.system, gsv);

@@ -491,6 +491,7 @@ void draw_mapping_panel() {
         text_wrapped_disabled("Off (default): positional, like a Nintendo pad. Xbox A (bottom) presses the console's B and Xbox B (right) presses A. "
                               "On: buttons follow the letters printed on your controller.");
         if (sys == "snes") text_wrapped_disabled("Players 3 and 4 use the multitap, which turns on by itself when three or more controllers are connected.");
+        else text_wrapped_disabled("Players 3 and 4 use the Four Score adapter, which turns on by itself when three or more controllers are connected.");
     }
     if (!game_mode) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
