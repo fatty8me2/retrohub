@@ -1,12 +1,70 @@
 #include "netplay_dolphin.h"
+#include "winutil.h"
+
+#include <windows.h>
 
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
 
 using namespace gcnp;
+
+namespace fs = std::filesystem;
+static void put(const fs::path& p, const std::string& t) { fs::create_directories(p.parent_path()); std::ofstream(p, std::ios::binary) << t; }
+static std::string get(const fs::path& p) { std::ifstream f(p, std::ios::binary); std::stringstream s; s << f.rdbuf(); return s.str(); }
+/* Dolphin 2509 Config::GetGCIFolderPath(configured, slot, region) (Core/Config/MainSettings.cpp): a trailing /USA, /JPN or /EUR is
+ * dropped and the folder of the disc's region is appended. This is the folder NetPlayServer::SyncSaveData sends to the guests. */
+static fs::path dolphin_gci_folder(std::string configured, const char* region_dir) {
+    for (auto& c : configured) if (c == '\\') c = '/';
+    while (!configured.empty() && configured.back() == '/') configured.pop_back();
+    for (const char* r : {"/USA", "/JPN", "/EUR"}) {
+        const size_t n = strlen(r);
+        if (configured.size() > n && configured.compare(configured.size() - n, n, r) == 0) { configured.resize(configured.size() - n); break; }
+    }
+    return fs::path(winutil::to_wide(configured + "/" + region_dir));
+}
+
+static void test_host_card_sync() {
+    const fs::path base = fs::temp_directory_path() / (L"rh_gcnp_sync_" + std::to_wstring(GetCurrentProcessId()) + L"_é");   // non-ASCII path
+    std::error_code ec;
+    fs::remove_all(base, ec);
+    const fs::path card = base / L"card é\\GCI";
+    put(card / "01-G4QE-MarioSoccer.gci", std::string("STRIKERS\0save", 13));
+    put(card / "01-GYQE-MarioBaseball.GCI", "MSB");            // upper-case extension counts
+    put(card / "notes.txt", "x");                              // not a save
+    put(card / "sub" / "deep.gci", "nested");                  // only the folder itself, like Dolphin's DoFileSearch
+    const std::string card8 = winutil::to_utf8(card.wstring()), root8 = winutil::to_utf8((base / L"host-sync").wstring());
+    put(base / L"host-sync" / "USA" / "stale.gci", "old session");
+    std::string err;
+    const std::string a = host_card_sync_args(card8, root8, &err);
+    CHECK(a == " -C \"Dolphin.Core.GCIFolderAPath=" + root8 + "\"");
+    for (const char* r : {"USA", "EUR", "JPN"}) {
+        const fs::path d = dolphin_gci_folder(root8, r);         // what Dolphin's NetPlay server reads for a disc of that region
+        CHECK(get(d / "01-G4QE-MarioSoccer.gci") == std::string("STRIKERS\0save", 13));
+        CHECK(get(d / "01-GYQE-MarioBaseball.GCI") == "MSB");
+        CHECK(!fs::exists(d / "notes.txt") && !fs::exists(d / "sub") && !fs::exists(d / "deep.gci"));
+        CHECK(!fs::exists(d / "stale.gci"));                    // wiped every launch
+    }
+    CHECK(get(card / "01-G4QE-MarioSoccer.gci") == std::string("STRIKERS\0save", 13) && fs::exists(card / "notes.txt"));   // the real card is untouched
+    /* the room's saves change between sessions: a deleted save must not be sent again */
+    fs::remove(card / "01-GYQE-MarioBaseball.GCI", ec);
+    CHECK(!host_card_sync_args(card8, root8, &err).empty());
+    CHECK(!fs::exists(dolphin_gci_folder(root8, "USA") / "01-GYQE-MarioBaseball.GCI") && fs::exists(dolphin_gci_folder(root8, "USA") / "01-G4QE-MarioSoccer.gci"));
+    /* no card folder yet (first online game): empty region folders, so host and guests both start blank */
+    const std::string none8 = winutil::to_utf8((base / L"missing").wstring());
+    CHECK(!host_card_sync_args(none8, root8, &err).empty());
+    CHECK(fs::is_directory(dolphin_gci_folder(root8, "EUR")) && fs::is_empty(dolphin_gci_folder(root8, "EUR")));
+    /* bad input: no argument (the launch then logs and goes on with the override alone) */
+    err.clear();
+    CHECK(host_card_sync_args("", root8, &err).empty() && !err.empty());
+    fs::remove_all(base, ec);
+}
 
 int main() {
     Spec s;
@@ -103,6 +161,8 @@ int main() {
     { IniParams gw = p; gw.write_save = true; CHECK(ini_patch("", s, gw).find("WriteSaveData = False") != std::string::npos); }
     CHECK(o.find("SyncSaves = True") != std::string::npos && o.find("StrictSettingsSync = True") != std::string::npos && o.find("SyncCodes = True") != std::string::npos);
     CHECK(o.find("GPUDeterminismMode = auto") != std::string::npos);
+
+    test_host_card_sync();
 
     if (!fails) printf("netplay_dolphin tests passed\n");
     return fails ? 1 : 0;
