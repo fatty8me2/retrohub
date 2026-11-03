@@ -34,13 +34,13 @@ int main() {
         CHECK(hubcaps::default_online_max(r.s) >= 2 && hubcaps::default_online_max(r.s) <= 4);
     }
     CHECK(std::string(hubcaps::online_unsupported_reason(System::WiiU)).empty() && hubcaps::remote_play_system(System::WiiU) && !hubcaps::remote_play_system(System::GC));   // Wii U = remote play now
-    CHECK(hubcaps::default_online_max(System::PS2) == 2);
-    /* PS2: catalog games flagged online are capable and capped at 2 players (LRPS2 has no multitap); anything else is offered as "untested". */
+    CHECK(hubcaps::default_online_max(System::PS2) == 4);
+    /* PS2: catalog games flagged online are capable and up to 4 players (LRPS2 multitap, catalog online_max wins); anything else is offered as "untested". */
     {
         const hub::GameInfo* t5 = hub::find_game("tekken5");
         CHECK(t5 && t5->online && hubcaps::online_capable(System::PS2, t5) && !hubcaps::online_untested(System::PS2, t5));
         const hub::GameInfo* cn = hub::find_game("crashnitro");
-        CHECK(cn && cn->max_players == 4 && hub::online_max_for(*cn) == 2);
+        CHECK(cn && cn->max_players == 4 && hub::online_max_for(*cn) == 4);
         const hub::GameInfo* kh = hub::find_game("kh");
         CHECK(kh && hubcaps::online_capable(System::PS2, kh) && hubcaps::online_untested(System::PS2, kh));
         CHECK(hubcaps::online_capable(System::PS2, nullptr) && hubcaps::online_untested(System::PS2, nullptr));

@@ -1,14 +1,18 @@
 # PlayStation 2 online: research note
 
-Status: **PS2 online works in rooms** (2 players, input-delay lockstep through retrorun + the LRPS2 libretro core). Offline PS2 still uses PCSX2 (`docs/PS2.md`).
+Status: **PS2 online works in rooms** (2-4 players, input-delay lockstep through retrorun + the LRPS2 libretro core). Offline PS2 still uses PCSX2 (`docs/PS2.md`).
 The sections "How it works in the hub" below describe what ships; "Why PCSX2 cannot do it" and "Options" are the original research; "Spike results" are the measurements it rests on.
 
 ## How it works in the hub
-- **Core.** `pcsx2_libretro.dll` (LRPS2 / ParaLLEl PS2 v2.0.0-38d3a83, GPL-3.0) is NOT shipped. `hubemu::Kind::Lrps2` (src/hub/emulators.cpp) downloads it on demand into
-  `<data>\emulators\lrps2\` from the libretro buildbot, pinned by size (3,760,634 bytes) and SHA-256 `730112622345f0ca12e7650c6d4052f443603aa630e9b6ab8a68874a4d66bae6`
-  (same downloader as PCSX2 / Dolphin; attribution in THIRD_PARTY.md). The download starts quietly the first time a PS2 game is selected in a room; until it is there the
-  READY / LAUNCH button is blocked with "Downloading the PlayStation 2 online core (n%)...". The URL is the moving `nightly/.../latest`: if the buildbot publishes a
-  different build the pin rejects it ("checksum mismatch") and the pin must be refreshed after re-running the QA below. A `pcsx2_libretro.dll` in the cores folder is also accepted (dev).
+- **Core.** `pcsx2_libretro.dll` (LRPS2 / ParaLLEl PS2 v2.0.0-8f1d15f, GPL-3.0, libretro buildbot nightly of 2026-11-02) is NOT shipped. `hubemu::Kind::Lrps2` (src/hub/emulators.cpp)
+  downloads it on demand into `<data>\emulators\lrps2\` from a **release asset we host**: `https://github.com/fatty8me2/retrohub/releases/download/core-lrps2-8f1d15f/pcsx2_libretro.dll.zip`
+  (the buildbot zip, unmodified), pinned by size (3,432,192 bytes) and SHA-256 `ff97bd2690e7a53433e1deb3570a72f9a06a78253f1db3796c8df6742aca7fe7` (same downloader as PCSX2 / Dolphin;
+  attribution in THIRD_PARTY.md and the licenses text). There is NO fallback URL: lockstep needs every peer on the byte-identical core, so a differing build must be refused, not accepted. The
+  DLL inside is 10,251,776 bytes. Corresponding GPL-3.0 source: https://github.com/libretro/ps2 at commit 8f1d15f (the core prints `2.0.0-8f1d15f`).
+  **Why it is hosted:** the first version pinned the buildbot's moving `nightly/.../latest/` URL (38d3a83, 3,760,634 bytes). The nightly moved on and users got "download has the wrong size". The old
+  38d3a83 zip was byte-identical to the pin (checked) but has no multitap option, so the pin moved to 8f1d15f together with the 4-player work rather than re-hosting 38d3a83.
+  **Refreshing the core:** download a nightly, re-run the QA below (`qa/ps2_online.sh` 2- and 4-player, direct and relay, determinism spike), upload the zip under a NEW tag `core-lrps2-<id>`,
+  change the pin in `emulators.cpp` + `test_ps2_online.cpp`, update THIRD_PARTY.md. Old tags stay up for existing installs. A `pcsx2_libretro.dll` in the cores folder is also accepted (dev).
 - **Engine.** Online PS2 rooms run `retrorun --system ps2` (software renderer, no GPU needed; pinned options: `pcsx2_renderer`, `mtvu`, `sw_renderer_threads=0`, fastboot,
   analog mode on, no deadzone/scale/invert, rumble off, shared cards). Lockstep only: PS2 states are not faithful, so there is no rollback. The input delay uses the N64-style
   negotiation (`n64run::negotiate_delay`, auto from the measured RTT, then adaptive during play). The desync check is a hash of EE RAM (32 MB) every 600 frames.
@@ -18,8 +22,16 @@ The sections "How it works in the hub" below describe what ships; "Why PCSX2 can
 - **Input.** Per port the lockstep sample is 8 bytes: 16 RetroPad buttons, L2/R2 pressure (0..255, bits 16-31 of the button word), and both analog sticks quantised to 8 bits
   (`retrorun::pack_sticks`, the PS1 format). A DualShock 2 reports 0..255 per axis, so nothing is lost. Online PS2 uses the DualShock layout of the "ps1" controls profile (per-game PS2
   bindings made for PCSX2 are not applied online). Verified: with sticks and pressure fuzzed the output differs from a no-stick run and two identical runs match bit for bit.
-- **Players.** 2. LRPS2 exposes two controller ports and no multitap option, so `online_max_for` caps every PS2 game at 2 (the catalog says 4 for Crash Nitro Kart, TimeSplitters 2, ...; those
-  rooms are 2-player). 3-4 players online would need a core with multitap support.
+- **Players.** 2-4. 8f1d15f adds the core option `pcsx2_multitap` ("disabled", "port 1", "port 2", "ports 1 and 2"; read at load). For rooms of 3+ players retrorun pins
+  `pcsx2_multitap=port 1` (a multitap in console port 1; frontend ports 0-3 are its four slots, slot k = lobby slot k); 1-2 player rooms pin it `disabled`, so they behave exactly as before.
+  The option is part of the setup fingerprint (a peer with a different value fails with exit 11). `online_max_for` no longer caps PS2: the catalog's per-game `online_max`/`max_players`
+  (e.g. Crash Nitro Kart, TimeSplitters 2 = 4) applies, non-catalog PS2 games default to 4 ("Untested online"). The hub refuses rooms above 4. Only games that support the multitap use the extra
+  pads. Alternatives considered and rejected: patching/building LRPS2 ourselves (a second binary to maintain, not needed now that upstream ships the option); standalone PCSX2 (no netplay hooks,
+  not deterministic across PCs). Console port 2 then has no frontend pad (a 4-player multitap game uses one tap).
+- **Pads must be plugged in (v1.31.7).** LRPS2 reads `input_state` for every port but only plugs a DualShock 2 into frontend port 0; ports 1-7 default to "None" until the frontend calls
+  `retro_set_controller_port_device(port, RETRO_DEVICE_JOYPAD)` (libretro/ps2 `pcsx2/PAD/PAD.cpp`). Through v1.31.6 retrorun never did, so player 2 was a pad the game could not see (Gauntlet: Dark Legacy
+  character select) while the QA's "pad reads" counter still counted reads. retrorun now plugs ports 0-1 (console ports 1-2; 1-2 players, multitap off) or 0-3 (3-4 players, multitap in console port 1).
+  Proof: `qa/ps2_p2_input.sh` (EE RAM with pads on one port vs all ports must differ; with `RETRORUN_PS2_NOPLUG=1` they are identical). `RETRORUN_FUZZ_PORTS=<mask>` fuzzes only some ports.
 - **Catalog.** Tekken 5, Burnout 3, Crash Nitro Kart, Crash Tag Team Racing and TimeSplitters 2 are flagged `online`; every other PS2 game is offered with the "Untested online" tag
   (`online_needs_catalog_flag`). The room picker lists them, the library shows "Play Online".
 - **Memory card.** See docs/SAVES.md. Both PCSX2 (`Mcd001.ps2`) and LRPS2 (`pcsx2\memcards\Mcd001.ps2`) use the standard 8 MB card file with ECC, 8,650,752 bytes (LRPS2 creates exactly
@@ -31,12 +43,16 @@ The sections "How it works in the hub" below describe what ships; "Why PCSX2 can
 - **RTC / known limits.** The PS2 clock follows the host time; games that read the RTC during play (rare) may differ. Rumble is off. USB cameras, HDD, DEV9 are off.
 
 ### QA scripts
-`qa/ps2_online.sh <tag> <iso> <frames> [direct|relay] [port]` (bash, headless, muted, local wrangler only; scratch copies of the core, BIOS and discs). It seeds a different memory card per
-peer and checks that the guest ends with the host's card. `PS2_BIOS1=<file>` / `PS2_TAG1=<text>` make the guest differ (BIOS / disc mismatch must exit 9 / 10 on both PCs).
+`[PLAYERS=2..4] [CORE=dll] [CORE1=dll] qa/ps2_online.sh <tag> <iso> <frames> [direct|relay] [port]` (bash, headless, muted, local wrangler only; scratch copies of the core, BIOS and discs). It seeds a different memory card per
+peer and checks that the guest ends with the host's card. `PS2_BIOS1=<file>` / `PS2_TAG1=<text>` make the guest differ (BIOS / disc mismatch must exit 9 / 10 on both PCs); `CORE1=<other build>` makes the guest's core differ (must exit 11 on both PCs). Each peer logs `ps2 pad reads with buttons down: port0..port3`, the proof that every pad reaches the core.
 Unit tests: `hub_ps2_online_test` (readiness reasons, retrorun args, exit texts, pinned download), `hub_online_caps_test`, `hubcommon_test`, `hubcontrols` (pressure).
 
-### Results (this branch)
-See the final section "Productized results".
+### Results (8f1d15f, Digimon Rumble Arena 2, local wrangler, headless, muted)
+- 2 players, direct, 1800 frames: both exit 0, EE RAM sync checks equal, output and input hashes identical, 113 fps each.
+- 4 players, direct and relay (`HUBNET_FORCE_RELAY=1`), 3600 frames each: all four exit 0, every EE RAM check (every 600 frames) equal on all peers, output hash and input hash identical on all four, ~112 fps.
+  Pad reads with buttons down on every peer: 1796/1796/1796/1796 for ports 0-3. Offline control with the same core: multitap on = ports 2 and 3 read 1200/1200; `pcsx2_multitap=disabled` = 0/0.
+- Mixed cores (38d3a83 guest, 8f1d15f host): both exit 11 with "slot N runs a different emulator core build" before frame 0.
+- Not verified: real human 3-4 player gameplay in a multitap game, a 4-PC run over the internet, other discs (a 4-player-heavy title would be the next check).
 
 ## Why PCSX2 cannot do it today
 - PCSX2 has no netplay and no rollback. Its save states are not deterministic across machines, and the EE/VU/GS timing is not
@@ -103,7 +119,7 @@ Digimon Rumble Arena 2 and Budokai Tenkaichi 3. Rollback does not work (savestat
 
 ### Next steps if wanted
 1. Human playtest of BT3 / Digimon over a real internet link; measure felt input delay (delay 3 frames = 50 ms plus RTT).
-2. 4-player multitap needs a core that exposes one.
+2. (Done) 4-player multitap: LRPS2 8f1d15f `pcsx2_multitap`.
 3. Consider an EE RAM + GS VRAM hash for faster desync pinpointing.
 
 (Done in the productized branch: hash-pinned core download, launch path, setup fingerprint, analog sticks + pressure, host memory card sharing, performance notes.)

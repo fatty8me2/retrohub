@@ -8,6 +8,11 @@
 
 namespace retrorun {
 
+/* PS2 (LRPS2): the number of frontend ports that need a DualShock 2 plugged in via retro_set_controller_port_device. The core leaves every port but 0
+ * as "None" (a pad the game cannot see) until the frontend asks; console ports 1-2 for up to 2 players, the four slots of the multitap in console
+ * port 1 (pcsx2_multitap=port 1) for 3-4. Must follow the same rule as the pcsx2_multitap pin in main.cpp. */
+inline unsigned ps2_pad_ports(int players) { return players >= 3 ? 4u : 2u; }
+
 inline uint32_t pack_sticks(const int16_t s[4]) {
     uint32_t a = 0;
     for (int k = 0; k < 4; k++) a |= (uint32_t)(uint8_t)(int8_t)(s[k] >> 8) << (8 * k);

@@ -264,6 +264,10 @@ int main() {
         unpack_sticks(pack_sticks(z), o);
         CHECK(o[0] == 0 && o[1] == 0 && o[2] == 0 && o[3] == 0, "neutral sticks");
     }
+    {   // PS2: every player needs a plugged-in pad (LRPS2 leaves ports 1+ unplugged by default: player 2 could not join a game)
+        CHECK(retrorun::ps2_pad_ports(1) == 2 && retrorun::ps2_pad_ports(2) == 2, "ps2: 1-2 players plug console ports 1 and 2");
+        CHECK(retrorun::ps2_pad_ports(3) == 4 && retrorun::ps2_pad_ports(4) == 4, "ps2: 3-4 players plug all four multitap slots");
+    }
     printf(g_fail ? "ROLLBACK TEST FAILED (%d)\n" : "ROLLBACK TEST PASSED\n", g_fail);
     return g_fail ? 1 : 0;
 }

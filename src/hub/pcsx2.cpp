@@ -114,6 +114,20 @@ static bool bios_in(const std::string& dir, Bios* out, int depth = 0) {
     return true;
 }
 
+/* Folders named like a BIOS folder ("ps2Bios", "BIOS", "GamesBios") up to `depth` levels below `dir`: games\PS2\ps2Bios\... */
+static void bios_named_dirs(const std::string& dir, int depth, std::vector<std::string>* out) {
+    std::error_code ec;
+    if (depth <= 0 || dir.empty() || !fs::is_directory(P(dir), ec)) return;
+    for (fs::directory_iterator it(P(dir), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (!it->is_directory(e2) || it->is_symlink(e2)) continue;
+        std::string n = lower(S(it->path().filename()));
+        if (n == "__macosx" || n.compare(0, 1, ".") == 0) continue;
+        if (n.find("bios") != std::string::npos) out->push_back(S(it->path()));
+        else bios_named_dirs(S(it->path()), depth - 1, out);
+    }
+}
+
 Bios pcsx2_find_bios(const std::vector<std::string>& dirs) {
     Bios b;
     for (const std::string& d : dirs) {
@@ -127,6 +141,12 @@ Bios pcsx2_find_bios(const std::vector<std::string>& dirs) {
             for (const char* sub : {"BIOS", "Bios", "GamesBios"})
                 if (bios_in(join(par, sub), &b, 4)) return b;
         }
+    }
+    for (const std::string& d : dirs) {   // a BIOS folder deeper in a games folder (Games\PS2\ps2Bios\<vendor>\<model>\SCPH-39001.BIN)
+        std::vector<std::string> named;
+        bios_named_dirs(d, 3, &named);
+        for (const std::string& n : named)
+            if (bios_in(n, &b, 4)) return b;
     }
     return Bios();
 }
