@@ -23,8 +23,38 @@ def pack(dest, name, data, fmt):
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
-def ps2_cd_raw(serial):
-    """A tiny CD-ROM XA image (MODE2/2352, form 1 user data at +24) holding an ISO9660 volume whose SYSTEM.CNF says BOOT2 = cdrom0:\\<serial>;1."""
+def pack_multi(dest, members):
+    """members: [(relative/path, bytes)] in archive order (a macOS __MACOSX fork first, sub folders, readme...)."""
+    d = tempfile.mkdtemp(prefix="pf_")
+    try:
+        names = []
+        for rel, data in members:
+            p = os.path.join(d, *rel.split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            open(p, "wb").write(data)
+            names.append(rel)
+        r = subprocess.run([TAR, "-a", "-cf", dest, "-C", d] + names, capture_output=True)
+        if r.returncode: raise SystemExit("tar failed: %s" % r.stderr)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+def gcz_raw(gid, title, blocks=40000):
+    """A GCZ whose block table is as long as a real disc's (~0.5 MB), so block 0 lies far from the file start; blocks stored raw."""
+    h = bytearray(0x440); h[0:6] = gid.encode(); struct.pack_into(">I", h, 0x1C, 0xC2339F3D); h[0x20:0x20 + len(title)] = title.encode()
+    hdr = struct.pack("<IIQQII", 0xB10BC001, 0, 0x440, 0x100000, 0x8000, blocks)
+    ptrs = b"".join(struct.pack("<Q", (1 << 63) | (0 if i == 0 else 0x440 + i)) for i in range(blocks))
+    return hdr + ptrs + bytes(4 * blocks) + bytes(h) + bytes(0x2000)
+
+def ncsd_3ds(tid, product):
+    b = bytearray(0x6000)
+    b[0x100:0x104] = b"NCSD"; struct.pack_into("<I", b, 0x120, 0x20); struct.pack_into("<I", b, 0x124, 0x1000)
+    n = 0x4000
+    b[n + 0x100:n + 0x104] = b"NCCH"; struct.pack_into("<Q", b, n + 0x108, tid); struct.pack_into("<Q", b, n + 0x118, tid)
+    b[n + 0x150:n + 0x150 + len(product)] = product.encode(); b[n + 0x188 + 7] = 0x04
+    return bytes(b)
+
+def ps2_cd_raw(serial, key="BOOT2", drive="cdrom0"):
+    """A tiny CD-ROM XA image (MODE2/2352, form 1 user data at +24) holding an ISO9660 volume whose SYSTEM.CNF says BOOT2 = cdrom0:\\<serial>;1 (key="BOOT" for a PlayStation 1 disc)."""
     sync = b"\x00" + b"\xff" * 10 + b"\x00"
     def sector(lba, data):
         m = lba + 150
@@ -34,7 +64,7 @@ def ps2_cd_raw(serial):
         sub = b"\x00\x00\x08\x00" * 2
         body = (data + bytes(2048))[:2048]
         return sync + bcd + sub + body + bytes(280)
-    cnf = ("BOOT2 = cdrom0:\\%s;1\nVER = 1.00\nVMODE = NTSC\n" % serial).encode()
+    cnf = ("%s = %s:\\%s;1\nVER = 1.00\nVMODE = NTSC\n" % (key, drive, serial)).encode()
     def rec(name, extent, size, flags):
         n = name
         r = bytearray(33 + len(n)); r[0] = len(r) + (len(r) & 1); r = r + bytes(r[0] - len(r))
@@ -115,6 +145,23 @@ def main(out):
         h[0x15E:0x160] = crc.to_bytes(2, "little"); return bytes(h)
     g = os.path.join(out, "NDS", "Fakeland DS"); os.makedirs(g)
     open(os.path.join(g, "fakeland.nds"), "wb").write(nds("FAKELANDDS", "AFKE"))
+    # ---- formats-matrix cases: awkward containers / names a real shared pack has (see src/common/test_formats_matrix.cpp for the full matrix) ----
+    # byte-swapped N64 (.v64) in a 7z: a sub folder, a macOS fork (same extension) listed FIRST, a readme
+    v64 = bytearray(n64("FAKELAND V64"));
+    for i in range(0, len(v64) - 1, 2): v64[i], v64[i + 1] = v64[i + 1], v64[i]
+    pack_multi(os.path.join(out, "N64", "Junky V64 Cart (USA).7z"),
+               [("__MACOSX/._Junky V64 Cart (USA).v64", os.urandom(4096)), ("Some Folder/Junky V64 Cart (USA).v64", bytes(v64)), ("readme.txt", b"hello\r\n")])
+    # a disc image called "disc.iso" in a zip next to a .DS_Store: the title is the pack's, never "disc"
+    pack_multi(os.path.join(gc, "Generic Disc Game.zip"), [(".DS_Store", os.urandom(6148)), ("disc.iso", gc_iso("GGDE01", "Header Title"))])
+    # a .gcz whose first block sits behind a full-size block table
+    pack(os.path.join(gc, "Compressed GCZ (USA).7z"), "Compressed GCZ (USA).gcz", gcz_raw("GCZE01", "Compressed GCZ"), "7z")
+    # a PlayStation 1 CD (cue + bin + readme) with a name no database knows: SYSTEM.CNF decides
+    cdset(os.path.join(out, "PS1", "Fakeland CD One.7z"), "Fakeland CD One", ps2_cd_raw("SLUS_999.31", "BOOT", "cdrom"))
+    # a 3DS image in a 7z
+    os.makedirs(os.path.join(out, "3DS"))
+    pack(os.path.join(out, "3DS", "Fakeland Three D (USA).7z"), "game.3ds", ncsd_3ds(0x0004000000FA2100, "CTR-P-FKCA"), "7z")
+    # a Wii U .wua called game.wua in a zip
+    pack(os.path.join(out, "Wii U", "Generic Wua Game.zip"), "game.wua", b"WUA0" + bytes(64 * 1024), "zip")
     print("fixture ready:", out)
 
 if __name__ == "__main__": main(sys.argv[1])

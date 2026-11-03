@@ -30,7 +30,8 @@ int main(int argc, char** argv) {
         std::string sys = argv[3], title = argv[4];
         hub::library_set_data_dir(hub::data_dir());
         index_refresh(roots);
-        for (int i = 0; i < 400 && index_state(sys) != IndexState::Ready; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        /* Ready alone is not enough: the built-in consoles turn Ready from their own listing while the community root (where the fixture games are) is still being read */
+        for (int i = 0; i < 400 && !(index_state(sys) == IndexState::Ready && index_has(sys, title)); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         auto has_ghost = [&](const std::vector<hubui::fg::Owned>& mine) {
             for (const auto& g : pack_only_ghosts(mine, {}, index_games(), 1000)) if (g.sys == sys && pack_key(g.title) == pack_key(title)) return true;
             return false;
@@ -48,6 +49,7 @@ int main(int argc, char** argv) {
         for (auto& e : in.entries) {   // the entries the installer scanned from the new folder alone (what the hub adds in place)
             std::string t = installed_folder_title(e.path, pack_root());
             std::printf("entry sys=%s key=%s title=[%s] folder=[%s] issue=%s\n", hub::system_short(e.system), e.key.c_str(), e.title.c_str(), t.c_str(), e.issue.c_str());
+            std::printf("lib_title_ok=%d\n", (int)(!e.catalog_id.empty() || pack_key(e.title) == pack_key(title)));   // the library's own title (before the hub's retitle below) already is the pack's name
             if (e.catalog_id.empty() && t.empty() && in.entries.size() == 1) t = title;   // a zipped cartridge lives in rom-cache: the install's title (hub: gamepack_adopt)
             if (e.catalog_id.empty() && !t.empty() && pack_key(t) != pack_key(e.title)) e.title = t;
             mine.push_back({hub::system_short(e.system), e.key, e.catalog_id, e.title});

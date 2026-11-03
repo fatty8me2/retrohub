@@ -16,7 +16,10 @@ $srv = Start-Process python -ArgumentList @((Join-Path $root 'qa\gamepack_fake_s
 Start-Sleep -Seconds 2
 $env:RETROHUB_QA = '1'; $env:RETROHUB_GP_BASE = "127.0.0.1:$port"; $env:SSB64_MUTE = '1'; $env:RETROHUB_NO_SHELL = '1'
 $cases = @(@('gc', 'Gauntlet - Dark Legacy'), @('gc', 'Fakeland Zip'), @('gc', 'Pikmin'), @('gc', 'Generic Inner Game'), @('gc', 'Folder Style Game'),
-           @('ps2', 'Gauntlet - Dark Legacy'), @('ps1', 'Crash Bandicoot'), @('wiiu', 'Fakeland WiiU'), @('gba', 'Control GBA Game'), @('n64', 'Fakeland 64'), @('n64', 'Zipland Cart'), @('nds', 'Fakeland DS'))
+           @('ps2', 'Gauntlet - Dark Legacy'), @('ps1', 'Crash Bandicoot'), @('wiiu', 'Fakeland WiiU'), @('gba', 'Control GBA Game'), @('n64', 'Fakeland 64'), @('n64', 'Zipland Cart'), @('nds', 'Fakeland DS'),
+           # awkward containers / names (formats matrix): the library's own title must already be the pack's name, the install must unpack and play
+           @('n64', 'Junky V64 Cart'), @('gc', 'Generic Disc Game'), @('gc', 'Compressed GCZ'), @('ps1', 'Fakeland CD One'), @('3ds', 'Fakeland Three D'), @('wiiu', 'Generic Wua Game'))
+$titleChecked = @('Generic Inner Game', 'Folder Style Game', 'Generic Disc Game', 'Compressed GCZ', 'Fakeland CD One', 'Fakeland Three D', 'Generic Wua Game')
 $fail = 0
 function Mode($m) { Invoke-WebRequest "http://127.0.0.1:$port/__mode?dl=$m" -UseBasicParsing | Out-Null }
 function RunCase($c) {
@@ -32,6 +35,7 @@ try {
                -and ($out -match 'scan_found=1') -and ($out -match 'ghost_after=0') -and ($out -match 'full_scan_same_keys=1') `
                -and ($out -match 'uninstalled=1 dir_gone=1 installed_flag=0 ghost_back=1') -and (-not $isArchive -or ($out -match 'prepared=1')) -and -not ($out -match 'prepared=0') `
                -and ($out -match 'play_ok=1') -and -not ($out -match 'real_image=0|full_scan_same_path=0')   # Play right after the install, same process: a real image path
+        if ($okc -and ($titleChecked -contains $c[1]) -and ($out -match 'lib_title_ok=0')) { $okc = $false; $out += "`nlibrary title is not the pack's name" }
         $tag = ''
         if ($isArchive) { $tag = ' (archive unpacked at install)' }
         Write-Output ("{0} {1} / {2}{3}" -f $(if ($okc) { 'PASS' } else { 'FAIL' }), $c[0], $c[1], $tag)
