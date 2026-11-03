@@ -47,6 +47,10 @@ target_link_libraries(hublibrary_test PRIVATE hubcommon hubminiz)
 add_executable(archives_all_test test_archives_all.cpp)
 target_link_libraries(archives_all_test PRIVATE hubcommon hubminiz)
 
+# Formats matrix: every console x container/layout/name (loose, zip, 7z, rar, sub folders, junk, unicode, misfiled folders, unknown files, small rom-cache limit).
+add_executable(formats_matrix_test test_formats_matrix.cpp)
+target_link_libraries(formats_matrix_test PRIVATE hubcommon hubminiz)
+
 add_executable(scan_bench scan_bench.cpp)   # QA: times scan_library cold/warm on real folders (scratch data dir)
 target_link_libraries(scan_bench PRIVATE hubcommon)
 
