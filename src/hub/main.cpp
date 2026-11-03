@@ -177,9 +177,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             else if (saved) { std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec); }
         }
     }
-    if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0 Library, 1 Online, 2 Saves, 3 Controllers, 4 Settings, 5 Updates (6 = Updates too: the old What's new page)
+    if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0 Library, 1 Online, 2 Saves, 3 Controllers, 4 Settings, 5 Updates (6 = Updates too: the old What's new page), 7 Discover
         int n = std::atoi(pg);
-        if (n >= 0 && n <= 6) A.page = static_cast<Page>(n == 6 ? 5 : n);
+        static const Page order[] = {Page::Library, Page::Online, Page::Saves, Page::Controllers, Page::Settings, Page::About, Page::About, Page::Discover};   // the numbers predate Discover; 7 = Discover
+        if (n >= 0 && n <= 7) A.page = order[n];
     }
     if (const char* sg = std::getenv("HUB_SELECT_GAME")) A.env_select = sg;   // preselect a library game key (screenshots)
     if (const char* ss = std::getenv("HUB_START_SYS")) A.sys_filter = ss;   // screenshots: console filter for All Games (n64 gc wiiu 3ds nds gba gbc gb)
