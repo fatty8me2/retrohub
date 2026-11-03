@@ -38,6 +38,7 @@
 #include "image.h"
 #include "link_sync.h"
 #include "ps1_input.h"
+#include "port_plan.h"
 #include "rollback.h"
 #include "lockstep.h"
 #include "perf_overlay.h"
@@ -87,7 +88,8 @@ struct Args {
     int frames = -1, scale = 3, slot = 0, players = 1, delay = -1;   // delay -1 = auto
     int ports[4] = {0, -1, -1, -1};
     bool ports_given = false;
-    bool rollback = false;        // --rollback: GGPO-style rollback netplay instead of lockstep (see rollback.h)
+    bool players_given = false;   // --players on the command line (else offline: one port per connected controller, port_plan.h)
+    bool rollback = false;       // --rollback: GGPO-style rollback netplay instead of lockstep (see rollback.h)
     bool spectate = false;        // --spectate: watch a running online match as a port-less spectator (confirmed inputs only; needs --net --room --ports)
     bool no_spectators = false;   // --no-spectators: as the host, do not record/serve the input history to spectators
     bool dropin = false;          // --dropin: join a running rollback game into a free port (needs --net --room --slot --ports; host: spectate.h kPktJoin version 2)
@@ -170,7 +172,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--frames") { if (!val(&v)) return false; o->frames = atoi(v.c_str()); }
         else if (k == "--scale") { if (!val(&v)) return false; o->scale = std::max(1, atoi(v.c_str())); }
         else if (k == "--slot") { if (!val(&v)) return false; o->slot = atoi(v.c_str()); }
-        else if (k == "--players") { if (!val(&v)) return false; o->players = atoi(v.c_str()); }
+        else if (k == "--players") { if (!val(&v)) return false; o->players = atoi(v.c_str()); o->players_given = true; }
         else if (k == "--delay") { if (!val(&v)) return false; o->delay = v == "auto" ? -1 : std::max(0, std::min(30, atoi(v.c_str()))); }
         else if (k == "--ports") {
             if (!val(&v)) return false;
@@ -498,6 +500,17 @@ class Frontend {
     hubctl::Profile prof = hubctl::default_profile("retro");
     std::unique_ptr<retrorun::RetroPad> retro_pad;
 
+    retrorun::PortPlanOut pplan;   // port_plan.h: 4-pad adapter + per-port devices for this system and port plan
+    retrorun::PortPlanIn port_plan_in() const {
+        retrorun::PortPlanIn in;
+        in.sys = retrorun::sys_of(lower(a.system));
+        for (int i = 0; i < 4; i++) in.owner[i] = owner[i];
+        in.players = a.players;
+        in.multiport = a.multiport;
+        in.want_tap = a.multitap;
+        in.no_tap = a.no_multitap;
+        return in;
+    }
     int owner[4] = {0, -1, -1, -1};
     int local_ports[4] = {-1, -1, -1, -1};
     runctl::InputGate in_gate_;   // hub quick menu open => neutral local input (docs/RUNNER_CTL.md "input")
@@ -864,8 +877,10 @@ bool Frontend::setup_paths() {
         core.overrides["sameboy_screen_layout"] = "left-right";
         core.overrides["sameboy_audio_output"] = "Game Boy #" + std::to_string(std::min(1, mine) + 1);
     }
-    if (lower(a.system) == "nes" && (a.multiport || a.ports[2] >= 0 || a.ports[3] >= 0 || (a.net.empty() && a.players >= 3)))
-        core.overrides["nestopia_select_adapter"] = "ntsc";   // 3-4 players: the Four Score adapter (every PC derives it from the same port plan)
+    {   // 3-4 players: the 4-pad adapter (NES Four Score, SNES / PS1 multitap, PS2 multitap); every PC derives it from the same port plan
+        pplan = retrorun::plan_ports(port_plan_in());
+        for (auto& op : pplan.options) core.overrides[op.first] = op.second;
+    }
     if (lower(a.system) == "nes" && (!a.net.empty() || a.synctest)) core.overrides["nestopia_ram_power_state"] = "0x00";   // random power-on RAM would differ per PC
     if ((!a.net.empty() || a.synctest) && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
     rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
@@ -943,8 +958,8 @@ bool Frontend::setup_paths() {
             {"pcsx2_usb_camera", "disabled"}, {"pcsx2_ee_cpu", "Recompiler"}};
         for (auto& pin : pins2) core.overrides[pin[0]] = pin[1];
         /* 3-4 players: a multitap in console port 1 (frontend ports 0-3 = its four slots; the core option needs LRPS2 builds from 2026-11, docs/PS2_ONLINE.md).
-         * 1-2 player rooms keep it off so they behave exactly as before. Part of the setup fingerprint (every peer must agree). */
-        core.overrides["pcsx2_multitap"] = a.players >= 3 ? "port 1" : "disabled";
+         * 1-2 player rooms keep it off so they behave exactly as before. Part of the setup fingerprint (every peer must agree). port_plan.h decides. */
+        for (auto& op : pplan.options) core.overrides[op.first] = op.second;
     }
     return true;
 }
@@ -3415,6 +3430,13 @@ int Frontend::run(const Args& args) {
      * core / game is still loading used to be lost (runners-M1). Made here, it is seen at the first event pump after the load. */
     if (!a.control.empty()) ctl_ = runctl::Poller(a.control);
 
+    /* Offline without --players (the hub never passes it): one port per connected controller, so a second, third and fourth pad play players 2-4 on
+     * NES / SNES / PS1 (adapter or multitap switched on from 3 pads). Before this, only port 0 was ever local and the extra pads did nothing. */
+    if (a.net.empty() && !a.ports_given && !a.players_given && !a.ds_link && !a.link && !a.headless && !a.synctest) {
+        const int pads = (int)hubctl::list_pads().size();
+        a.players = retrorun::offline_players(retrorun::sys_of(lower(a.system)), pads, a.no_multitap);
+        if (a.players > 1) rlog("players: %d connected controllers -> %d local players", pads, a.players);
+    }
     // Port ownership: --ports, else (offline) the first --players ports are all local.
     for (int i = 0; i < 4; i++) owner[i] = a.ports[i];
     if (a.ds_link) { for (int i = 0; i < 4; i++) owner[i] = i == 0 ? a.slot : -1; a.ports_given = true; }   // every PC plays the DS's only pad
@@ -3524,19 +3546,32 @@ int Frontend::run(const Args& args) {
     }
     fps = core.av().timing.fps > 1 ? core.av().timing.fps : 60.0;
     if (is_ps1) {   // every port is a DualShock (digital pads work too; games switch the analog mode themselves)
-        for (unsigned p = 0; p < 4; p++) core.set_port_device(p, 0x205);   // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
+        for (auto& d : pplan.devices) core.set_port_device(d.first, d.second);   // 0x205 = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
     }
     if (is_ps2 && !env_is("RETRORUN_PS2_NOPLUG")) {   // NOPLUG: QA only, reproduces the pre-fix behaviour
         /* LRPS2 plugs a pad only into console port 1 unless the frontend asks: every other port is "None" (PAD.cpp, retro_set_controller_port_device),
          * so player 2 never existed for the game even though input_state was answered for it (the pad-read QA counter cannot see that). Plug a
          * DualShock 2 (RETRO_DEVICE_JOYPAD) into both console ports, and into all four tap slots with 3-4 players (multitap = console port 1). */
-        const unsigned np = retrorun::ps2_pad_ports(a.players);
-        for (unsigned p = 0; p < np; p++) core.set_port_device(p, RETRO_DEVICE_JOYPAD);
-        rlog("ps2: DualShock 2 plugged into %u frontend ports (%s)", np, a.players >= 3 ? "multitap in console port 1" : "console ports 1-2");
+        for (auto& d : pplan.devices) core.set_port_device(d.first, d.second);
+        rlog("ps2: DualShock 2 plugged into %zu frontend ports (%s)", pplan.devices.size(), pplan.tap ? "multitap in console port 1" : "console ports 1-2");
     }
-    if (lower(a.system) == "snes" && !a.no_multitap && (a.multitap || a.multiport || owner[2] >= 0 || owner[3] >= 0 || (!a.headless && SDL_NumJoysticks() >= 3))) {
-        core.set_port_device(1, 0x101);   // snes9x RETRO_DEVICE_JOYPAD_MULTITAP ((1 << 8) | RETRO_DEVICE_JOYPAD): players 3-4 (libretro ports 2-3)
-        rlog("snes: multitap on port 2 (players 3-4)");
+    if (pplan.tap && (lower(a.system) == "nes" || lower(a.system) == "snes")) {
+        /* NES: Nestopia leaves pads 3-4 unplugged ("Auto") even with the Four Score on; SNES: snes9x's multitap is a device on controller port 2. */
+        for (auto& d : pplan.devices) core.set_port_device(d.first, d.second);
+        rlog("%s: %s (players 3-4 = libretro ports 2-3)", lower(a.system).c_str(), lower(a.system) == "nes" ? "Four Score adapter, pads 3-4 plugged" : "multitap on port 2");
+    }
+    if (const char* sd = std::getenv("RETRORUN_SET_DEVICES")) {   // QA only: "port:device[,port:device]" (decimal or 0x hex), retro_set_controller_port_device after load
+        for (const char* p = sd; *p;) {
+            char* e1 = nullptr;
+            unsigned long port = std::strtoul(p, &e1, 0);
+            if (*e1 != ':') break;
+            char* e2 = nullptr;
+            unsigned long dev = std::strtoul(e1 + 1, &e2, 0);
+            core.set_port_device((unsigned)port, (unsigned)dev);
+            rlog("qa: port %lu device 0x%lx (RETRORUN_SET_DEVICES)", port, dev);
+            p = *e2 == ',' ? e2 + 1 : e2;
+            if (e2 == e1 + 1) break;
+        }
     }
     if (a.rollback && !a.synctest) {
         // Only cores whose savestates were verified exact (SyncTest against a free-running reference) may roll back; others stay lockstep.
