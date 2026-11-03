@@ -49,8 +49,10 @@ public:
     size_t size() const { return rows_.size(); }
     /* Serial first (exact), then the normalized title of alt_title / title. Never fuzzy. */
     Meta lookup(const Query& q) const;
-private:
     struct Row { std::string sys, title, dev, pub, genre, esrb; int year = 0, month = 0, players = 0, famitsu = 0, edge = 0; };
+    /* Every game in file order (the Discover page's full-catalog browser reads these). */
+    const std::vector<Row>& rows() const { return rows_; }
+private:
     std::vector<Row> rows_;
     std::map<std::string, size_t> by_serial_;   // "sys|SERIAL"
     std::map<std::string, size_t> by_title_;    // "sys|normalized"

@@ -38,7 +38,7 @@ target_include_directories(hub_friend_games_test PRIVATE ${CMAKE_CURRENT_SOURCE_
 add_executable(hub_gamepack_test test_gamepack.cpp gamepack.cpp)
 target_include_directories(hub_gamepack_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gamepack_test PRIVATE hubcommon winhttp)
-add_executable(hub_discover_test test_discover.cpp discover_logic.cpp gamepack.cpp)
+add_executable(hub_discover_test test_discover.cpp discover_logic.cpp discover_browse.cpp gamepack.cpp)
 target_include_directories(hub_discover_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_discover_test PRIVATE hubcommon winhttp)
 add_executable(qa_gamepack qa_gamepack.cpp gamepack.cpp)   # QA driver against a local fake (qa/gamepack_qa.py); not a ctest
@@ -115,7 +115,7 @@ set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp spectate_ui.cpp dropin_ui.cpp
     ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp libview_ui.cpp shelf_draw.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_pick_ui.cpp challenge_ui.cpp gamenight_ui.cpp friend_games_ui.cpp group_ui.cpp
     page_controllers.cpp page_admin.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp welcome_ui.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp
-    attract.cpp continue_ui.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp page_discover.cpp discover_logic.cpp
+    attract.cpp continue_ui.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp page_discover.cpp discover_logic.cpp discover_browse.cpp
     party_ui.cpp party_view.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp   # Plan 4 Wave 1
     lockout.cpp icon_refresh.cpp discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp)   # Plan 4 Wave 2 C (convenience)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
