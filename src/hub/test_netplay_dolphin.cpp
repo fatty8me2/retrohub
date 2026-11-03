@@ -63,6 +63,18 @@ static void test_host_card_sync() {
     /* bad input: no argument (the launch then logs and goes on with the override alone) */
     err.clear();
     CHECK(host_card_sync_args("", root8, &err).empty() && !err.empty());
+    /* never wipe anything but our own scratch folder */
+    err.clear(); CHECK(host_card_sync_args(card8, winutil::to_utf8(base.wstring()), &err).empty() && !err.empty());   // not named host-sync
+    err.clear(); CHECK(host_card_sync_args(card8, "netplay\\gc\\host-sync", &err).empty() && !err.empty());          // relative
+    const fs::path inside = base / L"host-sync" / "card";
+    put(inside / "x.gci", "x");
+    err.clear(); CHECK(host_card_sync_args(winutil::to_utf8(inside.wstring()), root8, &err).empty() && fs::exists(inside / "x.gci"));   // root holds the card
+    CHECK(fs::exists(card / "01-G4QE-MarioSoccer.gci"));
+    /* a read-only save is copied, and does not block the next launch's wipe */
+    fs::permissions(card / "01-G4QE-MarioSoccer.gci", fs::perms::owner_write, fs::perm_options::remove, ec);
+    CHECK(!host_card_sync_args(card8, root8, &err).empty());
+    CHECK(!host_card_sync_args(card8, root8, &err).empty());
+    fs::permissions(card / "01-G4QE-MarioSoccer.gci", fs::perms::owner_write, fs::perm_options::add, ec);
     fs::remove_all(base, ec);
 }
 

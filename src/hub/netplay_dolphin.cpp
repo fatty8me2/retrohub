@@ -305,8 +305,16 @@ static std::string host_card_sync_impl(const std::string& card_dir, const std::s
 #else
     const fs::path src(card_dir), root(sync_root);
 #endif
+    /* Only ever wipe our own scratch folder: absolute, named host-sync, not a link, not the card itself or above it. */
+    if (!root.is_absolute() || root.filename() != L"host-sync") return fail("unsafe sync folder " + sync_root);
+    const std::wstring rs = root.lexically_normal().wstring() + L"\\", cs = src.lexically_normal().wstring() + L"\\";
+    if (_wcsnicmp(cs.c_str(), rs.c_str(), rs.size()) == 0) return fail("sync folder contains the card");
+#ifdef _WIN32
+    const DWORD ra = GetFileAttributesW(root.c_str());
+    if (ra != INVALID_FILE_ATTRIBUTES && (ra & FILE_ATTRIBUTE_REPARSE_POINT)) return fail("sync folder is a link");
+#endif
     std::error_code ec;
-    fs::remove_all(root, ec);   // RetroHub's own scratch folder (never a link): stale copies must not reach the guests
+    fs::remove_all(root, ec);   // stale copies must not reach the guests
     if (ec) return fail("cannot clear " + sync_root + ": " + ec.message());
     std::vector<fs::path> gci;
     std::error_code de;
@@ -326,6 +334,8 @@ static std::string host_card_sync_impl(const std::string& card_dir, const std::s
         for (const fs::path& f : gci) {
             fs::copy_file(f, dir / f.filename(), fs::copy_options::overwrite_existing, ec);
             if (ec) return fail("cannot copy " + winutil::to_utf8(f.filename().wstring()) + ": " + ec.message());
+            fs::permissions(dir / f.filename(), fs::perms::owner_write, fs::perm_options::add, ec);   // a read-only save must not block the next wipe
+            ec.clear();
         }
     }
     return " -C \"Dolphin.Core.GCIFolderAPath=" + sync_root + "\"";
