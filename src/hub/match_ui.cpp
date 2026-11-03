@@ -263,6 +263,10 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
             chip_x += w + 6 * S;
         };
         if (!ping_lab.empty()) chip(ping_lab.c_str(), ping_col);
+        if (!A.selected_game.empty() && !p->keys.empty() && std::find(p->keys.begin(), p->keys.end(), A.selected_game) == p->keys.end()) {   // before launch: who is missing the host's pick
+            const hub::GameEntry* sel = find_room_entry(A.selected_game);
+            if (sel && !remote_play_entry(*sel)) chip("No copy of this game", COL_BAD);
+        }
         if (!p->keys.empty()) {   // v2 peers: games per system; keys without a known system prefix count as "Other"
             std::map<int, int> per;
             int other = 0;
