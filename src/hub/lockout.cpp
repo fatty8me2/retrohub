@@ -23,7 +23,7 @@ const char* kind_name(hublock::Lock l) { return l == hublock::Lock::Pending ? "p
 }
 
 void lockout_init(bool had_account, const std::string& uid) {
-    g_enabled = !g_headless && !autotest_active();
+    g_enabled = !g_headless;   // autotest only skips the "Setting up" lock (fresh QA data dirs); a pending / banned verdict always locks
     g_t0 = (double)GetTickCount64() / 1000.0;
     hublock::Cache c;
     std::string text;
@@ -43,7 +43,9 @@ void lockout_shot(const std::string& mode) {   // HUB_SHOT_ACCESS=pending|unavai
 
 hublock::Lock lockout_kind() {
     if (g_forced) return g_forced_lock;
-    return g_enabled ? V.lock() : hublock::Lock::None;
+    if (!g_enabled) return hublock::Lock::None;
+    const hublock::Lock l = V.lock();
+    return l == hublock::Lock::Setup && autotest_active() ? hublock::Lock::None : l;
 }
 bool app_locked() { return lockout_kind() != hublock::Lock::None; }
 

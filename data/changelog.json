@@ -11,7 +11,7 @@
       ],
       "improved": [
         "The waiting screen shows your name and friend code so the owner knows it's you, with Check again",
-        "RetroHub refreshes its taskbar and Start Menu icon after an update, so the new logo shows up"
+        "RetroHub refreshes its shortcut icon after an update, so the new logo shows up in the Start Menu and taskbar"
       ],
       "fixed": [
         "Server busy in a room is now a short retry instead of an error"
