@@ -152,7 +152,7 @@ void settings_panel(float w) {
     section_title("Who can join");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     bool ap = s.approval, vo = s.vouch, af = s.autofriend;
-    if (ImGui::Checkbox("Approve new accounts before they can go online", &ap)) {
+    if (ImGui::Checkbox("Approve new accounts before they can use RetroHub", &ap)) {
         if (AU.fake) { AU.fs.approval = ap; fake_filter_apply(); } else FR.cli.admin_set_settings(ap, -1, -1);
         AU.refresh_at = ImGui::GetTime() + 0.5;
     }
