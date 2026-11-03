@@ -98,7 +98,7 @@ static const ImU32 COL_REMIX = IM_COL32(250, 150, 40, 255);
 
 /* ============================ types ============================ */
 
-enum class Page { Library, Online, Saves, Controllers, Settings, About /* the "Updates" page: version, update button, patch notes */ };
+enum class Page { Library, Online, Saves, Controllers, Settings, About /* the "Updates" page: version, update button, patch notes */, Admin /* owner only: accounts, bans, approvals */ };
 
 enum class LibView { Home, All };
 
@@ -1051,6 +1051,7 @@ extern bool g_ghost_popup_open;   // app exit: cancel + join the install job
 /* ---- page_about.cpp ---- */
 void draw_overlays();
 void page_about();
+void page_admin();   // page_admin.cpp: only ever reachable when fr_is_admin()
 void draw_changelog_list();    // page_changelog.cpp: the patch notes list (drawn inside the Updates page)
 void draw_changelog_popup();    // call every frame: the one-time "What's new in vX" popup
 
