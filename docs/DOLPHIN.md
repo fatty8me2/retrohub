@@ -395,8 +395,9 @@ How it was proven (two Dolphins on one PC, hidden desktop, muted, owner's disc a
 | Strikers, before (`--card gci`) | override only, guest gets 0 files | frame 420 (every run: 3 here + all Strikers rows of the speed matrix) | 7200: DIFF, 3.9 M of 6.3 M words |
 | Strikers, after (`--card hub`) | + host_card_sync_args, guest gets 1 file | none | 300 / 3600 / 7200: MATCH |
 | Strikers, after, full match at 100 % (no GDB) | hub | none over 540 s | same screens: final score DK 0 - Daisy 5, identical match stats |
-| Strikers, after, full match with hashes | hub | RESULT_FH | RESULT_FH_HASH |
+| Strikers, after, full match with hashes (2400 s at ~23 %: a whole match, DK 0 - Daisy 3, and part of a second) | hub | none | 18 samples, frames 300-34200: all MATCH |
 | Strikers, after, guest boots 1.3 s later (1.2 s one-way forwarder latency), 5700 frames | hub | none | 300-3900 MATCH; 4200-5700 the same 9 words differ (below) |
+| Strikers, after, guest boots later, match with hashes (first try: up to 1:05 left, then the guest's hasher timed out and left the guest halted; fixed) | hub | none | 300 MATCH; 3600-19800 (10 samples): the same 9 words |
 | Strikers, after, guest boots later, full match with hashes | hub | RESULT_FL | RESULT_FL_HASH |
 | Mario Superstar Baseball, before | override only | frame 1140 | 600 MATCH, 1800 / 3600 DIFF |
 | Mario Superstar Baseball, after (dual core: its allowlist) | hub | none | 600 / 1800 / 3600 MATCH |

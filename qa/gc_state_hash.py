@@ -54,7 +54,7 @@ class Gdb:
                 return out
             out += c
 
-    def cmd(self, data, timeout=10):
+    def cmd(self, data, timeout=60):
         self.s.sendall(pkt(data))
         return self.read(timeout)
 
@@ -175,47 +175,60 @@ def main():
     g.s.sendall(pkt(b"c"))
     if o.idle:
         time.sleep(o.secs)
-    while not o.idle and time.time() - t0 < o.secs:
-        if not st["base"]:
-            st["base"] = find_mem1(h, o.game)
-        if not armed:                                       # sparse: run free, poll the counter, arm just before a sample
+    try:
+        while not o.idle and time.time() - t0 < o.secs:
             if not st["base"]:
-                time.sleep(0.2); continue
-            raw = rpm(h, st["base"] + (addr & 0x1FFFFFF), 4)
-            v = int.from_bytes(raw, "big") if raw else 0
-            if nxt is None or v >= nxt:
+                st["base"] = find_mem1(h, o.game)
+            if not armed:                                       # sparse: run free, poll the counter, arm just before a sample
+                if not st["base"]:
+                    time.sleep(0.2); continue
+                raw = rpm(h, st["base"] + (addr & 0x1FFFFFF), 4)
+                v = int.from_bytes(raw, "big") if raw else 0
+                if nxt is None or v >= nxt:
+                    nxt = after(v)
+                if nxt - v > o.margin:
+                    time.sleep(0.002); continue
+                g.s.sendall(b"\x03")
+                g.read(30)
+                g.cmd(b"Z2,%08x,4" % addr)
+                armed = True
+                g.s.sendall(pkt(b"c"))
+            try:
+                g.read(60)                                      # stop reply (watchpoint hit: before the store)
+            except socket.timeout:
+                out.write("# no stop for 60 s\n"); out.flush(); continue
+            st["stops"] += 1
+            try:
+                v = int(g.cmd(b"m%08x,4" % addr), 16)
+            except ValueError:
+                v = -1
+            if nxt is None and v >= 0:
                 nxt = after(v)
-            if nxt - v > o.margin:
-                time.sleep(0.002); continue
-            g.s.sendall(b"\x03")
-            g.read(30)
-            g.cmd(b"Z2,%08x,4" % addr)
-            armed = True
+            if v >= 0 and nxt is not None and v >= nxt:
+                if v == nxt:                                    # only exact sample frames are comparable across instances
+                    take(v)
+                nxt = after(v)
+                if not o.dense:
+                    g.cmd(b"z2,%08x,4" % addr)
+                    armed = False
             g.s.sendall(pkt(b"c"))
+    except Exception as ex:   # never leave the emulated CPU halted at a watchpoint: the whole NetPlay room would stall
+        out.write("# ERROR %r (continuing so Dolphin runs on)\n" % (ex,)); out.flush()
         try:
-            g.read(60)                                      # stop reply (watchpoint hit: before the store)
-        except socket.timeout:
-            out.write("# no stop for 60 s\n"); out.flush(); continue
-        st["stops"] += 1
+            g.cmd(b"z2,%08x,4" % addr, 5)
+        except Exception:
+            pass
         try:
-            v = int(g.cmd(b"m%08x,4" % addr), 16)
-        except ValueError:
-            v = -1
-        if nxt is None and v >= 0:
-            nxt = after(v)
-        if v >= 0 and nxt is not None and v >= nxt:
-            if v == nxt:                                    # only exact sample frames are comparable across instances
-                take(v)
-            nxt = after(v)
-            if not o.dense:
-                g.cmd(b"z2,%08x,4" % addr)
-                armed = False
-        g.s.sendall(pkt(b"c"))
+            g.s.sendall(pkt(b"c"))   # Dolphin 2509 has no detach command: continue, then close
+        except Exception:
+            pass
+        out.close()
+        return 1
     try:
         g.s.sendall(b"\x03")
         g.read(10)
         g.cmd(b"z2,%08x,4" % addr)
-        g.s.sendall(pkt(b"D"))
+        g.s.sendall(pkt(b"c"))   # leave the CPU running (no detach command in Dolphin 2509)
     except Exception:
         pass
     out.write("# end stops %d\n" % st["stops"]); out.close()
