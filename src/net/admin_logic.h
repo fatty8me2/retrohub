@@ -48,7 +48,7 @@ struct AdminAccount {
 };
 
 struct AdminSettings {
-    bool approval = false;    // new accounts wait for the owner (OFF by default)
+    bool approval = true;     // new accounts wait for the owner (ON by default on the server)
     bool vouch = false;       // a friend adding a waiting account by its code approves it (OFF by default)
     bool autofriend = true;   // every new account is added to the owner's friends (ON by default = the old behaviour)
     bool strict_rooms = false; // a room seat must prove an approved account (OFF by default)
