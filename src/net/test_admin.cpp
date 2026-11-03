@@ -56,7 +56,9 @@ int main()
 
     // result sentences
     CHECK(admin_result_text("ban", true, "lucas", "", true, true) == "Banned lucas.");
-    CHECK(admin_result_text("ban", true, "lucas", "", true, false).find("next checks in") != std::string::npos);
+    CHECK(admin_result_text("ban", true, "lucas", "", true, false).find("Not applied yet - retrying") != std::string::npos);
+    AdminQuery tq; tq.show_test = true;
+    CHECK(admin_list_json(tq).find("\"tests\":true") != std::string::npos && admin_list_json(AdminQuery()).find("\"tests\":false") != std::string::npos);
     CHECK(admin_result_text("ban", false, "lucas", "ban-cap", false, false).find("full") != std::string::npos);
     CHECK(admin_result_text("approve", true, "", "", false, false) == "Approved that account.");
 
