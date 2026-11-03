@@ -45,6 +45,7 @@ void spectate_start(const std::string& code, const std::string& game_id, const s
     if (!g || is_remote_stand_in(*g)) { set_notice("You need your own copy of " + (title.empty() ? std::string("this game") : title) + " to watch it.", 8.0); return; }
     if (!spectate_supported(*g)) { set_notice("Watching isn't available for " + g->title + " yet.", 8.0); return; }
     SP.code = code; SP.game_id = game_id; SP.title = title; SP.friend_name = friend_name;
+    SP.lc.set_ident_msg(fr_lobby_ident_msg(true));   // proof of the account (strict rooms); spectators are never paired
     if (!SP.lc.start_watch(server_url(), code, A.st.name)) { set_notice("Couldn't reach the server.", 6.0); return; }
     SP.active = true;
     SP.since = ImGui::GetTime();

@@ -31,6 +31,9 @@ int main()
     CHECK(admin_settings_json() == "{\"type\":\"admin_settings\"}");
     CHECK(admin_settings_json(1, -1, 0) == "{\"type\":\"admin_settings\",\"set\":{\"approval\":true,\"autofriend\":false}}");
     CHECK(admin_settings_json(-1, 1, -1) == "{\"type\":\"admin_settings\",\"set\":{\"vouch\":true}}");
+    CHECK(admin_settings_json(-1, -1, -1, 1) == "{\"type\":\"admin_settings\",\"set\":{\"strict_rooms\":true}}");
+    CHECK(admin_settings_json(0, -1, -1, 0) == "{\"type\":\"admin_settings\",\"set\":{\"approval\":false,\"strict_rooms\":false}}");
+    CHECK(admin_strict_rooms_help().find("1.31.11") != std::string::npos);
 
     // words
     CHECK(admin_ago(1000000, 0) == "never");

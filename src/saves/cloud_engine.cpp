@@ -138,6 +138,10 @@ struct Outcome {
     int64_t retry_after = 0;
     bool ok() const { return k == Ok; }
 };
+/* A gated account (pending approval / banned) gets 403 {error:reason, reason} on /saves/*: not corrupt data and not a device limit. It is a plain
+ * "try later" (the queue's own growing wait) and the reason is handed to the whole-app lock (cloud_gate_take) so it feeds the same verdict. */
+std::atomic<int> g_gate{0};   // 0 none, 1 pending-approval, 2 account-unavailable
+bool gated_code(const str& c) { return c == "pending-approval" || c == "account-unavailable"; }
 Outcome oc_of(const HttpReply& r) {
     Outcome o;
     o.status = r.status;
@@ -148,6 +152,7 @@ Outcome oc_of(const HttpReply& r) {
         auto it = r.headers.find("retry-after");
         if (it != r.headers.end()) o.retry_after = atoll(it->second.c_str());
     }
+    if (r.status == 403 && gated_code(se.code)) { g_gate = se.code == "pending-approval" ? 1 : 2; o.k = Outcome::Throttled; return o; }
     if (r.status >= 200 && r.status < 300) o.k = Outcome::Ok;
     else if (r.status == 0) o.k = Outcome::Offline;
     else if (r.status == 401) o.k = Outcome::Auth;
@@ -1162,7 +1167,7 @@ Outcome ensure_device(Api& api) {
         }
         { std::lock_guard<std::mutex> lk(E.mu); E.registered.insert(u8); }
         save_state_file();
-    } else if (r.status == 403) {
+    } else if (r.status == 403 && !gated_code(o.code)) {
         std::lock_guard<std::mutex> lk(E.mu);
         E.acct.needs_attention = true;
         E.acct.attention = "device-limit";
@@ -1785,6 +1790,7 @@ void cloud_account_changed() {
 }
 
 void cloud_network_back() { wake_startup_if_parked(); }
+int cloud_gate_take() { return g_gate.exchange(0); }
 
 void cloud_wake_queue() {
     {

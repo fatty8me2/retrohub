@@ -14,7 +14,9 @@ using hubnet::Access;
 
 enum class Lock { None, Pending, Unavailable, Setup };
 
-/* What is remembered between runs (access.json in the data dir). verdict: "ok" | "pending" | "unavailable" | "" (nothing known). */
+/* What is remembered between runs (access.json in the data dir). verdict: "ok" | "pending" | "unavailable" | "setup" | "" (nothing known).
+ * "setup" = a brand-new install that has not yet been told Ok: it is written the moment the account is created, so the Setup lock survives
+ * a restart or going offline before the first Ok. An upgrader (identity but no access.json) never gets one. */
 struct Cache {
     std::string verdict;
     std::string uid;        // the account the verdict belongs to
@@ -39,7 +41,7 @@ inline Cache cache_parse(const std::string& t)
 {
     Cache c;
     const std::string v = cache_field(t, "verdict");
-    if (v == "ok" || v == "pending" || v == "unavailable") c.verdict = v;
+    if (v == "ok" || v == "pending" || v == "unavailable" || v == "setup") c.verdict = v;
     c.uid = cache_field(t, "uid");
     c.admin = t.find("\"admin\":true") != std::string::npos;
     return c;
@@ -57,13 +59,16 @@ public:
         uid_ = uid;
         state_ = State::Unknown;
         admin_ = false;
+        bool marked = false;   // access.json already says "setup" for this account
         if (cache.uid.empty() || uid.empty() || cache.uid == uid) {
-            if (cache.verdict == "ok") state_ = State::Ok;
+            if (cache.verdict == "setup") { had_account_ = false; marked = true; }   // never confirmed: still a new install, whatever the identity file says now
+            else if (cache.verdict == "ok") state_ = State::Ok;
             else if (cache.verdict == "pending") state_ = State::Pending;
             else if (cache.verdict == "unavailable") state_ = State::Unavailable;
             admin_ = cache.admin;
         }
-        dirty_ = false;
+        if (state_ == State::Ok) had_account_ = true;
+        dirty_ = state_ == State::Unknown && !had_account_ && !marked;   // a new install: write the "setup" marker now
     }
 
     /* Every tick, from the friends client: `welcomed` = the server accepted our hello, `live` = why it refused it (Ok when it did not). */
@@ -73,6 +78,7 @@ public:
         bool a = admin_;
         if (welcomed) {
             n = State::Ok;
+            had_account_ = true;   // confirmed by the server: from now on an account change is not a new install
             a = admin;     // the welcome says who the owner is: an account that stopped being one is no longer exempt
         } else if (live == Access::Pending) n = State::Pending;
         else if (live == Access::Unavailable) n = State::Unavailable;
@@ -82,9 +88,9 @@ public:
     }
 
     /* The account changed (identity adopted / regenerated): what was known no longer applies. */
-    void reset_account(const std::string& uid, bool had_account)
+    void reset_account(const std::string& uid)
     {
-        init(Cache(), had_account, uid);
+        init(Cache(), had_account_, uid);   // a new install stays a new install (e.g. a friend-code collision during setup)
         dirty_ = true;
     }
 
@@ -108,7 +114,7 @@ public:
         dirty_ = false;
         out->uid = uid_;
         out->admin = admin_;
-        out->verdict = state_ == State::Ok ? "ok" : state_ == State::Pending ? "pending" : state_ == State::Unavailable ? "unavailable" : "";
+        out->verdict = state_ == State::Ok ? "ok" : state_ == State::Pending ? "pending" : state_ == State::Unavailable ? "unavailable" : !had_account_ ? "setup" : "";
         return !out->verdict.empty();
     }
     bool admin() const { return admin_; }

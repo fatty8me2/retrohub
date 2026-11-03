@@ -124,6 +124,7 @@ void ensure_prep(const hub::GameEntry& e) {
 bool mute_tests() { return env_on("RETRORUN_MUTE") || env_on("RETROHUB_KT_MUTE") || env_on("SSB64_MUTE"); }
 
 bool start_session(const hub::GameEntry& e, bool host, const std::string& code) {
+    if (launch_blocked("kt_start")) return false;   // also reached from kt_tick (an armed guest start), outside any draw
     if (g_headless) { set_notice("Headless test run: launch skipped."); return false; }
     if (A.proc || KT.sess.active()) { set_notice("A game is already running."); return false; }
     if (kanto::Session::stopping() > 0) { set_notice("The previous Kanto Together session is still closing - try again in a moment."); return false; }

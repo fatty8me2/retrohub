@@ -253,7 +253,7 @@ class FriendsClient {
     void admin_request_detail(const std::string& uid);
     void admin_act(const std::string& op, const std::string& uid);   // ban | unban | approve | deny
     void admin_request_settings();
-    void admin_set_settings(int approval, int vouch, int autofriend);   // -1 = unchanged
+    void admin_set_settings(int approval, int vouch, int autofriend, int strict_rooms = -1);   // -1 = unchanged
     const AdminList& admin_list() const;
     const AdminDetail& admin_detail() const;
     const AdminSettings& admin_settings() const;

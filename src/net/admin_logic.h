@@ -51,6 +51,7 @@ struct AdminSettings {
     bool approval = false;    // new accounts wait for the owner (OFF by default)
     bool vouch = false;       // a friend adding a waiting account by its code approves it (OFF by default)
     bool autofriend = true;   // every new account is added to the owner's friends (ON by default = the old behaviour)
+    bool strict_rooms = false; // a room seat must prove an approved account (OFF by default)
     int64_t cutoff = 0;       // when approval was switched on: older accounts are untouched
 };
 struct AdminCounts { int all = 0, ok = 0, pending = 0, banned = 0; };
@@ -104,11 +105,11 @@ inline std::string admin_uid_json(const std::string& op, const std::string& uid)
     return "{\"type\":\"admin_" + admin_esc(op) + "\",\"uid\":\"" + admin_esc(uid) + "\"}";
 }
 /* -1 = leave as it is. Only the fields that change are sent. */
-inline std::string admin_settings_json(int approval = -1, int vouch = -1, int autofriend = -1)
+inline std::string admin_settings_json(int approval = -1, int vouch = -1, int autofriend = -1, int strict_rooms = -1)
 {
     std::string s;
     auto add = [&](const char* k, int v) { if (v < 0) return; if (!s.empty()) s += ","; s += std::string("\"") + k + "\":" + (v ? "true" : "false"); };
-    add("approval", approval); add("vouch", vouch); add("autofriend", autofriend);
+    add("approval", approval); add("vouch", vouch); add("autofriend", autofriend); add("strict_rooms", strict_rooms);
     return s.empty() ? std::string("{\"type\":\"admin_settings\"}") : "{\"type\":\"admin_settings\",\"set\":{" + s + "}}";
 }
 
@@ -163,6 +164,11 @@ inline std::string admin_vouch_help()
 inline std::string admin_autofriend_help()
 {
     return "On: every new account is added to your friends, as it always was. Off: new accounts are not added to your list. Your current friends are not affected.";
+}
+inline std::string admin_strict_rooms_help()
+{
+    return "On: a room seat that does not prove an approved RetroHub account within 15 seconds is closed. Friends on versions older than 1.31.11 can't join rooms while this is on, "
+           "so switch it on after they have updated. Off by default.";
 }
 inline std::string admin_result_text(const std::string& op, bool ok, const std::string& name, const std::string& reason, bool applied_known, bool applied)
 {
