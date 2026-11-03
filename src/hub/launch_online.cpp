@@ -1028,8 +1028,8 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
     }
     if (e.system == hub::System::PS2) {
         /* PlayStation 2 (LRPS2 in retrorun): every PC runs the whole console; pad buttons, both sticks and L2/R2 pressure travel through the room with
-         * the N64-style adaptive input delay. The host's memory card is the shared session card (docs/SAVES.md); two ports (LRPS2 has no multitap). */
-        if (plan.players > 2) { launch_note(is_host, "PlayStation 2 online supports 2 players.", 12.0); return; }
+         * the N64-style adaptive input delay. The host's memory card is the shared session card (docs/SAVES.md); up to four pads (3-4 players: retrorun plugs the core's multitap into console port 1). */
+        if (plan.players > 4) { launch_note(is_host, "PlayStation 2 online supports up to 4 players.", 12.0); return; }
         std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\ps2";
         remove_tree(tmp);
         make_dirs(tmp);
