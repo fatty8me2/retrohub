@@ -42,13 +42,14 @@ const char* cmd_name(Cmd c) {
         case Cmd::Pause: return "pause";
         case Cmd::OsdCorner: return "osd_corner";
         case Cmd::Handoff: return "handoff";
+        case Cmd::ReloadControls: return "reload_controls";
         default: return "none";
     }
 }
 
 Cmd cmd_from_name(const std::string& s) {
     for (Cmd c : {Cmd::SaveState, Cmd::LoadState, Cmd::Screenshot, Cmd::SwapDisc, Cmd::Quit, Cmd::Volume, Cmd::Mute, Cmd::Ff, Cmd::Speed,
-                  Cmd::Rewind, Cmd::Shader, Cmd::Overlay, Cmd::Clip, Cmd::OsdMsg, Cmd::Input, Cmd::Pause, Cmd::OsdCorner, Cmd::Handoff})
+                  Cmd::Rewind, Cmd::Shader, Cmd::Overlay, Cmd::Clip, Cmd::OsdMsg, Cmd::Input, Cmd::Pause, Cmd::OsdCorner, Cmd::Handoff, Cmd::ReloadControls})
         if (s == cmd_name(c)) return c;
     return Cmd::None;
 }
@@ -83,7 +84,7 @@ std::string speed_label(double s) {
 
 bool offline_only(Cmd c) {
     return c != Cmd::None && c != Cmd::Quit && c != Cmd::Screenshot && c != Cmd::OsdMsg && c != Cmd::Volume && c != Cmd::Mute && c != Cmd::Input && c != Cmd::Clip && c != Cmd::Overlay &&
-           c != Cmd::OsdCorner && c != Cmd::Handoff;   // clips, the stats overlay and corner text only read / display; a hand-off is agreed by every peer: allowed online
+           c != Cmd::OsdCorner && c != Cmd::Handoff && c != Cmd::ReloadControls;   // clips, the stats overlay and corner text only read / display; a hand-off is agreed by every peer: allowed online
 }
 
 bool parse_control(const std::string& text, Command* out) {

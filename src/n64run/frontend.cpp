@@ -1093,6 +1093,8 @@ static void pause_loop() {
 
 /* ---- Handoff (Plan 4 P4): pass a controller port to another player at an agreed sample. The online netcode is a spike behind
  * N64RUN_HANDOFF=1 (QA only, RETROHUB_QA=1); until it ships every runner answers "unsupported" and the hub keeps the local pad swap. ---- */
+static LocalInput* g_input_ptr = nullptr;   // live controls: the input object and the --controls file it was started with
+static std::string g_controls_path;
 static void ctl_handoff(const runctl::Command& c) { ctl_ack(c.seq, false, "unsupported"); }
 
 static bool ctl_needs_vi(runctl::Cmd c) { return c == runctl::Cmd::SaveState || c == runctl::Cmd::LoadState || c == runctl::Cmd::Screenshot || c == runctl::Cmd::Clip; }
@@ -1187,6 +1189,15 @@ static void ctl_dispatch(const runctl::Command& c, bool vi_ctx) {
             }
             break;
         case runctl::Cmd::Handoff: ctl_handoff(c); break;
+        case runctl::Cmd::ReloadControls: {   // local mapping only (the word sent to peers is the mapped result): allowed online
+            hubctl::Profile np;
+            std::string err;
+            if (!g_input_ptr || !hubctl::load_for_reload(g_controls_path, "n64", &np, &err)) { ctl_ack(c.seq, false, g_input_ptr ? err : std::string("Controls are not ready")); break; }
+            g_input_ptr->queue_profile(np);
+            osd::push("Controls updated", osd::Kind::Good);
+            ctl_ack(c.seq, true, "controls reloaded");
+            break;
+        }
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
         case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay:
             if (c.cmd == runctl::Cmd::Volume) {
@@ -1539,6 +1550,9 @@ int main(int argc, char** argv) {
             logf_("n64run", "controls: profile '%s' (%s)", prof.name.c_str(), args.controls.c_str());
         } else logf_("n64run", "controls: cannot use %s; built-in mapping", args.controls.c_str());
     }
+    g_input_ptr = &input;
+    struct InputPtrGuard { ~InputPtrGuard() { g_input_ptr = nullptr; } } input_ptr_guard;   // declared after `input`: cleared before it is destroyed
+    g_controls_path = args.controls;
     input.set_turbo(hubctl::turbo_allowed(online, args.turbo_online));
     // Headless never reads pads or the keyboard: stray input must not reach a background test run.
     if (!args.headless && !input.init()) logf_("n64run", "SDL game controller init failed; keyboard only");

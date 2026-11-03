@@ -309,7 +309,7 @@ void add_modal() {
 struct Remove { bool open = false, focus = true; std::string key, title, system; } RM;
 
 void do_remove(bool with_saves) {
-    if (A.proc) { set_notice("Close the game first."); return; }
+    if (A.proc && (A.run.key == RM.key || (find_entry(RM.key) && A.run.key == find_entry(RM.key)->hack_base))) { set_notice("That game is running. Close it first."); return; }   // other games are safe to change
     std::string gd = hub::saves::game_dir(RM.system, RM.key);
     hk::remove_hack_files(gd);
     std::error_code ec;

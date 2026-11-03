@@ -34,6 +34,7 @@
 #include "core.h"
 #include "ds_link.h"
 #include "retro_pad.h"
+#include "live_profile.h"
 #include "dsview.h"
 #include "image.h"
 #include "link_sync.h"
@@ -515,6 +516,11 @@ class Frontend {
     }
     int owner[4] = {0, -1, -1, -1};
     int local_ports[4] = {-1, -1, -1, -1};
+    /* Live controls (runner_ctl "reload_controls"): ctl_poll parses the rewritten profile file, poll_all_local applies it at the start of the next frame. */
+    std::string controls_path_, controls_sys_;
+    hubctl::LiveProfile live_prof_;
+    void apply_live_controls();
+    void reload_controls_cmd();
     runctl::InputGate in_gate_;   // hub quick menu open => neutral local input (docs/RUNNER_CTL.md "input")
     int n_local = 0;
     uint32_t frame_pad[4] = {0, 0, 0, 0};   // RetroPad bitmask per port for the frame about to run
@@ -1285,7 +1291,39 @@ uint32_t Frontend::poll_local(int i) {
         x ^= x >> 15; x *= 2246822519u; x ^= x >> 13;
         return x & 0xFF3u & ~0xCu;   // never Start/Select
     }
-    if (a.headless) return 0;
+    if (a.headless) {   // QA only: RETRORUN_PAD_SCRIPT drives the first pad through the real profile mapping (qa\live_controls.ps1)
+        if (!(i == 0 && retro_pad && std::getenv("RETROHUB_QA"))) return 0;
+        static std::vector<std::pair<uint64_t, hubctl::PadState>> ptab;
+        static bool ploaded = false;
+        if (!ploaded) {
+            ploaded = true;
+            const char* f = std::getenv("RETRORUN_PAD_SCRIPT");
+            std::ifstream in(f ? f : "");
+            std::string ln;
+            while (f && std::getline(in, ln)) {   // "frame:a+dpup" in SDL button names; empty / - = nothing held
+                size_t c = ln.find(':');
+                if (c == std::string::npos || ln[0] == '#') continue;
+                hubctl::PadState st;
+                std::string b = ln.substr(c + 1);
+                size_t q0 = 0;
+                while (q0 <= b.size()) {
+                    size_t q = b.find('+', q0); if (q == std::string::npos) q = b.size();
+                    std::string t = b.substr(q0, q - q0); q0 = q + 1;
+                    while (!t.empty() && (t.back() == '' || t.back() == ' ')) t.pop_back();
+                    int bi = hubctl::button_index(t);
+                    if (bi >= 0) st.b[bi] = true;
+                }
+                ptab.push_back({strtoull(ln.c_str(), nullptr, 10), st});
+            }
+        }
+        hubctl::PadState cur;
+        for (auto& e : ptab) { if (e.first > frame_no) break; cur = e.second; }
+        const uint32_t pm = retro_pad->mask(cur, frame_no, false);
+        static uint32_t last_pm = 0xFFFFFFFFu;
+        if (pm != last_pm && std::getenv("RETRORUN_PAD_LOG")) rlog("padscript: frame %llu mask 0x%x", (unsigned long long)frame_no, pm);
+        last_pm = pm;
+        return pm;
+    }
     uint32_t m = 0;
     if (i == 0 && retro_pad) m |= retro_pad->key_mask(SDL_GetKeyboardState(nullptr), frame_no, hubctl::turbo_allowed(online, a.turbo_online));
     if ((size_t)i < pads.size()) {
@@ -1296,7 +1334,30 @@ uint32_t Frontend::poll_local(int i) {
     return m;
 }
 
+void Frontend::reload_controls_cmd() {
+    hubctl::Profile p;
+    std::string err;
+    if (!hubctl::load_for_reload(controls_path_, controls_sys_, &p, &err)) { rlog("controls: reload refused: %s", err.c_str()); ctl_.ack(false, err); return; }
+    live_prof_.post(p);
+    ctl_.ack(true, "controls reloaded");
+}
+
+/* Start of a frame's input poll: swap in a profile the hub rewrote. Only the local pad -> RetroPad mapping changes; the masks that travel to
+ * other players, the ports this PC owns (local_ports) and the netplay state are untouched. A new port order only changes which physical pad
+ * feeds the i-th owned port, so the pads are reopened in the new order. */
+void Frontend::apply_live_controls() {
+    hubctl::Profile p;
+    if (!live_prof_.take(&p)) return;
+    const bool reopen = hubctl::ports_changed(prof, p);
+    prof = p;
+    retro_pad.reset(new retrorun::RetroPad(prof));
+    if (!a.headless && reopen) open_pads();
+    rlog("controls: applied profile '%s' at frame %llu%s", prof.name.c_str(), (unsigned long long)frame_no, reopen ? " (port order changed)" : "");
+    osd::push("Controls updated", osd::Kind::Good);
+}
+
 void Frontend::poll_all_local() {
+    apply_live_controls();
     if (!a.headless && !a.fuzz) {
         bool combo = false;
         for (size_t i = 0; i < pads.size(); i++) {
@@ -1684,6 +1745,7 @@ void Frontend::ctl_poll() {
             ctl_.ack(true, c.text.empty() ? "cleared" : "shown");
             break;
         case runctl::Cmd::Handoff: handoff_cmd(c); break;
+        case runctl::Cmd::ReloadControls: reload_controls_cmd(); break;   // local mapping only: fine online
         case runctl::Cmd::Volume: case runctl::Cmd::Mute: case runctl::Cmd::Ff: case runctl::Cmd::Speed:
         case runctl::Cmd::Rewind: case runctl::Cmd::Shader: case runctl::Cmd::Overlay: case runctl::Cmd::Pause:
             if ((online || a.ds_link) && runctl::offline_only(c.cmd)) { ctl_.ack(false, "Not available in online sessions"); break; }
@@ -3704,6 +3766,8 @@ int Frontend::run(const Args& args) {
             else rlog("controls: cannot use %s; built-in mapping", cf.c_str());
         }
         retro_pad.reset(new retrorun::RetroPad(prof));
+        controls_path_ = cf;
+        controls_sys_ = psys;
         if (!a.headless) hubctl::load_bundled_db();
     }
     if (!a.headless) open_pads();

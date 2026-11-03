@@ -57,6 +57,10 @@ int main() {
         CHECK(parse_control("{\"seq\":1,\"cmd\":\"handoff\",\"slot\":0,\"value\":2}", &q) && q.cmd == Cmd::Handoff && q.slot == 0 && q.value == 2);
         CHECK(!parse_control("{\"seq\":1,\"cmd\":\"handoff\",\"slot\":0,\"value\":5}", &q));
         CHECK(offline_only(Cmd::Pause) && !offline_only(Cmd::OsdCorner) && !offline_only(Cmd::Handoff));
+        // live controls: reload_controls takes no arguments, round-trips, and is allowed online (the mapping is local)
+        CHECK(parse_control("{\"seq\":1,\"cmd\":\"reload_controls\"}", &q) && q.cmd == Cmd::ReloadControls);
+        CHECK(!offline_only(Cmd::ReloadControls) && std::string(cmd_name(Cmd::ReloadControls)) == "reload_controls" && cmd_from_name("reload_controls") == Cmd::ReloadControls);
+        { Command r; r.cmd = Cmd::ReloadControls; r.seq = 7; CHECK(parse_control(make_control(r), &q) && q.cmd == Cmd::ReloadControls && q.seq == 7); }
         Command w; w.cmd = Cmd::OsdCorner; w.slot = 3; w.value = 10; w.text = "02:13"; w.seq = 4;
         CHECK(parse_control(make_control(w), &q) && q.cmd == Cmd::OsdCorner && q.slot == 3 && q.value == 10 && q.text == "02:13");
     }

@@ -96,7 +96,7 @@ bool palette_active() { return P.open; }
 /* Library: a typed character that starts a search (not F / I / S, which stay shortcuts; "/" always works). */
 bool type_to_search_pending() {
     ImGuiIO& io = ImGui::GetIO();
-    if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || P.open || !A.focused || A.proc || wizard_state() != -1) return false;
+    if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || P.open || !A.focused || wizard_state() != -1) return false;   // typing to search is fine while a game runs: it only filters the library
     if (ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return false;
     for (int i = 0; i < io.InputQueueCharacters.Size; ++i)
         if (hubpal::starts_search((unsigned)io.InputQueueCharacters[i])) return true;
@@ -114,12 +114,14 @@ void palette_draw() {
             std::snprintf(P.buf, sizeof P.buf, "%s", sq);
         }
     }
+    const bool kbd_free = (A.focused || g_headless) && wizard_state() == -1 && !P.open &&
+                          !ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);   // Ctrl+K works during a game (the user alt-tabbed to the hub)
     const bool free_to_open = (A.focused || g_headless) && !A.proc && !game_active() && wizard_state() == -1 && !P.open &&
                               !ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     // View + Y (Back held, Y pressed): global_input toggles the friends panel on View RELEASE and skips it after a combo, so nothing to undo
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false)) P.back_at = ImGui::GetTime();
     const bool view_y = ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) && ImGui::GetTime() - P.back_at < 3.0;
-    if (free_to_open && ((io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL3, false) || view_y)) {
+    if ((kbd_free && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) || (free_to_open && (ImGui::IsKeyPressed(ImGuiKey_GamepadL3, false) || view_y))) {   // the pad combos belong to the game (View+Y is its quick menu)
         P.want_open = true;
     }
     if (P.want_open && !P.open) {

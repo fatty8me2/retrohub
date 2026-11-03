@@ -200,19 +200,20 @@ void draw_footer(float h) {
 
 void global_input() {
     ImGuiIO& io = ImGui::GetIO();
-    if (!A.focused || A.proc) return;
+    if (!A.focused) return;   // a running game no longer blocks this: the hub only sees keys / pad while it has focus (osk::hub_input_blocked)
     if (attract_woke_this_frame()) return;   // the press that woke attract mode only wakes it
     if (ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
     if (io.WantTextInput) return;
     if (wizard_state() >= 0) return;   // the setup wizard owns the pad (its own B / Back / Next); Menu must not toggle the friends panel behind it
     if (A.popup_last_frame && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) return;   // that B just closed a menu/modal: not also "back"
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) && fr_invite_toast_visible()) fr_join_invite_toast();   // Start joins a pending invite
-    else if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
+    /* Start / View are game buttons: while a game runs they never drive the hub (the pad feeds both); F2 and the mouse still work. */
+    if (!A.proc && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) && fr_invite_toast_visible()) fr_join_invite_toast();   // Start joins a pending invite
+    else if ((!A.proc && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false)) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
     {   // View toggles the friends panel on RELEASE, and not when another pad button joined it (View + Y opens the palette / quick menu)
         static bool view_combo = false;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false)) view_combo = false;
         if (ImGui::IsKeyDown(ImGuiKey_GamepadBack) && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false))) view_combo = true;
-        if (ImGui::IsKeyReleased(ImGuiKey_GamepadBack) && !view_combo) fr_toggle_panel();
+        if (ImGui::IsKeyReleased(ImGuiKey_GamepadBack) && !view_combo && !A.proc) fr_toggle_panel();
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
         if (fr_handle_back()) return;
@@ -245,8 +246,28 @@ void global_input() {
 
 /* ---------- frame ---------- */
 
+/* Screenshot aid (headless only): HUB_SHOT_FAKE_RUNNING=<game key | 1> pretends a built-in runner plays that game, =ext:<key> an external
+ * emulator. The process handle is this process's pseudo-handle, which never signals, so nothing treats the "game" as ended. */
+static void shot_fake_running() {
+    static const char* f = g_headless ? std::getenv("HUB_SHOT_FAKE_RUNNING") : nullptr;
+    if (!f || A.proc || !A.scanned_once) return;
+    std::string v = f;
+    const bool ext = v.rfind("ext:", 0) == 0;
+    if (ext) v = v.substr(4);
+    const hub::GameEntry* e = v == "1" ? (A.lib.empty() ? nullptr : &A.lib[0]) : find_entry(v);
+    if (!e) return;
+    A.proc = GetCurrentProcess();
+    A.proc_title = e->title;
+    A.run = RunInfo();
+    A.run.key = e->key;
+    A.run.title = e->title;
+    A.run.start_tick = GetTickCount64();
+    if (!ext) { A.run.ctl_path = "fake-control.json"; A.run.controls_path = "fake-controls.json"; A.run.controls_sys = hubctl::system_key(e->system); }
+}
+
 void draw_frame() {
     ImGuiIO& io = ImGui::GetIO();
+    shot_fake_running();
     theme_tick();
     fr_anim_panel();
     const bool fr_docked = io.DisplaySize.x >= 1100.f * S;
@@ -390,7 +411,8 @@ void draw_frame() {
         dl->AddRect(p, p + ImVec2(w, h), with_alpha(ui::ACCENT, 0.5f), sp(1.5f), 0, 1.f);
         float pulse = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 4.f);
         dl->AddCircleFilled(p + ImVec2(sp(2.f), h * 0.5f), sp(0.6f) + pulse * sp(0.25f), ui::ACCENT, 16);
-        std::string m = A.proc_title + " is running - the hub is ready again when it closes.";
+        std::string m = A.proc_title + " is running. You can keep using RetroHub; " +
+                        (A.run.controls_path.empty() ? "control changes apply the next time you start it." : "changes to controls apply right away.");
         dl->AddText(ui::F.body, ui::F.body->FontSize, p + ImVec2(sp(3.5f), (h - ui::F.body->FontSize) * 0.5f),
                     ui::TEXT, ui::ellipsize(ui::F.body, ui::F.body->FontSize, m, w - sp(5.f)).c_str());
         ImGui::Dummy(ImVec2(w, h + sp(2.f)));

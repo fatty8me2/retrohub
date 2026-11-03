@@ -581,7 +581,7 @@ void draw_cheats_modal() {
         ImGui::TextDisabled(has_bk ? "Your save was backed up before cheats were first turned on." : "Your save is backed up automatically the first time you turn a cheat on.");
         if (has_bk) {
             ImGui::SameLine(0, sp(1.5f));
-            bool ok = A.proc == nullptr && !locked_guest;
+            bool ok = !(A.proc && A.run.key == e.key) && !locked_guest;   // another game running does not touch this save
             if (g_confirm_restore) {
                 if (button("Really restore?", ImVec2(0, 0), true, ok)) {
                     std::string err;
@@ -593,7 +593,7 @@ void draw_cheats_modal() {
                 ImGui::SameLine(0, sp(1.f));
                 if (button("Cancel", ImVec2(0, 0))) g_confirm_restore = false;
             } else if (button("Restore save", ImVec2(0, 0), false, ok)) g_confirm_restore = true;
-            if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Close the game first");
+            if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("This game is running. Close it first.");
         }
     }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));

@@ -99,6 +99,10 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     A.proc = pi.hProcess;
     A.proc_title = ri.title;
     A.run = ri;
+    A.run.controls_path.clear();
+    A.run.controls_sys.clear();
+    if (args.find("--controls ") != std::string::npos && !g_launch_controls.first.empty()) { A.run.controls_path = g_launch_controls.first; A.run.controls_sys = g_launch_controls.second; }
+    g_launch_controls = {};
     A.run.cloud_started = false;
     A.run.pad_exit = ri.after_exit != nullptr || !ri.o2r_prep.empty();   // external emulators and the native Smash port; n64run / retrorun handle the combo themselves
     A.run.start_unix = unix_now();

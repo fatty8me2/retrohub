@@ -133,6 +133,8 @@ add_test(NAME hubgamesettings_test COMMAND hubgamesettings_test)
 add_test(NAME hubdolphincheats_test COMMAND hubdolphincheats_test)   # GameCube cheats: gecko/ar_gc + Dolphin GameSettings ini writer
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
 add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
+add_test(NAME live_controls_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/live_controls.ps1 -Root ${CMAKE_SOURCE_DIR})   # reload_controls: a rewritten profile changes the mapped mask of a running headless retrorun
+set_tests_properties(live_controls_headless PROPERTIES TIMEOUT 120)
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
 add_test(NAME retrorun_fx_test COMMAND retrorun_fx_test)
 add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)

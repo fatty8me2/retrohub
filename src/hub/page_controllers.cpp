@@ -1,5 +1,6 @@
 #include "app.h"
 #include "osk.h"
+#include "controls_live.h"
 
 #include "controls_sdl.h"
 
@@ -179,7 +180,9 @@ void ctl_save() {
     if (!hubctl::save_store(CTL.st, hub::data_dir(), hub::saves::vault_dir())) {
         CTL.notice = "Could not save the controller settings.";
         CTL.notice_until = ImGui::GetTime() + 6.0;
+        return;
     }
+    controls_live_push();   // a built-in runner that is playing right now re-reads the profile on its next frame
 }
 
 void ctl_reload_pads() {
@@ -595,6 +598,32 @@ void open_controls_for(const hub::GameEntry& e) {
     A.page = Page::Controllers;
 }
 
+std::pair<std::string, std::string> g_launch_controls;
+
+/* A Controllers-page save while a built-in runner (retrorun / n64run) plays: rewrite the profile file the runner was started with and queue
+ * ReloadControls. Only when the mapping or the port order of THAT game's resolved profile changed (editing another system or game does
+ * nothing). Allowed online: the mapping is local and inputs travel as masks. Never touches a window. */
+void controls_live_push() {
+    if (!A.proc || A.run.controls_path.empty() || A.run.ctl_path.empty()) return;
+    hubctl::Store st;
+    hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
+    const hubctl::Profile next = hubctl::resolve(st, A.run.controls_sys, A.run.key);
+    hubctl::Profile cur;
+    const bool have = hubctl::read_profile_file(A.run.controls_path, &cur) && cur.system == next.system;
+    if (!hubctlive::needs_reload(have, cur, next)) return;
+    if (!hubctl::write_profile_file(A.run.controls_path, next)) return;
+    runctl::Command c;
+    c.cmd = runctl::Cmd::ReloadControls;
+    qm_send_command(c);
+}
+
+std::string controls_live_note() {
+    if (!A.proc) return "";
+    const hub::GameEntry* e = find_entry(A.run.key);
+    const bool builtin = !A.run.controls_path.empty() && !A.run.ctl_path.empty();
+    return hubctlive::note(hubctlive::mode_for(true, builtin), A.proc_title, e ? hubctlive::emulator_name(e->system) : "");
+}
+
 /* Writes the resolved profile for a launch and returns " --controls <file>" ("" when there is none: the runner then uses
  * its built-in mapping). Mapping only changes which pad source feeds which control; the input that is sent to other
  * players (n64run / retrorun netplay) is the same packed state as before. */
@@ -605,6 +634,7 @@ std::string controls_arg(const std::string& system_key, const std::string& game_
     hubctl::Profile p = hubctl::resolve(st, system_key, game_key);
     std::string path = hub::data_dir() + "controls_run_" + system_key + ".json";
     if (!hubctl::write_profile_file(path, p)) return "";
+    g_launch_controls = {path, system_key};   // spawn_room() copies it into A.run when this launch really starts
     return " --controls " + quote(path) + (A.in_room && A.room_turbo && hubctl::turbo_supported(system_key) ? " --turbo-online" : "");
 }
 
@@ -718,6 +748,19 @@ void page_controllers() {
         ImGui::PopStyleColor();
     }
 
+    {   // a game is running: say whether a change reaches it now (built-in runners) or at the next start (external emulators)
+        const std::string live = controls_live_note();
+        if (!live.empty()) {
+            const hub::GameEntry* re = find_entry(A.run.key);
+            const std::string rs = re ? hubctl::system_key(re->system) : std::string();
+            if (rs == kTabs[CTL.tab].key || game_mode) {   // only for the system being edited
+                ImGui::PushStyleColor(ImGuiCol_Text, A.run.controls_path.empty() ? ui::WARN : ui::GOOD);
+                ImGui::TextWrapped("%s", live.c_str());
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            }
+        }
+    }
     if (!game_mode) {
         if (CTL.pads.empty()) draw_empty_pads(); else draw_pads_panel();
         ImGui::Dummy(ImVec2(0, sp(1.5f)));
