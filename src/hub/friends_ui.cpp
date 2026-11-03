@@ -1079,7 +1079,7 @@ void fr_draw_toasts(float right_x, float bottom_y) {
         if (age > life) { n.toast = false; continue; }
         float in = (float)std::min(1.0, age / 0.3);
         in = 1.f - (1.f - in) * (1.f - in);
-        const bool pill = n.invite && n.night_id.empty() && !n.expanded && age > kInvitePillAfter;
+        const bool pill = n.invite && n.night_id.empty() && !n.expanded && (age > kInvitePillAfter || A.popup_last_frame);   // a modal or menu is open: the card shrinks to the one-line pill so it never sits over its buttons (a click expands it)
         float h = pill ? fr_invite_pill_h() : n.invite ? fr_invite_card_h() : fr_request_card_h();
         float cw = pill ? std::min(w, fr_tw(ui::F.bold, fr_invite_pill_text(n)) + sp(3.5f)) : w;
         ImGui::SetNextWindowPos(ImVec2(right_x - cw + (1.f - in) * sp(8.f), y - h));
@@ -2299,16 +2299,17 @@ bool fr_handle_back() {
 }
 
 /* ---- invite picker (Play Online room page) ---- */
-void fr_invite_button_and_picker(float btn_w, float btn_h) {
+void fr_invite_button_and_picker(float btn_w, float btn_h, bool icon_only) {
     int online = 0;
     for (auto& f : fr_friends()) if (f.online()) ++online;
     bool can = fr_in_my_room();
-    if (ui::button("Invite friends", ImVec2(btn_w, btn_h), true, can, ui::Icon::Plus) || (FR.open_picker && can)) {
+    if (ui::button(icon_only ? "##invite_plus" : "Invite friends", ImVec2(icon_only ? btn_h : btn_w, btn_h), true, can, ui::Icon::Plus) || (FR.open_picker && can)) {
         FR.pick.clear();
         ImGui::OpenPopup("Invite friends##picker");
         FR.open_picker = false;
     }
-    if (ImGui::IsItemHovered() && !can) ImGui::SetTooltip("Waiting for the room to connect.");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !can) ImGui::SetTooltip("Waiting for the room to connect.");
+    else if (icon_only && ImGui::IsItemHovered()) ImGui::SetTooltip("Invite friends");
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(std::min(sp(60.f), ds.x * 0.92f), std::min(sp(72.f), ds.y * 0.86f)));

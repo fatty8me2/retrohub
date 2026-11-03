@@ -377,7 +377,7 @@ void draw_frame() {
         char init[8] = {hubnet::username_initial(nm), 0};
         ImVec2 its = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, init);
         sdl->AddText(ui::F.bold, ui::F.bold->FontSize, ac - its * 0.5f, IM_COL32_WHITE, init);
-        const char* stt = A.proc ? "In game" : (A.in_room ? (A.lobby.connected() ? "In a room" : "Connecting") : "Offline");
+        const char* stt = A.proc ? "In game" : (A.in_room ? (room_connected() ? "In a room" : "Connecting") : "Offline");
         ImU32 sc = A.proc ? ui::ACCENT : (A.in_room ? (A.lobby.connected() ? ui::GOOD : ui::WARN) : ui::TEXT3);
         sdl->AddCircleFilled(ac + ImVec2(sp(1.6f), sp(1.6f)), sp(0.6f), sc, 12);
         sdl->AddCircle(ac + ImVec2(sp(1.6f), sp(1.6f)), sp(0.6f), ui::SIDEBAR, 12, 2.f);
@@ -467,7 +467,7 @@ void draw_frame() {
     global_input();
     A.popup_last_frame = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     /* the library page has a now-playing / selected-game bar above the footer: toasts stack above it, never over its buttons */
-    const float bar_clear = A.page == Page::Library ? sp(10.5f) : 0.f;
+    const float bar_clear = A.page == Page::Library ? sp(10.5f) : (A.page == Page::Online && A.in_room) ? sp(8.5f) : 0.f;   // the room page has its footer bar (code, Invite, Leave) there
     const float toast_used = draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f) - bar_clear, view_w - sp(3.f), sp(7.5f));
     ImGui::End();
     draw_gamepack_pill();

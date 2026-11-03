@@ -142,9 +142,10 @@ void podium_view(const pl::State& s, float w) {
     dl->AddRectFilled(o, o + ImVec2(w, h), mix(ui::PANEL, gold(), 0.06f), sp(1.5f));
     const int order[3] = {1, 0, 2};   // drawn left to right: 2nd, 1st, 3rd (a tie keeps the order and the height)
     const float cw = std::min(sp(20.f), (w - sp(6.f)) / 3.f), gap = sp(1.5f);
-    const float total = cw * 3 + gap * 2, x0 = o.x + (w - total) * 0.5f, base = o.y + h - sp(1.25f);
+    const float total = cw * 3 + gap * 2, x0 = o.x + (w - total) * 0.5f, base = o.y + h - sp(3.f);   // the blocks stand on a base plate with padding under it
     ImFont* nf = ui::F.h2 ? ui::F.h2 : ui::F.bold;
     ImFont* rf = ui::F.title ? ui::F.title : ui::F.h2;
+    dl->AddRectFilled(ImVec2(x0 - sp(1.5f), base), ImVec2(x0 + total + sp(1.5f), base + sp(1.f)), mix(ui::PANEL3, gold(), 0.35f), sp(0.5f));
     for (int k = 0; k < 3; ++k) {
         const int idx = order[k];
         if (idx >= (int)rows.size()) continue;
@@ -238,6 +239,21 @@ void winner_poll(const pl::State& s, float w) {
     }
 }
 
+/* The next-game poll's buttons. In the party popup they sit in its pinned footer row (after Close), so a short window never scrolls them away. */
+bool g_poll_btns_out = false;
+void next_poll_buttons(const pl::State& s, bool same_line) {
+    const bool host = partyui::is_host();
+    const pl::Tally t = pl::tally(s);
+    if (same_line) ImGui::SameLine(0, sp(1.f));
+    if (pbutton("Another game...##more", ImVec2(0, sp(same_line ? 5.5f : 4.75f)))) { to_room_page(); room_picker_open(PickMode::Vote); }
+    if (host) {
+        ImGui::SameLine(0, sp(1.f));
+        if (pbutton("Pick now##closevote", ImVec2(0, sp(same_line ? 5.5f : 4.75f)), true, t.voters > 0)) partyui::close_vote();
+        ImGui::SameLine(0, sp(1.f));
+        if (pbutton("Cancel the vote##cancel", ImVec2(0, sp(same_line ? 5.5f : 4.75f)))) { partyui::close_vote(); }
+    }
+}
+
 /* "Vote for the next game": a tile per option with its tally. */
 void next_poll(const pl::State& s, float w, bool big) {
     const bool host = partyui::is_host();
@@ -250,7 +266,7 @@ void next_poll(const pl::State& s, float w, bool big) {
     const std::string mine = partyui::my_vote();
     const float gap = sp(1.25f), tmin = big ? sp(17.f) : sp(14.f);
     const int cols = std::max(1, std::min((int)s.cand.size() + 0, (int)((w + gap) / (tmin + gap))));
-    const float tw = (w - gap * (cols - 1)) / cols, th = tw * 1.22f;
+    const float tw = (w - gap * (cols - 1)) / cols, th = tw * (ImGui::GetIO().DisplaySize.y < 900.f ? 0.8f : 1.22f);   // short windows: squatter covers, so the poll and its buttons fit without scrolling
     for (size_t i = 0; i < s.cand.size(); ++i) {
         const std::string& id = s.cand[i];
         int votes = 0;
@@ -288,13 +304,7 @@ void next_poll(const pl::State& s, float w, bool big) {
     ImGui::Dummy(ImVec2(0, sp(0.25f)));
     ImGui::TextDisabled("%d of %d voted", t.voters, (int)partyui::seats().size());
     ImGui::Dummy(ImVec2(0, sp(0.25f)));
-    if (pbutton("Another game...##more", ImVec2(0, sp(4.75f)))) { to_room_page(); room_picker_open(PickMode::Vote); }
-    if (host) {
-        ImGui::SameLine(0, sp(1.f));
-        if (pbutton("Pick now##closevote", ImVec2(0, sp(4.75f)), true, t.voters > 0)) partyui::close_vote();
-        ImGui::SameLine(0, sp(1.f));
-        if (pbutton("Cancel the vote##cancel", ImVec2(0, sp(4.75f)))) { partyui::close_vote(); }
-    }
+    if (!g_poll_btns_out) next_poll_buttons(s, false);
 }
 
 /* ------------------------------------------------------------------ next-up card, seats, host buttons */
@@ -1044,10 +1054,19 @@ void overlay_modal() {
     if (!open) return;
     if (!g_headless && game_active()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }   // a game started: step aside (not dismissed - it comes back after the game)
     if (ui::modal_back()) { partyui::overlay_close(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    const float inner = ImGui::GetContentRegionAvail().x;
-    if (!shows || !overlay_body(s, inner)) { partyui::overlay_close(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    bool body_ok = shows;
+    if (body_ok) {   // the card scrolls when the window is short; the Close / End buttons below it stay on screen (a guest can always close it)
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, std::max(sp(20.f), io.DisplaySize.y * 0.94f - sp(5.f) - sp(11.5f))));
+        ImGui::BeginChild("##ovbody", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened);
+        g_poll_btns_out = true;
+        body_ok = overlay_body(s, ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize);
+        g_poll_btns_out = false;
+        ImGui::EndChild();
+    }
+    if (!body_ok) { partyui::overlay_close(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (pbutton("Close##closeov", ImVec2(sp(14.f), sp(5.5f)))) { partyui::overlay_close(); ImGui::CloseCurrentPopup(); }
+    if (s.poll == "next" && (s.phase == pl::Phase::Off || s.phase == pl::Phase::Intermission)) next_poll_buttons(s, true);
     if (partyui::is_host() && s.phase == pl::Phase::Done) {
         ImGui::SameLine(0, sp(1.f));
         if (pbutton("Close the party##closeparty", ImVec2(0, sp(5.5f)), true)) { partyui::overlay_close(); partyui::turn_off(); ImGui::CloseCurrentPopup(); }
