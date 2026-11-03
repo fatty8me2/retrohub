@@ -491,7 +491,8 @@ std::vector<std::string> retrorun_args(System s, const Values& v) {
         opt("beetle_psx_internal_resolution", get(v, "ps1.res"));
         opt("beetle_psx_widescreen_hack", get(v, "ps1.widescreen") == "true" ? "enabled" : "disabled");
         if (get(v, "ps1.memcard2") == "true") opt("beetle_psx_enable_memcard1", "enabled");
-        if (get(v, "ps1.multitap") == "on") opt("beetle_psx_enable_multitap_port1", "enabled");   // "auto" is resolved by the launcher (pad count)
+        if (get(v, "ps1.multitap") == "on") opt("beetle_psx_enable_multitap_port1", "enabled");   // "auto": retrorun switches it on from the third controller / port
+        else if (get(v, "ps1.multitap") == "off") r.push_back("--no-multitap");                  // the user turned it off: players stay on the two console ports
     }
     return r;
 }

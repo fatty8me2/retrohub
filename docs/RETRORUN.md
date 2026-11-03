@@ -18,7 +18,7 @@ retrorun --core <x_libretro.dll> --rom <file> --save-dir <battery dir> --state-d
 
 - `--net/--room/--slot/--players/--ports/--delay` mean the same as for `n64run` (ports map RetroPad ports 0-3 to owning slots,
   `-1` = absent). Default delay is `auto` (the RTT-negotiated delay and the adaptive catch-up described in `docs/ARCHITECTURE.md`). With `--rollback`, `auto` starts at 1 frame and adapts; `--no-rb-delay-adapt` pins it.
-- Offline, `--players N` (without `--ports`) makes the first N ports local; controller *i* drives the *i*-th local port, the keyboard drives the first.
+- Offline, `--players N` (without `--ports`) makes the first N ports local; controller *i* drives the *i*-th local port, the keyboard drives the first. Without `--players` (the hub never passes it) a windowed run makes one port local per connected controller (at least 1, at most 4 on NES / SNES / PS1, 1 elsewhere; see "Players per system"). Headless runs stay at 1 unless `--players` says otherwise.
 - `--headless` opens no window and no audio device and runs `--frames` frames (default 600) as fast as possible.
   `--screenshot` writes the last frame (PNG, or BMP if the name ends in `.bmp`).
 - `--selftest` (headless): runs `--frames` frames, then checks `serialize -> unserialize -> next-frame state hash` identical, in memory and
@@ -236,7 +236,65 @@ A live player passes a controller port to another player of a rollback game (NES
 
 
 ## NES / SNES online
-Rollback (--rollback) via Nestopia UE / Snes9x, verified with --synctest 8/16; qa\nes_snes_online.ps1 runs direct, relay, 3-4 player (SNES multitap on port 2), guest drop and host leave. NES 3-4 players: retrorun sets nestopia_select_adapter=ntsc (Four Score), but the test ROM does not see pads 3-4 yet, so NES 3-4P is unverified. retro_init now runs before the set_* callbacks (RetroArch order).
+Rollback (--rollback) via Nestopia UE / Snes9x, verified with --synctest 8/16; qa\nes_snes_online.ps1 runs direct, relay, 3-4 player (SNES multitap on port 2), guest drop and host leave. NES 3-4 players: retrorun sets nestopia_select_adapter=ntsc (Four Score) AND plugs a Gamepad into libretro ports 2-3 (see "Players per system" below: before v1.31.8 pads 3-4 never reached the game). retro_init now runs before the set_* callbacks (RetroArch order).
+
+## Players per system (audit, v1.31.8)
+
+Rule that came out of the PS2 bug (LRPS2 asked for every port but only port 0 had a pad plugged in): **"the core called input_state for port N" proves nothing.** A pad reaches the game only if the
+frontend plugged a device into that port (`retro_set_controller_port_device`) or the core defaults to one. The per-system rules live in one pure header, `src/retrorun/port_plan.h` (unit test
+`retrorun_port_plan_test`), and every PC of an online room derives the same plan from the same `--ports` string. The core's own port/device list is logged at start as `core ports: port N takes [...]`.
+
+| System | Core | Device per port | 3-4 players | Local (several pads on one PC) | Online |
+|---|---|---|---|---|---|
+| NES | Nestopia UE | ports 0-1 "Auto" work as they are; ports 2-3 are **unplugged until the frontend sets Gamepad `0x101`** | `nestopia_select_adapter=ntsc` (Four Score; `famicom` = the Japanese 4-player adapter, not used) + Gamepad on ports 2-3, from the third owned port | one local port per connected pad (cap 4) | rollback + lockstep, 2-4 PCs, 2 PCs x 2 pads |
+| SNES | snes9x | Joypad on ports 0-1 (default) | multitap = device `0x101` on libretro port 1 (controller port 2); libretro ports 2-3 are then pads 3-4. The tap has 4 slots (pads 2-5): a 5th player is impossible because the lockstep/rollback engines carry 4 ports | same (cap 4) | same |
+| PS1 | Beetle PSX (stock / RetroHub rollback build) | DualShock `0x205` on all 4 ports | `beetle_psx_enable_multitap_port1=enabled` from the third owned port (libretro ports 0-3 = the tap's slots A-D; console port 2's pad would be port 4, unused) | same (cap 4; `--no-multitap` = the "Multitap: off" setting keeps 2) | same |
+| PS2 | LRPS2 8f1d15f | DualShock 2 `0x1`, **ports 1+ default to "None"** | `pcsx2_multitap=port 1` when the room has 3+ PCs **or any pad on port 3-4** (a PC with two pads); frontend ports 0-3 = the tap's slots, port 4 (console port 2) is unreachable then | not retrorun (PCSX2 standalone, `hub/pcsx2.cpp`) | lockstep, 2-4 PCs, 2 PCs x 2 pads |
+| GB / GBC | Gambatte, SameBoy, SameBoy (rollback) | one pad (port 0) | none; the link cable runs two Game Boys in one SameBoy: port 0 -> console 1, port 1 -> console 2 | n/a (one pad); `--link --players 2` drives both consoles | link cable rooms (2) |
+| GBA | mGBA, `mgba_link` | one pad (port 0) | none; `mgba_link` builds 2 (up to 4) consoles, port k -> console k | n/a | link cable rooms (2) |
+| NDS | melonDS | the core declares ONE port ("Nintendo DS") | none: Download Play / Union Room is the DS's own wireless between emulator instances (`--ds-link`, one instance per player, each with its own pad on port 0) | one pad | wireless only |
+
+What was wrong, and is fixed (each with a behavioural proof, see below):
+1. **NES players 3-4 were dead online.** Nestopia leaves libretro ports 2-3 unplugged even with the Four Score adapter on; `retro_set_controller_port_device(2|3, 0x101)` plugs them. (The old note "the test ROM does not see pads 3-4 yet" was this bug, not the ROM.)
+2. **Local multiplayer on NES / SNES / PS1 only ever drove pad 1.** The hub never passes `--players` for an offline retrorun launch, and retrorun made exactly one port local, so a second, third or fourth controller did nothing (the SNES multitap
+   auto-detect counted joysticks but there was no port for them). Offline without `--players`, retrorun now drives one port per connected controller (`offline_players` in `port_plan.h`: NES/SNES/PS1 up to 4, one for the one-pad systems;
+   the keyboard shares port 0 with pad 1). Pads plugged in after launch are not picked up (same as n64run).
+3. **PS2 rooms of 2 PCs with 3-4 pads in total** (`--ports 0,0,1,1`) had no multitap (the rule was "3+ PCs"); the rule is now "any pad on port 3 or 4".
+4. **NES/SNES room launches passed the `retro` controller profile**, which retrorun refuses for those systems (it only accepts `nes` / `snes`), so online NES/SNES used the built-in mapping instead of the player's own.
+5. The PS1 "Multitap: off" setting was ignored (now `--no-multitap`); with "auto" retrorun itself switches the tap on from the third port instead of relying on the hub.
+6. Drop-in was advertised in N64 rooms started from the match picker (every port's fighter is fixed there, a joiner would control nothing).
+
+Behavioural proof, `qa\players_input_check.ps1` (headless, muted, local worker only): per row, one run with scripted/fuzzed input on exactly ONE port (`RETRORUN_FUZZ_PORTS` / `N64RUN_TEST_PORTS` = port mask) against a run with no input; the end state (system RAM dump + video/audio hash;
+RDRAM for N64) must differ for every port, and two identical runs must agree (otherwise the row is reported NONDET). Online: N peers, peer s owns port s, run A = every peer sends input (twice, must be identical and equal on all peers), run B_k = peer k stays silent: B_k must differ from A on every PC.
+The test programs read every pad into RAM every frame (netplay ROMs for NES/SNES, the 4-pad SIO0 homebrew for PS1); the PS2 row runs Digimon Rumble Arena 2 (attract mode: the pad state is in EE RAM), the link rows Pokemon Red / Ruby, N64 uses the games' own OSContPad copy in RDRAM.
+Negative control: before the fix, NES ports 2-3 gave RAM identical to "no input" (and PS2 with `RETRORUN_PS2_NOPLUG=1` still does).
+`RETRORUN_SET_DEVICES=port:dev,...` plugs devices by hand for such experiments; `RETRORUN_QA_PADS=N` (with `RETROHUB_QA=1`) makes a run without `--players` believe N controllers are connected (the hub-style launch test).
+
+Results (2026-11-02, this PC, local worker; every row: stable baseline, every port changes the game):
+
+| Row | Offline (pads on one PC) | Online (each PC owns one port) | Online, 2 PCs x 2 pads (`--ports 0,0,1,1`) |
+|---|---|---|---|
+| NES (Four Score) | x4 pass; hub-style 4 pads pass | rollback x2 x3 x4, lockstep x2 pass | rollback pass |
+| SNES (multitap) | x4 pass; hub-style pass | rollback x2 x3 x4, lockstep x2 pass | rollback pass |
+| PS1 (Beetle, multitap) | x4 pass; hub-style pass | rollback x2 x3 x4, lockstep x2 pass | rollback pass |
+| PS2 (LRPS2, multitap) | x4 pass | lockstep x2 x3 x4 pass | lockstep pass |
+| GB/GBC link (SameBoy x2) | x2 pass | rollback pass; `qa\link_trade_gb.ps1` (real Red trade, parties swapped) pass | n/a |
+| GBA link (mGBA x2) | x2 pass | rollback pass | n/a |
+| GB / GBA / NDS single | port 0 pass (NDS: the core has one port) | n/a (NDS wireless: `qa\ds_link.ps1` 2 players pass) | n/a |
+| N64 Smash 64 | x2 x3 x4 pass | lockstep x2 x3 x4 pass | n/a |
+| N64 Mario Kart 64 | all ports change the game, but its offline RDRAM is not reproducible between identical runs (reported NONDET, not a port problem) | lockstep x2 x3 x4 pass | n/a |
+| N64 drop-in (`qa\n64_dropin.ps1`) | | basic: a joiner into port 2 plays on all 3 PCs; refuse: two joiners (ports 2 and 3), hashes agree, the 5th is refused | |
+
+Other QA run on the final build: `ctest -LE online` (121 tests, one flaky `pack_install_e2e` that passed on rerun), `qa\nes_snes_online.ps1` (all pass except the two "host leaves" runs: the guest exits 4 instead of 8 on a local worker; identical on the v1.31.7 build, so not part of this change),
+`qa\ps1_online.ps1 -Scenarios quick`, `qa\dropin.ps1` (SNES multitap join), `qa\ds_link.ps1`. `qa\retrorun_gbalink.ps1` desyncs in lockstep with `mgba_link` on v1.31.7 as well (the hub runs GBA link under `--rollback`; the players check covers that mode).
+
+N64 (`n64run`, mupen64plus), read and tested: the input plugin reports `Present` for every owned port and every drop-in reserved port (all four in drop-in rooms, so a game that polls controller status only at boot sees them), `Type` standard, a Controller Pak
+on every owned port when enabled (offline always; online only with the host's shared save, then identical on all PCs), a Rumble Pak instead offline when the profile asks. Offline the port count is the number of connected pads (1-4; the hub passes no `--ports`).
+Online the packet carries all four ports. One PC can own at most 2 ports through the hub (`build_ports` / `locals_of`), so 3-4 players online need 2-4 PCs. Known gaps: pads plugged in after launch get no port; `--test-input file:` gives every port the same word.
+QA hooks: `N64RUN_TEST_PORTS=<mask>` (with `RETROHUB_QA=1`) limits the scripted input to some ports, `N64RUN_QA_NODITHER=1` turns GLideN64's RDRAM dithering off for offline comparisons (online it is always off).
+
+Not verified (no hardware / no suitable game on this PC): a human playing a 3-4 player game with real pads; the Famicom 4-player adapter (`nestopia_select_adapter=famicom`); a 5th SNES player (the engines carry 4 ports); real NES games that read the Four Score (only the homebrew test ROM did);
+DS Download Play / Union Room inside a game (needs a save in a Pokemon Center; the wireless transport itself passes `qa\ds_link.ps1`); hot-plugging pads; a stock (non-RetroHub) Beetle build; 4 PCs over the internet.
 
 ## Screen filters and bezels (`present_fx.cpp`)
 

@@ -4,8 +4,9 @@
  * Assumption: the core calls GetKeys(port) once per poll for each Present port, in port order
  * (mupen64plus 2.6.0 joybus: controller_read_buttons -> input.get_input per channel). The lockstep
  * sample index advances on the call for the lowest present port; other ports reuse that sample.
- * Controller paks are disabled (Plugin = PLUGIN_NONE), so ControllerCommand/ReadController (raw
- * mode only) are never used. */
+ * Controller paks (mempak.h): a Controller Pak (or, offline, a Rumble Pak) is attached to every OWNED port when enabled, PLUGIN_NONE otherwise
+ * (online without --share-host-save); a port is Present when somebody owns it or it is reserved for a drop-in friend. ControllerCommand carries
+ * the rumble motor only; ReadController (raw mode) is never used. QA: qa\players_input_check.ps1 proves every port reaches the game. */
 
 #include <windows.h>
 
