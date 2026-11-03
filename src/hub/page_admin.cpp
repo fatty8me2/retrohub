@@ -126,6 +126,7 @@ void badge_pills(const AdminAccount& a) {
     auto pill = [&](const char* t, ImU32 bg) { x += ui::pill_at(dl, ImVec2(x, p.y), t, bg, IM_COL32_WHITE, ui::F.cap) + sp(0.5f); };
     if (a.test) pill("TEST", ui::PANEL3);
     if (a.unapplied) pill("NOT APPLIED YET", ui::WARN);
+    else if (a.unreachable) pill("UNREACHABLE", ui::WARN);   // enforced at their next hello
     if (a.blocked()) pill(a.status == "denied" ? "DENIED" : "BANNED", ui::BAD);
     else if (a.pending()) pill("PENDING", ui::WARN);
     if (a.friend_of_you) pill("FRIEND", ui::ACCENT);
