@@ -43,6 +43,13 @@ struct State {
     bool jump_top = false;        // letter jumps put the target at the top; others only reveal it
     std::string focus_key;        // pad focus lands on this item when it is submitted
     int traced = -2;
+    bool jump_center = false;     // reveal puts the target mid-viewport (entering the view / switching layout)
+    bool reveal = false;          // keep the selected game in view while the library is still loading / re-sorting
+    uint64_t reveal_sig = ~0ull;
+    int reveal_quiet = 0;
+    std::string reveal_key;
+    int top_pos = -1;             // flat position at the top of the viewport (the strip highlights its letter)
+    std::string top_title;        // its section title (List header shows it)
     float scroll_abs = -1.f;       // paging: the exact scroll to apply on the next draw
     LibLayout last_layout = LibLayout::Grid;
     bool layout_seen = false;
@@ -368,6 +375,7 @@ void draw_list_row(int idx, float w, float h, const hubui::ListCols& C, bool odd
 /* Sortable column headers above the list (they sit outside the scrolling child, so they stay put). */
 void draw_list_header(float x_left, float inner_w) {
     const hubui::ListCols C = hubui::list_columns(inner_w, sp(1.f));
+    const std::string group_now = G.top_title;
     bool desc = false;
     const ListCol act = effective_col(&desc);
     const float h = sp(3.25f);
@@ -396,6 +404,10 @@ void draw_list_header(float x_left, float inner_w) {
             float ax = tx + aw + sp(1.f), ay = o.y + h * 0.5f, s = sp(0.5f);
             if (desc) dl->AddTriangleFilled(ImVec2(ax - s, ay - s * 0.6f), ImVec2(ax + s, ay - s * 0.6f), ImVec2(ax, ay + s * 0.8f), ui::ACCENT);
             else dl->AddTriangleFilled(ImVec2(ax - s, ay + s * 0.6f), ImVec2(ax + s, ay + s * 0.6f), ImVec2(ax, ay - s * 0.8f), ui::ACCENT);
+        }
+        if (hd.c == ListCol::Title && !group_now.empty()) {   // which console / genre group the top row belongs to
+            float aw = f->CalcTextSizeA(f->FontSize * 0.85f, FLT_MAX, 0.f, nm).x;
+            dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + aw + sp(3.f), o.y + (h - ui::F.cap->FontSize) * 0.5f), ui::TEXT3, group_now.c_str());
         }
         if (foc) ui::focus_ring(dl, p0, p1, sp(0.75f));
         if (hov) ImGui::SetTooltip("Sort by %s", nm);
@@ -449,12 +461,27 @@ void draw_virtual(Disp& D, LibLayout lay) {
         if (G.jump_top) {
             int rr = (r > 0 && L.rows[r - 1].kind == 0) ? r - 1 : r;
             scroll = std::max(0.f, base_y + L.rows[rr].y - sp(0.5f));
+        } else if (G.jump_center) {
+            scroll = std::max(0.f, base_y + L.rows[r].y - view_h * 0.4f);
         } else {
             scroll = hubui::scroll_to_row(L, r, scroll - base_y, view_h - base_y, sp(1.f), 1e9f) + base_y;
             scroll = std::max(0.f, scroll);
         }
         ImGui::SetScrollY(scroll);
         G.jump_pos = -1;
+        G.jump_center = false;
+    }
+    {   // what is at the top of the viewport now (strip highlight, List header group name)
+        int tf = -1, tl = -1;
+        const float ty = std::max(0.f, scroll - base_y) + 1.f;
+        hubui::rows_in_range(L, ty, ty, &tf, &tl);
+        G.top_pos = -1;
+        if (tf >= 0) {
+            if (L.rows[tf].kind == 0 && tf + 1 < (int)L.rows.size()) ++tf;
+            if (L.rows[tf].kind == 1 && L.rows[tf].first < (int)D.flat.size()) G.top_pos = L.rows[tf].first;
+        }
+        G.top_title.clear();
+        if (G.top_pos >= 0 && D.sec_head[D.sec_of[G.top_pos]]) G.top_title = D.sec_title[D.sec_of[G.top_pos]];
     }
     int f = -1, l = -1;
     hubui::rows_in_range(L, scroll - base_y - view_h, scroll - base_y + view_h * 2.f, &f, &l);   // one page of nav stubs each way (PageUp/PageDown, fast scrolling)
@@ -561,8 +588,14 @@ void draw_showcase(Disp& D) {
     dl->AddRect(org, org + sz, ui::HAIRLINE, rad, 0, 1.f);
 
     // carousel geometry
-    const float fh = std::max(sp(14.f), std::min(H * 0.43f, W * 0.30f)), fw = fh * 1.08f;
-    const float cx = org.x + W * 0.5f, cy = org.y + H * 0.40f;
+    // bottom up: hints, pills, title; the cover gets what is left above them
+    ImFont* tfont = ui::F.title ? ui::F.title : ui::F.h2;
+    const float foot_y = org.y + H - sp(3.f);
+    const float pills_y = foot_y - sp(0.75f) - (ui::F.cap->FontSize + sp(1.f)) - sp(0.5f);
+    const float title_y = pills_y - tfont->FontSize * 1.15f - sp(0.5f);
+    const float cover_room = std::max(sp(8.f), title_y - org.y - sp(3.f));
+    const float fh = std::max(sp(8.f), std::min(cover_room * 0.96f, W * 0.30f)), fw = fh * 1.08f;
+    const float cx = org.x + W * 0.5f, cy = org.y + sp(1.5f) + cover_room * 0.5f;
     struct Slot { int i; ImVec2 p0, p1; float d, alpha, dim; };
     std::vector<Slot> slots;
     const int lo = std::max(0, (int)std::floor(pos) - 7), hi = std::min(n - 1, (int)std::ceil(pos) + 7);
@@ -635,12 +668,12 @@ void draw_showcase(Disp& D) {
     {
         const int idx = fidx;
         const bool ghost = is_ghost(idx);
-        float y = cy + fh * 0.5f + fh * 0.22f + sp(2.25f);
-        ImFont* tf = ui::F.title ? ui::F.title : ui::F.h2;
+        float y = title_y;
+        ImFont* tf = tfont;
         std::string title = ui::ellipsize(tf, tf->FontSize, item_title(idx), W * 0.8f);
         ImVec2 ts = tf->CalcTextSizeA(tf->FontSize, FLT_MAX, 0.f, title.c_str());
         ui::text_shadowed(dl, tf, tf->FontSize, ImVec2(cx - ts.x * 0.5f, y), IM_COL32_WHITE, title.c_str());
-        y += tf->FontSize * 1.15f + sp(0.75f);
+        y = pills_y;
         // meta pills, centred
         std::vector<std::pair<std::string, ImU32>> pills;
         ImU32 a, b;
@@ -676,7 +709,7 @@ void draw_showcase(Disp& D) {
         char cnt[48];
         std::snprintf(cnt, sizeof cnt, "%d / %d", G.sc_focus + 1, n);
         float cw = cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, cnt).x;
-        float fy = org.y + H - sp(3.f);
+        float fy = foot_y;
         dl->AddText(cf, cf->FontSize, ImVec2(org.x + W - sp(2.f) - cw, fy + sp(0.25f)), ui::TEXT2, cnt);
         const bool pad = A.pad_mode;
         float w1 = ui::key_hint_width(pad, "A", "Enter", "Open"), w2 = ui::key_hint_width(pad, "X", "F", "Favorite"), w3 = ui::key_hint_width(pad, "RS", "Ctrl+Dn", D.letter_mode ? "Next letter" : "Next group");
@@ -704,8 +737,9 @@ void page_move(Disp& D, int dir, float view_h) {
     const int col = cur - cr.first;
     const float yt = cr.y + (float)dir * view_h * 0.85f;
     int f = -1, l = -1;
-    hubui::rows_in_range(L, yt, yt, &f, &l);
+    hubui::rows_in_range(L, yt, yt + cr.h, &f, &l);   // a point can fall in the gap between rows, so ask for a row's worth
     int r = f;
+    if (r > 0 && L.rows[r - 1].kind == 1 && std::fabs(L.rows[r - 1].y - yt) < std::fabs(L.rows[r].y - yt)) --r;   // the nearer of the two rows
     if (r < 0) r = dir > 0 ? (int)L.rows.size() - 1 : 0;
     if (L.rows[r].kind == 0) r = std::min((int)L.rows.size() - 1, r + 1);
     if (L.rows[r].kind != 1) return;
@@ -733,7 +767,7 @@ void draw_strip(Disp& D, float h, float w, bool in_nav_window) {
     dl->AddRectFilled(p0, p1, ui::with_alpha(ui::PANEL, 0.85f), w * 0.5f);
     dl->AddRect(p0, p1, ui::HAIRLINE, w * 0.5f, 0, 1.f);
     ImFont* f = ui::F.cap;
-    const int cur_pos = selected_pos(D);
+    const int cur_pos = lib_layout() == LibLayout::Showcase ? G.sc_focus : (G.top_pos >= 0 ? G.top_pos : selected_pos(D));
     const int cr = cur_pos >= 0 ? hubui::run_of(D.runs, cur_pos) : -1;
     const std::string cur_label = cr >= 0 ? D.runs[cr].label : std::string();
     int mouse_slot = -1;
@@ -851,9 +885,18 @@ void lib_body(float bar_h) {
     const LibLayout lay = lib_layout();
     Disp& D = build_disp(lay);
     if (!G.layout_seen || G.last_layout != lay) { G.layout_seen = true; G.last_layout = lay; G.lsig = ~0ull; }
-    if (A.nav_seed && G.jump_pos < 0) {   // entering All Games / switching layout: the selected game comes into view so the pad focus lands on it
-        int p = selected_pos(D);
-        if (p >= 0) { G.jump_pos = p; G.jump_top = false; G.sc_init = false; }
+    if (A.nav_seed) { G.reveal = true; G.reveal_sig = ~0ull; G.reveal_quiet = 0; G.reveal_key = selected_key(); }
+    if (G.reveal) {   /* entering All Games / switching layout: bring the selected game into view (so the pad focus lands on it), and again whenever
+                       * the list changes under us (scan, art, friends loading) until the user scrolls or moves the selection. */
+        ImGuiIO& rio = ImGui::GetIO();
+        if (rio.MouseWheel != 0.f || ImGui::IsMouseClicked(0) || A.grid_scroll_top) G.reveal = false;
+        else if (D.sig != G.reveal_sig) {   // first frame, or the list changed: (re)reveal; the selection may have been settled by ensure_selection meanwhile
+            int p = selected_pos(D);
+            if (p >= 0) { G.jump_pos = p; G.jump_top = false; G.jump_center = true; G.sc_init = false; }
+            G.reveal_sig = D.sig;
+            G.reveal_quiet = 0;
+            G.reveal_key = selected_key();
+        } else if (selected_key() != G.reveal_key || ++G.reveal_quiet > 60) G.reveal = false;
     }
     const bool strip_on = D.marks.size() >= 2 && D.flat.size() >= 10;
     float strip_w = strip_on ? sp(3.f) : 0.f;
