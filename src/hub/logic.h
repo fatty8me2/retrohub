@@ -58,7 +58,7 @@ struct Settings {
     bool notify_migrated = true;       // one-time migration flag: settings files without it get notify_in_game forced off once
     bool notif_sound = true;           // play a sound for invites / messages (setting only for now)
     std::string watch_online;          // friends with "Notify me when they come online" on: comma separated uids (at most 50), none by default
-    bool menu_sounds = true;           // soft UI sounds in the hub (Settings > General)
+    bool menu_sounds = false;          // soft UI sounds in the hub (Settings > General); off by default
     int menu_volume = 30;              // menu sound volume 0..100 (low by default)
     bool menu_music = false;           // quiet ambient menu loop (OFF by default)
     bool attract_mode = true;          // Home hero turns into a slideshow of your own screenshots / save-state pictures after ~60 s idle (attract.cpp)
