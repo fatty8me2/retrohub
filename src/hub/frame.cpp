@@ -233,7 +233,7 @@ void global_input() {
             A.page = Page::Library;
         }
     }
-    if (A.page == Page::Library && (!A.lib.empty() || !A.ghosts.empty()) && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false)) cycle_sort(1);
+    if (A.page == Page::Library && (!A.lib.empty() || !A.ghosts.empty()) && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false) && A.view != LibView::All) cycle_sort(1);   // All Games: RT pages (main.cpp), the Sort chip cycles the order
     if (A.page == Page::Library && A.sel_game.empty() && find_ghost(A.sel_ghost) &&
         (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl))) A.show_ghost = true;
     if (A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {

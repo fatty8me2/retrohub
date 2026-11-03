@@ -1,5 +1,6 @@
 #include <sstream>
 #include "app.h"
+#include "libview_ui.h"
 #include <cstring>
 
 /* ============================ main ============================ */
@@ -40,6 +41,7 @@ ImGuiKey shot_key(const std::string& n) {
 
 /* Screenshot aids that seed UI state before the first frame (friends / room / emulator dialogs). Never any network. */
 void shot_init_ui() {
+    lib_shot_seed();   // HUB_SHOT_LIBVIEW=grid|list|compact|showcase (+ HUB_SHOT_LIBCOL=last:desc)
     if (const char* sq = std::getenv("HUB_SHOT_SEARCH")) { std::snprintf(A.search_buf, sizeof A.search_buf, "%s", sq); A.vis_dirty = true; }   // screenshot aid: preset the library search text
     if (const char* lf = std::getenv("HUB_SHOT_LIBFILTER")) {   // screenshot aid: "fav", "group" and "genre=Action" (';'-separated) seed the All Games filters
         std::stringstream fs(lf);
@@ -184,6 +186,8 @@ static ImGuiKey pad_token_key(const std::string& n) {
     if (n == "rt") return ImGuiKey_GamepadR2;
     if (n == "start") return ImGuiKey_GamepadStart;
     if (n == "back" || n == "view") return ImGuiKey_GamepadBack;
+    if (n == "rsdown") return ImGuiKey_GamepadRStickDown;   // library: next letter / console group
+    if (n == "rsup") return ImGuiKey_GamepadRStickUp;
     if (n == "pgdn") return ImGuiKey_PageDown;   // raw keys, to test ImGui's own paging without the LT/RT conversion
     if (n == "pgup") return ImGuiKey_PageUp;
     return ImGuiKey_None;

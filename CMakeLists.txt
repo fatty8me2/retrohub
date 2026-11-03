@@ -158,6 +158,7 @@ add_test(NAME hubsaves_engine_test COMMAND hubsaves_engine_test)   # cloud saves
 add_test(NAME hub_logic_test COMMAND hub_logic_test)
 add_test(NAME hub_homefun_test COMMAND hub_homefun_test)               # attract mode idle/slideshow, Surprise-me weighting + reel, Wrapped aggregation
 add_test(NAME hub_states_test COMMAND hub_states_test)               # save-state slot listing, resume wording, library sort
+add_test(NAME hub_libview_test COMMAND hub_libview_test)               # All Games layouts: A-Z jump runs, list column sort keys, virtual rows, settings round-trip
 add_test(NAME hub_customize_test COMMAND hub_customize_test)   # custom shelves ops, Home composition, renames, rename-aware search
 add_test(NAME hub_osk_test COMMAND hub_osk_test)                        # OSK key layout / edit logic / folder browser (scratch dirs)
 add_test(NAME hub_convenience_test COMMAND hub_convenience_test)   # Discord frames + opt-in gate, diagnostics exclusion, NAT verdict (loopback STUN), pad glyphs, palette ranking
