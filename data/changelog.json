@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.31.7",
+      "date": "2026-11-02",
+      "title": "PS2 online: everyone can play",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "PS2 online: only player 1's controller worked in game; players 2-4 couldn't join (for example at Gauntlet's character select)"
+      ]
+    },
+    {
       "version": "1.31.6",
       "date": "2026-11-02",
       "title": "PS2 BIOS found in more places",
