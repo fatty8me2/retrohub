@@ -224,8 +224,8 @@ void global_input() {
     if (dir && A.page == Page::Settings) {   // Settings owns LB/RB for its tabs; past either end it carries on to the neighbouring page
         int nt, pg = hubui::settings_tab_step(A.st.settings_tab, dir, &nt);
         if (pg == 0) { A.st.settings_tab = nt; A.page_focus_req = true; mark_dirty(); }
-        else A.page = static_cast<Page>((6 + (int)A.page + pg) % 6);
-    } else if (dir) A.page = static_cast<Page>((6 + (int)A.page + dir) % 6);
+        else A.page = static_cast<Page>((7 + (int)A.page + pg) % 7);
+    } else if (dir) A.page = static_cast<Page>((7 + (int)A.page + dir) % 7);
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
         if (A.page == Page::Library) {
             if (A.view == LibView::All) { A.view = LibView::Home; A.search_buf[0] = 0; A.sys_filter.clear(); A.vis_dirty = true; }
@@ -338,6 +338,7 @@ void draw_frame() {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, sp(0.5f)));
     ImU32 room_badge = A.in_room ? (A.lobby.connected() ? ui::GOOD : ui::WARN) : 0;
     if (nav_item(Page::Library, "Library", ui::Icon::Home, iw, expand, 0)) A.page = Page::Library;
+    if (nav_item(Page::Discover, "Discover", ui::Icon::Star, iw, expand, 0)) A.page = Page::Discover;
     if (nav_item(Page::Online, A.in_room ? "Play Online  (in room)" : "Play Online", ui::Icon::Globe, iw, expand, room_badge)) A.page = Page::Online;
     const int cloud_conflicts = cloud_ui_conflict_count();
     {
@@ -437,6 +438,7 @@ void draw_frame() {
     }
     switch (A.page) {
         case Page::Library: page_library(); break;
+        case Page::Discover: page_discover(); break;
         case Page::Online: page_online(); break;
         case Page::Saves: page_saves(); break;
         case Page::Controllers: page_controllers(); break;
