@@ -103,6 +103,48 @@ int main() {
     CHECK(offline_players(Sys::SNES, 4, true) == 2 && offline_players(Sys::PS1, 3, true) == 2);
     CHECK(offline_players(Sys::GBA, 3, false) == 1 && offline_players(Sys::GB, 2, false) == 1 && offline_players(Sys::NDS, 4, false) == 1);
 
+    /* ---- the game's seat cap (--max-local): never more local players than seats, so no adapter for a 1-2 player game ---- */
+    CHECK(offline_players(Sys::SNES, 4, false, 2) == 2 && offline_players(Sys::NES, 4, false, 1) == 1 && offline_players(Sys::PS1, 3, false, 2) == 2);
+    CHECK(offline_players(Sys::SNES, 4, false, 4) == 4 && offline_players(Sys::SNES, 2, false, 4) == 2 && offline_players(Sys::NES, 3, false, 3) == 3);
+    CHECK(offline_players(Sys::SNES, 4, false, 0) == 4);   // 0 = no cap given (a launcher that predates --max-local)
+    {   // the adapter follows the players actually driven: 4 pads on a 2-seat game -> 2 players -> no adapter; on a 4-seat game -> adapter
+        for (Sys s : {Sys::NES, Sys::SNES, Sys::PS1}) {
+            int n = offline_players(s, 4, false, 2);
+            PortPlanIn p; p.sys = s; p.players = n;
+            for (int i = 0; i < 4; i++) p.owner[i] = i < n ? 0 : -1;
+            CHECK(!plan_ports(p).tap);
+            n = offline_players(s, 4, false, 4);
+            for (int i = 0; i < 4; i++) p.owner[i] = i < n ? 0 : -1;
+            CHECK(plan_ports(p).tap);
+        }
+    }
+    /* ---- ghost pads: virtual / duplicate entries are not players ---- */
+    {
+        auto pad = [](const char* name, const char* guid, const char* serial, unsigned vid = 0, unsigned pid = 0) { PadDesc d; d.name = name; d.guid = guid; d.serial = serial; d.vendor = vid; d.product = pid; return d; };
+        CHECK(count_real_pads({}) == 0);
+        CHECK(count_real_pads({pad("Xbox 360 Controller", "g1", "")}) == 1);
+        CHECK(count_real_pads({pad("Xbox 360 Controller", "g1", ""), pad("Xbox 360 Controller", "g1", "")}) == 2);   // two identical XInput pads (no serial) are two players
+        CHECK(count_real_pads({pad("DualSense", "g2", "AB12"), pad("DualSense", "g2", "AB12")}) == 1);                // one device listed twice
+        CHECK(count_real_pads({pad("DualSense", "g2", "AB12"), pad("DualSense", "g2", "CD34")}) == 2);                // two real DualSenses
+        CHECK(count_real_pads({pad("Xbox 360 Controller", "g1", ""), pad("Steam Virtual Gamepad", "gs", "", 0x28DE, 0x11FF)}) == 1);
+        CHECK(count_real_pads({pad("Xbox 360 Controller", "g1", ""), pad("Xbox 360 Controller", "gx", "", 0x28DE, 0x11FF)}) == 1);   // by VID/PID although it calls itself an Xbox pad
+        CHECK(count_real_pads({pad("Steam Virtual Gamepad", "gs", "", 0x28DE, 0x11FF), pad("Steam Virtual Gamepad", "gs", "", 0x28DE, 0x11FF)}) == 2);   // Steam Input only: they ARE the pads
+        PadDesc sv = pad("Some Pad", "g3", ""); sv.sdl_virtual = true;
+        CHECK(count_real_pads({pad("Xbox 360 Controller", "g1", ""), sv}) == 1);
+        CHECK(ci_contains("Steam VIRTUAL Gamepad", "virtual") && !ci_contains("Xbox", "virtual"));
+        /* 1 real pad + 1 ghost on a 1-player game (cap 1): still one player and no adapter, whatever the pad list says */
+        CHECK(offline_players(Sys::NES, count_real_pads({pad("A", "g", "S1"), pad("A", "g", "S1"), pad("B", "h", "", 0x28DE, 0x11FF)}), false, 1) == 1);
+    }
+    /* ---- the port plan stored with a save state ---- */
+    {
+        PortPlanOut two = plan_ports(in(Sys::SNES, 0, 1, -1, -1, 2)), four = plan_ports(in(Sys::SNES, 0, 1, 2, 3, 4));
+        CHECK(plan_signature(two) != plan_signature(four) && plan_signature(two) == plan_signature(plan_ports(in(Sys::SNES, 0, -1, -1, -1, 1))));   // 1 or 2 players: same plan
+        CHECK(plan_signature(plan_ports(in(Sys::SNES, 0, 1, 2, -1, 3))) == plan_signature(four));   // 3 or 4: same adapter
+        CHECK(plan_signature(four).find("tap=1") != std::string::npos && plan_signature(two).find("tap=0") != std::string::npos);
+        CHECK(plan_signature(plan_ports(in(Sys::NES, 0, 1, -1, -1, 2))) != plan_signature(plan_ports(in(Sys::NES, 0, 1, 2, -1, 3))));
+        CHECK(plan_signature(plan_ports(in(Sys::GBA, 0, -1, -1, -1, 1))) == plan_signature(plan_ports(in(Sys::GBA, 0, 1, 2, 3, 4))));
+    }
+
     if (g_fail) { printf("%d FAILED\n", g_fail); return 1; }
     printf("port_plan_test: all passed\n");
     return 0;

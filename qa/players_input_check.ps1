@@ -112,14 +112,15 @@ function Row-Args($row, [string]$core, [string]$rom, [string]$dir) {
 }
 
 # ---------------------------------------------------------------- offline
-function Run-Offline($row, $core, $rom, [int]$mask, [string]$tag, [bool]$hubStyle = $false) {
+function Run-Offline($row, $core, $rom, [int]$mask, [string]$tag, [bool]$hubStyle = $false, [string[]]$more = @(), [int]$players = 0) {
     $dir = Join-Path $Work ("off_$($row.id)_$tag"); if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }; New-Item -ItemType Directory -Force "$dir\sv", "$dir\st" | Out-Null
     $ram = "$dir\ram.bin"; $log = "$dir\run.log"
     $env:RETRORUN_FUZZ_PORTS = "$mask"; $env:RETRORUN_DUMP_RAM = $ram
     $a = (Row-Args $row $core $rom $dir) + @('--headless', '--frames', $(if ($Frames) { $Frames } else { $row.frames }), '--fuzz-input', '--log', $log)
-    if ($hubStyle) { $env:RETRORUN_QA_PADS = "$($row.players)" } else { $a += @('--players', $row.players) }   # hub style: no --players, N connected pads (the hub never passes --players)
+    if ($hubStyle) { $env:RETRORUN_QA_PADS = "$($row.players)" } else { $a += @('--players', $(if ($players) { $players } else { $row.players })) }   # hub style: no --players, N connected pads (the hub never passes --players)
+    $a += $more
     $p = Start-Process -FilePath $exe -ArgumentList (QArgs $a) -PassThru -WindowStyle Hidden -Wait
-    Remove-Item Env:RETRORUN_FUZZ_PORTS, Env:RETRORUN_DUMP_RAM, Env:RETRORUN_QA_PADS -ErrorAction SilentlyContinue
+    Remove-Item Env:RETRORUN_FUZZ_PORTS, Env:RETRORUN_DUMP_RAM, Env:RETRORUN_QA_PADS, Env:RETRORUN_QA_NOADOPT -ErrorAction SilentlyContinue
     return (Sig-Of $log $ram $row.sig)
 }
 
@@ -147,6 +148,33 @@ function Test-HubStyle($row, $core, $rom) {
     $x = Run-Offline $row $core $rom (1 -shl $last) 'plr' $false
     $ok = ($w -eq $x) -and ($w -ne 'NOFINAL')
     return [pscustomobject]@{ Row = $row.id; Mode = "offline hub-style ($($row.players) pads, no --players)"; Ok = $ok; Nondet = $false; Text = $(if ($ok) { "P$($row.players) (last pad) drives the game exactly like --players $($row.players)" } else { "DIFFERS from --players $($row.players): $w | $x" }) }
+}
+
+# The game's seat cap (hub: --max-local = catalog max_players): 4 connected pads on a 2-seat game -> 2 players, no adapter; port 3 input must do nothing.
+function Test-SeatCap($row, $core, $rom) {
+    $b = Run-Offline $row $core $rom 0 'cap0' $true @('--max-local', '2')
+    $x = Run-Offline $row $core $rom 8 'cap8' $true @('--max-local', '2')
+    $f = Run-Offline $row $core $rom 8 'cap4' $true @('--max-local', '4')
+    $log = Get-Content "$Work\off_$($row.id)_cap0\run.log" -Raw
+    $noTap = ($log -notmatch 'adapter|multitap on|pads 3-4 plugged')
+    $ok = ($b -eq $x) -and ($f -ne $b) -and $noTap
+    return [pscustomobject]@{ Row = $row.id; Mode = 'offline seat cap (4 pads, --max-local 2)'; Ok = $ok; Nondet = $false; Text = $(if ($ok) { '2 seats: pads 3-4 ignored and no adapter; 4 seats: the 4th pad plays' } else { "seat cap not honoured (same=$($b -eq $x) 4seats-differs=$($f -ne $b) noAdapter=$noTap)" }) }
+}
+
+# Save states record the port plan. A state made with the adapter on is resumed with the adapter on (also with 2 pads); a manual load under another plan is refused.
+function Test-StatePlan($row, $core, $rom) {
+    $null = Run-Offline $row $core $rom 0 'sp4' $false @() 4
+    $st = "$Work\off_$($row.id)_sp4\st\auto.state"
+    $plan = Get-Content "$Work\off_$($row.id)_sp4\st\auto.plan" -ErrorAction SilentlyContinue
+    $null = Run-Offline $row $core $rom 0 'sp2' $false @('--load-state', $st) 2
+    $l2 = Get-Content "$Work\off_$($row.id)_sp2\run.log" -Raw
+    $adopt = ($l2 -match 'boot with the port plan of the saved state \(4-player adapter on\)') -and ($l2 -match 'Resumed from saved state')
+    $env:RETRORUN_QA_NOADOPT = '1'
+    $null = Run-Offline $row $core $rom 0 'sp2n' $false @('--load-state', $st) 2
+    $l3 = Get-Content "$Work\off_$($row.id)_sp2n\run.log" -Raw
+    $refused = ($l3 -match 'refused, port plan differs') -and ($l3 -notmatch 'Resumed from saved state')
+    $ok = ($plan -match 'tap=1') -and $adopt -and $refused
+    return [pscustomobject]@{ Row = $row.id; Mode = 'save state port plan'; Ok = $ok; Nondet = $false; Text = "plan file '$plan'; resume adopts the adapter plan: $adopt; mismatching load refused: $refused" }
 }
 # ---------------------------------------------------------------- online (retrorun)
 function Run-Online($row, $core, $rom, [int]$n, [int[]]$masks, [string]$tag, [bool]$rollback, [string]$portsOverride = '') {
@@ -294,7 +322,7 @@ foreach ($row in $rows) {
     if (-not $rom) { Skip $row.id 'any' 'ROM not found'; continue }
     if ($row.ps2 -and (-not $Ps2Bios -or -not (Test-Path (Join-Path $Ps2Bios 'pcsx2\bios')))) { Skip $row.id 'any' 'no PS2 BIOS (-Ps2Bios <dir containing pcsx2\bios>)'; continue }
     Write-Output "== $($row.label)"
-    if (-not $NoOffline) { Add-Result (Test-Offline $row $core $rom); if (@('nes', 'snes', 'ps1') -contains $row.id) { Add-Result (Test-HubStyle $row $core $rom) } }
+    if (-not $NoOffline) { Add-Result (Test-Offline $row $core $rom); if (@('nes', 'snes', 'ps1') -contains $row.id) { Add-Result (Test-HubStyle $row $core $rom); Add-Result (Test-SeatCap $row $core $rom); Add-Result (Test-StatePlan $row $core $rom) } }
     if ($Online -and $row.players -ge 2) {
         foreach ($n in $(if ($Only2x2) { @() } else { 2..$row.players })) {
             if ($row.rb) { Add-Result (Test-Online $row $core $rom $true $n) }                                   # GGPO rollback (NES/SNES/PS1/link cores)
