@@ -1,4 +1,5 @@
 #include "app.h"
+#include "libview_ui.h"
 #include "convenience.h"
 #include "gamepack.h"
 #include "wiiu_meta.h"
@@ -373,9 +374,10 @@ void library_top_bar() {
     const char* search_hint = "Search";
     const bool dice = A.view == LibView::Home && !A.lib.empty();   // L7: Surprise me
     float total = bh + sp(1.f) + add_games_header_width(bh) + (dice ? bh + sp(1.f) : 0.f);
+    const float sw_w = lib_switcher_width() + (A.view == LibView::All ? sp(1.f) : 0.f);
     {   // the search box gives way so the pinned right-hand buttons (Add games...) are never pushed past the edge (narrow window / Friends panel open)
         const float chips = ImGui::CalcTextSize("Sort: Recently added").x + ImGui::CalcTextSize("Friends' games").x + sp(14.f) + sp(4.f);
-        const float room = ImGui::GetContentRegionAvail().x - total - chips;
+        const float room = ImGui::GetContentRegionAvail().x - total - chips - sw_w;
         search_w = std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room));
         ImGui::SetNextItemWidth(search_w);
     }
@@ -397,6 +399,10 @@ void library_top_bar() {
         std::string sl = std::string("Sort: ") + hubui::sort_name(hubui::sort_from_key(A.st.library_sort));
         if (chip(sl.c_str(), hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title, ui::ACCENT)) cycle_sort(1);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the order of your games  (RT on a controller)");
+    }
+    if (A.view == LibView::All) {   // layout switcher: grid / list / compact / showcase
+        ImGui::SameLine(0, sp(1.f));
+        lib_switcher();
     }
     {   // "Show friends' games": friends' titles you do not own, greyed out (metadata only)
         ImGui::SameLine(0, sp(1.f));
@@ -540,17 +546,17 @@ void all_games_view() {
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
-    const hub::GameEntry* sel = find_entry(A.sel_game);
-    const hubui::fg::Ghost* selg = sel ? nullptr : find_ghost(A.sel_ghost);
+    const hubui::fg::Ghost* selg = (lib_layout_has_bar() && !A.sel_ghost.empty()) ? find_ghost(A.sel_ghost) : nullptr;   // a friend's game is selected
+    const hub::GameEntry* sel = (lib_layout_has_bar() && !selg) ? find_entry(A.sel_game) : nullptr;
     float bar_h = (sel || selg) ? sp(8.f) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.5f)));
-    if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; }
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() - sp(1.5f));   // the grid's padding is the cover inset: first cover lines up with the chips
-    ImGui::BeginChild("grid", ImVec2(ImGui::GetContentRegionAvail().x + sp(1.5f), -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding);
-    ImGui::PopStyleVar();
-    A.page_scrollable = true;
-    add_games_banner();
     if (A.vis.empty()) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.5f)));
+        if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; }
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() - sp(1.5f));
+        ImGui::BeginChild("grid", ImVec2(ImGui::GetContentRegionAvail().x + sp(1.5f), -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
+        A.page_scrollable = true;
+        add_games_banner();
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 o = ImGui::GetCursorScreenPos();
         float cx = o.x + ImGui::GetContentRegionAvail().x * 0.5f;
@@ -564,37 +570,10 @@ void all_games_view() {
             ImGui::SetCursorPosX((ImGui::GetWindowWidth() - bw) * 0.5f);
             if (button("Clear search", ImVec2(bw, sp(5.f)), false, true, ui::Icon::Close)) A.search_buf[0] = 0;
         }
+        ImGui::EndChild();
     } else {
-        // one section per console (fixed order), A-Z inside; A.vis already holds the search/console/online filters
-        const std::vector<hubui::ConsoleSection>& secs = A.secs;
-        float gap = sp(2.f);
-        float avail = ImGui::GetContentRegionAvail().x;
-        hubui::GridLayout gl = hubui::grid_layout(avail, sp(26.f), sp(37.5f), gap);
-        ImVec2 sz(gl.tile_w, gl.tile_w / kTileAspect);
-        for (auto& sec : secs) {
-            if (sec.items.empty()) continue;
-            shelf_header(sec.title.c_str(), "", 0.f, (int)sec.items.size());
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
-            for (size_t k = 0; k < sec.items.size(); ++k) {
-                if (k % gl.cols) ImGui::SameLine();
-                if (sec.items[k] >= (int)A.lib.size()) {   // a friend's game you do not own
-                    const hubui::fg::Ghost& g = A.ghosts[sec.items[k] - A.lib.size()];
-                    TileSpec gs = spec_for_ghost(g, "grid", sec.system == "other");
-                    TileResult gr = draw_tile(gs, sz);
-                    handle_ghost_result(g, gr);
-                    continue;
-                }
-                const hub::GameEntry& e = A.lib[sec.items[k]];
-                TileSpec spec = spec_for_entry(e, "grid", false, sec.system == "other");
-                TileResult r = draw_tile(spec, sz);
-                handle_entry_result(e, spec, r);
-            }
-            ImGui::PopStyleVar();
-            ImGui::Dummy(ImVec2(0, sp(1.5f)));
-        }
-        ImGui::Dummy(ImVec2(0, sp(2.f)));
+        lib_body(bar_h);   // libview_ui.cpp: grid / list / compact / showcase + the jump strip
     }
-    ImGui::EndChild();
     if (sel) selected_bar(*sel);
     else if (selg) selected_bar_ghost(*selg);
 }

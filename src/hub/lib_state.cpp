@@ -1,4 +1,5 @@
 #include "app.h"
+#include <ctime>
 #include "library_scan_info.h"
 #include "online_caps.h"
 #include "gameinfo.h"
@@ -141,6 +142,15 @@ void apply_scan() {
                 g.system = mix[i % 10];
                 g.title = std::string(a1[i % 10]) + " " + a2[(i / 10) % 10] + " " + a3[(i / 7) % 10] + (i >= 100 ? " " + std::to_string(i / 100 + 1) : "");
             }
+            if (std::getenv("HUB_SHOT_FAKE_AZ")) {   // library-layout screenshots: titles spread over A-Z (and a few digits), mixed consoles
+                static const hub::System mix2[] = {hub::System::N64, hub::System::GC, hub::System::PS1, hub::System::GBA, hub::System::NDS,
+                                                   hub::System::N3DS, hub::System::GBC, hub::System::PS2, hub::System::WiiU, hub::System::GB};
+                static const char* w1[] = {"Aero", "Blast", "Cosmic", "Dragon", "Elite", "Fury", "Galaxy", "Hyper", "Iron", "Jungle", "Kart", "Legend", "Mystic",
+                                           "Neon", "Omega", "Pixel", "Quest", "Rogue", "Star", "Turbo", "Ultra", "Vortex", "Wild", "Xeno", "Yoshi", "Zero"};
+                static const char* w2[] = {"Racers", "Knights", "Tactics", "Arena", "Odyssey", "Rumble", "Kingdom", "Stadium", "Legends", "Warriors"};
+                g.system = mix2[(i * 7) % 10];
+                g.title = i % 40 == 39 ? std::to_string(1000 + i) + " Club" : std::string(w1[(i * 5 + i / 26) % 26]) + " " + w2[(i / 3) % 10] + (i >= 260 ? " " + std::to_string(i / 260 + 1) : "");
+            }
             g.path = "C:/fake/game" + std::to_string(i) + ".z64";
             A.lib.push_back(g);
         }
@@ -199,6 +209,14 @@ void apply_scan() {
     }
     A.lib_index.clear();
     A.lib_state.clear();
+    if (std::getenv("HUB_SHOT_FAKE_AZ") && g_headless) {   // library-layout screenshots: favourites, last played and play time
+        for (size_t i = 0; i < A.lib.size(); ++i) {
+            hub::GameState gs;
+            if (i % 9 == 2) gs.favorite = true;
+            if (i % 4 == 1) { gs.last_played = (unsigned long long)std::time(nullptr) - (i % 40) * 86400ull - 3600; gs.play_seconds = 600 + (i * 977) % 90000; }
+            if (gs.favorite || gs.last_played) A.lib_state[A.lib[i].key] = gs;
+        }
+    }
     if (std::getenv("HUB_SHOT_FAKE_TITLES") && g_headless) {   // picker screenshots: some favourites and recently played games
         for (size_t i = 0; i < A.lib.size(); ++i) {
             hub::GameState gs;
@@ -433,6 +451,7 @@ void rebuild_vis() {
     A.vis_filter = A.sys_filter;
     A.vis_query = q;
     A.vis_dirty = false;
+    ++A.vis_gen;
 }
 
 /* ---------- online capability ---------- */
