@@ -309,7 +309,10 @@ void draw_frame() {
         ui_draw_brand_logo(sdl, m0, ms);
         if (expand > 0.02f) {
             sdl->PushClipRect(ImVec2(m1.x, p.y), ImVec2(p.x + iw, p.y + ms), true);
-            sdl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(m1.x + sp(1.25f), p.y + (ms - ui::F.h2->FontSize) * 0.5f), ui::scale_alpha(ui::TEXT, expand), "RetroHub");
+            const ImVec4 sb = ImGui::ColorConvertU32ToFloat4(ui::SIDEBAR);
+            const bool light_bg = sb.x * 0.299f + sb.y * 0.587f + sb.z * 0.114f > 0.55f;
+            const float cap_h = std::floor(ui::F.h2->FontSize * 0.92f + 0.5f);
+            ui_draw_brand_wordmark(sdl, ImVec2(std::floor(m1.x + sp(1.25f)), std::floor(p.y + (ms - cap_h) * 0.5f)), cap_h, expand, light_bg);
             sdl->PopClipRect();
         }
         ImGui::Dummy(ImVec2(iw, ms + sp(3.f)));
