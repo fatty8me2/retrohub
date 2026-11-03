@@ -102,4 +102,15 @@ inline std::string online_limit_note(hub::System s, const hub::GameInfo* cat, in
     }
 }
 
+/* Seats retrorun may drive on ONE PC (`retrorun --max-local`): the catalog's max_players, else default_local_max, except that an uncatalogued NES / SNES / PS1
+ * game gets 2 (it is assumed to be a one- or two-player game). Retrorun plays with min(real pads, seats) and only switches the 4-pad adapter (Four Score,
+ * multitap) on for 3 or more, so a 1- or 2-player game never boots with an adapter. Uncatalogued PS2 games keep 4 (Gauntlet: Dark Legacy). */
+inline int runner_local_seats(hub::System s, const hub::GameInfo* cat) {
+    if (cat && cat->max_players > 0) return cat->max_players;
+    switch (s) {
+        case hub::System::NES: case hub::System::SNES: case hub::System::PS1: return 2;
+        default: return default_local_max(s);
+    }
+}
+
 }  // namespace hubcaps

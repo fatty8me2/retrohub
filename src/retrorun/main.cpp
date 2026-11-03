@@ -88,6 +88,7 @@ struct Args {
     int frames = -1, scale = 3, slot = 0, players = 1, delay = -1;   // delay -1 = auto
     int ports[4] = {0, -1, -1, -1};
     bool ports_given = false;
+    int max_local = 0;            // --max-local N: the game's own seat count (the hub passes the catalog max_players); offline players = min(real pads, N), the adapter needs 3+
     bool players_given = false;   // --players on the command line (else offline: one port per connected controller, port_plan.h)
     bool rollback = false;       // --rollback: GGPO-style rollback netplay instead of lockstep (see rollback.h)
     bool spectate = false;        // --spectate: watch a running online match as a port-less spectator (confirmed inputs only; needs --net --room --ports)
@@ -172,6 +173,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--frames") { if (!val(&v)) return false; o->frames = atoi(v.c_str()); }
         else if (k == "--scale") { if (!val(&v)) return false; o->scale = std::max(1, atoi(v.c_str())); }
         else if (k == "--slot") { if (!val(&v)) return false; o->slot = atoi(v.c_str()); }
+        else if (k == "--max-local") { if (!val(&v)) return false; o->max_local = std::max(0, atoi(v.c_str())); }
         else if (k == "--players") { if (!val(&v)) return false; o->players = atoi(v.c_str()); o->players_given = true; }
         else if (k == "--delay") { if (!val(&v)) return false; o->delay = v == "auto" ? -1 : std::max(0, std::min(30, atoi(v.c_str()))); }
         else if (k == "--ports") {
@@ -647,6 +649,7 @@ class Frontend {
     std::string state_path(const std::string& name) const { return a.state_dir + "\\" + name + ".state"; }
     bool save_state(const std::string& name);
     bool load_state(const std::string& name);
+    bool plan_matches(const std::string& state_file);   // port plan (4-pad adapter on/off) stored next to the state vs this run's
     uint64_t state_hash();
     bool setup_net();
     uint64_t ps1_config_fingerprint();
@@ -1567,12 +1570,43 @@ void Frontend::save_srm(bool force) {
     }
 }
 
+/* The port plan (retrorun::plan_signature) is stored next to every state as <name>.plan. The 4-pad adapter is pinned when the core boots, so a state means the
+ * same thing only under the same plan: Nestopia / Beetle states load fine under either (nothing about the adapter is in them, the GAME then sees the adapter appear
+ * or vanish), snes9x states carry the multitap latch state (verified: the same state behaves differently loaded with the tap on or off). Never crash, never
+ * silently mix: a manual load under another plan is refused with a message; the automatic resume boots with the plan the state was made with (run()). */
+static std::string plan_file_for(const std::string& state_file) {
+    const std::string ext = ".state";
+    if (state_file.size() > ext.size() && state_file.compare(state_file.size() - ext.size(), ext.size(), ext) == 0) return state_file.substr(0, state_file.size() - ext.size()) + ".plan";
+    return state_file + ".plan";
+}
+static bool read_plan_sig(const std::string& state_file, std::string* sig) {
+    std::ifstream in(fs::u8path(plan_file_for(state_file)), std::ios::binary);
+    if (!in) return false;
+    std::getline(in, *sig);
+    while (!sig->empty() && (sig->back() == 13 || sig->back() == 10 || sig->back() == 32)) sig->pop_back();
+    return !sig->empty();
+}
+static bool plan_sig_tap(const std::string& sig) { return sig.find("tap=1") != std::string::npos; }
+
+bool Frontend::plan_matches(const std::string& state_file) {
+    std::string saved;
+    if (!read_plan_sig(state_file, &saved)) return true;   // a state from before the plan was recorded: load as always
+    const std::string now = retrorun::plan_signature(pplan);
+    if (saved == now) return true;
+    rlog("state: refused, port plan differs (saved %s, now %s)", saved.c_str(), now.c_str());
+    if (plan_sig_tap(saved) && !pplan.tap) set_status("This save was made with the 4-player adapter on - plug in the same number of controllers");
+    else if (!plan_sig_tap(saved) && pplan.tap) set_status("This save was made without the 4-player adapter - unplug down to the same number of controllers");
+    else set_status("This save was made with a different controller setup");
+    return false;
+}
+
 bool Frontend::save_state(const std::string& name) {
     size_t n = core.serialize_size();
     if (!n) { set_status("Core does not support save states"); return false; }
     std::vector<uint8_t> buf(n);
     if (!core.serialize(buf.data(), n)) { set_status("Save state failed (core error)"); return false; }
     if (!write_atomic(state_path(name), buf.data(), n)) { set_status("Save state failed (disk)"); return false; }
+    { const std::string ps = retrorun::plan_signature(pplan) + "\n"; write_atomic(plan_file_for(state_path(name)), ps.data(), ps.size()); }
     {   // thumbnail + sidecar next to the state (runner_ctl.h contract)
         write_frame_image_scaled(a.state_dir + "\\" + name + ".png", core.frame(), runctl::kThumbWidth);
         runctl::Sidecar sc;
@@ -1732,6 +1766,7 @@ bool Frontend::load_state(const std::string& name) {
     if (ra_.active() && !ra_.allow(cheevos::Feature::LoadState)) { set_status("Hardcore: save states are off"); return false; }
     std::vector<uint8_t> buf;
     if (!read_file(state_path(name), &buf)) { set_status("No state " + name); return false; }
+    if (!plan_matches(state_path(name))) return false;
     if (!core.unserialize(buf.data(), buf.size())) { set_status("Load state failed (core error)"); return false; }
     set_status("Loaded state " + name);
     ra_.reset();   // a restored moment is not progress: restart achievement trigger tracking
@@ -2870,8 +2905,11 @@ void Frontend::finish() {
         if (!a.selftest && !is_ds && core.serialize_size()) {   // DS states are ~19 MB and the hub never resumes them
             size_t n = core.serialize_size();
             std::vector<uint8_t> buf(n);
-            if (core.serialize(buf.data(), n) && write_atomic(state_path("auto"), buf.data(), n))
+            if (core.serialize(buf.data(), n) && write_atomic(state_path("auto"), buf.data(), n)) {
+                const std::string ps = retrorun::plan_signature(pplan) + "\n";
+                write_atomic(plan_file_for(state_path("auto")), ps.data(), ps.size());
                 rlog("state: wrote auto.state (%zu bytes)", n);
+            }
         }
     }
 }
@@ -3433,13 +3471,37 @@ int Frontend::run(const Args& args) {
 
     /* Offline without --players (the hub never passes it): one port per connected controller, so a second, third and fourth pad play players 2-4 on
      * NES / SNES / PS1 (adapter or multitap switched on from 3 pads). Before this, only port 0 was ever local and the extra pads did nothing. */
+    /* Resume keeps working across a change of controllers: boot with the port plan the state was made with (adapter on or off), the number of local
+     * players still follows the pads. A state without a recorded plan keeps today's behaviour. */
+    if (a.net.empty() && !a.link && !a.ds_link && (a.resume || !a.load_state_path.empty()) && !(env_is("RETROHUB_QA") && env_is("RETRORUN_QA_NOADOPT"))) {   // NOADOPT: QA, to reach the refusal path
+        std::string saved;
+        const std::string sf = !a.load_state_path.empty() ? a.load_state_path : state_path("auto");
+        if (read_plan_sig(sf, &saved)) {
+            if (plan_sig_tap(saved)) a.multiport = true; else a.no_multitap = true;
+            rlog("resume: boot with the port plan of the saved state (4-player adapter %s)", plan_sig_tap(saved) ? "on" : "off");
+        }
+    }
     const char* qa_pads = env_is("RETROHUB_QA") ? std::getenv("RETRORUN_QA_PADS") : nullptr;   // QA: pretend N controllers are connected (headless wiring test, qa\players_input_check.ps1)
     if (a.net.empty() && !a.ports_given && !a.players_given && !a.ds_link && !a.link && (!a.headless || qa_pads) && !a.synctest) {
         int pads = 0;
         if (qa_pads) pads = std::atoi(qa_pads);
-        else { hubctl::load_bundled_db(); pads = (int)hubctl::list_pads().size(); }   // the same pad mappings open_pads() will use, so the same pads are counted
-        a.players = retrorun::offline_players(retrorun::sys_of(lower(a.system)), pads, a.no_multitap);
-        if (a.players > 1) rlog("players: %d connected controllers -> %d local players", pads, a.players);
+        else {   // the same pad mappings open_pads() will use, so the same pads are counted; ghosts (Steam virtual pads, one device listed twice) are not
+            hubctl::load_bundled_db();
+            std::vector<retrorun::PadDesc> descs;
+            for (auto& pi : hubctl::list_pads()) {
+                retrorun::PadDesc d;
+                d.name = pi.name; d.guid = pi.guid;
+                size_t hs = pi.key.find('#');
+                if (hs != std::string::npos) d.serial = pi.key.substr(hs + 1);
+                if (pi.sdl_index >= 0) { d.vendor = SDL_JoystickGetDeviceVendor(pi.sdl_index); d.product = SDL_JoystickGetDeviceProduct(pi.sdl_index); d.sdl_virtual = SDL_JoystickIsVirtual(pi.sdl_index) == SDL_TRUE; }
+                descs.push_back(d);
+            }
+            const int listed = (int)descs.size();
+            pads = retrorun::count_real_pads(descs);
+            if (pads != listed) rlog("players: %d controllers listed, %d real (virtual / duplicate entries skipped)", listed, pads);
+        }
+        a.players = retrorun::offline_players(retrorun::sys_of(lower(a.system)), pads, a.no_multitap, a.max_local);
+        if (a.players > 1 || a.max_local > 0) rlog("players: %d connected controllers, game seats %d -> %d local players", pads, a.max_local, a.players);
     }
     // Port ownership: --ports, else (offline) the first --players ports are all local.
     for (int i = 0; i < 4; i++) owner[i] = a.ports[i];
@@ -3551,6 +3613,7 @@ int Frontend::run(const Args& args) {
     fps = core.av().timing.fps > 1 ? core.av().timing.fps : 60.0;
     if (is_ps1) {   // every port is a DualShock (digital pads work too; games switch the analog mode themselves)
         for (auto& d : pplan.devices) core.set_port_device(d.first, d.second);   // 0x205 = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
+        rlog("ps1: DualShock on %zu ports%s", pplan.devices.size(), pplan.tap ? ", multitap on (libretro ports 0-3 = its four slots)" : "");
     }
     if (is_ps2 && !env_is("RETRORUN_PS2_NOPLUG")) {   // NOPLUG: QA only, reproduces the pre-fix behaviour
         /* LRPS2 plugs a pad only into console port 1 unless the frontend asks: every other port is "None" (PAD.cpp, retro_set_controller_port_device),
@@ -3564,7 +3627,7 @@ int Frontend::run(const Args& args) {
         for (auto& d : pplan.devices) core.set_port_device(d.first, d.second);
         rlog("%s: %s (players 3-4 = libretro ports 2-3)", lower(a.system).c_str(), lower(a.system) == "nes" ? "Four Score adapter, pads 3-4 plugged" : "multitap on port 2");
     }
-    if (const char* sd = std::getenv("RETRORUN_SET_DEVICES")) {   // QA only: "port:device[,port:device]" (decimal or 0x hex), retro_set_controller_port_device after load
+    if (const char* sd = env_is("RETROHUB_QA") ? std::getenv("RETRORUN_SET_DEVICES") : nullptr) {   // QA only (needs RETROHUB_QA=1): "port:device[,port:device]" (decimal or 0x hex), retro_set_controller_port_device after load
         for (const char* p = sd; *p;) {
             char* e1 = nullptr;
             unsigned long port = std::strtoul(p, &e1, 0);
@@ -3657,7 +3720,7 @@ int Frontend::run(const Args& args) {
     }
     if (!a.load_state_path.empty() && !link && !online && a.net.empty() && !a.ds_link && ra_.allow(cheevos::Feature::LoadState)) {
         std::vector<uint8_t> sb;
-        if (read_file(a.load_state_path, &sb) && core.unserialize(sb.data(), sb.size())) set_status("Resumed from saved state");
+        if (read_file(a.load_state_path, &sb) && plan_matches(a.load_state_path) && core.unserialize(sb.data(), sb.size())) set_status("Resumed from saved state");
         else rlog("load-state: could not restore %s", a.load_state_path.c_str());
     }
 
