@@ -105,7 +105,7 @@ void cache_section() {
     text_wrapped_disabled("Oldest unpacked games are removed first; your archives are never touched.");
     if (!CU.skipped.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        std::string title = std::to_string(CU.skipped.size()) + (CU.skipped.size() == 1 ? " file skipped (not a game RetroHub can use)" : " files skipped (not games RetroHub can use)");
+        std::string title = std::to_string(CU.skipped.size()) + (CU.skipped.size() == 1 ? " file needs attention (skipped or only partly used)" : " files need attention (skipped or only partly used)");
         if (ImGui::CollapsingHeader(title.c_str())) {
             for (auto& s : CU.skipped) {
                 auto u8 = std::filesystem::u8path(s.path).filename().u8string();

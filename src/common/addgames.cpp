@@ -35,7 +35,7 @@ std::string pjoin(const std::string& a, const std::string& b) {
 }  // namespace
 
 const std::vector<std::string>& supported_exts() {
-    static const std::vector<std::string> v = {".z64", ".n64", ".v64", ".gba", ".gb", ".gbc", ".nds", ".nes", ".sfc", ".smc", ".3ds", ".cci", ".cia", ".cxi",
+    static const std::vector<std::string> v = {".z64", ".n64", ".v64", ".gba", ".gb", ".gbc", ".nds", ".nes", ".sfc", ".smc", ".3ds", ".cci", ".cia", ".cxi", ".3dsx",
                                                ".iso", ".gcm", ".rvz", ".ciso", ".wia", ".gcz", ".wua", ".wud", ".wux", ".rpx",
                                                ".chd", ".cso", ".cue", ".pbp", ".m3u", ".zip", ".7z", ".rar"};
     return v;
@@ -242,7 +242,7 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
         std::string dir = dest_dir(root, it.system);
         /* A PlayStation .cue / .m3u needs its bins / discs next to it: the set goes into its own folder, game name as folder name. */
         std::vector<std::string> comps;
-        if (known && g.system == System::PS1) {
+        if (known && (g.system == System::PS1 || g.system == System::PS2)) {   // PS2 CDs come as cue + bin too
             std::string ext = lower(U8(P(name).extension()));
             if (ext == ".cue" || ext == ".m3u") {
                 for (const std::string& c : ps1::referenced_files(src)) {

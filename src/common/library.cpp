@@ -1356,7 +1356,7 @@ std::wstring tar_member_arg(const std::string& name) {
 
 std::wstring tar_archive_arg(const std::string& archive) {
     const fs::path p = utf8_path(archive);
-    if (acp_safe(p.wstring())) return L"\"" + p.wstring() + L"\"";
+    if (acp_safe(p.wstring())) { t_tar_stdin.clear(); return L"\"" + p.wstring() + L"\""; }
     t_tar_stdin = archive;   // the next tar_spawn() on this thread opens the file and gives it to tar as stdin
     return L"-";
 }
@@ -1977,10 +1977,42 @@ static bool id_3ds_archive(const fs::path& arch, GameEntry* e) {
 
 namespace { const char* unsupported_reason(const std::string& ext); }   // defined with the scan code below
 
+/* An archive lists ONE game (the first image / ROM in it). When it holds several, the rest used to just not exist: say so. "" = nothing to say. */
+static std::string archive_extra_games_note(const std::string& path) {
+    std::vector<ArchiveEntry> l;
+    if (!list_archive(path, &l)) return std::string();
+    int n = 0;
+    std::string first;
+    for (const auto& a : l) {
+        if (!archive_entry_safe(a.name) || is_junk_entry(a.name)) continue;
+        const std::string x = ascii_lower(path_utf8(utf8_path(a.name).extension()));
+        const bool game = (is_cart_ext(x) && a.size >= 16 * 1024) || (is_3ds_zip_entry(x) && a.size >= 0x1000) || x == ".wua" || x == ".iso" || x == ".chd" || x == ".cso" || x == ".pbp" ||
+                          x == ".gcm" || x == ".rvz" || x == ".wia" || x == ".ciso" || x == ".gcz";
+        if (!game || a.size < 0x1000) continue;
+        if (n++ == 0) first = path_utf8(utf8_path(a.name).filename());
+    }
+    if (n < 2) return std::string();
+    return "holds " + std::to_string(n) + " game files, but an archive lists only its first one (" + first + "). Unpack the archive and add the others as separate files";
+}
+
 std::string archive_skip_reason(const std::string& path) {
     std::vector<ArchiveEntry> l;
     if (!archive_sig_ok(path)) return "this is not a valid archive (it may be damaged or renamed)";
     if (!list_archive(path, &l)) return archive_truncated(path) ? kTruncatedMsg : "this archive could not be read (damaged, encrypted, or an unsupported compression)";
+    if (ascii_lower(path_utf8(utf8_path(path).extension())) == ".zip") {   // a password protected zip lists fine and then yields nothing
+        mz_zip_archive za;
+        std::memset(&za, 0, sizeof za);
+        if (FILE* f = _wfopen(utf8_path(path).wstring().c_str(), L"rbN")) {
+            bool enc = false;
+            if (mz_zip_reader_init_cfile(&za, f, 0, 0)) {
+                mz_uint n = mz_zip_reader_get_num_files(&za);
+                for (mz_uint i = 0; i < n && !enc; ++i) enc = mz_zip_reader_is_file_encrypted(&za, i) != 0;
+                mz_zip_reader_end(&za);
+            }
+            std::fclose(f);
+            if (enc) return "is password protected; RetroHub cannot open it. Unpack it with the password and add the game files";
+        }
+    }
     std::string nested;
     for (const auto& a : l) {
         std::string x = ascii_lower(path_utf8(utf8_path(a.name).extension()));
@@ -2656,7 +2688,7 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
         o += json::quote(pr.first);
         o += ",\"s\":" + std::to_string(r.size) + ",\"m\":" + std::to_string(r.mtime);
         o += r.ok ? ",\"ok\":true" : ",\"ok\":false";
-        if (!r.ok && !r.skip.empty()) { o += ",\"sk\":"; o += json::quote(r.skip); }
+        if (!r.skip.empty()) { o += ",\"sk\":"; o += json::quote(r.skip); }   // why a file was skipped, or what an archive holds beyond the game listed
         if (r.ok) {
             o += ",\"k\":"; o += json::quote(r.e.key);
             o += ",\"sys\":"; o += json::quote(system_short(r.e.system));
@@ -2881,7 +2913,12 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
             c.rec.size = c.size;
             c.rec.mtime = c.mtime;
             c.rec.ok = ok;
-            if (ok) { if (e.path.empty()) e.path = c.path_utf8; e.size = c.size; c.rec.e = std::move(e); }
+            if (ok) {
+                if (e.path.empty()) e.path = c.path_utf8;
+                e.size = c.size;
+                c.rec.e = std::move(e);
+                if (is_archive_file(c.path_utf8)) { try { c.rec.skip = archive_extra_games_note(c.path_utf8); } catch (...) {} }   // listed, but not everything in it
+            }
             else if (is_archive_file(c.path_utf8)) { try { c.rec.skip = archive_skip_reason(c.path_utf8); } catch (...) {} }
             else { try { c.rec.skip = loose_skip_reason(c.path_utf8); } catch (...) {} }   // a loose file that is no game: the reason is listed, the file does not just vanish
             c.done = true;
@@ -2926,7 +2963,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
 
     {
         std::vector<SkippedArchive> sk;
-        for (const Candidate& c : cands) if (!c.rec.ok && !c.rec.skip.empty()) sk.push_back({c.path_utf8, c.rec.skip});
+        for (const Candidate& c : cands) if (!c.rec.skip.empty()) sk.push_back({c.path_utf8, c.rec.skip});
         std::lock_guard<std::mutex> lk(g_skip_mu);
         g_skipped = std::move(sk);
     }
