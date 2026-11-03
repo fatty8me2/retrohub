@@ -43,14 +43,14 @@ int main() {
 
     /* ---- the pinned LRPS2 download (docs/PS2_ONLINE.md) ---- */
     const hubemu::Release& r = hubemu::release(hubemu::Kind::Lrps2);
-    CHECK(r.size == 3760634ull);
-    CHECK(std::string(r.sha256) == "730112622345f0ca12e7650c6d4052f443603aa630e9b6ab8a68874a4d66bae6");
-    CHECK(std::wstring(r.host) == L"buildbot.libretro.com" && std::wstring(r.exe) == L"pcsx2_libretro.dll");
+    CHECK(r.size == 3432192ull);
+    CHECK(std::string(r.sha256) == "ff97bd2690e7a53433e1deb3570a72f9a06a78253f1db3796c8df6742aca7fe7");
+    CHECK(std::wstring(r.host) == L"github.com" && std::wstring(r.path).find(L"/fatty8me2/retrohub/releases/download/core-lrps2-") == 0 && std::wstring(r.path).find(L"latest") == std::wstring::npos && std::wstring(r.exe) == L"pcsx2_libretro.dll");
     CHECK(std::string(hubemu::name(hubemu::Kind::Lrps2)) == "PS2 online core");
     CHECK(hubemu::managed_dir(hubemu::Kind::Lrps2, "R").find("lrps2") != std::string::npos);
     CHECK(hubemu::kind_for(hub::System::PS2) == hubemu::Kind::Pcsx2);   // offline PS2 keeps using PCSX2
 
-    /* Live download from the buildbot (only with RETROHUB_QA_DOWNLOAD=1; ctest -L online sets nothing, so offline runs never touch the network). */
+    /* Live download from the release mirror (only with RETROHUB_QA_DOWNLOAD=1; ctest -L online sets nothing, so offline runs never touch the network). */
     if (const char* d = std::getenv("RETROHUB_QA_DOWNLOAD"); d && d[0] == '1') {
         std::string root = (std::filesystem::temp_directory_path() / "rh_lrps2_dl").string();
         std::filesystem::remove_all(root);
@@ -61,7 +61,7 @@ int main() {
         hubemu::Install in = hubemu::find(hubemu::Kind::Lrps2, "", "", root);
         CHECK(!in.exe.empty() && in.managed);
         std::error_code ec;
-        CHECK(!in.exe.empty() && std::filesystem::file_size(in.exe, ec) == 11074048);
+        CHECK(!in.exe.empty() && std::filesystem::file_size(in.exe, ec) == 10251776);
         std::filesystem::remove_all(root);
     }
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);

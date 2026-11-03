@@ -359,7 +359,7 @@ Measured with `qa\gc_online_speed.ps1` / `hub_gc_speed` (two Dolphins on a hidde
 
 Notes: two instances on one PC cannot test Dolphin's traversal server (hairpin NAT: the guest never joins). Real Internet relay latency is not reproduced by the local wrangler.
 
-## NetPlay memory card sync (the Super Mario Strikers desync, fixed in 1.31.5)
+## NetPlay memory card sync (the Super Mario Strikers desync, fixed in 1.31.8)
 Symptom: Super Mario Strikers (G4QE01) logged "Possible desync detected: <host> might have desynced at frame 420" in every harness row
 (direct, relay, buffer 8 or 13) and at frame 480 in the owner's two-PC session. It is a real desync, not a detector artefact.
 
