@@ -319,7 +319,7 @@ void draw_continue_hero(const hub::GameEntry& e, float h) {
     seed_nav_here();   // the Continue button is the default focus on Home
     if (act.show_fresh) {
         ImGui::SameLine(0, gap);
-        if (button(narrow ? "Fresh" : "Start fresh", ImVec2(sp(narrow ? 11.f : 16.f), bh), false, act.enabled)) continue_launch(e, false, true);
+        if (button(narrow ? "Restart" : "Start fresh", ImVec2(sp(narrow ? 11.f : 16.f), bh), false, act.enabled)) continue_launch(e, false, true);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Start from your battery save, not the resume point");
     }
     const bool online = supports_online(e);
