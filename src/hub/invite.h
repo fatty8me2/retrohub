@@ -20,6 +20,11 @@ bool invite_parse_url(const std::wstring& url, std::wstring* code);
 /* Scans a full command line (GetCommandLineW) for "--join <CODE>" or a retrohub:// URL argument. */
 bool invite_parse_command_line(const std::wstring& cmdline, std::wstring* code);
 
+/* Account invite codes (owner-made, XXXX-XXXX; see net/invite_logic.h): retrohub://invite/<CODE> or "--invite <CODE>". Returns the code as "ABCD-EFGH". */
+bool invite_parse_account_url(const std::wstring& url, std::wstring* code);
+bool invite_parse_account_command_line(const std::wstring& cmdline, std::wstring* code);
+bool invite_send_account(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms = 3000);
+
 /* One-click favorites: "RetroHub.exe --play <game key>" (library key: lowercase [a-z0-9._-], at most 120 chars). */
 bool invite_is_valid_game_key(const std::wstring& key);
 bool invite_parse_play(const std::wstring& cmdline, std::wstring* key);
@@ -61,6 +66,7 @@ public:
     void stop();
     bool take(std::wstring* code);        // pops the next queued join code (main thread, once per frame)
     bool take_play(std::wstring* key);    // pops the next queued --play game key
+    bool take_account(std::wstring* code);   // pops the next queued account invite code ("ABCD-EFGH")
     bool take_show();                     // true once per "show yourself" request
 private:
     bool pop(int kind, std::wstring* text);

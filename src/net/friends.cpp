@@ -527,6 +527,7 @@ struct FriendsClient::Impl {
     Access access = Access::Ok;                  // the server refused this account's hello (pending approval / blocked); Ok once welcomed
     bool admin = false;                          // the welcome said so (the server enforces it on every admin_* message regardless)
     AdminList alist; AdminDetail adetail; AdminSettings asettings; int admin_pend = 0, admin_ver = 0;
+    AdminInvites ainv; AdminList apend; std::string last_latest_key;
     std::map<std::string, std::string> admin_names;   // uid -> name, for the result sentences
     std::map<std::string, int> check_refs;   // name we asked about (lower case) -> ref; the server echoes the name, not the ref
 
@@ -998,6 +999,12 @@ struct FriendsClient::Impl {
             l.total = (int)jnum(j, "total"); l.offset = (int)jnum(j, "offset"); l.tracked = (int)jnum(j, "tracked");
             l.counts = parse_admin_counts(j.get("counts")); l.settings = parse_admin_settings(j.get("settings"));
             asettings = l.settings; admin_pend = l.counts.pending;
+            {   // a reply that is exactly the waiting list (every row pending, all of them) also feeds the Pending queue
+                bool all_pending = l.offset == 0 && l.total == l.counts.pending && (int)l.rows.size() == l.total;
+                for (const AdminAccount& r : l.rows) if (!r.pending()) all_pending = false;
+                if (l.counts.pending == 0) apend = AdminList();
+                else if (all_pending) apend = l;
+            }
             alist = std::move(l);
         } else if (type == "admin_detail") {
             AdminDetail d; d.valid = true;
@@ -1016,6 +1023,31 @@ struct FriendsClient::Impl {
         } else if (type == "admin_pending") {
             admin_pend = (int)jnum(j, "pending");
             alist.counts.pending = admin_pend;
+            if (admin_pend == 0) apend = AdminList();
+            const PendingLatest pl = parse_pending_latest(j);
+            if (pl.valid) {
+                const std::string key = pl.uid + "|" + std::to_string(pl.created);
+                if (key != last_latest_key) {
+                    last_latest_key = key;
+                    Event e; e.kind = Event::AdminJoinWaiting; e.uid = pl.uid; e.name = pl.name; e.text = pl.code; e.msg.at = pl.created;
+                    admin_names[pl.uid] = pl.name;
+                    push_event(std::move(e));
+                }
+            }
+        } else if (type == "admin_invites") {
+            AdminInvites r;
+            if (parse_admin_invites(j, &r)) {
+                if (!r.ok) {   // a refused create / revoke: say why (the list in the reply is still current)
+                    Event e; e.kind = Event::AdminResult; e.name = "invite"; e.ok = false; e.detail = r.reason;
+                    e.text = admin_result_text("invite", false, "", r.reason, false, false);
+                    push_event(std::move(e));
+                    r.has_created = false;
+                }
+                ainv = std::move(r);
+            }
+        } else if (type == "admin_invite_used") {
+            const InviteUsed u = parse_invite_used(j);
+            if (u.valid) { Event e; e.kind = Event::AdminInviteUsed; e.uid = u.uid; e.name = u.name; e.text = u.code; push_event(std::move(e)); }
         } else if (type == "admin_result") {
             std::string uid = j.str("uid"), op = j.str("op");
             auto it = admin_names.find(uid);
@@ -1035,7 +1067,8 @@ struct FriendsClient::Impl {
         access = Access::Ok;
         admin = jbool(j, "admin");
         if (admin) send(admin_settings_json());
-        else { alist = AdminList(); adetail = AdminDetail(); asettings = AdminSettings(); admin_pend = 0; }
+        else { alist = AdminList(); adetail = AdminDetail(); asettings = AdminSettings(); admin_pend = 0; ainv = AdminInvites(); apend = AdminList(); }
+        if (admin) send(invite_list_json());
         backoff_ms = 1000;
         last_keepalive = now_ms();
         live.reset(last_keepalive);
@@ -1257,6 +1290,12 @@ struct FriendsClient::Impl {
             Event e; e.kind = Event::AskResult; e.uid = j.str("to"); e.ok = jbool(j, "ok"); e.text = j.str("reason");
             push_event(std::move(e));
         } else if (type == "invite_result") {
+            RedeemResult rr;
+            if (!welcomed && parse_redeem_result(j, &rr)) {   // a waiting account's invite-code answer (room invite results carry results[] and need a welcome)
+                Event e; e.kind = Event::InviteRedeemed; e.ok = rr.ok; e.text = rr.reason;
+                push_event(std::move(e));
+                return false;
+            }
             Event e; e.kind = Event::InviteResult;
             if (const Json* a = j.get("results"))
                 for (const Json& r : a->a) {
@@ -1519,9 +1558,31 @@ void FriendsClient::admin_act(const std::string& op, const std::string& uid)
     if (!impl_->admin || !is_b32(uid, 26)) return;
     if (op != "ban" && op != "unban" && op != "approve" && op != "deny") return;
     impl_->send(admin_uid_json(op, uid));
+    if (op != "unban") {   // the row leaves the waiting queue at once; the next list reply confirms
+        auto& r = impl_->apend.rows;
+        r.erase(std::remove_if(r.begin(), r.end(), [&](const AdminAccount& a) { return a.uid == uid; }), r.end());
+    }
 }
+void FriendsClient::admin_request_pending()
+{
+    if (!impl_->admin) return;
+    AdminQuery q; q.status = "pending"; q.limit = 25; q.show_test = false;
+    impl_->send(admin_list_json(q));
+}
+const AdminList& FriendsClient::admin_pending_list() const { return impl_->apend; }
 void FriendsClient::admin_request_settings() { if (impl_->admin) impl_->send(admin_settings_json()); }
 void FriendsClient::admin_set_settings(int approval, int vouch, int autofriend, int strict_rooms) { if (impl_->admin) impl_->send(admin_settings_json(approval, vouch, autofriend, strict_rooms)); }
+bool FriendsClient::redeem_invite(const std::string& code)
+{
+    Impl& d = *impl_;
+    if (d.welcomed || !d.hello_sent || d.access != Access::Pending || !invite_valid(code)) return false;
+    return d.ws.send_text(redeem_invite_json(code));
+}
+void FriendsClient::admin_invite_create(int uses, int hours, const std::string& note) { if (impl_->admin) impl_->send(invite_create_json(uses, hours, note)); }
+void FriendsClient::admin_invite_list() { if (impl_->admin) impl_->send(invite_list_json()); }
+void FriendsClient::admin_invite_revoke(const std::string& code) { if (impl_->admin && invite_valid(code)) impl_->send(invite_revoke_json(code)); }
+void FriendsClient::admin_approve_code(const std::string& fc) { std::string n; if (impl_->admin && friend_code_normalize(fc, &n)) impl_->send(approve_code_json(n)); }
+const AdminInvites& FriendsClient::admin_invites() const { return impl_->ainv; }
 const AdminList& FriendsClient::admin_list() const { return impl_->alist; }
 const AdminDetail& FriendsClient::admin_detail() const { return impl_->adetail; }
 const AdminSettings& FriendsClient::admin_settings() const { return impl_->asettings; }

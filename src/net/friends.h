@@ -3,6 +3,7 @@
  * Non-blocking; reconnects automatically (backoff 1s..30s). */
 
 #include "admin_logic.h"
+#include "invite_logic.h"
 #include "library_share.h"
 
 #include <cstdint>
@@ -106,7 +107,7 @@ struct Event {
                 AskResult,
                 Queued,           // an action made while offline was saved in the outbox: uid, name = kind (message|invite|block|...), text = plain sentence, msg.id = the pending conversation line id (messages)
                 SendFailed,
-                AdminResult };      // owner dashboard: answer to a ban/unban/approve/deny: uid, name (op), ok, text = plain sentence, detail = reason     // a queued or refused action will not happen: same fields, text = plain sentence ("Your message could not be sent (...)")      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
+                AdminResult, AdminJoinWaiting, AdminInviteUsed, InviteRedeemed };      // owner dashboard: answer to a ban/unban/approve/deny: uid, name (op), ok, text = plain sentence, detail = reason     // a queued or refused action will not happen: same fields, text = plain sentence ("Your message could not be sent (...)")      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
     std::string name;
@@ -259,6 +260,16 @@ class FriendsClient {
     const AdminSettings& admin_settings() const;
     int admin_pending() const;     // accounts waiting for approval (0 until the server said)
     int admin_version() const;     // bumps whenever any admin data changed
+    /* Invite codes (docs/ADMIN.md). redeem_invite(): a WAITING account (access()==Pending) sends the code it was given; the answer is Event::InviteRedeemed
+     * and, on success, the server approves it and wakes the socket (the usual unlock). False when there is no open socket to send on. */
+    bool redeem_invite(const std::string& code);
+    void admin_invite_create(int uses, int hours, const std::string& note);
+    void admin_invite_list();
+    void admin_invite_revoke(const std::string& code);
+    void admin_approve_code(const std::string& friend_code);   // "RH-XXXX-XXXX" (see friend_code_normalize)
+    const AdminInvites& admin_invites() const;
+    void admin_request_pending();                 // asks for the waiting accounts (the Pending queue); the answer is admin_pending_list()
+    const AdminList& admin_pending_list() const;  // the waiting accounts (complete list, newest activity first); empty when nobody waits
 
     /* state */
     const std::vector<Friend>& friends() const;

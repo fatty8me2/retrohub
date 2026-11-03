@@ -749,6 +749,9 @@ void fr_tick() {
                     FR.reacts[e.uid + "|" + e.msg.target].set(e.uid, e.msg.emoji, e.msg.on);
                 break;
             case hubnet::Event::AdminResult: set_toast(e.text, e.ok, 6.0); admin_ui_poke(); break;
+            case hubnet::Event::InviteRedeemed: lockout_invite_result(e.ok, e.text); break;
+            case hubnet::Event::AdminJoinWaiting: admin_note_waiting(e.uid, e.name, e.text, e.msg.at); break;
+            case hubnet::Event::AdminInviteUsed: admin_note_invite_used(e.uid, e.name, e.text); break;
             case hubnet::Event::Queued: set_toast("Saved - will send when you're back online.", true, 4.0); break;
             case hubnet::Event::SendFailed: set_toast(e.text.empty() ? std::string("That could not be sent.") : e.text, false, 7.0); break;
             case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite, e.msg.ask_host); break;

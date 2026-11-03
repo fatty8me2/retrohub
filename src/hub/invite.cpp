@@ -1,6 +1,7 @@
 /* Clickable invite links: parsing, link building, and the single-instance pipe handoff (see invite.h). */
 #include "winutil.h"
 #include "invite.h"
+#include "invite_logic.h"
 
 #include <shellapi.h>
 #include <sddl.h>
@@ -236,6 +237,10 @@ void InviteServer::run() {
             }
             bool accepted = false;
             if (text == L"show") { push(2, L""); accepted = true; }
+            else if (text.compare(0, 5, L"acct:") == 0) {
+                std::string c;
+                if (hubnet::invite_valid(winutil::to_utf8(text.substr(5)))) { c = hubnet::invite_format(winutil::to_utf8(text.substr(5))); push(3, winutil::to_wide(c)); accepted = true; }
+            }
             else if (text.compare(0, 5, L"play:") == 0) {
                 std::wstring key = text.substr(5);
                 if (invite_is_valid_game_key(key)) { push(1, key); accepted = true; }
@@ -292,6 +297,7 @@ bool InviteServer::pop(int kind, std::wstring* text) {
 
 bool InviteServer::take(std::wstring* code) { return pop(0, code); }
 bool InviteServer::take_play(std::wstring* key) { return pop(1, key); }
+bool InviteServer::take_account(std::wstring* code) { return pop(3, code); }
 bool InviteServer::take_show() { return pop(2, nullptr); }
 
 bool invite_is_valid_game_key(const std::wstring& key) {
@@ -344,4 +350,32 @@ bool invite_send_play(const std::wstring& pipe_name, const std::wstring& key, DW
 }
 bool invite_send_show(const std::wstring& pipe_name, DWORD timeout_ms) {
     return pipe_call(pipe_name, L"show", timeout_ms);
+}
+
+bool invite_parse_account_url(const std::wstring& url, std::wstring* code) {
+    std::string c;
+    if (!hubnet::invite_link_code(winutil::to_utf8(url), &c)) return false;
+    if (code) *code = winutil::to_wide(c);
+    return true;
+}
+bool invite_parse_account_command_line(const std::wstring& cmdline, std::wstring* code) {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(cmdline.c_str(), &argc);
+    if (!argv) return false;
+    bool found = false;
+    std::wstring result;
+    for (int i = 0; i < argc && !found; ++i) {
+        if (invite_parse_account_url(argv[i], &result)) found = true;
+        else if (_wcsicmp(argv[i], L"--invite") == 0 && i + 1 < argc && hubnet::invite_valid(winutil::to_utf8(argv[i + 1]))) {
+            result = winutil::to_wide(hubnet::invite_format(winutil::to_utf8(argv[i + 1])));
+            found = true;
+        }
+    }
+    LocalFree(argv);
+    if (found && code) *code = result;
+    return found;
+}
+bool invite_send_account(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms) {
+    const std::string c = winutil::to_utf8(code);
+    return hubnet::invite_valid(c) && pipe_call(pipe_name, L"acct:" + winutil::to_wide(hubnet::invite_format(c)), timeout_ms);
 }

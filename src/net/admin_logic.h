@@ -175,6 +175,9 @@ inline std::string admin_result_text(const std::string& op, bool ok, const std::
     if (!ok) {
         if (reason == "ban-cap") return "The ban list is full (unban someone first).";
         if (reason == "cap") return "The account list is full.";
+        if (reason == "invite-cap") return "You have too many active invites. Revoke one first.";
+        if (reason == "not-found") return op == "invite" ? "That invite is already gone." : "No waiting account has that friend code.";
+        if (reason == "not-pending") return "That account isn't waiting for approval.";
         return "That did not work. Try again.";
     }
     std::string who = name.empty() ? std::string("that account") : name;

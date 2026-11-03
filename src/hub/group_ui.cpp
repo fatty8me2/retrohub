@@ -16,6 +16,7 @@ static World world_now() {
     for (auto& r : fr_incoming()) w.pending_request_uids.push_back(r.uid);
     w.update_available = hubupdate::update_available();
     w.conflicts = cloud_ui_conflict_count();
+    w.admin_waiting = !fr_is_admin() ? 0 : g_shot_admin ? 2 : FR.cli.admin_pending();
     return w;
 }
 
@@ -33,6 +34,18 @@ void group_note(Kind k, const std::string& uid, const std::string& name, const s
     e.kind = k; e.uid = uid; e.name = name; e.game_id = game_id; e.title = title; e.code = code; e.text = text;
     e.at = wall_ms(); e.expires_at = expires_at;
     GRP.hist.add(e);
+}
+/* Owner: a new account started waiting / someone joined with an invite. A bell entry always; an in-hub toast only when no game is running. */
+void admin_note_waiting(const std::string& uid, const std::string& name, const std::string& code, long long created) {
+    const std::string line = hubnet::waiting_bell_text(name, code);
+    group_note(Kind::JoinWaiting, uid, name, "", "", code, line, 0);
+    if (!game_active() && hubnet::waiting_is_fresh(created, wall_ms())) push_toast(line + ". Open the bell or the Admin page.", ui::WARN, 8.0);
+}
+void admin_note_invite_used(const std::string& uid, const std::string& name, const std::string& code) {
+    const std::string line = hubnet::joined_bell_text(name, code);
+    group_note(Kind::InviteUsed, uid, name, "", "", hubnet::invite_format(code), line, 0);
+    if (!game_active()) push_toast(line, ui::GOOD, 6.0);
+    admin_ui_poke();
 }
 void group_note_invite(const std::string& uid, const std::string& name, const hubnet::Invite& inv) {
     group_note(Kind::Invite, uid, name, inv.game_id, inv.game_title, inv.lobby_code, "", inv.expires_at);
@@ -143,13 +156,15 @@ static void draw_entry(Entry& e, int idx, float cw, const World& w) {
     if (!e.read) dl->AddCircleFilled(ImVec2(p0.x + sp(1.f), p0.y + sp(1.f)), sp(0.55f), ui::BAD, 12);
     float bw = sp(10.f), by = p0.y + (h - sp(3.5f)) * 0.5f;
     float rx = p1.x - pad;
-    if (!act.empty()) rx -= bw + sp(0.75f) + sp(3.5f);   // action + dismiss
+    const float dw = e.kind == Kind::JoinWaiting ? sp(8.f) : sp(3.5f);   // dismiss ("Deny" for a waiting account)
+    if (!act.empty()) rx -= bw + sp(0.75f) + dw;   // action + dismiss
     float tx = p0.x + pad + sp(1.f), tw = std::max(sp(8.f), rx - tx);
     ImU32 headc = s == State::Active || s == State::Info ? ui::TEXT : ui::TEXT2;
     dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, p0.y + pad), headc,
                 ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, headline(e), tw).c_str());
     std::string sub = ago_text(e.at, w.now);
     if (!e.code.empty() && (e.kind == Kind::Invite || e.kind == Kind::AskJoin)) sub = "Room " + e.code + "  -  " + sub;
+    if (!e.code.empty() && e.kind == Kind::JoinWaiting) sub = "Friend code " + e.code + "  -  " + sub;
     const char* sl = state_label(s);
     if (*sl) sub += std::string("  -  ") + sl;
     else if ((e.kind == Kind::Invite || e.kind == Kind::AskJoin) && e.expires_at > 0) {
@@ -160,20 +175,22 @@ static void draw_entry(Entry& e, int idx, float cw, const World& w) {
                 ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, tw).c_str());
     ImGui::PushID(idx);
     if (!act.empty()) {
-        ImGui::SetCursorScreenPos(ImVec2(p1.x - pad - bw - sp(0.75f) - sp(3.5f), by));
+        ImGui::SetCursorScreenPos(ImVec2(p1.x - pad - bw - sp(0.75f) - dw, by));
         if (ui::button(act.c_str(), ImVec2(bw, sp(3.5f)), true)) {
             switch (e.kind) {
                 case Kind::Invite: fr_join_lobby(e.code, e.game_id, e.title, e.name); e.done = true; ImGui::CloseCurrentPopup(); break;
                 case Kind::AskJoin: fr_invite_uids({e.uid}); e.done = true; break;
                 case Kind::FriendRequest: fr_accept(e.uid, e.name); e.done = true; break;
+                case Kind::JoinWaiting: admin_ui_act("approve", e.uid); e.done = true; break;
                 case Kind::CloudConflict: A.page = Page::Saves; ImGui::CloseCurrentPopup(); break;
                 case Kind::Update: hubupdate::start_update(); break;
                 default: break;
             }
             e.read = true; GRP.hist.dirty = true;
         }
-        ImGui::SetCursorScreenPos(ImVec2(p1.x - pad - sp(3.5f), by));
-        if (ui::button("X", ImVec2(sp(3.5f), sp(3.5f)), false, true)) {
+        ImGui::SetCursorScreenPos(ImVec2(p1.x - pad - dw, by));
+        if (ui::button(e.kind == Kind::JoinWaiting ? "Deny" : "X", ImVec2(dw, sp(3.5f)), false, true)) {
+            if (e.kind == Kind::JoinWaiting) admin_ui_act("deny", e.uid);
             if (e.kind == Kind::FriendRequest) { if (!FR.fake) FR.cli.decline(e.uid); else FR.f_in.clear(); }
             e.done = true; e.read = true; GRP.hist.dirty = true;
         }
@@ -216,6 +233,10 @@ void group_fake_seed() {
     GRP.hist.add({Kind::Invite, "kaiuid", "Kai", "mk64", "Mario Kart 64", "ZXCV23", "", now - 3 * 3600000LL, now - 2 * 3600000LL, true, false});
     GRP.hist.add({Kind::Invite, "miauid", "Mia", "mk64", "Mario Kart 64", "K7M2QX", "", now - 4 * 60000LL, now + 25 * 60000LL, false, false});
     GRP.hist.add({Kind::FriendRequest, "oliuid", "Oliver", "", "", "", "", now - 60000, 0, false, false});
+    if (g_shot_admin) {   // owner bell entries (HUB_SHOT_ADMIN together with HUB_SHOT_FAKE_FRIENDS)
+        GRP.hist.add({Kind::JoinWaiting, "newguy77", "newguy77", "", "", "RH-7KQ2-MNXD", hubnet::waiting_bell_text("newguy77", "RH-7KQ2-MNXD"), now - 2 * 60000LL, 0, false, false});
+        GRP.hist.add({Kind::InviteUsed, "kaiuid", "Kai", "", "", "K7QM-2XDT", hubnet::joined_bell_text("Kai", "K7QM-2XDT"), now - 30 * 60000LL, 0, false, false});
+    }
     GRP.hist.dirty = false; rivals_fake_seed();
 }
 
