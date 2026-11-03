@@ -1,6 +1,33 @@
 {
   "versions": [
     {
+      "version": "1.31.9",
+      "date": "2026-11-03",
+      "title": "New look, Discover, and every player on the controller",
+      "new": [
+        "Discover tab: highly rated games for every console, with Play, Install (from your shared packs) or Add your own copy",
+        "Library views: List, Compact and Showcase next to the usual Grid, plus an A-Z strip and right-stick letter jumps for big libraries",
+        "Friend profiles: head-to-head record, last played together, top games and games you both own. The friend menu is now short and tidy",
+        "Change your controls while a game is running: built-in emulators pick up the new buttons straight away (Dolphin, Cemu, PCSX2, Azahar and PPSSPP on the next launch)",
+        "New Candy D-pad logo and app icon"
+      ],
+      "improved": [
+        "Room page redesigned: the game pick and Launch at the top, one compact row per player, the room code and a red Leave room at the bottom",
+        "Party mode is a single slim bar; its setup and standings open in pop-ups",
+        "You can keep browsing and changing settings in RetroHub while a game runs",
+        "Menu sounds are now off by default (turn them on in Settings > General)",
+        "Games you can't use are listed under Settings > files need attention with the reason, instead of vanishing"
+      ],
+      "fixed": [
+        "Same-PC multiplayer in NES, SNES and PS1 games only listened to controller 1; every controller now drives its own player",
+        "NES players 3-4 never reached the game, even with the Four Score on",
+        "PS2 (Gauntlet and others), GameCube, Wii U and PSP could give a player the wrong controller or none when pads were unplugged or reordered",
+        "Online NES and SNES ignored each player's own button mapping",
+        "Archives with Mac leftover files, accented or Japanese names, generic names like game.iso, .gcz, PS2 .cso and multi-disc sets now install and get the right title",
+        "Long game titles and labels no longer run under buttons on the room and friends screens"
+      ]
+    },
+    {
       "version": "1.31.8",
       "date": "2026-11-02",
       "title": "GameCube online stays in sync",
@@ -456,7 +483,7 @@
       "title": "Watch N64 games live",
       "new": [],
       "improved": [
-         "Watching a friend's N64 game now joins live instead of replaying the match from the start."
+        "Watching a friend's N64 game now joins live instead of replaying the match from the start."
       ],
       "fixed": []
     },
