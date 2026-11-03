@@ -67,6 +67,20 @@ static std::string with_m3u(const hub::GameEntry& e, const std::string& game) {
     namespace fs = std::filesystem;
     std::error_code ec;
     fs::path gp = fs::u8path(game);
+    {   // a lone .bin / .img (no .cue next to it): the core only opens cue / chd / m3u / pbp, so a one-track cue sheet is written for it
+        std::string x = gp.extension().u8string();
+        for (char& c : x) c = (char)std::tolower((unsigned char)c);
+        if (x == ".bin" || x == ".img") {
+            uintmax_t sz = fs::file_size(gp, ec);
+            fs::path m = fs::u8path(staging_dir() + "/m3u/" + sanitize(e.key));
+            fs::create_directories(m, ec);
+            m /= gp.stem().concat(".cue");
+            std::ofstream f(m, std::ios::binary);
+            if (!f) return game;
+            f << "FILE \"" << gp.u8string() << "\" BINARY\r\n  TRACK 01 " << (!ec && sz % 2352 != 0 && sz % 2048 == 0 ? "MODE1/2048" : "MODE2/2352") << "\r\n    INDEX 01 00:00:00\r\n";
+            return m.u8string();
+        }
+    }
     std::vector<std::string> sib;
     for (auto& de : fs::directory_iterator(gp.parent_path(), ec))
         if (!ec && de.is_regular_file(ec)) sib.push_back(de.path().filename().u8string());

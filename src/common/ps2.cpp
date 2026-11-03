@@ -212,7 +212,7 @@ bool launch_image(const std::string& path, const std::string& out_dir, std::stri
     if (L.plain) {
         *image = u8(bin);
     } else {
-        fs::path sf = fs::u8path(out_dir) / L"stamp.txt";
+        fs::path sf = fs::u8path(out_dir) / L"iso_stamp.txt";   // not stamp.txt: the library keeps its own unpack record there (size|mtime|entry) and would see a foreign one
         std::string have;
         { std::ifstream sin(sf, std::ios::binary); std::getline(sin, have); }
         if (have != stamp || !fs::is_regular_file(fs::u8path(iso), ec)) {
