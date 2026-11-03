@@ -962,7 +962,7 @@ struct FriendsClient::Impl {
         a.status = j.str("status", "ok"); a.by = j.str("by");
         a.created = jnum(j, "created"); a.first_seen = jnum(j, "first_seen"); a.last_seen = jnum(j, "last_seen");
         a.pcs = (int)jnum(j, "pcs"); a.friend_of_you = jbool(j, "friend"); a.req = j.str("req");
-        a.test = jbool(j, "test"); a.unapplied = jbool(j, "unapplied");
+        a.test = jbool(j, "test"); a.unapplied = jbool(j, "unapplied"); a.unreachable = jbool(j, "unreachable");
         return a;
     }
     static AdminSettings parse_admin_settings(const Json* j)
