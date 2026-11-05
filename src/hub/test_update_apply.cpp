@@ -162,6 +162,7 @@ static bool lock_a_then_fail_b(const std::wstring& from, const std::wstring& to)
 int main(int argc, char** argv) {
     if (argc >= 3 && std::strcmp(argv[1], "--sleep") == 0) { Sleep((DWORD)std::atoi(argv[2])); return 0; }   // fake game mode
     // ---- pure helpers ----
+    CHECK(!is_excluded(L"rh-helper.exe") && !is_excluded(L"data\\helpers\\dolphin_netplay_driver.ps1") && !is_excluded(L"data\\helpers\\n3ds_join.ps1"));   // an update delivers the helper exe + scripts
     CHECK(is_excluded(L"userdata\\hub.json"));
     CHECK(is_excluded(L"UserData/saves/x.sav"));
     CHECK(is_excluded(L"BattleShip.o2r"));
