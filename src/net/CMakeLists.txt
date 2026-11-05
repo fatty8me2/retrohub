@@ -52,3 +52,7 @@ target_include_directories(hubfriends_live_test PRIVATE ${CMAKE_CURRENT_SOURCE_D
 add_executable(qa_invite_e2e qa_invite_e2e.cpp)
 target_include_directories(qa_invite_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub)
 target_link_libraries(qa_invite_e2e PRIVATE hubnet)
+
+# Per-Windows-user identity backup (offline).
+add_executable(hubidbackup_test test_identity_backup.cpp)
+target_link_libraries(hubidbackup_test PRIVATE hubnet)

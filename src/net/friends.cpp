@@ -237,6 +237,49 @@ Identity identity_load_or_create(const std::string& data_dir, const std::string&
     return id;
 }
 
+/* ---- identity backup outside the install folder (per Windows user) ---- */
+static bool env_set(const char* n) { const char* v = std::getenv(n); return v && *v; }
+
+std::string identity_backup_path()
+{
+    if (const char* o = std::getenv("RETROHUB_IDENTITY_BACKUP"); o && *o) return o;   // tests point this at a temp file
+    if (env_set("RETROHUB_QA") || env_set("RETROHUB_AUTOTEST") || env_set("RETROHUB_TEST_SERVER") || env_set("RETROHUB_TEST")) return "";
+    const char* la = std::getenv("LOCALAPPDATA");
+    if (!la || !*la) return "";
+    return with_sep(la) + "RetroHub\\identity-backup.json";
+}
+
+bool identity_backup_allowed(const std::string& server, const std::string& name)
+{
+    if (name.rfind("qa-", 0) == 0 || name.rfind("QA-", 0) == 0) return false;
+    if (!server.empty() && !is_production_server(server)) return false;   // a local test server's accounts must never reach the real backup
+    return !identity_backup_path().empty();
+}
+
+bool identity_backup_save(const Identity& id)
+{
+    const std::string bp = identity_backup_path();
+    if (bp.empty() || !is_b32(id.user_id, 26) || !is_b32(id.secret, 52)) return false;
+    Identity cur;
+    if (identity_read(bp, &cur) && cur.user_id == id.user_id && cur.secret == id.secret) return true;
+    return write_file(bp, identity_json(id));   // tmp file + rename
+}
+
+bool identity_backup_adopt_if_fresh(const std::string& data_dir, const std::string& vault_dir, Identity* adopted)
+{
+    const std::string bp = identity_backup_path();
+    if (bp.empty()) return false;
+    const std::string lp = with_sep(data_dir) + "identity.json";
+    Identity t;
+    if (identity_read(lp, &t)) return false;                                          // this install has its own account: never replaced
+    if (!vault_dir.empty() && identity_read(with_sep(vault_dir) + "_identity\\identity.json", &t)) return false;   // the sync folder's account wins
+    if (!identity_read(bp, &t)) return false;                                         // missing or corrupt: ignored
+    if (!write_file(lp, identity_json(t))) return false;
+    net_log("Friends: adopted identity from the per-user backup");
+    if (adopted) *adopted = t;
+    return true;
+}
+
 bool identity_exists(const std::string& data_dir, const std::string& vault_dir)
 {
     Identity id;
@@ -525,6 +568,7 @@ struct FriendsClient::Impl {
     std::vector<OutItem> inflight; uint32_t inflight_at = 0;   // the batch the last welcome flushed (an error reply maps back to it)
     std::string username; bool needs_new_name = false, username_known = false; int ref_seq = 0, claim_ref = 0;
     uint32_t hello_at = 0, access_since = 0;     // when the hello went out / when the current refusal was first seen (0 = none): silent-socket watchdogs
+    bool backup_ok = false;                      // may this client use the per-user identity backup (never in QA runs)
     Access access = Access::Ok;                  // the server refused this account's hello (pending approval / blocked); Ok once welcomed
     bool admin = false;                          // the welcome said so (the server enforces it on every admin_* message regardless)
     AdminList alist; AdminDetail adetail; AdminSettings asettings; int admin_pend = 0, admin_ver = 0;
@@ -1129,6 +1173,7 @@ struct FriendsClient::Impl {
     {
         welcomed = true;
         access = Access::Ok;
+        if (backup_ok) identity_backup_save(id);   // a server-confirmed account: keep a copy outside the install folder
         admin = jbool(j, "admin");
         if (admin) send(admin_settings_json());
         else { alist = AdminList(); adetail = AdminDetail(); asettings = AdminSettings(); admin_pend = 0; ainv = AdminInvites(); apend = AdminList(); }
@@ -1449,8 +1494,10 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
     d.server = server;
     d.name = sanitize_name(name);
     {
-        const bool had_identity = fs::exists(upath(with_sep(d.data_dir) + "identity.json")) ||
-                                  (!d.vault_dir.empty() && fs::exists(upath(with_sep(d.vault_dir) + "_identity\\identity.json")));
+        d.backup_ok = identity_backup_allowed(server, d.name);
+        bool had_identity = fs::exists(upath(with_sep(d.data_dir) + "identity.json")) ||
+                            (!d.vault_dir.empty() && fs::exists(upath(with_sep(d.vault_dir) + "_identity\\identity.json")));
+        if (!had_identity && d.backup_ok && identity_backup_adopt_if_fresh(d.data_dir, d.vault_dir, nullptr)) had_identity = true;
         d.id = identity_load_or_create(d.data_dir, d.vault_dir);
         if (!had_identity) write_file(d.fresh_marker(), "1");
     }
