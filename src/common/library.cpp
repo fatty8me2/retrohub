@@ -2853,7 +2853,7 @@ void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::strin
             const fs::directory_entry& de = *it;
             std::error_code e1;
             if (de.is_symlink(e1) || is_link_or_junction(de)) continue;
-            if (de.is_directory(e1)) { if (de.path().filename() != L"__MACOSX" && depth < kMaxWalkDepth) subdirs.push_back(de.path()); continue; }   // __MACOSX: resource forks of a macOS unzip
+            if (de.is_directory(e1)) { if (de.path().filename() != L"__MACOSX") { if (depth < kMaxWalkDepth) subdirs.push_back(de.path()); else if (incomplete) *incomplete = true; } continue; }   // __MACOSX: resource forks of a macOS unzip
             if (!de.is_regular_file(e1) || e1) continue;
             if (de.path().filename().native().compare(0, 2, L"._") == 0) continue;   // "._Game.z64": the same
             std::string ext = ascii_lower(path_utf8(de.path().extension()));
