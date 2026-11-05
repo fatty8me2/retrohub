@@ -1633,6 +1633,7 @@ bool FriendsClient::adopt_identity(const Identity& v)
 {
     Impl& d = *impl_;
     if (!identity_adopt(d.data_dir, d.vault_dir, v)) return false;
+    d.account_deleted = false; d.retire_suppressed = false;   // a new identity: start clean
     apply_adopted(v);
     return true;
 }
@@ -1751,7 +1752,13 @@ void FriendsClient::block(const std::string& uid)
 {
     Impl& d = *impl_;
     d.load_bnames();
-    for (const Friend& f : d.friends) if (f.uid == uid && !f.name.empty()) { d.bnames[uid] = f.name; d.save_bnames(); break; }
+    {
+        std::string nm;
+        for (const Friend& f : d.friends) if (f.uid == uid && !f.name.empty()) { nm = f.name; break; }
+        if (nm.empty()) for (const Request& r : d.incoming) if (r.uid == uid) { nm = r.name; break; }
+        if (nm.empty()) for (const Request& r : d.outgoing) if (r.uid == uid) { nm = r.name; break; }
+        if (!nm.empty()) { d.bnames[uid] = nm; d.save_bnames(); }
+    }
     if (std::find(d.blocked.begin(), d.blocked.end(), uid) == d.blocked.end()) d.blocked.push_back(uid);
     d.friends.erase(std::remove_if(d.friends.begin(), d.friends.end(), [&](const Friend& f) { return f.uid == uid; }), d.friends.end());
     Impl::drop(d.incoming, uid); Impl::drop(d.outgoing, uid);
