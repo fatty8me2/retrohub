@@ -262,6 +262,13 @@ void start_import() {
     }).detach();
 }
 
+/* A table cell's text on one line: too long gets "..." and the whole text in a tooltip. */
+void cell_text(const std::string& t) {
+    const std::string shown = ui::ellipsize(ui::F.body, ui::F.body->FontSize, t, ImGui::GetContentRegionAvail().x);
+    ImGui::TextUnformatted(shown.c_str());
+    if (shown != t && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.c_str());
+}
+
 void draw_table(bool can_act) {
     const float lh = ImGui::GetTextLineHeight();
     if (!ImGui::BeginTable("si_tbl", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) return;
@@ -282,7 +289,7 @@ void draw_table(bool can_act) {
         ImGui::Checkbox("##pick", &r.selected);
         ImGui::EndDisabled();
         ImGui::TableNextColumn();
-        ImGui::TextUnformatted(ui::ellipsize(ui::F.body, ui::F.body->FontSize, g.title, ImGui::GetContentRegionAvail().x).c_str());
+        cell_text(g.title);
         std::string sub;
         if (!r.problem.empty()) sub = r.problem;
         else if (r.same_as_vault) sub = "Already the same as your save here.";
@@ -290,13 +297,13 @@ void draw_table(bool can_act) {
         else if (r.newer == si::Row::VaultNewer) sub = "Your save here is newer, so it is not ticked.";
         if (!sub.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, r.problem.empty() ? ui::TEXT2 : ui::WARN);
-            ImGui::TextWrapped("%s", sub.c_str());
+            cell_text(sub);   // one line (an ellipsis + the full text on hover), so every row has the same height and nothing runs into the next column
             ImGui::PopStyleColor();
         }
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(si::source_name(r.src()));
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-        ImGui::TextUnformatted(ui::ellipsize(ui::F.body, ui::F.body->FontSize, r.files.empty() ? "" : (r.files.size() > 1 ? std::to_string(r.files.size()) + " save files" : r.files[0].name), ImGui::GetContentRegionAvail().x).c_str());
+        cell_text(r.files.empty() ? "" : (r.files.size() > 1 ? std::to_string(r.files.size()) + " save files" : r.files[0].name));
         ImGui::PopStyleColor();
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(date_text(r.src_mtime).c_str());

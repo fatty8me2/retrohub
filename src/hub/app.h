@@ -531,6 +531,8 @@ std::string genre_of_entry(const hub::GameEntry& e);   // first genre from the b
 void rebuild_vis();
 bool added_stamps_changed();   // true once when background "recently added" stats landed (rebuild the list)
 bool supports_online(const hub::GameEntry& e);
+bool entry_online(const hub::GameEntry& e);   // is_native || supports_online, memoized (per-frame callers)
+void lib_lookup_cache_clear();                // drop the catalog / online memos (every rescan)
 bool online_untested(const hub::GameEntry& e);
 std::string online_block_reason(const hub::GameEntry& e);   // why a game cannot be played in a room ("" = it can)
 std::string player_limit_note(const hub::GameEntry& e);     // why the room cap is below 4 ("" = nothing to explain)

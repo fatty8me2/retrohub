@@ -307,7 +307,7 @@ void draw_compact_item(int idx, ImVec2 sz, bool in_view) {
     if (!ghost) {
         bool fav = gstate(A.lib[idx].key).favorite;
         if (fav) ui::icon(dl, ui::Icon::StarFilled, ImVec2(p1.x - sp(1.4f), p0.y + sp(1.4f)), sp(1.5f), IM_COL32(255, 214, 70, 255));
-        if (supports_online(A.lib[idx]) || is_native(A.lib[idx])) dl->AddCircleFilled(ImVec2(p0.x + sp(1.1f), p0.y + sp(1.1f)), sp(0.45f), ui::GOOD);
+        if (entry_online(A.lib[idx])) dl->AddCircleFilled(ImVec2(p0.x + sp(1.1f), p0.y + sp(1.1f)), sp(0.45f), ui::GOOD);
     }
     dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
     if (r.focused) ui::focus_ring(dl, p0, p1, rad);
@@ -370,7 +370,7 @@ void draw_list_row(int idx, float w, float h, const hubui::ListCols& C, bool odd
             std::string s = gs.play_seconds ? hubui::format_play_time(gs.play_seconds) : std::string("-");
             dl->AddText(cf, cf->FontSize, ImVec2(p0.x + C.time_x, cy - cf->FontSize * 0.5f), gs.play_seconds ? scol : ui::TEXT3, s.c_str());
         }
-        bool on = is_native(A.lib[idx]) || supports_online(A.lib[idx]);
+        bool on = entry_online(A.lib[idx]);
         if (on) ui::icon(dl, ui::Icon::Globe, ImVec2(p0.x + C.icons_x + sp(1.5f), cy), sp(1.75f), ui::GOOD);
         bool fav = gs.favorite;
         float sa = fav ? 1.f : e * 0.8f;
@@ -702,7 +702,7 @@ void draw_showcase(Disp& D) {
             if (cat && cat->year) pills.push_back({std::to_string(cat->year), IM_COL32(255, 255, 255, 34)});
             pills.push_back({gs.last_played ? "Played " + fmt_ago(gs.last_played) : std::string("Not played yet"), IM_COL32(255, 255, 255, 34)});
             if (gs.play_seconds) pills.push_back({hubui::format_play_time(gs.play_seconds), IM_COL32(255, 255, 255, 34)});
-            if (is_native(e) || supports_online(e)) pills.push_back({"Online", ui::mix(ui::GOOD, IM_COL32_BLACK, 0.35f)});
+            if (entry_online(e)) pills.push_back({"Online", ui::mix(ui::GOOD, IM_COL32_BLACK, 0.35f)});
         } else pills.push_back({"A friend's game", IM_COL32(255, 255, 255, 34)});
         ImFont* cf = ui::F.cap;
         float tw = 0;
