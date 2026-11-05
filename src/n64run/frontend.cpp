@@ -138,6 +138,7 @@ struct Args {
     long long frames = 0;
     std::string screenshot;
     std::string load_state;   // --load-state FILE: restore this state right after boot (offline)
+    bool resume = false;      // --resume: restore <state-dir>\auto.state (the last quit's resume point) when it exists; offline only, --load-state wins
     int volume = 100;   // --volume N (0-100): applied once the core runs
     std::string control, state_dir, shot_dir, game_key;   // --control FILE (runner_ctl.h), --state-dir, --shot-dir, --game-key
     std::string cheats;     // --cheats FILE: cheat list JSON (cheats.h); polled for live toggles offline
@@ -229,6 +230,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--volume") { std::string s; ok = val(&s); if (ok) a.volume = std::max(0, std::min(100, atoi(s.c_str()))); }
         else if (k == "--control") ok = val(&a.control);
         else if (k == "--load-state") ok = val(&a.load_state);
+        else if (k == "--resume") a.resume = true;
         else if (k == "--state-dir") ok = val(&a.state_dir);
         else if (k == "--shot-dir") ok = val(&a.shot_dir);
         else if (k == "--game-key") ok = val(&a.game_key);
@@ -1989,6 +1991,11 @@ int main(int argc, char** argv) {
         g_key_for_auto = args.game_key;
         if (!online && !args.state_dir.empty() && !g_match) { g_auto_dir = args.state_dir; g_next_autosave = GetTickCount64() + 30000; }
         if (!online && !args.load_state.empty()) g_load_state_path = args.load_state;
+        else if (!online && args.resume && !args.state_dir.empty() && !g_match) {   // hub auto-resume (same rules as retrorun --resume; the hub decides whether to pass it)
+            std::error_code rec;
+            const std::string af = runctl::state_file(args.state_dir, runctl::kAutoSlot);
+            if (fs::is_regular_file(fs::path(af), rec)) g_load_state_path = af;
+        }
         if (!args.control.empty() && !args.headless) g_ctl_shot_tmp = save_dir + "\\screenshots_tmp";
         g_realtime = args.realtime;
         if (args.headless || g_match || online || !g_gs.empty() || !g_cheats_path.empty() || !args.control.empty() || !g_auto_dir.empty() || !g_load_state_path.empty() || !g_result_file.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));

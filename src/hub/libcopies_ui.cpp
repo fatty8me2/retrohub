@@ -1,5 +1,6 @@
 #include "app.h"
 
+#include "resume_more.h"
 #include "prefs.h"
 #include "library_scan_info.h"
 
@@ -225,6 +226,7 @@ static void draw_undo_card() {
 }
 
 void draw_missing_rom_dialog() {
+    resume_choice_draw();   // Wave 3 R1: "which save" choice before a launch
     draw_hidden_list();
     draw_undo_card();
     if (!MA.open) return;

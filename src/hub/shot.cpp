@@ -1,5 +1,6 @@
 #include <sstream>
 #include "app.h"
+#include "resume_more.h"
 #include "libview_ui.h"
 #include "continue_ui.h"
 #include <cstring>
@@ -81,6 +82,7 @@ void shot_init_ui() {
         else if (m == "missingrom") missing_rom_ask_shot();
         else if (m == "hidden") hidden_games_open_shot();
         else if (m == "ps1bios") ps1_bios_ask_shot();
+        else if (m == "resume") resume_choice_shot();   // Wave 3 R1: the Play choice (with HUB_SHOT_RESUME=1 + HUB_SHOT_DETAILS/TAB=1: the Saves tab row)
     }
     if (const char* ad = std::getenv("HUB_SHOT_ADMIN")) { g_shot_admin = true; admin_ui_shot_init(ad); }   // screenshot aid: the owner dashboard with fake data (1 | pending | banned | detail | confirm | settings)
     if (const char* ac = std::getenv("HUB_SHOT_ACCESS")) {   // screenshot aid: the whole-app lock screen: pending | unavailable | setup (a new install connecting) | setup-offline
