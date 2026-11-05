@@ -8,10 +8,10 @@
 namespace hubui {
 
 /* ---- which layout All Games uses (saved in Settings::lib_layout) ---- */
-enum class LibLayout { Grid = 0, List = 1, Compact = 2, Showcase = 3, Shelf = 4 };
-constexpr int kLibLayouts = 5;
-const char* layout_key(LibLayout l);                 // "grid" "list" "compact" "showcase" "shelf"
-const char* layout_name(LibLayout l);                // "Grid" "List" "Compact" "Showcase" "Shelf"
+enum class LibLayout { Grid = 0, List = 1, Compact = 2, Showcase = 3, Shelf = 4, Cases = 5 };
+constexpr int kLibLayouts = 6;
+const char* layout_key(LibLayout l);                 // "grid" "list" "compact" "showcase" "shelf" "cases"
+const char* layout_name(LibLayout l);                // "Grid" "List" "Compact" "Showcase" "Shelf" "Cases"
 LibLayout layout_from_key(const std::string& k);     // unknown -> Grid
 
 /* ---- A-Z jump strip ---- */

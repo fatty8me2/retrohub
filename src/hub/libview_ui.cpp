@@ -6,7 +6,15 @@
  * art is only requested for tiles that are really on screen. Pad: D-pad moves, LT/RT page (main.cpp turns them into PageUp/PageDown),
  * the right stick jumps to the next / previous letter (or console group). Mouse: the strip, the wheel, header clicks.
  * Colours all come from the ui:: palette so every theme works. */
+#define STBI_ONLY_PNG
+#define STBI_NO_STDIO
+#define STBI_NO_LINEAR
+#define STBI_NO_HDR
+#include "third_party/stb_image.h"
 #include "app.h"
+#include "cases_logic.h"
+#include "../saves/savestore.h"
+#include "state_slots.h"
 #include "libview_ui.h"
 #include "online_caps.h"
 #include "shelf_draw.h"
@@ -15,6 +23,10 @@
 #include <SDL.h>
 #include <algorithm>
 #include <cmath>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <unordered_map>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -50,6 +62,7 @@ struct State {
     int jump_pos = -1;            // flat position to bring into view (and focus, see focus_key) on the next draw
     bool jump_top = false;        // letter jumps put the target at the top; others only reveal it
     std::string focus_key;        // pad focus lands on this item when it is submitted
+    bool focus_quiet = false;     // ... without showing the focus ring (Cases: the mouse / wheel moved the selection)
     int traced = -2;
     bool jump_center = false;     // reveal puts the target mid-viewport (entering the view / switching layout)
     bool reveal = false;          // keep the selected game in view while the library is still loading / re-sorting
@@ -192,14 +205,14 @@ void jump(const Disp& D, int pos, bool top) {
 }
 
 /* The grid child's nav focus goes to the item just submitted (pad shortcuts and strip jumps). */
-void focus_item_here() {
+void focus_item_here(bool visible = true) {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     ImGuiWindow* w = g.CurrentWindow;
     if (g.NavWindow != w) ImGui::FocusWindow(w);
     ImVec2 off = w->DC.CursorStartPos;
     ImRect rel(ImGui::GetItemRectMin() - off, ImGui::GetItemRectMax() - off);
     ImGui::SetNavID(ImGui::GetItemID(), ImGuiNavLayer_Main, g.CurrentFocusScopeId, rel);
-    g.NavCursorVisible = true;
+    if (visible) g.NavCursorVisible = true;
 }
 
 /* ---------- one interactive item (same behaviour as draw_tile's front half) ---------- */
@@ -239,7 +252,7 @@ void deliver(int idx, TileResult r) {
 }
 
 void apply_pending_focus(int idx) {
-    if (!G.focus_key.empty() && G.focus_key == item_key(idx)) { focus_item_here(); G.focus_key.clear(); }
+    if (!G.focus_key.empty() && G.focus_key == item_key(idx)) { focus_item_here(!G.focus_quiet); G.focus_key.clear(); G.focus_quiet = false; }
 }
 
 /* ---------- Grid (draw_tile) and Compact ---------- */
@@ -916,13 +929,15 @@ void draw_shelf(Disp& D) {
     ImGui::Dummy(ImVec2(1.f, 1.f));
 }
 
+#include "cases_view.inc"
+
 /* LT / RT: a page up / down that keeps the focused game at the same height (ImGui's own page move would land on the selected bar below). */
 void page_move(Disp& D, int dir, float view_h) {
     const int n = (int)D.flat.size();
     int cur = selected_pos(D);
     if (n == 0) return;
     if (cur < 0) cur = 0;
-    if (lib_layout() == LibLayout::Showcase) { jump(D, std::max(0, std::min(n - 1, cur + dir * 8)), false); return; }
+    if (lib_layout() == LibLayout::Showcase || lib_layout() == LibLayout::Cases) { jump(D, std::max(0, std::min(n - 1, cur + dir * 8)), false); return; }
     const hubui::VLayout& L = G.L;
     if (cur >= (int)L.item_row.size() || L.rows.empty()) return;
     const hubui::VRow& cr = L.rows[L.item_row[cur]];
@@ -1001,10 +1016,25 @@ void draw_strip(Disp& D, float h, float w, bool in_nav_window) {
 /* ======================= public ======================= */
 
 LibLayout lib_layout() { return hubui::layout_from_key(A.st.lib_layout); }
-bool lib_layout_has_bar() { return lib_layout() != LibLayout::Showcase; }
+bool lib_layout_has_bar() { return lib_layout() != LibLayout::Showcase && lib_layout() != LibLayout::Cases; }
+
+/* Cases hooks (frame.cpp / palette_ui.cpp / tv_mode.cpp): the pad buttons it uses must not also do their global jobs. */
+bool lib_cases_active() { return lib_layout() == LibLayout::Cases && A.page == Page::Library && A.view == LibView::All; }
+bool lib_cases_back() {   // B / Esc: leave the flipped / inspected view first
+    if (!lib_cases_active()) return false;
+    if (!hubui::cases::on_back(&CS.mode)) return false;
+    shot_trace("cases-back", "browse");
+    return true;
+}
+void lib_cases_tv_enter() {   // TV mode opened with "TV mode opens in Cases view" on: All Games, Cases layout
+    if (!A.st.tv_cases) return;
+    if (lib_layout() != LibLayout::Cases) lib_set_layout(LibLayout::Cases);
+    A.view = LibView::All;
+}
 
 void lib_set_layout(LibLayout l) {
     if (l == lib_layout()) return;
+    if (l == LibLayout::Cases) { CS.intro = 0.f; CS.mode = hubui::cases::Mode::Browse; CS.init = false; CS.land_pending = false; }   // the carousel fades in on the selected game
     A.st.lib_layout = hubui::layout_key(l);
     mark_dirty();
     G.lsig = ~0ull;
@@ -1072,6 +1102,12 @@ void lib_switcher() {
                     dl->AddRectFilled(ImVec2(c.x + u * 0.9f, y - u * 0.8f), ImVec2(c.x + u * 1.2f, y - 0.06f * u), col, 1.f);
                 }
                 break;
+            case LibLayout::Cases:   // a tall case between two turned ones, standing on a floor line
+                dl->AddRectFilled(ImVec2(c.x - u * 0.62f, c.y - u * 1.35f), ImVec2(c.x + u * 0.62f, c.y + u * 0.95f), col, 1.5f);
+                dl->AddQuadFilled(ImVec2(c.x - u * 1.5f, c.y - u * 0.9f), ImVec2(c.x - u * 0.95f, c.y - u * 0.62f), ImVec2(c.x - u * 0.95f, c.y + u * 0.62f), ImVec2(c.x - u * 1.5f, c.y + u * 0.9f), col);
+                dl->AddQuadFilled(ImVec2(c.x + u * 0.95f, c.y - u * 0.62f), ImVec2(c.x + u * 1.5f, c.y - u * 0.9f), ImVec2(c.x + u * 1.5f, c.y + u * 0.9f), ImVec2(c.x + u * 0.95f, c.y + u * 0.62f), col);
+                dl->AddRectFilled(ImVec2(c.x - u * 1.5f, c.y + u * 1.25f), ImVec2(c.x + u * 1.5f, c.y + u * 1.55f), col, 1.f);
+                break;
             default:   // showcase: a big cover between two small ones
                 dl->AddRectFilled(ImVec2(c.x - u * 0.55f, c.y - u * 1.1f), ImVec2(c.x + u * 0.55f, c.y + u * 1.1f), col, 1.5f);
                 dl->AddRectFilled(ImVec2(c.x - u * 1.45f, c.y - u * 0.65f), ImVec2(c.x - u * 0.8f, c.y + u * 0.65f), col, 1.f);
@@ -1125,7 +1161,7 @@ void lib_body(float bar_h) {
             G.reveal_key = selected_key();
         } else if (selected_key() != G.reveal_key || ++G.reveal_quiet > 60) G.reveal = false;
     }
-    const bool strip_on = D.marks.size() >= 2 && D.flat.size() >= 10;
+    const bool strip_on = D.marks.size() >= 2 && D.flat.size() >= 10 && lay != LibLayout::Cases;
     float strip_w = strip_on ? sp(3.f) : 0.f;
     if (strip_on && !D.letter_mode)   // console / genre labels are wider than a letter
         for (const hubui::JumpRun& m : D.marks) strip_w = std::max(strip_w, ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, m.label.c_str()).x + sp(1.25f));
@@ -1138,12 +1174,12 @@ void lib_body(float bar_h) {
         const float inner = full_w - strip_w - strip_gap - st.ScrollbarSize - pad;
         draw_list_header(ImGui::GetCursorScreenPos().x, inner);
     }
-    const bool flush = lay == LibLayout::Showcase || lay == LibLayout::Shelf;   // these two fill the whole child
+    const bool flush = lay == LibLayout::Showcase || lay == LibLayout::Shelf || lay == LibLayout::Cases;   // these fill the whole child
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, flush ? ImVec2(0, 0) : ImVec2(pad, pad));
     if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; G.sc_init = false; G.jump_pos = -1; }
     ImGuiWindowFlags wf = 0;
     if (lay == LibLayout::List) wf |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
-    if (lay == LibLayout::Showcase) wf |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
+    if (lay == LibLayout::Showcase || lay == LibLayout::Cases) wf |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
     if (!flush) ImGui::SetCursorPosX(ImGui::GetCursorPosX() - pad);
     ImGui::BeginChild("grid", ImVec2(flush ? full_w - strip_w - strip_gap : child_w, -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding, wf);
     ImGui::PopStyleVar();
@@ -1152,7 +1188,7 @@ void lib_body(float bar_h) {
     ImGuiWindow* me = ImGui::GetCurrentWindow();
     const bool mine = g.NavWindow == me;
     // pad shortcut: right stick = next / previous letter (or console group)
-    if (mine && !ImGui::GetIO().WantTextInput && A.focused && !A.proc && D.runs.size() > 1) {
+    if (mine && !ImGui::GetIO().WantTextInput && A.focused && !A.proc && D.runs.size() > 1 && lay != LibLayout::Cases) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;   // keyboard: Ctrl+Down / Ctrl+Up
         int dir = (ImGui::IsKeyPressed(ImGuiKey_GamepadRStickDown, false) || (ctrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))) ? 1
                   : (ImGui::IsKeyPressed(ImGuiKey_GamepadRStickUp, false) || (ctrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))) ? -1 : 0;
@@ -1172,6 +1208,18 @@ void lib_body(float bar_h) {
     if (!flush) add_games_banner();
     if (lay == LibLayout::Showcase) draw_showcase(D);
     else if (lay == LibLayout::Shelf) draw_shelf(D);
+    else if (lay == LibLayout::Cases) {
+        static const bool perf = g_headless && std::getenv("HUB_SHOT_CASES_PERF") != nullptr;   // QA: CPU time of the carousel per frame (shot trace "cases-perf")
+        static double acc = 0; static int frames = 0;
+        LARGE_INTEGER t0, t1, fq;
+        if (perf) QueryPerformanceCounter(&t0);
+        draw_cases(D);
+        if (perf) {
+            QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
+            acc += (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)fq.QuadPart;
+            if (++frames == 20) { shot_trace("cases-perf", "avg_ms=" + std::to_string(acc / frames) + " games=" + std::to_string(D.flat.size())); acc = 0; frames = 0; }
+        }
+    }
     else draw_virtual(D, lay);
     ImGui::EndChild();
     const ImVec2 csz = ImGui::GetItemRectSize();
@@ -1190,6 +1238,12 @@ void lib_body(float bar_h) {
 /* ======================= screenshot aids ======================= */
 
 void lib_shot_seed() {
+    if (const char* cs = std::getenv("HUB_SHOT_CASES"); cs && *cs) {   // Cases screenshots: browse | flip | inspect | cartridge[:<console>] | missingart
+        A.st.lib_layout = hubui::layout_key(LibLayout::Cases);
+        A.view = LibView::All;
+        const std::string m = cs;
+        if (m.rfind("cartridge", 0) == 0) A.sys_filter = m.size() > 10 ? m.substr(10) : std::string("n64");
+    }
     const char* v = std::getenv("HUB_SHOT_LIBVIEW");
     if (!v || !*v) return;
     A.st.lib_layout = hubui::layout_key(hubui::layout_from_key(v));

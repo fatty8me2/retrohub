@@ -198,6 +198,10 @@ static ImGuiKey pad_token_key(const std::string& n) {
     if (n == "back" || n == "view") return ImGuiKey_GamepadBack;
     if (n == "rsdown") return ImGuiKey_GamepadRStickDown;   // library: next letter / console group
     if (n == "rsup") return ImGuiKey_GamepadRStickUp;
+    if (n == "rsleft") return ImGuiKey_GamepadRStickLeft;    // Cases: spin the inspected case
+    if (n == "rsright") return ImGuiKey_GamepadRStickRight;
+    if (n == "r3") return ImGuiKey_GamepadR3;                // Cases: inspect
+    if (n == "l3") return ImGuiKey_GamepadL3;                // Cases: shuffle
     if (n == "pgdn") return ImGuiKey_PageDown;   // raw keys, to test ImGui's own paging without the LT/RT conversion
     if (n == "pgup") return ImGuiKey_PageUp;
     return ImGuiKey_None;

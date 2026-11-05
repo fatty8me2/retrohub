@@ -543,13 +543,16 @@ void all_games_view() {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
     /* The chip rows wrap onto a new line instead of running off the right edge (1280x800 / 1100x700). */
     const float chips_right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    bool first = true;
     auto chip_same_line = [&](const char* label, float spacing) {
+        if (first) return;   // nothing before it on this row yet (Cases hides the console chips)
         if (spacing < 0.f) spacing = ImGui::GetStyle().ItemSpacing.x;
         if (ImGui::GetItemRectMax().x + spacing + ImGui::CalcTextSize(label).x + sp(3.25f) <= chips_right) ImGui::SameLine(0, spacing);
     };
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
-    bool first = true;
+    const bool cases_view = lib_layout() == hubui::LibLayout::Cases;   // Cases has its own console tabs along the top
     for (auto& c : chips) {
+        if (cases_view) break;
         int n = c.sys[0] ? counts[c.sys] : A.chip_total;
         if (c.sys[0] && n == 0 && A.sys_filter != c.sys) continue;
         char lab[48];
@@ -567,6 +570,7 @@ void all_games_view() {
         std::snprintf(lab, sizeof lab, "Online  %d", n_online);
         chip_same_line(lab, sp(2.f));
         if (chip(lab, A.online_only, ui::GOOD)) { A.online_only = !A.online_only; A.vis_dirty = true; }
+        first = false;
     }
     {   // Favorites chip, Genre picker and Group by Genre (saved like library_sort)
         int n_fav = 0;
@@ -580,11 +584,13 @@ void all_games_view() {
         chip_same_line(gl.c_str(), -1.f);
         if (chip(gl.c_str(), !A.st.lib_genre.empty(), COL_ACCENT)) ImGui::OpenPopup("##genre_pick");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show one genre only");
-        chip_same_line(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", -1.f);
-        if (chip(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", A.st.lib_group_genre, COL_ACCENT)) {
-            A.st.lib_group_genre = !A.st.lib_group_genre; mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true;
+        if (!cases_view) {
+            chip_same_line(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", -1.f);
+            if (chip(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", A.st.lib_group_genre, COL_ACCENT)) {
+                A.st.lib_group_genre = !A.st.lib_group_genre; mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Group the library by console or by genre");
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Group the library by console or by genre");
         if (ImGui::BeginPopup("##genre_pick")) {
             if (ImGui::Selectable("All genres", A.st.lib_genre.empty())) { A.st.lib_genre.clear(); mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true; }
             for (auto& kv : A.genre_counts) {
@@ -606,13 +612,13 @@ void all_games_view() {
     ImGui::PopStyleVar();
     ImGui::EndChild();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    verify_library_card();   // Wave 3 L3: only when there is something to say
+    if (!cases_view) verify_library_card();   // Wave 3 L3: only when there is something to say (Cases is a full-screen view: it stays out)
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
     const hubui::fg::Ghost* selg = (lib_layout_has_bar() && !A.sel_ghost.empty()) ? find_ghost(A.sel_ghost) : nullptr;   // a friend's game is selected
     const hub::GameEntry* sel = (lib_layout_has_bar() && !selg) ? find_entry(A.sel_game) : nullptr;
     float bar_h = (sel || selg) ? sp(8.f) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
-    if (A.vis.empty()) {
+    if (A.vis.empty() && !cases_view) {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.5f)));
         if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; }
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() - sp(1.5f));
