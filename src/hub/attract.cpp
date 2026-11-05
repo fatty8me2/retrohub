@@ -151,7 +151,7 @@ void draw_slide_image(ImDrawList* dl, const at::Slide& s, Tex* t, int idx, float
         return;
     }
     at::UV cover = at::cover_uv((float)t->w, (float)t->h, p1.x - p0.x, p1.y - p0.y);
-    at::UV uv = at::ken_burns(idx, progress, cover);
+    at::UV uv = at::ken_burns(idx, ui::reduce_motion ? 0.f : progress, cover);
     dl->AddImageRounded((ImTextureID)t->t, p0, p1, ImVec2(uv.u0, uv.v0), ImVec2(uv.u1, uv.v1), IM_COL32(255, 255, 255, (int)(255 * std::max(0.f, std::min(1.f, alpha)))), rad);
 }
 
