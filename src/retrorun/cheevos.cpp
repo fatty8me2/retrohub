@@ -194,6 +194,8 @@ static void RC_CCONV c_login(int result, const char* err, rc_client_t* c, void*)
     if (result != RC_OK) {
         d->log(std::string("login failed: ") + (err ? err : "?"));
         osd::push("Achievements: sign-in failed (open Settings > Account)", osd::Kind::Warn, 5.0);
+        rc_client_set_hardcore_enabled(c, 0);   // nothing can be earned this session: do not block rewind / cheats / speed for no reason (audit M7a)
+        d->log("hardcore off: not signed in");
         return;
     }
     const rc_client_user_t* u = rc_client_get_user_info(c);
@@ -204,6 +206,8 @@ static void RC_CCONV c_game(int result, const char* err, rc_client_t* c, void*) 
     if (result != RC_OK) {
         d->log(std::string("game load failed: ") + (err ? err : "?"));
         if (result == RC_NO_GAME_LOADED) d->log("no achievements for this game");
+        rc_client_set_hardcore_enabled(c, 0);   // nothing to earn: the hardcore restrictions would only get in the way (audit M7a)
+        d->log("hardcore off: no game loaded");
         return;
     }
     d->ready = true;
@@ -212,7 +216,7 @@ static void RC_CCONV c_game(int result, const char* err, rc_client_t* c, void*) 
     if (d->gc.total)
         osd::push(d->gc.title + ": " + std::to_string(d->gc.unlocked) + "/" + std::to_string(d->gc.total) + " achievements" + (hc ? " (hardcore)" : ""), osd::Kind::Info, 4.0);
     else
-        osd::push("No achievements for this game", osd::Kind::Info, 3.0);
+        { osd::push("No achievements for this game", osd::Kind::Info, 3.0); rc_client_set_hardcore_enabled(c, 0); d->log("hardcore off: game has no achievements"); }
     d->log("game ready: " + d->gc.title + " " + std::to_string(d->gc.unlocked) + "/" + std::to_string(d->gc.total));
 }
 
