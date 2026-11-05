@@ -415,6 +415,7 @@ void poll_process() {
     /* no focus_hub() here: the game just closed, the hub must not jump in front of whatever the user does next */
     sync_smash_prep();
     transferpak_run_finished();   // Wave 3 X1: the Game Boy game's save changed too
+    palpark_process_ended();   // Wave 3 X3: a GBA game in the DS Slot-2 may have a new save
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
     uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
     if (!A.run.key.empty()) {

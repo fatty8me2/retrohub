@@ -26,6 +26,8 @@ void gba_link_after_exit();                                                     
 
 std::string palpark_launch_args(const hub::GameEntry& e);                                // retrorun flags (offline DS)
 void palpark_details_section(const hub::GameEntry& e);
+void palpark_shot_init();                                                                // HUB_SHOT_PALPARK screenshot aid (headless)
+void palpark_process_ended();                                                            // poll_process: the game ended; queue the Slot-2 GBA save for the cloud
 
 void resume_details_section(const hub::GameEntry& e);                                    // details modal, Saves tab
 
