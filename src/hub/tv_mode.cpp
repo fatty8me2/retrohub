@@ -7,6 +7,7 @@
 #include "friends_ui.h"
 #include "popup_guard.h"
 #include "display.h"
+#include "libview_ui.h"
 
 namespace tvmode {
 
@@ -105,6 +106,7 @@ void frame_begin(SDL_Window* win, SDL_Renderer*) {
         return;
     }
     g_active = on;
+    if (on && A.st.tv_cases) lib_cases_tv_enter();   // "TV mode opens in Cases view"
     if (on) {
         save_rect(win);
         hubdisplay::prepare_fullscreen_monitor(win);   // the chosen monitor, not wherever the window happens to be
@@ -211,6 +213,7 @@ void settings_ui() {
     bool a = g_active;
     if (ImGui::Checkbox("TV mode (F11)", &a)) toggle();
     if (ImGui::Checkbox("Start RetroHub in TV mode", &A.st.tv_start)) mark_dirty();
+    if (ImGui::Checkbox("TV mode opens in Cases view", &A.st.tv_cases)) { mark_dirty(); if (g_active && A.st.tv_cases) lib_cases_tv_enter(); }
     bool w = autostart_enabled();
     if (ImGui::Checkbox("Start with Windows into TV mode", &w)) {
         if (!g_headless_mode && set_autostart(w)) { A.st.tv_windows = w; mark_dirty(); }
