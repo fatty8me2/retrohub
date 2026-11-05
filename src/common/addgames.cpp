@@ -263,6 +263,7 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
                 for (const std::string& c : comps) { std::error_code ce; uint64_t cs = fs::file_size(P(c), ce); if (!ce) bytes_total_ += cs; }
             }
         }
+        const bool made_dir = !fs::exists(P(dir), ec);   // library-10: only a folder this job creates is removed again on failure
         fs::create_directories(P(dir), ec);
         auto exists = [](const std::string& p) { std::error_code e; return fs::exists(P(p), e); };
         std::string same = pjoin(dir, name);
@@ -298,7 +299,7 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
         }
         if (!ok) {   // a half-copied set must not stay behind: a lone .cue would read as "Already in your library" on the next Add
             for (const std::string& w : written) { std::error_code de; fs::remove(P(w), de); }
-            if (!comps.empty()) { std::error_code de; fs::remove(P(dir), de); }   // the set's own folder, only when it is empty again
+            if (!comps.empty() && made_dir) { std::error_code de; fs::remove(P(dir), de); }   // the set's own folder, only when it is empty again
         }
         if (ok) finish(Outcome::Added, "");
         else if (err == "cancelled") finish(Outcome::Cancelled, "cancelled");

@@ -555,7 +555,7 @@ void worker_main() {
         d.ok = ok;
         if (!ok) {   // library-6: the network (or a DAT that could not be fetched) is not a verdict on the cover; 404s are recorded as misses already
             bool net = err == "network error" || err.compare(0, 5, "HTTP ") == 0;
-            if (unresolved) { std::lock_guard<std::mutex> dl(g_dat_mu); net = !g_dat_failed.empty(); }
+            if (unresolved) { std::lock_guard<std::mutex> dl(g_dat_mu); for (auto& kv : g_dat_failed) if (now_s() < kv.second) net = true; }   // a DAT is down right now
             d.transient = net;
         }
         std::lock_guard<std::mutex> l(g_mu);
