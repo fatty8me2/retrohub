@@ -128,6 +128,15 @@ void apply_scan() {
             { hub::GameEntry g; g.system = hub::System::N64; g.key = kNativeKey; g.title = "Super Smash Bros. 64"; g.catalog_id = "smash64"; g.path = "C:/fake/BattleShip.exe"; A.lib.insert(A.lib.begin(), g); }
             n = 0;
         }
+        if (std::string(fl) == "tpak") {   // Wave 3 X1 screenshot aid: Pokemon Stadium 2 + a few Game Boy games (HUB_SHOT_DETAILS=fake:tpak-n64)
+            struct F { const char* key; hub::System s; const char* title; const char* cat; };
+            for (const F& f : {F{"fake:tpak-n64", hub::System::N64, "Pokemon Stadium 2", "pokestadium2"}, F{"fake:tpak-gold", hub::System::GBC, "Pokemon Gold", "pokegold"},
+                               F{"fake:tpak-crystal", hub::System::GBC, "Pokemon Crystal", "pokecrystal"}, F{"fake:tpak-red", hub::System::GB, "Pokemon Red", "pokered"}}) {
+                hub::GameEntry g; g.system = f.s; g.key = f.key; g.title = f.title; g.catalog_id = f.cat; g.path = std::string("C:/fake/") + f.cat + ".rom";
+                A.lib.push_back(g);
+            }
+            n = 0;
+        }
         for (int i = 0; i < n; ++i) {
             hub::GameEntry g;
             g.system = sy[i % 5];

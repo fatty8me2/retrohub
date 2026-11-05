@@ -39,6 +39,9 @@ int main() {
         cmd[3] = 0x80;   // a different pak address is not rumble
         CHECK(!decode_rumble_command(cmd, &on));
     }
+    CHECK(tpak_enabled(false, "gold.gbc"));    // offline with a cartridge
+    CHECK(!tpak_enabled(true, "gold.gbc"));    // never online
+    CHECK(!tpak_enabled(false, ""));           // no cartridge: Controller / Rumble Pak stay
     CHECK(!is_mempak_file("a\\b.mpk"));
     CHECK(!is_mempak_file("Game.eep"));
 

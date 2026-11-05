@@ -188,6 +188,10 @@ target_link_libraries(hub_bracket_test PRIVATE hublogic)
 add_executable(hub_hack_test test_hack.cpp hack_core.cpp)
 target_link_libraries(hub_hack_test PRIVATE hublogic hubcommon)
 
+add_executable(hub_tpak_test test_transferpak.cpp)
+target_include_directories(hub_tpak_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_tpak_test PRIVATE cxx_std_17)
+
 add_executable(hub_toast_test test_toast.cpp)
 target_link_libraries(hub_toast_test PRIVATE hublogic)
 
