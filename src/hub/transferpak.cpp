@@ -91,8 +91,11 @@ bool same_bytes(const fs::path& a, const fs::path& b) {
 bool backup_save(const hub::GameEntry& gb, const std::string& save) {
     std::error_code ec;
     if (!fs::exists(fs::u8path(save), ec)) return true;   // nothing to lose yet
-    fs::path dir = fs::u8path(hub::data_dir() + "tpak_backups\\" + gb.key);
+    std::string folder = gb.key;   // keys look like "gb:abcd-1234": ':' is not allowed in a Windows folder name
+    for (char& c : folder) if (!(std::isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_')) c = '_';
+    fs::path dir = fs::u8path(hub::data_dir() + "tpak_backups\\" + folder);
     fs::create_directories(dir, ec);
+    if (!fs::is_directory(dir, ec)) return false;
     std::string name = fs::u8path(save).filename().u8string();
     std::vector<std::string> have;
     for (auto& n : list_names(dir.u8string())) if (n.rfind(name + ".", 0) == 0) have.push_back(n);
