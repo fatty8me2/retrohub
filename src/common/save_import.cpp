@@ -1,4 +1,5 @@
 #include "save_import.h"
+#include "gba_save.h"
 
 #include <algorithm>
 #include <chrono>
@@ -677,6 +678,7 @@ bool convert(const Row& r, const GameRef& g, const Ctx& ctx, std::vector<OutFile
         if (!read_src(f, &d, why)) return false;
         if (d.empty()) { *why = "The save is empty."; return false; }
         if (g.save_stem.empty()) { *why = "This game has no save name."; return false; }
+        if (sys == "gba") gbasave::strip_rtc_footer(&d);   // mGBA / Dolphin add a 16 byte clock block; retrorun's core keeps (and expects) the bare save
         out->push_back({g.save_stem + ".srm", std::move(d)});
         return true;
     }

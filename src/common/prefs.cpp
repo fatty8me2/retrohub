@@ -306,7 +306,39 @@ bool set_hidden(Prefs* p, std::vector<std::string> k, long long t) { return set_
 bool set_renames(Prefs* p, std::map<std::string, std::string> m, long long t) { return set_map_field(p, &p->renames, std::move(m), "renames", t); }
 bool set_covers(Prefs* p, std::map<std::string, std::string> m, long long t) { return set_map_field(p, &p->covers, std::move(m), "covers", t); }
 bool set_preferred_copy(Prefs* p, std::map<std::string, std::string> m, long long t) { return set_map_field(p, &p->preferred_copy, std::move(m), "preferred_copy", t); }
-bool set_progress(Prefs* p, std::map<std::string, Progress> m, long long t) { return set_map_field(p, &p->progress, clean_progress(m), "progress", t); }
+/* Progress keeps TWO stamps per game so a status set on one PC and a note typed on another both survive a merge:
+ *   map_ts["progress"][key]      = the status stamp (what an older client reads as the whole entry's stamp, so old files and old clients keep working)
+ *   map_ts["progress_note"][key] = the note stamp; the presence of this (possibly empty) map marks the new format. Without it (a file an older
+ *                                  client wrote) both stamps are the single entry stamp. A stamp that is missing in the new format means "never set".
+ * Negative = removed (tombstone, both stamps). */
+bool set_progress(Prefs* p, std::map<std::string, Progress> m, long long t) {
+    m = clean_progress(m);
+    auto& sts = p->map_ts["progress"];
+    const bool had_marker = p->map_ts.count("progress_note") != 0;
+    auto& nts = p->map_ts["progress_note"];
+    if (!had_marker) {   // an entry stamped as one value: both halves keep that stamp
+        fill_map_stamps(p->progress, &sts, p->stamp("progress"));
+        nts = sts;
+    }
+    if (p->progress == m) return false;
+    if (!t) t = now_ms();
+    auto half = [&](std::map<std::string, long long>& st, const std::string& k, bool changed, bool is_new, bool empty) {
+        auto it = st.find(k);
+        if (changed && !(is_new && empty)) { st[k] = t; return; }
+        if (it != st.end() && it->second < 0) { if (is_new && !empty) it->second = t; else it->second = -it->second; }   // revived: the old stamp stays
+    };
+    for (const auto& kv : m) {
+        auto it = p->progress.find(kv.first);
+        const bool is_new = it == p->progress.end();
+        half(sts, kv.first, is_new || it->second.status != kv.second.status, is_new, kv.second.status.empty());
+        half(nts, kv.first, is_new || it->second.note != kv.second.note, is_new, kv.second.note.empty());
+    }
+    for (const auto& kv : p->progress) if (!m.count(kv.first)) { sts[kv.first] = -t; nts[kv.first] = -t; }
+    p->progress = std::move(m);
+    p->ts["progress"] = t;
+    p->legacy_maps.erase("progress");
+    return true;
+}
 bool set_theme(Prefs* p, const std::string& v, long long t) { return set_field(p, &p->theme, v, "theme", t); }
 bool set_profile_avatar(Prefs* p, const std::string& v, long long t) { return set_field(p, &p->profile.avatar, v, "profile.avatar", t); }
 bool set_profile_fav_game(Prefs* p, const std::string& v, long long t) { return set_field(p, &p->profile.fav_game, v, "profile.fav_game", t); }
@@ -360,7 +392,22 @@ bool parse(const std::string& text, Prefs* out) {
         sanitize_map_stamps(&p, "renames", p.renames);
         sanitize_map_stamps(&p, "covers", p.covers);
         sanitize_map_stamps(&p, "preferred_copy", p.preferred_copy);
-        sanitize_map_stamps(&p, "progress", p.progress);
+        if (p.map_ts.count("progress_note")) {   // new format: two stamps; a missing half means "never set"
+            for (const char* f : {"progress", "progress_note"}) {
+                for (auto& kv : p.map_ts[f]) {
+                    const bool live = p.progress.count(kv.first) != 0;
+                    kv.second = live ? (kv.second < 0 ? -kv.second : kv.second) : (kv.second > 0 ? -kv.second : kv.second);
+                }
+            }
+            for (const auto& kv : p.progress)
+                if (!p.map_ts["progress"].count(kv.first) && !p.map_ts["progress_note"].count(kv.first)) {
+                    const long long ft = p.stamp("progress") > 0 ? p.stamp("progress") : 1;
+                    p.map_ts["progress"][kv.first] = ft;
+                    p.map_ts["progress_note"][kv.first] = ft;
+                }
+        } else {
+            sanitize_map_stamps(&p, "progress", p.progress);
+        }
         sanitize_map_stamps(&p, "user_shelves", sm);
     }
     {   // fields from a newer client: kept verbatim
@@ -417,6 +464,7 @@ std::string serialize(const Prefs& p) {
             auto it = p.map_ts.find(f);
             mt.o.push_back({f, key_stamps(it == p.map_ts.end() ? std::map<std::string, long long>() : it->second)});
         }
+        if (auto it = p.map_ts.find("progress_note"); it != p.map_ts.end()) mt.o.push_back({"progress_note", key_stamps(it->second)});
         add("map_ts", std::move(mt));
     }
     add("theme", json::make_string(p.theme));
@@ -432,6 +480,54 @@ std::string serialize(const Prefs& p) {
     return json::stringify(o);
 }
 
+/* Progress: status and note are merged on their own (value + stamp each; the newer stamp wins, equal stamps the larger value), so "beaten" set on
+ * one PC and a note typed on another both survive, in either order. An older client's file has one stamp per game: it counts for both halves. */
+static void merge_progress(const Prefs& a, const Prefs& b, Prefs* r) {
+    struct Side { bool fresh; std::map<std::string, long long> st, nt; };
+    auto mk = [](const Prefs& x) {
+        Side sd{x.map_ts.count("progress_note") != 0, {}, {}};
+        const long long ft = x.stamp("progress") > 0 ? x.stamp("progress") : 1;
+        auto i1 = x.map_ts.find("progress"), i2 = x.map_ts.find("progress_note");
+        if (i1 != x.map_ts.end()) sd.st = i1->second;
+        if (sd.fresh) {
+            if (i2 != x.map_ts.end()) sd.nt = i2->second;
+            for (const auto& kv : x.progress)   // a live entry with no stamp at all: the field stamp
+                if (!sd.st.count(kv.first) && !sd.nt.count(kv.first)) { sd.st[kv.first] = ft; sd.nt[kv.first] = ft; }
+        } else {
+            fill_map_stamps(x.progress, &sd.st, ft);
+            sd.nt = sd.st;
+        }
+        return sd;
+    };
+    const Side A = mk(a), B = mk(b);
+    auto ab = [](const std::map<std::string, long long>& m, const std::string& k) { auto it = m.find(k); return it == m.end() ? 0ll : (it->second < 0 ? -it->second : it->second); };
+    std::set<std::string> keys;
+    for (const Side* sd : {&A, &B}) { for (const auto& kv : sd->st) keys.insert(kv.first); for (const auto& kv : sd->nt) keys.insert(kv.first); }
+    r->progress.clear();
+    auto& ost = r->map_ts["progress"];
+    auto& ont = r->map_ts["progress_note"];
+    ost.clear();
+    ont.clear();
+    for (const auto& k : keys) {
+        auto pa = a.progress.find(k), pb = b.progress.find(k);
+        const std::string sva = pa == a.progress.end() ? std::string() : pa->second.status, svb = pb == b.progress.end() ? std::string() : pb->second.status;
+        const std::string nva = pa == a.progress.end() ? std::string() : pa->second.note, nvb = pb == b.progress.end() ? std::string() : pb->second.note;
+        const long long ssa = ab(A.st, k), ssb = ab(B.st, k), sna = ab(A.nt, k), snb = ab(B.nt, k);
+        const bool tb_s = ssa != ssb ? ssb > ssa : sva < svb;
+        const bool tb_n = sna != snb ? snb > sna : nva < nvb;
+        Progress v;
+        v.status = tb_s ? svb : sva;
+        v.note = tb_n ? nvb : nva;
+        const long long ss = tb_s ? ssb : ssa, sn = tb_n ? snb : sna;
+        const bool present = !v.status.empty() || !v.note.empty();
+        if (present) r->progress[k] = v;
+        const long long sg = present ? 1 : -1;
+        if (ss > 0) ost[k] = sg * ss;
+        if (sn > 0) ont[k] = sg * sn;
+    }
+    if (!A.fresh && !B.fresh && ost.empty()) r->map_ts.erase("progress_note");   // nobody uses the new format and there is nothing to keep
+}
+
 Prefs merge(const Prefs& a, const Prefs& b) {
     Prefs r = a;
     r.ts.clear();
@@ -443,7 +539,7 @@ Prefs merge(const Prefs& a, const Prefs& b) {
     merge_map(a.renames, mts(a, "renames"), a.stamp("renames"), leg(a, "renames"), b.renames, mts(b, "renames"), b.stamp("renames"), leg(b, "renames"), &r.renames, &r.map_ts["renames"]);
     merge_map(a.covers, mts(a, "covers"), a.stamp("covers"), leg(a, "covers"), b.covers, mts(b, "covers"), b.stamp("covers"), leg(b, "covers"), &r.covers, &r.map_ts["covers"]);
     merge_map(a.preferred_copy, mts(a, "preferred_copy"), a.stamp("preferred_copy"), leg(a, "preferred_copy"), b.preferred_copy, mts(b, "preferred_copy"), b.stamp("preferred_copy"), leg(b, "preferred_copy"), &r.preferred_copy, &r.map_ts["preferred_copy"]);
-    merge_map(a.progress, mts(a, "progress"), a.stamp("progress"), leg(a, "progress"), b.progress, mts(b, "progress"), b.stamp("progress"), leg(b, "progress"), &r.progress, &r.map_ts["progress"]);
+    merge_progress(a, b, &r);
     {   // shelves: per name; the order comes from the side whose field stamp is newer
         std::map<std::string, Shelf> ma = shelf_map(a.user_shelves), mb = shelf_map(b.user_shelves), mr;
         merge_map(ma, mts(a, "user_shelves"), a.stamp("user_shelves"), leg(a, "user_shelves"), mb, mts(b, "user_shelves"), b.stamp("user_shelves"), leg(b, "user_shelves"), &mr, &r.map_ts["user_shelves"]);
