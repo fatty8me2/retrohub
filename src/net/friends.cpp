@@ -262,7 +262,19 @@ bool identity_backup_save(const Identity& id)
     if (bp.empty() || !is_b32(id.user_id, 26) || !is_b32(id.secret, 52)) return false;
     Identity cur;
     if (identity_read(bp, &cur) && cur.user_id == id.user_id && cur.secret == id.secret) return true;
-    return write_file(bp, identity_json(id));   // tmp file + rename
+    std::error_code ec;   // atomic: write a temp file, then rename over the old one. Never fall back to truncating a good backup in place.
+    fs::create_directories(upath(bp).parent_path(), ec);
+    const std::string tmp = bp + ".tmp";
+    {
+        std::ofstream f(upath(tmp), std::ios::binary | std::ios::trunc);
+        const std::string j = identity_json(id);
+        if (!f) return false;
+        f.write(j.data(), (std::streamsize)j.size());
+        if (!f) { f.close(); fs::remove(upath(tmp), ec); return false; }
+    }
+    fs::rename(upath(tmp), upath(bp), ec);
+    if (ec) { fs::remove(upath(tmp), ec); return false; }
+    return true;
 }
 
 bool identity_backup_adopt_if_fresh(const std::string& data_dir, const std::string& vault_dir, Identity* adopted)
@@ -271,7 +283,7 @@ bool identity_backup_adopt_if_fresh(const std::string& data_dir, const std::stri
     if (bp.empty()) return false;
     const std::string lp = with_sep(data_dir) + "identity.json";
     Identity t;
-    if (identity_read(lp, &t)) return false;                                          // this install has its own account: never replaced
+    if (fs::exists(upath(lp))) return false;                                          // this install has its own account (even a damaged file): never replaced
     if (!vault_dir.empty() && identity_read(with_sep(vault_dir) + "_identity\\identity.json", &t)) return false;   // the sync folder's account wins
     if (!identity_read(bp, &t)) return false;                                         // missing or corrupt: ignored
     if (!write_file(lp, identity_json(t))) return false;
