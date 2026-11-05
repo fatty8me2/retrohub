@@ -196,7 +196,12 @@ int main() {
         // the old client re-writes its own file later with fewer renames: a whole-map write by a legacy client is last-writer-wins
         Prefs old2 = old_p; old2.renames.erase("n64:o"); old2.map_ts.clear(); old2.ts["renames"] = 2000;
         Prefs n3 = merge(new_p, old2);
-        CHECK(n3.renames.count("n64:o") == 0 && n3.renames.count("n64:n") == 0 && same(n3, merge(old2, new_p)));
+        CHECK(n3.renames.count("n64:n") == 1 && same(n3, merge(old2, new_p)));   // a key the old client never knew is never wiped
+        // an old client re-saving the shelf list drops the rule (it keeps name + empty keys): the merge puts the rule back
+        Prefs old3 = new_p; old3.map_ts.clear(); old3.legacy_maps.insert("user_shelves"); old3.ts["user_shelves"] = 3000;
+        old3.user_shelves[1].smart = false; old3.user_shelves[1].rule = ShelfRule();
+        Prefs n5 = merge(new_p, old3);
+        CHECK(n5.user_shelves.size() == 2 && n5.user_shelves[1].smart && n5.user_shelves[1].rule.min_players == 2 && same(n5, merge(old3, new_p)));
         // an old client's untouched file (older stamps) never deletes the new client's keys
         Prefs n4 = merge(new_p, old_p);
         CHECK(n4.renames.count("n64:n") == 1);
