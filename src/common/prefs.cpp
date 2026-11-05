@@ -135,18 +135,9 @@ void merge_map(const std::map<std::string, V>& la, std::map<std::string, long lo
                std::map<std::string, V>* out, std::map<std::string, long long>* kout) {
     fill_map_stamps(la, &A, fa);
     fill_map_stamps(lb, &B, fb);
-    auto legacy_tombs = [](bool legacy, long long f, std::map<std::string, long long>* self, const std::map<std::string, long long>& other) {
-        if (!legacy) return;
-        for (const auto& kv : other) {
-            long long s = kv.second < 0 ? -kv.second : kv.second;
-            if (!self->count(kv.first) && f > s) (*self)[kv.first] = -f;
-        }
-    };
-    {
-        std::map<std::string, long long> A0 = A, B0 = B;
-        legacy_tombs(a_legacy, fa, &A, B0);
-        legacy_tombs(b_legacy, fb, &B, A0);
-    }
+    /* An older client (a_legacy / b_legacy) wrote the whole map with one stamp and cannot say which keys it deleted, so a key it lacks is
+     * kept (a deleted entry may come back; a note or rename another PC just made is never wiped). */
+    (void)a_legacy; (void)b_legacy;
     out->clear();
     kout->clear();
     std::set<std::string> keys;
@@ -465,6 +456,11 @@ Prefs merge(const Prefs& a, const Prefs& b) {
         std::set<std::string> done;
         for (const auto& n : base) if (mr.count(n) && done.insert(n).second) r.user_shelves.push_back(mr[n]);
         for (const auto& kv : mr) if (done.insert(kv.first).second) r.user_shelves.push_back(kv.second);
+        for (auto& sh : r.user_shelves) {   // an older client drops a shelf's rule when it re-saves the list: put it back
+            if (sh.smart) continue;
+            for (const auto* src : {&a.user_shelves, &b.user_shelves})
+                for (const auto& o : *src) if (o.smart && o.name == sh.name && sh.keys.empty()) { sh.smart = true; sh.rule = o.rule; }
+        }
     }
     {   // unknown fields (from a newer client): keep every one; when both sides have it, the newer "ts" stamp wins, then the larger text
         std::vector<std::pair<std::string, json::Value>> ex = a.extra;

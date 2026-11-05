@@ -166,7 +166,7 @@ inline bool edit_smart_shelf(hubui::cust::Shelves* v, int i, const std::string& 
 /* A copy of the shelves where every smart shelf holds the keys its rule picks (titles map key -> title decides the order, case-insensitive),
  * so the Home composer treats it like a hand-made one. */
 inline hubui::cust::Shelves resolve_smart(const hubui::cust::Shelves& v, const std::vector<Facts>& games, const std::map<std::string, std::string>& titles,
-                                          unsigned long long now, size_t max_items = 60) {
+                                          unsigned long long now, size_t max_items = 200) {
     hubui::cust::Shelves out = v;
     for (auto& s : out) {
         if (!s.smart) continue;

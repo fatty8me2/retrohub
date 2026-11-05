@@ -10,7 +10,7 @@
 namespace {
 
 struct NoteState {
-    std::string key;
+    std::string key, base;   // base = the stored note the box was last loaded from
     char buf[1100] = {0};   // 500 characters (up to 2 bytes each for accents) plus slack
 };
 NoteState NS;
@@ -89,9 +89,13 @@ void progress_details_section(const hub::GameEntry& e) {
         const bool on = status == s.id;
         if (ui::button(s.label, ImVec2(0, sp(3.5f)), on, true, on ? ui::Icon::Check : ui::Icon::None)) custom_set_status(e.key, on ? std::string() : std::string(s.id));
     }
-    if (NS.key != e.key) { NS.key = e.key; std::snprintf(NS.buf, sizeof NS.buf, "%s", note.c_str()); }
+    if (NS.key != e.key) { NS.key = e.key; NS.base = note; std::snprintf(NS.buf, sizeof NS.buf, "%s", note.c_str()); }
+    else if (NS.base != note) {   // the note changed elsewhere (another PC synced): reload the box unless the player is mid-edit
+        if (hubui::prog::clean_note(NS.buf) == NS.base) std::snprintf(NS.buf, sizeof NS.buf, "%s", note.c_str());
+        NS.base = note;
+    }
     ImGui::SetNextItemWidth(std::min(sp(60.f), ImGui::GetContentRegionAvail().x - sp(14.f)));
-    bool go = osk::input("##progress_note", "Add a note (up to 500 characters)", NS.buf, sizeof NS.buf, ImGuiInputTextFlags_EnterReturnsTrue);
+    bool go = osk::input("##progress_note", "Add a short note", NS.buf, sizeof NS.buf, ImGuiInputTextFlags_EnterReturnsTrue);
     go = go || ImGui::IsItemDeactivatedAfterEdit();
     const std::string typed = hubui::prog::clean_note(NS.buf);
     ImGui::SameLine(0, sp(1.f));
