@@ -152,6 +152,13 @@ inline int playtime_minutes(unsigned long long seconds) { return (int)(seconds /
 /* True when a server "error" reply to retire_old means it can never succeed (the saved old secret is wrong), so the
  * client must drop pending-retire.json instead of resending it forever. */
 bool retire_error_is_terminal(const std::string& ref, const std::string& detail);
+/* True when `server` (a line the server stored, id = uuid) is the same line as `local` (this PC's own echo, id "local-..."): same
+ * recipient, same text / card / file, sent within 10 minutes of each other. Used so a restart's history reply does not show a
+ * line you sent twice. */
+/* A plain next step for a status text the client has stopped retrying on (the sign-in was rejected or replaced), or "" when the
+ * status needs nothing from the person. `needs_account` is set when the fix is entering the account code in Settings > Account. */
+std::string status_next_step(const std::string& status_text, bool* needs_account = nullptr);
+bool message_echo_matches(const Message& local, const Message& server);
 void dedupe_friends(std::vector<Friend>& friends, const std::string& self_uid = "");
 /* Different uids, same display name. Returns the OFFLINE entries that look like a person's older identity.
  *  confirmed=true : the uid is in `retired` (the server's alias map / <data_dir>/retired-ids.txt says it was replaced). Safe to merge in bulk.
@@ -276,6 +283,7 @@ class FriendsClient {
     const std::vector<Request>& incoming_requests() const;
     const std::vector<Request>& outgoing_requests() const;
     const std::vector<std::string>& blocked() const;
+    std::string blocked_name(const std::string& uid) const;   // the name they had when you blocked them; empty if unknown
     const Friend* find_friend(const std::string& uid) const;
 
     /* conversations: oldest first, last 200, persisted to <data_dir>/friends/<uid>.json */

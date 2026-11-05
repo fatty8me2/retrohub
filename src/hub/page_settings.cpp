@@ -281,6 +281,7 @@ void tab_online() {
         ImGui::SameLine();
         if (button("Copy", ImVec2(0, 0))) { SDL_SetClipboardText(mycode.c_str()); set_toast("Friend code copied.", true, 3.0); }
     }
+    fr_blocked_section();
     end_panel();
     gap();
     begin_panel("set_conn");
