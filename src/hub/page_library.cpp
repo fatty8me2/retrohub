@@ -1,4 +1,5 @@
 #include "app.h"
+#include "wave3_hooks.h"
 #include "libview_ui.h"
 #include "convenience.h"
 #include "gamepack.h"
@@ -894,6 +895,11 @@ void draw_details_modal() {
         }
         dupes_details_section(e);
         hack_details_section(e);   // Versions row (Original + hacks) and Remove hack
+        progress_details_section(e);   // Wave 3: completion + notes
+        transferpak_details_section(e);
+        gba_link_details_section(e);
+        palpark_details_section(e);
+        verify_details_section(e);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         if (gamepack_owns(e)) {   // installed from a shared pack: its folder (full path on hover) + Uninstall; the archive file name inside is not interesting
             const std::string ft = hubgp::installed_folder_title(e.path, hubgp::pack_root());
@@ -922,6 +928,7 @@ void draw_details_modal() {
         ImGui::TextUnformatted(sv.c_str());
         cloud_ui_game_line(e);
         history_ui_details_section(e);
+        resume_details_section(e);   // Wave 3 R1
         draw_state_strip(e);
     } else if (tab == TabShots) {
         shots_gallery(e);

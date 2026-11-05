@@ -83,6 +83,15 @@ std::string settings_to_json(const Settings& s) {
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
       << "  \"show_whats_new\": " << (s.show_whats_new ? "true" : "false") << ",\n"
+      << "  \"reduce_motion\": " << (s.reduce_motion ? "true" : "false") << ",\n"
+      << "  \"ui_scale\": " << s.ui_scale << ",\n"
+      << "  \"remember_window\": " << (s.remember_window ? "true" : "false") << ",\n"
+      << "  \"win_x\": " << s.win_x << ",\n"
+      << "  \"win_y\": " << s.win_y << ",\n"
+      << "  \"win_w\": " << s.win_w << ",\n"
+      << "  \"win_h\": " << s.win_h << ",\n"
+      << "  \"win_max\": " << (s.win_max ? "true" : "false") << ",\n"
+      << "  \"win_monitor\": \"" << json::escape(s.win_monitor) << "\",\n"
       << "  \"changelog_seen\": \"" << json::escape(s.changelog_seen) << "\",\n"
       << "  \"kt_intro_seen\": " << (s.kt_intro_seen ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json::escape(s.vault_dir) << "\",\n"
@@ -220,6 +229,15 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
     out->setup_done = json_bool(j, "setup_done", out->setup_done);
     out->show_whats_new = json_bool(j, "show_whats_new", out->show_whats_new);
+    out->reduce_motion = json_bool(j, "reduce_motion", out->reduce_motion);
+    out->ui_scale = std::max(80, std::min(200, (int)j.num("ui_scale", out->ui_scale)));
+    out->remember_window = json_bool(j, "remember_window", out->remember_window);
+    out->win_x = (int)j.num("win_x", out->win_x);
+    out->win_y = (int)j.num("win_y", out->win_y);
+    out->win_w = (int)j.num("win_w", out->win_w);
+    out->win_h = (int)j.num("win_h", out->win_h);
+    out->win_max = json_bool(j, "win_max", out->win_max);
+    out->win_monitor = j.str("win_monitor", out->win_monitor);
     out->changelog_seen = j.str("changelog_seen", out->changelog_seen);
     out->cemu_exe = j.str("cemu_exe", out->cemu_exe);
     out->ps1_bios = j.str("ps1_bios", out->ps1_bios);
