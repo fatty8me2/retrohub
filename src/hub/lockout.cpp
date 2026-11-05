@@ -99,6 +99,7 @@ bool launch_blocked(const char* what) {
 
 void lockout_tick() {
     if (!g_enabled || g_forced) return;
+    if (g_signin_open && lockout_kind() == hublock::Lock::None) g_signin_open = false;   // the lock lifted: start closed next time
     if (g_inv_busy && now_s() - g_inv_sent > 12.0) { g_inv_busy = false; inv_set(3, "No answer from the server. Try again."); }
     if (!g_inv_link.empty()) {   // an invite link: wait until we know whether this account is waiting
         const hublock::Lock l = lockout_kind();
