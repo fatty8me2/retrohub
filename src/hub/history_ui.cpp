@@ -123,6 +123,7 @@ void history_ui_saves_page() {
                     P.ok = hs::history_restore(P.hist_dir, P.battery_dir, r.id, now_s(), &err);
                     P.result = P.ok ? "Restored. Press Undo restore to go back." : "Could not restore: " + err;
                     A.vault_dirty = true;
+                    if (P.ok) hs::cloud_game_changed(P.id);   // the vault changed outside a run: queue the push (saves-F13)
                     reload_local();
                     if (P.ok) set_toast("Restored an earlier save of " + P.title + ".", true, 4.0);
                 } else {
@@ -147,6 +148,7 @@ void history_ui_saves_page() {
             P.ok = hs::history_undo(P.hist_dir, P.battery_dir, &err);
             P.result = P.ok ? "Put your save back the way it was before the restore." : "Could not undo: " + err;
             A.vault_dirty = true;
+            if (P.ok) hs::cloud_game_changed(P.id);   // (saves-F13)
             reload_local();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Your save from %s", when_text(P.undo.ts).c_str());
