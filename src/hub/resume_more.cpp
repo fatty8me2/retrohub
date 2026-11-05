@@ -210,6 +210,7 @@ std::string resume_launch_arg(const hub::GameEntry& e, const std::string&, const
     Facts f = facts_for(e);
     if (!resumes(f.sys)) return "";
     f.in.real_boot = blocked;
+    f.in.online = false;   // always offline: only play_entry calls this (run_info_for(e, false)); online / netplay launches never resume (their own temp save dir, no --resume)
     const ResumeChoice c = answer_for(f.key, f.in.newest_battery_time);
     switch (decide_resume(f.in, c)) {
         case ResumeResult::Resume:
@@ -232,6 +233,9 @@ bool resume_choice_gate(const hub::GameEntry& e, bool blocked) {
     if (A.fresh_key == e.key) return false;      // "Start fresh": no resume to ask about
     Facts f = facts_for(e);
     if (!resumes(f.sys)) return false;
+    /* The Transfer Pak launch drops --resume (launch.cpp): nothing to choose. If the pak is then left out (size mismatch / backup failed) the
+     * launch falls back to the safe default: no resume, the newest save wins. */
+    if (transferpak_will_use(e)) return false;
     f.in.real_boot = blocked;
     if (!resume_needs_choice(f.in, answer_for(f.key, f.in.newest_battery_time))) return false;
     G = Ask();
@@ -293,13 +297,16 @@ void resume_details_section(const hub::GameEntry& e) {
     static std::string cached_key;
     static double cached_at = -10;
     static Facts f;
+    static bool tpak = false;   // refreshed with the facts (it stats files)
     if (cached_key != e.key || ImGui::GetTime() - cached_at > 1.5) {
         cached_key = e.key;
         cached_at = ImGui::GetTime();
         f = facts_for(e);
+        tpak = transferpak_will_use(e);
     }
     const bool shot = g_headless && std::getenv("HUB_SHOT_RESUME");
     if (!resumes(f.sys) && !shot) return;
+    if (tpak) return;   // resume is dropped for a Transfer Pak launch: no "which save" row either
     if (!shot && !newer_save_exists(f.in)) return;
     ask_from_pc(f.sys, f.key);
     ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));

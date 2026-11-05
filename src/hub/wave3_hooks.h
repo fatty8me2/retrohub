@@ -17,6 +17,7 @@
 namespace hub { struct GameEntry; }
 
 std::string transferpak_launch_args(const hub::GameEntry& e);                            // n64run flags (offline N64)
+bool transferpak_will_use(const hub::GameEntry& e);                                  // no side effects: would transferpak_launch_args add flags? (resume is dropped then)
 void transferpak_details_section(const hub::GameEntry& e);                               // details modal, Info tab
 void transferpak_run_finished();                                                         // the game process ended: queue the Game Boy game's save push
 

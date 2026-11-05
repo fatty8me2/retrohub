@@ -122,6 +122,14 @@ struct Pending { bool on = false; std::string n64_key, sys, key, title; } g_pend
 
 }  // namespace
 
+/* Side-effect-free prediction of "transferpak_launch_args(e) will be non-empty": no notice, no backup, no pending run. Used so the resume
+ * choice is not asked for a launch that drops --resume anyway (a state would restore the cartridge's save too). */
+bool transferpak_will_use(const hub::GameEntry& e) {
+    if (e.system != hub::System::N64 || !tp::uses_transfer_pak(e.catalog_id)) return false;
+    const hub::GameEntry* gb = chosen_entry(e);
+    return gb && !gb->path.empty() && !rom_missing(*gb);
+}
+
 std::string transferpak_launch_args(const hub::GameEntry& e) {
     g_pending = Pending();
     if (e.system != hub::System::N64 || !tp::uses_transfer_pak(e.catalog_id)) return std::string();
