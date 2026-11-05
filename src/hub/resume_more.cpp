@@ -219,7 +219,7 @@ std::string resume_launch_arg(const hub::GameEntry& e, const std::string&, const
             }
             return " --resume";
         case ResumeResult::NewerSave:
-            if (c == ResumeChoice::Ask)   // not asked (e.g. an automatic launch): the newest save wins, as before
+            if (c == ResumeChoice::Ask && A.fresh_key != f.key)   // not asked (e.g. an automatic launch): the newest save wins, as before
                 set_toast("Your save is newer than your resume point (it came from another PC or a later session), so the game starts from your save. "
                           "The resume point is still on the game's page.");
             return "";
