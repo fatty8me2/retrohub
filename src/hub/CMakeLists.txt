@@ -238,6 +238,7 @@ target_link_libraries(hub_wiiu_test PRIVATE hublogic hubcommon hubminiz bcrypt w
 target_sources(RetroHub PRIVATE netplay_dolphin.cpp)
 add_executable(hub_gcnp_test test_netplay_dolphin.cpp netplay_dolphin.cpp)
 target_link_libraries(hub_gcnp_test PRIVATE hubbase)
+target_compile_definitions(hub_gcnp_test PRIVATE GCNP_DRIVER_PS1="${CMAKE_SOURCE_DIR}/data/helpers/dolphin_netplay_driver.ps1")
 add_executable(hub_gcfw_latency test_gcfw_latency.cpp netplay_3ds_run.cpp)
 target_include_directories(hub_gcfw_latency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gcfw_latency PRIVATE hublogic hubcommon hubnet user32 ws2_32 winhttp winmm)
@@ -259,6 +260,7 @@ target_link_libraries(hub_emu_live PRIVATE hublogic hubcommon hubsaves hubminiz 
 # 3DS local wireless over rooms (np_3ds): pure-logic test (no network, no emulator)
 add_executable(hub_np3ds_test test_netplay_3ds.cpp netplay_3ds_join.cpp)
 target_link_libraries(hub_np3ds_test PRIVATE hublogic hubcommon)
+target_compile_definitions(hub_np3ds_test PRIVATE N3DS_JOIN_PS1="${CMAKE_SOURCE_DIR}/data/helpers/n3ds_join.ps1")
 
 # Native update applier: unit tests + integration dry-run of `RetroHub.exe --apply-update` in scratch dirs.
 add_executable(hub_apply_test test_update_apply.cpp update_apply.cpp)
@@ -345,3 +347,24 @@ target_include_directories(RetroHub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)   # 
 add_executable(hub_palpark_test test_palpark.cpp)
 target_include_directories(hub_palpark_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hub_palpark_test PRIVATE hubcommon hubbase)
+
+# ---- rh-helper.exe: the only thing that starts the bundled UI Automation scripts (data/helpers/*.ps1). RetroHub.exe holds no script
+# text and no script-interpreter command line; it launches `rh-helper.exe run <script> <args>` (src/helper). Console exe, no new deps.
+add_executable(rh-helper ../helper/main.cpp ../helper/rh_helper.rc)
+add_dependencies(rh-helper hubversion)   # generates version_gen/hub_version_rc.h
+target_include_directories(rh-helper PRIVATE ${HUB_VERSION_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/../helper)
+target_compile_features(rh-helper PRIVATE cxx_std_17)
+target_compile_definitions(rh-helper PRIVATE UNICODE _UNICODE)
+set_source_files_properties(../helper/rh_helper.rc PROPERTIES OBJECT_DEPENDS "${HUB_VERSION_GEN}/hub_version_rc.h")
+if(MSVC)
+    target_link_options(rh-helper PRIVATE /ENTRY:wmainCRTStartup)
+endif()
+add_custom_command(TARGET rh-helper POST_BUILD   # scripts sit in <exe dir>\data\helpers\ in the build tree, like in the package
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:rh-helper>/data/helpers
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data/helpers $<TARGET_FILE_DIR:rh-helper>/data/helpers)
+foreach(t RetroHub hub_gc_speed hub_gcnp_live hub_n3ds_live)
+    add_dependencies(${t} rh-helper)
+endforeach()
+add_executable(rh_helper_test ../helper/test_helper.cpp)
+target_include_directories(rh_helper_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../helper)
+target_compile_features(rh_helper_test PRIVATE cxx_std_17)

@@ -445,7 +445,7 @@ int main() {
         CHECK(driver_verdict(false, "stage:driver-start error:x ", 9000, true) == V::Ok);
         CHECK(driver_verdict(true, "stage:driver-start ", 130000, true) == V::NeverOpened);
         CHECK(driver_verdict(true, "stage:driver-start ", 130000, false) == V::Ok);
-        CHECK(driver_verdict_text(V::DiedSilently).find("PowerShell") != std::string::npos);
+        CHECK(driver_verdict_text(V::DiedSilently).find("Windows helper script") != std::string::npos && driver_verdict_text(V::DiedSilently).find("PowerShell") == std::string::npos);
     }
     {   // retrorun exit 12: the real reason, never "Emulator files are missing"
         CHECK(exit_code_text(12).find("Couldn't connect") != std::string::npos && exit_code_text(12).find("Emulator") == std::string::npos);
