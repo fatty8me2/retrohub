@@ -61,7 +61,7 @@ PLUGIN_EXPORT void InitiateControllers(CONTROL_INFO info) {
     for (int i = 0; i < 4; i++) {
         info.Controls[i].Present = (g_run.owner[i] >= 0 || (g_run.reserved >> i & 1u)) ? 1 : 0;
         info.Controls[i].RawData = 0;
-        info.Controls[i].Plugin = g_run.owner[i] < 0 ? PLUGIN_NONE : g_run.rumble ? PLUGIN_RUMBLE_PAK : g_run.mempak ? PLUGIN_MEMPAK : PLUGIN_NONE;
+        info.Controls[i].Plugin = g_run.owner[i] < 0 ? PLUGIN_NONE : (i == 0 && g_run.tpak) ? PLUGIN_TRANSFER_PAK : g_run.rumble ? PLUGIN_RUMBLE_PAK : g_run.mempak ? PLUGIN_MEMPAK : PLUGIN_NONE;
         info.Controls[i].Type = CONT_TYPE_STANDARD;
     }
     char msg[128];
