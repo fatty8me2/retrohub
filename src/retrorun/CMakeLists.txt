@@ -74,3 +74,7 @@ target_include_directories(retrorun_dropin_test PRIVATE ${CMAKE_CURRENT_SOURCE_D
 # QA helper (not shipped): writes a command into control.json with the hub's own sender, runctl::send_command_ex. Used by qa\ctl_headless.ps1 / qa\handoff.ps1.
 add_executable(retrorun_ctl_send ctl_send.cpp)
 target_link_libraries(retrorun_ctl_send PRIVATE hubbase)
+
+# DS Slot-2 GBA cartridge (Wave 3 X3, slot2.h): refusal rules, subsystem pick, save copy-back, backup pruning (pure logic).
+add_executable(retrorun_slot2_test test_slot2.cpp)
+target_include_directories(retrorun_slot2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
