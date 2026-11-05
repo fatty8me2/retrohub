@@ -18,6 +18,7 @@ namespace hub { struct GameEntry; }
 
 std::string transferpak_launch_args(const hub::GameEntry& e);                            // n64run flags (offline N64)
 void transferpak_details_section(const hub::GameEntry& e);                               // details modal, Info tab
+void transferpak_run_finished();                                                         // the game process ended: queue the Game Boy game's save push
 
 void gba_link_apply_dolphin(const hub::GameEntry& e, const std::string& dolphin_dir);   // before an offline GameCube launch
 void gba_link_details_section(const hub::GameEntry& e);
