@@ -1,5 +1,6 @@
 #include "netplay_dolphin.h"
 #include "winutil.h"
+#include "helper_cmd.h"
 
 #include <windows.h>
 
@@ -18,6 +19,8 @@ using namespace gcnp;
 namespace fs = std::filesystem;
 static void put(const fs::path& p, const std::string& t) { fs::create_directories(p.parent_path()); std::ofstream(p, std::ios::binary) << t; }
 static std::string get(const fs::path& p) { std::ifstream f(p, std::ios::binary); std::stringstream s; s << f.rdbuf(); return s.str(); }
+/* The UI Automation driver is a shipped file (data/helpers), not text inside the exe. */
+static std::string driver_script() { return get(fs::path(GCNP_DRIVER_PS1)); }
 /* Dolphin 2509 Config::GetGCIFolderPath(configured, slot, region) (Core/Config/MainSettings.cpp): a trailing /USA, /JPN or /EUR is
  * dropped and the folder of the disc's region is appended. This is the folder NetPlayServer::SyncSaveData sends to the guests. */
 static fs::path dolphin_gci_folder(std::string configured, const char* region_dir) {
@@ -163,6 +166,12 @@ int main() {
 
     CHECK(launch_fragment(s).rfind(",\"np_gc\":{", 0) == 0);
     CHECK(oh.find("UsePanicHandlers = False") != std::string::npos && oh.find("UpdateTrack =") != std::string::npos);
+    CHECK(driver_script().size() > 1000 && driver_script().find("param(") == 0);   // the shipped file is read, not empty
+    {   // the hub launches the helper exe with the allowlisted script name; no interpreter name in the hub
+        const std::string c = hubhelper::run_command(rhhelper::kScriptDolphinDriver, "-Role host");
+        CHECK(c.find("rh-helper.exe") != std::string::npos && c.find(" run dolphin_netplay_driver.ps1 -Role host") != std::string::npos);
+        CHECK(rhhelper::script_allowed(rhhelper::kScriptDolphinDriver));
+    }
     CHECK(std::string(driver_script()).find("Start NetPlay...") != std::string::npos);
     CHECK(std::string(driver_script()).find("ClassName -eq \"MainWindow\"") != std::string::npos);   // main window found by class even when the title is "dolphin-emu"
     CHECK(std::string(driver_script()).find("$k -lt 40") != std::string::npos && std::string(driver_script()).find(" < 40") == std::string::npos);   // PowerShell has no < operator (it broke the driver once)

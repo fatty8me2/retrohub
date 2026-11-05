@@ -134,6 +134,6 @@ if ($SeedGci) {
   for ($i = 1; $i -lt $Players; $i++) { Write-Host "=== inst$i NetPlayTemp card:"; Get-ChildItem "$Work\inst$i\userdata\emulators\dolphin\User\GC\NetPlayTemp\Card A" -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Host ("  " + $_.Name + " " + $_.Length) } }
 }
 # kill only what we started: our RetroHub pids, and Dolphin/powershell processes whose image lives under $Work
-$procs = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*$Work*gc_netplay_driver*") }
+$procs = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*dolphin_netplay_driver*$Work*") }
 foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 foreach ($p in $pids) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }
