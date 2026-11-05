@@ -172,6 +172,7 @@ add_test(NAME hub_states_test COMMAND hub_states_test)               # save-stat
 add_test(NAME hub_shelf_test COMMAND hub_shelf_test)   # Shelf view: media per console, row packing, focus movement, slide-out spring
 add_test(NAME hub_libview_test COMMAND hub_libview_test)               # All Games layouts: A-Z jump runs, list column sort keys, virtual rows, settings round-trip
 add_test(NAME hub_customize_test COMMAND hub_customize_test)   # custom shelves ops, Home composition, renames, rename-aware search
+add_test(NAME hub_progress_test COMMAND hub_progress_test)   # completion status + notes, smart shelf rule evaluation
 add_test(NAME hub_osk_test COMMAND hub_osk_test)                        # OSK key layout / edit logic / folder browser (scratch dirs)
 add_test(NAME hub_convenience_test COMMAND hub_convenience_test)   # Discord frames + opt-in gate, diagnostics exclusion, NAT verdict (loopback STUN), pad glyphs, palette ranking
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)

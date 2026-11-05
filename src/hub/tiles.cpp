@@ -1,4 +1,5 @@
 #include "app.h"
+#include "progress_ui.h"
 #include "libview_ui.h"
 #include "hack_ui.h"
 
@@ -329,6 +330,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     }
     else if (e.issue == "encrypted") { t.tag = "ENCRYPTED"; t.tag_warn = true; t.tag_tip = "Encrypted dump - it needs decrypting before it can run"; }
     else if (e.issue == "keys") { t.tag = "NEEDS KEYS"; t.tag_warn = true; t.tag_tip = "Needs decryption keys (see the 3DS setup dialog)"; }
+    if (t.tag.empty()) t.tag = progress_tag(e.key, &t.tag_tip);   // L2: your completion status, only when set
     t.cloud = cloud_ui_pill(e, &t.cloud_col);
     entry_colors(e, &t.c0, &t.c1);
     t.art = art_for_entry(e);
