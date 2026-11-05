@@ -91,7 +91,7 @@ void frame_begin(SDL_Window* win, SDL_Renderer*) {
         g_base_s = g_pending_base;
         g_pending_base = 0.f;
         rebuild_fonts(g_active ? hubtv::tv_scale(g_base_s, display_h(win)) : g_base_s);
-        if (win && !g_active) hubdisplay::apply_min_size(win, g_base_s);
+        if (win && !g_active && !g_headless_mode) hubdisplay::apply_min_size(win, g_base_s);
     }
     if (g_pending < 0) return;
     const bool on = g_pending == 1, from_key = g_pending_key;

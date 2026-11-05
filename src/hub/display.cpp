@@ -66,6 +66,11 @@ float dpi_scale_for(const Monitor* m) {
     return 1.f;
 }
 
+void seed_monitor(SDL_Window* win) {
+    const std::vector<Monitor> mons = monitors();
+    if (const Monitor* m = monitor_of_window(win, mons)) g_last_monitor_seen = m->name;
+}
+
 float dpi_scale() { return g_dpi; }
 void set_dpi_scale(float s) { g_dpi = std::max(0.5f, s); }
 
@@ -138,9 +143,8 @@ float take_display_changed(SDL_Window* win) {
     const Monitor* m = monitor_of_window(win, mons);
     if (!m) return 0.f;
     if (m->name == g_last_monitor_seen) return 0.f;
-    const bool first = g_last_monitor_seen.empty();
     g_last_monitor_seen = m->name;
-    return first ? 0.f : dpi_scale_for(m);
+    return dpi_scale_for(m);
 }
 
 bool move_to_monitor(SDL_Window* win, const std::string& monitor) {
@@ -153,6 +157,7 @@ bool move_to_monitor(SDL_Window* win, const std::string& monitor) {
     if (t.w <= 0) return false;
     const Uint32 fl = SDL_GetWindowFlags(win);
     if (fl & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MINIMIZED)) return false;
+    if ((fl & SDL_WINDOW_MAXIMIZED) && game_active()) return false;   // re-maximizing activates the window: never while a game runs
     if (!(fl & SDL_WINDOW_MAXIMIZED)) SDL_SetWindowSize(win, t.w, t.h);
     SDL_SetWindowPosition(win, t.x, t.y);   // a maximized window stays maximized and follows to the new monitor
     if (fl & SDL_WINDOW_MAXIMIZED) SDL_MaximizeWindow(win);
