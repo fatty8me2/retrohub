@@ -1642,8 +1642,8 @@ bool Frontend::slot2_prepare() {
     rlog("slot2: GBA save backed up as %s", bak.u8string().c_str());
     std::vector<std::string> names;
     ec.clear();
-    for (auto& de : fs::directory_iterator(bdir, ec)) { std::string n = de.path().filename().u8string(); if (slot2::is_backup_of(n, fname)) names.push_back(n); }
-    for (auto& n : slot2::backups_to_prune(names, 3)) { fs::remove(bdir / fs::u8path(n), ec); rlog("slot2: old backup removed: %s", n.c_str()); }
+    for (auto& de : fs::directory_iterator(bdir, ec)) { std::string n = de.path().filename().u8string(); if (n != bname && slot2::is_backup_of(n, fname)) names.push_back(n); }   // the backup just made is never pruned (a clock that went back sorts it oldest)
+    for (auto& n : slot2::backups_to_prune(names, 2)) { fs::remove(bdir / fs::u8path(n), ec); rlog("slot2: old backup removed: %s", n.c_str()); }
     fs::path wdir = fs::u8path(core.save_dir) / L"palpark" / std::to_wstring(GetCurrentProcessId());
     fs::create_directories(wdir, ec);
     fs::path work = wdir / vault.filename();
