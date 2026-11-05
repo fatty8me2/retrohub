@@ -1,6 +1,39 @@
 {
   "versions": [
     {
+      "version": "1.32.0",
+      "date": "2026-11-05",
+      "title": "Link your consoles, bring your saves",
+      "new": [
+        "Transfer Pak: Pokemon Stadium 1 and 2, Mario Golf, Mario Tennis and Perfect Dark can use a Game Boy game from your library, with its save backed up and synced",
+        "Game Boy Advance link: connect a GBA to Pokemon Colosseum, XD, Four Swords Adventures, Crystal Chronicles, the Tingle Tuner and Metroid Prime (needs your own GBA BIOS)",
+        "Pal Park: put a GBA game in the DS's GBA slot so Diamond, Pearl, Platinum, HeartGold and SoulSilver can bring Pokemon over",
+        "Bring your saves: import saves from RetroArch, Project64, Dolphin, PCSX2, mGBA, VisualBoyAdvance and melonDS, with a preview and automatic backups",
+        "Verify my games: checks your cartridge games against known good dumps, plus a Library health card for bad dumps, missing BIOS, offline folders and duplicates",
+        "Smart shelves: shelves that fill themselves from a rule (console, genre, players, status, favorites, not played lately, decade)",
+        "Progress: mark games as playing, beaten, 100%, dropped or backlog and add a short note; it syncs between your PCs",
+        "N64 resume: N64 games continue where you left off",
+        "Which save: when another PC has a newer save, you choose which one to start from",
+        "Display: RetroHub reopens on the same monitor and spot, with an Open on choice, a UI size slider (80-200%) and Reduce motion",
+        "Blocked people: a list in Settings with Unblock"
+      ],
+      "improved": [
+        "Sync: renames, covers, notes and status from different PCs now merge game by game instead of overwriting each other",
+        "Saves: imported saves, history restores and folder pulls go to your cloud saves right away",
+        "Library: the toolbar wraps cleanly at large UI sizes, and scrolling big libraries is smoother",
+        "Friends: when sign-in stops working, the panel says what to do next",
+        "N64: save and load states confirm the core finished, and a failed save no longer wipes the old state"
+      ],
+      "fixed": [
+        "Your own messages no longer show twice after a restart",
+        "Cover art retries after a network hiccup instead of staying blank",
+        "The library scan no longer follows folder junctions",
+        "A cancelled PlayStation add no longer leaves a half-copied game behind",
+        "Adding a game no longer re-reads your whole library",
+        "Moving RetroHub to a monitor with a different scale rescales it"
+      ]
+    },
+    {
       "version": "1.31.14",
       "date": "2026-11-03",
       "title": "Shelves, Continue and a bigger Discover",
