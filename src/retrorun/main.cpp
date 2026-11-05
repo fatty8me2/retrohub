@@ -428,7 +428,7 @@ class Frontend {
     double speed = 1.0, fast_speed_ = 2.0;
     bool boost_active_ = false;   // View+RT quick boost is on
     bool speed_max = false;
-    void apply_speed(double s);
+    bool apply_speed(double s);   // false: refused (hardcore allows 1x only)
     SDL_Texture* osd_tex = nullptr;
     int osd_tex_w = 0, osd_tex_h = 0;
     osd::Layer osd_layer;
@@ -1152,8 +1152,8 @@ void Frontend::draw_osd() {
     SDL_RenderCopy(ren, osd_tex, nullptr, nullptr);
 }
 
-void Frontend::apply_speed(double s) {
-    if (!ra_.allow_speed(s == 0 ? 2.0 : s)) return;   // hardcore: only 1x
+bool Frontend::apply_speed(double s) {
+    if (!ra_.allow_speed(s == 0 ? 2.0 : s)) return false;   // hardcore: only 1x
     speed_max = (s == 0);
     speed = speed_max ? 1.0 : s;
     if (s == 0 || s > 1.0) fast_speed_ = s;
@@ -1163,6 +1163,7 @@ void Frontend::apply_speed(double s) {
     next_deadline = 0;   // re-anchor the timer pacing at the new rate
     osd::push(runctl::speed_label(s));
     rlog("speed: %s", runctl::speed_label(s).c_str());
+    return true;
 }
 
 void Frontend::draw_hint() {
@@ -1823,11 +1824,11 @@ void Frontend::ctl_poll() {
                 ctl_.ack(true, c.value ? "muted" : "unmuted");
             } else if (c.cmd == runctl::Cmd::Ff) {
                 boost_active_ = false;   // a menu choice made while View+RT is held wins: releasing the boost must not drop it back to 1x
-                apply_speed(c.value ? fast_speed_ : 1.0);
+                if (!apply_speed(c.value ? fast_speed_ : 1.0)) { ctl_.ack(false, "Hardcore: only normal speed"); break; }   // the menu must not claim a speed the game is not running at (audit M7b)
                 ctl_.ack(true, c.value ? "fast-forward on" : "fast-forward off");
             } else if (c.cmd == runctl::Cmd::Speed) {
                 boost_active_ = false;
-                apply_speed(c.speed);
+                if (!apply_speed(c.speed)) { ctl_.ack(false, "Hardcore: only normal speed"); break; }
                 ctl_.ack(true, runctl::speed_label(c.speed));
             } else if (c.cmd == runctl::Cmd::Shader) {
                 std::string m;
