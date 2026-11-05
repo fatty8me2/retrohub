@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.32.1",
+      "date": "2026-11-05",
+      "title": "Your account survives a reinstall",
+      "new": [
+        "Already have an account: the waiting and blocked screens can sign you in to your existing account"
+      ],
+      "improved": [
+        "Reinstalling: RetroHub keeps a backup of your account outside its folder, so a reinstall picks your account back up instead of making a new one",
+        "Reinstalling: the installer now offers the folder RetroHub already runs from, so it updates that copy in place",
+        "Antivirus: online helper scripts now run through a small RetroHub helper, which should mean fewer false alarms"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.32.0",
       "date": "2026-11-05",
       "title": "Link your consoles, bring your saves",
