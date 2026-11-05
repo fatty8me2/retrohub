@@ -39,6 +39,13 @@ bool identity_read_file(const std::string& path, Identity* id);
 /* Unconditionally makes `v` the current identity: backs up a different existing identity.json to
  * identity-backup-<timestamp>.json, then writes identity.json and the vault mirror. Pure file logic. */
 bool identity_adopt(const std::string& data_dir, const std::string& vault_dir, const Identity& v);
+/* Per-Windows-user identity backup: %LOCALAPPDATA%\RetroHub\identity-backup.json (env RETROHUB_IDENTITY_BACKUP overrides the path, for tests).
+ * Path is "" (feature off) in QA / autotest runs. Written (atomically) only for a server-confirmed account; read only by a fresh install. */
+std::string identity_backup_path();
+bool identity_backup_allowed(const std::string& server, const std::string& name);   // false for qa- names, non-production servers, QA runs
+bool identity_backup_save(const Identity& id);
+/* Fresh install only (no <data_dir>/identity.json and no vault mirror): copies a valid backup to identity.json. Never overwrites an identity. */
+bool identity_backup_adopt_if_fresh(const std::string& data_dir, const std::string& vault_dir, Identity* adopted);
 std::string friend_code(const std::string& user_id);   // "RH-7KQ2-M9XD"
 
 /* ---- data ---- */

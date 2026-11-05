@@ -19,6 +19,7 @@ hublock::Lock g_forced_lock = hublock::Lock::None;
 bool g_forced_trying = false;
 double g_t0 = 0.0;                            // when the app started (a new install shows "Setting up" for a few seconds before asking for internet)
 bool g_first_draw = true;
+bool g_signin_open = false;                   // "Already have an account?" panel (pending / denied): sign in with the account code from another PC
 
 /* The waiting screen's "Have an invite code?" field (net/invite_logic.h). Only on the Pending lock; the server approves the account on a good code. */
 char g_inv_buf[24] = {0};
@@ -70,13 +71,14 @@ void lockout_invite_result(bool ok, const std::string& reason) {
 }
 
 void lockout_shot(const std::string& mode) {   // HUB_SHOT_ACCESS=pending|pending-code|pending-bad|unavailable|setup|setup-offline
+    if (mode.size() > 7 && mode.compare(mode.size() - 7, 7, "-signin") == 0) g_signin_open = true;
     if (mode == "pending-code" || mode == "pending-bad") {
         std::snprintf(g_inv_buf, sizeof g_inv_buf, "%s", "K7QM-2XDT");
         if (mode == "pending-bad") inv_set(3, hubnet::redeem_result_text(false, "expired"));
     }
     g_forced = true;
     g_forced_trying = mode == "setup";
-    g_forced_lock = mode.rfind("pending", 0) == 0 ? hublock::Lock::Pending : mode == "unavailable" ? hublock::Lock::Unavailable : hublock::Lock::Setup;
+    g_forced_lock = mode.rfind("pending", 0) == 0 ? hublock::Lock::Pending : mode.rfind("unavailable", 0) == 0 ? hublock::Lock::Unavailable : hublock::Lock::Setup;
 }
 
 hublock::Lock lockout_kind() {
@@ -97,6 +99,7 @@ bool launch_blocked(const char* what) {
 
 void lockout_tick() {
     if (!g_enabled || g_forced) return;
+    if (g_signin_open && lockout_kind() == hublock::Lock::None) g_signin_open = false;   // the lock lifted: start closed next time
     if (g_inv_busy && now_s() - g_inv_sent > 12.0) { g_inv_busy = false; inv_set(3, "No answer from the server. Try again."); }
     if (!g_inv_link.empty()) {   // an invite link: wait until we know whether this account is waiting
         const hublock::Lock l = lockout_kind();
@@ -165,8 +168,9 @@ void draw_lock_screen() {
     /* Content height, to centre it: logo, title, message, account card (pending only), buttons. */
     ImFont* hf = ui::F.title;
     const float title_h = hf->FontSize * 1.2f, msg_h = msg.empty() ? 0.f : ui::F.body->FontSize * (msg.size() > 90 && cw < sp(70.f) ? 4.f : 3.f);
-    const float card_h = pending ? sp(15.f) : 0.f, btn_h = sp(6.f), inv_h = pending ? sp(17.f) : 0.f;
-    const float total = logo + sp(3.f) + title_h + sp(2.f) + msg_h + (pending ? sp(2.f) + card_h : 0.f) + inv_h + sp(4.f) + btn_h;
+    const bool can_signin = pending || lk == hublock::Lock::Unavailable;
+    const float card_h = pending ? sp(15.f) : 0.f, btn_h = sp(6.f), inv_h = !can_signin ? 0.f : g_signin_open ? sp(29.f) : pending ? sp(22.f) : sp(8.f);
+    const float total = logo + sp(3.f) + title_h + sp(2.f) + msg_h + (pending ? sp(2.f) + card_h : 0.f) + inv_h + (can_signin && !pending ? sp(2.f) : 0.f) + sp(4.f) + btn_h;
     const float x0 = (io.DisplaySize.x - cw) * 0.5f, y0 = std::max(sp(3.f), (io.DisplaySize.y - total) * 0.5f);
 
     ui_draw_brand_logo(dl, ImVec2((io.DisplaySize.x - logo) * 0.5f, y0), logo);
@@ -204,7 +208,7 @@ void draw_lock_screen() {
         dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(lx, ry + 2), ui::TEXT3, "Friend code");
         dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(vx, ry), ui::TEXT, code.empty() ? "..." : code.c_str());
         y = p1.y + sp(2.f);
-        {   // "Have an invite code?"
+        if (!g_signin_open) {   // "Have an invite code?"
             const char* hd = "Have an invite code?";
             ImVec2 hs = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, hd);
             dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2((io.DisplaySize.x - hs.x) * 0.5f, y + sp(1.f)), ui::TEXT, hd);
@@ -236,7 +240,38 @@ void draw_lock_screen() {
                 }
             }
         }
+        if (!g_signin_open) {
+            ImGui::SetCursorScreenPos(ImVec2((io.DisplaySize.x - sp(36.f)) * 0.5f, y + sp(15.5f)));
+            if (button("Already have an account? Sign in", ImVec2(sp(36.f), sp(5.f)), true, false)) { g_signin_open = true; account_redeem_reset(); }
+        }
         y += inv_h;
+    }
+    if (can_signin && (g_signin_open || !pending)) {
+        if (!pending && !g_signin_open) {
+            ImGui::SetCursorScreenPos(ImVec2((io.DisplaySize.x - sp(36.f)) * 0.5f, y + sp(1.f)));
+            if (button("Already have an account? Sign in", ImVec2(sp(36.f), sp(5.f)), true, false)) { g_signin_open = true; account_redeem_reset(); }
+            y += inv_h;
+        } else {
+            if (pending) y -= inv_h;   // the sign-in panel takes the invite box's place
+            const char* hd = "Sign in to your account";
+            ImVec2 hs = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, hd);
+            dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2((io.DisplaySize.x - hs.x) * 0.5f, y + sp(1.f)), ui::TEXT, hd);
+            const char* hint = "On your other PC, open Settings > Account and make an account code. Type it here.";
+            std::vector<std::string> hl = ui::wrap_lines(ui::F.body, ui::F.body->FontSize, hint, std::min(cw, sp(56.f)), 3);
+            float hy = y + sp(4.f);
+            for (auto& l : hl) {
+                ImVec2 ls = ui::F.body->CalcTextSizeA(ui::F.body->FontSize, FLT_MAX, 0.f, l.c_str());
+                dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2((io.DisplaySize.x - ls.x) * 0.5f, hy), ui::TEXT2, l.c_str());
+                hy += ui::F.body->FontSize * 1.3f;
+            }
+            ImGui::SetCursorScreenPos(ImVec2((io.DisplaySize.x - sp(42.f)) * 0.5f, hy + sp(1.f)));
+            ImGui::BeginGroup();
+            account_redeem_for_wizard();   // the same code box + sign-in the setup wizard uses; adopting reconnects and the lock lifts once approved
+            ImGui::EndGroup();
+            ImGui::SetCursorScreenPos(ImVec2((io.DisplaySize.x - sp(14.f)) * 0.5f, hy + sp(8.f)));
+            if (button("Back", ImVec2(sp(14.f), sp(5.f)), true, false)) { g_signin_open = false; account_redeem_reset(); }
+            y += inv_h;
+        }
     }
     y += sp(2.f);
 
