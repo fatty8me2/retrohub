@@ -487,9 +487,8 @@ const size_t kBlk = 0x2000;
 bool gc_card_entries(const std::string& raw, std::vector<GcEntry>* out) {
     if (raw.size() < 5 * kBlk + kBlk || raw.size() % kBlk) return false;
     const int nblocks = (int)(raw.size() / kBlk);
-    int dir = (be16(raw, 1 * kBlk + 0x1FFA) >= be16(raw, 2 * kBlk + 0x1FFA)) ? 1 : 2;
     int16_t diff = (int16_t)(be16(raw, 1 * kBlk + 0x1FFA) - be16(raw, 2 * kBlk + 0x1FFA));   // update counters wrap
-    dir = diff >= 0 ? 1 : 2;
+    const int dir = diff >= 0 ? 1 : 2;
     out->clear();
     for (int i = 0; i < 127; ++i) {
         size_t off = (size_t)dir * kBlk + (size_t)i * 0x40;
@@ -560,7 +559,7 @@ bool n64_file_name(const GameRef& g, const std::string& ext, const Ctx& ctx, std
     }
     std::string eff = !gn.empty() ? gn : (!header.empty() ? header + " (unknown rom)" : std::string());
     std::string dir = dir_with_slash(ctx.battery_dir ? ctx.battery_dir(g) : std::string());
-    if (!eff.empty() && !dir.empty()) {   // the core keeps using an old "<goodname>.<ext>" file when one exists
+    if (!eff.empty() && !dir.empty() && eff.find_first_of(":<>\"/\\|?*") == std::string::npos) {   // the core keeps using an old "<goodname>.<ext>" file when one exists
         std::error_code ec;
         fs::path old = P(dir) / P(eff + ext);
         if (fs::is_regular_file(old, ec) && fs::file_size(old, ec) > 0) { *name = eff + ext; return true; }
@@ -870,10 +869,18 @@ ApplyReport apply_row(const Row& r, const GameRef& g, const Ctx& ctx, const std:
     fs::path rel_game = fs::relative(P(dir), P(vault_root), ec);
     if (ec || rel_game.empty() || *rel_game.begin() == "..") rel_game = fs::path(g.system) / P(pcsx2_safe_key(g.key)) / "battery";
     const std::string stamp = stamp_of(now);
+    {   // the save must still be the one the preview showed (a game or a sync may have written it since)
+        int64_t cur = 0;
+        bool any = false;
+        for (const OutFile& o : outs) { std::error_code e0; fs::path p = P(dir) / P(o.rel); if (fs::exists(p, e0)) { any = true; cur = std::max(cur, mtime_unix(p)); } }
+        if (any != r.vault_has || (any && cur != r.vault_mtime)) { rep.ok = false; rep.error = "Your save here changed since you looked. Look again and pick it again."; return rep; }
+    }
     for (const OutFile& o : outs) {
         fs::path to = P(dir) / P(o.rel);
         std::error_code e1;
-        if (fs::is_regular_file(to, e1)) {
+        const bool exists = fs::exists(to, e1);
+        if (e1) { rep.ok = false; rep.error = "Could not look at the current save, so nothing was changed."; return rep; }   // unknown state: never overwrite
+        if (exists) {
             std::string cur;
             if (read_file(U8(to), &cur) && cur == o.data) { ++rep.unchanged; continue; }
             fs::path bk = P(vault_root) / "_conflicts" / rel_game / P(o.rel);

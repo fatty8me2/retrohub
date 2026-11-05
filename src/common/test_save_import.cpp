@@ -223,6 +223,13 @@ int main() {
         fs::path bk = vault() / "_conflicts" / "gba" / "gba_bk-1" / "battery" / "Backup Game.srm.import.20231114-221320";
         CHECK(fs::exists(bk) && rd(bk) == fill(1024, 'O'));
         /* a second run with the same content changes nothing and makes no new backup */
+        {   // a stale preview (the vault file changed after it was built) is refused, nothing is written
+            fs::path t2 = vault() / "gba" / "gba_bk-1" / "battery" / "Backup Game.srm";
+            auto stale = rows[0];
+            ApplyReport sr = apply_row(stale, g, ctx, U8(vault()), 1700000050);
+            CHECK(!sr.ok && sr.written == 0 && rd(t2) == fill(1024, 'N'));
+        }
+        rows = build_rows({found(Source::MGBA, src)}, {g}, ctx);
         rep = apply_row(rows[0], g, ctx, U8(vault()), 1700000100);
         CHECK(rep.ok && rep.written == 0 && rep.unchanged == 1 && rep.backed_up == 0);
         /* another different import backs up again (separate file, nothing overwritten) */

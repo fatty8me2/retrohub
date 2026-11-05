@@ -255,8 +255,8 @@ void start_import() {
             si::ApplyReport rep = si::apply_row(r, g, ctx, vault, (int64_t)std::time(nullptr));
             out->written += rep.written;
             out->backed_up += rep.backed_up;
-            if (!rep.ok) { out->errors.push_back(g.title + ": " + rep.error); continue; }
-            if (rep.written && done_games.insert(g.key).second) { out->changed.push_back({g.system, g.key}); ++out->games; }
+            if (rep.written && done_games.insert(g.key).second) { out->changed.push_back({g.system, g.key}); ++out->games; }   // even a partly written game goes to the cloud
+            if (!rep.ok) out->errors.push_back(g.title + ": " + rep.error);
         }
         out->done = true;
     }).detach();
