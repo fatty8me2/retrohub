@@ -41,6 +41,7 @@
 #include "qm_logic.h"
 #include "resume_logic.h"
 #include "online_caps.h"
+#include "wave3_hooks.h"
 #include <thread>
 #include <xinput.h>
 
@@ -585,6 +586,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         dolphin_speed_start();   // first: virtual DSU pad on 127.0.0.1:26761.. (first free port; DSUClient.ini gets that port); false = all busy -> quickmenu uses the keyboard path
         { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
         real_boot_dolphin_apply(inst.dir, real_boot_plan(e));   // GameCube IPL startup (this launch only)
+        gba_link_apply_dolphin(e, inst.dir);   // Wave 3 X2: integrated GBA per port (offline)
         cheats_apply_dolphin(e, inst.dir +"\\User", false, true, nullptr);   // enabled cheats -> GameSettings\<GAMEID>.ini (stale RetroHub entries removed)
         if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_GCPAD_INI")) {   // QA only: scripted pad (constant/timer expressions) instead of the user's mapping
             std::error_code ec;
@@ -812,6 +814,7 @@ void play_entry(const hub::GameEntry& e_in) {
                 args += " --result-file " + quote(ri.result_file);
             }
             args += cheats_launch_args(e, false, true, nullptr);
+            args += transferpak_launch_args(e);   // Wave 3 X1: Game Boy cartridge in the Transfer Pak (offline)
             args += qm_args(ri, e, true);
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
                 std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
@@ -861,6 +864,7 @@ void play_entry(const hub::GameEntry& e_in) {
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += real_boot_retro_args(e, real_boot_plan(e), nullptr);   // DS menu through the player's BIOS + firmware
             args += cheats_launch_args(e, false, true, nullptr);
+            args += palpark_launch_args(e);   // Wave 3 X3: GBA game in Slot-2 (offline)
             args += qm_args(ri, e, false);
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;
