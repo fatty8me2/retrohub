@@ -1,4 +1,5 @@
 #include "app.h"
+#include "wave3_hooks.h"
 #include <ctime>
 #include "library_scan_info.h"
 #include "online_caps.h"
@@ -226,6 +227,7 @@ void apply_scan() {
             }
         }
         gameinfo_ui_shot_lib();
+        palpark_shot_init();   // Wave 3 X3: HUB_SHOT_PALPARK=1|none (with HUB_SHOT_FAKE_LIB=1)
         A.st.find_games_done = true;
         hubart::set_enabled(false);
     }

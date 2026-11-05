@@ -147,6 +147,10 @@ add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
 add_test(NAME retrorun_link_test COMMAND retrorun_link_test)
 add_test(NAME retrorun_rollback_test COMMAND retrorun_rollback_test)
 add_test(NAME retrorun_port_plan_test COMMAND retrorun_port_plan_test)   # per-system port devices, 4-pad adapter rules, offline player count
+add_test(NAME retrorun_slot2_test COMMAND retrorun_slot2_test)   # Wave 3 X3: DS Slot-2 refusal rules, subsystem pick, save copy-back, backup pruning
+add_test(NAME hub_palpark_test COMMAND hub_palpark_test)   # Wave 3 X3: Pal Park rows, choice order, save matching, args, stored choice
+add_test(NAME palpark_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/palpark_headless.ps1 -Root ${CMAKE_SOURCE_DIR})   # retrorun --slot2-* flags parsed offline, refused with --net / --ds-link
+set_tests_properties(palpark_headless PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
 add_test(NAME retrorun_rewind_test COMMAND retrorun_rewind_test)   # rewind ring size/limits, rewind->replay hashes, run-ahead == normal shifted (fake core)
 add_test(NAME clip_test COMMAND clip_test)   # frame ring caps + MP4 encode and decode round trip (Media Foundation, no window)
 add_test(NAME retrorun_rollback_stall_test COMMAND retrorun_rollback_stall_test)
