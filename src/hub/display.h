@@ -11,6 +11,7 @@ std::string monitor_label(const Monitor& m);           // "Monitor 2 (2560x1440)
 float dpi_scale_for(const Monitor* m);                 // that monitor's DPI scale (1.0 = 96 dpi); 1.0 when unknown
 float dpi_scale();                                     // the DPI scale of the monitor the UI was last built for
 void set_dpi_scale(float s);
+void seed_monitor(SDL_Window* win);                    // remember which monitor the window opened on (so the first move to another one rescales)
 bool os_animations_on();                               // Windows "Show animations" (SPI_GETCLIENTAREAANIMATION)
 Rect work_area_of(SDL_Window* win);                    // work area of the monitor the window is on (empty when unknown)
 void apply_min_size(SDL_Window* win, float scale);     // minimum window size for a scale, clamped to the work area (L3)

@@ -237,6 +237,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         const hubdisplay::Monitor* cand = hubdisplay::find_monitor(mons, A.st.win_monitor);
         if (!cand) cand = hubdisplay::primary_monitor(mons);
         if (cand) dpi_s = hubdisplay::dpi_scale_for(cand);
+        if (const char* sc = std::getenv("HUB_SCALE")) dpi_s = std::max(0.75f, (float)std::atof(sc));
         S = hubdisplay::effective_scale(dpi_s, A.st.ui_scale);
         int dw = (int)(1280 * S), dh = (int)(780 * S);
         SDL_Rect ub;
@@ -251,7 +252,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             win_x = pl.rect.x; win_y = pl.rect.y; win_w = pl.rect.w; win_h = pl.rect.h;
             start_max = pl.maximized;
             if (const hubdisplay::Monitor* pm = hubdisplay::find_monitor(mons, pl.monitor)) {
-                dpi_s = hubdisplay::dpi_scale_for(pm);
+                if (!std::getenv("HUB_SCALE")) dpi_s = hubdisplay::dpi_scale_for(pm);
                 S = hubdisplay::effective_scale(dpi_s, A.st.ui_scale);
             }
         }
@@ -273,7 +274,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         std::fprintf(stderr, "RetroHub: window/renderer failed: %s\n", SDL_GetError());   // no MessageBox: it could land over a game
         return 1;
     }
-    if (!shot_path) hubdisplay::apply_min_size(A.win, S);   // clamped to the work area (L3); headless shots keep the size they ask for
+    if (!shot_path) { hubdisplay::seed_monitor(A.win); hubdisplay::apply_min_size(A.win, S); }   // clamped to the work area (L3); headless shots keep the size they ask for
     S = tvmode::init(A.win, g_headless, S, hubtv::has_tv_flag(GetCommandLineW()) || std::getenv("HUB_TV") != nullptr, A.st.tv_start, win_h);   // TV mode scale (fonts are built next)
     SDL_SysWMinfo wm;
     SDL_VERSION(&wm.version);
