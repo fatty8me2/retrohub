@@ -75,6 +75,24 @@ conflicts (both directions), states excluded/included, unicode and long paths, z
 that the account secret never travels (sync folder, export, hostile import zip). The cloud engine has its own
 test, `hubsaves_engine_test`, against an in-process mock Worker (see `CLOUD_SAVES_V2.md`).
 
+## Bring your saves (other emulators)
+
+Saves page > "Bring your saves from other emulators" (`src/hub/save_import_ui.cpp`, logic `src/common/save_import.*`, test `save_import_test`).
+It looks in the usual places (RetroArch `retroarch.cfg` save folder and `saves\`, Project64 `Save\`, Dolphin `GC\`, PCSX2 `memcards\`, mGBA `config.ini` / `Documents\mGBA`, VisualBoyAdvance(-M), melonDS), next to the library ROMs, and in any folder or file the player picks. RetroHub's own emulator folders are never offered.
+Each save is matched to a library game by ROM file stem, then by normalised title (GameCube cards by game code, PS2 cards by the game's serial). The preview shows game, source, date and size of both sides and marks the newer one; nothing is ticked when the vault save is newer, when the match is ambiguous or when the file cannot be converted.
+Written into the vault under exactly the name the runner reads:
+
+| Source | Vault file |
+|---|---|
+| RetroArch `.srm`, mGBA / VBA / melonDS `.sav` (GB, GBC, GBA, NES, SNES, DS, PS1) | `battery\<ROM stem>.srm` (stem = `GameEntry::save_stem` or the ROM file's stem) |
+| Project64 `.eep` `.sra` `.fla` `.mpk` | mupen64plus names `battery\<GoodName cut to 32>-<MD5[0:8]>.<ext>` (`SaveFilenameFormat 1`; GoodName from `mupen64plus.ini`, else the ROM header name; an existing old-style `<goodname>.<ext>` is kept). `.eep` is padded to 2 KB (the core always keeps 2 KB); a 32 KB Project64 pak (`_Cont_N.mpk`) goes into slot N of the core's single 128 KB `.mpk`; `.sra`/`.fla` are raw (both emulators keep them in the same word order) |
+| RetroArch N64 `.srm` (mupen64plus-next, 296,960 bytes) | split into `.eep` / `.mpk` / `.sra` / `.fla`, only the parts that hold data |
+| Dolphin `.gci` folder or `.raw` card | `battery\GCI\*.gci` for the matching game (a raw card is split into `.gci` files per game code) |
+| PCSX2 8 MB `.ps2` card | `battery\memcards\RetroHub\<safe key>\Mcd001.ps2` (the whole card) |
+
+An existing different file is copied to `_conflicts\<system>\<game>attery\<file>.import.<yyyymmdd-hhmmss>` first (no backup, no overwrite); writes are atomic and stamp "now", so the import is the newest copy on every PC. After the import the game's `meta.json` is refreshed and `cloud_game_changed()` queues a cloud push. Other emulators' save states are never imported.
+`cloud_game_changed()` is also called after a history restore/undo and after a folder pull or zip import (`cloud_sync_all_now`), so those changes no longer wait for the next play (audit saves-F13).
+
 ## Account prefs (`_account/prefs.json`)
 `src/common/prefs.h` defines a typed file in the vault's `_account/` folder (class `settings` in the cloud, so it is always synced): `favorites`, `user_shelves`, `hidden`, `renames`, `covers` (game key -> image path), `theme`, `profile.avatar|fav_game|status`. Each field carries its own modified time (unix ms) in `ts`; `merge()` keeps the newer side per field, so two PCs editing different fields never overwrite each other. `favorites` and `hidden` go further: each key has its own stamp, and a removal leaves a tombstone (cleaned up after 90 days), so two PCs adding different favorites offline keep both. The cloud engine syncs the file as the hidden pseudo-game `_account/_`; on a both-sides conflict it calls `merge_text()` through `merge_into_file()` instead of keeping both copies, then applies favorites back into `library.json` (tested by `prefs_test` and `hubsaves_engine_test`). The hub arms `set_vault_root()` at startup, so `hub::set_favorite` mirrors into prefs, and the screenshot viewer's "Set as cover" writes `covers[key]`. Nothing displays covers yet.
 Screenshots live in `<vault>/<system>/<game key>/shots/` and stay local unless "Back up screenshots" is on.

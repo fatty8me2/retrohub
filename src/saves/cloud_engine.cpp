@@ -832,7 +832,7 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                     out.local_only_added = true;
                     if (new_cap_loss) *new_cap_loss = true;
                 } else if (a.action == "same") {
-                    base_set(gkey, p.path, a.has_current ? a.current.ver : p.base, p.lf.sha, p.lf.size, p.lf.mtime);
+                    base_set(gkey, p.path, a.has_current ? a.current.ver : (a.ver > 0 ? a.ver : p.base), p.lf.sha, p.lf.size, p.lf.mtime);
                 } else if (a.action == "conflict") {
                     Item it;
                     for (auto& t : todo) if (t.path == p.path) it = t;
@@ -1938,6 +1938,20 @@ void cloud_game_exited(const GameId& g) {
     if (mode == SyncMode::ReadOnly || lo_user) return;
     base_save();
     if (dl) { set_state(g, CloudState::Conflict, LocalOnlyReason::DecideLater, "Not uploading until you decide."); return; }
+    set_state(g, CloudState::Waiting, LocalOnlyReason::None, "Waiting to sync.");
+    enqueue(gkey, "push");
+}
+
+void cloud_game_changed(const GameId& g) {   // F13: nothing else tells the engine that the vault changed outside a game run
+    if (!enabled_now()) return;
+    str gkey = wire_key(g);
+    bool lo_user = false, running = false;
+    {
+        std::lock_guard<std::mutex> lk(E.mu);
+        running = E.running.count(gkey) > 0;
+        lo_user = bgame(gkey).lo_user;
+    }
+    if (lo_user || running) return;   // "don't upload this game", or a run is open: its own exit queues the push
     set_state(g, CloudState::Waiting, LocalOnlyReason::None, "Waiting to sync.");
     enqueue(gkey, "push");
 }

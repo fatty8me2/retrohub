@@ -43,7 +43,7 @@ bool parse_manifest(const std::string& json, WManifest* out, std::string* err);
 
 struct PlanFile { std::string path, sha, enc = "none", cls; int64_t size = 0, stored = 0, mtime = 0; int base = 0; };
 std::string build_plan_body(const std::string& gkey, int64_t played_at, const std::string& mode, const std::vector<PlanFile>& files);
-struct PlanAnswer { std::string path, action /* upload|have|same|conflict|skip */, reason; WVer current; bool has_current = false; };
+struct PlanAnswer { std::string path, action /* upload|have|same|conflict|skip */, reason; WVer current; bool has_current = false; int ver = 0; /* "same": the version the cloud holds (the Worker sends no `current` for it, F8) */ };
 struct PlanReply { std::string ticket; std::vector<PlanAnswer> files; };
 bool parse_plan(const std::string& json, PlanReply* out, std::string* err);
 /* cloud: "synced" | "conflict" | "skipped" (reason over-cap / too-big-protected) | "missing" (blob not there yet) | "evicted". Only "synced" is an upload. */

@@ -178,6 +178,11 @@ static void test_wire() {
     CHECK(parse_plan("{\"ok\":true,\"ticket\":\"T1\",\"files\":[{\"path\":\"a\",\"action\":\"upload\"},{\"path\":\"b\",\"action\":\"skip\",\"reason\":\"over-cap\"},"
                      "{\"path\":\"c\",\"action\":\"conflict\",\"current\":{\"ver\":4,\"sha\":\"" + str(64, 'c') + "\",\"mtime\":7}}]}", &pr, &err));
     CHECK(pr.ticket == "T1" && pr.files.size() == 3 && pr.files[1].reason == "over-cap" && pr.files[2].has_current && pr.files[2].current.ver == 4);
+    {   // F8: the Worker answers an unchanged file with {action:"same", ver:N} and no `current`; the version must be read
+        PlanReply ps;
+        CHECK(parse_plan("{\"ok\":true,\"ticket\":\"T\",\"files\":[{\"path\":\"a\",\"action\":\"same\",\"ver\":7}]}", &ps, &err));
+        CHECK(ps.files.size() == 1 && ps.files[0].action == "same" && !ps.files[0].has_current && ps.files[0].ver == 7);
+    }
     CommitReply cr;
     CHECK(parse_commit("{\"ok\":true,\"rev\":9,\"results\":[{\"path\":\"a\",\"ver\":2,\"cloud\":\"synced\"},{\"path\":\"b\",\"conflict\":true}],"
                        "\"evicted\":[{\"game\":\"n64/y\",\"path\":\"states/s\"}]}", &cr, &err));
@@ -1296,6 +1301,27 @@ static void test_ps2_card_follows_the_player() {
     CHECK(!g_srv->evicted(g_uid, "ps2/slus-20946", rel) && g_srv->cur_sha(g_uid, "ps2/slus-20946", rel) == sha_of(card(2)));
 }
 
+/* F13: a save put into the vault outside a game run (Bring your saves, a history restore) is queued for push without playing. */
+static void test_vault_change_is_pushed() {
+    printf(" F13: a vault change outside a run is pushed\n");
+    Pc pc1("pc1");
+    const GameId g{"gba", "imp-1"};
+    use(pc1);
+    put(pc1.game("gba", "imp-1") / "battery" / "Imp.srm", rnd(300, 5), now_unix() - 500);
+    cloud_prelaunch(g, SyncMode::ReadWrite); play(g); exit_game(g);
+    CHECK(g_srv->cur_sha(g_uid, "gba/imp-1", "battery/Imp.srm") == sha_of(rnd(300, 5)));
+    put(pc1.game("gba", "imp-1") / "battery" / "Imp.srm", rnd(300, 6), now_unix() - 10);     // an import writes the file...
+    cloud_game_changed(g);                                                                   // ...and says so
+    pump();
+    CHECK(g_srv->cur_sha(g_uid, "gba/imp-1", "battery/Imp.srm") == sha_of(rnd(300, 6)));
+    /* a game the user keeps local-only is never queued */
+    cloud_set_local_only(g, true);
+    put(pc1.game("gba", "imp-1") / "battery" / "Imp.srm", rnd(300, 7), now_unix() - 5);
+    cloud_game_changed(g); pump();
+    CHECK(g_srv->cur_sha(g_uid, "gba/imp-1", "battery/Imp.srm") == sha_of(rnd(300, 6)));
+    cloud_set_local_only(g, false);
+}
+
 /* Restore mode: one game that cannot be written (here a folder sits where its save file belongs) must not keep the PC in restore mode,
  * which defers every push of every game. */
 static void test_restore_skips_a_failing_game() {
@@ -1432,6 +1458,7 @@ int main(int argc, char** argv) {
     RUN_SCENARIO(test_startup_retry_honours_retry_after);
     RUN_SCENARIO(test_deep_paths_do_not_block_the_game);
     RUN_SCENARIO(test_ps2_card_follows_the_player);
+    RUN_SCENARIO(test_vault_change_is_pushed);
     RUN_SCENARIO(test_restore_skips_a_failing_game);
     RUN_SCENARIO(test_deferral_does_not_rewrite_the_queue);
     RUN_SCENARIO(test_parked_startup_wakes_on_local_events);
