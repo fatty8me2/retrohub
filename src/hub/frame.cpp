@@ -108,9 +108,11 @@ float draw_toasts(float bottom, float right, float top) {
 
 /* ---------- sidebar ---------- */
 
+static float g_nav_h = 0.f;   // sidebar entry height; shrinks (and the logo hides) when a big UI size leaves too little height
+
 bool nav_item(Page pg, const char* label, ui::Icon ic, float w, float expand, ImU32 badge) {
     ImGui::PushID((int)pg);
-    bool pressed = ImGui::InvisibleButton("nav", ImVec2(w, sp(6.f)), ImGuiButtonFlags_EnableNav);
+    bool pressed = ImGui::InvisibleButton("nav", ImVec2(w, g_nav_h > 0.f ? g_nav_h : sp(6.f)), ImGuiButtonFlags_EnableNav);
     A.side_ids.push_back(ImGui::GetItemID());
     if (A.seed_side && A.page == pg) { A.seed_side = false; set_nav_here(); }
     bool hov = ImGui::IsItemHovered();
@@ -328,7 +330,17 @@ void draw_frame() {
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);   // the first D-pad press should land in the content, not the sidebar
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, !in_side);
     float iw = sw - sp(3.f);
-    {   // logo mark + wordmark
+    /* A big UI size (200% on a 800 px window) leaves too little height for logo + 7 entries + the player card: first the entries
+     * shrink, then the logo goes, so nothing overlaps the collapse button or the profile chip. */
+    const int nav_n = 7 + (fr_is_admin() ? 1 : 0);
+    const float side_avail = ImGui::GetWindowHeight() - sp(3.f) - (sp(7.f) + sp(4.f) + sp(1.f) + sp(3.f));
+    bool show_logo = true;
+    g_nav_h = sp(6.f);
+    if ((side_avail - sp(8.f)) / (float)nav_n - sp(0.5f) < sp(6.f)) {
+        g_nav_h = std::min(sp(6.f), std::max(sp(3.5f), (side_avail - sp(8.f)) / (float)nav_n - sp(0.5f)));
+        if (g_nav_h < sp(4.5f)) { show_logo = false; g_nav_h = std::min(sp(6.f), std::max(sp(3.5f), side_avail / (float)nav_n - sp(0.5f))); }
+    }
+    if (show_logo) {   // logo mark + wordmark
         ImVec2 p = ImGui::GetCursorScreenPos();
         float ms = sp(5.f);
         ImVec2 m0(p.x + sp(0.5f), p.y), m1(m0.x + ms, m0.y + ms);

@@ -74,6 +74,7 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
     const float W = disp.x, H = disp.y;
     const Phase ph = phase_at(tl, t);
     float p = phase_progress(tl, t);
+    if (ui::reduce_motion && ph != Phase::Fade && ph != Phase::Done) p = 1.f;   // Reduce motion: no movement, the sound still plays
     const Geo g = geo_for(sys);
     const bool disc_kind = g.kind == Insert::Lid || g.kind == Insert::Tray || g.kind == Insert::Front;
 

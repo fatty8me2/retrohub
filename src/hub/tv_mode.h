@@ -11,6 +11,9 @@ bool active();
  * fonts at (the TV scale when TV mode starts on). `cmd_flag` = launched with --tv. */
 float init(SDL_Window* win, bool headless, float base_scale, bool cmd_flag, bool start_setting, int shot_h);
 void toggle();
+/* UI size / monitor change: the new base scale (monitor DPI times the UI size). Applied between frames: fonts and theme are rebuilt live, TV mode keeps its larger scale. */
+void set_base_scale(float base);
+float base_scale();
 /* Main loop hooks. */
 void handle_event(const SDL_Event& e, bool want_text);
 void frame_begin(SDL_Window* win, SDL_Renderer* ren);   // applies a pending on/off (window + font rebuild) between frames

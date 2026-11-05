@@ -16,6 +16,7 @@
 namespace ui {
 
 float S = 1.0f;
+bool reduce_motion = false;
 Fonts F;
 
 static const float kPi = 3.14159265f;
@@ -54,7 +55,7 @@ ImU32 scale_alpha(ImU32 c, float k) {
     return ImGui::ColorConvertFloat4ToU32(v);
 }
 float anim(float& v, float target, float rate) {
-    v = hubui::approach(v, target, ImGui::GetIO().DeltaTime, rate);
+    v = reduce_motion ? target : hubui::approach(v, target, ImGui::GetIO().DeltaTime, rate);
     return v;
 }
 
