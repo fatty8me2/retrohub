@@ -103,7 +103,7 @@ void shelf_strip(const std::string& id, int count, float tw, float th, const std
         }
     }
     ss.target = hubui::shelf_clamp(ss.target, max_scroll);
-    if (!ss.dragging) ss.scroll = hubui::approach(ss.scroll, ss.target, io.DeltaTime, 16.f);
+    if (!ss.dragging) ss.scroll = ui::reduce_motion ? ss.target : hubui::approach(ss.scroll, ss.target, io.DeltaTime, 16.f);
     if (std::fabs(ss.scroll - ss.target) < 0.4f) ss.scroll = ss.target;
     g_suppress_click = ss.dragging;
 

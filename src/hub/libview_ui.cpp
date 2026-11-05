@@ -752,19 +752,9 @@ struct ShelfState {
     uint64_t maxh_sig = ~0ull;
 } SH;
 
-bool reduced_motion() {
-    static double next = 0;
-    static bool val = false;
+bool reduced_motion() {   // Settings > Reduce motion (first-run default follows Windows "Show animations", see display.h); HUB_REDUCE_MOTION forces it for shots
     static const bool forced = std::getenv("HUB_REDUCE_MOTION") != nullptr;
-    const double now = ImGui::GetTime();
-    if (now >= next) {
-        next = now + 2.0;
-#ifdef _WIN32
-        BOOL on = TRUE;
-        if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &on, 0)) val = !on;
-#endif
-    }
-    return val || forced;
+    return ui::reduce_motion || forced;
 }
 
 void draw_shelf(Disp& D) {

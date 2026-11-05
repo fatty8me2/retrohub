@@ -30,9 +30,7 @@ struct WelcomeState {
 } WS;
 
 bool os_reduced_motion() {
-    BOOL on = TRUE;   // Windows "Show animations in Windows" off -> no entrance animation
-    if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &on, 0) && !on) return true;
-    return false;
+    return ui::reduce_motion;   // Settings > Reduce motion (its first-run default follows Windows "Show animations")
 }
 
 bool env_on(const char* n) { const char* v = std::getenv(n); return v && *v && *v != '0'; }
