@@ -735,7 +735,11 @@ void custom_draw(int loc) {
                 else if (m == "picker") custom_open_picker(A.sel_game, false);
                 else if (m == "manager") custom_open_manager();
                 else if (m == "smart") { open_smart_editor(-1, LocRoot); CU.smart_rule.systems = {"n64"}; CU.smart_rule.min_players = 2; CU.smart_rule.favorites_only = true; std::snprintf(CU.smart_name, sizeof CU.smart_name, "Co-op favorites"); }
-                else if (m == "smart_edit") open_smart_editor(0, LocRoot);
+                else if (m == "smart_edit") {   // edit the first smart shelf (shelf 0 is often a plain one): seeded with its name and rule
+                    int si = -1;
+                    for (int i = 0; i < (int)CU.P.user_shelves.size() && si < 0; ++i) if (CU.P.user_shelves[i].smart) si = i;
+                    open_smart_editor(si, LocRoot);
+                }
                 else if (m.compare(0, 6, "cover:") == 0) custom_set_cover(A.sel_game, m.substr(6));   // QA: copy this picture in as the selected game's cover
             }
         }

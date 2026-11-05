@@ -10,6 +10,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include <unordered_map>
 
 /* ---------- library / ROM scanning ---------- */
 
@@ -58,6 +59,7 @@ const hub::GameEntry* find_entry(const std::string& key) {
 }
 
 void apply_scan() {
+    lib_lookup_cache_clear();
     A.lib.clear();
     if (!smash_exe_path().empty()) {
         if (const GameInfo* g = hub::find_game("smash64")) {
@@ -259,13 +261,66 @@ void apply_scan() {
 }
 
 /* Curated catalog entry for a scanned game (id/MD5 first, then serial + system). */
-const GameInfo* catalog_for(const hub::GameEntry& e) {
+static const GameInfo* catalog_for_uncached(const hub::GameEntry& e) {
     if (!e.catalog_id.empty())
         if (const GameInfo* g = hub::find_game(e.catalog_id)) return g;
     std::string md5;
     if (e.key.compare(0, 4, "n64:") == 0)
         for (char c : e.key.substr(4)) md5 += (char)std::toupper((unsigned char)c);
     return hub::find_game_for(sys_short(e), e.serial, md5);
+}
+
+/* Per-frame callers (every tile, the Online chip) must not redo the catalog scans: results are memoized on a hash of the fields the lookup and
+ * the online rule read (so a rename or a rescan that changes them just misses), and dropped on every rescan. The catalog itself is a static list. */
+namespace {
+std::mutex g_memo_mu;
+std::unordered_map<unsigned long long, const GameInfo*> g_cat_memo;
+std::unordered_map<unsigned long long, bool> g_online_memo;
+unsigned long long hmix(unsigned long long h, const std::string& s) { return (h ^ std::hash<std::string>()(s)) * 1099511628211ull + 0x9e3779b97f4a7c15ull; }
+unsigned long long entry_hash(const hub::GameEntry& e, bool with_title) {
+    unsigned long long h = 1469598103934665603ull + (unsigned long long)e.system;
+    h = hmix(h, e.catalog_id);
+    h = hmix(h, e.key);
+    h = hmix(h, e.serial);
+    if (with_title) h = hmix(h, e.title);
+    return h;
+}
+}  // namespace
+
+void lib_lookup_cache_clear() {
+    std::lock_guard<std::mutex> l(g_memo_mu);
+    g_cat_memo.clear();
+    g_online_memo.clear();
+}
+
+const GameInfo* catalog_for(const hub::GameEntry& e) {
+    const unsigned long long h = entry_hash(e, false);
+    {
+        std::lock_guard<std::mutex> l(g_memo_mu);
+        auto it = g_cat_memo.find(h);
+        if (it != g_cat_memo.end()) return it->second;
+    }
+    const GameInfo* g = catalog_for_uncached(e);
+    std::lock_guard<std::mutex> l(g_memo_mu);
+    if (g_cat_memo.size() > 50000) g_cat_memo.clear();
+    g_cat_memo[h] = g;
+    return g;
+}
+
+/* The Online chip / badge rule: the native port, or any game that can be played in a room. */
+bool entry_online(const hub::GameEntry& e) {
+    if (is_native(e)) return true;
+    const unsigned long long h = entry_hash(e, true);
+    {
+        std::lock_guard<std::mutex> l(g_memo_mu);
+        auto it = g_online_memo.find(h);
+        if (it != g_online_memo.end()) return it->second;
+    }
+    const bool on = supports_online(e);
+    std::lock_guard<std::mutex> l(g_memo_mu);
+    if (g_online_memo.size() > 50000) g_online_memo.clear();
+    g_online_memo[h] = on;
+    return on;
 }
 
 /* "Recently added": when the game file appeared on disk (creation time, else last write); cached per path. */
@@ -401,8 +456,7 @@ void rebuild_vis() {
                 continue;
             }
             const hub::GameEntry& e = A.lib[i];
-            const GameInfo* c = catalog_for(e);
-            (void)c; if (is_native(e) || supports_online(e)) keep.push_back(i);
+            if (entry_online(e)) keep.push_back(i);
         }
         base.swap(keep);
     }
@@ -450,7 +504,7 @@ void rebuild_vis() {
         g.system = sys_short(e);
         g.favorite = gs.favorite;
         g.last_played = gs.last_played;
-        g.online = is_native(e) || supports_online(e);
+        g.online = entry_online(e);
         g.pinned = is_native(e);
         g.play_seconds = gs.play_seconds;
         g.added = added_unix(e.path);
