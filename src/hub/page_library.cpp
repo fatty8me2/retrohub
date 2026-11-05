@@ -573,6 +573,7 @@ void all_games_view() {
     ImGui::PopItemFlag();
     ImGui::PopStyleVar();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    verify_library_card();   // Wave 3 L3: only when there is something to say
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
     const hubui::fg::Ghost* selg = (lib_layout_has_bar() && !A.sel_ghost.empty()) ? find_ghost(A.sel_ghost) : nullptr;   // a friend's game is selected
