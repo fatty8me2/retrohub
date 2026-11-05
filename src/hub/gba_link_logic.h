@@ -248,7 +248,9 @@ inline bool stage_save(const Staged& s, std::string* err) {
     std::error_code ec;
     fs::create_directories(U(s.dolphin).parent_path(), ec);
     std::string vault, existing;
+    std::error_code ec0;
     const bool have_vault = read_all(s.vault, &vault);
+    if (!have_vault && fs::exists(U(s.vault), ec0)) { if (err) *err = "the vault save could not be read"; return false; }   // locked for a moment: try next time
     if (read_all(s.dolphin, &existing)) {
         if (!(have_vault && existing == vault) && !backup_file(s.dolphin, s.backup_dir)) { if (err) *err = "could not back up the old GBA save"; return false; }
         fs::remove(U(s.dolphin), ec);
@@ -266,6 +268,8 @@ inline Back finish_save(const Staged& s, std::string* err) {
     const std::string now = normalize_save(raw);
     std::string vault;
     const bool have_vault = read_all(s.vault, &vault);
+    std::error_code ec0;
+    if (!have_vault && fs::exists(U(s.vault), ec0)) { if (err) *err = "the vault save could not be read"; return Back::Failed; }   // never overwrite what cannot be read
     if (have_vault ? now == vault : all_blank(now)) return Back::Nothing;
     if (have_vault && !backup_file(s.vault, s.backup_dir)) { if (err) *err = "could not back up the vault save"; return Back::Failed; }
     if (!write_atomic(s.vault, now)) { if (err) *err = "could not write the vault save"; return Back::Failed; }

@@ -10,6 +10,7 @@
 #include "saves/savestore.h"
 #include "wave3_hooks.h"
 
+#include <cctype>
 #include <cstdlib>
 
 namespace {
@@ -57,7 +58,11 @@ const hub::GameEntry* gba_entry(const std::string& key) {
     return nullptr;
 }
 
-std::string backup_dir_for(const std::string& key) { return root(hub::data_dir()) + "\\gba_link_backups\\" + key; }
+std::string backup_dir_for(const std::string& key) {
+    std::string k = key;
+    for (char& c : k) if (!(std::isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_')) c = '_';   // keys look like "gba:axve-1234": no ':' in a folder name
+    return root(hub::data_dir()) + "\\gba_link_backups\\" + k;
+}
 
 void finish_pending() {
     std::vector<hubgba::Staged> st;
@@ -98,6 +103,9 @@ void gba_link_apply_dolphin(const hub::GameEntry& e, const std::string& dolphin_
         if (c.kind == hubgba::Kind::Controller) { plan.on[i] = true; continue; }
         const hub::GameEntry* g = gba_entry(c.key);
         if (!g || !file_exists(g->path)) { set_notice("Game Boy Advance link: the GBA game for port " + std::to_string(i + 1) + " is no longer in your library.", 10.0); continue; }
+        bool dup = false;
+        for (const hubgba::Staged& o : staged) dup = dup || o.game_key == g->key;
+        if (dup) { set_notice("Game Boy Advance link: use a different GBA game on each port (" + g->title + " is on two).", 10.0); continue; }
         hubgba::Staged s;
         s.port = i;
         s.game_key = g->key;
