@@ -190,6 +190,7 @@ bool parse_plan(const std::string& json_text, PlanReply* out, std::string* err) 
         if (a.action.empty()) a.action = sval(f, "result");
         if (a.action.empty()) a.action = sval(f, "status");
         a.reason = sval(f, "reason");
+        a.ver = (int)f.i64("ver", 0);
         if (const JV* c = f.get("current")) if (c->type == JV::Object) { a.current = read_ver(*c); a.has_current = true; }
         if (a.path.empty() || a.action.empty()) continue;
         r.files.push_back(std::move(a));

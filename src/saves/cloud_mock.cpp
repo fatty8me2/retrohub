@@ -315,7 +315,7 @@ struct MockServer::Impl {
                 if (fr && fr->evicted) cur = 0;
                 const Ver* cv = fr && !fr->vers.empty() ? &fr->vers[0] : nullptr;
                 if (pf.stored > 16 * 1024 * 1024) { add(pf.path, "skip", ",\"reason\":\"too-large\""); continue; }
-                if (cv && cv->sha == pf.sha && !fr->evicted) { add(pf.path, "same", ",\"current\":" + ver_json(*cv)); continue; }
+                if (cv && cv->sha == pf.sha && !fr->evicted) { add(pf.path, "same", ",\"ver\":" + std::to_string(cv->ver));   /* like the real Worker: the version, no `current` (F8) */ continue; }
                 if (cur != pf.base && !(fr && fr->evicted)) { add(pf.path, "conflict", cv ? ",\"current\":" + ver_json(*cv) : str()); continue; }
                 if (!plan_refuse.empty() && pf.path.find(plan_refuse) != str::npos) { add(pf.path, "skip", ",\"reason\":" + json::quote(plan_reason)); continue; }
                 bool prot = is_prot(pf.cls, pf.size);

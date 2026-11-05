@@ -97,6 +97,7 @@ add_test(NAME runner_ctl_test COMMAND runner_ctl_test)   # hub<->runner control 
 add_test(NAME cheevos_test COMMAND cheevos_test)   # RetroAchievements: config/cache, hardcore rules, mocked login + rc_client session (no network, no RA account)
 add_test(NAME osd_test COMMAND osd_test)   # OSD toast queue + font renderer
 add_test(NAME prefs_test COMMAND prefs_test)   # synced account prefs: field-wise merge, library favorites mirror
+add_test(NAME save_import_test COMMAND save_import_test)   # Bring your saves (Wave 3 L4)
 add_test(NAME profile_test COMMAND profile_test)   # social profile + reaction tally logic
 add_test(NAME winutil_test COMMAND winutil_test)
 add_test(NAME starthint_test COMMAND starthint_test)
