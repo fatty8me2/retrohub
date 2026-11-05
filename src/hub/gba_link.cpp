@@ -71,7 +71,10 @@ void finish_pending() {
         std::string err;
         hubgba::Back b = hubgba::finish_save(s, &err);
         if (b == hubgba::Back::Copied) {
-            hub::saves::touch_game(s.system_short, s.game_key, s.title);   // like a normal play's exit: meta + cloud push in the background
+            hub::saves::touch_game(s.system_short, s.game_key, s.title);   // like a normal play's exit: meta, then the cloud push below
+            hub::saves::history_snapshot_game(s.system_short, s.game_key);
+            hub::saves::GameId gid{s.system_short, s.game_key};
+            if (!cloud_bg_run(gid.gkey(), [gid]() { hub::saves::cloud_game_exited(gid); })) hub::saves::cloud_game_exited(gid);   // queues the push
             A.vault_dirty = true;
             push_toast("Saved your " + s.title + " progress from the GBA.", ui::ACCENT, 6.0);
         } else if (b == hubgba::Back::Failed) {

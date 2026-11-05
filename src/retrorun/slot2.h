@@ -57,6 +57,16 @@ inline bool should_copy_back(const std::vector<uint8_t>& original, const std::ve
 /* Backup file name: "<file name>.<yyyymmdd-hhmmss>.bak". */
 inline std::string backup_name(const std::string& file_name, const std::string& stamp) { return file_name + "." + stamp + ".bak"; }
 
+/* The name for a new backup that never takes the place of an earlier one: "<file name>.<stamp>-NN.bak", NN = 01, 02, ... the first not in
+ * `existing` (two runs inside one second, or a clock that went back). The counter is zero padded, so names still sort oldest first. "" = 99 taken. */
+inline std::string unique_backup_name(const std::string& file_name, const std::string& stamp, const std::vector<std::string>& existing) {
+    for (int n = 1; n < 100; ++n) {
+        const std::string name = backup_name(file_name, stamp + (n < 10 ? "-0" : "-") + std::to_string(n));
+        if (std::find(existing.begin(), existing.end(), name) == existing.end()) return name;
+    }
+    return std::string();
+}
+
 /* Of the existing backup names of one save (stamped names sort oldest first), those to delete so only `keep` newest remain. */
 inline std::vector<std::string> backups_to_prune(std::vector<std::string> names, size_t keep) {
     std::sort(names.begin(), names.end());

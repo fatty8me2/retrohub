@@ -23,6 +23,7 @@
 #include <system_error>
 #include <vector>
 
+#include "gba_save.h"
 #include "json.h"
 #include "logic.h"
 
@@ -179,11 +180,29 @@ inline std::string file_stem_of(const std::string& path) {
     size_t dot = f.find_last_of('.');
     return dot == std::string::npos || dot == 0 ? f : f.substr(0, dot);
 }
-/* retrorun (mGBA core): <battery>\<stem>.srm, stem = GameEntry::save_stem or the ROM file's stem (save_stem_arg in launch.cpp). */
+/* retrorun (mGBA core): <battery>\<stem>.srm, stem = GameEntry::save_stem or the ROM file's stem (save_stem_arg in launch.cpp).
+ * Like retrorun (main.cpp, "lone .srm" rule): when <stem>.srm is not there but the battery folder holds exactly one .srm, that file is the save
+ * (the same game kept under another ROM file name on this PC), so a renamed ROM never gets a second .srm. `existing` = file names in the folder. */
+inline std::string vault_file_name(const std::string& rom_path, const std::string& save_stem, const std::vector<std::string>& existing) {
+    const std::string stem = save_stem.empty() ? file_stem_of(rom_path) : save_stem;
+    auto low = [](std::string x) { for (char& c : x) c = (char)std::tolower((unsigned char)c); return x; };
+    const std::string want = low(stem + ".srm");
+    std::string only;
+    int srms = 0;
+    for (const std::string& n : existing) {
+        const std::string l = low(n);
+        if (l == want) return n;
+        if (l.size() > 4 && l.compare(l.size() - 4, 4, ".srm") == 0) { only = n; ++srms; }
+    }
+    return srms == 1 ? only : stem + ".srm";
+}
 inline std::string vault_file(const std::string& battery_dir, const std::string& rom_path, const std::string& save_stem) {
     std::string d = battery_dir;
     while (!d.empty() && (d.back() == '/' || d.back() == '\\')) d.pop_back();
-    return d + "\\" + (save_stem.empty() ? file_stem_of(rom_path) : save_stem) + ".srm";
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (auto& de : fs::directory_iterator(U(d), ec)) if (!ec && de.is_regular_file(ec)) names.push_back(de.path().filename().u8string());
+    return d + "\\" + vault_file_name(rom_path, save_stem, names);
 }
 /* Dolphin (Core::GetSavePath): <SavesPath>/<rom file stem>-<SI port + 1>.sav */
 inline std::string dolphin_save_file(const std::string& saves_dir, const std::string& rom_path, int si_port) {
@@ -227,12 +246,12 @@ inline bool backup_file(const std::string& file, const std::string& dir) {
     return false;
 }
 
-/* mGBA's .sav carries a 16 byte clock block after the save for a cartridge with an RTC; the vault copy is the bare save. */
+/* mGBA's .sav carries a 16 byte clock block after the save for a cartridge with an RTC; the vault copy is the bare save
+ * (what retrorun's core keeps in the .srm: see gba_save.h for the check against the core's source). */
 inline std::string normalize_save(const std::string& b) {
-    static const size_t canon[] = {512, 8192, 32768, 65536, 131072};
-    auto is_c = [&](size_t n) { return std::find(std::begin(canon), std::end(canon), n) != std::end(canon); };
-    if (!is_c(b.size()) && b.size() > 16 && is_c(b.size() - 16)) return b.substr(0, b.size() - 16);
-    return b;
+    std::string o = b;
+    gbasave::strip_rtc_footer(&o);
+    return o;
 }
 inline bool all_blank(const std::string& b) { for (char c : b) if ((unsigned char)c != 0xFF) return false; return true; }
 
