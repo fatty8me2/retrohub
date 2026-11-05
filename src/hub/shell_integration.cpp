@@ -302,6 +302,7 @@ void shell_ensure_url_protocol() {
         {L"Software\\Classes\\retrohub", L"URL Protocol", L""},
         {L"Software\\Classes\\retrohub\\DefaultIcon", nullptr, exe + L",0"},
         {L"Software\\Classes\\retrohub\\shell\\open\\command", nullptr, cmd},
+        {L"Software\\RetroHub", L"InstallDir", exe.substr(0, exe.find_last_of(L"\\/"))},   // RetroHub-Setup.exe offers this folder, so a reinstall updates in place (keeps userdata and the account)
     };
     for (const auto& v : values) {
         HKEY key = nullptr;
