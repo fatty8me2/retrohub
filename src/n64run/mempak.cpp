@@ -19,6 +19,8 @@ bool decode_rumble_command(const unsigned char* cmd, bool* on) {
     return true;
 }
 
+bool tpak_enabled(bool online, const std::string& gb_rom) { return !online && !gb_rom.empty(); }
+
 bool is_mempak_file(const std::string& name) {
     if (!valid_save_name(name)) return false;
     std::string ext = name.size() >= 4 ? name.substr(name.size() - 4) : std::string();
