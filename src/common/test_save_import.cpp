@@ -210,7 +210,7 @@ int main() {
     /* ---- mGBA clock block: retrorun's core keeps the bare save, so the 16 byte RTC footer is cut off (and nothing else) ---- */
     {
         Ctx ctx; ctx.battery_dir = bat;
-        GameRef g = game("gba:rtc-1", "gba", "Pokemon Ruby", "Pokemon Ruby", "C:\r\Pokemon Ruby.gba");
+        GameRef g = game("gba:rtc-1", "gba", "Pokemon Ruby", "Pokemon Ruby", "C:\\r\\Pokemon Ruby.gba");
         struct { size_t in, out; } cases[] = {{131072 + 16, 131072}, {32768 + 16, 32768}, {65536 + 16, 65536}, {8192 + 16, 8192}, {512 + 16, 512}, {32768, 32768}, {131072, 131072}, {32768 + 17, 32768 + 17}, {100, 100}};
         for (auto& c : cases) {
             fs::path src = g_root / "rtc" / std::to_string(c.in) / "Pokemon Ruby.sav";
