@@ -9,6 +9,7 @@
 #include "games.h"
 #include "hack_logic.h"
 
+#include <algorithm>
 #include <SDL.h>
 
 #include <windows.h>
@@ -43,6 +44,8 @@ const int kMaxTexHeight = 512;
 const int kUploadsPerFrame = 8;
 const long long kMissRetrySeconds = 7LL * 24 * 3600;
 const long long kDatRefreshSeconds = 60LL * 24 * 3600;
+const long long kDatRetrySeconds = 120;                   // a DAT download that failed is tried again after this
+const long long kArtRetryMinSeconds = 30, kArtRetryMaxSeconds = 600;   // transient cover failures: 30 s, 60 s, ... up to 10 min
 
 struct Pixels {
     std::vector<unsigned char> rgba;
@@ -56,6 +59,8 @@ struct Slot {
     SDL_Texture* tex = nullptr;
     int w = 0, h = 0;
     uint32_t avg = 0;   // average saturated colour (theme "Accent from cover"), 0 = none
+    long long retry_at = 0;   // Failed by a transient error (offline, HTTP 5xx): ask again from this unix second (0 = never; 404 / bad image stay final)
+    int fails = 0;
 };
 
 struct Job {
@@ -70,6 +75,7 @@ struct Job {
 struct Done {
     std::string id;
     bool ok = false;
+    bool transient = false;   // failed because of the network (not a 404): worth another try later
     Pixels px;
 };
 
@@ -93,7 +99,7 @@ bool g_quit = false;
 std::mutex g_flush_mu;               // serialises names/misses writers (never taken under g_mu)
 std::mutex g_dat_mu;
 std::map<std::string, std::vector<hm::DatRec>> g_dats;
-std::map<std::string, bool> g_dat_failed;        // session-level
+std::map<std::string, long long> g_dat_failed;    // slot -> unix second before which it is not tried again (library-6: an offline start must not stick)
 
 /* ---------- small helpers ---------- */
 
@@ -252,7 +258,7 @@ const std::vector<hm::DatRec>* get_dat(const std::string& system, bool tree = fa
     std::lock_guard<std::mutex> l(g_dat_mu);
     auto it = g_dats.find(slot);
     if (it != g_dats.end()) return &it->second;
-    if (g_dat_failed[slot]) return nullptr;
+    { auto f = g_dat_failed.find(slot); if (f != g_dat_failed.end() && now_s() < f->second) return nullptr; }
     std::string url = tree ? hm::tree_url(system) : hm::dat_url(system);
     if (url.empty()) return nullptr;
     fs::path p = P(g_cache + "dat/" + system + (tree ? ".tree" : ".dat"));
@@ -275,12 +281,13 @@ const std::vector<hm::DatRec>* get_dat(const std::string& system, bool tree = fa
             text = body;
             have = true;
         } else if (!have) {
-            g_dat_failed[slot] = true;
+            g_dat_failed[slot] = now_s() + kDatRetrySeconds;
             return nullptr;
         }
     }
     auto recs = (tree || system == "wiiu") ? hm::parse_wiiu_tree(text) : hm::parse_dat(text);
-    if (recs.empty()) { g_dat_failed[slot] = true; return nullptr; }
+    if (recs.empty()) { g_dat_failed[slot] = now_s() + kDatRetrySeconds; return nullptr; }
+    g_dat_failed.erase(slot);
     return &(g_dats[slot] = std::move(recs));
 }
 
@@ -542,9 +549,15 @@ void worker_main() {
         std::string sys = j.by_name ? j.system : hub::system_short(j.game.system);
         std::string name = j.name, err;
         bool ok = true;
-        if (!j.by_name) ok = resolve_name_impl(j.game, &name, nullptr);
+        bool unresolved = false;
+        if (!j.by_name) { ok = resolve_name_impl(j.game, &name, nullptr); unresolved = !ok; }
         if (ok) ok = load_image(sys, name, j.kind, &d.px, &err, nullptr);
         d.ok = ok;
+        if (!ok) {   // library-6: the network (or a DAT that could not be fetched) is not a verdict on the cover; 404s are recorded as misses already
+            bool net = err == "network error" || err.compare(0, 5, "HTTP ") == 0;
+            if (unresolved) { std::lock_guard<std::mutex> dl(g_dat_mu); for (auto& kv : g_dat_failed) if (now_s() < kv.second) net = true; }   // a DAT is down right now
+            d.transient = net;
+        }
         std::lock_guard<std::mutex> l(g_mu);
         g_done.push_back(std::move(d));
     }
@@ -570,6 +583,12 @@ SDL_Texture* lookup_or_queue(Job&& j, int* w, int* h) {
             if (h) *h = it->second.h;
             g_lru.touch(it->first);
             return it->second.tex;
+        }
+        if (it->second.st == State::Failed && it->second.retry_at && now_s() >= it->second.retry_at) {   // library-6: a transient failure is asked again
+            it->second.st = State::Pending;
+            it->second.retry_at = 0;
+            { std::lock_guard<std::mutex> l(g_mu); g_jobs.push_back(std::move(j)); }
+            g_cv.notify_one();
         }
         return nullptr;
     }
@@ -632,7 +651,15 @@ void pump() {
             g_done.pop_front();
         }
         Slot& s = g_slots[d.id];
-        if (!d.ok) { s.st = State::Failed; continue; }
+        if (!d.ok) {
+            s.st = State::Failed;
+            if (d.transient) {   // retried later with a growing pause, instead of staying blank for the whole session
+                long long wait = std::min(kArtRetryMaxSeconds, kArtRetryMinSeconds << std::min(s.fails, 5));
+                ++s.fails;
+                s.retry_at = now_s() + wait;
+            }
+            continue;
+        }
         SDL_Texture* t = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, d.px.w, d.px.h);
         if (!t) { s.st = State::Failed; continue; }
         SDL_UpdateTexture(t, nullptr, d.px.rgba.data(), d.px.w * 4);
@@ -663,7 +690,7 @@ SDL_Texture* get(const hub::GameEntry& game, Kind kind, int* w, int* h) {
             g_lru.touch(it->first);
             return it->second.tex;
         }
-        return nullptr;
+        if (!(it->second.st == State::Failed && it->second.retry_at && now_s() >= it->second.retry_at)) return nullptr;
     }
     j.game = game;
     return lookup_or_queue(std::move(j), w, h);
@@ -687,7 +714,7 @@ SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, 
     j.id = slot_id("ghost:" + system_short + ":" + key + ":" + title, kind);
     j.kind = kind;
     auto it = g_slots.find(j.id);
-    if (it == g_slots.end()) {
+    if (it == g_slots.end() || it->second.st == State::Failed) {
         /* Resolve exactly like an owned copy: catalog name, serial/crc from the identity key, DAT title, then fuzzy. */
         j.game.system = hub::system_from_short(system_short);
         j.game.key = key.empty() ? "ghost:" + system_short + ":" + title : key;

@@ -126,6 +126,11 @@ add_test(NAME cheats_db_test COMMAND cheats_db_test)
 add_test(NAME psarchive_test COMMAND psarchive_test)                       # PS1/PS2 disc archives: identify by name/DB, truncated, extract+confirm (scratch dirs)
 add_test(NAME archives_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/archives_headless.ps1)   # GBA .zip, NES/SNES/N64 .7z, PS1 cue/bin .zip unpacked + retrorun --headless
 set_tests_properties(archives_headless PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME verify_test COMMAND verify_test ${CMAKE_SOURCE_DIR}/data/known_dumps.bin)   # L3: known-dump list parse, z64/iNES/SNES normalization, hash cache, runner
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME known_dumps_gen_selftest COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/gen_known_dumps.py --selftest)
+endif()
 add_test(NAME archives_all_test COMMAND archives_all_test)              # .zip/.7z of every system: keys, rescans, re-unpack, rom-cache (scratch dirs)
 add_test(NAME formats_matrix_test COMMAND formats_matrix_test --quiet)         # every console x container/layout/name: identify, title, key, unpack on Play, launch path, unknown files reported, small rom-cache limit (scratch dirs)
 set_tests_properties(formats_matrix_test PROPERTIES TIMEOUT 900)
