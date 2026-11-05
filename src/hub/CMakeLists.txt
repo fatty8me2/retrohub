@@ -14,6 +14,9 @@ target_link_libraries(hub_libview_test PRIVATE hublogic)
 add_executable(hub_shelf_test test_shelf.cpp)
 target_link_libraries(hub_shelf_test PRIVATE hublogic)
 
+add_executable(hub_progress_test test_progress.cpp)
+target_link_libraries(hub_progress_test PRIVATE hublogic hubcommon)
+
 add_executable(hub_customize_test test_customize.cpp)
 target_link_libraries(hub_customize_test PRIVATE hublogic hubcommon)
 
