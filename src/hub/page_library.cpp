@@ -389,6 +389,8 @@ void library_top_bar() {
     const bool dice = A.view == LibView::Home && !A.lib.empty();   // L7: Surprise me
     float total = bh + sp(1.f) + add_games_header_width(bh) + (dice ? bh + sp(1.f) : 0.f);
     const float sw_w = lib_switcher_width() + (A.view == LibView::All ? sp(1.f) : 0.f);
+    bool util_low = false;     // wrapped AND still tight: dice / rescan buttons on the second row, right-aligned
+    bool wrap_chips = false;   // sort / layout / friends chips on a second row (see below)
     {   // the search box gives way so the pinned right-hand buttons (Add games...) are never pushed past the edge (narrow window / Friends panel open)
         /* Search keeps a usable width: when the chips would squeeze it, "Friends' games" shortens to "Friends" and then "Sort: X" to "X". */
         const float min_search = sp(17.f);
@@ -399,9 +401,18 @@ void library_top_bar() {
             lib_sort_label = lvl >= 2 ? sort_nm : "Sort: " + sort_nm;
             lib_friends_label = lvl >= 1 ? "Friends" : "Friends' games";
             if (base - chips_w(lib_sort_label, lib_friends_label) >= min_search) break;
+            if (lvl == 2) wrap_chips = true;   // big UI size / narrow window: even the short labels would squeeze the search box, so the chips take a second row
         }
-        const float room = base - chips_w(lib_sort_label, lib_friends_label);
-        search_w = std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room));
+        if (wrap_chips) {   // full labels again (the second row has the room); search keeps what the first row has left, but never less than a usable minimum
+            lib_sort_label = "Sort: " + sort_nm;
+            lib_friends_label = "Friends' games";
+            float room1 = ImGui::GetContentRegionAvail().x - total - sp(1.5f);
+            if (room1 < sp(10.f)) { util_low = true; room1 = ImGui::GetContentRegionAvail().x - add_games_header_width(bh) - sp(1.5f); }   // still too tight: the dice / rescan buttons join the second row
+            search_w = std::max(sp(10.f), std::min(sp(46.f), room1));
+        } else {
+            const float room = base - chips_w(lib_sort_label, lib_friends_label);
+            search_w = std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room));
+        }
         ImGui::SetNextItemWidth(search_w);
     }
     {   // the hint gives way to a shorter one instead of being clipped (1280x800): the text starts after the search icon and ends before the rounded edge
@@ -417,8 +428,9 @@ void library_top_bar() {
     ImGui::PopStyleVar(2);
     if (A.search_buf[0] && A.view == LibView::Home) A.view = LibView::All;
 
+    auto draw_chips = [&](bool first_on_row) {
     {   // sort chip: A cycles Title / Last played / Most played / Recently added (RT on the pad)
-        ImGui::SameLine(0, sp(1.5f));
+        if (!first_on_row) ImGui::SameLine(0, sp(1.5f));
         std::string sl = lib_sort_label;
         if (chip(sl.c_str(), hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title, ui::ACCENT)) cycle_sort(1);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the order of your games  (RT on a controller)");
@@ -432,17 +444,34 @@ void library_top_bar() {
         if (chip(lib_friends_label.c_str(), A.friends_chip, ui::ACCENT)) { A.friends_chip = !A.friends_chip; A.vis_dirty = true; }   // session-only: never saved
         if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) ImGui::SetTooltip("Show or hide friends' games for now");
     }
+    };
+    if (!wrap_chips) draw_chips(false);
+    auto draw_utility = [&]() {
+        if (dice) { surprise_ui_button(bh); ImGui::SameLine(0, sp(1.f)); }
+        ImGui::BeginDisabled(A.scanning);
+        if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, nullptr)) start_scan();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible))
+            ImGui::SetTooltip("%s", A.scanning ? "Scanning..." : "Rescan library");
+        ImGui::EndDisabled();
+    };
+    const float add_w = add_games_header_width(bh);
     ImGui::SameLine(0, 0);
-    float ax = ImGui::GetContentRegionAvail().x;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax - total));
-    if (dice) { surprise_ui_button(bh); ImGui::SameLine(0, sp(1.f)); }
-    ImGui::BeginDisabled(A.scanning);
-    if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, nullptr)) start_scan();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible))
-        ImGui::SetTooltip("%s", A.scanning ? "Scanning..." : "Rescan library");
-    ImGui::EndDisabled();
-    ImGui::SameLine(0, sp(1.f));
+    {
+        const float ax = ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax - (util_low ? add_w : total)));
+    }
+    if (!util_low) { draw_utility(); ImGui::SameLine(0, sp(1.f)); }
     add_games_header_button(bh);
+    if (wrap_chips) {   // second row, left-aligned under the search box
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        draw_chips(true);
+        if (util_low) {
+            ImGui::SameLine(0, 0);
+            const float ax2 = ImGui::GetContentRegionAvail().x, uw = total - add_w;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax2 - uw));
+            draw_utility();
+        }
+    }
     ImGui::PopItemFlag();
 
     // scan progress: thin animated line under the bar
@@ -505,6 +534,12 @@ void all_games_view() {
                                 {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"PSP", "psp"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     std::map<std::string, int>& counts = A.chip_counts;
+    /* At big UI sizes the wrapped chip rows alone could fill the page and push the grid out of view: the rows live in a child that is as tall as
+     * its rows, up to about a quarter of the page, and scrolls past that. (Padding-free, so at normal sizes it looks exactly like before.) */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, std::max(sp(7.f), ImGui::GetContentRegionAvail().y * 0.25f)));
+    ImGui::BeginChild("##lib_chips", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleVar();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
     /* The chip rows wrap onto a new line instead of running off the right edge (1280x800 / 1100x700). */
     const float chips_right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
@@ -527,10 +562,7 @@ void all_games_view() {
     }
     {   // Online filter chip
         int n_online = 0;
-        for (auto& e : A.lib) {
-            const GameInfo* c = catalog_for(e);
-            (void)c; if (is_native(e) || supports_online(e)) ++n_online;
-        }
+        for (auto& e : A.lib) if (entry_online(e)) ++n_online;   // memoized: no catalog scan per frame
         char lab[48];
         std::snprintf(lab, sizeof lab, "Online  %d", n_online);
         chip_same_line(lab, sp(2.f));
@@ -572,6 +604,7 @@ void all_games_view() {
     }
     ImGui::PopItemFlag();
     ImGui::PopStyleVar();
+    ImGui::EndChild();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     verify_library_card();   // Wave 3 L3: only when there is something to say
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
