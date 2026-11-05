@@ -74,6 +74,7 @@ PrelaunchResult cloud_resolve_lease(const GameId& g, LeaseChoice c);      // con
 /* ---- run + exit ---- */
 void cloud_game_started(const GameId& g, SyncMode mode);  // starts the 5 min lease heartbeat (no-op when ReadOnly / single device)
 void cloud_game_exited(const GameId& g);                   // touch_game must already have run; releases lease, enqueues push
+void cloud_game_changed(const GameId& g);                  // the vault copy of this game changed outside a normal run (import, history restore, folder pull): queue a push (F13)
 
 /* ---- engine lifecycle (called from app startup/shutdown and the job loop) ---- */
 void cloud_engine_start(const std::string& base_url);      // loads queue, schedules the one startup delta
