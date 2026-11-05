@@ -911,8 +911,8 @@ DriverVerdict driver_verdict(bool driver_alive, const std::string& st, unsigned 
 
 std::string driver_verdict_text(DriverVerdict v) {
     switch (v) {
-        case DriverVerdict::DiedSilently: return "RetroHub's helper script for Dolphin could not run. PowerShell or Windows UI Automation may be blocked (antivirus, AppLocker, or a policy).";
-        case DriverVerdict::NoStage: return "RetroHub's helper script for Dolphin never reported in. PowerShell or Windows UI Automation may be blocked or too slow.";
+        case DriverVerdict::DiedSilently: return "RetroHub's Windows helper script for Dolphin could not run. The script or Windows UI Automation may be blocked (antivirus, AppLocker, or a policy).";
+        case DriverVerdict::NoStage: return "RetroHub's Windows helper script for Dolphin never reported in. The script or Windows UI Automation may be blocked or too slow.";
         case DriverVerdict::DiedEarly: return "RetroHub's helper script for Dolphin stopped before the game started.";
         case DriverVerdict::NeverOpened: return "Dolphin's NetPlay window never opened.";
         default: return "";

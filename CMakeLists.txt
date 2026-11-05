@@ -206,6 +206,7 @@ add_test(NAME hub_bracket_test COMMAND hub_bracket_test)       # Plan 4: bracket
 add_test(NAME hubchallenge_test COMMAND hubchallenge_test)   # Plan 4 p4-social: challenge cards, leaderboard, rules, attach helpers (pure)
 add_test(NAME hub_tpak_test COMMAND hub_tpak_test)             # Plan 4 W3 X1: Transfer Pak matching, save file, backups, args
 add_test(NAME hub_hack_test COMMAND hub_hack_test)             # Plan 4: ROM hack keys, base finder, hack.json
+add_test(NAME rh_helper_test COMMAND rh_helper_test $<TARGET_FILE:rh-helper> ${CMAKE_SOURCE_DIR}/data/helpers)   # rh-helper: script allowlist, path rejection, command-line split, exit codes
 add_test(NAME hub_popup_guard_test COMMAND hub_popup_guard_test)   # never pop up over a game: guard logic + lint of every raise/show/MessageBox/synthetic-input site in src/hub and src/common
 add_test(NAME hub_display_test COMMAND hub_display_test)            # window placement (monitor gone / off screen / maximized), UI scale, reduce-motion default
 add_test(NAME hub_idle_test COMMAND hub_idle_test)                  # idle throttle: when the hub may skip drawing a frame (pumps keep their cadence)

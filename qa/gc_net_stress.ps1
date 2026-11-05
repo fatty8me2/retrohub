@@ -106,7 +106,7 @@ function DolphinOf($d) { Get-CimInstance Win32_Process -Filter "Name='Dolphin.ex
 function ReadAll($p) { $t = ""; if (Test-Path $p) { try { $t = [System.IO.File]::ReadAllText($p) } catch { $t = "" } }; return [string]$t }
 function StatusOf($d, $role) { ReadAll "$d\userdata\gcnp\gc_${role}_status.txt" }
 function KillOwn() {
-  $procs = Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*$Work*gc_netplay_driver*") }
+  $procs = Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*dolphin_netplay_driver*$Work*") }
   foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 $descRx = '(?i)desync|out of sync|possible desync|checksum mismatch|state mismatch'
