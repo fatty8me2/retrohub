@@ -1251,8 +1251,7 @@ static void ctl_tick() {
                     if (ec) g_ctl_save_done = -1;   // that SAVECOMPLETE was another save's (the 30 s auto state): keep waiting for ours
                     else if (sz == 0) { fs::remove(fs::path(part), ec); ctl_finish(false, "the core wrote an empty state"); }
                     else {
-                        fs::rename(fs::path(part), fs::path(slot_file), ec);
-                        if (ec) { fs::remove(fs::path(slot_file), ec); ec.clear(); fs::rename(fs::path(part), fs::path(slot_file), ec); }
+                        fs::rename(fs::path(part), fs::path(slot_file), ec);   // replaces the old state in one step; on failure the old state stays
                         if (ec) { ctl_finish(false, "could not store the state"); }
                         else { g_job.kind = CtlJob::SaveShot; g_job.start_vi = vi; ctl_grab_begin(); }
                     }

@@ -100,7 +100,9 @@ bool backup_save(const hub::GameEntry& gb, const std::string& save) {
     if (!have.empty() && same_bytes(fs::u8path(save), dir / fs::u8path(have.back()))) return true;
     char stamp[32]; std::time_t t = std::time(nullptr); std::tm lt{}; localtime_s(&lt, &t);
     std::strftime(stamp, sizeof stamp, "%Y%m%d%H%M%S", &lt);
-    fs::copy_file(fs::u8path(save), dir / fs::u8path(tp::backup_name(name, stamp)), fs::copy_options::overwrite_existing, ec);
+    std::string bn = tp::backup_name(name, stamp);
+    for (int i = 1; fs::exists(dir / fs::u8path(bn), ec) && i < 100; ++i) bn = tp::backup_name(name, std::string(stamp) + "-" + std::to_string(i));   // same second: never overwrite a backup
+    fs::copy_file(fs::u8path(save), dir / fs::u8path(bn), fs::copy_options::none, ec);
     if (ec) return false;
     have.clear();
     for (auto& n : list_names(dir.u8string())) if (n.rfind(name + ".", 0) == 0) have.push_back(n);
