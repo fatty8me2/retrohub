@@ -589,7 +589,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         dolphin_speed_start();   // first: virtual DSU pad on 127.0.0.1:26761.. (first free port; DSUClient.ini gets that port); false = all busy -> quickmenu uses the keyboard path
         { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
         real_boot_dolphin_apply(inst.dir, real_boot_plan(e));   // GameCube IPL startup (this launch only)
-        gba_link_apply_dolphin(e, inst.dir);   // Wave 3 X2: integrated GBA per port (offline)
+        if (!ri.online && !ri.room) gba_link_apply_dolphin(e, inst.dir);   // Wave 3 X2: integrated GBA per port (offline only; GC netplay never comes through here, the guard is belt and braces)
         cheats_apply_dolphin(e, inst.dir +"\\User", false, true, nullptr);   // enabled cheats -> GameSettings\<GAMEID>.ini (stale RetroHub entries removed)
         if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_GCPAD_INI")) {   // QA only: scripted pad (constant/timer expressions) instead of the user's mapping
             std::error_code ec;
@@ -662,6 +662,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
             if (!cemu_managed) hubemu::revert_cemu_own_settings(cemu_user);
         }
         hubemu::end_session(*sess);
+        if (kind == hubemu::Kind::Dolphin) gba_link_after_exit();   // Wave 3 X2: GBA saves -> vault (no-op without a GBA link)
         autotest_log("end_session: " + sess->summary + (sess->error.empty() ? "" : " ERROR " + sess->error));
         NP3.stop();
         if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (your emulator's copy is untouched)", ui::WARN, 15.0);

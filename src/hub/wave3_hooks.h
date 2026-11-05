@@ -22,6 +22,7 @@ void transferpak_run_finished();                                                
 
 void gba_link_apply_dolphin(const hub::GameEntry& e, const std::string& dolphin_dir);   // before an offline GameCube launch
 void gba_link_details_section(const hub::GameEntry& e);
+void gba_link_after_exit();                                                              // launch_external's after_exit: GBA saves back to the vault
 
 std::string palpark_launch_args(const hub::GameEntry& e);                                // retrorun flags (offline DS)
 void palpark_details_section(const hub::GameEntry& e);
