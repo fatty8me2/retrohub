@@ -89,6 +89,7 @@ int fr_unread(const std::string& uid);
 int fr_total_unread();
 void fr_mark_read(const std::string& uid);
 bool fr_connected();
+void fr_blocked_section();               // Settings > Online > Friends: the "Blocked people" list with Unblock
 bool fr_is_admin();                      // the welcome said this account is the owner (the Worker enforces it too)
 hubnet::Access fr_access();              // pending approval / blocked, as told by the server at hello (Ok when welcomed)
 void admin_ui_poke();                    // page_admin.cpp: refresh the dashboard soon

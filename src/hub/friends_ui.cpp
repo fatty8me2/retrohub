@@ -79,8 +79,12 @@ bool g_shot_admin = false;                       // screenshot aids (HUB_SHOT_AD
 hubnet::Access g_shot_access = hubnet::Access::Ok;
 bool fr_is_admin() { return g_shot_admin || (FR.started && !FR.fake && FR.cli.is_admin()); }
 hubnet::Access fr_access() { return g_shot_access != hubnet::Access::Ok ? g_shot_access : (FR.started && !FR.fake ? FR.cli.access() : hubnet::Access::Ok); }
-bool fr_connected() { return FR.fake || (FR.started && FR.cli.connected()); }
-std::string fr_status_text() { return FR.fake ? "Online" : (FR.started ? FR.cli.status_text() : "Offline"); }
+static const char* g_shot_status = nullptr;   // screenshot aid HUB_SHOT_FRSTATUS=replaced|bad-secret|reconnect: show that status while "disconnected"
+bool fr_connected() { if (g_shot_status) return false; return FR.fake || (FR.started && FR.cli.connected()); }
+std::string fr_status_text() {
+    if (g_shot_status) return !std::strcmp(g_shot_status, "replaced") ? "This identity was replaced by a newer one" : !std::strcmp(g_shot_status, "bad-secret") ? "Identity rejected by server (bad secret)" : "Disconnected (connection lost)";
+    return FR.fake ? "Online" : (FR.started ? FR.cli.status_text() : "Offline");
+}
 std::string fr_my_code() { return FR.fake ? "RH-7KQ2-M9XD" : (FR.started ? FR.cli.my_code() : ""); }
 const hubnet::Friend* fr_find(const std::string& uid) {
     for (auto& f : fr_friends()) if (f.uid == uid) return &f;
@@ -787,9 +791,39 @@ void fr_tick() {
     gn_tick();
 }
 
+/* ---------- blocked people (Settings > Online > Friends) ----------
+ * The server keeps only uids of people you blocked; the client remembers the name you saw when you blocked them. */
+static std::vector<std::pair<std::string, std::string>> g_fake_blocked;   // screenshots only (uid, name)
+void fr_blocked_section() {
+    std::vector<std::pair<std::string, std::string>> rows;
+    if (FR.fake) rows = g_fake_blocked;
+    else if (FR.started) for (const std::string& u : FR.cli.blocked()) rows.push_back({u, FR.cli.blocked_name(u)});
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    settings_label("Blocked people", "People you blocked can't send you requests or messages. Unblocking does not make you friends again.");
+    if (rows.empty()) { ImGui::TextDisabled("Nobody is blocked."); return; }
+    std::string unblock_uid;
+    for (const auto& r : rows) {
+        ImGui::PushID(r.first.c_str());
+        std::string label = r.second.empty() ? hubnet::friend_code(r.first) : r.second;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label.c_str());
+        ImGui::SameLine(0, sp(2.f));
+        if (button("Unblock", ImVec2(0, 0), false, fr_connected() || FR.fake)) unblock_uid = r.first;
+        ImGui::PopID();
+    }
+    if (!fr_connected() && !FR.fake) ImGui::TextDisabled("Unblock needs a connection. RetroHub will keep trying.");
+    if (!unblock_uid.empty()) {
+        if (FR.fake) g_fake_blocked.erase(std::remove_if(g_fake_blocked.begin(), g_fake_blocked.end(), [&](const auto& x) { return x.first == unblock_uid; }), g_fake_blocked.end());
+        else FR.cli.unblock(unblock_uid);
+        set_toast("Unblocked. They can contact you again.", true, 4.0);
+    }
+}
+
 /* ---------- fake data for screenshots ---------- */
 void fr_fake_init() {
     FR.fake = true;
+    g_shot_status = std::getenv("HUB_SHOT_FRSTATUS");
+    if (std::getenv("HUB_SHOT_BLOCKED")) g_fake_blocked = {{"blkuid1", "Rowan"}, {"blkuid2", "SpamBot9000"}, {"abcdefghjkmnpqrstuvwxyz234", ""}};
     group_fake_seed();
     long long now = wall_ms();
     auto mk = [&](const char* uid, const char* name, hubnet::PresenceState st, const char* gid, const char* gt, const char* sys, const char* lobby,
@@ -1175,7 +1209,7 @@ void fr_top_bar() {
     // presence pill (left)
     std::string txt;
     ImU32 dot;
-    if (!fr_connected()) { txt = FR.started ? fr_status_text() : "Friends offline"; dot = ui::WARN; }
+    if (!fr_connected()) { txt = (FR.started || g_shot_status) ? fr_status_text() : "Friends offline"; dot = ui::WARN; }
     else {
         hubnet::Status s = fr_desired_status();
         if (s.state == hubnet::PresenceState::InGame) { txt = "Playing " + s.game_title; dot = ui::ACCENT; }
@@ -2146,6 +2180,21 @@ void fr_draw_panel(float disp_w, float disp_h) {
             ImGui::SetCursorScreenPos(ImVec2(c0.x, c0.y + ch + sp(0.75f)));
         }
         ImGui::Dummy(ImVec2(0, sp(0.25f)));
+
+        // a status with no way out on its own: say what to do next
+        if (!fr_connected() && (FR.started || g_shot_status)) {
+            bool acct = false;
+            const std::string next = hubnet::status_next_step(fr_status_text(), &acct);
+            if (!next.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+                ImGui::PushTextWrapPos(0.f);
+                ImGui::TextUnformatted(next.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::PopStyleColor();
+                if (acct && ui::button("Open account settings", ImVec2(fr_tw(ui::F.bold, "Open account settings") + sp(4.f), sp(3.5f)), true)) settings_open(hubui::ST_Account);
+                ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            }
+        }
 
         // add friend
         {

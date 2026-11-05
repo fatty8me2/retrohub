@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -755,6 +756,12 @@ struct FriendsClient::Impl {
         Conv& c = conv(peer);
         if (!m.id.empty())
             for (const Message& x : c.msgs) if (x.id == m.id) return false;
+        if (m.mine && m.id.compare(0, 6, "local-") != 0) {   // the server's copy of a line this PC already echoed: replace the echo (best time match), do not add twice
+            Message* best = nullptr;
+            for (Message& x : c.msgs)
+                if (message_echo_matches(x, m) && (!best || std::llabs(x.at - m.at) < std::llabs(best->at - m.at))) best = &x;
+            if (best) { *best = m; c.dirty = true; trim(c); return false; }
+        }
         c.msgs.push_back(m);
         if (count_unread && !m.mine) c.unread++;
         trim(c);
@@ -936,15 +943,71 @@ struct FriendsClient::Impl {
     std::vector<Identity> retire;   // every older identity of this person still to be retired (pending file, backups, vault)
     std::string retire_path() const { return data_dir + "pending-retire.json"; }
     std::string retired_ids_path() const { return data_dir + "retired-ids.txt"; }
+    std::string rejected_ids_path() const { return data_dir + "retire-rejected.txt"; }
+    /* Names of blocked people (the server only keeps uids): remembered when you block so the "Blocked people" list can show who. */
+    std::map<std::string, std::string> bnames;
+    bool bnames_loaded = false;
+    std::string bnames_path() const { return data_dir + "blocked-names.txt"; }
+    void load_bnames()
+    {
+        if (bnames_loaded || data_dir.empty()) return;
+        bnames_loaded = true;
+        std::string text;
+        if (!read_file(bnames_path(), &text)) return;
+        std::istringstream in(text);
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && line.back() == '') line.pop_back();
+            size_t t = line.find('\t');
+            if (t != std::string::npos && t > 0) bnames[line.substr(0, t)] = line.substr(t + 1);
+        }
+    }
+    void save_bnames()
+    {
+        std::string o;
+        for (const auto& kv : bnames) o += kv.first + "\t" + kv.second + "\n";
+        async_write(bnames_path(), std::move(o));
+    }
+    bool account_deleted = false;     // the server said this account was deleted (from another PC): no retry, say so
+    bool retire_suppressed = false;   // the server said another identity already took over: stop resending for this session
+    static std::set<std::string> read_ids_file(const std::string& path)
+    {
+        std::set<std::string> out;
+        std::string text;
+        if (!read_file(path, &text)) return out;
+        std::istringstream in(text);
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back();
+            if (!line.empty()) out.insert(line);
+        }
+        return out;
+    }
+    /* The server refused this retire for good (bad secret). That is NOT a confirmed retirement: no retired-ids.txt alias (that file
+     * feeds the bulk "Merge" offer), just stop asking. */
+    void retire_rejected(const std::string& uid)
+    {
+        if (uid.empty()) return;
+        for (size_t i = 0; i < retire.size();) {
+            if (retire[i].user_id == uid) {
+                std::ofstream f(upath(rejected_ids_path()), std::ios::app);
+                f << uid << '\n';
+                retire.erase(retire.begin() + i);
+            } else ++i;
+        }
+    }
     void load_retire()
     {
         retire = older_identities(data_dir, vault_dir, id.user_id);
+        std::set<std::string> rej = read_ids_file(rejected_ids_path());   // the server refused these secrets for good: never resend
+        retire.erase(std::remove_if(retire.begin(), retire.end(), [&](const Identity& r) { return rej.count(r.user_id) != 0; }), retire.end());
         std::error_code ec;
         Identity r;
         if (fs::exists(upath(retire_path()), ec) && identity_read(retire_path(), &r) && r.user_id == id.user_id) fs::remove(upath(retire_path()), ec);
     }
     void send_retire()
     {
+        if (retire_suppressed) return;
         int n = 0;
         for (const Identity& r : retire) {
             if (++n > 8) break;   // server allows 10 per hour
@@ -1185,6 +1248,7 @@ struct FriendsClient::Impl {
             if (parse_playtime_reply(text, &m)) { pt_friends = std::move(m); ++pt_version; }
         }
         else if (type == "retired") retire_done(j.str("uid"));
+        else if (type == "account_deleted") { account_deleted = true; status_text = "This account was deleted"; }   // the close that follows (4005) must not say "replaced"
         else if (type == "request") {
             const Json* r = j.get("req");
             if (!r) return false;
@@ -1254,7 +1318,10 @@ struct FriendsClient::Impl {
                 if (access == Access::Pending && !redeem_code.empty() && !redeem_sent && hello_sent) redeem_sent = ws.send_text(redeem_invite_json(redeem_code));
                 return false;   // the server leaves this socket open and wakes it with a close when that changes (4011): no retry loop
             }
-            if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) retire_done(j.str("uid"));   // can never succeed: stop resending
+            if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) {   // can never succeed: stop resending, but do not call it confirmed
+                if (j.str("detail") == "bad-secret") retire_rejected(j.str("uid"));
+                else retire_suppressed = true;   // retired-elsewhere carries no uid: stop for this session, and only toast once
+            }
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
             Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref"); e.detail = j.str("detail");
             for (size_t i = 0; i < inflight.size(); i++)   // a queued action the server refused after the flush: say so
@@ -1315,7 +1382,35 @@ struct FriendsClient::Impl {
 
 /* ====================================================================== public */
 
-bool retire_error_is_terminal(const std::string& ref, const std::string& detail) { return ref == "retire_old" && detail == "bad-secret"; }
+std::string status_next_step(const std::string& st, bool* needs_account)
+{
+    bool acct = false;
+    std::string out;
+    if (st.rfind("This identity was replaced", 0) == 0)
+        { acct = true; out = "This account was moved to a newer sign-in, so this PC stopped connecting. Enter your account code in Settings > Account to sign back in."; }
+    else if (st.rfind("This account was deleted", 0) == 0)
+        { acct = true; out = "This account was deleted on another PC. Enter an account code in Settings > Account to use a different account."; }
+    else if (st.rfind("Identity rejected", 0) == 0)
+        { acct = true; out = "The server did not accept this PC's sign-in. Enter your account code in Settings > Account to sign back in, or restart RetroHub."; }
+    else if (st.rfind("Disconnected", 0) == 0 || st.rfind("Reconnecting", 0) == 0)
+        out = "RetroHub keeps trying. Check your internet connection if this stays.";
+    if (needs_account) *needs_account = acct;
+    return out;
+}
+
+bool message_echo_matches(const Message& l, const Message& s)
+{
+    if (l.id.compare(0, 6, "local-") != 0 || s.id.empty() || s.id.compare(0, 6, "local-") == 0) return false;
+    if (!l.mine || !s.mine || l.to != s.to || l.text != s.text || l.card != s.card) return false;
+    if (l.has_attach != s.has_attach || (l.has_attach && l.attach.id != s.attach.id)) return false;
+    int64_t d = l.at - s.at;
+    return (d < 0 ? -d : d) <= 10 * 60 * 1000;
+}
+
+bool retire_error_is_terminal(const std::string& ref, const std::string& detail)
+{
+    return ref == "retire_old" && (detail == "bad-secret" || detail == "retired-elsewhere");
+}
 
 static std::string sanitize_name(const std::string& in)
 {
@@ -1436,7 +1531,7 @@ void FriendsClient::update()
             d.ws.close();
             d.welcomed = false;
             d.gave_up = true;
-            d.status_text = "This identity was replaced by a newer one";
+            d.status_text = d.account_deleted ? "This account was deleted" : "This identity was replaced by a newer one";
             return;
         }
         if (code == 4010 || code == 4012) {   // blocked / waiting while connected: say so, then try again slowly (a 4011 close means "approved")
@@ -1538,6 +1633,7 @@ bool FriendsClient::adopt_identity(const Identity& v)
 {
     Impl& d = *impl_;
     if (!identity_adopt(d.data_dir, d.vault_dir, v)) return false;
+    d.account_deleted = false; d.retire_suppressed = false;   // a new identity: start clean
     apply_adopted(v);
     return true;
 }
@@ -1655,6 +1751,14 @@ void FriendsClient::remove_friend(const std::string& uid)
 void FriendsClient::block(const std::string& uid)
 {
     Impl& d = *impl_;
+    d.load_bnames();
+    {
+        std::string nm;
+        for (const Friend& f : d.friends) if (f.uid == uid && !f.name.empty()) { nm = f.name; break; }
+        if (nm.empty()) for (const Request& r : d.incoming) if (r.uid == uid) { nm = r.name; break; }
+        if (nm.empty()) for (const Request& r : d.outgoing) if (r.uid == uid) { nm = r.name; break; }
+        if (!nm.empty()) { d.bnames[uid] = nm; d.save_bnames(); }
+    }
     if (std::find(d.blocked.begin(), d.blocked.end(), uid) == d.blocked.end()) d.blocked.push_back(uid);
     d.friends.erase(std::remove_if(d.friends.begin(), d.friends.end(), [&](const Friend& f) { return f.uid == uid; }), d.friends.end());
     Impl::drop(d.incoming, uid); Impl::drop(d.outgoing, uid);
@@ -1665,6 +1769,8 @@ void FriendsClient::unblock(const std::string& uid)
 {
     Impl& d = *impl_;
     d.blocked.erase(std::remove(d.blocked.begin(), d.blocked.end(), uid), d.blocked.end());
+    d.load_bnames();
+    if (d.bnames.erase(uid)) d.save_bnames();
     d.send_uid("unblock", uid);
 }
 
@@ -1784,6 +1890,12 @@ const std::vector<Friend>& FriendsClient::friends() const { return impl_->friend
 const std::vector<Request>& FriendsClient::incoming_requests() const { return impl_->incoming; }
 const std::vector<Request>& FriendsClient::outgoing_requests() const { return impl_->outgoing; }
 const std::vector<std::string>& FriendsClient::blocked() const { return impl_->blocked; }
+std::string FriendsClient::blocked_name(const std::string& uid) const
+{
+    impl_->load_bnames();
+    auto it = impl_->bnames.find(uid);
+    return it == impl_->bnames.end() ? std::string() : it->second;
+}
 const Friend* FriendsClient::find_friend(const std::string& uid) const
 {
     for (const auto& f : impl_->friends) if (f.uid == uid) return &f;
