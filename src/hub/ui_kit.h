@@ -13,7 +13,8 @@ struct SDL_Texture;
 
 namespace ui {
 
-extern float S;                 // DPI scale (1.0 = 96 dpi)
+extern float S;                 // DPI scale (1.0 = 96 dpi) times the player's UI size
+extern bool reduce_motion;      // Settings > Reduce motion: no slides, pans, spins or shelf tilt (anim() snaps; animations check it)
 extern hubglyph::Kind pad_kind; // family of the pad in use (glyph_ui.cpp keeps it current): hints print Xbox / PlayStation / Switch labels
 inline float sp(float n) { return n * 8.f * S; }   // 8-pt spacing scale: sp(1)=8px, sp(0.5)=4px, sp(2)=16px ...
 

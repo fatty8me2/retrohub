@@ -155,7 +155,7 @@ void draw_layer(ImDrawList* dl, const Layer& l, ImVec2 p0, ImVec2 p1, float rad,
     if (!r.tex || r.w <= 0 || r.h <= 0) return;
     const float w = p1.x - p0.x, h = p1.y - p0.y;
     const at::UV cov = at::cover_uv((float)r.w, (float)r.h, w, h);
-    const float u = ct::pingpong01(ImGui::GetTime() - g_layer_t0 + (double)key_idx(l.key) * 5.0);
+    const float u = ui::reduce_motion ? 0.f : ct::pingpong01(ImGui::GetTime() - g_layer_t0 + (double)key_idx(l.key) * 5.0);
     const at::UV kb = at::ken_burns(key_idx(l.key), u, cov);
     const float br = r.photo ? 0.92f : 0.34f;   // a cover is only a tinted backdrop; a game picture is the star
     const int b = (int)(255 * br);

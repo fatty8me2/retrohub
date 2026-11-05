@@ -141,7 +141,7 @@ void draw_popup() {
     const float cx = (v0.x + v1.x) * 0.5f, cy = (v0.y + v1.y) * 0.5f;
     dl->AddRectFilled(v0, v1, ui::BG, sp(1.5f));
     dl->PushClipRect(v0, v1, true);
-    const float pos = SU.ph == Spin::Spinning ? su::spin_pos(t, kSpinSecs, (int)SU.reel.size()) : (float)((int)SU.reel.size() - 1);
+    const float pos = (SU.ph == Spin::Spinning && !ui::reduce_motion) ? su::spin_pos(t, kSpinSecs, (int)SU.reel.size()) : (float)((int)SU.reel.size() - 1);
     const int first = std::max(0, (int)std::floor(pos - avail / (cw + gap) * 0.5f) - 1);
     const int last = std::min((int)SU.reel.size() - 1, (int)std::ceil(pos + avail / (cw + gap) * 0.5f) + 1);
     for (int i = first; i <= last; ++i) {
