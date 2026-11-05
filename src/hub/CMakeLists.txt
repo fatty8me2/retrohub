@@ -326,3 +326,8 @@ target_include_directories(hub_bootsound_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(hub_bootsound_test PRIVATE hubcommon)
 target_compile_definitions(hub_bootsound_test PRIVATE BOOT_SOUND_OUT_DIR="${CMAKE_SOURCE_DIR}/qa/out/boot_sounds")
 target_include_directories(RetroHub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)   # boot_anim.h includes "common/library.h"
+
+# Wave 3 X3 Pal Park: pure logic (palpark_logic.h)
+add_executable(hub_palpark_test test_palpark.cpp)
+target_include_directories(hub_palpark_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hub_palpark_test PRIVATE hubcommon hubbase)
