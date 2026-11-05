@@ -78,11 +78,22 @@ inline std::string pick_save_file(const std::vector<std::string>& names, const s
 }
 
 /* The retrorun flags (each starting with a space), or "" when there is no GBA ROM or a path would break the command line. `save` may be "" (no save yet). */
-inline std::string build_args(const std::string& gba_rom, const std::string& save) {
-    if (gba_rom.empty() || gba_rom.find('"') != std::string::npos || save.find('"') != std::string::npos) return std::string();
+inline std::string build_args(const std::string& gba_rom, const std::string& save, const std::string& backup_dir = std::string()) {
+    if (gba_rom.empty() || gba_rom.find('"') != std::string::npos || save.find('"') != std::string::npos || backup_dir.find('"') != std::string::npos) return std::string();
     std::string a = " --slot2-rom \"" + gba_rom + "\"";
     if (!save.empty()) a += " --slot2-save \"" + save + "\"";
+    if (!save.empty() && !backup_dir.empty()) a += " --slot2-backup-dir \"" + backup_dir + "\"";   // only with a save: no save, nothing to back up
     return a;
+}
+
+/* Where retrorun keeps the backups of this GBA game's save before a Pal Park run: <data dir>\palpark_backups\<game key as a folder name>, like Transfer Pak's
+ * tpak_backups, OUTSIDE the synced vault (a backup inside the vault would use up the cloud quota and be copied to every PC). "" when either part is empty. */
+inline std::string backup_dir_for(const std::string& data_dir, const std::string& gba_key) {
+    std::string d = data_dir, k = gba_key;
+    while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
+    for (char& c : k) if (!(std::isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_')) c = '_';   // keys look like "gba:axve-1234": no ':' in a folder name
+    if (d.empty() || k.empty()) return std::string();
+    return d + "\\palpark_backups\\" + k;
 }
 
 /* ---- the per-DS-game choice: { "slot2": { "<ds game key>": "<gba game key>" } } in hub::data_dir()\palpark.json ---- */

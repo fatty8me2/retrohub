@@ -105,6 +105,7 @@ struct Args {
     bool rb_adaptive = true;      // --rb-delay-adapt / --no-rb-delay-adapt: pick the input delay from the measured RTT when --delay is auto
     bool multitap = false, no_multitap = false;  // SNES multitap on port 2 (players 3-4); auto with --players >= 3 or 3+ pads
     bool ds_link = false;   // DS local wireless over the room (netpacket interface), no lockstep
+    std::string slot2_backup_dir;        // --slot2-backup-dir DIR: where the GBA save backups go (the hub passes a folder outside the synced vault)
     std::string slot2_rom, slot2_save;   // --slot2-rom GBA --slot2-save SAV: a GBA cartridge in the DS Slot-2 (Pal Park etc.), offline only (slot2.h)
     std::vector<std::string> opts;
     int rewind_mode = 0, runahead = 0;   // --rewind auto|on|off, --runahead off|1|2|auto (offline only; see features.h)
@@ -224,6 +225,7 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--ds-link") o->ds_link = true;
         else if (k == "--slot2-rom") { if (!val(&o->slot2_rom)) return false; }
         else if (k == "--slot2-save") { if (!val(&o->slot2_save)) return false; }
+        else if (k == "--slot2-backup-dir") { if (!val(&o->slot2_backup_dir)) return false; }
         else if (k == "--fuzz-input") o->fuzz = true;
         else if (k == "--selftest") o->selftest = true;
         else if (k == "--pace") { if (!val(&o->pace_override)) return false; }
@@ -1620,20 +1622,28 @@ bool Frontend::slot2_prepare() {
     if (!fs::is_regular_file(vault, ec)) { rlog("slot2: no GBA save file yet (%s): the cartridge goes in without one", a.slot2_save.c_str()); return true; }
     if (!read_file(a.slot2_save, &slot2_orig_) || slot2_orig_.empty()) { rlog("slot2: cannot read the GBA save %s: the cartridge goes in without one", a.slot2_save.c_str()); slot2_orig_.clear(); return true; }
     const std::string fname = vault.filename().u8string();
-    fs::path bdir = vault.parent_path() / L"palpark_backup";
+    /* The hub passes --slot2-backup-dir (under its data folder, so backups are not synced with the vault). Without it (a hand-made command line)
+     * they stay next to the save, as before: a backup is never skipped. */
+    fs::path bdir = a.slot2_backup_dir.empty() ? vault.parent_path() / L"palpark_backup" : fs::u8path(a.slot2_backup_dir);
     fs::create_directories(bdir, ec);
     char stamp[32];
     time_t now = time(nullptr);
     tm lt{};
     localtime_s(&lt, &now);
     strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &lt);
-    fs::path bak = bdir / fs::u8path(slot2::backup_name(fname, stamp));
-    fs::copy_file(vault, bak, fs::copy_options::overwrite_existing, ec);
+    std::vector<std::string> have;
+    for (auto& de : fs::directory_iterator(bdir, ec)) { std::string n = de.path().filename().u8string(); if (slot2::is_backup_of(n, fname)) have.push_back(n); }
+    ec.clear();
+    const std::string bname = slot2::unique_backup_name(fname, stamp, have);   // two runs in one second never overwrite each other's backup
+    if (bname.empty()) { rlog("slot2: too many backups with the same time stamp: the cartridge goes in without a save"); slot2_orig_.clear(); return true; }
+    fs::path bak = bdir / fs::u8path(bname);
+    fs::copy_file(vault, bak, fs::copy_options::none, ec);
     if (ec) { rlog("slot2: FAILED to back up the GBA save (%s): the cartridge goes in without one", ec.message().c_str()); slot2_orig_.clear(); return true; }
     rlog("slot2: GBA save backed up as %s", bak.u8string().c_str());
     std::vector<std::string> names;
-    for (auto& de : fs::directory_iterator(bdir, ec)) { std::string n = de.path().filename().u8string(); if (slot2::is_backup_of(n, fname)) names.push_back(n); }
-    for (auto& n : slot2::backups_to_prune(names, 3)) { fs::remove(bdir / fs::u8path(n), ec); rlog("slot2: old backup removed: %s", n.c_str()); }
+    ec.clear();
+    for (auto& de : fs::directory_iterator(bdir, ec)) { std::string n = de.path().filename().u8string(); if (n != bname && slot2::is_backup_of(n, fname)) names.push_back(n); }   // the backup just made is never pruned (a clock that went back sorts it oldest)
+    for (auto& n : slot2::backups_to_prune(names, 2)) { fs::remove(bdir / fs::u8path(n), ec); rlog("slot2: old backup removed: %s", n.c_str()); }
     fs::path wdir = fs::u8path(core.save_dir) / L"palpark" / std::to_wstring(GetCurrentProcessId());
     fs::create_directories(wdir, ec);
     fs::path work = wdir / vault.filename();
@@ -1655,7 +1665,7 @@ void Frontend::slot2_commit() {
             write_atomic(side, w.data(), w.size());
             rlog("slot2: the GBA save changed during the run, so the vault file was NOT replaced; the new Pal Park save is kept as %s", side.c_str());
         } else if (write_atomic(slot2_vault_, w.data(), w.size())) rlog("slot2: GBA save written back: %s (%zu bytes)", slot2_vault_.c_str(), w.size());
-        else rlog("slot2: FAILED to write the GBA save back; the backup is in palpark_backup");
+        else rlog("slot2: FAILED to write the GBA save back; the backup is in the Pal Park backup folder");
     } else if (w.empty() || w == slot2_orig_) {
         rlog("slot2: GBA save unchanged");
     } else {

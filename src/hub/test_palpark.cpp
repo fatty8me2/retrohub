@@ -49,6 +49,12 @@ int main() {
     CHECK(build_args("C:\\r\\ruby.gba", "") == " --slot2-rom \"C:\\r\\ruby.gba\"");
     CHECK(build_args("", "C:\\v\\ruby.srm").empty());
     CHECK(build_args("C:\\r\\ru\"by.gba", "").empty());
+    CHECK(build_args("C:\\r\\ruby.gba", "C:\\v\\ruby.srm", "C:\\d\\palpark_backups\\gba_x") ==
+          " --slot2-rom \"C:\\r\\ruby.gba\" --slot2-save \"C:\\v\\ruby.srm\" --slot2-backup-dir \"C:\\d\\palpark_backups\\gba_x\"");
+    CHECK(build_args("C:\\r\\ruby.gba", "", "C:\\d\\b") == " --slot2-rom \"C:\\r\\ruby.gba\"");   // no save yet: nothing to back up
+    CHECK(build_args("C:\\r\\ruby.gba", "C:\\v\\r.srm", "C:\\d\"b").empty());
+    CHECK(backup_dir_for("C:\\Users\\me\\data\\", "gba:axve-1234") == "C:\\Users\\me\\data\\palpark_backups\\gba_axve-1234");
+    CHECK(backup_dir_for("C:/data", "gba:k") == "C:/data\\palpark_backups\\gba_k" && backup_dir_for("", "gba:k").empty() && backup_dir_for("C:\\d", "").empty());
 
     Choices c;
     CHECK(get_choice(c, "nds:x").empty());
