@@ -132,7 +132,7 @@ add_custom_command(TARGET RetroHub POST_BUILD
 # Cheat database (data/cheats_db.bin + data/cheats_featured.json) ships next to RetroHub.exe in data\ (hub::cheats_db_set_dir default).
 add_custom_command(TARGET RetroHub POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:RetroHub>/data
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/cheats_db.bin ${CMAKE_SOURCE_DIR}/data/cheats_featured.json ${CMAKE_SOURCE_DIR}/data/changelog.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv ${CMAKE_SOURCE_DIR}/data/recommended.json $<TARGET_FILE_DIR:RetroHub>/data)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/cheats_db.bin ${CMAKE_SOURCE_DIR}/data/cheats_featured.json ${CMAKE_SOURCE_DIR}/data/changelog.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv ${CMAKE_SOURCE_DIR}/data/recommended.json ${CMAKE_SOURCE_DIR}/data/known_dumps.bin $<TARGET_FILE_DIR:RetroHub>/data)
 
 # Cover art: pure matching logic + console test (live network check with --live <cache> [rom]).
 add_executable(qa_pack_art qa_pack_art.cpp gamepack.cpp art.cpp art_match.cpp)   # cover-art coverage check over the real pack index + library (qa/pack_art_check.ps1); not a ctest

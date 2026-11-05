@@ -1,4 +1,5 @@
 #include "addgames.h"
+#include "library_scan_info.h"
 #include "ps1.h"
 #include "winutil.h"
 
@@ -75,12 +76,19 @@ std::set<std::string> index_keys(const std::string& root, const std::atomic<bool
     std::set<std::string> keys;
     std::error_code ec;
     if (root.empty() || !fs::is_directory(P(root), ec)) return keys;
+    std::vector<std::string> files;
     for (fs::recursive_directory_iterator it(P(root), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
         if (stop && *stop) break;
         std::error_code fe;
         if (!it->is_regular_file(fe)) continue;
         std::string p = U8(it->path());
-        if (!is_game_file(p)) continue;
+        if (is_game_file(p)) files.push_back(p);
+    }
+    /* library-13: the scan cache already knows most of these (path + size + mtime): hash only what it does not. */
+    std::vector<std::string> rest;
+    keys = cached_keys_for_files(files, &rest);
+    for (const std::string& p : rest) {
+        if (stop && *stop) break;
         GameEntry g;
         if (identify_game(p, &g) && !g.key.empty()) keys.insert(g.key);
     }
@@ -262,8 +270,10 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
             std::error_code se;
             if (fs::file_size(P(same), se) == size && !se) { finish(Outcome::Duplicate, "already in your library"); bytes_done_ += size; continue; }
         }
+        uint64_t need = size;   // library-10: a PlayStation set needs room for every bin, not just the cue
+        for (const std::string& c : comps) { std::error_code ce; uint64_t cs = fs::file_size(P(c), ce); if (!ce) need += cs; }
         ULARGE_INTEGER freeb{};
-        if (GetDiskFreeSpaceExW(winutil::to_wide(dir).c_str(), &freeb, nullptr, nullptr) && freeb.QuadPart < size + (64ull << 20)) {
+        if (GetDiskFreeSpaceExW(winutil::to_wide(dir).c_str(), &freeb, nullptr, nullptr) && freeb.QuadPart < need + (64ull << 20)) {
             finish(Outcome::Failed, "not enough free disk space");
             continue;
         }
@@ -271,7 +281,9 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
         uint64_t base = bytes_done_;
         uint64_t counted = 0;
         std::string err;
+        std::vector<std::string> written;   // library-10: what THIS job created, removed again when the set does not finish
         bool ok = copy_file(src, it.dest, &counted, [&](uint64_t d, uint64_t) { bytes_done_ = base + d; return !cancel_; }, &err);
+        if (ok) written.push_back(it.dest);
         bytes_done_ = base + size;
         for (size_t ci = 0; ok && ci < comps.size(); ++ci) {
             std::error_code ce;
@@ -281,7 +293,12 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
             if (fs::exists(P(cdst), ce) && fs::file_size(P(cdst), ce) == cs) { bytes_done_ += cs; continue; }
             uint64_t cbase = bytes_done_;
             ok = copy_file(comps[ci], cdst, &counted, [&](uint64_t d, uint64_t) { bytes_done_ = cbase + d; return !cancel_; }, &err);
+            if (ok) written.push_back(cdst);
             bytes_done_ = cbase + cs;
+        }
+        if (!ok) {   // a half-copied set must not stay behind: a lone .cue would read as "Already in your library" on the next Add
+            for (const std::string& w : written) { std::error_code de; fs::remove(P(w), de); }
+            if (!comps.empty()) { std::error_code de; fs::remove(P(dir), de); }   // the set's own folder, only when it is empty again
         }
         if (ok) finish(Outcome::Added, "");
         else if (err == "cancelled") finish(Outcome::Cancelled, "cancelled");
