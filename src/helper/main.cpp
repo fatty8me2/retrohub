@@ -57,10 +57,11 @@ int wmain() {
      * CREATE_SUSPENDED: it joins the job before its first instruction, so nothing it spawns can escape. */
     if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &si, &pi)) {
         fputs("rh-helper: could not start the script host\n", stderr);
+        if (job) CloseHandle(job);
         return 5;
     }
     if (job) AssignProcessToJobObject(job, pi.hProcess);   // if this fails the script still runs, just without kill-with-parent
-    ResumeThread(pi.hThread);
+    if (ResumeThread(pi.hThread) == (DWORD)-1) { TerminateProcess(pi.hProcess, 1); CloseHandle(pi.hThread); CloseHandle(pi.hProcess); if (job) CloseHandle(job); return 5; }   // never wait on a child that cannot run
     CloseHandle(pi.hThread);
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD code = 0;
