@@ -41,6 +41,57 @@ int main() {
     CHECK(is_backup_of("pokeruby.srm.20261105-101500.bak", "pokeruby.srm"));
     CHECK(!is_backup_of("pokeruby.srm", "pokeruby.srm"));
     CHECK(!is_backup_of("other.srm.20261105-101500.bak", "pokeruby.srm"));
+    {   // two backups in the same second never take each other's place, and still sort oldest first
+        std::vector<std::string> have;
+        const std::string b1 = unique_backup_name("s.srm", "20261105-101500", have);
+        CHECK(b1 == "s.srm.20261105-101500-01.bak" && is_backup_of(b1, "s.srm"));
+        have.push_back(b1);
+        const std::string b2 = unique_backup_name("s.srm", "20261105-101500", have);
+        CHECK(b2 == "s.srm.20261105-101500-02.bak" && b2 != b1 && b1 < b2);
+        have.push_back(b2);
+        for (int i = 3; i < 10; ++i) have.push_back(unique_backup_name("s.srm", "20261105-101500", have));
+        const std::string b10 = unique_backup_name("s.srm", "20261105-101500", have);
+        CHECK(b10 == "s.srm.20261105-101500-10.bak" && have.back() < b10);
+        CHECK(unique_backup_name("s.srm", "20261105-101501", have) == "s.srm.20261105-101501-01.bak");   // another second starts again
+        CHECK(backups_to_prune({b2, b1, "s.srm.20261105-101459-01.bak"}, 2) == std::vector<std::string>{"s.srm.20261105-101459-01.bak"});
+        std::vector<std::string> full;
+        for (int i = 1; i < 100; ++i) full.push_back(unique_backup_name("s.srm", "t", full));
+        CHECK(full.size() == 99 && unique_backup_name("s.srm", "t", full).empty());
+    }
+    {   // two backups in the same second never take each other's place, and still sort oldest first
+        std::vector<std::string> have;
+        const std::string b1 = unique_backup_name("s.srm", "20261105-101500", have);
+        CHECK(b1 == "s.srm.20261105-101500-01.bak" && is_backup_of(b1, "s.srm"));
+        have.push_back(b1);
+        const std::string b2 = unique_backup_name("s.srm", "20261105-101500", have);
+        CHECK(b2 == "s.srm.20261105-101500-02.bak" && b2 != b1 && b1 < b2);
+        have.push_back(b2);
+        for (int i = 3; i < 10; ++i) have.push_back(unique_backup_name("s.srm", "20261105-101500", have));
+        const std::string b10 = unique_backup_name("s.srm", "20261105-101500", have);
+        CHECK(b10 == "s.srm.20261105-101500-10.bak" && have.back() < b10);
+        CHECK(unique_backup_name("s.srm", "20261105-101501", have) == "s.srm.20261105-101501-01.bak");   // another second starts again
+        CHECK(backups_to_prune({b2, b1, "s.srm.20261105-101459-01.bak"}, 2) == std::vector<std::string>{"s.srm.20261105-101459-01.bak"});
+        std::vector<std::string> full;
+        for (int i = 1; i < 100; ++i) full.push_back(unique_backup_name("s.srm", "t", full));
+        CHECK(full.size() == 99 && unique_backup_name("s.srm", "t", full).empty());
+    }
+    {   // two backups in the same second never take each other's place, and still sort oldest first
+        std::vector<std::string> have;
+        const std::string b1 = unique_backup_name("s.srm", "20261105-101500", have);
+        CHECK(b1 == "s.srm.20261105-101500-01.bak" && is_backup_of(b1, "s.srm"));
+        have.push_back(b1);
+        const std::string b2 = unique_backup_name("s.srm", "20261105-101500", have);
+        CHECK(b2 == "s.srm.20261105-101500-02.bak" && b2 != b1 && b1 < b2);
+        have.push_back(b2);
+        for (int i = 3; i < 10; ++i) have.push_back(unique_backup_name("s.srm", "20261105-101500", have));
+        const std::string b10 = unique_backup_name("s.srm", "20261105-101500", have);
+        CHECK(b10 == "s.srm.20261105-101500-10.bak" && have.back() < b10);
+        CHECK(unique_backup_name("s.srm", "20261105-101501", have) == "s.srm.20261105-101501-01.bak");   // another second starts again
+        CHECK(backups_to_prune({b2, b1, "s.srm.20261105-101459-01.bak"}, 2) == std::vector<std::string>{"s.srm.20261105-101459-01.bak"});
+        std::vector<std::string> full;
+        for (int i = 1; i < 100; ++i) full.push_back(unique_backup_name("s.srm", "t", full));
+        CHECK(full.size() == 99 && unique_backup_name("s.srm", "t", full).empty());
+    }
     std::vector<std::string> n = {"s.srm.20261105-000004.bak", "s.srm.20261105-000001.bak", "s.srm.20261105-000003.bak", "s.srm.20261105-000002.bak"};
     auto p = backups_to_prune(n, 3);
     CHECK(p.size() == 1 && p[0] == "s.srm.20261105-000001.bak");

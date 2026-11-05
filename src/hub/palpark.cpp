@@ -69,7 +69,7 @@ std::string palpark_launch_args(const hub::GameEntry& e) {
     std::error_code ec;
     for (auto& de : fs::directory_iterator(fs::u8path(dir), ec)) if (de.is_regular_file(ec)) names.push_back(de.path().filename().u8string());
     const std::string file = pp::pick_save_file(names, pp::srm_stem(*g));
-    const std::string args = pp::build_args(g->path, file.empty() ? std::string() : dir + file);
+    const std::string args = pp::build_args(g->path, file.empty() ? std::string() : dir + file, pp::backup_dir_for(hub::data_dir(), g->key));   // backups stay out of the synced vault
     if (!args.empty()) g_pending = {e.key, g->key, g->title};
     return args;
 }

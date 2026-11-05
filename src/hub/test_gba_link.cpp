@@ -87,6 +87,51 @@ int main() {
     /* names: retrorun's vault file and Dolphin's save file */
     CHECK(vault_file("C:\\v\\gba\\k\\battery\\", "D:\\r\\Pokemon Ruby.gba", "") == "C:\\v\\gba\\k\\battery\\Pokemon Ruby.srm");
     CHECK(vault_file("C:\\v\\battery", "C:\\cache\\rom.gba", "Inner Name") == "C:\\v\\battery\\Inner Name.srm");   // zipped ROM: the save stem
+    {   // retrorun's lone-.srm rule: a renamed ROM keeps using the one save that is there
+        const std::vector<std::string> none, one = {"Old Name.srm", "meta.json"}, two = {"Old Name.srm", "Other.srm"}, exact = {"Other.srm", "pokemon ruby.SRM"};
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", none) == "Pokemon Ruby.srm");
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", one) == "Old Name.srm");
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", two) == "Pokemon Ruby.srm");   // two .srm: do not guess
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", exact) == "pokemon ruby.SRM");
+        CHECK(vault_file_name("C:\\cache\\rom.gba", "Inner", one) == "Old Name.srm");
+        fs::path bd = fs::temp_directory_path() / "gbalink_vault_test";
+        fs::remove_all(bd); fs::create_directories(bd);
+        const std::string bs = bd.u8string();
+        CHECK(vault_file(bs, "D:\\r\\New Name.gba", "") == bs + "\\New Name.srm");
+        wr(bd / "Old Name.srm", "x");
+        CHECK(vault_file(bs + "\\", "D:\\r\\New Name.gba", "") == bs + "\\Old Name.srm");
+        fs::remove_all(bd);
+    }
+    {   // retrorun's lone-.srm rule: a renamed ROM keeps using the one save that is there
+        const std::vector<std::string> none, one = {"Old Name.srm", "meta.json"}, two = {"Old Name.srm", "Other.srm"}, exact = {"Other.srm", "pokemon ruby.SRM"};
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", none) == "Pokemon Ruby.srm");
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", one) == "Old Name.srm");
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", two) == "Pokemon Ruby.srm");   // two .srm: do not guess
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", exact) == "pokemon ruby.SRM");
+        CHECK(vault_file_name("C:\\cache\\rom.gba", "Inner", one) == "Old Name.srm");
+        fs::path bd = fs::temp_directory_path() / "gbalink_vault_test";
+        fs::remove_all(bd); fs::create_directories(bd);
+        const std::string bs = bd.u8string();
+        CHECK(vault_file(bs, "D:\\r\\New Name.gba", "") == bs + "\\New Name.srm");
+        wr(bd / "Old Name.srm", "x");
+        CHECK(vault_file(bs + "\\", "D:\\r\\New Name.gba", "") == bs + "\\Old Name.srm");
+        fs::remove_all(bd);
+    }
+    {   // retrorun's lone-.srm rule: a renamed ROM keeps using the one save that is there
+        const std::vector<std::string> none, one = {"Old Name.srm", "meta.json"}, two = {"Old Name.srm", "Other.srm"}, exact = {"Other.srm", "pokemon ruby.SRM"};
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", none) == "Pokemon Ruby.srm");
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", one) == "Old Name.srm");
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", two) == "Pokemon Ruby.srm");   // two .srm: do not guess
+        CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", exact) == "pokemon ruby.SRM");
+        CHECK(vault_file_name("C:\\cache\\rom.gba", "Inner", one) == "Old Name.srm");
+        fs::path bd = fs::temp_directory_path() / "gbalink_vault_test";
+        fs::remove_all(bd); fs::create_directories(bd);
+        const std::string bs = bd.u8string();
+        CHECK(vault_file(bs, "D:\\r\\New Name.gba", "") == bs + "\\New Name.srm");
+        wr(bd / "Old Name.srm", "x");
+        CHECK(vault_file(bs + "\\", "D:\\r\\New Name.gba", "") == bs + "\\Old Name.srm");
+        fs::remove_all(bd);
+    }
     CHECK(dolphin_save_file("C:\\s\\", "D:\\r\\Pokemon Ruby.gba", 1) == "C:\\s\\Pokemon Ruby-2.sav");
     CHECK(dolphin_save_file("C:/s", "D:/r/Fusion.v2.gba", 3) == "C:/s\\Fusion.v2-4.sav");
 
@@ -134,6 +179,8 @@ int main() {
     CHECK(finish_save(s, &err) == Back::Nothing && rd(s.vault) == save3);
     // raw bytes of a vault save and the Dolphin save are the same format: no header, no conversion
     CHECK(normalize_save(std::string(512, 'e')).size() == 512 && normalize_save(std::string(8192 + 16, 'e')).size() == 8192 && normalize_save(std::string(100, 'e')).size() == 100);
+    CHECK(normalize_save(std::string(32768 + 16, 'e')).size() == 32768 && normalize_save(std::string(131072 + 16, 'e')).size() == 131072 && normalize_save(std::string(512 + 16, 'e')).size() == 512);
+    CHECK(normalize_save(std::string(32768 + 17, 'e')).size() == 32768 + 17);   // not canonical+16: left alone
 
     fs::remove_all(dir);
     std::printf(fails ? "gba_link_test: %d FAILED\n" : "gba_link_test: all passed\n", fails);

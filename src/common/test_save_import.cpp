@@ -207,6 +207,20 @@ int main() {
         for (auto& r : rows) if (r.game == 0) CHECK(r.same_as_vault && r.newer == Row::Same && !r.selected);
     }
 
+    /* ---- mGBA clock block: retrorun's core keeps the bare save, so the 16 byte RTC footer is cut off (and nothing else) ---- */
+    {
+        Ctx ctx; ctx.battery_dir = bat;
+        GameRef g = game("gba:rtc-1", "gba", "Pokemon Ruby", "Pokemon Ruby", "C:\\r\\Pokemon Ruby.gba");
+        struct { size_t in, out; } cases[] = {{131072 + 16, 131072}, {32768 + 16, 32768}, {65536 + 16, 65536}, {8192 + 16, 8192}, {512 + 16, 512}, {32768, 32768}, {131072, 131072}, {32768 + 17, 32768 + 17}, {100, 100}};
+        for (auto& c : cases) {
+            fs::path src = g_root / "rtc" / std::to_string(c.in) / "Pokemon Ruby.sav";
+            wr(src, fill(c.in, 'R'));
+            auto rows = build_rows({found(Source::MGBA, src)}, {g}, ctx);
+            std::vector<OutFile> o; std::string why;
+            CHECK(!rows.empty() && convert(rows[0], g, ctx, &o, &why) && o.size() == 1 && o[0].rel == "Pokemon Ruby.srm" && o[0].data.size() == c.out && o[0].data == fill(c.out, 'R'));
+        }
+    }
+
     /* ---- backup before overwrite ---- */
     {
         GameRef g = game("gba_bk-1", "gba", "Backup Game", "Backup Game");

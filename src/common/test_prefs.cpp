@@ -175,6 +175,64 @@ int main() {
         CHECK(!set_progress(&big, big.progress, 6) && big.stamp("progress") == 5);   // unchanged: no stamp
     }
     {
+        // status on PC A, note on PC B, same game: both survive, in either merge order and either time order
+        Prefs base;
+        Prefs pa = base, pb = base;
+        set_progress(&pa, {{"n64:g", {"beaten", ""}}}, 100);
+        set_progress(&pb, {{"n64:g", {"", "needs the red key"}}}, 200);
+        Prefs m1 = merge(pa, pb), m2 = merge(pb, pa);
+        CHECK(m1.progress.size() == 1 && m1.progress["n64:g"].status == "beaten" && m1.progress["n64:g"].note == "needs the red key");
+        CHECK(same(m1, m2) && same(merge(m1, pa), m1) && same(merge(m1, m1), m1));
+        Prefs pc = base, pd = base;   // the note is the OLDER edit this time
+        set_progress(&pc, {{"n64:g", {"", "old note"}}}, 100);
+        set_progress(&pd, {{"n64:g", {"complete", ""}}}, 200);
+        Prefs m3 = merge(pc, pd);
+        CHECK(m3.progress["n64:g"].status == "complete" && m3.progress["n64:g"].note == "old note" && same(m3, merge(pd, pc)));
+        // survives the JSON file and a later edit of one half on one PC
+        Prefs rt; CHECK(parse(serialize(m1), &rt) && same(rt, m1));
+        Prefs pe = rt; set_progress(&pe, {{"n64:g", {"beaten", "new note"}}}, 300);
+        Prefs m4 = merge(pe, pa);
+        CHECK(m4.progress["n64:g"].note == "new note" && m4.progress["n64:g"].status == "beaten" && same(m4, merge(pa, pe)));
+        // the same half edited on both: the newer stamp wins; changing only the note never touches the status stamp
+        Prefs pf = rt, pg = rt;
+        set_progress(&pf, {{"n64:g", {"dropped", "needs the red key"}}}, 400);
+        set_progress(&pg, {{"n64:g", {"complete", "changed my mind"}}}, 500);
+        Prefs m5 = merge(pf, pg);
+        CHECK(m5.progress["n64:g"].status == "complete" && m5.progress["n64:g"].note == "changed my mind" && same(m5, merge(pg, pf)));
+        Prefs ph = rt; set_progress(&ph, {{"n64:g", {"beaten", "only the note"}}}, 600);
+        Prefs pi = rt; set_progress(&pi, {{"n64:g", {"playing", "needs the red key"}}}, 550);
+        Prefs m6 = merge(ph, pi);
+        CHECK(m6.progress["n64:g"].status == "playing" && m6.progress["n64:g"].note == "only the note");
+        // a file an older client wrote (one stamp per game, no progress_note) merges with a new one, both ways
+        const std::string old_text = "{\"version\":1,\"progress\":{\"n64:g\":{\"s\":\"playing\",\"n\":\"from old\"}},\"map_ts\":{\"progress\":{\"n64:g\":50}},\"ts\":{\"progress\":50}}";
+        Prefs po; CHECK(parse(old_text, &po) && po.progress["n64:g"].note == "from old" && !po.map_ts.count("progress_note"));
+        CHECK(serialize(po).find("progress_note") == std::string::npos);   // an untouched legacy file keeps its shape
+        Prefs pn = base; set_progress(&pn, {{"n64:g", {"", "newer note"}}}, 60);
+        Prefs m7 = merge(po, pn);
+        CHECK(m7.progress["n64:g"].status == "playing" && m7.progress["n64:g"].note == "newer note" && same(m7, merge(pn, po)));
+        Prefs pp = po; set_progress(&pp, {{"n64:g", {"playing", "edited here"}}}, 70);   // editing a legacy file converts it
+        CHECK(pp.map_ts.count("progress_note") && merge(pp, po).progress["n64:g"].note == "edited here");
+    }
+    {
+        // tombstones: clearing a game removes both halves; a newer edit on the other PC revives only its own half
+        Prefs base; set_progress(&base, {{"n64:t", {"beaten", "note"}}}, 100);
+        Prefs pa = base, pb = base;
+        set_progress(&pa, {}, 200);   // cleared on A
+        CHECK(pa.progress.empty());
+        Prefs m1 = merge(pa, base), m2 = merge(base, pa);
+        CHECK(m1.progress.empty() && same(m1, m2));
+        CHECK(m1.map_ts["progress"]["n64:t"] < 0 && m1.map_ts["progress_note"]["n64:t"] < 0);
+        Prefs rt; CHECK(parse(serialize(m1), &rt) && same(rt, m1) && rt.progress.empty());
+        CHECK(merge(rt, base).progress.empty());   // the tombstone came back through the file and still beats the old entry
+        set_progress(&pb, {{"n64:t", {"beaten", "newer note"}}}, 300);   // B types a newer note after A's clear
+        Prefs m3 = merge(pa, pb);
+        CHECK(m3.progress.size() == 1 && m3.progress["n64:t"].note == "newer note" && m3.progress["n64:t"].status.empty() && same(m3, merge(pb, pa)));
+        Prefs pc = base; set_progress(&pc, {{"n64:t", {"complete", "note"}}}, 150);   // B's edit is OLDER than A's clear
+        CHECK(merge(pa, pc).progress.empty() && same(merge(pa, pc), merge(pc, pa)));
+        Prefs again = pa; set_progress(&again, {{"n64:t", {"", "fresh"}}}, 400);   // a game cleared and then given a note-only entry
+        CHECK(again.progress["n64:t"].note == "fresh" && merge(again, base).progress["n64:t"].status.empty());
+    }
+    {
         // an OLD-format file (no map_ts, no progress, no rule) and a NEW-format file merge both ways
         const std::string old_text =
             "{\"version\":1,\"favorites\":[\"n64:f\"],\"user_shelves\":[{\"name\":\"Co-op\",\"keys\":[\"n64:a\"]}],\"hidden\":[],"
