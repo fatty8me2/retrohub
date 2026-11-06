@@ -95,13 +95,23 @@ int main() {
     }
     {   // settings round trip + defaults for an old file
         Settings s;
-        CHECK(s.lib_layout == "grid" && s.lib_list_col.empty() && !s.lib_list_desc);
+        CHECK(s.lib_layout == "cases" && s.lib_cases_default && s.lib_list_col.empty() && !s.lib_list_desc);
         s.lib_layout = "showcase"; s.lib_list_col = "time"; s.lib_list_desc = true;
         Settings m;
         CHECK(settings_from_json(settings_to_json(s), &m));
         CHECK(m.lib_layout == "showcase" && m.lib_list_col == "time" && m.lib_list_desc);
         Settings o;
-        CHECK(settings_from_json("{\"name\": \"x\"}", &o) && o.lib_layout == "grid");
+        CHECK(settings_from_json("{\"name\": \"x\"}", &o) && o.lib_layout == "cases" && o.lib_cases_default);
+        Settings g;   // old file: grid, no marker -> cases once; marker present + grid -> grid stays
+        CHECK(settings_from_json("{\"lib_layout\": \"grid\"}", &g) && g.lib_layout == "cases" && g.lib_cases_default);
+        Settings g2;
+        CHECK(settings_from_json("{\"lib_layout\": \"list\"}", &g2) && g2.lib_layout == "list");
+        Settings k;
+        CHECK(settings_from_json("{\"lib_layout\": \"grid\", \"lib_cases_default\": true}", &k) && k.lib_layout == "grid");
+        Settings k2;
+        CHECK(settings_from_json(settings_to_json(g), &k2) && k2.lib_layout == "cases");
+        g.lib_layout = "grid";
+        CHECK(settings_from_json(settings_to_json(g), &k2) && k2.lib_layout == "grid");   // a later Grid pick survives a save/load
     }
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
     std::printf("hub_libview_test: all ok\n");
