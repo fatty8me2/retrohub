@@ -43,7 +43,8 @@ struct Settings {
     std::string lib_genre;             // All Games: Genre chip ("" = all genres; "Other" = games without a genre)
     bool lib_group_genre = false;      // All Games: Group by Genre instead of by console
     std::string discover_sort = "rec"; // Discover: rec | title | new | old | players
-    std::string lib_layout = "grid";   // All Games layout: grid | list | compact | showcase | shelf | cases
+    std::string lib_layout = "cases";  // All Games layout: grid | list | compact | showcase | shelf | cases (default Cases)
+    bool lib_cases_default = true;     // one-time migration marker: files without it that still say "grid" are moved to Cases once; a later Grid pick sticks
     bool lib_shelf_mixed = false;      // Shelf layout: false = one shelf per console, true = one flow following the Sort chip
     std::string lib_list_col;          // List layout: sorted column ("" = follow the Sort chip) title | console | players | last | time
     bool lib_list_desc = false;        // List layout: column sorted descending
