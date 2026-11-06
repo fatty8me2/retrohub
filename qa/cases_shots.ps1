@@ -18,16 +18,20 @@ $exe = Join-Path $root "build\bin\Release\RetroHub.exe"
 New-Item -ItemType Directory -Force $Out | Out-Null
 function Shot($name, $size, $extra) {
   $name = $name -replace '[:\\/*?"<>|]', '-'
-  $bmp = Join-Path $Out "$name-$size.bmp"
+  $sz = $size -replace '[:\/*?"<>|]', '-'
+  $bmp = Join-Path $Out "$name-$sz.bmp"
   $set = @{ RETROHUB_NO_SHELL = "1"; SSB64_MUTE = "1"; RETRORUN_MUTE = "1"; N64RUN_MUTE = "1"; RETROHUB_QA = "1"; HUB_SCREENSHOT = $bmp;
             HUB_SHOT_SIZE = $size; HUB_SHOT_SECS = "5"; HUB_SHOT_FAKE_LIB = "240"; HUB_SHOT_FAKE_SHELF = "1"; HUB_SHOT_FAKE_AZ = "1"; HUB_SHOT_FAKE_ART = $Art }
   foreach ($k in $extra.Keys) { $set[$k] = $extra[$k] }
   if ($Scale -ne 100) { $set["HUB_UI_SCALE"] = "$Scale" }
   if ($Keys) { $set["HUB_SHOT_KEYS"] = $Keys }
-  foreach ($k in $set.Keys) { Set-Item "env:$k" $set[$k] }
-  $p = Start-Process $exe -PassThru -WindowStyle Hidden
-  if (-not $p.WaitForExit(90000)) { Stop-Process -Id $p.Id -Force }
-  foreach ($k in $set.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+  try {
+    foreach ($k in $set.Keys) { Set-Item "env:$k" $set[$k] }
+    $p = Start-Process $exe -PassThru -WindowStyle Hidden
+    if (-not $p.WaitForExit(90000)) { Stop-Process -Id $p.Id -Force }
+  } finally {
+    foreach ($k in $set.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+  }
   Write-Host "shot $name $size"
 }
 $ui = if ($Scale -ne 100) { "-ui$Scale" } else { "" }
