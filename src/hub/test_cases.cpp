@@ -334,6 +334,34 @@ int main() {
         CHECK(sort_apply_row(s1, 99).mode == SortMode::Console);
     }
 
+    {   // flip / inspect fit: the enlarged case (any yaw, pitch up to 0.55) stays between the tab bar and the scrubber strip, for every case kind
+        for (float U : {260.f, 340.f, 420.f, 480.f}) {
+            FitScene fs; fs.U = U; fs.eye = 0.55f; fs.dist = 6.5f; fs.hy = 540.f - 0.55f * U;   // the floor line (f0) at y = 540
+            const float f0 = fs.hy + fs.eye * U, top_lim = f0 - 1.12f * U, bot_lim = f0 + 0.45f * U;
+            for (int i = 0; i < shelf::kMediaCount; ++i) {
+                const Media m = (Media)i;
+                const CaseDims d = case_dims(m);
+                for (float insp : {0.f, 1.f}) {
+                    const CentreAdj a = centre_adj(insp > 0.f ? 0.f : 3.14159f, insp);
+                    const float rest = display_scale(m) * a.scale_mul, pitch = 0.55f * insp, lift = 0.05f * insp + 0.02f;
+                    const float mul = fit_centre_scale(d, rest, pitch, lift, a.z, fs, top_lim, bot_lim);
+                    CHECK(mul >= 0.35f && mul <= 1.f);
+                    for (int yi = 0; yi < 24; ++yi) for (int pi_ = -2; pi_ <= 2; ++pi_) {
+                        float t, b;
+                        case_y_extent(d, rest * mul, 3.14159f * (float)yi / 24.f, pitch * (float)pi_ * 0.5f, lift, a.z, fs, &t, &b);
+                        if (!(t >= top_lim - 1.f && b <= bot_lim + 1.f)) std::printf("U=%g m=%d insp=%g mul=%g yi=%d pi=%d t=%g b=%g lim %g %g\n", U, i, insp, mul, yi, pi_, t, b, top_lim, bot_lim);
+                        CHECK(t >= top_lim - 1.f && b <= bot_lim + 1.f);
+                    }
+                }
+            }
+            // a case that already fits is left alone
+            CHECK(fit_centre_scale(case_dims(Media::GcCase), 0.5f, 0.f, 0.f, 0.f, fs, f0 - 3.f * U, f0 + 2.f * U) == 1.f);
+        }
+        // a tall case near the top is shrunk, and shrinking only ever helps
+        FitScene fs2; fs2.U = 400.f; fs2.hy = 500.f - 0.55f * 400.f;
+        CHECK(fit_centre_scale(case_dims(Media::SwitchCase), 1.3f, 0.f, 0.f, -1.1f, fs2, 500.f - 1.0f * 400.f, 560.f) < 1.f);
+    }
+
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
     std::printf("hub_cases_test: all ok\n");
     return 0;
