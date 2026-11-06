@@ -382,6 +382,23 @@ std::vector<float> psp() {          // 7.5 s: UMD clack and motor spin-up, a gla
     reverb(S, 0.42f, 0.86f, 0.3f);
     return finish(S, 1.9f);
 }
+std::vector<float> nswitch() {      // 6.2 s: soft card thud, a bright pluck run climbing a major pentatonic over a warm pad, an answering phrase, open Eadd9 bloom
+    Song S(6.2f); Rng r;
+    thunk(S, r, 0.0f, 0.22f, 160);
+    whoosh(S, r, 0.08f, 1.1f, 0.12f, 700, 4200);
+    pad(S, 0.5f, 2.2f, {52, 59, 64, 68}, 0.08f, Tri, 1800, 0.7f, 0.8f, 9);
+    pad(S, 2.4f, 2.0f, {49, 56, 61, 68}, 0.08f, Tri, 2000, 0.4f, 0.9f, 9);
+    pad(S, 4.1f, 1.9f, {52, 59, 64, 68, 71, 76}, 0.09f, Sine, 0, 0.3f, 1.6f, 10);
+    note(S, {0.4f, 4.0f, midi(40), 0, Sine, 0.16f, 0, 0.8f, 0.4f, 0.8f, 1.5f});
+    const float run[6] = {76, 80, 83, 88, 85, 88}, tr[6] = {0.7f, 0.9f, 1.1f, 1.3f, 1.6f, 1.85f};
+    for (int i = 0; i < 6; i++) pluck(S, tr[i], run[i], 0.15f, (i - 2.5f) * 0.25f, 2.2f, 3.f, 0.5f);
+    const float ans[6] = {85, 83, 80, 83, 88, 92}, ta[6] = {2.6f, 2.8f, 3.0f, 3.25f, 3.5f, 3.8f};
+    for (int i = 0; i < 6; i++) pluck(S, ta[i], ans[i], 0.15f, (2.5f - i) * 0.25f, 2.2f, 3.f, 0.55f);
+    for (int i = 0; i < 8; i++) bell(S, 3.4f + i * 0.2f, 88 + (i * 5) % 9, 0.04f * (1.f - i * 0.08f), std::sin(i * 2.f) * 0.8f, 0.9f, 6);
+    bell(S, 4.1f, 92, 0.15f, -0.2f, 1.9f); bell(S, 4.15f, 88, 0.1f, 0.3f, 1.9f); bell(S, 4.2f, 83, 0.1f, 0.1f, 1.8f); bell(S, 4.25f, 76, 0.08f, -0.1f, 1.8f);
+    reverb(S, 0.32f, 0.82f, 0.3f);
+    return finish(S, 1.6f);
+}
 std::vector<float> wiiu() {         // 7 s: click and breath, bell motif, harmonised marimba reply over a soft pad, ringing bell chord
     Song S(7.0f); Rng r;
     click(S, r, 0.0f, 0.3f);
@@ -525,6 +542,7 @@ std::vector<float> render(hub::System s) {
     case hub::System::PS1:  return ps1();
     case hub::System::PS2:  return ps2();
     case hub::System::PSP:  return psp();
+    case hub::System::Switch: return nswitch();
     case hub::System::WiiU: return wiiu();
     case hub::System::NES:  return nes();
     case hub::System::SNES: return snes();

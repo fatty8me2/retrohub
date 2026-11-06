@@ -164,6 +164,20 @@ void apply_scan() {
             g.path = "C:/fake/crashbash.cue";
             A.lib.push_back(g);
         }
+        if (!only_native && std::getenv("HUB_SHOT_SWITCH")) {   // Switch shelf / details screenshots (qa: HUB_SHOT_SWITCH=1); the last one is a Switch 2 game
+            static const char* ids[] = {"0100000000010000", "01007ef00011e000", "0400000000a1b000"};
+            static const char* names[] = {"Super Mario Odyssey", "The Legend of Zelda: Breath of the Wild", "Mario Kart World"};
+            for (int i = 0; i < 3; ++i) {
+                hub::GameEntry g;
+                g.system = hub::System::Switch;
+                g.key = std::string("switch:") + ids[i];
+                g.serial = ids[i];
+                g.title = names[i];
+                g.nx2 = i == 2;
+                g.path = std::string("C:/fake/") + ids[i] + ".nsp";
+                A.lib.push_back(g);
+            }
+        }
         if (!only_native && std::getenv("HUB_SHOT_PSP")) {   // PSP shelf / details screenshots (qa: HUB_SHOT_PSP=1)
             static const char* ids[] = {"ulus10041", "ucus98632", "npuz00001"};
             static const char* names[] = {"Crisis Core: Final Fantasy VII", "God of War: Chains of Olympus", "Echochrome"};
