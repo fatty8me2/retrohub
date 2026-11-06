@@ -128,8 +128,8 @@ Disp& build_disp(LibLayout lay) {
     sig = mixh(sig, (uint64_t)col * 2 + (A.st.lib_list_desc ? 1 : 0));
     sig = mixh(sig, A.lib.size() * 31 + A.ghosts.size());
     sig = mixh(sig, A.vis.size());
-    const bool shelf_mixed = lay == LibLayout::Shelf && A.st.lib_shelf_mixed;   // Shelf "Mixed": one flow in the Sort chip's order
-    sig = mixh(sig, (uint64_t)A.sort_mode + (A.st.lib_group_genre ? 8 : 0) + (shelf_mixed ? 16 : 0) + (lay == LibLayout::Shelf ? 32 : 0));
+    const bool shelf_mixed = (lay == LibLayout::Shelf && A.st.lib_shelf_mixed) || (lay == LibLayout::Cases && !A.st.lib_group_genre && A.sort_mode != hubui::SortMode::Console);   // Cases: one flow in the Sort chip's order (the scrubber's marks follow it); "Console" keeps the per-console groups   // Shelf "Mixed": one flow in the Sort chip's order
+    sig = mixh(sig, (uint64_t)A.sort_mode + (A.sort_rev ? 64 : 0) + (A.sort_favs ? 128 : 0) + (A.st.lib_group_genre ? 8 : 0) + (shelf_mixed ? 16 : 0) + (lay == LibLayout::Shelf ? 32 : 0));
     if (sig == D.sig) return D;
     D = Disp();
     D.sig = sig;
@@ -1023,11 +1023,13 @@ bool lib_layout_has_bar() { return lib_layout() != LibLayout::Showcase && lib_la
 bool lib_cases_active() { return lib_layout() == LibLayout::Cases && A.page == Page::Library && A.view == LibView::All; }
 bool lib_cases_back(bool from_esc) {   // B / Esc: close the menu, leave a flipped / inspected case; Esc on the plain carousel opens the menu
     if (!lib_cases_active()) return false;
+    if (nav_close_modal()) return true;   // the sort picker / quick-jump overlay
     if (CS.menu_open) { CS.menu_open = false; A.nav_seed = true; shot_trace("cases-menu", "closed"); return true; }
     if (hubui::cases::on_back(&CS.mode)) { shot_trace("cases-back", "browse"); return true; }
     if (from_esc) { lib_cases_menu_toggle(); return true; }
     return false;
 }
+bool lib_cases_nav_blocking() { return nav_blocking(); }   // the sort picker / quick-jump overlay own the keys (frame.cpp: F / I / S must not reach the selected game)
 void lib_cases_menu_toggle() {
     CS.menu_open = !CS.menu_open;
     if (CS.menu_open) { CS.menu_focus_req = true; CS.mode = hubui::cases::Mode::Browse; }
@@ -1210,7 +1212,7 @@ void lib_body(float bar_h) {
         }
     }
     A.lib_pg = mine;
-    if (mine && !ImGui::GetIO().WantTextInput && A.focused && !A.proc && A.pad_mode) {
+    if (mine && !ImGui::GetIO().WantTextInput && A.focused && !A.proc && A.pad_mode && lay != LibLayout::Cases) {   // Cases: LT / RT jump sections (cases_nav.inc)
         int pdir = ImGui::IsKeyPressed(ImGuiKey_GamepadR2, true) ? 1 : ImGui::IsKeyPressed(ImGuiKey_GamepadL2, true) ? -1 : 0;
         if (pdir) page_move(D, pdir, ImGui::GetWindowHeight());
     }
@@ -1251,6 +1253,7 @@ void lib_shot_seed() {
         A.st.lib_layout = hubui::layout_key(LibLayout::Cases);
         A.view = LibView::All;
         const std::string m = cs;
+        nav_shot_seed(m);   // "sortpicker:release_year+rev", "quickjump:console", "bubble:last_played", "sort:title+rev"
         if (m.rfind("cartridge", 0) == 0) A.sys_filter = m.size() > 10 ? m.substr(10) : std::string("n64");
     }
     const char* v = std::getenv("HUB_SHOT_LIBVIEW");

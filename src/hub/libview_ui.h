@@ -16,6 +16,7 @@ void lib_body(float bar_h);
 bool lib_layout_has_bar();                            // the selected-game bar below the body (not in Showcase)
 bool lib_cases_active();                              // All Games is showing the Cases layout (it owns LB/RB, X, R3, L3 and B)
 bool lib_cases_back(bool from_esc);                   // B / Esc: closes the menu / leaves a flipped or inspected case (Esc on the plain carousel opens the menu); true when it used the press
+bool lib_cases_nav_blocking();                       // the Cases sort picker / quick-jump overlay is open (or closed this frame): game hotkeys (F / I / S) must wait
 void lib_cases_menu_toggle();                         // Start / Menu: the slide-down overlay with the hidden toolbar
 void lib_cases_closed();                              // Cases is not showing: drop an open menu
 void lib_menu_overlay_body(bool* close);              // page_library.cpp: the toolbar + filters + page buttons shown in that overlay

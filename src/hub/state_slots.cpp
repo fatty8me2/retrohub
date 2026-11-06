@@ -128,6 +128,8 @@ const char* sort_name(SortMode m) {
         case SortMode::LastPlayed: return "Last played";
         case SortMode::MostPlayed: return "Most played";
         case SortMode::RecentlyAdded: return "Recently added";
+        case SortMode::ReleaseYear: return "Release year";
+        case SortMode::Console: return "Console";
         default: return "Title";
     }
 }
@@ -136,8 +138,22 @@ const char* sort_key(SortMode m) {
         case SortMode::LastPlayed: return "last_played";
         case SortMode::MostPlayed: return "most_played";
         case SortMode::RecentlyAdded: return "recently_added";
+        case SortMode::ReleaseYear: return "release_year";
+        case SortMode::Console: return "console";
         default: return "title";
     }
+}
+std::string sort_label(const SortSpec& s) {
+    std::string o;
+    switch (s.mode) {
+        case SortMode::Title: o = s.reverse ? "Title Z-A" : "Title A-Z"; break;
+        case SortMode::LastPlayed: o = s.reverse ? "Played longest ago" : "Last played"; break;
+        case SortMode::MostPlayed: o = s.reverse ? "Least played" : "Most played"; break;
+        case SortMode::RecentlyAdded: o = s.reverse ? "Oldest added" : "Recently added"; break;
+        case SortMode::ReleaseYear: o = s.reverse ? "Year (newest)" : "Year (oldest)"; break;
+        case SortMode::Console: o = s.reverse ? "Console (reverse)" : "Console"; break;
+    }
+    return s.favs_first ? "Favorites, " + o : o;
 }
 SortMode sort_from_key(const std::string& k) {
     for (int i = 0; i < kSortModes; ++i) if (k == sort_key((SortMode)i)) return (SortMode)i;
