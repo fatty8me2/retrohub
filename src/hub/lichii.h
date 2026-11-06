@@ -75,7 +75,17 @@ std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, 
  *   trigger engine:sdl,port:<n>,guid:<guid>,axis:<n>,threshold:0.5,invert:+
  *   stick   engine:sdl,port:<n>,guid:<guid>,axis_x:<n>,axis_y:<n>,offset_x:0,offset_y:0,invert_x:+,invert_y:+,deadzone:<0-1>,range:1
  * An empty guid (no pad known) writes "any first SDL controller": guid of the first connected pad is filled by launch.cpp. */
-std::string lichii_controls_ini(const std::string& ini, const hubctl::Profile& profile, const std::string& sdl_guid, int port);
+/* The pad's raw SDL joystick bindings (SDL_GameControllerGetBindForButton / ForAxis). Lichii's SDL engine (yuzu lineage, sdl_driver.cpp
+ * BuildParamPackageForBinding) addresses RAW joystick buttons / hats / axes, not SDL GameController numbers, so these are looked up for the
+ * chosen pad before every launch (page_controllers.cpp lichii_pad_for). Without them (no pad connected) the GameController numbers are written,
+ * which is right for XInput pads under SDL's default XInput mapping only. */
+struct SdlBinds {
+    struct B { char type = 0; int idx = -1; int hat = 0; };   // type 'b' button, 'a' axis, 'h' hat (hat = SDL_HAT_* mask); 0 = not bound on this pad
+    bool valid = false;
+    B button[21];   // by SDL_GameControllerButton
+    B axis[6];      // by SDL_GameControllerAxis
+};
+std::string lichii_controls_ini(const std::string& ini, const hubctl::Profile& profile, const std::string& sdl_guid, int port, const SdlBinds* binds = nullptr);
 
 /* Pad for player 1 from the RetroHub port order (same choice as Azahar's azahar_pad_select): the guid and the rank among same-guid pads in SDL order.
  * Returns false (guid "", port 0) when no pad is known. */
@@ -83,7 +93,7 @@ bool lichii_pad_select(const std::vector<PadDesc>& by_port, const std::vector<Pa
 
 /* Creates user\ (portable), writes the defaults once, the per-launch values, controls and the profile. Returns "" or an error. */
 std::string prepare_lichii(const std::string& install_dir, const hubctl::Profile& profile, const std::string& sdl_guid, int port,
-                           const hub::gs::Values& v, bool fullscreen);
+                           const hub::gs::Values& v, bool fullscreen, const SdlBinds* binds = nullptr);
 /* [-f] -u 0 -g "<game>" */
 std::string lichii_args(const std::string& game_path, bool fullscreen);
 

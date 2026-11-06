@@ -635,8 +635,9 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         if (!perr.empty()) { set_notice("Could not set up PPSSPP: " + perr, 12.0); return; }
     } else if (kind == hubemu::Kind::Lichii) {   // portable user\ under the managed dir; player 1 from the "switch" profile on one SDL pad
         hubctl::Profile px = controls_profile("switch", e.key);
-        hubemu::AzPad ap = azahar_pad_for(px);   // same pick as Azahar: the RetroHub port-1 pad as SDL guid + n-th pad with that guid
-        std::string perr = hubemu::prepare_lichii(inst.dir, px, ap.guid, ap.port, gs_values_for(e), hub::gs::is_fullscreen(gs_values_for(e)));
+        std::string guid; int port = 0; hubemu::SdlBinds binds;
+        if (!lichii_pad_for(px, &guid, &port, &binds)) set_notice("No controller found: connect one and Lichii picks it up (or set it in Lichii's Controls).", 10.0);
+        std::string perr = hubemu::prepare_lichii(inst.dir, px, guid, port, gs_values_for(e), hub::gs::is_fullscreen(gs_values_for(e)), &binds);
         if (!perr.empty()) { set_notice("Could not set up Lichii: " + perr, 12.0); return; }
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw)); }

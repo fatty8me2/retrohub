@@ -1,3 +1,4 @@
+#include "lichii.h"
 #include "app.h"
 #include "osk.h"
 #include "controls_live.h"
@@ -671,6 +672,34 @@ hubemu::AzPad azahar_pad_for(const hubctl::Profile& prof) {
     hubctl::load_bundled_db();
     hubemu::azahar_pad_select(pad_descs(hubctl::list_pads(prof.port_order)), pad_descs(hubctl::list_pads()), &pad);
     return pad;
+}
+
+/* Lichii: player 1 = the first pad of the port order (or, with no stored order, of the default order: XInput first), as SDL guid + n-th pad
+ * with that guid, plus that pad's raw joystick bindings read from SDL now (lichii.h SdlBinds). false = no pad connected. */
+bool lichii_pad_for(const hubctl::Profile& prof, std::string* guid, int* port, hubemu::SdlBinds* binds) {
+    hubctl::load_bundled_db();
+    std::vector<hubctl::PadInfo> all = hubctl::list_pads();
+    if (all.empty()) return false;
+    std::vector<hubemu::PadDesc> by_sdl = pad_descs(all);
+    std::vector<hubemu::PadDesc> order = prof.port_order.empty() ? hubemu::default_player_order(by_sdl) : pad_descs(hubctl::list_pads(prof.port_order));
+    if (order.empty()) order = hubemu::default_player_order(by_sdl);
+    if (!hubemu::lichii_pad_select(order, by_sdl, guid, port) || guid->empty()) return false;
+    const hubctl::PadInfo* pick = nullptr;
+    for (const auto& p : all) if (p.key == order[0].key) { pick = &p; break; }
+    if (!pick) return true;
+    SDL_GameController* c = open_handle_for(*pick);
+    if (!c) return true;
+    auto conv = [](SDL_GameControllerButtonBind b) {
+        hubemu::SdlBinds::B r;
+        if (b.bindType == SDL_CONTROLLER_BINDTYPE_BUTTON) { r.type = 'b'; r.idx = b.value.button; }
+        else if (b.bindType == SDL_CONTROLLER_BINDTYPE_AXIS) { r.type = 'a'; r.idx = b.value.axis; }
+        else if (b.bindType == SDL_CONTROLLER_BINDTYPE_HAT) { r.type = 'h'; r.idx = b.value.hat.hat; r.hat = b.value.hat.hat_mask; }
+        return r;
+    };
+    for (int i = 0; i < 21 && i < SDL_CONTROLLER_BUTTON_MAX; ++i) binds->button[i] = conv(SDL_GameControllerGetBindForButton(c, (SDL_GameControllerButton)i));
+    for (int i = 0; i < 6; ++i) binds->axis[i] = conv(SDL_GameControllerGetBindForAxis(c, (SDL_GameControllerAxis)i));
+    binds->valid = true;
+    return true;
 }
 
 /* XInput pads only, at their real XInput slots, in the RetroHub port order (stored order or SDL order). No XInput pad = the single pad on
