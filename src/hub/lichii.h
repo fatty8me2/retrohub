@@ -68,7 +68,8 @@ std::string lichii_ini_defaults(const std::string& ini);
 /* Every launch: [Renderer] resolution_setup (switch.res), frame_gen / frame_gen_type=1 (FSR3) / frame_gen_multiplier (switch.framegen),
  * use_vsync (switch.vsync: fifo 2, mailbox 1, off 0), use_asynchronous_shaders (switch.async_shaders: on / off; "lichii" leaves it alone),
  * gpu_accuracy (switch.gpu_accuracy: low 0 (default), high 1, "lichii" = untouched),
- * frame_pacing_mode (switch.pacing: auto 0, 30 1, 60 2, smooth60 = 1 + frame generation 2x overriding switch.framegen, "lichii" = untouched);
+ * frame_pacing_mode (switch.pacing: auto 0, 30 1, 60 2, smooth60 = 2 + frame generation 2x overriding switch.framegen (the target counts
+ * presented frames, generated ones included: 30 real + 30 generated), "lichii" = untouched);
  * [UI] fullscreen; [System] current_user=0. */
 std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, bool fullscreen);
 /* [Controls] player 1 (player_0_*) from the RetroHub "switch" profile on one SDL pad (guid + port among same-guid pads); player_0_connected=true,

@@ -101,9 +101,10 @@ static void test_ini() {
         CHECK(has(lichii_ini_launch(p30, p, true), "frame_pacing_mode=0\n"));
         p["switch.pacing"] = "smooth60"; p["switch.framegen"] = "off";
         const std::string sm = lichii_ini_launch(p30, p, true);
-        CHECK(has(sm, "frame_pacing_mode=1\n") && has(sm, "frame_gen=true\n") && has(sm, "frame_gen_type=1\n") && has(sm, "frame_gen_multiplier=2\n"));
+        // the pacing target counts presented frames (generated ones too): steady 30 real + 30 generated = Target_60
+        CHECK(has(sm, "frame_pacing_mode=2\n") && has(sm, "frame_gen=true\n") && has(sm, "frame_gen_type=1\n") && has(sm, "frame_gen_multiplier=2\n"));
         p["switch.pacing"] = "lichii";
-        CHECK(has(lichii_ini_launch(sm, p, true), "frame_pacing_mode=1\n") && has(lichii_ini_launch(sm, p, true), "frame_gen=false\n"));   // pacing untouched, framegen back to its own setting
+        CHECK(has(lichii_ini_launch(sm, p, true), "frame_pacing_mode=2\n") && has(lichii_ini_launch(sm, p, true), "frame_gen=false\n"));   // pacing untouched, framegen back to its own setting
     }
 }
 
