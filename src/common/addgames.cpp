@@ -60,6 +60,7 @@ std::string console_folder(System s) {
         case System::PS1: return "PlayStation";
         case System::PS2: return "PlayStation 2";
         case System::PSP: return "PlayStation Portable";
+        case System::Switch: return "Switch";
         case System::NES: return "NES";
         case System::SNES: return "SNES";
         default: return "Other";

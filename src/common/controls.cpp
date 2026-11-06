@@ -24,7 +24,7 @@ const char* button_name(int i) { return i >= 0 && i < kNumButtons ? kButtons[i] 
 const char* axis_name(int i) { return i >= 0 && i < kNumAxes ? kAxes[i] : ""; }
 
 const std::vector<std::string>& systems() {
-    static const std::vector<std::string> v = {"n64", "retro", "ps1", "gc", "wiiu", "3ds", "ps2", "nes", "snes", "psp"};
+    static const std::vector<std::string> v = {"n64", "retro", "ps1", "gc", "wiiu", "3ds", "ps2", "nes", "snes", "psp", "switch"};
     return v;
 }
 bool is_system(const std::string& s) { return std::find(systems().begin(), systems().end(), s) != systems().end(); }
@@ -41,6 +41,7 @@ std::string system_key(hub::System s) {
         case hub::System::NES: return "nes";
         case hub::System::SNES: return "snes";
         case hub::System::PSP: return "psp";
+        case hub::System::Switch: return "switch";
         default: return "";
     }
 }
@@ -88,6 +89,11 @@ const std::vector<ControlInfo>& controls_for(const std::string& sys) {
                  {"zl", "ZL", false}, {"zr", "ZR", false}, {"start", "Start", false}, {"select", "Select", false},
                  {"up", "D-pad up", false}, {"down", "D-pad down", false}, {"left", "D-pad left", false},
                  {"right", "D-pad right", false}, {"circle_pad", "Circle Pad", true}, {"c_stick", "C-Stick", true}}},
+        {"switch", {{"a", "A", false}, {"b", "B", false}, {"x", "X", false}, {"y", "Y", false}, {"l", "L", false}, {"r", "R", false},
+                    {"zl", "ZL", false}, {"zr", "ZR", false}, {"plus", "+", false}, {"minus", "-", false}, {"home", "HOME", false},
+                    {"dpup", "D-pad up", false}, {"dpdown", "D-pad down", false}, {"dpleft", "D-pad left", false}, {"dpright", "D-pad right", false},
+                    {"l3", "Left stick click", false}, {"r3", "Right stick click", false},
+                    {"left_stick", "Left stick", true}, {"right_stick", "Right stick", true}}},
         {"psp", {{"cross", "Cross", false}, {"circle", "Circle", false}, {"square", "Square", false}, {"triangle", "Triangle", false},
                  {"l", "L", false}, {"r", "R", false}, {"start", "Start", false}, {"select", "Select", false},
                  {"up", "D-pad up", false}, {"down", "D-pad down", false}, {"left", "D-pad left", false}, {"right", "D-pad right", false},
@@ -157,6 +163,12 @@ Profile default_profile(const std::string& sys) {
            {"zr", "righttrigger"}});
         p.analogs["circle_pad"] = {"leftx", "lefty", 0.15, 1.0};
         p.analogs["c_stick"] = {"rightx", "righty", 0.15, 1.0};
+    } else if (sys == "switch") {   // Xbox layout -> Switch by position: Xbox A (bottom) = Switch B, Xbox B (right) = Switch A, X = Y, Y = X
+        B({{"a", "b"}, {"b", "a"}, {"x", "y"}, {"y", "x"}, {"l", "leftshoulder"}, {"r", "rightshoulder"}, {"zl", "lefttrigger"},
+           {"zr", "righttrigger"}, {"plus", "start"}, {"minus", "back"}, {"home", "guide"}, {"dpup", "dpup"}, {"dpdown", "dpdown"},
+           {"dpleft", "dpleft"}, {"dpright", "dpright"}, {"l3", "leftstick"}, {"r3", "rightstick"}});
+        p.analogs["left_stick"] = {"leftx", "lefty", 0.15, 1.0};
+        p.analogs["right_stick"] = {"rightx", "righty", 0.15, 1.0};
     } else if (sys == "psp") {   // Xbox layout -> PSP by position: A=Cross, B=Circle, X=Square, Y=Triangle, bumpers = L / R
         B({{"cross", "a"}, {"circle", "b"}, {"square", "x"}, {"triangle", "y"}, {"l", "leftshoulder"}, {"r", "rightshoulder"},
            {"start", "start"}, {"select", "back"}, {"up", "dpup"}, {"down", "dpdown"}, {"left", "dpleft"}, {"right", "dpright"}});

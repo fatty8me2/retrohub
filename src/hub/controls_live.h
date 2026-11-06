@@ -28,6 +28,7 @@ inline const char* emulator_name(hub::System s) {
         case hub::System::N3DS: return "Azahar";
         case hub::System::PS2: return "PCSX2";
         case hub::System::PSP: return "PPSSPP";
+        case hub::System::Switch: return "Lichii";
         default: return "";
     }
 }

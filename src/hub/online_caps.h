@@ -64,6 +64,7 @@ inline int default_online_max(hub::System s) {
 inline int default_local_max(hub::System s) {
     switch (s) {
         case hub::System::PSP: return 1;
+        case hub::System::Switch: return 1;   // Lichii: player 1 only (RetroHub writes one controller)
         case hub::System::GB: case hub::System::GBC: case hub::System::NDS: case hub::System::NES: case hub::System::SNES: return 2;
         default: return 4;   // N64, GC, GBA, 3DS (as before), PS1 and Wii U (raised from 2), PS2
     }

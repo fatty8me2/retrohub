@@ -18,7 +18,8 @@ enum class System { Unknown = 0, N64, GBA, GB, GBC, GC,
     PS1,     // PlayStation (Beetle PSX via retrorun)
     NES,     // Nintendo Entertainment System (libretro via retrorun)
     SNES,    // Super Nintendo (libretro via retrorun)
-    PSP };   // PlayStation Portable (PPSSPP, downloaded on demand)
+    PSP,     // PlayStation Portable (PPSSPP, downloaded on demand)
+    Switch };   // Nintendo Switch and Switch 2 (Lichii, downloaded on demand; the player supplies keys + firmware)
 /* GB/GBC/GBA run as one lockstepped console online (retrorun --net); the room can share the host's save with everyone. */
 inline bool is_lockstep_gb_system(System s) { return s == System::GB || s == System::GBC || s == System::GBA; }
 
@@ -65,6 +66,7 @@ struct GameEntry {
      * hacks::make_key(hack_base, crc), `catalog_id` is "", and `path` is the BASE game's file (the patched copy is prepared at Play). */
     std::string hack_patch;   // absolute path of the patch file
     std::string hack_base;    // the base game's key
+    bool nx2 = false;         // Nintendo Switch 2 game (System::Switch; NPDM with the Switch 2 ACID layout). Cached with the scan.
 };
 
 /* Identify one file by extension + header. false if not a recognized game. Cheap:

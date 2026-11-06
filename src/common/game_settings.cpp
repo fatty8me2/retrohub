@@ -28,7 +28,8 @@ const unsigned PS2 = 1u << (unsigned)System::PS2;
 const unsigned NES = 1u << (unsigned)System::NES;
 const unsigned SNES = 1u << (unsigned)System::SNES;
 const unsigned PSP = 1u << (unsigned)System::PSP;
-const unsigned ALL = N64 | GB | GBA | NDS | PS1 | GC | N3DS | WIIU | PS2 | NES | SNES | PSP;
+const unsigned SWITCH = 1u << (unsigned)System::Switch;
+const unsigned ALL = N64 | GB | GBA | NDS | PS1 | GC | N3DS | WIIU | PS2 | NES | SNES | PSP | SWITCH;
 
 Option mk(const char* key, const char* label, const char* group, unsigned sys, Kind k, Scope sc, const char* def,
           std::vector<Choice> ch = {}) {
@@ -123,6 +124,14 @@ std::vector<Option> build() {
     // ---- PlayStation Portable (PPSSPP): InternalResolution of ppsspp.ini ([Graphics], 1 = 1x PSP screen)
     v.push_back(mk("psp.res", "Internal resolution", "Video", PSP, K::Choice, S::Visual, "2",
                    {{"1", "1x native (480x272)"}, {"2", "2x"}, {"3", "3x"}, {"4", "4x"}, {"5", "5x"}, {"6", "6x"}, {"8", "8x"}}));
+    // ---- Nintendo Switch / Switch 2 (Lichii): [Renderer] keys of Lichii's qt-config.ini (lichii.h). resolution_setup index: 3 = 1x (720p docked).
+    v.push_back(mk("switch.res", "Resolution", "Video", SWITCH, K::Choice, S::Visual, "3",
+                   {{"1", "0.5x (faster)"}, {"2", "0.75x"}, {"3", "1x native"}, {"5", "1.5x"}, {"6", "2x"}, {"7", "3x"}, {"8", "4x"}}));
+    // Lichii build 88 FSR3 frame generation (off by default in Lichii): a 30 fps game shown at 60 (2x) or more.
+    v.push_back(mk("switch.framegen", "Frame generation (FSR3)", "Video", SWITCH, K::Choice, S::Visual, "off",
+                   {{"off", "Off"}, {"2", "2x (30 to 60 fps)"}, {"3", "3x"}, {"4", "4x"}}));
+    v.push_back(mk("switch.vsync", "VSync", "Video", SWITCH, K::Choice, S::Visual, "fifo",
+                   {{"fifo", "On (FIFO)"}, {"mailbox", "Mailbox (low latency)"}, {"off", "Off (may tear)"}}));
     return v;
 }
 
@@ -218,7 +227,7 @@ bool normalize(const Option& o, const std::string& value, std::string* out) {
 Values defaults_for(System s) {
     Values v;
     for (auto& o : options()) if (o.systems & sys_bit(s)) v[o.key] = o.def;
-    if (s == System::PS2 || s == System::PSP) v["fullscreen"] = "true";   // PCSX2 starts fullscreen (a windowed PS2 under the hub is rarely wanted)
+    if (s == System::PS2 || s == System::PSP || s == System::Switch) v["fullscreen"] = "true";   // PCSX2 starts fullscreen (a windowed PS2 under the hub is rarely wanted)
     return v;
 }
 
