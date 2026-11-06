@@ -13,8 +13,9 @@ int main() {
     SlotPose c = slot_pose(0.f);
     CHECK(c.x == 0.f && c.yaw == 0.f && c.z == 0.f && c.scale == 1.f && c.alpha == 1.f);
     SlotPose r1 = slot_pose(1.f), l1 = slot_pose(-1.f), r5 = slot_pose(5.f);
-    CHECK(std::fabs(r1.yaw - 0.9f) < 0.12f && r1.yaw > 0.f && l1.yaw < 0.f);     // the neighbour is angled, partly turned (~50 degrees)
-    CHECK(r5.yaw > 1.3f && r5.yaw < 1.5f);                                       // further out: close to side-on, spines show
+    CHECK(std::fabs(r1.yaw - 0.72f) < 0.12f && r1.yaw > 0.f && l1.yaw < 0.f);    // the neighbour is angled, partly turned (~41 degrees)
+    CHECK(std::fabs(r1.scale - 0.82f) < 0.03f);                                  // and noticeably smaller than the centre
+    CHECK(r5.yaw > 1.28f && r5.yaw < 1.45f);                                       // further out: close to side-on, spines show
     CHECK(slot_pose(-5.f).yaw == -r5.yaw && slot_pose(-5.f).x == -r5.x);         // mirrored
     // x, yaw and z only grow with the distance; far cases are packed tight (small pitch)
     float px = -1, py = -1, pz = -1;
@@ -22,10 +23,10 @@ int main() {
         SlotPose p = slot_pose(a);
         CHECK(p.x >= px - 1e-5f && p.yaw >= py - 1e-5f && p.z >= pz - 1e-5f);
         px = p.x; py = p.yaw; pz = p.z;
-        CHECK(p.yaw < 1.5f && p.scale > 0.9f && p.alpha >= 0.f && p.alpha <= 1.f);
+        CHECK(p.yaw < 1.5f && p.scale > 0.7f && p.alpha >= 0.f && p.alpha <= 1.f);
     }
     CHECK(std::fabs((slot_pose(7.f).x - slot_pose(6.f).x) - 0.16f) < 0.001f);
-    CHECK(slot_pose(1.f).x - slot_pose(0.f).x > 0.7f && slot_pose(3.f).x - slot_pose(2.f).x < 0.2f);
+    CHECK(slot_pose(1.f).x - slot_pose(0.f).x > 0.6f && std::fabs(slot_pose(1.f).x - kNeighbourBase) < 1e-4f && slot_pose(3.f).x - slot_pose(2.f).x < 0.2f);
     // smooth: no jumps between close distances
     for (float a = 0.f; a < 6.f; a += 0.01f) CHECK(std::fabs(slot_pose(a + 0.01f).x - slot_pose(a).x) < 0.02f && std::fabs(slot_pose(a + 0.01f).yaw - slot_pose(a).yaw) < 0.02f);
     // edge fade: opaque near, zero at the edge of the window (nothing pops in)
@@ -46,6 +47,16 @@ int main() {
     CHECK(case_dims(Media::DsCase).w < case_dims(Media::GcCase).w && case_dims(Media::DsCase).h < case_dims(Media::GcCase).h);   // small cases are smaller
     CHECK(case_dims(Media::N64Cart).d > case_dims(Media::GcCase).d);                                                            // boxes are thicker
     CHECK(case_dims(Media::GcCase).w / case_dims(Media::GcCase).h > 0.68f && case_dims(Media::GcCase).w / case_dims(Media::GcCase).h < 0.74f);   // 135 x 190 mm
+
+    // wide boxes push their neighbours out so nothing overlaps the centre face; keep cases fit at the base distance
+    {
+        const CaseDims dvd = case_dims(Media::GcCase), box = case_dims(Media::N64Cart);
+        const float a = neighbour_x(dvd, display_scale(Media::GcCase), dvd, display_scale(Media::GcCase));
+        const float b = neighbour_x(box, display_scale(Media::N64Cart), box, display_scale(Media::N64Cart));
+        CHECK(a <= kNeighbourBase + 0.03f && b > kNeighbourBase + 0.1f && b > a);
+        CHECK(display_scale(Media::GcCase) == 1.f && display_scale(Media::DsCase) > 1.f && display_scale(Media::DsCase) < 1.f / case_dims(Media::DsCase).h);
+        for (int i = 0; i < shelf::kMediaCount; ++i) CHECK(case_dims((Media)i).h * display_scale((Media)i) <= 1.0f + 1e-4f);
+    }
 
     // ---- stepping: wrap and clamp at the ends ----
     CHECK(step_index(3, 1, 10, true) == 4 && step_index(3, -1, 10, true) == 2);

@@ -1020,12 +1020,20 @@ bool lib_layout_has_bar() { return lib_layout() != LibLayout::Showcase && lib_la
 
 /* Cases hooks (frame.cpp / palette_ui.cpp / tv_mode.cpp): the pad buttons it uses must not also do their global jobs. */
 bool lib_cases_active() { return lib_layout() == LibLayout::Cases && A.page == Page::Library && A.view == LibView::All; }
-bool lib_cases_back() {   // B / Esc: leave the flipped / inspected view first
+bool lib_cases_back(bool from_esc) {   // B / Esc: close the menu, leave a flipped / inspected case; Esc on the plain carousel opens the menu
     if (!lib_cases_active()) return false;
-    if (!hubui::cases::on_back(&CS.mode)) return false;
-    shot_trace("cases-back", "browse");
-    return true;
+    if (CS.menu_open) { CS.menu_open = false; A.nav_seed = true; shot_trace("cases-menu", "closed"); return true; }
+    if (hubui::cases::on_back(&CS.mode)) { shot_trace("cases-back", "browse"); return true; }
+    if (from_esc) { lib_cases_menu_toggle(); return true; }
+    return false;
 }
+void lib_cases_menu_toggle() {
+    CS.menu_open = !CS.menu_open;
+    if (CS.menu_open) { CS.menu_focus_req = true; CS.mode = hubui::cases::Mode::Browse; }
+    else A.nav_seed = true;
+    shot_trace("cases-menu", CS.menu_open ? "open" : "closed");
+}
+void lib_cases_closed() { CS.menu_open = false; CS.menu_t = 0.f; }   // the layout is not showing: forget an open menu
 void lib_cases_tv_enter() {   // TV mode opened with "TV mode opens in Cases view" on: All Games, Cases layout
     if (!A.st.tv_cases) return;
     if (lib_layout() != LibLayout::Cases) lib_set_layout(LibLayout::Cases);
@@ -1259,10 +1267,15 @@ void lib_shot_seed() {
 
 static SDL_Texture* g_fake[12];
 static int g_fake_w = 240, g_fake_h = 260;
+static int g_fake_dw[12], g_fake_dh[12];   // per-texture size (HUB_SHOT_FAKE_ART=posters: mixed aspect ratios)
 void lib_fake_art_init(SDL_Renderer* ren) {
     if (!std::getenv("HUB_SHOT_FAKE_ART") || !ren) return;
+    const bool posters = std::string(std::getenv("HUB_SHOT_FAKE_ART")) == "posters";   // box-art-like posters: gradients, a title banner, mixed aspect ratios
+    static const float aspect[12] = {0.72f, 0.70f, 1.0f, 1.33f, 0.68f, 0.75f, 1.0f, 0.72f, 1.5f, 0.70f, 0.8f, 1.0f};
     for (int t = 0; t < 12; ++t) {
-        SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, g_fake_w, g_fake_h, 32, SDL_PIXELFORMAT_ARGB8888);
+        g_fake_dw[t] = g_fake_w; g_fake_dh[t] = g_fake_h;
+        if (posters) { g_fake_dh[t] = 300; g_fake_dw[t] = (int)(300.f * aspect[t]); }
+        SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, g_fake_dw[t], g_fake_dh[t], 32, SDL_PIXELFORMAT_ARGB8888);
         if (!s) continue;
         const float hue = (float)t / 12.f;
         auto hsv = [](float h, float sat, float v) {
@@ -1275,6 +1288,35 @@ void lib_fake_art_init(SDL_Renderer* ren) {
         };
         const ImU32 top = hsv(hue, 0.65f, 0.95f), bot = hsv(std::fmod(hue + 0.12f, 1.f), 0.8f, 0.35f), acc = hsv(std::fmod(hue + 0.5f, 1.f), 0.7f, 1.f);
         uint32_t* px = (uint32_t*)s->pixels;
+        const int FW = g_fake_dw[t], FH = g_fake_dh[t];
+        if (posters) {
+            uint32_t rs = 977u + (uint32_t)t * 7919u;
+            auto rnd = [&]() { rs = rs * 1664525u + 1013904223u; return (rs >> 8) & 0xFFFFu; };
+            std::vector<int> rowsw;   // title banner: two or three rows of "lettering" blocks
+            for (int y = 0; y < FH; ++y)
+                for (int x = 0; x < FW; ++x) {
+                    const float k = (float)y / FH, dx = (float)x / FW - 0.5f, dy = k - 0.38f;
+                    ImU32 c = ImGui::GetColorU32(ImLerp(ImGui::ColorConvertU32ToFloat4(top), ImGui::ColorConvertU32ToFloat4(bot), k));
+                    const float rr = std::sqrt(dx * dx * 1.4f + dy * dy);
+                    if (rr < 0.20f) c = acc; else if (rr < 0.23f) c = IM_COL32(255, 255, 255, 255);
+                    if (((x - y / 2) / 18) % 4 == 0 && k < 0.55f && rr > 0.26f) c = ImGui::GetColorU32(ImLerp(ImGui::ColorConvertU32ToFloat4(c), ImVec4(1, 1, 1, 1), 0.16f));
+                    if (x < 6 || y < 6 || x >= FW - 6 || y >= FH - 6) c = IM_COL32(246, 240, 222, 255);   // a printed border
+                    px[y * s->pitch / 4 + x] = (c & 0xFF00FF00u) | ((c & 0xFF) << 16) | ((c >> 16) & 0xFF);
+                }
+            for (int row = 0; row < 3; ++row) {   // lettering blocks
+                const int y0 = (int)(FH * (0.68f + 0.085f * row)), hh = (int)(FH * 0.055f);
+                int x0 = (int)(FW * (0.12f + 0.04f * (float)(rnd() % 3)));
+                const int xe = FW - (int)(FW * 0.12f) - (row == 2 ? (int)(FW * 0.25f) : 0);
+                while (x0 < xe) {
+                    const int bw = std::min(xe - x0, (int)(FW * (0.035f + 0.02f * (float)(rnd() % 4))));
+                    for (int y = y0; y < y0 + hh && y < FH; ++y) for (int x = x0; x < x0 + bw; ++x) px[y * s->pitch / 4 + x] = 0xFFF8F4E6u;
+                    x0 += bw + (int)(FW * 0.012f) + (int)(rnd() % 3 == 0 ? FW * 0.025f : 0);
+                }
+            }
+            g_fake[t] = SDL_CreateTextureFromSurface(ren, s);
+            SDL_FreeSurface(s);
+            continue;
+        }
         for (int y = 0; y < g_fake_h; ++y)
             for (int x = 0; x < g_fake_w; ++x) {
                 float k = (float)y / g_fake_h;
@@ -1295,6 +1337,6 @@ bool lib_fake_art(const std::string& key, SDL_Texture** tex, int* w, int* h) {
     for (unsigned char c : key) hsh = (hsh ^ c) * 16777619u;
     SDL_Texture* t = g_fake[hsh % 12];
     if (!t) return false;
-    *tex = t; *w = g_fake_w; *h = g_fake_h;
+    *tex = t; *w = g_fake_dw[hsh % 12] ? g_fake_dw[hsh % 12] : g_fake_w; *h = g_fake_dh[hsh % 12] ? g_fake_dh[hsh % 12] : g_fake_h;
     return true;
 }
