@@ -40,7 +40,8 @@ void nav_refresh(const Disp& D) {
     for (size_t p = 0; p < D.flat.size(); ++p) {
         const int idx = D.flat[p];
         std::string& l = NV.labels[p];
-        if (is_ghost(idx)) { l = "Friends"; continue; }                  // friends' games you do not own sort after everything
+        if (is_ghost(idx)) { l = NV.kind == NavKind::Consoles ? std::string(short_sys(item_sys(idx))) : std::string("Friends"); continue; }   // by console, a friend's game belongs to its console's section (no repeated "Friends" ticks)
+                // friends' games you do not own sort after everything
         if (item_pinned(idx)) continue;                                  // the bundled game joins its neighbour's section
         const hub::GameEntry& e = A.lib[(size_t)idx];
         const hub::GameState& g = gstate(e.key);
@@ -195,11 +196,16 @@ void nav_draw_chip(ImDrawList* dl, ImVec2 org, float W, float y, float h, ImVec2
     ImFont* f = ui::F.bold ? ui::F.bold : ui::F.body;
     const float fs = f->FontSize, pad = sp(1.3f), caret = sp(1.4f);
     const float maxw = nav_side_w() - sp(1.4f) - sp(0.8f);
-    std::string full = "Sort: " + hubui::sort_label(nav_spec());
-    if (f->CalcTextSizeA(fs, FLT_MAX, 0.f, full.c_str()).x > maxw - pad * 2.f - caret) full = hubui::sort_label(nav_spec());   // too long: drop "Sort: "
-    std::string txt = ui::ellipsize(f, fs, full, maxw - pad * 2.f - caret);
+    // a short form: the mode name, a star in front for favorites-first and an arrow behind for the reversed order (the full text is the tooltip)
+    const hubui::SortSpec spec = nav_spec();
+    const float ic = fs * 0.95f, igap = sp(0.5f);
+    const float extra = (spec.favs_first ? ic + igap : 0.f) + (spec.reverse ? ic * 0.8f + igap : 0.f);
+    const char* mode_name = hubui::sort_name(spec.mode);
+    std::string full = std::string("Sort: ") + mode_name;
+    if (f->CalcTextSizeA(fs, FLT_MAX, 0.f, full.c_str()).x > maxw - pad * 2.f - caret - extra) full = mode_name;   // too long: drop "Sort: "
+    std::string txt = ui::ellipsize(f, fs, full, maxw - pad * 2.f - caret - extra);
     const float tw = f->CalcTextSizeA(fs, FLT_MAX, 0.f, txt.c_str()).x;
-    const float w = std::min(maxw, tw + pad * 2.f + caret);
+    const float w = std::min(maxw, tw + extra + pad * 2.f + caret);
     *p1 = ImVec2(org.x + W - sp(1.4f), y + h);
     *p0 = ImVec2(p1->x - w, y);
     ImGui::PushID("casesortchip");
@@ -213,11 +219,21 @@ void nav_draw_chip(ImDrawList* dl, ImVec2 org, float W, float y, float h, ImVec2
     dl->AddRectFilled(*p0, *p1, ui::with_alpha(ui::PANEL, hov || on ? 0.95f : 0.84f), h * 0.5f);
     dl->AddRect(*p0, *p1, on ? ui::ACCENT : ui::HAIRLINE, h * 0.5f, 0, 1.f);
     const float ty = (p0->y + p1->y - f->CalcTextSizeA(fs, FLT_MAX, 0.f, txt.c_str()).y) * 0.5f;
-    dl->AddText(f, fs, ImVec2(p0->x + pad, ty), hov || on ? ui::TEXT : ui::TEXT2, txt.c_str());
+    float cx_ = p0->x + pad;
+    if (spec.favs_first) { ui::icon(dl, ui::Icon::StarFilled, ImVec2(cx_ + ic * 0.5f, (p0->y + p1->y) * 0.5f), ic, IM_COL32(255, 214, 70, 255)); cx_ += ic + igap; }
+    dl->AddText(f, fs, ImVec2(cx_, ty), hov || on ? ui::TEXT : ui::TEXT2, txt.c_str());
+    cx_ += tw + igap;
+    if (spec.reverse) {   // an arrow pointing up: the list runs backwards from its natural order
+        const float ah = ic * 0.8f, ax = cx_ + ah * 0.5f, ay = (p0->y + p1->y) * 0.5f;
+        const ImU32 ac = hov || on ? ui::TEXT : ui::TEXT2;
+        dl->AddLine(ImVec2(ax, ay + ah * 0.5f), ImVec2(ax, ay - ah * 0.5f), ac, 1.6f);
+        dl->AddLine(ImVec2(ax - ah * 0.32f, ay - ah * 0.12f), ImVec2(ax, ay - ah * 0.5f), ac, 1.6f);
+        dl->AddLine(ImVec2(ax + ah * 0.32f, ay - ah * 0.12f), ImVec2(ax, ay - ah * 0.5f), ac, 1.6f);
+    }
     const ImVec2 cc(p1->x - pad - caret * 0.35f, (p0->y + p1->y) * 0.5f);
     const float cs = caret * 0.32f;
     dl->AddTriangleFilled(ImVec2(cc.x - cs, cc.y - cs * 0.5f), ImVec2(cc.x + cs, cc.y - cs * 0.5f), ImVec2(cc.x, cc.y + cs * 0.7f), hov || on ? ui::TEXT : ui::TEXT2);
-    if (hov && !on) ImGui::SetTooltip("Sort order  (O, or the right stick left / right)");
+    if (hov && !on) ImGui::SetTooltip("Sort: %s  (O, or the right stick left / right)", hubui::sort_label(spec).c_str());
     if (pressed) { if (NV.sort_open) nav_close_all(); else nav_open_sort(); }
     ImGui::PopID();
 }
