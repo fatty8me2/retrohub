@@ -72,6 +72,7 @@ struct CaseDraw {
     SDL_Texture* art = nullptr;
     int art_w = 0, art_h = 0;
     bool ghost = false, fav = false;
+    bool nx2 = false;             // a Switch 2 game (Media::SwitchCase with the two-tone "NINTENDO SWITCH 2" banner)
     const CaseBack* back = nullptr;
 };
 struct CasePose {
