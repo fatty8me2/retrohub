@@ -231,7 +231,7 @@ int main() {
 
     /* All Games: grouped by console */
     {
-        const std::vector<std::string> want = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "psp", "nes", "snes", "gba", "gbc", "gb"};
+        const std::vector<std::string> want = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "psp", "switch", "nes", "snes", "gba", "gbc", "gb"};
         CHECK(console_order() == want);
         std::vector<ListItem> it = {
             {"gb:1", "Tetris", "gb", false},          // 0

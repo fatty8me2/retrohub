@@ -450,8 +450,28 @@ static std::string sdl_prefix(const std::string& guid, int port) {
     return "engine:sdl,port:" + std::to_string(port < 0 ? 0 : port) + ",guid:" + (guid.empty() ? std::string("0") : guid);
 }
 
-static std::string term_value(const hubctl::Term& t, const std::string& guid, int port) {
+static std::string bind_value(const SdlBinds::B& b, const std::string& p) {
+    if (b.type == 'b' && b.idx >= 0) return p + ",button:" + std::to_string(b.idx);
+    if (b.type == 'h' && b.idx >= 0) {
+        const char* d = (b.hat & 1) ? "up" : (b.hat & 2) ? "right" : (b.hat & 4) ? "down" : (b.hat & 8) ? "left" : nullptr;
+        if (d) return p + ",hat:" + std::to_string(b.idx) + ",direction:" + d;
+    }
+    if (b.type == 'a' && b.idx >= 0) return p + ",axis:" + std::to_string(b.idx) + ",threshold:0.5,invert:+";
+    return "[empty]";
+}
+
+static std::string term_value(const hubctl::Term& t, const std::string& guid, int port, const SdlBinds* binds) {
     std::string p = sdl_prefix(guid, port);
+    if (binds && binds->valid) {   // the pad's raw joystick numbers (what Lichii's SDL engine reads)
+        if (!t.axis) return t.idx >= 0 && t.idx < 21 ? bind_value(binds->button[t.idx], p) : std::string("[empty]");
+        if (t.idx < 0 || t.idx >= 6) return "[empty]";
+        const SdlBinds::B& b = binds->axis[t.idx];
+        if (b.type != 'a') return bind_value(b, p);   // e.g. a pad whose triggers are plain buttons
+        const bool trig = t.idx >= 4;
+        double th = trig ? 0.5 : (t.threshold > 0 ? t.threshold / 32767.0 : 0.5);
+        if (th > 0.95) th = 0.95;
+        return p + ",axis:" + std::to_string(b.idx) + ",threshold:" + num(std::floor(th * 100 + 0.5) / 100) + ",invert:" + (!trig && t.sign < 0 ? "-" : "+");
+    }
     if (!t.axis) return t.idx < 0 || t.idx >= hubctl::kNumButtons ? std::string("[empty]") : p + ",button:" + std::to_string(t.idx);
     bool trig = t.idx >= 4;
     double th = trig ? 0.5 : (t.threshold > 0 ? t.threshold / 32767.0 : 0.5);
@@ -459,15 +479,15 @@ static std::string term_value(const hubctl::Term& t, const std::string& guid, in
     return p + ",axis:" + std::to_string(t.idx) + ",threshold:" + num(std::floor(th * 100 + 0.5) / 100) + ",invert:" + (!trig && t.sign < 0 ? "-" : "+");
 }
 
-static std::string button_value(const hubctl::Profile& prof, const std::string& control, const std::string& guid, int port) {
+static std::string button_value(const hubctl::Profile& prof, const std::string& control, const std::string& guid, int port, const SdlBinds* binds) {
     auto it = prof.buttons.find(control);
     std::vector<hubctl::Term> terms;
     if (it != prof.buttons.end() && hubctl::parse_expr(it->second, prof.axis_threshold, &terms) && !terms.empty())
-        return term_value(terms[0], guid, port);
+        return term_value(terms[0], guid, port, binds);
     return "[empty]";
 }
 
-static std::string stick_value(const hubctl::Profile& prof, const std::string& control, int dx, int dy, const std::string& guid, int port) {
+static std::string stick_value(const hubctl::Profile& prof, const std::string& control, int dx, int dy, const std::string& guid, int port, const SdlBinds* binds) {
     int ax = dx, ay = dy;
     double dz = 0.15, range = 1.0;
     auto it = prof.analogs.find(control);
@@ -477,11 +497,15 @@ static std::string stick_value(const hubctl::Profile& prof, const std::string& c
         dz = std::min(0.95, std::max(0.0, it->second.deadzone));
         range = std::min(1.5, std::max(0.25, it->second.sensitivity));
     }
+    if (binds && binds->valid) {   // GameController axis -> the pad's raw joystick axis
+        if (ax >= 0 && ax < 6 && binds->axis[ax].type == 'a') ax = binds->axis[ax].idx;
+        if (ay >= 0 && ay < 6 && binds->axis[ay].type == 'a') ay = binds->axis[ay].idx;
+    }
     return sdl_prefix(guid, port) + ",axis_x:" + std::to_string(ax) + ",axis_y:" + std::to_string(ay) +
            ",offset_x:0,offset_y:0,invert_x:+,invert_y:+,deadzone:" + num(dz) + ",range:" + num(range);
 }
 
-std::string lichii_controls_ini(const std::string& in, const hubctl::Profile& prof, const std::string& guid, int port) {
+std::string lichii_controls_ini(const std::string& in, const hubctl::Profile& prof, const std::string& guid, int port, const SdlBinds* binds) {
     struct M { const char* control; const char* key; };
     static const M map[] = {
         {"a", "button_a"}, {"b", "button_b"}, {"x", "button_x"}, {"y", "button_y"}, {"l3", "button_lstick"}, {"r3", "button_rstick"},
@@ -490,9 +514,9 @@ std::string lichii_controls_ini(const std::string& in, const hubctl::Profile& pr
     };
     std::string t = in;
     auto put = [&](const std::string& key, const std::string& value, bool quote) { t = ini_put(t, "Controls", key, quote ? "\"" + value + "\"" : value); };
-    for (const M& m : map) put(std::string("player_0_") + m.key, button_value(prof, m.control, guid, port), true);
-    put("player_0_lstick", stick_value(prof, "left_stick", 0, 1, guid, port), true);
-    put("player_0_rstick", stick_value(prof, "right_stick", 2, 3, guid, port), true);
+    for (const M& m : map) put(std::string("player_0_") + m.key, button_value(prof, m.control, guid, port, binds), true);
+    put("player_0_lstick", stick_value(prof, "left_stick", 0, 1, guid, port, binds), true);
+    put("player_0_rstick", stick_value(prof, "right_stick", 2, 3, guid, port, binds), true);
     put("player_0_connected", "true", false);
     put("player_0_type", "0", false);
     for (int i = 1; i < 8; ++i) put("player_" + std::to_string(i) + "_connected", "false", false);
@@ -502,7 +526,7 @@ std::string lichii_controls_ini(const std::string& in, const hubctl::Profile& pr
 /* ------------------------------------------------------------------ prepare + args */
 
 std::string prepare_lichii(const std::string& install, const hubctl::Profile& prof, const std::string& guid, int port, const hub::gs::Values& v,
-                           bool fullscreen) {
+                           bool fullscreen, const SdlBinds* binds) {
     std::error_code ec;
     fs::create_directories(P(lichii_user_dir(install)), ec);
     if (!is_dir(lichii_user_dir(install))) return "could not create Lichii's user folder";
@@ -511,7 +535,7 @@ std::string prepare_lichii(const std::string& install, const hubctl::Profile& pr
     const bool first = read_text(marker).empty();
     if (first) t = lichii_ini_defaults(t);
     t = lichii_ini_launch(t, v, fullscreen);
-    t = lichii_controls_ini(t, prof, guid, port);
+    t = lichii_controls_ini(t, prof, guid, port, binds);
     if (!write_bytes(ini, t)) return "could not write qt-config.ini";
     if (first) write_bytes(marker, "RetroHub wrote Lichii's defaults once (delete this file to write them again); video settings and controls are rewritten before every launch.\n");
     lichii_ensure_profile(install);
