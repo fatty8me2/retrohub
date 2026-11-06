@@ -266,25 +266,36 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
     ImFont* f = ui::F.bold ? ui::F.bold : ui::F.body;
     ImFont* cf = ui::F.cap;
     const float fs = f->FontSize, cfs = cf->FontSize;
-    const float pad_x = sp(1.35f), gap = sp(0.2f), ph = h - sp(0.7f), dot_r = sp(0.3f), cnt_gap = sp(0.45f);
+    float pad_x = sp(1.35f);
+    const float gap = sp(0.2f), ph = h - sp(0.7f), dot_r = sp(0.3f), cnt_gap = sp(0.45f);
     const size_t nt = std::min<size_t>(CS.tabs.size(), 40);
     if (nt == 0) return;
     active = std::max(0, std::min(active, (int)nt - 1));
     float total = 0.f;
     float wv[40], lw[40], cwid[40], xo[40];
     char cnt[40][12];
+    const char* lb_k = "[";
+    const float hint_w = ui::key_hint_width(A.pad_mode, "LB", lb_k, "") + sp(1.f);
+    const float left_min = org.x + sp(1.4f) + h + sp(1.f) + hint_w, right_max = org.x + W - nav_side_w() - hint_w;   // clear of the menu button and of the Sort chip at the right end
+    const float room = std::max(sp(10.f), right_max - left_min) - sp(1.f);
+    bool show_counts = true;
     for (size_t i = 0; i < nt; ++i) {
         std::snprintf(cnt[i], sizeof cnt[i], "%d", CS.tabs[i].count);
         lw[i] = f->CalcTextSizeA(fs, FLT_MAX, 0.f, CS.tabs[i].label.c_str()).x;
         cwid[i] = cf->CalcTextSizeA(cfs, FLT_MAX, 0.f, cnt[i]).x;
-        wv[i] = pad_x * 2.f + lw[i] + cnt_gap + cwid[i] + (CS.tabs[i].sys.empty() ? 0.f : dot_r * 2.f + sp(0.45f));
-        xo[i] = total;
-        total += wv[i] + gap;
     }
-    total -= gap;
-    const char* lb_k = "[";
-    const float hint_w = ui::key_hint_width(A.pad_mode, "LB", lb_k, "") + sp(1.f);
-    const float left_min = org.x + sp(1.4f) + h + sp(1.f) + hint_w, right_max = org.x + W - nav_side_w() - hint_w;   // clear of the menu button and of the Sort chip at the right end
+    auto layout = [&]() {   // too wide for the room: drop the small counts first, then tighten the padding; only then does the strip scroll
+        total = 0.f;
+        for (size_t i = 0; i < nt; ++i) {
+            wv[i] = pad_x * 2.f + lw[i] + (show_counts ? cnt_gap + cwid[i] : 0.f) + (CS.tabs[i].sys.empty() ? 0.f : dot_r * 2.f + sp(0.45f));
+            xo[i] = total;
+            total += wv[i] + gap;
+        }
+        total -= gap;
+    };
+    layout();
+    if (total > room) { show_counts = false; layout(); }
+    if (total > room) { pad_x = sp(0.8f); layout(); }
     const float cw = std::min(std::max(sp(10.f), right_max - left_min), total + sp(1.f));
     const float cx0 = std::max(left_min, std::min(org.x + (W - cw) * 0.5f, right_max - cw));
     const ImVec2 c0(cx0, y), c1(cx0 + cw, y + h);
@@ -293,7 +304,14 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
     dl->AddRect(c0, c1, ui::HAIRLINE, h * 0.5f, 0, 1.f);
     const float inner = cw - sp(1.f);
     float off_t = 0.f;
-    if (total > inner) off_t = std::max(0.f, std::min(total - inner, xo[active] + wv[active] * 0.5f - inner * 0.5f));
+    if (total > inner) {   // scroll: centre the active tab, snapped so the first visible tab starts at the left edge and the active tab is always whole
+        const float want = std::max(0.f, std::min(total - inner, xo[active] + wv[active] * 0.5f - inner * 0.5f));
+        off_t = want;
+        for (size_t i = 0; i < nt; ++i) if (xo[i] >= want - 1.f) { off_t = xo[i]; break; }
+        if (off_t > total - inner) off_t = total - inner;
+        if (off_t + inner < xo[active] + wv[active] + sp(0.6f)) for (size_t i = 0; i < nt; ++i) if (xo[i] + inner >= xo[active] + wv[active] + sp(0.6f)) { off_t = xo[i]; break; }
+        if (off_t > xo[active]) off_t = xo[active];
+    }
     const bool snap = reduced_motion();
     ui::anim(CS.tab_off, off_t, 12.f);
     if (snap) CS.tab_off = off_t;
@@ -338,10 +356,15 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
             dl->AddCircleFilled(ImVec2(tx + dot_r, (p0.y + p1.y) * 0.5f), dot_r, on ? ui::scale_alpha(ink, 0.9f) : col, 12);
             tx += dot_r * 2.f + sp(0.45f);
         }
-        const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.label.c_str());
-        dl->AddText(f, fs, ImVec2(tx, (p0.y + p1.y - ts.y) * 0.5f), ink, t.label.c_str());
-        const ImVec2 cs = cf->CalcTextSizeA(cfs, FLT_MAX, 0.f, cnt[i]);
-        dl->AddText(cf, cfs, ImVec2(tx + lw[i] + cnt_gap, (p0.y + p1.y - cs.y) * 0.5f + 1.f), on ? ui::scale_alpha(ink, 0.72f) : ui::TEXT3, cnt[i]);
+        const bool whole = p0.x >= c0.x + sp(0.5f) - 1.f && p1.x <= c1.x - sp(0.5f) + 1.f;   // a label is drawn whole or not at all
+        if (whole || total <= inner) {
+            const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.label.c_str());
+            dl->AddText(f, fs, ImVec2(tx, (p0.y + p1.y - ts.y) * 0.5f), ink, t.label.c_str());
+            if (show_counts) {
+                const ImVec2 cs = cf->CalcTextSizeA(cfs, FLT_MAX, 0.f, cnt[i]);
+                dl->AddText(cf, cfs, ImVec2(tx + lw[i] + cnt_gap, (p0.y + p1.y - cs.y) * 0.5f + 1.f), on ? ui::scale_alpha(ink, 0.72f) : ui::TEXT3, cnt[i]);
+            }
+        }
         if (hov) ImGui::SetTooltip("%s: %d game%s", t.label.c_str(), t.count, t.count == 1 ? "" : "s");
         if (pressed) cases_switch_tab(t.sys);
         ImGui::PopID();
@@ -701,6 +724,17 @@ void draw_cases(Disp& D) {
     }
     // flip / inspect: the enlarged, forward centre case is wider on screen, so the neighbours stand out of its way (never intersecting it)
     const hubui::cases::CentreAdj cadj = hubui::cases::centre_adj(fl, ins, CS.settle.x);   // includes the settle bounce, so the push below already accounts for it
+    // the enlarged case (any spin / pitch) must stay between the tab bar and the scrubber strip (flip: also above the title block)
+    float fit_mul = 1.f;
+    if (n && (fl > 0.01f || ins > 0.01f)) {
+        const hubui::shelf::Media mc = CS.media[(size_t)ic];
+        hubui::cases::FitScene fs;
+        fs.U = sc.U; fs.eye = sc.eye; fs.dist = sc.dist; fs.hy = sc.hy;
+        const float top_lim = tab_y + tab_h + sp(0.7f);
+        const float bot_lim = (f0 + Hc * 0.24f) * (1.f - ins) + (strip_y - sp(0.4f)) * ins;
+        const float rest = slot_pose(0.f).scale * display_scale(mc) * cadj.scale_mul;
+        fit_mul = hubui::cases::fit_centre_scale(case_dims(mc), rest, 0.55f * ins, 0.05f * ins + 0.02f, cadj.z, fs, top_lim, bot_lim);
+    }
     float push_l = 0.f, push_r = 0.f;
     if (n > 1 && (fl > 0.01f || ins > 0.01f) && CS.focus >= 0 && CS.focus < n) {
         const hubui::shelf::Media mc = CS.media[(size_t)CS.focus];
@@ -735,7 +769,7 @@ void draw_cases(Disp& D) {
         // flip: the centre case turns over, rising toward the viewer; the neighbours stand out of its way (push_l / push_r)
         ps.yaw += c * fl - c * 0.13f;   // the centre case sits turned a touch so its side shows a little depth
         ps.z += c * cadj.z;
-        ps.scale *= 1.f + c * (cadj.scale_mul - 1.f);
+        ps.scale *= (1.f + c * (cadj.scale_mul - 1.f)) * (1.f + c * (fit_mul - 1.f));
         if (c > 0.f && !reduced) {   // idle: the case breathes (a slow float and a hint of sway)
             const float calm = (1.f - ins) * (1.f - std::min(1.f, fl / 3.14159f));
             ps.lift += c * calm * hubui::cases::idle_bob(CS.clock);
@@ -912,7 +946,7 @@ void draw_cases(Disp& D) {
         ui::anim(CS.tl_a, 1.f, 9.f); ui::anim(CS.tl_slide, 0.f, 9.f);
         if (reduced) { CS.tl_a = 1.f; CS.tl_slide = 0.f; }
         const float moving = std::min(1.f, std::fabs(CS.pos.x - (float)CS.focus) * 0.8f);
-        const float ta = (1.f - moving * 0.85f) * (0.2f + 0.8f * CS.intro) * (1.f - 0.5f * ins) * CS.tl_a;   // dimmed, never gone, while inspecting
+        const float ta = (1.f - moving * 0.85f) * (0.2f + 0.8f * CS.intro) * (1.f - 0.5f * ins) * CS.tl_a * (1.f - smoothstep01(NV.jump_t));   // the quick-jump panel sits over the title block: the block steps aside while it is open   // dimmed, never gone, while inspecting
         const float rise = CS.tl_slide * cf->FontSize * 0.7f;
         const ImVec2 ts = tfont->CalcTextSizeA(tsz, FLT_MAX, 0.f, CS.title_txt.c_str());
         const float ty = f0 + Hc * 0.28f + rise;

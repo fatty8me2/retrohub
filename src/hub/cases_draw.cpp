@@ -410,15 +410,16 @@ void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
         outline(x, f, ex, ey, 1.f - ex, 1.f - ey, rgba(0, 0, 0, 50), 1.f);
     } else {   // clear plastic: a bright rim, the hinge ridge and a moving glossy highlight
         const float rx = std::max(0.014f, 4.f * px), ry = std::max(0.014f, 4.f * py);
-        const ImU32 rim = st.pale ? rgba(255, 255, 255, 120) : rgba(255, 255, 255, 46);
+        const bool dark = lum(st.body) < 0.12f;   // black plastic (GameCube, PS2): the gloss stays subtle so the case reads black, not silver
+        const ImU32 rim = st.pale ? rgba(255, 255, 255, 120) : rgba(255, 255, 255, dark ? 14 : 46);
         quad(x, f, 0.f, 0.f, 1.f, ry, rim); quad(x, f, 0.f, 1.f - ry, 1.f, 1.f, rim);
         quad(x, f, 1.f - rx, ry, 1.f, 1.f - ry, rim);
-        outline(x, f, 0.f, 0.f, 1.f, 1.f, st.pale ? rgba(0, 0, 0, 80) : rgba(255, 255, 255, 100), 1.f);
+        outline(x, f, 0.f, 0.f, 1.f, 1.f, st.pale ? rgba(0, 0, 0, 80) : rgba(255, 255, 255, dark ? 44 : 100), 1.f);
         outline(x, f, rx, ry, 1.f - rx, 1.f - ry, rgba(0, 0, 0, 70), 1.f);
-        line(x, f, rcu + 0.01f, 2.f * py, 1.f - rcu - 0.01f, 2.f * py, rgba(255, 255, 255, st.pale ? 160 : 120), 1.f);
-        hgrad(x, f, hinge * 0.2f, 0.f, hinge, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 70));   // the hinge ridge: a lit rib along the spine side
+        line(x, f, rcu + 0.01f, 2.f * py, 1.f - rcu - 0.01f, 2.f * py, rgba(255, 255, 255, st.pale ? 160 : dark ? 60 : 120), 1.f);
+        hgrad(x, f, hinge * 0.2f, 0.f, hinge, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, dark ? 30 : 70));   // the hinge ridge: a lit rib along the spine side
         line(x, f, hinge * 0.5f, 0.02f, hinge * 0.5f, 0.98f, rgba(255, 255, 255, 110), 1.f);
-        grad(x, f, 0.f, 0.f, 1.f, 0.62f, rgba(255, 255, 255, 46), rgba(255, 255, 255, 12), rgba(255, 255, 255, 0), rgba(255, 255, 255, 0));
+        grad(x, f, 0.f, 0.f, 1.f, 0.62f, rgba(255, 255, 255, dark ? 22 : 46), rgba(255, 255, 255, dark ? 6 : 12), rgba(255, 255, 255, 0), rgba(255, 255, 255, 0));
         const float uc = std::max(0.1f, std::min(0.9f, sheen_u));
         hgrad(x, f, std::max(0.f, uc - 0.2f), 0.f, uc, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 34));
         hgrad(x, f, uc, 0.f, std::min(1.f, uc + 0.12f), 1.f, rgba(255, 255, 255, 34), rgba(255, 255, 255, 0));

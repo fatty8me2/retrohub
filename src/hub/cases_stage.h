@@ -94,6 +94,41 @@ inline float flip_push(const CaseDims& c, float c_scale, float c_x, float c_z, f
     return std::max(0.f, neighbour_min_x(n, n_yaw, n_scale, n_z, dist, edge) - base_x);
 }
 
+/* ---- flip / inspect: the whole case stays between the tab bar and the scrubber strip ---- */
+/* The scene numbers the projection uses (CaseScene in shelf_draw.h): screen y = hy + (eye - world y) * dist / (dist + z) * U. */
+struct FitScene { float U = 1.f, eye = 0.55f, dist = 6.5f, hy = 0.f; };
+/* Screen y of the top / bottom of a case (all 8 corners of its box) for a yaw, pitch, lift, depth and scale. Mirrors Xf in cases_draw.cpp. */
+inline void case_y_extent(const CaseDims& c, float scale, float yaw, float pitch, float lift, float z, const FitScene& s, float* top, float* bot) {
+    const float ct = std::cos(yaw), st = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch), yc = c.h * 0.5f;
+    float lo = 1e9f, hi = -1e9f;
+    for (int i = 0; i < 8; ++i) {
+        const float x = (i & 1 ? 0.5f : -0.5f) * c.w * scale, y = (((i & 2) ? c.h : 0.f) - yc) * scale, zz = (i & 4 ? 0.5f : -0.5f) * c.d * scale;
+        const float zr = -x * st + zz * ct;
+        const float wy = y * cp - zr * sp + lift + yc * scale, wz = y * sp + zr * cp + z;
+        const float py = s.hy + (s.eye - wy) * (s.dist / std::max(0.4f, s.dist + wz)) * s.U;
+        lo = std::min(lo, py); hi = std::max(hi, py);
+    }
+    *top = lo; *bot = hi;
+}
+/* The multiplier (0.35..1) to apply to the centre case's scale so that, at any yaw (it is spun freely while inspected) and any pitch up to
+ * pitch_abs, its top stays below top_lim and its bottom above bot_lim (screen y). 1 when it already fits. */
+inline float fit_centre_scale(const CaseDims& c, float scale, float pitch_abs, float lift, float z, const FitScene& s, float top_lim, float bot_lim) {
+    auto fits = [&](float m) {
+        for (int yi = 0; yi < 24; ++yi) {
+            for (int pi_ = -1; pi_ <= 1; ++pi_) {
+                float t, b;
+                case_y_extent(c, scale * m, 3.14159265f * (float)yi / 24.f, pitch_abs * (float)pi_, lift, z, s, &t, &b);
+                if (t < top_lim || b > bot_lim) return false;
+            }
+        }
+        return true;
+    };
+    if (fits(1.f)) return 1.f;
+    float lo = 0.35f, hi = 1.f;
+    for (int i = 0; i < 14; ++i) { const float mid = 0.5f * (lo + hi); if (fits(mid)) lo = mid; else hi = mid; }
+    return lo;
+}
+
 /* ---- motion ---- */
 /* Idle float of the centre case: a slow bob (world units) and sway (radians). */
 /* t is a double (the clock runs for days: a float stops resolving frames after ~12 days). */
