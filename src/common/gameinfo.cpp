@@ -578,10 +578,11 @@ const char* gametdb_site(const std::string& system) {
 ResolveResult resolve_description(const Query& q, const Fetcher& fetch, const TdbFinder& tdb, Online* out) {
     ResolveResult r = resolve_online(q, fetch, out);
     if (r == ResolveResult::NetworkError) return r;
-    if (!tdb) return r;
-    const gametdb::Rec* rec = tdb(q);
-    if (!rec) return r;
-    if (out->description.empty() && !rec->synopsis.empty()) {
+    if (!tdb || !out->description.empty()) return r;   // Wikipedia answered: GameTDB (and any database download behind it) is not consulted
+    std::optional<gametdb::Rec> found = tdb(q);
+    if (!found) return r;
+    const gametdb::Rec* rec = &*found;
+    if (!rec->synopsis.empty()) {
         out->description = excerpt(rec->synopsis);
         out->source = "GameTDB";
         const char* site = gametdb_site(q.system);
