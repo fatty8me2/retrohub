@@ -41,7 +41,7 @@ struct Settings {
     std::string lib_genre;             // All Games: Genre chip ("" = all genres; "Other" = games without a genre)
     bool lib_group_genre = false;      // All Games: Group by Genre instead of by console
     std::string discover_sort = "rec"; // Discover: rec | title | new | old | players
-    std::string lib_layout = "grid";   // All Games layout: grid | list | compact | showcase | shelf
+    std::string lib_layout = "grid";   // All Games layout: grid | list | compact | showcase | shelf | cases
     bool lib_shelf_mixed = false;      // Shelf layout: false = one shelf per console, true = one flow following the Sort chip
     std::string lib_list_col;          // List layout: sorted column ("" = follow the Sort chip) title | console | players | last | time
     bool lib_list_desc = false;        // List layout: column sorted descending
@@ -55,6 +55,7 @@ struct Settings {
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
     bool show_friends = true;          // friends panel open
     bool tv_start = false;             // start RetroHub in TV mode (fullscreen 10-foot layout)
+    bool tv_cases = false;             // TV mode opens All Games in the Cases (3D game-case carousel) view
     bool tv_windows = false;           // mirrors the HKCU Run entry that starts with Windows into TV mode
     bool played_online = false;        // set on the first online launch: Play Online collapses its "How it works" help
     bool notify_in_game = false;       // Windows toast for invites while a game is running (OFF by default: nothing may pop up over a game)

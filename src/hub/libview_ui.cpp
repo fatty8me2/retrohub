@@ -6,7 +6,15 @@
  * art is only requested for tiles that are really on screen. Pad: D-pad moves, LT/RT page (main.cpp turns them into PageUp/PageDown),
  * the right stick jumps to the next / previous letter (or console group). Mouse: the strip, the wheel, header clicks.
  * Colours all come from the ui:: palette so every theme works. */
+#define STBI_ONLY_PNG
+#define STBI_NO_STDIO
+#define STBI_NO_LINEAR
+#define STBI_NO_HDR
+#include "third_party/stb_image.h"
 #include "app.h"
+#include "cases_logic.h"
+#include "../saves/savestore.h"
+#include "state_slots.h"
 #include "libview_ui.h"
 #include "online_caps.h"
 #include "shelf_draw.h"
@@ -15,6 +23,10 @@
 #include <SDL.h>
 #include <algorithm>
 #include <cmath>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <unordered_map>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -50,6 +62,7 @@ struct State {
     int jump_pos = -1;            // flat position to bring into view (and focus, see focus_key) on the next draw
     bool jump_top = false;        // letter jumps put the target at the top; others only reveal it
     std::string focus_key;        // pad focus lands on this item when it is submitted
+    bool focus_quiet = false;     // ... without showing the focus ring (Cases: the mouse / wheel moved the selection)
     int traced = -2;
     bool jump_center = false;     // reveal puts the target mid-viewport (entering the view / switching layout)
     bool reveal = false;          // keep the selected game in view while the library is still loading / re-sorting
@@ -192,14 +205,14 @@ void jump(const Disp& D, int pos, bool top) {
 }
 
 /* The grid child's nav focus goes to the item just submitted (pad shortcuts and strip jumps). */
-void focus_item_here() {
+void focus_item_here(bool visible = true) {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     ImGuiWindow* w = g.CurrentWindow;
     if (g.NavWindow != w) ImGui::FocusWindow(w);
     ImVec2 off = w->DC.CursorStartPos;
     ImRect rel(ImGui::GetItemRectMin() - off, ImGui::GetItemRectMax() - off);
     ImGui::SetNavID(ImGui::GetItemID(), ImGuiNavLayer_Main, g.CurrentFocusScopeId, rel);
-    g.NavCursorVisible = true;
+    if (visible) g.NavCursorVisible = true;
 }
 
 /* ---------- one interactive item (same behaviour as draw_tile's front half) ---------- */
@@ -239,7 +252,7 @@ void deliver(int idx, TileResult r) {
 }
 
 void apply_pending_focus(int idx) {
-    if (!G.focus_key.empty() && G.focus_key == item_key(idx)) { focus_item_here(); G.focus_key.clear(); }
+    if (!G.focus_key.empty() && G.focus_key == item_key(idx)) { focus_item_here(!G.focus_quiet); G.focus_key.clear(); G.focus_quiet = false; }
 }
 
 /* ---------- Grid (draw_tile) and Compact ---------- */
@@ -916,13 +929,15 @@ void draw_shelf(Disp& D) {
     ImGui::Dummy(ImVec2(1.f, 1.f));
 }
 
+#include "cases_view.inc"
+
 /* LT / RT: a page up / down that keeps the focused game at the same height (ImGui's own page move would land on the selected bar below). */
 void page_move(Disp& D, int dir, float view_h) {
     const int n = (int)D.flat.size();
     int cur = selected_pos(D);
     if (n == 0) return;
     if (cur < 0) cur = 0;
-    if (lib_layout() == LibLayout::Showcase) { jump(D, std::max(0, std::min(n - 1, cur + dir * 8)), false); return; }
+    if (lib_layout() == LibLayout::Showcase || lib_layout() == LibLayout::Cases) { jump(D, std::max(0, std::min(n - 1, cur + dir * 8)), false); return; }
     const hubui::VLayout& L = G.L;
     if (cur >= (int)L.item_row.size() || L.rows.empty()) return;
     const hubui::VRow& cr = L.rows[L.item_row[cur]];
@@ -1001,10 +1016,33 @@ void draw_strip(Disp& D, float h, float w, bool in_nav_window) {
 /* ======================= public ======================= */
 
 LibLayout lib_layout() { return hubui::layout_from_key(A.st.lib_layout); }
-bool lib_layout_has_bar() { return lib_layout() != LibLayout::Showcase; }
+bool lib_layout_has_bar() { return lib_layout() != LibLayout::Showcase && lib_layout() != LibLayout::Cases; }
+
+/* Cases hooks (frame.cpp / palette_ui.cpp / tv_mode.cpp): the pad buttons it uses must not also do their global jobs. */
+bool lib_cases_active() { return lib_layout() == LibLayout::Cases && A.page == Page::Library && A.view == LibView::All; }
+bool lib_cases_back(bool from_esc) {   // B / Esc: close the menu, leave a flipped / inspected case; Esc on the plain carousel opens the menu
+    if (!lib_cases_active()) return false;
+    if (CS.menu_open) { CS.menu_open = false; A.nav_seed = true; shot_trace("cases-menu", "closed"); return true; }
+    if (hubui::cases::on_back(&CS.mode)) { shot_trace("cases-back", "browse"); return true; }
+    if (from_esc) { lib_cases_menu_toggle(); return true; }
+    return false;
+}
+void lib_cases_menu_toggle() {
+    CS.menu_open = !CS.menu_open;
+    if (CS.menu_open) { CS.menu_focus_req = true; CS.mode = hubui::cases::Mode::Browse; }
+    else A.nav_seed = true;
+    shot_trace("cases-menu", CS.menu_open ? "open" : "closed");
+}
+void lib_cases_closed() { CS.menu_open = false; CS.menu_t = 0.f; }   // the layout is not showing: forget an open menu
+void lib_cases_tv_enter() {   // TV mode opened with "TV mode opens in Cases view" on: All Games, Cases layout
+    if (!A.st.tv_cases) return;
+    if (lib_layout() != LibLayout::Cases) lib_set_layout(LibLayout::Cases);
+    A.view = LibView::All;
+}
 
 void lib_set_layout(LibLayout l) {
     if (l == lib_layout()) return;
+    if (l == LibLayout::Cases) { CS.intro = 0.f; CS.mode = hubui::cases::Mode::Browse; CS.init = false; CS.land_pending = false; }   // the carousel fades in on the selected game
     A.st.lib_layout = hubui::layout_key(l);
     mark_dirty();
     G.lsig = ~0ull;
@@ -1072,6 +1110,12 @@ void lib_switcher() {
                     dl->AddRectFilled(ImVec2(c.x + u * 0.9f, y - u * 0.8f), ImVec2(c.x + u * 1.2f, y - 0.06f * u), col, 1.f);
                 }
                 break;
+            case LibLayout::Cases:   // a tall case between two turned ones, standing on a floor line
+                dl->AddRectFilled(ImVec2(c.x - u * 0.62f, c.y - u * 1.35f), ImVec2(c.x + u * 0.62f, c.y + u * 0.95f), col, 1.5f);
+                dl->AddQuadFilled(ImVec2(c.x - u * 1.5f, c.y - u * 0.9f), ImVec2(c.x - u * 0.95f, c.y - u * 0.62f), ImVec2(c.x - u * 0.95f, c.y + u * 0.62f), ImVec2(c.x - u * 1.5f, c.y + u * 0.9f), col);
+                dl->AddQuadFilled(ImVec2(c.x + u * 0.95f, c.y - u * 0.62f), ImVec2(c.x + u * 1.5f, c.y - u * 0.9f), ImVec2(c.x + u * 1.5f, c.y + u * 0.9f), ImVec2(c.x + u * 0.95f, c.y + u * 0.62f), col);
+                dl->AddRectFilled(ImVec2(c.x - u * 1.5f, c.y + u * 1.25f), ImVec2(c.x + u * 1.5f, c.y + u * 1.55f), col, 1.f);
+                break;
             default:   // showcase: a big cover between two small ones
                 dl->AddRectFilled(ImVec2(c.x - u * 0.55f, c.y - u * 1.1f), ImVec2(c.x + u * 0.55f, c.y + u * 1.1f), col, 1.5f);
                 dl->AddRectFilled(ImVec2(c.x - u * 1.45f, c.y - u * 0.65f), ImVec2(c.x - u * 0.8f, c.y + u * 0.65f), col, 1.f);
@@ -1125,7 +1169,7 @@ void lib_body(float bar_h) {
             G.reveal_key = selected_key();
         } else if (selected_key() != G.reveal_key || ++G.reveal_quiet > 60) G.reveal = false;
     }
-    const bool strip_on = D.marks.size() >= 2 && D.flat.size() >= 10;
+    const bool strip_on = D.marks.size() >= 2 && D.flat.size() >= 10 && lay != LibLayout::Cases;
     float strip_w = strip_on ? sp(3.f) : 0.f;
     if (strip_on && !D.letter_mode)   // console / genre labels are wider than a letter
         for (const hubui::JumpRun& m : D.marks) strip_w = std::max(strip_w, ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, m.label.c_str()).x + sp(1.25f));
@@ -1138,12 +1182,12 @@ void lib_body(float bar_h) {
         const float inner = full_w - strip_w - strip_gap - st.ScrollbarSize - pad;
         draw_list_header(ImGui::GetCursorScreenPos().x, inner);
     }
-    const bool flush = lay == LibLayout::Showcase || lay == LibLayout::Shelf;   // these two fill the whole child
+    const bool flush = lay == LibLayout::Showcase || lay == LibLayout::Shelf || lay == LibLayout::Cases;   // these fill the whole child
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, flush ? ImVec2(0, 0) : ImVec2(pad, pad));
     if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; G.sc_init = false; G.jump_pos = -1; }
     ImGuiWindowFlags wf = 0;
     if (lay == LibLayout::List) wf |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
-    if (lay == LibLayout::Showcase) wf |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
+    if (lay == LibLayout::Showcase || lay == LibLayout::Cases) wf |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
     if (!flush) ImGui::SetCursorPosX(ImGui::GetCursorPosX() - pad);
     ImGui::BeginChild("grid", ImVec2(flush ? full_w - strip_w - strip_gap : child_w, -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding, wf);
     ImGui::PopStyleVar();
@@ -1152,7 +1196,7 @@ void lib_body(float bar_h) {
     ImGuiWindow* me = ImGui::GetCurrentWindow();
     const bool mine = g.NavWindow == me;
     // pad shortcut: right stick = next / previous letter (or console group)
-    if (mine && !ImGui::GetIO().WantTextInput && A.focused && !A.proc && D.runs.size() > 1) {
+    if (mine && !ImGui::GetIO().WantTextInput && A.focused && !A.proc && D.runs.size() > 1 && lay != LibLayout::Cases) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;   // keyboard: Ctrl+Down / Ctrl+Up
         int dir = (ImGui::IsKeyPressed(ImGuiKey_GamepadRStickDown, false) || (ctrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))) ? 1
                   : (ImGui::IsKeyPressed(ImGuiKey_GamepadRStickUp, false) || (ctrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))) ? -1 : 0;
@@ -1172,6 +1216,18 @@ void lib_body(float bar_h) {
     if (!flush) add_games_banner();
     if (lay == LibLayout::Showcase) draw_showcase(D);
     else if (lay == LibLayout::Shelf) draw_shelf(D);
+    else if (lay == LibLayout::Cases) {
+        static const bool perf = g_headless && std::getenv("HUB_SHOT_CASES_PERF") != nullptr;   // QA: CPU time of the carousel per frame (shot trace "cases-perf")
+        static double acc = 0; static int frames = 0;
+        LARGE_INTEGER t0, t1, fq;
+        if (perf) QueryPerformanceCounter(&t0);
+        draw_cases(D);
+        if (perf) {
+            QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
+            acc += (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)fq.QuadPart;
+            if (++frames == 20) { shot_trace("cases-perf", "avg_ms=" + std::to_string(acc / frames) + " games=" + std::to_string(D.flat.size())); acc = 0; frames = 0; }
+        }
+    }
     else draw_virtual(D, lay);
     ImGui::EndChild();
     const ImVec2 csz = ImGui::GetItemRectSize();
@@ -1190,6 +1246,12 @@ void lib_body(float bar_h) {
 /* ======================= screenshot aids ======================= */
 
 void lib_shot_seed() {
+    if (const char* cs = std::getenv("HUB_SHOT_CASES"); cs && *cs) {   // Cases screenshots: browse | flip | inspect | cartridge[:<console>] | missingart
+        A.st.lib_layout = hubui::layout_key(LibLayout::Cases);
+        A.view = LibView::All;
+        const std::string m = cs;
+        if (m.rfind("cartridge", 0) == 0) A.sys_filter = m.size() > 10 ? m.substr(10) : std::string("n64");
+    }
     const char* v = std::getenv("HUB_SHOT_LIBVIEW");
     if (!v || !*v) return;
     A.st.lib_layout = hubui::layout_key(hubui::layout_from_key(v));
@@ -1205,10 +1267,15 @@ void lib_shot_seed() {
 
 static SDL_Texture* g_fake[12];
 static int g_fake_w = 240, g_fake_h = 260;
+static int g_fake_dw[12], g_fake_dh[12];   // per-texture size (HUB_SHOT_FAKE_ART=posters: mixed aspect ratios)
 void lib_fake_art_init(SDL_Renderer* ren) {
     if (!std::getenv("HUB_SHOT_FAKE_ART") || !ren) return;
+    const bool posters = std::string(std::getenv("HUB_SHOT_FAKE_ART")) == "posters";   // box-art-like posters: gradients, a title banner, mixed aspect ratios
+    static const float aspect[12] = {0.72f, 0.70f, 1.0f, 1.33f, 0.68f, 0.75f, 1.0f, 0.72f, 1.5f, 0.70f, 0.8f, 1.0f};
     for (int t = 0; t < 12; ++t) {
-        SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, g_fake_w, g_fake_h, 32, SDL_PIXELFORMAT_ARGB8888);
+        g_fake_dw[t] = g_fake_w; g_fake_dh[t] = g_fake_h;
+        if (posters) { g_fake_dh[t] = 300; g_fake_dw[t] = (int)(300.f * aspect[t]); }
+        SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, g_fake_dw[t], g_fake_dh[t], 32, SDL_PIXELFORMAT_ARGB8888);
         if (!s) continue;
         const float hue = (float)t / 12.f;
         auto hsv = [](float h, float sat, float v) {
@@ -1221,6 +1288,35 @@ void lib_fake_art_init(SDL_Renderer* ren) {
         };
         const ImU32 top = hsv(hue, 0.65f, 0.95f), bot = hsv(std::fmod(hue + 0.12f, 1.f), 0.8f, 0.35f), acc = hsv(std::fmod(hue + 0.5f, 1.f), 0.7f, 1.f);
         uint32_t* px = (uint32_t*)s->pixels;
+        const int FW = g_fake_dw[t], FH = g_fake_dh[t];
+        if (posters) {
+            uint32_t rs = 977u + (uint32_t)t * 7919u;
+            auto rnd = [&]() { rs = rs * 1664525u + 1013904223u; return (rs >> 8) & 0xFFFFu; };
+            std::vector<int> rowsw;   // title banner: two or three rows of "lettering" blocks
+            for (int y = 0; y < FH; ++y)
+                for (int x = 0; x < FW; ++x) {
+                    const float k = (float)y / FH, dx = (float)x / FW - 0.5f, dy = k - 0.38f;
+                    ImU32 c = ImGui::GetColorU32(ImLerp(ImGui::ColorConvertU32ToFloat4(top), ImGui::ColorConvertU32ToFloat4(bot), k));
+                    const float rr = std::sqrt(dx * dx * 1.4f + dy * dy);
+                    if (rr < 0.20f) c = acc; else if (rr < 0.23f) c = IM_COL32(255, 255, 255, 255);
+                    if (((x - y / 2) / 18) % 4 == 0 && k < 0.55f && rr > 0.26f) c = ImGui::GetColorU32(ImLerp(ImGui::ColorConvertU32ToFloat4(c), ImVec4(1, 1, 1, 1), 0.16f));
+                    if (x < 6 || y < 6 || x >= FW - 6 || y >= FH - 6) c = IM_COL32(246, 240, 222, 255);   // a printed border
+                    px[y * s->pitch / 4 + x] = (c & 0xFF00FF00u) | ((c & 0xFF) << 16) | ((c >> 16) & 0xFF);
+                }
+            for (int row = 0; row < 3; ++row) {   // lettering blocks
+                const int y0 = (int)(FH * (0.68f + 0.085f * row)), hh = (int)(FH * 0.055f);
+                int x0 = (int)(FW * (0.12f + 0.04f * (float)(rnd() % 3)));
+                const int xe = FW - (int)(FW * 0.12f) - (row == 2 ? (int)(FW * 0.25f) : 0);
+                while (x0 < xe) {
+                    const int bw = std::min(xe - x0, (int)(FW * (0.035f + 0.02f * (float)(rnd() % 4))));
+                    for (int y = y0; y < y0 + hh && y < FH; ++y) for (int x = x0; x < x0 + bw; ++x) px[y * s->pitch / 4 + x] = 0xFFF8F4E6u;
+                    x0 += bw + (int)(FW * 0.012f) + (int)(rnd() % 3 == 0 ? FW * 0.025f : 0);
+                }
+            }
+            g_fake[t] = SDL_CreateTextureFromSurface(ren, s);
+            SDL_FreeSurface(s);
+            continue;
+        }
         for (int y = 0; y < g_fake_h; ++y)
             for (int x = 0; x < g_fake_w; ++x) {
                 float k = (float)y / g_fake_h;
@@ -1241,6 +1337,6 @@ bool lib_fake_art(const std::string& key, SDL_Texture** tex, int* w, int* h) {
     for (unsigned char c : key) hsh = (hsh ^ c) * 16777619u;
     SDL_Texture* t = g_fake[hsh % 12];
     if (!t) return false;
-    *tex = t; *w = g_fake_w; *h = g_fake_h;
+    *tex = t; *w = g_fake_dw[hsh % 12] ? g_fake_dw[hsh % 12] : g_fake_w; *h = g_fake_dh[hsh % 12] ? g_fake_dh[hsh % 12] : g_fake_h;
     return true;
 }
