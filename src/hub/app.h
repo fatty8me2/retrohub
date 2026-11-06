@@ -504,6 +504,7 @@ void game_colors(const std::string& id, ImU32* a, ImU32* b);
 const char* short_name(const std::string& id);
 void system_colors(hub::System s, ImU32* a, ImU32* b);
 const char* sys_badge(hub::System s);
+const char* sys_badge(const hub::GameEntry& e);   // like sys_badge(System) but a Switch 2 game reads "SWITCH 2"
 void entry_colors(const hub::GameEntry& e, ImU32* a, ImU32* b);
 
 
