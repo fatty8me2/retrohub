@@ -29,7 +29,7 @@ struct CasesState {
     std::vector<hubui::shelf::Media> media;
     std::vector<unsigned char> sysv;
     // the text under the centre case, recomputed when the focus changes
-    int text_focus = -2; uint64_t text_sig = 0; float text_w = 0;
+    int text_focus = -2, text_tick = -1; uint64_t text_sig = 0; float text_w = 0;
     std::string title_txt, sub_txt, tint_sys;
     // back cover
     std::string back_key, b_desc, b_genre, b_maker, b_label;
@@ -42,7 +42,32 @@ struct CasesState {
     float pending_shuffle = -1.f;
     ImU32 sc0[32] = {}, sc1[32] = {};
     bool sc_have[32] = {};
+    // car-stage: ambient colour from the focused cover, idle motion, the title block, the sliding tab highlight
+    SDL_Texture* col_tex = nullptr; std::string col_key; bool col_have = false; hubui::cases::Rgb8 col_rgb;   // dominant colour of the focused cover (computed once per texture)
+    double clock = 0.0;                         // seconds, for the idle float and the light motes
+    hubui::shelf::Spring settle;                // a small bounce of the centre case when the carousel comes to rest
+    bool was_moving = false;
+    float tab_dir = 0.f;                        // -1 / +1: the direction the last console change came from (the cases slide in from there)
+    float tl_a = 1.f;                           // title block fade (restarts when the focus changes)
+    float tl_slide = 0.f;                       // and its small upward slide
+    int tl_focus = -2;
+    std::string key_next, played_clamp;
+    int key_idx = -2; uint64_t key_sig = ~0ull;  // the cover-colour key is rebuilt only when the focused item (or the list) changes
+    std::string meta_txt, played_txt, chip_txt; // "2001 - 1-4 players - Racing", "Last played 3 days ago - 14 h total", "GameCube" / "Switch 2"
+    ImU32 chip_col = 0;
+    float chip_font = 0.f;
+    ImU32 sc_art0 = 0, sc_art1 = 0;             // the stage tint pair taken from the focused cover (0 = use the console colours)
+    float hl_x0 = -1.f, hl_x1 = -1.f; ImU32 hl_col = 0;   // the tab bar's sliding highlight
+    std::unordered_map<SDL_Texture*, uint32_t> fake_cols;  // HUB_SHOT_FAKE_ART textures: their colours are registered when they are made
 } CS;
+
+/* The dominant colour of a cover texture: the art cache keeps one per slot; the screenshot fakes register theirs. 0 = none (grey art, not loaded). */
+uint32_t cases_art_rgb(SDL_Texture* t) {
+    if (!t) return 0;
+    auto it = CS.fake_cols.find(t);
+    if (it != CS.fake_cols.end()) return it->second;
+    return hubart::average_color(t);
+}
 
 bool cases_on() { return lib_layout() == LibLayout::Cases; }
 
@@ -51,7 +76,7 @@ const char* sys_short_c(hub::System s) {
         case hub::System::N64: return "N64"; case hub::System::GBA: return "GBA"; case hub::System::GB: return "GB"; case hub::System::GBC: return "GBC";
         case hub::System::GC: return "GC"; case hub::System::N3DS: return "3DS"; case hub::System::WiiU: return "Wii U"; case hub::System::NDS: return "DS";
         case hub::System::PS1: return "PS1"; case hub::System::PS2: return "PS2"; case hub::System::NES: return "NES"; case hub::System::SNES: return "SNES";
-        case hub::System::PSP: return "PSP"; default: return "?";
+        case hub::System::PSP: return "PSP"; case hub::System::Switch: return "SWITCH"; default: return "?";
     }
 }
 hub::System sys_of(int idx) { return is_ghost(idx) ? hub::system_from_short(ghost_of(idx).sys) : A.lib[(size_t)idx].system; }
@@ -81,6 +106,10 @@ void cases_goto(const Disp& D, int pos, bool glide_from_afar, bool set_nav) {
 
 void cases_switch_tab(const std::string& sys) {
     if (sys == A.sys_filter) return;
+    {   // the cases slide in from the side the new console sits on
+        const int a = hubui::cases::tab_index(CS.tabs, A.sys_filter), b = hubui::cases::tab_index(CS.tabs, sys);
+        CS.tab_dir = b > a ? 1.f : b < a ? -1.f : 0.f;
+    }
     A.sys_filter = sys;
     A.vis_dirty = true;
     CS.land_key = CS.mem.recall(sys);
@@ -228,46 +257,87 @@ CHit cases_hit(uint32_t id, ImVec2 p0, ImVec2 p1, bool is_focus_item) {
 
 float key_analog(ImGuiKey k) { const ImGuiKeyData* d = ImGui::GetKeyData(k); return d ? d->AnalogValue : 0.f; }
 
-/* ---- the tab bar ---- */
+#include "cases_nav.inc"   // sort chip + picker, scrubber, section jumps, quick-jump overlay, section bubble
+
+/* ---- the tab bar ---- a pill strip: one highlight slides to the active console (in its colour), every console has its colour dot and a small game count ---- */
 void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int active, bool can_pad) {
     using hubui::cases::Tab;
     ImGuiIO& io = ImGui::GetIO();
     ImFont* f = ui::F.bold ? ui::F.bold : ui::F.body;
-    const float fs = f->FontSize;
-    const float pad_x = sp(1.5f), gap = sp(0.3f), ph = h - sp(0.7f);
+    ImFont* cf = ui::F.cap;
+    const float fs = f->FontSize, cfs = cf->FontSize;
+    float pad_x = sp(1.35f);
+    const float gap = sp(0.2f), ph = h - sp(0.7f), dot_r = sp(0.3f), cnt_gap = sp(0.45f);
     const size_t nt = std::min<size_t>(CS.tabs.size(), 40);
-    active = std::min(active, (int)nt - 1);
+    if (nt == 0) return;
+    active = std::max(0, std::min(active, (int)nt - 1));
     float total = 0.f;
-    float wv[40];
-    for (size_t i = 0; i < nt && i < 40; ++i) { wv[i] = f->CalcTextSizeA(fs, FLT_MAX, 0.f, CS.tabs[i].label.c_str()).x + pad_x * 2.f; total += wv[i] + (i ? gap : 0.f); }
+    float wv[40], lw[40], cwid[40], xo[40];
+    char cnt[40][12];
     const char* lb_k = "[";
     const float hint_w = ui::key_hint_width(A.pad_mode, "LB", lb_k, "") + sp(1.f);
-    const float max_w = W - sp(2.f) - hint_w * 2.f - sp(1.f);
-    const float cw = std::min(max_w, total + sp(1.f));
-    const float cx0 = org.x + (W - cw) * 0.5f;
+    const float left_min = org.x + sp(1.4f) + h + sp(1.f) + hint_w, right_max = org.x + W - nav_side_w() - hint_w;   // clear of the menu button and of the Sort chip at the right end
+    const float room = std::max(sp(10.f), right_max - left_min) - sp(1.f);
+    bool show_counts = true;
+    for (size_t i = 0; i < nt; ++i) {
+        std::snprintf(cnt[i], sizeof cnt[i], "%d", CS.tabs[i].count);
+        lw[i] = f->CalcTextSizeA(fs, FLT_MAX, 0.f, CS.tabs[i].label.c_str()).x;
+        cwid[i] = cf->CalcTextSizeA(cfs, FLT_MAX, 0.f, cnt[i]).x;
+    }
+    auto layout = [&]() {   // too wide for the room: drop the small counts first, then tighten the padding; only then does the strip scroll
+        total = 0.f;
+        for (size_t i = 0; i < nt; ++i) {
+            wv[i] = pad_x * 2.f + lw[i] + (show_counts ? cnt_gap + cwid[i] : 0.f) + (CS.tabs[i].sys.empty() ? 0.f : dot_r * 2.f + sp(0.45f));
+            xo[i] = total;
+            total += wv[i] + gap;
+        }
+        total -= gap;
+    };
+    layout();
+    if (total > room) { show_counts = false; layout(); }
+    if (total > room) { pad_x = sp(0.8f); layout(); }
+    const float cw = std::min(std::max(sp(10.f), right_max - left_min), total + sp(1.f));
+    const float cx0 = std::max(left_min, std::min(org.x + (W - cw) * 0.5f, right_max - cw));
     const ImVec2 c0(cx0, y), c1(cx0 + cw, y + h);
     dl->AddRectFilled(ImVec2(c0.x + 2.f, c0.y + 4.f), ImVec2(c1.x + 2.f, c1.y + 4.f), IM_COL32(0, 0, 0, 70), h * 0.5f);
     dl->AddRectFilled(c0, c1, ui::with_alpha(ui::PANEL, 0.84f), h * 0.5f);
     dl->AddRect(c0, c1, ui::HAIRLINE, h * 0.5f, 0, 1.f);
     const float inner = cw - sp(1.f);
     float off_t = 0.f;
-    if (total > inner && active >= 0 && active < (int)nt) {
-        float acc = 0.f;
-        for (int i = 0; i < active; ++i) acc += wv[i] + gap;
-        off_t = std::max(0.f, std::min(total - inner, acc + wv[active] * 0.5f - inner * 0.5f));
+    if (total > inner) {   // scroll: centre the active tab, snapped so the first visible tab starts at the left edge and the active tab is always whole
+        const float want = std::max(0.f, std::min(total - inner, xo[active] + wv[active] * 0.5f - inner * 0.5f));
+        off_t = want;
+        for (size_t i = 0; i < nt; ++i) if (xo[i] >= want - 1.f) { off_t = xo[i]; break; }
+        if (off_t > total - inner) off_t = total - inner;
+        if (off_t + inner < xo[active] + wv[active] + sp(0.6f)) for (size_t i = 0; i < nt; ++i) if (xo[i] + inner >= xo[active] + wv[active] + sp(0.6f)) { off_t = xo[i]; break; }
+        if (off_t > xo[active]) off_t = xo[active];
     }
+    const bool snap = reduced_motion();
     ui::anim(CS.tab_off, off_t, 12.f);
-    if (reduced_motion()) CS.tab_off = off_t;
+    if (snap) CS.tab_off = off_t;
+    // the sliding highlight (strip coordinates) and its colour
+    ImU32 acol = ui::ACCENT, b2;
+    if (!CS.tabs[(size_t)active].sys.empty()) system_colors(hub::system_from_short(CS.tabs[(size_t)active].sys), &acol, &b2);
+    if (CS.hl_x0 < 0.f || snap) { CS.hl_x0 = xo[active]; CS.hl_x1 = xo[active] + wv[active]; CS.hl_col = acol; }
+    ui::anim(CS.hl_x0, xo[active], 14.f); ui::anim(CS.hl_x1, xo[active] + wv[active], 11.f);   // the trailing edge lags: the pill stretches as it moves
+    CS.hl_col = ui::mix(CS.hl_col ? CS.hl_col : acol, acol, snap ? 1.f : 1.f - std::exp(-io.DeltaTime * 12.f));
     // LB / RB hints at both ends
     const float hy = y + (h - (ui::F.cap->FontSize + sp(0.75f))) * 0.5f;
     ui::key_hint(dl, ImVec2(c0.x - hint_w + sp(0.3f), hy), A.pad_mode, "LB", "[", "");
     ui::key_hint(dl, ImVec2(c1.x + sp(0.7f), hy), A.pad_mode, "RB", "]", "");
     ImGui::PushClipRect(ImVec2(c0.x + sp(0.5f), c0.y), ImVec2(c1.x - sp(0.5f), c1.y), true);
-    float x = c0.x + sp(0.5f) - CS.tab_off;
+    const float x0s = c0.x + sp(0.5f) - CS.tab_off;
+    const float py0 = y + (h - ph) * 0.5f, py1 = y + (h + ph) * 0.5f;
+    {   // highlight: the console colour, a soft glow under it and a gloss on top
+        const ImVec2 a(x0s + CS.hl_x0, py0), b(x0s + CS.hl_x1, py1);
+        dl->AddRectFilled(ImVec2(a.x - 2.f, a.y + 2.f), ImVec2(b.x + 2.f, b.y + 3.f), ui::with_alpha(CS.hl_col, 0.28f), ph * 0.5f + 2.f);
+        dl->AddRectFilled(a, b, CS.hl_col, ph * 0.5f);
+        dl->AddRectFilledMultiColor(ImVec2(a.x + ph * 0.3f, a.y), ImVec2(b.x - ph * 0.3f, a.y + ph * 0.5f), IM_COL32(255, 255, 255, 52), IM_COL32(255, 255, 255, 52), IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 0));
+    }
     ImGui::PushID("casetabs");
-    for (size_t i = 0; i < nt && i < 40; ++i) {
+    for (size_t i = 0; i < nt; ++i) {
         const Tab& t = CS.tabs[i];
-        const ImVec2 p0(x, y + (h - ph) * 0.5f), p1(x + wv[i], y + (h + ph) * 0.5f);
+        const ImVec2 p0(x0s + xo[i], py0), p1(x0s + xo[i] + wv[i], py1);
         ImGui::PushID((int)i);
         ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         ImGui::SetCursorScreenPos(p0);
@@ -275,19 +345,29 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
         ImGui::PopItemFlag();
         const bool hov = ImGui::IsItemHovered();
         const bool on = (int)i == active;
-        ImU32 col = ui::ACCENT, b2;
-        if (!t.sys.empty()) system_colors(hub::system_from_short(t.sys), &col, &b2);
-        if (on) {
-            dl->AddRectFilled(p0, p1, col, ph * 0.5f);
-            dl->AddRectFilledMultiColor(ImVec2(p0.x + ph * 0.3f, p0.y), ImVec2(p1.x - ph * 0.3f, p0.y + ph * 0.5f), IM_COL32(255, 255, 255, 46), IM_COL32(255, 255, 255, 46), IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 0));
-        } else if (hov) dl->AddRectFilled(p0, p1, ui::FRAME_HOV, ph * 0.5f);
-        const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.label.c_str());
-        const bool light = on && ((0.2126f * (col & 0xFF) + 0.7152f * ((col >> 8) & 0xFF) + 0.0722f * ((col >> 16) & 0xFF)) / 255.f) > 0.72f;
-        dl->AddText(f, fs, ImVec2((p0.x + p1.x - ts.x) * 0.5f, (p0.y + p1.y - ts.y) * 0.5f), on ? (light ? IM_COL32(20, 22, 30, 255) : IM_COL32_WHITE) : hov ? ui::TEXT : ui::TEXT2, t.label.c_str());
+        ImU32 col = ui::ACCENT, b3;
+        if (!t.sys.empty()) system_colors(hub::system_from_short(t.sys), &col, &b3);
+        if (hov && !on) dl->AddRectFilled(p0, p1, ui::FRAME_HOV, ph * 0.5f);
+        const float hl_on = on ? 1.f : 0.f;
+        const bool light = on && ((0.2126f * (CS.hl_col & 0xFF) + 0.7152f * ((CS.hl_col >> 8) & 0xFF) + 0.0722f * ((CS.hl_col >> 16) & 0xFF)) / 255.f) > 0.72f;
+        const ImU32 ink = hl_on > 0.f ? (light ? IM_COL32(20, 22, 30, 255) : IM_COL32_WHITE) : hov ? ui::TEXT : ui::TEXT2;
+        float tx = p0.x + pad_x;
+        if (!t.sys.empty()) {   // the console's colour dot (on the active tab it becomes the ink colour: the pill already is that colour)
+            dl->AddCircleFilled(ImVec2(tx + dot_r, (p0.y + p1.y) * 0.5f), dot_r, on ? ui::scale_alpha(ink, 0.9f) : col, 12);
+            tx += dot_r * 2.f + sp(0.45f);
+        }
+        const bool whole = p0.x >= c0.x + sp(0.5f) - 1.f && p1.x <= c1.x - sp(0.5f) + 1.f;   // a label is drawn whole or not at all
+        if (whole || total <= inner) {
+            const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.label.c_str());
+            dl->AddText(f, fs, ImVec2(tx, (p0.y + p1.y - ts.y) * 0.5f), ink, t.label.c_str());
+            if (show_counts) {
+                const ImVec2 cs = cf->CalcTextSizeA(cfs, FLT_MAX, 0.f, cnt[i]);
+                dl->AddText(cf, cfs, ImVec2(tx + lw[i] + cnt_gap, (p0.y + p1.y - cs.y) * 0.5f + 1.f), on ? ui::scale_alpha(ink, 0.72f) : ui::TEXT3, cnt[i]);
+            }
+        }
         if (hov) ImGui::SetTooltip("%s: %d game%s", t.label.c_str(), t.count, t.count == 1 ? "" : "s");
         if (pressed) cases_switch_tab(t.sys);
         ImGui::PopID();
-        x += wv[i] + gap;
     }
     ImGui::PopID();
     ImGui::PopClipRect();
@@ -296,27 +376,31 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
         dl->AddRectFilledMultiColor(ImVec2(c0.x + sp(0.4f), c0.y + 1.f), ImVec2(c0.x + sp(2.8f), c1.y - 1.f), pc, pc0, pc0, pc);
         dl->AddRectFilledMultiColor(ImVec2(c1.x - sp(2.8f), c0.y + 1.f), ImVec2(c1.x - sp(0.4f), c1.y - 1.f), pc0, pc, pc, pc0);
     }
-    (void)io; (void)can_pad;
+    (void)can_pad;
 }
 
 /* ---- the hint bar ---- */
 void cases_hints(ImDrawList* dl, ImVec2 org, float W, float y, float h) {
     struct H { const char* pad; const char* key; const char* label; bool tail; };   // tail: dropped first when the bar is too narrow
     const bool pad = A.pad_mode;
-    H hs[14];
+    H hs[16];
     int nh = 0;
     hs[nh++] = {"A", "Enter", "Play", false};
     hs[nh++] = {"Y", "I", "Details", false};
     hs[nh++] = {"X", "X", "Flip", false};
-    hs[nh++] = {"X", "F", pad ? "Hold: Favorite" : "Favorite", true};
-    hs[nh++] = {"R3", "R", "Inspect", false};
+    hs[nh++] = {"X", "F", pad ? "Hold: Fav" : "Favorite", true};
+    hs[nh++] = {"R3", "R", "Inspect", true};
     hs[nh++] = {"L3", "Z", "Shuffle", true};
     hs[nh++] = {"LB", "[", "", false};
     hs[nh++] = {"RB", "]", "Console", false};
+    hs[nh++] = {"LT", "PgUp", "", false};
+    hs[nh++] = {"RT", "PgDn", "Section", false};
+    hs[nh++] = pad ? H{"RS", "J", "Jump / Sort", false} : H{"", "J", "Jump", false};
+    if (!pad) hs[nh++] = {"", "O", "Sort", false};
     hs[nh++] = {"Start", "Esc", "Menu", false};
     if (!pad) { hs[nh++] = {"", "Wheel", "Scroll", true}; hs[nh++] = {"", "Drag", "Inspect", true}; }
     const float gap = sp(2.f);
-    auto is_lb = [](const H& h) { return h.pad[0] == 'L' && h.pad[1] == 'B'; };
+    auto is_lb = [](const H& h) { return (h.pad[0] == 'L' && (h.pad[1] == 'B' || h.pad[1] == 'T') && !h.pad[2]) ; };   // LB + RB / LT + RT sit close together as a pair
     auto width = [&]() {
         float w = 0;
         for (int i = 0; i < nh; ++i) {
@@ -410,7 +494,7 @@ void draw_cases(Disp& D) {
             CS.init = true;
         } else if (CS.init) {
             const int p = selected_pos(D);
-            if (p >= 0) { CS.focus = p; CS.pos.x = (float)p; CS.pos.v = 0; } else CS.init = false;
+            if (p >= 0) { CS.focus = p; CS.pos.x = nav_land_x(CS.pos.x, p); CS.pos.v = 0; } else CS.init = false;
         }
     }
     if (!CS.init || CS.focus < 0 || CS.focus >= n) {
@@ -441,7 +525,8 @@ void draw_cases(Disp& D) {
 
     // ---- input ----
     const bool popup = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    const bool can = A.focused && !A.proc && !io.WantTextInput && !popup && !A.show_details && !A.show_ghost && A.page == Page::Library && !CS.menu_open;
+    const bool can0 = A.focused && !A.proc && !io.WantTextInput && !popup && !A.show_details && !A.show_ghost && A.page == Page::Library && !CS.menu_open;
+    const bool can = can0 && !nav_blocking();   // the sort picker / quick-jump overlay own the keys while open
     const bool act = can && (nav_mine || ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) || !A.pad_mode);
     if (can && !CS.tabs.empty()) {
         int td = 0;
@@ -502,7 +587,7 @@ void draw_cases(Disp& D) {
             int steps = 0;
             while (CS.wheel_acc >= 1.f) { CS.wheel_acc -= 1.f; --steps; }
             while (CS.wheel_acc <= -1.f) { CS.wheel_acc += 1.f; ++steps; }
-            if (steps) cases_goto(D, CS.focus + steps, false, true);
+            if (steps) { const int st = nav_wheel_steps(steps); cases_goto(D, CS.focus + st, std::abs(st) > 2, true); }   // a fast spin travels further per notch
         }
     }
     if (!act) CS.x_t = -1.f;
@@ -516,7 +601,8 @@ void draw_cases(Disp& D) {
     }
     if (held_dir != 0 && held_dir == CS.hold_dir) CS.hold_t += dt; else CS.hold_t = 0.f;
     CS.hold_dir = held_dir;
-    // page keys (LT / RT) and jumps from outside
+    nav_input(D, can0, act, dt);   // O / J / PageUp / PageDown / Home / End, LT / RT, right stick; the picker and overlay keys
+    // jumps from outside
     if (G.jump_pos >= 0 && G.jump_pos < n) { const int jp = G.jump_pos; G.jump_pos = -1; G.jump_center = false; G.jump_top = false; if (jp != CS.focus) { CS.focus = jp; CS.mode = on_move(CS.mode); } if (std::fabs((float)jp - CS.pos.x) > 14.f) CS.pos.x = jump_start(CS.pos.x, jp, 9.f); CS.last_game = A.sel_game; CS.last_ghost = A.sel_ghost; }
 
     // ---- inspect: spin with the right stick / arrows; a leaving case swings back ----
@@ -539,7 +625,21 @@ void draw_cases(Disp& D) {
     pos_step(CS.flip, ModeState{CS.mode}.flip_target(), dt, reduced);
     pos_step(CS.insp, CS.mode == Mode::Inspect ? 1.f : 0.f, dt, reduced);
     if (CS.mode != Mode::Flip && CS.flip.x < 0.02f && !CS.back_key.empty() && CS.flip.v == 0.f) cases_release_back();
+    { static float prev_flash = 0.f; if (CS.fav_flash > prev_flash + 0.5f && !reduced) CS.settle.v += 22.f; prev_flash = CS.fav_flash; }   // a favourite pops the case
     ui::anim(CS.fav_flash, 0.f, 2.2f);
+    CS.clock += (double)dt;
+    {   // a small bounce when the carousel comes to rest, and when a game is favourited
+        const bool moving_now = n && std::fabs(CS.pos.x - (float)CS.focus) > 0.02f;
+        if (CS.was_moving && !moving_now && !reduced) CS.settle.v += 12.f;
+        CS.was_moving = moving_now;
+        if (reduced) { CS.settle.x = 0.f; CS.settle.v = 0.f; }
+        else {
+            const float k = 260.f, c = 2.f * 0.30f * std::sqrt(k);   // light damping: two soft wobbles
+            const float h = std::min(dt, 0.05f);
+            CS.settle.v += (k * (0.f - CS.settle.x) - c * CS.settle.v) * h;
+            CS.settle.x += CS.settle.v * h;
+        }
+    }
 
     // ---- stage ----
     const bool tight = H < sp(44.f);   // a big UI size in a small window: a smaller title and hint bar so the cases keep their room
@@ -547,8 +647,10 @@ void draw_cases(Disp& D) {
     ImFont* cf = ui::F.cap;
     const float tab_h = sp(3.6f), tab_y = org.y + sp(tight ? 0.8f : 1.2f);
     const float hint_h = sp(tight ? 3.4f : 4.f), hint_y = org.y + H - hint_h;
-    const float title_h = tfont->FontSize * 1.18f + cf->FontSize * 1.35f + sp(0.6f);   // the title block; it starts below the case and its reflection gap (0.28 Hc)
-    const float avail_top = tab_y + tab_h + sp(1.2f), avail_bot = hint_y - sp(0.3f);
+    const float tsz = tfont->FontSize * (tight ? 1.f : 1.12f);   // a little larger than the heading font
+    const float title_h = tsz * 1.34f + cf->FontSize * (tight ? 1.5f : 1.75f) + cf->FontSize * (tight ? 1.3f : 1.45f) + sp(0.5f);   // the title block (title, console chip + facts, played line); it starts below the case and its reflection gap (0.28 Hc)
+    const float strip_h = nav_strip_h(tight), strip_y = hint_y - strip_h;   // the scrubber strip right above the hint bar (cases_nav.inc)
+    const float avail_top = tab_y + tab_h + sp(1.2f), avail_bot = strip_y - sp(0.3f);
     const float avail = std::max(sp(20.f), avail_bot - avail_top);
     float Hc = std::min((avail - title_h) / 1.34f, W * 0.42f);
     Hc = std::max(sp(12.f), Hc);
@@ -559,10 +661,38 @@ void draw_cases(Disp& D) {
     // tint follows the centre case's console
     ImU32 t0 = ui::ACCENT, t1 = ui::ACCENT;
     if (n) system_colors(sys_of(D.flat[(size_t)CS.focus]), &t0, &t1);
+    {   // ...but the focused game's own cover colour wins when it has one (computed once per texture, never from pixels per frame)
+        using namespace hubui::cases;
+        SDL_Texture* ft = nullptr;
+        bool key_changed = false;
+        if (n && !CS.no_art) {
+            ft = art_of(cur_idx).tex;
+            if (CS.key_idx != cur_idx || CS.key_sig != D.sig) { CS.key_idx = cur_idx; CS.key_sig = D.sig; CS.key_next = item_key(cur_idx); key_changed = true; }
+        } else if (CS.key_idx != -1) { CS.key_idx = -1; CS.key_next.clear(); key_changed = true; }
+        if (ft != CS.col_tex || key_changed) {
+            CS.col_tex = ft; CS.col_key = CS.key_next; CS.col_have = false;
+            if (ft) {
+                const uint32_t c = cases_art_rgb(ft);
+                Rgb8 a0, a1;
+                if (c && ambient_from_art({(int)(c & 255), (int)((c >> 8) & 255), (int)((c >> 16) & 255)}, &a0, &a1)) {
+                    t0 = IM_COL32(a0.r, a0.g, a0.b, 255); t1 = IM_COL32(a1.r, a1.g, a1.b, 255);
+                    CS.col_have = true; CS.col_rgb = a0;
+                }
+            }
+            CS.sc_art0 = CS.col_have ? t0 : 0; CS.sc_art1 = CS.col_have ? t1 : 0;
+        }
+        if (CS.sc_art0) { t0 = CS.sc_art0; t1 = CS.sc_art1; }
+    }
     if (!CS.tint0) { CS.tint0 = t0; CS.tint1 = t1; }
     {
-        const float k = reduced ? 1.f : 1.f - std::exp(-dt * 4.5f);
+        const float k = reduced ? 1.f : 1.f - std::exp(-dt * 3.4f);   // a slow, smooth crossfade as you browse
         CS.tint0 = ui::mix(CS.tint0, t0, k); CS.tint1 = ui::mix(CS.tint1, t1, k);
+    }
+    sc.time = CS.clock;   // a double: no stall after days of uptime sc.motion = !reduced;
+    {
+        const float mv = n ? std::min(1.f, std::fabs(CS.pos.x - (float)CS.focus)) : 0.f;
+        sc.spot = 1.f - 0.35f * mv;   // the spotlight dips a little while the carousel is moving
+        sc.dim = CS.insp.x > 0.f ? std::min(1.f, CS.insp.x) : 0.f;
     }
     const ImVec2 p0 = org, p1(org.x + W, org.y + H);
     dl->PushClipRect(p0, p1, true);
@@ -592,6 +722,38 @@ void draw_cases(Disp& D) {
         extra_r = need(lo, lo + 1) * (1.f - fr) + need(hi, hi + 1) * fr;
         extra_l = need(lo, lo - 1) * (1.f - fr) + need(hi, hi - 1) * fr;
     }
+    // flip / inspect: the enlarged, forward centre case is wider on screen, so the neighbours stand out of its way (never intersecting it)
+    const hubui::cases::CentreAdj cadj = hubui::cases::centre_adj(fl, ins, CS.settle.x);   // includes the settle bounce, so the push below already accounts for it
+    // the enlarged case (any spin / pitch) must stay between the tab bar and the scrubber strip (flip: also above the title block)
+    float fit_mul = 1.f;
+    if (n && (fl > 0.01f || ins > 0.01f)) {
+        const hubui::shelf::Media mc = CS.media[(size_t)ic];
+        hubui::cases::FitScene fs;
+        fs.U = sc.U; fs.eye = sc.eye; fs.dist = sc.dist; fs.hy = sc.hy;
+        const float top_lim = tab_y + tab_h + sp(0.7f);
+        const float bot_lim = (f0 + Hc * 0.24f) * (1.f - ins) + (strip_y - sp(0.4f)) * ins;
+        const float rest = slot_pose(0.f).scale * display_scale(mc) * cadj.scale_mul;
+        fit_mul = hubui::cases::fit_centre_scale(case_dims(mc), rest, 0.55f * ins, 0.05f * ins + 0.02f, cadj.z, fs, top_lim, bot_lim);
+    }
+    float push_l = 0.f, push_r = 0.f;
+    if (n > 1 && (fl > 0.01f || ins > 0.01f) && CS.focus >= 0 && CS.focus < n) {
+        const hubui::shelf::Media mc = CS.media[(size_t)CS.focus];
+        const CaseDims dc = case_dims(mc);
+        const float sc_rest = display_scale(mc), pitch = std::fabs(CS.spin.pitch) * ins;
+        const SlotPose s1 = slot_pose(1.f);
+        auto push_for = [&](int nb, float extra) {
+            if (nb < 0 || nb >= n) return 0.f;
+            const hubui::shelf::Media mn = CS.media[(size_t)nb];
+            const float nsc = s1.scale * display_scale(mn), base = s1.x + extra;
+            const float now = hubui::cases::flip_push(dc, sc_rest * cadj.scale_mul, 0.f, cadj.z, pitch, case_dims(mn), s1.yaw, nsc, s1.z, base, sc.dist);
+            const float rest = hubui::cases::flip_push(dc, sc_rest, 0.f, 0.f, 0.f, case_dims(mn), s1.yaw, nsc, s1.z, base, sc.dist);
+            return std::max(0.f, now - rest);
+        };
+        push_r = push_for(CS.focus + 1, extra_r);
+        push_l = push_for(CS.focus - 1, extra_l);
+        // the centre case is also turned (yaw 0.13 at rest, any angle while inspected) - covered by the conservative width bound
+    }
+    const float tab_slide = reduced ? 0.f : CS.tab_dir * (1.f - smoothstep01(CS.intro)) * 1.5f;
     for (int i = first; i <= last && ns < 2 * kWindow + 4; ++i) {
         Slot& s = slots[ns];
         s.i = i;
@@ -601,19 +763,21 @@ void draw_cases(Disp& D) {
         const float c = std::max(0.f, 1.f - ad);   // 1 at the centre, 0 one slot away
         shelfdraw::CasePose& ps = s.ps;
         ps = shelfdraw::CasePose();
-        ps.x = sp0.x + (s.d < 0.f ? -extra_l : extra_r) * smoothstep01(std::min(ad, 1.f)); ps.z = sp0.z; ps.yaw = sp0.yaw; ps.scale = sp0.scale * display_scale(CS.media[(size_t)i]);
+        ps.x = sp0.x + (s.d < 0.f ? -neighbour_shift(ad, extra_l, push_l) : neighbour_shift(ad, extra_r, push_r)); ps.z = sp0.z; ps.yaw = sp0.yaw; ps.scale = sp0.scale * display_scale(CS.media[(size_t)i]);
         ps.alpha = sp0.alpha * (0.15f + 0.85f * CS.intro);
-        // flip: the centre case turns over, rising a little toward the viewer so it never clips its neighbours
+        if (tab_slide != 0.f) ps.x += tab_slide;   // a console change: the whole row slides in from the side the new console sits on
+        // flip: the centre case turns over, rising toward the viewer; the neighbours stand out of its way (push_l / push_r)
         ps.yaw += c * fl - c * 0.13f;   // the centre case sits turned a touch so its side shows a little depth
-        const float sf = std::sin(std::min(fl, 3.14159f));
-        ps.z -= c * (0.5f * sf + 0.0f);
-        ps.scale *= 1.f + c * (0.05f * sf + 0.10f * smoothstep01(fl / 3.14159f));
-        ps.z -= c * 0.4f * smoothstep01(fl / 3.14159f);
+        ps.z += c * cadj.z;
+        ps.scale *= (1.f + c * (cadj.scale_mul - 1.f)) * (1.f + c * (fit_mul - 1.f));
+        if (c > 0.f && !reduced) {   // idle: the case breathes (a slow float and a hint of sway)
+            const float calm = (1.f - ins) * (1.f - std::min(1.f, fl / 3.14159f));
+            ps.lift += c * calm * hubui::cases::idle_bob(CS.clock);
+            ps.yaw += c * calm * hubui::cases::idle_sway(CS.clock);
+        }
         // inspect: the case comes forward and turns freely
         if (c > 0.f && ins > 0.001f) {
-            ps.z -= c * ins * 0.6f;
-            ps.scale *= 1.f + c * ins * 0.05f;
-            ps.lift = c * ins * 0.05f;
+            ps.lift += c * ins * 0.05f;
             ps.yaw = ps.yaw * (1.f - c * ins) + (CS.spin.yaw) * c * ins;
             ps.pitch = CS.spin.pitch * c * ins;
         }
@@ -629,6 +793,11 @@ void draw_cases(Disp& D) {
         const hub::System sy = (hub::System)CS.sysv[(size_t)i];
         cd.sys_name = hub::system_name(sy);
         cd.sys_short = sys_short_c(sy);
+        if (sy == hub::System::Switch) {   // Switch 2 games have their own banner; HUB_SHOT_NX2 (screenshots) makes every Switch case one
+            static const bool shot_nx2 = g_headless && std::getenv("HUB_SHOT_NX2") != nullptr;
+            cd.nx2 = shot_nx2 || (!is_ghost(idx) && A.lib[(size_t)idx].nx2);
+            if (cd.nx2) { cd.sys_name = "Nintendo Switch 2"; cd.sys_short = "SWITCH 2"; }
+        }
         const int si = CS.sysv[(size_t)i];
         if (!CS.sc_have[si]) { system_colors(sy, &CS.sc0[si], &CS.sc1[si]); CS.sc_have[si] = true; }
         cd.c0 = CS.sc0[si]; cd.c1 = CS.sc1[si];
@@ -658,7 +827,7 @@ void draw_cases(Disp& D) {
     shelfdraw::cases_stage_front(sc, p0, p1, CS.tint0, CS.tint1);
 
     // ---- hit boxes (left to right; the centre case claims its whole box) ----
-    if (n && ns > 0 && !CS.menu_open) {
+    if (n && ns > 0 && !CS.menu_open && !nav_blocking()) {
         int a0 = -1;
         for (int k = 0; k < ns; ++k) if (slots[k].i == ic) a0 = k;
         float xs[2 * kWindow + 5];
@@ -692,10 +861,11 @@ void draw_cases(Disp& D) {
         if (nav_to >= 0 && nav_to != CS.focus) {
             int target = nav_to;
             if (held_dir != 0 && CS.hold_t > 0.f) {   // holding a direction accelerates
-                const int extra = hold_boost(CS.hold_t) - 1;
+                const int extra = nav_hold_boost(CS.hold_t) - 1;
                 target = clamp_index(nav_to + held_dir * extra, n);
+                if (extra >= 1) NV.fast_t = std::max(NV.fast_t, 0.35f);
             }
-            cases_goto(D, target, false, target != nav_to);
+            cases_goto(D, target, target - nav_to >= 4 || nav_to - target >= 4, target != nav_to);
         }
         // a drag on the centre case inspects it; a click plays / opens details
         if (ImGui::IsMouseClicked(0)) { CS.drag_ok = centre_hover && CS.mode != Mode::Flip; CS.dragged = false; }
@@ -722,16 +892,23 @@ void draw_cases(Disp& D) {
         shelfdraw::cases_case(sc, s.cd, s.ps, false);
     });
 
-    // ---- title and subtitle under the centre case ----
+    shelfdraw::cases_vignette(sc, p0, p1, 0.55f + 0.35f * ins);
+
+    // ---- the title block under the centre case: title + favourite star, a console chip with the facts, and the play history ----
     if (n) {
         const int idx = cur_idx;
         const float maxw = W * 0.78f;
-        if (CS.text_focus != CS.focus || CS.text_sig != D.sig || std::fabs(CS.text_w - maxw) > 2.f) {
-            CS.text_focus = CS.focus; CS.text_sig = D.sig; CS.text_w = maxw;
-            CS.title_txt = ui::ellipsize(tfont, tfont->FontSize, item_title(idx), maxw);
+        const int tick = (int)(CS.clock / 5.f);   // the played line ("3 days ago") is refreshed every few seconds
+        if (CS.text_focus != CS.focus || CS.text_sig != D.sig || std::fabs(CS.text_w - maxw) > 2.f || CS.chip_font != tsz || CS.text_tick != tick) {
+            const bool new_game = CS.text_focus != CS.focus;
+            CS.text_focus = CS.focus; CS.text_sig = D.sig; CS.text_w = maxw; CS.chip_font = tsz; CS.text_tick = tick;
+            if (new_game) { CS.tl_a = reduced ? 1.f : 0.f; CS.tl_slide = reduced ? 0.f : 1.f; }
+            CS.title_txt = ui::ellipsize(tfont, tsz, item_title(idx), maxw);
             const hub::System sy = sys_of(idx);
             int year = 0, players = item_players(idx);
-            if (!is_ghost(idx)) {
+            std::string genre;
+            const bool ghost = is_ghost(idx);
+            if (!ghost) {
                 const hub::GameEntry& e = A.lib[(size_t)idx];
                 const GameInfo* cat = catalog_for(e);
                 CaseInfo ci;
@@ -739,22 +916,67 @@ void draw_cases(Disp& D) {
                 year = ci.year > 0 ? ci.year : (cat ? cat->year : 0);
                 if (ci.players > 0) players = ci.players;
                 else if (cat && cat->max_players > 0) players = cat->max_players;
+                genre = !ci.genre.empty() ? ci.genre : (cat ? cat->genre : std::string());
             }
             CS.sub_txt = subtitle_text(hub::system_name(sy), year, players);
+            const char* lab = tab_label(item_sys(idx));
+            CS.chip_txt = console_chip(lab ? lab : hub::system_name(sy), !ghost && A.lib[(size_t)idx].nx2);
+            ImU32 cc0 = ui::ACCENT, cc1 = ui::ACCENT;
+            system_colors(sy, &cc0, &cc1);
+            CS.chip_col = cc0;
+            const std::string dot = "  \xC2\xB7  ";
+            std::string m;
+            auto add = [&](const std::string& s) { if (!s.empty()) { if (!m.empty()) m += dot; m += s; } };
+            if (year > 0) add(std::to_string(year));
+            if (players == 1) add("1 player"); else if (players > 1) add("1-" + std::to_string(players) + " players");
+            add(genre);
+            {   // the facts and the played line never run wider than the stage: ellipsized to the room left beside the chip
+                ImFont* bf = ui::F.bold ? ui::F.bold : cf;
+                const float cfs = cf->FontSize;
+                const float chip_w = bf->CalcTextSizeA(cfs, FLT_MAX, 0.f, CS.chip_txt.c_str()).x + cfs * 1.3f, gap = cfs * 0.7f;
+                CS.meta_txt = m.empty() ? m : ui::ellipsize(cf, cfs, m.c_str(), std::max(cfs * 4.f, maxw - chip_w - gap));
+            }
+            if (ghost) CS.played_txt = "From a friend's library";
+            else {
+                const hub::GameState& gs = gstate(A.lib[(size_t)idx].key);
+                CS.played_txt = hubui::cont::last_played_line((uint64_t)std::time(nullptr), gs.last_played, gs.play_seconds, dot);
+            }
         }
+        if (CS.played_clamp != CS.played_txt) { CS.played_clamp = CS.played_txt; CS.played_txt = ui::ellipsize(cf, cf->FontSize, CS.played_txt.c_str(), maxw); CS.played_clamp = CS.played_txt; }
+        ui::anim(CS.tl_a, 1.f, 9.f); ui::anim(CS.tl_slide, 0.f, 9.f);
+        if (reduced) { CS.tl_a = 1.f; CS.tl_slide = 0.f; }
         const float moving = std::min(1.f, std::fabs(CS.pos.x - (float)CS.focus) * 0.8f);
-        const float ta = (1.f - moving * 0.85f) * (0.2f + 0.8f * CS.intro) * (1.f - 0.9f * ins);
-        const ImVec2 ts = tfont->CalcTextSizeA(tfont->FontSize, FLT_MAX, 0.f, CS.title_txt.c_str());
-        const float ty = f0 + Hc * 0.28f;
+        const float ta = (1.f - moving * 0.85f) * (0.2f + 0.8f * CS.intro) * (1.f - 0.5f * ins) * CS.tl_a * (1.f - smoothstep01(NV.jump_t));   // the quick-jump panel sits over the title block: the block steps aside while it is open   // dimmed, never gone, while inspecting
+        const float rise = CS.tl_slide * cf->FontSize * 0.7f;
+        const ImVec2 ts = tfont->CalcTextSizeA(tsz, FLT_MAX, 0.f, CS.title_txt.c_str());
+        const float ty = f0 + Hc * 0.28f + rise;
         const float tx = sc.cx - ts.x * 0.5f;
-        shelfdraw::glow_text(dl, tfont, tfont->FontSize, ImVec2(tx, ty), ui::scale_alpha(IM_COL32(255, 255, 255, 255), ta), CS.tint1 ? ui::mix(CS.tint0, IM_COL32_WHITE, 0.35f) : ui::ACCENT, ta, CS.title_txt.c_str());
-        const ImVec2 ss = cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, CS.sub_txt.c_str());
-        dl->AddText(cf, cf->FontSize, ImVec2(sc.cx - ss.x * 0.5f, ty + tfont->FontSize * 1.18f), ui::scale_alpha(ui::TEXT2, ta), CS.sub_txt.c_str());
-        // favourite star beside the title; a ring fills while X is held down
+        shelfdraw::glow_text(dl, tfont, tsz, ImVec2(tx, ty), ui::scale_alpha(IM_COL32(255, 255, 255, 255), ta), CS.tint1 ? ui::mix(CS.tint0, IM_COL32_WHITE, 0.35f) : ui::ACCENT, ta, CS.title_txt.c_str());
+        // row 2: the console chip and the facts
+        {
+            ImFont* bf = ui::F.bold ? ui::F.bold : cf;
+            const float cfs = cf->FontSize;
+            const ImVec2 cts = bf->CalcTextSizeA(cfs, FLT_MAX, 0.f, CS.chip_txt.c_str());
+            const ImVec2 mts = CS.meta_txt.empty() ? ImVec2(0, 0) : cf->CalcTextSizeA(cfs, FLT_MAX, 0.f, CS.meta_txt.c_str());
+            const float ch = cfs * 1.42f, cw = cts.x + cfs * 1.3f, gap = CS.meta_txt.empty() ? 0.f : cfs * 0.7f;
+            const float rx0 = sc.cx - (cw + gap + mts.x) * 0.5f, ry = ty + tsz * 1.22f + sp(0.1f);
+            const ImVec2 c0p(rx0, ry), c1p(rx0 + cw, ry + ch);
+            const ImU32 chip = ui::scale_alpha(CS.chip_col, ta);
+            dl->AddRectFilled(c0p, c1p, chip, ch * 0.5f);
+            dl->AddRectFilledMultiColor(ImVec2(c0p.x + ch * 0.4f, c0p.y + 1.f), ImVec2(c1p.x - ch * 0.4f, c0p.y + ch * 0.5f), IM_COL32(255, 255, 255, (int)(52 * ta)), IM_COL32(255, 255, 255, (int)(52 * ta)), IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 0));
+            const float luma = (0.2126f * (CS.chip_col & 255) + 0.7152f * ((CS.chip_col >> 8) & 255) + 0.0722f * ((CS.chip_col >> 16) & 255)) / 255.f;
+            dl->AddText(bf, cfs, ImVec2(c0p.x + (cw - cts.x) * 0.5f, ry + (ch - cts.y) * 0.5f), ui::scale_alpha(chip_wants_dark_ink(luma) ? IM_COL32(18, 20, 28, 255) : IM_COL32_WHITE, ta), CS.chip_txt.c_str());
+            if (!CS.meta_txt.empty()) dl->AddText(cf, cfs, ImVec2(c1p.x + gap, ry + (ch - mts.y) * 0.5f), ui::scale_alpha(ui::TEXT, ta * 0.86f), CS.meta_txt.c_str());
+            // row 3: last played and total time
+            const ImVec2 pts = cf->CalcTextSizeA(cfs, FLT_MAX, 0.f, CS.played_txt.c_str());
+            dl->AddText(cf, cfs, ImVec2(sc.cx - pts.x * 0.5f, ry + ch + sp(0.3f)), ui::scale_alpha(ui::TEXT3, ta), CS.played_txt.c_str());
+        }
+        // favourite star beside the title (it pops with a burst of sparks when toggled); a ring fills while X is held down
         const bool fav = item_fav(idx);
-        const float sr = tfont->FontSize * 0.62f;
-        const ImVec2 sc_pos(tx + ts.x + sr * 1.4f, ty + tfont->FontSize * 0.55f);
-        if (fav) ui::icon(dl, ui::Icon::StarFilled, sc_pos, sr * 2.f, ui::scale_alpha(IM_COL32(255, 214, 70, 255), ta));
+        const float sr = tsz * 0.62f;
+        const ImVec2 sc_pos(tx + ts.x + sr * 1.4f, ty + tsz * 0.55f);
+        const float pop = (CS.fav_flash > 0.01f && !reduced) ? 1.f + 0.7f * std::sin(3.14159f * std::min(1.f, (1.f - CS.fav_flash) * 1.6f)) : 1.f;
+        if (fav) ui::icon(dl, ui::Icon::StarFilled, sc_pos, sr * 2.f * pop, ui::scale_alpha(IM_COL32(255, 214, 70, 255), ta));
         if (CS.x_t > 0.12f && !CS.x_fav) {
             const float pr = std::min(1.f, CS.x_t / kFavHold);
             ui::icon(dl, ui::Icon::Star, sc_pos, sr * 2.f, IM_COL32(255, 214, 70, 200));
@@ -764,6 +986,11 @@ void draw_cases(Disp& D) {
         if (CS.fav_flash > 0.01f) {
             const float k = 1.f - CS.fav_flash;
             dl->AddCircle(sc_pos, sr * (1.4f + 2.2f * k), IM_COL32(255, 214, 70, (int)(200 * CS.fav_flash)), 28, sp(0.25f));
+            for (int i = 0; i < 8 && !reduced; ++i) {   // sparks
+                const float an = 6.2831853f * ((float)i + 0.5f) / 8.f;
+                const float r0 = sr * (1.5f + 2.0f * k), r1 = r0 + sr * (0.5f + 0.5f * (1.f - k));
+                dl->AddLine(ImVec2(sc_pos.x + std::cos(an) * r0, sc_pos.y + std::sin(an) * r0), ImVec2(sc_pos.x + std::cos(an) * r1, sc_pos.y + std::sin(an) * r1), IM_COL32(255, 224, 120, (int)(230 * CS.fav_flash)), sp(0.2f));
+            }
         }
     } else {
         const char* m1 = A.search_buf[0] ? "No games match your search" : "No games in this console yet";
@@ -793,6 +1020,7 @@ void draw_cases(Disp& D) {
         ImGui::PopID();
     }
     cases_hints(dl, org, W, hint_y, hint_h);
+    nav_draw(dl, org, sz, tab_y, tab_h, strip_y, strip_h, ImVec2(sc.cx, f0 - Hc * 0.5f), Hc, D);
     dl->PopClipRect();
 
     // ---- screenshot aids (HUB_SHOT_CASES=browse|flip|inspect|cartridge|missingart) ----
@@ -801,6 +1029,7 @@ void draw_cases(Disp& D) {
         const int target = std::min(n - 1, std::max(0, n / 5));
         cases_goto(D, CS.focus > 0 ? CS.focus : target, false, false);
         CS.pos.x = (float)CS.focus;
+        nav_shot_apply(CS.shot_mode, D);
         if (CS.shot_mode == "flip") { CS.mode = Mode::Flip; if (!is_ghost(D.flat[(size_t)CS.focus])) cases_collect_back(D.flat[(size_t)CS.focus]); CS.flip.x = 3.14159f; CS.flip.v = 0; }
         else if (CS.shot_mode == "inspect") { CS.mode = Mode::Inspect; CS.spin.yaw = 0.62f; CS.spin.pitch = -0.2f; CS.insp.x = 1.f; }
         CS.intro = 1.f;

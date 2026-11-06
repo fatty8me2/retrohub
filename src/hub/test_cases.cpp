@@ -1,4 +1,5 @@
 #include "cases_logic.h"
+#include "cases_stage.h"
 #include "logic.h"
 
 #include <cmath>
@@ -155,6 +156,211 @@ int main() {
     CHECK(back.lib_layout == "cases" && back.tv_cases && !Settings().tv_cases);
     Settings old;
     CHECK(settings_from_json("{\"lib_layout\": \"shelf\"}", &old) && old.lib_layout == "shelf" && !old.tv_cases);   // an older file stays valid
+
+    /* car-cases: per-console retail packaging (shapes, kinds, media mapping) */
+    {
+        using shelf::media_for;
+        CHECK(media_for("switch") == Media::SwitchCase && kind_for(Media::SwitchCase) == CaseKind::Keep && has_sheen(Media::SwitchCase) && !is_box(Media::SwitchCase));
+        CHECK(std::string(shelf::media_key(Media::SwitchCase)) == "switch-case" && !shelf::is_cart(Media::SwitchCase));
+        // every console has its own, non-generic media: no two share one
+        const char* all[] = {"nes", "snes", "n64", "gb", "gbc", "gba", "nds", "3ds", "ps1", "ps2", "gc", "wiiu", "psp", "switch"};
+        for (const char* sys : all) CHECK(media_for(sys) != Media::Generic);
+        for (int i = 0; i < 14; ++i) for (int j = i + 1; j < 14; ++j) CHECK(media_for(all[i]) != media_for(all[j]));
+        // kinds: plastic keep cases, a jewel case and cardboard boxes
+        CHECK(kind_for(Media::GcCase) == CaseKind::Keep && kind_for(Media::Ps2Case) == CaseKind::Keep && kind_for(Media::WiiUCase) == CaseKind::Keep);
+        CHECK(kind_for(Media::Ps1Jewel) == CaseKind::Jewel);
+        for (Media m : {Media::NesCart, Media::SnesCart, Media::N64Cart, Media::GbCart, Media::GbcCart, Media::GbaCart}) CHECK(kind_for(m) == CaseKind::Box && !has_sheen(m));
+        // proportions: Switch slim and tall, Wii U Blu-ray sized, PS1 wider than tall, DS near square, PSP tall and narrow, SNES / N64 landscape, NES portrait
+        const CaseDims sw = case_dims(Media::SwitchCase), wu = case_dims(Media::WiiUCase), gc = case_dims(Media::GcCase), ps2 = case_dims(Media::Ps2Case);
+        CHECK(sw.w < wu.w && sw.h < gc.h && sw.d < ps2.d && sw.w / sw.h > 0.55f && sw.w / sw.h < 0.65f);
+        CHECK(wu.h < gc.h && wu.d < ps2.d && gc.d < ps2.d);
+        CHECK(case_dims(Media::Ps1Jewel).w > case_dims(Media::Ps1Jewel).h);
+        CHECK(case_dims(Media::DsCase).w / case_dims(Media::DsCase).h > 0.85f && case_dims(Media::DsCase).w / case_dims(Media::DsCase).h < 1.0f);
+        CHECK(case_dims(Media::N3dsCase).w == case_dims(Media::DsCase).w && case_dims(Media::N3dsCase).h == case_dims(Media::DsCase).h);
+        CHECK(case_dims(Media::PspCase).w / case_dims(Media::PspCase).h < 0.66f && case_dims(Media::PspCase).h > case_dims(Media::DsCase).h);
+        CHECK(case_dims(Media::SnesCart).w > case_dims(Media::SnesCart).h && case_dims(Media::N64Cart).w > case_dims(Media::N64Cart).h && case_dims(Media::NesCart).w < case_dims(Media::NesCart).h);
+        CHECK(case_dims(Media::GbaCart).d > 0.12f && case_dims(Media::GbCart).h < case_dims(Media::NesCart).h);
+        // the switch case is drawn big enough to read, never taller than the stage allows
+        CHECK(display_scale(Media::SwitchCase) > 1.f && case_dims(Media::SwitchCase).h * display_scale(Media::SwitchCase) <= 1.f + 1e-4f);
+    }
+
+    /* car-stage */
+    {   // ambient colour from a cover
+        Rgb8 a0, a1;
+        CHECK(!ambient_from_art({128, 128, 128}, &a0, &a1));                    // grey art: the console colours stay
+        CHECK(!ambient_from_art({4, 3, 3}, &a0, &a1));                          // near black too
+        CHECK(ambient_from_art({220, 30, 30}, &a0, &a1));                       // a red cover: a deep red and a lighter red, never garish
+        float h0, s0, v0, h1, s1, v1;
+        rgb_to_hsv(a0, &h0, &s0, &v0); rgb_to_hsv(a1, &h1, &s1, &v1);
+        CHECK((h0 < 0.04f || h0 > 0.96f) && v0 < 0.7f && v1 > v0 && s0 <= 0.83f && s0 >= 0.4f && s1 <= s0 + 1e-3f);
+        for (int hue = 0; hue < 360; hue += 15) {                               // every hue stays within the tasteful brightness range
+            Rgb8 in = hsv_to_rgb((float)hue / 360.f, 1.f, 1.f), o0, o1;
+            CHECK(ambient_from_art(in, &o0, &o1));
+            float hh, ss, vv;
+            rgb_to_hsv(o0, &hh, &ss, &vv);
+            CHECK(vv > 0.5f && vv < 0.66f && ss >= 0.4f && ss <= 0.83f);
+        }
+        Rgb8 rt = hsv_to_rgb(0.33f, 0.5f, 0.8f); float hh, ss, vv; rgb_to_hsv(rt, &hh, &ss, &vv);
+        CHECK(std::fabs(hh - 0.33f) < 0.01f && std::fabs(ss - 0.5f) < 0.01f && std::fabs(vv - 0.8f) < 0.01f);
+    }
+    {   // centre_adj: the enlarged flipped / inspected case comes forward and grows
+        CHECK(centre_adj(0.f, 0.f).z == 0.f && centre_adj(0.f, 0.f).scale_mul == 1.f);
+        CHECK(centre_adj(3.14159f, 0.f).z < -0.35f && centre_adj(3.14159f, 0.f).scale_mul > 1.09f);
+        CHECK(centre_adj(0.f, 1.f).z < -0.5f && centre_adj(0.f, 1.f).scale_mul > 1.04f);
+    }
+    {   // nothing may intersect the centre case at the flip / inspect pose: every case kind against every neighbour kind, both sides, all angles
+        const float dist = 6.5f, eye = 0.55f;
+        (void)eye;
+        const shelf::Media all[] = {shelf::Media::NesCart, shelf::Media::SnesCart, shelf::Media::N64Cart, shelf::Media::GbCart, shelf::Media::GbcCart, shelf::Media::GbaCart,
+                                    shelf::Media::DsCase, shelf::Media::N3dsCase, shelf::Media::Ps1Jewel, shelf::Media::Ps2Case, shelf::Media::GcCase, shelf::Media::WiiUCase,
+                                    shelf::Media::PspCase, shelf::Media::Generic};
+        struct Ext { float lo, hi; };
+        // exact screen x extent (units of U, from the centre line) of a case: its 8 corners turned by yaw / pitch, then perspective-projected
+        auto extent = [&](const CaseDims& d, float yaw, float pitch, float scale, float ox, float oz) {
+            Ext e{1e9f, -1e9f};
+            const float ct = std::cos(yaw), st = std::sin(yaw), cp = std::cos(pitch), sp_ = std::sin(pitch);
+            for (int i = 0; i < 8; ++i) {
+                const float lx = (i & 1 ? 0.5f : -0.5f) * d.w * scale, ly = ((i & 2) ? 0.5f : -0.5f) * d.h * scale, lz = (i & 4 ? 0.5f : -0.5f) * d.d * scale;
+                const float xr = lx * ct + lz * st, zr = -lx * st + lz * ct;
+                const float zz = ly * sp_ + zr * cp;
+                const float sx = (ox + xr) * dist / std::max(0.4f, dist + oz + zz);
+                e.lo = std::min(e.lo, sx); e.hi = std::max(e.hi, sx);
+            }
+            return e;
+        };
+        int bad = 0, tested = 0;
+        for (shelf::Media mc : all) for (shelf::Media mn : all) {
+            const CaseDims dc = case_dims(mc), dn = case_dims(mn);
+            const float scc = display_scale(mc), snn = display_scale(mn);
+            const float extra = std::max(0.f, neighbour_x(dc, scc, dn, snn) - kNeighbourBase);
+            const SlotPose s1 = slot_pose(1.f);
+            const float nsc = s1.scale * snn, base = s1.x + extra;
+            for (int step = 0; step <= 14; ++step) {
+                float fl = 3.14159f * (float)step / 14.f, ins = 0.f;
+                for (int mode = 0; mode < 2; ++mode) {
+                    if (mode == 1) { fl = 0.f; ins = (float)step / 14.f; }
+                    for (float settle : {-0.8f, 0.f, 1.2f}) {   // the bounce of a case coming to rest scales the centre case too
+                    if (settle != 0.f && step % 3) continue;
+                    const CentreAdj a = centre_adj(fl, ins, settle);
+                    for (int sw = 0; sw < 8; ++sw) {   // the free spin of inspect (and pitch); during a flip the yaw is the flip angle
+                        const float yaw = mode == 1 ? 6.2831853f * (float)sw / 8.f : fl - 0.13f, pitch = mode == 1 ? ((sw & 1) ? 0.55f : (sw & 2) ? -0.55f : 0.f) * ins : 0.f;
+                        const float cs = scc * a.scale_mul;
+                        const float now = flip_push(dc, cs, 0.f, a.z, std::fabs(pitch), dn, s1.yaw, nsc, s1.z, base, dist);
+                        const float rest = flip_push(dc, scc, 0.f, 0.f, 0.f, dn, s1.yaw, nsc, s1.z, base, dist);
+                        const float push = std::max(0.f, now - rest);
+                        const Ext ce = extent(dc, yaw, pitch, cs, 0.f, a.z);
+                        const Ext re = extent(dn, s1.yaw, 0.f, nsc, base + push, s1.z);      // right neighbour
+                        const Ext le = extent(dn, -s1.yaw, 0.f, nsc, -(base + push), s1.z);  // left neighbour (mirror)
+                        ++tested;
+                        if (re.lo < ce.hi - 1e-4f || le.hi > ce.lo + 1e-4f) { if (++bad <= 3) std::printf("overlap: centre %d neighbour %d fl=%.2f ins=%.2f yaw=%.2f: gap %.3f\n", (int)mc, (int)mn, fl, ins, yaw, re.lo - ce.hi); }
+                        // on a 16:9 or 16:10 screen (case height = 0.42 of the width at most) the pushed neighbour must still start on screen
+                        for (float aspect : {16.f / 9.f, 16.f / 10.f}) {
+                            const float Wd = 1600.f, Hd = Wd / aspect, U = std::min(Hd * 0.42f, Wd * 0.42f);
+                            CHECK(re.lo * U < Wd * 0.5f);
+                        }
+                    }
+                    }
+                }
+            }
+        }
+        CHECK(bad == 0);
+        CHECK(tested > 1000);
+    }
+    {   // the first neighbours and everything beyond move out by the same amount, so the shelf pitch between them is untouched while a case is flipped
+        const float ex = 0.12f, pu = 0.31f;
+        CHECK(neighbour_shift(1.f, ex, pu) == neighbour_shift(2.f, ex, pu) && neighbour_shift(2.f, ex, pu) == neighbour_shift(7.f, ex, pu));
+        CHECK(neighbour_shift(0.f, ex, pu) == 0.f && neighbour_shift(0.5f, ex, pu) > 0.f && neighbour_shift(0.5f, ex, pu) < neighbour_shift(1.f, ex, pu));
+        CHECK(std::fabs((slot_pose(2.f).x + neighbour_shift(2.f, ex, pu) - (slot_pose(1.f).x + neighbour_shift(1.f, ex, pu))) - (slot_pose(2.f).x - slot_pose(1.f).x)) < 1e-6f);
+        CHECK(centre_adj(0.f, 0.f, 1.f).scale_mul > 1.029f && centre_adj(0.f, 0.f, 99.f).scale_mul < 1.05f);   // the settle term is bounded
+        // a clock running for 30 days still moves the idle float frame to frame
+        CHECK(idle_bob(2.6e6 + 0.00) != idle_bob(2.6e6 + 0.5));
+    }
+    {   // idle float stays tiny and bounded
+        float mx = 0.f, my = 0.f;
+        for (int i = 0; i < 2000; ++i) { mx = std::max(mx, std::fabs(idle_bob(0.05f * (float)i))); my = std::max(my, std::fabs(idle_sway(0.05f * (float)i))); }
+        CHECK(mx < 0.02f && mx > 0.008f && my < 0.02f);
+        CHECK(console_chip("GameCube", false) == "GameCube" && console_chip("Switch", true) == "Switch 2");
+        CHECK(chip_wants_dark_ink(0.9f) && !chip_wants_dark_ink(0.3f));
+    }
+    /* car-nav */
+    {
+        CHECK(nav_label_letter("Zelda") == "Z" && nav_label_letter("alpha") == "A" && nav_label_letter("1942") == "#" && nav_label_letter("!!!") == "#" && nav_label_letter("") == "#");
+        CHECK(nav_label_year(1998) == "1998" && nav_label_year(0) == "?");
+        const int64_t now = 10000000;
+        CHECK(nav_label_age(now, 0) == "Never" && nav_label_age(now, now - 3600) == "Today" && nav_label_age(now, now - 3 * 86400) == "This week");
+        CHECK(nav_label_age(now, now - 20 * 86400) == "This month" && nav_label_age(now, now - 90 * 86400) == "Earlier" && nav_label_age(now, 0, false) == "Unknown");
+        CHECK(nav_label_plays(0) == "Never" && nav_label_plays(600) == "Under 1h" && nav_label_plays(3600) == "1h+" && nav_label_plays(40000) == "10h+");
+        CHECK(nav_kind_for(SortMode::Title) == NavKind::Letters && nav_kind_for(SortMode::ReleaseYear) == NavKind::Years && nav_kind_for(SortMode::Console) == NavKind::Consoles);
+        CHECK(nav_kind_for(SortMode::LastPlayed) == NavKind::Recency && nav_kind_for(SortMode::MostPlayed) == NavKind::Plays && nav_kind_for(SortMode::RecentlyAdded) == NavKind::Added);
+        // sections: runs of equal labels; an empty label (the pinned game) joins its neighbour
+        const std::vector<std::string> lb = {"", "A", "A", "B", "B", "B", "#", "A"};
+        const auto sc = build_sections(lb);
+        CHECK(sc.size() == 4 && sc[0].label == "A" && sc[0].first == 0 && sc[0].count == 3 && sc[1].label == "B" && sc[1].first == 3 && sc[1].count == 3);
+        CHECK(sc[2].label == "#" && sc[2].first == 6 && sc[3].label == "A" && sc[3].first == 7 && sc[3].count == 1);   // the same label again later is a new section
+        {   // Title sort puts every digit / symbol / non-ASCII title in one block: a single "#" section
+            const auto hs = build_sections({"#", "#", "#", "A", "B", "Z"});
+            CHECK(hs.size() == 4 && hs[0].label == "#" && hs[0].count == 3);
+        }
+        CHECK(build_sections({}).empty() && build_sections({"", ""}).empty());
+        CHECK(section_index(sc, 0) == 0 && section_index(sc, 2) == 0 && section_index(sc, 3) == 1 && section_index(sc, 5) == 1 && section_index(sc, 7) == 3);
+        // previous / next section
+        CHECK(section_step(sc, 0, 1, 8) == 3 && section_step(sc, 4, 1, 8) == 6 && section_step(sc, 7, 1, 8) == 7);   // last section: the last game
+        CHECK(section_step(sc, 4, -1, 8) == 3 && section_step(sc, 3, -1, 8) == 0 && section_step(sc, 1, -1, 8) == 0 && section_step(sc, 0, -1, 8) == 0);
+        CHECK(section_by_label(sc, "B") == 1 && section_by_label(sc, "Q") == -1);
+        CHECK(section_step({}, 5, 1, 100) == 13 && section_step({}, 5, -1, 100) == 0);
+        // scrubber position <-> index
+        CHECK(scrub_frac(0, 100) == 0.f && scrub_frac(99, 100) == 1.f && scrub_frac(5, 1) == 0.f && std::fabs(scrub_frac(50, 101) - 0.5f) < 1e-6f);
+        CHECK(scrub_index(0.f, 100) == 0 && scrub_index(1.f, 100) == 99 && scrub_index(-3.f, 100) == 0 && scrub_index(7.f, 100) == 99 && scrub_index(0.5f, 101) == 50 && scrub_index(0.5f, 0) == 0);
+        for (int n : {2, 7, 240, 3000}) for (int i = 0; i < n; i += std::max(1, n / 37)) CHECK(scrub_index(scrub_frac(i, n), n) == i);   // the round trip never drifts
+        CHECK(std::fabs(scrub_x(50, 101, 100.f, 300.f) - 200.f) < 1e-3f);
+        CHECK(count_text(122, 2400) == "123 / 2,400" && count_text(0, 5) == "1 / 5" && count_text(0, 0) == "0 / 0" && count_text(5, 1234567) == "6 / 1,234,567");
+        // typed prefix
+        const std::vector<std::string> ti = {"Alpha", "bravo", "Bravura", "Charlie"};
+        auto tat = [&](int i) { return ti[(size_t)i]; };
+        CHECK(prefix_index(4, tat, "br") == 1 && prefix_index(4, tat, "BRAV") == 1 && prefix_index(4, tat, "bravu") == 2 && prefix_index(4, tat, "x") == -1 && prefix_index(4, tat, "") == -1 && prefix_index(4, tat, "charlie2") == -1);
+        // hold / wheel
+        CHECK(nav_hold_boost(0.f) == 1 && nav_hold_boost(1.f) == 2 && nav_hold_boost(2.f) == 4 && nav_hold_boost(3.f) == 8 && nav_hold_boost(4.f) == 14 && nav_hold_boost(9.f) == 24);
+        for (float t = 0.f; t < 9.f; t += 0.1f) CHECK(nav_hold_boost(t + 0.1f) >= nav_hold_boost(t));
+        CHECK(nav_wheel_gain(2.f) == 1.f && nav_wheel_gain(5.f) == 1.f && nav_wheel_gain(20.f) == 8.f && nav_wheel_gain(100.f) == 8.f && nav_wheel_gain(12.f) > 1.f && nav_wheel_gain(12.f) < 8.f);
+        CHECK(!nav_is_fast(1, 1.f) && nav_is_fast(2, 1.f) && nav_is_fast(1, 3.f));
+        // sort picker rows
+        SortSpec sp0;
+        CHECK(kSortRows == kSortModes + 2 && sort_row_on(sp0, 0) && !sort_row_on(sp0, 4) && !sort_row_on(sp0, kSortModes) && !sort_row_on(sp0, kSortModes + 1));
+        SortSpec s1 = sort_apply_row(sp0, (int)SortMode::ReleaseYear);
+        CHECK(s1.mode == SortMode::ReleaseYear && !s1.reverse && !s1.favs_first);
+        s1 = sort_apply_row(s1, kSortModes);        CHECK(s1.reverse && s1.mode == SortMode::ReleaseYear);
+        s1 = sort_apply_row(s1, kSortModes + 1);    CHECK(s1.favs_first && s1.reverse);
+        s1 = sort_apply_row(s1, (int)SortMode::Console); CHECK(s1.mode == SortMode::Console && !s1.reverse && s1.favs_first);   // a new mode starts in its natural direction; favorites first stays
+        CHECK(sort_apply_row(s1, 99).mode == SortMode::Console);
+    }
+
+    {   // flip / inspect fit: the enlarged case (any yaw, pitch up to 0.55) stays between the tab bar and the scrubber strip, for every case kind
+        for (float U : {260.f, 340.f, 420.f, 480.f}) {
+            FitScene fs; fs.U = U; fs.eye = 0.55f; fs.dist = 6.5f; fs.hy = 540.f - 0.55f * U;   // the floor line (f0) at y = 540
+            const float f0 = fs.hy + fs.eye * U, top_lim = f0 - 1.12f * U, bot_lim = f0 + 0.45f * U;
+            for (int i = 0; i < shelf::kMediaCount; ++i) {
+                const Media m = (Media)i;
+                const CaseDims d = case_dims(m);
+                for (float insp : {0.f, 1.f}) {
+                    const CentreAdj a = centre_adj(insp > 0.f ? 0.f : 3.14159f, insp);
+                    const float rest = display_scale(m) * a.scale_mul, pitch = 0.55f * insp, lift = 0.05f * insp + 0.02f;
+                    const float mul = fit_centre_scale(d, rest, pitch, lift, a.z, fs, top_lim, bot_lim);
+                    CHECK(mul >= 0.35f && mul <= 1.f);
+                    for (int yi = 0; yi < 24; ++yi) for (int pi_ = -2; pi_ <= 2; ++pi_) {
+                        float t, b;
+                        case_y_extent(d, rest * mul, 3.14159f * (float)yi / 24.f, pitch * (float)pi_ * 0.5f, lift, a.z, fs, &t, &b);
+                        if (!(t >= top_lim - 1.f && b <= bot_lim + 1.f)) std::printf("U=%g m=%d insp=%g mul=%g yi=%d pi=%d t=%g b=%g lim %g %g\n", U, i, insp, mul, yi, pi_, t, b, top_lim, bot_lim);
+                        CHECK(t >= top_lim - 1.f && b <= bot_lim + 1.f);
+                    }
+                }
+            }
+            // a case that already fits is left alone
+            CHECK(fit_centre_scale(case_dims(Media::GcCase), 0.5f, 0.f, 0.f, 0.f, fs, f0 - 3.f * U, f0 + 2.f * U) == 1.f);
+        }
+        // a tall case near the top is shrunk, and shrinking only ever helps
+        FitScene fs2; fs2.U = 400.f; fs2.hy = 500.f - 0.55f * 400.f;
+        CHECK(fit_centre_scale(case_dims(Media::SwitchCase), 1.3f, 0.f, 0.f, -1.1f, fs2, 500.f - 1.0f * 400.f, 560.f) < 1.f);
+    }
 
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
     std::printf("hub_cases_test: all ok\n");

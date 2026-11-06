@@ -30,30 +30,50 @@ uint64_t fnv(const char* s, uint64_t h = 1469598103934665603ull) { for (; *s; ++
 
 /* ------------------------------- text caches (no per-frame allocation once warm) ------------------------------- */
 
+/* A tiny cache keyed by (text, size, width bucket): the width is floored to 16 px buckets and the size to whole pixels, so a case that glides
+ * (its face width changes every frame) keeps hitting the same entry instead of re-wrapping. When full, only the least recently used entry is
+ * dropped (never the whole cache). Returned references are valid only until the next call of the same cache function. */
+template <class V>
+struct TextCache {
+    struct E { V v; uint64_t stamp = 0; };
+    std::unordered_map<uint64_t, E> map;
+    uint64_t tick = 0;
+    size_t cap = 0;
+    const V* find(uint64_t k) { auto it = map.find(k); if (it == map.end()) return nullptr; it->second.stamp = ++tick; return &it->second.v; }
+    const V& put(uint64_t k, V&& v) {
+        if (map.size() >= cap) {
+            auto old = map.begin();
+            for (auto it = map.begin(); it != map.end(); ++it) if (it->second.stamp < old->second.stamp) old = it;
+            map.erase(old);
+        }
+        E& e = map[k];
+        e.v = std::move(v);
+        e.stamp = ++tick;
+        return e.v;
+    }
+};
+float text_bucket(float w) { return std::max(16.f, std::floor(w / 16.f) * 16.f); }
+
 const std::vector<std::string>& wrap_cached(ImFont* f, float size, const char* text, float w, int maxl) {
-    static std::unordered_map<uint64_t, std::vector<std::string>> cache;
-    size = std::floor(size);                 // quantised so a case that is gliding keeps hitting the same entry
-    w = std::floor(w / 8.f) * 8.f;
+    static TextCache<std::vector<std::string>> cache = [] { TextCache<std::vector<std::string>> c; c.cap = 192; return c; }();
+    size = std::floor(size);
+    w = text_bucket(w);
     uint64_t k = fnv(text);
     k = (k ^ (uint64_t)(int)size) * 1099511628211ull;
-    k = (k ^ (uint64_t)(int)(w * 0.125f)) * 1099511628211ull;
+    k = (k ^ (uint64_t)(int)(w * (1.f / 16.f))) * 1099511628211ull;
     k = (k ^ (uint64_t)maxl) * 1099511628211ull;
-    auto it = cache.find(k);
-    if (it != cache.end()) return it->second;
-    if (cache.size() > 160) cache.clear();
-    return cache.emplace(k, ui::wrap_lines(f, size, text, w, maxl)).first->second;
+    if (const auto* hit = cache.find(k)) return *hit;
+    return cache.put(k, ui::wrap_lines(f, size, text, w, maxl));
 }
 const std::string& ellipsize_cached(ImFont* f, float size, const char* text, float w) {
-    static std::unordered_map<uint64_t, std::string> cache;
+    static TextCache<std::string> cache = [] { TextCache<std::string> c; c.cap = 480; return c; }();
     size = std::floor(size);
-    w = std::floor(w / 6.f) * 6.f;
+    w = text_bucket(w);
     uint64_t k = fnv(text, 7);
     k = (k ^ (uint64_t)(int)size) * 1099511628211ull;
-    k = (k ^ (uint64_t)(int)(w * (1.f / 6.f))) * 1099511628211ull;
-    auto it = cache.find(k);
-    if (it != cache.end()) return it->second;
-    if (cache.size() > 400) cache.clear();
-    return cache.emplace(k, ui::ellipsize(f, size, text, w)).first->second;
+    k = (k ^ (uint64_t)(int)(w * (1.f / 16.f))) * 1099511628211ull;
+    if (const auto* hit = cache.find(k)) return *hit;
+    return cache.put(k, ui::ellipsize(f, size, text, w));
 }
 void upper_into(char* out, size_t n, const char* s) {
     size_t i = 0;
@@ -101,43 +121,95 @@ bool make_face(const CaseScene& sc, const Xf& xf, const float c[4][3], const flo
     return true;
 }
 
-/* ------------------------------- colours per console ------------------------------- */
+/* ------------------------------- the look of each console's retail packaging ------------------------------- */
 
+enum class Ban { Top, Left, Bottom, Corner, Frame };   // where the console banner sits on the cover
 struct Style {
-    bool box = false;
-    ImU32 body = 0, band = 0, band_text = 0, ink = 0, panel = 0;
-    bool pale = false;
+    bool box = false, pale = false, nx2 = false, line = false, mixed = false;
+    Media m = Media::Generic;
+    Ban ban = Ban::Top;
+    ImU32 body = 0, spine = 0, band = 0, band2 = 0, band_text = 0, accent = 0, ink = 0, sink = 0, panel = 0;
 };
-ImU32 body_of(Media m) {
-    switch (m) {
-        case Media::Ps1Jewel: return rgba(30, 31, 38);
-        case Media::Ps2Case: return rgba(20, 25, 42);
-        case Media::GcCase: return rgba(84, 64, 156);
-        case Media::WiiUCase: return rgba(34, 128, 196);
-        case Media::PspCase: return rgba(34, 38, 52);
-        case Media::DsCase: return rgba(214, 217, 224);
-        case Media::N3dsCase: return rgba(238, 240, 245);
-        case Media::NesCart: return rgba(150, 147, 138);
-        case Media::SnesCart: return rgba(164, 162, 180);
-        case Media::N64Cart: return rgba(66, 69, 82);
-        case Media::GbCart: return rgba(168, 170, 164);
-        case Media::GbcCart: return rgba(112, 92, 168);
-        case Media::GbaCart: return rgba(96, 88, 144);
-        default: return rgba(52, 54, 64);
-    }
-}
+
+/* NTSC-U retail packaging per media: the plastic / card colour, the spine colour, the banner (colour and wordmark colour), a thin accent
+ * line, the back-cover panel. Generated colours (c0 / c1) are only used for an unknown console. */
 Style style_of(const CaseDraw& d) {
     Style s;
+    s.m = d.media;
     s.box = hubui::cases::is_box(d.media);
-    s.body = body_of(d.media);
-    ImU32 band = lerpc(d.c0, d.c1, 0.4f);
-    if (lum(band) < 0.2f) band = lerpc(band, rgba(255, 255, 255), 0.22f);
-    s.band = band;
-    s.band_text = lum(band) > 0.6f ? rgba(22, 24, 32) : rgba(250, 250, 253);
+    s.nx2 = d.nx2 && d.media == Media::SwitchCase;
+    auto set = [&](ImU32 body, ImU32 spine, ImU32 band, ImU32 text, ImU32 accent, ImU32 panel) { s.body = body; s.spine = spine; s.band = band; s.band_text = text; s.accent = accent; s.panel = panel; };
+    switch (d.media) {
+        case Media::GcCase: set(rgba(23, 23, 28), rgba(21, 21, 26), rgba(192, 196, 206), rgba(24, 26, 34), rgba(120, 124, 138), rgba(17, 17, 23)); break;
+        case Media::Ps2Case: set(rgba(16, 17, 22), rgba(14, 15, 20), rgba(9, 10, 14), rgba(246, 247, 252), rgba(40, 94, 216), rgba(13, 14, 19)); s.line = true; break;
+        case Media::WiiUCase: set(rgba(26, 130, 202), rgba(22, 118, 188), rgba(0, 152, 208), rgba(255, 255, 255), rgba(214, 240, 252), rgba(22, 104, 166)); s.line = true; s.mixed = true; break;
+        case Media::SwitchCase:
+            if (s.nx2) { set(rgba(178, 12, 26), rgba(160, 10, 24), rgba(232, 30, 46), rgba(255, 255, 255), rgba(255, 255, 255), rgba(232, 232, 236)); s.band2 = rgba(24, 26, 34); }
+            else set(rgba(216, 18, 30), rgba(202, 14, 28), rgba(234, 32, 48), rgba(255, 255, 255), rgba(255, 255, 255), rgba(232, 232, 236));
+            s.line = true;
+            break;
+        case Media::PspCase: set(rgba(94, 100, 114), rgba(18, 20, 28), rgba(12, 14, 20), rgba(246, 247, 252), rgba(72, 122, 232), rgba(20, 22, 30)); s.line = true; break;
+        case Media::DsCase: set(rgba(200, 204, 212), rgba(224, 227, 233), rgba(234, 236, 241), rgba(34, 38, 50), rgba(58, 148, 214), rgba(236, 238, 242)); s.line = true; break;
+        case Media::N3dsCase: set(rgba(242, 243, 246), rgba(247, 247, 250), rgba(252, 252, 253), rgba(210, 36, 44), rgba(210, 36, 44), rgba(250, 250, 252)); s.line = true; break;
+        case Media::Ps1Jewel: set(rgba(176, 182, 194), rgba(22, 23, 28), rgba(14, 14, 18), rgba(246, 247, 252), rgba(150, 154, 166), rgba(22, 23, 30)); s.ban = Ban::Left; break;
+        case Media::NesCart: set(rgba(26, 26, 30), rgba(28, 28, 32), rgba(16, 16, 20), rgba(226, 226, 232), rgba(124, 126, 134), rgba(34, 34, 40)); s.ban = Ban::Frame; break;
+        case Media::SnesCart: set(rgba(204, 204, 210), rgba(186, 186, 196), rgba(148, 150, 164), rgba(28, 30, 42), rgba(116, 92, 176), rgba(224, 224, 230)); s.ban = Ban::Bottom; break;
+        case Media::N64Cart: set(rgba(44, 46, 56), rgba(38, 40, 50), rgba(22, 24, 32), rgba(250, 250, 253), rgba(214, 214, 222), rgba(40, 42, 52)); s.ban = Ban::Corner; break;
+        case Media::GbCart: set(rgba(176, 178, 174), rgba(164, 166, 162), rgba(72, 76, 84), rgba(240, 240, 244), rgba(50, 54, 62), rgba(206, 208, 204)); s.ban = Ban::Left; break;
+        case Media::GbcCart: set(rgba(238, 238, 242), rgba(228, 228, 234), rgba(130, 70, 190), rgba(255, 255, 255), rgba(130, 70, 190), rgba(244, 244, 247)); break;
+        case Media::GbaCart: set(rgba(230, 230, 238), rgba(54, 44, 122), rgba(54, 46, 124), rgba(255, 255, 255), rgba(150, 140, 220), rgba(236, 236, 242)); break;
+        default: {
+            ImU32 band = lerpc(d.c0, d.c1, 0.4f);
+            if (lum(band) < 0.2f) band = lerpc(band, rgba(255, 255, 255), 0.22f);
+            set(rgba(52, 54, 64), rgba(52, 54, 64), band, lum(band) > 0.6f ? rgba(22, 24, 32) : rgba(250, 250, 253), band, lerpc(rgba(52, 54, 64), rgba(8, 9, 14), 0.62f));
+            break;
+        }
+    }
     s.pale = lum(s.body) > 0.55f;
-    s.ink = s.pale ? rgba(30, 32, 42) : rgba(244, 245, 250);
-    s.panel = s.pale ? lerpc(s.body, rgba(255, 255, 255), 0.55f) : lerpc(s.body, rgba(8, 9, 14), 0.62f);
+    s.ink = lum(s.panel) > 0.55f ? rgba(28, 30, 40) : rgba(244, 245, 250);   // ink on the back-cover panel
+    s.sink = lum(s.spine) > 0.55f ? rgba(28, 30, 40) : rgba(244, 245, 250);  // ink on the spine
     return s;
+}
+
+float tw_c(ImFont* f, float size, const char* s) { return f ? f->CalcTextSizeA(size, FLT_MAX, 0.f, s).x : 0.f; }   // no std::string temporary
+
+/* The wordmark text of the banner: upper case, except for the Wii U; a Switch 2 game reads "NINTENDO SWITCH 2". */
+void banner_name(char* out, size_t n, const CaseDraw& d, const Style& st) {
+    if (st.nx2) { std::snprintf(out, n, "NINTENDO SWITCH 2"); return; }
+    if (st.mixed) { std::snprintf(out, n, "%s", d.sys_name); return; }
+    upper_into(out, n, d.sys_name);
+}
+
+/* Fits `s` into [u0,u1] of the face, centred vertically on vc; the size follows bh_px (the banner height), shrunk to fit. align 0 = left, 1 = centre. */
+void label_h(Ctx& x, const Face& f, const char* s, float u0, float u1, float vc, float bh_px, ImU32 col, int align, float size_k = 0.52f, bool shadow = false) {
+    ImFont* cf = ui::F.bold ? ui::F.bold : ui::F.cap;
+    if (!cf || !x.detail || !s || !*s) return;
+    const float track_k = 0.12f, len = (float)std::strlen(s);
+    float bs = bh_px * size_k;
+    const float avail = (u1 - u0) * f.W * 0.88f;
+    const float w0 = tw_c(cf, bs, s) + len * bs * track_k;
+    if (w0 > avail) bs *= avail / w0;
+    if (bs < 5.f) return;
+    const float tr = bs * track_k, w = tw_c(cf, bs, s) + len * tr;
+    const float lx = align ? (u0 + u1) * 0.5f * f.W - w * 0.5f : u0 * f.W + (u1 - u0) * f.W * 0.05f + 3.f;
+    const float ly = vc * f.H - bs * 0.5f;
+    if (shadow) face_text(x, f, cf, bs, s, lx + 1.2f, ly + 1.2f, rgba(0, 0, 0, 110), false, tr);
+    face_text(x, f, cf, bs, s, lx, ly, col, false, tr);
+}
+/* The same, running down a vertical strip [u0,u1] x [v0,v1] (reads top to bottom); top_aligned starts near the top end. */
+void label_v(Ctx& x, const Face& f, const char* s, float u0, float u1, float v0, float v1, ImU32 col, bool top_aligned) {
+    ImFont* cf = ui::F.bold ? ui::F.bold : ui::F.cap;
+    if (!cf || !x.detail || !s || !*s) return;
+    const float sw = (u1 - u0) * f.W, track_k = 0.14f, len = (float)std::strlen(s);
+    float bs = sw * 0.5f;
+    const float avail = (v1 - v0) * f.H * 0.9f;
+    const float w0 = tw_c(cf, bs, s) + len * bs * track_k;
+    if (w0 > avail) bs *= avail / w0;
+    if (bs < 5.f) return;
+    const float tr = bs * track_k, w = tw_c(cf, bs, s) + len * tr;
+    const float lx = (u0 + u1) * 0.5f * f.W + bs * 0.38f;
+    const float ly = top_aligned ? v0 * f.H + (v1 - v0) * f.H * 0.05f : (v0 + v1) * 0.5f * f.H - w * 0.5f;
+    face_text(x, f, cf, bs, s, lx, ly, col, true, tr);
 }
 
 void ngon(Ctx& x, const Face& f, float cu, float cv, float ru, float rv, int n, ImU32 col) {
@@ -198,44 +270,135 @@ void cover_generated(Ctx& x, const Face& f, float u0, float v0, float u1, float 
 
 /* ------------------------------- faces ------------------------------- */
 
-void header_band(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, float u0, float v0, float u1, float bv) {
-    v0 -= 1.5f / f.H;   // a hair over the cover's top edge, so no sliver of cover shows (a dashed light line) above the band
-    bv += 1.5f / f.H;
-    quad(x, f, u0, v0, u1, v0 + bv, st.band);
-    vgrad(x, f, u0, v0, u1, v0 + bv, rgba(255, 255, 255, 54), rgba(0, 0, 0, 40));
-    quad(x, f, u0, v0 + bv, u1, v0 + bv + 1.5f / f.H, rgba(0, 0, 0, 90));
-    ImFont* cf = ui::F.bold ? ui::F.bold : ui::F.cap;
+/* The top banner [u0,u1] x [v0,v1] with the wordmark (front covers with a top banner, and every back cover). */
+void top_band(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, float u0, float v0, float u1, float v1) {
+    const float py = 1.f / f.H;
+    const float bh = (v1 - v0) * f.H;
+    v0 -= 1.5f * py;   // a hair over the cover's top edge, so no sliver of cover shows (a dashed light line) above the band
+    const float sp = u0 + (u1 - u0) * 0.66f;
+    switch (st.m) {
+        case Media::GbcCart: {   // the colourful band
+            const ImU32 c[5] = {rgba(0, 168, 176), rgba(112, 72, 196), rgba(226, 64, 146), rgba(250, 150, 40), rgba(250, 206, 50)};
+            for (int i = 0; i < 4; ++i) hgrad(x, f, u0 + (u1 - u0) * 0.25f * (float)i, v0, u0 + (u1 - u0) * 0.25f * (float)(i + 1), v1, c[i], c[i + 1]);
+            break;
+        }
+        case Media::SwitchCase:
+            if (st.nx2) { quad(x, f, u0, v0, sp, v1, st.band); quad(x, f, sp, v0, u1, v1, st.band2); }   // Switch 2: a two-tone banner
+            else quad(x, f, u0, v0, u1, v1, st.band);
+            break;
+        default: quad(x, f, u0, v0, u1, v1, st.band); break;
+    }
+    vgrad(x, f, u0, v0, u1, v1, rgba(255, 255, 255, st.box ? 30 : 54), rgba(0, 0, 0, st.box ? 24 : 40));
+    if (st.line) quad(x, f, u0, v1, u1, v1 + std::max(1.5f, bh * 0.07f) * py, st.accent);
+    else quad(x, f, u0, v1, u1, v1 + 1.5f * py, rgba(0, 0, 0, 90));
     char name[48];
-    upper_into(name, sizeof name, d.sys_name);
-    float bs = bv * f.H * 0.52f;
-    const float avail = (u1 - u0) * f.W * 0.74f;
-    const float tw0 = text_w(cf, bs, name) + (float)std::strlen(name) * bs * 0.12f;
-    if (tw0 > avail) bs *= avail / tw0;
-    if (bs >= 5.f) face_text(x, f, cf, bs, name, u0 * f.W + (u1 - u0) * f.W * 0.05f, (v0 + bv * 0.5f) * f.H - bs * 0.5f, st.band_text, false, bs * 0.12f);
-    console_mark(x, f, u1 - (u1 - u0) * 0.07f - bv * f.H * 0.3f / f.W, v0 + bv * 0.5f, bv * f.H * 0.46f, hash32(d.sys_short), st.band_text);
+    banner_name(name, sizeof name, d, st);
+    const float vc = (v0 + v1) * 0.5f;
+    if (st.m == Media::SwitchCase) {
+        if (st.nx2) { label_h(x, f, "NINTENDO SWITCH", u0, sp, vc, bh, st.band_text, 0, 0.62f); label_h(x, f, "2", sp, u1, vc, bh, st.band_text, 1, 0.85f); }
+        else label_h(x, f, name, u0, u1, vc, bh, st.band_text, 1, 0.66f);
+    } else label_h(x, f, name, u0, u1, vc, bh, st.band_text, 0, 0.58f, st.m == Media::GbcCart);
+    if (st.m == Media::Generic) console_mark(x, f, u1 - (u1 - u0) * 0.07f - bh * 0.3f / f.W, vc, bh * 0.46f, hash32(d.sys_short), st.band_text);
+}
+
+struct Lay { float au0, av0, au1, av1, bu0, bv0, bu1, bv1, cv1; };   // the art window, the banner rect, the bottom of the cover
+Lay front_lay(const Style& st, const Face& f, float u0, float v0, float u1, float v1) {
+    const float px = 1.f / f.W, py = 1.f / f.H;
+    Lay l{u0, v0, u1, v1, u0, v0, u1, v0, v1};
+    switch (st.ban) {
+        case Ban::Top: {
+            float bv = std::max(0.05f, std::min(0.085f, 27.f * py));
+            if (st.m == Media::SwitchCase) bv = std::max(0.045f, std::min(0.07f, 22.f * py));
+            else if (st.m == Media::GbcCart || st.m == Media::GbaCart) bv = std::max(0.07f, std::min(0.11f, 34.f * py));
+            l.bv1 = v0 + bv; l.av0 = l.bv1;
+            break;
+        }
+        case Ban::Left: { l.bu1 = u0 + (st.m == Media::Ps1Jewel ? 0.105f : 0.14f); l.bv1 = v1; l.au0 = l.bu1 + 1.5f * px; break; }
+        case Ban::Bottom: { const float bv = std::max(0.08f, std::min(0.115f, 30.f * py)); l.bv0 = v1 - bv; l.bv1 = v1; l.av1 = l.bv0; break; }
+        case Ban::Corner: { l.bu1 = u0 + 0.58f; l.bv1 = v0 + std::max(0.07f, std::min(0.1f, 30.f * py)); break; }
+        case Ban::Frame: {   // NES: a black frame with the wordmark in the top bar
+            l.bv1 = v0 + std::max(0.055f, std::min(0.09f, 26.f * py));
+            l.au0 = u0 + 0.06f; l.au1 = u1 - 0.06f; l.av0 = l.bv1 + 2.f * py; l.av1 = v1 - 0.08f;
+            break;
+        }
+    }
+    return l;
+}
+
+void banner_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, const Lay& l) {
+    const float px = 1.f / f.W, py = 1.f / f.H;
+    const float bh = (l.bv1 - l.bv0) * f.H, vc = (l.bv0 + l.bv1) * 0.5f;
+    char name[48];
+    banner_name(name, sizeof name, d, st);
+    switch (st.ban) {
+        case Ban::Top: top_band(x, f, d, st, l.bu0, l.bv0, l.bu1, l.bv1); break;
+        case Ban::Left: {   // a vertical strip down the left edge with the wordmark running down it
+            quad(x, f, l.bu0, l.bv0, l.bu1, l.bv1, st.band);
+            hgrad(x, f, l.bu0, l.bv0, l.bu1, l.bv1, rgba(255, 255, 255, 30), rgba(0, 0, 0, 44));
+            quad(x, f, l.bu1 - 3.5f * px, l.bv0, l.bu1 - 1.5f * px, l.bv1, st.accent);
+            quad(x, f, l.bu1, l.bv0, l.bu1 + 1.5f * px, l.bv1, rgba(0, 0, 0, 90));
+            label_v(x, f, name, l.bu0, l.bu1 - 4.f * px, l.bv0, l.bv1, st.band_text, st.m == Media::Ps1Jewel);
+            break;
+        }
+        case Ban::Bottom: {   // SNES: a grey stripe along the foot with the system name and four little buttons
+            quad(x, f, l.bu0, l.bv0, l.bu1, l.bv1, st.band);
+            vgrad(x, f, l.bu0, l.bv0, l.bu1, l.bv1, rgba(255, 255, 255, 46), rgba(0, 0, 0, 30));
+            quad(x, f, l.bu0, l.bv0 - 2.f * py, l.bu1, l.bv0, st.accent);
+            label_h(x, f, name, l.bu0, l.bu0 + (l.bu1 - l.bu0) * 0.72f, vc, bh, st.band_text, 0);
+            const ImU32 bc[4] = {rgba(222, 62, 62), rgba(62, 168, 92), rgba(64, 108, 214), rgba(244, 204, 60)};
+            const float r = bh * 0.15f;
+            for (int i = 0; i < 4; ++i) ngon(x, f, l.bu1 - 0.05f - (3.f - (float)i) * r * 2.9f * px, vc, r * px, r * py, 12, bc[i]);
+            break;
+        }
+        case Ban::Corner: {   // N64: a dark corner with the wordmark
+            const float sl = 0.07f;
+            poly(x, f, {ImVec2(l.bu0, l.bv0), ImVec2(l.bu1, l.bv0), ImVec2(l.bu1 - sl, l.bv1), ImVec2(l.bu0, l.bv1)}, st.band);
+            line(x, f, l.bu0, l.bv1, l.bu1 - sl, l.bv1, st.accent, 1.5f);
+            label_h(x, f, name, l.bu0, l.bu1 - sl, vc, bh, st.band_text, 0);
+            break;
+        }
+        case Ban::Frame: {
+            quad(x, f, l.bu0, l.bv0, l.bu1, l.bv1, st.band);
+            label_h(x, f, name, l.bu0, l.bu0 + (l.bu1 - l.bu0) * 0.74f, vc, bh, st.band_text, 0);
+            for (int i = -1; i <= 1; ++i) quad(x, f, l.bu0 + (l.bu1 - l.bu0) * 0.78f, vc + (float)i * bh * 0.2f * py - 0.8f * py, l.bu1 - 0.04f, vc + (float)i * bh * 0.2f * py + 0.8f * py, st.accent);
+            outline(x, f, l.au0 - 2.f * px, l.av0 - 2.f * py, l.au1 + 2.f * px, l.av1 + 2.f * py, alpha(st.accent, 0.7f), 1.f);   // the thin grid motif
+            const float gh = l.cv1 - l.av1;
+            for (int i = 0; i < 3; ++i) { const float yy = l.av1 + gh * (0.34f + 0.2f * (float)i); quad(x, f, l.bu0 + 0.04f, yy - 0.8f * py, l.bu1 - 0.04f, yy + 0.8f * py, alpha(st.accent, 0.8f - 0.2f * (float)i)); }
+            break;
+        }
+    }
 }
 
 void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseKind kind, float sheen_u) {
     const float W = f.W, H = f.H;
     const float px = 1.f / W, py = 1.f / H;
     const bool box = st.box;
-    const float rcu = std::min(0.035f, (box ? 2.5f : 5.f) * px), rcv = rcu * W * py;
+    const float rcu = std::min(0.035f, (box ? 1.5f : 5.f) * px), rcv = rcu * W * py;
     poly(x, f, {ImVec2(rcu, 0.f), ImVec2(1.f - rcu, 0.f), ImVec2(1.f, rcv), ImVec2(1.f, 1.f - rcv), ImVec2(1.f - rcu, 1.f), ImVec2(rcu, 1.f), ImVec2(0.f, 1.f - rcv), ImVec2(0.f, rcv)}, st.body);
     vgrad(x, f, 0.f, 0.f, 1.f, 1.f, rgba(255, 255, 255, box ? 18 : 30), rgba(0, 0, 0, box ? 36 : 40));
+    const float hinge = kind == CaseKind::Jewel ? 0.066f : kind == CaseKind::Small ? 0.05f : 0.045f;
     float cu0, cv0, cu1, cv1;
     if (box) {
         cu0 = 0.028f; cv0 = 0.028f; cu1 = 1.f - 0.028f; cv1 = 1.f - 0.03f;
     } else {
-        const float hinge = kind == CaseKind::Jewel ? 0.066f : kind == CaseKind::Small ? 0.05f : 0.045f;
         quad(x, f, 0.f, 0.f, hinge, 1.f, shade(st.body, 0.8f));
         quad(x, f, hinge - px, 0.f, hinge + px, 1.f, rgba(0, 0, 0, 70));
         quad(x, f, hinge + px, 0.f, hinge + 2.f * px, 1.f, rgba(255, 255, 255, 36));
+        if (kind == CaseKind::Jewel) {   // the jewel case's hinge tabs
+            for (int i = 0; i < 2; ++i) {
+                const float va = i ? 0.80f : 0.06f, vb = i ? 0.94f : 0.20f;
+                quad(x, f, 0.f, va, hinge * 0.86f, vb, rgba(96, 102, 116, 220));
+                quad(x, f, 0.f, va, hinge * 0.86f, va + 2.f * py, rgba(255, 255, 255, 110));
+                quad(x, f, hinge * 0.86f - px, va, hinge * 0.86f, vb, rgba(0, 0, 0, 80));
+            }
+        }
         cu0 = hinge + 2.f * px; cv0 = 0.02f; cu1 = 1.f - 0.024f; cv1 = 1.f - 0.02f;
     }
-    if (d.art) image(x, f, cu0, cv0, cu1, cv1, d.art, d.art_w, d.art_h, 0.f);
-    else cover_generated(x, f, cu0, cv0, cu1, cv1, d);
-    header_band(x, f, d, st, cu0, cv0, cu1, std::max(0.05f, std::min(0.085f, 30.f * py)));
-    outline(x, f, cu0, cv0, cu1, cv1, rgba(0, 0, 0, box ? 110 : 90), 1.f);
+    const Lay l = front_lay(st, f, cu0, cv0, cu1, cv1);
+    if (d.art) image(x, f, l.au0, l.av0, l.au1, l.av1, d.art, d.art_w, d.art_h, 0.f);   // fills the window left by the banner, cropped never stretched
+    else cover_generated(x, f, l.au0, l.av0, l.au1, l.av1, d);
+    banner_front(x, f, d, st, l);
+    outline(x, f, l.au0, l.av0, l.au1, l.av1, rgba(0, 0, 0, box ? 110 : 90), 1.f);
     if (box) {   // matte cardboard: worn edges and a fold line, no sheen
         hgrad(x, f, 0.f, 0.f, 0.05f, 1.f, rgba(0, 0, 0, 56), rgba(0, 0, 0, 0));
         hgrad(x, f, 0.95f, 0.f, 1.f, 1.f, rgba(0, 0, 0, 0), rgba(0, 0, 0, 62));
@@ -245,24 +408,21 @@ void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
         quad(x, f, 0.f, 0.f, 1.f, ey, rgba(255, 255, 255, 62)); quad(x, f, 0.f, 0.f, ex, 1.f, rgba(255, 255, 255, 40));
         quad(x, f, 0.f, 1.f - ey, 1.f, 1.f, rgba(0, 0, 0, 90)); quad(x, f, 1.f - ex, 0.f, 1.f, 1.f, rgba(0, 0, 0, 70));
         outline(x, f, ex, ey, 1.f - ex, 1.f - ey, rgba(0, 0, 0, 50), 1.f);
-    } else {   // clear plastic: a bright rim and a moving glossy highlight
-        // the clear plastic rim: a translucent frame around the cover with a bright outer edge, and a lit hinge
+    } else {   // clear plastic: a bright rim, the hinge ridge and a moving glossy highlight
         const float rx = std::max(0.014f, 4.f * px), ry = std::max(0.014f, 4.f * py);
-        const ImU32 rim = st.pale ? rgba(255, 255, 255, 120) : rgba(255, 255, 255, 56);
+        const bool dark = lum(st.body) < 0.12f;   // black plastic (GameCube, PS2): the gloss stays subtle so the case reads black, not silver
+        const ImU32 rim = st.pale ? rgba(255, 255, 255, 120) : rgba(255, 255, 255, dark ? 14 : 46);
         quad(x, f, 0.f, 0.f, 1.f, ry, rim); quad(x, f, 0.f, 1.f - ry, 1.f, 1.f, rim);
         quad(x, f, 1.f - rx, ry, 1.f, 1.f - ry, rim);
-        outline(x, f, 0.f, 0.f, 1.f, 1.f, st.pale ? rgba(0, 0, 0, 80) : rgba(255, 255, 255, 120), 1.f);
+        outline(x, f, 0.f, 0.f, 1.f, 1.f, st.pale ? rgba(0, 0, 0, 80) : rgba(255, 255, 255, dark ? 44 : 100), 1.f);
         outline(x, f, rx, ry, 1.f - rx, 1.f - ry, rgba(0, 0, 0, 70), 1.f);
-        line(x, f, rcu + 0.01f, 2.f * py, 1.f - rcu - 0.01f, 2.f * py, rgba(255, 255, 255, st.pale ? 160 : 130), 1.f);
-        {   // spine hinge highlight
-            const float hu = kind == CaseKind::Jewel ? 0.066f : kind == CaseKind::Small ? 0.05f : 0.045f;
-            hgrad(x, f, hu * 0.2f, 0.f, hu, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 70));
-            line(x, f, hu * 0.5f, 0.02f, hu * 0.5f, 0.98f, rgba(255, 255, 255, 110), 1.f);
-        }
-        grad(x, f, 0.f, 0.f, 1.f, 0.62f, rgba(255, 255, 255, 50), rgba(255, 255, 255, 14), rgba(255, 255, 255, 0), rgba(255, 255, 255, 0));
+        line(x, f, rcu + 0.01f, 2.f * py, 1.f - rcu - 0.01f, 2.f * py, rgba(255, 255, 255, st.pale ? 160 : dark ? 60 : 120), 1.f);
+        hgrad(x, f, hinge * 0.2f, 0.f, hinge, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, dark ? 30 : 70));   // the hinge ridge: a lit rib along the spine side
+        line(x, f, hinge * 0.5f, 0.02f, hinge * 0.5f, 0.98f, rgba(255, 255, 255, 110), 1.f);
+        grad(x, f, 0.f, 0.f, 1.f, 0.62f, rgba(255, 255, 255, dark ? 22 : 46), rgba(255, 255, 255, dark ? 6 : 12), rgba(255, 255, 255, 0), rgba(255, 255, 255, 0));
         const float uc = std::max(0.1f, std::min(0.9f, sheen_u));
-        hgrad(x, f, std::max(0.f, uc - 0.2f), 0.f, uc, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 36));
-        hgrad(x, f, uc, 0.f, std::min(1.f, uc + 0.12f), 1.f, rgba(255, 255, 255, 36), rgba(255, 255, 255, 0));
+        hgrad(x, f, std::max(0.f, uc - 0.2f), 0.f, uc, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 34));
+        hgrad(x, f, uc, 0.f, std::min(1.f, uc + 0.12f), 1.f, rgba(255, 255, 255, 34), rgba(255, 255, 255, 0));
     }
     if (d.fav) x.dl->AddCircleFilled(f.at(0.88f, 0.14f), std::max(5.f, W * 0.05f), x.c(rgba(255, 206, 64)), 16);
 }
@@ -270,21 +430,26 @@ void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
 void paint_spine(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseKind kind) {
     const float W = f.W, H = f.H;
     const float px = 1.f / W;
-    quad(x, f, 0.f, 0.f, 1.f, 1.f, st.body);
+    quad(x, f, 0.f, 0.f, 1.f, 1.f, st.spine);
     hgrad(x, f, 0.f, 0.f, 1.f, 1.f, rgba(255, 255, 255, st.box ? 22 : 40), rgba(0, 0, 0, st.box ? 40 : 62));
     if (kind == CaseKind::Jewel) {   // clear rails and the black spine card
         quad(x, f, 0.f, 0.f, 0.12f, 1.f, rgba(150, 156, 170, 110));
         quad(x, f, 0.88f, 0.f, 1.f, 1.f, rgba(110, 116, 130, 110));
     }
     const float bv = std::max(0.075f, std::min(0.14f, 24.f / H));
-    quad(x, f, 0.f, 0.f, 1.f, bv, st.band);
+    if (st.m == Media::GbcCart) {   // the colourful band, running down the spine
+        const ImU32 c[3] = {rgba(0, 168, 176), rgba(112, 72, 196), rgba(226, 64, 146)};
+        vgrad(x, f, 0.f, 0.f, 1.f, bv * 0.5f, c[0], c[1]); vgrad(x, f, 0.f, bv * 0.5f, 1.f, bv, c[1], c[2]);
+    } else if (st.m == Media::SwitchCase && st.nx2) {
+        quad(x, f, 0.f, 0.f, 1.f, bv * 0.6f, st.band); quad(x, f, 0.f, bv * 0.6f, 1.f, bv, st.band2);
+    } else quad(x, f, 0.f, 0.f, 1.f, bv, st.band);
     vgrad(x, f, 0.f, 0.f, 1.f, bv, rgba(255, 255, 255, 54), rgba(0, 0, 0, 40));
-    quad(x, f, 0.f, bv, 1.f, bv + 1.5f / H, rgba(0, 0, 0, 90));
+    quad(x, f, 0.f, bv, 1.f, bv + 1.5f / H, st.line ? st.accent : rgba(0, 0, 0, 90));
     ImFont* cf = ui::F.bold ? ui::F.bold : ui::F.cap;
     float bs = std::min(W * 0.5f, bv * H * 0.5f);
-    const float tw = text_w(cf, bs, d.sys_short);
+    const float tw = tw_c(cf, bs, d.sys_short);
     if (tw > W * 0.9f) bs *= W * 0.9f / tw;
-    if (bs >= 5.f) face_text(x, f, cf, bs, d.sys_short, (W - text_w(cf, bs, d.sys_short)) * 0.5f, bv * H * 0.5f - bs * 0.5f, st.band_text, false);
+    if (bs >= 5.f) face_text(x, f, cf, bs, d.sys_short, (W - tw_c(cf, bs, d.sys_short)) * 0.5f, bv * H * 0.5f - bs * 0.5f, st.band_text, false);
     if (d.fav) quad(x, f, 0.f, bv + 2.f / H, 1.f, bv + 6.f / H, rgba(255, 206, 64));
     // the title, reading top to bottom
     ImFont* font = ui::F.bold ? ui::F.bold : ui::F.body;
@@ -293,21 +458,48 @@ void paint_spine(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
     if (x.detail && W >= 9.f && avail > size * 2.f) {
         const std::string& t = ellipsize_cached(font, size, d.title, avail);
         const float lx = W * 0.5f + size * 0.38f, ly = bv * H + H * 0.03f;
-        face_text(x, f, font, size, t.c_str(), lx + 0.8f, ly + 0.8f, rgba(0, 0, 0, st.pale ? 0 : 120), true);
-        face_text(x, f, font, size, t.c_str(), lx, ly, st.ink, true);
+        face_text(x, f, font, size, t.c_str(), lx + 0.8f, ly + 0.8f, rgba(0, 0, 0, lum(st.spine) > 0.55f ? 0 : 120), true);
+        face_text(x, f, font, size, t.c_str(), lx, ly, st.sink, true);
     }
-    quad(x, f, 0.f, 0.915f, 1.f, 0.925f, alpha(st.band, 0.9f));
-    console_mark(x, f, 0.5f, 0.962f, std::min(W * 0.55f, H * 0.04f), hash32(d.sys_short), st.ink);
+    quad(x, f, 0.f, 0.915f, 1.f, 0.925f, alpha(st.m == Media::Generic ? st.band : st.accent, 0.9f));
+    if (st.m == Media::Generic) console_mark(x, f, 0.5f, 0.962f, std::min(W * 0.55f, H * 0.04f), hash32(d.sys_short), st.sink);
     if (st.box) {   // the folded cardboard edges of the box
         quad(x, f, 0.f, 0.f, 0.09f, 1.f, rgba(255, 255, 255, 46)); quad(x, f, 0.91f, 0.f, 1.f, 1.f, rgba(0, 0, 0, 56));
         line(x, f, 0.09f, 0.f, 0.09f, 1.f, rgba(0, 0, 0, 50), 1.f);
-    }
-    if (!st.box) {
-        line(x, f, px, 0.f, px, 1.f, rgba(255, 255, 255, st.pale ? 120 : 76), 1.f);
-        line(x, f, 1.f - px, 0.f, 1.f - px, 1.f, rgba(255, 255, 255, st.pale ? 80 : 40), 1.f);
+    } else {   // the keep case's plastic rails and the ridge along the spine
+        line(x, f, px, 0.f, px, 1.f, rgba(255, 255, 255, lum(st.spine) > 0.55f ? 120 : 76), 1.f);
+        line(x, f, 1.f - px, 0.f, 1.f - px, 1.f, rgba(255, 255, 255, lum(st.spine) > 0.55f ? 80 : 40), 1.f);
+        line(x, f, 0.1f, bv + 0.01f, 0.1f, 0.99f, rgba(0, 0, 0, 44), 1.f);
+        line(x, f, 0.9f, bv + 0.01f, 0.9f, 0.99f, rgba(0, 0, 0, 44), 1.f);
         hgrad(x, f, 0.18f, 0.f, 0.34f, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 22));
         hgrad(x, f, 0.34f, 0.f, 0.5f, 1.f, rgba(255, 255, 255, 22), rgba(255, 255, 255, 0));
     }
+}
+
+/* The opposite edge of the case (the side away from the spine): plain card or clear plastic, no design. */
+void paint_edge(Ctx& x, const Face& f, const Style& st) {
+    const float px = 1.f / f.W;
+    quad(x, f, 0.f, 0.f, 1.f, 1.f, st.body);
+    hgrad(x, f, 0.f, 0.f, 1.f, 1.f, rgba(255, 255, 255, st.box ? 22 : 36), rgba(0, 0, 0, st.box ? 44 : 60));
+    if (st.box) {
+        quad(x, f, 0.f, 0.f, 0.09f, 1.f, rgba(255, 255, 255, 40)); quad(x, f, 0.91f, 0.f, 1.f, 1.f, rgba(0, 0, 0, 52));
+        line(x, f, 0.91f, 0.f, 0.91f, 1.f, rgba(0, 0, 0, 50), 1.f);
+    } else {
+        line(x, f, px, 0.f, px, 1.f, rgba(255, 255, 255, st.pale ? 120 : 70), 1.f);
+        line(x, f, 1.f - px, 0.f, 1.f - px, 1.f, rgba(255, 255, 255, st.pale ? 80 : 40), 1.f);
+        quad(x, f, 0.28f, 0.01f, 0.72f, 0.99f, rgba(0, 0, 0, 22));
+    }
+}
+
+/* A generated "picture" tile (a sky, a hill, a sun) for the picture strip of a back cover when the player has no screenshots. */
+void scene_tile(Ctx& x, const Face& f, float ua, float va, float ub, float vb, uint32_t sd) {
+    const ImU32 sky = seed_color(sd, 0.5f, 0.85f), hz = lerpc(sky, rgba(255, 255, 255), 0.45f);
+    quad(x, f, ua - 1.f / f.W, va - 1.f / f.H, ub + 1.f / f.W, vb + 1.f / f.H, rgba(0, 0, 0, 150));
+    vgrad(x, f, ua, va, ub, vb, sky, hz);
+    const float w = ub - ua, h = vb - va;
+    ngon(x, f, ua + w * (0.25f + 0.5f * (float)((sd >> 4) & 3u) / 3.f), va + h * 0.3f, h * 0.17f * f.H / f.W, h * 0.17f, 14, rgba(255, 240, 190, 230));
+    poly(x, f, {ImVec2(ua, vb), ImVec2(ua, va + h * 0.62f), ImVec2(ua + w * 0.4f, va + h * 0.5f), ImVec2(ua + w * 0.7f, va + h * 0.66f), ImVec2(ub, va + h * 0.55f), ImVec2(ub, vb)}, shade(seed_color(sd >> 7, 0.55f, 0.55f), 0.8f));
+    quad(x, f, ua, va + h * 0.78f, ub, vb, shade(seed_color(sd >> 7, 0.55f, 0.5f), 0.55f));
 }
 
 void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseKind kind) {
@@ -319,14 +511,16 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
     // spine hinge: on the right when you look at the back
     const float hinge = kind == CaseKind::Jewel ? 0.066f : 0.045f;
     if (!st.box) { quad(x, f, 1.f - hinge, 0.f, 1.f, 1.f, shade(st.body, 0.8f)); quad(x, f, 1.f - hinge - px, 0.f, 1.f - hinge + px, 1.f, rgba(0, 0, 0, 70)); }
-    const float u0 = st.box ? 0.03f : 0.03f, u1 = st.box ? 0.97f : 1.f - hinge - 0.014f, v0 = 0.025f, v1 = 0.975f;
+    const float u0 = 0.03f, u1 = st.box ? 0.97f : 1.f - hinge - 0.014f, v0 = 0.025f, v1 = 0.975f;
     quad(x, f, u0, v0, u1, v1, st.panel);
-    const ImU32 ink = st.pale ? rgba(26, 28, 38) : rgba(244, 245, 250);
-    const ImU32 dim = st.pale ? rgba(70, 74, 90) : rgba(168, 174, 192);
-    header_band(x, f, d, st, u0, v0, u1, std::max(0.05f, std::min(0.075f, 28.f * py)));
+    const bool pp = lum(st.panel) > 0.55f;
+    const ImU32 ink = st.ink;
+    const ImU32 dim = pp ? rgba(70, 74, 90) : rgba(168, 174, 192);
+    const float hbv = std::max(0.05f, std::min(0.075f, 28.f * py));
+    top_band(x, f, d, st, u0, v0, u1, v0 + hbv);
     const float pad = W * 0.045f;
     const float lx = u0 * W + pad, pw = (u1 - u0) * W - pad * 2.f;
-    float y = (v0 + std::max(0.05f, std::min(0.075f, 28.f * py))) * H + H * 0.03f;
+    float y = (v0 + hbv) * H + H * 0.03f;
     ImFont* bold = ui::F.bold ? ui::F.bold : ui::F.body;
     ImFont* body = ui::F.body;
     ImFont* cap = ui::F.cap ? ui::F.cap : body;
@@ -360,46 +554,96 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
         }
         quad(x, f, u0 + 0.04f, y / H, u1 - 0.04f, y / H + 1.2f * py, alpha(ink, 0.18f));
         y += H * 0.014f;
-        // the description fills the room above the pictures
-        const float bs = std::max(7.f, std::min(W * 0.054f, 19.f));
+
+        // ---- laid out from the bottom up: the bottom row (players box, fine print, barcode), the picture strip, then the text fills what is left ----
+        const float row_h = std::max(20.f, std::min(40.f, H * 0.075f));
+        const float row_y1 = (v1 - 0.022f) * H, row_y0 = row_y1 - row_h;
         const bool has_pics = bk && bk->nshots > 0;
-        const float pic_h = has_pics ? std::min(H * 0.17f, pw * 0.3f) : 0.f;
-        const float bottom = (v1 - 0.03f) * H - (has_pics ? pic_h + cs * 2.4f : H * 0.11f);
+        const int np = has_pics ? bk->nshots : 3;
+        const float gap = pw * 0.03f, tw = (pw - gap * (float)(np - 1)) / (float)np;
+        float pic_h = std::min(tw * 0.92f, H * 0.27f);
+        const bool label = has_pics && bk->shots_label && *bk->shots_label;
+        const float bs0 = std::max(7.f, std::min(W * 0.054f, 19.f));
+        float pics_y0 = row_y0 - H * 0.02f - pic_h, text_bottom = pics_y0 - (label ? cs * 1.8f : H * 0.014f);
+        if (!has_pics && text_bottom - y < bs0 * 1.3f * 2.6f) { pic_h = 0.f; text_bottom = row_y0 - H * 0.016f; }   // too little room: no placeholder pictures
+        // the description; a short one is set a little larger so the page does not look empty
         const char* desc = bk && bk->desc && *bk->desc ? bk->desc : "No description for this game yet.";
-        int max_lines = (int)std::max(1.f, std::floor((bottom - y) / (bs * 1.3f)));
-        if (bk && (bk->lines_w != pw || bk->lines_size != bs || bk->lines_max != max_lines)) {   // wrap once per size; the last visible line carries its "..."
-            bk->lines = ui::wrap_lines(body, bs, desc, pw, 40);
-            if ((int)bk->lines.size() > max_lines && max_lines >= 1) { bk->lines.resize((size_t)max_lines); bk->lines.back() = ui::ellipsize(body, bs, bk->lines.back() + " ...", pw); }
-            bk->lines_w = pw; bk->lines_size = bs; bk->lines_max = max_lines;
-        }
-        const std::vector<std::string>& dl_lines = bk ? bk->lines : wrap_cached(body, bs, desc, pw, 40);
-        for (int i = 0; i < (int)dl_lines.size() && i < max_lines; ++i) {
-            face_text(x, f, body, bs, dl_lines[(size_t)i].c_str(), lx, y, ink, false);
-            y += bs * 1.3f;
-        }
-        // pictures: the player's own screenshots or save-state thumbnails
-        if (has_pics) {
-            const float gap = pw * 0.03f;
-            const int n = bk->nshots;
-            const float tw = (pw - gap * (float)(n - 1)) / (float)n;
-            const float ty = (v1 - 0.03f) * H - pic_h;
-            face_text(x, f, cap, cs, bk->shots_label, lx, ty - cs * 1.5f, dim, false, cs * 0.08f);
-            for (int i = 0; i < n; ++i) {
-                const float a = lx + (tw + gap) * (float)i;
-                const float ua = a * px, ub = (a + tw) * px, va = ty * py, vb = (ty + pic_h) * py;
-                quad(x, f, ua - px, va - py, ub + px, vb + py, rgba(0, 0, 0, 150));
-                if (bk->shots[i].tex) image(x, f, ua, va, ub, vb, bk->shots[i].tex, bk->shots[i].w, bk->shots[i].h, 0.5f);
-                else quad(x, f, ua, va, ub, vb, rgba(60, 64, 80));
+        const float room = std::max(0.f, text_bottom - y);
+        const float est_lines = (float)std::strlen(desc) * bs0 * 0.5f / std::max(1.f, pw);
+        const float bs = est_lines * bs0 * 1.3f < room * 0.4f ? std::min(bs0 * 1.22f, 22.f) : bs0;
+        const int max_lines = (int)std::floor(room / (bs * 1.3f));
+        int shown = 0;
+        if (max_lines >= 1) {
+            if (bk && (bk->lines_w != pw || bk->lines_size != bs || bk->lines_max != max_lines)) {   // wrap once per size; the last visible line carries its "..."
+                bk->lines = ui::wrap_lines(body, bs, desc, pw, 40);
+                if ((int)bk->lines.size() > max_lines) { bk->lines.resize((size_t)max_lines); bk->lines.back() = ui::ellipsize(body, bs, bk->lines.back() + " ...", pw); }
+                bk->lines_w = pw; bk->lines_size = bs; bk->lines_max = max_lines;
             }
-        } else {   // a generated barcode
-            const float bx0 = u1 - 0.34f, by0 = v1 - 0.095f, bx1 = u1 - 0.04f, by1 = v1 - 0.03f;
-            quad(x, f, bx0 - 0.012f, by0 - 0.01f, bx1 + 0.012f, by1 + 0.01f, rgba(244, 244, 246));
+            const std::vector<std::string>& dl_lines = bk ? bk->lines : wrap_cached(body, bs, desc, pw, 40);
+            for (int i = 0; i < (int)dl_lines.size() && i < max_lines; ++i, ++shown) {
+                face_text(x, f, body, bs, dl_lines[(size_t)i].c_str(), lx, y, ink, false);
+                y += bs * 1.3f;
+            }
+        }
+        // feature bullets fill the room the description leaves
+        {
+            y += bs * 0.35f;
+            const float lh = bs * 1.55f;
+            char b[96];
+            const bool cart = hubui::cases::is_box(d.media);
+            for (int i = 0; i < 3 && y + lh <= text_bottom + bs * 0.2f; ++i) {
+                if (i == 0) std::snprintf(b, sizeof b, "For use with %s", d.sys_name);
+                else if (i == 1) std::snprintf(b, sizeof b, "%s", cart ? "Battery back-up saves your progress" : "Save your progress as you play");
+                else if (bk && bk->players == 1) std::snprintf(b, sizeof b, "One player");
+                else if (bk && bk->players > 1) std::snprintf(b, sizeof b, "Up to %d players", bk->players);
+                else std::snprintf(b, sizeof b, "Instruction booklet included");
+                quad(x, f, (lx + bs * 0.05f) * px, (y + bs * 0.34f) * py, (lx + bs * 0.42f) * px, (y + bs * 0.71f) * py, dim);
+                const std::string& v = ellipsize_cached(body, bs * 0.92f, b, pw - bs * 0.9f);
+                face_text(x, f, body, bs * 0.92f, v.c_str(), lx + bs * 0.85f, y, ink, false);
+                y += lh;
+            }
+        }
+        // pictures: the player's own screenshots or save-state thumbnails (else generated tiles)
+        if (pic_h > 0.f) {
+            if (label) face_text(x, f, cap, cs, bk->shots_label, lx, pics_y0 - cs * 1.6f, dim, false, cs * 0.08f);
+            for (int i = 0; i < np; ++i) {
+                const float a = lx + (tw + gap) * (float)i;
+                const float ua = a * px, ub = (a + tw) * px, va = pics_y0 * py, vb = (pics_y0 + pic_h) * py;
+                if (has_pics) {
+                    quad(x, f, ua - px, va - py, ub + px, vb + py, rgba(0, 0, 0, 150));
+                    if (bk->shots[i].tex && bk->shots[i].w > 0 && bk->shots[i].h > 0) image(x, f, ua, va, ub, vb, bk->shots[i].tex, bk->shots[i].w, bk->shots[i].h, 0.5f);
+                    else quad(x, f, ua, va, ub, vb, rgba(60, 64, 80));
+                } else scene_tile(x, f, ua, va, ub, vb, d.seed * 2654435761u + (uint32_t)i * 977u);
+            }
+        }
+        // the bottom row: a players box, fine print, a generated barcode
+        {
+            const float bw = row_h * 1.15f;
+            const float bu0 = lx * px, bu1 = (lx + bw) * px, bv0 = row_y0 * py, bv1 = row_y1 * py;
+            outline(x, f, bu0, bv0, bu1, bv1, dim, 1.5f);
+            char pn[16];
+            if (bk && bk->players == 1) std::snprintf(pn, sizeof pn, "1");
+            else if (bk && bk->players > 1) std::snprintf(pn, sizeof pn, "1-%d", bk->players);
+            else std::snprintf(pn, sizeof pn, "%s", d.sys_short);
+            const float ps = std::min(row_h * 0.5f, bw * 0.8f / std::max(1.f, tw_c(bold, row_h * 0.5f, pn) / (row_h * 0.5f)));
+            face_text(x, f, bold, ps, pn, lx + (bw - tw_c(bold, ps, pn)) * 0.5f, row_y0 + (row_h - ps) * 0.5f, ink, false);
+            const float bx1 = u1 - 0.04f, bx0 = bx1 - std::min(0.32f, row_h * 3.4f * px);
+            const float fu0 = bu1 + 0.03f, fu1 = bx0 - 0.03f;
+            if (fu1 - fu0 > 0.05f) {   // fine print
+                uint32_t h = d.seed * 747796405u + 2891336453u;
+                for (int i = 0; i < 4; ++i) {
+                    h = h * 1664525u + 1013904223u;
+                    const float yy = row_y0 + row_h * (0.12f + 0.25f * (float)i), len = 0.55f + 0.45f * (float)((h >> 24) & 0xFFu) / 255.f;
+                    quad(x, f, fu0, yy * py, fu0 + (fu1 - fu0) * len, (yy + std::max(1.5f, row_h * 0.1f)) * py, alpha(dim, 0.5f));
+                }
+            }
+            quad(x, f, bx0 - 0.012f, bv0, bx1 + 0.012f, bv1, rgba(244, 244, 246));
             uint32_t h = d.seed * 2654435761u + 17u;
             float u = bx0 + 0.006f;
             while (u < bx1 - 0.012f) {
                 h = h * 1664525u + 1013904223u;
                 const float w = (1.f + (float)((h >> 24) % 3u)) * 1.1f * px;
-                if ((h >> 8) & 1u) quad(x, f, u, by0, std::min(bx1, u + w), by1, rgba(18, 18, 24));
+                if ((h >> 8) & 1u) quad(x, f, u, bv0 + 2.f * py, std::min(bx1, u + w), bv1 - 2.f * py, rgba(18, 18, 24));
                 u += w + (0.8f + (float)((h >> 16) & 1u)) * px;
             }
         }
@@ -410,7 +654,6 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
         grad(x, f, 0.f, 0.f, 1.f, 0.5f, rgba(255, 255, 255, 30), rgba(255, 255, 255, 8), rgba(255, 255, 255, 0), rgba(255, 255, 255, 0));
     }
 }
-
 }  // namespace
 
 /* ======================================================================= */
@@ -483,13 +726,13 @@ void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool
         const float c[4][3] = {{hw, H, dd}, {-hw, H, dd}, {-hw, 0, dd}, {hw, 0, dd}}, n[3] = {0, 0, 1};
         if (make_face(sc, xf, c, n, cd.w, H, &f)) { Ctx xb = x; xb.detail = x.detail && face_ratio(f) > 0.5f; paint_back(xb, f, d, st, kind); shade_face(f, n); }
     }
-    {   // left, right: both drawn as the spine design
+    {   // left: the spine design; right: the plain edge
         const float c[4][3] = {{-hw, H, dd}, {-hw, H, -dd}, {-hw, 0, -dd}, {-hw, 0, dd}}, n[3] = {-1, 0, 0};
         if (make_face(sc, xf, c, n, cd.d, H, &f)) { Ctx xs = x; xs.detail = x.detail && f.W * face_ratio(f) >= 12.f; paint_spine(xs, f, d, st, kind); shade_face(f, n); }
     }
     {
         const float c[4][3] = {{hw, H, -dd}, {hw, H, dd}, {hw, 0, dd}, {hw, 0, -dd}}, n[3] = {1, 0, 0};
-        if (make_face(sc, xf, c, n, cd.d, H, &f)) { Ctx xs = x; xs.detail = x.detail && f.W * face_ratio(f) >= 12.f; paint_spine(xs, f, d, st, kind); shade_face(f, n); }
+        if (make_face(sc, xf, c, n, cd.d, H, &f)) { Ctx xs = x; xs.detail = x.detail && f.W * face_ratio(f) >= 12.f; paint_edge(xs, f, st); shade_face(f, n); }
     }
     {   // top (seen when the case is tipped in Inspect)
         const float c[4][3] = {{-hw, H, dd}, {hw, H, dd}, {hw, H, -dd}, {-hw, H, -dd}}, n[3] = {0, 1, 0};
@@ -507,52 +750,106 @@ void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool
 }
 
 /* ------------------------------- the stage ------------------------------- */
+/* Wall, floor and light. The colours come from the focused game (see cases_stage.h ambient_from_art), so the whole room takes the mood of the
+ * cover. Lights are a few big gradient fans / quads (one draw call each), never stacks of small shapes. */
 
 namespace {
 constexpr float kWallZ = 5.2f;
-struct StageColors { ImU32 wall_top, wall_hz, floor_far, floor_near, tint; };
+struct StageColors { ImU32 wall_top, wall_hz, floor_far, floor_near, tint, light; };
 StageColors stage_colors(ImU32 c0, ImU32 c1) {
     StageColors s;
-    const ImU32 dark = rgba(6, 7, 11);
+    const ImU32 dark = rgba(5, 6, 10);
     s.tint = lerpc(c0, c1, 0.5f);
     if (lum(s.tint) < 0.12f) s.tint = lerpc(s.tint, rgba(120, 130, 190), 0.4f);
-    s.wall_top = lerpc(dark, s.tint, 0.22f);
-    s.wall_hz = lerpc(dark, s.tint, 0.50f);
+    s.wall_top = lerpc(dark, s.tint, 0.20f);
+    s.wall_hz = lerpc(dark, s.tint, 0.48f);
     s.floor_far = lerpc(dark, s.tint, 0.30f);
-    s.floor_near = lerpc(dark, s.tint, 0.07f);
+    s.floor_near = lerpc(dark, s.tint, 0.06f);
+    s.light = lerpc(c1, rgba(255, 255, 255), 0.45f);
     return s;
 }
 ImU32 floor_at(const StageColors& s, float yw, float yb, float y) { return lerpc(s.floor_far, s.floor_near, std::max(0.f, std::min(1.f, (y - yw) / std::max(1.f, yb - yw)))); }
-void ellipse_layers(ImDrawList* dl, ImVec2 c, float rx, float ry, ImU32 col, int layers, int a_each) {
-    for (int i = 0; i < layers; ++i) {
-        const float t = 1.f - (float)i / (float)layers;
-        ImVec2 p[28];
-        for (int k = 0; k < 28; ++k) { const float an = 6.2831853f * (float)k / 28.f; p[k] = ImVec2(c.x + std::cos(an) * rx * t, c.y + std::sin(an) * ry * t); }
-        dl->AddConvexPolyFilled(p, 28, alpha(col, (float)a_each / 255.f));
+
+/* A radial gradient: one triangle fan, `col_in` at the centre fading to `col_out` on the ellipse. */
+void fan(ImDrawList* dl, ImVec2 c, float rx, float ry, ImU32 col_in, ImU32 col_out, int seg = 40) {
+    if (rx < 1.f || ry < 1.f) return;
+    const ImVec2 uvw = dl->_Data->TexUvWhitePixel;
+    dl->PrimReserve(seg * 3, seg + 1);
+    const ImDrawIdx i0 = (ImDrawIdx)dl->_VtxCurrentIdx;
+    dl->PrimWriteVtx(c, uvw, col_in);
+    for (int k = 0; k < seg; ++k) {
+        const float an = 6.2831853f * (float)k / (float)seg;
+        dl->PrimWriteVtx(ImVec2(c.x + std::cos(an) * rx, c.y + std::sin(an) * ry), uvw, col_out);
     }
+    ImDrawIdx* ix = dl->_IdxWritePtr;
+    for (int k = 0; k < seg; ++k) {
+        ix[k * 3] = i0; ix[k * 3 + 1] = (ImDrawIdx)(i0 + 1 + k); ix[k * 3 + 2] = (ImDrawIdx)(i0 + 1 + (k + 1) % seg);
+    }
+    dl->_IdxWritePtr += seg * 3;
 }
+/* A quad with a colour per corner (TL TR BR BL). */
+void quad4(ImDrawList* dl, const ImVec2 p[4], const ImU32 c[4]) {
+    const ImVec2 uvw = dl->_Data->TexUvWhitePixel;
+    dl->PrimReserve(6, 4);
+    const ImDrawIdx i = (ImDrawIdx)dl->_VtxCurrentIdx;
+    for (int k = 0; k < 4; ++k) dl->PrimWriteVtx(p[k], uvw, c[k]);
+    ImDrawIdx* ix = dl->_IdxWritePtr;
+    ix[0] = i; ix[1] = (ImDrawIdx)(i + 1); ix[2] = (ImDrawIdx)(i + 2); ix[3] = i; ix[4] = (ImDrawIdx)(i + 2); ix[5] = (ImDrawIdx)(i + 3);
+    dl->_IdxWritePtr += 6;
+}
+float fract01(float v) { return v - std::floor(v); }
 }  // namespace
 
 void cases_stage_back(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1) {
     ImDrawList* dl = sc.dl;
     const StageColors s = stage_colors(c0, c1);
     const float yw = sc.floor_y(kWallZ);
+    const float W = p1.x - p0.x;
+    const float lit = sc.spot * (1.f - 0.45f * sc.dim);
     dl->AddRectFilledMultiColor(p0, ImVec2(p1.x, yw), s.wall_top, s.wall_top, s.wall_hz, s.wall_hz);
     dl->PushClipRect(p0, ImVec2(p1.x, yw + 1.f), true);
-    const ImU32 glow = lerpc(s.tint, rgba(255, 255, 255), 0.35f);
-    ellipse_layers(dl, ImVec2(sc.cx, yw - sc.U * 0.30f), (p1.x - p0.x) * 0.42f, sc.U * 1.25f, glow, 18, 5);
+    // a wide soft wash of the ambient colour behind the cases, a tighter glow right behind the centre case
+    fan(dl, ImVec2(sc.cx, yw - sc.U * 0.35f), W * 0.55f, sc.U * 1.55f, alpha(s.light, 0.20f), alpha(s.light, 0.f), 48);
+    // the spotlight: a cone from the top of the wall to the pool on the floor, soft at both sides
+    {
+        const float xt[4] = {-0.95f, -0.32f, 0.32f, 0.95f}, xb[4] = {-2.9f, -1.15f, 1.15f, 2.9f};
+        const float aw[4] = {0.f, 1.f, 1.f, 0.f};
+        const float ytop = p0.y - sc.U * 0.2f;
+        for (int k = 0; k < 3; ++k) {
+            const ImVec2 q[4] = {ImVec2(sc.cx + xt[k] * sc.U, ytop), ImVec2(sc.cx + xt[k + 1] * sc.U, ytop), ImVec2(sc.cx + xb[k + 1] * sc.U, yw), ImVec2(sc.cx + xb[k] * sc.U, yw)};
+            const ImU32 c[4] = {alpha(s.light, 0.f), alpha(s.light, 0.f), alpha(s.light, 0.15f * lit * aw[k + 1]), alpha(s.light, 0.15f * lit * aw[k])};
+            ImU32 cc[4] = {alpha(s.light, 0.06f * lit * aw[k]), alpha(s.light, 0.06f * lit * aw[k + 1]), c[2], c[3]};
+            quad4(dl, q, cc);
+        }
+    }
+    fan(dl, ImVec2(sc.cx, sc.hy + sc.U * 0.02f), sc.U * 0.95f, sc.U * 1.1f, alpha(s.light, 0.17f * lit), alpha(s.light, 0.f), 40);   // rim / back light
     dl->PopClipRect();
     dl->AddRectFilledMultiColor(ImVec2(p0.x, yw), p1, s.floor_far, s.floor_far, s.floor_near, s.floor_near);
     // soft horizon: a glow band over the junction, a bright line that fades out to the sides, and two faint lines above it
     const ImU32 hz = lerpc(s.tint, rgba(255, 255, 255), 0.55f);
     dl->AddRectFilledMultiColor(ImVec2(p0.x, yw - sc.U * 0.07f), ImVec2(p1.x, yw), alpha(hz, 0.f), alpha(hz, 0.f), alpha(hz, 0.16f), alpha(hz, 0.16f));
     const float mid = sc.cx;
-    dl->AddRectFilledMultiColor(ImVec2(p0.x, yw - 1.f), ImVec2(mid, yw + 1.f), alpha(hz, 0.f), alpha(hz, 0.55f), alpha(hz, 0.55f), alpha(hz, 0.f));
-    dl->AddRectFilledMultiColor(ImVec2(mid, yw - 1.f), ImVec2(p1.x, yw + 1.f), alpha(hz, 0.55f), alpha(hz, 0.f), alpha(hz, 0.f), alpha(hz, 0.55f));
+    dl->AddRectFilledMultiColor(ImVec2(p0.x, yw - 1.f), ImVec2(mid, yw + 1.f), alpha(hz, 0.f), alpha(hz, 0.60f), alpha(hz, 0.60f), alpha(hz, 0.f));
+    dl->AddRectFilledMultiColor(ImVec2(mid, yw - 1.f), ImVec2(p1.x, yw + 1.f), alpha(hz, 0.60f), alpha(hz, 0.f), alpha(hz, 0.f), alpha(hz, 0.60f));
     for (int i = 1; i <= 2; ++i) {
         const float y = yw - sc.U * 0.085f * (float)i;
         dl->AddRectFilledMultiColor(ImVec2(p0.x, y), ImVec2(mid, y + 1.f), alpha(hz, 0.f), alpha(hz, 0.16f / (float)i), alpha(hz, 0.16f / (float)i), alpha(hz, 0.f));
         dl->AddRectFilledMultiColor(ImVec2(mid, y), ImVec2(p1.x, y + 1.f), alpha(hz, 0.16f / (float)i), alpha(hz, 0.f), alpha(hz, 0.f), alpha(hz, 0.16f / (float)i));
+    }
+    // drifting light motes (a few dozen tiny discs; none under reduced motion)
+    if (sc.motion) {
+        const float H = yw - p0.y;
+        for (int i = 0; i < 26; ++i) {
+            const float a = fract01(0.6180339f * (float)(i + 1)), b = fract01(0.7548776f * (float)(i + 1) + 0.13f);
+            const float sp_ = 0.006f + 0.010f * fract01(a * 7.3f);
+            const double T = sc.time;   // doubles: the phases stay exact after days of uptime
+            const float x = p0.x + fract01(a + (float)std::fmod(T * (double)sp_ * 0.4, 1.0) + 0.02f * (float)std::sin(T * 0.35 + (double)i)) * W;
+            const float y = p0.y + (1.f - fract01(b + (float)std::fmod(T * (double)sp_, 1.0))) * (H * 0.96f);
+            const float tw = 0.5f + 0.5f * (float)std::sin(T * (0.5 + 0.4 * (double)a) + (double)i * 1.7);
+            const float edge = std::min(1.f, std::min((y - p0.y) / (H * 0.2f), (yw - y) / (H * 0.2f)));
+            const float al = 0.05f + 0.13f * tw;
+            dl->AddCircleFilled(ImVec2(x, y), std::max(1.f, sc.U * (0.004f + 0.006f * fract01(a * 3.1f))), alpha(s.light, al * std::max(0.f, edge) * (0.4f + 0.6f * lit)), 8);
+        }
     }
 }
 
@@ -560,13 +857,16 @@ void cases_veil(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1, f
     ImDrawList* dl = sc.dl;
     const StageColors s = stage_colors(c0, c1);
     const float yw = sc.floor_y(kWallZ), yb = p1.y;
-    const float y0 = sc.floor_y(2.2f), y1 = sc.floor_y(0.f) + case_h * 0.30f * sc.U;
-    const float al[4] = {0.f, 0.22f, 0.62f, 1.f};
-    const float ys[4] = {y0, y0 + (y1 - y0) * 0.32f, y0 + (y1 - y0) * 0.68f, y1};
+    const float y0 = sc.floor_y(2.2f), y1 = sc.floor_y(0.f) + case_h * 0.34f * sc.U;
     dl->PushClipRect(p0, p1, true);
-    for (int i = 0; i < 3; ++i) {
-        const ImU32 ca_ = floor_at(s, yw, yb, ys[i]), cb_ = floor_at(s, yw, yb, ys[i + 1]);
-        dl->AddRectFilledMultiColor(ImVec2(p0.x, ys[i]), ImVec2(p1.x, ys[i + 1]), alpha(ca_, al[i]), alpha(ca_, al[i]), alpha(cb_, al[i + 1]), alpha(cb_, al[i + 1]));
+    // an eased fade (the reflection stays crisp under the case and melts into the floor), in six bands
+    constexpr int kBands = 6;
+    for (int i = 0; i < kBands; ++i) {
+        const float ta = (float)i / (float)kBands, tb = (float)(i + 1) / (float)kBands;
+        const float ya = y0 + (y1 - y0) * ta, yb2 = y0 + (y1 - y0) * tb;
+        const float aa = std::pow(ta, 1.35f), ab = std::pow(tb, 1.35f);
+        const ImU32 ca_ = floor_at(s, yw, yb, ya), cb_ = floor_at(s, yw, yb, yb2);
+        dl->AddRectFilledMultiColor(ImVec2(p0.x, ya), ImVec2(p1.x, yb2), alpha(ca_, aa), alpha(ca_, aa), alpha(cb_, ab), alpha(cb_, ab));
     }
     dl->AddRectFilledMultiColor(ImVec2(p0.x, y1), ImVec2(p1.x, std::max(y1 + 1.f, p1.y)), floor_at(s, yw, yb, y1), floor_at(s, yw, yb, y1), floor_at(s, yw, yb, yb), floor_at(s, yw, yb, yb));
     dl->PopClipRect();
@@ -576,21 +876,36 @@ void cases_stage_front(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU3
     ImDrawList* dl = sc.dl;
     const StageColors s = stage_colors(c0, c1);
     const float yw = sc.floor_y(kWallZ);
+    const float lit = sc.spot * (1.f - 0.45f * sc.dim);
     dl->PushClipRect(ImVec2(p0.x, yw), p1, true);
     const ImU32 ln = lerpc(s.tint, rgba(255, 255, 255), 0.5f);
-    // perspective lines running away to the horizon
+    // perspective lines running away to the horizon (fainter toward the edges of the screen)
     const float vy = sc.hy;
     const float tw = (yw - vy) / std::max(1.f, p1.y - vy);
     for (int k = -9; k <= 9; ++k) {
         const float xb = sc.cx + (float)k * (p1.x - p0.x) * 0.105f;
         const float xt = sc.cx + (xb - sc.cx) * tw;
-        dl->AddLine(ImVec2(xt, yw), ImVec2(xb, p1.y), alpha(ln, 0.05f), 1.f);
+        dl->AddLine(ImVec2(xt, yw), ImVec2(xb, p1.y), alpha(ln, 0.055f * (1.f - std::fabs((float)k) / 11.f)), 1.f);
     }
-    // the pool of light under the centre case and a gloss streak across the floor
-    ellipse_layers(dl, ImVec2(sc.cx, sc.floor_y(0.f) + sc.U * 0.02f), sc.U * 0.95f, sc.U * 0.20f, lerpc(s.tint, rgba(255, 255, 255), 0.55f), 12, 6);
-    const float fy1 = sc.floor_y(0.f) + sc.U * 0.55f;
+    // the pool of light under the centre case: a wide tinted spill, then a brighter core
+    const float fy = sc.floor_y(0.f);
+    fan(dl, ImVec2(sc.cx, fy + sc.U * 0.05f), sc.U * 2.5f, sc.U * 0.52f, alpha(s.light, 0.30f * lit), alpha(s.light, 0.f), 44);
+    fan(dl, ImVec2(sc.cx, fy + sc.U * 0.03f), sc.U * 1.05f, sc.U * 0.23f, alpha(rgba(255, 255, 255), 0.46f * lit), alpha(s.light, 0.f), 36);
+    // a gloss streak across the floor
+    const float fy1 = fy + sc.U * 0.55f;
     dl->AddRectFilledMultiColor(ImVec2(p0.x, yw), ImVec2(p1.x, fy1), alpha(rgba(255, 255, 255), 0.05f), alpha(rgba(255, 255, 255), 0.0f), alpha(rgba(255, 255, 255), 0.0f), alpha(rgba(255, 255, 255), 0.0f));
     dl->PopClipRect();
+}
+
+void cases_vignette(const CaseScene& sc, ImVec2 p0, ImVec2 p1, float strength) {
+    ImDrawList* dl = sc.dl;
+    const float W = p1.x - p0.x, H = p1.y - p0.y;
+    const ImU32 d = IM_COL32(2, 3, 6, (int)(150.f * std::max(0.f, std::min(1.f, strength)))), z = IM_COL32(2, 3, 6, 0);
+    const float ex = W * 0.16f, ey = H * 0.18f;
+    dl->AddRectFilledMultiColor(p0, ImVec2(p0.x + ex, p1.y), d, z, z, d);
+    dl->AddRectFilledMultiColor(ImVec2(p1.x - ex, p0.y), p1, z, d, d, z);
+    dl->AddRectFilledMultiColor(p0, ImVec2(p1.x, p0.y + ey), d, d, z, z);
+    dl->AddRectFilledMultiColor(ImVec2(p0.x, p1.y - ey), p1, z, z, d, d);
 }
 
 void glow_text(ImDrawList* dl, ImFont* font, float size, ImVec2 p, ImU32 col, ImU32 glow, float strength, const char* text) {

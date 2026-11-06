@@ -290,6 +290,7 @@ namespace {
 std::mutex g_memo_mu;
 std::unordered_map<unsigned long long, const GameInfo*> g_cat_memo;
 std::unordered_map<unsigned long long, bool> g_online_memo;
+std::unordered_map<unsigned long long, int> g_year_memo;
 unsigned long long hmix(unsigned long long h, const std::string& s) { return (h ^ std::hash<std::string>()(s)) * 1099511628211ull + 0x9e3779b97f4a7c15ull; }
 unsigned long long entry_hash(const hub::GameEntry& e, bool with_title) {
     unsigned long long h = 1469598103934665603ull + (unsigned long long)e.system;
@@ -305,6 +306,7 @@ void lib_lookup_cache_clear() {
     std::lock_guard<std::mutex> l(g_memo_mu);
     g_cat_memo.clear();
     g_online_memo.clear();
+    g_year_memo.clear();
 }
 
 const GameInfo* catalog_for(const hub::GameEntry& e) {
@@ -319,6 +321,38 @@ const GameInfo* catalog_for(const hub::GameEntry& e) {
     if (g_cat_memo.size() > 50000) g_cat_memo.clear();
     g_cat_memo[h] = g;
     return g;
+}
+
+/* Release year for sorting and the carousel's year marks: the same source as the subtitle under the centre case (the bundled game database,
+ * then the curated catalog). Memoized per game (a rename or rescan that changes the hashed fields just misses). */
+int lib_year_of(int idx) {
+    if (idx < 0) return 0;
+    if (idx >= (int)A.lib.size()) {
+        const size_t gi = (size_t)idx - A.lib.size();
+        if (gi >= A.ghosts.size()) return 0;
+        const GameInfo* gc = A.ghosts[gi].cid.empty() ? nullptr : hub::find_game(A.ghosts[gi].cid);
+        return gc ? gc->year : 0;
+    }
+    const hub::GameEntry& e = A.lib[(size_t)idx];
+    const unsigned long long h = entry_hash(e, true);
+    {
+        std::lock_guard<std::mutex> l(g_memo_mu);
+        auto it = g_year_memo.find(h);
+        if (it != g_year_memo.end()) return it->second;
+    }
+    const GameInfo* cat = catalog_for(e);
+    CaseInfo ci;
+    gameinfo_case_info(e, cat ? cat->title : std::string(), false, &ci);
+    int y = ci.year > 0 ? ci.year : (cat ? cat->year : 0);
+    if (y <= 0 && g_headless && e.key.compare(0, 5, "fake:") == 0 && std::getenv("HUB_SHOT_FAKE_LIB")) {   // screenshot aid: made-up years so the year marks have something to show
+        unsigned h2 = 2166136261u;
+        for (char c : e.key) h2 = (h2 ^ (unsigned char)c) * 16777619u;
+        y = (h2 % 11u) == 0 ? 0 : 1984 + (int)((h2 >> 8) % 36u);
+    }
+    std::lock_guard<std::mutex> l(g_memo_mu);
+    if (g_year_memo.size() > 50000) g_year_memo.clear();
+    g_year_memo[h] = y;
+    return y;
 }
 
 /* The Online chip / badge rule: the native port, or any game that can be played in a room. */
@@ -399,6 +433,8 @@ static unsigned long long added_unix(const std::string& path) {
     return 0;
 }
 
+unsigned long long lib_added_unix(const std::string& path) { return added_unix(path); }   // the Cases scrubber's "added" marks
+
 static std::string genre_lookup(const gameinfo::Query& q) {
     std::string g;
     if (!q.system.empty()) g = gameinfo::shared_db(hub::exe_dir() + "data/").lookup(q).genre;
@@ -448,18 +484,25 @@ static std::string genre_of_index(int i) {
 
 void rebuild_vis() {
     A.sort_mode = hubui::sort_from_key(A.st.library_sort);
+    A.sort_rev = A.st.library_sort_rev;
+    A.sort_favs = A.st.library_favs_first;
+    const hubui::SortSpec spec(A.sort_mode, A.sort_rev, A.sort_favs);
+    const bool need_year = A.sort_mode == hubui::SortMode::ReleaseYear;
     rebuild_ghosts();   // friends' games you do not own (index >= lib.size() in items / vis / shelves)
     std::vector<hubui::ListItem> items;
     items.reserve(A.lib.size() + A.ghosts.size());
     for (auto& e : A.lib) {
         const hub::GameState& g0 = gstate(e.key);
         hubui::ListItem li{e.key, e.title, sys_short(e), is_native(e), g0.last_played, g0.play_seconds, added_unix(e.path)};
+        li.favorite = g0.favorite;
+        if (need_year) li.year = lib_year_of((int)items.size());
         if (custom_is_renamed(e.key)) li.alt_title = custom_original_title(e);   // search also matches the scanned name
+        hubui::prepare_sort_key(li);   // lower-cased title, "#" block and console rank once per build, not per comparison
         items.push_back(li);
     }
-    for (auto& g : A.ghosts) { hubui::ListItem li{"ghost:" + g.id, g.title, g.sys, false, 0, 0, 0}; li.ghost = true; items.push_back(li); }
+    for (auto& g : A.ghosts) { hubui::ListItem li{"ghost:" + g.id, g.title, g.sys, false, 0, 0, 0}; li.ghost = true; hubui::prepare_sort_key(li); if (need_year) li.year = lib_year_of((int)items.size()); items.push_back(li); }
     std::string q = A.search_buf;
-    std::vector<int> base = hubui::filter_sort(items, "", q, A.sort_mode);   // search applied, all consoles
+    std::vector<int> base = hubui::filter_sort(items, "", q, spec);   // search applied, all consoles
     if (A.online_only) {
         std::vector<int> keep;
         for (int i : base) {
@@ -494,10 +537,10 @@ void rebuild_vis() {
         ++A.chip_counts[items[i].system];
         if (A.sys_filter.empty() || items[i].system == A.sys_filter) A.vis.push_back(i);
     }
-    A.secs = hubui::group_by_console(items, &A.vis, A.sort_mode);
+    A.secs = hubui::group_by_console(items, &A.vis, spec);
     if (A.st.lib_group_genre) {   // Group by Genre: A-Z genre sections, "Other" last; tiles keep their console label
         std::vector<int> idx = A.vis;
-        std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) { return hubui::list_item_less(items[a], items[b], A.sort_mode); });
+        std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) { return hubui::list_item_less(items[a], items[b], spec); });
         std::map<std::string, std::vector<int>> by;
         for (int i : idx) by[genre_of_index(i)].push_back(i);
         A.secs.clear();
@@ -522,6 +565,7 @@ void rebuild_vis() {
         g.pinned = is_native(e);
         g.play_seconds = gs.play_seconds;
         g.added = added_unix(e.path);
+        if (need_year) g.year = lib_year_of((int)A.sg.size());
         A.sg.push_back(g);
     }
     for (auto& gh : A.ghosts) {
@@ -530,9 +574,10 @@ void rebuild_vis() {
         g.title = gh.title;
         g.system = gh.sys;
         g.ghost = true;
+        if (need_year) g.year = lib_year_of((int)A.sg.size());
         A.sg.push_back(g);
     }
-    A.shelves = hubui::compose_shelves(A.sg, 12, A.sort_mode);
+    A.shelves = hubui::compose_shelves(A.sg, 12, spec);
     const std::vector<GameInfo>& cat = hub::catalog();
     std::vector<bool> owned(cat.size()), online(cat.size());
     for (size_t i = 0; i < cat.size(); ++i) {

@@ -38,6 +38,13 @@ ImGuiKey shot_key(const std::string& n) {
     if (n == "f2") return ImGuiKey_F2;
     if (n == "i") return ImGuiKey_I;
     if (n == "f") return ImGuiKey_F;
+    if (n == "o") return ImGuiKey_O;               // Cases: sort picker
+    if (n == "j") return ImGuiKey_J;               // Cases: quick jump
+    if (n == "pgdn") return ImGuiKey_PageDown;     // Cases: next section
+    if (n == "pgup") return ImGuiKey_PageUp;
+    if (n == "home") return ImGuiKey_Home;
+    if (n == "end") return ImGuiKey_End;
+    if (n.size() == 1 && n[0] >= 'a' && n[0] <= 'z') return (ImGuiKey)(ImGuiKey_A + (n[0] - 'a'));   // typed letters (quick-jump)
     return ImGuiKey_None;
 }
 

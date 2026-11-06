@@ -394,7 +394,7 @@ void library_top_bar() {
     {   // the search box gives way so the pinned right-hand buttons (Add games...) are never pushed past the edge (narrow window / Friends panel open)
         /* Search keeps a usable width: when the chips would squeeze it, "Friends' games" shortens to "Friends" and then "Sort: X" to "X". */
         const float min_search = sp(17.f);
-        const std::string sort_nm = hubui::sort_name(hubui::sort_from_key(A.st.library_sort));
+        const std::string sort_nm = hubui::sort_label(hubui::SortSpec(hubui::sort_from_key(A.st.library_sort), A.st.library_sort_rev, A.st.library_favs_first));
         auto chips_w = [&](const std::string& s, const std::string& f) { return ImGui::CalcTextSize(s.c_str()).x + ImGui::CalcTextSize(f.c_str()).x + sp(6.5f) + sp(4.5f); };
         const float base = ImGui::GetContentRegionAvail().x - total - sw_w;
         for (int lvl = 0; lvl < 3; ++lvl) {
@@ -432,8 +432,9 @@ void library_top_bar() {
     {   // sort chip: A cycles Title / Last played / Most played / Recently added (RT on the pad)
         if (!first_on_row) ImGui::SameLine(0, sp(1.5f));
         std::string sl = lib_sort_label;
-        if (chip(sl.c_str(), hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title, ui::ACCENT)) cycle_sort(1);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the order of your games  (RT on a controller)");
+        if (chip(sl.c_str(), hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title || A.st.library_sort_rev || A.st.library_favs_first, ui::ACCENT)) cycle_sort(1);
+        if (ImGui::IsItemClicked(1)) { A.st.library_sort_rev = !A.st.library_sort_rev; sort_changed(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the order of your games  (RT on a controller)\nRight-click: reverse the order");
     }
     if (A.view == LibView::All) {   // layout switcher: grid / list / compact / showcase
         ImGui::SameLine(0, sp(1.f));
