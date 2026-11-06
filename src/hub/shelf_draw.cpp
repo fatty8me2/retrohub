@@ -69,7 +69,8 @@ Look case_look(Media m) {
     switch (m) {
         case Media::Ps1Jewel: return {rgba(24, 25, 30), rgba(150, 154, 164), rgba(24, 25, 30), rgba(240, 240, 244), rgba(150, 156, 170, 150)};
         case Media::Ps2Case: return {rgba(17, 19, 27), rgba(38, 84, 214), rgba(240, 244, 255), rgba(240, 242, 250), rgba(0, 0, 0, 0)};
-        case Media::GcCase: return {rgba(78, 60, 148), rgba(196, 199, 210), rgba(52, 40, 100), rgba(244, 242, 252), rgba(0, 0, 0, 0)};
+        case Media::GcCase: return {rgba(22, 22, 27), rgba(196, 199, 210), rgba(30, 30, 38), rgba(238, 238, 244), rgba(0, 0, 0, 0)};
+        case Media::SwitchCase: return {rgba(214, 20, 32), rgba(236, 40, 54), rgba(255, 255, 255), rgba(255, 244, 244), rgba(0, 0, 0, 0)};
         case Media::WiiUCase: return {rgba(30, 140, 205), rgba(236, 242, 248), rgba(24, 112, 170), rgba(248, 252, 255), rgba(0, 0, 0, 0)};
         case Media::PspCase: return {rgba(32, 36, 48), rgba(176, 182, 194), rgba(28, 32, 42), rgba(236, 238, 244), rgba(0, 0, 0, 0)};
         case Media::DsCase: return {rgba(216, 218, 224), rgba(54, 144, 210), rgba(255, 255, 255), rgba(40, 42, 52), rgba(255, 255, 255, 120)};

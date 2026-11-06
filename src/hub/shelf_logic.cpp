@@ -23,6 +23,7 @@ Media media_for(const std::string& s) {
     if (s == "gc") return Media::GcCase;
     if (s == "wiiu") return Media::WiiUCase;
     if (s == "psp") return Media::PspCase;
+    if (s == "switch") return Media::SwitchCase;
     return Media::Generic;
 }
 
@@ -41,6 +42,7 @@ const char* media_key(Media m) {
         case Media::GcCase: return "gc-case";
         case Media::WiiUCase: return "wiiu-case";
         case Media::PspCase: return "psp-case";
+        case Media::SwitchCase: return "switch-case";
         default: return "keep-case";
     }
 }
@@ -63,6 +65,7 @@ Dims base_dims(Media m) {
         case Media::GcCase:   return {0.62f, 0.84f, 0.155f, spine};
         case Media::WiiUCase: return {0.74f, 0.98f, 0.17f, spine};
         case Media::PspCase:  return {0.54f, 0.76f, 0.145f, spine};
+        case Media::SwitchCase: return {0.52f, 0.90f, 0.12f, spine};
         default:              return {0.70f, 0.94f, 0.155f, spine};
     }
 }
