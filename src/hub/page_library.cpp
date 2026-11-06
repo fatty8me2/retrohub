@@ -894,7 +894,7 @@ void draw_details_modal() {
         place(label_w("Offline only", true));
         button("Offline only", ImVec2(0, bh), false, false, ui::Icon::Globe);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", e.system == hub::System::PSP ? "PSP games play offline only: PPSSPP has no online rooms in RetroHub"
+            ImGui::SetTooltip("%s", e.system == hub::System::PSP ? "PSP games play offline only: PPSSPP has no online rooms in RetroHub" : e.system == hub::System::Switch ? "Switch games play offline only for now (Lichii is very experimental)"
                               : !online_block_reason(e).empty() ? online_block_reason(e).c_str() : "Online play isn't available for this game");
         tr("online", "explained:offline-only");
     } else {

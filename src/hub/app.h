@@ -1058,7 +1058,12 @@ std::map<std::string, std::string> preferred_copies();
 std::set<std::string> hidden_game_keys();
 void apply_located_paths(std::vector<hub::GameEntry>* lib, const std::map<std::string, std::string>& preferred);
 void ps1_bios_ask_shot();   // screenshot aid
-void ps2_bios_ask(const std::string& key);   // ps1_ui.cpp: "PlayStation 2 BIOS" prompt (pad-friendly folder choice)
+void ps2_bios_ask(const std::string& key);
+bool switch_ready_or_ask(const hub::GameEntry& e, const std::string& install_dir);   // switch_ui.cpp: keys + firmware present (else the prompt opens for the game)
+void switch_setup_ask_shot();      // switch_ui.cpp: the prompt without a game (screenshots)
+void draw_switch_dialogs();        // switch_ui.cpp
+void switch_settings_ui();         // switch_ui.cpp: Settings > Playing block (Lichii, keys, firmware)
+void lichii_hang_watch();          // launch.cpp: Lichii build 88 can hang on exit after its window closed (known fence-worker race)   // ps1_ui.cpp: "PlayStation 2 BIOS" prompt (pad-friendly folder choice)
 void ps1_settings_ui();
 void emu_modal_begin(const char* name, bool* open_flag);
 void emu_modal_begin(const char* name, bool* open_flag);
