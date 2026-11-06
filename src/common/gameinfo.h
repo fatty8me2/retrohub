@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+namespace gametdb { struct Rec; }
+
 namespace gameinfo {
 
 /* "Pokémon: Emerald Version", "Pokemon - Emerald" -> "pokemonemerald": lowercase ASCII, accents folded, "&" -> "and",
@@ -71,7 +73,9 @@ struct Online {
     int64_t fetched = 0;               // unix seconds
     std::string qid, label;            // Wikidata item that matched
     std::string description;           // Wikipedia summary extract
-    std::string page_url;              // Wikipedia article
+    std::string page_url;              // article the description comes from
+    std::string source;                // "Wikipedia" / "GameTDB" (who wrote the description)
+    int rev = 0;                       // kCacheRev of the code that fetched it: older entries without a description are looked up again
     std::vector<Rating> ratings;       // review scores from Wikidata (P444 + P447)
     std::string esrb, pegi;            // "T", "PEGI 12"
     std::string developer, publisher, genre;
@@ -83,6 +87,11 @@ using Fetcher = std::function<bool(const std::string& url, std::string* body, in
 
 /* Wikidata platform item for a library system; "" when unknown. */
 std::string platform_qid(const std::string& system);
+/* Every platform item accepted for a system (Switch also accepts Switch 2). */
+std::vector<std::string> platform_qids(const std::string& system);
+/* Titles to look up, best first, deduplicated by normalize(): curated alt_title, the cleaned library title, and the full form of the short
+ * ones ("Zelda: The Wind Waker" -> "The Legend of Zelda: The Wind Waker"). */
+std::vector<std::string> title_variants(const Query& q);
 /* The URL builders (exposed so tests / the fixture recorder use the exact strings). */
 std::string url_search(const std::string& text);
 std::string url_entities(const std::vector<std::string>& ids);
@@ -92,6 +101,19 @@ std::string url_summary(const std::string& wiki_title);
 enum class ResolveResult { Ok, NotFound, NetworkError };
 /* Looks the game up. Network failure -> NetworkError (nothing to cache). NotFound = no confident title+platform match. */
 ResolveResult resolve_online(const Query& q, const Fetcher& fetch, Online* out);
+
+/* GameTDB record for a query (id from the serial first, then the title), or nullptr. The caller owns the network side (gametdb::index_for). */
+using TdbFinder = std::function<const gametdb::Rec*(const Query&)>;
+/* resolve_online() and, for what Wikipedia did not give (no match, or a match without a description), GameTDB's synopsis, developer,
+ * publisher, genre and ratings. A NotFound that GameTDB can fill becomes Ok. */
+ResolveResult resolve_description(const Query& q, const Fetcher& fetch, const TdbFinder& tdb, Online* out);
+
+/* A factual one-liner built from metadata only, never plot: "A 2001 racing game for the Nintendo 64 by Rare, for 1-4 players."
+ * fan_base != "": a ROM hack / mod ("A fan-made modification of Super Smash Bros. for the Nintendo 64."; "*" = base unknown). */
+std::string generated_description(const Query& q, const Meta& m, const Online& o, bool nx2 = false, const std::string& fan_base = "");
+std::string system_display_name(const std::string& system_short, bool nx2 = false);
+
+constexpr int kCacheRev = 2;   // 2: sitelink redirects accepted, GameTDB fallback, Switch 2, title variants
 
 /* Cache file name (no directory) for a query: "<system>_<normalized title>.json". */
 std::string cache_name(const Query& q);

@@ -341,6 +341,13 @@ target_link_libraries(hubgameinfo_net PUBLIC hubcommon winhttp)
 target_link_libraries(hubgameinfo_net PUBLIC hubversion)
 add_executable(gameinfo_record gameinfo_record.cpp)
 target_link_libraries(gameinfo_record PRIVATE hubgameinfo_net)
+# Headless cover-art + description coverage tool (live network, NOT a ctest): hub_metadata_prefetch <userdata copy> [--limit N]
+add_executable(hub_metadata_prefetch hub_metadata_prefetch.cpp art.cpp art_match.cpp)
+target_include_directories(hub_metadata_prefetch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_metadata_prefetch PRIVATE hubgameinfo_net hubcommon SDL2::SDL2 winhttp)
+target_compile_definitions(hub_metadata_prefetch PRIVATE TOOL_DATA_DIR="${CMAKE_SOURCE_DIR}/data/")
+add_custom_command(TARGET hub_metadata_prefetch POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:hub_metadata_prefetch>)
 add_executable(hub_gameinfo_test test_gameinfo.cpp)
 target_link_libraries(hub_gameinfo_test PRIVATE hubgameinfo_net)
 target_compile_definitions(hub_gameinfo_test PRIVATE GAMEINFO_FIXTURES="${CMAKE_SOURCE_DIR}/src/hub/testdata/gameinfo" GAMEINFO_DB="${CMAKE_SOURCE_DIR}/data/gameinfo.tsv")

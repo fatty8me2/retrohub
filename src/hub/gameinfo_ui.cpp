@@ -1,18 +1,30 @@
 #include "app.h"
+#include "art.h"
 #include "gameinfo.h"
+#include "gameinfo_queue.h"
 #include "gameinfo_net.h"
+#include "gametdb.h"
+#include "games.h"
 #include "winutil.h"
 
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
+#include <set>
 #include <thread>
 
 /* ---------- Game info section of the details modal ----------
  * Facts (developer, publisher, genre, release, players, age rating, Famitsu/Edge scores) come from the bundled libretro-database file
  * (data\gameinfo.tsv) and show instantly. The description and review scores are fetched on demand from Wikidata/Wikipedia by ONE
  * background thread (>= 1 s between requests), cached per game under <data>\gameinfo\, and refreshed rarely; offline the cached copy is
- * used and nothing blocks. Headless runs never touch the network (fixtures only: HUB_GAMEINFO_FIXTURES). Logic: common/gameinfo.cpp. */
+ * used and nothing blocks. Headless runs never touch the network (fixtures only: HUB_GAMEINFO_FIXTURES). Logic: common/gameinfo.cpp.
+ *
+ * Every game gets a description without opening anything: gameinfo_prefetch() queues a lookup (urgent ones first = what the cases view shows),
+ * and once the library has loaded the rest trickle through the same single thread (>= 1 s between requests, stops while offline for 5 minutes
+ * or while "Download cover art" is off). Results are cached on disk exactly like the details window's; gameinfo_generation() ticks whenever
+ * one lands. When no description exists anywhere, gameinfo_case_info() returns a factual generated line from the metadata. */
 
 namespace {
 
@@ -30,17 +42,19 @@ struct Slot {
     bool expanded = false;
 };
 
-struct Job { std::string name; Query q; };
+using JobQueue = gameinfo::PrefetchQueue<Query>;
 struct Result { std::string name; gameinfo::ResolveResult r; Online on; };
 
 struct Worker {
     std::mutex mu;
     std::condition_variable cv;
-    std::deque<Job> jobs;
+    JobQueue jobs;                  // urgent first, deduplicated, handled names remembered (prefetch is called every frame)
     std::deque<Result> results;
     bool started = false;
     std::string cache_dir;
+    std::chrono::steady_clock::time_point pause_until{};   // background trickle waits here after a network failure
 };
+std::atomic<uint64_t> g_generation{1};
 Worker* W() { static Worker* w = new Worker();   // leaked on purpose: the thread outlives static destruction
               return w; }
 
@@ -58,38 +72,74 @@ std::string cache_dir() {
 }
 
 bool network_allowed() { return !g_headless || !gameinfo_net::fixture_dir().empty(); }
+bool gametdb_net_fixture() { return !gameinfo_net::fixture_dir().empty(); }
+
+bool bg_allowed(Worker* w) {   // the trickle: online, downloads enabled, not paused
+    return hubart::enabled() && std::chrono::steady_clock::now() >= w->pause_until && network_allowed();
+}
+
+const gametdb::Rec* tdb_find(const Query& q) {
+    const std::string db = gametdb::db_name(q.system);
+    if (db.empty()) return nullptr;
+    if (gametdb::dir().empty()) gametdb::set_dir(hub::data_dir() + "art/tdb/");
+    const gametdb::Index* idx = nullptr;
+    if (!gametdb_net_fixture()) idx = gametdb::index_for(q.system, [](const std::string& u, std::string* b, int* st) { return gameinfo_net::http_get(u, b, st); });
+    else idx = gametdb::cached_index(q.system);
+    if (!idx) return nullptr;
+    return gametdb::find_record(*idx, q.system, q.serial, gameinfo::title_variants(q));
+}
 
 void worker_main() {
     Worker* w = W();
     for (;;) {
-        Job j;
+        JobQueue::Entry j;
         {
             std::unique_lock<std::mutex> l(w->mu);
-            w->cv.wait(l, [&] { return !w->jobs.empty(); });
-            j = w->jobs.front();
-            w->jobs.pop_front();
+            for (;;) {   // urgent jobs sit in front; a background job only runs while bg_allowed()
+                if (!w->jobs.empty() && (w->jobs.front_urgent() || bg_allowed(w))) break;
+                w->cv.wait_for(l, std::chrono::seconds(1));
+            }
+            j = w->jobs.pop();
         }
         Online on;
+        std::string txt;
+        Online cached;
+        bool fresh = winutil::read_file(w->cache_dir + j.name, &txt) && gameinfo::cache_from_json(txt, &cached) && !gameinfo::cache_stale(cached, now_s());
+        if (fresh) continue;   // already on disk and recent: nothing to do
         gameinfo::Fetcher f = [](const std::string& u, std::string* b, int* s) { return gameinfo_net::fetch(u, b, s); };
-        auto r = gameinfo::resolve_online(j.q, f, &on);
+        auto r = gameinfo::resolve_description(j.payload, f, tdb_find, &on);
         if (r != gameinfo::ResolveResult::NetworkError) {
             on.fetched = now_s();
+            on.rev = gameinfo::kCacheRev;
             std::error_code ec;
             std::filesystem::create_directories(std::filesystem::u8path(w->cache_dir), ec);
             winutil::write_file_atomic(w->cache_dir + j.name, gameinfo::cache_to_json(on));
+            g_generation.fetch_add(1);
+        } else if (!j.urgent) {   // offline: leave the trickle alone for 5 minutes and keep the job
+            std::lock_guard<std::mutex> l(w->mu);
+            w->pause_until = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+            w->jobs.requeue(j);
+            continue;
+        } else {
+            std::lock_guard<std::mutex> l(w->mu);
+            w->jobs.forget(j.name);   // the details window asks again after its own back-off
         }
         std::lock_guard<std::mutex> l(w->mu);
         w->results.push_back({j.name, r, on});
     }
 }
 
-void enqueue(const std::string& name, Slot& s) {
+void enqueue(const std::string& name, const Query& q, bool urgent) {
     Worker* w = W();
     std::lock_guard<std::mutex> l(w->mu);
+    if (w->cache_dir.empty()) w->cache_dir = cache_dir();
     if (!w->started) { w->started = true; std::thread(worker_main).detach(); }
-    w->jobs.push_back({name, s.q});
+    if (w->jobs.add(name, q, urgent)) w->cv.notify_one();
+}
+
+void enqueue(const std::string& name, Slot& s) {
+    enqueue(name, s.q, true);
     s.queued = true;
-    w->cv.notify_one();
 }
 
 void drain_results() {
@@ -254,11 +304,12 @@ bool gameinfo_ui_section_query(const Query& q, const std::string& id, int part) 
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("From");
         ImGui::SameLine(0, sp(0.5f));
+        const bool tdb_src = o.source == "GameTDB";
         if (!o.page_url.empty()) {
-            if (ImGui::SmallButton("Wikipedia (CC BY-SA)")) open_url(o.page_url);
+            if (ImGui::SmallButton(tdb_src ? "GameTDB" : "Wikipedia (CC BY-SA)")) open_url(o.page_url);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", o.page_url.c_str());
         } else {
-            ImGui::TextDisabled("Wikipedia");
+            ImGui::TextDisabled(tdb_src ? "GameTDB" : "Wikipedia");
         }
     } else if (s.st == Slot::Offline && part != 1) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -282,17 +333,69 @@ bool gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_tit
     return d;
 }
 
+namespace {
+
+bool is_mod_entry(const hub::GameEntry& e) { return e.catalog_id == "remix" || e.catalog_id == "kanto" || !e.hack_patch.empty(); }
+
+std::string hack_base_title(const hub::GameEntry& e) {
+    if (e.catalog_id == "remix") return "Super Smash Bros.";
+    if (!e.hack_base.empty())
+        for (const auto& g : A.lib)
+            if (g.key == e.hack_base) return g.title;
+    return "*";
+}
+
+bool query_for(const hub::GameEntry& e, const std::string& catalog_title, Query* q) {
+    q->system = hub::system_short(e.system);
+    q->title = e.title;
+    q->serial = e.serial;
+    q->alt_title = e.catalog_id == "smash64" ? "Super Smash Bros." : catalog_title;
+    return !q->system.empty();
+}
+
+void bg_maybe_start() {   // once the library has loaded (or changed): queue every game, slowly, behind whatever the player is looking at
+    static bool busy = false;
+    static size_t last_n = 0;
+    static double next_check = 0;
+    if (busy || g_headless || !ImGui::GetCurrentContext()) return;
+    double t = ImGui::GetTime();
+    if (t < next_check) return;
+    next_check = t + 2.0;
+    if (A.lib.empty() || A.lib.size() == last_n || !hubart::enabled() || !network_allowed()) return;
+    last_n = A.lib.size();
+    busy = true;
+    for (const hub::GameEntry& e : A.lib) gameinfo_prefetch(e, false);
+    busy = false;
+}
+
+}  // namespace
+
 void gameinfo_case_info(const hub::GameEntry& e, const std::string& catalog_title, bool with_description, CaseInfo* out) {
-    if (!out || e.catalog_id == "remix" || e.catalog_id == "kanto") return;
+    if (!out) return;
+    bg_maybe_start();
     Query q;
-    q.system = hub::system_short(e.system);
-    q.title = e.title;
-    q.serial = e.serial;
-    q.alt_title = e.catalog_id == "smash64" ? "Super Smash Bros." : catalog_title;
-    if (q.system.empty()) return;
-    if (!with_description) {   // the bundled database only: a map lookup, no slot, no network
+    if (!query_for(e, catalog_title, &q)) return;
+    if (is_mod_entry(e)) {   // a mod / ROM hack: nothing reliable to match, so the line says what it is and nothing else
+        if (with_description) {
+            out->desc = gameinfo::generated_description(q, Meta(), Online(), e.nx2, hack_base_title(e));
+            out->desc_generated = true;
+        }
+        return;
+    }
+    if (!with_description) {   // the bundled database only (plus a cached online copy when this session already has one): no slot, no network
         const Meta m = gameinfo::shared_db(hub::exe_dir() + "data/").lookup(q);
         out->genre = m.genre; out->maker = m.developer; out->year = m.year; out->players = m.players;
+        out->publisher = m.publisher;
+        out->age = gameinfo::age_badge(m, Online());
+        auto it = g_slots.find(gameinfo::cache_name(q));
+        if (it != g_slots.end()) {
+            const Online& o = it->second.on;
+            if (out->genre.empty()) out->genre = o.genre;
+            if (out->maker.empty()) out->maker = o.developer;
+            if (out->publisher.empty()) out->publisher = o.publisher;
+            if (!out->year) out->year = o.year;
+            out->age = gameinfo::age_badge(m, o);
+        }
         return;
     }
     drain_results();
@@ -300,13 +403,32 @@ void gameinfo_case_info(const hub::GameEntry& e, const std::string& catalog_titl
     const Meta& m = s.meta;
     out->genre = !m.genre.empty() ? m.genre : s.on.genre;
     out->maker = !m.developer.empty() ? m.developer : s.on.developer;
-    out->year = m.year;
+    out->publisher = !m.publisher.empty() ? m.publisher : s.on.publisher;
+    out->age = gameinfo::age_badge(m, s.on);
+    out->year = m.year ? m.year : s.on.year;
     out->players = m.players;
     out->desc = s.on.description;
+    if (out->desc.empty() && s.st != Slot::Loading) {   // looked up and nothing found (or offline): say what we know, never invent plot
+        out->desc = gameinfo::generated_description(q, m, s.on, e.nx2);
+        out->desc_generated = true;
+    }
 }
 
-void gameinfo_prefetch(const hub::GameEntry&, bool) {}   // contract stub: the art/metadata lane implements the queue
-uint64_t gameinfo_generation() { return 0; }              // contract stub
+void gameinfo_prefetch(const hub::GameEntry& e, bool urgent) {
+    Query q;
+    if (!query_for(e, "", &q) || is_mod_entry(e)) return;
+    if (const hub::GameInfo* cat = hub::find_game(e.catalog_id)) if (e.catalog_id != "smash64") q.alt_title = cat->title;
+    if (e.catalog_id == "smash64") q.alt_title = "Super Smash Bros.";
+    if (!network_allowed()) return;
+    if (!urgent && !hubart::enabled()) return;
+    if (!urgent) bg_maybe_start();
+    enqueue(gameinfo::cache_name(q), q, urgent);
+}
+
+uint64_t gameinfo_generation() {
+    bg_maybe_start();
+    return g_generation.load();
+}
 
 /* Screenshot aid: HUB_SHOT_INFO="n64;Super Smash Bros.;NALE|gba;Pokemon Emerald;BPEE" replaces the fake library with these games
  * (keys fake:info0, fake:info1, ...; select one with HUB_SELECT_GAME and open its details with HUB_SHOT_KEYS=i). */

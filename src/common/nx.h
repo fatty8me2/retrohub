@@ -46,7 +46,10 @@ bool parse_nro(const uint8_t* d, size_t n, uint64_t file_size, Ident* out);
 bool parse_npdm(const uint8_t* d, size_t n, Ident* out);          // "META" magic; ACI0 program id; ACID size -> nx2
 /* NUP: reads only the superblock, the package records and the chosen package's meta (never the file tree). False = not a NUP.
  * No playable package -> true with update_or_dlc set. */
-bool parse_nup(const ReadFn& read, uint64_t file_size, Ident* out);
+bool parse_nup(const ReadFn& read, uint64_t file_size, Ident* out, std::vector<uint8_t>* icon = nullptr);
+/* NUP game icon (meta TLV 10 English entry, else TLV 3, else the first localized icon; JPEG / PNG bytes, at most 4 MB). Header + chosen
+ * package meta reads only. false = not a NUP or no icon. */
+bool nup_icon_file(const std::string& path, std::vector<uint8_t>* icon);
 /* "[0100ABCD12340000]" anywhere in a name -> title id, 0 when absent. */
 uint64_t title_id_from_name(const std::string& name);
 /* "Super Game [0100ABCD12340000][v0] (USA)" -> "Super Game". */

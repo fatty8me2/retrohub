@@ -4,9 +4,11 @@
 #include "art_lru.h"
 #include "library.h"
 #include "games.h"
+#include "gametdb.h"
 
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <string>
 
 namespace hm = hubart_match;
@@ -318,6 +320,154 @@ game (
                 }
             }
         }
+    }
+    /* ---- GameTDB: ids, regions, urls, database records (no network) ---- */
+    {
+        CHECK_EQ(gametdb::id_from_serial("gc", "gm4e01"), "GM4E01");
+        CHECK_EQ(gametdb::id_from_serial("gc", "GM4E"), "");
+        CHECK_EQ(gametdb::id_from_serial("wiiu", "ARDE"), "ARDE01");
+        CHECK_EQ(gametdb::id_from_serial("wiiu", "ARDE01"), "ARDE01");
+        CHECK_EQ(gametdb::id_from_serial("wiiu", "0005000010145C00"), "");   // a title id is not a product code
+        CHECK_EQ(gametdb::id_from_serial("nds", "irbo"), "IRBO");
+        CHECK_EQ(gametdb::id_from_serial("3ds", "ECLA"), "ECLA");
+        CHECK_EQ(gametdb::id_from_serial("3ds", "0004000000055d00"), "");
+        CHECK_EQ(gametdb::id_from_serial("n64", "NALE"), "");
+        CHECK_EQ(gametdb::id_from_serial("gc", "GM4/01"), "");
+        CHECK(gametdb::has_fullcover("gc") && gametdb::has_fullcover("wiiu") && gametdb::has_fullcover("nds") && gametdb::has_fullcover("3ds"));
+        CHECK(!gametdb::has_fullcover("n64") && !gametdb::has_fullcover("switch") && !gametdb::has_fullcover("ps2"));
+        CHECK_EQ(gametdb::db_name("gc"), "wii");
+        CHECK_EQ(gametdb::db_url("wiiu"), "https://www.gametdb.com/wiiutdb.zip");
+        CHECK_EQ(gametdb::db_url("nds"), "https://www.gametdb.com/dstdb.zip");
+        CHECK(gametdb::db_url("n64").empty());
+
+        /* region fallback: the id's own region, then the file name's hint, then US, EN, JA, the rest; no duplicates */
+        auto r = gametdb::region_folders("GM4E01");
+        CHECK(r.size() >= 8 && r[0] == "US" && r[1] == "EN" && r[2] == "JA");
+        r = gametdb::region_folders("GM4P01");
+        CHECK(r[0] == "EN" && r[1] == "US" && r[2] == "JA");
+        r = gametdb::region_folders("GM4J01");
+        CHECK(r[0] == "JA" && r[1] == "US" && r[2] == "EN");
+        r = gametdb::region_folders("ECLA", "Japan");   // 'A' = all regions: the hint decides
+        CHECK(r[0] == "JA" && r[1] == "US" && r[2] == "EN");
+        r = gametdb::region_folders("ECLA");
+        CHECK(r[0] == "US" && r[1] == "EN" && r[2] == "JA");
+        r = gametdb::region_folders("GM4D01");
+        CHECK(r[0] == "DE" && r[1] == "US" && r[2] == "EN");
+        std::set<std::string> uniq(r.begin(), r.end());
+        CHECK(uniq.size() == r.size());
+        CHECK_EQ(gametdb::region_hint_from_name("Pokemon X (USA) (En,Ja,Fr)"), "USA");
+        CHECK_EQ(gametdb::region_hint_from_name("Zelda (Europe) (En,Fr)"), "Europe");
+        CHECK_EQ(gametdb::region_hint_from_name("Zelda (Japan)"), "Japan");
+        CHECK_EQ(gametdb::region_hint_from_name("Plain Name"), "");
+        CHECK_EQ(gametdb::region_hint_from_name("Name (En,Ja,Fr)"), "");
+
+        /* urls: HQ first, then the standard size; GameCube is png and has no coverHQ; the others are jpg */
+        auto u = gametdb::image_urls("gc", "GM4E01", gametdb::Img::CoverFull, "US");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/wii/coverfullHQ/US/GM4E01.png" && u[1] == "https://art.gametdb.com/wii/coverfull/US/GM4E01.png");
+        u = gametdb::image_urls("gc", "GM4E01", gametdb::Img::Cover, "US");
+        CHECK(u.size() == 1 && u[0] == "https://art.gametdb.com/wii/cover/US/GM4E01.png");
+        u = gametdb::image_urls("nds", "IRBO", gametdb::Img::CoverFull, "US");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/ds/coverfullHQ/US/IRBO.jpg" && u[1] == "https://art.gametdb.com/ds/coverfull/US/IRBO.jpg");
+        u = gametdb::image_urls("3ds", "ECLA", gametdb::Img::Cover, "EN");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/3ds/coverHQ/EN/ECLA.jpg");
+        u = gametdb::image_urls("wiiu", "ARDE01", gametdb::Img::CoverFull, "US");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/wiiu/coverfullHQ/US/ARDE01.jpg");
+        u = gametdb::image_urls("switch", "AAAAA", gametdb::Img::Cover, "US");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/switch/coverHQ/US/AAAAA.jpg");
+        CHECK(gametdb::image_urls("switch", "AAAAA", gametdb::Img::CoverFull, "US").empty());   // no full scans for Switch
+        CHECK(gametdb::image_urls("n64", "NALE", gametdb::Img::Cover, "US").empty());
+        CHECK(gametdb::image_urls("gc", "../../x", gametdb::Img::Cover, "US").empty());          // ids are alphanumeric only
+        CHECK(gametdb::image_urls("gc", "GM4E01", gametdb::Img::Cover, "U/S").empty());
+
+        /* the pseudo names the art worker passes around, and the url list they expand to */
+        CHECK_EQ(hm::gametdb_name_for("GM4E01", "US"), "gametdb:GM4E01:US");
+        CHECK_EQ(hm::gametdb_name_for("GM4E01", ""), "gametdb:GM4E01:*");
+        CHECK_EQ(hm::gametdb_name_for("", "US"), "");
+        std::string pid, preg;
+        CHECK(hm::parse_gametdb_name("gametdb:ARDE01:US", &pid, &preg) && pid == "ARDE01" && preg == "US");
+        CHECK(!hm::parse_gametdb_name("Super Mario 64 (USA)", &pid, &preg));
+        auto tu = hm::thumb_urls("gc", 3, "gametdb:GM4E01:*");
+        CHECK(tu.size() == 6 && tu[0] == "https://art.gametdb.com/wii/coverfullHQ/US/GM4E01.png" && tu[2].find("/EN/") != std::string::npos);   // 3 folders x (HQ, standard)
+        tu = hm::thumb_urls("gc", 0, "gametdb:GM4E01:*");
+        CHECK(tu.size() == 3 && tu[0] == "https://art.gametdb.com/wii/cover/US/GM4E01.png");
+        tu = hm::thumb_urls("wiiu", 0, "gametdb:ARDE01:EN");
+        CHECK(tu.size() == 6 && tu[0] == "https://art.gametdb.com/wiiu/coverHQ/EN/ARDE01.jpg" && tu[2].find("/US/") != std::string::npos);
+        CHECK(hm::thumb_urls("gc", 1, "gametdb:GM4E01:*").empty() && hm::thumb_urls("gc", 2, "gametdb:GM4E01:*").empty());   // no title / snap from GameTDB
+        CHECK(hm::thumb_urls("n64", 3, "Super Mario 64 (USA)").empty());   // a libretro name never has a full cover
+        CHECK(hm::thumb_urls("n64", 0, "Super Mario 64 (USA)").size() == 1);
+        CHECK(hm::thumb_urls("switch", 0, "gametdb:AAAAA:*").size() == 4);   // US, EN x (HQ, standard)
+        tu = hm::thumb_urls("3ds", 3, "gametdb:BNEA:*");   // region 'A': 3 folders x (HQ, standard), then 5 more folders (HQ only), FR among them
+        CHECK(tu.size() == 11 && tu[0] == "https://art.gametdb.com/3ds/coverfullHQ/US/BNEA.jpg" && tu.back().find("/NL/") != std::string::npos);
+        bool has_fr = false;
+        for (const auto& x : tu) if (x == "https://art.gametdb.com/3ds/coverfullHQ/FR/BNEA.jpg") has_fr = true;
+        CHECK(has_fr);
+        CHECK(hubart::Kind::FullCover != hubart::Kind::Boxart);
+
+        /* database records: parse, tsv round trip, id / title lookup, region preference */
+        const char* xml = R"X(<?xml version="1.0" encoding="UTF-8"?>
+<datafile><WiiUTDB version="1" games="3"/>
+	<game name="Super Mario 3D World (USA) (EN)">
+		<id>ARDE01</id>
+		<type>WiiU</type>
+		<region>NTSC-U</region>
+		<locale lang="FR">
+			<title>SUPER MARIO 3D WORLD</title>
+			<synopsis>Partez &amp; voyez.</synopsis>
+		</locale>
+		<locale lang="EN">
+			<title>Super Mario 3D World</title>
+			<synopsis>Leap into the first multiplayer Mario platformer!
+
+Key Features:
+Play as Mario &lt;or&gt; Luigi</synopsis>
+		</locale>
+		<developer>Nintendo EAD Tokyo</developer>
+		<publisher>Nintendo</publisher>
+		<date year="2013" month="11" day="22"/>
+		<genre>action,platformer,3d platformer</genre>
+		<rating type="ESRB" value="E"/>
+		<rating type="PEGI" value="3"/>
+		<input players="4"><control type="pad" required="false"/></input>
+	</game>
+	<game name="Super Mario 3D World (Europe) (EN,FR)">
+		<id>ARDP01</id>
+		<type>WiiU</type>
+		<region>PAL</region>
+		<locale lang="EN"><title>Super Mario 3D World</title><synopsis/></locale>
+		<developer>Nintendo EAD Tokyo</developer>
+		<publisher>Nintendo</publisher>
+		<date year="2013" month="11" day="29"/>
+	</game>
+	<game name="Metroid (USA)"><id>GM8E01</id><type>GameCube</type><region>NTSC-U</region><locale lang="EN"><title>Metroid Prime</title><synopsis>Samus returns.</synopsis></locale></game>
+	<game name="Broken"><type>WiiU</type></game>
+</datafile>)X";
+        auto recs = gametdb::parse_xml(xml);
+        CHECK(recs.size() == 3);   // the entry without an id is dropped
+        CHECK(recs[0].id == "ARDE01" && recs[0].title == "Super Mario 3D World" && recs[0].region == "NTSC-U");
+        CHECK(recs[0].synopsis.find("Leap into") == 0 && recs[0].synopsis.find("<or>") != std::string::npos);   // EN locale chosen over FR; entities decoded
+        CHECK(recs[0].developer == "Nintendo EAD Tokyo" && recs[0].publisher == "Nintendo" && recs[0].year == 2013 && recs[0].month == 11);
+        CHECK(recs[0].esrb == "E" && recs[0].pegi == "PEGI 3" && recs[0].players == 4 && recs[0].genre.find("action") == 0);
+        CHECK(recs[1].id == "ARDP01" && recs[1].synopsis.empty() && recs[1].esrb.empty());
+        CHECK(gametdb::parse_xml(xml, "GameCube").size() == 1 && gametdb::parse_xml(xml, "GameCube")[0].id == "GM8E01");
+        CHECK(gametdb::parse_xml("").empty() && gametdb::parse_xml("<game name=\"x\"><id>A").empty());   // truncated input: no crash, nothing
+        auto back = gametdb::parse_tsv(gametdb::to_tsv(recs));
+        CHECK(back.size() == 3 && back[0].synopsis == recs[0].synopsis && back[0].title == recs[0].title && back[0].year == 2013 && back[2].id == "GM8E01");
+        gametdb::Index idx;
+        idx.load(back);
+        CHECK(idx.size() == 3 && idx.by_id("ARDP01") && idx.by_id("ARDP01")->region == "PAL" && !idx.by_id("NOPE01"));
+        const gametdb::Rec* t = idx.by_title("Super Mario 3D World (USA) (En,Fr,Es) (Rev 2)");   // tags dropped, USA entry preferred
+        CHECK(t && t->id == "ARDE01");
+        t = idx.by_title("super mario 3d world", true);
+        CHECK(t && t->id == "ARDE01" && !t->synopsis.empty());
+        CHECK(!idx.by_title("Mario Party") && !idx.by_title(""));
+        t = gametdb::find_record(idx, "wiiu", "0005000010145C00", {"Super Mario 3D World"});   // a Wii U title id finds it by title
+        CHECK(t && t->id == "ARDE01");
+        t = gametdb::find_record(idx, "wiiu", "ARDP", {"Super Mario 3D World"});             // the id's own entry has no synopsis: the same-title one is used
+        CHECK(t && !t->synopsis.empty());
+        t = gametdb::find_record(idx, "gc", "GM8E01", {"Wrong Title"});
+        CHECK(t && t->id == "GM8E01");
+        std::string xo;
+        CHECK(!gametdb::unzip_xml("not a zip", &xo) && xo.empty());
     }
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL OK\n", g_fail);
     return g_fail ? 1 : 0;
