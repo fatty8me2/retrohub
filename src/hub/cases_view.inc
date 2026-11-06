@@ -233,7 +233,8 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
     ImFont* f = ui::F.bold ? ui::F.bold : ui::F.body;
     const float fs = f->FontSize;
     const float pad_x = sp(1.5f), gap = sp(0.3f), ph = h - sp(0.7f);
-    const size_t nt = CS.tabs.size();
+    const size_t nt = std::min<size_t>(CS.tabs.size(), 40);
+    active = std::min(active, (int)nt - 1);
     float total = 0.f;
     float wv[40];
     for (size_t i = 0; i < nt && i < 40; ++i) { wv[i] = f->CalcTextSizeA(fs, FLT_MAX, 0.f, CS.tabs[i].label.c_str()).x + pad_x * 2.f; total += wv[i] + (i ? gap : 0.f); }
@@ -588,11 +589,11 @@ void draw_cases(Disp& D) {
             const ArtRef art = art_of(idx);
             cd.art = art.tex; cd.art_w = art.w; cd.art_h = art.h;
         }
-        if (c > 0.5f && showing_back) cd.back = &CS.back;
+        if (c > 0.5f && showing_back && CS.back_key == item_key(idx)) cd.back = &CS.back;   // only the game it was collected for
         shelfdraw::cases_bounds(sc, cd.media, ps, &s.mn, &s.mx);
         {   // cases fade out toward the edges of the screen instead of being cut off by them
             const float ex = 0.5f * (s.mn.x + s.mx.x);
-            ps.alpha *= smoothstep01(std::min(ex - p0.x, p1.x - ex) / (W * 0.13f));
+            ps.alpha *= smoothstep01(std::min(ex - p0.x, p1.x - ex) / std::max(1.f, W * 0.13f));
         }
         ++ns;
     }
@@ -609,7 +610,7 @@ void draw_cases(Disp& D) {
     if (ins > 0.01f) dl->AddRectFilled(p0, p1, IM_COL32(0, 0, 0, (int)(110.f * ins)));
 
     // ---- hit boxes (left to right; the centre case claims its whole box) ----
-    if (n) {
+    if (n && ns > 0) {
         int a0 = -1;
         for (int k = 0; k < ns; ++k) if (slots[k].i == ic) a0 = k;
         float xs[2 * kWindow + 5];
