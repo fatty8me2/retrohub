@@ -1,6 +1,26 @@
 {
   "versions": [
     {
+      "version": "1.35.0",
+      "date": "2026-11-06",
+      "title": "Real game cases, front to back",
+      "new": [
+        "The Cases view is now the Library's default. If you were on the old default (Grid) you are moved to Cases once; pick any other layout and it stays",
+        "Cases show the whole real cover scan: no more banner drawn over the art or covers cut off at the top (DS games lost theirs), and each case takes the shape of its cover",
+        "GameCube, Wii U, DS and 3DS games show their real spine and back cover (full cover scans from GameTDB)",
+        "Every other game gets a spine and back cover drawn like that console's real ones: real screenshots of the game, its description, developer and publisher, players, an age rating box and a barcode",
+        "Descriptions for every game in your library, fetched quietly in the background (Wikipedia, GameTDB), or a short factual line when none exists",
+        "Switch 2 games in .nup files use the game's own artwork on a red Switch case",
+        "Switch games: a Frame pacing setting. Steady 30 or 60 fps for even, stutter-free motion, or Smooth 60 (a steady 30 doubled by frame generation)"
+      ],
+      "improved": [
+        "Favourites get a gold star on the case's spine instead of a dot over the cover art",
+        "Inspect a case to see its top and bottom too: plastic edges on game cases, folded flaps on cardboard boxes",
+        "Small text on case backs is sharper",
+        "A library that only shows friends' games has an Add your own games button"
+      ]
+    },
+    {
       "version": "1.34.0",
       "date": "2026-11-06",
       "title": "Cases view, sorting and faster Switch games",

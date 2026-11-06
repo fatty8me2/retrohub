@@ -32,9 +32,18 @@ struct CasesState {
     int text_focus = -2, text_tick = -1; uint64_t text_sig = 0; float text_w = 0;
     std::string title_txt, sub_txt, tint_sys;
     // back cover
-    std::string back_key, b_desc, b_genre, b_maker, b_label;
+    std::string back_key, b_desc, b_genre, b_maker, b_pub, b_age, b_label, b_label_own;
     shelfdraw::CaseBack back;
-    SDL_Texture* back_tex[3] = {nullptr, nullptr, nullptr};
+    SDL_Texture* back_tex[3] = {nullptr, nullptr, nullptr};   // the player's own screenshots / save thumbnails (owned: destroyed on release)
+    shelfdraw::CaseShot own[3];                                // the same, as (texture, size)
+    int own_n = 0;
+    SDL_Texture* lr_tex[2] = {nullptr, nullptr};               // the game's libretro Title / Snap screenshots (owned by the art cache)
+    bool lr_have = false;
+    uint64_t back_gen = ~0ull;                                 // gameinfo_generation() the description was read at
+    int back_idx = -1;
+    int pf_focus = -2; uint64_t pf_sig = ~0ull; double pf_t = 0.0;   // description prefetch: the focus it was last issued for
+    SDL_Texture* shot_full = nullptr; int shot_full_w = 0, shot_full_h = 0; bool shot_full_tried = false;   // HUB_SHOT_FULLCOVER (screenshots only)
+    SDL_Texture* shot_icon = nullptr; int shot_icon_w = 0, shot_icon_h = 0; bool shot_icon_tried = false;   // HUB_SHOT_ICON: a square Switch icon for every Switch case (screenshots only)
     std::string shot_mode;
     bool shot_applied = false, no_art = false;
     bool menu_open = false, menu_focus_req = false;   // the slide-down menu overlay (the toolbar the immersive view hides)
@@ -142,10 +151,44 @@ SDL_Texture* cases_load_tex(const std::string& path, int* w, int* h) {
     }
     return t;
 }
+/* The consoles whose covers have a full scan (GameTDB coverfull): GameCube, Wii U, DS, 3DS. */
+bool cases_has_full(hub::System s) { return s == hub::System::GC || s == hub::System::WiiU || s == hub::System::NDS || s == hub::System::N3DS; }
+/* HUB_SHOT_FULLCOVER=<png>: a synthetic full cover (back | spine | front) for headless screenshots; nullptr otherwise. */
+SDL_Texture* cases_shot_full(int* w, int* h) {
+    if (!g_headless) return nullptr;
+    if (!CS.shot_full_tried) {
+        CS.shot_full_tried = true;
+        if (const char* fp = std::getenv("HUB_SHOT_FULLCOVER")) CS.shot_full = cases_load_tex(fp, &CS.shot_full_w, &CS.shot_full_h);
+    }
+    *w = CS.shot_full_w; *h = CS.shot_full_h;
+    return CS.shot_full;
+}
+SDL_Texture* cases_shot_icon(int* w, int* h) {
+    if (!g_headless) return nullptr;
+    if (!CS.shot_icon_tried) {
+        CS.shot_icon_tried = true;
+        if (const char* fp = std::getenv("HUB_SHOT_ICON")) {
+            CS.shot_icon = cases_load_tex(fp, &CS.shot_icon_w, &CS.shot_icon_h);
+            int iw = 0, ih = 0, comp = 0;   // its average colour, as the art cache would report it
+            std::ifstream ifs(std::filesystem::u8path(fp), std::ios::binary);
+            const std::string bytes((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+            if (unsigned char* px = CS.shot_icon && !bytes.empty() ? stbi_load_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), &iw, &ih, &comp, 4) : nullptr) {
+                unsigned long long r = 0, g = 0, b = 0, n = 0;
+                for (int i = 0; i < iw * ih; ++i) if (px[i * 4 + 3] > 127) { r += px[i * 4]; g += px[i * 4 + 1]; b += px[i * 4 + 2]; ++n; }
+                if (n) CS.fake_cols[CS.shot_icon] = IM_COL32((int)(r / n), (int)(g / n), (int)(b / n), 255);
+                stbi_image_free(px);
+            }
+        }
+    }
+    *w = CS.shot_icon_w; *h = CS.shot_icon_h;
+    return CS.shot_icon;
+}
+bool cases_fake_lib() { static const bool v = std::getenv("HUB_SHOT_FAKE_LIB") != nullptr || std::getenv("HUB_SHOT_FAKE_ART") != nullptr; return v; }
 void cases_release_back() {
     for (SDL_Texture*& t : CS.back_tex) if (t) { SDL_DestroyTexture(t); t = nullptr; }
     CS.back = shelfdraw::CaseBack();
     CS.back_key.clear();
+    CS.own_n = 0; CS.lr_tex[0] = CS.lr_tex[1] = nullptr; CS.lr_have = false; CS.back_gen = ~0ull; CS.back_idx = -1;
 }
 SDL_Texture* cases_fake_pic(int i, int* w, int* h) {   // HUB_SHOT_CASES=flip: three made-up pictures so the back cover shows its strip
     SDL_Renderer* ren = A.win ? SDL_GetRenderer(A.win) : nullptr;
@@ -164,11 +207,13 @@ SDL_Texture* cases_fake_pic(int i, int* w, int* h) {   // HUB_SHOT_CASES=flip: t
     SDL_FreeSurface(s);
     return t;
 }
-void cases_collect_back(int idx) {
-    cases_release_back();
-    CS.back_key = item_key(idx);
-    CS.b_desc.clear(); CS.b_genre.clear(); CS.b_maker.clear(); CS.b_label.clear();
+/* The text of the back (description, genre, year, players, developer, publisher, age): read when the case flips and again whenever an online
+ * lookup lands (gameinfo_generation() changes). Never touches the pictures. */
+void cases_back_info(int idx) {
+    CS.back_gen = gameinfo_generation();
+    CS.b_desc.clear(); CS.b_genre.clear(); CS.b_maker.clear(); CS.b_pub.clear(); CS.b_age.clear();
     int year = 0, players = item_players(idx);
+    CS.back.desc_generated = false;
     if (!is_ghost(idx)) {
         const hub::GameEntry& e = A.lib[(size_t)idx];
         const GameInfo* cat = catalog_for(e);
@@ -178,9 +223,55 @@ void cases_collect_back(int idx) {
         if (CS.b_desc.empty() && cat) CS.b_desc = cat->blurb;
         CS.b_genre = !ci.genre.empty() ? ci.genre : (cat ? cat->genre : std::string());
         CS.b_maker = ci.maker;
+        CS.b_pub = ci.publisher;
+        CS.b_age = ci.age;
         year = ci.year > 0 ? ci.year : (cat ? cat->year : 0);
         if (ci.players > 0) players = ci.players;
         else if (cat && cat->max_players > 0) players = cat->max_players;
+        CS.back.desc_generated = ci.desc_generated;
+        if (g_headless && CS.shot_mode == "flip" && cases_fake_lib()) {   // screenshot aid: a description, only for the fake library (a real library shows its real data)
+            if (CS.b_desc.empty()) CS.b_desc = "Race, battle and trade across a colourful world. Collect every cup, unlock hidden tracks and challenge friends in split-screen for up to four players. A story mode adds a grand adventure with new characters to meet along the way.";
+            if (CS.b_genre.empty()) CS.b_genre = "Racing";
+            if (year == 0) year = 2001;
+        }
+    }
+    CS.back.desc = CS.b_desc.c_str();
+    CS.back.genre = CS.b_genre.c_str();
+    CS.back.maker = CS.b_maker.c_str();
+    CS.back.publisher = CS.b_pub.c_str();
+    CS.back.age = CS.b_age.c_str();
+    CS.back.year = year;
+    CS.back.players = players;
+    CS.back.lines_w = -1.f;   // the wrapped lines are rebuilt
+}
+/* The picture strip of the back: the game's real libretro screenshots (title screen, then in game), topped up with the player's own
+ * screenshots / save thumbnails when the game has fewer than two. The libretro ones arrive asynchronously, so this is polled while flipped
+ * (a few hash lookups; the strip is rebuilt only when a picture arrives). */
+void cases_back_pics(int idx) {
+    SDL_Texture* lt[2] = {nullptr, nullptr};
+    int lw[2] = {0, 0}, lh[2] = {0, 0};
+    if (!is_ghost(idx) && !CS.no_art) {
+        const hub::GameEntry& e = A.lib[(size_t)idx];
+        lt[0] = hubart::get(e, hubart::Kind::Title, &lw[0], &lh[0]);
+        lt[1] = hubart::get(e, hubart::Kind::Snap, &lw[1], &lh[1]);
+    }
+    if (CS.lr_have && lt[0] == CS.lr_tex[0] && lt[1] == CS.lr_tex[1]) return;
+    CS.lr_have = true; CS.lr_tex[0] = lt[0]; CS.lr_tex[1] = lt[1];
+    int k = 0, nlr = 0;
+    for (int i = 0; i < 2; ++i) if (lt[i] && lw[i] > 0 && lh[i] > 0) { CS.back.shots[k++] = {lt[i], lw[i], lh[i]}; ++nlr; }
+    if (nlr < 2) for (int i = 0; i < CS.own_n && k < 3; ++i) CS.back.shots[k++] = CS.own[i];
+    CS.back.nshots = k;
+    CS.b_label = nlr > 0 ? "SCREENSHOTS" : CS.b_label_own;
+    CS.back.shots_label = CS.b_label.c_str();
+}
+void cases_collect_back(int idx) {
+    cases_release_back();
+    CS.back_key = item_key(idx);
+    CS.back_idx = idx;
+    CS.b_label.clear(); CS.b_label_own.clear();
+    CS.own_n = 0;
+    if (!is_ghost(idx)) {
+        const hub::GameEntry& e = A.lib[(size_t)idx];
         // the player's own screenshots, newest first; else save-state thumbnails
         std::vector<std::string> pics;
         if (!is_native(e)) {
@@ -195,40 +286,35 @@ void cases_collect_back(int idx) {
             }
             std::sort(names.begin(), names.end(), std::greater<std::string>());
             for (size_t i = 0; i < names.size() && i < 3; ++i) pics.push_back(dir + "\\shots\\" + names[i]);
-            CS.b_label = "YOUR SCREENSHOTS";
+            CS.b_label_own = "YOUR SCREENSHOTS";
             if (pics.empty()) {
                 for (const hubui::StateSlot& s : hubui::list_states(hub::saves::states_dir(sys_short(e), e.key)))
                     if (s.present && !s.thumb_path.empty() && pics.size() < 3) pics.push_back(s.thumb_path);
-                CS.b_label = "YOUR SAVES";
+                CS.b_label_own = "YOUR SAVES";
             }
         }
-        int k = 0;
         for (const std::string& p : pics) {
             int w = 0, h = 0;
             SDL_Texture* t = cases_load_tex(p, &w, &h);
             if (!t) continue;
-            CS.back_tex[k] = t;
-            CS.back.shots[k] = {t, w, h};
-            if (++k >= 3) break;
+            CS.back_tex[CS.own_n] = t;
+            CS.own[CS.own_n] = {t, w, h};
+            if (++CS.own_n >= 3) break;
         }
-        CS.back.nshots = k;
-        if (g_headless && CS.shot_mode == "flip") {   // screenshot aid: a description and three pictures for the fake library
-            if (CS.b_desc.empty()) CS.b_desc = "Race, battle and trade across a colourful world. Collect every cup, unlock hidden tracks and challenge friends in split-screen for up to four players. A story mode adds a grand adventure with new characters to meet along the way.";
-            if (CS.b_genre.empty()) CS.b_genre = "Racing";
-            if (year == 0) year = 2001;
-            if (CS.back.nshots == 0) {
-                for (int i = 0; i < 3; ++i) { int w = 0, h = 0; CS.back_tex[i] = cases_fake_pic(i, &w, &h); CS.back.shots[i] = {CS.back_tex[i], w, h}; }
-                CS.back.nshots = 3;
-                CS.b_label = "YOUR SCREENSHOTS";
-            }
+        if (g_headless && CS.shot_mode == "flip" && cases_fake_lib() && CS.own_n == 0) {   // screenshot aid: three pictures for the fake library (used when the game has no real ones)
+            for (int i = 0; i < 3; ++i) { int w = 0, h = 0; CS.back_tex[i] = cases_fake_pic(i, &w, &h); CS.own[i] = {CS.back_tex[i], w, h}; }
+            CS.own_n = 3;
+            CS.b_label_own = "YOUR SCREENSHOTS";
         }
     }
-    CS.back.desc = CS.b_desc.c_str();
-    CS.back.genre = CS.b_genre.c_str();
-    CS.back.maker = CS.b_maker.c_str();
-    CS.back.year = year;
-    CS.back.players = players;
-    CS.back.shots_label = CS.b_label.c_str();
+    cases_back_info(idx);
+    cases_back_pics(idx);
+}
+/* Every frame while a case is flipped: the pictures arriving, the description arriving. */
+void cases_back_poll() {
+    if (CS.back_key.empty() || CS.back_idx < 0) return;
+    cases_back_pics(CS.back_idx);
+    if (CS.back_gen != gameinfo_generation()) cases_back_info(CS.back_idx);
 }
 
 /* ---- hits ---- */
@@ -352,11 +438,11 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
         const bool light = on && ((0.2126f * (CS.hl_col & 0xFF) + 0.7152f * ((CS.hl_col >> 8) & 0xFF) + 0.0722f * ((CS.hl_col >> 16) & 0xFF)) / 255.f) > 0.72f;
         const ImU32 ink = hl_on > 0.f ? (light ? IM_COL32(20, 22, 30, 255) : IM_COL32_WHITE) : hov ? ui::TEXT : ui::TEXT2;
         float tx = p0.x + pad_x;
-        if (!t.sys.empty()) {   // the console's colour dot (on the active tab it becomes the ink colour: the pill already is that colour)
+        const bool whole = p0.x >= c0.x + sp(0.5f) - 1.f && p1.x <= c1.x - sp(0.5f) + 1.f;   // a label is drawn whole or not at all
+        if (!t.sys.empty() && (whole || total <= inner)) {   // the console's colour dot (on the active tab it becomes the ink colour: the pill already is that colour)
             dl->AddCircleFilled(ImVec2(tx + dot_r, (p0.y + p1.y) * 0.5f), dot_r, on ? ui::scale_alpha(ink, 0.9f) : col, 12);
             tx += dot_r * 2.f + sp(0.45f);
         }
-        const bool whole = p0.x >= c0.x + sp(0.5f) - 1.f && p1.x <= c1.x - sp(0.5f) + 1.f;   // a label is drawn whole or not at all
         if (whole || total <= inner) {
             const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.label.c_str());
             dl->AddText(f, fs, ImVec2(tx, (p0.y + p1.y - ts.y) * 0.5f), ink, t.label.c_str());
@@ -377,6 +463,43 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
         dl->AddRectFilledMultiColor(ImVec2(c1.x - sp(2.8f), c0.y + 1.f), ImVec2(c1.x - sp(0.4f), c1.y - 1.f), pc0, pc, pc, pc0);
     }
     (void)can_pad;
+}
+
+/* ---- first run: no games of your own yet but friends' / shared-pack games fill the carousel: a banner under the tabs opens the "Add your own
+ * games" dialog (a fully empty library shows the welcome card instead, see frame.cpp). ---- */
+bool cases_own_empty() {
+    for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey) return false;
+    return !A.scanning;
+}
+bool cases_add_banner(ImDrawList* dl, ImVec2 org, float W, float y, bool nav_ok) {
+    ImFont* hf = ui::F.h2 ? ui::F.h2 : ui::F.body;
+    const float fs = hf->FontSize, cs = ui::F.cap->FontSize;
+    const char* t1 = "Add your own games";
+    const char* t2 = "Drop ROM files on this window, or click to choose";
+    const float ir = sp(1.7f), pad_x = sp(2.f);
+    const float w1 = hf->CalcTextSizeA(fs, FLT_MAX, 0.f, t1).x;
+    float w = ir * 2.f + pad_x * 3.f + std::max(w1, ui::F.cap->CalcTextSizeA(cs, FLT_MAX, 0.f, t2).x);
+    w = std::min(w, W - sp(4.f));
+    const float h = sp(5.2f);
+    const ImVec2 p0(org.x + (W - w) * 0.5f, y), p1(p0.x + w, y + h);
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+    ImGui::SetCursorScreenPos(p0);
+    const bool pressed = ImGui::InvisibleButton("##casesaddbanner", ImVec2(w, h));
+    ImGui::PopItemFlag();
+    const bool hot = ImGui::IsItemHovered();
+    (void)nav_ok;
+    dl->AddRectFilled(p0, p1, ui::mix(ui::PANEL, ui::ACCENT, hot ? 0.30f : 0.16f), h * 0.5f);
+    dl->AddRect(p0, p1, ui::with_alpha(ui::ACCENT, hot ? 1.f : 0.7f), h * 0.5f, 0, hot ? 2.f : 1.5f);
+    const ImVec2 c(p0.x + pad_x + ir, (p0.y + p1.y) * 0.5f);
+    dl->AddCircleFilled(c, ir, ui::with_alpha(ui::ACCENT, 0.35f), 32);
+    ui::icon(dl, ui::Icon::Plus, c, ir * 1.1f, ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.6f));
+    const float tx = c.x + ir + pad_x * 0.8f;
+    dl->PushClipRect(ImVec2(tx, p0.y), ImVec2(p1.x - sp(1.f), p1.y), true);
+    dl->AddText(hf, fs, ImVec2(tx, c.y - fs * 0.95f), ui::TEXT, t1);
+    dl->AddText(ui::F.cap, cs, ImVec2(tx, c.y + sp(0.15f)), ui::TEXT2, t2);
+    dl->PopClipRect();
+    if (hot) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return pressed;
 }
 
 /* ---- the hint bar ---- */
@@ -625,6 +748,7 @@ void draw_cases(Disp& D) {
     pos_step(CS.flip, ModeState{CS.mode}.flip_target(), dt, reduced);
     pos_step(CS.insp, CS.mode == Mode::Inspect ? 1.f : 0.f, dt, reduced);
     if (CS.mode != Mode::Flip && CS.flip.x < 0.02f && !CS.back_key.empty() && CS.flip.v == 0.f) cases_release_back();
+    else cases_back_poll();   // descriptions / screenshots that arrive while the case is turned
     { static float prev_flash = 0.f; if (CS.fav_flash > prev_flash + 0.5f && !reduced) CS.settle.v += 22.f; prev_flash = CS.fav_flash; }   // a favourite pops the case
     ui::anim(CS.fav_flash, 0.f, 2.2f);
     CS.clock += (double)dt;
@@ -698,6 +822,16 @@ void draw_cases(Disp& D) {
     dl->PushClipRect(p0, p1, true);
     shelfdraw::cases_stage_back(sc, p0, p1, CS.tint0, CS.tint1);
 
+    // ---- descriptions: once the focus settles, the focused game and its two neighbours on each side are looked up (the back shows them) ----
+    if (n && std::fabs(CS.pos.x - (float)CS.focus) < 0.08f && (CS.pf_focus != CS.focus || CS.pf_sig != D.sig)) {
+        CS.pf_focus = CS.focus; CS.pf_sig = D.sig;
+        for (int o = -2; o <= 2; ++o) {
+            const int i = CS.focus + o;
+            if (i < 0 || i >= n) continue;
+            const int gi = D.flat[(size_t)i];
+            if (!is_ghost(gi)) gameinfo_prefetch(A.lib[(size_t)gi], o == 0);
+        }
+    }
     // ---- poses ----
     struct Slot { int i; float d; shelfdraw::CasePose ps; shelfdraw::CaseDraw cd; ImVec2 mn, mx; };
     static Slot slots[2 * kWindow + 4];
@@ -806,6 +940,17 @@ void draw_cases(Disp& D) {
         if (!CS.no_art && (ad <= 2.5f || (settled && ad <= 5.2f))) {
             const ArtRef art = art_of(idx);
             cd.art = art.tex; cd.art_w = art.w; cd.art_h = art.h;
+            if (sy == hub::System::Switch) { int iw = 0, ih = 0; if (SDL_Texture* it = cases_shot_icon(&iw, &ih)) { cd.art = it; cd.art_w = iw; cd.art_h = ih; } }
+            if (cd.art) cd.art_col = cases_art_rgb(cd.art);   // the generated spine / insert colours follow the front art
+            if (ad <= 2.5f && cases_has_full(sy)) {   // a full cover scan (back | spine | front): one texture, the faces are uv sub-rects of it
+                int fw = 0, fh = 0;
+                SDL_Texture* ft = is_ghost(idx) ? nullptr : hubart::get(A.lib[(size_t)idx], hubart::Kind::FullCover, &fw, &fh);
+                if (!ft) ft = cases_shot_full(&fw, &fh);
+                if (ft && fw > 0 && fh > 0) {
+                    cd.full = ft; cd.full_w = fw; cd.full_h = fh;
+                    hubart::fullcover_split(fw, fh, hubui::cases::nominal_cover_aspect(cd.media), &cd.full_back_x1, &cd.full_front_x0);
+                }
+            }
         }
         if (c > 0.5f && showing_back && CS.back_key == item_key(idx)) cd.back = &CS.back;   // only the game it was collected for
         shelfdraw::cases_bounds(sc, cd.media, ps, &s.mn, &s.mx);
@@ -1019,6 +1164,8 @@ void draw_cases(Disp& D) {
         if (pressed) lib_cases_menu_toggle();
         ImGui::PopID();
     }
+    if (n > 0 && cases_own_empty() && A.sys_filter.empty() && !A.search_buf[0] && CS.insp.x < 0.05f && CS.flip.x < 0.05f)   // only friends' / shared games so far: still point at Add games
+        if (cases_add_banner(dl, org, W, tab_y + tab_h + sp(1.5f), can)) add_games_open();
     cases_hints(dl, org, W, hint_y, hint_h);
     nav_draw(dl, org, sz, tab_y, tab_h, strip_y, strip_h, ImVec2(sc.cx, f0 - Hc * 0.5f), Hc, D);
     dl->PopClipRect();
@@ -1031,7 +1178,10 @@ void draw_cases(Disp& D) {
         CS.pos.x = (float)CS.focus;
         nav_shot_apply(CS.shot_mode, D);
         if (CS.shot_mode == "flip") { CS.mode = Mode::Flip; if (!is_ghost(D.flat[(size_t)CS.focus])) cases_collect_back(D.flat[(size_t)CS.focus]); CS.flip.x = 3.14159f; CS.flip.v = 0; }
-        else if (CS.shot_mode == "inspect") { CS.mode = Mode::Inspect; CS.spin.yaw = 0.62f; CS.spin.pitch = -0.2f; CS.insp.x = 1.f; }
+        else if (CS.shot_mode == "inspect") {
+            CS.mode = Mode::Inspect; CS.spin.yaw = 0.62f; CS.spin.pitch = -0.2f; CS.insp.x = 1.f;
+            if (const char* sp_ = std::getenv("HUB_SHOT_SPIN")) std::sscanf(sp_, "%f,%f", &CS.spin.yaw, &CS.spin.pitch);   // screenshots: "yaw,pitch" in radians (e.g. 1.2,0 shows the spine)
+        }
         CS.intro = 1.f;
     }
     ImGui::SetCursorScreenPos(org);

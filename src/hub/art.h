@@ -19,7 +19,17 @@ namespace hub { struct GameEntry; }
 
 namespace hubart {
 
-enum class Kind { Boxart, Title, Snap };
+/* Boxart: the front cover (libretro-thumbnails Named_Boxarts; for Switch, the game's own icon from its .nup / an online cover).
+ * Title / Snap: a title screen / in-game screenshot (libretro Named_Titles / Named_Snaps).
+ * FullCover: a scan of the whole cover sheet laid flat, left to right BACK | SPINE | FRONT (GameTDB "coverfull"); only GameCube,
+ * Wii U, DS and 3DS games have one, every other game gets nullptr (remembered as a miss like the other kinds). The spine strip is
+ * the part between two equal-width covers: see fullcover_split() below. */
+enum class Kind { Boxart, Title, Snap, FullCover };
+
+/* Splits a FullCover image of w x h pixels into its three parts, given the front cover's expected width / height ratio (the case's
+ * cover aspect). Outputs x ranges in pixels: back [0, back_x1), spine [back_x1, front_x0), front [front_x0, w). Uses equal-width back
+ * and front; when the computed spine is implausible (< 2% or > 14% of w) falls back to a 5% spine. Pure, no texture needed. */
+void fullcover_split(int w, int h, float front_aspect, int* back_x1, int* front_x0);
 
 void init(SDL_Renderer* renderer, const std::string& cache_dir);
 void shutdown();
@@ -52,11 +62,19 @@ void set_enabled(bool on);
 /* ---- internal, exposed for tests / headless tools (no renderer, no worker thread) ---- */
 namespace detail {
 void init_headless(const std::string& cache_dir);
+/* Writes names.json / misses.json now (they are otherwise written at most every 2 s). Call before a headless process exits. */
+void flush();
+/* The pre-allocation image check: known format (PNG / JPEG), each side <= 8192 px, at most 16 Mpx. Header bytes only. */
+bool image_header_ok(const std::string& bytes, int* w, int* h);
 /* Name resolution as the worker does it (names.json -> catalog nointro -> DAT). how: cache/catalog/md5/crc/serial/title. */
 bool resolve_name(const hub::GameEntry& game, std::string* name, std::string* how);
 /* Same for a ghost (friend / pack-only game): hint = the pack entry name without extension, "" if none. */
 bool resolve_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
                    const std::string& title, const std::string& hint, std::string* name, std::string* how);
+/* What the worker does for one game and kind, synchronously (the headless coverage tool): resolve the name, fall back to GameTDB's front
+ * cover / the Switch .nup icon for a Boxart, FullCover from GameTDB. *how: cache/catalog/md5/crc/serial/title/gametdb/nupicon. png_path = the
+ * cache file (JPEG bytes are cached under the same .png name: the decoder sniffs the content). On failure *err says why. */
+bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::string* err, std::string* how, std::string* png_path);
 /* Download (or read cache) + decode + downscale; returns dimensions. On failure *err says why
  * (a 404 is recorded in misses.json). png_path gets the cache file path. */
 bool fetch_decode(const std::string& system_short, const std::string& nointro_name, Kind kind,

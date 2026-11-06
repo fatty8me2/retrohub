@@ -26,6 +26,10 @@ std::string thumb_url(const std::string& system_short, int kind, const std::stri
 /* URLs to try in order. gbc adds the Game Boy repo second: dual-mode carts (e.g. Pokemon Yellow) are filed there. */
 /* "gametdb:ALZE01:US" pseudo name for Wii U games libretro-thumbnails lacks (id4 from meta.xml's product code; "" if not 4 chars). */
 std::string gametdb_name(const std::string& game_id4, char region_letter);
+/* "gametdb:<ID>:<region folder or *>" pseudo name for a GameTDB cover (id from the serial or the GameTDB index); "" when id is empty. */
+std::string gametdb_name_for(const std::string& id, const std::string& region_folder);
+bool parse_gametdb_name(const std::string& name, std::string* id, std::string* region);
+/* kind 0 Boxart, 1 Titles, 2 Snaps, 3 FullCover (GameTDB only: a normal name has none -> empty). A gametdb: name gives up to 3 region folders x (HQ, standard). */
 std::vector<std::string> thumb_urls(const std::string& system_short, int kind, const std::string& nointro_name);
 
 /* One ROM line of a DAT (game-level serial is inherited when the rom has none). */
