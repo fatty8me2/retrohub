@@ -318,7 +318,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     TileSpec t;
     t.id = std::string(shelf) + "|" + e.key;
     t.title = e.title;
-    if (show_sys) t.badge = sys_badge(e.system);   // inside a console section the header already says it
+    if (show_sys) t.badge = sys_badge(e);   // inside a console section the header already says it
     if (is_native(e)) t.tag = "NATIVE";
     if (is_hack(e)) { t.tag = hack_ribbon(e); t.tag_accent = true; }
     if (is_kanto(e)) { t.tag = "CO-OP"; t.tag_accent = true; t.tag_tip = "Two-player online co-op FireRed (a friend's project). Host or join from a room."; }

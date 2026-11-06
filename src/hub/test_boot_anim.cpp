@@ -17,6 +17,7 @@ int main() {
     CHECK(media_for(hub::System::GC) == Media::MiniDisc);
     CHECK(media_for(hub::System::PS1) == Media::Disc && media_for(hub::System::PS2) == Media::Disc && media_for(hub::System::WiiU) == Media::Disc);
     CHECK(media_for(hub::System::PSP) == Media::Umd);
+    CHECK(media_for(hub::System::Switch) == Media::Card && geo_for(hub::System::Switch).kind == Insert::Behind);
     CHECK(media_for(hub::System::Unknown) == Media::None);
 
     /* timeline: full is 2.5-3.5 s, short ~1 s, phases in order and contiguous */
@@ -124,7 +125,7 @@ int main() {
     {
         const float n64 = timeline_for(false, hub::System::N64, 6.f).total();
         using S = hub::System;
-        for (S sy : {S::GB, S::GBC, S::GBA, S::NDS, S::N3DS, S::GC, S::PS1, S::PS2, S::PSP, S::WiiU, S::NES, S::SNES}) {
+        for (S sy : {S::GB, S::GBC, S::GBA, S::NDS, S::N3DS, S::GC, S::PS1, S::PS2, S::PSP, S::Switch, S::WiiU, S::NES, S::SNES}) {
             for (float snd : {0.f, 5.f, 9.5f}) {
                 Timeline t = timeline_for(false, sy, snd);
                 CHECK(t.total() >= n64 - 1e-3f);

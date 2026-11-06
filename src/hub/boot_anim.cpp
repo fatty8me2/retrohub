@@ -343,6 +343,7 @@ void start(const hub::GameEntry& e, std::function<void()> on_done, bool online, 
     }
     if (R.running) { skip(); }   // a second start never stacks: finish the first (launches it) -- callers guard against this anyway
     G = e;
+    set_switch2(G.nx2);   // Switch 2 games get the darker console and red game card
     g_done = std::move(on_done);
     if (g_frozen) G.system = g_frozen_sys;
     const float snd = (g_opt.sounds && !real_boot && m == Mode::Full && sound_available(G.system) && options().volume > 0.f) ? sound_seconds(G.system) : 0.f;

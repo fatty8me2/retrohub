@@ -15,7 +15,7 @@ int main() {
     ImGui::NewFrame();
     ImDrawList* d = ImGui::GetForegroundDrawList();
 
-    const System all[] = {System::Unknown, System::N64, System::GBA, System::GB, System::GBC, System::GC, System::N3DS, System::WiiU, System::NDS, System::PS2, System::PSP, System::PS1, System::NES, System::SNES};
+    const System all[] = {System::Unknown, System::N64, System::GBA, System::GB, System::GBC, System::GC, System::N3DS, System::WiiU, System::NDS, System::PS2, System::PSP, System::Switch, System::PS1, System::NES, System::SNES};
     for (System s : all) {
         const char* nm = bootanim::art_name(s);
         CHECK(nm && *nm);
@@ -37,6 +37,11 @@ int main() {
     CHECK(bootanim::art_system_from_name("PS2") == System::PS2);
     CHECK(bootanim::art_system_from_name("PSP") == System::PSP);
     CHECK(std::string(bootanim::art_name(System::PSP)) == "psp" && bootanim::media_for(System::PSP) == bootanim::Media::Umd);
+    CHECK(bootanim::art_system_from_name("switch") == System::Switch && std::string(bootanim::art_name(System::Switch)) == "switch");
+    bootanim::set_switch2(true);
+    { int v0 = d->VtxBuffer.Size; bootanim::draw_console(System::Switch, d, ImVec2(400, 400), 1.f, 1.f, 1.f); bootanim::draw_media(System::Switch, d, ImVec2(400, 400), 1.f, 0.f, (ImTextureID)0, ImVec2(0, 0), ImVec2(1, 1)); CHECK(d->VtxBuffer.Size - v0 > 200); }
+    bootanim::set_switch2(false);
+    bootanim::draw_gallery(d, ImVec2(0, 0), ImVec2(1280, 800), "switch2", (ImTextureID)0);
     CHECK(bootanim::art_system_from_name("nope") == System::Unknown);
     ImGui::EndFrame();
     ImGui::DestroyContext();

@@ -235,6 +235,7 @@ const char* sys_badge(hub::System s) {
         default: return "?";
     }
 }
+const char* sys_badge(const hub::GameEntry& e) { return e.system == hub::System::Switch && e.nx2 ? "SWITCH 2" : sys_badge(e.system); }
 void entry_colors(const hub::GameEntry& e, ImU32* a, ImU32* b) {
     if (e.system == hub::System::N64 && !e.catalog_id.empty() && hub::find_game(e.catalog_id)) game_colors(e.catalog_id, a, b);
     else system_colors(e.system, a, b);
