@@ -527,12 +527,12 @@ void selected_bar(const hub::GameEntry& e) {
     ImGui::Dummy(ImVec2(w, 1));
 }
 
-void all_games_view() {
-    // system chips
+/* The filter chip rows of All Games (console chips, Online, Favorites, Genre, Group). In the Cases layout the console chips and Group are left
+ * out (it has its own console tabs); the Cases menu overlay shows this row. */
+void library_filter_chips() {
     struct Chip { const char* label; const char* sys; };
     static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"PlayStation", "ps1"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
                                 {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"PSP", "psp"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
-    if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     std::map<std::string, int>& counts = A.chip_counts;
     /* At big UI sizes the wrapped chip rows alone could fill the page and push the grid out of view: the rows live in a child that is as tall as
      * its rows, up to about a quarter of the page, and scrolls past that. (Padding-free, so at normal sizes it looks exactly like before.) */
@@ -612,6 +612,29 @@ void all_games_view() {
     ImGui::PopStyleVar();
     ImGui::EndChild();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
+}
+
+/* The Cases menu overlay (libview_ui.cpp slides it down over the carousel): the toolbar (Home / All Games, search, sort, layout switcher to
+ * leave Cases, friends' games, rescan, add games), the filters, and a button for every page, so nothing is out of reach. */
+void lib_menu_overlay_body(bool* close) {
+    library_top_bar();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    library_filter_chips();
+    static const struct { Page p; const char* label; } pages[] = {{Page::Discover, "Discover"}, {Page::Online, "Play Online"}, {Page::Saves, "Saves"},
+                                                                  {Page::Controllers, "Controllers"}, {Page::Settings, "Settings"}, {Page::About, "Updates"}};
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, false);
+    if (ui::button("Back to the carousel", ImVec2(0, sp(4.f)), true, true)) *close = true;
+    for (const auto& pg : pages) {
+        ImGui::SameLine(0, sp(1.f));
+        if (ui::button(pg.label, ImVec2(0, sp(4.f)), false, true)) { A.page = pg.p; *close = true; }
+    }
+    ImGui::PopItemFlag();
+}
+
+void all_games_view() {
+    if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
+    const bool cases_view = lib_layout() == hubui::LibLayout::Cases;   // immersive: the filters live in its menu overlay
+    if (!cases_view) library_filter_chips();
     if (!cases_view) verify_library_card();   // Wave 3 L3: only when there is something to say (Cases is a full-screen view: it stays out)
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
@@ -1088,7 +1111,7 @@ void sync_card() {
 void page_library() {
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     ensure_selection();
-    library_top_bar();
+    if (!lib_cases_active()) library_top_bar();   // Cases hides it (its menu overlay shows it)
     A.page_scrollable = false;
 
     if (A.lib.empty() && A.ghosts.empty()) {   // nothing of your own and no friends' games either

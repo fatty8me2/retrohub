@@ -34,19 +34,19 @@ inline SlotPose slot_pose(float d) {
     SlotPose p;
     const float a = std::fabs(d);
     const float sgn = d < 0.f ? -1.f : 1.f;
-    // x: a Hermite curve to the first neighbour (0 -> 0.80, ends with the shelf pitch), then a tight pitch
-    const float x1 = 0.80f, m0 = 1.25f, m1 = 0.16f, pitch = 0.16f;
+    // x: a Hermite curve to the first neighbour (0 -> 0.66 for a keep case; wider boxes add neighbour_x() on top, so it stays clear of the centre case's face, ends with the shelf pitch), then a tight pitch
+    const float x1 = 0.66f, m0 = 1.0f, m1 = 0.16f, pitch = 0.16f;
     float x;
     if (a < 1.f) {
         const float t = a, t2 = t * t, t3 = t2 * t;
         x = (2 * t3 - 3 * t2 + 1) * 0.f + (t3 - 2 * t2 + t) * m0 + (-2 * t3 + 3 * t2) * x1 + (t3 - t2) * m1;
     } else x = x1 + (a - 1.f) * pitch;
     p.x = sgn * x;
-    // yaw: nearly flat at the centre, ~54 degrees for the first neighbour, close to side-on (80 degrees) further out
-    const float ymax = 1.42f, k = 1.02f;
+    // yaw: nearly flat at the centre, ~41 degrees for the first neighbour, close to side-on (75-78 degrees) further out
+    const float ymax = 1.37f, k = 0.75f;
     p.yaw = sgn * ymax * (1.f - std::exp(-k * a));
     p.z = 0.55f * std::min(a, 1.f) * (2.f - std::min(a, 1.f)) + 0.11f * std::max(0.f, a - 1.f);
-    p.scale = 1.f - 0.05f * std::min(a, 1.f);
+    p.scale = 1.f - 0.18f * std::min(a, 1.f) - 0.015f * std::min(std::max(a - 1.f, 0.f), 6.f);   // the neighbour is about 75% of the centre
     p.alpha = a <= kFadeFrom ? 1.f : 1.f - smoothstep01((a - kFadeFrom) / (kFadeTo - kFadeFrom));
     return p;
 }
@@ -73,14 +73,26 @@ inline CaseDims case_dims(shelf::Media m) {
         case Media::DsCase: return {0.56f, 0.76f, 0.064f};
         case Media::N3dsCase: return {0.56f, 0.76f, 0.066f};
         case Media::PspCase: return {0.56f, 0.82f, 0.062f};
-        case Media::NesCart: return {0.66f, 0.92f, 0.115f};    // cardboard boxes: thicker than the plastic cases
-        case Media::SnesCart: return {0.98f, 0.74f, 0.125f};
-        case Media::N64Cart: return {0.96f, 0.72f, 0.135f};
-        case Media::GbCart: case Media::GbcCart: return {0.62f, 0.80f, 0.095f};
-        case Media::GbaCart: return {0.70f, 0.80f, 0.095f};
+        case Media::NesCart: return {0.66f, 0.92f, 0.16f};    // cardboard boxes: thicker than the plastic cases
+        case Media::SnesCart: return {0.98f, 0.74f, 0.17f};
+        case Media::N64Cart: return {0.96f, 0.72f, 0.18f};
+        case Media::GbCart: case Media::GbcCart: return {0.62f, 0.80f, 0.13f};
+        case Media::GbaCart: return {0.70f, 0.80f, 0.13f};
         default: return {0.71f, 1.f, 0.075f};
     }
 }
+
+/* Real heights differ a lot (a DS case is 0.76 of a keep case, a box 0.72): cases are drawn this much bigger so the centre case is always about
+ * as tall as the stage allows, but only part-way (the smaller systems still look smaller). */
+inline float display_scale(shelf::Media m) { const CaseDims d = case_dims(m); return std::min(std::pow(1.f / d.h, 0.6f), 1.0f / d.w); }   // wide boxes stay narrow enough for neighbours to fit
+/* World x of the nearest neighbour (turned ~41 degrees, 0.82 size, 0.92 perspective at its depth) so that its inner edge clears the centre
+ * case's face by a small gap. cs / ns = the display scales of the two cases. */
+inline float neighbour_x(const CaseDims& c, float cs, const CaseDims& n, float ns) {
+    const float persp = 0.922f, yaw1 = 0.72f, scale1 = 0.82f, gap = 0.04f;
+    const float half_n = (0.5f * n.w * std::cos(yaw1) + 0.5f * n.d * std::sin(yaw1)) * scale1 * ns;
+    return (0.5f * c.w * cs + gap) / persp + half_n;
+}
+constexpr float kNeighbourBase = 0.66f;   // slot_pose(1).x: enough for two keep cases
 
 /* ---- the spring that moves the carousel ---- */
 /* One frame of a soft, slightly under-damped spring toward `target` (the stiffer the further away it is, so a long run keeps up).

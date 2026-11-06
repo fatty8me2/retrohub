@@ -238,10 +238,25 @@ void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
         hgrad(x, f, 0.f, 0.f, 0.05f, 1.f, rgba(0, 0, 0, 56), rgba(0, 0, 0, 0));
         hgrad(x, f, 0.95f, 0.f, 1.f, 1.f, rgba(0, 0, 0, 0), rgba(0, 0, 0, 62));
         vgrad(x, f, 0.f, 0.94f, 1.f, 1.f, rgba(0, 0, 0, 0), rgba(0, 0, 0, 50));
-        line(x, f, 0.f, 0.006f, 1.f, 0.006f, rgba(255, 255, 255, 46), 1.f);
+        // a bevelled cardboard edge: a lighter lip on the top and left, a darker one on the bottom and right
+        const float ex = std::max(0.012f, 3.f * px), ey = std::max(0.012f, 3.f * py);
+        quad(x, f, 0.f, 0.f, 1.f, ey, rgba(255, 255, 255, 62)); quad(x, f, 0.f, 0.f, ex, 1.f, rgba(255, 255, 255, 40));
+        quad(x, f, 0.f, 1.f - ey, 1.f, 1.f, rgba(0, 0, 0, 90)); quad(x, f, 1.f - ex, 0.f, 1.f, 1.f, rgba(0, 0, 0, 70));
+        outline(x, f, ex, ey, 1.f - ex, 1.f - ey, rgba(0, 0, 0, 50), 1.f);
     } else {   // clear plastic: a bright rim and a moving glossy highlight
-        outline(x, f, 0.f, 0.f, 1.f, 1.f, st.pale ? rgba(0, 0, 0, 70) : rgba(255, 255, 255, 64), 1.f);
-        line(x, f, rcu + 0.01f, 2.f * py, 1.f - rcu - 0.01f, 2.f * py, rgba(255, 255, 255, st.pale ? 140 : 90), 1.f);
+        // the clear plastic rim: a translucent frame around the cover with a bright outer edge, and a lit hinge
+        const float rx = std::max(0.014f, 4.f * px), ry = std::max(0.014f, 4.f * py);
+        const ImU32 rim = st.pale ? rgba(255, 255, 255, 120) : rgba(255, 255, 255, 56);
+        quad(x, f, 0.f, 0.f, 1.f, ry, rim); quad(x, f, 0.f, 1.f - ry, 1.f, 1.f, rim);
+        quad(x, f, 1.f - rx, ry, 1.f, 1.f - ry, rim);
+        outline(x, f, 0.f, 0.f, 1.f, 1.f, st.pale ? rgba(0, 0, 0, 80) : rgba(255, 255, 255, 120), 1.f);
+        outline(x, f, rx, ry, 1.f - rx, 1.f - ry, rgba(0, 0, 0, 70), 1.f);
+        line(x, f, rcu + 0.01f, 2.f * py, 1.f - rcu - 0.01f, 2.f * py, rgba(255, 255, 255, st.pale ? 160 : 130), 1.f);
+        {   // spine hinge highlight
+            const float hu = kind == CaseKind::Jewel ? 0.066f : kind == CaseKind::Small ? 0.05f : 0.045f;
+            hgrad(x, f, hu * 0.2f, 0.f, hu, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 70));
+            line(x, f, hu * 0.5f, 0.02f, hu * 0.5f, 0.98f, rgba(255, 255, 255, 110), 1.f);
+        }
         grad(x, f, 0.f, 0.f, 1.f, 0.62f, rgba(255, 255, 255, 50), rgba(255, 255, 255, 14), rgba(255, 255, 255, 0), rgba(255, 255, 255, 0));
         const float uc = std::max(0.1f, std::min(0.9f, sheen_u));
         hgrad(x, f, std::max(0.f, uc - 0.2f), 0.f, uc, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 36));
@@ -281,6 +296,10 @@ void paint_spine(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
     }
     quad(x, f, 0.f, 0.915f, 1.f, 0.925f, alpha(st.band, 0.9f));
     console_mark(x, f, 0.5f, 0.962f, std::min(W * 0.55f, H * 0.04f), hash32(d.sys_short), st.ink);
+    if (st.box) {   // the folded cardboard edges of the box
+        quad(x, f, 0.f, 0.f, 0.09f, 1.f, rgba(255, 255, 255, 46)); quad(x, f, 0.91f, 0.f, 1.f, 1.f, rgba(0, 0, 0, 56));
+        line(x, f, 0.09f, 0.f, 0.09f, 1.f, rgba(0, 0, 0, 50), 1.f);
+    }
     if (!st.box) {
         line(x, f, px, 0.f, px, 1.f, rgba(255, 255, 255, st.pale ? 120 : 76), 1.f);
         line(x, f, 1.f - px, 0.f, 1.f - px, 1.f, rgba(255, 255, 255, st.pale ? 80 : 40), 1.f);
@@ -536,7 +555,7 @@ void cases_veil(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1, f
     ImDrawList* dl = sc.dl;
     const StageColors s = stage_colors(c0, c1);
     const float yw = sc.floor_y(kWallZ), yb = p1.y;
-    const float y0 = sc.floor_y(2.2f), y1 = sc.floor_y(0.f) + case_h * 0.60f * sc.U;
+    const float y0 = sc.floor_y(2.2f), y1 = sc.floor_y(0.f) + case_h * 0.30f * sc.U;
     const float al[4] = {0.f, 0.22f, 0.62f, 1.f};
     const float ys[4] = {y0, y0 + (y1 - y0) * 0.32f, y0 + (y1 - y0) * 0.68f, y1};
     dl->PushClipRect(p0, p1, true);

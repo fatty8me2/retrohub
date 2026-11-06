@@ -37,6 +37,8 @@ struct CasesState {
     SDL_Texture* back_tex[3] = {nullptr, nullptr, nullptr};
     std::string shot_mode;
     bool shot_applied = false, no_art = false;
+    bool menu_open = false, menu_focus_req = false;   // the slide-down menu overlay (the toolbar the immersive view hides)
+    float menu_t = 0.f, menu_h = 0.f;
     float pending_shuffle = -1.f;
     ImU32 sc0[32] = {}, sc1[32] = {};
     bool sc_have[32] = {};
@@ -301,7 +303,7 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
 void cases_hints(ImDrawList* dl, ImVec2 org, float W, float y, float h) {
     struct H { const char* pad; const char* key; const char* label; bool tail; };   // tail: dropped first when the bar is too narrow
     const bool pad = A.pad_mode;
-    H hs[12];
+    H hs[14];
     int nh = 0;
     hs[nh++] = {"A", "Enter", "Play", false};
     hs[nh++] = {"Y", "I", "Details", false};
@@ -311,6 +313,7 @@ void cases_hints(ImDrawList* dl, ImVec2 org, float W, float y, float h) {
     hs[nh++] = {"L3", "Z", "Shuffle", true};
     hs[nh++] = {"LB", "[", "", false};
     hs[nh++] = {"RB", "]", "Console", false};
+    hs[nh++] = {"Start", "Esc", "Menu", false};
     if (!pad) { hs[nh++] = {"", "Wheel", "Scroll", true}; hs[nh++] = {"", "Drag", "Inspect", true}; }
     const float gap = sp(2.f);
     auto is_lb = [](const H& h) { return h.pad[0] == 'L' && h.pad[1] == 'B'; };
@@ -339,6 +342,38 @@ void cases_hints(ImDrawList* dl, ImVec2 org, float W, float y, float h) {
         const bool wheel = !hs[i].pad[0];
         x += ui::key_hint(dl, ImVec2(x, y + (h - fh) * 0.5f), wheel ? false : pad, hs[i].pad[0] ? hs[i].pad : "A", hs[i].key, hs[i].label) + (is_lb(hs[i]) ? sp(0.5f) : gap);
     }
+}
+
+/* ---- the menu overlay: the toolbar, filters and page buttons that the immersive view hides ---- */
+void cases_menu_overlay(ImVec2 org, ImVec2 sz) {
+    const bool reduced = reduced_motion();
+    ui::anim(CS.menu_t, CS.menu_open ? 1.f : 0.f, 13.f);
+    if (reduced) CS.menu_t = CS.menu_open ? 1.f : 0.f;
+    if (CS.menu_t < 0.01f) return;
+    const float t = CS.menu_t;
+    const float h = CS.menu_h > 0.f ? CS.menu_h : sp(24.f);
+    ImDrawList* fg = ImGui::GetWindowDrawList();   // the carousel window: drawn before the overlay window, so the dim never covers the menu
+    fg->AddRectFilled(org, ImVec2(org.x + sz.x, org.y + sz.y), IM_COL32(0, 0, 0, (int)(120.f * t)));
+    ImGui::SetNextWindowPos(ImVec2(org.x, org.y - h * (1.f - t)));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(sz.x, 0.f), ImVec2(sz.x, FLT_MAX));
+    if (CS.menu_focus_req) { ImGui::SetNextWindowFocus(); CS.menu_focus_req = false; }
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::with_alpha(ui::PANEL, 0.98f));
+    ImGui::Begin("##casesmenu", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    bool close = false;
+    lib_menu_overlay_body(&close);
+    CS.menu_h = ImGui::GetWindowHeight();
+    const float bottom = ImGui::GetWindowPos().y + CS.menu_h;
+    const bool inside = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+    ImDrawList* wd = ImGui::GetWindowDrawList();
+    wd->AddLine(ImVec2(org.x, bottom - 1.f), ImVec2(org.x + sz.x, bottom - 1.f), ui::HAIRLINE, 1.f);
+    ImGui::End();
+    const bool any_popup = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    if (CS.menu_open && ImGui::IsMouseClicked(0) && !inside && !any_popup && ImGui::GetIO().MousePos.y > bottom) close = true;   // a click on the dimmed carousel closes it
+    if (close && CS.menu_open) { CS.menu_open = false; A.nav_seed = true; G.focus_quiet = false; }
 }
 
 /* ---- the carousel ---- */
@@ -406,7 +441,7 @@ void draw_cases(Disp& D) {
 
     // ---- input ----
     const bool popup = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    const bool can = A.focused && !A.proc && !io.WantTextInput && !popup && !A.show_details && !A.show_ghost && A.page == Page::Library;
+    const bool can = A.focused && !A.proc && !io.WantTextInput && !popup && !A.show_details && !A.show_ghost && A.page == Page::Library && !CS.menu_open;
     const bool act = can && (nav_mine || ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) || !A.pad_mode);
     if (can && !CS.tabs.empty()) {
         int td = 0;
@@ -512,12 +547,12 @@ void draw_cases(Disp& D) {
     ImFont* cf = ui::F.cap;
     const float tab_h = sp(3.6f), tab_y = org.y + sp(tight ? 0.8f : 1.2f);
     const float hint_h = sp(tight ? 3.4f : 4.f), hint_y = org.y + H - hint_h;
-    const float title_h = sp(1.3f) + tfont->FontSize * 1.18f + cf->FontSize * 1.35f + sp(0.3f);
+    const float title_h = tfont->FontSize * 1.18f + cf->FontSize * 1.35f + sp(0.6f);   // the title block; it starts below the case and its reflection gap (0.28 Hc)
     const float avail_top = tab_y + tab_h + sp(1.2f), avail_bot = hint_y - sp(0.3f);
     const float avail = std::max(sp(20.f), avail_bot - avail_top);
-    float Hc = std::min((avail - title_h) * 0.90f, W * 0.42f);
+    float Hc = std::min((avail - title_h) / 1.34f, W * 0.42f);
     Hc = std::max(sp(12.f), Hc);
-    const float case_top = avail_top + std::max(0.f, (avail - Hc * 1.1f - title_h) * 0.22f) + Hc * 0.10f;
+    const float case_top = avail_top + std::max(0.f, (avail - Hc * 1.34f - title_h) * 0.4f) + Hc * 0.06f;
     const float f0 = case_top + Hc;
     shelfdraw::CaseScene sc;
     sc.dl = dl; sc.dist = 6.5f; sc.eye = 0.55f; sc.U = Hc; sc.cx = org.x + W * 0.5f; sc.hy = f0 - sc.eye * sc.U;
@@ -543,6 +578,19 @@ void draw_cases(Disp& D) {
     const bool settled = n && std::fabs(CS.pos.x - (float)CS.focus) < 1.3f;
     const float fl = CS.flip.x, ins = std::max(0.f, std::min(1.f, CS.insp.x));
     const bool showing_back = fl > 0.02f && !CS.back_key.empty();
+    // how far each side's neighbours must stand out for the centre case's width (blended between the two cases the carousel is between)
+    float extra_l = 0.f, extra_r = 0.f;
+    if (n > 1) {
+        const int lo = std::max(0, std::min(n - 1, (int)std::floor(CS.pos.x))), hi = std::min(n - 1, lo + 1);
+        const float fr = std::max(0.f, std::min(1.f, CS.pos.x - (float)lo));
+        auto need = [&](int c, int nb) {
+            if (nb < 0 || nb >= n) return 0.f;
+            const hubui::shelf::Media mc = CS.media[(size_t)c], mn = CS.media[(size_t)nb];
+            return std::max(0.f, neighbour_x(case_dims(mc), display_scale(mc), case_dims(mn), display_scale(mn)) - kNeighbourBase);
+        };
+        extra_r = need(lo, lo + 1) * (1.f - fr) + need(hi, hi + 1) * fr;
+        extra_l = need(lo, lo - 1) * (1.f - fr) + need(hi, hi - 1) * fr;
+    }
     for (int i = first; i <= last && ns < 2 * kWindow + 4; ++i) {
         Slot& s = slots[ns];
         s.i = i;
@@ -552,18 +600,18 @@ void draw_cases(Disp& D) {
         const float c = std::max(0.f, 1.f - ad);   // 1 at the centre, 0 one slot away
         shelfdraw::CasePose& ps = s.ps;
         ps = shelfdraw::CasePose();
-        ps.x = sp0.x; ps.z = sp0.z; ps.yaw = sp0.yaw; ps.scale = sp0.scale;
+        ps.x = sp0.x + (s.d < 0.f ? -extra_l : extra_r) * smoothstep01(std::min(ad, 1.f)); ps.z = sp0.z; ps.yaw = sp0.yaw; ps.scale = sp0.scale * display_scale(CS.media[(size_t)i]);
         ps.alpha = sp0.alpha * (0.15f + 0.85f * CS.intro);
         // flip: the centre case turns over, rising a little toward the viewer so it never clips its neighbours
-        ps.yaw += c * fl;
+        ps.yaw += c * fl - c * 0.13f;   // the centre case sits turned a touch so its side shows a little depth
         const float sf = std::sin(std::min(fl, 3.14159f));
         ps.z -= c * (0.5f * sf + 0.0f);
         ps.scale *= 1.f + c * (0.05f * sf + 0.10f * smoothstep01(fl / 3.14159f));
         ps.z -= c * 0.4f * smoothstep01(fl / 3.14159f);
         // inspect: the case comes forward and turns freely
         if (c > 0.f && ins > 0.001f) {
-            ps.z -= c * ins * 1.5f;
-            ps.scale *= 1.f + c * ins * 0.12f;
+            ps.z -= c * ins * 0.6f;
+            ps.scale *= 1.f + c * ins * 0.05f;
             ps.lift = c * ins * 0.05f;
             ps.yaw = ps.yaw * (1.f - c * ins) + (CS.spin.yaw) * c * ins;
             ps.pitch = CS.spin.pitch * c * ins;
@@ -610,7 +658,7 @@ void draw_cases(Disp& D) {
     if (ins > 0.01f) dl->AddRectFilled(p0, p1, IM_COL32(0, 0, 0, (int)(110.f * ins)));
 
     // ---- hit boxes (left to right; the centre case claims its whole box) ----
-    if (n && ns > 0) {
+    if (n && ns > 0 && !CS.menu_open) {
         int a0 = -1;
         for (int k = 0; k < ns; ++k) if (slots[k].i == ic) a0 = k;
         float xs[2 * kWindow + 5];
@@ -696,7 +744,7 @@ void draw_cases(Disp& D) {
         const float moving = std::min(1.f, std::fabs(CS.pos.x - (float)CS.focus) * 0.8f);
         const float ta = (1.f - moving * 0.85f) * (0.2f + 0.8f * CS.intro) * (1.f - 0.9f * ins);
         const ImVec2 ts = tfont->CalcTextSizeA(tfont->FontSize, FLT_MAX, 0.f, CS.title_txt.c_str());
-        const float ty = f0 + sp(1.3f);
+        const float ty = f0 + Hc * 0.28f;
         const float tx = sc.cx - ts.x * 0.5f;
         shelfdraw::glow_text(dl, tfont, tfont->FontSize, ImVec2(tx, ty), ui::scale_alpha(IM_COL32(255, 255, 255, 255), ta), CS.tint1 ? ui::mix(CS.tint0, IM_COL32_WHITE, 0.35f) : ui::ACCENT, ta, CS.title_txt.c_str());
         const ImVec2 ss = cf->CalcTextSizeA(cf->FontSize, FLT_MAX, 0.f, CS.sub_txt.c_str());
@@ -726,6 +774,23 @@ void draw_cases(Disp& D) {
     }
 
     cases_tabs(dl, org, W, tab_y, tab_h, active_tab, can);
+    {   // the menu affordance in the top-left corner: a small round button with three bars
+        const float bs = tab_h;
+        const ImVec2 b0(org.x + sp(1.4f), tab_y), b1(b0.x + bs, b0.y + bs);
+        ImGui::PushID("casesmenubtn");
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);   // the pad reaches the menu with Start
+        ImGui::SetCursorScreenPos(b0);
+        const bool pressed = ImGui::InvisibleButton("m", ImVec2(bs, bs));
+        ImGui::PopItemFlag();
+        const bool hov = ImGui::IsItemHovered();
+        const ImVec2 c((b0.x + b1.x) * 0.5f, (b0.y + b1.y) * 0.5f);
+        dl->AddCircleFilled(c, bs * 0.5f, ui::with_alpha(ui::PANEL, hov || CS.menu_open ? 0.95f : 0.62f), 32);
+        dl->AddCircle(c, bs * 0.5f, ui::HAIRLINE, 32, 1.f);
+        for (int i = -1; i <= 1; ++i) dl->AddRectFilled(ImVec2(c.x - bs * 0.2f, c.y + (float)i * bs * 0.13f - 1.f), ImVec2(c.x + bs * 0.2f, c.y + (float)i * bs * 0.13f + 1.5f), hov || CS.menu_open ? ui::TEXT : ui::TEXT2, 1.f);
+        if (hov) ImGui::SetTooltip("Menu  (Start or Esc)");
+        if (pressed) lib_cases_menu_toggle();
+        ImGui::PopID();
+    }
     cases_hints(dl, org, W, hint_y, hint_h);
     dl->PopClipRect();
 
@@ -741,4 +806,5 @@ void draw_cases(Disp& D) {
     }
     ImGui::SetCursorScreenPos(org);
     ImGui::Dummy(sz);
+    cases_menu_overlay(org, sz);
 }
