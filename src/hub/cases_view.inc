@@ -51,7 +51,7 @@ const char* sys_short_c(hub::System s) {
         case hub::System::N64: return "N64"; case hub::System::GBA: return "GBA"; case hub::System::GB: return "GB"; case hub::System::GBC: return "GBC";
         case hub::System::GC: return "GC"; case hub::System::N3DS: return "3DS"; case hub::System::WiiU: return "Wii U"; case hub::System::NDS: return "DS";
         case hub::System::PS1: return "PS1"; case hub::System::PS2: return "PS2"; case hub::System::NES: return "NES"; case hub::System::SNES: return "SNES";
-        case hub::System::PSP: return "PSP"; default: return "?";
+        case hub::System::PSP: return "PSP"; case hub::System::Switch: return "SWITCH"; default: return "?";
     }
 }
 hub::System sys_of(int idx) { return is_ghost(idx) ? hub::system_from_short(ghost_of(idx).sys) : A.lib[(size_t)idx].system; }
@@ -629,6 +629,11 @@ void draw_cases(Disp& D) {
         const hub::System sy = (hub::System)CS.sysv[(size_t)i];
         cd.sys_name = hub::system_name(sy);
         cd.sys_short = sys_short_c(sy);
+        if (sy == hub::System::Switch) {   // Switch 2 games have their own banner; HUB_SHOT_NX2 (screenshots) makes every Switch case one
+            static const bool shot_nx2 = g_headless && std::getenv("HUB_SHOT_NX2") != nullptr;
+            cd.nx2 = shot_nx2 || (!is_ghost(idx) && A.lib[(size_t)idx].nx2);
+            if (cd.nx2) { cd.sys_name = "Nintendo Switch 2"; cd.sys_short = "SWITCH 2"; }
+        }
         const int si = CS.sysv[(size_t)i];
         if (!CS.sc_have[si]) { system_colors(sy, &CS.sc0[si], &CS.sc1[si]); CS.sc_have[si] = true; }
         cd.c0 = CS.sc0[si]; cd.c1 = CS.sc1[si];

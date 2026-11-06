@@ -13,9 +13,9 @@
 namespace hubui::shelf {
 
 /* ---- what a game of a console looks like on the shelf ---- */
-enum class Media { NesCart, SnesCart, N64Cart, GbCart, GbcCart, GbaCart, DsCase, N3dsCase, Ps1Jewel, Ps2Case, GcCase, WiiUCase, PspCase, Generic };
-constexpr int kMediaCount = 14;
-Media media_for(const std::string& system_short);   // "n64" "nes" "gb" ... "ps1" "ps2" "gc" "wiiu" "psp" "nds" "3ds"; unknown -> Generic (a plain keep-case)
+enum class Media { NesCart, SnesCart, N64Cart, GbCart, GbcCart, GbaCart, DsCase, N3dsCase, Ps1Jewel, Ps2Case, GcCase, WiiUCase, PspCase, SwitchCase, Generic };
+constexpr int kMediaCount = 15;
+Media media_for(const std::string& system_short);   // "n64" "nes" "gb" ... "ps1" "ps2" "gc" "wiiu" "psp" "nds" "3ds" "switch"; unknown -> Generic (a plain keep-case)
 const char* media_key(Media m);                     // "nes-cart" "ps1-jewel" ...
 bool is_cart(Media m);                              // a cartridge: stands label-out on the shelf (the others stand spine-out)
 

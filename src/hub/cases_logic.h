@@ -59,7 +59,7 @@ inline CaseKind kind_for(shelf::Media m) {
         case Media::NesCart: case Media::SnesCart: case Media::N64Cart: case Media::GbCart: case Media::GbcCart: case Media::GbaCart: return CaseKind::Box;
         case Media::DsCase: case Media::N3dsCase: case Media::PspCase: return CaseKind::Small;
         case Media::Ps1Jewel: return CaseKind::Jewel;
-        default: return CaseKind::Keep;   // GC / Wii U / PS2 / generic: the tall DVD-style keep case
+        default: return CaseKind::Keep;   // GC / Wii U / PS2 / Switch / generic: the tall DVD-style keep case
     }
 }
 inline bool is_box(shelf::Media m) { return kind_for(m) == CaseKind::Box; }
@@ -68,16 +68,19 @@ struct CaseDims { float w = 0.71f, h = 1.f, d = 0.075f; };   // world units; a 1
 inline CaseDims case_dims(shelf::Media m) {
     using shelf::Media;
     switch (m) {
-        case Media::WiiUCase: return {0.71f, 0.92f, 0.075f};   // Blu-ray keep case (135 x 172 mm)
-        case Media::Ps1Jewel: return {0.86f, 0.757f, 0.062f};  // jewel case (142 x 125 mm, wider than tall)
-        case Media::DsCase: return {0.56f, 0.76f, 0.064f};
-        case Media::N3dsCase: return {0.56f, 0.76f, 0.066f};
-        case Media::PspCase: return {0.56f, 0.82f, 0.062f};
-        case Media::NesCart: return {0.66f, 0.92f, 0.16f};    // cardboard boxes: thicker than the plastic cases
-        case Media::SnesCart: return {0.98f, 0.74f, 0.17f};
-        case Media::N64Cart: return {0.96f, 0.72f, 0.18f};
-        case Media::GbCart: case Media::GbcCart: return {0.62f, 0.80f, 0.13f};
-        case Media::GbaCart: return {0.70f, 0.80f, 0.13f};
+        case Media::GcCase: return {0.71f, 1.f, 0.068f};        // GameCube keep case (about 135 x 191 x 13 mm)
+        case Media::Ps2Case: return {0.71f, 1.f, 0.075f};       // DVD keep case (135 x 190 x 14)
+        case Media::WiiUCase: return {0.71f, 0.90f, 0.058f};    // Blu-ray keep case (135 x 171 x 11 mm)
+        case Media::SwitchCase: return {0.553f, 0.895f, 0.058f};// Switch keep case, slim (105 x 170 x 11 mm)
+        case Media::Ps1Jewel: return {0.86f, 0.757f, 0.058f};   // jewel case (142 x 125 mm, wider than tall; drawn a little large)
+        case Media::DsCase: return {0.66f, 0.72f, 0.07f};       // near-square DS case (125 x 137 x 14)
+        case Media::N3dsCase: return {0.66f, 0.72f, 0.072f};
+        case Media::PspCase: return {0.54f, 0.90f, 0.068f};     // UMD case: tall and narrow (104 x 171 x 14)
+        case Media::NesCart: return {0.67f, 0.93f, 0.16f};      // cardboard boxes: thicker than the plastic cases
+        case Media::SnesCart: return {0.97f, 0.70f, 0.18f};     // landscape (184 x 132 x 35)
+        case Media::N64Cart: return {0.94f, 0.68f, 0.19f};      // landscape (178 x 128 x 38)
+        case Media::GbCart: case Media::GbcCart: return {0.58f, 0.66f, 0.15f};   // small near-square boxes (110 x 125 x 30)
+        case Media::GbaCart: return {0.60f, 0.66f, 0.15f};
         default: return {0.71f, 1.f, 0.075f};
     }
 }
