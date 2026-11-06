@@ -1734,9 +1734,10 @@ static void fill_psp(const hub::psp::Ident& id, const fs::path& key_src, const f
     e->title = !t.empty() ? t : title_from_filename(title_name);
 }
 
-/* ---- Nintendo Switch / Switch 2 (Lichii): .nsp .nsz .xci .xcz .nro and loose exefs/main dumps. Headers only; update / DLC packages are not games.
- * Not read from inside .zip/.7z/.rar (Lichii cannot open archives). ---- */
-static bool is_nx_ext(const std::string& ext) { return ext == ".nsp" || ext == ".nsz" || ext == ".xci" || ext == ".xcz" || ext == ".nro"; }
+/* ---- Nintendo Switch / Switch 2 (Lichii): .nsp .nsz .xci .xcz .nro .nup (Lichii's own package) and loose exefs/main dumps. Headers only; update /
+ * DLC packages are not games (a .nup holding only a standalone update is: Lichii boots it). Not read from inside .zip/.7z/.rar (Lichii cannot open
+ * archives). ---- */
+static bool is_nx_ext(const std::string& ext) { return ext == ".nsp" || ext == ".nsz" || ext == ".xci" || ext == ".xcz" || ext == ".nro" || ext == ".nup"; }
 static bool is_exefs_main(const fs::path& p) { return p.filename() == L"main" && ascii_lower(path_utf8(p.parent_path().filename())) == "exefs"; }
 static bool id_nx_file(const fs::path& p, GameEntry* e) {
     hub::nx::Ident id;
@@ -2782,7 +2783,7 @@ bool is_archive_file(const std::string& path) {
 /* Files a ROM folder holds that RetroHub cannot use. They are looked at (not identified) so the player is told why a game is missing
  * ("Settings > skipped files") instead of the file silently not showing up. */
 const char* unsupported_reason(const std::string& ext) {
-    if (ext == ".nsp" || ext == ".xci" || ext == ".nsz" || ext == ".xcz") return "this Nintendo Switch file is not a game RetroHub can list (an update / DLC package, damaged, or inside an archive: Switch games are read from loose files, not from .zip / .7z / .rar)";
+    if (ext == ".nsp" || ext == ".xci" || ext == ".nsz" || ext == ".xcz" || ext == ".nup") return "this Nintendo Switch file is not a game RetroHub can list (an update / DLC package, damaged, or inside an archive: Switch games are read from loose files, not from .zip / .7z / .rar)";
     if (ext == ".wbfs" || ext == ".wad") return "this is a Wii game file; RetroHub plays GameCube discs, not Wii games";
     if (ext == ".gz" || ext == ".xz" || ext == ".bz2" || ext == ".zst" || ext == ".tgz" || ext == ".tar")
         return "this archive type is not supported; re-pack it as a .zip or .7z, or unpack it and add the game files";
@@ -2796,7 +2797,7 @@ bool scan_extension(const std::string& ext) {
                                        ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip", ".nds", ".nes", ".sfc", ".smc",
                                        ".3ds", ".cci", ".cia", ".cxi", ".3dsx", ".zcci", ".zcia", ".zcxi", ".z3dsx",
                                        ".wua", ".wud", ".wux", ".rpx", ".chd", ".cso", ".cue",
-                                       ".m3u", ".pbp", ".bin", ".img", ".nro"};
+                                       ".m3u", ".pbp", ".bin", ".img", ".nro", ".nup"};
     for (const char* e : kExt)
         if (ext == e) return true;
     return unsupported_reason(ext) != nullptr;

@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "1.33.1",
+      "date": "2026-11-06",
+      "title": "Switch 2 .nup games",
+      "fixed": [
+        "Switch 2 games packed as a .nup file (Lichii's own game package) now show up in your library, with their real title and the SWITCH 2 badge. They need no keys",
+        "Add Games now accepts Switch and Switch 2 files (.nsp, .xci, .nsz, .xcz, .nro and .nup)"
+      ]
+    },
+    {
       "version": "1.33.0",
       "date": "2026-11-06",
       "title": "Nintendo Switch and Switch 2",
