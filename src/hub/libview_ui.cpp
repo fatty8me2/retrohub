@@ -13,6 +13,8 @@
 #include "third_party/stb_image.h"
 #include "app.h"
 #include "cases_logic.h"
+#include "cases_stage.h"
+#include "continue_logic.h"
 #include "../saves/savestore.h"
 #include "state_slots.h"
 #include "libview_ui.h"
@@ -1269,6 +1271,21 @@ void lib_shot_seed() {
 static SDL_Texture* g_fake[12];
 static int g_fake_w = 240, g_fake_h = 260;
 static int g_fake_dw[12], g_fake_dh[12];   // per-texture size (HUB_SHOT_FAKE_ART=posters: mixed aspect ratios)
+static void fake_register_color(SDL_Texture* tex, SDL_Surface* s) {   // the dominant colour of a fake cover (the stage takes its mood from it)
+    if (!tex || !s) return;
+    double sr = 0, sg = 0, sb = 0, sw = 0;
+    for (int y = 0; y < s->h; y += 2)
+        for (int x = 0; x < s->w; x += 2) {
+            const uint32_t c = ((const uint32_t*)s->pixels)[y * s->pitch / 4 + x];
+            const int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255, mx = std::max(r, std::max(g, b)), mn = std::min(r, std::min(g, b));
+            if (mx < 50 || mn > 215) continue;
+            const double sat = (mx - mn) / (double)mx;
+            if (sat < 0.25) continue;
+            const double w = sat * sat;
+            sr += r * w; sg += g * w; sb += b * w; sw += w;
+        }
+    if (sw > 0) CS.fake_cols[tex] = IM_COL32((int)(sr / sw + 0.5), (int)(sg / sw + 0.5), (int)(sb / sw + 0.5), 255);
+}
 void lib_fake_art_init(SDL_Renderer* ren) {
     if (!std::getenv("HUB_SHOT_FAKE_ART") || !ren) return;
     const bool posters = std::string(std::getenv("HUB_SHOT_FAKE_ART")) == "posters";   // box-art-like posters: gradients, a title banner, mixed aspect ratios
@@ -1315,6 +1332,7 @@ void lib_fake_art_init(SDL_Renderer* ren) {
                 }
             }
             g_fake[t] = SDL_CreateTextureFromSurface(ren, s);
+        fake_register_color(g_fake[t], s);
             SDL_FreeSurface(s);
             continue;
         }
@@ -1328,6 +1346,7 @@ void lib_fake_art_init(SDL_Renderer* ren) {
                 px[y * s->pitch / 4 + x] = (c & 0xFF00FF00u) | ((c & 0xFF) << 16) | ((c >> 16) & 0xFF);   // RGBA -> ARGB
             }
         g_fake[t] = SDL_CreateTextureFromSurface(ren, s);
+        fake_register_color(g_fake[t], s);
         SDL_FreeSurface(s);
     }
 }
