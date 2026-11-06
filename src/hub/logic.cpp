@@ -1011,6 +1011,21 @@ static std::string lower(const std::string& s) {
     return o;
 }
 
+/* Same rule as letter_of (libview_logic): the first letter or digit decides; a digit, a non-ASCII byte, or no letter at all means "#". */
+static bool title_is_hash(const std::string& t) {
+    for (unsigned char c : t) {
+        if (c >= 0x80) return true;
+        if (std::isalpha(c)) return false;
+        if (std::isdigit(c)) return true;
+    }
+    return !t.empty();
+}
+void prepare_sort_key(ListItem& it) {
+    it.lkey = lower(it.title);
+    it.hashb = title_is_hash(it.title) ? 1 : 0;
+    it.crank = console_index(it.system);
+}
+
 int console_index(const std::string& system) {
     const std::vector<std::string>& o = console_order();
     for (size_t i = 0; i < o.size(); ++i) if (o[i] == system) return (int)i;
@@ -1041,7 +1056,13 @@ bool list_item_less(const ListItem& x, const ListItem& y, SortSpec sp) {
         }
         default: break;
     }
-    std::string lx = lower(x.title), ly = lower(y.title);
+    std::string tx, ty;
+    const std::string& lx = !x.lkey.empty() ? x.lkey : (tx = lower(x.title));
+    const std::string& ly = !y.lkey.empty() ? y.lkey : (ty = lower(y.title));
+    if (sp.mode == SortMode::Title) {   // digits, symbols and non-ASCII letters form one "#" block ahead of A (behind Z when reversed)
+        const int hx = x.hashb >= 0 ? x.hashb : (title_is_hash(x.title) ? 1 : 0), hy = y.hashb >= 0 ? y.hashb : (title_is_hash(y.title) ? 1 : 0);
+        if (hx != hy) return sp.reverse ? hx < hy : hx > hy;
+    }
     if (lx != ly) return (sp.mode == SortMode::Title && sp.reverse) ? lx > ly : lx < ly;
     return x.key < y.key;
 }
@@ -1103,7 +1124,9 @@ std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items,
     else for (size_t i = 0; i < items.size(); ++i) idx.push_back((int)i);
     std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) { return list_item_less(items[a], items[b], mode); });
     std::vector<ConsoleSection> out;
-    for (const std::string& c : console_order()) {
+    std::vector<std::string> order = console_order();
+    if (mode.mode == SortMode::Console && mode.reverse) std::reverse(order.begin(), order.end());   // Console sort, reversed: last console first ("Other" stays at the end)
+    for (const std::string& c : order) {
         ConsoleSection s{c, system_shelf_title(c), {}};
         for (int i : idx) if (items[i].system == c) s.items.push_back(i);
         if (!s.items.empty()) out.push_back(s);
