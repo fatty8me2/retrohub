@@ -293,7 +293,10 @@ player's other keys stay):
   (`switch.vsync`: fifo 2, mailbox 1, off 0), use_asynchronous_shaders (`switch.async_shaders`: on (default) / off / `lichii` = untouched),
   gpu_accuracy (`switch.gpu_accuracy`: low 0 (default) / high 1 / `lichii` = untouched; Lichii's own default is High. Measured on Ocarina of Time
   (Switch 2, i9-14900K + RTX 3090 Ti, Kokiri Forest): High ~30 fps, Low ~40 fps; CPU accuracy Unsafe, CPU clock Boost, fence Immediate, reactive
-  flushing off, DMA Unsafe and docked mode changed nothing on top of Low; the limit is then Lichii's GPU / GPUBack threads); `[UI]` fullscreen; `[System]` current_user=0; `[Controls]` player 1 from the RetroHub `switch` profile on
+  flushing off, DMA Unsafe and docked mode changed nothing on top of Low; the limit is then Lichii's GPU / GPUBack threads), frame_pacing_mode
+  (`switch.pacing`: `auto` 0 / `30` 1 / `60` 2 / `smooth60` = 1 plus frame_gen 2x, overriding `switch.framegen` / `lichii` = untouched; the
+  swapchain presents at that steady rate, so a game running between 30 and 60 fps no longer alternates 3 and 4 refreshes per frame on a
+  60 / 120 Hz screen, which reads as micro-stutter); `[UI]` fullscreen; `[System]` current_user=0; `[Controls]` player 1 from the RetroHub `switch` profile on
   one SDL pad (SDL GameController names become SDL button / axis indices; triggers `axis:4|5,threshold:0.5`), connected as a Pro Controller, players 2-8
   disconnected. Values are quoted as Qt writes them; the screenshot button is left alone.
 - `profiles.dat` gets one fixed user ("Player", a hardcoded uuid) only when the file is missing or empty; an existing user list is never touched.
