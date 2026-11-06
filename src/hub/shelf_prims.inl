@@ -98,6 +98,11 @@ void image(Ctx& x, const Face& f, float u0, float v0, float u1, float v1, SDL_Te
  * reading top to bottom) starts at its top end with the glyph tops pointing to +x, so lx is the right edge of the line. */
 void face_text(Ctx& x, const Face& f, ImFont* font, float size, const char* s, float lx, float ly, ImU32 col, bool vertical, float track = 0.f) {
     if (!font || !s || !*s || size < 3.f || !x.detail) return;
+    if (size < font->FontSize * 0.75f) {   // shrinking a big glyph this far loses its 1-px strokes ("GENRE" read "GFNRF"): use a small atlas font
+        const bool heavy = font == ui::F.bold || font == ui::F.h2 || font == ui::F.title || font == ui::F.hero || font == ui::F.big;
+        ImFont* tiny = heavy ? ui::F.tiny_bold : ui::F.tiny;
+        if (tiny && tiny->FontSize < font->FontSize && tiny->ContainerAtlas == font->ContainerAtlas) font = tiny;
+    }
     ImDrawList* dl = x.dl;
     const float sc = size / font->FontSize;
     const ImVec2 inv(1.f / f.W, 1.f / f.H);
