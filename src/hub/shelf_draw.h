@@ -47,8 +47,8 @@ struct CaseScene {
     ImDrawList* dl = nullptr;
     float cx = 0, hy = 0, U = 100, dist = 6.5f, eye = 0.55f;
     /* stage lighting (car-stage) */
-    float time = 0;            // seconds, drives the drifting light motes
-    bool motion = true;        // false under reduced motion: no motes, no breathing glow
+    double time = 0;           // seconds, drives the drifting light motes
+    bool motion = true;        // false under reduced motion: no drifting light motes
     float spot = 1;            // 0..1 strength of the spotlight on the centre case (dips a little while the carousel moves)
     float dim = 0;             // 0..1 inspect: the whole stage darkens around the case
     float floor_y(float z = 0.f) const { return hy + eye * U * dist / (dist + z); }   // screen y of the floor at depth z
