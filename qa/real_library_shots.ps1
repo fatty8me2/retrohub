@@ -17,6 +17,8 @@ $Sizes = & $split $Sizes; $Scales = & $split $Scales; $Consoles = & $split $Cons
 $root = Split-Path $PSScriptRoot -Parent
 $bin = Join-Path $root "build\bin\Release"
 if (-not $Out) { $Out = Join-Path $root "qa_out\cases-default" }
+# RetroHub runs from a temp copy, so a relative -Out would land (and vanish) inside that copy: make it absolute against the caller's folder
+if (-not [System.IO.Path]::IsPathRooted($Out)) { $Out = Join-Path (Get-Location).Path $Out }
 if (-not (Test-Path (Join-Path $DataFrom "hub.json")) -and -not (Test-Path (Join-Path $DataFrom "library_cache.json"))) { if (-not (Test-Path $DataFrom)) { throw "DataFrom not found: $DataFrom" } }
 New-Item -ItemType Directory -Force $Out | Out-Null
 
