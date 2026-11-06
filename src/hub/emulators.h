@@ -200,6 +200,7 @@ struct SaveSession {
     std::string battery;                  // vault battery dir of the game
     std::string backup_dir;               // overwritten files are kept here
     std::vector<std::string> rels;        // relative save folders (forward slashes)
+    std::vector<std::string> vault_rels;  // vault-side relative folder of rels[i] when it differs (Switch: no user uuid); empty = same as rels
     bool wiiu_unknown_title = false;      // wud/wux: find the save folder by what changed during the session
     std::string wiiu_save_parent;         // <mlc>\usr\save\00050000
     int64_t started_unix = 0;
