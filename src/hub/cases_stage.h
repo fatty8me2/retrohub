@@ -58,13 +58,13 @@ inline bool ambient_from_art(Rgb8 art, Rgb8* c0, Rgb8* c1) {
 /* ---- flip / inspect: nothing may intersect the centre case ---- */
 /* What the flip and inspect presentation does to the centre case on top of its rest pose (so the view and the tests agree). */
 struct CentreAdj { float z = 0, scale_mul = 1; };
-inline CentreAdj centre_adj(float flip, float insp) {
+inline CentreAdj centre_adj(float flip, float insp, float settle = 0.f) {
     const float pi = 3.14159265f;
     const float f = std::max(0.f, std::min(flip, pi)), sf = std::sin(f);
     const float ins = std::max(0.f, std::min(1.f, insp));
     CentreAdj a;
     a.z = -(0.5f * sf) - 0.4f * smoothstep01(f / pi) - 0.6f * ins;
-    a.scale_mul = (1.f + 0.05f * sf + 0.10f * smoothstep01(f / pi)) * (1.f + 0.05f * ins);
+    a.scale_mul = (1.f + 0.05f * sf + 0.10f * smoothstep01(f / pi)) * (1.f + 0.05f * ins) * (1.f + 0.03f * std::max(-1.5f, std::min(1.5f, settle)));   // settle: the bounce of the case coming to rest
     return a;
 }
 /* Half the screen width (in world units at the centre plane, i.e. screen px / U) the centre case may cover, whatever its yaw: it is turned
@@ -96,8 +96,12 @@ inline float flip_push(const CaseDims& c, float c_scale, float c_x, float c_z, f
 
 /* ---- motion ---- */
 /* Idle float of the centre case: a slow bob (world units) and sway (radians). */
-inline float idle_bob(float t) { return 0.011f * std::sin(t * 1.45f) + 0.004f * std::sin(t * 2.7f + 1.1f); }
-inline float idle_sway(float t) { return 0.014f * std::sin(t * 0.83f + 0.6f); }
+/* t is a double (the clock runs for days: a float stops resolving frames after ~12 days). */
+inline float idle_bob(double t) { return (float)(0.011 * std::sin(t * 1.45) + 0.004 * std::sin(t * 2.7 + 1.1)); }
+inline float idle_sway(double t) { return (float)(0.014 * std::sin(t * 0.83 + 0.6)); }
+/* How far a slot at distance |d| from the centre moves outward: the nearest neighbours' extra room plus the flip / inspect push, fading in over the first slot.
+ * Every slot from the first neighbour outward gets the same shift, so the spacing between the neighbours (the shelf pitch) never changes while a case is flipped. */
+inline float neighbour_shift(float ad, float extra, float push) { return (extra + push) * smoothstep01(std::min(ad, 1.f)); }
 
 /* ---- the text under the centre case ---- */
 /* "Switch 2" for Switch 2 games, else the console's name. */

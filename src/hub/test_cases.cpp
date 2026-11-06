@@ -213,7 +213,9 @@ int main() {
                 float fl = 3.14159f * (float)step / 14.f, ins = 0.f;
                 for (int mode = 0; mode < 2; ++mode) {
                     if (mode == 1) { fl = 0.f; ins = (float)step / 14.f; }
-                    const CentreAdj a = centre_adj(fl, ins);
+                    for (float settle : {-0.8f, 0.f, 1.2f}) {   // the bounce of a case coming to rest scales the centre case too
+                    if (settle != 0.f && step % 3) continue;
+                    const CentreAdj a = centre_adj(fl, ins, settle);
                     for (int sw = 0; sw < 8; ++sw) {   // the free spin of inspect (and pitch); during a flip the yaw is the flip angle
                         const float yaw = mode == 1 ? 6.2831853f * (float)sw / 8.f : fl - 0.13f, pitch = mode == 1 ? ((sw & 1) ? 0.55f : (sw & 2) ? -0.55f : 0.f) * ins : 0.f;
                         const float cs = scc * a.scale_mul;
@@ -231,11 +233,21 @@ int main() {
                             CHECK(re.lo * U < Wd * 0.5f);
                         }
                     }
+                    }
                 }
             }
         }
         CHECK(bad == 0);
         CHECK(tested > 1000);
+    }
+    {   // the first neighbours and everything beyond move out by the same amount, so the shelf pitch between them is untouched while a case is flipped
+        const float ex = 0.12f, pu = 0.31f;
+        CHECK(neighbour_shift(1.f, ex, pu) == neighbour_shift(2.f, ex, pu) && neighbour_shift(2.f, ex, pu) == neighbour_shift(7.f, ex, pu));
+        CHECK(neighbour_shift(0.f, ex, pu) == 0.f && neighbour_shift(0.5f, ex, pu) > 0.f && neighbour_shift(0.5f, ex, pu) < neighbour_shift(1.f, ex, pu));
+        CHECK(std::fabs((slot_pose(2.f).x + neighbour_shift(2.f, ex, pu) - (slot_pose(1.f).x + neighbour_shift(1.f, ex, pu))) - (slot_pose(2.f).x - slot_pose(1.f).x)) < 1e-6f);
+        CHECK(centre_adj(0.f, 0.f, 1.f).scale_mul > 1.029f && centre_adj(0.f, 0.f, 99.f).scale_mul < 1.05f);   // the settle term is bounded
+        // a clock running for 30 days still moves the idle float frame to frame
+        CHECK(idle_bob(2.6e6 + 0.00) != idle_bob(2.6e6 + 0.5));
     }
     {   // idle float stays tiny and bounded
         float mx = 0.f, my = 0.f;

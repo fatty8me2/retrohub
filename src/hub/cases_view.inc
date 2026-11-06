@@ -44,13 +44,15 @@ struct CasesState {
     bool sc_have[32] = {};
     // car-stage: ambient colour from the focused cover, idle motion, the title block, the sliding tab highlight
     SDL_Texture* col_tex = nullptr; std::string col_key; bool col_have = false; hubui::cases::Rgb8 col_rgb;   // dominant colour of the focused cover (computed once per texture)
-    float clock = 0.f;                          // seconds, for the idle float and the light motes
+    double clock = 0.0;                         // seconds, for the idle float and the light motes
     hubui::shelf::Spring settle;                // a small bounce of the centre case when the carousel comes to rest
     bool was_moving = false;
     float tab_dir = 0.f;                        // -1 / +1: the direction the last console change came from (the cases slide in from there)
     float tl_a = 1.f;                           // title block fade (restarts when the focus changes)
     float tl_slide = 0.f;                       // and its small upward slide
     int tl_focus = -2;
+    std::string key_next, played_clamp;
+    int key_idx = -2; uint64_t key_sig = ~0ull;  // the cover-colour key is rebuilt only when the focused item (or the list) changes
     std::string meta_txt, played_txt, chip_txt; // "2001 - 1-4 players - Racing", "Last played 3 days ago - 14 h total", "GameCube" / "Switch 2"
     ImU32 chip_col = 0;
     float chip_font = 0.f;
@@ -594,7 +596,7 @@ void draw_cases(Disp& D) {
     if (CS.mode != Mode::Flip && CS.flip.x < 0.02f && !CS.back_key.empty() && CS.flip.v == 0.f) cases_release_back();
     { static float prev_flash = 0.f; if (CS.fav_flash > prev_flash + 0.5f && !reduced) CS.settle.v += 22.f; prev_flash = CS.fav_flash; }   // a favourite pops the case
     ui::anim(CS.fav_flash, 0.f, 2.2f);
-    CS.clock += dt;
+    CS.clock += (double)dt;
     {   // a small bounce when the carousel comes to rest, and when a game is favourited
         const bool moving_now = n && std::fabs(CS.pos.x - (float)CS.focus) > 0.02f;
         if (CS.was_moving && !moving_now && !reduced) CS.settle.v += 12.f;
@@ -631,10 +633,13 @@ void draw_cases(Disp& D) {
     {   // ...but the focused game's own cover colour wins when it has one (computed once per texture, never from pixels per frame)
         using namespace hubui::cases;
         SDL_Texture* ft = nullptr;
-        std::string fk;
-        if (n && !CS.no_art) { ft = art_of(cur_idx).tex; fk = item_key(cur_idx); }
-        if (ft != CS.col_tex || fk != CS.col_key) {
-            CS.col_tex = ft; CS.col_key = fk; CS.col_have = false;
+        bool key_changed = false;
+        if (n && !CS.no_art) {
+            ft = art_of(cur_idx).tex;
+            if (CS.key_idx != cur_idx || CS.key_sig != D.sig) { CS.key_idx = cur_idx; CS.key_sig = D.sig; CS.key_next = item_key(cur_idx); key_changed = true; }
+        } else if (CS.key_idx != -1) { CS.key_idx = -1; CS.key_next.clear(); key_changed = true; }
+        if (ft != CS.col_tex || key_changed) {
+            CS.col_tex = ft; CS.col_key = CS.key_next; CS.col_have = false;
             if (ft) {
                 const uint32_t c = cases_art_rgb(ft);
                 Rgb8 a0, a1;
@@ -652,7 +657,7 @@ void draw_cases(Disp& D) {
         const float k = reduced ? 1.f : 1.f - std::exp(-dt * 3.4f);   // a slow, smooth crossfade as you browse
         CS.tint0 = ui::mix(CS.tint0, t0, k); CS.tint1 = ui::mix(CS.tint1, t1, k);
     }
-    sc.time = CS.clock; sc.motion = !reduced;
+    sc.time = CS.clock;   // a double: no stall after days of uptime sc.motion = !reduced;
     {
         const float mv = n ? std::min(1.f, std::fabs(CS.pos.x - (float)CS.focus)) : 0.f;
         sc.spot = 1.f - 0.35f * mv;   // the spotlight dips a little while the carousel is moving
@@ -687,7 +692,7 @@ void draw_cases(Disp& D) {
         extra_l = need(lo, lo - 1) * (1.f - fr) + need(hi, hi - 1) * fr;
     }
     // flip / inspect: the enlarged, forward centre case is wider on screen, so the neighbours stand out of its way (never intersecting it)
-    const hubui::cases::CentreAdj cadj = hubui::cases::centre_adj(fl, ins);
+    const hubui::cases::CentreAdj cadj = hubui::cases::centre_adj(fl, ins, CS.settle.x);   // includes the settle bounce, so the push below already accounts for it
     float push_l = 0.f, push_r = 0.f;
     if (n > 1 && (fl > 0.01f || ins > 0.01f) && CS.focus >= 0 && CS.focus < n) {
         const hubui::shelf::Media mc = CS.media[(size_t)CS.focus];
@@ -716,15 +721,13 @@ void draw_cases(Disp& D) {
         const float c = std::max(0.f, 1.f - ad);   // 1 at the centre, 0 one slot away
         shelfdraw::CasePose& ps = s.ps;
         ps = shelfdraw::CasePose();
-        const float wedge = smoothstep01(std::min(ad, 1.f));
-        ps.x = sp0.x + (s.d < 0.f ? -(extra_l + push_l) : (extra_r + push_r)) * wedge; ps.z = sp0.z; ps.yaw = sp0.yaw; ps.scale = sp0.scale * display_scale(CS.media[(size_t)i]);
+        ps.x = sp0.x + (s.d < 0.f ? -neighbour_shift(ad, extra_l, push_l) : neighbour_shift(ad, extra_r, push_r)); ps.z = sp0.z; ps.yaw = sp0.yaw; ps.scale = sp0.scale * display_scale(CS.media[(size_t)i]);
         ps.alpha = sp0.alpha * (0.15f + 0.85f * CS.intro);
         if (tab_slide != 0.f) ps.x += tab_slide;   // a console change: the whole row slides in from the side the new console sits on
         // flip: the centre case turns over, rising toward the viewer; the neighbours stand out of its way (push_l / push_r)
         ps.yaw += c * fl - c * 0.13f;   // the centre case sits turned a touch so its side shows a little depth
         ps.z += c * cadj.z;
         ps.scale *= 1.f + c * (cadj.scale_mul - 1.f);
-        ps.scale *= 1.f + c * 0.03f * CS.settle.x;
         if (c > 0.f && !reduced) {   // idle: the case breathes (a slow float and a hint of sway)
             const float calm = (1.f - ins) * (1.f - std::min(1.f, fl / 3.14159f));
             ps.lift += c * calm * hubui::cases::idle_bob(CS.clock);
@@ -879,13 +882,19 @@ void draw_cases(Disp& D) {
             if (year > 0) add(std::to_string(year));
             if (players == 1) add("1 player"); else if (players > 1) add("1-" + std::to_string(players) + " players");
             add(genre);
-            CS.meta_txt = m;
+            {   // the facts and the played line never run wider than the stage: ellipsized to the room left beside the chip
+                ImFont* bf = ui::F.bold ? ui::F.bold : cf;
+                const float cfs = cf->FontSize;
+                const float chip_w = bf->CalcTextSizeA(cfs, FLT_MAX, 0.f, CS.chip_txt.c_str()).x + cfs * 1.3f, gap = cfs * 0.7f;
+                CS.meta_txt = m.empty() ? m : ui::ellipsize(cf, cfs, m.c_str(), std::max(cfs * 4.f, maxw - chip_w - gap));
+            }
             if (ghost) CS.played_txt = "From a friend's library";
             else {
                 const hub::GameState& gs = gstate(A.lib[(size_t)idx].key);
                 CS.played_txt = hubui::cont::last_played_line((uint64_t)std::time(nullptr), gs.last_played, gs.play_seconds, dot);
             }
         }
+        if (CS.played_clamp != CS.played_txt) { CS.played_clamp = CS.played_txt; CS.played_txt = ui::ellipsize(cf, cf->FontSize, CS.played_txt.c_str(), maxw); CS.played_clamp = CS.played_txt; }
         ui::anim(CS.tl_a, 1.f, 9.f); ui::anim(CS.tl_slide, 0.f, 9.f);
         if (reduced) { CS.tl_a = 1.f; CS.tl_slide = 0.f; }
         const float moving = std::min(1.f, std::fabs(CS.pos.x - (float)CS.focus) * 0.8f);
@@ -918,7 +927,7 @@ void draw_cases(Disp& D) {
         const bool fav = item_fav(idx);
         const float sr = tsz * 0.62f;
         const ImVec2 sc_pos(tx + ts.x + sr * 1.4f, ty + tsz * 0.55f);
-        const float pop = CS.fav_flash > 0.01f ? 1.f + 0.7f * std::sin(3.14159f * std::min(1.f, (1.f - CS.fav_flash) * 1.6f)) : 1.f;
+        const float pop = (CS.fav_flash > 0.01f && !reduced) ? 1.f + 0.7f * std::sin(3.14159f * std::min(1.f, (1.f - CS.fav_flash) * 1.6f)) : 1.f;
         if (fav) ui::icon(dl, ui::Icon::StarFilled, sc_pos, sr * 2.f * pop, ui::scale_alpha(IM_COL32(255, 214, 70, 255), ta));
         if (CS.x_t > 0.12f && !CS.x_fav) {
             const float pr = std::min(1.f, CS.x_t / kFavHold);
@@ -929,7 +938,7 @@ void draw_cases(Disp& D) {
         if (CS.fav_flash > 0.01f) {
             const float k = 1.f - CS.fav_flash;
             dl->AddCircle(sc_pos, sr * (1.4f + 2.2f * k), IM_COL32(255, 214, 70, (int)(200 * CS.fav_flash)), 28, sp(0.25f));
-            for (int i = 0; i < 8; ++i) {   // sparks
+            for (int i = 0; i < 8 && !reduced; ++i) {   // sparks
                 const float an = 6.2831853f * ((float)i + 0.5f) / 8.f;
                 const float r0 = sr * (1.5f + 2.0f * k), r1 = r0 + sr * (0.5f + 0.5f * (1.f - k));
                 dl->AddLine(ImVec2(sc_pos.x + std::cos(an) * r0, sc_pos.y + std::sin(an) * r0), ImVec2(sc_pos.x + std::cos(an) * r1, sc_pos.y + std::sin(an) * r1), IM_COL32(255, 224, 120, (int)(230 * CS.fav_flash)), sp(0.2f));

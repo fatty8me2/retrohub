@@ -599,9 +599,10 @@ void cases_stage_back(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32
         for (int i = 0; i < 26; ++i) {
             const float a = fract01(0.6180339f * (float)(i + 1)), b = fract01(0.7548776f * (float)(i + 1) + 0.13f);
             const float sp_ = 0.006f + 0.010f * fract01(a * 7.3f);
-            const float x = p0.x + fract01(a + sc.time * sp_ * 0.4f + 0.02f * std::sin(sc.time * 0.35f + (float)i)) * W;
-            const float y = p0.y + (1.f - fract01(b + sc.time * sp_)) * (H * 0.96f);
-            const float tw = 0.5f + 0.5f * std::sin(sc.time * (0.5f + 0.4f * a) + (float)i * 1.7f);
+            const double T = sc.time;   // doubles: the phases stay exact after days of uptime
+            const float x = p0.x + fract01(a + (float)std::fmod(T * (double)sp_ * 0.4, 1.0) + 0.02f * (float)std::sin(T * 0.35 + (double)i)) * W;
+            const float y = p0.y + (1.f - fract01(b + (float)std::fmod(T * (double)sp_, 1.0))) * (H * 0.96f);
+            const float tw = 0.5f + 0.5f * (float)std::sin(T * (0.5 + 0.4 * (double)a) + (double)i * 1.7);
             const float edge = std::min(1.f, std::min((y - p0.y) / (H * 0.2f), (yw - y) / (H * 0.2f)));
             const float al = 0.05f + 0.13f * tw;
             dl->AddCircleFilled(ImVec2(x, y), std::max(1.f, sc.U * (0.004f + 0.006f * fract01(a * 3.1f))), alpha(s.light, al * std::max(0.f, edge) * (0.4f + 0.6f * lit)), 8);
