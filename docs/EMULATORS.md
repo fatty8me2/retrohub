@@ -264,6 +264,7 @@ Identification is header-only (`src/common/nx.h`, `nx.cpp`): no keys, no decrypt
 | `.xci .xcz` | `HEAD` magic at 0x100 (or 0x1100 with a key area); title id only from the file-name tag |
 | `.nro` | `NRO0` magic; title from the ASET/NACP when present, else the file name |
 | loose dump | `exefs\main` + `exefs\main.npdm` (how Switch 2 games are dumped). The game file is `exefs\main`; title = the dump's top folder name; title id = the NPDM ACI0 program id. Only a file called `main` inside a folder called `exefs` is considered, so scans stay fast |
+| `.nup` | Lichii's own "NX Package" (build 88 `src/core/file_sys/nup_container.cpp`): unencrypted ExeFS/RomFS trees for a base game, its updates and add-ons in one file. `NUP\x01` superblock, then the TOC's 0x40-byte package records (title id, kind 0 base / 1 update / 2 add-on, ExeFS dir), then each package's meta TLVs (1 NPDM, 5 title, 9 localized titles). Only those records and the chosen package's meta are read, never the file tree. The game is picked like Lichii's loader: a base package with an ExeFS, else the newest update with one (dumps holding only a standalone update are playable). Title id = that package's id with the low 12 bits cleared; title = the meta title (else an English localized one, else the file name); Switch 2 = the meta NPDM's ACID layout, else a `04xx` title id. A package with only add-ons is not listed |
 
 Switch 2 (`GameEntry::nx2`, cached with the scan) = the NPDM ACID magic sits at +0x300 (Switch 2 signature area) instead of +0x200. Files inside `.zip / .7z / .rar` are not read (Lichii cannot open archives); they stay unlisted with a skip reason.
 
@@ -282,7 +283,7 @@ refused with a message) and optionally `title.keys` into `user\keys`, and their 
 "Install Firmware" replaces that folder too). Sources are only read: a folder, a firmware `.zip` (own miniz unzip, entry names checked for `..`, drives and
 absolute paths), or an Eden / yuzu / Citron / Suyu / Sudachi / Ryujinx install found in `%APPDATA%` (Ryujinx stores each NCA as a folder `x.nca` holding a
 file `00`; that file is copied as `x.nca`). An empty result is rejected and leaves the installed firmware alone. NSP / NSZ / XCI / XCZ need `prod.keys`;
-a loose `exefs\main` dump and `.nro` do not. Firmware is recommended for every game.
+a loose `exefs\main` dump, `.nup` and `.nro` do not. Firmware is recommended for every game.
 
 **Config written** (`user\config\qt-config.ini`, SimpleIni: every value has its `key\default=false` twin; the file is merged, never replaced, so the
 player's other keys stay):

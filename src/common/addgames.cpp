@@ -38,7 +38,8 @@ std::string pjoin(const std::string& a, const std::string& b) {
 const std::vector<std::string>& supported_exts() {
     static const std::vector<std::string> v = {".z64", ".n64", ".v64", ".gba", ".gb", ".gbc", ".nds", ".nes", ".sfc", ".smc", ".3ds", ".cci", ".cia", ".cxi", ".3dsx",
                                                ".iso", ".gcm", ".rvz", ".ciso", ".wia", ".gcz", ".wua", ".wud", ".wux", ".rpx",
-                                               ".chd", ".cso", ".cue", ".pbp", ".m3u", ".zip", ".7z", ".rar"};
+                                               ".chd", ".cso", ".cue", ".pbp", ".m3u", ".nsp", ".nsz", ".xci", ".xcz", ".nro", ".nup",
+                                               ".zip", ".7z", ".rar"};
     return v;
 }
 

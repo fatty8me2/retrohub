@@ -135,6 +135,7 @@ static void test_profile(const fs::path& d) {
 static void test_needs_keys() {
     CHECK(!lichii_needs_keys("C:\\g\\exefs\\main") && !lichii_needs_keys("C:\\g\\homebrew.nro") && !lichii_needs_keys("C:\\g\\HOMEBREW.NRO"));
     for (const char* e : {"a.nsp", "a.NSZ", "a.xci", "a.xcz"}) CHECK(lichii_needs_keys(std::string("C:\\g\\") + e));
+    CHECK(!lichii_needs_keys("C:\\g\\Zelda [0400486024DEC000].nup") && !lichii_needs_keys("C:\\g\\A.NUP"));   // unencrypted package: no keys
     CHECK(lichii_args("C:\\My Games\\a b.nsp", true) == "-f -u 0 -g \"C:\\My Games\\a b.nsp\"");
     CHECK(lichii_args("C:\\g\\a.nsp", false) == "-u 0 -g \"C:\\g\\a.nsp\"");
 }

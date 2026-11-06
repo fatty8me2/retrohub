@@ -10,13 +10,20 @@
  *   loose dump    a folder holding exefs/main + exefs/main.npdm (+ romfs/) -- how Switch 2 games are dumped today. The game file is
  *                 exefs/main (Lichii loads it as a deconstructed ROM directory). Title id = the NPDM ACI0 program id (plaintext).
  *                 Switch 2 = the NPDM's ACID signature area is 0x300 bytes instead of 0x200 (Lichii program_metadata.cpp).
+ *   .nup          Lichii's own "NX Package" (src/core/file_sys/nup_container.cpp, build 88): unencrypted ExeFS/RomFS trees in one file, no
+ *                 keys needed. Superblock "NUP\x01" (0x80) -> TOC "TOC\x01" + 0x40-byte package records (title id, kind 0 base / 1 update /
+ *                 2 add-on, exefs dir) -> per-package meta TLVs (1 NPDM, 5 title name, 9 localized titles). Playable like Lichii's loader:
+ *                 a base package with an ExeFS, else the newest update with one (standalone update dumps). Switch 2 from the meta NPDM,
+ *                 else a 04xx title id.
  *
  * Key: "switch:<title id, 16 lowercase hex>"; no title id -> "switch:file-<sanitized name>". serial = title id upper case ("" when none). */
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace hub::nx {
 
@@ -26,14 +33,20 @@ struct Ident {
     bool nx2 = false;         // Switch 2 program (NPDM ACID layout)
     bool loose = false;       // exefs/main dump
     bool update_or_dlc = false;   // not a playable base game: the scanner skips it
-    std::string format;       // "nsp" "nsz" "xci" "xcz" "nro" "exefs"
+    std::string format;       // "nsp" "nsz" "xci" "xcz" "nro" "exefs" "nup"
 };
+
+/* Reads len bytes at off into *out (fewer at the end of the file); false on an I/O error. */
+using ReadFn = std::function<bool(uint64_t off, size_t len, std::vector<uint8_t>* out)>;
 
 /* Pure parsers over a prefix of the file (unit-tested with synthetic headers). Each returns false when the magic is not there. */
 bool parse_pfs0(const uint8_t* d, size_t n, Ident* out);          // NSP / NSZ: entry table + string table
 bool parse_xci(const uint8_t* d, size_t n, Ident* out);           // "HEAD" at 0x100
 bool parse_nro(const uint8_t* d, size_t n, uint64_t file_size, Ident* out);
 bool parse_npdm(const uint8_t* d, size_t n, Ident* out);          // "META" magic; ACI0 program id; ACID size -> nx2
+/* NUP: reads only the superblock, the package records and the chosen package's meta (never the file tree). False = not a NUP.
+ * No playable package -> true with update_or_dlc set. */
+bool parse_nup(const ReadFn& read, uint64_t file_size, Ident* out);
 /* "[0100ABCD12340000]" anywhere in a name -> title id, 0 when absent. */
 uint64_t title_id_from_name(const std::string& name);
 /* "Super Game [0100ABCD12340000][v0] (USA)" -> "Super Game". */

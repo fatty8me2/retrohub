@@ -64,6 +64,7 @@ int main() {
     // ---- pure helpers ----
     CHECK(is_game_file("C:\\x\\Mario.Z64") && is_game_file("a.7z") && is_game_file("a.wux") && is_game_file("a.cci"));
     CHECK(!is_game_file("a.txt") && !is_game_file("noext"));
+    for (const char* e : {"a.nsp", "a.NSZ", "a.xci", "a.xcz", "a.nro", "C:\\x\\Zelda.nup"}) CHECK(is_game_file(e));   // Switch / Switch 2
     CHECK(console_folder(System::N64) == "Nintendo 64" && console_folder(System::WiiU) == "Wii U" && console_folder(System::NDS) == "DS");
     CHECK(console_folder(System::GBC) == "Game Boy Color" && console_folder(System::Unknown) == "Other");
     CHECK(games_root({"D:\\mine", "E:\\Stuff\\RetroHub Games\\"}, "C:\\Users\\a\\Documents") == "E:\\Stuff\\RetroHub Games");

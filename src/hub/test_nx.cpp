@@ -4,6 +4,7 @@
 #include "library.h"
 #include "nx.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -78,6 +79,189 @@ static Bytes make_npdm(uint64_t tid, bool nx2, const std::string& name) {
     le32(b, 0x78, acid); le32(b, 0x7C, 0x400);
     put(b, acid + (nx2 ? 0x300 : 0x200), "ACID");
     return b;
+}
+
+/* NUP (Lichii build 88 nup_container.cpp): superblock 0x80, TOC at 0x80 = 0x30 header + 0x40-byte package records, then each package's meta TLVs. */
+struct NupPkg {
+    uint64_t tid = 0;
+    uint8_t kind = 0;       // 0 base, 1 update, 2 add-on
+    uint8_t flags = 0;      // 1 = standalone update
+    uint32_t version = 0;
+    bool exefs = true;
+    Bytes meta;
+    bool empty_exefs = false;   // an ExeFS dir with no children: Lichii's GetExeFSDir returns null
+};
+static Bytes tlv(uint16_t type, const Bytes& payload) {
+    Bytes b(8, 0);
+    b[0] = uint8_t(type); b[1] = uint8_t(type >> 8);
+    le32(b, 4, (uint32_t)payload.size());
+    b.insert(b.end(), payload.begin(), payload.end());
+    return b;
+}
+static Bytes tlv_s(uint16_t type, const std::string& s) { return tlv(type, Bytes(s.begin(), s.end())); }
+static Bytes localized(const std::vector<std::pair<std::string, std::string>>& v) {
+    Bytes b;
+    for (auto& lt : v) {
+        b.push_back((uint8_t)lt.first.size());
+        b.insert(b.end(), lt.first.begin(), lt.first.end());
+        size_t at = b.size();
+        le32(b, at, (uint32_t)lt.second.size());
+        b.insert(b.end(), lt.second.begin(), lt.second.end());
+    }
+    return b;
+}
+static Bytes cat(std::vector<Bytes> parts) { Bytes o; for (auto& p : parts) o.insert(o.end(), p.begin(), p.end()); return o; }
+static Bytes make_nup(const std::vector<NupPkg>& pk) {
+    /* each package i owns dirs 3i (root), 3i+1 (exefs), 3i+2 (romfs); dir records (0x18) follow the package records */
+    const size_t toc_off = 0x80, n = pk.size(), dirs = 3 * n, dir_at = toc_off + 0x30 + n * 0x40, toc_size = 0x30 + n * 0x40 + dirs * 0x18;
+    Bytes b(toc_off + toc_size, 0);
+    put(b, 0, std::string("NUP\x01", 4));
+    b[4] = 0x80; b[6] = 1;
+    le64(b, 0x08, toc_off);
+    le64(b, 0x10, toc_size);
+    le32(b, 0x48, (uint32_t)n);
+    put(b, toc_off, std::string("TOC\x01", 4));
+    le32(b, toc_off + 4, (uint32_t)n);
+    le64(b, toc_off + 8, dirs);
+    for (size_t i = 0; i < n; ++i) {
+        const size_t r = toc_off + 0x30 + i * 0x40;
+        le64(b, r, pk[i].tid);
+        le32(b, r + 0x08, (uint32_t)(3 * i));
+        le32(b, r + 0x0C, pk[i].exefs ? (uint32_t)(3 * i + 1) : 0xFFFFFFFFu);
+        le32(b, r + 0x10, (uint32_t)(3 * i + 2));
+        le32(b, r + 0x14, pk[i].version);
+        b[r + 0x18] = pk[i].kind;
+        b[r + 0x19] = pk[i].flags;
+        le32(b, dir_at + (3 * i) * 0x18 + 0x0C, 2);                                    // root: exefs + romfs
+        le32(b, dir_at + (3 * i + 1) * 0x18 + 0x0C, pk[i].empty_exefs ? 0u : 2u);        // exefs: main + main.npdm
+        le32(b, dir_at + (3 * i + 2) * 0x18 + 0x0C, 1);
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (pk[i].meta.empty()) continue;
+        while (b.size() % 0x10) b.push_back(0);
+        le64(b, toc_off + 0x30 + i * 0x40 + 0x20, b.size());
+        le32(b, toc_off + 0x30 + i * 0x40 + 0x28, (uint32_t)pk[i].meta.size());
+        b.insert(b.end(), pk[i].meta.begin(), pk[i].meta.end());
+    }
+    while (b.size() % 0x10) b.push_back(0);
+    le64(b, 0x38, b.size());   // blob offset (no member files here)
+    le64(b, 0x40, b.size());   // file size
+    return b;
+}
+static bool nup_ident(const Bytes& b, size_t n, nx::Ident* id) {
+    *id = nx::Ident();
+    return nx::parse_nup([&](uint64_t off, size_t len, Bytes* o) {
+        if (off > n) return false;
+        size_t k = (size_t)std::min<uint64_t>(len, n - off);
+        o->assign(b.begin() + (size_t)off, b.begin() + (size_t)off + k);
+        return true;
+    }, n, id);
+}
+
+static void test_nup() {
+    nx::Ident id;
+    // a base package: title TLV + a Switch 2 NPDM
+    Bytes meta = cat({tlv(1, make_npdm(0x0400AAAA00000000ull, true, "Application")), tlv_s(4, "1.0.0"), tlv_s(5, "Base Game")});
+    Bytes b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, meta}});
+    CHECK(nup_ident(b, b.size(), &id) && id.format == "nup" && id.title_id == 0x0400AAAA00000000ull && id.nx2 && !id.update_or_dlc && id.title == "Base Game");
+
+    // the user's dump: one standalone update, no title TLV, localized titles (English wins), no NPDM -> nx2 from the 04xx id
+    meta = tlv(9, localized({{"ja", "JP Title"}, {"en-US", "Ocarina of Time"}, {"fr", "FR"}}));
+    b = make_nup({{0x0400486024DEC000ull, 1, 1, 0x20000, true, meta}});
+    CHECK(nup_ident(b, b.size(), &id) && id.title_id == 0x0400486024DEC000ull && !id.update_or_dlc && id.nx2 && id.title == "Ocarina of Time");
+    // no English: the first localized title
+    b = make_nup({{0x0400486024DEC000ull, 1, 1, 1, true, tlv(9, localized({{"ja", "JP Title"}, {"de", "DE"}}))}});
+    CHECK(nup_ident(b, b.size(), &id) && id.title == "JP Title");
+
+    // an update's own id (base + 0x800) is reported as the base id
+    b = make_nup({{0x0400BBBB00000800ull, 1, 0, 1, true, {}}});
+    CHECK(nup_ident(b, b.size(), &id) && id.title_id == 0x0400BBBB00000000ull && !id.update_or_dlc && id.title.empty());
+
+    // two updates: the newest one is the game (like Lichii's FindBestUpdatePackage)
+    b = make_nup({{0x0400CCCC00000800ull, 1, 0, 1, true, tlv_s(5, "Old")}, {0x0400CCCC00000800ull, 1, 0, 7, true, tlv_s(5, "New")},
+                  {0x0400CCCC00000800ull, 1, 0, 3, true, tlv_s(5, "Mid")}});
+    CHECK(nup_ident(b, b.size(), &id) && id.title == "New");
+
+    // base + update + add-on: the base wins
+    b = make_nup({{0x0400DDDD00000800ull, 1, 0, 9, true, tlv_s(5, "Update")}, {0x0400DDDD00001001ull, 2, 0, 0, true, tlv_s(5, "Addon")},
+                  {0x0400DDDD00000000ull, 0, 0, 0, true, tlv_s(5, "Base")}});
+    CHECK(nup_ident(b, b.size(), &id) && id.title == "Base" && id.title_id == 0x0400DDDD00000000ull);
+
+    // a base without an ExeFS cannot boot: the update with one is used
+    b = make_nup({{0x0400EEEE00000000ull, 0, 0, 0, false, tlv_s(5, "Base")}, {0x0400EEEE00000800ull, 1, 0, 1, true, tlv_s(5, "Patched")}});
+    CHECK(nup_ident(b, b.size(), &id) && id.title == "Patched" && !id.update_or_dlc);
+
+    // add-on only / nothing with an ExeFS: not a game
+    b = make_nup({{0x0400FFFF00001001ull, 2, 0, 0, true, tlv_s(5, "DLC")}});
+    CHECK(nup_ident(b, b.size(), &id) && id.update_or_dlc);
+    b = make_nup({{0x0400FFFF00000000ull, 0, 0, 0, false, {}}, {0x0400FFFF00000800ull, 1, 0, 1, false, {}}});
+    CHECK(nup_ident(b, b.size(), &id) && id.update_or_dlc);
+
+    // an empty ExeFS cannot boot (Lichii's GetExeFSDir returns null): the update is used, or nothing
+    b = make_nup({{0x0400ACAC00000000ull, 0, 0, 0, true, tlv_s(5, "Base"), true}, {0x0400ACAC00000800ull, 1, 0, 1, true, tlv_s(5, "Patched")}});
+    CHECK(nup_ident(b, b.size(), &id) && id.title == "Patched");
+    b = make_nup({{0x0400ACAC00000800ull, 1, 1, 1, true, tlv_s(5, "Patched"), true}});
+    CHECK(nup_ident(b, b.size(), &id) && id.update_or_dlc);
+    // only the FIRST base counts (FindBasePackage); the newest update must itself have an ExeFS (no fallback to an older one)
+    b = make_nup({{0x0400ADAD00000000ull, 0, 0, 0, false, tlv_s(5, "Base 1")}, {0x0400ADAD00000000ull, 0, 0, 0, true, tlv_s(5, "Base 2")}});
+    CHECK(nup_ident(b, b.size(), &id) && id.update_or_dlc);
+    b = make_nup({{0x0400AEAE00000800ull, 1, 0, 1, true, tlv_s(5, "v1")}, {0x0400AEAE00000800ull, 1, 0, 2, false, tlv_s(5, "v2")}});
+    CHECK(nup_ident(b, b.size(), &id) && id.update_or_dlc);
+
+    // a Switch 1 program in a NUP
+    b = make_nup({{0x0100ABAB00000000ull, 0, 0, 0, true, tlv(1, make_npdm(0x0100ABAB00000000ull, false, "x"))}});
+    CHECK(nup_ident(b, b.size(), &id) && !id.nx2 && id.title_id == 0x0100ABAB00000000ull);
+
+    // not a NUP / too short
+    Bytes bad = b;
+    bad[3] = 2;
+    CHECK(!nup_ident(bad, bad.size(), &id));
+    CHECK(!nup_ident(b, 0x7F, &id));
+    CHECK(!nx::parse_nup(nx::ReadFn(), 0, &id));
+
+    // every truncation and hostile fields: never crashes, never reads out of bounds
+    Bytes full = make_nup({{0x0400486024DEC000ull, 1, 1, 1, true, cat({tlv(1, make_npdm(0x0400486024DEC000ull, true, "x")), tlv(9, localized({{"en", "T"}}))})}});
+    for (size_t n = 0; n <= full.size(); ++n) nup_ident(full, n, &id);
+    CHECK(nup_ident(full, full.size(), &id) && !id.update_or_dlc);
+    for (size_t n = 0x80; n < full.size(); ++n) CHECK(!nup_ident(full, n, &id));   // truncated: the declared size no longer matches
+    Bytes h = full;
+    le32(h, 0x48, 0xFFFFFFFF);                   // package count
+    CHECK(!nup_ident(h, h.size(), &id));
+    h = full;
+    le64(h, 0x08, ~0ull);                        // toc offset
+    CHECK(!nup_ident(h, h.size(), &id));
+    h = full;
+    le64(h, 0x40, h.size() + 16);                // declared file size
+    CHECK(!nup_ident(h, h.size(), &id));
+    h = full;
+    le32(h, 0x4C, 1);                            // superblock flags
+    CHECK(!nup_ident(h, h.size(), &id));
+    h = full;
+    le32(h, 0x80 + 4, 2);                        // TOC package count != superblock count
+    CHECK(!nup_ident(h, h.size(), &id));
+    h = full;
+    h[0x80 + 0x30 + 0x18] = 3;                   // unknown package kind
+    CHECK(!nup_ident(h, h.size(), &id));
+    h = full;
+    h[0x80 + 0x30 + 0x19] = 2;                   // unknown package flag
+    CHECK(!nup_ident(h, h.size(), &id));
+    h = full;
+    le32(h, 0x80 + 0x30 + 0x0C, 3);              // exefs dir past dir_count
+    CHECK(!nup_ident(h, h.size(), &id));
+    h = full;
+    le64(h, 0x80 + 8, ~0ull);                    // dir count
+    CHECK(!nup_ident(h, h.size(), &id));
+    h = full;
+    le32(h, 0x80 + 0x30 + 0x28, 0xFFFFFFF0);     // meta size
+    CHECK(nup_ident(h, h.size(), &id) && !id.update_or_dlc && id.title.empty());
+    h = full;
+    {   // a TLV whose size runs past the meta block, and a localized record whose length does
+        const size_t meta_at = (size_t)(h[0x80 + 0x30 + 0x20] | (h[0x80 + 0x30 + 0x21] << 8) | (h[0x80 + 0x30 + 0x22] << 16));
+        le32(h, meta_at + 4, 0x7FFFFFFF);
+        CHECK(nup_ident(h, h.size(), &id) && !id.update_or_dlc);
+    }
+    h = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, tlv(9, Bytes{2, 'e', 'n', 0xFF, 0xFF, 0xFF, 0x7F, 'x'})}});
+    CHECK(nup_ident(h, h.size(), &id) && id.title.empty());
 }
 
 static void test_parsers() {
@@ -189,7 +373,12 @@ static void test_files_and_scan() {
     write_file(games / "Other" / "main", Bytes(64, 1));                      // main outside exefs: ignored
     write_file(games / "Update Dump" / "exefs" / "main", Bytes(64, 1));
     write_file(games / "Update Dump" / "exefs" / "main.npdm", make_npdm(0x0100EEEE00000800ull, false, "x"));
-    write_file(games / "Real Cart.gba", Bytes(0x200, 0));                    // a non-game GBA stays unlisted
+    write_file(games / "Real Cart.gba", Bytes(0x200, 0));
+    write_file(games / "Switch2" / "Zelda OoT [04004860224DEC000].nup",   // the user's case: a standalone update, a 17-digit name tag
+               make_nup({{0x0400486024DEC000ull, 1, 1, 0x20000, true, tlv(9, localized({{"en-US", "Ocarina of Time"}}))}}));
+    write_file(games / "Bare [0400ABAB00000000].NUP", make_nup({{0x0400ABAB00000000ull, 0, 0, 0, true, {}}}));
+    write_file(games / "Addon Pack.nup", make_nup({{0x0400ABAB00001001ull, 2, 0, 0, true, {}}}));
+    write_file(games / "broken.nup", Bytes(0x200, 0x5A));                    // a non-game GBA stays unlisted
 
     nx::Ident id;
     CHECK(nx::identify_file(U8(games / "Super Game [0100ABCD12340000][v0].nsp"), &id) && id.title == "Super Game" && id.title_id == 0x0100ABCD12340000ull);
@@ -204,7 +393,7 @@ static void test_files_and_scan() {
     auto find = [&](const std::string& key) -> const GameEntry* { for (auto& g : lib) if (g.key == key) return &g; return nullptr; };
     int sw = 0;
     for (auto& g : lib) if (g.system == System::Switch) ++sw;
-    CHECK(sw == 8);   // Super Game, Tagged Only, 2 xci, 2 nro, 2 loose dumps
+    CHECK(sw == 10);   // Super Game, Tagged Only, 2 xci, 2 nro, 2 loose dumps, 2 nup
     const GameEntry* mk = find("switch:0400abcd12340000");
     CHECK(mk && mk->system == System::Switch && mk->nx2 && mk->title == "Mario Kart World" && mk->serial == "0400ABCD12340000");
     CHECK(mk && mk->path.size() > 4 && mk->path.compare(mk->path.size() - 4, 4, "main") == 0);
@@ -215,6 +404,14 @@ static void test_files_and_scan() {
     CHECK(!find("switch:0100abcd12340800") && !find("switch:0100abcd12341001") && !find("switch:0100eeee00000800"));
     CHECK(find("switch:0100aaaa00000000") && find("switch:0100bbbb00000000") && find("switch:0100cccc00000000"));
     for (auto& g : lib) CHECK(g.path.find("Orphan") == std::string::npos && g.path.find("Other") == std::string::npos);
+    const GameEntry* oot = find("switch:0400486024dec000");
+    CHECK(oot && oot->nx2 && oot->title == "Ocarina of Time" && oot->serial == "0400486024DEC000");
+    CHECK(oot && oot->path.size() > 4 && oot->path.compare(oot->path.size() - 4, 4, ".nup") == 0);
+    const GameEntry* bare = find("switch:0400abab00000000");
+    CHECK(bare && bare->title == "Bare" && bare->nx2);
+    for (auto& g : lib) CHECK(g.path.find("Addon Pack") == std::string::npos && g.path.find("broken.nup") == std::string::npos);
+    CHECK(nx::identify_file(U8(games / "Switch2" / "Zelda OoT [04004860224DEC000].nup"), &id) && id.format == "nup" && !id.loose);
+    CHECK(nx::identify_file(U8(games / "broken.nup"), &id) == false);
 
     // cache round trip: a second scan reuses the cache and keeps nx2
     auto lib2 = scan_library({U8(games)}, nullptr);
@@ -239,9 +436,39 @@ static void test_files_and_scan() {
     fs::remove_all(d, ec);
 }
 
-int main() {
+/* hub_nx_test --probe <file or folder>: read-only check of real dumps. A file is identified (header reads only); a folder is scanned with
+ * scan_library into a throwaway data dir (the player's library cache is never touched). Prints what the library would list. */
+static int probe(const std::string& target) {
+    std::error_code ec;
+    fs::path t = fs::u8path(target);
+    if (fs::is_regular_file(t, ec)) {
+        nx::Ident id;
+        bool ok = nx::identify_file(target, &id);
+        std::printf("identify_file: %s\n  format=%s title_id=%016llX nx2=%d loose=%d update_or_dlc=%d title=\"%s\"\n", ok ? "ok" : "NOT A SWITCH FILE",
+                    id.format.c_str(), (unsigned long long)id.title_id, id.nx2, id.loose, id.update_or_dlc, id.title.c_str());
+        return ok && !id.update_or_dlc ? 0 : 1;
+    }
+    fs::path data = fs::temp_directory_path() / "nx_probe_data";
+    fs::remove_all(data, ec);
+    library_set_data_dir(U8(data));
+    auto lib = scan_library({target}, nullptr);
+    int sw = 0;
+    for (auto& g : lib) {
+        if (g.system != System::Switch) continue;
+        ++sw;
+        std::printf("  %s | %s | nx2=%d | serial=%s | %s\n", g.key.c_str(), g.title.c_str(), g.nx2, g.serial.c_str(), g.path.c_str());
+    }
+    std::printf("scan_library: %d game(s), %d Switch\n", (int)lib.size(), sw);
+    library_set_data_dir("");
+    fs::remove_all(data, ec);
+    return sw ? 0 : 1;
+}
+
+int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "--probe") return probe(argv[2]);
     test_parsers();
     test_garbage();
+    test_nup();
     test_files_and_scan();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("hub_nx_test: all passed\n");
