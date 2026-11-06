@@ -67,6 +67,10 @@ bool resolve_name(const hub::GameEntry& game, std::string* name, std::string* ho
 /* Same for a ghost (friend / pack-only game): hint = the pack entry name without extension, "" if none. */
 bool resolve_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
                    const std::string& title, const std::string& hint, std::string* name, std::string* how);
+/* What the worker does for one game and kind, synchronously (the headless coverage tool): resolve the name, fall back to GameTDB's front
+ * cover / the Switch .nup icon for a Boxart, FullCover from GameTDB. *how: cache/catalog/md5/crc/serial/title/gametdb/nupicon. png_path = the
+ * cache file (JPEG bytes are cached under the same .png name: the decoder sniffs the content). On failure *err says why. */
+bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::string* err, std::string* how, std::string* png_path);
 /* Download (or read cache) + decode + downscale; returns dimensions. On failure *err says why
  * (a 404 is recorded in misses.json). png_path gets the cache file path. */
 bool fetch_decode(const std::string& system_short, const std::string& nointro_name, Kind kind,

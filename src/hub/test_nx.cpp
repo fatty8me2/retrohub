@@ -464,11 +464,87 @@ static int probe(const std::string& target) {
     return sw ? 0 : 1;
 }
 
+/* NUP icon extraction (meta TLV 3 / localized TLV 10): English wins, bounded, hostile sizes ignored, file front end. */
+static Bytes icon_localized(const std::vector<std::pair<std::string, Bytes>>& v) {
+    Bytes b;
+    for (auto& li : v) {
+        b.push_back((uint8_t)li.first.size());
+        b.insert(b.end(), li.first.begin(), li.first.end());
+        size_t at = b.size();
+        le32(b, at, (uint32_t)li.second.size());
+        b.insert(b.end(), li.second.begin(), li.second.end());
+    }
+    return b;
+}
+static bool nup_icon_of(const Bytes& b, Bytes* icon, nx::Ident* id) {
+    *id = nx::Ident();
+    return nx::parse_nup([&](uint64_t off, size_t len, Bytes* o) {
+        if (off > b.size()) return false;
+        size_t k = (size_t)std::min<uint64_t>(len, b.size() - off);
+        o->assign(b.begin() + (size_t)off, b.begin() + (size_t)off + k);
+        return true;
+    }, b.size(), id, icon);
+}
+static void test_nup_icon() {
+    nx::Ident id;
+    Bytes icon;
+    const Bytes jpg = {0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3, 4}, png = {0x89, 'P', 'N', 'G', 9, 9}, ja = {0xFF, 0xD8, 7, 7}, en = {0xFF, 0xD8, 8, 8, 8};
+    // TLV 3 only
+    Bytes b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, cat({tlv_s(5, "G"), tlv(3, jpg)})}});
+    CHECK(nup_icon_of(b, &icon, &id) && icon == jpg && id.title == "G");
+    // localized icons: English beats the others and beats TLV 3
+    b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, cat({tlv(3, jpg), tlv(10, icon_localized({{"ja", ja}, {"en-US", en}}))})}});
+    CHECK(nup_icon_of(b, &icon, &id) && icon == en);
+    // no English entry: TLV 3 (the package default) before the first localized one
+    b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, cat({tlv(10, icon_localized({{"ja", ja}})), tlv(3, png)})}});
+    CHECK(nup_icon_of(b, &icon, &id) && icon == png);
+    // only a Japanese icon: the first localized one
+    b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, tlv(10, icon_localized({{"ja", ja}, {"fr", en}}))}});
+    CHECK(nup_icon_of(b, &icon, &id) && icon == ja);
+    // no icon at all
+    b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, tlv_s(5, "G")}});
+    CHECK(nup_icon_of(b, &icon, &id) && icon.empty());
+    // hostile: an icon over the 4 MB bound is ignored (the title still parses), a localized record that overruns its TLV stops cleanly
+    Bytes huge((4u << 20) + 1, 0xAB);
+    b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, cat({tlv_s(5, "Big"), tlv(3, huge)})}});
+    CHECK(nup_icon_of(b, &icon, &id) && icon.empty() && id.title == "Big");
+    Bytes bad = {2, 'e', 'n', 0xFF, 0xFF, 0xFF, 0x7F, 1, 2};   // claims a 2 GB icon inside a 9 byte TLV
+    b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, cat({tlv(10, bad), tlv_s(5, "Ok")})}});
+    CHECK(nup_icon_of(b, &icon, &id) && icon.empty() && id.title == "Ok");
+    Bytes cut = {5, 'e', 'n'};                               // language longer than the record
+    b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, tlv(10, cut)}});
+    CHECK(nup_icon_of(b, &icon, &id) && icon.empty());
+    // a TLV whose size runs past the meta block: nothing read, no crash
+    Bytes lie = tlv(3, jpg);
+    lie[4] = 0xFF; lie[5] = 0xFF; lie[6] = 0xFF; lie[7] = 0x00;
+    b = make_nup({{0x0400AAAA00000000ull, 0, 0, 0, true, lie}});
+    CHECK(nup_icon_of(b, &icon, &id) && icon.empty());
+    // not a NUP: icon cleared, false
+    Bytes junk(256, 0x41);
+    icon = jpg;
+    CHECK(!nup_icon_of(junk, &icon, &id) && icon.empty());
+    // file front end
+    fs::path dir = fs::temp_directory_path() / "hub_nx_icon_test";
+    fs::create_directories(dir);
+    b = make_nup({{0x0400486024DEC000ull, 1, 1, 0x20000, true, cat({tlv(1, make_npdm(0x0400486024DEC000ull, true, "Application")), tlv(3, jpg)})}});
+    fs::path f = dir / "game.nup";
+    { std::ofstream o(f, std::ios::binary); o.write((const char*)b.data(), (std::streamsize)b.size()); }
+    Bytes got;
+    CHECK(nx::nup_icon_file(f.u8string(), &got) && got == jpg);
+    Bytes none = make_nup({{0x0400486024DEC000ull, 1, 1, 0x20000, true, tlv_s(5, "x")}});
+    { std::ofstream o(f, std::ios::binary | std::ios::trunc); o.write((const char*)none.data(), (std::streamsize)none.size()); }
+    CHECK(!nx::nup_icon_file(f.u8string(), &got) && got.empty());
+    CHECK(!nx::nup_icon_file((dir / "missing.nup").u8string(), &got));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--probe") return probe(argv[2]);
     test_parsers();
     test_garbage();
     test_nup();
+    test_nup_icon();
     test_files_and_scan();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("hub_nx_test: all passed\n");
