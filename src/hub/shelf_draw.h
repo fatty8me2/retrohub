@@ -80,6 +80,7 @@ struct CasePose {
     float scale = 1;
     float alpha = 1;
     float lift = 0;            // raised off the floor (inspect)
+    ImU32 fog = IM_COL32(6, 7, 11, 255);   // the colour a faded case blends toward (alpha < 1 fades by fog, never by transparency)
     float refl = 0;            // reflection strength used by cases_case(reflection = true)
     bool refl_detail = false;  // text in the reflection
 };
