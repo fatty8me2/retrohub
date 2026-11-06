@@ -251,3 +251,18 @@ with `<vault>\psp\<key>\battery\SAVEDATA\<folder>` around each session by `begin
 ## Online
 
 None. PSP is offline only (`system_has_online_launch` is false for PSP, so the library shows "Offline only").
+
+# Nintendo Switch / Switch 2 (Lichii)
+
+## Library
+
+Identification is header-only (`src/common/nx.h`, `nx.cpp`): no keys, no decryption. Key `switch:<title id, 16 lowercase hex>` (no id: `switch:file-<name>`); serial = the title id in upper case. Update and DLC packages (title id low 12 bits not zero) are not listed.
+
+| Format | Identification |
+|---|---|
+| `.nsp .nsz` | PFS0 container; title id from the `<rights id>.tik` entry name (first 16 hex), else the `[0100XXXXXXXXXXXX]` tag in the file name |
+| `.xci .xcz` | `HEAD` magic at 0x100 (or 0x1100 with a key area); title id only from the file-name tag |
+| `.nro` | `NRO0` magic; title from the ASET/NACP when present, else the file name |
+| loose dump | `exefs\main` + `exefs\main.npdm` (how Switch 2 games are dumped). The game file is `exefs\main`; title = the dump's top folder name; title id = the NPDM ACI0 program id. Only a file called `main` inside a folder called `exefs` is considered, so scans stay fast |
+
+Switch 2 (`GameEntry::nx2`, cached with the scan) = the NPDM ACID magic sits at +0x300 (Switch 2 signature area) instead of +0x200. Files inside `.zip / .7z / .rar` are not read (Lichii cannot open archives); they stay unlisted with a skip reason.
