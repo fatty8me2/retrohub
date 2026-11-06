@@ -71,6 +71,8 @@ std::string settings_to_json(const Settings& s) {
       << "  \"backup_shots\": " << (s.backup_shots ? "true" : "false") << ",\n"
       << "  \"cloud_states\": " << (s.cloud_states ? "true" : "false") << ",\n"
       << "  \"library_sort\": \"" << json::escape(s.library_sort) << "\",\n"
+      << "  \"library_sort_rev\": " << (s.library_sort_rev ? "true" : "false") << ",\n"
+      << "  \"library_favs_first\": " << (s.library_favs_first ? "true" : "false") << ",\n"
       << "  \"lib_favs_only\": " << (s.lib_favs_only ? "true" : "false") << ",\n"
       << "  \"lib_genre\": \"" << json::escape(s.lib_genre) << "\",\n"
       << "  \"lib_group_genre\": " << (s.lib_group_genre ? "true" : "false") << ",\n"
@@ -184,6 +186,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->backup_shots = json_bool(j, "backup_shots", out->backup_shots);
     out->cloud_states = json_bool(j, "cloud_states", out->cloud_states);
     if (const json::Value* ls = j.get("library_sort")) if (ls->is_string()) out->library_sort = ls->s;
+    out->library_sort_rev = json_bool(j, "library_sort_rev", out->library_sort_rev);
+    out->library_favs_first = json_bool(j, "library_favs_first", out->library_favs_first);
     out->lib_favs_only = json_bool(j, "lib_favs_only", out->lib_favs_only);
     out->lib_genre = j.str("lib_genre", out->lib_genre);
     out->lib_group_genre = json_bool(j, "lib_group_genre", out->lib_group_genre);
@@ -1007,21 +1011,64 @@ static std::string lower(const std::string& s) {
     return o;
 }
 
-bool list_item_less(const ListItem& x, const ListItem& y, SortMode mode) {
+/* Same rule as letter_of (libview_logic): the first letter or digit decides; a digit, a non-ASCII byte, or no letter at all means "#". */
+static bool title_is_hash(const std::string& t) {
+    for (unsigned char c : t) {
+        if (c >= 0x80) return true;
+        if (std::isalpha(c)) return false;
+        if (std::isdigit(c)) return true;
+    }
+    return !t.empty();
+}
+void prepare_sort_key(ListItem& it) {
+    it.lkey = lower(it.title);
+    it.hashb = title_is_hash(it.title) ? 1 : 0;
+    it.crank = console_index(it.system);
+}
+
+int console_index(const std::string& system) {
+    const std::vector<std::string>& o = console_order();
+    for (size_t i = 0; i < o.size(); ++i) if (o[i] == system) return (int)i;
+    return (int)o.size();
+}
+
+bool list_item_less(const ListItem& x, const ListItem& y, SortSpec sp) {
     if (x.pinned != y.pinned) return x.pinned;
     if (x.ghost != y.ghost) return y.ghost;
-    unsigned long long a = 0, b = 0;
-    if (mode == SortMode::LastPlayed) { a = x.last_played; b = y.last_played; }
-    else if (mode == SortMode::MostPlayed) { a = x.play_seconds; b = y.play_seconds; }
-    else if (mode == SortMode::RecentlyAdded) { a = x.added; b = y.added; }
-    if (a != b) return a > b;
-    std::string lx = lower(x.title), ly = lower(y.title);
-    if (lx != ly) return lx < ly;
+    if (sp.favs_first && x.favorite != y.favorite) return x.favorite;
+    switch (sp.mode) {
+        case SortMode::LastPlayed: case SortMode::MostPlayed: case SortMode::RecentlyAdded: {
+            const unsigned long long a = sp.mode == SortMode::LastPlayed ? x.last_played : sp.mode == SortMode::MostPlayed ? x.play_seconds : x.added;
+            const unsigned long long b = sp.mode == SortMode::LastPlayed ? y.last_played : sp.mode == SortMode::MostPlayed ? y.play_seconds : y.added;
+            if ((a == 0) != (b == 0)) return b == 0;   // never played / no date: last, reversed or not
+            if (a != b) return sp.reverse ? a < b : a > b;
+            break;
+        }
+        case SortMode::ReleaseYear: {
+            if ((x.year <= 0) != (y.year <= 0)) return y.year <= 0;   // unknown year: last
+            if (x.year != y.year) return sp.reverse ? x.year > y.year : x.year < y.year;
+            break;
+        }
+        case SortMode::Console: {
+            const int a = x.crank >= 0 ? x.crank : console_index(x.system), b = y.crank >= 0 ? y.crank : console_index(y.system);
+            if (a != b) return sp.reverse ? a > b : a < b;
+            break;
+        }
+        default: break;
+    }
+    std::string tx, ty;
+    const std::string& lx = !x.lkey.empty() ? x.lkey : (tx = lower(x.title));
+    const std::string& ly = !y.lkey.empty() ? y.lkey : (ty = lower(y.title));
+    if (sp.mode == SortMode::Title) {   // digits, symbols and non-ASCII letters form one "#" block ahead of A (behind Z when reversed)
+        const int hx = x.hashb >= 0 ? x.hashb : (title_is_hash(x.title) ? 1 : 0), hy = y.hashb >= 0 ? y.hashb : (title_is_hash(y.title) ? 1 : 0);
+        if (hx != hy) return sp.reverse ? hx < hy : hx > hy;
+    }
+    if (lx != ly) return (sp.mode == SortMode::Title && sp.reverse) ? lx > ly : lx < ly;
     return x.key < y.key;
 }
 
 std::vector<int> filter_sort(const std::vector<ListItem>& items, const std::string& system_filter,
-                             const std::string& query, SortMode mode) {
+                             const std::string& query, SortSpec mode) {
     std::string q = lower(query);
     size_t b = q.find_first_not_of(' ');
     size_t e = q.find_last_not_of(' ');
@@ -1071,13 +1118,15 @@ const std::vector<std::string>& console_order() {
     return v;
 }
 
-std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items, const std::vector<int>* indices, SortMode mode) {
+std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items, const std::vector<int>* indices, SortSpec mode) {
     std::vector<int> idx;
     if (indices) idx = *indices;
     else for (size_t i = 0; i < items.size(); ++i) idx.push_back((int)i);
     std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) { return list_item_less(items[a], items[b], mode); });
     std::vector<ConsoleSection> out;
-    for (const std::string& c : console_order()) {
+    std::vector<std::string> order = console_order();
+    if (mode.mode == SortMode::Console && mode.reverse) std::reverse(order.begin(), order.end());   // Console sort, reversed: last console first ("Other" stays at the end)
+    for (const std::string& c : order) {
         ConsoleSection s{c, system_shelf_title(c), {}};
         for (int i : idx) if (items[i].system == c) s.items.push_back(i);
         if (!s.items.empty()) out.push_back(s);
@@ -1091,7 +1140,7 @@ std::vector<ConsoleSection> group_by_console(const std::vector<ListItem>& items,
     return out;
 }
 
-std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_recent, SortMode mode) {
+std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_recent, SortSpec mode) {
     auto by_title = [&](std::vector<int>& v) {
         std::stable_sort(v.begin(), v.end(), [&](int a, int b) {
             if (g[a].pinned != g[b].pinned) return g[a].pinned;
@@ -1111,7 +1160,7 @@ std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_rece
     by_title(favs.items);
     if (!favs.items.empty()) out.push_back(favs);
     std::vector<ListItem> li;
-    for (auto& e : g) { ListItem it{e.key, e.title, e.system, e.pinned, e.last_played, e.play_seconds, e.added}; it.ghost = e.ghost; li.push_back(it); }
+    for (auto& e : g) { ListItem it{e.key, e.title, e.system, e.pinned, e.last_played, e.play_seconds, e.added}; it.ghost = e.ghost; it.favorite = e.favorite; it.year = e.year; li.push_back(it); }
     for (auto& cs : group_by_console(li, nullptr, mode)) {
         Shelf sh{"console:" + cs.system, cs.title, cs.items};
         out.push_back(sh);

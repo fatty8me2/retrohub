@@ -132,6 +132,15 @@ std::vector<Option> build() {
                    {{"off", "Off"}, {"2", "2x (30 to 60 fps)"}, {"3", "3x"}, {"4", "4x"}}));
     v.push_back(mk("switch.vsync", "VSync", "Video", SWITCH, K::Choice, S::Visual, "fifo",
                    {{"fifo", "On (FIFO)"}, {"mailbox", "Mailbox (low latency)"}, {"off", "Off (may tear)"}}));
+    // use_asynchronous_shaders: a shader the game has not used before is built in the background instead of freezing the game (less stutter
+    // the first time a place or effect shows up; the thing may appear a few frames late). "lichii" leaves whatever is set inside Lichii.
+    v.push_back(mk("switch.async_shaders", "Asynchronous shaders (less stutter)", "Video", SWITCH, K::Choice, S::Visual, "on",
+                   {{"on", "On"}, {"off", "Off"}, {"lichii", "Use Lichii's setting"}}));
+    // gpu_accuracy (Lichii: Low 0 / High 1, its default High). Measured 2026-11-06 on Ocarina of Time (Switch 2), i9-14900K + RTX 3090 Ti,
+    // Kokiri Forest gameplay: High ~30 fps, Low ~40 fps. CPU accuracy Unsafe, CPU clock Boost, fence Immediate, reactive flushing off and
+    // DMA Unsafe added nothing on top of Low, so only this is exposed. "lichii" leaves whatever is set inside Lichii.
+    v.push_back(mk("switch.gpu_accuracy", "GPU accuracy", "Video", SWITCH, K::Choice, S::Visual, "low",
+                   {{"low", "Low (faster)"}, {"high", "High (more accurate, slower)"}, {"lichii", "Use Lichii's setting"}}));
     return v;
 }
 

@@ -13,6 +13,8 @@
 #include "third_party/stb_image.h"
 #include "app.h"
 #include "cases_logic.h"
+#include "cases_stage.h"
+#include "continue_logic.h"
 #include "../saves/savestore.h"
 #include "state_slots.h"
 #include "libview_ui.h"
@@ -128,8 +130,8 @@ Disp& build_disp(LibLayout lay) {
     sig = mixh(sig, (uint64_t)col * 2 + (A.st.lib_list_desc ? 1 : 0));
     sig = mixh(sig, A.lib.size() * 31 + A.ghosts.size());
     sig = mixh(sig, A.vis.size());
-    const bool shelf_mixed = lay == LibLayout::Shelf && A.st.lib_shelf_mixed;   // Shelf "Mixed": one flow in the Sort chip's order
-    sig = mixh(sig, (uint64_t)A.sort_mode + (A.st.lib_group_genre ? 8 : 0) + (shelf_mixed ? 16 : 0) + (lay == LibLayout::Shelf ? 32 : 0));
+    const bool shelf_mixed = (lay == LibLayout::Shelf && A.st.lib_shelf_mixed) || (lay == LibLayout::Cases && !A.st.lib_group_genre && A.sort_mode != hubui::SortMode::Console);   // Cases: one flow in the Sort chip's order (the scrubber's marks follow it); "Console" keeps the per-console groups   // Shelf "Mixed": one flow in the Sort chip's order
+    sig = mixh(sig, (uint64_t)A.sort_mode + (A.sort_rev ? 64 : 0) + (A.sort_favs ? 128 : 0) + (A.st.lib_group_genre ? 8 : 0) + (shelf_mixed ? 16 : 0) + (lay == LibLayout::Shelf ? 32 : 0));
     if (sig == D.sig) return D;
     D = Disp();
     D.sig = sig;
@@ -1023,11 +1025,13 @@ bool lib_layout_has_bar() { return lib_layout() != LibLayout::Showcase && lib_la
 bool lib_cases_active() { return lib_layout() == LibLayout::Cases && A.page == Page::Library && A.view == LibView::All; }
 bool lib_cases_back(bool from_esc) {   // B / Esc: close the menu, leave a flipped / inspected case; Esc on the plain carousel opens the menu
     if (!lib_cases_active()) return false;
+    if (nav_close_modal()) return true;   // the sort picker / quick-jump overlay
     if (CS.menu_open) { CS.menu_open = false; A.nav_seed = true; shot_trace("cases-menu", "closed"); return true; }
     if (hubui::cases::on_back(&CS.mode)) { shot_trace("cases-back", "browse"); return true; }
     if (from_esc) { lib_cases_menu_toggle(); return true; }
     return false;
 }
+bool lib_cases_nav_blocking() { return nav_blocking(); }   // the sort picker / quick-jump overlay own the keys (frame.cpp: F / I / S must not reach the selected game)
 void lib_cases_menu_toggle() {
     CS.menu_open = !CS.menu_open;
     if (CS.menu_open) { CS.menu_focus_req = true; CS.mode = hubui::cases::Mode::Browse; }
@@ -1210,7 +1214,7 @@ void lib_body(float bar_h) {
         }
     }
     A.lib_pg = mine;
-    if (mine && !ImGui::GetIO().WantTextInput && A.focused && !A.proc && A.pad_mode) {
+    if (mine && !ImGui::GetIO().WantTextInput && A.focused && !A.proc && A.pad_mode && lay != LibLayout::Cases) {   // Cases: LT / RT jump sections (cases_nav.inc)
         int pdir = ImGui::IsKeyPressed(ImGuiKey_GamepadR2, true) ? 1 : ImGui::IsKeyPressed(ImGuiKey_GamepadL2, true) ? -1 : 0;
         if (pdir) page_move(D, pdir, ImGui::GetWindowHeight());
     }
@@ -1251,6 +1255,7 @@ void lib_shot_seed() {
         A.st.lib_layout = hubui::layout_key(LibLayout::Cases);
         A.view = LibView::All;
         const std::string m = cs;
+        nav_shot_seed(m);   // "sortpicker:release_year+rev", "quickjump:console", "bubble:last_played", "sort:title+rev"
         if (m.rfind("cartridge", 0) == 0) A.sys_filter = m.size() > 10 ? m.substr(10) : std::string("n64");
     }
     const char* v = std::getenv("HUB_SHOT_LIBVIEW");
@@ -1269,6 +1274,21 @@ void lib_shot_seed() {
 static SDL_Texture* g_fake[12];
 static int g_fake_w = 240, g_fake_h = 260;
 static int g_fake_dw[12], g_fake_dh[12];   // per-texture size (HUB_SHOT_FAKE_ART=posters: mixed aspect ratios)
+static void fake_register_color(SDL_Texture* tex, SDL_Surface* s) {   // the dominant colour of a fake cover (the stage takes its mood from it)
+    if (!tex || !s) return;
+    double sr = 0, sg = 0, sb = 0, sw = 0;
+    for (int y = 0; y < s->h; y += 2)
+        for (int x = 0; x < s->w; x += 2) {
+            const uint32_t c = ((const uint32_t*)s->pixels)[y * s->pitch / 4 + x];
+            const int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255, mx = std::max(r, std::max(g, b)), mn = std::min(r, std::min(g, b));
+            if (mx < 50 || mn > 215) continue;
+            const double sat = (mx - mn) / (double)mx;
+            if (sat < 0.25) continue;
+            const double w = sat * sat;
+            sr += r * w; sg += g * w; sb += b * w; sw += w;
+        }
+    if (sw > 0) CS.fake_cols[tex] = IM_COL32((int)(sr / sw + 0.5), (int)(sg / sw + 0.5), (int)(sb / sw + 0.5), 255);
+}
 void lib_fake_art_init(SDL_Renderer* ren) {
     if (!std::getenv("HUB_SHOT_FAKE_ART") || !ren) return;
     const bool posters = std::string(std::getenv("HUB_SHOT_FAKE_ART")) == "posters";   // box-art-like posters: gradients, a title banner, mixed aspect ratios
@@ -1315,6 +1335,7 @@ void lib_fake_art_init(SDL_Renderer* ren) {
                 }
             }
             g_fake[t] = SDL_CreateTextureFromSurface(ren, s);
+        fake_register_color(g_fake[t], s);
             SDL_FreeSurface(s);
             continue;
         }
@@ -1328,6 +1349,7 @@ void lib_fake_art_init(SDL_Renderer* ren) {
                 px[y * s->pitch / 4 + x] = (c & 0xFF00FF00u) | ((c & 0xFF) << 16) | ((c >> 16) & 0xFF);   // RGBA -> ARGB
             }
         g_fake[t] = SDL_CreateTextureFromSurface(ren, s);
+        fake_register_color(g_fake[t], s);
         SDL_FreeSurface(s);
     }
 }

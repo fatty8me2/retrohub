@@ -73,6 +73,21 @@ static void test_ini() {
     std::string l3 = lichii_ini_launch(l2, v, true);
     CHECK(has(l3, "use_vsync=0\n") && has(l3, "frame_gen=false\n") && !has(l3, "frame_gen=true"));
     CHECK(has(l3, "frame_gen_type=1\n"));   // left over, harmless while frame_gen=false
+    // asynchronous shaders: on by default, off on request, "lichii" keeps whatever the player set inside Lichii
+    CHECK(has(l, "use_asynchronous_shaders\\default=false\nuse_asynchronous_shaders=true\n"));
+    v["switch.async_shaders"] = "off";
+    const std::string a1 = lichii_ini_launch(l3, v, true);
+    CHECK(has(a1, "use_asynchronous_shaders=false\n") && count_of(a1, "use_asynchronous_shaders=") == 1);
+    v["switch.async_shaders"] = "lichii";
+    CHECK(lichii_ini_launch(a1, v, true).find("use_asynchronous_shaders=false\n") != std::string::npos);   // untouched
+    CHECK(!has(lichii_ini_launch("", v, true), "use_asynchronous_shaders"));
+    // GPU accuracy: Low by default (measured ~30 -> ~40 fps on Ocarina), High on request, "lichii" keeps Lichii's own value
+    CHECK(has(l, "gpu_accuracy\\default=false\ngpu_accuracy=0\n") && !has(l, "use_reactive_flushing") && !has(l, "dma_accuracy"));
+    v["switch.gpu_accuracy"] = "high";
+    const std::string s2 = lichii_ini_launch(l, v, true);
+    CHECK(has(s2, "gpu_accuracy=1\n") && count_of(s2, "gpu_accuracy=") == 1);
+    v["switch.gpu_accuracy"] = "lichii";
+    CHECK(has(lichii_ini_launch(s2, v, true), "gpu_accuracy=1\n") && !has(lichii_ini_launch("", v, true), "gpu_accuracy"));   // untouched
 }
 
 static void test_controls() {

@@ -1,6 +1,32 @@
 {
   "versions": [
     {
+      "version": "1.34.0",
+      "date": "2026-11-06",
+      "title": "Cases view, sorting and faster Switch games",
+      "new": [
+        "Cases view: every console's games now come in their own real-world packaging. Black GameCube and PS2 cases, blue Wii U cases, PS1 jewel cases with the black side strip, slim red Switch cases (with a two-tone banner for Switch 2), near-square DS and 3DS cases, tall PSP cases, and cardboard boxes for NES, SNES, N64 and the Game Boy family",
+        "New sort orders for the whole library: release year and console, plus a reverse option (Z to A, oldest first) and a favorites-first toggle",
+        "Cases view: a Sort button at the top right (O on the keyboard, right stick left or right on a pad)",
+        "Cases view: a scrubber bar along the bottom with letter, year or console marks and your position (like 123 / 2,400). Click or drag it to travel",
+        "Cases view: jump to the previous or next letter, year or console with LT / RT or Page Up / Page Down, and Home / End for the first and last game",
+        "Cases view: a quick-jump rail (J, or right stick up or down) where you pick a letter, year or console, or type the start of a title",
+        "Switch games: new per-game settings for GPU accuracy (Low by default, about a third more fps in Ocarina of Time) and asynchronous shaders (on by default, less stutter the first time something new appears)"
+      ],
+      "improved": [
+        "Cases view: the stage takes its colour from the selected game's cover, with a spotlight, floor reflections and a gentle idle float",
+        "Cases view: a bigger title with the console, year, players and genre, plus when you last played and for how long",
+        "Cases view: the console tabs show game counts and slide a highlight to the active console, and Switch has its own tab",
+        "Cases view: holding a direction speeds up much more, so even a very large library takes seconds to cross, and a big letter shows where you are",
+        "Cases view: the back of a case is laid out like the real thing, with pictures, a short description and fine print"
+      ],
+      "fixed": [
+        "Cases view: a flipped or inspected case no longer slides under the tabs or into the cases next to it",
+        "Cases view: Switch games showed a plain dark case labelled \"?\"",
+        "Switch keys and firmware window: the Firmware .zip button no longer runs off the edge of the window"
+      ]
+    },
+    {
       "version": "1.33.1",
       "date": "2026-11-06",
       "title": "Switch 2 .nup games",

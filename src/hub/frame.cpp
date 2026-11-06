@@ -241,9 +241,10 @@ void global_input() {
         }
     }
     if (A.page == Page::Library && (!A.lib.empty() || !A.ghosts.empty()) && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false) && A.view != LibView::All) cycle_sort(1);   // All Games: RT pages (main.cpp), the Sort chip cycles the order
-    if (A.page == Page::Library && A.sel_game.empty() && find_ghost(A.sel_ghost) &&
+    const bool nav_modal = lib_cases_active() && lib_cases_nav_blocking();   // typing in the Cases quick-jump must not favourite / open details
+    if (!nav_modal && A.page == Page::Library && A.sel_game.empty() && find_ghost(A.sel_ghost) &&
         (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl))) A.show_ghost = true;
-    if (A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
+    if (!nav_modal && A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl)) A.show_details = true;
         if ((ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) && !lib_cases_active()) || (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl)) toggle_favorite(A.sel_game);   // Cases: X flips (hold = favourite) there
         if (!io.WantTextInput && ((ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false) && !lib_cases_active()) || (ImGui::IsKeyPressed(ImGuiKey_S, false) && !io.KeyCtrl)))

@@ -66,12 +66,18 @@ void import_buttons(const char* id) {
         std::string p = osk::file(id[0] == 'a' ? "nxkeys_ask" : "nxkeys_set", button((std::string("Choose prod.keys...##") + id).c_str(), ImVec2(0, 0), LOOK.sources.empty() && !LOOK.st.prod_keys, true, ui::Icon::Folder), {".keys"});
         if (!p.empty()) report(hubemu::lichii_import_keys(dir, p), "Keys copied.");
     }
-    ImGui::SameLine();
+    // the next button goes on this row only when it fits (a narrow dialog / big UI scale would cut it off at the edge)
+    auto same_line_if_fits = [](const char* next_label) {
+        const ImGuiStyle& sty = ImGui::GetStyle();
+        const float need = ImGui::CalcTextSize(next_label, nullptr, true).x + ImGui::GetFontSize() * 2.2f + sty.FramePadding.x * 2.f + sty.ItemSpacing.x;
+        if (ImGui::GetItemRectMax().x + need <= ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
+    };
+    same_line_if_fits("Choose firmware folder...");
     {
         std::string p = osk::folder(id[0] == 'a' ? "nxfwd_ask" : "nxfwd_set", button((std::string("Choose firmware folder...##") + id).c_str(), ImVec2(0, 0), false, true, ui::Icon::Folder));
         if (!p.empty()) report(hubemu::lichii_import_firmware(dir, p), "Firmware installed.");
     }
-    ImGui::SameLine();
+    same_line_if_fits("Firmware .zip...");
     {
         std::string p = osk::file(id[0] == 'a' ? "nxfwz_ask" : "nxfwz_set", button((std::string("Firmware .zip...##") + id).c_str(), ImVec2(0, 0), false, true, ui::Icon::Folder), {".zip"});
         if (!p.empty()) report(hubemu::lichii_import_firmware(dir, p), "Firmware installed.");

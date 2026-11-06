@@ -66,7 +66,9 @@ std::string lichii_save_rel(const std::string& uuid, uint64_t title_id);
  * select_user_on_boot=false, enable_discord_presence=false, singleWindowMode=true; [Renderer] fullscreen_mode=0 (borderless). */
 std::string lichii_ini_defaults(const std::string& ini);
 /* Every launch: [Renderer] resolution_setup (switch.res), frame_gen / frame_gen_type=1 (FSR3) / frame_gen_multiplier (switch.framegen),
- * use_vsync (switch.vsync: fifo 2, mailbox 1, off 0); [UI] fullscreen; [System] current_user=0. */
+ * use_vsync (switch.vsync: fifo 2, mailbox 1, off 0), use_asynchronous_shaders (switch.async_shaders: on / off; "lichii" leaves it alone),
+ * gpu_accuracy (switch.gpu_accuracy: low 0 (default), high 1, "lichii" = untouched);
+ * [UI] fullscreen; [System] current_user=0. */
 std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, bool fullscreen);
 /* [Controls] player 1 (player_0_*) from the RetroHub "switch" profile on one SDL pad (guid + port among same-guid pads); player_0_connected=true,
  * player_0_type=0 (Pro Controller), players 2-8 disconnected. Value format (Lichii sdl_driver.cpp):
