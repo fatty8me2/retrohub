@@ -10,6 +10,7 @@
 #include "ps1.h"
 #include "ps2.h"
 #include "psp.h"
+#include "nx.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -1733,6 +1734,22 @@ static void fill_psp(const hub::psp::Ident& id, const fs::path& key_src, const f
     e->title = !t.empty() ? t : title_from_filename(title_name);
 }
 
+/* ---- Nintendo Switch / Switch 2 (Lichii): .nsp .nsz .xci .xcz .nro and loose exefs/main dumps. Headers only; update / DLC packages are not games.
+ * Not read from inside .zip/.7z/.rar (Lichii cannot open archives). ---- */
+static bool is_nx_ext(const std::string& ext) { return ext == ".nsp" || ext == ".nsz" || ext == ".xci" || ext == ".xcz" || ext == ".nro"; }
+static bool is_exefs_main(const fs::path& p) { return p.filename() == L"main" && ascii_lower(path_utf8(p.parent_path().filename())) == "exefs"; }
+static bool id_nx_file(const fs::path& p, GameEntry* e) {
+    hub::nx::Ident id;
+    if (!hub::nx::identify_file(path_utf8(p), &id) || id.update_or_dlc) return false;
+    const fs::path name_src = id.loose ? title_src(path_utf8(p.parent_path().parent_path().filename())) : p;   // a dump is named by its top folder
+    e->system = System::Switch;
+    e->nx2 = id.nx2;
+    e->key = hub::nx::key_for(id.title_id, sanitize_key(title_from_filename(name_src)));
+    if (id.title_id) { char b[17]; std::snprintf(b, sizeof b, "%016llX", (unsigned long long)id.title_id); e->serial = b; }
+    e->title = !id.title.empty() ? id.title : title_from_filename(name_src);
+    return true;
+}
+
 static bool id_psp_file(const fs::path& p, const fs::path& title_name, GameEntry* e) {
     hub::psp::Ident id;
     if (!hub::psp::identify_file(path_utf8(p), &id)) return false;
@@ -2156,6 +2173,7 @@ static bool identify_rom(const fs::path& p, const fs::path& name_src, GameEntry*
         ok = id_gc(p, ext, size, &e, name_src);
         if (!ok && ext == ".iso") { e = GameEntry(); ok = id_ps1(p, ext, &e, name_src); }   // a PlayStation data disc
     }
+    else if (is_nx_ext(ext) || is_exefs_main(p)) ok = id_nx_file(p, &e);
     else if (is_3ds_extension(ext)) ok = id_3ds(p, ext, &e, name_src);
     else if (ext == ".wua" || ext == ".wud" || ext == ".wux" || ext == ".rpx") ok = id_wiiu(p, ext, size, &e, name_src);
     if (!ok && ext == ".iso") { e = GameEntry(); ok = id_ps2_file(p, name_src, &e); }
@@ -2677,7 +2695,8 @@ struct CacheRec {
     std::string skip;   // !ok archive: why it was skipped
 };
 
-constexpr int kCacheVersion = 11;  // 11: archive/folder-name titles, loose skip reasons, ps1 entry names from disk; 10: cartridges/3DS in 7z/rar, PS1 content ids, Wii U archive keys, skip reasons; 2: serial matching + GBA catalog_id; 5: GB/GBC serials; 6: 3DS/Wii U/DS; 7: save_stem (short rom-cache names); 8: GB/GBC catalog titles; forces a rescan
+constexpr int kCacheVersion = 12;  // 12: Switch (nx2 flag; .nsp/.xci were refused before)
+//  // 11: archive/folder-name titles, loose skip reasons, ps1 entry names from disk; 10: cartridges/3DS in 7z/rar, PS1 content ids, Wii U archive keys, skip reasons; 2: serial matching + GBA catalog_id; 5: GB/GBC serials; 6: 3DS/Wii U/DS; 7: save_stem (short rom-cache names); 8: GB/GBC catalog titles; forces a rescan
 
 std::unordered_map<std::string, CacheRec> cache_load() {
     std::unordered_map<std::string, CacheRec> m;
@@ -2707,6 +2726,7 @@ std::unordered_map<std::string, CacheRec> cache_load() {
             r.e.path = f.str("lp").empty() ? path : f.str("lp");
             r.e.save_stem = f.str("ss");
             r.e.unpacked = (uint64_t)f.i64("us");
+            r.e.nx2 = jbool(f, "nx2");   // absent in older caches = false
             {   /* catalog can change between versions: re-match instead of trusting the cache */
                 std::string md5 = (r.e.key.rfind("n64:", 0) == 0) ? r.e.key.substr(4) : std::string();
                 if (const GameInfo* g = find_game_for(f.str("sys"), r.e.serial, md5)) {
@@ -2746,6 +2766,7 @@ void cache_save(const std::vector<std::pair<std::string, const CacheRec*>>& recs
             o += ",\"lp\":"; o += json::quote(r.e.path);   // launch path (differs for zipped ROMs)
             if (!r.e.save_stem.empty()) { o += ",\"ss\":"; o += json::quote(r.e.save_stem); }
             if (r.e.unpacked) o += ",\"us\":" + std::to_string(r.e.unpacked);
+            if (r.e.nx2) o += ",\"nx2\":true";
         }
         o.push_back('}');
     }
@@ -2761,7 +2782,7 @@ bool is_archive_file(const std::string& path) {
 /* Files a ROM folder holds that RetroHub cannot use. They are looked at (not identified) so the player is told why a game is missing
  * ("Settings > skipped files") instead of the file silently not showing up. */
 const char* unsupported_reason(const std::string& ext) {
-    if (ext == ".nsp" || ext == ".xci") return "this is a Nintendo Switch game; RetroHub does not play Switch games";
+    if (ext == ".nsp" || ext == ".xci" || ext == ".nsz" || ext == ".xcz") return "this Nintendo Switch file is not a game RetroHub can list (an update / DLC package, damaged, or inside an archive: Switch games are read from loose files, not from .zip / .7z / .rar)";
     if (ext == ".wbfs" || ext == ".wad") return "this is a Wii game file; RetroHub plays GameCube discs, not Wii games";
     if (ext == ".gz" || ext == ".xz" || ext == ".bz2" || ext == ".zst" || ext == ".tgz" || ext == ".tar")
         return "this archive type is not supported; re-pack it as a .zip or .7z, or unpack it and add the game files";
@@ -2775,7 +2796,7 @@ bool scan_extension(const std::string& ext) {
                                        ".gcm", ".rvz", ".wia", ".ciso", ".gcz", ".zip", ".nds", ".nes", ".sfc", ".smc",
                                        ".3ds", ".cci", ".cia", ".cxi", ".3dsx", ".zcci", ".zcia", ".zcxi", ".z3dsx",
                                        ".wua", ".wud", ".wux", ".rpx", ".chd", ".cso", ".cue",
-                                       ".m3u", ".pbp", ".bin", ".img"};
+                                       ".m3u", ".pbp", ".bin", ".img", ".nro"};
     for (const char* e : kExt)
         if (ext == e) return true;
     return unsupported_reason(ext) != nullptr;
@@ -2786,6 +2807,8 @@ std::string loose_skip_reason(const std::string& path_u8) {
     const fs::path p = utf8_path(path_u8);
     const std::string ext = ascii_lower(path_utf8(p.extension()));
     if (const char* r = unsupported_reason(ext)) return r;
+    if (ext == ".nro") return "this homebrew file is not a valid .nro";
+    if (ext.empty() && is_exefs_main(p)) return "this exefs folder is not a Switch game RetroHub can list (needs main.npdm next to main, and not an update / DLC)";
     std::vector<uint8_t> h;
     if (ext == ".iso" || ext == ".gcm") {
         if (read_at(p, 0x18, 4, &h) && be32(h.data()) == 0x5D1C9EA3u) return "this is a Wii disc; RetroHub plays GameCube discs, not Wii games";
@@ -2849,7 +2872,10 @@ void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::strin
             if (!de.is_regular_file(e1) || e1) continue;
             if (de.path().filename().native().compare(0, 2, L"._") == 0) continue;   // "._Game.z64": the same
             std::string ext = ascii_lower(path_utf8(de.path().extension()));
-            if (!scan_extension(ext)) continue;
+            if (!scan_extension(ext)) {
+                /* Switch 2 / loose dumps: an extension-less "main" counts only inside a folder called exefs (keeps scans cheap) */
+                if (!(ext.empty() && de.path().filename() == L"main" && ascii_lower(path_utf8(dir.filename())) == "exefs")) continue;
+            }
             Candidate c;
             c.path = de.path();
             c.path_utf8 = path_utf8(c.path);
