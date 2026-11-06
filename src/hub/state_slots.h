@@ -46,11 +46,19 @@ bool can_resume(bool has_states_support, bool auto_state_present);
 std::string playtime_text(uint64_t seconds);
 
 /* ---- library sort ---- */
-enum class SortMode { Title = 0, LastPlayed = 1, MostPlayed = 2, RecentlyAdded = 3 };
-constexpr int kSortModes = 4;
-const char* sort_name(SortMode m);               // "Title" "Last played" "Most played" "Recently added"
-const char* sort_key(SortMode m);                // persisted: "title" "last_played" "most_played" "recently_added"
-SortMode sort_from_key(const std::string& k);    // unknown -> Title
+enum class SortMode { Title = 0, LastPlayed = 1, MostPlayed = 2, RecentlyAdded = 3, ReleaseYear = 4, Console = 5 };
+constexpr int kSortModes = 6;
+const char* sort_name(SortMode m);               // "Title" "Last played" "Most played" "Recently added" "Release year" "Console"
+const char* sort_key(SortMode m);                // persisted: "title" "last_played" "most_played" "recently_added" "release_year" "console"
+SortMode sort_from_key(const std::string& k);    // unknown -> Title (an older / newer client's key never breaks the library)
 SortMode next_sort(SortMode m, int dir = 1);     // wraps
+/* A sort mode plus the two toggles: reverse order and "favorites first". Converts implicitly from a plain SortMode. */
+struct SortSpec {
+    SortMode mode = SortMode::Title;
+    bool reverse = false, favs_first = false;
+    SortSpec(SortMode m = SortMode::Title, bool rev = false, bool favs = false) : mode(m), reverse(rev), favs_first(favs) {}
+};
+/* Chip text without "Sort: ": "Title A-Z", "Title Z-A", "Year (newest)", "Favorites, Title A-Z" ... */
+std::string sort_label(const SortSpec& s);
 
 }  // namespace hubui

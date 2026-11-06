@@ -257,6 +257,8 @@ CHit cases_hit(uint32_t id, ImVec2 p0, ImVec2 p1, bool is_focus_item) {
 
 float key_analog(ImGuiKey k) { const ImGuiKeyData* d = ImGui::GetKeyData(k); return d ? d->AnalogValue : 0.f; }
 
+#include "cases_nav.inc"   // sort chip + picker, scrubber, section jumps, quick-jump overlay, section bubble
+
 /* ---- the tab bar ---- a pill strip: one highlight slides to the active console (in its colour), every console has its colour dot and a small game count ---- */
 void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int active, bool can_pad) {
     using hubui::cases::Tab;
@@ -282,7 +284,7 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
     total -= gap;
     const char* lb_k = "[";
     const float hint_w = ui::key_hint_width(A.pad_mode, "LB", lb_k, "") + sp(1.f);
-    const float left_min = org.x + sp(1.4f) + h + sp(1.f) + hint_w, right_max = org.x + W - sp(31.f) - hint_w;   // clear of the menu button and of ~240 px at the right end (the sort chip)
+    const float left_min = org.x + sp(1.4f) + h + sp(1.f) + hint_w, right_max = org.x + W - nav_side_w() - hint_w;   // clear of the menu button and of the Sort chip at the right end
     const float cw = std::min(std::max(sp(10.f), right_max - left_min), total + sp(1.f));
     const float cx0 = std::max(left_min, std::min(org.x + (W - cw) * 0.5f, right_max - cw));
     const ImVec2 c0(cx0, y), c1(cx0 + cw, y + h);
@@ -358,20 +360,24 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
 void cases_hints(ImDrawList* dl, ImVec2 org, float W, float y, float h) {
     struct H { const char* pad; const char* key; const char* label; bool tail; };   // tail: dropped first when the bar is too narrow
     const bool pad = A.pad_mode;
-    H hs[14];
+    H hs[16];
     int nh = 0;
     hs[nh++] = {"A", "Enter", "Play", false};
     hs[nh++] = {"Y", "I", "Details", false};
     hs[nh++] = {"X", "X", "Flip", false};
-    hs[nh++] = {"X", "F", pad ? "Hold: Favorite" : "Favorite", true};
-    hs[nh++] = {"R3", "R", "Inspect", false};
+    hs[nh++] = {"X", "F", pad ? "Hold: Fav" : "Favorite", true};
+    hs[nh++] = {"R3", "R", "Inspect", true};
     hs[nh++] = {"L3", "Z", "Shuffle", true};
     hs[nh++] = {"LB", "[", "", false};
     hs[nh++] = {"RB", "]", "Console", false};
+    hs[nh++] = {"LT", "PgUp", "", false};
+    hs[nh++] = {"RT", "PgDn", "Section", false};
+    hs[nh++] = pad ? H{"RS", "J", "Jump / Sort", false} : H{"", "J", "Jump", false};
+    if (!pad) hs[nh++] = {"", "O", "Sort", false};
     hs[nh++] = {"Start", "Esc", "Menu", false};
     if (!pad) { hs[nh++] = {"", "Wheel", "Scroll", true}; hs[nh++] = {"", "Drag", "Inspect", true}; }
     const float gap = sp(2.f);
-    auto is_lb = [](const H& h) { return h.pad[0] == 'L' && h.pad[1] == 'B'; };
+    auto is_lb = [](const H& h) { return (h.pad[0] == 'L' && (h.pad[1] == 'B' || h.pad[1] == 'T') && !h.pad[2]) ; };   // LB + RB / LT + RT sit close together as a pair
     auto width = [&]() {
         float w = 0;
         for (int i = 0; i < nh; ++i) {
@@ -465,7 +471,7 @@ void draw_cases(Disp& D) {
             CS.init = true;
         } else if (CS.init) {
             const int p = selected_pos(D);
-            if (p >= 0) { CS.focus = p; CS.pos.x = (float)p; CS.pos.v = 0; } else CS.init = false;
+            if (p >= 0) { CS.focus = p; CS.pos.x = nav_land_x(CS.pos.x, p); CS.pos.v = 0; } else CS.init = false;
         }
     }
     if (!CS.init || CS.focus < 0 || CS.focus >= n) {
@@ -496,7 +502,8 @@ void draw_cases(Disp& D) {
 
     // ---- input ----
     const bool popup = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    const bool can = A.focused && !A.proc && !io.WantTextInput && !popup && !A.show_details && !A.show_ghost && A.page == Page::Library && !CS.menu_open;
+    const bool can0 = A.focused && !A.proc && !io.WantTextInput && !popup && !A.show_details && !A.show_ghost && A.page == Page::Library && !CS.menu_open;
+    const bool can = can0 && !nav_blocking();   // the sort picker / quick-jump overlay own the keys while open
     const bool act = can && (nav_mine || ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) || !A.pad_mode);
     if (can && !CS.tabs.empty()) {
         int td = 0;
@@ -557,7 +564,7 @@ void draw_cases(Disp& D) {
             int steps = 0;
             while (CS.wheel_acc >= 1.f) { CS.wheel_acc -= 1.f; --steps; }
             while (CS.wheel_acc <= -1.f) { CS.wheel_acc += 1.f; ++steps; }
-            if (steps) cases_goto(D, CS.focus + steps, false, true);
+            if (steps) { const int st = nav_wheel_steps(steps); cases_goto(D, CS.focus + st, std::abs(st) > 2, true); }   // a fast spin travels further per notch
         }
     }
     if (!act) CS.x_t = -1.f;
@@ -571,7 +578,8 @@ void draw_cases(Disp& D) {
     }
     if (held_dir != 0 && held_dir == CS.hold_dir) CS.hold_t += dt; else CS.hold_t = 0.f;
     CS.hold_dir = held_dir;
-    // page keys (LT / RT) and jumps from outside
+    nav_input(D, can0, act, dt);   // O / J / PageUp / PageDown / Home / End, LT / RT, right stick; the picker and overlay keys
+    // jumps from outside
     if (G.jump_pos >= 0 && G.jump_pos < n) { const int jp = G.jump_pos; G.jump_pos = -1; G.jump_center = false; G.jump_top = false; if (jp != CS.focus) { CS.focus = jp; CS.mode = on_move(CS.mode); } if (std::fabs((float)jp - CS.pos.x) > 14.f) CS.pos.x = jump_start(CS.pos.x, jp, 9.f); CS.last_game = A.sel_game; CS.last_ghost = A.sel_ghost; }
 
     // ---- inspect: spin with the right stick / arrows; a leaving case swings back ----
@@ -618,8 +626,8 @@ void draw_cases(Disp& D) {
     const float hint_h = sp(tight ? 3.4f : 4.f), hint_y = org.y + H - hint_h;
     const float tsz = tfont->FontSize * (tight ? 1.f : 1.12f);   // a little larger than the heading font
     const float title_h = tsz * 1.34f + cf->FontSize * (tight ? 1.5f : 1.75f) + cf->FontSize * (tight ? 1.3f : 1.45f) + sp(0.5f);   // the title block (title, console chip + facts, played line); it starts below the case and its reflection gap (0.28 Hc)
-    const float nav_band = sp(4.5f);   // kept clear above the hint bar for the scrubber strip (car-nav)
-    const float avail_top = tab_y + tab_h + sp(1.2f), avail_bot = hint_y - nav_band;
+    const float strip_h = nav_strip_h(tight), strip_y = hint_y - strip_h;   // the scrubber strip right above the hint bar (cases_nav.inc)
+    const float avail_top = tab_y + tab_h + sp(1.2f), avail_bot = strip_y - sp(0.3f);
     const float avail = std::max(sp(20.f), avail_bot - avail_top);
     float Hc = std::min((avail - title_h) / 1.34f, W * 0.42f);
     Hc = std::max(sp(12.f), Hc);
@@ -785,7 +793,7 @@ void draw_cases(Disp& D) {
     shelfdraw::cases_stage_front(sc, p0, p1, CS.tint0, CS.tint1);
 
     // ---- hit boxes (left to right; the centre case claims its whole box) ----
-    if (n && ns > 0 && !CS.menu_open) {
+    if (n && ns > 0 && !CS.menu_open && !nav_blocking()) {
         int a0 = -1;
         for (int k = 0; k < ns; ++k) if (slots[k].i == ic) a0 = k;
         float xs[2 * kWindow + 5];
@@ -819,10 +827,11 @@ void draw_cases(Disp& D) {
         if (nav_to >= 0 && nav_to != CS.focus) {
             int target = nav_to;
             if (held_dir != 0 && CS.hold_t > 0.f) {   // holding a direction accelerates
-                const int extra = hold_boost(CS.hold_t) - 1;
+                const int extra = nav_hold_boost(CS.hold_t) - 1;
                 target = clamp_index(nav_to + held_dir * extra, n);
+                if (extra >= 1) NV.fast_t = std::max(NV.fast_t, 0.35f);
             }
-            cases_goto(D, target, false, target != nav_to);
+            cases_goto(D, target, target - nav_to >= 4 || nav_to - target >= 4, target != nav_to);
         }
         // a drag on the centre case inspects it; a click plays / opens details
         if (ImGui::IsMouseClicked(0)) { CS.drag_ok = centre_hover && CS.mode != Mode::Flip; CS.dragged = false; }
@@ -977,6 +986,7 @@ void draw_cases(Disp& D) {
         ImGui::PopID();
     }
     cases_hints(dl, org, W, hint_y, hint_h);
+    nav_draw(dl, org, sz, tab_y, tab_h, strip_y, strip_h, ImVec2(sc.cx, f0 - Hc * 0.5f), Hc, D);
     dl->PopClipRect();
 
     // ---- screenshot aids (HUB_SHOT_CASES=browse|flip|inspect|cartridge|missingart) ----
@@ -985,6 +995,7 @@ void draw_cases(Disp& D) {
         const int target = std::min(n - 1, std::max(0, n / 5));
         cases_goto(D, CS.focus > 0 ? CS.focus : target, false, false);
         CS.pos.x = (float)CS.focus;
+        nav_shot_apply(CS.shot_mode, D);
         if (CS.shot_mode == "flip") { CS.mode = Mode::Flip; if (!is_ghost(D.flat[(size_t)CS.focus])) cases_collect_back(D.flat[(size_t)CS.focus]); CS.flip.x = 3.14159f; CS.flip.v = 0; }
         else if (CS.shot_mode == "inspect") { CS.mode = Mode::Inspect; CS.spin.yaw = 0.62f; CS.spin.pitch = -0.2f; CS.insp.x = 1.f; }
         CS.intro = 1.f;

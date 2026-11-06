@@ -246,6 +246,7 @@ struct App {
     std::string resume_key, resume_state;        // set by resume_entry(): the next launch of resume_key passes --load-state resume_state
     std::string fresh_key;                       // set by the Home hero's "Start fresh": the next spawn of this game drops --resume (starts from the battery save)
     hubui::SortMode sort_mode = hubui::SortMode::Title;
+    bool sort_rev = false, sort_favs = false;   // reverse order / favorites first (saved: library_sort_rev, library_favs_first)
 
     // saves
     SaveJob job;
@@ -528,6 +529,9 @@ void refresh_state(const std::string& key);
 const hub::GameEntry* find_entry(const std::string& key);
 void apply_scan();
 const GameInfo* catalog_for(const hub::GameEntry& e);
+int lib_year_of(int idx);   // release year of a library item (index into lib / ghosts as in Disp); 0 unknown. Memoized, cheap for thousands of games
+unsigned long long lib_added_unix(const std::string& path);   // when the game file was added (cached; 0 until known)
+void sort_changed();         // after A.st.library_sort / _rev / _favs_first change: save, rebuild the list, scroll to top
 std::string genre_of_entry(const hub::GameEntry& e);   // first genre from the bundled game info ("Other" when unknown); cached per game key
 void rebuild_vis();
 bool added_stamps_changed();   // true once when background "recently added" stats landed (rebuild the list)
