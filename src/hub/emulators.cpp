@@ -2,6 +2,7 @@
 #include <cctype>
 #include "emulators.h"
 #include "psp.h"
+#include "lichii.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -1644,6 +1645,18 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
                 if (hub::psp::savedata_folder_matches(f, s.psp_disc_id) && std::find(seen.begin(), seen.end(), f) == seen.end()) seen.push_back(f);
         for (const auto& f : seen) s.rels.push_back("SAVEDATA/" + f);
         make_dirs(join(s.emu_root, "SAVEDATA"));
+    } else if (e.system == hub::System::Switch) {
+        if (!tid || inst.dir.empty()) return s;   // no title id (homebrew, unknown): nothing to map
+        const std::string uuid = lichii_ensure_profile(inst.dir);
+        if (uuid.empty()) return s;
+        s.emu_root = lichii_user_dir(inst.dir);
+        /* The vault side holds the title id only (the user uuid can differ between PCs): <vault>/switch/<key>/battery/save/<TID> */
+        char tb[24];
+        std::snprintf(tb, sizeof tb, "%016llX", (unsigned long long)tid);
+        s.rels = {lichii_save_rel(uuid, tid)};
+        s.vault_rels = {std::string("save/") + tb};
+        const std::string acct = std::string("nand/user/save/account/") + uuid + "/" + tb;   // Lichii prefers this folder when it exists
+        if (dir_exists(join(s.emu_root, acct))) { s.rels.push_back(acct); s.vault_rels.push_back(std::string("save-account/") + tb); }
     } else if (e.system == hub::System::GC) {
         if (inst.dir.empty()) return s;
         s.emu_root = dolphin_card_root(inst.dir, e.key);   // <install>\User\GC\RetroHub\<game>\GCI  <->  <vault>\gc\<game>\battery\GCI
@@ -1657,10 +1670,12 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
     hub::SyncManifest man;
     hub::manifest_load(s.manifest_path, &man);
     int in = 0, kept = 0;
-    for (const auto& rel : s.rels) {
-        std::string vsrc = join(battery, rel), edst = join(s.emu_root, rel);
+    for (size_t ri = 0; ri < s.rels.size(); ++ri) {
+        const std::string& rel = s.rels[ri];
+        const std::string& vrel = ri < s.vault_rels.size() ? s.vault_rels[ri] : rel;
+        std::string vsrc = join(battery, vrel), edst = join(s.emu_root, rel);
         if (s.restore_only_if_missing && hub::tree_has_files(edst)) continue;
-        hub::TreeSyncReport r = hub::sync_tree_newest(vsrc, edst, join(join(s.backup_dir, "emulator"), rel), tag, &man, rel + "/");
+        hub::TreeSyncReport r = hub::sync_tree_newest(vsrc, edst, join(join(s.backup_dir, "emulator"), vrel), tag, &man, vrel + "/");
         in += r.copied;
         kept += r.kept;
         if (!r.ok && s.error.empty()) s.error = r.error;
@@ -1691,8 +1706,10 @@ void end_session(SaveSession& s) {
     hub::SyncManifest man;
     hub::manifest_load(s.manifest_path, &man);
     int out = 0, bk = 0;
-    for (const auto& rel : s.rels) {
-        hub::TreeSyncReport r = hub::sync_tree_newest(join(s.emu_root, rel), join(s.battery, rel), join(s.backup_dir, rel), tag, &man, rel + "/");
+    for (size_t ri = 0; ri < s.rels.size(); ++ri) {
+        const std::string& rel = s.rels[ri];
+        const std::string& vrel = ri < s.vault_rels.size() ? s.vault_rels[ri] : rel;
+        hub::TreeSyncReport r = hub::sync_tree_newest(join(s.emu_root, rel), join(s.battery, vrel), join(s.backup_dir, vrel), tag, &man, vrel + "/");
         out += r.copied;
         bk += r.backed_up;
         if (!r.ok && s.error.empty()) s.error = r.error;

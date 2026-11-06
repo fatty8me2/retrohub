@@ -227,13 +227,13 @@ target_sources(RetroHub PRIVATE emulators.cpp netplay_3ds_run.cpp netplay_3ds_jo
 target_link_libraries(RetroHub PRIVATE ws2_32)
 target_link_libraries(RetroHub PRIVATE xinput setupapi)
 target_link_libraries(RetroHub PRIVATE hubminiz)
-add_executable(hub_emu_test test_emulators.cpp emulators.cpp ppsspp.cpp)
+add_executable(hub_emu_test test_emulators.cpp lichii.cpp emulators.cpp ppsspp.cpp)
 target_include_directories(hub_emu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
-add_executable(hub_gbalink_test test_gba_link.cpp emulators.cpp ppsspp.cpp)   # X2 GC<->GBA: targets, choices, Dolphin.ini, save round trip, pads coexistence
+add_executable(hub_gbalink_test test_gba_link.cpp emulators.cpp lichii.cpp ppsspp.cpp)   # X2 GC<->GBA: targets, choices, Dolphin.ini, save round trip, pads coexistence
 target_include_directories(hub_gbalink_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_gbalink_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
-add_executable(hub_wiiu_test test_wiiu_offline.cpp emulators.cpp art_match.cpp)   # offline Wii U: .wua/meta.xml, own-Cemu settings, profiles, saves, art names
+add_executable(hub_wiiu_test test_wiiu_offline.cpp emulators.cpp lichii.cpp art_match.cpp)   # offline Wii U: .wua/meta.xml, own-Cemu settings, profiles, saves, art names
 target_include_directories(hub_wiiu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${libchdr_SOURCE_DIR}/deps/zstd-1.5.7)
 target_link_libraries(hub_wiiu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
@@ -245,7 +245,7 @@ target_compile_definitions(hub_gcnp_test PRIVATE GCNP_DRIVER_PS1="${CMAKE_SOURCE
 add_executable(hub_gcfw_latency test_gcfw_latency.cpp netplay_3ds_run.cpp)
 target_include_directories(hub_gcfw_latency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gcfw_latency PRIVATE hublogic hubcommon hubnet user32 ws2_32 winhttp winmm)
-add_executable(hub_gc_speed gc_speed.cpp emulators.cpp netplay_dolphin.cpp netplay_3ds_run.cpp)   # QA: GameCube online speed matrix (qa/gc_online_speed.ps1)
+add_executable(hub_gc_speed gc_speed.cpp emulators.cpp lichii.cpp netplay_dolphin.cpp netplay_3ds_run.cpp)   # QA: GameCube online speed matrix (qa/gc_online_speed.ps1)
 target_include_directories(hub_gc_speed PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gc_speed PRIVATE dsuserver hublogic hubcommon hubminiz hubnet bcrypt winhttp xinput setupapi user32 ws2_32 winmm)
 add_executable(hub_gcnp_live gcnp_live.cpp netplay_dolphin.cpp netplay_3ds_run.cpp)
@@ -256,7 +256,7 @@ target_include_directories(hub_n3ds_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../
 target_link_libraries(hub_n3ds_live PRIVATE hublogic hubcommon hubnet user32 ws2_32 winhttp)
 
 # Live launch driver: runs the 3DS / Wii U launch path without the UI (manual tool, not a ctest)
-add_executable(hub_emu_live emu_live.cpp emulators.cpp)
+add_executable(hub_emu_live emu_live.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_emu_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
 target_link_libraries(hub_emu_live PRIVATE hublogic hubcommon hubsaves hubminiz bcrypt winhttp user32 gdi32 xinput setupapi)
 
@@ -292,7 +292,7 @@ target_sources(RetroHub PRIVATE dolphin_speed.cpp)
 target_link_libraries(RetroHub PRIVATE dsuserver)
 add_executable(hub_dolphin_speed_test test_dolphin_speed.cpp dolphin_speed.cpp)
 target_link_libraries(hub_dolphin_speed_test PRIVATE dsuserver hubcommon ws2_32)
-add_executable(hub_dolphin_speed_live dolphin_speed_live.cpp dolphin_speed.cpp emulators.cpp)
+add_executable(hub_dolphin_speed_live dolphin_speed_live.cpp dolphin_speed.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_dolphin_speed_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_dolphin_speed_live PRIVATE dsuserver hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi user32 ws2_32)
 
@@ -305,12 +305,17 @@ target_link_libraries(kanto_live PRIVATE hubcommon hubminiz)
 
 # PlayStation 2 via PCSX2 (docs/PS2.md): BIOS discovery, PCSX2.ini writers, pad bindings, card session; library scan of PS2 images
 target_sources(RetroHub PRIVATE pcsx2.cpp ppsspp.cpp lichii.cpp switch_ui.cpp)
-add_executable(hub_ps2_test test_pcsx2.cpp pcsx2.cpp emulators.cpp)
+add_executable(hub_ps2_test test_pcsx2.cpp pcsx2.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_ps2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
+# Nintendo Switch via Lichii (docs/EMULATORS.md): qt-config.ini merge, controls, profiles.dat, keys/firmware import, save session
+add_executable(hub_switch_test test_switch.cpp emulators.cpp lichii.cpp)
+target_include_directories(hub_switch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_switch_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
 # PlayStation Portable via PPSSPP (docs/EMULATORS.md): PARAM.SFO / ISO / CSO / CHD / PBP identification (synthetic images), PS1-vs-PSP routing, scan, SAVEDATA mapping, ppsspp.ini + controls.ini
-add_executable(hub_psp_test test_psp.cpp ppsspp.cpp emulators.cpp)
+add_executable(hub_psp_test test_psp.cpp ppsspp.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_psp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_psp_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
@@ -320,12 +325,12 @@ target_include_directories(hub_nx_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../co
 target_link_libraries(hub_nx_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # External emulators' pad configs for 1-4 fake pads (PCSX2, Dolphin, Cemu, Azahar, PPSSPP): distinct correct devices, full button sets, nothing bound twice
-add_executable(hub_ext_pads_test test_ext_pads.cpp pcsx2.cpp ppsspp.cpp emulators.cpp)
+add_executable(hub_ext_pads_test test_ext_pads.cpp pcsx2.cpp ppsspp.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_ext_pads_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ext_pads_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # PS2 online (docs/PS2_ONLINE.md): readiness reasons, retrorun arguments, exit-code texts, the pinned LRPS2 download
-add_executable(hub_ps2_online_test test_ps2_online.cpp emulators.cpp)
+add_executable(hub_ps2_online_test test_ps2_online.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_ps2_online_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_online_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 

@@ -266,3 +266,35 @@ Identification is header-only (`src/common/nx.h`, `nx.cpp`): no keys, no decrypt
 | loose dump | `exefs\main` + `exefs\main.npdm` (how Switch 2 games are dumped). The game file is `exefs\main`; title = the dump's top folder name; title id = the NPDM ACI0 program id. Only a file called `main` inside a folder called `exefs` is considered, so scans stay fast |
 
 Switch 2 (`GameEntry::nx2`, cached with the scan) = the NPDM ACID magic sits at +0x300 (Switch 2 signature area) instead of +0x200. Files inside `.zip / .7z / .rar` are not read (Lichii cannot open archives); they stay unlisted with a skip reason.
+
+### Nintendo Switch / Switch 2 (Lichii)
+
+| | |
+|---|---|
+| Source | github.com/zortos293/Lichii (an Eden / yuzu fork) |
+| Pinned release | build-88, SHA-256 `3405860a13f7b0729548ddb9402a355f4cfb1cd6a6d705fb8ea26f88879b0407` (GitHub's published asset digest) |
+| Install dir | `<data>\emulators\lichii\` (`lichii.exe` at its root); a player's own Eden / yuzu / Ryujinx is never written to |
+| Portable data | a `user` folder beside `lichii.exe` is Lichii's portable mode; everything below lives in `<install>\user` |
+| Launch | `lichii.exe [-f] -u 0 -g "<game>"` (`-f` only when Fullscreen is on) |
+
+**Keys and firmware.** RetroHub never downloads them. The player copies their own `prod.keys` (must contain a `header_key = ...` line, else the import is
+refused with a message) and optionally `title.keys` into `user\keys`, and their firmware `.nca` files into `user\nand\system\Contents\registered` (Lichii's
+"Install Firmware" replaces that folder too). Sources are only read: a folder, a firmware `.zip` (own miniz unzip, entry names checked for `..`, drives and
+absolute paths), or an Eden / yuzu / Citron / Suyu / Sudachi / Ryujinx install found in `%APPDATA%` (Ryujinx stores each NCA as a folder `x.nca` holding a
+file `00`; that file is copied as `x.nca`). An empty result is rejected and leaves the installed firmware alone. NSP / NSZ / XCI / XCZ need `prod.keys`;
+a loose `exefs\main` dump and `.nro` do not. Firmware is recommended for every game.
+
+**Config written** (`user\config\qt-config.ini`, SimpleIni: every value has its `key\default=false` twin; the file is merged, never replaced, so the
+player's other keys stay):
+- Once (marker `user\config\retrohub-defaults.txt`; delete it to write them again): `[UI]` firstStart=false, check_for_updates=false, confirmStop=2,
+  showConsole=false, pauseWhenInBackground=false, select_user_on_boot=false, enable_discord_presence=false, singleWindowMode=true; `[Renderer]` fullscreen_mode=0.
+- Every launch: `[Renderer]` resolution_setup (`switch.res`), frame_gen / frame_gen_type=1 (FSR3) / frame_gen_multiplier (`switch.framegen`), use_vsync
+  (`switch.vsync`: fifo 2, mailbox 1, off 0); `[UI]` fullscreen; `[System]` current_user=0; `[Controls]` player 1 from the RetroHub `switch` profile on
+  one SDL pad (SDL GameController names become SDL button / axis indices; triggers `axis:4|5,threshold:0.5`), connected as a Pro Controller, players 2-8
+  disconnected. Values are quoted as Qt writes them; the screenshot button is left alone.
+- `profiles.dat` gets one fixed user ("Player", a hardcoded uuid) only when the file is missing or empty; an existing user list is never touched.
+
+**Saves.** `<install>\user\nand\user\save\0000000000000000\<uuid>\<TITLE ID>` (and `nand\user\save\account\<uuid>\<TITLE ID>` when it already exists, which
+Lichii prefers) is synced by `begin_session` / `end_session` with `<vault>\switch\<key>\battery\save\<TITLE ID>` (`save-account\<TITLE ID>` for the second).
+The vault side never contains the user uuid (`SaveSession::vault_rels`), so any PC restores into its own profile folder. Games without a title id
+(`switch:file-...`) are not synced. Lichii has no save states.

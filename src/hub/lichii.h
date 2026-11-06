@@ -77,6 +77,10 @@ std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, 
  * An empty guid (no pad known) writes "any first SDL controller": guid of the first connected pad is filled by launch.cpp. */
 std::string lichii_controls_ini(const std::string& ini, const hubctl::Profile& profile, const std::string& sdl_guid, int port);
 
+/* Pad for player 1 from the RetroHub port order (same choice as Azahar's azahar_pad_select): the guid and the rank among same-guid pads in SDL order.
+ * Returns false (guid "", port 0) when no pad is known. */
+bool lichii_pad_select(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& by_sdl, std::string* guid, int* port);
+
 /* Creates user\ (portable), writes the defaults once, the per-launch values, controls and the profile. Returns "" or an error. */
 std::string prepare_lichii(const std::string& install_dir, const hubctl::Profile& profile, const std::string& sdl_guid, int port,
                            const hub::gs::Values& v, bool fullscreen);
