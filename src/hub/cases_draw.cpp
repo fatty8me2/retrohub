@@ -507,52 +507,105 @@ void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool
 }
 
 /* ------------------------------- the stage ------------------------------- */
+/* Wall, floor and light. The colours come from the focused game (see cases_stage.h ambient_from_art), so the whole room takes the mood of the
+ * cover. Lights are a few big gradient fans / quads (one draw call each), never stacks of small shapes. */
 
 namespace {
 constexpr float kWallZ = 5.2f;
-struct StageColors { ImU32 wall_top, wall_hz, floor_far, floor_near, tint; };
+struct StageColors { ImU32 wall_top, wall_hz, floor_far, floor_near, tint, light; };
 StageColors stage_colors(ImU32 c0, ImU32 c1) {
     StageColors s;
-    const ImU32 dark = rgba(6, 7, 11);
+    const ImU32 dark = rgba(5, 6, 10);
     s.tint = lerpc(c0, c1, 0.5f);
     if (lum(s.tint) < 0.12f) s.tint = lerpc(s.tint, rgba(120, 130, 190), 0.4f);
-    s.wall_top = lerpc(dark, s.tint, 0.22f);
-    s.wall_hz = lerpc(dark, s.tint, 0.50f);
+    s.wall_top = lerpc(dark, s.tint, 0.20f);
+    s.wall_hz = lerpc(dark, s.tint, 0.48f);
     s.floor_far = lerpc(dark, s.tint, 0.30f);
-    s.floor_near = lerpc(dark, s.tint, 0.07f);
+    s.floor_near = lerpc(dark, s.tint, 0.06f);
+    s.light = lerpc(c1, rgba(255, 255, 255), 0.45f);
     return s;
 }
 ImU32 floor_at(const StageColors& s, float yw, float yb, float y) { return lerpc(s.floor_far, s.floor_near, std::max(0.f, std::min(1.f, (y - yw) / std::max(1.f, yb - yw)))); }
-void ellipse_layers(ImDrawList* dl, ImVec2 c, float rx, float ry, ImU32 col, int layers, int a_each) {
-    for (int i = 0; i < layers; ++i) {
-        const float t = 1.f - (float)i / (float)layers;
-        ImVec2 p[28];
-        for (int k = 0; k < 28; ++k) { const float an = 6.2831853f * (float)k / 28.f; p[k] = ImVec2(c.x + std::cos(an) * rx * t, c.y + std::sin(an) * ry * t); }
-        dl->AddConvexPolyFilled(p, 28, alpha(col, (float)a_each / 255.f));
+
+/* A radial gradient: one triangle fan, `col_in` at the centre fading to `col_out` on the ellipse. */
+void fan(ImDrawList* dl, ImVec2 c, float rx, float ry, ImU32 col_in, ImU32 col_out, int seg = 40) {
+    if (rx < 1.f || ry < 1.f) return;
+    const ImVec2 uvw = dl->_Data->TexUvWhitePixel;
+    dl->PrimReserve(seg * 3, seg + 1);
+    const ImDrawIdx i0 = (ImDrawIdx)dl->_VtxCurrentIdx;
+    dl->PrimWriteVtx(c, uvw, col_in);
+    for (int k = 0; k < seg; ++k) {
+        const float an = 6.2831853f * (float)k / (float)seg;
+        dl->PrimWriteVtx(ImVec2(c.x + std::cos(an) * rx, c.y + std::sin(an) * ry), uvw, col_out);
     }
+    ImDrawIdx* ix = dl->_IdxWritePtr;
+    for (int k = 0; k < seg; ++k) {
+        ix[k * 3] = i0; ix[k * 3 + 1] = (ImDrawIdx)(i0 + 1 + k); ix[k * 3 + 2] = (ImDrawIdx)(i0 + 1 + (k + 1) % seg);
+    }
+    dl->_IdxWritePtr += seg * 3;
 }
+/* A quad with a colour per corner (TL TR BR BL). */
+void quad4(ImDrawList* dl, const ImVec2 p[4], const ImU32 c[4]) {
+    const ImVec2 uvw = dl->_Data->TexUvWhitePixel;
+    dl->PrimReserve(6, 4);
+    const ImDrawIdx i = (ImDrawIdx)dl->_VtxCurrentIdx;
+    for (int k = 0; k < 4; ++k) dl->PrimWriteVtx(p[k], uvw, c[k]);
+    ImDrawIdx* ix = dl->_IdxWritePtr;
+    ix[0] = i; ix[1] = (ImDrawIdx)(i + 1); ix[2] = (ImDrawIdx)(i + 2); ix[3] = i; ix[4] = (ImDrawIdx)(i + 2); ix[5] = (ImDrawIdx)(i + 3);
+    dl->_IdxWritePtr += 6;
+}
+float fract01(float v) { return v - std::floor(v); }
 }  // namespace
 
 void cases_stage_back(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1) {
     ImDrawList* dl = sc.dl;
     const StageColors s = stage_colors(c0, c1);
     const float yw = sc.floor_y(kWallZ);
+    const float W = p1.x - p0.x;
+    const float lit = sc.spot * (1.f - 0.45f * sc.dim);
     dl->AddRectFilledMultiColor(p0, ImVec2(p1.x, yw), s.wall_top, s.wall_top, s.wall_hz, s.wall_hz);
     dl->PushClipRect(p0, ImVec2(p1.x, yw + 1.f), true);
-    const ImU32 glow = lerpc(s.tint, rgba(255, 255, 255), 0.35f);
-    ellipse_layers(dl, ImVec2(sc.cx, yw - sc.U * 0.30f), (p1.x - p0.x) * 0.42f, sc.U * 1.25f, glow, 18, 5);
+    // a wide soft wash of the ambient colour behind the cases, a tighter glow right behind the centre case
+    fan(dl, ImVec2(sc.cx, yw - sc.U * 0.35f), W * 0.55f, sc.U * 1.55f, alpha(s.light, 0.20f), alpha(s.light, 0.f), 48);
+    // the spotlight: a cone from the top of the wall to the pool on the floor, soft at both sides
+    {
+        const float xt[4] = {-0.95f, -0.32f, 0.32f, 0.95f}, xb[4] = {-2.9f, -1.15f, 1.15f, 2.9f};
+        const float aw[4] = {0.f, 1.f, 1.f, 0.f};
+        const float ytop = p0.y - sc.U * 0.2f;
+        for (int k = 0; k < 3; ++k) {
+            const ImVec2 q[4] = {ImVec2(sc.cx + xt[k] * sc.U, ytop), ImVec2(sc.cx + xt[k + 1] * sc.U, ytop), ImVec2(sc.cx + xb[k + 1] * sc.U, yw), ImVec2(sc.cx + xb[k] * sc.U, yw)};
+            const ImU32 c[4] = {alpha(s.light, 0.f), alpha(s.light, 0.f), alpha(s.light, 0.15f * lit * aw[k + 1]), alpha(s.light, 0.15f * lit * aw[k])};
+            ImU32 cc[4] = {alpha(s.light, 0.06f * lit * aw[k]), alpha(s.light, 0.06f * lit * aw[k + 1]), c[2], c[3]};
+            quad4(dl, q, cc);
+        }
+    }
+    fan(dl, ImVec2(sc.cx, sc.hy + sc.U * 0.02f), sc.U * 0.95f, sc.U * 1.1f, alpha(s.light, 0.17f * lit), alpha(s.light, 0.f), 40);   // rim / back light
     dl->PopClipRect();
     dl->AddRectFilledMultiColor(ImVec2(p0.x, yw), p1, s.floor_far, s.floor_far, s.floor_near, s.floor_near);
     // soft horizon: a glow band over the junction, a bright line that fades out to the sides, and two faint lines above it
     const ImU32 hz = lerpc(s.tint, rgba(255, 255, 255), 0.55f);
     dl->AddRectFilledMultiColor(ImVec2(p0.x, yw - sc.U * 0.07f), ImVec2(p1.x, yw), alpha(hz, 0.f), alpha(hz, 0.f), alpha(hz, 0.16f), alpha(hz, 0.16f));
     const float mid = sc.cx;
-    dl->AddRectFilledMultiColor(ImVec2(p0.x, yw - 1.f), ImVec2(mid, yw + 1.f), alpha(hz, 0.f), alpha(hz, 0.55f), alpha(hz, 0.55f), alpha(hz, 0.f));
-    dl->AddRectFilledMultiColor(ImVec2(mid, yw - 1.f), ImVec2(p1.x, yw + 1.f), alpha(hz, 0.55f), alpha(hz, 0.f), alpha(hz, 0.f), alpha(hz, 0.55f));
+    dl->AddRectFilledMultiColor(ImVec2(p0.x, yw - 1.f), ImVec2(mid, yw + 1.f), alpha(hz, 0.f), alpha(hz, 0.60f), alpha(hz, 0.60f), alpha(hz, 0.f));
+    dl->AddRectFilledMultiColor(ImVec2(mid, yw - 1.f), ImVec2(p1.x, yw + 1.f), alpha(hz, 0.60f), alpha(hz, 0.f), alpha(hz, 0.f), alpha(hz, 0.60f));
     for (int i = 1; i <= 2; ++i) {
         const float y = yw - sc.U * 0.085f * (float)i;
         dl->AddRectFilledMultiColor(ImVec2(p0.x, y), ImVec2(mid, y + 1.f), alpha(hz, 0.f), alpha(hz, 0.16f / (float)i), alpha(hz, 0.16f / (float)i), alpha(hz, 0.f));
         dl->AddRectFilledMultiColor(ImVec2(mid, y), ImVec2(p1.x, y + 1.f), alpha(hz, 0.16f / (float)i), alpha(hz, 0.f), alpha(hz, 0.f), alpha(hz, 0.16f / (float)i));
+    }
+    // drifting light motes (a few dozen tiny discs; none under reduced motion)
+    if (sc.motion) {
+        const float H = yw - p0.y;
+        for (int i = 0; i < 26; ++i) {
+            const float a = fract01(0.6180339f * (float)(i + 1)), b = fract01(0.7548776f * (float)(i + 1) + 0.13f);
+            const float sp_ = 0.006f + 0.010f * fract01(a * 7.3f);
+            const float x = p0.x + fract01(a + sc.time * sp_ * 0.4f + 0.02f * std::sin(sc.time * 0.35f + (float)i)) * W;
+            const float y = p0.y + (1.f - fract01(b + sc.time * sp_)) * (H * 0.96f);
+            const float tw = 0.5f + 0.5f * std::sin(sc.time * (0.5f + 0.4f * a) + (float)i * 1.7f);
+            const float edge = std::min(1.f, std::min((y - p0.y) / (H * 0.2f), (yw - y) / (H * 0.2f)));
+            const float al = 0.05f + 0.13f * tw;
+            dl->AddCircleFilled(ImVec2(x, y), std::max(1.f, sc.U * (0.004f + 0.006f * fract01(a * 3.1f))), alpha(s.light, al * std::max(0.f, edge) * (0.4f + 0.6f * lit)), 8);
+        }
     }
 }
 
@@ -560,13 +613,16 @@ void cases_veil(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1, f
     ImDrawList* dl = sc.dl;
     const StageColors s = stage_colors(c0, c1);
     const float yw = sc.floor_y(kWallZ), yb = p1.y;
-    const float y0 = sc.floor_y(2.2f), y1 = sc.floor_y(0.f) + case_h * 0.30f * sc.U;
-    const float al[4] = {0.f, 0.22f, 0.62f, 1.f};
-    const float ys[4] = {y0, y0 + (y1 - y0) * 0.32f, y0 + (y1 - y0) * 0.68f, y1};
+    const float y0 = sc.floor_y(2.2f), y1 = sc.floor_y(0.f) + case_h * 0.34f * sc.U;
     dl->PushClipRect(p0, p1, true);
-    for (int i = 0; i < 3; ++i) {
-        const ImU32 ca_ = floor_at(s, yw, yb, ys[i]), cb_ = floor_at(s, yw, yb, ys[i + 1]);
-        dl->AddRectFilledMultiColor(ImVec2(p0.x, ys[i]), ImVec2(p1.x, ys[i + 1]), alpha(ca_, al[i]), alpha(ca_, al[i]), alpha(cb_, al[i + 1]), alpha(cb_, al[i + 1]));
+    // an eased fade (the reflection stays crisp under the case and melts into the floor), in six bands
+    constexpr int kBands = 6;
+    for (int i = 0; i < kBands; ++i) {
+        const float ta = (float)i / (float)kBands, tb = (float)(i + 1) / (float)kBands;
+        const float ya = y0 + (y1 - y0) * ta, yb2 = y0 + (y1 - y0) * tb;
+        const float aa = std::pow(ta, 1.35f), ab = std::pow(tb, 1.35f);
+        const ImU32 ca_ = floor_at(s, yw, yb, ya), cb_ = floor_at(s, yw, yb, yb2);
+        dl->AddRectFilledMultiColor(ImVec2(p0.x, ya), ImVec2(p1.x, yb2), alpha(ca_, aa), alpha(ca_, aa), alpha(cb_, ab), alpha(cb_, ab));
     }
     dl->AddRectFilledMultiColor(ImVec2(p0.x, y1), ImVec2(p1.x, std::max(y1 + 1.f, p1.y)), floor_at(s, yw, yb, y1), floor_at(s, yw, yb, y1), floor_at(s, yw, yb, yb), floor_at(s, yw, yb, yb));
     dl->PopClipRect();
@@ -576,21 +632,36 @@ void cases_stage_front(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU3
     ImDrawList* dl = sc.dl;
     const StageColors s = stage_colors(c0, c1);
     const float yw = sc.floor_y(kWallZ);
+    const float lit = sc.spot * (1.f - 0.45f * sc.dim);
     dl->PushClipRect(ImVec2(p0.x, yw), p1, true);
     const ImU32 ln = lerpc(s.tint, rgba(255, 255, 255), 0.5f);
-    // perspective lines running away to the horizon
+    // perspective lines running away to the horizon (fainter toward the edges of the screen)
     const float vy = sc.hy;
     const float tw = (yw - vy) / std::max(1.f, p1.y - vy);
     for (int k = -9; k <= 9; ++k) {
         const float xb = sc.cx + (float)k * (p1.x - p0.x) * 0.105f;
         const float xt = sc.cx + (xb - sc.cx) * tw;
-        dl->AddLine(ImVec2(xt, yw), ImVec2(xb, p1.y), alpha(ln, 0.05f), 1.f);
+        dl->AddLine(ImVec2(xt, yw), ImVec2(xb, p1.y), alpha(ln, 0.055f * (1.f - std::fabs((float)k) / 11.f)), 1.f);
     }
-    // the pool of light under the centre case and a gloss streak across the floor
-    ellipse_layers(dl, ImVec2(sc.cx, sc.floor_y(0.f) + sc.U * 0.02f), sc.U * 0.95f, sc.U * 0.20f, lerpc(s.tint, rgba(255, 255, 255), 0.55f), 12, 6);
-    const float fy1 = sc.floor_y(0.f) + sc.U * 0.55f;
+    // the pool of light under the centre case: a wide tinted spill, then a brighter core
+    const float fy = sc.floor_y(0.f);
+    fan(dl, ImVec2(sc.cx, fy + sc.U * 0.05f), sc.U * 2.5f, sc.U * 0.52f, alpha(s.light, 0.30f * lit), alpha(s.light, 0.f), 44);
+    fan(dl, ImVec2(sc.cx, fy + sc.U * 0.03f), sc.U * 1.05f, sc.U * 0.23f, alpha(rgba(255, 255, 255), 0.46f * lit), alpha(s.light, 0.f), 36);
+    // a gloss streak across the floor
+    const float fy1 = fy + sc.U * 0.55f;
     dl->AddRectFilledMultiColor(ImVec2(p0.x, yw), ImVec2(p1.x, fy1), alpha(rgba(255, 255, 255), 0.05f), alpha(rgba(255, 255, 255), 0.0f), alpha(rgba(255, 255, 255), 0.0f), alpha(rgba(255, 255, 255), 0.0f));
     dl->PopClipRect();
+}
+
+void cases_vignette(const CaseScene& sc, ImVec2 p0, ImVec2 p1, float strength) {
+    ImDrawList* dl = sc.dl;
+    const float W = p1.x - p0.x, H = p1.y - p0.y;
+    const ImU32 d = IM_COL32(2, 3, 6, (int)(150.f * std::max(0.f, std::min(1.f, strength)))), z = IM_COL32(2, 3, 6, 0);
+    const float ex = W * 0.16f, ey = H * 0.18f;
+    dl->AddRectFilledMultiColor(p0, ImVec2(p0.x + ex, p1.y), d, z, z, d);
+    dl->AddRectFilledMultiColor(ImVec2(p1.x - ex, p0.y), p1, z, d, d, z);
+    dl->AddRectFilledMultiColor(p0, ImVec2(p1.x, p0.y + ey), d, d, z, z);
+    dl->AddRectFilledMultiColor(ImVec2(p0.x, p1.y - ey), p1, z, z, d, d);
 }
 
 void glow_text(ImDrawList* dl, ImFont* font, float size, ImVec2 p, ImU32 col, ImU32 glow, float strength, const char* text) {
