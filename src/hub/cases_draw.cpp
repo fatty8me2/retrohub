@@ -30,30 +30,50 @@ uint64_t fnv(const char* s, uint64_t h = 1469598103934665603ull) { for (; *s; ++
 
 /* ------------------------------- text caches (no per-frame allocation once warm) ------------------------------- */
 
+/* A tiny cache keyed by (text, size, width bucket): the width is floored to 16 px buckets and the size to whole pixels, so a case that glides
+ * (its face width changes every frame) keeps hitting the same entry instead of re-wrapping. When full, only the least recently used entry is
+ * dropped (never the whole cache). Returned references are valid only until the next call of the same cache function. */
+template <class V>
+struct TextCache {
+    struct E { V v; uint64_t stamp = 0; };
+    std::unordered_map<uint64_t, E> map;
+    uint64_t tick = 0;
+    size_t cap = 0;
+    const V* find(uint64_t k) { auto it = map.find(k); if (it == map.end()) return nullptr; it->second.stamp = ++tick; return &it->second.v; }
+    const V& put(uint64_t k, V&& v) {
+        if (map.size() >= cap) {
+            auto old = map.begin();
+            for (auto it = map.begin(); it != map.end(); ++it) if (it->second.stamp < old->second.stamp) old = it;
+            map.erase(old);
+        }
+        E& e = map[k];
+        e.v = std::move(v);
+        e.stamp = ++tick;
+        return e.v;
+    }
+};
+float text_bucket(float w) { return std::max(16.f, std::floor(w / 16.f) * 16.f); }
+
 const std::vector<std::string>& wrap_cached(ImFont* f, float size, const char* text, float w, int maxl) {
-    static std::unordered_map<uint64_t, std::vector<std::string>> cache;
-    size = std::floor(size);                 // quantised so a case that is gliding keeps hitting the same entry
-    w = std::floor(w / 8.f) * 8.f;
+    static TextCache<std::vector<std::string>> cache = [] { TextCache<std::vector<std::string>> c; c.cap = 192; return c; }();
+    size = std::floor(size);
+    w = text_bucket(w);
     uint64_t k = fnv(text);
     k = (k ^ (uint64_t)(int)size) * 1099511628211ull;
-    k = (k ^ (uint64_t)(int)(w * 0.125f)) * 1099511628211ull;
+    k = (k ^ (uint64_t)(int)(w * (1.f / 16.f))) * 1099511628211ull;
     k = (k ^ (uint64_t)maxl) * 1099511628211ull;
-    auto it = cache.find(k);
-    if (it != cache.end()) return it->second;
-    if (cache.size() > 160) cache.clear();
-    return cache.emplace(k, ui::wrap_lines(f, size, text, w, maxl)).first->second;
+    if (const auto* hit = cache.find(k)) return *hit;
+    return cache.put(k, ui::wrap_lines(f, size, text, w, maxl));
 }
 const std::string& ellipsize_cached(ImFont* f, float size, const char* text, float w) {
-    static std::unordered_map<uint64_t, std::string> cache;
+    static TextCache<std::string> cache = [] { TextCache<std::string> c; c.cap = 480; return c; }();
     size = std::floor(size);
-    w = std::floor(w / 6.f) * 6.f;
+    w = text_bucket(w);
     uint64_t k = fnv(text, 7);
     k = (k ^ (uint64_t)(int)size) * 1099511628211ull;
-    k = (k ^ (uint64_t)(int)(w * (1.f / 6.f))) * 1099511628211ull;
-    auto it = cache.find(k);
-    if (it != cache.end()) return it->second;
-    if (cache.size() > 400) cache.clear();
-    return cache.emplace(k, ui::ellipsize(f, size, text, w)).first->second;
+    k = (k ^ (uint64_t)(int)(w * (1.f / 16.f))) * 1099511628211ull;
+    if (const auto* hit = cache.find(k)) return *hit;
+    return cache.put(k, ui::ellipsize(f, size, text, w));
 }
 void upper_into(char* out, size_t n, const char* s) {
     size_t i = 0;
@@ -590,7 +610,7 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
                 const float ua = a * px, ub = (a + tw) * px, va = pics_y0 * py, vb = (pics_y0 + pic_h) * py;
                 if (has_pics) {
                     quad(x, f, ua - px, va - py, ub + px, vb + py, rgba(0, 0, 0, 150));
-                    if (bk->shots[i].tex) image(x, f, ua, va, ub, vb, bk->shots[i].tex, bk->shots[i].w, bk->shots[i].h, 0.5f);
+                    if (bk->shots[i].tex && bk->shots[i].w > 0 && bk->shots[i].h > 0) image(x, f, ua, va, ub, vb, bk->shots[i].tex, bk->shots[i].w, bk->shots[i].h, 0.5f);
                     else quad(x, f, ua, va, ub, vb, rgba(60, 64, 80));
                 } else scene_tile(x, f, ua, va, ub, vb, d.seed * 2654435761u + (uint32_t)i * 977u);
             }
