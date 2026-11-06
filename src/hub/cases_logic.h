@@ -8,7 +8,10 @@
 #include "shelf_logic.h"
 #include "surprise_logic.h"
 
+#include "state_slots.h"
+
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -249,6 +252,111 @@ inline std::string subtitle_text(const std::string& console, int year, int playe
     if (players == 1) s += "  -  1 player";
     else if (players > 1) s += "  -  1-" + std::to_string(players) + " players";
     return s;
+}
+
+/* ---- nav: sort sections, scrubber, quick jump ---- */
+/* What the scrubber's marks name for each sort mode, and the pure pieces behind them: labels per game, runs of equal labels ("sections"),
+ * previous / next section, index <-> scrubber fraction, typed-prefix lookup, the sort picker rows and the faster hold / wheel travel. */
+enum class NavKind { Letters, Recency, Plays, Added, Years, Consoles };
+inline NavKind nav_kind_for(SortMode m) {
+    switch (m) {
+        case SortMode::LastPlayed: return NavKind::Recency;
+        case SortMode::MostPlayed: return NavKind::Plays;
+        case SortMode::RecentlyAdded: return NavKind::Added;
+        case SortMode::ReleaseYear: return NavKind::Years;
+        case SortMode::Console: return NavKind::Consoles;
+        default: return NavKind::Letters;
+    }
+}
+/* Title: "A".."Z", everything else "#" (digits, symbols, non-ASCII). */
+inline std::string nav_label_letter(const std::string& title) { std::string l = letter_of(title); return l.empty() ? std::string("#") : l; }
+inline std::string nav_label_year(int year) { return year > 0 ? std::to_string(year) : std::string("?"); }
+/* Age buckets for Last played / Recently added: never (t == 0), then Today (< 1 day), This week, This month, Earlier. */
+inline std::string nav_label_age(int64_t now, int64_t t, bool never_label = true) {
+    if (t <= 0) return never_label ? "Never" : "Unknown";
+    const int64_t age = now - t;
+    return age < 86400 ? "Today" : age < 7 * 86400 ? "This week" : age < 30 * 86400 ? "This month" : "Earlier";
+}
+inline std::string nav_label_plays(int64_t seconds) {
+    return seconds <= 0 ? "Never" : seconds >= 36000 ? "10h+" : seconds >= 3600 ? "1h+" : "Under 1h";
+}
+constexpr const char* kNavFavorites = "Favorites";
+
+struct NavSection { std::string label; int first = 0; int count = 0; };
+/* Runs of equal labels in list order. An empty label (e.g. the pinned native game) joins the section before it, or the first one after it. */
+inline std::vector<NavSection> build_sections(const std::vector<std::string>& labels) {
+    std::vector<NavSection> out;
+    int lead = 0;   // empty labels at the very start, folded into the first real section
+    for (int i = 0; i < (int)labels.size(); ++i) {
+        const std::string& l = labels[(size_t)i];
+        if (l.empty()) { if (out.empty()) ++lead; else ++out.back().count; continue; }
+        if (!out.empty() && out.back().label == l) { ++out.back().count; continue; }
+        NavSection s;
+        s.label = l; s.first = out.empty() ? 0 : i; s.count = out.empty() ? lead + 1 : 1;
+        out.push_back(s);
+    }
+    return out;
+}
+inline int section_index(const std::vector<NavSection>& secs, int idx) {
+    for (int k = (int)secs.size() - 1; k >= 0; --k) if (idx >= secs[(size_t)k].first) return k;
+    return secs.empty() ? -1 : 0;
+}
+/* LT / RT / PageUp / PageDown: dir > 0 goes to the start of the next section (the last game from the last section); dir < 0 goes to the start of
+ * this section, or of the previous one when already there. */
+inline int section_step(const std::vector<NavSection>& secs, int cur, int dir, int n) {
+    if (n <= 0) return 0;
+    cur = clamp_index(cur, n);
+    if (secs.empty()) return clamp_index(cur + (dir < 0 ? -8 : 8), n);
+    const int k = section_index(secs, cur);
+    if (dir > 0) return k + 1 < (int)secs.size() ? secs[(size_t)k + 1].first : n - 1;
+    if (cur > secs[(size_t)k].first) return secs[(size_t)k].first;
+    return k > 0 ? secs[(size_t)k - 1].first : 0;
+}
+/* First section with this label (quick-jump by name); -1 when none. */
+inline int section_by_label(const std::vector<NavSection>& secs, const std::string& label) {
+    for (size_t k = 0; k < secs.size(); ++k) if (secs[k].label == label) return (int)k;
+    return -1;
+}
+/* The scrubber maps the whole list onto its track: fraction 0..1 <-> index 0..n-1. */
+inline float scrub_frac(int idx, int n) { return n <= 1 ? 0.f : std::max(0.f, std::min(1.f, (float)idx / (float)(n - 1))); }
+inline int scrub_index(float frac, int n) { return n <= 0 ? 0 : clamp_index((int)std::lround(std::max(0.f, std::min(1.f, frac)) * (float)(n - 1)), n); }
+/* x pixel of the section's mark on a track [x0, x1]: where its first game sits. */
+inline float scrub_x(int idx, int n, float x0, float x1) { return x0 + scrub_frac(idx, n) * (x1 - x0); }
+/* "123 / 2,400" */
+inline std::string count_text(int pos0, int n) {
+    auto group = [](int v) { std::string d = std::to_string(v), o; for (size_t i = 0; i < d.size(); ++i) { if (i && (d.size() - i) % 3 == 0) o += ','; o += d[i]; } return o; };
+    return group(n <= 0 ? 0 : pos0 + 1) + " / " + group(n);
+}
+/* Quick-jump typing (Title sort): the first game whose title starts with `prefix` (case-insensitive); -1 when none. `title_at(i)` returns a
+ * const std::string& / const char*. */
+template <class F> inline int prefix_index(int n, F&& title_at, const std::string& prefix) {
+    if (prefix.empty()) return -1;
+    for (int i = 0; i < n; ++i) {
+        const std::string t = title_at(i);
+        if (t.size() < prefix.size()) continue;
+        bool ok = true;
+        for (size_t k = 0; k < prefix.size() && ok; ++k) ok = std::tolower((unsigned char)t[k]) == std::tolower((unsigned char)prefix[k]);
+        if (ok) return i;
+    }
+    return -1;
+}
+/* Held direction: cases per repeat. Slower to start than hold_boost, and it keeps climbing so a 2,000-game library is crossed in about ten seconds. */
+inline int nav_hold_boost(float held) { return held < 0.8f ? 1 : held < 1.6f ? 2 : held < 2.6f ? 4 : held < 3.8f ? 8 : held < 5.f ? 14 : 24; }
+/* Wheel: notches per second -> cases per notch (1 for a slow scroll, up to 8 for a fast spin). */
+inline float nav_wheel_gain(float notches_per_sec) { return 1.f + 7.f * std::max(0.f, std::min(1.f, (notches_per_sec - 5.f) / 15.f)); }
+/* True when travel is fast enough that the section bubble should show. */
+inline bool nav_is_fast(int hold_boost_now, float wheel_gain_now) { return hold_boost_now >= 2 || wheel_gain_now >= 1.5f; }
+
+/* The sort picker: one row per mode, then the two toggles. */
+constexpr int kSortRows = kSortModes + 2;
+inline SortSpec sort_apply_row(SortSpec cur, int row) {
+    if (row >= 0 && row < kSortModes) { if (cur.mode != (SortMode)row) { cur.mode = (SortMode)row; cur.reverse = false; } }   // a new mode starts in its natural direction; the active one again changes nothing
+    else if (row == kSortModes) cur.reverse = !cur.reverse;
+    else if (row == kSortModes + 1) cur.favs_first = !cur.favs_first;
+    return cur;
+}
+inline bool sort_row_on(const SortSpec& s, int row) {
+    return row < kSortModes ? (int)s.mode == row : row == kSortModes ? s.reverse : s.favs_first;
 }
 
 }  // namespace hubui::cases

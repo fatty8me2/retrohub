@@ -84,14 +84,18 @@ void resume_entry(const hub::GameEntry& e, int slot) {
     play_entry(c);
 }
 
-void cycle_sort(int dir) {
-    hubui::SortMode m = hubui::next_sort(hubui::sort_from_key(A.st.library_sort), dir);
-    A.st.library_sort = hubui::sort_key(m);
+void sort_changed() {
     lib_sort_chip_changed();
     mark_dirty();
     A.vis_dirty = true;
     A.grid_scroll_top = true;
-    shot_trace("sort", A.st.library_sort);
+    shot_trace("sort", A.st.library_sort + (A.st.library_sort_rev ? " rev" : "") + (A.st.library_favs_first ? " favs" : ""));
+}
+
+void cycle_sort(int dir) {
+    hubui::SortMode m = hubui::next_sort(hubui::sort_from_key(A.st.library_sort), dir);
+    A.st.library_sort = hubui::sort_key(m);
+    sort_changed();
 }
 
 void draw_state_strip(const hub::GameEntry& e) {

@@ -156,6 +156,54 @@ int main() {
     Settings old;
     CHECK(settings_from_json("{\"lib_layout\": \"shelf\"}", &old) && old.lib_layout == "shelf" && !old.tv_cases);   // an older file stays valid
 
+    /* car-nav */
+    {
+        CHECK(nav_label_letter("Zelda") == "Z" && nav_label_letter("alpha") == "A" && nav_label_letter("1942") == "#" && nav_label_letter("!!!") == "#" && nav_label_letter("") == "#");
+        CHECK(nav_label_year(1998) == "1998" && nav_label_year(0) == "?");
+        const int64_t now = 10000000;
+        CHECK(nav_label_age(now, 0) == "Never" && nav_label_age(now, now - 3600) == "Today" && nav_label_age(now, now - 3 * 86400) == "This week");
+        CHECK(nav_label_age(now, now - 20 * 86400) == "This month" && nav_label_age(now, now - 90 * 86400) == "Earlier" && nav_label_age(now, 0, false) == "Unknown");
+        CHECK(nav_label_plays(0) == "Never" && nav_label_plays(600) == "Under 1h" && nav_label_plays(3600) == "1h+" && nav_label_plays(40000) == "10h+");
+        CHECK(nav_kind_for(SortMode::Title) == NavKind::Letters && nav_kind_for(SortMode::ReleaseYear) == NavKind::Years && nav_kind_for(SortMode::Console) == NavKind::Consoles);
+        CHECK(nav_kind_for(SortMode::LastPlayed) == NavKind::Recency && nav_kind_for(SortMode::MostPlayed) == NavKind::Plays && nav_kind_for(SortMode::RecentlyAdded) == NavKind::Added);
+        // sections: runs of equal labels; an empty label (the pinned game) joins its neighbour
+        const std::vector<std::string> lb = {"", "A", "A", "B", "B", "B", "#", "A"};
+        const auto sc = build_sections(lb);
+        CHECK(sc.size() == 4 && sc[0].label == "A" && sc[0].first == 0 && sc[0].count == 3 && sc[1].label == "B" && sc[1].first == 3 && sc[1].count == 3);
+        CHECK(sc[2].label == "#" && sc[2].first == 6 && sc[3].label == "A" && sc[3].first == 7 && sc[3].count == 1);   // the same label again later is a new section
+        CHECK(build_sections({}).empty() && build_sections({"", ""}).empty());
+        CHECK(section_index(sc, 0) == 0 && section_index(sc, 2) == 0 && section_index(sc, 3) == 1 && section_index(sc, 5) == 1 && section_index(sc, 7) == 3);
+        // previous / next section
+        CHECK(section_step(sc, 0, 1, 8) == 3 && section_step(sc, 4, 1, 8) == 6 && section_step(sc, 7, 1, 8) == 7);   // last section: the last game
+        CHECK(section_step(sc, 4, -1, 8) == 3 && section_step(sc, 3, -1, 8) == 0 && section_step(sc, 1, -1, 8) == 0 && section_step(sc, 0, -1, 8) == 0);
+        CHECK(section_by_label(sc, "B") == 1 && section_by_label(sc, "Q") == -1);
+        CHECK(section_step({}, 5, 1, 100) == 13 && section_step({}, 5, -1, 100) == 0);
+        // scrubber position <-> index
+        CHECK(scrub_frac(0, 100) == 0.f && scrub_frac(99, 100) == 1.f && scrub_frac(5, 1) == 0.f && std::fabs(scrub_frac(50, 101) - 0.5f) < 1e-6f);
+        CHECK(scrub_index(0.f, 100) == 0 && scrub_index(1.f, 100) == 99 && scrub_index(-3.f, 100) == 0 && scrub_index(7.f, 100) == 99 && scrub_index(0.5f, 101) == 50 && scrub_index(0.5f, 0) == 0);
+        for (int n : {2, 7, 240, 3000}) for (int i = 0; i < n; i += std::max(1, n / 37)) CHECK(scrub_index(scrub_frac(i, n), n) == i);   // the round trip never drifts
+        CHECK(std::fabs(scrub_x(50, 101, 100.f, 300.f) - 200.f) < 1e-3f);
+        CHECK(count_text(122, 2400) == "123 / 2,400" && count_text(0, 5) == "1 / 5" && count_text(0, 0) == "0 / 0" && count_text(5, 1234567) == "6 / 1,234,567");
+        // typed prefix
+        const std::vector<std::string> ti = {"Alpha", "bravo", "Bravura", "Charlie"};
+        auto tat = [&](int i) { return ti[(size_t)i]; };
+        CHECK(prefix_index(4, tat, "br") == 1 && prefix_index(4, tat, "BRAV") == 1 && prefix_index(4, tat, "bravu") == 2 && prefix_index(4, tat, "x") == -1 && prefix_index(4, tat, "") == -1 && prefix_index(4, tat, "charlie2") == -1);
+        // hold / wheel
+        CHECK(nav_hold_boost(0.f) == 1 && nav_hold_boost(1.f) == 2 && nav_hold_boost(2.f) == 4 && nav_hold_boost(3.f) == 8 && nav_hold_boost(4.f) == 14 && nav_hold_boost(9.f) == 24);
+        for (float t = 0.f; t < 9.f; t += 0.1f) CHECK(nav_hold_boost(t + 0.1f) >= nav_hold_boost(t));
+        CHECK(nav_wheel_gain(2.f) == 1.f && nav_wheel_gain(5.f) == 1.f && nav_wheel_gain(20.f) == 8.f && nav_wheel_gain(100.f) == 8.f && nav_wheel_gain(12.f) > 1.f && nav_wheel_gain(12.f) < 8.f);
+        CHECK(!nav_is_fast(1, 1.f) && nav_is_fast(2, 1.f) && nav_is_fast(1, 3.f));
+        // sort picker rows
+        SortSpec sp0;
+        CHECK(kSortRows == kSortModes + 2 && sort_row_on(sp0, 0) && !sort_row_on(sp0, 4) && !sort_row_on(sp0, kSortModes) && !sort_row_on(sp0, kSortModes + 1));
+        SortSpec s1 = sort_apply_row(sp0, (int)SortMode::ReleaseYear);
+        CHECK(s1.mode == SortMode::ReleaseYear && !s1.reverse && !s1.favs_first);
+        s1 = sort_apply_row(s1, kSortModes);        CHECK(s1.reverse && s1.mode == SortMode::ReleaseYear);
+        s1 = sort_apply_row(s1, kSortModes + 1);    CHECK(s1.favs_first && s1.reverse);
+        s1 = sort_apply_row(s1, (int)SortMode::Console); CHECK(s1.mode == SortMode::Console && !s1.reverse && s1.favs_first);   // a new mode starts in its natural direction; favorites first stays
+        CHECK(sort_apply_row(s1, 99).mode == SortMode::Console);
+    }
+
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
     std::printf("hub_cases_test: all ok\n");
     return 0;

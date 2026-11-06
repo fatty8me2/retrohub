@@ -71,8 +71,9 @@ int main() {
     /* ---- sort modes ---- */
     CHECK(sort_from_key("most_played") == SortMode::MostPlayed && sort_from_key("zzz") == SortMode::Title);
     for (int i = 0; i < kSortModes; ++i) CHECK(sort_from_key(sort_key((SortMode)i)) == (SortMode)i);
-    CHECK(next_sort(SortMode::Title) == SortMode::LastPlayed && next_sort(SortMode::RecentlyAdded) == SortMode::Title);
-    CHECK(next_sort(SortMode::Title, -1) == SortMode::RecentlyAdded);
+    CHECK(next_sort(SortMode::Title) == SortMode::LastPlayed && next_sort(SortMode::Console) == SortMode::Title);
+    CHECK(next_sort(SortMode::Title, -1) == SortMode::Console && next_sort(SortMode::RecentlyAdded) == SortMode::ReleaseYear);
+    CHECK(sort_from_key("release_year") == SortMode::ReleaseYear && sort_from_key("console") == SortMode::Console && sort_from_key("some_future_mode") == SortMode::Title);
 
     std::vector<ListItem> it = {
         {"a", "Alpha", "n64", false, 100, 50, 7},
@@ -110,6 +111,36 @@ int main() {
     CHECK(settings_from_json(settings_to_json(s), &t) && t.library_sort == "most_played" && !t.cloud_states);
     Settings u;
     CHECK(settings_from_json("{\"name\":\"x\"}", &u) && u.cloud_states && u.library_sort == "title");
+
+    /* ---- car-nav: release year, console, favorites first, reverse ---- */
+    {
+        std::vector<ListItem> v = {
+            {"a", "Alpha", "gba", false, 0, 0, 0}, {"b", "bravo", "n64", false, 0, 0, 0}, {"c", "Charlie", "gc", false, 0, 0, 0},
+            {"d", "Delta", "n64", false, 0, 0, 0}, {"e", "Echo", "gba", false, 0, 0, 0}, {"n", "Zed Native", "n64", true, 0, 0, 0},
+        };
+        v[0].year = 2001; v[1].year = 1998; v[2].year = 0; v[3].year = 1998; v[4].year = 2010;
+        v[2].favorite = true; v[4].favorite = true;
+        auto nm = [&](const std::vector<int>& o) { std::string r; for (int i : o) r += v[i].key; return r; };
+        CHECK(nm(filter_sort(v, "", "", SortSpec(SortMode::ReleaseYear))) == "nbdaec");                  // pinned, 1998 (title tie-break b < d), 2001, 2010, unknown last
+        CHECK(nm(filter_sort(v, "", "", SortSpec(SortMode::ReleaseYear, true))) == "neabdc");             // newest first: unknown still last, ties still by title
+        CHECK(nm(filter_sort(v, "", "", SortSpec(SortMode::Title))) == "nabcde");
+        CHECK(nm(filter_sort(v, "", "", SortSpec(SortMode::Title, true))) == "nedcba");
+        CHECK(nm(filter_sort(v, "", "", SortSpec(SortMode::Console))) == "nbdcae");                       // n64, gc, gba (the library's console order), titles inside
+        CHECK(nm(filter_sort(v, "", "", SortSpec(SortMode::Console, true))) == "naecbd");
+        CHECK(nm(filter_sort(v, "", "", SortSpec(SortMode::Title, false, true))) == "nceabd");            // favorites first, then the order
+        CHECK(nm(filter_sort(v, "", "", SortSpec(SortMode::ReleaseYear, false, true))) == "necbda");
+        v.push_back({"g", "Ghost", "n64", false, 0, 0, 0}); v.back().ghost = true; v.back().year = 1980;
+        CHECK(nm(filter_sort(v, "", "", SortSpec(SortMode::ReleaseYear, false, true))).back() == 'g');     // friends' games stay last whatever the sort
+        CHECK(sort_label(SortSpec(SortMode::Title)) == "Title A-Z" && sort_label(SortSpec(SortMode::Title, true)) == "Title Z-A");
+        CHECK(sort_label(SortSpec(SortMode::ReleaseYear, false, true)) == "Favorites, Year (oldest)");
+        SortSpec fromMode = SortMode::MostPlayed;   // implicit: old call sites keep compiling
+        CHECK(fromMode.mode == SortMode::MostPlayed && !fromMode.reverse && !fromMode.favs_first);
+        Settings s0, s1;
+        s0.library_sort = "release_year"; s0.library_sort_rev = true; s0.library_favs_first = true;
+        CHECK(settings_from_json(settings_to_json(s0), &s1) && s1.library_sort == "release_year" && s1.library_sort_rev && s1.library_favs_first);
+        Settings s2;
+        CHECK(settings_from_json("{\"library_sort\":\"from_the_future\"}", &s2) && sort_from_key(s2.library_sort) == SortMode::Title && !s2.library_sort_rev && !s2.library_favs_first);
+    }
 
     std::printf(fails ? "hub_states_test: %d FAILED\n" : "hub_states_test: all passed\n", fails);
     return fails ? 1 : 0;
