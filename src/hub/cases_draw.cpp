@@ -475,6 +475,18 @@ void front_art(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, const 
 
 /* ------------------------------- faces ------------------------------- */
 
+/* The favourite marker: a small gold star badge, drawn on the case's own plastic / spine (never over the cover art). */
+void fav_star(Ctx& x, const Face& f, float cu, float cv, float r_px) {
+    if (r_px < 2.5f) return;
+    ImVec2 p[10];
+    for (int i = 0; i < 10; ++i) {
+        const float a = -1.5707963f + 0.62831853f * (float)i, r = (i & 1) ? 0.42f : 1.f;
+        p[i] = f.at(cu + std::cos(a) * r * r_px / f.W, cv + std::sin(a) * r * r_px / f.H);
+    }
+    x.dl->AddConvexPolyFilled(p, 10, x.c(rgba(255, 206, 64)));
+    x.dl->AddPolyline(p, 10, x.c(rgba(120, 80, 0, 140)), ImDrawFlags_Closed, 1.f);
+}
+
 void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseKind kind, float sheen_u) {
     const float W = f.W, H = f.H;
     const float px = 1.f / W, py = 1.f / H;
@@ -530,7 +542,7 @@ void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
         hgrad(x, f, std::max(0.f, uc - 0.2f), 0.f, uc, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 34));
         hgrad(x, f, uc, 0.f, std::min(1.f, uc + 0.12f), 1.f, rgba(255, 255, 255, 34), rgba(255, 255, 255, 0));
     }
-    if (d.fav && !fs.tex) x.dl->AddCircleFilled(f.at(0.88f, 0.14f), std::max(5.f, W * 0.05f), x.c(rgba(255, 206, 64)), 16);
+    if (d.fav && !box) fav_star(x, f, hinge * 0.5f, 0.06f, std::max(4.f, W * hinge * 0.42f));   // on the hinge strip of the plastic
 }
 
 /* A small generated mark for the foot of a spine: a publisher-style badge (a generic shape, never a real logo). */
@@ -627,6 +639,7 @@ void paint_spine(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
         quad(x, f, 0.12f, 0.9f, 0.88f, 0.9f + 1.4f / H, alpha(ink, 0.4f));
         publisher_mark(x, f, 0.5f, 0.955f, std::min(W * 0.55f, H * 0.045f), hash32(d.title), mk, body_mid);
     }
+    if (d.fav && ss.tex) fav_star(x, f, 0.5f, 0.04f, std::min(W * 0.36f, H * 0.03f));
     if (st.box) {   // the folded cardboard edges of the box
         quad(x, f, 0.f, 0.f, 0.09f, 1.f, rgba(255, 255, 255, 46)); quad(x, f, 0.91f, 0.f, 1.f, 1.f, rgba(0, 0, 0, 56));
         line(x, f, 0.09f, 0.f, 0.09f, 1.f, rgba(0, 0, 0, 50), 1.f);
@@ -836,17 +849,34 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
             const float lh = bs * 1.55f;
             char b[96];
             const bool cart = hubui::cases::is_box(d.media);
+            const bool know_players = bk && bk->players > 0, know_genre = bk && bk->genre && *bk->genre;
             const int maxb = has_pics ? 3 : 5;
-            for (int i = 0; i < maxb && y + lh <= text_bottom + bs * 0.2f; ++i) {
+            int shown_b = 0;
+            for (int i = 0; i < 5 && shown_b < maxb && y + lh <= text_bottom + bs * 0.2f; ++i) {
                 if (i == 0) std::snprintf(b, sizeof b, "For use with %s", d.sys_name);
                 else if (i == 1) std::snprintf(b, sizeof b, "%s", cart ? "Battery back-up saves your progress" : "Save your progress as you play");
-                else if (i == 2) { if (bk && bk->players == 1) std::snprintf(b, sizeof b, "One player"); else if (bk && bk->players > 1) std::snprintf(b, sizeof b, "Up to %d players", bk->players); else std::snprintf(b, sizeof b, "Instruction booklet included"); }
-                else if (i == 3) std::snprintf(b, sizeof b, "%s", bk && bk->genre && *bk->genre ? bk->genre : "Instruction booklet included");
+                else if (i == 2) { if (!know_players) continue; if (bk->players == 1) std::snprintf(b, sizeof b, "One player"); else std::snprintf(b, sizeof b, "Up to %d players", bk->players); }
+                else if (i == 3) { if (!know_genre) continue; std::snprintf(b, sizeof b, "%s", bk->genre); }
                 else std::snprintf(b, sizeof b, "Instruction booklet included");
                 quad(x, f, (lx + bs * 0.05f) * px, (y + bs * 0.34f) * py, (lx + bs * 0.42f) * px, (y + bs * 0.71f) * py, dim);
                 const std::string& v = ellipsize_cached(body, bs * 0.92f, b, pw - bs * 0.9f);
                 face_text(x, f, body, bs * 0.92f, v.c_str(), lx + bs * 0.85f, y, ink, false);
                 y += lh;
+                ++shown_b;
+            }
+        }
+        // no pictures and room left over: a large faint console wordmark so the page never looks empty
+        if (!has_pics && text_bottom - y > H * 0.1f) {
+            char wm[48];
+            upper_into(wm, sizeof wm, d.sys_name);
+            float ws = std::min((text_bottom - y) * 0.45f, 40.f);
+            const float w0 = tw_c(bold, ws, wm) * 1.04f;
+            if (w0 > pw * 0.9f) ws *= pw * 0.9f / w0;
+            if (ws >= 8.f) {
+                const float cy = (y + text_bottom) * 0.5f;
+                quad(x, f, (lx) * px, (cy - ws * 1.1f) * py, (lx + pw) * px, (cy - ws * 1.1f + 1.5f) * py, alpha(ink, 0.15f));
+                quad(x, f, (lx) * px, (cy + ws * 1.1f) * py, (lx + pw) * px, (cy + ws * 1.1f + 1.5f) * py, alpha(ink, 0.15f));
+                face_text(x, f, bold, ws, wm, lx + (pw - tw_c(bold, ws, wm)) * 0.5f, cy - ws * 0.5f, alpha(ink, 0.2f), false);
             }
         }
         // pictures: the game's real screenshots (title screen / in game), else the player's own
