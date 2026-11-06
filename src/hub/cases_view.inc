@@ -151,7 +151,6 @@ SDL_Texture* cases_load_tex(const std::string& path, int* w, int* h) {
     }
     return t;
 }
-int ic0(int v, int n) { return std::max(0, std::min(n - 1, v)); }
 /* The consoles whose covers have a full scan (GameTDB coverfull): GameCube, Wii U, DS, 3DS. */
 bool cases_has_full(hub::System s) { return s == hub::System::GC || s == hub::System::WiiU || s == hub::System::NDS || s == hub::System::N3DS; }
 /* HUB_SHOT_FULLCOVER=<png>: a synthetic full cover (back | spine | front) for headless screenshots; nullptr otherwise. */
@@ -184,6 +183,7 @@ SDL_Texture* cases_shot_icon(int* w, int* h) {
     *w = CS.shot_icon_w; *h = CS.shot_icon_h;
     return CS.shot_icon;
 }
+bool cases_fake_lib() { static const bool v = std::getenv("HUB_SHOT_FAKE_LIB") != nullptr || std::getenv("HUB_SHOT_FAKE_ART") != nullptr; return v; }
 void cases_release_back() {
     for (SDL_Texture*& t : CS.back_tex) if (t) { SDL_DestroyTexture(t); t = nullptr; }
     CS.back = shelfdraw::CaseBack();
@@ -229,7 +229,7 @@ void cases_back_info(int idx) {
         if (ci.players > 0) players = ci.players;
         else if (cat && cat->max_players > 0) players = cat->max_players;
         CS.back.desc_generated = ci.desc_generated;
-        if (g_headless && CS.shot_mode == "flip") {   // screenshot aid: a description for the fake library
+        if (g_headless && CS.shot_mode == "flip" && cases_fake_lib()) {   // screenshot aid: a description, only for the fake library (a real library shows its real data)
             if (CS.b_desc.empty()) CS.b_desc = "Race, battle and trade across a colourful world. Collect every cup, unlock hidden tracks and challenge friends in split-screen for up to four players. A story mode adds a grand adventure with new characters to meet along the way.";
             if (CS.b_genre.empty()) CS.b_genre = "Racing";
             if (year == 0) year = 2001;
@@ -301,7 +301,7 @@ void cases_collect_back(int idx) {
             CS.own[CS.own_n] = {t, w, h};
             if (++CS.own_n >= 3) break;
         }
-        if (g_headless && CS.shot_mode == "flip" && CS.own_n == 0) {   // screenshot aid: three pictures for the fake library (used when the game has no real ones)
+        if (g_headless && CS.shot_mode == "flip" && cases_fake_lib() && CS.own_n == 0) {   // screenshot aid: three pictures for the fake library (used when the game has no real ones)
             for (int i = 0; i < 3; ++i) { int w = 0, h = 0; CS.back_tex[i] = cases_fake_pic(i, &w, &h); CS.own[i] = {CS.back_tex[i], w, h}; }
             CS.own_n = 3;
             CS.b_label_own = "YOUR SCREENSHOTS";
@@ -786,7 +786,7 @@ void draw_cases(Disp& D) {
     shelfdraw::cases_stage_back(sc, p0, p1, CS.tint0, CS.tint1);
 
     // ---- descriptions: once the focus settles, the focused game and its two neighbours on each side are looked up (the back shows them) ----
-    if (n && !is_ghost(D.flat[(size_t)ic0(CS.focus, n)]) && std::fabs(CS.pos.x - (float)CS.focus) < 0.08f && (CS.pf_focus != CS.focus || CS.pf_sig != D.sig)) {
+    if (n && std::fabs(CS.pos.x - (float)CS.focus) < 0.08f && (CS.pf_focus != CS.focus || CS.pf_sig != D.sig)) {
         CS.pf_focus = CS.focus; CS.pf_sig = D.sig;
         for (int o = -2; o <= 2; ++o) {
             const int i = CS.focus + o;
