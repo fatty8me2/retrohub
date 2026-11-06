@@ -296,7 +296,40 @@ static void test_saves(const fs::path& d) {
     CHECK(!begin_session(hb, ia, U8(vault / "switch" / "hb" / "battery"), "").active);
 }
 
-int main() {
+/* hub_switch_test --download <dir>: downloads the pinned Lichii build into <dir> (network, ~110 MB; NEVER started), checks the exe, the
+ * portable user\ folder, that the debug symbols / VC++ installer were dropped, then writes RetroHub's config into it. */
+static int test_download(const std::string& root) {
+    std::string err;
+    int last = -1;
+    bool ok = hubemu::install_blocking(hubemu::Kind::Lichii, root, &err, [&](int phase, uint64_t got, uint64_t total) {
+        if (phase != last) { std::printf("  Lichii: phase %d (%llu / %llu bytes)\n", phase, (unsigned long long)got, (unsigned long long)total); last = phase; }
+    });
+    CHECK(ok);
+    if (!ok) { std::printf("install failed: %s\n", err.c_str()); return 1; }
+    hubemu::Install in = hubemu::find(hubemu::Kind::Lichii, "", "", root);
+    std::printf("exe: %s (%s)\n", in.exe.c_str(), in.how.c_str());
+    CHECK(!in.exe.empty() && fs::exists(fs::u8path(in.exe)));
+    CHECK(fs::is_directory(fs::u8path(in.dir) / "user"));
+    CHECK(!fs::exists(fs::u8path(in.dir) / "lichii.pdb") && !fs::exists(fs::u8path(in.dir) / "eden-cli.pdb") && !fs::exists(fs::u8path(in.dir) / "vc_redist.x64.exe"));
+    CHECK(fs::exists(fs::u8path(in.dir) / "Qt6Core.dll") && fs::exists(fs::u8path(in.dir) / "platforms" / "qwindows.dll"));
+    hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
+    v["switch.framegen"] = "2";
+    CHECK(hubemu::prepare_lichii(in.dir, hubctl::default_profile("switch"), "030000005e0400008e02000000007200", 0, v, true).empty());
+    hubemu::NxSetup st = hubemu::lichii_setup_status(in.dir);
+    CHECK(!st.prod_keys && !st.firmware);
+    std::printf("args: %s\n", hubemu::lichii_args("C:\\Games\\x.nsp", true).c_str());
+    std::string again;
+    CHECK(hubemu::install_blocking(hubemu::Kind::Lichii, root, &again, nullptr));   // already installed: instant
+    return g_fail;
+}
+
+int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "--download") {
+        setvbuf(stdout, nullptr, _IONBF, 0);
+        int bad = test_download(argv[2]);
+        std::printf(bad ? "hub_switch_test --download: %d FAILED\n" : "hub_switch_test --download: all passed\n", bad);
+        return bad ? 1 : 0;
+    }
     fs::path d = fs::temp_directory_path() / ("hub_switch_test_" + std::to_string((unsigned long long)GetCurrentProcessId()));
     fs::create_directories(d);
     setvbuf(stdout, nullptr, _IONBF, 0);
