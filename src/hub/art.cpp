@@ -3,6 +3,7 @@
 #include "art_match.h"
 #include "art_lru.h"
 #include "gametdb.h"
+#include "netgate.h"
 #include "gameinfo.h"
 #include "nx.h"
 #include "wiiu_meta.h"
@@ -48,7 +49,8 @@ namespace {
 
 const int kMaxTexHeight = 512;
 const int kFullMaxW = 2048, kFullMaxH = 1536;   // FullCover scans keep more detail (the whole sheet is drawn across a case)
-const long long kMaxPixels = 80LL * 1000 * 1000;   // refuse decompression bombs before decoding
+const long long kMaxPixels = 16LL * 1000 * 1000;   // refuse decompression bombs before allocating (a 16 Mpx RGBA buffer is 64 MB)
+const int kMaxSide = 8192, kMaxBoxW = 4096;
 const int kUploadsPerFrame = 8;
 const long long kMissRetrySeconds = 7LL * 24 * 3600;
 const long long kDatRefreshSeconds = 60LL * 24 * 3600;
@@ -177,6 +179,32 @@ void flush_maps() {
         if (!okm) g_misses_dirty = true;
     }
 }
+/* names.json / misses.json are rewritten whole: a big library resolving hundreds of games must not rewrite them per game. A change is
+ * written at once if the last write was more than 2 s ago, else left dirty for flush_if_due() (the worker's idle tick), shutdown or detail::flush. */
+std::mutex g_deb_mu;
+std::chrono::steady_clock::time_point g_last_flush;
+bool g_flush_pending = false;
+
+void request_flush() {
+    {
+        std::lock_guard<std::mutex> l(g_deb_mu);
+        auto now = std::chrono::steady_clock::now();
+        if (now - g_last_flush < std::chrono::seconds(2)) { g_flush_pending = true; return; }
+        g_last_flush = now;
+        g_flush_pending = false;
+    }
+    flush_maps();
+}
+void flush_if_due() {
+    {
+        std::lock_guard<std::mutex> l(g_deb_mu);
+        if (!g_flush_pending || std::chrono::steady_clock::now() - g_last_flush < std::chrono::seconds(2)) return;
+        g_last_flush = std::chrono::steady_clock::now();
+        g_flush_pending = false;
+    }
+    flush_maps();
+}
+
 bool is_missed(const std::string& id) {
     std::lock_guard<std::mutex> l(g_mu);
     auto it = g_misses.find(id);
@@ -195,41 +223,12 @@ void record_miss(const std::string& id) {
         g_misses[id] = std::to_string(now_s());
         g_misses_dirty = true;
     }
-    flush_maps();
+    request_flush();
 }
 
 /* ---------- WinHTTP ---------- */
 
-/* Politeness: GameTDB and the other hosts get one request at a time per host with a pause between them (GameTDB 0.5 s), and a host that
- * answered 429 / 503 is left alone until its Retry-After has passed (callers see that as a transport failure, i.e. "try again later"). */
-std::mutex g_host_mu;
-std::map<std::string, std::chrono::steady_clock::time_point> g_host_last, g_host_block;
-
-int host_gap_ms(const std::string& host) {
-    if (host.find("gametdb.com") != std::string::npos) return 500;
-    if (host.find("wikipedia.org") != std::string::npos || host.find("wikidata.org") != std::string::npos) return 1000;
-    return 0;
-}
-
-/* Waits for the gap; false when the host is blocked by a Retry-After. */
-bool host_acquire(const std::string& host) {
-    std::lock_guard<std::mutex> l(g_host_mu);   // held while sleeping: serialises requests to a host (and to all, which is fine for a trickle)
-    auto now = std::chrono::steady_clock::now();
-    auto b = g_host_block.find(host);
-    if (b != g_host_block.end()) { if (now < b->second) return false; g_host_block.erase(b); }
-    int gap = host_gap_ms(host);
-    auto it = g_host_last.find(host);
-    if (gap && it != g_host_last.end()) {
-        auto due = it->second + std::chrono::milliseconds(gap);
-        if (now < due) std::this_thread::sleep_for(due - now);
-    }
-    g_host_last[host] = std::chrono::steady_clock::now();
-    return true;
-}
-void host_block(const std::string& host, int seconds) {
-    std::lock_guard<std::mutex> l(g_host_mu);
-    g_host_block[host] = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(30, std::min(seconds, 3600)));
-}
+/* Politeness (per-site spacing, 429 / Retry-After blocks) lives in common/netgate.*, shared with the game-info client. */
 
 /* status: HTTP status, or 0 for a transport failure. */
 bool http_get(const std::string& url, std::string* body, int* status, size_t max_bytes = 64u << 20) {
@@ -243,7 +242,7 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
     uc.lpszUrlPath = path;   uc.dwUrlPathLength = 2048;
     if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) return false;
     const std::string host_u8(winutil::to_utf8(std::wstring(host, uc.dwHostNameLength)));
-    if (!host_acquire(host_u8)) return false;
+    if (!netgate::acquire(host_u8)) return false;   // spaced per site, and blocked while a Retry-After runs
 
     /* One shared session for the process (WinHTTP sessions are thread-safe). */
     static std::mutex ses_mu;
@@ -276,7 +275,7 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
             DWORD rl = sizeof ra;
             int secs = 120;
             if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CUSTOM, L"Retry-After", ra, &rl, WINHTTP_NO_HEADER_INDEX)) secs = _wtoi(ra) > 0 ? _wtoi(ra) : 120;
-            host_block(host_u8, secs);
+            netgate::block(host_u8, secs);
         }
         ok = true;
         for (;;) {
@@ -368,7 +367,17 @@ const hub::GameInfo* catalog_by_title(const std::string& sys, const std::string&
 
 /* ---------- GameTDB (cover scans + id lookup), Switch package icons ---------- */
 
+/* Only the art worker thread (and the headless tool) may download a GameTDB database, and only when a Wii U / Switch title really has to be mapped
+ * to a product code. Every other caller (the UI thread through detail::resolve_name, the shortcut maker) reads what is already on disk. */
+thread_local bool t_may_download = false;
+struct DownloadScope {
+    bool old;
+    DownloadScope() : old(t_may_download) { t_may_download = true; }
+    ~DownloadScope() { t_may_download = old; }
+};
+
 const gametdb::Index* tdb_index(const std::string& sys) {
+    if (!t_may_download) return gametdb::cached_index(sys);
     return gametdb::index_for(sys, [](const std::string& u, std::string* b, int* st) { return http_get(u, b, st, 64u << 20); });
 }
 
@@ -392,7 +401,7 @@ std::string tdb_name_for(const hub::GameEntry& g, const std::string& libretro_na
     std::string folder = "*";
     if (id.empty() && (sys == "wiiu" || sys == "switch") && !(sys == "switch" && g.nx2)) {   // no product code in the files we can read: the title picks the GameTDB entry
         if (const gametdb::Index* idx = tdb_index(sys)) {
-            const gametdb::Rec* r = idx->by_title(g.title);
+            std::optional<gametdb::Rec> r = idx->by_title(g.title);
             if (!r && !libretro_name.empty()) r = idx->by_title(libretro_name);
             if (r) { id = r->id; folder = folder_of_region(r->region); if (folder.empty()) folder = "*"; }
         }
@@ -438,14 +447,21 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
             if (it != g_names.end() && !it->second.empty()) { *name = it->second; if (how) *how = "cache"; return true; }
         }
         std::string n = tdb_name_for(g, ""), h2 = "gametdb";
-        if (n.empty()) { n = nup_icon_name(g); h2 = "nupicon"; }
-        if (n.empty()) return false;
-        {
-            std::lock_guard<std::mutex> l(g_mu);
-            g_names[g.key] = n;
-            g_names_dirty = true;
+        bool persist = true;
+        if (n.empty()) {
+            n = nup_icon_name(g);
+            h2 = "nupicon";
+            persist = g.nx2 || gametdb::cached_index("switch");   // GameTDB's index not there yet: the icon serves now, the box is looked for again next time
         }
-        flush_maps();
+        if (n.empty()) return false;
+        if (persist) {
+            {
+                std::lock_guard<std::mutex> l(g_mu);
+                g_names[g.key] = n;
+                g_names_dirty = true;
+            }
+            request_flush();
+        }
         *name = n;
         if (how) *how = h2;
         return true;
@@ -538,7 +554,7 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
         g_names[g.key] = found;
         g_names_dirty = true;
     }
-    flush_maps();
+    request_flush();
     *name = found;
     if (how) *how = h;
     return true;
@@ -546,10 +562,16 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
 
 /* ---------- image load / downscale ---------- */
 
-bool decode_png(const std::string& bytes, Pixels* out, int max_w = 1 << 20, int max_h = kMaxTexHeight) {
+/* Header-only check, before anything is allocated: a known format, each side <= 8192 and at most 16 Mpx. */
+bool header_ok(const std::string& bytes, int* w, int* h) {
+    int n = 0;
+    if (!stbi_info_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), w, h, &n)) return false;
+    return *w > 0 && *h > 0 && *w <= kMaxSide && *h <= kMaxSide && (long long)*w * *h <= kMaxPixels;
+}
+
+bool decode_png(const std::string& bytes, Pixels* out, int max_w = kMaxBoxW, int max_h = kMaxTexHeight) {
     int w = 0, h = 0, n = 0;
-    if (!stbi_info_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), &w, &h, &n)) return false;
-    if (w <= 0 || h <= 0 || (long long)w * h > kMaxPixels) return false;
+    if (!header_ok(bytes, &w, &h)) return false;
     unsigned char* d = stbi_load_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), &w, &h, &n, 4);
     if (!d) return false;
     if (w <= 0 || h <= 0) { stbi_image_free(d); return false; }
@@ -599,7 +621,7 @@ bool load_image(const std::string& system, const std::string& name, Kind kind, P
     fs::path file = P(g_cache + system + "/" + kind_name(kind) + "/" + safe_file_name(name) + ".png");
     if (png_path) *png_path = file.u8string();
     std::string bytes;
-    const int cap_w = kind == Kind::FullCover ? kFullMaxW : 1 << 20, cap_h = kind == Kind::FullCover ? kFullMaxH : kMaxTexHeight;
+    const int cap_w = kind == Kind::FullCover ? kFullMaxW : kMaxBoxW, cap_h = kind == Kind::FullCover ? kFullMaxH : kMaxTexHeight;
     if (read_file(file, &bytes) && decode_png(bytes, px, cap_w, cap_h)) return true;
     if (name.compare(0, 8, "nupicon:") == 0) { *err = "no icon"; return false; }   // extracted from the package by the caller, never downloaded
     if (is_missed(miss_id)) { *err = "known miss"; return false; }
@@ -704,7 +726,7 @@ bool run_job(const Job& j, Pixels* px, std::string* err, bool* transient, std::s
                         g_names[j.game.key] = alt;
                         g_names_dirty = true;
                     }
-                    flush_maps();
+                    request_flush();
                     break;
                 }
                 if (e2 == "network error" || e2.compare(0, 5, "HTTP ") == 0) *err = e2;
@@ -721,11 +743,18 @@ bool run_job(const Job& j, Pixels* px, std::string* err, bool* transient, std::s
 }
 
 void worker_main() {
+    t_may_download = true;   // this thread may fetch a GameTDB database when a Wii U / Switch title has to be mapped (once; the UI thread never does)
     for (;;) {
         Job j;
         {
             std::unique_lock<std::mutex> l(g_mu);
-            g_cv.wait(l, [] { return g_quit || !g_jobs.empty(); });
+            while (!g_quit && g_jobs.empty()) {
+                if (g_cv.wait_for(l, std::chrono::seconds(2)) == std::cv_status::timeout) {
+                    l.unlock();
+                    flush_if_due();   // idle: write what the 2 s debounce held back
+                    l.lock();
+                }
+            }
             if (g_quit) return;
             j = std::move(g_jobs.front());
             g_jobs.pop_front();
@@ -947,7 +976,17 @@ bool resolve_ghost(const std::string& system_short, const std::string& key, cons
     return resolve_name_impl(g, name, how);
 }
 
+void flush() { flush_maps(); }
+bool image_header_ok(const std::string& bytes, int* w, int* h) {
+    int a = 0, b = 0;
+    bool ok = header_ok(bytes, &a, &b);
+    if (w) *w = a;
+    if (h) *h = b;
+    return ok;
+}
+
 bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::string* err, std::string* how, std::string* png_path) {
+    DownloadScope allow;   // the headless tool runs on one thread and may download the databases it needs
     Job j;
     j.kind = kind;
     j.game = game;

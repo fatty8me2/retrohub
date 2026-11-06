@@ -62,6 +62,10 @@ void set_enabled(bool on);
 /* ---- internal, exposed for tests / headless tools (no renderer, no worker thread) ---- */
 namespace detail {
 void init_headless(const std::string& cache_dir);
+/* Writes names.json / misses.json now (they are otherwise written at most every 2 s). Call before a headless process exits. */
+void flush();
+/* The pre-allocation image check: known format (PNG / JPEG), each side <= 8192 px, at most 16 Mpx. Header bytes only. */
+bool image_header_ok(const std::string& bytes, int* w, int* h);
 /* Name resolution as the worker does it (names.json -> catalog nointro -> DAT). how: cache/catalog/md5/crc/serial/title. */
 bool resolve_name(const hub::GameEntry& game, std::string* name, std::string* how);
 /* Same for a ghost (friend / pack-only game): hint = the pack entry name without extension, "" if none. */

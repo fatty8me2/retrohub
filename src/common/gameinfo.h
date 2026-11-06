@@ -8,12 +8,14 @@
  *    A match needs BOTH the title (label/alias) and the platform to agree; otherwise nothing from the web is shown. */
 
 #include <cstdint>
+#include <optional>
+
+#include "gametdb.h"
 #include <functional>
 #include <map>
 #include <string>
 #include <vector>
 
-namespace gametdb { struct Rec; }
 
 namespace gameinfo {
 
@@ -103,9 +105,10 @@ enum class ResolveResult { Ok, NotFound, NetworkError };
 ResolveResult resolve_online(const Query& q, const Fetcher& fetch, Online* out);
 
 /* GameTDB record for a query (id from the serial first, then the title), or nullptr. The caller owns the network side (gametdb::index_for). */
-using TdbFinder = std::function<const gametdb::Rec*(const Query&)>;
-/* resolve_online() and, for what Wikipedia did not give (no match, or a match without a description), GameTDB's synopsis, developer,
- * publisher, genre and ratings. A NotFound that GameTDB can fill becomes Ok. */
+using TdbFinder = std::function<std::optional<gametdb::Rec>(const Query&)>;
+/* resolve_online() and, ONLY when Wikipedia gave no description (no match, or a match without one), GameTDB's synopsis, developer,
+ * publisher, genre and ratings through `tdb`. The finder is not called at all when Wikipedia answered, so a caller whose finder may
+ * download a database never does for games Wikipedia knows. A NotFound that GameTDB can fill becomes Ok. */
 ResolveResult resolve_description(const Query& q, const Fetcher& fetch, const TdbFinder& tdb, Online* out);
 
 /* A factual one-liner built from metadata only, never plot: "A 2001 racing game for the Nintendo 64 by Rare, for 1-4 players."
