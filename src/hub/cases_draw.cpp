@@ -199,6 +199,8 @@ void cover_generated(Ctx& x, const Face& f, float u0, float v0, float u1, float 
 /* ------------------------------- faces ------------------------------- */
 
 void header_band(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, float u0, float v0, float u1, float bv) {
+    v0 -= 1.5f / f.H;   // a hair over the cover's top edge, so no sliver of cover shows (a dashed light line) above the band
+    bv += 1.5f / f.H;
     quad(x, f, u0, v0, u1, v0 + bv, st.band);
     vgrad(x, f, u0, v0, u1, v0 + bv, rgba(255, 255, 255, 54), rgba(0, 0, 0, 40));
     quad(x, f, u0, v0 + bv, u1, v0 + bv + 1.5f / f.H, rgba(0, 0, 0, 90));
