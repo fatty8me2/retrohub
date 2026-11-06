@@ -55,6 +55,7 @@ float init(SDL_Window* win, bool headless, float base_scale, bool cmd_flag, bool
     g_shot_h = shot_h;
     if (!hubtv::start_in_tv(cmd_flag, start_setting)) return base_scale;
     g_active = true;
+    if (A.st.tv_cases) { A.st.lib_layout = hubui::layout_key(hubui::LibLayout::Cases); A.view = LibView::All; }   // "TV mode opens in Cases view"
     if (!headless && win) {
         save_rect(win);
         if (!game_active()) hubdisplay::prepare_fullscreen_monitor(win);   // fullscreen lands on the chosen monitor

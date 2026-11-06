@@ -60,6 +60,7 @@ struct CaseBack {
     const char* shots_label = "";
     mutable std::vector<std::string> lines;
     mutable float lines_w = -1, lines_size = -1;
+    mutable int lines_max = -1;
 };
 struct CaseDraw {
     hubui::shelf::Media media = hubui::shelf::Media::Generic;

@@ -346,13 +346,14 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
         const float bottom = (v1 - 0.03f) * H - (has_pics ? pic_h + cs * 2.4f : H * 0.11f);
         const char* desc = bk && bk->desc && *bk->desc ? bk->desc : "No description for this game yet.";
         int max_lines = (int)std::max(1.f, std::floor((bottom - y) / (bs * 1.3f)));
-        if (bk && (bk->lines_w != pw || bk->lines_size != bs)) { bk->lines = ui::wrap_lines(body, bs, desc, pw, 40); bk->lines_w = pw; bk->lines_size = bs; }
+        if (bk && (bk->lines_w != pw || bk->lines_size != bs || bk->lines_max != max_lines)) {   // wrap once per size; the last visible line carries its "..."
+            bk->lines = ui::wrap_lines(body, bs, desc, pw, 40);
+            if ((int)bk->lines.size() > max_lines && max_lines >= 1) { bk->lines.resize((size_t)max_lines); bk->lines.back() = ui::ellipsize(body, bs, bk->lines.back() + " ...", pw); }
+            bk->lines_w = pw; bk->lines_size = bs; bk->lines_max = max_lines;
+        }
         const std::vector<std::string>& dl_lines = bk ? bk->lines : wrap_cached(body, bs, desc, pw, 40);
         for (int i = 0; i < (int)dl_lines.size() && i < max_lines; ++i) {
-            if (i == max_lines - 1 && (int)dl_lines.size() > max_lines) {
-                const std::string t = ui::ellipsize(body, bs, dl_lines[(size_t)i] + " ...", pw);
-                face_text(x, f, body, bs, t.c_str(), lx, y, ink, false);
-            } else face_text(x, f, body, bs, dl_lines[(size_t)i].c_str(), lx, y, ink, false);
+            face_text(x, f, body, bs, dl_lines[(size_t)i].c_str(), lx, y, ink, false);
             y += bs * 1.3f;
         }
         // pictures: the player's own screenshots or save-state thumbnails
