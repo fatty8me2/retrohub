@@ -445,8 +445,16 @@ std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, b
     auto get = [&](const char* k, const char* def) { auto i = v.find(k); return i == v.end() || i->second.empty() ? std::string(def) : i->second; };
     std::string res = get("switch.res", "3"), fg = get("switch.framegen", "off"), vs = get("switch.vsync", "fifo");
     if (!all_digits(res)) res = "3";
+    /* Frame pacing (Lichii FramePacingMode {Target_Auto 0, Target_30 1, Target_60 2, Target_90 3, Target_120 4}): the swapchain waits
+     * so frames are presented at that steady rate. A game that can't hold 60 but runs above 30 (Ocarina of Time: ~40) presents
+     * unevenly on a 60/120 Hz screen (each frame 3 or 4 refreshes): micro-stutter. "smooth60" = steady 30 + FSR3 frame generation 2x,
+     * which overrides switch.framegen. "lichii" leaves Lichii's own setting alone. */
+    const std::string pc = get("switch.pacing", "lichii");
+    if (pc == "smooth60") fg = "2";
     std::string t = in;
     t = ini_put(t, "Renderer", "resolution_setup", res);
+    if (pc == "auto" || pc == "30" || pc == "60" || pc == "smooth60")
+        t = ini_put(t, "Renderer", "frame_pacing_mode", pc == "auto" ? "0" : pc == "60" ? "2" : "1");
     if (all_digits(fg) && fg != "0" && fg != "1") {
         t = ini_put(t, "Renderer", "frame_gen", "true");
         t = ini_put(t, "Renderer", "frame_gen_type", "1");
