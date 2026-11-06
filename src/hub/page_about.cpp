@@ -17,6 +17,7 @@ void conv_frame() {
 void draw_overlays() {
     draw_emulator_dialogs();
     draw_ps1_dialogs();
+    draw_switch_dialogs();
     draw_wizard();
     draw_username_overlays();
     draw_changelog_popup();

@@ -51,7 +51,7 @@ void draw_emulator_dialogs() {
                 if (back) EMU.state = hubemu::Installer::Idle;
                 ImGui::TextWrapped("%s games need the %s emulator (about %d MB download from its official release, %s). "
                                    "It is kept inside RetroHub's data folder. Download now?",
-                                   EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : EMU.kind == hubemu::Kind::Dolphin ? "GameCube" : EMU.kind == hubemu::Kind::Pcsx2 ? "PlayStation 2" : EMU.kind == hubemu::Kind::Ppsspp ? "PSP" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
+                                   EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : EMU.kind == hubemu::Kind::Dolphin ? "GameCube" : EMU.kind == hubemu::Kind::Pcsx2 ? "PlayStation 2" : EMU.kind == hubemu::Kind::Ppsspp ? "PSP" : EMU.kind == hubemu::Kind::Lichii ? "Switch / Switch 2" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
                 ImGui::Dummy(ImVec2(0, 8 * S));
                 if (button("Download", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
                 ImGui::SetItemDefaultFocus();

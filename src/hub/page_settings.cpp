@@ -340,6 +340,7 @@ void tab_video() {
             }
         }
         text_wrapped_disabled("PPSSPP (PlayStation Portable): " + (pp.exe.empty() ? std::string("not installed - downloads the first time you play a PSP game (about " + std::to_string((int)(hubemu::release(hubemu::Kind::Ppsspp).size / 1048576)) + " MB)") : pp.exe));
+        switch_settings_ui();
         ps1_settings_ui();
         text_wrapped_disabled("Azahar (3DS): " + (az.exe.empty() ? std::string("not installed - downloads the first time you play a 3DS game (about 42 MB)") : az.exe));
         text_wrapped_disabled("Cemu (Wii U): " + (cm.exe.empty() ? std::string("not found - downloads the first time you play a Wii U game (about 25 MB)") : cm.exe + "  (" + cm.how + ")"));
