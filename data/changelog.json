@@ -1,6 +1,25 @@
 {
   "versions": [
     {
+      "version": "1.33.0",
+      "date": "2026-11-06",
+      "title": "Nintendo Switch and Switch 2",
+      "new": [
+        "Nintendo Switch and Switch 2 games: .nsp, .xci, .nsz, .xcz and .nro files, plus Switch 2 game dumps (an exefs folder with main + main.npdm), are listed under a new Switch console. Switch 2 games get a SWITCH 2 badge",
+        "They play through Lichii build 88, a very experimental Switch 2 emulator, downloaded the first time you start a Switch game (about 110 MB)",
+        "Keys and firmware: RetroHub never includes them. Copy your own once (a prod.keys file and a firmware folder or .zip dumped from your Switch), or copy them in one click from Eden, yuzu, Ryujinx, Citron, Suyu or Sudachi if one is already on this PC",
+        "Per-game Switch settings: resolution, VSync and Lichii's FSR3 frame generation (2x turns a 30 fps game into 60 fps)",
+        "Your Switch saves go into the save vault and follow you to every PC, like every other console",
+        "Switch boot animation, game card and start-up chime"
+      ],
+      "improved": [
+        "Settings > Games defaults: every console is in the list again (SNES was missing)"
+      ],
+      "fixed": [
+        "Lichii build 88 can stay running after you close its window; RetroHub now ends it after 15 seconds so your save is copied and the next game can start"
+      ]
+    },
+    {
       "version": "1.32.2",
       "date": "2026-11-05",
       "title": "Cases view",
