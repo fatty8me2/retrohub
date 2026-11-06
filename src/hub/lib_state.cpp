@@ -495,12 +495,12 @@ void rebuild_vis() {
         const hub::GameState& g0 = gstate(e.key);
         hubui::ListItem li{e.key, e.title, sys_short(e), is_native(e), g0.last_played, g0.play_seconds, added_unix(e.path)};
         li.favorite = g0.favorite;
-        li.crank = hubui::console_index(li.system);
         if (need_year) li.year = lib_year_of((int)items.size());
         if (custom_is_renamed(e.key)) li.alt_title = custom_original_title(e);   // search also matches the scanned name
+        hubui::prepare_sort_key(li);   // lower-cased title, "#" block and console rank once per build, not per comparison
         items.push_back(li);
     }
-    for (auto& g : A.ghosts) { hubui::ListItem li{"ghost:" + g.id, g.title, g.sys, false, 0, 0, 0}; li.ghost = true; li.crank = hubui::console_index(li.system); if (need_year) li.year = lib_year_of((int)items.size()); items.push_back(li); }
+    for (auto& g : A.ghosts) { hubui::ListItem li{"ghost:" + g.id, g.title, g.sys, false, 0, 0, 0}; li.ghost = true; hubui::prepare_sort_key(li); if (need_year) li.year = lib_year_of((int)items.size()); items.push_back(li); }
     std::string q = A.search_buf;
     std::vector<int> base = hubui::filter_sort(items, "", q, spec);   // search applied, all consoles
     if (A.online_only) {

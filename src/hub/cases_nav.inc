@@ -138,6 +138,9 @@ void nav_input(Disp& D, bool can, bool act, float dt) {
         return;
     }
     if (NV.jump_open) {   // ---- the quick-jump overlay: moves the carousel live; Enter / A keeps it, B / Esc goes back ----
+        nav_refresh(D);   // the sections may have shrunk (rescan, search, tab) while the overlay is open
+        if (NV.secs.empty()) { nav_close_all(); return; }
+        NV.jump_sel = std::max(0, std::min((int)NV.secs.size() - 1, NV.jump_sel));
         int mv = 0;
         if (pr(ImGuiKey_LeftArrow, true) || padk(ImGuiKey_GamepadDpadLeft, true) || padk(ImGuiKey_GamepadLStickLeft, true) || padk(ImGuiKey_GamepadRStickLeft, true) || pr(ImGuiKey_UpArrow, true) || padk(ImGuiKey_GamepadRStickUp, false)) mv = -1;
         else if (pr(ImGuiKey_RightArrow, true) || padk(ImGuiKey_GamepadDpadRight, true) || padk(ImGuiKey_GamepadLStickRight, true) || padk(ImGuiKey_GamepadRStickRight, true) || pr(ImGuiKey_DownArrow, true) || padk(ImGuiKey_GamepadRStickDown, false)) mv = 1;
