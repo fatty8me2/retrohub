@@ -14,7 +14,7 @@ function Start-LocalWorker([int]$Port, [string]$Tmp,
     $env:WRANGLER_REGISTRY_PATH = Join-Path $Tmp 'wrangler-registry'   # never share the registry with another agent's worker
     $log = Join-Path $Tmp 'wrangler.log'
     $node = (Get-Command node).Source
-    $p = Start-Process -FilePath $node -ArgumentList @('node_modules\wrangler\bin\wrangler.js', 'dev', '--ip', '127.0.0.1', '--port', $Port, '--persist-to', (Join-Path $Tmp 'persist')) `
+    $p = Start-Process -FilePath $node -ArgumentList @('node_modules\wrangler\bin\wrangler.js', 'dev', '--ip', '127.0.0.1', '--port', $Port, '--persist-to', (Join-Path $Tmp 'persist'), '--var', 'REG_APPROVAL_DEFAULT:0', 'ALLOW_TEST_FLAG:1') `
         -WorkingDirectory $WorkerDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
     $up = $false
     for ($i = 0; $i -lt 120 -and -not $up; $i++) {

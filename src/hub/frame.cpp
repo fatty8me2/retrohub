@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../net/username.h"
 #include "homefun.h"
+#include "libview_ui.h"
 #include "ui_sound.h"
 
 /* Startup "new version available" prompt. Shown once per run when the launch
@@ -108,9 +109,11 @@ float draw_toasts(float bottom, float right, float top) {
 
 /* ---------- sidebar ---------- */
 
+static float g_nav_h = 0.f;   // sidebar entry height; shrinks (and the logo hides) when a big UI size leaves too little height
+
 bool nav_item(Page pg, const char* label, ui::Icon ic, float w, float expand, ImU32 badge) {
     ImGui::PushID((int)pg);
-    bool pressed = ImGui::InvisibleButton("nav", ImVec2(w, sp(6.f)), ImGuiButtonFlags_EnableNav);
+    bool pressed = ImGui::InvisibleButton("nav", ImVec2(w, g_nav_h > 0.f ? g_nav_h : sp(6.f)), ImGuiButtonFlags_EnableNav);
     A.side_ids.push_back(ImGui::GetItemID());
     if (A.seed_side && A.page == pg) { A.seed_side = false; set_nav_here(); }
     bool hov = ImGui::IsItemHovered();
@@ -155,13 +158,14 @@ void draw_footer(float h) {
         hints = {{"A", "Enter", "Actions"}, {"X", "", "Join / invite"}, {"Y", "", "Menu"}, {"B", "Esc", "Close"}};
     } else if (A.page == Page::Library && (!A.lib.empty() || !A.ghosts.empty())) {
         hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}, {"R3", "S", "Add to shelf"}};
-        if (A.view == LibView::All) hints.push_back({"B", "Esc", "Back"});
+        if (lib_cases_active()) hints = {{"B", "Esc", "Back"}};   // the Cases view draws its own hint bar (X flips, R3 inspects, LB / RB switch console)
+        else if (A.view == LibView::All) hints.push_back({"B", "Esc", "Back"});
     } else if (A.page == Page::Library) {
         hints = {{"A", "Enter", "Select"}};
     } else {
         hints = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}};
     }
-    if (pad && !popup) {
+    if (pad && !popup && !lib_cases_active()) {
         hints.push_back({"LB", "", "Prev page"});
         hints.push_back({"RB", "", "Next page"});
         if (A.page != Page::Library) hints.push_back({"LT", "", "Scroll up"}), hints.push_back({"RT", "", "Scroll down"});
@@ -208,6 +212,7 @@ void global_input() {
     if (A.popup_last_frame && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) return;   // that B just closed a menu/modal: not also "back"
     /* Start / View are game buttons: while a game runs they never drive the hub (the pad feeds both); F2 and the mouse still work. */
     if (!A.proc && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) && fr_invite_toast_visible()) fr_join_invite_toast();   // Start joins a pending invite
+    else if (!A.proc && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) && lib_cases_active()) lib_cases_menu_toggle();   // Cases: Start / Menu opens its menu overlay
     else if ((!A.proc && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false)) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
     {   // View toggles the friends panel on RELEASE, and not when another pad button joined it (View + Y opens the palette / quick menu)
         static bool view_combo = false;
@@ -221,13 +226,15 @@ void global_input() {
     if (FR.panel_focused) {}
     else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) dir = 1;
     if (!FR.panel_focused && ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) dir = -1;
+    if (lib_cases_active()) dir = 0;   // the Cases layout uses LB / RB to switch console
     if (dir && A.page == Page::Settings) {   // Settings owns LB/RB for its tabs; past either end it carries on to the neighbouring page
         int nt, pg = hubui::settings_tab_step(A.st.settings_tab, dir, &nt);
         if (pg == 0) { A.st.settings_tab = nt; A.page_focus_req = true; mark_dirty(); }
         else A.page = static_cast<Page>((7 + (int)A.page + pg) % 7);
     } else if (dir) A.page = static_cast<Page>((7 + (int)A.page + dir) % 7);
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
-        if (A.page == Page::Library) {
+        if (lib_cases_back(ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {}   // B / Esc: closes the Cases menu, leaves a flipped / inspected case; Esc on the plain carousel opens the menu
+        else if (A.page == Page::Library) {
             if (A.view == LibView::All) { A.view = LibView::Home; A.search_buf[0] = 0; A.sys_filter.clear(); A.vis_dirty = true; }
         } else {
             A.page = Page::Library;
@@ -238,8 +245,8 @@ void global_input() {
         (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl))) A.show_ghost = true;
     if (A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl)) A.show_details = true;
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl)) toggle_favorite(A.sel_game);
-        if (!io.WantTextInput && (ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false) || (ImGui::IsKeyPressed(ImGuiKey_S, false) && !io.KeyCtrl)))
+        if ((ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) && !lib_cases_active()) || (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl)) toggle_favorite(A.sel_game);   // Cases: X flips (hold = favourite) there
+        if (!io.WantTextInput && ((ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false) && !lib_cases_active()) || (ImGui::IsKeyPressed(ImGuiKey_S, false) && !io.KeyCtrl)))
             custom_open_picker(A.sel_game, false);   // tile action: Add to shelf (R3 on a pad, S on a keyboard)
     }
 }
@@ -274,9 +281,16 @@ void draw_frame() {
     const float fr_pw = fr_panel_w(io.DisplaySize.x);
     const float dock_w = fr_docked ? fr_pw * FR.panel_t : 0.f;
     const float view_w = io.DisplaySize.x - dock_w;
+    const bool immersive = lib_cases_active();   // Cases is a full-window console browser: no sidebar, toolbar, chips or footer (its menu overlay has them)
+    if (!immersive) lib_cases_closed();
     ui_sound::configure(A.st.menu_sounds, A.st.menu_volume, A.st.menu_music, A.st.notif_sound);
     ui_sound::tick(A.proc != nullptr, g_headless ? false : (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0);
     A.focused = g_headless || (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    if (app_locked()) {   // pending / banned / not yet confirmed: the lock screen replaces every page, panel and overlay (a running game keeps its own quick menu)
+        draw_lock_screen();
+        draw_quick_menu();
+        return;
+    }
     if (A.page != A.last_page || A.view != A.last_view) { if (A.page != A.last_page) A.page_focus_req = true; A.last_page = A.page; A.last_view = A.view; A.nav_seed = true; }
     {   // a modal/menu just closed and the pad lost its focus: land on the page's default item again
         static bool was_popup = false;
@@ -294,7 +308,7 @@ void draw_frame() {
         if (A.zone_req == 1) { in_side = true; A.seed_side = true; }
         if (A.zone_req == 2) { in_side = false; A.nav_seed = true; }
         A.zone_req = 0;
-        if (A.nav_seed) in_side = false;
+        if (A.nav_seed || immersive) in_side = false;
         A.side_ids_prev.swap(A.side_ids);
         A.side_ids.clear();
     }
@@ -314,6 +328,7 @@ void draw_frame() {
     ui::anim(A.side_w, target, 14.f);
     float sw = A.side_w, expand = std::max(0.f, std::min(1.f, (sw - mini_w) / (full_w - mini_w)));
 
+    if (!immersive) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::SIDEBAR);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(3.f)));
@@ -323,7 +338,17 @@ void draw_frame() {
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);   // the first D-pad press should land in the content, not the sidebar
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, !in_side);
     float iw = sw - sp(3.f);
-    {   // logo mark + wordmark
+    /* A big UI size (200% on a 800 px window) leaves too little height for logo + 7 entries + the player card: first the entries
+     * shrink, then the logo goes, so nothing overlaps the collapse button or the profile chip. */
+    const int nav_n = 7 + (fr_is_admin() ? 1 : 0);
+    const float side_avail = ImGui::GetWindowHeight() - sp(3.f) - (sp(7.f) + sp(4.f) + sp(1.f) + sp(3.f));
+    bool show_logo = true;
+    g_nav_h = sp(6.f);
+    if ((side_avail - sp(8.f)) / (float)nav_n - sp(0.5f) < sp(6.f)) {
+        g_nav_h = std::min(sp(6.f), std::max(sp(3.5f), (side_avail - sp(8.f)) / (float)nav_n - sp(0.5f)));
+        if (g_nav_h < sp(4.5f)) { show_logo = false; g_nav_h = std::min(sp(6.f), std::max(sp(3.5f), side_avail / (float)nav_n - sp(0.5f))); }
+    }
+    if (show_logo) {   // logo mark + wordmark
         ImVec2 p = ImGui::GetCursorScreenPos();
         float ms = sp(5.f);
         ImVec2 m0(p.x + sp(0.5f), p.y), m1(m0.x + ms, m0.y + ms);
@@ -351,6 +376,11 @@ void draw_frame() {
     if (nav_item(Page::Controllers, "Controllers", ui::Icon::Gamepad, iw, expand, 0)) A.page = Page::Controllers;
     if (nav_item(Page::Settings, "Settings", ui::Icon::Gear, iw, expand, 0)) A.page = Page::Settings;
     if (nav_item(Page::About, "Updates", ui::Icon::Info, iw, expand, hubupdate::update_available() ? ui::ACCENT : 0)) A.page = Page::About;
+    if (fr_is_admin()) {   // the owner account only; a non-admin never reaches this code
+        const int waiting = g_shot_admin ? 2 : FR.cli.admin_pending();
+        std::string al = waiting ? "Admin  (" + std::to_string(waiting) + " waiting)" : std::string("Admin");
+        if (nav_item(Page::Admin, al.c_str(), ui::Icon::Bolt, iw, expand, waiting ? ui::WARN : 0)) A.page = Page::Admin;
+    } else if (A.page == Page::Admin) A.page = Page::Library;
     ImGui::PopStyleVar();
 
     // bottom: collapse toggle + player card
@@ -377,7 +407,7 @@ void draw_frame() {
         char init[8] = {hubnet::username_initial(nm), 0};
         ImVec2 its = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, init);
         sdl->AddText(ui::F.bold, ui::F.bold->FontSize, ac - its * 0.5f, IM_COL32_WHITE, init);
-        const char* stt = A.proc ? "In game" : (A.in_room ? (A.lobby.connected() ? "In a room" : "Connecting") : "Offline");
+        const char* stt = A.proc ? "In game" : (A.in_room ? (room_connected() ? "In a room" : "Connecting") : "Offline");
         ImU32 sc = A.proc ? ui::ACCENT : (A.in_room ? (A.lobby.connected() ? ui::GOOD : ui::WARN) : ui::TEXT3);
         sdl->AddCircleFilled(ac + ImVec2(sp(1.6f), sp(1.6f)), sp(0.6f), sc, 12);
         sdl->AddCircle(ac + ImVec2(sp(1.6f), sp(1.6f)), sp(0.6f), ui::SIDEBAR, 12, 2.f);
@@ -395,19 +425,20 @@ void draw_frame() {
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
+    }
 
-    ImGui::SameLine(0, 0);
+    if (!immersive) ImGui::SameLine(0, 0);
 
     /* ---- content ---- */
-    float hpad = (view_w - sw > 1200.f * S) ? sp(5.f) : sp(4.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(hpad, sp(3.f)));
+    float hpad = immersive ? 0.f : (view_w - sw > 1200.f * S) ? sp(5.f) : sp(4.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(hpad, immersive ? 0.f : sp(3.f)));
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, in_side);
     ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
 
-    fr_top_bar();
-    if (A.proc) {
+    if (!immersive) fr_top_bar();
+    if (A.proc && !immersive) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p = ImGui::GetCursorScreenPos();
         float w = ImGui::GetContentRegionAvail().x, h = sp(5.f);
@@ -422,7 +453,7 @@ void draw_frame() {
         ImGui::Dummy(ImVec2(w, h + sp(2.f)));
     }
 
-    float footer_h = sp(5.5f);
+    float footer_h = immersive ? 0.f : sp(5.5f);
     ImGuiWindowFlags pf = A.page == Page::Library ? (ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse) : ImGuiWindowFlags_None;
     ImGui::BeginChild("page", ImVec2(0, -footer_h), ImGuiChildFlags_NavFlattened, pf);
     if (A.page_focus_req) {   // arrived on a page (LB/RB, sidebar, B): put the focus on its first item unless the user is in the sidebar
@@ -447,9 +478,10 @@ void draw_frame() {
         case Page::Controllers: page_controllers(); break;
         case Page::Settings: page_settings(); break;
         case Page::About: page_about(); break;
+        case Page::Admin: page_admin(); break;
     }
     ImGui::EndChild();
-    draw_footer(footer_h);
+    if (!immersive) draw_footer(footer_h);
     ImGui::EndChild();
     ImGui::PopItemFlag();
 
@@ -467,7 +499,7 @@ void draw_frame() {
     global_input();
     A.popup_last_frame = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     /* the library page has a now-playing / selected-game bar above the footer: toasts stack above it, never over its buttons */
-    const float bar_clear = A.page == Page::Library ? sp(10.5f) : 0.f;
+    const float bar_clear = A.page == Page::Library ? sp(10.5f) : (A.page == Page::Online && A.in_room) ? sp(8.5f) : 0.f;   // the room page has its footer bar (code, Invite, Leave) there
     const float toast_used = draw_toasts(io.DisplaySize.y - footer_h - sp(1.5f) - bar_clear, view_w - sp(3.f), sp(7.5f));
     ImGui::End();
     draw_gamepack_pill();

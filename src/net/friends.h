@@ -2,6 +2,8 @@
 /* hubnet friends client (see docs/FRIENDS.md). Single UI thread: call update() every frame.
  * Non-blocking; reconnects automatically (backoff 1s..30s). */
 
+#include "admin_logic.h"
+#include "invite_logic.h"
 #include "library_share.h"
 
 #include <cstdint>
@@ -25,6 +27,8 @@ struct Identity {
  * Dirs are paths with or without trailing separator. */
 Identity identity_load_or_create(const std::string& data_dir, const std::string& vault_dir);
 Identity identity_generate();
+/* Does a valid identity already exist (data dir or vault mirror)? Pure file check, creates nothing: call BEFORE start() to tell an existing account from a brand-new install. */
+bool identity_exists(const std::string& data_dir, const std::string& vault_dir);
 /* After a vault sync/import: if <vault_dir>/_identity/identity.json is a valid, different identity with an
  * OLDER "created" than <data_dir>/identity.json, back the current one up to
  * <data_dir>/identity-backup-<timestamp>.json and switch identity.json to the vault's. Returns true (and
@@ -35,6 +39,13 @@ bool identity_read_file(const std::string& path, Identity* id);
 /* Unconditionally makes `v` the current identity: backs up a different existing identity.json to
  * identity-backup-<timestamp>.json, then writes identity.json and the vault mirror. Pure file logic. */
 bool identity_adopt(const std::string& data_dir, const std::string& vault_dir, const Identity& v);
+/* Per-Windows-user identity backup: %LOCALAPPDATA%\RetroHub\identity-backup.json (env RETROHUB_IDENTITY_BACKUP overrides the path, for tests).
+ * Path is "" (feature off) in QA / autotest runs. Written (atomically) only for a server-confirmed account; read only by a fresh install. */
+std::string identity_backup_path();
+bool identity_backup_allowed(const std::string& server, const std::string& name);   // false for qa- names, non-production servers, QA runs
+bool identity_backup_save(const Identity& id);
+/* Fresh install only (no <data_dir>/identity.json and no vault mirror): copies a valid backup to identity.json. Never overwrites an identity. */
+bool identity_backup_adopt_if_fresh(const std::string& data_dir, const std::string& vault_dir, Identity* adopted);
 std::string friend_code(const std::string& user_id);   // "RH-7KQ2-M9XD"
 
 /* ---- data ---- */
@@ -102,7 +113,8 @@ struct Event {
                 ReactionReceived, // a friend reacted to a DM line: uid, msg.target / msg.emoji / msg.on
                 AskResult,
                 Queued,           // an action made while offline was saved in the outbox: uid, name = kind (message|invite|block|...), text = plain sentence, msg.id = the pending conversation line id (messages)
-                SendFailed };     // a queued or refused action will not happen: same fields, text = plain sentence ("Your message could not be sent (...)")      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
+                SendFailed,
+                AdminResult, AdminJoinWaiting, AdminInviteUsed, InviteRedeemed };      // owner dashboard: answer to a ban/unban/approve/deny: uid, name (op), ok, text = plain sentence, detail = reason     // a queued or refused action will not happen: same fields, text = plain sentence ("Your message could not be sent (...)")      // answer to ask_to_join(): uid, ok, text = reason when not ("rate-limited"|"not-friends"|"undeliverable")// this account's username is now `name` (welcome / claimed on another PC); ok=false + empty name = needs a new one
     Kind kind = Error;
     std::string uid;          // the friend / requester / sender (empty for some Errors)
     std::string name;
@@ -147,6 +159,13 @@ inline int playtime_minutes(unsigned long long seconds) { return (int)(seconds /
 /* True when a server "error" reply to retire_old means it can never succeed (the saved old secret is wrong), so the
  * client must drop pending-retire.json instead of resending it forever. */
 bool retire_error_is_terminal(const std::string& ref, const std::string& detail);
+/* A plain next step for a status text the client has stopped retrying on (the sign-in was rejected or replaced), or "" when the
+ * status needs nothing from the person. `needs_account` is set when the fix is entering the account code in Settings > Account. */
+std::string status_next_step(const std::string& status_text, bool* needs_account = nullptr);
+/* True when `server` (a line the server stored, id = uuid) is the same line as `local` (this PC's own echo, id "local-..."): same
+ * recipient, same text / card / file, sent within 10 minutes of each other. Used so a restart's history reply does not show a
+ * line you sent twice. */
+bool message_echo_matches(const Message& local, const Message& server);
 void dedupe_friends(std::vector<Friend>& friends, const std::string& self_uid = "");
 /* Different uids, same display name. Returns the OFFLINE entries that look like a person's older identity.
  *  confirmed=true : the uid is in `retired` (the server's alias map / <data_dir>/retired-ids.txt says it was replaced). Safe to merge in bulk.
@@ -239,11 +258,39 @@ class FriendsClient {
     bool username_known() const;                    // a welcome has told us (username() / needs_new_name() are meaningful)
     void request_history(const std::string& uid);
 
+    /* ---- account access + owner dashboard (docs/ADMIN.md). access(): why the server refused this account's hello (Ok once welcomed).
+     * is_admin(): the welcome said this account is the owner. The server independently refuses admin_* from anyone else. */
+    Access access() const;
+    /* "Check again": drop the wait (an access refusal slows reconnects to a minute) and connect right now. No-op while welcomed. */
+    void reconnect_now();
+    bool is_admin() const;
+    void admin_request_list(const AdminQuery& q);
+    void admin_request_detail(const std::string& uid);
+    void admin_act(const std::string& op, const std::string& uid);   // ban | unban | approve | deny
+    void admin_request_settings();
+    void admin_set_settings(int approval, int vouch, int autofriend, int strict_rooms = -1);   // -1 = unchanged
+    const AdminList& admin_list() const;
+    const AdminDetail& admin_detail() const;
+    const AdminSettings& admin_settings() const;
+    int admin_pending() const;     // accounts waiting for approval (0 until the server said)
+    int admin_version() const;     // bumps whenever any admin data changed
+    /* Invite codes (docs/ADMIN.md). redeem_invite(): a WAITING account sends the code it was given on its waiting socket (queued and sent after a reconnect if the server has closed that socket); the answer is Event::InviteRedeemed
+     * and, on success, the server approves it and wakes the socket (the usual unlock). False when there is no open socket to send on. */
+    bool redeem_invite(const std::string& code);
+    void admin_invite_create(int uses, int hours, const std::string& note);
+    void admin_invite_list();
+    void admin_invite_revoke(const std::string& code);
+    void admin_approve_code(const std::string& friend_code);   // "RH-XXXX-XXXX" (see friend_code_normalize)
+    const AdminInvites& admin_invites() const;
+    void admin_request_pending();                 // asks for the waiting accounts (the Pending queue); the answer is admin_pending_list()
+    const AdminList& admin_pending_list() const;  // the waiting accounts (complete list, newest activity first); empty when nobody waits
+
     /* state */
     const std::vector<Friend>& friends() const;
     const std::vector<Request>& incoming_requests() const;
     const std::vector<Request>& outgoing_requests() const;
     const std::vector<std::string>& blocked() const;
+    std::string blocked_name(const std::string& uid) const;   // the name they had when you blocked them; empty if unknown
     const Friend* find_friend(const std::string& uid) const;
 
     /* conversations: oldest first, last 200, persisted to <data_dir>/friends/<uid>.json */

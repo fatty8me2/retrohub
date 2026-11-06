@@ -1,6 +1,6 @@
 # Headless two-console link-cable netplay QA for retrorun --link (mgba_link_libretro, N linked GBAs). Windows PowerShell 5.1.
 # Each peer runs BOTH Game Boys in one deterministic simulation and owns one console; saves are exchanged through the room.
-# Start a local server first (hidden): in a BattleShip server\cloudflare worktree: npx wrangler dev --port 8791 --ip 127.0.0.1
+# Start a local server first (hidden): in a BattleShip server\cloudflare worktree: npx wrangler dev --port 8791 --ip 127.0.0.1 --var REG_APPROVAL_DEFAULT:0 ALLOW_TEST_FLAG:1
 # Usage: powershell -File qa\retrorun_gbalink.ps1 -Server ws://127.0.0.1:8791 -Rom out\roms\red.gb -Frames 3000 [-Relay] [-Bad]
 param(
     [string]$Server = 'ws://127.0.0.1:8791',

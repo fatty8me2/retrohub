@@ -2,6 +2,7 @@
 #include "convenience.h"
 #include "pcsx2.h"
 #include "gamepack.h"
+#include "display.h"
 
 /* ---------- Settings ---------- */
 
@@ -36,6 +37,60 @@ const EmuLook& emu_look() {
 }
 
 void gap() { ImGui::Dummy(ImVec2(0, sp(0.5f))); }
+
+/* D1/D2: which monitor RetroHub opens on, whether it remembers its window, the UI size and Reduce motion. */
+void display_settings_ui() {
+    static std::vector<hubdisplay::Monitor> mons;
+    static double looked_at = -100;
+    if (ImGui::GetTime() - looked_at > 2.0) { mons = hubdisplay::monitors(); looked_at = ImGui::GetTime(); }
+    settings_label("Window and size");
+    if (!mons.empty()) {
+        const hubdisplay::Monitor* cur = hubdisplay::find_monitor(mons, A.st.win_monitor);
+        if (!cur) cur = hubdisplay::primary_monitor(mons);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Open on");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(sp(36.f));
+        if (ImGui::BeginCombo("##openon", hubdisplay::monitor_label(*cur).c_str())) {
+            for (const hubdisplay::Monitor& m : mons) {
+                if (ImGui::Selectable(hubdisplay::monitor_label(m).c_str(), cur && m.name == cur->name) && (!cur || m.name != cur->name)) {
+                    A.st.win_monitor = m.name;
+                    hubdisplay::move_to_monitor(A.win, m.name);   // the player just asked: the window moves, nothing is raised
+                    mark_dirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+    if (ImGui::Checkbox("Remember window position", &A.st.remember_window)) mark_dirty();
+    text_wrapped_disabled("RetroHub reopens on the same monitor, in the same place and size. If that monitor is gone it opens on your main one.");
+    gap();
+    {   // UI size: applies live once you let go (or stop nudging it with the controller)
+        static int pending = -1;
+        static double changed_at = 0;
+        int v = pending >= 0 ? pending : A.st.ui_scale;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("UI size");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(sp(26.f));
+        if (ImGui::SliderInt("##uiscale", &v, 80, 200, "%d%%")) { pending = hubdisplay::clamp_ui_scale(v); changed_at = ImGui::GetTime(); }
+        const bool held = ImGui::IsItemActive();
+        ImGui::SameLine();
+        if (button("Reset##uiscale", ImVec2(0, 0), false, A.st.ui_scale != 100 || pending >= 0)) { pending = 100; changed_at = -100; }
+        if (pending >= 0 && !held && ImGui::GetTime() - changed_at > 0.4) {
+            if (pending != A.st.ui_scale) {
+                A.st.ui_scale = pending;
+                tvmode::set_base_scale(hubdisplay::effective_scale(hubdisplay::dpi_scale(), A.st.ui_scale));   // fonts rebuild before the next frame
+                mark_dirty();
+            }
+            pending = -1;
+        }
+        text_wrapped_disabled("Makes everything bigger or smaller, on top of your screen's own scaling (80% to 200%).");
+    }
+    gap();
+    if (ImGui::Checkbox("Reduce motion", &A.st.reduce_motion)) { ui::reduce_motion = A.st.reduce_motion; mark_dirty(); }
+    text_wrapped_disabled("Turns off slides, pans, spins and the shelf tilt. The start-up animation stays still; its sound still plays. It starts out matching Windows' \"Show animations\" setting.");
+}
 
 /* "Unpacked games" cache section. Disk usage is measured on a background thread (on open and after clearing), never per frame. */
 struct CacheUi {
@@ -208,6 +263,8 @@ void tab_general() {
     gap();
     theme_settings_row();
     gap();
+    display_settings_ui();
+    gap();
     settings_label("Sidebar");
     int sm = A.st.sidebar_mode;
     if (ImGui::RadioButton("Automatic", sm == 0)) { A.st.sidebar_mode = 0; mark_dirty(); }
@@ -238,6 +295,8 @@ void tab_general() {
     if (ImGui::Checkbox("Menu music", &A.st.menu_music)) mark_dirty();
     text_wrapped_disabled("Soft sounds and an optional quiet ambient loop in RetroHub. Always silent while a game is running or RetroHub is in the background.");
     tvmode::settings_ui();
+    if (ImGui::Checkbox("Show what's new after updates", &A.st.show_whats_new)) mark_dirty();
+    text_wrapped_disabled("A short welcome-back card with the highlights the first time RetroHub opens on a new version. Never while a game is running.");
     if (ImGui::Checkbox("Show my screenshots when RetroHub is idle", &A.st.attract_mode)) mark_dirty();
     text_wrapped_disabled("After about a minute with no input on Home, the top card slowly pans through your own screenshots and save-state pictures. Any button brings it back. Nothing is downloaded.");
     end_panel();
@@ -279,6 +338,7 @@ void tab_online() {
         ImGui::SameLine();
         if (button("Copy", ImVec2(0, 0))) { SDL_SetClipboardText(mycode.c_str()); set_toast("Friend code copied.", true, 3.0); }
     }
+    fr_blocked_section();
     end_panel();
     gap();
     begin_panel("set_conn");
@@ -373,8 +433,12 @@ void page_settings() {
     static const char* labels[hubui::ST_Count] = {"General", "Online", "Video & Games", "Account", "Help"};
     int nt = ui::segmented("settabs", labels, hubui::ST_Count, A.st.settings_tab);
     if (nt != A.st.settings_tab) { A.st.settings_tab = nt; mark_dirty(); }
-    ImGui::SameLine(0, sp(2.f));
-    ImGui::TextDisabled("LB / RB switch tabs");
+    {   // the hint hides when the window is too narrow for it (200% UI size) instead of being cut off
+        const char* hint = "LB / RB switch tabs";
+        ImGui::SameLine(0, sp(2.f));
+        if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(hint).x <= ImGui::GetWindowContentRegionMax().x) ImGui::TextDisabled("%s", hint);
+        else ImGui::NewLine();
+    }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     switch (A.st.settings_tab) {
         case hubui::ST_General: tab_general(); break;

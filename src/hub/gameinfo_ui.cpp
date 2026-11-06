@@ -282,6 +282,29 @@ bool gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_tit
     return d;
 }
 
+void gameinfo_case_info(const hub::GameEntry& e, const std::string& catalog_title, bool with_description, CaseInfo* out) {
+    if (!out || e.catalog_id == "remix" || e.catalog_id == "kanto") return;
+    Query q;
+    q.system = hub::system_short(e.system);
+    q.title = e.title;
+    q.serial = e.serial;
+    q.alt_title = e.catalog_id == "smash64" ? "Super Smash Bros." : catalog_title;
+    if (q.system.empty()) return;
+    if (!with_description) {   // the bundled database only: a map lookup, no slot, no network
+        const Meta m = gameinfo::shared_db(hub::exe_dir() + "data/").lookup(q);
+        out->genre = m.genre; out->maker = m.developer; out->year = m.year; out->players = m.players;
+        return;
+    }
+    drain_results();
+    Slot& s = slot_for(q, gameinfo::cache_name(q));
+    const Meta& m = s.meta;
+    out->genre = !m.genre.empty() ? m.genre : s.on.genre;
+    out->maker = !m.developer.empty() ? m.developer : s.on.developer;
+    out->year = m.year;
+    out->players = m.players;
+    out->desc = s.on.description;
+}
+
 /* Screenshot aid: HUB_SHOT_INFO="n64;Super Smash Bros.;NALE|gba;Pokemon Emerald;BPEE" replaces the fake library with these games
  * (keys fake:info0, fake:info1, ...; select one with HUB_SELECT_GAME and open its details with HUB_SHOT_KEYS=i). */
 void gameinfo_ui_shot_lib() {

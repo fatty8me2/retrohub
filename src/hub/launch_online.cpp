@@ -139,6 +139,7 @@ bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
 }
 
 bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
+    if (launch_blocked("gc_begin")) return false;
     autotest_log(std::string("gc_begin request ") + (host ? "host" : "guest") + " slot " + std::to_string(slot));
     if (GCO.active && gc_process_alive()) { launch_note(host, "A GameCube online session is already running."); return false; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Dolphin, "", "");
@@ -355,6 +356,7 @@ void gc_tick() {
 }
 
 void gc_guest_prepare(const hub::GameEntry& e, const gcnp::Spec& s, int launch_no) {
+    if (launch_blocked("gc_guest_prepare")) return;
     if (GCO.active && gc_process_alive()) { launch_fail("A GameCube session is still open on this PC (Dolphin) - close it, then the host can start again."); return; }
     GCO.status_seen = 0;
     GCO.desync_told = false;
@@ -399,6 +401,7 @@ void gc_guest_poll() {
 
 /* 3DS: bring up the room server (host) + UDP forwarder, then poll_np3ds() starts Azahar once everyone is reachable. */
 void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg, const hubnp3ds::Plan* resumed) {
+    if (launch_blocked("launch_online_3ds")) return;
     if (A.proc || NP3.active()) { launch_note(is_host, "A game is already running."); return; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, e.path);
     if (inst.exe.empty()) { launch_note(is_host, "Install Azahar first (start the game offline once), then join the room again.", 10.0); return; }
@@ -547,7 +550,10 @@ bool start_hidden(const std::string& exe, const std::string& args, HANDLE* out) 
     STARTUPINFOW si{};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(dir_of(exe)).c_str(), &si, &pi)) return false;
+    fr_ident_env(true);   // streamrun (remote play) opens /hub itself: account proof through the inherited environment, only for this CreateProcess
+    const BOOL started = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(dir_of(exe)).c_str(), &si, &pi);
+    fr_ident_env(false);
+    if (!started) return false;
     CloseHandle(pi.hThread);
     *out = pi.hProcess;
     return true;
@@ -621,6 +627,7 @@ void rplay_probe_guest(const std::string& room, int pcs) {
 }
 
 void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
+    if (launch_blocked("launch_online_wiiu")) return;
     if (A.proc) { launch_note(is_host, "A game is already running."); return; }
     std::string sr = streamrun_path();
     if (g_headless) { shot_trace("online-route", std::string("wiiu-remote-play ") + (is_host ? "host" : "guest")); return; }
@@ -744,6 +751,7 @@ void poll_rplay() {
 void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan, const hubui::Json* launch_msg,
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
+    if (launch_blocked("launch_online")) return;
     hub::GameEntry hacked;   // ROM hack (Plan 4 H4): every PC plays its own patched copy; the content key makes them identical
     if (is_hack(e_in)) {
         std::string patched;

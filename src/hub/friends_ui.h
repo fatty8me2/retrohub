@@ -89,6 +89,16 @@ int fr_unread(const std::string& uid);
 int fr_total_unread();
 void fr_mark_read(const std::string& uid);
 bool fr_connected();
+void fr_blocked_section();               // Settings > Online > Friends: the "Blocked people" list with Unblock
+bool fr_is_admin();                      // the welcome said this account is the owner (the Worker enforces it too)
+hubnet::Access fr_access();              // pending approval / blocked, as told by the server at hello (Ok when welcomed)
+void admin_ui_poke();                    // page_admin.cpp: refresh the dashboard soon
+void admin_ui_act(const std::string& op, const std::string& uid);   // approve | deny from the bell (fake mode in screenshots)
+void admin_note_waiting(const std::string& uid, const std::string& name, const std::string& code, long long created);   // bell + toast (never over a game)
+void admin_note_invite_used(const std::string& uid, const std::string& name, const std::string& code);
+void admin_ui_shot_init(const char* mode);   // HUB_SHOT_ADMIN: fake data, no network
+extern bool g_shot_admin;
+extern hubnet::Access g_shot_access;
 std::string fr_status_text();
 std::string fr_my_code();
 void fr_set_auto_friend(bool on);        // Settings toggle: tells the server (also sent in every hello)
@@ -96,7 +106,8 @@ void fr_set_share_playtime(bool on);     // Settings toggle: off erases my total
 void fr_playtime_session_ended();        // a game session ended: send my per-game totals (when sharing is on)
 std::string fr_playtime_line(const std::string& game_key);   // "Mickey 14h · camer 3h" for the game details ("" = none); asks the server at most every 10 min
 std::string fr_top_games_text(const std::string& uid);       // "Top games: ..." for the friend's actions menu
-std::string fr_lobby_ident_msg();        // "ident" frame for the lobby socket ("" when there is no account yet)
+void fr_ident_env(bool on);              // set / clear RETROHUB_IDENT (account proof for our runners; launch.cpp spawn, launch_online.cpp start_hidden)
+std::string fr_lobby_ident_msg(bool nopair = false);        // nopair: proof of the account only, no auto-friend pairing; "ident" frame for the lobby socket ("" when there is no account yet)
 const hubnet::Friend* fr_find(const std::string& uid);
 hubui::FriendRow fr_row(const hubnet::Friend& f);
 ImU32 fr_state_col(int st);
@@ -178,7 +189,7 @@ void fr_section(const std::string& title);
 void fr_chat_view(float cw);
 void fr_draw_panel(float disp_w, float disp_h);
 bool fr_handle_back();
-void fr_invite_button_and_picker(float btn_w, float btn_h);
+void fr_invite_button_and_picker(float btn_w, float btn_h, bool icon_only = false);   // icon_only: a + button with a tooltip (tight footers)
 
 /* ---- username_ui.cpp ---- */
 #include "username_logic.h"

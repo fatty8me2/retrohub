@@ -1,6 +1,7 @@
 /* Command palette (Ctrl+K, L3 on a pad, or View + Y while the hub is focused) and type-to-search for the library.
  * Searches games, friends, pages / settings and actions with fuzzy matching (palette_logic.h). Opens only from a user action. */
 #include "convenience.h"
+#include "libview_ui.h"
 #include "friends_ui.h"
 #include "hack_ui.h"
 #include "osk.h"
@@ -123,7 +124,7 @@ void palette_draw() {
     // View + Y (Back held, Y pressed): global_input toggles the friends panel on View RELEASE and skips it after a combo, so nothing to undo
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false)) P.back_at = ImGui::GetTime();
     const bool view_y = ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) && ImGui::GetTime() - P.back_at < 3.0;
-    if ((kbd_free && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) || (free_to_open && (ImGui::IsKeyPressed(ImGuiKey_GamepadL3, false) || view_y))) {   // the pad combos belong to the game (View+Y is its quick menu)
+    if ((kbd_free && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) || (free_to_open && ((ImGui::IsKeyPressed(ImGuiKey_GamepadL3, false) && !lib_cases_active()) || view_y))) {   // the pad combos belong to the game (View+Y is its quick menu)
         P.want_open = true;
     }
     if (P.want_open && !P.open) {

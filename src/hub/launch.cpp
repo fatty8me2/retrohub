@@ -41,6 +41,8 @@
 #include "qm_logic.h"
 #include "resume_logic.h"
 #include "online_caps.h"
+#include "wave3_hooks.h"
+#include "resume_more.h"
 #include <thread>
 #include <xinput.h>
 
@@ -57,7 +59,12 @@ static starthint::Popup g_hint;
 
 bool spawn(const std::string& exe, const std::string& args_in, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
+    if (launch_blocked("spawn")) return false;
     std::string args = args_in;
+    if (!A.fresh_key.empty()) {   // Home hero "Start fresh": one launch without the auto resume
+        if (A.fresh_key == ri.key) { size_t k = args.find(" --resume"); if (k != std::string::npos) args.erase(k, 9); }
+        A.fresh_key.clear();
+    }
     if (!A.resume_key.empty()) {   // "Resume": one-shot --load-state for exactly this game on a retrorun launch (Lane 2 runners; docs/RUNNER_CTL)
         if (A.resume_key == ri.key && (file_name(exe) == "retrorun.exe" || file_name(exe) == "n64run.exe") && !A.resume_state.empty()) args += " --load-state " + quote(A.resume_state);
         A.resume_key.clear();
@@ -79,6 +86,9 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     std::vector<wchar_t> buf(cmd.begin(), cmd.end());
     buf.push_back(0);
     for (auto& e : env) SetEnvironmentVariableW(W(e.first).c_str(), W(e.second).c_str());
+    const std::string exe_name = file_name(exe);
+    const bool own_runner = exe_name == "retrorun.exe" || exe_name == "n64run.exe" || exe_name == "streamrun.exe" || exe == smash_exe_path();   // our own processes that open /hub: they prove the account (strict rooms); emulators never get it
+    if (own_runner) fr_ident_env(true);
     STARTUPINFOW si{};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi{};
@@ -88,6 +98,7 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     BOOL ok = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(cwd).c_str(), &si, &pi);
     DWORD err = GetLastError();
     for (auto& e : env) SetEnvironmentVariableW(W(e.first).c_str(), nullptr);
+    if (own_runner) fr_ident_env(false);
     SetEnvironmentVariableW(L"RETROHUB_START_HINT", nullptr);
     if (!ok) { set_notice("Could not start " + file_name(exe) + " (error " + std::to_string(err) + ")"); return false; }
     CloseHandle(pi.hThread);
@@ -403,10 +414,13 @@ void poll_process() {
     hub::rom_cache_pin(nullptr);   // its unpacked copy may be trimmed again
     /* no focus_hub() here: the game just closed, the hub must not jump in front of whatever the user does next */
     sync_smash_prep();
+    transferpak_run_finished();   // Wave 3 X1: the Game Boy game's save changed too
+    palpark_process_ended();   // Wave 3 X3: a GBA game in the DS Slot-2 may have a new save
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
     uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
     if (!A.run.key.empty()) {
         if (secs >= 1) { hub::record_play(A.run.key, A.run.start_unix, secs); if (!A.run.system_short.empty()) hub::saves::playlog_append(A.run.system_short, A.run.key, (int64_t)A.run.start_unix, (int64_t)secs); }
+        resume_note_exit(A.run.system_short, A.run.key, A.run.online, A.run.start_unix);   // Wave 3 R1: which PC wrote the resume point
         if (hubui::exit_should_touch_game(!A.run.key.empty(), A.run.track, A.run.online, A.run.system_short))
             { hub::saves::touch_game(A.run.system_short, A.run.key, A.run.title); hub::saves::history_snapshot_game(A.run.system_short, A.run.key); }
         if (A.run.cloud_started) {
@@ -532,6 +546,7 @@ std::string launch_path_for(const hub::GameEntry& e) {
 }
 
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg) {
+    if (launch_blocked("launch_external")) return;
     hubemu::Kind kind = hubemu::kind_for(e.system);
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
@@ -575,6 +590,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         dolphin_speed_start();   // first: virtual DSU pad on 127.0.0.1:26761.. (first free port; DSUClient.ini gets that port); false = all busy -> quickmenu uses the keyboard path
         { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
         real_boot_dolphin_apply(inst.dir, real_boot_plan(e));   // GameCube IPL startup (this launch only)
+        if (!ri.online && !ri.room) gba_link_apply_dolphin(e, inst.dir);   // Wave 3 X2: integrated GBA per port (offline only; GC netplay never comes through here, the guard is belt and braces)
         cheats_apply_dolphin(e, inst.dir +"\\User", false, true, nullptr);   // enabled cheats -> GameSettings\<GAMEID>.ini (stale RetroHub entries removed)
         if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_GCPAD_INI")) {   // QA only: scripted pad (constant/timer expressions) instead of the user's mapping
             std::error_code ec;
@@ -647,6 +663,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
             if (!cemu_managed) hubemu::revert_cemu_own_settings(cemu_user);
         }
         hubemu::end_session(*sess);
+        if (kind == hubemu::Kind::Dolphin) gba_link_after_exit();   // Wave 3 X2: GBA saves -> vault (no-op without a GBA link)
         autotest_log("end_session: " + sess->summary + (sess->error.empty() ? "" : " ERROR " + sess->error));
         NP3.stop();
         if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (your emulator's copy is untouched)", ui::WARN, 15.0);
@@ -713,37 +730,14 @@ void add_game_shortcut(const hub::GameEntry& e) {
     else set_notice("Could not create the shortcut.");
 }
 
-/* saves-F1 (resume_logic.h): " --resume" only when auto.state is not older than the newest battery save. */
-static long long file_unix_time(const std::string& path) {
-    WIN32_FILE_ATTRIBUTE_DATA fa{};
-    if (!GetFileAttributesExW(W(path).c_str(), GetFileExInfoStandard, &fa)) return 0;
-    ULARGE_INTEGER u;
-    u.LowPart = fa.ftLastWriteTime.dwLowDateTime;
-    u.HighPart = fa.ftLastWriteTime.dwHighDateTime;
-    return (long long)(u.QuadPart / 10000000ULL) - 11644473600LL;
-}
-static long long newest_battery_time(const std::string& dir) {
-    long long best = 0;
-    std::error_code ec;
-    for (std::filesystem::directory_iterator it(std::filesystem::u8path(dir), ec), end; !ec && it != end; it.increment(ec)) {
-        std::error_code e2;
-        if (!it->is_regular_file(e2)) continue;
-        std::string n = it->path().u8string(), ext = it->path().extension().u8string();
-        for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-        if (ext == ".bak" || ext == ".tmp") continue;   // kept copies, half writes: not the live save
-        best = std::max(best, file_unix_time(n));
-    }
-    return best;
-}
-static std::string resume_arg(const std::string& battery, const std::string& states) {
-    long long st = file_unix_time(runctl::state_file(states, runctl::kAutoSlot));
-    if (hubui::resume_allowed(st, newest_battery_time(battery))) return " --resume";
-    set_toast("Your save is newer than your resume point (it came from another PC or a later session), so the game starts from your save. "
-              "The resume point is still on the game's page.");
-    return std::string();
+/* saves-F1 / Wave 3 R1 (resume_logic.h, resume_more.cpp): " --resume" only when the resume point is not older than the newest save,
+ * or the player chose it; the older-save choice is asked once at Play (resume_choice_gate). */
+static std::string resume_arg(const hub::GameEntry& e, const std::string& battery, const std::string& states, bool blocked) {
+    return resume_launch_arg(e, battery, states, blocked);
 }
 
 void play_entry(const hub::GameEntry& e_in) {
+    if (launch_blocked("play_entry")) return;
     if (A.proc) { set_notice("A game is already running."); return; }
     hub::GameEntry hacked;   // ROM hack / translation (Plan 4 H3): launch the patched copy prepared in rom-cache\hacks
     if (is_hack(e_in)) {
@@ -790,6 +784,14 @@ void play_entry(const hub::GameEntry& e_in) {
     }
     std::string battery = no_slash(hub::saves::battery_dir(sys, e.key));
     std::string states = no_slash(hub::saves::states_dir(sys, e.key));
+    {   // Wave 3 R1: another PC's save is newer than this PC's resume point: ask once, here in the hub, before anything starts
+        bool blocked = false;
+        if (e.system == hub::System::GB || e.system == hub::System::GBC || e.system == hub::System::GBA) {
+            const RealBootPlan p = real_boot_plan(e);
+            blocked = p.use && hub::realboot::drops_resume(e.system);
+        }
+        if (resume_choice_gate(e, blocked)) return;
+    }
     switch (e.system) {
         case hub::System::N64: {
             std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) +
@@ -801,7 +803,12 @@ void play_entry(const hub::GameEntry& e_in) {
                 args += " --result-file " + quote(ri.result_file);
             }
             args += cheats_launch_args(e, false, true, nullptr);
+            const size_t pre_tp = args.size();
+            args += transferpak_launch_args(e);   // Wave 3 X1: Game Boy cartridge in the Transfer Pak (offline)
+            const bool tp_on = args.size() > pre_tp;   // a state would restore the cartridge's save too: no resume then
             args += qm_args(ri, e, true);
+            args += resume_arg(e, battery, states, tp_on);   // Wave 3 R1: n64run --resume loads <state-dir>/auto.state (offline only)
+            if (args.find(" --resume") != std::string::npos && args.find("--state-dir ") == std::string::npos) args += " --state-dir " + quote(states);
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
                 std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
                 if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
@@ -814,8 +821,10 @@ void play_entry(const hub::GameEntry& e_in) {
         case hub::System::GBC: {
             std::string core = find_core(e.system == hub::System::GBA ? "mgba" : A.st.gb_core);
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
+            const RealBootPlan rb_plan = real_boot_plan(e);
+            const bool rb_drops = rb_plan.use && hub::realboot::drops_resume(e.system);   // a real startup replaces the resume
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + resume_arg(battery, states) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+                               " --state-dir " + quote(states) + resume_arg(e, battery, states, rb_drops) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             {   // the console's own startup (boot ROM / BIOS of the player); a resumed state would skip it
                 bool dr = false;
@@ -834,7 +843,7 @@ void play_entry(const hub::GameEntry& e_in) {
             std::string core = find_core(nes ? "nestopia" : "snes9x");
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + resume_arg(battery, states) + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
+                               " --state-dir " + quote(states) + resume_arg(e, battery, states, false) + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += " --max-local " + std::to_string(hubcaps::runner_local_seats(e.system, hub::find_game(e.catalog_id)));   // seats of this game: retrorun never boots an adapter for a 1-2 player game
             args += cheats_launch_args(e, false, true, nullptr);
@@ -850,6 +859,7 @@ void play_entry(const hub::GameEntry& e_in) {
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += real_boot_retro_args(e, real_boot_plan(e), nullptr);   // DS menu through the player's BIOS + firmware
             args += cheats_launch_args(e, false, true, nullptr);
+            args += palpark_launch_args(e);   // Wave 3 X3: GBA game in Slot-2 (offline)
             args += qm_args(ri, e, false);
             spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
             break;

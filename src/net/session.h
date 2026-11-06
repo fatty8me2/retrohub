@@ -90,6 +90,7 @@ struct SessionConfig {
     bool keep_on_guest_bye = false;  // host: a guest's clean bye does not end the session (drop-in rooms: a friend may leave and another drop in)
     bool spectate = false;           // join as a port-less spectator (role=watch): the server picks the slot, we only talk to the host
     uint32_t silence_fail_ms = 0;    // 0 = default (10 s): guest gives up when the host is silent this long after ready
+    std::string ident;               // ready-made {type:"ident"} frame for strict rooms (in-process callers); empty = process ident / RETROHUB_IDENT (ident_env.h). Never logged.
 };
 
 struct PingStats { int n = 0, avg_ms = 0, min_ms = 0, max_ms = 0; };

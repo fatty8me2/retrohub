@@ -195,13 +195,14 @@ void start_redeem() {
 void adopt_pending() {
     if ((g_headless && !shot_net()) || FR.fake) return;
     if (!FR.started) FR.cli.set_paths(hub::data_dir(), hub::saves::vault_dir());
+    const bool same_account = FR.cli.my_uid() == AC.pending.user_id;   // signing in as the account already here keeps its saved code
     if (!FR.cli.adopt_identity(AC.pending)) {
         set_toast("Could not switch accounts. The current account is unchanged.", false, 8.0);
         return;
     }
     AC.redeem_buf[0] = 0;
     AC.show_code = false;
-    std::remove(code_path().c_str()); AC.code_loaded = false;   // the saved account code belonged to the previous account
+    if (!same_account) { std::remove(code_path().c_str()); AC.code_loaded = false; }   // the saved account code belonged to the previous account
     AC.io_msg.clear();
     cloud_account_changed();   // cloud saves follow the account: this PC pulls it (cloud wins where there is no local save)
     if (!FR.started)   // when the friends client runs, its IdentityAdopted event shows the same toast
@@ -327,7 +328,7 @@ void draw_account_section() {
     {
         namespace cu = hubui::cloudui;
         settings_label("Your PCs", "The PCs that use this account. \"Stop syncing\" switches cloud saves off on that PC until someone there turns sync back on; "
-                                   "nothing is deleted. It is not a lock-out: to fully lock someone out, create a new account code. You can't do this to the PC you are using.");
+                                   "nothing is deleted. It does not sign that PC out of your friends or username. You can't do this to the PC you are using.");
         if (hs::cloud_revoked()) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(COL_BAD));
             ImGui::PushTextWrapPos(0.f);
@@ -472,7 +473,7 @@ void draw_account_section() {
         ImGui::PushTextWrapPos(sp(44.f));
         ImGui::Text("Account to sign in with: %s", hubnet::friend_code(AC.pending.user_id).c_str());
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        ImGui::TextUnformatted("This replaces the account on this PC; the current one is backed up.");
+        ImGui::TextUnformatted("This replaces the account on this PC; the current one is backed up. If another PC still uses the current account, it will stop connecting to friends until you sign it in again with your account code.");
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         if (button("Replace account", ImVec2(sp(16.f), sp(5.f)), true)) { adopt_pending(); ImGui::CloseCurrentPopup(); }

@@ -7,6 +7,8 @@
 #include "toast.h"
 #include "ui_sound.h"
 #include "attach_xfer.h"
+#include "../net/ident_env.h"
+#include "winutil.h"
 #include "challenge_ui.h"
 #include "friend_pick_ui.h"
 #include "hack_ui.h"
@@ -73,8 +75,16 @@ int fr_total_unread() {
     return n;
 }
 void fr_mark_read(const std::string& uid) { if (FR.fake) FR.f_unread[uid] = 0; else FR.cli.mark_read(uid); }
-bool fr_connected() { return FR.fake || (FR.started && FR.cli.connected()); }
-std::string fr_status_text() { return FR.fake ? "Online" : (FR.started ? FR.cli.status_text() : "Offline"); }
+bool g_shot_admin = false;                       // screenshot aids (HUB_SHOT_ADMIN / HUB_SHOT_ACCESS)
+hubnet::Access g_shot_access = hubnet::Access::Ok;
+bool fr_is_admin() { return g_shot_admin || (FR.started && !FR.fake && FR.cli.is_admin()); }
+hubnet::Access fr_access() { return g_shot_access != hubnet::Access::Ok ? g_shot_access : (FR.started && !FR.fake ? FR.cli.access() : hubnet::Access::Ok); }
+static const char* g_shot_status = nullptr;   // screenshot aid HUB_SHOT_FRSTATUS=replaced|bad-secret|reconnect: show that status while "disconnected"
+bool fr_connected() { if (g_shot_status) return false; return FR.fake || (FR.started && FR.cli.connected()); }
+std::string fr_status_text() {
+    if (g_shot_status) return !std::strcmp(g_shot_status, "replaced") ? "This identity was replaced by a newer one" : !std::strcmp(g_shot_status, "bad-secret") ? "Identity rejected by server (bad secret)" : "Disconnected (connection lost)";
+    return FR.fake ? "Online" : (FR.started ? FR.cli.status_text() : "Offline");
+}
 std::string fr_my_code() { return FR.fake ? "RH-7KQ2-M9XD" : (FR.started ? FR.cli.my_code() : ""); }
 const hubnet::Friend* fr_find(const std::string& uid) {
     for (auto& f : fr_friends()) if (f.uid == uid) return &f;
@@ -446,6 +456,7 @@ void fr_invite_uids(const std::vector<std::string>& uids) {
     if (FR.fake) set_toast("Invited " + names + " to room " + A.code + ".");   // live: the server's invite_result reports who was reached
 }
 void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who) {
+    if (launch_blocked("fr_join_lobby")) return;
     fr_trace("join", code);
     if (!hubnet::valid_room_code(code)) { set_notice("That lobby code is not valid any more."); return; }
     if (session_active()) {   // any session (A.proc, GC NetPlay, remote play, Kanto, 3DS room) or a full-screen app: NEVER auto-join or launch after it closes; keep the invite in the bell, joinable by hand
@@ -635,9 +646,25 @@ static void fr_friend_online(const std::string& uid, const std::string& name) {
     push_toast((who.empty() ? std::string("A friend") : who) + " came online", ui::ACCENT, 5.0);
     if (game_active() && !g_headless) hubtoast::notify_online(hubtoast::system_notifier(), A.st.notify_in_game, true, who);
 }
-std::string fr_lobby_ident_msg() {
+std::string fr_lobby_ident_msg(bool nopair) {
     if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return "";
-    return hubui::lobby_ident_json(FR.cli.my_uid(), FR.cli.my_secret());
+    return hubui::lobby_ident_json(FR.cli.my_uid(), FR.cli.my_secret(), nopair);
+}
+
+/* Proof of the account for the game-room sockets (net/ident_env.h): the hub's own forwarders get it in-process, our runners through the inherited
+ * environment, set only around their CreateProcess. Never on a command line, never logged, bound to our server_url(). */
+void fr_ident_env(bool on) {
+    if (!on) { SetEnvironmentVariableW(L"RETROHUB_IDENT", nullptr); return; }
+    if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return;
+    SetEnvironmentVariableW(L"RETROHUB_IDENT", winutil::to_wide(hubnet::ident_env_value(server_url(), FR.cli.my_uid(), FR.cli.my_secret())).c_str());
+}
+static void fr_publish_process_ident() {
+    static std::string last_uid, last_secret;
+    const bool have = FR.started && !FR.fake;
+    const std::string uid = have ? FR.cli.my_uid() : std::string(), secret = have ? FR.cli.my_secret() : std::string();
+    if (uid == last_uid && secret == last_secret) return;
+    last_uid = uid; last_secret = secret;
+    hubnet::set_process_ident(server_url(), uid, secret);
 }
 
 void fr_start() {
@@ -692,6 +719,7 @@ void fr_tick() {
     if (FR.fake) { gn_tick(); return; }
     if (!FR.started) return;
     FR.cli.update();
+    fr_publish_process_ident();
     { static bool was_conn = false; const bool now_conn = FR.cli.connected(); if (now_conn && !was_conn) hub::saves::cloud_network_back(); was_conn = now_conn; }   // wake a parked cloud pass
     hubnet::Event e;
     while (FR.cli.poll_event(&e)) {
@@ -724,6 +752,10 @@ void fr_tick() {
                 if (hub::profile::valid_reaction(e.msg.emoji) && !e.msg.target.empty() && e.msg.target.size() <= 64 && fr_find(e.uid))
                     FR.reacts[e.uid + "|" + e.msg.target].set(e.uid, e.msg.emoji, e.msg.on);
                 break;
+            case hubnet::Event::AdminResult: set_toast(e.text, e.ok, 6.0); admin_ui_poke(); break;
+            case hubnet::Event::InviteRedeemed: lockout_invite_result(e.ok, e.text); break;
+            case hubnet::Event::AdminJoinWaiting: admin_note_waiting(e.uid, e.name, e.text, e.msg.at); break;
+            case hubnet::Event::AdminInviteUsed: admin_note_invite_used(e.uid, e.name, e.text); break;
             case hubnet::Event::Queued: set_toast("Saved - will send when you're back online.", true, 4.0); break;
             case hubnet::Event::SendFailed: set_toast(e.text.empty() ? std::string("That could not be sent.") : e.text, false, 7.0); break;
             case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite, e.msg.ask_host); break;
@@ -759,9 +791,39 @@ void fr_tick() {
     gn_tick();
 }
 
+/* ---------- blocked people (Settings > Online > Friends) ----------
+ * The server keeps only uids of people you blocked; the client remembers the name you saw when you blocked them. */
+static std::vector<std::pair<std::string, std::string>> g_fake_blocked;   // screenshots only (uid, name)
+void fr_blocked_section() {
+    std::vector<std::pair<std::string, std::string>> rows;
+    if (FR.fake) rows = g_fake_blocked;
+    else if (FR.started) for (const std::string& u : FR.cli.blocked()) rows.push_back({u, FR.cli.blocked_name(u)});
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    settings_label("Blocked people", "People you blocked can't send you requests or messages. Unblocking does not make you friends again.");
+    if (rows.empty()) { ImGui::TextDisabled("Nobody is blocked."); return; }
+    std::string unblock_uid;
+    for (const auto& r : rows) {
+        ImGui::PushID(r.first.c_str());
+        std::string label = r.second.empty() ? hubnet::friend_code(r.first) : r.second;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label.c_str());
+        ImGui::SameLine(0, sp(2.f));
+        if (button("Unblock", ImVec2(0, 0), false, fr_connected() || FR.fake)) unblock_uid = r.first;
+        ImGui::PopID();
+    }
+    if (!fr_connected() && !FR.fake) ImGui::TextDisabled("Unblock needs a connection. RetroHub will keep trying.");
+    if (!unblock_uid.empty()) {
+        if (FR.fake) g_fake_blocked.erase(std::remove_if(g_fake_blocked.begin(), g_fake_blocked.end(), [&](const auto& x) { return x.first == unblock_uid; }), g_fake_blocked.end());
+        else FR.cli.unblock(unblock_uid);
+        set_toast("Unblocked. They can contact you again.", true, 4.0);
+    }
+}
+
 /* ---------- fake data for screenshots ---------- */
 void fr_fake_init() {
     FR.fake = true;
+    g_shot_status = std::getenv("HUB_SHOT_FRSTATUS");
+    if (std::getenv("HUB_SHOT_BLOCKED")) g_fake_blocked = {{"blkuid1", "Rowan"}, {"blkuid2", "SpamBot9000"}, {"abcdefghjkmnpqrstuvwxyz234", ""}};
     group_fake_seed();
     long long now = wall_ms();
     auto mk = [&](const char* uid, const char* name, hubnet::PresenceState st, const char* gid, const char* gt, const char* sys, const char* lobby,
@@ -1073,13 +1135,14 @@ void fr_draw_toasts(float right_x, float bottom_y) {
     float y = bottom_y, w = std::min(sp(45.f), right_x - sp(2.f));
     for (auto& n : FR.notifs) {
         if (n.done || !n.toast) continue;
+        if (n.invite && n.night_id.empty() && A.popup_last_frame) continue;   // the bell / a menu / a modal is open: the floating invite card or pill is hidden (it is in the bell list), never over the panel
         if (FR.fake && g_headless) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
         if (FR.fake && g_headless && std::getenv("HUB_SHOT_INVITE_AGE")) n.t0 = now - std::atof(std::getenv("HUB_SHOT_INVITE_AGE"));   // screenshot aid: age the invite toast (>10 = shrunk pill)
         double life = !n.night_id.empty() ? 120.0 : (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;
         if (age > life) { n.toast = false; continue; }
         float in = (float)std::min(1.0, age / 0.3);
         in = 1.f - (1.f - in) * (1.f - in);
-        const bool pill = n.invite && n.night_id.empty() && !n.expanded && age > kInvitePillAfter;
+        const bool pill = n.invite && n.night_id.empty() && !n.expanded && (age > kInvitePillAfter || A.popup_last_frame);   // a modal or menu is open: the card shrinks to the one-line pill so it never sits over its buttons (a click expands it)
         float h = pill ? fr_invite_pill_h() : n.invite ? fr_invite_card_h() : fr_request_card_h();
         float cw = pill ? std::min(w, fr_tw(ui::F.bold, fr_invite_pill_text(n)) + sp(3.5f)) : w;
         ImGui::SetNextWindowPos(ImVec2(right_x - cw + (1.f - in) * sp(8.f), y - h));
@@ -1146,7 +1209,7 @@ void fr_top_bar() {
     // presence pill (left)
     std::string txt;
     ImU32 dot;
-    if (!fr_connected()) { txt = FR.started ? fr_status_text() : "Friends offline"; dot = ui::WARN; }
+    if (!fr_connected()) { txt = (FR.started || g_shot_status) ? fr_status_text() : "Friends offline"; dot = ui::WARN; }
     else {
         hubnet::Status s = fr_desired_status();
         if (s.state == hubnet::PresenceState::InGame) { txt = "Playing " + s.game_title; dot = ui::ACCENT; }
@@ -2118,6 +2181,21 @@ void fr_draw_panel(float disp_w, float disp_h) {
         }
         ImGui::Dummy(ImVec2(0, sp(0.25f)));
 
+        // a status with no way out on its own: say what to do next
+        if (!fr_connected() && (FR.started || g_shot_status)) {
+            bool acct = false;
+            const std::string next = hubnet::status_next_step(fr_status_text(), &acct);
+            if (!next.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+                ImGui::PushTextWrapPos(0.f);
+                ImGui::TextUnformatted(next.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::PopStyleColor();
+                if (acct && ui::button("Open account settings", ImVec2(fr_tw(ui::F.bold, "Open account settings") + sp(4.f), sp(3.5f)), true)) settings_open(hubui::ST_Account);
+                ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            }
+        }
+
         // add friend
         {
             const float abw = std::max(sp(8.f), fr_tw(ui::F.bold, "Add") + sp(4.f));   // the Add button is reserved first; the box gets the rest
@@ -2299,16 +2377,17 @@ bool fr_handle_back() {
 }
 
 /* ---- invite picker (Play Online room page) ---- */
-void fr_invite_button_and_picker(float btn_w, float btn_h) {
+void fr_invite_button_and_picker(float btn_w, float btn_h, bool icon_only) {
     int online = 0;
     for (auto& f : fr_friends()) if (f.online()) ++online;
     bool can = fr_in_my_room();
-    if (ui::button("Invite friends", ImVec2(btn_w, btn_h), true, can, ui::Icon::Plus) || (FR.open_picker && can)) {
+    if (ui::button(icon_only ? "##invite_plus" : "Invite friends", ImVec2(icon_only ? btn_h : btn_w, btn_h), true, can, ui::Icon::Plus) || (FR.open_picker && can)) {
         FR.pick.clear();
         ImGui::OpenPopup("Invite friends##picker");
         FR.open_picker = false;
     }
-    if (ImGui::IsItemHovered() && !can) ImGui::SetTooltip("Waiting for the room to connect.");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !can) ImGui::SetTooltip("Waiting for the room to connect.");
+    else if (icon_only && ImGui::IsItemHovered()) ImGui::SetTooltip("Invite friends");
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(std::min(sp(60.f), ds.x * 0.92f), std::min(sp(72.f), ds.y * 0.86f)));

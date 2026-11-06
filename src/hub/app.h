@@ -5,6 +5,7 @@
 #define SDL_MAIN_HANDLED
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <SDL.h>
+#include "changelog.h"
 #include "runner_ctl.h"
 #include <SDL_syswm.h>
 #include "imgui.h"
@@ -52,6 +53,7 @@
 #include "friend_games.h"
 #include "logic.h"
 #include "settings_tabs.h"
+#include "lockout_logic.h"
 #include "tv_mode.h"
 #include "savestore.h"
 #include "history.h"
@@ -99,7 +101,7 @@ static const ImU32 COL_REMIX = IM_COL32(250, 150, 40, 255);
 
 /* ============================ types ============================ */
 
-enum class Page { Library, Discover /* recommended games per console */, Online, Saves, Controllers, Settings, About /* the "Updates" page: version, update button, patch notes */ };
+enum class Page { Library, Discover /* recommended games per console */, Online, Saves, Controllers, Settings, About /* the "Updates" page: version, update button, patch notes */, Admin /* owner only: accounts, bans, approvals */ };
 
 enum class LibView { Home, All };
 
@@ -242,6 +244,7 @@ struct App {
     int state_sel = -3;                          // slot highlighted in the strip (-1 = Auto)
     int state_confirm = -2;                      // slot awaiting a second Delete press
     std::string resume_key, resume_state;        // set by resume_entry(): the next launch of resume_key passes --load-state resume_state
+    std::string fresh_key;                       // set by the Home hero's "Start fresh": the next spawn of this game drops --resume (starts from the battery save)
     hubui::SortMode sort_mode = hubui::SortMode::Title;
 
     // saves
@@ -528,6 +531,8 @@ std::string genre_of_entry(const hub::GameEntry& e);   // first genre from the b
 void rebuild_vis();
 bool added_stamps_changed();   // true once when background "recently added" stats landed (rebuild the list)
 bool supports_online(const hub::GameEntry& e);
+bool entry_online(const hub::GameEntry& e);   // is_native || supports_online, memoized (per-frame callers)
+void lib_lookup_cache_clear();                // drop the catalog / online memos (every rescan)
 bool online_untested(const hub::GameEntry& e);
 std::string online_block_reason(const hub::GameEntry& e);   // why a game cannot be played in a room ("" = it can)
 std::string player_limit_note(const hub::GameEntry& e);     // why the room cap is below 4 ("" = nothing to explain)
@@ -618,6 +623,17 @@ void add_game_shortcut(const hub::GameEntry& e);   // "Add to desktop": .lnk to 
 void flash_taskbar();                              // FlashWindowEx on the hub window; never takes focus; no-op while a game is active
 /* window_guard.cpp: the one place that may raise/restore/show the hub window (popup_guard.h has the policy). */
 bool game_active();          // ANY session (A.proc, GC NetPlay, remote play, Kanto, 3DS room...) or another full-screen / busy app owns the screen
+/* lockout.cpp: the whole-app lock (docs/ADMIN.md). A pending / banned account, or a new install the server has not yet confirmed, sees only a lock screen. */
+void lockout_init(bool had_account, const std::string& uid);   // once at startup, after fr_start(); had_account = an identity existed before this run
+void icon_refresh_tick();                                      // icon_refresh.cpp: once per version, background, idle only
+void lockout_tick();                                           // every loop iteration, after fr_tick()
+void lockout_invite_link(const std::string& code);   // retrohub://invite/XXXX-XXXX: fill (and submit) the waiting screen's code field; ignored when not waiting
+void lockout_invite_result(bool ok, const std::string& reason);   // the server's answer to the code
+void lockout_shot(const std::string& mode);                    // HUB_SHOT_ACCESS: pending | unavailable | setup | setup-offline
+hublock::Lock lockout_kind();
+bool app_locked();                                             // true = show the lock screen and refuse every launch
+bool launch_blocked(const char* what);                         // every launch entry point asks this first (true = refuse, silently)
+void draw_lock_screen();
 bool session_active();       // like game_active() but only sessions the hub knows about (no OS full-screen guess)
 bool rplay_session_alive();  // launch_online.cpp: remote-play host streamrun running or attach pending
 bool kt_session_active();    // kanto_ui.cpp: a Kanto Together session object is active
@@ -977,6 +993,10 @@ void history_ui_saves_page();
 void history_ui_details_section(const hub::GameEntry& e);   // details modal: one line + "History..." button
 bool gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_title, int part = 0);   // details modal: part 0 all, 1 description only (returns whether drawn), 2 facts + ratings
 void gameinfo_ui_shot_lib();   // HUB_SHOT_INFO screenshot aid
+/* Facts for the back of a game case (Cases library view). Offline facts always; with `with_description` the cached / fetched description too
+ * (queues the usual background lookup, never blocks, never touches the network when headless). */
+struct CaseInfo { std::string desc, genre, maker; int year = 0, players = 0; };
+void gameinfo_case_info(const hub::GameEntry& e, const std::string& catalog_title, bool with_description, CaseInfo* out);
 void stats_ui_card();                                       // Home: "Your stats"
 void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history
 void cloud_ui_shot_init();   // HUB_SHOT_CLOUD_* seeds (screenshots only, no network)
@@ -1065,8 +1085,10 @@ extern bool g_ghost_popup_open;   // app exit: cancel + join the install job
 /* ---- page_about.cpp ---- */
 void draw_overlays();
 void page_about();
+void page_admin();   // page_admin.cpp: only ever reachable when fr_is_admin()
 void draw_changelog_list();    // page_changelog.cpp: the patch notes list (drawn inside the Updates page)
-void draw_changelog_popup();    // call every frame: the one-time "What's new in vX" popup
+const std::vector<hubui::changelog::Entry>& changelog_entries();   // page_changelog.cpp: data/changelog.json, loaded once
+void draw_welcome();    // welcome_ui.cpp, every frame: the one-time "Welcome back" card after an update
 
 
 /* ---- frame.cpp ---- */

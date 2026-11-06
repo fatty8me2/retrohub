@@ -1,5 +1,5 @@
 add_library(hublogic STATIC changelog.cpp osk_logic.cpp logic.cpp toast.cpp netplay_3ds.cpp smash_save.cpp state_slots.cpp
-    party_logic.cpp bracket_logic.cpp hack_logic.cpp libview_logic.cpp)   # Plan 4: party mode, brackets/ladder, ROM hack identity (pure)
+    party_logic.cpp bracket_logic.cpp hack_logic.cpp libview_logic.cpp shelf_logic.cpp)   # Plan 4: party mode, brackets/ladder, ROM hack identity (pure)
 target_link_libraries(hublogic PUBLIC hubbase)
 target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
 target_compile_features(hublogic PUBLIC cxx_std_17)
@@ -10,6 +10,15 @@ target_link_libraries(hub_logic_test PRIVATE hublogic)
 
 add_executable(hub_libview_test test_libview.cpp)
 target_link_libraries(hub_libview_test PRIVATE hublogic)
+
+add_executable(hub_shelf_test test_shelf.cpp)
+target_link_libraries(hub_shelf_test PRIVATE hublogic)
+
+add_executable(hub_cases_test test_cases.cpp)
+target_link_libraries(hub_cases_test PRIVATE hublogic)
+
+add_executable(hub_progress_test test_progress.cpp)
+target_link_libraries(hub_progress_test PRIVATE hublogic hubcommon)
 
 add_executable(hub_customize_test test_customize.cpp)
 target_link_libraries(hub_customize_test PRIVATE hublogic hubcommon)
@@ -22,6 +31,12 @@ target_link_libraries(hub_online_caps_test PRIVATE hublogic hubcommon)
 add_executable(hub_picker_test test_picker.cpp)
 target_include_directories(hub_picker_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(hub_lockout_test test_lockout.cpp)   # whole-app lock verdict state machine (pure)
+target_include_directories(hub_lockout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
+
+add_executable(hub_iconrefresh_test test_icon_refresh.cpp)   # once-per-version shortcut icon refresh policy (pure)
+target_include_directories(hub_iconrefresh_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(hub_friend_games_test test_friend_games.cpp)
 target_include_directories(hub_friend_games_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 
@@ -29,7 +44,7 @@ target_include_directories(hub_friend_games_test PRIVATE ${CMAKE_CURRENT_SOURCE_
 add_executable(hub_gamepack_test test_gamepack.cpp gamepack.cpp)
 target_include_directories(hub_gamepack_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gamepack_test PRIVATE hubcommon winhttp)
-add_executable(hub_discover_test test_discover.cpp discover_logic.cpp gamepack.cpp)
+add_executable(hub_discover_test test_discover.cpp discover_logic.cpp discover_browse.cpp gamepack.cpp)
 target_include_directories(hub_discover_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_discover_test PRIVATE hubcommon winhttp)
 add_executable(qa_gamepack qa_gamepack.cpp gamepack.cpp)   # QA driver against a local fake (qa/gamepack_qa.py); not a ctest
@@ -46,6 +61,8 @@ target_compile_features(hub_boot_art_test PRIVATE cxx_std_17)
 
 add_executable(hub_changelog_test test_changelog.cpp)
 target_link_libraries(hub_changelog_test PRIVATE hublogic)
+add_executable(hub_welcome_test test_welcome.cpp)   # Welcome back card rules (pure)
+target_link_libraries(hub_welcome_test PRIVATE hublogic)
 
 # Session-level rules: Smash save one-time copy (scratch dirs), post-exit touch/sync, queued friend join.
 add_executable(hub_osk_test test_osk.cpp)
@@ -62,6 +79,11 @@ target_include_directories(hub_username_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 # Home fun (Wave 3 L6/L7/L8): attract-mode idle + slideshow maths, Surprise-me pick weighting, Wrapped aggregation (pure headers).
 add_executable(hub_homefun_test test_homefun.cpp)
 target_link_libraries(hub_homefun_test PRIVATE hublogic)
+
+# Home Continue hero + Jump back in row: hero pick, backdrop source, relative time, Continue/Play label (pure header).
+add_executable(hub_continue_test test_continue.cpp)
+target_include_directories(hub_continue_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_continue_test PRIVATE cxx_std_17)
 
 # Plan 4 p4-social: DM attachments (async upload/download through the Worker) + friend challenge logic (cards, leaderboard, rules)
 add_library(hubattach STATIC attach_xfer.cpp challenge_logic.cpp)
@@ -97,11 +119,12 @@ target_link_libraries(hub_convenience_test PRIVATE hubconv)
 add_library(hubversion STATIC ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_GEN}/hub_version_rc.h)
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp spectate_ui.cpp dropin_ui.cpp
-    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp libview_ui.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_pick_ui.cpp challenge_ui.cpp gamenight_ui.cpp friend_games_ui.cpp group_ui.cpp
-    page_controllers.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp
-    attract.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp page_discover.cpp discover_logic.cpp
+    ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp libview_ui.cpp shelf_draw.cpp cases_draw.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_pick_ui.cpp challenge_ui.cpp gamenight_ui.cpp friend_games_ui.cpp group_ui.cpp
+    page_controllers.cpp page_admin.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp welcome_ui.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp display.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp
+    attract.cpp continue_ui.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp page_discover.cpp discover_logic.cpp discover_browse.cpp
     party_ui.cpp party_view.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp   # Plan 4 Wave 1
-    discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp)   # Plan 4 Wave 2 C (convenience)
+    lockout.cpp icon_refresh.cpp discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp   # Plan 4 Wave 2 C (convenience)
+    transferpak.cpp gba_link.cpp palpark.cpp resume_more.cpp progress_ui.cpp verify_ui.cpp save_import_ui.cpp)   # Plan 4 Wave 3
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
@@ -115,7 +138,7 @@ add_custom_command(TARGET RetroHub POST_BUILD
 # Cheat database (data/cheats_db.bin + data/cheats_featured.json) ships next to RetroHub.exe in data\ (hub::cheats_db_set_dir default).
 add_custom_command(TARGET RetroHub POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:RetroHub>/data
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/cheats_db.bin ${CMAKE_SOURCE_DIR}/data/cheats_featured.json ${CMAKE_SOURCE_DIR}/data/changelog.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv ${CMAKE_SOURCE_DIR}/data/recommended.json $<TARGET_FILE_DIR:RetroHub>/data)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/cheats_db.bin ${CMAKE_SOURCE_DIR}/data/cheats_featured.json ${CMAKE_SOURCE_DIR}/data/changelog.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv ${CMAKE_SOURCE_DIR}/data/recommended.json ${CMAKE_SOURCE_DIR}/data/known_dumps.bin $<TARGET_FILE_DIR:RetroHub>/data)
 
 # Cover art: pure matching logic + console test (live network check with --live <cache> [rom]).
 add_executable(qa_pack_art qa_pack_art.cpp gamepack.cpp art.cpp art_match.cpp)   # cover-art coverage check over the real pack index + library (qa/pack_art_check.ps1); not a ctest
@@ -171,11 +194,19 @@ target_link_libraries(hub_bracket_test PRIVATE hublogic)
 add_executable(hub_hack_test test_hack.cpp hack_core.cpp)
 target_link_libraries(hub_hack_test PRIVATE hublogic hubcommon)
 
+add_executable(hub_tpak_test test_transferpak.cpp)
+target_include_directories(hub_tpak_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_tpak_test PRIVATE cxx_std_17)
+
 add_executable(hub_toast_test test_toast.cpp)
 target_link_libraries(hub_toast_test PRIVATE hublogic)
 
 add_executable(hub_popup_guard_test test_popup_guard.cpp)
 target_compile_definitions(hub_popup_guard_test PRIVATE HUB_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")   # the lint also scans ${HUB_SRC_DIR}/../common
+
+add_executable(hub_display_test test_display.cpp)
+target_include_directories(hub_display_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_display_test PRIVATE cxx_std_17)
 
 add_executable(hub_idle_test test_idle.cpp)
 target_include_directories(hub_idle_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -199,6 +230,9 @@ target_link_libraries(RetroHub PRIVATE hubminiz)
 add_executable(hub_emu_test test_emulators.cpp emulators.cpp ppsspp.cpp)
 target_include_directories(hub_emu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+add_executable(hub_gbalink_test test_gba_link.cpp emulators.cpp ppsspp.cpp)   # X2 GC<->GBA: targets, choices, Dolphin.ini, save round trip, pads coexistence
+target_include_directories(hub_gbalink_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_gbalink_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 add_executable(hub_wiiu_test test_wiiu_offline.cpp emulators.cpp art_match.cpp)   # offline Wii U: .wua/meta.xml, own-Cemu settings, profiles, saves, art names
 target_include_directories(hub_wiiu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${libchdr_SOURCE_DIR}/deps/zstd-1.5.7)
 target_link_libraries(hub_wiiu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
@@ -207,6 +241,7 @@ target_link_libraries(hub_wiiu_test PRIVATE hublogic hubcommon hubminiz bcrypt w
 target_sources(RetroHub PRIVATE netplay_dolphin.cpp)
 add_executable(hub_gcnp_test test_netplay_dolphin.cpp netplay_dolphin.cpp)
 target_link_libraries(hub_gcnp_test PRIVATE hubbase)
+target_compile_definitions(hub_gcnp_test PRIVATE GCNP_DRIVER_PS1="${CMAKE_SOURCE_DIR}/data/helpers/dolphin_netplay_driver.ps1")
 add_executable(hub_gcfw_latency test_gcfw_latency.cpp netplay_3ds_run.cpp)
 target_include_directories(hub_gcfw_latency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_gcfw_latency PRIVATE hublogic hubcommon hubnet user32 ws2_32 winhttp winmm)
@@ -228,6 +263,7 @@ target_link_libraries(hub_emu_live PRIVATE hublogic hubcommon hubsaves hubminiz 
 # 3DS local wireless over rooms (np_3ds): pure-logic test (no network, no emulator)
 add_executable(hub_np3ds_test test_netplay_3ds.cpp netplay_3ds_join.cpp)
 target_link_libraries(hub_np3ds_test PRIVATE hublogic hubcommon)
+target_compile_definitions(hub_np3ds_test PRIVATE N3DS_JOIN_PS1="${CMAKE_SOURCE_DIR}/data/helpers/n3ds_join.ps1")
 
 # Native update applier: unit tests + integration dry-run of `RetroHub.exe --apply-update` in scratch dirs.
 add_executable(hub_apply_test test_update_apply.cpp update_apply.cpp)
@@ -236,6 +272,7 @@ add_dependencies(hub_apply_test RetroHub)
 # ---- Clickable invite links (retrohub://join/<CODE>, --join <CODE>, single-instance handoff) ----
 add_library(hubinvite STATIC invite.cpp)
 target_include_directories(hubinvite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(hubinvite PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hubinvite PUBLIC hubbase shell32 user32 advapi32)
 target_compile_features(hubinvite PUBLIC cxx_std_17)
 target_link_libraries(RetroHub PRIVATE hubinvite advapi32)
@@ -308,3 +345,29 @@ target_include_directories(hub_bootsound_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(hub_bootsound_test PRIVATE hubcommon)
 target_compile_definitions(hub_bootsound_test PRIVATE BOOT_SOUND_OUT_DIR="${CMAKE_SOURCE_DIR}/qa/out/boot_sounds")
 target_include_directories(RetroHub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)   # boot_anim.h includes "common/library.h"
+
+# Wave 3 X3 Pal Park: pure logic (palpark_logic.h)
+add_executable(hub_palpark_test test_palpark.cpp)
+target_include_directories(hub_palpark_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hub_palpark_test PRIVATE hubcommon hubbase)
+
+# ---- rh-helper.exe: the only thing that starts the bundled UI Automation scripts (data/helpers/*.ps1). RetroHub.exe holds no script
+# text and no script-interpreter command line; it launches `rh-helper.exe run <script> <args>` (src/helper). Console exe, no new deps.
+add_executable(rh-helper ../helper/main.cpp ../helper/rh_helper.rc)
+add_dependencies(rh-helper hubversion)   # generates version_gen/hub_version_rc.h
+target_include_directories(rh-helper PRIVATE ${HUB_VERSION_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/../helper)
+target_compile_features(rh-helper PRIVATE cxx_std_17)
+target_compile_definitions(rh-helper PRIVATE UNICODE _UNICODE)
+set_source_files_properties(../helper/rh_helper.rc PROPERTIES OBJECT_DEPENDS "${HUB_VERSION_GEN}/hub_version_rc.h")
+if(MSVC)
+    target_link_options(rh-helper PRIVATE /ENTRY:wmainCRTStartup)
+endif()
+add_custom_command(TARGET rh-helper POST_BUILD   # scripts sit in <exe dir>\data\helpers\ in the build tree, like in the package
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:rh-helper>/data/helpers
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data/helpers $<TARGET_FILE_DIR:rh-helper>/data/helpers)
+foreach(t RetroHub hub_gc_speed hub_gcnp_live hub_n3ds_live)
+    add_dependencies(${t} rh-helper)
+endforeach()
+add_executable(rh_helper_test ../helper/test_helper.cpp)
+target_include_directories(rh_helper_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../helper)
+target_compile_features(rh_helper_test PRIVATE cxx_std_17)

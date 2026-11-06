@@ -138,6 +138,7 @@ struct Args {
     long long frames = 0;
     std::string screenshot;
     std::string load_state;   // --load-state FILE: restore this state right after boot (offline)
+    bool resume = false;      // --resume: restore <state-dir>\auto.state (the last quit's resume point) when it exists; offline only, --load-state wins
     int volume = 100;   // --volume N (0-100): applied once the core runs
     std::string control, state_dir, shot_dir, game_key;   // --control FILE (runner_ctl.h), --state-dir, --shot-dir, --game-key
     std::string cheats;     // --cheats FILE: cheat list JSON (cheats.h); polled for live toggles offline
@@ -146,6 +147,7 @@ struct Args {
     std::string test_input;   // --test-input / N64RUN_TEST_INPUT: scripted local input (QA)
     std::string match;   // --match spec (VS battle jump)
     std::string result_file;   // --result-file FILE: Smash Remix / Smash 64 ROM VS results as rivals JSON v1 (match_result.h); written once per match
+    std::string tpak_rom, tpak_save;   // --tpak-rom / --tpak-save: Game Boy cartridge + its save in the Transfer Pak on controller 1 (offline only)
     std::string gs_code;   // --gs-code "80ADDR 00VV+..." (headless QA: GameShark RAM writes every VI)
     struct RamDump { uint32_t offset, len; std::string file; };
     std::vector<RamDump> dumps;
@@ -229,9 +231,12 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "--volume") { std::string s; ok = val(&s); if (ok) a.volume = std::max(0, std::min(100, atoi(s.c_str()))); }
         else if (k == "--control") ok = val(&a.control);
         else if (k == "--load-state") ok = val(&a.load_state);
+        else if (k == "--resume") a.resume = true;
         else if (k == "--state-dir") ok = val(&a.state_dir);
         else if (k == "--shot-dir") ok = val(&a.shot_dir);
         else if (k == "--game-key") ok = val(&a.game_key);
+        else if (k == "--tpak-rom") ok = val(&a.tpak_rom);
+        else if (k == "--tpak-save") ok = val(&a.tpak_save);
         else { std::fprintf(stderr, "unknown argument: %s\n", k.c_str()); return false; }
         if (!ok) { std::fprintf(stderr, "bad value for %s\n", k.c_str()); return false; }
     }
@@ -455,6 +460,8 @@ static std::string g_ctl_path;                     // --control (the ack is its 
 static long long g_ctl_acked = 0;                  // highest seq acked so far
 static runctl::InputGate g_in_gate;   // hub quick menu open => neutral local input
 static CtlJob g_job;
+static std::atomic<int> g_ctl_save_done{-1}, g_ctl_load_done{-1};   // runners-M3: the core's SAVECOMPLETE / LOADCOMPLETE for the running state job (-1 not yet, 0 failed, 1 ok)
+static const ULONGLONG g_boot_tick = GetTickCount64();                 // process start: a state card's "played" is this session, not machine uptime
 static std::string g_ctl_state_dir, g_ctl_shot_dir, g_ctl_key, g_ctl_shot_tmp;
 static bool g_ctl_online = false;
 static std::set<std::string> g_ctl_shot_seen;
@@ -618,6 +625,8 @@ static void nolive(int slot, uint8_t reason) {
 
 /* core state callback (emulation thread for loads, the core's worker thread for finished saves) */
 static void state_cb(void*, m64p_core_param p, int v) {
+    if (p == M64CORE_STATE_SAVECOMPLETE) g_ctl_save_done = v ? 1 : 0;   // runners-M3 (the job's file check follows in ctl_tick)
+    else if (p == M64CORE_STATE_LOADCOMPLETE) g_ctl_load_done = v ? 1 : 0;
     if (p == M64CORE_STATE_SAVECOMPLETE) {   // the core's worker thread, right after it wrote the file
         std::string path;
         uint32_t id;
@@ -1138,12 +1147,16 @@ static void ctl_dispatch(const runctl::Command& c, bool vi_ctx) {
             g_job = CtlJob();
             g_job.slot = c.slot; g_job.start_vi = vi; g_job.seq = c.seq;
             if (c.cmd == runctl::Cmd::SaveState) {
-                fs::remove(fs::path(f), ec);
+                /* runners-M3: write beside the slot and rename once the core says it is done, so a failed save (disk full) never destroys the old state */
+                const std::string part = f + ".part";
+                fs::remove(fs::path(part), ec);
+                g_ctl_save_done = -1;
                 g_job.thumb = runctl::thumb_file(g_ctl_state_dir, c.slot);
-                if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) { ctl_finish(false, "the core refused to save"); break; }
+                if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(part.c_str())) != M64ERR_SUCCESS) { ctl_finish(false, "the core refused to save"); break; }
                 g_job.kind = CtlJob::SaveWait;
             } else {
                 if (!fs::exists(fs::path(f), ec)) { ctl_finish(false, "no state in that slot"); break; }
+                g_ctl_load_done = -1;
                 if (g_core.DoCommand(M64CMD_STATE_LOAD, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) { ctl_finish(false, "the core refused to load"); break; }
                 g_job.kind = CtlJob::LoadWait;
             }
@@ -1232,23 +1245,33 @@ static void ctl_tick() {
         switch (g_job.kind) {
             case CtlJob::SaveWait: {
                 std::error_code ec;
-                auto sz = fs::file_size(fs::path(runctl::state_file(g_ctl_state_dir, g_job.slot)), ec);
-                if (!ec && sz > 0 && vi > g_job.start_vi + 1) {
-                    g_job.kind = CtlJob::SaveShot; g_job.start_vi = vi;
-                    ctl_grab_begin();
-                } else if (vi > g_job.start_vi + 600) ctl_finish(false, "the core did not write the state");
+                const std::string slot_file = runctl::state_file(g_ctl_state_dir, g_job.slot), part = slot_file + ".part";
+                const int done = g_ctl_save_done.load();
+                if (done == 0) { fs::remove(fs::path(part), ec); ctl_finish(false, "the core could not write the state"); }
+                else if (done == 1 && vi > g_job.start_vi + 1) {
+                    auto sz = fs::file_size(fs::path(part), ec);
+                    if (ec) g_ctl_save_done = -1;   // that SAVECOMPLETE was another save's (the 30 s auto state): keep waiting for ours
+                    else if (sz == 0) { fs::remove(fs::path(part), ec); ctl_finish(false, "the core wrote an empty state"); }
+                    else {
+                        fs::rename(fs::path(part), fs::path(slot_file), ec);   // replaces the old state in one step; on failure the old state stays
+                        if (ec) { ctl_finish(false, "could not store the state"); }
+                        else { g_job.kind = CtlJob::SaveShot; g_job.start_vi = vi; ctl_grab_begin(); }
+                    }
+                } else if (vi > g_job.start_vi + 600) { fs::remove(fs::path(part), ec); ctl_finish(false, "the core did not write the state"); }
                 break;
             }
             case CtlJob::SaveShot:
                 if (ctl_grab_end(g_job.thumb, runctl::kThumbWidth, &failed) || vi > g_job.start_vi + 300) {
                     runctl::Sidecar sc;
-                    sc.game_key = g_ctl_key; sc.time = (long long)std::time(nullptr); sc.playtime = (long long)(GetTickCount64() / 1000);
+                    sc.game_key = g_ctl_key; sc.time = (long long)std::time(nullptr); sc.playtime = (long long)((GetTickCount64() - g_boot_tick) / 1000);
                     runctl::write_text_atomic(runctl::sidecar_file(g_ctl_state_dir, g_job.slot), runctl::make_sidecar(sc));
                     ctl_finish(true, "saved slot " + std::to_string(g_job.slot));
                 }
                 break;
             case CtlJob::LoadWait:
-                if (vi > g_job.start_vi + 2) ctl_finish(true, "loaded");
+                if (g_ctl_load_done.load() == 1) ctl_finish(true, "loaded");   // runners-M3: only once the core says the state really loaded
+                else if (g_ctl_load_done.load() == 0) ctl_finish(false, "the core could not load that state");
+                else if (vi > g_job.start_vi + 300) ctl_finish(false, "the state did not load");
                 break;
             case CtlJob::Shot:
                 if (ctl_grab_end(g_job.dest, 0, &failed)) ctl_finish(!failed, failed ? "could not write the screenshot" : g_job.dest);
@@ -1579,6 +1602,17 @@ int main(int argc, char** argv) {
         g_run.rumble_cb = [](int port, bool on) { if (s_input) s_input->rumble(port, on); };   // offline: owned index == port
         logf_("n64run", "Rumble Pak: on (replaces the Controller Pak)");
     }
+    {   // Transfer Pak (offline, controller 1): replaces the Controller / Rumble Pak on port 1 only; every other case keeps the paks above
+        std::error_code tec;
+        if (!args.tpak_rom.empty() && online) logf_("n64run", "Transfer Pak: ignored online");
+        else if (!args.tpak_rom.empty() && !fs::exists(fs::u8path(args.tpak_rom), tec)) logf_("n64run", "Transfer Pak: Game Boy ROM not found (%s); not attached", args.tpak_rom.c_str());
+        else if (tpak_enabled(online, args.tpak_rom)) {
+            g_run.tpak = true;
+            g_run.tpak_rom = args.tpak_rom;
+            g_run.tpak_save = args.tpak_save;
+            logf_("n64run", "Transfer Pak: on controller 1 (plugin=%d), gb-rom %s, gb-ram %s", (int)PLUGIN_TRANSFER_PAK, args.tpak_rom.c_str(), args.tpak_save.empty() ? "(default)" : args.tpak_save.c_str());
+        }
+    }
     logf_("n64run", "controller paks: %s", g_run.mempak ? "on (saved as .mpk in the save dir)" : "off (online without shared host saves)");
     logf_("n64run", "ports: %d %d %d %d (my slot %d, %d pad(s))", args.owner[0], args.owner[1], args.owner[2], args.owner[3], my_slot, input.pad_count());
 
@@ -1629,6 +1663,13 @@ int main(int argc, char** argv) {
     }
     m64p_error e = g_core.Startup(kFrontendApiVersion, cfg_dir.c_str(), emu_dir.c_str(), const_cast<char*>("Core"), m64p_debug_cb, nullptr, &live::state_cb);
     if (e != M64ERR_SUCCESS) { logf_("n64run", "CoreStartup failed (%d)", (int)e); return 3; }
+    if (g_run.tpak) {   // the core asks for the Game Boy cartridge and its save through the media loader (the strings are freed by the core)
+        static m64p_media_loader ml;
+        ml = m64p_media_loader{};
+        ml.get_gb_cart_rom = [](void*, int c) -> char* { return c == 0 ? _strdup(g_run.tpak_rom.c_str()) : nullptr; };
+        ml.get_gb_cart_ram = [](void*, int c) -> char* { return c == 0 && !g_run.tpak_save.empty() ? _strdup(g_run.tpak_save.c_str()) : nullptr; };
+        if (g_core.DoCommand(M64CMD_SET_MEDIA_LOADER, (int)sizeof ml, &ml) != M64ERR_SUCCESS) { g_run.tpak = false; logf_("n64run", "Transfer Pak: this emulator core has no media loader; not attached"); }
+    }
 
     // ---- forced deterministic configuration
     m64p_handle core_cfg = nullptr, vid_cfg = nullptr, ev_cfg = nullptr;
@@ -1989,6 +2030,11 @@ int main(int argc, char** argv) {
         g_key_for_auto = args.game_key;
         if (!online && !args.state_dir.empty() && !g_match) { g_auto_dir = args.state_dir; g_next_autosave = GetTickCount64() + 30000; }
         if (!online && !args.load_state.empty()) g_load_state_path = args.load_state;
+        else if (!online && args.resume && !args.state_dir.empty() && !g_match) {   // hub auto-resume (same rules as retrorun --resume; the hub decides whether to pass it)
+            std::error_code rec;
+            const std::string af = runctl::state_file(args.state_dir, runctl::kAutoSlot);
+            if (fs::is_regular_file(fs::path(af), rec)) g_load_state_path = af;
+        }
         if (!args.control.empty() && !args.headless) g_ctl_shot_tmp = save_dir + "\\screenshots_tmp";
         g_realtime = args.realtime;
         if (args.headless || g_match || online || !g_gs.empty() || !g_cheats_path.empty() || !args.control.empty() || !g_auto_dir.empty() || !g_load_state_path.empty() || !g_result_file.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));

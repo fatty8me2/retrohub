@@ -1,6 +1,8 @@
 #include <sstream>
 #include "app.h"
+#include "resume_more.h"
 #include "libview_ui.h"
+#include "continue_ui.h"
 #include <cstring>
 
 /* ============================ main ============================ */
@@ -80,13 +82,21 @@ void shot_init_ui() {
         else if (m == "missingrom") missing_rom_ask_shot();
         else if (m == "hidden") hidden_games_open_shot();
         else if (m == "ps1bios") ps1_bios_ask_shot();
+        else if (m == "resume") resume_choice_shot();   // Wave 3 R1: the Play choice (with HUB_SHOT_RESUME=1 + HUB_SHOT_DETAILS/TAB=1: the Saves tab row)
     }
+    if (const char* ad = std::getenv("HUB_SHOT_ADMIN")) { g_shot_admin = true; admin_ui_shot_init(ad); }   // screenshot aid: the owner dashboard with fake data (1 | pending | banned | detail | confirm | settings)
+    if (const char* ac = std::getenv("HUB_SHOT_ACCESS")) {   // screenshot aid: the whole-app lock screen: pending | unavailable | setup (a new install connecting) | setup-offline
+        const std::string m = ac;
+        lockout_shot(m);
+        if (m == "pending" || m == "unavailable") g_shot_access = m == "pending" ? hubnet::Access::Pending : hubnet::Access::Unavailable;
+    }   // screenshot aid: the Play Online notice for a waiting / blocked account
     if (std::getenv("HUB_SHOT_FAKE_FRIENDS")) {
         fr_fake_init();
         if (std::getenv("HUB_SHOT_CHAT")) { fr_open_chat("miauid"); FR.chat_unread = 2; }
         if (std::getenv("HUB_SHOT_BELL")) FR.shot_bell = true;
     }
     states_shot_seed();
+    continue_shot_seed();   // HUB_SHOT_CONTINUE=1|playing: play history for the Home Continue hero + Jump back in row
     cloud_ui_shot_init();
     kt_shot_init();
     party_shot_init();     // Plan 4 aids (HUB_SHOT_PARTY / _BRACKET / _HACKS); no-ops until each lane lands
@@ -188,6 +198,10 @@ static ImGuiKey pad_token_key(const std::string& n) {
     if (n == "back" || n == "view") return ImGuiKey_GamepadBack;
     if (n == "rsdown") return ImGuiKey_GamepadRStickDown;   // library: next letter / console group
     if (n == "rsup") return ImGuiKey_GamepadRStickUp;
+    if (n == "rsleft") return ImGuiKey_GamepadRStickLeft;    // Cases: spin the inspected case
+    if (n == "rsright") return ImGuiKey_GamepadRStickRight;
+    if (n == "r3") return ImGuiKey_GamepadR3;                // Cases: inspect
+    if (n == "l3") return ImGuiKey_GamepadL3;                // Cases: shuffle
     if (n == "pgdn") return ImGuiKey_PageDown;   // raw keys, to test ImGui's own paging without the LT/RT conversion
     if (n == "pgup") return ImGuiKey_PageUp;
     return ImGuiKey_None;

@@ -1,6 +1,147 @@
 {
   "versions": [
     {
+      "version": "1.32.2",
+      "date": "2026-11-05",
+      "title": "Cases view",
+      "new": [
+        "Cases view: All Games can show your games as 3D cases in a full-screen carousel, with console tabs, smooth scrolling and reflections on a glossy floor",
+        "Flip and Inspect: flip a case to see its back (description, info and your own screenshots), or pick it up and turn it with the right stick",
+        "Shuffle: spin the carousel to a random game",
+        "Each console gets its own case: plastic cases for disc and card systems, cardboard boxes for cartridge games",
+        "TV mode can open straight into the Cases view (Settings > General)"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
+      "version": "1.32.1",
+      "date": "2026-11-05",
+      "title": "Your account survives a reinstall",
+      "new": [
+        "Already have an account: the waiting and blocked screens can sign you in to your existing account"
+      ],
+      "improved": [
+        "Reinstalling: RetroHub keeps a backup of your account outside its folder, so a reinstall picks your account back up instead of making a new one",
+        "Reinstalling: the installer now offers the folder RetroHub already runs from, so it updates that copy in place",
+        "Antivirus: online helper scripts now run through a small RetroHub helper, which should mean fewer false alarms"
+      ],
+      "fixed": []
+    },
+    {
+      "version": "1.32.0",
+      "date": "2026-11-05",
+      "title": "Link your consoles, bring your saves",
+      "new": [
+        "Transfer Pak: Pokemon Stadium 1 and 2, Mario Golf, Mario Tennis and Perfect Dark can use a Game Boy game from your library, with its save backed up and synced",
+        "Game Boy Advance link: connect a GBA to Pokemon Colosseum, XD, Four Swords Adventures, Crystal Chronicles, the Tingle Tuner and Metroid Prime (needs your own GBA BIOS)",
+        "Pal Park: put a GBA game in the DS's GBA slot so Diamond, Pearl, Platinum, HeartGold and SoulSilver can bring Pokemon over",
+        "Bring your saves: import saves from RetroArch, Project64, Dolphin, PCSX2, mGBA, VisualBoyAdvance and melonDS, with a preview and automatic backups",
+        "Verify my games: checks your cartridge games against known good dumps, plus a Library health card for bad dumps, missing BIOS, offline folders and duplicates",
+        "Smart shelves: shelves that fill themselves from a rule (console, genre, players, status, favorites, not played lately, decade)",
+        "Progress: mark games as playing, beaten, 100%, dropped or backlog and add a short note; it syncs between your PCs",
+        "N64 resume: N64 games continue where you left off",
+        "Which save: when another PC has a newer save, you choose which one to start from",
+        "Display: RetroHub reopens on the same monitor and spot, with an Open on choice, a UI size slider (80-200%) and Reduce motion",
+        "Blocked people: a list in Settings with Unblock"
+      ],
+      "improved": [
+        "Sync: renames, covers, notes and status from different PCs now merge game by game instead of overwriting each other",
+        "Saves: imported saves, history restores and folder pulls go to your cloud saves right away",
+        "Library: the toolbar wraps cleanly at large UI sizes, and scrolling big libraries is smoother",
+        "Friends: when sign-in stops working, the panel says what to do next",
+        "N64: save and load states confirm the core finished, and a failed save no longer wipes the old state"
+      ],
+      "fixed": [
+        "Your own messages no longer show twice after a restart",
+        "Cover art retries after a network hiccup instead of staying blank",
+        "The library scan no longer follows folder junctions",
+        "A cancelled PlayStation add no longer leaves a half-copied game behind",
+        "Adding a game no longer re-reads your whole library",
+        "Moving RetroHub to a monitor with a different scale rescales it"
+      ]
+    },
+    {
+      "version": "1.31.14",
+      "date": "2026-11-03",
+      "title": "Shelves, Continue and a bigger Discover",
+      "new": [
+        "3D shelf view: your games as cartridges, discs and cases on wooden shelves; the one you pick slides out to show its cover",
+        "Continue where you left off: Home shows your last game's save picture with a big Continue button and a Jump back in row",
+        "Bigger Discover: about 1,100 picks (up to ~100 per console), Show more, and the full catalog of every known game for older consoles",
+        "Sort and filter Discover: by title, year or players; filter by genre, players, decade or what you own, and search",
+        "Welcome back: a quick look at what's new the first time you open RetroHub after an update"
+      ],
+      "improved": [
+        "Discover: an All consoles view mixes every console's best picks together"
+      ],
+      "fixed": []
+    },
+    {
+      "version": "1.31.13",
+      "date": "2026-11-03",
+      "title": "Invite codes and quick approvals",
+      "new": [
+        "Invite codes: the owner makes a code in Admin and sends it; a new friend types it on the waiting screen (or opens the invite link) and gets in at once",
+        "Admin: people waiting for approval are listed first with big Approve / Deny buttons, plus Approve by friend code",
+        "Owner notifications: \"<name> wants to join\" with Approve / Deny right in the bell, and a note when an invite is used"
+      ],
+      "improved": [
+        "Floating invite cards hide while the bell or a pop-up is open"
+      ],
+      "fixed": [
+        "A new account could drop its connection right after starting and wait a minute to reconnect"
+      ]
+    },
+    {
+      "version": "1.31.12",
+      "date": "2026-11-03",
+      "title": "Smash online needs an account too",
+      "new": [
+        "Smash Classic online now checks your RetroHub account: banned or waiting accounts can't join Smash rooms"
+      ],
+      "improved": [
+        "With 'Only approved accounts can join rooms' on, Smash rooms are covered as well"
+      ],
+      "fixed": [
+        "Smash online shows the server's reason when a room refuses you instead of a generic connection error"
+      ]
+    },
+    {
+      "version": "1.31.11",
+      "date": "2026-11-03",
+      "title": "Only people you approve",
+      "new": [
+        "Banned accounts and accounts waiting for approval see only a lock screen: no library, no games, not even offline",
+        "New accounts now wait for the owner's approval. Everyone who already has RetroHub keeps working",
+        "Admin: \"Only approved accounts can join rooms\" switch for lobbies, game rooms and spectating"
+      ],
+      "improved": [
+        "The waiting screen shows your name and friend code so the owner knows it's you, with Check again",
+        "RetroHub refreshes its shortcut icon after an update, so the new logo shows up in the Start Menu and taskbar"
+      ],
+      "fixed": [
+        "Server busy in a room is now a short retry instead of an error"
+      ]
+    },
+    {
+      "version": "1.31.10",
+      "date": "2026-11-03",
+      "title": "Owner tools and a tidier room",
+      "new": [
+        "Owner-only Admin page: see accounts, ban people you don't recognise, and optionally require approval for new accounts. Existing friends are never affected"
+      ],
+      "improved": [
+        "Room page: the room code bar and Leave room stay visible in small windows; long reasons wrap instead of being cut off",
+        "Invite cards shrink while a menu or pop-up is open so they no longer cover buttons",
+        "Party votes always show their Close button; the podium and cheats strip look tidier",
+        "Checkboxes are easier to see in every theme; the Host and Join cards are the same height"
+      ],
+      "fixed": [
+        "The sidebar could say \"Connecting\" while you were already in a room"
+      ]
+    },
+    {
       "version": "1.31.9",
       "date": "2026-11-03",
       "title": "New look, Discover, and every player on the controller",

@@ -74,11 +74,13 @@ PrelaunchResult cloud_resolve_lease(const GameId& g, LeaseChoice c);      // con
 /* ---- run + exit ---- */
 void cloud_game_started(const GameId& g, SyncMode mode);  // starts the 5 min lease heartbeat (no-op when ReadOnly / single device)
 void cloud_game_exited(const GameId& g);                   // touch_game must already have run; releases lease, enqueues push
+void cloud_game_changed(const GameId& g);                  // the vault copy of this game changed outside a normal run (import, history restore, folder pull): queue a push (F13)
 
 /* ---- engine lifecycle (called from app startup/shutdown and the job loop) ---- */
 void cloud_engine_start(const std::string& base_url);      // loads queue, schedules the one startup delta
 void cloud_engine_stop();                                  // joins the worker; queue is already persisted
 void cloud_network_back();                                 // a cheap local sign the network is back (friends socket reconnected): wakes a parked startup pass, no request
+int cloud_gate_take();                                     // 0 | 1 pending-approval | 2 account-unavailable: the last /saves 403 reason, once (feeds the whole-app lock)
 void cloud_sync_all_now();                                 // "Sync now"
 void cloud_set_sync_states(bool on);                      // Saves > "Back up save states to the cloud" (default on): off = states/thumbnails stay on this PC
 void cloud_set_paused(bool paused);                        // Advanced > Pause cloud sync

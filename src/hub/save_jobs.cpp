@@ -278,12 +278,13 @@ void start_job(SaveJob::Kind k, const std::string& path, bool manual) {
             if (j.manual && g_cloud_on) hub::saves::cloud_sync_all_now();
             if (!j.path.empty()) folder = hub::saves::sync_folder(j.path, j.include_states);
             j.report = folder;
+            if (g_cloud_on && folder.pulled > 0) hub::saves::cloud_sync_all_now();   // files pulled from the folder changed the vault outside a run: push them (saves-F13)
         }
         else if (j.kind == SaveJob::Status) {
             j.cloud_stat = cloud_status_now();
         }
         else if (j.kind == SaveJob::Export) j.export_ok = hub::saves::export_zip(j.path, j.include_states, &j.export_err);
-        else if (j.kind == SaveJob::Import) j.report = hub::saves::import_zip(j.path);
+        else if (j.kind == SaveJob::Import) { j.report = hub::saves::import_zip(j.path); if (g_cloud_on) hub::saves::cloud_sync_all_now(); }   // an imported zip changed the vault outside a run: push it (saves-F13)
         j.done = true;
     });
 }
