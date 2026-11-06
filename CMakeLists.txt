@@ -208,6 +208,7 @@ add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U
 add_test(NAME hub_wiiu_test COMMAND hub_wiiu_test)               # offline Wii U: meta.xml/.wua, own-Cemu settings backup+revert, profiles, saves, archives, art names
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
 add_test(NAME hub_ext_pads_test COMMAND hub_ext_pads_test)           # external emulators' pad configs for 1-4 fake pads (PCSX2 multitap, Dolphin ports, Cemu players, Azahar, PPSSPP)
+add_test(NAME hub_switch_test COMMAND hub_switch_test)               # Switch (Lichii): qt-config.ini merge, controls, profiles.dat, keys/firmware import, save session (no network)
 add_test(NAME hub_psp_test COMMAND hub_psp_test)                   # PSP: SFO/ISO/CSO/CHD/PBP ids (synthetic), PS1-vs-PSP, scan, SAVEDATA session, PPSSPP config (no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
 add_test(NAME stream_core_test COMMAND stream_core_test)            # remote play: packetizer, FEC, NACK, jitter buffer, codecs, bitrate
