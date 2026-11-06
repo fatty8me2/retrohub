@@ -1,4 +1,5 @@
 #include "cases_logic.h"
+#include "cases_stage.h"
 #include "logic.h"
 
 #include <cmath>
@@ -181,6 +182,105 @@ int main() {
         CHECK(case_dims(Media::GbaCart).d > 0.12f && case_dims(Media::GbCart).h < case_dims(Media::NesCart).h);
         // the switch case is drawn big enough to read, never taller than the stage allows
         CHECK(display_scale(Media::SwitchCase) > 1.f && case_dims(Media::SwitchCase).h * display_scale(Media::SwitchCase) <= 1.f + 1e-4f);
+    }
+
+    /* car-stage */
+    {   // ambient colour from a cover
+        Rgb8 a0, a1;
+        CHECK(!ambient_from_art({128, 128, 128}, &a0, &a1));                    // grey art: the console colours stay
+        CHECK(!ambient_from_art({4, 3, 3}, &a0, &a1));                          // near black too
+        CHECK(ambient_from_art({220, 30, 30}, &a0, &a1));                       // a red cover: a deep red and a lighter red, never garish
+        float h0, s0, v0, h1, s1, v1;
+        rgb_to_hsv(a0, &h0, &s0, &v0); rgb_to_hsv(a1, &h1, &s1, &v1);
+        CHECK((h0 < 0.04f || h0 > 0.96f) && v0 < 0.7f && v1 > v0 && s0 <= 0.83f && s0 >= 0.4f && s1 <= s0 + 1e-3f);
+        for (int hue = 0; hue < 360; hue += 15) {                               // every hue stays within the tasteful brightness range
+            Rgb8 in = hsv_to_rgb((float)hue / 360.f, 1.f, 1.f), o0, o1;
+            CHECK(ambient_from_art(in, &o0, &o1));
+            float hh, ss, vv;
+            rgb_to_hsv(o0, &hh, &ss, &vv);
+            CHECK(vv > 0.5f && vv < 0.66f && ss >= 0.4f && ss <= 0.83f);
+        }
+        Rgb8 rt = hsv_to_rgb(0.33f, 0.5f, 0.8f); float hh, ss, vv; rgb_to_hsv(rt, &hh, &ss, &vv);
+        CHECK(std::fabs(hh - 0.33f) < 0.01f && std::fabs(ss - 0.5f) < 0.01f && std::fabs(vv - 0.8f) < 0.01f);
+    }
+    {   // centre_adj: the enlarged flipped / inspected case comes forward and grows
+        CHECK(centre_adj(0.f, 0.f).z == 0.f && centre_adj(0.f, 0.f).scale_mul == 1.f);
+        CHECK(centre_adj(3.14159f, 0.f).z < -0.35f && centre_adj(3.14159f, 0.f).scale_mul > 1.09f);
+        CHECK(centre_adj(0.f, 1.f).z < -0.5f && centre_adj(0.f, 1.f).scale_mul > 1.04f);
+    }
+    {   // nothing may intersect the centre case at the flip / inspect pose: every case kind against every neighbour kind, both sides, all angles
+        const float dist = 6.5f, eye = 0.55f;
+        (void)eye;
+        const shelf::Media all[] = {shelf::Media::NesCart, shelf::Media::SnesCart, shelf::Media::N64Cart, shelf::Media::GbCart, shelf::Media::GbcCart, shelf::Media::GbaCart,
+                                    shelf::Media::DsCase, shelf::Media::N3dsCase, shelf::Media::Ps1Jewel, shelf::Media::Ps2Case, shelf::Media::GcCase, shelf::Media::WiiUCase,
+                                    shelf::Media::PspCase, shelf::Media::Generic};
+        struct Ext { float lo, hi; };
+        // exact screen x extent (units of U, from the centre line) of a case: its 8 corners turned by yaw / pitch, then perspective-projected
+        auto extent = [&](const CaseDims& d, float yaw, float pitch, float scale, float ox, float oz) {
+            Ext e{1e9f, -1e9f};
+            const float ct = std::cos(yaw), st = std::sin(yaw), cp = std::cos(pitch), sp_ = std::sin(pitch);
+            for (int i = 0; i < 8; ++i) {
+                const float lx = (i & 1 ? 0.5f : -0.5f) * d.w * scale, ly = ((i & 2) ? 0.5f : -0.5f) * d.h * scale, lz = (i & 4 ? 0.5f : -0.5f) * d.d * scale;
+                const float xr = lx * ct + lz * st, zr = -lx * st + lz * ct;
+                const float zz = ly * sp_ + zr * cp;
+                const float sx = (ox + xr) * dist / std::max(0.4f, dist + oz + zz);
+                e.lo = std::min(e.lo, sx); e.hi = std::max(e.hi, sx);
+            }
+            return e;
+        };
+        int bad = 0, tested = 0;
+        for (shelf::Media mc : all) for (shelf::Media mn : all) {
+            const CaseDims dc = case_dims(mc), dn = case_dims(mn);
+            const float scc = display_scale(mc), snn = display_scale(mn);
+            const float extra = std::max(0.f, neighbour_x(dc, scc, dn, snn) - kNeighbourBase);
+            const SlotPose s1 = slot_pose(1.f);
+            const float nsc = s1.scale * snn, base = s1.x + extra;
+            for (int step = 0; step <= 14; ++step) {
+                float fl = 3.14159f * (float)step / 14.f, ins = 0.f;
+                for (int mode = 0; mode < 2; ++mode) {
+                    if (mode == 1) { fl = 0.f; ins = (float)step / 14.f; }
+                    for (float settle : {-0.8f, 0.f, 1.2f}) {   // the bounce of a case coming to rest scales the centre case too
+                    if (settle != 0.f && step % 3) continue;
+                    const CentreAdj a = centre_adj(fl, ins, settle);
+                    for (int sw = 0; sw < 8; ++sw) {   // the free spin of inspect (and pitch); during a flip the yaw is the flip angle
+                        const float yaw = mode == 1 ? 6.2831853f * (float)sw / 8.f : fl - 0.13f, pitch = mode == 1 ? ((sw & 1) ? 0.55f : (sw & 2) ? -0.55f : 0.f) * ins : 0.f;
+                        const float cs = scc * a.scale_mul;
+                        const float now = flip_push(dc, cs, 0.f, a.z, std::fabs(pitch), dn, s1.yaw, nsc, s1.z, base, dist);
+                        const float rest = flip_push(dc, scc, 0.f, 0.f, 0.f, dn, s1.yaw, nsc, s1.z, base, dist);
+                        const float push = std::max(0.f, now - rest);
+                        const Ext ce = extent(dc, yaw, pitch, cs, 0.f, a.z);
+                        const Ext re = extent(dn, s1.yaw, 0.f, nsc, base + push, s1.z);      // right neighbour
+                        const Ext le = extent(dn, -s1.yaw, 0.f, nsc, -(base + push), s1.z);  // left neighbour (mirror)
+                        ++tested;
+                        if (re.lo < ce.hi - 1e-4f || le.hi > ce.lo + 1e-4f) { if (++bad <= 3) std::printf("overlap: centre %d neighbour %d fl=%.2f ins=%.2f yaw=%.2f: gap %.3f\n", (int)mc, (int)mn, fl, ins, yaw, re.lo - ce.hi); }
+                        // on a 16:9 or 16:10 screen (case height = 0.42 of the width at most) the pushed neighbour must still start on screen
+                        for (float aspect : {16.f / 9.f, 16.f / 10.f}) {
+                            const float Wd = 1600.f, Hd = Wd / aspect, U = std::min(Hd * 0.42f, Wd * 0.42f);
+                            CHECK(re.lo * U < Wd * 0.5f);
+                        }
+                    }
+                    }
+                }
+            }
+        }
+        CHECK(bad == 0);
+        CHECK(tested > 1000);
+    }
+    {   // the first neighbours and everything beyond move out by the same amount, so the shelf pitch between them is untouched while a case is flipped
+        const float ex = 0.12f, pu = 0.31f;
+        CHECK(neighbour_shift(1.f, ex, pu) == neighbour_shift(2.f, ex, pu) && neighbour_shift(2.f, ex, pu) == neighbour_shift(7.f, ex, pu));
+        CHECK(neighbour_shift(0.f, ex, pu) == 0.f && neighbour_shift(0.5f, ex, pu) > 0.f && neighbour_shift(0.5f, ex, pu) < neighbour_shift(1.f, ex, pu));
+        CHECK(std::fabs((slot_pose(2.f).x + neighbour_shift(2.f, ex, pu) - (slot_pose(1.f).x + neighbour_shift(1.f, ex, pu))) - (slot_pose(2.f).x - slot_pose(1.f).x)) < 1e-6f);
+        CHECK(centre_adj(0.f, 0.f, 1.f).scale_mul > 1.029f && centre_adj(0.f, 0.f, 99.f).scale_mul < 1.05f);   // the settle term is bounded
+        // a clock running for 30 days still moves the idle float frame to frame
+        CHECK(idle_bob(2.6e6 + 0.00) != idle_bob(2.6e6 + 0.5));
+    }
+    {   // idle float stays tiny and bounded
+        float mx = 0.f, my = 0.f;
+        for (int i = 0; i < 2000; ++i) { mx = std::max(mx, std::fabs(idle_bob(0.05f * (float)i))); my = std::max(my, std::fabs(idle_sway(0.05f * (float)i))); }
+        CHECK(mx < 0.02f && mx > 0.008f && my < 0.02f);
+        CHECK(console_chip("GameCube", false) == "GameCube" && console_chip("Switch", true) == "Switch 2");
+        CHECK(chip_wants_dark_ink(0.9f) && !chip_wants_dark_ink(0.3f));
     }
 
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
