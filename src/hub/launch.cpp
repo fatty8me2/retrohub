@@ -25,6 +25,7 @@
 #include "pcsx2.h"
 #include "ps2.h"
 #include "ppsspp.h"
+#include "lichii.h"
 #include "wiiu_meta.h"
 #include "invite.h"
 #include "dolphin_speed.h"
@@ -269,6 +270,25 @@ void pad_exit_watch() {
     request_game_close();
 }
 
+/* Lichii build 88 (release notes, known issue): a fence-worker shutdown race can leave lichii.exe waiting after its window closed. The session
+ * (save copy-back, vault sync) waits for the whole job, so once the game had a window and every window of the job has been gone for 15 s,
+ * the job is ended. Only RetroHub's own Lichii runs in that job (Kind::Lichii is never a user's install); by handle, never by image name. */
+void lichii_hang_watch() {
+    static bool had_window = false;
+    static ULONGLONG gone_since = 0;
+    if (!A.proc || A.run.system_short != "switch" || g_headless) { had_window = false; gone_since = 0; return; }
+    const ULONGLONG now = GetTickCount64();
+    if (game_main_window()) { had_window = true; gone_since = 0; return; }
+    if (!had_window) return;
+    if (!gone_since) { gone_since = now; return; }
+    if (now - gone_since < 15000) return;
+    autotest_log("lichii: window closed 15 s ago but the process is still running (build 88 exit hang): ending its job");
+    if (A.job_h) TerminateJobObject(A.job_h, 0);
+    else TerminateProcess(A.proc, 0);
+    had_window = false;
+    gone_since = 0;
+}
+
 void* running_game_hwnd() { return g_headless ? nullptr : (void*)game_main_window(); }
 std::vector<unsigned long> running_game_pids() { std::vector<unsigned long> v; for (DWORD p : game_pids()) v.push_back(p); return v; }
 
@@ -399,6 +419,7 @@ void poll_process() {
     start_hint_tick();
     cheats_pad_watch();
     wiiu_pad_watch();
+    lichii_hang_watch();
     if (!A.proc) return;
     if (WaitForSingleObject(A.proc, 0) != WAIT_OBJECT_0) return;
     if (A.job_h) {   // the emulator may have handed the game to a child: wait until the whole job is gone
@@ -574,11 +595,14 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         std::string a0 = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(g0, fs0, mp_arg)
                          : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(g0, fs0, "<card>")
                          : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(g0, fs0)
-                         : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
+                         : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(g0, fs0)
+                         : kind == hubemu::Kind::Lichii ? hubemu::lichii_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
+        if (kind == hubemu::Kind::Lichii) { hubemu::NxSetup ns = hubemu::lichii_setup_status(inst.dir); a0 += std::string(" | keys ") + (ns.prod_keys ? "yes" : "no") + " firmware " + (ns.firmware ? "yes" : "no"); }
         shot_trace("external", std::string(hubemu::name(kind)) + " installed | " + a0);
         set_notice("Headless test run: launch skipped.");
         return;
     }
+    if (kind == hubemu::Kind::Lichii && !switch_ready_or_ask(e, inst.dir)) return;   // keys / firmware first (the player's own; switch_ui.cpp)
     if (hubemu::is_running(inst.exe)) {   // a second launch would hand over to the running instance and end the session early
         set_notice(std::string(hubemu::name(kind)) + " is already running. Close it first, then start the game from RetroHub.", 10.0);
         return;
@@ -609,6 +633,11 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         hubemu::CemuPads cp = cemu_pads_for(pq);
         std::string perr = hubemu::prepare_ppsspp(inst.dir, pq, cp.xinput.empty() ? 0 : cp.xinput[0], gs_values_for(e));
         if (!perr.empty()) { set_notice("Could not set up PPSSPP: " + perr, 12.0); return; }
+    } else if (kind == hubemu::Kind::Lichii) {   // portable user\ under the managed dir; player 1 from the "switch" profile on one SDL pad
+        hubctl::Profile px = controls_profile("switch", e.key);
+        hubemu::AzPad ap = azahar_pad_for(px);   // same pick as Azahar: the RetroHub port-1 pad as SDL guid + n-th pad with that guid
+        std::string perr = hubemu::prepare_lichii(inst.dir, px, ap.guid, ap.port, gs_values_for(e), hub::gs::is_fullscreen(gs_values_for(e)));
+        if (!perr.empty()) { set_notice("Could not set up Lichii: " + perr, 12.0); return; }
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw)); }
     } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
@@ -647,6 +676,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI", hub::gs::volume_of(gsv))
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
                        : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(game, fs)
+                       : kind == hubemu::Kind::Lichii ? hubemu::lichii_args(game, fs)
                                                        : hubemu::cemu_args(game, fs);
     if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS") && kind == hubemu::Kind::Dolphin)   // QA only: extra Dolphin flags (e.g. -m movie.dtm)
         args = std::string(std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS")) + " " + args;
@@ -870,6 +900,7 @@ void play_entry(const hub::GameEntry& e_in) {
         case hub::System::GC:
         case hub::System::PS2:
         case hub::System::PSP:
+        case hub::System::Switch:
         case hub::System::N3DS:
         case hub::System::WiiU:
             launch_external(e, ri, battery);
