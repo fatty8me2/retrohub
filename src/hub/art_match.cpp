@@ -1,5 +1,6 @@
 #include "json.h"
 #include "art_match.h"
+#include "gametdb.h"
 
 #include <algorithm>
 #include <cctype>
@@ -119,14 +120,44 @@ std::string gametdb_name(const std::string& game_id4, char region_letter) {
     return "gametdb:" + game_id4 + "01:" + r;   // 01 = Nintendo; other publishers use other codes and simply 404
 }
 
+std::string gametdb_name_for(const std::string& id, const std::string& region_folder) {
+    if (id.empty()) return "";
+    return "gametdb:" + id + ":" + (region_folder.empty() ? "*" : region_folder);
+}
+
+bool parse_gametdb_name(const std::string& name, std::string* id, std::string* region) {
+    if (name.compare(0, 8, "gametdb:") != 0) return false;
+    size_t c = name.rfind(':');
+    if (c <= 8) return false;
+    if (id) *id = name.substr(8, c - 8);
+    if (region) *region = name.substr(c + 1);
+    return true;
+}
+
 std::vector<std::string> thumb_urls(const std::string& system_short, int kind, const std::string& nointro_name) {
     std::vector<std::string> out;
-    if (nointro_name.compare(0, 8, "gametdb:") == 0) {   // Wii U cover from GameTDB (front cover only), fetched on demand and cached like the rest
-        size_t c = nointro_name.rfind(':');
-        if (kind == 0 && system_short == "wiiu" && c > 8)
-            out.push_back("https://art.gametdb.com/wiiu/cover/" + nointro_name.substr(c + 1) + "/" + nointro_name.substr(8, c - 8) + ".jpg");
+    std::string id, region;
+    if (parse_gametdb_name(nointro_name, &id, &region)) {   // GameTDB cover scans, fetched on demand and cached like the rest
+        if (kind != 0 && kind != 3) return out;
+        std::vector<std::string> folders = gametdb::region_folders(id, region == "*" ? "" : region);
+        if (region != "*" && region.size() == 2 && !folders.empty()) {   // the name's own folder first
+            folders.erase(std::remove(folders.begin(), folders.end(), region), folders.end());
+            folders.insert(folders.begin(), region);
+        }
+        if (system_short == "switch") folders = {"US", "EN"};   // Switch ids are region "ALL" or per region; try the common ones
+        /* An id whose region letter is 'A' (all regions) or 'O' (USA + Europe), e.g. 3DS "BNEA", often has its scan filed under one of the
+         * language folders only (Pokemon Moon: FR): look further for those, HQ size only past the third folder. */
+        const bool multi = id.size() >= 4 && (id[3] == 'A' || id[3] == 'O');
+        const size_t full_n = 3, max_n = multi ? 8 : 3;
+        if (folders.size() > max_n) folders.resize(max_n);
+        for (size_t i = 0; i < folders.size(); ++i) {
+            auto us = gametdb::image_urls(system_short, id, kind == 3 ? gametdb::Img::CoverFull : gametdb::Img::Cover, folders[i]);
+            for (size_t k = 0; k < us.size(); ++k)
+                if (i < full_n || k == 0) out.push_back(us[k]);
+        }
         return out;
     }
+    if (kind == 3) return out;   // a full cover only comes from GameTDB
     std::string u = thumb_url(system_short, kind, nointro_name);
     if (u.empty()) return out;
     out.push_back(u);

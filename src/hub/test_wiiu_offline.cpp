@@ -405,11 +405,11 @@ static void test_art_names() {
     CHECK(hubart_match::unshift_article("Mario Kart 8 (USA)") == "Mario Kart 8 (USA)");
     CHECK(hubart_match::dat_url("wiiu").find("api.github.com/repos/libretro-thumbnails/Nintendo_-_Wii_U") != std::string::npos);
     CHECK(hubart_match::thumb_url("wiiu", 0, "Super Mario 3D World (USA) (En,Fr,Es) (Rev 2)").find("/Nintendo_-_Wii_U/master/Named_Boxarts/") != std::string::npos);
-    /* GameTDB fallback: front cover only, one image per game */
+    /* GameTDB fallback: front cover only */
     std::string gn = hubart_match::gametdb_name("ALZE", 'E');
     CHECK(gn == "gametdb:ALZE01:US" && hubart_match::gametdb_name("ALZ", 'E').empty());
     auto u = hubart_match::thumb_urls("wiiu", 0, gn);
-    CHECK(u.size() == 1 && u[0] == "https://art.gametdb.com/wiiu/cover/US/ALZE01.jpg");
+    CHECK(u.size() == 6 && u[0] == "https://art.gametdb.com/wiiu/coverHQ/US/ALZE01.jpg" && u[1] == "https://art.gametdb.com/wiiu/cover/US/ALZE01.jpg");   // 3 region folders x (HQ, standard)
     CHECK(hubart_match::thumb_urls("wiiu", 1, gn).empty());
     CHECK(hubart_match::thumb_urls("wiiu", 0, hubart_match::gametdb_name("ALZP", 'P'))[0].find("/EN/ALZP01.jpg") != std::string::npos);
 }

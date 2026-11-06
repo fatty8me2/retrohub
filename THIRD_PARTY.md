@@ -99,5 +99,8 @@ Licence check for xdelta3, done on the exact tags: **v3.1.0 is GPL-2.0-or-later*
 ## Online game info (fetched on demand, not shipped)
 The details modal fetches a game description and review/age ratings, at most about one request a second and cached per game, from Wikipedia (REST page summary; text CC BY-SA 4.0, shown with a "From Wikipedia" link) and Wikidata (CC0). Requests identify themselves as `RetroHub/<version> (https://github.com/fatty8me2/retrohub)`. A result is shown only when the Wikidata item matches both the game title and its platform.
 
+## GameTDB (fetched on demand, not shipped)
+Full cover scans and front covers of GameCube, Wii U, DS and 3DS games (`art.gametdb.com/<wii|wiiu|ds|3ds>/coverfullHQ|coverHQ/<region>/<id>`, plus Switch front covers when a title matches) and the official database downloads (`www.gametdb.com/<wiitdb|wiiutdb|dstdb|3dstdb|switchtdb>.zip`, parsed once into a compact per-user index) are used as a fallback for cover art, to map a Wii U title to its product code, and as the description source when Wikipedia has none (shown with a "GameTDB" link). Requests are one at a time, at least 0.5 s apart, honour 429 / Retry-After, and everything is cached per user; nothing is bundled. Switch `.nup` packages supply their own icon from the package header (no keys).
+
 ## Custom startup sounds (decoders)
 - dr_wav.h, dr_mp3.h (mackron/dr_libs): public domain / MIT-0. stb_vorbis.c (nothings/stb): public domain / MIT. In src/common/third_party, used by real_boot.cpp.

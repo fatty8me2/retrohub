@@ -1,10 +1,12 @@
 #include "gameinfo.h"
 #include "json.h"
+#include "gametdb.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -78,6 +80,36 @@ std::vector<std::string> split(const std::string& s, char sep) {
 int to_int(const std::string& s) { return s.empty() ? 0 : std::atoi(s.c_str()); }
 
 }  // namespace
+
+std::vector<std::string> title_variants(const Query& q) {
+    std::vector<std::string> out;
+    auto add = [&](const std::string& t) {
+        if (t.empty()) return;
+        std::string n = normalize(t);
+        if (n.empty()) return;
+        for (const auto& w : out) if (normalize(w) == n) return;
+        out.push_back(t);
+    };
+    auto add_forms = [&](const std::string& t) {
+        add(t);
+        /* short forms the library uses ("Zelda: The Wind Waker") -> the full title Wikidata labels */
+        std::string l = lower_ascii(t);
+        if (l.rfind("zelda:", 0) == 0) add("The Legend of Zelda:" + t.substr(6));
+        else if (l.rfind("zelda ", 0) == 0) add("The Legend of Zelda " + t.substr(6));
+        else if (l.rfind("legend of zelda", 0) == 0) add("The " + t);
+    };
+    for (const std::string& t : {q.alt_title, clean_title(q.title)}) {
+        if (t.empty()) continue;
+        add_forms(t);
+        /* "Name (Platform)" disambiguators and trailing editions fall back to the base game's entry */
+        std::string l = lower_ascii(t);
+        for (const char* suf : {" master quest", " (gamecube)"}) {
+            size_t n = std::strlen(suf);
+            if (l.size() > n && l.compare(l.size() - n, n, suf) == 0) add_forms(t.substr(0, t.size() - n));
+        }
+    }
+    return out;
+}
 
 std::string normalize(const std::string& title) {
     std::vector<std::string> w = words_of(title);
@@ -225,6 +257,14 @@ std::string platform_qid(const std::string& s) {
     return "";
 }
 
+std::vector<std::string> platform_qids(const std::string& system) {
+    std::vector<std::string> v;
+    std::string p = platform_qid(system);
+    if (!p.empty()) v.push_back(p);
+    if (system == "switch") v.push_back("Q122761124");   // Nintendo Switch 2
+    return v;
+}
+
 std::string url_search(const std::string& text) {
     return "https://www.wikidata.org/w/api.php?action=wbsearchentities&search=" + url_enc(text) +
            "&language=en&uselang=en&type=item&limit=8&format=json";
@@ -329,18 +369,11 @@ bool get_json(const Fetcher& f, const std::string& url, json::Value* out, bool* 
 
 ResolveResult resolve_online(const Query& q, const Fetcher& fetch, Online* out) {
     *out = Online();
-    const std::string plat = platform_qid(q.system);
-    if (plat.empty()) { out->status = Online::NotFound; return ResolveResult::NotFound; }
+    const std::vector<std::string> plats = platform_qids(q.system);
+    if (plats.empty()) { out->status = Online::NotFound; return ResolveResult::NotFound; }
+    std::string plat = plats[0];   // the platform the matched item is on (refined below)
 
-    std::vector<std::string> wants;
-    for (const std::string& t : {q.alt_title, clean_title(q.title)}) {
-        if (t.empty()) continue;
-        std::string n = normalize(t);
-        if (n.empty()) continue;
-        bool dup = false;
-        for (const auto& w : wants) if (normalize(w) == n) dup = true;
-        if (!dup) wants.push_back(t);
-    }
+    const std::vector<std::string> wants = title_variants(q);
     bool net_err = false;
     std::string qid, label;
     json::Value ent;   // the matched entity
@@ -373,7 +406,8 @@ ResolveResult resolve_online(const Query& q, const Fetcher& fetch, Online* out) 
             if (!cl) continue;
             bool game = false, onplat = false;
             for (const auto& s : statements(*cl, "P31")) if (s.id == "Q7889") game = true;
-            for (const auto& s : statements(*cl, "P400")) if (s.id == plat) onplat = true;
+            for (const auto& s : statements(*cl, "P400"))
+                for (const std::string& pq : plats) if (s.id == pq) { onplat = true; plat = pq; }
             if (game && onplat) { qid = id; ent = *e; break; }
         }
         if (!qid.empty()) break;
@@ -440,10 +474,12 @@ ResolveResult resolve_online(const Query& q, const Fetcher& fetch, Online* out) 
         json::Value sm;
         if (st == 200 && json::parse(body, &sm) && sm.str("type") == "standard") {
             std::string item = sm.str("wikibase_item");
-            if (item.empty() || item == qid) {   // the page must be the same Wikidata item
-                out->description = sm.str("extract");
-                if (const json::Value* u = path(sm, {"content_urls", "desktop", "page"})) out->page_url = u->s;
-            }
+            /* The enwiki sitelink of the matched item is authoritative even when the page it names is a redirect to a shared article
+             * (Pokemon Black -> "Pokemon Black and White"), whose own wikibase item differs. */
+            (void)item;
+            out->description = sm.str("extract");
+            out->source = "Wikipedia";
+            if (const json::Value* u = path(sm, {"content_urls", "desktop", "page"})) out->page_url = u->s;
         }
     }
     out->status = Online::Ok;
@@ -467,6 +503,8 @@ std::string cache_to_json(const Online& o) {
     put("label", json::make_string(o.label));
     put("description", json::make_string(o.description));
     put("url", json::make_string(o.page_url));
+    put("source", json::make_string(o.source));
+    put("rev", json::make_int(o.rev));
     put("esrb", json::make_string(o.esrb));
     put("pegi", json::make_string(o.pegi));
     put("developer", json::make_string(o.developer));
@@ -491,7 +529,8 @@ bool cache_from_json(const std::string& text, Online* o) {
     std::string st = v.str("status");
     o->status = st == "ok" ? Online::Ok : st == "none" ? Online::NotFound : Online::Unknown;
     o->fetched = v.i64("fetched");
-    o->qid = v.str("qid"); o->label = v.str("label"); o->description = v.str("description"); o->page_url = v.str("url");
+    o->qid = v.str("qid"); o->label = v.str("label"); o->description = v.str("description"); o->page_url = v.str("url"); o->source = v.str("source"); o->rev = (int)v.i64("rev");
+    if (o->source.empty() && !o->description.empty()) o->source = "Wikipedia";
     o->esrb = v.str("esrb"); o->pegi = v.str("pegi"); o->developer = v.str("developer"); o->publisher = v.str("publisher");
     o->genre = v.str("genre"); o->year = (int)v.i64("year");
     if (const json::Value* ra = v.get("ratings"); ra && ra->is_array())
@@ -501,9 +540,116 @@ bool cache_from_json(const std::string& text, Online* o) {
 
 bool cache_stale(const Online& o, int64_t now) {
     const int64_t day = 86400;
+    if (o.rev < kCacheRev && (o.status == Online::NotFound || o.description.empty())) return true;   // fetched before the matching fixes
     if (o.status == Online::Ok) return now - o.fetched > 90 * day;
     if (o.status == Online::NotFound) return now - o.fetched > 7 * day;
     return true;
+}
+
+/* ============================ GameTDB fallback + generated text ============================ */
+
+namespace {
+
+std::string excerpt(const std::string& syn) {
+    std::string t = syn;
+    for (const char* cut : {"Key Features", "KEY FEATURES", "Features:", "*"}) {   // marketing bullet lists and footnotes
+        size_t p = t.find(cut);
+        if (p != std::string::npos && p > 80) t.resize(p);
+    }
+    while (!t.empty() && std::isspace((unsigned char)t.back())) t.pop_back();
+    for (size_t p; (p = t.find("\n\n\n")) != std::string::npos;) t.erase(p, 1);
+    const size_t kMax = 650;
+    if (t.size() > kMax) {
+        size_t cut = t.find_last_of(".!?", kMax);
+        t.resize(cut != std::string::npos && cut > 200 ? cut + 1 : kMax);
+    }
+    for (char& c : t) if (c == '\n') c = ' ';
+    for (size_t p; (p = t.find("  ")) != std::string::npos;) t.erase(p, 1);
+    return t;
+}
+
+const char* gametdb_site(const std::string& system) {
+    std::string d = gametdb::db_name(system);
+    return d == "wii" ? "Wii" : d == "wiiu" ? "WiiU" : d == "ds" ? "DS" : d == "3ds" ? "3DS" : d == "switch" ? "Switch" : "";
+}
+
+}  // namespace
+
+ResolveResult resolve_description(const Query& q, const Fetcher& fetch, const TdbFinder& tdb, Online* out) {
+    ResolveResult r = resolve_online(q, fetch, out);
+    if (r == ResolveResult::NetworkError) return r;
+    if (!tdb) return r;
+    const gametdb::Rec* rec = tdb(q);
+    if (!rec) return r;
+    if (out->description.empty() && !rec->synopsis.empty()) {
+        out->description = excerpt(rec->synopsis);
+        out->source = "GameTDB";
+        const char* site = gametdb_site(q.system);
+        out->page_url = *site ? std::string("https://www.gametdb.com/") + site + "/" + rec->id : "";
+    }
+    if (out->developer.empty()) out->developer = rec->developer;
+    if (out->publisher.empty()) out->publisher = rec->publisher;
+    if (out->genre.empty() && !rec->genre.empty()) {
+        std::string g = rec->genre.substr(0, rec->genre.find(','));
+        if (!g.empty()) g[0] = (char)std::toupper((unsigned char)g[0]);
+        out->genre = g;
+    }
+    if (out->esrb.empty()) out->esrb = rec->esrb;
+    if (out->pegi.empty()) out->pegi = rec->pegi;
+    if (!out->year) out->year = rec->year;
+    if (out->status != Online::Ok && (!out->description.empty() || !out->developer.empty())) {
+        out->status = Online::Ok;
+        r = ResolveResult::Ok;
+    }
+    return r;
+}
+
+std::string system_display_name(const std::string& s, bool nx2) {
+    if (s == "n64") return "Nintendo 64";
+    if (s == "gc") return "Nintendo GameCube";
+    if (s == "gba") return "Game Boy Advance";
+    if (s == "gb") return "Game Boy";
+    if (s == "gbc") return "Game Boy Color";
+    if (s == "nds") return "Nintendo DS";
+    if (s == "3ds") return "Nintendo 3DS";
+    if (s == "wiiu") return "Wii U";
+    if (s == "ps1") return "PlayStation";
+    if (s == "ps2") return "PlayStation 2";
+    if (s == "psp") return "PlayStation Portable";
+    if (s == "switch") return nx2 ? "Nintendo Switch 2" : "Nintendo Switch";
+    if (s == "nes") return "NES";
+    if (s == "snes") return "Super Nintendo";
+    return s;
+}
+
+std::string generated_description(const Query& q, const Meta& m, const Online& o, bool nx2, const std::string& fan_base) {
+    const std::string console = system_display_name(q.system, nx2);
+    const std::string on = "the " + console;
+    if (!fan_base.empty()) {   // ROM hack / mod
+        std::string base = fan_base == "*" ? "" : fan_base;
+        return base.empty() ? "A fan-made modification for " + on + "." : "A fan-made modification of " + base + " for " + on + ".";
+    }
+    std::string genre = !m.genre.empty() ? m.genre : o.genre;
+    genre = lower_ascii(genre);
+    for (const char* suf : {" video game", " game"}) {
+        size_t n = std::strlen(suf);
+        if (genre.size() > n && genre.compare(genre.size() - n, n, suf) == 0) genre.resize(genre.size() - n);
+    }
+    size_t comma = genre.find(',');
+    if (comma != std::string::npos) genre.resize(comma);
+    while (!genre.empty() && std::isspace((unsigned char)genre.back())) genre.pop_back();
+    const int year = m.year ? m.year : o.year;
+    std::string who = !m.developer.empty() ? m.developer : !o.developer.empty() ? o.developer : !m.publisher.empty() ? m.publisher : o.publisher;
+    std::string noun = genre.empty() ? "game" : genre + " game";
+    std::string lead = year ? std::to_string(year) + " " + noun : noun;
+    const char first = lead[0];
+    std::string text = std::string(std::strchr("aeiouAEIOU", first) ? "An " : "A ") + lead + " for " + on;
+    if (!who.empty()) text += " by " + who;
+    std::string pl = players_text(m.players);
+    if (!pl.empty()) {
+        text += ", for " + pl;
+    }
+    return text + ".";
 }
 
 /* ============================ presentation ============================ */
