@@ -352,11 +352,11 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
         const bool light = on && ((0.2126f * (CS.hl_col & 0xFF) + 0.7152f * ((CS.hl_col >> 8) & 0xFF) + 0.0722f * ((CS.hl_col >> 16) & 0xFF)) / 255.f) > 0.72f;
         const ImU32 ink = hl_on > 0.f ? (light ? IM_COL32(20, 22, 30, 255) : IM_COL32_WHITE) : hov ? ui::TEXT : ui::TEXT2;
         float tx = p0.x + pad_x;
-        if (!t.sys.empty()) {   // the console's colour dot (on the active tab it becomes the ink colour: the pill already is that colour)
+        const bool whole = p0.x >= c0.x + sp(0.5f) - 1.f && p1.x <= c1.x - sp(0.5f) + 1.f;   // a label is drawn whole or not at all
+        if (!t.sys.empty() && (whole || total <= inner)) {   // the console's colour dot (on the active tab it becomes the ink colour: the pill already is that colour)
             dl->AddCircleFilled(ImVec2(tx + dot_r, (p0.y + p1.y) * 0.5f), dot_r, on ? ui::scale_alpha(ink, 0.9f) : col, 12);
             tx += dot_r * 2.f + sp(0.45f);
         }
-        const bool whole = p0.x >= c0.x + sp(0.5f) - 1.f && p1.x <= c1.x - sp(0.5f) + 1.f;   // a label is drawn whole or not at all
         if (whole || total <= inner) {
             const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.label.c_str());
             dl->AddText(f, fs, ImVec2(tx, (p0.y + p1.y - ts.y) * 0.5f), ink, t.label.c_str());
