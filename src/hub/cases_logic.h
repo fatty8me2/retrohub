@@ -73,19 +73,67 @@ inline CaseDims case_dims(shelf::Media m) {
     switch (m) {
         case Media::GcCase: return {0.71f, 1.f, 0.068f};        // GameCube keep case (about 135 x 191 x 13 mm)
         case Media::Ps2Case: return {0.71f, 1.f, 0.075f};       // DVD keep case (135 x 190 x 14)
-        case Media::WiiUCase: return {0.71f, 0.90f, 0.058f};    // Blu-ray keep case (135 x 171 x 11 mm)
+        case Media::WiiUCase: return {0.67f, 0.90f, 0.058f};    // Blu-ray keep case (the cover scans measure 0.71 w/h)
         case Media::SwitchCase: return {0.553f, 0.895f, 0.058f};// Switch keep case, slim (105 x 170 x 11 mm)
         case Media::Ps1Jewel: return {0.86f, 0.757f, 0.058f};   // jewel case (142 x 125 mm, wider than tall; drawn a little large)
-        case Media::DsCase: return {0.66f, 0.72f, 0.07f};       // near-square DS case (125 x 137 x 14)
-        case Media::N3dsCase: return {0.66f, 0.72f, 0.072f};
+        case Media::DsCase: return {0.76f, 0.65f, 0.07f};       // DS case: the cover scans are landscape (1.12 w/h)
+        case Media::N3dsCase: return {0.76f, 0.65f, 0.072f};
         case Media::PspCase: return {0.54f, 0.90f, 0.068f};     // UMD case: tall and narrow (104 x 171 x 14)
         case Media::NesCart: return {0.67f, 0.93f, 0.16f};      // cardboard boxes: thicker than the plastic cases
         case Media::SnesCart: return {0.97f, 0.70f, 0.18f};     // landscape (184 x 132 x 35)
         case Media::N64Cart: return {0.94f, 0.68f, 0.19f};      // landscape (178 x 128 x 38)
-        case Media::GbCart: case Media::GbcCart: return {0.58f, 0.66f, 0.15f};   // small near-square boxes (110 x 125 x 30)
-        case Media::GbaCart: return {0.60f, 0.66f, 0.15f};
+        case Media::GbCart: case Media::GbcCart: return {0.66f, 0.66f, 0.15f};   // small square boxes (the cover scans are 1:1)
+        case Media::GbaCart: return {0.66f, 0.66f, 0.15f};
         default: return {0.71f, 1.f, 0.075f};
     }
+}
+
+/* ---- case faces: where the cover art goes (pure; shared by cases_draw.cpp and the tests) ---- */
+struct UvRect { float u0 = 0, v0 = 0, u1 = 1, v1 = 1; };
+/* Share of the face width taken by the hinge strip of a plastic case (the spine side of the front, and of the back). */
+inline float hinge_frac(CaseKind k) { return k == CaseKind::Jewel ? 0.066f : k == CaseKind::Small ? 0.05f : 0.045f; }
+/* The cover window of the front face in face uv: the area the cover scan fills (cardboard boxes: nearly the whole face; plastic cases: inside the
+ * hinge strip and the rim). Pixel-free so the nominal cover aspect below can be computed without a face. */
+inline UvRect front_window(CaseKind k) {
+    UvRect r;
+    if (k == CaseKind::Box) { r.u0 = 0.028f; r.v0 = 0.028f; r.u1 = 1.f - 0.028f; r.v1 = 1.f - 0.03f; }
+    else { r.u0 = hinge_frac(k) + 0.008f; r.v0 = 0.02f; r.u1 = 1.f - 0.024f; r.v1 = 1.f - 0.02f; }
+    return r;
+}
+/* Width / height of the cover window of a console's case (what a scan of that console's cover is expected to measure). */
+inline float nominal_cover_aspect(shelf::Media m) {
+    const CaseDims d = case_dims(m);
+    const UvRect r = front_window(kind_for(m));
+    return (d.w * (r.u1 - r.u0)) / (d.h * (r.v1 - r.v0));
+}
+/* Where a whole cover scan of aspect `art_aspect` (w/h) goes inside a window of aspect `win_aspect` (both pixel aspects), as a rect in window
+ * fractions (0..1). The scan is never cropped. A scan within ~15% of the console's nominal cover aspect is the case's own insert: it takes the
+ * window as is when it is within 7% of its shape (a hair of stretch), else the window shrinks to the scan's shape (the plastic shows around it);
+ * anything else is letterboxed (`letterbox` = true: the margin is painted with the insert colour, not the case colour). */
+struct CaseArtFit { UvRect dst; bool letterbox = false; bool exact = false; };
+inline CaseArtFit fit_art(float win_aspect, float art_aspect, float nominal) {
+    CaseArtFit f;
+    if (!(win_aspect > 0.f) || !(art_aspect > 0.f)) return f;
+    const float rel = art_aspect / (nominal > 0.f ? nominal : win_aspect);
+    f.letterbox = !(rel >= 0.85f && rel <= 1.15f);
+    const float k = art_aspect / win_aspect;   // > 1: the scan is wider than the window
+    if (k > 0.93f && k < 1.07f) { f.exact = true; return f; }
+    if (k > 1.f) { const float h = 1.f / k; f.dst.v0 = (1.f - h) * 0.5f; f.dst.v1 = f.dst.v0 + h; }
+    else { f.dst.u0 = (1.f - k) * 0.5f; f.dst.u1 = f.dst.u0 + k; }
+    return f;
+}
+/* A square-ish scan (a Switch game's own icon) on a portrait case: the front is composed (banner, large icon, title) instead of a scan. */
+inline bool is_square_art(int w, int h) { return w > 0 && h > 0 && (float)w / (float)h >= 0.9f && (float)w / (float)h <= 1.1f; }
+inline bool is_portrait_case(shelf::Media m) { const CaseDims d = case_dims(m); return d.h >= d.w * 1.15f; }
+/* uv sub-rects of a full cover scan (BACK | SPINE | FRONT left to right) from the pixel split fullcover_split() returns. */
+struct FullParts { UvRect back, spine, front; };
+inline FullParts full_cover_parts(int w, int back_x1, int front_x0) {
+    FullParts p;
+    const float iw = w > 0 ? 1.f / (float)w : 0.f;
+    p.back = {0.f, 0.f, (float)back_x1 * iw, 1.f};
+    p.spine = {(float)back_x1 * iw, 0.f, (float)front_x0 * iw, 1.f};
+    p.front = {(float)front_x0 * iw, 0.f, 1.f, 1.f};
+    return p;
 }
 
 /* Real heights differ a lot (a DS case is 0.76 of a keep case, a box 0.72): cases are drawn this much bigger so the centre case is always about

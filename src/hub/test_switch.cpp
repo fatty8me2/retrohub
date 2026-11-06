@@ -88,6 +88,24 @@ static void test_ini() {
     CHECK(has(s2, "gpu_accuracy=1\n") && count_of(s2, "gpu_accuracy=") == 1);
     v["switch.gpu_accuracy"] = "lichii";
     CHECK(has(lichii_ini_launch(s2, v, true), "gpu_accuracy=1\n") && !has(lichii_ini_launch("", v, true), "gpu_accuracy"));   // untouched
+    // frame pacing: untouched by default; 30 / 60 / auto map to Lichii's FramePacingMode; smooth60 = steady 30 + frame generation 2x
+    {
+        hub::gs::Values p = hub::gs::defaults_for(hub::System::Switch);
+        CHECK(!has(lichii_ini_launch("", p, true), "frame_pacing_mode"));
+        p["switch.pacing"] = "30";
+        const std::string p30 = lichii_ini_launch("", p, true);
+        CHECK(has(p30, "frame_pacing_mode\\default=false\nframe_pacing_mode=1\n") && has(p30, "frame_gen=false\n"));
+        p["switch.pacing"] = "60";
+        CHECK(has(lichii_ini_launch(p30, p, true), "frame_pacing_mode=2\n") && count_of(lichii_ini_launch(p30, p, true), "frame_pacing_mode=") == 1);
+        p["switch.pacing"] = "auto";
+        CHECK(has(lichii_ini_launch(p30, p, true), "frame_pacing_mode=0\n"));
+        p["switch.pacing"] = "smooth60"; p["switch.framegen"] = "off";
+        const std::string sm = lichii_ini_launch(p30, p, true);
+        // the pacing target counts presented frames (generated ones too): steady 30 real + 30 generated = Target_60
+        CHECK(has(sm, "frame_pacing_mode=2\n") && has(sm, "frame_gen=true\n") && has(sm, "frame_gen_type=1\n") && has(sm, "frame_gen_multiplier=2\n"));
+        p["switch.pacing"] = "lichii";
+        CHECK(has(lichii_ini_launch(sm, p, true), "frame_pacing_mode=2\n") && has(lichii_ini_launch(sm, p, true), "frame_gen=false\n"));   // pacing untouched, framegen back to its own setting
+    }
 }
 
 static void test_controls() {

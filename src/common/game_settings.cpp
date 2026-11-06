@@ -130,6 +130,13 @@ std::vector<Option> build() {
     // Lichii build 88 FSR3 frame generation (off by default in Lichii): a 30 fps game shown at 60 (2x) or more.
     v.push_back(mk("switch.framegen", "Frame generation (FSR3)", "Video", SWITCH, K::Choice, S::Visual, "off",
                    {{"off", "Off"}, {"2", "2x (30 to 60 fps)"}, {"3", "3x"}, {"4", "4x"}}));
+    // Lichii frame pacing (frame_pacing_mode): a game running between 30 and 60 fps is shown unevenly on a 60 / 120 Hz screen (each
+    // frame held for 3 or 4 refreshes), which reads as micro-stutter; a steady 30 is perfectly even, and "Smooth 60" doubles that
+    // steady 30 with FSR3 frame generation (it overrides the frame generation setting above; it keeps the game at 30 real frames even
+    // where it could run 60 on its own).
+    v.push_back(mk("switch.pacing", "Frame pacing", "Video", SWITCH, K::Choice, S::Visual, "lichii",
+                   {{"lichii", "Use Lichii's setting"}, {"auto", "As fast as it runs"}, {"30", "Steady 30 fps"}, {"60", "Steady 60 fps"},
+                    {"smooth60", "Smooth 60 (steady 30 + frame generation)"}}));
     v.push_back(mk("switch.vsync", "VSync", "Video", SWITCH, K::Choice, S::Visual, "fifo",
                    {{"fifo", "On (FIFO)"}, {"mailbox", "Mailbox (low latency)"}, {"off", "Off (may tear)"}}));
     // use_asynchronous_shaders: a shader the game has not used before is built in the background instead of freezing the game (less stutter

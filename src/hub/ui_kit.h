@@ -20,6 +20,9 @@ inline float sp(float n) { return n * 8.f * S; }   // 8-pt spacing scale: sp(1)=
 
 struct Fonts {
     ImFont *cap = nullptr, *body = nullptr, *bold = nullptr, *h2 = nullptr, *title = nullptr, *hero = nullptr, *big = nullptr;
+    /* Small atlas fonts (2x vertical oversampling) for text drawn much smaller than the fonts above, e.g. the fine print on a
+     * game case's back: shrinking a 15-19 px glyph to ~7 px drops its 1-px strokes ("GENRE" read "GFNRF"). */
+    ImFont *tiny = nullptr, *tiny_bold = nullptr;
 };
 extern Fonts F;
 

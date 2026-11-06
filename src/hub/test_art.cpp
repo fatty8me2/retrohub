@@ -4,9 +4,15 @@
 #include "art_lru.h"
 #include "library.h"
 #include "games.h"
+#include "gametdb.h"
+#include "netgate.h"
 
 #include <cstdio>
+#include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <set>
 #include <string>
 
 namespace hm = hubart_match;
@@ -318,6 +324,248 @@ game (
                 }
             }
         }
+    }
+    /* ---- GameTDB: ids, regions, urls, database records (no network) ---- */
+    {
+        CHECK_EQ(gametdb::id_from_serial("gc", "gm4e01"), "GM4E01");
+        CHECK_EQ(gametdb::id_from_serial("gc", "GM4E"), "");
+        CHECK_EQ(gametdb::id_from_serial("wiiu", "ARDE"), "ARDE01");
+        CHECK_EQ(gametdb::id_from_serial("wiiu", "ARDE01"), "ARDE01");
+        CHECK_EQ(gametdb::id_from_serial("wiiu", "0005000010145C00"), "");   // a title id is not a product code
+        CHECK_EQ(gametdb::id_from_serial("nds", "irbo"), "IRBO");
+        CHECK_EQ(gametdb::id_from_serial("3ds", "ECLA"), "ECLA");
+        CHECK_EQ(gametdb::id_from_serial("3ds", "0004000000055d00"), "");
+        CHECK_EQ(gametdb::id_from_serial("n64", "NALE"), "");
+        CHECK_EQ(gametdb::id_from_serial("gc", "GM4/01"), "");
+        CHECK(gametdb::has_fullcover("gc") && gametdb::has_fullcover("wiiu") && gametdb::has_fullcover("nds") && gametdb::has_fullcover("3ds"));
+        CHECK(!gametdb::has_fullcover("n64") && !gametdb::has_fullcover("switch") && !gametdb::has_fullcover("ps2"));
+        CHECK_EQ(gametdb::db_name("gc"), "wii");
+        CHECK_EQ(gametdb::db_url("wiiu"), "https://www.gametdb.com/wiiutdb.zip");
+        CHECK_EQ(gametdb::db_url("nds"), "https://www.gametdb.com/dstdb.zip");
+        CHECK(gametdb::db_url("n64").empty());
+
+        /* region fallback: the id's own region, then the file name's hint, then US, EN, JA, the rest; no duplicates */
+        auto r = gametdb::region_folders("GM4E01");
+        CHECK(r.size() >= 8 && r[0] == "US" && r[1] == "EN" && r[2] == "JA");
+        r = gametdb::region_folders("GM4P01");
+        CHECK(r[0] == "EN" && r[1] == "US" && r[2] == "JA");
+        r = gametdb::region_folders("GM4J01");
+        CHECK(r[0] == "JA" && r[1] == "US" && r[2] == "EN");
+        r = gametdb::region_folders("ECLA", "Japan");   // 'A' = all regions: the hint decides
+        CHECK(r[0] == "JA" && r[1] == "US" && r[2] == "EN");
+        r = gametdb::region_folders("ECLA");
+        CHECK(r[0] == "US" && r[1] == "EN" && r[2] == "JA");
+        r = gametdb::region_folders("GM4D01");
+        CHECK(r[0] == "DE" && r[1] == "US" && r[2] == "EN");
+        std::set<std::string> uniq(r.begin(), r.end());
+        CHECK(uniq.size() == r.size());
+        CHECK_EQ(gametdb::region_hint_from_name("Pokemon X (USA) (En,Ja,Fr)"), "USA");
+        CHECK_EQ(gametdb::region_hint_from_name("Zelda (Europe) (En,Fr)"), "Europe");
+        CHECK_EQ(gametdb::region_hint_from_name("Zelda (Japan)"), "Japan");
+        CHECK_EQ(gametdb::region_hint_from_name("Plain Name"), "");
+        CHECK_EQ(gametdb::region_hint_from_name("Name (En,Ja,Fr)"), "");
+
+        /* urls: HQ first, then the standard size; GameCube is png and has no coverHQ; the others are jpg */
+        auto u = gametdb::image_urls("gc", "GM4E01", gametdb::Img::CoverFull, "US");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/wii/coverfullHQ/US/GM4E01.png" && u[1] == "https://art.gametdb.com/wii/coverfull/US/GM4E01.png");
+        u = gametdb::image_urls("gc", "GM4E01", gametdb::Img::Cover, "US");
+        CHECK(u.size() == 1 && u[0] == "https://art.gametdb.com/wii/cover/US/GM4E01.png");
+        u = gametdb::image_urls("nds", "IRBO", gametdb::Img::CoverFull, "US");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/ds/coverfullHQ/US/IRBO.jpg" && u[1] == "https://art.gametdb.com/ds/coverfull/US/IRBO.jpg");
+        u = gametdb::image_urls("3ds", "ECLA", gametdb::Img::Cover, "EN");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/3ds/coverHQ/EN/ECLA.jpg");
+        u = gametdb::image_urls("wiiu", "ARDE01", gametdb::Img::CoverFull, "US");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/wiiu/coverfullHQ/US/ARDE01.jpg");
+        u = gametdb::image_urls("switch", "AAAAA", gametdb::Img::Cover, "US");
+        CHECK(u.size() == 2 && u[0] == "https://art.gametdb.com/switch/coverHQ/US/AAAAA.jpg");
+        CHECK(gametdb::image_urls("switch", "AAAAA", gametdb::Img::CoverFull, "US").empty());   // no full scans for Switch
+        CHECK(gametdb::image_urls("n64", "NALE", gametdb::Img::Cover, "US").empty());
+        CHECK(gametdb::image_urls("gc", "../../x", gametdb::Img::Cover, "US").empty());          // ids are alphanumeric only
+        CHECK(gametdb::image_urls("gc", "GM4E01", gametdb::Img::Cover, "U/S").empty());
+
+        /* the pseudo names the art worker passes around, and the url list they expand to */
+        CHECK_EQ(hm::gametdb_name_for("GM4E01", "US"), "gametdb:GM4E01:US");
+        CHECK_EQ(hm::gametdb_name_for("GM4E01", ""), "gametdb:GM4E01:*");
+        CHECK_EQ(hm::gametdb_name_for("", "US"), "");
+        std::string pid, preg;
+        CHECK(hm::parse_gametdb_name("gametdb:ARDE01:US", &pid, &preg) && pid == "ARDE01" && preg == "US");
+        CHECK(!hm::parse_gametdb_name("Super Mario 64 (USA)", &pid, &preg));
+        auto tu = hm::thumb_urls("gc", 3, "gametdb:GM4E01:*");
+        CHECK(tu.size() == 6 && tu[0] == "https://art.gametdb.com/wii/coverfullHQ/US/GM4E01.png" && tu[2].find("/EN/") != std::string::npos);   // 3 folders x (HQ, standard)
+        tu = hm::thumb_urls("gc", 0, "gametdb:GM4E01:*");
+        CHECK(tu.size() == 3 && tu[0] == "https://art.gametdb.com/wii/cover/US/GM4E01.png");
+        tu = hm::thumb_urls("wiiu", 0, "gametdb:ARDE01:EN");
+        CHECK(tu.size() == 6 && tu[0] == "https://art.gametdb.com/wiiu/coverHQ/EN/ARDE01.jpg" && tu[2].find("/US/") != std::string::npos);
+        CHECK(hm::thumb_urls("gc", 1, "gametdb:GM4E01:*").empty() && hm::thumb_urls("gc", 2, "gametdb:GM4E01:*").empty());   // no title / snap from GameTDB
+        CHECK(hm::thumb_urls("n64", 3, "Super Mario 64 (USA)").empty());   // a libretro name never has a full cover
+        CHECK(hm::thumb_urls("n64", 0, "Super Mario 64 (USA)").size() == 1);
+        CHECK(hm::thumb_urls("switch", 0, "gametdb:AAAAA:*").size() == 4);   // US, EN x (HQ, standard)
+        tu = hm::thumb_urls("3ds", 3, "gametdb:BNEA:*");   // region 'A': 3 folders x (HQ, standard), then 5 more folders (HQ only), FR among them
+        CHECK(tu.size() == 11 && tu[0] == "https://art.gametdb.com/3ds/coverfullHQ/US/BNEA.jpg" && tu.back().find("/NL/") != std::string::npos);
+        bool has_fr = false;
+        for (const auto& x : tu) if (x == "https://art.gametdb.com/3ds/coverfullHQ/FR/BNEA.jpg") has_fr = true;
+        CHECK(has_fr);
+        CHECK(hubart::Kind::FullCover != hubart::Kind::Boxart);
+
+        /* database records: parse, tsv round trip, id / title lookup, region preference */
+        const char* xml = R"X(<?xml version="1.0" encoding="UTF-8"?>
+<datafile><WiiUTDB version="1" games="3"/>
+	<game name="Super Mario 3D World (USA) (EN)">
+		<id>ARDE01</id>
+		<type>WiiU</type>
+		<region>NTSC-U</region>
+		<locale lang="FR">
+			<title>SUPER MARIO 3D WORLD</title>
+			<synopsis>Partez &amp; voyez.</synopsis>
+		</locale>
+		<locale lang="EN">
+			<title>Super Mario 3D World</title>
+			<synopsis>Leap into the first multiplayer Mario platformer!
+
+Key Features:
+Play as Mario &lt;or&gt; Luigi</synopsis>
+		</locale>
+		<developer>Nintendo EAD Tokyo</developer>
+		<publisher>Nintendo</publisher>
+		<date year="2013" month="11" day="22"/>
+		<genre>action,platformer,3d platformer</genre>
+		<rating type="ESRB" value="E"/>
+		<rating type="PEGI" value="3"/>
+		<input players="4"><control type="pad" required="false"/></input>
+	</game>
+	<game name="Super Mario 3D World (Europe) (EN,FR)">
+		<id>ARDP01</id>
+		<type>WiiU</type>
+		<region>PAL</region>
+		<locale lang="EN"><title>Super Mario 3D World</title><synopsis/></locale>
+		<developer>Nintendo EAD Tokyo</developer>
+		<publisher>Nintendo</publisher>
+		<date year="2013" month="11" day="29"/>
+	</game>
+	<game name="Metroid (USA)"><id>GM8E01</id><type>GameCube</type><region>NTSC-U</region><locale lang="EN"><title>Metroid Prime</title><synopsis>Samus returns.</synopsis></locale></game>
+	<game name="Broken"><type>WiiU</type></game>
+</datafile>)X";
+        auto recs = gametdb::parse_xml(xml);
+        CHECK(recs.size() == 3);   // the entry without an id is dropped
+        CHECK(recs[0].id == "ARDE01" && recs[0].title == "Super Mario 3D World" && recs[0].region == "NTSC-U");
+        CHECK(recs[0].synopsis.find("Leap into") == 0 && recs[0].synopsis.find("<or>") != std::string::npos);   // EN locale chosen over FR; entities decoded
+        CHECK(recs[0].developer == "Nintendo EAD Tokyo" && recs[0].publisher == "Nintendo" && recs[0].year == 2013 && recs[0].month == 11);
+        CHECK(recs[0].esrb == "E" && recs[0].pegi == "PEGI 3" && recs[0].players == 4 && recs[0].genre.find("action") == 0);
+        CHECK(recs[1].id == "ARDP01" && recs[1].synopsis.empty() && recs[1].esrb.empty());
+        CHECK(gametdb::parse_xml(xml, "GameCube").size() == 1 && gametdb::parse_xml(xml, "GameCube")[0].id == "GM8E01");
+        CHECK(gametdb::parse_xml("").empty() && gametdb::parse_xml("<game name=\"x\"><id>A").empty());   // truncated input: no crash, nothing
+        auto back = gametdb::parse_tsv(gametdb::to_tsv(recs));
+        CHECK(back.size() == 3 && back[0].synopsis == recs[0].synopsis && back[0].title == recs[0].title && back[0].year == 2013 && back[2].id == "GM8E01");
+        gametdb::Index idx;
+        idx.load(back);
+        CHECK(idx.size() == 3 && idx.by_id("ARDP01") && idx.by_id("ARDP01")->region == "PAL" && !idx.by_id("NOPE01"));
+        auto t = idx.by_title("Super Mario 3D World (USA) (En,Fr,Es) (Rev 2)");   // tags dropped, USA entry preferred
+        CHECK(t && t->id == "ARDE01");
+        t = idx.by_title("super mario 3d world", true);
+        CHECK(t && t->id == "ARDE01" && !t->synopsis.empty());
+        CHECK(!idx.by_title("Mario Party") && !idx.by_title(""));
+        t = gametdb::find_record(idx, "wiiu", "0005000010145C00", {"Super Mario 3D World"});   // a Wii U title id finds it by title
+        CHECK(t && t->id == "ARDE01");
+        t = gametdb::find_record(idx, "wiiu", "ARDP", {"Super Mario 3D World"});             // the id's own entry has no synopsis: the same-title one is used
+        CHECK(t && !t->synopsis.empty());
+        t = gametdb::find_record(idx, "gc", "GM8E01", {"Wrong Title"});
+        CHECK(t && t->id == "GM8E01");
+        std::string xo;
+        CHECK(!gametdb::unzip_xml("not a zip", &xo) && xo.empty());
+    }
+
+    /* ---- review fixes: bounded entity decoding, per-game searches, slim index, decode caps, one shared limiter ---- */
+    {
+        /* an '&' with no ';' within 10 characters is literal, and a hostile run of them is linear, not quadratic */
+        std::string hostile = "<game name=\"x\"><id>ID1</id><type>WiiU</type><locale lang=\"EN\"><title>T</title><synopsis>";
+        hostile.append(300000, '&');
+        hostile += "&amp; ok;</synopsis></locale></game>";
+        auto t0 = std::chrono::steady_clock::now();
+        auto hr = gametdb::parse_xml(hostile);
+        double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        CHECK(hr.size() == 1 && hr[0].synopsis.size() == 300000 + 1 + 4 && secs < 2.0);   // '&' x 300000, then "&amp;" -> '&', then " ok;"
+        auto er = gametdb::parse_xml("<game name=\"x\"><id>A1</id><locale lang=\"EN\"><title>A &amp; B &#x41;&#66; &bogus; &lt</title><synopsis/></locale></game>");
+        CHECK(er.size() == 1 && er[0].title == "A & B AB &bogus; &lt");
+
+        /* every tag search stays inside its own <game>: the second game has no developer / no EN locale / no name and must not borrow the third's */
+        auto sr = gametdb::parse_xml("<game name=\"One\"><id>A1</id><locale lang=\"FR\"><title>Un</title></locale></game>"
+                                     "<game name=\"Two\"><id>B2</id></game>"
+                                     "<game name=\"Three\"><id>C3</id><developer>Dev3</developer><locale lang=\"EN\"><title>Three EN</title><synopsis>s3</synopsis></locale>"
+                                     "<date year=\"2001\" month=\"2\"/></game>");
+        CHECK(sr.size() == 3 && sr[0].title == "Un" && sr[0].developer.empty() && sr[0].synopsis.empty());
+        CHECK(sr[1].id == "B2" && sr[1].title == "Two" && sr[1].developer.empty() && sr[1].synopsis.empty() && sr[1].year == 0);
+        CHECK(sr[2].title == "Three EN" && sr[2].developer == "Dev3" && sr[2].year == 2001);
+
+        /* slim index: only id / region / title stay in memory, the rest is read from the file on demand (and a changed file is no record) */
+        namespace fs2 = std::filesystem;
+        fs2::path td = fs2::temp_directory_path() / "hub_art_slim_idx";
+        fs2::create_directories(td);
+        std::vector<gametdb::Rec> rs(3);
+        rs[0].id = "AAAA"; rs[0].region = "NTSC-U"; rs[0].title = "Alpha Game"; rs[0].synopsis = "alpha text\nline two"; rs[0].developer = "DevA";
+        rs[1].id = "BBBB"; rs[1].region = "PAL"; rs[1].title = "Alpha Game"; rs[1].publisher = "PubB";
+        rs[2].id = "CCCC"; rs[2].region = "NTSC-J"; rs[2].title = "Gamma"; rs[2].synopsis = "gamma";
+        { std::ofstream o(td / "t.tsv", std::ios::binary); std::string tsv = gametdb::to_tsv(rs); o.write(tsv.data(), (std::streamsize)tsv.size()); }
+        gametdb::Index si;
+        CHECK(si.load_file((td / "t.tsv").u8string()) && si.size() == 3);
+        auto a = si.by_id("AAAA");
+        CHECK(a && a->synopsis == "alpha text\nline two" && a->developer == "DevA");
+        auto b = si.by_title("alpha game");
+        CHECK(b && b->id == "AAAA");                       // USA before PAL
+        b = si.by_title("Gamma (Japan)", true);
+        CHECK(b && b->synopsis == "gamma");
+        CHECK(!si.by_id("ZZZZ") && !si.load_file((td / "missing.tsv").u8string()));
+        { std::ofstream o(td / "t.tsv", std::ios::binary | std::ios::trunc); o << "#changed\n"; }
+        CHECK(!si.by_id("AAAA"));                          // the file changed under the index: nothing, not garbage
+        std::error_code ec2;
+        fs2::remove_all(td, ec2);
+
+        /* image decode caps are checked from the header before any allocation */
+        auto png_hdr = [](uint32_t w, uint32_t h) {
+            std::string b("\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR", 16);
+            for (uint32_t v : {w, h}) for (int sh = 24; sh >= 0; sh -= 8) b += (char)((v >> sh) & 255);
+            b += std::string("\x08\x06\0\0\0\0\0\0\0", 9);
+            b += std::string("\0\0\0\0IDAT", 8);   // stb scans on to the first IDAT even for a header-only read
+            return b;
+        };
+        int iw = 0, ih = 0;
+        {   // positive control: a real 1x1 PNG
+            static const unsigned char one[] = {0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x02,0x00,0x00,0x00,0x90,0x77,0x53,0xde,0x00,0x00,0x00,0x0c,0x49,0x44,0x41,0x54,0x78,0x9c,0x63,0xf8,0xcf,0xc0,0x00,0x00,0x03,0x01,0x01,0x00,0xc9,0xfe,0x92,0xef,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82};
+            CHECK(hubart::detail::image_header_ok(std::string((const char*)one, sizeof one), &iw, &ih) && iw == 1 && ih == 1);
+        }
+        CHECK(hubart::detail::image_header_ok(png_hdr(2048, 2048), &iw, &ih) && iw == 2048 && ih == 2048);
+        CHECK(hubart::detail::image_header_ok(png_hdr(4000, 4000), &iw, &ih));          // 16 Mpx exactly
+        CHECK(!hubart::detail::image_header_ok(png_hdr(4001, 4000), &iw, &ih));         // over 16 Mpx
+        CHECK(!hubart::detail::image_header_ok(png_hdr(20000, 20000), &iw, &ih));       // a 400 Mpx bomb
+        CHECK(!hubart::detail::image_header_ok(png_hdr(9000, 10), &iw, &ih));           // one side over 8192
+        CHECK(!hubart::detail::image_header_ok(png_hdr(10, 8193), &iw, &ih));
+        CHECK(hubart::detail::image_header_ok(png_hdr(8192, 100), &iw, &ih));
+        CHECK(!hubart::detail::image_header_ok(png_hdr(0, 5), &iw, &ih));
+        CHECK(!hubart::detail::image_header_ok("not an image at all", &iw, &ih) && !hubart::detail::image_header_ok("", &iw, &ih));
+
+        /* one limiter for all gametdb.com traffic (art. and www. together), 1 s for the Wikimedia sites, per-site blocks from Retry-After */
+        CHECK_EQ(netgate::site_of("art.gametdb.com"), "gametdb.com");
+        CHECK_EQ(netgate::site_of("WWW.GameTDB.com"), "gametdb.com");
+        CHECK_EQ(netgate::site_of("en.wikipedia.org"), "wikipedia.org");
+        CHECK_EQ(netgate::site_of("raw.githubusercontent.com"), "raw.githubusercontent.com");
+        CHECK_EQ(netgate::site_of("notgametdb.com"), "notgametdb.com");
+        netgate::Gate g;
+        using ms = std::chrono::milliseconds;
+        const auto n0 = netgate::Clock::now();
+        ms w{-1};
+        CHECK(g.reserve("art.gametdb.com", n0, &w) && w.count() == 0);
+        CHECK(g.reserve("www.gametdb.com", n0 + ms(100), &w) && w.count() == 400);          // same site: 0.5 s after the first, whichever host name
+        CHECK(g.reserve("art.gametdb.com", n0 + ms(100), &w) && w.count() == 900);          // queued behind the second
+        CHECK(g.reserve("art.gametdb.com", n0 + ms(5000), &w) && w.count() == 0);           // long idle: no wait
+        CHECK(g.reserve("www.wikidata.org", n0, &w) && w.count() == 0);
+        CHECK(g.reserve("en.wikipedia.org", n0, &w) && w.count() == 0);                      // separate site: independent
+        CHECK(g.reserve("www.wikidata.org", n0 + ms(10), &w) && w.count() == 990);
+        CHECK(g.reserve("raw.githubusercontent.com", n0, &w) && g.reserve("raw.githubusercontent.com", n0, &w) && w.count() == 0);   // no gap configured
+        g.block("art.gametdb.com", n0 + ms(6000), 120);
+        CHECK(!g.reserve("www.gametdb.com", n0 + ms(6000) + std::chrono::seconds(119), &w));      // blocked for the whole Retry-After, for every gametdb host
+        CHECK(g.reserve("art.gametdb.com", n0 + ms(6000) + std::chrono::seconds(121), &w));
+        CHECK(g.reserve("en.wikipedia.org", n0 + ms(6000), &w));                              // other sites unaffected
+        g.block("art.gametdb.com", n0 + std::chrono::seconds(1000), 1);                       // a tiny Retry-After is raised to 30 s
+        CHECK(!g.reserve("art.gametdb.com", n0 + std::chrono::seconds(1029), &w) && g.reserve("art.gametdb.com", n0 + std::chrono::seconds(1031), &w));
     }
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL OK\n", g_fail);
     return g_fail ? 1 : 0;

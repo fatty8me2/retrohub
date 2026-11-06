@@ -78,7 +78,15 @@ void setup_fonts(float scale) {
         cfg.SizePixels = 19 * scale;
         F.body = io.Fonts->AddFontDefault(&cfg);
         F.cap = F.bold = F.h2 = F.title = F.hero = F.big = F.body;
+        F.tiny = F.tiny_bold = nullptr;
         return;
+    }
+    {   // small faces for scaled-down text (see Fonts::tiny): 2x vertical oversampling keeps thin horizontal strokes when shrunk further
+        ImFontConfig cfg;
+        cfg.OversampleH = 3;
+        cfg.OversampleV = 2;
+        F.tiny = io.Fonts->AddFontFromFileTTF(reg, 11 * scale, &cfg);
+        F.tiny_bold = have_bold ? io.Fonts->AddFontFromFileTTF(bold, 11 * scale, &cfg) : F.tiny;
     }
     F.cap = load(false, 15);
     F.bold = load(true, 19);

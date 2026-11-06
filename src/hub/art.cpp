@@ -2,6 +2,10 @@
 #include "art.h"
 #include "art_match.h"
 #include "art_lru.h"
+#include "gametdb.h"
+#include "netgate.h"
+#include "gameinfo.h"
+#include "nx.h"
 #include "wiiu_meta.h"
 #include "theme.h"
 
@@ -10,6 +14,7 @@
 #include "hack_logic.h"
 
 #include <algorithm>
+#include <cstring>
 #include <SDL.h>
 
 #include <windows.h>
@@ -17,12 +22,14 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG   // GameTDB DS / 3DS / Wii U covers and Switch package icons are JPEG
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
 #define STBI_NO_HDR
 #include "third_party/stb_image.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <ctime>
 #include <deque>
@@ -41,6 +48,9 @@ namespace hubart {
 namespace {
 
 const int kMaxTexHeight = 512;
+const int kFullMaxW = 2048, kFullMaxH = 1536;   // FullCover scans keep more detail (the whole sheet is drawn across a case)
+const long long kMaxPixels = 16LL * 1000 * 1000;   // refuse decompression bombs before allocating (a 16 Mpx RGBA buffer is 64 MB)
+const int kMaxSide = 8192, kMaxBoxW = 4096;
 const int kUploadsPerFrame = 8;
 const long long kMissRetrySeconds = 7LL * 24 * 3600;
 const long long kDatRefreshSeconds = 60LL * 24 * 3600;
@@ -131,7 +141,7 @@ long long now_s() { return (long long)std::time(nullptr); }
 
 std::wstring widen(const std::string& s) { return winutil::to_wide(s); }
 
-const char* kind_name(Kind k) { return k == Kind::Boxart ? "boxart" : k == Kind::Title ? "title" : "snap"; }
+const char* kind_name(Kind k) { return k == Kind::Boxart ? "boxart" : k == Kind::Title ? "title" : k == Kind::FullCover ? "coverfull" : "snap"; }
 
 std::string safe_file_name(const std::string& n) {
     std::string r = hm::thumb_name(n);
@@ -169,6 +179,32 @@ void flush_maps() {
         if (!okm) g_misses_dirty = true;
     }
 }
+/* names.json / misses.json are rewritten whole: a big library resolving hundreds of games must not rewrite them per game. A change is
+ * written at once if the last write was more than 2 s ago, else left dirty for flush_if_due() (the worker's idle tick), shutdown or detail::flush. */
+std::mutex g_deb_mu;
+std::chrono::steady_clock::time_point g_last_flush;
+bool g_flush_pending = false;
+
+void request_flush() {
+    {
+        std::lock_guard<std::mutex> l(g_deb_mu);
+        auto now = std::chrono::steady_clock::now();
+        if (now - g_last_flush < std::chrono::seconds(2)) { g_flush_pending = true; return; }
+        g_last_flush = now;
+        g_flush_pending = false;
+    }
+    flush_maps();
+}
+void flush_if_due() {
+    {
+        std::lock_guard<std::mutex> l(g_deb_mu);
+        if (!g_flush_pending || std::chrono::steady_clock::now() - g_last_flush < std::chrono::seconds(2)) return;
+        g_last_flush = std::chrono::steady_clock::now();
+        g_flush_pending = false;
+    }
+    flush_maps();
+}
+
 bool is_missed(const std::string& id) {
     std::lock_guard<std::mutex> l(g_mu);
     auto it = g_misses.find(id);
@@ -187,10 +223,12 @@ void record_miss(const std::string& id) {
         g_misses[id] = std::to_string(now_s());
         g_misses_dirty = true;
     }
-    flush_maps();
+    request_flush();
 }
 
 /* ---------- WinHTTP ---------- */
+
+/* Politeness (per-site spacing, 429 / Retry-After blocks) lives in common/netgate.*, shared with the game-info client. */
 
 /* status: HTTP status, or 0 for a transport failure. */
 bool http_get(const std::string& url, std::string* body, int* status, size_t max_bytes = 64u << 20) {
@@ -203,6 +241,8 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
     uc.lpszHostName = host;  uc.dwHostNameLength = 256;
     uc.lpszUrlPath = path;   uc.dwUrlPathLength = 2048;
     if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) return false;
+    const std::string host_u8(winutil::to_utf8(std::wstring(host, uc.dwHostNameLength)));
+    if (!netgate::acquire(host_u8)) return false;   // spaced per site, and blocked while a Retry-After runs
 
     /* One shared session for the process (WinHTTP sessions are thread-safe). */
     static std::mutex ses_mu;
@@ -230,6 +270,13 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
                             &code, &sz, WINHTTP_NO_HEADER_INDEX);
         *status = (int)code;
+        if (code == 429 || code == 503) {
+            wchar_t ra[32] = {};
+            DWORD rl = sizeof ra;
+            int secs = 120;
+            if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CUSTOM, L"Retry-After", ra, &rl, WINHTTP_NO_HEADER_INDEX)) secs = _wtoi(ra) > 0 ? _wtoi(ra) : 120;
+            netgate::block(host_u8, secs);
+        }
         ok = true;
         for (;;) {
             DWORD avail = 0;
@@ -318,6 +365,68 @@ const hub::GameInfo* catalog_by_title(const std::string& sys, const std::string&
     return nullptr;
 }
 
+/* ---------- GameTDB (cover scans + id lookup), Switch package icons ---------- */
+
+/* Only the art worker thread (and the headless tool) may download a GameTDB database, and only when a Wii U / Switch title really has to be mapped
+ * to a product code. Every other caller (the UI thread through detail::resolve_name, the shortcut maker) reads what is already on disk. */
+thread_local bool t_may_download = false;
+struct DownloadScope {
+    bool old;
+    DownloadScope() : old(t_may_download) { t_may_download = true; }
+    ~DownloadScope() { t_may_download = old; }
+};
+
+const gametdb::Index* tdb_index(const std::string& sys) {
+    if (!t_may_download) return gametdb::cached_index(sys);
+    return gametdb::index_for(sys, [](const std::string& u, std::string* b, int* st) { return http_get(u, b, st, 64u << 20); });
+}
+
+std::string folder_of_region(const std::string& region) {
+    return region.find("NTSC-U") != std::string::npos ? "US" : region.find("PAL") != std::string::npos ? "EN" : region.find("NTSC-J") != std::string::npos ? "JA" : "";
+}
+
+std::string lower_ascii(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
+bool ends_with_ci(const std::string& s, const char* suf) {
+    size_t n = std::strlen(suf);
+    return s.size() >= n && lower_ascii(s.substr(s.size() - n)) == suf;
+}
+
+/* "gametdb:<ID>:<folder>" for a game, "" when GameTDB cannot help (not one of GameCube / Wii U / DS / 3DS / Switch, or no id).
+ * libretro_name (the No-Intro / Redump name already resolved, may be "") only supplies the region tag and a second title to try. */
+std::string tdb_name_for(const hub::GameEntry& g, const std::string& libretro_name) {
+    const std::string sys = hub::system_short(g.system);
+    if (!gametdb::has_cover(sys) && sys != "switch") return "";
+    std::string id = sys == "switch" ? "" : gametdb::id_from_serial(sys, g.serial);
+    std::string hint = gametdb::region_hint_from_name(libretro_name.empty() ? g.path : libretro_name);
+    std::string folder = "*";
+    if (id.empty() && (sys == "wiiu" || sys == "switch") && !(sys == "switch" && g.nx2)) {   // no product code in the files we can read: the title picks the GameTDB entry
+        if (const gametdb::Index* idx = tdb_index(sys)) {
+            std::optional<gametdb::Rec> r = idx->by_title(g.title);
+            if (!r && !libretro_name.empty()) r = idx->by_title(libretro_name);
+            if (r) { id = r->id; folder = folder_of_region(r->region); if (folder.empty()) folder = "*"; }
+        }
+    }
+    if (id.empty()) return "";
+    if (folder == "*" && !hint.empty()) { auto f = gametdb::region_folders(id, hint); if (!f.empty()) folder = f.front(); }
+    return hm::gametdb_name_for(id, folder);
+}
+
+/* A Switch .nup holds the game's own icon in its package meta: cached under the pseudo name "nupicon:<title id>" (JPEG / PNG bytes). */
+std::string nup_icon_name(const hub::GameEntry& g) {
+    if (g.system != hub::System::Switch || !ends_with_ci(g.path, ".nup")) return "";
+    std::string tid = g.key.compare(0, 7, "switch:") == 0 ? g.key.substr(7) : g.key;
+    return tid.empty() ? "" : "nupicon:" + tid;
+}
+
+bool ensure_nup_icon(const hub::GameEntry& g, const std::string& name) {
+    fs::path file = P(g_cache + "switch/boxart/" + safe_file_name(name) + ".png");
+    std::error_code ec;
+    if (fs::exists(file, ec)) return true;
+    std::vector<uint8_t> icon;
+    if (!hub::nx::nup_icon_file(g.path, &icon) || icon.empty()) return false;
+    return write_file_atomic(file, std::string((const char*)icon.data(), icon.size()));
+}
+
 bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* how) {
     {   /* a ROM hack / translation borrows its base game's box: look the cover up under the base key (N64 md5, GBA / NES / SNES crc come from it) */
         std::string base_key;
@@ -331,6 +440,32 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
     }
     std::string sys = hub::system_short(g.system);
     const bool ghost = is_ghost_path(g.path);
+    if (g.system == hub::System::Switch) {   // no libretro set: a real box cover from GameTDB when its title matches, else the package's own icon
+        {
+            std::lock_guard<std::mutex> l(g_mu);
+            auto it = g_names.find(g.key);
+            if (it != g_names.end() && !it->second.empty()) { *name = it->second; if (how) *how = "cache"; return true; }
+        }
+        std::string n = tdb_name_for(g, ""), h2 = "gametdb";
+        bool persist = true;
+        if (n.empty()) {
+            n = nup_icon_name(g);
+            h2 = "nupicon";
+            persist = g.nx2 || gametdb::cached_index("switch");   // GameTDB's index not there yet: the icon serves now, the box is looked for again next time
+        }
+        if (n.empty()) return false;
+        if (persist) {
+            {
+                std::lock_guard<std::mutex> l(g_mu);
+                g_names[g.key] = n;
+                g_names_dirty = true;
+            }
+            request_flush();
+        }
+        *name = n;
+        if (how) *how = h2;
+        return true;
+    }
     {
         std::lock_guard<std::mutex> l(g_mu);
         auto it = g_names.find(g.key);
@@ -409,6 +544,7 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
             }
         }
     }
+    if (found.empty() && gametdb::has_cover(sys)) { found = tdb_name_for(g, ""); h = "gametdb"; }   // libretro-thumbnails does not know it: GameTDB by product code / title
     if (found.empty()) {
         record_miss(miss_id);
         return false;
@@ -418,7 +554,7 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
         g_names[g.key] = found;
         g_names_dirty = true;
     }
-    flush_maps();
+    request_flush();
     *name = found;
     if (how) *how = h;
     return true;
@@ -426,18 +562,26 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
 
 /* ---------- image load / downscale ---------- */
 
-bool decode_png(const std::string& bytes, Pixels* out) {
+/* Header-only check, before anything is allocated: a known format, each side <= 8192 and at most 16 Mpx. */
+bool header_ok(const std::string& bytes, int* w, int* h) {
+    int n = 0;
+    if (!stbi_info_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), w, h, &n)) return false;
+    return *w > 0 && *h > 0 && *w <= kMaxSide && *h <= kMaxSide && (long long)*w * *h <= kMaxPixels;
+}
+
+bool decode_png(const std::string& bytes, Pixels* out, int max_w = kMaxBoxW, int max_h = kMaxTexHeight) {
     int w = 0, h = 0, n = 0;
+    if (!header_ok(bytes, &w, &h)) return false;
     unsigned char* d = stbi_load_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), &w, &h, &n, 4);
     if (!d) return false;
     if (w <= 0 || h <= 0) { stbi_image_free(d); return false; }
-    if (h <= kMaxTexHeight) {
+    if (h <= max_h && w <= max_w) {
         out->rgba.assign(d, d + (size_t)w * h * 4);
         out->w = w; out->h = h;
     } else {
-        int nh = kMaxTexHeight;
-        int nw = (int)((double)w * nh / h + 0.5);
-        if (nw < 1) nw = 1;
+        double sc = std::min((double)max_h / h, (double)max_w / w);
+        int nh = std::max(1, (int)(h * sc + 0.5));
+        int nw = std::max(1, (int)(w * sc + 0.5));
         out->rgba.resize((size_t)nw * nh * 4);
         out->w = nw; out->h = nh;
         for (int y = 0; y < nh; ++y) {
@@ -477,7 +621,9 @@ bool load_image(const std::string& system, const std::string& name, Kind kind, P
     fs::path file = P(g_cache + system + "/" + kind_name(kind) + "/" + safe_file_name(name) + ".png");
     if (png_path) *png_path = file.u8string();
     std::string bytes;
-    if (read_file(file, &bytes) && decode_png(bytes, px)) return true;
+    const int cap_w = kind == Kind::FullCover ? kFullMaxW : kMaxBoxW, cap_h = kind == Kind::FullCover ? kFullMaxH : kMaxTexHeight;
+    if (read_file(file, &bytes) && decode_png(bytes, px, cap_w, cap_h)) return true;
+    if (name.compare(0, 8, "nupicon:") == 0) { *err = "no icon"; return false; }   // extracted from the package by the caller, never downloaded
     if (is_missed(miss_id)) { *err = "known miss"; return false; }
     std::vector<std::string> urls = hm::thumb_urls(system, (int)kind, name);
     if (urls.empty()) { *err = "unsupported system"; return false; }
@@ -527,37 +673,98 @@ bool load_image(const std::string& system, const std::string& name, Kind kind, P
     }
     if (st == 404) { record_miss(miss_id); *err = "404 (no art for this name)"; return false; }
     if (st != 200) { *err = "HTTP " + std::to_string(st); return false; }
-    if (!decode_png(bytes, px)) { *err = "bad image"; return false; }
+    if (!decode_png(bytes, px, cap_w, cap_h)) { *err = "bad image"; return false; }
     write_file_atomic(file, bytes);
     return true;
 }
 
 /* ---------- worker ---------- */
 
+/* One job, start to finish: resolve the name, fetch / read the image. Shared by the worker thread and the headless tool.
+ * Fallbacks: a Boxart libretro has no thumbnail for tries GameTDB's front cover (GameCube / Wii U / DS / 3DS) and a Switch .nup's icon. */
+bool run_job(const Job& j, Pixels* px, std::string* err, bool* transient, std::string* how, std::string* png_path) {
+    std::string sys = j.by_name ? j.system : hub::system_short(j.game.system);
+    std::string name = j.name;
+    bool ok = true, unresolved = false;
+    *transient = false;
+    if (j.kind == Kind::FullCover) {   // GameTDB only, by product code (Wii U: by title through the GameTDB index)
+        if (j.by_name || !gametdb::has_fullcover(sys)) { *err = "no full cover for this system"; return false; }
+        std::string libretro;
+        { std::lock_guard<std::mutex> l(g_mu); auto it = g_names.find(j.game.key); if (it != g_names.end()) libretro = it->second; }
+        name = tdb_name_for(j.game, libretro);
+        if (name.empty()) {
+            *err = "no GameTDB id";
+            *transient = sys == "wiiu" && !gametdb::cached_index("wiiu");   // the Wii U index (title -> product code) could not be loaded: offline, ask again later
+            return false;
+        }
+        if (how) *how = "gametdb";
+        ok = load_image(sys, name, j.kind, px, err, png_path);
+        *transient = !ok && (*err == "network error" || err->compare(0, 5, "HTTP ") == 0);
+        return ok;
+    }
+    if (!j.by_name) { ok = resolve_name_impl(j.game, &name, how); unresolved = !ok; }
+    if (ok) {
+        if (name.compare(0, 8, "nupicon:") == 0 && !j.by_name) ensure_nup_icon(j.game, name);
+        ok = load_image(sys, name, j.kind, px, err, png_path);
+    }
+    if (!ok && j.kind == Kind::Boxart && !j.by_name) {
+        const bool final_fail = unresolved || err->compare(0, 3, "404") == 0 || *err == "known miss" || *err == "no icon" || *err == "bad image";
+        if (final_fail) {
+            std::vector<std::string> alts;
+            std::string t = tdb_name_for(j.game, unresolved ? "" : name);
+            if (!t.empty() && t != name) alts.push_back(t);
+            std::string nup = nup_icon_name(j.game);
+            if (!nup.empty() && nup != name) alts.push_back(nup);
+            for (const std::string& alt : alts) {
+                if (alt.compare(0, 8, "nupicon:") == 0) ensure_nup_icon(j.game, alt);
+                std::string e2;
+                if (load_image(sys, alt, j.kind, px, &e2, png_path)) {
+                    ok = true;
+                    if (how) *how = alt.compare(0, 8, "nupicon:") == 0 ? "nupicon" : "gametdb";
+                    {   // remember which name has art, so the next start goes straight there
+                        std::lock_guard<std::mutex> l(g_mu);
+                        g_names[j.game.key] = alt;
+                        g_names_dirty = true;
+                    }
+                    request_flush();
+                    break;
+                }
+                if (e2 == "network error" || e2.compare(0, 5, "HTTP ") == 0) *err = e2;
+            }
+        }
+    }
+    if (!ok) {   // library-6: the network (or a DAT that could not be fetched) is not a verdict on the cover; 404s are recorded as misses already
+        bool net = *err == "network error" || err->compare(0, 5, "HTTP ") == 0;
+        if (unresolved) { std::lock_guard<std::mutex> dl(g_dat_mu); for (auto& kv : g_dat_failed) if (now_s() < kv.second) net = true; }   // a DAT is down right now
+        if (unresolved && !j.game.nx2 && (sys == "wiiu" || sys == "switch") && !gametdb::cached_index(sys)) net = true;   // the GameTDB index is not there yet
+        *transient = net;
+    }
+    return ok;
+}
+
 void worker_main() {
+    t_may_download = true;   // this thread may fetch a GameTDB database when a Wii U / Switch title has to be mapped (once; the UI thread never does)
     for (;;) {
         Job j;
         {
             std::unique_lock<std::mutex> l(g_mu);
-            g_cv.wait(l, [] { return g_quit || !g_jobs.empty(); });
+            while (!g_quit && g_jobs.empty()) {
+                if (g_cv.wait_for(l, std::chrono::seconds(2)) == std::cv_status::timeout) {
+                    l.unlock();
+                    flush_if_due();   // idle: write what the 2 s debounce held back
+                    l.lock();
+                }
+            }
             if (g_quit) return;
             j = std::move(g_jobs.front());
             g_jobs.pop_front();
         }
         Done d;
         d.id = j.id;
-        std::string sys = j.by_name ? j.system : hub::system_short(j.game.system);
-        std::string name = j.name, err;
-        bool ok = true;
-        bool unresolved = false;
-        if (!j.by_name) { ok = resolve_name_impl(j.game, &name, nullptr); unresolved = !ok; }
-        if (ok) ok = load_image(sys, name, j.kind, &d.px, &err, nullptr);
-        d.ok = ok;
-        if (!ok) {   // library-6: the network (or a DAT that could not be fetched) is not a verdict on the cover; 404s are recorded as misses already
-            bool net = err == "network error" || err.compare(0, 5, "HTTP ") == 0;
-            if (unresolved) { std::lock_guard<std::mutex> dl(g_dat_mu); for (auto& kv : g_dat_failed) if (now_s() < kv.second) net = true; }   // a DAT is down right now
-            d.transient = net;
-        }
+        std::string err, how;
+        bool transient = false;
+        d.ok = run_job(j, &d.px, &err, &transient, &how, nullptr);
+        d.transient = !d.ok && transient;
         std::lock_guard<std::mutex> l(g_mu);
         g_done.push_back(std::move(d));
     }
@@ -569,6 +776,7 @@ void setup_cache(const std::string& cache_dir) {
     std::error_code ec;
     fs::create_directories(P(g_cache), ec);
     load_maps();
+    gametdb::set_dir(g_cache + "tdb/");
     g_inited = true;
 }
 
@@ -676,8 +884,19 @@ uint32_t average_color(SDL_Texture* tex) {
     return 0;
 }
 
+void fullcover_split(int w, int h, float front_aspect, int* back_x1, int* front_x0) {
+    if (w <= 0 || h <= 0) { if (back_x1) *back_x1 = 0; if (front_x0) *front_x0 = 0; return; }
+    float face = (float)h * (front_aspect > 0.f ? front_aspect : 0.71f);
+    float spine = (float)w - 2.f * face;
+    if (!(spine >= 0.02f * (float)w && spine <= 0.14f * (float)w)) { spine = 0.05f * (float)w; face = ((float)w - spine) * 0.5f; }
+    const int b = (int)(face + 0.5f), f = (int)((float)w - face + 0.5f);
+    if (back_x1) *back_x1 = b;
+    if (front_x0) *front_x0 = std::max(b, f);
+}
+
 SDL_Texture* get(const hub::GameEntry& game, Kind kind, int* w, int* h) {
     if (!g_enabled.load()) return nullptr;
+    if (kind == Kind::FullCover && !gametdb::has_fullcover(hub::system_short(game.system))) return nullptr;   // only GameCube / Wii U / DS / 3DS have a scan
     Job j;
     j.id = slot_id(game.key, kind);
     j.kind = kind;
@@ -697,7 +916,7 @@ SDL_Texture* get(const hub::GameEntry& game, Kind kind, int* w, int* h) {
 }
 
 SDL_Texture* get_by_name(const std::string& system_short, const std::string& nointro_name, Kind kind, int* w, int* h) {
-    if (!g_enabled.load() || nointro_name.empty()) return nullptr;
+    if (!g_enabled.load() || nointro_name.empty() || kind == Kind::FullCover) return nullptr;
     Job j;
     j.id = slot_id("name:" + system_short + ":" + nointro_name, kind);
     j.by_name = true;
@@ -755,6 +974,29 @@ bool resolve_ghost(const std::string& system_short, const std::string& key, cons
     g.serial = hm::serial_from_key(system_short, key);
     g.path = hint.empty() ? "ghost" : "ghost|" + hint;
     return resolve_name_impl(g, name, how);
+}
+
+void flush() { flush_maps(); }
+bool image_header_ok(const std::string& bytes, int* w, int* h) {
+    int a = 0, b = 0;
+    bool ok = header_ok(bytes, &a, &b);
+    if (w) *w = a;
+    if (h) *h = b;
+    return ok;
+}
+
+bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::string* err, std::string* how, std::string* png_path) {
+    DownloadScope allow;   // the headless tool runs on one thread and may download the databases it needs
+    Job j;
+    j.kind = kind;
+    j.game = game;
+    Pixels px;
+    std::string e;
+    bool transient = false;
+    bool ok = run_job(j, &px, &e, &transient, how, png_path);
+    if (ok) { if (w) *w = px.w; if (h) *h = px.h; }
+    else if (err) *err = e + (transient ? " (transient)" : "");
+    return ok;
 }
 
 bool fetch_decode(const std::string& system_short, const std::string& nointro_name, Kind kind, int* w, int* h,

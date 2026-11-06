@@ -98,6 +98,21 @@ void image(Ctx& x, const Face& f, float u0, float v0, float u1, float v1, SDL_Te
  * reading top to bottom) starts at its top end with the glyph tops pointing to +x, so lx is the right edge of the line. */
 void face_text(Ctx& x, const Face& f, ImFont* font, float size, const char* s, float lx, float ly, ImU32 col, bool vertical, float track = 0.f) {
     if (!font || !s || !*s || size < 3.f || !x.detail) return;
+    {   // draw from the smallest same-weight atlas font that is still >= 95% of `size`: shrinking a glyph drops whole 1-px rows under
+        // nearest sampling (the headless software renderer) and thins them under linear ("GENRE" read "GFNRF" on case backs)
+        const ui::Fonts& F = ui::F;
+        const bool heavy = font == F.bold || font == F.h2 || font == F.title || font == F.hero || font == F.big || font == F.tiny_bold;
+        ImFont* const reg[] = {F.tiny, F.cap, F.body};
+        ImFont* const bld[] = {F.tiny_bold, F.bold, F.h2, F.title, F.hero, F.big};
+        ImFont* const* list = heavy ? bld : reg;
+        const int count = heavy ? 6 : 3;
+        ImFont* best = font;
+        for (int i = 0; i < count; ++i) {
+            ImFont* c = list[i];
+            if (c && c->ContainerAtlas == font->ContainerAtlas && c->FontSize >= size * 0.95f && c->FontSize < best->FontSize) best = c;
+        }
+        font = best;
+    }
     ImDrawList* dl = x.dl;
     const float sc = size / font->FontSize;
     const ImVec2 inv(1.f / f.W, 1.f / f.H);
