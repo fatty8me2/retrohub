@@ -143,6 +143,96 @@ bool parse_npdm(const uint8_t* d, size_t n, Ident* out) {
     return true;
 }
 
+bool parse_nup(const ReadFn& read, uint64_t file_size, Ident* out) {
+    if (!read || !out) return false;
+    std::vector<uint8_t> sb;
+    if (!read(0, 0x80, &sb) || sb.size() < 0x80 || std::memcmp(sb.data(), "NUP\x01", 4) != 0) return false;
+    /* The checks Lichii's NupContainer::Parse makes on these headers (a file it would refuse is not listed: it would not boot). The TOC SHA-256 is
+     * not checked (the TOC can be tens of MB). */
+    const uint64_t toc_off = rd64(sb.data(), 0x08), toc_size = rd64(sb.data(), 0x10);
+    const uint64_t blob_off = rd64(sb.data(), 0x38), declared_size = rd64(sb.data(), 0x40);
+    const uint32_t count = rd32(sb.data(), 0x48);
+    if ((uint32_t)(sb[4] | (sb[5] << 8)) < 0x80 || rd32(sb.data(), 0x4C) != 0) return false;
+    if (file_size && declared_size != file_size) return false;   // truncated or padded copy
+    if (toc_off < 0x80 || blob_off > declared_size || toc_off > blob_off || toc_size > blob_off - toc_off || blob_off % 0x10) return false;
+    if (count == 0 || count > 4096) return false;
+    const uint64_t want = 0x30 + (uint64_t)count * 0x40;
+    std::vector<uint8_t> toc;
+    if (want > toc_size || !read(toc_off, (size_t)want, &toc) || toc.size() < want || std::memcmp(toc.data(), "TOC\x01", 4) != 0) return false;
+    if (rd32(toc.data(), 4) != count) return false;
+    const uint64_t dir_count = rd64(toc.data(), 8);
+    if (dir_count > toc_size / 0x18) return false;
+    constexpr uint32_t kNoDir = 0xFFFFFFFFu;
+    auto rec = [&](uint32_t i) { return toc.data() + 0x30 + (size_t)i * 0x40; };
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint8_t* r = rec(i);
+        const uint32_t ex = rd32(r, 0x0C), ro = rd32(r, 0x10);
+        if (r[0x18] > 2 || (r[0x19] & ~1u) || rd32(r, 0x08) >= dir_count || (ex != kNoDir && ex >= dir_count) || (ro != kNoDir && ro >= dir_count)) return false;
+    }
+    out->format = "nup";
+    out->update_or_dlc = true;   // until a playable package is found
+    /* GetExeFSDir: no ExeFS dir, or an empty one (dir record child_count 0), cannot boot. Dir records follow the package records. */
+    auto has_exefs = [&](const uint8_t* r) {
+        const uint32_t ex = rd32(r, 0x0C);
+        if (ex == kNoDir) return false;
+        const uint64_t at = toc_off + want + (uint64_t)ex * 0x18;
+        std::vector<uint8_t> d;
+        return want + ((uint64_t)ex + 1) * 0x18 <= toc_size && read(at, 0x18, &d) && d.size() == 0x18 && rd32(d.data(), 0x0C) != 0;
+    };
+    long pick = -1;   // Lichii's loader: the FIRST base package if it has an ExeFS, else the newest update that has one
+    for (uint32_t i = 0; i < count; ++i)
+        if (rec(i)[0x18] == 0) { if (has_exefs(rec(i))) pick = (long)i; break; }
+    if (pick < 0)
+        for (uint32_t i = 0; i < count; ++i)   // FindBestUpdatePackage: highest version among the updates, then its ExeFS
+            if (rec(i)[0x18] == 1 && (pick < 0 || rd32(rec(i), 0x14) > rd32(rec((uint32_t)pick), 0x14))) pick = (long)i;
+    if (pick >= 0 && rec((uint32_t)pick)[0x18] == 1 && !has_exefs(rec((uint32_t)pick))) pick = -1;
+    if (pick < 0) return true;
+    const uint8_t* r = rec((uint32_t)pick);
+    out->update_or_dlc = false;
+    out->title_id = rd64(r, 0x00) & ~0xFFFull;   // an update's id is the base id + 0x800; saves and the key follow the base game
+
+    const uint64_t meta_off = rd64(r, 0x20);
+    const uint32_t meta_size = rd32(r, 0x28);
+    std::vector<uint8_t> m;
+    if (meta_off && meta_size && meta_size <= (16u << 20) && (!file_size || (meta_off <= file_size && meta_size <= file_size - meta_off)) &&
+        read(meta_off, meta_size, &m)) {
+        std::string localized;
+        for (size_t p = 0; p + 8 <= m.size();) {
+            const uint16_t type = (uint16_t)(m[p] | (m[p + 1] << 8));
+            const uint32_t sz = rd32(m.data(), p + 4);
+            p += 8;
+            if (sz > m.size() - p) break;
+            const uint8_t* pl = m.data() + p;
+            if (type == 1) {   // NPDM
+                Ident n;
+                if (parse_npdm(pl, sz, &n)) out->nx2 = n.nx2;
+            } else if (type == 5) {
+                out->title = cstr(pl, sz);
+            } else if (type == 9 && localized.empty()) {   // [u8 lang len][lang][u32 len][title]...: English first, else the first one
+                std::string first;
+                for (size_t q = 0; q < sz;) {
+                    const size_t ll = pl[q++];
+                    if (q + ll + 4 > sz) break;
+                    const std::string lang((const char*)pl + q, ll);
+                    q += ll;
+                    const uint32_t tl = rd32(pl, q);
+                    q += 4;
+                    if (tl > sz - q) break;
+                    std::string t = cstr(pl + q, tl);
+                    q += tl;
+                    if (first.empty()) first = t;
+                    if (lower(lang).rfind("en", 0) == 0 && !t.empty()) { localized = t; break; }
+                }
+                if (localized.empty()) localized = first;
+            }
+            p += sz;
+        }
+        if (out->title.empty()) out->title = localized;
+    }
+    if (!out->nx2 && (out->title_id >> 56) == 0x04) out->nx2 = true;   // Switch 2 program ids are 04xx...
+    return true;
+}
+
 bool identify_file(const std::string& path, Ident* out) {
     if (!out) return false;
     *out = Ident();
@@ -166,6 +256,16 @@ bool identify_file(const std::string& path, Ident* out) {
         ok = parse_xci(b.data(), b.size(), &id);
         id.format = ext.substr(1);
         if (ok) id.title = clean_title(stem);
+    } else if (ext == ".nup") {
+        std::error_code ec;
+        fsz = fs::file_size(p, ec);
+        if (ec) return false;
+        ok = parse_nup([&](uint64_t off, size_t len, std::vector<uint8_t>* o) { return read_at(p, off, len, o); }, fsz, &id);
+        if (!ok) return false;
+        if (id.title.empty()) id.title = clean_title(stem);
+        if (!id.title_id) id.title_id = title_id_from_name(stem);
+        *out = id;   // update_or_dlc is decided by the package kinds, not by the id bits
+        return true;
     } else if (ext == ".nro") {
         if (!read_at(p, 0, 0x20, &b, &fsz)) return false;
         if (!parse_nro(b.data(), b.size(), fsz, &id)) return false;
