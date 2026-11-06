@@ -199,6 +199,8 @@ void cover_generated(Ctx& x, const Face& f, float u0, float v0, float u1, float 
 /* ------------------------------- faces ------------------------------- */
 
 void header_band(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, float u0, float v0, float u1, float bv) {
+    v0 -= 1.5f / f.H;   // a hair over the cover's top edge, so no sliver of cover shows (a dashed light line) above the band
+    bv += 1.5f / f.H;
     quad(x, f, u0, v0, u1, v0 + bv, st.band);
     vgrad(x, f, u0, v0, u1, v0 + bv, rgba(255, 255, 255, 54), rgba(0, 0, 0, 40));
     quad(x, f, u0, v0 + bv, u1, v0 + bv + 1.5f / f.H, rgba(0, 0, 0, 90));
@@ -450,8 +452,10 @@ void cases_shadow(const CaseScene& sc, const CaseDraw& d, const CasePose& ps) {
 }
 
 void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool reflection) {
-    float a = ps.alpha * (reflection ? ps.refl : 1.f);
-    if (a <= 0.01f) return;
+    // Cases are always drawn fully opaque (see-through faces would show the cases behind them): fading toward the background is a fog quad per face
+    const float a = reflection ? ps.alpha * ps.refl : 1.f;
+    if (a <= 0.01f || ps.alpha <= 0.01f) return;
+    const float fog = reflection ? 0.f : 1.f - ps.alpha;
     const CaseKind kind = hubui::cases::kind_for(d.media);
     const CaseDims cd = hubui::cases::case_dims(d.media);
     const Style st = style_of(d);
@@ -472,6 +476,7 @@ void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool
     auto shade_face = [&](const Face& f, const float n[3]) {
         const float k = std::min(1.f, lit(n));
         if (k < 0.995f) sc.dl->AddQuadFilled(f.q[0], f.q[1], f.q[2], f.q[3], IM_COL32(4, 5, 10, (int)((1.f - k) * 230.f * a)));
+        if (fog > 0.004f) sc.dl->AddQuadFilled(f.q[0], f.q[1], f.q[2], f.q[3], (ps.fog & 0x00FFFFFFu) | ((ImU32)(std::min(1.f, fog) * 255.f) << 24));
     };
     Face f;
     {   // back
@@ -480,11 +485,11 @@ void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool
     }
     {   // left, right: both drawn as the spine design
         const float c[4][3] = {{-hw, H, dd}, {-hw, H, -dd}, {-hw, 0, -dd}, {-hw, 0, dd}}, n[3] = {-1, 0, 0};
-        if (make_face(sc, xf, c, n, cd.d, H, &f)) { paint_spine(x, f, d, st, kind); shade_face(f, n); }
+        if (make_face(sc, xf, c, n, cd.d, H, &f)) { Ctx xs = x; xs.detail = x.detail && f.W * face_ratio(f) >= 12.f; paint_spine(xs, f, d, st, kind); shade_face(f, n); }
     }
     {
         const float c[4][3] = {{hw, H, -dd}, {hw, H, dd}, {hw, 0, dd}, {hw, 0, -dd}}, n[3] = {1, 0, 0};
-        if (make_face(sc, xf, c, n, cd.d, H, &f)) { paint_spine(x, f, d, st, kind); shade_face(f, n); }
+        if (make_face(sc, xf, c, n, cd.d, H, &f)) { Ctx xs = x; xs.detail = x.detail && f.W * face_ratio(f) >= 12.f; paint_spine(xs, f, d, st, kind); shade_face(f, n); }
     }
     {   // top (seen when the case is tipped in Inspect)
         const float c[4][3] = {{-hw, H, dd}, {hw, H, dd}, {hw, H, -dd}, {-hw, H, -dd}}, n[3] = {0, 1, 0};

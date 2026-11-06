@@ -577,6 +577,7 @@ void draw_cases(Disp& D) {
     const int ic = n ? std::max(0, std::min(n - 1, (int)std::lround(CS.pos.x))) : 0;
     const bool settled = n && std::fabs(CS.pos.x - (float)CS.focus) < 1.3f;
     const float fl = CS.flip.x, ins = std::max(0.f, std::min(1.f, CS.insp.x));
+    const ImU32 fogc = ui::mix(IM_COL32(6, 7, 11, 255), CS.tint0 ? CS.tint0 : ui::ACCENT, 0.22f);
     const bool showing_back = fl > 0.02f && !CS.back_key.empty();
     // how far each side's neighbours must stand out for the centre case's width (blended between the two cases the carousel is between)
     float extra_l = 0.f, extra_r = 0.f;
@@ -616,7 +617,7 @@ void draw_cases(Disp& D) {
             ps.yaw = ps.yaw * (1.f - c * ins) + (CS.spin.yaw) * c * ins;
             ps.pitch = CS.spin.pitch * c * ins;
         }
-        if (ins > 0.001f && ad > 0.5f) ps.alpha *= 1.f - 0.75f * ins;
+        ps.fog = fogc;
         ps.refl = c > 0.5f ? 0.34f : 0.28f;
         ps.refl_detail = ad < 1.6f;
         const int idx = D.flat[(size_t)i];
@@ -655,7 +656,6 @@ void draw_cases(Disp& D) {
     each_far_to_near([&](Slot& s) { if (std::fabs(s.d) <= 7.f) shelfdraw::cases_case(sc, s.cd, s.ps, true); });
     shelfdraw::cases_veil(sc, p0, p1, CS.tint0, CS.tint1, 1.f);
     shelfdraw::cases_stage_front(sc, p0, p1, CS.tint0, CS.tint1);
-    if (ins > 0.01f) dl->AddRectFilled(p0, p1, IM_COL32(0, 0, 0, (int)(110.f * ins)));
 
     // ---- hit boxes (left to right; the centre case claims its whole box) ----
     if (n && ns > 0 && !CS.menu_open) {
@@ -717,6 +717,7 @@ void draw_cases(Disp& D) {
 
     // ---- the cases, far to near, each with its floor shadow ----
     each_far_to_near([&](Slot& s) {
+        if (s.i == ic && ins > 0.01f) dl->AddRectFilled(p0, p1, IM_COL32(0, 0, 0, (int)(170.f * ins)));   // dim the neighbours: a scrim between them and the inspected case
         shelfdraw::cases_shadow(sc, s.cd, s.ps);
         shelfdraw::cases_case(sc, s.cd, s.ps, false);
     });
