@@ -787,7 +787,7 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
         else std::snprintf(fs[2].val, sizeof fs[2].val, "-");
         fs[2].cap = "PLAYERS";
         const float cs = std::max(6.f, std::min(W * 0.04f, 14.f)), vs = std::max(7.5f, std::min(W * 0.058f, 19.f));
-        const float cwid[3] = {pw * 0.42f, pw * 0.27f, pw * 0.31f}, cx0[3] = {0.f, pw * 0.42f, pw * 0.69f};
+        const float cwid[3] = {pw * 0.37f, pw * 0.26f, pw * 0.37f}, cx0[3] = {0.f, pw * 0.37f, pw * 0.63f};
         for (int i = 0; i < 3; ++i) {
             face_text(x, f, cap, cs, fs[i].cap, lx + cx0[i], y, dim, false, cs * 0.08f);
             const std::string& v = ellipsize_cached(bold, vs, fs[i].val, cwid[i] - pad * 0.3f);
