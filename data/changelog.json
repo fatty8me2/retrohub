@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.32.2",
+      "date": "2026-11-05",
+      "title": "Cases view",
+      "new": [
+        "Cases view: All Games can show your games as 3D cases in a full-screen carousel, with console tabs, smooth scrolling and reflections on a glossy floor",
+        "Flip and Inspect: flip a case to see its back (description, info and your own screenshots), or pick it up and turn it with the right stick",
+        "Shuffle: spin the carousel to a random game",
+        "Each console gets its own case: plastic cases for disc and card systems, cardboard boxes for cartridge games",
+        "TV mode can open straight into the Cases view (Settings > General)"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.32.1",
       "date": "2026-11-05",
       "title": "Your account survives a reinstall",
