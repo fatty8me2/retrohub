@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <set>
 #include <thread>
 
@@ -44,10 +45,11 @@ struct Row {
 
 bool is_hack(const hub::GameEntry& e) { return e.catalog_id == "remix" || e.catalog_id == "kanto" || !e.hack_patch.empty(); }
 
-const gametdb::Rec* tdb_find(const gameinfo::Query& q) {
-    if (gametdb::db_name(q.system).empty()) return nullptr;
+/* The tool runs on one thread: when Wikipedia had no description it may download the system's GameTDB database (once, then it is cached). */
+std::optional<gametdb::Rec> tdb_find(const gameinfo::Query& q) {
+    if (gametdb::db_name(q.system).empty()) return std::nullopt;
     const gametdb::Index* idx = gametdb::index_for(q.system, [](const std::string& u, std::string* b, int* st) { return gameinfo_net::http_get(u, b, st); });
-    if (!idx) return nullptr;
+    if (!idx) return std::nullopt;
     return gametdb::find_record(*idx, q.system, q.serial, gameinfo::title_variants(q));
 }
 
@@ -85,6 +87,7 @@ int describe(const hub::GameEntry& e, const std::string& udir, Row* row) {
         row->desc = "generated";
         row->note = gameinfo::generated_description(q, m, on, e.nx2);
     }
+    hubart::detail::flush();
     return 0;
 }
 
@@ -194,5 +197,6 @@ int main(int argc, char** argv) {
     }
     for (const Row& r : rows) if (r.desc == "online" || r.desc == "tdb") ++online;
     std::printf("TOTAL  %5d %6d/%-3d %8d/%-3d %9d/%-3d   (real description: %d, generated: %d)\n", g, b, g, fo, fa, d, g, online, d - online);
+    hubart::detail::flush();
     return 0;
 }

@@ -6,6 +6,7 @@
 #include "winutil.h"
 
 #include <algorithm>
+#include <optional>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -189,27 +190,36 @@ int main() {
         rec.synopsis = "Leap into the first multiplayer Mario platformer set in a 3D world! Play as Mario, Luigi, Princess Peach, and Toad in the all-new Sprixie Kingdom.\n\n"
                        "Key Features:\nThe first multiplayer Mario platformer set in a 3D world\nCat Mario can climb high";
         Fetcher none = [](const std::string&, std::string* b, int* st) { b->clear(); *st = 404; return true; };
-        TdbFinder finder = [&](const Query&) { return &rec; };
+        TdbFinder finder = [&](const Query&) { return std::optional<gametdb::Rec>(rec); };
         Online od;
         CHECK(resolve_description(Q("wiiu", "Super Mario 3D World"), none, finder, &od) == ResolveResult::Ok);
         CHECK(od.status == Online::Ok && od.source == "GameTDB" && od.description.find("Leap into") == 0 && od.description.find("Key Features") == std::string::npos);
         CHECK(od.description.find('\n') == std::string::npos && od.page_url == "https://www.gametdb.com/WiiU/ARDE01");
         CHECK(od.developer == "Nintendo EAD Tokyo" && od.publisher == "Nintendo" && od.esrb == "E" && od.pegi == "PEGI 3" && od.genre == "Action" && od.year == 2013);
         // no record: stays NotFound; a record without a synopsis still supplies the facts
-        CHECK(resolve_description(Q("wiiu", "Super Mario 3D World"), none, [](const Query&) { return (const gametdb::Rec*)nullptr; }, &od) == ResolveResult::NotFound && od.description.empty());
+        CHECK(resolve_description(Q("wiiu", "Super Mario 3D World"), none, [](const Query&) { return std::optional<gametdb::Rec>(); }, &od) == ResolveResult::NotFound && od.description.empty());
         gametdb::Rec bare = rec;
         bare.synopsis.clear();
-        CHECK(resolve_description(Q("wiiu", "X"), none, [&](const Query&) { return &bare; }, &od) == ResolveResult::Ok && od.description.empty() && od.developer == "Nintendo EAD Tokyo");
+        CHECK(resolve_description(Q("wiiu", "X"), none, [&](const Query&) { return std::optional<gametdb::Rec>(bare); }, &od) == ResolveResult::Ok && od.description.empty() && od.developer == "Nintendo EAD Tokyo");
         // a network failure is never papered over by GameTDB
         Fetcher down = [](const std::string&, std::string*, int* st) { *st = 0; return false; };
         CHECK(resolve_description(Q("wiiu", "Super Mario 3D World"), down, finder, &od) == ResolveResult::NetworkError);
         // Wikipedia wins when it has a description
         CHECK(resolve_description(Q("nds", "Pokemon Black"), make_fetcher({"Q170323", "Pok\xC3\xA9mon Black", "Q16683542", "Pok\xC3\xA9mon Black", "Q816034"}), finder, &od) == ResolveResult::Ok && od.source == "Wikipedia");
+        // Wikipedia answered: the GameTDB finder (which may sit in front of a database download) is not called at all
+        int finder_calls = 0;
+        TdbFinder spy = [&](const Query&) { ++finder_calls; return std::optional<gametdb::Rec>(rec); };
+        CHECK(resolve_description(Q("nds", "Pokemon Black"), make_fetcher({"Q170323", "Pok\xC3\xA9mon Black", "Q16683542", "Pok\xC3\xA9mon Black", "Q816034"}), spy, &od) == ResolveResult::Ok && finder_calls == 0);
+        // ... but it is asked once when Wikipedia has nothing
+        CHECK(resolve_description(Q("wiiu", "Super Mario 3D World"), none, spy, &od) == ResolveResult::Ok && finder_calls == 1);
+        // a network failure never reaches it either
+        finder_calls = 0;
+        CHECK(resolve_description(Q("wiiu", "Super Mario 3D World"), down, spy, &od) == ResolveResult::NetworkError && finder_calls == 0);
         // very long synopsis: cut at a sentence end near 650 characters
         gametdb::Rec lng = rec;
         lng.synopsis.clear();
         for (int i = 0; i < 40; ++i) lng.synopsis += "This is a sentence about the game. ";
-        CHECK(resolve_description(Q("wiiu", "Y"), none, [&](const Query&) { return &lng; }, &od) == ResolveResult::Ok && od.description.size() <= 650 && od.description.size() > 400 && od.description.back() == '.');
+        CHECK(resolve_description(Q("wiiu", "Y"), none, [&](const Query&) { return std::optional<gametdb::Rec>(lng); }, &od) == ResolveResult::Ok && od.description.size() <= 650 && od.description.size() > 400 && od.description.back() == '.');
 
         // generated description: factual, from metadata only
         Meta gm;

@@ -1,5 +1,6 @@
 #include "gameinfo_net.h"
 #include "winutil.h"
+#include "netgate.h"
 
 #include <algorithm>
 #include <chrono>
@@ -22,8 +23,6 @@ namespace {
 std::mutex g_mu;
 std::string g_fixture_dir;
 bool g_fixture_set = false;
-std::chrono::steady_clock::time_point g_last;
-std::chrono::steady_clock::time_point g_blocked_until;   // a 429 / 503 with Retry-After: nothing is requested before this (callers see "network error" and retry later)
 
 std::wstring widen(const std::string& s) {
     if (s.empty()) return std::wstring();
@@ -62,7 +61,6 @@ std::string user_agent() {
 }
 
 namespace {
-std::mutex g_block_mu;
 bool http_request(const wchar_t* method, const std::string& url, const std::string& ctype, const std::string& post, std::string* body, int* status) {
     *status = 0;
     body->clear();
@@ -74,6 +72,8 @@ bool http_request(const wchar_t* method, const std::string& url, const std::stri
     uc.lpszUrlPath = path;   uc.dwUrlPathLength = 4096;
     uc.dwExtraInfoLength = (DWORD)-1;
     if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) return false;
+    const std::string host_u8 = winutil::to_utf8(std::wstring(host, uc.dwHostNameLength));
+    if (!netgate::acquire(host_u8)) return false;   // spaced, and blocked while a Retry-After runs
     std::wstring full(path, uc.dwUrlPathLength);
     if (uc.lpszExtraInfo && uc.dwExtraInfoLength) full.append(uc.lpszExtraInfo, uc.dwExtraInfoLength);
 
@@ -102,8 +102,7 @@ bool http_request(const wchar_t* method, const std::string& url, const std::stri
             DWORD rl = sizeof ra;
             int secs = 120;
             if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CUSTOM, L"Retry-After", ra, &rl, WINHTTP_NO_HEADER_INDEX) && _wtoi(ra) > 0) secs = _wtoi(ra);
-            std::lock_guard<std::mutex> l(g_block_mu);
-            g_blocked_until = std::chrono::steady_clock::now() + std::chrono::seconds(std::min(std::max(secs, 30), 3600));
+            netgate::block(host_u8, secs);
         }
         ok = true;
         for (;;) {
@@ -142,17 +141,8 @@ bool fetch(const std::string& url, std::string* body, int* status) {
         *status = 0;
         return false;
     }
-    std::lock_guard<std::mutex> l(g_mu);   // one request at a time, >= 1 s apart (Wikimedia asks for low rates)
-    auto now = std::chrono::steady_clock::now();
-    {
-        std::lock_guard<std::mutex> bl(g_block_mu);
-        if (now < g_blocked_until) { *status = 0; body->clear(); return false; }
-    }
-    auto gap = std::chrono::milliseconds(1000);
-    if (g_last.time_since_epoch().count() != 0 && now - g_last < gap) std::this_thread::sleep_for(gap - (now - g_last));
-    bool r = http_get(url, body, status);
-    g_last = std::chrono::steady_clock::now();
-    return r;
+    std::lock_guard<std::mutex> l(g_mu);   // one request at a time; the per-site spacing (Wikimedia 1 s, GameTDB 0.5 s) and any Retry-After block live in netgate
+    return http_get(url, body, status);
 }
 
 } // namespace gameinfo_net
