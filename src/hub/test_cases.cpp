@@ -156,6 +156,33 @@ int main() {
     Settings old;
     CHECK(settings_from_json("{\"lib_layout\": \"shelf\"}", &old) && old.lib_layout == "shelf" && !old.tv_cases);   // an older file stays valid
 
+    /* car-cases: per-console retail packaging (shapes, kinds, media mapping) */
+    {
+        using shelf::media_for;
+        CHECK(media_for("switch") == Media::SwitchCase && kind_for(Media::SwitchCase) == CaseKind::Keep && has_sheen(Media::SwitchCase) && !is_box(Media::SwitchCase));
+        CHECK(std::string(shelf::media_key(Media::SwitchCase)) == "switch-case" && !shelf::is_cart(Media::SwitchCase));
+        // every console has its own, non-generic media: no two share one
+        const char* all[] = {"nes", "snes", "n64", "gb", "gbc", "gba", "nds", "3ds", "ps1", "ps2", "gc", "wiiu", "psp", "switch"};
+        for (const char* sys : all) CHECK(media_for(sys) != Media::Generic);
+        for (int i = 0; i < 14; ++i) for (int j = i + 1; j < 14; ++j) CHECK(media_for(all[i]) != media_for(all[j]));
+        // kinds: plastic keep cases, a jewel case and cardboard boxes
+        CHECK(kind_for(Media::GcCase) == CaseKind::Keep && kind_for(Media::Ps2Case) == CaseKind::Keep && kind_for(Media::WiiUCase) == CaseKind::Keep);
+        CHECK(kind_for(Media::Ps1Jewel) == CaseKind::Jewel);
+        for (Media m : {Media::NesCart, Media::SnesCart, Media::N64Cart, Media::GbCart, Media::GbcCart, Media::GbaCart}) CHECK(kind_for(m) == CaseKind::Box && !has_sheen(m));
+        // proportions: Switch slim and tall, Wii U Blu-ray sized, PS1 wider than tall, DS near square, PSP tall and narrow, SNES / N64 landscape, NES portrait
+        const CaseDims sw = case_dims(Media::SwitchCase), wu = case_dims(Media::WiiUCase), gc = case_dims(Media::GcCase), ps2 = case_dims(Media::Ps2Case);
+        CHECK(sw.w < wu.w && sw.h < gc.h && sw.d < ps2.d && sw.w / sw.h > 0.55f && sw.w / sw.h < 0.65f);
+        CHECK(wu.h < gc.h && wu.d < ps2.d && gc.d < ps2.d);
+        CHECK(case_dims(Media::Ps1Jewel).w > case_dims(Media::Ps1Jewel).h);
+        CHECK(case_dims(Media::DsCase).w / case_dims(Media::DsCase).h > 0.85f && case_dims(Media::DsCase).w / case_dims(Media::DsCase).h < 1.0f);
+        CHECK(case_dims(Media::N3dsCase).w == case_dims(Media::DsCase).w && case_dims(Media::N3dsCase).h == case_dims(Media::DsCase).h);
+        CHECK(case_dims(Media::PspCase).w / case_dims(Media::PspCase).h < 0.66f && case_dims(Media::PspCase).h > case_dims(Media::DsCase).h);
+        CHECK(case_dims(Media::SnesCart).w > case_dims(Media::SnesCart).h && case_dims(Media::N64Cart).w > case_dims(Media::N64Cart).h && case_dims(Media::NesCart).w < case_dims(Media::NesCart).h);
+        CHECK(case_dims(Media::GbaCart).d > 0.12f && case_dims(Media::GbCart).h < case_dims(Media::NesCart).h);
+        // the switch case is drawn big enough to read, never taller than the stage allows
+        CHECK(display_scale(Media::SwitchCase) > 1.f && case_dims(Media::SwitchCase).h * display_scale(Media::SwitchCase) <= 1.f + 1e-4f);
+    }
+
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
     std::printf("hub_cases_test: all ok\n");
     return 0;
