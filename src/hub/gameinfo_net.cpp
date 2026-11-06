@@ -1,6 +1,7 @@
 #include "gameinfo_net.h"
 #include "winutil.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -22,6 +23,7 @@ std::mutex g_mu;
 std::string g_fixture_dir;
 bool g_fixture_set = false;
 std::chrono::steady_clock::time_point g_last;
+std::chrono::steady_clock::time_point g_blocked_until;   // a 429 / 503 with Retry-After: nothing is requested before this (callers see "network error" and retry later)
 
 std::wstring widen(const std::string& s) {
     if (s.empty()) return std::wstring();
@@ -60,6 +62,7 @@ std::string user_agent() {
 }
 
 namespace {
+std::mutex g_block_mu;
 bool http_request(const wchar_t* method, const std::string& url, const std::string& ctype, const std::string& post, std::string* body, int* status) {
     *status = 0;
     body->clear();
@@ -94,13 +97,21 @@ bool http_request(const wchar_t* method, const std::string& url, const std::stri
         DWORD code = 0, sz = sizeof code;
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code, &sz, WINHTTP_NO_HEADER_INDEX);
         *status = (int)code;
+        if (code == 429 || code == 503) {
+            wchar_t ra[32] = {};
+            DWORD rl = sizeof ra;
+            int secs = 120;
+            if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CUSTOM, L"Retry-After", ra, &rl, WINHTTP_NO_HEADER_INDEX) && _wtoi(ra) > 0) secs = _wtoi(ra);
+            std::lock_guard<std::mutex> l(g_block_mu);
+            g_blocked_until = std::chrono::steady_clock::now() + std::chrono::seconds(std::min(std::max(secs, 30), 3600));
+        }
         ok = true;
         for (;;) {
             DWORD avail = 0;
             if (!WinHttpQueryDataAvailable(req, &avail)) { ok = false; break; }
             if (avail == 0) break;
             size_t old = body->size();
-            if (old + avail > (8u << 20)) { ok = false; break; }
+            if (old + avail > (24u << 20)) { ok = false; break; }   // the GameCube database zip is ~10 MB; API answers are far smaller
             body->resize(old + avail);
             DWORD got = 0;
             if (!WinHttpReadData(req, &(*body)[old], avail, &got)) { ok = false; break; }
@@ -133,6 +144,10 @@ bool fetch(const std::string& url, std::string* body, int* status) {
     }
     std::lock_guard<std::mutex> l(g_mu);   // one request at a time, >= 1 s apart (Wikimedia asks for low rates)
     auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> bl(g_block_mu);
+        if (now < g_blocked_until) { *status = 0; body->clear(); return false; }
+    }
     auto gap = std::chrono::milliseconds(1000);
     if (g_last.time_since_epoch().count() != 0 && now - g_last < gap) std::this_thread::sleep_for(gap - (now - g_last));
     bool r = http_get(url, body, status);

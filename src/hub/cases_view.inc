@@ -438,11 +438,11 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
         const bool light = on && ((0.2126f * (CS.hl_col & 0xFF) + 0.7152f * ((CS.hl_col >> 8) & 0xFF) + 0.0722f * ((CS.hl_col >> 16) & 0xFF)) / 255.f) > 0.72f;
         const ImU32 ink = hl_on > 0.f ? (light ? IM_COL32(20, 22, 30, 255) : IM_COL32_WHITE) : hov ? ui::TEXT : ui::TEXT2;
         float tx = p0.x + pad_x;
-        if (!t.sys.empty()) {   // the console's colour dot (on the active tab it becomes the ink colour: the pill already is that colour)
+        const bool whole = p0.x >= c0.x + sp(0.5f) - 1.f && p1.x <= c1.x - sp(0.5f) + 1.f;   // a label is drawn whole or not at all
+        if (!t.sys.empty() && (whole || total <= inner)) {   // the console's colour dot (on the active tab it becomes the ink colour: the pill already is that colour)
             dl->AddCircleFilled(ImVec2(tx + dot_r, (p0.y + p1.y) * 0.5f), dot_r, on ? ui::scale_alpha(ink, 0.9f) : col, 12);
             tx += dot_r * 2.f + sp(0.45f);
         }
-        const bool whole = p0.x >= c0.x + sp(0.5f) - 1.f && p1.x <= c1.x - sp(0.5f) + 1.f;   // a label is drawn whole or not at all
         if (whole || total <= inner) {
             const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.label.c_str());
             dl->AddText(f, fs, ImVec2(tx, (p0.y + p1.y - ts.y) * 0.5f), ink, t.label.c_str());
@@ -463,6 +463,43 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
         dl->AddRectFilledMultiColor(ImVec2(c1.x - sp(2.8f), c0.y + 1.f), ImVec2(c1.x - sp(0.4f), c1.y - 1.f), pc0, pc, pc, pc0);
     }
     (void)can_pad;
+}
+
+/* ---- first run: no games of your own yet but friends' / shared-pack games fill the carousel: a banner under the tabs opens the "Add your own
+ * games" dialog (a fully empty library shows the welcome card instead, see frame.cpp). ---- */
+bool cases_own_empty() {
+    for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey) return false;
+    return !A.scanning;
+}
+bool cases_add_banner(ImDrawList* dl, ImVec2 org, float W, float y, bool nav_ok) {
+    ImFont* hf = ui::F.h2 ? ui::F.h2 : ui::F.body;
+    const float fs = hf->FontSize, cs = ui::F.cap->FontSize;
+    const char* t1 = "Add your own games";
+    const char* t2 = "Drop ROM files on this window, or click to choose";
+    const float ir = sp(1.7f), pad_x = sp(2.f);
+    const float w1 = hf->CalcTextSizeA(fs, FLT_MAX, 0.f, t1).x;
+    float w = ir * 2.f + pad_x * 3.f + std::max(w1, ui::F.cap->CalcTextSizeA(cs, FLT_MAX, 0.f, t2).x);
+    w = std::min(w, W - sp(4.f));
+    const float h = sp(5.2f);
+    const ImVec2 p0(org.x + (W - w) * 0.5f, y), p1(p0.x + w, y + h);
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+    ImGui::SetCursorScreenPos(p0);
+    const bool pressed = ImGui::InvisibleButton("##casesaddbanner", ImVec2(w, h));
+    ImGui::PopItemFlag();
+    const bool hot = ImGui::IsItemHovered();
+    (void)nav_ok;
+    dl->AddRectFilled(p0, p1, ui::mix(ui::PANEL, ui::ACCENT, hot ? 0.30f : 0.16f), h * 0.5f);
+    dl->AddRect(p0, p1, ui::with_alpha(ui::ACCENT, hot ? 1.f : 0.7f), h * 0.5f, 0, hot ? 2.f : 1.5f);
+    const ImVec2 c(p0.x + pad_x + ir, (p0.y + p1.y) * 0.5f);
+    dl->AddCircleFilled(c, ir, ui::with_alpha(ui::ACCENT, 0.35f), 32);
+    ui::icon(dl, ui::Icon::Plus, c, ir * 1.1f, ui::mix(ui::ACCENT, IM_COL32_WHITE, 0.6f));
+    const float tx = c.x + ir + pad_x * 0.8f;
+    dl->PushClipRect(ImVec2(tx, p0.y), ImVec2(p1.x - sp(1.f), p1.y), true);
+    dl->AddText(hf, fs, ImVec2(tx, c.y - fs * 0.95f), ui::TEXT, t1);
+    dl->AddText(ui::F.cap, cs, ImVec2(tx, c.y + sp(0.15f)), ui::TEXT2, t2);
+    dl->PopClipRect();
+    if (hot) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return pressed;
 }
 
 /* ---- the hint bar ---- */
@@ -1127,6 +1164,8 @@ void draw_cases(Disp& D) {
         if (pressed) lib_cases_menu_toggle();
         ImGui::PopID();
     }
+    if (n > 0 && cases_own_empty() && A.sys_filter.empty() && !A.search_buf[0] && CS.insp.x < 0.05f && CS.flip.x < 0.05f)   // only friends' / shared games so far: still point at Add games
+        if (cases_add_banner(dl, org, W, tab_y + tab_h + sp(1.5f), can)) add_games_open();
     cases_hints(dl, org, W, hint_y, hint_h);
     nav_draw(dl, org, sz, tab_y, tab_h, strip_y, strip_h, ImVec2(sc.cx, f0 - Hc * 0.5f), Hc, D);
     dl->PopClipRect();

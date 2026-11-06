@@ -13,6 +13,8 @@ namespace fs = std::filesystem;
 namespace hub::nx {
 namespace {
 
+constexpr uint32_t kMaxIconBytes = 4u << 20;   // an icon larger than this is ignored (real ones are 20-200 KB)
+
 uint32_t rd32(const uint8_t* d, size_t at) { return (uint32_t)d[at] | ((uint32_t)d[at + 1] << 8) | ((uint32_t)d[at + 2] << 16) | ((uint32_t)d[at + 3] << 24); }
 uint64_t rd64(const uint8_t* d, size_t at) { return (uint64_t)rd32(d, at) | ((uint64_t)rd32(d, at + 4) << 32); }
 bool has(size_t n, uint64_t at, uint64_t len) { return at <= n && len <= n - at; }   // [at, at+len) inside the n bytes
@@ -143,7 +145,8 @@ bool parse_npdm(const uint8_t* d, size_t n, Ident* out) {
     return true;
 }
 
-bool parse_nup(const ReadFn& read, uint64_t file_size, Ident* out) {
+bool parse_nup(const ReadFn& read, uint64_t file_size, Ident* out, std::vector<uint8_t>* icon) {
+    if (icon) icon->clear();
     if (!read || !out) return false;
     std::vector<uint8_t> sb;
     if (!read(0, 0x80, &sb) || sb.size() < 0x80 || std::memcmp(sb.data(), "NUP\x01", 4) != 0) return false;
@@ -197,6 +200,7 @@ bool parse_nup(const ReadFn& read, uint64_t file_size, Ident* out) {
     if (meta_off && meta_size && meta_size <= (16u << 20) && (!file_size || (meta_off <= file_size && meta_size <= file_size - meta_off)) &&
         read(meta_off, meta_size, &m)) {
         std::string localized;
+        std::vector<uint8_t> en_icon, icon_fallback, first_icon;
         for (size_t p = 0; p + 8 <= m.size();) {
             const uint16_t type = (uint16_t)(m[p] | (m[p + 1] << 8));
             const uint32_t sz = rd32(m.data(), p + 4);
@@ -208,6 +212,23 @@ bool parse_nup(const ReadFn& read, uint64_t file_size, Ident* out) {
                 if (parse_npdm(pl, sz, &n)) out->nx2 = n.nx2;
             } else if (type == 5) {
                 out->title = cstr(pl, sz);
+            } else if (icon && type == 3) {   // the package's own icon (JPEG / PNG), bounded
+                if (sz > 0 && sz <= kMaxIconBytes && icon_fallback.empty()) icon_fallback.assign(pl, pl + sz);
+            } else if (icon && type == 10) {   // localized icons: same record layout as type 9, English preferred, else the first
+                for (size_t q = 0; q < sz;) {
+                    const size_t ll = pl[q++];
+                    if (q + ll + 4 > sz) break;
+                    const std::string lang((const char*)pl + q, ll);
+                    q += ll;
+                    const uint32_t il = rd32(pl, q);
+                    q += 4;
+                    if (il > sz - q) break;
+                    if (il > 0 && il <= kMaxIconBytes) {
+                        if (lower(lang).rfind("en", 0) == 0 && en_icon.empty()) en_icon.assign(pl + q, pl + q + il);
+                        else if (first_icon.empty()) first_icon.assign(pl + q, pl + q + il);
+                    }
+                    q += il;
+                }
             } else if (type == 9 && localized.empty()) {   // [u8 lang len][lang][u32 len][title]...: English first, else the first one
                 std::string first;
                 for (size_t q = 0; q < sz;) {
@@ -228,9 +249,22 @@ bool parse_nup(const ReadFn& read, uint64_t file_size, Ident* out) {
             p += sz;
         }
         if (out->title.empty()) out->title = localized;
+        if (icon) *icon = !en_icon.empty() ? en_icon : !icon_fallback.empty() ? icon_fallback : first_icon;
     }
     if (!out->nx2 && (out->title_id >> 56) == 0x04) out->nx2 = true;   // Switch 2 program ids are 04xx...
     return true;
+}
+
+bool nup_icon_file(const std::string& path, std::vector<uint8_t>* icon) {
+    if (!icon) return false;
+    icon->clear();
+    fs::path p = fs::u8path(path);
+    std::error_code ec;
+    const uint64_t fsz = fs::file_size(p, ec);
+    if (ec) return false;
+    Ident id;
+    bool ok = parse_nup([&](uint64_t off, size_t len, std::vector<uint8_t>* o) { return read_at(p, off, len, o); }, fsz, &id, icon);
+    return ok && !icon->empty();
 }
 
 bool identify_file(const std::string& path, Ident* out) {
