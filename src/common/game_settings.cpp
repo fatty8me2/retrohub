@@ -136,10 +136,11 @@ std::vector<Option> build() {
     // the first time a place or effect shows up; the thing may appear a few frames late). "lichii" leaves whatever is set inside Lichii.
     v.push_back(mk("switch.async_shaders", "Asynchronous shaders (less stutter)", "Video", SWITCH, K::Choice, S::Visual, "on",
                    {{"on", "On"}, {"off", "Off"}, {"lichii", "Use Lichii's setting"}}));
-    // Lichii's accuracy trade-offs for CPU-heavy games (the GPU idles while one emulation thread is the limit): "fast" = gpu_accuracy Low,
-    // reactive flushing off, DMA accuracy Unsafe; "accurate" = Lichii's own defaults (High / on / Default); "lichii" leaves them alone.
-    v.push_back(mk("switch.speed", "Speed hacks (more fps, rare glitches)", "Video", SWITCH, K::Choice, S::Visual, "lichii",
-                   {{"lichii", "Use Lichii's setting"}, {"fast", "Faster (less accurate)"}, {"accurate", "Accurate (Lichii default)"}}));
+    // gpu_accuracy (Lichii: Low 0 / High 1, its default High). Measured 2026-11-06 on Ocarina of Time (Switch 2), i9-14900K + RTX 3090 Ti,
+    // Kokiri Forest gameplay: High ~30 fps, Low ~40 fps. CPU accuracy Unsafe, CPU clock Boost, fence Immediate, reactive flushing off and
+    // DMA Unsafe added nothing on top of Low, so only this is exposed. "lichii" leaves whatever is set inside Lichii.
+    v.push_back(mk("switch.gpu_accuracy", "GPU accuracy", "Video", SWITCH, K::Choice, S::Visual, "low",
+                   {{"low", "Low (faster)"}, {"high", "High (more accurate, slower)"}, {"lichii", "Use Lichii's setting"}}));
     return v;
 }
 
