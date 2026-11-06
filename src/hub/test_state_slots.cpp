@@ -135,6 +135,27 @@ int main() {
         CHECK(sort_label(SortSpec(SortMode::ReleaseYear, false, true)) == "Favorites, Year (oldest)");
         SortSpec fromMode = SortMode::MostPlayed;   // implicit: old call sites keep compiling
         CHECK(fromMode.mode == SortMode::MostPlayed && !fromMode.reverse && !fromMode.favs_first);
+        {   // Console + Reverse in the grouped layouts: the last console first, "Other" still last
+            std::vector<ListItem> g = {{"a", "Alpha", "gba", false, 0, 0, 0}, {"b", "Bravo", "n64", false, 0, 0, 0}, {"c", "Charlie", "gc", false, 0, 0, 0}, {"x", "Xeno", "zzz", false, 0, 0, 0}};
+            auto order = [&](SortSpec sp) { std::string r; for (auto& c : group_by_console(g, nullptr, sp)) r += c.system + ","; return r; };
+            CHECK(order(SortSpec(SortMode::Console)) == "n64,gc,gba,other,");
+            CHECK(order(SortSpec(SortMode::Console, true)) == "gba,gc,n64,other,");
+            CHECK(order(SortSpec(SortMode::Title, true)) == "n64,gc,gba,other,");   // other sorts keep the library's console order
+            std::vector<ShelfGame> sg(3);
+            sg[0].key = "a"; sg[0].title = "Alpha"; sg[0].system = "gba"; sg[1].key = "b"; sg[1].title = "Bravo"; sg[1].system = "n64"; sg[2].key = "c"; sg[2].title = "Charlie"; sg[2].system = "gc";
+            auto sh = compose_shelves(sg, 12, SortSpec(SortMode::Console, true));
+            CHECK(sh.size() == 3 && sh[0].id == "console:gba" && sh[2].id == "console:n64");
+        }
+        {   // Title sort: digits, symbols and non-ASCII letters form ONE "#" block ahead of A (behind Z when reversed)
+            std::vector<ListItem> h = {{"1", "1942", "n64", false, 0, 0, 0}, {"e", "Ãtoile", "n64", false, 0, 0, 0}, {"z", "Zed", "n64", false, 0, 0, 0},
+                                       {"s", "!!!", "n64", false, 0, 0, 0}, {"a", "Alpha", "n64", false, 0, 0, 0}};
+            auto hn = [&](SortSpec sp) { std::string r; for (int i : filter_sort(h, "", "", sp)) r += h[i].key; return r; };
+            for (auto& it : h) prepare_sort_key(it);   // precomputed keys give the same order
+            const std::string a1 = hn(SortSpec(SortMode::Title));
+            CHECK(a1.size() == 5 && a1.substr(3) == "az" && a1.find('1') < 3 && a1.find('e') < 3 && a1.find('s') < 3);   // the three "#" games first, then Alpha, Zed
+            const std::string r1 = hn(SortSpec(SortMode::Title, true));
+            CHECK(r1.size() == 5 && r1.substr(0, 2) == "za" && r1.find('1') > 1 && r1.find('e') > 1 && r1.find('s') > 1);
+        }
         Settings s0, s1;
         s0.library_sort = "release_year"; s0.library_sort_rev = true; s0.library_favs_first = true;
         CHECK(settings_from_json(settings_to_json(s0), &s1) && s1.library_sort == "release_year" && s1.library_sort_rev && s1.library_favs_first);

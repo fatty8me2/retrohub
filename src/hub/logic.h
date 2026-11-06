@@ -205,7 +205,11 @@ struct ListItem {
     bool favorite = false;  // Favorites first
     int year = 0;           // release year for the Release year sort (0 = unknown, sorts last); precomputed per list build
     int crank = -1;         // console_index(system), precomputed (-1 = compute on demand)
+    std::string lkey;       // lower-cased title, precomputed by prepare_sort_key (empty = compute on demand)
+    int hashb = -1;         // Title sort: 1 when the title starts with a digit / symbol / non-ASCII letter (one "#" block before A), 0 otherwise; -1 = compute
 };
+/* Fills lkey / hashb / crank once per list build so sorting thousands of games does no per-comparison string work. */
+void prepare_sort_key(ListItem& it);
 /* Position of a system short code in the library's console order (unknown systems after all of them). */
 int console_index(const std::string& system);
 /* Strict-weak order for the library: pinned first, then by `mode` (Title A-Z; Last played / Most played / Recently added newest or
