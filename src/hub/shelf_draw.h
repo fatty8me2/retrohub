@@ -63,6 +63,9 @@ struct CaseBack {
     CaseShot shots[3];
     int nshots = 0;
     const char* shots_label = "";
+    const char* publisher = "";   // "Published by ..." (the maker above is the developer)
+    const char* age = "";         // "ESRB E": printed in a plain rating box (text only)
+    bool desc_generated = false;  // the description is a factual line built from the metadata, not an online summary
     mutable std::vector<std::string> lines;
     mutable float lines_w = -1, lines_size = -1;
     mutable int lines_max = -1;
@@ -79,6 +82,11 @@ struct CaseDraw {
     bool ghost = false, fav = false;
     bool nx2 = false;             // a Switch 2 game (Media::SwitchCase with the two-tone "NINTENDO SWITCH 2" banner)
     const CaseBack* back = nullptr;
+    ImU32 art_col = 0;            // average colour of the front art (0 = unknown): the generated spine / insert colours follow it
+    /* A full cover scan (BACK | SPINE | FRONT laid flat, hubart::Kind::FullCover): back / spine / front are uv sub-rects of this one texture,
+     * split at the pixel columns back_x1 and front_x0 (hubart::fullcover_split). Null = none. */
+    SDL_Texture* full = nullptr;
+    int full_w = 0, full_h = 0, full_back_x1 = 0, full_front_x0 = 0;
 };
 struct CasePose {
     float x = 0, z = 0;        // world offset from the centre line, depth behind the centre plane
