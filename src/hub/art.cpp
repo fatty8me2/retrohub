@@ -131,7 +131,7 @@ long long now_s() { return (long long)std::time(nullptr); }
 
 std::wstring widen(const std::string& s) { return winutil::to_wide(s); }
 
-const char* kind_name(Kind k) { return k == Kind::Boxart ? "boxart" : k == Kind::Title ? "title" : "snap"; }
+const char* kind_name(Kind k) { return k == Kind::Boxart ? "boxart" : k == Kind::Title ? "title" : k == Kind::FullCover ? "coverfull" : "snap"; }
 
 std::string safe_file_name(const std::string& n) {
     std::string r = hm::thumb_name(n);
@@ -676,8 +676,19 @@ uint32_t average_color(SDL_Texture* tex) {
     return 0;
 }
 
+void fullcover_split(int w, int h, float front_aspect, int* back_x1, int* front_x0) {
+    if (w <= 0 || h <= 0) { if (back_x1) *back_x1 = 0; if (front_x0) *front_x0 = 0; return; }
+    float face = (float)h * (front_aspect > 0.f ? front_aspect : 0.71f);
+    float spine = (float)w - 2.f * face;
+    if (!(spine >= 0.02f * (float)w && spine <= 0.14f * (float)w)) { spine = 0.05f * (float)w; face = ((float)w - spine) * 0.5f; }
+    const int b = (int)(face + 0.5f), f = (int)((float)w - face + 0.5f);
+    if (back_x1) *back_x1 = b;
+    if (front_x0) *front_x0 = std::max(b, f);
+}
+
 SDL_Texture* get(const hub::GameEntry& game, Kind kind, int* w, int* h) {
     if (!g_enabled.load()) return nullptr;
+    if (kind == Kind::FullCover) return nullptr;   // contract stub: the art lane adds the GameTDB coverfull fetch
     Job j;
     j.id = slot_id(game.key, kind);
     j.kind = kind;

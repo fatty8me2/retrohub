@@ -19,7 +19,17 @@ namespace hub { struct GameEntry; }
 
 namespace hubart {
 
-enum class Kind { Boxart, Title, Snap };
+/* Boxart: the front cover (libretro-thumbnails Named_Boxarts; for Switch, the game's own icon from its .nup / an online cover).
+ * Title / Snap: a title screen / in-game screenshot (libretro Named_Titles / Named_Snaps).
+ * FullCover: a scan of the whole cover sheet laid flat, left to right BACK | SPINE | FRONT (GameTDB "coverfull"); only GameCube,
+ * Wii U, DS and 3DS games have one, every other game gets nullptr (remembered as a miss like the other kinds). The spine strip is
+ * the part between two equal-width covers: see fullcover_split() below. */
+enum class Kind { Boxart, Title, Snap, FullCover };
+
+/* Splits a FullCover image of w x h pixels into its three parts, given the front cover's expected width / height ratio (the case's
+ * cover aspect). Outputs x ranges in pixels: back [0, back_x1), spine [back_x1, front_x0), front [front_x0, w). Uses equal-width back
+ * and front; when the computed spine is implausible (< 2% or > 14% of w) falls back to a 5% spine. Pure, no texture needed. */
+void fullcover_split(int w, int h, float front_aspect, int* back_x1, int* front_x0);
 
 void init(SDL_Renderer* renderer, const std::string& cache_dir);
 void shutdown();
