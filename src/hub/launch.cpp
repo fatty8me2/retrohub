@@ -276,12 +276,22 @@ void pad_exit_watch() {
 void lichii_hang_watch() {
     static bool had_window = false;
     static ULONGLONG gone_since = 0;
+    static ULONGLONG cpu_at_gone = 0, idle_since = 0;
     if (!A.proc || A.run.system_short != "switch" || g_headless) { had_window = false; gone_since = 0; return; }
     const ULONGLONG now = GetTickCount64();
     if (game_main_window()) { had_window = true; gone_since = 0; return; }
     if (!had_window) return;
-    if (!gone_since) { gone_since = now; return; }
-    if (now - gone_since < 15000) return;
+    auto cpu = []() -> ULONGLONG {   // total CPU time (100 ns units) of the game process
+        FILETIME c, x, k, u;
+        if (!GetProcessTimes(A.proc, &c, &x, &k, &u)) return 0;
+        return (((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime);
+    };
+    if (!gone_since) { gone_since = now; cpu_at_gone = cpu(); idle_since = now; return; }
+    {   /* still busy (saving, shutting threads down): wait; only a process that stopped using the CPU counts as hung */
+        const ULONGLONG c = cpu();
+        if (c > cpu_at_gone + 2000000) { cpu_at_gone = c; idle_since = now; }   // more than 0.2 s of CPU since the last check
+    }
+    if (now - gone_since < 15000 || now - idle_since < 10000) return;
     autotest_log("lichii: window closed 15 s ago but the process is still running (build 88 exit hang): ending its job");
     if (A.job_h) TerminateJobObject(A.job_h, 0);
     else TerminateProcess(A.proc, 0);

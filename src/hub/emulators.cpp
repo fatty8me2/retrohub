@@ -1648,7 +1648,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
     } else if (e.system == hub::System::Switch) {
         if (!tid || inst.dir.empty()) return s;   // no title id (homebrew, unknown): nothing to map
         const std::string uuid = lichii_ensure_profile(inst.dir);
-        if (uuid.empty()) return s;
+        if (uuid.empty()) { s.error = "could not create Lichii's user profile (profiles.dat) - saves were not copied"; return s; }
         s.emu_root = lichii_user_dir(inst.dir);
         /* The vault side holds the title id only (the user uuid can differ between PCs): <vault>/switch/<key>/battery/save/<TID> */
         char tb[24];
@@ -1656,7 +1656,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         s.rels = {lichii_save_rel(uuid, tid)};
         s.vault_rels = {std::string("save/") + tb};
         const std::string acct = std::string("nand/user/save/account/") + uuid + "/" + tb;   // Lichii prefers this folder when it exists
-        if (dir_exists(join(s.emu_root, acct))) { s.rels.push_back(acct); s.vault_rels.push_back(std::string("save-account/") + tb); }
+        if (dir_exists(join(s.emu_root, acct)) || dir_exists(join(battery, std::string("save-account/") + tb))) {   /* either side has it: keep both PCs in step */ s.rels.push_back(acct); s.vault_rels.push_back(std::string("save-account/") + tb); }
     } else if (e.system == hub::System::GC) {
         if (inst.dir.empty()) return s;
         s.emu_root = dolphin_card_root(inst.dir, e.key);   // <install>\User\GC\RetroHub\<game>\GCI  <->  <vault>\gc\<game>\battery\GCI

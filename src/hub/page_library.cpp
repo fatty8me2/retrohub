@@ -233,7 +233,7 @@ void draw_hero(const hub::GameEntry& e, float h) {
             pill_at(dl, ImVec2(x, ty), s.c_str(), ui::scale_alpha(bg, ha), ui::scale_alpha(IM_COL32_WHITE, ha));
             x += pw + sp(0.75f);
         };
-        put(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.3f));
+        put(e.nx2 ? "Nintendo Switch 2" : hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.3f));
         if (is_hack(e)) put(hack_ribbon(e), ui::ACCENT);
         if (is_native(e)) put("Native port", IM_COL32(255, 255, 255, 30));
         if (cat && cat->year) put(std::to_string(cat->year), IM_COL32(255, 255, 255, 30));
@@ -801,7 +801,7 @@ void draw_details_modal() {
     ImGui::PopTextWrapPos();
     {   /* one short line of key facts */
         const char* dot = "  \xC2\xB7  ";
-        std::string facts = hub::system_name(e.system);
+        std::string facts = e.nx2 ? std::string("Nintendo Switch 2") : std::string(hub::system_name(e.system));
         if (native) facts += std::string(dot) + "Native port";
         if (local_players_for(e) >= 2) facts += std::string(dot) + "1-" + std::to_string(local_players_for(e)) + " players";
         if (supports_online(e)) facts += std::string(dot) + "Online";

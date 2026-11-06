@@ -141,8 +141,12 @@ static std::string copy_keys_file(const fs::path& from, const std::string& to) {
     if (same_file(from, P(to))) return "";
     std::error_code ec;
     fs::create_directories(P(to).parent_path(), ec);
-    fs::copy_file(from, P(to), fs::copy_options::overwrite_existing, ec);
-    return ec ? "could not copy " + S(from.filename()) + ": " + ec.message() : "";
+    const fs::path tmp = P(to + ".retrohub-new");   // copied beside it first, then swapped in: a failed copy never leaves a half-written key file
+    fs::copy_file(from, tmp, fs::copy_options::overwrite_existing, ec);
+    if (ec) { std::error_code e2; fs::remove(tmp, e2); return "could not copy " + S(from.filename()) + ": " + ec.message(); }
+    fs::rename(tmp, P(to), ec);
+    if (ec) { std::error_code e2; fs::remove(tmp, e2); return "could not replace " + S(P(to).filename()) + ": " + ec.message(); }
+    return "";
 }
 
 std::string lichii_import_keys(const std::string& install, const std::string& from) {
@@ -165,6 +169,7 @@ std::string lichii_import_keys(const std::string& install, const std::string& fr
     }
     if (!prod.empty()) {
         if (file_size(S(prod)) == 0) return "prod.keys is empty";
+        if (file_size(S(prod)) > (4u << 20)) return "that file is too big to be a prod.keys";
         if (!valid_keys_text(read_text(S(prod)))) return "that prod.keys is not valid: it has no header_key line (use the prod.keys dumped from your own Switch with Lockpick_RCM)";
         std::string e = copy_keys_file(prod, join(keys_dir(install), "prod.keys"));
         if (!e.empty()) return e;
@@ -199,13 +204,17 @@ static std::string unzip_nca(const std::string& archive, const std::string& dest
     if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); return "that is not a valid zip"; }
     std::string err;
     mz_uint n = mz_zip_reader_get_num_files(&za);
+    uint64_t total = 0;
+    if (n > 20000) { mz_zip_reader_end(&za); std::fclose(zf); return "that zip has too many files to be a Switch firmware"; }
     for (mz_uint i = 0; i < n && err.empty(); i++) {
         mz_zip_archive_file_stat st;
         if (!mz_zip_reader_file_stat(&za, i, &st)) { err = "damaged zip entry"; break; }
         std::string name = st.m_filename;
         if (!safe_zip_name(name)) { err = "unsafe path in the zip: " + name; break; }
         if (st.m_is_directory || name.back() == '/' || name.back() == '\\') continue;
-        if (lower(name).find(".nca") == std::string::npos) continue;
+        { const std::string ln = lower(name); if (!ends_with(ln, ".nca") && !ends_with(ln, ".nca/00") && !ends_with(ln, ".nca\\00")) continue; }
+        total += st.m_uncomp_size;
+        if (st.m_uncomp_size > (1ull << 30) || total > (4ull << 30)) { err = "that zip is far bigger than a Switch firmware"; break; }
         fs::path target = P(dest) / fs::u8path(name);
         std::error_code ec;
         fs::create_directories(target.parent_path(), ec);
@@ -284,10 +293,23 @@ std::string lichii_import_firmware(const std::string& install, const std::string
     }
     if (zipped) fs::remove_all(P(unz), ec);
     if (!err.empty()) { fs::remove_all(P(tmp), ec); return err; }
-    fs::remove_all(P(reg), ec);
+    /* Swap: the old firmware is moved aside first and only deleted once the new folder is in place; any failure puts it back. */
+    const std::string old = join(lichii_user_dir(install), "nand\\system\\Contents\\.retrohub-fw-old");
+    fs::remove_all(P(old), ec);
     fs::create_directories(P(reg).parent_path(), ec);
+    const bool had_old = fs::exists(P(reg), ec);
+    if (had_old) {
+        fs::rename(P(reg), P(old), ec);
+        if (ec) { std::error_code e2; fs::remove_all(P(tmp), e2); return "could not replace the firmware (is Lichii still running?): " + ec.message(); }
+    }
     fs::rename(P(tmp), P(reg), ec);
-    if (ec) { fs::remove_all(P(tmp), ec); return "could not install the firmware files: " + ec.message(); }
+    if (ec) {
+        std::error_code e2;
+        if (had_old) fs::rename(P(old), P(reg), e2);
+        fs::remove_all(P(tmp), e2);
+        return "could not install the firmware files: " + ec.message();
+    }
+    fs::remove_all(P(old), ec);
     return "";
 }
 
@@ -535,7 +557,7 @@ std::string prepare_lichii(const std::string& install, const hubctl::Profile& pr
     const bool first = read_text(marker).empty();
     if (first) t = lichii_ini_defaults(t);
     t = lichii_ini_launch(t, v, fullscreen);
-    t = lichii_controls_ini(t, prof, guid, port, binds);
+    if (!guid.empty()) t = lichii_controls_ini(t, prof, guid, port, binds);   // no pad: keep whatever Lichii has (a mapping the player made there)
     if (!write_bytes(ini, t)) return "could not write qt-config.ini";
     if (first) write_bytes(marker, "RetroHub wrote Lichii's defaults once (delete this file to write them again); video settings and controls are rewritten before every launch.\n");
     lichii_ensure_profile(install);

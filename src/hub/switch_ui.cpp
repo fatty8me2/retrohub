@@ -49,7 +49,7 @@ void report(const std::string& err, const std::string& ok_text) {
 
 /* The import buttons, shared by the prompt and Settings. `id` keeps the picker ids apart. */
 void import_buttons(const char* id) {
-    if (LOOK.inst.dir.empty()) return;
+    if (LOOK.inst.dir.empty()) { text_wrapped_disabled("Lichii is not downloaded yet: start any Switch game once, then add your keys and firmware here."); return; }
     const std::string dir = LOOK.inst.dir;
     for (size_t i = 0; i < LOOK.sources.size(); ++i) {
         const hubemu::NxSource& s = LOOK.sources[i];
@@ -136,7 +136,7 @@ void switch_settings_ui() {
     refresh();
     const hubemu::Install& li = LOOK.inst;
     if (li.exe.empty()) {
-        text_wrapped_disabled("Lichii (Switch / Switch 2, build " + std::string(hubemu::release(hubemu::Kind::Lichii).version) + "): not installed - downloads the first time you play a Switch game (about " +
+        text_wrapped_disabled("Lichii (Switch / Switch 2, " + std::string(hubemu::release(hubemu::Kind::Lichii).version) + "): not installed - downloads the first time you play a Switch game (about " +
                               std::to_string((int)(hubemu::release(hubemu::Kind::Lichii).size / 1048576)) + " MB). Very experimental.");
         return;
     }

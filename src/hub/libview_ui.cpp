@@ -365,6 +365,7 @@ void draw_list_row(int idx, float w, float h, const hubui::ListCols& C, bool odd
         ImU32 a, b;
         system_colors(sy, &a, &b);
         std::string badge = short_sys(item_sys(idx));
+        if (!ghost && idx >= 0 && idx < (int)A.lib.size() && A.lib[idx].nx2) badge = "Switch 2";
         ui::pill_at(dl, ImVec2(p0.x + C.console_x, cy - (cf->FontSize + sp(1.f)) * 0.5f), badge.c_str(), ui::mix(a, ui::PANEL, ghost ? 0.7f : 0.45f), IM_COL32_WHITE);
     }
     if (C.players) {

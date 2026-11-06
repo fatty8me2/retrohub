@@ -74,7 +74,7 @@ std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, 
  *   d-pad   engine:sdl,port:<n>,guid:<guid>,hat:0,direction:up      (when the pad's SDL mapping uses a hat; else button)
  *   trigger engine:sdl,port:<n>,guid:<guid>,axis:<n>,threshold:0.5,invert:+
  *   stick   engine:sdl,port:<n>,guid:<guid>,axis_x:<n>,axis_y:<n>,offset_x:0,offset_y:0,invert_x:+,invert_y:+,deadzone:<0-1>,range:1
- * An empty guid (no pad known) writes "any first SDL controller": guid of the first connected pad is filled by launch.cpp. */
+ * prepare_lichii skips the controls when the guid is empty (no pad connected), so a mapping made in Lichii itself is kept. */
 /* The pad's raw SDL joystick bindings (SDL_GameControllerGetBindForButton / ForAxis). Lichii's SDL engine (yuzu lineage, sdl_driver.cpp
  * BuildParamPackageForBinding) addresses RAW joystick buttons / hats / axes, not SDL GameController numbers, so these are looked up for the
  * chosen pad before every launch (page_controllers.cpp lichii_pad_for). Without them (no pad connected) the GameController numbers are written,
