@@ -109,12 +109,12 @@ void gs_draw_defaults_area() {
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     static const hub::System sysl[] = {hub::System::N64, hub::System::GC, hub::System::WiiU, hub::System::N3DS,
                                        hub::System::NDS, hub::System::PS2, hub::System::PSP, hub::System::GBA, hub::System::GB, hub::System::GBC,
-                                       hub::System::NES, hub::System::SNES};
+                                       hub::System::NES, hub::System::SNES, hub::System::Switch};
     static int cur = 0;
-    if (const char* s = std::getenv("HUB_SHOT_GS_SYS")) { static bool once = true; if (once) { cur = std::atoi(s) % 12; once = false; } }
+    if (const char* s = std::getenv("HUB_SHOT_GS_SYS")) { static bool once = true; if (once) { cur = std::atoi(s) % (int)(sizeof(sysl) / sizeof(sysl[0])); once = false; } }
     ImGui::SetNextItemWidth(sp(30.f));
     if (ImGui::BeginCombo("##gssys", hub::system_name(sysl[cur]))) {
-        for (int i = 0; i < 11; ++i)
+        for (int i = 0; i < (int)(sizeof(sysl) / sizeof(sysl[0])); ++i)
             if (ImGui::Selectable(hub::system_name(sysl[i]), i == cur)) cur = i;
         ImGui::EndCombo();
     }

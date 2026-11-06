@@ -90,8 +90,8 @@ static std::string join(const std::string& a, const std::string& b) {
     return (c == '\\' || c == '/') ? a + b : a + "\\" + b;
 }
 
-const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : k == Kind::Ppsspp ? "PPSSPP" : "Dolphin"; }
-Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : s == hub::System::PS2 ? Kind::Pcsx2 : s == hub::System::PSP ? Kind::Ppsspp : Kind::Azahar; }
+const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : k == Kind::Ppsspp ? "PPSSPP" : k == Kind::Lichii ? "Lichii" : "Dolphin"; }
+Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : s == hub::System::PS2 ? Kind::Pcsx2 : s == hub::System::PSP ? Kind::Ppsspp : s == hub::System::Switch ? Kind::Lichii : Kind::Azahar; }
 
 /* Pinned official releases. Azahar: github.com/azahar-emu/azahar (GPL-3.0), asset digest as published by GitHub.
  * Cemu: github.com/cemu-project/Cemu (MPL-2.0); GitHub lists no digest for the Windows zip, so the SHA-256 was
@@ -125,11 +125,17 @@ const Release& release(Kind k) {
     static const Release pp = {
         "1.20.4", L"www.ppsspp.org", L"/files/1_20_4/ppsspp_win.zip",
         27658759ull, "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163", L"PPSSPPWindows64.exe", "GPL-2.0+"};
-    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : dol;
+    /* Lichii build 88 (GPL-3.0), github.com/zortos293/Lichii tag build-88 (nx2 @ 55532f2, pre-release 2026-11-06): an Eden fork that adds
+     * Switch 2 games. The MSVC Windows zip holds lichii.exe at its root; the SHA-256 is GitHub's published asset digest. Portable via a
+     * `user` folder beside the exe (lichii.h). No games, keys or firmware are included: the player supplies their own. */
+    static const Release li = {
+        "build-88", L"github.com", L"/zortos293/Lichii/releases/download/build-88/lichii-windows-x86_64.zip",
+        116094897ull, "3405860a13f7b0729548ddb9402a355f4cfb1cd6a6d705fb8ea26f88879b0407", L"lichii.exe", "GPL-3.0"};
+    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : k == Kind::Lichii ? li : dol;
 }
 
 std::string managed_root() { return join(hub::data_dir(), "emulators"); }
-std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : k == Kind::Lrps2 ? "lrps2" : k == Kind::Ppsspp ? "ppsspp" : "dolphin"); }
+std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : k == Kind::Lrps2 ? "lrps2" : k == Kind::Ppsspp ? "ppsspp" : k == Kind::Lichii ? "lichii" : "dolphin"); }
 
 /* ------------------------------------------------------------------ */
 /* locating                                                            */
@@ -453,6 +459,11 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     remove_tree(stage);
     if (ok && k == Kind::Pcsx2) ok = write_text(join(dir, "portable.ini"), "");   // portable mode: all data beside the exe, a user's own PCSX2 is never touched
     if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
+    if (ok && k == Kind::Lichii) {   // a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the debug symbols (~116 MB) and the bundled VC++ installer are not needed to play
+        make_dirs(join(dir, "user"));
+        std::error_code ec2;
+        for (const char* f : {"lichii.pdb", "eden-cli.pdb", "vc_redist.x64.exe"}) fs::remove(P(join(dir, f)), ec2);
+    }
     if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");   // Dolphin keeps its User folder beside the exe
     if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");
     if (!ok) remove_tree(dir);   // never leave a half install behind
@@ -1267,7 +1278,7 @@ void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::
         make_dirs(d);
         std::string f = join(d, "qt-config.ini");
         write_text(f, azahar_config_apply(read_text(f), v));
-    } else if (k == Kind::Pcsx2 || k == Kind::Ppsspp) {
+    } else if (k == Kind::Pcsx2 || k == Kind::Ppsspp || k == Kind::Lichii) {
         return;   // written by prepare_pcsx2 / prepare_ppsspp (pcsx2.h, ppsspp.h)
     } else {   // RetroHub's own portable Cemu (a user's own install goes through prepare_cemu_own_settings)
         std::string f = join(install_dir, "portable\\settings.xml");

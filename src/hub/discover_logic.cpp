@@ -53,7 +53,7 @@ const std::vector<Rec>& all()
 
 const std::vector<std::string>& consoles()
 {
-    static const std::vector<std::string> c = {"nes", "snes", "n64", "gb", "gbc", "gba", "nds", "3ds", "gc", "wiiu", "ps1", "ps2", "psp"};
+    static const std::vector<std::string> c = {"nes", "snes", "n64", "gb", "gbc", "gba", "nds", "3ds", "gc", "wiiu", "ps1", "ps2", "psp", "switch"};
     return c;
 }
 

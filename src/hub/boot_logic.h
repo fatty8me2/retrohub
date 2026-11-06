@@ -18,6 +18,7 @@ inline Media media_for(hub::System s) {
         case hub::System::GC: return Media::MiniDisc;
         case hub::System::PS1: case hub::System::PS2: case hub::System::WiiU: return Media::Disc;
         case hub::System::PSP: return Media::Umd;
+        case hub::System::Switch: return Media::Card;
         default: return Media::None;
     }
 }

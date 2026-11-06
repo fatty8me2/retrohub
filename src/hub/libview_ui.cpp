@@ -74,7 +74,7 @@ bool item_pinned(int idx) { return !is_ghost(idx) && is_native(A.lib[idx]); }
 /* Short console name for pills and the strip. */
 std::string short_sys(const std::string& s) {
     static const char* m[][2] = {{"n64", "N64"}, {"gc", "GC"}, {"ps1", "PS1"}, {"wiiu", "Wii U"}, {"3ds", "3DS"}, {"nds", "DS"}, {"ps2", "PS2"},
-                                 {"psp", "PSP"}, {"nes", "NES"}, {"snes", "SNES"}, {"gba", "GBA"}, {"gbc", "GBC"}, {"gb", "GB"}};
+                                 {"psp", "PSP"}, {"switch", "Switch"}, {"nes", "NES"}, {"snes", "SNES"}, {"gba", "GBA"}, {"gbc", "GBC"}, {"gb", "GB"}};
     for (auto& e : m) if (s == e[0]) return e[1];
     std::string o = s;
     for (char& c : o) c = (char)std::toupper((unsigned char)c);

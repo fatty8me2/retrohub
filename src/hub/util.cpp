@@ -212,6 +212,7 @@ void system_colors(hub::System s, ImU32* a, ImU32* b) {
         case hub::System::PS1: *a = IM_COL32(95, 100, 115, 255); *b = IM_COL32(165, 170, 185, 255); break;
         case hub::System::PS2: *a = IM_COL32(20, 40, 120, 255); *b = IM_COL32(70, 110, 220, 255); break;
         case hub::System::PSP: *a = IM_COL32(25, 28, 38, 255); *b = IM_COL32(95, 105, 135, 255); break;
+        case hub::System::Switch: *a = IM_COL32(170, 25, 35, 255); *b = IM_COL32(235, 70, 80, 255); break;
         default: *a = IM_COL32(70, 78, 100, 255); *b = IM_COL32(120, 130, 160, 255); break;
     }
 }
@@ -228,6 +229,7 @@ const char* sys_badge(hub::System s) {
         case hub::System::PS1: return "PLAYSTATION";
         case hub::System::PS2: return "PLAYSTATION 2";
         case hub::System::PSP: return "PSP";
+        case hub::System::Switch: return "SWITCH";
         case hub::System::NES: return "NES";
         case hub::System::SNES: return "SNES";
         default: return "?";

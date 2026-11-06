@@ -219,6 +219,7 @@ std::string platform_qid(const std::string& s) {
     if (s == "ps1") return "Q10677";
     if (s == "ps2") return "Q10680";
     if (s == "psp") return "Q170325";
+    if (s == "switch") return "Q19610114";
     if (s == "nes") return "Q172742";
     if (s == "snes") return "Q183259";
     return "";

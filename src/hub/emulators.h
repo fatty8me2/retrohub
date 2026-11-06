@@ -19,7 +19,7 @@
 
 namespace hubemu {
 
-enum class Kind { Azahar, Cemu, Dolphin, Pcsx2, Lrps2, Ppsspp };   // Ppsspp: PlayStation Portable (ppsspp.h)
+enum class Kind { Azahar, Cemu, Dolphin, Pcsx2, Lrps2, Ppsspp, Lichii };   // Ppsspp: PlayStation Portable (ppsspp.h); Lichii: Switch / Switch 2 (lichii.h)
 //   // Pcsx2: PlayStation 2 (pcsx2.h); Lrps2: the libretro PS2 core for online rooms (a DLL for retrorun, not an exe)
 
 const char* name(Kind k);                 // "Azahar" / "Cemu" / "Dolphin"

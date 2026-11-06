@@ -1016,6 +1016,7 @@ const char* system_name(System s) {
     case System::NES: return "Nintendo Entertainment System";
     case System::SNES: return "Super Nintendo";
     case System::PSP: return "PlayStation Portable";
+    case System::Switch: return "Nintendo Switch";
     default:          return "Unknown";
     }
 }
@@ -1035,6 +1036,7 @@ const char* system_short(System s) {
     case System::NES: return "nes";
     case System::SNES: return "snes";
     case System::PSP: return "psp";
+    case System::Switch: return "switch";
     default:          return "";
     }
 }
@@ -1054,6 +1056,7 @@ System system_from_short(const std::string& s) {
     if (l == "nes") return System::NES;
     if (l == "snes") return System::SNES;
     if (l == "psp") return System::PSP;
+    if (l == "switch") return System::Switch;
     return System::Unknown;
 }
 
