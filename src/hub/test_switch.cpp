@@ -81,16 +81,13 @@ static void test_ini() {
     v["switch.async_shaders"] = "lichii";
     CHECK(lichii_ini_launch(a1, v, true).find("use_asynchronous_shaders=false\n") != std::string::npos);   // untouched
     CHECK(!has(lichii_ini_launch("", v, true), "use_asynchronous_shaders"));
-    // speed hacks: untouched by default, "fast" lowers GPU / DMA accuracy and turns reactive flushing off, "accurate" puts Lichii's defaults back
-    CHECK(!has(l, "gpu_accuracy") && !has(l, "use_reactive_flushing") && !has(l, "dma_accuracy"));
-    v["switch.speed"] = "fast";
-    const std::string s1 = lichii_ini_launch(l, v, true);
-    CHECK(has(s1, "gpu_accuracy=0\n") && has(s1, "use_reactive_flushing=false\n") && has(s1, "dma_accuracy=1\n"));
-    v["switch.speed"] = "accurate";
-    const std::string s2 = lichii_ini_launch(s1, v, true);
-    CHECK(has(s2, "gpu_accuracy=1\n") && has(s2, "use_reactive_flushing=true\n") && has(s2, "dma_accuracy=0\n") && count_of(s2, "gpu_accuracy=") == 1);
-    v["switch.speed"] = "lichii";
-    CHECK(lichii_ini_launch(s2, v, true) == lichii_ini_launch(s2, v, true) && has(lichii_ini_launch(s2, v, true), "gpu_accuracy=1\n"));   // untouched
+    // GPU accuracy: Low by default (measured ~30 -> ~40 fps on Ocarina), High on request, "lichii" keeps Lichii's own value
+    CHECK(has(l, "gpu_accuracy\\default=false\ngpu_accuracy=0\n") && !has(l, "use_reactive_flushing") && !has(l, "dma_accuracy"));
+    v["switch.gpu_accuracy"] = "high";
+    const std::string s2 = lichii_ini_launch(l, v, true);
+    CHECK(has(s2, "gpu_accuracy=1\n") && count_of(s2, "gpu_accuracy=") == 1);
+    v["switch.gpu_accuracy"] = "lichii";
+    CHECK(has(lichii_ini_launch(s2, v, true), "gpu_accuracy=1\n") && !has(lichii_ini_launch("", v, true), "gpu_accuracy"));   // untouched
 }
 
 static void test_controls() {

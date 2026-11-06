@@ -290,7 +290,10 @@ player's other keys stay):
 - Once (marker `user\config\retrohub-defaults.txt`; delete it to write them again): `[UI]` firstStart=false, check_for_updates=false, confirmStop=2,
   showConsole=false, pauseWhenInBackground=false, select_user_on_boot=false, enable_discord_presence=false, singleWindowMode=true; `[Renderer]` fullscreen_mode=0.
 - Every launch: `[Renderer]` resolution_setup (`switch.res`), frame_gen / frame_gen_type=1 (FSR3) / frame_gen_multiplier (`switch.framegen`), use_vsync
-  (`switch.vsync`: fifo 2, mailbox 1, off 0); `[UI]` fullscreen; `[System]` current_user=0; `[Controls]` player 1 from the RetroHub `switch` profile on
+  (`switch.vsync`: fifo 2, mailbox 1, off 0), use_asynchronous_shaders (`switch.async_shaders`: on (default) / off / `lichii` = untouched),
+  gpu_accuracy (`switch.gpu_accuracy`: low 0 (default) / high 1 / `lichii` = untouched; Lichii's own default is High. Measured on Ocarina of Time
+  (Switch 2, i9-14900K + RTX 3090 Ti, Kokiri Forest): High ~30 fps, Low ~40 fps; CPU accuracy Unsafe, CPU clock Boost, fence Immediate, reactive
+  flushing off, DMA Unsafe and docked mode changed nothing on top of Low; the limit is then Lichii's GPU / GPUBack threads); `[UI]` fullscreen; `[System]` current_user=0; `[Controls]` player 1 from the RetroHub `switch` profile on
   one SDL pad (SDL GameController names become SDL button / axis indices; triggers `axis:4|5,threshold:0.5`), connected as a Pro Controller, players 2-8
   disconnected. Values are quoted as Qt writes them; the screenshot button is left alone.
 - `profiles.dat` gets one fixed user ("Player", a hardcoded uuid) only when the file is missing or empty; an existing user list is never touched.
