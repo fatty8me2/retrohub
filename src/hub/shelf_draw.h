@@ -46,6 +46,11 @@ void caption(ImDrawList* dl, ImVec2 anchor, const std::string& title, const std:
 struct CaseScene {
     ImDrawList* dl = nullptr;
     float cx = 0, hy = 0, U = 100, dist = 6.5f, eye = 0.55f;
+    /* stage lighting (car-stage) */
+    double time = 0;           // seconds, drives the drifting light motes
+    bool motion = true;        // false under reduced motion: no drifting light motes
+    float spot = 1;            // 0..1 strength of the spotlight on the centre case (dips a little while the carousel moves)
+    float dim = 0;             // 0..1 inspect: the whole stage darkens around the case
     float floor_y(float z = 0.f) const { return hy + eye * U * dist / (dist + z); }   // screen y of the floor at depth z
 };
 struct CaseShot { SDL_Texture* tex = nullptr; int w = 0, h = 0; };
@@ -91,6 +96,8 @@ void cases_stage_back(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32
 void cases_veil(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1, float case_h);
 /* Floor details drawn over the veil: perspective lines, the pool of light under the centre case, a gloss streak. */
 void cases_stage_front(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1);
+/* Softly darkens the screen edges: call after the cases, before the text. */
+void cases_vignette(const CaseScene& sc, ImVec2 p0, ImVec2 p1, float strength);
 void cases_shadow(const CaseScene& sc, const CaseDraw& d, const CasePose& ps);   // contact shadow on the floor
 void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool reflection);
 /* Screen box of a case (for hit tests). */
