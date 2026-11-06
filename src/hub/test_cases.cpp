@@ -171,6 +171,10 @@ int main() {
         const auto sc = build_sections(lb);
         CHECK(sc.size() == 4 && sc[0].label == "A" && sc[0].first == 0 && sc[0].count == 3 && sc[1].label == "B" && sc[1].first == 3 && sc[1].count == 3);
         CHECK(sc[2].label == "#" && sc[2].first == 6 && sc[3].label == "A" && sc[3].first == 7 && sc[3].count == 1);   // the same label again later is a new section
+        {   // Title sort puts every digit / symbol / non-ASCII title in one block: a single "#" section
+            const auto hs = build_sections({"#", "#", "#", "A", "B", "Z"});
+            CHECK(hs.size() == 4 && hs[0].label == "#" && hs[0].count == 3);
+        }
         CHECK(build_sections({}).empty() && build_sections({"", ""}).empty());
         CHECK(section_index(sc, 0) == 0 && section_index(sc, 2) == 0 && section_index(sc, 3) == 1 && section_index(sc, 5) == 1 && section_index(sc, 7) == 3);
         // previous / next section
