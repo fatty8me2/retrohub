@@ -305,6 +305,9 @@ void gameinfo_case_info(const hub::GameEntry& e, const std::string& catalog_titl
     out->desc = s.on.description;
 }
 
+void gameinfo_prefetch(const hub::GameEntry&, bool) {}   // contract stub: the art/metadata lane implements the queue
+uint64_t gameinfo_generation() { return 0; }              // contract stub
+
 /* Screenshot aid: HUB_SHOT_INFO="n64;Super Smash Bros.;NALE|gba;Pokemon Emerald;BPEE" replaces the fake library with these games
  * (keys fake:info0, fake:info1, ...; select one with HUB_SELECT_GAME and open its details with HUB_SHOT_KEYS=i). */
 void gameinfo_ui_shot_lib() {

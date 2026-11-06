@@ -1000,8 +1000,16 @@ bool gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_tit
 void gameinfo_ui_shot_lib();   // HUB_SHOT_INFO screenshot aid
 /* Facts for the back of a game case (Cases library view). Offline facts always; with `with_description` the cached / fetched description too
  * (queues the usual background lookup, never blocks, never touches the network when headless). */
-struct CaseInfo { std::string desc, genre, maker; int year = 0, players = 0; };
+/* desc: the online (Wikipedia) summary when cached; otherwise, once the lookup is known to have no match, a short factual line built
+ * from the metadata ("A 2001 racing game for the Nintendo 64 by Rare, for 1-4 players."), desc_generated = true; "" while unknown.
+ * publisher / age (e.g. "ESRB E") when known. */
+struct CaseInfo { std::string desc, genre, maker, publisher, age; int year = 0, players = 0; bool desc_generated = false; };
 void gameinfo_case_info(const hub::GameEntry& e, const std::string& catalog_title, bool with_description, CaseInfo* out);
+/* Queue the online description lookup for a game (no-op when cached and fresh, offline, or disabled). urgent = the player is looking at
+ * it (front of the queue); otherwise it waits behind other lookups. Rate-limited; never blocks. */
+void gameinfo_prefetch(const hub::GameEntry& e, bool urgent);
+/* Bumped every time an online lookup result lands; a view that shows descriptions re-reads them when this changes. */
+uint64_t gameinfo_generation();
 void stats_ui_card();                                       // Home: "Your stats"
 void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history
 void cloud_ui_shot_init();   // HUB_SHOT_CLOUD_* seeds (screenshots only, no network)
