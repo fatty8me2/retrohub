@@ -45,7 +45,7 @@ int main() {
     CHECK(kind_for(Media::GcCase) == CaseKind::Keep && kind_for(Media::Ps2Case) == CaseKind::Keep && kind_for(Media::WiiUCase) == CaseKind::Keep);
     CHECK(kind_for(Media::DsCase) == CaseKind::Small && kind_for(Media::PspCase) == CaseKind::Small && kind_for(Media::N3dsCase) == CaseKind::Small);
     CHECK(kind_for(Media::Ps1Jewel) == CaseKind::Jewel && kind_for(Media::N64Cart) == CaseKind::Box && kind_for(Media::GbaCart) == CaseKind::Box);
-    CHECK(case_dims(Media::DsCase).w < case_dims(Media::GcCase).w && case_dims(Media::DsCase).h < case_dims(Media::GcCase).h);   // small cases are smaller
+    CHECK(case_dims(Media::DsCase).h < case_dims(Media::GcCase).h && case_dims(Media::PspCase).w < case_dims(Media::GcCase).w);   // small cases are smaller (the DS case is landscape, like its cover scans)
     CHECK(case_dims(Media::N64Cart).d > case_dims(Media::GcCase).d);                                                            // boxes are thicker
     CHECK(case_dims(Media::GcCase).w / case_dims(Media::GcCase).h > 0.68f && case_dims(Media::GcCase).w / case_dims(Media::GcCase).h < 0.74f);   // 135 x 190 mm
 
@@ -175,7 +175,7 @@ int main() {
         CHECK(sw.w < wu.w && sw.h < gc.h && sw.d < ps2.d && sw.w / sw.h > 0.55f && sw.w / sw.h < 0.65f);
         CHECK(wu.h < gc.h && wu.d < ps2.d && gc.d < ps2.d);
         CHECK(case_dims(Media::Ps1Jewel).w > case_dims(Media::Ps1Jewel).h);
-        CHECK(case_dims(Media::DsCase).w / case_dims(Media::DsCase).h > 0.85f && case_dims(Media::DsCase).w / case_dims(Media::DsCase).h < 1.0f);
+        CHECK(case_dims(Media::DsCase).w / case_dims(Media::DsCase).h > 1.1f && case_dims(Media::DsCase).w / case_dims(Media::DsCase).h < 1.25f);   // landscape, like the DS cover scans (1.12 w/h)
         CHECK(case_dims(Media::N3dsCase).w == case_dims(Media::DsCase).w && case_dims(Media::N3dsCase).h == case_dims(Media::DsCase).h);
         CHECK(case_dims(Media::PspCase).w / case_dims(Media::PspCase).h < 0.66f && case_dims(Media::PspCase).h > case_dims(Media::DsCase).h);
         CHECK(case_dims(Media::SnesCart).w > case_dims(Media::SnesCart).h && case_dims(Media::N64Cart).w > case_dims(Media::N64Cart).h && case_dims(Media::NesCart).w < case_dims(Media::NesCart).h);
@@ -360,6 +360,59 @@ int main() {
         // a tall case near the top is shrunk, and shrinking only ever helps
         FitScene fs2; fs2.U = 400.f; fs2.hy = 500.f - 0.55f * 400.f;
         CHECK(fit_centre_scale(case_dims(Media::SwitchCase), 1.3f, 0.f, 0.f, -1.1f, fs2, 500.f - 1.0f * 400.f, 560.f) < 1.f);
+    }
+
+    /* cases-faces */
+    {
+        using shelf::Media;
+        // the cover window sits inside the face, the hinge strip is to its left on plastic cases
+        for (int i = 0; i < shelf::kMediaCount; ++i) {
+            const Media m = (Media)i;
+            const UvRect w = front_window(kind_for(m));
+            CHECK(w.u0 >= 0.f && w.v0 >= 0.f && w.u1 <= 1.f && w.v1 <= 1.f && w.u1 - w.u0 > 0.85f && w.v1 - w.v0 > 0.9f);
+            if (!is_box(m)) CHECK(w.u0 > hinge_frac(kind_for(m)));
+            CHECK(nominal_cover_aspect(m) > 0.5f && nominal_cover_aspect(m) < 1.6f);
+        }
+        // the case shapes follow the real cover scans (libretro Named_Boxarts measure: GC / PS2 / Wii U 0.71, DS / 3DS 1.12, N64 / SNES 1.42, GBA / GBC / GB / PS1 1.0, NES 0.70):
+        // none of them is letterboxed, so the scan fills the case's cover window
+        struct { Media m; float a; } scans[] = {{Media::GcCase, 0.71f}, {Media::Ps2Case, 0.71f}, {Media::WiiUCase, 0.71f}, {Media::DsCase, 1.12f}, {Media::N3dsCase, 1.13f}, {Media::N64Cart, 1.42f},
+                                                {Media::SnesCart, 1.42f}, {Media::GbaCart, 1.0f}, {Media::GbcCart, 1.0f}, {Media::GbCart, 1.0f}, {Media::Ps1Jewel, 1.02f}, {Media::NesCart, 0.70f}};
+        for (const auto& s : scans) {
+            const CaseArtFit f = fit_art(nominal_cover_aspect(s.m), s.a, nominal_cover_aspect(s.m));
+            CHECK(!f.letterbox);
+            const float na = nominal_cover_aspect(s.m);
+            CHECK(std::fabs(na / s.a - 1.f) < 0.08f);   // within the "exact" stretch (or the window shrinks a little)
+        }
+        // fit_art: a scan is never cropped nor stretched beyond 7%; the rect stays inside the window and centred
+        for (float win : {0.6f, 0.9f, 1.4f}) for (float art : {0.5f, 0.71f, 1.0f, 1.12f, 1.4f, 2.0f}) {
+            const CaseArtFit f = fit_art(win, art, win);
+            CHECK(f.dst.u0 >= 0.f && f.dst.v0 >= 0.f && f.dst.u1 <= 1.f + 1e-5f && f.dst.v1 <= 1.f + 1e-5f && f.dst.u1 > f.dst.u0 && f.dst.v1 > f.dst.v0);
+            CHECK(std::fabs((f.dst.u0 + f.dst.u1) - 1.f) < 1e-4f && std::fabs((f.dst.v0 + f.dst.v1) - 1.f) < 1e-4f);
+            const float got = ((f.dst.u1 - f.dst.u0) * win) / (f.dst.v1 - f.dst.v0);
+            CHECK(std::fabs(got / art - 1.f) < 0.07f + 1e-4f);
+            CHECK(f.exact == (std::fabs(art / win - 1.f) < 0.07f && f.dst.u0 == 0.f && f.dst.v0 == 0.f));
+        }
+        {   // a wide scan in a tall window: bars above and below, none at the sides; a tall one the other way round
+            const CaseArtFit w = fit_art(0.7f, 1.4f, 0.7f), t = fit_art(1.4f, 0.7f, 1.4f);
+            CHECK(w.dst.u0 == 0.f && w.dst.u1 == 1.f && w.dst.v0 > 0.2f && !w.exact);
+            CHECK(t.dst.v0 == 0.f && t.dst.v1 == 1.f && t.dst.u0 > 0.2f && !t.exact);
+            CHECK(w.letterbox && t.letterbox);   // far from the console's nominal aspect: painted with the insert colour
+        }
+        CHECK(!fit_art(0.7f, 0.7f * 1.14f, 0.7f).letterbox && fit_art(0.7f, 0.7f * 1.2f, 0.7f).letterbox && fit_art(0.7f, 0.7f * 0.86f, 0.7f).letterbox == false && fit_art(0.7f, 0.7f * 0.8f, 0.7f).letterbox);
+        CHECK(fit_art(0.f, 1.f, 1.f).exact == false && fit_art(1.f, 0.f, 1.f).dst.u1 == 1.f);   // degenerate input: the whole window, no NaN
+        // square art (a Switch game's icon) on a portrait case is composed; DS / N64 style art never is
+        CHECK(is_square_art(256, 256) && is_square_art(512, 480) && is_square_art(1000, 1100) && !is_square_art(256, 300) && !is_square_art(0, 0) && !is_square_art(640, 480));
+        CHECK(is_portrait_case(Media::SwitchCase) && is_portrait_case(Media::GcCase) && is_portrait_case(Media::PspCase) && !is_portrait_case(Media::DsCase) && !is_portrait_case(Media::N64Cart) && !is_portrait_case(Media::Ps1Jewel));
+        // a full cover (back | spine | front): three contiguous uv ranges of one texture, the spine in the middle
+        {
+            const FullParts p = full_cover_parts(2087, 1008, 1079);
+            CHECK(p.back.u0 == 0.f && p.front.u1 == 1.f && p.back.u1 == p.spine.u0 && p.spine.u1 == p.front.u0);
+            CHECK(std::fabs(p.back.u1 - 1008.f / 2087.f) < 1e-6f && std::fabs(p.front.u0 - 1079.f / 2087.f) < 1e-6f);
+            CHECK(p.spine.u1 - p.spine.u0 > 0.02f && p.spine.u1 - p.spine.u0 < 0.14f);
+            CHECK((p.back.u1 - p.back.u0) == (p.front.u1 - p.front.u0) || std::fabs((p.back.u1 - p.back.u0) - (p.front.u1 - p.front.u0)) < 1e-3f);   // equal-width back and front
+            const FullParts z = full_cover_parts(0, 0, 0);   // no texture: no NaN
+            CHECK(z.back.u1 == 0.f && z.spine.u1 == 0.f);
+        }
     }
 
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
