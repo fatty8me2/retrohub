@@ -14,6 +14,9 @@ void set_console_inner(std::function<void(ImDrawList*)> fn);
 /* Disc media: true draws the data side (mirror finish with rainbow diffraction) instead of the printed label. Set around one draw_media call. */
 void set_media_back(bool back);
 
+/* Switch art: true draws the Switch 2 look (larger darker body, red game card). Set around the draw_console / draw_media calls; gallery name "switch2" does it too. */
+void set_switch2(bool nx2);
+
 /* Short lowercase name for a system's art ("n64", "gb", "gbc", "gba", "ds", "3ds", "gc", "ps1", "ps2", "wiiu", "nes", "snes"); never null. */
 const char* art_name(hub::System);
 /* True when the system has dedicated console + media art (Unknown falls back to N64 art and reports false). */
