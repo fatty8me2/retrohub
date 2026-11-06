@@ -73,6 +73,24 @@ static void test_ini() {
     std::string l3 = lichii_ini_launch(l2, v, true);
     CHECK(has(l3, "use_vsync=0\n") && has(l3, "frame_gen=false\n") && !has(l3, "frame_gen=true"));
     CHECK(has(l3, "frame_gen_type=1\n"));   // left over, harmless while frame_gen=false
+    // asynchronous shaders: on by default, off on request, "lichii" keeps whatever the player set inside Lichii
+    CHECK(has(l, "use_asynchronous_shaders\\default=false\nuse_asynchronous_shaders=true\n"));
+    v["switch.async_shaders"] = "off";
+    const std::string a1 = lichii_ini_launch(l3, v, true);
+    CHECK(has(a1, "use_asynchronous_shaders=false\n") && count_of(a1, "use_asynchronous_shaders=") == 1);
+    v["switch.async_shaders"] = "lichii";
+    CHECK(lichii_ini_launch(a1, v, true).find("use_asynchronous_shaders=false\n") != std::string::npos);   // untouched
+    CHECK(!has(lichii_ini_launch("", v, true), "use_asynchronous_shaders"));
+    // speed hacks: untouched by default, "fast" lowers GPU / DMA accuracy and turns reactive flushing off, "accurate" puts Lichii's defaults back
+    CHECK(!has(l, "gpu_accuracy") && !has(l, "use_reactive_flushing") && !has(l, "dma_accuracy"));
+    v["switch.speed"] = "fast";
+    const std::string s1 = lichii_ini_launch(l, v, true);
+    CHECK(has(s1, "gpu_accuracy=0\n") && has(s1, "use_reactive_flushing=false\n") && has(s1, "dma_accuracy=1\n"));
+    v["switch.speed"] = "accurate";
+    const std::string s2 = lichii_ini_launch(s1, v, true);
+    CHECK(has(s2, "gpu_accuracy=1\n") && has(s2, "use_reactive_flushing=true\n") && has(s2, "dma_accuracy=0\n") && count_of(s2, "gpu_accuracy=") == 1);
+    v["switch.speed"] = "lichii";
+    CHECK(lichii_ini_launch(s2, v, true) == lichii_ini_launch(s2, v, true) && has(lichii_ini_launch(s2, v, true), "gpu_accuracy=1\n"));   // untouched
 }
 
 static void test_controls() {

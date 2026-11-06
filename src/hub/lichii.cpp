@@ -455,6 +455,15 @@ std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, b
         t = ini_put(t, "Renderer", "frame_gen", "false");
     }
     t = ini_put(t, "Renderer", "use_vsync", vs == "mailbox" ? "1" : vs == "off" ? "0" : "2");
+    const std::string as = get("switch.async_shaders", "on");
+    if (as == "on" || as == "off") t = ini_put(t, "Renderer", "use_asynchronous_shaders", as == "on" ? "true" : "false");   // "lichii": untouched
+    const std::string sp = get("switch.speed", "lichii");   // GpuAccuracy {Low 0, High 1}; DmaAccuracy {Default 0, Unsafe 1, Safe 2}
+    if (sp == "fast" || sp == "accurate") {
+        const bool fast = sp == "fast";
+        t = ini_put(t, "Renderer", "gpu_accuracy", fast ? "0" : "1");
+        t = ini_put(t, "Renderer", "use_reactive_flushing", fast ? "false" : "true");
+        t = ini_put(t, "Renderer", "dma_accuracy", fast ? "1" : "0");
+    }
     t = ini_put(t, "UI", "fullscreen", fullscreen ? "true" : "false");
     t = ini_put(t, "System", "current_user", "0");
     return t;

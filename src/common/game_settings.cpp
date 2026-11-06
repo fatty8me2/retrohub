@@ -132,6 +132,14 @@ std::vector<Option> build() {
                    {{"off", "Off"}, {"2", "2x (30 to 60 fps)"}, {"3", "3x"}, {"4", "4x"}}));
     v.push_back(mk("switch.vsync", "VSync", "Video", SWITCH, K::Choice, S::Visual, "fifo",
                    {{"fifo", "On (FIFO)"}, {"mailbox", "Mailbox (low latency)"}, {"off", "Off (may tear)"}}));
+    // use_asynchronous_shaders: a shader the game has not used before is built in the background instead of freezing the game (less stutter
+    // the first time a place or effect shows up; the thing may appear a few frames late). "lichii" leaves whatever is set inside Lichii.
+    v.push_back(mk("switch.async_shaders", "Asynchronous shaders (less stutter)", "Video", SWITCH, K::Choice, S::Visual, "on",
+                   {{"on", "On"}, {"off", "Off"}, {"lichii", "Use Lichii's setting"}}));
+    // Lichii's accuracy trade-offs for CPU-heavy games (the GPU idles while one emulation thread is the limit): "fast" = gpu_accuracy Low,
+    // reactive flushing off, DMA accuracy Unsafe; "accurate" = Lichii's own defaults (High / on / Default); "lichii" leaves them alone.
+    v.push_back(mk("switch.speed", "Speed hacks (more fps, rare glitches)", "Video", SWITCH, K::Choice, S::Visual, "lichii",
+                   {{"lichii", "Use Lichii's setting"}, {"fast", "Faster (less accurate)"}, {"accurate", "Accurate (Lichii default)"}}));
     return v;
 }
 
