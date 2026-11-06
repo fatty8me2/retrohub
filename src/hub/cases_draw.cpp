@@ -369,6 +369,112 @@ void banner_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, con
     }
 }
 
+/* ------------------------------- real art sources ------------------------------- */
+
+/* A cover image as (texture, size of the part in pixels, uv sub-rect). A full cover scan serves three of these (back / spine / front) from one
+ * texture; nothing is copied or uploaded per frame. */
+struct Src {
+    SDL_Texture* tex = nullptr;
+    int w = 0, h = 0;
+    ImVec2 a{0.f, 0.f}, b{1.f, 1.f};
+};
+constexpr bool kFrontFromFull = true;   // with a full cover scan the front comes from it too: all three faces are then the same edition and print
+
+hubui::cases::FullParts full_parts(const CaseDraw& d) { return hubui::cases::full_cover_parts(d.full_w, d.full_back_x1, d.full_front_x0); }
+bool has_full(const CaseDraw& d) { return d.full && d.full_w > 8 && d.full_h > 8 && d.full_back_x1 > 4 && d.full_front_x0 < d.full_w - 4 && d.full_front_x0 >= d.full_back_x1; }
+Src front_src(const CaseDraw& d) {
+    Src s;
+    if (kFrontFromFull && has_full(d)) {
+        const hubui::cases::FullParts p = full_parts(d);
+        s.tex = d.full; s.w = d.full_w - d.full_front_x0; s.h = d.full_h; s.a = ImVec2(p.front.u0, 0.f); s.b = ImVec2(1.f, 1.f);
+    } else if (d.art) { s.tex = d.art; s.w = d.art_w; s.h = d.art_h; }
+    return s;
+}
+Src back_src(const CaseDraw& d) {
+    Src s;
+    if (has_full(d)) { const hubui::cases::FullParts p = full_parts(d); s.tex = d.full; s.w = d.full_back_x1; s.h = d.full_h; s.a = ImVec2(0.f, 0.f); s.b = ImVec2(p.back.u1, 1.f); }
+    return s;
+}
+Src spine_src(const CaseDraw& d) {
+    Src s;
+    if (has_full(d) && d.full_front_x0 - d.full_back_x1 >= 3) {
+        const hubui::cases::FullParts p = full_parts(d);
+        s.tex = d.full; s.w = d.full_front_x0 - d.full_back_x1; s.h = d.full_h; s.a = ImVec2(p.spine.u0, 0.f); s.b = ImVec2(p.spine.u1, 1.f);
+    }
+    return s;
+}
+/* Draws the sub-rect [a,b] of `tex` over the face rect exactly (no crop: callers fit the rect to the picture first). */
+void image_uv(Ctx& x, const Face& f, float u0, float v0, float u1, float v1, SDL_Texture* tex, ImVec2 a, ImVec2 b, float bright = 1.f) {
+    const int k = cl8(255 * bright);
+    ImU32 col = IM_COL32(k, k, k, 255);
+    if (x.ghost > 0.f) col = lerpc(col, IM_COL32(150, 152, 160, 255), x.ghost * 0.6f);
+    if (x.a < 1.f) col = alpha(col, x.a);
+    x.dl->AddImageQuad((ImTextureID)tex, f.at(u0, v0), f.at(u1, v0), f.at(u1, v1), f.at(u0, v1), a, ImVec2(b.x, a.y), b, ImVec2(a.x, b.y), col);
+}
+/* The paper the scan is printed on when it does not fill the window: the art's own colour, darkened (the case colour when unknown). */
+ImU32 insert_col(const CaseDraw& d, const Style& st, bool letterbox) {
+    const ImU32 base = d.art_col ? shade(d.art_col, 0.42f) : st.panel;
+    return letterbox ? base : lerpc(st.body, base, 0.5f);
+}
+ImU32 on_color(ImU32 c) { return lum(c) > 0.55f ? rgba(28, 30, 40) : rgba(244, 245, 250); }
+
+/* A square scan (a Switch game's icon) on a portrait case: the red console banner, the icon large over a background made of its own colours
+ * (the middle of the icon blown up into a soft blur, darkened), the title underneath. */
+void front_square(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, const Src& s, const hubui::cases::UvRect& win) {
+    const float W = f.W, H = f.H, px = 1.f / W, py = 1.f / H;
+    const float bv = std::max(0.045f, std::min(0.07f, 22.f * py));
+    const float u0 = win.u0, u1 = win.u1, v0 = win.v0 + bv, v1 = win.v1;
+    const float AW = (u1 - u0) * W, AH = (v1 - v0) * H;
+    const ImU32 base = d.art_col ? d.art_col : seed_color(d.seed, 0.55f, 0.6f);
+    vgrad(x, f, u0, v0, u1, v1, shade(base, 0.95f), shade(base, 0.4f));
+    {   // the icon's own colours, extended: its top strip is stretched over the upper half, its bottom strip over the lower half (a soft blur of its edges)
+        const float vm = (v0 + v1) * 0.5f;
+        image_uv(x, f, u0, v0, u1, vm, s.tex, s.a, ImVec2(s.b.x, s.a.y + (s.b.y - s.a.y) * 0.1f), 0.8f);
+        image_uv(x, f, u0, vm, u1, v1, s.tex, ImVec2(s.a.x, s.a.y + (s.b.y - s.a.y) * 0.9f), s.b, 0.8f);
+        const ImU32 seam = shade(base, 0.55f);   // the two halves melt into each other
+        vgrad(x, f, u0, vm - (vm - v0) * 0.4f, u1, vm, alpha(seam, 0.f), alpha(seam, 0.85f));
+        vgrad(x, f, u0, vm, u1, vm + (v1 - vm) * 0.4f, alpha(seam, 0.85f), alpha(seam, 0.f));
+        vgrad(x, f, u0, v0, u1, v1, rgba(0, 0, 0, 60), rgba(0, 0, 0, 150));
+    }
+    const float side = std::min(AW * 0.84f, AH * 0.6f);
+    const float cxp = (u0 + u1) * 0.5f * W, iy = v0 * H + AH * 0.075f, ix = cxp - side * 0.5f;
+    const float sh = std::max(3.f, side * 0.03f);
+    quad(x, f, (ix + sh) * px, (iy + sh * 1.4f) * py, (ix + side + sh * 1.8f) * px, (iy + side + sh * 2.4f) * py, rgba(0, 0, 0, 110));
+    const float fr = std::max(2.f, side * 0.012f);
+    quad(x, f, (ix - fr) * px, (iy - fr) * py, (ix + side + fr) * px, (iy + side + fr) * py, rgba(250, 250, 252));
+    image_uv(x, f, ix * px, iy * py, (ix + side) * px, (iy + side) * py, s.tex, s.a, s.b);
+    vgrad(x, f, ix * px, iy * py, (ix + side) * px, (iy + side * 0.18f) * py, rgba(255, 255, 255, 46), rgba(255, 255, 255, 0));
+    ImFont* font = ui::F.bold ? ui::F.bold : ui::F.body;
+    const float size = std::max(7.f, std::min(std::min(W * 0.1f, AH * 0.085f), 34.f));
+    float ty = iy + side + AH * 0.055f;
+    if (x.detail && font && size >= 7.f) {
+        const std::vector<std::string>& ln = wrap_cached(font, size, d.title, AW * 0.86f, 3);
+        for (const std::string& l : ln) {
+            if (ty + size > v1 * H - 3.f) break;
+            const float tw = text_w(font, size, l), lx = cxp - tw * 0.5f;
+            face_text(x, f, font, size, l.c_str(), lx + 1.4f, ty + 1.4f, rgba(0, 0, 0, 150), false);
+            face_text(x, f, font, size, l.c_str(), lx, ty, rgba(255, 255, 255, 250), false);
+            ty += size * 1.14f;
+        }
+    }
+    quad(x, f, u0, v1 - 4.f * py, u1, v1, alpha(st.band, 0.9f));
+    top_band(x, f, d, st, u0, win.v0, u1, v0);
+}
+
+/* The cover scan, whole: never cropped, no drawn banner or overlay. */
+void front_art(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, const Src& s, const hubui::cases::UvRect& win) {
+    if (hubui::cases::is_square_art(s.w, s.h) && hubui::cases::is_portrait_case(d.media)) { front_square(x, f, d, st, s, win); return; }
+    const float wu = win.u1 - win.u0, wv = win.v1 - win.v0;
+    const float wa = (wu * f.W) / std::max(1.f, wv * f.H);
+    const hubui::cases::CaseArtFit ft = hubui::cases::fit_art(wa, (float)s.w / (float)std::max(1, s.h), hubui::cases::nominal_cover_aspect(d.media));
+    const float au0 = win.u0 + wu * ft.dst.u0, au1 = win.u0 + wu * ft.dst.u1, av0 = win.v0 + wv * ft.dst.v0, av1 = win.v0 + wv * ft.dst.v1;
+    if (!ft.exact) quad(x, f, win.u0, win.v0, win.u1, win.v1, insert_col(d, st, ft.letterbox));
+    image_uv(x, f, au0, av0, au1, av1, s.tex, s.a, s.b);
+    outline(x, f, au0, av0, au1, av1, rgba(0, 0, 0, st.box ? 90 : 70), 1.f);
+}
+
+/* ------------------------------- faces ------------------------------- */
+
 void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseKind kind, float sheen_u) {
     const float W = f.W, H = f.H;
     const float px = 1.f / W, py = 1.f / H;
@@ -376,11 +482,9 @@ void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
     const float rcu = std::min(0.035f, (box ? 1.5f : 5.f) * px), rcv = rcu * W * py;
     poly(x, f, {ImVec2(rcu, 0.f), ImVec2(1.f - rcu, 0.f), ImVec2(1.f, rcv), ImVec2(1.f, 1.f - rcv), ImVec2(1.f - rcu, 1.f), ImVec2(rcu, 1.f), ImVec2(0.f, 1.f - rcv), ImVec2(0.f, rcv)}, st.body);
     vgrad(x, f, 0.f, 0.f, 1.f, 1.f, rgba(255, 255, 255, box ? 18 : 30), rgba(0, 0, 0, box ? 36 : 40));
-    const float hinge = kind == CaseKind::Jewel ? 0.066f : kind == CaseKind::Small ? 0.05f : 0.045f;
-    float cu0, cv0, cu1, cv1;
-    if (box) {
-        cu0 = 0.028f; cv0 = 0.028f; cu1 = 1.f - 0.028f; cv1 = 1.f - 0.03f;
-    } else {
+    const float hinge = hubui::cases::hinge_frac(kind);
+    const hubui::cases::UvRect win = hubui::cases::front_window(kind);
+    if (!box) {
         quad(x, f, 0.f, 0.f, hinge, 1.f, shade(st.body, 0.8f));
         quad(x, f, hinge - px, 0.f, hinge + px, 1.f, rgba(0, 0, 0, 70));
         quad(x, f, hinge + px, 0.f, hinge + 2.f * px, 1.f, rgba(255, 255, 255, 36));
@@ -392,13 +496,15 @@ void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
                 quad(x, f, hinge * 0.86f - px, va, hinge * 0.86f, vb, rgba(0, 0, 0, 80));
             }
         }
-        cu0 = hinge + 2.f * px; cv0 = 0.02f; cu1 = 1.f - 0.024f; cv1 = 1.f - 0.02f;
     }
-    const Lay l = front_lay(st, f, cu0, cv0, cu1, cv1);
-    if (d.art) image(x, f, l.au0, l.av0, l.au1, l.av1, d.art, d.art_w, d.art_h, 0.f);   // fills the window left by the banner, cropped never stretched
-    else cover_generated(x, f, l.au0, l.av0, l.au1, l.av1, d);
-    banner_front(x, f, d, st, l);
-    outline(x, f, l.au0, l.av0, l.au1, l.av1, rgba(0, 0, 0, box ? 110 : 90), 1.f);
+    const Src fs = front_src(d);
+    if (fs.tex) front_art(x, f, d, st, fs, win);   // the real scan carries its own console banner: nothing is drawn over it
+    else {   // the generated cover: the console banner is drawn
+        const Lay l = front_lay(st, f, win.u0, win.v0, win.u1, win.v1);
+        cover_generated(x, f, l.au0, l.av0, l.au1, l.av1, d);
+        banner_front(x, f, d, st, l);
+        outline(x, f, l.au0, l.av0, l.au1, l.av1, rgba(0, 0, 0, box ? 110 : 90), 1.f);
+    }
     if (box) {   // matte cardboard: worn edges and a fold line, no sheen
         hgrad(x, f, 0.f, 0.f, 0.05f, 1.f, rgba(0, 0, 0, 56), rgba(0, 0, 0, 0));
         hgrad(x, f, 0.95f, 0.f, 1.f, 1.f, rgba(0, 0, 0, 0), rgba(0, 0, 0, 62));
@@ -424,59 +530,118 @@ void paint_front(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
         hgrad(x, f, std::max(0.f, uc - 0.2f), 0.f, uc, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 34));
         hgrad(x, f, uc, 0.f, std::min(1.f, uc + 0.12f), 1.f, rgba(255, 255, 255, 34), rgba(255, 255, 255, 0));
     }
-    if (d.fav) x.dl->AddCircleFilled(f.at(0.88f, 0.14f), std::max(5.f, W * 0.05f), x.c(rgba(255, 206, 64)), 16);
+    if (d.fav && !fs.tex) x.dl->AddCircleFilled(f.at(0.88f, 0.14f), std::max(5.f, W * 0.05f), x.c(rgba(255, 206, 64)), 16);
 }
 
+/* A small generated mark for the foot of a spine: a publisher-style badge (a generic shape, never a real logo). */
+void publisher_mark(Ctx& x, const Face& f, float cu, float cv, float s_px, uint32_t h, ImU32 col, ImU32 hole) {
+    const float du = s_px / f.W * 0.5f, dv = s_px / f.H * 0.5f;
+    switch (h % 4u) {
+        case 0: ngon(x, f, cu, cv, du, dv, 20, col); ngon(x, f, cu, cv, du * 0.55f, dv * 0.55f, 16, hole); break;
+        case 1: quad(x, f, cu - du, cv - dv, cu + du, cv + dv, col); quad(x, f, cu - du * 0.6f, cv - dv * 0.18f, cu + du * 0.6f, cv + dv * 0.18f, hole); break;
+        case 2: poly(x, f, {ImVec2(cu, cv - dv), ImVec2(cu + du, cv + dv), ImVec2(cu - du, cv + dv)}, col); break;
+        default: ngon(x, f, cu, cv, du, dv, 20, col); quad(x, f, cu - du * 0.9f, cv - dv * 0.14f, cu + du * 0.9f, cv + dv * 0.14f, hole); break;
+    }
+}
+
+/* The colours of a generated spine, following each console's retail trade dress (cardboard sides take the front art's colours). */
+struct SpineLook { ImU32 top = 0, bot = 0, cap = 0, cap_text = 0, accent = 0; bool vword = false; };
+SpineLook spine_look(const CaseDraw& d, const Style& st) {
+    SpineLook k;
+    k.top = k.bot = st.spine; k.cap = st.band; k.cap_text = st.band_text; k.accent = st.accent;
+    switch (d.media) {
+        case Media::GcCase: k.top = rgba(30, 30, 38); k.bot = rgba(14, 14, 18); k.cap = rgba(192, 196, 206); k.cap_text = rgba(24, 26, 34); break;   // black, grey cap
+        case Media::Ps2Case: k.top = rgba(26, 27, 34); k.bot = rgba(10, 11, 15); k.cap = rgba(8, 9, 13); k.cap_text = rgba(246, 247, 252); k.accent = rgba(40, 94, 216); break;
+        case Media::WiiUCase: k.top = rgba(28, 142, 210); k.bot = rgba(16, 100, 166); k.cap = rgba(255, 255, 255); k.cap_text = rgba(0, 120, 190); k.accent = rgba(214, 240, 252); break;
+        case Media::SwitchCase: k.top = rgba(226, 24, 36); k.bot = rgba(172, 10, 24); k.cap = d.nx2 ? rgba(150, 8, 20) : rgba(188, 12, 26); k.cap_text = rgba(255, 255, 255); k.accent = rgba(255, 255, 255); break;
+        case Media::DsCase: k.top = rgba(240, 242, 246); k.bot = rgba(204, 208, 216); k.cap = rgba(144, 150, 164); k.cap_text = rgba(255, 255, 255); k.accent = rgba(58, 148, 214); break;
+        case Media::N3dsCase: k.top = rgba(252, 252, 253); k.bot = rgba(226, 228, 233); k.cap = rgba(252, 252, 253); k.cap_text = rgba(210, 36, 44); k.accent = rgba(210, 36, 44); break;
+        case Media::PspCase: k.top = rgba(26, 28, 38); k.bot = rgba(8, 9, 14); k.cap = rgba(10, 12, 18); k.cap_text = rgba(246, 247, 252); k.accent = rgba(72, 122, 232); break;
+        case Media::Ps1Jewel: k.top = rgba(30, 30, 36); k.bot = rgba(10, 10, 14); k.vword = true; break;
+        default:
+            if (st.box && d.art_col) { k.top = lerpc(d.art_col, rgba(255, 255, 255), 0.08f); k.bot = shade(d.art_col, 0.52f); }
+            break;
+    }
+    return k;
+}
+
+/* The spine face: the real strip of a full cover scan when there is one, else a generated spine in the console's trade dress. Left of the
+ * front when you look at it; the title reads top to bottom. */
 void paint_spine(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseKind kind) {
     const float W = f.W, H = f.H;
     const float px = 1.f / W;
-    quad(x, f, 0.f, 0.f, 1.f, 1.f, st.spine);
-    hgrad(x, f, 0.f, 0.f, 1.f, 1.f, rgba(255, 255, 255, st.box ? 22 : 40), rgba(0, 0, 0, st.box ? 40 : 62));
-    if (kind == CaseKind::Jewel) {   // clear rails and the black spine card
-        quad(x, f, 0.f, 0.f, 0.12f, 1.f, rgba(150, 156, 170, 110));
-        quad(x, f, 0.88f, 0.f, 1.f, 1.f, rgba(110, 116, 130, 110));
+    const Src ss = spine_src(d);
+    ImU32 ink = st.sink;
+    if (ss.tex) {
+        quad(x, f, 0.f, 0.f, 1.f, 1.f, st.spine);
+        image_uv(x, f, 0.f, 0.f, 1.f, 1.f, ss.tex, ss.a, ss.b);
+        hgrad(x, f, 0.f, 0.f, 1.f, 1.f, rgba(255, 255, 255, st.box ? 14 : 22), rgba(0, 0, 0, st.box ? 30 : 44));
+    } else {
+        const SpineLook k = spine_look(d, st);
+        const ImU32 body_mid = lerpc(k.top, k.bot, 0.5f);
+        ink = on_color(body_mid);
+        vgrad(x, f, 0.f, 0.f, 1.f, 1.f, k.top, k.bot);
+        hgrad(x, f, 0.f, 0.f, 1.f, 1.f, rgba(255, 255, 255, st.box ? 22 : 40), rgba(0, 0, 0, st.box ? 40 : 62));
+        if (kind == CaseKind::Jewel) {   // clear rails and the black spine card
+            quad(x, f, 0.f, 0.f, 0.12f, 1.f, rgba(150, 156, 170, 110));
+            quad(x, f, 0.88f, 0.f, 1.f, 1.f, rgba(110, 116, 130, 110));
+        }
+        ImFont* cf = ui::F.bold ? ui::F.bold : ui::F.cap;
+        float v_title = 0.03f;
+        if (k.vword) {   // PS1: a vertical PlayStation strip down the top of the black card
+            const float ve = 0.30f;
+            quad(x, f, 0.16f, 0.f, 0.84f, ve, rgba(236, 238, 244));
+            const ImU32 pc[4] = {rgba(222, 52, 48), rgba(246, 190, 40), rgba(54, 170, 88), rgba(48, 104, 214)};
+            for (int i = 0; i < 4; ++i) quad(x, f, 0.16f + 0.17f * (float)i, ve - 0.012f, 0.16f + 0.17f * (float)(i + 1), ve, pc[i]);
+            label_v(x, f, "PLAYSTATION", 0.16f, 0.84f, 0.01f, ve - 0.014f, rgba(24, 26, 34), true);
+            v_title = ve + 0.03f;
+        } else {
+            const float bv = std::max(0.075f, std::min(0.14f, 24.f / H));
+            if (st.m == Media::GbcCart) {   // the colourful band, running down the spine
+                const ImU32 c[3] = {rgba(0, 168, 176), rgba(112, 72, 196), rgba(226, 64, 146)};
+                vgrad(x, f, 0.f, 0.f, 1.f, bv * 0.5f, c[0], c[1]); vgrad(x, f, 0.f, bv * 0.5f, 1.f, bv, c[1], c[2]);
+            } else if (st.m == Media::SwitchCase && st.nx2) {
+                quad(x, f, 0.f, 0.f, 1.f, bv * 0.6f, st.band); quad(x, f, 0.f, bv * 0.6f, 1.f, bv, st.band2);
+            } else quad(x, f, 0.f, 0.f, 1.f, bv, k.cap);
+            vgrad(x, f, 0.f, 0.f, 1.f, bv, rgba(255, 255, 255, 54), rgba(0, 0, 0, 40));
+            quad(x, f, 0.f, bv, 1.f, bv + 1.5f / H, st.line ? k.accent : rgba(0, 0, 0, 90));
+            float bs = std::min(W * 0.5f, bv * H * 0.5f);
+            const float tw = tw_c(cf, bs, d.sys_short);
+            if (tw > W * 0.9f) bs *= W * 0.9f / tw;
+            if (bs >= 5.f) face_text(x, f, cf, bs, d.sys_short, (W - tw_c(cf, bs, d.sys_short)) * 0.5f, bv * H * 0.5f - bs * 0.5f, k.cap_text, false);
+            v_title = bv + 0.03f;
+        }
+        if (d.fav) quad(x, f, 0.f, v_title - 0.01f, 1.f, v_title - 0.01f + 4.f / H, rgba(255, 206, 64));
+        // the title, reading top to bottom
+        ImFont* font = ui::F.bold ? ui::F.bold : ui::F.body;
+        const float size = std::max(7.f, std::min(W * 0.55f, 22.f));
+        const float avail = H * (0.875f - v_title) - size * 0.2f;
+        if (x.detail && W >= 9.f && avail > size * 2.f) {
+            const std::string& t = ellipsize_cached(font, size, d.title, avail);
+            const float lx = W * 0.5f + size * 0.38f, ly = v_title * H + 2.f;
+            face_text(x, f, font, size, t.c_str(), lx + 0.8f, ly + 0.8f, rgba(0, 0, 0, lum(body_mid) > 0.55f ? 0 : 120), true);
+            face_text(x, f, font, size, t.c_str(), lx, ly, ink, true);
+        }
+        // the foot: a rule and a publisher-style badge
+        const ImU32 mk = d.art_col && st.box ? lerpc(ink, d.art_col, 0.25f) : alpha(ink, 0.85f);
+        quad(x, f, 0.12f, 0.9f, 0.88f, 0.9f + 1.4f / H, alpha(ink, 0.4f));
+        publisher_mark(x, f, 0.5f, 0.955f, std::min(W * 0.55f, H * 0.045f), hash32(d.title), mk, body_mid);
     }
-    const float bv = std::max(0.075f, std::min(0.14f, 24.f / H));
-    if (st.m == Media::GbcCart) {   // the colourful band, running down the spine
-        const ImU32 c[3] = {rgba(0, 168, 176), rgba(112, 72, 196), rgba(226, 64, 146)};
-        vgrad(x, f, 0.f, 0.f, 1.f, bv * 0.5f, c[0], c[1]); vgrad(x, f, 0.f, bv * 0.5f, 1.f, bv, c[1], c[2]);
-    } else if (st.m == Media::SwitchCase && st.nx2) {
-        quad(x, f, 0.f, 0.f, 1.f, bv * 0.6f, st.band); quad(x, f, 0.f, bv * 0.6f, 1.f, bv, st.band2);
-    } else quad(x, f, 0.f, 0.f, 1.f, bv, st.band);
-    vgrad(x, f, 0.f, 0.f, 1.f, bv, rgba(255, 255, 255, 54), rgba(0, 0, 0, 40));
-    quad(x, f, 0.f, bv, 1.f, bv + 1.5f / H, st.line ? st.accent : rgba(0, 0, 0, 90));
-    ImFont* cf = ui::F.bold ? ui::F.bold : ui::F.cap;
-    float bs = std::min(W * 0.5f, bv * H * 0.5f);
-    const float tw = tw_c(cf, bs, d.sys_short);
-    if (tw > W * 0.9f) bs *= W * 0.9f / tw;
-    if (bs >= 5.f) face_text(x, f, cf, bs, d.sys_short, (W - tw_c(cf, bs, d.sys_short)) * 0.5f, bv * H * 0.5f - bs * 0.5f, st.band_text, false);
-    if (d.fav) quad(x, f, 0.f, bv + 2.f / H, 1.f, bv + 6.f / H, rgba(255, 206, 64));
-    // the title, reading top to bottom
-    ImFont* font = ui::F.bold ? ui::F.bold : ui::F.body;
-    const float size = std::max(7.f, std::min(W * 0.55f, 22.f));
-    const float avail = H * (0.9f - bv) - size * 0.5f;
-    if (x.detail && W >= 9.f && avail > size * 2.f) {
-        const std::string& t = ellipsize_cached(font, size, d.title, avail);
-        const float lx = W * 0.5f + size * 0.38f, ly = bv * H + H * 0.03f;
-        face_text(x, f, font, size, t.c_str(), lx + 0.8f, ly + 0.8f, rgba(0, 0, 0, lum(st.spine) > 0.55f ? 0 : 120), true);
-        face_text(x, f, font, size, t.c_str(), lx, ly, st.sink, true);
-    }
-    quad(x, f, 0.f, 0.915f, 1.f, 0.925f, alpha(st.m == Media::Generic ? st.band : st.accent, 0.9f));
-    if (st.m == Media::Generic) console_mark(x, f, 0.5f, 0.962f, std::min(W * 0.55f, H * 0.04f), hash32(d.sys_short), st.sink);
     if (st.box) {   // the folded cardboard edges of the box
         quad(x, f, 0.f, 0.f, 0.09f, 1.f, rgba(255, 255, 255, 46)); quad(x, f, 0.91f, 0.f, 1.f, 1.f, rgba(0, 0, 0, 56));
         line(x, f, 0.09f, 0.f, 0.09f, 1.f, rgba(0, 0, 0, 50), 1.f);
     } else {   // the keep case's plastic rails and the ridge along the spine
-        line(x, f, px, 0.f, px, 1.f, rgba(255, 255, 255, lum(st.spine) > 0.55f ? 120 : 76), 1.f);
-        line(x, f, 1.f - px, 0.f, 1.f - px, 1.f, rgba(255, 255, 255, lum(st.spine) > 0.55f ? 80 : 40), 1.f);
-        line(x, f, 0.1f, bv + 0.01f, 0.1f, 0.99f, rgba(0, 0, 0, 44), 1.f);
-        line(x, f, 0.9f, bv + 0.01f, 0.9f, 0.99f, rgba(0, 0, 0, 44), 1.f);
+        const bool pale = lum(lerpc(spine_look(d, st).top, spine_look(d, st).bot, 0.5f)) > 0.55f;
+        line(x, f, px, 0.f, px, 1.f, rgba(255, 255, 255, pale ? 120 : 76), 1.f);
+        line(x, f, 1.f - px, 0.f, 1.f - px, 1.f, rgba(255, 255, 255, pale ? 80 : 40), 1.f);
+        line(x, f, 0.1f, 0.01f, 0.1f, 0.99f, rgba(0, 0, 0, 44), 1.f);
+        line(x, f, 0.9f, 0.01f, 0.9f, 0.99f, rgba(0, 0, 0, 44), 1.f);
         hgrad(x, f, 0.18f, 0.f, 0.34f, 1.f, rgba(255, 255, 255, 0), rgba(255, 255, 255, 22));
         hgrad(x, f, 0.34f, 0.f, 0.5f, 1.f, rgba(255, 255, 255, 22), rgba(255, 255, 255, 0));
     }
 }
 
-/* The opposite edge of the case (the side away from the spine): plain card or clear plastic, no design. */
+/* The opposite edge of the case (the side away from the spine): plain card or clear plastic with the cover sheet's edge, no design. */
 void paint_edge(Ctx& x, const Face& f, const Style& st) {
     const float px = 1.f / f.W;
     quad(x, f, 0.f, 0.f, 1.f, 1.f, st.body);
@@ -488,28 +653,97 @@ void paint_edge(Ctx& x, const Face& f, const Style& st) {
         line(x, f, px, 0.f, px, 1.f, rgba(255, 255, 255, st.pale ? 120 : 70), 1.f);
         line(x, f, 1.f - px, 0.f, 1.f - px, 1.f, rgba(255, 255, 255, st.pale ? 80 : 40), 1.f);
         quad(x, f, 0.28f, 0.01f, 0.72f, 0.99f, rgba(0, 0, 0, 22));
+        quad(x, f, 0.44f, 0.02f, 0.56f, 0.98f, rgba(255, 255, 255, st.pale ? 46 : 20));   // the paper edge of the cover sheet inside the clear plastic
     }
 }
 
-/* A generated "picture" tile (a sky, a hill, a sun) for the picture strip of a back cover when the player has no screenshots. */
-void scene_tile(Ctx& x, const Face& f, float ua, float va, float ub, float vb, uint32_t sd) {
-    const ImU32 sky = seed_color(sd, 0.5f, 0.85f), hz = lerpc(sky, rgba(255, 255, 255), 0.45f);
-    quad(x, f, ua - 1.f / f.W, va - 1.f / f.H, ub + 1.f / f.W, vb + 1.f / f.H, rgba(0, 0, 0, 150));
-    vgrad(x, f, ua, va, ub, vb, sky, hz);
-    const float w = ub - ua, h = vb - va;
-    ngon(x, f, ua + w * (0.25f + 0.5f * (float)((sd >> 4) & 3u) / 3.f), va + h * 0.3f, h * 0.17f * f.H / f.W, h * 0.17f, 14, rgba(255, 240, 190, 230));
-    poly(x, f, {ImVec2(ua, vb), ImVec2(ua, va + h * 0.62f), ImVec2(ua + w * 0.4f, va + h * 0.5f), ImVec2(ua + w * 0.7f, va + h * 0.66f), ImVec2(ub, va + h * 0.55f), ImVec2(ub, vb)}, shade(seed_color(sd >> 7, 0.55f, 0.55f), 0.8f));
-    quad(x, f, ua, va + h * 0.78f, ub, vb, shade(seed_color(sd >> 7, 0.55f, 0.5f), 0.55f));
+/* The top (or bottom) of the case: u runs spine side -> open side, v back -> front. Plastic cases show the plastic edge in the case colour,
+ * boxes the cardboard flap with its crease. */
+void paint_cap(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, bool top) {
+    const float W = f.W, H = f.H, px = 1.f / W, py = 1.f / H;
+    const float k = top ? 1.12f : 0.62f;
+    ImU32 body = shade(st.body, k);
+    quad(x, f, 0.f, 0.f, 1.f, 1.f, body);
+    if (st.box) {
+        const ImU32 edge = shade(st.spine, k);
+        quad(x, f, 0.f, 0.f, 0.045f, 1.f, edge);                         // the spine side of the box
+        quad(x, f, 0.04f, 0.5f, 0.96f, 1.f - 0.02f, shade(body, 1.06f)); // the tuck flap lying over the box
+        quad(x, f, 0.04f, 0.5f, 0.96f, 0.5f + std::max(0.04f, 2.f * py), rgba(0, 0, 0, 70));   // the flap's shadow edge: the crease
+        quad(x, f, 0.04f, 0.5f - std::max(0.02f, py), 0.96f, 0.5f, rgba(255, 255, 255, 36));
+        line(x, f, 0.04f, 1.f - 0.02f, 0.96f, 1.f - 0.02f, rgba(0, 0, 0, 60), 1.f);
+        line(x, f, 0.045f, 0.f, 0.045f, 1.f, rgba(0, 0, 0, 60), 1.f);
+        line(x, f, 0.04f, 0.5f, 0.04f, 0.98f, rgba(0, 0, 0, 50), 1.f);
+        line(x, f, 0.96f, 0.5f, 0.96f, 0.98f, rgba(0, 0, 0, 50), 1.f);
+        ngon(x, f, 0.5f, 0.5f, 0.045f, 0.045f * W * py * 0.9f, 14, rgba(0, 0, 0, 56));      // the thumb notch
+        const float ex = std::max(0.012f, 3.f * px);
+        quad(x, f, 1.f - ex, 0.f, 1.f, 1.f, rgba(0, 0, 0, 50));
+        (void)d;
+    } else {
+        quad(x, f, 0.f, 0.f, 1.f, std::max(0.1f, 2.5f * py), rgba(255, 255, 255, st.pale ? 90 : 26));   // the back rail of the clear case
+        quad(x, f, 0.f, 0.f, 0.05f, 1.f, shade(st.spine, k));                                          // the hinge strip, in the spine colour
+        quad(x, f, 0.07f, 0.3f, 0.95f, 0.7f, rgba(0, 0, 0, 30));                                        // the cover sheet seen through the plastic
+        quad(x, f, 0.07f, 0.45f, 0.95f, 0.55f, rgba(255, 255, 255, st.pale ? 44 : 16));
+        line(x, f, 0.f, 1.f - py, 1.f, 1.f - py, rgba(255, 255, 255, st.pale ? 120 : 70), 1.f);        // the lit front lip
+        line(x, f, px, 0.f, px, 1.f, rgba(255, 255, 255, st.pale ? 100 : 50), 1.f);
+        line(x, f, 1.f - px, 0.f, 1.f - px, 1.f, rgba(255, 255, 255, st.pale ? 80 : 40), 1.f);
+    }
+    outline(x, f, 0.f, 0.f, 1.f, 1.f, rgba(0, 0, 0, 80), 1.f);
+    (void)H;
+}
+
+/* ------------------------------- the back ------------------------------- */
+
+void paint_back_art(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseKind kind, const Src& bs) {
+    const float px = 1.f / f.W;
+    quad(x, f, 0.f, 0.f, 1.f, 1.f, st.body);
+    vgrad(x, f, 0.f, 0.f, 1.f, 1.f, rgba(255, 255, 255, 24), rgba(0, 0, 0, 40));
+    const float hinge = hubui::cases::hinge_frac(kind);   // the hinge is on the right of a back
+    hubui::cases::UvRect win = hubui::cases::front_window(kind);
+    win.u1 = st.box ? 1.f - 0.028f : 1.f - hinge - 0.008f;
+    win.u0 = st.box ? 0.028f : 0.024f;
+    if (!st.box) { quad(x, f, 1.f - hinge, 0.f, 1.f, 1.f, shade(st.body, 0.8f)); quad(x, f, 1.f - hinge - px, 0.f, 1.f - hinge + px, 1.f, rgba(0, 0, 0, 70)); }
+    const float wu = win.u1 - win.u0, wv = win.v1 - win.v0;
+    const hubui::cases::CaseArtFit ft = hubui::cases::fit_art((wu * f.W) / std::max(1.f, wv * f.H), (float)bs.w / (float)std::max(1, bs.h), hubui::cases::nominal_cover_aspect(d.media));
+    if (!ft.exact) quad(x, f, win.u0, win.v0, win.u1, win.v1, insert_col(d, st, ft.letterbox));
+    image_uv(x, f, win.u0 + wu * ft.dst.u0, win.v0 + wv * ft.dst.v0, win.u0 + wu * ft.dst.u1, win.v0 + wv * ft.dst.v1, bs.tex, bs.a, bs.b);
+    outline(x, f, win.u0, win.v0, win.u1, win.v1, rgba(0, 0, 0, 80), 1.f);
+}
+
+/* The age-rating style box: plain text only (e.g. "ESRB E": the agency on a small line, the rating large), never a rating logo. */
+void rating_box(Ctx& x, const Face& f, float lx, float y0, float bw, float bh, const char* age, ImFont* bold, ImFont* cap, ImU32 ink) {
+    const float px = 1.f / f.W, py = 1.f / f.H;
+    outline(x, f, lx * px, y0 * py, (lx + bw) * px, (y0 + bh) * py, ink, 1.5f);
+    char a[32], b[32];
+    std::snprintf(a, sizeof a, "%s", age);
+    b[0] = 0;
+    if (char* sp_ = std::strchr(a, ' ')) { *sp_ = 0; std::snprintf(b, sizeof b, "%s", sp_ + 1); }
+    if (!b[0]) { std::snprintf(b, sizeof b, "%s", a); a[0] = 0; }
+    const float cs = std::min(bh * 0.24f, bw * 0.2f);
+    float bs = bh * (a[0] ? 0.5f : 0.6f);
+    const float tw = tw_c(bold, bs, b);
+    if (tw > bw * 0.84f) bs *= bw * 0.84f / tw;
+    float ty = y0 + (bh - bs) * 0.5f + (a[0] ? cs * 0.55f : 0.f);
+    if (a[0]) { const float cw = tw_c(cap, cs, a); face_text(x, f, cap, cs, a, lx + (bw - cw) * 0.5f, y0 + bh * 0.08f, ink, false, cs * 0.08f); }
+    face_text(x, f, bold, bs, b, lx + (bw - tw_c(bold, bs, b)) * 0.5f, ty, ink, false);
 }
 
 void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseKind kind) {
+    const Src bsrc = back_src(d);
+    if (bsrc.tex) {   // the real back of the cover
+        paint_back_art(x, f, d, st, kind, bsrc);
+        if (!st.box) {
+            outline(x, f, 0.f, 0.f, 1.f, 1.f, st.pale ? rgba(0, 0, 0, 70) : rgba(255, 255, 255, 50), 1.f);
+            grad(x, f, 0.f, 0.f, 1.f, 0.5f, rgba(255, 255, 255, 30), rgba(255, 255, 255, 8), rgba(255, 255, 255, 0), rgba(255, 255, 255, 0));
+        }
+        return;
+    }
     const float W = f.W, H = f.H;
     const float px = 1.f / W, py = 1.f / H;
     const CaseBack* bk = d.back;
     quad(x, f, 0.f, 0.f, 1.f, 1.f, st.body);
     vgrad(x, f, 0.f, 0.f, 1.f, 1.f, rgba(255, 255, 255, 24), rgba(0, 0, 0, 40));
     // spine hinge: on the right when you look at the back
-    const float hinge = kind == CaseKind::Jewel ? 0.066f : 0.045f;
+    const float hinge = hubui::cases::hinge_frac(kind == CaseKind::Small ? CaseKind::Keep : kind);
     if (!st.box) { quad(x, f, 1.f - hinge, 0.f, 1.f, 1.f, shade(st.body, 0.8f)); quad(x, f, 1.f - hinge - px, 0.f, 1.f - hinge + px, 1.f, rgba(0, 0, 0, 70)); }
     const float u0 = 0.03f, u1 = st.box ? 0.97f : 1.f - hinge - 0.014f, v0 = 0.025f, v1 = 0.975f;
     quad(x, f, u0, v0, u1, v1, st.panel);
@@ -517,7 +751,7 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
     const ImU32 ink = st.ink;
     const ImU32 dim = pp ? rgba(70, 74, 90) : rgba(168, 174, 192);
     const float hbv = std::max(0.05f, std::min(0.075f, 28.f * py));
-    top_band(x, f, d, st, u0, v0, u1, v0 + hbv);
+    top_band(x, f, d, st, u0, v0, u1, v0 + hbv);   // the console banner
     const float pad = W * 0.045f;
     const float lx = u0 * W + pad, pw = (u1 - u0) * W - pad * 2.f;
     float y = (v0 + hbv) * H + H * 0.03f;
@@ -547,30 +781,41 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
             face_text(x, f, bold, vs, v.c_str(), lx + colw * (float)i, y + cs * 1.35f, ink, false);
         }
         y += cs * 1.35f + vs * 1.5f;
-        if (bk && bk->maker && *bk->maker) {
-            const std::string& v = ellipsize_cached(body, cs * 1.25f, bk->maker, pw);
-            face_text(x, f, body, cs * 1.25f, v.c_str(), lx, y, dim, false);
-            y += cs * 1.25f * 1.5f;
+        {   // who made it: developer / publisher
+            char who[2][160];
+            int nw = 0;
+            const bool dev = bk && bk->maker && *bk->maker, pub = bk && bk->publisher && *bk->publisher;
+            if (dev && pub && std::strcmp(bk->maker, bk->publisher) == 0) std::snprintf(who[nw++], sizeof who[0], "Developed and published by %s", bk->maker);
+            else {
+                if (dev) std::snprintf(who[nw++], sizeof who[0], "Developed by %s", bk->maker);
+                if (pub) std::snprintf(who[nw++], sizeof who[0], "Published by %s", bk->publisher);
+            }
+            for (int i = 0; i < nw; ++i) {
+                const std::string& v = ellipsize_cached(body, cs * 1.25f, who[i], pw);
+                face_text(x, f, body, cs * 1.25f, v.c_str(), lx, y, dim, false);
+                y += cs * 1.25f * 1.4f;
+            }
+            if (nw) y += cs * 0.1f;
         }
         quad(x, f, u0 + 0.04f, y / H, u1 - 0.04f, y / H + 1.2f * py, alpha(ink, 0.18f));
         y += H * 0.014f;
 
-        // ---- laid out from the bottom up: the bottom row (players box, fine print, barcode), the picture strip, then the text fills what is left ----
+        // ---- laid out from the bottom up: the bottom row (players box, rating box, fine print, barcode), the picture strip, then the text fills what is left ----
         const float row_h = std::max(20.f, std::min(40.f, H * 0.075f));
         const float row_y1 = (v1 - 0.022f) * H, row_y0 = row_y1 - row_h;
         const bool has_pics = bk && bk->nshots > 0;
-        const int np = has_pics ? bk->nshots : 3;
-        const float gap = pw * 0.03f, tw = (pw - gap * (float)(np - 1)) / (float)np;
-        float pic_h = std::min(tw * 0.92f, H * 0.27f);
+        const int np = has_pics ? bk->nshots : 0;
+        const float gap = pw * 0.03f, tw = np > 0 ? (pw - gap * (float)(np - 1)) / (float)np : 0.f;
+        float pic_h = np > 0 ? std::min(tw * 0.78f, H * 0.27f) : 0.f;
         const bool label = has_pics && bk->shots_label && *bk->shots_label;
         const float bs0 = std::max(7.f, std::min(W * 0.054f, 19.f));
         float pics_y0 = row_y0 - H * 0.02f - pic_h, text_bottom = pics_y0 - (label ? cs * 1.8f : H * 0.014f);
-        if (!has_pics && text_bottom - y < bs0 * 1.3f * 2.6f) { pic_h = 0.f; text_bottom = row_y0 - H * 0.016f; }   // too little room: no placeholder pictures
+        if (!has_pics) text_bottom = row_y0 - H * 0.016f;
         // the description; a short one is set a little larger so the page does not look empty
         const char* desc = bk && bk->desc && *bk->desc ? bk->desc : "No description for this game yet.";
         const float room = std::max(0.f, text_bottom - y);
         const float est_lines = (float)std::strlen(desc) * bs0 * 0.5f / std::max(1.f, pw);
-        const float bs = est_lines * bs0 * 1.3f < room * 0.4f ? std::min(bs0 * 1.22f, 22.f) : bs0;
+        const float bs = est_lines * bs0 * 1.3f < room * 0.4f ? std::min(bs0 * (has_pics ? 1.22f : 1.4f), 24.f) : bs0;
         const int max_lines = (int)std::floor(room / (bs * 1.3f));
         int shown = 0;
         if (max_lines >= 1) {
@@ -591,11 +836,12 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
             const float lh = bs * 1.55f;
             char b[96];
             const bool cart = hubui::cases::is_box(d.media);
-            for (int i = 0; i < 3 && y + lh <= text_bottom + bs * 0.2f; ++i) {
+            const int maxb = has_pics ? 3 : 5;
+            for (int i = 0; i < maxb && y + lh <= text_bottom + bs * 0.2f; ++i) {
                 if (i == 0) std::snprintf(b, sizeof b, "For use with %s", d.sys_name);
                 else if (i == 1) std::snprintf(b, sizeof b, "%s", cart ? "Battery back-up saves your progress" : "Save your progress as you play");
-                else if (bk && bk->players == 1) std::snprintf(b, sizeof b, "One player");
-                else if (bk && bk->players > 1) std::snprintf(b, sizeof b, "Up to %d players", bk->players);
+                else if (i == 2) { if (bk && bk->players == 1) std::snprintf(b, sizeof b, "One player"); else if (bk && bk->players > 1) std::snprintf(b, sizeof b, "Up to %d players", bk->players); else std::snprintf(b, sizeof b, "Instruction booklet included"); }
+                else if (i == 3) std::snprintf(b, sizeof b, "%s", bk && bk->genre && *bk->genre ? bk->genre : "Instruction booklet included");
                 else std::snprintf(b, sizeof b, "Instruction booklet included");
                 quad(x, f, (lx + bs * 0.05f) * px, (y + bs * 0.34f) * py, (lx + bs * 0.42f) * px, (y + bs * 0.71f) * py, dim);
                 const std::string& v = ellipsize_cached(body, bs * 0.92f, b, pw - bs * 0.9f);
@@ -603,20 +849,18 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
                 y += lh;
             }
         }
-        // pictures: the player's own screenshots or save-state thumbnails (else generated tiles)
+        // pictures: the game's real screenshots (title screen / in game), else the player's own
         if (pic_h > 0.f) {
             if (label) face_text(x, f, cap, cs, bk->shots_label, lx, pics_y0 - cs * 1.6f, dim, false, cs * 0.08f);
             for (int i = 0; i < np; ++i) {
                 const float a = lx + (tw + gap) * (float)i;
                 const float ua = a * px, ub = (a + tw) * px, va = pics_y0 * py, vb = (pics_y0 + pic_h) * py;
-                if (has_pics) {
-                    quad(x, f, ua - px, va - py, ub + px, vb + py, rgba(0, 0, 0, 150));
-                    if (bk->shots[i].tex && bk->shots[i].w > 0 && bk->shots[i].h > 0) image(x, f, ua, va, ub, vb, bk->shots[i].tex, bk->shots[i].w, bk->shots[i].h, 0.5f);
-                    else quad(x, f, ua, va, ub, vb, rgba(60, 64, 80));
-                } else scene_tile(x, f, ua, va, ub, vb, d.seed * 2654435761u + (uint32_t)i * 977u);
+                quad(x, f, ua - px, va - py, ub + px, vb + py, rgba(0, 0, 0, 150));
+                if (bk->shots[i].tex && bk->shots[i].w > 0 && bk->shots[i].h > 0) image(x, f, ua, va, ub, vb, bk->shots[i].tex, bk->shots[i].w, bk->shots[i].h, 0.5f);
+                else quad(x, f, ua, va, ub, vb, rgba(60, 64, 80));
             }
         }
-        // the bottom row: a players box, fine print, a generated barcode
+        // the bottom row: a players box, an age-rating box, fine print, a generated barcode
         {
             const float bw = row_h * 1.15f;
             const float bu0 = lx * px, bu1 = (lx + bw) * px, bv0 = row_y0 * py, bv1 = row_y1 * py;
@@ -627,8 +871,14 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
             else std::snprintf(pn, sizeof pn, "%s", d.sys_short);
             const float ps = std::min(row_h * 0.5f, bw * 0.8f / std::max(1.f, tw_c(bold, row_h * 0.5f, pn) / (row_h * 0.5f)));
             face_text(x, f, bold, ps, pn, lx + (bw - tw_c(bold, ps, pn)) * 0.5f, row_y0 + (row_h - ps) * 0.5f, ink, false);
+            float fx0 = lx + bw + pw * 0.03f;
+            if (bk && bk->age && *bk->age) {
+                const float rw = row_h * 1.35f;
+                rating_box(x, f, fx0, row_y0, rw, row_h, bk->age, bold, cap, ink);
+                fx0 += rw + pw * 0.03f;
+            }
             const float bx1 = u1 - 0.04f, bx0 = bx1 - std::min(0.32f, row_h * 3.4f * px);
-            const float fu0 = bu1 + 0.03f, fu1 = bx0 - 0.03f;
+            const float fu0 = fx0 * px, fu1 = bx0 - 0.03f;
             if (fu1 - fu0 > 0.05f) {   // fine print
                 uint32_t h = d.seed * 747796405u + 2891336453u;
                 for (int i = 0; i < 4; ++i) {
@@ -647,6 +897,7 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
                 u += w + (0.8f + (float)((h >> 16) & 1u)) * px;
             }
         }
+        (void)shown;
     }
     outline(x, f, u0, v0, u1, v1, rgba(0, 0, 0, 90), 1.f);
     if (!st.box) {
@@ -736,7 +987,11 @@ void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool
     }
     {   // top (seen when the case is tipped in Inspect)
         const float c[4][3] = {{-hw, H, dd}, {hw, H, dd}, {hw, H, -dd}, {-hw, H, -dd}}, n[3] = {0, 1, 0};
-        if (make_face(sc, xf, c, n, cd.w, cd.d, &f)) { quad(x, f, 0.f, 0.f, 1.f, 1.f, shade(st.body, 1.15f)); quad(x, f, 0.f, 0.f, 1.f, 0.2f, rgba(255, 255, 255, 40)); shade_face(f, n); }
+        if (make_face(sc, xf, c, n, cd.w, cd.d, &f)) { Ctx xt = x; xt.detail = x.detail && f.W * face_ratio(f) >= 12.f; paint_cap(xt, f, d, st, true); shade_face(f, n); }
+    }
+    {   // bottom (seen when the case is lifted and tipped in Inspect)
+        const float c[4][3] = {{-hw, 0, -dd}, {hw, 0, -dd}, {hw, 0, dd}, {-hw, 0, dd}}, n[3] = {0, -1, 0};
+        if (make_face(sc, xf, c, n, cd.w, cd.d, &f)) { Ctx xt = x; xt.detail = x.detail && f.W * face_ratio(f) >= 12.f; paint_cap(xt, f, d, st, false); shade_face(f, n); }
     }
     {   // front
         const float c[4][3] = {{-hw, H, -dd}, {hw, H, -dd}, {hw, 0, -dd}, {-hw, 0, -dd}}, n[3] = {0, 0, -1};
