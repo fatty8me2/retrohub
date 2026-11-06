@@ -2830,11 +2830,22 @@ struct Candidate {
     CacheRec rec;
 };
 
+/* A directory entry that is a symlink or an NTFS junction (MSVC's std::filesystem reports a junction as file_type::junction, which is_symlink() misses). library-9 */
+bool is_link_or_junction(const fs::directory_entry& de) {
+    std::error_code ec;
+    fs::file_status st = de.symlink_status(ec);
+    if (ec) return false;
+    return st.type() == fs::file_type::symlink || st.type() == fs::file_type::junction;
+}
+
+constexpr size_t kMaxWalkDepth = 24;   // library-9: a backstop for any loop the link check cannot see
+
 /* Directory walk that skips unreadable dirs and never follows symlinks/junctions. */
 void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::string>& seen, bool* incomplete = nullptr) {
-    std::vector<fs::path> stack{root};
+    std::vector<std::pair<fs::path, size_t>> stack{{root, 0}};
     while (!stack.empty()) {
-        fs::path dir = std::move(stack.back());
+        fs::path dir = std::move(stack.back().first);
+        const size_t depth = stack.back().second;
         stack.pop_back();
         std::error_code ec;
         fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
@@ -2844,8 +2855,8 @@ void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::strin
             if (ec) { if (incomplete) *incomplete = true; break; }
             const fs::directory_entry& de = *it;
             std::error_code e1;
-            if (de.is_symlink(e1)) continue;
-            if (de.is_directory(e1)) { if (de.path().filename() != L"__MACOSX") subdirs.push_back(de.path()); continue; }   // __MACOSX: resource forks of a macOS unzip
+            if (de.is_symlink(e1) || is_link_or_junction(de)) continue;
+            if (de.is_directory(e1)) { if (de.path().filename() != L"__MACOSX") { if (depth < kMaxWalkDepth) subdirs.push_back(de.path()); else if (incomplete) *incomplete = true; } continue; }   // __MACOSX: resource forks of a macOS unzip
             if (!de.is_regular_file(e1) || e1) continue;
             if (de.path().filename().native().compare(0, 2, L"._") == 0) continue;   // "._Game.z64": the same
             std::string ext = ascii_lower(path_utf8(de.path().extension()));
@@ -2862,7 +2873,7 @@ void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::strin
         }
         /* depth-first in sorted order for deterministic results */
         std::sort(subdirs.begin(), subdirs.end(), std::greater<fs::path>());
-        for (auto& s : subdirs) stack.push_back(std::move(s));
+        for (auto& s : subdirs) stack.emplace_back(std::move(s), depth + 1);
     }
 }
 
@@ -3073,6 +3084,25 @@ std::vector<GameEntry> scan_extra_copies() {
 std::vector<FolderScanStatus> scan_folder_status() {
     std::lock_guard<std::mutex> lk(g_skip_mu);
     return g_folder_status;
+}
+
+/* library-13: keys of files the scan cache already identified (same path, size and mtime), without reading them. */
+std::set<std::string> cached_keys_for_files(const std::vector<std::string>& paths, std::vector<std::string>* uncached) {
+    std::set<std::string> keys;
+    std::unordered_map<std::string, CacheRec> cache = cache_load();
+    for (const std::string& p : paths) {
+        bool hit = false;
+        auto it = cache.find(ascii_lower(p));
+        if (it != cache.end() && it->second.ok && !it->second.e.key.empty()) {
+            std::error_code e1, e2;
+            fs::path fp = utf8_path(p);
+            uint64_t sz = fs::file_size(fp, e1);
+            long long mt = (long long)fs::last_write_time(fp, e2).time_since_epoch().count();
+            if (!e1 && !e2 && sz == it->second.size && mt == it->second.mtime) { keys.insert(it->second.e.key); hit = true; }
+        }
+        if (!hit && uncached) uncached->push_back(p);
+    }
+    return keys;
 }
 
 std::vector<SkippedArchive> scan_skipped_archives() {

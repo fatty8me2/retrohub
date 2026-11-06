@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -234,6 +235,68 @@ Identity identity_load_or_create(const std::string& data_dir, const std::string&
     id = identity_generate();
     identity_save(id, data_dir, vault_dir);
     return id;
+}
+
+/* ---- identity backup outside the install folder (per Windows user) ---- */
+static bool env_set(const char* n) { const char* v = std::getenv(n); return v && *v; }
+
+std::string identity_backup_path()
+{
+    if (const char* o = std::getenv("RETROHUB_IDENTITY_BACKUP"); o && *o) return o;   // tests point this at a temp file
+    if (env_set("RETROHUB_QA") || env_set("RETROHUB_AUTOTEST") || env_set("RETROHUB_TEST_SERVER") || env_set("RETROHUB_TEST")) return "";
+    const char* la = std::getenv("LOCALAPPDATA");
+    if (!la || !*la) return "";
+    return with_sep(la) + "RetroHub\\identity-backup.json";
+}
+
+bool identity_backup_allowed(const std::string& server, const std::string& name)
+{
+    if (name.rfind("qa-", 0) == 0 || name.rfind("QA-", 0) == 0) return false;
+    if (!server.empty() && !is_production_server(server)) return false;   // a local test server's accounts must never reach the real backup
+    return !identity_backup_path().empty();
+}
+
+bool identity_backup_save(const Identity& id)
+{
+    const std::string bp = identity_backup_path();
+    if (bp.empty() || !is_b32(id.user_id, 26) || !is_b32(id.secret, 52)) return false;
+    Identity cur;
+    if (identity_read(bp, &cur) && cur.user_id == id.user_id && cur.secret == id.secret) return true;
+    std::error_code ec;   // atomic: write a temp file, then rename over the old one. Never fall back to truncating a good backup in place.
+    fs::create_directories(upath(bp).parent_path(), ec);
+    const std::string tmp = bp + ".tmp";
+    {
+        std::ofstream f(upath(tmp), std::ios::binary | std::ios::trunc);
+        const std::string j = identity_json(id);
+        if (!f) return false;
+        f.write(j.data(), (std::streamsize)j.size());
+        if (!f) { f.close(); fs::remove(upath(tmp), ec); return false; }
+    }
+    fs::rename(upath(tmp), upath(bp), ec);
+    if (ec) { fs::remove(upath(tmp), ec); return false; }
+    return true;
+}
+
+bool identity_backup_adopt_if_fresh(const std::string& data_dir, const std::string& vault_dir, Identity* adopted)
+{
+    const std::string bp = identity_backup_path();
+    if (bp.empty()) return false;
+    const std::string lp = with_sep(data_dir) + "identity.json";
+    Identity t;
+    if (fs::exists(upath(lp))) return false;                                          // this install has its own account (even a damaged file): never replaced
+    if (!vault_dir.empty() && identity_read(with_sep(vault_dir) + "_identity\\identity.json", &t)) return false;   // the sync folder's account wins
+    if (!identity_read(bp, &t)) return false;                                         // missing or corrupt: ignored
+    if (!write_file(lp, identity_json(t))) return false;
+    net_log("Friends: adopted identity from the per-user backup");
+    if (adopted) *adopted = t;
+    return true;
+}
+
+bool identity_exists(const std::string& data_dir, const std::string& vault_dir)
+{
+    Identity id;
+    if (identity_read(with_sep(data_dir) + "identity.json", &id)) return true;
+    return !vault_dir.empty() && identity_read(with_sep(vault_dir) + "_identity\\identity.json", &id);
 }
 
 static std::string backup_stamp()
@@ -516,6 +579,14 @@ struct FriendsClient::Impl {
     Liveness live;                       // keepalive answer tracking: a silent socket is closed and re-opened
     std::vector<OutItem> inflight; uint32_t inflight_at = 0;   // the batch the last welcome flushed (an error reply maps back to it)
     std::string username; bool needs_new_name = false, username_known = false; int ref_seq = 0, claim_ref = 0;
+    uint32_t hello_at = 0, access_since = 0;     // when the hello went out / when the current refusal was first seen (0 = none): silent-socket watchdogs
+    bool backup_ok = false;                      // may this client use the per-user identity backup (never in QA runs)
+    Access access = Access::Ok;                  // the server refused this account's hello (pending approval / blocked); Ok once welcomed
+    bool admin = false;                          // the welcome said so (the server enforces it on every admin_* message regardless)
+    AdminList alist; AdminDetail adetail; AdminSettings asettings; int admin_pend = 0, admin_ver = 0;
+    AdminInvites ainv; AdminList apend; std::string last_latest_key;
+    std::string redeem_code; bool redeem_sent = false;   // an invite code waiting to go out on the waiting socket (sent as soon as the pending-approval answer is in, re-sent after a reconnect)
+    std::map<std::string, std::string> admin_names;   // uid -> name, for the result sentences
     std::map<std::string, int> check_refs;   // name we asked about (lower case) -> ref; the server echoes the name, not the ref
 
     /* ---- sending */
@@ -741,6 +812,12 @@ struct FriendsClient::Impl {
         Conv& c = conv(peer);
         if (!m.id.empty())
             for (const Message& x : c.msgs) if (x.id == m.id) return false;
+        if (m.mine && m.id.compare(0, 6, "local-") != 0) {   // the server's copy of a line this PC already echoed: replace the echo (best time match), do not add twice
+            Message* best = nullptr;
+            for (Message& x : c.msgs)
+                if (message_echo_matches(x, m) && (!best || std::llabs(x.at - m.at) < std::llabs(best->at - m.at))) best = &x;
+            if (best) { *best = m; c.dirty = true; trim(c); return false; }
+        }
         c.msgs.push_back(m);
         if (count_unread && !m.mine) c.unread++;
         trim(c);
@@ -809,6 +886,7 @@ struct FriendsClient::Impl {
     void send_hello()
     {
         hello_sent = true;
+        hello_at = now_ms() | 1u;
         ws.send_text("{\"type\":\"hello\",\"secret\":" + q(id.secret) + ",\"name\":" + q(name) + ",\"version\":\"retrohub-1\",\"auto_friend\":" + (auto_friend ? "true" : "false") + (is_test_client() ? ",\"test\":true" : "") + (username_pending() ? ",\"no_auto_username\":true" : "") + "}");
     }
 
@@ -921,15 +999,71 @@ struct FriendsClient::Impl {
     std::vector<Identity> retire;   // every older identity of this person still to be retired (pending file, backups, vault)
     std::string retire_path() const { return data_dir + "pending-retire.json"; }
     std::string retired_ids_path() const { return data_dir + "retired-ids.txt"; }
+    std::string rejected_ids_path() const { return data_dir + "retire-rejected.txt"; }
+    /* Names of blocked people (the server only keeps uids): remembered when you block so the "Blocked people" list can show who. */
+    std::map<std::string, std::string> bnames;
+    bool bnames_loaded = false;
+    std::string bnames_path() const { return data_dir + "blocked-names.txt"; }
+    void load_bnames()
+    {
+        if (bnames_loaded || data_dir.empty()) return;
+        bnames_loaded = true;
+        std::string text;
+        if (!read_file(bnames_path(), &text)) return;
+        std::istringstream in(text);
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && line.back() == '') line.pop_back();
+            size_t t = line.find('\t');
+            if (t != std::string::npos && t > 0) bnames[line.substr(0, t)] = line.substr(t + 1);
+        }
+    }
+    void save_bnames()
+    {
+        std::string o;
+        for (const auto& kv : bnames) o += kv.first + "\t" + kv.second + "\n";
+        async_write(bnames_path(), std::move(o));
+    }
+    bool account_deleted = false;     // the server said this account was deleted (from another PC): no retry, say so
+    bool retire_suppressed = false;   // the server said another identity already took over: stop resending for this session
+    static std::set<std::string> read_ids_file(const std::string& path)
+    {
+        std::set<std::string> out;
+        std::string text;
+        if (!read_file(path, &text)) return out;
+        std::istringstream in(text);
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back();
+            if (!line.empty()) out.insert(line);
+        }
+        return out;
+    }
+    /* The server refused this retire for good (bad secret). That is NOT a confirmed retirement: no retired-ids.txt alias (that file
+     * feeds the bulk "Merge" offer), just stop asking. */
+    void retire_rejected(const std::string& uid)
+    {
+        if (uid.empty()) return;
+        for (size_t i = 0; i < retire.size();) {
+            if (retire[i].user_id == uid) {
+                std::ofstream f(upath(rejected_ids_path()), std::ios::app);
+                f << uid << '\n';
+                retire.erase(retire.begin() + i);
+            } else ++i;
+        }
+    }
     void load_retire()
     {
         retire = older_identities(data_dir, vault_dir, id.user_id);
+        std::set<std::string> rej = read_ids_file(rejected_ids_path());   // the server refused these secrets for good: never resend
+        retire.erase(std::remove_if(retire.begin(), retire.end(), [&](const Identity& r) { return rej.count(r.user_id) != 0; }), retire.end());
         std::error_code ec;
         Identity r;
         if (fs::exists(upath(retire_path()), ec) && identity_read(retire_path(), &r) && r.user_id == id.user_id) fs::remove(upath(retire_path()), ec);
     }
     void send_retire()
     {
+        if (retire_suppressed) return;
         int n = 0;
         for (const Identity& r : retire) {
             if (++n > 8) break;   // server allows 10 per hour
@@ -951,9 +1085,111 @@ struct FriendsClient::Impl {
         }
     }
 
+    static AdminAccount parse_admin_account(const Json& j)
+    {
+        AdminAccount a;
+        a.uid = j.str("uid"); a.code = j.str("code"); a.name = j.str("name"); a.username = j.str("username");
+        a.status = j.str("status", "ok"); a.by = j.str("by");
+        a.created = jnum(j, "created"); a.first_seen = jnum(j, "first_seen"); a.last_seen = jnum(j, "last_seen");
+        a.pcs = (int)jnum(j, "pcs"); a.friend_of_you = jbool(j, "friend"); a.req = j.str("req");
+        a.test = jbool(j, "test"); a.unapplied = jbool(j, "unapplied"); a.unreachable = jbool(j, "unreachable");
+        return a;
+    }
+    static AdminSettings parse_admin_settings(const Json* j)
+    {
+        AdminSettings s;
+        if (!j || j->type != Json::Object) return s;
+        s.approval = jbool(*j, "approval"); s.vouch = jbool(*j, "vouch"); s.autofriend = jbool(*j, "autofriend", true); s.strict_rooms = jbool(*j, "strict_rooms"); s.cutoff = jnum(*j, "cutoff");
+        return s;
+    }
+    static AdminCounts parse_admin_counts(const Json* j)
+    {
+        AdminCounts c;
+        if (!j || j->type != Json::Object) return c;
+        c.all = (int)jnum(*j, "all"); c.ok = (int)jnum(*j, "ok"); c.pending = (int)jnum(*j, "pending"); c.banned = (int)jnum(*j, "banned");
+        return c;
+    }
+    /* admin_* replies. Only honoured when the welcome said this account is the owner: a stray frame can never fill the dashboard. */
+    void on_admin_message(const std::string& type, const Json& j)
+    {
+        if (!admin) return;
+        if (type == "admin_list") {
+            AdminList l; l.valid = true;
+            if (const Json* a = j.get("rows")) for (const Json& x : a->a) { AdminAccount r = parse_admin_account(x); if (!r.uid.empty() && l.rows.size() < 50) { admin_names[r.uid] = r.shown_name(); l.rows.push_back(std::move(r)); } }
+            l.total = (int)jnum(j, "total"); l.offset = (int)jnum(j, "offset"); l.tracked = (int)jnum(j, "tracked");
+            l.counts = parse_admin_counts(j.get("counts")); l.settings = parse_admin_settings(j.get("settings"));
+            asettings = l.settings; admin_pend = l.counts.pending;
+            {   // a reply that is exactly the waiting list (every row pending, all of them) also feeds the Pending queue
+                bool all_pending = l.offset == 0 && l.total == l.counts.pending && (int)l.rows.size() == l.total;
+                for (const AdminAccount& r : l.rows) if (!r.pending()) all_pending = false;
+                if (l.counts.pending == 0) apend = AdminList();
+                else if (all_pending) apend = l;
+            }
+            alist = std::move(l);
+        } else if (type == "admin_detail") {
+            AdminDetail d; d.valid = true;
+            d.uid = j.str("uid"); d.found = jbool(j, "found"); d.code = j.str("code"); d.rel = j.str("rel"); d.how = j.str("how");
+            d.how_at = jnum(j, "how_at"); d.friend_since = jnum(j, "friend_since");
+            if (const Json* r = j.get("row")) if (r->type == Json::Object) d.row = parse_admin_account(*r);
+            if (const Json* p = j.get("peek")) if (p->type == Json::Object) {
+                d.has_peek = true; d.nfriends = (int)jnum(*p, "nfriends");
+                if (const Json* a = p->get("friends")) for (const Json& x : a->a) if (x.type == Json::String && d.friends.size() < 30) d.friends.push_back(x.s);
+            }
+            adetail = std::move(d);
+        } else if (type == "admin_settings") {
+            asettings = parse_admin_settings(j.get("settings"));
+            AdminCounts c = parse_admin_counts(j.get("counts"));
+            admin_pend = c.pending; alist.settings = asettings; alist.counts = c;
+        } else if (type == "admin_pending") {
+            admin_pend = (int)jnum(j, "pending");
+            alist.counts.pending = admin_pend;
+            if (admin_pend == 0) apend = AdminList();
+            const PendingLatest pl = parse_pending_latest(j);
+            if (pl.valid) {
+                const std::string key = pl.uid + "|" + std::to_string(pl.created);
+                if (key != last_latest_key) {
+                    last_latest_key = key;
+                    Event e; e.kind = Event::AdminJoinWaiting; e.uid = pl.uid; e.name = pl.name; e.text = pl.code; e.msg.at = pl.created;
+                    admin_names[pl.uid] = pl.name;
+                    push_event(std::move(e));
+                }
+            }
+        } else if (type == "admin_invites") {
+            AdminInvites r;
+            if (parse_admin_invites(j, &r)) {
+                if (!r.ok) {   // a refused create / revoke: say why (the list in the reply is still current)
+                    Event e; e.kind = Event::AdminResult; e.name = "invite"; e.ok = false; e.detail = r.reason;
+                    e.text = admin_result_text("invite", false, "", r.reason, false, false);
+                    push_event(std::move(e));
+                    r.has_created = false;
+                }
+                ainv = std::move(r);
+            }
+        } else if (type == "admin_invite_used") {
+            const InviteUsed u = parse_invite_used(j);
+            if (u.valid) { Event e; e.kind = Event::AdminInviteUsed; e.uid = u.uid; e.name = u.name; e.text = u.code; push_event(std::move(e)); }
+        } else if (type == "admin_result") {
+            std::string uid = j.str("uid"), op = j.str("op");
+            auto it = admin_names.find(uid);
+            std::string nm = it == admin_names.end() ? std::string() : it->second;
+            bool ok = jbool(j, "ok");
+            const Json* ap = j.get("applied");
+            Event e; e.kind = Event::AdminResult; e.uid = uid; e.name = op; e.ok = ok; e.detail = j.str("reason");
+            e.text = admin_result_text(op, ok, nm, e.detail, ap && ap->type == Json::Bool, ap && ap->type == Json::Bool && ap->b);
+            push_event(std::move(e));
+        } else return;
+        ++admin_ver;
+    }
+
     void on_welcome(const Json& j)
     {
         welcomed = true;
+        access = Access::Ok;
+        if (backup_ok) identity_backup_save(id);   // a server-confirmed account: keep a copy outside the install folder
+        admin = jbool(j, "admin");
+        if (admin) send(admin_settings_json());
+        else { alist = AdminList(); adetail = AdminDetail(); asettings = AdminSettings(); admin_pend = 0; ainv = AdminInvites(); apend = AdminList(); }
+        if (admin) send(invite_list_json());
         backoff_ms = 1000;
         last_keepalive = now_ms();
         live.reset(last_keepalive);
@@ -1055,6 +1291,7 @@ struct FriendsClient::Impl {
         if (type == "welcome") on_welcome(j);
         else if (type == "presence") on_presence(j);
         else if (type == "friend_library") on_friend_library(j);
+        else if (type.compare(0, 6, "admin_") == 0) on_admin_message(type, j);
         else if (type == "friend_online") {   // only ever for friends we asked about; anything else is ignored
             const std::string u = j.str("uid");
             if (find(u) && std::find(watch.begin(), watch.end(), u) != watch.end()) {
@@ -1068,6 +1305,7 @@ struct FriendsClient::Impl {
             if (parse_playtime_reply(text, &m)) { pt_friends = std::move(m); ++pt_version; }
         }
         else if (type == "retired") retire_done(j.str("uid"));
+        else if (type == "account_deleted") { account_deleted = true; status_text = "This account was deleted"; }   // the close that follows (4005) must not say "replaced"
         else if (type == "request") {
             const Json* r = j.get("req");
             if (!r) return false;
@@ -1130,7 +1368,17 @@ struct FriendsClient::Impl {
                 for (const Json& m : a->a) add_msg(with, parse_msg(m), false);
         } else if (type == "error") {
             std::string reason = j.str("reason", "error");
-            if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) retire_done(j.str("uid"));   // can never succeed: stop resending
+            if (!welcomed && access_from_reason(reason) != Access::Ok) {   // the owner has not approved this account / it is blocked: no welcome will follow
+                access = access_from_reason(reason);
+                status_text = access_title(access);
+                net_log("Friends: access %s", reason.c_str());
+                if (access == Access::Pending && !redeem_code.empty() && !redeem_sent && hello_sent) redeem_sent = ws.send_text(redeem_invite_json(redeem_code));
+                return false;   // the server leaves this socket open and wakes it with a close when that changes (4011): no retry loop
+            }
+            if (retire_error_is_terminal(j.str("ref"), j.str("detail"))) {   // can never succeed: stop resending, but do not call it confirmed
+                if (j.str("detail") == "bad-secret") retire_rejected(j.str("uid"));
+                else retire_suppressed = true;   // retired-elsewhere carries no uid: stop for this session, and only toast once
+            }
             if (!welcomed && (reason == "code-taken" || reason == "code-collision" || reason == "collision")) return true;
             Event e; e.kind = Event::Error; e.text = reason; e.name = j.str("ref"); e.detail = j.str("detail");
             for (size_t i = 0; i < inflight.size(); i++)   // a queued action the server refused after the flush: say so
@@ -1168,6 +1416,13 @@ struct FriendsClient::Impl {
             Event e; e.kind = Event::AskResult; e.uid = j.str("to"); e.ok = jbool(j, "ok"); e.text = j.str("reason");
             push_event(std::move(e));
         } else if (type == "invite_result") {
+            RedeemResult rr;
+            if (!welcomed && parse_redeem_result(j, &rr)) {   // a waiting account's invite-code answer (room invite results carry results[] and need a welcome)
+                redeem_code.clear(); redeem_sent = false;
+                Event e; e.kind = Event::InviteRedeemed; e.ok = rr.ok; e.text = rr.reason;
+                push_event(std::move(e));
+                return false;
+            }
             Event e; e.kind = Event::InviteResult;
             if (const Json* a = j.get("results"))
                 for (const Json& r : a->a) {
@@ -1184,7 +1439,35 @@ struct FriendsClient::Impl {
 
 /* ====================================================================== public */
 
-bool retire_error_is_terminal(const std::string& ref, const std::string& detail) { return ref == "retire_old" && detail == "bad-secret"; }
+std::string status_next_step(const std::string& st, bool* needs_account)
+{
+    bool acct = false;
+    std::string out;
+    if (st.rfind("This identity was replaced", 0) == 0)
+        { acct = true; out = "This account was moved to a newer sign-in, so this PC stopped connecting. Enter your account code in Settings > Account to sign back in."; }
+    else if (st.rfind("This account was deleted", 0) == 0)
+        { acct = true; out = "This account was deleted on another PC. Enter an account code in Settings > Account to use a different account."; }
+    else if (st.rfind("Identity rejected", 0) == 0)
+        { acct = true; out = "The server did not accept this PC's sign-in. Enter your account code in Settings > Account to sign back in, or restart RetroHub."; }
+    else if (st.rfind("Disconnected", 0) == 0 || st.rfind("Reconnecting", 0) == 0)
+        out = "RetroHub keeps trying. Check your internet connection if this stays.";
+    if (needs_account) *needs_account = acct;
+    return out;
+}
+
+bool message_echo_matches(const Message& l, const Message& s)
+{
+    if (l.id.compare(0, 6, "local-") != 0 || s.id.empty() || s.id.compare(0, 6, "local-") == 0) return false;
+    if (!l.mine || !s.mine || l.to != s.to || l.text != s.text || l.card != s.card) return false;
+    if (l.has_attach != s.has_attach || (l.has_attach && l.attach.id != s.attach.id)) return false;
+    int64_t d = l.at - s.at;
+    return (d < 0 ? -d : d) <= 10 * 60 * 1000;
+}
+
+bool retire_error_is_terminal(const std::string& ref, const std::string& detail)
+{
+    return ref == "retire_old" && (detail == "bad-secret" || detail == "retired-elsewhere");
+}
 
 static std::string sanitize_name(const std::string& in)
 {
@@ -1223,8 +1506,10 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
     d.server = server;
     d.name = sanitize_name(name);
     {
-        const bool had_identity = fs::exists(upath(with_sep(d.data_dir) + "identity.json")) ||
-                                  (!d.vault_dir.empty() && fs::exists(upath(with_sep(d.vault_dir) + "_identity\\identity.json")));
+        d.backup_ok = identity_backup_allowed(server, d.name);
+        bool had_identity = fs::exists(upath(with_sep(d.data_dir) + "identity.json")) ||
+                            (!d.vault_dir.empty() && fs::exists(upath(with_sep(d.vault_dir) + "_identity\\identity.json")));
+        if (!had_identity && d.backup_ok && identity_backup_adopt_if_fresh(d.data_dir, d.vault_dir, nullptr)) had_identity = true;
         d.id = identity_load_or_create(d.data_dir, d.vault_dir);
         if (!had_identity) write_file(d.fresh_marker(), "1");
     }
@@ -1305,9 +1590,16 @@ void FriendsClient::update()
             d.ws.close();
             d.welcomed = false;
             d.gave_up = true;
-            d.status_text = "This identity was replaced by a newer one";
+            d.status_text = d.account_deleted ? "This account was deleted" : "This identity was replaced by a newer one";
             return;
         }
+        if (code == 4010 || code == 4012) {   // blocked / waiting while connected: say so, then try again slowly (a 4011 close means "approved")
+            d.access = code == 4012 ? Access::Pending : Access::Unavailable;
+            d.admin = false;
+            d.backoff_ms = 60000;
+            if (code == 4012 && !d.redeem_code.empty()) { d.redeem_sent = false; d.backoff_ms = 400; }   // a code is waiting to be sent: come back at once, not in a minute
+        }
+        if (code == 4011) d.backoff_ms = 1000;
         if (code == 4003) {
             d.ws.close();
             d.welcomed = false;
@@ -1326,6 +1618,22 @@ void FriendsClient::update()
         return;
     }
 
+    /* Silent-socket watchdogs for a socket that was never welcomed (the welcomed one has d.live below). A refused account's socket is left
+     * open and silent by the server on purpose, so it is simply re-checked every 3 minutes (one hello: no loop, no spam); a hello that gets
+     * no answer at all within 30 s means a dead socket. Both go through the normal, backed-off reconnect. */
+    if (d.access == Access::Ok) d.access_since = 0;
+    else if (!d.access_since) d.access_since = now | 1u;
+    if (!d.welcomed && st == WsState::Open && d.hello_sent) {
+        const bool refused = d.access != Access::Ok;
+        if ((refused && (int32_t)(now - d.access_since) > 180000) || (!refused && d.hello_at && (int32_t)(now - d.hello_at) > 30000)) {   // signed: access_since / hello_at are `now | 1`, which can be 1 ms AHEAD of `now` (an unsigned difference then wraps and the socket was dropped at once, with a 60 s wait)
+            net_log("Friends: %s", refused ? "re-checking access" : "no answer to hello, reconnecting");
+            d.access_since = refused ? (now | 1u) : 0;
+            d.hello_at = 0;
+            if (refused) d.backoff_ms = 60000;
+            d.schedule_reconnect(refused ? "re-checking access" : "no answer from the server");
+            return;
+        }
+    }
     d.pump_fetch(now);
     if (d.welcomed && d.live.dead(now)) {   // no answer for ~60 s (PC slept / network gone without a close): reconnect
         net_log("Friends: no answer from the server for %u ms, reconnecting", (unsigned)(now - d.live.last_rx));
@@ -1384,12 +1692,65 @@ bool FriendsClient::adopt_identity(const Identity& v)
 {
     Impl& d = *impl_;
     if (!identity_adopt(d.data_dir, d.vault_dir, v)) return false;
+    d.account_deleted = false; d.retire_suppressed = false;   // a new identity: start clean
     apply_adopted(v);
     return true;
 }
 
 bool FriendsClient::connected() const { return impl_->welcomed; }
 std::string FriendsClient::status_text() const { return impl_->status_text; }
+Access FriendsClient::access() const { return impl_->access; }
+void FriendsClient::reconnect_now()
+{
+    Impl& d = *impl_;
+    if (!d.started || d.welcomed || d.gave_up) return;
+    d.ws.close();
+    d.reconnect_at = 0;
+    d.backoff_ms = 1000;
+    d.connect();
+}
+bool FriendsClient::is_admin() const { return impl_->admin; }
+void FriendsClient::admin_request_list(const AdminQuery& q) { if (impl_->admin) impl_->send(admin_list_json(q)); }
+void FriendsClient::admin_request_detail(const std::string& uid) { if (impl_->admin && is_b32(uid, 26)) impl_->send(admin_uid_json("detail", uid)); }
+void FriendsClient::admin_act(const std::string& op, const std::string& uid)
+{
+    if (!impl_->admin || !is_b32(uid, 26)) return;
+    if (op != "ban" && op != "unban" && op != "approve" && op != "deny") return;
+    impl_->send(admin_uid_json(op, uid));
+    if (op != "unban") {   // the row leaves the waiting queue at once; the next list reply confirms
+        auto& r = impl_->apend.rows;
+        r.erase(std::remove_if(r.begin(), r.end(), [&](const AdminAccount& a) { return a.uid == uid; }), r.end());
+    }
+}
+void FriendsClient::admin_request_pending()
+{
+    if (!impl_->admin) return;
+    AdminQuery q; q.status = "pending"; q.limit = 25; q.show_test = false;
+    impl_->send(admin_list_json(q));
+}
+const AdminList& FriendsClient::admin_pending_list() const { return impl_->apend; }
+void FriendsClient::admin_request_settings() { if (impl_->admin) impl_->send(admin_settings_json()); }
+void FriendsClient::admin_set_settings(int approval, int vouch, int autofriend, int strict_rooms) { if (impl_->admin) impl_->send(admin_settings_json(approval, vouch, autofriend, strict_rooms)); }
+bool FriendsClient::redeem_invite(const std::string& code)
+{
+    Impl& d = *impl_;
+    if (!d.started || d.welcomed || d.gave_up || d.access == Access::Unavailable || !invite_valid(code)) return false;
+    d.redeem_code = invite_format(code);
+    d.redeem_sent = false;
+    if (d.hello_sent && d.access == Access::Pending && d.ws.send_text(redeem_invite_json(d.redeem_code))) { d.redeem_sent = true; return true; }
+    reconnect_now();   // the waiting socket is gone (the server closes it now and then): reconnect at once; the code goes out when the pending answer arrives
+    return true;
+}
+void FriendsClient::admin_invite_create(int uses, int hours, const std::string& note) { if (impl_->admin) impl_->send(invite_create_json(uses, hours, note)); }
+void FriendsClient::admin_invite_list() { if (impl_->admin) impl_->send(invite_list_json()); }
+void FriendsClient::admin_invite_revoke(const std::string& code) { if (impl_->admin && invite_valid(code)) impl_->send(invite_revoke_json(code)); }
+void FriendsClient::admin_approve_code(const std::string& fc) { std::string n; if (impl_->admin && friend_code_normalize(fc, &n)) impl_->send(approve_code_json(n)); }
+const AdminInvites& FriendsClient::admin_invites() const { return impl_->ainv; }
+const AdminList& FriendsClient::admin_list() const { return impl_->alist; }
+const AdminDetail& FriendsClient::admin_detail() const { return impl_->adetail; }
+const AdminSettings& FriendsClient::admin_settings() const { return impl_->asettings; }
+int FriendsClient::admin_pending() const { return impl_->admin_pend; }
+int FriendsClient::admin_version() const { return impl_->admin_ver; }
 std::string FriendsClient::my_code() const { return friend_code(impl_->id.user_id); }
 std::string FriendsClient::my_uid() const { return impl_->id.user_id; }
 std::string FriendsClient::my_secret() const { return impl_->id.secret; }
@@ -1449,6 +1810,14 @@ void FriendsClient::remove_friend(const std::string& uid)
 void FriendsClient::block(const std::string& uid)
 {
     Impl& d = *impl_;
+    d.load_bnames();
+    {
+        std::string nm;
+        for (const Friend& f : d.friends) if (f.uid == uid && !f.name.empty()) { nm = f.name; break; }
+        if (nm.empty()) for (const Request& r : d.incoming) if (r.uid == uid) { nm = r.name; break; }
+        if (nm.empty()) for (const Request& r : d.outgoing) if (r.uid == uid) { nm = r.name; break; }
+        if (!nm.empty()) { d.bnames[uid] = nm; d.save_bnames(); }
+    }
     if (std::find(d.blocked.begin(), d.blocked.end(), uid) == d.blocked.end()) d.blocked.push_back(uid);
     d.friends.erase(std::remove_if(d.friends.begin(), d.friends.end(), [&](const Friend& f) { return f.uid == uid; }), d.friends.end());
     Impl::drop(d.incoming, uid); Impl::drop(d.outgoing, uid);
@@ -1459,6 +1828,8 @@ void FriendsClient::unblock(const std::string& uid)
 {
     Impl& d = *impl_;
     d.blocked.erase(std::remove(d.blocked.begin(), d.blocked.end(), uid), d.blocked.end());
+    d.load_bnames();
+    if (d.bnames.erase(uid)) d.save_bnames();
     d.send_uid("unblock", uid);
 }
 
@@ -1578,6 +1949,12 @@ const std::vector<Friend>& FriendsClient::friends() const { return impl_->friend
 const std::vector<Request>& FriendsClient::incoming_requests() const { return impl_->incoming; }
 const std::vector<Request>& FriendsClient::outgoing_requests() const { return impl_->outgoing; }
 const std::vector<std::string>& FriendsClient::blocked() const { return impl_->blocked; }
+std::string FriendsClient::blocked_name(const std::string& uid) const
+{
+    impl_->load_bnames();
+    auto it = impl_->bnames.find(uid);
+    return it == impl_->bnames.end() ? std::string() : it->second;
+}
 const Friend* FriendsClient::find_friend(const std::string& uid) const
 {
     for (const auto& f : impl_->friends) if (f.uid == uid) return &f;

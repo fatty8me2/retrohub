@@ -40,7 +40,9 @@ struct Settings {
     bool lib_favs_only = false;        // All Games: Favorites chip
     std::string lib_genre;             // All Games: Genre chip ("" = all genres; "Other" = games without a genre)
     bool lib_group_genre = false;      // All Games: Group by Genre instead of by console
-    std::string lib_layout = "grid";   // All Games layout: grid | list | compact | showcase
+    std::string discover_sort = "rec"; // Discover: rec | title | new | old | players
+    std::string lib_layout = "grid";   // All Games layout: grid | list | compact | showcase | shelf | cases
+    bool lib_shelf_mixed = false;      // Shelf layout: false = one shelf per console, true = one flow following the Sort chip
     std::string lib_list_col;          // List layout: sorted column ("" = follow the Sort chip) title | console | players | last | time
     bool lib_list_desc = false;        // List layout: column sorted descending
     bool cloud_states = true;          // "Back up save states to the cloud" (within the smart cap)
@@ -53,6 +55,7 @@ struct Settings {
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
     bool show_friends = true;          // friends panel open
     bool tv_start = false;             // start RetroHub in TV mode (fullscreen 10-foot layout)
+    bool tv_cases = false;             // TV mode opens All Games in the Cases (3D game-case carousel) view
     bool tv_windows = false;           // mirrors the HKCU Run entry that starts with Windows into TV mode
     bool played_online = false;        // set on the first online launch: Play Online collapses its "How it works" help
     bool notify_in_game = false;       // Windows toast for invites while a game is running (OFF by default: nothing may pop up over a game)
@@ -76,6 +79,7 @@ struct Settings {
     bool username_claimed = false;     // this PC has a username the server confirmed (name below IS that username); false = still the provisional Windows name
     bool find_games_done = false;      // the first-run "Find my games" step was finished or skipped
     bool setup_done = false;           // the first-run setup wizard was finished or skipped
+    bool show_whats_new = true;        // "Show what's new after updates": the Welcome back card (welcome_ui.cpp)
     std::string changelog_seen;        // version whose "What's new" popup was shown/skipped ("" = never)
     bool kt_intro_seen = false;        // Kanto Together: the "first session" guidance was shown once
     std::string games_dest;            // Add games: chosen destination folder ("" = the RetroHub Games folder)
@@ -85,6 +89,13 @@ struct Settings {
     bool cemu_manage_controls = true;  // "Let RetroHub manage Wii U controls" for the user's own Cemu (backup made first)
     int settings_tab = 0;             // last Settings tab (0 General, 1 Online, 2 Video & Games, 3 Account), remembered
     std::string ps2_bios_dir;         // user-chosen folder with the PS2 BIOS ("" = look next to the games / Desktop\Everything\BIOS)
+    /* Plan 4 Wave 3 D1/D2 (display) */
+    bool reduce_motion = false;       // calmer UI: no slides, pans, spins or shelf tilt (read by every animation)
+    int ui_scale = 100;               // UI scale in percent (80..200), on top of the monitor DPI
+    bool remember_window = true;      // reopen on the same monitor, position and size
+    int win_x = 0, win_y = 0, win_w = 0, win_h = 0;   // last normal window rect (0 size = never saved)
+    bool win_max = false;             // last window was maximized
+    std::string win_monitor;          // device name of the last monitor (\\.\DISPLAY2); empty = primary
 };
 std::string settings_to_json(const Settings& s);
 bool settings_from_json(const std::string& text, Settings* out);   // missing keys keep defaults in *out
@@ -607,8 +618,8 @@ template <class V> void remap_slot_key(std::map<int, V>& m, int from, int to) {
 /* Toast for a server-made friendship (joined a room / played together). */
 inline std::string auto_friend_text(const std::string& name) { return "You and " + (name.empty() ? std::string("a new player") : name) + " are now friends"; }
 /* First message a lobby client sends after the welcome so the room can tell who is sitting where. */
-inline std::string lobby_ident_json(const std::string& uid, const std::string& secret) {
-    return "{\"type\":\"ident\",\"uid\":\"" + json::escape(uid) + "\",\"secret\":\"" + json::escape(secret) + "\"}";
+inline std::string lobby_ident_json(const std::string& uid, const std::string& secret, bool nopair = false) {
+    return "{\"type\":\"ident\",\"uid\":\"" + json::escape(uid) + "\",\"secret\":\"" + json::escape(secret) + "\"" + (nopair ? ",\"nopair\":true" : "") + "}";
 }
 /* The host left: move every per-slot map to the promoted member's slot 0 in one go. `ready` is NOT carried over - the game it
  * belonged to is gone, everyone re-announces (pass the same map the caller then clears). */

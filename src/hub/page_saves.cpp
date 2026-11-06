@@ -1,4 +1,5 @@
 #include "app.h"
+#include "wave3_hooks.h"
 
 #include <atomic>
 #include <memory>
@@ -100,6 +101,7 @@ void page_saves() {
     bool busy = A.job.running;
 
     history_ui_saves_page();
+    save_import_section();   // Wave 3 L4: bring your saves from other emulators
     cloud_ui_saves_page();
 
     begin_panel("vault");

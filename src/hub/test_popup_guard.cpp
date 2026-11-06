@@ -172,7 +172,6 @@ static void lint() {
         {{"launch.cpp", "keybd_event"}, 2},         // View+Y: the Alt tap that lets the menu / the game take the foreground (player pressed it)
         {{"launch.cpp", "AttachThreadInput"}, 2},  // View+Y: attach to the foreground thread's input for that call, detach after
         {{"launch.cpp", "SendInput"}, 2},          // Cemu pad-screen toggle + Dolphin speed hotkeys, only while the game window is already the foreground window
-        {{"netplay_3ds_join.cpp", "SendInput"}, 1},   // the word inside a PowerShell comment in an embedded script (UI Automation helper); not a call
     };
 
     const fs::path hub_dir = fs::path(HUB_SRC_DIR);
@@ -225,7 +224,31 @@ static void lint_self_test() {
     fs::remove_all(dir, ec);
 }
 
+/* The UI Automation helper scripts (data/helpers/*.ps1) used to live inside the C++ sources and were covered by the lint above.
+ * They are files now, so pin the same rule: no foreground-taking or synthetic-input calls. */
+static void lint_helper_scripts() {
+    const fs::path dir = fs::path(HUB_SRC_DIR).parent_path().parent_path() / "data" / "helpers";
+    int n = 0;
+    for (const auto& e : fs::directory_iterator(dir)) {
+        if (e.path().extension() != ".ps1") continue;
+        ++n;
+        std::ifstream f(e.path(), std::ios::binary);
+        std::string t((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        for (const char* bad : {"SetForegroundWindow", "BringWindowToTop", "AppActivate", "SendKeys", "keybd_event", "AttachThreadInput", "SwitchToThisWindow", "MessageBox"})
+            if (t.find(bad) != std::string::npos) { std::printf("FAIL %s uses %s\n", e.path().filename().string().c_str(), bad); ++fails; }
+        std::string t2 = t;   // "SendInput" is allowed only as a word inside a comment line
+        size_t pos = 0;
+        while ((pos = t2.find("SendInput", pos)) != std::string::npos) {
+            size_t ls = t2.rfind('\n', pos); ls = ls == std::string::npos ? 0 : ls + 1;
+            if (t2.substr(ls, pos - ls).find('#') == std::string::npos) { std::printf("FAIL %s calls SendInput\n", e.path().filename().string().c_str()); ++fails; }
+            pos += 9;
+        }
+    }
+    CHECK(n >= 2);
+}
+
 int main() {
+    lint_helper_scripts();
     logic();
     lint_self_test();
     lint();

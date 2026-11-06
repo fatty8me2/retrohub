@@ -1,4 +1,5 @@
 #include "app.h"
+#include "progress_ui.h"
 #include "libview_ui.h"
 #include "hack_ui.h"
 
@@ -329,6 +330,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     }
     else if (e.issue == "encrypted") { t.tag = "ENCRYPTED"; t.tag_warn = true; t.tag_tip = "Encrypted dump - it needs decrypting before it can run"; }
     else if (e.issue == "keys") { t.tag = "NEEDS KEYS"; t.tag_warn = true; t.tag_tip = "Needs decryption keys (see the 3DS setup dialog)"; }
+    if (t.tag.empty()) t.tag = progress_tag(e.key, &t.tag_tip);   // L2: your completion status, only when set
     t.cloud = cloud_ui_pill(e, &t.cloud_col);
     entry_colors(e, &t.c0, &t.c1);
     t.art = art_for_entry(e);
@@ -336,7 +338,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     t.favorite = gs.favorite;
     t.selected = A.sel_game == e.key;
     const GameInfo* cat = catalog_for(e);
-    t.online = is_native(e) || supports_online(e);
+    t.online = entry_online(e);
     if (recent_sub && gs.last_played) t.subtitle = fmt_ago(gs.last_played);
     else if (gs.play_seconds) t.subtitle = hubui::format_play_time(gs.play_seconds) + " played";
     else t.subtitle = cat && cat->year ? std::to_string(cat->year) : std::string("Not played yet");

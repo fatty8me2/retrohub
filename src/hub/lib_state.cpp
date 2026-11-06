@@ -1,4 +1,5 @@
 #include "app.h"
+#include "wave3_hooks.h"
 #include <ctime>
 #include "library_scan_info.h"
 #include "online_caps.h"
@@ -9,6 +10,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include <unordered_map>
 
 /* ---------- library / ROM scanning ---------- */
 
@@ -57,6 +59,7 @@ const hub::GameEntry* find_entry(const std::string& key) {
 }
 
 void apply_scan() {
+    lib_lookup_cache_clear();
     A.lib.clear();
     if (!smash_exe_path().empty()) {
         if (const GameInfo* g = hub::find_game("smash64")) {
@@ -128,6 +131,15 @@ void apply_scan() {
             { hub::GameEntry g; g.system = hub::System::N64; g.key = kNativeKey; g.title = "Super Smash Bros. 64"; g.catalog_id = "smash64"; g.path = "C:/fake/BattleShip.exe"; A.lib.insert(A.lib.begin(), g); }
             n = 0;
         }
+        if (std::string(fl) == "tpak") {   // Wave 3 X1 screenshot aid: Pokemon Stadium 2 + a few Game Boy games (HUB_SHOT_DETAILS=fake:tpak-n64)
+            struct F { const char* key; hub::System s; const char* title; const char* cat; };
+            for (const F& f : {F{"fake:tpak-n64", hub::System::N64, "Pokemon Stadium 2", "pokestadium2"}, F{"fake:tpak-gold", hub::System::GBC, "Pokemon Gold", "pokegold"},
+                               F{"fake:tpak-crystal", hub::System::GBC, "Pokemon Crystal", "pokecrystal"}, F{"fake:tpak-red", hub::System::GB, "Pokemon Red", "pokered"}}) {
+                hub::GameEntry g; g.system = f.s; g.key = f.key; g.title = f.title; g.catalog_id = f.cat; g.path = std::string("C:/fake/") + f.cat + ".rom";
+                A.lib.push_back(g);
+            }
+            n = 0;
+        }
         for (int i = 0; i < n; ++i) {
             hub::GameEntry g;
             g.system = sy[i % 5];
@@ -150,6 +162,19 @@ void apply_scan() {
                 static const char* w2[] = {"Racers", "Knights", "Tactics", "Arena", "Odyssey", "Rumble", "Kingdom", "Stadium", "Legends", "Warriors"};
                 g.system = mix2[(i * 7) % 10];
                 g.title = i % 40 == 39 ? std::to_string(1000 + i) + " Club" : std::string(w1[(i * 5 + i / 26) % 26]) + " " + w2[(i / 3) % 10] + (i >= 260 ? " " + std::to_string(i / 260 + 1) : "");
+            }
+            if (std::getenv("HUB_SHOT_FAKE_SHELF")) {   // Shelf screenshots: every console, real-looking and a few very long titles (HUB_SHOT_FAKE_SHELF=<system short> keeps one console)
+                static const hub::System all13[] = {hub::System::NES, hub::System::SNES, hub::System::N64, hub::System::GB, hub::System::GBC, hub::System::GBA, hub::System::NDS,
+                                                    hub::System::N3DS, hub::System::PS1, hub::System::PS2, hub::System::GC, hub::System::WiiU, hub::System::PSP};
+                static const char* w1[] = {"Super", "Mega", "Turbo", "Legend of", "Mystic", "Dark", "Crystal", "Pocket", "Neon", "Royal", "Kirby's", "Star", "Metroid"};
+                static const char* w2[] = {"Kart", "Quest", "Arena", "Strike", "Tactics", "Racers", "Party", "Tennis", "Fighters", "Stadium", "Odyssey", "Warriors"};
+                static const char* w3[] = {"Remix", "Advance", "Deluxe", "World", "Rumble", "Legends", "Origins", "Zero", "Plus", "Blitz"};
+                const char* only = std::getenv("HUB_SHOT_FAKE_SHELF");
+                g.system = all13[(i * 5 + i / 13) % 13];
+                if (only && only[0] && only[0] != '1') g.system = hub::system_from_short(only);
+                g.title = std::string(w1[(i * 3) % 13]) + " " + w2[(i * 7 + i / 5) % 12] + " " + w3[(i / 3) % 10];
+                if (i % 11 == 4) g.title += ": The Adventures of the Forgotten Kingdom Collector's Edition";
+                if (i % 17 == 9) g.title = "Q" + g.title;
             }
             g.path = "C:/fake/game" + std::to_string(i) + ".z64";
             A.lib.push_back(g);
@@ -204,6 +229,7 @@ void apply_scan() {
             }
         }
         gameinfo_ui_shot_lib();
+        palpark_shot_init();   // Wave 3 X3: HUB_SHOT_PALPARK=1|none (with HUB_SHOT_FAKE_LIB=1)
         A.st.find_games_done = true;
         hubart::set_enabled(false);
     }
@@ -235,13 +261,66 @@ void apply_scan() {
 }
 
 /* Curated catalog entry for a scanned game (id/MD5 first, then serial + system). */
-const GameInfo* catalog_for(const hub::GameEntry& e) {
+static const GameInfo* catalog_for_uncached(const hub::GameEntry& e) {
     if (!e.catalog_id.empty())
         if (const GameInfo* g = hub::find_game(e.catalog_id)) return g;
     std::string md5;
     if (e.key.compare(0, 4, "n64:") == 0)
         for (char c : e.key.substr(4)) md5 += (char)std::toupper((unsigned char)c);
     return hub::find_game_for(sys_short(e), e.serial, md5);
+}
+
+/* Per-frame callers (every tile, the Online chip) must not redo the catalog scans: results are memoized on a hash of the fields the lookup and
+ * the online rule read (so a rename or a rescan that changes them just misses), and dropped on every rescan. The catalog itself is a static list. */
+namespace {
+std::mutex g_memo_mu;
+std::unordered_map<unsigned long long, const GameInfo*> g_cat_memo;
+std::unordered_map<unsigned long long, bool> g_online_memo;
+unsigned long long hmix(unsigned long long h, const std::string& s) { return (h ^ std::hash<std::string>()(s)) * 1099511628211ull + 0x9e3779b97f4a7c15ull; }
+unsigned long long entry_hash(const hub::GameEntry& e, bool with_title) {
+    unsigned long long h = 1469598103934665603ull + (unsigned long long)e.system;
+    h = hmix(h, e.catalog_id);
+    h = hmix(h, e.key);
+    h = hmix(h, e.serial);
+    if (with_title) h = hmix(h, e.title);
+    return h;
+}
+}  // namespace
+
+void lib_lookup_cache_clear() {
+    std::lock_guard<std::mutex> l(g_memo_mu);
+    g_cat_memo.clear();
+    g_online_memo.clear();
+}
+
+const GameInfo* catalog_for(const hub::GameEntry& e) {
+    const unsigned long long h = entry_hash(e, false);
+    {
+        std::lock_guard<std::mutex> l(g_memo_mu);
+        auto it = g_cat_memo.find(h);
+        if (it != g_cat_memo.end()) return it->second;
+    }
+    const GameInfo* g = catalog_for_uncached(e);
+    std::lock_guard<std::mutex> l(g_memo_mu);
+    if (g_cat_memo.size() > 50000) g_cat_memo.clear();
+    g_cat_memo[h] = g;
+    return g;
+}
+
+/* The Online chip / badge rule: the native port, or any game that can be played in a room. */
+bool entry_online(const hub::GameEntry& e) {
+    if (is_native(e)) return true;
+    const unsigned long long h = entry_hash(e, true);
+    {
+        std::lock_guard<std::mutex> l(g_memo_mu);
+        auto it = g_online_memo.find(h);
+        if (it != g_online_memo.end()) return it->second;
+    }
+    const bool on = supports_online(e);
+    std::lock_guard<std::mutex> l(g_memo_mu);
+    if (g_online_memo.size() > 50000) g_online_memo.clear();
+    g_online_memo[h] = on;
+    return on;
 }
 
 /* "Recently added": when the game file appeared on disk (creation time, else last write); cached per path. */
@@ -377,8 +456,7 @@ void rebuild_vis() {
                 continue;
             }
             const hub::GameEntry& e = A.lib[i];
-            const GameInfo* c = catalog_for(e);
-            (void)c; if (is_native(e) || supports_online(e)) keep.push_back(i);
+            if (entry_online(e)) keep.push_back(i);
         }
         base.swap(keep);
     }
@@ -426,7 +504,7 @@ void rebuild_vis() {
         g.system = sys_short(e);
         g.favorite = gs.favorite;
         g.last_played = gs.last_played;
-        g.online = is_native(e) || supports_online(e);
+        g.online = entry_online(e);
         g.pinned = is_native(e);
         g.play_seconds = gs.play_seconds;
         g.added = added_unix(e.path);

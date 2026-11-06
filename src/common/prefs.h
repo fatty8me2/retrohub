@@ -2,19 +2,58 @@
 /* Synced account preferences: <vault>/_account/prefs.json (cloud class "Settings", see src/saves).
  * Typed struct + JSON loader/serializer + a FIELD-WISE merge. Every field carries its own last-modified time (unix ms), and
  * merge() keeps, per field, whichever side changed last, so two PCs editing different fields never overwrite each other.
- * Fields: favorites, user_shelves, hidden, renames, covers, theme, profile.avatar, profile.fav_game, profile.status.
+ * Fields: favorites, user_shelves, hidden, renames, covers, preferred_copy, progress, theme, profile.avatar, profile.fav_game, profile.status.
+ * Map-like fields (renames, covers, preferred_copy, progress, user_shelves) merge per KEY (shelves: per name), favorites/hidden per key
+ * with tombstones, and top-level fields a newer client added are carried through untouched.
  * Game identities are the library keys (library.h). Pure logic apart from load()/save()/the library mirror. No UI. */
 #include <cstdint>
 #include <map>
+#include <set>
+#include <tuple>
 #include <string>
+#include <utility>
 #include <vector>
+
+#include "json.h"
 
 namespace hub { namespace prefs {
 
+/* A smart shelf's rule (Plan 4 L1). Every field is optional; a game must match all that are set. Stored under "rule" in a shelf's
+ * JSON; clients that do not know it ignore it and show an empty shelf. */
+struct ShelfRule {
+    std::vector<std::string> systems;   // library system_short codes; empty = any system
+    std::string genre;                  // "" = any
+    int min_players = 0;                // players >= N; 0 = any
+    std::string status;                 // completion status ("playing" ...); "" = any
+    bool favorites_only = false;
+    int not_played_days = 0;            // not played in N days (never played counts); 0 = any
+    int decade = 0;                     // 1990 = the 1990s; 0 = any
+    bool operator==(const ShelfRule& o) const {
+        return systems == o.systems && genre == o.genre && min_players == o.min_players && status == o.status &&
+               favorites_only == o.favorites_only && not_played_days == o.not_played_days && decade == o.decade;
+    }
+    bool operator<(const ShelfRule& o) const {
+        return std::tie(systems, genre, min_players, status, favorites_only, not_played_days, decade) <
+               std::tie(o.systems, o.genre, o.min_players, o.status, o.favorites_only, o.not_played_days, o.decade);
+    }
+};
+
 struct Shelf {
     std::string name;
-    std::vector<std::string> keys;
-    bool operator==(const Shelf& o) const { return name == o.name && keys == o.keys; }
+    std::vector<std::string> keys;      // hand-picked games (unused by a smart shelf)
+    bool smart = false;                 // true = the shelf is `rule`, not `keys`
+    ShelfRule rule;
+    bool operator==(const Shelf& o) const { return name == o.name && keys == o.keys && smart == o.smart && rule == o.rule; }
+    bool operator<(const Shelf& o) const {
+        return std::tie(name, keys, smart, rule) < std::tie(o.name, o.keys, o.smart, o.rule);
+    }
+};
+
+/* Completion status + a short note for one game (Plan 4 L2). status: "" | playing | beaten | complete (100%) | dropped | backlog. */
+struct Progress {
+    std::string status, note;           // note <= 500 characters
+    bool operator==(const Progress& o) const { return status == o.status && note == o.note; }
+    bool operator<(const Progress& o) const { return std::tie(status, note) < std::tie(o.status, o.note); }
 };
 
 struct Profile {
@@ -28,8 +67,15 @@ struct Prefs {
     std::map<std::string, std::string> renames;    // game key -> display name
     std::map<std::string, std::string> covers;     // game key -> cover image path
     std::map<std::string, std::string> preferred_copy;   // game key -> path of the duplicate copy to use (library scan)
+    std::map<std::string, Progress> progress;      // game key -> completion status + note
     std::string theme;
     Profile profile;
+    /* Per-key stamps for the map fields (renames, covers, preferred_copy, progress, user_shelves by shelf name): field -> key -> unix ms,
+     * negative = tombstone. merge() resolves each key on its own, so two PCs editing different games both keep their edit. */
+    std::map<std::string, std::map<std::string, long long>> map_ts;
+    std::set<std::string> legacy_maps;             // map fields parsed from a file with no per-key stamps (older client); cleared by the setters
+    /* Top-level fields this client does not know (a newer RetroHub wrote them). Kept through parse / serialize / merge, never dropped. */
+    std::vector<std::pair<std::string, json::Value>> extra;
     /* Per-key stamps for favorites and hidden (unix ms). Positive = key present as of that time, negative = tombstone
      * (removed at -value). merge() unions these, newest per key wins, so two PCs favoriting different games both keep them. */
     std::map<std::string, long long> favorites_ts, hidden_ts;
@@ -53,6 +99,7 @@ bool set_hidden(Prefs* p, std::vector<std::string> keys, long long t = 0);
 bool set_renames(Prefs* p, std::map<std::string, std::string> m, long long t = 0);
 bool set_covers(Prefs* p, std::map<std::string, std::string> m, long long t = 0);
 bool set_preferred_copy(Prefs* p, std::map<std::string, std::string> m, long long t = 0);
+bool set_progress(Prefs* p, std::map<std::string, Progress> m, long long t = 0);   // entries with no status and no note are dropped
 bool set_theme(Prefs* p, const std::string& theme, long long t = 0);
 bool set_profile_avatar(Prefs* p, const std::string& v, long long t = 0);
 bool set_profile_fav_game(Prefs* p, const std::string& v, long long t = 0);

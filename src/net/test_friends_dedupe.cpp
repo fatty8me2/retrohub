@@ -30,6 +30,27 @@ int main()
     CHECK(!retire_error_is_terminal("retire_old", "retire-failed"));   // transient: keep resending
     CHECK(!retire_error_is_terminal("retire_old", "rate-limited"));
     CHECK(!retire_error_is_terminal("add_friend", "bad-secret"));
+    CHECK(retire_error_is_terminal("retire_old", "retired-elsewhere"));   // another identity already took over: stop resending
+    {   // own DM echo vs the server's copy after a restart (F7)
+        Message l; l.id = "local-1000-0"; l.to = "peer"; l.text = "hi"; l.at = 1000000; l.mine = true;
+        Message s; s.id = "3f2a-uuid"; s.to = "peer"; s.text = "hi"; s.at = 1000500; s.mine = true;
+        CHECK(message_echo_matches(l, s));
+        Message s2 = s; s2.text = "hello";
+        CHECK(!message_echo_matches(l, s2));
+        Message s3 = s; s3.at = l.at + 11 * 60 * 1000;
+        CHECK(!message_echo_matches(l, s3));
+        Message s4 = s; s4.to = "other";
+        CHECK(!message_echo_matches(l, s4));
+        CHECK(!message_echo_matches(s, l));   // only a local echo is replaced by a server line
+    }
+    {   // F13: dead-end statuses say what to do
+        bool acct = false;
+        CHECK(!status_next_step("This identity was replaced by a newer one", &acct).empty() && acct);
+        CHECK(!status_next_step("Identity rejected by server (bad secret)", &acct).empty() && acct);
+        CHECK(!status_next_step("This account was deleted", &acct).empty() && acct);
+        CHECK(!status_next_step("Disconnected (connection lost)", &acct).empty() && !acct);
+        CHECK(status_next_step("Online", &acct).empty() && !acct);
+    }
     {   // same uid twice: one entry, most present status wins, earliest "since" kept
         std::vector<Friend> v = {mk("a", "Mia", PresenceState::Offline, 10, 500), mk("b", "Jo", PresenceState::Online, 1, 5),
                                  mk("a", "Mia", PresenceState::InGame, 5, 900), mk("a", "Mia", PresenceState::Online, 99, 100)};

@@ -74,12 +74,24 @@ std::string settings_to_json(const Settings& s) {
       << "  \"lib_favs_only\": " << (s.lib_favs_only ? "true" : "false") << ",\n"
       << "  \"lib_genre\": \"" << json::escape(s.lib_genre) << "\",\n"
       << "  \"lib_group_genre\": " << (s.lib_group_genre ? "true" : "false") << ",\n"
+      << "  \"discover_sort\": \"" << json::escape(s.discover_sort) << "\",\n"
       << "  \"lib_layout\": \"" << json::escape(s.lib_layout) << "\",\n"
+      << "  \"lib_shelf_mixed\": " << (s.lib_shelf_mixed ? "true" : "false") << ",\n"
       << "  \"lib_list_col\": \"" << json::escape(s.lib_list_col) << "\",\n"
       << "  \"lib_list_desc\": " << (s.lib_list_desc ? "true" : "false") << ",\n"
       << "  \"cloud_enabled\": " << (s.cloud_enabled ? "true" : "false") << ",\n"
       << "  \"sync_card_dismissed\": " << (s.sync_card_dismissed ? "true" : "false") << ",\n"
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
+      << "  \"show_whats_new\": " << (s.show_whats_new ? "true" : "false") << ",\n"
+      << "  \"reduce_motion\": " << (s.reduce_motion ? "true" : "false") << ",\n"
+      << "  \"ui_scale\": " << s.ui_scale << ",\n"
+      << "  \"remember_window\": " << (s.remember_window ? "true" : "false") << ",\n"
+      << "  \"win_x\": " << s.win_x << ",\n"
+      << "  \"win_y\": " << s.win_y << ",\n"
+      << "  \"win_w\": " << s.win_w << ",\n"
+      << "  \"win_h\": " << s.win_h << ",\n"
+      << "  \"win_max\": " << (s.win_max ? "true" : "false") << ",\n"
+      << "  \"win_monitor\": \"" << json::escape(s.win_monitor) << "\",\n"
       << "  \"changelog_seen\": \"" << json::escape(s.changelog_seen) << "\",\n"
       << "  \"kt_intro_seen\": " << (s.kt_intro_seen ? "true" : "false") << ",\n"
       << "  \"vault_dir\": \"" << json::escape(s.vault_dir) << "\",\n"
@@ -88,6 +100,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
       << "  \"tv_start\": " << (s.tv_start ? "true" : "false") << ",\n"
+      << "  \"tv_cases\": " << (s.tv_cases ? "true" : "false") << ",\n"
       << "  \"tv_windows\": " << (s.tv_windows ? "true" : "false") << ",\n"
       << "  \"played_online\": " << (s.played_online ? "true" : "false") << ",\n"
       << "  \"notify_in_game\": " << (s.notify_in_game ? "true" : "false") << ",\n"
@@ -174,8 +187,10 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->lib_favs_only = json_bool(j, "lib_favs_only", out->lib_favs_only);
     out->lib_genre = j.str("lib_genre", out->lib_genre);
     out->lib_group_genre = json_bool(j, "lib_group_genre", out->lib_group_genre);
+    out->discover_sort = j.str("discover_sort", out->discover_sort);
     out->lib_layout = j.str("lib_layout", out->lib_layout);
     out->lib_list_col = j.str("lib_list_col", out->lib_list_col);
+    out->lib_shelf_mixed = json_bool(j, "lib_shelf_mixed", out->lib_shelf_mixed);
     out->lib_list_desc = json_bool(j, "lib_list_desc", out->lib_list_desc);
     out->cloud_enabled = json_bool(j, "cloud_enabled", out->cloud_enabled);   // legacy sync_states / cloud_saves keys are ignored
     out->sync_card_dismissed = json_bool(j, "sync_card_dismissed", out->sync_card_dismissed);
@@ -187,6 +202,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));
     out->show_friends = json_bool(j, "show_friends", out->show_friends);
     out->tv_start = json_bool(j, "tv_start", out->tv_start);
+    out->tv_cases = json_bool(j, "tv_cases", out->tv_cases);
     out->tv_windows = json_bool(j, "tv_windows", out->tv_windows);
     out->played_online = json_bool(j, "played_online", out->played_online);
     out->notify_in_game = json_bool(j, "notify_in_game", out->notify_in_game);
@@ -214,6 +230,16 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->cemu_manage_controls = json_bool(j, "cemu_manage_controls", out->cemu_manage_controls);
     out->find_games_done = json_bool(j, "find_games_done", out->find_games_done);
     out->setup_done = json_bool(j, "setup_done", out->setup_done);
+    out->show_whats_new = json_bool(j, "show_whats_new", out->show_whats_new);
+    out->reduce_motion = json_bool(j, "reduce_motion", out->reduce_motion);
+    out->ui_scale = std::max(80, std::min(200, (int)j.num("ui_scale", out->ui_scale)));
+    out->remember_window = json_bool(j, "remember_window", out->remember_window);
+    out->win_x = (int)j.num("win_x", out->win_x);
+    out->win_y = (int)j.num("win_y", out->win_y);
+    out->win_w = (int)j.num("win_w", out->win_w);
+    out->win_h = (int)j.num("win_h", out->win_h);
+    out->win_max = json_bool(j, "win_max", out->win_max);
+    out->win_monitor = j.str("win_monitor", out->win_monitor);
     out->changelog_seen = j.str("changelog_seen", out->changelog_seen);
     out->cemu_exe = j.str("cemu_exe", out->cemu_exe);
     out->ps1_bios = j.str("ps1_bios", out->ps1_bios);
@@ -887,8 +913,8 @@ DriverVerdict driver_verdict(bool driver_alive, const std::string& st, unsigned 
 
 std::string driver_verdict_text(DriverVerdict v) {
     switch (v) {
-        case DriverVerdict::DiedSilently: return "RetroHub's helper script for Dolphin could not run. PowerShell or Windows UI Automation may be blocked (antivirus, AppLocker, or a policy).";
-        case DriverVerdict::NoStage: return "RetroHub's helper script for Dolphin never reported in. PowerShell or Windows UI Automation may be blocked or too slow.";
+        case DriverVerdict::DiedSilently: return "RetroHub's Windows helper script for Dolphin could not run. The script or Windows UI Automation may be blocked (antivirus, AppLocker, or a policy).";
+        case DriverVerdict::NoStage: return "RetroHub's Windows helper script for Dolphin never reported in. The script or Windows UI Automation may be blocked or too slow.";
         case DriverVerdict::DiedEarly: return "RetroHub's helper script for Dolphin stopped before the game started.";
         case DriverVerdict::NeverOpened: return "Dolphin's NetPlay window never opened.";
         default: return "";

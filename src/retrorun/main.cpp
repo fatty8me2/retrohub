@@ -33,6 +33,8 @@
 #include "present_fx.h"
 #include "core.h"
 #include "ds_link.h"
+#include "slot2.h"
+namespace slot2 = retrorun::slot2;
 #include "retro_pad.h"
 #include "live_profile.h"
 #include "dsview.h"
@@ -103,6 +105,8 @@ struct Args {
     bool rb_adaptive = true;      // --rb-delay-adapt / --no-rb-delay-adapt: pick the input delay from the measured RTT when --delay is auto
     bool multitap = false, no_multitap = false;  // SNES multitap on port 2 (players 3-4); auto with --players >= 3 or 3+ pads
     bool ds_link = false;   // DS local wireless over the room (netpacket interface), no lockstep
+    std::string slot2_backup_dir;        // --slot2-backup-dir DIR: where the GBA save backups go (the hub passes a folder outside the synced vault)
+    std::string slot2_rom, slot2_save;   // --slot2-rom GBA --slot2-save SAV: a GBA cartridge in the DS Slot-2 (Pal Park etc.), offline only (slot2.h)
     std::vector<std::string> opts;
     int rewind_mode = 0, runahead = 0;   // --rewind auto|on|off, --runahead off|1|2|auto (offline only; see features.h)
     int selftest_rewind_frames = 0, selftest_rewind_back = 0, selftest_runahead_frames = 0;   // QA: --rewind-selftest N,K / --runahead-selftest N (headless)
@@ -219,6 +223,9 @@ static bool parse_args(const std::vector<std::string>& a, Args* o) {
         else if (k == "--resume") o->resume = true;
         else if (k == "--load-state") { if (!val(&o->load_state_path)) return false; }
         else if (k == "--ds-link") o->ds_link = true;
+        else if (k == "--slot2-rom") { if (!val(&o->slot2_rom)) return false; }
+        else if (k == "--slot2-save") { if (!val(&o->slot2_save)) return false; }
+        else if (k == "--slot2-backup-dir") { if (!val(&o->slot2_backup_dir)) return false; }
         else if (k == "--fuzz-input") o->fuzz = true;
         else if (k == "--selftest") o->selftest = true;
         else if (k == "--pace") { if (!val(&o->pace_override)) return false; }
@@ -423,7 +430,7 @@ class Frontend {
     double speed = 1.0, fast_speed_ = 2.0;
     bool boost_active_ = false;   // View+RT quick boost is on
     bool speed_max = false;
-    void apply_speed(double s);
+    bool apply_speed(double s);   // false: refused (hardcore allows 1x only)
     SDL_Texture* osd_tex = nullptr;
     int osd_tex_w = 0, osd_tex_h = 0;
     osd::Layer osd_layer;
@@ -526,6 +533,10 @@ class Frontend {
     uint32_t frame_pad[4] = {0, 0, 0, 0};   // RetroPad bitmask per port for the frame about to run
 
     std::string rom_stem, srm_path;
+    std::string slot2_work_, slot2_vault_;           // Slot-2: scratch copy the core gets / the vault file it is copied back to ("" = no GBA save)
+    std::vector<uint8_t> slot2_orig_;                 // the vault file as it was at launch
+    bool slot2_prepare();                             // backup + scratch copy
+    void slot2_commit();                              // after core.unload(): copy the scratch save back over the vault file
     // Window caption prefix: --title if given, else "retrorun - <rom stem>".
     std::string window_base() const { return a.title.empty() ? "retrorun - " + rom_stem : a.title; }
     std::vector<uint8_t> srm_saved;
@@ -1143,8 +1154,8 @@ void Frontend::draw_osd() {
     SDL_RenderCopy(ren, osd_tex, nullptr, nullptr);
 }
 
-void Frontend::apply_speed(double s) {
-    if (!ra_.allow_speed(s == 0 ? 2.0 : s)) return;   // hardcore: only 1x
+bool Frontend::apply_speed(double s) {
+    if (!ra_.allow_speed(s == 0 ? 2.0 : s)) return false;   // hardcore: only 1x
     speed_max = (s == 0);
     speed = speed_max ? 1.0 : s;
     if (s == 0 || s > 1.0) fast_speed_ = s;
@@ -1154,6 +1165,7 @@ void Frontend::apply_speed(double s) {
     next_deadline = 0;   // re-anchor the timer pacing at the new rate
     osd::push(runctl::speed_label(s));
     rlog("speed: %s", runctl::speed_label(s).c_str());
+    return true;
 }
 
 void Frontend::draw_hint() {
@@ -1601,6 +1613,69 @@ bool Frontend::share_host_save_run() {
     return true;
 }
 
+/* Slot-2 GBA save: keep the last 3 backups next to it, then give the core a scratch copy (never the vault file itself). */
+bool Frontend::slot2_prepare() {
+    slot2_work_.clear(); slot2_vault_.clear(); slot2_orig_.clear();
+    if (a.slot2_save.empty()) return true;
+    std::error_code ec;
+    fs::path vault = fs::u8path(a.slot2_save);
+    if (!fs::is_regular_file(vault, ec)) { rlog("slot2: no GBA save file yet (%s): the cartridge goes in without one", a.slot2_save.c_str()); return true; }
+    if (!read_file(a.slot2_save, &slot2_orig_) || slot2_orig_.empty()) { rlog("slot2: cannot read the GBA save %s: the cartridge goes in without one", a.slot2_save.c_str()); slot2_orig_.clear(); return true; }
+    const std::string fname = vault.filename().u8string();
+    /* The hub passes --slot2-backup-dir (under its data folder, so backups are not synced with the vault). Without it (a hand-made command line)
+     * they stay next to the save, as before: a backup is never skipped. */
+    fs::path bdir = a.slot2_backup_dir.empty() ? vault.parent_path() / L"palpark_backup" : fs::u8path(a.slot2_backup_dir);
+    fs::create_directories(bdir, ec);
+    char stamp[32];
+    time_t now = time(nullptr);
+    tm lt{};
+    localtime_s(&lt, &now);
+    strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &lt);
+    std::vector<std::string> have;
+    for (auto& de : fs::directory_iterator(bdir, ec)) { std::string n = de.path().filename().u8string(); if (slot2::is_backup_of(n, fname)) have.push_back(n); }
+    ec.clear();
+    const std::string bname = slot2::unique_backup_name(fname, stamp, have);   // two runs in one second never overwrite each other's backup
+    if (bname.empty()) { rlog("slot2: too many backups with the same time stamp: the cartridge goes in without a save"); slot2_orig_.clear(); return true; }
+    fs::path bak = bdir / fs::u8path(bname);
+    fs::copy_file(vault, bak, fs::copy_options::none, ec);
+    if (ec) { rlog("slot2: FAILED to back up the GBA save (%s): the cartridge goes in without one", ec.message().c_str()); slot2_orig_.clear(); return true; }
+    rlog("slot2: GBA save backed up as %s", bak.u8string().c_str());
+    std::vector<std::string> names;
+    ec.clear();
+    for (auto& de : fs::directory_iterator(bdir, ec)) { std::string n = de.path().filename().u8string(); if (n != bname && slot2::is_backup_of(n, fname)) names.push_back(n); }   // the backup just made is never pruned (a clock that went back sorts it oldest)
+    for (auto& n : slot2::backups_to_prune(names, 2)) { fs::remove(bdir / fs::u8path(n), ec); rlog("slot2: old backup removed: %s", n.c_str()); }
+    fs::path wdir = fs::u8path(core.save_dir) / L"palpark" / std::to_wstring(GetCurrentProcessId());
+    fs::create_directories(wdir, ec);
+    fs::path work = wdir / vault.filename();
+    if (!write_atomic(work.u8string(), slot2_orig_.data(), slot2_orig_.size())) { rlog("slot2: cannot make the scratch copy: the cartridge goes in without a save"); slot2_orig_.clear(); return true; }
+    slot2_work_ = work.u8string();
+    slot2_vault_ = a.slot2_save;
+    return true;
+}
+
+void Frontend::slot2_commit() {
+    if (slot2_work_.empty()) return;
+    std::vector<uint8_t> w;
+    std::error_code ec;
+    if (read_file(slot2_work_, &w) && slot2::should_copy_back(slot2_orig_, w)) {
+        std::vector<uint8_t> now_vault;
+        read_file(slot2_vault_, &now_vault);
+        if (!slot2_orig_.empty() && now_vault != slot2_orig_) {   // the vault file changed while we played (another PC synced it, or the GBA game ran): never overwrite it
+            const std::string side = slot2_vault_ + ".palpark-" + std::to_string(GetTickCount64()) + ".sav";
+            write_atomic(side, w.data(), w.size());
+            rlog("slot2: the GBA save changed during the run, so the vault file was NOT replaced; the new Pal Park save is kept as %s", side.c_str());
+        } else if (write_atomic(slot2_vault_, w.data(), w.size())) rlog("slot2: GBA save written back: %s (%zu bytes)", slot2_vault_.c_str(), w.size());
+        else rlog("slot2: FAILED to write the GBA save back; the backup is in the Pal Park backup folder");
+    } else if (w.empty() || w == slot2_orig_) {
+        rlog("slot2: GBA save unchanged");
+    } else {
+        rlog("slot2: the core's GBA save has an unexpected size (%zu vs %zu bytes): vault file left as it was", w.size(), slot2_orig_.size());
+    }
+    fs::remove(fs::u8path(slot2_work_), ec);
+    fs::remove(fs::u8path(slot2_work_).parent_path(), ec);   // the per-process folder (empty now)
+    slot2_work_.clear();
+}
+
 void Frontend::save_srm(bool force) {
     if (guest_save_ro) return;
     size_t n = 0;
@@ -1759,11 +1834,11 @@ void Frontend::ctl_poll() {
                 ctl_.ack(true, c.value ? "muted" : "unmuted");
             } else if (c.cmd == runctl::Cmd::Ff) {
                 boost_active_ = false;   // a menu choice made while View+RT is held wins: releasing the boost must not drop it back to 1x
-                apply_speed(c.value ? fast_speed_ : 1.0);
+                if (!apply_speed(c.value ? fast_speed_ : 1.0)) { ctl_.ack(false, "Hardcore: only normal speed"); break; }   // the menu must not claim a speed the game is not running at (audit M7b)
                 ctl_.ack(true, c.value ? "fast-forward on" : "fast-forward off");
             } else if (c.cmd == runctl::Cmd::Speed) {
                 boost_active_ = false;
-                apply_speed(c.speed);
+                if (!apply_speed(c.speed)) { ctl_.ack(false, "Hardcore: only normal speed"); break; }
                 ctl_.ack(true, runctl::speed_label(c.speed));
             } else if (c.cmd == runctl::Cmd::Shader) {
                 std::string m;
@@ -3523,6 +3598,14 @@ int Frontend::run(const Args& args) {
     g_fe = this;
     muted = env_is("N64RUN_MUTE") || env_is("RETRORUN_MUTE") || env_is("SSB64_MUTE");
     if (!a.log.empty()) rlog_set_file(a.log);
+    if (!a.slot2_rom.empty() || !a.slot2_save.empty()) {   // DS Slot-2 GBA cartridge: offline only, never in any netplay / link / rollback mode
+        slot2::RunMode sm;
+        sm.net = !a.net.empty(); sm.ds_link = a.ds_link; sm.link = a.link; sm.rollback = a.rollback; sm.spectate = a.spectate; sm.dropin = a.dropin;
+        sm.synctest = a.synctest != 0; sm.share_host_save = a.share_host_save; sm.is_ds = lower(a.system) == "nds";
+        std::string why = slot2::refuse_reason(sm, !a.slot2_rom.empty(), !a.slot2_save.empty());
+        if (!why.empty()) { rlog("slot2: REFUSED: %s", why.c_str()); fprintf(stderr, "retrorun: %s\n", why.c_str()); return 2; }
+        rlog("slot2: accepted (GBA rom %s, save %s)", a.slot2_rom.c_str(), a.slot2_save.empty() ? "none" : a.slot2_save.c_str());
+    }
     if (a.save_dir.empty()) a.save_dir = ".\\saves";
     if (a.state_dir.empty()) a.state_dir = a.save_dir + "\\states";
     if (a.headless && a.frames < 0) a.frames = 600;
@@ -3668,6 +3751,18 @@ int Frontend::run(const Args& args) {
         unsigned gt = 0x101;
         for (auto& ss : core.subsystems()) if (ss.num_roms == (unsigned)link_n) { gt = ss.id; break; }
         if (!core.load_game_special(gt, roms, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
+    } else if (!a.slot2_rom.empty()) {   // DS + a GBA cartridge: the core's "Slot 1 & 2 Boot" subsystem (contents: DS ROM, GBA ROM, GBA save)
+        std::vector<slot2::Sub> subs;
+        for (auto& ss : core.subsystems()) { subs.push_back({ss.ident, ss.desc, ss.id, ss.num_roms}); rlog("slot2: core subsystem '%s' (%s) id 0x%x, %u contents", ss.ident.c_str(), ss.desc.c_str(), ss.id, ss.num_roms); }
+        slot2_prepare();
+        const bool with_save = !slot2_work_.empty();
+        unsigned gt = 0;
+        if (!slot2::pick_game_type(subs, with_save, &gt)) { rlog("ERROR: slot2: this core has no Slot-2 (GBA cartridge) support"); return 1; }
+        rlog("slot2: using game type 0x%x (%s GBA save)", gt, with_save ? "with" : "without");
+        std::vector<std::string> roms = {a.rom, a.slot2_rom};
+        if (with_save) roms.push_back(slot2_work_);
+        if (!core.load_game_special(gt, roms, &err)) { rlog("ERROR: %s", err.c_str()); slot2_commit(); return 1; }   // commit: only removes the scratch copy (nothing changed)
+        rlog("slot2: GBA cartridge inserted (%s save)", with_save ? "with" : "without");
     } else {
         if (is_ps2 && !a.net.empty() && a.share_host_save && !ps2_card_presync()) { rlog("net: memory card sharing failed"); return net_rc; }
         if (!core.load_game(a.rom, &err)) { rlog("ERROR: %s", err.c_str()); return 1; }
@@ -4049,6 +4144,7 @@ done:
     ra_.stop();
     session.stop();
     core.unload();
+    slot2_commit();   // the core has flushed its GBA SRAM into the scratch copy by now
     SDL_Quit();
     return rc;
 }

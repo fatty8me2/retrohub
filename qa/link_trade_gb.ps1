@@ -3,7 +3,7 @@
 # (RETRORUN_INPUT_SCRIPT, see qa\link_trade_mk.py) walks both consoles from the saved Cable Club counter to the Trade Center and trades.
 # PASS = both peers exit 0, identical final hashes, no DESYNC, and the serialized core state (RETRORUN_STATE_DUMP) shows the two parties swapped.
 # Needs: a retrorun built with the QA input script + state dump (see report), a local worker, the ROM zip (read only, extracted to qa\out).
-#   cd BattleShip\server\cloudflare; npx wrangler dev --ip 127.0.0.1 --port 8761 --persist-to <fresh dir>
+#   cd BattleShip\server\cloudflare; npx wrangler dev --ip 127.0.0.1 --port 8761 --var REG_APPROVAL_DEFAULT:0 ALLOW_TEST_FLAG:1 --persist-to <fresh dir>
 # Usage: powershell -File qa\link_trade_gb.ps1 [-Server ws://127.0.0.1:8761] [-Game red] [-Lockstep] [-Relay] [-Bad] [-Core <dll>]
 param(
     [string]$Server = 'ws://127.0.0.1:8761',

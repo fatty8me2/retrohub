@@ -32,6 +32,7 @@ bool dropin_supported(const hub::GameEntry& e) {
 }
 
 void dropin_start(const std::string& code, const std::string& game_id, const std::string& title, const std::string& friend_name) {
+    if (launch_blocked("dropin_start")) return;
     if (DP.active) return;
     if (A.proc) { set_notice("A game is already running on this PC.", 6.0); return; }
     if (A.in_room) { set_notice("Leave your room first, then you can join a friend's game.", 8.0); return; }
@@ -40,6 +41,7 @@ void dropin_start(const std::string& code, const std::string& game_id, const std
     if (!g || is_remote_stand_in(*g)) { set_notice("You need your own copy of " + (title.empty() ? std::string("this game") : title) + " to join it.", 8.0); return; }
     if (!dropin_supported(*g)) { set_notice("Joining a game in progress isn't available for " + g->title + ".", 8.0); return; }
     DP.code = code; DP.game_id = game_id; DP.title = title; DP.friend_name = friend_name;
+    DP.lc.set_ident_msg(fr_lobby_ident_msg(true));   // proof of the account (strict rooms), no pairing
     if (!DP.lc.start_dropin(server_url(), code, A.st.name)) { set_notice("Couldn't reach the server.", 6.0); return; }
     DP.active = true;
     DP.since = ImGui::GetTime();

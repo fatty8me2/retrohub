@@ -73,7 +73,7 @@ if (-not $NoServer) {
   $env:WRANGLER_REGISTRY_PATH = "C:\rhq\reg$Port"; New-Item -ItemType Directory -Force $env:WRANGLER_REGISTRY_PATH | Out-Null
   $persist = "C:\rhq\s$Port"; if (Test-Path $persist) { Remove-Item -Recurse -Force $persist }
   $psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = (Get-Command node).Source; $psi.WorkingDirectory = $WorkerDir
-  $psi.Arguments = "node_modules\wrangler/bin\wrangler.js dev --ip 127.0.0.1 --port $Port --persist-to $persist"
+  $psi.Arguments = "node_modules\wrangler/bin\wrangler.js dev --ip 127.0.0.1 --port $Port --persist-to $persist --var REG_APPROVAL_DEFAULT:0 --var ALLOW_TEST_FLAG:1"
   $psi.CreateNoWindow = $true; $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
   $wr = [System.Diagnostics.Process]::Start($psi)   # no console window; drain the pipes so wrangler never blocks
   $null = $wr.StandardOutput.BaseStream.CopyToAsync([System.IO.Stream]::Null); $null = $wr.StandardError.BaseStream.CopyToAsync([System.IO.Stream]::Null)
@@ -106,7 +106,7 @@ function DolphinOf($d) { Get-CimInstance Win32_Process -Filter "Name='Dolphin.ex
 function ReadAll($p) { $t = ""; if (Test-Path $p) { try { $t = [System.IO.File]::ReadAllText($p) } catch { $t = "" } }; return [string]$t }
 function StatusOf($d, $role) { ReadAll "$d\userdata\gcnp\gc_${role}_status.txt" }
 function KillOwn() {
-  $procs = Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*$Work*gc_netplay_driver*") }
+  $procs = Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($Work, [StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq "powershell.exe" -and $_.CommandLine -like "*dolphin_netplay_driver*$Work*") }
   foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 $descRx = '(?i)desync|out of sync|possible desync|checksum mismatch|state mismatch'

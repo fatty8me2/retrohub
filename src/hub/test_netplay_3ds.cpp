@@ -4,6 +4,10 @@
 #include "games.h"
 #include "netplay_3ds.h"
 #include "netplay_3ds_join.h"
+#include "helper_cmd.h"
+
+#include <fstream>
+#include <sstream>
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
@@ -16,7 +20,14 @@ int main() {
     CHECK(join_state("stage:driver-start\nstage:connect-clicked\njoined\n") == "joined");
     CHECK(join_state("error:join timed out\n").rfind("error:", 0) == 0);
     CHECK(join_driver_args(42, "s.txt", "Host_1", "", "127.0.0.1", 24990, 120).find("-Port 24990") != std::string::npos);
-    CHECK(std::string(join_driver_script()).find("DirectConnectWindow") != std::string::npos);
+    {   // the join helper is a shipped file (data/helpers); every parameter join_driver_args passes must be declared in it
+        std::ifstream f(N3DS_JOIN_PS1, std::ios::binary); std::stringstream ss; ss << f.rdbuf();
+        const std::string d = ss.str();
+        CHECK(d.find("DirectConnectWindow") != std::string::npos && d.find("param(") == 0);
+        for (const char* p : {"$AzPid", "$Status", "$Nick", "$Pw", "$Addr", "$Port", "$TimeoutS"}) CHECK(d.find(p) != std::string::npos);
+        const std::string c = hubhelper::run_command(rhhelper::kScriptN3dsJoin, join_driver_args(42, "s.txt", "H", "", "127.0.0.1", 1, 120));
+        CHECK(c.find("rh-helper.exe") != std::string::npos && c.find(" run n3ds_join.ps1 -AzPid 42") != std::string::npos);
+    }
     {
         std::string c = seed_join_config("[UI]\nfirstStart=false\n", "Host_1", "127.0.0.1", 24990);
         CHECK(c.find("[Multiplayer]") != std::string::npos && c.find("ip = 127.0.0.1") != std::string::npos);

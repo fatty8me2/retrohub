@@ -23,6 +23,10 @@ bool rumble_enabled(bool online, bool profile_rumble);
 // Returns true for that command and sets *on to the motor state.
 bool decode_rumble_command(const unsigned char* cmd, bool* on);
 
+// Transfer Pak (offline only, X1): a Game Boy / Game Boy Color cartridge (--tpak-rom, its save --tpak-save) in controller 1.
+// Replaces the Controller Pak / Rumble Pak on port 1 only. Online it is never used (the pak would change what the game sees).
+bool tpak_enabled(bool online, const std::string& gb_rom);
+
 // True for a file name the save sync may carry as a Controller Pak: a plain battery name ending in .mpk.
 bool is_mempak_file(const std::string& name);
 

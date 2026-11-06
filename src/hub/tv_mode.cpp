@@ -6,6 +6,8 @@
 #include "tv_logic.h"
 #include "friends_ui.h"
 #include "popup_guard.h"
+#include "display.h"
+#include "libview_ui.h"
 
 namespace tvmode {
 
@@ -17,6 +19,7 @@ static hubtv::WinRect g_saved;
 static bool g_headless_mode = false;
 static int g_shot_h = 0;
 static bool g_prev_game = false;
+static float g_pending_base = 0.f;   // set_base_scale(): applied in frame_begin
 
 static const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const wchar_t* kRunName = L"RetroHub";
@@ -52,8 +55,10 @@ float init(SDL_Window* win, bool headless, float base_scale, bool cmd_flag, bool
     g_shot_h = shot_h;
     if (!hubtv::start_in_tv(cmd_flag, start_setting)) return base_scale;
     g_active = true;
+    if (A.st.tv_cases) { A.st.lib_layout = hubui::layout_key(hubui::LibLayout::Cases); A.view = LibView::All; }   // "TV mode opens in Cases view"
     if (!headless && win) {
         save_rect(win);
+        if (!game_active()) hubdisplay::prepare_fullscreen_monitor(win);   // fullscreen lands on the chosen monitor
         if (!game_active())   // started while a game is up (autostart / update relaunch): no fullscreen grab
             SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);   // popup-guard: ok (guarded by game_active)
     }
@@ -62,6 +67,9 @@ float init(SDL_Window* win, bool headless, float base_scale, bool cmd_flag, bool
 
 /* The Settings checkbox and any other non-key route: applied at the next frame, but turning TV mode ON is refused while a game runs
  * (frame_begin): fullscreening the hub would cover a windowed game. */
+float base_scale() { return g_base_s; }
+void set_base_scale(float base) { if (base > 0.f && std::fabs(base - g_base_s) > 0.001f) g_pending_base = base; }
+
 void toggle() { g_pending = g_active ? 0 : 1; g_pending_key = false; }
 
 void handle_event(const SDL_Event& e, bool want_text) {
@@ -81,6 +89,12 @@ static void rebuild_fonts(float s) {
 }
 
 void frame_begin(SDL_Window* win, SDL_Renderer*) {
+    if (g_pending_base > 0.f) {   // UI size or monitor DPI changed: rebuild fonts and theme at the new scale (TV mode keeps its own larger one)
+        g_base_s = g_pending_base;
+        g_pending_base = 0.f;
+        rebuild_fonts(g_active ? hubtv::tv_scale(g_base_s, display_h(win)) : g_base_s);
+        if (win && !g_active && !g_headless_mode) hubdisplay::apply_min_size(win, g_base_s);
+    }
     if (g_pending < 0) return;
     const bool on = g_pending == 1, from_key = g_pending_key;
     g_pending = -1;
@@ -93,22 +107,27 @@ void frame_begin(SDL_Window* win, SDL_Renderer*) {
         return;
     }
     g_active = on;
+    if (on && A.st.tv_cases) lib_cases_tv_enter();   // "TV mode opens in Cases view"
     if (on) {
         save_rect(win);
+        hubdisplay::prepare_fullscreen_monitor(win);   // the chosen monitor, not wherever the window happens to be
         if (!g_headless_mode) SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);   // popup-guard: ok (F11 in the focused hub, or the Settings checkbox with no game running: may_enter_tv_mode)
         rebuild_fonts(hubtv::tv_scale(g_base_s, display_h(win)));
     } else {
         if (!g_headless_mode) {
             SDL_SetWindowFullscreen(win, 0);   // popup-guard: ok (leaving TV mode from the focused hub: the window shrinks, nothing is covered)
             if (g_saved.valid) {
-                SDL_SetWindowSize(win, g_saved.w, g_saved.h);
-                SDL_SetWindowPosition(win, g_saved.x, g_saved.y);
+                hubdisplay::Rect r{g_saved.x, g_saved.y, g_saved.w, g_saved.h};   // M4: a monitor may have gone while in TV mode
+                const std::vector<hubdisplay::Monitor> mons = hubdisplay::monitors();
+                if (!mons.empty() && !hubdisplay::visible_on_any(r, mons)) r = hubdisplay::centred_on(*hubdisplay::primary_monitor(mons), r.w, r.h);
+                SDL_SetWindowSize(win, r.w, r.h);
+                SDL_SetWindowPosition(win, r.x, r.y);
                 if (g_saved.maximized) SDL_MaximizeWindow(win);
             }
         }
         rebuild_fonts(g_base_s);
     }
-    if (win) SDL_SetWindowMinimumSize(win, (int)(960 * g_base_s), (int)(600 * g_base_s));
+    if (win && !g_headless_mode) hubdisplay::apply_min_size(win, g_base_s);
 }
 
 void tick(SDL_Window* win, bool game_running) {
@@ -195,6 +214,7 @@ void settings_ui() {
     bool a = g_active;
     if (ImGui::Checkbox("TV mode (F11)", &a)) toggle();
     if (ImGui::Checkbox("Start RetroHub in TV mode", &A.st.tv_start)) mark_dirty();
+    if (ImGui::Checkbox("TV mode opens in Cases view", &A.st.tv_cases)) { mark_dirty(); if (g_active && A.st.tv_cases) lib_cases_tv_enter(); }
     bool w = autostart_enabled();
     if (ImGui::Checkbox("Start with Windows into TV mode", &w)) {
         if (!g_headless_mode && set_autostart(w)) { A.st.tv_windows = w; mark_dirty(); }

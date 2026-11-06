@@ -63,6 +63,40 @@ int main() {
         CHECK(!resume_allowed(1000, 1000 + hubui::kResumeSlackSec + 1));                      // another PC's save arrived later
         CHECK(!resume_allowed(1000, 1000 + 86400));
     }
+    {   // Wave 3 R1: the resume decision matrix + the state sidecar
+        using namespace hubui;
+        ResumeInput in;
+        in.game_key = "n64:abc"; in.this_pc = "pc-A";
+        in.state_time = 1000; in.newest_battery_time = 990;
+        CHECK(decide_resume(in, ResumeChoice::Ask) == ResumeResult::Resume);               // normal: resume
+        in.online = true;
+        CHECK(decide_resume(in, ResumeChoice::ThisPc) == ResumeResult::Fresh);              // never online, whatever was chosen
+        in.online = false; in.real_boot = true;
+        CHECK(decide_resume(in, ResumeChoice::Ask) == ResumeResult::Fresh);                 // real console startup drops it
+        in.real_boot = false; in.state_time = 0;
+        CHECK(decide_resume(in, ResumeChoice::Ask) == ResumeResult::Fresh);                 // no state: nothing to resume
+        in.state_time = 1000; in.newest_battery_time = 5000;                                // another PC's save is newer
+        CHECK(decide_resume(in, ResumeChoice::Ask) == ResumeResult::NewerSave);
+        CHECK(resume_needs_choice(in, ResumeChoice::Ask));
+        CHECK(decide_resume(in, ResumeChoice::Newest) == ResumeResult::NewerSave && !resume_needs_choice(in, ResumeChoice::Newest));
+        CHECK(decide_resume(in, ResumeChoice::ThisPc) == ResumeResult::Resume);             // "continue from this PC's resume point"
+        in.newest_battery_time = 0;
+        CHECK(decide_resume(in, ResumeChoice::Ask) == ResumeResult::Resume);                // no battery file at all
+        // clock skew: the other PC's save has an OLDER mtime than the state, but is newer than what the state's run saw
+        in.newest_battery_time = 950;
+        in.sidecar.valid = true; in.sidecar.pc = "pc-A"; in.sidecar.game_key = "n64:abc"; in.sidecar.battery_time = 900;
+        CHECK(decide_resume(in, ResumeChoice::Ask) == ResumeResult::NewerSave);
+        in.sidecar.battery_time = 950;
+        CHECK(decide_resume(in, ResumeChoice::Ask) == ResumeResult::Resume);                // same battery as at exit
+        in.sidecar.battery_time = 900; in.sidecar.pc = "pc-B";
+        CHECK(decide_resume(in, ResumeChoice::Ask) == ResumeResult::Resume);                // a sidecar from another PC says nothing here
+        in.sidecar.pc = "pc-A"; in.sidecar.game_key = "gba:other";
+        CHECK(decide_resume(in, ResumeChoice::Ask) == ResumeResult::Resume);                // another game's sidecar
+        ResumeSidecar sc; sc.pc = "pc-A"; sc.pc_name = "LIVING \"RM\""; sc.game_key = "n64:abc"; sc.time = 1234; sc.battery_time = 1200;
+        ResumeSidecar rt = parse_resume_sidecar(make_resume_sidecar(sc));
+        CHECK(rt.valid && rt.pc == "pc-A" && rt.pc_name == "LIVING \"RM\"" && rt.game_key == "n64:abc" && rt.time == 1234 && rt.battery_time == 1200);
+        CHECK(!parse_resume_sidecar("").valid && !parse_resume_sidecar("{garbage").valid && !parse_resume_sidecar("{\"pc\":\"x\"}").valid);
+    }
     if (!fails) std::printf("hub_results_test: all passed\n");
     return fails ? 1 : 0;
 }

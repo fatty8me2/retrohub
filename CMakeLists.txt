@@ -97,6 +97,7 @@ add_test(NAME runner_ctl_test COMMAND runner_ctl_test)   # hub<->runner control 
 add_test(NAME cheevos_test COMMAND cheevos_test)   # RetroAchievements: config/cache, hardcore rules, mocked login + rc_client session (no network, no RA account)
 add_test(NAME osd_test COMMAND osd_test)   # OSD toast queue + font renderer
 add_test(NAME prefs_test COMMAND prefs_test)   # synced account prefs: field-wise merge, library favorites mirror
+add_test(NAME save_import_test COMMAND save_import_test)   # Bring your saves (Wave 3 L4)
 add_test(NAME profile_test COMMAND profile_test)   # social profile + reaction tally logic
 add_test(NAME winutil_test COMMAND winutil_test)
 add_test(NAME starthint_test COMMAND starthint_test)
@@ -114,7 +115,7 @@ add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypa
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
 add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-out friend games: identity, ghosts, badge text, publish hash/debounce
 add_test(NAME hub_gamepack_test COMMAND hub_gamepack_test)           # GamePack: Drive listing HTML parse, entity decode, safe names (no network)
-add_test(NAME hub_discover_test COMMAND hub_discover_test ${CMAKE_SOURCE_DIR}/data/recommended.json)   # Discover: recommended.json schema (13 consoles, fields, no dupes, no URLs) + library/pack status matching
+add_test(NAME hub_discover_test COMMAND hub_discover_test ${CMAKE_SOURCE_DIR}/data/recommended.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv)   # Discover: recommended.json schema (13 consoles, fields, no dupes, no URLs) + library/pack status matching
 add_test(NAME pack_install_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/pack_install_e2e.ps1)   # pack install -> scan -> ghost dropped -> unpack, fake Drive on loopback
 add_test(NAME hub_boot_art_test COMMAND hub_boot_art_test)   # boot-animation art: every System has console + media art
 add_test(NAME hub_theme_test COMMAND hub_theme_test)   # every theme preset defines every palette slot and meets text contrast
@@ -126,6 +127,11 @@ add_test(NAME cheats_db_test COMMAND cheats_db_test)
 add_test(NAME psarchive_test COMMAND psarchive_test)                       # PS1/PS2 disc archives: identify by name/DB, truncated, extract+confirm (scratch dirs)
 add_test(NAME archives_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/archives_headless.ps1)   # GBA .zip, NES/SNES/N64 .7z, PS1 cue/bin .zip unpacked + retrorun --headless
 set_tests_properties(archives_headless PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME verify_test COMMAND verify_test ${CMAKE_SOURCE_DIR}/data/known_dumps.bin)   # L3: known-dump list parse, z64/iNES/SNES normalization, hash cache, runner
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME known_dumps_gen_selftest COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/gen_known_dumps.py --selftest)
+endif()
 add_test(NAME archives_all_test COMMAND archives_all_test)              # .zip/.7z of every system: keys, rescans, re-unpack, rom-cache (scratch dirs)
 add_test(NAME formats_matrix_test COMMAND formats_matrix_test --quiet)         # every console x container/layout/name: identify, title, key, unpack on Play, launch path, unknown files reported, small rom-cache limit (scratch dirs)
 set_tests_properties(formats_matrix_test PROPERTIES TIMEOUT 900)
@@ -142,6 +148,10 @@ add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
 add_test(NAME retrorun_link_test COMMAND retrorun_link_test)
 add_test(NAME retrorun_rollback_test COMMAND retrorun_rollback_test)
 add_test(NAME retrorun_port_plan_test COMMAND retrorun_port_plan_test)   # per-system port devices, 4-pad adapter rules, offline player count
+add_test(NAME retrorun_slot2_test COMMAND retrorun_slot2_test)   # Wave 3 X3: DS Slot-2 refusal rules, subsystem pick, save copy-back, backup pruning
+add_test(NAME hub_palpark_test COMMAND hub_palpark_test)   # Wave 3 X3: Pal Park rows, choice order, save matching, args, stored choice
+add_test(NAME palpark_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/palpark_headless.ps1 -Root ${CMAKE_SOURCE_DIR})   # retrorun --slot2-* flags parsed offline, refused with --net / --ds-link
+set_tests_properties(palpark_headless PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
 add_test(NAME retrorun_rewind_test COMMAND retrorun_rewind_test)   # rewind ring size/limits, rewind->replay hashes, run-ahead == normal shifted (fake core)
 add_test(NAME clip_test COMMAND clip_test)   # frame ring caps + MP4 encode and decode round trip (Media Foundation, no window)
 add_test(NAME retrorun_rollback_stall_test COMMAND retrorun_rollback_stall_test)
@@ -157,9 +167,13 @@ add_test(NAME hubsaves_cloud_test COMMAND hubsaves_cloud_test)   # e2e part runs
 add_test(NAME hubsaves_engine_test COMMAND hubsaves_engine_test)   # cloud saves v2 engine against an in-process mock Worker (loopback only)
 add_test(NAME hub_logic_test COMMAND hub_logic_test)
 add_test(NAME hub_homefun_test COMMAND hub_homefun_test)               # attract mode idle/slideshow, Surprise-me weighting + reel, Wrapped aggregation
+add_test(NAME hub_continue_test COMMAND hub_continue_test)           # Home Continue hero: hero pick, backdrop source, relative time, Continue/Play label, Jump back in row
 add_test(NAME hub_states_test COMMAND hub_states_test)               # save-state slot listing, resume wording, library sort
+add_test(NAME hub_cases_test COMMAND hub_cases_test)   # Cases view: slot pose maths, case shapes, wrap/clamp, tab memory, flip/inspect modes, layout key round-trip
+add_test(NAME hub_shelf_test COMMAND hub_shelf_test)   # Shelf view: media per console, row packing, focus movement, slide-out spring
 add_test(NAME hub_libview_test COMMAND hub_libview_test)               # All Games layouts: A-Z jump runs, list column sort keys, virtual rows, settings round-trip
 add_test(NAME hub_customize_test COMMAND hub_customize_test)   # custom shelves ops, Home composition, renames, rename-aware search
+add_test(NAME hub_progress_test COMMAND hub_progress_test)   # completion status + notes, smart shelf rule evaluation
 add_test(NAME hub_osk_test COMMAND hub_osk_test)                        # OSK key layout / edit logic / folder browser (scratch dirs)
 add_test(NAME hub_convenience_test COMMAND hub_convenience_test)   # Discord frames + opt-in gate, diagnostics exclusion, NAT verdict (loopback STUN), pad glyphs, palette ranking
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
@@ -183,6 +197,7 @@ add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit ch
 add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
 add_test(NAME hub_shell_test COMMAND hub_shell_test)
 add_test(NAME hub_changelog_test COMMAND hub_changelog_test ${CMAKE_SOURCE_DIR}/data/changelog.json)   # patch notes parser + show-once rule
+add_test(NAME hub_welcome_test COMMAND hub_welcome_test)   # Welcome back card: versions since, collapse/cap, labels, keyword->page, show/defer rules
 add_test(NAME hub_gamenight_test COMMAND hub_gamenight_test)     # game night plans: DM tag, reminder timing, persistence
 add_test(NAME hub_group_test COMMAND hub_group_test)             # recent groups + notification history persistence/expiry
 add_test(NAME hub_rivals_test COMMAND hub_rivals_test)         # rivalry result parsing, ranking, storage union, head-to-head
@@ -190,8 +205,11 @@ add_test(NAME hub_results_test COMMAND hub_results_test)       # Plan 4: match r
 add_test(NAME hub_party_test COMMAND hub_party_test)           # Plan 4: party mode reducer, points, shuffle, votes
 add_test(NAME hub_bracket_test COMMAND hub_bracket_test)       # Plan 4: brackets (single/double elimination) + Elo
 add_test(NAME hubchallenge_test COMMAND hubchallenge_test)   # Plan 4 p4-social: challenge cards, leaderboard, rules, attach helpers (pure)
+add_test(NAME hub_tpak_test COMMAND hub_tpak_test)             # Plan 4 W3 X1: Transfer Pak matching, save file, backups, args
 add_test(NAME hub_hack_test COMMAND hub_hack_test)             # Plan 4: ROM hack keys, base finder, hack.json
+add_test(NAME rh_helper_test COMMAND rh_helper_test $<TARGET_FILE:rh-helper> ${CMAKE_SOURCE_DIR}/data/helpers)   # rh-helper: script allowlist, path rejection, command-line split, exit codes
 add_test(NAME hub_popup_guard_test COMMAND hub_popup_guard_test)   # never pop up over a game: guard logic + lint of every raise/show/MessageBox/synthetic-input site in src/hub and src/common
+add_test(NAME hub_display_test COMMAND hub_display_test)            # window placement (monitor gone / off screen / maximized), UI scale, reduce-motion default
 add_test(NAME hub_idle_test COMMAND hub_idle_test)                  # idle throttle: when the hub may skip drawing a frame (pumps keep their cadence)
 add_test(NAME hub_toast_test COMMAND hub_toast_test)                  # toast XML/activation/policy with a mock notifier (no real toasts)
 add_test(NAME hub_wizard_test COMMAND hub_wizard_test)
@@ -204,6 +222,7 @@ add_test(NAME hub_uisound_test COMMAND hub_uisound_test)   # menu UI sounds + am
 add_test(NAME hub_bootsound_test COMMAND hub_bootsound_test)       # procedural startup sounds render to WAVs (not played)
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
 add_test(NAME dsu_test COMMAND dsu_test)   # DSU packets + loopback server round trip
+add_test(NAME hub_gbalink_test COMMAND hub_gbalink_test)                 # GameCube <-> GBA link (offline, temp dir)
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
 add_test(NAME hub_wiiu_test COMMAND hub_wiiu_test)               # offline Wii U: meta.xml/.wua, own-Cemu settings backup+revert, profiles, saves, archives, art names
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
@@ -234,10 +253,14 @@ set_tests_properties(hub_gcfw_latency PROPERTIES LABELS online)
 add_test(NAME hubnet_test COMMAND hubnet_test)                           # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubattach_test COMMAND hubattach_test)                     # DM attachment round trip; server: $RETROHUB_TEST_SERVER at run time (local wrangler)
 add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # server: $RETROHUB_TEST_SERVER at run time
+add_test(NAME hubidbackup_test COMMAND hubidbackup_test)               # identity backup outside the install folder (offline, temp dirs)
 add_test(NAME hubws_close_test COMMAND hubws_close_test)   # WebSocket close never blocks (local loopback server only)
 add_test(NAME hubfriends_dedupe_test COMMAND hubfriends_dedupe_test)   # friends list: one entry per uid (no network)
 add_test(NAME hubfriends_outbox_test COMMAND hubfriends_outbox_test)   # offline outbox rules (no network)
 add_test(NAME hubfriends_live_test COMMAND hubfriends_live_test)         # socket liveness rules (no network)
+add_test(NAME hub_iconrefresh_test COMMAND hub_iconrefresh_test)           # shortcut icon refresh: once per version, idle only
+add_test(NAME hub_lockout_test COMMAND hub_lockout_test)               # whole-app lock verdict state machine (no network)
+add_test(NAME hubadmin_test COMMAND hubadmin_test)                       # owner dashboard + account access rules (no network)
 add_test(NAME hublink_test COMMAND hublink_test)                         # link-a-new-PC crypto/adopt/export (no network)
 set_tests_properties(hubnet_test hublink_test n64run_save_sync_test n64run_lockstep_test n64run_testinput_test retrorun_link_test
                      retrorun_rollback_test retrorun_rollback_stall_test retrorun_resync_test retrorun_dropin_test retrorun_dslink_test hub_bootsound_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)

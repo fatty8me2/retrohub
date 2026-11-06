@@ -30,4 +30,8 @@ std::vector<FolderScanStatus> scan_folder_status();
 std::set<std::string> local_removed();
 bool local_removed_set(const std::string& key, bool removed);   // false if the file could not be written
 
+/* library-13: the game keys of `paths` that the scan cache (path + size + mtime) already knows, so "Add games" does not re-hash the whole
+ * destination. Paths the cache cannot answer (new, changed, never scanned) are appended to *uncached for the caller to identify. */
+std::set<std::string> cached_keys_for_files(const std::vector<std::string>& paths, std::vector<std::string>* uncached);
+
 }  // namespace hub

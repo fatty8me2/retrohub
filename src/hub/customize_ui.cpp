@@ -3,6 +3,7 @@
 #include "customize_logic.h"
 #include "osk.h"
 #include "prefs.h"
+#include "progress_ui.h"
 #include "savestore.h"
 
 #define STBI_ONLY_PNG
@@ -25,7 +26,7 @@ namespace {
 
 using hubui::cust::Shelves;
 
-enum Loc { LocRoot = 0, LocDetails = 1, LocCustomize = 2, LocPicker = 3 };
+enum Loc { LocRoot = 0, LocDetails = 1, LocCustomize = 2, LocPicker = 3, LocMgr = 4 };
 
 struct Tex { SDL_Texture* t = nullptr; int w = 0, h = 0; std::string stamp; unsigned long long used = 0; };   // used: LRU tick of the last tex_for() hit
 static unsigned long long g_tex_tick = 0;
@@ -38,7 +39,15 @@ struct State {
     double checked = -100;
     std::map<std::string, std::string> orig;   // key -> scanned title
     std::map<std::string, Tex> tex;            // cover / thumbnail cache by path
-    Popup cust, shots, pick, mgr;
+    Popup cust, shots, pick, mgr, smart;
+    /* Smart shelf editor (L1): shelf index being edited (-1 = new), name box, the rule draft, the genres to cycle through. */
+    int smart_idx = -1;
+    char smart_name[64] = {0};
+    hub::prefs::ShelfRule smart_rule;
+    std::vector<std::string> smart_genres;
+    std::map<std::string, std::vector<std::string>> smart_hits;   // Home cache: smart shelf name -> game keys (rebuilt every ~1 s and on a prefs change)
+    double smart_hits_at = -100;
+    std::string smart_hits_sig;
     std::string key;                           // game the Customize / picker / shots modals are about
     char name_buf[128] = {0};
     std::string name_key;
@@ -239,6 +248,21 @@ bool commit_shelves(const std::function<bool(Shelves*)>& edit) {
 
 const hub::GameEntry* entry_of(const std::string& key) { return find_entry(key); }
 
+/* ---- smart shelf editor ---- */
+
+void open_smart_editor(int idx, int parent) {
+    CU.smart_idx = idx;
+    CU.smart_rule = hub::prefs::ShelfRule();
+    CU.smart_name[0] = 0;
+    if (idx >= 0 && idx < (int)CU.P.user_shelves.size() && CU.P.user_shelves[idx].smart) {
+        CU.smart_rule = CU.P.user_shelves[idx].rule;
+        std::snprintf(CU.smart_name, sizeof CU.smart_name, "%s", CU.P.user_shelves[idx].name.c_str());
+    } else CU.smart_idx = -1;
+    CU.smart_genres = progress_genres();
+    CU.smart.want = true;
+    CU.smart.parent = parent;
+}
+
 /* ---- modal frame ---- */
 
 bool begin_modal(const char* name, Popup& pp, float width_sp) {
@@ -329,6 +353,98 @@ void draw_shots() {
 
 void draw_manager();
 
+/* Counts how many library games a rule picks right now (for the editor's live line). */
+int smart_match_count(const hub::prefs::ShelfRule& r) {
+    int n = 0;
+    const unsigned long long now = unix_now();
+    for (const auto& e : A.lib) if (hubui::prog::rule_matches(r, progress_facts(e), now)) ++n;
+    return n;
+}
+
+void draw_smart() {
+    if (!begin_modal("Smart shelf##cust", CU.smart, 78.f)) return;
+    if (ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    using hubui::prog::next_players; using hubui::prog::next_days; using hubui::prog::next_decade;
+    hub::prefs::ShelfRule& r = CU.smart_rule;
+    heading(CU.smart_idx >= 0 ? "Edit smart shelf" : "New smart shelf");
+    ImGui::TextDisabled("It fills itself with every game that matches. Leave a row alone to ignore it.");
+    sub_heading("Name");
+    ImGui::SetNextItemWidth(sp(34.f));
+    osk::input("##smart_name", "Shelf name", CU.smart_name, sizeof CU.smart_name);
+
+    sub_heading("Consoles");
+    {
+        static const char* const kSys[] = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb", "ps1", "ps2", "psp", "switch"};
+        bool first = true;
+        for (const char* sy : kSys) {
+            bool have = false;
+            for (const auto& e : A.lib) if (sys_short(e) == sy) { have = true; break; }
+            const bool on = std::find(r.systems.begin(), r.systems.end(), sy) != r.systems.end();
+            if (!have && !on) continue;   // only consoles the player has games for
+            if (!first) ImGui::SameLine(0, sp(0.75f));
+            first = false;
+            std::string up = sy;
+            for (auto& c : up) c = (char)std::toupper((unsigned char)c);
+            ImGui::PushID(sy);
+            if (ui::button(up.c_str(), ImVec2(0, sp(3.5f)), on, true, on ? ui::Icon::Check : ui::Icon::None)) hubui::prog::toggle_system(&r, sy);
+            ImGui::PopID();
+        }
+        if (first) ImGui::TextDisabled("Add some games first.");
+    }
+
+    sub_heading("Match");
+    const float bw = sp(24.f), bh = sp(3.75f);
+    {   // genre: cycles any -> each genre in the library -> any
+        std::string lbl = "Genre: " + (r.genre.empty() ? std::string("any") : r.genre);
+        if (ui::button(lbl.c_str(), ImVec2(bw, bh), !r.genre.empty())) {
+            const auto& g = CU.smart_genres;
+            auto it = std::find(g.begin(), g.end(), r.genre);
+            if (r.genre.empty()) r.genre = g.empty() ? std::string() : g.front();
+            else if (it == g.end() || it + 1 == g.end()) r.genre.clear();
+            else r.genre = *(it + 1);
+        }
+        ImGui::SameLine(0, sp(1.f));
+        lbl = r.min_players > 0 ? "Players: " + std::to_string(r.min_players) + " or more" : std::string("Players: any");
+        if (ui::button(lbl.c_str(), ImVec2(bw, bh), r.min_players > 0)) r.min_players = next_players(r.min_players);
+    }
+    {
+        std::string lbl = "Status: " + (r.status.empty() ? std::string("any") : hubui::prog::status_label(r.status));
+        if (ui::button(lbl.c_str(), ImVec2(bw, bh), !r.status.empty())) r.status = hubui::prog::next_status(r.status);
+        ImGui::SameLine(0, sp(1.f));
+        lbl = r.decade > 0 ? "Decade: the " + std::to_string(r.decade) + "s" : std::string("Decade: any");
+        if (ui::button(lbl.c_str(), ImVec2(bw, bh), r.decade > 0)) r.decade = next_decade(r.decade);
+    }
+    {
+        std::string lbl = r.not_played_days > 0 ? "Not played in " + std::to_string(r.not_played_days) + " days" : std::string("Last played: any time");
+        if (ui::button(lbl.c_str(), ImVec2(bw, bh), r.not_played_days > 0)) r.not_played_days = next_days(r.not_played_days);
+        ImGui::SameLine(0, sp(1.f));
+        if (ui::button("Favorites only", ImVec2(bw, bh), r.favorites_only, true, r.favorites_only ? ui::Icon::Check : ui::Icon::None)) r.favorites_only = !r.favorites_only;
+    }
+
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    const bool empty = hubui::prog::rule_is_empty(r);
+    if (empty) ImGui::TextDisabled("Pick at least one thing to match.");
+    else {
+        const int n = smart_match_count(r);
+        ImGui::TextDisabled("%s  -  %d game%s right now", hubui::prog::rule_summary(r).c_str(), n, n == 1 ? "" : "s");
+    }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (ui::button("Save shelf", ImVec2(sp(16.f), sp(4.5f)), true, !empty, ui::Icon::Check)) {
+        const std::string nm = CU.smart_name;
+        const hub::prefs::ShelfRule rule = r;
+        const int idx = CU.smart_idx;
+        std::string made;
+        bool ok = commit_shelves([&](Shelves* v) {
+            return idx >= 0 ? hubui::prog::edit_smart_shelf(v, idx, nm, rule) : hubui::prog::add_smart_shelf(v, nm, rule, &made);
+        });
+        if (ok) { push_toast("Smart shelf saved", COL_GOOD, 2.5); CU.smart_hits_at = -100; ImGui::CloseCurrentPopup(); }
+        else push_toast(CU.P.user_shelves.size() >= 24 ? "You can have up to 24 shelves" : "Couldn't save the shelf", COL_BAD, 4.0);
+    }
+    ImGui::SameLine(0, sp(1.f));
+    if (ui::button("Cancel", ImVec2(sp(14.f), sp(4.5f)))) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 void draw_picker() {
     if (!begin_modal("Add to shelf##cust", CU.pick, 56.f)) return;
     const hub::GameEntry* e = entry_of(CU.key);
@@ -341,9 +457,10 @@ void draw_picker() {
     ImGui::BeginChild("##pick_list", ImVec2(0, std::min(sp(30.f), (sp(4.5f) + sp(0.75f)) * (float)std::max<size_t>(1, shelves.size()) + sp(0.5f))), ImGuiChildFlags_NavFlattened);
     for (size_t i = 0; i < shelves.size(); ++i) {
         const bool in = hubui::cust::has_game(shelves, (int)i, CU.key);
-        std::string lbl = shelves[i].name + "  (" + std::to_string(shelves[i].keys.size()) + ")";
+        std::string lbl = shelves[i].smart ? shelves[i].name + "  (smart: " + hubui::prog::rule_summary(shelves[i].rule) + ")"
+                                           : shelves[i].name + "  (" + std::to_string(shelves[i].keys.size()) + ")";
         ImGui::PushID((int)i);
-        if (ui::button(lbl.c_str(), ImVec2(-FLT_MIN, sp(4.5f)), in, true, in ? ui::Icon::Check : ui::Icon::Plus)) {
+        if (ui::button(lbl.c_str(), ImVec2(-FLT_MIN, sp(4.5f)), in, !shelves[i].smart, in ? ui::Icon::Check : ui::Icon::Plus)) {
             const std::string key = CU.key;
             bool ok = commit_shelves([&](Shelves* v) { return hubui::cust::toggle_game(v, (int)i, key); });
             if (ok) push_toast(in ? "Removed from " + shelves[i].name : "Added to " + shelves[i].name, COL_GOOD, 2.5);
@@ -361,23 +478,27 @@ void draw_picker() {
         push_toast("Added to " + made, COL_GOOD, 2.5);
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (ui::button("New smart shelf...", ImVec2(0, sp(4.5f)), false, true, ui::Icon::Plus)) open_smart_editor(-1, LocPicker);
+    ImGui::SameLine(0, sp(1.f));
     if (ui::button("Manage shelves", ImVec2(0, sp(4.5f)), false, true, ui::Icon::Gear)) { CU.mgr.want = true; CU.mgr.parent = LocPicker; }
     ImGui::SameLine(0, sp(1.f));
     if (ui::button("Done", ImVec2(sp(14.f), sp(4.5f)), true)) ImGui::CloseCurrentPopup();
     if (CU.mgr.parent == LocPicker) draw_manager();   // opened from here: nests inside this modal (see custom_draw)
+    if (CU.smart.parent == LocPicker) draw_smart();
     ImGui::EndPopup();
 }
 
 /* ---------- Manage shelves: new / rename / reorder / delete ---------- */
 
 void draw_manager() {
-    if (!begin_modal("Manage shelves##cust", CU.mgr, 70.f)) return;
+    if (!begin_modal("Manage shelves##cust", CU.mgr, 84.f)) return;
     if (ui::modal_back()) { CU.edit = CU.del = -1; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     heading("Your shelves");
     ImGui::TextDisabled("They show on Home after the built-in shelves.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     std::string made;
     new_shelf_row(CU.new_buf, sizeof CU.new_buf, "mgr", &made);
+    if (ui::button("New smart shelf...", ImVec2(0, sp(4.f)), false, true, ui::Icon::Plus)) open_smart_editor(-1, LocMgr);
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     const Shelves shelves = CU.P.user_shelves;
     if (shelves.empty()) ImGui::TextDisabled("No shelves yet.");
@@ -388,7 +509,8 @@ void draw_manager() {
         ImGui::Text("%s", shelves[i].name.c_str());
         ImGui::PopFont();
         ImGui::SameLine();
-        ImGui::TextDisabled("%d game%s", (int)shelves[i].keys.size(), shelves[i].keys.size() == 1 ? "" : "s");
+        if (shelves[i].smart) ImGui::TextDisabled("smart: %s", hubui::prog::rule_summary(shelves[i].rule).c_str());
+        else ImGui::TextDisabled("%d game%s", (int)shelves[i].keys.size(), shelves[i].keys.size() == 1 ? "" : "s");
         if (CU.edit == i) {
             ImGui::SetNextItemWidth(sp(26.f));
             bool go = osk::input("##rename_shelf", "Shelf name", CU.edit_buf, sizeof CU.edit_buf, ImGuiInputTextFlags_EnterReturnsTrue);
@@ -413,6 +535,10 @@ void draw_manager() {
             ImGui::SameLine(0, sp(1.f));
             if (ui::button("Rename", ImVec2(0, sp(4.f)))) { CU.edit = i; CU.del = -1; std::snprintf(CU.edit_buf, sizeof CU.edit_buf, "%s", shelves[i].name.c_str()); }
             ImGui::SameLine(0, sp(1.f));
+            if (shelves[i].smart) {
+                if (ui::button("Edit rule", ImVec2(0, sp(4.f)), false, true, ui::Icon::Gear)) open_smart_editor(i, LocMgr);
+                ImGui::SameLine(0, sp(1.f));
+            }
             if (ui::button("Delete", ImVec2(0, sp(4.f)), false, true, ui::Icon::Close)) { CU.del = i; CU.edit = -1; }
         }
         ImGui::Dummy(ImVec2(0, sp(0.75f)));
@@ -421,6 +547,7 @@ void draw_manager() {
     ImGui::EndChild();
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ui::button("Done", ImVec2(sp(14.f), sp(4.5f)), true)) { CU.edit = CU.del = -1; ImGui::CloseCurrentPopup(); }
+    if (CU.smart.parent == LocMgr) draw_smart();
     ImGui::EndPopup();
 }
 
@@ -566,6 +693,21 @@ bool custom_cover(const std::string& key, SDL_Texture** tex, int* w, int* h) {
 
 bool custom_set_cover(const std::string& key, const std::string& path) { return !key.empty() && set_cover(key, path); }
 
+const hub::prefs::Progress* custom_progress(const std::string& key) {
+    auto it = CU.P.progress.find(key);
+    return it == CU.P.progress.end() ? nullptr : &it->second;
+}
+
+bool custom_set_status(const std::string& key, const std::string& status) {
+    if (key.empty() || !hubui::prog::valid_status(status)) return false;
+    return commit([&](hub::prefs::Prefs& p) { return hub::prefs::set_progress(&p, hubui::prog::with_status(p.progress, key, status)); }) ;
+}
+
+bool custom_set_note(const std::string& key, const std::string& note) {
+    if (key.empty()) return false;
+    return commit([&](hub::prefs::Prefs& p) { return hub::prefs::set_progress(&p, hubui::prog::with_note(p.progress, key, note)); });
+}
+
 void custom_open_customize(const std::string& key) {
     CU.key = key;
     CU.cust.want = true;
@@ -592,6 +734,12 @@ void custom_draw(int loc) {
                 if (m == "customize" || m == "shots") { A.show_details = true; custom_open_customize(A.sel_game); CU.shots.parent = LocCustomize; CU.shots.want = m == "shots"; }
                 else if (m == "picker") custom_open_picker(A.sel_game, false);
                 else if (m == "manager") custom_open_manager();
+                else if (m == "smart") { open_smart_editor(-1, LocRoot); CU.smart_rule.systems = {"n64"}; CU.smart_rule.min_players = 2; CU.smart_rule.favorites_only = true; std::snprintf(CU.smart_name, sizeof CU.smart_name, "Co-op favorites"); }
+                else if (m == "smart_edit") {   // edit the first smart shelf (shelf 0 is often a plain one): seeded with its name and rule
+                    int si = -1;
+                    for (int i = 0; i < (int)CU.P.user_shelves.size() && si < 0; ++i) if (CU.P.user_shelves[i].smart) si = i;
+                    open_smart_editor(si, LocRoot);
+                }
                 else if (m.compare(0, 6, "cover:") == 0) custom_set_cover(A.sel_game, m.substr(6));   // QA: copy this picture in as the selected game's cover
             }
         }
@@ -599,16 +747,37 @@ void custom_draw(int loc) {
     if (CU.cust.parent == loc) draw_customize();
     if (CU.pick.parent == loc) draw_picker();
     if (CU.mgr.parent == loc) draw_manager();
+    if (CU.smart.parent == loc) draw_smart();
 }
 
 /* Home: the user's shelves, after the built-in ones. Tiles are the same as everywhere (spec_for_entry / draw_tile). */
 void custom_home_shelves(float avail, float tw, float th, float gap, float bleed) {
     if (A.lib.empty()) return;
+    if (g_headless && ImGui::GetFrameCount() > 10) { const char* c = std::getenv("HUB_SHOT_CUSTOM"); if (c && std::string(c) == "home_smart") ImGui::SetScrollHereY(0.05f); }   // screenshot aid: scroll Home to the user shelves
+    /* Smart shelves: evaluate each rule against the library (at most once a second, or right after a prefs change), then treat the
+     * result like a hand-made shelf. Nothing is stored: the rule is the shelf. */
+    Shelves shelves = CU.P.user_shelves;
+    bool any_smart = false;
+    for (const auto& sh : shelves) any_smart = any_smart || sh.smart;
+    if (any_smart) {
+        const std::string sig = CU.sig + "|" + std::to_string(A.lib.size());
+        if (CU.smart_hits_sig != sig || now_s() - CU.smart_hits_at > 1.0) {
+            CU.smart_hits_sig = sig;
+            CU.smart_hits_at = now_s();
+            std::vector<hubui::prog::Facts> facts;
+            std::map<std::string, std::string> titles;
+            for (const auto& e : A.lib) { facts.push_back(progress_facts(e)); titles[e.key] = e.title; }
+            Shelves res = hubui::prog::resolve_smart(shelves, facts, titles, unix_now());
+            CU.smart_hits.clear();
+            for (const auto& sh : res) if (sh.smart) CU.smart_hits[sh.name] = sh.keys;
+        }
+        for (auto& sh : shelves) if (sh.smart) sh.keys = CU.smart_hits[sh.name];
+    }
     std::map<std::string, int> idx;
-    for (const auto& sh : CU.P.user_shelves)
+    for (const auto& sh : shelves)
         for (const auto& k : sh.keys)
             if (const hub::GameEntry* e = find_entry(k)) idx[k] = (int)(e - A.lib.data());
-    const std::vector<hubui::Shelf> view = hubui::cust::compose_user_shelves(CU.P.user_shelves, idx);
+    const std::vector<hubui::Shelf> view = hubui::cust::compose_user_shelves(shelves, idx);
     for (const hubui::Shelf& sh : view) {
         bool overflow = hubui::shelf_max_scroll((int)sh.items.size(), tw, gap, bleed, avail) > 0;
         shelf_header(sh.title.c_str(), "", bleed, (int)sh.items.size(), nullptr, overflow);

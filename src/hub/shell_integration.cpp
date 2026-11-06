@@ -109,12 +109,12 @@ bool shell_read_shortcut(const std::wstring& lnk_path, ShellLinkInfo* out) {
     return true;
 }
 
-bool shell_write_shortcut(const std::wstring& lnk_path, const std::wstring& exe, bool* ok) {
+bool shell_write_shortcut(const std::wstring& lnk_path, const std::wstring& exe, bool* ok, bool force) {
     if (ok) *ok = false;
     const std::wstring workdir = dir_of(exe);
     const std::wstring desc = L"RetroHub - your retro game library";
     ShellLinkInfo cur;   // already up to date?
-    if (shell_read_shortcut(lnk_path, &cur) && ieq(cur.target, exe) && ieq(cur.workdir, workdir) && ieq(cur.icon, exe) &&
+    if (!force && shell_read_shortcut(lnk_path, &cur) && ieq(cur.target, exe) && ieq(cur.workdir, workdir) && ieq(cur.icon, exe) &&
         cur.description == desc && cur.app_id == RETROHUB_APP_ID) {
         if (ok) *ok = true;
         return false;
@@ -255,6 +255,29 @@ void shell_ensure_start_menu_shortcut() {
     shell_write_shortcut(programs + L"\\RetroHub.lnk", exe_path(), &ok);
 }
 
+bool shell_refresh_icons() {
+    if (!shell_registration_allowed()) return false;
+    const std::wstring exe = exe_path();
+    std::vector<std::wstring> done;
+    std::wstring programs = known_folder(FOLDERID_Programs);
+    if (!programs.empty()) {   // the Start Menu shortcut: re-saved even if it looks current (that is the stale one), icon exe,0 and the app id
+        const std::wstring lnk = programs + L"\\RetroHub.lnk";
+        bool ok = false;
+        shell_write_shortcut(lnk, exe, &ok, true);
+        if (ok) done.push_back(lnk);
+    }
+    std::wstring desk = known_folder(FOLDERID_Desktop);
+    if (!desk.empty()) {   // the desktop one only if RetroHub made it (never create one here)
+        const std::wstring lnk = desk + L"\\RetroHub.lnk";
+        ShellLinkInfo cur;
+        bool ok = false;
+        if (shell_read_shortcut(lnk, &cur) && cur.app_id == RETROHUB_APP_ID) { shell_write_shortcut(lnk, exe, &ok, true); if (ok) done.push_back(lnk); }
+    }
+    for (const auto& l : done) SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, l.c_str(), nullptr);
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);   // Explorer drops its cached icons and reloads them
+    return !done.empty();
+}
+
 void shell_ensure_desktop_shortcut(bool create) {
     if (!shell_registration_allowed()) return;
     std::wstring desk = known_folder(FOLDERID_Desktop);
@@ -279,6 +302,7 @@ void shell_ensure_url_protocol() {
         {L"Software\\Classes\\retrohub", L"URL Protocol", L""},
         {L"Software\\Classes\\retrohub\\DefaultIcon", nullptr, exe + L",0"},
         {L"Software\\Classes\\retrohub\\shell\\open\\command", nullptr, cmd},
+        {L"Software\\RetroHub", L"InstallDir", exe.substr(0, exe.find_last_of(L"\\/"))},   // RetroHub-Setup.exe offers this folder, so a reinstall updates in place (keeps userdata and the account)
     };
     for (const auto& v : values) {
         HKEY key = nullptr;

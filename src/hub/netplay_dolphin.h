@@ -85,9 +85,6 @@ std::string list_item_suffix(const Spec& s);
 /* Seconds a guest waits before connecting so NetPlay ports follow room-slot order (slot 1 = first guest). */
 int guest_connect_delay_s(int slot);
 
-/* The PowerShell UIA driver text (Role: host|guest). */
-const char* driver_script();
-
 #ifdef _WIN32
 struct Run {
     unsigned long dolphin_pid = 0;

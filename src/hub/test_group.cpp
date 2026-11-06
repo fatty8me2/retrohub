@@ -133,6 +133,24 @@ int main() {
         CHECK(watch_set(&full, "extra", true, &keep) && watch_split(full).size() == 3 && watch_has(full, "extra"));       // removed friends make room
     }
 
+    {   // owner bell entries: someone waiting (Approve / Deny while still waiting) and an invite used
+        NotifHistory h;
+        Entry w; w.kind = Kind::JoinWaiting; w.uid = "u1"; w.name = "newguy"; w.code = "RH-7KQ2-MNXD"; w.text = "newguy (RH-7KQ2-MNXD) wants to join"; w.at = 100;
+        Entry w2 = w; w2.at = 200;   // the same person again replaces the older entry
+        Entry u; u.kind = Kind::InviteUsed; u.uid = "u2"; u.name = "Kai"; u.code = "K7QM-2XDT"; u.text = "Kai joined with invite K7QM-2XDT"; u.at = 150;
+        h.add(w); h.add(u); h.add(w2);
+        CHECK(h.v.size() == 2 && h.v[0].at == 200);
+        World wo; wo.now = 300; wo.admin_waiting = 1;
+        CHECK(state_of(h.v[0], wo) == State::Active && action_label(h.v[0], State::Active) == "Approve");
+        wo.admin_waiting = 0;
+        CHECK(state_of(h.v[0], wo) == State::Expired);   // approved elsewhere: nobody waits any more
+        wo.admin_waiting = 2; h.resolve(Kind::JoinWaiting, "u1");
+        CHECK(state_of(h.v[0], wo) == State::Done);
+        CHECK(state_of(h.v[1], wo) == State::Info && action_label(h.v[1], State::Info).empty());
+        CHECK(kind_from(kind_name(Kind::JoinWaiting)) == Kind::JoinWaiting && kind_from(kind_name(Kind::InviteUsed)) == Kind::InviteUsed);
+        CHECK(headline(h.v[1]) == "Kai joined with invite K7QM-2XDT");
+    }
+
     fs::remove_all(base);
     if (fails) { std::printf("%d failures\n", fails); return 1; }
     std::printf("hub_group_test: ok\n");

@@ -13,6 +13,8 @@
 #include "toast.h"
 #include "start_hint.h"
 #include "wizard_logic.h"
+#include "display.h"
+#include "tv_mode.h"
 
 #include <cstring>
 
@@ -123,12 +125,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     std::wstring cmd_join, cmd_play;
     const bool has_join = invite_parse_command_line(GetCommandLineW(), &cmd_join);
     const bool has_play = invite_parse_play(GetCommandLineW(), &cmd_play);
+    std::wstring cmd_acct;   // retrohub://invite/XXXX-XXXX or --invite XXXX-XXXX: an account invite code for the waiting screen
+    const bool has_acct = invite_parse_account_command_line(GetCommandLineW(), &cmd_acct);
     std::unique_ptr<InviteInstance> instance;
     InviteServer invite_srv;
     if (!shot_path && !autotest) {
         instance.reset(new InviteInstance(INVITE_MUTEX_NAME));
         if (!instance->is_primary()) {   // already running: hand the request over (or just ask it to show itself) and leave
-            bool sent = has_join ? invite_send(INVITE_PIPE_NAME, cmd_join) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play) : invite_send_show(INVITE_PIPE_NAME);
+            bool sent = has_acct ? invite_send_account(INVITE_PIPE_NAME, cmd_acct) : has_join ? invite_send(INVITE_PIPE_NAME, cmd_join) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play) : invite_send_show(INVITE_PIPE_NAME);
             if (sent) return 0;
         } else {
             invite_srv.start(INVITE_PIPE_NAME);
@@ -138,6 +142,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (has_join && !shot_path) link_join.push(U(cmd_join));
     bool told_need_name = false;
     if (has_play && !shot_path) A.pending_play = U(cmd_play);
+    if (has_acct && !shot_path) lockout_invite_link(U(cmd_acct));
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
     if (qm_e2e_active()) qm_e2e_boot();   // HUB_QM_E2E (needs HUB_SCREENSHOT): only the test's virtual joystick exists
     SDL_SetMainReady();
@@ -152,13 +157,24 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     float ddpi = 96.f;
     SDL_GetDisplayDPI(0, &ddpi, nullptr, nullptr);
-    S = std::max(1.0f, ddpi / 96.0f);
+    S = std::max(1.0f, ddpi / 96.0f);   // provisional (display 0): the real scale is taken from the monitor the window opens on, below
     if (const char* sc = std::getenv("HUB_SCALE")) S = std::max(0.75f, (float)std::atof(sc));
 
     // settings
     A.settings_path = hub::data_dir() + "hub.json";
     A.st.server = hubnet::default_server();
     hubui::load_settings(A.settings_path, &A.st);
+    {   // D2: Reduce motion's first-run default follows Windows "Show animations"; after that it is the player's own choice
+        bool key_saved = false;
+        { std::ifstream hin(std::filesystem::path(W(A.settings_path)), std::ios::binary); std::stringstream hs; hs << hin.rdbuf(); key_saved = hs.str().find("\"reduce_motion\"") != std::string::npos; }
+        if (!g_headless) {
+            const bool want = hubdisplay::initial_reduce_motion(key_saved, A.st.reduce_motion, hubdisplay::os_animations_on());
+            if (want != A.st.reduce_motion || !key_saved) { A.st.reduce_motion = want; A.dirty = true; }
+        }
+        if (std::getenv("HUB_REDUCE_MOTION")) A.st.reduce_motion = true;
+        if (g_headless) if (const char* us = std::getenv("HUB_UI_SCALE")) A.st.ui_scale = hubdisplay::clamp_ui_scale(std::atoi(us));   // screenshots: UI size in percent
+        ui::reduce_motion = A.st.reduce_motion;
+    }
     const std::string installer_hand = hub::data_dir() + "installer_games_dir.txt";
     bool installer_prefill_kept = false;   // the hand-off file stays until the first-run wizard is finished or skipped (see below)
     {   // the installer's chosen games folder (written by a FRESH install only, never by an upgrade): merged into rom_folders
@@ -210,30 +226,55 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         hub::prefs::seed_from_library();
     }
 
-    int win_w = (int)(1280 * S), win_h = (int)(780 * S);
-    {   // never open larger than the screen
+    int win_w = 0, win_h = 0;
+    /* D1: open where the player left the window (same monitor, position, size, maximized), or centred on the main monitor when that
+     * monitor is gone or the rect is no longer on screen. Start-up only: nothing here moves a window that is already up. */
+    int win_x = SDL_WINDOWPOS_CENTERED, win_y = SDL_WINDOWPOS_CENTERED;
+    bool start_max = false;
+    float dpi_s = S;
+    if (!shot_path) {
+        const std::vector<hubdisplay::Monitor> mons = hubdisplay::monitors();
+        const hubdisplay::Monitor* cand = hubdisplay::find_monitor(mons, A.st.win_monitor);
+        if (!cand) cand = hubdisplay::primary_monitor(mons);
+        if (cand) dpi_s = hubdisplay::dpi_scale_for(cand);
+        if (const char* sc = std::getenv("HUB_SCALE")) dpi_s = std::max(0.75f, (float)std::atof(sc));
+        S = hubdisplay::effective_scale(dpi_s, A.st.ui_scale);
+        int dw = (int)(1280 * S), dh = (int)(780 * S);
         SDL_Rect ub;
-        if (!shot_path && SDL_GetDisplayUsableBounds(0, &ub) == 0) {
-            win_w = std::min(win_w, (int)(ub.w * 0.94f));
-            win_h = std::min(win_h, (int)(ub.h * 0.94f));
+        if (SDL_GetDisplayUsableBounds(0, &ub) == 0) { dw = std::min(dw, (int)(ub.w * 0.94f)); dh = std::min(dh, (int)(ub.h * 0.94f)); }
+        hubdisplay::Saved sv;
+        sv.rect = hubdisplay::Rect{A.st.win_x, A.st.win_y, A.st.win_w, A.st.win_h};
+        sv.maximized = A.st.win_max;
+        sv.monitor = A.st.win_monitor;
+        const hubdisplay::Placement pl = hubdisplay::plan_start(sv, A.st.remember_window, mons, dw, dh);
+        win_w = dw; win_h = dh;
+        if (pl.rect.w > 0 && !mons.empty()) {
+            win_x = pl.rect.x; win_y = pl.rect.y; win_w = pl.rect.w; win_h = pl.rect.h;
+            start_max = pl.maximized;
+            if (const hubdisplay::Monitor* pm = hubdisplay::find_monitor(mons, pl.monitor)) {
+                if (!std::getenv("HUB_SCALE")) dpi_s = hubdisplay::dpi_scale_for(pm);
+                S = hubdisplay::effective_scale(dpi_s, A.st.ui_scale);
+            }
         }
-    }
-    if (shot_path) {
+    } else {
+        S = hubdisplay::effective_scale(S, A.st.ui_scale);
         win_w = (int)(1280 * S);
         win_h = (int)(780 * S);
         if (const char* sz = std::getenv("HUB_SHOT_SIZE")) std::sscanf(sz, "%dx%d", &win_w, &win_h);
     }
+    hubdisplay::set_dpi_scale(dpi_s);
     /* Never open over a running game: `--background` (the update relaunch passes it) or a full-screen / busy app up front means the
      * window is shown minimised without activation instead (see popup_guard.h). */
     const bool quiet_start = !shot_path && hubguard::start_quiet(wcsstr(GetCommandLineW(), L"--background") != nullptr, game_active());
-    A.win = SDL_CreateWindow("RetroHub", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, win_w, win_h,
+    A.win = SDL_CreateWindow("RetroHub", win_x, win_y, win_w, win_h,
                              SDL_WINDOW_RESIZABLE | ((shot_path || quiet_start) ? 0 : SDL_WINDOW_SHOWN));
+    if (A.win && start_max && !quiet_start) SDL_MaximizeWindow(A.win);   // the window was just created for the player (never while minimised for a game)
     SDL_Renderer* ren = A.win ? SDL_CreateRenderer(A.win, -1, shot_path ? SDL_RENDERER_SOFTWARE : (SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC)) : nullptr;
     if (!A.win || !ren) {
         std::fprintf(stderr, "RetroHub: window/renderer failed: %s\n", SDL_GetError());   // no MessageBox: it could land over a game
         return 1;
     }
-    SDL_SetWindowMinimumSize(A.win, (int)(960 * S), (int)(600 * S));
+    if (!shot_path) { hubdisplay::seed_monitor(A.win); hubdisplay::apply_min_size(A.win, S); }   // clamped to the work area (L3); headless shots keep the size they ask for
     S = tvmode::init(A.win, g_headless, S, hubtv::has_tv_flag(GetCommandLineW()) || std::getenv("HUB_TV") != nullptr, A.st.tv_start, win_h);   // TV mode scale (fonts are built next)
     SDL_SysWMinfo wm;
     SDL_VERSION(&wm.version);
@@ -264,7 +305,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hub::rom_cache_set_limit((uint64_t)A.st.rom_cache_limit_gb << 30);
 
     if (shot_path) shot_init_ui();
+    const bool had_account = !g_headless && hubnet::identity_exists(hub::data_dir(), hub::saves::vault_dir());   // BEFORE fr_start() creates one: tells an upgrading friend from a new install
     fr_start();
+    lockout_init(had_account, FR.started && !FR.fake ? FR.cli.my_uid() : std::string());
 
     refresh_pads();
     if (qm_e2e_active()) qm_e2e_start();
@@ -346,6 +389,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             input_this_iter = true;                   // only events that reach the UI count (a pad's axis noise behind a game is dropped above)
             ImGui_ImplSDL2_ProcessEvent(&e);
             tvmode::handle_event(e, io.WantTextInput);
+            hubdisplay::note_event(e);
             if (e.type == SDL_DROPFILE && e.drop.file) { add_games_drop(e.drop.file); SDL_free(e.drop.file); }
             if (e.type == SDL_QUIT) running = false;
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) running = false;
@@ -371,6 +415,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_process();
         hang_watchdog_phase("tvmode::tick");
         tvmode::tick(A.win, A.proc != nullptr);
+        hubdisplay::tick(A.win, false, tvmode::active());   // remember the window once a move / resize has settled
+        if (const float ds = hubdisplay::take_display_changed(A.win)) { hubdisplay::set_dpi_scale(ds); tvmode::set_base_scale(hubdisplay::effective_scale(ds, A.st.ui_scale)); }   // dragged to a monitor with another scale
         hang_watchdog_phase("poll_np3ds");
         poll_np3ds();
         hang_watchdog_phase("poll_rplay");
@@ -399,6 +445,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         autotest_tick();
         hang_watchdog_phase("fr_tick");
         fr_tick();
+        lockout_tick();
+        icon_refresh_tick();
         hang_watchdog_phase("ghost_tick");
         ghost_tick();
         group_tick();
@@ -407,7 +455,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         userflow_tick();
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;
-            while (invite_srv.take(&w)) { link_join.push(U(w)); told_need_name = false; }
+            while (invite_srv.take(&w)) { if (launch_blocked("invite link")) continue; link_join.push(U(w)); told_need_name = false; }
+            while (invite_srv.take_account(&w)) { lockout_invite_link(U(w)); hub_surface(); }   // an account invite link: fills the waiting screen's code field (no-op while a game runs: nothing is raised)
+            if (app_locked()) { link_join = hubui::LinkJoinQueue(); A.pending_play.clear(); }   // a locked account joins and plays nothing, however the request arrived
             const bool name_set = !A.st.name.empty();
             if (link_join.needs_name(name_set) && !told_need_name) {
                 told_need_name = true;
@@ -419,7 +469,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 fr_join_lobby(jc, "", "", "");
                 hub_surface();   // no-op while a game runs: the join is queued and starts after the game; nothing is shown or flashed
             }
-            while (invite_srv.take_play(&w)) A.pending_play = U(w);
+            while (invite_srv.take_play(&w)) { if (!launch_blocked("--play")) A.pending_play = U(w); }
             if (invite_srv.take_show()) hub_surface();   // a game is running: never pull RetroHub in front of it (refused inside)
             if (!A.pending_play.empty() && !A.scanning) {   // library is loaded: start the favorite (offline)
                 std::string key = A.pending_play;
@@ -470,6 +520,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
         if (fps_report) { q_ui = qpc_ms(); ms_pump += q_ui - q_iter; }
         osk::pre_frame(io);
+        ui::reduce_motion = A.st.reduce_motion;
         tvmode::frame_begin(A.win, ren);
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
@@ -639,6 +690,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
 
     // clean shutdown
+    hubdisplay::tick(A.win, true, tvmode::active());   // last window rect / monitor / maximized, before the window is hidden
     hubupdate::shutdown();   // stop waiting for a game to close, drop the unused installer copy, join the startup pass
     SDL_HideWindow(A.win);   // the joins below can wait on a slow network: never leave a frozen-looking window up meanwhile
     dolphin_speed_stop();   // the Dolphin speed DSU server (if a GameCube game ran)
