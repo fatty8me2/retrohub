@@ -993,6 +993,10 @@ void history_ui_saves_page();
 void history_ui_details_section(const hub::GameEntry& e);   // details modal: one line + "History..." button
 bool gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_title, int part = 0);   // details modal: part 0 all, 1 description only (returns whether drawn), 2 facts + ratings
 void gameinfo_ui_shot_lib();   // HUB_SHOT_INFO screenshot aid
+/* Facts for the back of a game case (Cases library view). Offline facts always; with `with_description` the cached / fetched description too
+ * (queues the usual background lookup, never blocks, never touches the network when headless). */
+struct CaseInfo { std::string desc, genre, maker; int year = 0, players = 0; };
+void gameinfo_case_info(const hub::GameEntry& e, const std::string& catalog_title, bool with_description, CaseInfo* out);
 void stats_ui_card();                                       // Home: "Your stats"
 void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history
 void cloud_ui_shot_init();   // HUB_SHOT_CLOUD_* seeds (screenshots only, no network)

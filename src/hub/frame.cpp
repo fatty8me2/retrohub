@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../net/username.h"
 #include "homefun.h"
+#include "libview_ui.h"
 #include "ui_sound.h"
 
 /* Startup "new version available" prompt. Shown once per run when the launch
@@ -157,13 +158,14 @@ void draw_footer(float h) {
         hints = {{"A", "Enter", "Actions"}, {"X", "", "Join / invite"}, {"Y", "", "Menu"}, {"B", "Esc", "Close"}};
     } else if (A.page == Page::Library && (!A.lib.empty() || !A.ghosts.empty())) {
         hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}, {"R3", "S", "Add to shelf"}};
-        if (A.view == LibView::All) hints.push_back({"B", "Esc", "Back"});
+        if (lib_cases_active()) hints = {{"B", "Esc", "Back"}};   // the Cases view draws its own hint bar (X flips, R3 inspects, LB / RB switch console)
+        else if (A.view == LibView::All) hints.push_back({"B", "Esc", "Back"});
     } else if (A.page == Page::Library) {
         hints = {{"A", "Enter", "Select"}};
     } else {
         hints = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}};
     }
-    if (pad && !popup) {
+    if (pad && !popup && !lib_cases_active()) {
         hints.push_back({"LB", "", "Prev page"});
         hints.push_back({"RB", "", "Next page"});
         if (A.page != Page::Library) hints.push_back({"LT", "", "Scroll up"}), hints.push_back({"RT", "", "Scroll down"});
@@ -210,6 +212,7 @@ void global_input() {
     if (A.popup_last_frame && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) return;   // that B just closed a menu/modal: not also "back"
     /* Start / View are game buttons: while a game runs they never drive the hub (the pad feeds both); F2 and the mouse still work. */
     if (!A.proc && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) && fr_invite_toast_visible()) fr_join_invite_toast();   // Start joins a pending invite
+    else if (!A.proc && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) && lib_cases_active()) lib_cases_menu_toggle();   // Cases: Start / Menu opens its menu overlay
     else if ((!A.proc && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false)) || ImGui::IsKeyPressed(ImGuiKey_F2, false)) fr_toggle_panel();
     {   // View toggles the friends panel on RELEASE, and not when another pad button joined it (View + Y opens the palette / quick menu)
         static bool view_combo = false;
@@ -223,13 +226,15 @@ void global_input() {
     if (FR.panel_focused) {}
     else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) dir = 1;
     if (!FR.panel_focused && ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) dir = -1;
+    if (lib_cases_active()) dir = 0;   // the Cases layout uses LB / RB to switch console
     if (dir && A.page == Page::Settings) {   // Settings owns LB/RB for its tabs; past either end it carries on to the neighbouring page
         int nt, pg = hubui::settings_tab_step(A.st.settings_tab, dir, &nt);
         if (pg == 0) { A.st.settings_tab = nt; A.page_focus_req = true; mark_dirty(); }
         else A.page = static_cast<Page>((7 + (int)A.page + pg) % 7);
     } else if (dir) A.page = static_cast<Page>((7 + (int)A.page + dir) % 7);
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
-        if (A.page == Page::Library) {
+        if (lib_cases_back(ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {}   // B / Esc: closes the Cases menu, leaves a flipped / inspected case; Esc on the plain carousel opens the menu
+        else if (A.page == Page::Library) {
             if (A.view == LibView::All) { A.view = LibView::Home; A.search_buf[0] = 0; A.sys_filter.clear(); A.vis_dirty = true; }
         } else {
             A.page = Page::Library;
@@ -240,8 +245,8 @@ void global_input() {
         (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl))) A.show_ghost = true;
     if (A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl)) A.show_details = true;
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl)) toggle_favorite(A.sel_game);
-        if (!io.WantTextInput && (ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false) || (ImGui::IsKeyPressed(ImGuiKey_S, false) && !io.KeyCtrl)))
+        if ((ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) && !lib_cases_active()) || (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl)) toggle_favorite(A.sel_game);   // Cases: X flips (hold = favourite) there
+        if (!io.WantTextInput && ((ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false) && !lib_cases_active()) || (ImGui::IsKeyPressed(ImGuiKey_S, false) && !io.KeyCtrl)))
             custom_open_picker(A.sel_game, false);   // tile action: Add to shelf (R3 on a pad, S on a keyboard)
     }
 }
@@ -276,6 +281,8 @@ void draw_frame() {
     const float fr_pw = fr_panel_w(io.DisplaySize.x);
     const float dock_w = fr_docked ? fr_pw * FR.panel_t : 0.f;
     const float view_w = io.DisplaySize.x - dock_w;
+    const bool immersive = lib_cases_active();   // Cases is a full-window console browser: no sidebar, toolbar, chips or footer (its menu overlay has them)
+    if (!immersive) lib_cases_closed();
     ui_sound::configure(A.st.menu_sounds, A.st.menu_volume, A.st.menu_music, A.st.notif_sound);
     ui_sound::tick(A.proc != nullptr, g_headless ? false : (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0);
     A.focused = g_headless || (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
@@ -301,7 +308,7 @@ void draw_frame() {
         if (A.zone_req == 1) { in_side = true; A.seed_side = true; }
         if (A.zone_req == 2) { in_side = false; A.nav_seed = true; }
         A.zone_req = 0;
-        if (A.nav_seed) in_side = false;
+        if (A.nav_seed || immersive) in_side = false;
         A.side_ids_prev.swap(A.side_ids);
         A.side_ids.clear();
     }
@@ -321,6 +328,7 @@ void draw_frame() {
     ui::anim(A.side_w, target, 14.f);
     float sw = A.side_w, expand = std::max(0.f, std::min(1.f, (sw - mini_w) / (full_w - mini_w)));
 
+    if (!immersive) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::SIDEBAR);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(3.f)));
@@ -417,19 +425,20 @@ void draw_frame() {
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
+    }
 
-    ImGui::SameLine(0, 0);
+    if (!immersive) ImGui::SameLine(0, 0);
 
     /* ---- content ---- */
-    float hpad = (view_w - sw > 1200.f * S) ? sp(5.f) : sp(4.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(hpad, sp(3.f)));
+    float hpad = immersive ? 0.f : (view_w - sw > 1200.f * S) ? sp(5.f) : sp(4.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(hpad, immersive ? 0.f : sp(3.f)));
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, in_side);
     ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
 
-    fr_top_bar();
-    if (A.proc) {
+    if (!immersive) fr_top_bar();
+    if (A.proc && !immersive) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p = ImGui::GetCursorScreenPos();
         float w = ImGui::GetContentRegionAvail().x, h = sp(5.f);
@@ -444,7 +453,7 @@ void draw_frame() {
         ImGui::Dummy(ImVec2(w, h + sp(2.f)));
     }
 
-    float footer_h = sp(5.5f);
+    float footer_h = immersive ? 0.f : sp(5.5f);
     ImGuiWindowFlags pf = A.page == Page::Library ? (ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse) : ImGuiWindowFlags_None;
     ImGui::BeginChild("page", ImVec2(0, -footer_h), ImGuiChildFlags_NavFlattened, pf);
     if (A.page_focus_req) {   // arrived on a page (LB/RB, sidebar, B): put the focus on its first item unless the user is in the sidebar
@@ -472,7 +481,7 @@ void draw_frame() {
         case Page::Admin: page_admin(); break;
     }
     ImGui::EndChild();
-    draw_footer(footer_h);
+    if (!immersive) draw_footer(footer_h);
     ImGui::EndChild();
     ImGui::PopItemFlag();
 
