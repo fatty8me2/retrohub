@@ -12,7 +12,9 @@
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
+#include <optional>
 #include <set>
+#include <vector>
 #include <thread>
 
 /* ---------- Game info section of the details modal ----------
@@ -42,13 +44,18 @@ struct Slot {
     bool expanded = false;
 };
 
-using JobQueue = gameinfo::PrefetchQueue<Query>;
+struct JobData {
+    Query q;
+    bool dl = false;   // the details window / a focused card asked: this job may start a one-off GameTDB database download (never the trickle)
+};
+using JobQueue = gameinfo::PrefetchQueue<JobData>;
 struct Result { std::string name; gameinfo::ResolveResult r; Online on; };
 
 struct Worker {
     std::mutex mu;
     std::condition_variable cv;
     JobQueue jobs;                  // urgent first, deduplicated, handled names remembered (prefetch is called every frame)
+    std::vector<std::pair<std::string, JobData>> tdb_wait;   // finished without a description because a GameTDB database was still downloading
     std::deque<Result> results;
     bool started = false;
     std::string cache_dir;
@@ -78,14 +85,24 @@ bool bg_allowed(Worker* w) {   // the trickle: online, downloads enabled, not pa
     return hubart::enabled() && std::chrono::steady_clock::now() >= w->pause_until && network_allowed();
 }
 
-const gametdb::Rec* tdb_find(const Query& q) {
-    const std::string db = gametdb::db_name(q.system);
-    if (db.empty()) return nullptr;
+thread_local bool t_tdb_pending = false;   // set by tdb_find when the answer would have needed a database that is not on disk yet
+
+void tdb_ready(const std::string& system);
+
+/* GameTDB record for a query. Reads only an index that is already on disk; the one thing it may do for a `dl` job is START a background
+ * download (once per database, on its own thread), so this worker never waits on a multi-MB download and the trickle never starts one. */
+std::optional<gametdb::Rec> tdb_find(const Query& q, bool dl) {
+    if (gametdb::db_name(q.system).empty()) return std::nullopt;
     if (gametdb::dir().empty()) gametdb::set_dir(hub::data_dir() + "art/tdb/");
-    const gametdb::Index* idx = nullptr;
-    if (!gametdb_net_fixture()) idx = gametdb::index_for(q.system, [](const std::string& u, std::string* b, int* st) { return gameinfo_net::http_get(u, b, st); });
-    else idx = gametdb::cached_index(q.system);
-    if (!idx) return nullptr;
+    const gametdb::Index* idx = gametdb::cached_index(q.system);
+    if (!idx) {
+        if (dl && !gametdb_net_fixture()) {
+            const std::string sys = q.system;
+            gametdb::request_download(sys, [](const std::string& u, std::string* b, int* st) { return gameinfo_net::http_get(u, b, st); }, [sys] { tdb_ready(sys); });
+            t_tdb_pending = true;
+        }
+        return std::nullopt;
+    }
     return gametdb::find_record(*idx, q.system, q.serial, gameinfo::title_variants(q));
 }
 
@@ -107,10 +124,13 @@ void worker_main() {
         bool fresh = winutil::read_file(w->cache_dir + j.name, &txt) && gameinfo::cache_from_json(txt, &cached) && !gameinfo::cache_stale(cached, now_s());
         if (fresh) continue;   // already on disk and recent: nothing to do
         gameinfo::Fetcher f = [](const std::string& u, std::string* b, int* s) { return gameinfo_net::fetch(u, b, s); };
-        auto r = gameinfo::resolve_description(j.payload, f, tdb_find, &on);
+        t_tdb_pending = false;
+        const bool dl = j.payload.dl;
+        auto r = gameinfo::resolve_description(j.payload.q, f, [dl](const Query& q) { return tdb_find(q, dl); }, &on);
+        const bool waiting_db = t_tdb_pending && on.description.empty();
         if (r != gameinfo::ResolveResult::NetworkError) {
             on.fetched = now_s();
-            on.rev = gameinfo::kCacheRev;
+            on.rev = waiting_db ? 0 : gameinfo::kCacheRev;   // rev 0 = looked up again once the database is there (cache_stale)
             std::error_code ec;
             std::filesystem::create_directories(std::filesystem::u8path(w->cache_dir), ec);
             winutil::write_file_atomic(w->cache_dir + j.name, gameinfo::cache_to_json(on));
@@ -125,20 +145,38 @@ void worker_main() {
             w->jobs.forget(j.name);   // the details window asks again after its own back-off
         }
         std::lock_guard<std::mutex> l(w->mu);
-        w->results.push_back({j.name, r, on});
+        if (waiting_db) w->tdb_wait.emplace_back(j.name, j.payload);
+        if (j.urgent) w->results.push_back({j.name, r, on});   // only requested-by-the-UI jobs have a slot waiting; background results are on disk and nothing else
     }
 }
 
-void enqueue(const std::string& name, const Query& q, bool urgent) {
+/* A GameTDB database finished downloading: the games that were waiting for it are looked up again (their cached rev-0 entry is stale). */
+void tdb_ready(const std::string& system) {
+    Worker* w = W();
+    std::lock_guard<std::mutex> l(w->mu);
+    for (size_t i = 0; i < w->tdb_wait.size();) {
+        if (w->tdb_wait[i].second.q.system == system) {
+            JobData d = w->tdb_wait[i].second;
+            d.dl = false;
+            w->jobs.forget(w->tdb_wait[i].first);
+            w->jobs.add(w->tdb_wait[i].first, d, true);
+            w->tdb_wait.erase(w->tdb_wait.begin() + (long)i);
+        } else ++i;
+    }
+    g_generation.fetch_add(1);
+    w->cv.notify_one();
+}
+
+void enqueue(const std::string& name, const Query& q, bool urgent, bool dl = false) {
     Worker* w = W();
     std::lock_guard<std::mutex> l(w->mu);
     if (w->cache_dir.empty()) w->cache_dir = cache_dir();
     if (!w->started) { w->started = true; std::thread(worker_main).detach(); }
-    if (w->jobs.add(name, q, urgent)) w->cv.notify_one();
+    if (w->jobs.add(name, JobData{q, dl}, urgent)) w->cv.notify_one();
 }
 
 void enqueue(const std::string& name, Slot& s) {
-    enqueue(name, s.q, true);
+    enqueue(name, s.q, true, true);   // the details window / a focused card: a missing GameTDB synopsis may start its (single) background download
     s.queued = true;
 }
 
@@ -420,6 +458,7 @@ void gameinfo_prefetch(const hub::GameEntry& e, bool urgent) {
     if (const hub::GameInfo* cat = hub::find_game(e.catalog_id)) if (e.catalog_id != "smash64") q.alt_title = cat->title;
     if (e.catalog_id == "smash64") q.alt_title = "Super Smash Bros.";
     if (!network_allowed()) return;
+    if (ImGui::GetCurrentContext()) drain_results();
     if (!urgent && !hubart::enabled()) return;
     if (!urgent) bg_maybe_start();
     enqueue(gameinfo::cache_name(q), q, urgent);
@@ -427,6 +466,7 @@ void gameinfo_prefetch(const hub::GameEntry& e, bool urgent) {
 
 uint64_t gameinfo_generation() {
     bg_maybe_start();
+    if (ImGui::GetCurrentContext()) drain_results();   // never lets finished-job results pile up when no card draws a description
     return g_generation.load();
 }
 

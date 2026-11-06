@@ -9,6 +9,7 @@
  * No API key, no HTML scraping, nothing shipped with the app. Unit-tested by hub_art_test / hub_gameinfo_test. */
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,21 +51,30 @@ std::vector<Rec> parse_tsv(const std::string& tsv);
 
 class Index {
 public:
-    void load(std::vector<Rec> recs);
-    size_t size() const { return recs_.size(); }
-    const Rec* by_id(const std::string& id) const;
+    void load(std::vector<Rec> recs);                 // everything in memory (tests, small inputs)
+    /* Reads a TSV written by to_tsv(): only id / region / title (+ file offsets) stay in memory, the synopsis, developer, publisher ... of a
+     * record are re-read from the file when asked for. False when the file is missing or empty. */
+    bool load_file(const std::string& tsv_path);
+    size_t size() const { return s_.size(); }
+    std::optional<Rec> by_id(const std::string& id) const;
     /* Same normalized title (gameinfo::normalize of the title with ()/[] tags dropped); among several regional entries the best one:
      * USA first, then English PAL, then the rest; with want_synopsis an entry that has a synopsis beats one that has none. */
-    const Rec* by_title(const std::string& title, bool want_synopsis = false) const;
+    std::optional<Rec> by_title(const std::string& title, bool want_synopsis = false) const;
 private:
-    std::vector<Rec> recs_;
+    struct Slim { std::string id, region, title; uint64_t off = 0; uint32_t len = 0; bool syn = false; };
+    void add(Slim s);
+    void finish();
+    std::optional<Rec> fetch(size_t i) const;
+    std::vector<Slim> s_;
+    std::vector<Rec> mem_;                                   // load(): the records themselves (Slim::off indexes this)
+    std::string path_;                                       // load_file(): where the records live
     std::vector<std::pair<std::string, size_t>> by_title_;   // sorted by normalized title
     std::vector<std::pair<std::string, size_t>> by_id_;
 };
 
 /* The record for a library game: by id (from the serial) first, then by title (any of `titles`, best regional entry); when the id's own
- * record has no synopsis a same-title record that has one is preferred. nullptr when unknown. */
-const Rec* find_record(const Index& idx, const std::string& system, const std::string& serial, const std::vector<std::string>& titles);
+ * record has no synopsis a same-title record that has one is preferred. nullopt when unknown. */
+std::optional<Rec> find_record(const Index& idx, const std::string& system, const std::string& serial, const std::vector<std::string>& titles);
 
 /* Gets a URL: true when an HTTP response arrived (status set), false on a transport error. body gets the raw bytes. */
 using Get = std::function<bool(const std::string& url, std::string* body, int* status)>;
@@ -74,8 +84,11 @@ std::string dir();
 /* The system's index: from the cache (refreshed after 60 days), else downloaded once through `get`. nullptr when unavailable (offline,
  * no dir). A failed download is not retried for 5 minutes. Thread-safe; the returned pointer stays valid for the process. */
 const Index* index_for(const std::string& system, const Get& get);
-/* The cached index only, never the network (nullptr if none yet). */
+/* The index if it is already loaded or its file is on disk (read locally, never the network); nullptr otherwise. Safe on any thread. */
 const Index* cached_index(const std::string& system);
+/* Downloads + indexes in a background thread, at most once per database at a time (false = already loaded / already on its way / unsupported).
+ * `done` runs on that thread once the index is usable. Never blocks the caller: this is the only way an automatic path may fetch a database. */
+bool request_download(const std::string& system, const Get& get, std::function<void()> done);
 /* First *.xml member of a zip held in memory ("" on failure; entries over 256 MB are refused). */
 bool unzip_xml(const std::string& zip, std::string* xml);
 

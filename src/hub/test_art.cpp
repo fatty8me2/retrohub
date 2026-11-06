@@ -5,9 +5,13 @@
 #include "library.h"
 #include "games.h"
 #include "gametdb.h"
+#include "netgate.h"
 
 #include <cstdio>
+#include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 
@@ -455,7 +459,7 @@ Play as Mario &lt;or&gt; Luigi</synopsis>
         gametdb::Index idx;
         idx.load(back);
         CHECK(idx.size() == 3 && idx.by_id("ARDP01") && idx.by_id("ARDP01")->region == "PAL" && !idx.by_id("NOPE01"));
-        const gametdb::Rec* t = idx.by_title("Super Mario 3D World (USA) (En,Fr,Es) (Rev 2)");   // tags dropped, USA entry preferred
+        auto t = idx.by_title("Super Mario 3D World (USA) (En,Fr,Es) (Rev 2)");   // tags dropped, USA entry preferred
         CHECK(t && t->id == "ARDE01");
         t = idx.by_title("super mario 3d world", true);
         CHECK(t && t->id == "ARDE01" && !t->synopsis.empty());
@@ -468,6 +472,100 @@ Play as Mario &lt;or&gt; Luigi</synopsis>
         CHECK(t && t->id == "GM8E01");
         std::string xo;
         CHECK(!gametdb::unzip_xml("not a zip", &xo) && xo.empty());
+    }
+
+    /* ---- review fixes: bounded entity decoding, per-game searches, slim index, decode caps, one shared limiter ---- */
+    {
+        /* an '&' with no ';' within 10 characters is literal, and a hostile run of them is linear, not quadratic */
+        std::string hostile = "<game name=\"x\"><id>ID1</id><type>WiiU</type><locale lang=\"EN\"><title>T</title><synopsis>";
+        hostile.append(300000, '&');
+        hostile += "&amp; ok;</synopsis></locale></game>";
+        auto t0 = std::chrono::steady_clock::now();
+        auto hr = gametdb::parse_xml(hostile);
+        double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        CHECK(hr.size() == 1 && hr[0].synopsis.size() == 300000 + 1 + 4 && secs < 2.0);   // '&' x 300000, then "&amp;" -> '&', then " ok;"
+        auto er = gametdb::parse_xml("<game name=\"x\"><id>A1</id><locale lang=\"EN\"><title>A &amp; B &#x41;&#66; &bogus; &lt</title><synopsis/></locale></game>");
+        CHECK(er.size() == 1 && er[0].title == "A & B AB &bogus; &lt");
+
+        /* every tag search stays inside its own <game>: the second game has no developer / no EN locale / no name and must not borrow the third's */
+        auto sr = gametdb::parse_xml("<game name=\"One\"><id>A1</id><locale lang=\"FR\"><title>Un</title></locale></game>"
+                                     "<game name=\"Two\"><id>B2</id></game>"
+                                     "<game name=\"Three\"><id>C3</id><developer>Dev3</developer><locale lang=\"EN\"><title>Three EN</title><synopsis>s3</synopsis></locale>"
+                                     "<date year=\"2001\" month=\"2\"/></game>");
+        CHECK(sr.size() == 3 && sr[0].title == "Un" && sr[0].developer.empty() && sr[0].synopsis.empty());
+        CHECK(sr[1].id == "B2" && sr[1].title == "Two" && sr[1].developer.empty() && sr[1].synopsis.empty() && sr[1].year == 0);
+        CHECK(sr[2].title == "Three EN" && sr[2].developer == "Dev3" && sr[2].year == 2001);
+
+        /* slim index: only id / region / title stay in memory, the rest is read from the file on demand (and a changed file is no record) */
+        namespace fs2 = std::filesystem;
+        fs2::path td = fs2::temp_directory_path() / "hub_art_slim_idx";
+        fs2::create_directories(td);
+        std::vector<gametdb::Rec> rs(3);
+        rs[0].id = "AAAA"; rs[0].region = "NTSC-U"; rs[0].title = "Alpha Game"; rs[0].synopsis = "alpha text\nline two"; rs[0].developer = "DevA";
+        rs[1].id = "BBBB"; rs[1].region = "PAL"; rs[1].title = "Alpha Game"; rs[1].publisher = "PubB";
+        rs[2].id = "CCCC"; rs[2].region = "NTSC-J"; rs[2].title = "Gamma"; rs[2].synopsis = "gamma";
+        { std::ofstream o(td / "t.tsv", std::ios::binary); std::string tsv = gametdb::to_tsv(rs); o.write(tsv.data(), (std::streamsize)tsv.size()); }
+        gametdb::Index si;
+        CHECK(si.load_file((td / "t.tsv").u8string()) && si.size() == 3);
+        auto a = si.by_id("AAAA");
+        CHECK(a && a->synopsis == "alpha text\nline two" && a->developer == "DevA");
+        auto b = si.by_title("alpha game");
+        CHECK(b && b->id == "AAAA");                       // USA before PAL
+        b = si.by_title("Gamma (Japan)", true);
+        CHECK(b && b->synopsis == "gamma");
+        CHECK(!si.by_id("ZZZZ") && !si.load_file((td / "missing.tsv").u8string()));
+        { std::ofstream o(td / "t.tsv", std::ios::binary | std::ios::trunc); o << "#changed\n"; }
+        CHECK(!si.by_id("AAAA"));                          // the file changed under the index: nothing, not garbage
+        std::error_code ec2;
+        fs2::remove_all(td, ec2);
+
+        /* image decode caps are checked from the header before any allocation */
+        auto png_hdr = [](uint32_t w, uint32_t h) {
+            std::string b("\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR", 16);
+            for (uint32_t v : {w, h}) for (int sh = 24; sh >= 0; sh -= 8) b += (char)((v >> sh) & 255);
+            b += std::string("\x08\x06\0\0\0\0\0\0\0", 9);
+            b += std::string("\0\0\0\0IDAT", 8);   // stb scans on to the first IDAT even for a header-only read
+            return b;
+        };
+        int iw = 0, ih = 0;
+        {   // positive control: a real 1x1 PNG
+            static const unsigned char one[] = {0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x02,0x00,0x00,0x00,0x90,0x77,0x53,0xde,0x00,0x00,0x00,0x0c,0x49,0x44,0x41,0x54,0x78,0x9c,0x63,0xf8,0xcf,0xc0,0x00,0x00,0x03,0x01,0x01,0x00,0xc9,0xfe,0x92,0xef,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82};
+            CHECK(hubart::detail::image_header_ok(std::string((const char*)one, sizeof one), &iw, &ih) && iw == 1 && ih == 1);
+        }
+        CHECK(hubart::detail::image_header_ok(png_hdr(2048, 2048), &iw, &ih) && iw == 2048 && ih == 2048);
+        CHECK(hubart::detail::image_header_ok(png_hdr(4000, 4000), &iw, &ih));          // 16 Mpx exactly
+        CHECK(!hubart::detail::image_header_ok(png_hdr(4001, 4000), &iw, &ih));         // over 16 Mpx
+        CHECK(!hubart::detail::image_header_ok(png_hdr(20000, 20000), &iw, &ih));       // a 400 Mpx bomb
+        CHECK(!hubart::detail::image_header_ok(png_hdr(9000, 10), &iw, &ih));           // one side over 8192
+        CHECK(!hubart::detail::image_header_ok(png_hdr(10, 8193), &iw, &ih));
+        CHECK(hubart::detail::image_header_ok(png_hdr(8192, 100), &iw, &ih));
+        CHECK(!hubart::detail::image_header_ok(png_hdr(0, 5), &iw, &ih));
+        CHECK(!hubart::detail::image_header_ok("not an image at all", &iw, &ih) && !hubart::detail::image_header_ok("", &iw, &ih));
+
+        /* one limiter for all gametdb.com traffic (art. and www. together), 1 s for the Wikimedia sites, per-site blocks from Retry-After */
+        CHECK_EQ(netgate::site_of("art.gametdb.com"), "gametdb.com");
+        CHECK_EQ(netgate::site_of("WWW.GameTDB.com"), "gametdb.com");
+        CHECK_EQ(netgate::site_of("en.wikipedia.org"), "wikipedia.org");
+        CHECK_EQ(netgate::site_of("raw.githubusercontent.com"), "raw.githubusercontent.com");
+        CHECK_EQ(netgate::site_of("notgametdb.com"), "notgametdb.com");
+        netgate::Gate g;
+        using ms = std::chrono::milliseconds;
+        const auto n0 = netgate::Clock::now();
+        ms w{-1};
+        CHECK(g.reserve("art.gametdb.com", n0, &w) && w.count() == 0);
+        CHECK(g.reserve("www.gametdb.com", n0 + ms(100), &w) && w.count() == 400);          // same site: 0.5 s after the first, whichever host name
+        CHECK(g.reserve("art.gametdb.com", n0 + ms(100), &w) && w.count() == 900);          // queued behind the second
+        CHECK(g.reserve("art.gametdb.com", n0 + ms(5000), &w) && w.count() == 0);           // long idle: no wait
+        CHECK(g.reserve("www.wikidata.org", n0, &w) && w.count() == 0);
+        CHECK(g.reserve("en.wikipedia.org", n0, &w) && w.count() == 0);                      // separate site: independent
+        CHECK(g.reserve("www.wikidata.org", n0 + ms(10), &w) && w.count() == 990);
+        CHECK(g.reserve("raw.githubusercontent.com", n0, &w) && g.reserve("raw.githubusercontent.com", n0, &w) && w.count() == 0);   // no gap configured
+        g.block("art.gametdb.com", n0 + ms(6000), 120);
+        CHECK(!g.reserve("www.gametdb.com", n0 + ms(6000) + std::chrono::seconds(119), &w));      // blocked for the whole Retry-After, for every gametdb host
+        CHECK(g.reserve("art.gametdb.com", n0 + ms(6000) + std::chrono::seconds(121), &w));
+        CHECK(g.reserve("en.wikipedia.org", n0 + ms(6000), &w));                              // other sites unaffected
+        g.block("art.gametdb.com", n0 + std::chrono::seconds(1000), 1);                       // a tiny Retry-After is raised to 30 s
+        CHECK(!g.reserve("art.gametdb.com", n0 + std::chrono::seconds(1029), &w) && g.reserve("art.gametdb.com", n0 + std::chrono::seconds(1031), &w));
     }
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL OK\n", g_fail);
     return g_fail ? 1 : 0;
