@@ -120,7 +120,7 @@ add_library(hubversion STATIC ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_G
 set(RETROHUB_UI_SOURCES
     main.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp spectate_ui.cpp dropin_ui.cpp
     ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp libview_ui.cpp shelf_draw.cpp cases_draw.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_pick_ui.cpp challenge_ui.cpp gamenight_ui.cpp friend_games_ui.cpp group_ui.cpp
-    page_controllers.cpp page_admin.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp welcome_ui.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp display.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp
+    page_controllers.cpp page_admin.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp welcome_ui.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp display.cpp osk.cpp onboarding.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp cases_audit.cpp
     attract.cpp continue_ui.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp page_discover.cpp discover_logic.cpp discover_browse.cpp
     party_ui.cpp party_view.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp   # Plan 4 Wave 1
     lockout.cpp icon_refresh.cpp discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp   # Plan 4 Wave 2 C (convenience)
@@ -146,8 +146,8 @@ target_include_directories(qa_pack_art PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../co
 target_link_libraries(qa_pack_art PRIVATE hubcommon SDL2::SDL2 winhttp)
 add_custom_command(TARGET qa_pack_art POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:qa_pack_art>)
-add_executable(hub_art_test test_art.cpp art.cpp art_match.cpp)
-target_include_directories(hub_art_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+add_executable(hub_art_test test_art.cpp art.cpp art_match.cpp cases_audit.cpp)
+target_include_directories(hub_art_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_art_test PRIVATE hubcommon SDL2::SDL2 winhttp)
 add_custom_command(TARGET hub_art_test POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:hub_art_test>)
@@ -342,8 +342,8 @@ target_link_libraries(hubgameinfo_net PUBLIC hubversion)
 add_executable(gameinfo_record gameinfo_record.cpp)
 target_link_libraries(gameinfo_record PRIVATE hubgameinfo_net)
 # Headless cover-art + description coverage tool (live network, NOT a ctest): hub_metadata_prefetch <userdata copy> [--limit N]
-add_executable(hub_metadata_prefetch hub_metadata_prefetch.cpp art.cpp art_match.cpp)
-target_include_directories(hub_metadata_prefetch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+add_executable(hub_metadata_prefetch hub_metadata_prefetch.cpp art.cpp art_match.cpp cases_audit.cpp gamepack.cpp)
+target_include_directories(hub_metadata_prefetch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hub_metadata_prefetch PRIVATE hubgameinfo_net hubcommon SDL2::SDL2 winhttp)
 target_compile_definitions(hub_metadata_prefetch PRIVATE TOOL_DATA_DIR="${CMAKE_SOURCE_DIR}/data/")
 add_custom_command(TARGET hub_metadata_prefetch POST_BUILD

@@ -106,6 +106,25 @@ std::vector<std::string> region_folders(const std::string& id, const std::string
     return v;
 }
 
+std::vector<std::pair<std::string, std::string>> regional_siblings(const std::string& id, const std::string& region_hint) {
+    std::vector<std::pair<std::string, std::string>> out;
+    if (id.size() < 4 || !alnum_id(id)) return out;
+    std::string order;
+    const std::string h = lower(region_hint);
+    if (h == "europe" || h == "eur" || h == "uk" || h == "germany" || h == "france" || h == "spain" || h == "italy" || h == "australia") order += 'P';
+    else if (h == "japan" || h == "jpn") order += 'J';
+    else if (h == "korea") order += 'K';
+    for (char c : std::string("EPJK")) if (order.find(c) == std::string::npos) order += c;
+    const char own = (char)std::toupper((unsigned char)id[3]);
+    for (char c : order) {
+        if (c == own) continue;
+        std::string sib = id;
+        sib[3] = c;
+        out.push_back({sib, c == 'E' ? "US" : c == 'P' ? "EN" : c == 'J' ? "JA" : "KO"});
+    }
+    return out;
+}
+
 std::string region_hint_from_name(const std::string& name) {
     static const char* words[] = {"USA", "Europe", "Japan", "World", "Korea", "Australia", "Germany", "France", "Spain", "Italy",
                                   "Netherlands", "Russia", "China", "Taiwan", "Canada"};

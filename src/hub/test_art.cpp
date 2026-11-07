@@ -2,6 +2,7 @@
 #include "art.h"
 #include "art_match.h"
 #include "art_lru.h"
+#include "cases_audit.h"
 #include "library.h"
 #include "games.h"
 #include "gametdb.h"
@@ -10,12 +11,14 @@
 #include <cstdio>
 #include <chrono>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <set>
 #include <string>
 
 namespace hm = hubart_match;
+namespace fs = std::filesystem;
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
@@ -566,6 +569,102 @@ Play as Mario &lt;or&gt; Luigi</synopsis>
         CHECK(g.reserve("en.wikipedia.org", n0 + ms(6000), &w));                              // other sites unaffected
         g.block("art.gametdb.com", n0 + std::chrono::seconds(1000), 1);                       // a tiny Retry-After is raised to 30 s
         CHECK(!g.reserve("art.gametdb.com", n0 + std::chrono::seconds(1029), &w) && g.reserve("art.gametdb.com", n0 + std::chrono::seconds(1031), &w));
+    }
+    /* ---- artcov: ghost console, regional siblings, exact-folder GameTDB names, catalog corrections, audit rows ---- */
+    {
+        CHECK_EQ(hm::system_of_key("gc", "ps2:slus-20047"), "ps2");
+        CHECK_EQ(hm::system_of_key("gc", "gc:gale01-0"), "gc");
+        CHECK_EQ(hm::system_of_key("gba", "kanto-together"), "gba");
+        CHECK_EQ(hm::system_of_key("n64", "weird:thing"), "n64");
+        auto sib = gametdb::regional_siblings("AZEE", "USA");
+        CHECK(sib.size() == 3 && sib[0].first == "AZEP" && sib[0].second == "EN" && sib[1].first == "AZEJ" && sib[2].first == "AZEK");
+        auto sib2 = gametdb::regional_siblings("EKJA", "USA");   // the all-region code: EKJE (US) first
+        CHECK(sib2.size() == 4 && sib2[0].first == "EKJE" && sib2[0].second == "US" && sib2[1].first == "EKJP");
+        auto sib3 = gametdb::regional_siblings("ALZE01", "Europe");
+        CHECK(sib3[0].first == "ALZP01" && sib3[0].second == "EN");
+        CHECK(gametdb::regional_siblings("AB", "").empty());
+        auto u = hm::thumb_urls("nds", 3, "gametdb:AZEP:EN!");   // exactly one folder, HQ then standard
+        CHECK(u.size() == 2 && u[0].find("/coverfullHQ/EN/AZEP.jpg") != std::string::npos && u[1].find("/coverfull/EN/AZEP.jpg") != std::string::npos);
+        CHECK(hm::thumb_urls("nds", 3, "gametdb:AZEE:US").size() >= 4);                           // the normal form still tries more folders
+    }
+    {   // a corrected catalog name replaces a cached plain one; fallback pseudo names stay
+        const std::string dir = (fs::temp_directory_path() / "hub_art_test_catalog").string();
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        {
+            std::ofstream f(fs::path(dir) / "names.json", std::ios::binary);
+            f << "{\"n64:mq\":\"Legend of Zelda, The - Ocarina of Time (USA)\",\"n64:psuedo\":\"gametdb:XXXX01:US\"}";
+        }
+        hubart::detail::init_headless(dir + "/");
+        hub::GameEntry g;
+        g.key = "n64:mq"; g.system = hub::System::N64; g.title = "Zelda: Ocarina of Time Master Quest"; g.catalog_id = "ootmq";
+        std::string name, how;
+        CHECK(hubart::detail::resolve_name(g, &name, &how));
+        CHECK_EQ(name, "Legend of Zelda, The - Ocarina of Time - Master Quest (USA) (GameCube)");
+        CHECK_EQ(how, "catalog");
+        CHECK_EQ(hubart::cached_name("n64:mq"), "Legend of Zelda, The - Ocarina of Time - Master Quest (USA) (GameCube)");
+        hub::GameEntry p = g;
+        p.key = "n64:psuedo"; p.catalog_id = "oot";
+        CHECK(hubart::detail::resolve_name(p, &name, &how) && name == "gametdb:XXXX01:US" && how == "cache");
+        CHECK_EQ(hubart::catalog_id_for("n64", "The Legend of Zelda Ocarina of Time Master Quest"), "");   // different words than the catalog title: no guess
+        CHECK_EQ(hubart::catalog_id_for("n64", "Zelda: Ocarina of Time Master Quest"), "ootmq");
+        // negative caches from older matching are dropped: a stale art2: record is not a "known miss" any more
+        {
+            std::ofstream f(fs::path(dir) / "misses.json", std::ios::binary);
+            f << "{\"art2:3ds:coverfull:gametdb:EKJA:US\":\"" << (long long)std::time(nullptr) << "\"}";
+        }
+        hubart::detail::init_headless(dir + "/");
+        hubart::detail::flush();
+        std::string mj;
+        { std::ifstream f(fs::path(dir) / "misses.json", std::ios::binary); mj.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()); }
+        CHECK(mj.find("art2:") == std::string::npos);   // dropped, so the cover is looked up once more
+        fs::remove_all(dir, ec);
+    }
+    {   // audit rows
+        namespace ca = hubui::cases_audit;
+        ca::Item it;
+        it.section = "friend"; it.sys = "nds"; it.title = "Zelda\tPH"; it.key = "nds:azee-004d56"; it.ghost = true;
+        hubart::SlotInfo fr, fu;
+        fr.state = hubart::SlotState::Ready; fr.name = "Legend of Zelda, The - Phantom Hourglass (USA) (En,Fr,Es)";
+        fu.state = hubart::SlotState::Ready; fu.name = "gametdb:AZEP:EN!";
+        ca::Row r = ca::make_row(7, it, fr, fu);
+        CHECK(r.front == "scan" && r.full == "yes" && r.spine == "real" && r.back == "real" && r.index == 7);
+        fu.state = hubart::SlotState::Failed; fu.err = "404 (no art for this name)";
+        r = ca::make_row(7, it, fr, fu);
+        CHECK(r.front == "libretro" && r.full == "no" && r.spine == "generated" && r.back == "generated" && r.note.find("full: 404") == 0);
+        fr.name = "gametdb:ABCD01:US";
+        CHECK_EQ(ca::make_row(0, it, fr, fu).front, "GameTDB");
+        fr.name = "nupicon:0400"; it.sys = "switch"; it.key = "switch:0400";
+        r = ca::make_row(0, it, fr, hubart::SlotInfo());
+        CHECK(r.front == "icon" && r.full == "n/a");
+        hubart::SlotInfo bad; bad.state = hubart::SlotState::Failed; bad.err = "known miss";
+        CHECK_EQ(ca::make_row(0, it, bad, hubart::SlotInfo()).front, "GENERATED");
+        CHECK_EQ(ca::make_row(0, it, hubart::SlotInfo(), hubart::SlotInfo()).front, "PENDING");
+        ca::Row t = ca::make_row(3, ca::Item{"pack", "n64", "A\nB", "k", "", "", true, {}}, fr, hubart::SlotInfo());
+        const std::string line = ca::tsv_row(t);
+        int tabs = 0; for (char c : line) if (c == '\t') ++tabs;
+        CHECK(tabs == 11 && line.back() == '\n' && line.find("A B") != std::string::npos);
+        int htabs = 0; for (char c : ca::tsv_header()) if (c == '\t') ++htabs;
+        CHECK(htabs == 11);
+        CHECK_EQ(ca::source_of_art_name("Mario Kart 64 (USA)"), "libretro");
+        CHECK_EQ(ca::source_of_art_name(""), "");
+        std::vector<ca::Row> rows = {r, t};
+        CHECK(ca::summary(rows).find("total=2 own=0 friend=1 pack=1") == 0);
+        // friend cache + pack index parsing
+        auto libs = ca::parse_friend_libs("{\"libs\":{\"u1\":{\"ver\":3,\"games\":[{\"s\":\"gb\",\"k\":\"gb:x\",\"c\":\"pokered\",\"t\":\"Pokemon Red\"},{\"s\":\"\",\"k\":\"bad\"}]},\"u2\":{\"ver\":1,\"games\":[]}}}");
+        CHECK(libs.size() == 1 && libs[0].first == "u1" && libs[0].second.size() == 1 && libs[0].second[0].cid == "pokered");
+        CHECK(ca::parse_friend_libs("not json").empty());
+        auto pk = ca::parse_pack_tsv(ca::pack_tsv({{"n64", "Mario Golf", "mario golf", "Mario Golf 64 (English)"}, {"gc", "Melee", "melee", ""}}));
+        CHECK(pk.size() == 2 && pk[0].hint == "Mario Golf 64 (English)" && pk[1].sys == "gc" && pk[1].hint.empty());
+        // the item list: owned first, then friend and pack ghosts
+        std::vector<hub::GameEntry> lib(1);
+        lib[0].key = "gb:a"; lib[0].system = hub::System::GB; lib[0].title = "A"; lib[0].catalog_id = "pokered";
+        std::vector<hubui::fg::Ghost> gh(2);
+        gh[0].sys = "gc"; gh[0].title = "G"; gh[0].uids = {"u1"};
+        gh[1].sys = "n64"; gh[1].title = "P"; gh[1].hint = "P (USA)";
+        auto items = ca::items_for(lib, gh);
+        CHECK(items.size() == 3 && items[0].section == "own" && items[0].sys == "gb" && items[1].section == "friend" && items[2].section == "pack" && items[2].hint == "P (USA)");
     }
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL OK\n", g_fail);
     return g_fail ? 1 : 0;

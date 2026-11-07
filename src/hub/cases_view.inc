@@ -596,6 +596,7 @@ void draw_cases(Disp& D) {
     const float dt = std::min(io.DeltaTime, 0.1f);
     const bool reduced = reduced_motion();
     const bool nav_mine = gctx.NavWindow == win;
+    if (g_headless) hubui::cases_audit::tick(A.lib, A.ghosts, A.scanning);   // HUB_CASES_AUDIT=<out.tsv>: cover coverage table (cases_audit.cpp)
 
     // ---- the list changed under us / first frame ----
     if (CS.sig != D.sig) {
@@ -944,7 +945,9 @@ void draw_cases(Disp& D) {
             if (cd.art) cd.art_col = cases_art_rgb(cd.art);   // the generated spine / insert colours follow the front art
             if (ad <= 2.5f && cases_has_full(sy)) {   // a full cover scan (back | spine | front): one texture, the faces are uv sub-rects of it
                 int fw = 0, fh = 0;
-                SDL_Texture* ft = is_ghost(idx) ? nullptr : hubart::get(A.lib[(size_t)idx], hubart::Kind::FullCover, &fw, &fh);
+                SDL_Texture* ft = nullptr;
+                if (is_ghost(idx)) { const hubui::fg::Ghost& gh = ghost_of(idx); ft = hubart::get_ghost(gh.sys, gh.key, gh.cid, gh.title, hubart::Kind::FullCover, &fw, &fh, gh.hint); }
+                else ft = hubart::get(A.lib[(size_t)idx], hubart::Kind::FullCover, &fw, &fh);
                 if (!ft) ft = cases_shot_full(&fw, &fh);
                 if (ft && fw > 0 && fh > 0) {
                     cd.full = ft; cd.full_w = fw; cd.full_h = fh;

@@ -2,6 +2,7 @@
 #include "gameinfo.h"
 #include "gamepack.h"
 #include "art.h"
+#include "cases_audit.h"
 #include <chrono>
 
 #include <map>
@@ -57,13 +58,34 @@ std::vector<hubnet::LibGame> fg_shared_with(const std::string& uid) {
 void rebuild_ghosts() {
     A.ghosts.clear();
     std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>> libs;
-    if (A.st.show_friend_games && A.friends_chip) fr_library_collect(&libs);   // an empty own library still gets ghosts: new users install from shared packs
+    bool inject = false;
+    if (g_headless) {
+        libs = hubui::cases_audit::injected_libs();
+        const auto& pk = hubui::cases_audit::injected_pack();
+        static bool pack_set = false;
+        if (!pk.empty() && !pack_set) {
+            pack_set = true;
+            std::vector<hubgp::PackGame> pg;
+            for (const auto& r : pk) pg.push_back({r.sys, r.title, r.key, r.hint});
+            hubgp::index_test_set(pg);
+        }
+        inject = !libs.empty() || !pk.empty();
+    }   // HUB_CASES_AUDIT_FRIENDS: audits feed a friends cache copy
+    if (!inject && A.st.show_friend_games && A.friends_chip) fr_library_collect(&libs);   // an empty own library still gets ghosts: new users install from shared packs
     const std::vector<hubui::fg::Owned> mine = owned_snapshot();
     if (!libs.empty()) A.ghosts = hubui::fg::build_ghosts(mine, libs, [](const std::string&, const std::string& key) { return hubart::cached_name(key); });
     const size_t friend_ghosts = A.ghosts.size();
-    if (A.st.show_friend_games && A.friends_chip && A.ghosts.size() < hubui::fg::kMaxGhosts) {   // games in the shared Drive packs, owned by no friend
+    if ((inject || (A.st.show_friend_games && A.friends_chip)) && A.ghosts.size() < hubui::fg::kMaxGhosts) {   // games in the shared Drive packs, owned by no friend
         std::vector<hubui::fg::Ghost> pk = hubgp::pack_only_ghosts(mine, A.ghosts, hubgp::index_games(), hubui::fg::kMaxGhosts - A.ghosts.size());
         A.ghosts.insert(A.ghosts.end(), pk.begin(), pk.end());
+    }
+    {   /* a ghost whose title is a catalog game you own is that game (catalog id, whatever the spelling): "The Legend of Zelda Ocarina of Time Master Quest" */
+        std::set<std::string> own_cid;
+        for (const hub::GameEntry& e : A.lib) if (!e.catalog_id.empty() && e.hack_patch.empty()) own_cid.insert(sys_short(e) + "|" + e.catalog_id);
+        A.ghosts.erase(std::remove_if(A.ghosts.begin(), A.ghosts.end(), [&](const hubui::fg::Ghost& g) {
+            const std::string c = g.cid.empty() ? hubart::catalog_id_for(g.sys, g.title) : g.cid;
+            return !c.empty() && own_cid.count(g.sys + "|" + c) > 0;
+        }), A.ghosts.end());
     }
     static std::string last;
     const size_t nf = fr_friends().size();
