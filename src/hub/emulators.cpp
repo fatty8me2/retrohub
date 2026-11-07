@@ -496,15 +496,35 @@ static void clear_dir_keeping(const std::string& dir, const std::vector<std::str
 
 /* Puts the parked old build back: whatever new files made it into `dir` are removed first (never the kept data), then _old\* moves home.
  * Returns false when something could not be moved back (the journal then stays so the next run retries). */
+/* Journal phases: 1 = parking the old files in _old (dir still holds old files that never moved: nothing is removed); 2 = the new build is coming in (every
+ * old file is parked, so whatever is in dir that is not kept data or scratch is new and goes first); 3 = putting the old build back (the new files are
+ * already gone, so everything in dir is old: nothing is removed, the rest of _old moves home). Phase 3 is written as soon as the new files are gone, so a
+ * restore that a locked file stops half way is finished by the next run instead of mistaking the files it already moved back for new ones. */
+static void set_journal_phase(const std::string& dir, int phase) {
+    std::istringstream ls(read_text(join(dir, kJournal)));
+    std::string line, text;
+    while (std::getline(ls, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty() || line.compare(0, 6, "phase ") == 0) continue;
+        text += line + "\n";
+    }
+    write_journal(dir, text + "phase " + std::to_string(phase) + "\n");
+}
+
 static bool restore_old(const std::string& dir, const std::vector<std::string>& keep, bool drop_new) {
     const std::string old = join(dir, kOldDir);
     if (!dir_exists(old)) return true;
-    if (drop_new) {   // (journal phase 2: every old file is parked, so whatever is in dir now is new. Phase 1 is still parking: dir holds old files that never moved, nothing is removed)
+    if (drop_new) {   // (phase 2, see above)
+        bool left = false;
         for (const fs::path& c : children(dir)) {
             const std::string n = S(c.filename());
             if (name_in(keep, n) || is_scratch(n)) continue;
             remove_tree(S(c));
+            std::error_code ec;
+            if (fs::exists(fs::symlink_status(c, ec))) left = true;
         }
+        if (left) return false;   // a new file is still in use: the journal still says phase 2, so the next run removes it and restores
+        set_journal_phase(dir, 3);
     }
     bool ok = true;
     for (const fs::path& c : children(old)) {
@@ -543,6 +563,7 @@ void recover_interrupted(Kind k, const std::string& root) {
             while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
             if (line.compare(0, 7, "sha256 ") == 0) want = line.substr(7);
             if (line == "phase 2") drop_new = true;
+            else if (line == "phase 1" || line == "phase 3") drop_new = false;
         }
         if (!want.empty() && installed_sha(dir) == want && file_exists(join(dir, U(release(k).exe)))) {   // finished: only the scratch is left
             remove_tree(join(dir, kOldDir));
