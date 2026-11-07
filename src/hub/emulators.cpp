@@ -1592,6 +1592,25 @@ uint64_t wiiu_title_id_of_file(const std::string& path) {
 
 hub::FsProbe wiiu_probe() { return probe(); }
 
+void sync_vault_to_emulator(SaveSession& s) {
+    std::string tag = stamp_tag();
+    hub::SyncManifest man;
+    hub::manifest_load(s.manifest_path, &man);
+    int in = 0, kept = 0;
+    for (size_t ri = 0; ri < s.rels.size(); ++ri) {
+        const std::string& rel = s.rels[ri];
+        const std::string& vrel = ri < s.vault_rels.size() ? s.vault_rels[ri] : rel;
+        std::string vsrc = join(s.battery, vrel), edst = join(s.emu_root, rel);
+        if (s.restore_only_if_missing && hub::tree_has_files(edst)) continue;
+        hub::TreeSyncReport r = hub::sync_tree_newest(vsrc, edst, join(join(s.backup_dir, "emulator"), vrel), tag, &man, vrel + "/");
+        in += r.copied;
+        kept += r.kept;
+        if (!r.ok && s.error.empty()) s.error = r.error;
+    }
+    hub::manifest_save(s.manifest_path, man);
+    s.summary = std::to_string(in) + " save file(s) restored from the vault, " + std::to_string(kept) + " kept (emulator copy newer)";
+}
+
 SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& battery_in, const std::string&, uint64_t tid_override) {
     SaveSession s;
     s.started_unix = (int64_t)std::time(nullptr);
@@ -1666,22 +1685,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         return s;
     }
     s.active = true;
-    std::string tag = stamp_tag();
-    hub::SyncManifest man;
-    hub::manifest_load(s.manifest_path, &man);
-    int in = 0, kept = 0;
-    for (size_t ri = 0; ri < s.rels.size(); ++ri) {
-        const std::string& rel = s.rels[ri];
-        const std::string& vrel = ri < s.vault_rels.size() ? s.vault_rels[ri] : rel;
-        std::string vsrc = join(battery, vrel), edst = join(s.emu_root, rel);
-        if (s.restore_only_if_missing && hub::tree_has_files(edst)) continue;
-        hub::TreeSyncReport r = hub::sync_tree_newest(vsrc, edst, join(join(s.backup_dir, "emulator"), vrel), tag, &man, vrel + "/");
-        in += r.copied;
-        kept += r.kept;
-        if (!r.ok && s.error.empty()) s.error = r.error;
-    }
-    hub::manifest_save(s.manifest_path, man);
-    s.summary = std::to_string(in) + " save file(s) restored from the vault, " + std::to_string(kept) + " kept (emulator copy newer)";
+    sync_vault_to_emulator(s);
     return s;
 }
 

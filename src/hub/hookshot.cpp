@@ -1,6 +1,8 @@
 #include "hookshot.h"
 
 #include <cstdio>
+#include <ctime>
+#include <mutex>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -8,6 +10,13 @@
 #include "../common/games.h"
 #include "../common/json.h"
 #include "../common/library.h"
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mftransform.h>
 
 namespace fs = std::filesystem;
 
@@ -81,6 +90,60 @@ bool ready(std::string* why, const std::string& dir_in) {
     if (s.commit != kSourceCommit) return miss("the build is from another Hookshot version: rebuild it");
     if (why) why->clear();
     return true;
+}
+
+bool use_for(const hub::GameEntry& e, const Values& v) {
+    if (!supports(e)) return false;
+    auto it = v.find(kRunnerSetting);
+    if (it != v.end() && it->second == "lichii") return false;
+    return ready();
+}
+
+static bool av1_probe() {
+    const HRESULT hs = MFStartup(MF_VERSION, MFSTARTUP_LITE);
+    if (FAILED(hs)) return false;
+    MFT_REGISTER_TYPE_INFO in{MFMediaType_Video, MFVideoFormat_AV1};
+    IMFActivate** acts = nullptr;
+    UINT32 n = 0;
+    const HRESULT hr = MFTEnumEx(MFT_CATEGORY_VIDEO_DECODER, MFT_ENUM_FLAG_ALL, &in, nullptr, &acts, &n);
+    bool found = SUCCEEDED(hr) && n > 0;
+    if (acts) {
+        for (UINT32 i = 0; i < n; ++i) if (acts[i]) acts[i]->Release();
+        CoTaskMemFree(acts);
+    }
+    MFShutdown();
+    return found;
+}
+
+bool av1_decoder_present(bool force_recheck) {
+    static std::mutex mu;
+    static int cached = -1;
+    std::lock_guard<std::mutex> lk(mu);
+    if (force_recheck || cached < 0) cached = av1_probe() ? 1 : 0;
+    return cached == 1;
+}
+
+hubemu::SaveSession begin_save_session(const hub::GameEntry& e, const std::string& battery_in) {
+    hubemu::SaveSession s;
+    s.started_unix = (int64_t)std::time(nullptr);
+    std::string battery = battery_in;
+    while (!battery.empty() && (battery.back() == '\\' || battery.back() == '/')) battery.pop_back();
+    s.battery = battery;
+    if (!supports(e) || battery.empty()) return s;
+    /* vault layout: system dir / game dir / battery -> _conflicts/<system>/<game>/battery; manifest .sync/emu-<system>-<game>-hookshot.json */
+    const fs::path game = P(battery).parent_path(), sysdir = game.parent_path(), vault = sysdir.parent_path();
+    s.backup_dir = S(vault / L"_conflicts" / sysdir.filename() / game.filename() / L"battery");
+    s.manifest_path = S(vault / L".sync" / (L"emu-" + sysdir.filename().wstring() + L"-" + game.filename().wstring() + L"-hookshot.json"));
+    s.emu_root = user_dir();
+    s.rels = {kSaveRel};
+    char tb[24];
+    std::snprintf(tb, sizeof tb, "%016llX", (unsigned long long)kTitleId);   // uppercase, as the Lichii branch writes it
+    s.vault_rels = {std::string("save/") + tb};
+    std::error_code ec;
+    fs::create_directories(P(s.emu_root) / kSaveRel, ec);
+    s.active = true;
+    hubemu::sync_vault_to_emulator(s);
+    return s;
 }
 
 }   // namespace hookshot

@@ -44,6 +44,7 @@
 #include "online_caps.h"
 #include "wave3_hooks.h"
 #include "resume_more.h"
+#include "hookshot.h"
 #include <thread>
 #include <xinput.h>
 
@@ -273,11 +274,15 @@ void pad_exit_watch() {
 /* Lichii build 88 (release notes, known issue): a fence-worker shutdown race can leave lichii.exe waiting after its window closed. The session
  * (save copy-back, vault sync) waits for the whole job, so once the game had a window and every window of the job has been gone for 15 s,
  * the job is ended. Only RetroHub's own Lichii runs in that job (Kind::Lichii is never a user's install); by handle, never by image name. */
+static bool g_hookshot_run = false;   // the running game is Hookshot (set by launch_hookshot)
+bool hookshot_running() { return g_hookshot_run && A.proc; }
+
 void lichii_hang_watch() {
     static bool had_window = false;
     static ULONGLONG gone_since = 0;
     static ULONGLONG cpu_at_gone = 0, idle_since = 0;
-    if (!A.proc || A.run.system_short != "switch" || g_headless) { had_window = false; gone_since = 0; return; }
+    if (!A.proc) g_hookshot_run = false;
+    if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii build 88 issue
     const ULONGLONG now = GetTickCount64();
     if (game_main_window()) { had_window = true; gone_since = 0; return; }
     if (!had_window) return;
@@ -576,9 +581,36 @@ std::string launch_path_for(const hub::GameEntry& e) {
     return e.path;
 }
 
+/* Hookshot (hookshot.h): the native Ocarina of Time build plays instead of Lichii. Offline only; its save sits in the same vault folder Lichii uses. */
+static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery) {
+    const std::string exe = hookshot::exe_path();
+    if (g_headless) {
+        shot_trace("external", "hookshot ready | " + exe);
+        set_notice("Headless test run: launch skipped.");
+        return;
+    }
+    if (hubemu::is_running(exe)) { set_notice("Hookshot is already running. Close it first, then start the game from RetroHub.", 10.0); return; }
+    if (!hookshot::av1_decoder_present(true)) { hookshot_av1_ask(e); return; }   // Hookshot would open a top-most box over the game: ask here instead
+    auto sess = std::make_shared<hubemu::SaveSession>(hookshot::begin_save_session(e, battery));
+    autotest_log("external: hookshot save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
+    std::vector<std::pair<std::string, std::string>> env;
+    if (hub::gs::is_fullscreen(gs_values_for(e))) env.push_back({"HOS_FULLSCREEN", "1"});
+    RunInfo r = ri;
+    r.after_exit = [sess]() {   // Hookshot's save folder -> vault
+        hubemu::end_session(*sess);
+        autotest_log("end_session: " + sess->summary + (sess->error.empty() ? "" : " ERROR " + sess->error));
+        if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (Hookshot's copy is untouched)", ui::WARN, 15.0);
+    };
+    autotest_log("external: starting " + exe);
+    if (spawn(exe, "", hookshot::game_dir(), env, r)) g_hookshot_run = true;
+    else autotest_log("external: spawn failed");
+}
+
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg) {
     if (launch_blocked("launch_external")) return;
     hubemu::Kind kind = hubemu::kind_for(e.system);
+    if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot_lichii_once_consume(e.key)) { /* "Play with Lichii this time": skip Hookshot once */ }
+    else if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot::use_for(e, gs_values_for(e))) { launch_hookshot(e, ri, battery); return; }   // before any Lichii-only step: works without Lichii, keys or firmware
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
         ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
