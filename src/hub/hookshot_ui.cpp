@@ -46,6 +46,7 @@ struct UI {
     std::string remove_error;
 };
 UI HU;
+std::atomic<bool> g_game_running{false};
 
 void read_fake() {
     if (HU.fake_read) return;
@@ -338,14 +339,12 @@ void hookshot_ui_tick() {
     if (g_headless) return;
     if (!HU.probe_set) {
         HU.probe_set = true;
-        hs::set_game_running_probe([] { return A.proc != nullptr; });
+        hs::set_game_running_probe([] { return g_game_running.load(); });   // (a flag the UI thread keeps: the build's thread never reads app state)
     }
-    if (!HU.recovered && !hs::build_running()) {
+    g_game_running = A.proc != nullptr;
+    if (!HU.recovered && !hs::build_running()) {   // a swap cut short by a crash: a few renames, once
         HU.recovered = true;
-        std::thread([] {
-            const std::string r = hs::recover_swap(hs::game_dir() + ".staging", hs::game_dir(), hs::game_dir() + ".old");
-            (void)r;
-        }).detach();
+        hs::recover_swap(hs::game_dir() + ".staging", hs::game_dir(), hs::game_dir() + ".old");
     }
     const bool running = hs::build_running();
     if (HU.was_running && !running) {
