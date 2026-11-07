@@ -273,7 +273,7 @@ void pad_exit_watch() {
     request_game_close();
 }
 
-/* Lichii build 88 (release notes, known issue): a fence-worker shutdown race can leave lichii.exe waiting after its window closed. The session
+/* Lichii builds 88-95 (build 88 release notes, known issue; still unfixed in build 95): a fence-worker shutdown race can leave lichii.exe waiting after its window closed. The session
  * (save copy-back, vault sync) waits for the whole job, so once the game had a window and every window of the job has been gone for 15 s,
  * the job is ended. Only RetroHub's own Lichii runs in that job (Kind::Lichii is never a user's install); by handle, never by image name. */
 static bool g_hookshot_run = false;   // the running game is Hookshot (set by launch_hookshot)
@@ -284,7 +284,7 @@ void lichii_hang_watch() {
     static ULONGLONG gone_since = 0;
     static ULONGLONG cpu_at_gone = 0, idle_since = 0;
     if (!A.proc) g_hookshot_run = false;
-    if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii build 88 issue
+    if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95)
     const ULONGLONG now = GetTickCount64();
     if (game_main_window()) { had_window = true; gone_since = 0; return; }
     if (!had_window) return;
@@ -299,7 +299,7 @@ void lichii_hang_watch() {
         if (c > cpu_at_gone + 2000000) { cpu_at_gone = c; idle_since = now; }   // more than 0.2 s of CPU since the last check
     }
     if (now - gone_since < 15000 || now - idle_since < 10000) return;
-    autotest_log("lichii: window closed 15 s ago but the process is still running (build 88 exit hang): ending its job");
+    autotest_log("lichii: window closed 15 s ago but the process is still running (Lichii exit hang): ending its job");
     if (A.job_h) TerminateJobObject(A.job_h, 0);
     else TerminateProcess(A.proc, 0);
     had_window = false;
