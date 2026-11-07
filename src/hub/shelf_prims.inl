@@ -98,20 +98,33 @@ void image(Ctx& x, const Face& f, float u0, float v0, float u1, float v1, SDL_Te
  * reading top to bottom) starts at its top end with the glyph tops pointing to +x, so lx is the right edge of the line. */
 void face_text(Ctx& x, const Face& f, ImFont* font, float size, const char* s, float lx, float ly, ImU32 col, bool vertical, float track = 0.f) {
     if (!font || !s || !*s || size < 3.f || !x.detail) return;
-    {   // draw from the smallest same-weight atlas font that is still >= 95% of `size`: shrinking a glyph drops whole 1-px rows under
-        // nearest sampling (the headless software renderer) and thins them under linear ("GENRE" read "GFNRF" on case backs)
+    {   // Pick the same-weight atlas font whose glyphs are never SHRUNK on screen. Shrinking drops whole 1-px rows under nearest
+        // sampling (the headless software renderer) and thins them under linear: "GENRE" read "GFNRF", "PLAYERS" "PI AYFRS" on case
+        // backs. The on-screen glyph height is `size` times the face's projected scale (a case seen at an angle or from afar is
+        // smaller than its local px), so that is the size to match. The tiny fonts are 2x vertically oversampled: they survive
+        // shrinking to about half size, so they cover the small end; the others may only be enlarged. Of the fonts that fit, the
+        // largest wins (closest to 1:1, crispest shapes).
         const ui::Fonts& F = ui::F;
         const bool heavy = font == F.bold || font == F.h2 || font == F.title || font == F.hero || font == F.big || font == F.tiny_bold;
         ImFont* const reg[] = {F.tiny, F.cap, F.body};
         ImFont* const bld[] = {F.tiny_bold, F.bold, F.h2, F.title, F.hero, F.big};
         ImFont* const* list = heavy ? bld : reg;
         const int count = heavy ? 6 : 3;
-        ImFont* best = font;
+        auto len = [](ImVec2 a, ImVec2 b) { const float dx = b.x - a.x, dy = b.y - a.y; return std::sqrt(dx * dx + dy * dy); };
+        const float sy = 0.5f * (len(f.q[0], f.q[3]) + len(f.q[1], f.q[2])) / std::max(1.f, f.H);   // screen px per local px, down the face
+        const float sx = 0.5f * (len(f.q[0], f.q[1]) + len(f.q[3], f.q[2])) / std::max(1.f, f.W);   // ... and across it
+        const float target = size * std::max(0.05f, vertical ? sx : sy);   // glyph height as drawn (vertical text runs across the face)
+        ImFont* best = nullptr;
+        ImFont* smallest = nullptr;
         for (int i = 0; i < count; ++i) {
             ImFont* c = list[i];
-            if (c && c->ContainerAtlas == font->ContainerAtlas && c->FontSize >= size * 0.95f && c->FontSize < best->FontSize) best = c;
+            if (!c || c->ContainerAtlas != font->ContainerAtlas) continue;
+            if (!smallest || c->FontSize < smallest->FontSize) smallest = c;
+            const bool oversampled = c == F.tiny || c == F.tiny_bold;
+            const float min_draw = c->FontSize * (oversampled ? 0.55f : 1.f);   // smallest on-screen height this font keeps every row at
+            if (min_draw <= target * 1.02f && (!best || c->FontSize > best->FontSize)) best = c;
         }
-        font = best;
+        font = best ? best : smallest ? smallest : font;   // smaller than every atlas font can draw cleanly: the smallest shrinks least
     }
     ImDrawList* dl = x.dl;
     const float sc = size / font->FontSize;
