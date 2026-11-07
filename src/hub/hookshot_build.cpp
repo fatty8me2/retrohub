@@ -53,6 +53,7 @@ static bool dir_empty(const fs::path& p) {   // false when the folder cannot be 
     fs::directory_iterator it(p, ec);
     return !ec && it == fs::directory_iterator();
 }
+static bool has_saves(const fs::path& dir) { return is_dir(dir / "user") && !dir_empty(dir / "user"); }   // a missing user\ = no saves to keep
 static std::string trim(const std::string& s) {
     size_t a = 0, b = s.size();
     while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r' || s[a] == '\n')) ++a;
@@ -67,6 +68,14 @@ static std::string data_dir_clean() {
 static std::string emu_root() { return S(P(data_dir_clean()) / "emulators"); }
 static std::string staging_dir() { return S(P(emu_root()) / "hookshot.staging"); }
 static std::string old_dir() { return S(P(emu_root()) / "hookshot.old"); }
+static std::string stamp_for_folder() {
+    char b[32];
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    localtime_s(&tm, &t);
+    std::strftime(b, sizeof b, "%Y%m%d-%H%M%S", &tm);
+    return b;
+}
 std::string kit_dir() { return S(P(emu_root()) / "hookshot-kit"); }
 bool kit_present() { return is_dir(P(kit_dir())); }
 
@@ -413,7 +422,7 @@ bool swap_in(const std::string& staging_s, const std::string& game_s, const std:
     auto fail = [&](const std::string& m) { if (err) *err = m; return false; };
     if (!is_dir(staging)) return fail("The new build is missing, so nothing was changed.");
     if (!pexists(game)) {   // first build: nothing to keep
-        if (pexists(old) && !dir_empty(old / "user")) return fail("An earlier backup folder holds saves (" + old_s + "). It was left alone and nothing was changed.");
+        if (pexists(old) && has_saves(old)) return fail("An earlier backup folder holds saves (" + old_s + "). It was left alone and nothing was changed.");
         fs::rename(staging, game, ec);
         return ec ? fail("Could not put the new build in place: " + ec.message()) : true;
     }
@@ -480,6 +489,55 @@ std::string recover_swap(const std::string& staging_s, const std::string& game_s
     return trim(did);
 }
 
+bool remove_staging_keeping_saves(const std::string& staging_s, const std::string& parent_s, std::string* note) {
+    const fs::path staging = P(staging_s);
+    std::error_code ec;
+    if (note) note->clear();
+    if (!pexists(staging)) return true;
+    if (has_saves(staging) || (is_dir(staging / "user") && !dir_empty(staging / "user"))) {
+        fs::path base = P(parent_s) / ("hookshot-saves-recovered-" + stamp_for_folder());
+        for (int n = 2; pexists(base) && n < 100; ++n) base = P(parent_s) / ("hookshot-saves-recovered-" + stamp_for_folder() + "-" + std::to_string(n));
+        fs::create_directories(base, ec);
+        fs::rename(staging / "user", base / "user", ec);
+        if (ec) {
+            if (note) *note = "Saves were found in " + staging_s + " but could not be moved away (" + ec.message() + "). The folder was kept: move it away and try again.";
+            return false;
+        }
+        if (note) *note = "Saves from an earlier build were moved to " + S(base / "user") + ".";
+    }
+    ec.clear();
+    fs::remove_all(staging, ec);
+    return true;
+}
+
+bool exe_running_from(const std::string& exe_path) {
+    std::error_code ec;
+    std::wstring want = fs::weakly_canonical(P(exe_path), ec).wstring();
+    if (ec || want.empty()) want = P(exe_path).wstring();
+    const std::wstring name = P(exe_path).filename().wstring();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof pe;
+    bool found = false;
+    for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, name.c_str()) != 0) continue;
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+        if (!h) { found = true; continue; }   // cannot tell: assume it is ours (the safe side)
+        wchar_t buf[32768];
+        DWORD n = (DWORD)(sizeof buf / sizeof buf[0]);
+        if (QueryFullProcessImageNameW(h, 0, buf, &n)) {
+            std::error_code e2;
+            std::wstring got = fs::weakly_canonical(fs::path(std::wstring(buf, n)), e2).wstring();
+            if (e2) got.assign(buf, n);
+            if (_wcsicmp(got.c_str(), want.c_str()) == 0) found = true;
+        } else found = true;
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
+    return found;
+}
+
 /* ======================================================================================================================== */
 /* running programs                                                                                                         */
 /* ======================================================================================================================== */
@@ -537,25 +595,44 @@ struct Spawned {
  * creation flags (CREATE_SUSPENDED, BELOW_NORMAL_PRIORITY_CLASS). */
 bool spawn_piped(const std::wstring& cmdline, const std::wstring& cwd, const EnvEdit& env, DWORD flags, Spawned* out, std::string* err) {
     std::lock_guard<std::mutex> lk(g_spawn_mu);   // so no other child of ours inherits this pipe's write end
-    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+    // The handles start NON-inheritable; only the two the child needs are made inheritable right before CreateProcess, are the only ones
+    // named in PROC_THREAD_ATTRIBUTE_HANDLE_LIST, and are made non-inheritable again right after. (A CreateProcess elsewhere in RetroHub
+    // that runs inside that short window with bInheritHandles could still inherit them: Windows needs the flag set for a list entry.)
     HANDLE rd = nullptr, wr = nullptr;
-    if (!CreatePipe(&rd, &wr, &sa, 0)) { if (err) *err = "could not create a pipe"; return false; }
-    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
-    HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = nul == INVALID_HANDLE_VALUE ? nullptr : nul;
-    si.hStdOutput = wr;
-    si.hStdError = wr;
+    if (!CreatePipe(&rd, &wr, nullptr, 0)) { if (err) *err = "could not create a pipe"; return false; }
+    HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    const bool have_nul = nul != INVALID_HANDLE_VALUE;
+    SetHandleInformation(wr, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+    if (have_nul) SetHandleInformation(nul, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof(STARTUPINFOEXW);
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdInput = have_nul ? nul : nullptr;
+    si.StartupInfo.hStdOutput = wr;
+    si.StartupInfo.hStdError = wr;
+    HANDLE list[2];
+    DWORD nlist = 0;
+    list[nlist++] = wr;
+    if (have_nul) list[nlist++] = nul;
+    SIZE_T asz = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &asz);
+    std::vector<char> abuf(asz ? asz : 1);
+    auto* attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)abuf.data();
+    bool attrs_ok = asz && InitializeProcThreadAttributeList(attrs, 1, 0, &asz) &&
+                    UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, list, nlist * sizeof(HANDLE), nullptr, nullptr);
+    DWORD cflags = flags | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
+    if (attrs_ok) { si.lpAttributeList = attrs; cflags |= EXTENDED_STARTUPINFO_PRESENT; }
     std::wstring cmd = cmdline;
     std::wstring blk = make_env_block(env);
     PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, flags | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, (LPVOID)blk.data(),
-                             cwd.empty() ? nullptr : cwd.c_str(), &si, &pi);
+    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, cflags, (LPVOID)blk.data(),
+                             cwd.empty() ? nullptr : cwd.c_str(), &si.StartupInfo, &pi);
     const DWORD le = GetLastError();
+    if (attrs_ok) DeleteProcThreadAttributeList(attrs);
+    SetHandleInformation(wr, HANDLE_FLAG_INHERIT, 0);
+    if (have_nul) SetHandleInformation(nul, HANDLE_FLAG_INHERIT, 0);
     CloseHandle(wr);
-    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+    if (have_nul) CloseHandle(nul);
     if (!ok) {
         CloseHandle(rd);
         if (err) *err = "could not start " + winutil::to_utf8(cmdline.substr(0, cmdline.find(L' '))) + " (error " + std::to_string(le) + ")";
@@ -660,7 +737,11 @@ int run_in_job(const std::string& exe, const std::vector<std::string>& args, con
     if (!job) { if (err) *err = "could not create a job object"; return -1; }
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
     li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof li);
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof li)) {   // without kill-on-close the build could outlive RetroHub
+        if (err) *err = "could not set up the build's job object (error " + std::to_string(GetLastError()) + ")";
+        CloseHandle(job);
+        return -1;
+    }
     Spawned sp;
     if (!spawn_piped(make_cmdline(exe, args), W(cwd), env, CREATE_SUSPENDED | BELOW_NORMAL_PRIORITY_CLASS, &sp, err)) { CloseHandle(job); return -1; }
     if (!AssignProcessToJobObject(job, sp.proc)) {
@@ -670,8 +751,14 @@ int run_in_job(const std::string& exe, const std::vector<std::string>& args, con
         CloseHandle(job);
         return -1;
     }
+    if (ResumeThread(sp.thread) == (DWORD)-1) {
+        if (err) *err = "could not start the build's process (error " + std::to_string(GetLastError()) + ")";
+        TerminateProcess(sp.proc, 1);
+        sp.close();
+        CloseHandle(job);
+        return -1;
+    }
     if (publish_job) g_job = job;
-    ResumeThread(sp.thread);
     JobPauser pauser;
     pauser.job = job;
     std::string pending;
@@ -748,6 +835,8 @@ struct G {
     // kit
     std::atomic<int64_t> kit_size{-1};
     std::atomic<bool> kit_busy{false};
+    std::mutex xmu;                         // start_build / remove_kit_async: check-and-set of running / kit_busy as one step
+    std::atomic<bool> swapping{false};      // a finished build waits for the game to close / is being swapped in
     std::mutex log_mu;
     std::ofstream log;
 };
@@ -1129,8 +1218,11 @@ bool remove_kit(std::string* err) {
 }
 
 void remove_kit_async() {
-    if (g().running.load()) return;
-    if (g().kit_busy.exchange(true)) return;
+    {
+        std::lock_guard<std::mutex> lk(g().xmu);
+        if (g().running.load()) return;
+        if (g().kit_busy.exchange(true)) return;
+    }
     std::thread([] {
         std::string e;
         remove_kit(&e);
@@ -1360,15 +1452,21 @@ void run_build(std::string game_path, std::string key, std::string language) {
     Monitor mon;
     auto stop_monitor = [&] { mon.halt(); };
     auto cancelled = [&] { return g().cancel.load(); };
-    auto bail = [&](const std::string& msg) {   // a failure: the partly built files go, the tools stay
-        std::error_code ec;
-        fs::remove_all(P(staging), ec);
+    // The partly built files go, never saves: staging\user is moved out first (remove_staging_keeping_saves)
+    auto clear_staging = [&]() -> std::string {
+        std::string note;
+        remove_staging_keeping_saves(staging, emu_root(), &note);
+        if (!note.empty()) log_line("staging: " + note);
+        return note;
+    };
+    auto bail = [&](const std::string& msg) {   // a failure: the tools stay
+        const std::string note = clear_staging();
         stop_monitor();
-        finish(BuildState::Failed, msg);
+        finish(BuildState::Failed, note.empty() ? msg : msg + " " + note);
     };
     auto was_cancelled = [&] {
+        clear_staging();
         std::error_code ec;
-        fs::remove_all(P(staging), ec);
         fs::remove_all(P(work), ec);
         stop_monitor();
         finish(BuildState::Cancelled, "");
@@ -1389,6 +1487,11 @@ void run_build(std::string game_path, std::string key, std::string language) {
     // 0. an earlier swap that was cut short
     const std::string rec = recover_swap(staging, game, old);
     if (!rec.empty()) log_line("recovered an interrupted swap: " + rec);
+    {   // a leftover staging folder from a crash goes, but its saves (when recover_swap could not put them back) are moved to safety first
+        std::string note;
+        if (!remove_staging_keeping_saves(staging, emu_root(), &note)) { log_line("staging: " + note); stop_monitor(); finish(BuildState::Failed, note); return; }
+        if (!note.empty()) log_line("staging: " + note);
+    }
 
     // 1. requirements, fresh
     set_state(BuildState::Preparing, "prepare", "Checking your PC");
@@ -1401,10 +1504,6 @@ void run_build(std::string game_path, std::string key, std::string language) {
     if (src.kind == GameSource::None) return bail(src.problem);
     if (cancelled()) return was_cancelled();
 
-    // a leftover staging folder from a crash goes (its saves, if any, were put back above); the build starts clean
-    if (is_dir(P(staging) / "user") && !dir_empty(P(staging) / "user")) return bail("An earlier build left a folder with saves in it (" + staging + "). It was kept: move it away and try again.");
-    fs::remove_all(P(staging), ec);
-
     // 2. the kit
     set_state(BuildState::Downloading, "kit-src", "Getting the build tools ready");
     KitIO io;
@@ -1412,7 +1511,7 @@ void run_build(std::string game_path, std::string key, std::string language) {
     io.data = hub::exe_dir() + "data/hookshot";
     io.sdl2_dll = hub::exe_dir() + "SDL2.dll";
     io.cancel = &g().cancel;
-    io.pause = &g().pause;
+    io.pause = nullptr;   // the downloads and unpacking run on while a game plays; only the check and build stages pause
     io.report = [](const std::string& id, const std::string& text, float p) {
         {
             std::lock_guard<std::mutex> lk(g().mu);
@@ -1518,6 +1617,21 @@ void run_build(std::string game_path, std::string key, std::string language) {
     if (!hookshot::write_stamp(staging, stamp)) return bail("Could not write the build's stamp file.");
     std::string why;
     if (!hookshot::ready(&why, staging)) return bail("The build finished but is incomplete: " + why + ".");
+    // The old build's hookshot.exe cannot be moved while it runs, and a launch must not start into the middle of the swap:
+    // refuse launches, then wait (cancellable) until no process runs from game_dir()\hookshot.exe.
+    g().swapping = true;
+    struct SwapFlag { ~SwapFlag() { g().swapping = false; } } swap_flag;
+    if (exe_running_from(hookshot::exe_path())) {
+        set_state(BuildState::Building, "swap", "Waiting for the game to close");
+        log_line("swap: waiting for hookshot.exe to close");
+        while (exe_running_from(hookshot::exe_path())) {
+            for (int i = 0; i < 20; ++i) {   // polls every 2 s, looks at cancel every 100 ms
+                if (cancelled()) return was_cancelled();
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+        set_state(BuildState::Building, "swap", "Putting the game in place");
+    }
     std::string swap_err;
     if (!swap_in(staging, game, old, &swap_err)) {   // both folders stay: no partial removal
         log_line("swap: " + swap_err);
@@ -1536,8 +1650,11 @@ bool start_build(const hub::GameEntry& e, const std::string& language, std::stri
     auto fail = [&](const std::string& m) { if (err) *err = m; return false; };
     if (!supports(e)) return fail("This game can't be built.");
     if (!language_valid(language)) return fail("Unknown language.");
-    if (g().kit_busy.load()) return fail("The build tools are being removed. Try again in a moment.");
-    if (g().running.exchange(true)) return fail("A build is already running.");
+    {
+        std::lock_guard<std::mutex> lk(g().xmu);
+        if (g().kit_busy.load()) return fail("The build tools are being removed. Try again in a moment.");
+        if (g().running.exchange(true)) return fail("A build is already running.");
+    }
     if (g().th.joinable()) g().th.join();
     g().cancel = false;
     g().pause = false;
@@ -1566,10 +1683,13 @@ void cancel_build() { g().cancel = true; }
 
 bool build_running() { return g().running.load(); }
 
+bool swap_in_progress() { return g().swapping.load(); }
+
 BuildStatus build_status() {
     std::lock_guard<std::mutex> lk(g().mu);
     BuildStatus s = g().st;
-    if (g().running.load() && g().pause.load() && s.state != BuildState::Done && s.state != BuildState::Failed && s.state != BuildState::Cancelled) {
+    // Only the CPU-heavy stages pause for a game; downloads never do (a stalled transfer times out and restarts from zero)
+    if (g().running.load() && g().pause.load() && (s.state == BuildState::Checking || s.state == BuildState::Building) && s.stage_id != "swap") {
         s.state = BuildState::Paused;
         s.paused_for_game = true;
     }

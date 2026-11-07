@@ -155,6 +155,15 @@ bool swap_in(const std::string& staging, const std::string& game, const std::str
 /* After a crash in the middle of swap_in: puts a stranded staging\user back, and renames `old` back to `game` when game is gone.
  * Returns what it did ("" = nothing to do). */
 std::string recover_swap(const std::string& staging, const std::string& game, const std::string& old);
+/* Removes a leftover `staging` folder WITHOUT ever deleting saves: when staging\user holds anything it is first MOVED to
+ * <recovered_parent>\hookshot-saves-recovered-<timestamp>\user. If that move fails staging is NOT deleted and false comes back.
+ * *note (may be null) says what happened ("" = nothing special; else a sentence for the log / the failure message). */
+bool remove_staging_keeping_saves(const std::string& staging, const std::string& recovered_parent, std::string* note);
+
+/* True while a process runs from this exact exe path (case-insensitive full-path match, not just the file name). */
+bool exe_running_from(const std::string& exe_path);
+/* True while a finished build waits to be swapped in (or is being swapped in): launch_hookshot refuses to start meanwhile. */
+bool swap_in_progress();
 
 /* ---- the process runner the pipeline uses (tested with harmless commands) ----
  * Runs a program without a window, at below-normal priority, inside a kill-on-close job; every stdout/stderr line goes to on_line.
