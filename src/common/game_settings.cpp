@@ -148,6 +148,10 @@ std::vector<Option> build() {
     // DMA Unsafe added nothing on top of Low, so only this is exposed. "lichii" leaves whatever is set inside Lichii.
     v.push_back(mk("switch.gpu_accuracy", "GPU accuracy", "Video", SWITCH, K::Choice, S::Visual, "low",
                    {{"low", "Low (faster)"}, {"high", "High (more accurate, slower)"}, {"lichii", "Use Lichii's setting"}}));
+    // Which program plays Ocarina of Time (Switch 2): Hookshot (the native PC build RetroHub makes from the player's own game) or Lichii.
+    // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.
+    v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "auto",
+                   {{"auto", "Hookshot (native PC version) when it's built"}, {"lichii", "Lichii (emulator)"}}));
     return v;
 }
 
