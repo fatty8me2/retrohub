@@ -1,5 +1,7 @@
 #include "app.h"
 
+#include "hookshot.h"
+
 /* ---------- per-game settings UI (details modal section + "Game defaults" area in Settings) ---------- */
 
 hub::gs::Store GSTORE;
@@ -65,6 +67,10 @@ void options_grouped(hub::System sys, const std::string& game_key, int level) {
         bool any = false;
         for (auto* o : opts) {
             if (std::string(group_label(o->group)) != grp) continue;
+            if (o->key == hookshot::kRunnerSetting) {   // only for the one game Hookshot runs, never in the per-system defaults
+                const hub::GameEntry* ge = level == 2 ? find_entry(game_key) : nullptr;
+                if (!ge || !hookshot::supports(*ge)) continue;
+            }
             if (!any) { ImGui::Dummy(ImVec2(0, sp(0.4f))); ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted(grp); ImGui::PopFont(); any = true; }
             hub::gs::Values v = level == 2 ? hubui::effective_values(GSTORE, sys, game_key, A.st.fullscreen, A.st.volume)
                                            : GSTORE.resolve(sys, "");

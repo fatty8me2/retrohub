@@ -213,6 +213,9 @@ struct SaveSession {
 /* Before launch: vault -> emulator (newest wins; see sync_tree_newest). */
 SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& vault_battery_dir,
                           const std::string& vault_root, uint64_t title_id_override = 0);   // override: Wii U title id read from an unpacked .wua
+/* The vault -> emulator step of begin_session (newest wins), for a session whose fields the caller filled in (s.active, emu_root, battery,
+ * backup_dir, rels, vault_rels, manifest_path); sets s.summary and s.error. */
+void sync_vault_to_emulator(SaveSession& s);
 /* After exit: emulator -> vault. */
 void end_session(SaveSession& s);
 

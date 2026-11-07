@@ -8,7 +8,10 @@
  * PC stays in step. Source audited 2026-11-07 at kSourceCommit: no network code, no telemetry, no registry or system
  * changes (docs/HOOKSHOT.md). The build pipeline is hookshot_build.h. */
 #include <cstdint>
+#include <map>
 #include <string>
+
+#include "emulators.h"
 
 namespace hub { struct GameEntry; }
 
@@ -42,5 +45,22 @@ bool write_stamp(const std::string& dir, const Stamp& s);
 /* Ready to play from `dir` (default game_dir()): hookshot.exe, hookshot_vk.dll, SDL2.dll and romfs\ exist and the stamp
  * names kSourceCommit. why (optional): what is missing, in plain words. */
 bool ready(std::string* why = nullptr, const std::string& dir = std::string());
+
+/* Setting "switch.runner" (game_settings.cpp, Visual, shown only for games where supports() is true): "auto" (default) = Hookshot once it
+ * is built, "lichii" = always the emulator. Never read by online / sync code: Hookshot is offline only. */
+constexpr const char* kRunnerSetting = "switch.runner";
+using Values = std::map<std::string, std::string>;   // == hub::gs::Values
+/* Play this game with Hookshot: supports(e), ready(), and the setting is not "lichii". */
+bool use_for(const hub::GameEntry& e, const Values& v);
+
+/* Is a Media Foundation AV1 video decoder installed (Microsoft's free "AV1 Video Extension")? Without one Hookshot would open a top-most
+ * message box over the game, so RetroHub asks first. Cached; force_recheck re-asks Windows (after the player installed it, and on the next Play). */
+bool av1_decoder_present(bool force_recheck = false);
+constexpr const char* kAv1StoreUri = "ms-windows-store://pdp/?ProductId=9MVZQVXJBQ9V";
+
+/* Saves: <user_dir()>/kSaveRel <-> <vault battery>/save/0400486024DEC000 (the folder the Lichii branch of hubemu::begin_session uses, so the
+ * two stay interchangeable). Same vault->emulator newest-wins step as begin_session, with its own "last agreed" manifest (suffix -hookshot).
+ * Finish with hubemu::end_session(). Inactive (nothing copied) when e is not supported. */
+hubemu::SaveSession begin_save_session(const hub::GameEntry& e, const std::string& vault_battery_dir);
 
 }   // namespace hookshot

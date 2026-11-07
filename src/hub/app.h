@@ -1077,6 +1077,11 @@ void ps2_bios_ask(const std::string& key);   // ps1_ui.cpp: "PlayStation 2 BIOS"
 bool switch_ready_or_ask(const hub::GameEntry& e, const std::string& install_dir);   // switch_ui.cpp: keys + firmware present (else the prompt opens for the game)
 void switch_setup_ask_shot();      // switch_ui.cpp: the prompt without a game (screenshots)
 void draw_switch_dialogs();        // switch_ui.cpp
+void hookshot_av1_ask(const hub::GameEntry& e);   // hookshot_run_ui.cpp: "movies need Microsoft's AV1 Video Extension" prompt before Hookshot starts
+void hookshot_av1_ask_shot();                      // same, without a game (screenshots)
+bool hookshot_lichii_once_consume(const std::string& key);   // one-shot: "Play with Lichii this time" was chosen for this game
+void draw_hookshot_run_dialogs();
+bool hookshot_running();                           // launch.cpp: the running game is Hookshot (no emulator)
 void switch_settings_ui();         // switch_ui.cpp: Settings > Playing block (Lichii, keys, firmware)
 namespace hubemu { struct SdlBinds; }
 bool lichii_pad_for(const hubctl::Profile& prof, std::string* guid, int* port, hubemu::SdlBinds* binds);   // page_controllers.cpp: player 1's pad + raw SDL binds
