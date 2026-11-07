@@ -1159,7 +1159,7 @@ static void test_lichii_upgrade(const fs::path& root) {
             if (n == "user" || n == "_old") continue;
             fs::rename(c.path(), dir / "_old" / n, ec);
         }
-        write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\n");
+        write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\nphase 2\n");   // every old file parked, the new ones coming in
         write_text(dir / "fourth.dll", "half-written");
         write_text(dir / "_extract" / "junk.bin", "junk");
         CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());   // right now it does not look installed
@@ -1180,7 +1180,7 @@ static void test_lichii_upgrade(const fs::path& root) {
             if (n == "user" || n == "_old") continue;
             fs::rename(c.path(), dir / "_old" / n, ec);
         }
-        write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\n");
+        write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\nphase 2\n");
         write_text(dir / "_extract" / "junk.bin", "junk");
         use(v4);
         CHECK(run(&err) && playable("EXE-4") && marker_has(v4) && snapshot(user) == data && scratch_gone());
@@ -1209,6 +1209,46 @@ static void test_lichii_upgrade(const fs::path& root) {
         CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());
         offline = false;
         CHECK(run(&err) && playable("EXE-4") && marker_has(v4) && snapshot(user) == data && scratch_gone());
+    }
+    // ---- 7. a power cut while the first journal was written: it is empty and nothing has moved yet, so nothing may be removed
+    {
+        const Files before = snapshot(dir);
+        fs::create_directories(dir / "_old", ec);
+        write_text(dir / "retrohub-upgrade.txt", "");
+        write_text(dir / "retrohub-upgrade.txt.tmp", "to build-98\nsha");
+        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());
+        CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone() && !fs::exists(dir / "retrohub-upgrade.txt.tmp"));
+        // no phase line, and the new build's lichii.exe already clashes with the parked old one: the old one comes back over it
+        fs::create_directories(dir / "_old", ec);
+        fs::rename(dir / "lichii.exe", dir / "_old" / "lichii.exe", ec);
+        write_text(dir / "lichii.exe", "EXE-NEW");
+        write_text(dir / "retrohub-upgrade.txt", "to build-98\nsha256 0000\n");
+        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());
+        CHECK(snapshot(dir) == before && playable("EXE-4") && scratch_gone());
+    }
+
+    // ---- 8. a rollback that cannot finish yet (a parked file still in use): the next install job must keep _old, not wipe it, and finish later
+    {
+        const Files before = snapshot(dir);
+        fs::create_directories(dir / "_old", ec);
+        for (auto& c : fs::directory_iterator(dir, ec)) {
+            const std::string n = c.path().filename().string();
+            if (n == "user" || n == "_old") continue;
+            fs::rename(c.path(), dir / "_old" / n, ec);
+        }
+        write_text(dir / "retrohub-upgrade.txt", "to build-98\nsha256 0000\nphase 2\n");
+        const fs::path parked = dir / "_old" / "lichii.exe";
+        HANDLE h = CreateFileW(parked.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // no FILE_SHARE_DELETE: it cannot move back
+        CHECK(h != INVALID_HANDLE_VALUE);
+        fetches = 0;
+        err.clear();
+        const bool r = run(&err);
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        CHECK(!r && err.find("could not be finished") != std::string::npos && fetches == 0);
+        CHECK(fs::exists(parked) && fs::exists(dir / "retrohub-upgrade.txt") && snapshot(user) == data);   // the only copy of the old exe survived
+        fetches = 0;
+        CHECK(run(&err) && fetches == 0);   // file free again: rolled back, and the install is current, so nothing is downloaded
+        CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
     }
     hubemu::set_install_test_hooks(nullptr);
     fs::remove_all(root, ec);

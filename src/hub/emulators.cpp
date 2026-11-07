@@ -458,9 +458,23 @@ static bool exe_is_running(const std::string& exe) {
 static const char* const kStageDir = "_extract";   // the unpacked download
 static const char* const kOldDir = "_old";         // the previous build's program files while an upgrade swaps
 static const char* const kJournal = "retrohub-upgrade.txt";
+static const char* const kJournalTmp = "retrohub-upgrade.txt.tmp";
 
 static bool is_scratch(const std::string& n) {
-    return _stricmp(n.c_str(), kStageDir) == 0 || _stricmp(n.c_str(), kOldDir) == 0 || _stricmp(n.c_str(), kJournal) == 0;
+    return _stricmp(n.c_str(), kStageDir) == 0 || _stricmp(n.c_str(), kOldDir) == 0 || _stricmp(n.c_str(), kJournal) == 0 || _stricmp(n.c_str(), kJournalTmp) == 0;
+}
+
+/* The journal is never seen half-written (a power cut while writing it): the text goes to a temp file first, which then replaces the journal in one step. */
+static bool write_journal(const std::string& dir, const std::string& text) {
+    const std::string tmp = join(dir, kJournalTmp);
+    {
+        std::ofstream f(P(tmp), std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        f.write(text.data(), (std::streamsize)text.size());
+        f.flush();
+        if (!f) return false;
+    }
+    return MoveFileExW(P(tmp).c_str(), P(join(dir, kJournal)).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 }
 
 static std::vector<fs::path> children(const std::string& dir) {
@@ -494,8 +508,13 @@ static bool restore_old(const std::string& dir, const std::vector<std::string>& 
     }
     bool ok = true;
     for (const fs::path& c : children(old)) {
+        const std::string n = S(c.filename());
+        const fs::path to = P(dir) / c.filename();
         std::error_code ec;
-        fs::rename(c, P(dir) / c.filename(), ec);
+        /* A name is in exactly one of dir and _old while parking (phase 1), so a clash means the new build already put its own copy there (phase 2):
+         * that copy goes and the old one comes back. Never the kept data or the scratch. */
+        if (!name_in(keep, n) && !is_scratch(n) && fs::exists(fs::symlink_status(to, ec))) remove_tree(S(to));
+        fs::rename(c, to, ec);
         if (ec) ok = false;
     }
     if (!ok) return false;
@@ -503,6 +522,7 @@ static bool restore_old(const std::string& dir, const std::vector<std::string>& 
     remove_tree(join(dir, kStageDir));
     std::error_code ec;
     fs::remove(P(join(dir, kJournal)), ec);
+    fs::remove(P(join(dir, kJournalTmp)), ec);
     return true;
 }
 
@@ -516,13 +536,13 @@ void recover_interrupted(Kind k, const std::string& root) {
     const std::string journal = join(dir, kJournal);
     if (file_exists(journal)) {
         std::string want;
-        bool drop_new = true;   // (no phase line: assume the later phase)
+        bool drop_new = false;   // (no phase line: assume parking, which removes nothing; restore_old still replaces any new file that clashes with a parked one)
         std::istringstream ls(read_text(journal));
         std::string line;
         while (std::getline(ls, line)) {
             while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
             if (line.compare(0, 7, "sha256 ") == 0) want = line.substr(7);
-            if (line == "phase 1") drop_new = false;
+            if (line == "phase 2") drop_new = true;
         }
         if (!want.empty() && installed_sha(dir) == want && file_exists(join(dir, U(release(k).exe)))) {   // finished: only the scratch is left
             remove_tree(join(dir, kOldDir));
@@ -537,6 +557,8 @@ void recover_interrupted(Kind k, const std::string& root) {
     }
     remove_tree(join(dir, kStageDir));
     remove_tree(join(dir, kOldDir));
+    std::error_code ec;
+    fs::remove(P(join(dir, kJournalTmp)), ec);
 }
 
 /* The swap of an upgrade: `inner` (the unpacked new build, a folder under dir\_extract) replaces the program files in `dir`. See recover_interrupted for the
@@ -547,7 +569,7 @@ static bool swap_in_new_build(Kind k, const std::string& dir, const std::string&
     remove_tree(old);
     make_dirs(old);
     const std::string jtext = std::string("to ") + rel.version + "\nsha256 " + rel.sha256 + "\n";
-    if (!write_text(join(dir, kJournal), jtext + "phase 1\n")) { remove_tree(old); *err = "cannot write the upgrade journal"; return false; }
+    if (!write_journal(dir, jtext + "phase 1\n")) { remove_tree(old); *err = "cannot write the upgrade journal"; return false; }
     bool phase2 = false;
     auto fail = [&](const std::string& why) {
         *err = why;
@@ -561,7 +583,7 @@ static bool swap_in_new_build(Kind k, const std::string& dir, const std::string&
         fs::rename(c, P(old) / c.filename(), ec);
         if (ec) return fail("could not move " + n + " aside (is something using it?)");
     }
-    if (!write_text(join(dir, kJournal), jtext + "phase 2\n")) return fail("cannot write the upgrade journal");
+    if (!write_journal(dir, jtext + "phase 2\n")) return fail("cannot write the upgrade journal");
     phase2 = true;
     for (const fs::path& c : children(inner)) {   // 2. the new ones come in; a `user` folder in the archive is ignored
         const std::string n = S(c.filename());
@@ -580,6 +602,10 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     std::string exe = join(dir, U(rel.exe));
     const std::vector<std::string> keep = preserved_names(k);
     recover_interrupted(k, root);   // an upgrade that a crash cut short comes back to a whole install first
+    if (upgradable(k) && file_exists(join(dir, kJournal))) {   // ...but could not be undone yet (a file still in use): the parked old build in _old must survive for the next try
+        *err = std::string("an earlier ") + name(k) + " update could not be finished yet. Close " + name(k) + " if it is open, then try again";
+        return false;
+    }
     const bool complete = file_exists(exe) && file_exists(join(dir, "retrohub-install.txt"));   // (marker is written last)
     if (complete && (!upgradable(k) || installed_sha(dir) == rel.sha256)) return true;
     const bool upgrading = complete;   // an older pin: the old build stays installed and working until the new one is whole
