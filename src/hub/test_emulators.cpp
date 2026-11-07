@@ -1251,6 +1251,72 @@ static void test_lichii_upgrade(const fs::path& root) {
         CHECK(run(&err) && fetches == 0);   // file free again: rolled back, and the install is current, so nothing is downloaded
         CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
     }
+
+    auto park_all = [&]() {
+        fs::create_directories(dir / "_old", ec);
+        for (auto& c : fs::directory_iterator(dir, ec)) {
+            const std::string n = c.path().filename().string();
+            if (n == "user" || n == "_old") continue;
+            fs::rename(c.path(), dir / "_old" / n, ec);
+        }
+    };
+    auto lock = [](const fs::path& f) {   // no FILE_SHARE_DELETE: it can be read, but not renamed, replaced or deleted
+        return CreateFileW(f.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    };
+
+    // ---- 9. phase 2 with a new file to drop, and the journal cannot be rewritten to phase 3: nothing may move back yet, and nothing old may be lost
+    {
+        const Files before = snapshot(dir);
+        park_all();
+        write_text(dir / "retrohub-upgrade.txt", "to build-98\nsha256 0000\nphase 2\n");
+        write_text(dir / "fresh.dll", "new-build-file");
+        HANDLE h = lock(dir / "retrohub-upgrade.txt");
+        CHECK(h != INVALID_HANDLE_VALUE);
+        fetches = 0;
+        err.clear();
+        const bool r = run(&err);
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        CHECK(!r && err.find("could not be finished") != std::string::npos && fetches == 0);
+        CHECK(!fs::exists(dir / "fresh.dll") && fs::exists(dir / "_old" / "lichii.exe") && fs::exists(dir / "_old" / "retrohub-install.txt"));   // new file gone, old ones still parked
+        CHECK(read_text(dir / "retrohub-upgrade.txt").find("phase 2") != std::string::npos && snapshot(user) == data);
+        CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());
+        fetches = 0;
+        CHECK(run(&err) && fetches == 0);
+        CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
+    }
+
+    // ---- 10. a new file that cannot be dropped yet (in use): nothing moves back, phase 2 stays; once free, it goes and the old build returns
+    {
+        const Files before = snapshot(dir);
+        park_all();
+        write_text(dir / "retrohub-upgrade.txt", "to build-98\nsha256 0000\nphase 2\n");
+        write_text(dir / "fresh.dll", "new-build-file");
+        HANDLE h = lock(dir / "fresh.dll");
+        CHECK(h != INVALID_HANDLE_VALUE);
+        err.clear();
+        const bool r = run(&err);
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        CHECK(!r && fs::exists(dir / "_old" / "lichii.exe") && read_text(dir / "retrohub-upgrade.txt").find("phase 2") != std::string::npos && snapshot(user) == data);
+        fetches = 0;
+        CHECK(run(&err) && fetches == 0);
+        CHECK(snapshot(dir) == before && playable("EXE-4") && scratch_gone());
+    }
+
+    // ---- 11. a restore stuck half way with lichii.exe and the marker already back: it must not count as installed (Play would start a half build)
+    {
+        const Files before = snapshot(dir);
+        park_all();
+        write_text(dir / "retrohub-upgrade.txt", "to build-98\nsha256 0000\nphase 2\n");
+        HANDLE h = lock(dir / "_old" / "fourth.dll");
+        CHECK(h != INVALID_HANDLE_VALUE);
+        err.clear();
+        const bool r = run(&err);
+        CHECK(!r && fs::exists(dir / "lichii.exe") && fs::exists(dir / "retrohub-install.txt") && fs::exists(dir / "_old" / "fourth.dll"));
+        CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());   // not playable while the journal is there
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());   // the next start finishes it
+        CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
+    }
     hubemu::set_install_test_hooks(nullptr);
     fs::remove_all(root, ec);
 }
