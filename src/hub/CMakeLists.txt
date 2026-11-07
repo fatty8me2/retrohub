@@ -144,6 +144,9 @@ add_custom_command(TARGET RetroHub POST_BUILD
 add_custom_command(TARGET RetroHub POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:RetroHub>/data
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/data/cheats_db.bin ${CMAKE_SOURCE_DIR}/data/cheats_featured.json ${CMAKE_SOURCE_DIR}/data/changelog.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv ${CMAKE_SOURCE_DIR}/data/recommended.json ${CMAKE_SOURCE_DIR}/data/known_dumps.bin $<TARGET_FILE_DIR:RetroHub>/data)
+# Hookshot build kit inputs (hookshot_build.h): the audited source zip, requirements.txt, unpack_tar.py -> data\hookshot beside RetroHub.exe
+add_custom_command(TARGET RetroHub POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data/hookshot $<TARGET_FILE_DIR:RetroHub>/data/hookshot)
 
 # Cover art: pure matching logic + console test (live network check with --live <cache> [rom]).
 add_executable(qa_pack_art qa_pack_art.cpp gamepack.cpp art.cpp art_match.cpp)   # cover-art coverage check over the real pack index + library (qa/pack_art_check.ps1); not a ctest
@@ -310,8 +313,9 @@ target_link_libraries(kanto_live PRIVATE hubcommon hubminiz)
 
 # PlayStation 2 via PCSX2 (docs/PS2.md): BIOS discovery, PCSX2.ini writers, pad bindings, card session; library scan of PS2 images
 target_sources(RetroHub PRIVATE pcsx2.cpp ppsspp.cpp lichii.cpp switch_ui.cpp)
-target_sources(RetroHub PRIVATE hookshot.cpp hookshot_run_ui.cpp)
-target_link_libraries(RetroHub PRIVATE mfplat mfuuid)   # Hookshot: native Ocarina of Time (Switch 2) build, runner + saves (hookshot.h); the build pipeline is hookshot_build.h
+target_sources(RetroHub PRIVATE hookshot.cpp hookshot_run_ui.cpp)   # Hookshot: native Ocarina of Time (Switch 2) build, runner + saves (hookshot.h)
+target_sources(RetroHub PRIVATE hookshot_build.cpp hookshot_ui.cpp)   # Hookshot build pipeline (kit download, make_game.py run, swap) + the game-page card (hookshot_build.h)
+target_link_libraries(RetroHub PRIVATE mfplat mfuuid)   # Hookshot: the AV1 decoder check (Media Foundation)
 add_executable(hub_ps2_test test_pcsx2.cpp pcsx2.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_ps2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
@@ -320,6 +324,12 @@ target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt wi
 add_executable(hub_switch_test test_switch.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_switch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_switch_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
+# Hookshot build pipeline (hookshot_build.h): protocol lines, RX_JOBS, hashes, pins, requirement texts, folder swap (temp folders; no downloads, no builds)
+add_executable(hub_hookshot_build_test test_hookshot_build.cpp hookshot_build.cpp hookshot.cpp emulators.cpp lichii.cpp)
+target_include_directories(hub_hookshot_build_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_compile_definitions(hub_hookshot_build_test PRIVATE HOOKSHOT_DATA_DIR="${CMAKE_SOURCE_DIR}/data/hookshot")
+target_link_libraries(hub_hookshot_build_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # PlayStation Portable via PPSSPP (docs/EMULATORS.md): PARAM.SFO / ISO / CSO / CHD / PBP identification (synthetic images), PS1-vs-PSP routing, scan, SAVEDATA mapping, ppsspp.ini + controls.ini
 add_executable(hub_psp_test test_psp.cpp ppsspp.cpp emulators.cpp lichii.cpp)

@@ -6,6 +6,7 @@
 #include "wiiu_meta.h"
 #include "homefun.h"
 #include "hack_ui.h"
+#include "hookshot_ui.h"
 #include "continue_ui.h"
 #include "continue_logic.h"
 
@@ -964,6 +965,7 @@ void draw_details_modal() {
         gba_link_details_section(e);
         palpark_details_section(e);
         verify_details_section(e);
+        hookshot_details_section(e);   // Ocarina of Time (Switch 2) only: build the native version
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         if (gamepack_owns(e)) {   // installed from a shared pack: its folder (full path on hover) + Uninstall; the archive file name inside is not interesting
             const std::string ft = hubgp::installed_folder_title(e.path, hubgp::pack_root());
