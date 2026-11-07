@@ -45,7 +45,7 @@ void draw_hookshot_run_dialogs() {
     }
     if (button("Play with Lichii this time", ImVec2(300 * S, 44 * S))) {
         ASK.open = false;
-        if (const hub::GameEntry* g = find_entry(ASK.key)) { hub::GameEntry copy = *g; g_lichii_once = copy.key; g_lichii_once_at = GetTickCount64(); play_entry(copy); }
+        if (const hub::GameEntry* g = find_entry(ASK.key)) { hub::GameEntry copy = *g; g_lichii_once = copy.key; g_lichii_once_at = GetTickCount64(); play_entry(copy); if (A.cloud_gate.phase == CloudGate::Idle && !A.job.running) g_lichii_once.clear(); }   // cleared whatever play_entry did (it can return early), unless the launch was deferred (cloud check / save sync re-enters play_entry; the 20 s expiry covers that)
     }
     if (button("Cancel", ImVec2(300 * S, 44 * S))) ASK.open = false;
     if (!ASK.open) { ImGui::CloseCurrentPopup(); ASK.focused = false; }

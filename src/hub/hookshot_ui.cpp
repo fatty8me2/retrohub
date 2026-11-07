@@ -133,14 +133,24 @@ View make_view(const hub::GameEntry& e) {
     v.req = hs::requirements_cached();
     v.kit_there = hs::kit_present();
     v.kit_bytes = hs::kit_size_cached();
+    // ready() / read_stamp() touch the disk: not every frame. Cached for 2 s, and re-read at once when a build has just finished.
+    static double s_at = -100.0;
+    static bool s_ready = false, s_was_running = false;
+    static hs::Stamp s_stamp;
     if (hs::build_running()) {
+        s_was_running = true;
         v.mode = Mode::Building;
         return v;
     }
-    hs::Stamp stamp;
-    if (hs::ready() && hs::read_stamp(hs::game_dir(), &stamp)) {
+    const double now = ImGui::GetTime();
+    if (s_was_running) { s_at = -100.0; s_was_running = false; }
+    if (now - s_at > 2.0 || now < s_at) {
+        s_at = now;
+        s_ready = hs::ready() && hs::read_stamp(hs::game_dir(), &s_stamp);
+    }
+    if (s_ready) {
         v.mode = Mode::Ready;
-        v.built = stamp.built;
+        v.built = s_stamp.built;
     } else if (v.st.state == hs::BuildState::Failed) {
         v.mode = Mode::Failed;
     } else {
