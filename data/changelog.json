@@ -1,6 +1,24 @@
 {
   "versions": [
     {
+      "version": "1.36.0",
+      "date": "2026-11-06",
+      "title": "Truer cases, smoother Home",
+      "new": [
+        "All Games stands out: the switch is a bright cyan-to-pink pill on every page"
+      ],
+      "improved": [
+        "Home scrolls smoothly: the mouse wheel always moves the page, even over the side-scrolling rows (swipe sideways or use Shift+wheel to scroll a row), and the controller eases to the row you move to",
+        "Cases look like the real thing: DS cases are black, 3DS white, Switch cases clear with the red sleeve (Switch 2 red), and N64, SNES, NES and Game Boy boxes are printed in the game's colours on the sides, flaps and back",
+        "Covers: friends' games show full case art where it exists, Pokemon X and Phantom Hourglass get their full cover scans, and covers that were missing are looked up again",
+        "The small print on drawn back covers is crisp (labels no longer lose strokes)"
+      ],
+      "fixed": [
+        "Master Quest shows its own box instead of Ocarina of Time's",
+        "Games you own no longer appear a second time in the Friends section"
+      ]
+    },
+    {
       "version": "1.35.1",
       "date": "2026-11-06",
       "title": "Xbox controllers work in Switch games",
