@@ -151,7 +151,7 @@ std::vector<Option> build() {
     // Which program plays Ocarina of Time (Switch 2): Hookshot (the native PC build RetroHub makes from the player's own game) or Lichii.
     // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.
     v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "auto",
-                   {{"auto", "Hookshot (native PC version) when it's built"}, {"lichii", "Lichii (emulator)"}}));
+                   {{"auto", "Hookshot (native)"}, {"lichii", "Lichii (emulator)"}}));
     return v;
 }
 
