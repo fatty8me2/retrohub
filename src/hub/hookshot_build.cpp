@@ -47,7 +47,12 @@ static bool starts_with(const std::string& s, const char* p) { return s.compare(
 static bool pexists(const fs::path& p) { std::error_code ec; return fs::exists(p, ec); }
 static bool is_dir(const fs::path& p) { std::error_code ec; return fs::is_directory(p, ec); }
 static bool is_file(const fs::path& p) { std::error_code ec; return fs::is_regular_file(p, ec); }
-static bool dir_empty(const fs::path& p) { std::error_code ec; return fs::is_directory(p, ec) && fs::directory_iterator(p, ec) == fs::directory_iterator(); }
+static bool dir_empty(const fs::path& p) {   // false when the folder cannot be listed: "empty" is never assumed (saves live in these folders)
+    std::error_code ec;
+    if (!fs::is_directory(p, ec)) return false;
+    fs::directory_iterator it(p, ec);
+    return !ec && it == fs::directory_iterator();
+}
 static std::string trim(const std::string& s) {
     size_t a = 0, b = s.size();
     while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r' || s[a] == '\n')) ++a;
@@ -1120,6 +1125,7 @@ bool remove_kit(std::string* err) {
 }
 
 void remove_kit_async() {
+    if (g().running.load()) return;
     if (g().kit_busy.exchange(true)) return;
     std::thread([] {
         std::string e;
@@ -1526,6 +1532,7 @@ bool start_build(const hub::GameEntry& e, const std::string& language, std::stri
     auto fail = [&](const std::string& m) { if (err) *err = m; return false; };
     if (!supports(e)) return fail("This game can't be built.");
     if (!language_valid(language)) return fail("Unknown language.");
+    if (g().kit_busy.load()) return fail("The build tools are being removed. Try again in a moment.");
     if (g().running.exchange(true)) return fail("A build is already running.");
     if (g().th.joinable()) g().th.join();
     g().cancel = false;
