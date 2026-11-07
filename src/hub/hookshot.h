@@ -3,7 +3,8 @@
  * Time (Nintendo Switch 2 remake), made ON the player's PC from their own game file by static recompilation. Nothing
  * of the game is downloaded or shared; the build never leaves this PC (never offer it to friends or packs).
  *
- * RetroHub runs it instead of Lichii for that one game once it is built ("switch.runner" = auto), with the save in the
+ * Experimental and opt-in: Lichii plays that game by default. RetroHub runs Hookshot instead only when it is built AND the
+ * player chose it ("switch.runner" = hookshot), with the save in the
  * SAME vault folder Lichii uses (<vault>/switch/<key>/battery/save/<TID>), so the two stay interchangeable and every
  * PC stays in step. Source audited 2026-11-07 at kSourceCommit: no network code, no telemetry, no registry or system
  * changes (docs/HOOKSHOT.md). The build pipeline is hookshot_build.h. */
@@ -46,11 +47,11 @@ bool write_stamp(const std::string& dir, const Stamp& s);
  * names kSourceCommit. why (optional): what is missing, in plain words. */
 bool ready(std::string* why = nullptr, const std::string& dir = std::string());
 
-/* Setting "switch.runner" (game_settings.cpp, Visual, shown only for games where supports() is true): "auto" (default) = Hookshot once it
- * is built, "lichii" = always the emulator. Never read by online / sync code: Hookshot is offline only. */
+/* Setting "switch.runner" (game_settings.cpp, Visual, shown only for games where supports() is true): "lichii" (default) = the emulator,
+ * "hookshot" = Hookshot once it is built (an old v1.37.0 "auto" is dropped on load and means Lichii). Never read by online / sync code: Hookshot is offline only. */
 constexpr const char* kRunnerSetting = "switch.runner";
 using Values = std::map<std::string, std::string>;   // == hub::gs::Values
-/* Play this game with Hookshot: supports(e), ready(), and the setting is not "lichii". */
+/* Play this game with Hookshot: supports(e), ready(), and the setting is exactly "hookshot". */
 bool use_for(const hub::GameEntry& e, const Values& v);
 
 /* Is a Media Foundation AV1 video decoder installed (Microsoft's free "AV1 Video Extension")? Without one Hookshot would open a top-most

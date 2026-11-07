@@ -148,10 +148,11 @@ std::vector<Option> build() {
     // DMA Unsafe added nothing on top of Low, so only this is exposed. "lichii" leaves whatever is set inside Lichii.
     v.push_back(mk("switch.gpu_accuracy", "GPU accuracy", "Video", SWITCH, K::Choice, S::Visual, "low",
                    {{"low", "Low (faster)"}, {"high", "High (more accurate, slower)"}, {"lichii", "Use Lichii's setting"}}));
-    // Which program plays Ocarina of Time (Switch 2): Hookshot (the native PC build RetroHub makes from the player's own game) or Lichii.
+    // Which program plays Ocarina of Time (Switch 2): Lichii (default) or Hookshot (experimental native PC build RetroHub makes from the player's own game).
     // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.
-    v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "auto",
-                   {{"auto", "Hookshot (native)"}, {"lichii", "Lichii (emulator)"}}));
+    // v1.37.0 stored "auto" (= Hookshot); it is no longer a choice, so loading / merging / resolving drops it and the default (Lichii) applies.
+    v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "lichii",
+                   {{"lichii", "Lichii (emulator)"}, {"hookshot", "Hookshot (native)"}}));
     return v;
 }
 
@@ -287,7 +288,14 @@ bool Store::has_game_overrides(const std::string& g) const { auto it = game_.fin
 Values Store::resolve(System s, const std::string& g) const {
     Values v = defaults_for(s);
     auto layer = [&](const Values& m) {
-        for (auto& kv : m) if (v.count(kv.first)) v[kv.first] = kv.second;
+        for (auto& kv : m) {
+            if (!v.count(kv.first)) continue;
+            // a stored value that is no longer a choice (switch.runner "auto" from v1.37.0) falls back to the lower layer / default
+            const Option* o = find_option(kv.first);
+            std::string n;
+            if (o && !normalize(*o, kv.second, &n)) continue;
+            v[kv.first] = o ? n : kv.second;
+        }
     };
     auto si = sys_.find(sys_name(s));
     if (si != sys_.end()) layer(si->second);
@@ -330,8 +338,13 @@ bool Store::from_json(const std::string& text) {
 }
 
 void Store::merge_from(const Store& o) {
-    for (auto& kv : o.sys_) for (auto& e : kv.second) sys_[kv.first][e.first] = e.second;
-    for (auto& kv : o.game_) for (auto& e : kv.second) game_[kv.first][e.first] = e.second;
+    auto ok = [](const std::string& key, const std::string& val) {
+        const Option* op = find_option(key);
+        std::string n;
+        return !op || normalize(*op, val, &n);   // drops values that are no longer choices (old "auto" runner)
+    };
+    for (auto& kv : o.sys_) for (auto& e : kv.second) if (ok(e.first, e.second)) sys_[kv.first][e.first] = e.second;
+    for (auto& kv : o.game_) for (auto& e : kv.second) if (ok(e.first, e.second)) game_[kv.first][e.first] = e.second;
 }
 
 std::string Store::file_path(const std::string& vault_dir) {

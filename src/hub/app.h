@@ -739,6 +739,7 @@ void qm_emote_incoming(int from_slot, const std::string& code);
 extern hub::gs::Store GSTORE;
 void gs_load();   // after the vault dir is known
 hub::gs::Values gs_values_for(const hub::GameEntry& e);   // resolved incl. the global fullscreen default
+bool gs_set_game_value(const hub::GameEntry& e, const std::string& key, const std::string& value);   // the per-game override, saved (same path as the Settings rows)
 bool gs_has_game_section(const hub::GameEntry& e);
 void gs_draw_game_section(const hub::GameEntry& e);       // details modal
 void gs_draw_defaults_area();                              // Settings page

@@ -114,19 +114,34 @@ int main() {
         hub::GameEntry oot = game("switch:0400486024dec000"), other = game("switch:0100abcd12340000");
         hub::gs::Values v;
         CHECK(!hookshot::use_for(oot, v));   // not built
+        v["switch.runner"] = "hookshot";
+        CHECK(!hookshot::use_for(oot, v));   // chosen but not built: Lichii
+        v.clear();
         make_build(gdir, true, true, true, true, hookshot::kSourceCommit);
-        CHECK(hookshot::use_for(oot, v));    // no value: auto
+        CHECK(!hookshot::use_for(oot, v));   // built, no value: Lichii (Hookshot is opt-in)
         v["switch.runner"] = "auto";
-        CHECK(hookshot::use_for(oot, v));
+        CHECK(!hookshot::use_for(oot, v));   // the old v1.37.0 value means Lichii
         v["switch.runner"] = "lichii";
         CHECK(!hookshot::use_for(oot, v));
-        v["switch.runner"] = "auto";
+        v["switch.runner"] = "hookshot";
+        CHECK(hookshot::use_for(oot, v));    // built and chosen
         CHECK(!hookshot::use_for(other, v));
         const hub::gs::Option* o = hub::gs::find_option("switch.runner");
-        CHECK(o && o->def == "auto" && o->scope == hub::gs::Scope::Visual && o->choices.size() == 2);
+        CHECK(o && o->def == "lichii" && o->scope == hub::gs::Scope::Visual && o->choices.size() == 2);
+        CHECK(o && o->choices[0].value == "lichii" && o->choices[1].value == "hookshot");
         hub::gs::Values dv = hub::gs::defaults_for(hub::System::Switch);
-        CHECK(dv["switch.runner"] == "auto");
-        CHECK(hookshot::use_for(oot, dv));
+        CHECK(dv["switch.runner"] == "lichii");
+        CHECK(!hookshot::use_for(oot, dv));
+        // a stored "auto" is dropped on load / merge / resolve and the default (Lichii) applies
+        {
+            hub::gs::Store st;
+            CHECK(st.from_json("{\"version\":\"1\",\"systems\":{},\"games\":{\"switch:0400486024dec000\":{\"switch.runner\":\"auto\"}}}"));
+            CHECK(st.resolve(hub::System::Switch, "switch:0400486024dec000")["switch.runner"] == "lichii");
+            CHECK(st.source(hub::System::Switch, "switch:0400486024dec000", "switch.runner") == 0);
+            CHECK(!st.set_game("switch:0400486024dec000", hub::System::Switch, "switch.runner", "auto"));
+            CHECK(st.set_game("switch:0400486024dec000", hub::System::Switch, "switch.runner", "hookshot"));
+            CHECK(st.resolve(hub::System::Switch, "switch:0400486024dec000")["switch.runner"] == "hookshot");
+        }
         fs::remove_all(gdir, ec);
     }
 
