@@ -1173,8 +1173,10 @@ void draw_cases(Disp& D) {
     // ---- screenshot aids (HUB_SHOT_CASES=browse|flip|inspect|cartridge|missingart) ----
     if (!CS.shot_applied && n > 0 && !CS.shot_mode.empty() && A.scanned_once) {
         CS.shot_applied = true;
-        const int target = std::min(n - 1, std::max(0, n / 5));
-        cases_goto(D, CS.focus > 0 ? CS.focus : target, false, false);
+        int target = std::min(n - 1, std::max(0, n / 5));
+        bool by_index = false;
+        if (const char* si = std::getenv("HUB_SHOT_CASES_INDEX")) { target = std::min(n - 1, std::max(0, std::atoi(si))); by_index = true; }   // screenshots: the Nth case of the shown list (a console tab's own order)
+        cases_goto(D, by_index ? target : CS.focus > 0 ? CS.focus : target, false, false);
         CS.pos.x = (float)CS.focus;
         nav_shot_apply(CS.shot_mode, D);
         if (CS.shot_mode == "flip") { CS.mode = Mode::Flip; if (!is_ghost(D.flat[(size_t)CS.focus])) cases_collect_back(D.flat[(size_t)CS.focus]); CS.flip.x = 3.14159f; CS.flip.v = 0; }
