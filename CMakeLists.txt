@@ -170,6 +170,7 @@ add_test(NAME hub_homefun_test COMMAND hub_homefun_test)               # attract
 add_test(NAME hub_continue_test COMMAND hub_continue_test)           # Home Continue hero: hero pick, backdrop source, relative time, Continue/Play label, Jump back in row
 add_test(NAME hub_states_test COMMAND hub_states_test)               # save-state slot listing, resume wording, library sort
 add_test(NAME hub_cases_test COMMAND hub_cases_test)   # Cases view: slot pose maths, case shapes, wrap/clamp, tab memory, flip/inspect modes, layout key round-trip
+add_test(NAME hub_homescroll_test COMMAND hub_homescroll_test)   # Home wheel routing (vertical/horizontal/Shift/diagonal) + eased page spring
 add_test(NAME hub_shelf_test COMMAND hub_shelf_test)   # Shelf view: media per console, row packing, focus movement, slide-out spring
 add_test(NAME hub_libview_test COMMAND hub_libview_test)               # All Games layouts: A-Z jump runs, list column sort keys, virtual rows, settings round-trip
 add_test(NAME hub_customize_test COMMAND hub_customize_test)   # custom shelves ops, Home composition, renames, rename-aware search

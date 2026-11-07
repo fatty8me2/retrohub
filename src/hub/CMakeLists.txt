@@ -85,6 +85,11 @@ add_executable(hub_continue_test test_continue.cpp)
 target_include_directories(hub_continue_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hub_continue_test PRIVATE cxx_std_17)
 
+# Home scrolling: wheel axis routing + eased page spring (pure header).
+add_executable(hub_homescroll_test test_homescroll.cpp)
+target_include_directories(hub_homescroll_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_homescroll_test PRIVATE cxx_std_17)
+
 # Plan 4 p4-social: DM attachments (async upload/download through the Worker) + friend challenge logic (cards, leaderboard, rules)
 add_library(hubattach STATIC attach_xfer.cpp challenge_logic.cpp)
 target_include_directories(hubattach PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)

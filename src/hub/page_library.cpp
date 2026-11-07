@@ -371,7 +371,7 @@ void library_top_bar() {
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);   // D-pad focus starts on the hero / tiles, not here
     static const char* tabs[] = {"Home", "All Games"};
     int cur = A.view == LibView::Home ? 0 : 1;
-    int n = ui::segmented("view", tabs, 2, cur);
+    int n = ui::segmented("view", tabs, 2, cur, 1);   // All Games is the main attraction: it gets the logo-palette highlight
     if (n != cur) {
         A.view = n == 0 ? LibView::Home : LibView::All;
         if (n == 0) A.search_buf[0] = 0;
@@ -1164,7 +1164,10 @@ void page_library() {
     const float lib_bleed = sp(1.5f);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() - lib_bleed);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::BeginChild("shelves", ImVec2(ImGui::GetContentRegionAvail().x + lib_bleed, 0), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+    home_note_page();
+    home_scroll_pre();
+    ImGui::BeginChild("shelves", ImVec2(ImGui::GetContentRegionAvail().x + lib_bleed, 0), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
+    home_scroll_post();
     ImGui::PopStyleVar();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(2.f), 0));
     A.page_scrollable = ImGui::GetScrollMaxY() > 0;
