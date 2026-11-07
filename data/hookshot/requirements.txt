@@ -1,0 +1,13 @@
+# Hookshot build: the Python packages RetroHub installs into its private Python (pip --require-hashes --only-binary :all: --no-deps).
+# CPython 3.13, Windows x64 wheels only. Hashes are sha256 from https://pypi.org/pypi/<name>/<version>/json.
+
+capstone==5.0.9 \
+    --hash=sha256:732cedbbb56d42e723f14d7af6387f1454194a820b4b96b56d1e53f865ef85d0
+lz4==4.4.5 \
+    --hash=sha256:da68497f78953017deb20edff0dba95641cc86e7423dfadf7c0264e1ac60dc22
+numpy==2.5.4 \
+    --hash=sha256:8b4d2fd2d34e5f8c9235ee787de5631a37a28402b15cb80814df973d2be54129
+unicorn==2.1.4 \
+    --hash=sha256:d7107500c64ce5c168fbff6bef9485b5db1350050036f4cea568650cf8bdbdf5
+zstandard==0.25.0 \
+    --hash=sha256:1f830a0dac88719af0ae43b8b2d6aef487d437036468ef3c2ea59c51f9d55fd5
