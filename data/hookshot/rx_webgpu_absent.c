@@ -34,6 +34,15 @@ void wgr_nvn_register_sampler(int id, const nvn_samp_par *p) { (void)id, (void)p
 void wgr_nvn_set_texture_pool_size(int n) { (void)n; }
 void wgr_nvn_texture_released(const nvn_tex *t) { (void)t; }
 void wgr_nvn_program_released(const nvn_prog *p) { (void)p; }
+void wgr_nvn_read_texels(const nvn_tex *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, uint8_t *dst,
+                         uint64_t row, uint64_t img) {
+    (void)t, (void)level, (void)layer0, (void)r, (void)dst, (void)row, (void)img;
+}
+void wgr_nvn_write_texels(const nvn_tex *t, unsigned level, unsigned layer0, const NVNcopyRegion *r,
+                          const uint8_t *src, uint64_t row, uint64_t img) {
+    (void)t, (void)level, (void)layer0, (void)r, (void)src, (void)row, (void)img;
+}
+void wgr_nvn_invalidate(uint64_t gpu, uint64_t size) { (void)gpu, (void)size; }
 
 void rx_flash_dark_arm(void) {}
 void rx_request_frame_dump(void) {}
