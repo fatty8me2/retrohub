@@ -147,6 +147,20 @@ void switch_settings_ui() {
         return;
     }
     text_wrapped_disabled("Lichii (Switch / Switch 2): " + li.exe);
+    if (li.outdated) {
+        const hubemu::Release& rel = hubemu::release(hubemu::Kind::Lichii);
+        text_wrapped_disabled(std::string("A newer Lichii is available (") + rel.version + ", about " + std::to_string((int)(rel.size / 1048576)) +
+                              " MB). Your keys, firmware, saves and settings are kept.");
+        const bool busy = EMU.state != hubemu::Installer::Idle || hubemu::is_running(li.exe) || A.proc != nullptr;
+        if (button("Update Lichii", ImVec2(0, 0), true, !busy, ui::Icon::Refresh)) {
+            EMU.kind = hubemu::Kind::Lichii;
+            EMU.game_key.clear();
+            EMU.updating = true;
+            EMU_UPDATE_SKIP[(int)hubemu::Kind::Lichii] = false;
+            EMU.state = hubemu::Installer::Asking;
+        }
+        if (hubemu::is_running(li.exe)) text_wrapped_disabled("Close Lichii first: it is not updated while it runs.");
+    }
     text_wrapped_disabled(status_line(LOOK.st));
     import_buttons("set");
 }

@@ -41,6 +41,7 @@ struct Install {
     std::string dir;          // folder holding the exe
     bool managed = false;     // RetroHub's own download (portable, inside its data dir)
     std::string how;          // human text for Settings: "RetroHub download", "existing install (game folder)", ...
+    bool outdated = false;    // a complete RetroHub download of an older pin (marker sha256 differs) that install_blocking / Installer upgrades in place; it still runs as is
 };
 
 /* <data dir>\emulators\ */
@@ -52,7 +53,12 @@ std::string managed_dir(Kind k, const std::string& root = managed_root());
 Install find(Kind k, const std::string& configured_exe, const std::string& game_path,
              const std::string& root = managed_root());
 
-/* ---- download + install (one background job at a time) ---- */
+/* ---- download + install (one background job at a time) ----
+ * A managed install whose marker (retrohub-install.txt, written last) names another sha256 than the pin is "outdated" (Install::outdated). The same job
+ * UPGRADES it (kinds with a data folder to keep: today Lichii, whose `user\` holds keys, firmware, saves, config and shader caches, see preserved_names in
+ * emulators.cpp): download + size + sha256 + unpack into a staging folder first, refuse while the emulator runs from that folder, then swap the program
+ * files with every step undoable (journal retrohub-upgrade.txt, old files parked in _old), the new marker last. Any failure leaves the old build installed
+ * and working; the data folder is never touched. An interrupted swap is rolled back / finished by the next install job or recover_interrupted(). */
 struct Installer {
     enum State { Idle, Asking, Working, Failed } state = Idle;
     Kind kind = Kind::Azahar;
@@ -64,11 +70,23 @@ struct Installer {
     std::mutex mu;
     std::thread th;
     std::string root;                     // managed root used by the job
+    bool updating = false;                // the job upgrades an outdated install (UI wording "Updating"); set by the caller before Asking, and by start()
     ~Installer();
     void start(Kind k, const std::string& managed_root_dir);   // begins the job (state -> Working)
     /* UI thread, each frame: when the job ended, join it and return true exactly once; ok tells the result. */
     bool poll(bool* success);
 };
+/* Finish or roll back an upgrade that a crash cut short (see above). Cheap when there is nothing to do. Never call while an install job runs. */
+void recover_interrupted(Kind k, const std::string& root = managed_root());
+/* Test seam (console tests only; nullptr clears): replaces release(kind), the HTTPS download and the "is it running" check, so installs and upgrades run
+ * from a local archive with no network and no process. */
+struct InstallTestHooks {
+    Kind kind = Kind::Lichii;
+    const Release* release = nullptr;
+    std::function<bool(const Release& rel, const std::string& out_file, std::string* err)> fetch;   // write the archive to out_file
+    std::function<bool(const std::string& exe)> running;
+};
+void set_install_test_hooks(const InstallTestHooks* h);
 /* Same job, synchronously (console test): returns false and fills err on failure. */
 bool install_blocking(Kind k, const std::string& root, std::string* err,
                       const std::function<void(int phase, uint64_t got, uint64_t total)>& progress);

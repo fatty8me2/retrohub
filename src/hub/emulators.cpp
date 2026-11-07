@@ -98,7 +98,11 @@ Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s ==
 /* Pinned official releases. Azahar: github.com/azahar-emu/azahar (GPL-3.0), asset digest as published by GitHub.
  * Cemu: github.com/cemu-project/Cemu (MPL-2.0); GitHub lists no digest for the Windows zip, so the SHA-256 was
  * computed from the official v2.6 asset when this was written (trust on first use). */
+static const InstallTestHooks* g_test_hooks = nullptr;
+void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
+
 const Release& release(Kind k) {
+    if (g_test_hooks && g_test_hooks->release && g_test_hooks->kind == k) return *g_test_hooks->release;
     static const Release az = {
         "2126.2", L"github.com", L"/azahar-emu/azahar/releases/download/2126.2/azahar-windows-msvc-2126.2.zip",
         43941048ull, "4412eac8d13123c8840f11890fc26e5b0e4c76d16aa28a608941377b948a9db0", L"azahar.exe", "GPL-3.0"};
@@ -127,12 +131,14 @@ const Release& release(Kind k) {
     static const Release pp = {
         "1.20.4", L"www.ppsspp.org", L"/files/1_20_4/ppsspp_win.zip",
         27658759ull, "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163", L"PPSSPPWindows64.exe", "GPL-2.0+"};
-    /* Lichii build 88 (GPL-3.0), github.com/zortos293/Lichii tag build-88 (nx2 @ 55532f2, pre-release 2026-11-06): an Eden fork that adds
-     * Switch 2 games. The MSVC Windows zip holds lichii.exe at its root; the SHA-256 is GitHub's published asset digest. Portable via a
-     * `user` folder beside the exe (lichii.h). No games, keys or firmware are included: the player supplies their own. */
+    /* Lichii build 95 (GPL-3.0), github.com/zortos293/Lichii. The release TAG is misnamed: it is `build-94`, but its notes and the CI run say build 95
+     * (nx2 @ 222877d, 2026-11-07); every file in the zip is byte-identical to the release-binaries CI artifact of that run. An Eden fork that adds
+     * Switch 2 games. The MSVC Windows zip holds lichii.exe at its root. Portable via a `user` folder beside the exe (lichii.h), which an upgrade
+     * from an older pin never touches (install_core). No games, keys or firmware are included: the player supplies their own.
+     * The version string is the tag, so the marker, Settings and the dialogs all say "build-94". */
     static const Release li = {
-        "build-88", L"github.com", L"/zortos293/Lichii/releases/download/build-88/lichii-windows-x86_64.zip",
-        116094897ull, "3405860a13f7b0729548ddb9402a355f4cfb1cd6a6d705fb8ea26f88879b0407", L"lichii.exe", "GPL-3.0"};
+        "build-94", L"github.com", L"/zortos293/Lichii/releases/download/build-94/lichii-windows-x86_64.zip",
+        116143228ull, "1560b9d46a20b54a8494316a650bfef12a905fbd6c612758d4509dcefca61164", L"lichii.exe", "GPL-3.0"};
     return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : k == Kind::Lichii ? li : dol;
 }
 
@@ -161,6 +167,32 @@ static std::string cemu_in(const std::string& base, int depth) {
         if (depth == 2 && n.find("cemu") == std::string::npos && n != "games" && n != "emulators" && n != "emulator" && n != "everything") continue;
         std::string r = cemu_in(S(it->path()), depth - 1);
         if (!r.empty()) return r;
+    }
+    return "";
+}
+
+/* ---- upgrade support ---- */
+
+/* Top-level names inside an install folder that hold the PLAYER'S data and that RetroHub's own files live in. An install/upgrade never deletes, replaces or
+ * overwrites them, even when the archive ships a folder of the same name. Non-empty = this kind can be upgraded in place. Lichii: everything it keeps
+ * (keys, firmware, saves, config, shader caches, RetroHub's retrohub-defaults.txt) is under user\ (portable mode, lichii.h); RetroHub writes nothing else
+ * beside the exe except the install marker. */
+static std::vector<std::string> preserved_names(Kind k) {
+    if (k == Kind::Lichii) return {"user"};
+    return {};
+}
+static bool upgradable(Kind k) { return !preserved_names(k).empty(); }
+static bool name_in(const std::vector<std::string>& v, const std::string& n) {
+    for (const auto& x : v) if (_stricmp(x.c_str(), n.c_str()) == 0) return true;
+    return false;
+}
+/* sha256 line of retrohub-install.txt ("" when absent) */
+static std::string installed_sha(const std::string& dir) {
+    std::istringstream ls(read_text(join(dir, "retrohub-install.txt")));
+    std::string line;
+    while (std::getline(ls, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.compare(0, 7, "sha256 ") == 0) return line.substr(7);
     }
     return "";
 }
@@ -203,6 +235,8 @@ Install find(Kind k, const std::string& configured, const std::string& game_path
         in.dir = md;
         in.managed = true;
         in.how = "RetroHub download";
+        in.outdated = upgradable(k) && installed_sha(md) != release(k).sha256;
+        if (in.outdated) in.how += " (update available)";
     }
     return in;
 }
@@ -414,14 +448,144 @@ static bool untar_to(const std::string& archive, const std::string& dest, const 
     return run_tar(L"-xf \"" + W(archive) + L"\" -C \"" + W(dest) + L"\"", "", err);
 }
 
+static bool running_from(const std::string& exe);   // (below)
+static bool exe_is_running(const std::string& exe) {
+    if (g_test_hooks && g_test_hooks->running) return g_test_hooks->running(exe);
+    return running_from(exe);
+}
+
+/* Staging / journal names inside an install folder. They are RetroHub's own scratch space, never part of an install. */
+static const char* const kStageDir = "_extract";   // the unpacked download
+static const char* const kOldDir = "_old";         // the previous build's program files while an upgrade swaps
+static const char* const kJournal = "retrohub-upgrade.txt";
+
+static bool is_scratch(const std::string& n) {
+    return _stricmp(n.c_str(), kStageDir) == 0 || _stricmp(n.c_str(), kOldDir) == 0 || _stricmp(n.c_str(), kJournal) == 0;
+}
+
+static std::vector<fs::path> children(const std::string& dir) {
+    std::vector<fs::path> v;
+    std::error_code ec;
+    for (fs::directory_iterator it(P(dir), ec), end; !ec && it != end; it.increment(ec)) v.push_back(it->path());
+    return v;
+}
+
+/* Empties `dir` of everything except the kept names (the player's data); no keep list = the whole folder goes (the old behaviour). */
+static void clear_dir_keeping(const std::string& dir, const std::vector<std::string>& keep) {
+    if (keep.empty()) { remove_tree(dir); return; }
+    for (const fs::path& c : children(dir)) {
+        const std::string n = S(c.filename());
+        if (name_in(keep, n)) continue;
+        remove_tree(S(c));
+    }
+}
+
+/* Puts the parked old build back: whatever new files made it into `dir` are removed first (never the kept data), then _old\* moves home.
+ * Returns false when something could not be moved back (the journal then stays so the next run retries). */
+static bool restore_old(const std::string& dir, const std::vector<std::string>& keep, bool drop_new) {
+    const std::string old = join(dir, kOldDir);
+    if (!dir_exists(old)) return true;
+    if (drop_new) {   // (journal phase 2: every old file is parked, so whatever is in dir now is new. Phase 1 is still parking: dir holds old files that never moved, nothing is removed)
+        for (const fs::path& c : children(dir)) {
+            const std::string n = S(c.filename());
+            if (name_in(keep, n) || is_scratch(n)) continue;
+            remove_tree(S(c));
+        }
+    }
+    bool ok = true;
+    for (const fs::path& c : children(old)) {
+        std::error_code ec;
+        fs::rename(c, P(dir) / c.filename(), ec);
+        if (ec) ok = false;
+    }
+    if (!ok) return false;
+    remove_tree(old);
+    remove_tree(join(dir, kStageDir));
+    std::error_code ec;
+    fs::remove(P(join(dir, kJournal)), ec);
+    return true;
+}
+
+/* A crash can cut an upgrade anywhere between "journal written" and "journal removed". The journal is written before anything moves and removed last, and
+ * the marker is the last thing the swap writes, so: a valid marker for the journal's sha256 = the swap finished (only scratch left to delete); otherwise the
+ * old build is parked in _old and goes back. Without a journal, _old and _extract are junk from before any file moved. The data folder is never touched. */
+void recover_interrupted(Kind k, const std::string& root) {
+    const std::string dir = managed_dir(k, root);
+    if (!upgradable(k) || !dir_exists(dir)) return;
+    const std::vector<std::string> keep = preserved_names(k);
+    const std::string journal = join(dir, kJournal);
+    if (file_exists(journal)) {
+        std::string want;
+        bool drop_new = true;   // (no phase line: assume the later phase)
+        std::istringstream ls(read_text(journal));
+        std::string line;
+        while (std::getline(ls, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (line.compare(0, 7, "sha256 ") == 0) want = line.substr(7);
+            if (line == "phase 1") drop_new = false;
+        }
+        if (!want.empty() && installed_sha(dir) == want && file_exists(join(dir, U(release(k).exe)))) {   // finished: only the scratch is left
+            remove_tree(join(dir, kOldDir));
+            remove_tree(join(dir, kStageDir));
+            std::error_code ec;
+            fs::remove(P(journal), ec);
+            return;
+        }
+        if (dir_exists(join(dir, kOldDir))) { restore_old(dir, keep, drop_new); return; }
+        std::error_code ec;   // journal but no _old: nothing had moved yet
+        fs::remove(P(journal), ec);
+    }
+    remove_tree(join(dir, kStageDir));
+    remove_tree(join(dir, kOldDir));
+}
+
+/* The swap of an upgrade: `inner` (the unpacked new build, a folder under dir\_extract) replaces the program files in `dir`. See recover_interrupted for the
+ * crash story. On any failure the old build is moved back and false is returned. */
+static bool swap_in_new_build(Kind k, const std::string& dir, const std::string& inner, const Release& rel, std::string* err) {
+    const std::vector<std::string> keep = preserved_names(k);
+    const std::string old = join(dir, kOldDir);
+    remove_tree(old);
+    make_dirs(old);
+    const std::string jtext = std::string("to ") + rel.version + "\nsha256 " + rel.sha256 + "\n";
+    if (!write_text(join(dir, kJournal), jtext + "phase 1\n")) { remove_tree(old); *err = "cannot write the upgrade journal"; return false; }
+    bool phase2 = false;
+    auto fail = [&](const std::string& why) {
+        *err = why;
+        if (!restore_old(dir, keep, phase2)) *err += " (and the old files could not all be put back; RetroHub will retry at the next start)";
+        return false;
+    };
+    for (const fs::path& c : children(dir)) {   // 1. the old program files (and the old marker) go aside
+        const std::string n = S(c.filename());
+        if (name_in(keep, n) || is_scratch(n)) continue;
+        std::error_code ec;
+        fs::rename(c, P(old) / c.filename(), ec);
+        if (ec) return fail("could not move " + n + " aside (is something using it?)");
+    }
+    if (!write_text(join(dir, kJournal), jtext + "phase 2\n")) return fail("cannot write the upgrade journal");
+    phase2 = true;
+    for (const fs::path& c : children(inner)) {   // 2. the new ones come in; a `user` folder in the archive is ignored
+        const std::string n = S(c.filename());
+        if (name_in(keep, n) || is_scratch(n)) continue;
+        std::error_code ec;
+        fs::rename(c, P(dir) / c.filename(), ec);
+        if (ec) return fail("could not install " + n);
+    }
+    if (!file_exists(join(dir, U(rel.exe)))) return fail(U(rel.exe) + " missing after the update");
+    return true;
+}
+
 static bool install_core(Kind k, const std::string& root, std::string* err, std::atomic<int>* phase, Progress pr) {
     const Release& rel = release(k);
     std::string dir = managed_dir(k, root);
     std::string exe = join(dir, U(rel.exe));
-    if (file_exists(exe) && file_exists(join(dir, "retrohub-install.txt"))) return true;   // complete install (marker is written last)
-    remove_tree(dir);   // a leftover from a failed attempt
-    std::string stage = join(dir, "_extract");
+    const std::vector<std::string> keep = preserved_names(k);
+    recover_interrupted(k, root);   // an upgrade that a crash cut short comes back to a whole install first
+    const bool complete = file_exists(exe) && file_exists(join(dir, "retrohub-install.txt"));   // (marker is written last)
+    if (complete && (!upgradable(k) || installed_sha(dir) == rel.sha256)) return true;
+    const bool upgrading = complete;   // an older pin: the old build stays installed and working until the new one is whole
+    std::string stage = join(dir, kStageDir);
     std::string archive = join(join(root, "_downloads"), S(fs::path(rel.path).filename()));
+    if (!upgrading) clear_dir_keeping(dir, keep);   // a leftover from a failed attempt (the player's data folder stays)
     make_dirs(dir);
     make_dirs(S(P(archive).parent_path()));
     remove_tree(stage);
@@ -430,7 +594,8 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     auto setp = [&](int p) { if (phase) *phase = p; };
 
     setp(0);
-    ok = http_download(rel.host, rel.path, archive + ".part", pr, err);
+    if (g_test_hooks && g_test_hooks->fetch) ok = g_test_hooks->fetch(rel, archive + ".part", err);
+    else ok = http_download(rel.host, rel.path, archive + ".part", pr, err);
     if (ok) {
         std::error_code ec;
         uint64_t sz = fs::file_size(P(archive + ".part"), ec);
@@ -443,6 +608,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     }
     if (ok) {
         std::error_code ec;
+        fs::remove(P(archive), ec);
         fs::rename(P(archive + ".part"), P(archive), ec);
         if (ec) { ok = false; *err = "cannot move the download into place"; }
     }
@@ -455,9 +621,13 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         setp(3);
         std::string inner;
         if (!find_file_below(stage, rel.exe, 3, &inner)) { ok = false; *err = U(rel.exe) + " not found in the download"; }
-        else {
+        else if (upgrading) {
+            if (exe_is_running(exe)) { ok = false; *err = std::string(name(k)) + " is running: close it, then update"; }   // never replace files under a running program
+            else ok = swap_in_new_build(k, dir, inner, rel, err);
+        } else {
             std::error_code ec;
             for (fs::directory_iterator it(P(inner), ec), end; !ec && it != end; it.increment(ec)) {
+                if (name_in(keep, S(it->path().filename()))) continue;   // never let the archive replace the player's data folder
                 std::error_code e2;
                 fs::path to = P(dir) / it->path().filename();
                 fs::remove_all(to, e2);
@@ -467,7 +637,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
             if (ok && !file_exists(exe)) { ok = false; *err = U(rel.exe) + " missing after install"; }
         }
     }
-    remove_tree(stage);
+    const bool swapped = ok && upgrading;   // from here a failure must put the old build back
     if (ok && k == Kind::Pcsx2) ok = write_text(join(dir, "portable.ini"), "");   // portable mode: all data beside the exe, a user's own PCSX2 is never touched
     if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
     if (ok && k == Kind::Lichii) {   // a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the debug symbols (~116 MB) and the bundled VC++ installer are not needed to play
@@ -476,8 +646,17 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         for (const char* f : {"lichii.pdb", "eden-cli.pdb", "vc_redist.x64.exe"}) fs::remove(P(join(dir, f)), ec2);
     }
     if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");   // Dolphin keeps its User folder beside the exe
-    if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");
-    if (!ok) remove_tree(dir);   // never leave a half install behind
+    if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");   // the marker is last
+    if (!ok) {
+        if (swapped) { if (!restore_old(dir, keep, true)) *err += " (the old files could not all be put back; RetroHub will retry at the next start)"; }
+        else if (!upgrading) clear_dir_keeping(dir, keep);   // never leave a half install behind (the player's data folder stays)
+    } else if (upgrading) {   // done: the scratch goes, the journal last
+        remove_tree(join(dir, kOldDir));
+        remove_tree(stage);
+        std::error_code ec3;
+        fs::remove(P(join(dir, kJournal)), ec3);
+    }
+    remove_tree(stage);
     std::error_code ec;
     fs::remove(P(archive), ec);
     fs::remove(P(archive + ".part"), ec);
@@ -508,6 +687,7 @@ void Installer::start(Kind k, const std::string& managed_root_dir) {
     if (th.joinable()) th.join();
     kind = k;
     root = managed_root_dir;
+    updating = upgradable(k) && file_exists(join(managed_dir(k, root), U(release(k).exe))) && file_exists(join(managed_dir(k, root), "retrohub-install.txt"));
     done = false;
     ok = false;
     got = 0;

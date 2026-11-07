@@ -50,6 +50,7 @@
 #include <xinput.h>
 
 hubemu::Installer EMU;   // download-on-demand job + its dialog state
+bool EMU_UPDATE_SKIP[8] = {};
 UnzipJob UNZ;
 hubnp3ds::Runner NP3;                 // 3DS local-wireless forwarder (np_3ds)
 std::string NP3_mp;                    // "-m ..." for Azahar once NP3 is ready
@@ -633,6 +634,14 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         shot_trace("external", std::string(hubemu::name(kind)) + " not-installed -> install dialog");
         EMU.kind = kind;
         EMU.game_key = e.key;
+        EMU.updating = false;
+        EMU.state = hubemu::Installer::Asking;
+        return;
+    }
+    if (inst.outdated && !g_headless && !EMU_UPDATE_SKIP[(int)kind] && !hubemu::is_running(inst.exe)) {   // an older pinned build: offer the in-place update first (never while it runs)
+        EMU.kind = kind;
+        EMU.game_key = e.key;
+        EMU.updating = true;
         EMU.state = hubemu::Installer::Asking;
         return;
     }

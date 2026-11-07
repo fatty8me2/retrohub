@@ -108,6 +108,11 @@ int main(int argc, char** argv) {
                 if (ph != lastphase) { lastphase = ph; std::printf("  phase %d at %.1fs\n", ph, stamp()); }
             })) { std::printf("INSTALL FAILED: %s\n", err.c_str()); return 4; }
         inst = hubemu::find(kind, "", e.path);
+    } else if (inst.outdated && !hubemu::is_running(inst.exe)) {   // best effort: the old build is kept when this fails
+        std::string err;
+        std::printf("[%.1fs] %s is outdated: updating...\n", stamp(), hubemu::name(kind));
+        if (!hubemu::install_blocking(kind, hubemu::managed_root(), &err, nullptr)) std::printf("UPDATE FAILED (the current version stays): %s\n", err.c_str());
+        inst = hubemu::find(kind, "", e.path);
     }
     std::printf("[%.1fs] emulator: %s (%s, managed=%d)\n", stamp(), inst.exe.c_str(), inst.how.c_str(), (int)inst.managed);
     if (inst.exe.empty() || !inst.managed) { std::printf("refusing: not a managed install\n"); return 5; }
