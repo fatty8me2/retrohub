@@ -13,6 +13,7 @@ struct Av1Ask {
     std::string key;
 } ASK;
 
+ULONGLONG g_lichii_once_at = 0;   // set with it: the choice expires after 20 s, so a launch that stopped at a prompt cannot leak into a later Play
 std::string g_lichii_once;   // game key: the next launch_external for it skips Hookshot ("Play with Lichii this time")
 
 }  // namespace
@@ -22,8 +23,9 @@ void hookshot_av1_ask_shot() { ASK.open = true; ASK.key.clear(); ASK.focused = f
 
 bool hookshot_lichii_once_consume(const std::string& key) {
     if (g_lichii_once.empty() || g_lichii_once != key) return false;
+    const bool fresh = GetTickCount64() - g_lichii_once_at < 20000;
     g_lichii_once.clear();
-    return true;
+    return fresh;
 }
 
 void draw_hookshot_run_dialogs() {
@@ -43,7 +45,7 @@ void draw_hookshot_run_dialogs() {
     }
     if (button("Play with Lichii this time", ImVec2(300 * S, 44 * S))) {
         ASK.open = false;
-        if (const hub::GameEntry* g = find_entry(ASK.key)) { hub::GameEntry copy = *g; g_lichii_once = copy.key; play_entry(copy); }
+        if (const hub::GameEntry* g = find_entry(ASK.key)) { hub::GameEntry copy = *g; g_lichii_once = copy.key; g_lichii_once_at = GetTickCount64(); play_entry(copy); }
     }
     if (button("Cancel", ImVec2(300 * S, 44 * S))) ASK.open = false;
     if (!ASK.open) { ImGui::CloseCurrentPopup(); ASK.focused = false; }

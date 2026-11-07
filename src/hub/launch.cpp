@@ -609,7 +609,7 @@ static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const st
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg) {
     if (launch_blocked("launch_external")) return;
     hubemu::Kind kind = hubemu::kind_for(e.system);
-    if (kind == hubemu::Kind::Lichii && hookshot_lichii_once_consume(e.key)) { /* "Play with Lichii this time": skip Hookshot once */ }
+    if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot_lichii_once_consume(e.key)) { /* "Play with Lichii this time": skip Hookshot once */ }
     else if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot::use_for(e, gs_values_for(e))) { launch_hookshot(e, ri, battery); return; }   // before any Lichii-only step: works without Lichii, keys or firmware
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
