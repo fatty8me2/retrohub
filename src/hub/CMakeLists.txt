@@ -329,7 +329,7 @@ target_link_libraries(hub_switch_test PRIVATE hublogic hubcommon hubminiz bcrypt
 add_executable(hub_hookshot_build_test test_hookshot_build.cpp hookshot_build.cpp hookshot.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_hookshot_build_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_compile_definitions(hub_hookshot_build_test PRIVATE HOOKSHOT_DATA_DIR="${CMAKE_SOURCE_DIR}/data/hookshot")
-target_link_libraries(hub_hookshot_build_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+target_link_libraries(hub_hookshot_build_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi mfplat mfuuid ole32)   # (hookshot.cpp: the AV1 check)
 
 # PlayStation Portable via PPSSPP (docs/EMULATORS.md): PARAM.SFO / ISO / CSO / CHD / PBP identification (synthetic images), PS1-vs-PSP routing, scan, SAVEDATA mapping, ppsspp.ini + controls.ini
 add_executable(hub_psp_test test_psp.cpp ppsspp.cpp emulators.cpp lichii.cpp)
