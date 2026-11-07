@@ -21,7 +21,7 @@ only retailer protector-sleeve sizes, so every cardboard-box figure is **approx*
 | PS2 (NA) | DVD keep case, black | Standard DVD keep case 135 x 190 x 15 [src], NA PS2 black [src] | Black (NA); navy blue (PAL from 2001) [src] | Top-to-bottom | Black spine with PS2 logo, Greatest Hits = red [src red from PS2 onward] | Black polypropylene + sleeve; memory card slot [src] |
 | PSP | UMD case | 99 x 168 x 14 [src]; UMD page quotes 104 x 177 x 14 [src] (conflict, wrapper vs. inner) | Clear [src] | Top-to-bottom [mem] | Black PSP banner/logo at top [mem] | Clear plastic, sleeve; Greatest Hits red [src] |
 | DS (NA) | Proprietary small keep case | 122 x 135 x 15 [src] (EU: 20 deep, clear [src]) | Black (NA/JP) [src]; DSi-only white, some Mario red [src] | Top-to-bottom [mem] | Black spine, DS logo [mem] | Black plastic + sleeve; GBA slot [src] |
-| 3DS (NA) | Same small DS-family case | approx 135 x 122 x 15 (one listing 133 x 167 x 14, unverified; likely wrong case) | Black (NA) [mem]; Selects red [mem] | Top-to-bottom | Blue 3D band top [mem] | Same as DS |
+| 3DS (NA) | Same small DS-family case | approx 135 x 122 x 15 (one listing 133 x 167 x 14, unverified; likely wrong case) | White [src: PocketGamer "3DS game cases are usually white"; replacement-case listings]; Nintendo Selects red [mem] | Top-to-bottom | White band, red NINTENDO 3DS logo [mem] | Same as DS |
 | N64 (NA) | Cardboard box | approx 5.25 x 7.25 x 1.25 in = 133 x 184 x 32 (retailer protector listing "5 x 7 x 1.5 in") | Printed cardboard, art on all faces; Player's Choice: NTSC box has yellow N64 logo background [src], PAL silver/platinum [src] | Top-to-bottom [mem] | Narrow spine with game title and N64 logo, coloured banner [mem] | Matte cardboard + inner foam/ plastic tray, flaps [mem] |
 | SNES (NA) | Cardboard box + plastic tray | approx 5 x 7 x 1.5 in = 127 x 178 x 38 (protector listing, SNES/N64 share) | Cardboard; Player's Choice gold SNES wordmark; most boxes red-overhauled, Disney blue [src] | Top-to-bottom [mem] | Red/ white label with SNES logo [mem] | Matte cardboard, inner plastic tray, flaps [mem] |
 | NES (NA) | Cardboard box | approx 4.9 x 7.0 x 0.9 in = 124 x 178 x 22 (unlicensed Gauntlet sample) | Grey/silver band, black/white logo [mem] | Top-to-bottom [mem] | Narrow spine, "NES" seal, grey [mem] | Matte cardboard, inner foam/plastic tray [mem] |
@@ -93,8 +93,14 @@ Real scans (front, and GameTDB full scans with spine and back where they exist) 
 | Wii U | light blue | blue, white cap band | blue | blue panel |
 | Switch | clear plastic around a red-banded sleeve | red | clear | white panel with red banner |
 | Switch 2 | red-tinted plastic | red, two-tone cap | red | white panel |
-| DS, 3DS | black (NTSC-U) | black, light logo band | black | light panel |
+| DS | black (NTSC-U / NTSC-J; Europe clear) | black, light logo band | black | light panel |
+| 3DS | white | white, red logo | white | light panel |
 | PS1 | clear jewel case, black tray | black card, PlayStation strip | clear rails | black tray panel |
 | N64, SNES, NES, GB, GBC, GBA | printed card in the game's colours (N64 strongest, NES / SNES mildest) | the front art's colours | the front art's colours | panel tinted by the front art |
 
 Spines always read top to bottom (US convention). Cardboard boxes are matte (no sheen); plastic cases are glossy.
+
+### Sources (checked by the orchestrator)
+- DS: Wikipedia "Keep case" table (black, 135 x 122 x 15 mm, North America / Japan; Europe clear 20 mm); Nintendo World Report "Quick and Easy Ways to Spot a Bootleg Nintendo DS Game".
+- 3DS: PocketGamer (3DS game cases are usually white; the black EU Xenoblade 3D case is the exception).
+- Switch: OpenCritic (Switch 1 cases clear/transparent; Switch 2 cases translucent red).

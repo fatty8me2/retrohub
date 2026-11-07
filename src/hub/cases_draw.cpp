@@ -149,8 +149,8 @@ Style style_of(const CaseDraw& d) {
             s.line = true;
             break;
         case Media::PspCase: set(rgba(94, 100, 114), rgba(18, 20, 28), rgba(12, 14, 20), rgba(246, 247, 252), rgba(72, 122, 232), rgba(20, 22, 30)); s.line = true; break;
-        case Media::DsCase: set(rgba(24, 25, 31), rgba(24, 25, 31), rgba(228, 231, 238), rgba(34, 38, 50), rgba(58, 148, 214), rgba(236, 238, 242)); s.line = true; break;   // NTSC-U DS / 3DS cases are black plastic
-        case Media::N3dsCase: set(rgba(24, 25, 31), rgba(24, 25, 31), rgba(244, 245, 248), rgba(210, 36, 44), rgba(210, 36, 44), rgba(250, 250, 252)); s.line = true; break;
+        case Media::DsCase: set(rgba(24, 25, 31), rgba(24, 25, 31), rgba(228, 231, 238), rgba(34, 38, 50), rgba(58, 148, 214), rgba(236, 238, 242)); s.line = true; break;   // NTSC-U / NTSC-J DS cases are black plastic (Europe: clear)
+        case Media::N3dsCase: set(rgba(242, 243, 246), rgba(247, 247, 250), rgba(252, 252, 253), rgba(210, 36, 44), rgba(210, 36, 44), rgba(250, 250, 252)); s.line = true; break;   // 3DS cases are white plastic
         case Media::Ps1Jewel: set(rgba(176, 182, 194), rgba(22, 23, 28), rgba(14, 14, 18), rgba(246, 247, 252), rgba(150, 154, 166), rgba(22, 23, 30)); s.ban = Ban::Left; break;
         case Media::NesCart: set(rgba(26, 26, 30), rgba(28, 28, 32), rgba(16, 16, 20), rgba(226, 226, 232), rgba(124, 126, 134), rgba(34, 34, 40)); s.ban = Ban::Frame; break;
         case Media::SnesCart: set(rgba(204, 204, 210), rgba(186, 186, 196), rgba(148, 150, 164), rgba(28, 30, 42), rgba(116, 92, 176), rgba(224, 224, 230)); s.ban = Ban::Bottom; break;
@@ -579,7 +579,7 @@ SpineLook spine_look(const CaseDraw& d, const Style& st) {
         case Media::WiiUCase: k.top = rgba(28, 142, 210); k.bot = rgba(16, 100, 166); k.cap = rgba(255, 255, 255); k.cap_text = rgba(0, 120, 190); k.accent = rgba(214, 240, 252); break;
         case Media::SwitchCase: k.top = rgba(226, 24, 36); k.bot = rgba(172, 10, 24); k.cap = d.nx2 ? rgba(150, 8, 20) : rgba(188, 12, 26); k.cap_text = rgba(255, 255, 255); k.accent = rgba(255, 255, 255); break;
         case Media::DsCase: k.top = rgba(34, 36, 44); k.bot = rgba(14, 15, 19); k.cap = rgba(228, 231, 238); k.cap_text = rgba(34, 38, 50); k.accent = rgba(58, 148, 214); break;   // black case, light logo band
-        case Media::N3dsCase: k.top = rgba(34, 36, 44); k.bot = rgba(14, 15, 19); k.cap = rgba(244, 245, 248); k.cap_text = rgba(210, 36, 44); k.accent = rgba(210, 36, 44); break;
+        case Media::N3dsCase: k.top = rgba(252, 252, 253); k.bot = rgba(226, 228, 233); k.cap = rgba(252, 252, 253); k.cap_text = rgba(210, 36, 44); k.accent = rgba(210, 36, 44); break;   // white case, red logo
         case Media::PspCase: k.top = rgba(26, 28, 38); k.bot = rgba(8, 9, 14); k.cap = rgba(10, 12, 18); k.cap_text = rgba(246, 247, 252); k.accent = rgba(72, 122, 232); break;
         case Media::Ps1Jewel: k.top = rgba(30, 30, 36); k.bot = rgba(10, 10, 14); k.vword = true; break;
         default:
