@@ -313,11 +313,11 @@ const std::vector<GameInfo>& catalog() {
          {"NTHE", "NTHP"}, false, 1999,
          "Buzz Lightyear explores rooms and streets from the film to rescue Woody.",
          "Toy Story 2 - Buzz Lightyear to the Rescue! (USA)"},
-        /* Master Quest was released on GameCube; N64-format copies carry NZLE. Art: Ocarina's box. */
+        /* Master Quest was released on GameCube; N64-format copies carry NZLE. Art: the Master Quest box (libretro files it under N64 as the GameCube bonus disc). */
         {"ootmq", "Zelda: Ocarina of Time Master Quest", Engine::Mupen64Plus, 1, {}, "", "n64",
          {"NZLE"}, false, 2002,
          "Ocarina of Time with remixed, much harder dungeons.",
-         "Legend of Zelda, The - Ocarina of Time (USA)"},
+         "Legend of Zelda, The - Ocarina of Time - Master Quest (USA) (GameCube)"},
         {"wwfnomercy", "WWF No Mercy", Engine::Mupen64Plus, 4, {}, "", "n64",
          {"NW4E", "NW4P"}, true, 2000,
          "Pro wrestling with create-a-wrestler and a four-player bout option.",

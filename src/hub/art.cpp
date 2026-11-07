@@ -71,6 +71,8 @@ struct Slot {
     uint32_t avg = 0;   // average saturated colour (theme "Accent from cover"), 0 = none
     long long retry_at = 0;   // Failed by a transient error (offline, HTTP 5xx): ask again from this unix second (0 = never; 404 / bad image stay final)
     int fails = 0;
+    std::string name;         // the art name that loaded ("Super Mario 64 (USA)", "gametdb:ALZE01:US", "nupicon:<id>"); audit only
+    std::string err;          // why it failed (final or transient); audit only
 };
 
 struct Job {
@@ -86,6 +88,7 @@ struct Done {
     std::string id;
     bool ok = false;
     bool transient = false;   // failed because of the network (not a 404): worth another try later
+    std::string name, err;
     Pixels px;
 };
 
@@ -151,11 +154,25 @@ std::string safe_file_name(const std::string& n) {
 
 /* ---------- persisted maps ---------- */
 
+/* Miss record versions: every time the matching improves the prefixes below are bumped, so a game recorded as a "known miss" by an older
+ * version is looked up once more. Current: images "art3:", owned names "name3:", ghost names "name4:". Older records are dropped at load. */
+const char* const kMissArt = "art3:";
+const char* const kMissName = "name3:";
+const char* const kMissGhost = "name4:";
+bool stale_miss_key(const std::string& k) {
+    return k.compare(0, 5, "art2:") == 0 || k.compare(0, 4, "art:") == 0 || k.compare(0, 5, "name:") == 0 || k.compare(0, 6, "name2:") == 0;
+}
+
 void load_maps() {
     std::string t;
     std::map<std::string, std::string> m;
     if (read_file(P(g_cache + "names.json"), &t) && hm::map_from_json(t, &m)) g_names = m;
-    if (read_file(P(g_cache + "misses.json"), &t) && hm::map_from_json(t, &m)) g_misses = m;
+    if (read_file(P(g_cache + "misses.json"), &t) && hm::map_from_json(t, &m)) {
+        g_misses = m;
+        for (auto it = g_misses.begin(); it != g_misses.end();) {
+            if (stale_miss_key(it->first)) { it = g_misses.erase(it); g_misses_dirty = true; } else ++it;
+        }
+    }
 }
 /* Snapshot under g_mu, write with no lock held (the UI thread takes g_mu every frame).
    Callers must NOT hold g_mu. g_flush_mu serialises writers. */
@@ -467,15 +484,22 @@ bool resolve_name_impl(const hub::GameEntry& g, std::string* name, std::string* 
         return true;
     }
     {
+        /* A catalog name is authoritative: a cached plain name that differs from it (the catalog entry was corrected since, e.g. Master Quest used
+         * to borrow Ocarina of Time's box) is replaced. Pseudo names (GameTDB / package icon fallbacks) stay: they record a fallback that worked. */
+        const hub::GameInfo* cgi = g.catalog_id.empty() ? nullptr : hub::find_game(g.catalog_id);
+        const std::string cat_name = cgi ? cgi->nointro : std::string();
         std::lock_guard<std::mutex> l(g_mu);
         auto it = g_names.find(g.key);
         if (it != g_names.end() && !it->second.empty()) {
-            *name = it->second;
-            if (how) *how = "cache";
-            return true;
+            const bool pseudo = it->second.compare(0, 8, "gametdb:") == 0 || it->second.compare(0, 8, "nupicon:") == 0;
+            if (pseudo || cat_name.empty() || it->second == cat_name) {
+                *name = it->second;
+                if (how) *how = "cache";
+                return true;
+            }
         }
     }
-    const std::string miss_id = (ghost ? "name2:" : "name:") + g.key;   // ghosts: new id, so misses recorded by older versions do not hide the improved lookup
+    const std::string miss_id = (ghost ? kMissGhost : kMissName) + g.key;   // versioned: misses recorded by older matching do not hide the improved lookup
 
     std::string found, h;
     bool skip_dat = false;
@@ -617,7 +641,7 @@ bool decode_png(const std::string& bytes, Pixels* out, int max_w = kMaxBoxW, int
 bool load_image(const std::string& system, const std::string& name, Kind kind, Pixels* px, std::string* err,
                 std::string* png_path) {
     if (name.empty()) { *err = "no name"; return false; }
-    std::string miss_id = "art2:" + system + ":" + kind_name(kind) + ":" + name;
+    std::string miss_id = kMissArt + system + ":" + kind_name(kind) + ":" + name;
     fs::path file = P(g_cache + system + "/" + kind_name(kind) + "/" + safe_file_name(name) + ".png");
     if (png_path) *png_path = file.u8string();
     std::string bytes;
@@ -682,7 +706,7 @@ bool load_image(const std::string& system, const std::string& name, Kind kind, P
 
 /* One job, start to finish: resolve the name, fetch / read the image. Shared by the worker thread and the headless tool.
  * Fallbacks: a Boxart libretro has no thumbnail for tries GameTDB's front cover (GameCube / Wii U / DS / 3DS) and a Switch .nup's icon. */
-bool run_job(const Job& j, Pixels* px, std::string* err, bool* transient, std::string* how, std::string* png_path) {
+bool run_job(const Job& j, Pixels* px, std::string* err, bool* transient, std::string* how, std::string* png_path, std::string* used = nullptr) {
     std::string sys = j.by_name ? j.system : hub::system_short(j.game.system);
     std::string name = j.name;
     bool ok = true, unresolved = false;
@@ -699,13 +723,38 @@ bool run_job(const Job& j, Pixels* px, std::string* err, bool* transient, std::s
         }
         if (how) *how = "gametdb";
         ok = load_image(sys, name, j.kind, px, err, png_path);
+        if (ok && used) *used = name;
         *transient = !ok && (*err == "network error" || err->compare(0, 5, "HTTP ") == 0);
+        if (!ok && !*transient && (*err == "known miss" || err->compare(0, 3, "404") == 0)) {   // no scan for this region: the same game's other regions (Phantom Hourglass US -> PAL, 3DS "EKJA" -> EKJE)
+            std::string id, folder;
+            if (hm::parse_gametdb_name(name, &id, &folder)) {
+                const std::string hint = gametdb::region_hint_from_name(libretro.empty() ? j.game.path : libretro);
+                int tried = 0;
+                for (const auto& sib : gametdb::regional_siblings(id, hint)) {
+                    if (tried >= (gametdb::cached_index(sys) ? 3 : 1)) break;   // without the index only the best guess is tried
+                    if (const gametdb::Index* idx = gametdb::cached_index(sys)) { if (!idx->by_id(sib.first)) continue; }   // only ids GameTDB lists
+                    ++tried;
+                    const std::string sn = hm::gametdb_name_for(sib.first, sib.second + "!");
+                    std::string e2;
+                    if (load_image(sys, sn, j.kind, px, &e2, png_path)) {
+                        ok = true;
+                        if (used) *used = sn;
+                        if (how) *how = "gametdb-sibling";
+                        err->clear();
+                        *transient = false;
+                        return true;
+                    }
+                    if (e2 == "network error" || e2.compare(0, 5, "HTTP ") == 0) { *transient = true; *err = e2; break; }
+                }
+            }
+        }
         return ok;
     }
     if (!j.by_name) { ok = resolve_name_impl(j.game, &name, how); unresolved = !ok; }
     if (ok) {
         if (name.compare(0, 8, "nupicon:") == 0 && !j.by_name) ensure_nup_icon(j.game, name);
         ok = load_image(sys, name, j.kind, px, err, png_path);
+        if (ok && used) *used = name;
     }
     if (!ok && j.kind == Kind::Boxart && !j.by_name) {
         const bool final_fail = unresolved || err->compare(0, 3, "404") == 0 || *err == "known miss" || *err == "no icon" || *err == "bad image";
@@ -720,6 +769,7 @@ bool run_job(const Job& j, Pixels* px, std::string* err, bool* transient, std::s
                 std::string e2;
                 if (load_image(sys, alt, j.kind, px, &e2, png_path)) {
                     ok = true;
+                    if (used) *used = alt;
                     if (how) *how = alt.compare(0, 8, "nupicon:") == 0 ? "nupicon" : "gametdb";
                     {   // remember which name has art, so the next start goes straight there
                         std::lock_guard<std::mutex> l(g_mu);
@@ -763,8 +813,9 @@ void worker_main() {
         d.id = j.id;
         std::string err, how;
         bool transient = false;
-        d.ok = run_job(j, &d.px, &err, &transient, &how, nullptr);
+        d.ok = run_job(j, &d.px, &err, &transient, &how, nullptr, &d.name);
         d.transient = !d.ok && transient;
+        d.err = err;
         std::lock_guard<std::mutex> l(g_mu);
         g_done.push_back(std::move(d));
     }
@@ -859,6 +910,7 @@ void pump() {
             g_done.pop_front();
         }
         Slot& s = g_slots[d.id];
+        s.err = d.err;
         if (!d.ok) {
             s.st = State::Failed;
             if (d.transient) {   // retried later with a growing pause, instead of staying blank for the whole session
@@ -873,7 +925,7 @@ void pump() {
         SDL_UpdateTexture(t, nullptr, d.px.rgba.data(), d.px.w * 4);
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
-        s.tex = t; s.w = d.px.w; s.h = d.px.h; s.st = State::Ready; g_lru.touch(d.id);
+        s.tex = t; s.w = d.px.w; s.h = d.px.h; s.st = State::Ready; s.name = d.name; g_lru.touch(d.id);
         s.avg = hubtheme::average_saturated(d.px.rgba.data(), d.px.w, d.px.h, 4);
     }
 }
@@ -926,23 +978,53 @@ SDL_Texture* get_by_name(const std::string& system_short, const std::string& noi
     return lookup_or_queue(std::move(j), w, h);
 }
 
+namespace {
+/* The stand-in entry for a ghost: resolved exactly like an owned copy (catalog name, serial / crc from the identity key, DAT title, fuzzy). */
+hub::GameEntry ghost_entry(const std::string& system_short, const std::string& key, const std::string& catalog_id,
+                           const std::string& title, const std::string& hint) {
+    hub::GameEntry g;
+    const std::string sys = hm::system_of_key(system_short, key);   // a PS2 disc a friend filed under GameCube is looked up as PS2
+    g.system = hub::system_from_short(sys);
+    g.key = key.empty() ? "ghost:" + system_short + ":" + title : key;
+    g.title = title;
+    g.catalog_id = catalog_id;
+    g.serial = hm::serial_from_key(sys, key);
+    g.path = hint.empty() ? "ghost" : "ghost|" + hint;
+    return g;
+}
+}
+
+std::string game_slot_id(const std::string& key, Kind kind) { return slot_id(key, kind); }
+std::string ghost_slot_id(const std::string& system_short, const std::string& key, const std::string& title, Kind kind) {
+    return slot_id("ghost:" + system_short + ":" + key + ":" + title, kind);
+}
+
 SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
                        const std::string& title, Kind kind, int* w, int* h, const std::string& hint) {
     if (!g_enabled.load()) return nullptr;
+    if (kind == Kind::FullCover && !gametdb::has_fullcover(hm::system_of_key(system_short, key))) return nullptr;
     Job j;
-    j.id = slot_id("ghost:" + system_short + ":" + key + ":" + title, kind);
+    j.id = ghost_slot_id(system_short, key, title, kind);
     j.kind = kind;
     auto it = g_slots.find(j.id);
-    if (it == g_slots.end() || it->second.st == State::Failed) {
-        /* Resolve exactly like an owned copy: catalog name, serial/crc from the identity key, DAT title, then fuzzy. */
-        j.game.system = hub::system_from_short(system_short);
-        j.game.key = key.empty() ? "ghost:" + system_short + ":" + title : key;
-        j.game.title = title;
-        j.game.catalog_id = catalog_id;
-        j.game.serial = hm::serial_from_key(system_short, key);
-        j.game.path = hint.empty() ? "ghost" : "ghost|" + hint;
-    }
+    if (it == g_slots.end() || it->second.st == State::Failed) j.game = ghost_entry(system_short, key, catalog_id, title, hint);
     return lookup_or_queue(std::move(j), w, h);
+}
+
+SlotInfo slot_info(const std::string& id) {
+    SlotInfo r;
+    auto it = g_slots.find(id);
+    if (it == g_slots.end()) return r;
+    const Slot& s = it->second;
+    r.state = s.st == State::Ready ? SlotState::Ready : s.st == State::Failed ? SlotState::Failed : SlotState::Pending;
+    r.w = s.w; r.h = s.h; r.name = s.name; r.err = s.err;
+    r.transient = s.st == State::Failed && s.retry_at != 0;
+    return r;
+}
+
+std::string catalog_id_for(const std::string& system_short, const std::string& title) {
+    const hub::GameInfo* gi = catalog_by_title(system_short, title);
+    return gi ? gi->id : std::string();
 }
 
 std::string cached_name(const std::string& key) {
@@ -966,14 +1048,23 @@ bool resolve_name(const hub::GameEntry& game, std::string* name, std::string* ho
 
 bool resolve_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
                    const std::string& title, const std::string& hint, std::string* name, std::string* how) {
-    hub::GameEntry g;
-    g.system = hub::system_from_short(system_short);
-    g.key = key.empty() ? "ghost:" + system_short + ":" + title : key;
-    g.title = title;
-    g.catalog_id = catalog_id;
-    g.serial = hm::serial_from_key(system_short, key);
-    g.path = hint.empty() ? "ghost" : "ghost|" + hint;
-    return resolve_name_impl(g, name, how);
+    return resolve_name_impl(ghost_entry(system_short, key, catalog_id, title, hint), name, how);
+}
+
+bool fetch_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id, const std::string& title,
+                 const std::string& hint, Kind kind, int* w, int* h, std::string* err, std::string* name) {
+    if (kind == Kind::FullCover && !gametdb::has_fullcover(hm::system_of_key(system_short, key))) { if (err) *err = "no full cover for this system"; return false; }
+    DownloadScope allow;
+    Job j;
+    j.kind = kind;
+    j.game = ghost_entry(system_short, key, catalog_id, title, hint);
+    Pixels px;
+    std::string e, how;
+    bool transient = false;
+    bool ok = run_job(j, &px, &e, &transient, &how, nullptr, name);
+    if (ok) { if (w) *w = px.w; if (h) *h = px.h; }
+    else if (err) *err = e + (transient ? " (transient)" : "");
+    return ok;
 }
 
 void flush() { flush_maps(); }
@@ -985,7 +1076,7 @@ bool image_header_ok(const std::string& bytes, int* w, int* h) {
     return ok;
 }
 
-bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::string* err, std::string* how, std::string* png_path) {
+bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::string* err, std::string* how, std::string* png_path, std::string* name) {
     DownloadScope allow;   // the headless tool runs on one thread and may download the databases it needs
     Job j;
     j.kind = kind;
@@ -993,7 +1084,7 @@ bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::stri
     Pixels px;
     std::string e;
     bool transient = false;
-    bool ok = run_job(j, &px, &e, &transient, how, png_path);
+    bool ok = run_job(j, &px, &e, &transient, how, png_path, name);
     if (ok) { if (w) *w = px.w; if (h) *h = px.h; }
     else if (err) *err = e + (transient ? " (transient)" : "");
     return ok;

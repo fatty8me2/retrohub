@@ -10,6 +10,7 @@
 
 #include <functional>
 #include <optional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,11 @@ std::string id_from_serial(const std::string& system, const std::string& serial)
 std::vector<std::string> region_folders(const std::string& id, const std::string& region_hint = "");
 /* "Pokemon X (USA) (En,Ja)" -> "USA"; "Europe" / "Japan" / "World" / "Korea" ...; "" when no tag. */
 std::string region_hint_from_name(const std::string& name);
+
+/* The same game's other regional releases: ids that differ only in the region letter (index 3), original excluded, best first for `region_hint`
+ * ("USA" / "Europe" / "Japan" / "Korea" / ""): the hint's region, then USA, Europe, Japan, Korea. Each pair is (id, scan folder). Pure. Used when
+ * a game's own region has no full cover scan on GameTDB (Phantom Hourglass US: only the PAL scan exists; Pokemon X 3DS "EKJA" is filed as EKJE). */
+std::vector<std::pair<std::string, std::string>> regional_siblings(const std::string& id, const std::string& region_hint);
 
 enum class Img { Cover, CoverFull };
 /* Candidate URLs for one region folder, best quality first (HQ, then standard). "" system/id -> empty. */

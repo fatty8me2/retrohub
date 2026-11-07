@@ -69,6 +69,8 @@ std::string match_hint(const std::vector<DatRec>& dat, const std::string& hint);
 std::string title_key(const std::string& s);
 /* Serial for a ghost entry derived from its identity key ("ps1:slus-01188" -> "slus-01188", "gc:gm4e01-0" -> "gm4e01"). */
 std::string serial_from_key(const std::string& system, const std::string& key);
+/* The console a friend's game key really belongs to: "ps2:slus-20047" filed under "gc" is a PS2 disc. sys when the key has no known console prefix. */
+std::string system_of_key(const std::string& sys, const std::string& key);
 /* Best DAT name for the query; "" if none. *how (optional) is one of md5 crc serial title. */
 std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::string* how = nullptr);
 

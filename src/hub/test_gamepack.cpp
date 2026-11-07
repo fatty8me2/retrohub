@@ -11,6 +11,18 @@ using namespace hubgp;
 int main()
 {
     /* decode_entities */
+    {   // the closest loose match wins when a shorter owned title also fits (Master Quest vs Ocarina of Time)
+        auto K2 = [](std::initializer_list<const char*> l) { std::vector<std::string> v; for (const char* x : l) v.push_back(pack_key(x)); return v; };
+        std::vector<std::string> own = K2({"The Legend of Zelda: Ocarina of Time", "Zelda: Ocarina of Time Master Quest", "Mario Kart 64"});
+        CHECK(pack_pick(own, pack_key("The Legend of Zelda Ocarina of Time Master Quest")) == 1);
+        CHECK(pack_pick(own, pack_key("Legend of Zelda, The - Ocarina of Time (USA)")) == 0);
+        std::vector<std::string> tie = K2({"Zelda Ocarina Time", "Ocarina of Time Zelda Link"});
+        CHECK(pack_pick(tie, pack_key("Legend of Zelda Ocarina of Time Link Zelda Time")) != -2);   // does not crash; ties are decided by overlap only
+        // and the pack ghost of a game I own under the shorter spelling is not shown
+        std::vector<hubui::fg::Owned> mine = {{"n64", "n64:oot", "oot", "The Legend of Zelda: Ocarina of Time"}, {"n64", "n64:mq", "ootmq", "Zelda: Ocarina of Time Master Quest"}};
+        PackGame pg1{"n64", "The Legend of Zelda Ocarina of Time Master Quest", pack_key("The Legend of Zelda Ocarina of Time Master Quest"), "The Legend of Zelda Ocarina of Time Master Quest"};
+        CHECK(pack_only_ghosts(mine, {}, {pg1}, 10).empty());
+    }
     {   // pack_pick: exact first, then a single loose match; numbers must agree
         auto K = [](std::initializer_list<const char*> l) { std::vector<std::string> v; for (const char* x : l) v.push_back(pack_key(x)); return v; };
         std::vector<std::string> n64 = K({"007 - GoldenEye", "Mario Golf 64 (English)", "Smash_Remix_2.0.0", "The Legend of Zelda Ocarina of Time Master Quest", "Mario Party 2 (U) [!]", "Mario Party 3 (U) [!]"});
