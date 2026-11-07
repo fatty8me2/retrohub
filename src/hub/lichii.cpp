@@ -482,8 +482,105 @@ static std::string num(double d) {
     return b;
 }
 
+static bool hex32(const std::string& g) {
+    if (g.size() != 32) return false;
+    for (char ch : g) if (!std::isxdigit((unsigned char)ch)) return false;
+    return true;
+}
+
+std::string lichii_zero_guid_crc(const std::string& guid) {
+    if (!hex32(guid)) return guid;
+    std::string g = guid;
+    for (char& ch : g) ch = (char)std::tolower((unsigned char)ch);
+    g.replace(4, 4, "0000");   // bytes 2-3: SDL's name crc, which Lichii's GetGUID clears
+    return g;
+}
+
+std::string lichii_xinput_guid(unsigned vendor, unsigned product, unsigned version, unsigned subtype) {
+    char b[48];
+    std::snprintf(b, sizeof b, "03000000%02x%02x0000%02x%02x0000%02x%02x%02x%02x", vendor & 0xff, (vendor >> 8) & 0xff, product & 0xff, (product >> 8) & 0xff,
+                  version & 0xff, (version >> 8) & 0xff, 0x78u, subtype & 0xff);
+    return b;
+}
+
+bool lichii_guid_is_xinput(const std::string& guid) { return hex32(guid) && guid.compare(28, 2, "78") == 0; }
+
+static unsigned le16(const std::string& g, size_t at) { return (unsigned)(std::stoul(g.substr(at, 2), nullptr, 16) | (std::stoul(g.substr(at + 2, 2), nullptr, 16) << 8)); }
+
+std::string lichii_guid_to_xinput(const std::string& guid) {
+    if (!hex32(guid) || lichii_guid_is_xinput(guid)) return "";
+    const std::string g = lichii_zero_guid_crc(guid);
+    if (le16(g, 8) != 0x045e) return "";   // Microsoft pads only
+    return lichii_xinput_guid(0x045e, le16(g, 16), le16(g, 24), 1);
+}
+
+SdlBinds lichii_xinput_binds() {
+    SdlBinds s;
+    auto b = [&](int i, int idx) { s.button[i].type = 'b'; s.button[i].idx = idx; };
+    auto h = [&](int i, int mask) { s.button[i].type = 'h'; s.button[i].idx = 0; s.button[i].hat = mask; };
+    auto a = [&](int i, int idx) { s.axis[i].type = 'a'; s.axis[i].idx = idx; };
+    b(0, 0); b(1, 1); b(2, 2); b(3, 3);          // A B X Y
+    b(4, 6); b(5, 10); b(6, 7);                  // Back, Guide, Start
+    b(7, 8); b(8, 9); b(9, 4); b(10, 5);         // L3 R3 LB RB
+    h(11, 1); h(12, 4); h(13, 8); h(14, 2);      // d-pad up down left right: hat 0
+    a(0, 0); a(1, 1); a(2, 3); a(3, 4); a(4, 2); a(5, 5);   // LX LY RX RY LT RT
+    s.valid = true;
+    return s;
+}
+
+bool lichii_ini_player0(const std::string& ini, std::string* guid, int* port) {
+    const std::string key = "player_0_button_a=\"";
+    size_t p = ini.find(key);
+    if (p == std::string::npos) return false;
+    p += key.size();
+    size_t e = ini.find_first_of("\"\r\n", p);
+    const std::string v = ini.substr(p, e == std::string::npos ? std::string::npos : e - p);   // engine:sdl,port:0,guid:...,button:1
+    size_t g = v.find("guid:");
+    if (g == std::string::npos) return false;
+    size_t ge = v.find(',', g);
+    *guid = v.substr(g + 5, ge == std::string::npos ? std::string::npos : ge - g - 5);
+    *port = 0;
+    size_t q = v.find("port:");
+    if (q != std::string::npos) *port = std::atoi(v.c_str() + q + 5);
+    return true;
+}
+
+XinputId lichii_xinput_id(int slot) {
+    XinputId r;
+    if (slot < 0 || slot > 3) return r;
+    struct CapsEx { BYTE type, sub; WORD flags; BYTE gamepad[12]; BYTE vibration[4]; WORD vendor, product, version, unk1; DWORD unk2; };
+    typedef DWORD(WINAPI * GetCaps)(DWORD, DWORD, void*);
+    typedef DWORD(WINAPI * GetCapsEx)(DWORD, DWORD, DWORD, CapsEx*);
+    static HMODULE dll = LoadLibraryW(L"xinput1_4.dll");   // the one SDL3 loads first
+    if (!dll) return r;
+    GetCaps caps = (GetCaps)(void*)GetProcAddress(dll, "XInputGetCapabilities");
+    GetCapsEx ex = (GetCapsEx)(void*)GetProcAddress(dll, (LPCSTR)(ULONG_PTR)108);   // _XInputGetCapabilitiesEx: also returns vid / pid / version
+    if (!caps) return r;
+    BYTE buf[32] = {};
+    if (caps((DWORD)slot, 1 /*XINPUT_FLAG_GAMEPAD*/, buf) != ERROR_SUCCESS) return r;
+    const unsigned sub = buf[1];
+    if (sub == 0) return r;   // XINPUT_DEVSUBTYPE_UNKNOWN: SDL ignores it
+    r.present = true;
+    r.subtype = sub;
+    r.vendor = 0x045e; r.product = 0x028e; r.version = 0;   // SDL3's fallback when CapsEx is missing
+    CapsEx e = {};
+    if (ex && ex(1, (DWORD)slot, 0, &e) == ERROR_SUCCESS) {
+        r.vendor = e.vendor; r.product = e.product; r.version = e.version;
+        if (r.product == 0 && (e.flags & 0x0002 /*XINPUT_CAPS_WIRELESS*/)) { r.vendor = 0x045e; r.product = 0x028e; }   // wireless 360 pad
+    }
+    return r;
+}
+
+bool lichii_xinput_pad(const XinputId ids[4], int slot, std::string* guid, int* port) {
+    if (slot < 0 || slot > 3 || !ids[slot].present) return false;
+    *guid = ids[slot].guid();
+    *port = 0;
+    for (int s = 0; s < slot; ++s) if (ids[s].present && ids[s].guid() == *guid) ++*port;
+    return true;
+}
+
 static std::string sdl_prefix(const std::string& guid, int port) {
-    return "engine:sdl,port:" + std::to_string(port < 0 ? 0 : port) + ",guid:" + (guid.empty() ? std::string("0") : guid);
+    return "engine:sdl,port:" + std::to_string(port < 0 ? 0 : port) + ",guid:" + (guid.empty() ? std::string("0") : lichii_zero_guid_crc(guid));
 }
 
 static std::string bind_value(const SdlBinds::B& b, const std::string& p) {
@@ -571,7 +668,19 @@ std::string prepare_lichii(const std::string& install, const hubctl::Profile& pr
     const bool first = read_text(marker).empty();
     if (first) t = lichii_ini_defaults(t);
     t = lichii_ini_launch(t, v, fullscreen);
-    if (!guid.empty()) t = lichii_controls_ini(t, prof, guid, port, binds);   // no pad: keep whatever Lichii has (a mapping the player made there)
+    std::string g = guid;
+    int pt = port;
+    const SdlBinds* b = binds;
+    SdlBinds xb;
+    if (g.empty()) {   // no pad now: keep whatever Lichii has, but turn a Microsoft pad's old RAWINPUT / WGI guid into the XInput one Lichii sees once the pad is switched on
+        std::string og; int op = 0;
+        const std::string x = lichii_ini_player0(t, &og, &op) ? lichii_guid_to_xinput(og) : std::string();
+        if (!x.empty()) { g = x; pt = op; xb = lichii_xinput_binds(); b = &xb; }
+    }
+    if (!g.empty()) {
+        t = lichii_controls_ini(t, prof, g, pt, b);
+        if (lichii_guid_is_xinput(g)) t = ini_put(t, "Controls", "enable_raw_input", "false");   // an XInput guid only exists while Lichii's RAWINPUT is off
+    }
     if (!write_bytes(ini, t)) return "could not write qt-config.ini";
     if (first) write_bytes(marker, "RetroHub wrote Lichii's defaults once (delete this file to write them again); video settings and controls are rewritten before every launch.\n");
     lichii_ensure_profile(install);

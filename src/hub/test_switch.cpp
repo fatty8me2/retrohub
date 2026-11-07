@@ -138,6 +138,64 @@ static void test_controls() {
     CHECK(!lichii_pad_select({}, {a}, &guid, &port) && guid.empty() && port == 0);
 }
 
+/* What Lichii's SDL3 sees (lichii.h): zeroed name crc, the XInput guid + numbering for an Xbox pad, other pads unchanged but for the crc. */
+static void test_lichii_sdl3() {
+    const std::string raw = "0300e3c05e040000130b000017057200";      // an Xbox Wireless Controller as RetroHub's SDL2 (RAWINPUT) reports it
+    const std::string xi = "030000005e040000130b000017057801";       // the same pad as Lichii's SDL3 XInput driver builds it (crc cleared, 'x', subtype 1)
+    CHECK(lichii_zero_guid_crc(raw) == "030000005e040000130b000017057200");
+    CHECK(lichii_zero_guid_crc("0300E3C05E040000130B000017057200") == "030000005e040000130b000017057200" && lichii_zero_guid_crc("guid1") == "guid1" && lichii_zero_guid_crc("").empty());
+    CHECK(lichii_xinput_guid(0x045e, 0x0b13, 0x0517, 1) == xi && lichii_xinput_guid(0x045e, 0x028e, 0, 1) == "030000005e0400008e02000000007801");
+    CHECK(lichii_guid_is_xinput(xi) && !lichii_guid_is_xinput(raw) && !lichii_guid_is_xinput("78"));
+    CHECK(lichii_guid_to_xinput(raw) == xi && lichii_guid_to_xinput(xi).empty());
+    CHECK(lichii_guid_to_xinput("030000004c050000e60c000000006800").empty() && lichii_guid_to_xinput("guid1").empty());   // a DualSense is not converted
+    std::string g; int pt = -1;
+    CHECK(lichii_ini_player0("[Controls]\nplayer_0_button_a\\default=false\nplayer_0_button_a=\"engine:sdl,port:2,guid:" + raw + ",button:1\"\n", &g, &pt) && g == raw && pt == 2);
+    CHECK(!lichii_ini_player0("[Controls]\nmykey=1\n", &g, &pt));
+
+    hubctl::Profile p = hubctl::default_profile("switch");
+    const SdlBinds xb = lichii_xinput_binds();
+    const std::string c = lichii_controls_ini("", p, raw, 0, &xb);   // the raw guid is written with the crc cleared
+    const std::string q = "engine:sdl,port:0,guid:030000005e040000130b000017057200";
+    CHECK(!has(c, "e3c0") && has(c, "player_0_button_a=\"" + q + ",button:1\""));
+    const std::string cx = lichii_controls_ini("", p, xi, 0, &xb);
+    const std::string gx = "engine:sdl,port:0,guid:" + xi;
+    CHECK(has(cx, "player_0_button_a=\"" + gx + ",button:1\"") && has(cx, "player_0_button_b=\"" + gx + ",button:0\""));   // Switch A = Xbox B, B = A (kept)
+    CHECK(has(cx, "player_0_button_x=\"" + gx + ",button:3\"") && has(cx, "player_0_button_y=\"" + gx + ",button:2\""));
+    CHECK(has(cx, "player_0_button_l=\"" + gx + ",button:4\"") && has(cx, "player_0_button_r=\"" + gx + ",button:5\""));
+    CHECK(has(cx, "player_0_button_zl=\"" + gx + ",axis:2,threshold:0.5,invert:+\"") && has(cx, "player_0_button_zr=\"" + gx + ",axis:5,threshold:0.5,invert:+\""));
+    CHECK(has(cx, "player_0_button_plus=\"" + gx + ",button:7\"") && has(cx, "player_0_button_minus=\"" + gx + ",button:6\"") && has(cx, "player_0_button_home=\"" + gx + ",button:10\""));
+    CHECK(has(cx, "player_0_button_lstick=\"" + gx + ",button:8\"") && has(cx, "player_0_button_rstick=\"" + gx + ",button:9\""));
+    CHECK(has(cx, "player_0_button_dup=\"" + gx + ",hat:0,direction:up\"") && has(cx, "player_0_button_ddown=\"" + gx + ",hat:0,direction:down\""));
+    CHECK(has(cx, "player_0_button_dleft=\"" + gx + ",hat:0,direction:left\"") && has(cx, "player_0_button_dright=\"" + gx + ",hat:0,direction:right\""));
+    CHECK(has(cx, "player_0_lstick=\"" + gx + ",axis_x:0,axis_y:1,") && has(cx, "player_0_rstick=\"" + gx + ",axis_x:3,axis_y:4,"));
+    // the player's RetroHub remaps still apply on top of the XInput numbering
+    p.buttons["a"] = "x";
+    p.buttons["zl"] = "leftshoulder";
+    p.buttons["b"] = "leftx-";
+    const std::string cr = lichii_controls_ini("", p, xi, 0, &xb);
+    CHECK(has(cr, "player_0_button_a=\"" + gx + ",button:2\"") && has(cr, "player_0_button_zl=\"" + gx + ",button:4\""));
+    CHECK(has(cr, "player_0_button_b=\"" + gx + ",axis:0,threshold:0.5,invert:-\""));
+    // a pad that is not XInput: same output as before but for the cleared crc
+    SdlBinds ds;
+    ds.valid = true;
+    ds.button[0].type = 'b'; ds.button[0].idx = 1; ds.button[1].type = 'b'; ds.button[1].idx = 2;
+    ds.axis[4].type = 'a'; ds.axis[4].idx = 3;
+    const std::string ps = "030022a54c050000e60c000000016800";
+    const std::string ps0 = lichii_zero_guid_crc(ps);
+    CHECK(ps != ps0 && lichii_controls_ini("", hubctl::default_profile("switch"), ps, 1, &ds) == lichii_controls_ini("", hubctl::default_profile("switch"), ps0, 1, &ds));
+    CHECK(has(lichii_controls_ini("", hubctl::default_profile("switch"), ps, 1, &ds), "engine:sdl,port:1,guid:" + ps0 + ",button:2\"") && !has(lichii_controls_ini("", hubctl::default_profile("switch"), ps, 1, &ds), "22a5"));
+    // port among identical XInput pads (SDL3 lists them in slot order); an empty slot is skipped
+    XinputId ids[4];
+    ids[0].present = true; ids[0].vendor = 0x045e; ids[0].product = 0x0b13; ids[0].version = 0x0517; ids[0].subtype = 1;
+    ids[2] = ids[0];
+    ids[3] = ids[0]; ids[3].product = 0x02ea;
+    CHECK(lichii_xinput_pad(ids, 0, &g, &pt) && g == xi && pt == 0);
+    CHECK(lichii_xinput_pad(ids, 2, &g, &pt) && g == xi && pt == 1);
+    CHECK(lichii_xinput_pad(ids, 3, &g, &pt) && g == lichii_xinput_guid(0x045e, 0x02ea, 0x0517, 1) && pt == 0);
+    CHECK(!lichii_xinput_pad(ids, 1, &g, &pt) && !lichii_xinput_pad(ids, 4, &g, &pt) && !lichii_xinput_pad(ids, -1, &g, &pt));
+    for (int s = -1; s < 5; ++s) (void)lichii_xinput_id(s);   // reads the real XInput slots: must not crash with or without a pad
+}
+
 static void test_profile(const fs::path& d) {
     fs::path inst = d / "pinst";
     const fs::path pf = inst / "user" / "nand" / "system" / "save" / "8000000000000010" / "su" / "avators" / "profiles.dat";
@@ -287,6 +345,38 @@ static void test_prepare(const fs::path& d) {
     CHECK(fs::exists(inst / "user" / "nand" / "system" / "save" / "8000000000000010" / "su" / "avators" / "profiles.dat"));
 }
 
+static void test_prepare_nopad(const fs::path& d) {
+    hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
+    hubctl::Profile p = hubctl::default_profile("switch");
+    // the owner's case: a mapping written with RetroHub's SDL2 guid (RAWINPUT, crc set) and no pad connected at launch -> converted to the XInput guid
+    fs::path inst = d / "nopad", ini = inst / "user" / "config" / "qt-config.ini";
+    write_text(ini, "[Controls]\nplayer_0_button_a\\default=false\nplayer_0_button_a=\"engine:sdl,port:0,guid:0300e3c05e040000130b000017057200,button:1\"\nenable_raw_input\\default=true\nenable_raw_input=true\n");
+    CHECK(prepare_lichii(U8(inst), p, "", 0, v, true).empty());
+    std::string t = read_text(ini);
+    const std::string gx = "engine:sdl,port:0,guid:030000005e040000130b000017057801";
+    CHECK(has(t, "player_0_button_a=\"" + gx + ",button:1\"") && has(t, "player_0_button_zl=\"" + gx + ",axis:2,") && has(t, "player_0_button_dup=\"" + gx + ",hat:0,direction:up\""));
+    CHECK(has(t, "enable_raw_input=false") && !has(t, "enable_raw_input=true") && count_of(t, "enable_raw_input=") == 1 && !has(t, "e3c0"));
+    const std::string once = t;
+    CHECK(prepare_lichii(U8(inst), p, "", 0, v, true).empty() && read_text(ini) == once);   // already XInput: left alone, nothing changes
+    // a mapping for another kind of pad, or none at all, is kept exactly as it was (no pad = nothing written)
+    fs::path inst2 = d / "nopad2", ini2 = inst2 / "user" / "config" / "qt-config.ini";
+    write_text(ini2, "[Controls]\nplayer_0_button_a=\"engine:sdl,port:0,guid:030022a54c050000e60c000000016800,button:1\"\n");
+    CHECK(prepare_lichii(U8(inst2), p, "", 0, v, true).empty());
+    t = read_text(ini2);
+    CHECK(has(t, "guid:030022a54c050000e60c000000016800,button:1\"") && !has(t, "player_0_button_b="));
+    fs::path inst3 = d / "nopad3";
+    CHECK(prepare_lichii(U8(inst3), p, "", 0, v, true).empty() && !has(read_text(inst3 / "user" / "config" / "qt-config.ini"), "player_0_button_a"));
+    // a connected XInput pad: guid + numbers + RAWINPUT forced off
+    fs::path inst4 = d / "xipad", ini4 = inst4 / "user" / "config" / "qt-config.ini";
+    const SdlBinds xb = lichii_xinput_binds();
+    CHECK(prepare_lichii(U8(inst4), p, "030000005e040000130b000017057801", 1, v, true, &xb).empty());
+    t = read_text(ini4);
+    CHECK(has(t, "engine:sdl,port:1,guid:030000005e040000130b000017057801,button:1\"") && has(t, "enable_raw_input=false") && has(t, "player_0_button_zr=\"engine:sdl,port:1,guid:030000005e040000130b000017057801,axis:5,"));
+    // a pad that is not XInput does not touch the RAWINPUT setting
+    fs::path inst5 = d / "dspad", ini5 = inst5 / "user" / "config" / "qt-config.ini";
+    CHECK(prepare_lichii(U8(inst5), p, "030022a54c050000e60c000000016800", 0, v, true).empty() && !has(read_text(ini5), "enable_raw_input"));
+}
+
 static void test_saves(const fs::path& d) {
     // two PCs, one vault: the user uuid differs per PC, the vault layout must not
     const char* tid = "0100abcd12340000";
@@ -369,10 +459,12 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     test_ini();
     test_controls();
+    test_lichii_sdl3();
     test_needs_keys();
     test_profile(d);
     test_import(d);
     test_prepare(d);
+    test_prepare_nopad(d);
     test_saves(d);
     std::error_code ec;
     fs::remove_all(d, ec);
