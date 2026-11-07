@@ -296,6 +296,10 @@ player's other keys stay):
   flushing off, DMA Unsafe and docked mode changed nothing on top of Low; the limit is then Lichii's GPU / GPUBack threads); `[UI]` fullscreen; `[System]` current_user=0; `[Controls]` player 1 from the RetroHub `switch` profile on
   one SDL pad (SDL GameController names become SDL button / axis indices; triggers `axis:4|5,threshold:0.5`), connected as a Pro Controller, players 2-8
   disconnected. Values are quoted as Qt writes them; the screenshot button is left alone.
+  Lichii runs SDL3 (RAWINPUT off, HIDAPI Xbox off) and clears the name-CRC bytes of every joystick guid, so RetroHub does too. An Xbox / XInput pad is
+  written as Lichii sees it: guid `03000000<vid><pid>0000<ver>` + `78 <subtype>` (read with XInputGetCapabilitiesEx) and XInput numbering (buttons A B X Y LB RB Back Start
+  L3 R3 Guide = 0..10, d-pad hat 0, axes LX LY LT RX RY RT = 0..5), NOT the RAWINPUT guid / numbers RetroHub's own SDL2 reports; `enable_raw_input=false` is forced then.
+  Any other pad keeps SDL2's raw numbers (crc cleared). With no pad connected an old Microsoft RAWINPUT mapping is converted to the XInput guid.
 - `profiles.dat` gets one fixed user ("Player", a hardcoded uuid) only when the file is missing or empty; an existing user list is never touched.
 
 **Saves.** `<install>\user\nand\user\save\0000000000000000\<uuid>\<TITLE ID>` (and `nand\user\save\account\<uuid>\<TITLE ID>` when it already exists, which
