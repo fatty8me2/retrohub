@@ -87,7 +87,9 @@ bool chip(const char* label, bool on, ImU32 col);
 /* Inside a modal: true on the frame B (pad) or Esc is pressed while this modal has the focus. ImGui never closes modals on its own. */
 bool modal_back();
 /* Pill-style segmented control; returns the (possibly new) selected index. */
-int segmented(const char* id, const char* const* labels, int n, int cur);
+int segmented(const char* id, const char* const* labels, int n, int cur, int hot = -1);
+/* `hot` (>= 0) marks one segment as the main attraction: a logo-palette (cyan to pink, tinted by the theme accent) gradient border and
+ * glow when unselected, a full gradient fill with dark text when selected. One soft shimmer every few seconds (none under Reduce motion). */
 float pill_at(ImDrawList* dl, ImVec2 p, const char* text, ImU32 bg, ImU32 fg = IM_COL32_WHITE, ImFont* font = nullptr);
 void pill(const char* text, ImU32 bg, ImU32 fg = IM_COL32_WHITE);
 /* Controller/keyboard hint ("(A) Play"). Draws at p, returns the width used. pad = show the gamepad glyph, else the key cap. */

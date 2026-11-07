@@ -378,7 +378,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             if (e.type == SDL_MOUSEWHEEL && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
                 float wx = e.wheel.preciseX, wy = e.wheel.preciseY;
                 if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { wx = -wx; wy = -wy; }
-                if (route_wheel(io.MousePos.x, io.MousePos.y, wx, wy)) continue;   // over a shelf: scroll that row, not the page
+                if (route_wheel(io.MousePos.x, io.MousePos.y, wx, wy)) { input_this_iter = true; continue; }   // Home: vertical = eased page scroll, horizontal / Shift = the row under the pointer
             }
             if (osk::hub_input_blocked()) {   // game running / hub unfocused: no key, text or pad event may reach the UI (quit, window, drop, device events still pass)
                 if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_TEXTINPUT || e.type == SDL_TEXTEDITING) continue;
