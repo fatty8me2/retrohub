@@ -447,6 +447,30 @@ static int test_download(const std::string& root) {
     return g_fail;
 }
 
+static void test_env() {
+    const uint64_t G = 1024ull * 1024 * 1024;
+    auto set = [](const hub::gs::Values& v, uint64_t ram) {
+        auto e = hubemu::lichii_env(v, ram);
+        return e.size() == 1 && e[0].first == "EDEN_NX2_PRELOAD_ALL_PIPELINES" && e[0].second == "1";
+    };
+    hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
+    const hub::gs::Option* o = hub::gs::find_option("switch.preload_shaders");
+    CHECK(o && o->def == "auto" && o->choices.size() == 3);
+    CHECK(v["switch.preload_shaders"] == "auto");
+    hub::gs::Store st;
+    CHECK(st.resolve(hub::System::Switch, "switch:x")["switch.preload_shaders"] == "auto");
+    CHECK(set(v, (uint64_t)(31.7 * G)));
+    CHECK(!set(v, 16 * G));
+    v["switch.preload_shaders"] = "all";
+    CHECK(set(v, 8 * G));
+    v["switch.preload_shaders"] = "recent";
+    CHECK(hubemu::lichii_env(v, 64 * G).empty());
+    CHECK(set(hub::gs::Values{}, 32 * G));
+    CHECK(!set(hub::gs::Values{}, 8 * G));
+    v["switch.preload_shaders"] = "bogus";
+    CHECK(set(v, 32 * G) && !set(v, 8 * G));
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--download") {
         setvbuf(stdout, nullptr, _IONBF, 0);
@@ -466,6 +490,7 @@ int main(int argc, char** argv) {
     test_prepare(d);
     test_prepare_nopad(d);
     test_saves(d);
+    test_env();
     std::error_code ec;
     fs::remove_all(d, ec);
     std::printf(g_fail ? "hub_switch_test: %d FAILED\n" : "hub_switch_test: all passed\n", g_fail);

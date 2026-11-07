@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "controls.h"
@@ -122,6 +123,11 @@ bool lichii_pad_select(const std::vector<PadDesc>& by_port, const std::vector<Pa
 /* Creates user\ (portable), writes the defaults once, the per-launch values, controls and the profile. Returns "" or an error. */
 std::string prepare_lichii(const std::string& install_dir, const hubctl::Profile& profile, const std::string& sdl_guid, int port,
                            const hub::gs::Values& v, bool fullscreen, const SdlBinds* binds = nullptr);
+/* Environment variables added to Lichii's own (the child inherits RetroHub's environment plus these; launch.cpp spawn()).
+ * switch.preload_shaders: "all" -> EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (Lichii builds every cached pipeline at start, ~0.45 MB driver memory each);
+ * "auto" (also missing / unknown) -> the same when physical_ram_bytes >= 30 GiB (a PC sold as 32 GB reports ~31.7 GiB); "recent" -> nothing. Pure. */
+std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t physical_ram_bytes);
+uint64_t physical_ram_bytes();   // GlobalMemoryStatusEx ullTotalPhys; 0 when unknown
 /* [-f] -u 0 -g "<game>" */
 std::string lichii_args(const std::string& game_path, bool fullscreen);
 
