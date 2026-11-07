@@ -12,6 +12,12 @@ hub::gs::Values gs_values_for(const hub::GameEntry& e) {
     return hubui::effective_values(GSTORE, e.system, e.key, A.st.fullscreen, A.st.volume);
 }
 
+bool gs_set_game_value(const hub::GameEntry& e, const std::string& key, const std::string& value) {
+    if (!GSTORE.set_game(e.key, e.system, key, value)) return false;
+    GSTORE.save(hub::saves::vault_dir());
+    return true;
+}
+
 namespace {
 
 const char* group_label(const std::string& g) {

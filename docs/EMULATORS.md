@@ -314,13 +314,15 @@ The vault side never contains the user uuid (`SaveSession::vault_rels`), so any 
 
 ### Hookshot (native Ocarina of Time)
 
-Ocarina of Time (Switch 2, title id `0400486024DEC000`) can run as a native Windows build, Hookshot, instead of in Lichii (`src/hub/hookshot.*`; the build
+Ocarina of Time (Switch 2, title id `0400486024DEC000`) is played with Lichii by default; the player can opt in to a native Windows build, Hookshot, instead (`src/hub/hookshot.*`; the build
 itself is `docs/HOOKSHOT.md`). Hookshot is made on the player's PC from their own game file and never leaves it.
 
 - **When it is used.** Play starts Hookshot when `hookshot::use_for` is true: the game is that one title, a build exists (`hookshot.exe`, `hookshot_vk.dll`,
-  `SDL2.dll`, `romfs\` and a build stamp naming the pinned source commit, under `<data>\emulators\hookshot`) and `switch.runner` is not `lichii`. The check
+  `SDL2.dll`, `romfs\` and a build stamp naming the pinned source commit, under `<data>\emulators\hookshot`) and `switch.runner` is exactly `hookshot`. The check
   comes before any Lichii step, so a built Hookshot plays even when Lichii is not installed or has no keys. Otherwise Lichii plays as before.
-- **Setting.** `switch.runner` (Visual): `auto` = Hookshot when it is built (default), `lichii` = Lichii. It appears under the game's Settings only for this
+- **Setting.** `switch.runner` (Visual): `lichii` = Lichii (default), `hookshot` = Hookshot when it is built (otherwise Lichii plays). The v1.37.0 value `auto` is
+  no longer a choice: settings load / merge / resolve drop it, so it means Lichii everywhere (launch, Settings, game page, synced settings). The card on the game page has a
+  one-click "Play with Hookshot / Lichii instead" button (`gs_set_game_value`, the same store write as the Settings row). It appears under the game's Settings only for this
   game, never in the per-system defaults, and online / sync code ignores it. "Play with Lichii this time" (AV1 prompt) skips Hookshot for one launch.
 - **Saves.** Hookshot keeps the game's own save files in `<build>\user\save\5a3c9e1f0b7d24680000000000000001`. They are synced with the SAME vault folder
   Lichii uses, `<vault>\switch\<key>\battery\save\0400486024DEC000`, newest wins, with the usual `_conflicts` backups, so Lichii and Hookshot are

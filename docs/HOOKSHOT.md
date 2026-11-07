@@ -2,8 +2,10 @@
 
 Hookshot (https://github.com/NotRexed/Hookshot, GPL-3.0-or-later) is a native Windows build of *The Legend of Zelda: Ocarina of
 Time* (the Nintendo Switch 2 remake). It is made on the player's own PC, from the player's own copy of the game, by static
-recompilation: no emulator, and a higher frame rate than Lichii. RetroHub builds it for the player with one button on the game's
-page, and once it exists Play starts it instead of Lichii (`switch.runner` = auto). Lichii stays installed as the fallback.
+recompilation: no emulator. It is **experimental and opt-in**: Lichii is the default way to play this game. RetroHub builds Hookshot
+for the player with one button on the game's page; once it exists, the card offers "Play with Hookshot instead" (or Settings >
+Plays with), which sets `switch.runner` = `hookshot` for that game. Play then starts Hookshot; the same button (or the setting)
+goes back to Lichii. v1.37.0 made Hookshot the default (`auto`); `auto` is no longer a choice and is read as Lichii.
 
 Code: `src/hub/hookshot.*` (what is built: paths, stamp, `ready()`), `src/hub/hookshot_build.*` (the build pipeline),
 `src/hub/hookshot_ui.*` (the card on the game page). Tests: `hub_hookshot_build_test`.
@@ -68,7 +70,9 @@ does not exist, so the build uses the Vulkan back end only.
 
 ### RetroHub's one addition to the source
 
-`data\hookshotx_webgpu_absent.c` is copied to `<kit>\src\hostx_webgpu_absent.c` after the source is unpacked (`build.py`
+`data\hookshot
+x_webgpu_absent.c` is copied to `<kit>\src\host
+x_webgpu_absent.c` after the source is unpacked (`build.py`
 compiles every `host\*.c`). It holds the Vulkan-only build's placeholders for the WebGPU fallback (`wgr_start`, `wgr_nvn_*`,
 `rx_request_frame_dump` and so on): if `hookshot_vk.dll` can't start, the game logs why and stops instead of falling back. No other
 Hookshot file is changed.

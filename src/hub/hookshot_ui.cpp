@@ -27,6 +27,7 @@ struct View {
     hs::BuildStatus st;
     hs::Requirements req;
     int64_t built = 0;
+    bool use_hookshot = false;   // Play starts Hookshot (this game's switch.runner is "hookshot")
     int64_t kit_bytes = -1;
     bool kit_there = false;
     bool cancelled_note = false;
@@ -42,6 +43,7 @@ struct UI {
     std::string req_for;
     double kit_asked_at = -100.0;
     Fake fake;
+    bool fake_on_hookshot = false;   // the fake done state's runner, toggled by the switch button
     bool fake_read = false;
     std::string remove_error;
 };
@@ -52,7 +54,7 @@ void read_fake() {
     if (HU.fake_read) return;
     HU.fake_read = true;
     const char* m = g_headless ? std::getenv("HUB_SHOT_HOOKSHOT") : nullptr;
-    if (m && *m) { HU.fake.on = true; HU.fake.mode = m; }
+    if (m && *m) { HU.fake.on = true; HU.fake.mode = m; HU.fake_on_hookshot = HU.fake.mode == "done_on"; }
 }
 
 std::string date_text(int64_t unix_t) {
@@ -113,9 +115,10 @@ View make_view(const hub::GameEntry& e) {
             v.st.overall = 0.40f + 0.57f * 0.58f;
             v.st.paused_for_game = m == "paused";
             v.st.started_unix = (int64_t)std::time(nullptr) - 1800;
-        } else if (m == "done") {
+        } else if (m == "done" || m == "done_on") {
             v.mode = Mode::Ready;
             v.built = (int64_t)std::time(nullptr) - 5 * 3600;
+            v.use_hookshot = HU.fake_on_hookshot;
         } else if (m == "failed") {
             v.mode = Mode::Failed;
             v.st.state = hs::BuildState::Failed;
@@ -151,6 +154,9 @@ View make_view(const hub::GameEntry& e) {
     if (s_ready) {
         v.mode = Mode::Ready;
         v.built = s_stamp.built;
+        const hs::Values gv = gs_values_for(e);
+        const auto rit = gv.find(hs::kRunnerSetting);
+        v.use_hookshot = rit != gv.end() && rit->second == "hookshot";
     } else if (v.st.state == hs::BuildState::Failed) {
         v.mode = Mode::Failed;
     } else {
@@ -221,8 +227,9 @@ void problems_list(const hs::Requirements& r) {
 
 void draw_not_built(const hub::GameEntry& e, const View& v) {
     using ui::sp;
-    wrapped("Hookshot runs this game natively on Windows: no emulator, a higher frame rate. RetroHub builds it on this PC from your own copy of the "
-            "game. It takes about 45 minutes and needs 70 GB free while building. You can keep using your PC, and it pauses while you play.",
+    wrapped("Hookshot is an experimental native Windows version of this game, with no emulator. It may be rough in places, so Lichii stays the "
+            "default way to play. RetroHub builds Hookshot on this PC from your own copy of the game. It takes about 45 minutes and needs 70 GB free "
+            "while building. You can keep using your PC, and it pauses while you play.",
             ui::TEXT2);
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     const bool busy = !HU.fake.on && hs::requirements_busy();
@@ -294,8 +301,15 @@ void draw_kit_actions(const hub::GameEntry& e, const View& v) {
 void draw_ready(const hub::GameEntry& e, const View& v) {
     using ui::sp;
     ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT);
-    ImGui::TextUnformatted("Ready: Play starts the native version.");
+    ImGui::TextUnformatted(v.use_hookshot ? "Play starts Hookshot (native)." : "Play starts Lichii (emulator).");
     ImGui::PopStyleColor();
+    wrapped(v.use_hookshot ? "Hookshot is experimental. Switch back to Lichii if it misbehaves; your saves are shared by both."
+                           : "The native Hookshot version is built and ready. Your saves are shared by both.", ui::TEXT3);
+    if (ui::button(v.use_hookshot ? "Play with Lichii instead" : "Play with Hookshot instead", ImVec2(0, sp(4.f)), !v.use_hookshot, true, ui::Icon::Refresh)) {
+        const char* nv = v.use_hookshot ? "lichii" : "hookshot";
+        if (HU.fake.on) HU.fake_on_hookshot = !v.use_hookshot;
+        else if (!gs_set_game_value(e, hs::kRunnerSetting, nv)) push_toast("Could not save that choice.", ui::WARN, 6.0);
+    }
     const std::string d = date_text(v.built);
     if (!d.empty()) wrapped("Built on " + d + ".", ui::TEXT3);
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -359,7 +373,7 @@ void hookshot_ui_tick() {
     const bool running = hs::build_running();
     if (HU.was_running && !running) {
         const hs::BuildStatus st = hs::build_status();
-        if (st.state == hs::BuildState::Done) push_toast("Hookshot is ready. Play now starts the native version of Ocarina of Time.", ui::GOOD, 12.0);
+        if (st.state == hs::BuildState::Done) push_toast("Hookshot is built. To play with it, open the game's page and choose \"Play with Hookshot instead\" (or Settings > Plays with). Play still uses Lichii until then.", ui::GOOD, 12.0);
         else if (st.state == hs::BuildState::Failed) push_toast("The Hookshot build stopped. Open the game's page to see why.", ui::BAD, 12.0);
         HU.was_running = false;
         HU.req_asked = false;

@@ -95,7 +95,7 @@ bool ready(std::string* why, const std::string& dir_in) {
 bool use_for(const hub::GameEntry& e, const Values& v) {
     if (!supports(e)) return false;
     auto it = v.find(kRunnerSetting);
-    if (it != v.end() && it->second == "lichii") return false;
+    if (it == v.end() || it->second != "hookshot") return false;   // opt-in: unset, "lichii" and the old v1.37.0 "auto" all mean Lichii
     return ready();
 }
 

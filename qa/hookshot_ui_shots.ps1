@@ -8,7 +8,7 @@
 # States: "notbuilt" = the real library, no Hookshot build. "ready" = the same copy plus a FAKE build in userdata\emulators\hookshot
 #   (empty hookshot.exe, hookshot_vk.dll, SDL2.dll, an empty romfs\ and a stamp naming hookshot::kSourceCommit). Nothing is ever started.
 # The shots: card and settings in both states; the Wii U game's settings (no "Plays with" for other games); the headless Play path
-#   (not built, built with runner=auto, built with runner=lichii); the AV1 prompt at 1600x1000 (only that size).
+#   (not built, built with runner=hookshot, built with runner=lichii, built with the old runner=auto = Lichii); the AV1 prompt at 1600x1000 (only that size).
 param([string]$DataFrom = "C:\Users\fatty\Desktop\smashClassic\userdata", [string]$Build = "", [string]$Out = "",
       [string[]]$Sizes = @("1280x800", "1600x1000"), [int]$Secs = 12, [int]$Scroll = 30)
 $ErrorActionPreference = "Stop"
@@ -100,19 +100,24 @@ function Shot([string]$name, [string]$run, [string]$size, [hashtable]$extra) {
     Save-Result $run "$name-$size"
 }
 
+$hookshotJson = '{"version": "1", "systems": {}, "games": {"' + $OOT + '": {"switch.runner": "hookshot"}}}'
+$autoJson = '{"version": "1", "systems": {}, "games": {"' + $OOT + '": {"switch.runner": "auto"}}}'
 $lichiiJson = '{"version": "1", "systems": {}, "games": {"' + $OOT + '": {"switch.runner": "lichii"}}}'
 $copies = @()
 try {
     $notbuilt = New-Copy "nb" $false;  $copies += $notbuilt
-    $ready = New-Copy "rd" $true;      $copies += $ready
+    $ready = New-Copy "rd" $true $hookshotJson; $copies += $ready
+    $auto = New-Copy "au" $true $autoJson; $copies += $auto
     $lichii = New-Copy "lc" $true $lichiiJson; $copies += $lichii
-    Write-Host "copies: $notbuilt | $ready | $lichii"
+    Write-Host "copies: $notbuilt | $ready | $lichii | $auto"
 
     foreach ($s in $Sizes) {
         Shot "card-notbuilt" $notbuilt $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "0" }
         Shot "settings-notbuilt" $notbuilt $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" }
         Shot "card-ready" $ready $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "0" }
         Shot "settings-ready" $ready $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" }
+        Shot "card-ready-lichii" $lichii $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "0" }
+        Shot "settings-ready-auto" $auto $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" }
         Shot "settings-ready-lichii" $lichii $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" }
         Shot "settings-wiiu-notbuilt" $notbuilt $s @{ HUB_SHOT_DETAILS = $WIIU; HUB_SHOT_TAB = "3" }
     }
@@ -120,7 +125,7 @@ try {
     # headless Play: RETROHUB_AUTOTEST=play presses the Play button's code path (play_entry -> launch_external) for Ocarina.
     # Headless launches are skipped; the trace line says which path was chosen.
     $playEnv = @{ RETROHUB_AUTOTEST = "play"; RETROHUB_AUTOTEST_GAME = $OOT; HUB_SHOT_SECS = "25"; HUB_SHOT_SIZE = $Sizes[0] }
-    foreach ($pair in @(@("play-notbuilt", $notbuilt), @("play-ready", $ready), @("play-ready-lichii", $lichii))) {
+    foreach ($pair in @(@("play-notbuilt", $notbuilt), @("play-ready", $ready), @("play-ready-lichii", $lichii), @("play-ready-auto", $auto))) {
         Invoke-Run $pair[1] $playEnv
         Save-Result $pair[1] ($pair[0] + "-" + $Sizes[0])
     }
