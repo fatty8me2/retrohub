@@ -45,10 +45,20 @@ SDL_Texture* get(const hub::GameEntry& game, Kind kind, int* w, int* h);
 /* Same, for catalog entries the player doesn't own (no GameEntry): by system + No-Intro name. */
 SDL_Texture* get_by_name(const std::string& system_short, const std::string& nointro_name, Kind kind, int* w, int* h);
 
-/* Cover for a friend's game you do not own: same name resolution as an owned copy (catalog, serial/crc from the key,
+/* Cover for a friend's game you do not own (Kind::FullCover too: GameCube / Wii U / DS / 3DS): same name resolution as an owned copy (catalog, serial/crc from the key,
  * DAT title, fuzzy title) so it gets the same art; loads that system's DAT on demand even if you own nothing there. */
 SDL_Texture* get_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id,
                        const std::string& title, Kind kind, int* w, int* h, const std::string& hint = "");
+
+/* ---- audit (UI thread): what a texture slot holds, without queueing anything ---- */
+enum class SlotState { None, Pending, Ready, Failed };
+struct SlotInfo { SlotState state = SlotState::None; int w = 0, h = 0; std::string name, err; bool transient = false; };
+std::string game_slot_id(const std::string& key, Kind kind);
+std::string ghost_slot_id(const std::string& system_short, const std::string& key, const std::string& title, Kind kind);
+SlotInfo slot_info(const std::string& slot_id);
+
+/* The catalog id the loose title match gives a game of that console ("" = none): the rule ghost art uses, so the ghost list can drop games you own. */
+std::string catalog_id_for(const std::string& system_short, const std::string& title);
 
 /* The No-Intro name already cached for a game key (names.json), "" if none. Cheap: never loads a DAT or touches the network. */
 std::string cached_name(const std::string& key);
@@ -74,7 +84,10 @@ bool resolve_ghost(const std::string& system_short, const std::string& key, cons
 /* What the worker does for one game and kind, synchronously (the headless coverage tool): resolve the name, fall back to GameTDB's front
  * cover / the Switch .nup icon for a Boxart, FullCover from GameTDB. *how: cache/catalog/md5/crc/serial/title/gametdb/nupicon. png_path = the
  * cache file (JPEG bytes are cached under the same .png name: the decoder sniffs the content). On failure *err says why. */
-bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::string* err, std::string* how, std::string* png_path);
+bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::string* err, std::string* how, std::string* png_path, std::string* name = nullptr);
+/* The same for a ghost (friend / pack game): the stand-in entry is built exactly like get_ghost() does. *name = the art name that loaded. */
+bool fetch_ghost(const std::string& system_short, const std::string& key, const std::string& catalog_id, const std::string& title,
+                 const std::string& hint, Kind kind, int* w, int* h, std::string* err, std::string* name);
 /* Download (or read cache) + decode + downscale; returns dimensions. On failure *err says why
  * (a 404 is recorded in misses.json). png_path gets the cache file path. */
 bool fetch_decode(const std::string& system_short, const std::string& nointro_name, Kind kind,

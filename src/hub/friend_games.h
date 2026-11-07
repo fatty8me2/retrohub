@@ -36,6 +36,40 @@ inline std::string norm_title(const std::string& t)
     return o;
 }
 
+/* Looser than norm_title(), for "is this the game I already own" checks only: Latin accents folded ("Pokémon"), "&" read as "and" and then
+ * dropped with "version" / "edition", and "(the) legend of zelda" shortened to "zelda" ("The Legend of Zelda Ocarina of Time Master Quest" and
+ * "Zelda: Ocarina of Time Master Quest" are one game). Never used for the ghost id itself. */
+inline std::string loose_title(const std::string& t)
+{
+    std::string f;
+    for (size_t i = 0; i < t.size(); ++i) {
+        unsigned char c = (unsigned char)t[i];
+        if (c == '&') { f += " and "; continue; }
+        if ((c == 0xC3 || c == 0xC4 || c == 0xC5) && i + 1 < t.size()) {
+            const unsigned char d = (unsigned char)t[i + 1];
+            const unsigned cp = ((c & 0x1Fu) << 6) | (d & 0x3Fu);
+            char r = 0;
+            if (cp >= 0xC0 && cp <= 0xC5) r = 'a'; else if (cp == 0xC7) r = 'c'; else if (cp >= 0xC8 && cp <= 0xCB) r = 'e'; else if (cp >= 0xCC && cp <= 0xCF) r = 'i';
+            else if (cp == 0xD1) r = 'n'; else if ((cp >= 0xD2 && cp <= 0xD6) || cp == 0xD8) r = 'o'; else if (cp >= 0xD9 && cp <= 0xDC) r = 'u';
+            else if (cp >= 0xE0 && cp <= 0xE5) r = 'a'; else if (cp == 0xE7) r = 'c'; else if (cp >= 0xE8 && cp <= 0xEB) r = 'e'; else if (cp >= 0xEC && cp <= 0xEF) r = 'i';
+            else if (cp == 0xF1) r = 'n'; else if ((cp >= 0xF2 && cp <= 0xF6) || cp == 0xF8) r = 'o'; else if (cp >= 0xF9 && cp <= 0xFC) r = 'u';
+            else if (cp == 0x14C || cp == 0x14D) r = 'o'; else if (cp == 0x16A || cp == 0x16B) r = 'u';
+            if (r) { f += r; ++i; continue; }
+        }
+        f += t[i];
+    }
+    const std::string n = norm_title(f);
+    std::string o, w;
+    auto flush = [&] {
+        if (!w.empty() && w != "and" && w != "version" && w != "edition") { if (!o.empty()) o += ' '; o += w; }
+        w.clear();
+    };
+    for (char c : n) { if (c == ' ') flush(); else w += c; }
+    flush();
+    if (o.compare(0, 15, "legend of zelda") == 0 && (o.size() == 15 || o[15] == ' ')) o.erase(0, 10);
+    return o;
+}
+
 /* Identity of a game across regions: the catalog id when there is one, else the normalised title; always per system. */
 inline std::string identity(const std::string& sys, const std::string& cid, const std::string& title)
 {
@@ -83,8 +117,12 @@ inline std::vector<Ghost> build_ghosts(const std::vector<Owned>& mine,
                                        const std::vector<std::pair<std::string, const std::vector<hubnet::LibGame>*>>& libs,
                                        const NameOf& name_of = nullptr)
 {
-    std::set<std::string> have_id, have_key;
-    for (const Owned& o : mine) { have_id.insert(identity(o.sys, o.cid, o.title)); have_id.insert(identity(o.sys, "", o.title)); have_key.insert(o.sys + "|" + o.key); }
+    std::set<std::string> have_id, have_key, have_loose, have_cid;
+    for (const Owned& o : mine) {
+        have_id.insert(identity(o.sys, o.cid, o.title)); have_id.insert(identity(o.sys, "", o.title)); have_key.insert(o.sys + "|" + o.key);
+        have_loose.insert(o.sys + "|" + loose_title(o.title));
+        if (!o.cid.empty()) have_cid.insert(o.sys + "|" + o.cid);
+    }
     std::map<std::string, Ghost> by_id;
     for (const auto& fl : libs) {
         if (!fl.second) continue;
@@ -94,6 +132,8 @@ inline std::vector<Ghost> build_ghosts(const std::vector<Owned>& mine,
             if (g.cid.empty() && name_of) { std::string nm = name_of(g.sys, g.key); if (!nm.empty()) { std::string c = clean_dat_name(nm); if (!c.empty()) title = c; } }
             std::string id = identity(g.sys, g.cid, title);
             if (have_id.count(id) || have_id.count(identity(g.sys, "", title)) || have_id.count(identity(g.sys, "", g.title)) || have_key.count(g.sys + "|" + g.key)) continue;
+            if (have_loose.count(g.sys + "|" + loose_title(title)) || have_loose.count(g.sys + "|" + loose_title(g.title))) continue;   // the same game under a looser spelling
+            if (!g.cid.empty() && have_cid.count(g.sys + "|" + g.cid)) continue;                                                     // the same catalog game
             auto it = by_id.find(id);
             if (it == by_id.end()) {
                 if (by_id.size() >= kMaxGhosts) continue;
@@ -189,13 +229,13 @@ struct PublishGate {
 /* Games both of you own: the friend's list entries whose identity or key matches one of yours. Sorted by title (case-insensitive), one row per identity. */
 inline std::vector<hubnet::LibGame> shared_games(const std::vector<Owned>& mine, const std::vector<hubnet::LibGame>& theirs)
 {
-    std::set<std::string> have_id, have_key, seen;
-    for (const Owned& o : mine) { have_id.insert(identity(o.sys, o.cid, o.title)); have_id.insert(identity(o.sys, "", o.title)); have_key.insert(o.sys + "|" + o.key); }
+    std::set<std::string> have_id, have_key, have_loose, seen;
+    for (const Owned& o : mine) { have_id.insert(identity(o.sys, o.cid, o.title)); have_id.insert(identity(o.sys, "", o.title)); have_key.insert(o.sys + "|" + o.key); have_loose.insert(o.sys + "|" + loose_title(o.title)); }
     std::vector<hubnet::LibGame> out;
     for (const hubnet::LibGame& g : theirs) {
         if (g.sys.empty() || g.title.empty()) continue;
         const std::string id = identity(g.sys, g.cid, g.title);
-        if (!(have_id.count(id) || have_id.count(identity(g.sys, "", g.title)) || have_key.count(g.sys + "|" + g.key))) continue;
+        if (!(have_id.count(id) || have_id.count(identity(g.sys, "", g.title)) || have_key.count(g.sys + "|" + g.key) || have_loose.count(g.sys + "|" + loose_title(g.title)))) continue;
         if (!seen.insert(identity(g.sys, "", g.title)).second) continue;
         out.push_back(g);
     }

@@ -13,6 +13,7 @@
 #include "third_party/stb_image.h"
 #include "app.h"
 #include "cases_logic.h"
+#include "cases_audit.h"
 #include "cases_stage.h"
 #include "continue_logic.h"
 #include "../saves/savestore.h"

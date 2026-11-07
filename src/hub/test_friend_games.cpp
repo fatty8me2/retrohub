@@ -98,6 +98,26 @@ int main()
         CHECK(shared_games(mine, {}).empty() && shared_games({}, theirs).empty());
     }
 
+    {   // loose title: accents, "&", "version", "(the) legend of zelda"
+        CHECK(loose_title("The Legend of Zelda Ocarina of Time Master Quest") == loose_title("Zelda: Ocarina of Time Master Quest"));
+        CHECK(loose_title("Legend of Zelda, The - Ocarina of Time (USA)") != loose_title("Zelda: Ocarina of Time Master Quest"));
+        CHECK(loose_title("Pok\xC3\xA9mon - Red Version") == loose_title("Pokemon Red"));
+        CHECK(loose_title("Mario & Luigi: Superstar Saga") == loose_title("Mario and Luigi - Superstar Saga"));
+        CHECK(loose_title("Mario Party 2") != loose_title("Mario Party 3"));
+        CHECK(loose_title("Legend of Zeldas") == "legend of zeldas");   // only the whole word
+    }
+    {   // a friend's differently spelled copy of a game I own is not a ghost (title, catalog id and accents)
+        std::vector<Owned> mine = {{"n64", "n64:mq", "ootmq", "Zelda: Ocarina of Time Master Quest"}, {"gba", "gba:p", "", "Pokemon Emerald"}, {"n64", "n64:mk", "mk64", "Mario Kart 64"}};
+        std::vector<LibGame> f = {{"n64", "n64:other", "", "The Legend of Zelda Ocarina of Time Master Quest"},   // loose title
+                                  {"n64", "n64:zz", "mk64", "Totally Different Title"},                           // same catalog id
+                                  {"gba", "gba:q", "", "Pok\xC3\xA9mon Emerald"},                                    // accent
+                                  {"n64", "n64:new", "", "Star Fox 64"}};
+        std::vector<std::pair<std::string, const std::vector<LibGame>*>> libs = {{"u1", &f}};
+        auto gg = build_ghosts(mine, libs);
+        CHECK(gg.size() == 1 && gg[0].title == "Star Fox 64");
+        CHECK(shared_games(mine, f).size() == 3);
+    }
+
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("friend_games: ok\n");
     return 0;
