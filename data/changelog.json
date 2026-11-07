@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.37.2",
+      "date": "2026-11-07",
+      "title": "Preload every shader on Switch",
+      "new": [
+        "Switch games can load every shader Lichii has cached when the game starts, so there are fewer hitches while you play (Settings: Shaders at start). Auto turns it on for PCs with 32 GB of RAM or more"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.37.1",
       "date": "2026-11-07",
       "title": "Ocarina of Time is back on Lichii",
