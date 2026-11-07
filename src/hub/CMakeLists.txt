@@ -310,7 +310,8 @@ target_link_libraries(kanto_live PRIVATE hubcommon hubminiz)
 
 # PlayStation 2 via PCSX2 (docs/PS2.md): BIOS discovery, PCSX2.ini writers, pad bindings, card session; library scan of PS2 images
 target_sources(RetroHub PRIVATE pcsx2.cpp ppsspp.cpp lichii.cpp switch_ui.cpp)
-target_sources(RetroHub PRIVATE hookshot.cpp)   # Hookshot: native Ocarina of Time (Switch 2) build, runner + saves (hookshot.h); the build pipeline is hookshot_build.h
+target_sources(RetroHub PRIVATE hookshot.cpp hookshot_run_ui.cpp)
+target_link_libraries(RetroHub PRIVATE mfplat mfuuid)   # Hookshot: native Ocarina of Time (Switch 2) build, runner + saves (hookshot.h); the build pipeline is hookshot_build.h
 add_executable(hub_ps2_test test_pcsx2.cpp pcsx2.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_ps2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
@@ -324,6 +325,11 @@ target_link_libraries(hub_switch_test PRIVATE hublogic hubcommon hubminiz bcrypt
 add_executable(hub_psp_test test_psp.cpp ppsspp.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_psp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_psp_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
+# Hookshot (native Ocarina of Time, docs/EMULATORS.md): ready/stamp/use_for + save session in temp dirs
+add_executable(hub_hookshot_test test_hookshot.cpp hookshot.cpp emulators.cpp lichii.cpp)
+target_include_directories(hub_hookshot_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_hookshot_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi mfplat mfuuid ole32)
 
 # Nintendo Switch / Switch 2 identification (src/common/nx.h): PFS0 / XCI / NRO / NPDM, loose exefs dumps, scan + cache (synthetic files)
 add_executable(hub_nx_test test_nx.cpp)

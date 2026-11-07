@@ -87,6 +87,7 @@ void shot_init_ui() {
         else if (m == "unzip") { UNZ.key = A.env_select; UNZ.state = UnzipJob::Asking; }
         else if (m == "ps2bios") ps2_bios_ask("");
         else if (m == "switchkeys") switch_setup_ask_shot();
+        else if (m == "hookshotav1") hookshot_av1_ask_shot();
         else if (m == "missingrom") missing_rom_ask_shot();
         else if (m == "hidden") hidden_games_open_shot();
         else if (m == "ps1bios") ps1_bios_ask_shot();
