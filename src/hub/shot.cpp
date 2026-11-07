@@ -80,9 +80,10 @@ void shot_init_ui() {
         else if (std::string(pg).rfind("discover", 0) == 0) { A.page = Page::Discover; if (const char* c = std::strchr(pg, ':')) discover_shot_console(c + 1); }   // "discover" or "discover:<console>"
     }
     if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n
-    if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show a 3DS / Wii U dialog (azahar | cemu | unzip | failed)
+    if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show an emulator dialog (azahar | cemu | lichiiupdate | unzip | failed | ...)
         std::string m = se;
         if (m == "azahar" || m == "cemu") { EMU.kind = m == "cemu" ? hubemu::Kind::Cemu : hubemu::Kind::Azahar; EMU.state = hubemu::Installer::Asking; }
+        else if (m == "lichiiupdate") { EMU.kind = hubemu::Kind::Lichii; EMU.updating = true; EMU.state = hubemu::Installer::Asking; }   // the "newer Lichii" offer at Play
         else if (m == "failed") { EMU.kind = hubemu::Kind::Azahar; EMU.error = "checksum mismatch: the download was rejected"; EMU.state = hubemu::Installer::Failed; }
         else if (m == "unzip") { UNZ.key = A.env_select; UNZ.state = UnzipJob::Asking; }
         else if (m == "ps2bios") ps2_bios_ask("");

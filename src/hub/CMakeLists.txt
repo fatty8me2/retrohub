@@ -268,6 +268,11 @@ add_executable(hub_emu_live emu_live.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_emu_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
 target_link_libraries(hub_emu_live PRIVATE hublogic hubcommon hubsaves hubminiz bcrypt winhttp user32 gdi32 xinput setupapi)
 
+# Lichii install / in-place upgrade with the REAL pinned download (manual QA tool, not a ctest: needs github.com; launches nothing)
+add_executable(hub_lichii_upgrade_qa lichii_upgrade_qa.cpp emulators.cpp lichii.cpp)
+target_include_directories(hub_lichii_upgrade_qa PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
+target_link_libraries(hub_lichii_upgrade_qa PRIVATE hublogic hubcommon hubsaves hubminiz bcrypt winhttp user32 gdi32 xinput setupapi)
+
 # 3DS local wireless over rooms (np_3ds): pure-logic test (no network, no emulator)
 add_executable(hub_np3ds_test test_netplay_3ds.cpp netplay_3ds_join.cpp)
 target_link_libraries(hub_np3ds_test PRIVATE hublogic hubcommon)
