@@ -553,7 +553,7 @@ static void gradient_pill(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 a
     const int N = 20;
     const float w = p1.x - p0.x;
     for (int i = 0; i < N; ++i) {
-        float x0 = p0.x + w * i / N, x1 = p0.x + w * (i + 1) / N + (i + 1 < N ? 1.f : 0.f);
+        float x0 = p0.x + w * i / N, x1 = p0.x + w * (i + 1) / N + (i + 1 < N && alpha >= 1.f ? 1.f : 0.f);
         dl->PushClipRect(ImVec2(x0, p0.y - 8.f), ImVec2(x1, p1.y + 8.f), true);
         dl->AddRectFilled(p0, p1, with_alpha(mix(a, b, (i + 0.5f) / N), alpha), r);
         dl->PopClipRect();
@@ -600,7 +600,7 @@ int segmented(const char* id, const char* const* labels, int n, int cur, int hot
                 double ph = std::fmod(ImGui::GetTime(), 7.0) / 1.1;
                 if (ph < 1.0) {
                     float cx = p0.x + (p1.x - p0.x) * (float)ph, bw = (p1.x - p0.x) * 0.18f;
-                    dl->PushClipRect(p0, p1, true);
+                    dl->PushClipRect(ImVec2(p0.x + r * 0.6f, p0.y), ImVec2(p1.x - r * 0.6f, p1.y), true);   // stay inside the rounded ends
                     dl->AddRectFilledMultiColor(ImVec2(cx - bw, p0.y), ImVec2(cx, p1.y), with_alpha(IM_COL32_WHITE, 0.f), with_alpha(IM_COL32_WHITE, 0.22f), with_alpha(IM_COL32_WHITE, 0.22f), with_alpha(IM_COL32_WHITE, 0.f));
                     dl->AddRectFilledMultiColor(ImVec2(cx, p0.y), ImVec2(cx + bw, p1.y), with_alpha(IM_COL32_WHITE, 0.22f), with_alpha(IM_COL32_WHITE, 0.f), with_alpha(IM_COL32_WHITE, 0.f), with_alpha(IM_COL32_WHITE, 0.22f));
                     dl->PopClipRect();
