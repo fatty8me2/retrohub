@@ -78,7 +78,8 @@ std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, 
  *   d-pad   engine:sdl,port:<n>,guid:<guid>,hat:0,direction:up      (when the pad's SDL mapping uses a hat; else button)
  *   trigger engine:sdl,port:<n>,guid:<guid>,axis:<n>,threshold:0.5,invert:+
  *   stick   engine:sdl,port:<n>,guid:<guid>,axis_x:<n>,axis_y:<n>,offset_x:0,offset_y:0,invert_x:+,invert_y:+,deadzone:<0-1>,range:1
- * prepare_lichii skips the controls when the guid is empty (no pad connected), so a mapping made in Lichii itself is kept. */
+ * prepare_lichii skips the controls when the guid is empty (no pad connected), so a mapping made in Lichii itself is kept - except a Microsoft pad's
+ * old non-XInput mapping, which is converted to the XInput guid so the pad works when it is switched on later. */
 /* The pad's raw SDL joystick bindings (SDL_GameControllerGetBindForButton / ForAxis). Lichii's SDL engine (yuzu lineage, sdl_driver.cpp
  * BuildParamPackageForBinding) addresses RAW joystick buttons / hats / axes, not SDL GameController numbers, so these are looked up for the
  * chosen pad before every launch (page_controllers.cpp lichii_pad_for). Without them (no pad connected) the GameController numbers are written,
@@ -90,6 +91,29 @@ struct SdlBinds {
     B axis[6];      // by SDL_GameControllerAxis
 };
 std::string lichii_controls_ini(const std::string& ini, const hubctl::Profile& profile, const std::string& sdl_guid, int port, const SdlBinds* binds = nullptr);
+
+/* ---- which GUID / button numbers Lichii's own SDL3 will see (checked against the SDL 3.4.14 sources, the SDL Lichii build 88 links) ----
+ * Lichii's GetGUID zeroes the name-CRC bytes (2-3) of SDL's joystick GUID, so every guid written to the ini has them zeroed (lichii_controls_ini
+ * does this itself). Lichii runs SDL3 with RAWINPUT off and the HIDAPI Xbox driver off, so an Xbox / XInput pad is read by SDL's XInput driver:
+ *   guid = 03 00 | 00 00 | vendor LE | 00 00 | product LE | 00 00 | version LE | 'x' (0x78) | XInput subtype (1 = gamepad), from XInputGetCapabilitiesEx;
+ *   11 buttons A B X Y LB RB Back Start L3 R3 Guide = 0..10, hat 0 = d-pad, axes 0 LX, 1 LY, 2 LT, 3 RX, 4 RY, 5 RT.
+ * RetroHub's own SDL2 reads the same pad through RAWINPUT (driver 'r', other button / axis numbers), so those must not be written for Lichii. */
+std::string lichii_zero_guid_crc(const std::string& guid);   // 32 hex digits -> lower case, chars 4-7 zeroed; anything else unchanged
+std::string lichii_xinput_guid(unsigned vendor, unsigned product, unsigned version, unsigned subtype);
+bool lichii_guid_is_xinput(const std::string& guid);          // 32 hex digits with driver byte 'x'
+/* A Microsoft-vendor (045e) guid that is not XInput yet (SDL2 RAWINPUT 'r', WGI 'w'...) -> the same pad's XInput guid (subtype 1); "" otherwise. */
+std::string lichii_guid_to_xinput(const std::string& guid);
+SdlBinds lichii_xinput_binds();                               // the numbers above, per SDL_GameControllerButton / Axis
+/* Player 1's button A guid + port as currently written in the ini; false when there is none. */
+bool lichii_ini_player0(const std::string& ini, std::string* guid, int* port);
+struct XinputId {
+    bool present = false;   // an XInput pad sits in that slot (not the "unknown" subtype)
+    unsigned vendor = 0, product = 0, version = 0, subtype = 0;
+    std::string guid() const { return lichii_xinput_guid(vendor, product, version, subtype); }
+};
+XinputId lichii_xinput_id(int slot);   // slot 0-3, read from xinput1_4 exactly like SDL3 does (generic 045e:028e when CapsEx is missing)
+/* Lichii port of the pad in `slot` = its rank among the present slots with the same guid (SDL3 lists XInput pads in slot order). false = nothing in that slot. */
+bool lichii_xinput_pad(const XinputId ids[4], int slot, std::string* guid, int* port);
 
 /* Pad for player 1 from the RetroHub port order (same choice as Azahar's azahar_pad_select): the guid and the rank among same-guid pads in SDL order.
  * Returns false (guid "", port 0) when no pad is known. */
