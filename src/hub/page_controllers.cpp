@@ -687,6 +687,15 @@ bool lichii_pad_for(const hubctl::Profile& prof, std::string* guid, int* port, h
     const hubctl::PadInfo* pick = nullptr;
     for (const auto& p : all) if (p.key == order[0].key) { pick = &p; break; }
     if (!pick) return true;
+    if (pick->xinput) {   // Lichii's SDL3 reads an Xbox pad through XInput (guid driver 'x', XInput numbering), not through the RAWINPUT SDL2 reports here
+        const std::vector<int> slots = hubemu::xinput_slots(by_sdl);
+        int slot = -1;
+        for (size_t i = 0; i < by_sdl.size(); ++i) if (by_sdl[i].key == pick->key) slot = slots[i];
+        hubemu::XinputId ids[4];
+        for (int s = 0; s < 4; ++s) ids[s] = hubemu::lichii_xinput_id(s);
+        std::string xg; int xp = 0;
+        if (hubemu::lichii_xinput_pad(ids, slot, &xg, &xp)) { *guid = xg; *port = xp; *binds = hubemu::lichii_xinput_binds(); return true; }
+    }
     SDL_GameController* c = open_handle_for(*pick);
     if (!c) return true;
     auto conv = [](SDL_GameControllerButtonBind b) {
