@@ -630,6 +630,15 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         return;
     }
     hubemu::Install inst = hubemu::find(kind, A.st.cemu_exe, e.path);
+    {   // a download / update job already runs (or its question is up): never ask over it, and never start the build it is replacing
+        const bool want_install = inst.exe.empty();
+        const bool want_update = !want_install && inst.outdated && !g_headless && !EMU_UPDATE_SKIP[(int)kind] && !hubemu::is_running(inst.exe);
+        if (EMU.state == hubemu::Installer::Working && (EMU.kind == kind || want_install || want_update)) {
+            set_toast(std::string(hubemu::name(EMU.kind)) + (EMU.updating ? " is updating" : " is downloading") + ". Press Play again when it is done.", false, 6.0);
+            return;
+        }
+        if (EMU.state == hubemu::Installer::Asking && (EMU.kind == kind || want_install || want_update)) return;   // its question is already on screen
+    }
     if (inst.exe.empty()) {   // not installed: ask, download, then start this game
         shot_trace("external", std::string(hubemu::name(kind)) + " not-installed -> install dialog");
         EMU.kind = kind;
