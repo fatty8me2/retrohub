@@ -410,3 +410,7 @@ endforeach()
 add_executable(rh_helper_test ../helper/test_helper.cpp)
 target_include_directories(rh_helper_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../helper)
 target_compile_features(rh_helper_test PRIVATE cxx_std_17)
+
+add_executable(hub_hookshot_saves_qa test_hookshot_saves.cpp hookshot.cpp emulators.cpp lichii.cpp)
+target_include_directories(hub_hookshot_saves_qa PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_hookshot_saves_qa PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi mfplat mfuuid ole32)
