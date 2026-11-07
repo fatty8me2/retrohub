@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.37.1",
+      "date": "2026-11-07",
+      "title": "Ocarina of Time is back on Lichii",
+      "new": [],
+      "improved": [
+        "Ocarina of Time (Switch 2) plays with Lichii again by default. Hookshot is still there to try: build it on the game's page, then pick it with one button there or in the game's Settings (Plays with)",
+        "Lichii is updated to build 95: plants and flowers that used to fade or go missing are drawn again, and it fixes white flashes when the camera moves, the Z-target reticle, Gerudo Valley shaders and a random crash",
+        "RetroHub now updates Lichii for you: the next time you play a Switch game it offers the new build, and your keys, firmware, saves and settings stay exactly as they are"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.37.0",
       "date": "2026-11-07",
       "title": "Ocarina of Time runs natively",
