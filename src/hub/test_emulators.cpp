@@ -13,6 +13,11 @@
 #include "miniz.h"
 
 #include <chrono>
+#include <memory>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include <process.h>
 #include <cstdint>
 #include <cstdio>
@@ -971,6 +976,244 @@ static void test_ppsspp_pin_and_config(const fs::path& d) {
     CHECK(ctl.find("Cross = 20-96") != std::string::npos && ctl.find("Save State") == std::string::npos);
 }
 
+/* ---- Lichii: in-place upgrade of an outdated managed install (install_core). Temp dirs only; the download is a local zip through the test hooks (no network, no process). ---- */
+namespace upg {
+struct Rel {
+    std::string version, sha;
+    fs::path zip;
+    uint64_t size = 0;
+    hubemu::Release r{};
+};
+using Files = std::map<std::string, std::string>;
+
+static std::shared_ptr<Rel> make_rel(const fs::path& zip, const std::string& version, const Files& files) {
+    auto rel = std::make_shared<Rel>();
+    rel->version = version;
+    rel->zip = zip;
+    std::error_code ec;
+    fs::create_directories(zip.parent_path(), ec);
+    fs::remove(zip, ec);
+    mz_zip_archive z;
+    std::memset(&z, 0, sizeof z);
+    bool ok = mz_zip_writer_init_file(&z, zip.string().c_str(), 0) != 0;
+    for (const auto& f : files) ok = mz_zip_writer_add_mem(&z, f.first.c_str(), f.second.data(), f.second.size(), MZ_DEFAULT_COMPRESSION) && ok;
+    ok = mz_zip_writer_finalize_archive(&z) && ok;
+    mz_zip_writer_end(&z);
+    CHECK(ok);
+    rel->size = fs::file_size(zip, ec);
+    rel->sha = hubemu::sha256_file(zip.string());
+    rel->r = {rel->version.c_str(), L"example.invalid", L"/test/lichii-windows-x86_64.zip", rel->size, rel->sha.c_str(), L"lichii.exe", "GPL-3.0"};
+    return rel;
+}
+
+/* every file under `d` -> its bytes (relative paths, forward slashes) */
+static Files snapshot(const fs::path& d) {
+    Files m;
+    std::error_code ec;
+    if (!fs::exists(d, ec)) return m;
+    for (fs::recursive_directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec)) m[fs::relative(it->path(), d, ec).generic_string()] = read_text(it->path());
+    return m;
+}
+}   // namespace upg
+
+static void test_lichii_upgrade(const fs::path& root) {
+    using namespace upg;
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    const fs::path dir = fs::u8path(hubemu::managed_dir(hubemu::Kind::Lichii, root.string()));
+    const fs::path user = dir / "user";
+
+    auto v1 = make_rel(root / "zips" / "v1.zip", "build-88", {{"lichii.exe", "EXE-1"}, {"Qt6Core.dll", "qt-1"}, {"old_only.dll", "gone-soon"},
+                                                                {"lichii.pdb", "pdb"}, {"vc_redist.x64.exe", "vc"}, {"platforms/qwindows.dll", "plat-1"}});
+    auto v2 = make_rel(root / "zips" / "v2.zip", "build-94", {{"lichii.exe", "EXE-2"}, {"Qt6Core.dll", "qt-2"}, {"new.dll", "fresh"},
+                                                                {"lichii.pdb", "pdb2"}, {"eden-cli.pdb", "pdb3"}, {"platforms/qwindows.dll", "plat-2"},
+                                                                {"user/keys/prod.keys", "EVIL-FROM-ARCHIVE"}});
+    auto v3 = make_rel(root / "zips" / "v3.zip", "build-96", {{"lichii.exe", "EXE-3"}, {"Qt6Core.dll", "qt-3"}});
+    const fs::path corrupt = root / "zips" / "v3-corrupt.zip";   // same size as v3, one byte different: the hash check must reject it
+    {
+        std::string b = read_text(v3->zip);
+        b[b.size() / 2] ^= 0x55;
+        CHECK(write_file(corrupt, Bytes(b.begin(), b.end())));
+    }
+    auto v4 = make_rel(root / "zips" / "v4.zip", "build-97", {{"lichii.exe", "EXE-4"}, {"fourth.dll", "4"}});
+
+    const hubemu::Release* cur = &v1->r;
+    int fetches = 0;
+    bool offline = false, is_running = false;
+    fs::path corrupt_for;   // when set, a fetch of the release with this zip delivers the corrupt copy
+    std::map<std::string, fs::path> zips = {{v1->sha, v1->zip}, {v2->sha, v2->zip}, {v3->sha, v3->zip}, {v4->sha, v4->zip}};
+    hubemu::InstallTestHooks hk;
+    hk.kind = hubemu::Kind::Lichii;
+    hk.release = cur;
+    hk.fetch = [&](const hubemu::Release& r, const std::string& out, std::string* err) {
+        ++fetches;
+        if (offline) { *err = "could not reach example.invalid"; return false; }
+        fs::path src = zips[r.sha256];
+        if (!corrupt_for.empty() && src == corrupt_for) src = corrupt;
+        std::error_code e2;
+        fs::copy_file(src, fs::u8path(out), fs::copy_options::overwrite_existing, e2);
+        if (e2) { *err = "copy failed"; return false; }
+        return true;
+    };
+    hk.running = [&](const std::string&) { return is_running; };
+    auto use = [&](const std::shared_ptr<Rel>& r) { cur = &r->r; hk.release = cur; hubemu::set_install_test_hooks(&hk); };
+    auto run = [&](std::string* err) { return hubemu::install_blocking(hubemu::Kind::Lichii, root.string(), err, nullptr); };
+    auto marker_has = [&](const std::shared_ptr<Rel>& r) { return read_text(dir / "retrohub-install.txt").find("sha256 " + r->sha) != std::string::npos; };
+    auto scratch_gone = [&]() { return !fs::exists(dir / "_old") && !fs::exists(dir / "_extract") && !fs::exists(dir / "retrohub-upgrade.txt"); };
+    auto playable = [&](const char* exe_text) {
+        hubemu::Install in = hubemu::find(hubemu::Kind::Lichii, "", "", root.string());
+        return !in.exe.empty() && in.managed && read_text(fs::u8path(in.exe)) == exe_text;
+    };
+
+    // ---- first install (build-88), then the player's data
+    use(v1);
+    std::string err;
+    CHECK(run(&err));
+    CHECK(marker_has(v1) && read_text(dir / "lichii.exe") == "EXE-1" && !fs::exists(dir / "lichii.pdb") && !fs::exists(dir / "vc_redist.x64.exe"));
+    CHECK(fs::is_directory(user));
+    write_text(user / "keys" / "prod.keys", "MY-KEYS");
+    write_text(user / "config" / "qt-config.ini", "[UI]\nfirstStart=false\n");
+    write_text(user / "config" / "retrohub-defaults.txt", "x");
+    write_file(user / "nand" / "user" / "save" / "0400486024DEC000" / "slot0.bin", Bytes{0, 1, 2, 3, 0xFF, 0xFE, 0, 9});
+    write_text(user / "shader" / "cache.bin", std::string(5000, 'S'));
+    const Files data = snapshot(user);
+    CHECK(data.size() == 5);
+
+    // ---- 1. the marker matches the pin: nothing to do (no download, nothing touched)
+    fetches = 0;
+    CHECK(run(&err) && fetches == 0);
+    CHECK(!hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).outdated);
+
+    // ---- 2. a newer pin: the install is outdated but still playable, and the next run upgrades it
+    use(v2);
+    {
+        hubemu::Install in = hubemu::find(hubemu::Kind::Lichii, "", "", root.string());
+        CHECK(!in.exe.empty() && in.outdated && in.how.find("update available") != std::string::npos);
+    }
+    fetches = 0;
+    CHECK(run(&err) && fetches == 1);
+    CHECK(snapshot(user) == data);   // user\ byte-identical (the archive's own user/keys/prod.keys was ignored)
+    CHECK(read_text(dir / "lichii.exe") == "EXE-2" && read_text(dir / "Qt6Core.dll") == "qt-2" && read_text(dir / "new.dll") == "fresh");
+    CHECK(read_text(dir / "platforms" / "qwindows.dll") == "plat-2");
+    CHECK(!fs::exists(dir / "old_only.dll"));   // stale file of the old build removed
+    CHECK(!fs::exists(dir / "lichii.pdb") && !fs::exists(dir / "eden-cli.pdb") && !fs::exists(dir / "vc_redist.x64.exe"));
+    CHECK(marker_has(v2) && !marker_has(v1) && scratch_gone());
+    CHECK(!hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).outdated && playable("EXE-2"));
+    fetches = 0;
+    CHECK(run(&err) && fetches == 0);   // and now it is current
+
+    // ---- 3. failures leave the old build installed, playable and its data untouched
+    use(v3);
+    offline = true;
+    err.clear();
+    CHECK(!run(&err) && !err.empty());   // download fails
+    CHECK(playable("EXE-2") && marker_has(v2) && snapshot(user) == data && scratch_gone());
+    CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).outdated);   // and it will be offered again
+    offline = false;
+    corrupt_for = v3->zip;
+    err.clear();
+    CHECK(!run(&err) && err.find("checksum") != std::string::npos);   // bad hash
+    CHECK(playable("EXE-2") && marker_has(v2) && snapshot(user) == data && scratch_gone());
+    CHECK(!fs::exists(root / "_downloads" / "lichii-windows-x86_64.zip") && !fs::exists(root / "_downloads" / "lichii-windows-x86_64.zip.part"));
+    corrupt_for.clear();
+    {   // wrong size
+        auto short_rel = std::make_shared<Rel>(*v3);
+        short_rel->size += 1;
+        short_rel->r.size = short_rel->size;
+        short_rel->r.version = short_rel->version.c_str();
+        short_rel->r.sha256 = short_rel->sha.c_str();
+        use(short_rel);
+        err.clear();
+        CHECK(!run(&err) && err.find("wrong size") != std::string::npos);
+        CHECK(playable("EXE-2") && marker_has(v2) && snapshot(user) == data && scratch_gone());
+        use(v3);
+    }
+    {   // Lichii running from that folder: never replaced
+        is_running = true;
+        err.clear();
+        CHECK(!run(&err) && err.find("running") != std::string::npos);
+        CHECK(playable("EXE-2") && marker_has(v2) && snapshot(user) == data && scratch_gone());
+        is_running = false;
+    }
+    {   // a swap that fails half way (a file in use): the old build is put back
+        const fs::path locked = dir / "Qt6Core.dll";
+        HANDLE h = CreateFileW(locked.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // no FILE_SHARE_DELETE: a rename fails
+        CHECK(h != INVALID_HANDLE_VALUE);
+        err.clear();
+        const bool r = run(&err);
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        CHECK(!r && !err.empty());
+        CHECK(playable("EXE-2") && marker_has(v2) && read_text(dir / "Qt6Core.dll") == "qt-2" && read_text(dir / "new.dll") == "fresh" && read_text(dir / "platforms" / "qwindows.dll") == "plat-2");
+        CHECK(snapshot(user) == data && scratch_gone());
+    }
+    CHECK(run(&err) && playable("EXE-3") && marker_has(v3) && snapshot(user) == data && scratch_gone());   // and with everything fine again it upgrades (build-96)
+    CHECK(!fs::exists(dir / "new.dll") && !fs::exists(dir / "platforms"));
+
+    // ---- 4. a crash in the middle of an upgrade (v3 -> v4): old files parked in _old, journal written, marker gone, new files half in
+    {
+        const Files before = snapshot(dir);
+        fs::create_directories(dir / "_old", ec);
+        for (auto& c : fs::directory_iterator(dir, ec)) {
+            const std::string n = c.path().filename().string();
+            if (n == "user" || n == "_old") continue;
+            fs::rename(c.path(), dir / "_old" / n, ec);
+        }
+        write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\n");
+        write_text(dir / "fourth.dll", "half-written");
+        write_text(dir / "_extract" / "junk.bin", "junk");
+        CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());   // right now it does not look installed
+        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());   // what the next start does
+        CHECK(snapshot(dir) == before);   // exactly the v3 install again, user\ included
+        CHECK(playable("EXE-3") && marker_has(v3) && scratch_gone());
+        {   // a crash while still parking (phase 1): some old files moved, the rest never did, and none of them may be lost
+            fs::create_directories(dir / "_old", ec);
+            fs::rename(dir / "lichii.exe", dir / "_old" / "lichii.exe", ec);
+            write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\nphase 1\n");
+            hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());
+            CHECK(snapshot(dir) == before && playable("EXE-3") && scratch_gone());
+        }
+        // the same crash, found by the next install job instead of the start-up check: it recovers, then upgrades
+        fs::create_directories(dir / "_old", ec);
+        for (auto& c : fs::directory_iterator(dir, ec)) {
+            const std::string n = c.path().filename().string();
+            if (n == "user" || n == "_old") continue;
+            fs::rename(c.path(), dir / "_old" / n, ec);
+        }
+        write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\n");
+        write_text(dir / "_extract" / "junk.bin", "junk");
+        use(v4);
+        CHECK(run(&err) && playable("EXE-4") && marker_has(v4) && snapshot(user) == data && scratch_gone());
+        CHECK(read_text(dir / "fourth.dll") == "4" && !fs::exists(dir / "Qt6Core.dll"));
+    }
+
+    // ---- 5. a crash after the swap finished (marker written) but before the scratch was removed: nothing is rolled back
+    {
+        write_text(dir / "_old" / "lichii.exe", "EXE-3");
+        write_text(dir / "_extract" / "junk.bin", "junk");
+        write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\n");
+        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());
+        CHECK(playable("EXE-4") && marker_has(v4) && scratch_gone() && snapshot(user) == data);
+    }
+
+    // ---- 6. scratch left behind with no journal and no marker (a crash while unpacking a first install): user\ stays, the next run ends with a working install
+    {
+        fs::remove(dir / "retrohub-install.txt", ec);
+        fs::remove(dir / "lichii.exe", ec);
+        write_text(dir / "_extract" / "half" / "lichii.exe", "partial");
+        write_text(dir / "stray.dll", "stray");
+        offline = true;
+        err.clear();
+        CHECK(!run(&err));   // even a failed first install keeps the player's data
+        CHECK(snapshot(user) == data && !fs::exists(dir / "stray.dll") && !fs::exists(dir / "_extract") && !fs::exists(dir / "lichii.exe"));
+        CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());
+        offline = false;
+        CHECK(run(&err) && playable("EXE-4") && marker_has(v4) && snapshot(user) == data && scratch_gone());
+    }
+    hubemu::set_install_test_hooks(nullptr);
+    fs::remove_all(root, ec);
+}
+
 int main(int argc, char** argv) {
     test_3ds_header();
     test_wiiu_formats();
@@ -989,6 +1232,7 @@ int main(int argc, char** argv) {
     test_controls_emulators(dir / "ctl");
     test_controls2_emulators(dir / "ctl2");
     test_ppsspp_pin_and_config(dir / "psp");
+    test_lichii_upgrade(dir / "upg");
     fs::remove_all(dir, ec);
 
     int dl_bad = 0;

@@ -460,7 +460,8 @@ extern std::atomic<bool> g_io_shutdown;   // set in main() teardown: detached di
 extern bool g_headless;   // HUB_SCREENSHOT run: never launch games or touch the lobby
 
 /* launch.cpp */
-extern hubemu::Installer EMU;   // download-on-demand job + its dialog state
+extern hubemu::Installer EMU;   // download-on-demand job + its dialog state (also the in-place update of an outdated Lichii: EMU.updating)
+extern bool EMU_UPDATE_SKIP[8];   // per hubemu::Kind, this session: the player said "not now" or the update failed, so Play just uses the installed build
 extern UnzipJob UNZ;
 extern hubnp3ds::Runner NP3;                 // 3DS local-wireless forwarder (np_3ds)
 extern std::string NP3_mp;                    // "-m ..." for Azahar once NP3 is ready

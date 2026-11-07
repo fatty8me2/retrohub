@@ -3,12 +3,26 @@
 /* ---------- 3DS / Wii U emulator download + unzip dialogs ---------- */
 
 void poll_emulators() {
+    static bool recovered = false;
+    if (!recovered && EMU.state != hubemu::Installer::Working) {   // an update cut short by a crash: roll it back / finish it, once, before anything uses the install
+        recovered = true;
+        hubemu::recover_interrupted(hubemu::Kind::Lichii);
+    }
     bool success = false;
     if (EMU.poll(&success)) {
+        const bool upd = EMU.updating;
         if (success) {
-            set_toast(std::string(hubemu::name(EMU.kind)) + " installed.");
-            if (const hub::GameEntry* g = find_entry(EMU.game_key)) { hub::GameEntry copy = *g; play_entry(copy); }
+            set_toast(std::string(hubemu::name(EMU.kind)) + (upd ? " updated." : " installed."));
+            if (const hub::GameEntry* g = find_entry(EMU.game_key)) { hub::GameEntry copy = *g; if (!A.proc) play_entry(copy); }
+        } else if (upd) {   // a failed update is not a failed game: the old build is intact, so say so quietly and carry on with it
+            std::string err;
+            { std::lock_guard<std::mutex> lk(EMU.mu); err = EMU.error; }
+            EMU_UPDATE_SKIP[(int)EMU.kind] = true;
+            EMU.state = hubemu::Installer::Idle;
+            set_toast(std::string("Could not update ") + hubemu::name(EMU.kind) + ": " + err + ". The current version still works.", false, 10.0);
+            if (const hub::GameEntry* g = find_entry(EMU.game_key)) { hub::GameEntry copy = *g; if (!A.proc) play_entry(copy); }
         }
+        EMU.updating = false;
     }
     if (UNZ.state == UnzipJob::Working && UNZ.done) {
         if (UNZ.th.joinable()) UNZ.th.join();
@@ -49,6 +63,21 @@ void draw_emulator_dialogs() {
             const bool back = ui::modal_back();
             if (EMU.state == hubemu::Installer::Asking) {
                 if (back) EMU.state = hubemu::Installer::Idle;
+                if (EMU.updating) {
+                    ImGui::TextWrapped("%s has a newer version (%s, about %d MB download from its official release). Update it now? "
+                                       "Your keys, firmware, saves and settings are kept. If the update fails, the current version stays.",
+                                       nm.c_str(), rel.version, (int)(rel.size / 1048576));
+                    ImGui::Dummy(ImVec2(0, 8 * S));
+                    if (button("Update", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
+                    ImGui::SetItemDefaultFocus();
+                    ImGui::SameLine();
+                    if (button("Not now", ImVec2(160 * S, 44 * S))) {   // play with what is installed
+                        EMU_UPDATE_SKIP[(int)EMU.kind] = true;
+                        EMU.state = hubemu::Installer::Idle;
+                        EMU.updating = false;
+                        if (const hub::GameEntry* g = find_entry(EMU.game_key)) { hub::GameEntry copy = *g; if (!A.proc) play_entry(copy); }
+                    }
+                } else {
                 ImGui::TextWrapped("%s games need the %s emulator (about %d MB download from its official release, %s). "
                                    "It is kept inside RetroHub's data folder. Download now?",
                                    EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : EMU.kind == hubemu::Kind::Dolphin ? "GameCube" : EMU.kind == hubemu::Kind::Pcsx2 ? "PlayStation 2" : EMU.kind == hubemu::Kind::Ppsspp ? "PSP" : EMU.kind == hubemu::Kind::Lichii ? "Switch / Switch 2" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
@@ -57,14 +86,15 @@ void draw_emulator_dialogs() {
                 ImGui::SetItemDefaultFocus();
                 ImGui::SameLine();
                 if (button("Cancel", ImVec2(160 * S, 44 * S))) EMU.state = hubemu::Installer::Idle;
+                }
             } else if (EMU.state == hubemu::Installer::Working) {
-                std::string phases[] = {"Downloading " + nm + "...", "Checking the download...", "Unpacking...", "Installing..."};
+                std::string phases[] = {(EMU.updating ? "Updating " : "Downloading ") + nm + "...", "Checking the download...", "Unpacking...", "Installing..."};
                 ImGui::TextUnformatted(phases[std::min(3, (int)EMU.phase)].c_str());
                 uint64_t got = EMU.got, tot = EMU.total;
                 char ov[48];
                 std::snprintf(ov, sizeof ov, "%.1f / %.1f MB", got / 1048576.0, tot / 1048576.0);
                 ImGui::ProgressBar(EMU.phase > 0 ? 1.f : (tot ? (float)got / (float)tot : 0.f), ImVec2(-1, 24 * S), EMU.phase > 0 ? "" : ov);
-                ImGui::TextDisabled("Your game starts as soon as it is ready.");
+                ImGui::TextDisabled(EMU.updating ? "Your game starts as soon as the update is done." : "Your game starts as soon as it is ready.");
             } else {
                 if (back) EMU.state = hubemu::Installer::Idle;
                 std::string err;
