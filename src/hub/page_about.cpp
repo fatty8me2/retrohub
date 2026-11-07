@@ -1,5 +1,6 @@
 #include "app.h"
 #include "convenience.h"
+#include "hookshot_ui.h"
 
 /* Plan 4 Wave 2 C: per-frame convenience work (pad glyphs + battery, Discord, firewall probe, command palette). */
 void conv_frame() {
@@ -32,6 +33,7 @@ void draw_overlays() {
     party_draw();     // Plan 4 hooks (stubs until each lane lands)
     bracket_draw();
     hack_draw();
+    hookshot_ui_tick();
     boot_draw_overlay();
     conv_frame();
 }

@@ -203,6 +203,16 @@ void apply_scan() {
                 A.lib.push_back(g);
             }
         }
+        if (!only_native && std::getenv("HUB_SHOT_HOOKSHOT")) {   // Hookshot card screenshots (hookshot_ui.h): Ocarina of Time (Switch 2)
+            hub::GameEntry g;
+            g.system = hub::System::Switch;
+            g.key = "switch:0400486024dec000";
+            g.serial = "0400486024DEC000";
+            g.title = "The Legend of Zelda: Ocarina of Time";
+            g.nx2 = true;
+            g.path = "C:/fake/0400486024dec000.nup";
+            A.lib.push_back(g);
+        }
         if (!only_native && std::getenv("HUB_SHOT_PSP")) {   // PSP shelf / details screenshots (qa: HUB_SHOT_PSP=1)
             static const char* ids[] = {"ulus10041", "ucus98632", "npuz00001"};
             static const char* names[] = {"Crisis Core: Final Fantasy VII", "God of War: Chains of Olympus", "Echochrome"};
