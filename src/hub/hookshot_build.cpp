@@ -1160,7 +1160,7 @@ struct Kit {
                 if (!fetch(p, "kit-cpm", std::string("Downloading ") + p.what, (float)i / 4.f, (float)(i + 0.6) / 4.f, &pkg)) return false;
                 wipe(d);
                 if (!run(python_exe(), {"-I", S(P(io.data) / "unpack_tar.py"), pkg, S(d), "--strip", c.strip}, io.kit, std::string("Unpacking ") + p.what)) return false;
-                if (!is_dir(d / "include") || !is_file(d / c.must_have)) return fail(std::string(p.what) + " is missing its include or lib files.");
+                if (!is_dir(d / "include") || !(is_file(d / c.must_have) || is_dir(d / c.must_have))) return fail(std::string(p.what) + " is missing its include or lib files.");
                 write_marker(d, want);
             }
             ++i;
