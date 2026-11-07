@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.35.1",
+      "date": "2026-11-06",
+      "title": "Xbox controllers work in Switch games",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Switch: an Xbox controller now works in Lichii right away, with no setup (RetroHub writes the controller the way Lichii sees it, and fixes an old mapping on its own)"
+      ]
+    },
+    {
       "version": "1.35.0",
       "date": "2026-11-06",
       "title": "Real game cases, front to back",
