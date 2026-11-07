@@ -1246,6 +1246,7 @@ static void test_lichii_upgrade(const fs::path& root) {
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
         CHECK(!r && err.find("could not be finished") != std::string::npos && fetches == 0);
         CHECK(fs::exists(parked) && fs::exists(dir / "retrohub-upgrade.txt") && snapshot(user) == data);   // the only copy of the old exe survived
+        CHECK(read_text(dir / "retrohub-upgrade.txt").find("phase 3") != std::string::npos && fs::exists(dir / "retrohub-install.txt"));   // the rest is back, and marked as old
         fetches = 0;
         CHECK(run(&err) && fetches == 0);   // file free again: rolled back, and the install is current, so nothing is downloaded
         CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
