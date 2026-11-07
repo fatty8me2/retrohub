@@ -173,6 +173,12 @@ static std::string cemu_in(const std::string& base, int depth) {
 
 /* ---- upgrade support ---- */
 
+/* Staging / journal names inside an install folder. They are RetroHub's own scratch space, never part of an install. */
+static const char* const kStageDir = "_extract";   // the unpacked download
+static const char* const kOldDir = "_old";         // the previous build's program files while an upgrade swaps
+static const char* const kJournal = "retrohub-upgrade.txt";
+static const char* const kJournalTmp = "retrohub-upgrade.txt.tmp";
+
 /* Top-level names inside an install folder that hold the PLAYER'S data and that RetroHub's own files live in. An install/upgrade never deletes, replaces or
  * overwrites them, even when the archive ships a folder of the same name. Non-empty = this kind can be upgraded in place. Lichii: everything it keeps
  * (keys, firmware, saves, config, shader caches, RetroHub's retrohub-defaults.txt) is under user\ (portable mode, lichii.h); RetroHub writes nothing else
@@ -230,7 +236,9 @@ Install find(Kind k, const std::string& configured, const std::string& game_path
     }
     std::string md = managed_dir(k, root);
     std::string exe = join(md, U(release(k).exe));
-    if (file_exists(exe) && file_exists(join(md, "retrohub-install.txt"))) {   // complete installs only
+    /* complete installs only; an upgrade journal means a swap is running or was cut short (old files may still be parked in _old): not playable until
+     * the install job or recover_interrupted() has finished or rolled it back, so Play goes through the install path instead of starting a half build */
+    if (file_exists(exe) && file_exists(join(md, "retrohub-install.txt")) && !(upgradable(k) && file_exists(join(md, kJournal)))) {
         in.exe = exe;
         in.dir = md;
         in.managed = true;
@@ -454,11 +462,6 @@ static bool exe_is_running(const std::string& exe) {
     return running_from(exe);
 }
 
-/* Staging / journal names inside an install folder. They are RetroHub's own scratch space, never part of an install. */
-static const char* const kStageDir = "_extract";   // the unpacked download
-static const char* const kOldDir = "_old";         // the previous build's program files while an upgrade swaps
-static const char* const kJournal = "retrohub-upgrade.txt";
-static const char* const kJournalTmp = "retrohub-upgrade.txt.tmp";
 
 static bool is_scratch(const std::string& n) {
     return _stricmp(n.c_str(), kStageDir) == 0 || _stricmp(n.c_str(), kOldDir) == 0 || _stricmp(n.c_str(), kJournal) == 0 || _stricmp(n.c_str(), kJournalTmp) == 0;
@@ -494,13 +497,11 @@ static void clear_dir_keeping(const std::string& dir, const std::vector<std::str
     }
 }
 
-/* Puts the parked old build back: whatever new files made it into `dir` are removed first (never the kept data), then _old\* moves home.
- * Returns false when something could not be moved back (the journal then stays so the next run retries). */
 /* Journal phases: 1 = parking the old files in _old (dir still holds old files that never moved: nothing is removed); 2 = the new build is coming in (every
  * old file is parked, so whatever is in dir that is not kept data or scratch is new and goes first); 3 = putting the old build back (the new files are
  * already gone, so everything in dir is old: nothing is removed, the rest of _old moves home). Phase 3 is written as soon as the new files are gone, so a
  * restore that a locked file stops half way is finished by the next run instead of mistaking the files it already moved back for new ones. */
-static void set_journal_phase(const std::string& dir, int phase) {
+static bool set_journal_phase(const std::string& dir, int phase) {
     std::istringstream ls(read_text(join(dir, kJournal)));
     std::string line, text;
     while (std::getline(ls, line)) {
@@ -508,9 +509,11 @@ static void set_journal_phase(const std::string& dir, int phase) {
         if (line.empty() || line.compare(0, 6, "phase ") == 0) continue;
         text += line + "\n";
     }
-    write_journal(dir, text + "phase " + std::to_string(phase) + "\n");
+    return write_journal(dir, text + "phase " + std::to_string(phase) + "\n");
 }
 
+/* Puts the parked old build back: in phase 2 whatever new files made it into `dir` are removed first (never the kept data), then _old\* moves home.
+ * Returns false when something could not be removed or moved back; the journal then stays (at the phase that is still true) so the next run retries. */
 static bool restore_old(const std::string& dir, const std::vector<std::string>& keep, bool drop_new) {
     const std::string old = join(dir, kOldDir);
     if (!dir_exists(old)) return true;
@@ -524,7 +527,7 @@ static bool restore_old(const std::string& dir, const std::vector<std::string>& 
             if (fs::exists(fs::symlink_status(c, ec))) left = true;
         }
         if (left) return false;   // a new file is still in use: the journal still says phase 2, so the next run removes it and restores
-        set_journal_phase(dir, 3);
+        if (!set_journal_phase(dir, 3)) return false;   // nothing moved back yet, so phase 2 is still true: the next run simply drops nothing and restores
     }
     bool ok = true;
     for (const fs::path& c : children(old)) {
