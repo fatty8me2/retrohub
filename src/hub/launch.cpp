@@ -664,6 +664,11 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
                          : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(g0, fs0)
                          : kind == hubemu::Kind::Lichii ? hubemu::lichii_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
         if (kind == hubemu::Kind::Lichii) { hubemu::NxSetup ns = hubemu::lichii_setup_status(inst.dir); a0 += std::string(" | keys ") + (ns.prod_keys ? "yes" : "no") + " firmware " + (ns.firmware ? "yes" : "no"); }
+        if (kind == hubemu::Kind::Lichii) {
+            const bool pre = !hubemu::lichii_env(gv, hubemu::physical_ram_bytes()).empty();
+            a0 += std::string(" | preload all shaders ") + (pre ? "yes" : "no");
+            autotest_log(std::string("lichii: EDEN_NX2_PRELOAD_ALL_PIPELINES ") + (pre ? "set" : "not set"));
+        }
         shot_trace("external", std::string(hubemu::name(kind)) + " installed | " + a0);
         set_notice("Headless test run: launch skipped.");
         return;
@@ -766,7 +771,9 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (your emulator's copy is untouched)", ui::WARN, 15.0);
     };
     autotest_log("external: starting " + inst.exe + " " + args);
-    if (!spawn(inst.exe, args, inst.dir, {}, r)) { autotest_log("external: spawn failed"); NP3.stop(); }
+    std::vector<std::pair<std::string, std::string>> xenv;   // added to RetroHub's environment for the child (spawn)
+    if (kind == hubemu::Kind::Lichii) { xenv = hubemu::lichii_env(gsv, hubemu::physical_ram_bytes()); autotest_log(std::string("lichii: EDEN_NX2_PRELOAD_ALL_PIPELINES ") + (xenv.empty() ? "not set" : "set")); }
+    if (!spawn(inst.exe, args, inst.dir, xenv, r)) { autotest_log("external: spawn failed"); NP3.stop(); }
 }
 
 void start_unzip(const hub::GameEntry& e) {

@@ -313,6 +313,8 @@ Lichii prefers) is synced by `begin_session` / `end_session` with `<vault>\switc
 The vault side never contains the user uuid (`SaveSession::vault_rels`), so any PC restores into its own profile folder. Games without a title id
 (`switch:file-...`) are not synced. Lichii has no save states.
 
+**Shaders at start (`switch.preload_shaders`, default `auto`).** Lichii builds only the cached shader pipelines that recent sessions used when a game starts (at most 3000 when it has no used-list); the rest are built in the background or when first needed, which shows as stutter. `all` makes RetroHub start Lichii with the environment variable `EDEN_NX2_PRELOAD_ALL_PIPELINES=1` (added to RetroHub's own environment for that child only, `lichii_env` in `lichii.cpp`, passed by `spawn` in `launch.cpp`), so Lichii builds EVERY cached pipeline at start: a longer start and about 0.45 MB of driver memory per pipeline (a full 21k cache is about 9.5 GB), for fewer hitches. `auto` does the same on PCs with at least 30 GiB of physical RAM (a PC sold as 32 GB reports about 31.7 GiB) and nothing below that; `recent` never sets it. Not written to Lichii's ini. Limit in Lichii build 95: it still unloads pipelines unused for 9000 frames, so a preloaded shader can be dropped again; upstream Lichii PR #550 ("don't evict disk-cache pipelines that were never used") is merged for the next release and fixes that once RetroHub pins it. The headless launch trace prints `preload all shaders yes/no`.
+
 ### Hookshot (native Ocarina of Time)
 
 Ocarina of Time (Switch 2, title id `0400486024DEC000`) is played with Lichii by default; the player can opt in to a native Windows build, Hookshot, instead (`src/hub/hookshot.*`; the build

@@ -148,6 +148,13 @@ std::vector<Option> build() {
     // DMA Unsafe added nothing on top of Low, so only this is exposed. "lichii" leaves whatever is set inside Lichii.
     v.push_back(mk("switch.gpu_accuracy", "GPU accuracy", "Video", SWITCH, K::Choice, S::Visual, "low",
                    {{"low", "Low (faster)"}, {"high", "High (more accurate, slower)"}, {"lichii", "Use Lichii's setting"}}));
+    // Lichii builds only the cached shaders recent sessions used at start (at most 3000 without a used-list); the rest are built in the background or
+    // when first needed, which hitches. "all" sets EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (hubemu::lichii_env): every cached shader is built at start (about
+    // 0.45 MB of driver memory each, ~9.5 GB for a 21k cache). "auto" does that on PCs with 30 GiB or more of RAM (a "32 GB" PC reports ~31.7 GiB).
+    // Help text: "All loads every shader Lichii has cached when the game starts: a longer start and more memory, fewer hitches. Auto does this on PCs with
+    // 32 GB of RAM or more." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
+    v.push_back(mk("switch.preload_shaders", "Shaders at start", "Video", SWITCH, K::Choice, S::Visual, "auto",
+                   {{"auto", "Auto"}, {"all", "All cached shaders"}, {"recent", "Recently used"}}));
     // Which program plays Ocarina of Time (Switch 2): Lichii (default) or Hookshot (experimental native PC build RetroHub makes from the player's own game).
     // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.
     // v1.37.0 stored "auto" (= Hookshot); it is no longer a choice, so loading / merging / resolving drops it and the default (Lichii) applies.

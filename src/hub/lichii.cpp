@@ -699,4 +699,20 @@ std::string lichii_args(const std::string& game, bool fullscreen) {
     return std::string(fullscreen ? "-f " : "") + "-u 0 -g " + winutil::quote_arg(game);
 }
 
+std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t ram) {
+    std::vector<std::pair<std::string, std::string>> env;
+    auto it = v.find("switch.preload_shaders");
+    const std::string m = it == v.end() ? "auto" : it->second;
+    const uint64_t kGiB = 1024ull * 1024 * 1024;
+    const bool all = m == "all" || (m != "recent" && ram >= 30 * kGiB);
+    if (all) env.push_back({"EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"});
+    return env;
+}
+
+uint64_t physical_ram_bytes() {
+    MEMORYSTATUSEX ms{};
+    ms.dwLength = sizeof ms;
+    return GlobalMemoryStatusEx(&ms) ? (uint64_t)ms.ullTotalPhys : 0;
+}
+
 }  // namespace hubemu
