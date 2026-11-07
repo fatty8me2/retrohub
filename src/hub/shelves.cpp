@@ -91,6 +91,7 @@ void home_scroll_pre() {
     if (!w || HS.frame != fc - 1) {   // first frame, or Home was away: start from wherever the window is
         HS.pos = HS.target = w ? w->Scroll.y : 0.f;
         HS.vel = 0.f;
+        g_home_pending = 0.f;
         return;
     }
     const float maxs = std::max(0.f, w->ScrollMax.y);
