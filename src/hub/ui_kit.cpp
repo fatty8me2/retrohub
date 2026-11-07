@@ -548,7 +548,19 @@ bool chip(const char* label, bool on, ImU32 col) {
     return pressed;
 }
 
-int segmented(const char* id, const char* const* labels, int n, int cur) {
+/* A rounded pill filled with a left-to-right gradient (clip strips: ImGui has no rounded gradient fill). */
+static void gradient_pill(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 a, ImU32 b, float alpha = 1.f) {
+    const int N = 20;
+    const float w = p1.x - p0.x;
+    for (int i = 0; i < N; ++i) {
+        float x0 = p0.x + w * i / N, x1 = p0.x + w * (i + 1) / N + (i + 1 < N ? 1.f : 0.f);
+        dl->PushClipRect(ImVec2(x0, p0.y - 8.f), ImVec2(x1, p1.y + 8.f), true);
+        dl->AddRectFilled(p0, p1, with_alpha(mix(a, b, (i + 0.5f) / N), alpha), r);
+        dl->PopClipRect();
+    }
+}
+
+int segmented(const char* id, const char* const* labels, int n, int cur, int hot) {
     ImGui::PushID(id);
     float pad = sp(2.f), h = sp(5.f), inner = sp(0.5f);
     std::vector<float> ws(n);
@@ -570,11 +582,35 @@ int segmented(const char* id, const char* const* labels, int n, int cur) {
         anim(*hv, (hov || focus) ? 1.f : 0.f, 16.f);
         ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
         float r = (p1.y - p0.y) * 0.5f;
-        if (i == cur) dl->AddRectFilled(p0, p1, mix(ACCENT, IM_COL32_WHITE, 0.1f * *hv), r);
+        ImU32 txt = i == cur ? IM_COL32_WHITE : mix(TEXT2, TEXT, *hv);
+        if (i == hot) {   // main attraction: logo cyan -> pink, nudged toward the theme accent
+            const ImU32 ga = mix(IM_COL32(47, 224, 255, 255), ACCENT, 0.2f), gb = mix(IM_COL32(255, 111, 168, 255), ACCENT, 0.2f);
+            const float h2 = *hv * 0.12f;
+            dl->AddRectFilled(ImVec2(p0.x - 3, p0.y - 3), ImVec2(p1.x + 3, p1.y + 3), with_alpha(ga, 0.26f + h2), r + 3);   // soft halo
+            if (i == cur) {
+                gradient_pill(dl, p0, p1, r, ga, gb);
+                txt = IM_COL32(29, 20, 70, 255);   // the logo navy: >= 9:1 on the whole gradient, on every theme
+            } else {
+                gradient_pill(dl, p0, p1, r, ga, gb);   // 1.5 px gradient border around the panel colour
+                dl->AddRectFilled(ImVec2(p0.x + 2.f, p0.y + 2.f), ImVec2(p1.x - 2.f, p1.y - 2.f), PANEL, r - 2.f);
+                gradient_pill(dl, ImVec2(p0.x + 2.f, p0.y + 2.f), ImVec2(p1.x - 2.f, p1.y - 2.f), r - 2.f, ga, gb, 0.34f + h2);   // tinted body
+                txt = TEXT;
+            }
+            if (!reduce_motion) {   // one soft shimmer sweep every ~7 s
+                double ph = std::fmod(ImGui::GetTime(), 7.0) / 1.1;
+                if (ph < 1.0) {
+                    float cx = p0.x + (p1.x - p0.x) * (float)ph, bw = (p1.x - p0.x) * 0.18f;
+                    dl->PushClipRect(p0, p1, true);
+                    dl->AddRectFilledMultiColor(ImVec2(cx - bw, p0.y), ImVec2(cx, p1.y), with_alpha(IM_COL32_WHITE, 0.f), with_alpha(IM_COL32_WHITE, 0.22f), with_alpha(IM_COL32_WHITE, 0.22f), with_alpha(IM_COL32_WHITE, 0.f));
+                    dl->AddRectFilledMultiColor(ImVec2(cx, p0.y), ImVec2(cx + bw, p1.y), with_alpha(IM_COL32_WHITE, 0.22f), with_alpha(IM_COL32_WHITE, 0.f), with_alpha(IM_COL32_WHITE, 0.f), with_alpha(IM_COL32_WHITE, 0.22f));
+                    dl->PopClipRect();
+                }
+            }
+        } else if (i == cur) dl->AddRectFilled(p0, p1, mix(ACCENT, IM_COL32_WHITE, 0.1f * *hv), r);
         else if (*hv > 0.01f) dl->AddRectFilled(p0, p1, with_alpha(HILITE, 0.07f * *hv), r);
         ImVec2 ts = ImGui::CalcTextSize(labels[i]);
         dl->AddText(F.bold ? F.bold : nullptr, F.bold ? F.bold->FontSize : 0, ImVec2((p0.x + p1.x - ts.x) * 0.5f, (p0.y + p1.y - ts.y) * 0.5f),
-                    i == cur ? IM_COL32_WHITE : mix(TEXT2, TEXT, *hv), labels[i]);
+                    txt, labels[i]);
         if (focus) focus_ring(dl, p0, p1, r);
         if (pr) result = i;
         ImGui::PopID();
