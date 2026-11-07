@@ -1087,7 +1087,7 @@ bool hookshot_running();                           // launch.cpp: the running ga
 void switch_settings_ui();         // switch_ui.cpp: Settings > Playing block (Lichii, keys, firmware)
 namespace hubemu { struct SdlBinds; }
 bool lichii_pad_for(const hubctl::Profile& prof, std::string* guid, int* port, hubemu::SdlBinds* binds);   // page_controllers.cpp: player 1's pad + raw SDL binds
-void lichii_hang_watch();          // launch.cpp: Lichii build 88 can hang on exit after its window closed (known fence-worker race)
+void lichii_hang_watch();          // launch.cpp: Lichii (builds 88-95) can hang on exit after its window closed (known fence-worker race)
 void ps1_settings_ui();
 void emu_modal_begin(const char* name, bool* open_flag);
 void emu_modal_begin(const char* name, bool* open_flag);

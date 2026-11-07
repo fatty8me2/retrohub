@@ -135,9 +135,9 @@ const Release& release(Kind k) {
      * (nx2 @ 222877d, 2026-11-07); every file in the zip is byte-identical to the release-binaries CI artifact of that run. An Eden fork that adds
      * Switch 2 games. The MSVC Windows zip holds lichii.exe at its root. Portable via a `user` folder beside the exe (lichii.h), which an upgrade
      * from an older pin never touches (install_core). No games, keys or firmware are included: the player supplies their own.
-     * The version string is the tag, so the marker, Settings and the dialogs all say "build-94". */
+     * The version string is what the marker, Settings and the dialogs show, so it says "build 95"; only the URL uses the tag. */
     static const Release li = {
-        "build-94", L"github.com", L"/zortos293/Lichii/releases/download/build-94/lichii-windows-x86_64.zip",
+        "build 95", L"github.com", L"/zortos293/Lichii/releases/download/build-94/lichii-windows-x86_64.zip",
         116143228ull, "1560b9d46a20b54a8494316a650bfef12a905fbd6c612758d4509dcefca61164", L"lichii.exe", "GPL-3.0"};
     return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : k == Kind::Lichii ? li : dol;
 }
