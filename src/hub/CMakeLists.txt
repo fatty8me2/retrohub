@@ -341,6 +341,11 @@ add_executable(hub_hookshot_test test_hookshot.cpp hookshot.cpp emulators.cpp li
 target_include_directories(hub_hookshot_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_hookshot_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi mfplat mfuuid ole32)
 
+# QA-only harness: runs the real Hookshot build end to end (not an add_test; see src/hub/hookshot_e2e.cpp)
+add_executable(hub_hookshot_e2e hookshot_e2e.cpp hookshot_build.cpp hookshot.cpp emulators.cpp lichii.cpp)
+target_include_directories(hub_hookshot_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_hookshot_e2e PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi mfplat mfuuid ole32)
+
 # Nintendo Switch / Switch 2 identification (src/common/nx.h): PFS0 / XCI / NRO / NPDM, loose exefs dumps, scan + cache (synthetic files)
 add_executable(hub_nx_test test_nx.cpp)
 target_include_directories(hub_nx_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
