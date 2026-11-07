@@ -72,7 +72,7 @@ bool parse_packs_json(const std::string& text, std::vector<std::string>* out);
  * "PS2" -> ps2 ...), or "" when it names no console. */
 std::string console_alias(const std::string& name);
 
-/* Pure: true when `name` is a console short code usable as a pack subfolder (n64, gc, wiiu, 3ds, nds, gba, gbc, gb, ps1). */
+/* Pure: true when `name` is a console short code usable as a pack subfolder (n64, gc, wiiu, 3ds, nds, gba, gbc, gb, ps1, switch). */
 bool console_code(const std::string& name);
 
 /* List a Drive folder. Returns false on network error (out is left empty). */

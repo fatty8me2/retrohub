@@ -52,6 +52,7 @@ const char* sys_folder(const std::string& s) {
     if (s == "gbc") return "1idefowNapO3KpwE4nRv8zqrpCeEZFgpc";
     if (s == "nds") return "1FVsjeQMBAcxw-_gRU4MSSRLQpIOD3ygu";
     if (s == "ps1") return "19H5x-ZY6-8HHUl0g3XI0NEsW2e6ROWzr";
+    if (s == "switch") return "1NQsDUIDBBuP0diI6ChDAfDn4KRUdeDmv";
     return "";
 }
 
@@ -174,6 +175,8 @@ std::string console_alias(const std::string& name) {
         {"ps2", "ps2"}, {"playstation2", "ps2"},
         {"nes", "nes"}, {"famicom", "nes"}, {"nintendoentertainmentsystem", "nes"},
         {"snes", "snes"}, {"superfamicom", "snes"}, {"supernintendo", "snes"}, {"supernintendoentertainmentsystem", "snes"},
+        {"switch", "switch"}, {"nintendoswitch", "switch"}, {"nx", "switch"},
+        {"switch2", "switch"}, {"nintendoswitch2", "switch"}, {"nx2", "switch"},
     };
     for (auto& m : map) if (l == m[0]) return m[1];
     return "";
@@ -784,7 +787,8 @@ std::string pack_hint(const std::string& name) {
     size_t dot = n.find_last_of('.');
     if (dot != std::string::npos && dot > 0) {
         static const char* exts[] = {"zip", "7z", "rar", "z64", "n64", "v64", "gba", "gb", "gbc", "nds", "iso", "rvz", "cue", "bin", "chd", "gcm", "ciso",
-                                     "wbfs", "3ds", "cia", "wua", "wud", "wux", "nes", "sfc", "smc", "pbp", "gcz", "ndd", "cso", "cci", "cxi", "3dsx", "img", "m3u"};   // every format the library opens: "Game.cso" is titled "Game"
+                                     "wbfs", "3ds", "cia", "wua", "wud", "wux", "nes", "sfc", "smc", "pbp", "gcz", "ndd", "cso", "cci", "cxi", "3dsx", "img", "m3u",
+                                     "nsp", "xci", "nsz", "xcz"};   // every format the library opens: "Game.cso" is titled "Game"
         std::string ext = lower_name(n.substr(dot + 1));
         for (const char* x : exts) if (ext == x) { n.erase(dot); break; }
     }
@@ -946,7 +950,7 @@ void index_refresh(const std::vector<std::string>& roots) {
             }
             return true;
         };
-        static const char* builtin[] = {"n64", "gc", "gba", "gbc", "nds", "ps1"};
+        static const char* builtin[] = {"n64", "gc", "gba", "gbc", "nds", "ps1", "switch"};
         for (const char* s : builtin) {   // the built-in pack first: its consoles are known even before any listing
             { std::lock_guard<std::mutex> lk(IX.mu); IX.state[s] = 0; }
             bool ok = list_into(sys_folder(s), s);

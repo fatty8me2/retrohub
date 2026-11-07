@@ -47,6 +47,11 @@ int main()
     CHECK(console_alias("PS2") == "ps2");
     CHECK(console_alias("3ds") == "3ds");
     CHECK(console_alias("NDS") == "nds");
+    CHECK(console_alias("Switch") == "switch");
+    CHECK(console_alias("Nintendo Switch") == "switch");
+    CHECK(console_alias("Switch 2") == "switch");
+    CHECK(console_alias("NX") == "switch");
+    CHECK(console_alias("NX2") == "switch");
     CHECK(console_alias("Tools") == "");
     CHECK(pack_key("The Legend of Zelda: A Link to the Past") == pack_key("Legend of Zelda, The - A Link to the Past (USA)"));
     CHECK(pack_key("Pokemon X") == pack_key("Pokemon X (USA) (En,Ja,Fr,De,Es,It,Ko)"));
