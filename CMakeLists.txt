@@ -229,6 +229,7 @@ add_test(NAME hub_wiiu_test COMMAND hub_wiiu_test)               # offline Wii U
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
 add_test(NAME hub_ext_pads_test COMMAND hub_ext_pads_test)           # external emulators' pad configs for 1-4 fake pads (PCSX2 multitap, Dolphin ports, Cemu players, Azahar, PPSSPP)
 add_test(NAME hub_switch_test COMMAND hub_switch_test)               # Switch (Lichii): qt-config.ini merge, controls, profiles.dat, keys/firmware import, save session (no network)
+add_test(NAME hub_hookshot_build_test COMMAND hub_hookshot_build_test)   # Hookshot build: protocol parser, jobs, hashes, pins, requirement texts, folder swap keeps user\ (temp dirs, no network)
 add_test(NAME hub_psp_test COMMAND hub_psp_test)                   # PSP: SFO/ISO/CSO/CHD/PBP ids (synthetic), PS1-vs-PSP, scan, SAVEDATA session, PPSSPP config (no network)
 add_test(NAME hub_nx_test COMMAND hub_nx_test)                     # Switch / Switch 2: PFS0/XCI/NRO/NPDM ids, loose exefs dumps, scan + cache nx2 (synthetic, no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)

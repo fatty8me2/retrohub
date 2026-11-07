@@ -1,6 +1,7 @@
 #include "winutil.h"
 #include <cctype>
 #include "emulators.h"
+#include "emu_http.h"
 #include "psp.h"
 #include "lichii.h"
 
@@ -244,6 +245,8 @@ std::string md5_file(const std::string& path) { return bcrypt_file(path, BCRYPT_
 struct Progress {
     std::atomic<uint64_t>* got;
     std::atomic<uint64_t>* total;
+    const std::atomic<bool>* cancel = nullptr;   // emu_http.h callers only: stop (download fails with "cancelled")
+    const std::atomic<bool>* pause = nullptr;    // emu_http.h callers only: wait while true
 };
 
 static bool http_download(const std::wstring& host, const std::wstring& path, const std::string& out_file, Progress pr, std::string* err) {
@@ -267,6 +270,8 @@ static bool http_download(const std::wstring& host, const std::wstring& path, co
                 std::vector<char> buf(64 * 1024);
                 ok = true;
                 for (;;) {
+                    while (pr.pause && pr.pause->load() && !(pr.cancel && pr.cancel->load())) Sleep(250);
+                    if (pr.cancel && pr.cancel->load()) { ok = false; *err = "cancelled"; break; }
                     DWORD n = 0;
                     if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &n)) { ok = false; *err = "download interrupted"; break; }
                     if (n == 0) break;
@@ -282,6 +287,11 @@ static bool http_download(const std::wstring& host, const std::wstring& path, co
     if (con) WinHttpCloseHandle(con);
     WinHttpCloseHandle(ses);
     return ok;
+}
+
+bool http_get_file(const std::string& host, const std::string& path, const std::string& out_file, std::atomic<uint64_t>* got,
+                   std::atomic<uint64_t>* total, const std::atomic<bool>* cancel, const std::atomic<bool>* pause, std::string* err) {
+    return http_download(W(host), W(path), out_file, Progress{got, total, cancel, pause}, err);
 }
 
 /* Directory (searched to `depth` levels) that contains a file called `name`. */
