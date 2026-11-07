@@ -45,6 +45,7 @@
 #include "wave3_hooks.h"
 #include "resume_more.h"
 #include "hookshot.h"
+#include "hookshot_build.h"
 #include <thread>
 #include <xinput.h>
 
@@ -589,10 +590,15 @@ static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const st
         set_notice("Headless test run: launch skipped.");
         return;
     }
+    if (hookshot::swap_in_progress()) { set_notice("Hookshot is being updated: try again in a moment.", 8.0); return; }
     if (hubemu::is_running(exe)) { set_notice("Hookshot is already running. Close it first, then start the game from RetroHub.", 10.0); return; }
     if (!hookshot::av1_decoder_present(true)) { hookshot_av1_ask(e); return; }   // Hookshot would open a top-most box over the game: ask here instead
     auto sess = std::make_shared<hubemu::SaveSession>(hookshot::begin_save_session(e, battery));
     autotest_log("external: hookshot save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
+    if (!sess->error.empty()) {   // the vault -> Hookshot copy failed: starting would play an older or missing save (and end_session must not run)
+        set_notice("Couldn't copy your save into Hookshot (" + sess->error + "). The game was not started, so nothing changes.", 15.0);
+        return;
+    }
     std::vector<std::pair<std::string, std::string>> env;
     if (hub::gs::is_fullscreen(gs_values_for(e))) env.push_back({"HOS_FULLSCREEN", "1"});
     RunInfo r = ri;
