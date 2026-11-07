@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.37.0",
+      "date": "2026-11-07",
+      "title": "Ocarina of Time runs natively",
+      "new": [
+        "Ocarina of Time (Switch 2) plays with Hookshot, a native PC version of the game: no emulator, a higher frame rate, and your save carries over",
+        "Build Hookshot from the game's page with one button: RetroHub makes it on your PC from your own copy of the game (about 45 minutes, paused while you play)"
+      ],
+      "improved": [
+        "Your Ocarina of Time save is shared between Hookshot and Lichii, so you can switch either way at any time (the game's Settings: Plays with)",
+        "Everything the Hookshot build downloads comes from the official sources and is checked against a fixed fingerprint before it is used"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.36.0",
       "date": "2026-11-06",
       "title": "Truer cases, smoother Home",
