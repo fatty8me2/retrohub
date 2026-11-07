@@ -586,16 +586,14 @@ int segmented(const char* id, const char* const* labels, int n, int cur, int hot
         if (i == hot) {   // main attraction: logo cyan -> pink, nudged toward the theme accent
             const ImU32 ga = mix(IM_COL32(47, 224, 255, 255), ACCENT, 0.2f), gb = mix(IM_COL32(255, 111, 168, 255), ACCENT, 0.2f);
             const float h2 = *hv * 0.12f;
-            dl->AddRectFilled(ImVec2(p0.x - 3, p0.y - 3), ImVec2(p1.x + 3, p1.y + 3), with_alpha(ga, 0.26f + h2), r + 3);   // soft halo
+            dl->AddRectFilled(ImVec2(p0.x - 3, p0.y - 3), ImVec2(p1.x + 3, p1.y + 3), with_alpha(ga, (i == cur ? 0.30f : 0.12f) + h2), r + 3);   // soft halo (stronger when selected)
             if (i == cur) {
-                gradient_pill(dl, p0, p1, r, ga, gb);
-                txt = IM_COL32(29, 20, 70, 255);   // the logo navy: >= 9:1 on the whole gradient, on every theme
+                gradient_pill(dl, p0, p1, r, ga, gb);   // full-strength fill + a white ring
+                dl->AddRect(p0, p1, with_alpha(IM_COL32_WHITE, 0.85f), r, 0, 1.5f);
             } else {
-                gradient_pill(dl, p0, p1, r, ga, gb);   // 1.5 px gradient border around the panel colour
-                dl->AddRectFilled(ImVec2(p0.x + 2.f, p0.y + 2.f), ImVec2(p1.x - 2.f, p1.y - 2.f), PANEL, r - 2.f);
-                gradient_pill(dl, ImVec2(p0.x + 2.f, p0.y + 2.f), ImVec2(p1.x - 2.f, p1.y - 2.f), r - 2.f, ga, gb, 0.34f + h2);   // tinted body
-                txt = TEXT;
+                gradient_pill(dl, p0, p1, r, mix(ga, PANEL, 0.25f + 0.0f * h2), mix(gb, PANEL, 0.25f));   // same gradient, a notch calmer
             }
+            txt = IM_COL32(29, 20, 70, 255);   // the logo navy: strong contrast on the whole gradient, on every theme
             if (!reduce_motion) {   // one soft shimmer sweep every ~7 s
                 double ph = std::fmod(ImGui::GetTime(), 7.0) / 1.1;
                 if (ph < 1.0) {
