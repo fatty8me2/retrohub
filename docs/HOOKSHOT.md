@@ -66,6 +66,13 @@ downloaded once while writing this and matched Eden's pins byte for byte. SDL2.d
 `src\third_party\sdl2\SDL2.dll` on every build). The Hookshot source is the audited zip above. `WGPU_NATIVE` points at a folder that
 does not exist, so the build uses the Vulkan back end only.
 
+### RetroHub's one addition to the source
+
+`data\hookshotx_webgpu_absent.c` is copied to `<kit>\src\hostx_webgpu_absent.c` after the source is unpacked (`build.py`
+compiles every `host\*.c`). It holds the Vulkan-only build's placeholders for the WebGPU fallback (`wgr_start`, `wgr_nvn_*`,
+`rx_request_frame_dump` and so on): if `hookshot_vk.dll` can't start, the game logs why and stops instead of falling back. No other
+Hookshot file is changed.
+
 ### How the LLVM archive is unpacked
 
 Windows' `tar.exe` refuses this archive's zstd window, so `data\hookshot\unpack_tar.py` (run with the kit's own Python, `-I`)

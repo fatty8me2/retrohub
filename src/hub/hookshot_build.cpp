@@ -999,8 +999,12 @@ struct Kit {
             if (!is_file(d / "nx2" / "make_game.py")) return fail("The Hookshot source is incomplete.");
             write_marker(d, want);
         }
-        // RetroHub's own SDL2.dll (every build, so it follows RetroHub's updates)
+        // RetroHub's one addition to the source: placeholders for the WebGPU fallback (Vulkan-only build); build.py compiles every host\*.c
         std::error_code ec;
+        fs::create_directories(d / "host", ec);
+        fs::copy_file(P(io.data) / "rx_webgpu_absent.c", d / "host" / "rx_webgpu_absent.c", fs::copy_options::overwrite_existing, ec);
+        if (ec) return fail("Could not add RetroHub's rx_webgpu_absent.c to the source (" + ec.message() + ").");
+        // RetroHub's own SDL2.dll (every build, so it follows RetroHub's updates)
         fs::create_directories(d / "third_party" / "sdl2", ec);
         fs::copy_file(P(io.sdl2_dll), d / "third_party" / "sdl2" / "SDL2.dll", fs::copy_options::overwrite_existing, ec);
         if (ec) return fail("Could not copy SDL2.dll from RetroHub (" + ec.message() + ").");
